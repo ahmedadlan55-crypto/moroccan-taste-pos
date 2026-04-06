@@ -139,4 +139,26 @@ router.post('/stock-update', async (req, res) => {
   }
 });
 
+// Get live inventory (current stock with movements summary)
+router.get('/live', async (req, res) => {
+  try {
+    const [items] = await db.query('SELECT * FROM inv_items WHERE active = 1 ORDER BY category, name');
+    const result = items.map(i => ({
+      id: i.id,
+      name: i.name,
+      category: i.category || '',
+      unit: i.unit || 'حبة',
+      initialStock: 0,
+      purchasedQty: 0,
+      consumedQty: 0,
+      currentStock: Number(i.stock) || 0,
+      minStock: Number(i.min_stock) || 0,
+      cost: Number(i.cost) || 0
+    }));
+    res.json(result);
+  } catch (e) {
+    res.json([]);
+  }
+});
+
 module.exports = router;

@@ -70,4 +70,18 @@ router.put('/payment-methods', async (req, res) => {
   }
 });
 
+// Get discounts
+router.get('/discounts', async (req, res) => {
+  try {
+    const [rows] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'discounts'");
+    if (rows.length && rows[0].setting_value) {
+      res.json(JSON.parse(rows[0].setting_value));
+    } else {
+      res.json([]);
+    }
+  } catch (e) {
+    res.json([]);
+  }
+});
+
 module.exports = router;

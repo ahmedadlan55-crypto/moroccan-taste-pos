@@ -29,6 +29,11 @@ app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/erp', require('./routes/erp'));
 
+// Catch-all for unimplemented API routes — return JSON instead of HTML
+app.all('/api/*', (req, res) => {
+  res.json([]);
+});
+
 // SPA fallback
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

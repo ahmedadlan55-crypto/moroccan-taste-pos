@@ -34,6 +34,29 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => {
+// Auto-initialize database tables on first run
+const fs = require('fs');
+const db = require('./db/connection');
+async function autoInitDB() {
+  try {
+    const [rows] = await db.query("SHOW TABLES LIKE 'users'");
+    if (!rows.length) {
+      console.log('First run — creating database tables...');
+      const schema = fs.readFileSync(require('path').join(__dirname, 'db/schema.sql'), 'utf8');
+      const stmts = schema.split(';').map(s => s.trim()).filter(s => s.length > 5 && !s.startsWith('CREATE DATABASE') && !s.startsWith('USE '));
+      for (const stmt of stmts) {
+        try { await db.query(stmt); } catch(e) {}
+      }
+      // Create default admin user
+      const bcrypt = require('bcryptjs');
+      const hash = await bcrypt.hash('admin123', 10);
+      await db.query("INSERT IGNORE INTO users (username, password, role) VALUES ('admin', ?, 'admin')", [hash]);
+      console.log('Database ready! Default login: admin / admin123');
+    }
+  } catch(e) { console.log('DB init note:', e.message); }
+}
+
+app.listen(PORT, async () => {
+  await autoInitDB();
   console.log(`Moroccan Taste POS running on port ${PORT}`);
 });

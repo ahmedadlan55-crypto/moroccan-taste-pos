@@ -1,3 +1,4 @@
+// Deployment trigger: 2025-01-31 — force redeploy to pick up env-var-based DB config
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');

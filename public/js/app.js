@@ -1038,6 +1038,79 @@ function saveInv() {
   else { api.withFailureHandler(err=>{loader(false);showToast(err.message,true);}).withSuccessHandler(r=>{loader(false); closeModal('#modalInvForm'); showToast("تمت الإضافة"); loadDashInv();}).addMenuItem(d); }
 }
 
+// ─── Export Menu to Excel ───
+function exportMenuExcel() {
+  if (!state.menu || !state.menu.length) return showToast("لا توجد منتجات للتصدير", true);
+  var data = state.menu.map(function(m) {
+    return {
+      'الاسم': m.name || '',
+      'التصنيف': m.category || '',
+      'سعر البيع': m.price || 0,
+      'التكلفة': m.cost || 0,
+      'المخزون': m.stock || 0,
+      'الحد الأدنى': m.minStock || 0,
+      'فعال': m.active ? 'نعم' : 'لا'
+    };
+  });
+  var ws = XLSX.utils.json_to_sheet(data);
+  // Set column widths
+  ws['!cols'] = [{wch:25},{wch:15},{wch:12},{wch:12},{wch:10},{wch:12},{wch:8}];
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'المنيو');
+  var today = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, 'menu-products-' + today + '.xlsx');
+  showToast('تم تصدير ' + data.length + ' منتج بنجاح');
+}
+
+// ─── Import Menu from Excel ───
+function importMenuExcel(input) {
+  var file = input.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var wb = XLSX.read(e.target.result, { type: 'array' });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(ws);
+      if (!rows.length) { showToast("الملف فارغ", true); input.value = ''; return; }
+
+      var items = rows.map(function(r) {
+        return {
+          name: r['الاسم'] || r['name'] || r['Name'] || '',
+          category: r['التصنيف'] || r['category'] || r['Category'] || 'عام',
+          price: Number(r['سعر البيع'] || r['price'] || r['Price'] || 0),
+          cost: Number(r['التكلفة'] || r['cost'] || r['Cost'] || 0),
+          stock: Number(r['المخزون'] || r['stock'] || r['Stock'] || 999),
+          minStock: Number(r['الحد الأدنى'] || r['minStock'] || r['Min Stock'] || 5),
+          active: r['فعال'] === 'لا' ? false : true
+        };
+      }).filter(function(i) { return i.name; });
+
+      if (!items.length) { showToast("لم يتم العثور على منتجات صالحة", true); input.value = ''; return; }
+
+      if (!confirm('سيتم استيراد ' + items.length + ' منتج. المنتجات الموجودة بنفس الاسم سيتم تحديثها. متابعة؟')) { input.value = ''; return; }
+
+      loader();
+      api.withSuccessHandler(function(res) {
+        loader(false);
+        if (res.success) {
+          showToast('تم الاستيراد: ' + (res.imported||0) + ' جديد، ' + (res.updated||0) + ' محدث');
+          loadDashInv();
+        } else {
+          showToast(res.error || 'خطأ في الاستيراد', true);
+        }
+      }).withFailureHandler(function(err) {
+        loader(false);
+        showToast(err.message || 'خطأ في الاستيراد', true);
+      }).importMenuItems({ items: items });
+    } catch(ex) {
+      showToast("خطأ في قراءة الملف: " + ex.message, true);
+    }
+    input.value = '';
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 function delInv(id) {
   if (confirm("هل أنت متأكد من حذف/إيقاف هذا المنتج؟")) {
     loader(); api.withFailureHandler(err=>{loader(false);showToast(err.message,true);}).withSuccessHandler(r=>{loader(false); showToast("تم التنفيذ"); loadDashInv();}).deleteMenuItem(id);

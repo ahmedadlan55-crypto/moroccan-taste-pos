@@ -60,6 +60,40 @@ router.delete('/:id', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// Bulk import menu items
+router.post('/import', async (req, res) => {
+  try {
+    const { items } = req.body;
+    if (!items || !items.length) return res.json({ success: false, error: 'No items provided' });
+
+    let imported = 0;
+    let updated = 0;
+
+    for (const item of items) {
+      const id = item.id || 'MENU-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+      const [existing] = await db.query('SELECT id FROM menu WHERE id = ? OR name = ?', [id, item.name]);
+
+      if (existing.length) {
+        await db.query(
+          `UPDATE menu SET name=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=? WHERE id=?`,
+          [item.name, item.price || 0, item.category || 'عام', item.cost || 0, item.stock || 999, item.minStock || 5, item.active !== false, existing[0].id]
+        );
+        updated++;
+      } else {
+        await db.query(
+          `INSERT INTO menu (id, name, price, category, cost, stock, min_stock, active) VALUES (?,?,?,?,?,?,?,?)`,
+          [id, item.name, item.price || 0, item.category || 'عام', item.cost || 0, item.stock || 999, item.minStock || 5, item.active !== false]
+        );
+        imported++;
+      }
+    }
+
+    res.json({ success: true, imported, updated, total: items.length });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
 // ─── Recipes ───
 router.get('/recipes', async (req, res) => {
   try {

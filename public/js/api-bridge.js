@@ -18,6 +18,7 @@
     updateMenuItem:      { method: 'PUT',  url: (d) => '/menu/'+d.id, body: (d) => d },
     updateMenuPrice:     { method: 'PATCH',url: (id,p) => '/menu/'+id+'/price', body: (id,p) => ({price:p}) },
     deleteMenuItem:      { method: 'DELETE',url: (id) => '/menu/'+id },
+    importMenuItems:     { method: 'POST', url: '/menu/import' },
     getRecipes:          { method: 'GET',  url: '/menu/recipes' },
     saveRecipe:          { method: 'POST', url: (menuId,menuName,ings) => '/menu/recipes/'+menuId, body: (menuId,menuName,ings) => ({menuName,ingredients:ings}) },
 

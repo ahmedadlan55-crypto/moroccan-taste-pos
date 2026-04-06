@@ -358,7 +358,13 @@
             <div class="form-group" style="flex:1; max-width:400px; margin:0;">
               <input type="text" id="invSearchQ" class="form-control" placeholder="البحث باسم المنتج أو الصنف..." oninput="loadDashInv()">
             </div>
-            <button class="btn btn-primary" onclick="openInvM('add')"><i class="fas fa-plus"></i> إضافة منتج جديد</button>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <button class="btn btn-success" onclick="exportMenuExcel()"><i class="fas fa-file-excel"></i> تصدير Excel</button>
+              <label class="btn btn-secondary" style="margin:0;cursor:pointer;"><i class="fas fa-file-upload"></i> استيراد Excel
+                <input type="file" id="menuImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importMenuExcel(this)">
+              </label>
+              <button class="btn btn-primary" onclick="openInvM('add')"><i class="fas fa-plus"></i> إضافة منتج جديد</button>
+            </div>
           </div>
           <div class="table-wrapper">
             <table class="table">

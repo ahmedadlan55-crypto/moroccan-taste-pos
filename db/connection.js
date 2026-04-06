@@ -6,15 +6,27 @@ const dbUrl = process.env.DATABASE_URL || process.env.MYSQL_URL;
 let poolConfig;
 
 if (dbUrl) {
+  console.log('[DB] Connecting via DATABASE_URL');
   poolConfig = { uri: dbUrl, waitForConnections: true, connectionLimit: 10, charset: 'utf8mb4' };
 } else {
+  // Railway injects: MYSQLHOST, MYSQLPORT, MYSQLUSER, MYSQLPASSWORD, MYSQL_DATABASE
+  const host     = process.env.MYSQLHOST     || process.env.DB_HOST     || 'localhost';
+  const port     = process.env.MYSQLPORT     || process.env.DB_PORT     || 3306;
+  const user     = process.env.MYSQLUSER     || process.env.DB_USER     || 'root';
+  const password = process.env.MYSQLPASSWORD || process.env.DB_PASSWORD || '';
+  const database = process.env.MYSQL_DATABASE || process.env.MYSQLDATABASE || process.env.DB_NAME || 'moroccan_taste_pos';
+
+  console.log(`[DB] Connecting to MySQL at ${host}:${port} — database: "${database}" — user: "${user}"`);
+
   poolConfig = {
-    host: process.env.DB_HOST || process.env.MYSQLHOST || 'localhost',
-    port: process.env.DB_PORT || process.env.MYSQLPORT || 3306,
-    user: process.env.DB_USER || process.env.MYSQLUSER || 'root',
-    password: process.env.DB_PASSWORD || process.env.MYSQLPASSWORD || '',
-    database: process.env.DB_NAME || process.env.MYSQLDATABASE || 'moroccan_taste_pos',
-    waitForConnections: true, connectionLimit: 10, charset: 'utf8mb4'
+    host,
+    port: Number(port),
+    user,
+    password,
+    database,
+    waitForConnections: true,
+    connectionLimit: 10,
+    charset: 'utf8mb4'
   };
 }
 

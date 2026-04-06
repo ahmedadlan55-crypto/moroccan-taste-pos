@@ -37,26 +37,46 @@ app.get('*', (req, res) => {
 // Auto-initialize database tables on first run
 const fs = require('fs');
 const db = require('./db/connection');
+
 async function autoInitDB() {
-  try {
-    const [rows] = await db.query("SHOW TABLES LIKE 'users'");
-    if (!rows.length) {
-      console.log('First run — creating database tables...');
-      const schema = fs.readFileSync(require('path').join(__dirname, 'db/schema.sql'), 'utf8');
-      const stmts = schema.split(';').map(s => s.trim()).filter(s => s.length > 5 && !s.startsWith('CREATE DATABASE') && !s.startsWith('USE '));
-      for (const stmt of stmts) {
-        try { await db.query(stmt); } catch(e) {}
+  // Retry loop — Railway MySQL may not be ready immediately on cold start
+  const MAX_RETRIES = 5;
+  const RETRY_DELAY_MS = 3000;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const [rows] = await db.query("SHOW TABLES LIKE 'users'");
+      if (!rows.length) {
+        console.log('First run — creating database tables...');
+        const schema = fs.readFileSync(require('path').join(__dirname, 'db/schema.sql'), 'utf8');
+        const stmts = schema.split(';').map(s => s.trim()).filter(s => s.length > 5 && !s.startsWith('CREATE DATABASE') && !s.startsWith('USE '));
+        for (const stmt of stmts) {
+          try { await db.query(stmt); } catch (e) {
+            console.log('Schema warning:', e.message.substring(0, 120));
+          }
+        }
+        // Create default admin user
+        const bcrypt = require('bcryptjs');
+        const hash = await bcrypt.hash('admin123', 10);
+        await db.query("INSERT IGNORE INTO users (username, password, role) VALUES ('admin', ?, 'admin')", [hash]);
+        console.log('Database ready! Default login: admin / admin123');
+      } else {
+        console.log('Database connection OK — tables already exist.');
       }
-      // Create default admin user
-      const bcrypt = require('bcryptjs');
-      const hash = await bcrypt.hash('admin123', 10);
-      await db.query("INSERT IGNORE INTO users (username, password, role) VALUES ('admin', ?, 'admin')", [hash]);
-      console.log('Database ready! Default login: admin / admin123');
+      return; // success — exit retry loop
+    } catch (e) {
+      console.error(`[DB] Connection attempt ${attempt}/${MAX_RETRIES} failed: ${e.message}`);
+      if (attempt < MAX_RETRIES) {
+        console.log(`[DB] Retrying in ${RETRY_DELAY_MS / 1000}s...`);
+        await new Promise(res => setTimeout(res, RETRY_DELAY_MS));
+      } else {
+        console.error('[DB] Could not connect to MySQL after all retries. Check MYSQLHOST, MYSQLPORT, MYSQLUSER, MYSQLPASSWORD, MYSQL_DATABASE environment variables.');
+      }
     }
-  } catch(e) { console.log('DB init note:', e.message); }
+  }
 }
 
 app.listen(PORT, async () => {
-  await autoInitDB();
   console.log(`Moroccan Taste POS running on port ${PORT}`);
+  await autoInitDB();
 });

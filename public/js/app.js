@@ -1040,8 +1040,8 @@ function saveInv() {
 
 // ─── Export Menu to Excel ───
 function exportMenuExcel() {
-  if (!state.menu || !state.menu.length) return showToast("لا توجد منتجات للتصدير", true);
-  var data = state.menu.map(function(m) {
+  var headers = ['الاسم', 'التصنيف', 'سعر البيع', 'التكلفة', 'المخزون', 'الحد الأدنى', 'فعال'];
+  var data = (state.menu || []).map(function(m) {
     return {
       'الاسم': m.name || '',
       'التصنيف': m.category || '',
@@ -1052,14 +1052,18 @@ function exportMenuExcel() {
       'فعال': m.active ? 'نعم' : 'لا'
     };
   });
-  var ws = XLSX.utils.json_to_sheet(data);
-  // Set column widths
+  var ws;
+  if (data.length) {
+    ws = XLSX.utils.json_to_sheet(data);
+  } else {
+    ws = XLSX.utils.aoa_to_sheet([headers]);
+  }
   ws['!cols'] = [{wch:25},{wch:15},{wch:12},{wch:12},{wch:10},{wch:12},{wch:8}];
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'المنيو');
   var today = new Date().toISOString().slice(0,10);
   XLSX.writeFile(wb, 'menu-products-' + today + '.xlsx');
-  showToast('تم تصدير ' + data.length + ' منتج بنجاح');
+  showToast(data.length ? 'تم تصدير ' + data.length + ' منتج بنجاح' : 'تم تصدير نموذج فارغ — قم بتعبئته ثم استيراده');
 }
 
 // ─── Import Menu from Excel ───

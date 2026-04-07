@@ -937,47 +937,84 @@ function nav(sectionId) {
 
 function loadDashHome() {
   loader();
-  api.withSuccessHandler(d => {
+
+  // Build the date range: last 7 days through today
+  var today = new Date();
+  var todayStr = today.toISOString().split('T')[0];
+  var sevenAgo = new Date(today); sevenAgo.setDate(sevenAgo.getDate() - 6);
+  var sevenStr = sevenAgo.toISOString().split('T')[0];
+
+  // Compute everything from /api/sales — the backend dashboard endpoint
+  // returns a simplified shape that doesn't include payment / hourly / top items.
+  api.withFailureHandler(function(err) { loader(false); showToast(err.message || 'فشل تحميل الداش بورد', true); })
+  .withSuccessHandler(function(sales) {
     loader(false);
-    if (d.error) return;
-    
-    // Top Stats
-    q("#dhTotalSale").innerText = formatVal(d.today.sales);
-    q("#dhTotalOrders").innerText = d.today.orders;
-    q("#dhTotalCash").innerText = formatVal(d.payment.cash);
-    q("#dhTotalCard").innerText = formatVal(d.payment.card);
-    
-    // Low Stock Alert
-    let lsHtml = "";
-    if (d.lowStock.length === 0) {
+    sales = Array.isArray(sales) ? sales : [];
+
+    var todaySales = sales.filter(function(s) {
+      return String(s.date || '').indexOf(todayStr) === 0;
+    });
+
+    // ─── KPI cards ───
+    var totalToday = todaySales.reduce(function(sum, s) { return sum + (Number(s.total) || 0); }, 0);
+    var countToday = todaySales.length;
+    var sumByPay = function(method) {
+      return todaySales
+        .filter(function(s) { return String(s.payment || '').toLowerCase() === method; })
+        .reduce(function(sum, s) { return sum + (Number(s.total) || 0); }, 0);
+    };
+    var cashToday = sumByPay('cash');
+    var cardToday = sumByPay('card');
+
+    if (q("#dhTotalSale")) q("#dhTotalSale").innerText = formatVal(totalToday);
+    if (q("#dhTotalOrders")) q("#dhTotalOrders").innerText = countToday;
+    if (q("#dhTotalCash")) q("#dhTotalCash").innerText = formatVal(cashToday);
+    if (q("#dhTotalCard")) q("#dhTotalCard").innerText = formatVal(cardToday);
+
+    // ─── Low stock from menu (use cached state.menu, refreshed elsewhere) ───
+    var lowStock = (state.menu || []).filter(function(m) {
+      return m.active && (Number(m.stock) || 0) <= (Number(m.minStock) || 0);
+    });
+    var lsHtml = '';
+    if (!lowStock.length) {
       lsHtml = "<div style='text-align:center; padding:30px; color:var(--text-light);'><i class='fas fa-check-circle' style='font-size:40px; color:var(--success); margin-bottom:10px; display:block;'></i>المخزون ممتاز</div>";
     } else {
-      d.lowStock.forEach(ls => {
-        lsHtml += `<div style="display:flex; justify-content:space-between; align-items:center; padding:12px; background:#fff1f2; border:1px solid #ffe4e6; border-radius:12px; margin-bottom:10px;">
-          <span style="font-weight:600; color:#9f1239;">${ls.name}</span>
-          <span class="badge red">${ls.stock} مدخل</span>
-        </div>`;
+      lowStock.forEach(function(ls) {
+        lsHtml += '<div style="display:flex; justify-content:space-between; align-items:center; padding:12px; background:#fff1f2; border:1px solid #ffe4e6; border-radius:12px; margin-bottom:10px;">'+
+          '<span style="font-weight:600; color:#9f1239;">' + (ls.name||'') + '</span>'+
+          '<span class="badge red">' + (ls.stock||0) + ' مدخل</span>'+
+        '</div>';
       });
     }
-    q("#dhLowStock").innerHTML = lsHtml;
-    
-    // Charts Management
-    if (state.charts) {
-      Object.values(state.charts).forEach(c => c && c.destroy());
-    }
+    if (q("#dhLowStock")) q("#dhLowStock").innerHTML = lsHtml;
+
+    // ─── Charts: destroy old before redraw ───
+    if (state.charts) Object.values(state.charts).forEach(function(c) { if (c) c.destroy(); });
     state.charts = {};
 
-    // 1. Daily Sales Chart (Line)
-    const dailyCtx = q("#dailySalesChartCtx");
-    if (dailyCtx) {
-      const labels = d.last7Days.map(x => x.date).reverse();
-      const data = d.last7Days.map(x => Number(x.total)).reverse();
+    // 1. Daily Sales (last 7 days, line chart)
+    var dailyCtx = q("#dailySalesChartCtx");
+    if (dailyCtx && typeof Chart !== 'undefined') {
+      var byDay = {};
+      for (var i = 6; i >= 0; i--) {
+        var d2 = new Date(today); d2.setDate(d2.getDate() - i);
+        byDay[d2.toISOString().split('T')[0]] = 0;
+      }
+      sales.forEach(function(s) {
+        var k = String(s.date || '').split('T')[0];
+        if (k in byDay) byDay[k] += Number(s.total) || 0;
+      });
+      var dayLabels = Object.keys(byDay).map(function(k) {
+        var p = k.split('-');
+        return p[2] + '/' + p[1];
+      });
+      var dayData = Object.values(byDay);
       state.charts.daily = new Chart(dailyCtx.getContext("2d"), {
         type: 'line',
         data: {
-          labels: labels,
+          labels: dayLabels,
           datasets: [{
-            label: 'المبيعات (SAR)', data: data,
+            label: 'المبيعات (SAR)', data: dayData,
             borderColor: '#6366f1', backgroundColor: 'rgba(99, 102, 241, 0.1)',
             borderWidth: 3, pointBackgroundColor: '#ffffff', pointBorderColor: '#6366f1', pointBorderWidth: 2, pointRadius: 5, fill: true, tension: 0.4
           }]
@@ -986,17 +1023,20 @@ function loadDashHome() {
       });
     }
 
-    // 2. Hourly Sales Chart (Bar)
-    const hourlyCtx = q("#hourlySalesChartCtx");
-    if (hourlyCtx) {
-      const labels = d.hourlyData.map(x => x.hour + ":00");
-      const data = d.hourlyData.map(x => x.total);
+    // 2. Hourly Sales (today, bar chart)
+    var hourlyCtx = q("#hourlySalesChartCtx");
+    if (hourlyCtx && typeof Chart !== 'undefined') {
+      var byHour = new Array(24).fill(0);
+      todaySales.forEach(function(s) {
+        try { var h = new Date(s.date).getHours(); byHour[h] += Number(s.total) || 0; } catch(e) {}
+      });
+      var hourLabels = byHour.map(function(_, h) { return h + ':00'; });
       state.charts.hourly = new Chart(hourlyCtx.getContext("2d"), {
         type: 'bar',
         data: {
-          labels: labels,
+          labels: hourLabels,
           datasets: [{
-            label: 'مبيعات الساعة (SAR)', data: data,
+            label: 'مبيعات الساعة (SAR)', data: byHour,
             backgroundColor: '#10b981', borderRadius: 4
           }]
         },
@@ -1004,46 +1044,55 @@ function loadDashHome() {
       });
     }
 
-    // 3. Top Items Chart (Doughnut)
-    const topCtx = q("#topItemsChartCtx");
-    if (topCtx) {
-      const labels = d.topProducts.map(x => x.name);
-      const data = d.topProducts.map(x => x.qty);
+    // 3. Top Items (Doughnut) — aggregate qty across all 7-day sales
+    var topCtx = q("#topItemsChartCtx");
+    if (topCtx && typeof Chart !== 'undefined') {
+      var byItem = {};
+      sales.forEach(function(s) {
+        (s.items || []).forEach(function(it) {
+          var name = it.name || 'غير معروف';
+          if (!byItem[name]) byItem[name] = 0;
+          byItem[name] += Number(it.qty) || 0;
+        });
+      });
+      var topArr = Object.entries(byItem).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 8);
       state.charts.top = new Chart(topCtx.getContext("2d"), {
         type: 'doughnut',
         data: {
-          labels: labels,
+          labels: topArr.map(function(x) { return x[0]; }),
           datasets: [{
-            data: data,
+            data: topArr.map(function(x) { return x[1]; }),
             backgroundColor: ['#f59e0b', '#3b82f6', '#ec4899', '#8b5cf6', '#14b8a6', '#f43f5e', '#84cc16', '#06b6d4'],
             borderWidth: 2, hoverOffset: 4
           }]
         },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { family: "'Tajawal', sans-serif" } } } }, cutout: '70%' }
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12 } } }, cutout: '70%' }
       });
     }
 
-    // 4. User Shifts Chart (Bar Horizontal)
-    const userCtx = q("#userSalesChartCtx");
-    if (userCtx) {
-      const labels = d.userSales.map(x => x.username);
-      const data = d.userSales.map(x => x.total);
+    // 4. User Sales (Horizontal Bar) — aggregate by cashier across 7 days
+    var userCtx = q("#userSalesChartCtx");
+    if (userCtx && typeof Chart !== 'undefined') {
+      var byUser = {};
+      sales.forEach(function(s) {
+        var u = s.username || 'غير معروف';
+        if (!byUser[u]) byUser[u] = 0;
+        byUser[u] += Number(s.total) || 0;
+      });
+      var userArr = Object.entries(byUser).sort(function(a, b) { return b[1] - a[1]; });
       state.charts.user = new Chart(userCtx.getContext("2d"), {
         type: 'bar',
         data: {
-          labels: labels,
+          labels: userArr.map(function(x) { return x[0]; }),
           datasets: [{
-            label: 'إجمالي مبيعات الكاشير', data: data,
+            label: 'إجمالي مبيعات الكاشير', data: userArr.map(function(x) { return x[1]; }),
             backgroundColor: '#8b5cf6', borderRadius: 4
           }]
         },
-        options: { 
-          indexAxis: 'y', 
-          responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } 
-        }
+        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
       });
     }
-  }).getDashboardSummary();
+  }).getSalesListDetailed({ startDate: sevenStr, endDate: todayStr });
 }
 
 // Sales Table

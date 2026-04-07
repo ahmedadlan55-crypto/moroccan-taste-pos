@@ -975,17 +975,49 @@ function erpLoadVATReports() {
     var cy = new Date().getFullYear();
     for (var y=cy;y>=cy-3;y--) ySel.innerHTML += '<option value="'+y+'">'+y+'</option>';
   }
-  // Load reports list
+
+  // Auto-populate the current quarter date range so KPI cards aren't empty on first visit
+  var startInput = document.getElementById('erpVATStart');
+  var endInput   = document.getElementById('erpVATEnd');
+  if (startInput && !startInput.value) {
+    var now = new Date();
+    var qIdx = Math.floor(now.getMonth() / 3); // 0..3
+    var qStart = new Date(now.getFullYear(), qIdx * 3, 1);
+    var qEnd   = new Date(now.getFullYear(), qIdx * 3 + 3, 0);
+    var fmt = function(d){ return d.toISOString().split('T')[0]; };
+    startInput.value = fmt(qStart);
+    if (endInput) endInput.value = fmt(qEnd);
+    // Auto-fetch the current quarter data
+    if (typeof erpLoadVATDetail === 'function') erpLoadVATDetail();
+  }
+
+  // Load reports list (endpoint may be missing → catch-all returns [])
   window._apiBridge.withSuccessHandler(function(list) {
     var tbody = document.getElementById('erpVATReportsBody');
-    if (!list||!list.length) { tbody.innerHTML='<tr><td colspan="7" class="empty-msg">لا توجد تقارير</td></tr>'; return; }
-    tbody.innerHTML = list.map(function(r){
-      var stColor = r.Status==='submitted'?'green':(r.Status==='closed'?'blue':'orange');
-      return '<tr><td><code>'+r.ID+'</code></td><td>'+( r.PeriodStart||'')+'</td><td>'+(r.PeriodEnd||'')+'</td>'+
-        '<td style="color:#ef4444;">'+(Number(r.TotalOutputVAT)||0).toFixed(2)+'</td>'+
-        '<td style="color:#16a34a;">'+(Number(r.TotalInputVAT)||0).toFixed(2)+'</td>'+
-        '<td><strong>'+(Number(r.NetVAT)||0).toFixed(2)+'</strong></td>'+
-        '<td><span class="badge badge-'+stColor+'">'+(r.Status||'draft')+'</span></td></tr>';
+    if (!tbody) return;
+    if (!list || !list.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد تقارير محفوظة</td></tr>';
+      return;
+    }
+    tbody.innerHTML = list.map(function(r) {
+      // Tolerate either camelCase or PascalCase keys
+      var id     = r.id || r.ID || '';
+      var pStart = r.periodStart || r.PeriodStart || '';
+      var pEnd   = r.periodEnd   || r.PeriodEnd   || '';
+      var outVat = Number(r.totalOutputVat || r.TotalOutputVAT || 0);
+      var inVat  = Number(r.totalInputVat  || r.TotalInputVAT  || 0);
+      var netVat = Number(r.netVat || r.NetVAT || (outVat - inVat));
+      var status = r.status || r.Status || 'draft';
+      var stColor = status === 'submitted' ? 'green' : (status === 'closed' ? 'blue' : 'orange');
+      return '<tr>' +
+        '<td><code>' + id + '</code></td>' +
+        '<td>' + pStart + '</td>' +
+        '<td>' + pEnd + '</td>' +
+        '<td style="color:#ef4444;">' + outVat.toFixed(2) + '</td>' +
+        '<td style="color:#16a34a;">' + inVat.toFixed(2) + '</td>' +
+        '<td><strong>' + netVat.toFixed(2) + '</strong></td>' +
+        '<td><span class="badge badge-' + stColor + '">' + status + '</span></td>' +
+      '</tr>';
     }).join('');
   }).getVATReports();
 }
@@ -1004,32 +1036,57 @@ function erpLoadVATDetail() {
   var ed = document.getElementById('erpVATEnd').value;
   if (!sd||!ed) return showToast('حدد الفترة','error');
   loader(true);
-  window._apiBridge.withSuccessHandler(function(res) {
-    loader(false);
-    if (!res.success) return showToast(res.error,'error');
-    // Update KPI
-    document.getElementById('erpVATOutDetail').textContent = res.summary.output.toFixed(2);
-    document.getElementById('erpVATInDetail').textContent = res.summary.input.toFixed(2);
-    var net = res.summary.net;
-    document.getElementById('erpVATNetDetail').textContent = net.toFixed(2);
-    document.getElementById('erpVATNetDetail').style.color = net>0?'#ef4444':'#16a34a';
-    document.getElementById('erpVATStatus').textContent = net>0?'مستحق للهيئة':(net<0?'مستحق للمنشأة':'متوازن');
-    document.getElementById('erpVATStatus').style.color = net>0?'#ef4444':'#16a34a';
-    // Render transactions
-    var tbody = document.getElementById('erpVATTransBody');
-    if (!res.transactions.length) { tbody.innerHTML='<tr><td colspan="7" class="empty-msg">لا توجد عمليات</td></tr>'; return; }
-    tbody.innerHTML = res.transactions.map(function(t){
-      var typeColor = t.type==='sale'?'red':'green';
-      var typeLabel = t.type==='sale'?'بيع':'شراء';
-      return '<tr><td>'+t.date+'</td>'+
-        '<td><span class="badge badge-'+typeColor+'">'+typeLabel+'</span></td>'+
-        '<td><code style="font-size:11px;">'+t.ref+'</code></td>'+
-        '<td>'+t.amount.toFixed(2)+'</td><td>'+t.net.toFixed(2)+'</td>'+
-        '<td style="color:#ef4444;font-weight:700;">'+(t.vat<0?t.vat.toFixed(2):'—')+'</td>'+
-        '<td style="color:#16a34a;font-weight:700;">'+(t.vat>0?t.vat.toFixed(2):'—')+'</td></tr>';
-    }).join('');
-  }).getVATTransactions(sd, ed);
-  erpLoadVATReports();
+  window._apiBridge
+    .withFailureHandler(function(e){ loader(false); showToast('خطأ: '+e.message,'error'); })
+    .withSuccessHandler(function(res) {
+      loader(false);
+      if (!res || res.error) return showToast((res && res.error) || 'فشل تحميل البيانات','error');
+
+      // Backend returns: { vatRate, outputVat, inputVat, netVat, transactions: [{id, date, type, total, vatAmount, source}] }
+      var output = Number(res.outputVat) || 0;
+      var input  = Number(res.inputVat)  || 0;
+      var net    = (res.netVat !== undefined) ? Number(res.netVat) : (output - input);
+
+      document.getElementById('erpVATOutDetail').textContent = output.toFixed(2);
+      document.getElementById('erpVATInDetail').textContent = input.toFixed(2);
+      var netEl = document.getElementById('erpVATNetDetail');
+      netEl.textContent = net.toFixed(2);
+      netEl.style.color = net > 0 ? '#ef4444' : (net < 0 ? '#16a34a' : '#64748b');
+      var stEl = document.getElementById('erpVATStatus');
+      stEl.textContent = net > 0 ? 'مستحق للهيئة' : (net < 0 ? 'مستحق للمنشأة' : 'متوازن');
+      stEl.style.color = net > 0 ? '#ef4444' : (net < 0 ? '#16a34a' : '#64748b');
+
+      var tbody = document.getElementById('erpVATTransBody');
+      var txns = Array.isArray(res.transactions) ? res.transactions : [];
+      if (!txns.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد عمليات في هذه الفترة</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = txns.map(function(t) {
+        var isOutput = String(t.type).toLowerCase() === 'output' || String(t.source).toLowerCase() === 'sale';
+        var typeColor = isOutput ? 'red' : 'green';
+        var typeLabel = isOutput ? 'بيع' : 'شراء';
+        var total = Number(t.total) || 0;
+        var vatAmount = Number(t.vatAmount) || 0;
+        var netAmount = total - vatAmount;
+        var dateStr = '';
+        try {
+          var dt = new Date(t.date);
+          dateStr = dt.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        } catch (e) { dateStr = String(t.date || ''); }
+
+        return '<tr>' +
+          '<td>' + dateStr + '</td>' +
+          '<td><span class="badge badge-' + typeColor + '">' + typeLabel + '</span></td>' +
+          '<td><code style="font-size:11px;">' + (t.id || '') + '</code></td>' +
+          '<td>' + total.toFixed(2) + '</td>' +
+          '<td>' + netAmount.toFixed(2) + '</td>' +
+          '<td style="color:#ef4444;font-weight:700;">' + (isOutput ? vatAmount.toFixed(2) : '—') + '</td>' +
+          '<td style="color:#16a34a;font-weight:700;">' + (isOutput ? '—' : vatAmount.toFixed(2)) + '</td>' +
+        '</tr>';
+      }).join('');
+    }).getVATTransactions(sd, ed);
 }
 
 function erpPostVAT() {

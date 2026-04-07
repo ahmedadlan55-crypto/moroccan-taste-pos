@@ -143,18 +143,38 @@ router.post('/stock-update', async (req, res) => {
 router.get('/live', async (req, res) => {
   try {
     const [items] = await db.query('SELECT * FROM inv_items WHERE active = 1 ORDER BY category, name');
-    const result = items.map(i => ({
-      id: i.id,
-      name: i.name,
-      category: i.category || '',
-      unit: i.unit || 'حبة',
-      initialStock: 0,
-      purchasedQty: 0,
-      consumedQty: 0,
-      currentStock: Number(i.stock) || 0,
-      minStock: Number(i.min_stock) || 0,
-      cost: Number(i.cost) || 0
-    }));
+
+    // Aggregate inventory movements per item: total purchased (in) and total consumed (out)
+    const [movRows] = await db.query(
+      "SELECT item_id, type, SUM(qty) AS totalQty FROM inventory_movements GROUP BY item_id, type"
+    );
+    const movMap = {}; // itemId → { in: number, out: number }
+    movRows.forEach(r => {
+      const id = r.item_id;
+      if (!movMap[id]) movMap[id] = { in: 0, out: 0 };
+      if (r.type === 'in') movMap[id].in = Number(r.totalQty) || 0;
+      else if (r.type === 'out') movMap[id].out = Number(r.totalQty) || 0;
+    });
+
+    const result = items.map(i => {
+      const m = movMap[i.id] || { in: 0, out: 0 };
+      const currentStock = Number(i.stock) || 0;
+      // Initial stock = current + consumed - purchased
+      // (i.e. what was on hand before any movements were recorded)
+      const initialStock = currentStock + m.out - m.in;
+      return {
+        id: i.id,
+        name: i.name,
+        category: i.category || '',
+        unit: i.unit || 'حبة',
+        initialStock: initialStock,
+        purchasedQty: m.in,
+        consumedQty: m.out,
+        currentStock: currentStock,
+        minStock: Number(i.min_stock) || 0,
+        cost: Number(i.cost) || 0
+      };
+    });
     res.json(result);
   } catch (e) {
     res.json([]);

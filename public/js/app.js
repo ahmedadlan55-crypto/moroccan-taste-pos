@@ -2889,60 +2889,108 @@ function exportSalesExcel() {
 
 function loadPayments() {
   loader();
-  const filters = {};
-  const start = q("#fpayStart") ? q("#fpayStart").value : "";
-  const end = q("#fpayEnd") ? q("#fpayEnd").value : "";
-  const cashier = q("#fpayCashier") ? q("#fpayCashier").value : "";
-  if (start) filters.startDate = start;
-  if (end) filters.endDate = end;
-  if (cashier) filters.username = cashier;
+  // Default to today if no date range was set
+  var start = q("#fpayStart") ? q("#fpayStart").value : "";
+  var end   = q("#fpayEnd")   ? q("#fpayEnd").value   : "";
+  if (!start && !end) {
+    var today = new Date().toISOString().split('T')[0];
+    start = today; end = today;
+    if (q("#fpayStart")) q("#fpayStart").value = today;
+    if (q("#fpayEnd"))   q("#fpayEnd").value   = today;
+  } else if (!end) {
+    end = start;
+  } else if (!start) {
+    start = end;
+  }
+  var cashier = q("#fpayCashier") ? q("#fpayCashier").value : "";
+  var params = { startDate: start, endDate: end };
+  if (cashier) params.username = cashier;
 
-  api.withFailureHandler(err => { loader(false); showToast(err.message, true); }).withSuccessHandler(d => {
-    loader(false);
-    // Summary cards
-    q("#payTotalCash").innerText = formatVal(d.totals.cash);
-    q("#payTotalCard").innerText = formatVal(d.totals.card);
-    q("#payTotalKita").innerText = formatVal(d.totals.kita);
-    q("#payTotalAll").innerText = formatVal(d.totals.all);
-    q("#payCntCash").innerText = d.counts.cash;
-    q("#payCntCard").innerText = d.counts.card;
-    q("#payCntKita").innerText = d.counts.kita;
-    q("#payCntAll").innerText = d.counts.all;
+  // No dedicated /payments-summary endpoint exists — compute everything from /api/sales
+  api.withFailureHandler(function(err) { loader(false); showToast(err.message || 'فشل تحميل الدفعات', true); })
+    .withSuccessHandler(function(sales) {
+      loader(false);
+      sales = Array.isArray(sales) ? sales : [];
 
-    // Daily table
-    let h = "";
-    if (!d.daily.length) h = "<tr><td colspan='6' style='text-align:center;padding:20px;'>\u0644\u0627 \u062a\u0648\u062c\u062f \u0628\u064a\u0627\u0646\u0627\u062a</td></tr>";
-    else {
-      d.daily.forEach(day => {
-        h += `<tr>
-          <td style="font-weight:700;">${day.date}</td>
-          <td style="color:#16a34a;font-weight:700;">${formatVal(day.cash)}</td>
-          <td style="color:#1e40af;font-weight:700;">${formatVal(day.card)}</td>
-          <td style="color:#854d0e;font-weight:700;">${formatVal(day.kita)}</td>
-          <td style="font-weight:900;color:var(--primary);">${formatVal(day.total)}</td>
-          <td>${day.count}</td>
-        </tr>`;
+      var totals = { cash: 0, card: 0, kita: 0, all: 0 };
+      var counts = { cash: 0, card: 0, kita: 0, all: 0 };
+      var dayMap = {};      // key = YYYY-MM-DD
+      var cashierMap = {};  // key = username
+
+      sales.forEach(function(s) {
+        var amount = Number(s.total) || 0;
+        var pay = String(s.payment || '').toLowerCase();
+        var dateKey = String(s.date || '').split('T')[0];
+        var user = s.username || '—';
+
+        totals.all += amount; counts.all += 1;
+        if (pay === 'cash') { totals.cash += amount; counts.cash += 1; }
+        else if (pay === 'card' || pay === 'mada') { totals.card += amount; counts.card += 1; }
+        else if (pay === 'kita') { totals.kita += amount; counts.kita += 1; }
+
+        if (!dayMap[dateKey]) dayMap[dateKey] = { date: dateKey, cash: 0, card: 0, kita: 0, total: 0, count: 0 };
+        var dRow = dayMap[dateKey];
+        dRow.total += amount; dRow.count += 1;
+        if (pay === 'cash') dRow.cash += amount;
+        else if (pay === 'card' || pay === 'mada') dRow.card += amount;
+        else if (pay === 'kita') dRow.kita += amount;
+
+        if (!cashierMap[user]) cashierMap[user] = { username: user, cash: 0, card: 0, kita: 0, total: 0, count: 0 };
+        var cRow = cashierMap[user];
+        cRow.total += amount; cRow.count += 1;
+        if (pay === 'cash') cRow.cash += amount;
+        else if (pay === 'card' || pay === 'mada') cRow.card += amount;
+        else if (pay === 'kita') cRow.kita += amount;
       });
-    }
-    q("#tbPayments").innerHTML = h;
 
-    // Cashier table
-    let ch = "";
-    if (!d.byCashier.length) ch = "<tr><td colspan='6' style='text-align:center;padding:20px;'>\u0644\u0627 \u062a\u0648\u062c\u062f \u0628\u064a\u0627\u0646\u0627\u062a</td></tr>";
-    else {
-      d.byCashier.forEach(c => {
-        ch += `<tr>
-          <td style="font-weight:800;">${c.username}</td>
-          <td style="color:#16a34a;">${formatVal(c.cash)}</td>
-          <td style="color:#1e40af;">${formatVal(c.card)}</td>
-          <td style="color:#854d0e;">${formatVal(c.kita)}</td>
-          <td style="font-weight:900;color:var(--secondary);">${formatVal(c.total)}</td>
-          <td>${c.count}</td>
-        </tr>`;
-      });
-    }
-    q("#tbPayCashier").innerHTML = ch;
-  }).getPaymentsSummary(Object.keys(filters).length ? filters : null);
+      // Summary KPI cards
+      if (q("#payTotalCash")) q("#payTotalCash").innerText = formatVal(totals.cash);
+      if (q("#payTotalCard")) q("#payTotalCard").innerText = formatVal(totals.card);
+      if (q("#payTotalKita")) q("#payTotalKita").innerText = formatVal(totals.kita);
+      if (q("#payTotalAll"))  q("#payTotalAll").innerText  = formatVal(totals.all);
+      if (q("#payCntCash"))   q("#payCntCash").innerText   = counts.cash;
+      if (q("#payCntCard"))   q("#payCntCard").innerText   = counts.card;
+      if (q("#payCntKita"))   q("#payCntKita").innerText   = counts.kita;
+      if (q("#payCntAll"))    q("#payCntAll").innerText    = counts.all;
+
+      // Daily table (sorted newest first)
+      var daily = Object.values(dayMap).sort(function(a, b) { return a.date < b.date ? 1 : -1; });
+      var h = '';
+      if (!daily.length) {
+        h = "<tr><td colspan='6' style='text-align:center;padding:20px;'>لا توجد بيانات</td></tr>";
+      } else {
+        daily.forEach(function(day) {
+          h += '<tr>' +
+            '<td style="font-weight:700;">' + day.date + '</td>' +
+            '<td style="color:#16a34a;font-weight:700;">' + formatVal(day.cash) + '</td>' +
+            '<td style="color:#1e40af;font-weight:700;">' + formatVal(day.card) + '</td>' +
+            '<td style="color:#854d0e;font-weight:700;">' + formatVal(day.kita) + '</td>' +
+            '<td style="font-weight:900;color:var(--primary);">' + formatVal(day.total) + '</td>' +
+            '<td>' + day.count + '</td>' +
+          '</tr>';
+        });
+      }
+      if (q("#tbPayments")) q("#tbPayments").innerHTML = h;
+
+      // Cashier table (sorted by total descending)
+      var byCashier = Object.values(cashierMap).sort(function(a, b) { return b.total - a.total; });
+      var ch = '';
+      if (!byCashier.length) {
+        ch = "<tr><td colspan='6' style='text-align:center;padding:20px;'>لا توجد بيانات</td></tr>";
+      } else {
+        byCashier.forEach(function(c) {
+          ch += '<tr>' +
+            '<td style="font-weight:800;">' + c.username + '</td>' +
+            '<td style="color:#16a34a;">' + formatVal(c.cash) + '</td>' +
+            '<td style="color:#1e40af;">' + formatVal(c.card) + '</td>' +
+            '<td style="color:#854d0e;">' + formatVal(c.kita) + '</td>' +
+            '<td style="font-weight:900;color:var(--secondary);">' + formatVal(c.total) + '</td>' +
+            '<td>' + c.count + '</td>' +
+          '</tr>';
+        });
+      }
+      if (q("#tbPayCashier")) q("#tbPayCashier").innerHTML = ch;
+    }).getSalesListDetailed(params);
 }
 
 function loadSalesBreakdownActive() {
@@ -2957,16 +3005,68 @@ function loadSalesBreakdown(type) {
   if (btn) btn.classList.add('active');
 
   loader();
-  const filters = {};
-  const start = q("#fbrkStart") ? q("#fbrkStart").value : "";
-  const end = q("#fbrkEnd") ? q("#fbrkEnd").value : "";
-  if (start) filters.startDate = start;
-  if (end) filters.endDate = end;
+  // Default to last 30 days if no date range was set
+  var start = q("#fbrkStart") ? q("#fbrkStart").value : "";
+  var end   = q("#fbrkEnd")   ? q("#fbrkEnd").value   : "";
+  if (!start || !end) {
+    var today = new Date();
+    var thirty = new Date(today); thirty.setDate(thirty.getDate() - 29);
+    var fmt = function(d){ return d.toISOString().split('T')[0]; };
+    if (!end)   end   = fmt(today);
+    if (!start) start = fmt(thirty);
+    if (q("#fbrkStart") && !q("#fbrkStart").value) q("#fbrkStart").value = start;
+    if (q("#fbrkEnd")   && !q("#fbrkEnd").value)   q("#fbrkEnd").value   = end;
+  }
+  var params = { startDate: start, endDate: end };
 
-  api.withFailureHandler(err => { loader(false); showToast(err.message, true); }).withSuccessHandler(result => {
+  // No /salesBreakdown endpoint exists — compute everything from /api/sales
+  api.withFailureHandler(function(err) { loader(false); showToast(err.message || 'فشل تحميل التقرير', true); })
+  .withSuccessHandler(function(sales) {
     loader(false);
-    const data = result.data || [];
+    sales = Array.isArray(sales) ? sales : [];
 
+    // Aggregate the sales into the requested breakdown shape
+    var aggregated = {};
+    sales.forEach(function(s) {
+      var amount = Number(s.total) || 0;
+      var pay = String(s.payment || '').toLowerCase();
+      var dateKey = String(s.date || '').split('T')[0];
+
+      if (type === 'byProduct') {
+        (s.items || []).forEach(function(it) {
+          var name = it.name || 'غير معروف';
+          if (!aggregated[name]) aggregated[name] = { name: name, qty: 0, orders: 0, revenue: 0 };
+          aggregated[name].qty += Number(it.qty) || 0;
+          aggregated[name].orders += 1;
+          aggregated[name].revenue += (Number(it.price) || 0) * (Number(it.qty) || 0);
+        });
+      } else if (type === 'byCashier') {
+        var u = s.username || '—';
+        if (!aggregated[u]) aggregated[u] = { name: u, orders: 0, cash: 0, card: 0, kita: 0, revenue: 0 };
+        aggregated[u].orders += 1;
+        aggregated[u].revenue += amount;
+        if (pay === 'cash') aggregated[u].cash += amount;
+        else if (pay === 'card' || pay === 'mada') aggregated[u].card += amount;
+        else if (pay === 'kita') aggregated[u].kita += amount;
+      } else if (type === 'byMonth') {
+        var monthKey = dateKey.substring(0, 7); // YYYY-MM
+        if (!aggregated[monthKey]) aggregated[monthKey] = { name: monthKey, orders: 0, revenue: 0 };
+        aggregated[monthKey].orders += 1;
+        aggregated[monthKey].revenue += amount;
+      } else if (type === 'byDay') {
+        if (!aggregated[dateKey]) aggregated[dateKey] = { name: dateKey, orders: 0, revenue: 0 };
+        aggregated[dateKey].orders += 1;
+        aggregated[dateKey].revenue += amount;
+      }
+    });
+
+    // Sort: revenue desc for product/cashier; chronological for month/day
+    var data = Object.values(aggregated);
+    if (type === 'byMonth' || type === 'byDay') {
+      data.sort(function(a, b) { return a.name < b.name ? -1 : 1; });
+    } else {
+      data.sort(function(a, b) { return b.revenue - a.revenue; });
+    }
     // Update table headers
     const headMap = {
       byProduct: '<tr><th>\u0627\u0644\u0645\u0646\u062a\u062c</th><th>\u0627\u0644\u0643\u0645\u064a\u0629</th><th>\u0639\u062f\u062f \u0627\u0644\u0637\u0644\u0628\u0627\u062a</th><th>\u0627\u0644\u0625\u064a\u0631\u0627\u062f (SAR)</th></tr>',
@@ -3029,7 +3129,7 @@ function loadSalesBreakdown(type) {
         }
       });
     }
-  }).getSalesBreakdown(type, Object.keys(filters).length ? filters : null);
+  }).getSalesListDetailed(params);
 }
 
 // =========================================

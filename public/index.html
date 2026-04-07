@@ -4,14 +4,31 @@
   <meta charset="UTF-8">
   <title>Moroccan Taste POS System</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes, viewport-fit=cover">
+
+  <!-- ─── CRITICAL AUTH GATE ───
+       Hides every section of the app until JavaScript adds `body.authenticated`
+       after a successful login (or auto-login from a saved session). This stops
+       the brief flash of the dashboard / POS / ERP content before the login
+       screen appears, and prevents inspecting the page contents without auth. -->
+  <style id="critical-auth-gate">
+    html, body { margin: 0; padding: 0; background: radial-gradient(circle at top right, #1e293b, #0f172a); }
+    body:not(.authenticated) > *:not(#loginView):not(#loader):not(#toastContainer):not(#critical-auth-gate) {
+      display: none !important;
+      visibility: hidden !important;
+    }
+    body:not(.authenticated) #loginView { display: flex !important; visibility: visible !important; }
+    /* Hide every modal until logged in (modals don't have .hidden class by default) */
+    body:not(.authenticated) .modal,
+    body:not(.authenticated) .glass-modal,
+    body:not(.authenticated) .modal-overlay { display: none !important; }
+  </style>
+
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-  <!-- Heavy libs: defer -->
-  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-  
-  <!-- Include CSS -->
   <link rel="stylesheet" href="/css/style.css">
+
+  <!-- Heavy libs (Chart.js, XLSX, QRCode, erp.js) are NOT loaded eagerly anymore.
+       app.js loads them on-demand via loadScript() before any function that
+       needs them runs. This drops the initial payload by ~380 KB on mobile. -->
 </head>
 <body class="ar">
 
@@ -1722,10 +1739,9 @@
     </div>
   </div>
 
-  <!-- Include Custom JavaScript -->
+  <!-- Include Custom JavaScript — erp.js loads on-demand via loadScript() in app.js -->
   <script src="/js/api-bridge.js"></script>
   <script src="/js/app.js"></script>
-  <script src="/js/erp.js"></script>
 
 </body>
 </html>

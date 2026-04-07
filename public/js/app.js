@@ -1,4 +1,51 @@
 // =========================================
+// 0. Lazy script loader — defer Chart.js / XLSX / QRCode / erp.js until needed
+// =========================================
+window._loadedScripts = window._loadedScripts || {};
+window.loadScript = function(url) {
+  if (window._loadedScripts[url] === true) return Promise.resolve();
+  if (window._loadedScripts[url] && window._loadedScripts[url].then) return window._loadedScripts[url];
+  var p = new Promise(function(resolve, reject) {
+    var s = document.createElement('script');
+    s.src = url;
+    s.async = false; // preserve order if multiple loads happen
+    s.onload  = function() { window._loadedScripts[url] = true; resolve(); };
+    s.onerror = function() { delete window._loadedScripts[url]; reject(new Error('فشل تحميل ' + url)); };
+    document.head.appendChild(s);
+  });
+  window._loadedScripts[url] = p;
+  return p;
+};
+window.ensureChartJs = function() {
+  if (typeof Chart !== 'undefined') return Promise.resolve();
+  return loadScript('https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js');
+};
+window.ensureXlsx = function() {
+  if (typeof XLSX !== 'undefined') return Promise.resolve();
+  return loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+};
+window.ensureQRCode = function() {
+  if (typeof QRCode !== 'undefined') return Promise.resolve();
+  return loadScript('https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js');
+};
+window.ensureErpJs = function() {
+  if (window._erpJsLoaded) return Promise.resolve();
+  return loadScript('/js/erp.js').then(function() { window._erpJsLoaded = true; });
+};
+
+// erpNav is called by sidebar onclicks but erp.js isn't loaded eagerly anymore.
+// Define a lazy stub here that loads erp.js then forwards the call to the real
+// erpNav defined inside erp.js (which overwrites this stub on load).
+window.erpNav = function(section) {
+  ensureErpJs().then(function() {
+    if (window.erpNav && window.erpNav !== window._erpNavStub) {
+      window.erpNav(section);
+    }
+  }).catch(function(e) { showToast(e.message || 'فشل تحميل وحدة ERP', true); });
+};
+window._erpNavStub = window.erpNav;
+
+// =========================================
 // 1. App State & Utilities
 // =========================================
 let state = {
@@ -420,6 +467,8 @@ function loadCoreData() {
 }
 
 function initViews() {
+  // Authenticated — release the critical CSS gate so the rest of the page can render
+  document.body.classList.add('authenticated');
   hide("#loginView");
   // Save view state for page reload persistence
   localStorage.setItem("pos_last_view", state.role === 'admin' ? 'admin' : 'pos');
@@ -452,8 +501,11 @@ function viewAdmin() { if (state.role === "admin") { hide("#posView"); show("#ad
 function logout() {
   // Clear saved session
   localStorage.removeItem("pos_session");
+  localStorage.removeItem("pos_token");
   // Reset app state
   state.user = ""; state.role = ""; state.shift = ""; state.cart = []; state.menu = []; state.categories = [];
+  // Re-engage the auth gate so nothing else is visible
+  document.body.classList.remove('authenticated');
   // Hide all views and show login
   hide("#posView"); hide("#adminView");
   show("#loginView");
@@ -871,6 +923,10 @@ function refreshActiveAdminSection() {
 }
 
 function printReceipt(orderId) {
+  // Lazy-load QRCode the first time we need to render a receipt
+  ensureQRCode().then(function() { _printReceiptBody(orderId); }).catch(function(e) { showToast(e.message || 'فشل تحميل QRCode', true); });
+}
+function _printReceiptBody(orderId) {
   api.withSuccessHandler(function(inv) {
     if (!inv) return;
     var dt = new Date(inv.date);
@@ -1062,7 +1118,12 @@ function nav(sectionId) {
 
 function loadDashHome() {
   loader();
-
+  // Lazy-load Chart.js the first time the dashboard is opened
+  ensureChartJs().then(_loadDashHomeBody).catch(function(e) {
+    loader(false); showToast(e.message || 'فشل تحميل المكتبات', true);
+  });
+}
+function _loadDashHomeBody() {
   // Build the date range: last 7 days through today
   var today = new Date();
   var todayStr = today.toISOString().split('T')[0];
@@ -1377,6 +1438,9 @@ function saveInv() {
 
 // ─── Export Menu to Excel ───
 function exportMenuExcel() {
+  ensureXlsx().then(_exportMenuExcelBody).catch(function(e) { showToast(e.message || 'فشل تحميل XLSX', true); });
+}
+function _exportMenuExcelBody() {
   var headers = ['الاسم', 'التصنيف', 'سعر البيع', 'التكلفة', 'المخزون', 'الحد الأدنى', 'فعال'];
   var data = (state.menu || []).map(function(m) {
     return {
@@ -1405,6 +1469,9 @@ function exportMenuExcel() {
 
 // ─── Import Menu from Excel ───
 function importMenuExcel(input) {
+  ensureXlsx().then(function() { _importMenuExcelBody(input); }).catch(function(e) { showToast(e.message || 'فشل تحميل XLSX', true); });
+}
+function _importMenuExcelBody(input) {
   var file = input.files[0];
   if (!file) return;
   var reader = new FileReader();
@@ -1632,6 +1699,9 @@ function delRawItem(id) {
 
 // ─── تصدير Excel ───
 function exportInvExcel() {
+  ensureXlsx().then(_exportInvExcelBody).catch(function(e) { showToast(e.message || 'فشل تحميل XLSX', true); });
+}
+function _exportInvExcelBody() {
   if (!cachedRawItems || !cachedRawItems.length) return showToast("لا توجد بيانات للتصدير", true);
   var wsData = [["ID","اسم المادة","التصنيف","سعر الوحدة الكبرى","المخزون (صغرى)","حد التنبيه","الوحدة الصغرى","الوحدة الكبرى","معامل التحويل","نشط"]];
   cachedRawItems.forEach(function(i) {
@@ -1647,6 +1717,9 @@ function exportInvExcel() {
 
 // ─── استيراد Excel ───
 function importInvExcel(input) {
+  ensureXlsx().then(function() { _importInvExcelBody(input); }).catch(function(e) { showToast(e.message || 'فشل تحميل XLSX', true); });
+}
+function _importInvExcelBody(input) {
   var file = input.files[0];
   if (!file) return;
   var reader = new FileReader();
@@ -2273,6 +2346,9 @@ function applyDeveloperVisibility() {
 let advCharts = []; // keep track to destroy previous charts
 
 function buildAdvReport() {
+  ensureChartJs().then(_buildAdvReportBody).catch(function(e) { showToast(e.message || 'فشل تحميل المكتبات', true); });
+}
+function _buildAdvReportBody() {
   loader();
   const filters = {
     startDate: q("#repStart").value,
@@ -2531,6 +2607,9 @@ function buildAdvReport() {
 }
 
 function exportRepExcel() {
+  ensureXlsx().then(_exportRepExcelBody).catch(function(e) { showToast(e.message || 'فشل تحميل XLSX', true); });
+}
+function _exportRepExcelBody() {
   if (!state.reportCache || !state.reportCache.success) return showToast("\u064a\u0631\u062c\u0649 \u062a\u0648\u0644\u064a\u062f \u0627\u0644\u062a\u0642\u0631\u064a\u0631 \u0623\u0648\u0644\u0627\u064b", true);
   try {
     const d = state.reportCache;
@@ -3137,6 +3216,9 @@ function resetSalesFilter() {
   loadDashSales();
 }
 function exportSalesExcel() {
+  ensureXlsx().then(_exportSalesExcelBody).catch(function(e) { showToast(e.message || 'فشل تحميل XLSX', true); });
+}
+function _exportSalesExcelBody() {
   var cache = state.salesCache || [];
   if (!cache.length) return showToast('No sales data to export', true);
   var wsData = [['Invoice #','Date','Cashier','Products','Payment','Amount']];
@@ -3257,6 +3339,9 @@ function loadSalesBreakdownActive() {
 }
 
 function loadSalesBreakdown(type) {
+  ensureChartJs().then(function() { _loadSalesBreakdownBody(type); }).catch(function(e) { showToast(e.message || 'فشل تحميل المكتبات', true); });
+}
+function _loadSalesBreakdownBody(type) {
   activeBreakdownType = type;
   // Update buttons
   qs('.breakdown-btn').forEach(el => el.classList.remove('active'));
@@ -3858,6 +3943,9 @@ function updateShiftTotals(list) {
   var diffEl=q('#shTotalDiff'); if(diffEl) diffEl.style.color=tDiff===0?'#64748b':(tDiff>0?'#16a34a':'#ef4444');
 }
 function exportShiftsExcel() {
+  ensureXlsx().then(_exportShiftsExcelBody).catch(function(e) { showToast(e.message || 'فشل تحميل XLSX', true); });
+}
+function _exportShiftsExcelBody() {
   if(!_allShifts.length) return showToast('No shifts to export','error');
   var ws=[['Shift ID','Cashier','Start','End','Expected Cash','Expected Card','Expected Kita','Expected Total','Actual Cash','Actual Card','Actual Kita','Actual Total','Cash Diff','Card Diff','Kita Diff','Total Diff']];
   _allShifts.forEach(function(s){

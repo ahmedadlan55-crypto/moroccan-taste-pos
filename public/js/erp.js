@@ -92,58 +92,62 @@ function erpLoadCustomers() {
       return;
     }
     tbody.innerHTML = _erpCustomers.map(c => `<tr>
-      <td>${c.ID}</td><td><strong>${c.Name}</strong></td><td>${c.VATNumber||'-'}</td>
-      <td>${c.Phone||'-'}</td><td><span class="badge badge-${c.CustomerType==='B2B'?'blue':'green'}">${c.CustomerType||'B2C'}</span></td>
-      <td>${(Number(c.Balance)||0).toFixed(2)}</td>
-      <td><span class="badge badge-${c.IsActive!==false?'green':'red'}">${c.IsActive!==false?'نشط':'معطل'}</span></td>
-      <td><button class="btn-icon" onclick="erpEditCustomer('${c.ID}')"><i class="fas fa-edit"></i></button>
-      <button class="btn-icon text-red" onclick="erpDeactivateCustomer('${c.ID}')"><i class="fas fa-ban"></i></button></td>
+      <td>${c.id||''}</td><td><strong>${c.name||''}</strong></td><td>${c.vatNumber||'-'}</td>
+      <td>${c.phone||'-'}</td><td><span class="badge badge-${c.customerType==='B2B'?'blue':'green'}">${c.customerType||'B2C'}</span></td>
+      <td>${(Number(c.balance)||0).toFixed(2)}</td>
+      <td><span class="badge badge-${c.isActive!==false?'green':'red'}">${c.isActive!==false?'نشط':'معطل'}</span></td>
+      <td><button class="btn-icon" onclick="erpEditCustomer('${c.id}')"><i class="fas fa-edit"></i></button>
+      <button class="btn-icon text-red" onclick="erpDeactivateCustomer('${c.id}')"><i class="fas fa-ban"></i></button></td>
     </tr>`).join('');
   }).getCustomers();
 }
 
 function erpOpenCustomerModal(data) {
   const d = data || {};
-  document.getElementById('erpModalTitle').textContent = d.ID ? 'تعديل عميل' : 'إضافة عميل جديد';
+  document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل عميل' : 'إضافة عميل جديد';
   document.getElementById('erpModalBody').innerHTML = `
-    <input type="hidden" id="erpCustID" value="${d.ID||''}">
-    <div class="form-row"><label>الاسم (عربي) *</label><input class="form-control" id="erpCustName" value="${d.Name||''}"></div>
-    <div class="form-row"><label>الاسم (إنجليزي)</label><input class="form-control" id="erpCustNameEN" value="${d.NameEN||''}"></div>
-    <div class="form-row"><label>الرقم الضريبي</label><input class="form-control" id="erpCustVAT" value="${d.VATNumber||''}"></div>
-    <div class="form-row"><label>الهاتف</label><input class="form-control" id="erpCustPhone" value="${d.Phone||''}"></div>
-    <div class="form-row"><label>البريد الإلكتروني</label><input class="form-control" id="erpCustEmail" value="${d.Email||''}"></div>
-    <div class="form-row"><label>العنوان</label><input class="form-control" id="erpCustAddr" value="${d.Address||''}"></div>
-    <div class="form-row"><label>المدينة</label><input class="form-control" id="erpCustCity" value="${d.City||''}"></div>
-    <div class="form-row"><label>نوع العميل</label><select class="form-control" id="erpCustType"><option value="B2C" ${d.CustomerType==='B2C'?'selected':''}>B2C — مستهلك</option><option value="B2B" ${d.CustomerType==='B2B'?'selected':''}>B2B — شركة</option><option value="B2G" ${d.CustomerType==='B2G'?'selected':''}>B2G — جهة حكومية</option></select></div>
-    <div class="form-row"><label>حد الائتمان</label><input type="number" class="form-control" id="erpCustCredit" value="${d.CreditLimit||0}"></div>`;
+    <input type="hidden" id="erpCustID" value="${d.id||''}">
+    <div class="form-row"><label>الاسم (عربي) *</label><input class="form-control" id="erpCustName" value="${d.name||''}"></div>
+    <div class="form-row"><label>الاسم (إنجليزي)</label><input class="form-control" id="erpCustNameEN" value="${d.nameEn||''}"></div>
+    <div class="form-row"><label>الرقم الضريبي</label><input class="form-control" id="erpCustVAT" value="${d.vatNumber||''}"></div>
+    <div class="form-row"><label>الهاتف</label><input class="form-control" id="erpCustPhone" value="${d.phone||''}"></div>
+    <div class="form-row"><label>البريد الإلكتروني</label><input class="form-control" id="erpCustEmail" value="${d.email||''}"></div>
+    <div class="form-row"><label>العنوان</label><input class="form-control" id="erpCustAddr" value="${d.address||''}"></div>
+    <div class="form-row"><label>المدينة</label><input class="form-control" id="erpCustCity" value="${d.city||''}"></div>
+    <div class="form-row"><label>نوع العميل</label><select class="form-control" id="erpCustType"><option value="B2C" ${d.customerType==='B2C'?'selected':''}>B2C — مستهلك</option><option value="B2B" ${d.customerType==='B2B'?'selected':''}>B2B — شركة</option><option value="B2G" ${d.customerType==='B2G'?'selected':''}>B2G — جهة حكومية</option></select></div>
+    <div class="form-row"><label>حد الائتمان</label><input type="number" class="form-control" id="erpCustCredit" value="${d.creditLimit||0}"></div>`;
   document.getElementById('erpModalSaveBtn').onclick = erpSaveCustomer;
   document.getElementById('erpModal').classList.remove('hidden');
 }
 
 function erpEditCustomer(id) {
-  const c = _erpCustomers.find(x => String(x.ID) === String(id));
+  const c = _erpCustomers.find(x => String(x.id) === String(id));
   if (c) erpOpenCustomerModal(c);
 }
 
 function erpSaveCustomer() {
   const data = {
-    ID: document.getElementById('erpCustID').value || '',
-    Name: document.getElementById('erpCustName').value,
-    NameEN: document.getElementById('erpCustNameEN').value,
-    VATNumber: document.getElementById('erpCustVAT').value,
-    Phone: document.getElementById('erpCustPhone').value,
-    Email: document.getElementById('erpCustEmail').value,
-    Address: document.getElementById('erpCustAddr').value,
-    City: document.getElementById('erpCustCity').value,
-    CustomerType: document.getElementById('erpCustType').value,
-    CreditLimit: document.getElementById('erpCustCredit').value
+    id: document.getElementById('erpCustID').value || '',
+    name: (document.getElementById('erpCustName').value || '').trim(),
+    nameEn: document.getElementById('erpCustNameEN').value || '',
+    vatNumber: document.getElementById('erpCustVAT').value || '',
+    phone: document.getElementById('erpCustPhone').value || '',
+    email: document.getElementById('erpCustEmail').value || '',
+    address: document.getElementById('erpCustAddr').value || '',
+    city: document.getElementById('erpCustCity').value || '',
+    customerType: document.getElementById('erpCustType').value || 'B2C',
+    creditLimit: Number(document.getElementById('erpCustCredit').value) || 0,
+    username: currentUser || ''
   };
-  if (!data.Name) return showToast('الاسم مطلوب', 'error');
+  if (!data.name) return showToast('الاسم مطلوب', 'error');
   loader(true);
   window._apiBridge.withSuccessHandler(function(res) {
     loader(false);
-    if (res.success) { showToast('تم الحفظ بنجاح'); erpCloseModal(); erpLoadCustomers(); }
-    else showToast(res.error, 'error');
+    if (res && res.success) { showToast('تم الحفظ بنجاح'); erpCloseModal(); erpLoadCustomers(); }
+    else showToast((res && res.error) || 'فشل الحفظ', 'error');
+  }).withFailureHandler(function(e) {
+    loader(false);
+    showToast('خطأ في الاتصال: ' + e.message, 'error');
   }).saveCustomer(data, currentUser);
 }
 
@@ -175,7 +179,7 @@ function erpLoadSuppliers() {
 
 function erpFilterSuppliersTable() {
   const q = (document.getElementById('erpSupSearch')?.value || '').toLowerCase();
-  const filtered = q ? _erpSuppliers.filter(s => (s.Name||'').toLowerCase().includes(q) || (s.Phone||'').includes(q) || (s.VATNumber||'').includes(q)) : _erpSuppliers;
+  const filtered = q ? _erpSuppliers.filter(s => (s.name||'').toLowerCase().includes(q) || (s.phone||'').includes(q) || (s.vatNumber||'').includes(q)) : _erpSuppliers;
   erpRenderSuppliersTable(filtered);
 }
 
@@ -187,55 +191,56 @@ function erpRenderSuppliersTable(list) {
     return;
   }
   tbody.innerHTML = list.map(s => `<tr>
-    <td><code style="font-size:11px;">${s.ID||''}</code></td>
-    <td><strong>${s.Name||''}</strong>${s.NameEN ? `<br><small style="color:#64748b;">${s.NameEN}</small>` : ''}</td>
-    <td>${s.VATNumber||'—'}</td>
-    <td>${s.Phone||'—'}</td>
-    <td><span class="badge badge-blue">${s.PaymentTerms||'Cash'}</span></td>
-    <td><strong>${(Number(s.Balance)||0).toFixed(2)}</strong></td>
-    <td><span class="badge badge-${s.IsActive!==false?'green':'red'}">${s.IsActive!==false?'نشط':'معطل'}</span></td>
+    <td><code style="font-size:11px;">${s.id||''}</code></td>
+    <td><strong>${s.name||''}</strong>${s.nameEn ? `<br><small style="color:#64748b;">${s.nameEn}</small>` : ''}</td>
+    <td>${s.vatNumber||'—'}</td>
+    <td>${s.phone||'—'}</td>
+    <td><span class="badge badge-blue">${s.paymentTerms||'Cash'}</span></td>
+    <td><strong>${(Number(s.balance)||0).toFixed(2)}</strong></td>
+    <td><span class="badge badge-${s.isActive!==false?'green':'red'}">${s.isActive!==false?'نشط':'معطل'}</span></td>
     <td style="white-space:nowrap;">
-      <button class="btn-icon" title="تعديل" onclick="erpEditSupplier('${s.ID}')"><i class="fas fa-edit"></i></button>
-      <button class="btn-icon text-red" title="حذف" onclick="erpDeleteSupplier('${s.ID}','${(s.Name||'').replace(/'/g,"\\'")}')"><i class="fas fa-trash"></i></button>
+      <button class="btn-icon" title="تعديل" onclick="erpEditSupplier('${s.id}')"><i class="fas fa-edit"></i></button>
+      <button class="btn-icon text-red" title="حذف" onclick="erpDeleteSupplier('${s.id}','${(s.name||'').replace(/'/g,"\\'")}')"><i class="fas fa-trash"></i></button>
     </td>
   </tr>`).join('');
 }
 
 function erpOpenSupplierModal(data) {
   const d = data || {};
-  document.getElementById('erpModalTitle').textContent = d.ID ? 'تعديل مورد' : 'إضافة مورد جديد';
+  document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل مورد' : 'إضافة مورد جديد';
   document.getElementById('erpModalBody').innerHTML = `
-    <input type="hidden" id="erpSupID" value="${d.ID||''}">
-    <div class="form-row"><label>الاسم (عربي) *</label><input class="form-control" id="erpSupName" value="${d.Name||''}"></div>
-    <div class="form-row"><label>الاسم (إنجليزي)</label><input class="form-control" id="erpSupNameEN" value="${d.NameEN||''}"></div>
-    <div class="form-row"><label>الرقم الضريبي</label><input class="form-control" id="erpSupVAT" value="${d.VATNumber||''}"></div>
-    <div class="form-row"><label>الهاتف</label><input class="form-control" id="erpSupPhone" value="${d.Phone||''}"></div>
-    <div class="form-row"><label>البريد الإلكتروني</label><input class="form-control" id="erpSupEmail" value="${d.Email||''}"></div>
-    <div class="form-row"><label>العنوان</label><input class="form-control" id="erpSupAddr" value="${d.Address||''}"></div>
-    <div class="form-row"><label>المدينة</label><input class="form-control" id="erpSupCity" value="${d.City||''}"></div>
-    <div class="form-row"><label>شروط الدفع</label><select class="form-control" id="erpSupTerms"><option value="Cash" ${d.PaymentTerms==='Cash'?'selected':''}>نقدي</option><option value="Net30" ${d.PaymentTerms==='Net30'?'selected':''}>30 يوم</option><option value="Net60" ${d.PaymentTerms==='Net60'?'selected':''}>60 يوم</option></select></div>`;
+    <input type="hidden" id="erpSupID" value="${d.id||''}">
+    <div class="form-row"><label>الاسم (عربي) *</label><input class="form-control" id="erpSupName" value="${d.name||''}"></div>
+    <div class="form-row"><label>الاسم (إنجليزي)</label><input class="form-control" id="erpSupNameEN" value="${d.nameEn||''}"></div>
+    <div class="form-row"><label>الرقم الضريبي</label><input class="form-control" id="erpSupVAT" value="${d.vatNumber||''}"></div>
+    <div class="form-row"><label>الهاتف</label><input class="form-control" id="erpSupPhone" value="${d.phone||''}"></div>
+    <div class="form-row"><label>البريد الإلكتروني</label><input class="form-control" id="erpSupEmail" value="${d.email||''}"></div>
+    <div class="form-row"><label>العنوان</label><input class="form-control" id="erpSupAddr" value="${d.address||''}"></div>
+    <div class="form-row"><label>المدينة</label><input class="form-control" id="erpSupCity" value="${d.city||''}"></div>
+    <div class="form-row"><label>شروط الدفع</label><select class="form-control" id="erpSupTerms"><option value="Cash" ${d.paymentTerms==='Cash'?'selected':''}>نقدي</option><option value="Net30" ${d.paymentTerms==='Net30'?'selected':''}>30 يوم</option><option value="Net60" ${d.paymentTerms==='Net60'?'selected':''}>60 يوم</option></select></div>`;
   document.getElementById('erpModalSaveBtn').onclick = erpSaveSupplier;
   document.getElementById('erpModal').classList.remove('hidden');
 }
 
 function erpEditSupplier(id) {
-  const s = _erpSuppliers.find(x => String(x.ID) === String(id));
+  const s = _erpSuppliers.find(x => String(x.id) === String(id));
   if (s) erpOpenSupplierModal(s);
 }
 
 function erpSaveSupplier() {
   const data = {
-    ID: document.getElementById('erpSupID').value || '',
-    Name: (document.getElementById('erpSupName').value || '').trim(),
-    NameEN: document.getElementById('erpSupNameEN').value || '',
-    VATNumber: document.getElementById('erpSupVAT').value || '',
-    Phone: document.getElementById('erpSupPhone').value || '',
-    Email: document.getElementById('erpSupEmail').value || '',
-    Address: document.getElementById('erpSupAddr').value || '',
-    City: document.getElementById('erpSupCity').value || '',
-    PaymentTerms: document.getElementById('erpSupTerms').value || 'Cash'
+    id: document.getElementById('erpSupID').value || '',
+    name: (document.getElementById('erpSupName').value || '').trim(),
+    nameEn: document.getElementById('erpSupNameEN').value || '',
+    vatNumber: document.getElementById('erpSupVAT').value || '',
+    phone: document.getElementById('erpSupPhone').value || '',
+    email: document.getElementById('erpSupEmail').value || '',
+    address: document.getElementById('erpSupAddr').value || '',
+    city: document.getElementById('erpSupCity').value || '',
+    paymentTerms: document.getElementById('erpSupTerms').value || 'Cash',
+    username: currentUser || ''
   };
-  if (!data.Name) return showToast('اسم المورد مطلوب', 'error');
+  if (!data.name) return showToast('اسم المورد مطلوب', 'error');
   const btn = document.getElementById('erpModalSaveBtn');
   if (btn) btn.disabled = true;
   loader(true);

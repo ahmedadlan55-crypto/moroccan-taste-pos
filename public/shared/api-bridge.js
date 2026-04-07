@@ -141,7 +141,11 @@
   function buildBody(route, args) {
     if (route.method === 'GET' || route.method === 'DELETE') return undefined;
     if (route.body) return JSON.stringify(route.body(...args));
-    if (args.length === 1 && typeof args[0] === 'object') return JSON.stringify(args[0]);
+    // Use the first object argument as the body — works for both single-arg
+    // calls like fn({...}) and multi-arg calls like fn({...}, currentUser).
+    for (var i = 0; i < args.length; i++) {
+      if (args[i] && typeof args[i] === 'object') return JSON.stringify(args[i]);
+    }
     return undefined;
   }
 

@@ -44,15 +44,19 @@
       ? '<img src="' + state.settings.logo + '" style="width:32px;height:32px;border-radius:8px;object-fit:cover;">'
       : '<i class="fas fa-mug-hot"></i>';
 
+    var displayName = (session && session.user) || '';
+    var logoutLabel = lang === 'ar' ? 'تسجيل خروج' : 'Logout';
+    var posLabel    = lang === 'ar' ? 'واجهة البيع' : 'POS';
+
     host.innerHTML =
       '<div class="app-brand">' + brandLogo + '<span>' + (state.settings && state.settings.name || 'Moroccan Taste') + '</span></div>' +
       '<button class="app-menu-toggle" onclick="toggleAppNav()" aria-label="Menu"><i class="fas fa-bars"></i></button>' +
       '<nav class="app-nav" id="appNav">' + navHtml + '</nav>' +
       '<div class="app-header-actions">' +
         shiftBadge +
-        '<div class="app-user-badge"><i class="fas fa-user-circle"></i><span>' + (session && session.user || '') + '</span></div>' +
-        '<button class="btn btn-light" onclick="toggleLang()" title="AR/EN"><i class="fas fa-language"></i></button>' +
-        '<button class="btn btn-danger" onclick="logout()" title="' + (lang === 'ar' ? 'خروج' : 'Logout') + '"><i class="fas fa-sign-out-alt"></i></button>' +
+        '<button class="btn btn-light app-lang-btn" onclick="toggleLang()" title="AR/EN"><i class="fas fa-language"></i><span>AR/EN</span></button>' +
+        '<div class="app-user-badge"><i class="fas fa-user-circle"></i><span>' + displayName + '</span></div>' +
+        '<button class="btn btn-danger app-logout-btn" onclick="logout()"><i class="fas fa-sign-out-alt"></i><span>' + logoutLabel + '</span></button>' +
       '</div>';
 
     // Backdrop for mobile drawer

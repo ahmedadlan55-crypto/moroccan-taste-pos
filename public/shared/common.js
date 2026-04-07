@@ -168,6 +168,82 @@ window.restoreState = function() {
   } catch (e) {}
 };
 
+// ─── Glass modal helpers (replace native confirm/alert) ───
+window.openGlassModal = function(id) {
+  var m = q(id);
+  if (!m) return;
+  m.classList.remove('hidden');
+  void m.offsetWidth; // force reflow so the transition runs
+  m.classList.add('show');
+};
+window.closeGlassModal = function(id, result) {
+  var m = q(id);
+  if (!m) return;
+  m.classList.remove('show');
+  setTimeout(function() {
+    m.classList.add('hidden');
+    if (id === '#modalGlassConfirm' && typeof state._gcResolve === 'function') {
+      var cb = state._gcResolve;
+      state._gcResolve = null;
+      cb(!!result);
+    }
+  }, 250);
+};
+
+// Ensure a generic confirm/alert modal exists at the end of <body>.
+// Each page using glassConfirm/glassAlert calls this once (idempotent).
+window.ensureGlassConfirmModal = function() {
+  if (document.getElementById('modalGlassConfirm')) return;
+  var m = document.createElement('div');
+  m.id = 'modalGlassConfirm';
+  m.className = 'glass-modal hidden';
+  m.innerHTML =
+    '<div class="glass-modal-content small">' +
+      '<div class="glass-modal-title"><span id="gcTitle"><i class="fas fa-question-circle"></i> تأكيد</span></div>' +
+      '<div class="glass-modal-body"><p id="gcMessage" class="glass-modal-message"></p></div>' +
+      '<div class="glass-modal-actions" id="gcActions">' +
+        '<button class="btn btn-light" onclick="closeGlassModal(\'#modalGlassConfirm\', false)">إلغاء</button>' +
+        '<button class="btn btn-primary" onclick="closeGlassModal(\'#modalGlassConfirm\', true)">تأكيد</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(m);
+};
+
+window.glassConfirm = function(title, message, opts) {
+  ensureGlassConfirmModal();
+  opts = opts || {};
+  var tEl = q('#gcTitle');
+  var mEl = q('#gcMessage');
+  var actions = q('#gcActions');
+  if (tEl) tEl.innerHTML = '<i class="fas ' + (opts.danger ? 'fa-exclamation-triangle' : 'fa-question-circle') + '"></i> ' + title;
+  if (mEl) mEl.textContent = message;
+  if (actions) {
+    var okClass = opts.danger ? 'btn-danger' : 'btn-primary';
+    actions.innerHTML =
+      '<button class="btn btn-light" onclick="closeGlassModal(\'#modalGlassConfirm\', false)">' + (opts.cancelText || 'إلغاء') + '</button>' +
+      '<button class="btn ' + okClass + '" onclick="closeGlassModal(\'#modalGlassConfirm\', true)">' + (opts.okText || 'تأكيد') + '</button>';
+  }
+  return new Promise(function(resolve) {
+    state._gcResolve = resolve;
+    openGlassModal('#modalGlassConfirm');
+  });
+};
+
+window.glassAlert = function(title, message, opts) {
+  ensureGlassConfirmModal();
+  opts = opts || {};
+  var tEl = q('#gcTitle');
+  var mEl = q('#gcMessage');
+  var actions = q('#gcActions');
+  if (tEl) tEl.innerHTML = '<i class="fas ' + (opts.danger ? 'fa-exclamation-circle' : 'fa-info-circle') + '"></i> ' + title;
+  if (mEl) mEl.textContent = message;
+  if (actions) actions.innerHTML = '<button class="btn btn-primary" onclick="closeGlassModal(\'#modalGlassConfirm\', true)" style="flex:1;">حسناً</button>';
+  return new Promise(function(resolve) {
+    state._gcResolve = resolve;
+    openGlassModal('#modalGlassConfirm');
+  });
+};
+
 // Apply language on first load
 applyLang();
 

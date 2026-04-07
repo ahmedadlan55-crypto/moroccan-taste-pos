@@ -1,0 +1,6 @@
+/* VirtualTable — minimal styles for spacer rows */
+.vt-spacer td {
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+}

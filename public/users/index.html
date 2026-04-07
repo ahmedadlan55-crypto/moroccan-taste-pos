@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>المستخدمون - Moroccan Taste</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d47a1">
+
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <link rel="stylesheet" href="/shared/common.css">
+  <link rel="stylesheet" href="/shared/header.css">
+  <link rel="stylesheet" href="/users/style.css">
+
+  <script defer src="/shared/api-bridge.js"></script>
+  <script defer src="/shared/common.js"></script>
+  <script defer src="/shared/auth.js"></script>
+  <script defer src="/shared/header.js"></script>
+  <script defer src="/users/app.js"></script>
+</head>
+<body class="ar" data-page="users">
+
+  <div id="loader">
+    <div class="spinner"></div>
+    <h3 style="margin-top:20px;color:#fff;font-weight:800;">جاري التحميل...</h3>
+  </div>
+
+  <header id="appHeader" class="app-header"></header>
+
+  <main class="page-main">
+    <div class="page-header">
+      <h2 class="page-title"><i class="fas fa-users-cog"></i> صلاحيات الموظفين</h2>
+      <button class="btn btn-primary" onclick="openUserForm()">
+        <i class="fas fa-user-plus"></i> إنشاء مستخدم جديد
+      </button>
+    </div>
+
+    <div class="page-card">
+      <div class="table-wrapper">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>اسم الموظف</th>
+              <th>الرقم الوظيفي / الدخول</th>
+              <th>الصلاحية</th>
+              <th>الحالة</th>
+              <th>تاريخ الإنشاء</th>
+              <th>إجراءات</th>
+            </tr>
+          </thead>
+          <tbody id="tbUsers">
+            <tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8;">جاري التحميل...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- Add/Edit User glass modal -->
+  <div id="modalUserForm" class="glass-modal hidden">
+    <div class="glass-modal-content">
+      <div class="glass-modal-title">
+        <span id="userModalTitle"><i class="fas fa-user-plus"></i> إضافة موظف جديد</span>
+        <button class="glass-modal-close" onclick="closeGlassModal('#modalUserForm')">&times;</button>
+      </div>
+      <div class="glass-modal-body">
+        <div class="form-group">
+          <label class="form-label">اسم الموظف الكامل (يظهر في التقارير)</label>
+          <input type="text" id="muDisplayName" class="form-control glass-input" placeholder="مثال: أحمد محمد العبدالله">
+        </div>
+        <div class="form-group">
+          <label class="form-label">الرقم الوظيفي / اسم الدخول</label>
+          <input type="text" id="muName" class="form-control glass-input" placeholder="مثال: EMP001 أو ahmad.s">
+        </div>
+        <div class="form-group">
+          <label class="form-label">كلمة المرور</label>
+          <input type="password" id="muPass" class="form-control glass-input" placeholder="******">
+        </div>
+        <div class="form-group">
+          <label class="form-label">نوع الصلاحية</label>
+          <select id="muRole" class="form-control glass-input">
+            <option value="cashier">كاشير — بائع فرع</option>
+            <option value="manager">مدير فرع</option>
+            <option value="admin">مدير مؤسسة (وصول كامل)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="dev-flag">
+            <input type="checkbox" id="muIsDeveloper">
+            <span><i class="fas fa-code"></i> صلاحية المطور (تصفير قاعدة البيانات + صلاحيات حساسة)</span>
+          </label>
+        </div>
+      </div>
+      <div class="glass-modal-actions">
+        <button class="btn btn-light" onclick="closeGlassModal('#modalUserForm')">إلغاء</button>
+        <button class="btn btn-primary" onclick="saveUser()"><i class="fas fa-save"></i> حفظ المستخدم</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

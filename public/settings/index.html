@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>الإعدادات - Moroccan Taste</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d47a1">
+
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <link rel="stylesheet" href="/shared/common.css">
+  <link rel="stylesheet" href="/shared/header.css">
+  <link rel="stylesheet" href="/settings/style.css">
+
+  <script defer src="/shared/api-bridge.js"></script>
+  <script defer src="/shared/common.js"></script>
+  <script defer src="/shared/auth.js"></script>
+  <script defer src="/shared/header.js"></script>
+  <script defer src="/settings/app.js"></script>
+</head>
+<body class="ar" data-page="settings">
+
+  <div id="loader">
+    <div class="spinner"></div>
+    <h3 style="margin-top:20px;color:#fff;font-weight:800;">جاري التحميل...</h3>
+  </div>
+
+  <header id="appHeader" class="app-header"></header>
+
+  <main class="page-main">
+    <div class="page-header">
+      <h2 class="page-title"><i class="fas fa-sliders-h"></i> الإعدادات العامة</h2>
+    </div>
+
+    <!-- ─── Company branding card ─── -->
+    <div class="page-card">
+      <h3 class="card-title"><i class="fas fa-store"></i> هوية الشركة</h3>
+
+      <div class="form-group">
+        <label class="form-label">شعار الشركة (يظهر في تسجيل الدخول، الفواتير، تقارير الإغلاق)</label>
+        <div class="logo-row">
+          <div id="setLogoPreview" class="logo-preview">
+            <i class="fas fa-image"></i>
+          </div>
+          <div class="logo-controls">
+            <label class="btn btn-light logo-upload-btn">
+              <i class="fas fa-upload"></i> اختر صورة
+              <input type="file" id="setLogoFile" accept="image/*" onchange="handleLogoUpload(this)">
+            </label>
+            <button type="button" class="btn btn-danger" onclick="removeLogo()">
+              <i class="fas fa-trash"></i> إزالة الشعار
+            </button>
+            <small class="logo-hint">الحد الأقصى 200×200 — يتم التصغير تلقائياً</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">اسم الشركة المطبوع على الفاتورة</label>
+          <input type="text" id="setCompany" class="form-control glass-input" placeholder="مثال: مطعم النخيل">
+        </div>
+        <div class="form-group">
+          <label class="form-label">الرقم الضريبي المعتمد لدى هيئة الزكاة والدخل</label>
+          <input type="text" id="setTax" class="form-control glass-input" placeholder="1234567890">
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Payment methods card ─── -->
+    <div class="page-card">
+      <h3 class="card-title"><i class="fas fa-credit-card"></i> طرق الدفع</h3>
+      <p class="card-hint">تفعيل/تعطيل طرق الدفع وتحديد رسوم الخدمة لكل طريقة. الحذف يُحدِّث السلة فوراً.</p>
+      <div id="payMethodsSettings"></div>
+      <button class="btn btn-primary" style="width:100%;margin-top:10px;" onclick="addNewPaymentMethod()">
+        <i class="fas fa-plus"></i> إضافة طريقة دفع جديدة
+      </button>
+    </div>
+
+    <!-- ─── Save settings ─── -->
+    <button class="btn btn-primary save-all-btn" onclick="saveAllSettings()">
+      <i class="fas fa-save"></i> حفظ جميع الإعدادات
+    </button>
+
+    <!-- ─── Developer zone (only visible if state.isDeveloper) ─── -->
+    <div id="devZone" class="dev-zone hidden">
+      <h3><i class="fas fa-skull-crossbones"></i> منطقة المطور — خطر</h3>
+      <p>
+        هذا الزر يحذف جميع المبيعات، الورديات، المشتريات، المخزون، الوصفات، المنتجات، المصروفات والقيود من قاعدة البيانات.
+        المستخدمون والإعدادات وطرق الدفع ستبقى. <strong>لا يمكن التراجع.</strong>
+      </p>
+      <button class="btn btn-danger dev-reset-btn" onclick="openResetDb()">
+        <i class="fas fa-trash-alt"></i> تصفير قاعدة البيانات والبدء من جديد
+      </button>
+    </div>
+  </main>
+
+  <!-- Reset DB confirmation modal -->
+  <div id="modalResetDb" class="glass-modal hidden">
+    <div class="glass-modal-content danger">
+      <div class="glass-modal-title">
+        <span><i class="fas fa-exclamation-triangle"></i> تأكيد تصفير قاعدة البيانات</span>
+        <button class="glass-modal-close" onclick="closeGlassModal('#modalResetDb')">&times;</button>
+      </div>
+      <div class="glass-modal-body">
+        <div class="reset-warning">
+          <strong>سيتم حذف جميع البيانات التالية نهائياً:</strong><br>
+          • المبيعات والفواتير<br>
+          • الورديات وحركات المخزون<br>
+          • المنتجات والوصفات والمواد الخام<br>
+          • المشتريات وأوامر الشراء<br>
+          • المصروفات والقيود المحاسبية<br>
+          • تقارير الضريبة<br><br>
+          <strong>لن يتم حذف:</strong> المستخدمين، الإعدادات، طرق الدفع.
+        </div>
+        <div class="form-group">
+          <label class="form-label">أعد إدخال كلمة المرور للتأكيد</label>
+          <input type="password" id="rdbPass" class="form-control glass-input" placeholder="كلمة المرور">
+        </div>
+        <div class="form-group">
+          <label class="form-label">اكتب <code>YES_RESET_ALL_DATA</code> للتأكيد</label>
+          <input type="text" id="rdbConfirm" class="form-control glass-input" placeholder="YES_RESET_ALL_DATA" autocomplete="off">
+        </div>
+      </div>
+      <div class="glass-modal-actions">
+        <button class="btn btn-light" onclick="closeGlassModal('#modalResetDb')">إلغاء</button>
+        <button class="btn btn-danger" onclick="confirmResetDb()"><i class="fas fa-trash-alt"></i> تصفير الآن</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

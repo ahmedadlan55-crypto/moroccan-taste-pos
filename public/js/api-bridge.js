@@ -64,6 +64,7 @@
     updateCompanySettings:{ method: 'PUT', url: '/settings' },
     getPaymentMethods:   { method: 'GET',  url: '/settings/payment-methods' },
     savePaymentMethods:  { method: 'PUT',  url: '/settings/payment-methods' },
+    deletePaymentMethod: { method: 'DELETE', url: (id) => '/settings/payment-methods/' + id },
     setKitaServiceFeeRate:{ method: 'PUT', url: '/settings', body: (r) => ({KitaServiceFee:r}) },
     getDiscounts:        { method: 'GET',  url: '/settings/discounts' },
 

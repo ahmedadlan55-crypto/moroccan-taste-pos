@@ -70,6 +70,16 @@ router.put('/payment-methods', async (req, res) => {
   }
 });
 
+// Delete a single payment method
+router.delete('/payment-methods/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM payment_methods WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
 // Get discounts
 router.get('/discounts', async (req, res) => {
   try {

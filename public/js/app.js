@@ -23,6 +23,72 @@ function userLabel(username) {
   return username;
 }
 
+// Distribute a sale's payment string + amount across cash/card/kita/other buckets.
+// Handles both plain methods ("Cash", "Card", "Kita") and split format
+// (e.g. "Cash:50/Card:30/Kita:20" — what the backend writes when Split is used).
+// `buckets` is mutated; if `countBuckets` is provided, each method that received money
+// also gets +1 there (so a split sale counts in multiple categories).
+function distributePayment(paymentStr, totalAmount, buckets, countBuckets) {
+  buckets.cash  = buckets.cash  || 0;
+  buckets.card  = buckets.card  || 0;
+  buckets.kita  = buckets.kita  || 0;
+  buckets.other = buckets.other || 0;
+  if (countBuckets) {
+    countBuckets.cash  = countBuckets.cash  || 0;
+    countBuckets.card  = countBuckets.card  || 0;
+    countBuckets.kita  = countBuckets.kita  || 0;
+    countBuckets.other = countBuckets.other || 0;
+  }
+
+  var pay = String(paymentStr || '').toLowerCase().trim();
+  totalAmount = Number(totalAmount) || 0;
+
+  function addTo(method, amt) {
+    if (amt <= 0) return;
+    if (method === 'cash')                       { buckets.cash += amt; if (countBuckets) countBuckets.cash++; }
+    else if (method === 'card' || method === 'mada') { buckets.card += amt; if (countBuckets) countBuckets.card++; }
+    else if (method === 'kita')                  { buckets.kita += amt; if (countBuckets) countBuckets.kita++; }
+    else                                          { buckets.other += amt; if (countBuckets) countBuckets.other++; }
+  }
+
+  // Split format: "Cash:50/Card:30/Kita:20"
+  if (pay.indexOf(':') !== -1) {
+    pay.split('/').forEach(function(part) {
+      var kv = part.split(':');
+      if (kv.length === 2) addTo(kv[0].trim(), Number(kv[1]) || 0);
+    });
+    return;
+  }
+
+  // Plain method
+  addTo(pay, totalAmount);
+}
+
+// Format a payment string for human display.
+// "Cash:50/Card:30" → "كاش 50.00 + مدى 30.00"
+function paymentLabel(paymentStr) {
+  var pay = String(paymentStr || '');
+  if (pay.indexOf(':') === -1) {
+    var p = pay.toLowerCase();
+    if (p === 'cash') return state.lang === 'en' ? 'Cash' : 'كاش';
+    if (p === 'card' || p === 'mada') return state.lang === 'en' ? 'Card' : 'مدى';
+    if (p === 'kita') return state.lang === 'en' ? 'Kita' : 'كيتا';
+    return pay || '—';
+  }
+  var labelMap = {
+    cash: state.lang === 'en' ? 'Cash' : 'كاش',
+    card: state.lang === 'en' ? 'Card' : 'مدى',
+    mada: state.lang === 'en' ? 'Card' : 'مدى',
+    kita: state.lang === 'en' ? 'Kita' : 'كيتا'
+  };
+  return pay.split('/').map(function(part) {
+    var kv = part.split(':');
+    if (kv.length !== 2) return part;
+    var lbl = labelMap[kv[0].trim().toLowerCase()] || kv[0];
+    return lbl + ' ' + (Number(kv[1]) || 0).toFixed(2);
+  }).join(' + ');
+}
+
 // Locales Dict
 const dict = {
   ar: {
@@ -588,18 +654,34 @@ function setPayMethod(m) {
 }
 function applyManualServiceFee() { updateCart(); }
 
-// ─── Render dynamic pay buttons from state.paymentMethods ───
+// ─── Render dynamic pay buttons from state.paymentMethods + always-on Split feature ───
 function renderPayButtons() {
   var container = q("#payMethodsContainer");
-  if (!container || !state.paymentMethods || !state.paymentMethods.length) return;
-  var active = state.paymentMethods.filter(function(m){ return m.IsActive!==false && m.IsActive!=='FALSE'; });
-  if (!active.length) return;
+  if (!container) return;
+  // Filter out inactive methods AND any "Split" entry from the saved methods —
+  // Split is rendered as a fixed feature, not a saved method.
+  var active = (state.paymentMethods || []).filter(function(m) {
+    if (m.IsActive === false || m.IsActive === 'FALSE') return false;
+    var n = String(m.Name || '').toLowerCase();
+    return n !== 'split';
+  });
+  if (!active.length) {
+    // Fallback minimum so the cart isn't broken
+    active = [{ Name: 'Cash', NameAR: 'كاش', Icon: 'fa-money-bill-wave' }];
+  }
   var isEn = state.lang === 'en';
-  var hiddenInput = '<input type="hidden" id="posPayMethod" value="'+active[0].Name+'">';
-  container.innerHTML = active.map(function(m){
-    var label = isEn ? (m.Name||m.NameAR) : (m.NameAR||m.Name);
-    return '<button class="pay-btn'+(m.Name===active[0].Name?' active':'')+'" id="payBtn'+m.Name+'" onclick="setPayMethod(\''+m.Name+'\')"><i class="fas '+(m.Icon||'fa-money-bill')+'"></i> <span>'+label+'</span></button>';
-  }).join('') + hiddenInput;
+  var defaultMethod = active[0].Name;
+  var hiddenInput = '<input type="hidden" id="posPayMethod" value="' + defaultMethod + '">';
+
+  var html = active.map(function(m) {
+    var label = isEn ? (m.Name || m.NameAR) : (m.NameAR || m.Name);
+    return '<button class="pay-btn' + (m.Name === defaultMethod ? ' active' : '') + '" id="payBtn' + m.Name + '" onclick="setPayMethod(\'' + m.Name + '\')"><i class="fas ' + (m.Icon || 'fa-money-bill') + '"></i> <span>' + label + '</span></button>';
+  }).join('');
+
+  // Always-on Split feature button
+  html += '<button class="pay-btn" id="payBtnSplit" onclick="setPayMethod(\'Split\')" title="' + (isEn ? 'Split payment between methods' : 'تجزئة الدفع بين أكثر من وسيلة') + '"><i class="fas fa-divide"></i> <span>' + (isEn ? 'Split' : 'تجزئة') + '</span></button>';
+
+  container.innerHTML = html + hiddenInput;
 }
 
 // ─── Split payment fields ───
@@ -643,13 +725,38 @@ function loadPayMethodsSettings() {
   }).join('') + '<button class="btn btn-sm btn-success" style="width:100%;margin-top:8px;" onclick="addNewPM()"><i class="fas fa-plus"></i> إضافة طريقة دفع جديدة</button>';
 }
 function addNewPM() {
-  state.paymentMethods.push({ ID:'PM-'+Date.now(), Name:'NewMethod', NameAR:'طريقة جديدة', Icon:'fa-money-bill', IsActive:true, ServiceFeeRate:0, SortOrder:state.paymentMethods.length+1 });
+  // Don't pre-assign an ID — let the backend AUTO_INCREMENT it on INSERT.
+  state.paymentMethods.push({ Name: 'NewMethod', NameAR: 'طريقة جديدة', Icon: 'fa-money-bill', IsActive: true, ServiceFeeRate: 0, SortOrder: state.paymentMethods.length + 1 });
   loadPayMethodsSettings();
+  renderPayButtons();
 }
 function removePM(idx) {
-  if (!confirm('حذف طريقة الدفع؟')) return;
-  state.paymentMethods.splice(idx,1);
-  loadPayMethodsSettings();
+  var m = state.paymentMethods[idx];
+  if (!m) return;
+  if (!confirm('حذف طريقة الدفع "' + (m.NameAR || m.Name || '') + '"؟')) return;
+
+  // If the method has an ID, delete it from the DB immediately so it doesn't reappear on reload
+  if (m.ID) {
+    loader();
+    api.withFailureHandler(function(err) { loader(false); showToast('فشل الحذف: ' + err.message, true); })
+       .withSuccessHandler(function(r) {
+          loader(false);
+          if (r && r.success) {
+            state.paymentMethods.splice(idx, 1);
+            loadPayMethodsSettings();
+            renderPayButtons();        // refresh the cart pay buttons immediately
+            showToast('تم حذف طريقة الدفع');
+          } else {
+            showToast((r && r.error) || 'فشل الحذف', true);
+          }
+       }).deletePaymentMethod(m.ID);
+  } else {
+    // New unsaved method — just remove locally
+    state.paymentMethods.splice(idx, 1);
+    loadPayMethodsSettings();
+    renderPayButtons();
+    showToast('تم حذف طريقة الدفع');
+  }
 }
 function promptPMIcon(idx) {
   var icon = prompt('أدخل اسم أيقونة FontAwesome (مثال: fa-wallet, fa-mobile, fa-coins):', state.paymentMethods[idx].Icon||'fa-money-bill');
@@ -976,18 +1083,16 @@ function loadDashHome() {
     // ─── KPI cards ───
     var totalToday = todaySales.reduce(function(sum, s) { return sum + (Number(s.total) || 0); }, 0);
     var countToday = todaySales.length;
-    var sumByPay = function(method) {
-      return todaySales
-        .filter(function(s) { return String(s.payment || '').toLowerCase() === method; })
-        .reduce(function(sum, s) { return sum + (Number(s.total) || 0); }, 0);
-    };
-    var cashToday = sumByPay('cash');
-    var cardToday = sumByPay('card');
+    // Distribute split payments correctly across cash/card buckets
+    var todayBuckets = { cash: 0, card: 0, kita: 0, other: 0 };
+    todaySales.forEach(function(s) {
+      distributePayment(s.payment, Number(s.total) || 0, todayBuckets);
+    });
 
     if (q("#dhTotalSale")) q("#dhTotalSale").innerText = formatVal(totalToday);
     if (q("#dhTotalOrders")) q("#dhTotalOrders").innerText = countToday;
-    if (q("#dhTotalCash")) q("#dhTotalCash").innerText = formatVal(cashToday);
-    if (q("#dhTotalCard")) q("#dhTotalCard").innerText = formatVal(cardToday);
+    if (q("#dhTotalCash")) q("#dhTotalCash").innerText = formatVal(todayBuckets.cash);
+    if (q("#dhTotalCard")) q("#dhTotalCard").innerText = formatVal(todayBuckets.card);
 
     // ─── Low stock from menu (use cached state.menu, refreshed elsewhere) ───
     var lowStock = (state.menu || []).filter(function(m) {
@@ -1140,7 +1245,10 @@ function loadDashSales() {
         try {
           totalSales += s.total;
           let payType = String(s.payment || "").toLowerCase();
-          let bClass = payType === 'cash' ? 'green' : (payType === 'card' ? 'blue' : 'yellow');
+          // For split payments, use a neutral colour
+          let isSplit = payType.indexOf(':') !== -1;
+          let bClass = isSplit ? 'blue' : (payType === 'cash' ? 'green' : (payType === 'card' || payType === 'mada' ? 'blue' : 'yellow'));
+          let payDisplay = paymentLabel(s.payment);
           let itemsHtml = "<div style='display:flex; flex-wrap:wrap; gap:5px;'>";
           if (s.items && s.items.length) {
             s.items.forEach(it => {
@@ -1156,7 +1264,7 @@ function loadDashSales() {
             '<td style="font-size:12px;color:#64748b;">'+dateStr+'</td>'+
             '<td style="font-weight:600;">'+userLabel(s.username)+'</td>'+
             '<td>'+itemsHtml+'</td>'+
-            '<td><span class="badge '+bClass+'">'+(s.payment||'')+'</span></td>'+
+            '<td><span class="badge '+bClass+'">'+payDisplay+'</span></td>'+
             '<td style="font-weight:900;color:var(--secondary);font-size:15px;">'+formatVal(s.total)+'</td>'+
             '<td><button class="btn btn-sm btn-primary" onclick="printReceipt(\''+s.orderId+'\')"><i class="fas fa-print"></i></button></td>'+
           '</tr>';
@@ -2563,15 +2671,23 @@ function saveDashSettings() {
   api.withSuccessHandler(function(r) {
     // Save payment methods
     api.withSuccessHandler(function(r2) {
-      loader(false);
-      state.paymentMethods = methods;
-      renderPayButtons();
-      showToast("تم تحديث جميع الإعدادات بنجاح");
-      state.settings.name = up.name;
-      state.settings.taxNumber = up.taxNumber;
-      // Re-apply branding immediately + cache for fast paint next time
-      try { localStorage.setItem('pos_branding', JSON.stringify({ name: up.name, logo: up.logo })); } catch(e) {}
-      applyBrandingToUI(up.name, up.logo);
+      // Re-fetch fresh payment methods so any newly inserted rows get their real auto-increment IDs
+      api.withSuccessHandler(function(fresh) {
+        loader(false);
+        state.paymentMethods = fresh || [];
+        renderPayButtons();
+        loadPayMethodsSettings();
+        showToast("تم تحديث جميع الإعدادات بنجاح");
+        state.settings.name = up.name;
+        state.settings.taxNumber = up.taxNumber;
+        // Re-apply branding immediately + cache for fast paint next time
+        try { localStorage.setItem('pos_branding', JSON.stringify({ name: up.name, logo: up.logo })); } catch(e) {}
+        applyBrandingToUI(up.name, up.logo);
+      }).withFailureHandler(function() {
+        loader(false);
+        state.paymentMethods = methods;
+        renderPayButtons();
+      }).getPaymentMethods();
     }).savePaymentMethods(methods);
   }).updateCompanySettings(up);
 }
@@ -3068,28 +3184,22 @@ function loadPayments() {
 
       sales.forEach(function(s) {
         var amount = Number(s.total) || 0;
-        var pay = String(s.payment || '').toLowerCase();
         var dateKey = String(s.date || '').split('T')[0];
         var user = s.username || '—';
 
         totals.all += amount; counts.all += 1;
-        if (pay === 'cash') { totals.cash += amount; counts.cash += 1; }
-        else if (pay === 'card' || pay === 'mada') { totals.card += amount; counts.card += 1; }
-        else if (pay === 'kita') { totals.kita += amount; counts.kita += 1; }
+        // Distributes split payments correctly across cash/card/kita buckets
+        distributePayment(s.payment, amount, totals, counts);
 
-        if (!dayMap[dateKey]) dayMap[dateKey] = { date: dateKey, cash: 0, card: 0, kita: 0, total: 0, count: 0 };
+        if (!dayMap[dateKey]) dayMap[dateKey] = { date: dateKey, cash: 0, card: 0, kita: 0, other: 0, total: 0, count: 0 };
         var dRow = dayMap[dateKey];
         dRow.total += amount; dRow.count += 1;
-        if (pay === 'cash') dRow.cash += amount;
-        else if (pay === 'card' || pay === 'mada') dRow.card += amount;
-        else if (pay === 'kita') dRow.kita += amount;
+        distributePayment(s.payment, amount, dRow);
 
-        if (!cashierMap[user]) cashierMap[user] = { username: user, cash: 0, card: 0, kita: 0, total: 0, count: 0 };
+        if (!cashierMap[user]) cashierMap[user] = { username: user, cash: 0, card: 0, kita: 0, other: 0, total: 0, count: 0 };
         var cRow = cashierMap[user];
         cRow.total += amount; cRow.count += 1;
-        if (pay === 'cash') cRow.cash += amount;
-        else if (pay === 'card' || pay === 'mada') cRow.card += amount;
-        else if (pay === 'kita') cRow.kita += amount;
+        distributePayment(s.payment, amount, cRow);
       });
 
       // Summary KPI cards
@@ -3191,12 +3301,10 @@ function loadSalesBreakdown(type) {
         });
       } else if (type === 'byCashier') {
         var u = s.username || '—';
-        if (!aggregated[u]) aggregated[u] = { name: userLabel(u), orders: 0, cash: 0, card: 0, kita: 0, revenue: 0 };
+        if (!aggregated[u]) aggregated[u] = { name: userLabel(u), orders: 0, cash: 0, card: 0, kita: 0, other: 0, revenue: 0 };
         aggregated[u].orders += 1;
         aggregated[u].revenue += amount;
-        if (pay === 'cash') aggregated[u].cash += amount;
-        else if (pay === 'card' || pay === 'mada') aggregated[u].card += amount;
-        else if (pay === 'kita') aggregated[u].kita += amount;
+        distributePayment(s.payment, amount, aggregated[u]);
       } else if (type === 'byMonth') {
         var monthKey = dateKey.substring(0, 7); // YYYY-MM
         if (!aggregated[monthKey]) aggregated[monthKey] = { name: monthKey, orders: 0, revenue: 0 };

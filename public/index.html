@@ -1739,6 +1739,45 @@
     </div>
   </div>
 
+  <!-- ─── Glass Modals (POS shift close, variance, report, generic confirm) ─── -->
+  <div id="modalShiftVariance" class="glass-modal hidden">
+    <div class="glass-modal-content danger">
+      <div class="glass-modal-title">
+        <span><i class="fas fa-exclamation-triangle"></i> فرق غير متوازن</span>
+      </div>
+      <div class="glass-modal-body" id="varianceBody"></div>
+      <div class="glass-modal-actions">
+        <button class="btn btn-light" onclick="closeGlassModal('#modalShiftVariance')"><i class="fas fa-arrow-right"></i> رجوع لمراجعة الفواتير</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalShiftReport" class="glass-modal hidden">
+    <div class="glass-modal-content large">
+      <div class="glass-modal-title">
+        <span><i class="fas fa-clipboard-check"></i> تقرير إغلاق الوردية</span>
+        <button class="glass-modal-close" onclick="closeGlassModal('#modalShiftReport')">&times;</button>
+      </div>
+      <div class="glass-modal-body" id="shiftReportBody"></div>
+      <div class="glass-modal-actions">
+        <button class="btn btn-success" onclick="shareShiftReportWhatsApp()"><i class="fab fa-whatsapp"></i> إرسال عبر واتساب</button>
+        <button class="btn btn-primary" onclick="printShiftReportNew()"><i class="fas fa-print"></i> طباعة</button>
+        <button class="btn btn-light" onclick="closeGlassModal('#modalShiftReport')">إغلاق</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalGlassConfirm" class="glass-modal hidden">
+    <div class="glass-modal-content small">
+      <div class="glass-modal-title"><span id="gcTitle"><i class="fas fa-question-circle"></i> تأكيد</span></div>
+      <div class="glass-modal-body"><p id="gcMessage" class="glass-modal-message"></p></div>
+      <div class="glass-modal-actions" id="gcActions">
+        <button class="btn btn-light" onclick="closeGlassModal('#modalGlassConfirm', false)">إلغاء</button>
+        <button class="btn btn-primary" onclick="closeGlassModal('#modalGlassConfirm', true)">تأكيد</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Include Custom JavaScript — erp.js loads on-demand via loadScript() in app.js -->
   <script src="/js/api-bridge.js"></script>
   <script src="/js/app.js"></script>

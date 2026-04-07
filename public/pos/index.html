@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>POS - Moroccan Taste</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0d47a1">
+
+  <!-- Preconnect for faster CDN loading -->
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+
+  <!-- Font Awesome (icons only) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+
+  <!-- Page-specific styles -->
+  <link rel="stylesheet" href="/shared/common.css">
+  <link rel="stylesheet" href="/shared/header.css">
+  <link rel="stylesheet" href="/pos/style.css">
+
+  <!-- QR Code library (deferred — only used at receipt time) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
+  <!-- App scripts (order matters: api-bridge → common → auth → header → app) -->
+  <script defer src="/shared/api-bridge.js"></script>
+  <script defer src="/shared/common.js"></script>
+  <script defer src="/shared/auth.js"></script>
+  <script defer src="/shared/header.js"></script>
+  <script defer src="/pos/app.js"></script>
+</head>
+<body class="ar" data-page="pos" data-show-shift="1">
+
+  <!-- Loader -->
+  <div id="loader">
+    <div class="spinner"></div>
+    <h3 style="margin-top:20px;color:var(--secondary);font-weight:800;">جاري التحميل...</h3>
+  </div>
+
+  <!-- Shared Header (rendered by header.js) -->
+  <header id="appHeader" class="app-header"></header>
+
+  <!-- POS Main Layout -->
+  <main class="pos-main">
+    <!-- Products Area -->
+    <section class="pos-products-area">
+      <div class="pos-search-bar">
+        <i class="fas fa-search"></i>
+        <input type="text" id="posSearchInput" placeholder="بحث عن منتج..." oninput="renderMenuGrid()" autocomplete="off">
+      </div>
+      <div class="pos-categories" id="posCatTabs"></div>
+      <div class="pos-grid" id="posItemsGrid"></div>
+    </section>
+
+    <!-- Cart Area -->
+    <aside class="pos-cart-area" id="mobileCartPanel">
+      <div class="cart-header">
+        <button class="btn btn-light mobile-close-cart" onclick="toggleMobileCart()">
+          <i class="fas fa-arrow-right"></i> <span data-i18n="goBack">الرجوع</span>
+        </button>
+        <h3 class="desktop-cart-title">
+          <i class="fas fa-shopping-basket" style="color:var(--accent);"></i>
+          <span data-i18n="cartTitle">سلة الطلبات</span>
+        </h3>
+        <div>
+          <button class="btn btn-light" style="padding:8px 12px;color:#b45309;" onclick="openDiscountModal()" title="إضافة خصم">
+            <i class="fas fa-tag"></i>
+          </button>
+          <button class="btn btn-light" style="padding:8px 12px;color:var(--danger);" onclick="clearCart()" title="إفراغ السلة">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="cart-items" id="cartItemsArea"></div>
+
+      <div class="cart-footer">
+        <div class="pay-methods" id="payMethodsContainer">
+          <input type="hidden" id="posPayMethod" value="Cash">
+        </div>
+
+        <div class="cart-summary-line">
+          <span data-i18n="subtotal">المجموع الفرعي:</span>
+          <span id="cartSubtotalText">0.00</span>
+        </div>
+        <div class="cart-summary-line" style="color:var(--danger);">
+          <span data-i18n="discount">الخصم:</span>
+          <span id="cartDiscText">0.00</span>
+        </div>
+
+        <div class="hidden" id="serviceFeeRow" style="background:rgba(254,243,199,0.5);padding:8px 10px;border-radius:10px;margin-bottom:8px;border:1px solid #fde047;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span id="serviceFeeLabel" style="font-size:13px;font-weight:700;color:#92400e;">رسوم الخدمة:</span>
+            <span id="serviceFeeText" style="font-weight:800;color:#b45309;">0.00</span>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <input type="number" id="serviceFeeInput" step="0.01" min="0" class="form-control" placeholder="أدخل مبلغ الرسوم يدوياً" oninput="applyManualServiceFee()" style="flex:1;padding:8px 10px;font-size:14px;font-weight:700;border-radius:8px;">
+            <span style="font-size:11px;color:#92400e;white-space:nowrap;">SAR</span>
+          </div>
+        </div>
+
+        <div class="cart-summary-total">
+          <span data-i18n="totalLabel">الإجمالي:</span>
+          <span id="cartFinalTotal">0.00 SAR</span>
+        </div>
+
+        <!-- Split payment panel -->
+        <div id="splitPayPanel" class="hidden" style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:10px;">
+          <h4 style="font-size:13px;font-weight:700;margin-bottom:10px;color:var(--primary);">
+            <i class="fas fa-divide"></i> <span data-i18n="split">تجزئة</span>
+          </h4>
+          <div id="splitFields" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div>
+          <div style="margin-top:8px;text-align:center;font-weight:800;font-size:14px;">
+            <span id="splitRemainingLabel">Remaining:</span>
+            <span id="splitRemaining" style="color:var(--danger);">0.00</span>
+          </div>
+        </div>
+
+        <button class="btn btn-primary checkout-btn" onclick="doCheckout()">
+          <i class="fas fa-check-circle"></i>
+          <span data-i18n="checkoutBtn">إتمام الدفع والطلب</span>
+        </button>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Mobile Floating Cart Button -->
+  <div class="mobile-cart-btn" id="mobileCartBtn" onclick="toggleMobileCart()">
+    <div style="position:relative;display:flex;align-items:center;gap:10px;">
+      <i class="fas fa-shopping-cart"></i>
+      <span data-i18n="viewCart">مشاهدة السلة</span>
+      <span id="mobCartCount" style="background:var(--danger);color:white;padding:2px 8px;border-radius:10px;font-size:12px;position:absolute;top:-10px;right:-20px;">0</span>
+    </div>
+    <div id="mobCartTotal" style="font-size:20px;">0.00 SAR</div>
+  </div>
+
+  <!-- Floating Shift Controls -->
+  <div class="float-actions">
+    <button class="btn btn-success" onclick="shiftOpen()" title="فتح وردية"><i class="fas fa-play"></i></button>
+    <button class="btn btn-danger" onclick="shiftCloseStart()" title="إغلاق الوردية"><i class="fas fa-stop"></i></button>
+  </div>
+
+  <!-- Modal: Discount -->
+  <div id="modalDiscount" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-title">
+        <span><i class="fas fa-tag"></i> اختر خصماً</span>
+        <button class="modal-close" onclick="closeModal('#modalDiscount')">&times;</button>
+      </div>
+      <div id="discModalList"></div>
+    </div>
+  </div>
+
+  <!-- Modal: Shift Close -->
+  <div id="modalShiftClose" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-title">
+        <span><i class="fas fa-stop-circle"></i> <span data-i18n="shiftClose">إغلاق الوردية</span></span>
+        <button class="modal-close" onclick="closeModal('#modalShiftClose')">&times;</button>
+      </div>
+      <p style="margin-bottom:15px;color:var(--text-light);" data-i18n="enterAmounts">أدخل المبالغ الفعلية في الدرج:</p>
+      <div class="form-group">
+        <label class="form-label" data-i18n="cashAmount">المبلغ النقدي (كاش)</label>
+        <input type="number" id="scCash" class="form-control" value="0" step="0.01">
+      </div>
+      <div class="form-group">
+        <label class="form-label" data-i18n="cardAmount">مدى / شبكة</label>
+        <input type="number" id="scCard" class="form-control" value="0" step="0.01">
+      </div>
+      <div class="form-group">
+        <label class="form-label" data-i18n="kitaAmount">كيتا / آجل</label>
+        <input type="number" id="scKita" class="form-control" value="0" step="0.01">
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-light" style="flex:1;" onclick="closeModal('#modalShiftClose')" data-i18n="cancel">إلغاء</button>
+        <button class="btn btn-danger" style="flex:1;" onclick="shiftConfirmClose()" data-i18n="confirmClose">اعتماد وإغلاق</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Receipt -->
+  <div id="modalReceipt" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-title">
+        <span><i class="fas fa-receipt"></i> فاتورة</span>
+        <button class="modal-close" onclick="closeModal('#modalReceipt')">&times;</button>
+      </div>
+      <div id="receiptBox" style="font-family:Arial;background:#fff;padding:10px;border:1px dashed #cbd5e1;max-height:60vh;overflow-y:auto;"></div>
+      <button class="btn btn-primary" style="width:100%;margin-top:12px;" onclick="printReceiptWindow()">
+        <i class="fas fa-print"></i> طباعة
+      </button>
+    </div>
+  </div>
+
+</body>
+</html>

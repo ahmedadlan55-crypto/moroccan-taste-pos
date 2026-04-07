@@ -386,6 +386,13 @@ function openModal(id) { show(id); setTimeout(() => q(id).classList.add("show"),
 function closeModal(id) { q(id).classList.remove("show"); setTimeout(() => hide(id), 300); }
 window.onclick = function(e) { if (e.target.classList.contains('modal')) { closeModal('#' + e.target.id); } }
 
+// Refresh the active admin section whenever the user returns to this tab.
+// Solves the "dashboard didn't update after I sold from another window" issue.
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState !== 'visible') return;
+  if (typeof refreshActiveAdminSection === 'function') refreshActiveAdminSection();
+});
+
 // =========================================
 // 4. POS (Cashier) Logic
 // =========================================
@@ -714,7 +721,28 @@ function doCheckout() {
     printReceipt(res.orderId);
     clearCart();
     api.withSuccessHandler(function(m) { state.menu = m; renderMenuGrid(); }).getMenu();
+    // Mark dashboard as stale + refresh any visible admin section so cards update instantly
+    state.lastSaleAt = Date.now();
+    refreshActiveAdminSection();
   }).saveOrder(order, state.user, state.activeShiftId);
+}
+
+// Refresh whichever admin section is currently visible (after a sale, recipe save, etc.)
+function refreshActiveAdminSection() {
+  var adminVisible = q('#adminView') && !q('#adminView').classList.contains('hidden');
+  if (!adminVisible) return;
+  var active = q('.admin-section.active');
+  if (!active) return;
+  var id = (active.id || '').replace('sec_', '');
+  switch (id) {
+    case 'home':       if (typeof loadDashHome === 'function') loadDashHome(); break;
+    case 'sales':      if (typeof loadDashSales === 'function') loadDashSales(); break;
+    case 'inventory':  if (typeof loadDashInv === 'function') loadDashInv(); break;
+    case 'warehouse':  if (typeof loadDashInvItems === 'function') loadDashInvItems(); break;
+    case 'expenses':   if (typeof loadDashExpenses === 'function') loadDashExpenses(); break;
+    case 'purchases':  if (typeof loadDashPurchases === 'function') loadDashPurchases(); break;
+    case 'shifts':     if (typeof loadDashShifts === 'function') loadDashShifts(); break;
+  }
 }
 
 function printReceipt(orderId) {
@@ -871,12 +899,24 @@ function nav(sectionId) {
   var navEl = q('.nav-item[onclick="nav(\''+sectionId+'\')"]');
   if (navEl) navEl.classList.add("active");
 
+  // Stop any previous auto-refresh interval (only the home dashboard polls)
+  if (state._dashAutoRefresh) { clearInterval(state._dashAutoRefresh); state._dashAutoRefresh = null; }
+
   // Hide ERP sections when navigating POS
   document.querySelectorAll('.dash-section').forEach(s => s.classList.add('hidden'));
 
   qs(".admin-section").forEach(el => el.classList.remove("active"));
   const secEl = q(`#sec_${sectionId}`);
   if (secEl) secEl.classList.add("active");
+
+  // Start polling on the home dashboard so KPIs/chart cards reflect new sales without manual refresh
+  if (sectionId === 'home') {
+    state._dashAutoRefresh = setInterval(function() {
+      if (document.visibilityState === 'visible' && typeof loadDashHome === 'function') {
+        loadDashHome();
+      }
+    }, 30000);
+  }
   
   const titles = { home:"\u0646\u0638\u0631\u0629 \u0639\u0627\u0645\u0629", sales:"\u0633\u062c\u0644 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a", inventory:"\u0627\u0644\u0645\u0646\u064a\u0648 \u0648\u0627\u0644\u0648\u0635\u0641\u0627\u062a", warehouse:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0633\u062a\u0648\u062f\u0639", expenses:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0635\u0631\u0648\u0641\u0627\u062a", purchases:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a", users:"\u0635\u0644\u0627\u062d\u064a\u0627\u062a \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645\u064a\u0646", shifts:"\u0633\u062c\u0644 \u0627\u0644\u0645\u0646\u0627\u0648\u0628\u0627\u062a \u0627\u0644\u0645\u063a\u0644\u0642\u0629", reports:"\u0627\u0644\u062a\u0642\u0627\u0631\u064a\u0631 \u0627\u0644\u0645\u062a\u0642\u062f\u0645\u0629", settings:"\u0627\u0644\u0625\u0639\u062f\u0627\u062f\u0627\u062a" };
   const hTitle = q('.admin-header-title');
@@ -1712,21 +1752,9 @@ function saveRecipe() {
     loader(false);
     if (r && r.success) {
       showToast("تم حفظ الوصفة: " + cleanIngs.length + " مكون");
-      // Verify with full diagnostic
-      api.withSuccessHandler(function(dbg){
-        if (dbg.error) { alert('DEBUG ERROR: '+dbg.error); return; }
-        var msg = 'Sheet: '+dbg.sheetName+'\nRows: '+dbg.totalRows+'\nHeaders: '+dbg.headers.join(', ')+
-          '\nMenuID col index: '+dbg.menuIdIdx+
-          '\nRows matching "'+menuId+'": '+dbg.matchingRowsInSheet+
-          '\ngetRecipes() total: '+dbg.getRecipesTotal+
-          '\ngetRecipes() for this menu: '+dbg.getRecipesForMenu;
-        if (dbg.sampleRow.length) msg += '\nSample row: '+dbg.sampleRow.join(' | ');
-        if (dbg.getRecipesForMenu > 0) {
-          closeModal("#modalRecipeForm");
-        } else {
-          alert(msg);
-        }
-      }).testRecipeSaveAndRead(menuId);
+      closeModal("#modalRecipeForm");
+      // Refresh inventory list so the margin/profit/cost columns reflect the new recipe
+      if (typeof loadDashInv === 'function') loadDashInv();
     } else { showToast((r&&r.error)||'فشل الحفظ — النتيجة: '+JSON.stringify(r), true); }
   }).withFailureHandler(function(e){ loader(false); showToast('خطأ saveRecipe: '+e.message, true); })
   .saveRecipe(menuId, menuName, cleanIngs);

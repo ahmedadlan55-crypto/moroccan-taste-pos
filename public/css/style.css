@@ -183,25 +183,34 @@ input, select, textarea { outline: none; font-family: inherit; }
   font-weight: 500;
 }
 
-/* Input fields with icons */
+/* Input fields with icons — both LTR and RTL aligned */
 .login-field {
   position: relative;
   margin-bottom: 14px;
 }
 .login-field input.form-control {
   width: 100%;
-  padding: 15px 50px 15px 20px;
+  height: 52px;
+  padding: 0 20px;
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1.5px solid rgba(255, 255, 255, 0.25);
   border-radius: 14px;
   color: #fff;
   font-size: 15px;
   font-weight: 500;
   transition: all 0.2s;
+  line-height: 52px;
 }
-body.ar .login-field input.form-control { padding: 15px 20px 15px 50px; }
-.login-field input.form-control::placeholder { color: rgba(255, 255, 255, 0.6); }
+/* Reserve space for the icon on the inline-end side */
+body.ar .login-field input.form-control { padding-right: 20px; padding-left: 50px; text-align: right; }
+body.en .login-field input.form-control { padding-left: 20px; padding-right: 50px; text-align: left; }
+.login-field input.form-control::placeholder {
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 500;
+  line-height: 52px;
+}
 .login-field input.form-control:focus {
   background: rgba(255, 255, 255, 0.15);
   border-color: rgba(255, 255, 255, 0.5);
@@ -209,15 +218,19 @@ body.ar .login-field input.form-control { padding: 15px 20px 15px 50px; }
 }
 .login-field .login-field-icon {
   position: absolute;
-  top: 50%;
-  inset-inline-end: 18px;
-  transform: translateY(-50%);
+  top: 0;
+  height: 52px;
+  width: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: rgba(255, 255, 255, 0.7);
   font-size: 16px;
   pointer-events: none;
 }
-body.ar .login-field .login-field-icon { right: 18px; left: auto; }
-body.en .login-field .login-field-icon { left: 18px; right: auto; }
+/* Place icon on the END side: left for ar (RTL), right for en (LTR) */
+body.ar .login-field .login-field-icon { left: 0; right: auto; }
+body.en .login-field .login-field-icon { right: 0; left: auto; }
 
 .login-row {
   display: flex;
@@ -298,8 +311,10 @@ body.en .login-field .login-field-icon { left: 18px; right: auto; }
   .login-logo .login-logo-fallback { font-size: 36px; }
   .login-title { font-size: 26px; }
   .login-subtitle { margin-bottom: 22px; font-size: 13px; }
-  .login-field input.form-control { padding: 14px 46px 14px 18px; font-size: 16px; }
-  body.ar .login-field input.form-control { padding: 14px 18px 14px 46px; }
+  .login-field input.form-control { height: 48px; line-height: 48px; font-size: 16px; }
+  body.ar .login-field input.form-control { padding-right: 16px; padding-left: 46px; }
+  body.en .login-field input.form-control { padding-left: 16px; padding-right: 46px; }
+  .login-field .login-field-icon { height: 48px; width: 46px; }
   .login-box .btn-primary { padding: 14px; font-size: 15px; }
 }
 

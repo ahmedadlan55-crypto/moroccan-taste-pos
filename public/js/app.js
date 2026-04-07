@@ -14,6 +14,14 @@ const qs = s => document.querySelectorAll(s);
 const show = id => { const el = q(id); if (el) el.classList.remove("hidden"); };
 const hide = id => { const el = q(id); if (el) el.classList.add("hidden"); };
 const formatVal = v => Number(v || 0).toFixed(2);
+// Resolve a username to its display name (falls back to username if no metadata)
+function userLabel(username) {
+  if (!username) return '';
+  if (state && state.userDisplayMap && state.userDisplayMap[username]) {
+    return state.userDisplayMap[username] + ' (' + username + ')';
+  }
+  return username;
+}
 
 // Locales Dict
 const dict = {
@@ -326,6 +334,16 @@ function loadCoreData() {
     state.categories = [...new Set(state.menu.map(i => i.category))];
     state.activeShiftId = res.activeShiftId || "";
     state.users = (res.usernames || []).map(u => ({ username: u }));
+
+    // Current user info (display name + developer flag)
+    state.currentUser = res.currentUser || { username: state.user, displayName: '', role: state.role, isDeveloper: state.role === 'admin' };
+    state.isDeveloper = !!state.currentUser.isDeveloper;
+    // user → display name lookup map (used by report renderers)
+    state.userMeta = res.userMeta || {};
+    state.userDisplayMap = {};
+    Object.keys(state.userMeta).forEach(function(u) {
+      if (state.userMeta[u] && state.userMeta[u].name) state.userDisplayMap[u] = state.userMeta[u].name;
+    });
 
     // Cache menu in localStorage
     try { localStorage.setItem("pos_menu_cache", JSON.stringify({ ts: Date.now(), menu: state.menu })); } catch(e) {}
@@ -932,7 +950,7 @@ function nav(sectionId) {
   if (sectionId === 'users') loadDashUsers();
   if (sectionId === 'shifts') loadDashShifts();
   if (sectionId === 'reports') populateReportFilters();
-  if (sectionId === 'settings') loadPayMethodsSettings();
+  if (sectionId === 'settings') { loadPayMethodsSettings(); applyDeveloperVisibility(); }
 }
 
 function loadDashHome() {
@@ -1083,7 +1101,7 @@ function loadDashHome() {
       state.charts.user = new Chart(userCtx.getContext("2d"), {
         type: 'bar',
         data: {
-          labels: userArr.map(function(x) { return x[0]; }),
+          labels: userArr.map(function(x) { return userLabel(x[0]); }),
           datasets: [{
             label: 'إجمالي مبيعات الكاشير', data: userArr.map(function(x) { return x[1]; }),
             backgroundColor: '#8b5cf6', borderRadius: 4
@@ -1136,7 +1154,7 @@ function loadDashSales() {
           h += '<tr>'+
             '<td style="font-family:monospace;font-weight:bold;color:var(--primary);font-size:12px;">'+(s.orderId||'')+'</td>'+
             '<td style="font-size:12px;color:#64748b;">'+dateStr+'</td>'+
-            '<td style="font-weight:600;">'+(s.username||'')+'</td>'+
+            '<td style="font-weight:600;">'+userLabel(s.username)+'</td>'+
             '<td>'+itemsHtml+'</td>'+
             '<td><span class="badge '+bClass+'">'+(s.payment||'')+'</span></td>'+
             '<td style="font-weight:900;color:var(--secondary);font-size:15px;">'+formatVal(s.total)+'</td>'+
@@ -1982,35 +2000,166 @@ function saveStocktakeFn() {
 
 
 // Users Management
+var _cachedUsers = [];
 function loadDashUsers() {
   loader();
-  api.withSuccessHandler(arr => {
+  api.withSuccessHandler(function(arr) {
     loader(false);
-    let h = "";
-    arr.forEach(u => {
-      let bClass = u.role === 'admin' ? 'blue' : 'green';
-      h += `<tr>
-        <td style="font-weight:bold; font-size:16px;">${u.username}</td>
-        <td><span class="badge ${bClass}">${u.role === 'admin' ? 'مدير نظام' : 'كاشير'}</span></td>
-        <td>${u.active ? '<span class="badge green">نشط</span>' : '<span class="badge red">موقوف</span>'}</td>
-        <td>${u.createdAt ? new Date(u.createdAt).toLocaleDateString('ar-SA') : '—'}</td>
-        <td>
-          <button class="btn btn-light" style="padding:8px 15px;" onclick="toggUsr('${u.username}')">تفعيل/إيقاف</button>
-          <button class="btn btn-danger" style="padding:8px 15px;" onclick="delUsr('${u.username}')"><i class="fas fa-trash"></i></button>
-        </td>
-      </tr>`;
+    arr = Array.isArray(arr) ? arr : [];
+    _cachedUsers = arr;
+    // Build a map for use by report renderers
+    state.userDisplayMap = {};
+    arr.forEach(function(u) { state.userDisplayMap[u.username] = u.displayName || u.username; });
+
+    var roleLabel = function(r) {
+      if (r === 'admin')   return '<span class="badge blue">مدير مؤسسة</span>';
+      if (r === 'manager') return '<span class="badge orange">مدير فرع</span>';
+      return '<span class="badge green">كاشير</span>';
+    };
+
+    var h = '';
+    arr.forEach(function(u) {
+      var devBadge = u.isDeveloper ? ' <span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;"><i class="fas fa-code"></i> مطور</span>' : '';
+      h += '<tr>' +
+        '<td style="font-weight:bold; font-size:15px;">' + (u.displayName || '<span style="color:#94a3b8;">— لم يُحدد —</span>') + '</td>' +
+        '<td style="font-family:monospace; font-weight:600; color:var(--secondary);">' + (u.username || '') + '</td>' +
+        '<td>' + roleLabel(u.role) + devBadge + '</td>' +
+        '<td>' + (u.active ? '<span class="badge green">نشط</span>' : '<span class="badge red">موقوف</span>') + '</td>' +
+        '<td>' + (u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-GB') : '—') + '</td>' +
+        '<td>' +
+          '<button class="btn btn-light" style="padding:6px 10px;" onclick="editUsr(\'' + u.username + '\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
+          '<button class="btn btn-light" style="padding:6px 10px;" onclick="toggUsr(\'' + u.username + '\')" title="تفعيل/إيقاف"><i class="fas fa-power-off"></i></button> ' +
+          '<button class="btn btn-danger" style="padding:6px 10px;" onclick="delUsr(\'' + u.username + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+        '</td>' +
+      '</tr>';
     });
+    if (!arr.length) h = '<tr><td colspan="6" style="text-align:center;padding:20px;color:#94a3b8;">لا يوجد مستخدمين</td></tr>';
     q("#tbUsers").innerHTML = h;
-  }).getUsers();
+  }).withFailureHandler(function(err) { loader(false); showToast(err.message || 'فشل تحميل المستخدمين', true); }).getUsers();
 }
-function tglUserM() { q("#muName").value=""; q("#muPass").value=""; openModal('#modalUserForm'); }
+
+var _editingUsername = '';
+function tglUserM() {
+  _editingUsername = '';
+  q("#muModalTitle").innerText = 'إضافة موظف جديد';
+  q("#muDisplayName").value = '';
+  q("#muName").value = '';
+  q("#muName").disabled = false;
+  q("#muPass").value = '';
+  q("#muPass").placeholder = '******';
+  q("#muRole").value = 'cashier';
+  if (q("#muIsDeveloper")) q("#muIsDeveloper").checked = false;
+  openModal('#modalUserForm');
+}
+
+function editUsr(username) {
+  var u = _cachedUsers.find(function(x){ return x.username === username; });
+  if (!u) return;
+  _editingUsername = username;
+  q("#muModalTitle").innerText = 'تعديل المستخدم — ' + (u.displayName || u.username);
+  q("#muDisplayName").value = u.displayName || '';
+  q("#muName").value = u.username;
+  q("#muName").disabled = true; // username (employee number) cannot change
+  q("#muPass").value = '';
+  q("#muPass").placeholder = 'اتركها فارغة لعدم التغيير';
+  q("#muRole").value = u.role || 'cashier';
+  if (q("#muIsDeveloper")) q("#muIsDeveloper").checked = !!u.isDeveloper;
+  openModal('#modalUserForm');
+}
+
 function saveUserFn() {
+  var displayName = (q("#muDisplayName").value || '').trim();
+  var username    = (q("#muName").value || '').trim();
+  var password    = q("#muPass").value || '';
+  var role        = q("#muRole").value || 'cashier';
+  var isDeveloper = q("#muIsDeveloper") ? q("#muIsDeveloper").checked : false;
+
+  if (!username) return showToast('الرقم الوظيفي مطلوب', true);
+  if (!_editingUsername && !password) return showToast('كلمة المرور مطلوبة عند إنشاء مستخدم', true);
+
   loader();
-  api.withSuccessHandler(r=>{loader(false); closeModal('#modalUserForm'); showToast("تمت إضافة المستخدم"); loadDashUsers();})
-  .addUser(q("#muName").value, q("#muPass").value, q("#muRole").value);
+  if (_editingUsername) {
+    var payload = { displayName: displayName, role: role, isDeveloper: isDeveloper };
+    if (password) payload.password = password;
+    api.withFailureHandler(function(err){loader(false); showToast(err.message, true);})
+       .withSuccessHandler(function(r) {
+          loader(false);
+          if (r && r.success) { showToast('تم تحديث المستخدم'); closeModal('#modalUserForm'); loadDashUsers(); }
+          else showToast((r && r.error) || 'فشل التحديث', true);
+       }).updateUser(_editingUsername, payload);
+  } else {
+    var data = { username: username, password: password, role: role, displayName: displayName, isDeveloper: isDeveloper };
+    api.withFailureHandler(function(err){loader(false); showToast(err.message, true);})
+       .withSuccessHandler(function(r) {
+          loader(false);
+          if (r && r.success) { showToast('تم إنشاء المستخدم بنجاح'); closeModal('#modalUserForm'); loadDashUsers(); }
+          else showToast((r && r.error) || 'فشل الإنشاء', true);
+       }).addUser(data);
+  }
 }
-function toggUsr(u) { loader(); api.withSuccessHandler(r=>{loader(false); loadDashUsers(); showToast("تم التحديث");}).toggleUserActive(u); }
-function delUsr(u) { if(confirm("تأكيد الحذف النهائي؟")) { loader(); api.withSuccessHandler(r=>{loader(false); loadDashUsers(); showToast("تم الحذف");}).deleteUser(u); } }
+
+function toggUsr(u) {
+  loader();
+  api.withFailureHandler(function(err){loader(false); showToast(err.message, true);})
+     .withSuccessHandler(function(r) {
+        loader(false);
+        if (r && r.success) { showToast('تم التحديث'); loadDashUsers(); }
+        else showToast((r && r.error) || 'فشل', true);
+     }).toggleUserActive(u);
+}
+
+function delUsr(u) {
+  if (!confirm('تأكيد الحذف النهائي للمستخدم "' + u + '"؟')) return;
+  loader();
+  api.withFailureHandler(function(err){loader(false); showToast(err.message, true);})
+     .withSuccessHandler(function(r) {
+        loader(false);
+        if (r && r.success) { showToast('تم الحذف'); loadDashUsers(); }
+        else showToast((r && r.error) || 'فشل الحذف', true);
+     }).deleteUser(u);
+}
+
+// ─── Developer-only DB reset ───
+function openResetDbModal() {
+  q("#rdbPass").value = '';
+  q("#rdbConfirm").value = '';
+  openModal('#modalResetDb');
+}
+
+function confirmResetDb() {
+  var pass = q("#rdbPass").value;
+  var conf = q("#rdbConfirm").value;
+  if (!pass) return showToast('كلمة المرور مطلوبة', true);
+  if (conf !== 'YES_RESET_ALL_DATA') return showToast('نص التأكيد غير صحيح', true);
+  if (!confirm('⚠️ هل أنت متأكد تماماً من تصفير قاعدة البيانات؟ لا يمكن التراجع!')) return;
+
+  loader();
+  api.withFailureHandler(function(err){ loader(false); showToast(err.message, true); })
+     .withSuccessHandler(function(r) {
+        loader(false);
+        if (r && r.success) {
+          closeModal('#modalResetDb');
+          showToast('تم تصفير قاعدة البيانات بنجاح. سيتم إعادة تحميل الصفحة...');
+          // Clear local caches and reload
+          try {
+            localStorage.removeItem('pos_menu_cache');
+            localStorage.removeItem('pos_branding');
+            localStorage.removeItem('pos_active_shift_id');
+          } catch (e) {}
+          setTimeout(function(){ window.location.reload(); }, 1500);
+        } else {
+          showToast((r && r.error) || 'فشلت عملية التصفير', true);
+        }
+     }).resetDatabase({ confirm: conf, username: state.user, password: pass });
+}
+
+// Toggle the developer zone visibility based on the current user
+function applyDeveloperVisibility() {
+  var devZone = q("#devZone");
+  if (!devZone) return;
+  if (state.isDeveloper) devZone.classList.remove('hidden');
+  else devZone.classList.add('hidden');
+}
 
 // Advanced Reports Engine (Dashboard View)
 let advCharts = []; // keep track to destroy previous charts
@@ -2980,7 +3129,7 @@ function loadPayments() {
       } else {
         byCashier.forEach(function(c) {
           ch += '<tr>' +
-            '<td style="font-weight:800;">' + c.username + '</td>' +
+            '<td style="font-weight:800;">' + userLabel(c.username) + '</td>' +
             '<td style="color:#16a34a;">' + formatVal(c.cash) + '</td>' +
             '<td style="color:#1e40af;">' + formatVal(c.card) + '</td>' +
             '<td style="color:#854d0e;">' + formatVal(c.kita) + '</td>' +
@@ -3042,7 +3191,7 @@ function loadSalesBreakdown(type) {
         });
       } else if (type === 'byCashier') {
         var u = s.username || '—';
-        if (!aggregated[u]) aggregated[u] = { name: u, orders: 0, cash: 0, card: 0, kita: 0, revenue: 0 };
+        if (!aggregated[u]) aggregated[u] = { name: userLabel(u), orders: 0, cash: 0, card: 0, kita: 0, revenue: 0 };
         aggregated[u].orders += 1;
         aggregated[u].revenue += amount;
         if (pay === 'cash') aggregated[u].cash += amount;

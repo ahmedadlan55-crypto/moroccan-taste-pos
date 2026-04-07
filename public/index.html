@@ -153,10 +153,20 @@
       <div class="sidebar-nav">
         <div class="nav-item active" onclick="nav('home')"><i class="fas fa-chart-line"></i><span>الرئيسية</span></div>
         <div class="nav-item" onclick="nav('sales')"><i class="fas fa-receipt"></i><span>المبيعات</span></div>
-        
-        <div class="nav-item" onclick="nav('warehouse')"><i class="fas fa-warehouse"></i><span>المستودع</span></div>
-        <div class="nav-item" onclick="nav('purchases')"><i class="fas fa-truck-loading"></i><span>المشتريات</span></div>
-        <div class="nav-item" onclick="nav('inventory')"><i class="fas fa-clipboard-list"></i><span>المنيو والوصفات</span></div>
+
+        <!-- ═══ مجموعة المستودعات (كل ما يخص المخزون والمشتريات) ═══ -->
+        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
+          <i class="fas fa-warehouse"></i><span>المستودعات</span><i class="fas fa-chevron-down submenu-indicator"></i>
+        </div>
+        <div class="submenu">
+          <div class="nav-item" onclick="nav('warehouse')"><i class="fas fa-boxes-stacked"></i><span>إدارة المخزون</span></div>
+          <div class="nav-item" onclick="nav('inventory')"><i class="fas fa-clipboard-list"></i><span>المنيو والوصفات</span></div>
+          <div class="nav-item" onclick="nav('purchases')"><i class="fas fa-truck-loading"></i><span>المشتريات</span></div>
+          <div class="nav-item" data-erp-nav="erpPurchaseOrders" onclick="erpNav('erpPurchaseOrders')"><i class="fas fa-shopping-cart"></i><span>أوامر الشراء</span></div>
+          <div class="nav-item" data-erp-nav="erpWarehouses" onclick="erpNav('erpWarehouses')"><i class="fas fa-warehouse"></i><span>إدارة المستودعات</span></div>
+          <div class="nav-item" data-erp-nav="erpWarehouseStock" onclick="erpNav('erpWarehouseStock')"><i class="fas fa-boxes"></i><span>أرصدة المستودعات</span></div>
+          <div class="nav-item" data-erp-nav="erpStockTransfers" onclick="erpNav('erpStockTransfers')"><i class="fas fa-exchange-alt"></i><span>التحويلات بين الفروع</span></div>
+        </div>
 
         <div class="nav-item" onclick="nav('expenses')"><i class="fas fa-money-check-alt"></i><span>المصروفات</span></div>
         <div class="nav-item" onclick="nav('users')"><i class="fas fa-users-cog"></i><span>صلاحيات الموظفين</span></div>
@@ -169,15 +179,6 @@
           <div style="padding:4px 16px;font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:1px;">نظام ERP</div>
         </div>
         <div class="nav-item" data-erp-nav="erpDashHome" onclick="erpNav('erpDashHome')"><i class="fas fa-building"></i><span>لوحة ERP</span></div>
-
-        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-warehouse"></i><span>المستودعات</span><i class="fas fa-chevron-down submenu-indicator"></i>
-        </div>
-        <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpWarehouses" onclick="erpNav('erpWarehouses')"><i class="fas fa-warehouse"></i><span>إدارة المستودعات</span></div>
-          <div class="nav-item" data-erp-nav="erpWarehouseStock" onclick="erpNav('erpWarehouseStock')"><i class="fas fa-boxes"></i><span>أرصدة المستودعات</span></div>
-          <div class="nav-item" data-erp-nav="erpStockTransfers" onclick="erpNav('erpStockTransfers')"><i class="fas fa-exchange-alt"></i><span>التحويلات</span></div>
-        </div>
 
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
           <i class="fas fa-calculator"></i><span>المحاسبة</span><i class="fas fa-chevron-down submenu-indicator"></i>
@@ -201,7 +202,6 @@
           <div class="nav-item" data-erp-nav="erpAPAging" onclick="erpNav('erpAPAging')"><i class="fas fa-truck-loading"></i><span>أعمار ذمم الموردين</span></div>
         </div>
 
-        <div class="nav-item" data-erp-nav="erpPurchaseOrders" onclick="erpNav('erpPurchaseOrders')"><i class="fas fa-shopping-cart"></i><span>أوامر الشراء</span></div>
         <div class="nav-item" data-erp-nav="erpVATReports" onclick="erpNav('erpVATReports')"><i class="fas fa-percent"></i><span>تقارير الضريبة</span></div>
         <div class="nav-item" data-erp-nav="erpZATCA" onclick="erpNav('erpZATCA')"><i class="fas fa-stamp"></i><span>ZATCA</span></div>
         <div class="nav-item" data-erp-nav="erpCreditNotes" onclick="erpNav('erpCreditNotes')"><i class="fas fa-file-alt"></i><span>الإشعارات</span></div>
@@ -477,7 +477,7 @@
           <div style="margin-bottom:20px;"><button class="btn btn-primary" onclick="tglUserM()"><i class="fas fa-user-plus"></i> إنشاء مستخدم جديد للمنظومة</button></div>
           <div class="table-wrapper">
             <table class="table">
-              <thead><tr><th>اسم المستخدم الموظف</th><th>الصلاحيات الوظيفية</th><th>حالة الحساب</th><th>تاريخ الإنشاء</th><th>إجراءات</th></tr></thead>
+              <thead><tr><th>اسم الموظف</th><th>الرقم الوظيفي / تسجيل الدخول</th><th>الصلاحيات الوظيفية</th><th>حالة الحساب</th><th>تاريخ الإنشاء</th><th>إجراءات</th></tr></thead>
               <tbody id="tbUsers"></tbody>
             </table>
           </div>
@@ -630,6 +630,52 @@
             <input type="hidden" id="setKitaFee" value="0">
             <hr style="border:0; border-top:1px dashed var(--border); margin:25px 0;">
             <button class="btn btn-primary" style="width:100%; padding:15px; font-size:16px;" onclick="saveDashSettings()"><i class="fas fa-save"></i> حفظ جميع المتغيرات</button>
+
+            <!-- Developer Zone — visible only to users marked as developer -->
+            <div id="devZone" class="hidden" style="margin-top:30px; padding:20px; background:#fef2f2; border:2px solid #fecaca; border-radius:14px;">
+              <h3 style="color:#991b1b; font-size:16px; margin-bottom:8px;"><i class="fas fa-skull-crossbones"></i> منطقة المطور — خطر</h3>
+              <p style="color:#7f1d1d; font-size:13px; margin-bottom:14px;">
+                هذا الزر يحذف جميع المبيعات، الورديات، المشتريات، المخزون، الوصفات، المنتجات، المصروفات والقيود من قاعدة البيانات.
+                المستخدمون والإعدادات وطرق الدفع ستبقى. <strong>لا يمكن التراجع.</strong>
+              </p>
+              <button class="btn btn-danger" style="width:100%; padding:14px;" onclick="openResetDbModal()">
+                <i class="fas fa-trash-alt"></i> تصفير قاعدة البيانات والبدء من جديد
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reset DB confirmation modal -->
+        <div class="modal" id="modalResetDb">
+          <div class="modal-content">
+            <div class="modal-title">
+              <span style="color:#991b1b;"><i class="fas fa-exclamation-triangle"></i> تأكيد تصفير قاعدة البيانات</span>
+              <button class="modal-close" onclick="closeModal('#modalResetDb')">&times;</button>
+            </div>
+            <div style="background:#fef2f2; border:1.5px solid #fecaca; border-radius:10px; padding:14px; margin-bottom:18px;">
+              <p style="color:#991b1b; font-size:14px; line-height:1.7;">
+                <strong>سيتم حذف جميع البيانات التالية نهائياً:</strong><br>
+                • المبيعات والفواتير<br>
+                • الورديات وحركات المخزون<br>
+                • المنتجات والوصفات والمواد الخام<br>
+                • المشتريات وأوامر الشراء<br>
+                • المصروفات والقيود المحاسبية<br>
+                • تقارير الضريبة<br><br>
+                <strong>لن يتم حذف:</strong> المستخدمين، الإعدادات، طرق الدفع.
+              </p>
+            </div>
+            <div class="form-group">
+              <label class="form-label">أعد إدخال كلمة المرور للتأكيد</label>
+              <input type="password" id="rdbPass" class="form-control" placeholder="كلمة المرور">
+            </div>
+            <div class="form-group">
+              <label class="form-label">اكتب <code style="background:#fee;padding:2px 6px;border-radius:4px;color:#991b1b;">YES_RESET_ALL_DATA</code> للتأكيد</label>
+              <input type="text" id="rdbConfirm" class="form-control" placeholder="YES_RESET_ALL_DATA" autocomplete="off">
+            </div>
+            <div style="display:flex; gap:10px; margin-top:10px;">
+              <button class="btn btn-light" style="flex:1;" onclick="closeModal('#modalResetDb')">إلغاء</button>
+              <button class="btn btn-danger" style="flex:1;" onclick="confirmResetDb()"><i class="fas fa-trash-alt"></i> تصفير الآن</button>
+            </div>
           </div>
         </div>
 
@@ -1420,11 +1466,34 @@
   <!-- Create New User Modal -->
   <div class="modal" id="modalUserForm">
     <div class="modal-content">
-      <div class="modal-title">إضافة موظف حساب جديد<button class="modal-close" onclick="closeModal('#modalUserForm')">&times;</button></div>
-      <div class="form-group"><label class="form-label">معرف اسم الدخول للحساب</label><input type="text" id="muName" class="form-control" placeholder="Ahmad_sale..."></div>
-      <div class="form-group"><label class="form-label">رقم الاثبات (الباسوورد الموثوق)</label><input type="password" id="muPass" class="form-control" placeholder="*****"></div>
-      <div class="form-group"><label class="form-label">نوع الصلاحيات الوظيفية</label><select id="muRole" class="form-control"><option value="cashier">مستخدم كاشير وبائع فرع (لا يمكنه الإدارة)</option><option value="admin">مدير مؤسسة متكامل (يستعرض التقارير والمخازن كافة)</option></select></div>
-      <button class="btn btn-primary" style="width:100%; margin-top:15px;" onclick="saveUserFn()"><i class="fas fa-user-check"></i> فتح صلاحيات المستخدم في النظام</button>
+      <div class="modal-title"><span id="muModalTitle">إضافة موظف جديد</span><button class="modal-close" onclick="closeModal('#modalUserForm')">&times;</button></div>
+      <div class="form-group">
+        <label class="form-label">اسم الموظف الكامل (يظهر في التقارير)</label>
+        <input type="text" id="muDisplayName" class="form-control" placeholder="مثال: أحمد محمد العبدالله">
+      </div>
+      <div class="form-group">
+        <label class="form-label">الرقم الوظيفي / اسم الدخول</label>
+        <input type="text" id="muName" class="form-control" placeholder="مثال: EMP001 أو ahmad.s">
+      </div>
+      <div class="form-group">
+        <label class="form-label">كلمة المرور</label>
+        <input type="password" id="muPass" class="form-control" placeholder="******">
+      </div>
+      <div class="form-group">
+        <label class="form-label">نوع الصلاحية</label>
+        <select id="muRole" class="form-control">
+          <option value="cashier">كاشير — بائع فرع</option>
+          <option value="manager">مدير فرع</option>
+          <option value="admin">مدير مؤسسة (وصول كامل)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 14px; background:#fef3c7; border:1px solid #fde68a; border-radius:10px;">
+          <input type="checkbox" id="muIsDeveloper" style="width:18px; height:18px; accent-color:#d97706;">
+          <span style="font-weight:700; color:#92400e;"><i class="fas fa-code"></i> صلاحية المطور (تصفير قاعدة البيانات + صلاحيات حساسة)</span>
+        </label>
+      </div>
+      <button class="btn btn-primary" style="width:100%; margin-top:15px;" onclick="saveUserFn()"><i class="fas fa-user-check"></i> حفظ المستخدم</button>
     </div>
   </div>
 

@@ -95,7 +95,10 @@
     getAllUsernames:     { method: 'GET',  url: '/auth/users' },
     getUsers:            { method: 'GET',  url: '/auth/users' },
     addUser:             { method: 'POST', url: '/auth/users' },
-    updateUser:          { method: 'PUT',  url: '/auth/users' },
+    updateUser:          { method: 'PUT',  url: (u, d) => '/auth/users/' + u, body: (u, d) => d },
+    toggleUserActive:    { method: 'POST', url: (u) => '/auth/users/' + u + '/toggle' },
+    deleteUser:          { method: 'DELETE', url: (u) => '/auth/users/' + u },
+    resetDatabase:       { method: 'POST', url: '/auth/reset-db' },
 
     // Misc
     getDashboardSummary: { method: 'GET',  url: '/erp/dashboard' },

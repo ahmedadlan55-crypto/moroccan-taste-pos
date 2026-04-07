@@ -503,44 +503,48 @@ function erpLoadPOs() {
     if (s) {
       s.style.display = 'grid';
       document.getElementById('erpPOTotalCount').textContent = _erpPOAllData.length;
-      document.getElementById('erpPODraftCount').textContent = _erpPOAllData.filter(p => p.Status==='draft').length;
-      document.getElementById('erpPOApprovedCount').textContent = _erpPOAllData.filter(p => p.Status==='approved').length;
-      document.getElementById('erpPOReceivedCount').textContent = _erpPOAllData.filter(p => p.Status==='received').length;
-      document.getElementById('erpPOTotalValue').textContent = _erpPOAllData.reduce((a,p)=>a+(Number(p.TotalAfterVAT)||0),0).toFixed(2)+' ر.س';
+      document.getElementById('erpPODraftCount').textContent = _erpPOAllData.filter(function(p){ return p.status === 'draft'; }).length;
+      document.getElementById('erpPOApprovedCount').textContent = _erpPOAllData.filter(function(p){ return p.status === 'approved'; }).length;
+      document.getElementById('erpPOReceivedCount').textContent = _erpPOAllData.filter(function(p){ return p.status === 'received'; }).length;
+      document.getElementById('erpPOTotalValue').textContent = _erpPOAllData.reduce(function(a, p){ return a + (Number(p.totalAfterVat) || 0); }, 0).toFixed(2) + ' ر.س';
     }
     erpRenderPOTable(_erpPOAllData);
   }).getPurchaseOrders({});
 }
 
 function erpFilterPOTable() {
-  const search = (document.getElementById('erpPOSearch')?.value||'').toLowerCase();
-  const status = document.getElementById('erpPOStatusFilter')?.value||'';
-  erpRenderPOTable(_erpPOAllData.filter(po => {
-    return (!search || (po.PONumber||'').toLowerCase().includes(search) || (po.SupplierName||'').toLowerCase().includes(search))
-      && (!status || po.Status===status);
+  const search = (document.getElementById('erpPOSearch')?.value || '').toLowerCase();
+  const status = document.getElementById('erpPOStatusFilter')?.value || '';
+  erpRenderPOTable(_erpPOAllData.filter(function(po) {
+    return (!search || (po.poNumber || '').toLowerCase().includes(search) || (po.supplierName || '').toLowerCase().includes(search))
+      && (!status || po.status === status);
   }));
 }
 
 function erpRenderPOTable(list) {
   var tbody = document.getElementById('erpPOBody');
-  if (!list||!list.length) { tbody.innerHTML='<tr><td colspan="9" class="empty-msg">لا توجد أوامر شراء</td></tr>'; return; }
-  var sc={draft:'orange',approved:'blue',received:'green',cancelled:'red'};
-  var sl={draft:'مسودة',approved:'معتمد',received:'مستلم',cancelled:'ملغي'};
-  tbody.innerHTML = list.map(function(po){return '<tr>'+
-    '<td><code>'+( po.PONumber||'')+'</code></td>'+
-    '<td><i class="fas fa-truck" style="color:var(--accent);margin-left:6px;font-size:11px;"></i>'+(po.SupplierName||'—')+'</td>'+
-    '<td>'+(po.Date?new Date(po.Date).toLocaleDateString('ar-SA'):'—')+'</td>'+
-    '<td>'+(Number(po.TotalBeforeVAT)||0).toFixed(2)+'</td>'+
-    '<td><strong>'+(Number(po.TotalAfterVAT)||0).toFixed(2)+'</strong></td>'+
-    '<td><span class="badge badge-'+(sc[po.Status]||'blue')+'">'+(sl[po.Status]||po.Status)+'</span></td>'+
-    '<td style="font-size:12px;color:#64748b;">'+(po.ApprovedBy||'—')+'</td>'+
-    '<td style="white-space:nowrap;">'+
-      '<button class="btn btn-sm btn-outline" title="عرض" onclick="erpViewPO(\''+po.ID+'\')"><i class="fas fa-eye"></i></button> '+
-      (po.Status==='draft'?'<button class="btn btn-sm btn-success" title="اعتماد" onclick="erpApprovePO(\''+po.ID+'\')"><i class="fas fa-check"></i></button> ':'')+
-      (po.Status==='approved'?'<button class="btn btn-sm btn-outline" style="color:#d97706;border-color:#d97706;" title="تراجع" onclick="erpRevertPO(\''+po.ID+'\')"><i class="fas fa-undo"></i></button> ':'')+
-      '<button class="btn btn-sm btn-outline" title="طباعة" onclick="erpPrintPO(\''+po.ID+'\')"><i class="fas fa-print"></i></button> '+
-      (po.Status==='draft'?'<button class="btn btn-sm btn-danger" title="حذف" onclick="erpDeletePO(\''+po.ID+'\',\''+(po.PONumber||'').replace(/'/g,"\\'")+'\')"><i class="fas fa-trash"></i></button>':'')+
-    '</td></tr>';}).join('');
+  if (!list || !list.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty-msg">لا توجد أوامر شراء</td></tr>'; return; }
+  var sc = { draft: 'orange', approved: 'blue', received: 'green', cancelled: 'red' };
+  var sl = { draft: 'مسودة', approved: 'معتمد', received: 'مستلم', cancelled: 'ملغي' };
+  tbody.innerHTML = list.map(function(po) {
+    var safeNum = String(po.poNumber || '').replace(/'/g, "\\'");
+    return '<tr>' +
+      '<td><code>' + (po.poNumber || '') + '</code></td>' +
+      '<td><i class="fas fa-truck" style="color:var(--accent);margin-left:6px;font-size:11px;"></i>' + (po.supplierName || '—') + '</td>' +
+      '<td>' + (po.poDate ? new Date(po.poDate).toLocaleDateString('en-GB') : '—') + '</td>' +
+      '<td>' + (Number(po.totalBeforeVat) || 0).toFixed(2) + '</td>' +
+      '<td><strong>' + (Number(po.totalAfterVat) || 0).toFixed(2) + '</strong></td>' +
+      '<td><span class="badge badge-' + (sc[po.status] || 'blue') + '">' + (sl[po.status] || po.status) + '</span></td>' +
+      '<td style="font-size:12px;color:#64748b;">' + (po.approvedBy || '—') + '</td>' +
+      '<td style="white-space:nowrap;">' +
+        '<button class="btn btn-sm btn-outline" title="عرض" onclick="erpViewPO(\'' + po.id + '\')"><i class="fas fa-eye"></i></button> ' +
+        (po.status === 'draft' ? '<button class="btn btn-sm btn-success" title="اعتماد" onclick="erpApprovePO(\'' + po.id + '\')"><i class="fas fa-check"></i></button> ' : '') +
+        (po.status === 'approved' ? '<button class="btn btn-sm btn-outline" style="color:#d97706;border-color:#d97706;" title="تراجع" onclick="erpRevertPO(\'' + po.id + '\')"><i class="fas fa-undo"></i></button> ' : '') +
+        '<button class="btn btn-sm btn-outline" title="طباعة" onclick="erpPrintPO(\'' + po.id + '\')"><i class="fas fa-print"></i></button> ' +
+        (po.status === 'draft' ? '<button class="btn btn-sm btn-danger" title="حذف" onclick="erpDeletePO(\'' + po.id + '\',\'' + safeNum + '\')"><i class="fas fa-trash"></i></button>' : '') +
+      '</td>' +
+    '</tr>';
+  }).join('');
 }
 
 function erpRevertPO(poId) {
@@ -588,15 +592,19 @@ function erpBackToPOList() {
 
 // ─── بحث المورد ───
 function erpFilterPOSuppliers() {
-  const q = (document.getElementById('erpPOSupplierInput')?.value||'').toLowerCase();
+  const q = (document.getElementById('erpPOSupplierInput')?.value || '').toLowerCase();
   const res = document.getElementById('erpPOSupplierResults');
   if (!res) return;
-  const f = _erpPOSuppliersList.filter(s=>(s.Name||'').toLowerCase().includes(q)||(s.Phone||'').includes(q));
-  res.innerHTML = f.length ? f.slice(0,15).map(s=>
-    `<div class="sd-result-item" onclick="erpSelectPOSupplier('${s.ID}','${(s.Name||'').replace(/'/g,"\\'")}')">
-      <i class="fas fa-truck" style="margin-left:8px;color:var(--accent);font-size:12px;"></i>${s.Name}
-      <span class="sd-item-meta">${s.Phone||''}</span></div>`
-  ).join('') : '<div class="sd-result-item" style="color:#94a3b8;font-style:italic;">لا توجد نتائج — أضف المورد من قسم الموردين أولاً</div>';
+  // Backend returns camelCase: { id, name, phone, ... }
+  const f = (_erpPOSuppliersList || []).filter(function(s) {
+    return (s.name || '').toLowerCase().includes(q) || (s.phone || '').includes(q);
+  });
+  res.innerHTML = f.length ? f.slice(0, 15).map(function(s) {
+    var safeName = String(s.name || '').replace(/'/g, "\\'");
+    return '<div class="sd-result-item" onclick="erpSelectPOSupplier(\'' + s.id + '\',\'' + safeName + '\')">' +
+      '<i class="fas fa-truck" style="margin-left:8px;color:var(--accent);font-size:12px;"></i>' + (s.name || '') +
+      '<span class="sd-item-meta">' + (s.phone || '') + '</span></div>';
+  }).join('') : '<div class="sd-result-item" style="color:#94a3b8;font-style:italic;">لا توجد نتائج — أضف المورد من قسم الموردين أولاً</div>';
   res.classList.add('open');
 }
 function erpSelectPOSupplier(id, name) {
@@ -1750,17 +1758,21 @@ function erpLoadSupplierStatementPage() {
 }
 
 function erpFilterStmtSuppliers() {
-  var q = (document.getElementById('erpStmtSupSearch')?.value||'').toLowerCase();
+  var q = (document.getElementById('erpStmtSupSearch')?.value || '').toLowerCase();
   var res = document.getElementById('erpStmtSupResults');
   if (!res) return;
-  var filtered = _erpStmtSupList.filter(function(s){ return (s.Name||'').toLowerCase().includes(q) || (s.Phone||'').includes(q); });
+  // Backend returns camelCase fields
+  var filtered = (_erpStmtSupList || []).filter(function(s) {
+    return (s.name || '').toLowerCase().includes(q) || (s.phone || '').includes(q);
+  });
   if (!filtered.length) {
     res.innerHTML = '<div class="sd-result-item" style="color:#94a3b8;">لا توجد نتائج</div>';
   } else {
-    res.innerHTML = filtered.slice(0,15).map(function(s){
-      return '<div class="sd-result-item" onclick="erpSelectStmtSup(\''+s.ID+'\',\''+( s.Name||'').replace(/'/g,"\\'")+'\')">'
-        +'<i class="fas fa-truck" style="margin-left:8px;color:var(--accent);font-size:12px;"></i>'+s.Name
-        +'<span class="sd-item-meta">'+(s.Phone||'')+'</span></div>';
+    res.innerHTML = filtered.slice(0, 15).map(function(s) {
+      var safe = String(s.name || '').replace(/'/g, "\\'");
+      return '<div class="sd-result-item" onclick="erpSelectStmtSup(\'' + s.id + '\',\'' + safe + '\')">' +
+        '<i class="fas fa-truck" style="margin-left:8px;color:var(--accent);font-size:12px;"></i>' + (s.name || '') +
+        '<span class="sd-item-meta">' + (s.phone || '') + '</span></div>';
     }).join('');
   }
   res.classList.add('open');

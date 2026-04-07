@@ -70,14 +70,238 @@ input, select, textarea { outline: none; font-family: inherit; }
 .modal-close:hover { color: var(--danger); }
 
 /* =========================================
-   4. Login Screen
+   4. Login Screen — Cosmic Forest Theme
    ========================================= */
-#loginView { height: 100dvh; background: radial-gradient(circle at top right, #1e293b, #0f172a); display: flex; justify-content: center; align-items: center; padding: 20px; }
-.login-box { background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); padding: 50px 40px; border-radius: 30px; width: 100%; max-width: 420px; text-align: center; box-shadow: 0 25px 50px rgba(0,0,0,0.3); }
-.login-title { font-size: 30px; color: var(--primary); font-weight: 800; margin-bottom: 10px; }
-.login-subtitle { color: var(--text-light); margin-bottom: 30px; }
-.login-box .form-control { padding: 16px 20px; margin-bottom: 15px; border-radius: 15px; font-size: 16px; }
-.login-box .btn-primary { width: 100%; padding: 16px; font-size: 18px; border-radius: 15px; margin-top: 10px; -webkit-tap-highlight-color: transparent; }
+#loginView {
+  height: 100dvh;
+  min-height: 100vh;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 20% 0%, rgba(167, 139, 250, 0.55) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 10%, rgba(236, 72, 153, 0.35) 0%, transparent 55%),
+    linear-gradient(180deg, #1e1147 0%, #2d1b69 25%, #4c1d95 55%, #5b21b6 75%, #1e1147 100%);
+}
+
+/* Stars layer (CSS only — no images) */
+#loginView::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(1.5px 1.5px at 12% 8%, #fff, transparent),
+    radial-gradient(1px 1px at 25% 15%, #fff, transparent),
+    radial-gradient(2px 2px at 40% 5%, #fff, transparent),
+    radial-gradient(1px 1px at 55% 20%, rgba(255,255,255,0.8), transparent),
+    radial-gradient(1.5px 1.5px at 70% 12%, #fff, transparent),
+    radial-gradient(1px 1px at 85% 8%, #fff, transparent),
+    radial-gradient(2px 2px at 18% 30%, rgba(255,255,255,0.9), transparent),
+    radial-gradient(1px 1px at 33% 42%, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 48% 35%, rgba(255,255,255,0.85), transparent),
+    radial-gradient(1px 1px at 62% 38%, #fff, transparent),
+    radial-gradient(1px 1px at 78% 32%, rgba(255,255,255,0.7), transparent),
+    radial-gradient(1.5px 1.5px at 92% 25%, #fff, transparent),
+    radial-gradient(1px 1px at 8% 50%, rgba(255,255,255,0.8), transparent),
+    radial-gradient(1px 1px at 28% 55%, #fff, transparent),
+    radial-gradient(2px 2px at 65% 48%, rgba(255,255,255,0.9), transparent);
+  opacity: 0.85;
+  pointer-events: none;
+  animation: twinkle 4s ease-in-out infinite alternate;
+}
+@keyframes twinkle { 0% { opacity: 0.55; } 100% { opacity: 0.95; } }
+
+/* Mountains + forest silhouette layer */
+#loginView::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 55%;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 600' preserveAspectRatio='none'><path fill='%231e0e3f' fill-opacity='0.55' d='M0,320 L120,260 L220,310 L320,220 L440,300 L560,200 L680,290 L820,210 L960,300 L1100,230 L1240,310 L1360,250 L1440,290 L1440,600 L0,600 Z'/><path fill='%23150a30' fill-opacity='0.85' d='M0,400 L60,360 L130,390 L200,340 L260,380 L320,350 L380,395 L440,360 L500,400 L560,370 L620,410 L680,380 L740,420 L800,390 L860,425 L920,395 L980,430 L1040,400 L1100,440 L1160,410 L1220,440 L1280,420 L1340,450 L1440,420 L1440,600 L0,600 Z'/><g fill='%2308041a'><path d='M40,540 L60,470 L80,540 Z M100,545 L120,475 L140,545 Z M160,540 L180,460 L200,540 Z M220,545 L240,480 L260,545 Z M280,540 L300,470 L320,540 Z M340,545 L360,485 L380,545 Z M400,540 L420,460 L440,540 Z M460,545 L480,475 L500,545 Z M520,540 L540,470 L560,540 Z M580,545 L600,485 L620,545 Z M640,540 L660,465 L680,540 Z M700,545 L720,480 L740,545 Z M760,540 L780,470 L800,540 Z M820,545 L840,485 L860,545 Z M880,540 L900,460 L920,540 Z M940,545 L960,475 L980,545 Z M1000,540 L1020,470 L1040,540 Z M1060,545 L1080,485 L1100,545 Z M1120,540 L1140,460 L1160,540 Z M1180,545 L1200,475 L1220,545 Z M1240,540 L1260,470 L1280,540 Z M1300,545 L1320,485 L1340,545 Z M1360,540 L1380,470 L1400,540 Z'/></g></svg>");
+  background-size: cover;
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+
+/* Login card — glass morphism */
+.login-box {
+  position: relative;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 38px 36px 30px;
+  border-radius: 24px;
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+/* Logo container */
+.login-logo {
+  width: 90px;
+  height: 90px;
+  margin: 0 auto 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+.login-logo img { width: 100%; height: 100%; object-fit: cover; }
+.login-logo .login-logo-fallback {
+  font-size: 42px;
+  color: #fff;
+  text-shadow: 0 2px 10px rgba(255, 255, 255, 0.4);
+}
+
+.login-title {
+  font-size: 32px;
+  color: #fff;
+  font-weight: 800;
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+}
+.login-subtitle {
+  color: rgba(255, 255, 255, 0.75);
+  margin-bottom: 26px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* Input fields with icons */
+.login-field {
+  position: relative;
+  margin-bottom: 14px;
+}
+.login-field input.form-control {
+  width: 100%;
+  padding: 15px 50px 15px 20px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  border-radius: 14px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+body.ar .login-field input.form-control { padding: 15px 20px 15px 50px; }
+.login-field input.form-control::placeholder { color: rgba(255, 255, 255, 0.6); }
+.login-field input.form-control:focus {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08);
+}
+.login-field .login-field-icon {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 18px;
+  transform: translateY(-50%);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 16px;
+  pointer-events: none;
+}
+body.ar .login-field .login-field-icon { right: 18px; left: auto; }
+body.en .login-field .login-field-icon { left: 18px; right: auto; }
+
+.login-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 8px 0 18px;
+  font-size: 13px;
+}
+.login-row label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 500;
+}
+.login-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #a78bfa;
+  cursor: pointer;
+}
+.login-row a {
+  color: rgba(255, 255, 255, 0.9);
+  text-decoration: none;
+  font-weight: 600;
+  cursor: pointer;
+}
+.login-row a:hover { color: #fff; text-decoration: underline; }
+
+.login-box .btn-primary {
+  width: 100%;
+  padding: 15px;
+  font-size: 16px;
+  font-weight: 800;
+  border-radius: 14px;
+  margin-top: 6px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #4c1d95;
+  border: none;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25);
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.1s, box-shadow 0.2s;
+}
+.login-box .btn-primary:hover {
+  background: #fff;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.3);
+}
+.login-box .btn-primary:active { transform: scale(0.97); }
+
+.login-footer {
+  margin-top: 18px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+}
+.login-footer a {
+  color: #fff;
+  text-decoration: none;
+  font-weight: 700;
+  margin-inline-start: 4px;
+}
+.login-footer a:hover { text-decoration: underline; }
+
+/* Sidebar / header logo */
+.brand-logo-img {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+  vertical-align: middle;
+  margin-inline-end: 6px;
+}
+
+/* Mobile login */
+@media (max-width: 768px) {
+  .login-box { padding: 30px 24px 24px; border-radius: 20px; max-width: 360px; }
+  .login-logo { width: 76px; height: 76px; }
+  .login-logo .login-logo-fallback { font-size: 36px; }
+  .login-title { font-size: 26px; }
+  .login-subtitle { margin-bottom: 22px; font-size: 13px; }
+  .login-field input.form-control { padding: 14px 46px 14px 18px; font-size: 16px; }
+  body.ar .login-field input.form-control { padding: 14px 18px 14px 46px; }
+  .login-box .btn-primary { padding: 14px; font-size: 15px; }
+}
 
 /* =========================================
    5. POS Screen (Cashier) Let's make it beautiful

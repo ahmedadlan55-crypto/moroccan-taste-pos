@@ -32,6 +32,13 @@ document.addEventListener('DOMContentLoaded', function() {
   updateCart();
   updateShiftUI();
 
+  // Refresh branding from server (logo + name) and re-render header
+  if (typeof refreshBrandingFromServer === 'function') {
+    refreshBrandingFromServer(function() {
+      renderHeader('pos', { showShift: true });
+    });
+  }
+
   // 5. Refresh from server (latest menu, settings, payment methods, shift)
   loader(true);
   api.withSuccessHandler(function(res) {

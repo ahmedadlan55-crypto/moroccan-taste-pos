@@ -87,6 +87,12 @@ window.onload = function() {
   applyLang();
   translateUI();
 
+  // Apply cached company branding instantly (logo + name) for fast paint on login
+  applyCachedBranding();
+
+  // Refresh branding from server (public — no auth needed)
+  fetchPublicBranding();
+
   // Load cached menu instantly for faster UI
   try {
     var cached = localStorage.getItem("pos_menu_cache");
@@ -151,6 +157,115 @@ function translateUI() {
   });
 }
 
+// =========================================
+// Branding (Logo + Company Name)
+// =========================================
+function applyCachedBranding() {
+  try {
+    var cached = localStorage.getItem('pos_branding');
+    if (cached) {
+      var b = JSON.parse(cached);
+      if (b.name) state.settings.name = b.name;
+      if (b.logo) state.settings.logo = b.logo;
+      applyBrandingToUI(b.name, b.logo);
+    }
+  } catch (e) {}
+}
+
+function fetchPublicBranding() {
+  // Public endpoint — no auth needed
+  fetch('/api/settings').then(function(r) { return r.json(); }).then(function(s) {
+    if (!s) return;
+    var name = s.name || s.CompanyName || 'Moroccan Taste';
+    var logo = s.logo || s.Logo || '';
+    state.settings.name = name;
+    state.settings.logo = logo;
+    try { localStorage.setItem('pos_branding', JSON.stringify({ name: name, logo: logo })); } catch (e) {}
+    applyBrandingToUI(name, logo);
+  }).catch(function() {});
+}
+
+function applyBrandingToUI(name, logo) {
+  // Login screen
+  var loginName = document.getElementById('loginCompanyName');
+  if (loginName && name) loginName.textContent = name;
+  var loginLogoBox = document.getElementById('loginLogoBox');
+  if (loginLogoBox) {
+    if (logo) {
+      loginLogoBox.innerHTML = '<img src="' + logo + '" alt="logo">';
+    } else {
+      loginLogoBox.innerHTML = '<span class="login-logo-fallback">&#9749;</span>';
+    }
+  }
+  // Sidebar (admin)
+  var sbName = document.getElementById('sidebarBrandName');
+  if (sbName && name) sbName.textContent = name;
+  var sbBrand = document.getElementById('sidebarBrand');
+  if (sbBrand && logo) {
+    sbBrand.innerHTML = '<img src="' + logo + '" class="brand-logo-img" alt="logo"> <span id="sidebarBrandName">' + name + '</span>';
+  }
+  // POS header
+  var pbName = document.getElementById('posBrandName');
+  if (pbName && name) pbName.textContent = name;
+  var pbBrand = document.getElementById('posBrand');
+  if (pbBrand && logo) {
+    pbBrand.innerHTML = '<img src="' + logo + '" class="brand-logo-img" alt="logo"> <span id="posBrandName">' + name + '</span>';
+  }
+  // Settings preview (if open)
+  var setLogoPrev = document.getElementById('setLogoPreview');
+  if (setLogoPrev && logo) {
+    setLogoPrev.innerHTML = '<img src="' + logo + '" style="width:100%;height:100%;object-fit:cover;">';
+  }
+  var setName = document.getElementById('setCompany');
+  if (setName && name && !setName.value) setName.value = name;
+}
+
+// Resize uploaded image to ≤200x200 JPEG (~30KB) so it fits in TEXT column
+function handleLogoUpload(input) {
+  var file = input.files && input.files[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/')) return showToast('يرجى اختيار ملف صورة', true);
+
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var img = new Image();
+    img.onload = function() {
+      var MAX = 200;
+      var w = img.width, h = img.height;
+      if (w > h) {
+        if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
+      } else {
+        if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      var canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      var ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      // Try JPEG first (smaller), fallback to PNG if transparent matters
+      var dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      // Show preview immediately
+      var prev = document.getElementById('setLogoPreview');
+      if (prev) prev.innerHTML = '<img src="' + dataUrl + '" style="width:100%;height:100%;object-fit:cover;">';
+      // Stash in state — saved when user clicks "Save Settings"
+      state.settings.logo = dataUrl;
+      showToast('تم تحميل الشعار — اضغط حفظ الإعدادات لاعتماده');
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeLogo() {
+  if (!confirm('هل تريد إزالة شعار الشركة؟')) return;
+  state.settings.logo = '';
+  var prev = document.getElementById('setLogoPreview');
+  if (prev) prev.innerHTML = '<i class="fas fa-image" style="color:#cbd5e1;font-size:28px;"></i>';
+  showToast('سيتم إزالة الشعار عند الحفظ');
+}
+
 function doLogin() {
   const u = q("#lUser").value.trim();
   const p = q("#lPass").value.trim();
@@ -196,6 +311,9 @@ function loadCoreData() {
     state.settings = res.settings;
     if (q("#setCompany")) q("#setCompany").value = res.settings.name || "";
     if (q("#setTax")) q("#setTax").value = res.settings.taxNumber || "";
+    // Apply branding (logo + name) to UI + cache
+    try { localStorage.setItem('pos_branding', JSON.stringify({ name: res.settings.name || '', logo: res.settings.logo || '' })); } catch(e) {}
+    applyBrandingToUI(res.settings.name, res.settings.logo);
 
     state.kitaFeeRate = Number(res.kitaFeeRate) || 0;
     if (q("#setKitaFee")) q("#setKitaFee").value = state.kitaFeeRate;
@@ -617,7 +735,10 @@ function printReceipt(orderId) {
     var vatAmount = Number(inv.totalFinal) - netAmount;
     var payLabel = {'Cash':'Cash | كاش','Card':'Mada | مدى','Kita':'Kita | كيتا'};
 
-    var h = '<div style="text-align:center;font-size:18px;font-weight:900;margin-bottom:2px;">'+companyName+'</div>'+
+    var logoUrl = (state.settings && state.settings.logo) || '';
+    var logoTag = logoUrl ? '<div style="text-align:center;margin-bottom:6px;"><img src="'+logoUrl+'" style="max-width:80px;max-height:80px;object-fit:contain;"></div>' : '';
+    var h = logoTag +
+      '<div style="text-align:center;font-size:18px;font-weight:900;margin-bottom:2px;">'+companyName+'</div>'+
       '<div style="text-align:center;font-size:11px;color:#666;margin-bottom:2px;">Simplified TAX Invoice</div>'+
       '<div style="text-align:center;font-size:11px;color:#666;">فاتورة ضريبية مبسطة</div>'+
       '<div style="text-align:center;font-size:11px;color:#666;margin-bottom:8px;">Tax No: '+taxNumber+'</div>'+
@@ -696,6 +817,7 @@ function printReceiptWindow() {
     'table{width:100%;border-collapse:collapse;}th,td{padding:4px 2px;font-size:11px;}th{text-align:left;border-bottom:1px dashed #000;}'+
     '.center{text-align:center;}.bold{font-weight:700;}.big{font-size:14px;}.line{border-top:1px dashed #000;margin:6px 0;}'+
     '@media print{@page{margin:0;size:80mm auto;}body{padding:4px;width:100%;}}</style></head><body>'+
+    ((state.settings && state.settings.logo) ? '<div class="center" style="margin-bottom:6px;"><img src="'+state.settings.logo+'" style="max-width:80px;max-height:80px;"></div>' : '')+
     '<div class="center bold" style="font-size:16px;">'+r.companyName+'</div>'+
     '<div class="center" style="font-size:10px;color:#666;">Simplified TAX Invoice | فاتورة ضريبية مبسطة</div>'+
     '<div class="center" style="font-size:10px;color:#666;margin-bottom:6px;">Tax: '+r.taxNumber+'</div>'+
@@ -2197,7 +2319,7 @@ function populateReportFilters() {
 // Settings Update
 function saveDashSettings() {
   loader();
-  var up = { name: q("#setCompany").value, taxNumber: q("#setTax").value };
+  var up = { name: q("#setCompany").value, taxNumber: q("#setTax").value, logo: state.settings.logo || '' };
   // Collect payment methods from settings UI
   var methods = (state.paymentMethods||[]).map(function(m, i) {
     var activeEl = document.querySelector('.pm-active[data-idx="'+i+'"]');
@@ -2221,6 +2343,9 @@ function saveDashSettings() {
       showToast("تم تحديث جميع الإعدادات بنجاح");
       state.settings.name = up.name;
       state.settings.taxNumber = up.taxNumber;
+      // Re-apply branding immediately + cache for fast paint next time
+      try { localStorage.setItem('pos_branding', JSON.stringify({ name: up.name, logo: up.logo })); } catch(e) {}
+      applyBrandingToUI(up.name, up.logo);
     }).savePaymentMethods(methods);
   }).updateCompanySettings(up);
 }
@@ -3202,6 +3327,7 @@ function printShiftReport(res, actualCash, actualCard, actualKita) {
   '.grand{font-size:15px;font-weight:900;background:#eff6ff;}.footer{text-align:center;margin-top:20px;font-size:11px;color:#94a3b8;border-top:1px dashed #cbd5e1;padding-top:10px;}'+
   '@media print{body{padding:10px;}}</style></head><body>'+
 
+  ((state.settings && state.settings.logo) ? '<div style="text-align:center;margin-bottom:8px;"><img src="'+state.settings.logo+'" style="max-width:90px;max-height:90px;"></div>' : '')+
   '<div class="header"><h1>'+companyName+'</h1><h2>Shift Close Report / تقرير إغلاق الوردية</h2></div>'+
 
   '<div class="meta"><span>Cashier: <b>'+user+'</b></span><span>Shift: <b>'+shiftId+'</b></span><span>Date: <b>'+now.toLocaleDateString('en-US')+'</b></span><span>Time: <b>'+now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})+'</b></span></div>'+

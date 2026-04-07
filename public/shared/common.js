@@ -170,3 +170,24 @@ window.restoreState = function() {
 
 // Apply language on first load
 applyLang();
+
+// ─── Branding (logo + name) ───
+window.loadBrandingFromCache = function() {
+  try {
+    var b = JSON.parse(localStorage.getItem('pos_branding') || '{}');
+    if (b.name) state.settings.name = b.name;
+    if (b.logo) state.settings.logo = b.logo;
+  } catch (e) {}
+};
+window.refreshBrandingFromServer = function(cb) {
+  fetch('/api/settings').then(function(r) { return r.json(); }).then(function(s) {
+    if (!s) return;
+    var name = s.name || s.CompanyName || state.settings.name || 'Moroccan Taste';
+    var logo = s.logo || s.Logo || '';
+    state.settings.name = name;
+    state.settings.logo = logo;
+    try { localStorage.setItem('pos_branding', JSON.stringify({ name: name, logo: logo })); } catch (e) {}
+    if (typeof cb === 'function') cb(name, logo);
+  }).catch(function() {});
+};
+loadBrandingFromCache();

@@ -40,8 +40,12 @@
       ? '<div id="shiftBadge" class="shift-indicator">' + (state.activeShiftId || (lang === 'ar' ? 'لا يوجد وردية' : 'No shift')) + '</div>'
       : '';
 
+    var brandLogo = state.settings && state.settings.logo
+      ? '<img src="' + state.settings.logo + '" style="width:32px;height:32px;border-radius:8px;object-fit:cover;">'
+      : '<i class="fas fa-mug-hot"></i>';
+
     host.innerHTML =
-      '<div class="app-brand"><i class="fas fa-mug-hot"></i><span>' + (state.settings && state.settings.name || 'Moroccan Taste') + '</span></div>' +
+      '<div class="app-brand">' + brandLogo + '<span>' + (state.settings && state.settings.name || 'Moroccan Taste') + '</span></div>' +
       '<button class="app-menu-toggle" onclick="toggleAppNav()" aria-label="Menu"><i class="fas fa-bars"></i></button>' +
       '<nav class="app-nav" id="appNav">' + navHtml + '</nav>' +
       '<div class="app-header-actions">' +

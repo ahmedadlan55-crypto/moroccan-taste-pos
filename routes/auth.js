@@ -97,13 +97,16 @@ router.get('/users', async (req, res) => {
     const meta = await getUserMeta();
     res.json(users.map(u => {
       const m = meta[u.username] || {};
+      // Default the seed admin user to "مدير النظام" so the row never looks empty,
+      // and treat any admin-role user as a developer by default (matches auth/init).
+      const fallbackName = u.username === 'admin' ? 'مدير النظام' : '';
       return {
         username: u.username,
         role: u.role,
         active: !!u.active,
         createdAt: u.created_at,
-        displayName: m.name || '',
-        isDeveloper: !!m.isDeveloper
+        displayName: m.name || fallbackName,
+        isDeveloper: !!m.isDeveloper || u.role === 'admin'
       };
     }));
   } catch (e) { res.json([]); }

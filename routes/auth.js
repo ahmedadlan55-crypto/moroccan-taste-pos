@@ -2,6 +2,13 @@ const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../db/connection');
+const path = require('path');
+const verifyToken = require('./authMiddleware');
+
+// Serve protected app template
+router.get('/template', verifyToken, (req, res) => {
+  res.sendFile(path.join(__dirname, '../views/app-content.html'));
+});
 
 // Login
 router.post('/login', async (req, res) => {
@@ -18,6 +25,7 @@ router.post('/login', async (req, res) => {
     res.json({ success: true, username: user.username, role: user.role, token });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
+
 
 // Get initial app data
 router.get('/init/:username', async (req, res) => {

@@ -136,6 +136,68 @@ function paymentLabel(paymentStr) {
   }).join(' + ');
 }
 
+// =========================================
+// Server-side template injection (Foodics-style)
+// =========================================
+// The application HTML (admin / POS / ERP / modals) is NOT in index.html.
+// It lives in views/app-content.html and is served by GET /api/auth/template,
+// which is protected by the JWT verifyToken middleware. The frontend fetches
+// it AFTER login, injects it at the <!-- TEMPLATE_INJECTION_POINT --> marker,
+// then runs the normal init flow. Anonymous visitors never see the HTML.
+function fetchAppTemplate() {
+  var token = localStorage.getItem('pos_token');
+  if (!token) return Promise.reject(new Error('NO_TOKEN'));
+  return fetch('/api/auth/template', {
+    headers: { 'Authorization': 'Bearer ' + token, 'Cache-Control': 'no-cache' }
+  }).then(function(r) {
+    if (r.status === 401) throw new Error('UNAUTHORIZED');
+    if (!r.ok) throw new Error('FETCH_FAILED_' + r.status);
+    return r.text();
+  });
+}
+
+function injectAppTemplate(html) {
+  // If already injected (DOM already has #posView), do nothing
+  if (document.getElementById('posView') || document.getElementById('adminView')) return;
+
+  // Find the marker comment node
+  var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_COMMENT, null);
+  var marker = null;
+  while (walker.nextNode()) {
+    if (walker.currentNode.nodeValue && walker.currentNode.nodeValue.indexOf('TEMPLATE_INJECTION_POINT') !== -1) {
+      marker = walker.currentNode;
+      break;
+    }
+  }
+
+  // Parse HTML into a fragment via a temporary container
+  var container = document.createElement('div');
+  container.innerHTML = html;
+
+  // Insert each top-level child of the container before the marker (or before the first script)
+  var insertBefore = marker || document.querySelector('script[src="/js/api-bridge.js"]') || document.querySelector('script[src="/js/app.js"]');
+  while (container.firstChild) {
+    document.body.insertBefore(container.firstChild, insertBefore);
+  }
+  // Remove the marker (we keep the position by inserting before it)
+  if (marker && marker.parentNode) marker.parentNode.removeChild(marker);
+}
+
+// Wipe injected template back out — used by logout
+function clearInjectedTemplate() {
+  var keep = { 'loader': 1, 'loginView': 1, 'toastContainer': 1 };
+  Array.from(document.body.children).forEach(function(node) {
+    if (node.id && keep[node.id]) return;
+    if (node.tagName === 'SCRIPT' || node.tagName === 'STYLE') return;
+    node.remove();
+  });
+  // Re-add the marker so subsequent logins can re-inject
+  var firstScript = document.querySelector('script[src="/js/api-bridge.js"]') || document.querySelector('script[src="/js/app.js"]');
+  if (firstScript && firstScript.parentNode === document.body) {
+    document.body.insertBefore(document.createComment(' TEMPLATE_INJECTION_POINT '), firstScript);
+  }
+}
+
 // Locales Dict
 const dict = {
   ar: {
@@ -226,20 +288,37 @@ window.onload = function() {
     }
   } catch(e) {}
 
-  // Auto-login from saved session
-  const saved = localStorage.getItem("pos_session");
-  if (saved) {
-    try {
-      const session = JSON.parse(saved);
-      if (session.user && session.pass) {
-        q("#lUser").value = session.user;
-        q("#lPass").value = session.pass;
-        if (q("#lRemember")) q("#lRemember").checked = true;
-        doLogin();
-        return;
-      }
-    } catch(e) {}
+  // ─── Silent auto-login from saved JWT ───
+  // Instead of replaying the username + password through the login API,
+  // we test the saved JWT by attempting to fetch the protected template.
+  // If 200 → token is valid → inject + initialize without ever showing the
+  // login screen. If 401 → token expired → clear and show the login screen.
+  var token = localStorage.getItem("pos_token");
+  var saved = localStorage.getItem("pos_session");
+  if (token && saved) {
+    fetchAppTemplate()
+      .then(function(html) {
+        injectAppTemplate(html);
+        try {
+          var s = JSON.parse(saved);
+          state.user = s.user || '';
+          state.role = (s.role || '').toLowerCase();
+          // Pre-fill login fields too in case the user logs out and back in
+          if (q("#lUser")) q("#lUser").value = s.user || '';
+          if (q("#lPass") && s.pass) q("#lPass").value = s.pass;
+          if (q("#lRemember")) q("#lRemember").checked = true;
+        } catch(e) {}
+        loadCoreData();
+      })
+      .catch(function(err) {
+        // Token expired / invalid — clear and reveal the login screen
+        localStorage.removeItem("pos_token");
+        // Keep pos_session so the user can quickly log back in if it was cached
+        loader(false);
+      });
+    return;
   }
+
   loader(false);
 };
 
@@ -391,24 +470,36 @@ function doLogin() {
   const u = q("#lUser").value.trim();
   const p = q("#lPass").value.trim();
   if (!u || !p) return showToast("يرجى إدخال اسم المستخدم وكلمة المرور", true);
-  
+
   loader(true);
   api.withSuccessHandler(res => {
     if (!res.success) { loader(false); showToast(res.error, true); return; }
     state.user = res.username;
     state.role = res.role.toLowerCase();
-    
-    // Save session if remember me is checked
-    var rememberEl = q("#lRemember");
-    if (rememberEl && rememberEl.checked) {
-      localStorage.setItem("pos_session", JSON.stringify({ user: u, pass: p, role: state.role }));
-    }
+
+    // Save token for secured API calls and templates
+    localStorage.setItem("pos_token", res.token);
+
+    // Always save session so the template auto-fetch on reload works
+    localStorage.setItem("pos_session", JSON.stringify({ user: u, pass: p, role: state.role }));
 
     // Save current page state
     localStorage.setItem("pos_last_view", state.role === 'admin' ? 'admin' : 'pos');
 
-    // Load Core Data
-    loadCoreData();
+    // Fetch the protected app template, inject it, then run the normal init
+    fetchAppTemplate()
+      .then(injectAppTemplate)
+      .then(function() { loadCoreData(); })
+      .catch(function(err) {
+        loader(false);
+        // Token invalid (shouldn't happen right after login) — clear and reset
+        if (err.message === 'UNAUTHORIZED') {
+          localStorage.removeItem('pos_token');
+          showToast('فشل التحقق من الجلسة، حاول مرة أخرى', true);
+        } else {
+          showToast('فشل تحميل التطبيق: ' + err.message, true);
+        }
+      });
   }).checkLogin(u, p);
 }
 
@@ -461,8 +552,32 @@ function loadCoreData() {
     // Cache menu in localStorage
     try { localStorage.setItem("pos_menu_cache", JSON.stringify({ ts: Date.now(), menu: state.menu })); } catch(e) {}
 
-    updateShiftUI();
-    initViews();
+    // Fetch the protected HTML template for the app
+    const token = localStorage.getItem("pos_token");
+    if (token) {
+      fetch('/api/auth/template', { headers: { Authorization: "Bearer " + token } })
+        .then(r => {
+          if (!r.ok) throw new Error('Unauthenticated');
+          return r.text();
+        })
+        .then(html => {
+          const div = document.createElement('div');
+          div.innerHTML = html;
+          while(div.firstChild) {
+            document.body.appendChild(div.firstChild);
+          }
+          updateShiftUI();
+          initViews();
+        })
+        .catch(err => {
+          loader(false);
+          logout();
+          showToast("انتهت الجلسة، الرجاء تسجيل الدخول مجددا", true);
+        });
+    } else {
+      updateShiftUI();
+      initViews();
+    }
   }).getInitialAppData(state.user);
 }
 
@@ -499,19 +614,28 @@ function viewPOS() { hide("#adminView"); show("#posView"); renderMenuGrid(); }
 function viewAdmin() { if (state.role === "admin") { hide("#posView"); show("#adminView"); nav('home'); } }
 
 function logout() {
-  // Clear saved session
+  // Clear saved session and JWT
   localStorage.removeItem("pos_session");
   localStorage.removeItem("pos_token");
+  localStorage.removeItem("pos_active_shift_id");
+
   // Reset app state
   state.user = ""; state.role = ""; state.shift = ""; state.cart = []; state.menu = []; state.categories = [];
+
   // Re-engage the auth gate so nothing else is visible
   document.body.classList.remove('authenticated');
-  // Hide all views and show login
-  hide("#posView"); hide("#adminView");
+
+  // Wipe the injected template DOM (all sections + modals from views/app-content.html)
+  if (typeof clearInjectedTemplate === 'function') clearInjectedTemplate();
+
+  // Show the login view (still in the document — never injected)
   show("#loginView");
+
   // Clear login form
-  q("#lUser").value = ""; q("#lPass").value = "";
+  if (q("#lUser")) q("#lUser").value = "";
+  if (q("#lPass")) q("#lPass").value = "";
   if (q("#lRemember")) q("#lRemember").checked = false;
+
   showToast(state.lang === 'ar' ? 'تم تسجيل الخروج' : 'Logged out');
 }
 

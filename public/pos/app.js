@@ -6,6 +6,8 @@
 // ─── Boot ───
 document.addEventListener('DOMContentLoaded', function() {
   if (!requireAuth()) return;
+  // Release the visibility gate immediately — auth confirmed
+  document.body.classList.add('authenticated');
   restoreState();
 
   // 1. Show cached menu instantly for fast first paint

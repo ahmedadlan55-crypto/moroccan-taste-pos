@@ -1,0 +1,1715 @@
+<!-- 2. POS SCREEN (Cashier) -->
+  <div id="posView" class="hidden">
+    <!-- POS Header -->
+    <div class="pos-header">
+      <div class="pos-brand" id="posBrand"><i class="fas fa-mug-hot"></i> <span id="posBrandName">Moroccan Taste</span></div>
+      <div class="pos-header-actions">
+        <div id="shiftBadge" class="shift-indicator" data-i18n="noShift">لا يوجد وردية مفتوحة</div>
+        <button class="btn btn-light" onclick="toggleLang()"><i class="fas fa-language"></i> AR/EN</button>
+        <button class="btn btn-danger" onclick="logout()">Exit</button>
+        <button class="btn btn-success hidden" id="goToDashBtn" onclick="viewAdmin()">Admin</button>
+      </div>
+    </div>
+    
+    <!-- POS Main Layout -->
+    <div class="pos-main">
+      <!-- Products List Area -->
+      <div class="pos-products-area">
+        <div class="pos-search-bar">
+          <i class="fas fa-search"></i>
+          <input type="text" id="posSearchInput" placeholder="البحث برقم، أو اسم المنتج..." oninput="renderMenuGrid()">
+        </div>
+        
+        <div class="pos-categories" id="posCatTabs">
+          <!-- Categories Injected via JS -->
+        </div>
+        
+        <div class="pos-grid" id="posItemsGrid">
+          <!-- Products Injected via JS -->
+        </div>
+      </div>
+      
+      <!-- Cart Box Area -->
+      <div class="pos-cart-area" id="mobileCartPanel">
+        <div class="cart-header">
+          <button class="btn btn-light mobile-close-cart" onclick="toggleMobileCart()"><i class="fas fa-arrow-right"></i> <span data-i18n="goBack">الرجوع</span></button>
+          <h3 class="desktop-cart-title"><i class="fas fa-shopping-basket" style="color:var(--accent);"></i> <span data-i18n="cartTitle">سلة الطلبات</span></h3>
+          <div>
+            <button class="btn btn-light" style="padding:8px 12px; color:#b45309;" onclick="openDiscountModal()" title="إضافة خصم"><i class="fas fa-tag"></i></button>
+            <button class="btn btn-light" style="padding:8px 12px; color:var(--danger);" onclick="clearCart()" title="إفراغ السلة"><i class="fas fa-trash"></i></button>
+          </div>
+        </div>
+        
+        <div class="cart-items" id="cartItemsArea">
+          <!-- Cart Items Injected via JS -->
+        </div>
+        
+        <div class="cart-footer">
+          <div class="pay-methods" id="payMethodsContainer">
+            <button class="pay-btn active" id="payBtnCash" onclick="setPayMethod('Cash')"><i class="fas fa-money-bill-wave"></i> <span data-i18n="cash">كاش</span></button>
+            <button class="pay-btn" id="payBtnCard" onclick="setPayMethod('Card')"><i class="fas fa-credit-card"></i> <span data-i18n="card">مدى</span></button>
+            <button class="pay-btn" id="payBtnKita" onclick="setPayMethod('Kita')"><i class="fas fa-calculator"></i> <span data-i18n="kita">كيتا</span></button>
+            <input type="hidden" id="posPayMethod" value="Cash">
+          </div>
+
+          <div class="cart-summary-line"><span data-i18n="subtotal">المجموع الفرعي:</span><span id="cartSubtotalText">0.00</span></div>
+          <div class="cart-summary-line" style="color:var(--danger);"><span data-i18n="discount">الخصم:</span><span id="cartDiscText">0.00</span></div>
+          <div class="hidden" id="serviceFeeRow" style="background:rgba(254,243,199,0.5);padding:8px 10px;border-radius:10px;margin-bottom:8px;border:1px solid #fde047;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span id="serviceFeeLabel" style="font-size:13px;font-weight:700;color:#92400e;">رسوم الخدمة:</span>
+              <span id="serviceFeeText" style="font-weight:800;color:#b45309;">0.00</span>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <input type="number" id="serviceFeeInput" step="0.01" min="0" class="form-control" placeholder="أدخل مبلغ الرسوم يدوياً" oninput="applyManualServiceFee()" style="flex:1;padding:8px 10px;font-size:14px;font-weight:700;border-radius:8px;">
+              <span style="font-size:11px;color:#92400e;white-space:nowrap;">SAR</span>
+            </div>
+          </div>
+          <div class="cart-summary-total"><span data-i18n="totalLabel">الإجمالي:</span><span id="cartFinalTotal">0.00 SAR</span></div>
+
+          <!-- Split Payment Panel -->
+          <div id="splitPayPanel" class="hidden" style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:10px;">
+            <h4 style="font-size:13px;font-weight:700;margin-bottom:10px;color:var(--primary);"><i class="fas fa-divide"></i> <span data-i18n="split">تجزئة</span></h4>
+            <div id="splitFields" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div>
+            <div style="margin-top:8px;text-align:center;font-weight:800;font-size:14px;"><span id="splitRemainingLabel">Remaining:</span> <span id="splitRemaining" style="color:var(--danger);">0.00</span></div>
+          </div>
+
+          <button class="btn btn-primary checkout-btn" onclick="doCheckout()"><i class="fas fa-check-circle"></i> <span data-i18n="checkoutBtn">إتمام الدفع والطلب</span></button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Mobile Floating Cart Button -->
+    <div class="mobile-cart-btn" id="mobileCartBtn" onclick="toggleMobileCart()">
+      <div style="position:relative; display:flex; align-items:center; gap:10px;">
+        <i class="fas fa-shopping-cart"></i> <span data-i18n="viewCart">مشاهدة السلة</span> 
+        <span id="mobCartCount" style="background:var(--danger); color:white; padding:2px 8px; border-radius:10px; font-size:12px; position:absolute; top:-10px; right:-20px;">0</span>
+      </div>
+      <div id="mobCartTotal" style="font-size:20px;">0.00 SAR</div>
+    </div>
+    
+    <!-- Floating Shift Controls for POS -->
+    <div class="float-actions">
+      <button class="btn btn-success" onclick="shiftOpen()" title="فتح وردية"><i class="fas fa-play"></i></button>
+      <button class="btn btn-danger" onclick="shiftCloseStart()" title="إغلاق الوردية"><i class="fas fa-stop"></i></button>
+    </div>
+  </div>
+
+  <!-- 3. ADMIN DASHBOARD SCREEN -->
+  <div id="adminView" class="hidden">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-brand" id="sidebarBrand">
+        <i class="fas fa-mug-hot" style="color:var(--accent);"></i> <span id="sidebarBrandName">Moroccan Taste</span>
+      </div>
+      <div class="sidebar-nav">
+        <div class="nav-item active" onclick="nav('home')"><i class="fas fa-chart-line"></i><span>الرئيسية</span></div>
+        <div class="nav-item" onclick="nav('sales')"><i class="fas fa-receipt"></i><span>المبيعات</span></div>
+
+        <!-- ═══ مجموعة المستودعات (كل ما يخص المخزون والمشتريات) ═══ -->
+        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
+          <i class="fas fa-warehouse"></i><span>المستودعات</span><i class="fas fa-chevron-down submenu-indicator"></i>
+        </div>
+        <div class="submenu">
+          <div class="nav-item" onclick="nav('warehouse')"><i class="fas fa-boxes-stacked"></i><span>إدارة المخزون</span></div>
+          <div class="nav-item" onclick="nav('inventory')"><i class="fas fa-clipboard-list"></i><span>المنيو والوصفات</span></div>
+          <div class="nav-item" onclick="nav('purchases')"><i class="fas fa-truck-loading"></i><span>المشتريات</span></div>
+          <div class="nav-item" data-erp-nav="erpPurchaseOrders" onclick="erpNav('erpPurchaseOrders')"><i class="fas fa-shopping-cart"></i><span>أوامر الشراء</span></div>
+          <div class="nav-item" data-erp-nav="erpWarehouses" onclick="erpNav('erpWarehouses')"><i class="fas fa-warehouse"></i><span>إدارة المستودعات</span></div>
+          <div class="nav-item" data-erp-nav="erpWarehouseStock" onclick="erpNav('erpWarehouseStock')"><i class="fas fa-boxes"></i><span>أرصدة المستودعات</span></div>
+          <div class="nav-item" data-erp-nav="erpStockTransfers" onclick="erpNav('erpStockTransfers')"><i class="fas fa-exchange-alt"></i><span>التحويلات بين الفروع</span></div>
+        </div>
+
+        <div class="nav-item" onclick="nav('expenses')"><i class="fas fa-money-check-alt"></i><span>المصروفات</span></div>
+        <div class="nav-item" onclick="nav('users')"><i class="fas fa-users-cog"></i><span>صلاحيات الموظفين</span></div>
+        <div class="nav-item" onclick="nav('shifts')"><i class="fas fa-folder-open"></i><span>سجل المناوبات</span></div>
+        <div class="nav-item" onclick="nav('reports')"><i class="fas fa-file-excel"></i><span>التقارير</span></div>
+        <div class="nav-item" onclick="nav('settings')"><i class="fas fa-sliders-h"></i><span>الإعدادات</span></div>
+
+        <!-- ═══ ERP System ═══ -->
+        <div style="border-top:1px solid rgba(255,255,255,0.1);margin:10px 0;padding-top:8px;">
+          <div style="padding:4px 16px;font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:1px;">نظام ERP</div>
+        </div>
+        <div class="nav-item" data-erp-nav="erpDashHome" onclick="erpNav('erpDashHome')"><i class="fas fa-building"></i><span>لوحة ERP</span></div>
+
+        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
+          <i class="fas fa-calculator"></i><span>المحاسبة</span><i class="fas fa-chevron-down submenu-indicator"></i>
+        </div>
+        <div class="submenu">
+          <div class="nav-item" data-erp-nav="erpGLAccounts" onclick="erpNav('erpGLAccounts')"><i class="fas fa-sitemap"></i><span>دليل الحسابات</span></div>
+          <div class="nav-item" data-erp-nav="erpGLJournals" onclick="erpNav('erpGLJournals')"><i class="fas fa-book"></i><span>القيود المحاسبية</span></div>
+          <div class="nav-item" data-erp-nav="erpPeriods" onclick="erpNav('erpPeriods')"><i class="fas fa-calendar-alt"></i><span>الفترات المحاسبية</span></div>
+          <div class="nav-item" data-erp-nav="erpFinReports" onclick="erpNav('erpFinReports')"><i class="fas fa-chart-bar"></i><span>التقارير المالية</span></div>
+        </div>
+
+        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
+          <i class="fas fa-users"></i><span>العملاء والموردين</span><i class="fas fa-chevron-down submenu-indicator"></i>
+        </div>
+        <div class="submenu">
+          <div class="nav-item" data-erp-nav="erpCustomers" onclick="erpNav('erpCustomers')"><i class="fas fa-user-tie"></i><span>العملاء</span></div>
+          <div class="nav-item" data-erp-nav="erpSuppliers" onclick="erpNav('erpSuppliers')"><i class="fas fa-truck"></i><span>الموردين</span></div>
+          <div class="nav-item" data-erp-nav="erpCustomerStatement" onclick="erpNav('erpCustomerStatement')"><i class="fas fa-file-invoice-dollar"></i><span>كشف حساب عميل</span></div>
+          <div class="nav-item" data-erp-nav="erpSupplierStatement" onclick="erpNav('erpSupplierStatement')"><i class="fas fa-file-invoice"></i><span>كشف حساب مورد</span></div>
+          <div class="nav-item" data-erp-nav="erpARAging" onclick="erpNav('erpARAging')"><i class="fas fa-user-clock"></i><span>أعمار ذمم العملاء</span></div>
+          <div class="nav-item" data-erp-nav="erpAPAging" onclick="erpNav('erpAPAging')"><i class="fas fa-truck-loading"></i><span>أعمار ذمم الموردين</span></div>
+        </div>
+
+        <div class="nav-item" data-erp-nav="erpVATReports" onclick="erpNav('erpVATReports')"><i class="fas fa-percent"></i><span>تقارير الضريبة</span></div>
+        <div class="nav-item" data-erp-nav="erpZATCA" onclick="erpNav('erpZATCA')"><i class="fas fa-stamp"></i><span>ZATCA</span></div>
+        <div class="nav-item" data-erp-nav="erpCreditNotes" onclick="erpNav('erpCreditNotes')"><i class="fas fa-file-alt"></i><span>الإشعارات</span></div>
+        <div class="nav-item" data-erp-nav="erpBranches" onclick="erpNav('erpBranches')"><i class="fas fa-code-branch"></i><span>الفروع</span></div>
+        <div class="nav-item" data-erp-nav="erpAuditLog" onclick="erpNav('erpAuditLog')"><i class="fas fa-history"></i><span>سجل العمليات</span></div>
+      </div>
+    </div>
+    
+    <!-- Main Content Area -->
+    <div class="admin-content">
+      <div class="admin-header">
+        <div class="admin-header-title">لوحة تحكم المدير</div>
+        <div class="admin-header-actions">
+          <div class="admin-user-badge"><div class="admin-avatar"><i class="fas fa-user"></i></div><span id="adminUserLabel">Admin</span></div>
+          <button class="btn btn-success" onclick="viewPOS()"><i class="fas fa-cash-register"></i> واجهة البيع</button>
+          <button class="btn btn-light" style="color:var(--danger);" onclick="logout()"><i class="fas fa-sign-out-alt"></i> تسجيل خروج</button>
+        </div>
+      </div>
+      
+      <div class="admin-main">
+        
+        <!-- Section: Overview (Home) -->
+        <div id="sec_home" class="admin-section active">
+          <div class="stat-grid">
+            <div class="stat-card">
+              <div class="stat-info"><h4>إجمالي مبيعات اليوم</h4><p id="dhTotalSale">0.00</p></div>
+              <div class="stat-icon" style="background:#e0e7ff; color:#4f46e5;"><i class="fas fa-money-bill-trend-up"></i></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-info"><h4>عدد طلبات اليوم</h4><p id="dhTotalOrders">0</p></div>
+              <div class="stat-icon" style="background:#dcfce7; color:#16a34a;"><i class="fas fa-shopping-bag"></i></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-info"><h4>مبيعات الكاش</h4><p id="dhTotalCash">0.00</p></div>
+              <div class="stat-icon" style="background:#fef9c3; color:#ca8a04;"><i class="fas fa-coins"></i></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-info"><h4>مبيعات الشبكة</h4><p id="dhTotalCard">0.00</p></div>
+              <div class="stat-icon" style="background:#fee2e2; color:#dc2626;"><i class="fas fa-credit-card"></i></div>
+            </div>
+          </div>
+          
+          <style>
+            .dash-chart-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px; }
+            @media (max-width:992px) { .dash-chart-grid { grid-template-columns:1fr; } }
+          </style>
+          
+          <div class="dash-chart-grid">
+            <div class="dash-box" style="display:flex; flex-direction:column;">
+              <h3 class="dash-box-title">حركة المبيعات (آخر 7 أيام)</h3>
+              <div style="flex:1; position:relative; min-height:280px;"><canvas id="dailySalesChartCtx"></canvas></div>
+            </div>
+            <div class="dash-box" style="display:flex; flex-direction:column;">
+              <h3 class="dash-box-title">أكثر ساعات العمل مبيعاً</h3>
+              <div style="flex:1; position:relative; min-height:280px;"><canvas id="hourlySalesChartCtx"></canvas></div>
+            </div>
+            <div class="dash-box" style="display:flex; flex-direction:column;">
+              <h3 class="dash-box-title">أكثر العناصر مبيعاً (المنتجات)</h3>
+              <div style="flex:1; position:relative; min-height:280px;"><canvas id="topItemsChartCtx"></canvas></div>
+            </div>
+            <div class="dash-box" style="display:flex; flex-direction:column;">
+              <h3 class="dash-box-title">مبيعات الشيفتات (حسب الموظف)</h3>
+              <div style="flex:1; position:relative; min-height:280px;"><canvas id="userSalesChartCtx"></canvas></div>
+            </div>
+          </div>
+          
+          <div class="dash-row">
+            <div class="dash-box" style="width:100%;">
+              <h3 class="dash-box-title" style="color:var(--danger);"><i class="fas fa-exclamation-triangle"></i> نواقص المخزون والتنبيهات</h3>
+              <div id="dhLowStock" style="display:flex; flex-direction:column; gap:10px;"></div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Section: Sales History (with Tabs) -->
+        <div id="sec_sales" class="admin-section">
+          <!-- Sales Tabs -->
+          <div class="sales-tabs">
+            <div class="sales-tab active" onclick="switchSalesTab('log')" id="stab_log"><i class="fas fa-receipt"></i> <span>سجل المبيعات</span></div>
+            <div class="sales-tab" onclick="switchSalesTab('payments')" id="stab_payments"><i class="fas fa-money-bill-wave"></i> <span>الدفعات</span></div>
+            <div class="sales-tab" onclick="switchSalesTab('reports')" id="stab_reports"><i class="fas fa-chart-pie"></i> <span>تقارير المبيعات</span></div>
+          </div>
+
+          <!-- Tab 1: Sales Log -->
+          <div class="sales-tab-content active" id="stc_log">
+            <div class="filter-bar" style="flex-wrap:wrap;">
+              <div class="form-group"><label class="form-label">من تاريخ</label><input type="date" id="fsStart" class="form-control"></div>
+              <div class="form-group"><label class="form-label">إلى تاريخ</label><input type="date" id="fsEnd" class="form-control"></div>
+              <div class="form-group"><label class="form-label">الكاشير</label><select id="fsCashier" class="form-control"><option value="">الكل</option></select></div>
+              <div class="form-group"><label class="form-label">طريقة الدفع</label>
+                <select id="fsPay" class="form-control"><option value="">الكل</option><option value="cash">كاش</option><option value="card">مدى/شبكة</option><option value="kita">كيتا</option></select>
+              </div>
+              <button class="btn btn-primary" style="height:48px;" onclick="loadDashSales()"><i class="fas fa-filter"></i> تصفية</button>
+              <button class="btn btn-success" style="height:48px;" onclick="exportSalesExcel()"><i class="fas fa-file-excel"></i> تصدير</button>
+              <button class="btn btn-light" style="height:48px;" onclick="resetSalesFilter()"><i class="fas fa-redo"></i></button>
+            </div>
+            <div class="stat-grid" style="margin-bottom:15px;">
+              <div class="stat-card"><div class="stat-info"><h4>إجمالي المبيعات</h4><p id="slTotalSales">0.00</p></div><div class="stat-icon" style="background:#e0e7ff;color:#4f46e5;"><i class="fas fa-money-bill-trend-up"></i></div></div>
+              <div class="stat-card"><div class="stat-info"><h4>عدد الفواتير</h4><p id="slTotalCount">0</p></div><div class="stat-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-file-invoice"></i></div></div>
+            </div>
+            <div class="table-wrapper">
+              <table class="table">
+                <thead><tr><th>رقم الفاتورة</th><th>التاريخ والوقت</th><th>الكاشير</th><th style="width:35%;">المنتجات المباعة</th><th>وسيلة الدفع</th><th>المبلغ المستحق</th><th>إجراء</th></tr></thead>
+                <tbody id="tbSales"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab 2: Payments -->
+          <div class="sales-tab-content" id="stc_payments">
+            <div class="filter-bar" style="flex-wrap:wrap;">
+              <div class="form-group"><label class="form-label">من تاريخ</label><input type="date" id="fpayStart" class="form-control"></div>
+              <div class="form-group"><label class="form-label">إلى تاريخ</label><input type="date" id="fpayEnd" class="form-control"></div>
+              <div class="form-group"><label class="form-label">الكاشير</label><select id="fpayCashier" class="form-control"><option value="">الكل</option></select></div>
+              <button class="btn btn-primary" style="height:48px;" onclick="loadPayments()"><i class="fas fa-filter"></i> تصفية</button>
+            </div>
+            <div class="pay-summary-grid">
+              <div class="pay-summary-card"><div class="psc-icon">💵</div><div class="psc-val" id="payTotalCash" style="color:#16a34a;">0.00</div><div class="psc-label" style="color:#166534;">كاش</div><div class="psc-count" style="color:#64748b;"><span id="payCntCash">0</span> عملية</div></div>
+              <div class="pay-summary-card"><div class="psc-icon">💳</div><div class="psc-val" id="payTotalCard" style="color:#1e40af;">0.00</div><div class="psc-label" style="color:#1e40af;">مدى / شبكة</div><div class="psc-count" style="color:#64748b;"><span id="payCntCard">0</span> عملية</div></div>
+              <div class="pay-summary-card"><div class="psc-icon">🧾</div><div class="psc-val" id="payTotalKita" style="color:#854d0e;">0.00</div><div class="psc-label" style="color:#854d0e;">كيتا</div><div class="psc-count" style="color:#64748b;"><span id="payCntKita">0</span> عملية</div></div>
+              <div class="pay-summary-card" style="background:#f8fafc;"><div class="psc-icon">📈</div><div class="psc-val" id="payTotalAll" style="color:var(--primary);">0.00</div><div class="psc-label" style="color:var(--primary);">إجمالي</div><div class="psc-count" style="color:#64748b;"><span id="payCntAll">0</span> عملية</div></div>
+            </div>
+            <div class="table-wrapper">
+              <table class="table">
+                <thead><tr><th>التاريخ</th><th>كاش</th><th>مدى/شبكة</th><th>كيتا</th><th>الإجمالي</th><th>عدد العمليات</th></tr></thead>
+                <tbody id="tbPayments"></tbody>
+              </table>
+            </div>
+            <h4 style="margin-top:20px;color:var(--primary);font-weight:800;">توزيع حسب الكاشير</h4>
+            <div class="table-wrapper" style="margin-top:10px;">
+              <table class="table">
+                <thead><tr><th>الكاشير</th><th>كاش</th><th>مدى</th><th>كيتا</th><th>الإجمالي</th><th>عدد العمليات</th></tr></thead>
+                <tbody id="tbPayCashier"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab 3: Sales Reports (Breakdown like Foodics) -->
+          <div class="sales-tab-content" id="stc_reports">
+            <div class="filter-bar" style="flex-wrap:wrap;">
+              <div class="form-group"><label class="form-label">من تاريخ</label><input type="date" id="fbrkStart" class="form-control"></div>
+              <div class="form-group"><label class="form-label">إلى تاريخ</label><input type="date" id="fbrkEnd" class="form-control"></div>
+              <button class="btn btn-primary" style="height:48px;" onclick="loadSalesBreakdownActive()"><i class="fas fa-filter"></i> تصفية</button>
+            </div>
+            <div class="breakdown-btns">
+              <button class="breakdown-btn active" onclick="loadSalesBreakdown('byProduct')" id="brk_byProduct"><i class="fas fa-box"></i> حسب المنتج</button>
+              <button class="breakdown-btn" onclick="loadSalesBreakdown('byCashier')" id="brk_byCashier"><i class="fas fa-user"></i> حسب الكاشير</button>
+              <button class="breakdown-btn" onclick="loadSalesBreakdown('byMonth')" id="brk_byMonth"><i class="fas fa-calendar-alt"></i> حسب الشهر</button>
+              <button class="breakdown-btn" onclick="loadSalesBreakdown('byDay')" id="brk_byDay"><i class="fas fa-calendar-day"></i> حسب اليوم</button>
+            </div>
+            <div class="breakdown-result">
+              <div class="breakdown-chart-area"><canvas id="breakdownChartCtx"></canvas></div>
+              <div class="table-wrapper" style="border:none;box-shadow:none;border-radius:0;">
+                <table class="table">
+                  <thead id="tbBrkHead"><tr><th>الاسم</th><th>الكمية</th><th>الإيراد</th></tr></thead>
+                  <tbody id="tbBrkBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: Inventory Management (Menu & Recipes) -->
+        <div id="sec_inventory" class="admin-section">
+          <div class="filter-bar" style="justify-content:space-between; align-items:center;">
+            <div class="form-group" style="flex:1; max-width:400px; margin:0;">
+              <input type="text" id="invSearchQ" class="form-control" placeholder="البحث باسم المنتج أو الصنف..." oninput="loadDashInv()">
+            </div>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <button class="btn btn-success" onclick="exportMenuExcel()"><i class="fas fa-file-excel"></i> تصدير Excel</button>
+              <label class="btn btn-secondary" style="margin:0;cursor:pointer;"><i class="fas fa-file-upload"></i> استيراد Excel
+                <input type="file" id="menuImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importMenuExcel(this)">
+              </label>
+              <button class="btn btn-primary" onclick="openInvM('add')"><i class="fas fa-plus"></i> إضافة منتج جديد</button>
+            </div>
+          </div>
+          <div class="table-wrapper">
+            <table class="table">
+              <thead><tr><th>المنتج</th><th>التصنيف</th><th>سعر البيع</th><th>المقادير / التكلفة</th><th>الربح</th><th>المخزون</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+              <tbody id="tbInv"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section: Raw Materials (INV_Items) -->
+        <!-- Section: Unified Warehouse -->
+        <div id="sec_warehouse" class="admin-section">
+          <div class="sales-tabs" id="whTabs">
+            <div class="sales-tab active" onclick="switchWhTab('items')" id="whtab_items"><i class="fas fa-boxes"></i> <span>مواد المخزون</span></div>
+            <div class="sales-tab" onclick="switchWhTab('live')" id="whtab_live"><i class="fas fa-cubes"></i> <span>المخزون الفعلي</span></div>
+            <div class="sales-tab" onclick="switchWhTab('stocktake')" id="whtab_stocktake"><i class="fas fa-tasks"></i> <span>الجرد</span></div>
+            <div class="sales-tab" onclick="switchWhTab('transfers')" id="whtab_transfers"><i class="fas fa-exchange-alt"></i> <span>التحويلات</span></div>
+          </div>
+
+          <!-- Tab 1: مواد المخزون -->
+          <div class="sales-tab-content active" id="wh_items">
+            <div class="filter-bar" style="justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+              <div style="display:flex; gap:8px; flex:1; max-width:600px; flex-wrap:wrap; align-items:center;">
+                <div class="form-group" style="flex:1; min-width:180px; margin:0;">
+                  <input type="text" id="rawSearchQ" class="form-control" placeholder="بحث بالاسم أو الكود..." oninput="filterInvItems()">
+                </div>
+                <select id="rawCatFilter" class="form-control" style="max-width:160px;" onchange="filterInvItems()">
+                  <option value="">كل التصنيفات</option>
+                </select>
+                <select id="rawStockFilter" class="form-control" style="max-width:140px;" onchange="filterInvItems()">
+                  <option value="">كل المخزون</option>
+                  <option value="low">نواقص فقط</option>
+                  <option value="out">نفذ تماماً</option>
+                  <option value="ok">متوفر</option>
+                </select>
+              </div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn btn-success" onclick="exportInvExcel()"><i class="fas fa-file-excel"></i> تصدير</button>
+                <label class="btn btn-secondary" style="margin:0;cursor:pointer;"><i class="fas fa-file-upload"></i> استيراد
+                  <input type="file" id="importExcelFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importInvExcel(this)">
+                </label>
+                <button class="btn btn-primary" onclick="openRawModal()"><i class="fas fa-plus"></i> إضافة مادة</button>
+              </div>
+            </div>
+            <div class="table-wrapper">
+              <table class="table">
+                <thead><tr><th>كود المادة</th><th>وصف الصنف</th><th>التصنيف</th><th>الوحدة الكبرى (الكمية/التكلفة)</th><th>الوحدة الصغرى (الكمية/التكلفة)</th><th>القيمة الإجمالية</th><th>حد النواقص</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+                <tbody id="tbRawItems"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab 2: المخزون الفعلي -->
+          <div class="sales-tab-content" id="wh_live">
+            <div class="filter-bar" style="justify-content:space-between; align-items:center;">
+              <h3 style="margin:0; color:var(--primary);"><i class="fas fa-cubes"></i> سجل المخزون الفعلي (Live Ledger)</h3>
+              <button class="btn btn-primary" onclick="loadLiveInventory()"><i class="fas fa-sync"></i> تحديث السجل</button>
+            </div>
+            <div class="table-wrapper">
+              <table class="table">
+                <thead><tr><th>المادة الخام</th><th>التصنيف</th><th>الجرد الافتتاحي</th><th>إجمالي المشتريات (+)</th><th>المستهلك بالمبيعات (-)</th><th>الرصيد الفعلي الحالي</th><th>الحالة</th></tr></thead>
+                <tbody id="tbLiveInventory"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab 3: الجرد -->
+          <div class="sales-tab-content" id="wh_stocktake">
+            <div class="filter-bar" style="justify-content:space-between; align-items:center;">
+              <h3 style="margin:0; color:var(--primary);"><i class="fas fa-tasks"></i> عمليات الجرد والتسويات</h3>
+              <button class="btn btn-primary" onclick="startStocktake()"><i class="fas fa-play"></i> بدء عملية جرد جديدة</button>
+            </div>
+            <div class="table-wrapper">
+              <table class="table">
+                <thead><tr><th>رقم الجرد</th><th>التاريخ</th><th>بواسطة</th><th>ملاحظات</th><th>الحالة</th><th>التفاصيل</th></tr></thead>
+                <tbody id="tbStocktake"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab 4: التحويلات -->
+          <div class="sales-tab-content" id="wh_transfers">
+            <div class="filter-bar" style="justify-content:space-between; align-items:center;">
+              <h3 style="margin:0; color:var(--primary);"><i class="fas fa-exchange-alt"></i> طلبات التحويل من/إلى الفروع</h3>
+              <button class="btn btn-primary" onclick="openTransferModal()"><i class="fas fa-plus"></i> إنشاء طلب تحويل جديد</button>
+            </div>
+            <div class="table-wrapper">
+              <table class="table">
+                <thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>الوجهة / المصدر</th><th>النوع</th><th>حالة الطلب</th><th>المسؤول</th><th>إجراءات</th></tr></thead>
+                <tbody id="tbTransfers"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: Users -->
+        <div id="sec_users" class="admin-section">
+          <div style="margin-bottom:20px;"><button class="btn btn-primary" onclick="tglUserM()"><i class="fas fa-user-plus"></i> إنشاء مستخدم جديد للمنظومة</button></div>
+          <div class="table-wrapper">
+            <table class="table">
+              <thead><tr><th>اسم الموظف</th><th>الرقم الوظيفي / تسجيل الدخول</th><th>الصلاحيات الوظيفية</th><th>حالة الحساب</th><th>تاريخ الإنشاء</th><th>إجراءات</th></tr></thead>
+              <tbody id="tbUsers"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section: Expenses -->
+        <div id="sec_expenses" class="admin-section">
+          <div class="filter-bar" style="justify-content:space-between; align-items:center; flex-wrap:wrap;">
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+              <div class="form-group" style="margin:0;"><label class="form-label">من تاريخ</label><input type="date" id="fexpStart" class="form-control"></div>
+              <div class="form-group" style="margin:0;"><label class="form-label">إلى تاريخ</label><input type="date" id="fexpEnd" class="form-control"></div>
+              <button class="btn btn-primary" style="height:48px;" onclick="loadDashExpenses()"><i class="fas fa-filter"></i> تصفية</button>
+            </div>
+            <button class="btn btn-success" onclick="openExpModal()"><i class="fas fa-plus-circle"></i> إضافة مصروف جديد</button>
+          </div>
+          <div class="stat-grid" style="margin-bottom:20px;">
+            <div class="stat-card"><div class="stat-info"><h4>إجمالي المصروفات</h4><p id="expTotalAmt">0.00</p></div><div class="stat-icon" style="background:#fee2e2; color:#dc2626;"><i class="fas fa-hand-holding-usd"></i></div></div>
+            <div class="stat-card"><div class="stat-info"><h4>عدد المصروفات</h4><p id="expTotalCount">0</p></div><div class="stat-icon" style="background:#fef9c3; color:#ca8a04;"><i class="fas fa-hashtag"></i></div></div>
+          </div>
+          <div class="table-wrapper">
+            <table class="table">
+              <thead><tr><th>التاريخ</th><th>التصنيف</th><th>الوصف</th><th>المبلغ (SAR)</th><th>طريقة الدفع</th><th>المستخدم</th><th>ملاحظات</th><th></th></tr></thead>
+              <tbody id="tbExpenses"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- sec_live_inventory moved to sec_warehouse tabs -->
+
+        <!-- Section: Purchases -->
+        <div id="sec_purchases" class="admin-section">
+          <!-- فواتير الشراء -->
+          <div>
+            <div class="filter-bar" style="justify-content:space-between; align-items:center; flex-wrap:wrap;">
+              <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                <div class="form-group" style="margin:0;"><label class="form-label">من تاريخ</label><input type="date" id="fpurStart" class="form-control"></div>
+                <div class="form-group" style="margin:0;"><label class="form-label">إلى تاريخ</label><input type="date" id="fpurEnd" class="form-control"></div>
+                <button class="btn btn-primary" style="height:48px;" onclick="loadDashPurchases()"><i class="fas fa-filter"></i> تصفية</button>
+              </div>
+              <button class="btn btn-success" onclick="openPurModal()"><i class="fas fa-plus-circle"></i> إضافة فاتورة شراء</button>
+            </div>
+            <div class="stat-grid" style="margin-bottom:20px;">
+              <div class="stat-card"><div class="stat-info"><h4>إجمالي المشتريات</h4><p id="purTotalAmt">0.00</p></div><div class="stat-icon" style="background:#dbeafe; color:#2563eb;"><i class="fas fa-shopping-cart"></i></div></div>
+              <div class="stat-card"><div class="stat-info"><h4>عدد العمليات</h4><p id="purTotalCount">0</p></div><div class="stat-icon" style="background:#dcfce7; color:#16a34a;"><i class="fas fa-file-invoice"></i></div></div>
+            </div>
+            <div class="table-wrapper">
+              <table class="table">
+                <thead><tr><th>التاريخ</th><th>المورد</th><th>المادة</th><th>الكمية</th><th>الصافي</th><th style="color:#d97706;">الضريبة 15%</th><th>الإجمالي</th><th>الدفع</th><th>الحالة</th><th>المستخدم</th><th>إجراءات</th></tr></thead>
+                <tbody id="tbPurchases"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: Shift Reports -->
+        <div id="sec_shifts" class="admin-section">
+          <!-- KPI Cards -->
+          <div class="stat-grid" style="margin-bottom:16px;">
+            <div class="stat-card"><div class="stat-info"><h4>Total Shifts</h4><p id="shTotalCount">0</p></div><div class="stat-icon" style="background:#dbeafe;color:#2563eb;"><i class="fas fa-clock"></i></div></div>
+            <div class="stat-card"><div class="stat-info"><h4>Total Expected</h4><p id="shTotalExpected">0.00</p></div><div class="stat-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-calculator"></i></div></div>
+            <div class="stat-card"><div class="stat-info"><h4>Total Actual</h4><p id="shTotalActual">0.00</p></div><div class="stat-icon" style="background:#fef3c7;color:#d97706;"><i class="fas fa-cash-register"></i></div></div>
+            <div class="stat-card"><div class="stat-info"><h4>Total Variance</h4><p id="shTotalDiff">0.00</p></div><div class="stat-icon" style="background:#fee2e2;color:#ef4444;"><i class="fas fa-balance-scale"></i></div></div>
+          </div>
+          <!-- Filters -->
+          <div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+            <input type="date" id="shFilterDate" class="form-control" style="max-width:160px;" onchange="filterShifts()">
+            <select id="shFilterCashier" class="form-control" style="max-width:160px;" onchange="filterShifts()">
+              <option value="">All Cashiers</option>
+            </select>
+            <button class="btn btn-sm btn-light" onclick="document.getElementById('shFilterDate').value='';document.getElementById('shFilterCashier').value='';filterShifts();">Clear</button>
+            <button class="btn btn-sm btn-success" onclick="exportShiftsExcel()"><i class="fas fa-file-excel"></i> Export</button>
+          </div>
+          <!-- Table -->
+          <div class="table-wrapper" style="overflow-x:auto;">
+            <table class="table" style="font-size:12px;">
+              <thead><tr>
+                <th>Shift ID</th><th>Cashier</th><th>Start</th><th>End</th>
+                <th>Expected</th><th>Actual</th><th>Variance</th>
+                <th>Cash Diff</th><th>Card Diff</th><th>Kita Diff</th>
+                <th>Action</th>
+              </tr></thead>
+              <tbody id="tbShifts"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section: Advanced Reports -->
+        <div id="sec_reports" class="admin-section">
+          <div class="report-layout">
+            <div class="dash-box">
+              <h3 class="dash-box-title"><i class="fas fa-chart-bar"></i> إعدادات التقرير</h3>
+              <div class="form-group"><label class="form-label">من يوم</label><input type="date" id="repStart" class="form-control"></div>
+              <div class="form-group"><label class="form-label">إلى يوم</label><input type="date" id="repEnd" class="form-control"></div>
+              <div class="form-group"><label class="form-label">فلتر الموظفين</label><select id="repUserOpt" class="form-control"><option value="">جميع الكاشيرية</option></select></div>
+              <div class="form-group"><label class="form-label">طريقة الدفع</label><select id="repPayOpt" class="form-control"><option value="">كل طرق الدفع</option><option value="cash">كاش فقط</option><option value="card">البطاقات البنكية / الشبكة</option><option value="kita">كيتا</option></select></div>
+
+              <button class="btn btn-primary" style="width:100%; margin-top:10px; padding:15px;" onclick="buildAdvReport()"><i class="fas fa-server"></i> تجميع وبناء التقرير</button>
+              <button class="btn btn-success" style="width:100%; margin-top:10px; padding:15px;" onclick="exportRepExcel()"><i class="fas fa-file-excel"></i> تصدير Excel (XLSX)</button>
+              <button class="btn btn-light" style="width:100%; margin-top:10px; padding:15px; margin-bottom:10px; border:1px solid var(--border);" onclick="printAdvReport()"><i class="fas fa-print"></i> طباعة التقرير</button>
+              <p style="font-size:12px; color:var(--text-light); text-align:center;">يعتمد استخراج الأرقام على العمليات المسجلة فعلياً بعد إغلاق الفواتير وطباعتها.</p>
+            </div>
+            <div id="reportContentArea">
+              <div style="height:100%; min-height:400px; display:flex; flex-direction:column; justify-content:center; align-items:center; background:var(--white); border-radius:20px; border:1px dashed var(--border); color:#94a3b8;">
+                <i class="fas fa-file-invoice-dollar" style="font-size:60px; margin-bottom:20px; color:#cbd5e1;"></i>
+                <h3 style="margin-bottom:10px;">لا يوجد تقرير مبني حالياً</h3>
+                <p>قم باختيار الفلاتر المرغوبة واضغط على "تجميع وبناء التقرير"</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: Settings -->
+        <div id="sec_settings" class="admin-section">
+          <div class="dash-box" style="max-width:600px; margin:0 auto;">
+            <h3 class="dash-box-title"><i class="fas fa-cogs"></i> إعدادات المؤسسة والفروع</h3>
+
+            <!-- Logo upload -->
+            <div class="form-group">
+              <label class="form-label">شعار الشركة (يظهر في تسجيل الدخول والداش بورد والتقارير)</label>
+              <div style="display:flex;gap:14px;align-items:center;">
+                <div id="setLogoPreview" style="width:80px;height:80px;border-radius:14px;border:2px dashed var(--border);display:flex;align-items:center;justify-content:center;background:#f8fafc;overflow:hidden;flex-shrink:0;">
+                  <i class="fas fa-image" style="color:#cbd5e1;font-size:28px;"></i>
+                </div>
+                <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                  <label class="btn btn-light" style="cursor:pointer;margin:0;text-align:center;padding:10px;">
+                    <i class="fas fa-upload"></i> اختر ملف صورة
+                    <input type="file" id="setLogoFile" accept="image/*" style="display:none;" onchange="handleLogoUpload(this)">
+                  </label>
+                  <button type="button" class="btn btn-danger" style="padding:8px;font-size:12px;" onclick="removeLogo()">
+                    <i class="fas fa-trash"></i> إزالة الشعار
+                  </button>
+                  <small style="color:#64748b;font-size:11px;">الحد الأقصى 200×200 — سيتم التصغير تلقائياً</small>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">اسم الفرع الفعلي المطبوع على الفاتورة</label>
+              <input type="text" id="setCompany" class="form-control" placeholder="مثال: مطعم أو مقهى أو فرع...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">الرقم الضريبي الرسمي المعتمد لهيئة الزكاة والدخل</label>
+              <input type="text" id="setTax" class="form-control" placeholder="1234567890">
+            </div>
+            <hr style="border:0; border-top:1px dashed var(--border); margin:25px 0;">
+            <h3 class="dash-box-title" style="margin-top:10px;"><i class="fas fa-credit-card"></i> إدارة طرق الدفع</h3>
+            <p style="font-size:12px;color:#64748b;margin-bottom:12px;">تفعيل/تعطيل طرق الدفع وتحديد نسبة رسوم الخدمة لكل طريقة</p>
+            <div id="payMethodsSettings"></div>
+            <button class="btn btn-secondary" style="width:100%;margin-top:10px;padding:10px;" onclick="loadPayMethodsSettings()"><i class="fas fa-sync"></i> تحديث طرق الدفع</button>
+            <input type="hidden" id="setKitaFee" value="0">
+            <hr style="border:0; border-top:1px dashed var(--border); margin:25px 0;">
+            <button class="btn btn-primary" style="width:100%; padding:15px; font-size:16px;" onclick="saveDashSettings()"><i class="fas fa-save"></i> حفظ جميع المتغيرات</button>
+
+            <!-- Developer Zone — visible only to users marked as developer -->
+            <div id="devZone" class="hidden" style="margin-top:30px; padding:20px; background:#fef2f2; border:2px solid #fecaca; border-radius:14px;">
+              <h3 style="color:#991b1b; font-size:16px; margin-bottom:8px;"><i class="fas fa-skull-crossbones"></i> منطقة المطور — خطر</h3>
+              <p style="color:#7f1d1d; font-size:13px; margin-bottom:14px;">
+                هذا الزر يحذف جميع المبيعات، الورديات، المشتريات، المخزون، الوصفات، المنتجات، المصروفات والقيود من قاعدة البيانات.
+                المستخدمون والإعدادات وطرق الدفع ستبقى. <strong>لا يمكن التراجع.</strong>
+              </p>
+              <button class="btn btn-danger" style="width:100%; padding:14px;" onclick="openResetDbModal()">
+                <i class="fas fa-trash-alt"></i> تصفير قاعدة البيانات والبدء من جديد
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reset DB confirmation modal -->
+        <div class="modal" id="modalResetDb">
+          <div class="modal-content">
+            <div class="modal-title">
+              <span style="color:#991b1b;"><i class="fas fa-exclamation-triangle"></i> تأكيد تصفير قاعدة البيانات</span>
+              <button class="modal-close" onclick="closeModal('#modalResetDb')">&times;</button>
+            </div>
+            <div style="background:#fef2f2; border:1.5px solid #fecaca; border-radius:10px; padding:14px; margin-bottom:18px;">
+              <p style="color:#991b1b; font-size:14px; line-height:1.7;">
+                <strong>سيتم حذف جميع البيانات التالية نهائياً:</strong><br>
+                • المبيعات والفواتير<br>
+                • الورديات وحركات المخزون<br>
+                • المنتجات والوصفات والمواد الخام<br>
+                • المشتريات وأوامر الشراء<br>
+                • المصروفات والقيود المحاسبية<br>
+                • تقارير الضريبة<br><br>
+                <strong>لن يتم حذف:</strong> المستخدمين، الإعدادات، طرق الدفع.
+              </p>
+            </div>
+            <div class="form-group">
+              <label class="form-label">أعد إدخال كلمة المرور للتأكيد</label>
+              <input type="password" id="rdbPass" class="form-control" placeholder="كلمة المرور">
+            </div>
+            <div class="form-group">
+              <label class="form-label">اكتب <code style="background:#fee;padding:2px 6px;border-radius:4px;color:#991b1b;">YES_RESET_ALL_DATA</code> للتأكيد</label>
+              <input type="text" id="rdbConfirm" class="form-control" placeholder="YES_RESET_ALL_DATA" autocomplete="off">
+            </div>
+            <div style="display:flex; gap:10px; margin-top:10px;">
+              <button class="btn btn-light" style="flex:1;" onclick="closeModal('#modalResetDb')">إلغاء</button>
+              <button class="btn btn-danger" style="flex:1;" onclick="confirmResetDb()"><i class="fas fa-trash-alt"></i> تصفير الآن</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══════════════════════════════ -->
+        <!-- ERP SECTIONS (included from erp_ui.html) -->
+        <!-- ═══════════════════════════════ -->
+        <!-- ====================================================================
+     ERP Dashboard UI — MASTER_ERP_SYSTEM_SPEC Compliant
+     All modules: Customers, Suppliers, GL, VAT, ZATCA, Audit, PO, etc.
+     ==================================================================== -->
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- ERP MAIN DASHBOARD -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpDashHome" class="dash-section hidden">
+  <h2 class="section-title"><i class="fas fa-building"></i> لوحة تحكم ERP</h2>
+  <div id="erpKPICards" class="kpi-grid-erp">
+    <div class="erp-kpi-card bg-blue"><div class="erp-kpi-icon"><i class="fas fa-users"></i></div><div class="erp-kpi-body"><div class="erp-kpi-val" id="erpCustCount">0</div><div class="erp-kpi-label">العملاء</div></div></div>
+    <div class="erp-kpi-card bg-green"><div class="erp-kpi-icon"><i class="fas fa-truck"></i></div><div class="erp-kpi-body"><div class="erp-kpi-val" id="erpSupCount">0</div><div class="erp-kpi-label">الموردين</div></div></div>
+    <div class="erp-kpi-card bg-purple"><div class="erp-kpi-icon"><i class="fas fa-book"></i></div><div class="erp-kpi-body"><div class="erp-kpi-val" id="erpJrnCount">0</div><div class="erp-kpi-label">القيود</div></div></div>
+    <div class="erp-kpi-card bg-orange"><div class="erp-kpi-icon"><i class="fas fa-code-branch"></i></div><div class="erp-kpi-body"><div class="erp-kpi-val" id="erpBrCount">0</div><div class="erp-kpi-label">الفروع</div></div></div>
+  </div>
+  <div class="erp-financial-summary">
+    <h3><i class="fas fa-chart-pie"></i> الملخص المالي</h3>
+    <div class="fin-grid">
+      <div class="fin-card"><span class="fin-label">إجمالي الأصول</span><span class="fin-val" id="erpTotalAssets">0.00</span></div>
+      <div class="fin-card"><span class="fin-label">إجمالي الالتزامات</span><span class="fin-val" id="erpTotalLiab">0.00</span></div>
+      <div class="fin-card"><span class="fin-label">حقوق الملكية</span><span class="fin-val" id="erpTotalEquity">0.00</span></div>
+      <div class="fin-card"><span class="fin-label">إجمالي الإيرادات</span><span class="fin-val text-green" id="erpTotalRev">0.00</span></div>
+      <div class="fin-card"><span class="fin-label">إجمالي المصروفات</span><span class="fin-val text-red" id="erpTotalExp">0.00</span></div>
+      <div class="fin-card highlight"><span class="fin-label">صافي الدخل</span><span class="fin-val" id="erpNetIncome">0.00</span></div>
+    </div>
+  </div>
+  <div class="erp-vat-summary">
+    <h3><i class="fas fa-percent"></i> ملخص ضريبة القيمة المضافة</h3>
+    <div class="vat-grid">
+      <div class="vat-card"><span class="vat-label">ضريبة المخرجات</span><span class="vat-val" id="erpVATOutput">0.00</span></div>
+      <div class="vat-card"><span class="vat-label">ضريبة المدخلات</span><span class="vat-val" id="erpVATInput">0.00</span></div>
+      <div class="vat-card highlight"><span class="vat-label">صافي الضريبة</span><span class="vat-val" id="erpVATNet">0.00</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- CUSTOMERS (العملاء) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpCustomers" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-users"></i> إدارة العملاء</h2>
+    <button class="btn btn-primary" onclick="erpOpenCustomerModal()"><i class="fas fa-plus"></i> إضافة عميل</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table" id="erpCustomersTable">
+      <thead><tr><th>الرقم</th><th>الاسم</th><th>الرقم الضريبي</th><th>الهاتف</th><th>النوع</th><th>الرصيد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpCustomersBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- SUPPLIERS (الموردين) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpSuppliers" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-truck"></i> إدارة الموردين</h2>
+    <button class="btn btn-primary" onclick="erpOpenSupplierModal()"><i class="fas fa-plus"></i> إضافة مورد</button>
+  </div>
+  <div id="erpSupDebugInfo" style="display:none;background:#fef3c7;padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;border:1px solid #fbbf24;direction:ltr;text-align:left;"></div>
+  <div class="erp-filters">
+    <div class="filter-search">
+      <i class="fas fa-search"></i>
+      <input type="text" id="erpSupSearch" class="form-control-sm" placeholder="بحث بالاسم أو الهاتف أو الرقم الضريبي..." oninput="erpFilterSuppliersTable()">
+    </div>
+    <button class="btn btn-sm btn-secondary" onclick="erpLoadSuppliers()"><i class="fas fa-sync-alt"></i> تحديث</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table" id="erpSuppliersTable">
+      <thead><tr><th>الرقم</th><th>الاسم</th><th>الرقم الضريبي</th><th>الهاتف</th><th>شروط الدفع</th><th>الرصيد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpSuppliersBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- GL ACCOUNTS (دليل الحسابات) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpGLAccounts" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-sitemap"></i> دليل الحسابات</h2>
+    <button class="btn btn-primary" onclick="erpOpenAccountModal()"><i class="fas fa-plus"></i> إضافة حساب</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table" id="erpAccountsTable">
+      <thead><tr><th>الرمز</th><th>الاسم (عربي)</th><th>الاسم (إنجليزي)</th><th>النوع</th><th>المستوى</th><th>الرصيد</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpAccountsBody"><tr><td colspan="7" class="empty-msg">جاري التحميل...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- GL JOURNALS (القيود المحاسبية) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpGLJournals" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-book"></i> القيود المحاسبية</h2>
+    <button class="btn btn-primary" onclick="erpOpenJournalModal()"><i class="fas fa-plus"></i> قيد يدوي</button>
+  </div>
+  <div class="erp-filters">
+    <input type="date" id="erpJrnStartDate" class="form-control-sm">
+    <input type="date" id="erpJrnEndDate" class="form-control-sm">
+    <button class="btn btn-sm btn-secondary" onclick="erpLoadJournals()"><i class="fas fa-search"></i> بحث</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table" id="erpJournalsTable">
+      <thead><tr><th>رقم القيد</th><th>التاريخ</th><th>المرجع</th><th>الوصف</th><th>مدين</th><th>دائن</th><th>الحالة</th><th>تفاصيل</th></tr></thead>
+      <tbody id="erpJournalsBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- PURCHASE ORDERS (أوامر الشراء) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpPurchaseOrders" class="dash-section hidden">
+
+  <!-- ═══ عرض القائمة ═══ -->
+  <div id="erpPOListView">
+    <div class="section-header">
+      <h2 class="section-title"><i class="fas fa-shopping-cart"></i> أوامر الشراء</h2>
+      <button class="btn btn-primary" onclick="erpShowPOForm()"><i class="fas fa-plus"></i> أمر شراء جديد</button>
+    </div>
+    <div id="erpPOSummary" class="po-summary-cards" style="display:none;">
+      <div class="po-sum-card"><span class="po-sum-label">إجمالي الأوامر</span><span class="po-sum-val" id="erpPOTotalCount">0</span></div>
+      <div class="po-sum-card highlight-draft"><span class="po-sum-label">مسودة</span><span class="po-sum-val" id="erpPODraftCount">0</span></div>
+      <div class="po-sum-card highlight-approved"><span class="po-sum-label">معتمد</span><span class="po-sum-val" id="erpPOApprovedCount">0</span></div>
+      <div class="po-sum-card highlight-received"><span class="po-sum-label">مستلم</span><span class="po-sum-val" id="erpPOReceivedCount">0</span></div>
+      <div class="po-sum-card"><span class="po-sum-label">إجمالي القيمة مع الضريبة</span><span class="po-sum-val" id="erpPOTotalValue">0.00</span></div>
+    </div>
+    <div class="erp-filters">
+      <div class="filter-search"><i class="fas fa-search"></i>
+        <input type="text" id="erpPOSearch" class="form-control-sm" placeholder="بحث برقم الأمر أو المورد..." oninput="erpFilterPOTable()">
+      </div>
+      <select class="form-control-sm" id="erpPOStatusFilter" onchange="erpFilterPOTable()">
+        <option value="">كل الحالات</option><option value="draft">مسودة</option><option value="approved">معتمد</option><option value="received">مستلم</option><option value="cancelled">ملغي</option>
+      </select>
+    </div>
+    <div class="erp-table-container">
+      <table class="erp-table" id="erpPOTable">
+        <thead><tr><th>رقم الأمر</th><th>المورد</th><th>التاريخ</th><th>قبل الضريبة</th><th>مع الضريبة</th><th>الحالة</th><th>المعتمد</th><th>إجراءات</th></tr></thead>
+        <tbody id="erpPOBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══ صفحة إنشاء أمر شراء (كاملة) ═══ -->
+  <div id="erpPOFormView" class="hidden">
+    <div class="section-header">
+      <h2 class="section-title"><i class="fas fa-clipboard-list"></i> أمر شراء جديد</h2>
+      <button class="btn btn-secondary" onclick="erpBackToPOList()"><i class="fas fa-arrow-right"></i> العودة للقائمة</button>
+    </div>
+
+    <div class="po-form-grid">
+      <!-- عمود بيانات الأمر -->
+      <div class="po-form-section">
+        <h4 class="po-section-title"><i class="fas fa-info-circle"></i> بيانات الأمر</h4>
+        <div class="form-group" style="margin-bottom:14px;">
+          <label class="form-label">المورد *</label>
+          <div class="search-dropdown-wrap">
+            <i class="fas fa-truck sd-icon"></i>
+            <input type="text" id="erpPOSupplierInput" class="sd-input" placeholder="ابحث عن المورد..." autocomplete="off"
+              oninput="erpFilterPOSuppliers()" onfocus="erpFilterPOSuppliers()">
+            <input type="hidden" id="erpPOSupplierId">
+            <div class="sd-results" id="erpPOSupplierResults"></div>
+          </div>
+        </div>
+        <div class="form-row-2col">
+          <div class="form-group" style="margin-bottom:14px;">
+            <label class="form-label">تاريخ الأمر</label>
+            <input type="date" id="erpPODate" class="form-control">
+          </div>
+          <div class="form-group" style="margin-bottom:14px;">
+            <label class="form-label">تاريخ التسليم المتوقع</label>
+            <input type="date" id="erpPOExpDate" class="form-control">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">ملاحظات</label>
+          <textarea id="erpPONotes" class="form-control" rows="3" placeholder="ملاحظات إضافية..." style="resize:vertical;"></textarea>
+        </div>
+      </div>
+
+      <!-- عمود الأصناف -->
+      <div class="po-form-section">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+          <h4 class="po-section-title" style="margin-bottom:0;"><i class="fas fa-boxes"></i> الأصناف</h4>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-sm btn-success" onclick="erpExportPOTemplate()"><i class="fas fa-file-excel"></i> تصدير نموذج</button>
+            <label class="btn btn-sm btn-secondary" style="margin:0;cursor:pointer;"><i class="fas fa-file-upload"></i> استيراد
+              <input type="file" id="erpPOImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="erpImportPOItems(this)">
+            </label>
+          </div>
+        </div>
+
+        <!-- صف إضافة مادة -->
+        <div class="po-add-row">
+          <div class="po-add-item-field">
+            <label class="form-label" style="font-size:12px;">المادة *</label>
+            <div class="search-dropdown-wrap">
+              <i class="fas fa-search sd-icon"></i>
+              <input type="text" id="erpPOItemSearch" class="sd-input" placeholder="ابحث عن مادة خام..." autocomplete="off"
+                oninput="erpFilterPOItemSearch()" onfocus="erpFilterPOItemSearch()">
+              <input type="hidden" id="erpPOItemId">
+              <input type="hidden" id="erpPOItemNameH">
+              <div class="sd-results" id="erpPOItemResults"></div>
+            </div>
+          </div>
+          <div style="width:80px;">
+            <label class="form-label" style="font-size:12px;">الكمية</label>
+            <input type="number" id="erpPOItemQty" class="form-control" value="1" min="0.01" step="0.01" style="text-align:center;">
+          </div>
+          <div style="width:100px;">
+            <label class="form-label" style="font-size:12px;">الوحدة</label>
+            <select id="erpPOItemUnit" class="form-control" onchange="erpPOUnitChanged()" style="text-align:center;padding:8px 4px;font-size:13px;">
+              <option value="">—</option>
+            </select>
+          </div>
+          <div style="width:110px;">
+            <label class="form-label" style="font-size:12px;">سعر الوحدة</label>
+            <input type="number" step="0.01" id="erpPOItemPrice" class="form-control" placeholder="0.00">
+          </div>
+          <button class="btn btn-success po-add-btn" onclick="erpAddPOItem()"><i class="fas fa-plus"></i> إضافة</button>
+        </div>
+        <div id="erpPOStockHint" style="display:none;font-size:12px;color:#0369a1;background:#e0f2fe;padding:6px 12px;border-radius:8px;margin-top:8px;"></div>
+
+        <!-- جدول الأصناف المضافة -->
+        <div style="overflow-x:auto;margin-top:14px;">
+          <table class="po-lines-table">
+            <thead><tr>
+              <th style="width:90px;">الكود</th><th>المادة</th><th style="text-align:center;width:70px;">الكمية</th>
+              <th style="text-align:center;width:70px;">الوحدة</th><th style="text-align:center;width:100px;">سعر الوحدة</th>
+              <th style="text-align:center;width:110px;">إجمالي التكلفة</th><th style="width:40px;"></th>
+            </tr></thead>
+            <tbody id="erpPOItemsBody">
+              <tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:24px;font-style:italic;">لم تتم إضافة أصناف بعد</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- الإجماليات -->
+        <div class="po-totals-box">
+          <div class="po-total-row"><span>الإجمالي قبل الضريبة:</span><span id="erpPOSubtotal">0.00 ر.س</span></div>
+          <div class="po-total-row"><span>ضريبة القيمة المضافة (15%):</span><span id="erpPOVATTotal">0.00 ر.س</span></div>
+          <div class="po-total-row po-grand-total"><span>الإجمالي الكلي:</span><span id="erpPOGrandTotal">0.00 ر.س</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px;margin-top:20px;">
+      <button class="btn btn-primary" style="flex:1;padding:14px;font-size:15px;" onclick="erpSavePO()">
+        <i class="fas fa-save"></i> حفظ أمر الشراء
+      </button>
+      <button class="btn btn-secondary" style="padding:14px;min-width:120px;" onclick="erpBackToPOList()">إلغاء</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- VAT REPORTS (التقارير الضريبية) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpVATReports" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-percent"></i> إدارة الضريبة (VAT 15%)</h2>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-success" onclick="erpPostVAT()"><i class="fas fa-exchange-alt"></i> ترحيل العمليات</button>
+      <button class="btn btn-primary" onclick="erpCreateVATReport()"><i class="fas fa-plus"></i> تقرير جديد</button>
+    </div>
+  </div>
+
+  <!-- Quarter Tabs -->
+  <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+    <button class="btn btn-sm btn-light" onclick="erpLoadVATQuarter(1)">Q1 (Jan-Mar)</button>
+    <button class="btn btn-sm btn-light" onclick="erpLoadVATQuarter(2)">Q2 (Apr-Jun)</button>
+    <button class="btn btn-sm btn-light" onclick="erpLoadVATQuarter(3)">Q3 (Jul-Sep)</button>
+    <button class="btn btn-sm btn-light" onclick="erpLoadVATQuarter(4)">Q4 (Oct-Dec)</button>
+    <select id="erpVATYear" class="form-control-sm" style="width:100px;" onchange="erpLoadVATReports()"></select>
+    <button class="btn btn-sm btn-danger" onclick="erpCloseQuarter()"><i class="fas fa-lock"></i> إقفال الربع</button>
+    <button class="btn btn-sm btn-danger" onclick="erpCloseYear()"><i class="fas fa-lock"></i> إقفال السنة</button>
+  </div>
+
+  <div class="erp-filters">
+    <input type="date" id="erpVATStart" class="form-control-sm">
+    <input type="date" id="erpVATEnd" class="form-control-sm">
+    <button class="btn btn-sm btn-primary" onclick="erpLoadVATDetail()"><i class="fas fa-search"></i> عرض</button>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="fin-grid" style="margin-bottom:14px;">
+    <div class="fin-card"><span class="fin-label">ضريبة المخرجات (مبيعات)</span><span class="fin-val text-red" id="erpVATOutDetail">0.00</span></div>
+    <div class="fin-card"><span class="fin-label">ضريبة المدخلات (مشتريات)</span><span class="fin-val text-green" id="erpVATInDetail">0.00</span></div>
+    <div class="fin-card highlight"><span class="fin-label">صافي الضريبة المستحقة</span><span class="fin-val" id="erpVATNetDetail">0.00</span></div>
+    <div class="fin-card"><span class="fin-label">الحالة</span><span class="fin-val" id="erpVATStatus">—</span></div>
+  </div>
+
+  <!-- VAT Transactions Detail -->
+  <h4 style="font-size:14px;font-weight:700;margin-bottom:8px;"><i class="fas fa-list" style="color:var(--accent);"></i> تفاصيل العمليات الضريبية</h4>
+  <div class="erp-table-container" style="margin-bottom:14px;">
+    <table class="erp-table">
+      <thead><tr><th>التاريخ</th><th>النوع</th><th>المرجع</th><th>المبلغ</th><th>الصافي</th><th style="color:#ef4444;">ض. مخرجات</th><th style="color:#16a34a;">ض. مدخلات</th></tr></thead>
+      <tbody id="erpVATTransBody"><tr><td colspan="7" class="empty-msg">اختر الفترة ثم اضغط عرض</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- VAT Reports History -->
+  <h4 style="font-size:14px;font-weight:700;margin-bottom:8px;"><i class="fas fa-file-alt" style="color:var(--accent);"></i> سجل التقارير الضريبية</h4>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الرقم</th><th>من</th><th>إلى</th><th>المخرجات</th><th>المدخلات</th><th>الصافي</th><th>الحالة</th></tr></thead>
+      <tbody id="erpVATReportsBody"><tr><td colspan="7" class="empty-msg">لا توجد تقارير</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- ZATCA (الفوترة الإلكترونية) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpZATCA" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-file-invoice"></i> الفوترة الإلكترونية (ZATCA)</h2>
+  </div>
+  <div class="erp-zatca-stats">
+    <div class="zatca-stat-card"><i class="fas fa-check-circle text-green"></i><span id="erpZATCASent">0</span><small>مرسلة</small></div>
+    <div class="zatca-stat-card"><i class="fas fa-clock text-orange"></i><span id="erpZATCAPending">0</span><small>معلقة</small></div>
+    <div class="zatca-stat-card"><i class="fas fa-times-circle text-red"></i><span id="erpZATCARejected">0</span><small>مرفوضة</small></div>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الفاتورة</th><th>النوع</th><th>UUID</th><th>Hash</th><th>الحالة</th><th>التاريخ</th></tr></thead>
+      <tbody id="erpZATCABody"><tr><td colspan="6" class="empty-msg">لا توجد فواتير ZATCA</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- FINANCIAL REPORTS (التقارير المالية) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpFinReports" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-chart-bar"></i> التقارير المالية</h2>
+  </div>
+  <div class="erp-report-tabs">
+    <button class="erp-tab active" onclick="erpShowFinReport('trial')">ميزان المراجعة</button>
+    <button class="erp-tab" onclick="erpShowFinReport('income')">قائمة الدخل</button>
+    <button class="erp-tab" onclick="erpShowFinReport('balance')">الميزانية العمومية</button>
+  </div>
+  <div id="erpFinReportContent" class="erp-report-content">
+    <!-- Will be filled dynamically -->
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- BRANCHES (الفروع) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpBranches" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-code-branch"></i> إدارة الفروع</h2>
+    <button class="btn btn-primary" onclick="erpOpenBranchModal()"><i class="fas fa-plus"></i> إضافة فرع</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الرمز</th><th>الاسم</th><th>الموقع</th><th>النوع</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpBranchesBody"><tr><td colspan="6" class="empty-msg">لا توجد فروع</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- ACCOUNTING PERIODS (الفترات المحاسبية) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpPeriods" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-calendar-alt"></i> الفترات المحاسبية</h2>
+    <button class="btn btn-primary" onclick="erpOpenPeriodModal()"><i class="fas fa-plus"></i> فترة جديدة</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الاسم</th><th>البداية</th><th>النهاية</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpPeriodsBody"><tr><td colspan="5" class="empty-msg">لا توجد فترات</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- AUDIT LOG (سجل العمليات) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpAuditLog" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-history"></i> سجل العمليات (Audit Log)</h2>
+  </div>
+  <div class="erp-filters">
+    <input type="text" id="erpAuditUser" placeholder="المستخدم" class="form-control-sm">
+    <select id="erpAuditAction" class="form-control-sm">
+      <option value="">كل العمليات</option>
+      <option value="CREATE">إنشاء</option>
+      <option value="UPDATE">تعديل</option>
+      <option value="DELETE">حذف</option>
+      <option value="DEACTIVATE">تعطيل</option>
+      <option value="APPROVE_PO">اعتماد أمر شراء</option>
+      <option value="CREATE_JOURNAL">قيد محاسبي</option>
+      <option value="CLOSE_PERIOD">إقفال فترة</option>
+      <option value="GENERATE_ZATCA">توليد ZATCA</option>
+    </select>
+    <button class="btn btn-sm btn-secondary" onclick="erpLoadAuditLog()"><i class="fas fa-search"></i> بحث</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>التاريخ</th><th>المستخدم</th><th>العملية</th><th>الجدول</th><th>السجل</th><th>التفاصيل</th></tr></thead>
+      <tbody id="erpAuditBody"><tr><td colspan="6" class="empty-msg">جاري التحميل...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- CREDIT/DEBIT NOTES (الإشعارات الدائنة والمدينة) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpCreditNotes" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-file-alt"></i> الإشعارات الدائنة والمدينة</h2>
+    <div>
+      <button class="btn btn-success" onclick="erpOpenCreditNoteModal()"><i class="fas fa-minus-circle"></i> إشعار دائن</button>
+      <button class="btn btn-warning" onclick="erpOpenDebitNoteModal()"><i class="fas fa-plus-circle"></i> إشعار مدين</button>
+    </div>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الرقم</th><th>النوع</th><th>الفاتورة الأصلية</th><th>العميل</th><th>السبب</th><th>المبلغ</th><th>الحالة</th></tr></thead>
+      <tbody id="erpNotesBody"><tr><td colspan="7" class="empty-msg">لا توجد إشعارات</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- WAREHOUSES (المستودعات) §16 -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpWarehouses" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-warehouse"></i> إدارة المستودعات</h2>
+    <button class="btn btn-primary" onclick="erpOpenWarehouseModal()"><i class="fas fa-plus"></i> مستودع جديد</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الرمز</th><th>الاسم</th><th>النوع</th><th>الفرع</th><th>الموقع</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpWarehousesBody"><tr><td colspan="7" class="empty-msg">لا توجد مستودعات</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- WAREHOUSE STOCK (أرصدة المستودعات) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpWarehouseStock" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-boxes"></i> أرصدة المستودعات</h2>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <select id="erpStockWhFilter" class="form-control" style="width:200px;" onchange="erpLoadWarehouseStock()">
+        <option value="">كل المستودعات</option>
+      </select>
+      <button class="btn btn-secondary" onclick="erpExportReport('warehouse_stock')"><i class="fas fa-file-csv"></i> تصدير CSV</button>
+    </div>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>المستودع</th><th>الصنف</th><th>الكمية</th><th>متوسط التكلفة</th><th>القيمة</th><th>آخر تحديث</th></tr></thead>
+      <tbody id="erpWarehouseStockBody"><tr><td colspan="6" class="empty-msg">لا توجد أرصدة</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- STOCK TRANSFERS (التحويلات بين المستودعات) §16.9 -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpStockTransfers" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-exchange-alt"></i> التحويلات بين المستودعات</h2>
+    <button class="btn btn-primary" onclick="erpOpenTransferModal()"><i class="fas fa-plus"></i> تحويل جديد</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>رقم التحويل</th><th>من</th><th>إلى</th><th>التاريخ</th><th>الحالة</th><th>بواسطة</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpTransfersBody"><tr><td colspan="7" class="empty-msg">لا توجد تحويلات</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- AR AGING (أعمار الذمم المدينة) §19.6.7 -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpARAging" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-user-clock"></i> أعمار الذمم المدينة (العملاء)</h2>
+    <button class="btn btn-secondary" onclick="erpExportReport('ar_aging')"><i class="fas fa-file-csv"></i> تصدير CSV</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>العميل</th><th>الرقم الضريبي</th><th>حالي</th><th>1-30 يوم</th><th>31-60 يوم</th><th>61-90 يوم</th><th>+90 يوم</th><th>الإجمالي</th></tr></thead>
+      <tbody id="erpARAgingBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody>
+      <tfoot id="erpARAgingFoot"></tfoot>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- AP AGING (أعمار الذمم الدائنة) §19.6.8 -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpAPAging" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-truck-loading"></i> أعمار الذمم الدائنة (الموردين)</h2>
+    <button class="btn btn-secondary" onclick="erpExportReport('ap_aging')"><i class="fas fa-file-csv"></i> تصدير CSV</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>المورد</th><th>الرقم الضريبي</th><th>حالي</th><th>1-30 يوم</th><th>31-60 يوم</th><th>61-90 يوم</th><th>+90 يوم</th><th>الإجمالي</th></tr></thead>
+      <tbody id="erpAPAgingBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody>
+      <tfoot id="erpAPAgingFoot"></tfoot>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- CUSTOMER STATEMENT (كشف حساب العميل) §19.6.5 -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpCustomerStatement" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-file-invoice-dollar"></i> كشف حساب العميل</h2>
+    <button class="btn btn-secondary" onclick="erpPrintStatement('customer')"><i class="fas fa-print"></i> طباعة</button>
+  </div>
+  <div class="filter-bar" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+    <select id="erpStmtCustId" class="form-control" style="width:200px;">
+      <option value="">اختر العميل</option>
+    </select>
+    <input type="date" id="erpStmtCustFrom" class="form-control" style="width:150px;">
+    <input type="date" id="erpStmtCustTo" class="form-control" style="width:150px;">
+    <button class="btn btn-primary" onclick="erpLoadCustomerStatement()"><i class="fas fa-search"></i> عرض</button>
+  </div>
+  <div id="erpCustStmtInfo" style="margin-bottom:10px;"></div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>التاريخ</th><th>النوع</th><th>المرجع</th><th>الوصف</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead>
+      <tbody id="erpCustStmtBody"><tr><td colspan="7" class="empty-msg">اختر العميل ثم اضغط عرض</td></tr></tbody>
+    </table>
+  </div>
+  <div id="erpCustStmtSummary" class="fin-grid" style="margin-top:10px;"></div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- SUPPLIER STATEMENT (كشف حساب المورد) §19.6.6 -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpSupplierStatement" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-file-invoice"></i> كشف حساب المورد</h2>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-success" onclick="erpExportSupStmt()"><i class="fas fa-file-excel"></i> تصدير Excel</button>
+      <button class="btn btn-secondary" onclick="erpPrintSupStmt()"><i class="fas fa-print"></i> طباعة</button>
+    </div>
+  </div>
+  <div class="erp-filters">
+    <div class="filter-search" style="min-width:220px;">
+      <i class="fas fa-truck"></i>
+      <input type="text" id="erpStmtSupSearch" class="form-control-sm" placeholder="ابحث عن المورد..." oninput="erpFilterStmtSuppliers()" onfocus="erpFilterStmtSuppliers()" autocomplete="off">
+      <input type="hidden" id="erpStmtSupId">
+      <div class="sd-results" id="erpStmtSupResults" style="position:absolute;top:100%;left:0;right:0;z-index:50;"></div>
+    </div>
+    <input type="date" id="erpStmtSupFrom" class="form-control-sm">
+    <input type="date" id="erpStmtSupTo" class="form-control-sm">
+    <button class="btn btn-primary btn-sm" onclick="erpLoadSupplierStatement()"><i class="fas fa-search"></i> عرض</button>
+  </div>
+  <div id="erpSupStmtInfo" style="margin-bottom:10px;"></div>
+  <div id="erpSupStmtSummary" class="fin-grid" style="margin-bottom:12px;"></div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>التاريخ</th><th>النوع</th><th>المرجع</th><th>الوصف</th><th style="color:#ef4444;">مدين</th><th style="color:#16a34a;">دائن</th><th>الرصيد</th></tr></thead>
+      <tbody id="erpSupStmtBody"><tr><td colspan="7" class="empty-msg">اختر المورد ثم اضغط عرض</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- GENERIC ERP MODAL -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpModal" class="modal-overlay hidden" onclick="if(event.target===this) erpCloseModal()">
+  <div class="modal-box erp-modal-box">
+    <div class="modal-header">
+      <h3 id="erpModalTitle">عنوان</h3>
+      <button class="modal-close" onclick="erpCloseModal()">&times;</button>
+    </div>
+    <div id="erpModalBody" class="modal-body">
+      <!-- Dynamic content -->
+    </div>
+    <div id="erpModalFooter" class="modal-footer">
+      <button class="btn btn-secondary" onclick="erpCloseModal()">إلغاء</button>
+      <button class="btn btn-primary" id="erpModalSaveBtn" onclick="erpModalSave()">حفظ</button>
+    </div>
+  </div>
+</div>
+
+<!-- Journal Entry Detail Modal -->
+<div id="erpJournalDetailModal" class="modal-overlay hidden" onclick="if(event.target===this) this.classList.add('hidden')">
+  <div class="modal-box erp-modal-box" style="max-width:700px;">
+    <div class="modal-header">
+      <h3>تفاصيل القيد المحاسبي</h3>
+      <button class="modal-close" onclick="document.getElementById('erpJournalDetailModal').classList.add('hidden')">&times;</button>
+    </div>
+    <div id="erpJournalDetailBody" class="modal-body">
+    </div>
+  </div>
+</div>
+
+
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ========================================= -->
+  <!-- MODALS (Hidden by default)                -->
+  <!-- ========================================= -->
+  
+  <!-- Add/Edit Inventory Item Modal -->
+  <div class="modal" id="modalInvForm">
+    <div class="modal-content modal-large">
+      <div class="modal-title"><span id="iMdlTitle">تهيئة وإضافة عنصر المخزون الجديد</span><button class="modal-close" onclick="closeModal('#modalInvForm')">&times;</button></div>
+      <input type="hidden" id="miId">
+      
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+        <div class="form-group"><label class="form-label">اسم ووصف المنتج التجاري (مطلوب)</label><input type="text" id="miName" class="form-control" placeholder="اسم المنتج كما سيظهر"></div>
+        <div class="form-group"><label class="form-label">التصنيف أو القسم الخاص للفرز</label><input type="text" id="miCat" class="form-control" placeholder="مثال: لحوم، بهارات.."></div>
+        <div class="form-group"><label class="form-label">سعر البيع الرسمي مع الضريبة (SAR) (مطلوب)</label><input type="number" step="0.01" id="miPrice" class="form-control" placeholder="0.00"></div>
+        <div class="form-group"><label class="form-label">سعر التكلفة الصافي (لحساب الأرباح) (SAR)</label><input type="number" step="0.01" id="miCost" class="form-control" placeholder="0.00"></div>
+        <div class="form-group"><label class="form-label">الرصيد الافتتاحي (المخزون المتوفر لحظياً)</label><input type="number" id="miStock" class="form-control" placeholder="0"></div>
+        <div class="form-group"><label class="form-label">حد إعادة الطلب للتنبيه قبل النفاذ التام</label><input type="number" id="miMin" class="form-control" placeholder="5"></div>
+      </div>
+      
+      <div class="form-group" style="background:#f1f5f9; padding:15px; border-radius:12px; margin-top:10px;">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer;" class="form-label"><input type="checkbox" id="miActive" style="transform:scale(1.5);"> عرض وتفعيل هذا المنتج على أنظمة الكاشير المتاحة للمبيعات</label>
+      </div>
+      
+      <div style="display:flex; gap:10px; margin-top:25px;">
+        <button class="btn btn-primary" style="flex:1;" onclick="saveInv()"><i class="fas fa-cloud-upload-alt"></i> رفع واعتماد بيانات المنتج</button>
+        <button class="btn btn-light" onclick="closeModal('#modalInvForm')">إلغاء الأمر</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stock Movement Adjustment Modal -->
+  <div class="modal" id="modalStockMove">
+    <div class="modal-content">
+      <div class="modal-title">تسجيل حركة مخزون يدوية<button class="modal-close" onclick="closeModal('#modalStockMove')">&times;</button></div>
+      <div style="background:#e0e7ff; color:var(--secondary); padding:15px; border-radius:12px; font-weight:bold; font-size:18px; margin-bottom:20px; text-align:center;">منتج: <span id="movName"></span></div>
+      <input type="hidden" id="movId">
+      <div class="form-group"><label class="form-label">طبيعة إجراء الحركة</label><select id="movType" class="form-control"><option value="in">توريد وإدخال بضاعة (زيادة الرصيد المتاح)</option><option value="out">تالف أو استخدام (إنقاص الرصيد من المستودع)</option></select></div>
+      <div class="form-group"><label class="form-label">الكمية المسجلة للتعديل</label><input type="number" id="movQty" class="form-control" value="1" min="1"></div>
+      <div class="form-group"><label class="form-label">توضيحات إضافية (اختياري)</label><input type="text" id="movNotes" class="form-control" placeholder="رقم بوليصة المورد / اسم المسلم / ملاحظات الشحن"></div>
+      
+      <button class="btn btn-success" style="width:100%; margin-top:15px;" onclick="saveStockMove()"><i class="fas fa-check-double"></i> تأكيد وحفظ التسوية المجردة</button>
+    </div>
+  </div>
+
+  <!-- Raw Material Modal (INV_Items) -->
+  <div class="modal" id="modalRawForm">
+    <div class="modal-content modal-large">
+      <div class="modal-title"><span id="rMdlTitle">إضافة مادة خام جديدة للمستودع</span><button class="modal-close" onclick="closeModal('#modalRawForm')">&times;</button></div>
+      <input type="hidden" id="mrId">
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px 20px;">
+        <div class="form-group"><label class="form-label">اسم المادة الخام</label><input type="text" id="mrName" class="form-control" placeholder="مثال: بن كولومبي، سكر..."></div>
+        <div class="form-group"><label class="form-label">التصنيف</label><input type="text" id="mrCat" class="form-control" placeholder="مثال: حبوب قهوة، تغليف.."></div>
+        <div class="form-group" style="background:#e0f2fe; padding:10px; border-radius:8px;"><label class="form-label" style="color:#0369a1;">الوحدة الكبرى (للشراء)</label><input type="text" id="mrBigUnit" class="form-control" placeholder="كرتون، بوكس، كيس..."></div>
+
+        <div class="form-group" style="background:#dbeafe; padding:10px; border-radius:8px; border:2px solid #3b82f6;">
+          <label class="form-label" style="color:#1d4ed8; font-weight:800;">سعر شراء الوحدة الكبرى (SAR)</label>
+          <input type="number" step="0.01" id="mrCost" class="form-control" value="0" oninput="calcSmallUnitCost()">
+        </div>
+        <div class="form-group" style="background:#e0f2fe; padding:10px; border-radius:8px;"><label class="form-label" style="color:#0369a1;">معامل التحويل (كم وحدة صغرى؟)</label><input type="number" id="mrConvRate" class="form-control" placeholder="مثال: 24" value="1" min="1" oninput="calcSmallUnitCost()">
+</div>
+        <div class="form-group" style="background:#e0f2fe; padding:10px; border-radius:8px;"><label class="form-label" style="color:#0369a1;">الوحدة الصغرى (للوصفات)</label><input type="text" id="mrUnit" class="form-control" value="حبة" placeholder="حبة، جرام، مل"></div>
+
+        <div class="form-group" style="background:#f0fdf4; padding:10px; border-radius:8px; border:2px solid #22c55e;">
+          <label class="form-label" style="color:#16a34a; font-weight:800;">سعر الوحدة الصغرى (SAR)</label>
+          <input type="number" step="0.0001" id="mrSmallCost" class="form-control" style="font-weight:900; color:#166534; font-size:16px;" value="0" oninput="calcBigUnitCost()">
+        </div>
+        <div class="form-group"><label class="form-label">المخزون الفعلي (بالوحدة الصغرى)</label><input type="number" id="mrStock" class="form-control" value="0"></div>
+        <div class="form-group"><label class="form-label">حد التنبيه (بالوحدة الصغرى)</label><input type="number" id="mrMin" class="form-control" value="0"></div>
+      </div>
+      <div style="display:flex; gap:10px; margin-top:25px;">
+        <button class="btn btn-primary" style="flex:1;" onclick="saveRawItem()"><i class="fas fa-save"></i> حفظ مادة المستودع</button>
+        <button class="btn btn-light" onclick="closeModal('#modalRawForm')">إلغاء الأمر</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recipe Editor Modal -->
+  <!-- Product Card Modal -->
+  <div class="modal" id="modalProductCard">
+    <div class="modal-content modal-large" style="max-width:700px;">
+      <div class="modal-title"><i class="fas fa-id-card"></i> كارت المنتج<button class="modal-close" onclick="closeModal('#modalProductCard')">&times;</button></div>
+
+      <!-- Product Info -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+        <div style="background:#f8fafc;padding:14px;border-radius:12px;border:1px solid #e2e8f0;">
+          <div style="font-size:11px;color:#64748b;margin-bottom:4px;">Product Name</div>
+          <div id="pcName" style="font-size:18px;font-weight:900;color:var(--primary);"></div>
+          <div id="pcCategory" style="font-size:12px;color:#64748b;margin-top:2px;"></div>
+        </div>
+        <div style="background:#f8fafc;padding:14px;border-radius:12px;border:1px solid #e2e8f0;">
+          <div style="font-size:11px;color:#64748b;margin-bottom:4px;">Selling Price (VAT inc.)</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input type="number" id="pcPrice" step="0.01" class="form-control" style="font-size:20px;font-weight:900;color:var(--secondary);padding:8px 12px;flex:1;">
+            <button class="btn btn-sm btn-primary" onclick="saveProductPrice()"><i class="fas fa-save"></i></button>
+          </div>
+          <div style="font-size:11px;color:#64748b;margin-top:4px;">Net: <span id="pcNetPrice">0.00</span> | VAT: <span id="pcVATPrice">0.00</span></div>
+        </div>
+      </div>
+
+      <!-- Cost & Profit Summary -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px;">
+        <div style="background:#fef2f2;padding:12px;border-radius:10px;text-align:center;border:1px solid #fecaca;">
+          <div style="font-size:11px;color:#991b1b;">Recipe Cost</div>
+          <div id="pcCost" style="font-size:20px;font-weight:900;color:#ef4444;">0.00</div>
+        </div>
+        <div style="background:#f0fdf4;padding:12px;border-radius:10px;text-align:center;border:1px solid #bbf7d0;">
+          <div style="font-size:11px;color:#166534;">Gross Profit</div>
+          <div id="pcProfit" style="font-size:20px;font-weight:900;color:#16a34a;">0.00</div>
+        </div>
+        <div style="background:#eff6ff;padding:12px;border-radius:10px;text-align:center;border:1px solid #bfdbfe;">
+          <div style="font-size:11px;color:#1e40af;">Margin %</div>
+          <div id="pcMargin" style="font-size:20px;font-weight:900;color:#2563eb;">0%</div>
+        </div>
+      </div>
+
+      <!-- Ingredients -->
+      <h4 style="font-size:14px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:8px;">
+        <i class="fas fa-blender" style="color:var(--accent);"></i> المقادير / Recipe Ingredients
+        <button class="btn btn-sm btn-success" style="margin-right:auto;" onclick="closeModal('#modalProductCard');openRecipeModal(q('#pcId').value,q('#pcName').textContent)"><i class="fas fa-edit"></i> تعديل</button>
+      </h4>
+      <input type="hidden" id="pcId">
+      <div class="erp-table-container">
+        <table class="erp-table">
+          <thead><tr><th>المادة</th><th>الكمية</th><th>الوحدة</th><th>تكلفة الوحدة</th><th>الإجمالي</th></tr></thead>
+          <tbody id="pcIngredientsBody"><tr><td colspan="5" class="empty-msg">لا توجد مقادير</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="modalRecipeForm">
+    <div class="modal-content modal-large">
+      <div class="modal-title"><i class="fas fa-mortar-pestle"></i> وصفة المنتج: <span id="recMenuName"></span><button class="modal-close" onclick="closeModal('#modalRecipeForm')">&times;</button></div>
+      <input type="hidden" id="recMenuId">
+      <div style="background:#f1f5f9; padding:15px; border-radius:12px; margin-bottom:15px;">
+        <h4 style="margin-bottom:10px;"><i class="fas fa-plus-circle"></i> إضافة مادة خام للوصفة</h4>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <div class="search-dropdown-wrap" style="flex:2; min-width:200px;">
+            <i class="fas fa-search sd-icon"></i>
+            <input type="text" id="recRawSearch" class="sd-input form-control" placeholder="ابحث عن مادة خام..." oninput="filterRecipeItems()" onfocus="filterRecipeItems()">
+            <input type="hidden" id="recRawId">
+            <input type="hidden" id="recRawName">
+            <div class="sd-results" id="recRawResults"></div>
+          </div>
+          <input type="number" step="0.01" id="recQtyInput" class="form-control" style="flex:1; min-width:120px;" placeholder="الكمية (بالوحدة الصغرى)">
+          <button class="btn btn-success" onclick="addIngredientToRecipe()"><i class="fas fa-plus"></i> إدراج</button>
+        </div>
+      </div>
+      <div id="recipeTotalCostBar" style="background:linear-gradient(135deg,#1e293b,#0f172a); color:#fff; padding:14px 20px; border-radius:12px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-weight:700;"><i class="fas fa-calculator"></i> إجمالي تكلفة الوصفة للطلب الواحد</span>
+        <span id="recipeTotalCost" style="font-size:20px; font-weight:900; color:#34d399;">0.00 SAR</span>
+      </div>
+      <div id="recipeLowestCost" style="font-size:12px;color:#64748b;margin-bottom:10px;padding:0 4px;"></div>
+      <table class="table" style="background:#fff; border-radius:8px; border:1px solid #ddd;">
+        <thead><tr><th>المادة الخام</th><th>الكمية (وحدة صغرى)</th><th>تكلفة المكون</th><th>الوحدة</th><th>إجراء</th></tr></thead>
+        <tbody id="tbRecipeIngs"></tbody>
+      </table>
+      <div style="display:flex; gap:10px; margin-top:25px;">
+        <button class="btn btn-primary" style="flex:1;" onclick="saveRecipe()"><i class="fas fa-save"></i> حفظ الوصفة واعتمادها للخصم الآلي</button>
+        <button class="btn btn-light" onclick="closeModal('#modalRecipeForm')">إلغاء الأمر</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create New User Modal -->
+  <div class="modal" id="modalUserForm">
+    <div class="modal-content">
+      <div class="modal-title"><span id="muModalTitle">إضافة موظف جديد</span><button class="modal-close" onclick="closeModal('#modalUserForm')">&times;</button></div>
+      <div class="form-group">
+        <label class="form-label">اسم الموظف الكامل (يظهر في التقارير)</label>
+        <input type="text" id="muDisplayName" class="form-control" placeholder="مثال: أحمد محمد العبدالله">
+      </div>
+      <div class="form-group">
+        <label class="form-label">الرقم الوظيفي / اسم الدخول</label>
+        <input type="text" id="muName" class="form-control" placeholder="مثال: EMP001 أو ahmad.s">
+      </div>
+      <div class="form-group">
+        <label class="form-label">كلمة المرور</label>
+        <input type="password" id="muPass" class="form-control" placeholder="******">
+      </div>
+      <div class="form-group">
+        <label class="form-label">نوع الصلاحية</label>
+        <select id="muRole" class="form-control">
+          <option value="cashier">كاشير — بائع فرع</option>
+          <option value="manager">مدير فرع</option>
+          <option value="admin">مدير مؤسسة (وصول كامل)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 14px; background:#fef3c7; border:1px solid #fde68a; border-radius:10px;">
+          <input type="checkbox" id="muIsDeveloper" style="width:18px; height:18px; accent-color:#d97706;">
+          <span style="font-weight:700; color:#92400e;"><i class="fas fa-code"></i> صلاحية المطور (تصفير قاعدة البيانات + صلاحيات حساسة)</span>
+        </label>
+      </div>
+      <button class="btn btn-primary" style="width:100%; margin-top:15px;" onclick="saveUserFn()"><i class="fas fa-user-check"></i> حفظ المستخدم</button>
+    </div>
+  </div>
+
+  <!-- Discounts Modal -->
+  <div class="modal" id="modalDiscount">
+    <div class="modal-content">
+      <div class="modal-title">اختيار وتأكيد الخصم للحساب<button class="modal-close" onclick="closeModal('#modalDiscount')">&times;</button></div>
+      <div id="discModalList" style="max-height:300px; overflow-y:auto;"></div>
+      <button class="btn btn-light" style="width:100%; margin-top:20px;" onclick="closeModal('#modalDiscount')">تجاهل تطبيق الخصومات الخاصة</button>
+    </div>
+  </div>
+
+  <!-- Receipt Printing Modal -->
+  <div class="modal" id="modalReceipt">
+    <div class="modal-content" style="max-width:400px; padding:20px;">
+      <div class="modal-title" style="display:flex; justify-content:center; margin-bottom:10px;"><button class="modal-close" style="position:absolute; left:20px;" onclick="closeModal('#modalReceipt')">&times;</button>طباعة الإيصال الحراري</div>
+      <div id="receiptBox" style="background:#fff; border:1px solid #ddd; padding:15px; margin:0 auto; box-shadow:0 0 10px rgba(0,0,0,0.1); max-height:450px; overflow-y:auto;">
+        <!-- Recepit format -->
+      </div>
+      <button class="btn btn-success" style="width:100%; margin-top:20px; padding:15px; font-size:16px;" onclick="printReceiptWindow()"><i class="fas fa-print"></i> Print Receipt</button>
+    </div>
+  </div>
+
+  <!-- Shift Closing Operations Modal -->
+  <div class="modal" id="modalShiftClose">
+    <div class="modal-content">
+      <div class="modal-title"><span style="color:var(--danger);"><i class="fas fa-lock"></i> <span data-i18n="shiftClose">إغلاق الوردية</span></span><button class="modal-close" onclick="closeModal('#modalShiftClose')">&times;</button></div>
+
+      <div style="background:#f1f5f9; padding:15px; border-radius:15px; margin-bottom:20px;">
+        <p style="margin-bottom:15px; font-weight:bold; color:var(--text-dark); text-align:center;" data-i18n="enterAmounts">أدخل المبالغ الفعلية في الدرج:</p>
+        <div class="form-group">
+          <label class="form-label" data-i18n="cashAmount">المبلغ النقدي (كاش)</label>
+          <input type="number" id="scCash" class="form-control" value="0" step="0.01" style="font-size:18px; font-weight:bold; height:50px; text-align:center;">
+        </div>
+        <div class="form-group">
+          <label class="form-label" data-i18n="cardAmount">مدى / شبكة</label>
+          <input type="number" id="scCard" class="form-control" value="0" step="0.01" style="font-size:18px; font-weight:bold; height:50px; text-align:center;">
+        </div>
+        <div class="form-group">
+          <label class="form-label" data-i18n="kitaAmount">كيتا / آجل</label>
+          <input type="number" id="scKita" class="form-control" value="0" step="0.01" style="font-size:18px; font-weight:bold; height:50px; text-align:center;">
+        </div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <button class="btn btn-success" style="width:100%; padding:15px; font-size:16px; font-weight:bold;" onclick="shiftConfirmClose()">
+          <i class="fas fa-check-double"></i> <span data-i18n="confirmClose">اعتماد الجرد وإغلاق الوردية</span>
+        </button>
+        <button class="btn btn-light" style="width:100%;" onclick="closeModal('#modalShiftClose')"><span data-i18n="cancel">إلغاء</span></button>
+      </div>
+      
+    </div>
+  </div>
+
+
+  <!-- Purchase Invoice Detail Modal -->
+  <div class="modal" id="modalPurDetail">
+    <div class="modal-content modal-large">
+      <div class="modal-title"><i class="fas fa-file-invoice"></i> تفاصيل فاتورة الشراء<button class="modal-close" onclick="closeModal('#modalPurDetail')">&times;</button></div>
+      <input type="hidden" id="purDetailId">
+      <input type="hidden" id="purDetailIdx">
+      <div id="purDetailBody"></div>
+      <div style="display:flex;gap:10px;margin-top:15px;">
+        <button class="btn btn-success" id="purDetailReceiveBtn" style="flex:1;padding:14px;" onclick="receivePurDetail()"><i class="fas fa-check-double"></i> استلام المحدد</button>
+        <button class="btn btn-light" style="padding:14px;" onclick="closeModal('#modalPurDetail')">إغلاق</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Receive Purchase Modal (partial receive with item selection) -->
+  <div class="modal" id="modalReceiveForm">
+    <div class="modal-content modal-large">
+      <div class="modal-title"><i class="fas fa-truck-loading"></i> استلام فاتورة الشراء<button class="modal-close" onclick="closeModal('#modalReceiveForm')">&times;</button></div>
+      <div style="background:#eff6ff; padding:12px 16px; border-radius:10px; margin-bottom:15px; display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-weight:700; color:#1e40af;"><i class="fas fa-file-invoice"></i> رقم الفاتورة: <span id="rcvInvoiceId"></span></span>
+        <span style="color:#64748b;" id="rcvSupplierName"></span>
+      </div>
+      <p style="font-size:13px; color:#64748b; margin-bottom:10px;">حدد الأصناف المستلمة وعدّل الكميات إذا لزم الأمر:</p>
+
+      <!-- VAT Option -->
+      <div style="background:#fefce8;padding:10px 14px;border-radius:10px;border:1px solid #fde047;margin-bottom:12px;display:flex;align-items:center;gap:12px;">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;color:#854d0e;cursor:pointer;">
+          <input type="checkbox" id="rcvIncludesVAT" style="width:18px;height:18px;accent-color:#d97706;">
+          المبالغ شاملة ضريبة 15%
+        </label>
+        <span style="font-size:11px;color:#92400e;">عند التفعيل: يُرحّل المخزون بالسعر بدون ضريبة، والضريبة تُرحّل لحساب ضريبة المدخلات</span>
+      </div>
+
+      <div class="table-wrapper" style="margin-bottom:15px;">
+        <table class="table">
+          <thead><tr><th style="width:40px;"><input type="checkbox" id="rcvSelectAll" onchange="toggleRcvAll()" checked></th><th>الصنف</th><th>الكمية المطلوبة</th><th>الكمية المستلمة</th><th>سعر الوحدة</th></tr></thead>
+          <tbody id="tbReceiveItems"></tbody>
+        </table>
+      </div>
+      <div id="rcvVATSummary" style="display:none;background:#f0fdf4;padding:10px 14px;border-radius:10px;border:1px solid #86efac;margin-bottom:10px;font-size:13px;"></div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn btn-success" style="flex:1; padding:15px;" onclick="confirmReceive()"><i class="fas fa-check-double"></i> تأكيد الاستلام وتحديث المخزون</button>
+        <button class="btn btn-light" style="padding:15px;" onclick="closeModal('#modalReceiveForm')">إلغاء</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Expense Modal -->
+  <div class="modal" id="modalExpForm">
+    <div class="modal-content">
+      <div class="modal-title">إضافة مصروف جديد<button class="modal-close" onclick="closeModal('#modalExpForm')">&times;</button></div>
+      <div class="form-group"><label class="form-label">التصنيف</label>
+        <select id="expCat" class="form-control">
+          <option value="إيجار">إيجار</option>
+          <option value="رواتب">رواتب</option>
+          <option value="صيانة">صيانة</option>
+          <option value="مواد تنظيف">مواد تنظيف</option>
+          <option value="فواتير">فواتير (كهرباء/ماء)</option>
+          <option value="تسويق">تسويق وإعلانات</option>
+          <option value="مواصلات">مواصلات ونقل</option>
+          <option value="أخرى">أخرى</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">الوصف</label><input type="text" id="expDesc" class="form-control" placeholder="مثال: فاتورة كهرباء شهر مارس"></div>
+      <div class="form-group"><label class="form-label">المبلغ (SAR)</label><input type="number" step="0.01" id="expAmt" class="form-control" placeholder="0.00"></div>
+      <div class="form-group"><label class="form-label">طريقة الدفع</label>
+        <select id="expPay" class="form-control"><option value="Cash">كاش</option><option value="Card">بطاقة</option><option value="Transfer">تحويل</option></select>
+      </div>
+      <div class="form-group"><label class="form-label">ملاحظات (اختياري)</label><input type="text" id="expNotes" class="form-control" placeholder="ملاحظات"></div>
+      <button class="btn btn-primary" style="width:100%; margin-top:15px;" onclick="saveExpFn()"><i class="fas fa-save"></i> حفظ المصروف</button>
+    </div>
+  </div>
+
+  <div class="modal" id="modalPurForm">
+    <div class="modal-content modal-large">
+      <div class="modal-title">إضافة فاتورة مشتريات (متعددة المواد)<button class="modal-close" onclick="closeModal('#modalPurForm')">&times;</button></div>
+      
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:15px; margin-bottom:15px;">
+        <div class="form-group" style="margin:0;"><label class="form-label">المورد *</label>
+          <div class="search-dropdown-wrap">
+            <i class="fas fa-truck sd-icon"></i>
+            <input type="text" id="purSupplier" class="sd-input" placeholder="ابحث عن المورد..." autocomplete="off" oninput="filterPurSuppliers()" onfocus="filterPurSuppliers()">
+            <input type="hidden" id="purSupplierId">
+            <div class="sd-results" id="purSupplierResults"></div>
+          </div>
+        </div>
+        <div class="form-group" style="margin:0;"><label class="form-label">تاريخ الفاتورة</label><input type="date" id="purInvDate" class="form-control"></div>
+        <div class="form-group" style="margin:0;"><label class="form-label">طريقة الدفع</label>
+          <select id="purPay" class="form-control"><option value="Cash">كاش</option><option value="Card">بطاقة</option><option value="آجل">آجل</option><option value="Transfer">تحويل</option></select>
+        </div>
+      </div>
+      <div class="form-group"><label class="form-label">ملاحظات (رقم الفاتورة)</label><input type="text" id="purNotes" class="form-control" placeholder="ملاحظات"></div>
+
+      <div style="background:#f8fafc; padding:15px; border-radius:12px; margin-bottom:15px; border:1px solid #e2e8f0;">
+        <h4 style="margin-bottom:10px; color:var(--primary);">إضافة مواد للفاتورة</h4>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+          <div style="flex:2; min-width:200px;">
+            <label class="form-label" style="font-size:13px;">المادة (بحث من المستودع)</label>
+            <div class="search-dropdown-wrap" id="purItemDropdown">
+              <i class="fas fa-search sd-icon"></i>
+              <input type="text" id="purItemSearch" class="sd-input" placeholder="ابحث عن مادة..." autocomplete="off" oninput="filterPurItems()" onfocus="filterPurItems()">
+              <input type="hidden" id="purItemId" value="">
+              <input type="hidden" id="purItem" value="">
+              <div class="sd-results" id="purItemResults"></div>
+            </div>
+          </div>
+          <div style="flex:1; min-width:80px;">
+            <label class="form-label" style="font-size:13px;">الكمية</label><input type="number" id="purQty" class="form-control" value="1" min="1">
+          </div>
+          <div style="flex:1; min-width:100px;">
+            <label class="form-label" style="font-size:13px;">سعر الوحدة</label><input type="number" step="0.01" id="purUnitPrice" class="form-control" placeholder="0.00">
+          </div>
+          <button class="btn btn-success" style="height:48px;" onclick="addPurchaseCartItem()"><i class="fas fa-plus"></i> إدراج</button>
+        </div>
+      </div>
+      
+      <table class="table" style="background:#fff; border:1px solid #e2e8f0;">
+        <thead><tr><th>المادة الخام</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th><th>إجراء</th></tr></thead>
+        <tbody id="tbPurCart"><tr><td colspan="5" style="text-align:center;">الفاتورة فارغة</td></tr></tbody>
+        <tfoot>
+          <tr style="background:#f1f5f9;">
+            <td colspan="3" style="text-align:left; font-weight:bold;">إجمالي الفاتورة:</td>
+            <td colspan="2" style="font-weight:bold; color:var(--primary); font-size:18px;" id="purCartTotal">0.00 SAR</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <button class="btn btn-primary" style="width:100%; margin-top:20px; font-size:16px; padding:15px;" onclick="savePurBatchFn()"><i class="fas fa-check-double"></i> حفظ واعتماد الفاتورة للمستودع</button>
+    </div>
+  </div>
+
+  <!-- Modal: Live Stocktake Form -->
+  <div class="modal" id="modalStocktakeForm">
+    <div class="modal-content" style="max-width:900px; max-height:90vh; display:flex; flex-direction:column;">
+      <div class="modal-title" style="flex-shrink:0;">
+        <i class="fas fa-tasks" style="color:var(--primary);"></i> عملية جرد وتسوية مخزون (جديدة)
+      </div>
+      
+      <div style="flex-shrink:0; background:#f8fafc; padding:15px; border-radius:12px; margin-bottom:15px; border:1px solid #e2e8f0; display:flex; gap:15px; flex-wrap:wrap;">
+        <div style="flex:1;">
+          <label class="form-label" style="font-size:13px; font-weight:700;">بحث وتصفية المواد الخام السريعة:</label>
+          <input type="text" id="stSearch" class="form-control" placeholder="اسم المادة..." oninput="filterStItems()">
+        </div>
+        <div style="flex:1;">
+          <label class="form-label" style="font-size:13px; font-weight:700;">ملاحظات الجرد (اختياري):</label>
+          <input type="text" id="stNotes" class="form-control" placeholder="سبب التسوية (كسر، تالف، جرد دوري)">
+        </div>
+      </div>
+      
+      <div style="flex:1; overflow-y:auto; border:1px solid #e2e8f0; border-radius:12px; margin-bottom:15px;">
+        <table class="table" style="background:#fff; margin:0;">
+          <thead style="position:sticky; top:0; z-index:10; box-shadow:0 2px 4px rgba(0,0,0,0.05);">
+            <tr>
+              <th>كود المادة</th>
+              <th>وصف المادة الخام</th>
+              <th>رصيد النظام الحالي</th>
+              <th style="width:160px;">الرصيد الفعلي (جرد)</th>
+              <th style="text-align:left;">الفارق</th>
+            </tr>
+          </thead>
+          <tbody id="tbStBody">
+            <!-- Items loaded via JS -->
+          </tbody>
+        </table>
+      </div>
+
+      <div style="flex-shrink:0;">
+        <button class="btn btn-primary" style="width:100%; font-size:16px; padding:15px;" onclick="saveStocktakeFn()">
+          <i class="fas fa-check-double"></i> اعتماد وتسجيل التسوية الجردية للمخزون
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Glass Modals (POS shift close, variance, report, generic confirm) ─── -->
+  <div id="modalShiftVariance" class="glass-modal hidden">
+    <div class="glass-modal-content danger">
+      <div class="glass-modal-title">
+        <span><i class="fas fa-exclamation-triangle"></i> فرق غير متوازن</span>
+      </div>
+      <div class="glass-modal-body" id="varianceBody"></div>
+      <div class="glass-modal-actions">
+        <button class="btn btn-light" onclick="closeGlassModal('#modalShiftVariance')"><i class="fas fa-arrow-right"></i> رجوع لمراجعة الفواتير</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalShiftReport" class="glass-modal hidden">
+    <div class="glass-modal-content large">
+      <div class="glass-modal-title">
+        <span><i class="fas fa-clipboard-check"></i> تقرير إغلاق الوردية</span>
+        <button class="glass-modal-close" onclick="closeGlassModal('#modalShiftReport')">&times;</button>
+      </div>
+      <div class="glass-modal-body" id="shiftReportBody"></div>
+      <div class="glass-modal-actions">
+        <button class="btn btn-success" onclick="shareShiftReportWhatsApp()"><i class="fab fa-whatsapp"></i> إرسال عبر واتساب</button>
+        <button class="btn btn-primary" onclick="printShiftReportNew()"><i class="fas fa-print"></i> طباعة</button>
+        <button class="btn btn-light" onclick="closeGlassModal('#modalShiftReport')">إغلاق</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalGlassConfirm" class="glass-modal hidden">
+    <div class="glass-modal-content small">
+      <div class="glass-modal-title"><span id="gcTitle"><i class="fas fa-question-circle"></i> تأكيد</span></div>
+      <div class="glass-modal-body"><p id="gcMessage" class="glass-modal-message"></p></div>
+      <div class="glass-modal-actions" id="gcActions">
+        <button class="btn btn-light" onclick="closeGlassModal('#modalGlassConfirm', false)">إلغاء</button>
+        <button class="btn btn-primary" onclick="closeGlassModal('#modalGlassConfirm', true)">تأكيد</button>
+      </div>
+    </div>
+  </div>
+
+  

@@ -6,6 +6,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0d47a1">
 
+  <!-- Synchronous auth gate — redirects to / if no token, otherwise releases the visibility gate when body parses -->
+  <script>
+    (function() {
+      try {
+        if (!localStorage.getItem('pos_token') || !localStorage.getItem('pos_session')) {
+          window.location.replace('/');
+          return;
+        }
+        document.addEventListener('DOMContentLoaded', function() {
+          document.body.classList.add('authenticated');
+        });
+      } catch (e) { window.location.replace('/'); }
+    })();
+  </script>
+  <style id="critical-auth-gate">
+    html, body { background: #0f172a; }
+    body:not(.authenticated) { visibility: hidden !important; }
+  </style>
+
   <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   <link rel="stylesheet" href="/shared/common.css">

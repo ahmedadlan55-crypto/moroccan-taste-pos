@@ -5,6 +5,7 @@
 
 document.addEventListener('DOMContentLoaded', function() {
   if (!requireAuth()) return;
+  document.body.classList.add('authenticated');
   restoreState();
 
   // Header + branding

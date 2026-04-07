@@ -896,80 +896,111 @@ function erpImportPOItems(input) {
 }
 
 function erpPrintPO(poId) {
-  const po = _erpPOAllData.find(p=>p.ID===poId);
-  if (!po) return showToast('لم يتم العثور على الأمر','error');
-  loader(true);
-  window._apiBridge.withSuccessHandler(function(lines) {
-    loader(false);
-    lines = lines || [];
-    var itemsH='', total=0;
-    lines.forEach(function(l,i){ var t=(Number(l.Qty)||0)*(Number(l.UnitPrice)||0); total+=t; itemsH+=`<tr><td>${i+1}</td><td>${l.ItemName||''}</td><td>${l.Qty||0}</td><td>${(Number(l.UnitPrice)||0).toFixed(2)}</td><td>${t.toFixed(2)}</td></tr>`; });
-    var vat=total*0.15;
-    var w=window.open('','_blank','width=800,height=700');
-    w.document.write(`<html dir="rtl"><head><title>أمر شراء ${po.PONumber||''}</title>
-    <style>body{font-family:Arial,sans-serif;direction:rtl;padding:30px;color:#1e293b;}h2{text-align:center;margin-bottom:6px;}
-    .meta{display:flex;justify-content:space-between;margin:14px 0;font-size:13px;}
-    table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px;}
-    th,td{border:1px solid #ddd;padding:8px 10px;text-align:right;}th{background:#f1f5f9;font-weight:700;}
-    .ts{margin-top:10px;}.ts table{width:280px;margin-right:auto;border:none;}.ts td{border:none;padding:4px 8px;}
-    .g{font-weight:800;font-size:15px;background:#eff6ff;}
-    .sig{display:flex;justify-content:space-between;margin-top:50px;font-size:13px;}.sig div{text-align:center;min-width:150px;}</style></head><body>
-    <h2>أمر شراء</h2>
-    <div class="meta"><div><strong>رقم:</strong> ${po.PONumber||''}</div><div><strong>التاريخ:</strong> ${po.Date?new Date(po.Date).toLocaleDateString('ar-SA'):'—'}</div></div>
-    <p><strong>المورد:</strong> ${po.SupplierName||'—'}</p>
-    ${po.Notes?'<p><strong>ملاحظات:</strong> '+po.Notes+'</p>':''}
-    <table><thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead>
-    <tbody>${itemsH||'<tr><td colspan="5" style="text-align:center;color:#999;">لا توجد أصناف</td></tr>'}</tbody></table>
-    <div class="ts"><table>
-      <tr><td>قبل الضريبة</td><td>${total.toFixed(2)}</td></tr>
-      <tr><td>ضريبة 15%</td><td>${vat.toFixed(2)}</td></tr>
-      <tr class="g"><td>الإجمالي</td><td>${(total+vat).toFixed(2)}</td></tr>
-    </table></div>
-    <div class="sig"><div><p>_________________</p><p>توقيع المشتري</p></div><div><p>_________________</p><p>توقيع المورد</p></div></div>
-    </body></html>`);
-    w.document.close(); setTimeout(function(){w.print();},400);
-  }).withFailureHandler(function(e){ loader(false); showToast('خطأ: '+e.message,'error'); }).getPOLines(poId);
+  // Backend already returns lines inside each PO object — no separate fetch needed.
+  var po = (_erpPOAllData || []).find(function(p) { return String(p.id) === String(poId); });
+  if (!po) return showToast('لم يتم العثور على الأمر', 'error');
+
+  var lines = po.lines || [];
+  var itemsH = '', totalBefore = 0, totalVat = 0;
+  lines.forEach(function(l, i) {
+    var lineTotalBefore = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0);
+    var lineVat = Number(l.vatAmount) || (lineTotalBefore * 0.15);
+    var lineTotal = Number(l.total) || (lineTotalBefore + lineVat);
+    totalBefore += lineTotalBefore;
+    totalVat += lineVat;
+    itemsH += '<tr>' +
+      '<td>' + (i + 1) + '</td>' +
+      '<td>' + (l.itemName || '') + '</td>' +
+      '<td>' + (l.qty || 0) + '</td>' +
+      '<td>' + (Number(l.unitPrice) || 0).toFixed(2) + '</td>' +
+      '<td>' + lineTotal.toFixed(2) + '</td>' +
+    '</tr>';
+  });
+
+  var grandTotal = totalBefore + totalVat;
+  var dateStr = po.poDate ? new Date(po.poDate).toLocaleDateString('en-GB') : '—';
+
+  var w = window.open('', '_blank', 'width=800,height=700');
+  if (!w) return showToast('السماح بالنوافذ المنبثقة مطلوب للطباعة', 'error');
+  w.document.write(
+    '<html dir="rtl"><head><meta charset="UTF-8"><title>أمر شراء ' + (po.poNumber || '') + '</title>' +
+    '<style>body{font-family:Arial,sans-serif;direction:rtl;padding:30px;color:#1e293b;}h2{text-align:center;margin-bottom:6px;}' +
+    '.meta{display:flex;justify-content:space-between;margin:14px 0;font-size:13px;}' +
+    'table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px;}' +
+    'th,td{border:1px solid #ddd;padding:8px 10px;text-align:right;}th{background:#f1f5f9;font-weight:700;}' +
+    '.ts{margin-top:10px;}.ts table{width:280px;margin-right:auto;border:none;}.ts td{border:none;padding:4px 8px;}' +
+    '.g{font-weight:800;font-size:15px;background:#eff6ff;}' +
+    '.sig{display:flex;justify-content:space-between;margin-top:50px;font-size:13px;}.sig div{text-align:center;min-width:150px;}</style></head><body>' +
+    '<h2>أمر شراء</h2>' +
+    '<div class="meta"><div><strong>رقم:</strong> ' + (po.poNumber || '') + '</div><div><strong>التاريخ:</strong> ' + dateStr + '</div></div>' +
+    '<p><strong>المورد:</strong> ' + (po.supplierName || '—') + '</p>' +
+    (po.notes ? '<p><strong>ملاحظات:</strong> ' + po.notes + '</p>' : '') +
+    '<table><thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead>' +
+    '<tbody>' + (itemsH || '<tr><td colspan="5" style="text-align:center;color:#999;">لا توجد أصناف</td></tr>') + '</tbody></table>' +
+    '<div class="ts"><table>' +
+      '<tr><td>قبل الضريبة</td><td>' + totalBefore.toFixed(2) + '</td></tr>' +
+      '<tr><td>ضريبة 15%</td><td>' + totalVat.toFixed(2) + '</td></tr>' +
+      '<tr class="g"><td>الإجمالي</td><td>' + grandTotal.toFixed(2) + '</td></tr>' +
+    '</table></div>' +
+    '<div class="sig"><div><p>_________________</p><p>توقيع المشتري</p></div><div><p>_________________</p><p>توقيع المورد</p></div></div>' +
+    '</body></html>'
+  );
+  w.document.close();
+  setTimeout(function() { w.print(); }, 400);
 }
 
 // ─── عرض/تعديل أمر شراء ───
 var _erpEditingPOId = null;
 function erpViewPO(poId) {
-  var po = _erpPOAllData.find(function(p){return p.ID===poId;});
-  if (!po) return showToast('لم يتم العثور على الأمر','error');
+  var po = (_erpPOAllData || []).find(function(p) { return String(p.id) === String(poId); });
+  if (!po) return showToast('لم يتم العثور على الأمر', 'error');
   _erpEditingPOId = poId;
-  var isDraft = po.Status==='draft';
+  var isDraft = po.status === 'draft';
+
   // Show form view
   document.getElementById('erpPOListView').classList.add('hidden');
   document.getElementById('erpPOFormView').classList.remove('hidden');
-  // Fill fields
-  document.getElementById('erpPOSupplierInput').value = po.SupplierName||'';
-  document.getElementById('erpPOSupplierId').value = po.SupplierID||'';
-  document.getElementById('erpPODate').value = po.Date ? po.Date.substring(0,10) : '';
-  document.getElementById('erpPOExpDate').value = po.ExpectedDate ? String(po.ExpectedDate).substring(0,10) : '';
-  document.getElementById('erpPONotes').value = po.Notes||'';
+
+  // Fill fields (camelCase from backend)
+  document.getElementById('erpPOSupplierInput').value = po.supplierName || '';
+  document.getElementById('erpPOSupplierId').value = po.supplierId || '';
+  document.getElementById('erpPODate').value = po.poDate ? String(po.poDate).substring(0, 10) : '';
+  document.getElementById('erpPOExpDate').value = po.expectedDate ? String(po.expectedDate).substring(0, 10) : '';
+  document.getElementById('erpPONotes').value = po.notes || '';
+
   // Disable fields if not draft
-  ['erpPOSupplierInput','erpPODate','erpPOExpDate','erpPONotes'].forEach(function(id){
-    var el=document.getElementById(id); if(el) el.readOnly=!isDraft;
+  ['erpPOSupplierInput', 'erpPODate', 'erpPOExpDate', 'erpPONotes'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.readOnly = !isDraft;
   });
-  // Load items
-  _erpPOCart = [];
-  loader(true);
-  window._apiBridge.withSuccessHandler(function(lines) {
-    loader(false);
-    (lines||[]).forEach(function(l){
-      _erpPOCart.push({ itemId:l.ItemID||'', itemName:l.ItemName||'', unit:'', qty:Number(l.Qty)||0, unitPrice:Number(l.UnitPrice)||0, total:(Number(l.Qty)||0)*(Number(l.UnitPrice)||0) });
-    });
-    erpRenderPOCart();
-    // Hide/show add-item row and save button based on status
-    var addRow = document.querySelector('#erpPOFormView .po-add-row');
-    if (addRow) addRow.style.display = isDraft ? 'flex' : 'none';
-    var saveBtn = document.querySelector('#erpPOFormView .btn-primary');
-    if (saveBtn) saveBtn.textContent = isDraft ? ' حفظ التعديلات' : ' عرض فقط (معتمد)';
-    if (saveBtn) saveBtn.disabled = !isDraft;
-  }).withFailureHandler(function(e){ loader(false); showToast('خطأ: '+e.message,'error'); }).getPOLines(poId);
-  // Load suppliers + items for dropdowns
-  window._apiBridge.withSuccessHandler(function(s){ _erpPOSuppliersList=s||[]; }).getSuppliers();
-  window._apiBridge.withSuccessHandler(function(i){ _erpPOItemsList=i||[]; }).getInvItems();
+
+  // Lines are already embedded in the PO object — no extra fetch
+  _erpPOCart = (po.lines || []).map(function(l) {
+    var qty = Number(l.qty) || 0;
+    var unitPrice = Number(l.unitPrice) || 0;
+    return {
+      itemId: l.itemId || '',
+      itemName: l.itemName || '',
+      unit: '',
+      qty: qty,
+      unitPrice: unitPrice,
+      total: qty * unitPrice
+    };
+  });
+  erpRenderPOCart();
+
+  // Hide/show add-item row and save button based on status
+  var addRow = document.querySelector('#erpPOFormView .po-add-row');
+  if (addRow) addRow.style.display = isDraft ? 'flex' : 'none';
+  var saveBtn = document.querySelector('#erpPOFormView .btn-primary');
+  if (saveBtn) {
+    saveBtn.textContent = isDraft ? ' حفظ التعديلات' : ' عرض فقط (معتمد)';
+    saveBtn.disabled = !isDraft;
+  }
+
+  // Load suppliers + items for dropdowns (used when editing)
+  window._apiBridge.withSuccessHandler(function(s) { _erpPOSuppliersList = s || []; }).getSuppliers();
+  window._apiBridge.withSuccessHandler(function(i) { _erpPOItemsList = i || []; }).getInvItems();
 }
 
 // ═══════════════════════════════════════

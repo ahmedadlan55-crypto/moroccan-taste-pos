@@ -102,9 +102,9 @@ async function addColumnIfMissing(table, column, definition) {
 }
 
 async function runMigrations() {
-  // PO lines — unit of measurement (kg / piece / box / etc.) carried from
-  // the ERP PO form through to the purchase and inventory receive screens.
   await addColumnIfMissing('po_lines', 'unit', "VARCHAR(50) DEFAULT ''");
+  await addColumnIfMissing('po_lines', 'conv_rate', "DECIMAL(10,2) DEFAULT 1");
+  await addColumnIfMissing('po_lines', 'unit_type', "VARCHAR(10) DEFAULT 'small'");
 }
 
 app.listen(PORT, async () => {

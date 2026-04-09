@@ -728,7 +728,10 @@ function erpAddPOItem() {
   var itemStock = 0;
   var foundItem = id ? _erpPOItemsList.find(function(x){return String(x.id)===String(id);}) : null;
   if (foundItem) itemStock = Number(foundItem.stock)||0;
-  _erpPOCart.push({ itemId:id, itemName:name, unit:unitName, qty:qty, unitPrice:price, total:qty*price, stock:itemStock });
+  // Capture conv_rate + unit_type so the receive endpoint knows how to convert
+  var convRate = _erpPOSelectedItem ? (_erpPOSelectedItem.convRate || 1) : 1;
+  var unitType = unit; // 'big' or 'small' from the dropdown <select> value
+  _erpPOCart.push({ itemId:id, itemName:name, unit:unitName, unitType:unitType, convRate:convRate, qty:qty, unitPrice:price, total:qty*price, stock:itemStock });
   document.getElementById('erpPOItemSearch').value='';
   document.getElementById('erpPOItemId').value='';
   document.getElementById('erpPOItemNameH').value='';
@@ -785,9 +788,9 @@ function erpSavePO() {
     date: document.getElementById('erpPODate')?.value||'',
     expectedDate: document.getElementById('erpPOExpDate')?.value||'',
     notes: document.getElementById('erpPONotes')?.value||'',
-    // Include `unit` so it's carried through to po_lines → purchases.items_json
-    // → receive preview + PO print.
-    items: _erpPOCart.map(function(i){ return { itemId:i.itemId, itemName:i.itemName, unit:i.unit||'', qty:i.qty, unitPrice:i.unitPrice }; })
+    // Include unit + unitType + convRate so the receive endpoint knows
+    // whether to multiply qty × convRate when adding to stock.
+    items: _erpPOCart.map(function(i){ return { itemId:i.itemId, itemName:i.itemName, unit:i.unit||'', unitType:i.unitType||'small', convRate:i.convRate||1, qty:i.qty, unitPrice:i.unitPrice }; })
   };
   loader(true);
   if (_erpEditingPOId) {
@@ -993,6 +996,8 @@ function erpViewPO(poId) {
       itemId: l.itemId || '',
       itemName: l.itemName || '',
       unit: l.unit || '',
+      unitType: l.unitType || 'small',
+      convRate: Number(l.convRate) || 1,
       qty: qty,
       unitPrice: unitPrice,
       total: qty * unitPrice

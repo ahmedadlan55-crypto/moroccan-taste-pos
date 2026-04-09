@@ -71,9 +71,29 @@ function normPurchaseItem(item) {
     id: item.id || item.itemId || null,
     name: item.name || item.itemName || '',
     unit: item.unit || '',
+    unitType: item.unitType || 'small',
+    convRate: Number(item.convRate) || 1,
     qty: Number(item.qty) || 0,
     unitPrice: Number(item.unitPrice) || 0
   };
+}
+
+// Compute the actual stock quantity in small-units.
+// If the user ordered 5 cartons and conv_rate = 28, this returns 140.
+function computeStockQty(item, inv) {
+  let usedConvRate = 1;
+  // Priority 1: convRate stored explicitly in the purchase item (from PO pipeline)
+  if (item.unitType === 'big' && item.convRate > 1) {
+    usedConvRate = item.convRate;
+  }
+  // Priority 2: the item.unit name matches the inv's big_unit → look up conv_rate from inv
+  else if (item.unit && inv.big_unit &&
+           item.unit.trim().toLowerCase() === String(inv.big_unit).trim().toLowerCase() &&
+           Number(inv.conv_rate) > 1) {
+    usedConvRate = Number(inv.conv_rate);
+  }
+  const stockQty = usedConvRate > 1 ? item.qty * usedConvRate : item.qty;
+  return { stockQty, usedConvRate };
 }
 
 // Resolve a purchase-item to a real inv_items row. Tries:
@@ -146,28 +166,40 @@ router.post('/receive/:id', async (req, res) => {
         totalVat += (item.unitPrice - netUnitPrice) * item.qty;
       }
 
-      // Update stock on the resolved inv row. Only overwrite cost if it's
-      // not already set (first receive) so subsequent receives at different
-      // prices don't clobber prior cost data.
-      // CRITICAL: capture affectedRows so we know if the WHERE clause matched.
+      // ─── UNIT CONVERSION: if ordered in big units, multiply qty × convRate ───
+      const { stockQty, usedConvRate } = computeStockQty(item, inv);
+
+      // Update stock with the CONVERTED quantity (in small units).
       const stockBefore = Number(inv.stock) || 0;
       const currentCost = Number(inv.cost) || 0;
+      // For cost, if the user bought 5 cartons @ 50 SAR/carton and conv_rate=28,
+      // the per-piece cost is 50/28 = 1.79 SAR. Store cost per small-unit.
+      let costPerSmallUnit = netUnitPrice;
+      if (usedConvRate > 1 && netUnitPrice > 0) {
+        costPerSmallUnit = netUnitPrice / usedConvRate;
+      }
+
       let affectedRows = 0;
-      if (currentCost === 0 && netUnitPrice > 0) {
+      if (currentCost === 0 && costPerSmallUnit > 0) {
         const [result] = await db.query('UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?',
-          [item.qty, netUnitPrice, inv.id]);
+          [stockQty, costPerSmallUnit, inv.id]);
         affectedRows = result.affectedRows;
       } else {
         const [result] = await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?',
-          [item.qty, inv.id]);
+          [stockQty, inv.id]);
         affectedRows = result.affectedRows;
       }
 
+      var convNote = usedConvRate > 1
+        ? item.qty + ' ' + (item.unit || 'big') + ' × ' + usedConvRate + ' = ' + stockQty + ' ' + (inv.unit || 'unit')
+        : '';
       console.log('[RECEIVE]   ' + (affectedRows > 0 ? 'OK' : 'FAIL'),
         inv.name, '(' + inv.id + ')',
-        'qty=' + item.qty,
-        'stock: ' + stockBefore + ' → ' + (stockBefore + item.qty),
-        'affected=' + affectedRows);
+        'ordered=' + item.qty + (usedConvRate > 1 ? ' ' + (item.unit || 'big') : ''),
+        'stockQty=' + stockQty,
+        'stock: ' + stockBefore + ' → ' + (stockBefore + stockQty),
+        'affected=' + affectedRows,
+        convNote ? '(' + convNote + ')' : '');
 
       if (affectedRows === 0) {
         // The UPDATE silently affected 0 rows — the WHERE clause didn't
@@ -184,15 +216,18 @@ router.post('/receive/:id', async (req, res) => {
       const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4) + '-' + count;
       await db.query(
         'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
-        [movId, now, inv.id, inv.name, 'in', item.qty, 'مشتريات', username || '', 'PUR: ' + id]
+        [movId, now, inv.id, inv.name, 'in', stockQty, 'مشتريات', username || '', 'PUR: ' + id]
       );
 
       updated.push({
         invId: inv.id,
         invName: inv.name,
-        qty: item.qty,
+        qtyOrdered: item.qty,
+        unitOrdered: item.unit || '',
+        convRate: usedConvRate,
+        stockQty: stockQty,
         stockBefore: stockBefore,
-        stockAfter: stockBefore + item.qty
+        stockAfter: stockBefore + stockQty
       });
 
       count++;
@@ -265,29 +300,32 @@ router.post('/receive/:id/revert', async (req, res) => {
     const rawItems = JSON.parse(purchase.items_json || '[]');
     const items = rawItems.map(normPurchaseItem);
 
-    // Pre-resolve items to their real inv rows (reused for both safety
-    // check and the rollback step).
+    // Pre-resolve items to their real inv rows + compute the converted qty
+    // (same logic as the receive endpoint — if the purchase was in big units,
+    // we need to subtract qty × convRate, not just qty).
     const resolved = [];
     for (const item of items) {
       if (item.qty <= 0) continue;
       const inv = await resolveInvItem(item);
-      if (inv) resolved.push({ item, inv });
+      if (!inv) continue;
+      const { stockQty } = computeStockQty(item, inv);
+      resolved.push({ item, inv, stockQty });
     }
 
     // Safety check — refuse if rolling back would make any item's stock go negative
     for (const r of resolved) {
       const currentStock = Number(r.inv.stock) || 0;
-      if (currentStock < r.item.qty) {
+      if (currentStock < r.stockQty) {
         return res.json({
           success: false,
-          error: 'لا يمكن التراجع: المخزون الحالي للمادة "' + r.inv.name + '" (' + currentStock + ') أقل من الكمية المستلمة (' + r.item.qty + '). ربما استُهلكت بعض الكمية في المبيعات.'
+          error: 'لا يمكن التراجع: المخزون الحالي للمادة "' + r.inv.name + '" (' + currentStock + ') أقل من الكمية المستلمة (' + r.stockQty + '). ربما استُهلكت بعض الكمية في المبيعات.'
         });
       }
     }
 
-    // Roll back stock
+    // Roll back stock (using the converted quantity, not the raw ordered qty)
     for (const r of resolved) {
-      await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [r.item.qty, r.inv.id]);
+      await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [r.stockQty, r.inv.id]);
     }
 
     // Delete the movements created by the receive (matched by notes = 'PUR: <id>' and type = 'in')
@@ -355,6 +393,8 @@ router.get('/orders', async (req, res) => {
         lines: lines.map(l => ({
           id: l.id, itemId: l.item_id, itemName: l.item_name,
           unit: l.unit || '',
+          unitType: l.unit_type || 'small',
+          convRate: Number(l.conv_rate) || 1,
           qty: Number(l.qty), unitPrice: Number(l.unit_price),
           vatRate: Number(l.vat_rate), vatAmount: Number(l.vat_amount),
           total: Number(l.total), receivedQty: Number(l.received_qty)
@@ -418,9 +458,10 @@ router.post('/orders', async (req, res) => {
         const lineVat = lineTotal * ((Number(line.vatRate) || 15) / 100);
 
         await db.query(
-          `INSERT INTO po_lines (id, po_id, item_id, item_name, unit, qty, unit_price, vat_rate, vat_amount, total, received_qty)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO po_lines (id, po_id, item_id, item_name, unit, unit_type, conv_rate, qty, unit_price, vat_rate, vat_amount, total, received_qty)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [lineId, poId, line.itemId || null, line.itemName || '', line.unit || '',
+           line.unitType || 'small', line.convRate || 1,
            line.qty || 0, line.unitPrice || 0, line.vatRate || 15, lineVat, lineTotal + lineVat, 0]
         );
       }
@@ -515,11 +556,14 @@ router.post('/orders/:id/approve', async (req, res) => {
     // Load PO lines so we can copy them into the purchase
     const [poLines] = await db.query('SELECT * FROM po_lines WHERE po_id = ?', [id]);
 
-    // Shape lines like the purchase items_json: [{ id, name, unit, qty, unitPrice }]
+    // Shape lines like the purchase items_json — include unit conversion info
+    // so the receive endpoint can multiply by convRate when adding to stock.
     const purchaseItems = poLines.map(l => ({
       id: l.item_id,
       name: l.item_name,
       unit: l.unit || '',
+      unitType: l.unit_type || 'small',
+      convRate: Number(l.conv_rate) || 1,
       qty: Number(l.qty) || 0,
       unitPrice: Number(l.unit_price) || 0
     }));

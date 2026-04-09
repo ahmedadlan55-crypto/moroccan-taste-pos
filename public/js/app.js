@@ -3419,7 +3419,10 @@ function confirmReceive() {
     if (r.updated && r.updated.length) {
       msg += "📦 التحديثات:\n";
       r.updated.forEach(function(u) {
-        msg += "• " + u.invName + ": " + u.stockBefore + " → " + u.stockAfter + " (+" + u.qty + ")\n";
+        var convNote = u.convRate > 1
+          ? "  (" + u.qtyOrdered + " " + (u.unitOrdered||'كبرى') + " × " + u.convRate + " = " + u.stockQty + ")"
+          : "";
+        msg += "• " + u.invName + ": " + u.stockBefore + " → " + u.stockAfter + " (+" + u.stockQty + ")" + convNote + "\n";
       });
     }
     if (r.skipped > 0 && r.skippedDetails) {
@@ -3473,15 +3476,23 @@ function openPurDetail(idx) {
     '<div><strong>الحالة:</strong> <span class="badge '+(isReceived?'green':'yellow')+'">'+(isReceived?'مستلم':'بانتظار الاستلام')+'</span></div>'+
     '</div></div>'+
     '<table class="table" style="font-size:13px;"><thead><tr>'+
-    '<th>الكود</th><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th>'+
+    '<th>الكود</th><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>سعر الوحدة</th><th>الإجمالي</th>'+
     (!isReceived?'<th>استلام</th>':'')+
     '</tr></thead><tbody>';
   items.forEach(function(it,i){
-    h += '<tr><td><code style="font-size:11px;">'+( it.ItemID||'—')+'</code></td>'+
-      '<td style="font-weight:600;">'+( it.ItemName||'')+'</td>'+
-      '<td style="text-align:center;">'+( it.Qty||0)+'</td>'+
-      '<td style="text-align:center;">'+(Number(it.UnitPrice)||0).toFixed(2)+'</td>'+
-      '<td style="text-align:center;font-weight:700;">'+(Number(it.Total)||(Number(it.Qty)*Number(it.UnitPrice))||0).toFixed(2)+'</td>'+
+    // Support both camelCase (new) and PascalCase (legacy) field shapes
+    var iid  = it.itemId || it.id || it.ItemID || '—';
+    var iname= it.itemName || it.name || it.ItemName || '';
+    var iqty = Number(it.qty || it.Qty) || 0;
+    var iprc = Number(it.unitPrice || it.UnitPrice) || 0;
+    var itot = Number(it.Total) || (iqty * iprc) || 0;
+    var iunit= it.unit || it.Unit || '—';
+    h += '<tr><td><code style="font-size:11px;">'+iid+'</code></td>'+
+      '<td style="font-weight:600;">'+iname+'</td>'+
+      '<td style="text-align:center;">'+iqty+'</td>'+
+      '<td style="text-align:center;">'+iunit+'</td>'+
+      '<td style="text-align:center;">'+iprc.toFixed(2)+'</td>'+
+      '<td style="text-align:center;font-weight:700;">'+itot.toFixed(2)+'</td>'+
       (!isReceived?'<td style="text-align:center;"><input type="checkbox" class="pur-detail-chk" data-idx="'+i+'" checked style="width:18px;height:18px;"></td>':'')+
       '</tr>';
   });
@@ -3919,10 +3930,15 @@ function printPurchaseInvoice(p, items) {
   var grandVAT = Math.round(grandNet*0.15*100)/100;
   var grandTotal = Math.round((grandNet+grandVAT)*100)/100;
   var rows = items.map(function(it,i){
-    var t = (Number(it.Qty)||0)*(Number(it.UnitPrice)||0);
+    // Support both camelCase (new pipeline) and PascalCase (legacy)
+    var iname = it.itemName || it.name || it.ItemName || '';
+    var iqty  = Number(it.qty || it.Qty) || 0;
+    var iprc  = Number(it.unitPrice || it.UnitPrice) || 0;
+    var iunit = it.unit || it.Unit || '—';
+    var t = iqty * iprc;
     var iNet = t;
     var iVat = Math.round(t*0.15*100)/100;
-    return '<tr><td>'+(i+1)+'</td><td style="font-weight:600;text-align:right;padding-right:12px;">'+(it.ItemName||'')+'</td><td>'+(it.Qty||0)+'</td><td>'+(Number(it.UnitPrice)||0).toFixed(2)+'</td><td>'+iNet.toFixed(2)+'</td><td style="color:#d97706;">'+iVat.toFixed(2)+'</td><td style="font-weight:700;">'+(iNet+iVat).toFixed(2)+'</td></tr>';
+    return '<tr><td>'+(i+1)+'</td><td style="font-weight:600;text-align:right;padding-right:12px;">'+iname+'</td><td>'+iqty+'</td><td>'+iunit+'</td><td>'+iprc.toFixed(2)+'</td><td>'+iNet.toFixed(2)+'</td><td style="color:#d97706;">'+iVat.toFixed(2)+'</td><td style="font-weight:700;">'+(iNet+iVat).toFixed(2)+'</td></tr>';
   }).join('');
   var w = window.open('','_blank','width=750,height=700');
   w.document.write('<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>فاتورة شراء '+p.id+'</title>'+
@@ -3941,7 +3957,7 @@ function printPurchaseInvoice(p, items) {
     '@media print{body{padding:10px;}.header,.tot-card{print-color-adjust:exact;-webkit-print-color-adjust:exact;}}</style></head><body>'+
     '<div class="header"><div><h1>'+companyName+'</h1><div class="sub">Tax: '+taxNumber+'</div></div><div><div class="tag">فاتورة شراء ضريبية</div><div style="text-align:center;font-size:11px;opacity:.7;margin-top:4px;">'+p.id+'</div></div></div>'+
     '<div class="info"><div><div class="lbl">المورد</div><div class="val">'+p.supplierName+'</div></div><div><div class="lbl">التاريخ</div><div class="val">'+dateF+'</div></div><div><div class="lbl">المنشئ</div><div class="val">'+p.username+'</div></div><div><div class="lbl">طريقة الدفع</div><div class="val">'+p.paymentMethod+'</div></div></div>'+
-    '<table><thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>الصافي</th><th style="color:#d97706;">الضريبة 15%</th><th>الإجمالي</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+    '<table><thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>سعر الوحدة</th><th>الصافي</th><th style="color:#d97706;">الضريبة 15%</th><th>الإجمالي</th></tr></thead><tbody>'+rows+'</tbody></table>'+
     '<div class="totals">'+
       '<div class="tot-card" style="background:#f8fafc;"><div class="l">المبلغ قبل الضريبة</div><div class="v">'+grandNet.toFixed(2)+'</div></div>'+
       '<div class="tot-card" style="background:#fefce8;"><div class="l">ضريبة القيمة المضافة 15%</div><div class="v" style="color:#d97706;">'+grandVAT.toFixed(2)+'</div></div>'+

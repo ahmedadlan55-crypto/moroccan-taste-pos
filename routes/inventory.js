@@ -194,6 +194,12 @@ router.post('/stocktakes', async (req, res) => {
     let adjustedCount = 0;
     let totalVariance = 0;
 
+    // Insert header FIRST so the FK on stocktake_items doesn't fail
+    await db.query(
+      'INSERT INTO stocktakes (id, stocktake_date, username, notes, status, items_count, total_variance) VALUES (?,?,?,?,?,?,?)',
+      [stId, now, username || '', notes || '', 'completed', 0, 0]
+    );
+
     for (const item of items) {
       const itemId = item.id;
       const sysQty = Number(item.sys || item.systemQty) || 0;
@@ -228,10 +234,10 @@ router.post('/stocktakes', async (req, res) => {
       adjustedCount++;
     }
 
-    // Save stocktake header
+    // Update header with final counts
     await db.query(
-      'INSERT INTO stocktakes (id, stocktake_date, username, notes, status, items_count, total_variance) VALUES (?,?,?,?,?,?,?)',
-      [stId, now, username || '', notes || '', 'completed', adjustedCount, totalVariance]
+      'UPDATE stocktakes SET items_count = ?, total_variance = ? WHERE id = ?',
+      [adjustedCount, totalVariance, stId]
     );
 
     // Recompute menu costs since inventory changed

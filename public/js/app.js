@@ -331,7 +331,10 @@ window.onload = function() {
 };
 
 function applyLang() {
-  document.body.className = state.lang;
+  // Toggle only lang-specific classes — do NOT overwrite body.className
+  // or we'd wipe the 'authenticated' class and re-engage the auth gate.
+  document.body.classList.remove('ar', 'en');
+  document.body.classList.add(state.lang);
   const htmlEl = document.documentElement;
   if (state.lang === 'ar') {
     htmlEl.setAttribute('lang', 'ar');

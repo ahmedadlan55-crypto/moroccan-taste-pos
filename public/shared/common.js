@@ -68,8 +68,12 @@ window.dict = {
 window.t = function(k) { return (dict[state.lang] && dict[state.lang][k]) || k; };
 
 // ─── Language ───
+// IMPORTANT: do NOT reassign document.body.className here — it would wipe out
+// the 'authenticated' class and re-engage the critical CSS auth gate, hiding
+// the entire page. Toggle only the lang-specific classes.
 window.applyLang = function() {
-  document.body.className = state.lang;
+  document.body.classList.remove('ar', 'en');
+  document.body.classList.add(state.lang);
   var html = document.documentElement;
   if (state.lang === 'ar') {
     html.setAttribute('lang', 'ar');

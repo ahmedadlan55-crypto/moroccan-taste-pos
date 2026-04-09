@@ -31,7 +31,8 @@ router.post('/', async (req, res) => {
       await db.query('INSERT INTO sales_items (order_id, order_date, item_name, qty, price, total, payment_method, username, shift_id) VALUES (?,?,?,?,?,?,?,?,?)',
         [orderId, now, item.name, item.qty, item.price, item.qty * item.price, payStr, username, shiftId]);
 
-      // Stock deduction via recipe
+      // Stock deduction via recipe — the menu item itself has no stock,
+      // it pulls the raw ingredients from inv_items via recipe mappings.
       if (item.id && recipeMap[item.id]) {
         for (const ing of recipeMap[item.id]) {
           const deduct = ing.qtyUsed * item.qty;
@@ -40,9 +41,9 @@ router.post('/', async (req, res) => {
             ['MOV-'+Date.now()+'-'+Math.random().toString(36).substr(2,4), now, ing.invId, '', 'out', deduct, 'مبيعات', username, orderId]);
         }
       }
-
-      // Deduct menu stock
-      await db.query('UPDATE menu SET stock = GREATEST(0, stock - ?) WHERE id = ?', [item.qty, item.id]);
+      // NOTE: we deliberately no longer touch menu.stock. The menu column
+      // is a DB-level relic; menu availability is now purely driven by the
+      // availability of its recipe ingredients in inv_items.
     }
 
     res.json({ success: true, orderId });

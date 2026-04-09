@@ -45,6 +45,7 @@
     getPurchases:        { method: 'GET',  url: '/purchases', query: (f) => f },
     addPurchaseBatch:    { method: 'POST', url: '/purchases' },
     receivePurchaseBatch:{ method: 'POST', url: (id,u,vat) => '/purchases/receive/'+id, body: (id,u,vat) => ({username:u,includesVAT:vat}) },
+    revertReceivePurchase:{ method: 'POST', url: (id,u) => '/purchases/receive/'+id+'/revert', body: (id,u) => ({username:u}) },
     deletePurchase:      { method: 'DELETE',url: (id) => '/purchases/'+id },
     getPurchaseOrders:   { method: 'GET',  url: '/purchases/orders', query: (f) => f },
     createPurchaseOrder: { method: 'POST', url: '/purchases/orders', body: (d,u) => ({...d,username:u}) },

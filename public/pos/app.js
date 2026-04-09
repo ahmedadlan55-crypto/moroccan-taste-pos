@@ -198,10 +198,9 @@ window.renderMenuGrid = function() {
       var inCart = state.cart.find(function(c) { return c.id === i.id; });
       var qty = inCart ? inCart.qty : 0;
       var isSel = !!inCart;
-      var lowStock = i.stock <= i.minStock;
+      // Menu items no longer have their own stock — no stock badge.
       var safeJson = JSON.stringify(i).replace(/'/g, '&#39;');
       h += '<div class="pos-item ' + (isSel ? 'selected' : '') + '">' +
-        '<div class="pos-item-stock ' + (lowStock ? 'low' : '') + '">' + i.stock + '</div>' +
         '<div>' +
           '<div class="pos-item-name">' + (i.name || '') + '</div>' +
           '<div class="pos-item-price">' + formatVal(i.price) + '</div>' +

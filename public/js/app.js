@@ -760,10 +760,9 @@ function renderMenuGrid() {
     const inCart = state.cart.find(c => c.id === i.id);
     const qty = inCart ? inCart.qty : 0;
     const isSel = !!inCart;
-    const lowStock = i.stock <= i.minStock;
+    // The menu no longer has its own stock — hide the stock badge entirely.
     const safeJson = JSON.stringify(i).replace(/'/g, "&#39;");
     h += `<div class="pos-item ${isSel ? 'selected' : ''}">
-      <div class="pos-item-stock ${lowStock ? 'low' : ''}">${i.stock}</div>
       <div>
         <div class="pos-item-name">${i.name}</div>
         <div class="pos-item-price">${formatVal(i.price)}</div>
@@ -1383,22 +1382,26 @@ function _loadDashHomeBody() {
     if (q("#dhTotalCash")) q("#dhTotalCash").innerText = formatVal(todayBuckets.cash);
     if (q("#dhTotalCard")) q("#dhTotalCard").innerText = formatVal(todayBuckets.card);
 
-    // ─── Low stock from menu (use cached state.menu, refreshed elsewhere) ───
-    var lowStock = (state.menu || []).filter(function(m) {
-      return m.active && (Number(m.stock) || 0) <= (Number(m.minStock) || 0);
-    });
-    var lsHtml = '';
-    if (!lowStock.length) {
-      lsHtml = "<div style='text-align:center; padding:30px; color:var(--text-light);'><i class='fas fa-check-circle' style='font-size:40px; color:var(--success); margin-bottom:10px; display:block;'></i>المخزون ممتاز</div>";
-    } else {
-      lowStock.forEach(function(ls) {
-        lsHtml += '<div style="display:flex; justify-content:space-between; align-items:center; padding:12px; background:#fff1f2; border:1px solid #ffe4e6; border-radius:12px; margin-bottom:10px;">'+
-          '<span style="font-weight:600; color:#9f1239;">' + (ls.name||'') + '</span>'+
-          '<span class="badge red">' + (ls.stock||0) + ' مدخل</span>'+
-        '</div>';
+    // ─── Low stock from the RAW INVENTORY (inv_items), not the menu ───
+    // The menu doesn't have its own stock any more — it draws from the raw
+    // materials via recipes. So "low stock" must be computed on inv_items.
+    api.withSuccessHandler(function(rawList) {
+      var lowStock = (rawList || []).filter(function(it) {
+        return it.active !== false && (Number(it.stock) || 0) <= (Number(it.minStock) || 0);
       });
-    }
-    if (q("#dhLowStock")) q("#dhLowStock").innerHTML = lsHtml;
+      var lsHtml = '';
+      if (!lowStock.length) {
+        lsHtml = "<div style='text-align:center; padding:30px; color:var(--text-light);'><i class='fas fa-check-circle' style='font-size:40px; color:var(--success); margin-bottom:10px; display:block;'></i>المخزون ممتاز</div>";
+      } else {
+        lowStock.forEach(function(ls) {
+          lsHtml += '<div style="display:flex; justify-content:space-between; align-items:center; padding:12px; background:#fff1f2; border:1px solid #ffe4e6; border-radius:12px; margin-bottom:10px;">'+
+            '<span style="font-weight:600; color:#9f1239;">' + (ls.name||'') + '</span>'+
+            '<span class="badge red">' + (Number(ls.stock)||0) + ' ' + (ls.unit || 'وحدة') + '</span>'+
+          '</div>';
+        });
+      }
+      if (q("#dhLowStock")) q("#dhLowStock").innerHTML = lsHtml;
+    }).getInvItems();
 
     // ─── Charts: destroy old before redraw ───
     if (state.charts) Object.values(state.charts).forEach(function(c) { if (c) c.destroy(); });
@@ -1600,11 +1603,12 @@ function loadDashInv() {
         if (search) list = list.filter(function(i){ return (i.name||'').toLowerCase().includes(search) || (i.category||'').toLowerCase().includes(search); });
 
         var h = '';
-        if (!list.length) { h = '<tr><td colspan="8" style="text-align:center;">لا توجد بيانات</td></tr>'; }
+        // Menu items no longer have their own stock — they draw from the
+        // inventory (inv_items) through recipes. So no stock column here.
+        if (!list.length) { h = '<tr><td colspan="7" style="text-align:center;">لا توجد بيانات</td></tr>'; }
         else {
           list.forEach(function(i) {
             try {
-              var stClass = i.stock <= i.minStock ? 'red' : 'green';
               var sellPrice = Number(i.price)||0;
               var netSell = sellPrice / 1.15;
 
@@ -1637,7 +1641,6 @@ function loadDashInv() {
                 '<td style="font-weight:700;">'+formatVal(sellPrice)+'</td>'+
                 '<td>'+ingDisplay+'</td>'+
                 '<td style="color:'+profitColor+';font-weight:800;">'+formatVal(profit)+'<div style="font-size:10px;color:'+marginColor+';">'+margin.toFixed(0)+'%</div></td>'+
-                '<td><span class="badge '+stClass+'" style="font-size:13px;">'+i.stock+'</span></td>'+
                 '<td>'+(i.active?'<i class="fas fa-check-circle" style="color:var(--success);"></i>':'<i class="fas fa-times-circle" style="color:var(--danger);"></i>')+'</td>'+
                 '<td style="white-space:nowrap;">'+
                   '<button class="btn btn-success" style="padding:5px 8px;" onclick="openProductCard(\''+i.id+'\')" title="كارت"><i class="fas fa-id-card"></i></button> '+
@@ -3124,8 +3127,8 @@ function loadDashPurchases() {
           ? '<span class="badge green">\u062a\u0645 \u0627\u0644\u0627\u0633\u062a\u0644\u0627\u0645</span>'
           : '<span class="badge" style="background:#fef3c7;color:#92400e;">\u0628\u0627\u0646\u062a\u0638\u0627\u0631 \u0627\u0644\u0627\u0633\u062a\u0644\u0627\u0645</span>';
         const receiveBtn = (p.status !== 'received')
-          ? `<button class="btn btn-success" style="padding:6px 12px;" onclick="receivePurFn('${p.id}')" title="\u0627\u0633\u062a\u0644\u0627\u0645 \u0644\u0644\u0645\u062e\u0632\u0648\u0646"><i class="fas fa-check-double"></i></button>`
-          : '';
+          ? `<button class="btn btn-success" style="padding:6px 12px;" onclick="receivePurFn('${p.id}')" title="\u0627\u0633\u062a\u0644\u0627\u0645 \u0644\u0644\u0645\u062e\u0632\u0648\u0646"><i class="fas fa-check-double"></i></button> `
+          : `<button class="btn btn-light" style="padding:6px 12px;color:#d97706;border:1px solid #d97706;" onclick="revertReceivePurFn('${p.id}')" title="\u0627\u0644\u062a\u0631\u0627\u062c\u0639 \u0639\u0646 \u0627\u0644\u0627\u0633\u062a\u0644\u0627\u0645"><i class="fas fa-undo"></i></button> `;
         var hasItems = p.itemsJson && p.itemsJson.length > 5;
         var itemLabel = hasItems ? '<i class="fas fa-box-open" style="color:var(--accent);margin-left:4px;"></i> '+p.itemName : p.itemName;
         // المبلغ المُدخل بدون ضريبة — الضريبة تُضاف عليه
@@ -3314,16 +3317,33 @@ function receivePurFn(invoiceId) {
   var invoice = all.find(function(p){ return p.id === invoiceId; });
   if (!invoice || invoice.status === 'received') return showToast('لا توجد أصناف للاستلام', true);
 
-  // Read items from ItemsJSON if available, otherwise single item
+  // Read items from items_json. Support BOTH field shapes:
+  //   { itemId, itemName, qty, unitPrice }   ← direct purchase UI
+  //   { id, name, qty, unitPrice }            ← PO approve endpoint
+  // (the old code read PascalCase which never matched anything,
+  //  so every row showed qty=0 and received=0 in the preview.)
   rcvItems = [];
-  if (invoice.itemsJson && invoice.itemsJson.length > 5) {
-    try {
-      var parsed = JSON.parse(invoice.itemsJson);
-      rcvItems = parsed.map(function(it){ return { itemName: it.ItemName||'', itemId: it.ItemID||'', qty: Number(it.Qty)||0, unitPrice: Number(it.UnitPrice)||0, received: Number(it.Qty)||0, checked: true }; });
-    } catch(e) {}
+  // invoice.items is the already-parsed array coming from the purchases GET endpoint
+  var parsedItems = invoice.items;
+  if (!parsedItems || !parsedItems.length) {
+    if (invoice.itemsJson && invoice.itemsJson.length > 5) {
+      try { parsedItems = JSON.parse(invoice.itemsJson); } catch(e) { parsedItems = []; }
+    }
+  }
+  if (parsedItems && parsedItems.length) {
+    rcvItems = parsedItems.map(function(it){
+      return {
+        itemName: it.itemName || it.name || it.ItemName || '',
+        itemId:   it.itemId   || it.id   || it.ItemID   || '',
+        qty:      Number(it.qty || it.Qty) || 0,
+        unitPrice:Number(it.unitPrice || it.UnitPrice) || 0,
+        received: Number(it.qty || it.Qty) || 0,
+        checked:  true
+      };
+    });
   }
   if (!rcvItems.length) {
-    rcvItems = [{ itemName: invoice.itemName, qty: invoice.qty, unitPrice: invoice.unitPrice, received: invoice.qty, checked: true }];
+    rcvItems = [{ itemName: invoice.itemName, itemId: invoice.itemId, qty: invoice.qty, unitPrice: invoice.unitPrice, received: invoice.qty, checked: true }];
   }
 
   q("#rcvInvoiceId").innerText = invoiceId + (invoice.notes ? ' | ' + invoice.notes : '');
@@ -3366,11 +3386,29 @@ function confirmReceive() {
     if (r.success) {
       closeModal('#modalReceiveForm');
       var toast = "تم استلام " + (r.count||0) + " صنف وتحديث المخزون";
-      if (r.vatAmount) toast += " | ضريبة مدخلات: " + r.vatAmount.toFixed(2);
+      if (r.vatAmount) toast += " | ضريبة مدخلات: " + Number(r.vatAmount).toFixed(2);
       showToast(toast);
       loadDashPurchases();
     } else showToast(r.error, true);
   }).receivePurchaseBatch(rcvInvoiceId, state.user, includesVAT);
+}
+
+// Revert a RECEIVED purchase: roll back stock, delete movements, set back
+// to draft. Backend refuses if any item's stock would go negative
+// (i.e. some of the received quantity has already been consumed by sales).
+function revertReceivePurFn(invoiceId) {
+  if (!confirm('هل تريد التراجع عن استلام هذه الفاتورة؟\nسيتم خصم الكميات المستلمة من المخزون وإعادة الفاتورة إلى المسودات.\n\nملاحظة: إذا كانت بعض الكميات قد بيعت بالفعل، سيتم رفض العملية.')) return;
+  loader(true);
+  api.withFailureHandler(function(err){ loader(false); showToast(err.message || 'خطأ', true); })
+  .withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) {
+      showToast('تم التراجع عن الاستلام وإعادة المخزون');
+      loadDashPurchases();
+    } else {
+      showToast(r.error || 'تعذّر التراجع', true);
+    }
+  }).revertReceivePurchase(invoiceId, state.user);
 }
 
 // delPurFn defined below — removed duplicate

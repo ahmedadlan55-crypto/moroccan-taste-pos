@@ -61,15 +61,34 @@ router.post('/', async (req, res) => {
   }
 });
 
+// Helper — pull (id, name, qty, unitPrice) out of a purchase item regardless
+// of whether it was saved by the direct-purchase UI (itemId/itemName) or by
+// the PO approve endpoint (id/name). This was the root cause of the
+// "received 0 items" bug: the old code only checked `item.id`, so items
+// coming from the direct-purchase UI (which uses `itemId`) silently skipped
+// every stock update.
+function normPurchaseItem(item) {
+  return {
+    id: item.id || item.itemId || null,
+    name: item.name || item.itemName || '',
+    qty: Number(item.qty) || 0,
+    unitPrice: Number(item.unitPrice) || 0
+  };
+}
+
 // Receive purchase (update status, add stock)
 //
 // If the purchase came from an approved PO (po_id is set), this endpoint
 // also updates the PO's status to 'received' and marks each PO line's
 // received_qty so the PO reflects the real state of the warehouse.
+//
+// Returns { success, count, vatAmount } so the frontend toast can show
+// how many items were actually received and the input-VAT total when
+// the user ticks "includes VAT".
 router.post('/receive/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { username } = req.body;
+    const { username, includesVAT } = req.body;
     const now = new Date();
 
     const [purchases] = await db.query('SELECT * FROM purchases WHERE id = ?', [id]);
@@ -78,19 +97,45 @@ router.post('/receive/:id', async (req, res) => {
     const purchase = purchases[0];
     if (purchase.status === 'received') return res.json({ success: false, error: 'Already received' });
 
-    const items = JSON.parse(purchase.items_json || '[]');
+    const rawItems = JSON.parse(purchase.items_json || '[]');
+    const items = rawItems.map(normPurchaseItem);
 
-    // Update stock for each item + record movement
+    let count = 0;
+    let totalVat = 0;
+
     for (const item of items) {
-      if (item.id) {
-        await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?', [Number(item.qty) || 0, item.id]);
+      if (!item.id || item.qty <= 0) continue;
 
-        const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-        await db.query(
-          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
-          [movId, now, item.id, item.name || '', 'in', Number(item.qty) || 0, 'مشتريات', username || '', 'PUR: ' + id]
-        );
+      // VAT handling — if prices include VAT, net cost = gross / 1.15
+      let netUnitPrice = item.unitPrice;
+      if (includesVAT && item.unitPrice > 0) {
+        netUnitPrice = item.unitPrice / 1.15;
+        totalVat += (item.unitPrice - netUnitPrice) * item.qty;
       }
+
+      // Update stock. Only overwrite cost if it's not already set (first receive),
+      // so subsequent receives at different prices don't clobber prior cost data.
+      const [existingItem] = await db.query('SELECT cost FROM inv_items WHERE id = ?', [item.id]);
+      if (existingItem.length) {
+        const currentCost = Number(existingItem[0].cost) || 0;
+        if (currentCost === 0 && netUnitPrice > 0) {
+          await db.query('UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?',
+            [item.qty, netUnitPrice, item.id]);
+        } else {
+          await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?',
+            [item.qty, item.id]);
+        }
+      }
+
+      // Record movement — notes links back to purchase so we can roll it
+      // back on revert.
+      const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+      await db.query(
+        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
+        [movId, now, item.id, item.name, 'in', item.qty, 'مشتريات', username || '', 'PUR: ' + id]
+      );
+
+      count++;
     }
 
     // Mark the purchase itself as received
@@ -99,12 +144,79 @@ router.post('/receive/:id', async (req, res) => {
     // Back-propagate to the linked PO (if any)
     if (purchase.po_id) {
       await db.query('UPDATE purchase_orders SET status = "received" WHERE id = ?', [purchase.po_id]);
-      // Mirror received_qty on each po_line (match by item_id)
       for (const item of items) {
-        if (item.id) {
+        if (item.id && item.qty > 0) {
           await db.query(
             'UPDATE po_lines SET received_qty = received_qty + ? WHERE po_id = ? AND item_id = ?',
-            [Number(item.qty) || 0, purchase.po_id, item.id]
+            [item.qty, purchase.po_id, item.id]
+          );
+        }
+      }
+    }
+
+    res.json({ success: true, count, vatAmount: Number(totalVat.toFixed(2)) });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// Revert a RECEIVED purchase — rolls back stock, deletes the "مشتريات"
+// movements we created on receive, and flips the purchase (and any linked
+// PO) back to 'draft' / 'approved' respectively.
+router.post('/receive/:id/revert', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { username } = req.body;
+
+    const [purchases] = await db.query('SELECT * FROM purchases WHERE id = ?', [id]);
+    if (!purchases.length) return res.json({ success: false, error: 'Purchase not found' });
+
+    const purchase = purchases[0];
+    if (purchase.status !== 'received') {
+      return res.json({ success: false, error: 'هذه الفاتورة ليست مستلمة — لا يوجد ما يُلغى' });
+    }
+
+    const rawItems = JSON.parse(purchase.items_json || '[]');
+    const items = rawItems.map(normPurchaseItem);
+
+    // Safety check — refuse if rolling back would make any item's stock go negative
+    for (const item of items) {
+      if (!item.id || item.qty <= 0) continue;
+      const [existing] = await db.query('SELECT stock, name FROM inv_items WHERE id = ?', [item.id]);
+      if (existing.length) {
+        const currentStock = Number(existing[0].stock) || 0;
+        if (currentStock < item.qty) {
+          return res.json({
+            success: false,
+            error: 'لا يمكن التراجع: المخزون الحالي للمادة "' + existing[0].name + '" (' + currentStock + ') أقل من الكمية المستلمة (' + item.qty + '). ربما استُهلكت بعض الكمية في المبيعات.'
+          });
+        }
+      }
+    }
+
+    // Roll back stock
+    for (const item of items) {
+      if (!item.id || item.qty <= 0) continue;
+      await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [item.qty, item.id]);
+    }
+
+    // Delete the movements created by the receive (matched by notes = 'PUR: <id>' and type = 'in')
+    await db.query(
+      'DELETE FROM inventory_movements WHERE notes = ? AND type = ? AND reason = ?',
+      ['PUR: ' + id, 'in', 'مشتريات']
+    );
+
+    // Flip the purchase back to draft
+    await db.query('UPDATE purchases SET status = "draft" WHERE id = ?', [id]);
+
+    // Back-propagate to linked PO: unset received, return to approved, zero received_qty
+    if (purchase.po_id) {
+      await db.query('UPDATE purchase_orders SET status = "approved" WHERE id = ?', [purchase.po_id]);
+      for (const item of items) {
+        if (item.id && item.qty > 0) {
+          await db.query(
+            'UPDATE po_lines SET received_qty = GREATEST(0, received_qty - ?) WHERE po_id = ? AND item_id = ?',
+            [item.qty, purchase.po_id, item.id]
           );
         }
       }

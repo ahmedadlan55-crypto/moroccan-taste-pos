@@ -236,7 +236,7 @@
           </div>
           <div class="table-wrapper">
             <table class="table">
-              <thead><tr><th>المنتج</th><th>التصنيف</th><th>سعر البيع</th><th>المقادير / التكلفة</th><th>الربح</th><th>المخزون</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+              <thead><tr><th>المنتج</th><th>التصنيف</th><th>سعر البيع</th><th>المقادير / التكلفة</th><th>الربح</th><th>الحالة</th><th>إجراءات</th></tr></thead>
               <tbody id="tbInv"></tbody>
             </table>
           </div>
@@ -1170,9 +1170,12 @@
         <div class="form-group"><label class="form-label">التصنيف أو القسم الخاص للفرز</label><input type="text" id="miCat" class="form-control" placeholder="مثال: لحوم، بهارات.."></div>
         <div class="form-group"><label class="form-label">سعر البيع الرسمي مع الضريبة (SAR) (مطلوب)</label><input type="number" step="0.01" id="miPrice" class="form-control" placeholder="0.00"></div>
         <div class="form-group"><label class="form-label">سعر التكلفة الصافي (لحساب الأرباح) (SAR)</label><input type="number" step="0.01" id="miCost" class="form-control" placeholder="0.00"></div>
-        <div class="form-group"><label class="form-label">الرصيد الافتتاحي (المخزون المتوفر لحظياً)</label><input type="number" id="miStock" class="form-control" placeholder="0"></div>
-        <div class="form-group"><label class="form-label">حد إعادة الطلب للتنبيه قبل النفاذ التام</label><input type="number" id="miMin" class="form-control" placeholder="5"></div>
       </div>
+      <!-- Hidden legacy stock inputs — the menu no longer has its own stock;
+           it draws from inv_items via recipes. These are kept as hidden
+           fields so the saveInv() code doesn't crash when it reads them. -->
+      <input type="hidden" id="miStock" value="9999">
+      <input type="hidden" id="miMin" value="0">
       
       <div class="form-group" style="background:#f1f5f9; padding:15px; border-radius:12px; margin-top:10px;">
         <label style="display:flex; align-items:center; gap:10px; cursor:pointer;" class="form-label"><input type="checkbox" id="miActive" style="transform:scale(1.5);"> عرض وتفعيل هذا المنتج على أنظمة الكاشير المتاحة للمبيعات</label>

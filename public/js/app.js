@@ -1321,14 +1321,16 @@ function nav(sectionId) {
     }, 30000);
   }
   
-  const titles = { home:"\u0646\u0638\u0631\u0629 \u0639\u0627\u0645\u0629", sales:"\u0633\u062c\u0644 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a", inventory:"\u0627\u0644\u0645\u0646\u064a\u0648 \u0648\u0627\u0644\u0648\u0635\u0641\u0627\u062a", warehouse:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0633\u062a\u0648\u062f\u0639", expenses:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0635\u0631\u0648\u0641\u0627\u062a", purchases:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a", users:"\u0635\u0644\u0627\u062d\u064a\u0627\u062a \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645\u064a\u0646", shifts:"\u0633\u062c\u0644 \u0627\u0644\u0645\u0646\u0627\u0648\u0628\u0627\u062a \u0627\u0644\u0645\u063a\u0644\u0642\u0629", reports:"\u0627\u0644\u062a\u0642\u0627\u0631\u064a\u0631 \u0627\u0644\u0645\u062a\u0642\u062f\u0645\u0629", settings:"\u0627\u0644\u0625\u0639\u062f\u0627\u062f\u0627\u062a" };
+  const titles = { home:"\u0646\u0638\u0631\u0629 \u0639\u0627\u0645\u0629", sales:"\u0633\u062c\u0644 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a", menu:"\u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0645\u0646\u064a\u0648", recipes:"\u0627\u0644\u0645\u0642\u0627\u062f\u064a\u0631 \u0648\u0627\u0644\u0648\u0635\u0641\u0627\u062a", inventory:"\u0627\u0644\u0645\u0646\u064a\u0648", warehouse:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0633\u062a\u0648\u062f\u0639", expenses:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0635\u0631\u0648\u0641\u0627\u062a", purchases:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a", users:"\u0635\u0644\u0627\u062d\u064a\u0627\u062a \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645\u064a\u0646", shifts:"\u0633\u062c\u0644 \u0627\u0644\u0645\u0646\u0627\u0648\u0628\u0627\u062a \u0627\u0644\u0645\u063a\u0644\u0642\u0629", reports:"\u0627\u0644\u062a\u0642\u0627\u0631\u064a\u0631 \u0627\u0644\u0645\u062a\u0642\u062f\u0645\u0629", settings:"\u0627\u0644\u0625\u0639\u062f\u0627\u062f\u0627\u062a" };
   const hTitle = q('.admin-header-title');
   if (hTitle) hTitle.innerText = titles[sectionId] || "لوحة التحكم";
 
   // Data Loading Trigger
   if (sectionId === 'home') loadDashHome();
   if (sectionId === 'sales') loadDashSales();
-  if (sectionId === 'inventory') loadDashInv();
+  if (sectionId === 'menu') loadDashMenu();
+  if (sectionId === 'recipes') loadDashRecipes();
+  if (sectionId === 'inventory') loadDashMenu(); // legacy alias → menu
   if (sectionId === 'warehouse') loadDashInvItems();
   if (sectionId === 'expenses') loadDashExpenses();
   if (sectionId === 'purchases') loadDashPurchases();
@@ -1588,10 +1590,10 @@ function loadDashSales() {
 }
 
 // Inventory Management
-function loadDashInv() {
+// ─── Menu section ───
+function loadDashMenu() {
   loader();
-  var search = (q("#invSearchQ")?q("#invSearchQ").value:'').toLowerCase();
-  // Load menu + recipes + raw items together
+  var search = (q("#menuSearchQ") ? q("#menuSearchQ").value : '').toLowerCase();
   api.withSuccessHandler(function(m) {
     state.menu = m || [];
     api.withSuccessHandler(function(recipes) {
@@ -1600,50 +1602,37 @@ function loadDashInv() {
         cachedRawItems = raws || [];
         var allRecipes = recipes || [];
         var list = state.menu;
-        if (search) list = list.filter(function(i){ return (i.name||'').toLowerCase().includes(search) || (i.category||'').toLowerCase().includes(search); });
-
+        if (search) list = list.filter(function(i){ return (i.name||'').toLowerCase().includes(search) || (i.id||'').toLowerCase().includes(search) || (i.category||'').toLowerCase().includes(search); });
         var h = '';
-        // Menu items no longer have their own stock — they draw from the
-        // inventory (inv_items) through recipes. So no stock column here.
-        if (!list.length) { h = '<tr><td colspan="7" style="text-align:center;">لا توجد بيانات</td></tr>'; }
+        if (!list.length) { h = '<tr><td colspan="8" style="text-align:center;padding:30px;">لا توجد منتجات</td></tr>'; }
         else {
           list.forEach(function(i) {
             try {
               var sellPrice = Number(i.price)||0;
               var netSell = sellPrice / 1.15;
-
-              // Get recipe ingredients for this product
               var ings = allRecipes.filter(function(r){ return String(r.menuId).trim()===String(i.id).trim(); });
               var recipeCost = 0;
-              var ingNames = [];
               ings.forEach(function(ing){
                 var raw = cachedRawItems.find(function(r){ return String(r.id)===String(ing.invItemId); });
                 var cRate = raw ? (Number(raw.convRate)||1) : 1;
                 var uCost = raw ? (cRate>1 ? Number(raw.cost)/cRate : Number(raw.cost)) : 0;
-                var cost = ing.qtyUsed * uCost;
-                recipeCost += cost;
-                ingNames.push(ing.invItemName + ' (' + ing.qtyUsed + ')');
+                recipeCost += ing.qtyUsed * uCost;
               });
-
               var profit = netSell - recipeCost;
               var margin = netSell > 0 ? (profit/netSell*100) : 0;
               var profitColor = profit >= 0 ? '#16a34a' : '#ef4444';
-              var marginColor = margin >= 30 ? '#2563eb' : (margin >= 0 ? '#d97706' : '#ef4444');
-
-              var ingDisplay = ings.length ?
-                '<div style="font-size:11px;color:#475569;max-width:200px;">'+ingNames.join(', ')+'</div>'+
-                '<div style="font-weight:700;color:#ef4444;font-size:13px;">Cost: '+formatVal(recipeCost)+'</div>'
+              var costDisplay = ings.length
+                ? '<span style="font-weight:800;color:#ef4444;">' + formatVal(recipeCost) + '</span> <span style="font-size:11px;color:#64748b;">(' + ings.length + ' مكوّن)</span>'
                 : '<span style="color:#94a3b8;font-size:11px;">لا توجد مقادير</span>';
-
               h += '<tr>'+
-                '<td style="font-weight:800;">'+( i.name||'')+'</td>'+
+                '<td><code style="font-size:11px;color:#64748b;">'+(i.id||'')+'</code></td>'+
+                '<td style="font-weight:800;">'+(i.name||'')+'</td>'+
                 '<td><span class="badge" style="background:#e2e8f0;color:#475569;">'+(i.category||'')+'</span></td>'+
                 '<td style="font-weight:700;">'+formatVal(sellPrice)+'</td>'+
-                '<td>'+ingDisplay+'</td>'+
-                '<td style="color:'+profitColor+';font-weight:800;">'+formatVal(profit)+'<div style="font-size:10px;color:'+marginColor+';">'+margin.toFixed(0)+'%</div></td>'+
+                '<td>'+costDisplay+'</td>'+
+                '<td style="color:'+profitColor+';font-weight:800;">'+formatVal(profit)+'<div style="font-size:10px;">'+margin.toFixed(0)+'%</div></td>'+
                 '<td>'+(i.active?'<i class="fas fa-check-circle" style="color:var(--success);"></i>':'<i class="fas fa-times-circle" style="color:var(--danger);"></i>')+'</td>'+
                 '<td style="white-space:nowrap;">'+
-                  '<button class="btn btn-success" style="padding:5px 8px;" onclick="openProductCard(\''+i.id+'\')" title="كارت"><i class="fas fa-id-card"></i></button> '+
                   '<button class="btn btn-primary" style="padding:5px 8px;" onclick="openRecipeModal(\''+i.id+'\',\''+String(i.name||'').replace(/'/g,"\\'")+'\')" title="مقادير"><i class="fas fa-blender"></i></button> '+
                   '<button class="btn btn-light" style="padding:5px 8px;" onclick="openInvM(\'edit\',\''+i.id+'\')" title="تعديل"><i class="fas fa-edit"></i></button> '+
                   '<button class="btn btn-danger" style="padding:5px 8px;" onclick="delInv(\''+i.id+'\')" title="حذف"><i class="fas fa-trash"></i></button>'+
@@ -1651,11 +1640,61 @@ function loadDashInv() {
             } catch(ex) { console.error(ex); }
           });
         }
-        q("#tbInv").innerHTML = h;
+        if (q("#tbMenu")) q("#tbMenu").innerHTML = h;
+        // Also update old tbInv for backward compat
+        if (q("#tbInv")) q("#tbInv").innerHTML = h;
       }).getInvItems();
     }).getRecipes();
   }).getMenuAll();
 }
+
+// ─── NEW: Recipes flat table section ───
+function loadDashRecipes() {
+  loader();
+  var search = (q("#recipeSearchQ") ? q("#recipeSearchQ").value : '').toLowerCase();
+  api.withSuccessHandler(function(recipes) {
+    api.withSuccessHandler(function(raws) {
+      api.withSuccessHandler(function(menus) {
+        loader(false);
+        cachedRawItems = raws || [];
+        var allRecipes = recipes || [];
+        if (search) {
+          allRecipes = allRecipes.filter(function(r) {
+            return (r.menuName||'').toLowerCase().includes(search) || (r.invItemName||'').toLowerCase().includes(search);
+          });
+        }
+        // Group by menuId to show subtotals
+        var menuMap = {};
+        menus.forEach(function(m){ menuMap[m.id] = m; });
+        var h = '';
+        if (!allRecipes.length) { h = '<tr><td colspan="8" style="text-align:center;padding:30px;">لا توجد مقادير مسجلة</td></tr>'; }
+        else {
+          allRecipes.forEach(function(r) {
+            var raw = cachedRawItems.find(function(x){ return String(x.id)===String(r.invItemId); });
+            var cRate = raw ? (Number(raw.convRate)||1) : 1;
+            var uCost = raw ? (cRate>1 ? Number(raw.cost)/cRate : Number(raw.cost)) : 0;
+            var lineCost = r.qtyUsed * uCost;
+            var unitName = raw ? (raw.unit||'') : '';
+            h += '<tr>'+
+              '<td><code style="font-size:11px;">'+(r.menuId||'')+'</code></td>'+
+              '<td style="font-weight:700;">'+(r.menuName||'')+'</td>'+
+              '<td>'+(r.invItemName||'')+'</td>'+
+              '<td style="text-align:center;">'+unitName+'</td>'+
+              '<td style="text-align:center;font-weight:700;">'+r.qtyUsed+'</td>'+
+              '<td style="text-align:center;">'+formatVal(uCost)+'</td>'+
+              '<td style="text-align:center;font-weight:800;color:var(--secondary);">'+formatVal(lineCost)+'</td>'+
+              '<td><button class="btn btn-primary btn-sm" onclick="openRecipeModal(\''+r.menuId+'\',\''+String(r.menuName||'').replace(/'/g,"\\'")+'\')" title="تعديل المقادير"><i class="fas fa-edit"></i></button></td>'+
+            '</tr>';
+          });
+        }
+        q("#tbRecipes").innerHTML = h;
+      }).getMenuAll();
+    }).getInvItems();
+  }).getRecipes();
+}
+
+// Keep old loadDashInv as alias
+function loadDashInv() { loadDashMenu(); }
 
 function openInvM(mode, id = null) {
   if (mode === 'add') {

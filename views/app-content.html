@@ -11,13 +11,21 @@
         <div class="nav-item active" onclick="nav('home')"><i class="fas fa-chart-line"></i><span>الرئيسية</span></div>
         <div class="nav-item" onclick="nav('sales')"><i class="fas fa-receipt"></i><span>المبيعات</span></div>
 
-        <!-- ═══ مجموعة المستودعات (كل ما يخص المخزون والمشتريات) ═══ -->
+        <!-- ═══ مجموعة المنيو (المنتجات + الوصفات) ═══ -->
+        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
+          <i class="fas fa-utensils"></i><span>المنيو</span><i class="fas fa-chevron-down submenu-indicator"></i>
+        </div>
+        <div class="submenu">
+          <div class="nav-item" onclick="nav('menu')"><i class="fas fa-clipboard-list"></i><span>قائمة المنيو</span></div>
+          <div class="nav-item" onclick="nav('recipes')"><i class="fas fa-blender"></i><span>المقادير والوصفات</span></div>
+        </div>
+
+        <!-- ═══ مجموعة المستودعات (المخزون والمشتريات) ═══ -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
           <i class="fas fa-warehouse"></i><span>المستودعات</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
           <div class="nav-item" onclick="nav('warehouse')"><i class="fas fa-boxes-stacked"></i><span>إدارة المخزون</span></div>
-          <div class="nav-item" onclick="nav('inventory')"><i class="fas fa-clipboard-list"></i><span>المنيو والوصفات</span></div>
           <div class="nav-item" onclick="nav('purchases')"><i class="fas fa-truck-loading"></i><span>المشتريات</span></div>
           <div class="nav-item" data-erp-nav="erpPurchaseOrders" onclick="erpNav('erpPurchaseOrders')"><i class="fas fa-shopping-cart"></i><span>أوامر الشراء</span></div>
           <div class="nav-item" data-erp-nav="erpWarehouses" onclick="erpNav('erpWarehouses')"><i class="fas fa-warehouse"></i><span>إدارة المستودعات</span></div>
@@ -221,26 +229,48 @@
         </div>
 
         <!-- Section: Inventory Management (Menu & Recipes) -->
-        <div id="sec_inventory" class="admin-section">
+        <!-- ═══ قسم المنيو — قائمة المنتجات ═══ -->
+        <div id="sec_menu" class="admin-section">
           <div class="filter-bar" style="justify-content:space-between; align-items:center;">
             <div class="form-group" style="flex:1; max-width:400px; margin:0;">
-              <input type="text" id="invSearchQ" class="form-control" placeholder="البحث باسم المنتج أو الصنف..." oninput="loadDashInv()">
+              <input type="text" id="menuSearchQ" class="form-control" placeholder="البحث باسم المنتج أو الكود..." oninput="loadDashMenu()">
             </div>
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-              <button class="btn btn-success" onclick="exportMenuExcel()"><i class="fas fa-file-excel"></i> تصدير Excel</button>
-              <label class="btn btn-secondary" style="margin:0;cursor:pointer;"><i class="fas fa-file-upload"></i> استيراد Excel
+              <button class="btn btn-success" onclick="exportMenuExcel()"><i class="fas fa-file-excel"></i> تصدير</button>
+              <label class="btn btn-secondary" style="margin:0;cursor:pointer;"><i class="fas fa-file-upload"></i> استيراد
                 <input type="file" id="menuImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importMenuExcel(this)">
               </label>
-              <button class="btn btn-primary" onclick="openInvM('add')"><i class="fas fa-plus"></i> إضافة منتج جديد</button>
+              <button class="btn btn-primary" onclick="openInvM('add')"><i class="fas fa-plus"></i> إضافة منتج</button>
             </div>
           </div>
           <div class="table-wrapper">
             <table class="table">
-              <thead><tr><th>المنتج</th><th>التصنيف</th><th>سعر البيع</th><th>المقادير / التكلفة</th><th>الربح</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-              <tbody id="tbInv"></tbody>
+              <thead><tr><th>الكود</th><th>المنتج</th><th>التصنيف</th><th>سعر البيع</th><th>تكلفة المقادير</th><th>الربح</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+              <tbody id="tbMenu"></tbody>
             </table>
           </div>
         </div>
+
+        <!-- ═══ قسم المقادير — الوصفات المرتبطة بكل منتج ═══ -->
+        <div id="sec_recipes" class="admin-section">
+          <div class="filter-bar" style="justify-content:space-between; align-items:center;">
+            <div class="form-group" style="flex:1; max-width:400px; margin:0;">
+              <input type="text" id="recipeSearchQ" class="form-control" placeholder="البحث باسم المنتج أو المقدار..." oninput="loadDashRecipes()">
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <button class="btn btn-primary" onclick="openRecipeModalNew()"><i class="fas fa-plus"></i> إضافة مقادير لمنتج</button>
+            </div>
+          </div>
+          <div class="table-wrapper">
+            <table class="table">
+              <thead><tr><th>كود المنتج</th><th>اسم المنتج</th><th>المادة الخام</th><th>الوحدة</th><th>الكمية المستخدمة</th><th>تكلفة المادة</th><th>التكلفة الإجمالية</th><th>إجراءات</th></tr></thead>
+              <tbody id="tbRecipes"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Keep old sec_inventory as hidden alias so any legacy nav('inventory') call still works -->
+        <div id="sec_inventory" class="admin-section" style="display:none;"></div>
 
         <!-- Section: Raw Materials (INV_Items) -->
         <!-- Section: Unified Warehouse -->
@@ -687,20 +717,20 @@
   </div>
 
   <!-- ═══ صفحة إنشاء أمر شراء (كاملة) ═══ -->
-  <div id="erpPOFormView" class="hidden">
-    <div class="section-header">
-      <h2 class="section-title"><i class="fas fa-clipboard-list"></i> أمر شراء جديد</h2>
-      <button class="btn btn-secondary" onclick="erpBackToPOList()"><i class="fas fa-arrow-right"></i> العودة للقائمة</button>
+  <div id="erpPOFormView" class="hidden" style="animation: fadeIn 0.4s ease forwards;">
+    <div class="section-header" style="background: var(--white); padding: 16px 20px; border-radius: 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.02); border: 1px solid var(--border); margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center;">
+      <h2 class="section-title" style="margin: 0;"><i class="fas fa-clipboard-list" style="background:#eff6ff; padding:8px; border-radius:8px; color:var(--accent);"></i> أمر شراء جديد</h2>
+      <button class="btn btn-secondary" style="font-weight:700; padding:8px 16px; border-radius:8px;" onclick="erpBackToPOList()"><i class="fas fa-arrow-right"></i> العودة للقائمة</button>
     </div>
 
     <div class="po-form-grid">
       <!-- عمود بيانات الأمر -->
       <div class="po-form-section">
         <h4 class="po-section-title"><i class="fas fa-info-circle"></i> بيانات الأمر</h4>
-        <div class="form-group" style="margin-bottom:14px;">
-          <label class="form-label">المورد *</label>
+        <div class="form-group" style="margin-bottom:18px;">
+          <label class="form-label">المورد <span style="color:#ef4444">*</span></label>
           <div class="search-dropdown-wrap">
-            <i class="fas fa-truck sd-icon"></i>
+            <i class="fas fa-truck sd-icon" style="color:#94a3b8;"></i>
             <input type="text" id="erpPOSupplierInput" class="sd-input" placeholder="ابحث عن المورد..." autocomplete="off"
               oninput="erpFilterPOSuppliers()" onfocus="erpFilterPOSuppliers()">
             <input type="hidden" id="erpPOSupplierId">
@@ -708,28 +738,28 @@
           </div>
         </div>
         <div class="form-row-2col">
-          <div class="form-group" style="margin-bottom:14px;">
+          <div class="form-group">
             <label class="form-label">تاريخ الأمر</label>
             <input type="date" id="erpPODate" class="form-control">
           </div>
-          <div class="form-group" style="margin-bottom:14px;">
+          <div class="form-group">
             <label class="form-label">تاريخ التسليم المتوقع</label>
             <input type="date" id="erpPOExpDate" class="form-control">
           </div>
         </div>
-        <div class="form-group">
+        <div class="form-group" style="margin-top: 18px;">
           <label class="form-label">ملاحظات</label>
-          <textarea id="erpPONotes" class="form-control" rows="3" placeholder="ملاحظات إضافية..." style="resize:vertical;"></textarea>
+          <textarea id="erpPONotes" class="form-control" rows="3" placeholder="أضف أي ملاحظات إضافية حول أمر الشراء..."></textarea>
         </div>
       </div>
 
       <!-- عمود الأصناف -->
-      <div class="po-form-section">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
-          <h4 class="po-section-title" style="margin-bottom:0;"><i class="fas fa-boxes"></i> الأصناف</h4>
-          <div style="display:flex;gap:6px;">
-            <button class="btn btn-sm btn-success" onclick="erpExportPOTemplate()"><i class="fas fa-file-excel"></i> تصدير نموذج</button>
-            <label class="btn btn-sm btn-secondary" style="margin:0;cursor:pointer;"><i class="fas fa-file-upload"></i> استيراد
+      <div class="po-form-section" style="display:flex; flex-direction:column;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:20px;">
+          <h4 class="po-section-title" style="margin-bottom:0; border:none; padding:0;"><i class="fas fa-boxes"></i> الأصناف المطلوبة</h4>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm btn-outline" style="border-radius:8px; font-weight:700;" onclick="erpExportPOTemplate()"><i class="fas fa-file-excel"></i> التحميل كنموذج</button>
+            <label class="btn btn-sm btn-secondary" style="margin:0;cursor:pointer; border-radius:8px; font-weight:700; display:flex; align-items:center; gap:6px;"><i class="fas fa-file-upload"></i> استيراد
               <input type="file" id="erpPOImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="erpImportPOItems(this)">
             </label>
           </div>
@@ -738,62 +768,67 @@
         <!-- صف إضافة مادة -->
         <div class="po-add-row">
           <div class="po-add-item-field">
-            <label class="form-label" style="font-size:12px;">المادة *</label>
+            <label class="form-label" style="font-size:12.5px;">المادة <span style="color:#ef4444">*</span></label>
             <div class="search-dropdown-wrap">
-              <i class="fas fa-search sd-icon"></i>
-              <input type="text" id="erpPOItemSearch" class="sd-input" placeholder="ابحث عن مادة خام..." autocomplete="off"
+              <i class="fas fa-search sd-icon" style="color:#94a3b8;"></i>
+              <input type="text" id="erpPOItemSearch" class="sd-input" placeholder="ابحث عن مادة..." autocomplete="off"
                 oninput="erpFilterPOItemSearch()" onfocus="erpFilterPOItemSearch()">
               <input type="hidden" id="erpPOItemId">
               <input type="hidden" id="erpPOItemNameH">
               <div class="sd-results" id="erpPOItemResults"></div>
             </div>
           </div>
-          <div style="width:80px;">
-            <label class="form-label" style="font-size:12px;">الكمية</label>
-            <input type="number" id="erpPOItemQty" class="form-control" value="1" min="0.01" step="0.01" style="text-align:center;">
+          <div>
+            <label class="form-label" style="font-size:12.5px;">الكمية</label>
+            <input type="number" id="erpPOItemQty" class="form-control" value="1" min="0.01" step="0.01" style="text-align:center; font-weight:700;">
           </div>
-          <div style="width:100px;">
-            <label class="form-label" style="font-size:12px;">الوحدة</label>
-            <select id="erpPOItemUnit" class="form-control" onchange="erpPOUnitChanged()" style="text-align:center;padding:8px 4px;font-size:13px;">
+          <div>
+            <label class="form-label" style="font-size:12.5px;">الوحدة</label>
+            <select id="erpPOItemUnit" class="form-control" onchange="erpPOUnitChanged()" style="padding:12px 10px;font-size:13.5px; font-weight:600;">
               <option value="">—</option>
             </select>
           </div>
-          <div style="width:110px;">
-            <label class="form-label" style="font-size:12px;">سعر الوحدة</label>
-            <input type="number" step="0.01" id="erpPOItemPrice" class="form-control" placeholder="0.00">
+          <div>
+            <label class="form-label" style="font-size:12.5px;">سعـر الوحدة</label>
+            <input type="number" step="0.01" id="erpPOItemPrice" class="form-control" placeholder="0.00" style="font-weight:700;">
           </div>
-          <button class="btn btn-success po-add-btn" onclick="erpAddPOItem()"><i class="fas fa-plus"></i> إضافة</button>
+          <button class="btn btn-success po-add-btn" onclick="erpAddPOItem()"><i class="fas fa-plus"></i> إضـافة</button>
         </div>
-        <div id="erpPOStockHint" style="display:none;font-size:12px;color:#0369a1;background:#e0f2fe;padding:6px 12px;border-radius:8px;margin-top:8px;"></div>
+        <div id="erpPOStockHint" style="display:none;font-size:12.5px;color:#0369a1;background:#e0f2fe;padding:8px 14px;border-radius:10px;margin-top:12px;font-weight:600;border:1px solid #bae6fd;"></div>
 
         <!-- جدول الأصناف المضافة -->
-        <div style="overflow-x:auto;margin-top:14px;">
+        <div class="po-table-container" style="flex: 1;">
           <table class="po-lines-table">
             <thead><tr>
-              <th style="width:90px;">الكود</th><th>المادة</th><th style="text-align:center;width:70px;">الكمية</th>
-              <th style="text-align:center;width:70px;">الوحدة</th><th style="text-align:center;width:100px;">سعر الوحدة</th>
-              <th style="text-align:center;width:110px;">إجمالي التكلفة</th><th style="width:40px;"></th>
+              <th style="width:15%;">الكود</th>
+              <th style="width:35%;">المادة</th>
+              <th style="text-align:center;width:12%;">الكمية</th>
+              <th style="text-align:center;width:12%;">الوحدة</th>
+              <th style="text-align:center;width:13%;">سعر الوحدة</th>
+              <th style="text-align:center;width:13%;">إجمالي التكلفة</th>
+              <th style="width:50px; text-align:center;">إجراء</th>
             </tr></thead>
             <tbody id="erpPOItemsBody">
-              <tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:24px;font-style:italic;">لم تتم إضافة أصناف بعد</td></tr>
+              <tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:30px;font-style:italic;font-size:14px;"><i class="fas fa-inbox" style="font-size:30px; color:#cbd5e1; margin-bottom:10px; display:block;"></i> لم تتم إضافة أصناف بعد</td></tr>
             </tbody>
           </table>
         </div>
 
         <!-- الإجماليات -->
         <div class="po-totals-box">
-          <div class="po-total-row"><span>الإجمالي قبل الضريبة:</span><span id="erpPOSubtotal">0.00 ر.س</span></div>
-          <div class="po-total-row"><span>ضريبة القيمة المضافة (15%):</span><span id="erpPOVATTotal">0.00 ر.س</span></div>
-          <div class="po-total-row po-grand-total"><span>الإجمالي الكلي:</span><span id="erpPOGrandTotal">0.00 ر.س</span></div>
+          <div class="po-total-row"><span>الإجمالي قبل الضريبة:</span><span id="erpPOSubtotal" style="font-family:monospace; font-size:16px;">0.00 ر.س</span></div>
+          <div class="po-total-row"><span>ضريبة القيمة المضافة (15%):</span><span id="erpPOVATTotal" style="font-family:monospace; font-size:16px; color:#ef4444;">0.00 ر.س</span></div>
+          <div class="po-total-row po-grand-total"><span>الإجمالي الكلي:</span><span id="erpPOGrandTotal" style="font-family:monospace; font-size:22px;">0.00 ر.س</span></div>
         </div>
       </div>
     </div>
 
-    <div style="display:flex;gap:12px;margin-top:20px;">
-      <button class="btn btn-primary" style="flex:1;padding:14px;font-size:15px;" onclick="erpSavePO()">
-        <i class="fas fa-save"></i> حفظ أمر الشراء
+    <!-- أزرار الحفظ والإلغاء -->
+    <div style="background: var(--white); padding: 18px 24px; border-radius: 16px; border: 1px solid var(--border); margin-top: 20px; display: flex; gap: 14px; justify-content: flex-end; box-shadow: 0 -4px 15px rgba(0,0,0,0.01);">
+      <button class="btn btn-secondary" style="padding: 14px 30px; font-size: 15.5px; font-weight: 700; border-radius: 12px; background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; transition:all 0.2s;" onmouseover="this.style.background='#e2e8f0';" onmouseout="this.style.background='#f1f5f9';" onclick="erpBackToPOList()">إلغاء الأمر</button>
+      <button class="btn btn-primary" style="padding: 14px 40px; font-size: 15.5px; font-weight: 800; border-radius: 12px; box-shadow: 0 6px 20px rgba(13, 71, 161, 0.25);" onclick="erpSavePO()">
+        <i class="fas fa-check-circle" style="margin-inline-end: 6px;"></i> حفظ أمر الشراء
       </button>
-      <button class="btn btn-secondary" style="padding:14px;min-width:120px;" onclick="erpBackToPOList()">إلغاء</button>
     </div>
   </div>
 

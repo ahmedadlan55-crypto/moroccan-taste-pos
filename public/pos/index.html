@@ -180,6 +180,48 @@
     <button class="float-btn float-btn-info" onclick="openPrinterSettings()" title="الطابعة الحرارية" data-i18n-title="printer" aria-label="الطابعة الحرارية" data-i18n-aria-label="printer">
       <i class="fas fa-print"></i>
     </button>
+    <button class="float-btn float-btn-warn" onclick="openCashierStocktake()" title="جرد المخزون" aria-label="جرد المخزون">
+      <i class="fas fa-clipboard-check"></i>
+    </button>
+  </div>
+
+  <!-- Cashier Stocktake Modal -->
+  <div id="modalCashierStocktake" class="glass-modal hidden">
+    <div class="glass-modal-content large">
+      <div class="glass-modal-title">
+        <span><i class="fas fa-clipboard-check"></i> جرد المخزون</span>
+        <button class="glass-modal-close" onclick="closeGlassModal('#modalCashierStocktake')">&times;</button>
+      </div>
+      <div class="glass-modal-body">
+        <!-- Search + add -->
+        <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:200px;position:relative;">
+            <input type="text" id="cstSearch" class="form-control glass-input" placeholder="ابحث عن مادة بالاسم أو الكود..." oninput="filterCashierStItems()">
+            <div id="cstSearchResults" class="sd-results" style="position:absolute;top:100%;left:0;right:0;z-index:100;max-height:200px;overflow-y:auto;display:none;"></div>
+          </div>
+          <input type="number" id="cstQty" class="form-control glass-input" style="width:80px;" placeholder="الكمية" value="0">
+          <select id="cstUnitType" class="form-control glass-input" style="width:120px;">
+            <option value="small">صغرى</option>
+            <option value="big">كبرى</option>
+          </select>
+          <button class="btn btn-primary" onclick="addCashierStItem()"><i class="fas fa-plus"></i></button>
+        </div>
+        <!-- Items table -->
+        <div style="max-height:350px;overflow-y:auto;">
+          <table class="table" style="font-size:13px;">
+            <thead><tr><th>المادة</th><th>رصيد النظام</th><th>الفعلي</th><th>الوحدة</th><th>التباين</th><th></th></tr></thead>
+            <tbody id="cstBody"></tbody>
+          </table>
+        </div>
+        <div class="form-group" style="margin-top:10px;">
+          <input type="text" id="cstNotes" class="form-control glass-input" placeholder="ملاحظات (اختياري)">
+        </div>
+      </div>
+      <div class="glass-modal-actions">
+        <button class="btn btn-primary" style="flex:1;" onclick="submitCashierStocktake()"><i class="fas fa-check-double"></i> اعتماد وحفظ المحضر</button>
+        <button class="btn btn-light" onclick="closeGlassModal('#modalCashierStocktake')">إلغاء</button>
+      </div>
+    </div>
   </div>
 
   <!-- Printer Settings Modal -->

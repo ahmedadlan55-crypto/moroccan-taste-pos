@@ -1234,6 +1234,148 @@ window.saveNetworkPrinter = function() {
 // Initialize the "current printer" display when the user first opens
 // the page (the modal is empty by default).
 document.addEventListener('DOMContentLoaded', function() {
-  // Delay slightly so the modal DOM is ready
   setTimeout(refreshPrinterCurrent, 100);
 });
+
+// =========================================
+// Cashier Stocktake
+// =========================================
+var _cstAllItems = [];
+var _cstCart = [];      // [{id, name, unit, systemQty, actualQty, unitType, convRate}]
+var _cstSelectedItem = null;
+
+window.openCashierStocktake = function() {
+  _cstCart = [];
+  _cstSelectedItem = null;
+  if (q('#cstSearch')) q('#cstSearch').value = '';
+  if (q('#cstQty')) q('#cstQty').value = '';
+  if (q('#cstNotes')) q('#cstNotes').value = '';
+  renderCstCart();
+  // Load inventory items
+  loader(true);
+  api.withSuccessHandler(function(items) {
+    loader(false);
+    _cstAllItems = items || [];
+    openGlassModal('#modalCashierStocktake');
+  }).withFailureHandler(function(err) {
+    loader(false);
+    glassToast(err.message || 'فشل تحميل المواد', true);
+  }).getInvItems();
+};
+
+window.filterCashierStItems = function() {
+  var search = (q('#cstSearch') ? q('#cstSearch').value : '').toLowerCase();
+  var res = q('#cstSearchResults');
+  if (!res) return;
+  if (!search || search.length < 1) { res.style.display = 'none'; return; }
+  var matches = _cstAllItems.filter(function(i) {
+    return (i.name || '').toLowerCase().includes(search) || (i.id || '').toLowerCase().includes(search);
+  }).slice(0, 10);
+  if (!matches.length) { res.innerHTML = '<div style="padding:8px;color:#94a3b8;">لا توجد نتائج</div>'; res.style.display = 'block'; return; }
+  res.innerHTML = matches.map(function(i) {
+    return '<div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-weight:600;" onclick="selectCstItem(\'' + i.id + '\')">' +
+      i.name + ' <span style="font-size:11px;color:#64748b;">(' + (i.stock || 0) + ' ' + (i.unit || '') + ')</span></div>';
+  }).join('');
+  res.style.display = 'block';
+};
+
+window.selectCstItem = function(itemId) {
+  var item = _cstAllItems.find(function(i) { return i.id === itemId; });
+  if (!item) return;
+  _cstSelectedItem = item;
+  if (q('#cstSearch')) q('#cstSearch').value = item.name;
+  if (q('#cstQty')) q('#cstQty').value = '';
+  if (q('#cstSearchResults')) q('#cstSearchResults').style.display = 'none';
+  // Set unit options
+  var sel = q('#cstUnitType');
+  if (sel) {
+    sel.innerHTML = '<option value="small">' + (item.unit || 'حبة') + ' (صغرى)</option>';
+    if (item.bigUnit) sel.innerHTML += '<option value="big">' + item.bigUnit + ' (كبرى)</option>';
+  }
+  if (q('#cstQty')) q('#cstQty').focus();
+};
+
+window.addCashierStItem = function() {
+  if (!_cstSelectedItem) return glassToast('اختر مادة من القائمة أولاً', true);
+  var qty = Number(q('#cstQty') ? q('#cstQty').value : 0);
+  if (qty < 0) return glassToast('الكمية يجب أن تكون 0 أو أكثر', true);
+  var unitType = q('#cstUnitType') ? q('#cstUnitType').value : 'small';
+  var convRate = Number(_cstSelectedItem.convRate) || 1;
+
+  // Convert to small units for storage
+  var actualSmall = unitType === 'big' && convRate > 1 ? qty * convRate : qty;
+
+  // Check if already in cart
+  var existing = _cstCart.find(function(c) { return c.id === _cstSelectedItem.id; });
+  if (existing) {
+    existing.actualQty = actualSmall;
+    existing.unitType = unitType;
+    existing.enteredQty = qty;
+  } else {
+    _cstCart.push({
+      id: _cstSelectedItem.id,
+      name: _cstSelectedItem.name,
+      unit: _cstSelectedItem.unit || '',
+      bigUnit: _cstSelectedItem.bigUnit || '',
+      convRate: convRate,
+      systemQty: Number(_cstSelectedItem.stock) || 0,
+      actualQty: actualSmall,
+      unitType: unitType,
+      enteredQty: qty
+    });
+  }
+
+  _cstSelectedItem = null;
+  if (q('#cstSearch')) q('#cstSearch').value = '';
+  if (q('#cstQty')) q('#cstQty').value = '';
+  renderCstCart();
+};
+
+function renderCstCart() {
+  var tb = q('#cstBody');
+  if (!tb) return;
+  if (!_cstCart.length) {
+    tb.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:20px;">لم تتم إضافة مواد بعد</td></tr>';
+    return;
+  }
+  tb.innerHTML = _cstCart.map(function(c, i) {
+    var diff = c.actualQty - c.systemQty;
+    var vc = diff === 0 ? '#64748b' : (diff > 0 ? '#16a34a' : '#ef4444');
+    var vs = diff > 0 ? '+' + diff.toFixed(2) : diff.toFixed(2);
+    var unitLabel = c.unitType === 'big' ? (c.bigUnit || 'كبرى') : (c.unit || 'صغرى');
+    return '<tr>' +
+      '<td style="font-weight:700;">' + c.name + '</td>' +
+      '<td style="text-align:center;">' + c.systemQty.toFixed(2) + ' ' + (c.unit || '') + '</td>' +
+      '<td style="text-align:center;font-weight:800;">' + c.enteredQty + ' ' + unitLabel + '</td>' +
+      '<td style="text-align:center;font-size:11px;">' + unitLabel + '</td>' +
+      '<td style="text-align:center;font-weight:900;color:' + vc + ';">' + vs + '</td>' +
+      '<td><button class="btn-remove" onclick="_cstCart.splice(' + i + ',1);renderCstCart();"><i class="fas fa-trash"></i></button></td>' +
+    '</tr>';
+  }).join('');
+}
+
+window.submitCashierStocktake = function() {
+  if (!_cstCart.length) return glassToast('أضف مواد للمحضر أولاً', true);
+  var itemsToSend = _cstCart.map(function(c) {
+    return { id: c.id, sys: c.systemQty, actual: c.actualQty, diff: c.actualQty - c.systemQty };
+  });
+  var notes = q('#cstNotes') ? q('#cstNotes').value : '';
+
+  glassConfirm('اعتماد محضر الجرد', 'سيتم تعديل رصيد ' + itemsToSend.length + ' مادة في المخزون. متابعة؟', { okText: 'اعتماد' }).then(function(ok) {
+    if (!ok) return;
+    loader(true);
+    api.withSuccessHandler(function(r) {
+      loader(false);
+      if (r && r.success) {
+        closeGlassModal('#modalCashierStocktake');
+        glassToast('تم اعتماد محضر الجرد ' + (r.stocktakeId || '') + ' — ' + (r.adjustedCount || 0) + ' مادة');
+        _cstCart = [];
+      } else {
+        glassToast((r && r.error) || 'فشل الحفظ', true);
+      }
+    }).withFailureHandler(function(err) {
+      loader(false);
+      glassToast(err.message || 'خطأ', true);
+    }).submitStocktake(itemsToSend, state.user, notes);
+  });
+};

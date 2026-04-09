@@ -2521,18 +2521,107 @@ function loadDashStocktake() {
       h = "<tr><td colspan='6' style='text-align:center; padding:30px;'>لا توجد عمليات جرد سابقة</td></tr>";
     } else {
       res.forEach(st => {
-        h += `<tr>
-          <td style="font-family:monospace; color:#64748b;">${st.id}</td>
-          <td>${st.date ? new Date(st.date).toLocaleString('ar-SA') : ''}</td>
-          <td style="font-weight:bold;">${st.username}</td>
-          <td>${st.notes || '—'}</td>
-          <td><span class="badge green">مكتمل ومُعتمد</span></td>
-          <td><button class="btn btn-light" onclick="alert('تفاصيل التسوية لاحقاً')">عرض</button></td>
-        </tr>`;
+        var dateStr = st.date ? new Date(st.date).toLocaleString('ar-SA') : '';
+        var varColor = st.totalVariance === 0 ? '#16a34a' : (st.totalVariance > 0 ? '#2563eb' : '#ef4444');
+        h += '<tr>'+
+          '<td style="font-family:monospace;color:#64748b;font-size:12px;">'+st.id+'</td>'+
+          '<td>'+dateStr+'</td>'+
+          '<td style="font-weight:bold;">'+st.username+'</td>'+
+          '<td>'+st.itemsCount+' صنف</td>'+
+          '<td style="font-weight:800;color:'+varColor+';">'+Number(st.totalVariance).toFixed(2)+'</td>'+
+          '<td style="white-space:nowrap;">'+
+            '<button class="btn btn-primary btn-sm" onclick="viewStocktakeDetail(\''+st.id+'\')" title="عرض التفاصيل"><i class="fas fa-eye"></i></button> '+
+            '<button class="btn btn-light btn-sm" onclick="printStocktake(\''+st.id+'\')" title="طباعة المحضر"><i class="fas fa-print"></i></button>'+
+          '</td>'+
+        '</tr>';
       });
     }
     q("#tbStocktake").innerHTML = h;
   }).getAllStocktakes();
+}
+
+// View stocktake detail in a modal
+function viewStocktakeDetail(stId) {
+  loader();
+  api.withSuccessHandler(function(st) {
+    loader(false);
+    if (!st || st.error) return showToast(st && st.error || 'خطأ', true);
+    var dateStr = st.date ? new Date(st.date).toLocaleString('ar-SA') : '';
+    var h = '<div style="margin-bottom:14px;">'+
+      '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">'+
+        '<div><strong>رقم المحضر:</strong> <code>'+st.id+'</code></div>'+
+        '<div><strong>التاريخ:</strong> '+dateStr+'</div>'+
+        '<div><strong>القائم بالجرد:</strong> '+st.username+'</div>'+
+        '<div><strong>عدد الأصناف:</strong> '+st.itemsCount+'</div>'+
+      '</div>'+
+      (st.notes ? '<div style="background:#fefce8;padding:8px 12px;border-radius:8px;font-size:13px;border:1px solid #fef08a;">'+st.notes+'</div>' : '')+
+    '</div>'+
+    '<table class="table" style="font-size:13px;"><thead><tr>'+
+      '<th>المادة</th><th>الوحدة</th><th>رصيد النظام</th><th>الفعلي (بعد الجرد)</th><th>التباين</th>'+
+    '</tr></thead><tbody>';
+    (st.items || []).forEach(function(i) {
+      var vc = i.variance === 0 ? '#64748b' : (i.variance > 0 ? '#16a34a' : '#ef4444');
+      var vs = i.variance > 0 ? '+' + i.variance.toFixed(2) : i.variance.toFixed(2);
+      h += '<tr>'+
+        '<td style="font-weight:700;">'+i.invItemName+'</td>'+
+        '<td>'+i.unit+'</td>'+
+        '<td style="text-align:center;">'+i.systemQty.toFixed(2)+'</td>'+
+        '<td style="text-align:center;font-weight:800;">'+i.actualQty.toFixed(2)+'</td>'+
+        '<td style="text-align:center;font-weight:900;color:'+vc+';">'+vs+'</td>'+
+      '</tr>';
+    });
+    h += '</tbody></table>';
+    h += '<div style="text-align:left;font-weight:900;font-size:15px;margin-top:8px;color:'+(st.totalVariance===0?'#16a34a':'#ef4444')+';">إجمالي التباين: '+Number(st.totalVariance).toFixed(2)+'</div>';
+    // Use a generic modal container
+    if (!q("#modalStocktakeDetail")) {
+      var m = document.createElement('div');
+      m.id = 'modalStocktakeDetail';
+      m.className = 'modal';
+      m.innerHTML = '<div class="modal-content modal-large"><div class="modal-title">محضر الجرد <button class="modal-close" onclick="closeModal(\'#modalStocktakeDetail\')">&times;</button></div><div id="stDetailBody"></div><div style="display:flex;gap:10px;margin-top:15px;"><button class="btn btn-primary" onclick="printStocktake(state._viewingStId)"><i class="fas fa-print"></i> طباعة المحضر</button><button class="btn btn-light" onclick="closeModal(\'#modalStocktakeDetail\')">إغلاق</button></div></div>';
+      document.body.appendChild(m);
+    }
+    state._viewingStId = stId;
+    q("#stDetailBody").innerHTML = h;
+    openModal("#modalStocktakeDetail");
+  }).getStocktakeDetail(stId);
+}
+
+// Print stocktake report
+function printStocktake(stId) {
+  loader();
+  api.withSuccessHandler(function(st) {
+    loader(false);
+    if (!st || st.error) return showToast('خطأ', true);
+    var company = (state.settings && state.settings.name) || 'Moroccan Taste';
+    var dateStr = st.date ? new Date(st.date).toLocaleString('ar-SA') : '';
+    var rows = (st.items || []).map(function(i, idx) {
+      var vc = i.variance === 0 ? '#64748b' : (i.variance > 0 ? '#16a34a' : '#ef4444');
+      var vs = i.variance > 0 ? '+' + i.variance.toFixed(2) : i.variance.toFixed(2);
+      return '<tr><td>'+(idx+1)+'</td><td style="font-weight:700;">'+i.invItemName+'</td><td>'+i.unit+'</td><td>'+i.systemQty.toFixed(2)+'</td><td style="font-weight:800;">'+i.actualQty.toFixed(2)+'</td><td style="font-weight:900;color:'+vc+';">'+vs+'</td></tr>';
+    }).join('');
+    var w = window.open('','_blank','width=800,height=700');
+    w.document.write(
+      '<html dir="rtl"><head><meta charset="UTF-8"><title>محضر جرد '+st.id+'</title>'+
+      '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;direction:rtl;padding:30px;color:#1e293b;}'+
+      'h2{text-align:center;margin-bottom:6px;}'+
+      '.meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0;font-size:13px;}'+
+      '.meta div{background:#f8fafc;padding:10px 14px;border-radius:10px;border:1px solid #e2e8f0;}'+
+      '.meta .lbl{font-size:10px;color:#64748b;}.meta .val{font-weight:700;}'+
+      'table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px;}'+
+      'th,td{border:1px solid #ddd;padding:8px 10px;text-align:right;}th{background:#f1f5f9;font-weight:700;}'+
+      '.sig{display:flex;justify-content:space-around;margin-top:40px;font-size:13px;}.sig div{text-align:center;}.sig .line{width:150px;border-bottom:1px solid #94a3b8;padding-top:40px;margin:0 auto;}.sig .cap{font-size:11px;color:#64748b;margin-top:4px;}'+
+      '@media print{body{padding:10px;}}</style></head><body>'+
+      '<h2>'+company+'</h2><h3 style="text-align:center;color:#64748b;margin-bottom:14px;">محضر جرد مخزون</h3>'+
+      '<div class="meta"><div><div class="lbl">رقم المحضر</div><div class="val">'+st.id+'</div></div><div><div class="lbl">التاريخ</div><div class="val">'+dateStr+'</div></div><div><div class="lbl">القائم بالجرد</div><div class="val">'+st.username+'</div></div><div><div class="lbl">عدد الأصناف</div><div class="val">'+st.itemsCount+'</div></div></div>'+
+      (st.notes ? '<div style="background:#fefce8;padding:10px;border-radius:8px;border:1px solid #fef08a;font-size:12px;margin-bottom:10px;">ملاحظات: '+st.notes+'</div>' : '')+
+      '<table><thead><tr><th>#</th><th>المادة</th><th>الوحدة</th><th>رصيد النظام</th><th>الفعلي</th><th>التباين</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+      '<div style="text-align:center;margin-top:14px;font-weight:900;font-size:16px;color:'+(st.totalVariance===0?'#16a34a':'#ef4444')+';">إجمالي التباين: '+Number(st.totalVariance).toFixed(2)+'</div>'+
+      '<div class="sig"><div><div class="line"></div><div class="cap">القائم بالجرد</div></div><div><div class="line"></div><div class="cap">مدير المستودع</div></div><div><div class="line"></div><div class="cap">المدير العام</div></div></div>'+
+      '</body></html>'
+    );
+    w.document.close();
+    setTimeout(function() { w.print(); }, 400);
+  }).getStocktakeDetail(stId);
 }
 
 function startStocktake() {

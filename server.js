@@ -140,6 +140,33 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
+  // Stocktake tables
+  await createTableIfMissing('stocktakes', `
+    CREATE TABLE stocktakes (
+      id VARCHAR(50) PRIMARY KEY,
+      stocktake_date DATETIME,
+      username VARCHAR(100),
+      notes TEXT,
+      status ENUM('completed') DEFAULT 'completed',
+      items_count INT DEFAULT 0,
+      total_variance DECIMAL(12,2) DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('stocktake_items', `
+    CREATE TABLE stocktake_items (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      stocktake_id VARCHAR(50) NOT NULL,
+      inv_item_id VARCHAR(50),
+      inv_item_name VARCHAR(200),
+      unit VARCHAR(50),
+      system_qty DECIMAL(12,2) DEFAULT 0,
+      actual_qty DECIMAL(12,2) DEFAULT 0,
+      variance DECIMAL(12,2) DEFAULT 0,
+      FOREIGN KEY (stocktake_id) REFERENCES stocktakes(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB
+  `);
+
   // Seed cost settings into the existing key-value settings table
   try {
     await db.query(`INSERT IGNORE INTO settings (setting_key, setting_value) VALUES

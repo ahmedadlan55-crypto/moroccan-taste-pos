@@ -670,6 +670,10 @@ body.ar .pwa-install-btn {
   background: linear-gradient(135deg, #0d47a1, #1e40af 50%, #3b82f6);
   box-shadow: 0 12px 28px rgba(13, 71, 161, 0.4);
 }
+.float-btn-warn {
+  background: linear-gradient(135deg, #d97706, #f59e0b);
+  box-shadow: 0 12px 28px rgba(217, 119, 6, 0.4);
+}
 .float-btn:hover { transform: translateY(-2px); }
 .float-btn:active { transform: scale(0.93); }
 

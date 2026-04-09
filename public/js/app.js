@@ -1696,6 +1696,133 @@ function loadDashRecipes() {
   }).getRecipes();
 }
 
+// ─── Export Recipes to Excel ───
+function exportRecipesExcel() {
+  ensureXlsx().then(function() {
+    api.withSuccessHandler(function(recipes) {
+      api.withSuccessHandler(function(raws) {
+        var rawMap = {};
+        (raws||[]).forEach(function(r){ rawMap[r.id] = r; });
+        // Sheet: المقادير — matches user's Excel structure
+        var wsData = [['كود المنتج','اسم المنتج','اسم المادة الخام','كود المادة','الوحدة','الكمية المستخدمة','تكلفة الوحدة','التكلفة الإجمالية']];
+        (recipes||[]).forEach(function(r){
+          var raw = rawMap[r.invItemId];
+          var cRate = raw ? (Number(raw.convRate)||1) : 1;
+          var uCost = raw ? (cRate>1 ? Number(raw.cost)/cRate : Number(raw.cost)) : 0;
+          wsData.push([
+            r.menuId||'', r.menuName||'', r.invItemName||'', r.invItemId||'',
+            raw ? (raw.unit||'') : '', r.qtyUsed||0, Number(uCost.toFixed(4)), Number((r.qtyUsed*uCost).toFixed(4))
+          ]);
+        });
+        var wb = XLSX.utils.book_new();
+        var ws = XLSX.utils.aoa_to_sheet(wsData);
+        ws['!cols'] = [{wch:16},{wch:20},{wch:20},{wch:18},{wch:10},{wch:14},{wch:12},{wch:14}];
+        XLSX.utils.book_append_sheet(wb, ws, 'المقادير');
+        XLSX.writeFile(wb, 'recipes-' + new Date().toISOString().split('T')[0] + '.xlsx');
+      }).getInvItems();
+    }).getRecipes();
+  }).catch(function(e){ showToast(e.message||'فشل تحميل XLSX',true); });
+}
+
+// ─── Import Recipes from Excel ───
+// Expected columns: كود المنتج, اسم المنتج, اسم المادة الخام (أو كود المادة), الكمية المستخدمة
+function importRecipesExcel(input) {
+  ensureXlsx().then(function(){ _importRecipesBody(input); }).catch(function(e){ showToast(e.message||'فشل',true); });
+}
+function _importRecipesBody(input) {
+  var file = input.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var wb = XLSX.read(e.target.result, { type: 'array' });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      if (!rows.length) return showToast('الملف فارغ', true);
+
+      // Group by menu item (by code or name)
+      var grouped = {}; // menuKey → { menuId, menuName, ingredients: [] }
+      rows.forEach(function(r) {
+        var menuId   = String(r['كود المنتج'] || r['menuId'] || r['menu_id'] || '').trim();
+        var menuName = String(r['اسم المنتج'] || r['menuName'] || r['menu_name'] || '').trim();
+        var invName  = String(r['اسم المادة الخام'] || r['المقادير'] || r['invItemName'] || r['ingredient'] || '').trim();
+        var invId    = String(r['كود المادة'] || r['invItemId'] || r['inv_item_id'] || '').trim();
+        var qtyUsed  = Number(r['الكمية المستخدمة'] || r['التكلفة'] || r['qtyUsed'] || r['qty_used'] || 1) || 1;
+
+        if (!menuName && !menuId) return;
+        if (!invName && !invId) return;
+
+        var key = menuId || menuName;
+        if (!grouped[key]) grouped[key] = { menuId: menuId, menuName: menuName, ingredients: [] };
+        grouped[key].ingredients.push({ invItemId: invId, invItemName: invName, qtyUsed: qtyUsed });
+      });
+
+      var keys = Object.keys(grouped);
+      if (!keys.length) return showToast('لم يتم العثور على مقادير صالحة في الملف', true);
+
+      // Resolve menu IDs and inv_item IDs from names if needed
+      loader(true);
+      api.withSuccessHandler(function(menus) {
+        api.withSuccessHandler(function(invItems) {
+          var menuByName = {};
+          (menus||[]).forEach(function(m){ menuByName[m.name.toLowerCase().trim()] = m; });
+          var invByName = {};
+          (invItems||[]).forEach(function(i){ invByName[i.name.toLowerCase().trim()] = i; });
+
+          var saved = 0, failed = 0, total = keys.length;
+          var pending = total;
+
+          keys.forEach(function(key) {
+            var g = grouped[key];
+            // Resolve menu ID
+            var mid = g.menuId;
+            var mname = g.menuName;
+            if (!mid && mname) {
+              var found = menuByName[mname.toLowerCase().trim()];
+              if (found) { mid = found.id; mname = found.name; }
+            }
+            if (!mid) { failed++; pending--; checkDone(); return; }
+
+            // Resolve inv_item IDs for each ingredient
+            var cleanIngs = g.ingredients.map(function(ing) {
+              var iid = ing.invItemId;
+              if (!iid && ing.invItemName) {
+                var found = invByName[ing.invItemName.toLowerCase().trim()];
+                if (found) iid = found.id;
+              }
+              return { invItemId: iid || '', invItemName: ing.invItemName, qtyUsed: ing.qtyUsed };
+            }).filter(function(ing) { return ing.invItemId; });
+
+            if (!cleanIngs.length) { failed++; pending--; checkDone(); return; }
+
+            api.withSuccessHandler(function(r) {
+              if (r && r.success) saved++; else failed++;
+              pending--;
+              checkDone();
+            }).withFailureHandler(function() {
+              failed++; pending--;
+              checkDone();
+            }).saveRecipe(mid, mname, cleanIngs);
+          });
+
+          function checkDone() {
+            if (pending <= 0) {
+              loader(false);
+              showToast('تم استيراد مقادير ' + saved + ' منتج' + (failed ? ' (فشل ' + failed + ')' : ''));
+              loadDashRecipes();
+            }
+          }
+        }).getInvItems();
+      }).getMenuAll();
+    } catch(ex) {
+      loader(false);
+      showToast('خطأ في قراءة الملف: ' + ex.message, true);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+  input.value = '';
+}
+
 // Keep old loadDashInv as alias
 function loadDashInv() { loadDashMenu(); }
 

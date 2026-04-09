@@ -257,8 +257,12 @@
             <div class="form-group" style="flex:1; max-width:400px; margin:0;">
               <input type="text" id="recipeSearchQ" class="form-control" placeholder="البحث باسم المنتج أو المقدار..." oninput="loadDashRecipes()">
             </div>
-            <div style="display:flex; gap:6px; align-items:center;">
-              <button class="btn btn-primary" onclick="openRecipeModalNew()"><i class="fas fa-plus"></i> إضافة مقادير لمنتج</button>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <button class="btn btn-success" onclick="exportRecipesExcel()"><i class="fas fa-file-excel"></i> تصدير</button>
+              <label class="btn btn-secondary" style="margin:0;cursor:pointer;"><i class="fas fa-file-upload"></i> استيراد
+                <input type="file" id="recipeImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importRecipesExcel(this)">
+              </label>
+              <button class="btn btn-primary" onclick="openRecipeModalNew()"><i class="fas fa-plus"></i> إضافة مقادير</button>
             </div>
           </div>
           <div class="table-wrapper">

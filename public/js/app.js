@@ -1686,7 +1686,10 @@ function loadDashRecipes() {
               '<td style="text-align:center;font-weight:700;">'+r.qtyUsed+'</td>'+
               '<td style="text-align:center;">'+formatVal(uCost)+'</td>'+
               '<td style="text-align:center;font-weight:800;color:var(--secondary);">'+formatVal(lineCost)+'</td>'+
-              '<td><button class="btn btn-primary btn-sm" onclick="openRecipeModal(\''+r.menuId+'\',\''+String(r.menuName||'').replace(/'/g,"\\'")+'\')" title="تعديل المقادير"><i class="fas fa-edit"></i></button></td>'+
+              '<td>'+
+                '<button class="btn btn-primary btn-sm" onclick="openRecipeModal(\''+r.menuId+'\',\''+String(r.menuName||'').replace(/'/g,"\\'")+'\')" title="تعديل المقادير" style="margin-inline-end: 4px;"><i class="fas fa-edit"></i></button>'+
+                '<button class="btn btn-danger btn-sm" onclick="deleteRecipeItem(\''+r.menuId+'\',\''+String(r.menuName||'').replace(/'/g,"\\'")+'\',\''+r.invItemId+'\')" title="حذف المادة من الوصفة"><i class="fas fa-trash"></i></button>'+
+              '</td>'+
             '</tr>';
           });
         }
@@ -2461,6 +2464,31 @@ function saveRecipe() {
   .saveRecipe(menuId, menuName, cleanIngs);
 }
 
+function deleteRecipeItem(menuId, menuName, invItemId) {
+  if(!confirm('هل أنت متأكد من مسح هذه المادة الخام من وصفة المنتج؟')) return;
+  loader(true);
+  api.withSuccessHandler(function(recipes) {
+    var cleanIngs = [];
+    (recipes || []).filter(function(r) { return String(r.menuId) === String(menuId); }).forEach(function(r) {
+      if (String(r.invItemId) !== String(invItemId)) {
+        cleanIngs.push({ invItemId: r.invItemId, invItemName: r.invItemName, qtyUsed: r.qtyUsed });
+      }
+    });
+
+    api.withSuccessHandler(function() {
+      loader(false);
+      showToast('تم مسح المادة من الوصفة البنجاح');
+      if (typeof loadDashRecipes === 'function') loadDashRecipes();
+    }).withFailureHandler(function(e) {
+      loader(false);
+      showToast('خطأ أثناء الحذف: ' + e.message, true);
+    }).saveRecipe(menuId, menuName, cleanIngs);
+
+  }).withFailureHandler(function(e) {
+    loader(false);
+    showToast('خطأ في جلب الوصفات: ' + e.message, true);
+  }).getRecipes();
+}
 // =========================================
 // 6.d. Transfers and Stocktake Stubs
 // =========================================

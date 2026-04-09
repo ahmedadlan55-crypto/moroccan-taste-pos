@@ -99,7 +99,7 @@ document.addEventListener('DOMContentLoaded', function() {
       var c = JSON.parse(cached);
       if (c.menu && c.menu.length && (Date.now() - c.ts) < 3600000) {
         state.menu = c.menu;
-        state.categories = [...new Set(c.menu.map(function(i) { return i.category; }))];
+        state.categories = [...new Set(c.menu.map(function(i) { return i.category; }))].filter(function(cat) { return cat && String(cat).trim() !== ''; });
       }
     }
   } catch (e) {}
@@ -130,7 +130,7 @@ document.addEventListener('DOMContentLoaded', function() {
     state.kitaFeeRate = Number(res.kitaFeeRate) || 0;
     state.paymentMethods = res.paymentMethods || [];
     state.menu = res.menu || [];
-    state.categories = [...new Set(state.menu.map(function(i) { return i.category; }))];
+    state.categories = [...new Set(state.menu.map(function(i) { return i.category; }))].filter(function(c) { return c && String(c).trim() !== ''; });
     state.activeShiftId = res.activeShiftId || '';
 
     try { localStorage.setItem('pos_menu_cache', JSON.stringify({ ts: Date.now(), menu: state.menu })); } catch (e) {}
@@ -177,7 +177,9 @@ window.renderMenuGrid = function() {
 
   var catHtml = '<div class="cat-pill ' + (!state.activeCat ? 'active' : '') + '" onclick="setPosCat(\'\')">' + t('allItems') + '</div>';
   state.categories.forEach(function(c) {
-    catHtml += '<div class="cat-pill ' + (state.activeCat === c ? 'active' : '') + '" onclick="setPosCat(\'' + c + '\')">' + c + '</div>';
+    if(!c) return;
+    var safeCat = String(c).replace(/'/g, "\\'");
+    catHtml += '<div class="cat-pill ' + (state.activeCat === c ? 'active' : '') + '" onclick="setPosCat(\'' + safeCat + '\')">' + String(c).replace(/</g, "&lt;") + '</div>';
   });
   catTabs.innerHTML = catHtml;
 

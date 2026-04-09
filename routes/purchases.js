@@ -406,7 +406,16 @@ router.post('/receive/:id/revert', async (req, res) => {
 // Delete purchase
 router.delete('/:id', async (req, res) => {
   try {
+    // If this purchase is linked to a PO, reset the PO status back so it can be re-used
+    const [pur] = await db.query('SELECT po_id, status FROM purchases WHERE id = ?', [req.params.id]);
     await db.query('DELETE FROM purchases WHERE id = ?', [req.params.id]);
+    // Also clean up purchase_lots
+    try { await db.query('DELETE FROM purchase_lots WHERE purchase_id = ?', [req.params.id]); } catch(e) {}
+    // Reset the linked PO to 'approved' (if it was 'received') or 'draft'
+    if (pur.length && pur[0].po_id) {
+      const newStatus = pur[0].status === 'received' ? 'approved' : 'draft';
+      await db.query('UPDATE purchase_orders SET status = ? WHERE id = ?', [newStatus, pur[0].po_id]);
+    }
     res.json({ success: true });
   } catch (e) {
     res.json({ success: false, error: e.message });
@@ -673,17 +682,19 @@ router.post('/orders/:id/revert', async (req, res) => {
 
     const [existing] = await db.query('SELECT status FROM purchase_orders WHERE id = ?', [id]);
     if (!existing.length) return res.json({ success: false, error: 'PO not found' });
-    if (existing[0].status === 'received') return res.json({ success: false, error: 'Cannot revert a received PO' });
 
-    // If there's a linked purchase, only allow revert if it's still draft
+    // If 'received' but the linked purchase is already gone (deleted manually),
+    // allow revert since there's nothing to undo on the purchase side.
     const [linkedPurchases] = await db.query('SELECT id, status FROM purchases WHERE po_id = ?', [id]);
-    for (const lp of linkedPurchases) {
-      if (lp.status === 'received') {
-        return res.json({ success: false, error: 'الفاتورة المرتبطة مستلمة بالفعل — لا يمكن التراجع' });
+    if (existing[0].status === 'received') {
+      const hasReceivedPurchase = linkedPurchases.some(lp => lp.status === 'received');
+      if (hasReceivedPurchase) {
+        return res.json({ success: false, error: 'الفاتورة المرتبطة مستلمة بالفعل — استخدم زر التراجع عن الاستلام في المشتريات أولاً.' });
       }
+      // Purchase was deleted or doesn't exist → allow revert
     }
 
-    // Delete the linked draft purchase(s)
+    // Delete any remaining linked draft purchases
     await db.query('DELETE FROM purchases WHERE po_id = ? AND status = "draft"', [id]);
 
     // Flip the PO back to draft

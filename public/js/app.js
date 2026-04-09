@@ -2060,9 +2060,10 @@ function renderInvTable(list) {
           let hasBigUnit = !!i.bigUnit;
 
           let bigQty = hasBigUnit ? (i.stock / cRate).toFixed(2) : i.stock;
-          let bigCost = i.cost;
           let smallQty = i.stock;
-          let smallCost = hasBigUnit ? (i.cost / cRate) : i.cost;
+          // inv_items.cost = per SMALL unit (after WAC). Derive big from small.
+          let smallCost = i.cost;
+          let bigCost = hasBigUnit ? (i.cost * cRate) : i.cost;
           let totalValue = smallQty * smallCost;
           grandTotal += totalValue;
 
@@ -2110,7 +2111,9 @@ function openRawModal(id = null) {
     let d = cachedRawItems.find(x => x.id === id);
     if (!d) return;
     q("#mrId").value = d.id; q("#mrName").value = d.name; q("#mrCat").value = d.category;
-    q("#mrCost").value = d.cost; 
+    // inv_items.cost is per small unit. The form #mrCost shows per BIG unit.
+    var cRate = Number(d.convRate) || 1;
+    q("#mrCost").value = (cRate > 1 ? d.cost * cRate : d.cost).toFixed(2);
     q("#mrBigUnit").value = d.bigUnit || ""; q("#mrUnit").value = d.unit || "حبة"; q("#mrConvRate").value = d.convRate || 1;
     q("#mrStock").value = d.stock; q("#mrMin").value = d.minStock;
   }
@@ -2119,9 +2122,13 @@ function openRawModal(id = null) {
 }
 
 function saveRawItem() {
+  // #mrCost is the big-unit cost from the form. Convert to per-small-unit for storage.
+  var bigCostInput = Number(q("#mrCost").value) || 0;
+  var cRateInput = Number(q("#mrConvRate").value) || 1;
+  var costPerSmall = cRateInput > 1 ? bigCostInput / cRateInput : bigCostInput;
   const d = {
     id: q("#mrId").value, name: q("#mrName").value, category: q("#mrCat").value,
-    cost: q("#mrCost").value, bigUnit: q("#mrBigUnit").value, unit: q("#mrUnit").value, convRate: q("#mrConvRate").value,
+    cost: costPerSmall, bigUnit: q("#mrBigUnit").value, unit: q("#mrUnit").value, convRate: q("#mrConvRate").value,
     stock: q("#mrStock").value, minStock: q("#mrMin").value, active: true
   };
   if (!d.name) return showToast("يرجى تعبئة اسم المادة الخام", true);

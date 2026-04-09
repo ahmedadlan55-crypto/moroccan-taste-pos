@@ -703,7 +703,11 @@ document.addEventListener('visibilitychange', function() {
 // 4. POS (Cashier) Logic
 // =========================================
 function updateShiftUI() {
+  // #shiftBadge lives only inside the old #posView (now removed from the
+  // admin template). In the admin-only layout this element doesn't exist,
+  // so bail out quietly instead of crashing on null.
   const badge = q("#shiftBadge");
+  if (!badge) return;
   if (state.activeShiftId) {
     badge.innerText = state.activeShiftId;
     badge.className = "shift-indicator active";
@@ -719,10 +723,17 @@ function setPosCat(cat) {
 }
 
 function renderMenuGrid() {
+  // The POS grid containers (#posCatTabs, #posItemsGrid) only exist inside
+  // #posView which was removed from the admin template. Bail out quietly if
+  // either container is missing — admin code paths may still call this.
+  const catTabsEl = q("#posCatTabs");
+  const itemsGridEl = q("#posItemsGrid");
+  if (!catTabsEl || !itemsGridEl) return;
+
   // Render Categories Tabs
   let catHtml = `<div class="cat-pill ${!state.activeCat ? 'active' : ''}" onclick="setPosCat('')">الكل</div>`;
   state.categories.forEach(c => catHtml += `<div class="cat-pill ${state.activeCat === c ? 'active' : ''}" onclick="setPosCat('${c}')">${c}</div>`);
-  q("#posCatTabs").innerHTML = catHtml;
+  catTabsEl.innerHTML = catHtml;
 
   // Render Items — explicit ± buttons (no full-card click)
   const searchTerm = (q("#posSearchInput") ? q("#posSearchInput").value : '').toLowerCase();
@@ -753,7 +764,7 @@ function renderMenuGrid() {
   if (!list.length) {
     h = '<div style="grid-column:1/-1;text-align:center;padding:50px 20px;color:#94a3b8;"><i class="fas fa-box-open" style="font-size:54px;margin-bottom:14px;display:block;opacity:0.35;"></i><div style="font-weight:700;">لا توجد منتجات</div></div>';
   }
-  q("#posItemsGrid").innerHTML = h;
+  itemsGridEl.innerHTML = h;
 }
 
 function addToCart(item) {
@@ -789,7 +800,13 @@ function editCartPrice(idx, newPrice) {
 function clearCart() { state.cart = []; state.currentDiscount = { name: "", amount: 0 }; updateCart(); }
 
 function updateCart() {
-  const payMethod = q("#posPayMethod").value;
+  // POS-only DOM — these elements live only inside the removed #posView.
+  // In the admin-only layout they don't exist; bail out quietly.
+  const payInput = q("#posPayMethod");
+  const cartItemsEl = q("#cartItemsArea");
+  if (!payInput || !cartItemsEl) return;
+
+  const payMethod = payInput.value;
   let subtotal = 0;
   
   if (payMethod !== "Kita") {

@@ -1068,18 +1068,13 @@ window.scanBluetoothPrinter = async function() {
   }
 
   // ─── Pre-flight check 3: Radio turned on? ───
-  // getAvailability() is the newer API that checks if the adapter is powered.
-  // It doesn't exist on older browsers — treat absence as "probably OK".
-  try {
-    if (typeof navigator.bluetooth.getAvailability === 'function') {
-      var available = await navigator.bluetooth.getAvailability();
-      if (!available) {
-        return glassAlert(t('errorTitle'), t('bluetoothRadioOff'), { danger: true });
-      }
-    }
-  } catch (e) {
-    console.warn('[Printer] getAvailability check failed:', e && e.message);
-  }
+  // We DELIBERATELY do not call navigator.bluetooth.getAvailability() here.
+  // It's unreliable: on many Android devices and Chrome versions it returns
+  // false even when Bluetooth is fully enabled, because the API queries the
+  // adapter without holding a permission grant. Trusting it produced false
+  // "Bluetooth is off" errors. Instead, we let requestDevice() do the real
+  // check — it'll throw a clear, accurate error if the radio is actually
+  // off (or if any other low-level problem exists).
 
   // ─── Pre-flight check 4: Running inside an installed PWA on Android? ───
   // Chrome for Android has a known issue where Web Bluetooth returns

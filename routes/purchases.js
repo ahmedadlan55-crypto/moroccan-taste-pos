@@ -82,17 +82,36 @@ function normPurchaseItem(item) {
 // If the user ordered 5 cartons and conv_rate = 28, this returns 140.
 function computeStockQty(item, inv) {
   let usedConvRate = 1;
-  // Priority 1: convRate stored explicitly in the purchase item (from PO pipeline)
+  const invConvRate = Number(inv.conv_rate) || 1;
+  const invBigUnit = String(inv.big_unit || '').trim().toLowerCase();
+  const itemUnit = String(item.unit || '').trim().toLowerCase()
+    .replace(/\s*\(.*\)\s*$/, ''); // Strip "(كبرى)" / "(صغرى)" suffix from old data
+
+  // Priority 1: convRate stored explicitly in the purchase item AND unitType = 'big'
   if (item.unitType === 'big' && item.convRate > 1) {
     usedConvRate = item.convRate;
   }
-  // Priority 2: the item.unit name matches the inv's big_unit → look up conv_rate from inv
-  else if (item.unit && inv.big_unit &&
-           item.unit.trim().toLowerCase() === String(inv.big_unit).trim().toLowerCase() &&
-           Number(inv.conv_rate) > 1) {
-    usedConvRate = Number(inv.conv_rate);
+  // Priority 2: item.unit name matches inv.big_unit (name-based, covers legacy purchases)
+  else if (itemUnit && invBigUnit && itemUnit === invBigUnit && invConvRate > 1) {
+    usedConvRate = invConvRate;
   }
+  // Priority 3: convRate is set in the item (> 1) but unitType wasn't captured
+  // (handles PO lines created between the unit-column migration and the unitType migration)
+  else if (item.convRate > 1) {
+    usedConvRate = item.convRate;
+  }
+  // Priority 4: item has no conversion info at all, but the inv_items record has
+  // a big_unit AND the item's unit is NOT the small unit → assume it's big
+  else if (itemUnit && invBigUnit && itemUnit !== String(inv.unit || '').trim().toLowerCase()
+           && itemUnit === invBigUnit && invConvRate > 1) {
+    usedConvRate = invConvRate;
+  }
+
   const stockQty = usedConvRate > 1 ? item.qty * usedConvRate : item.qty;
+  console.log('[CONV]', item.name,
+    'unit="' + item.unit + '"', 'unitType=' + item.unitType, 'itemConvRate=' + item.convRate,
+    'invBigUnit="' + inv.big_unit + '"', 'invConvRate=' + invConvRate,
+    '→ usedConvRate=' + usedConvRate, 'stockQty=' + stockQty);
   return { stockQty, usedConvRate };
 }
 

@@ -489,18 +489,37 @@ window.doCheckout = function() {
   };
 
   var send = function() {
+    // Hard sanity check — the backend requires a valid shift_id FK. If the
+    // cashier's localStorage got desynced from the DB, bail here with a
+    // clear message instead of failing silently in the backend.
+    if (!state.user) {
+      return glassAlert('خطأ', 'لم يتم التعرّف على المستخدم. الرجاء تسجيل الدخول من جديد.', { danger: true });
+    }
+    if (!state.activeShiftId) {
+      return glassAlert('وردية مغلقة', 'لا توجد وردية مفتوحة حالياً. افتح وردية جديدة قبل إتمام الدفع.', { danger: true });
+    }
+
     loader();
     api.withSuccessHandler(function(res) {
       loader(false);
+      // Backend returns { success: true, orderId } on success or
+      // { success: false, error } on any DB/FK/validation failure.
+      // We must check success explicitly — otherwise we'd show "saved"
+      // while the row was silently dropped, and the invoice would
+      // never appear in the sales report.
+      if (!res || res.success === false || !res.orderId) {
+        var msg = (res && res.error) ? res.error : 'تعذّر حفظ الفاتورة في قاعدة البيانات';
+        return glassAlert('فشل حفظ الفاتورة', msg, { danger: true });
+      }
       glassToast('تم حفظ الطلب بنجاح!');
-      if (res && res.orderId) printReceipt(res.orderId);
+      printReceipt(res.orderId);
       state.cart = [];
       state.currentDiscount = { name: '', amount: 0 };
       updateCart();
       api.withSuccessHandler(function(m) { state.menu = m || []; renderMenuGrid(); }).getMenu();
     }).withFailureHandler(function(err) {
       loader(false);
-      glassToast(err.message || 'فشل حفظ الطلب', true);
+      glassAlert('فشل الاتصال', (err && err.message) || 'تعذّر الاتصال بالخادم لحفظ الفاتورة', { danger: true });
     }).saveOrder(order, state.user, state.activeShiftId);
   };
 

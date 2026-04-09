@@ -61,6 +61,20 @@ const qs = s => document.querySelectorAll(s);
 const show = id => { const el = q(id); if (el) el.classList.remove("hidden"); };
 const hide = id => { const el = q(id); if (el) el.classList.add("hidden"); };
 const formatVal = v => Number(v || 0).toFixed(2);
+
+// ─── Local-date helper ───
+// Returns "YYYY-MM-DD" in the user's LOCAL timezone (not UTC).
+// Critical: using new Date().toISOString().split('T')[0] returns the UTC
+// date, which drifts from the local date around midnight and causes
+// invoices created "today" locally to disappear from the "today" filter
+// in reports. Always use this helper for report filter defaults.
+const localDateStr = d => {
+  const dt = d ? new Date(d) : new Date();
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return yyyy + '-' + mm + '-' + dd;
+};
 // Resolve a username to its display name (falls back to username if no metadata)
 function userLabel(username) {
   if (!username) return '';
@@ -1333,11 +1347,16 @@ function loadDashHome() {
   });
 }
 function _loadDashHomeBody() {
-  // Build the date range: last 7 days through today
+  // Build the date range: last 7 days through today (LOCAL dates).
   var today = new Date();
-  var todayStr = today.toISOString().split('T')[0];
+  var todayStr = localDateStr(today);
   var sevenAgo = new Date(today); sevenAgo.setDate(sevenAgo.getDate() - 6);
-  var sevenStr = sevenAgo.toISOString().split('T')[0];
+  var sevenStr = localDateStr(sevenAgo);
+
+  // Widen the server query by 1 day each side to catch sales that fall on
+  // an adjacent UTC day (server is UTC, client may be UTC+3, etc.).
+  var queryStart = localDateStr(sevenAgo.getTime() - 86400000);
+  var queryEnd   = localDateStr(today.getTime() + 86400000);
 
   // Compute everything from /api/sales — the backend dashboard endpoint
   // returns a simplified shape that doesn't include payment / hourly / top items.
@@ -1347,7 +1366,7 @@ function _loadDashHomeBody() {
     sales = Array.isArray(sales) ? sales : [];
 
     var todaySales = sales.filter(function(s) {
-      return String(s.date || '').indexOf(todayStr) === 0;
+      return localDateStr(s.date) === todayStr;
     });
 
     // ─── KPI cards ───
@@ -1385,16 +1404,16 @@ function _loadDashHomeBody() {
     if (state.charts) Object.values(state.charts).forEach(function(c) { if (c) c.destroy(); });
     state.charts = {};
 
-    // 1. Daily Sales (last 7 days, line chart)
+    // 1. Daily Sales (last 7 days, line chart) — all keys in LOCAL date.
     var dailyCtx = q("#dailySalesChartCtx");
     if (dailyCtx && typeof Chart !== 'undefined') {
       var byDay = {};
       for (var i = 6; i >= 0; i--) {
         var d2 = new Date(today); d2.setDate(d2.getDate() - i);
-        byDay[d2.toISOString().split('T')[0]] = 0;
+        byDay[localDateStr(d2)] = 0;
       }
       sales.forEach(function(s) {
-        var k = String(s.date || '').split('T')[0];
+        var k = localDateStr(s.date);
         if (k in byDay) byDay[k] += Number(s.total) || 0;
       });
       var dayLabels = Object.keys(byDay).map(function(k) {
@@ -1485,28 +1504,45 @@ function _loadDashHomeBody() {
         options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
       });
     }
-  }).getSalesListDetailed({ startDate: sevenStr, endDate: todayStr });
+  }).getSalesListDetailed({ startDate: queryStart, endDate: queryEnd });
 }
 
 // Sales Table
 function loadDashSales() {
   loader();
-  var start = q("#fsStart").value, end = q("#fsEnd").value;
-  // Default: today if no dates set
+  var start = q("#fsStart") ? q("#fsStart").value : "";
+  var end   = q("#fsEnd")   ? q("#fsEnd").value   : "";
+  // Default: today if no dates set — use LOCAL date so we match what the
+  // user considers "today", and widen the backend range by ±1 day to catch
+  // invoices that fall on the adjacent UTC day (server is UTC).
   if (!start && !end) {
-    var today = new Date().toISOString().split('T')[0];
+    var today = localDateStr();
     start = today; end = today;
     if (q("#fsStart")) q("#fsStart").value = today;
     if (q("#fsEnd")) q("#fsEnd").value = today;
   }
   var cashier = q("#fsCashier") ? q("#fsCashier").value : "";
   var payMethod = q("#fsPay") ? q("#fsPay").value : "";
-  var params = { startDate: start, endDate: end };
+  // Widen the server query by 1 day on each side to catch timezone drift
+  // between the client (local) and server (UTC). We re-filter client-side
+  // below so the final rendered list still matches the user's intent.
+  var queryStart = localDateStr(new Date(start + 'T00:00:00').getTime() - 86400000);
+  var queryEnd   = localDateStr(new Date(end + 'T00:00:00').getTime() + 86400000);
+  var params = { startDate: queryStart, endDate: queryEnd };
   if (cashier) params.username = cashier;
   if (payMethod) params.paymentMethod = payMethod;
 
   api.withFailureHandler(err => { loader(false); showToast(err.message || 'خطأ في جلب بيانات المبيعات', true); }).withSuccessHandler(arr => {
     loader(false);
+    // Client-side filter on LOCAL date to offset the ±1 day widening we did
+    // on the server query. This ensures "today" really means the user's
+    // local today, not server UTC today.
+    var startMs = new Date(start + 'T00:00:00').getTime();
+    var endMs   = new Date(end   + 'T23:59:59.999').getTime();
+    arr = (arr || []).filter(function(r) {
+      var t = new Date(r.date).getTime();
+      return !isNaN(t) && t >= startMs && t <= endMs;
+    });
     let totalSales = 0;
     let h = "";
     if (!arr || !arr.length) h = "<tr><td colspan='7' style='text-align:center; padding:30px;'>لا توجد بيانات لهذه الفترة</td></tr>";
@@ -3445,11 +3481,11 @@ function _exportSalesExcelBody() {
 
 function loadPayments() {
   loader();
-  // Default to today if no date range was set
+  // Default to today (LOCAL) if no date range was set
   var start = q("#fpayStart") ? q("#fpayStart").value : "";
   var end   = q("#fpayEnd")   ? q("#fpayEnd").value   : "";
   if (!start && !end) {
-    var today = new Date().toISOString().split('T')[0];
+    var today = localDateStr();
     start = today; end = today;
     if (q("#fpayStart")) q("#fpayStart").value = today;
     if (q("#fpayEnd"))   q("#fpayEnd").value   = today;
@@ -3459,7 +3495,10 @@ function loadPayments() {
     start = end;
   }
   var cashier = q("#fpayCashier") ? q("#fpayCashier").value : "";
-  var params = { startDate: start, endDate: end };
+  // Widen server range ±1 day for timezone drift
+  var queryStart = localDateStr(new Date(start + 'T00:00:00').getTime() - 86400000);
+  var queryEnd   = localDateStr(new Date(end + 'T00:00:00').getTime() + 86400000);
+  var params = { startDate: queryStart, endDate: queryEnd };
   if (cashier) params.username = cashier;
 
   // No dedicated /payments-summary endpoint exists — compute everything from /api/sales
@@ -3468,14 +3507,22 @@ function loadPayments() {
       loader(false);
       sales = Array.isArray(sales) ? sales : [];
 
+      // Client-side re-filter using LOCAL dates (we widened the server query)
+      var startMs = new Date(start + 'T00:00:00').getTime();
+      var endMs   = new Date(end + 'T23:59:59.999').getTime();
+      sales = sales.filter(function(r) {
+        var t = new Date(r.date).getTime();
+        return !isNaN(t) && t >= startMs && t <= endMs;
+      });
+
       var totals = { cash: 0, card: 0, kita: 0, all: 0 };
       var counts = { cash: 0, card: 0, kita: 0, all: 0 };
-      var dayMap = {};      // key = YYYY-MM-DD
+      var dayMap = {};      // key = YYYY-MM-DD (local)
       var cashierMap = {};  // key = username
 
       sales.forEach(function(s) {
         var amount = Number(s.total) || 0;
-        var dateKey = String(s.date || '').split('T')[0];
+        var dateKey = localDateStr(s.date);
         var user = s.username || '—';
 
         totals.all += amount; counts.all += 1;
@@ -3558,19 +3605,21 @@ function _loadSalesBreakdownBody(type) {
   if (btn) btn.classList.add('active');
 
   loader();
-  // Default to last 30 days if no date range was set
+  // Default to last 30 days if no date range was set (LOCAL dates)
   var start = q("#fbrkStart") ? q("#fbrkStart").value : "";
   var end   = q("#fbrkEnd")   ? q("#fbrkEnd").value   : "";
   if (!start || !end) {
     var today = new Date();
     var thirty = new Date(today); thirty.setDate(thirty.getDate() - 29);
-    var fmt = function(d){ return d.toISOString().split('T')[0]; };
-    if (!end)   end   = fmt(today);
-    if (!start) start = fmt(thirty);
+    if (!end)   end   = localDateStr(today);
+    if (!start) start = localDateStr(thirty);
     if (q("#fbrkStart") && !q("#fbrkStart").value) q("#fbrkStart").value = start;
     if (q("#fbrkEnd")   && !q("#fbrkEnd").value)   q("#fbrkEnd").value   = end;
   }
-  var params = { startDate: start, endDate: end };
+  // Widen server query ±1 day for timezone drift
+  var queryStart = localDateStr(new Date(start + 'T00:00:00').getTime() - 86400000);
+  var queryEnd   = localDateStr(new Date(end + 'T00:00:00').getTime() + 86400000);
+  var params = { startDate: queryStart, endDate: queryEnd };
 
   // No /salesBreakdown endpoint exists — compute everything from /api/sales
   api.withFailureHandler(function(err) { loader(false); showToast(err.message || 'فشل تحميل التقرير', true); })
@@ -3578,12 +3627,20 @@ function _loadSalesBreakdownBody(type) {
     loader(false);
     sales = Array.isArray(sales) ? sales : [];
 
+    // Client-side re-filter on LOCAL dates after the ±1 day widening above
+    var startMs = new Date(start + 'T00:00:00').getTime();
+    var endMs   = new Date(end + 'T23:59:59.999').getTime();
+    sales = sales.filter(function(r) {
+      var t = new Date(r.date).getTime();
+      return !isNaN(t) && t >= startMs && t <= endMs;
+    });
+
     // Aggregate the sales into the requested breakdown shape
     var aggregated = {};
     sales.forEach(function(s) {
       var amount = Number(s.total) || 0;
       var pay = String(s.payment || '').toLowerCase();
-      var dateKey = String(s.date || '').split('T')[0];
+      var dateKey = localDateStr(s.date);
 
       if (type === 'byProduct') {
         (s.items || []).forEach(function(it) {

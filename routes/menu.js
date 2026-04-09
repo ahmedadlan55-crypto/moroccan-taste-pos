@@ -134,7 +134,14 @@ router.post('/recipes/:menuId', async (req, res) => {
       const values = ingredients.map(ing => [menuId, menuName, ing.invItemId, ing.invItemName, ing.qtyUsed]);
       await db.query('INSERT INTO recipe (menu_id, menu_name, inv_item_id, inv_item_name, qty_used) VALUES ?', [values]);
     }
-    res.json({ success: true });
+    // Recompute the menu item's cost from the new recipe
+    try {
+      const { recomputeMenuCost } = require('./pricing-utils');
+      const newCost = await recomputeMenuCost(menuId);
+      res.json({ success: true, computedCost: newCost });
+    } catch (e) {
+      res.json({ success: true }); // recipe saved, cost recompute failed silently
+    }
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 

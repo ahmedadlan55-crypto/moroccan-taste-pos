@@ -1624,9 +1624,12 @@ function loadDashMenu() {
               var costDisplay = ings.length
                 ? '<span style="font-weight:800;color:#ef4444;">' + formatVal(recipeCost) + '</span> <span style="font-size:11px;color:#64748b;">(' + ings.length + ' مكوّن)</span>'
                 : '<span style="color:#94a3b8;font-size:11px;">لا توجد مقادير</span>';
+              var priceBadge = (i.pricingMode === 'variable')
+                ? '<div style="font-size:10px;"><span class="badge" style="background:#dbeafe;color:#1e40af;">🔄 متغير ' + (Number(i.markupPct)||30) + '%</span></div>'
+                : '<div style="font-size:10px;"><span class="badge" style="background:#f1f5f9;color:#64748b;">🔒 ثابت</span></div>';
               h += '<tr>'+
                 '<td><code style="font-size:11px;color:#64748b;">'+(i.id||'')+'</code></td>'+
-                '<td style="font-weight:800;">'+(i.name||'')+'</td>'+
+                '<td style="font-weight:800;">'+(i.name||'')+priceBadge+'</td>'+
                 '<td><span class="badge" style="background:#e2e8f0;color:#475569;">'+(i.category||'')+'</span></td>'+
                 '<td style="font-weight:700;">'+formatVal(sellPrice)+'</td>'+
                 '<td>'+costDisplay+'</td>'+
@@ -1700,27 +1703,64 @@ function openInvM(mode, id = null) {
   if (mode === 'add') {
     q("#iMdlTitle").innerText = "إضافة منتج جديد";
     q("#miId").value = ""; q("#miName").value = ""; q("#miCat").value = "عام";
-    q("#miPrice").value = ""; q("#miCost").value = "0"; q("#miStock").value = "0"; q("#miMin").value = "5"; q("#miActive").checked = true;
+    q("#miPrice").value = ""; q("#miCost").value = "0"; q("#miStock").value = "9999"; q("#miMin").value = "0"; q("#miActive").checked = true;
+    q("#miComputedCost").value = "0"; q("#miMarkupPct").value = "30";
+    q("#miPricingFixed").checked = true;
   } else {
     q("#iMdlTitle").innerText = "تعديل المنتج";
     let d = state.menu.find(x => x.id === id);
     if (!d) return;
     q("#miId").value = d.id || ""; q("#miName").value = d.name || ""; q("#miCat").value = d.category || "";
-    q("#miPrice").value = d.price || ""; q("#miCost").value = d.cost || "0"; q("#miStock").value = d.stock || "0"; q("#miMin").value = d.minStock || "5"; q("#miActive").checked = !!d.active;
+    q("#miPrice").value = d.price || ""; q("#miCost").value = d.cost || "0";
+    q("#miComputedCost").value = d.computedCost || "0";
+    q("#miMarkupPct").value = d.markupPct || "30";
+    q("#miActive").checked = !!d.active;
+    // Set pricing mode radio
+    if (d.pricingMode === 'variable') { q("#miPricingVariable").checked = true; }
+    else { q("#miPricingFixed").checked = true; }
   }
+  togglePricingMode();
   openModal("#modalInvForm");
 }
 
+// Show/hide markup field and lock/unlock price field based on pricing mode toggle
+function togglePricingMode() {
+  var isVariable = q("#miPricingVariable") && q("#miPricingVariable").checked;
+  var priceInput = q("#miPrice");
+  var priceGroup = q("#priceGroup");
+  var markupGroup = q("#markupGroup");
+  if (isVariable) {
+    if (priceInput) { priceInput.readOnly = true; priceInput.style.background = '#f1f5f9'; priceInput.style.color = '#94a3b8'; }
+    if (markupGroup) markupGroup.style.display = '';
+    // Auto-compute price preview: computed_cost × (1 + markup/100)
+    var cc = Number(q("#miComputedCost") ? q("#miComputedCost").value : 0);
+    var mk = Number(q("#miMarkupPct") ? q("#miMarkupPct").value : 30);
+    if (priceInput && cc > 0) priceInput.value = (cc * (1 + mk / 100)).toFixed(2);
+    // Highlight variable label
+    if (q("#labelPricingVariable")) q("#labelPricingVariable").style.borderColor = '#3b82f6';
+    if (q("#labelPricingFixed")) q("#labelPricingFixed").style.borderColor = '#e2e8f0';
+  } else {
+    if (priceInput) { priceInput.readOnly = false; priceInput.style.background = ''; priceInput.style.color = ''; }
+    if (markupGroup) markupGroup.style.display = 'none';
+    if (q("#labelPricingFixed")) q("#labelPricingFixed").style.borderColor = '#3b82f6';
+    if (q("#labelPricingVariable")) q("#labelPricingVariable").style.borderColor = '#e2e8f0';
+  }
+}
+
 function saveInv() {
+  var pricingMode = q('input[name="miPricingMode"]:checked') ? q('input[name="miPricingMode"]:checked').value : 'fixed';
   const d = {
     id: q("#miId").value, name: q("#miName").value, category: q("#miCat").value,
-    price: q("#miPrice").value, cost: q("#miCost").value, stock: q("#miStock").value, minStock: q("#miMin").value, active: q("#miActive").checked
+    price: q("#miPrice").value, cost: q("#miCost").value, stock: q("#miStock").value, minStock: q("#miMin").value, active: q("#miActive").checked,
+    pricingMode: pricingMode,
+    markupPct: q("#miMarkupPct") ? q("#miMarkupPct").value : 30
   };
-  if (!d.name || !d.price) return showToast("يرجى تعبئة الحقول الأساسية (الاسم والسعر)", true);
-  
+  if (!d.name) return showToast("يرجى كتابة اسم المنتج", true);
+  if (pricingMode === 'fixed' && !d.price) return showToast("يرجى إدخال سعر البيع", true);
+
   loader();
-  if (d.id) { api.withFailureHandler(err=>{loader(false);showToast(err.message,true);}).withSuccessHandler(r=>{loader(false); closeModal('#modalInvForm'); showToast("تم التعديل"); loadDashInv();}).updateMenuItem(d); }
-  else { api.withFailureHandler(err=>{loader(false);showToast(err.message,true);}).withSuccessHandler(r=>{loader(false); closeModal('#modalInvForm'); showToast("تمت الإضافة"); loadDashInv();}).addMenuItem(d); }
+  if (d.id) { api.withFailureHandler(err=>{loader(false);showToast(err.message,true);}).withSuccessHandler(r=>{loader(false); closeModal('#modalInvForm'); showToast("تم التعديل"); loadDashMenu();}).updateMenuItem(d); }
+  else { api.withFailureHandler(err=>{loader(false);showToast(err.message,true);}).withSuccessHandler(r=>{loader(false); closeModal('#modalInvForm'); showToast("تمت الإضافة"); loadDashMenu();}).addMenuItem(d); }
 }
 
 // ─── Export Menu to Excel ───

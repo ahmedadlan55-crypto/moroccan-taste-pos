@@ -94,4 +94,15 @@ router.get('/discounts', async (req, res) => {
   }
 });
 
+// Recompute all menu costs from current ingredient prices
+router.post('/recompute-costs', async (req, res) => {
+  try {
+    const { recomputeAllMenuCosts } = require('./pricing-utils');
+    const count = await recomputeAllMenuCosts();
+    res.json({ success: true, recomputed: count });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
 module.exports = router;

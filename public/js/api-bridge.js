@@ -68,6 +68,7 @@
     deletePaymentMethod: { method: 'DELETE', url: (id) => '/settings/payment-methods/' + id },
     setKitaServiceFeeRate:{ method: 'PUT', url: '/settings', body: (r) => ({KitaServiceFee:r}) },
     getDiscounts:        { method: 'GET',  url: '/settings/discounts' },
+    recomputeAllCosts:   { method: 'POST', url: '/settings/recompute-costs' },
 
     // ERP
     getERPDashboardData: { method: 'GET',  url: '/erp/dashboard' },

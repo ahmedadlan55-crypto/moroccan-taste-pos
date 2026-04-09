@@ -549,12 +549,28 @@ window.doCheckout = function() {
     loader();
     api.withSuccessHandler(function(res) {
       loader(false);
-      // Backend returns { success: true, orderId } on success or
-      // { success: false, error } on any DB/FK/validation failure.
+      // Backend returns { success: true, orderId, recipesApplied, itemsWithoutRecipe }
+      // on success or { success: false, error } on any DB/FK/validation failure.
       if (!res || res.success === false || !res.orderId) {
         var msg = (res && res.error) ? res.error : t('invoiceSaveErrorDefault');
         return glassAlert(t('invoiceSaveFailed'), msg, { danger: true });
       }
+
+      // Diagnostic logging — open DevTools console (F12) to see exactly
+      // which inventory rows were deducted and by how much.
+      console.log('[SALE response]', res);
+      if (res.recipesApplied && res.recipesApplied.length) {
+        res.recipesApplied.forEach(function(r) {
+          console.log('  ✓', r.menuName, '(' + r.menuId + ') deducted:', r.deductions);
+        });
+      }
+      if (res.itemsWithoutRecipe && res.itemsWithoutRecipe.length) {
+        console.warn('  ⚠ items WITHOUT recipe (no inventory deduction):', res.itemsWithoutRecipe);
+        // Show a one-time toast warning the cashier
+        var names = res.itemsWithoutRecipe.map(function(x) { return x.name; }).join('، ');
+        glassToast('⚠ تحذير: المنتجات التالية ليس لها وصفة (لم يتم خصم أي مكوّن من المخزون): ' + names, true);
+      }
+
       glassToast(t('orderSaved'));
       printReceipt(res.orderId);
       state.cart = [];

@@ -3389,13 +3389,35 @@ function confirmReceive() {
   api.withFailureHandler(function(err){ loader(false); showToast(err.message, true); })
   .withSuccessHandler(function(r) {
     loader(false);
-    if (r.success) {
-      closeModal('#modalReceiveForm');
-      var toast = "تم استلام " + (r.count||0) + " صنف وتحديث المخزون";
-      if (r.vatAmount) toast += " | ضريبة مدخلات: " + Number(r.vatAmount).toFixed(2);
-      showToast(toast);
-      loadDashPurchases();
-    } else showToast(r.error, true);
+
+    // Open DevTools (F12) → Console to see verbose diagnostics about which
+    // inventory rows were updated, by how much, and which items were skipped.
+    console.log('[RECEIVE response]', r);
+
+    if (!r || r.success === false) {
+      // Use a long alert (not a toast) so the user can read the full skip reason
+      return alert(r && r.error ? r.error : 'فشل الاستلام');
+    }
+
+    // Show every successful update so the user can verify
+    if (r.updated && r.updated.length) {
+      console.log('  ✓ Updated', r.updated.length, 'inventory rows:');
+      r.updated.forEach(function(u) {
+        console.log('    •', u.invName, '(' + u.invId + ')',
+          'qty +' + u.qty,
+          'stock: ' + u.stockBefore + ' → ' + u.stockAfter);
+      });
+    }
+    if (r.skippedDetails && r.skippedDetails.length) {
+      console.warn('  ⚠ Skipped', r.skippedDetails.length, 'items:', r.skippedDetails);
+    }
+
+    closeModal('#modalReceiveForm');
+    var toast = "تم استلام " + (r.count||0) + " صنف وتحديث المخزون";
+    if (r.skipped > 0) toast += " (تم تخطي " + r.skipped + " — راجع F12 console)";
+    if (r.vatAmount) toast += " | ضريبة مدخلات: " + Number(r.vatAmount).toFixed(2);
+    showToast(toast);
+    loadDashPurchases();
   }).receivePurchaseBatch(rcvInvoiceId, state.user, includesVAT);
 }
 

@@ -117,13 +117,17 @@ router.post('/receive/:id', async (req, res) => {
     const rawItems = JSON.parse(purchase.items_json || '[]');
     const items = rawItems.map(normPurchaseItem);
 
+    console.log('[RECEIVE] Purchase', id, '— processing', items.length, 'items');
+
     let count = 0;
     const skipped = [];
+    const updated = [];   // verbose list of what we actually did
     let totalVat = 0;
 
     for (const item of items) {
       if (item.qty <= 0) {
         skipped.push({ name: item.name, reason: 'qty=0' });
+        console.log('[RECEIVE]   skip', item.name, 'qty=0');
         continue;
       }
 
@@ -131,6 +135,7 @@ router.post('/receive/:id', async (req, res) => {
       const inv = await resolveInvItem(item);
       if (!inv) {
         skipped.push({ name: item.name, reason: 'not found in inventory' });
+        console.log('[RECEIVE]   skip', item.name, '— not found in inventory (tried id=' + item.id + ', name=' + item.name + ')');
         continue;
       }
 
@@ -144,24 +149,51 @@ router.post('/receive/:id', async (req, res) => {
       // Update stock on the resolved inv row. Only overwrite cost if it's
       // not already set (first receive) so subsequent receives at different
       // prices don't clobber prior cost data.
+      // CRITICAL: capture affectedRows so we know if the WHERE clause matched.
+      const stockBefore = Number(inv.stock) || 0;
       const currentCost = Number(inv.cost) || 0;
+      let affectedRows = 0;
       if (currentCost === 0 && netUnitPrice > 0) {
-        await db.query('UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?',
+        const [result] = await db.query('UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?',
           [item.qty, netUnitPrice, inv.id]);
+        affectedRows = result.affectedRows;
       } else {
-        await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?',
+        const [result] = await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?',
           [item.qty, inv.id]);
+        affectedRows = result.affectedRows;
+      }
+
+      console.log('[RECEIVE]   ' + (affectedRows > 0 ? 'OK' : 'FAIL'),
+        inv.name, '(' + inv.id + ')',
+        'qty=' + item.qty,
+        'stock: ' + stockBefore + ' → ' + (stockBefore + item.qty),
+        'affected=' + affectedRows);
+
+      if (affectedRows === 0) {
+        // The UPDATE silently affected 0 rows — the WHERE clause didn't
+        // match. This shouldn't happen because we just SELECT'd it, but
+        // log it loudly so we catch any future drift.
+        skipped.push({ name: item.name, reason: 'UPDATE affected 0 rows for id=' + inv.id });
+        continue;
       }
 
       // Record movement — notes links back to purchase so we can roll it
       // back on revert. Use the resolved inv.id + inv.name so the movement
       // points to the real inventory row even if the purchase row had a
       // stale/missing id.
-      const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+      const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4) + '-' + count;
       await db.query(
         'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
         [movId, now, inv.id, inv.name, 'in', item.qty, 'مشتريات', username || '', 'PUR: ' + id]
       );
+
+      updated.push({
+        invId: inv.id,
+        invName: inv.name,
+        qty: item.qty,
+        stockBefore: stockBefore,
+        stockAfter: stockBefore + item.qty
+      });
 
       count++;
     }
@@ -184,14 +216,21 @@ router.post('/receive/:id', async (req, res) => {
       }
     }
 
+    console.log('[RECEIVE] Done — updated', count, 'items, skipped', skipped.length);
+
     // If we skipped every item, return an error so the frontend shows it.
     if (count === 0) {
-      let reason = 'لم يتم تحديث المخزون — لا توجد مواد مطابقة في قاعدة بيانات المخزون.';
-      if (skipped.length) {
-        reason += ' (' + skipped.map(s => s.name || '—').join('، ') + ')';
-      }
-      reason += ' تأكد من أن المواد المضافة في أمر الشراء مختارة من قائمة المخزون وليست مكتوبة يدوياً.';
-      return res.json({ success: false, error: reason });
+      let reason = 'لم يتم تحديث المخزون — لا توجد مواد مطابقة في قاعدة بيانات المخزون.\n\n';
+      reason += 'الأصناف الموجودة في الفاتورة:\n';
+      reason += items.map(function(it) {
+        return '• ' + (it.name || '—') + ' (id=' + (it.id || 'null') + ', qty=' + it.qty + ')';
+      }).join('\n');
+      reason += '\n\nالسبب الأكثر احتمالاً: المواد مكتوبة يدوياً وليست مختارة من قائمة المخزون. تأكد من إنشاء المواد في "إدارة المخزون" أولاً، ثم اختيارها من القائمة عند إنشاء أمر الشراء أو الفاتورة.';
+      return res.json({
+        success: false,
+        error: reason,
+        debug: { items: items, skipped: skipped }
+      });
     }
 
     res.json({
@@ -199,6 +238,7 @@ router.post('/receive/:id', async (req, res) => {
       count,
       skipped: skipped.length,
       skippedDetails: skipped,
+      updated: updated,
       vatAmount: Number(totalVat.toFixed(2))
     });
   } catch (e) {

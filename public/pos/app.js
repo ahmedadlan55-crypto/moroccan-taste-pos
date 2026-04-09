@@ -6,7 +6,7 @@
  * home screen, it works offline (app shell is cached by /pos/sw.js), and it
  * launches in standalone mode without any browser chrome. The install prompt
  * is handled by setupPwa() below — if the browser supports PWA install, a
- * floating "تثبيت التطبيق" button appears when the user can install.
+ * floating install-app button appears when the user can install.
  */
 
 // ─── PWA: Service worker registration + install prompt ───
@@ -54,8 +54,9 @@
     btn.id = 'pwaInstallBtn';
     btn.className = 'pwa-install-btn';
     btn.type = 'button';
-    btn.setAttribute('aria-label', 'تثبيت التطبيق');
-    btn.innerHTML = '<i class="fas fa-mobile-screen-button"></i><span>تثبيت التطبيق</span>';
+    btn.setAttribute('data-i18n-aria-label', 'installApp');
+    btn.setAttribute('aria-label', t('installApp'));
+    btn.innerHTML = '<i class="fas fa-mobile-screen-button"></i><span data-i18n="installApp">' + t('installApp') + '</span>';
     btn.addEventListener('click', function() {
       if (!deferredPrompt) return;
       deferredPrompt.prompt();
@@ -64,7 +65,7 @@
         hidePwaInstallButton();
         // If the user accepted, appinstalled will fire next
         if (choice && choice.outcome === 'accepted' && typeof glassToast === 'function') {
-          glassToast('جاري تثبيت التطبيق…');
+          glassToast(t('installingApp'));
         }
       });
     });
@@ -122,7 +123,7 @@ document.addEventListener('DOMContentLoaded', function() {
   api.withSuccessHandler(function(res) {
     loader(false);
     if (!res || res.error) {
-      glassToast((res && res.error) || 'فشل تحميل البيانات', true);
+      glassToast((res && res.error) || t('failLoadData'), true);
       return;
     }
     state.settings = res.settings || state.settings;
@@ -142,80 +143,24 @@ document.addEventListener('DOMContentLoaded', function() {
     renderHeader('pos', { showShift: true });
   }).withFailureHandler(function(err) {
     loader(false);
-    glassToast(err.message || 'تعذر الاتصال بالخادم', true);
+    glassToast(err.message || t('failConnect'), true);
   }).getInitialAppData(state.user);
 });
 
 window.onLangChange = function() {
+  // Re-render everything that depends on the language
   renderPayButtons();
   renderMenuGrid();
   updateCart();
   updateShiftUI();
   renderHeader('pos', { showShift: true });
+  // Re-translate any static data-i18n elements that may have been (re)created
+  translateUI();
 };
 
-// =========================================
-// Glass Modal helpers (replace native confirm/alert)
-// =========================================
-window.openGlassModal = function(id) {
-  var m = q(id);
-  if (!m) return;
-  m.classList.remove('hidden');
-  // Force reflow before adding 'show' so the transition runs
-  void m.offsetWidth;
-  m.classList.add('show');
-};
-window.closeGlassModal = function(id, result) {
-  var m = q(id);
-  if (!m) return;
-  m.classList.remove('show');
-  setTimeout(function() {
-    m.classList.add('hidden');
-    // If a confirm callback is waiting, fire it with the result
-    if (id === '#modalGlassConfirm' && typeof state._gcResolve === 'function') {
-      var cb = state._gcResolve;
-      state._gcResolve = null;
-      cb(!!result);
-    }
-  }, 250);
-};
-
-// glassConfirm('عنوان', 'رسالة', { okText, cancelText, danger }) → Promise<boolean>
-window.glassConfirm = function(title, message, opts) {
-  opts = opts || {};
-  var t = q('#gcTitle');
-  var m = q('#gcMessage');
-  var actions = q('#gcActions');
-  if (t) t.innerHTML = '<i class="fas ' + (opts.danger ? 'fa-exclamation-triangle' : 'fa-question-circle') + '"></i> ' + title;
-  if (m) m.textContent = message;
-  if (actions) {
-    var okClass = opts.danger ? 'btn-danger' : 'btn-primary';
-    actions.innerHTML =
-      '<button class="btn btn-light" onclick="closeGlassModal(\'#modalGlassConfirm\', false)">' + (opts.cancelText || 'إلغاء') + '</button>' +
-      '<button class="btn ' + okClass + '" onclick="closeGlassModal(\'#modalGlassConfirm\', true)">' + (opts.okText || 'تأكيد') + '</button>';
-  }
-  return new Promise(function(resolve) {
-    state._gcResolve = resolve;
-    openGlassModal('#modalGlassConfirm');
-  });
-};
-
-// glassAlert('عنوان', 'رسالة', { danger }) → Promise<void>
-window.glassAlert = function(title, message, opts) {
-  opts = opts || {};
-  var t = q('#gcTitle');
-  var m = q('#gcMessage');
-  var actions = q('#gcActions');
-  if (t) t.innerHTML = '<i class="fas ' + (opts.danger ? 'fa-exclamation-circle' : 'fa-info-circle') + '"></i> ' + title;
-  if (m) m.textContent = message;
-  if (actions) actions.innerHTML = '<button class="btn btn-primary" onclick="closeGlassModal(\'#modalGlassConfirm\', true)" style="flex:1;">حسناً</button>';
-  return new Promise(function(resolve) {
-    state._gcResolve = resolve;
-    openGlassModal('#modalGlassConfirm');
-  });
-};
-
-// Toast (uses common.js showToast underneath)
+// Toast alias — shared/common.js already provides openGlassModal,
+// closeGlassModal, glassConfirm and glassAlert (fully translated via t()).
+// We only need a thin glassToast alias here.
 window.glassToast = function(msg, isError) { showToast(msg, isError); };
 
 // =========================================
@@ -247,7 +192,7 @@ window.renderMenuGrid = function() {
 
   var h = '';
   if (!list.length) {
-    h = '<div style="grid-column:1/-1;text-align:center;padding:50px 20px;color:#94a3b8;"><i class="fas fa-box-open" style="font-size:54px;margin-bottom:14px;display:block;opacity:0.35;"></i><div style="font-weight:700;">لا توجد منتجات</div></div>';
+    h = '<div style="grid-column:1/-1;text-align:center;padding:50px 20px;color:#94a3b8;"><i class="fas fa-box-open" style="font-size:54px;margin-bottom:14px;display:block;opacity:0.35;"></i><div style="font-weight:700;">' + t('noProducts') + '</div></div>';
   } else {
     list.forEach(function(i) {
       var inCart = state.cart.find(function(c) { return c.id === i.id; });
@@ -262,9 +207,9 @@ window.renderMenuGrid = function() {
           '<div class="pos-item-price">' + formatVal(i.price) + '</div>' +
         '</div>' +
         '<div class="pos-item-actions">' +
-          '<button class="qty-btn" ' + (qty <= 0 ? 'disabled' : '') + ' onclick="decFromCart(\'' + i.id + '\')" aria-label="تقليل">−</button>' +
+          '<button class="qty-btn" ' + (qty <= 0 ? 'disabled' : '') + ' onclick="decFromCart(\'' + i.id + '\')" aria-label="' + t('decrease') + '">−</button>' +
           '<div class="qty-display">' + qty + '</div>' +
-          '<button class="qty-btn add" onclick=\'addToCart(' + safeJson + ')\' aria-label="إضافة">+</button>' +
+          '<button class="qty-btn add" onclick=\'addToCart(' + safeJson + ')\' aria-label="' + t('add') + '">+</button>' +
         '</div>' +
       '</div>';
     });
@@ -311,7 +256,7 @@ window.removeCartItem = function(idx) {
 
 window.clearCart = function() {
   if (!state.cart.length) return;
-  glassConfirm('تفريغ السلة', 'هل تريد إزالة جميع الأصناف من السلة؟', { danger: true, okText: 'نعم، أفرغ' }).then(function(ok) {
+  glassConfirm(t('clearCartTitle'), t('clearCartMsg'), { danger: true, okText: t('yesClear') }).then(function(ok) {
     if (!ok) return;
     state.cart = [];
     state.currentDiscount = { name: '', amount: 0 };
@@ -342,13 +287,13 @@ window.updateCart = function() {
       '</div>' +
       '<div class="cart-item-actions">' +
         '<div class="qty-control">' +
-          '<button class="qty-btn" onclick="modQty(' + idx + ', -1)" aria-label="تقليل">−</button>' +
+          '<button class="qty-btn" onclick="modQty(' + idx + ', -1)" aria-label="' + t('decrease') + '">−</button>' +
           '<div class="qty-val">' + c.qty + '</div>' +
-          '<button class="qty-btn" onclick="modQty(' + idx + ', 1)" aria-label="زيادة">+</button>' +
+          '<button class="qty-btn" onclick="modQty(' + idx + ', 1)" aria-label="' + t('increase') + '">+</button>' +
         '</div>' +
         '<div class="cart-item-side">' +
           '<span class="cart-item-price-tag">@ ' + priceEditEl + '</span>' +
-          '<button class="btn-remove" onclick="removeCartItem(' + idx + ')" aria-label="حذف"><i class="fas fa-trash"></i></button>' +
+          '<button class="btn-remove" onclick="removeCartItem(' + idx + ')" aria-label="' + t('deleteLabel') + '"><i class="fas fa-trash"></i></button>' +
         '</div>' +
       '</div>' +
     '</div>';
@@ -382,9 +327,11 @@ window.updateCart = function() {
     if (feeRow) feeRow.classList.remove('hidden');
     var isEn = state.lang === 'en';
     var feeLabel = q('#serviceFeeLabel');
-    if (feeLabel) feeLabel.textContent = (isEn ? 'Service Fee' : 'رسوم الخدمة') + ' (' + (selectedPM ? (isEn ? selectedPM.Name : selectedPM.NameAR) : payMethod) + '):';
+    // Service Fee label: translated base + translated method name in parentheses
+    var methodLabel = selectedPM ? (isEn ? (selectedPM.Name || selectedPM.NameAR) : (selectedPM.NameAR || selectedPM.Name)) : t(String(payMethod).toLowerCase());
+    if (feeLabel) feeLabel.textContent = t('serviceFee').replace(':', '') + ' (' + methodLabel + '):';
     q('#serviceFeeText').innerText = formatVal(serviceFee) + (feeRate > 0 && !manualFee ? ' (' + feeRate + '%)' : '');
-    if (feeInput && !manualFee && feeRate > 0) feeInput.placeholder = formatVal(serviceFee) + ' (تلقائي ' + feeRate + '%)';
+    if (feeInput && !manualFee && feeRate > 0) feeInput.placeholder = formatVal(serviceFee) + ' (' + t('serviceFeeAuto') + ' ' + feeRate + '%)';
   } else {
     if (feeRow) feeRow.classList.add('hidden');
     if (feeInput) { feeInput.value = ''; feeInput.placeholder = '0'; }
@@ -438,10 +385,11 @@ window.renderPayButtons = function() {
     return String(m.Name || '').toLowerCase() !== 'split';
   });
   if (!active.length) {
+    // Fallback: labels come from t() so they follow the language
     active = [
-      { Name: 'Cash', NameAR: 'كاش', Icon: 'fa-money-bill-wave' },
-      { Name: 'Card', NameAR: 'مدى', Icon: 'fa-credit-card' },
-      { Name: 'Kita', NameAR: 'كيتا', Icon: 'fa-calculator' }
+      { Name: 'Cash', NameAR: t('cash'), Icon: 'fa-money-bill-wave' },
+      { Name: 'Card', NameAR: t('card'), Icon: 'fa-credit-card' },
+      { Name: 'Kita', NameAR: t('kita'), Icon: 'fa-calculator' }
     ];
   }
   var isEn = state.lang === 'en';
@@ -449,12 +397,20 @@ window.renderPayButtons = function() {
   var hiddenInput = '<input type="hidden" id="posPayMethod" value="' + defaultMethod + '">';
 
   var html = active.map(function(m) {
-    var label = isEn ? (m.Name || m.NameAR) : (m.NameAR || m.Name);
+    // If the saved payment method is one of the core three (Cash/Card/Kita),
+    // use the translated dict label so EN mode never shows Arabic words.
+    var lowerName = String(m.Name || '').toLowerCase();
+    var label;
+    if (lowerName === 'cash' || lowerName === 'card' || lowerName === 'kita') {
+      label = t(lowerName);
+    } else {
+      label = isEn ? (m.Name || m.NameAR) : (m.NameAR || m.Name);
+    }
     return '<button class="pay-btn' + (m.Name === defaultMethod ? ' active' : '') + '" id="payBtn' + m.Name + '" onclick="setPayMethod(\'' + m.Name + '\')"><i class="fas ' + (m.Icon || 'fa-money-bill') + '"></i> <span>' + label + '</span></button>';
   }).join('');
 
   // Always-on Split feature
-  html += '<button class="pay-btn" id="payBtnSplit" onclick="setPayMethod(\'Split\')" title="' + (isEn ? 'Split payment' : 'تجزئة الدفع') + '"><i class="fas fa-divide"></i> <span>' + (isEn ? 'Split' : 'تجزئة') + '</span></button>';
+  html += '<button class="pay-btn" id="payBtnSplit" onclick="setPayMethod(\'Split\')" title="' + t('splitPayment') + '"><i class="fas fa-divide"></i> <span>' + t('split') + '</span></button>';
 
   container.innerHTML = html + hiddenInput;
 };
@@ -467,7 +423,14 @@ window.renderSplitFields = function(total) {
     return m.IsActive !== false && m.IsActive !== 'FALSE' && String(m.Name || '').toLowerCase() !== 'split';
   });
   container.innerHTML = methods.map(function(m) {
-    var label = isEn ? (m.Name || m.NameAR) : (m.NameAR || m.Name);
+    // Prefer dict translation for core three methods (Cash/Card/Kita)
+    var lowerName = String(m.Name || '').toLowerCase();
+    var label;
+    if (lowerName === 'cash' || lowerName === 'card' || lowerName === 'kita') {
+      label = t(lowerName);
+    } else {
+      label = isEn ? (m.Name || m.NameAR) : (m.NameAR || m.Name);
+    }
     return '<div><label>' + label + '</label><input type="number" step="0.01" class="form-control split-input" data-method="' + m.Name + '" placeholder="0.00" value="" oninput="calcSplitRemaining()"></div>';
   }).join('');
   q('#splitRemaining').textContent = formatVal(total);
@@ -496,7 +459,7 @@ window.openDiscountModal = function() {
     loader(false);
     discs = discs || [];
     var h = '';
-    if (!discs.length) h = '<p style="text-align:center;color:#94a3b8;padding:20px;">لا توجد خصومات متاحة</p>';
+    if (!discs.length) h = '<p style="text-align:center;color:#94a3b8;padding:20px;">' + t('noDiscounts') + '</p>';
     discs.forEach(function(d) {
       var valStr = d.type === 'PERCENT' ? d.value + '%' : d.value + ' ' + state.settings.currency;
       h += '<div class="card" style="margin-bottom:12px;cursor:pointer;padding:16px;background:rgba(255,255,255,0.7);border:1px solid rgba(226,232,240,0.6);border-radius:14px;" onclick="applyDiscount(\'' + d.name + '\',\'' + d.type + '\',' + d.value + ')">' +
@@ -517,14 +480,14 @@ window.applyDiscount = function(name, type, val) {
   state.currentDiscount = { name: name, amount: calc };
   updateCart();
   closeGlassModal('#modalDiscount');
-  glassToast('تم تطبيق الخصم');
+  glassToast(t('discountApplied'));
 };
 
 // =========================================
 // Checkout
 // =========================================
 window.doCheckout = function() {
-  if (!state.activeShiftId) return glassToast('عذراً، يجب فتح وردية لاستقبال الطلبات.', true);
+  if (!state.activeShiftId) return glassToast(t('shiftRequired'), true);
   if (!state.cart.length) return glassToast(t('emptyCart'), true);
 
   var sub = state.cart.reduce(function(s, c) { return s + c.qty * c.price; }, 0);
@@ -547,7 +510,11 @@ window.doCheckout = function() {
       if (val > 0) { splitDetails[el.dataset.method] = val; totalPaid += val; }
     });
     if (Math.abs(totalPaid - afterDiscount) > 0.01) {
-      return glassAlert('فرق في التجزئة', 'مجموع التجزئة (' + formatVal(totalPaid) + ') لا يساوي الإجمالي (' + formatVal(afterDiscount) + ')', { danger: true });
+      return glassAlert(
+        t('splitMismatchTitle'),
+        t('splitMismatchPre') + formatVal(totalPaid) + t('splitMismatchMid') + formatVal(afterDiscount) + t('splitMismatchSuf'),
+        { danger: true }
+      );
     }
     totalFinal = afterDiscount;
   } else if (manualFee > 0) {
@@ -574,10 +541,10 @@ window.doCheckout = function() {
     // cashier's localStorage got desynced from the DB, bail here with a
     // clear message instead of failing silently in the backend.
     if (!state.user) {
-      return glassAlert('خطأ', 'لم يتم التعرّف على المستخدم. الرجاء تسجيل الدخول من جديد.', { danger: true });
+      return glassAlert(t('errorTitle'), t('userNotRecognized'), { danger: true });
     }
     if (!state.activeShiftId) {
-      return glassAlert('وردية مغلقة', 'لا توجد وردية مفتوحة حالياً. افتح وردية جديدة قبل إتمام الدفع.', { danger: true });
+      return glassAlert(t('noShiftTitle'), t('noShiftBodyMsg'), { danger: true });
     }
 
     loader();
@@ -585,14 +552,11 @@ window.doCheckout = function() {
       loader(false);
       // Backend returns { success: true, orderId } on success or
       // { success: false, error } on any DB/FK/validation failure.
-      // We must check success explicitly — otherwise we'd show "saved"
-      // while the row was silently dropped, and the invoice would
-      // never appear in the sales report.
       if (!res || res.success === false || !res.orderId) {
-        var msg = (res && res.error) ? res.error : 'تعذّر حفظ الفاتورة في قاعدة البيانات';
-        return glassAlert('فشل حفظ الفاتورة', msg, { danger: true });
+        var msg = (res && res.error) ? res.error : t('invoiceSaveErrorDefault');
+        return glassAlert(t('invoiceSaveFailed'), msg, { danger: true });
       }
-      glassToast('تم حفظ الطلب بنجاح!');
+      glassToast(t('orderSaved'));
       printReceipt(res.orderId);
       state.cart = [];
       state.currentDiscount = { name: '', amount: 0 };
@@ -600,12 +564,16 @@ window.doCheckout = function() {
       api.withSuccessHandler(function(m) { state.menu = m || []; renderMenuGrid(); }).getMenu();
     }).withFailureHandler(function(err) {
       loader(false);
-      glassAlert('فشل الاتصال', (err && err.message) || 'تعذّر الاتصال بالخادم لحفظ الفاتورة', { danger: true });
+      glassAlert(t('connectionFailed'), (err && err.message) || t('connectionFailedMsg'), { danger: true });
     }).saveOrder(order, state.user, state.activeShiftId);
   };
 
   if (serviceFee > 0) {
-    glassConfirm('تأكيد رسوم الخدمة', 'رسوم الخدمة: ' + formatVal(serviceFee) + ' ' + state.settings.currency + '\nالإجمالي: ' + formatVal(totalFinal) + ' ' + state.settings.currency, { okText: 'متابعة' }).then(function(ok) {
+    glassConfirm(
+      t('confirmServiceFeeTitle'),
+      t('serviceFeeLine') + formatVal(serviceFee) + ' ' + state.settings.currency + '\n' + t('totalLine') + formatVal(totalFinal) + ' ' + state.settings.currency,
+      { okText: t('continue') }
+    ).then(function(ok) {
       if (ok) send();
     });
   } else {
@@ -635,26 +603,36 @@ window.printReceipt = function(orderId) {
 
     var logoUrl = (state.settings && state.settings.logo) || '';
     var logoTag = logoUrl ? '<div style="text-align:center;margin-bottom:6px;"><img src="' + logoUrl + '" style="max-width:80px;max-height:80px;object-fit:contain;"></div>' : '';
+    var isEn = state.lang === 'en';
+    // Labels on the receipt: static English words are kept (Item/Qty/Date/Tax No)
+    // since they're universal; the rest follow the selected language so EN users
+    // never see Arabic on their copy.
+    var lblItem = isEn ? 'Item' : 'الصنف';
+    var lblQty  = isEn ? 'Qty'  : 'الكمية';
+    var lblDate = isEn ? 'Date' : 'التاريخ';
+    var lblID   = isEn ? 'ID'   : 'المعرف';
+    var lblItems= isEn ? 'Items' : 'عدد الأصناف';
+    var lblServedBy = isEn ? 'Served by' : 'المسؤول';
+    var lblTaxNo = isEn ? 'Tax No' : 'الرقم الضريبي';
     var h = logoTag +
       '<div style="text-align:center;font-size:18px;font-weight:900;margin-bottom:2px;">' + companyName + '</div>' +
-      '<div style="text-align:center;font-size:11px;color:#666;margin-bottom:2px;">Simplified TAX Invoice</div>' +
-      '<div style="text-align:center;font-size:11px;color:#666;">فاتورة ضريبية مبسطة</div>' +
-      '<div style="text-align:center;font-size:11px;color:#666;margin-bottom:8px;">Tax No: ' + taxNumber + '</div>' +
+      '<div style="text-align:center;font-size:11px;color:#666;margin-bottom:8px;">' + t('simplifiedTaxInvoice') + '</div>' +
+      '<div style="text-align:center;font-size:11px;color:#666;margin-bottom:8px;">' + lblTaxNo + ': ' + taxNumber + '</div>' +
       '<div style="border-top:1px dashed #999;border-bottom:1px dashed #999;padding:8px 0;margin:8px 0;">' +
-        '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px;"><span>ID</span><span style="font-weight:700;">' + inv.orderId + '</span></div>' +
-        '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>Date</span><span>' + dateStr + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px;"><span>' + lblID + '</span><span style="font-weight:700;">' + inv.orderId + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>' + lblDate + '</span><span>' + dateStr + '</span></div>' +
       '</div>' +
-      '<table style="width:100%;border-collapse:collapse;margin:8px 0;"><thead><tr style="border-bottom:1px dashed #999;"><th style="text-align:left;font-size:11px;padding:4px 0;">Item</th><th style="text-align:center;font-size:11px;">Qty</th><th style="text-align:right;font-size:11px;">' + currency + '</th></tr></thead><tbody>' + itemsHtml + '</tbody></table>' +
-      '<div style="text-align:center;font-size:12px;font-weight:700;border-top:1px dashed #999;padding-top:6px;">Items: ' + totalItems + '</div>' +
+      '<table style="width:100%;border-collapse:collapse;margin:8px 0;"><thead><tr style="border-bottom:1px dashed #999;"><th style="text-align:left;font-size:11px;padding:4px 0;">' + lblItem + '</th><th style="text-align:center;font-size:11px;">' + lblQty + '</th><th style="text-align:right;font-size:11px;">' + currency + '</th></tr></thead><tbody>' + itemsHtml + '</tbody></table>' +
+      '<div style="text-align:center;font-size:12px;font-weight:700;border-top:1px dashed #999;padding-top:6px;">' + lblItems + ': ' + totalItems + '</div>' +
       '<table style="width:100%;margin:10px 0;border-collapse:collapse;border-top:1px solid #333;border-bottom:1px solid #333;"><tr>' +
-        '<td style="text-align:center;padding:8px;border-left:1px solid #333;"><div style="font-size:10px;font-weight:700;">Total<br>إجمالي</div><div style="font-size:15px;font-weight:900;">' + formatVal(inv.totalFinal) + '</div></td>' +
-        '<td style="text-align:center;padding:8px;border-left:1px solid #333;"><div style="font-size:10px;font-weight:700;">Net<br>قبل الضريبة</div><div style="font-size:15px;font-weight:900;">' + netAmount.toFixed(2) + '</div></td>' +
-        '<td style="text-align:center;padding:8px;"><div style="font-size:10px;font-weight:700;">VAT 15%<br>الضريبة</div><div style="font-size:15px;font-weight:900;">' + vatAmount.toFixed(2) + '</div></td>' +
+        '<td style="text-align:center;padding:8px;border-left:1px solid #333;"><div style="font-size:10px;font-weight:700;">' + t('receiptTotalLabel') + '</div><div style="font-size:15px;font-weight:900;">' + formatVal(inv.totalFinal) + '</div></td>' +
+        '<td style="text-align:center;padding:8px;border-left:1px solid #333;"><div style="font-size:10px;font-weight:700;">' + t('receiptNetLabel') + '</div><div style="font-size:15px;font-weight:900;">' + netAmount.toFixed(2) + '</div></td>' +
+        '<td style="text-align:center;padding:8px;"><div style="font-size:10px;font-weight:700;">' + t('receiptVatLabel') + ' 15%</div><div style="font-size:15px;font-weight:900;">' + vatAmount.toFixed(2) + '</div></td>' +
       '</tr></table>' +
-      '<div style="text-align:center;font-size:11px;color:#666;margin-bottom:4px;">Served by: ' + (inv.username || state.user) + '</div>' +
+      '<div style="text-align:center;font-size:11px;color:#666;margin-bottom:4px;">' + lblServedBy + ': ' + (inv.username || state.user) + '</div>' +
       '<div id="receiptQR" style="text-align:center;margin:12px auto;width:150px;height:150px;"></div>' +
       '<div style="text-align:center;font-size:10px;color:#999;margin-bottom:4px;">' + inv.orderId + '</div>' +
-      '<div style="text-align:center;font-size:11px;color:#666;">شكراً لزيارتكم</div>';
+      '<div style="text-align:center;font-size:11px;color:#666;">' + t('thankYou') + '</div>';
 
     q('#receiptBox').innerHTML = h;
     state._lastReceipt = { inv: inv, html: h, companyName: companyName, taxNumber: taxNumber };
@@ -705,29 +683,40 @@ window.printReceiptWindow = function() {
   var qrImg = qrCanvas ? qrCanvas.toDataURL() : '';
   var w = window.open('', '_blank', 'width=350,height=700');
   if (!w) return;
-  w.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Receipt</title>' +
-    '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;padding:8px;width:280px;margin:0 auto;font-size:12px;color:#000;}' +
-    'table{width:100%;border-collapse:collapse;}th,td{padding:4px 2px;font-size:11px;}th{text-align:left;border-bottom:1px dashed #000;}' +
+  var isEn = state.lang === 'en';
+  var dir = isEn ? 'ltr' : 'rtl';
+  var lblItem = isEn ? 'Item' : 'الصنف';
+  var lblQty  = isEn ? 'Qty'  : 'الكمية';
+  var lblDate = isEn ? 'Date' : 'التاريخ';
+  var lblID   = isEn ? 'ID'   : 'المعرف';
+  var lblTax  = isEn ? 'Tax'  : 'الرقم الضريبي';
+  var lblTotal = isEn ? 'Total' : 'الإجمالي';
+  var lblNet  = isEn ? 'Net'  : 'قبل الضريبة';
+  var lblVat  = isEn ? 'VAT'  : 'الضريبة';
+  w.document.write('<!DOCTYPE html><html lang="' + (isEn ? 'en' : 'ar') + '" dir="' + dir + '"><head><meta charset="UTF-8"><title>Receipt</title>' +
+    '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;padding:8px;width:280px;margin:0 auto;font-size:12px;color:#000;direction:' + dir + ';}' +
+    'table{width:100%;border-collapse:collapse;}th,td{padding:4px 2px;font-size:11px;}th{text-align:start;border-bottom:1px dashed #000;}' +
     '.center{text-align:center;}.bold{font-weight:700;}.big{font-size:14px;}.line{border-top:1px dashed #000;margin:6px 0;}' +
     '@media print{@page{margin:0;size:80mm auto;}body{padding:4px;width:100%;}}</style></head><body>' +
     ((state.settings && state.settings.logo) ? '<div class="center" style="margin-bottom:6px;"><img src="' + state.settings.logo + '" style="max-width:80px;max-height:80px;"></div>' : '') +
     '<div class="center bold" style="font-size:16px;">' + r.companyName + '</div>' +
-    '<div class="center" style="font-size:10px;color:#666;margin-bottom:6px;">Tax: ' + r.taxNumber + '</div>' +
+    '<div class="center" style="font-size:10px;color:#666;margin-bottom:2px;">' + t('simplifiedTaxInvoice') + '</div>' +
+    '<div class="center" style="font-size:10px;color:#666;margin-bottom:6px;">' + lblTax + ': ' + r.taxNumber + '</div>' +
     '<div class="line"></div>' +
-    '<div style="display:flex;justify-content:space-between;font-size:11px;margin:4px 0;"><span>ID:</span><span class="bold">' + r.inv.orderId + '</span></div>' +
-    '<div style="display:flex;justify-content:space-between;font-size:11px;margin:4px 0;"><span>Date:</span><span>' + new Date(r.inv.date).toLocaleString('en-US') + '</span></div>' +
-    '<div class="line"></div><table><tr><th>Item</th><th style="text-align:center;">Qty</th><th style="text-align:right;">SAR</th></tr>');
+    '<div style="display:flex;justify-content:space-between;font-size:11px;margin:4px 0;"><span>' + lblID + ':</span><span class="bold">' + r.inv.orderId + '</span></div>' +
+    '<div style="display:flex;justify-content:space-between;font-size:11px;margin:4px 0;"><span>' + lblDate + ':</span><span>' + new Date(r.inv.date).toLocaleString('en-US') + '</span></div>' +
+    '<div class="line"></div><table><tr><th>' + lblItem + '</th><th style="text-align:center;">' + lblQty + '</th><th style="text-align:end;">SAR</th></tr>');
   (r.inv.items || []).forEach(function(it) {
-    w.document.write('<tr><td>' + it.name + '</td><td style="text-align:center;">' + it.qty + '</td><td style="text-align:right;">' + formatVal(it.total) + '</td></tr>');
+    w.document.write('<tr><td>' + it.name + '</td><td style="text-align:center;">' + it.qty + '</td><td style="text-align:end;">' + formatVal(it.total) + '</td></tr>');
   });
   w.document.write('</table><div class="line"></div>');
   var net = r.inv.totalFinal / 1.15;
   var vat = r.inv.totalFinal - net;
-  w.document.write('<div class="center bold" style="margin:6px 0;">Total: ' + formatVal(r.inv.totalFinal) + ' SAR</div>');
-  w.document.write('<div class="center" style="font-size:10px;">Net: ' + net.toFixed(2) + ' | VAT: ' + vat.toFixed(2) + '</div>');
+  w.document.write('<div class="center bold" style="margin:6px 0;">' + lblTotal + ': ' + formatVal(r.inv.totalFinal) + ' SAR</div>');
+  w.document.write('<div class="center" style="font-size:10px;">' + lblNet + ': ' + net.toFixed(2) + ' | ' + lblVat + ': ' + vat.toFixed(2) + '</div>');
   if (qrImg) w.document.write('<div class="center" style="margin:10px 0;"><img src="' + qrImg + '" width="130" height="130"></div>');
   w.document.write('<div class="center" style="font-size:9px;color:#666;">' + r.inv.orderId + '</div>');
-  w.document.write('<div class="center" style="font-size:10px;margin-top:6px;">شكراً لزيارتكم</div></body></html>');
+  w.document.write('<div class="center" style="font-size:10px;margin-top:6px;">' + t('thankYou') + '</div></body></html>');
   w.document.close();
   setTimeout(function() { w.print(); }, 400);
 };
@@ -748,8 +737,8 @@ window.updateShiftUI = function() {
 };
 
 window.shiftOpen = function() {
-  if (state.activeShiftId) return glassToast('هناك وردية مفتوحة بالفعل', true);
-  glassConfirm('فتح وردية', 'هل تريد فتح وردية بيع جديدة للموظف: ' + state.user + '؟', { okText: 'فتح الوردية' }).then(function(ok) {
+  if (state.activeShiftId) return glassToast(t('shiftAlreadyOpen'), true);
+  glassConfirm(t('openShiftTitle'), t('openShiftMsg') + state.user + '?', { okText: t('openShiftBtn') }).then(function(ok) {
     if (!ok) return;
     loader(true);
     api.withFailureHandler(function(err) { loader(false); glassToast(err.message, true); })
@@ -760,7 +749,7 @@ window.shiftOpen = function() {
           saveState();
           updateShiftUI();
           renderHeader('pos', { showShift: true });
-          glassToast('تم بدء الوردية بنجاح!');
+          glassToast(t('shiftStarted'));
         } else {
           glassToast(res.error, true);
         }
@@ -769,7 +758,7 @@ window.shiftOpen = function() {
 };
 
 window.shiftCloseStart = function() {
-  if (!state.activeShiftId) return glassToast('ليس لديك وردية نشطة حالياً لإغلاقها', true);
+  if (!state.activeShiftId) return glassToast(t('noActiveShift'), true);
   q('#scCash').value = '0';
   q('#scCard').value = '0';
   q('#scKita').value = '0';
@@ -798,7 +787,7 @@ window.shiftConfirmClose = function() {
       if (totalExpected > 0 && cash === 0 && card === 0 && kita === 0) {
         return showVarianceBlock({ thCash: thCash, thCard: thCard, thKita: thKita, cash: cash, card: card, kita: kita,
           dCash: -thCash, dCard: -thCard, dKita: -thKita, totalDiff: -totalExpected,
-          msg: 'لم تُدخل أي مبلغ! المبيعات المتوقعة في النظام هي ' + totalExpected.toFixed(2) + ' SAR. أدخل المبالغ الفعلية في الدرج قبل الإغلاق.'
+          msg: t('noAmountEnteredMsg') + totalExpected.toFixed(2) + ' SAR' + t('noAmountEnteredMsgSuffix')
         });
       }
 
@@ -806,12 +795,12 @@ window.shiftConfirmClose = function() {
       if (Math.abs(totalDiff) > 0.01) {
         return showVarianceBlock({ thCash: thCash, thCard: thCard, thKita: thKita, cash: cash, card: card, kita: kita,
           dCash: dCash, dCard: dCard, dKita: dKita, totalDiff: totalDiff,
-          msg: 'يوجد فرق بين مبالغ الدرج والمبيعات المسجلة. يجب أن يكون الفرق صفراً لإغلاق الوردية. يُرجى مراجعة الفواتير وتصحيح المبالغ ثم المحاولة مجدداً.'
+          msg: t('unbalancedMsg')
         });
       }
 
       // All good — final confirm + close
-      glassConfirm('تأكيد الإغلاق', 'الفرق متطابق تماماً (0.00). متابعة لإغلاق الوردية؟', { okText: 'إغلاق الوردية', danger: true }).then(function(ok) {
+      glassConfirm(t('confirmCloseTitle'), t('diffExactMsg'), { okText: t('closeShift'), danger: true }).then(function(ok) {
         if (!ok) return;
         loader(true);
         api.withFailureHandler(function(err) { loader(false); glassToast(err.message, true); })
@@ -825,7 +814,7 @@ window.shiftConfirmClose = function() {
               updateShiftUI();
               renderHeader('pos', { showShift: true });
               closeGlassModal('#modalShiftClose');
-              glassToast('تم إغلاق الوردية بنجاح!');
+              glassToast(t('shiftClosed'));
               // Show the report with WhatsApp share
               showShiftReport(closedShiftId, { thCash: thCash, thCard: thCard, thKita: thKita, cash: cash, card: card, kita: kita, orders: Number(d.orderCount) || 0 });
             } else {
@@ -844,15 +833,15 @@ function showVarianceBlock(d) {
 
   var html = '<p class="glass-modal-message">' + d.msg + '</p>' +
     '<table class="variance-table">' +
-      '<thead><tr><th>الوسيلة</th><th>المتوقع</th><th>الفعلي</th><th>الفرق</th></tr></thead>' +
+      '<thead><tr><th>' + t('method') + '</th><th>' + t('expected') + '</th><th>' + t('actual') + '</th><th>' + t('difference') + '</th></tr></thead>' +
       '<tbody>' +
-        '<tr><td>كاش</td><td>' + fmt(d.thCash) + '</td><td>' + fmt(d.cash) + '</td><td class="' + dCls(d.dCash) + '">' + sign(d.dCash) + '</td></tr>' +
-        '<tr><td>مدى</td><td>' + fmt(d.thCard) + '</td><td>' + fmt(d.card) + '</td><td class="' + dCls(d.dCard) + '">' + sign(d.dCard) + '</td></tr>' +
-        '<tr><td>كيتا</td><td>' + fmt(d.thKita) + '</td><td>' + fmt(d.kita) + '</td><td class="' + dCls(d.dKita) + '">' + sign(d.dKita) + '</td></tr>' +
-        '<tr class="total-row"><td>الإجمالي</td><td>' + fmt(d.thCash + d.thCard + d.thKita) + '</td><td>' + fmt(d.cash + d.card + d.kita) + '</td><td class="' + dCls(d.totalDiff) + '">' + sign(d.totalDiff) + '</td></tr>' +
+        '<tr><td>' + t('cash') + '</td><td>' + fmt(d.thCash) + '</td><td>' + fmt(d.cash) + '</td><td class="' + dCls(d.dCash) + '">' + sign(d.dCash) + '</td></tr>' +
+        '<tr><td>' + t('card') + '</td><td>' + fmt(d.thCard) + '</td><td>' + fmt(d.card) + '</td><td class="' + dCls(d.dCard) + '">' + sign(d.dCard) + '</td></tr>' +
+        '<tr><td>' + t('kita') + '</td><td>' + fmt(d.thKita) + '</td><td>' + fmt(d.kita) + '</td><td class="' + dCls(d.dKita) + '">' + sign(d.dKita) + '</td></tr>' +
+        '<tr class="total-row"><td>' + t('total') + '</td><td>' + fmt(d.thCash + d.thCard + d.thKita) + '</td><td>' + fmt(d.cash + d.card + d.kita) + '</td><td class="' + dCls(d.totalDiff) + '">' + sign(d.totalDiff) + '</td></tr>' +
       '</tbody>' +
     '</table>' +
-    '<p style="font-size:12px;color:#7f1d1d;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px;margin-top:8px;">⚠️ لا يمكن إغلاق الوردية حتى يكون الفرق صفراً. اضغط رجوع وراجع الفواتير في السجل.</p>';
+    '<p style="font-size:12px;color:#7f1d1d;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px;margin-top:8px;">' + t('varianceBlockNote') + '</p>';
   q('#varianceBody').innerHTML = html;
   openGlassModal('#modalShiftVariance');
 }
@@ -885,22 +874,22 @@ function showShiftReport(shiftId, d) {
   var html = logoTag +
     '<div style="text-align:center;margin-bottom:14px;">' +
       '<div style="font-size:18px;font-weight:900;color:var(--primary);">' + company + '</div>' +
-      '<div style="font-size:12px;color:var(--text-light);">تقرير إغلاق الوردية</div>' +
+      '<div style="font-size:12px;color:var(--text-light);">' + t('shiftCloseReport') + '</div>' +
     '</div>' +
     '<div style="background:rgba(255,255,255,0.7);border:1px solid rgba(226,232,240,0.6);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:13px;">' +
-      '<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:var(--text-light);">رقم الوردية:</span><span style="font-weight:800;font-family:monospace;">' + shiftId + '</span></div>' +
-      '<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:var(--text-light);">الكاشير:</span><span style="font-weight:800;">' + state._lastShiftReport.cashierName + '</span></div>' +
-      '<div style="display:flex;justify-content:space-between;"><span style="color:var(--text-light);">تاريخ الإغلاق:</span><span style="font-weight:700;">' + dateStr + '</span></div>' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:var(--text-light);">' + t('shiftNumber') + ':</span><span style="font-weight:800;font-family:monospace;">' + shiftId + '</span></div>' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:var(--text-light);">' + t('cashierLabel') + ':</span><span style="font-weight:800;">' + state._lastShiftReport.cashierName + '</span></div>' +
+      '<div style="display:flex;justify-content:space-between;"><span style="color:var(--text-light);">' + t('closeDate') + ':</span><span style="font-weight:700;">' + dateStr + '</span></div>' +
     '</div>' +
     '<div class="shift-report-grid">' +
-      '<div class="shift-stat-card"><div class="label">عدد الطلبات</div><div class="value">' + d.orders + '</div></div>' +
-      '<div class="shift-stat-card total"><div class="label">إجمالي المبيعات</div><div class="value">' + fmt(totalActual) + '</div></div>' +
-      '<div class="shift-stat-card cash"><div class="label">كاش</div><div class="value">' + fmt(d.cash) + '</div></div>' +
-      '<div class="shift-stat-card card"><div class="label">مدى</div><div class="value">' + fmt(d.card) + '</div></div>' +
-      '<div class="shift-stat-card kita" style="grid-column:1/-1;"><div class="label">كيتا</div><div class="value">' + fmt(d.kita) + '</div></div>' +
+      '<div class="shift-stat-card"><div class="label">' + t('ordersCount') + '</div><div class="value">' + d.orders + '</div></div>' +
+      '<div class="shift-stat-card total"><div class="label">' + t('totalSales') + '</div><div class="value">' + fmt(totalActual) + '</div></div>' +
+      '<div class="shift-stat-card cash"><div class="label">' + t('cash') + '</div><div class="value">' + fmt(d.cash) + '</div></div>' +
+      '<div class="shift-stat-card card"><div class="label">' + t('card') + '</div><div class="value">' + fmt(d.card) + '</div></div>' +
+      '<div class="shift-stat-card kita" style="grid-column:1/-1;"><div class="label">' + t('kita') + '</div><div class="value">' + fmt(d.kita) + '</div></div>' +
     '</div>' +
     '<div style="text-align:center;padding:14px;border-radius:12px;background:#f0fdf4;border:1.5px solid #86efac;color:#166534;font-weight:900;font-size:15px;">' +
-      '<i class="fas fa-check-circle"></i> الفرق متطابق — البيانات سليمة' +
+      '<i class="fas fa-check-circle"></i> ' + t('diffExactConfirm') +
     '</div>';
   q('#shiftReportBody').innerHTML = html;
   openGlassModal('#modalShiftReport');
@@ -911,22 +900,22 @@ window.shareShiftReportWhatsApp = function() {
   var r = state._lastShiftReport;
   if (!r) return;
   var lines = [
-    '🧾 *تقرير إغلاق الوردية*',
+    t('wappTitle'),
     '',
     '🏪 ' + r.company,
     '📅 ' + r.date,
     '🆔 ' + r.shiftId,
     '👤 ' + r.cashierName + ' (' + r.cashier + ')',
     '',
-    '🧾 عدد الطلبات: ' + r.orders,
-    '💰 إجمالي المبيعات: ' + r.totalActual.toFixed(2) + ' SAR',
+    t('wappOrders') + r.orders,
+    t('wappTotalSales') + r.totalActual.toFixed(2) + ' SAR',
     '',
-    '*تفصيل الدفع:*',
-    '• كاش: ' + r.cash.toFixed(2) + ' SAR',
-    '• مدى: ' + r.card.toFixed(2) + ' SAR',
-    '• كيتا: ' + r.kita.toFixed(2) + ' SAR',
+    t('wappPaymentBreakdown'),
+    t('wappCash') + r.cash.toFixed(2) + ' SAR',
+    t('wappCard') + r.card.toFixed(2) + ' SAR',
+    t('wappKita') + r.kita.toFixed(2) + ' SAR',
     '',
-    '✅ الفرق: 0.00 — متطابق'
+    t('wappDiffExact')
   ];
   var text = encodeURIComponent(lines.join('\n'));
   // Opens WhatsApp letting the user pick any contact
@@ -940,26 +929,28 @@ window.printShiftReport = function() {
   var w = window.open('', '_blank', 'width=420,height=720');
   if (!w) return;
   var fmt = function(v) { return Number(v).toFixed(2); };
-  w.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Shift Report</title>' +
-    '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;padding:18px;color:#1e293b;max-width:380px;margin:0 auto;font-size:13px;}' +
+  var isEn = state.lang === 'en';
+  var dir = isEn ? 'ltr' : 'rtl';
+  w.document.write('<!DOCTYPE html><html lang="' + (isEn ? 'en' : 'ar') + '" dir="' + dir + '"><head><meta charset="UTF-8"><title>' + t('shiftCloseReport') + '</title>' +
+    '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;padding:18px;color:#1e293b;max-width:380px;margin:0 auto;font-size:13px;direction:' + dir + ';}' +
     '.h{text-align:center;border-bottom:2px solid #1e293b;padding-bottom:12px;margin-bottom:14px;}h1{font-size:18px;}h2{font-size:13px;color:#64748b;font-weight:400;}' +
     '.row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #cbd5e1;}.row:last-child{border:none;}' +
-    'table{width:100%;border-collapse:collapse;margin:10px 0;}th,td{padding:8px;text-align:left;border-bottom:1px solid #e2e8f0;font-size:12px;}th{background:#f1f5f9;font-weight:700;}' +
+    'table{width:100%;border-collapse:collapse;margin:10px 0;}th,td{padding:8px;text-align:start;border-bottom:1px solid #e2e8f0;font-size:12px;}th{background:#f1f5f9;font-weight:700;}' +
     '.t{background:#ecfeff;font-weight:900;}@media print{body{padding:10px;}}</style></head><body>' +
     ((state.settings && state.settings.logo) ? '<div style="text-align:center;margin-bottom:8px;"><img src="' + state.settings.logo + '" style="max-width:90px;"></div>' : '') +
-    '<div class="h"><h1>' + r.company + '</h1><h2>تقرير إغلاق الوردية</h2></div>' +
-    '<div class="row"><span>الكاشير</span><span><b>' + r.cashierName + '</b></span></div>' +
-    '<div class="row"><span>المعرف</span><span>' + r.cashier + '</span></div>' +
-    '<div class="row"><span>رقم الوردية</span><span><b>' + r.shiftId + '</b></span></div>' +
-    '<div class="row"><span>تاريخ الإغلاق</span><span>' + r.date + '</span></div>' +
-    '<div class="row"><span>عدد الطلبات</span><span><b>' + r.orders + '</b></span></div>' +
-    '<table><tr><th>الوسيلة</th><th style="text-align:right;">المبلغ (SAR)</th></tr>' +
-      '<tr><td>كاش</td><td style="text-align:right;">' + fmt(r.cash) + '</td></tr>' +
-      '<tr><td>مدى</td><td style="text-align:right;">' + fmt(r.card) + '</td></tr>' +
-      '<tr><td>كيتا</td><td style="text-align:right;">' + fmt(r.kita) + '</td></tr>' +
-      '<tr class="t"><td>الإجمالي</td><td style="text-align:right;">' + fmt(r.totalActual) + '</td></tr>' +
+    '<div class="h"><h1>' + r.company + '</h1><h2>' + t('shiftCloseReport') + '</h2></div>' +
+    '<div class="row"><span>' + t('cashierLabel') + '</span><span><b>' + r.cashierName + '</b></span></div>' +
+    '<div class="row"><span>' + t('identifier') + '</span><span>' + r.cashier + '</span></div>' +
+    '<div class="row"><span>' + t('shiftNumber') + '</span><span><b>' + r.shiftId + '</b></span></div>' +
+    '<div class="row"><span>' + t('closeDate') + '</span><span>' + r.date + '</span></div>' +
+    '<div class="row"><span>' + t('ordersCount') + '</span><span><b>' + r.orders + '</b></span></div>' +
+    '<table><tr><th>' + t('method') + '</th><th style="text-align:end;">' + t('amountSar') + '</th></tr>' +
+      '<tr><td>' + t('cash') + '</td><td style="text-align:end;">' + fmt(r.cash) + '</td></tr>' +
+      '<tr><td>' + t('card') + '</td><td style="text-align:end;">' + fmt(r.card) + '</td></tr>' +
+      '<tr><td>' + t('kita') + '</td><td style="text-align:end;">' + fmt(r.kita) + '</td></tr>' +
+      '<tr class="t"><td>' + t('total') + '</td><td style="text-align:end;">' + fmt(r.totalActual) + '</td></tr>' +
     '</table>' +
-    '<div style="text-align:center;padding:14px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;color:#166534;font-weight:900;">✅ الفرق: 0.00 — متطابق</div>' +
+    '<div style="text-align:center;padding:14px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;color:#166534;font-weight:900;">' + t('diffZeroValid') + '</div>' +
     '</body></html>');
   w.document.close();
   setTimeout(function() { w.print(); }, 400);

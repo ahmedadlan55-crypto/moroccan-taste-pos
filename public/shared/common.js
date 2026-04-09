@@ -29,40 +29,247 @@ window.formatVal = function(v) { return Number(v || 0).toFixed(2); };
 // ─── Locales Dictionary ───
 window.dict = {
   ar: {
-    login: 'تسجيل الدخول', errLogin: 'خطأ في تسجيل الدخول',
-    sales: 'المبيعات', shift: 'الشيفت:', openShift: 'فتح الوردية', closeShift: 'إغلاق الوردية', noShift: 'لا يوجد وردية مفتوحة',
-    dash: 'الداشبورد', home: 'الرئيسية', inventory: 'المخزون', users: 'المستخدمين', reports: 'التقارير', settings: 'الإعدادات',
-    emptyCart: 'السلة فارغة!', checkout: 'إتمام الطلب', tax: 'الضريبة', total: 'الإجمالي', searchP: 'بحث عن منتج...',
-    success: 'تمت العملية بنجاح!', loading: 'جاري المعالجة...',
-    cartTitle: 'سلة الطلبات', goBack: 'الرجوع', viewCart: 'مشاهدة السلة',
-    cash: 'كاش', card: 'مدى', kita: 'كيتا', split: 'تجزئة',
-    subtotal: 'المجموع الفرعي:', discount: 'الخصم:', serviceFee: 'رسوم الخدمة:',
-    totalLabel: 'الإجمالي:', checkoutBtn: 'إتمام الدفع والطلب',
-    emptyCartDesc: 'اختر منتجات من القائمة لإضافتها',
+    // Auth / common
+    login: 'تسجيل الدخول', errLogin: 'خطأ في تسجيل الدخول', loading: 'جاري التحميل...',
+    cancel: 'إلغاء', confirm: 'تأكيد', ok: 'حسناً', close: 'إغلاق', back: 'رجوع',
+    errorTitle: 'خطأ', success: 'تمت العملية بنجاح!',
+    yes: 'نعم', no: 'لا', print: 'طباعة',
+
+    // Navigation / header
+    sales: 'المبيعات', home: 'الرئيسية', inventory: 'المخزون', users: 'المستخدمين',
+    reports: 'التقارير', settings: 'الإعدادات', dash: 'الداشبورد',
+    pos: 'نقطة البيع', dashboard: 'الرئيسية', logout: 'تسجيل خروج',
+    installApp: 'تثبيت التطبيق', installingApp: 'جاري تثبيت التطبيق…',
+
+    // Shift — general
+    shift: 'الشيفت:', openShift: 'فتح الوردية', closeShift: 'إغلاق الوردية', noShift: 'لا يوجد وردية مفتوحة',
+    openShiftTitle: 'فتح وردية', openShiftMsg: 'هل تريد فتح وردية بيع جديدة للموظف: ',
+    openShiftBtn: 'فتح الوردية', shiftStarted: 'تم بدء الوردية بنجاح!',
+    shiftAlreadyOpen: 'هناك وردية مفتوحة بالفعل', noActiveShift: 'ليس لديك وردية نشطة حالياً لإغلاقها',
+    shiftRequired: 'عذراً، يجب فتح وردية لاستقبال الطلبات.',
+    noShiftTitle: 'وردية مغلقة', noShiftBodyMsg: 'لا توجد وردية مفتوحة حالياً. افتح وردية جديدة قبل إتمام الدفع.',
+    shiftClosed: 'تم إغلاق الوردية بنجاح!',
+    shiftClose: 'إغلاق الوردية', confirmClose: 'اعتماد وإغلاق', approveAndClose: 'اعتماد وإغلاق',
+    enterAmounts: 'أدخل المبالغ الفعلية في الدرج:',
+    cashAmount: 'المبلغ النقدي (كاش)', cardAmount: 'مدى / شبكة', kitaAmount: 'كيتا / آجل',
+    confirmCloseTitle: 'تأكيد الإغلاق',
+    diffExactMsg: 'الفرق متطابق تماماً (0.00). متابعة لإغلاق الوردية؟',
+
+    // Shift variance block
+    unbalancedDiff: 'فرق غير متوازن',
+    noAmountEnteredMsg: 'لم تُدخل أي مبلغ! المبيعات المتوقعة في النظام هي ',
+    noAmountEnteredMsgSuffix: '. أدخل المبالغ الفعلية في الدرج قبل الإغلاق.',
+    unbalancedMsg: 'يوجد فرق بين مبالغ الدرج والمبيعات المسجلة. يجب أن يكون الفرق صفراً لإغلاق الوردية. يُرجى مراجعة الفواتير وتصحيح المبالغ ثم المحاولة مجدداً.',
+    method: 'الوسيلة', expected: 'المتوقع', actual: 'الفعلي', difference: 'الفرق',
+    varianceBlockNote: '⚠️ لا يمكن إغلاق الوردية حتى يكون الفرق صفراً. اضغط رجوع وراجع الفواتير في السجل.',
+    backToInvoices: 'رجوع لمراجعة الفواتير',
+
+    // Shift close report
+    shiftCloseReport: 'تقرير إغلاق الوردية',
+    shiftNumber: 'رقم الوردية', cashierLabel: 'الكاشير', closeDate: 'تاريخ الإغلاق',
+    ordersCount: 'عدد الطلبات', totalSales: 'إجمالي المبيعات',
+    diffExactConfirm: 'الفرق متطابق — البيانات سليمة',
+    identifier: 'المعرف', amountSar: 'المبلغ (SAR)',
+    diffZeroValid: '✅ الفرق: 0.00 — متطابق',
+    sendWhatsApp: 'إرسال عبر واتساب',
+
+    // WhatsApp report
+    wappTitle: '🧾 *تقرير إغلاق الوردية*',
+    wappOrders: '🧾 عدد الطلبات: ',
+    wappTotalSales: '💰 إجمالي المبيعات: ',
+    wappCashier: '👤 الكاشير',
+    wappDate: '🕐 التاريخ',
+    wappShiftId: '📋 رقم الوردية',
+    wappPaymentBreakdown: '*تفصيل الدفع:*',
+    wappCash: '• كاش: ',
+    wappCard: '• مدى: ',
+    wappKita: '• كيتا: ',
+    wappDiffExact: '✅ الفرق: 0.00 — متطابق',
+
+    // Cart
+    cartTitle: 'سلة الطلبات', goBack: 'الرجوع', viewCart: 'السلة',
+    emptyCart: 'السلة فارغة!', emptyCartDesc: 'اختر منتجات من القائمة لإضافتها',
+    subtotal: 'المجموع الفرعي:', discount: 'الخصم:',
+    serviceFee: 'رسوم الخدمة:', serviceFeeAuto: 'تلقائي',
+    serviceFeeInputPH: 'أدخل مبلغ الرسوم يدوياً',
+    totalLabel: 'الإجمالي:', total: 'الإجمالي', tax: 'الضريبة',
+    checkout: 'إتمام الطلب', checkoutBtn: 'إتمام الدفع والطلب',
+    clearCart: 'تفريغ السلة',
+    clearCartTitle: 'تفريغ السلة', clearCartMsg: 'هل تريد إزالة جميع الأصناف من السلة؟',
+    yesClear: 'نعم، أفرغ',
+    addDiscount: 'إضافة خصم', emptyCartTitle: 'إفراغ السلة',
+
+    // Search / product grid
+    searchP: 'بحث عن منتج...', searchPlaceholder: 'البحث برقم، أو اسم المنتج...',
+    categories: 'التصنيفات', allItems: 'الكل',
+    outOfStock: 'نفذ', inStock: 'متوفر', noProducts: 'لا توجد منتجات',
     qty: 'الكمية', price: 'السعر', remove: 'حذف', addToCart: 'أضف للسلة',
-    shiftClose: 'إغلاق الوردية', cashAmount: 'المبلغ النقدي (كاش)', cardAmount: 'مدى / شبكة', kitaAmount: 'كيتا / آجل',
-    confirmClose: 'اعتماد الجرد وإغلاق الوردية', cancel: 'إلغاء',
-    enterAmounts: 'أدخل المبالغ الفعلية في الدرج:', shiftReport: 'تقرير إغلاق الوردية',
-    categories: 'التصنيفات', allItems: 'الكل', outOfStock: 'نفذ', inStock: 'متوفر',
-    pos: 'نقطة البيع', dashboard: 'الرئيسية', logout: 'خروج'
+    decrease: 'تقليل', increase: 'زيادة', add: 'إضافة', deleteLabel: 'حذف',
+
+    // Payment methods
+    cash: 'كاش', card: 'مدى', kita: 'كيتا', split: 'تجزئة',
+    splitPayment: 'تجزئة الدفع', splitTitle: 'تجزئة الدفع',
+    remaining: 'المتبقي:',
+    splitMismatchTitle: 'فرق في التجزئة',
+    splitMismatchPre: 'مجموع التجزئة (',
+    splitMismatchMid: ') لا يساوي الإجمالي (',
+    splitMismatchSuf: ')',
+
+    // Discount modal
+    chooseDiscount: 'اختر خصماً',
+    noDiscounts: 'لا توجد خصومات متاحة',
+    discountApplied: 'تم تطبيق الخصم',
+
+    // Checkout / order save
+    orderSaved: 'تم حفظ الطلب بنجاح!',
+    invoiceSaveFailed: 'فشل حفظ الفاتورة',
+    invoiceSaveErrorDefault: 'تعذّر حفظ الفاتورة في قاعدة البيانات',
+    connectionFailed: 'فشل الاتصال',
+    connectionFailedMsg: 'تعذّر الاتصال بالخادم لحفظ الفاتورة',
+    userNotRecognized: 'لم يتم التعرّف على المستخدم. الرجاء تسجيل الدخول من جديد.',
+    confirmServiceFeeTitle: 'تأكيد رسوم الخدمة',
+    serviceFeeLine: 'رسوم الخدمة: ',
+    totalLine: 'الإجمالي: ',
+    continue: 'متابعة',
+    failLoadData: 'فشل تحميل البيانات',
+    failConnect: 'تعذر الاتصال بالخادم',
+
+    // Receipt
+    receiptTitle: 'فاتورة',
+    simplifiedTaxInvoice: 'فاتورة ضريبية مبسطة',
+    thankYou: 'شكراً لزيارتكم',
+    receiptTotalLabel: 'إجمالي',
+    receiptNetLabel: 'قبل الضريبة',
+    receiptVatLabel: 'الضريبة',
+
+    // Glass confirm/alert fallbacks
+    confirmTitle: 'تأكيد', alertTitle: 'تنبيه',
+
+    // Language toggle toast
+    switchedAr: 'تم التحويل للعربية',
+    switchedEn: 'Switched to English'
   },
+
   en: {
-    login: 'Login', errLogin: 'Login failed',
-    sales: 'Sales', shift: 'Shift:', openShift: 'Open Shift', closeShift: 'Close Shift', noShift: 'No open shift',
-    dash: 'Dashboard', home: 'Home', inventory: 'Inventory', users: 'Users', reports: 'Reports', settings: 'Settings',
-    emptyCart: 'Cart is empty!', checkout: 'Checkout', tax: 'Tax', total: 'Total', searchP: 'Search product...',
-    success: 'Operation successful!', loading: 'Processing...',
-    cartTitle: 'Order Cart', goBack: 'Back', viewCart: 'View Cart',
-    cash: 'Cash', card: 'Card', kita: 'Kita', split: 'Split',
-    subtotal: 'Subtotal:', discount: 'Discount:', serviceFee: 'Service Fee:',
-    totalLabel: 'Total:', checkoutBtn: 'Complete Payment',
-    emptyCartDesc: 'Select products from the menu to add',
+    // Auth / common
+    login: 'Login', errLogin: 'Login failed', loading: 'Loading...',
+    cancel: 'Cancel', confirm: 'Confirm', ok: 'OK', close: 'Close', back: 'Back',
+    errorTitle: 'Error', success: 'Operation successful!',
+    yes: 'Yes', no: 'No', print: 'Print',
+
+    // Navigation / header
+    sales: 'Sales', home: 'Home', inventory: 'Inventory', users: 'Users',
+    reports: 'Reports', settings: 'Settings', dash: 'Dashboard',
+    pos: 'POS', dashboard: 'Dashboard', logout: 'Logout',
+    installApp: 'Install App', installingApp: 'Installing app…',
+
+    // Shift — general
+    shift: 'Shift:', openShift: 'Open Shift', closeShift: 'Close Shift', noShift: 'No open shift',
+    openShiftTitle: 'Open Shift', openShiftMsg: 'Open a new shift for: ',
+    openShiftBtn: 'Open Shift', shiftStarted: 'Shift started successfully!',
+    shiftAlreadyOpen: 'A shift is already open', noActiveShift: 'You have no active shift to close',
+    shiftRequired: 'A shift must be opened to receive orders.',
+    noShiftTitle: 'No Open Shift', noShiftBodyMsg: 'No shift is currently open. Open a new shift before completing payment.',
+    shiftClosed: 'Shift closed successfully!',
+    shiftClose: 'Close Shift', confirmClose: 'Approve & Close', approveAndClose: 'Approve & Close',
+    enterAmounts: 'Enter the actual drawer amounts:',
+    cashAmount: 'Cash Amount', cardAmount: 'Card / Network', kitaAmount: 'Kita / Credit',
+    confirmCloseTitle: 'Confirm Close',
+    diffExactMsg: 'Difference is exactly 0.00. Continue to close the shift?',
+
+    // Shift variance block
+    unbalancedDiff: 'Unbalanced Difference',
+    noAmountEnteredMsg: 'No amount entered! Expected sales in the system are ',
+    noAmountEnteredMsgSuffix: '. Enter the actual drawer amounts before closing.',
+    unbalancedMsg: 'There is a difference between the drawer amounts and recorded sales. The difference must be zero to close the shift. Please review the invoices and correct the amounts, then try again.',
+    method: 'Method', expected: 'Expected', actual: 'Actual', difference: 'Difference',
+    varianceBlockNote: '⚠️ You cannot close the shift until the difference is zero. Go back and review the invoices in the log.',
+    backToInvoices: 'Back to Review Invoices',
+
+    // Shift close report
+    shiftCloseReport: 'Shift Close Report',
+    shiftNumber: 'Shift Number', cashierLabel: 'Cashier', closeDate: 'Close Date',
+    ordersCount: 'Orders Count', totalSales: 'Total Sales',
+    diffExactConfirm: 'Difference is exact — data is valid',
+    identifier: 'ID', amountSar: 'Amount (SAR)',
+    diffZeroValid: '✅ Difference: 0.00 — Exact',
+    sendWhatsApp: 'Send via WhatsApp',
+
+    // WhatsApp report
+    wappTitle: '🧾 *Shift Close Report*',
+    wappOrders: '🧾 Orders: ',
+    wappTotalSales: '💰 Total Sales: ',
+    wappCashier: '👤 Cashier',
+    wappDate: '🕐 Date',
+    wappShiftId: '📋 Shift ID',
+    wappPaymentBreakdown: '*Payment Breakdown:*',
+    wappCash: '• Cash: ',
+    wappCard: '• Card: ',
+    wappKita: '• Kita: ',
+    wappDiffExact: '✅ Difference: 0.00 — Exact',
+
+    // Cart
+    cartTitle: 'Order Cart', goBack: 'Back', viewCart: 'Cart',
+    emptyCart: 'Cart is empty!', emptyCartDesc: 'Select products from the menu to add',
+    subtotal: 'Subtotal:', discount: 'Discount:',
+    serviceFee: 'Service Fee:', serviceFeeAuto: 'auto',
+    serviceFeeInputPH: 'Enter service fee manually',
+    totalLabel: 'Total:', total: 'Total', tax: 'Tax',
+    checkout: 'Checkout', checkoutBtn: 'Complete Payment',
+    clearCart: 'Clear Cart',
+    clearCartTitle: 'Clear Cart', clearCartMsg: 'Remove all items from the cart?',
+    yesClear: 'Yes, clear',
+    addDiscount: 'Add Discount', emptyCartTitle: 'Clear Cart',
+
+    // Search / product grid
+    searchP: 'Search product...', searchPlaceholder: 'Search by number or product name...',
+    categories: 'Categories', allItems: 'All',
+    outOfStock: 'Out', inStock: 'In Stock', noProducts: 'No products',
     qty: 'Qty', price: 'Price', remove: 'Remove', addToCart: 'Add to Cart',
-    shiftClose: 'Close Shift', cashAmount: 'Cash Amount', cardAmount: 'Card / Network', kitaAmount: 'Kita / Credit',
-    confirmClose: 'Confirm & Close Shift', cancel: 'Cancel',
-    enterAmounts: 'Enter actual drawer amounts:', shiftReport: 'Shift Close Report',
-    categories: 'Categories', allItems: 'All', outOfStock: 'Out', inStock: 'In Stock',
-    pos: 'POS', dashboard: 'Dashboard', logout: 'Logout'
+    decrease: 'Decrease', increase: 'Increase', add: 'Add', deleteLabel: 'Delete',
+
+    // Payment methods
+    cash: 'Cash', card: 'Card', kita: 'Kita', split: 'Split',
+    splitPayment: 'Split Payment', splitTitle: 'Split Payment',
+    remaining: 'Remaining:',
+    splitMismatchTitle: 'Split Mismatch',
+    splitMismatchPre: 'Split total (',
+    splitMismatchMid: ') does not equal the grand total (',
+    splitMismatchSuf: ')',
+
+    // Discount modal
+    chooseDiscount: 'Choose a Discount',
+    noDiscounts: 'No discounts available',
+    discountApplied: 'Discount applied',
+
+    // Checkout / order save
+    orderSaved: 'Order saved successfully!',
+    invoiceSaveFailed: 'Failed to save invoice',
+    invoiceSaveErrorDefault: 'Could not save invoice to the database',
+    connectionFailed: 'Connection failed',
+    connectionFailedMsg: 'Could not reach the server to save the invoice',
+    userNotRecognized: 'User not recognized. Please log in again.',
+    confirmServiceFeeTitle: 'Confirm Service Fee',
+    serviceFeeLine: 'Service fee: ',
+    totalLine: 'Total: ',
+    continue: 'Continue',
+    failLoadData: 'Failed to load data',
+    failConnect: 'Could not connect to the server',
+
+    // Receipt
+    receiptTitle: 'Invoice',
+    simplifiedTaxInvoice: 'Simplified Tax Invoice',
+    thankYou: 'Thank you for your visit',
+    receiptTotalLabel: 'Total',
+    receiptNetLabel: 'Net',
+    receiptVatLabel: 'VAT',
+
+    // Glass confirm/alert fallbacks
+    confirmTitle: 'Confirm', alertTitle: 'Notice',
+
+    // Language toggle toast
+    switchedAr: 'Switched to Arabic',
+    switchedEn: 'Switched to English'
   }
 };
 window.t = function(k) { return (dict[state.lang] && dict[state.lang][k]) || k; };
@@ -84,9 +291,29 @@ window.applyLang = function() {
   }
 };
 window.translateUI = function() {
+  // Text content
   document.querySelectorAll('[data-i18n]').forEach(function(el) {
     var key = el.getAttribute('data-i18n');
-    if (dict[state.lang] && dict[state.lang][key]) el.textContent = dict[state.lang][key];
+    var v = dict[state.lang] && dict[state.lang][key];
+    if (v !== undefined) el.textContent = v;
+  });
+  // Placeholders
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el) {
+    var key = el.getAttribute('data-i18n-placeholder');
+    var v = dict[state.lang] && dict[state.lang][key];
+    if (v !== undefined) el.setAttribute('placeholder', v);
+  });
+  // title attributes (tooltips)
+  document.querySelectorAll('[data-i18n-title]').forEach(function(el) {
+    var key = el.getAttribute('data-i18n-title');
+    var v = dict[state.lang] && dict[state.lang][key];
+    if (v !== undefined) el.setAttribute('title', v);
+  });
+  // aria-label
+  document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el) {
+    var key = el.getAttribute('data-i18n-aria-label');
+    var v = dict[state.lang] && dict[state.lang][key];
+    if (v !== undefined) el.setAttribute('aria-label', v);
   });
 };
 window.toggleLang = function() {
@@ -95,7 +322,7 @@ window.toggleLang = function() {
   applyLang();
   translateUI();
   if (typeof window.onLangChange === 'function') window.onLangChange();
-  showToast(state.lang === 'ar' ? 'تم التحويل للعربية' : 'Switched to English');
+  showToast(state.lang === 'ar' ? t('switchedAr') : t('switchedEn'));
 };
 
 // ─── Loader ───
@@ -203,11 +430,11 @@ window.ensureGlassConfirmModal = function() {
   m.className = 'glass-modal hidden';
   m.innerHTML =
     '<div class="glass-modal-content small">' +
-      '<div class="glass-modal-title"><span id="gcTitle"><i class="fas fa-question-circle"></i> تأكيد</span></div>' +
+      '<div class="glass-modal-title"><span id="gcTitle"><i class="fas fa-question-circle"></i> ' + t('confirmTitle') + '</span></div>' +
       '<div class="glass-modal-body"><p id="gcMessage" class="glass-modal-message"></p></div>' +
       '<div class="glass-modal-actions" id="gcActions">' +
-        '<button class="btn btn-light" onclick="closeGlassModal(\'#modalGlassConfirm\', false)">إلغاء</button>' +
-        '<button class="btn btn-primary" onclick="closeGlassModal(\'#modalGlassConfirm\', true)">تأكيد</button>' +
+        '<button class="btn btn-light" onclick="closeGlassModal(\'#modalGlassConfirm\', false)">' + t('cancel') + '</button>' +
+        '<button class="btn btn-primary" onclick="closeGlassModal(\'#modalGlassConfirm\', true)">' + t('confirm') + '</button>' +
       '</div>' +
     '</div>';
   document.body.appendChild(m);
@@ -224,8 +451,8 @@ window.glassConfirm = function(title, message, opts) {
   if (actions) {
     var okClass = opts.danger ? 'btn-danger' : 'btn-primary';
     actions.innerHTML =
-      '<button class="btn btn-light" onclick="closeGlassModal(\'#modalGlassConfirm\', false)">' + (opts.cancelText || 'إلغاء') + '</button>' +
-      '<button class="btn ' + okClass + '" onclick="closeGlassModal(\'#modalGlassConfirm\', true)">' + (opts.okText || 'تأكيد') + '</button>';
+      '<button class="btn btn-light" onclick="closeGlassModal(\'#modalGlassConfirm\', false)">' + (opts.cancelText || t('cancel')) + '</button>' +
+      '<button class="btn ' + okClass + '" onclick="closeGlassModal(\'#modalGlassConfirm\', true)">' + (opts.okText || t('confirm')) + '</button>';
   }
   return new Promise(function(resolve) {
     state._gcResolve = resolve;
@@ -241,7 +468,7 @@ window.glassAlert = function(title, message, opts) {
   var actions = q('#gcActions');
   if (tEl) tEl.innerHTML = '<i class="fas ' + (opts.danger ? 'fa-exclamation-circle' : 'fa-info-circle') + '"></i> ' + title;
   if (mEl) mEl.textContent = message;
-  if (actions) actions.innerHTML = '<button class="btn btn-primary" onclick="closeGlassModal(\'#modalGlassConfirm\', true)" style="flex:1;">حسناً</button>';
+  if (actions) actions.innerHTML = '<button class="btn btn-primary" onclick="closeGlassModal(\'#modalGlassConfirm\', true)" style="flex:1;">' + t('ok') + '</button>';
   return new Promise(function(resolve) {
     state._gcResolve = resolve;
     openGlassModal('#modalGlassConfirm');

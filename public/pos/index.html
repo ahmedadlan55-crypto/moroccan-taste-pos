@@ -71,7 +71,7 @@
   <!-- Loader -->
   <div id="loader">
     <div class="spinner"></div>
-    <h3 style="margin-top:20px;color:#fff;font-weight:800;">جاري التحميل...</h3>
+    <h3 style="margin-top:20px;color:#fff;font-weight:800;" data-i18n="loading">جاري التحميل...</h3>
   </div>
 
   <!-- Compact POS Top Bar -->
@@ -83,7 +83,7 @@
     <section class="pos-products-area">
       <div class="pos-search-bar">
         <i class="fas fa-search"></i>
-        <input type="text" id="posSearchInput" placeholder="البحث برقم، أو اسم المنتج..." oninput="renderMenuGrid()" autocomplete="off">
+        <input type="text" id="posSearchInput" placeholder="البحث برقم، أو اسم المنتج..." data-i18n-placeholder="searchPlaceholder" oninput="renderMenuGrid()" autocomplete="off">
       </div>
       <div class="pos-categories" id="posCatTabs"></div>
       <div class="pos-grid" id="posItemsGrid"></div>
@@ -92,7 +92,7 @@
     <!-- Cart Area (Glass) -->
     <aside class="pos-cart-area glass-card" id="mobileCartPanel">
       <div class="cart-header">
-        <button class="btn-icon-pill mobile-close-cart" onclick="toggleMobileCart()" aria-label="رجوع">
+        <button class="btn-icon-pill mobile-close-cart" onclick="toggleMobileCart()" aria-label="رجوع" data-i18n-aria-label="back">
           <i class="fas fa-arrow-right"></i>
         </button>
         <h3 class="desktop-cart-title">
@@ -100,10 +100,10 @@
           <span data-i18n="cartTitle">سلة الطلبات</span>
         </h3>
         <div class="cart-actions">
-          <button class="btn-icon-pill warn" onclick="openDiscountModal()" aria-label="خصم" title="إضافة خصم">
+          <button class="btn-icon-pill warn" onclick="openDiscountModal()" aria-label="خصم" data-i18n-aria-label="discount" title="إضافة خصم" data-i18n-title="addDiscount">
             <i class="fas fa-tag"></i>
           </button>
-          <button class="btn-icon-pill danger" onclick="clearCart()" aria-label="مسح السلة" title="إفراغ السلة">
+          <button class="btn-icon-pill danger" onclick="clearCart()" aria-label="مسح السلة" data-i18n-aria-label="clearCart" title="إفراغ السلة" data-i18n-title="emptyCartTitle">
             <i class="fas fa-trash"></i>
           </button>
         </div>
@@ -127,11 +127,11 @@
 
         <div class="hidden service-fee-row" id="serviceFeeRow">
           <div class="service-fee-row-top">
-            <span id="serviceFeeLabel">رسوم الخدمة:</span>
+            <span id="serviceFeeLabel" data-i18n="serviceFee">رسوم الخدمة:</span>
             <span id="serviceFeeText">0.00</span>
           </div>
           <div class="service-fee-row-bottom">
-            <input type="number" id="serviceFeeInput" step="0.01" min="0" class="form-control" placeholder="أدخل مبلغ الرسوم يدوياً" oninput="applyManualServiceFee()">
+            <input type="number" id="serviceFeeInput" step="0.01" min="0" class="form-control" placeholder="أدخل مبلغ الرسوم يدوياً" data-i18n-placeholder="serviceFeeInputPH" oninput="applyManualServiceFee()">
             <span class="service-fee-currency">SAR</span>
           </div>
         </div>
@@ -143,10 +143,10 @@
 
         <!-- Split payment panel -->
         <div id="splitPayPanel" class="hidden split-panel">
-          <h4><i class="fas fa-divide"></i> <span data-i18n="split">تجزئة الدفع</span></h4>
+          <h4><i class="fas fa-divide"></i> <span data-i18n="splitTitle">تجزئة الدفع</span></h4>
           <div id="splitFields" class="split-fields"></div>
           <div class="split-remaining-row">
-            <span id="splitRemainingLabel">المتبقي:</span>
+            <span id="splitRemainingLabel" data-i18n="remaining">المتبقي:</span>
             <span id="splitRemaining">0.00</span>
           </div>
         </div>
@@ -171,10 +171,10 @@
 
   <!-- Floating Shift Controls -->
   <div class="float-actions">
-    <button class="float-btn float-btn-success" onclick="shiftOpen()" title="فتح وردية" aria-label="فتح وردية">
+    <button class="float-btn float-btn-success" onclick="shiftOpen()" title="فتح وردية" data-i18n-title="openShift" aria-label="فتح وردية" data-i18n-aria-label="openShift">
       <i class="fas fa-play"></i>
     </button>
-    <button class="float-btn float-btn-danger" onclick="shiftCloseStart()" title="إغلاق الوردية" aria-label="إغلاق الوردية">
+    <button class="float-btn float-btn-danger" onclick="shiftCloseStart()" title="إغلاق الوردية" data-i18n-title="closeShift" aria-label="إغلاق الوردية" data-i18n-aria-label="closeShift">
       <i class="fas fa-stop"></i>
     </button>
   </div>
@@ -185,8 +185,8 @@
   <div id="modalDiscount" class="glass-modal hidden">
     <div class="glass-modal-content">
       <div class="glass-modal-title">
-        <span><i class="fas fa-tag"></i> اختر خصماً</span>
-        <button class="glass-modal-close" onclick="closeGlassModal('#modalDiscount')" aria-label="إغلاق">&times;</button>
+        <span><i class="fas fa-tag"></i> <span data-i18n="chooseDiscount">اختر خصماً</span></span>
+        <button class="glass-modal-close" onclick="closeGlassModal('#modalDiscount')" aria-label="إغلاق" data-i18n-aria-label="close">&times;</button>
       </div>
       <div id="discModalList" class="glass-modal-body"></div>
     </div>
@@ -197,7 +197,7 @@
     <div class="glass-modal-content">
       <div class="glass-modal-title">
         <span><i class="fas fa-stop-circle"></i> <span data-i18n="shiftClose">إغلاق الوردية</span></span>
-        <button class="glass-modal-close" onclick="closeGlassModal('#modalShiftClose')" aria-label="إغلاق">&times;</button>
+        <button class="glass-modal-close" onclick="closeGlassModal('#modalShiftClose')" aria-label="إغلاق" data-i18n-aria-label="close">&times;</button>
       </div>
       <div class="glass-modal-body">
         <p class="glass-modal-hint" data-i18n="enterAmounts">أدخل المبالغ الفعلية في الدرج:</p>
@@ -215,7 +215,7 @@
         </div>
         <div class="glass-modal-actions">
           <button class="btn btn-light" onclick="closeGlassModal('#modalShiftClose')" data-i18n="cancel">إلغاء</button>
-          <button class="btn btn-danger" onclick="shiftConfirmClose()" data-i18n="confirmClose"><i class="fas fa-check-double"></i> اعتماد وإغلاق</button>
+          <button class="btn btn-danger" onclick="shiftConfirmClose()"><i class="fas fa-check-double"></i> <span data-i18n="approveAndClose">اعتماد وإغلاق</span></button>
         </div>
       </div>
     </div>
@@ -225,11 +225,11 @@
   <div id="modalShiftVariance" class="glass-modal hidden">
     <div class="glass-modal-content danger">
       <div class="glass-modal-title">
-        <span><i class="fas fa-exclamation-triangle"></i> فرق غير متوازن</span>
+        <span><i class="fas fa-exclamation-triangle"></i> <span data-i18n="unbalancedDiff">فرق غير متوازن</span></span>
       </div>
       <div class="glass-modal-body" id="varianceBody"></div>
       <div class="glass-modal-actions">
-        <button class="btn btn-light" onclick="closeGlassModal('#modalShiftVariance')"><i class="fas fa-arrow-right"></i> رجوع لمراجعة الفواتير</button>
+        <button class="btn btn-light" onclick="closeGlassModal('#modalShiftVariance')"><i class="fas fa-arrow-right"></i> <span data-i18n="backToInvoices">رجوع لمراجعة الفواتير</span></button>
       </div>
     </div>
   </div>
@@ -238,14 +238,14 @@
   <div id="modalShiftReport" class="glass-modal hidden">
     <div class="glass-modal-content large">
       <div class="glass-modal-title">
-        <span><i class="fas fa-clipboard-check"></i> تقرير إغلاق الوردية</span>
-        <button class="glass-modal-close" onclick="closeGlassModal('#modalShiftReport')" aria-label="إغلاق">&times;</button>
+        <span><i class="fas fa-clipboard-check"></i> <span data-i18n="shiftCloseReport">تقرير إغلاق الوردية</span></span>
+        <button class="glass-modal-close" onclick="closeGlassModal('#modalShiftReport')" aria-label="إغلاق" data-i18n-aria-label="close">&times;</button>
       </div>
       <div class="glass-modal-body" id="shiftReportBody"></div>
       <div class="glass-modal-actions">
-        <button class="btn btn-success" onclick="shareShiftReportWhatsApp()"><i class="fab fa-whatsapp"></i> إرسال عبر واتساب</button>
-        <button class="btn btn-primary" onclick="printShiftReport()"><i class="fas fa-print"></i> طباعة</button>
-        <button class="btn btn-light" onclick="closeGlassModal('#modalShiftReport')">إغلاق</button>
+        <button class="btn btn-success" onclick="shareShiftReportWhatsApp()"><i class="fab fa-whatsapp"></i> <span data-i18n="sendWhatsApp">إرسال عبر واتساب</span></button>
+        <button class="btn btn-primary" onclick="printShiftReport()"><i class="fas fa-print"></i> <span data-i18n="print">طباعة</span></button>
+        <button class="btn btn-light" onclick="closeGlassModal('#modalShiftReport')" data-i18n="close">إغلاق</button>
       </div>
     </div>
   </div>
@@ -254,13 +254,13 @@
   <div id="modalReceipt" class="glass-modal hidden">
     <div class="glass-modal-content">
       <div class="glass-modal-title">
-        <span><i class="fas fa-receipt"></i> فاتورة</span>
-        <button class="glass-modal-close" onclick="closeGlassModal('#modalReceipt')" aria-label="إغلاق">&times;</button>
+        <span><i class="fas fa-receipt"></i> <span data-i18n="receiptTitle">فاتورة</span></span>
+        <button class="glass-modal-close" onclick="closeGlassModal('#modalReceipt')" aria-label="إغلاق" data-i18n-aria-label="close">&times;</button>
       </div>
       <div id="receiptBox" class="receipt-box"></div>
       <div class="glass-modal-actions">
-        <button class="btn btn-primary" onclick="printReceiptWindow()"><i class="fas fa-print"></i> طباعة</button>
-        <button class="btn btn-light" onclick="closeGlassModal('#modalReceipt')">إغلاق</button>
+        <button class="btn btn-primary" onclick="printReceiptWindow()"><i class="fas fa-print"></i> <span data-i18n="print">طباعة</span></button>
+        <button class="btn btn-light" onclick="closeGlassModal('#modalReceipt')" data-i18n="close">إغلاق</button>
       </div>
     </div>
   </div>
@@ -269,14 +269,14 @@
   <div id="modalGlassConfirm" class="glass-modal hidden">
     <div class="glass-modal-content small">
       <div class="glass-modal-title">
-        <span id="gcTitle"><i class="fas fa-question-circle"></i> تأكيد</span>
+        <span id="gcTitle"><i class="fas fa-question-circle"></i> <span data-i18n="confirmTitle">تأكيد</span></span>
       </div>
       <div class="glass-modal-body">
         <p id="gcMessage" class="glass-modal-message"></p>
       </div>
       <div class="glass-modal-actions" id="gcActions">
-        <button class="btn btn-light" onclick="closeGlassModal('#modalGlassConfirm', false)">إلغاء</button>
-        <button class="btn btn-primary" onclick="closeGlassModal('#modalGlassConfirm', true)">تأكيد</button>
+        <button class="btn btn-light" onclick="closeGlassModal('#modalGlassConfirm', false)" data-i18n="cancel">إلغاء</button>
+        <button class="btn btn-primary" onclick="closeGlassModal('#modalGlassConfirm', true)" data-i18n="confirm">تأكيد</button>
       </div>
     </div>
   </div>

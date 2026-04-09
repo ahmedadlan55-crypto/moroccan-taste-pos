@@ -21,16 +21,10 @@ async function recomputeMenuCost(menuId) {
 
   const computedCost = Number(rows[0].computed_cost) || 0;
 
-  // Update computed_cost on the menu row
+  // Update computed_cost on the menu row.
+  // IMPORTANT: we NEVER auto-update menu.price — the selling price is
+  // always manual. Only the COST is auto-computed from recipes.
   await db.query('UPDATE menu SET computed_cost = ? WHERE id = ?', [computedCost, menuId]);
-
-  // If variable pricing, auto-update the selling price
-  const [menuRows] = await db.query('SELECT pricing_mode, markup_pct FROM menu WHERE id = ?', [menuId]);
-  if (menuRows.length && menuRows[0].pricing_mode === 'variable') {
-    const markup = Number(menuRows[0].markup_pct) || 0;
-    const newPrice = Math.round(computedCost * (1 + markup / 100) * 100) / 100;
-    await db.query('UPDATE menu SET price = ? WHERE id = ?', [newPrice, menuId]);
-  }
 
   return computedCost;
 }

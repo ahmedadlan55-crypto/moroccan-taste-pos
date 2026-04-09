@@ -42,22 +42,11 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { name, price, category, cost, stock, minStock, active, pricingMode, markupPct } = req.body;
-    // If variable pricing, the price is auto-computed — don't overwrite it from the form.
-    // Only update pricing_mode and markup_pct; the cascade will handle the price.
-    if (pricingMode === 'variable') {
-      await db.query(
-        'UPDATE menu SET name=?, category=?, cost=?, stock=?, min_stock=?, active=?, pricing_mode=?, markup_pct=? WHERE id=?',
-        [name, category, cost || 0, stock, minStock, active, 'variable', markupPct || 30, req.params.id]);
-      // Recompute the price now from the stored computed_cost
-      try {
-        const { recomputeMenuCost } = require('./pricing-utils');
-        await recomputeMenuCost(req.params.id);
-      } catch(e) {}
-    } else {
-      await db.query(
-        'UPDATE menu SET name=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?, pricing_mode=?, markup_pct=? WHERE id=?',
-        [name, price, category, cost || 0, stock, minStock, active, 'fixed', markupPct || 30, req.params.id]);
-    }
+    // Price is ALWAYS manual (user sets it). pricing_mode only controls
+    // whether the COST comes from recipes (variable) or manual input (fixed).
+    await db.query(
+      'UPDATE menu SET name=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?, pricing_mode=?, markup_pct=? WHERE id=?',
+      [name, price, category, cost || 0, stock, minStock, active, pricingMode || 'variable', markupPct || 0, req.params.id]);
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });

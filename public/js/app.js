@@ -1625,8 +1625,8 @@ function loadDashMenu() {
                 ? '<span style="font-weight:800;color:#ef4444;">' + formatVal(recipeCost) + '</span> <span style="font-size:11px;color:#64748b;">(' + ings.length + ' مكوّن)</span>'
                 : '<span style="color:#94a3b8;font-size:11px;">لا توجد مقادير</span>';
               var priceBadge = (i.pricingMode === 'variable')
-                ? '<div style="font-size:10px;"><span class="badge" style="background:#dbeafe;color:#1e40af;">🔄 متغير ' + (Number(i.markupPct)||30) + '%</span></div>'
-                : '<div style="font-size:10px;"><span class="badge" style="background:#f1f5f9;color:#64748b;">🔒 ثابت</span></div>';
+                ? '<div style="font-size:10px;"><span class="badge" style="background:#dbeafe;color:#1e40af;">🔄 تكلفة متغيرة</span></div>'
+                : '<div style="font-size:10px;"><span class="badge" style="background:#fef3c7;color:#92400e;">🔒 تكلفة ثابتة</span></div>';
               h += '<tr>'+
                 '<td><code style="font-size:11px;color:#64748b;">'+(i.id||'')+'</code></td>'+
                 '<td style="font-weight:800;">'+(i.name||'')+priceBadge+'</td>'+
@@ -1850,27 +1850,19 @@ function openInvM(mode, id = null) {
   openModal("#modalInvForm");
 }
 
-// Show/hide markup field and lock/unlock price field based on pricing mode toggle
+// Toggle: variable cost (from recipes/inventory) vs fixed cost (manual).
+// Selling price is ALWAYS manual — this only controls the cost source.
 function togglePricingMode() {
-  var isVariable = q("#miPricingVariable") && q("#miPricingVariable").checked;
-  var priceInput = q("#miPrice");
-  var priceGroup = q("#priceGroup");
-  var markupGroup = q("#markupGroup");
-  if (isVariable) {
-    if (priceInput) { priceInput.readOnly = true; priceInput.style.background = '#f1f5f9'; priceInput.style.color = '#94a3b8'; }
-    if (markupGroup) markupGroup.style.display = '';
-    // Auto-compute price preview: computed_cost × (1 + markup/100)
-    var cc = Number(q("#miComputedCost") ? q("#miComputedCost").value : 0);
-    var mk = Number(q("#miMarkupPct") ? q("#miMarkupPct").value : 30);
-    if (priceInput && cc > 0) priceInput.value = (cc * (1 + mk / 100)).toFixed(2);
-    // Highlight variable label
-    if (q("#labelPricingVariable")) q("#labelPricingVariable").style.borderColor = '#3b82f6';
-    if (q("#labelPricingFixed")) q("#labelPricingFixed").style.borderColor = '#e2e8f0';
-  } else {
-    if (priceInput) { priceInput.readOnly = false; priceInput.style.background = ''; priceInput.style.color = ''; }
-    if (markupGroup) markupGroup.style.display = 'none';
+  var isFixed = q("#miPricingFixed") && q("#miPricingFixed").checked;
+  var manualCostGroup = q("#manualCostGroup");
+  if (isFixed) {
+    if (manualCostGroup) manualCostGroup.style.display = '';
     if (q("#labelPricingFixed")) q("#labelPricingFixed").style.borderColor = '#3b82f6';
     if (q("#labelPricingVariable")) q("#labelPricingVariable").style.borderColor = '#e2e8f0';
+  } else {
+    if (manualCostGroup) manualCostGroup.style.display = 'none';
+    if (q("#labelPricingVariable")) q("#labelPricingVariable").style.borderColor = '#3b82f6';
+    if (q("#labelPricingFixed")) q("#labelPricingFixed").style.borderColor = '#e2e8f0';
   }
 }
 

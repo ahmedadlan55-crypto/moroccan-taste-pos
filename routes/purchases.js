@@ -62,6 +62,10 @@ router.post('/', async (req, res) => {
 });
 
 // Receive purchase (update status, add stock)
+//
+// If the purchase came from an approved PO (po_id is set), this endpoint
+// also updates the PO's status to 'received' and marks each PO line's
+// received_qty so the PO reflects the real state of the warehouse.
 router.post('/receive/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -76,21 +80,35 @@ router.post('/receive/:id', async (req, res) => {
 
     const items = JSON.parse(purchase.items_json || '[]');
 
-    // Update stock for each item
+    // Update stock for each item + record movement
     for (const item of items) {
       if (item.id) {
-        await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?', [item.qty || 0, item.id]);
+        await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?', [Number(item.qty) || 0, item.id]);
 
-        // Record movement
         const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
         await db.query(
           'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
-          [movId, now, item.id, item.name || '', 'in', item.qty || 0, 'مشتريات', username || '', 'PUR: ' + id]
+          [movId, now, item.id, item.name || '', 'in', Number(item.qty) || 0, 'مشتريات', username || '', 'PUR: ' + id]
         );
       }
     }
 
+    // Mark the purchase itself as received
     await db.query('UPDATE purchases SET status = "received" WHERE id = ?', [id]);
+
+    // Back-propagate to the linked PO (if any)
+    if (purchase.po_id) {
+      await db.query('UPDATE purchase_orders SET status = "received" WHERE id = ?', [purchase.po_id]);
+      // Mirror received_qty on each po_line (match by item_id)
+      for (const item of items) {
+        if (item.id) {
+          await db.query(
+            'UPDATE po_lines SET received_qty = received_qty + ? WHERE po_id = ? AND item_id = ?',
+            [Number(item.qty) || 0, purchase.po_id, item.id]
+          );
+        }
+      }
+    }
 
     res.json({ success: true });
   } catch (e) {
@@ -150,9 +168,16 @@ router.get('/orders', async (req, res) => {
 });
 
 // Create purchase order
+// Accepts BOTH {lines, poDate} and {items, date} from the frontend to stay
+// backward-compatible with the ERP UI which sends {items, date}.
 router.post('/orders', async (req, res) => {
   try {
-    const { supplierId, supplierName, poDate, expectedDate, lines, notes, username } = req.body;
+    const { supplierId, supplierName, notes, username } = req.body;
+    const poDate = req.body.poDate || req.body.date;
+    const expectedDate = req.body.expectedDate;
+    // Support both `lines` (legacy) and `items` (ERP UI)
+    const lines = req.body.lines || req.body.items || [];
+
     const poId = 'PO-' + Date.now();
 
     // Calculate next PO number
@@ -207,10 +232,14 @@ router.post('/orders', async (req, res) => {
 });
 
 // Update purchase order
+// Accepts both {lines, poDate} and {items, date} for frontend compatibility.
 router.put('/orders/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { supplierId, supplierName, poDate, expectedDate, lines, notes } = req.body;
+    const { supplierId, supplierName, notes } = req.body;
+    const poDate = req.body.poDate || req.body.date;
+    const expectedDate = req.body.expectedDate;
+    const lines = req.body.lines || req.body.items || [];
 
     // Only allow editing draft POs
     const [existing] = await db.query('SELECT status FROM purchase_orders WHERE id = ?', [id]);
@@ -260,28 +289,89 @@ router.put('/orders/:id', async (req, res) => {
 });
 
 // Approve PO
+//
+// In addition to flipping purchase_orders.status to 'approved', this endpoint
+// ALSO creates a matching row in the `purchases` table (status='draft') with
+// all the PO lines copied over as items_json. That way the approved PO
+// immediately shows up in the "المشتريات" (Purchases) section so the user
+// can go there and press "استلام" (Receive) to add stock to inventory.
+//
+// The link between the PO and its generated purchase is kept via the
+// `po_id` column on the purchases table, so we can clean up on revert and
+// back-propagate status on receive.
 router.post('/orders/:id/approve', async (req, res) => {
   try {
     const { id } = req.params;
     const { username } = req.body;
     const now = new Date();
 
-    const [existing] = await db.query('SELECT status FROM purchase_orders WHERE id = ?', [id]);
+    const [existing] = await db.query('SELECT * FROM purchase_orders WHERE id = ?', [id]);
     if (!existing.length) return res.json({ success: false, error: 'PO not found' });
     if (existing[0].status !== 'draft') return res.json({ success: false, error: 'Only draft POs can be approved' });
 
+    const po = existing[0];
+
+    // Load PO lines so we can copy them into the purchase
+    const [poLines] = await db.query('SELECT * FROM po_lines WHERE po_id = ?', [id]);
+
+    // Shape lines like the purchase items_json: [{ id, name, qty, unitPrice }]
+    const purchaseItems = poLines.map(l => ({
+      id: l.item_id,
+      name: l.item_name,
+      qty: Number(l.qty) || 0,
+      unitPrice: Number(l.unit_price) || 0
+    }));
+
+    const totalPrice = purchaseItems.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0);
+
+    // Guard: don't create a duplicate purchase if one already exists for this PO
+    const [existingPurchase] = await db.query('SELECT id FROM purchases WHERE po_id = ?', [id]);
+    let purchaseId;
+    if (existingPurchase.length) {
+      purchaseId = existingPurchase[0].id;
+    } else {
+      purchaseId = 'PUR-' + Date.now();
+      await db.query(
+        `INSERT INTO purchases (id, purchase_date, supplier_name, supplier_id, item_name, item_id, qty, unit_price, total_price, payment_method, username, notes, status, items_json, po_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          purchaseId,
+          now,
+          po.supplier_name || '',
+          po.supplier_id || null,
+          purchaseItems.length === 1 ? purchaseItems[0].name : 'متعدد',
+          purchaseItems.length === 1 ? purchaseItems[0].id : null,
+          purchaseItems.length === 1 ? purchaseItems[0].qty : 0,
+          purchaseItems.length === 1 ? purchaseItems[0].unitPrice : 0,
+          totalPrice,
+          'آجل',
+          username || '',
+          'من أمر الشراء ' + (po.po_number || id),
+          'draft',
+          JSON.stringify(purchaseItems),
+          id
+        ]
+      );
+    }
+
+    // Flip PO status
     await db.query(
       'UPDATE purchase_orders SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?',
       [username || '', now, id]
     );
 
-    res.json({ success: true });
+    res.json({ success: true, purchaseId });
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
 });
 
 // Revert PO (back to draft)
+//
+// Also deletes the linked draft purchase that was auto-created on approve.
+// We refuse to revert if the linked purchase was already received (that
+// would require stock rollback, which is outside the scope of a simple
+// revert and should be handled by deleting the received purchase first).
 router.post('/orders/:id/revert', async (req, res) => {
   try {
     const { id } = req.params;
@@ -290,6 +380,18 @@ router.post('/orders/:id/revert', async (req, res) => {
     if (!existing.length) return res.json({ success: false, error: 'PO not found' });
     if (existing[0].status === 'received') return res.json({ success: false, error: 'Cannot revert a received PO' });
 
+    // If there's a linked purchase, only allow revert if it's still draft
+    const [linkedPurchases] = await db.query('SELECT id, status FROM purchases WHERE po_id = ?', [id]);
+    for (const lp of linkedPurchases) {
+      if (lp.status === 'received') {
+        return res.json({ success: false, error: 'الفاتورة المرتبطة مستلمة بالفعل — لا يمكن التراجع' });
+      }
+    }
+
+    // Delete the linked draft purchase(s)
+    await db.query('DELETE FROM purchases WHERE po_id = ? AND status = "draft"', [id]);
+
+    // Flip the PO back to draft
     await db.query(
       'UPDATE purchase_orders SET status = "draft", approved_by = NULL, approved_at = NULL WHERE id = ?',
       [id]

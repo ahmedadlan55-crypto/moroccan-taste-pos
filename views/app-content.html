@@ -1716,4 +1716,64 @@
     </div>
   </div>
 
+  <!-- Theme Customizer Appended -->
+  <div class="theme-fab" onclick="toggleThemePanel()" title="تخصيص ألوان الواجهة">
+    <i class="fas fa-palette"></i>
+  </div>
   
+  <div class="theme-panel" id="themePanel">
+    <div class="theme-panel-header">
+      <h3>تخصيص المظهر</h3>
+      <button class="theme-panel-close" onclick="toggleThemePanel()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="theme-panel-body">
+      <!-- Presets -->
+      <div class="theme-section">
+        <div class="theme-section-title">ثيمات احترافية جاهزة</div>
+        <div class="theme-preset-grid">
+          <div class="theme-preset-card" onclick="applyPresetTheme('blue')" id="preset_blue">
+            <div class="theme-preset-colors">
+              <span style="background: #0f172a;"></span><span style="background: #0d47a1;"></span><span style="background: #3b82f6;"></span>
+            </div>
+            <div class="theme-preset-name">الأزرق الاحترافي</div>
+          </div>
+          <div class="theme-preset-card" onclick="applyPresetTheme('dark')" id="preset_dark">
+            <div class="theme-preset-colors">
+              <span style="background: #000000;"></span><span style="background: #111827;"></span><span style="background: #10b981;"></span>
+            </div>
+            <div class="theme-preset-name">الأسود الملكي</div>
+          </div>
+          <div class="theme-preset-card" onclick="applyPresetTheme('emerald')" id="preset_emerald">
+            <div class="theme-preset-colors">
+              <span style="background: #064e3b;"></span><span style="background: #047857;"></span><span style="background: #10b981;"></span>
+            </div>
+            <div class="theme-preset-name">الزمردي</div>
+          </div>
+          <div class="theme-preset-card" onclick="applyPresetTheme('crimson')" id="preset_crimson">
+            <div class="theme-preset-colors">
+              <span style="background: #4c0519;"></span><span style="background: #9f1239;"></span><span style="background: #e11d48;"></span>
+            </div>
+            <div class="theme-preset-name">القرمزي</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Custom Pickers -->
+      <div class="theme-section">
+        <div class="theme-section-title">تخصيص يدوي</div>
+        <div class="theme-picker-group">
+          <label>خلفية القائمة الجانبية</label>
+          <input type="color" id="themePickPrimary" onchange="applyCustomTheme()">
+        </div>
+        <div class="theme-picker-group">
+          <label>الألوان الرئيسية</label>
+          <input type="color" id="themePickSecondary" onchange="applyCustomTheme()">
+        </div>
+        <div class="theme-picker-group">
+          <label>اللون التمييزي (Accent)</label>
+          <input type="color" id="themePickAccent" onchange="applyCustomTheme()">
+        </div>
+        <button class="btn btn-primary" style="width: 100%; margin-top: 15px;" onclick="resetTheme()"><i class="fas fa-undo"></i> استعادة الافتراضي</button>
+      </div>
+    </div>
+  </div>

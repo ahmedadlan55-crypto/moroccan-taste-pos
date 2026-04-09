@@ -5043,3 +5043,91 @@ function printShiftPDF(data) {
   const w = window.open('', '_blank', 'width=900,height=1100');
   if (w) { w.document.open(); w.document.write(html); w.document.close(); }
 }
+
+// =========================================
+// 13. Dynamic Theme Customizer
+// =========================================
+const THEME_PRESETS = {
+  blue:    { primary: '#0f172a', secondary: '#0d47a1', accent: '#3b82f6' },
+  dark:    { primary: '#000000', secondary: '#111827', accent: '#10b981' },
+  emerald: { primary: '#064e3b', secondary: '#047857', accent: '#10b981' },
+  crimson: { primary: '#4c0519', secondary: '#9f1239', accent: '#e11d48' }
+};
+
+function toggleThemePanel() {
+  const panel = document.getElementById('themePanel');
+  if (panel) panel.classList.toggle('open');
+}
+
+function applyPresetTheme(presetName) {
+  const t = THEME_PRESETS[presetName];
+  if (!t) return;
+  document.documentElement.style.setProperty('--primary', t.primary);
+  document.documentElement.style.setProperty('--secondary', t.secondary);
+  document.documentElement.style.setProperty('--accent', t.accent);
+  
+  // Highlight active card
+  document.querySelectorAll('.theme-preset-card').forEach(c => c.classList.remove('active'));
+  document.getElementById('preset_'+presetName)?.classList.add('active');
+  
+  // Update pickers
+  if (document.getElementById('themePickPrimary')) document.getElementById('themePickPrimary').value = t.primary;
+  if (document.getElementById('themePickSecondary')) document.getElementById('themePickSecondary').value = t.secondary;
+  if (document.getElementById('themePickAccent')) document.getElementById('themePickAccent').value = t.accent;
+
+  localStorage.setItem('mt_theme_pref', JSON.stringify(t));
+}
+
+function applyCustomTheme() {
+  const p = document.getElementById('themePickPrimary').value;
+  const s = document.getElementById('themePickSecondary').value;
+  const a = document.getElementById('themePickAccent').value;
+  
+  document.documentElement.style.setProperty('--primary', p);
+  document.documentElement.style.setProperty('--secondary', s);
+  document.documentElement.style.setProperty('--accent', a);
+  
+  // Remove preset highlights
+  document.querySelectorAll('.theme-preset-card').forEach(c => c.classList.remove('active'));
+  
+  localStorage.setItem('mt_theme_pref', JSON.stringify({ primary: p, secondary: s, accent: a }));
+}
+
+function resetTheme() {
+  applyPresetTheme('blue');
+}
+
+function initTheme() {
+  try {
+    const saved = localStorage.getItem('mt_theme_pref');
+    if (saved) {
+      const t = JSON.parse(saved);
+      document.documentElement.style.setProperty('--primary', t.primary);
+      document.documentElement.style.setProperty('--secondary', t.secondary);
+      document.documentElement.style.setProperty('--accent', t.accent);
+      
+      // Attempt to highlight preset or just set value
+      let matched = false;
+      for (const [name, colors] of Object.entries(THEME_PRESETS)) {
+        if (colors.primary === t.primary && colors.secondary === t.secondary) {
+          document.getElementById('preset_'+name)?.classList.add('active');
+          matched = true;
+          break;
+        }
+      }
+      
+      if (document.getElementById('themePickPrimary')) {
+        document.getElementById('themePickPrimary').value = t.primary;
+        document.getElementById('themePickSecondary').value = t.secondary;
+        document.getElementById('themePickAccent').value = t.accent;
+      }
+    } else {
+      resetTheme();
+    }
+  } catch (e) { console.error('Theme Load Error', e); }
+}
+
+// Initialize theme as soon as this script is loaded / parsed
+document.addEventListener('DOMContentLoaded', initTheme);
+initTheme(); // Also immediately call it to prevent FOUC as much as possible
+

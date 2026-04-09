@@ -1048,31 +1048,119 @@ window.switchPrinterTab = function(tab) {
 // ─── Bluetooth (Web Bluetooth API) ───
 // Supported on Chrome/Edge desktop + Android. Not supported on iOS Safari.
 window.scanBluetoothPrinter = async function() {
-  if (!('bluetooth' in navigator)) {
-    return glassAlert(t('errorTitle'), t('unsupportedBrowserBluetooth'), { danger: true });
+  // ─── Pre-flight check 1: API available at all? ───
+  if (!('bluetooth' in navigator) || !navigator.bluetooth) {
+    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    var hint = isIOS
+      ? t('bluetoothIOSHint')
+      : t('unsupportedBrowserBluetooth');
+    return glassAlert(t('errorTitle'), hint, { danger: true });
   }
+
+  // ─── Pre-flight check 2: Secure context (HTTPS or localhost)? ───
+  // navigator.bluetooth.requestDevice silently fails on http:// pages.
+  if (!window.isSecureContext) {
+    return glassAlert(
+      t('errorTitle'),
+      t('bluetoothNotSecure') + '\n\n(' + location.protocol + '//' + location.host + ')',
+      { danger: true }
+    );
+  }
+
+  // ─── Pre-flight check 3: Radio turned on? ───
+  // getAvailability() is the newer API that checks if the adapter is powered.
+  // It doesn't exist on older browsers — treat absence as "probably OK".
   try {
-    // Generic thermal printer service UUIDs — covers most ESC/POS BLE printers.
-    // We also accept any device with a name so users can pair any printer the
-    // browser exposes in the picker.
+    if (typeof navigator.bluetooth.getAvailability === 'function') {
+      var available = await navigator.bluetooth.getAvailability();
+      if (!available) {
+        return glassAlert(t('errorTitle'), t('bluetoothRadioOff'), { danger: true });
+      }
+    }
+  } catch (e) {
+    console.warn('[Printer] getAvailability check failed:', e && e.message);
+  }
+
+  // ─── Pre-flight check 4: Running inside an installed PWA on Android? ───
+  // Chrome for Android has a known issue where Web Bluetooth returns
+  // NotFoundError from the standalone PWA window even though it works in
+  // the browser tab. Warn the user ONCE so they can open it in the tab
+  // if the scan comes up empty.
+  var inStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+  if (inStandalone && !localStorage.getItem('pos_bt_pwa_warned')) {
+    try { localStorage.setItem('pos_bt_pwa_warned', '1'); } catch (e) {}
+    await glassAlert(t('errorTitle'), t('bluetoothPwaWarning'), {});
+  }
+
+  // ─── Actual scan — open the browser's native device picker ───
+  // acceptAllDevices:true forces the browser to list every nearby BLE
+  // device, even ones that don't advertise a known service. This is the
+  // most compatible configuration for thermal printer discovery.
+  try {
+    console.log('[Printer] Bluetooth scan starting…');
     var device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
+      // Common thermal-printer service UUIDs so we can GATT-connect later.
+      // Any of these being pre-authorized doesn't affect the picker.
       optionalServices: [
-        '000018f0-0000-1000-8000-00805f9b34fb', // Common generic printer service
-        '0000ff00-0000-1000-8000-00805f9b34fb',
-        '49535343-fe7d-4ae5-8fa9-9fafd205e455'
+        '000018f0-0000-1000-8000-00805f9b34fb', // Generic printer service (0x18F0)
+        '0000ff00-0000-1000-8000-00805f9b34fb', // 0xFF00 custom
+        '0000ffe0-0000-1000-8000-00805f9b34fb', // 0xFFE0 HM-10 style
+        '49535343-fe7d-4ae5-8fa9-9fafd205e455', // Microchip BLE UART
+        'e7810a71-73ae-499d-8c15-faa9aef0c3f2', // BlueTooth Printer (some GP/POS devices)
+        '0000180a-0000-1000-8000-00805f9b34fb', // Device Information
+        '00001800-0000-1000-8000-00805f9b34fb', // Generic Access
+        '00001801-0000-1000-8000-00805f9b34fb'  // Generic Attribute
       ]
     });
+
+    console.log('[Printer] Device selected:', device && device.name, device && device.id);
+
+    if (!device) {
+      return glassAlert(t('errorTitle'), t('bluetoothNoDevicePicked'), { danger: true });
+    }
+
     savePrinter({
       type: 'bluetooth',
       name: device.name || 'Bluetooth Printer',
       id: device.id || ''
     });
     glassToast(t('printerConnected') + ': ' + (device.name || 'Bluetooth Printer'));
+
   } catch (err) {
-    // User cancelled the picker — not a real error
-    if (err && String(err.name || '').indexOf('NotFoundError') !== -1) return;
-    glassAlert(t('errorTitle'), (err && err.message) || String(err), { danger: true });
+    console.error('[Printer] Bluetooth scan failed:', err);
+
+    var errName = (err && err.name) || '';
+    var errMsg = (err && err.message) || String(err);
+
+    // User cancelled the native picker — silent, not an error
+    if (errName === 'NotFoundError' && errMsg.toLowerCase().indexOf('user cancel') !== -1) {
+      return;
+    }
+
+    // NotFoundError without "user cancel" usually means no devices in range
+    // or the adapter is off / blocked by permissions
+    if (errName === 'NotFoundError') {
+      return glassAlert(t('errorTitle'), t('bluetoothNoDevicesFound'), { danger: true });
+    }
+
+    // Security — not HTTPS, or blocked by permissions policy
+    if (errName === 'SecurityError') {
+      return glassAlert(t('errorTitle'), t('bluetoothSecurityError') + '\n\n' + errMsg, { danger: true });
+    }
+
+    // Permission denied (user clicked "Block" in Chrome)
+    if (errName === 'NotAllowedError') {
+      return glassAlert(t('errorTitle'), t('bluetoothPermissionDenied') + '\n\n' + errMsg, { danger: true });
+    }
+
+    // Not supported in this specific context (PWA / webview / etc.)
+    if (errName === 'NotSupportedError' || errMsg.indexOf('not supported') !== -1) {
+      return glassAlert(t('errorTitle'), t('bluetoothNotSupportedHere') + '\n\n' + errMsg, { danger: true });
+    }
+
+    // Anything else — show the raw error so we can diagnose
+    glassAlert(t('errorTitle'), errName + ': ' + errMsg, { danger: true });
   }
 };
 

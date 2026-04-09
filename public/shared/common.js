@@ -172,8 +172,17 @@ window.dict = {
     ipRequired: 'الرجاء إدخال عنوان IP',
     invalidIp: 'صيغة عنوان IP غير صحيحة',
     supported: 'مدعوم في هذا المتصفح',
-    unsupportedBrowserBluetooth: 'متصفحك لا يدعم Web Bluetooth — استخدم Chrome أو Edge على Android أو سطح المكتب.',
-    unsupportedBrowserUsb: 'متصفحك لا يدعم Web USB — استخدم Chrome أو Edge على Android أو سطح المكتب.'
+    unsupportedBrowserBluetooth: 'متصفحك لا يدعم Web Bluetooth. استخدم Chrome أو Edge على Android أو سطح المكتب (ليس iOS Safari ولا Firefox).',
+    unsupportedBrowserUsb: 'متصفحك لا يدعم Web USB. استخدم Chrome أو Edge على Android أو سطح المكتب.',
+    bluetoothIOSHint: 'Web Bluetooth غير مدعوم على أجهزة iPhone / iPad. لربط طابعة بلوتوث، استخدم خيار "شبكة" إذا كانت الطابعة تدعم WiFi، أو استخدم تطبيق طابعة من App Store.',
+    bluetoothNotSecure: 'البلوتوث يتطلب اتصالاً آمناً (HTTPS). تأكد من فتح الموقع عبر https:// وليس http://.',
+    bluetoothRadioOff: 'البلوتوث مُعطَّل في جهازك. افتح إعدادات الجهاز وشغّل البلوتوث، ثم حاول مرة أخرى.',
+    bluetoothPwaWarning: 'تنبيه: أنت تستخدم التطبيق في وضع "التطبيق المُثبَّت" (PWA). بعض إصدارات Chrome على Android لا تدعم البلوتوث في هذا الوضع. إذا لم تظهر أي طابعات في القائمة، افتح الرابط مباشرة في Chrome (ليس من الأيقونة المُثبَّتة).',
+    bluetoothNoDevicePicked: 'لم يتم اختيار أي جهاز.',
+    bluetoothNoDevicesFound: 'لم يتم العثور على أي جهاز بلوتوث قريب.\n\nتأكد من:\n• تشغيل الطابعة وأنها في وضع الإقران (Pairing Mode)\n• البلوتوث مُفعَّل على جهازك\n• الطابعة قريبة (أقل من 10 أمتار)\n• صلاحية البلوتوث مسموحة للمتصفح في إعدادات الجهاز',
+    bluetoothSecurityError: 'خطأ أمان — البلوتوث مرفوض بسبب سياسة الأمان. قد يكون الموقع يعمل على HTTP بدلاً من HTTPS.',
+    bluetoothPermissionDenied: 'تم رفض إذن البلوتوث. اذهب إلى إعدادات المتصفح لهذا الموقع وفعّل إذن البلوتوث، ثم حاول مرة أخرى.',
+    bluetoothNotSupportedHere: 'البلوتوث غير مدعوم في هذا السياق. جرّب فتح الرابط في Chrome المتصفح بدلاً من التطبيق المثبت.'
   },
 
   en: {
@@ -320,8 +329,17 @@ window.dict = {
     ipRequired: 'Please enter an IP address',
     invalidIp: 'Invalid IP format',
     supported: 'Supported in this browser',
-    unsupportedBrowserBluetooth: 'Your browser does not support Web Bluetooth — use Chrome or Edge on Android or desktop.',
-    unsupportedBrowserUsb: 'Your browser does not support Web USB — use Chrome or Edge on Android or desktop.'
+    unsupportedBrowserBluetooth: 'Your browser does not support Web Bluetooth. Use Chrome or Edge on Android or desktop (not iOS Safari or Firefox).',
+    unsupportedBrowserUsb: 'Your browser does not support Web USB. Use Chrome or Edge on Android or desktop.',
+    bluetoothIOSHint: 'Web Bluetooth is not supported on iPhone / iPad. To connect a Bluetooth printer, use the "Network" option if your printer has WiFi, or use a printer app from the App Store.',
+    bluetoothNotSecure: 'Bluetooth requires a secure connection (HTTPS). Make sure you are opening the site over https:// and not http://.',
+    bluetoothRadioOff: 'Bluetooth is turned off on your device. Go to your device settings and enable Bluetooth, then try again.',
+    bluetoothPwaWarning: 'Notice: you are running the app as an installed PWA. Some versions of Chrome for Android do not support Bluetooth in this mode. If no printers show up, open the link directly in Chrome (not from the installed icon).',
+    bluetoothNoDevicePicked: 'No device was selected.',
+    bluetoothNoDevicesFound: 'No nearby Bluetooth devices were found.\n\nCheck that:\n• The printer is powered on and in pairing mode\n• Bluetooth is enabled on your device\n• The printer is within range (less than 10 meters)\n• The browser has Bluetooth permission in your device settings',
+    bluetoothSecurityError: 'Security error — Bluetooth was blocked by the security policy. The site may be running on HTTP instead of HTTPS.',
+    bluetoothPermissionDenied: 'Bluetooth permission denied. Go to your browser settings for this site and enable Bluetooth permission, then try again.',
+    bluetoothNotSupportedHere: 'Bluetooth is not supported in this context. Try opening the link in Chrome browser instead of the installed app.'
   }
 };
 window.t = function(k) { return (dict[state.lang] && dict[state.lang][k]) || k; };

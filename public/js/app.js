@@ -289,13 +289,23 @@ window.onload = function() {
   } catch(e) {}
 
   // ─── Silent auto-login from saved JWT ───
-  // Instead of replaying the username + password through the login API,
-  // we test the saved JWT by attempting to fetch the protected template.
-  // If 200 → token is valid → inject + initialize without ever showing the
-  // login screen. If 401 → token expired → clear and show the login screen.
   var token = localStorage.getItem("pos_token");
   var saved = localStorage.getItem("pos_session");
   if (token && saved) {
+    var savedRole = '';
+    try { savedRole = (JSON.parse(saved).role || '').toLowerCase(); } catch(e) {}
+
+    // Cashier session → redirect straight to /pos/ (no need to validate the
+    // admin template — the /pos/ page has its own auth gate and will
+    // redirect back to / if the token is actually invalid).
+    if (savedRole && savedRole !== 'admin') {
+      window.location.replace('/pos/');
+      return;
+    }
+
+    // Admin session → validate the JWT by fetching the protected template.
+    // If 200 → token valid → inject + initialize without showing login screen.
+    // If 401 → token expired → clear and show the login screen.
     fetchAppTemplate()
       .then(function(html) {
         injectAppTemplate(html);
@@ -303,7 +313,6 @@ window.onload = function() {
           var s = JSON.parse(saved);
           state.user = s.user || '';
           state.role = (s.role || '').toLowerCase();
-          // Pre-fill login fields too in case the user logs out and back in
           if (q("#lUser")) q("#lUser").value = s.user || '';
           if (q("#lPass") && s.pass) q("#lPass").value = s.pass;
           if (q("#lRemember")) q("#lRemember").checked = true;
@@ -313,7 +322,6 @@ window.onload = function() {
       .catch(function(err) {
         // Token expired / invalid — clear and reveal the login screen
         localStorage.removeItem("pos_token");
-        // Keep pos_session so the user can quickly log back in if it was cached
         loader(false);
       });
     return;
@@ -480,19 +488,24 @@ function doLogin() {
     // Save token for secured API calls and templates
     localStorage.setItem("pos_token", res.token);
 
-    // Always save session so the template auto-fetch on reload works
+    // Always save session so auto-login works on page reload
     localStorage.setItem("pos_session", JSON.stringify({ user: u, pass: p, role: state.role }));
-
-    // Save current page state
     localStorage.setItem("pos_last_view", state.role === 'admin' ? 'admin' : 'pos');
 
-    // Fetch the protected app template, inject it, then run the normal init
+    // ─── Cashier (or any non-admin) → redirect straight to /pos/ ───
+    // No need to fetch the admin template (127 KB) since the cashier never
+    // sees the admin dashboard. The /pos/ page loads only POS assets.
+    if (state.role !== 'admin') {
+      window.location.replace('/pos/');
+      return;
+    }
+
+    // ─── Admin → fetch the protected app template, inject it, then init ───
     fetchAppTemplate()
       .then(injectAppTemplate)
       .then(function() { loadCoreData(); })
       .catch(function(err) {
         loader(false);
-        // Token invalid (shouldn't happen right after login) — clear and reset
         if (err.message === 'UNAUTHORIZED') {
           localStorage.removeItem('pos_token');
           showToast('فشل التحقق من الجلسة، حاول مرة أخرى', true);

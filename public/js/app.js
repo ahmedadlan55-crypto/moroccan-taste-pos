@@ -4021,7 +4021,7 @@ function printPurchaseInvoice(p, items) {
       '<div class="tot-card" style="background:#eff6ff;border-color:#93c5fd;"><div class="l">إجمالي الفاتورة</div><div class="v" style="color:#1e40af;">'+grandTotal.toFixed(2)+' '+currency+'</div></div>'+
     '</div>'+
     (p.notes?'<div class="notes"><strong>ملاحظات:</strong> '+p.notes+'</div>':'')+
-    '<div class="sig"><div><div class="line"></div><div class="cap">المستلم</div></div><div><div class="line"></div><div class="cap">المورد</div></div><div><div class="line"></div><div class="cap">المدير</div></div></div>'+
+    '<div class="sig"><div><div class="line"></div><div class="cap">توقيع المستلم</div><div class="cap" style="color:#1e293b;font-weight:700;">الاسم: '+(p.username||'______________')+'</div></div><div><div class="line"></div><div class="cap">المورد</div></div><div><div class="line"></div><div class="cap">المدير</div></div></div>'+
     '</body></html>');
   w.document.close();
   setTimeout(function(){w.print();},400);
@@ -4135,7 +4135,11 @@ function printPurchase(id, supplier, itemName, qty, unitPrice, totalPrice, payMe
 
   <div class="footer">
     <div class="sig-row">
-      <div class="sig-line"><div class="line"></div><div class="caption">توقيع المستلم</div></div>
+      <div class="sig-line">
+        <div class="line"></div>
+        <div class="caption">توقيع المستلم</div>
+        <div class="caption" style="margin-top:5px; color:#1e293b; font-weight:700;">الاسم: ${username || '__________________'}</div>
+      </div>
       <div class="sig-line"><div class="line"></div><div class="caption">توقيع المورد</div></div>
       <div class="sig-line"><div class="line"></div><div class="caption">توقيع المدير</div></div>
     </div>

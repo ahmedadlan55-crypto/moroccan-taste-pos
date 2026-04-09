@@ -619,4 +619,38 @@ router.delete('/orders/:id', async (req, res) => {
   }
 });
 
+// ─── Debug/Diagnose endpoint — shows why a purchase might not be updating stock ───
+// Hit GET /api/purchases/diagnose/:id from the browser to see the raw truth.
+router.get('/diagnose/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [purchases] = await db.query('SELECT * FROM purchases WHERE id = ?', [id]);
+    if (!purchases.length) return res.json({ error: 'Purchase not found', id });
+    const purchase = purchases[0];
+    const rawItems = JSON.parse(purchase.items_json || '[]');
+    const items = rawItems.map(normPurchaseItem);
+    const diagnosis = [];
+    for (const item of items) {
+      const inv = await resolveInvItem(item);
+      diagnosis.push({
+        fromPurchase: { id: item.id, name: item.name, qty: item.qty, unitPrice: item.unitPrice },
+        resolvedInvItem: inv ? { id: inv.id, name: inv.name, currentStock: Number(inv.stock), cost: Number(inv.cost) } : null,
+        matchMethod: inv ? (String(inv.id) === String(item.id) ? 'by_id' : 'by_name') : 'NOT_FOUND',
+        wouldUpdate: inv ? 'stock ' + Number(inv.stock) + ' → ' + (Number(inv.stock) + item.qty) : 'SKIP'
+      });
+    }
+    res.json({
+      purchaseId: id,
+      purchaseStatus: purchase.status,
+      supplierName: purchase.supplier_name,
+      rawItemsJson: rawItems,
+      normalizedItems: items,
+      diagnosis,
+      tip: diagnosis.some(d => !d.resolvedInvItem)
+        ? 'بعض الأصناف لم تتطابق مع أي مادة في المخزون. تأكد من أن الأسماء والأكواد متطابقة.'
+        : 'كل الأصناف تطابقت — الاستلام يجب أن يعمل.'
+    });
+  } catch (e) { res.json({ error: e.message }); }
+});
+
 module.exports = router;

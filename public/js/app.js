@@ -3413,11 +3413,27 @@ function confirmReceive() {
     }
 
     closeModal('#modalReceiveForm');
-    var toast = "تم استلام " + (r.count||0) + " صنف وتحديث المخزون";
-    if (r.skipped > 0) toast += " (تم تخطي " + r.skipped + " — راجع F12 console)";
-    if (r.vatAmount) toast += " | ضريبة مدخلات: " + Number(r.vatAmount).toFixed(2);
-    showToast(toast);
+
+    // Show detailed results in an alert so the user can verify stock changes
+    var msg = "✅ تم استلام " + (r.count||0) + " صنف وتحديث المخزون\n\n";
+    if (r.updated && r.updated.length) {
+      msg += "📦 التحديثات:\n";
+      r.updated.forEach(function(u) {
+        msg += "• " + u.invName + ": " + u.stockBefore + " → " + u.stockAfter + " (+" + u.qty + ")\n";
+      });
+    }
+    if (r.skipped > 0 && r.skippedDetails) {
+      msg += "\n⚠️ تم تخطي " + r.skipped + " صنف:\n";
+      r.skippedDetails.forEach(function(s) {
+        msg += "• " + (s.name||'—') + ": " + (s.reason||'—') + "\n";
+      });
+    }
+    if (r.vatAmount) msg += "\n💰 ضريبة مدخلات: " + Number(r.vatAmount).toFixed(2) + " SAR";
+    alert(msg);
+
     loadDashPurchases();
+    // Also refresh the warehouse data so it shows the new stock immediately
+    if (typeof loadDashInvItems === 'function') loadDashInvItems();
   }).receivePurchaseBatch(rcvInvoiceId, state.user, includesVAT);
 }
 

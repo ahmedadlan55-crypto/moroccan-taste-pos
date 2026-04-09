@@ -1,98 +1,4 @@
-<!-- 2. POS SCREEN (Cashier) -->
-  <div id="posView" class="hidden">
-    <!-- POS Header -->
-    <div class="pos-header">
-      <div class="pos-brand" id="posBrand"><i class="fas fa-mug-hot"></i> <span id="posBrandName">Moroccan Taste</span></div>
-      <div class="pos-header-actions">
-        <div id="shiftBadge" class="shift-indicator" data-i18n="noShift">لا يوجد وردية مفتوحة</div>
-        <button class="btn btn-light" onclick="toggleLang()"><i class="fas fa-language"></i> AR/EN</button>
-        <button class="btn btn-danger" onclick="logout()">Exit</button>
-        <button class="btn btn-success hidden" id="goToDashBtn" onclick="viewAdmin()">Admin</button>
-      </div>
-    </div>
-    
-    <!-- POS Main Layout -->
-    <div class="pos-main">
-      <!-- Products List Area -->
-      <div class="pos-products-area">
-        <div class="pos-search-bar">
-          <i class="fas fa-search"></i>
-          <input type="text" id="posSearchInput" placeholder="البحث برقم، أو اسم المنتج..." oninput="renderMenuGrid()">
-        </div>
-        
-        <div class="pos-categories" id="posCatTabs">
-          <!-- Categories Injected via JS -->
-        </div>
-        
-        <div class="pos-grid" id="posItemsGrid">
-          <!-- Products Injected via JS -->
-        </div>
-      </div>
-      
-      <!-- Cart Box Area -->
-      <div class="pos-cart-area" id="mobileCartPanel">
-        <div class="cart-header">
-          <button class="btn btn-light mobile-close-cart" onclick="toggleMobileCart()"><i class="fas fa-arrow-right"></i> <span data-i18n="goBack">الرجوع</span></button>
-          <h3 class="desktop-cart-title"><i class="fas fa-shopping-basket" style="color:var(--accent);"></i> <span data-i18n="cartTitle">سلة الطلبات</span></h3>
-          <div>
-            <button class="btn btn-light" style="padding:8px 12px; color:#b45309;" onclick="openDiscountModal()" title="إضافة خصم"><i class="fas fa-tag"></i></button>
-            <button class="btn btn-light" style="padding:8px 12px; color:var(--danger);" onclick="clearCart()" title="إفراغ السلة"><i class="fas fa-trash"></i></button>
-          </div>
-        </div>
-        
-        <div class="cart-items" id="cartItemsArea">
-          <!-- Cart Items Injected via JS -->
-        </div>
-        
-        <div class="cart-footer">
-          <div class="pay-methods" id="payMethodsContainer">
-            <button class="pay-btn active" id="payBtnCash" onclick="setPayMethod('Cash')"><i class="fas fa-money-bill-wave"></i> <span data-i18n="cash">كاش</span></button>
-            <button class="pay-btn" id="payBtnCard" onclick="setPayMethod('Card')"><i class="fas fa-credit-card"></i> <span data-i18n="card">مدى</span></button>
-            <button class="pay-btn" id="payBtnKita" onclick="setPayMethod('Kita')"><i class="fas fa-calculator"></i> <span data-i18n="kita">كيتا</span></button>
-            <input type="hidden" id="posPayMethod" value="Cash">
-          </div>
-
-          <div class="cart-summary-line"><span data-i18n="subtotal">المجموع الفرعي:</span><span id="cartSubtotalText">0.00</span></div>
-          <div class="cart-summary-line" style="color:var(--danger);"><span data-i18n="discount">الخصم:</span><span id="cartDiscText">0.00</span></div>
-          <div class="hidden" id="serviceFeeRow" style="background:rgba(254,243,199,0.5);padding:8px 10px;border-radius:10px;margin-bottom:8px;border:1px solid #fde047;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-              <span id="serviceFeeLabel" style="font-size:13px;font-weight:700;color:#92400e;">رسوم الخدمة:</span>
-              <span id="serviceFeeText" style="font-weight:800;color:#b45309;">0.00</span>
-            </div>
-            <div style="display:flex;gap:6px;align-items:center;">
-              <input type="number" id="serviceFeeInput" step="0.01" min="0" class="form-control" placeholder="أدخل مبلغ الرسوم يدوياً" oninput="applyManualServiceFee()" style="flex:1;padding:8px 10px;font-size:14px;font-weight:700;border-radius:8px;">
-              <span style="font-size:11px;color:#92400e;white-space:nowrap;">SAR</span>
-            </div>
-          </div>
-          <div class="cart-summary-total"><span data-i18n="totalLabel">الإجمالي:</span><span id="cartFinalTotal">0.00 SAR</span></div>
-
-          <!-- Split Payment Panel -->
-          <div id="splitPayPanel" class="hidden" style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:10px;">
-            <h4 style="font-size:13px;font-weight:700;margin-bottom:10px;color:var(--primary);"><i class="fas fa-divide"></i> <span data-i18n="split">تجزئة</span></h4>
-            <div id="splitFields" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div>
-            <div style="margin-top:8px;text-align:center;font-weight:800;font-size:14px;"><span id="splitRemainingLabel">Remaining:</span> <span id="splitRemaining" style="color:var(--danger);">0.00</span></div>
-          </div>
-
-          <button class="btn btn-primary checkout-btn" onclick="doCheckout()"><i class="fas fa-check-circle"></i> <span data-i18n="checkoutBtn">إتمام الدفع والطلب</span></button>
-        </div>
-      </div>
-    </div>
-    
-    <!-- Mobile Floating Cart Button -->
-    <div class="mobile-cart-btn" id="mobileCartBtn" onclick="toggleMobileCart()">
-      <div style="position:relative; display:flex; align-items:center; gap:10px;">
-        <i class="fas fa-shopping-cart"></i> <span data-i18n="viewCart">مشاهدة السلة</span> 
-        <span id="mobCartCount" style="background:var(--danger); color:white; padding:2px 8px; border-radius:10px; font-size:12px; position:absolute; top:-10px; right:-20px;">0</span>
-      </div>
-      <div id="mobCartTotal" style="font-size:20px;">0.00 SAR</div>
-    </div>
-    
-    <!-- Floating Shift Controls for POS -->
-    <div class="float-actions">
-      <button class="btn btn-success" onclick="shiftOpen()" title="فتح وردية"><i class="fas fa-play"></i></button>
-      <button class="btn btn-danger" onclick="shiftCloseStart()" title="إغلاق الوردية"><i class="fas fa-stop"></i></button>
-    </div>
-  </div>
+<!-- POS (Cashier) screen removed from admin interface — accessible only via standalone /pos/ page -->
 
   <!-- 3. ADMIN DASHBOARD SCREEN -->
   <div id="adminView" class="hidden">
@@ -167,7 +73,6 @@
         <div class="admin-header-title">لوحة تحكم المدير</div>
         <div class="admin-header-actions">
           <div class="admin-user-badge"><div class="admin-avatar"><i class="fas fa-user"></i></div><span id="adminUserLabel">Admin</span></div>
-          <button class="btn btn-success" onclick="viewPOS()"><i class="fas fa-cash-register"></i> واجهة البيع</button>
           <button class="btn btn-light" style="color:var(--danger);" onclick="logout()"><i class="fas fa-sign-out-alt"></i> تسجيل خروج</button>
         </div>
       </div>

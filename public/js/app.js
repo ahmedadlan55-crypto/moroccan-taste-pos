@@ -157,8 +157,8 @@ function fetchAppTemplate() {
 }
 
 function injectAppTemplate(html) {
-  // If already injected (DOM already has #posView), do nothing
-  if (document.getElementById('posView') || document.getElementById('adminView')) return;
+  // If already injected (DOM already has #adminView), do nothing
+  if (document.getElementById('adminView')) return;
 
   // Find the marker comment node
   var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_COMMENT, null);
@@ -552,32 +552,10 @@ function loadCoreData() {
     // Cache menu in localStorage
     try { localStorage.setItem("pos_menu_cache", JSON.stringify({ ts: Date.now(), menu: state.menu })); } catch(e) {}
 
-    // Fetch the protected HTML template for the app
-    const token = localStorage.getItem("pos_token");
-    if (token) {
-      fetch('/api/auth/template', { headers: { Authorization: "Bearer " + token } })
-        .then(r => {
-          if (!r.ok) throw new Error('Unauthenticated');
-          return r.text();
-        })
-        .then(html => {
-          const div = document.createElement('div');
-          div.innerHTML = html;
-          while(div.firstChild) {
-            document.body.appendChild(div.firstChild);
-          }
-          updateShiftUI();
-          initViews();
-        })
-        .catch(err => {
-          loader(false);
-          logout();
-          showToast("انتهت الجلسة، الرجاء تسجيل الدخول مجددا", true);
-        });
-    } else {
-      updateShiftUI();
-      initViews();
-    }
+    // Template was already fetched + injected BEFORE loadCoreData was called
+    // (by doLogin or window.onload). Just initialize the views now.
+    updateShiftUI();
+    initViews();
   }).getInitialAppData(state.user);
 }
 
@@ -585,33 +563,39 @@ function initViews() {
   // Authenticated — release the critical CSS gate so the rest of the page can render
   document.body.classList.add('authenticated');
   hide("#loginView");
-  // Save view state for page reload persistence
-  localStorage.setItem("pos_last_view", state.role === 'admin' ? 'admin' : 'pos');
-  if (state.role === "admin") {
-    show("#adminView");
-    q("#adminUserLabel").innerText = state.user;
-    show("#goToDashBtn");
-    // Restore last admin section or default to home
-    var lastSection = localStorage.getItem("pos_last_section") || 'home';
-    nav(lastSection);
-    // Use usernames already loaded from getInitialAppData (no extra API call)
-    const users = (state.users || []).map(u => u.username);
-    const selectors = ['#repUserOpt', '#fsCashier', '#fpayCashier'];
-    selectors.forEach(sel => {
-      const el = q(sel);
-      if (el) {
-        el.innerHTML = '<option value="">\u0627\u0644\u0643\u0644</option>';
-        users.forEach(u => { el.innerHTML += `<option value="${u}">${u}</option>`; });
-      }
-    });
-  } else {
-    viewPOS();
+
+  // Cashier role → redirect to the standalone /pos/ page (POS is no longer
+  // embedded in this admin template). The /pos/ page has its own auth gate
+  // and loads only the POS assets.
+  if (state.role !== "admin") {
+    localStorage.setItem("pos_last_view", 'pos');
+    window.location.replace('/pos/');
+    return;
   }
-  renderMenuGrid();
+
+  // Admin role → show the admin dashboard
+  localStorage.setItem("pos_last_view", 'admin');
+  show("#adminView");
+  if (q("#adminUserLabel")) q("#adminUserLabel").innerText = state.user;
+  // Restore last admin section or default to home
+  var lastSection = localStorage.getItem("pos_last_section") || 'home';
+  nav(lastSection);
+  // Use usernames already loaded from getInitialAppData (no extra API call)
+  const users = (state.users || []).map(u => u.username);
+  const selectors = ['#repUserOpt', '#fsCashier', '#fpayCashier'];
+  selectors.forEach(sel => {
+    const el = q(sel);
+    if (el) {
+      el.innerHTML = '<option value="">\u0627\u0644\u0643\u0644</option>';
+      users.forEach(u => { el.innerHTML += `<option value="${u}">${u}</option>`; });
+    }
+  });
 }
 
-function viewPOS() { hide("#adminView"); show("#posView"); renderMenuGrid(); }
-function viewAdmin() { if (state.role === "admin") { hide("#posView"); show("#adminView"); nav('home'); } }
+// POS is no longer embedded in the admin interface. viewPOS redirects to the
+// standalone /pos/ page which has its own auth gate + lightweight assets.
+function viewPOS() { window.location.replace('/pos/'); }
+function viewAdmin() { if (state.role === "admin") { show("#adminView"); nav('home'); } }
 
 function logout() {
   // Clear saved session and JWT
@@ -3940,7 +3924,7 @@ function shiftOpen() {
       state.activeShiftId = res.shiftId;
       updateShiftUI();
       showToast("تم بدء الوردية بنجاح!");
-      viewPOS();
+      // POS is no longer embedded in the admin view — stay on the current page
     } else { showToast(res.error, true); }
   }).openShift(state.user);
 }

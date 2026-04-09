@@ -772,12 +772,22 @@ function erpSavePO() {
   var supplierName = document.getElementById('erpPOSupplierInput')?.value||'';
   if (!supplierName) return showToast('يجب اختيار المورد','error');
   if (!_erpPOCart.length) return showToast('يجب إضافة صنف واحد على الأقل','error');
+  // Hard requirement: every cart item must have an itemId (i.e. the user
+  // picked it from the inventory autocomplete, not just typed the name).
+  // Otherwise the receive flow can't find the inv_items row to update
+  // stock on, and silently skips every line.
+  var missing = _erpPOCart.filter(function(i){ return !i.itemId; });
+  if (missing.length) {
+    return showToast('بعض الأصناف غير مرتبطة بمادة من المخزون — استخدم البحث لاختيار المادة من القائمة: ' + missing.map(function(m){return m.itemName;}).join('، '), 'error');
+  }
   var poData = {
     supplierId:supplierId, supplierName:supplierName,
     date: document.getElementById('erpPODate')?.value||'',
     expectedDate: document.getElementById('erpPOExpDate')?.value||'',
     notes: document.getElementById('erpPONotes')?.value||'',
-    items: _erpPOCart.map(function(i){ return { itemId:i.itemId, itemName:i.itemName, qty:i.qty, unitPrice:i.unitPrice }; })
+    // Include `unit` so it's carried through to po_lines → purchases.items_json
+    // → receive preview + PO print.
+    items: _erpPOCart.map(function(i){ return { itemId:i.itemId, itemName:i.itemName, unit:i.unit||'', qty:i.qty, unitPrice:i.unitPrice }; })
   };
   loader(true);
   if (_erpEditingPOId) {
@@ -912,6 +922,7 @@ function erpPrintPO(poId) {
       '<td>' + (i + 1) + '</td>' +
       '<td>' + (l.itemName || '') + '</td>' +
       '<td>' + (l.qty || 0) + '</td>' +
+      '<td>' + (l.unit || '—') + '</td>' +
       '<td>' + (Number(l.unitPrice) || 0).toFixed(2) + '</td>' +
       '<td>' + lineTotal.toFixed(2) + '</td>' +
     '</tr>';
@@ -935,8 +946,8 @@ function erpPrintPO(poId) {
     '<div class="meta"><div><strong>رقم:</strong> ' + (po.poNumber || '') + '</div><div><strong>التاريخ:</strong> ' + dateStr + '</div></div>' +
     '<p><strong>المورد:</strong> ' + (po.supplierName || '—') + '</p>' +
     (po.notes ? '<p><strong>ملاحظات:</strong> ' + po.notes + '</p>' : '') +
-    '<table><thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead>' +
-    '<tbody>' + (itemsH || '<tr><td colspan="5" style="text-align:center;color:#999;">لا توجد أصناف</td></tr>') + '</tbody></table>' +
+    '<table><thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead>' +
+    '<tbody>' + (itemsH || '<tr><td colspan="6" style="text-align:center;color:#999;">لا توجد أصناف</td></tr>') + '</tbody></table>' +
     '<div class="ts"><table>' +
       '<tr><td>قبل الضريبة</td><td>' + totalBefore.toFixed(2) + '</td></tr>' +
       '<tr><td>ضريبة 15%</td><td>' + totalVat.toFixed(2) + '</td></tr>' +
@@ -981,7 +992,7 @@ function erpViewPO(poId) {
     return {
       itemId: l.itemId || '',
       itemName: l.itemName || '',
-      unit: '',
+      unit: l.unit || '',
       qty: qty,
       unitPrice: unitPrice,
       total: qty * unitPrice

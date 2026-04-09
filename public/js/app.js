@@ -3335,6 +3335,7 @@ function receivePurFn(invoiceId) {
       return {
         itemName: it.itemName || it.name || it.ItemName || '',
         itemId:   it.itemId   || it.id   || it.ItemID   || '',
+        unit:     it.unit     || it.Unit || '',
         qty:      Number(it.qty || it.Qty) || 0,
         unitPrice:Number(it.unitPrice || it.UnitPrice) || 0,
         received: Number(it.qty || it.Qty) || 0,
@@ -3343,7 +3344,7 @@ function receivePurFn(invoiceId) {
     });
   }
   if (!rcvItems.length) {
-    rcvItems = [{ itemName: invoice.itemName, itemId: invoice.itemId, qty: invoice.qty, unitPrice: invoice.unitPrice, received: invoice.qty, checked: true }];
+    rcvItems = [{ itemName: invoice.itemName, itemId: invoice.itemId, unit: '', qty: invoice.qty, unitPrice: invoice.unitPrice, received: invoice.qty, checked: true }];
   }
 
   q("#rcvInvoiceId").innerText = invoiceId + (invoice.notes ? ' | ' + invoice.notes : '');
@@ -3351,10 +3352,15 @@ function receivePurFn(invoiceId) {
 
   var h = '';
   rcvItems.forEach(function(item, i) {
+    var unitDisplay = item.unit ? '<span style="color:#64748b;font-size:11px;">' + item.unit + '</span>' : '<span style="color:#cbd5e1;font-size:11px;">—</span>';
+    var idBadge = item.itemId
+      ? '<code style="font-size:10px;color:#64748b;background:#f1f5f9;padding:1px 4px;border-radius:3px;">' + item.itemId + '</code>'
+      : '<span style="color:#ef4444;font-size:10px;">⚠ غير مرتبط بالمخزون</span>';
     h += '<tr>'+
       '<td><input type="checkbox" class="rcv-check" data-idx="'+i+'" checked onchange="rcvItems['+i+'].checked=this.checked"></td>'+
-      '<td style="font-weight:600;">'+item.itemName+'</td>'+
+      '<td style="font-weight:600;">'+item.itemName+'<br>'+idBadge+'</td>'+
       '<td style="text-align:center;">'+item.qty+'</td>'+
+      '<td style="text-align:center;">'+unitDisplay+'</td>'+
       '<td><input type="number" class="form-control" style="width:100px;margin:0;padding:6px;" value="'+item.qty+'" min="0" max="'+item.qty+'" onchange="rcvItems['+i+'].received=Number(this.value)"></td>'+
       '<td>'+formatVal(item.unitPrice)+'</td>'+
     '</tr>';

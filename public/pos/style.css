@@ -666,8 +666,106 @@ body.ar .pwa-install-btn {
   background: linear-gradient(135deg, #ef4444, #dc2626);
   box-shadow: 0 12px 28px rgba(239, 68, 68, 0.4);
 }
+.float-btn-info {
+  background: linear-gradient(135deg, #0d47a1, #1e40af 50%, #3b82f6);
+  box-shadow: 0 12px 28px rgba(13, 71, 161, 0.4);
+}
 .float-btn:hover { transform: translateY(-2px); }
 .float-btn:active { transform: scale(0.93); }
+
+/* ────────────────────────────────────────
+   Printer settings modal — status box, tabs, panels
+   ──────────────────────────────────────── */
+.printer-current-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.7);
+  border: 1.5px solid rgba(226, 232, 240, 0.8);
+  margin-bottom: 18px;
+}
+.printer-current-box.connected {
+  background: rgba(240, 253, 244, 0.7);
+  border-color: #86efac;
+}
+.printer-current-box > i {
+  font-size: 22px;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+.printer-current-box.connected > i { color: #16a34a; }
+.printer-current-box > div { flex: 1; min-width: 0; }
+.printer-current-label {
+  font-weight: 800;
+  font-size: 14px;
+  color: #1e293b;
+}
+.printer-current-detail {
+  font-size: 11px;
+  color: #64748b;
+  font-family: monospace;
+  margin-top: 2px;
+  word-break: break-all;
+}
+
+.printer-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 6px;
+  background: rgba(241, 245, 249, 0.7);
+  border-radius: 12px;
+}
+.printer-tab {
+  padding: 10px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #64748b;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+.printer-tab i { font-size: 14px; }
+.printer-tab.active {
+  background: #fff;
+  color: #0d47a1;
+  box-shadow: 0 2px 6px rgba(13, 71, 161, 0.12);
+}
+
+.printer-panel { display: none; }
+.printer-panel.active { display: block; }
+
+.printer-hint {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.6;
+  margin-bottom: 10px;
+}
+.printer-support-note {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.printer-scan-btn {
+  width: 100%;
+  padding: 14px;
+  font-size: 15px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
 
 /* ────────────────────────────────────────
    GLASS MODAL — replaces native confirm/alert + all popups

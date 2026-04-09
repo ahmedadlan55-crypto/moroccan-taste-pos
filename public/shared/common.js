@@ -147,7 +147,33 @@ window.dict = {
 
     // Language toggle toast
     switchedAr: 'تم التحويل للعربية',
-    switchedEn: 'Switched to English'
+    switchedEn: 'Switched to English',
+
+    // Printer settings
+    printer: 'الطابعة الحرارية',
+    printerSettings: 'إعدادات الطابعة الحرارية',
+    noPrinterConnected: 'لا توجد طابعة مرتبطة',
+    printerConnected: 'تم ربط الطابعة',
+    printerCleared: 'تم إلغاء ربط الطابعة',
+    printerType_bluetooth: 'بلوتوث',
+    printerType_usb: 'USB',
+    printerType_network: 'شبكة',
+    bluetooth: 'بلوتوث',
+    usb: 'USB',
+    network: 'شبكة',
+    bluetoothHint: 'اضغط "بحث" لفتح قائمة أجهزة البلوتوث القريبة. اختر الطابعة من القائمة التي تظهر.',
+    usbHint: 'وصّل الطابعة بالهاتف أو الجهاز عن طريق كابل USB ثم اضغط "بحث" لاختيارها.',
+    networkHint: 'إذا كانت الطابعة متصلة بالشبكة، أدخل عنوان IP والمنفذ (عادة 9100) ثم اضغط "حفظ".',
+    scanBluetooth: 'بحث عن طابعة بلوتوث',
+    scanUsb: 'بحث عن طابعة USB',
+    ipAddress: 'عنوان IP',
+    port: 'المنفذ',
+    save: 'حفظ',
+    ipRequired: 'الرجاء إدخال عنوان IP',
+    invalidIp: 'صيغة عنوان IP غير صحيحة',
+    supported: 'مدعوم في هذا المتصفح',
+    unsupportedBrowserBluetooth: 'متصفحك لا يدعم Web Bluetooth — استخدم Chrome أو Edge على Android أو سطح المكتب.',
+    unsupportedBrowserUsb: 'متصفحك لا يدعم Web USB — استخدم Chrome أو Edge على Android أو سطح المكتب.'
   },
 
   en: {
@@ -269,7 +295,33 @@ window.dict = {
 
     // Language toggle toast
     switchedAr: 'Switched to Arabic',
-    switchedEn: 'Switched to English'
+    switchedEn: 'Switched to English',
+
+    // Printer settings
+    printer: 'Thermal Printer',
+    printerSettings: 'Thermal Printer Settings',
+    noPrinterConnected: 'No printer connected',
+    printerConnected: 'Printer connected',
+    printerCleared: 'Printer disconnected',
+    printerType_bluetooth: 'Bluetooth',
+    printerType_usb: 'USB',
+    printerType_network: 'Network',
+    bluetooth: 'Bluetooth',
+    usb: 'USB',
+    network: 'Network',
+    bluetoothHint: 'Tap "Scan" to open the nearby Bluetooth devices picker and select your printer.',
+    usbHint: 'Connect the printer to your phone or device via USB cable, then tap "Scan" to select it.',
+    networkHint: 'If the printer is on your local network, enter its IP address and port (usually 9100), then tap "Save".',
+    scanBluetooth: 'Scan for Bluetooth printer',
+    scanUsb: 'Scan for USB printer',
+    ipAddress: 'IP Address',
+    port: 'Port',
+    save: 'Save',
+    ipRequired: 'Please enter an IP address',
+    invalidIp: 'Invalid IP format',
+    supported: 'Supported in this browser',
+    unsupportedBrowserBluetooth: 'Your browser does not support Web Bluetooth — use Chrome or Edge on Android or desktop.',
+    unsupportedBrowserUsb: 'Your browser does not support Web USB — use Chrome or Edge on Android or desktop.'
   }
 };
 window.t = function(k) { return (dict[state.lang] && dict[state.lang][k]) || k; };

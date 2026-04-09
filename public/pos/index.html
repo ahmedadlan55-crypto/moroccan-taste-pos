@@ -169,7 +169,7 @@
     <div id="mobCartTotal" class="mobile-cart-total">0.00 SAR</div>
   </div>
 
-  <!-- Floating Shift Controls -->
+  <!-- Floating Shift Controls + Printer button -->
   <div class="float-actions">
     <button class="float-btn float-btn-success" onclick="shiftOpen()" title="فتح وردية" data-i18n-title="openShift" aria-label="فتح وردية" data-i18n-aria-label="openShift">
       <i class="fas fa-play"></i>
@@ -177,6 +177,71 @@
     <button class="float-btn float-btn-danger" onclick="shiftCloseStart()" title="إغلاق الوردية" data-i18n-title="closeShift" aria-label="إغلاق الوردية" data-i18n-aria-label="closeShift">
       <i class="fas fa-stop"></i>
     </button>
+    <button class="float-btn float-btn-info" onclick="openPrinterSettings()" title="الطابعة الحرارية" data-i18n-title="printer" aria-label="الطابعة الحرارية" data-i18n-aria-label="printer">
+      <i class="fas fa-print"></i>
+    </button>
+  </div>
+
+  <!-- Printer Settings Modal -->
+  <div id="modalPrinterSettings" class="glass-modal hidden">
+    <div class="glass-modal-content">
+      <div class="glass-modal-title">
+        <span><i class="fas fa-print"></i> <span data-i18n="printerSettings">إعدادات الطابعة الحرارية</span></span>
+        <button class="glass-modal-close" onclick="closeGlassModal('#modalPrinterSettings')" aria-label="إغلاق" data-i18n-aria-label="close">&times;</button>
+      </div>
+      <div class="glass-modal-body">
+        <!-- Current connection indicator -->
+        <div id="printerCurrent" class="printer-current-box">
+          <i class="fas fa-plug"></i>
+          <div>
+            <div class="printer-current-label" data-i18n="noPrinterConnected">لا توجد طابعة مرتبطة</div>
+            <div class="printer-current-detail" id="printerCurrentDetail"></div>
+          </div>
+          <button class="btn btn-light btn-sm" id="printerClearBtn" onclick="clearPrinter()" style="display:none;"><i class="fas fa-times"></i></button>
+        </div>
+
+        <!-- Method tabs -->
+        <div class="printer-tabs">
+          <button class="printer-tab active" onclick="switchPrinterTab('bluetooth')" id="ptab_bluetooth"><i class="fab fa-bluetooth-b"></i> <span data-i18n="bluetooth">بلوتوث</span></button>
+          <button class="printer-tab" onclick="switchPrinterTab('usb')" id="ptab_usb"><i class="fas fa-usb"></i> <span data-i18n="usb">USB</span></button>
+          <button class="printer-tab" onclick="switchPrinterTab('network')" id="ptab_network"><i class="fas fa-network-wired"></i> <span data-i18n="network">شبكة</span></button>
+        </div>
+
+        <!-- Bluetooth panel -->
+        <div id="ppanel_bluetooth" class="printer-panel active">
+          <p class="printer-hint" data-i18n="bluetoothHint">اضغط "بحث" لفتح قائمة أجهزة البلوتوث القريبة. اختر الطابعة من القائمة التي تظهر.</p>
+          <p class="printer-support-note" id="bluetoothSupport"></p>
+          <button class="btn btn-primary printer-scan-btn" onclick="scanBluetoothPrinter()">
+            <i class="fab fa-bluetooth-b"></i> <span data-i18n="scanBluetooth">بحث عن طابعة بلوتوث</span>
+          </button>
+        </div>
+
+        <!-- USB panel -->
+        <div id="ppanel_usb" class="printer-panel">
+          <p class="printer-hint" data-i18n="usbHint">وصّل الطابعة بالهاتف أو الجهاز عن طريق كابل USB ثم اضغط "بحث" لاختيارها.</p>
+          <p class="printer-support-note" id="usbSupport"></p>
+          <button class="btn btn-primary printer-scan-btn" onclick="scanUsbPrinter()">
+            <i class="fas fa-usb"></i> <span data-i18n="scanUsb">بحث عن طابعة USB</span>
+          </button>
+        </div>
+
+        <!-- Network panel -->
+        <div id="ppanel_network" class="printer-panel">
+          <p class="printer-hint" data-i18n="networkHint">إذا كانت الطابعة متصلة بالشبكة، أدخل عنوان IP والمنفذ (عادة 9100) ثم اضغط "حفظ".</p>
+          <div class="form-group">
+            <label class="form-label" data-i18n="ipAddress">عنوان IP</label>
+            <input type="text" id="printerIP" class="form-control glass-input" placeholder="192.168.1.100">
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="port">المنفذ</label>
+            <input type="number" id="printerPort" class="form-control glass-input" value="9100" placeholder="9100">
+          </div>
+          <button class="btn btn-primary printer-scan-btn" onclick="saveNetworkPrinter()">
+            <i class="fas fa-save"></i> <span data-i18n="save">حفظ</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ─── GLASS MODALS ─── -->

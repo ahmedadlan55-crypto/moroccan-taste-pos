@@ -61,19 +61,35 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Helper — pull (id, name, qty, unitPrice) out of a purchase item regardless
-// of whether it was saved by the direct-purchase UI (itemId/itemName) or by
-// the PO approve endpoint (id/name). This was the root cause of the
-// "received 0 items" bug: the old code only checked `item.id`, so items
-// coming from the direct-purchase UI (which uses `itemId`) silently skipped
-// every stock update.
+// Helper — pull (id, name, unit, qty, unitPrice) out of a purchase item
+// regardless of whether it was saved by the direct-purchase UI
+// ({itemId, itemName, ...}) or by the PO approve endpoint ({id, name, ...}).
+// The old code only checked `item.id`, so items from the direct-purchase
+// UI (which uses `itemId`) silently skipped every stock update.
 function normPurchaseItem(item) {
   return {
     id: item.id || item.itemId || null,
     name: item.name || item.itemName || '',
+    unit: item.unit || '',
     qty: Number(item.qty) || 0,
     unitPrice: Number(item.unitPrice) || 0
   };
+}
+
+// Resolve a purchase-item to a real inv_items row. Tries:
+//   1. exact match on id
+//   2. case-insensitive exact match on name
+// Returns the inv_items row or null.
+async function resolveInvItem(item) {
+  if (item.id) {
+    const [byId] = await db.query('SELECT * FROM inv_items WHERE id = ?', [item.id]);
+    if (byId.length) return byId[0];
+  }
+  if (item.name) {
+    const [byName] = await db.query('SELECT * FROM inv_items WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [item.name]);
+    if (byName.length) return byName[0];
+  }
+  return null;
 }
 
 // Receive purchase (update status, add stock)
@@ -82,9 +98,10 @@ function normPurchaseItem(item) {
 // also updates the PO's status to 'received' and marks each PO line's
 // received_qty so the PO reflects the real state of the warehouse.
 //
-// Returns { success, count, vatAmount } so the frontend toast can show
-// how many items were actually received and the input-VAT total when
-// the user ticks "includes VAT".
+// Returns { success, count, skipped, vatAmount, errors } so the frontend
+// toast can show how many items were actually received, how many were
+// skipped (no matching inv_items), and the input-VAT total when the user
+// ticks "includes VAT".
 router.post('/receive/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -101,10 +118,21 @@ router.post('/receive/:id', async (req, res) => {
     const items = rawItems.map(normPurchaseItem);
 
     let count = 0;
+    const skipped = [];
     let totalVat = 0;
 
     for (const item of items) {
-      if (!item.id || item.qty <= 0) continue;
+      if (item.qty <= 0) {
+        skipped.push({ name: item.name, reason: 'qty=0' });
+        continue;
+      }
+
+      // Resolve to a real inv_items row (by id first, then by name)
+      const inv = await resolveInvItem(item);
+      if (!inv) {
+        skipped.push({ name: item.name, reason: 'not found in inventory' });
+        continue;
+      }
 
       // VAT handling — if prices include VAT, net cost = gross / 1.15
       let netUnitPrice = item.unitPrice;
@@ -113,26 +141,26 @@ router.post('/receive/:id', async (req, res) => {
         totalVat += (item.unitPrice - netUnitPrice) * item.qty;
       }
 
-      // Update stock. Only overwrite cost if it's not already set (first receive),
-      // so subsequent receives at different prices don't clobber prior cost data.
-      const [existingItem] = await db.query('SELECT cost FROM inv_items WHERE id = ?', [item.id]);
-      if (existingItem.length) {
-        const currentCost = Number(existingItem[0].cost) || 0;
-        if (currentCost === 0 && netUnitPrice > 0) {
-          await db.query('UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?',
-            [item.qty, netUnitPrice, item.id]);
-        } else {
-          await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?',
-            [item.qty, item.id]);
-        }
+      // Update stock on the resolved inv row. Only overwrite cost if it's
+      // not already set (first receive) so subsequent receives at different
+      // prices don't clobber prior cost data.
+      const currentCost = Number(inv.cost) || 0;
+      if (currentCost === 0 && netUnitPrice > 0) {
+        await db.query('UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?',
+          [item.qty, netUnitPrice, inv.id]);
+      } else {
+        await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?',
+          [item.qty, inv.id]);
       }
 
       // Record movement — notes links back to purchase so we can roll it
-      // back on revert.
+      // back on revert. Use the resolved inv.id + inv.name so the movement
+      // points to the real inventory row even if the purchase row had a
+      // stale/missing id.
       const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
       await db.query(
         'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
-        [movId, now, item.id, item.name, 'in', item.qty, 'مشتريات', username || '', 'PUR: ' + id]
+        [movId, now, inv.id, inv.name, 'in', item.qty, 'مشتريات', username || '', 'PUR: ' + id]
       );
 
       count++;
@@ -145,16 +173,34 @@ router.post('/receive/:id', async (req, res) => {
     if (purchase.po_id) {
       await db.query('UPDATE purchase_orders SET status = "received" WHERE id = ?', [purchase.po_id]);
       for (const item of items) {
-        if (item.id && item.qty > 0) {
+        const inv = await resolveInvItem(item);
+        if (inv && item.qty > 0) {
+          // Match by either item_id OR item_name on po_lines (same fallback logic)
           await db.query(
-            'UPDATE po_lines SET received_qty = received_qty + ? WHERE po_id = ? AND item_id = ?',
-            [item.qty, purchase.po_id, item.id]
+            'UPDATE po_lines SET received_qty = received_qty + ? WHERE po_id = ? AND (item_id = ? OR (item_id IS NULL AND LOWER(TRIM(item_name)) = LOWER(TRIM(?))))',
+            [item.qty, purchase.po_id, inv.id, item.name]
           );
         }
       }
     }
 
-    res.json({ success: true, count, vatAmount: Number(totalVat.toFixed(2)) });
+    // If we skipped every item, return an error so the frontend shows it.
+    if (count === 0) {
+      let reason = 'لم يتم تحديث المخزون — لا توجد مواد مطابقة في قاعدة بيانات المخزون.';
+      if (skipped.length) {
+        reason += ' (' + skipped.map(s => s.name || '—').join('، ') + ')';
+      }
+      reason += ' تأكد من أن المواد المضافة في أمر الشراء مختارة من قائمة المخزون وليست مكتوبة يدوياً.';
+      return res.json({ success: false, error: reason });
+    }
+
+    res.json({
+      success: true,
+      count,
+      skipped: skipped.length,
+      skippedDetails: skipped,
+      vatAmount: Number(totalVat.toFixed(2))
+    });
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
@@ -179,25 +225,29 @@ router.post('/receive/:id/revert', async (req, res) => {
     const rawItems = JSON.parse(purchase.items_json || '[]');
     const items = rawItems.map(normPurchaseItem);
 
-    // Safety check — refuse if rolling back would make any item's stock go negative
+    // Pre-resolve items to their real inv rows (reused for both safety
+    // check and the rollback step).
+    const resolved = [];
     for (const item of items) {
-      if (!item.id || item.qty <= 0) continue;
-      const [existing] = await db.query('SELECT stock, name FROM inv_items WHERE id = ?', [item.id]);
-      if (existing.length) {
-        const currentStock = Number(existing[0].stock) || 0;
-        if (currentStock < item.qty) {
-          return res.json({
-            success: false,
-            error: 'لا يمكن التراجع: المخزون الحالي للمادة "' + existing[0].name + '" (' + currentStock + ') أقل من الكمية المستلمة (' + item.qty + '). ربما استُهلكت بعض الكمية في المبيعات.'
-          });
-        }
+      if (item.qty <= 0) continue;
+      const inv = await resolveInvItem(item);
+      if (inv) resolved.push({ item, inv });
+    }
+
+    // Safety check — refuse if rolling back would make any item's stock go negative
+    for (const r of resolved) {
+      const currentStock = Number(r.inv.stock) || 0;
+      if (currentStock < r.item.qty) {
+        return res.json({
+          success: false,
+          error: 'لا يمكن التراجع: المخزون الحالي للمادة "' + r.inv.name + '" (' + currentStock + ') أقل من الكمية المستلمة (' + r.item.qty + '). ربما استُهلكت بعض الكمية في المبيعات.'
+        });
       }
     }
 
     // Roll back stock
-    for (const item of items) {
-      if (!item.id || item.qty <= 0) continue;
-      await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [item.qty, item.id]);
+    for (const r of resolved) {
+      await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [r.item.qty, r.inv.id]);
     }
 
     // Delete the movements created by the receive (matched by notes = 'PUR: <id>' and type = 'in')
@@ -212,13 +262,11 @@ router.post('/receive/:id/revert', async (req, res) => {
     // Back-propagate to linked PO: unset received, return to approved, zero received_qty
     if (purchase.po_id) {
       await db.query('UPDATE purchase_orders SET status = "approved" WHERE id = ?', [purchase.po_id]);
-      for (const item of items) {
-        if (item.id && item.qty > 0) {
-          await db.query(
-            'UPDATE po_lines SET received_qty = GREATEST(0, received_qty - ?) WHERE po_id = ? AND item_id = ?',
-            [item.qty, purchase.po_id, item.id]
-          );
-        }
+      for (const r of resolved) {
+        await db.query(
+          'UPDATE po_lines SET received_qty = GREATEST(0, received_qty - ?) WHERE po_id = ? AND (item_id = ? OR (item_id IS NULL AND LOWER(TRIM(item_name)) = LOWER(TRIM(?))))',
+          [r.item.qty, purchase.po_id, r.inv.id, r.item.name]
+        );
       }
     }
 
@@ -266,6 +314,7 @@ router.get('/orders', async (req, res) => {
         createdBy: po.created_by, approvedBy: po.approved_by, approvedAt: po.approved_at,
         lines: lines.map(l => ({
           id: l.id, itemId: l.item_id, itemName: l.item_name,
+          unit: l.unit || '',
           qty: Number(l.qty), unitPrice: Number(l.unit_price),
           vatRate: Number(l.vat_rate), vatAmount: Number(l.vat_amount),
           total: Number(l.total), receivedQty: Number(l.received_qty)
@@ -329,10 +378,10 @@ router.post('/orders', async (req, res) => {
         const lineVat = lineTotal * ((Number(line.vatRate) || 15) / 100);
 
         await db.query(
-          `INSERT INTO po_lines (id, po_id, item_id, item_name, qty, unit_price, vat_rate, vat_amount, total, received_qty)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          [lineId, poId, line.itemId || null, line.itemName || '', line.qty || 0,
-           line.unitPrice || 0, line.vatRate || 15, lineVat, lineTotal + lineVat, 0]
+          `INSERT INTO po_lines (id, po_id, item_id, item_name, unit, qty, unit_price, vat_rate, vat_amount, total, received_qty)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          [lineId, poId, line.itemId || null, line.itemName || '', line.unit || '',
+           line.qty || 0, line.unitPrice || 0, line.vatRate || 15, lineVat, lineTotal + lineVat, 0]
         );
       }
     }
@@ -386,10 +435,10 @@ router.put('/orders/:id', async (req, res) => {
         const lineVat = lineTotal * ((Number(line.vatRate) || 15) / 100);
 
         await db.query(
-          `INSERT INTO po_lines (id, po_id, item_id, item_name, qty, unit_price, vat_rate, vat_amount, total, received_qty)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          [lineId, id, line.itemId || null, line.itemName || '', line.qty || 0,
-           line.unitPrice || 0, line.vatRate || 15, lineVat, lineTotal + lineVat, 0]
+          `INSERT INTO po_lines (id, po_id, item_id, item_name, unit, qty, unit_price, vat_rate, vat_amount, total, received_qty)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          [lineId, id, line.itemId || null, line.itemName || '', line.unit || '',
+           line.qty || 0, line.unitPrice || 0, line.vatRate || 15, lineVat, lineTotal + lineVat, 0]
         );
       }
     }
@@ -426,10 +475,11 @@ router.post('/orders/:id/approve', async (req, res) => {
     // Load PO lines so we can copy them into the purchase
     const [poLines] = await db.query('SELECT * FROM po_lines WHERE po_id = ?', [id]);
 
-    // Shape lines like the purchase items_json: [{ id, name, qty, unitPrice }]
+    // Shape lines like the purchase items_json: [{ id, name, unit, qty, unitPrice }]
     const purchaseItems = poLines.map(l => ({
       id: l.item_id,
       name: l.item_name,
+      unit: l.unit || '',
       qty: Number(l.qty) || 0,
       unitPrice: Number(l.unit_price) || 0
     }));

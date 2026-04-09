@@ -68,6 +68,8 @@ async function autoInitDB() {
       } else {
         console.log('Database connection OK — tables already exist.');
       }
+      // Idempotent migrations — run on every startup, skip if already applied
+      await runMigrations();
       return; // success — exit retry loop
     } catch (e) {
       console.error(`[DB] Connection attempt ${attempt}/${MAX_RETRIES} failed: ${e.message}`);
@@ -79,6 +81,30 @@ async function autoInitDB() {
       }
     }
   }
+}
+
+// ─── Idempotent schema migrations ───
+// Checks if a column exists on a table; if not, adds it.
+async function addColumnIfMissing(table, column, definition) {
+  try {
+    const [cols] = await db.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+      [table, column]
+    );
+    if (!cols.length) {
+      console.log(`[DB] Migration: adding ${table}.${column}`);
+      await db.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  } catch (e) {
+    console.log(`[DB] Migration warning (${table}.${column}):`, e.message.substring(0, 120));
+  }
+}
+
+async function runMigrations() {
+  // PO lines — unit of measurement (kg / piece / box / etc.) carried from
+  // the ERP PO form through to the purchase and inventory receive screens.
+  await addColumnIfMissing('po_lines', 'unit', "VARCHAR(50) DEFAULT ''");
 }
 
 app.listen(PORT, async () => {

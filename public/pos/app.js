@@ -954,3 +954,187 @@ window.printShiftReport = function() {
   w.document.close();
   setTimeout(function() { w.print(); }, 400);
 };
+
+// =========================================
+// Thermal Printer Settings
+// =========================================
+// Saved shape: { type: 'bluetooth'|'usb'|'network', name, id?, host?, port? }
+// Persisted in localStorage under 'pos_printer'. Future print jobs can
+// read this and route the job accordingly.
+
+window.getSavedPrinter = function() {
+  try {
+    var raw = localStorage.getItem('pos_printer');
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return null;
+};
+
+window.savePrinter = function(printer) {
+  try {
+    localStorage.setItem('pos_printer', JSON.stringify(printer));
+  } catch (e) {}
+  refreshPrinterCurrent();
+};
+
+window.clearPrinter = function() {
+  localStorage.removeItem('pos_printer');
+  refreshPrinterCurrent();
+  glassToast(t('printerCleared'));
+};
+
+function refreshPrinterCurrent() {
+  var box = q('#printerCurrent');
+  var label = q('#printerCurrent .printer-current-label');
+  var detail = q('#printerCurrentDetail');
+  var clearBtn = q('#printerClearBtn');
+  if (!box) return;
+
+  var p = getSavedPrinter();
+  if (!p) {
+    if (label) label.textContent = t('noPrinterConnected');
+    if (detail) detail.textContent = '';
+    if (clearBtn) clearBtn.style.display = 'none';
+    box.classList.remove('connected');
+    return;
+  }
+
+  box.classList.add('connected');
+  var typeLabel = t('printerType_' + p.type) || p.type;
+  if (label) label.textContent = typeLabel + ' — ' + (p.name || '');
+  if (detail) {
+    if (p.type === 'network') detail.textContent = (p.host || '') + ':' + (p.port || 9100);
+    else if (p.id) detail.textContent = p.id;
+    else detail.textContent = '';
+  }
+  if (clearBtn) clearBtn.style.display = '';
+}
+
+window.openPrinterSettings = function() {
+  // Warn about unsupported environments
+  var btSup = q('#bluetoothSupport');
+  var usbSup = q('#usbSupport');
+  if (btSup) {
+    btSup.textContent = 'bluetooth' in navigator
+      ? '✓ ' + t('supported')
+      : '✗ ' + t('unsupportedBrowserBluetooth');
+    btSup.style.color = 'bluetooth' in navigator ? '#16a34a' : '#ef4444';
+  }
+  if (usbSup) {
+    usbSup.textContent = 'usb' in navigator
+      ? '✓ ' + t('supported')
+      : '✗ ' + t('unsupportedBrowserUsb');
+    usbSup.style.color = 'usb' in navigator ? '#16a34a' : '#ef4444';
+  }
+  // Prefill saved network config
+  var p = getSavedPrinter();
+  if (p && p.type === 'network') {
+    if (q('#printerIP')) q('#printerIP').value = p.host || '';
+    if (q('#printerPort')) q('#printerPort').value = p.port || '9100';
+  }
+  refreshPrinterCurrent();
+  openGlassModal('#modalPrinterSettings');
+};
+
+window.switchPrinterTab = function(tab) {
+  ['bluetooth','usb','network'].forEach(function(t) {
+    var tabEl = q('#ptab_' + t);
+    var panelEl = q('#ppanel_' + t);
+    if (tabEl) tabEl.classList.toggle('active', t === tab);
+    if (panelEl) panelEl.classList.toggle('active', t === tab);
+  });
+};
+
+// ─── Bluetooth (Web Bluetooth API) ───
+// Supported on Chrome/Edge desktop + Android. Not supported on iOS Safari.
+window.scanBluetoothPrinter = async function() {
+  if (!('bluetooth' in navigator)) {
+    return glassAlert(t('errorTitle'), t('unsupportedBrowserBluetooth'), { danger: true });
+  }
+  try {
+    // Generic thermal printer service UUIDs — covers most ESC/POS BLE printers.
+    // We also accept any device with a name so users can pair any printer the
+    // browser exposes in the picker.
+    var device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [
+        '000018f0-0000-1000-8000-00805f9b34fb', // Common generic printer service
+        '0000ff00-0000-1000-8000-00805f9b34fb',
+        '49535343-fe7d-4ae5-8fa9-9fafd205e455'
+      ]
+    });
+    savePrinter({
+      type: 'bluetooth',
+      name: device.name || 'Bluetooth Printer',
+      id: device.id || ''
+    });
+    glassToast(t('printerConnected') + ': ' + (device.name || 'Bluetooth Printer'));
+  } catch (err) {
+    // User cancelled the picker — not a real error
+    if (err && String(err.name || '').indexOf('NotFoundError') !== -1) return;
+    glassAlert(t('errorTitle'), (err && err.message) || String(err), { danger: true });
+  }
+};
+
+// ─── USB (Web USB API) ───
+// Supported on Chrome/Edge desktop + Android. Not iOS.
+window.scanUsbPrinter = async function() {
+  if (!('usb' in navigator)) {
+    return glassAlert(t('errorTitle'), t('unsupportedBrowserUsb'), { danger: true });
+  }
+  try {
+    // Most thermal printer USB class codes: 7 (printer) or use acceptAllDevices
+    // We request all devices so the user sees everything plugged in.
+    var device = await navigator.usb.requestDevice({ filters: [{ classCode: 7 }] });
+    if (!device) return;
+    var name = (device.productName || 'USB Printer') +
+      (device.manufacturerName ? ' (' + device.manufacturerName + ')' : '');
+    savePrinter({
+      type: 'usb',
+      name: name,
+      id: (device.vendorId || '') + ':' + (device.productId || '')
+    });
+    glassToast(t('printerConnected') + ': ' + name);
+  } catch (err) {
+    if (err && String(err.name || '').indexOf('NotFoundError') !== -1) return;
+    // If no class-7 match, retry with no filter so any device works
+    try {
+      var device2 = await navigator.usb.requestDevice({ filters: [] });
+      if (!device2) return;
+      var name2 = (device2.productName || 'USB Device') +
+        (device2.manufacturerName ? ' (' + device2.manufacturerName + ')' : '');
+      savePrinter({
+        type: 'usb',
+        name: name2,
+        id: (device2.vendorId || '') + ':' + (device2.productId || '')
+      });
+      glassToast(t('printerConnected') + ': ' + name2);
+    } catch (err2) {
+      if (err2 && String(err2.name || '').indexOf('NotFoundError') !== -1) return;
+      glassAlert(t('errorTitle'), (err2 && err2.message) || String(err2), { danger: true });
+    }
+  }
+};
+
+// ─── Network (IP-based) ───
+window.saveNetworkPrinter = function() {
+  var ip = (q('#printerIP') ? q('#printerIP').value : '').trim();
+  var port = Number(q('#printerPort') ? q('#printerPort').value : 9100) || 9100;
+  if (!ip) return glassAlert(t('errorTitle'), t('ipRequired'), { danger: true });
+  // Very loose IP/hostname validation — allow IPv4 and hostnames
+  if (!/^[\w\-.]+$/.test(ip)) return glassAlert(t('errorTitle'), t('invalidIp'), { danger: true });
+  savePrinter({
+    type: 'network',
+    name: 'Network ' + ip + ':' + port,
+    host: ip,
+    port: port
+  });
+  glassToast(t('printerConnected') + ': ' + ip + ':' + port);
+};
+
+// Initialize the "current printer" display when the user first opens
+// the page (the modal is empty by default).
+document.addEventListener('DOMContentLoaded', function() {
+  // Delay slightly so the modal DOM is ready
+  setTimeout(refreshPrinterCurrent, 100);
+});

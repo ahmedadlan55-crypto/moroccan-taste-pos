@@ -3395,8 +3395,7 @@ function confirmReceive() {
     console.log('[RECEIVE response]', r);
 
     if (!r || r.success === false) {
-      // Use a long alert (not a toast) so the user can read the full skip reason
-      return alert(r && r.error ? r.error : 'فشل الاستلام');
+      return showToast(r && r.error ? r.error : 'فشل الاستلام', true);
     }
 
     // Show every successful update so the user can verify
@@ -3413,29 +3412,8 @@ function confirmReceive() {
     }
 
     closeModal('#modalReceiveForm');
-
-    // Show detailed results in an alert so the user can verify stock changes
-    var msg = "✅ تم استلام " + (r.count||0) + " صنف وتحديث المخزون\n\n";
-    if (r.updated && r.updated.length) {
-      msg += "📦 التحديثات:\n";
-      r.updated.forEach(function(u) {
-        var convNote = u.convRate > 1
-          ? "  (" + u.qtyOrdered + " " + (u.unitOrdered||'كبرى') + " × " + u.convRate + " = " + u.stockQty + ")"
-          : "";
-        msg += "• " + u.invName + ": " + u.stockBefore + " → " + u.stockAfter + " (+" + u.stockQty + ")" + convNote + "\n";
-      });
-    }
-    if (r.skipped > 0 && r.skippedDetails) {
-      msg += "\n⚠️ تم تخطي " + r.skipped + " صنف:\n";
-      r.skippedDetails.forEach(function(s) {
-        msg += "• " + (s.name||'—') + ": " + (s.reason||'—') + "\n";
-      });
-    }
-    if (r.vatAmount) msg += "\n💰 ضريبة مدخلات: " + Number(r.vatAmount).toFixed(2) + " SAR";
-    alert(msg);
-
+    showToast("✅ تم استلام " + (r.count||0) + " صنف وتحديث المخزون");
     loadDashPurchases();
-    // Also refresh the warehouse data so it shows the new stock immediately
     if (typeof loadDashInvItems === 'function') loadDashInvItems();
   }).receivePurchaseBatch(rcvInvoiceId, state.user, includesVAT);
 }

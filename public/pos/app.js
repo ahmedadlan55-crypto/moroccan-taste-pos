@@ -1,7 +1,88 @@
 /**
  * POS page logic — cart, menu, checkout, shifts, receipt, glass modals
  * Standalone — uses /shared/common.js + /shared/auth.js + /shared/api-bridge.js
+ *
+ * This page is ALSO a Progressive Web App: it can be installed on a phone's
+ * home screen, it works offline (app shell is cached by /pos/sw.js), and it
+ * launches in standalone mode without any browser chrome. The install prompt
+ * is handled by setupPwa() below — if the browser supports PWA install, a
+ * floating "تثبيت التطبيق" button appears when the user can install.
  */
+
+// ─── PWA: Service worker registration + install prompt ───
+// Runs as early as possible so the SW starts installing in the background
+// while the rest of the boot sequence continues. Completely safe if the
+// browser doesn't support service workers — everything still works.
+(function setupPwa() {
+  if (!('serviceWorker' in navigator)) return;
+  // Wait for the page to finish loading before registering the SW so it
+  // doesn't compete with the critical rendering path on slow devices.
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('/pos/sw.js', { scope: '/pos/' })
+      .then(function(reg) {
+        // Re-check for updates every hour while the app is open
+        setInterval(function() { reg.update().catch(function() {}); }, 3600000);
+      })
+      .catch(function(err) {
+        console.warn('[PWA] Service worker registration failed:', err && err.message);
+      });
+  });
+
+  // Capture the native install prompt and defer it — we'll trigger it from
+  // our own button so the user gets a clean in-app "install" experience.
+  var deferredPrompt = null;
+
+  window.addEventListener('beforeinstallprompt', function(e) {
+    e.preventDefault();
+    deferredPrompt = e;
+    showPwaInstallButton();
+  });
+
+  // Hide the button once the app is actually installed
+  window.addEventListener('appinstalled', function() {
+    deferredPrompt = null;
+    hidePwaInstallButton();
+    try { localStorage.setItem('pos_pwa_installed', '1'); } catch (e) {}
+  });
+
+  function showPwaInstallButton() {
+    // Don't re-create if one already exists
+    var btn = document.getElementById('pwaInstallBtn');
+    if (btn) { btn.classList.remove('hidden'); return; }
+
+    btn = document.createElement('button');
+    btn.id = 'pwaInstallBtn';
+    btn.className = 'pwa-install-btn';
+    btn.type = 'button';
+    btn.setAttribute('aria-label', 'تثبيت التطبيق');
+    btn.innerHTML = '<i class="fas fa-mobile-screen-button"></i><span>تثبيت التطبيق</span>';
+    btn.addEventListener('click', function() {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then(function(choice) {
+        deferredPrompt = null;
+        hidePwaInstallButton();
+        // If the user accepted, appinstalled will fire next
+        if (choice && choice.outcome === 'accepted' && typeof glassToast === 'function') {
+          glassToast('جاري تثبيت التطبيق…');
+        }
+      });
+    });
+    document.body.appendChild(btn);
+  }
+
+  function hidePwaInstallButton() {
+    var btn = document.getElementById('pwaInstallBtn');
+    if (btn) btn.classList.add('hidden');
+  }
+
+  // Expose the trigger globally in case other code wants to call it
+  window.triggerPwaInstall = function() {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+    }
+  };
+})();
 
 // ─── Boot ───
 document.addEventListener('DOMContentLoaded', function() {

@@ -6,6 +6,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#0d47a1">
 
+  <!-- ─── PWA Manifest + Install ─── -->
+  <link rel="manifest" href="/pos/manifest.json">
+  <meta name="application-name" content="MT POS">
+  <meta name="mobile-web-app-capable" content="yes">
+
+  <!-- iOS Safari standalone mode -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MT POS">
+  <link rel="apple-touch-icon" href="/pos/icons/icon.svg">
+  <link rel="apple-touch-icon" sizes="192x192" href="/pos/icons/icon-192.svg">
+  <link rel="apple-touch-icon" sizes="512x512" href="/pos/icons/icon-512.svg">
+
+  <!-- Windows tile -->
+  <meta name="msapplication-TileColor" content="#0d47a1">
+  <meta name="msapplication-TileImage" content="/pos/icons/icon-192.svg">
+
+  <!-- Browser tab icon -->
+  <link rel="icon" type="image/svg+xml" href="/pos/icons/icon.svg">
+
   <!-- ─── HARD AUTH GATE ───
        Runs synchronously BEFORE any HTML body is parsed. If there is no JWT
        token in localStorage, the browser is redirected to /. Otherwise we

@@ -60,73 +60,10 @@
         <label><input type="checkbox" id="lRemember"> <span>Remember me</span></label>
       </div>
 
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-  <meta charset="UTF-8">
-  <title>Moroccan Taste POS System</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes, viewport-fit=cover">
-
-  <!-- ─── CRITICAL AUTH GATE ───
-       Hides every section of the app until JavaScript adds `body.authenticated`
-       after a successful login (or auto-login from a saved session). This stops
-       the brief flash of the dashboard / POS / ERP content before the login
-       screen appears, and prevents inspecting the page contents without auth. -->
-  <style id="critical-auth-gate">
-    html, body { margin: 0; padding: 0; background: radial-gradient(circle at top right, #1e293b, #0f172a); }
-    body:not(.authenticated) > *:not(#loginView):not(#loader):not(#toastContainer):not(#critical-auth-gate) {
-      display: none !important;
-      visibility: hidden !important;
-    }
-    body:not(.authenticated) #loginView { display: flex !important; visibility: visible !important; }
-    /* Hide every modal until logged in (modals don't have .hidden class by default) */
-    body:not(.authenticated) .modal,
-    body:not(.authenticated) .glass-modal,
-    body:not(.authenticated) .modal-overlay { display: none !important; }
-  </style>
-
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=6">
-
-  <!-- Heavy libs (Chart.js, XLSX, QRCode, erp.js) are NOT loaded eagerly anymore.
-       app.js loads them on-demand via loadScript() before any function that
-       needs them runs. This drops the initial payload by ~380 KB on mobile. -->
-</head>
-<body class="ar">
-
-  <!-- Full Screen Loader (hidden by default, shown only during API calls) -->
-  <div id="loader" style="display:none;">
-    <div class="spinner"></div>
-    <h3 style="margin-top:20px; color:var(--secondary); font-weight:800;" data-i18n="loading">جاري التحميل...</h3>
-  </div>
-
-  <!-- 1. LOGIN SCREEN -->
-  <div id="loginView">
-    <div class="login-box">
-      <div class="login-logo" id="loginLogoBox">
-        <span class="login-logo-fallback">&#9749;</span>
-      </div>
-      <div class="login-title" id="loginCompanyName">Moroccan Taste</div>
-      <p class="login-subtitle" data-i18n="login">Login</p>
-
-      <div class="login-field">
-        <input type="text" id="lUser" class="form-control" placeholder="Username" autocomplete="off" onkeypress="if(event.key==='Enter') doLogin()">
-        <i class="fas fa-user login-field-icon"></i>
-      </div>
-      <div class="login-field">
-        <input type="password" id="lPass" class="form-control" placeholder="Password" onkeypress="if(event.key==='Enter') doLogin()">
-        <i class="fas fa-lock login-field-icon"></i>
-      </div>
-
-      <div class="login-row">
-        <label><input type="checkbox" id="lRemember"> <span>Remember me</span></label>
-      </div>
-
       <button class="btn btn-primary" onclick="doLogin()"><span data-i18n="login">Login</span></button>
     </div>
   </div>
 
-  
   <!-- TEMPLATE_INJECTION_POINT -->
   <!-- ========================================== -->
   <!-- 4. MAIN APP SCRIPT                         -->

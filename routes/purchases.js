@@ -22,7 +22,7 @@ router.get('/', async (req, res) => {
       itemName: p.item_name, itemId: p.item_id,
       qty: Number(p.qty), unitPrice: Number(p.unit_price), totalPrice: Number(p.total_price),
       paymentMethod: p.payment_method, username: p.username, notes: p.notes,
-      status: p.status, items: JSON.parse(p.items_json || '[]'), poId: p.po_id
+      status: p.status, items: JSON.parse(p.items_json || '[]'), itemsJson: p.items_json || '[]', poId: p.po_id
     })));
   } catch (e) {
     res.json([]);

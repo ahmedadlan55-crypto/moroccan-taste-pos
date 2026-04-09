@@ -101,10 +101,52 @@ async function addColumnIfMissing(table, column, definition) {
   }
 }
 
+async function createTableIfMissing(tableName, createSQL) {
+  try {
+    const [rows] = await db.query("SHOW TABLES LIKE ?", [tableName]);
+    if (!rows.length) {
+      console.log(`[DB] Migration: creating table ${tableName}`);
+      await db.query(createSQL);
+    }
+  } catch (e) {
+    console.log(`[DB] Migration warning (${tableName}):`, e.message.substring(0, 120));
+  }
+}
+
 async function runMigrations() {
+  // PO lines — unit conversion columns
   await addColumnIfMissing('po_lines', 'unit', "VARCHAR(50) DEFAULT ''");
   await addColumnIfMissing('po_lines', 'conv_rate', "DECIMAL(10,2) DEFAULT 1");
   await addColumnIfMissing('po_lines', 'unit_type', "VARCHAR(10) DEFAULT 'small'");
+
+  // Menu — pricing system columns
+  await addColumnIfMissing('menu', 'computed_cost', "DECIMAL(10,4) DEFAULT 0");
+  await addColumnIfMissing('menu', 'pricing_mode', "VARCHAR(20) DEFAULT 'fixed'");
+  await addColumnIfMissing('menu', 'markup_pct', "DECIMAL(5,2) DEFAULT 30");
+
+  // Purchase lots — for future FIFO support (populated on receive, not consumed yet)
+  await createTableIfMissing('purchase_lots', `
+    CREATE TABLE purchase_lots (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      inv_item_id VARCHAR(50) NOT NULL,
+      purchase_id VARCHAR(50),
+      received_date DATETIME,
+      qty_received DECIMAL(12,2) DEFAULT 0,
+      qty_remaining DECIMAL(12,2) DEFAULT 0,
+      unit_cost DECIMAL(10,4) DEFAULT 0,
+      FOREIGN KEY (inv_item_id) REFERENCES inv_items(id) ON DELETE CASCADE,
+      INDEX idx_lots_item (inv_item_id),
+      INDEX idx_lots_purchase (purchase_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // Seed cost settings into the existing key-value settings table
+  try {
+    await db.query(`INSERT IGNORE INTO settings (setting_key, setting_value) VALUES
+      ('costing_method','WEIGHTED_AVERAGE'),
+      ('default_pricing_mode','fixed'),
+      ('default_markup_pct','30')`);
+  } catch (e) { console.log('[DB] Cost settings seed:', e.message.substring(0, 80)); }
 }
 
 app.listen(PORT, async () => {

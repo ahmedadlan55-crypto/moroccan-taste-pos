@@ -7,7 +7,8 @@ router.get('/', async (req, res) => {
     const [rows] = await db.query('SELECT * FROM menu WHERE active = 1 ORDER BY category, name');
     res.json(rows.map(m => ({
       id: m.id, name: m.name, price: Number(m.price), category: m.category,
-      cost: Number(m.cost), stock: m.stock, minStock: m.min_stock, active: m.active, rowIndex: m.id
+      cost: Number(m.cost), stock: m.stock, minStock: m.min_stock, active: m.active, rowIndex: m.id,
+      computedCost: Number(m.computed_cost) || 0, pricingMode: m.pricing_mode || 'fixed', markupPct: Number(m.markup_pct) || 30
     })));
   } catch (e) { res.json([]); }
 });
@@ -18,7 +19,8 @@ router.get('/all', async (req, res) => {
     const [rows] = await db.query('SELECT * FROM menu ORDER BY category, name');
     res.json(rows.map(m => ({
       id: m.id, name: m.name, price: Number(m.price), category: m.category,
-      cost: Number(m.cost), stock: m.stock, minStock: m.min_stock, active: m.active
+      cost: Number(m.cost), stock: m.stock, minStock: m.min_stock, active: m.active,
+      computedCost: Number(m.computed_cost) || 0, pricingMode: m.pricing_mode || 'fixed', markupPct: Number(m.markup_pct) || 30
     })));
   } catch (e) { res.json([]); }
 });
@@ -26,10 +28,12 @@ router.get('/all', async (req, res) => {
 // Add menu item
 router.post('/', async (req, res) => {
   try {
-    const { name, price, category, cost, stock, minStock, active } = req.body;
+    const { name, price, category, cost, stock, minStock, active, pricingMode, markupPct } = req.body;
     const id = 'MENU-' + Date.now();
-    await db.query('INSERT INTO menu (id, name, price, category, cost, stock, min_stock, active) VALUES (?,?,?,?,?,?,?,?)',
-      [id, name, price, category || 'عام', cost || 0, stock || 999, minStock || 5, active !== false]);
+    await db.query(
+      'INSERT INTO menu (id, name, price, category, cost, stock, min_stock, active, pricing_mode, markup_pct) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [id, name, price, category || 'عام', cost || 0, stock || 9999, minStock || 0, active !== false,
+       pricingMode || 'fixed', markupPct || 30]);
     res.json({ success: true, id });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
@@ -37,9 +41,23 @@ router.post('/', async (req, res) => {
 // Update menu item
 router.put('/:id', async (req, res) => {
   try {
-    const { name, price, category, cost, stock, minStock, active } = req.body;
-    await db.query('UPDATE menu SET name=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=? WHERE id=?',
-      [name, price, category, cost || 0, stock, minStock, active, req.params.id]);
+    const { name, price, category, cost, stock, minStock, active, pricingMode, markupPct } = req.body;
+    // If variable pricing, the price is auto-computed — don't overwrite it from the form.
+    // Only update pricing_mode and markup_pct; the cascade will handle the price.
+    if (pricingMode === 'variable') {
+      await db.query(
+        'UPDATE menu SET name=?, category=?, cost=?, stock=?, min_stock=?, active=?, pricing_mode=?, markup_pct=? WHERE id=?',
+        [name, category, cost || 0, stock, minStock, active, 'variable', markupPct || 30, req.params.id]);
+      // Recompute the price now from the stored computed_cost
+      try {
+        const { recomputeMenuCost } = require('./pricing-utils');
+        await recomputeMenuCost(req.params.id);
+      } catch(e) {}
+    } else {
+      await db.query(
+        'UPDATE menu SET name=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?, pricing_mode=?, markup_pct=? WHERE id=?',
+        [name, price, category, cost || 0, stock, minStock, active, 'fixed', markupPct || 30, req.params.id]);
+    }
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });

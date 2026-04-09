@@ -188,26 +188,38 @@ router.post('/receive/:id', async (req, res) => {
       // ─── UNIT CONVERSION: if ordered in big units, multiply qty × convRate ───
       const { stockQty, usedConvRate } = computeStockQty(item, inv);
 
-      // Update stock with the CONVERTED quantity (in small units).
+      // Cost per small unit (e.g. 50 SAR/carton ÷ 28 = 1.79 SAR/piece)
       const stockBefore = Number(inv.stock) || 0;
       const currentCost = Number(inv.cost) || 0;
-      // For cost, if the user bought 5 cartons @ 50 SAR/carton and conv_rate=28,
-      // the per-piece cost is 50/28 = 1.79 SAR. Store cost per small-unit.
       let costPerSmallUnit = netUnitPrice;
       if (usedConvRate > 1 && netUnitPrice > 0) {
         costPerSmallUnit = netUnitPrice / usedConvRate;
       }
 
-      let affectedRows = 0;
-      if (currentCost === 0 && costPerSmallUnit > 0) {
-        const [result] = await db.query('UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?',
-          [stockQty, costPerSmallUnit, inv.id]);
-        affectedRows = result.affectedRows;
+      // ─── WEIGHTED AVERAGE COST ───
+      // new_cost = (old_stock × old_cost + new_qty × new_unit_cost) / (old_stock + new_qty)
+      let newCost;
+      if (stockBefore === 0) {
+        newCost = costPerSmallUnit;
+      } else if (costPerSmallUnit > 0) {
+        newCost = ((stockBefore * currentCost) + (stockQty * costPerSmallUnit)) / (stockBefore + stockQty);
       } else {
-        const [result] = await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?',
-          [stockQty, inv.id]);
-        affectedRows = result.affectedRows;
+        newCost = currentCost;
       }
+
+      const [result] = await db.query(
+        'UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?',
+        [stockQty, newCost, inv.id]
+      );
+      let affectedRows = result.affectedRows;
+
+      // ─── PURCHASE LOT (for future FIFO) ───
+      try {
+        await db.query(
+          'INSERT INTO purchase_lots (inv_item_id, purchase_id, received_date, qty_received, qty_remaining, unit_cost) VALUES (?,?,?,?,?,?)',
+          [inv.id, id, now, stockQty, stockQty, costPerSmallUnit]
+        );
+      } catch (lotErr) { console.warn('[RECEIVE] purchase_lots insert failed:', lotErr.message); }
 
       var convNote = usedConvRate > 1
         ? item.qty + ' ' + (item.unit || 'big') + ' × ' + usedConvRate + ' = ' + stockQty + ' ' + (inv.unit || 'unit')
@@ -250,6 +262,15 @@ router.post('/receive/:id', async (req, res) => {
       });
 
       count++;
+    }
+
+    // ─── CASCADE: recompute menu costs for any affected products ───
+    if (updated.length) {
+      try {
+        const { recomputeMenuCostsForItems } = require('./pricing-utils');
+        const recomputed = await recomputeMenuCostsForItems(updated.map(u => u.invId));
+        console.log('[RECEIVE] Cascade: recomputed', recomputed, 'menu items');
+      } catch (cascadeErr) { console.warn('[RECEIVE] Cascade failed:', cascadeErr.message); }
     }
 
     // Mark the purchase itself as received
@@ -347,11 +368,20 @@ router.post('/receive/:id/revert', async (req, res) => {
       await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [r.stockQty, r.inv.id]);
     }
 
-    // Delete the movements created by the receive (matched by notes = 'PUR: <id>' and type = 'in')
+    // Delete the movements created by the receive
     await db.query(
       'DELETE FROM inventory_movements WHERE notes = ? AND type = ? AND reason = ?',
       ['PUR: ' + id, 'in', 'مشتريات']
     );
+
+    // Delete purchase lots created by this receive
+    try { await db.query('DELETE FROM purchase_lots WHERE purchase_id = ?', [id]); } catch(e) {}
+
+    // Cascade: recompute affected menu costs after stock rollback
+    try {
+      const { recomputeMenuCostsForItems } = require('./pricing-utils');
+      await recomputeMenuCostsForItems(resolved.map(r => r.inv.id));
+    } catch(e) {}
 
     // Flip the purchase back to draft
     await db.query('UPDATE purchases SET status = "draft" WHERE id = ?', [id]);

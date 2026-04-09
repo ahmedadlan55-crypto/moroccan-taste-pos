@@ -569,8 +569,12 @@ function erpShowPOForm() {
   // Reset
   document.getElementById('erpPOSupplierInput').value = '';
   document.getElementById('erpPOSupplierId').value = '';
-  document.getElementById('erpPODate').value = new Date().toISOString().split('T')[0];
-  document.getElementById('erpPOExpDate').value = '';
+  var today = new Date();
+  var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+  var weekLater = new Date(today); weekLater.setDate(weekLater.getDate() + 7);
+  var weekStr = weekLater.getFullYear() + '-' + String(weekLater.getMonth()+1).padStart(2,'0') + '-' + String(weekLater.getDate()).padStart(2,'0');
+  document.getElementById('erpPODate').value = todayStr;
+  document.getElementById('erpPOExpDate').value = weekStr;
   document.getElementById('erpPONotes').value = '';
   document.getElementById('erpPOItemSearch').value = '';
   document.getElementById('erpPOItemId').value = '';

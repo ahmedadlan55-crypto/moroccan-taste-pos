@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(node -e \"require\\(''''./routes/menu''''\\)\")",
+      "Bash(node -c routes/menu.js)",
+      "Bash(node -c public/js/app.js)",
+      "Bash(node -c public/js/api-bridge.js)",
+      "Bash(npm ls:*)",
+      "Bash(npm install:*)",
+      "mcp__Claude_Preview__preview_start",
+      "WebFetch(domain:moroccan-taste-pos-production.up.railway.app)",
+      "Bash(node -c public/js/erp.js)",
+      "Bash(node -c public/shared/common.js)",
+      "Bash(node -c public/shared/header.js)",
+      "Bash(node -c public/pos/app.js)",
+      "Bash(node -c public/shared/api-bridge.js)",
+      "Bash(node -c routes/inventory.js)",
+      "Bash(node -c routes/auth.js)",
+      "Bash(node -c routes/settings.js)",
+      "Bash(node -c public/shared/virtual-table.js)",
+      "Bash(node -c public/users/app.js)",
+      "Bash(node -c public/settings/app.js)",
+      "Bash(node -c routes/authMiddleware.js)",
+      "Bash(node -e ':*)",
+      "Bash(node -e \"try { require\\('./routes/purchases'\\); console.log\\('routes/purchases.js: syntax OK'\\); } catch \\(e\\) { console.log\\('SYNTAX ERROR:', e.message\\); }\")",
+      "Bash(node -e \"new Function\\(require\\('fs'\\).readFileSync\\('public/pos/app.js','utf8'\\)\\); console.log\\('OK'\\);\")",
+      "Bash(python -c ':*)",
+      "Bash(python -c \"import sys; sys.stdout.reconfigure\\(encoding='utf-8'\\); print\\(sys.stdin.read\\(\\)\\)\")",
+      "Bash(node -e \"try { require\\('./routes/purchases'\\); console.log\\('OK'\\); } catch\\(e\\) { console.log\\('ERROR:', e.message\\); }\")",
+      "Bash(node -e \"new Function\\(require\\('fs'\\).readFileSync\\('public/js/erp.js','utf8'\\)\\); console.log\\('OK'\\);\")",
+      "Bash(node -e \"new Function\\(require\\('fs'\\).readFileSync\\('public/js/app.js','utf8'\\)\\); console.log\\('OK'\\);\")"
+    ]
+  }
+}

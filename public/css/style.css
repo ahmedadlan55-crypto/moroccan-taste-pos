@@ -771,31 +771,50 @@ body.ar .erp-filters .filter-search input { padding: 7px 30px 7px 10px; }
 .po-sum-val { display: block; font-size: 20px; font-weight: 800; color: var(--text-dark); }
 
 /* PO Add Row */
-.po-add-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; background: var(--white); padding: 14px; border-radius: 12px; border: 1.5px dashed #cbd5e1; }
-.po-add-item-field { flex: 1; min-width: 200px; }
-.po-add-btn { height: 46px; padding: 0 20px; white-space: nowrap; flex-shrink: 0; font-size: 13px; font-weight: 700; }
+.po-add-row { display: grid; grid-template-columns: 1fr 90px 120px 130px auto; gap: 16px; align-items: end; background: #f8fafc; padding: 20px; border-radius: 16px; border: 1.5px dashed #cbd5e1; transition: border-color 0.25s, box-shadow 0.25s; box-shadow: 0 4px 15px rgba(0,0,0,0.01); }
+.po-add-row:focus-within { border-color: var(--accent); box-shadow: 0 4px 20px rgba(59, 130, 246, 0.08); }
+.po-add-item-field { min-width: 0; }
+.po-add-btn { height: 46px; padding: 0 26px; white-space: nowrap; font-size: 14px; font-weight: 800; border-radius: 10px; box-shadow: 0 4px 12px rgba(22, 163, 74, 0.2); transition: transform 0.15s, box-shadow 0.15s; border: none; }
+.po-add-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(22, 163, 74, 0.3); }
 
 /* PO Form Layout */
-.po-form-grid { display: grid; grid-template-columns: 320px 1fr; gap: 20px; min-height: 500px; }
-.po-form-section { background: #f8fafc; border-radius: 14px; padding: 20px; border: 1px solid #e2e8f0; }
-.po-form-section .form-group { margin-bottom: 16px; }
-.po-form-section .form-label { font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 6px; display: block; }
-.po-form-section .form-control, .po-form-section .sd-input { padding: 10px 14px; font-size: 14px; }
-.po-form-section textarea.form-control { min-height: 80px; }
-.po-section-title { font-size: 16px; font-weight: 800; color: var(--text-dark); margin-bottom: 18px; padding-bottom: 10px; border-bottom: 2px solid #e2e8f0; display: flex; align-items: center; gap: 8px; }
-.po-section-title i { color: var(--accent); }
-.form-row-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.po-form-grid { display: grid; grid-template-columns: 340px 1fr; gap: 24px; min-height: 500px; }
+.po-form-section { background: var(--white); border-radius: 18px; padding: 24px; border: 1px solid rgba(226,232,240,0.8); box-shadow: 0 4px 20px rgba(0,0,0,0.015); transition: box-shadow 0.3s ease; display:flex; flex-direction:column; }
+.po-form-section:hover { box-shadow: 0 8px 30px rgba(0,0,0,0.03); }
+.po-form-section .form-group { margin-bottom: 20px; }
+.po-form-section .form-label { font-size: 13.5px; font-weight: 700; color: #334155; margin-bottom: 8px; display: block; }
+.po-form-section .form-control, .po-form-section .sd-input { padding: 12px 16px; font-size: 14.5px; border-radius: 10px; border: 1.5px solid #e2e8f0; transition: all 0.25s; background: #f8fafc; width: 100%; box-sizing: border-box; }
+.po-form-section .form-control:focus, .po-form-section .sd-input:focus { background: var(--white); border-color: var(--accent); box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1); outline: none; }
+.po-form-section textarea.form-control { min-height: 100px; resize: vertical; }
+
+.po-section-title { font-size: 17px; font-weight: 800; color: var(--primary); margin-bottom: 22px; padding-bottom: 14px; border-bottom: 2px solid #f1f5f9; display: flex; align-items: center; gap: 10px; }
+.po-section-title i { color: var(--accent); background: #eff6ff; padding: 8px 10px; border-radius: 10px; font-size: 15px; }
+.form-row-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
 /* PO Line Items Table */
-.po-lines-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 14px; }
-.po-lines-table th { padding: 10px 12px; background: #f1f5f9; text-align: right; font-weight: 700; color: #475569; border-bottom: 2px solid #e2e8f0; font-size: 12px; }
-.po-lines-table td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+.po-table-container { background: var(--white); border: 1px solid #e2e8f0; border-radius: 14px; overflow: hidden; margin-top: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.01); }
+.po-lines-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.po-lines-table th { padding: 14px 16px; background: #f8fafc; text-align: right; font-weight: 800; color: #475569; font-size: 12.5px; border-bottom: 2px solid #e2e8f0; }
+.po-lines-table td { padding: 12px 16px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; color: #334155; font-weight: 500; }
 .po-lines-table tbody tr:hover { background: #f8fafc; }
+.po-lines-table tbody tr:last-child td { border-bottom: none; }
 
 /* PO Totals Box */
-.po-totals-box { margin-top: 18px; background: linear-gradient(135deg, #eff6ff, #f0f4ff); border-radius: 12px; padding: 16px 20px; border: 1.5px solid #bfdbfe; }
-.po-total-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 14px; color: #475569; }
-.po-total-row.po-grand-total { font-size: 18px; font-weight: 800; color: #1e293b; border-top: 2px solid #93c5fd; padding-top: 10px; margin-top: 6px; }
+.po-totals-box { margin-top: 24px; background: linear-gradient(135deg, #f8fafc, #f1f5f9); border-radius: 16px; padding: 22px 26px; border: 1.5px solid #e2e8f0; display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 420px; margin-inline-start: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.02); }
+.po-total-row { display: flex; justify-content: space-between; align-items: center; font-size: 15px; color: #475569; font-weight: 700; }
+.po-total-row.po-grand-total { font-size: 22px; font-weight: 900; color: var(--primary); border-top: 2px dashed #cbd5e1; padding-top: 16px; margin-top: 4px; }
+
+@media (max-width: 1024px) {
+  .po-form-grid { grid-template-columns: 1fr; gap: 20px; }
+  .po-add-row { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .po-add-btn { grid-column: span 2; width: 100%; margin-top: 10px; }
+  .po-totals-box { max-width: 100%; }
+}
+@media (max-width: 768px) {
+  .po-add-row { grid-template-columns: 1fr; }
+  .po-add-btn { grid-column: 1; }
+  .po-lines-table th, .po-lines-table td { padding: 10px; }
+}
 
 @media (max-width: 768px) {
   .kpi-grid-erp { grid-template-columns: repeat(2, 1fr); }

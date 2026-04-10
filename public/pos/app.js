@@ -1398,101 +1398,45 @@ window.submitCashierStocktake = function() {
   });
 };
 
-// After save: generate a printable report page and offer to share via WhatsApp
+// After save: send report directly via WhatsApp — no browser window
 function _showStocktakeWhatsApp(stId, items) {
   var cashier = (state.currentUser && state.currentUser.displayName) || state.user;
   var dateStr = new Date().toLocaleString('en-GB');
   var company = (state.settings && state.settings.name) || 'Moroccan Taste';
   var isEn = state.lang === 'en';
-
-  // Build the printable report (same quality as admin print but without variance cost)
-  var rows = items.map(function(c, idx) {
-    var sysQty = Number(c.sys || c.systemQty) || 0;
-    var actQty = Number(c.actual || c.actualQty) || 0;
-    var diff = actQty - sysQty;
-    var vc = diff === 0 ? '#64748b' : (diff > 0 ? '#16a34a' : '#ef4444');
-    var vs = diff > 0 ? '+' + diff.toFixed(2) : diff.toFixed(2);
-    return '<tr><td>' + (idx+1) + '</td><td style="font-weight:700;">' + (c.name||c.id) + '</td>' +
-      '<td style="text-align:center;">' + sysQty.toFixed(2) + '</td>' +
-      '<td style="text-align:center;font-weight:800;">' + actQty.toFixed(2) + '</td>' +
-      '<td style="text-align:center;font-weight:900;color:' + vc + ';">' + vs + '</td></tr>';
-  }).join('');
   var totalVar = items.reduce(function(s, c) { return s + ((Number(c.actual || c.actualQty) || 0) - (Number(c.sys || c.systemQty) || 0)); }, 0);
 
-  var dir = isEn ? 'ltr' : 'rtl';
   var lblTitle = isEn ? 'Inventory Stocktake Report' : 'محضر جرد مخزون';
-  var lblId = isEn ? 'Report No.' : 'رقم المحضر';
-  var lblDate = isEn ? 'Date' : 'التاريخ';
-  var lblCashier = isEn ? 'Counted by' : 'القائم بالجرد';
-  var lblItems = isEn ? 'Items' : 'عدد الأصناف';
-  var thN = isEn ? '#' : '#';
-  var thItem = isEn ? 'Item' : 'المادة';
-  var thSys = isEn ? 'System Qty' : 'رصيد النظام';
-  var thActual = isEn ? 'Actual Qty' : 'الفعلي';
-  var thVar = isEn ? 'Variance' : 'التباين';
   var lblTotal = isEn ? 'Total Variance' : 'إجمالي التباين';
-  var lblSig1 = isEn ? 'Counted by' : 'القائم بالجرد';
-  var lblSig2 = isEn ? 'Warehouse Manager' : 'مدير المستودع';
-  var lblSig3 = isEn ? 'General Manager' : 'المدير العام';
+  var lblSys = isEn ? 'Sys' : 'النظام';
+  var lblAct = isEn ? 'Actual' : 'الفعلي';
 
-  // Open as a regular new tab (no dimensions) so on mobile the user can:
-  // Share → Google Drive, or Print → Save as PDF, or just screenshot it
-  var w = window.open('', '_blank');
-  if (w) {
-    w.document.write(
-      '<html dir="' + dir + '"><head><meta charset="UTF-8"><title>' + lblTitle + ' ' + stId + '</title>' +
-      '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;direction:' + dir + ';padding:30px;color:#1e293b;}' +
-      'h2{text-align:center;margin-bottom:4px;}h3{text-align:center;color:#64748b;margin-bottom:14px;}' +
-      '.meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0;font-size:13px;}.meta div{background:#f8fafc;padding:10px 14px;border-radius:10px;border:1px solid #e2e8f0;}.meta .lbl{font-size:10px;color:#64748b;}.meta .val{font-weight:700;}' +
-      'table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px;}th,td{border:1px solid #ddd;padding:8px 10px;text-align:center;}th{background:#f1f5f9;font-weight:700;}' +
-      '.total{text-align:center;margin-top:14px;font-weight:900;font-size:18px;padding:14px;border-radius:12px;}' +
-      '.sig{display:flex;justify-content:space-around;margin-top:40px;font-size:13px;}.sig div{text-align:center;}.sig .line{width:150px;border-bottom:1px solid #94a3b8;padding-top:40px;margin:0 auto;}.sig .cap{font-size:11px;color:#64748b;margin-top:4px;}' +
-      '@media print{body{padding:10px;}}</style></head><body>' +
-      '<h2>' + company + '</h2><h3>' + lblTitle + '</h3>' +
-      '<div class="meta">' +
-        '<div><div class="lbl">' + lblId + '</div><div class="val">' + stId + '</div></div>' +
-        '<div><div class="lbl">' + lblDate + '</div><div class="val">' + dateStr + '</div></div>' +
-        '<div><div class="lbl">' + lblCashier + '</div><div class="val">' + cashier + '</div></div>' +
-        '<div><div class="lbl">' + lblItems + '</div><div class="val">' + items.length + '</div></div>' +
-      '</div>' +
-      '<table><thead><tr><th>' + thN + '</th><th>' + thItem + '</th><th>' + thSys + '</th><th>' + thActual + '</th><th>' + thVar + '</th></tr></thead><tbody>' + rows + '</tbody></table>' +
-      '<div class="total" style="background:' + (totalVar < 0 ? '#fef2f2;border:1.5px solid #fecaca;color:#ef4444' : '#f0fdf4;border:1.5px solid #86efac;color:#16a34a') + ';">' + lblTotal + ': ' + (totalVar >= 0 ? '+' : '') + totalVar.toFixed(2) + '</div>' +
-      '<div class="sig"><div><div class="line"></div><div class="cap">' + lblSig1 + '</div></div><div><div class="line"></div><div class="cap">' + lblSig2 + '</div></div><div><div class="line"></div><div class="cap">' + lblSig3 + '</div></div></div>' +
-      '<div class="no-print" style="text-align:center;margin-top:20px;"><button onclick="window.print()" style="padding:12px 30px;font-size:16px;font-weight:800;background:#0d47a1;color:#fff;border:none;border-radius:10px;cursor:pointer;">🖨️ ' + (isEn ? 'Print Report' : 'طباعة التقرير') + '</button></div>' +
-      '<style>@media print{.no-print{display:none!important;}}</style>' +
-      '</body></html>'
-    );
-    w.document.close();
-  }
-
-  // Offer WhatsApp share with a text summary
+  // Build formatted WhatsApp message
   var lines = [
-    '📋 *' + lblTitle + '*', '',
-    '🏪 ' + company, '📅 ' + dateStr, '👤 ' + cashier, '🆔 ' + stId, '',
-    '*' + (isEn ? 'Details:' : 'تفاصيل الجرد:') + '*'
+    '📋 *' + lblTitle + '*',
+    '━━━━━━━━━━━━━━━━',
+    '🏪 ' + company,
+    '📅 ' + dateStr,
+    '👤 ' + cashier,
+    '🆔 ' + stId,
+    '',
+    '┌─────────────────────┐'
   ];
   items.forEach(function(c) {
     var sysQty = Number(c.sys || c.systemQty) || 0;
     var actQty = Number(c.actual || c.actualQty) || 0;
     var diff = actQty - sysQty;
-    var arrow = diff === 0 ? '=' : (diff > 0 ? '↑' : '↓');
-    lines.push('• ' + (c.name||c.id) + ': ' + sysQty.toFixed(2) + ' → ' + actQty.toFixed(2) + ' (' + arrow + Math.abs(diff).toFixed(2) + ')');
+    var icon = diff === 0 ? '✅' : (diff > 0 ? '🟢' : '🔴');
+    var sign = diff > 0 ? '+' : '';
+    lines.push(icon + ' *' + (c.name || c.id) + '*');
+    lines.push('   ' + lblSys + ': ' + sysQty.toFixed(2) + ' → ' + lblAct + ': ' + actQty.toFixed(2) + ' (' + sign + diff.toFixed(2) + ')');
   });
+  lines.push('└─────────────────────┘');
   lines.push('');
-  lines.push('📊 ' + lblTotal + ': ' + (totalVar >= 0 ? '+' : '') + totalVar.toFixed(2));
+  var varIcon = totalVar === 0 ? '✅' : (totalVar > 0 ? '📈' : '📉');
+  lines.push(varIcon + ' *' + lblTotal + ':* ' + (totalVar >= 0 ? '+' : '') + totalVar.toFixed(2));
 
-  setTimeout(function() {
-    glassConfirm(
-      isEn ? 'Send Report' : 'إرسال التقرير',
-      isEn ? 'Print the report or send via WhatsApp to the supervisor?' : 'طباعة التقرير أو إرسال عبر واتساب للسوبرفايزر؟',
-      { okText: isEn ? 'WhatsApp' : 'واتساب', cancelText: isEn ? 'Print Only' : 'طباعة فقط' }
-    ).then(function(ok) {
-      if (ok) {
-        var text = encodeURIComponent(lines.join('\n'));
-        window.open('https://wa.me/?text=' + text, '_blank');
-      }
-      // Either way, trigger print on the report window
-      try { if (w) w.print(); } catch(e) {}
-    });
-  }, 300);
+  // Send directly to WhatsApp
+  var text = encodeURIComponent(lines.join('\n'));
+  window.open('https://wa.me/?text=' + text, '_blank');
 }

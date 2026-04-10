@@ -2815,7 +2815,10 @@ function addIngredientToRecipe() {
   if (!rawId || isNaN(qty) || qty <= 0) return showToast("\u064a\u0631\u062c\u0649 \u062a\u062d\u062f\u064a\u062f \u0645\u0627\u062f\u0629 \u0648\u0643\u0645\u064a\u0629 \u0635\u062d\u064a\u062d\u0629", true);
 
   const rawItem = cachedRawItems.find(r => r.id === rawId);
-  if (!rawItem) return showToast("\u0627\u0644\u0645\u0627\u062f\u0629 \u063a\u064a\u0631 \u0645\u0648\u062c\u0648\u062f\u0629", true);
+  if (!rawItem) return showToast("المادة غير موجودة", true);
+  // Prevent duplicate ingredients
+  var dup = currentRecipeIngredients.find(function(ing) { return ing.invItemId === rawItem.id; });
+  if (dup) return showToast("هذه المادة موجودة بالفعل في المقادير — عدّل الكمية بدلاً من إضافتها مرة أخرى", true);
   currentRecipeIngredients.push({ invItemId: rawItem.id, invItemName: rawItem.name, qtyUsed: qty });
 
   q("#recRawSearch").value = "";

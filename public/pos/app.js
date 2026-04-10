@@ -1275,11 +1275,15 @@ window.filterCashierStItems = function() {
   var search = (q('#cstSearch') ? q('#cstSearch').value : '').toLowerCase();
   var res = q('#cstSearchResults');
   if (!res) return;
-  // Show all items on focus (empty search) or filtered
+  // Get IDs already in cart so we can hide them from the dropdown
+  var cart = _getCstCart();
+  var cartIds = cart.map(function(c) { return c.id; });
+  // Filter: exclude items already in cart + apply search
+  var available = _cstAllItems.filter(function(i) { return cartIds.indexOf(i.id) === -1; });
   var matches = search
-    ? _cstAllItems.filter(function(i) { return (i.name||'').toLowerCase().includes(search) || (i.id||'').toLowerCase().includes(search); })
-    : _cstAllItems;
-  matches = matches.slice(0, 15);
+    ? available.filter(function(i) { return (i.name||'').toLowerCase().includes(search) || (i.id||'').toLowerCase().includes(search); })
+    : available;
+  // Show ALL available items (no limit) so user can scroll through everything
   if (!matches.length) { res.innerHTML = '<div style="padding:10px;color:#94a3b8;text-align:center;">' + t('stNoResults') + '</div>'; res.style.display = 'block'; return; }
   res.innerHTML = matches.map(function(i) {
     var stk = Number(i.stock) || 0;
@@ -1353,6 +1357,8 @@ window.removeCstItem = function(idx) {
   cart.splice(idx, 1);
   _saveCstCart(cart);
   renderCstCart();
+  // Refresh dropdown so the removed item reappears in search
+  filterCashierStItems();
 };
 
 window.submitCashierStocktake = function() {
@@ -1449,6 +1455,8 @@ function _showStocktakeWhatsApp(stId, items) {
       '<table><thead><tr><th>' + thN + '</th><th>' + thItem + '</th><th>' + thSys + '</th><th>' + thActual + '</th><th>' + thVar + '</th></tr></thead><tbody>' + rows + '</tbody></table>' +
       '<div class="total" style="background:' + (totalVar < 0 ? '#fef2f2;border:1.5px solid #fecaca;color:#ef4444' : '#f0fdf4;border:1.5px solid #86efac;color:#16a34a') + ';">' + lblTotal + ': ' + (totalVar >= 0 ? '+' : '') + totalVar.toFixed(2) + '</div>' +
       '<div class="sig"><div><div class="line"></div><div class="cap">' + lblSig1 + '</div></div><div><div class="line"></div><div class="cap">' + lblSig2 + '</div></div><div><div class="line"></div><div class="cap">' + lblSig3 + '</div></div></div>' +
+      '<div class="no-print" style="text-align:center;margin-top:20px;"><button onclick="window.print()" style="padding:12px 30px;font-size:16px;font-weight:800;background:#0d47a1;color:#fff;border:none;border-radius:10px;cursor:pointer;">🖨️ ' + (isEn ? 'Print Report' : 'طباعة التقرير') + '</button></div>' +
+      '<style>@media print{.no-print{display:none!important;}}</style>' +
       '</body></html>'
     );
     w.document.close();

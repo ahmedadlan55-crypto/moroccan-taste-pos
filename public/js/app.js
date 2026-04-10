@@ -2004,7 +2004,279 @@ function switchWhTab(tab) {
   if (tab === 'items') loadDashInvItems();
   if (tab === 'live') loadLiveInventory();
   if (tab === 'stocktake') loadDashStocktake();
+  if (tab === 'adjustments') loadDashAdjustments();
   if (tab === 'transfers') loadDashTransfers();
+}
+
+// =========================================
+// Stock Adjustments (تعديل كمية)
+// =========================================
+var _adjCart = []; // [{id, name, unit, qty, unitCost, stockBefore}]
+var _adjReasonLabels = { damaged: 'تالف', admin: 'إداري', settlement: 'تسويات' };
+
+function loadDashAdjustments() {
+  loader();
+  api.withSuccessHandler(function(res) {
+    loader(false);
+    var h = '';
+    if (!res || !res.length) {
+      h = '<tr><td colspan="8" style="text-align:center;padding:30px;">لا توجد محاضر تعديل سابقة</td></tr>';
+    } else {
+      res.forEach(function(a) {
+        var dateStr = a.date ? new Date(a.date).toLocaleString('ar-SA') : '';
+        var reasonBadge = '<span class="badge ' + (a.reason === 'damaged' ? 'red' : (a.reason === 'admin' ? 'blue' : 'yellow')) + '">' + (a.reasonLabel || a.reason) + '</span>';
+        var statusBadge = a.status === 'approved'
+          ? '<span class="badge green">معتمد ✓</span>'
+          : '<span class="badge yellow">بانتظار الاعتماد</span>';
+        h += '<tr>' +
+          '<td style="font-family:monospace;font-size:12px;color:#64748b;">' + a.id + '</td>' +
+          '<td>' + dateStr + '</td>' +
+          '<td>' + reasonBadge + '</td>' +
+          '<td style="font-weight:600;">' + a.username + '</td>' +
+          '<td style="text-align:center;">' + a.itemsCount + '</td>' +
+          '<td style="font-weight:800;color:#ef4444;">' + formatVal(a.totalCost) + ' SAR</td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td style="white-space:nowrap;">' +
+            '<button class="btn btn-primary btn-sm" onclick="viewAdjustmentDetail(\'' + a.id + '\')" title="عرض"><i class="fas fa-eye"></i></button> ' +
+            (a.status !== 'approved' ? '<button class="btn btn-success btn-sm" onclick="approveAdjustment(\'' + a.id + '\')" title="اعتماد"><i class="fas fa-check"></i></button> ' : '') +
+            '<button class="btn btn-light btn-sm" onclick="printAdjustment(\'' + a.id + '\')" title="طباعة"><i class="fas fa-print"></i></button> ' +
+            (a.status !== 'approved' ? '<button class="btn btn-danger btn-sm" onclick="deleteAdjustment(\'' + a.id + '\')" title="حذف"><i class="fas fa-trash"></i></button>' : '') +
+          '</td></tr>';
+      });
+    }
+    q("#tbAdjustments").innerHTML = h;
+  }).getAllAdjustments();
+}
+
+function openAdjustmentModal() {
+  _adjCart = [];
+  // Create modal dynamically if not exists
+  if (!q('#modalAdjustment')) {
+    var m = document.createElement('div');
+    m.id = 'modalAdjustment';
+    m.className = 'modal';
+    m.innerHTML =
+      '<div class="modal-content modal-large">' +
+        '<div class="modal-title"><i class="fas fa-minus-circle" style="color:var(--danger);"></i> محضر تعديل كمية جديد<button class="modal-close" onclick="closeModal(\'#modalAdjustment\')">&times;</button></div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">' +
+          '<div class="form-group"><label class="form-label">سبب التعديل *</label>' +
+            '<select id="adjReason" class="form-control"><option value="damaged">تالف</option><option value="admin">إداري</option><option value="settlement">تسويات</option></select></div>' +
+          '<div class="form-group"><label class="form-label">ملاحظات</label><input type="text" id="adjNotes" class="form-control" placeholder="تفاصيل إضافية..."></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">' +
+          '<div style="flex:1;min-width:200px;position:relative;">' +
+            '<input type="text" id="adjItemSearch" class="form-control" placeholder="ابحث عن مادة..." oninput="filterAdjItems()">' +
+            '<div id="adjSearchResults" style="position:absolute;top:100%;left:0;right:0;z-index:100;background:#fff;border:1px solid #e2e8f0;border-radius:8px;max-height:200px;overflow-y:auto;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.1);"></div>' +
+          '</div>' +
+          '<input type="number" id="adjQty" class="form-control" style="width:100px;" placeholder="الكمية" min="0.01" step="0.01">' +
+          '<button class="btn btn-danger" onclick="addAdjItem()"><i class="fas fa-plus"></i> إضافة</button>' +
+        '</div>' +
+        '<div class="table-wrapper" style="max-height:300px;overflow-y:auto;">' +
+          '<table class="table" style="font-size:13px;"><thead><tr><th>المادة</th><th>الوحدة</th><th>الكمية المخصومة</th><th>تكلفة الوحدة</th><th>إجمالي التكلفة</th><th>المخزون قبل</th><th>المخزون بعد</th><th></th></tr></thead>' +
+          '<tbody id="adjCartBody"></tbody></table>' +
+        '</div>' +
+        '<div id="adjTotalRow" style="text-align:left;font-weight:900;font-size:16px;color:#ef4444;margin-top:8px;"></div>' +
+        '<div style="display:flex;gap:10px;margin-top:15px;">' +
+          '<button class="btn btn-danger" style="flex:1;" onclick="submitAdjustment()"><i class="fas fa-check-double"></i> حفظ المحضر (بانتظار الاعتماد)</button>' +
+          '<button class="btn btn-light" onclick="closeModal(\'#modalAdjustment\')">إلغاء</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(m);
+  }
+  renderAdjCart();
+  // Load items for search
+  api.withSuccessHandler(function(items) { state._adjAllItems = items || []; }).getInvItems();
+  openModal('#modalAdjustment');
+}
+
+var _adjSelectedItem = null;
+function filterAdjItems() {
+  var search = (q('#adjItemSearch') ? q('#adjItemSearch').value : '').toLowerCase();
+  var res = q('#adjSearchResults');
+  if (!res || !search) { if (res) res.style.display = 'none'; return; }
+  var matches = (state._adjAllItems || []).filter(function(i) {
+    return (i.name || '').toLowerCase().includes(search) || (i.id || '').toLowerCase().includes(search);
+  }).slice(0, 10);
+  if (!matches.length) { res.innerHTML = '<div style="padding:8px;color:#94a3b8;">لا توجد نتائج</div>'; res.style.display = 'block'; return; }
+  res.innerHTML = matches.map(function(i) {
+    return '<div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;" onclick="selectAdjItem(\'' + i.id + '\')">' +
+      '<strong>' + i.name + '</strong> <span style="font-size:11px;color:#64748b;">(' + (i.stock || 0) + ' ' + (i.unit || '') + ')</span></div>';
+  }).join('');
+  res.style.display = 'block';
+}
+
+function selectAdjItem(itemId) {
+  _adjSelectedItem = (state._adjAllItems || []).find(function(i) { return i.id === itemId; });
+  if (q('#adjItemSearch') && _adjSelectedItem) q('#adjItemSearch').value = _adjSelectedItem.name;
+  if (q('#adjSearchResults')) q('#adjSearchResults').style.display = 'none';
+  if (q('#adjQty')) q('#adjQty').focus();
+}
+
+function addAdjItem() {
+  if (!_adjSelectedItem) return showToast('اختر مادة أولاً', true);
+  var qty = Number(q('#adjQty') ? q('#adjQty').value : 0);
+  if (qty <= 0) return showToast('أدخل كمية صحيحة', true);
+  var i = _adjSelectedItem;
+  var stockBefore = Number(i.stock) || 0;
+  _adjCart.push({
+    id: i.id, name: i.name, unit: i.unit || '', qty: qty,
+    unitCost: Number(i.cost) || 0, stockBefore: stockBefore
+  });
+  _adjSelectedItem = null;
+  if (q('#adjItemSearch')) q('#adjItemSearch').value = '';
+  if (q('#adjQty')) q('#adjQty').value = '';
+  renderAdjCart();
+}
+
+function renderAdjCart() {
+  var tb = q('#adjCartBody');
+  if (!tb) return;
+  if (!_adjCart.length) {
+    tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:20px;">لم تتم إضافة مواد</td></tr>';
+    if (q('#adjTotalRow')) q('#adjTotalRow').textContent = '';
+    return;
+  }
+  var total = 0;
+  tb.innerHTML = _adjCart.map(function(c, idx) {
+    var lineCost = c.qty * c.unitCost;
+    total += lineCost;
+    var after = c.stockBefore - c.qty;
+    return '<tr>' +
+      '<td style="font-weight:700;">' + c.name + '</td>' +
+      '<td>' + c.unit + '</td>' +
+      '<td style="text-align:center;font-weight:800;color:#ef4444;">' + c.qty + '</td>' +
+      '<td style="text-align:center;">' + formatVal(c.unitCost) + '</td>' +
+      '<td style="text-align:center;font-weight:800;color:#ef4444;">' + formatVal(lineCost) + '</td>' +
+      '<td style="text-align:center;">' + c.stockBefore.toFixed(2) + '</td>' +
+      '<td style="text-align:center;font-weight:800;color:' + (after < 0 ? '#ef4444' : '#16a34a') + ';">' + (after < 0 ? 0 : after).toFixed(2) + '</td>' +
+      '<td><button class="btn btn-danger btn-sm" onclick="_adjCart.splice(' + idx + ',1);renderAdjCart();"><i class="fas fa-trash"></i></button></td>' +
+    '</tr>';
+  }).join('');
+  if (q('#adjTotalRow')) q('#adjTotalRow').innerHTML = 'إجمالي تكلفة التالف/التعديل: <span style="font-size:20px;">' + formatVal(total) + ' SAR</span>';
+}
+
+function submitAdjustment() {
+  if (!_adjCart.length) return showToast('أضف مواد للمحضر', true);
+  var reason = q('#adjReason') ? q('#adjReason').value : 'damaged';
+  var notes = q('#adjNotes') ? q('#adjNotes').value : '';
+  if (!confirm('سيتم إنشاء محضر تعديل كمية بعدد ' + _adjCart.length + ' صنف. المحضر سيكون بانتظار الاعتماد. متابعة؟')) return;
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r && r.success) {
+      closeModal('#modalAdjustment');
+      showToast('تم إنشاء المحضر ' + (r.adjustmentId || '') + ' — بانتظار الاعتماد');
+      loadDashAdjustments();
+    } else showToast((r && r.error) || 'خطأ', true);
+  }).withFailureHandler(function(e) { loader(false); showToast(e.message, true); })
+  .submitAdjustment({ items: _adjCart, reason: reason, reasonNotes: notes, username: state.user });
+}
+
+function approveAdjustment(adjId) {
+  if (!confirm('اعتماد المحضر وخصم الكميات من المخزون؟')) return;
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم الاعتماد وخصم الكميات ✓'); loadDashAdjustments(); loadDashInvItems(); }
+    else showToast((r && r.error) || 'خطأ', true);
+  }).approveAdjustment(adjId, state.user);
+}
+
+function deleteAdjustment(adjId) {
+  if (!confirm('حذف المحضر؟')) return;
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم الحذف'); loadDashAdjustments(); }
+    else showToast((r && r.error) || 'خطأ', true);
+  }).deleteAdjustment(adjId);
+}
+
+function viewAdjustmentDetail(adjId) {
+  loader();
+  api.withSuccessHandler(function(a) {
+    loader(false);
+    if (!a || a.error) return showToast(a && a.error || 'خطأ', true);
+    var dateStr = a.date ? new Date(a.date).toLocaleString('ar-SA') : '';
+    var h = '<div style="margin-bottom:14px;">' +
+      '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">' +
+        '<div><strong>رقم المحضر:</strong> <code>' + a.id + '</code></div>' +
+        '<div><strong>التاريخ:</strong> ' + dateStr + '</div>' +
+        '<div><strong>السبب:</strong> <span class="badge ' + (a.reason === 'damaged' ? 'red' : 'blue') + '">' + (a.reasonLabel || a.reason) + '</span></div>' +
+        '<div><strong>المنشئ:</strong> ' + a.username + '</div>' +
+        '<div><strong>الحالة:</strong> ' + (a.status === 'approved' ? '<span class="badge green">معتمد (' + (a.approvedBy || '') + ')</span>' : '<span class="badge yellow">بانتظار</span>') + '</div>' +
+      '</div>' +
+      (a.reasonNotes ? '<div style="background:#fefce8;padding:8px 12px;border-radius:8px;font-size:13px;border:1px solid #fef08a;">' + a.reasonNotes + '</div>' : '') +
+    '</div>' +
+    '<table class="table" style="font-size:13px;"><thead><tr>' +
+      '<th>المادة</th><th>الوحدة</th><th>الكمية</th><th>تكلفة الوحدة</th><th>إجمالي التكلفة</th><th>المخزون قبل</th><th>المخزون بعد</th>' +
+    '</tr></thead><tbody>';
+    (a.items || []).forEach(function(i) {
+      h += '<tr>' +
+        '<td style="font-weight:700;">' + i.invItemName + '</td>' +
+        '<td>' + i.unit + '</td>' +
+        '<td style="text-align:center;font-weight:800;color:#ef4444;">' + i.qty.toFixed(2) + '</td>' +
+        '<td style="text-align:center;">' + formatVal(i.unitCost) + '</td>' +
+        '<td style="text-align:center;font-weight:800;color:#ef4444;">' + formatVal(i.totalCost) + '</td>' +
+        '<td style="text-align:center;">' + i.stockBefore.toFixed(2) + '</td>' +
+        '<td style="text-align:center;font-weight:800;">' + i.stockAfter.toFixed(2) + '</td>' +
+      '</tr>';
+    });
+    h += '</tbody></table>';
+    h += '<div style="text-align:left;font-weight:900;font-size:16px;color:#ef4444;margin-top:8px;">إجمالي التكلفة: ' + formatVal(a.totalCost) + ' SAR</div>';
+    if (!q('#modalAdjDetail')) {
+      var m = document.createElement('div'); m.id = 'modalAdjDetail'; m.className = 'modal';
+      m.innerHTML = '<div class="modal-content modal-large"><div class="modal-title">محضر تعديل الكمية<button class="modal-close" onclick="closeModal(\'#modalAdjDetail\')">&times;</button></div><div id="adjDetailBody"></div><div style="display:flex;gap:10px;margin-top:15px;"><button class="btn btn-primary" onclick="printAdjustment(state._viewingAdjId)"><i class="fas fa-print"></i> طباعة</button><button class="btn btn-light" onclick="closeModal(\'#modalAdjDetail\')">إغلاق</button></div></div>';
+      document.body.appendChild(m);
+    }
+    state._viewingAdjId = adjId;
+    q('#adjDetailBody').innerHTML = h;
+    openModal('#modalAdjDetail');
+  }).getAdjustmentDetail(adjId);
+}
+
+function printAdjustment(adjId) {
+  loader();
+  api.withSuccessHandler(function(a) {
+    loader(false);
+    if (!a || a.error) return showToast('خطأ', true);
+    var company = (state.settings && state.settings.name) || 'Moroccan Taste';
+    var dateStr = a.date ? new Date(a.date).toLocaleString('ar-SA') : '';
+    var rows = (a.items || []).map(function(i, idx) {
+      return '<tr><td>' + (idx + 1) + '</td><td style="font-weight:700;">' + i.invItemName + '</td><td>' + i.unit + '</td>' +
+        '<td style="font-weight:800;color:#ef4444;">' + i.qty.toFixed(2) + '</td>' +
+        '<td>' + formatVal(i.unitCost) + '</td><td style="font-weight:800;color:#ef4444;">' + formatVal(i.totalCost) + '</td>' +
+        '<td>' + i.stockBefore.toFixed(2) + '</td><td>' + i.stockAfter.toFixed(2) + '</td></tr>';
+    }).join('');
+    var reasonLabel = _adjReasonLabels[a.reason] || a.reason;
+    var w = window.open('', '_blank', 'width=900,height=700');
+    w.document.write(
+      '<html dir="rtl"><head><meta charset="UTF-8"><title>محضر تعديل كمية ' + a.id + '</title>' +
+      '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;direction:rtl;padding:30px;color:#1e293b;font-size:13px;}' +
+      'h2{text-align:center;margin-bottom:4px;}h3{text-align:center;color:#ef4444;margin-bottom:14px;}' +
+      '.meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:14px 0;}.meta div{background:#f8fafc;padding:10px 14px;border-radius:10px;border:1px solid #e2e8f0;}.meta .lbl{font-size:10px;color:#64748b;}.meta .val{font-weight:700;}' +
+      'table{width:100%;border-collapse:collapse;margin-top:12px;}th,td{border:1px solid #ddd;padding:8px 10px;text-align:right;}th{background:#f1f5f9;font-weight:700;}' +
+      '.total{text-align:center;margin-top:14px;font-weight:900;font-size:18px;color:#ef4444;padding:14px;background:#fef2f2;border-radius:12px;border:2px solid #fecaca;}' +
+      '.sig{display:flex;justify-content:space-around;margin-top:40px;}.sig div{text-align:center;}.sig .line{width:150px;border-bottom:1px solid #94a3b8;padding-top:40px;margin:0 auto;}.sig .cap{font-size:11px;color:#64748b;margin-top:4px;}' +
+      '@media print{body{padding:10px;}}</style></head><body>' +
+      '<h2>' + company + '</h2><h3>محضر تعديل كمية — ' + reasonLabel + '</h3>' +
+      '<div class="meta">' +
+        '<div><div class="lbl">رقم المحضر</div><div class="val">' + a.id + '</div></div>' +
+        '<div><div class="lbl">التاريخ</div><div class="val">' + dateStr + '</div></div>' +
+        '<div><div class="lbl">المنشئ</div><div class="val">' + a.username + '</div></div>' +
+        '<div><div class="lbl">السبب</div><div class="val" style="color:#ef4444;">' + reasonLabel + '</div></div>' +
+        '<div><div class="lbl">عدد الأصناف</div><div class="val">' + a.itemsCount + '</div></div>' +
+        '<div><div class="lbl">الحالة</div><div class="val">' + (a.status === 'approved' ? 'معتمد ✓' : 'بانتظار الاعتماد') + '</div></div>' +
+      '</div>' +
+      (a.reasonNotes ? '<div style="background:#fefce8;padding:10px;border-radius:8px;border:1px solid #fef08a;font-size:12px;margin-bottom:10px;">ملاحظات: ' + a.reasonNotes + '</div>' : '') +
+      '<table><thead><tr><th>#</th><th>المادة</th><th>الوحدة</th><th>الكمية</th><th>تكلفة الوحدة</th><th>إجمالي التكلفة</th><th>المخزون قبل</th><th>المخزون بعد</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<div class="total">إجمالي تكلفة التالف / التعديل: ' + formatVal(a.totalCost) + ' SAR</div>' +
+      '<div class="sig"><div><div class="line"></div><div class="cap">المنشئ</div></div><div><div class="line"></div><div class="cap">مدير المستودع</div></div><div><div class="line"></div><div class="cap">المدير العام</div></div></div>' +
+      '</body></html>'
+    );
+    w.document.close();
+    setTimeout(function() { w.print(); }, 400);
+  }).getAdjustmentDetail(adjId);
 }
 
 function calcSmallUnitCost() {

@@ -281,4 +281,133 @@ router.get('/stocktakes/:id', async (req, res) => {
   } catch (e) { res.json({ error: e.message }); }
 });
 
+// ─── Stock Adjustments (تعديل كمية) ───
+
+const REASON_LABELS = { damaged: 'تالف', admin: 'إداري', settlement: 'تسويات' };
+
+// Create adjustment (draft — needs approval)
+router.post('/adjustments', async (req, res) => {
+  try {
+    const { items, reason, reasonNotes, username } = req.body;
+    if (!items || !items.length) return res.json({ success: false, error: 'No items' });
+
+    const now = new Date();
+    const adjId = 'ADJ-' + Date.now();
+    let totalCost = 0;
+
+    // Insert header first (FK)
+    await db.query(
+      'INSERT INTO stock_adjustments (id, adjustment_date, reason, reason_notes, username, status, items_count, total_cost) VALUES (?,?,?,?,?,?,?,?)',
+      [adjId, now, reason || 'damaged', reasonNotes || '', username || '', 'pending', 0, 0]
+    );
+
+    for (const item of items) {
+      const [inv] = await db.query('SELECT id, name, unit, stock, cost, conv_rate FROM inv_items WHERE id = ?', [item.id]);
+      if (!inv.length) continue;
+      const r = inv[0];
+      const qty = Number(item.qty) || 0;
+      if (qty <= 0) continue;
+      const unitCost = Number(r.cost) || 0; // per small unit
+      const lineCost = qty * unitCost;
+      const stockBefore = Number(r.stock) || 0;
+      const stockAfter = stockBefore - qty;
+
+      await db.query(
+        'INSERT INTO stock_adjustment_items (adjustment_id, inv_item_id, inv_item_name, unit, qty, unit_cost, total_cost, stock_before, stock_after) VALUES (?,?,?,?,?,?,?,?,?)',
+        [adjId, r.id, r.name, r.unit || '', qty, unitCost, lineCost, stockBefore, stockAfter < 0 ? 0 : stockAfter]
+      );
+      totalCost += lineCost;
+    }
+
+    await db.query('UPDATE stock_adjustments SET items_count = ?, total_cost = ? WHERE id = ?',
+      [items.length, totalCost, adjId]);
+
+    res.json({ success: true, adjustmentId: adjId });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Approve adjustment — actually deducts stock
+router.post('/adjustments/:id/approve', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { username } = req.body;
+    const now = new Date();
+
+    const [adj] = await db.query('SELECT * FROM stock_adjustments WHERE id = ?', [id]);
+    if (!adj.length) return res.json({ success: false, error: 'Not found' });
+    if (adj[0].status === 'approved') return res.json({ success: false, error: 'Already approved' });
+
+    const [items] = await db.query('SELECT * FROM stock_adjustment_items WHERE adjustment_id = ?', [id]);
+
+    for (const item of items) {
+      // Deduct from stock
+      await db.query('UPDATE inv_items SET stock = GREATEST(0, stock - ?) WHERE id = ?', [item.qty, item.inv_item_id]);
+
+      // Record movement
+      const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+      await db.query(
+        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
+        [movId, now, item.inv_item_id, item.inv_item_name, 'out', item.qty,
+         REASON_LABELS[adj[0].reason] || 'تعديل كمية', username || '', 'ADJ: ' + id]
+      );
+    }
+
+    await db.query(
+      'UPDATE stock_adjustments SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?',
+      [username || '', now, id]
+    );
+
+    // Recompute menu costs
+    try { const { recomputeAllMenuCosts } = require('./pricing-utils'); await recomputeAllMenuCosts(); } catch(e) {}
+
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// List adjustments
+router.get('/adjustments', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM stock_adjustments ORDER BY adjustment_date DESC LIMIT 200');
+    res.json(rows.map(a => ({
+      id: a.id, date: a.adjustment_date, reason: a.reason,
+      reasonLabel: REASON_LABELS[a.reason] || a.reason,
+      reasonNotes: a.reason_notes, username: a.username,
+      status: a.status, itemsCount: a.items_count,
+      totalCost: Number(a.total_cost), approvedBy: a.approved_by, approvedAt: a.approved_at
+    })));
+  } catch (e) { res.json([]); }
+});
+
+// Detail
+router.get('/adjustments/:id', async (req, res) => {
+  try {
+    const [headers] = await db.query('SELECT * FROM stock_adjustments WHERE id = ?', [req.params.id]);
+    if (!headers.length) return res.json({ error: 'Not found' });
+    const a = headers[0];
+    const [items] = await db.query('SELECT * FROM stock_adjustment_items WHERE adjustment_id = ?', [req.params.id]);
+    res.json({
+      id: a.id, date: a.adjustment_date, reason: a.reason,
+      reasonLabel: REASON_LABELS[a.reason] || a.reason,
+      reasonNotes: a.reason_notes, username: a.username,
+      status: a.status, itemsCount: a.items_count,
+      totalCost: Number(a.total_cost), approvedBy: a.approved_by, approvedAt: a.approved_at,
+      items: items.map(i => ({
+        invItemId: i.inv_item_id, invItemName: i.inv_item_name, unit: i.unit,
+        qty: Number(i.qty), unitCost: Number(i.unit_cost), totalCost: Number(i.total_cost),
+        stockBefore: Number(i.stock_before), stockAfter: Number(i.stock_after)
+      }))
+    });
+  } catch (e) { res.json({ error: e.message }); }
+});
+
+// Delete (only pending)
+router.delete('/adjustments/:id', async (req, res) => {
+  try {
+    const [adj] = await db.query('SELECT status FROM stock_adjustments WHERE id = ?', [req.params.id]);
+    if (adj.length && adj[0].status === 'approved') return res.json({ success: false, error: 'Cannot delete approved adjustment' });
+    await db.query('DELETE FROM stock_adjustments WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 module.exports = router;

@@ -283,6 +283,7 @@
             <div class="sales-tab active" onclick="switchWhTab('items')" id="whtab_items"><i class="fas fa-boxes"></i> <span>مواد المخزون</span></div>
             <div class="sales-tab" onclick="switchWhTab('live')" id="whtab_live"><i class="fas fa-cubes"></i> <span>المخزون الفعلي</span></div>
             <div class="sales-tab" onclick="switchWhTab('stocktake')" id="whtab_stocktake"><i class="fas fa-tasks"></i> <span>الجرد</span></div>
+            <div class="sales-tab" onclick="switchWhTab('adjustments')" id="whtab_adjustments"><i class="fas fa-minus-circle"></i> <span>تعديل كمية</span></div>
             <div class="sales-tab" onclick="switchWhTab('transfers')" id="whtab_transfers"><i class="fas fa-exchange-alt"></i> <span>التحويلات</span></div>
           </div>
 
@@ -343,6 +344,20 @@
               <table class="table">
                 <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>القائم بالجرد</th><th>عدد الأصناف</th><th>إجمالي التباين</th><th>إجراءات</th></tr></thead>
                 <tbody id="tbStocktake"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab: تعديل كمية -->
+          <div class="sales-tab-content" id="wh_adjustments">
+            <div class="filter-bar" style="justify-content:space-between; align-items:center;">
+              <h3 style="margin:0; color:var(--primary);"><i class="fas fa-minus-circle"></i> محاضر تعديل الكمية</h3>
+              <button class="btn btn-danger" onclick="openAdjustmentModal()"><i class="fas fa-plus"></i> إنشاء محضر تعديل كمية</button>
+            </div>
+            <div class="table-wrapper">
+              <table class="table">
+                <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>السبب</th><th>بواسطة</th><th>عدد الأصناف</th><th>إجمالي التكلفة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+                <tbody id="tbAdjustments"></tbody>
               </table>
             </div>
           </div>

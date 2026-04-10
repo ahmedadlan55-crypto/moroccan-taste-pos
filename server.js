@@ -167,6 +167,38 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
+  // Stock adjustment tables (تعديل كمية — تالف / إداري / تسويات)
+  await createTableIfMissing('stock_adjustments', `
+    CREATE TABLE stock_adjustments (
+      id VARCHAR(50) PRIMARY KEY,
+      adjustment_date DATETIME,
+      reason ENUM('damaged','admin','settlement') DEFAULT 'damaged',
+      reason_notes TEXT,
+      username VARCHAR(100),
+      status ENUM('pending','approved') DEFAULT 'pending',
+      items_count INT DEFAULT 0,
+      total_cost DECIMAL(12,2) DEFAULT 0,
+      approved_by VARCHAR(100),
+      approved_at DATETIME,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('stock_adjustment_items', `
+    CREATE TABLE stock_adjustment_items (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      adjustment_id VARCHAR(50) NOT NULL,
+      inv_item_id VARCHAR(50),
+      inv_item_name VARCHAR(200),
+      unit VARCHAR(50),
+      qty DECIMAL(12,2) DEFAULT 0,
+      unit_cost DECIMAL(10,4) DEFAULT 0,
+      total_cost DECIMAL(12,2) DEFAULT 0,
+      stock_before DECIMAL(12,2) DEFAULT 0,
+      stock_after DECIMAL(12,2) DEFAULT 0,
+      FOREIGN KEY (adjustment_id) REFERENCES stock_adjustments(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB
+  `);
+
   // Seed cost settings into the existing key-value settings table
   try {
     await db.query(`INSERT IGNORE INTO settings (setting_key, setting_value) VALUES

@@ -1324,7 +1324,7 @@ function renderCstCart() {
   var tb = q('#cstBody');
   if (!tb) return;
   if (!cart.length) {
-    tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:24px;"><i class="fas fa-clipboard-list" style="font-size:28px;margin-bottom:8px;display:block;opacity:0.3;"></i>' + t('stEmptyHint') + '</td></tr>';
+    tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:24px;"><i class="fas fa-clipboard-list" style="font-size:28px;margin-bottom:8px;display:block;opacity:0.3;"></i>' + t('stEmptyHint') + '</td></tr>';
     return;
   }
   tb.innerHTML = cart.map(function(c, i) {
@@ -1342,11 +1342,13 @@ function renderCstCart() {
     var nameCell = '<td style="font-weight:700;font-size:12px;">' + c.name + '</td>';
     // Column 2: الكبرى — input or dash
     var bigCell = hasBig
-      ? '<td style="text-align:center;"><input type="number" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (bigVal === '' ? '' : bigVal) + '" oninput="updateCstDual(' + i + ',this.value,null)" placeholder="0"><div style="font-size:9px;color:#94a3b8;margin-top:2px;">' + c.bigUnit + '</div></td>'
+      ? '<td style="text-align:center;"><input type="number" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (bigVal === '' ? '' : bigVal) + '" oninput="updateCstDual(' + i + ',this.value,null)" placeholder="0"></td>'
       : '<td style="text-align:center;color:#e2e8f0;">—</td>';
-    // Column 3: الصغرى — always has input
+    // Column 3: وحدة كبرى
+    var bigUnitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (hasBig ? c.bigUnit : '—') + '</td>';
+    // Column 4: الصغرى — always has input
     var smallCell = '<td style="text-align:center;"><input type="number" min="0" step="0.01" class="form-control glass-input" style="width:60px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (smallVal === '' ? '' : smallVal) + '" oninput="updateCstDual(' + i + ',null,this.value)" placeholder="0"></td>';
-    // Column 4: الوحدة
+    // Column 5: وحدة صغرى
     var unitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (c.unit || '') + '</td>';
     // Column 5: النظام
     var sysCell = '<td style="text-align:center;font-weight:600;color:var(--primary);font-size:12px;">' + c.systemQty.toFixed(2) + '</td>';
@@ -1354,7 +1356,7 @@ function renderCstCart() {
     var diffCell = '<td style="text-align:center;font-weight:900;">' + diffHtml + '</td>';
     // Column 7: حذف
     var delCell = '<td style="text-align:center;"><button class="btn-remove" onclick="removeCstItem(' + i + ')"><i class="fas fa-trash"></i></button></td>';
-    return '<tr>' + nameCell + bigCell + smallCell + unitCell + sysCell + diffCell + delCell + '</tr>';
+    return '<tr>' + nameCell + bigCell + bigUnitCell + smallCell + unitCell + sysCell + diffCell + delCell + '</tr>';
   }).join('');
 }
 

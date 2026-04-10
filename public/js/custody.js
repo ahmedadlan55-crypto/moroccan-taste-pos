@@ -28,7 +28,8 @@ window.loadCustodyUsers = function() {
           '<td>' + (u.isActive ? '<span class="badge green">نشط</span>' : '<span class="badge red">معطّل</span>') + '</td>' +
           '<td style="white-space:nowrap;">' +
             '<button class="btn btn-light btn-sm" onclick="editCustodyUser(\'' + u.id + '\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
-            '<button class="btn btn-' + (u.isActive ? 'danger' : 'success') + ' btn-sm" onclick="toggleCustodyUserFn(\'' + u.id + '\')" title="' + (u.isActive ? 'تعطيل' : 'تفعيل') + '"><i class="fas fa-' + (u.isActive ? 'ban' : 'check') + '"></i></button>' +
+            '<button class="btn btn-' + (u.isActive ? 'danger' : 'success') + ' btn-sm" onclick="toggleCustodyUserFn(\'' + u.id + '\')" title="' + (u.isActive ? 'تعطيل' : 'تفعيل') + '"><i class="fas fa-' + (u.isActive ? 'ban' : 'check') + '"></i></button> ' +
+            '<button class="btn btn-danger btn-sm" onclick="deleteCustodyUserFn(\'' + u.id + '\',\'' + (u.name||'').replace(/'/g,'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
           '</td></tr>';
       });
     }
@@ -89,6 +90,11 @@ window.toggleCustodyUserFn = function(id) {
   loader(); api.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم التحديث'); loadCustodyUsers(); } }).toggleCustodyUser(id);
 };
 
+window.deleteCustodyUserFn = function(id, name) {
+  if (!confirm('حذف مسؤول العهدة "' + name + '"؟\nسيتم حذفه نهائياً.')) return;
+  loader(); api.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحذف'); loadCustodyUsers(); } else showToast(r.error, true); }).deleteCustodyUser(id);
+};
+
 // ═══════════════════════════════════════
 // CUSTODIES (إدارة العهد)
 // ═══════════════════════════════════════
@@ -114,7 +120,8 @@ window.loadCustodies = function() {
           '<td style="white-space:nowrap;">' +
             '<button class="btn btn-primary btn-sm" onclick="openCustodyDetail(\'' + c.id + '\')" title="تفاصيل"><i class="fas fa-eye"></i></button> ' +
             '<button class="btn btn-success btn-sm" onclick="openTopupModal(\'' + c.id + '\')" title="تغذية رصيد"><i class="fas fa-plus-circle"></i></button> ' +
-            '<button class="btn btn-light btn-sm" onclick="openAddExpenseModal(\'' + c.id + '\')" title="إضافة مصروف"><i class="fas fa-receipt"></i></button>' +
+            '<button class="btn btn-light btn-sm" onclick="openAddExpenseModal(\'' + c.id + '\')" title="إضافة مصروف"><i class="fas fa-receipt"></i></button> ' +
+            '<button class="btn btn-danger btn-sm" onclick="deleteCustodyFn(\'' + c.id + '\',\'' + (c.custodyNumber||'').replace(/'/g,'') + '\')" title="حذف العهدة"><i class="fas fa-trash"></i></button>' +
           '</td></tr>';
       });
     }
@@ -143,6 +150,11 @@ window.openCreateCustodyModal = function() {
     document.getElementById('modalCreateCustody').innerHTML = h;
     openModal('#modalCreateCustody');
   }).getCustodyUsers();
+};
+
+window.deleteCustodyFn = function(id, num) {
+  if (!confirm('حذف العهدة "' + num + '" وجميع مصروفاتها وتغذياتها؟\nلا يمكن التراجع!')) return;
+  loader(); api.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم حذف العهدة'); loadCustodies(); } else showToast(r.error, true); }).deleteCustody(id);
 };
 
 window.createCustodyFn = function() {
@@ -202,7 +214,7 @@ window.openAddExpenseModal = function(custodyId) {
       '<div class="form-group" id="cesVatGroup" style="display:none;"><label class="form-label">نسبة الضريبة (%)</label><input type="number" id="cesVatRate" class="form-control" value="15" step="0.1"></div>' +
     '</div>' +
     '<div class="form-group"><label class="form-label">ملاحظات</label><input type="text" id="cesNotes" class="form-control"></div>' +
-    '<div class="form-group"><label class="form-label">صورة الفاتورة</label><input type="file" id="cesInvoice" accept="image/*" onchange="handleCustodyImage(this,\'cesInvoicePreview\')"><div id="cesInvoicePreview" style="margin-top:8px;"></div></div>' +
+    '<div class="form-group"><label class="form-label">صورة الفاتورة أو PDF</label><input type="file" id="cesInvoice" accept="image/*,application/pdf" onchange="handleCustodyImage(this,\'cesInvoicePreview\')"><div id="cesInvoicePreview" style="margin-top:8px;"></div></div>' +
     '<div style="display:flex;gap:10px;margin-top:15px;"><button class="btn btn-danger" style="flex:1;" onclick="submitCustodyExpense()"><i class="fas fa-save"></i> حفظ المصروف</button><button class="btn btn-light" onclick="closeModal(\'#modalCusExp\')">إلغاء</button></div></div>';
   if (!document.getElementById('modalCusExp')) {
     var m = document.createElement('div'); m.id = 'modalCusExp'; m.className = 'modal'; document.body.appendChild(m);
@@ -237,21 +249,31 @@ window.submitCustodyExpense = function() {
 window.handleCustodyImage = function(input, previewId) {
   var file = input.files[0];
   if (!file) return;
+  var isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
   var reader = new FileReader();
   reader.onload = function(e) {
-    var img = new Image();
-    img.onload = function() {
-      var canvas = document.createElement('canvas');
-      var max = 1200;
-      var w = img.width, h = img.height;
-      if (w > max || h > max) { var r = Math.min(max/w, max/h); w *= r; h *= r; }
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      var dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      var prev = document.getElementById(previewId);
-      if (prev) prev.innerHTML = '<img src="' + dataUrl + '" style="max-width:200px;max-height:150px;border-radius:8px;border:1px solid #e2e8f0;">';
-    };
-    img.src = e.target.result;
+    var prev = document.getElementById(previewId);
+    if (isPdf) {
+      // Store PDF as-is
+      if (prev) prev.innerHTML = '<div style="padding:10px;background:#f1f5f9;border-radius:8px;text-align:center;"><i class="fas fa-file-pdf" style="font-size:28px;color:#ef4444;"></i><div style="font-size:12px;margin-top:4px;">' + (file.name || 'PDF') + '</div></div>';
+      // Store in a hidden img tag for retrieval
+      var hidden = document.createElement('img');
+      hidden.src = e.target.result; hidden.style.display = 'none';
+      if (prev) prev.appendChild(hidden);
+    } else {
+      var img = new Image();
+      img.onload = function() {
+        var canvas = document.createElement('canvas');
+        var max = 1200;
+        var w = img.width, h = img.height;
+        if (w > max || h > max) { var r = Math.min(max/w, max/h); w *= r; h *= r; }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        var dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        if (prev) prev.innerHTML = '<img src="' + dataUrl + '" style="max-width:200px;max-height:150px;border-radius:8px;border:1px solid #e2e8f0;">';
+      };
+      img.src = e.target.result;
+    }
   };
   reader.readAsDataURL(file);
 };

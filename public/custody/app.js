@@ -1,306 +1,258 @@
 /**
- * Custody User App — Lightweight standalone page for custody role users
- * Shows: balance cards + expenses list + add expense modal
+ * Custody User App — Standalone lightweight page
+ * Only loads custody-specific code. No admin/POS overhead.
  */
-
 (function() {
   'use strict';
 
-  // ─── State ───
-  var state = {
-    user: '',
-    custodyId: '',
-    custodyNumber: '',
-    userName: '',
-    balance: 0,
-    totalTopups: 0,
-    totalExpenses: 0,
-    expenses: [],
-    invoiceImageData: ''
+  var S = {
+    user: '', custodyId: '', custodyNumber: '', userName: '',
+    balance: 0, topups: 0, expenses: 0, list: [], imgData: ''
   };
 
-  // ─── Wait for API bridge to load ───
-  function waitForApi(cb) {
-    if (window._apiBridge) return cb();
-    var tries = 0;
-    var interval = setInterval(function() {
-      tries++;
-      if (window._apiBridge || tries > 50) {
-        clearInterval(interval);
-        if (window._apiBridge) cb();
-        else { showToast('فشل تحميل النظام', true); }
-      }
-    }, 100);
-  }
+  var api;
 
-  // ─── Init ───
+  // ─── Boot ───
   document.addEventListener('DOMContentLoaded', function() {
-    waitForApi(function() {
-      // Parse session
+    waitApi(function() {
+      api = window._apiBridge;
       try {
-        var session = JSON.parse(localStorage.getItem('pos_session') || '{}');
-        state.user = session.username || session.user || '';
-      } catch (e) {}
-
-      if (!state.user) {
-        showToast('يرجى تسجيل الدخول', true);
-        setTimeout(function() { window.location.replace('/'); }, 1500);
-        return;
-      }
-
-      loadMyCustody();
+        var s = JSON.parse(localStorage.getItem('pos_session') || '{}');
+        S.user = s.username || s.user || '';
+      } catch(e) {}
+      if (!S.user) { toast('يرجى تسجيل الدخول', 'err'); setTimeout(function(){ location.replace('/'); }, 1200); return; }
+      load();
     });
   });
 
+  function waitApi(cb) {
+    if (window._apiBridge) return cb();
+    var n = 0, iv = setInterval(function() {
+      n++;
+      if (window._apiBridge || n > 40) { clearInterval(iv); if (window._apiBridge) cb(); else toast('فشل الاتصال', 'err'); }
+    }, 80);
+  }
+
   // ─── Load Data ───
-  function loadMyCustody() {
-    var api = window._apiBridge;
-    api.withSuccessHandler(function(data) {
+  function load() {
+    api.withSuccessHandler(function(d) {
       hideLoader();
-      if (!data || data.error || data.noCustody) {
-        document.getElementById('custodyApp').style.display = 'block';
-        document.getElementById('custodyUserName').textContent = state.user;
-        showToast(data && data.error || 'لا توجد عهدة مرتبطة بحسابك', true);
+      if (!d || d.error) {
+        el('app').style.display = 'flex';
+        el('headerName').textContent = S.user;
+        toast(d && d.error || 'لا توجد عهدة', 'err');
         return;
       }
-
-      state.custodyId = data.custody.id;
-      state.custodyNumber = data.custody.custodyNumber;
-      state.userName = data.user.name || data.custody.userName || state.user;
-      state.balance = data.custody.balance;
-      state.totalTopups = data.custody.totalTopups;
-      state.totalExpenses = data.custody.totalExpenses;
-      state.expenses = data.expenses || [];
-
-      renderUI();
-    }).withFailureHandler(function(err) {
+      S.custodyId = d.custody.id;
+      S.custodyNumber = d.custody.custodyNumber;
+      S.userName = (d.user && d.user.name) || d.custody.userName || S.user;
+      S.balance = d.custody.balance;
+      S.topups = d.custody.totalTopups;
+      S.expenses = d.custody.totalExpenses;
+      S.list = d.expenses || [];
+      render();
+    }).withFailureHandler(function() {
       hideLoader();
-      showToast('خطأ في الاتصال', true);
-    }).getMyCustody(state.user);
+      toast('خطأ في الاتصال', 'err');
+    }).getMyCustody(S.user);
   }
+  window.refreshData = function() {
+    el('topBar').classList.add('refreshing');
+    api.withSuccessHandler(function(d) {
+      el('topBar').classList.remove('refreshing');
+      if (!d || d.error) return toast(d && d.error || 'خطأ', 'err');
+      S.custodyId = d.custody.id;
+      S.custodyNumber = d.custody.custodyNumber;
+      S.userName = (d.user && d.user.name) || d.custody.userName || S.user;
+      S.balance = d.custody.balance;
+      S.topups = d.custody.totalTopups;
+      S.expenses = d.custody.totalExpenses;
+      S.list = d.expenses || [];
+      render();
+      toast('تم التحديث', 'ok');
+    }).withFailureHandler(function() {
+      el('topBar').classList.remove('refreshing');
+      toast('فشل التحديث', 'err');
+    }).getMyCustody(S.user);
+  };
 
-  function hideLoader() {
-    var loader = document.getElementById('loader');
-    if (loader) loader.style.display = 'none';
-    document.getElementById('custodyApp').style.display = 'block';
-  }
+  function hideLoader() { el('loader').style.display = 'none'; el('app').style.display = 'flex'; el('app').style.flexDirection = 'column'; }
 
-  // ─── Render UI ───
-  function renderUI() {
-    var fmt = function(v) {
-      return Number(v || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-    };
-
-    document.getElementById('custodyUserName').textContent = state.userName;
-    document.getElementById('balanceCurrent').textContent = fmt(state.balance) + ' SAR';
-    document.getElementById('balanceCustodyNum').textContent = state.custodyNumber;
-    document.getElementById('balanceTopups').textContent = fmt(state.totalTopups);
-    document.getElementById('balanceExpenses').textContent = fmt(state.totalExpenses);
+  // ─── Render ───
+  function render() {
+    el('headerName').textContent = S.userName;
+    el('headerNum').textContent = S.custodyNumber;
+    el('sBalance').textContent = fmt(S.balance);
+    el('sTopups').textContent = fmt(S.topups);
+    el('sExpenses').textContent = fmt(S.expenses);
 
     // Balance color
-    var balEl = document.getElementById('balanceCurrent');
-    if (state.balance < 0) balEl.style.color = '#ef4444';
-    else if (state.balance > 0) balEl.style.color = '#16a34a';
-    else balEl.style.color = '#64748b';
+    var bc = el('sBalance');
+    bc.style.color = S.balance > 0 ? 'var(--green)' : S.balance < 0 ? 'var(--red)' : 'var(--slate)';
 
-    // Expense count
-    document.getElementById('expCount').textContent = state.expenses.length;
+    el('expBadge').textContent = S.list.length;
 
-    // Render expenses
-    var listEl = document.getElementById('expensesList');
-    if (!state.expenses.length) {
-      listEl.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>لا توجد مصروفات بعد</p></div>';
+    var box = el('expList');
+    if (!S.list.length) {
+      box.innerHTML = '<div class="exp-empty"><i class="fas fa-inbox"></i><p>لا توجد مصروفات بعد</p><p style="font-size:12px;margin-top:6px;color:#b0b8c5;">اضغط الزر بالأسفل لإضافة مصروف</p></div>';
       return;
     }
 
-    var html = '';
-    state.expenses.forEach(function(e) {
-      var statusClass = 'status-' + e.status;
-      var statusLabels = {
-        pending: 'بانتظار الموافقة',
-        approved: 'تمت الموافقة',
-        rejected: 'مرفوض',
-        posted: 'تم الترحيل'
-      };
-      var statusIcons = {
-        pending: 'fa-clock',
-        approved: 'fa-check-circle',
-        rejected: 'fa-times-circle',
-        posted: 'fa-book'
-      };
-
-      var dateStr = '';
-      if (e.expenseDate) {
-        try { dateStr = new Date(e.expenseDate).toLocaleDateString('en-GB'); } catch(err) {}
-      }
-
+    var h = '';
+    S.list.forEach(function(e, i) {
+      var bClass = 'b-' + e.status;
+      var labels = { pending:'بانتظار الموافقة', approved:'تمت الموافقة', rejected:'مرفوض', posted:'تم الترحيل' };
+      var icons = { pending:'fa-clock', approved:'fa-check-circle', rejected:'fa-times-circle', posted:'fa-book' };
       var total = e.totalWithVat || e.amount || 0;
+      var dt = '';
+      try { if (e.expenseDate) dt = new Date(e.expenseDate).toLocaleDateString('en-GB'); } catch(x){}
 
-      html += '<div class="expense-card">';
-      html += '<div class="exp-top">';
-      html += '<div class="exp-desc">' + escHtml(e.description || '') + '</div>';
-      html += '<span class="exp-status ' + statusClass + '"><i class="fas ' + (statusIcons[e.status] || 'fa-circle') + '"></i> ' + (statusLabels[e.status] || e.status) + '</span>';
-      html += '</div>';
-
-      html += '<div class="exp-amount">' + fmt(total) + ' <small>SAR</small></div>';
-
-      html += '<div class="exp-details">';
-      if (dateStr) html += '<div class="exp-detail-item"><i class="fas fa-calendar"></i> ' + dateStr + '</div>';
-      if (e.vatAmount > 0) html += '<div class="exp-detail-item"><i class="fas fa-percentage"></i> ضريبة: ' + fmt(e.vatAmount) + '</div>';
-      if (e.notes) html += '<div class="exp-detail-item"><i class="fas fa-sticky-note"></i> ' + escHtml(e.notes) + '</div>';
-      html += '</div>';
-
-      // Rejection reason
+      h += '<div class="ecard" style="animation-delay:' + (i * 0.04) + 's;">';
+      h += '<div class="ec-row1">';
+      h += '<div class="ec-desc">' + esc(e.description || '') + '</div>';
+      h += '<span class="ec-badge ' + bClass + '"><i class="fas ' + (icons[e.status]||'fa-circle') + '"></i> ' + (labels[e.status]||e.status) + '</span>';
+      h += '</div>';
+      h += '<div class="ec-amount">' + fmt(total) + ' <small>SAR</small></div>';
+      h += '<div class="ec-meta">';
+      if (dt) h += '<span><i class="fas fa-calendar-day"></i> ' + dt + '</span>';
+      if (e.vatAmount > 0) h += '<span><i class="fas fa-percent"></i> ضريبة ' + fmt(e.vatAmount) + '</span>';
+      if (e.notes) h += '<span><i class="fas fa-sticky-note"></i> ' + esc(e.notes) + '</span>';
+      h += '</div>';
       if (e.status === 'rejected' && e.rejectionReason) {
-        html += '<div class="exp-rejection"><i class="fas fa-exclamation-triangle"></i> سبب الرفض: ' + escHtml(e.rejectionReason) + '</div>';
+        h += '<div class="ec-reject"><i class="fas fa-exclamation-triangle"></i> ' + esc(e.rejectionReason) + '</div>';
       }
-
-      // Invoice image button
-      html += '<div class="exp-bottom">';
-      if (e.invoiceImage) {
-        html += '<button class="exp-invoice-btn" onclick="viewInvoiceImage(\'' + e.id + '\')"><i class="fas fa-image"></i> عرض الفاتورة</button>';
-      } else {
-        html += '<span></span>';
+      if (e.invoiceImage || e.approvedBy) {
+        h += '<div class="ec-foot">';
+        if (e.invoiceImage) h += '<button class="ec-img-btn" onclick="viewImg(\'' + e.id + '\')"><i class="fas fa-image"></i> الفاتورة</button>';
+        else h += '<span></span>';
+        if (e.approvedBy) h += '<span class="ec-meta"><i class="fas fa-user-check"></i> ' + esc(e.approvedBy) + '</span>';
+        h += '</div>';
       }
-      if (e.approvedBy) {
-        html += '<div class="exp-detail-item"><i class="fas fa-user-check"></i> ' + escHtml(e.approvedBy) + '</div>';
-      }
-      html += '</div>';
-
-      html += '</div>';
+      h += '</div>';
     });
-
-    listEl.innerHTML = html;
+    box.innerHTML = h;
   }
 
-  // ─── Expense Modal ───
-  window.openExpenseModal = function() {
-    if (!state.custodyId) return showToast('لا توجد عهدة مرتبطة', true);
-    // Reset form
-    document.getElementById('expDate').value = new Date().toISOString().split('T')[0];
-    document.getElementById('expAmount').value = '';
-    document.getElementById('expDesc').value = '';
-    document.getElementById('expHasVat').value = '0';
-    document.getElementById('expVatRate').value = '15';
-    document.getElementById('vatGroup').style.display = 'none';
-    document.getElementById('expNotes').value = '';
-    document.getElementById('invoicePreview').innerHTML = '';
-    state.invoiceImageData = '';
-    document.getElementById('expenseModal').style.display = 'flex';
+  // ─── Modal ───
+  window.openModal = function() {
+    if (!S.custodyId) return toast('لا توجد عهدة', 'err');
+    el('fDate').value = new Date().toISOString().split('T')[0];
+    el('fAmt').value = '';
+    el('fDesc').value = '';
+    el('fVat').value = '0';
+    el('fVatR').value = '15';
+    el('vatBox').style.display = 'none';
+    el('fNotes').value = '';
+    el('imgPrev').innerHTML = '';
+    el('uploadLabel').className = 'upload-area';
+    el('uploadLabel').querySelector('span').textContent = 'اضغط لرفع صورة';
+    S.imgData = '';
+    el('sheet').style.display = 'flex';
   };
+  window.closeModal = function() { el('sheet').style.display = 'none'; };
+  window.togVat = function() { el('vatBox').style.display = el('fVat').value === '1' ? '' : 'none'; };
 
-  window.closeExpenseModal = function() {
-    document.getElementById('expenseModal').style.display = 'none';
-  };
-
-  window.toggleVat = function() {
-    document.getElementById('vatGroup').style.display =
-      document.getElementById('expHasVat').value === '1' ? '' : 'none';
-  };
-
-  // ─── Image Upload ───
-  window.handleInvoiceImage = function(input) {
-    var file = input.files[0];
-    if (!file) return;
-    var reader = new FileReader();
-    reader.onload = function(e) {
-      var img = new Image();
-      img.onload = function() {
-        var canvas = document.createElement('canvas');
-        var max = 1200;
-        var w = img.width, h = img.height;
-        if (w > max || h > max) { var r = Math.min(max / w, max / h); w *= r; h *= r; }
-        canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        state.invoiceImageData = canvas.toDataURL('image/jpeg', 0.85);
-        document.getElementById('invoicePreview').innerHTML =
-          '<img src="' + state.invoiceImageData + '">';
-      };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
-  };
-
-  // ─── Submit Expense ───
-  window.submitExpense = function() {
-    var desc = document.getElementById('expDesc').value.trim();
-    var amount = Number(document.getElementById('expAmount').value) || 0;
-    if (!desc || amount <= 0) return showToast('البيان والقيمة مطلوبة', true);
-
-    var hasVat = document.getElementById('expHasVat').value === '1';
-    var vatRate = hasVat ? (Number(document.getElementById('expVatRate').value) || 15) : 0;
-
-    var payload = {
-      expenseDate: document.getElementById('expDate').value,
-      description: desc,
-      amount: amount,
-      hasVat: hasVat,
-      vatRate: vatRate,
-      invoiceImage: state.invoiceImageData || '',
-      notes: document.getElementById('expNotes').value.trim(),
-      username: state.user
-    };
-
-    // Show loading state
-    var saveBtn = document.querySelector('.btn-save');
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الحفظ...'; }
-
-    var api = window._apiBridge;
-    api.withSuccessHandler(function(r) {
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = '<i class="fas fa-save"></i> حفظ المصروف'; }
-      if (r && r.success) {
-        closeExpenseModal();
-        showToast('تم إضافة المصروف بنجاح');
-        loadMyCustody(); // Refresh data
+  // ─── Image ───
+  window.pickImg = function(inp) {
+    var f = inp.files[0]; if (!f) return;
+    var isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
+    var r = new FileReader();
+    r.onload = function(ev) {
+      if (isPdf) {
+        // Store PDF as data URL directly (no compression)
+        S.imgData = ev.target.result;
+        el('imgPrev').innerHTML = '<div style="padding:14px;background:#f1f5f9;border-radius:12px;text-align:center;"><i class="fas fa-file-pdf" style="font-size:32px;color:#ef4444;"></i><p style="margin-top:6px;font-size:13px;font-weight:700;">' + esc(f.name) + '</p></div>';
+        el('uploadLabel').className = 'upload-area has-img';
+        el('uploadLabel').querySelector('span').textContent = 'تم رفع الملف';
       } else {
-        showToast((r && r.error) || 'فشل الحفظ', true);
+        // Compress image
+        var img = new Image();
+        img.onload = function() {
+          var c = document.createElement('canvas'), mx = 1200, w = img.width, h = img.height;
+          if (w > mx || h > mx) { var sc = Math.min(mx/w, mx/h); w *= sc; h *= sc; }
+          c.width = w; c.height = h;
+          c.getContext('2d').drawImage(img, 0, 0, w, h);
+          S.imgData = c.toDataURL('image/jpeg', 0.82);
+          el('imgPrev').innerHTML = '<img src="' + S.imgData + '">';
+          el('uploadLabel').className = 'upload-area has-img';
+          el('uploadLabel').querySelector('span').textContent = 'تم رفع الصورة';
+        };
+        img.src = ev.target.result;
       }
-    }).withFailureHandler(function(err) {
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = '<i class="fas fa-save"></i> حفظ المصروف'; }
-      showToast('خطأ في الاتصال', true);
-    }).addCustodyExpense(state.custodyId, payload);
+    };
+    r.readAsDataURL(f);
   };
 
-  // ─── View Invoice Image ───
-  window.viewInvoiceImage = function(expId) {
-    var exp = state.expenses.find(function(e) { return e.id === expId; });
-    if (exp && exp.invoiceImage) {
-      document.getElementById('imageViewerImg').src = exp.invoiceImage;
-      document.getElementById('imageViewer').style.display = 'flex';
-    } else {
-      showToast('لا توجد صورة', true);
-    }
+  // ─── Save ───
+  window.doSave = function() {
+    var desc = el('fDesc').value.trim();
+    var amt = Number(el('fAmt').value) || 0;
+    if (!desc || amt <= 0) return toast('البيان والقيمة مطلوبة', 'err');
+
+    var hasVat = el('fVat').value === '1';
+    var vatRate = hasVat ? (Number(el('fVatR').value) || 15) : 0;
+
+    var btn = el('saveBtn');
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الإرسال...';
+
+    api.withSuccessHandler(function(r) {
+      btn.disabled = false; btn.innerHTML = '<i class="fas fa-paper-plane"></i> إرسال المصروف';
+      if (r && r.success) {
+        closeModal();
+        toast('تم إرسال المصروف — بانتظار الموافقة', 'ok');
+        load();
+      } else toast((r && r.error) || 'فشل الحفظ', 'err');
+    }).withFailureHandler(function() {
+      btn.disabled = false; btn.innerHTML = '<i class="fas fa-paper-plane"></i> إرسال المصروف';
+      toast('خطأ في الاتصال', 'err');
+    }).addCustodyExpense(S.custodyId, {
+      expenseDate: el('fDate').value,
+      description: desc, amount: amt,
+      hasVat: hasVat, vatRate: vatRate,
+      invoiceImage: S.imgData || '',
+      notes: el('fNotes').value.trim(),
+      username: S.user
+    });
   };
 
-  window.closeImageViewer = function() {
-    document.getElementById('imageViewer').style.display = 'none';
+  // ─── Image Viewer ───
+  window.viewImg = function(id) {
+    var e = S.list.find(function(x) { return x.id === id; });
+    if (e && e.invoiceImage) {
+      // Check if PDF
+      if (e.invoiceImage.indexOf('application/pdf') !== -1) {
+        // Open PDF in new tab
+        var w = window.open('', '_blank');
+        w.document.write('<html><body style="margin:0;"><iframe src="' + e.invoiceImage + '" style="width:100%;height:100vh;border:none;"></iframe></body></html>');
+        w.document.close();
+      } else {
+        el('viewerImg').src = e.invoiceImage;
+        el('viewer').style.display = 'flex';
+      }
+    } else toast('لا توجد صورة', 'err');
   };
+  window.closeViewer = function() { el('viewer').style.display = 'none'; };
 
   // ─── Logout ───
-  window.custodyLogout = function() {
+  window.doLogout = function() {
     localStorage.removeItem('pos_session');
     localStorage.removeItem('pos_token');
     localStorage.removeItem('pos_last_view');
-    window.location.replace('/');
+    location.replace('/');
   };
 
-  // ─── Toast ───
-  function showToast(msg, isError) {
-    var container = document.getElementById('toastContainer');
-    if (!container) return;
-    var el = document.createElement('div');
-    el.className = 'toast' + (isError ? ' error' : '');
-    el.textContent = msg;
-    container.appendChild(el);
-    setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 3000);
+  // ─── Utilities ───
+  function el(id) { return document.getElementById(id); }
+  function fmt(v) { return Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function esc(s) { var d = document.createElement('div'); d.appendChild(document.createTextNode(s || '')); return d.innerHTML; }
+  function toast(msg, type) {
+    var c = el('toasts'); if (!c) return;
+    var t = document.createElement('div');
+    t.className = 'toast' + (type ? ' ' + type : '');
+    t.textContent = msg;
+    c.appendChild(t);
+    setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 2800);
   }
-  window.showToast = showToast;
-
-  // ─── Helpers ───
-  function escHtml(s) {
-    var div = document.createElement('div');
-    div.appendChild(document.createTextNode(s || ''));
-    return div.innerHTML;
-  }
+  window.toast = toast;
 
 })();

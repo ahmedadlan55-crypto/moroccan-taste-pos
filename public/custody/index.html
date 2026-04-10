@@ -5,8 +5,11 @@
   <title>عهدتي — Moroccan Taste</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#0d47a1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MT Custody">
 
-  <!-- Auth gate — redirect if no token -->
+  <!-- Auth gate -->
   <script>
     (function() {
       try {
@@ -20,7 +23,7 @@
       } catch (e) { window.location.replace('/'); }
     })();
   </script>
-  <style id="critical-auth-gate">
+  <style>
     html, body { background: #0f172a; }
     body:not(.authenticated) { visibility: hidden !important; }
   </style>
@@ -35,132 +38,144 @@
 <body>
 
   <!-- Loader -->
-  <div id="loader" class="custody-loader">
-    <div class="spinner"></div>
-    <h3>جاري التحميل...</h3>
+  <div id="loader">
+    <div class="loader-ring"></div>
+    <p>جاري التحميل...</p>
   </div>
 
-  <!-- Main App -->
-  <div id="custodyApp" style="display:none;">
+  <!-- Main App Shell -->
+  <div id="app" style="display:none;">
 
-    <!-- Header -->
-    <header class="custody-header">
-      <div class="header-right">
-        <i class="fas fa-hand-holding-usd header-icon"></i>
+    <!-- Top Bar -->
+    <header id="topBar">
+      <div class="tb-right">
+        <div class="tb-avatar"><i class="fas fa-hand-holding-usd"></i></div>
         <div>
-          <div class="header-title">عهدتي</div>
-          <div class="header-sub" id="custodyUserName"></div>
+          <div class="tb-title" id="headerName">عهدتي</div>
+          <div class="tb-sub" id="headerNum"></div>
         </div>
       </div>
-      <button class="logout-btn" onclick="custodyLogout()">
-        <i class="fas fa-sign-out-alt"></i>
-      </button>
+      <div class="tb-actions">
+        <button class="tb-btn refresh-btn" onclick="refreshData()" title="تحديث">
+          <i class="fas fa-sync-alt"></i>
+        </button>
+        <button class="tb-btn logout-btn" onclick="doLogout()" title="خروج">
+          <i class="fas fa-sign-out-alt"></i>
+        </button>
+      </div>
     </header>
 
-    <!-- Balance Cards -->
-    <div class="balance-grid">
-      <div class="balance-card balance-main">
-        <div class="bc-icon"><i class="fas fa-wallet"></i></div>
-        <div class="bc-label">الرصيد الحالي</div>
-        <div class="bc-value" id="balanceCurrent">0.00</div>
-        <div class="bc-sub" id="balanceCustodyNum"></div>
-      </div>
-      <div class="balance-card balance-topup">
-        <div class="bc-icon"><i class="fas fa-arrow-up"></i></div>
-        <div class="bc-label">إجمالي التغذية</div>
-        <div class="bc-value" id="balanceTopups">0.00</div>
-      </div>
-      <div class="balance-card balance-expense">
-        <div class="bc-icon"><i class="fas fa-arrow-down"></i></div>
-        <div class="bc-label">إجمالي المصروفات</div>
-        <div class="bc-value" id="balanceExpenses">0.00</div>
-      </div>
-    </div>
+    <!-- Scrollable Content -->
+    <main id="mainContent">
 
-    <!-- Expenses List -->
-    <div class="expenses-section">
-      <div class="section-header">
-        <h3><i class="fas fa-receipt"></i> المصروفات</h3>
-        <span class="exp-count" id="expCount">0</span>
-      </div>
-      <div id="expensesList" class="expenses-list">
-        <div class="empty-state">
-          <i class="fas fa-inbox"></i>
-          <p>لا توجد مصروفات بعد</p>
+      <!-- Stats Strip -->
+      <div class="stats-strip">
+        <div class="stat-card stat-balance">
+          <i class="fas fa-wallet"></i>
+          <div class="stat-body">
+            <span class="stat-label">الرصيد</span>
+            <span class="stat-val" id="sBalance">0.00</span>
+          </div>
+        </div>
+        <div class="stat-card stat-in">
+          <i class="fas fa-arrow-circle-up"></i>
+          <div class="stat-body">
+            <span class="stat-label">التغذية</span>
+            <span class="stat-val" id="sTopups">0.00</span>
+          </div>
+        </div>
+        <div class="stat-card stat-out">
+          <i class="fas fa-arrow-circle-down"></i>
+          <div class="stat-body">
+            <span class="stat-label">المصروفات</span>
+            <span class="stat-val" id="sExpenses">0.00</span>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- FAB (Floating Action Button) -->
-    <button class="fab" onclick="openExpenseModal()">
+      <!-- Expenses Header -->
+      <div class="list-header">
+        <h3><i class="fas fa-list-alt"></i> سجل المصروفات</h3>
+        <span class="badge-count" id="expBadge">0</span>
+      </div>
+
+      <!-- Expenses List -->
+      <div id="expList" class="exp-list"></div>
+
+    </main>
+
+    <!-- FAB -->
+    <button class="fab" onclick="openModal()">
       <i class="fas fa-plus"></i>
+      <span>إضافة مصروف</span>
     </button>
+
   </div>
 
-  <!-- Expense Modal -->
-  <div id="expenseModal" class="glass-modal" style="display:none;">
-    <div class="glass-modal-content">
-      <div class="modal-header">
-        <h3><i class="fas fa-receipt"></i> إضافة مصروف جديد</h3>
-        <button class="modal-close-btn" onclick="closeExpenseModal()">&times;</button>
+  <!-- Add Expense Bottom Sheet -->
+  <div id="sheet" class="bottom-sheet" style="display:none;">
+    <div class="sheet-overlay" onclick="closeModal()"></div>
+    <div class="sheet-content">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title">
+        <i class="fas fa-receipt"></i> مصروف جديد
       </div>
 
-      <div class="form-grid">
-        <div class="form-group">
+      <div class="field-row">
+        <div class="field">
           <label>التاريخ</label>
-          <input type="date" id="expDate" class="glass-input">
+          <input type="date" id="fDate" class="fi">
         </div>
-        <div class="form-group">
-          <label>القيمة (SAR)</label>
-          <input type="number" id="expAmount" class="glass-input" step="0.01" min="0.01" placeholder="0.00">
+        <div class="field">
+          <label>القيمة</label>
+          <input type="number" id="fAmt" class="fi" inputmode="decimal" step="0.01" placeholder="0.00">
         </div>
-        <div class="form-group full-width">
-          <label>البيان</label>
-          <input type="text" id="expDesc" class="glass-input" placeholder="وصف المصروف...">
-        </div>
-        <div class="form-group">
-          <label>هل يوجد ضريبة؟</label>
-          <select id="expHasVat" class="glass-input" onchange="toggleVat()">
+      </div>
+      <div class="field full">
+        <label>البيان</label>
+        <input type="text" id="fDesc" class="fi" placeholder="وصف المصروف...">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>ضريبة؟</label>
+          <select id="fVat" class="fi" onchange="togVat()">
             <option value="0">لا</option>
             <option value="1">نعم</option>
           </select>
         </div>
-        <div class="form-group" id="vatGroup" style="display:none;">
-          <label>نسبة الضريبة (%)</label>
-          <input type="number" id="expVatRate" class="glass-input" value="15" step="0.1">
+        <div class="field" id="vatBox" style="display:none;">
+          <label>النسبة %</label>
+          <input type="number" id="fVatR" class="fi" value="15" step="0.1">
         </div>
-        <div class="form-group full-width">
-          <label>ملاحظات</label>
-          <input type="text" id="expNotes" class="glass-input" placeholder="ملاحظات إضافية...">
-        </div>
-        <div class="form-group full-width">
-          <label>صورة الفاتورة</label>
-          <label class="file-upload-label" for="expInvoice">
-            <i class="fas fa-camera"></i> اختر صورة
-          </label>
-          <input type="file" id="expInvoice" accept="image/*" onchange="handleInvoiceImage(this)" style="display:none;">
-          <div id="invoicePreview" class="invoice-preview"></div>
-        </div>
+      </div>
+      <div class="field full">
+        <label>ملاحظات</label>
+        <input type="text" id="fNotes" class="fi" placeholder="اختياري...">
+      </div>
+      <div class="field full">
+        <label>صورة الفاتورة</label>
+        <label class="upload-area" for="fImg" id="uploadLabel">
+          <i class="fas fa-camera"></i>
+          <span>اضغط لرفع صورة أو PDF</span>
+        </label>
+        <input type="file" id="fImg" accept="image/*,application/pdf" capture="environment" onchange="pickImg(this)" style="display:none;">
+        <div id="imgPrev"></div>
       </div>
 
-      <div class="modal-actions">
-        <button class="btn-save" onclick="submitExpense()">
-          <i class="fas fa-save"></i> حفظ المصروف
-        </button>
-        <button class="btn-cancel" onclick="closeExpenseModal()">إلغاء</button>
-      </div>
+      <button class="save-btn" id="saveBtn" onclick="doSave()">
+        <i class="fas fa-paper-plane"></i> إرسال المصروف
+      </button>
     </div>
   </div>
 
-  <!-- Image Viewer Modal -->
-  <div id="imageViewer" class="glass-modal" style="display:none;" onclick="closeImageViewer()">
-    <div class="image-viewer-content">
-      <img id="imageViewerImg" src="">
-    </div>
+  <!-- Image Viewer -->
+  <div id="viewer" class="img-viewer" style="display:none;" onclick="closeViewer()">
+    <img id="viewerImg" src="">
+    <button class="viewer-close"><i class="fas fa-times"></i></button>
   </div>
 
   <!-- Toast -->
-  <div id="toastContainer" class="toast-container"></div>
+  <div id="toasts"></div>
 
 </body>
 </html>

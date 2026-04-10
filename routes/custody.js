@@ -39,6 +39,17 @@ router.post('/users', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// Delete custody user
+router.delete('/users/:id', async (req, res) => {
+  try {
+    // Check if has active custodies
+    const [custs] = await db.query('SELECT id FROM custodies WHERE user_id = ? AND status = "active"', [req.params.id]);
+    if (custs.length) return res.json({ success: false, error: 'لا يمكن حذف مسؤول عهدة لديه عهد نشطة — أغلق العهد أولاً' });
+    await db.query('DELETE FROM custody_users WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 router.post('/users/:id/toggle', async (req, res) => {
   try {
     await db.query('UPDATE custody_users SET is_active = NOT is_active WHERE id = ?', [req.params.id]);
@@ -86,21 +97,56 @@ router.post('/create', async (req, res) => {
 // MY CUSTODY (شاشة مسؤول العهدة الخاصة)
 // ═══════════════════════════════════════
 
+// Delete custody (with all topups & expenses)
+router.delete('/:id', async (req, res) => {
+  try {
+    // Delete related records (CASCADE should handle expenses & topups)
+    await db.query('DELETE FROM custody_topups WHERE custody_id = ?', [req.params.id]);
+    await db.query('DELETE FROM custody_expenses WHERE custody_id = ?', [req.params.id]);
+    await db.query('DELETE FROM custodies WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 router.get('/my-custody', async (req, res) => {
   try {
     const username = req.query.username;
     if (!username) return res.json({ error: 'Username required' });
 
-    // Find custody user linked to this username
-    const [cuUsers] = await db.query('SELECT * FROM custody_users WHERE linked_username = ? AND is_active = 1', [username]);
-    if (!cuUsers.length) return res.json({ error: 'لا توجد عهدة مرتبطة بهذا المستخدم', noCustody: true });
-
+    // Find custody user linked to this username — auto-create if missing
+    let [cuUsers] = await db.query('SELECT * FROM custody_users WHERE linked_username = ? AND is_active = 1', [username]);
+    if (!cuUsers.length) {
+      // Auto-create custody_users record for this custody-role user
+      const [userRow] = await db.query('SELECT role FROM users WHERE username = ?', [username]);
+      if (!userRow.length || userRow[0].role !== 'custody') {
+        return res.json({ error: 'هذا الحساب ليس مسؤول عهدة', noCustody: true });
+      }
+      const cuId = 'CU-' + Date.now();
+      await db.query(
+        'INSERT INTO custody_users (id, name, job_title, linked_username) VALUES (?,?,?,?)',
+        [cuId, username, 'مسؤول عهدة', username]
+      );
+      [cuUsers] = await db.query('SELECT * FROM custody_users WHERE id = ?', [cuId]);
+    }
     const cuUser = cuUsers[0];
 
-    // Find the active custody for this custody user
-    const [custodies] = await db.query('SELECT * FROM custodies WHERE user_id = ? AND status = "active" ORDER BY created_at DESC LIMIT 1', [cuUser.id]);
-    if (!custodies.length) return res.json({ error: 'لا توجد عهدة نشطة', noCustody: true });
-
+    // Find the active custody — auto-create if none exists
+    let [custodies] = await db.query('SELECT * FROM custodies WHERE user_id = ? AND status = "active" ORDER BY created_at DESC LIMIT 1', [cuUser.id]);
+    if (!custodies.length) {
+      const cusId = 'CUS-' + Date.now();
+      const [last] = await db.query('SELECT custody_number FROM custodies ORDER BY created_at DESC LIMIT 1');
+      let nextNum = 1;
+      if (last.length && last[0].custody_number) {
+        const m = last[0].custody_number.match(/(\d+)/);
+        if (m) nextNum = parseInt(m[1]) + 1;
+      }
+      const cusNumber = 'CUS-' + String(nextNum).padStart(5, '0');
+      await db.query(
+        'INSERT INTO custodies (id, custody_number, user_id, user_name, created_date, created_by) VALUES (?,?,?,?,?,?)',
+        [cusId, cusNumber, cuUser.id, cuUser.name, new Date(), 'auto']
+      );
+      [custodies] = await db.query('SELECT * FROM custodies WHERE id = ?', [cusId]);
+    }
     const custody = custodies[0];
 
     // Get expenses

@@ -143,6 +143,8 @@
     getCustodyReport:    { method: 'GET',  url: (id) => '/custody/' + id + '/report' },
     getCustodyPending:   { method: 'GET',  url: '/custody/approval/pending' },
     getMyCustody:        { method: 'GET',  url: '/custody/my-custody', query: (u) => ({username:u}) },
+    deleteCustodyUser:   { method: 'DELETE', url: (id) => '/custody/users/' + id },
+    deleteCustody:       { method: 'DELETE', url: (id) => '/custody/' + id },
     getAdvancedFullReport: { method: 'GET', url: '/sales/report/advanced', query: (f) => f },
     getWarehouses:       { method: 'GET',  url: '/erp/warehouses' },
     getWarehouseStock:   { method: 'GET',  url: '/erp/warehouse-stock' },

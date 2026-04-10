@@ -1240,20 +1240,26 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // =========================================
-// Cashier Stocktake
+// Cashier Stocktake — persistent cart (survives close/reopen)
 // =========================================
 var _cstAllItems = [];
-var _cstCart = [];      // [{id, name, unit, systemQty, actualQty, unitType, convRate}]
 var _cstSelectedItem = null;
 
+// Cart is stored in localStorage so the cashier can close the modal,
+// serve a customer, and come back to find their work exactly as they left it.
+function _getCstCart() {
+  try { return JSON.parse(localStorage.getItem('pos_stocktake_cart') || '[]'); } catch(e) { return []; }
+}
+function _saveCstCart(cart) {
+  try { localStorage.setItem('pos_stocktake_cart', JSON.stringify(cart)); } catch(e) {}
+}
+
 window.openCashierStocktake = function() {
-  _cstCart = [];
   _cstSelectedItem = null;
   if (q('#cstSearch')) q('#cstSearch').value = '';
-  if (q('#cstQty')) q('#cstQty').value = '';
   if (q('#cstNotes')) q('#cstNotes').value = '';
   renderCstCart();
-  // Load inventory items
+  // Load raw materials from warehouse
   loader(true);
   api.withSuccessHandler(function(items) {
     loader(false);
@@ -1261,7 +1267,7 @@ window.openCashierStocktake = function() {
     openGlassModal('#modalCashierStocktake');
   }).withFailureHandler(function(err) {
     loader(false);
-    glassToast(err.message || 'فشل تحميل المواد', true);
+    glassToast(err.message || t('failConnect'), true);
   }).getInvItems();
 };
 
@@ -1269,14 +1275,18 @@ window.filterCashierStItems = function() {
   var search = (q('#cstSearch') ? q('#cstSearch').value : '').toLowerCase();
   var res = q('#cstSearchResults');
   if (!res) return;
-  if (!search || search.length < 1) { res.style.display = 'none'; return; }
-  var matches = _cstAllItems.filter(function(i) {
-    return (i.name || '').toLowerCase().includes(search) || (i.id || '').toLowerCase().includes(search);
-  }).slice(0, 10);
-  if (!matches.length) { res.innerHTML = '<div style="padding:8px;color:#94a3b8;">لا توجد نتائج</div>'; res.style.display = 'block'; return; }
+  // Show all items on focus (empty search) or filtered
+  var matches = search
+    ? _cstAllItems.filter(function(i) { return (i.name||'').toLowerCase().includes(search) || (i.id||'').toLowerCase().includes(search); })
+    : _cstAllItems;
+  matches = matches.slice(0, 15);
+  if (!matches.length) { res.innerHTML = '<div style="padding:10px;color:#94a3b8;text-align:center;">لا توجد نتائج</div>'; res.style.display = 'block'; return; }
   res.innerHTML = matches.map(function(i) {
-    return '<div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-weight:600;" onclick="selectCstItem(\'' + i.id + '\')">' +
-      i.name + ' <span style="font-size:11px;color:#64748b;">(' + (i.stock || 0) + ' ' + (i.unit || '') + ')</span></div>';
+    var stk = Number(i.stock) || 0;
+    var stkColor = stk <= (Number(i.minStock)||0) ? '#ef4444' : '#16a34a';
+    return '<div style="padding:10px 14px;cursor:pointer;border-bottom:1px solid rgba(226,232,240,0.5);display:flex;justify-content:space-between;align-items:center;" onclick="selectCstItem(\'' + i.id + '\')">' +
+      '<span style="font-weight:700;">' + i.name + '</span>' +
+      '<span style="font-size:12px;color:' + stkColor + ';font-weight:800;">' + stk + ' ' + (i.unit||'') + '</span></div>';
   }).join('');
   res.style.display = 'block';
 };
@@ -1286,92 +1296,89 @@ window.selectCstItem = function(itemId) {
   if (!item) return;
   _cstSelectedItem = item;
   if (q('#cstSearch')) q('#cstSearch').value = item.name;
-  if (q('#cstQty')) q('#cstQty').value = '';
   if (q('#cstSearchResults')) q('#cstSearchResults').style.display = 'none';
-  // Set unit options
-  var sel = q('#cstUnitType');
-  if (sel) {
-    sel.innerHTML = '<option value="small">' + (item.unit || 'حبة') + ' (صغرى)</option>';
-    if (item.bigUnit) sel.innerHTML += '<option value="big">' + item.bigUnit + ' (كبرى)</option>';
-  }
-  if (q('#cstQty')) q('#cstQty').focus();
-};
 
-window.addCashierStItem = function() {
-  if (!_cstSelectedItem) return glassToast('اختر مادة من القائمة أولاً', true);
-  var qty = Number(q('#cstQty') ? q('#cstQty').value : 0);
-  if (qty < 0) return glassToast('الكمية يجب أن تكون 0 أو أكثر', true);
-  var unitType = q('#cstUnitType') ? q('#cstUnitType').value : 'small';
-  var convRate = Number(_cstSelectedItem.convRate) || 1;
-
-  // Convert to small units for storage
-  var actualSmall = unitType === 'big' && convRate > 1 ? qty * convRate : qty;
-
-  // Check if already in cart
-  var existing = _cstCart.find(function(c) { return c.id === _cstSelectedItem.id; });
-  if (existing) {
-    existing.actualQty = actualSmall;
-    existing.unitType = unitType;
-    existing.enteredQty = qty;
-  } else {
-    _cstCart.push({
-      id: _cstSelectedItem.id,
-      name: _cstSelectedItem.name,
-      unit: _cstSelectedItem.unit || '',
-      bigUnit: _cstSelectedItem.bigUnit || '',
-      convRate: convRate,
-      systemQty: Number(_cstSelectedItem.stock) || 0,
-      actualQty: actualSmall,
-      unitType: unitType,
-      enteredQty: qty
+  // Add immediately to cart with systemQty — user fills in actual later in the table
+  var cart = _getCstCart();
+  var existing = cart.find(function(c) { return c.id === item.id; });
+  if (!existing) {
+    cart.push({
+      id: item.id, name: item.name, unit: item.unit || '', bigUnit: item.bigUnit || '',
+      convRate: Number(item.convRate) || 1,
+      systemQty: Number(item.stock) || 0, actualQty: '', // empty = not yet counted
+      unitCost: Number(item.cost) || 0
     });
+    _saveCstCart(cart);
   }
-
   _cstSelectedItem = null;
   if (q('#cstSearch')) q('#cstSearch').value = '';
-  if (q('#cstQty')) q('#cstQty').value = '';
   renderCstCart();
 };
 
 function renderCstCart() {
+  var cart = _getCstCart();
   var tb = q('#cstBody');
   if (!tb) return;
-  if (!_cstCart.length) {
-    tb.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:20px;">لم تتم إضافة مواد بعد</td></tr>';
+  if (!cart.length) {
+    tb.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:24px;"><i class="fas fa-clipboard-list" style="font-size:28px;margin-bottom:8px;display:block;opacity:0.3;"></i>ابحث عن مادة واضفها للبدء</td></tr>';
     return;
   }
-  tb.innerHTML = _cstCart.map(function(c, i) {
-    var diff = c.actualQty - c.systemQty;
-    var vc = diff === 0 ? '#64748b' : (diff > 0 ? '#16a34a' : '#ef4444');
-    var vs = diff > 0 ? '+' + diff.toFixed(2) : diff.toFixed(2);
-    var unitLabel = c.unitType === 'big' ? (c.bigUnit || 'كبرى') : (c.unit || 'صغرى');
+  tb.innerHTML = cart.map(function(c, i) {
+    var actual = c.actualQty === '' || c.actualQty === null ? '' : Number(c.actualQty);
+    var diff = actual === '' ? '' : (Number(actual) - c.systemQty);
+    var diffHtml = diff === '' ? '<span style="color:#94a3b8;">—</span>'
+      : (diff === 0 ? '<span style="color:#64748b;">0</span>'
+        : (diff > 0 ? '<span style="color:#16a34a;">+' + diff.toFixed(2) + '</span>'
+          : '<span style="color:#ef4444;">' + diff.toFixed(2) + '</span>'));
     return '<tr>' +
-      '<td style="font-weight:700;">' + c.name + '</td>' +
-      '<td style="text-align:center;">' + c.systemQty.toFixed(2) + ' ' + (c.unit || '') + '</td>' +
-      '<td style="text-align:center;font-weight:800;">' + c.enteredQty + ' ' + unitLabel + '</td>' +
-      '<td style="text-align:center;font-size:11px;">' + unitLabel + '</td>' +
-      '<td style="text-align:center;font-weight:900;color:' + vc + ';">' + vs + '</td>' +
-      '<td><button class="btn-remove" onclick="_cstCart.splice(' + i + ',1);renderCstCart();"><i class="fas fa-trash"></i></button></td>' +
+      '<td style="font-weight:700;font-size:13px;">' + c.name + '<div style="font-size:10px;color:#94a3b8;">' + (c.unit||'') + '</div></td>' +
+      '<td style="text-align:center;font-weight:600;color:var(--primary);">' + c.systemQty.toFixed(2) + '</td>' +
+      '<td style="text-align:center;"><input type="number" step="0.01" min="0" class="form-control glass-input" style="width:80px;margin:0 auto;padding:6px;text-align:center;font-weight:800;" value="' + (actual === '' ? '' : actual) + '" oninput="updateCstActual(' + i + ',this.value)" placeholder="—"></td>' +
+      '<td style="text-align:center;font-weight:900;">' + diffHtml + '</td>' +
+      '<td style="text-align:center;"><button class="btn-remove" onclick="removeCstItem(' + i + ')"><i class="fas fa-trash"></i></button></td>' +
     '</tr>';
   }).join('');
 }
 
-window.submitCashierStocktake = function() {
-  if (!_cstCart.length) return glassToast('أضف مواد للمحضر أولاً', true);
-  var itemsToSend = _cstCart.map(function(c) {
-    return { id: c.id, sys: c.systemQty, actual: c.actualQty, diff: c.actualQty - c.systemQty };
-  });
-  var notes = q('#cstNotes') ? q('#cstNotes').value : '';
+window.updateCstActual = function(idx, val) {
+  var cart = _getCstCart();
+  if (!cart[idx]) return;
+  cart[idx].actualQty = val === '' ? '' : Number(val);
+  _saveCstCart(cart);
+  renderCstCart();
+};
 
-  glassConfirm('اعتماد محضر الجرد', 'سيتم تعديل رصيد ' + itemsToSend.length + ' مادة في المخزون. متابعة؟', { okText: 'اعتماد' }).then(function(ok) {
+window.removeCstItem = function(idx) {
+  var cart = _getCstCart();
+  cart.splice(idx, 1);
+  _saveCstCart(cart);
+  renderCstCart();
+};
+
+window.submitCashierStocktake = function() {
+  var cart = _getCstCart();
+  if (!cart.length) return glassToast('أضف مواد للمحضر أولاً', true);
+  // Filter out items that haven't been counted yet
+  var counted = cart.filter(function(c) { return c.actualQty !== '' && c.actualQty !== null; });
+  if (!counted.length) return glassToast('أدخل الكمية الفعلية لمادة واحدة على الأقل', true);
+
+  var itemsToSend = counted.map(function(c) {
+    return { id: c.id, sys: c.systemQty, actual: Number(c.actualQty), diff: Number(c.actualQty) - c.systemQty };
+  });
+  var notes = (q('#cstNotes') ? q('#cstNotes').value : '') || ('جرد بواسطة ' + state.user);
+
+  glassConfirm(t('confirm'), 'سيتم تعديل رصيد ' + counted.length + ' مادة في المخزون. متابعة؟', { okText: t('confirm') }).then(function(ok) {
     if (!ok) return;
     loader(true);
     api.withSuccessHandler(function(r) {
       loader(false);
       if (r && r.success) {
         closeGlassModal('#modalCashierStocktake');
-        glassToast('تم اعتماد محضر الجرد ' + (r.stocktakeId || '') + ' — ' + (r.adjustedCount || 0) + ' مادة');
-        _cstCart = [];
+        glassToast('تم اعتماد محضر الجرد ✓');
+        // Clear the persistent cart
+        localStorage.removeItem('pos_stocktake_cart');
+        // Build WhatsApp report
+        _showStocktakeWhatsApp(r.stocktakeId || '', counted);
       } else {
         glassToast((r && r.error) || 'فشل الحفظ', true);
       }
@@ -1381,3 +1388,35 @@ window.submitCashierStocktake = function() {
     }).submitStocktake(itemsToSend, state.user, notes);
   });
 };
+
+// After save: offer to share report via WhatsApp
+function _showStocktakeWhatsApp(stId, items) {
+  var cashier = (state.currentUser && state.currentUser.displayName) || state.user;
+  var dateStr = new Date().toLocaleString('ar-SA');
+  var company = (state.settings && state.settings.name) || 'Moroccan Taste';
+
+  var lines = [
+    '📋 *محضر جرد مخزون*',
+    '',
+    '🏪 ' + company,
+    '📅 ' + dateStr,
+    '👤 ' + cashier,
+    '🆔 ' + stId,
+    '',
+    '*تفاصيل الجرد:*'
+  ];
+  items.forEach(function(c) {
+    var diff = Number(c.actual) - c.sys;
+    var arrow = diff === 0 ? '=' : (diff > 0 ? '↑' : '↓');
+    lines.push('• ' + (c.name || c.id) + ': النظام ' + c.sys + ' → الفعلي ' + c.actual + ' (' + arrow + Math.abs(diff).toFixed(2) + ')');
+  });
+  var totalVariance = items.reduce(function(s, c) { return s + (Number(c.actual) - c.sys); }, 0);
+  lines.push('');
+  lines.push('📊 إجمالي التباين: ' + (totalVariance >= 0 ? '+' : '') + totalVariance.toFixed(2));
+
+  glassConfirm('إرسال التقرير', 'هل تريد إرسال تقرير الجرد عبر واتساب للسوبرفايزر؟', { okText: 'إرسال واتساب', cancelText: 'لا، شكراً' }).then(function(ok) {
+    if (!ok) return;
+    var text = encodeURIComponent(lines.join('\n'));
+    window.open('https://wa.me/?text=' + text, '_blank');
+  });
+}

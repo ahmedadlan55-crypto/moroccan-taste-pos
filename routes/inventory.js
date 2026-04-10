@@ -269,14 +269,24 @@ router.get('/stocktakes/:id', async (req, res) => {
     const [headers] = await db.query('SELECT * FROM stocktakes WHERE id = ?', [req.params.id]);
     if (!headers.length) return res.json({ error: 'Not found' });
     const st = headers[0];
-    const [items] = await db.query('SELECT * FROM stocktake_items WHERE stocktake_id = ? ORDER BY id', [req.params.id]);
+    const [items] = await db.query('SELECT si.*, COALESCE(inv.cost, 0) AS unit_cost FROM stocktake_items si LEFT JOIN inv_items inv ON si.inv_item_id = inv.id WHERE si.stocktake_id = ? ORDER BY si.id', [req.params.id]);
+    var totalVarianceCost = 0;
+    var mappedItems = items.map(i => {
+      var variance = Number(i.variance);
+      var unitCost = Number(i.unit_cost) || 0;
+      var varianceCost = variance * unitCost; // negative = deficit
+      totalVarianceCost += varianceCost;
+      return {
+        invItemId: i.inv_item_id, invItemName: i.inv_item_name, unit: i.unit,
+        systemQty: Number(i.system_qty), actualQty: Number(i.actual_qty), variance: variance,
+        unitCost: unitCost, varianceCost: varianceCost
+      };
+    });
     res.json({
       id: st.id, date: st.stocktake_date, username: st.username, notes: st.notes,
       status: st.status, itemsCount: st.items_count, totalVariance: Number(st.total_variance),
-      items: items.map(i => ({
-        invItemId: i.inv_item_id, invItemName: i.inv_item_name, unit: i.unit,
-        systemQty: Number(i.system_qty), actualQty: Number(i.actual_qty), variance: Number(i.variance)
-      }))
+      totalVarianceCost: totalVarianceCost,
+      items: mappedItems
     });
   } catch (e) { res.json({ error: e.message }); }
 });

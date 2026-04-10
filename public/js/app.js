@@ -2860,21 +2860,30 @@ function viewStocktakeDetail(stId) {
       (st.notes ? '<div style="background:#fefce8;padding:8px 12px;border-radius:8px;font-size:13px;border:1px solid #fef08a;">'+st.notes+'</div>' : '')+
     '</div>'+
     '<table class="table" style="font-size:13px;"><thead><tr>'+
-      '<th>المادة</th><th>الوحدة</th><th>رصيد النظام</th><th>الفعلي (بعد الجرد)</th><th>التباين</th>'+
+      '<th>المادة</th><th>الوحدة</th><th>رصيد النظام</th><th>الفعلي</th><th>التباين (كمية)</th><th>تكلفة الوحدة</th><th>تكلفة التباين</th>'+
     '</tr></thead><tbody>';
     (st.items || []).forEach(function(i) {
       var vc = i.variance === 0 ? '#64748b' : (i.variance > 0 ? '#16a34a' : '#ef4444');
       var vs = i.variance > 0 ? '+' + i.variance.toFixed(2) : i.variance.toFixed(2);
+      var vcost = Number(i.varianceCost) || 0;
+      var vcostColor = vcost === 0 ? '#64748b' : (vcost > 0 ? '#16a34a' : '#ef4444');
       h += '<tr>'+
         '<td style="font-weight:700;">'+i.invItemName+'</td>'+
         '<td>'+i.unit+'</td>'+
         '<td style="text-align:center;">'+i.systemQty.toFixed(2)+'</td>'+
         '<td style="text-align:center;font-weight:800;">'+i.actualQty.toFixed(2)+'</td>'+
         '<td style="text-align:center;font-weight:900;color:'+vc+';">'+vs+'</td>'+
+        '<td style="text-align:center;">'+formatVal(i.unitCost || 0)+'</td>'+
+        '<td style="text-align:center;font-weight:900;color:'+vcostColor+';">'+formatVal(vcost)+'</td>'+
       '</tr>';
     });
     h += '</tbody></table>';
-    h += '<div style="text-align:left;font-weight:900;font-size:15px;margin-top:8px;color:'+(st.totalVariance===0?'#16a34a':'#ef4444')+';">إجمالي التباين: '+Number(st.totalVariance).toFixed(2)+'</div>';
+    var tvc = Number(st.totalVarianceCost) || 0;
+    var tvcColor = tvc === 0 ? '#16a34a' : (tvc < 0 ? '#ef4444' : '#16a34a');
+    h += '<div style="display:flex;justify-content:space-between;margin-top:10px;padding:12px;background:#fef2f2;border:1.5px solid #fecaca;border-radius:10px;">' +
+      '<div style="font-weight:900;font-size:15px;color:'+(st.totalVariance===0?'#16a34a':'#ef4444')+';">إجمالي التباين (كمية): '+Number(st.totalVariance).toFixed(2)+'</div>' +
+      '<div style="font-weight:900;font-size:15px;color:'+tvcColor+';">تكلفة التباين: '+formatVal(tvc)+' SAR</div>' +
+    '</div>';
     // Use a generic modal container
     if (!q("#modalStocktakeDetail")) {
       var m = document.createElement('div');
@@ -2900,9 +2909,11 @@ function printStocktake(stId) {
     var rows = (st.items || []).map(function(i, idx) {
       var vc = i.variance === 0 ? '#64748b' : (i.variance > 0 ? '#16a34a' : '#ef4444');
       var vs = i.variance > 0 ? '+' + i.variance.toFixed(2) : i.variance.toFixed(2);
-      return '<tr><td>'+(idx+1)+'</td><td style="font-weight:700;">'+i.invItemName+'</td><td>'+i.unit+'</td><td>'+i.systemQty.toFixed(2)+'</td><td style="font-weight:800;">'+i.actualQty.toFixed(2)+'</td><td style="font-weight:900;color:'+vc+';">'+vs+'</td></tr>';
+      var vcost = Number(i.varianceCost) || 0;
+      return '<tr><td>'+(idx+1)+'</td><td style="font-weight:700;">'+i.invItemName+'</td><td>'+i.unit+'</td><td>'+i.systemQty.toFixed(2)+'</td><td style="font-weight:800;">'+i.actualQty.toFixed(2)+'</td><td style="font-weight:900;color:'+vc+';">'+vs+'</td><td>'+formatVal(i.unitCost||0)+'</td><td style="font-weight:900;color:'+vc+';">'+formatVal(vcost)+'</td></tr>';
     }).join('');
-    var w = window.open('','_blank','width=800,height=700');
+    var tvc = Number(st.totalVarianceCost) || 0;
+    var w = window.open('','_blank','width=900,height=700');
     w.document.write(
       '<html dir="rtl"><head><meta charset="UTF-8"><title>محضر جرد '+st.id+'</title>'+
       '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;direction:rtl;padding:30px;color:#1e293b;}'+
@@ -2912,13 +2923,17 @@ function printStocktake(stId) {
       '.meta .lbl{font-size:10px;color:#64748b;}.meta .val{font-weight:700;}'+
       'table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px;}'+
       'th,td{border:1px solid #ddd;padding:8px 10px;text-align:right;}th{background:#f1f5f9;font-weight:700;}'+
+      '.totals{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;}.tot-box{text-align:center;padding:14px;border-radius:12px;font-weight:900;font-size:16px;}'+
       '.sig{display:flex;justify-content:space-around;margin-top:40px;font-size:13px;}.sig div{text-align:center;}.sig .line{width:150px;border-bottom:1px solid #94a3b8;padding-top:40px;margin:0 auto;}.sig .cap{font-size:11px;color:#64748b;margin-top:4px;}'+
-      '@media print{body{padding:10px;}}</style></head><body>'+
+      '@media print{body{padding:10px;}.totals,.meta{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style></head><body>'+
       '<h2>'+company+'</h2><h3 style="text-align:center;color:#64748b;margin-bottom:14px;">محضر جرد مخزون</h3>'+
       '<div class="meta"><div><div class="lbl">رقم المحضر</div><div class="val">'+st.id+'</div></div><div><div class="lbl">التاريخ</div><div class="val">'+dateStr+'</div></div><div><div class="lbl">القائم بالجرد</div><div class="val">'+st.username+'</div></div><div><div class="lbl">عدد الأصناف</div><div class="val">'+st.itemsCount+'</div></div></div>'+
       (st.notes ? '<div style="background:#fefce8;padding:10px;border-radius:8px;border:1px solid #fef08a;font-size:12px;margin-bottom:10px;">ملاحظات: '+st.notes+'</div>' : '')+
-      '<table><thead><tr><th>#</th><th>المادة</th><th>الوحدة</th><th>رصيد النظام</th><th>الفعلي</th><th>التباين</th></tr></thead><tbody>'+rows+'</tbody></table>'+
-      '<div style="text-align:center;margin-top:14px;font-weight:900;font-size:16px;color:'+(st.totalVariance===0?'#16a34a':'#ef4444')+';">إجمالي التباين: '+Number(st.totalVariance).toFixed(2)+'</div>'+
+      '<table><thead><tr><th>#</th><th>المادة</th><th>الوحدة</th><th>رصيد النظام</th><th>الفعلي</th><th>التباين (كمية)</th><th>تكلفة الوحدة</th><th>تكلفة التباين</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+      '<div class="totals">'+
+        '<div class="tot-box" style="background:#f8fafc;border:1px solid #e2e8f0;color:'+(st.totalVariance===0?'#16a34a':'#ef4444')+';">إجمالي التباين (كمية)<br>'+Number(st.totalVariance).toFixed(2)+'</div>'+
+        '<div class="tot-box" style="background:'+(tvc<0?'#fef2f2':'#f0fdf4')+';border:1.5px solid '+(tvc<0?'#fecaca':'#86efac')+';color:'+(tvc<0?'#ef4444':'#16a34a')+';">تكلفة التباين<br>'+formatVal(tvc)+' SAR</div>'+
+      '</div>'+
       '<div class="sig"><div><div class="line"></div><div class="cap">القائم بالجرد</div></div><div><div class="line"></div><div class="cap">مدير المستودع</div></div><div><div class="line"></div><div class="cap">المدير العام</div></div></div>'+
       '</body></html>'
     );

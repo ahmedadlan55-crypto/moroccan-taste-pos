@@ -2588,6 +2588,50 @@ function saveProductPrice() {
 let currentRecipeIngredients = [];
 let cachedAllRecipes = [];
 
+// Open recipe modal for a NEW product — shows a dropdown to pick the menu item first
+function openRecipeModalNew() {
+  // Load menu items and let user pick one
+  loader();
+  api.withSuccessHandler(function(menus) {
+    loader(false);
+    var list = (menus || []).filter(function(m) { return m.active !== false; });
+    if (!list.length) return showToast('لا توجد منتجات في المنيو — أضف منتجاً أولاً', true);
+    // Build a simple picker modal
+    var h = '<div style="margin-bottom:12px;"><input type="text" id="recPickSearch" class="form-control" placeholder="ابحث عن منتج..." oninput="filterRecipePicker()" style="margin-bottom:10px;"></div>';
+    h += '<div id="recPickList" style="max-height:400px;overflow-y:auto;">';
+    list.forEach(function(m) {
+      h += '<div class="card" style="margin-bottom:8px;padding:14px;cursor:pointer;background:rgba(255,255,255,0.7);border:1px solid #e2e8f0;border-radius:12px;" onclick="pickMenuForRecipe(\'' + m.id + '\',\'' + String(m.name||'').replace(/'/g,"\\'") + '\')">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;"><strong>' + m.name + '</strong><span class="badge" style="background:#e2e8f0;color:#475569;">' + (m.category||'') + '</span></div></div>';
+    });
+    h += '</div>';
+    state._recPickMenus = list;
+    if (!q('#modalRecipePick')) {
+      var modal = document.createElement('div'); modal.id = 'modalRecipePick'; modal.className = 'modal';
+      modal.innerHTML = '<div class="modal-content"><div class="modal-title">اختر منتجاً لإضافة مقاديره<button class="modal-close" onclick="closeModal(\'#modalRecipePick\')">&times;</button></div><div id="recPickBody"></div></div>';
+      document.body.appendChild(modal);
+    }
+    q('#recPickBody').innerHTML = h;
+    openModal('#modalRecipePick');
+  }).getMenuAll();
+}
+
+function filterRecipePicker() {
+  var search = (q('#recPickSearch') ? q('#recPickSearch').value : '').toLowerCase();
+  var list = state._recPickMenus || [];
+  var filtered = search ? list.filter(function(m) { return (m.name||'').toLowerCase().includes(search); }) : list;
+  var h = '';
+  filtered.forEach(function(m) {
+    h += '<div class="card" style="margin-bottom:8px;padding:14px;cursor:pointer;background:rgba(255,255,255,0.7);border:1px solid #e2e8f0;border-radius:12px;" onclick="pickMenuForRecipe(\'' + m.id + '\',\'' + String(m.name||'').replace(/'/g,"\\'") + '\')">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;"><strong>' + m.name + '</strong><span class="badge" style="background:#e2e8f0;color:#475569;">' + (m.category||'') + '</span></div></div>';
+  });
+  if (q('#recPickList')) q('#recPickList').innerHTML = h || '<div style="text-align:center;color:#94a3b8;padding:20px;">لا توجد نتائج</div>';
+}
+
+function pickMenuForRecipe(menuId, menuName) {
+  closeModal('#modalRecipePick');
+  openRecipeModal(menuId, menuName);
+}
+
 function openRecipeModal(menuId, menuName) {
   q("#recMenuId").value = menuId;
   q("#recMenuName").innerText = menuName;

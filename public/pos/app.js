@@ -1362,7 +1362,9 @@ window.submitCashierStocktake = function() {
   if (!counted.length) return glassToast(t('stEnterActual'), true);
 
   var itemsToSend = counted.map(function(c) {
-    return { id: c.id, sys: c.systemQty, actual: Number(c.actualQty), diff: Number(c.actualQty) - c.systemQty };
+    var s = Number(c.systemQty) || 0;
+    var a = Number(c.actualQty) || 0;
+    return { id: c.id, name: c.name, unit: c.unit || '', systemQty: s, actualQty: a, sys: s, actual: a, diff: a - s };
   });
   var notes = (q('#cstNotes') ? q('#cstNotes').value : '') || ('جرد بواسطة ' + state.user);
 
@@ -1375,7 +1377,8 @@ window.submitCashierStocktake = function() {
         closeGlassModal('#modalCashierStocktake');
         glassToast(t('stSaved'));
         localStorage.removeItem('pos_stocktake_cart');
-        _showStocktakeWhatsApp(r.stocktakeId || '', counted);
+        // Pass itemsToSend (which has name/sys/actual) not counted (which has systemQty/actualQty)
+        _showStocktakeWhatsApp(r.stocktakeId || '', itemsToSend);
       } else {
         glassToast((r && r.error) || t('errorTitle'), true);
       }
@@ -1395,15 +1398,17 @@ function _showStocktakeWhatsApp(stId, items) {
 
   // Build the printable report (same quality as admin print but without variance cost)
   var rows = items.map(function(c, idx) {
-    var diff = Number(c.actual) - c.sys;
+    var sysQty = Number(c.sys || c.systemQty) || 0;
+    var actQty = Number(c.actual || c.actualQty) || 0;
+    var diff = actQty - sysQty;
     var vc = diff === 0 ? '#64748b' : (diff > 0 ? '#16a34a' : '#ef4444');
     var vs = diff > 0 ? '+' + diff.toFixed(2) : diff.toFixed(2);
     return '<tr><td>' + (idx+1) + '</td><td style="font-weight:700;">' + (c.name||c.id) + '</td>' +
-      '<td style="text-align:center;">' + Number(c.sys).toFixed(2) + '</td>' +
-      '<td style="text-align:center;font-weight:800;">' + Number(c.actual).toFixed(2) + '</td>' +
+      '<td style="text-align:center;">' + sysQty.toFixed(2) + '</td>' +
+      '<td style="text-align:center;font-weight:800;">' + actQty.toFixed(2) + '</td>' +
       '<td style="text-align:center;font-weight:900;color:' + vc + ';">' + vs + '</td></tr>';
   }).join('');
-  var totalVar = items.reduce(function(s, c) { return s + (Number(c.actual) - c.sys); }, 0);
+  var totalVar = items.reduce(function(s, c) { return s + ((Number(c.actual || c.actualQty) || 0) - (Number(c.sys || c.systemQty) || 0)); }, 0);
 
   var dir = isEn ? 'ltr' : 'rtl';
   var lblTitle = isEn ? 'Inventory Stocktake Report' : 'محضر جرد مخزون';
@@ -1421,29 +1426,33 @@ function _showStocktakeWhatsApp(stId, items) {
   var lblSig2 = isEn ? 'Warehouse Manager' : 'مدير المستودع';
   var lblSig3 = isEn ? 'General Manager' : 'المدير العام';
 
-  var w = window.open('', '_blank', 'width=800,height=700');
-  w.document.write(
-    '<html dir="' + dir + '"><head><meta charset="UTF-8"><title>' + lblTitle + ' ' + stId + '</title>' +
-    '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;direction:' + dir + ';padding:30px;color:#1e293b;}' +
-    'h2{text-align:center;margin-bottom:4px;}h3{text-align:center;color:#64748b;margin-bottom:14px;}' +
-    '.meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0;font-size:13px;}.meta div{background:#f8fafc;padding:10px 14px;border-radius:10px;border:1px solid #e2e8f0;}.meta .lbl{font-size:10px;color:#64748b;}.meta .val{font-weight:700;}' +
-    'table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px;}th,td{border:1px solid #ddd;padding:8px 10px;text-align:center;}th{background:#f1f5f9;font-weight:700;}' +
-    '.total{text-align:center;margin-top:14px;font-weight:900;font-size:18px;padding:14px;border-radius:12px;}' +
-    '.sig{display:flex;justify-content:space-around;margin-top:40px;font-size:13px;}.sig div{text-align:center;}.sig .line{width:150px;border-bottom:1px solid #94a3b8;padding-top:40px;margin:0 auto;}.sig .cap{font-size:11px;color:#64748b;margin-top:4px;}' +
-    '@media print{body{padding:10px;}}</style></head><body>' +
-    '<h2>' + company + '</h2><h3>' + lblTitle + '</h3>' +
-    '<div class="meta">' +
-      '<div><div class="lbl">' + lblId + '</div><div class="val">' + stId + '</div></div>' +
-      '<div><div class="lbl">' + lblDate + '</div><div class="val">' + dateStr + '</div></div>' +
-      '<div><div class="lbl">' + lblCashier + '</div><div class="val">' + cashier + '</div></div>' +
-      '<div><div class="lbl">' + lblItems + '</div><div class="val">' + items.length + '</div></div>' +
-    '</div>' +
-    '<table><thead><tr><th>' + thN + '</th><th>' + thItem + '</th><th>' + thSys + '</th><th>' + thActual + '</th><th>' + thVar + '</th></tr></thead><tbody>' + rows + '</tbody></table>' +
-    '<div class="total" style="background:' + (totalVar < 0 ? '#fef2f2;border:1.5px solid #fecaca;color:#ef4444' : '#f0fdf4;border:1.5px solid #86efac;color:#16a34a') + ';">' + lblTotal + ': ' + (totalVar >= 0 ? '+' : '') + totalVar.toFixed(2) + '</div>' +
-    '<div class="sig"><div><div class="line"></div><div class="cap">' + lblSig1 + '</div></div><div><div class="line"></div><div class="cap">' + lblSig2 + '</div></div><div><div class="line"></div><div class="cap">' + lblSig3 + '</div></div></div>' +
-    '</body></html>'
-  );
-  w.document.close();
+  // Open as a regular new tab (no dimensions) so on mobile the user can:
+  // Share → Google Drive, or Print → Save as PDF, or just screenshot it
+  var w = window.open('', '_blank');
+  if (w) {
+    w.document.write(
+      '<html dir="' + dir + '"><head><meta charset="UTF-8"><title>' + lblTitle + ' ' + stId + '</title>' +
+      '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;direction:' + dir + ';padding:30px;color:#1e293b;}' +
+      'h2{text-align:center;margin-bottom:4px;}h3{text-align:center;color:#64748b;margin-bottom:14px;}' +
+      '.meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0;font-size:13px;}.meta div{background:#f8fafc;padding:10px 14px;border-radius:10px;border:1px solid #e2e8f0;}.meta .lbl{font-size:10px;color:#64748b;}.meta .val{font-weight:700;}' +
+      'table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px;}th,td{border:1px solid #ddd;padding:8px 10px;text-align:center;}th{background:#f1f5f9;font-weight:700;}' +
+      '.total{text-align:center;margin-top:14px;font-weight:900;font-size:18px;padding:14px;border-radius:12px;}' +
+      '.sig{display:flex;justify-content:space-around;margin-top:40px;font-size:13px;}.sig div{text-align:center;}.sig .line{width:150px;border-bottom:1px solid #94a3b8;padding-top:40px;margin:0 auto;}.sig .cap{font-size:11px;color:#64748b;margin-top:4px;}' +
+      '@media print{body{padding:10px;}}</style></head><body>' +
+      '<h2>' + company + '</h2><h3>' + lblTitle + '</h3>' +
+      '<div class="meta">' +
+        '<div><div class="lbl">' + lblId + '</div><div class="val">' + stId + '</div></div>' +
+        '<div><div class="lbl">' + lblDate + '</div><div class="val">' + dateStr + '</div></div>' +
+        '<div><div class="lbl">' + lblCashier + '</div><div class="val">' + cashier + '</div></div>' +
+        '<div><div class="lbl">' + lblItems + '</div><div class="val">' + items.length + '</div></div>' +
+      '</div>' +
+      '<table><thead><tr><th>' + thN + '</th><th>' + thItem + '</th><th>' + thSys + '</th><th>' + thActual + '</th><th>' + thVar + '</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<div class="total" style="background:' + (totalVar < 0 ? '#fef2f2;border:1.5px solid #fecaca;color:#ef4444' : '#f0fdf4;border:1.5px solid #86efac;color:#16a34a') + ';">' + lblTotal + ': ' + (totalVar >= 0 ? '+' : '') + totalVar.toFixed(2) + '</div>' +
+      '<div class="sig"><div><div class="line"></div><div class="cap">' + lblSig1 + '</div></div><div><div class="line"></div><div class="cap">' + lblSig2 + '</div></div><div><div class="line"></div><div class="cap">' + lblSig3 + '</div></div></div>' +
+      '</body></html>'
+    );
+    w.document.close();
+  }
 
   // Offer WhatsApp share with a text summary
   var lines = [
@@ -1452,9 +1461,11 @@ function _showStocktakeWhatsApp(stId, items) {
     '*' + (isEn ? 'Details:' : 'تفاصيل الجرد:') + '*'
   ];
   items.forEach(function(c) {
-    var diff = Number(c.actual) - c.sys;
+    var sysQty = Number(c.sys || c.systemQty) || 0;
+    var actQty = Number(c.actual || c.actualQty) || 0;
+    var diff = actQty - sysQty;
     var arrow = diff === 0 ? '=' : (diff > 0 ? '↑' : '↓');
-    lines.push('• ' + (c.name||c.id) + ': ' + c.sys + ' → ' + c.actual + ' (' + arrow + Math.abs(diff).toFixed(2) + ')');
+    lines.push('• ' + (c.name||c.id) + ': ' + sysQty.toFixed(2) + ' → ' + actQty.toFixed(2) + ' (' + arrow + Math.abs(diff).toFixed(2) + ')');
   });
   lines.push('');
   lines.push('📊 ' + lblTotal + ': ' + (totalVar >= 0 ? '+' : '') + totalVar.toFixed(2));
@@ -1470,7 +1481,7 @@ function _showStocktakeWhatsApp(stId, items) {
         window.open('https://wa.me/?text=' + text, '_blank');
       }
       // Either way, trigger print on the report window
-      try { w.print(); } catch(e) {}
+      try { if (w) w.print(); } catch(e) {}
     });
   }, 300);
 }

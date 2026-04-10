@@ -1623,7 +1623,7 @@ function loadDashMenu() {
               ings.forEach(function(ing){
                 var raw = cachedRawItems.find(function(r){ return String(r.id)===String(ing.invItemId); });
                 var cRate = raw ? (Number(raw.convRate)||1) : 1;
-                var uCost = raw ? (cRate>1 ? Number(raw.cost)/cRate : Number(raw.cost)) : 0;
+                var uCost = raw ? (Number(raw.cost) || 0) : 0;
                 recipeCost += ing.qtyUsed * uCost;
               });
               var profit = netSell - recipeCost;
@@ -1683,7 +1683,7 @@ function loadDashRecipes() {
           allRecipes.forEach(function(r) {
             var raw = cachedRawItems.find(function(x){ return String(x.id)===String(r.invItemId); });
             var cRate = raw ? (Number(raw.convRate)||1) : 1;
-            var uCost = raw ? (cRate>1 ? Number(raw.cost)/cRate : Number(raw.cost)) : 0;
+            var uCost = raw ? (Number(raw.cost) || 0) : 0;
             var lineCost = r.qtyUsed * uCost;
             var unitName = raw ? (raw.unit||'') : '';
             h += '<tr>'+
@@ -1719,7 +1719,7 @@ function exportRecipesExcel() {
         (recipes||[]).forEach(function(r){
           var raw = rawMap[r.invItemId];
           var cRate = raw ? (Number(raw.convRate)||1) : 1;
-          var uCost = raw ? (cRate>1 ? Number(raw.cost)/cRate : Number(raw.cost)) : 0;
+          var uCost = raw ? (Number(raw.cost) || 0) : 0;
           wsData.push([
             r.menuId||'', r.menuName||'', r.invItemName||'', r.invItemId||'',
             raw ? (raw.unit||'') : '', r.qtyUsed||0, Number(uCost.toFixed(4)), Number((r.qtyUsed*uCost).toFixed(4))
@@ -2535,7 +2535,7 @@ function openProductCard(menuId) {
           var raw = (raws||[]).find(function(r){ return String(r.id)===String(ing.invItemId); });
           var unit = raw ? (raw.unit||'') : '';
           var cRate = raw ? (Number(raw.convRate)||1) : 1;
-          var unitCost = raw ? (cRate>1 ? Number(raw.cost)/cRate : Number(raw.cost)) : 0;
+          var unitCost = raw ? (Number(raw.cost) || 0) : 0;
           var ingCost = ing.qtyUsed * unitCost;
           totalCost += ingCost;
           return '<tr>'+
@@ -2690,7 +2690,8 @@ function filterRecipeItems() {
   let h = "";
   filtered.slice(0, 20).forEach(item => {
     const cRate = Number(item.convRate) || 1;
-    const smallCost = cRate > 1 ? (item.cost / cRate) : item.cost;
+    // inv_items.cost is already per small unit — no division needed
+    const smallCost = Number(item.cost) || 0;
     h += `<div class="sd-result-item" onclick="selectRecipeItem('${String(item.id).replace(/'/g,"\\'")}','${String(item.name).replace(/'/g,"\\'")}')">
       <div><span class="sd-item-name">${item.name}</span></div>
       <span class="sd-item-meta">${item.unit||'\u062d\u0628\u0629'} | ${formatVal(smallCost)} SAR</span>
@@ -2719,8 +2720,8 @@ function renderRecipeTable() {
     currentRecipeIngredients.forEach(function(ing, index) {
       var raw = (cachedRawItems || []).find(function(r){return r.id === ing.invItemId;});
       var unit = raw ? (raw.unit || 'حبة') : '';
-      var cRate = raw ? (Number(raw.convRate) || 1) : 1;
-      var smallCost = raw ? (cRate > 1 ? raw.cost / cRate : raw.cost) : 0;
+      // inv_items.cost is already per SMALL unit — do NOT divide by convRate again
+      var smallCost = raw ? (Number(raw.cost) || 0) : 0;
       var ingCost = ing.qtyUsed * smallCost;
       totalCost += ingCost;
       if (ingCost < lowestCost && ingCost > 0) { lowestCost = ingCost; lowestName = ing.invItemName; }

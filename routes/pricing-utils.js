@@ -12,7 +12,7 @@ async function recomputeMenuCost(menuId) {
   // Sum recipe ingredient costs (using small-unit cost)
   const [rows] = await db.query(`
     SELECT COALESCE(SUM(
-      r.qty_used * (CASE WHEN i.conv_rate > 1 THEN i.cost / i.conv_rate ELSE i.cost END)
+      r.qty_used * i.cost
     ), 0) AS computed_cost
     FROM recipe r
     JOIN inv_items i ON r.inv_item_id = i.id

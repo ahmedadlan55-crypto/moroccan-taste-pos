@@ -322,10 +322,9 @@ window.onload = function() {
     var savedRole = '';
     try { savedRole = (JSON.parse(saved).role || '').toLowerCase(); } catch(e) {}
 
-    // Cashier session → redirect straight to /pos/ (no need to validate the
-    // admin template — the /pos/ page has its own auth gate and will
-    // redirect back to / if the token is actually invalid).
-    if (savedRole && savedRole !== 'admin') {
+    // Cashier session → redirect straight to /pos/
+    // Admin, manager, and custody roles load the admin template.
+    if (savedRole === 'cashier') {
       window.location.replace('/pos/');
       return;
     }
@@ -522,10 +521,9 @@ function doLogin() {
     localStorage.setItem("pos_session", JSON.stringify({ user: u, pass: p, role: state.role }));
     localStorage.setItem("pos_last_view", state.role === 'admin' ? 'admin' : 'pos');
 
-    // ─── Cashier (or any non-admin) → redirect straight to /pos/ ───
-    // No need to fetch the admin template (127 KB) since the cashier never
-    // sees the admin dashboard. The /pos/ page loads only POS assets.
-    if (state.role !== 'admin') {
+    // ─── Cashier → redirect to /pos/ ───
+    // Admin, manager, and custody roles see the admin dashboard.
+    if (state.role === 'cashier') {
       window.location.replace('/pos/');
       return;
     }

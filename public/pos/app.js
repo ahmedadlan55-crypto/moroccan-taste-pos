@@ -1407,6 +1407,12 @@ window.updateCstDual = function(idx, bigVal, smallVal) {
   }
 };
 
+window.clearCstCart = function() {
+  localStorage.removeItem('pos_stocktake_cart');
+  renderCstCart();
+  glassToast('تم مسح المحضر');
+};
+
 window.removeCstItem = function(idx) {
   var cart = _getCstCart();
   cart.splice(idx, 1);

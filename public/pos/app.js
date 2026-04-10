@@ -1374,33 +1374,39 @@ function renderCstCart() {
 }
 
 // Update stocktake from dual inputs (big qty + small qty)
+// Each input is independent: big = cartons, small = pieces
+// Total = (big × convRate) + small
 window.updateCstDual = function(idx, bigVal, smallVal) {
   var cart = _getCstCart();
   if (!cart[idx]) return;
   var cRate = Number(cart[idx].convRate) || 1;
   var hasBig = cart[idx].bigUnit && cRate > 1;
 
-  // Preserve the other input's value
-  if (bigVal !== null) cart[idx]._bigInput = bigVal === '' ? '' : Number(bigVal);
-  if (smallVal !== null) cart[idx]._smallInput = smallVal === '' ? '' : Number(smallVal);
+  // Save each input independently — never overwrite the other
+  if (bigVal !== null && bigVal !== undefined) cart[idx]._bigInput = bigVal === '' ? '' : Number(bigVal);
+  if (smallVal !== null && smallVal !== undefined) cart[idx]._smallInput = smallVal === '' ? '' : Number(smallVal);
 
   var b = Number(cart[idx]._bigInput) || 0;
   var s = Number(cart[idx]._smallInput) || 0;
 
-  // If both empty, mark as uncounted
-  if ((cart[idx]._bigInput === '' || cart[idx]._bigInput === undefined) &&
-      (cart[idx]._smallInput === '' || cart[idx]._smallInput === undefined)) {
+  // Both empty = not counted yet
+  var bigEmpty = cart[idx]._bigInput === '' || cart[idx]._bigInput === undefined;
+  var smallEmpty = cart[idx]._smallInput === '' || cart[idx]._smallInput === undefined;
+
+  if (bigEmpty && smallEmpty) {
     cart[idx].actualQty = '';
   } else {
+    // Total in small units: (cartons × piecesPerCarton) + loose pieces
     cart[idx].actualQty = hasBig ? (b * cRate) + s : s;
   }
   _saveCstCart(cart);
 
-  // Update diff cell without re-rendering (keeps focus)
+  // Update ONLY the diff cell (column 7 = index 6) without re-rendering
   var row = q('#cstBody') && q('#cstBody').children[idx];
   if (row) {
     var diff = cart[idx].actualQty === '' ? '' : (Number(cart[idx].actualQty) - cart[idx].systemQty);
-    var cell = row.querySelector('td:nth-child(4)');
+    // Column order: المادة(1) الكبرى(2) وحدة_كبرى(3) الصغرى(4) وحدة_صغرى(5) النظام(6) التباين(7) حذف(8)
+    var cell = row.children[6]; // التباين = 7th column (0-indexed = 6)
     if (cell) {
       cell.innerHTML = diff === '' ? '<span style="color:#94a3b8;">—</span>'
         : (diff === 0 ? '<span style="color:#64748b;">0</span>'

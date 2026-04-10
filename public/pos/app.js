@@ -1357,8 +1357,9 @@ window.removeCstItem = function(idx) {
   cart.splice(idx, 1);
   _saveCstCart(cart);
   renderCstCart();
-  // Refresh dropdown so the removed item reappears in search
-  filterCashierStItems();
+  // Hide the dropdown — it will refresh next time user clicks search
+  var res = q('#cstSearchResults');
+  if (res) res.style.display = 'none';
 };
 
 window.submitCashierStocktake = function() {

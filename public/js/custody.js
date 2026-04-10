@@ -284,18 +284,47 @@ window.handleCustodyImage = function(input, previewId) {
 
 window.loadCustodyApprovals = function() {
   loader();
-  api.withSuccessHandler(function(list) {
+
+  // Load expenses + close requests in parallel
+  var expDone = false, closeDone = false, expList = [], closeList = [];
+  function tryRender() {
+    if (!expDone || !closeDone) return;
     loader(false);
     var h = '';
-    if (!list || !list.length) { h = '<tr><td colspan="10" style="text-align:center;padding:30px;">لا توجد مصروفات معلقة</td></tr>'; }
+
+    // Close requests section
+    if (closeList.length) {
+      closeList.forEach(function(c) {
+        if (c.status !== 'close_pending') return;
+        var balColor = c.balance >= 0 ? '#16a34a' : '#ef4444';
+        h += '<tr style="background:rgba(239,68,68,0.04);">' +
+          '<td><code style="font-size:11px;">' + (c.custodyNumber || '') + '</code></td>' +
+          '<td style="font-weight:700;">' + (c.userName || '') + '</td>' +
+          '<td colspan="4" style="font-weight:700;color:#ef4444;"><i class="fas fa-lock"></i> طلب إقفال العهدة — الرصيد: <span style="color:' + balColor + ';">' + formatVal(c.balance) + '</span></td>' +
+          '<td style="font-weight:900;color:' + balColor + ';">' + formatVal(c.balance) + '</td>' +
+          '<td></td>' +
+          '<td><span class="badge red">طلب إقفال</span></td>' +
+          '<td style="white-space:nowrap;">' +
+            '<button class="btn btn-success btn-sm" onclick="approveCloseCustodyFn(\'' + c.id + '\')" title="موافقة"><i class="fas fa-check"></i></button> ' +
+            '<button class="btn btn-danger btn-sm" onclick="rejectCloseCustodyFn(\'' + c.id + '\')" title="رفض"><i class="fas fa-times"></i></button>' +
+          '</td></tr>';
+      });
+    }
+
+    // Expenses
+    if (!expList.length && !h) { h = '<tr><td colspan="10" style="text-align:center;padding:30px;">لا توجد مصروفات معلقة</td></tr>'; }
     else {
-      list.forEach(function(e) {
+      expList.forEach(function(e) {
         var sBadge = e.status === 'pending' ? '<span class="badge yellow">بانتظار</span>'
           : e.status === 'approved' ? '<span class="badge blue">معتمد</span>'
+          : e.status === 'override_pending' ? '<span class="badge" style="background:#fef3c7;color:#92400e;">تجاوز رصيد</span>'
           : '<span class="badge green">مرحّل</span>';
         var imgBtn = e.invoiceImage ? '<button class="btn btn-light btn-sm" onclick="viewCustodyImage(\'' + e.id + '\')" title="عرض الفاتورة"><i class="fas fa-image"></i></button>' : '—';
         var actions = '';
-        if (e.status === 'pending') {
+        if (e.status === 'override_pending') {
+          actions = '<button class="btn btn-warning btn-sm" onclick="approveOverrideFn(\'' + e.id + '\')" title="موافقة تجاوز"><i class="fas fa-check-double"></i></button> ' +
+            '<button class="btn btn-danger btn-sm" onclick="rejectCustodyExpFn(\'' + e.id + '\')" title="رفض"><i class="fas fa-times"></i></button>';
+        } else if (e.status === 'pending') {
           actions = '<button class="btn btn-success btn-sm" onclick="approveCustodyExpFn(\'' + e.id + '\')" title="موافقة"><i class="fas fa-check"></i></button> ' +
             '<button class="btn btn-danger btn-sm" onclick="rejectCustodyExpFn(\'' + e.id + '\')" title="رفض"><i class="fas fa-times"></i></button>';
         } else if (e.status === 'approved') {
@@ -316,7 +345,10 @@ window.loadCustodyApprovals = function() {
       });
     }
     if (document.getElementById('tbCustodyApproval')) document.getElementById('tbCustodyApproval').innerHTML = h;
-  }).getCustodyPending();
+  }
+
+  api.withSuccessHandler(function(list) { expList = list || []; expDone = true; tryRender(); }).getCustodyPending();
+  api.withSuccessHandler(function(list) { closeList = (list || []).filter(function(c) { return c.status === 'close_pending'; }); closeDone = true; tryRender(); }).getCustodies();
 };
 
 window._pendingExpImages = {};
@@ -341,6 +373,22 @@ window.rejectCustodyExpFn = function(expId) {
   var reason = prompt('سبب الرفض:');
   if (reason === null) return;
   loader(); api.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الرفض'); loadCustodyApprovals(); } else showToast(r.error, true); }).rejectCustodyExp(expId, state.user, reason);
+};
+
+window.approveOverrideFn = function(expId) {
+  if (!confirm('الموافقة على تجاوز الرصيد لهذا المصروف؟\nسيتم نقله لقائمة الانتظار العادية.')) return;
+  loader(); api.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الموافقة على التجاوز — المصروف بانتظار الاعتماد'); loadCustodyApprovals(); } else showToast(r.error, true); }).approveOverrideExp(expId, state.user);
+};
+
+window.approveCloseCustodyFn = function(cusId) {
+  if (!confirm('الموافقة على إقفال العهدة؟')) return;
+  loader(); api.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم إقفال العهدة'); loadCustodyApprovals(); loadCustodies(); } else showToast(r.error, true); }).closeCustodyApprove(cusId, state.user);
+};
+
+window.rejectCloseCustodyFn = function(cusId) {
+  var reason = prompt('سبب رفض الإقفال:');
+  if (reason === null) return;
+  loader(); api.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم رفض طلب الإقفال'); loadCustodyApprovals(); loadCustodies(); } else showToast(r.error, true); }).closeCustodyReject(cusId, state.user, reason);
 };
 
 window.postCustodyExpFn = function(expId) {

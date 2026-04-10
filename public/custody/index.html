@@ -104,11 +104,17 @@
 
     </main>
 
-    <!-- FAB -->
-    <button class="fab" onclick="openModal()">
-      <i class="fas fa-plus"></i>
-      <span>إضافة مصروف</span>
-    </button>
+    <!-- Action Buttons -->
+    <div class="action-bar">
+      <button class="fab" onclick="openModal()">
+        <i class="fas fa-plus"></i>
+        <span>إضافة مصروف</span>
+      </button>
+      <button class="close-btn" id="closeBtn" onclick="requestClose()" style="display:none;">
+        <i class="fas fa-lock"></i>
+        <span>إقفال العهدة</span>
+      </button>
+    </div>
 
   </div>
 
@@ -164,6 +170,43 @@
 
       <button class="save-btn" id="saveBtn" onclick="doSave()">
         <i class="fas fa-paper-plane"></i> إرسال المصروف
+      </button>
+    </div>
+  </div>
+
+  <!-- Override Confirm Sheet -->
+  <div id="overrideSheet" class="bottom-sheet" style="display:none;">
+    <div class="sheet-overlay" onclick="closeOverride()"></div>
+    <div class="sheet-content">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title" style="color:var(--amber);">
+        <i class="fas fa-exclamation-triangle"></i> تجاوز الرصيد
+      </div>
+      <div id="overrideMsg" style="padding:12px 0;font-size:14px;line-height:1.7;color:#475569;"></div>
+      <div style="display:flex;gap:10px;">
+        <button class="save-btn" style="background:linear-gradient(135deg,var(--amber),#d97706);" onclick="confirmOverride()">
+          <i class="fas fa-paper-plane"></i> إرسال طلب تجاوز
+        </button>
+        <button style="flex:0 0 auto;padding:14px 20px;border:none;border-radius:14px;background:rgba(100,116,139,0.1);color:var(--slate);font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;" onclick="closeOverride()">إلغاء</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Close Custody Sheet -->
+  <div id="closeSheet" class="bottom-sheet" style="display:none;">
+    <div class="sheet-overlay" onclick="closeCloseSheet()"></div>
+    <div class="sheet-content">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title" style="color:var(--red);">
+        <i class="fas fa-lock"></i> طلب إقفال العهدة
+      </div>
+      <div id="closeInfo" style="padding:12px 0;font-size:14px;line-height:1.7;color:#475569;"></div>
+      <div class="field full">
+        <label>ملاحظات (اختياري)</label>
+        <input type="text" id="closeNotes" class="fi" placeholder="سبب الإقفال...">
+      </div>
+      <button class="save-btn" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-top:10px;" id="closeSaveBtn" onclick="confirmClose()">
+        <i class="fas fa-lock"></i> تأكيد طلب الإقفال
       </button>
     </div>
   </div>

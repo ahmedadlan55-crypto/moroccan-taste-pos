@@ -250,20 +250,37 @@ router.get('/:id/expenses', async (req, res) => {
 
 router.post('/:id/expenses', async (req, res) => {
   try {
-    const { expenseDate, description, amount, hasVat, vatRate, invoiceImage, notes, username } = req.body;
+    const { expenseDate, description, amount, hasVat, vatRate, invoiceImage, notes, username, overrideBalance } = req.body;
     const amt = Number(amount) || 0;
     if (amt <= 0 || !description) return res.json({ success: false, error: 'Amount and description required' });
     const vRate = hasVat ? (Number(vatRate) || 15) : 0;
     const vAmt = hasVat ? amt * (vRate / 100) : 0;
     const total = amt + vAmt;
+
+    // Check balance — block if expense exceeds balance (unless override requested)
+    const [cust] = await db.query('SELECT balance FROM custodies WHERE id = ?', [req.params.id]);
+    if (cust.length) {
+      const currentBalance = Number(cust[0].balance) || 0;
+      if (total > currentBalance && !overrideBalance) {
+        return res.json({
+          success: false,
+          needsOverride: true,
+          error: 'المبلغ (' + total.toFixed(2) + ') يتجاوز الرصيد المتاح (' + currentBalance.toFixed(2) + '). يرجى طلب تجاوز الرصيد.'
+        });
+      }
+    }
+
+    // Status: if override requested, mark as 'override_pending' so admin must approve first
+    const status = overrideBalance ? 'override_pending' : 'pending';
+
     const expId = 'CEXP-' + Date.now();
     await db.query(
       `INSERT INTO custody_expenses (id, custody_id, expense_date, description, amount, has_vat, vat_rate, vat_amount, total_with_vat, invoice_image, notes, status, created_by)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [expId, req.params.id, expenseDate || new Date(), description, amt, hasVat ? 1 : 0, vRate, vAmt, total,
-       invoiceImage || null, notes || '', 'pending', username || '']
+       invoiceImage || null, notes || '', status, username || '']
     );
-    res.json({ success: true, id: expId });
+    res.json({ success: true, id: expId, status });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
@@ -358,6 +375,76 @@ router.post('/expenses/:expId/post', async (req, res) => {
 });
 
 // ═══════════════════════════════════════
+// CLOSE CUSTODY REQUEST (طلب إقفال العهدة)
+// ═══════════════════════════════════════
+
+// User submits close request
+router.post('/:id/close-request', async (req, res) => {
+  try {
+    const { username, notes } = req.body;
+    const [custs] = await db.query('SELECT * FROM custodies WHERE id = ?', [req.params.id]);
+    if (!custs.length) return res.json({ success: false, error: 'العهدة غير موجودة' });
+    const c = custs[0];
+    if (c.status === 'closed') return res.json({ success: false, error: 'العهدة مغلقة بالفعل' });
+
+    // Calculate difference: positive = user owes company, negative = company owes user
+    const balance = Number(c.balance) || 0;
+    const totalExpApproved = Number(c.total_expenses) || 0;
+
+    await db.query(
+      'UPDATE custodies SET status = "close_pending", close_requested_by = ?, close_requested_at = ?, close_notes = ? WHERE id = ?',
+      [username || '', new Date(), notes || '', req.params.id]
+    );
+    res.json({ success: true, balance });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Admin approves close request
+router.post('/:id/close-approve', async (req, res) => {
+  try {
+    const { username } = req.body;
+    const [custs] = await db.query('SELECT * FROM custodies WHERE id = ?', [req.params.id]);
+    if (!custs.length) return res.json({ success: false, error: 'العهدة غير موجودة' });
+    const c = custs[0];
+    if (c.status !== 'close_pending') return res.json({ success: false, error: 'لا يوجد طلب إقفال معلق' });
+
+    await db.query(
+      'UPDATE custodies SET status = "closed", close_approved_by = ?, close_approved_at = ? WHERE id = ?',
+      [username || '', new Date(), req.params.id]
+    );
+    res.json({ success: true, balance: Number(c.balance) });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Admin rejects close request — back to active
+router.post('/:id/close-reject', async (req, res) => {
+  try {
+    const { username, reason } = req.body;
+    await db.query(
+      'UPDATE custodies SET status = "active", close_notes = ? WHERE id = ?',
+      [(reason || '') + ' [رفض بواسطة ' + (username || '') + ']', req.params.id]
+    );
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Approve override expense (admin approves over-balance expense)
+router.post('/expenses/:expId/approve-override', async (req, res) => {
+  try {
+    const { username } = req.body;
+    const [exps] = await db.query('SELECT * FROM custody_expenses WHERE id = ?', [req.params.expId]);
+    if (!exps.length) return res.json({ success: false, error: 'المصروف غير موجود' });
+    const exp = exps[0];
+    if (exp.status !== 'override_pending') return res.json({ success: false, error: 'هذا المصروف ليس بانتظار موافقة تجاوز' });
+
+    // Move to normal pending (so it follows the regular approval flow)
+    await db.query('UPDATE custody_expenses SET status = "pending", approved_by = ?, approved_at = ? WHERE id = ?',
+      [username || '', new Date(), req.params.expId]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// ═══════════════════════════════════════
 // REPORTS (تقارير العهدة)
 // ═══════════════════════════════════════
 
@@ -392,7 +479,7 @@ router.get('/approval/pending', async (req, res) => {
     const [rows] = await db.query(
       `SELECT ce.*, c.custody_number, c.user_name FROM custody_expenses ce
        JOIN custodies c ON ce.custody_id = c.id
-       WHERE ce.status IN ('pending','approved')
+       WHERE ce.status IN ('pending','approved','override_pending')
        ORDER BY ce.created_at DESC`
     );
     res.json(rows.map(e => ({

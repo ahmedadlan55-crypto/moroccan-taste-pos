@@ -7,7 +7,10 @@
 
   var S = {
     user: '', custodyId: '', custodyNumber: '', userName: '',
-    balance: 0, topups: 0, expenses: 0, list: [], imgData: ''
+    balance: 0, topups: 0, expenses: 0, list: [], imgData: '',
+    custodyStatus: 'active',
+    // Temp storage for override flow
+    _pendingPayload: null
   };
 
   var api;
@@ -49,6 +52,7 @@
       S.balance = d.custody.balance;
       S.topups = d.custody.totalTopups;
       S.expenses = d.custody.totalExpenses;
+      S.custodyStatus = d.custody.status || 'active';
       S.list = d.expenses || [];
       render();
     }).withFailureHandler(function() {
@@ -56,6 +60,7 @@
       toast('خطأ في الاتصال', 'err');
     }).getMyCustody(S.user);
   }
+
   window.refreshData = function() {
     el('topBar').classList.add('refreshing');
     api.withSuccessHandler(function(d) {
@@ -67,6 +72,7 @@
       S.balance = d.custody.balance;
       S.topups = d.custody.totalTopups;
       S.expenses = d.custody.totalExpenses;
+      S.custodyStatus = d.custody.status || 'active';
       S.list = d.expenses || [];
       render();
       toast('تم التحديث', 'ok');
@@ -90,6 +96,36 @@
     var bc = el('sBalance');
     bc.style.color = S.balance > 0 ? 'var(--green)' : S.balance < 0 ? 'var(--red)' : 'var(--slate)';
 
+    // Show/hide close button based on status
+    var closeBtn = el('closeBtn');
+    if (closeBtn) {
+      if (S.custodyStatus === 'active') {
+        closeBtn.style.display = 'inline-flex';
+      } else if (S.custodyStatus === 'close_pending') {
+        closeBtn.style.display = 'inline-flex';
+        closeBtn.innerHTML = '<i class="fas fa-hourglass-half"></i><span>بانتظار الإقفال</span>';
+        closeBtn.disabled = true;
+        closeBtn.style.opacity = '0.6';
+      } else {
+        closeBtn.style.display = 'inline-flex';
+        closeBtn.innerHTML = '<i class="fas fa-lock"></i><span>العهدة مغلقة</span>';
+        closeBtn.disabled = true;
+        closeBtn.style.opacity = '0.6';
+      }
+    }
+
+    // Disable FAB if custody is closed or close_pending
+    var fab = document.querySelector('.fab');
+    if (fab) {
+      if (S.custodyStatus !== 'active') {
+        fab.style.opacity = '0.4';
+        fab.style.pointerEvents = 'none';
+      } else {
+        fab.style.opacity = '1';
+        fab.style.pointerEvents = 'auto';
+      }
+    }
+
     el('expBadge').textContent = S.list.length;
 
     var box = el('expList');
@@ -100,9 +136,22 @@
 
     var h = '';
     S.list.forEach(function(e, i) {
-      var bClass = 'b-' + e.status;
-      var labels = { pending:'بانتظار الموافقة', approved:'تمت الموافقة', rejected:'مرفوض', posted:'تم الترحيل' };
-      var icons = { pending:'fa-clock', approved:'fa-check-circle', rejected:'fa-times-circle', posted:'fa-book' };
+      var statusKey = e.status;
+      var bClass = 'b-' + statusKey;
+      var labels = {
+        pending: 'بانتظار الموافقة',
+        approved: 'تمت الموافقة',
+        rejected: 'مرفوض',
+        posted: 'تم الترحيل',
+        override_pending: 'طلب تجاوز رصيد'
+      };
+      var icons = {
+        pending: 'fa-clock',
+        approved: 'fa-check-circle',
+        rejected: 'fa-times-circle',
+        posted: 'fa-book',
+        override_pending: 'fa-exclamation-triangle'
+      };
       var total = e.totalWithVat || e.amount || 0;
       var dt = '';
       try { if (e.expenseDate) dt = new Date(e.expenseDate).toLocaleDateString('en-GB'); } catch(x){}
@@ -110,7 +159,7 @@
       h += '<div class="ecard" style="animation-delay:' + (i * 0.04) + 's;">';
       h += '<div class="ec-row1">';
       h += '<div class="ec-desc">' + esc(e.description || '') + '</div>';
-      h += '<span class="ec-badge ' + bClass + '"><i class="fas ' + (icons[e.status]||'fa-circle') + '"></i> ' + (labels[e.status]||e.status) + '</span>';
+      h += '<span class="ec-badge ' + bClass + '"><i class="fas ' + (icons[statusKey]||'fa-circle') + '"></i> ' + (labels[statusKey]||statusKey) + '</span>';
       h += '</div>';
       h += '<div class="ec-amount">' + fmt(total) + ' <small>SAR</small></div>';
       h += '<div class="ec-meta">';
@@ -133,9 +182,10 @@
     box.innerHTML = h;
   }
 
-  // ─── Modal ───
+  // ─── Add Expense Modal ───
   window.openModal = function() {
     if (!S.custodyId) return toast('لا توجد عهدة', 'err');
+    if (S.custodyStatus !== 'active') return toast('العهدة غير نشطة — لا يمكن إضافة مصروفات', 'err');
     el('fDate').value = new Date().toISOString().split('T')[0];
     el('fAmt').value = '';
     el('fDesc').value = '';
@@ -145,27 +195,25 @@
     el('fNotes').value = '';
     el('imgPrev').innerHTML = '';
     el('uploadLabel').className = 'upload-area';
-    el('uploadLabel').querySelector('span').textContent = 'اضغط لرفع صورة';
+    el('uploadLabel').querySelector('span').textContent = 'اضغط لرفع صورة أو PDF';
     S.imgData = '';
     el('sheet').style.display = 'flex';
   };
   window.closeModal = function() { el('sheet').style.display = 'none'; };
   window.togVat = function() { el('vatBox').style.display = el('fVat').value === '1' ? '' : 'none'; };
 
-  // ─── Image ───
+  // ─── Image / PDF ───
   window.pickImg = function(inp) {
     var f = inp.files[0]; if (!f) return;
     var isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
     var r = new FileReader();
     r.onload = function(ev) {
       if (isPdf) {
-        // Store PDF as data URL directly (no compression)
         S.imgData = ev.target.result;
         el('imgPrev').innerHTML = '<div style="padding:14px;background:#f1f5f9;border-radius:12px;text-align:center;"><i class="fas fa-file-pdf" style="font-size:32px;color:#ef4444;"></i><p style="margin-top:6px;font-size:13px;font-weight:700;">' + esc(f.name) + '</p></div>';
         el('uploadLabel').className = 'upload-area has-img';
         el('uploadLabel').querySelector('span').textContent = 'تم رفع الملف';
       } else {
-        // Compress image
         var img = new Image();
         img.onload = function() {
           var c = document.createElement('canvas'), mx = 1200, w = img.width, h = img.height;
@@ -183,15 +231,32 @@
     r.readAsDataURL(f);
   };
 
-  // ─── Save ───
-  window.doSave = function() {
+  // ─── Build payload ───
+  function buildPayload(override) {
     var desc = el('fDesc').value.trim();
     var amt = Number(el('fAmt').value) || 0;
-    if (!desc || amt <= 0) return toast('البيان والقيمة مطلوبة', 'err');
-
+    if (!desc || amt <= 0) { toast('البيان والقيمة مطلوبة', 'err'); return null; }
     var hasVat = el('fVat').value === '1';
     var vatRate = hasVat ? (Number(el('fVatR').value) || 15) : 0;
+    return {
+      expenseDate: el('fDate').value,
+      description: desc, amount: amt,
+      hasVat: hasVat, vatRate: vatRate,
+      invoiceImage: S.imgData || '',
+      notes: el('fNotes').value.trim(),
+      username: S.user,
+      overrideBalance: !!override
+    };
+  }
 
+  // ─── Save expense ───
+  window.doSave = function() {
+    var payload = buildPayload(false);
+    if (!payload) return;
+    submitExpense(payload);
+  };
+
+  function submitExpense(payload) {
     var btn = el('saveBtn');
     btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الإرسال...';
 
@@ -199,29 +264,80 @@
       btn.disabled = false; btn.innerHTML = '<i class="fas fa-paper-plane"></i> إرسال المصروف';
       if (r && r.success) {
         closeModal();
-        toast('تم إرسال المصروف — بانتظار الموافقة', 'ok');
+        if (r.status === 'override_pending') {
+          toast('تم إرسال طلب تجاوز الرصيد — بانتظار موافقة المدير', 'ok');
+        } else {
+          toast('تم إرسال المصروف — بانتظار الموافقة', 'ok');
+        }
         load();
-      } else toast((r && r.error) || 'فشل الحفظ', 'err');
+      } else if (r && r.needsOverride) {
+        // Balance exceeded — show override confirmation
+        S._pendingPayload = payload;
+        el('overrideMsg').innerHTML =
+          '<div style="background:#fef3c7;padding:14px;border-radius:12px;margin-bottom:10px;">' +
+          '<strong style="color:#92400e;"><i class="fas fa-exclamation-triangle"></i> تنبيه:</strong><br>' +
+          esc(r.error) +
+          '</div>' +
+          '<p>هل تريد إرسال طلب تجاوز الرصيد للمدير للموافقة عليه؟</p>';
+        el('overrideSheet').style.display = 'flex';
+      } else {
+        toast((r && r.error) || 'فشل الحفظ', 'err');
+      }
     }).withFailureHandler(function() {
       btn.disabled = false; btn.innerHTML = '<i class="fas fa-paper-plane"></i> إرسال المصروف';
       toast('خطأ في الاتصال', 'err');
-    }).addCustodyExpense(S.custodyId, {
-      expenseDate: el('fDate').value,
-      description: desc, amount: amt,
-      hasVat: hasVat, vatRate: vatRate,
-      invoiceImage: S.imgData || '',
-      notes: el('fNotes').value.trim(),
-      username: S.user
-    });
+    }).addCustodyExpense(S.custodyId, payload);
+  }
+
+  // ─── Override flow ───
+  window.closeOverride = function() { el('overrideSheet').style.display = 'none'; };
+  window.confirmOverride = function() {
+    el('overrideSheet').style.display = 'none';
+    if (!S._pendingPayload) return;
+    S._pendingPayload.overrideBalance = true;
+    submitExpense(S._pendingPayload);
+    S._pendingPayload = null;
+  };
+
+  // ─── Close custody request ───
+  window.requestClose = function() {
+    if (S.custodyStatus !== 'active') return;
+    var info = '<div style="background:#f1f5f9;padding:14px;border-radius:12px;margin-bottom:10px;">' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span>إجمالي التغذية:</span><strong style="color:var(--green);">' + fmt(S.topups) + ' SAR</strong></div>' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span>إجمالي المصروفات:</span><strong style="color:var(--red);">' + fmt(S.expenses) + ' SAR</strong></div>' +
+      '<div style="display:flex;justify-content:space-between;border-top:1px solid #e2e8f0;padding-top:6px;"><span>الرصيد المتبقي:</span><strong style="color:' + (S.balance >= 0 ? 'var(--green)' : 'var(--red)') + ';font-size:18px;">' + fmt(S.balance) + ' SAR</strong></div>' +
+      '</div>';
+    if (S.balance < 0) {
+      info += '<p style="color:var(--red);font-weight:700;margin-bottom:8px;"><i class="fas fa-info-circle"></i> تم تجاوز الرصيد بمبلغ ' + fmt(Math.abs(S.balance)) + ' SAR — سيتم تسوية الفرق بعد الموافقة.</p>';
+    } else if (S.balance > 0) {
+      info += '<p style="color:var(--green);font-weight:700;margin-bottom:8px;"><i class="fas fa-info-circle"></i> سيتم استرجاع المبلغ المتبقي ' + fmt(S.balance) + ' SAR بعد الموافقة.</p>';
+    }
+    el('closeInfo').innerHTML = info;
+    el('closeSheet').style.display = 'flex';
+  };
+  window.closeCloseSheet = function() { el('closeSheet').style.display = 'none'; };
+  window.confirmClose = function() {
+    var btn = el('closeSaveBtn');
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الإرسال...';
+
+    api.withSuccessHandler(function(r) {
+      btn.disabled = false; btn.innerHTML = '<i class="fas fa-lock"></i> تأكيد طلب الإقفال';
+      el('closeSheet').style.display = 'none';
+      if (r && r.success) {
+        toast('تم إرسال طلب الإقفال — بانتظار موافقة المدير', 'ok');
+        load();
+      } else toast((r && r.error) || 'فشل', 'err');
+    }).withFailureHandler(function() {
+      btn.disabled = false; btn.innerHTML = '<i class="fas fa-lock"></i> تأكيد طلب الإقفال';
+      toast('خطأ في الاتصال', 'err');
+    }).closeCustodyRequest(S.custodyId, { username: S.user, notes: el('closeNotes').value.trim() });
   };
 
   // ─── Image Viewer ───
   window.viewImg = function(id) {
     var e = S.list.find(function(x) { return x.id === id; });
     if (e && e.invoiceImage) {
-      // Check if PDF
       if (e.invoiceImage.indexOf('application/pdf') !== -1) {
-        // Open PDF in new tab
         var w = window.open('', '_blank');
         w.document.write('<html><body style="margin:0;"><iframe src="' + e.invoiceImage + '" style="width:100%;height:100vh;border:none;"></iframe></body></html>');
         w.document.close();

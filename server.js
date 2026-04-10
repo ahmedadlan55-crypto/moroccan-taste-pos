@@ -274,6 +274,17 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
+  // Custody close request columns + override status
+  await addColumnIfMissing('custodies', 'close_requested_by', "VARCHAR(100) DEFAULT ''");
+  await addColumnIfMissing('custodies', 'close_requested_at', "DATETIME");
+  await addColumnIfMissing('custodies', 'close_approved_by', "VARCHAR(100) DEFAULT ''");
+  await addColumnIfMissing('custodies', 'close_approved_at', "DATETIME");
+  await addColumnIfMissing('custodies', 'close_notes', "TEXT");
+  // Extend custodies status ENUM to include close_pending
+  try { await db.query("ALTER TABLE custodies MODIFY COLUMN status ENUM('active','closed','close_pending') DEFAULT 'active'"); } catch(e) {}
+  // Extend custody_expenses status ENUM to include override_pending
+  try { await db.query("ALTER TABLE custody_expenses MODIFY COLUMN status ENUM('pending','approved','rejected','posted','override_pending') DEFAULT 'pending'"); } catch(e) {}
+
   // Seed cost settings into the existing key-value settings table
   try {
     await db.query(`INSERT IGNORE INTO settings (setting_key, setting_value) VALUES

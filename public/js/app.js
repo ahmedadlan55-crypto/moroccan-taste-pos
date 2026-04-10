@@ -1833,7 +1833,7 @@ function openInvM(mode, id = null) {
   if (mode === 'add') {
     q("#iMdlTitle").innerText = "إضافة منتج جديد";
     q("#miId").value = ""; q("#miName").value = ""; q("#miCat").value = "عام";
-    q("#miPrice").value = ""; q("#miCost").value = "0"; q("#miStock").value = "9999"; q("#miMin").value = "0"; q("#miActive").checked = true;
+    q("#miPrice").value = ""; q("#miCost").value = "0"; q("#miActive").checked = true;
     q("#miComputedCost").value = "0"; q("#miMarkupPct").value = "30";
     q("#miPricingFixed").checked = true;
   } else {
@@ -1873,7 +1873,7 @@ function saveInv() {
   var pricingMode = q('input[name="miPricingMode"]:checked') ? q('input[name="miPricingMode"]:checked').value : 'fixed';
   const d = {
     id: q("#miId").value, name: q("#miName").value, category: q("#miCat").value,
-    price: q("#miPrice").value, cost: q("#miCost").value, stock: q("#miStock").value, minStock: q("#miMin").value, active: q("#miActive").checked,
+    price: q("#miPrice").value, cost: q("#miCost").value, stock: 9999, minStock: 0, active: q("#miActive").checked,
     pricingMode: pricingMode,
     markupPct: q("#miMarkupPct") ? q("#miMarkupPct").value : 30
   };
@@ -1890,15 +1890,13 @@ function exportMenuExcel() {
   ensureXlsx().then(_exportMenuExcelBody).catch(function(e) { showToast(e.message || 'فشل تحميل XLSX', true); });
 }
 function _exportMenuExcelBody() {
-  var headers = ['الاسم', 'التصنيف', 'سعر البيع', 'التكلفة', 'المخزون', 'الحد الأدنى', 'فعال'];
+  var headers = ['الاسم', 'التصنيف', 'سعر البيع', 'التكلفة', 'فعال'];
   var data = (state.menu || []).map(function(m) {
     return {
       'الاسم': m.name || '',
       'التصنيف': m.category || '',
       'سعر البيع': m.price || 0,
       'التكلفة': m.cost || 0,
-      'المخزون': m.stock || 0,
-      'الحد الأدنى': m.minStock || 0,
       'فعال': m.active ? 'نعم' : 'لا'
     };
   });
@@ -1908,7 +1906,7 @@ function _exportMenuExcelBody() {
   } else {
     ws = XLSX.utils.aoa_to_sheet([headers]);
   }
-  ws['!cols'] = [{wch:25},{wch:15},{wch:12},{wch:12},{wch:10},{wch:12},{wch:8}];
+  ws['!cols'] = [{wch:25},{wch:15},{wch:12},{wch:12},{wch:8}];
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'المنيو');
   var today = new Date().toISOString().slice(0,10);
@@ -1937,8 +1935,8 @@ function _importMenuExcelBody(input) {
           category: r['التصنيف'] || r['category'] || r['Category'] || 'عام',
           price: Number(r['سعر البيع'] || r['price'] || r['Price'] || 0),
           cost: Number(r['التكلفة'] || r['cost'] || r['Cost'] || 0),
-          stock: Number(r['المخزون'] || r['stock'] || r['Stock'] || 999),
-          minStock: Number(r['الحد الأدنى'] || r['minStock'] || r['Min Stock'] || 5),
+          stock: 9999,
+          minStock: 0,
           active: r['فعال'] === 'لا' ? false : true
         };
       }).filter(function(i) { return i.name; });
@@ -2434,9 +2432,13 @@ function exportInvExcel() {
 }
 function _exportInvExcelBody() {
   if (!cachedRawItems || !cachedRawItems.length) return showToast("لا توجد بيانات للتصدير", true);
-  var wsData = [["ID","اسم المادة","التصنيف","سعر الوحدة الكبرى","المخزون (صغرى)","حد التنبيه","الوحدة الصغرى","الوحدة الكبرى","معامل التحويل","نشط"]];
+  // inv_items.cost is per SMALL unit. Export shows both: big-unit cost (cost × convRate) and small-unit cost.
+  var wsData = [["ID","اسم المادة","التصنيف","تكلفة الوحدة الكبرى","تكلفة الوحدة الصغرى","المخزون (صغرى)","حد التنبيه","الوحدة الصغرى","الوحدة الكبرى","معامل التحويل","نشط"]];
   cachedRawItems.forEach(function(i) {
-    wsData.push([i.id||'', i.name||'', i.category||'', i.cost||0, i.stock||0, i.minStock||0, i.unit||'', i.bigUnit||'', i.convRate||1, i.active!==false?'TRUE':'FALSE']);
+    var smallCost = Number(i.cost) || 0;
+    var cRate = Number(i.convRate) || 1;
+    var bigCost = cRate > 1 ? smallCost * cRate : smallCost;
+    wsData.push([i.id||'', i.name||'', i.category||'', Number(bigCost.toFixed(4)), Number(smallCost.toFixed(4)), i.stock||0, i.minStock||0, i.unit||'', i.bigUnit||'', cRate, i.active!==false?'TRUE':'FALSE']);
   });
   var wb = XLSX.utils.book_new();
   var ws = XLSX.utils.aoa_to_sheet(wsData);
@@ -2462,16 +2464,22 @@ function _importInvExcelBody(input) {
       if (!rows.length) return showToast("الملف فارغ", true);
       // Map columns (support Arabic or English headers)
       var mapped = rows.map(function(r) {
+        var convRate = Number(r['معامل التحويل'] || r['ConvRate'] || r['convRate']) || 1;
+        // Cost: accept either big-unit or small-unit cost. Convert big to small for DB storage.
+        var bigCost = Number(r['تكلفة الوحدة الكبرى'] || r['سعر الوحدة الكبرى'] || r['Cost'] || r['cost'] || r['السعر']) || 0;
+        var smallCost = Number(r['تكلفة الوحدة الصغرى'] || r['SmallCost'] || r['smallCost']) || 0;
+        // If small cost is provided, use it directly; otherwise derive from big cost
+        var costForDb = smallCost > 0 ? smallCost : (convRate > 1 ? bigCost / convRate : bigCost);
         return {
           id: r['ID'] || r['id'] || r['كود'] || '',
           name: r['اسم المادة'] || r['Name'] || r['name'] || r['الاسم'] || '',
           category: r['التصنيف'] || r['Category'] || r['category'] || '',
-          cost: Number(r['سعر الوحدة الكبرى'] || r['Cost'] || r['cost'] || r['السعر']) || 0,
+          cost: costForDb,
           stock: Number(r['المخزون (صغرى)'] || r['Stock'] || r['stock'] || r['المخزون']) || 0,
           minStock: Number(r['حد التنبيه'] || r['MinStock'] || r['minStock'] || r['الحد الأدنى']) || 0,
           unit: r['الوحدة الصغرى'] || r['Unit'] || r['unit'] || r['الوحدة'] || '',
           bigUnit: r['الوحدة الكبرى'] || r['BigUnit'] || r['bigUnit'] || '',
-          convRate: Number(r['معامل التحويل'] || r['ConvRate'] || r['convRate']) || 1,
+          convRate: convRate,
           active: String(r['نشط'] || r['Active'] || r['active'] || 'TRUE').toUpperCase() !== 'FALSE'
         };
       }).filter(function(i) { return i.name; });
@@ -2480,9 +2488,9 @@ function _importInvExcelBody(input) {
       loader(true);
       api.withSuccessHandler(function(r) {
         loader(false);
-        if (r.success) { showToast("تم الاستيراد: " + r.added + " جديد، " + r.updated + " محدّث"); loadDashInvItems(); }
+        if (r.success) { showToast("تم الاستيراد: " + (r.imported||0) + " جديد، " + (r.updated||0) + " محدّث"); loadDashInvItems(); }
         else showToast(r.error || "خطأ", true);
-      }).withFailureHandler(function(err) { loader(false); showToast("خطأ: " + err.message, true); }).importInvItems(mapped);
+      }).withFailureHandler(function(err) { loader(false); showToast("خطأ: " + err.message, true); }).importInvItems({items: mapped});
     } catch(ex) { showToast("خطأ في قراءة الملف: " + ex.message, true); }
     input.value = '';
   };
@@ -2749,6 +2757,9 @@ function addIngredientToRecipe() {
   q("#recRawId").value = "";
   q("#recRawName").value = "";
   q("#recQtyInput").value = "";
+  // Close the search dropdown
+  if (q("#recRawResults")) q("#recRawResults").classList.remove('open');
+  recDropOpen = false;
   renderRecipeTable();
 }
 

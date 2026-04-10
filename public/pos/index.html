@@ -185,44 +185,44 @@
     </button>
   </div>
 
-  <!-- Cashier Stocktake Modal — persistent cart survives close/reopen -->
+  <!-- Cashier Stocktake Modal — persistent cart, full-screen height -->
   <div id="modalCashierStocktake" class="glass-modal hidden">
-    <div class="glass-modal-content large">
+    <div class="glass-modal-content" style="max-width:700px;height:95dvh;display:flex;flex-direction:column;">
       <div class="glass-modal-title">
         <span><i class="fas fa-clipboard-check"></i> <span data-i18n="stocktakeTitle">جرد المخزون</span></span>
         <button class="glass-modal-close" onclick="closeGlassModal('#modalCashierStocktake')" aria-label="إغلاق">&times;</button>
       </div>
-      <div class="glass-modal-body">
-        <!-- Search bar — shows all items on focus -->
-        <div style="position:relative;margin-bottom:14px;">
+      <div class="glass-modal-body" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;">
+        <!-- Search bar -->
+        <div style="position:relative;margin-bottom:12px;flex-shrink:0;">
           <div style="display:flex;gap:8px;align-items:center;">
             <div style="flex:1;position:relative;">
               <i class="fas fa-search" style="position:absolute;top:12px;right:12px;color:#94a3b8;"></i>
-              <input type="text" id="cstSearch" class="form-control glass-input" style="padding-right:36px;" placeholder="ابحث عن مادة خام وأضفها..." oninput="filterCashierStItems()" onfocus="filterCashierStItems()">
+              <input type="text" id="cstSearch" class="form-control glass-input" style="padding-right:36px;" data-i18n-placeholder="stSearchPH" placeholder="ابحث عن مادة خام وأضفها..." oninput="filterCashierStItems()" onfocus="filterCashierStItems()">
               <div id="cstSearchResults" style="position:absolute;top:100%;left:0;right:0;z-index:200;background:rgba(255,255,255,0.98);backdrop-filter:blur(12px);border:1.5px solid rgba(226,232,240,0.8);border-radius:0 0 14px 14px;max-height:220px;overflow-y:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,0.12);"></div>
             </div>
           </div>
         </div>
-        <!-- Items being counted -->
-        <div style="max-height:320px;overflow-y:auto;margin-bottom:10px;">
+        <!-- Items being counted — takes all remaining space -->
+        <div style="flex:1;overflow-y:auto;min-height:0;">
           <table class="table" style="font-size:13px;">
             <thead><tr>
-              <th>المادة</th>
-              <th style="text-align:center;">رصيد النظام</th>
-              <th style="text-align:center;">العدد الفعلي</th>
-              <th style="text-align:center;">التباين</th>
+              <th data-i18n="stItem">المادة</th>
+              <th style="text-align:center;" data-i18n="stSystemQty">رصيد النظام</th>
+              <th style="text-align:center;" data-i18n="stActualQty">العدد الفعلي</th>
+              <th style="text-align:center;" data-i18n="stVariance">التباين</th>
               <th></th>
             </tr></thead>
             <tbody id="cstBody"></tbody>
           </table>
         </div>
-        <div class="form-group">
-          <input type="text" id="cstNotes" class="form-control glass-input" placeholder="ملاحظات (اختياري)">
+        <div class="form-group" style="flex-shrink:0;margin-top:8px;">
+          <input type="text" id="cstNotes" class="form-control glass-input" data-i18n-placeholder="stNotesPH" placeholder="ملاحظات (اختياري)">
         </div>
       </div>
-      <div class="glass-modal-actions">
-        <button class="btn btn-primary" style="flex:1;" onclick="submitCashierStocktake()"><i class="fas fa-check-double"></i> حفظ وإرسال التقرير</button>
-        <button class="btn btn-light" onclick="closeGlassModal('#modalCashierStocktake')">إغلاق (البيانات محفوظة)</button>
+      <div class="glass-modal-actions" style="flex-shrink:0;">
+        <button class="btn btn-primary" style="flex:1;" onclick="submitCashierStocktake()"><i class="fas fa-check-double"></i> <span data-i18n="stSaveBtn">حفظ وإرسال التقرير</span></button>
+        <button class="btn btn-light" onclick="closeGlassModal('#modalCashierStocktake')" data-i18n="stCloseBtn">إغلاق (البيانات محفوظة)</button>
       </div>
     </div>
   </div>

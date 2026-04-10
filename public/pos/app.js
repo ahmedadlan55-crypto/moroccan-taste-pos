@@ -1267,7 +1267,7 @@ window.openCashierStocktake = function() {
     openGlassModal('#modalCashierStocktake');
   }).withFailureHandler(function(err) {
     loader(false);
-    glassToast(err.message || t('failConnect'), true);
+    glassToast(err.message || t('failLoadData'), true);
   }).getInvItems();
 };
 
@@ -1280,7 +1280,7 @@ window.filterCashierStItems = function() {
     ? _cstAllItems.filter(function(i) { return (i.name||'').toLowerCase().includes(search) || (i.id||'').toLowerCase().includes(search); })
     : _cstAllItems;
   matches = matches.slice(0, 15);
-  if (!matches.length) { res.innerHTML = '<div style="padding:10px;color:#94a3b8;text-align:center;">لا توجد نتائج</div>'; res.style.display = 'block'; return; }
+  if (!matches.length) { res.innerHTML = '<div style="padding:10px;color:#94a3b8;text-align:center;">' + t('stNoResults') + '</div>'; res.style.display = 'block'; return; }
   res.innerHTML = matches.map(function(i) {
     var stk = Number(i.stock) || 0;
     var stkColor = stk <= (Number(i.minStock)||0) ? '#ef4444' : '#16a34a';
@@ -1320,7 +1320,7 @@ function renderCstCart() {
   var tb = q('#cstBody');
   if (!tb) return;
   if (!cart.length) {
-    tb.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:24px;"><i class="fas fa-clipboard-list" style="font-size:28px;margin-bottom:8px;display:block;opacity:0.3;"></i>ابحث عن مادة واضفها للبدء</td></tr>';
+    tb.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:24px;"><i class="fas fa-clipboard-list" style="font-size:28px;margin-bottom:8px;display:block;opacity:0.3;"></i>' + t('stEmptyHint') + '</td></tr>';
     return;
   }
   tb.innerHTML = cart.map(function(c, i) {
@@ -1357,66 +1357,120 @@ window.removeCstItem = function(idx) {
 
 window.submitCashierStocktake = function() {
   var cart = _getCstCart();
-  if (!cart.length) return glassToast('أضف مواد للمحضر أولاً', true);
-  // Filter out items that haven't been counted yet
+  if (!cart.length) return glassToast(t('stAddFirst'), true);
   var counted = cart.filter(function(c) { return c.actualQty !== '' && c.actualQty !== null; });
-  if (!counted.length) return glassToast('أدخل الكمية الفعلية لمادة واحدة على الأقل', true);
+  if (!counted.length) return glassToast(t('stEnterActual'), true);
 
   var itemsToSend = counted.map(function(c) {
     return { id: c.id, sys: c.systemQty, actual: Number(c.actualQty), diff: Number(c.actualQty) - c.systemQty };
   });
   var notes = (q('#cstNotes') ? q('#cstNotes').value : '') || ('جرد بواسطة ' + state.user);
 
-  glassConfirm(t('confirm'), 'سيتم تعديل رصيد ' + counted.length + ' مادة في المخزون. متابعة؟', { okText: t('confirm') }).then(function(ok) {
+  glassConfirm(t('stConfirmTitle'), t('stConfirmMsg').replace('{n}', counted.length), { okText: t('confirm') }).then(function(ok) {
     if (!ok) return;
     loader(true);
     api.withSuccessHandler(function(r) {
       loader(false);
       if (r && r.success) {
         closeGlassModal('#modalCashierStocktake');
-        glassToast('تم اعتماد محضر الجرد ✓');
-        // Clear the persistent cart
+        glassToast(t('stSaved'));
         localStorage.removeItem('pos_stocktake_cart');
-        // Build WhatsApp report
         _showStocktakeWhatsApp(r.stocktakeId || '', counted);
       } else {
-        glassToast((r && r.error) || 'فشل الحفظ', true);
+        glassToast((r && r.error) || t('errorTitle'), true);
       }
     }).withFailureHandler(function(err) {
       loader(false);
-      glassToast(err.message || 'خطأ', true);
+      glassToast(err.message || t('errorTitle'), true);
     }).submitStocktake(itemsToSend, state.user, notes);
   });
 };
 
-// After save: offer to share report via WhatsApp
+// After save: generate a printable report page and offer to share via WhatsApp
 function _showStocktakeWhatsApp(stId, items) {
   var cashier = (state.currentUser && state.currentUser.displayName) || state.user;
-  var dateStr = new Date().toLocaleString('ar-SA');
+  var dateStr = new Date().toLocaleString('en-GB');
   var company = (state.settings && state.settings.name) || 'Moroccan Taste';
+  var isEn = state.lang === 'en';
 
+  // Build the printable report (same quality as admin print but without variance cost)
+  var rows = items.map(function(c, idx) {
+    var diff = Number(c.actual) - c.sys;
+    var vc = diff === 0 ? '#64748b' : (diff > 0 ? '#16a34a' : '#ef4444');
+    var vs = diff > 0 ? '+' + diff.toFixed(2) : diff.toFixed(2);
+    return '<tr><td>' + (idx+1) + '</td><td style="font-weight:700;">' + (c.name||c.id) + '</td>' +
+      '<td style="text-align:center;">' + Number(c.sys).toFixed(2) + '</td>' +
+      '<td style="text-align:center;font-weight:800;">' + Number(c.actual).toFixed(2) + '</td>' +
+      '<td style="text-align:center;font-weight:900;color:' + vc + ';">' + vs + '</td></tr>';
+  }).join('');
+  var totalVar = items.reduce(function(s, c) { return s + (Number(c.actual) - c.sys); }, 0);
+
+  var dir = isEn ? 'ltr' : 'rtl';
+  var lblTitle = isEn ? 'Inventory Stocktake Report' : 'محضر جرد مخزون';
+  var lblId = isEn ? 'Report No.' : 'رقم المحضر';
+  var lblDate = isEn ? 'Date' : 'التاريخ';
+  var lblCashier = isEn ? 'Counted by' : 'القائم بالجرد';
+  var lblItems = isEn ? 'Items' : 'عدد الأصناف';
+  var thN = isEn ? '#' : '#';
+  var thItem = isEn ? 'Item' : 'المادة';
+  var thSys = isEn ? 'System Qty' : 'رصيد النظام';
+  var thActual = isEn ? 'Actual Qty' : 'الفعلي';
+  var thVar = isEn ? 'Variance' : 'التباين';
+  var lblTotal = isEn ? 'Total Variance' : 'إجمالي التباين';
+  var lblSig1 = isEn ? 'Counted by' : 'القائم بالجرد';
+  var lblSig2 = isEn ? 'Warehouse Manager' : 'مدير المستودع';
+  var lblSig3 = isEn ? 'General Manager' : 'المدير العام';
+
+  var w = window.open('', '_blank', 'width=800,height=700');
+  w.document.write(
+    '<html dir="' + dir + '"><head><meta charset="UTF-8"><title>' + lblTitle + ' ' + stId + '</title>' +
+    '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;direction:' + dir + ';padding:30px;color:#1e293b;}' +
+    'h2{text-align:center;margin-bottom:4px;}h3{text-align:center;color:#64748b;margin-bottom:14px;}' +
+    '.meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0;font-size:13px;}.meta div{background:#f8fafc;padding:10px 14px;border-radius:10px;border:1px solid #e2e8f0;}.meta .lbl{font-size:10px;color:#64748b;}.meta .val{font-weight:700;}' +
+    'table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px;}th,td{border:1px solid #ddd;padding:8px 10px;text-align:center;}th{background:#f1f5f9;font-weight:700;}' +
+    '.total{text-align:center;margin-top:14px;font-weight:900;font-size:18px;padding:14px;border-radius:12px;}' +
+    '.sig{display:flex;justify-content:space-around;margin-top:40px;font-size:13px;}.sig div{text-align:center;}.sig .line{width:150px;border-bottom:1px solid #94a3b8;padding-top:40px;margin:0 auto;}.sig .cap{font-size:11px;color:#64748b;margin-top:4px;}' +
+    '@media print{body{padding:10px;}}</style></head><body>' +
+    '<h2>' + company + '</h2><h3>' + lblTitle + '</h3>' +
+    '<div class="meta">' +
+      '<div><div class="lbl">' + lblId + '</div><div class="val">' + stId + '</div></div>' +
+      '<div><div class="lbl">' + lblDate + '</div><div class="val">' + dateStr + '</div></div>' +
+      '<div><div class="lbl">' + lblCashier + '</div><div class="val">' + cashier + '</div></div>' +
+      '<div><div class="lbl">' + lblItems + '</div><div class="val">' + items.length + '</div></div>' +
+    '</div>' +
+    '<table><thead><tr><th>' + thN + '</th><th>' + thItem + '</th><th>' + thSys + '</th><th>' + thActual + '</th><th>' + thVar + '</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    '<div class="total" style="background:' + (totalVar < 0 ? '#fef2f2;border:1.5px solid #fecaca;color:#ef4444' : '#f0fdf4;border:1.5px solid #86efac;color:#16a34a') + ';">' + lblTotal + ': ' + (totalVar >= 0 ? '+' : '') + totalVar.toFixed(2) + '</div>' +
+    '<div class="sig"><div><div class="line"></div><div class="cap">' + lblSig1 + '</div></div><div><div class="line"></div><div class="cap">' + lblSig2 + '</div></div><div><div class="line"></div><div class="cap">' + lblSig3 + '</div></div></div>' +
+    '</body></html>'
+  );
+  w.document.close();
+
+  // Offer WhatsApp share with a text summary
   var lines = [
-    '📋 *محضر جرد مخزون*',
-    '',
-    '🏪 ' + company,
-    '📅 ' + dateStr,
-    '👤 ' + cashier,
-    '🆔 ' + stId,
-    '',
-    '*تفاصيل الجرد:*'
+    '📋 *' + lblTitle + '*', '',
+    '🏪 ' + company, '📅 ' + dateStr, '👤 ' + cashier, '🆔 ' + stId, '',
+    '*' + (isEn ? 'Details:' : 'تفاصيل الجرد:') + '*'
   ];
   items.forEach(function(c) {
     var diff = Number(c.actual) - c.sys;
     var arrow = diff === 0 ? '=' : (diff > 0 ? '↑' : '↓');
-    lines.push('• ' + (c.name || c.id) + ': النظام ' + c.sys + ' → الفعلي ' + c.actual + ' (' + arrow + Math.abs(diff).toFixed(2) + ')');
+    lines.push('• ' + (c.name||c.id) + ': ' + c.sys + ' → ' + c.actual + ' (' + arrow + Math.abs(diff).toFixed(2) + ')');
   });
-  var totalVariance = items.reduce(function(s, c) { return s + (Number(c.actual) - c.sys); }, 0);
   lines.push('');
-  lines.push('📊 إجمالي التباين: ' + (totalVariance >= 0 ? '+' : '') + totalVariance.toFixed(2));
+  lines.push('📊 ' + lblTotal + ': ' + (totalVar >= 0 ? '+' : '') + totalVar.toFixed(2));
 
-  glassConfirm('إرسال التقرير', 'هل تريد إرسال تقرير الجرد عبر واتساب للسوبرفايزر؟', { okText: 'إرسال واتساب', cancelText: 'لا، شكراً' }).then(function(ok) {
-    if (!ok) return;
-    var text = encodeURIComponent(lines.join('\n'));
-    window.open('https://wa.me/?text=' + text, '_blank');
-  });
+  setTimeout(function() {
+    glassConfirm(
+      isEn ? 'Send Report' : 'إرسال التقرير',
+      isEn ? 'Print the report or send via WhatsApp to the supervisor?' : 'طباعة التقرير أو إرسال عبر واتساب للسوبرفايزر؟',
+      { okText: isEn ? 'WhatsApp' : 'واتساب', cancelText: isEn ? 'Print Only' : 'طباعة فقط' }
+    ).then(function(ok) {
+      if (ok) {
+        var text = encodeURIComponent(lines.join('\n'));
+        window.open('https://wa.me/?text=' + text, '_blank');
+      }
+      // Either way, trigger print on the report window
+      try { w.print(); } catch(e) {}
+    });
+  }, 300);
 }

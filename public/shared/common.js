@@ -145,6 +145,18 @@ window.dict = {
     // Glass confirm/alert fallbacks
     confirmTitle: 'تأكيد', alertTitle: 'تنبيه',
 
+    // Stocktake
+    stocktakeTitle: 'جرد المخزون',
+    stSearchPH: 'ابحث عن مادة خام وأضفها...',
+    stItem: 'المادة', stSystemQty: 'رصيد النظام', stActualQty: 'العدد الفعلي', stVariance: 'التباين',
+    stNotesPH: 'ملاحظات (اختياري)',
+    stSaveBtn: 'حفظ وإرسال التقرير', stCloseBtn: 'إغلاق (البيانات محفوظة)',
+    stConfirmTitle: 'اعتماد محضر الجرد', stConfirmMsg: 'سيتم تعديل رصيد {n} مادة في المخزون. متابعة؟',
+    stSaved: 'تم اعتماد محضر الجرد ✓',
+    stAddFirst: 'أضف مواد للمحضر أولاً', stEnterActual: 'أدخل الكمية الفعلية لمادة واحدة على الأقل',
+    stEmptyHint: 'ابحث عن مادة واضفها للبدء',
+    stNoResults: 'لا توجد نتائج',
+
     // Language toggle toast
     switchedAr: 'تم التحويل للعربية',
     switchedEn: 'Switched to English',
@@ -301,6 +313,18 @@ window.dict = {
 
     // Glass confirm/alert fallbacks
     confirmTitle: 'Confirm', alertTitle: 'Notice',
+
+    // Stocktake
+    stocktakeTitle: 'Inventory Stocktake',
+    stSearchPH: 'Search for a raw material and add it...',
+    stItem: 'Item', stSystemQty: 'System Qty', stActualQty: 'Actual Qty', stVariance: 'Variance',
+    stNotesPH: 'Notes (optional)',
+    stSaveBtn: 'Save & Send Report', stCloseBtn: 'Close (data saved)',
+    stConfirmTitle: 'Approve Stocktake', stConfirmMsg: 'This will adjust the stock of {n} items. Continue?',
+    stSaved: 'Stocktake approved ✓',
+    stAddFirst: 'Add items to the stocktake first', stEnterActual: 'Enter the actual count for at least one item',
+    stEmptyHint: 'Search for an item and add it to start',
+    stNoResults: 'No results',
 
     // Language toggle toast
     switchedAr: 'Switched to Arabic',

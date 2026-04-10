@@ -38,22 +38,32 @@ window.loadCustodyUsers = function() {
 
 window.openCustodyUserModal = function(data) {
   var d = data || {};
-  var h = '<div class="modal-content"><div class="modal-title">' + (d.id ? 'تعديل' : 'إضافة') + ' مسؤول عهدة<button class="modal-close" onclick="closeModal(\'#modalCustodyUser\')">&times;</button></div>' +
-    '<input type="hidden" id="cuUserId" value="' + (d.id||'') + '">' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-      '<div class="form-group"><label class="form-label">الاسم *</label><input type="text" id="cuName" class="form-control" value="' + (d.name||'') + '"></div>' +
-      '<div class="form-group"><label class="form-label">رقم الهوية</label><input type="text" id="cuIdNum" class="form-control" value="' + (d.idNumber||'') + '"></div>' +
-      '<div class="form-group"><label class="form-label">الجوال</label><input type="text" id="cuPhone" class="form-control" value="' + (d.phone||'') + '"></div>' +
-      '<div class="form-group"><label class="form-label">الوظيفة</label><input type="text" id="cuJob" class="form-control" value="' + (d.jobTitle||'') + '"></div>' +
-      '<div class="form-group"><label class="form-label">ربط بحساب مستخدم</label><input type="text" id="cuLinked" class="form-control" placeholder="username" value="' + (d.linkedUsername||'') + '"></div>' +
-      '<div class="form-group"><label class="form-label">ملاحظات</label><input type="text" id="cuNotes" class="form-control" value="' + (d.notes||'') + '"></div>' +
-    '</div>' +
-    '<div style="display:flex;gap:10px;margin-top:15px;"><button class="btn btn-primary" style="flex:1;" onclick="saveCustodyUserFn()"><i class="fas fa-save"></i> حفظ</button><button class="btn btn-light" onclick="closeModal(\'#modalCustodyUser\')">إلغاء</button></div></div>';
-  if (!document.getElementById('modalCustodyUser')) {
-    var m = document.createElement('div'); m.id = 'modalCustodyUser'; m.className = 'modal'; document.body.appendChild(m);
-  }
-  document.getElementById('modalCustodyUser').innerHTML = h;
-  openModal('#modalCustodyUser');
+  // Load system users to populate the dropdown
+  api.withSuccessHandler(function(users) {
+    var usersList = users || [];
+    var opts = '<option value="">— بدون ربط —</option>' + usersList.map(function(u) {
+      var uname = u.username || u;
+      var selected = (d.linkedUsername && d.linkedUsername === uname) ? ' selected' : '';
+      return '<option value="' + uname + '"' + selected + '>' + uname + '</option>';
+    }).join('');
+
+    var h = '<div class="modal-content"><div class="modal-title">' + (d.id ? 'تعديل' : 'إضافة') + ' مسؤول عهدة<button class="modal-close" onclick="closeModal(\'#modalCustodyUser\')">&times;</button></div>' +
+      '<input type="hidden" id="cuUserId" value="' + (d.id||'') + '">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-group"><label class="form-label">الاسم *</label><input type="text" id="cuName" class="form-control" value="' + (d.name||'') + '"></div>' +
+        '<div class="form-group"><label class="form-label">رقم الهوية</label><input type="text" id="cuIdNum" class="form-control" value="' + (d.idNumber||'') + '"></div>' +
+        '<div class="form-group"><label class="form-label">الجوال</label><input type="text" id="cuPhone" class="form-control" value="' + (d.phone||'') + '"></div>' +
+        '<div class="form-group"><label class="form-label">الوظيفة</label><input type="text" id="cuJob" class="form-control" value="' + (d.jobTitle||'') + '"></div>' +
+        '<div class="form-group"><label class="form-label">ربط بحساب مستخدم</label><select id="cuLinked" class="form-control">' + opts + '</select></div>' +
+        '<div class="form-group"><label class="form-label">ملاحظات</label><input type="text" id="cuNotes" class="form-control" value="' + (d.notes||'') + '"></div>' +
+      '</div>' +
+      '<div style="display:flex;gap:10px;margin-top:15px;"><button class="btn btn-primary" style="flex:1;" onclick="saveCustodyUserFn()"><i class="fas fa-save"></i> حفظ</button><button class="btn btn-light" onclick="closeModal(\'#modalCustodyUser\')">إلغاء</button></div></div>';
+    if (!document.getElementById('modalCustodyUser')) {
+      var m = document.createElement('div'); m.id = 'modalCustodyUser'; m.className = 'modal'; document.body.appendChild(m);
+    }
+    document.getElementById('modalCustodyUser').innerHTML = h;
+    openModal('#modalCustodyUser');
+  }).getUsers();
 };
 
 window.editCustodyUser = function(id) {

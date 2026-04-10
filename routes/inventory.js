@@ -291,6 +291,14 @@ router.get('/stocktakes/:id', async (req, res) => {
   } catch (e) { res.json({ error: e.message }); }
 });
 
+// Delete stocktake (developer only — checked on frontend)
+router.delete('/stocktakes/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM stocktakes WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 // ─── Stock Adjustments (تعديل كمية) ───
 
 const REASON_LABELS = { damaged: 'تالف', admin: 'إداري', settlement: 'تسويات' };
@@ -414,7 +422,7 @@ router.get('/adjustments/:id', async (req, res) => {
 router.delete('/adjustments/:id', async (req, res) => {
   try {
     const [adj] = await db.query('SELECT status FROM stock_adjustments WHERE id = ?', [req.params.id]);
-    if (adj.length && adj[0].status === 'approved') return res.json({ success: false, error: 'Cannot delete approved adjustment' });
+    // Approved adjustments can be deleted by developer (frontend checks isDeveloper)
     await db.query('DELETE FROM stock_adjustments WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }

@@ -1558,13 +1558,12 @@ function loadDashSales() {
     });
     let totalSales = 0;
     let h = "";
-    if (!arr || !arr.length) h = "<tr><td colspan='7' style='text-align:center; padding:30px;'>لا توجد بيانات لهذه الفترة</td></tr>";
+    if (!arr || !arr.length) h = "<tr><td colspan='8' style='text-align:center; padding:30px;'>لا توجد بيانات لهذه الفترة</td></tr>";
     else {
       arr.forEach(s => {
         try {
           totalSales += s.total;
           let payType = String(s.payment || "").toLowerCase();
-          // For split payments, use a neutral colour
           let isSplit = payType.indexOf(':') !== -1;
           let bClass = isSplit ? 'blue' : (payType === 'cash' ? 'green' : (payType === 'card' || payType === 'mada' ? 'blue' : 'yellow'));
           let payDisplay = paymentLabel(s.payment);
@@ -1579,13 +1578,17 @@ function loadDashSales() {
           var dateStr = '';
           try { var dt = new Date(s.date); dateStr = dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+' '+dt.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}); } catch(e){ dateStr = s.date; }
           h += '<tr>'+
+            (state.isDeveloper ? '<td style="text-align:center;"><input type="checkbox" class="sale-chk" value="'+s.orderId+'" style="width:16px;height:16px;"></td>' : '')+
             '<td style="font-family:monospace;font-weight:bold;color:var(--primary);font-size:12px;">'+(s.orderId||'')+'</td>'+
             '<td style="font-size:12px;color:#64748b;">'+dateStr+'</td>'+
             '<td style="font-weight:600;">'+userLabel(s.username)+'</td>'+
             '<td>'+itemsHtml+'</td>'+
             '<td><span class="badge '+bClass+'">'+payDisplay+'</span></td>'+
             '<td style="font-weight:900;color:var(--secondary);font-size:15px;">'+formatVal(s.total)+'</td>'+
-            '<td><button class="btn btn-sm btn-primary" onclick="printReceipt(\''+s.orderId+'\')"><i class="fas fa-print"></i></button></td>'+
+            '<td style="white-space:nowrap;">'+
+              '<button class="btn btn-sm btn-primary" onclick="printReceipt(\''+s.orderId+'\')"><i class="fas fa-print"></i></button>'+
+              (state.isDeveloper ? ' <button class="btn btn-sm btn-danger" onclick="deleteSingleSale(\''+s.orderId+'\')"><i class="fas fa-trash"></i></button>' : '')+
+            '</td>'+
           '</tr>';
         } catch(ex) { console.error("Error rendering row", s, ex); }
       });
@@ -1594,7 +1597,60 @@ function loadDashSales() {
     state.salesCache = arr || [];
     if (q("#slTotalSales")) q("#slTotalSales").innerText = formatVal(totalSales);
     if (q("#slTotalCount")) q("#slTotalCount").innerText = arr ? arr.length : 0;
+    // Show bulk actions bar for developer
+    var bulkBar = q("#salesBulkBar");
+    if (bulkBar) bulkBar.style.display = state.isDeveloper && arr && arr.length ? '' : 'none';
   }).getSalesListDetailed(params);
+}
+
+// ─── Sales bulk actions (developer only) ───
+function toggleAllSales() {
+  var checked = q("#salesSelectAll") ? q("#salesSelectAll").checked : false;
+  qs(".sale-chk").forEach(function(cb) { cb.checked = checked; });
+}
+
+function deleteSingleSale(orderId) {
+  if (!confirm('حذف الفاتورة ' + orderId + '؟')) return;
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم الحذف'); loadDashSales(); }
+    else showToast((r && r.error) || 'خطأ', true);
+  }).deleteSale(orderId);
+}
+
+function deleteSelectedSales() {
+  var ids = [];
+  qs(".sale-chk:checked").forEach(function(cb) { ids.push(cb.value); });
+  if (!ids.length) return showToast('حدد فواتير أولاً', true);
+  if (!confirm('حذف ' + ids.length + ' فاتورة نهائياً؟')) return;
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم حذف ' + (r.deleted || ids.length) + ' فاتورة'); loadDashSales(); }
+    else showToast((r && r.error) || 'خطأ', true);
+  }).bulkDeleteSales(ids);
+}
+
+function exportSelectedSales() {
+  ensureXlsx().then(function() {
+    var ids = [];
+    qs(".sale-chk:checked").forEach(function(cb) { ids.push(cb.value); });
+    var data = (state.salesCache || []);
+    if (ids.length) data = data.filter(function(s) { return ids.indexOf(s.orderId) !== -1; });
+    if (!data.length) return showToast('لا توجد فواتير للتصدير', true);
+    var wsData = [['رقم الفاتورة','التاريخ','الكاشير','المنتجات','طريقة الدفع','المبلغ']];
+    data.forEach(function(s){
+      var items = (s.items||[]).map(function(it){return it.qty+'x '+it.name;}).join(', ');
+      wsData.push([s.orderId, s.date, s.username, items, s.payment, Number(s.total)||0]);
+    });
+    var wb = XLSX.utils.book_new();
+    var ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!cols'] = [{wch:20},{wch:22},{wch:14},{wch:40},{wch:14},{wch:14}];
+    XLSX.utils.book_append_sheet(wb, ws, 'فواتير');
+    XLSX.writeFile(wb, 'sales-export-' + new Date().toISOString().split('T')[0] + '.xlsx');
+    showToast('تم تصدير ' + data.length + ' فاتورة');
+  }).catch(function(e){ showToast(e.message, true); });
 }
 
 // Inventory Management
@@ -2046,7 +2102,7 @@ function loadDashAdjustments() {
             '<button class="btn btn-primary btn-sm" onclick="viewAdjustmentDetail(\'' + a.id + '\')" title="عرض"><i class="fas fa-eye"></i></button> ' +
             (a.status !== 'approved' ? '<button class="btn btn-success btn-sm" onclick="approveAdjustment(\'' + a.id + '\')" title="اعتماد"><i class="fas fa-check"></i></button> ' : '') +
             '<button class="btn btn-light btn-sm" onclick="printAdjustment(\'' + a.id + '\')" title="طباعة"><i class="fas fa-print"></i></button> ' +
-            (a.status !== 'approved' ? '<button class="btn btn-danger btn-sm" onclick="deleteAdjustment(\'' + a.id + '\')" title="حذف"><i class="fas fa-trash"></i></button>' : '') +
+            (a.status !== 'approved' || state.isDeveloper ? '<button class="btn btn-danger btn-sm" onclick="deleteAdjustment(\'' + a.id + '\')" title="حذف"><i class="fas fa-trash"></i></button>' : '') +
           '</td></tr>';
       });
     }
@@ -2439,7 +2495,7 @@ function exportInvExcel() {
   ensureXlsx().then(_exportInvExcelBody).catch(function(e) { showToast(e.message || 'فشل تحميل XLSX', true); });
 }
 function _exportInvExcelBody() {
-  if (!cachedRawItems || !cachedRawItems.length) return showToast("لا توجد بيانات للتصدير", true);
+  // Allow export even with no items — exports an empty template the user can fill and re-import
   // inv_items.cost is per SMALL unit. Export shows both: big-unit cost (cost × convRate) and small-unit cost.
   var wsData = [["ID","اسم المادة","التصنيف","تكلفة الوحدة الكبرى","تكلفة الوحدة الصغرى","المخزون (صغرى)","حد التنبيه","الوحدة الصغرى","الوحدة الكبرى","معامل التحويل","نشط"]];
   cachedRawItems.forEach(function(i) {
@@ -2898,7 +2954,8 @@ function loadDashStocktake() {
           '<td style="font-weight:800;color:'+varColor+';">'+Number(st.totalVariance).toFixed(2)+'</td>'+
           '<td style="white-space:nowrap;">'+
             '<button class="btn btn-primary btn-sm" onclick="viewStocktakeDetail(\''+st.id+'\')" title="عرض التفاصيل"><i class="fas fa-eye"></i></button> '+
-            '<button class="btn btn-light btn-sm" onclick="printStocktake(\''+st.id+'\')" title="طباعة المحضر"><i class="fas fa-print"></i></button>'+
+            '<button class="btn btn-light btn-sm" onclick="printStocktake(\''+st.id+'\')" title="طباعة المحضر"><i class="fas fa-print"></i></button> '+
+            (state.isDeveloper ? '<button class="btn btn-danger btn-sm" onclick="deleteStocktake(\''+st.id+'\')" title="حذف"><i class="fas fa-trash"></i></button>' : '')+
           '</td>'+
         '</tr>';
       });
@@ -3004,6 +3061,16 @@ function printStocktake(stId) {
     w.document.close();
     setTimeout(function() { w.print(); }, 400);
   }).getStocktakeDetail(stId);
+}
+
+function deleteStocktake(stId) {
+  if (!confirm('حذف محضر الجرد نهائياً؟')) return;
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم الحذف'); loadDashStocktake(); }
+    else showToast((r && r.error) || 'خطأ', true);
+  }).deleteStocktake(stId);
 }
 
 function startStocktake() {

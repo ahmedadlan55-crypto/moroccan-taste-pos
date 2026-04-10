@@ -39,7 +39,7 @@
     saveInvItem:         { method: 'POST', url: '/inventory/items' },
     deleteInvItem:       { method: 'DELETE',url: (id) => '/inventory/items/'+id },
     importInvItems:      { method: 'POST', url: '/inventory/items/import' },
-    updateStock:         { method: 'POST', url: '/inventory/stock-update' },
+    updateStock:         { method: 'POST', url: '/inventory/stock-update', body: (itemId,qty,type,notes,username,reason) => ({itemId,qty,type,notes,username,reason,itemName:''}) },
 
     // Purchases
     getPurchases:        { method: 'GET',  url: '/purchases', query: (f) => f },
@@ -117,6 +117,7 @@
     submitStocktake:     { method: 'POST', url: '/inventory/stocktakes', body: (items,u,n) => ({items:items,username:u,notes:n}) },
     getAllStocktakes:     { method: 'GET',  url: '/inventory/stocktakes' },
     getStocktakeDetail:  { method: 'GET',  url: (id) => '/inventory/stocktakes/' + id },
+    deleteStocktake:     { method: 'DELETE', url: (id) => '/inventory/stocktakes/' + id },
     submitAdjustment:    { method: 'POST', url: '/inventory/adjustments', body: (d) => d },
     approveAdjustment:   { method: 'POST', url: (id,u) => '/inventory/adjustments/' + id + '/approve', body: (id,u) => ({username:u}) },
     getAllAdjustments:    { method: 'GET',  url: '/inventory/adjustments' },

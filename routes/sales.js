@@ -144,4 +144,23 @@ router.get('/invoice/:orderId', async (req, res) => {
   } catch (e) { res.json(null); }
 });
 
+// Delete sale (developer only — frontend checks isDeveloper)
+router.delete('/:orderId', async (req, res) => {
+  try {
+    await db.query('DELETE FROM sales WHERE id = ?', [req.params.orderId]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Bulk delete sales
+router.post('/bulk-delete', async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.json({ success: false, error: 'No IDs' });
+    const placeholders = ids.map(() => '?').join(',');
+    await db.query('DELETE FROM sales WHERE id IN (' + placeholders + ')', ids);
+    res.json({ success: true, deleted: ids.length });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 module.exports = router;

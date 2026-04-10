@@ -166,9 +166,19 @@
               <div class="stat-card"><div class="stat-info"><h4>إجمالي المبيعات</h4><p id="slTotalSales">0.00</p></div><div class="stat-icon" style="background:#e0e7ff;color:#4f46e5;"><i class="fas fa-money-bill-trend-up"></i></div></div>
               <div class="stat-card"><div class="stat-info"><h4>عدد الفواتير</h4><p id="slTotalCount">0</p></div><div class="stat-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-file-invoice"></i></div></div>
             </div>
+            <!-- Bulk actions bar (developer only) -->
+            <div id="salesBulkBar" style="display:none;background:#fef2f2;border:1.5px solid #fecaca;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:none;">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <label style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:13px;cursor:pointer;">
+                  <input type="checkbox" id="salesSelectAll" onchange="toggleAllSales()" style="width:16px;height:16px;"> تحديد الكل
+                </label>
+                <button class="btn btn-danger btn-sm" onclick="deleteSelectedSales()"><i class="fas fa-trash"></i> حذف المحدد</button>
+                <button class="btn btn-success btn-sm" onclick="exportSelectedSales()"><i class="fas fa-file-excel"></i> تصدير المحدد</button>
+              </div>
+            </div>
             <div class="table-wrapper">
               <table class="table">
-                <thead><tr><th>رقم الفاتورة</th><th>التاريخ والوقت</th><th>الكاشير</th><th style="width:35%;">المنتجات المباعة</th><th>وسيلة الدفع</th><th>المبلغ المستحق</th><th>إجراء</th></tr></thead>
+                <thead><tr><th style="width:30px;"></th><th>رقم الفاتورة</th><th>التاريخ والوقت</th><th>الكاشير</th><th style="width:30%;">المنتجات المباعة</th><th>وسيلة الدفع</th><th>المبلغ المستحق</th><th>إجراء</th></tr></thead>
                 <tbody id="tbSales"></tbody>
               </table>
             </div>
@@ -1284,9 +1294,6 @@
 
       <input type="hidden" id="miMarkupPct" value="0">
 
-      <input type="hidden" id="miCost" value="0">
-      <input type="hidden" id="miStock" value="9999">
-      <input type="hidden" id="miMin" value="0">
 
       <div class="form-group" style="background:#f1f5f9; padding:15px; border-radius:12px; margin-top:10px;">
         <label style="display:flex; align-items:center; gap:10px; cursor:pointer;" class="form-label"><input type="checkbox" id="miActive" style="transform:scale(1.5);"> عرض وتفعيل هذا المنتج على أنظمة الكاشير</label>

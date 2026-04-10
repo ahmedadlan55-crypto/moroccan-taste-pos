@@ -28,6 +28,7 @@ app.use('/api/purchases', require('./routes/purchases'));
 app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/erp', require('./routes/erp'));
+app.use('/api/custody', require('./routes/custody'));
 
 // Catch-all for unimplemented API routes — return JSON instead of HTML
 app.all('/api/*', (req, res) => {
@@ -198,6 +199,75 @@ async function runMigrations() {
       stock_before DECIMAL(12,2) DEFAULT 0,
       stock_after DECIMAL(12,2) DEFAULT 0,
       FOREIGN KEY (adjustment_id) REFERENCES stock_adjustments(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB
+  `);
+
+  // Custody management tables (العهد)
+  await createTableIfMissing('custody_users', `
+    CREATE TABLE custody_users (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      id_number VARCHAR(20),
+      phone VARCHAR(20),
+      job_title VARCHAR(100),
+      notes TEXT,
+      is_active BOOLEAN DEFAULT TRUE,
+      linked_username VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('custodies', `
+    CREATE TABLE custodies (
+      id VARCHAR(50) PRIMARY KEY,
+      custody_number VARCHAR(20) UNIQUE,
+      user_id VARCHAR(50) NOT NULL,
+      user_name VARCHAR(200),
+      created_date DATETIME,
+      balance DECIMAL(14,2) DEFAULT 0,
+      total_topups DECIMAL(14,2) DEFAULT 0,
+      total_expenses DECIMAL(14,2) DEFAULT 0,
+      status ENUM('active','closed') DEFAULT 'active',
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES custody_users(id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('custody_topups', `
+    CREATE TABLE custody_topups (
+      id VARCHAR(50) PRIMARY KEY,
+      custody_id VARCHAR(50) NOT NULL,
+      amount DECIMAL(14,2),
+      payment_method VARCHAR(50),
+      receipt_image LONGTEXT,
+      notes TEXT,
+      created_at DATETIME,
+      created_by VARCHAR(100),
+      FOREIGN KEY (custody_id) REFERENCES custodies(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('custody_expenses', `
+    CREATE TABLE custody_expenses (
+      id VARCHAR(50) PRIMARY KEY,
+      custody_id VARCHAR(50) NOT NULL,
+      expense_date DATE,
+      description TEXT,
+      amount DECIMAL(14,2),
+      has_vat BOOLEAN DEFAULT FALSE,
+      vat_rate DECIMAL(5,2) DEFAULT 15,
+      vat_amount DECIMAL(14,2) DEFAULT 0,
+      total_with_vat DECIMAL(14,2) DEFAULT 0,
+      invoice_image LONGTEXT,
+      notes TEXT,
+      status ENUM('pending','approved','rejected','posted') DEFAULT 'pending',
+      rejection_reason TEXT,
+      created_by VARCHAR(100),
+      approved_by VARCHAR(100),
+      approved_at DATETIME,
+      posted_by VARCHAR(100),
+      posted_at DATETIME,
+      journal_id VARCHAR(50),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (custody_id) REFERENCES custodies(id) ON DELETE CASCADE
     ) ENGINE=InnoDB
   `);
 

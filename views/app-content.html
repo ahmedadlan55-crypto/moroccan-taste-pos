@@ -34,6 +34,17 @@
         </div>
 
         <div class="nav-item" onclick="nav('expenses')"><i class="fas fa-money-check-alt"></i><span>المصروفات</span></div>
+
+        <!-- ═══ العهد (Custody Management) ═══ -->
+        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
+          <i class="fas fa-hand-holding-usd"></i><span>العهد</span><i class="fas fa-chevron-down submenu-indicator"></i>
+        </div>
+        <div class="submenu">
+          <div class="nav-item" onclick="nav('custodyUsers')"><i class="fas fa-user-tie"></i><span>مسؤولو العهدة</span></div>
+          <div class="nav-item" onclick="nav('custodies')"><i class="fas fa-wallet"></i><span>إدارة العهد</span></div>
+          <div class="nav-item" onclick="nav('custodyApproval')"><i class="fas fa-check-double"></i><span>تأكيد المصروفات</span></div>
+          <div class="nav-item" onclick="nav('custodyReports')"><i class="fas fa-file-invoice-dollar"></i><span>تقارير العهد</span></div>
+        </div>
         <div class="nav-item" onclick="nav('users')"><i class="fas fa-users-cog"></i><span>صلاحيات الموظفين</span></div>
         <div class="nav-item" onclick="nav('shifts')"><i class="fas fa-folder-open"></i><span>سجل المناوبات</span></div>
         <div class="nav-item" onclick="nav('reports')"><i class="fas fa-file-excel"></i><span>التقارير</span></div>
@@ -420,7 +431,62 @@
           </div>
         </div>
 
-        <!-- sec_live_inventory moved to sec_warehouse tabs -->
+        <!-- ═══ CUSTODY SECTIONS (العهد) ═══ -->
+
+        <!-- Section: Custody Users -->
+        <div id="sec_custodyUsers" class="admin-section">
+          <div class="filter-bar" style="justify-content:space-between;align-items:center;">
+            <h3 style="margin:0;color:var(--primary);"><i class="fas fa-user-tie"></i> مسؤولو العهدة</h3>
+            <button class="btn btn-primary" onclick="openCustodyUserModal()"><i class="fas fa-plus"></i> إضافة مسؤول عهدة</button>
+          </div>
+          <div class="table-wrapper">
+            <table class="table">
+              <thead><tr><th>الاسم</th><th>رقم الهوية</th><th>الجوال</th><th>الوظيفة</th><th>مرتبط بـ</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+              <tbody id="tbCustodyUsers"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section: Custodies Management -->
+        <div id="sec_custodies" class="admin-section">
+          <div class="filter-bar" style="justify-content:space-between;align-items:center;">
+            <h3 style="margin:0;color:var(--primary);"><i class="fas fa-wallet"></i> إدارة العهد</h3>
+            <button class="btn btn-primary" onclick="openCreateCustodyModal()"><i class="fas fa-plus"></i> إنشاء عهدة جديدة</button>
+          </div>
+          <div class="table-wrapper">
+            <table class="table">
+              <thead><tr><th>رقم العهدة</th><th>المسؤول</th><th>تاريخ الإنشاء</th><th>إجمالي التغذية</th><th>إجمالي المصروفات</th><th>الرصيد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+              <tbody id="tbCustodies"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section: Custody Approval -->
+        <div id="sec_custodyApproval" class="admin-section">
+          <div class="filter-bar" style="justify-content:space-between;align-items:center;">
+            <h3 style="margin:0;color:var(--primary);"><i class="fas fa-check-double"></i> تأكيد مصروفات العهد</h3>
+          </div>
+          <div class="table-wrapper">
+            <table class="table">
+              <thead><tr><th>رقم العهدة</th><th>المسؤول</th><th>التاريخ</th><th>البيان</th><th>القيمة</th><th>الضريبة</th><th>الإجمالي</th><th>الفاتورة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+              <tbody id="tbCustodyApproval"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section: Custody Reports -->
+        <div id="sec_custodyReports" class="admin-section">
+          <div class="filter-bar" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+            <h3 style="margin:0;color:var(--primary);"><i class="fas fa-file-invoice-dollar"></i> تقارير العهد</h3>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <select id="custodyReportSelect" class="form-control" style="min-width:200px;" onchange="loadCustodyReport()">
+                <option value="">اختر عهدة...</option>
+              </select>
+              <button class="btn btn-primary" onclick="printCustodyPDF()"><i class="fas fa-print"></i> طباعة PDF</button>
+            </div>
+          </div>
+          <div id="custodyReportBody" style="padding:10px;"></div>
+        </div>
 
         <!-- Section: Purchases -->
         <div id="sec_purchases" class="admin-section">

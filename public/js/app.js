@@ -33,6 +33,11 @@ window.ensureErpJs = function() {
   return loadScript('/js/erp.js').then(function() { window._erpJsLoaded = true; });
 };
 
+window.ensureCustodyJs = function() {
+  if (window._custodyJsLoaded) return Promise.resolve();
+  return loadScript('/js/custody.js').then(function() { window._custodyJsLoaded = true; });
+};
+
 // erpNav is called by sidebar onclicks but erp.js isn't loaded eagerly anymore.
 // Define a lazy stub here that loads erp.js then forwards the call to the real
 // erpNav defined inside erp.js (which overwrites this stub on load).
@@ -1329,7 +1334,7 @@ function nav(sectionId) {
     }, 30000);
   }
   
-  const titles = { home:"\u0646\u0638\u0631\u0629 \u0639\u0627\u0645\u0629", sales:"\u0633\u062c\u0644 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a", menu:"\u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0645\u0646\u064a\u0648", recipes:"\u0627\u0644\u0645\u0642\u0627\u062f\u064a\u0631 \u0648\u0627\u0644\u0648\u0635\u0641\u0627\u062a", inventory:"\u0627\u0644\u0645\u0646\u064a\u0648", warehouse:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0633\u062a\u0648\u062f\u0639", expenses:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0635\u0631\u0648\u0641\u0627\u062a", purchases:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a", users:"\u0635\u0644\u0627\u062d\u064a\u0627\u062a \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645\u064a\u0646", shifts:"\u0633\u062c\u0644 \u0627\u0644\u0645\u0646\u0627\u0648\u0628\u0627\u062a \u0627\u0644\u0645\u063a\u0644\u0642\u0629", reports:"\u0627\u0644\u062a\u0642\u0627\u0631\u064a\u0631 \u0627\u0644\u0645\u062a\u0642\u062f\u0645\u0629", settings:"\u0627\u0644\u0625\u0639\u062f\u0627\u062f\u0627\u062a" };
+  const titles = { home:"\u0646\u0638\u0631\u0629 \u0639\u0627\u0645\u0629", sales:"\u0633\u062c\u0644 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a", menu:"\u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0645\u0646\u064a\u0648", recipes:"\u0627\u0644\u0645\u0642\u0627\u062f\u064a\u0631 \u0648\u0627\u0644\u0648\u0635\u0641\u0627\u062a", inventory:"\u0627\u0644\u0645\u0646\u064a\u0648", warehouse:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0633\u062a\u0648\u062f\u0639", expenses:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0635\u0631\u0648\u0641\u0627\u062a", purchases:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a", users:"\u0635\u0644\u0627\u062d\u064a\u0627\u062a \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645\u064a\u0646", shifts:"\u0633\u062c\u0644 \u0627\u0644\u0645\u0646\u0627\u0648\u0628\u0627\u062a \u0627\u0644\u0645\u063a\u0644\u0642\u0629", reports:"\u0627\u0644\u062a\u0642\u0627\u0631\u064a\u0631 \u0627\u0644\u0645\u062a\u0642\u062f\u0645\u0629", settings:"\u0627\u0644\u0625\u0639\u062f\u0627\u062f\u0627\u062a", custodyUsers:"\u0645\u0633\u0624\u0648\u0644\u0648 \u0627\u0644\u0639\u0647\u062f\u0629", custodies:"\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0639\u0647\u062f", custodyApproval:"\u062a\u0623\u0643\u064a\u062f \u0645\u0635\u0631\u0648\u0641\u0627\u062a \u0627\u0644\u0639\u0647\u062f", custodyReports:"\u062a\u0642\u0627\u0631\u064a\u0631 \u0627\u0644\u0639\u0647\u062f" };
   const hTitle = q('.admin-header-title');
   if (hTitle) hTitle.innerText = titles[sectionId] || "لوحة التحكم";
 
@@ -1346,6 +1351,11 @@ function nav(sectionId) {
   if (sectionId === 'shifts') loadDashShifts();
   if (sectionId === 'reports') populateReportFilters();
   if (sectionId === 'settings') { loadPayMethodsSettings(); applyDeveloperVisibility(); }
+  // Custody sections (lazy-load custody.js)
+  if (sectionId === 'custodyUsers') { ensureCustodyJs().then(function() { loadCustodyUsers(); }); }
+  if (sectionId === 'custodies') { ensureCustodyJs().then(function() { loadCustodies(); }); }
+  if (sectionId === 'custodyApproval') { ensureCustodyJs().then(function() { loadCustodyApprovals(); }); }
+  if (sectionId === 'custodyReports') { ensureCustodyJs().then(function() { loadCustodies(); }); }
 }
 
 function loadDashHome() {

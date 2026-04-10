@@ -607,22 +607,27 @@ function initViews() {
   document.body.classList.add('authenticated');
   hide("#loginView");
 
-  // Cashier role → redirect to the standalone /pos/ page (POS is no longer
-  // embedded in this admin template). The /pos/ page has its own auth gate
-  // and loads only the POS assets.
-  if (state.role !== "admin") {
+  // Cashier role → redirect to the standalone /pos/ page
+  if (state.role === 'cashier') {
     localStorage.setItem("pos_last_view", 'pos');
     window.location.replace('/pos/');
     return;
   }
 
-  // Admin role → show the admin dashboard
+  // Custody role → show admin panel but navigate to custody section
+  // Admin/Manager → show admin panel with full access
   localStorage.setItem("pos_last_view", 'admin');
   show("#adminView");
   if (q("#adminUserLabel")) q("#adminUserLabel").innerText = state.user;
-  // Restore last admin section or default to home
-  var lastSection = localStorage.getItem("pos_last_section") || 'home';
-  nav(lastSection);
+
+  if (state.role === 'custody') {
+    // Custody user → go directly to their custody section
+    nav('custodies');
+  } else {
+    // Admin/manager → restore last section or default to home
+    var lastSection = localStorage.getItem("pos_last_section") || 'home';
+    nav(lastSection);
+  }
   // Use usernames already loaded from getInitialAppData (no extra API call)
   const users = (state.users || []).map(u => u.username);
   const selectors = ['#repUserOpt', '#fsCashier', '#fpayCashier'];

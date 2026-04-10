@@ -127,8 +127,7 @@ router.post('/users', async (req, res) => {
     if (!username || !password) return res.json({ success: false, error: 'اسم المستخدم وكلمة المرور مطلوبان' });
 
     const hash = await bcrypt.hash(password, 10);
-    // Map developer to admin role at the DB level (ENUM doesn't allow new values)
-    const dbRole = ['admin', 'cashier', 'manager'].indexOf(role) >= 0 ? role : 'cashier';
+    const dbRole = ['admin', 'cashier', 'manager', 'custody'].indexOf(role) >= 0 ? role : 'cashier';
 
     await db.query(
       'INSERT INTO users (username, password, role, active) VALUES (?, ?, ?, 1)',
@@ -141,6 +140,17 @@ router.post('/users', async (req, res) => {
       if (displayName) meta[username].name = displayName;
       if (isDeveloper) meta[username].isDeveloper = true;
       await setUserMeta(meta);
+    }
+
+    // Auto-create custody_users record when role is custody
+    if (dbRole === 'custody') {
+      try {
+        const cuId = 'CU-' + Date.now();
+        await db.query(
+          'INSERT INTO custody_users (id, name, job_title, linked_username) VALUES (?,?,?,?)',
+          [cuId, displayName || username, 'مسؤول عهدة', username]
+        );
+      } catch(e) { /* ignore if custody_users table not yet created */ }
     }
     res.json({ success: true });
   } catch (e) {
@@ -158,8 +168,21 @@ router.put('/users/:username', async (req, res) => {
       const hash = await bcrypt.hash(password, 10);
       await db.query('UPDATE users SET password = ? WHERE username = ?', [hash, username]);
     }
-    if (role && ['admin', 'cashier', 'manager'].indexOf(role) >= 0) {
+    if (role && ['admin', 'cashier', 'manager', 'custody'].indexOf(role) >= 0) {
       await db.query('UPDATE users SET role = ? WHERE username = ?', [role, username]);
+      // Auto-create custody_users record if switching to custody role
+      if (role === 'custody') {
+        try {
+          const [existing] = await db.query('SELECT id FROM custody_users WHERE linked_username = ?', [username]);
+          if (!existing.length) {
+            const cuId = 'CU-' + Date.now();
+            await db.query(
+              'INSERT INTO custody_users (id, name, job_title, linked_username) VALUES (?,?,?,?)',
+              [cuId, displayName || username, 'مسؤول عهدة', username]
+            );
+          }
+        } catch(e) {}
+      }
     }
     if (displayName !== undefined || isDeveloper !== undefined) {
       const meta = await getUserMeta();

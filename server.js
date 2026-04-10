@@ -202,6 +202,9 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
+  // Add 'custody' role to users table ENUM
+  try { await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody') DEFAULT 'cashier'"); } catch(e) {}
+
   // Custody management tables (العهد)
   await createTableIfMissing('custody_users', `
     CREATE TABLE custody_users (

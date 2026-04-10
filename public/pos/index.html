@@ -189,7 +189,7 @@
   <div id="modalCashierStocktake" class="glass-modal hidden">
     <div class="glass-modal-content" style="max-width:700px;height:95dvh;display:flex;flex-direction:column;">
       <div class="glass-modal-title">
-        <span><i class="fas fa-clipboard-check"></i> <span data-i18n="stocktakeTitle">جرد المخزون</span></span>
+        <span><i class="fas fa-clipboard-check"></i> <span data-i18n="stocktakeTitle">Inventory Stocktake</span></span>
         <button class="glass-modal-close" onclick="closeGlassModal('#modalCashierStocktake')" aria-label="إغلاق">&times;</button>
       </div>
       <div class="glass-modal-body" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;">
@@ -198,7 +198,7 @@
           <div style="display:flex;gap:8px;align-items:center;">
             <div style="flex:1;position:relative;">
               <i class="fas fa-search" style="position:absolute;top:12px;right:12px;color:#94a3b8;"></i>
-              <input type="text" id="cstSearch" class="form-control glass-input" style="padding-right:36px;" data-i18n-placeholder="stSearchPH" placeholder="ابحث عن مادة خام وأضفها..." oninput="filterCashierStItems()" onfocus="filterCashierStItems()">
+              <input type="text" id="cstSearch" class="form-control glass-input" style="padding-right:36px;" data-i18n-placeholder="stSearchPH" placeholder="Search for a raw material..." oninput="filterCashierStItems()" onfocus="filterCashierStItems()">
               <div id="cstSearchResults" style="position:absolute;top:100%;left:0;right:0;z-index:200;background:rgba(255,255,255,0.98);backdrop-filter:blur(12px);border:1.5px solid rgba(226,232,240,0.8);border-radius:0 0 14px 14px;max-height:220px;overflow-y:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,0.12);"></div>
             </div>
           </div>
@@ -207,26 +207,26 @@
         <div style="flex:1;overflow-y:auto;min-height:0;">
           <table class="table" style="font-size:13px;">
             <thead><tr>
-              <th>المادة</th>
-              <th style="text-align:center;">الكبرى</th>
-              <th style="text-align:center;">وحدة كبرى</th>
-              <th style="text-align:center;">الصغرى</th>
-              <th style="text-align:center;">وحدة صغرى</th>
-              <th style="text-align:center;">النظام</th>
-              <th style="text-align:center;">التباين</th>
+              <th>Item</th>
+              <th style="text-align:center;">Big Qty</th>
+              <th style="text-align:center;">Big Unit</th>
+              <th style="text-align:center;">Small Qty</th>
+              <th style="text-align:center;">Small Unit</th>
+              <th style="text-align:center;">System</th>
+              <th style="text-align:center;">Variance</th>
               <th></th>
             </tr></thead>
             <tbody id="cstBody"></tbody>
           </table>
         </div>
         <div class="form-group" style="flex-shrink:0;margin-top:8px;">
-          <input type="text" id="cstNotes" class="form-control glass-input" data-i18n-placeholder="stNotesPH" placeholder="ملاحظات (اختياري)">
+          <input type="text" id="cstNotes" class="form-control glass-input" data-i18n-placeholder="stNotesPH" placeholder="Notes (optional)">
         </div>
       </div>
       <div class="glass-modal-actions" style="flex-shrink:0;">
-        <button class="btn btn-primary" style="flex:1;" onclick="submitCashierStocktake()"><i class="fas fa-check-double"></i> <span data-i18n="stSaveBtn">حفظ وإرسال التقرير</span></button>
-        <button class="btn btn-light" onclick="closeGlassModal('#modalCashierStocktake')" data-i18n="stCloseBtn">إغلاق (البيانات محفوظة)</button>
-        <button class="btn btn-danger btn-sm" onclick="clearCstCart()" style="padding:8px 12px;" title="مسح الكل"><i class="fas fa-trash"></i></button>
+        <button class="btn btn-primary" style="flex:1;" onclick="submitCashierStocktake()"><i class="fas fa-check-double"></i> <span data-i18n="stSaveBtn">Save & Send Report</span></button>
+        <button class="btn btn-light" onclick="closeGlassModal('#modalCashierStocktake')" data-i18n="stCloseBtn">Close (data saved)</button>
+        <button class="btn btn-danger btn-sm" onclick="clearCstCart()" style="padding:8px 12px;" title="Clear all"><i class="fas fa-trash"></i></button>
       </div>
     </div>
   </div>

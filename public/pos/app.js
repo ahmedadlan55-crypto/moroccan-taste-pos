@@ -1259,17 +1259,30 @@ window.openCashierStocktake = function() {
   if (q('#cstSearch')) q('#cstSearch').value = '';
   if (q('#cstNotes')) q('#cstNotes').value = '';
   renderCstCart();
-  // Load raw materials from warehouse
   loader(true);
   api.withSuccessHandler(function(items) {
     loader(false);
     _cstAllItems = items || [];
     openGlassModal('#modalCashierStocktake');
+    // Close dropdown when clicking anywhere outside
+    setTimeout(function() {
+      document.addEventListener('click', _closeCstDropdown);
+    }, 100);
   }).withFailureHandler(function(err) {
     loader(false);
     glassToast(err.message || t('failLoadData'), true);
   }).getInvItems();
 };
+
+function _closeCstDropdown(e) {
+  var res = q('#cstSearchResults');
+  var search = q('#cstSearch');
+  if (!res || !search) return;
+  // If click is outside the search input and dropdown, hide it
+  if (!search.contains(e.target) && !res.contains(e.target)) {
+    res.style.display = 'none';
+  }
+}
 
 window.filterCashierStItems = function() {
   var search = (q('#cstSearch') ? q('#cstSearch').value : '').toLowerCase();

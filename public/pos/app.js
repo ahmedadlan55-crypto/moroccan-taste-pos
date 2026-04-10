@@ -1328,6 +1328,16 @@ function renderCstCart() {
     return;
   }
   tb.innerHTML = cart.map(function(c, i) {
+    // Supplement missing unit data from _cstAllItems (for items added before this feature)
+    if ((!c.bigUnit || !c.convRate || c.convRate <= 1) && _cstAllItems.length) {
+      var fresh = _cstAllItems.find(function(x) { return x.id === c.id; });
+      if (fresh) {
+        if (fresh.bigUnit && !c.bigUnit) c.bigUnit = fresh.bigUnit;
+        if (fresh.convRate > 1 && (!c.convRate || c.convRate <= 1)) c.convRate = Number(fresh.convRate);
+        if (fresh.unit && !c.unit) c.unit = fresh.unit;
+        _saveCstCart(cart); // persist the fix
+      }
+    }
     var cRate = Number(c.convRate) || 1;
     var hasBig = c.bigUnit && cRate > 1;
     var actualSmall = c.actualQty === '' || c.actualQty === null ? '' : Number(c.actualQty);

@@ -1398,7 +1398,19 @@ window.submitCashierStocktake = function() {
   });
 };
 
-// After save: send report directly via WhatsApp — no browser window
+// Lazy-load jsPDF for PDF generation
+function ensureJsPDF() {
+  if (window.jspdf) return Promise.resolve();
+  return new Promise(function(resolve, reject) {
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.onload = resolve;
+    s.onerror = function() { reject(new Error('Failed to load jsPDF')); };
+    document.head.appendChild(s);
+  });
+}
+
+// After save: generate PDF and share via WhatsApp using Web Share API
 function _showStocktakeWhatsApp(stId, items) {
   var cashier = (state.currentUser && state.currentUser.displayName) || state.user;
   var dateStr = new Date().toLocaleString('en-GB');
@@ -1408,35 +1420,136 @@ function _showStocktakeWhatsApp(stId, items) {
 
   var lblTitle = isEn ? 'Inventory Stocktake Report' : 'محضر جرد مخزون';
   var lblTotal = isEn ? 'Total Variance' : 'إجمالي التباين';
-  var lblSys = isEn ? 'Sys' : 'النظام';
-  var lblAct = isEn ? 'Actual' : 'الفعلي';
+  var hSys = isEn ? 'System' : 'النظام';
+  var hAct = isEn ? 'Actual' : 'الفعلي';
+  var hVar = isEn ? 'Variance' : 'التباين';
+  var hItem = isEn ? 'Item' : 'المادة';
 
-  // Build formatted WhatsApp message
-  var lines = [
-    '📋 *' + lblTitle + '*',
-    '━━━━━━━━━━━━━━━━',
-    '🏪 ' + company,
-    '📅 ' + dateStr,
-    '👤 ' + cashier,
-    '🆔 ' + stId,
-    '',
-    '┌─────────────────────┐'
-  ];
-  items.forEach(function(c) {
-    var sysQty = Number(c.sys || c.systemQty) || 0;
-    var actQty = Number(c.actual || c.actualQty) || 0;
-    var diff = actQty - sysQty;
-    var icon = diff === 0 ? '✅' : (diff > 0 ? '🟢' : '🔴');
-    var sign = diff > 0 ? '+' : '';
-    lines.push(icon + ' *' + (c.name || c.id) + '*');
-    lines.push('   ' + lblSys + ': ' + sysQty.toFixed(2) + ' → ' + lblAct + ': ' + actQty.toFixed(2) + ' (' + sign + diff.toFixed(2) + ')');
+  loader(true);
+  ensureJsPDF().then(function() {
+    loader(false);
+    var doc = new jspdf.jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+    // Use default font (Helvetica) — works for English; Arabic shows as boxes
+    // but since user asked for English mode, this is fine
+    var pageW = doc.internal.pageSize.getWidth();
+    var y = 20;
+
+    // Header
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text(company, pageW / 2, y, { align: 'center' });
+    y += 8;
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100);
+    doc.text(lblTitle, pageW / 2, y, { align: 'center' });
+    y += 10;
+
+    // Meta info
+    doc.setFontSize(10);
+    doc.setTextColor(0);
+    doc.setFont('helvetica', 'bold');
+    doc.text((isEn ? 'Report No: ' : 'رقم المحضر: ') + stId, 15, y);
+    doc.text((isEn ? 'Date: ' : 'التاريخ: ') + dateStr, pageW - 15, y, { align: 'right' });
+    y += 6;
+    doc.text((isEn ? 'Counted by: ' : 'القائم بالجرد: ') + cashier, 15, y);
+    doc.text((isEn ? 'Items: ' : 'عدد الأصناف: ') + items.length, pageW - 15, y, { align: 'right' });
+    y += 10;
+
+    // Table header
+    doc.setFillColor(241, 245, 249);
+    doc.rect(15, y, pageW - 30, 8, 'F');
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(71, 85, 105);
+    doc.text('#', 18, y + 5.5);
+    doc.text(hItem, 28, y + 5.5);
+    doc.text(hSys, 110, y + 5.5);
+    doc.text(hAct, 135, y + 5.5);
+    doc.text(hVar, 160, y + 5.5);
+    y += 10;
+
+    // Table rows
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(0);
+    items.forEach(function(c, idx) {
+      if (y > 270) { doc.addPage(); y = 20; }
+      var sysQty = Number(c.sys || c.systemQty) || 0;
+      var actQty = Number(c.actual || c.actualQty) || 0;
+      var diff = actQty - sysQty;
+      var sign = diff > 0 ? '+' : '';
+
+      doc.setFontSize(9);
+      doc.setTextColor(0);
+      doc.text(String(idx + 1), 18, y);
+      doc.setFont('helvetica', 'bold');
+      doc.text(String(c.name || c.id), 28, y);
+      doc.setFont('helvetica', 'normal');
+      doc.text(sysQty.toFixed(2), 110, y);
+      doc.text(actQty.toFixed(2), 135, y);
+      // Variance color
+      if (diff < 0) doc.setTextColor(239, 68, 68);
+      else if (diff > 0) doc.setTextColor(22, 163, 74);
+      else doc.setTextColor(100);
+      doc.setFont('helvetica', 'bold');
+      doc.text(sign + diff.toFixed(2), 160, y);
+      doc.setTextColor(0);
+      doc.setFont('helvetica', 'normal');
+
+      // Row line
+      y += 2;
+      doc.setDrawColor(226, 232, 240);
+      doc.line(15, y, pageW - 15, y);
+      y += 6;
+    });
+
+    // Total variance box
+    y += 5;
+    if (totalVar < 0) { doc.setFillColor(254, 242, 242); doc.setTextColor(239, 68, 68); }
+    else { doc.setFillColor(240, 253, 244); doc.setTextColor(22, 163, 74); }
+    doc.roundedRect(15, y, pageW - 30, 12, 3, 3, 'F');
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text(lblTotal + ': ' + (totalVar >= 0 ? '+' : '') + totalVar.toFixed(2), pageW / 2, y + 8, { align: 'center' });
+
+    // Signature lines
+    y += 25;
+    doc.setTextColor(0);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    var sig1 = isEn ? 'Counted by' : 'القائم بالجرد';
+    var sig2 = isEn ? 'Warehouse Mgr' : 'مدير المستودع';
+    var sig3 = isEn ? 'General Mgr' : 'المدير العام';
+    [sig1, sig2, sig3].forEach(function(lbl, i) {
+      var x = 30 + i * 55;
+      doc.line(x - 10, y, x + 30, y);
+      doc.setTextColor(100);
+      doc.text(lbl, x + 10, y + 5, { align: 'center' });
+    });
+
+    // Generate PDF blob
+    var pdfBlob = doc.output('blob');
+    var fileName = 'Stocktake-' + stId + '.pdf';
+    var pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+
+    // Try Web Share API (works on mobile — shares to WhatsApp, email, etc.)
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+      navigator.share({
+        title: lblTitle,
+        text: lblTitle + ' - ' + stId,
+        files: [pdfFile]
+      }).catch(function() {
+        // User cancelled share — just download instead
+        doc.save(fileName);
+      });
+    } else {
+      // Fallback: download the PDF
+      doc.save(fileName);
+      glassToast(isEn ? 'PDF downloaded — share it via WhatsApp manually' : 'تم تنزيل PDF — شاركه عبر واتساب يدوياً');
+    }
+  }).catch(function(err) {
+    loader(false);
+    glassToast(err.message || 'Failed to generate PDF', true);
   });
-  lines.push('└─────────────────────┘');
-  lines.push('');
-  var varIcon = totalVar === 0 ? '✅' : (totalVar > 0 ? '📈' : '📉');
-  lines.push(varIcon + ' *' + lblTotal + ':* ' + (totalVar >= 0 ? '+' : '') + totalVar.toFixed(2));
-
-  // Send directly to WhatsApp
-  var text = encodeURIComponent(lines.join('\n'));
-  window.open('https://wa.me/?text=' + text, '_blank');
 }

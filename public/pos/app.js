@@ -1306,10 +1306,13 @@ window.selectCstItem = function(itemId) {
   var cart = _getCstCart();
   var existing = cart.find(function(c) { return c.id === item.id; });
   if (!existing) {
+    console.log('[STOCKTAKE] Adding item:', item.name, 'bigUnit:', item.bigUnit, 'convRate:', item.convRate, 'unit:', item.unit);
     cart.push({
-      id: item.id, name: item.name, unit: item.unit || '', bigUnit: item.bigUnit || '',
-      convRate: Number(item.convRate) || 1,
-      systemQty: Number(item.stock) || 0, actualQty: '', // empty = not yet counted
+      id: item.id, name: item.name,
+      unit: item.unit || '',
+      bigUnit: item.bigUnit || item.big_unit || '',
+      convRate: Number(item.convRate || item.conv_rate) || 1,
+      systemQty: Number(item.stock) || 0, actualQty: '',
       unitCost: Number(item.cost) || 0
     });
     _saveCstCart(cart);
@@ -1328,14 +1331,14 @@ function renderCstCart() {
     return;
   }
   tb.innerHTML = cart.map(function(c, i) {
-    // Supplement missing unit data from _cstAllItems (for items added before this feature)
-    if ((!c.bigUnit || !c.convRate || c.convRate <= 1) && _cstAllItems.length) {
+    // Always refresh unit data from _cstAllItems to ensure bigUnit/convRate are current
+    if (_cstAllItems.length) {
       var fresh = _cstAllItems.find(function(x) { return x.id === c.id; });
       if (fresh) {
-        if (fresh.bigUnit && !c.bigUnit) c.bigUnit = fresh.bigUnit;
-        if (fresh.convRate > 1 && (!c.convRate || c.convRate <= 1)) c.convRate = Number(fresh.convRate);
-        if (fresh.unit && !c.unit) c.unit = fresh.unit;
-        _saveCstCart(cart); // persist the fix
+        c.bigUnit = fresh.bigUnit || fresh.big_unit || c.bigUnit || '';
+        c.convRate = Number(fresh.convRate || fresh.conv_rate) || Number(c.convRate) || 1;
+        c.unit = fresh.unit || c.unit || '';
+        c.systemQty = Number(fresh.stock) || c.systemQty || 0;
       }
     }
     var cRate = Number(c.convRate) || 1;

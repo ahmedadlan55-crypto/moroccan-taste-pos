@@ -1357,9 +1357,11 @@ window.removeCstItem = function(idx) {
   cart.splice(idx, 1);
   _saveCstCart(cart);
   renderCstCart();
-  // Hide the dropdown — it will refresh next time user clicks search
-  var res = q('#cstSearchResults');
-  if (res) res.style.display = 'none';
+  // Force hide dropdown after a tick (renderCstCart may trigger focus events)
+  setTimeout(function() {
+    var res = q('#cstSearchResults');
+    if (res) res.style.display = 'none';
+  }, 50);
 };
 
 window.submitCashierStocktake = function() {

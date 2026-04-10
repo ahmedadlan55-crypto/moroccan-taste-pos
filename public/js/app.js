@@ -2065,7 +2065,7 @@ function openAdjustmentModal() {
         '</div>' +
         '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">' +
           '<div style="flex:1;min-width:200px;position:relative;">' +
-            '<input type="text" id="adjItemSearch" class="form-control" placeholder="ابحث عن مادة..." oninput="filterAdjItems()">' +
+            '<input type="text" id="adjItemSearch" class="form-control" placeholder="ابحث عن مادة..." oninput="filterAdjItems()" onfocus="filterAdjItems()">' +
             '<div id="adjSearchResults" style="position:absolute;top:100%;left:0;right:0;z-index:100;background:#fff;border:1px solid #e2e8f0;border-radius:8px;max-height:200px;overflow-y:auto;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.1);"></div>' +
           '</div>' +
           '<input type="number" id="adjQty" class="form-control" style="width:100px;" placeholder="الكمية" min="0.01" step="0.01">' +
@@ -2093,10 +2093,13 @@ var _adjSelectedItem = null;
 function filterAdjItems() {
   var search = (q('#adjItemSearch') ? q('#adjItemSearch').value : '').toLowerCase();
   var res = q('#adjSearchResults');
-  if (!res || !search) { if (res) res.style.display = 'none'; return; }
-  var matches = (state._adjAllItems || []).filter(function(i) {
-    return (i.name || '').toLowerCase().includes(search) || (i.id || '').toLowerCase().includes(search);
-  }).slice(0, 10);
+  if (!res) return;
+  var all = state._adjAllItems || [];
+  // Show all items when search is empty (on focus), filter when typing
+  var matches = search
+    ? all.filter(function(i) { return (i.name || '').toLowerCase().includes(search) || (i.id || '').toLowerCase().includes(search); })
+    : all;
+  matches = matches.slice(0, 15);
   if (!matches.length) { res.innerHTML = '<div style="padding:8px;color:#94a3b8;">لا توجد نتائج</div>'; res.style.display = 'block'; return; }
   res.innerHTML = matches.map(function(i) {
     return '<div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;" onclick="selectAdjItem(\'' + i.id + '\')">' +

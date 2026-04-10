@@ -323,9 +323,14 @@ window.onload = function() {
     try { savedRole = (JSON.parse(saved).role || '').toLowerCase(); } catch(e) {}
 
     // Cashier session → redirect straight to /pos/
-    // Admin, manager, and custody roles load the admin template.
     if (savedRole === 'cashier') {
       window.location.replace('/pos/');
+      return;
+    }
+
+    // Custody session → redirect straight to /custody/
+    if (savedRole === 'custody') {
+      window.location.replace('/custody/');
       return;
     }
 
@@ -519,12 +524,17 @@ function doLogin() {
 
     // Always save session so auto-login works on page reload
     localStorage.setItem("pos_session", JSON.stringify({ user: u, pass: p, role: state.role }));
-    localStorage.setItem("pos_last_view", state.role === 'admin' ? 'admin' : 'pos');
+    localStorage.setItem("pos_last_view", state.role === 'cashier' ? 'pos' : state.role === 'custody' ? 'custody' : 'admin');
 
     // ─── Cashier → redirect to /pos/ ───
-    // Admin, manager, and custody roles see the admin dashboard.
     if (state.role === 'cashier') {
       window.location.replace('/pos/');
+      return;
+    }
+
+    // ─── Custody → redirect to /custody/ ───
+    if (state.role === 'custody') {
+      window.location.replace('/custody/');
       return;
     }
 
@@ -612,16 +622,19 @@ function initViews() {
     return;
   }
 
-  // Custody role → show admin panel but navigate to custody section
+  // Custody role → redirect to lightweight /custody/ page
+  if (state.role === 'custody') {
+    localStorage.setItem("pos_last_view", 'custody');
+    window.location.replace('/custody/');
+    return;
+  }
+
   // Admin/Manager → show admin panel with full access
   localStorage.setItem("pos_last_view", 'admin');
   show("#adminView");
   if (q("#adminUserLabel")) q("#adminUserLabel").innerText = state.user;
 
-  if (state.role === 'custody') {
-    // Custody user → go directly to their custody section
-    nav('custodies');
-  } else {
+  {
     // Admin/manager → restore last section or default to home
     var lastSection = localStorage.getItem("pos_last_section") || 'home';
     nav(lastSection);

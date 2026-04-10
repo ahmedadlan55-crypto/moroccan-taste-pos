@@ -82,6 +82,61 @@ router.post('/create', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// ═══════════════════════════════════════
+// MY CUSTODY (شاشة مسؤول العهدة الخاصة)
+// ═══════════════════════════════════════
+
+router.get('/my-custody', async (req, res) => {
+  try {
+    const username = req.query.username;
+    if (!username) return res.json({ error: 'Username required' });
+
+    // Find custody user linked to this username
+    const [cuUsers] = await db.query('SELECT * FROM custody_users WHERE linked_username = ? AND is_active = 1', [username]);
+    if (!cuUsers.length) return res.json({ error: 'لا توجد عهدة مرتبطة بهذا المستخدم', noCustody: true });
+
+    const cuUser = cuUsers[0];
+
+    // Find the active custody for this custody user
+    const [custodies] = await db.query('SELECT * FROM custodies WHERE user_id = ? AND status = "active" ORDER BY created_at DESC LIMIT 1', [cuUser.id]);
+    if (!custodies.length) return res.json({ error: 'لا توجد عهدة نشطة', noCustody: true });
+
+    const custody = custodies[0];
+
+    // Get expenses
+    const [expenses] = await db.query('SELECT * FROM custody_expenses WHERE custody_id = ? ORDER BY created_at DESC', [custody.id]);
+
+    // Get topups
+    const [topups] = await db.query('SELECT * FROM custody_topups WHERE custody_id = ? ORDER BY created_at DESC', [custody.id]);
+
+    res.json({
+      success: true,
+      user: {
+        id: cuUser.id, name: cuUser.name, idNumber: cuUser.id_number,
+        phone: cuUser.phone, jobTitle: cuUser.job_title
+      },
+      custody: {
+        id: custody.id, custodyNumber: custody.custody_number, userName: custody.user_name,
+        createdDate: custody.created_date, balance: Number(custody.balance),
+        totalTopups: Number(custody.total_topups), totalExpenses: Number(custody.total_expenses),
+        status: custody.status
+      },
+      expenses: expenses.map(e => ({
+        id: e.id, expenseDate: e.expense_date, description: e.description,
+        amount: Number(e.amount), hasVat: e.has_vat, vatRate: Number(e.vat_rate),
+        vatAmount: Number(e.vat_amount), totalWithVat: Number(e.total_with_vat),
+        invoiceImage: e.invoice_image, notes: e.notes, status: e.status,
+        rejectionReason: e.rejection_reason, createdBy: e.created_by,
+        approvedBy: e.approved_by, approvedAt: e.approved_at
+      })),
+      topups: topups.map(t => ({
+        id: t.id, amount: Number(t.amount), paymentMethod: t.payment_method,
+        notes: t.notes, createdAt: t.created_at
+      }))
+    });
+  } catch (e) { res.json({ error: e.message }); }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const [custs] = await db.query('SELECT * FROM custodies WHERE id = ?', [req.params.id]);

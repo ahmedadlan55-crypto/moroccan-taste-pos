@@ -163,4 +163,238 @@ router.post('/bulk-delete', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// ═══════════════════════════════════════
+// ADVANCED FULL REPORT (التقارير المتطورة)
+// ═══════════════════════════════════════
+
+router.get('/report/advanced', async (req, res) => {
+  try {
+    const { startDate, endDate, username, paymentMethod } = req.query;
+
+    // Build WHERE clause for sales
+    let salesWhere = '1=1';
+    const salesParams = [];
+    if (startDate) { salesWhere += ' AND DATE(order_date) >= ?'; salesParams.push(startDate); }
+    if (endDate)   { salesWhere += ' AND DATE(order_date) <= ?'; salesParams.push(endDate); }
+    if (username)  { salesWhere += ' AND username = ?'; salesParams.push(username); }
+    if (paymentMethod) { salesWhere += ' AND LOWER(payment_method) LIKE ?'; salesParams.push('%' + paymentMethod.toLowerCase() + '%'); }
+
+    // 1) Fetch all sales in range (we need rows for payment parsing + product detail)
+    const [allSales] = await db.query(
+      `SELECT id, order_date, items_json, total_final, payment_method, username,
+              discount_name, discount_amount, kita_service_fee
+       FROM sales WHERE ${salesWhere} ORDER BY order_date`, salesParams
+    );
+
+    // ── Aggregate stats ──
+    let totalSales = 0, totalDiscount = 0, totalKitaFees = 0;
+    const orderCount = allSales.length;
+    allSales.forEach(s => {
+      totalSales += Number(s.total_final) || 0;
+      totalDiscount += Number(s.discount_amount) || 0;
+      totalKitaFees += Number(s.kita_service_fee) || 0;
+    });
+
+    // ── Payment method breakdown (supports split: "cash:100/card:50") ──
+    const pay = { cash: { total: 0, count: 0 }, card: { total: 0, count: 0 }, kita: { total: 0, count: 0 } };
+
+    function addPayment(method, amount) {
+      const m = method.toLowerCase().trim();
+      if (m.includes('kita'))      { pay.kita.total += amount; pay.kita.count++; }
+      else if (m.includes('card') || m.includes('mada') || m.includes('شبكة') || m.includes('مدى'))
+                                   { pay.card.total += amount; pay.card.count++; }
+      else                         { pay.cash.total += amount; pay.cash.count++; }
+    }
+
+    allSales.forEach(s => {
+      const pm = (s.payment_method || 'cash').trim();
+      const total = Number(s.total_final) || 0;
+      // Check for split payment format: "cash:100/card:50"
+      if (pm.includes('/') && pm.includes(':')) {
+        pm.split('/').forEach(part => {
+          const [method, amt] = part.split(':');
+          if (method && amt) addPayment(method, Number(amt) || 0);
+        });
+      } else {
+        addPayment(pm, total);
+      }
+    });
+
+    // ── Charts data ──
+
+    // Sales by day
+    const dayMap = {};
+    allSales.forEach(s => {
+      const d = new Date(s.order_date);
+      const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      dayMap[key] = (dayMap[key] || 0) + (Number(s.total_final) || 0);
+    });
+    const salesByDay = Object.entries(dayMap).sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([label, value]) => ({ label, value }));
+
+    // Sales by hour
+    const hourMap = {};
+    for (let i = 0; i < 24; i++) hourMap[i] = 0;
+    allSales.forEach(s => {
+      const h = new Date(s.order_date).getHours();
+      hourMap[h] += Number(s.total_final) || 0;
+    });
+    const salesByHour = Object.entries(hourMap).map(([h, value]) => ({ label: h + ':00', value }));
+
+    // Sales by cashier
+    const cashierMap = {};
+    allSales.forEach(s => {
+      const u = s.username || 'unknown';
+      if (!cashierMap[u]) cashierMap[u] = { total: 0, count: 0, cash: 0, card: 0, kita: 0 };
+      cashierMap[u].total += Number(s.total_final) || 0;
+      cashierMap[u].count++;
+      // Payment breakdown per cashier
+      const pm = (s.payment_method || 'cash').trim();
+      const amt = Number(s.total_final) || 0;
+      if (pm.includes('/') && pm.includes(':')) {
+        pm.split('/').forEach(part => {
+          const [method, a] = part.split(':');
+          const val = Number(a) || 0;
+          const ml = (method || '').toLowerCase();
+          if (ml.includes('kita')) cashierMap[u].kita += val;
+          else if (ml.includes('card') || ml.includes('mada')) cashierMap[u].card += val;
+          else cashierMap[u].cash += val;
+        });
+      } else {
+        const ml = pm.toLowerCase();
+        if (ml.includes('kita')) cashierMap[u].kita += amt;
+        else if (ml.includes('card') || ml.includes('mada') || ml.includes('شبكة') || ml.includes('مدى')) cashierMap[u].card += amt;
+        else cashierMap[u].cash += amt;
+      }
+    });
+    const salesByCashier = Object.entries(cashierMap)
+      .sort((a, b) => b[1].total - a[1].total)
+      .map(([label, v]) => ({ label, value: v.total }));
+
+    // Top products (from items_json)
+    const prodMap = {}; // name → {qty, revenue, orders}
+    allSales.forEach(s => {
+      try {
+        const items = JSON.parse(s.items_json || '[]');
+        const orderProducts = new Set();
+        items.forEach(item => {
+          const name = item.name || 'Unknown';
+          if (!prodMap[name]) prodMap[name] = { qty: 0, revenue: 0, orders: 0 };
+          prodMap[name].qty += Number(item.qty) || 0;
+          prodMap[name].revenue += (Number(item.qty) || 0) * (Number(item.price) || 0);
+          orderProducts.add(name);
+        });
+        orderProducts.forEach(n => { prodMap[n].orders++; });
+      } catch (e) { /* ignore parse errors */ }
+    });
+    const topProducts = Object.entries(prodMap)
+      .sort((a, b) => b[1].qty - a[1].qty)
+      .slice(0, 5)
+      .map(([label, v]) => ({ label, value: v.qty }));
+
+    // ── Tables data ──
+
+    // Daily detail
+    const dailyMap = {};
+    allSales.forEach(s => {
+      const d = new Date(s.order_date);
+      const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      if (!dailyMap[key]) dailyMap[key] = { date: key, cash: 0, card: 0, kita: 0, total: 0, orders: 0, discount: 0 };
+      dailyMap[key].total += Number(s.total_final) || 0;
+      dailyMap[key].orders++;
+      dailyMap[key].discount += Number(s.discount_amount) || 0;
+      // Payment breakdown per day
+      const pm = (s.payment_method || 'cash').trim();
+      const amt = Number(s.total_final) || 0;
+      if (pm.includes('/') && pm.includes(':')) {
+        pm.split('/').forEach(part => {
+          const [method, a] = part.split(':');
+          const val = Number(a) || 0;
+          const ml = (method || '').toLowerCase();
+          if (ml.includes('kita')) dailyMap[key].kita += val;
+          else if (ml.includes('card') || ml.includes('mada')) dailyMap[key].card += val;
+          else dailyMap[key].cash += val;
+        });
+      } else {
+        const ml = pm.toLowerCase();
+        if (ml.includes('kita')) dailyMap[key].kita += amt;
+        else if (ml.includes('card') || ml.includes('mada') || ml.includes('شبكة') || ml.includes('مدى')) dailyMap[key].card += amt;
+        else dailyMap[key].cash += amt;
+      }
+    });
+    const dailyDetail = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date));
+
+    // Cashier detail
+    const cashierDetail = Object.entries(cashierMap)
+      .sort((a, b) => b[1].total - a[1].total)
+      .map(([name, v]) => ({ name, cash: v.cash, card: v.card, kita: v.kita, total: v.total, orders: v.count }));
+
+    // Product detail (all products, sorted by qty)
+    const productDetail = Object.entries(prodMap)
+      .sort((a, b) => b[1].qty - a[1].qty)
+      .map(([name, v]) => ({ name, qty: v.qty, revenue: v.revenue, orders: v.orders }));
+
+    // ── Expenses by category (date filters only) ──
+    let expWhere = '1=1';
+    const expParams = [];
+    if (startDate) { expWhere += ' AND DATE(expense_date) >= ?'; expParams.push(startDate); }
+    if (endDate)   { expWhere += ' AND DATE(expense_date) <= ?'; expParams.push(endDate); }
+
+    const [expRows] = await db.query(
+      `SELECT category, SUM(amount) AS total, COUNT(*) AS cnt FROM expenses
+       WHERE ${expWhere} GROUP BY category ORDER BY total DESC`, expParams
+    );
+    const expensesByCategory = expRows.map(r => ({ category: r.category || 'أخرى', total: Number(r.total), count: r.cnt }));
+    const totalExp = expensesByCategory.reduce((sum, e) => sum + e.total, 0);
+
+    // ── Purchases by supplier (date filters only, received only) ──
+    let purWhere = "status = 'received'";
+    const purParams = [];
+    if (startDate) { purWhere += ' AND DATE(purchase_date) >= ?'; purParams.push(startDate); }
+    if (endDate)   { purWhere += ' AND DATE(purchase_date) <= ?'; purParams.push(endDate); }
+
+    const [purRows] = await db.query(
+      `SELECT supplier_name, SUM(total_price) AS total, COUNT(*) AS cnt FROM purchases
+       WHERE ${purWhere} GROUP BY supplier_name ORDER BY total DESC`, purParams
+    );
+    const purchasesBySupplier = purRows.map(r => ({ supplier: r.supplier_name || 'غير محدد', total: Number(r.total), count: r.cnt }));
+    const totalPur = purchasesBySupplier.reduce((sum, p) => sum + p.total, 0);
+
+    // ── Computed stats ──
+    const activeDays = salesByDay.length || 1;
+    const avgOrderValue = orderCount > 0 ? totalSales / orderCount : 0;
+    const avgDailyRevenue = totalSales / activeDays;
+    const netProfit = totalSales - totalExp - totalPur;
+    const profitMargin = totalSales > 0 ? ((netProfit / totalSales) * 100).toFixed(1) : '0.0';
+
+    // ── Sales list for Excel export ──
+    const salesList = allSales.map(s => ({
+      orderId: s.id,
+      date: s.order_date,
+      username: s.username,
+      paymentMethod: s.payment_method,
+      discountName: s.discount_name || '',
+      discountAmount: Number(s.discount_amount) || 0,
+      total: Number(s.total_final) || 0
+    }));
+
+    res.json({
+      success: true,
+      stats: {
+        totalSales, totalExp, totalPur, totalDiscount, totalKitaFees,
+        orderCount, activeDays, avgOrderValue, avgDailyRevenue,
+        netProfit, profitMargin
+      },
+      payments: pay,
+      charts: { salesByDay, salesByHour, salesByCashier, topProducts },
+      tables: { dailyDetail, cashierDetail, productDetail, expensesByCategory, purchasesBySupplier },
+      salesList
+    });
+
+  } catch (e) {
+    console.error('[REPORT] Advanced report error:', e.message);
+    res.json({ success: false, error: e.message });
+  }
+});
+
 module.exports = router;

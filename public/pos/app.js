@@ -1324,45 +1324,37 @@ function renderCstCart() {
   var tb = q('#cstBody');
   if (!tb) return;
   if (!cart.length) {
-    tb.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:24px;"><i class="fas fa-clipboard-list" style="font-size:28px;margin-bottom:8px;display:block;opacity:0.3;"></i>' + t('stEmptyHint') + '</td></tr>';
+    tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:24px;"><i class="fas fa-clipboard-list" style="font-size:28px;margin-bottom:8px;display:block;opacity:0.3;"></i>' + t('stEmptyHint') + '</td></tr>';
     return;
   }
   tb.innerHTML = cart.map(function(c, i) {
     var cRate = Number(c.convRate) || 1;
     var hasBig = c.bigUnit && cRate > 1;
-    // System qty display: show in both units if has big
-    var sysDisplay = hasBig
-      ? Math.floor(c.systemQty / cRate) + ' ' + c.bigUnit + ' + ' + (c.systemQty % cRate).toFixed(0) + ' ' + (c.unit||'')
-      : c.systemQty.toFixed(2) + ' ' + (c.unit||'');
-    // Actual qty: stored as total small units. Split into big + small for display
     var actualSmall = c.actualQty === '' || c.actualQty === null ? '' : Number(c.actualQty);
-    var bigVal = c._bigInput !== undefined ? c._bigInput : (actualSmall !== '' && hasBig ? Math.floor(actualSmall / cRate) : '');
-    var smallVal = c._smallInput !== undefined ? c._smallInput : (actualSmall !== '' ? (hasBig ? Math.round(actualSmall % cRate) : actualSmall) : '');
+    var bigVal = c._bigInput !== undefined ? c._bigInput : '';
+    var smallVal = c._smallInput !== undefined ? c._smallInput : (actualSmall !== '' && !hasBig ? actualSmall : '');
     var diff = actualSmall === '' ? '' : (Number(actualSmall) - c.systemQty);
     var diffHtml = diff === '' ? '<span style="color:#94a3b8;">—</span>'
       : (diff === 0 ? '<span style="color:#64748b;">0</span>'
         : (diff > 0 ? '<span style="color:#16a34a;">+' + diff.toFixed(2) + '</span>'
           : '<span style="color:#ef4444;">' + diff.toFixed(2) + '</span>'));
-    // Input boxes: big + small side by side
-    var inputHtml = '';
-    if (hasBig) {
-      inputHtml =
-        '<div style="display:flex;gap:3px;align-items:center;justify-content:center;">' +
-          '<input type="number" min="0" step="1" class="form-control glass-input" style="width:45px;padding:4px;text-align:center;font-weight:800;font-size:13px;" value="' + (bigVal === '' ? '' : bigVal) + '" oninput="updateCstDual(' + i + ',this.value,null)" placeholder="0">' +
-          '<span style="font-size:9px;color:#64748b;">' + c.bigUnit + '</span>' +
-          '<input type="number" min="0" step="1" class="form-control glass-input" style="width:45px;padding:4px;text-align:center;font-weight:800;font-size:13px;" value="' + (smallVal === '' ? '' : smallVal) + '" oninput="updateCstDual(' + i + ',null,this.value)" placeholder="0">' +
-          '<span style="font-size:9px;color:#64748b;">' + (c.unit||'') + '</span>' +
-        '</div>';
-    } else {
-      inputHtml = '<input type="number" step="0.01" min="0" class="form-control glass-input" style="width:80px;margin:0 auto;padding:6px;text-align:center;font-weight:800;" value="' + (smallVal === '' ? '' : smallVal) + '" oninput="updateCstDual(' + i + ',null,this.value)" placeholder="—">';
-    }
-    return '<tr>' +
-      '<td style="font-weight:700;font-size:12px;">' + c.name + '</td>' +
-      '<td style="text-align:center;font-size:11px;color:var(--primary);font-weight:600;">' + sysDisplay + '</td>' +
-      '<td style="text-align:center;">' + inputHtml + '</td>' +
-      '<td style="text-align:center;font-weight:900;">' + diffHtml + '</td>' +
-      '<td style="text-align:center;"><button class="btn-remove" onclick="removeCstItem(' + i + ')"><i class="fas fa-trash"></i></button></td>' +
-    '</tr>';
+    // Column 1: المادة
+    var nameCell = '<td style="font-weight:700;font-size:12px;">' + c.name + '</td>';
+    // Column 2: الكبرى — input or dash
+    var bigCell = hasBig
+      ? '<td style="text-align:center;"><input type="number" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (bigVal === '' ? '' : bigVal) + '" oninput="updateCstDual(' + i + ',this.value,null)" placeholder="0"><div style="font-size:9px;color:#94a3b8;margin-top:2px;">' + c.bigUnit + '</div></td>'
+      : '<td style="text-align:center;color:#e2e8f0;">—</td>';
+    // Column 3: الصغرى — always has input
+    var smallCell = '<td style="text-align:center;"><input type="number" min="0" step="0.01" class="form-control glass-input" style="width:60px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (smallVal === '' ? '' : smallVal) + '" oninput="updateCstDual(' + i + ',null,this.value)" placeholder="0"></td>';
+    // Column 4: الوحدة
+    var unitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (c.unit || '') + '</td>';
+    // Column 5: النظام
+    var sysCell = '<td style="text-align:center;font-weight:600;color:var(--primary);font-size:12px;">' + c.systemQty.toFixed(2) + '</td>';
+    // Column 6: التباين
+    var diffCell = '<td style="text-align:center;font-weight:900;">' + diffHtml + '</td>';
+    // Column 7: حذف
+    var delCell = '<td style="text-align:center;"><button class="btn-remove" onclick="removeCstItem(' + i + ')"><i class="fas fa-trash"></i></button></td>';
+    return '<tr>' + nameCell + bigCell + smallCell + unitCell + sysCell + diffCell + delCell + '</tr>';
   }).join('');
 }
 

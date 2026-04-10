@@ -60,7 +60,15 @@ const q = s => document.querySelector(s);
 const qs = s => document.querySelectorAll(s);
 const show = id => { const el = q(id); if (el) el.classList.remove("hidden"); };
 const hide = id => { const el = q(id); if (el) el.classList.add("hidden"); };
-const formatVal = v => Number(v || 0).toFixed(2);
+// Smart formatting: show up to 4 decimal places for tiny costs (< 1),
+// 2 decimals for normal prices. Never shows "0.00" when the value is 0.0035.
+const formatVal = v => {
+  var n = Number(v || 0);
+  if (n === 0) return '0.00';
+  if (Math.abs(n) < 0.01) return n.toFixed(4);
+  if (Math.abs(n) < 1) return n.toFixed(3);
+  return n.toFixed(2);
+};
 
 // ─── Local-date helper ───
 // Returns "YYYY-MM-DD" in the user's LOCAL timezone (not UTC).

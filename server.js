@@ -119,8 +119,10 @@ async function runMigrations() {
   await addColumnIfMissing('po_lines', 'conv_rate', "DECIMAL(10,2) DEFAULT 1");
   await addColumnIfMissing('po_lines', 'unit_type', "VARCHAR(10) DEFAULT 'small'");
 
-  // Menu — pricing system columns
+  // Menu — pricing system columns + fix cost precision
   await addColumnIfMissing('menu', 'computed_cost', "DECIMAL(10,4) DEFAULT 0");
+  // Upgrade menu.cost from DECIMAL(10,2) to DECIMAL(10,4) for tiny ingredient costs
+  try { await db.query("ALTER TABLE menu MODIFY COLUMN cost DECIMAL(10,4) DEFAULT 0"); } catch(e) {}
   await addColumnIfMissing('menu', 'pricing_mode', "VARCHAR(20) DEFAULT 'fixed'");
   await addColumnIfMissing('menu', 'markup_pct', "DECIMAL(5,2) DEFAULT 30");
 

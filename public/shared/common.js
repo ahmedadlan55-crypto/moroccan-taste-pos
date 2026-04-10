@@ -24,7 +24,13 @@ window.q = function(s) { return document.querySelector(s); };
 window.qs = function(s) { return document.querySelectorAll(s); };
 window.show = function(id) { var el = q(id); if (el) el.classList.remove('hidden'); };
 window.hide = function(id) { var el = q(id); if (el) el.classList.add('hidden'); };
-window.formatVal = function(v) { return Number(v || 0).toFixed(2); };
+window.formatVal = function(v) {
+  var n = Number(v || 0);
+  if (n === 0) return '0.00';
+  if (Math.abs(n) < 0.01) return n.toFixed(4);
+  if (Math.abs(n) < 1) return n.toFixed(3);
+  return n.toFixed(2);
+};
 
 // ─── Locales Dictionary ───
 window.dict = {

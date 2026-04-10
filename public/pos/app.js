@@ -1330,46 +1330,67 @@ function renderCstCart() {
   tb.innerHTML = cart.map(function(c, i) {
     var cRate = Number(c.convRate) || 1;
     var hasBig = c.bigUnit && cRate > 1;
-    var usesBig = c.unitMode === 'big';
-    // System qty display: convert if user chose big unit
-    var sysDisplay = usesBig ? (c.systemQty / cRate).toFixed(2) : c.systemQty.toFixed(2);
-    var unitLabel = usesBig ? c.bigUnit : (c.unit || '');
-    // Actual qty: stored in small units internally
+    // System qty display: show in both units if has big
+    var sysDisplay = hasBig
+      ? Math.floor(c.systemQty / cRate) + ' ' + c.bigUnit + ' + ' + (c.systemQty % cRate).toFixed(0) + ' ' + (c.unit||'')
+      : c.systemQty.toFixed(2) + ' ' + (c.unit||'');
+    // Actual qty: stored as total small units. Split into big + small for display
     var actualSmall = c.actualQty === '' || c.actualQty === null ? '' : Number(c.actualQty);
-    var actualDisplay = actualSmall === '' ? '' : (usesBig ? (actualSmall / cRate) : actualSmall);
+    var bigVal = c._bigInput !== undefined ? c._bigInput : (actualSmall !== '' && hasBig ? Math.floor(actualSmall / cRate) : '');
+    var smallVal = c._smallInput !== undefined ? c._smallInput : (actualSmall !== '' ? (hasBig ? Math.round(actualSmall % cRate) : actualSmall) : '');
     var diff = actualSmall === '' ? '' : (Number(actualSmall) - c.systemQty);
     var diffHtml = diff === '' ? '<span style="color:#94a3b8;">—</span>'
       : (diff === 0 ? '<span style="color:#64748b;">0</span>'
         : (diff > 0 ? '<span style="color:#16a34a;">+' + diff.toFixed(2) + '</span>'
           : '<span style="color:#ef4444;">' + diff.toFixed(2) + '</span>'));
-    // Unit toggle button
-    var unitToggle = hasBig
-      ? '<button class="btn-remove" style="font-size:10px;padding:2px 6px;background:' + (usesBig ? '#dbeafe' : '#f1f5f9') + ';color:' + (usesBig ? '#1e40af' : '#64748b') + ';border:1px solid #e2e8f0;border-radius:6px;cursor:pointer;" onclick="toggleCstUnit(' + i + ')">' + unitLabel + '</button>'
-      : '<span style="font-size:10px;color:#94a3b8;">' + unitLabel + '</span>';
+    // Input boxes: big + small side by side
+    var inputHtml = '';
+    if (hasBig) {
+      inputHtml =
+        '<div style="display:flex;gap:3px;align-items:center;justify-content:center;">' +
+          '<input type="number" min="0" step="1" class="form-control glass-input" style="width:45px;padding:4px;text-align:center;font-weight:800;font-size:13px;" value="' + (bigVal === '' ? '' : bigVal) + '" oninput="updateCstDual(' + i + ',this.value,null)" placeholder="0">' +
+          '<span style="font-size:9px;color:#64748b;">' + c.bigUnit + '</span>' +
+          '<input type="number" min="0" step="1" class="form-control glass-input" style="width:45px;padding:4px;text-align:center;font-weight:800;font-size:13px;" value="' + (smallVal === '' ? '' : smallVal) + '" oninput="updateCstDual(' + i + ',null,this.value)" placeholder="0">' +
+          '<span style="font-size:9px;color:#64748b;">' + (c.unit||'') + '</span>' +
+        '</div>';
+    } else {
+      inputHtml = '<input type="number" step="0.01" min="0" class="form-control glass-input" style="width:80px;margin:0 auto;padding:6px;text-align:center;font-weight:800;" value="' + (smallVal === '' ? '' : smallVal) + '" oninput="updateCstDual(' + i + ',null,this.value)" placeholder="—">';
+    }
     return '<tr>' +
-      '<td style="font-weight:700;font-size:13px;">' + c.name + '<div style="margin-top:2px;">' + unitToggle + '</div></td>' +
-      '<td style="text-align:center;font-weight:600;color:var(--primary);">' + sysDisplay + '</td>' +
-      '<td style="text-align:center;"><input type="number" step="0.01" min="0" class="form-control glass-input" style="width:80px;margin:0 auto;padding:6px;text-align:center;font-weight:800;" value="' + (actualDisplay === '' ? '' : actualDisplay) + '" oninput="updateCstActual(' + i + ',this.value)" placeholder="—"></td>' +
+      '<td style="font-weight:700;font-size:12px;">' + c.name + '</td>' +
+      '<td style="text-align:center;font-size:11px;color:var(--primary);font-weight:600;">' + sysDisplay + '</td>' +
+      '<td style="text-align:center;">' + inputHtml + '</td>' +
       '<td style="text-align:center;font-weight:900;">' + diffHtml + '</td>' +
       '<td style="text-align:center;"><button class="btn-remove" onclick="removeCstItem(' + i + ')"><i class="fas fa-trash"></i></button></td>' +
     '</tr>';
   }).join('');
 }
 
-window.updateCstActual = function(idx, val) {
+// Update stocktake from dual inputs (big qty + small qty)
+window.updateCstDual = function(idx, bigVal, smallVal) {
   var cart = _getCstCart();
   if (!cart[idx]) return;
-  if (val === '' || val === null) {
+  var cRate = Number(cart[idx].convRate) || 1;
+  var hasBig = cart[idx].bigUnit && cRate > 1;
+
+  // Preserve the other input's value
+  if (bigVal !== null) cart[idx]._bigInput = bigVal === '' ? '' : Number(bigVal);
+  if (smallVal !== null) cart[idx]._smallInput = smallVal === '' ? '' : Number(smallVal);
+
+  var b = Number(cart[idx]._bigInput) || 0;
+  var s = Number(cart[idx]._smallInput) || 0;
+
+  // If both empty, mark as uncounted
+  if ((cart[idx]._bigInput === '' || cart[idx]._bigInput === undefined) &&
+      (cart[idx]._smallInput === '' || cart[idx]._smallInput === undefined)) {
     cart[idx].actualQty = '';
   } else {
-    var num = Number(val);
-    var cRate = Number(cart[idx].convRate) || 1;
-    // If user is entering in big units, convert to small for storage
-    cart[idx].actualQty = cart[idx].unitMode === 'big' && cRate > 1 ? num * cRate : num;
+    cart[idx].actualQty = hasBig ? (b * cRate) + s : s;
   }
   _saveCstCart(cart);
-  // Don't re-render (causes input focus loss) — just update the diff cell
-  var row = q('#cstBody').children[idx];
+
+  // Update diff cell without re-rendering (keeps focus)
+  var row = q('#cstBody') && q('#cstBody').children[idx];
   if (row) {
     var diff = cart[idx].actualQty === '' ? '' : (Number(cart[idx].actualQty) - cart[idx].systemQty);
     var cell = row.querySelector('td:nth-child(4)');
@@ -1380,16 +1401,6 @@ window.updateCstActual = function(idx, val) {
             : '<span style="color:#ef4444;">' + diff.toFixed(2) + '</span>'));
     }
   }
-};
-
-window.toggleCstUnit = function(idx) {
-  var cart = _getCstCart();
-  if (!cart[idx]) return;
-  cart[idx].unitMode = cart[idx].unitMode === 'big' ? 'small' : 'big';
-  // Clear actual qty when switching units to avoid confusion
-  cart[idx].actualQty = '';
-  _saveCstCart(cart);
-  renderCstCart();
 };
 
 window.removeCstItem = function(idx) {

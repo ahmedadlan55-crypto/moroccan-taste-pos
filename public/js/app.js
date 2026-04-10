@@ -2125,13 +2125,21 @@ function openAdjustmentModal() {
             '<select id="adjReason" class="form-control"><option value="damaged">تالف</option><option value="admin">إداري</option><option value="settlement">تسويات</option></select></div>' +
           '<div class="form-group"><label class="form-label">ملاحظات</label><input type="text" id="adjNotes" class="form-control" placeholder="تفاصيل إضافية..."></div>' +
         '</div>' +
-        '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">' +
+        '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:flex-end;">' +
           '<div style="flex:1;min-width:200px;position:relative;">' +
+            '<label style="font-size:11px;color:#64748b;font-weight:600;">المادة</label>' +
             '<input type="text" id="adjItemSearch" class="form-control" placeholder="ابحث عن مادة..." oninput="filterAdjItems()" onfocus="filterAdjItems()">' +
             '<div id="adjSearchResults" style="position:absolute;top:100%;left:0;right:0;z-index:100;background:#fff;border:1px solid #e2e8f0;border-radius:8px;max-height:200px;overflow-y:auto;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.1);"></div>' +
           '</div>' +
-          '<input type="number" id="adjQty" class="form-control" style="width:100px;" placeholder="الكمية" min="0.01" step="0.01">' +
-          '<button class="btn btn-danger" onclick="addAdjItem()"><i class="fas fa-plus"></i> إضافة</button>' +
+          '<div id="adjBigQtyGroup" style="display:none;">' +
+            '<label style="font-size:11px;color:#64748b;font-weight:600;" id="adjBigLabel">كبرى</label>' +
+            '<input type="number" id="adjQtyBig" class="form-control" style="width:70px;" placeholder="0" min="0" step="1">' +
+          '</div>' +
+          '<div>' +
+            '<label style="font-size:11px;color:#64748b;font-weight:600;" id="adjSmallLabel">الكمية</label>' +
+            '<input type="number" id="adjQty" class="form-control" style="width:80px;" placeholder="0" min="0" step="0.01">' +
+          '</div>' +
+          '<button class="btn btn-danger" style="height:40px;" onclick="addAdjItem()"><i class="fas fa-plus"></i></button>' +
         '</div>' +
         '<div class="table-wrapper" style="max-height:300px;overflow-y:auto;">' +
           '<table class="table" style="font-size:13px;"><thead><tr><th>المادة</th><th>الوحدة</th><th>الكمية المخصومة</th><th>تكلفة الوحدة</th><th>إجمالي التكلفة</th><th>المخزون قبل</th><th>المخزون بعد</th><th></th></tr></thead>' +
@@ -2175,29 +2183,42 @@ function filterAdjItems() {
 
 function selectAdjItem(itemId) {
   _adjSelectedItem = (state._adjAllItems || []).find(function(i) { return i.id === itemId; });
-  if (q('#adjItemSearch') && _adjSelectedItem) q('#adjItemSearch').value = _adjSelectedItem.name;
+  if (!_adjSelectedItem) return;
+  if (q('#adjItemSearch')) q('#adjItemSearch').value = _adjSelectedItem.name;
   if (q('#adjSearchResults')) q('#adjSearchResults').style.display = 'none';
-  if (q('#adjQty')) q('#adjQty').focus();
+  // Show big unit field if item has one
+  var hasBig = _adjSelectedItem.bigUnit && Number(_adjSelectedItem.convRate) > 1;
+  var bigGroup = q('#adjBigQtyGroup');
+  if (bigGroup) bigGroup.style.display = hasBig ? '' : 'none';
+  if (q('#adjBigLabel')) q('#adjBigLabel').textContent = _adjSelectedItem.bigUnit || '';
+  if (q('#adjSmallLabel')) q('#adjSmallLabel').textContent = _adjSelectedItem.unit || 'حبة';
+  if (q('#adjQtyBig')) q('#adjQtyBig').value = '';
+  if (q('#adjQty')) { q('#adjQty').value = ''; q('#adjQty').focus(); }
 }
 
 function addAdjItem() {
   if (!_adjSelectedItem) return showToast('اختر مادة أولاً', true);
-  var qty = Number(q('#adjQty') ? q('#adjQty').value : 0);
-  if (qty <= 0) return showToast('أدخل كمية صحيحة', true);
-  // Prevent duplicates
   if (_adjCart.find(function(c) { return c.id === _adjSelectedItem.id; })) {
     return showToast('هذه المادة موجودة بالفعل في المحضر', true);
   }
   var i = _adjSelectedItem;
-  var stockBefore = Number(i.stock) || 0;
   var cRate = Number(i.convRate) || 1;
+  var bigQty = Number(q('#adjQtyBig') ? q('#adjQtyBig').value : 0) || 0;
+  var smallQty = Number(q('#adjQty') ? q('#adjQty').value : 0) || 0;
+  // Total in small units: (bigQty × convRate) + smallQty
+  var totalSmall = (bigQty * cRate) + smallQty;
+  if (totalSmall <= 0) return showToast('أدخل كمية صحيحة', true);
+  var stockBefore = Number(i.stock) || 0;
   _adjCart.push({
     id: i.id, name: i.name, unit: i.unit || '', bigUnit: i.bigUnit || '', convRate: cRate,
-    qty: qty, unitCost: Number(i.cost) || 0, stockBefore: stockBefore
+    qty: totalSmall, bigQtyEntered: bigQty, smallQtyEntered: smallQty,
+    unitCost: Number(i.cost) || 0, stockBefore: stockBefore
   });
   _adjSelectedItem = null;
   if (q('#adjItemSearch')) q('#adjItemSearch').value = '';
   if (q('#adjQty')) q('#adjQty').value = '';
+  if (q('#adjQtyBig')) q('#adjQtyBig').value = '';
+  if (q('#adjBigQtyGroup')) q('#adjBigQtyGroup').style.display = 'none';
   renderAdjCart();
 }
 
@@ -2214,15 +2235,24 @@ function renderAdjCart() {
     var lineCost = c.qty * c.unitCost;
     total += lineCost;
     var after = c.stockBefore - c.qty;
+    // Display entered qty nicely: "1 كرتون + 50 حبة" if both entered
+    var qtyDisplay = '';
+    if (c.bigQtyEntered > 0 && c.smallQtyEntered > 0) {
+      qtyDisplay = c.bigQtyEntered + ' ' + (c.bigUnit||'') + ' + ' + c.smallQtyEntered + ' ' + (c.unit||'');
+    } else if (c.bigQtyEntered > 0) {
+      qtyDisplay = c.bigQtyEntered + ' ' + (c.bigUnit||'');
+    } else {
+      qtyDisplay = c.qty + ' ' + (c.unit||'');
+    }
     return '<tr>' +
       '<td style="font-weight:700;">' + c.name + '</td>' +
-      '<td>' + c.unit + '</td>' +
-      '<td style="text-align:center;font-weight:800;color:#ef4444;">' + c.qty + '</td>' +
+      '<td style="text-align:center;font-weight:800;color:#ef4444;">' + qtyDisplay + '</td>' +
+      '<td style="text-align:center;font-size:11px;color:#64748b;">(' + c.qty.toFixed(2) + ' ' + (c.unit||'') + ')</td>' +
       '<td style="text-align:center;">' + formatVal(c.unitCost) + '</td>' +
       '<td style="text-align:center;font-weight:800;color:#ef4444;">' + formatVal(lineCost) + '</td>' +
       '<td style="text-align:center;">' + c.stockBefore.toFixed(2) + '</td>' +
       '<td style="text-align:center;font-weight:800;color:' + (after < 0 ? '#ef4444' : '#16a34a') + ';">' + (after < 0 ? 0 : after).toFixed(2) + '</td>' +
-      '<td><button class="btn btn-danger btn-sm" onclick="_adjCart.splice(' + idx + ',1);renderAdjCart();"><i class="fas fa-trash"></i></button></td>' +
+      '<td><button class="btn btn-danger btn-sm" onclick="_adjCart.splice(' + idx + ',1);renderAdjCart();filterAdjItems();"><i class="fas fa-trash"></i></button></td>' +
     '</tr>';
   }).join('');
   if (q('#adjTotalRow')) q('#adjTotalRow').innerHTML = 'إجمالي تكلفة التالف/التعديل: <span style="font-size:20px;">' + formatVal(total) + ' SAR</span>';

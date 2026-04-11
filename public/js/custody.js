@@ -360,12 +360,16 @@ window.loadCustodyApprovals = function() {
 
 window._pendingExpImages = {};
 window.viewCustodyImage = function(expId) {
-  // Fetch image from the pending list cache or API
   api.withSuccessHandler(function(list) {
     var exp = (list || []).find(function(e) { return e.id === expId; });
     if (exp && exp.invoiceImage) {
+      var isPdf = exp.invoiceImage.indexOf('application/pdf') !== -1;
       var w = window.open('', '_blank');
-      w.document.write('<html><body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#000;"><img src="' + exp.invoiceImage + '" style="max-width:100%;max-height:100vh;object-fit:contain;"></body></html>');
+      if (isPdf) {
+        w.document.write('<html><body style="margin:0;"><embed src="' + exp.invoiceImage + '" type="application/pdf" style="width:100%;height:100vh;"></body></html>');
+      } else {
+        w.document.write('<html><body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#000;"><img src="' + exp.invoiceImage + '" style="max-width:100%;max-height:100vh;object-fit:contain;"></body></html>');
+      }
       w.document.close();
     } else showToast('لا توجد صورة', true);
   }).getCustodyPending();
@@ -494,11 +498,22 @@ window.printCustodyPDF = function() {
   var rows = (data.expenses || []).map(function(e, i) {
     return '<tr><td>' + (i+1) + '</td><td>' + (e.date ? new Date(e.date).toLocaleDateString('en-GB') : '') + '</td><td style="font-weight:700;">' + (e.description||'') + '</td><td>' + formatVal(e.amount) + '</td><td>' + formatVal(e.vatAmount) + '</td><td style="font-weight:800;">' + formatVal(e.totalWithVat) + '</td><td>' + (e.status||'') + '</td></tr>';
   }).join('');
-  // Invoice images
+  // Invoice images / PDFs
   var imgs = '';
   (data.expenses || []).forEach(function(e, i) {
     if (e.invoiceImage) {
-      imgs += '<div style="page-break-before:always;text-align:center;padding:20px;"><h4>فاتورة #' + (i+1) + ' — ' + (e.description||'') + '</h4><img src="' + e.invoiceImage + '" style="max-width:90%;max-height:80vh;margin-top:10px;border:1px solid #ddd;border-radius:8px;"></div>';
+      var isPdf = e.invoiceImage.indexOf('application/pdf') !== -1;
+      if (isPdf) {
+        imgs += '<div style="page-break-before:always;text-align:center;padding:20px;">' +
+          '<h4>فاتورة #' + (i+1) + ' — ' + (e.description||'') + '</h4>' +
+          '<div style="margin:20px auto;padding:30px;background:#f8fafc;border:2px dashed #cbd5e1;border-radius:12px;max-width:400px;">' +
+          '<div style="font-size:48px;color:#ef4444;margin-bottom:10px;">&#128196;</div>' +
+          '<div style="font-size:16px;font-weight:700;color:#334155;">مرفق PDF</div>' +
+          '<div style="font-size:13px;color:#64748b;margin-top:6px;">' + (e.description||'فاتورة') + '</div>' +
+          '</div></div>';
+      } else {
+        imgs += '<div style="page-break-before:always;text-align:center;padding:20px;"><h4>فاتورة #' + (i+1) + ' — ' + (e.description||'') + '</h4><img src="' + e.invoiceImage + '" style="max-width:90%;max-height:80vh;margin-top:10px;border:1px solid #ddd;border-radius:8px;"></div>';
+      }
     }
   });
   var w = window.open('', '_blank');

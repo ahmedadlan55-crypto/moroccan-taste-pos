@@ -482,64 +482,126 @@ function erpSaveAccount() {
 // ═══════════════════════════════════════
 // GL JOURNALS
 // ═══════════════════════════════════════
-// ─── Journal cache for viewing entries ───
+// ─── Journal cache ───
 var _jrnCache = [];
 
 function erpLoadJournals() {
-  const filters = {};
-  const s = document.getElementById('erpJrnStartDate');
-  const e = document.getElementById('erpJrnEndDate');
+  var filters = {};
+  var s = document.getElementById('erpJrnStartDate');
+  var e = document.getElementById('erpJrnEndDate');
+  var st = document.getElementById('erpJrnStatusFilter');
   if (s && s.value) filters.startDate = s.value;
   if (e && e.value) filters.endDate = e.value;
+  if (st && st.value) filters.status = st.value;
 
   window._apiBridge.withSuccessHandler(function(list) {
     _jrnCache = list || [];
-    const tbody = document.getElementById('erpJournalsBody');
-    if (!list || list.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد قيود</td></tr>'; return; }
-    const refLabels = {manual:'يدوي',custody_expense:'عهدة',sale:'مبيعات',purchase:'مشتريات'};
-    tbody.innerHTML = list.map(j => {
-      const dt = j.journalDate ? new Date(j.journalDate).toLocaleDateString('en-GB') : '';
-      return `<tr>
-        <td><code style="font-weight:800;">${j.journalNumber||''}</code></td>
-        <td>${dt}</td>
-        <td><span class="badge badge-blue">${refLabels[j.referenceType]||j.referenceType||''}</span></td>
-        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${j.description||''}</td>
-        <td class="text-green" style="font-weight:700;">${(j.totalDebit||0).toFixed(2)}</td>
-        <td class="text-red" style="font-weight:700;">${(j.totalCredit||0).toFixed(2)}</td>
-        <td><span class="badge badge-green">${j.status||''}</span></td>
-        <td style="white-space:nowrap;">
-          <button class="btn-icon" onclick="erpViewJournal('${j.id}')" title="تفاصيل"><i class="fas fa-eye"></i></button>
-          <button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteJournal('${j.id}','${j.journalNumber||''}')" title="حذف"><i class="fas fa-trash"></i></button>
-        </td>
-      </tr>`;
+    var tbody = document.getElementById('erpJournalsBody');
+
+    // Stats
+    var total = list.length, drafts = 0, approved = 0, posted = 0;
+    list.forEach(function(j) {
+      if (j.status === 'draft') drafts++;
+      else if (j.status === 'approved') approved++;
+      else if (j.status === 'posted') posted++;
+    });
+    var _s = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+    _s('jrnStatTotal', total); _s('jrnStatDraft', drafts); _s('jrnStatApproved', approved); _s('jrnStatPosted', posted);
+
+    if (!list.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-inbox" style="font-size:28px;display:block;margin-bottom:8px;color:#cbd5e1;"></i>لا توجد قيود</td></tr>'; return; }
+
+    var statusBadge = function(s) {
+      if (s === 'draft') return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:8px;font-size:11px;font-weight:800;background:#fef3c7;color:#92400e;"><i class="fas fa-pencil-alt"></i> مسودة</span>';
+      if (s === 'approved') return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:8px;font-size:11px;font-weight:800;background:#e0e7ff;color:#4338ca;"><i class="fas fa-check"></i> معتمد</span>';
+      return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:8px;font-size:11px;font-weight:800;background:#dcfce7;color:#166534;"><i class="fas fa-check-double"></i> مرحّل</span>';
+    };
+
+    tbody.innerHTML = list.map(function(j) {
+      var dt = j.journalDate ? new Date(j.journalDate).toLocaleDateString('en-GB') : '';
+      var actions = '<button class="btn-icon" onclick="erpViewJournal(\'' + j.id + '\')" title="عرض"><i class="fas fa-eye"></i></button> ';
+      actions += '<button class="btn-icon" style="color:#3b82f6;" onclick="erpPrintJournal(\'' + j.id + '\')" title="طباعة"><i class="fas fa-print"></i></button> ';
+      if (j.status === 'draft') {
+        actions += '<button class="btn-icon" style="color:#8b5cf6;" onclick="erpApproveJournal(\'' + j.id + '\')" title="اعتماد"><i class="fas fa-check-circle"></i></button> ';
+        actions += '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>';
+      } else if (j.status === 'approved') {
+        actions += '<button class="btn-icon" style="color:#16a34a;" onclick="erpPostJournal(\'' + j.id + '\')" title="ترحيل"><i class="fas fa-share-square"></i></button> ';
+        actions += '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>';
+      }
+      return '<tr style="' + (j.status==='draft'?'background:rgba(254,243,199,0.15);':'') + '">' +
+        '<td><code style="font-weight:800;color:#1e40af;">' + (j.journalNumber||'') + '</code></td>' +
+        '<td style="font-size:13px;">' + dt + '</td>' +
+        '<td style="font-weight:600;">' + (j.description||'') + '</td>' +
+        '<td style="font-weight:800;color:#16a34a;">' + (j.totalDebit||0).toFixed(2) + '</td>' +
+        '<td style="font-weight:800;color:#ef4444;">' + (j.totalCredit||0).toFixed(2) + '</td>' +
+        '<td>' + statusBadge(j.status) + '</td>' +
+        '<td style="white-space:nowrap;">' + actions + '</td></tr>';
     }).join('');
   }).getGLJournals(filters);
 }
 
 function erpViewJournal(journalId) {
-  // Try cache first, then API
   var j = _jrnCache.find(function(x) { return x.id === journalId; });
   if (j && j.entries && j.entries.length) {
-    _renderJournalDetail(j.entries);
+    _renderJournalDetail(j);
   } else {
     window._apiBridge.withSuccessHandler(function(entries) {
-      _renderJournalDetail(entries || []);
+      _renderJournalDetail({ entries: entries || [], journalNumber: '', description: '', journalDate: '', status: '' });
     }).getGLEntries(journalId);
   }
 }
-function _renderJournalDetail(entries) {
-  let html = '<table class="erp-table"><thead><tr><th>رقم الحساب</th><th>اسم الحساب</th><th>الوصف</th><th>مدين</th><th>دائن</th></tr></thead><tbody>';
-  let totalD = 0, totalC = 0;
+
+function _renderJournalDetail(j) {
+  var entries = j.entries || [];
+  var dt = j.journalDate ? new Date(j.journalDate).toLocaleDateString('en-GB') : '';
+  var statusLabels = {draft:'مسودة',approved:'معتمد',posted:'مرحّل'};
+
+  var html = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px;">' +
+    '<div style="background:#f8fafc;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;">رقم القيد</span><strong style="font-size:16px;color:#1e40af;">' + (j.journalNumber||'') + '</strong></div>' +
+    '<div style="background:#f8fafc;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;">التاريخ</span><strong>' + dt + '</strong></div>' +
+    '<div style="background:#f8fafc;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;">الحالة</span><strong>' + (statusLabels[j.status]||j.status||'') + '</strong></div>' +
+    '</div>';
+  if (j.description) html += '<div style="margin-bottom:14px;padding:10px 14px;background:#eff6ff;border-radius:12px;font-weight:700;color:#1e40af;"><i class="fas fa-file-alt" style="margin-left:6px;"></i>' + j.description + '</div>';
+
+  html += '<table class="erp-table" style="font-size:13px;"><thead><tr><th style="width:100px;">رقم الحساب</th><th>اسم الحساب</th><th>البيان</th><th style="width:110px;">مدين</th><th style="width:110px;">دائن</th></tr></thead><tbody>';
+  var totalD = 0, totalC = 0;
   entries.forEach(function(e) {
     totalD += Number(e.debit)||0; totalC += Number(e.credit)||0;
-    html += '<tr><td><code>' + (e.accountCode||'') + '</code></td><td style="font-weight:700;">' + (e.accountName||'') + '</td><td style="color:#64748b;font-size:12px;">' + (e.description||'') + '</td>' +
-      '<td class="text-green">' + ((e.debit||0) > 0 ? Number(e.debit).toFixed(2) : '') + '</td>' +
-      '<td class="text-red">' + ((e.credit||0) > 0 ? Number(e.credit).toFixed(2) : '') + '</td></tr>';
+    html += '<tr><td><code style="font-weight:700;">' + (e.accountCode||'') + '</code></td><td style="font-weight:700;">' + (e.accountName||'') + '</td><td style="color:#64748b;">' + (e.description||'') + '</td>' +
+      '<td style="font-weight:800;color:#16a34a;">' + ((e.debit||0) > 0 ? Number(e.debit).toFixed(2) : '') + '</td>' +
+      '<td style="font-weight:800;color:#ef4444;">' + ((e.credit||0) > 0 ? Number(e.credit).toFixed(2) : '') + '</td></tr>';
   });
-  html += '<tr class="total-row"><td colspan="3"><strong>الإجمالي</strong></td><td class="text-green"><strong>' + totalD.toFixed(2) + '</strong></td><td class="text-red"><strong>' + totalC.toFixed(2) + '</strong></td></tr>';
+  html += '<tr style="background:#f1f5f9;"><td colspan="3" style="font-weight:900;">الإجمالي</td><td style="font-weight:900;color:#16a34a;">' + totalD.toFixed(2) + '</td><td style="font-weight:900;color:#ef4444;">' + totalC.toFixed(2) + '</td></tr>';
   html += '</tbody></table>';
+
+  // Action buttons
+  html += '<div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">';
+  html += '<button class="btn btn-sm btn-secondary" onclick="erpPrintJournal(\'' + j.id + '\')" style="border-radius:10px;"><i class="fas fa-print"></i> طباعة</button>';
+  if (j.status === 'draft') html += '<button class="btn btn-sm btn-primary" onclick="erpApproveJournal(\'' + j.id + '\');erpCloseDetailModal();" style="border-radius:10px;background:#8b5cf6;"><i class="fas fa-check-circle"></i> اعتماد</button>';
+  if (j.status === 'approved') html += '<button class="btn btn-sm btn-primary" onclick="erpPostJournal(\'' + j.id + '\');erpCloseDetailModal();" style="border-radius:10px;background:#16a34a;"><i class="fas fa-share-square"></i> ترحيل</button>';
+  html += '</div>';
+
   document.getElementById('erpJournalDetailBody').innerHTML = html;
   document.getElementById('erpJournalDetailModal').classList.remove('hidden');
+}
+
+function erpCloseDetailModal() { document.getElementById('erpJournalDetailModal').classList.add('hidden'); }
+
+function erpApproveJournal(id) {
+  if (!confirm('اعتماد هذا القيد؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم اعتماد القيد'); erpLoadJournals(); } else showToast(r.error, true);
+  }).approveGLJournal(id, currentUser);
+}
+
+function erpPostJournal(id) {
+  if (!confirm('ترحيل القيد إلى ميزان المراجعة ودفتر الأستاذ؟\nسيتم تحديث أرصدة الحسابات.')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم ترحيل القيد وتحديث الأرصدة'); erpLoadJournals(); erpLoadAccountsList_(); } else showToast(r.error, true);
+  }).postGLJournal(id, currentUser);
 }
 
 function erpDeleteJournal(id, num) {
@@ -547,9 +609,45 @@ function erpDeleteJournal(id, num) {
   loader(true);
   window._apiBridge.withSuccessHandler(function(r) {
     loader(false);
-    if (r.success) { showToast('تم حذف القيد وعكس الأرصدة'); erpLoadJournals(); erpLoadAccountsList_(); }
-    else showToast(r.error, true);
+    if (r.success) { showToast('تم حذف القيد'); erpLoadJournals(); erpLoadAccountsList_(); } else showToast(r.error, true);
   }).deleteGLJournal(id);
+}
+
+function erpPrintJournal(journalId) {
+  var j = _jrnCache.find(function(x) { return x.id === journalId; });
+  if (!j) return showToast('القيد غير موجود', true);
+  var dt = j.journalDate ? new Date(j.journalDate).toLocaleDateString('en-GB') : '';
+  var company = (state.settings && state.settings.name) || 'Moroccan Taste';
+  var statusLabels = {draft:'مسودة',approved:'معتمد',posted:'مرحّل'};
+  var rows = (j.entries||[]).map(function(e) {
+    return '<tr><td style="font-weight:700;">' + (e.accountCode||'') + '</td><td style="font-weight:700;">' + (e.accountName||'') + '</td><td>' + (e.description||'') + '</td>' +
+      '<td style="font-weight:800;color:#16a34a;">' + ((e.debit||0)>0?Number(e.debit).toFixed(2):'') + '</td>' +
+      '<td style="font-weight:800;color:#ef4444;">' + ((e.credit||0)>0?Number(e.credit).toFixed(2):'') + '</td></tr>';
+  }).join('');
+  var w = window.open('','_blank');
+  w.document.write(
+    '<html dir="rtl"><head><meta charset="UTF-8"><title>قيد ' + (j.journalNumber||'') + '</title>' +
+    '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;direction:rtl;padding:30px;color:#1e293b;font-size:13px;}' +
+    'h2{text-align:center;margin-bottom:4px;}h3{text-align:center;color:#64748b;margin-bottom:16px;}' +
+    '.info{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:16px;}.info div{background:#f8fafc;padding:10px;border-radius:8px;border:1px solid #e2e8f0;}.info .lbl{font-size:10px;color:#64748b;}.info .val{font-weight:700;}' +
+    'table{width:100%;border-collapse:collapse;margin:12px 0;}th,td{border:1px solid #ddd;padding:8px;text-align:right;}th{background:#f1f5f9;font-weight:700;}' +
+    '.sig{display:flex;justify-content:space-around;margin-top:40px;}.sig div{text-align:center;}.sig .line{width:120px;border-bottom:1px solid #94a3b8;padding-top:40px;margin:0 auto;}.sig .cap{font-size:11px;color:#64748b;margin-top:4px;}' +
+    '@media print{body{padding:10px;}}</style></head><body>' +
+    '<h2>' + company + '</h2><h3>قيد يومية — ' + (j.journalNumber||'') + '</h3>' +
+    '<div class="info">' +
+      '<div><div class="lbl">رقم القيد</div><div class="val">' + (j.journalNumber||'') + '</div></div>' +
+      '<div><div class="lbl">التاريخ</div><div class="val">' + dt + '</div></div>' +
+      '<div><div class="lbl">الحالة</div><div class="val">' + (statusLabels[j.status]||j.status) + '</div></div>' +
+      '<div><div class="lbl">بواسطة</div><div class="val">' + (j.createdBy||'') + '</div></div>' +
+    '</div>' +
+    (j.description ? '<p style="margin-bottom:12px;font-weight:700;background:#eff6ff;padding:8px 12px;border-radius:8px;">' + j.description + '</p>' : '') +
+    '<table><thead><tr><th>رقم الحساب</th><th>اسم الحساب</th><th>البيان</th><th>مدين</th><th>دائن</th></tr></thead><tbody>' + rows +
+    '<tr style="background:#f1f5f9;font-weight:900;"><td colspan="3">الإجمالي</td><td>' + (j.totalDebit||0).toFixed(2) + '</td><td>' + (j.totalCredit||0).toFixed(2) + '</td></tr>' +
+    '</tbody></table>' +
+    '<div class="sig"><div><div class="line"></div><div class="cap">المحاسب</div></div><div><div class="line"></div><div class="cap">المدير المالي</div></div><div><div class="line"></div><div class="cap">المدير العام</div></div></div>' +
+    '</body></html>');
+  w.document.close();
+  setTimeout(function() { w.print(); }, 400);
 }
 
 // ─── Build account path (الأصول → المتداولة → الصندوق) ───
@@ -600,6 +698,7 @@ function _renderJournalForm() {
     '</div>' +
     '<div class="form-row"><label>عنوان القيد / الوصف *</label><input class="form-control" id="erpJrnDesc" placeholder="مثال: تسجيل مبيعات يوم 10/4"></div>' +
     '<div class="form-row"><label>ملاحظات إضافية</label><input class="form-control" id="erpJrnRef" placeholder="اختياري..."></div>' +
+    '<div class="form-row"><label>مرفق (صورة أو PDF)</label><div style="display:flex;gap:10px;align-items:center;"><label style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;cursor:pointer;background:rgba(59,130,246,0.06);color:#3b82f6;font-size:13px;font-weight:700;border:1.5px dashed rgba(59,130,246,0.2);" for="erpJrnAttach"><i class="fas fa-paperclip"></i> إرفاق ملف</label><input type="file" id="erpJrnAttach" accept="image/*,application/pdf" onchange="erpPickAttachment(this)" style="display:none;"><div id="jrnAttachPrev"></div></div></div>' +
     '<hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;">' +
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
       '<h4 style="margin:0;color:#1e293b;"><i class="fas fa-list-ol" style="color:#3b82f6;margin-left:6px;"></i> بنود القيد</h4>' +
@@ -753,11 +852,39 @@ function erpSaveJournal() {
   }).createJournalEntry({
     journalDate: document.getElementById('erpJrnDate').value,
     referenceType: 'manual',
-    referenceId: document.getElementById('erpJrnRef').value,
+    referenceId: '',
     description: desc,
+    notes: document.getElementById('erpJrnRef').value,
+    attachment: window._jrnAttachmentData || '',
     entries: entries
   }, currentUser);
 }
+
+// ─── Attachment handler ───
+window._jrnAttachmentData = '';
+window.erpPickAttachment = function(input) {
+  var f = input.files[0]; if (!f) return;
+  var isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
+  var r = new FileReader();
+  r.onload = function(ev) {
+    if (isPdf) {
+      window._jrnAttachmentData = ev.target.result;
+      document.getElementById('jrnAttachPrev').innerHTML = '<div style="padding:8px;background:#f1f5f9;border-radius:8px;text-align:center;font-size:12px;"><i class="fas fa-file-pdf" style="color:#ef4444;font-size:20px;"></i><br>' + f.name + '</div>';
+    } else {
+      var img = new Image();
+      img.onload = function() {
+        var c = document.createElement('canvas'), mx = 1200, w = img.width, h = img.height;
+        if (w > mx || h > mx) { var sc = Math.min(mx/w, mx/h); w *= sc; h *= sc; }
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        window._jrnAttachmentData = c.toDataURL('image/jpeg', 0.82);
+        document.getElementById('jrnAttachPrev').innerHTML = '<img src="' + window._jrnAttachmentData + '" style="max-width:120px;max-height:80px;border-radius:8px;border:1px solid #e2e8f0;">';
+      };
+      img.src = ev.target.result;
+    }
+  };
+  r.readAsDataURL(f);
+};
 
 // ═══════════════════════════════════════
 // PURCHASE ORDERS — صفحة كاملة

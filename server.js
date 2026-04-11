@@ -282,6 +282,15 @@ async function runMigrations() {
   await addColumnIfMissing('custodies', 'close_notes', "TEXT");
   // Extend custodies status ENUM to include close_pending
   try { await db.query("ALTER TABLE custodies MODIFY COLUMN status ENUM('active','closed','close_pending') DEFAULT 'active'"); } catch(e) {}
+  // GL journals — status workflow + attachment columns
+  await addColumnIfMissing('gl_journals', 'attachment', "LONGTEXT");
+  await addColumnIfMissing('gl_journals', 'notes', "TEXT");
+  await addColumnIfMissing('gl_journals', 'approved_by', "VARCHAR(100) DEFAULT ''");
+  await addColumnIfMissing('gl_journals', 'approved_at', "DATETIME");
+  await addColumnIfMissing('gl_journals', 'posted_by', "VARCHAR(100) DEFAULT ''");
+  await addColumnIfMissing('gl_journals', 'posted_at', "DATETIME");
+  try { await db.query("ALTER TABLE gl_journals MODIFY COLUMN status ENUM('draft','approved','posted') DEFAULT 'draft'"); } catch(e) {}
+
   // GL account link on custody expenses
   await addColumnIfMissing('custody_expenses', 'gl_account_id', "VARCHAR(50) DEFAULT NULL");
   await addColumnIfMissing('custody_expenses', 'gl_account_name', "VARCHAR(200) DEFAULT ''");

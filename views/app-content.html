@@ -787,19 +787,56 @@
 <!-- GL JOURNALS (القيود المحاسبية) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpGLJournals" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-book"></i> القيود المحاسبية</h2>
-    <button class="btn btn-primary" onclick="erpOpenJournalModal()"><i class="fas fa-plus"></i> قيد يدوي</button>
+  <div class="section-header" style="flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title"><i class="fas fa-book-open"></i> القيود اليومية</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-primary" onclick="erpOpenJournalModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> قيد جديد</button>
+    </div>
   </div>
-  <div class="erp-filters">
-    <input type="date" id="erpJrnStartDate" class="form-control-sm">
-    <input type="date" id="erpJrnEndDate" class="form-control-sm">
-    <button class="btn btn-sm btn-secondary" onclick="erpLoadJournals()"><i class="fas fa-search"></i> بحث</button>
+
+  <!-- Stats Cards -->
+  <div id="jrnStatsBar" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
+    <div class="jrn-stat-card"><div class="jsc-icon" style="color:#3b82f6;"><i class="fas fa-file-alt"></i></div><div class="jsc-body"><span class="jsc-label">إجمالي القيود</span><span class="jsc-val" id="jrnStatTotal">0</span></div></div>
+    <div class="jrn-stat-card"><div class="jsc-icon" style="color:#f59e0b;"><i class="fas fa-pencil-alt"></i></div><div class="jsc-body"><span class="jsc-label">مسودة</span><span class="jsc-val" id="jrnStatDraft">0</span></div></div>
+    <div class="jrn-stat-card"><div class="jsc-icon" style="color:#8b5cf6;"><i class="fas fa-check-circle"></i></div><div class="jsc-body"><span class="jsc-label">معتمد</span><span class="jsc-val" id="jrnStatApproved">0</span></div></div>
+    <div class="jrn-stat-card"><div class="jsc-icon" style="color:#16a34a;"><i class="fas fa-check-double"></i></div><div class="jsc-body"><span class="jsc-label">مرحّل</span><span class="jsc-val" id="jrnStatPosted">0</span></div></div>
   </div>
-  <div class="erp-table-container">
+
+  <!-- Filters -->
+  <div class="jrn-filter-bar">
+    <div class="jfb-group">
+      <label>من</label>
+      <input type="date" id="erpJrnStartDate" class="form-control">
+    </div>
+    <div class="jfb-group">
+      <label>إلى</label>
+      <input type="date" id="erpJrnEndDate" class="form-control">
+    </div>
+    <div class="jfb-group">
+      <label>الحالة</label>
+      <select id="erpJrnStatusFilter" class="form-control">
+        <option value="">الكل</option>
+        <option value="draft">مسودة</option>
+        <option value="approved">معتمد</option>
+        <option value="posted">مرحّل</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" onclick="erpLoadJournals()" style="align-self:flex-end;border-radius:10px;height:38px;"><i class="fas fa-search"></i> بحث</button>
+  </div>
+
+  <!-- Journals Table -->
+  <div class="erp-table-container" style="border-radius:16px;overflow:hidden;">
     <table class="erp-table" id="erpJournalsTable">
-      <thead><tr><th>رقم القيد</th><th>التاريخ</th><th>المرجع</th><th>الوصف</th><th>مدين</th><th>دائن</th><th>الحالة</th><th>تفاصيل</th></tr></thead>
-      <tbody id="erpJournalsBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody>
+      <thead><tr>
+        <th style="width:110px;">رقم القيد</th>
+        <th style="width:100px;">التاريخ</th>
+        <th>الوصف</th>
+        <th style="width:100px;">مدين</th>
+        <th style="width:100px;">دائن</th>
+        <th style="width:90px;">الحالة</th>
+        <th style="width:160px;">إجراءات</th>
+      </tr></thead>
+      <tbody id="erpJournalsBody"><tr><td colspan="7" class="empty-msg">جاري التحميل...</td></tr></tbody>
     </table>
   </div>
 </div>

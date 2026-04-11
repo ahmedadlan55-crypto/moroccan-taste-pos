@@ -380,13 +380,12 @@ router.get('/gl/journals', async (req, res) => {
   }
 });
 
-// Create journal entry
+// Create journal entry (status: draft — no balance update until posted)
 router.post('/gl/journals', async (req, res) => {
   try {
-    const { journalDate, referenceType, referenceId, description, entries, username } = req.body;
+    const { journalDate, referenceType, referenceId, description, entries, username, attachment, notes } = req.body;
     const journalId = 'JRN-' + Date.now();
 
-    // Auto-generate journal number
     const [lastJ] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
     let nextNum = 1;
     if (lastJ.length && lastJ[0].journal_number) {
@@ -395,29 +394,24 @@ router.post('/gl/journals', async (req, res) => {
     }
     const journalNumber = 'JV-' + String(nextNum).padStart(6, '0');
 
-    // Calculate totals
-    let totalDebit = 0;
-    let totalCredit = 0;
+    let totalDebit = 0, totalCredit = 0;
     if (entries && entries.length) {
       for (const entry of entries) {
         totalDebit += Number(entry.debit) || 0;
         totalCredit += Number(entry.credit) || 0;
       }
     }
-
-    // Validate balanced entry
     if (Math.abs(totalDebit - totalCredit) > 0.01) {
-      return res.json({ success: false, error: 'Journal entry is not balanced (debit != credit)' });
+      return res.json({ success: false, error: 'القيد غير متوازن (مدين ≠ دائن)' });
     }
 
     await db.query(
-      `INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, reference_id, description, total_debit, total_credit, status, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [journalId, journalNumber, journalDate || new Date(), referenceType || '', referenceId || '',
-       description || '', totalDebit, totalCredit, 'posted', username || '']
+      `INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, reference_id, description, total_debit, total_credit, status, created_by, attachment, notes)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [journalId, journalNumber, journalDate || new Date(), referenceType || 'manual', referenceId || '',
+       description || '', totalDebit, totalCredit, 'draft', username || '', attachment || null, notes || '']
     );
 
-    // Insert entries and update account balances
     if (entries && entries.length) {
       for (const entry of entries) {
         const entryId = 'GLE-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
@@ -427,19 +421,46 @@ router.post('/gl/journals', async (req, res) => {
           [entryId, journalId, entry.accountId || null, entry.accountCode || '',
            entry.accountName || '', entry.debit || 0, entry.credit || 0, entry.description || '']
         );
-
-        // Update account balance
-        if (entry.accountId) {
-          const netAmount = (Number(entry.debit) || 0) - (Number(entry.credit) || 0);
-          await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [netAmount, entry.accountId]);
-        }
       }
     }
-
+    // Note: balances NOT updated yet — only on "post"
     res.json({ success: true, id: journalId, journalNumber });
-  } catch (e) {
-    res.json({ success: false, error: e.message });
-  }
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Approve journal (draft → approved)
+router.post('/gl/journals/:id/approve', async (req, res) => {
+  try {
+    const { username } = req.body;
+    const [jrn] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [req.params.id]);
+    if (!jrn.length) return res.json({ success: false, error: 'القيد غير موجود' });
+    if (jrn[0].status !== 'draft') return res.json({ success: false, error: 'فقط القيود المسودة يمكن اعتمادها' });
+    await db.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?',
+      [username || '', new Date(), req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Post journal (approved → posted) — updates account balances
+router.post('/gl/journals/:id/post', async (req, res) => {
+  try {
+    const { username } = req.body;
+    const [jrn] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [req.params.id]);
+    if (!jrn.length) return res.json({ success: false, error: 'القيد غير موجود' });
+    if (jrn[0].status !== 'approved') return res.json({ success: false, error: 'يجب اعتماد القيد أولاً قبل الترحيل' });
+
+    // Update account balances
+    const [entries] = await db.query('SELECT * FROM gl_entries WHERE journal_id = ?', [req.params.id]);
+    for (const e of entries) {
+      if (e.account_id) {
+        const netAmount = (Number(e.debit) || 0) - (Number(e.credit) || 0);
+        await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [netAmount, e.account_id]);
+      }
+    }
+    await db.query('UPDATE gl_journals SET status = "posted", posted_by = ?, posted_at = ? WHERE id = ?',
+      [username || '', new Date(), req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
 // Get entries for a specific journal

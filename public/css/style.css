@@ -762,6 +762,32 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 .form-row { margin-bottom: 16px; }
 .form-row label { display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px; }
 
+/* Journal Stats Cards */
+.jrn-stat-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; border-radius: 14px;
+  background: rgba(255,255,255,0.7); border: 1px solid #e2e8f0;
+  backdrop-filter: blur(10px);
+}
+.jsc-icon { font-size: 22px; }
+.jsc-body { display: flex; flex-direction: column; }
+.jsc-label { font-size: 11px; color: #64748b; font-weight: 700; }
+.jsc-val { font-size: 20px; font-weight: 900; color: #1e293b; }
+@media (max-width: 600px) {
+  #jrnStatsBar { grid-template-columns: 1fr 1fr !important; }
+  .jsc-val { font-size: 16px; }
+}
+
+/* Journal Filter Bar */
+.jrn-filter-bar {
+  display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+  padding: 14px 16px; margin-bottom: 14px;
+  background: rgba(255,255,255,0.6); border: 1px solid #e2e8f0; border-radius: 14px;
+}
+.jfb-group { display: flex; flex-direction: column; gap: 4px; }
+.jfb-group label { font-size: 11px; font-weight: 700; color: #64748b; }
+.jfb-group .form-control { padding: 8px 12px; border-radius: 10px; font-size: 13px; border: 1.5px solid #e2e8f0; min-width: 140px; }
+
 /* Journal Entry Card Lines */
 .jrn-entry-card {
   background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px;

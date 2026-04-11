@@ -5235,9 +5235,9 @@ function loadDashShifts() {
   api.withSuccessHandler(function(res) {
     loader(false);
     if (!res || res.error) return showToast((res&&res.error)||"Failed to load shifts", true);
-    _allShifts = (res||[]).sort(function(a,b){ return new Date(b.StartTime||0)-new Date(a.StartTime||0); });
+    _allShifts = (res||[]).sort(function(a,b){ return new Date(b.startTime||0)-new Date(a.startTime||0); });
     // Populate cashier filter
-    var cashiers = []; _allShifts.forEach(function(s){ if(s.Username && cashiers.indexOf(s.Username)<0) cashiers.push(s.Username); });
+    var cashiers = []; _allShifts.forEach(function(s){ if(s.username && cashiers.indexOf(s.username)<0) cashiers.push(s.username); });
     var sel = q("#shFilterCashier");
     if (sel) sel.innerHTML = '<option value="">All Cashiers</option>' + cashiers.map(function(c){return '<option value="'+c+'">'+c+'</option>';}).join('');
     filterShifts();
@@ -5247,8 +5247,8 @@ function filterShifts() {
   var dateF = q("#shFilterDate")?.value||'';
   var cashierF = q("#shFilterCashier")?.value||'';
   var filtered = _allShifts.filter(function(s){
-    var matchDate = !dateF || (s.StartTime && s.StartTime.toString().indexOf(dateF)>=0);
-    var matchCashier = !cashierF || s.Username===cashierF;
+    var matchDate = !dateF || (s.startTime && s.startTime.toString().indexOf(dateF)>=0);
+    var matchCashier = !cashierF || s.username===cashierF;
     return matchDate && matchCashier;
   });
   renderShiftsTable(filtered);
@@ -5258,18 +5258,18 @@ function renderShiftsTable(list) {
   var tb = q("#tbShifts");
   if (!list||!list.length) { tb.innerHTML='<tr><td colspan="11" style="text-align:center;padding:20px;color:#94a3b8;">No shifts found</td></tr>'; updateShiftTotals([]); return; }
   tb.innerHTML = list.map(function(s){
-    var thCash=Number(s.TheoreticalCash)||0, thCard=Number(s.TheoreticalCard)||0, thKita=Number(s.TheoreticalKita)||0;
-    var aCash=Number(s.ActualCash)||0, aCard=Number(s.ActualCard)||0, aKita=Number(s.ActualKita)||0;
+    var thCash=Number(s.theoreticalCash)||0, thCard=Number(s.theoreticalCard)||0, thKita=Number(s.theoreticalKita)||0;
+    var aCash=Number(s.actualCash)||0, aCard=Number(s.actualCard)||0, aKita=Number(s.actualKita)||0;
     var tTheo=thCash+thCard+thKita, tAct=aCash+aCard+aKita, tDiff=tAct-tTheo;
     var dCash=aCash-thCash, dCard=aCard-thCard, dKita=aKita-thKita;
     var dc=function(v){return v===0?'#64748b':(v>0?'#16a34a':'#ef4444');};
     var fs=function(v){return (v>0?'+':'')+formatVal(v);};
     var diffBadge = tDiff===0?'<span class="badge green">Balanced</span>':(tDiff>0?'<span class="badge" style="background:#dcfce7;color:#166534;">+'+formatVal(tDiff)+'</span>':'<span class="badge red">'+formatVal(tDiff)+'</span>');
     return '<tr>'+
-      '<td style="font-family:monospace;font-size:11px;color:#64748b;">'+s.ShiftID+'</td>'+
-      '<td style="font-weight:700;">'+s.Username+'</td>'+
-      '<td style="font-size:12px;">'+fmtDT(s.StartTime)+'</td>'+
-      '<td style="font-size:12px;">'+(s.EndTime?fmtDT(s.EndTime):'<span class="badge orange">Open</span>')+'</td>'+
+      '<td style="font-family:monospace;font-size:11px;color:#64748b;">'+s.id+'</td>'+
+      '<td style="font-weight:700;">'+s.username+'</td>'+
+      '<td style="font-size:12px;">'+fmtDT(s.startTime)+'</td>'+
+      '<td style="font-size:12px;">'+(s.endTime?fmtDT(s.endTime):'<span class="badge orange">Open</span>')+'</td>'+
       '<td style="font-weight:700;">'+formatVal(tTheo)+'</td>'+
       '<td style="font-weight:900;color:var(--primary);">'+formatVal(tAct)+'</td>'+
       '<td>'+diffBadge+'</td>'+
@@ -5284,8 +5284,8 @@ function renderShiftsTable(list) {
 function updateShiftTotals(list) {
   var tExp=0,tAct=0,tDiff=0,count=0;
   list.forEach(function(s){
-    var th=(Number(s.TheoreticalCash)||0)+(Number(s.TheoreticalCard)||0)+(Number(s.TheoreticalKita)||0);
-    var ta=(Number(s.ActualCash)||0)+(Number(s.ActualCard)||0)+(Number(s.ActualKita)||0);
+    var th=(Number(s.theoreticalCash)||0)+(Number(s.theoreticalCard)||0)+(Number(s.theoreticalKita)||0);
+    var ta=(Number(s.actualCash)||0)+(Number(s.actualCard)||0)+(Number(s.actualKita)||0);
     tExp+=th; tAct+=ta; tDiff+=(ta-th); count++;
   });
   var el=function(id,v){var e=q('#'+id);if(e)e.textContent=v;};
@@ -5302,9 +5302,9 @@ function _exportShiftsExcelBody() {
   if(!_allShifts.length) return showToast('No shifts to export','error');
   var ws=[['Shift ID','Cashier','Start','End','Expected Cash','Expected Card','Expected Kita','Expected Total','Actual Cash','Actual Card','Actual Kita','Actual Total','Cash Diff','Card Diff','Kita Diff','Total Diff']];
   _allShifts.forEach(function(s){
-    var thC=Number(s.TheoreticalCash)||0,thR=Number(s.TheoreticalCard)||0,thK=Number(s.TheoreticalKita)||0;
-    var aC=Number(s.ActualCash)||0,aR=Number(s.ActualCard)||0,aK=Number(s.ActualKita)||0;
-    ws.push([s.ShiftID,s.Username,fmtDT(s.StartTime),fmtDT(s.EndTime),thC,thR,thK,thC+thR+thK,aC,aR,aK,aC+aR+aK,aC-thC,aR-thR,aK-thK,(aC+aR+aK)-(thC+thR+thK)]);
+    var thC=Number(s.theoreticalCash)||0,thR=Number(s.theoreticalCard)||0,thK=Number(s.theoreticalKita)||0;
+    var aC=Number(s.actualCash)||0,aR=Number(s.actualCard)||0,aK=Number(s.actualKita)||0;
+    ws.push([s.id,s.username,fmtDT(s.startTime),fmtDT(s.endTime),thC,thR,thK,thC+thR+thK,aC,aR,aK,aC+aR+aK,aC-thC,aR-thR,aK-thK,(aC+aR+aK)-(thC+thR+thK)]);
   });
   var wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(ws),'Shifts');
@@ -5312,36 +5312,35 @@ function _exportShiftsExcelBody() {
 }
 
 function reprintShift(s) {
-  const actTotal = (Number(s.ActualCash)||0) + (Number(s.ActualCard)||0) + (Number(s.ActualKita)||0);
-  const theoTotal = Number(s.TotalTheoretical) || 0;
+  const actTotal = (Number(s.actualCash)||0) + (Number(s.actualCard)||0) + (Number(s.actualKita)||0);
+  const theoTotal = (Number(s.theoreticalCash)||0) + (Number(s.theoreticalCard)||0) + (Number(s.theoreticalKita)||0);
   loader(true);
   api.withSuccessHandler(res => {
     loader(false);
     const soldItems = (res && res.soldItems) ? res.soldItems : [];
     printShiftPDF({
-      shiftId: s.ShiftID,
-      actuals: { cash: s.ActualCash, card: s.ActualCard, kita: s.ActualKita },
-      expected: { cash: s.TheoreticalCash, card: s.TheoreticalCard, kita: s.TheoreticalKita },
+      shiftId: s.id,
+      actuals: { cash: s.actualCash, card: s.actualCard, kita: s.actualKita },
+      expected: { cash: s.theoreticalCash, card: s.theoreticalCard, kita: s.theoreticalKita },
       diff: { totalDiff: actTotal - theoTotal },
-      startTime: s.StartTime,
-      endTime: s.EndTime,
-      user: s.Username,
+      startTime: s.startTime,
+      endTime: s.endTime,
+      user: s.username,
       soldItems: soldItems
     });
   }).withFailureHandler(err => {
     loader(false);
-    // Print without items on error
     printShiftPDF({
-      shiftId: s.ShiftID,
-      actuals: { cash: s.ActualCash, card: s.ActualCard, kita: s.ActualKita },
-      expected: { cash: s.TheoreticalCash, card: s.TheoreticalCard, kita: s.TheoreticalKita },
+      shiftId: s.id,
+      actuals: { cash: s.actualCash, card: s.actualCard, kita: s.actualKita },
+      expected: { cash: s.theoreticalCash, card: s.theoreticalCard, kita: s.theoreticalKita },
       diff: { totalDiff: actTotal - theoTotal },
-      startTime: s.StartTime,
-      endTime: s.EndTime,
-      user: s.Username,
+      startTime: s.startTime,
+      endTime: s.endTime,
+      user: s.username,
       soldItems: []
     });
-  }).getShiftDataForClosing(s.ShiftID);
+  }).getShiftDataForClosing(s.id);
 }
 
 function printShiftPDF(data) {

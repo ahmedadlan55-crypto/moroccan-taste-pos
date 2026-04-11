@@ -83,6 +83,7 @@
     getGLJournals:       { method: 'GET',  url: '/erp/gl/journals', query: (f) => f },
     createJournalEntry:  { method: 'POST', url: '/erp/gl/journals' },
     getGLEntries:        { method: 'GET',  url: (jid) => '/erp/gl/journals/'+jid+'/entries' },
+    deleteGLJournal:     { method: 'DELETE', url: (id) => '/erp/gl/journals/' + id },
     getVATTransactions:  { method: 'GET',  url: '/erp/vat/transactions', query: (s,e) => ({startDate:s,endDate:e}) },
     postVATJournals:     { method: 'POST', url: '/erp/vat/post', body: (s,e,u) => ({startDate:s,endDate:e,username:u}) },
     closeVATQuarter:     { method: 'POST', url: '/erp/vat/close-quarter' },

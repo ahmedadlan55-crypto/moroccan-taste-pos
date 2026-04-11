@@ -442,6 +442,116 @@ router.post('/gl/journals', async (req, res) => {
   }
 });
 
+// Get entries for a specific journal
+router.get('/gl/journals/:id/entries', async (req, res) => {
+  try {
+    const [entries] = await db.query('SELECT * FROM gl_entries WHERE journal_id = ? ORDER BY id', [req.params.id]);
+    res.json(entries.map(e => ({
+      id: e.id, accountId: e.account_id, accountCode: e.account_code,
+      accountName: e.account_name, debit: Number(e.debit), credit: Number(e.credit),
+      description: e.description
+    })));
+  } catch (e) { res.json([]); }
+});
+
+// Delete journal — reverse balances then delete
+router.delete('/gl/journals/:id', async (req, res) => {
+  try {
+    const [entries] = await db.query('SELECT * FROM gl_entries WHERE journal_id = ?', [req.params.id]);
+    // Reverse account balances
+    for (const e of entries) {
+      if (e.account_id) {
+        const reverseAmount = (Number(e.credit) || 0) - (Number(e.debit) || 0);
+        await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [reverseAmount, e.account_id]);
+      }
+    }
+    await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [req.params.id]);
+    await db.query('DELETE FROM gl_journals WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// ─── Financial Reports ───
+
+// Trial Balance (ميزان المراجعة)
+router.get('/reports/trial-balance', async (req, res) => {
+  try {
+    const [accounts] = await db.query('SELECT * FROM gl_accounts WHERE is_active = 1 ORDER BY code');
+    const rows = [];
+    let totalDebit = 0, totalCredit = 0;
+
+    accounts.forEach(a => {
+      const bal = Number(a.balance) || 0;
+      if (bal === 0) return; // skip zero-balance accounts
+      let debit = 0, credit = 0;
+      // Assets & expenses are debit-normal
+      if (a.type === 'asset' || a.type === 'expense') {
+        if (bal >= 0) debit = bal; else credit = Math.abs(bal);
+      } else {
+        // Liabilities, equity, revenue are credit-normal
+        if (bal >= 0) credit = bal; else debit = Math.abs(bal);
+      }
+      totalDebit += debit;
+      totalCredit += credit;
+      rows.push({
+        code: a.code, nameAR: a.name_ar, type: a.type,
+        level: a.level, debit, credit
+      });
+    });
+
+    res.json({
+      isBalanced: Math.abs(totalDebit - totalCredit) < 0.01,
+      rows, totalDebit, totalCredit
+    });
+  } catch (e) { res.json({ isBalanced: false, rows: [], totalDebit: 0, totalCredit: 0 }); }
+});
+
+// Income Statement (قائمة الدخل)
+router.get('/reports/income', async (req, res) => {
+  try {
+    const [accounts] = await db.query("SELECT * FROM gl_accounts WHERE type IN ('revenue','expense') AND is_active = 1 ORDER BY code");
+    const revenue = [], expenses = [];
+    let totalRevenue = 0, totalExpenses = 0;
+
+    accounts.forEach(a => {
+      const bal = Math.abs(Number(a.balance) || 0);
+      if (bal === 0) return;
+      if (a.type === 'revenue') {
+        revenue.push({ code: a.code, name: a.name_ar, balance: bal });
+        totalRevenue += bal;
+      } else {
+        expenses.push({ code: a.code, name: a.name_ar, balance: bal });
+        totalExpenses += bal;
+      }
+    });
+
+    res.json({ revenue, expenses, totalRevenue, totalExpenses, netIncome: totalRevenue - totalExpenses });
+  } catch (e) { res.json({ revenue: [], expenses: [], totalRevenue: 0, totalExpenses: 0, netIncome: 0 }); }
+});
+
+// Balance Sheet (الميزانية العمومية)
+router.get('/reports/balance-sheet', async (req, res) => {
+  try {
+    const [accounts] = await db.query("SELECT * FROM gl_accounts WHERE type IN ('asset','liability','equity') AND is_active = 1 ORDER BY code");
+    const assets = [], liabilities = [], equity = [];
+    let totalAssets = 0, totalLiabilities = 0, totalEquity = 0;
+
+    accounts.forEach(a => {
+      const bal = Math.abs(Number(a.balance) || 0);
+      if (bal === 0) return;
+      if (a.type === 'asset') { assets.push({ code: a.code, name: a.name_ar, balance: bal }); totalAssets += bal; }
+      else if (a.type === 'liability') { liabilities.push({ code: a.code, name: a.name_ar, balance: bal }); totalLiabilities += bal; }
+      else { equity.push({ code: a.code, name: a.name_ar, balance: bal }); totalEquity += bal; }
+    });
+
+    res.json({
+      assets, liabilities, equity,
+      totalAssets, totalLiabilities, totalEquity,
+      isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01
+    });
+  } catch (e) { res.json({ assets: [], liabilities: [], equity: [], totalAssets: 0, totalLiabilities: 0, totalEquity: 0, isBalanced: false }); }
+});
+
 // ─── VAT ───
 
 // Get VAT transactions for period

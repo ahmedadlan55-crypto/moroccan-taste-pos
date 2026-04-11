@@ -482,6 +482,9 @@ function erpSaveAccount() {
 // ═══════════════════════════════════════
 // GL JOURNALS
 // ═══════════════════════════════════════
+// ─── Journal cache for viewing entries ───
+var _jrnCache = [];
+
 function erpLoadJournals() {
   const filters = {};
   const s = document.getElementById('erpJrnStartDate');
@@ -490,120 +493,242 @@ function erpLoadJournals() {
   if (e && e.value) filters.endDate = e.value;
 
   window._apiBridge.withSuccessHandler(function(list) {
+    _jrnCache = list || [];
     const tbody = document.getElementById('erpJournalsBody');
     if (!list || list.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد قيود</td></tr>'; return; }
+    const refLabels = {manual:'يدوي',custody_expense:'عهدة',sale:'مبيعات',purchase:'مشتريات'};
     tbody.innerHTML = list.map(j => {
-      const dt = j.Date ? new Date(j.Date).toLocaleDateString('ar-SA') : '';
+      const dt = j.journalDate ? new Date(j.journalDate).toLocaleDateString('en-GB') : '';
       return `<tr>
-        <td><code>${j.JournalNumber||''}</code></td><td>${dt}</td>
-        <td><span class="badge badge-blue">${j.ReferenceType||''}</span></td>
-        <td>${j.Description||''}</td>
-        <td class="text-green">${(j.TotalDebit||0).toFixed(2)}</td>
-        <td class="text-red">${(j.TotalCredit||0).toFixed(2)}</td>
-        <td><span class="badge badge-green">${j.Status||''}</span></td>
-        <td><button class="btn-icon" onclick="erpViewJournal('${j.ID}')"><i class="fas fa-eye"></i></button></td>
+        <td><code style="font-weight:800;">${j.journalNumber||''}</code></td>
+        <td>${dt}</td>
+        <td><span class="badge badge-blue">${refLabels[j.referenceType]||j.referenceType||''}</span></td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${j.description||''}</td>
+        <td class="text-green" style="font-weight:700;">${(j.totalDebit||0).toFixed(2)}</td>
+        <td class="text-red" style="font-weight:700;">${(j.totalCredit||0).toFixed(2)}</td>
+        <td><span class="badge badge-green">${j.status||''}</span></td>
+        <td style="white-space:nowrap;">
+          <button class="btn-icon" onclick="erpViewJournal('${j.id}')" title="تفاصيل"><i class="fas fa-eye"></i></button>
+          <button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteJournal('${j.id}','${j.journalNumber||''}')" title="حذف"><i class="fas fa-trash"></i></button>
+        </td>
       </tr>`;
     }).join('');
   }).getGLJournals(filters);
 }
 
 function erpViewJournal(journalId) {
-  window._apiBridge.withSuccessHandler(function(entries) {
-    let html = '<table class="erp-table"><thead><tr><th>الحساب</th><th>الوصف</th><th>مدين</th><th>دائن</th></tr></thead><tbody>';
-    let totalD = 0, totalC = 0;
-    (entries||[]).forEach(e => {
-      totalD += e.Debit; totalC += e.Credit;
-      html += `<tr><td><code>${e.AccountCode||''}</code> ${e.AccountName||''}</td><td>${e.Description||''}</td>
-        <td class="text-green">${e.Debit > 0 ? e.Debit.toFixed(2) : ''}</td>
-        <td class="text-red">${e.Credit > 0 ? e.Credit.toFixed(2) : ''}</td></tr>`;
-    });
-    html += `<tr class="total-row"><td colspan="2"><strong>الإجمالي</strong></td><td class="text-green"><strong>${totalD.toFixed(2)}</strong></td><td class="text-red"><strong>${totalC.toFixed(2)}</strong></td></tr>`;
-    html += '</tbody></table>';
-    document.getElementById('erpJournalDetailBody').innerHTML = html;
-    document.getElementById('erpJournalDetailModal').classList.remove('hidden');
-  }).getGLEntries(journalId);
+  // Try cache first, then API
+  var j = _jrnCache.find(function(x) { return x.id === journalId; });
+  if (j && j.entries && j.entries.length) {
+    _renderJournalDetail(j.entries);
+  } else {
+    window._apiBridge.withSuccessHandler(function(entries) {
+      _renderJournalDetail(entries || []);
+    }).getGLEntries(journalId);
+  }
+}
+function _renderJournalDetail(entries) {
+  let html = '<table class="erp-table"><thead><tr><th>رقم الحساب</th><th>اسم الحساب</th><th>الوصف</th><th>مدين</th><th>دائن</th></tr></thead><tbody>';
+  let totalD = 0, totalC = 0;
+  entries.forEach(function(e) {
+    totalD += Number(e.debit)||0; totalC += Number(e.credit)||0;
+    html += '<tr><td><code>' + (e.accountCode||'') + '</code></td><td style="font-weight:700;">' + (e.accountName||'') + '</td><td style="color:#64748b;font-size:12px;">' + (e.description||'') + '</td>' +
+      '<td class="text-green">' + ((e.debit||0) > 0 ? Number(e.debit).toFixed(2) : '') + '</td>' +
+      '<td class="text-red">' + ((e.credit||0) > 0 ? Number(e.credit).toFixed(2) : '') + '</td></tr>';
+  });
+  html += '<tr class="total-row"><td colspan="3"><strong>الإجمالي</strong></td><td class="text-green"><strong>' + totalD.toFixed(2) + '</strong></td><td class="text-red"><strong>' + totalC.toFixed(2) + '</strong></td></tr>';
+  html += '</tbody></table>';
+  document.getElementById('erpJournalDetailBody').innerHTML = html;
+  document.getElementById('erpJournalDetailModal').classList.remove('hidden');
 }
 
+function erpDeleteJournal(id, num) {
+  if (!confirm('حذف القيد ' + num + '؟\nسيتم عكس جميع الأرصدة المتأثرة.')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم حذف القيد وعكس الأرصدة'); erpLoadJournals(); erpLoadAccountsList_(); }
+    else showToast(r.error, true);
+  }).deleteGLJournal(id);
+}
+
+// ─── Build account path (الأصول → المتداولة → الصندوق) ───
+function _getAccountPath(accountId) {
+  var path = [];
+  var current = _erpAccounts.find(function(a) { return a.id === accountId; });
+  while (current) {
+    path.unshift(current.nameAr);
+    if (!current.parentId) break;
+    current = _erpAccounts.find(function(a) { return a.id === current.parentId; });
+  }
+  return path.join(' → ');
+}
+
+// ─── Get leaf accounts (فرعية فقط) ───
+function _getLeafAccounts() {
+  var parentIds = {};
+  _erpAccounts.forEach(function(a) { if (a.parentId) parentIds[a.parentId] = true; });
+  return _erpAccounts.filter(function(a) { return !parentIds[a.id]; });
+}
+
+// ─── Journal creation modal ───
+var _jrnLineCounter = 0;
+
 function erpOpenJournalModal() {
-  document.getElementById('erpModalTitle').textContent = 'قيد محاسبي يدوي';
-  let accOptions = _erpAccounts.length > 0 ? _erpAccounts : [];
-  if (accOptions.length === 0) {
+  document.getElementById('erpModalTitle').textContent = 'قيد محاسبي جديد';
+  _jrnLineCounter = 0;
+
+  if (_erpAccounts.length === 0) {
     window._apiBridge.withSuccessHandler(function(list) {
-      accOptions = list || [];
-      _erpAccounts = accOptions;
-      renderJournalForm(accOptions);
+      _erpAccounts = (list || []).map(function(a) {
+        return { id: a.id, code: a.code, nameAr: a.nameAr, nameEn: a.nameEn, type: a.type, parentId: a.parentId, level: Number(a.level)||1, balance: Number(a.balance)||0 };
+      });
+      _renderJournalForm();
     }).getGLAccounts();
   } else {
-    renderJournalForm(accOptions);
+    _renderJournalForm();
   }
 }
 
-function renderJournalForm(accounts) {
-  const opts = accounts.map(a => `<option value="${a.ID}" data-code="${a.Code}" data-name="${a.NameAR}">${a.Code} - ${a.NameAR}</option>`).join('');
-  document.getElementById('erpModalBody').innerHTML = `
-    <div class="form-row"><label>التاريخ</label><input type="date" class="form-control" id="erpJrnDate" value="${new Date().toISOString().split('T')[0]}"></div>
-    <div class="form-row"><label>الوصف *</label><input class="form-control" id="erpJrnDesc" placeholder="وصف القيد"></div>
-    <div class="form-row"><label>المرجع</label><input class="form-control" id="erpJrnRef" placeholder="رقم المرجع (اختياري)"></div>
-    <hr>
-    <h4>بنود القيد</h4>
-    <div id="erpJrnLines">
-      <div class="jrn-line"><select class="form-control-sm jrn-acc">${opts}</select><input type="number" class="form-control-sm jrn-debit" placeholder="مدين" step="0.01"><input type="number" class="form-control-sm jrn-credit" placeholder="دائن" step="0.01"><button class="btn-icon text-red" onclick="this.parentElement.remove();erpCalcJrnBalance()"><i class="fas fa-trash"></i></button></div>
-      <div class="jrn-line"><select class="form-control-sm jrn-acc">${opts}</select><input type="number" class="form-control-sm jrn-debit" placeholder="مدين" step="0.01"><input type="number" class="form-control-sm jrn-credit" placeholder="دائن" step="0.01"><button class="btn-icon text-red" onclick="this.parentElement.remove();erpCalcJrnBalance()"><i class="fas fa-trash"></i></button></div>
-    </div>
-    <button class="btn btn-sm btn-secondary" onclick="erpAddJrnLine()"><i class="fas fa-plus"></i> إضافة سطر</button>
-    <div class="jrn-balance" id="erpJrnBalanceInfo">مدين: 0.00 | دائن: 0.00</div>`;
+function _renderJournalForm() {
+  var today = new Date().toISOString().split('T')[0];
+
+  document.getElementById('erpModalBody').innerHTML =
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+      '<div class="form-row"><label>تاريخ القيد *</label><input type="date" class="form-control" id="erpJrnDate" value="' + today + '"></div>' +
+      '<div class="form-row"><label>رقم القيد</label><input class="form-control" id="erpJrnNum" placeholder="تلقائي" readonly style="background:#f8fafc;color:#94a3b8;"></div>' +
+    '</div>' +
+    '<div class="form-row"><label>عنوان القيد / الوصف *</label><input class="form-control" id="erpJrnDesc" placeholder="مثال: تسجيل مبيعات يوم 10/4"></div>' +
+    '<div class="form-row"><label>ملاحظات إضافية</label><input class="form-control" id="erpJrnRef" placeholder="اختياري..."></div>' +
+    '<hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+      '<h4 style="margin:0;color:#1e293b;"><i class="fas fa-list-ol" style="color:#3b82f6;margin-left:6px;"></i> بنود القيد</h4>' +
+      '<button class="btn btn-sm btn-secondary" onclick="erpAddJrnLine()" style="border-radius:10px;"><i class="fas fa-plus"></i> إضافة سطر</button>' +
+    '</div>' +
+    '<div id="erpJrnLines"></div>' +
+    '<div class="jrn-balance-bar" id="erpJrnBalanceInfo">مدين: <strong>0.00</strong> | دائن: <strong>0.00</strong></div>';
+
   document.getElementById('erpModalSaveBtn').onclick = erpSaveJournal;
   document.getElementById('erpModal').classList.remove('hidden');
 
-  // Add change listeners
-  document.querySelectorAll('.jrn-debit, .jrn-credit').forEach(el => el.addEventListener('input', erpCalcJrnBalance));
+  // Add 2 initial lines
+  erpAddJrnLine();
+  erpAddJrnLine();
 }
 
 function erpAddJrnLine() {
-  const opts = _erpAccounts.map(a => `<option value="${a.ID}" data-code="${a.Code}" data-name="${a.NameAR}">${a.Code} - ${a.NameAR}</option>`).join('');
-  const div = document.createElement('div');
-  div.className = 'jrn-line';
-  div.innerHTML = `<select class="form-control-sm jrn-acc">${opts}</select><input type="number" class="form-control-sm jrn-debit" placeholder="مدين" step="0.01" oninput="erpCalcJrnBalance()"><input type="number" class="form-control-sm jrn-credit" placeholder="دائن" step="0.01" oninput="erpCalcJrnBalance()"><button class="btn-icon text-red" onclick="this.parentElement.remove();erpCalcJrnBalance()"><i class="fas fa-trash"></i></button>`;
+  _jrnLineCounter++;
+  var leafAccounts = _getLeafAccounts();
+  var lineId = 'jln' + _jrnLineCounter;
+  var div = document.createElement('div');
+  div.className = 'jrn-entry-card';
+  div.id = lineId;
+  div.innerHTML =
+    '<div class="jec-header">' +
+      '<span class="jec-num">' + _jrnLineCounter + '</span>' +
+      '<button class="btn-icon" style="color:#ef4444;" onclick="erpRemoveJrnLine(\'' + lineId + '\')" title="حذف"><i class="fas fa-trash-alt"></i></button>' +
+    '</div>' +
+    '<div class="jec-account-wrap">' +
+      '<input type="text" class="form-control jec-search" placeholder="ابحث عن حساب..." oninput="erpFilterAccounts(this)">' +
+      '<select class="form-control jec-acc" onchange="erpOnAccChange(this)">' +
+        '<option value="">— اختر حساب —</option>' +
+        leafAccounts.map(function(a) {
+          var typeLabels = {asset:'أصول',liability:'التزامات',equity:'ملكية',revenue:'إيرادات',expense:'مصروفات'};
+          return '<option value="' + a.id + '" data-code="' + a.code + '" data-name="' + (a.nameAr||'') + '" data-type="' + a.type + '">' + a.code + ' — ' + (a.nameAr||'') + ' (' + (typeLabels[a.type]||'') + ')</option>';
+        }).join('') +
+      '</select>' +
+      '<div class="jec-path"></div>' +
+    '</div>' +
+    '<div class="jec-amounts">' +
+      '<div><label>مدين</label><input type="number" class="form-control jec-debit" step="0.01" min="0" placeholder="0.00" oninput="erpCalcJrnBalance()"></div>' +
+      '<div><label>دائن</label><input type="number" class="form-control jec-credit" step="0.01" min="0" placeholder="0.00" oninput="erpCalcJrnBalance()"></div>' +
+      '<div style="flex:2;"><label>وصف السطر</label><input type="text" class="form-control jec-desc" placeholder="اختياري..."></div>' +
+    '</div>';
+
   document.getElementById('erpJrnLines').appendChild(div);
 }
 
+window.erpRemoveJrnLine = function(lineId) {
+  var el = document.getElementById(lineId);
+  if (el) el.remove();
+  erpCalcJrnBalance();
+};
+
+// Searchable account filter
+window.erpFilterAccounts = function(input) {
+  var val = input.value.toLowerCase();
+  var select = input.parentElement.querySelector('.jec-acc');
+  var options = select.querySelectorAll('option');
+  options.forEach(function(opt) {
+    if (!opt.value) { opt.style.display = ''; return; }
+    var text = opt.textContent.toLowerCase();
+    opt.style.display = text.indexOf(val) !== -1 ? '' : 'none';
+  });
+  select.size = val ? Math.min(8, select.querySelectorAll('option:not([style*="none"])').length) : 1;
+};
+
+// Show account path on selection
+window.erpOnAccChange = function(select) {
+  var pathEl = select.parentElement.querySelector('.jec-path');
+  var searchEl = select.parentElement.querySelector('.jec-search');
+  if (!select.value) { pathEl.innerHTML = ''; return; }
+  var opt = select.options[select.selectedIndex];
+  var path = _getAccountPath(select.value);
+  var typeBadge = {asset:'#3b82f6',liability:'#ef4444',equity:'#8b5cf6',revenue:'#16a34a',expense:'#f59e0b'};
+  var type = opt.dataset.type || '';
+  pathEl.innerHTML = '<i class="fas fa-sitemap" style="color:#94a3b8;margin-left:4px;"></i> ' + path +
+    ' <span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:800;background:' + (typeBadge[type]||'#e2e8f0') + '18;color:' + (typeBadge[type]||'#64748b') + ';">' + (opt.dataset.type||'') + '</span>';
+  // Update search field
+  if (searchEl) { searchEl.value = opt.dataset.code + ' — ' + (opt.dataset.name||''); }
+  select.size = 1;
+};
+
 function erpCalcJrnBalance() {
-  let totalD = 0, totalC = 0;
-  document.querySelectorAll('.jrn-debit').forEach(el => totalD += Number(el.value) || 0);
-  document.querySelectorAll('.jrn-credit').forEach(el => totalC += Number(el.value) || 0);
-  const bal = document.getElementById('erpJrnBalanceInfo');
-  const balanced = Math.abs(totalD - totalC) < 0.01;
-  bal.innerHTML = `مدين: <strong>${totalD.toFixed(2)}</strong> | دائن: <strong>${totalC.toFixed(2)}</strong> | <span style="color:${balanced?'green':'red'}">${balanced?'متوازن':'غير متوازن'}</span>`;
+  var totalD = 0, totalC = 0;
+  document.querySelectorAll('.jec-debit').forEach(function(el) { totalD += Number(el.value) || 0; });
+  document.querySelectorAll('.jec-credit').forEach(function(el) { totalC += Number(el.value) || 0; });
+  var bal = document.getElementById('erpJrnBalanceInfo');
+  var balanced = Math.abs(totalD - totalC) < 0.01;
+  bal.innerHTML = 'مدين: <strong style="color:#16a34a;">' + totalD.toFixed(2) + '</strong> | دائن: <strong style="color:#ef4444;">' + totalC.toFixed(2) + '</strong> | ' +
+    '<span style="display:inline-block;padding:2px 10px;border-radius:8px;font-weight:800;font-size:12px;background:' + (balanced?'#dcfce7':'#fee2e2') + ';color:' + (balanced?'#166534':'#991b1b') + ';">' +
+    (balanced?'<i class="fas fa-check-circle"></i> متوازن':'<i class="fas fa-exclamation-triangle"></i> غير متوازن — فرق: ' + Math.abs(totalD - totalC).toFixed(2)) + '</span>';
 }
 
 function erpSaveJournal() {
-  const lines = document.querySelectorAll('.jrn-line');
-  const entries = [];
-  lines.forEach(line => {
-    const sel = line.querySelector('.jrn-acc');
-    const opt = sel.options[sel.selectedIndex];
-    const debit = Number(line.querySelector('.jrn-debit').value) || 0;
-    const credit = Number(line.querySelector('.jrn-credit').value) || 0;
+  var lines = document.querySelectorAll('.jrn-entry-card');
+  var entries = [];
+  lines.forEach(function(line) {
+    var sel = line.querySelector('.jec-acc');
+    if (!sel || !sel.value) return;
+    var opt = sel.options[sel.selectedIndex];
+    var debit = Number(line.querySelector('.jec-debit').value) || 0;
+    var credit = Number(line.querySelector('.jec-credit').value) || 0;
+    var desc = line.querySelector('.jec-desc') ? line.querySelector('.jec-desc').value : '';
     if (debit > 0 || credit > 0) {
       entries.push({
         accountId: sel.value,
         accountCode: opt.dataset.code || '',
-        accountName: opt.dataset.name || opt.text,
-        debit, credit
+        accountName: opt.dataset.name || '',
+        debit: debit, credit: credit,
+        description: desc
       });
     }
   });
-  if (entries.length < 2) return showToast('يجب إدخال بندين على الأقل', 'error');
-  const desc = document.getElementById('erpJrnDesc').value;
-  if (!desc) return showToast('الوصف مطلوب', 'error');
+  if (entries.length < 2) return showToast('يجب إدخال بندين على الأقل', true);
+  var desc = document.getElementById('erpJrnDesc').value;
+  if (!desc) return showToast('عنوان القيد مطلوب', true);
+
+  var totalD = 0, totalC = 0;
+  entries.forEach(function(e) { totalD += e.debit; totalC += e.credit; });
+  if (Math.abs(totalD - totalC) > 0.01) return showToast('القيد غير متوازن — مدين: ' + totalD.toFixed(2) + ' | دائن: ' + totalC.toFixed(2), true);
 
   loader(true);
   window._apiBridge.withSuccessHandler(function(res) {
     loader(false);
     if (res.success) { showToast('تم إنشاء القيد: ' + res.journalNumber); erpCloseModal(); erpLoadJournals(); }
-    else showToast(res.error, 'error');
+    else showToast(res.error, true);
   }).createJournalEntry({
-    date: document.getElementById('erpJrnDate').value,
+    journalDate: document.getElementById('erpJrnDate').value,
     referenceType: 'manual',
     referenceId: document.getElementById('erpJrnRef').value,
     description: desc,

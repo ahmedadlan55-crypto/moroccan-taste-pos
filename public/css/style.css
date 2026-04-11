@@ -771,11 +771,11 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 .jrn-entry-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.05); }
 .jec-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .jec-num { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; background: #3b82f6; color: #fff; font-size: 12px; font-weight: 800; }
-.jec-account-wrap { margin-bottom: 8px; }
-.jec-search { margin-bottom: 4px; font-size: 13px; padding: 8px 10px; border-radius: 10px; }
-.jec-acc { font-size: 13px; padding: 8px 10px; border-radius: 10px; }
-.jec-acc[size] { position: absolute; z-index: 10; width: 100%; background: #fff; border: 1px solid #3b82f6; box-shadow: 0 8px 24px rgba(0,0,0,0.12); border-radius: 10px; }
-.jec-account-wrap { position: relative; }
+.jec-account-wrap { position: relative; margin-bottom: 8px; }
+.jec-search { display: block; width: 100%; margin-bottom: 4px; font-size: 13px; padding: 8px 12px; border-radius: 10px; border: 1.5px solid #e2e8f0; box-sizing: border-box; }
+.jec-search:focus { border-color: #3b82f6; outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+.jec-acc { display: block; width: 100%; font-size: 13px; padding: 8px 12px; border-radius: 10px; border: 1.5px solid #e2e8f0; box-sizing: border-box; }
+.jec-acc[size] { position: absolute; top: 100%; right: 0; left: 0; z-index: 10; width: 100%; max-height: 220px; overflow-y: auto; background: #fff; border: 1.5px solid #3b82f6; box-shadow: 0 8px 24px rgba(0,0,0,0.12); border-radius: 10px; }
 .jec-path { font-size: 11px; color: #64748b; padding: 4px 2px 0; font-weight: 600; }
 .jec-amounts { display: flex; gap: 8px; }
 .jec-amounts > div { flex: 1; }

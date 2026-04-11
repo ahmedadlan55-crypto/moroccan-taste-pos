@@ -659,28 +659,51 @@ window.erpFilterAccounts = function(input) {
   var val = input.value.toLowerCase();
   var select = input.parentElement.querySelector('.jec-acc');
   var options = select.querySelectorAll('option');
+  var visibleCount = 0;
   options.forEach(function(opt) {
     if (!opt.value) { opt.style.display = ''; return; }
     var text = opt.textContent.toLowerCase();
-    opt.style.display = text.indexOf(val) !== -1 ? '' : 'none';
+    var show = text.indexOf(val) !== -1;
+    opt.style.display = show ? '' : 'none';
+    if (show) visibleCount++;
   });
-  select.size = val ? Math.min(8, select.querySelectorAll('option:not([style*="none"])').length) : 1;
+  // Show dropdown only when searching
+  if (val && visibleCount > 0) {
+    select.size = Math.min(6, visibleCount + 1);
+    select.style.display = 'block';
+  } else if (!val) {
+    select.size = 0;
+    select.removeAttribute('size');
+    select.style.display = '';
+  }
 };
+
+// Close dropdown on click outside
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.jec-account-wrap')) {
+    document.querySelectorAll('.jec-acc[size]').forEach(function(s) {
+      s.removeAttribute('size');
+    });
+  }
+});
 
 // Show account path on selection
 window.erpOnAccChange = function(select) {
   var pathEl = select.parentElement.querySelector('.jec-path');
   var searchEl = select.parentElement.querySelector('.jec-search');
-  if (!select.value) { pathEl.innerHTML = ''; return; }
+  // Close dropdown
+  select.removeAttribute('size');
+
+  if (!select.value) { pathEl.innerHTML = ''; if (searchEl) searchEl.value = ''; return; }
   var opt = select.options[select.selectedIndex];
   var path = _getAccountPath(select.value);
+  var typeLabels = {asset:'أصول',liability:'التزامات',equity:'ملكية',revenue:'إيرادات',expense:'مصروفات'};
   var typeBadge = {asset:'#3b82f6',liability:'#ef4444',equity:'#8b5cf6',revenue:'#16a34a',expense:'#f59e0b'};
   var type = opt.dataset.type || '';
   pathEl.innerHTML = '<i class="fas fa-sitemap" style="color:#94a3b8;margin-left:4px;"></i> ' + path +
-    ' <span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:800;background:' + (typeBadge[type]||'#e2e8f0') + '18;color:' + (typeBadge[type]||'#64748b') + ';">' + (opt.dataset.type||'') + '</span>';
-  // Update search field
+    ' <span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:800;background:' + (typeBadge[type]||'#e2e8f0') + '18;color:' + (typeBadge[type]||'#64748b') + ';">' + (typeLabels[type]||type) + '</span>';
+  // Update search field with selected account
   if (searchEl) { searchEl.value = opt.dataset.code + ' — ' + (opt.dataset.name||''); }
-  select.size = 1;
 };
 
 function erpCalcJrnBalance() {

@@ -363,9 +363,12 @@ router.get('/gl/journals', async (req, res) => {
       result.push({
         id: j.id, journalNumber: j.journal_number, journalDate: j.journal_date,
         referenceType: j.reference_type, referenceId: j.reference_id,
-        description: j.description,
+        description: j.description, notes: j.notes || '',
         totalDebit: Number(j.total_debit), totalCredit: Number(j.total_credit),
-        periodId: j.period_id, status: j.status, createdBy: j.created_by,
+        periodId: j.period_id, status: j.status,
+        createdBy: j.created_by || '', approvedBy: j.approved_by || '', postedBy: j.posted_by || '',
+        approvedAt: j.approved_at, postedAt: j.posted_at,
+        attachment: j.attachment || '',
         entries: entries.map(e => ({
           id: e.id, accountId: e.account_id, accountCode: e.account_code,
           accountName: e.account_name, debit: Number(e.debit), credit: Number(e.credit),

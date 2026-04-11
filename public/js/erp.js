@@ -528,7 +528,7 @@ function erpLoadJournals() {
         actions += '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>';
       }
       return '<tr style="' + (j.status==='draft'?'background:rgba(254,243,199,0.15);':'') + '">' +
-        '<td><code style="font-weight:800;color:#1e40af;">' + (j.journalNumber||'') + '</code></td>' +
+        '<td><code style="font-weight:800;color:#1e40af;">' + (j.journalNumber||'') + '</code><div style="font-size:10px;color:#94a3b8;margin-top:2px;"><i class="fas fa-user" style="margin-left:2px;"></i>' + (j.createdBy||'') + '</div></td>' +
         '<td style="font-size:13px;">' + dt + '</td>' +
         '<td style="font-weight:600;">' + (j.description||'') + '</td>' +
         '<td style="font-weight:800;color:#16a34a;">' + (j.totalDebit||0).toFixed(2) + '</td>' +
@@ -555,10 +555,13 @@ function _renderJournalDetail(j) {
   var dt = j.journalDate ? new Date(j.journalDate).toLocaleDateString('en-GB') : '';
   var statusLabels = {draft:'مسودة',approved:'معتمد',posted:'مرحّل'};
 
-  var html = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px;">' +
+  var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px;">' +
     '<div style="background:#f8fafc;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;">رقم القيد</span><strong style="font-size:16px;color:#1e40af;">' + (j.journalNumber||'') + '</strong></div>' +
     '<div style="background:#f8fafc;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;">التاريخ</span><strong>' + dt + '</strong></div>' +
     '<div style="background:#f8fafc;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;">الحالة</span><strong>' + (statusLabels[j.status]||j.status||'') + '</strong></div>' +
+    '<div style="background:#f0fdf4;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;"><i class="fas fa-user-edit" style="margin-left:3px;"></i> أنشأه</span><strong style="color:#16a34a;">' + (j.createdBy||'—') + '</strong></div>' +
+    (j.approvedBy ? '<div style="background:#eff6ff;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;"><i class="fas fa-user-check" style="margin-left:3px;"></i> اعتمده</span><strong style="color:#1e40af;">' + j.approvedBy + '</strong></div>' : '') +
+    (j.postedBy ? '<div style="background:#f0fdf4;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;"><i class="fas fa-user-shield" style="margin-left:3px;"></i> رحّله</span><strong style="color:#166534;">' + j.postedBy + '</strong></div>' : '') +
     '</div>';
   if (j.description) html += '<div style="margin-bottom:14px;padding:10px 14px;background:#eff6ff;border-radius:12px;font-weight:700;color:#1e40af;"><i class="fas fa-file-alt" style="margin-left:6px;"></i>' + j.description + '</div>';
 
@@ -638,7 +641,9 @@ function erpPrintJournal(journalId) {
       '<div><div class="lbl">رقم القيد</div><div class="val">' + (j.journalNumber||'') + '</div></div>' +
       '<div><div class="lbl">التاريخ</div><div class="val">' + dt + '</div></div>' +
       '<div><div class="lbl">الحالة</div><div class="val">' + (statusLabels[j.status]||j.status) + '</div></div>' +
-      '<div><div class="lbl">بواسطة</div><div class="val">' + (j.createdBy||'') + '</div></div>' +
+      '<div><div class="lbl">أنشأه</div><div class="val">' + (j.createdBy||'') + '</div></div>' +
+      (j.approvedBy ? '<div><div class="lbl">اعتمده</div><div class="val">' + j.approvedBy + '</div></div>' : '') +
+      (j.postedBy ? '<div><div class="lbl">رحّله</div><div class="val">' + j.postedBy + '</div></div>' : '') +
     '</div>' +
     (j.description ? '<p style="margin-bottom:12px;font-weight:700;background:#eff6ff;padding:8px 12px;border-radius:8px;">' + j.description + '</p>' : '') +
     '<table><thead><tr><th>رقم الحساب</th><th>اسم الحساب</th><th>البيان</th><th>مدين</th><th>دائن</th></tr></thead><tbody>' + rows +

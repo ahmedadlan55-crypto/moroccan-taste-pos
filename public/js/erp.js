@@ -371,10 +371,8 @@ function erpOpenAccountModal(data) {
     '</div>' +
     '<div class="form-row"><label>الاسم (عربي) *</label><input class="form-control" id="erpAccNameAR" value="' + (d.nameAr||'') + '" placeholder="اسم الحساب بالعربي"></div>' +
     '<div class="form-row"><label>الاسم (إنجليزي)</label><input class="form-control" id="erpAccNameEN" value="' + (d.nameEn||'') + '" placeholder="Account name in English"></div>' +
-    '<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;">' +
-      '<div class="form-row"><label>الحساب الرئيسي (الأب)</label><select class="form-control" id="erpAccParent"><option value="">— حساب رئيسي (بدون أب) —</option>' + parentOpts + '</select></div>' +
-      '<div class="form-row"><label>المستوى</label><input type="number" class="form-control" id="erpAccLevel" value="' + (d.level||1) + '" min="1" max="5"></div>' +
-    '</div>';
+    '<div class="form-row"><label>الحساب الرئيسي (الأب)</label><select class="form-control" id="erpAccParent"><option value="">— حساب رئيسي (بدون أب) —</option>' + parentOpts + '</select></div>' +
+    '<input type="hidden" id="erpAccLevel" value="' + (d.level||1) + '">';
 
   // Auto-set level + auto-generate next code when parent changes
   setTimeout(function() {

@@ -995,56 +995,82 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<!-- VAT REPORTS (التقارير الضريبية) -->
+<!-- VAT REPORTS (إدارة الضريبة) — Redesigned -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpVATReports" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-percent"></i> إدارة الضريبة (VAT 15%)</h2>
+  <div class="section-header" style="flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title"><i class="fas fa-percentage"></i> إدارة ضريبة القيمة المضافة (VAT)</h2>
     <div style="display:flex;gap:8px;">
-      <button class="btn btn-success" onclick="erpPostVAT()"><i class="fas fa-exchange-alt"></i> ترحيل العمليات</button>
-      <button class="btn btn-primary" onclick="erpCreateVATReport()"><i class="fas fa-plus"></i> تقرير جديد</button>
+      <button class="btn btn-primary" onclick="erpPostVAT()" style="border-radius:12px;background:linear-gradient(135deg,#16a34a,#047857);"><i class="fas fa-paper-plane"></i> ترحيل وتسوية</button>
+      <button class="btn btn-secondary" onclick="erpCloseQuarter()" style="border-radius:12px;"><i class="fas fa-lock"></i> إقفال الربع</button>
+      <button class="btn btn-secondary" onclick="erpCloseYear()" style="border-radius:12px;background:#ef4444;color:#fff;border-color:#ef4444;"><i class="fas fa-lock"></i> إقفال السنة</button>
     </div>
   </div>
 
-  <!-- Quarter Tabs -->
-  <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
-    <button class="btn btn-sm btn-light" onclick="erpLoadVATQuarter(1)">Q1 (Jan-Mar)</button>
-    <button class="btn btn-sm btn-light" onclick="erpLoadVATQuarter(2)">Q2 (Apr-Jun)</button>
-    <button class="btn btn-sm btn-light" onclick="erpLoadVATQuarter(3)">Q3 (Jul-Sep)</button>
-    <button class="btn btn-sm btn-light" onclick="erpLoadVATQuarter(4)">Q4 (Oct-Dec)</button>
-    <select id="erpVATYear" class="form-control-sm" style="width:100px;" onchange="erpLoadVATReports()"></select>
-    <button class="btn btn-sm btn-danger" onclick="erpCloseQuarter()"><i class="fas fa-lock"></i> إقفال الربع</button>
-    <button class="btn btn-sm btn-danger" onclick="erpCloseYear()"><i class="fas fa-lock"></i> إقفال السنة</button>
+  <!-- Quarter Tabs + Year -->
+  <div class="fin-tabs" style="margin-bottom:14px;">
+    <button class="fin-tab" onclick="erpLoadVATQuarter(1)"><i class="fas fa-calendar"></i> Q1 يناير-مارس</button>
+    <button class="fin-tab" onclick="erpLoadVATQuarter(2)"><i class="fas fa-calendar"></i> Q2 أبريل-يونيو</button>
+    <button class="fin-tab" onclick="erpLoadVATQuarter(3)"><i class="fas fa-calendar"></i> Q3 يوليو-سبتمبر</button>
+    <button class="fin-tab" onclick="erpLoadVATQuarter(4)"><i class="fas fa-calendar"></i> Q4 أكتوبر-ديسمبر</button>
   </div>
 
-  <div class="erp-filters">
-    <input type="date" id="erpVATStart" class="form-control-sm">
-    <input type="date" id="erpVATEnd" class="form-control-sm">
-    <button class="btn btn-sm btn-primary" onclick="erpLoadVATDetail()"><i class="fas fa-search"></i> عرض</button>
+  <!-- Filters -->
+  <div class="jrn-filter-bar" style="margin-bottom:14px;">
+    <div class="jfb-group"><label>السنة</label><select id="erpVATYear" class="form-control" onchange="erpLoadVATReports()" style="min-width:100px;"></select></div>
+    <div class="jfb-group"><label>من تاريخ</label><input type="date" id="erpVATStart" class="form-control"></div>
+    <div class="jfb-group"><label>إلى تاريخ</label><input type="date" id="erpVATEnd" class="form-control"></div>
+    <button class="btn btn-primary" onclick="erpLoadVATDetail()" style="align-self:flex-end;border-radius:10px;height:38px;"><i class="fas fa-search"></i> عرض</button>
   </div>
 
   <!-- KPI Cards -->
-  <div class="fin-grid" style="margin-bottom:14px;">
-    <div class="fin-card"><span class="fin-label">ضريبة المخرجات (مبيعات)</span><span class="fin-val text-red" id="erpVATOutDetail">0.00</span></div>
-    <div class="fin-card"><span class="fin-label">ضريبة المدخلات (مشتريات)</span><span class="fin-val text-green" id="erpVATInDetail">0.00</span></div>
-    <div class="fin-card highlight"><span class="fin-label">صافي الضريبة المستحقة</span><span class="fin-val" id="erpVATNetDetail">0.00</span></div>
-    <div class="fin-card"><span class="fin-label">الحالة</span><span class="fin-val" id="erpVATStatus">—</span></div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
+    <div style="background:linear-gradient(135deg,#fef2f2,#fee2e2);padding:18px;border-radius:16px;text-align:center;border:1px solid #fecaca;">
+      <div style="font-size:11px;color:#991b1b;font-weight:700;margin-bottom:4px;"><i class="fas fa-arrow-up" style="margin-left:4px;"></i> ضريبة المخرجات</div>
+      <div style="font-size:12px;color:#64748b;">المبيعات</div>
+      <div style="font-size:26px;font-weight:900;color:#ef4444;" id="erpVATOutDetail">0.00</div>
+    </div>
+    <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);padding:18px;border-radius:16px;text-align:center;border:1px solid #bbf7d0;">
+      <div style="font-size:11px;color:#166534;font-weight:700;margin-bottom:4px;"><i class="fas fa-arrow-down" style="margin-left:4px;"></i> ضريبة المدخلات</div>
+      <div style="font-size:12px;color:#64748b;">المشتريات</div>
+      <div style="font-size:26px;font-weight:900;color:#16a34a;" id="erpVATInDetail">0.00</div>
+    </div>
+    <div style="background:linear-gradient(135deg,#eff6ff,#dbeafe);padding:18px;border-radius:16px;text-align:center;border:1px solid #bfdbfe;">
+      <div style="font-size:11px;color:#1e40af;font-weight:700;margin-bottom:4px;"><i class="fas fa-balance-scale" style="margin-left:4px;"></i> صافي الضريبة</div>
+      <div style="font-size:12px;color:#64748b;">المستحقة / المستردة</div>
+      <div style="font-size:26px;font-weight:900;" id="erpVATNetDetail">0.00</div>
+    </div>
+    <div style="background:linear-gradient(135deg,#f8fafc,#f1f5f9);padding:18px;border-radius:16px;text-align:center;border:1px solid #e2e8f0;">
+      <div style="font-size:11px;color:#475569;font-weight:700;margin-bottom:4px;"><i class="fas fa-info-circle" style="margin-left:4px;"></i> الحالة</div>
+      <div style="font-size:12px;color:#64748b;">التسوية</div>
+      <div style="font-size:20px;font-weight:900;" id="erpVATStatus">—</div>
+    </div>
   </div>
 
-  <!-- VAT Transactions Detail -->
-  <h4 style="font-size:14px;font-weight:700;margin-bottom:8px;"><i class="fas fa-list" style="color:var(--accent);"></i> تفاصيل العمليات الضريبية</h4>
-  <div class="erp-table-container" style="margin-bottom:14px;">
-    <table class="erp-table">
-      <thead><tr><th>التاريخ</th><th>النوع</th><th>المرجع</th><th>المبلغ</th><th>الصافي</th><th style="color:#ef4444;">ض. مخرجات</th><th style="color:#16a34a;">ض. مدخلات</th></tr></thead>
-      <tbody id="erpVATTransBody"><tr><td colspan="7" class="empty-msg">اختر الفترة ثم اضغط عرض</td></tr></tbody>
+  <!-- GL Account Info -->
+  <div style="padding:10px 16px;border-radius:12px;background:#eff6ff;border:1px solid #bfdbfe;margin-bottom:14px;font-size:12px;color:#1e40af;font-weight:600;">
+    <i class="fas fa-sitemap" style="margin-left:6px;"></i>
+    مرتبط بدليل الحسابات: <strong>21301</strong> ضريبة القيمة المضافة المستحقة (التزام) + <strong>1430</strong> ضريبة المدخلات (أصل)
+    — يظهر الرصيد في ميزان المراجعة والتقارير المالية
+  </div>
+
+  <!-- VAT Transactions -->
+  <h4 style="font-size:15px;font-weight:800;margin-bottom:10px;color:#1e293b;"><i class="fas fa-list-alt" style="color:#3b82f6;margin-left:8px;"></i> تفاصيل العمليات الضريبية</h4>
+  <div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;margin-bottom:20px;">
+    <table class="erp-table" style="margin:0;font-size:13px;">
+      <thead><tr style="background:#0f172a;color:#fff;">
+        <th style="padding:10px 12px;">التاريخ</th><th>النوع</th><th>المرجع</th><th>المبلغ شامل</th><th>الصافي</th>
+        <th style="color:#fca5a5;">ض. مخرجات</th><th style="color:#86efac;">ض. مدخلات</th>
+      </tr></thead>
+      <tbody id="erpVATTransBody"><tr><td colspan="7" class="empty-msg">اختر الفترة واضغط عرض</td></tr></tbody>
     </table>
   </div>
 
   <!-- VAT Reports History -->
-  <h4 style="font-size:14px;font-weight:700;margin-bottom:8px;"><i class="fas fa-file-alt" style="color:var(--accent);"></i> سجل التقارير الضريبية</h4>
-  <div class="erp-table-container">
-    <table class="erp-table">
-      <thead><tr><th>الرقم</th><th>من</th><th>إلى</th><th>المخرجات</th><th>المدخلات</th><th>الصافي</th><th>الحالة</th></tr></thead>
+  <h4 style="font-size:15px;font-weight:800;margin-bottom:10px;color:#1e293b;"><i class="fas fa-file-invoice-dollar" style="color:#8b5cf6;margin-left:8px;"></i> سجل التقارير الضريبية</h4>
+  <div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;">
+    <table class="erp-table" style="margin:0;font-size:13px;">
+      <thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 12px;">الرقم</th><th>من</th><th>إلى</th><th style="color:#fca5a5;">المخرجات</th><th style="color:#86efac;">المدخلات</th><th>الصافي</th><th>الحالة</th></tr></thead>
       <tbody id="erpVATReportsBody"><tr><td colspan="7" class="empty-msg">لا توجد تقارير</td></tr></tbody>
     </table>
   </div>

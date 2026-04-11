@@ -293,63 +293,74 @@ router.post('/:id/topup', async (req, res) => {
       [amt, amt, req.params.id]);
 
     // Create GL journal entry for the topup (debit custody account, credit cash/bank)
-    try {
-      const [cust] = await db.query('SELECT custody_number, user_name FROM custodies WHERE id = ?', [req.params.id]);
-      const custName = cust.length ? cust[0].user_name : '';
-      const custNum = cust.length ? cust[0].custody_number : '';
+    const [cust] = await db.query('SELECT custody_number, user_name FROM custodies WHERE id = ?', [req.params.id]);
+    const custName = cust.length ? cust[0].user_name : '';
+    const custNum = cust.length ? cust[0].custody_number : '';
 
-      // Find custody user GL account
-      let custAccId = null;
-      const [custAccRows] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE name_ar LIKE ? AND code LIKE '1130%'", ['عهدة ' + (custName||'').substring(0,20) + '%']);
-      if (custAccRows.length) { custAccId = custAccRows[0].id; }
-      else {
+    // Find custody user GL account
+    let custAccId = null, custAccCode = '';
+    const [custAccRows] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE name_ar LIKE ? AND code LIKE '1130%'", ['عهدة ' + (custName||'').substring(0,20) + '%']);
+    if (custAccRows.length) { custAccId = custAccRows[0].id; custAccCode = custAccRows[0].code; }
+    else {
+      try {
         const newAcc = await createCustodyUserGLAccount(custName || 'موظف');
-        custAccId = newAcc.id;
+        custAccId = newAcc.id; custAccCode = newAcc.code;
+      } catch(e) { console.log('[TOPUP] GL account create failed:', e.message); }
+    }
+
+    // Source account (cash box or bank) from GL
+    let sourceAccId = glAccountId || null;
+    let sourceAccCode = '', sourceAccName = '';
+    if (sourceAccId) {
+      const [src] = await db.query('SELECT code, name_ar FROM gl_accounts WHERE id = ?', [sourceAccId]);
+      if (src.length) { sourceAccCode = src[0].code; sourceAccName = src[0].name_ar; }
+      else { sourceAccId = null; } // Invalid ID
+    }
+    // Fallback: if no source selected, find default cash account
+    if (!sourceAccId) {
+      const [defCash] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE code = '11101' OR (code LIKE '1110%' AND type='asset') ORDER BY code LIMIT 1");
+      if (defCash.length) { sourceAccId = defCash[0].id; sourceAccCode = defCash[0].code; sourceAccName = defCash[0].name_ar; }
+    }
+
+    console.log('[TOPUP GL] custAcc:', custAccId, custAccCode, '| sourceAcc:', sourceAccId, sourceAccCode, '| amount:', amt);
+
+    if (custAccId && sourceAccId) {
+      const ts = Date.now();
+      const jrnId = 'JRN-TOP-' + ts;
+      const [lastJrn] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
+      let jrnNum = 1;
+      if (lastJrn.length && lastJrn[0].journal_number) {
+        const m = lastJrn[0].journal_number.match(/(\d+)/);
+        if (m) jrnNum = parseInt(m[1]) + 1;
       }
+      const journalNumber = 'JV-' + String(jrnNum).padStart(6, '0');
+      const desc = 'تغذية عهدة ' + custNum + ' — ' + custName;
+      const now = new Date();
 
-      // Source account (cash box or bank) from GL
-      let sourceAccId = glAccountId || null;
-      let sourceAccCode = '', sourceAccName = '';
-      if (sourceAccId) {
-        const [src] = await db.query('SELECT code, name_ar FROM gl_accounts WHERE id = ?', [sourceAccId]);
-        if (src.length) { sourceAccCode = src[0].code; sourceAccName = src[0].name_ar; }
-      }
+      await db.query(
+        `INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, reference_id, description, total_debit, total_credit, status, created_by, posted_by, posted_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [jrnId, journalNumber, now, 'custody_topup', topupId, desc, amt, amt, 'posted', username||'', username||'', now]
+      );
 
-      if (custAccId && sourceAccId) {
-        const jrnId = 'JRN-' + Date.now();
-        const [lastJrn] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
-        let jrnNum = 1;
-        if (lastJrn.length && lastJrn[0].journal_number) {
-          const m = lastJrn[0].journal_number.match(/(\d+)/);
-          if (m) jrnNum = parseInt(m[1]) + 1;
-        }
-        const journalNumber = 'JV-' + String(jrnNum).padStart(6, '0');
-        const desc = 'تغذية عهدة ' + custNum + ' — ' + custName;
-        const now = new Date();
+      // Debit: custody user account (increases عهدة الموظف)
+      await db.query(
+        'INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)',
+        ['GLE-TOP-' + ts + '-D', jrnId, custAccId, custAccCode, 'عهدة ' + custName, amt, 0, desc]
+      );
+      await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [amt, custAccId]);
 
-        await db.query(
-          `INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, reference_id, description, total_debit, total_credit, status, created_by, posted_by, posted_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [jrnId, journalNumber, now, 'custody_topup', topupId, desc, amt, amt, 'posted', username||'', username||'', now]
-        );
+      // Credit: cash/bank source (decreases الصندوق/البنك)
+      await db.query(
+        'INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)',
+        ['GLE-TOP-' + ts + '-C', jrnId, sourceAccId, sourceAccCode, sourceAccName, 0, amt, desc]
+      );
+      await db.query('UPDATE gl_accounts SET balance = balance - ? WHERE id = ?', [amt, sourceAccId]);
 
-        // Debit: custody user account (increases عهدة الموظف)
-        const gleDebit = 'GLE-' + Date.now() + '-1';
-        await db.query(
-          'INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)',
-          [gleDebit, jrnId, custAccId, custAccRows.length ? custAccRows[0].code : '', 'عهدة ' + custName, amt, 0, desc]
-        );
-        await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [amt, custAccId]);
-
-        // Credit: cash/bank source (decreases الصندوق/البنك)
-        const gleCredit = 'GLE-' + Date.now() + '-2';
-        await db.query(
-          'INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)',
-          [gleCredit, jrnId, sourceAccId, sourceAccCode, sourceAccName, 0, amt, desc]
-        );
-        await db.query('UPDATE gl_accounts SET balance = balance - ? WHERE id = ?', [amt, sourceAccId]);
-      }
-    } catch(glErr) { console.log('[TOPUP GL] Warning:', glErr.message); }
+      console.log('[TOPUP GL] Journal created:', journalNumber, '| Debit:', custAccCode, amt, '| Credit:', sourceAccCode, amt);
+    } else {
+      console.log('[TOPUP GL] SKIPPED — missing accounts. custAcc:', custAccId, '| sourceAcc:', sourceAccId);
+    }
 
     res.json({ success: true, id: topupId });
   } catch (e) { res.json({ success: false, error: e.message }); }

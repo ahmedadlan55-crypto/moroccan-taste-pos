@@ -1663,80 +1663,120 @@ function erpApplyFinFilters() {
 function _renderTrialBalance(container, filters) {
   var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
   var typeLabels = {asset:'أصول',liability:'التزامات',equity:'حقوق ملكية',revenue:'إيرادات',expense:'مصروفات'};
-  var typeColors = {asset:'#3b82f6',liability:'#ef4444',equity:'#8b5cf6',revenue:'#16a34a',expense:'#f59e0b'};
+  var typeIcons = {asset:'fa-coins',liability:'fa-hand-holding-usd',equity:'fa-gem',revenue:'fa-chart-line',expense:'fa-receipt'};
+  var typeBg = {asset:'#dbeafe',liability:'#fee2e2',equity:'#f3e8ff',revenue:'#dcfce7',expense:'#fef3c7'};
+  var typeFg = {asset:'#1e40af',liability:'#991b1b',equity:'#7c3aed',revenue:'#166534',expense:'#92400e'};
 
   window._apiBridge.withSuccessHandler(function(data) {
     var rows = data.rows || [];
     var tot = data.totals || {};
 
-    // Status banner
-    var statusHtml = '<div style="display:flex;align-items:center;gap:8px;padding:12px 18px;border-radius:12px;margin-bottom:14px;font-weight:800;font-size:14px;' +
-      (data.isBalanced ? 'background:#dcfce7;color:#166534;border:1px solid #bbf7d0;' : 'background:#fee2e2;color:#991b1b;border:1px solid #fecaca;') + '">' +
-      '<i class="fas ' + (data.isBalanced?'fa-check-circle':'fa-exclamation-triangle') + '"></i> ' +
-      (data.isBalanced ? 'الميزان متوازن' : 'الميزان غير متوازن!') + '</div>';
+    // Toolbar: status + actions
+    var statusBg = data.isBalanced ? '#dcfce7' : '#fee2e2';
+    var statusFg = data.isBalanced ? '#166534' : '#991b1b';
+    var html = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">';
+    html += '<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;border-radius:12px;font-weight:800;font-size:13px;background:' + statusBg + ';color:' + statusFg + ';"><i class="fas ' + (data.isBalanced?'fa-check-circle':'fa-exclamation-triangle') + '"></i> ' + (data.isBalanced?'الميزان متوازن':'الميزان غير متوازن!') + '</div>';
+    html += '<div style="display:flex;gap:6px;">';
+    html += '<button class="btn btn-sm btn-secondary" onclick="erpPrintFinReport()" style="border-radius:10px;"><i class="fas fa-print"></i> طباعة</button>';
+    html += '<button class="btn btn-sm btn-secondary" onclick="erpExportTrialBalance()" style="border-radius:10px;"><i class="fas fa-file-excel"></i> تصدير Excel</button>';
+    html += '<button class="btn btn-sm" onclick="erpRepairGL()" style="border-radius:10px;background:#fef3c7;color:#92400e;border:1px solid #fde68a;" title="إصلاح القيود المعلقة"><i class="fas fa-wrench"></i> إصلاح</button>';
+    html += '</div></div>';
 
-    // Period label
-    var periodLabel = '';
     if (filters.startDate || filters.endDate) {
-      periodLabel = '<div style="padding:8px 14px;border-radius:10px;background:#eff6ff;color:#1e40af;font-size:12px;font-weight:700;margin-bottom:12px;display:inline-block;"><i class="fas fa-calendar-alt" style="margin-left:4px;"></i> الفترة: ' + (filters.startDate||'البداية') + ' → ' + (filters.endDate||'الآن') + '</div>';
+      html += '<div style="padding:8px 14px;border-radius:10px;background:#eff6ff;color:#1e40af;font-size:12px;font-weight:700;margin-bottom:12px;display:inline-block;"><i class="fas fa-calendar-alt" style="margin-left:4px;"></i> الفترة: ' + (filters.startDate||'البداية') + ' → ' + (filters.endDate||'الآن') + '</div>';
     }
 
     // Table
-    var html = statusHtml + periodLabel;
-    html += '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;">';
-    html += '<table class="erp-table" style="font-size:12px;margin:0;">';
-    html += '<thead><tr style="background:#1e293b;color:#fff;">' +
-      '<th rowspan="2" style="border-color:#334155;width:80px;text-align:center;">الرمز</th>' +
-      '<th rowspan="2" style="border-color:#334155;">اسم الحساب</th>' +
-      '<th rowspan="2" style="border-color:#334155;width:70px;text-align:center;">النوع</th>' +
-      '<th colspan="2" style="border-color:#334155;text-align:center;background:#1e40af;">رصيد أول المدة</th>' +
-      '<th colspan="2" style="border-color:#334155;text-align:center;background:#7c3aed;">حركة الفترة</th>' +
-      '<th colspan="2" style="border-color:#334155;text-align:center;background:#047857;">الرصيد النهائي</th>' +
-      '</tr><tr style="background:#334155;color:#e2e8f0;">' +
-      '<th style="border-color:#475569;width:100px;">مدين</th><th style="border-color:#475569;width:100px;">دائن</th>' +
-      '<th style="border-color:#475569;width:100px;">مدين</th><th style="border-color:#475569;width:100px;">دائن</th>' +
-      '<th style="border-color:#475569;width:100px;">مدين</th><th style="border-color:#475569;width:100px;">دائن</th>' +
+    html += '<div id="trialBalanceTable" style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead><tr style="background:#0f172a;color:#fff;">' +
+      '<th rowspan="2" style="padding:10px 12px;border:1px solid #1e293b;width:80px;text-align:center;">الرمز</th>' +
+      '<th rowspan="2" style="padding:10px 12px;border:1px solid #1e293b;">اسم الحساب</th>' +
+      '<th colspan="2" style="padding:8px;border:1px solid #1e293b;text-align:center;background:#1e3a5f;">رصيد أول المدة</th>' +
+      '<th colspan="2" style="padding:8px;border:1px solid #1e293b;text-align:center;background:#4c1d95;">حركة الفترة</th>' +
+      '<th colspan="2" style="padding:8px;border:1px solid #1e293b;text-align:center;background:#065f46;">الرصيد النهائي</th>' +
+      '</tr><tr style="background:#1e293b;color:#cbd5e1;">' +
+      '<th style="padding:6px 10px;border:1px solid #334155;width:95px;">مدين</th><th style="padding:6px 10px;border:1px solid #334155;width:95px;">دائن</th>' +
+      '<th style="padding:6px 10px;border:1px solid #334155;width:95px;">مدين</th><th style="padding:6px 10px;border:1px solid #334155;width:95px;">دائن</th>' +
+      '<th style="padding:6px 10px;border:1px solid #334155;width:95px;">مدين</th><th style="padding:6px 10px;border:1px solid #334155;width:95px;">دائن</th>' +
       '</tr></thead><tbody>';
 
     var lastType = '';
-    rows.forEach(function(r) {
-      // Type group header
+    rows.forEach(function(r, idx) {
       if (r.type !== lastType) {
         lastType = r.type;
-        html += '<tr style="background:' + (typeColors[r.type]||'#f1f5f9') + '10;"><td colspan="9" style="font-weight:900;font-size:13px;color:' + (typeColors[r.type]||'#1e293b') + ';padding:8px 14px;"><i class="fas fa-folder-open" style="margin-left:6px;"></i>' + (typeLabels[r.type]||r.type) + '</td></tr>';
+        html += '<tr style="background:' + (typeBg[r.type]||'#f8fafc') + ';"><td colspan="8" style="padding:8px 14px;font-weight:900;font-size:13px;color:' + (typeFg[r.type]||'#1e293b') + ';border:1px solid #e2e8f0;"><i class="fas ' + (typeIcons[r.type]||'fa-folder') + '" style="margin-left:8px;"></i>' + (typeLabels[r.type]||r.type) + '</td></tr>';
       }
-      var indent = r.level > 1 ? (r.level - 1) * 18 : 0;
-      var weight = r.level <= 2 ? '800' : '400';
+      var indent = r.level > 1 ? (r.level - 1) * 16 : 0;
+      var isParent = r.level <= 2;
+      var weight = isParent ? '800' : '400';
+      var fontSize = isParent ? '13px' : '12px';
       var hasData = r.openDebit || r.openCredit || r.periodDebit || r.periodCredit || r.closeDebit || r.closeCredit;
-      var rowBg = hasData ? '' : 'opacity:0.5;';
+      var stripe = idx % 2 === 0 ? '#fff' : '#f8fafc';
+      var rowStyle = 'background:' + (hasData ? stripe : '#fafafa') + ';' + (hasData ? '' : 'opacity:0.45;');
 
-      html += '<tr style="' + rowBg + '">' +
-        '<td style="text-align:center;"><code style="font-weight:700;font-size:11px;">' + r.code + '</code></td>' +
-        '<td style="padding-right:' + indent + 'px;font-weight:' + weight + ';font-size:' + (r.level<=2?'13px':'12px') + ';">' + r.nameAR + '</td>' +
-        '<td style="text-align:center;"><span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:9px;font-weight:800;background:' + (typeColors[r.type]||'#e2e8f0') + '18;color:' + (typeColors[r.type]||'#64748b') + ';">' + (r.typeLabel||'') + '</span></td>' +
-        '<td style="color:#1e40af;font-weight:700;text-align:left;">' + (r.openDebit ? fmt(r.openDebit) : '-') + '</td>' +
-        '<td style="color:#1e40af;font-weight:700;text-align:left;">' + (r.openCredit ? fmt(r.openCredit) : '-') + '</td>' +
-        '<td style="color:#7c3aed;font-weight:700;text-align:left;">' + (r.periodDebit ? fmt(r.periodDebit) : '-') + '</td>' +
-        '<td style="color:#7c3aed;font-weight:700;text-align:left;">' + (r.periodCredit ? fmt(r.periodCredit) : '-') + '</td>' +
-        '<td style="color:#047857;font-weight:800;text-align:left;">' + (r.closeDebit ? fmt(r.closeDebit) : '-') + '</td>' +
-        '<td style="color:#047857;font-weight:800;text-align:left;">' + (r.closeCredit ? fmt(r.closeCredit) : '-') + '</td>' +
+      var cell = function(val, color) { return '<td style="padding:5px 10px;text-align:left;border:1px solid #e2e8f0;color:' + color + ';font-weight:' + (val?'700':'400') + ';">' + (val ? fmt(val) : '-') + '</td>'; };
+
+      html += '<tr style="' + rowStyle + '">' +
+        '<td style="text-align:center;padding:5px 8px;border:1px solid #e2e8f0;"><code style="font-weight:700;font-size:11px;color:#475569;">' + r.code + '</code></td>' +
+        '<td style="padding:5px 10px;padding-right:' + (10+indent) + 'px;font-weight:' + weight + ';font-size:' + fontSize + ';border:1px solid #e2e8f0;color:#1e293b;">' + r.nameAR + '</td>' +
+        cell(r.openDebit, '#1e40af') + cell(r.openCredit, '#1e40af') +
+        cell(r.periodDebit, '#7c3aed') + cell(r.periodCredit, '#7c3aed') +
+        cell(r.closeDebit, '#065f46') + cell(r.closeCredit, '#065f46') +
         '</tr>';
     });
 
-    // Totals row
-    html += '<tr style="background:#1e293b;color:#fff;font-weight:900;font-size:13px;">' +
-      '<td colspan="3" style="border-color:#334155;">الإجمالي</td>' +
-      '<td style="border-color:#334155;text-align:left;">' + fmt(tot.openDebit) + '</td>' +
-      '<td style="border-color:#334155;text-align:left;">' + fmt(tot.openCredit) + '</td>' +
-      '<td style="border-color:#334155;text-align:left;">' + fmt(tot.periodDebit) + '</td>' +
-      '<td style="border-color:#334155;text-align:left;">' + fmt(tot.periodCredit) + '</td>' +
-      '<td style="border-color:#334155;text-align:left;">' + fmt(tot.closeDebit) + '</td>' +
-      '<td style="border-color:#334155;text-align:left;">' + fmt(tot.closeCredit) + '</td>' +
+    // Totals
+    var totCell = function(val) { return '<td style="padding:8px 10px;text-align:left;border:1px solid #334155;font-size:13px;">' + fmt(val) + '</td>'; };
+    html += '<tr style="background:#0f172a;color:#fff;font-weight:900;">' +
+      '<td colspan="2" style="padding:8px 12px;border:1px solid #334155;font-size:14px;">الإجمالي</td>' +
+      totCell(tot.openDebit) + totCell(tot.openCredit) +
+      totCell(tot.periodDebit) + totCell(tot.periodCredit) +
+      totCell(tot.closeDebit) + totCell(tot.closeCredit) +
       '</tr></tbody></table></div>';
 
+    // Store data for export
+    window._trialBalanceData = { rows: rows, totals: tot, filters: filters };
     container.innerHTML = html;
   }).getTrialBalance(filters);
 }
+
+// Repair GL entries (fix NULL account_ids + recalculate balances)
+window.erpRepairGL = function() {
+  if (!confirm('إصلاح القيود المعلقة وإعادة حساب الأرصدة؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) {
+      showToast('تم الإصلاح: ' + r.nullFixed + ' قيد تم ربطه، ' + r.balancesRecalculated + ' حساب تم تحديث رصيده');
+      erpApplyFinFilters();
+      erpLoadAccountsList_();
+    } else showToast(r.error, true);
+  }).repairGLEntries();
+};
+
+// Export Trial Balance to Excel
+window.erpExportTrialBalance = function() {
+  var data = window._trialBalanceData;
+  if (!data || !data.rows) return showToast('لا توجد بيانات للتصدير', true);
+  // Build CSV
+  var csv = '\uFEFF'; // BOM for Arabic
+  csv += 'الرمز,اسم الحساب,النوع,رصيد أول مدين,رصيد أول دائن,حركة مدين,حركة دائن,رصيد نهائي مدين,رصيد نهائي دائن\n';
+  data.rows.forEach(function(r) {
+    csv += '"' + r.code + '","' + (r.nameAR||'') + '","' + (r.typeLabel||'') + '",' +
+      (r.openDebit||0) + ',' + (r.openCredit||0) + ',' +
+      (r.periodDebit||0) + ',' + (r.periodCredit||0) + ',' +
+      (r.closeDebit||0) + ',' + (r.closeCredit||0) + '\n';
+  });
+  var t = data.totals;
+  csv += '"","الإجمالي","",' + (t.openDebit||0) + ',' + (t.openCredit||0) + ',' + (t.periodDebit||0) + ',' + (t.periodCredit||0) + ',' + (t.closeDebit||0) + ',' + (t.closeCredit||0) + '\n';
+
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  var link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'trial_balance_' + new Date().toISOString().split('T')[0] + '.csv';
+  link.click();
+};
 
 // ─── Income Statement — IFRS / IAS 1 ───
 function _renderIncomeStatement(container) {

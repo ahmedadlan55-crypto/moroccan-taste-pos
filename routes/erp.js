@@ -495,6 +495,60 @@ router.delete('/gl/journals/:id', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// Repair: fix gl_entries with NULL account_id by matching account_code
+router.post('/gl/repair', async (req, res) => {
+  try {
+    const [nullEntries] = await db.query('SELECT e.id, e.account_code, e.account_name FROM gl_entries e WHERE e.account_id IS NULL');
+    let fixed = 0;
+    for (const entry of nullEntries) {
+      // Try to find by code
+      let accId = null;
+      if (entry.account_code) {
+        const [rows] = await db.query('SELECT id FROM gl_accounts WHERE code = ?', [entry.account_code]);
+        if (rows.length) accId = rows[0].id;
+      }
+      // Try by name
+      if (!accId && entry.account_name) {
+        const [rows] = await db.query('SELECT id FROM gl_accounts WHERE name_ar LIKE ?', ['%' + entry.account_name.substring(0, 20) + '%']);
+        if (rows.length) accId = rows[0].id;
+      }
+      if (accId) {
+        await db.query('UPDATE gl_entries SET account_id = ? WHERE id = ?', [accId, entry.id]);
+        fixed++;
+      }
+    }
+    // Recalculate all account balances from posted entries
+    await db.query('UPDATE gl_accounts SET balance = 0');
+    const [allEntries] = await db.query(
+      `SELECT e.account_id, SUM(e.debit) AS d, SUM(e.credit) AS c
+       FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
+       WHERE j.status = 'posted' AND e.account_id IS NOT NULL
+       GROUP BY e.account_id`
+    );
+    for (const e of allEntries) {
+      const net = (Number(e.d)||0) - (Number(e.c)||0);
+      await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [net, e.account_id]);
+    }
+    res.json({ success: true, nullFixed: fixed, totalNull: nullEntries.length, balancesRecalculated: allEntries.length });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// Diagnostic: check GL data
+router.get('/gl/diagnose', async (req, res) => {
+  try {
+    const [accs] = await db.query('SELECT COUNT(*) AS cnt FROM gl_accounts');
+    const [jrns] = await db.query('SELECT COUNT(*) AS cnt, status FROM gl_journals GROUP BY status');
+    const [nullEntries] = await db.query('SELECT COUNT(*) AS cnt FROM gl_entries WHERE account_id IS NULL');
+    const [validEntries] = await db.query('SELECT COUNT(*) AS cnt FROM gl_entries WHERE account_id IS NOT NULL');
+    const [nonZeroAccs] = await db.query('SELECT code, name_ar, balance FROM gl_accounts WHERE balance != 0 ORDER BY code');
+    const [recentEntries] = await db.query(
+      `SELECT e.account_id, e.account_code, e.account_name, e.debit, e.credit, j.journal_number, j.status, j.description
+       FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id ORDER BY j.created_at DESC LIMIT 10`
+    );
+    res.json({ accounts: accs[0].cnt, journals: jrns, nullEntries: nullEntries[0].cnt, validEntries: validEntries[0].cnt, nonZeroAccounts: nonZeroAccs, recentEntries });
+  } catch(e) { res.json({ error: e.message }); }
+});
+
 // ─── Financial Reports ───
 
 // Trial Balance — Professional (ميزان المراجعة)

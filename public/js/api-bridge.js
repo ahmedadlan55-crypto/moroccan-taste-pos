@@ -117,6 +117,8 @@
     debugSuppliers:      { method: 'GET',  url: '/erp/suppliers/debug' },
     testSuppliers:       { method: 'GET',  url: '/erp/suppliers/debug' },
     seedCafeGLAccounts:  { method: 'POST', url: '/erp/gl/seed' },
+    repairGLEntries:     { method: 'POST', url: '/erp/gl/repair' },
+    diagnoseGL:          { method: 'GET',  url: '/erp/gl/diagnose' },
     getAccountingPeriods:{ method: 'GET',  url: '/erp/periods' },
     getBranches:         { method: 'GET',  url: '/erp/branches' },
     saveBranch:          { method: 'POST', url: '/erp/branches' },

@@ -414,35 +414,64 @@ router.post('/expenses/:expId/post', async (req, res) => {
     const total = amt + vat;
     const desc = 'عهدة ' + (exp.custody_number || '') + ' — ' + (exp.description || '');
 
-    // Insert journal header
+    // Resolve GL account IDs from chart of accounts
+    // Expense account: use linked gl_account_id from expense, or find by code
+    let expAccId = exp.gl_account_id || null;
+    let expAccCode = exp.gl_account_name ? '' : '6';
+    let expAccName = exp.gl_account_name || 'مصروفات عهدة';
+    if (!expAccId) {
+      // Try to find expense account by code pattern (6xxx = expenses)
+      const [expAcc] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE code LIKE '6%' AND type='expense' ORDER BY code LIMIT 1");
+      if (expAcc.length) { expAccId = expAcc[0].id; expAccCode = expAcc[0].code; expAccName = expAcc[0].name_ar; }
+    } else {
+      const [accRow] = await db.query('SELECT code, name_ar FROM gl_accounts WHERE id = ?', [expAccId]);
+      if (accRow.length) { expAccCode = accRow[0].code; expAccName = accRow[0].name_ar; }
+    }
+
+    // VAT account
+    let vatAccId = null;
+    if (vat > 0) {
+      const [vatAcc] = await db.query("SELECT id FROM gl_accounts WHERE code = '21301' OR (code LIKE '213%' AND type='liability') ORDER BY code LIMIT 1");
+      if (vatAcc.length) vatAccId = vatAcc[0].id;
+    }
+
+    // Custody/Cash account (asset — عهدة الموظف)
+    let cusAccId = null;
+    const [cusAcc] = await db.query("SELECT id FROM gl_accounts WHERE code = '11101' OR (code LIKE '111%' AND type='asset') ORDER BY code LIMIT 1");
+    if (cusAcc.length) cusAccId = cusAcc[0].id;
+
+    // Insert journal header — status 'posted' with balance updates
     await db.query(
-      `INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, reference_id, description, total_debit, total_credit, status, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [jrnId, journalNumber, exp.expense_date || now, 'custody_expense', req.params.expId, desc, total, total, 'posted', username || '']
+      `INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, reference_id, description, total_debit, total_credit, status, created_by, posted_by, posted_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [jrnId, journalNumber, exp.expense_date || now, 'custody_expense', req.params.expId, desc, total, total, 'posted', username || '', username || '', now]
     );
 
     // Debit: Expenses account
     const gleExpId = 'GLE-' + Date.now() + '-1';
     await db.query(
       `INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)`,
-      [gleExpId, jrnId, null, '5000', 'مصروفات عهدة', amt, 0, desc]
+      [gleExpId, jrnId, expAccId, expAccCode, expAccName, amt, 0, desc]
     );
+    if (expAccId) await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [amt, expAccId]);
 
     // Debit: Input VAT (if any)
     if (vat > 0) {
       const gleVatId = 'GLE-' + Date.now() + '-2';
       await db.query(
         `INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)`,
-        [gleVatId, jrnId, null, '1430', 'ضريبة المدخلات', vat, 0, 'ضريبة — ' + desc]
+        [gleVatId, jrnId, vatAccId, '21301', 'ضريبة القيمة المضافة المستحقة', vat, 0, 'ضريبة — ' + desc]
       );
+      if (vatAccId) await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [vat, vatAccId]);
     }
 
-    // Credit: Custody account
+    // Credit: Custody/Cash account
     const gleCusId = 'GLE-' + Date.now() + '-3';
     await db.query(
       `INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)`,
-      [gleCusId, jrnId, null, '1200', 'عهدة ' + (exp.user_name || ''), 0, total, desc]
+      [gleCusId, jrnId, cusAccId, '11101', 'عهدة الكاشير / صناديق نقاط البيع', 0, total, desc]
     );
+    if (cusAccId) await db.query('UPDATE gl_accounts SET balance = balance - ? WHERE id = ?', [total, cusAccId]);
 
     // Update expense status
     await db.query('UPDATE custody_expenses SET status="posted", posted_by=?, posted_at=?, journal_id=? WHERE id=?',

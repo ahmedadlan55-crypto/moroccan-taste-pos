@@ -5,19 +5,35 @@
   <title>Moroccan Taste POS System</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes, viewport-fit=cover">
 
+  <!-- ─── INSTANT SESSION CHECK ───
+       Runs SYNCHRONOUSLY before any paint. If a saved session exists,
+       hides login and shows loader. User NEVER sees the login screen on reload. -->
+  <script>
+    (function() {
+      try {
+        var t = localStorage.getItem('pos_token');
+        var s = localStorage.getItem('pos_session');
+        if (t && s) {
+          var role = '';
+          try { role = (JSON.parse(s).role || '').toLowerCase(); } catch(e) {}
+          if (role === 'cashier') { window.location.replace('/pos/'); return; }
+          if (role === 'custody') { window.location.replace('/custody/'); return; }
+          // Admin/manager — hide login, show loader immediately
+          document.write('<style id="session-gate">#loginView{display:none!important;visibility:hidden!important;}#loader{display:flex!important;}</style>');
+        }
+      } catch(e) {}
+    })();
+  </script>
+
   <!-- ─── CRITICAL AUTH GATE ───
-       Hides every section of the app until JavaScript adds `body.authenticated`
-       after a successful login (or auto-login from a saved session). This stops
-       the brief flash of the dashboard / POS / ERP content before the login
-       screen appears, and prevents inspecting the page contents without auth. -->
+       Fallback: if no saved session, show login form and hide everything else. -->
   <style id="critical-auth-gate">
     html, body { margin: 0; padding: 0; background: radial-gradient(circle at top right, #1e293b, #0f172a); }
-    body:not(.authenticated) > *:not(#loginView):not(#loader):not(#toastContainer):not(#critical-auth-gate) {
+    body:not(.authenticated) > *:not(#loginView):not(#loader):not(#toastContainer):not(#critical-auth-gate):not(#session-gate) {
       display: none !important;
       visibility: hidden !important;
     }
     body:not(.authenticated) #loginView { display: flex !important; visibility: visible !important; }
-    /* Hide every modal until logged in (modals don't have .hidden class by default) */
     body:not(.authenticated) .modal,
     body:not(.authenticated) .glass-modal,
     body:not(.authenticated) .modal-overlay { display: none !important; }

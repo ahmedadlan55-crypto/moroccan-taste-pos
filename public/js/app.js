@@ -334,6 +334,16 @@ window.onload = function() {
       return;
     }
 
+    // Helper: show login form when auto-login fails (removes session-gate CSS)
+    function _showLoginFallback() {
+      localStorage.removeItem("pos_token");
+      var gate = document.getElementById('session-gate');
+      if (gate) gate.remove();
+      var lv = document.getElementById('loginView');
+      if (lv) { lv.style.display = 'flex'; lv.style.visibility = 'visible'; }
+      loader(false);
+    }
+
     // Admin session → refresh token first, then load template.
     // This ensures even expired tokens get renewed (using saved credentials as fallback).
     function _tryLoadAdmin() {
@@ -363,15 +373,13 @@ window.onload = function() {
                   localStorage.setItem('pos_token', res.token);
                   _tryLoadAdmin(); // retry with new token
                 } else {
-                  localStorage.removeItem("pos_token");
-                  loader(false);
+                  _showLoginFallback();
                 }
-              }).catch(function() { localStorage.removeItem("pos_token"); loader(false); });
+              }).catch(function() { _showLoginFallback(); });
               return;
             }
           } catch(e) {}
-          localStorage.removeItem("pos_token");
-          loader(false);
+          _showLoginFallback();
         });
     }
 

@@ -376,16 +376,46 @@ function erpOpenAccountModal(data) {
       '<div class="form-row"><label>المستوى</label><input type="number" class="form-control" id="erpAccLevel" value="' + (d.level||1) + '" min="1" max="5"></div>' +
     '</div>';
 
-  // Auto-set level when parent changes
+  // Auto-set level + auto-generate next code when parent changes
   setTimeout(function() {
     var parentSel = document.getElementById('erpAccParent');
     if (parentSel) parentSel.onchange = function() {
       var pid = parentSel.value;
-      if (pid) {
-        var parent = _erpAccounts.find(function(a) { return a.id === pid; });
-        if (parent) document.getElementById('erpAccLevel').value = parent.level + 1;
-      } else {
-        document.getElementById('erpAccLevel').value = 1;
+      var codeEl = document.getElementById('erpAccCode');
+      var levelEl = document.getElementById('erpAccLevel');
+      if (!pid) {
+        levelEl.value = 1;
+        if (!isEdit) { codeEl.value = ''; codeEl.placeholder = 'مثال: 11201'; }
+        return;
+      }
+      var parent = _erpAccounts.find(function(a) { return a.id === pid; });
+      if (!parent) return;
+      levelEl.value = parent.level + 1;
+
+      if (!isEdit) {
+        // Find all direct children of this parent and compute next code
+        var parentCode = parent.code;
+        var children = _erpAccounts.filter(function(a) { return a.parentId === pid; });
+        var childCodes = children.map(function(a) { return a.code; }).sort();
+
+        if (!childCodes.length) {
+          // No children yet — first child: parentCode + "01" or "1" depending on level
+          if (parent.level >= 3) {
+            codeEl.value = parentCode + '01';
+          } else {
+            codeEl.value = parentCode + '1';
+          }
+        } else {
+          // Get last child code and increment
+          var lastCode = childCodes[childCodes.length - 1];
+          // Extract the suffix after parent code
+          var suffix = lastCode.substring(parentCode.length);
+          var nextNum = parseInt(suffix, 10) + 1;
+          // Keep same suffix length (zero-padded)
+          var padded = String(nextNum).padStart(suffix.length, '0');
+          codeEl.value = parentCode + padded;
+        }
+        codeEl.placeholder = '';
       }
     };
   }, 50);
@@ -402,17 +432,24 @@ function erpEditAccount(id) {
 function erpAddChildAccount(parentId, parentCode) {
   const parent = _erpAccounts.find(x => x.id === parentId);
   if (!parent) return;
+  // Compute next child code
+  var children = _erpAccounts.filter(function(a) { return a.parentId === parentId; });
+  var childCodes = children.map(function(a) { return a.code; }).sort();
+  var nextCode = '';
+  if (!childCodes.length) {
+    nextCode = parent.level >= 3 ? parentCode + '01' : parentCode + '1';
+  } else {
+    var lastCode = childCodes[childCodes.length - 1];
+    var suffix = lastCode.substring(parentCode.length);
+    var nextNum = parseInt(suffix, 10) + 1;
+    nextCode = parentCode + String(nextNum).padStart(suffix.length, '0');
+  }
   erpOpenAccountModal({
     parentId: parentId,
     type: parent.type,
     level: parent.level + 1,
-    code: parentCode
+    code: nextCode
   });
-  // Pre-fill code prefix and clear to let user complete
-  setTimeout(function() {
-    var codeEl = document.getElementById('erpAccCode');
-    if (codeEl) { codeEl.value = ''; codeEl.placeholder = parentCode + 'XX'; codeEl.focus(); }
-  }, 100);
 }
 
 function erpDeleteAccount(id, code, name) {

@@ -762,6 +762,33 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 .form-row { margin-bottom: 16px; }
 .form-row label { display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px; }
 
+/* Financial Report Tabs */
+.fin-tabs {
+  display: flex; gap: 4px; margin-bottom: 14px;
+  background: #f1f5f9; padding: 4px; border-radius: 14px;
+}
+.fin-tab {
+  flex: 1; padding: 10px 16px; border: none; border-radius: 10px;
+  background: transparent; color: #64748b; font-size: 13px; font-weight: 700;
+  font-family: inherit; cursor: pointer; transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.fin-tab:hover { background: rgba(255,255,255,0.5); }
+.fin-tab.active { background: #fff; color: #1e293b; font-weight: 800; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.fin-tab i { font-size: 14px; }
+
+/* Financial Report Filters */
+.fin-filters {
+  display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+  padding: 14px 16px; margin-bottom: 14px;
+  background: rgba(255,255,255,0.6); border: 1px solid #e2e8f0; border-radius: 14px;
+}
+.ff-group { display: flex; flex-direction: column; gap: 4px; }
+.ff-group label { font-size: 11px; font-weight: 700; color: #64748b; }
+.ff-group .form-control { padding: 8px 12px; border-radius: 10px; font-size: 13px; border: 1.5px solid #e2e8f0; min-width: 130px; }
+
+.fin-report-content { min-height: 200px; }
+
 /* Journal Stats Cards */
 .jrn-stat-card {
   display: flex; align-items: center; gap: 10px;

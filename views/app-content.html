@@ -1073,15 +1073,38 @@
 <!-- FINANCIAL REPORTS (التقارير المالية) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpFinReports" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-chart-bar"></i> التقارير المالية</h2>
+  <div class="section-header" style="flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title"><i class="fas fa-chart-line"></i> التقارير المالية</h2>
+    <button class="btn btn-secondary" onclick="erpPrintFinReport()" style="border-radius:10px;"><i class="fas fa-print"></i> طباعة</button>
   </div>
-  <div class="erp-report-tabs">
-    <button class="erp-tab active" onclick="erpShowFinReport('trial')">ميزان المراجعة</button>
-    <button class="erp-tab" onclick="erpShowFinReport('income')">قائمة الدخل</button>
-    <button class="erp-tab" onclick="erpShowFinReport('balance')">الميزانية العمومية</button>
+
+  <!-- Report Tabs -->
+  <div class="fin-tabs">
+    <button class="fin-tab active" id="finTabTrial" onclick="erpShowFinReport('trial',this)"><i class="fas fa-balance-scale"></i> ميزان المراجعة</button>
+    <button class="fin-tab" id="finTabIncome" onclick="erpShowFinReport('income',this)"><i class="fas fa-chart-pie"></i> قائمة الدخل</button>
+    <button class="fin-tab" id="finTabBalance" onclick="erpShowFinReport('balance',this)"><i class="fas fa-university"></i> الميزانية العمومية</button>
   </div>
-  <div id="erpFinReportContent" class="erp-report-content">
+
+  <!-- Filters -->
+  <div class="fin-filters" id="finFilters">
+    <div class="ff-group"><label>من تاريخ</label><input type="date" id="finStartDate" class="form-control"></div>
+    <div class="ff-group"><label>إلى تاريخ</label><input type="date" id="finEndDate" class="form-control"></div>
+    <div class="ff-group"><label>نوع الحساب</label>
+      <select id="finAccType" class="form-control">
+        <option value="">الكل</option>
+        <option value="asset">أصول</option>
+        <option value="liability">التزامات</option>
+        <option value="equity">حقوق ملكية</option>
+        <option value="revenue">إيرادات</option>
+        <option value="expense">مصروفات</option>
+      </select>
+    </div>
+    <div class="ff-group"><label>المنشئ</label><input type="text" id="finCreatedBy" class="form-control" placeholder="اسم المستخدم"></div>
+    <button class="btn btn-primary" onclick="erpApplyFinFilters()" style="align-self:flex-end;border-radius:10px;height:38px;"><i class="fas fa-filter"></i> تطبيق</button>
+  </div>
+
+  <!-- Report Content -->
+  <div id="erpFinReportContent" class="fin-report-content">
     <!-- Will be filled dynamically -->
   </div>
 </div>

@@ -497,37 +497,87 @@ router.delete('/gl/journals/:id', async (req, res) => {
 
 // ─── Financial Reports ───
 
-// Trial Balance (ميزان المراجعة)
+// Trial Balance — Professional (ميزان المراجعة)
+// Returns: opening balance + period movement + closing balance for ALL accounts
 router.get('/reports/trial-balance', async (req, res) => {
   try {
+    const { startDate, endDate, accountType, createdBy } = req.query;
     const [accounts] = await db.query('SELECT * FROM gl_accounts WHERE is_active = 1 ORDER BY code');
+
+    // Build journal filter for period
+    let jrnWhere = "j.status = 'posted'";
+    const jrnParams = [];
+    if (startDate) { jrnWhere += ' AND DATE(j.journal_date) >= ?'; jrnParams.push(startDate); }
+    if (endDate) { jrnWhere += ' AND DATE(j.journal_date) <= ?'; jrnParams.push(endDate); }
+    if (createdBy) { jrnWhere += ' AND j.created_by = ?'; jrnParams.push(createdBy); }
+
+    // Get ALL movements from posted journals in period
+    const [periodEntries] = await db.query(
+      `SELECT e.account_id, SUM(e.debit) AS totalDebit, SUM(e.credit) AS totalCredit
+       FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
+       WHERE ${jrnWhere} GROUP BY e.account_id`, jrnParams
+    );
+    const periodMap = {};
+    periodEntries.forEach(e => { periodMap[e.account_id] = { debit: Number(e.totalDebit)||0, credit: Number(e.totalCredit)||0 }; });
+
+    // Get opening balance (all posted entries BEFORE startDate)
+    let openMap = {};
+    if (startDate) {
+      const [openEntries] = await db.query(
+        `SELECT e.account_id, SUM(e.debit) AS totalDebit, SUM(e.credit) AS totalCredit
+         FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
+         WHERE j.status = 'posted' AND DATE(j.journal_date) < ?
+         GROUP BY e.account_id`, [startDate]
+      );
+      openEntries.forEach(e => { openMap[e.account_id] = { debit: Number(e.totalDebit)||0, credit: Number(e.totalCredit)||0 }; });
+    }
+
+    const typeLabels = {asset:'أصول',liability:'التزامات',equity:'حقوق ملكية',revenue:'إيرادات',expense:'مصروفات'};
     const rows = [];
-    let totalDebit = 0, totalCredit = 0;
+    let totals = { openDebit:0, openCredit:0, periodDebit:0, periodCredit:0, closeDebit:0, closeCredit:0 };
 
     accounts.forEach(a => {
-      const bal = Number(a.balance) || 0;
-      if (bal === 0) return; // skip zero-balance accounts
-      let debit = 0, credit = 0;
-      // Assets & expenses are debit-normal
+      if (accountType && a.type !== accountType) return;
+
+      const open = openMap[a.id] || { debit: 0, credit: 0 };
+      const period = periodMap[a.id] || { debit: 0, credit: 0 };
+
+      // Opening net balance
+      const openNet = open.debit - open.credit;
+      let openDebit = 0, openCredit = 0;
       if (a.type === 'asset' || a.type === 'expense') {
-        if (bal >= 0) debit = bal; else credit = Math.abs(bal);
+        if (openNet >= 0) openDebit = openNet; else openCredit = Math.abs(openNet);
       } else {
-        // Liabilities, equity, revenue are credit-normal
-        if (bal >= 0) credit = bal; else debit = Math.abs(bal);
+        if (openNet <= 0) openCredit = Math.abs(openNet); else openDebit = openNet;
       }
-      totalDebit += debit;
-      totalCredit += credit;
+
+      // Closing net = opening + period
+      const closeNet = openNet + (period.debit - period.credit);
+      let closeDebit = 0, closeCredit = 0;
+      if (a.type === 'asset' || a.type === 'expense') {
+        if (closeNet >= 0) closeDebit = closeNet; else closeCredit = Math.abs(closeNet);
+      } else {
+        if (closeNet <= 0) closeCredit = Math.abs(closeNet); else closeDebit = closeNet;
+      }
+
+      totals.openDebit += openDebit; totals.openCredit += openCredit;
+      totals.periodDebit += period.debit; totals.periodCredit += period.credit;
+      totals.closeDebit += closeDebit; totals.closeCredit += closeCredit;
+
       rows.push({
-        code: a.code, nameAR: a.name_ar, type: a.type,
-        level: a.level, debit, credit
+        code: a.code, nameAR: a.name_ar, type: a.type, typeLabel: typeLabels[a.type]||a.type,
+        level: a.level, parentId: a.parent_id,
+        openDebit, openCredit,
+        periodDebit: period.debit, periodCredit: period.credit,
+        closeDebit, closeCredit
       });
     });
 
     res.json({
-      isBalanced: Math.abs(totalDebit - totalCredit) < 0.01,
-      rows, totalDebit, totalCredit
+      isBalanced: Math.abs(totals.closeDebit - totals.closeCredit) < 0.01,
+      rows, totals
     });
-  } catch (e) { res.json({ isBalanced: false, rows: [], totalDebit: 0, totalCredit: 0 }); }
+  } catch (e) { res.json({ isBalanced: false, rows: [], totals: {} }); }
 });
 
 // Income Statement (قائمة الدخل)

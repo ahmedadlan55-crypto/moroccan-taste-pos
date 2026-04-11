@@ -1624,52 +1624,192 @@ function erpLoadZATCA() {
 }
 
 // ═══════════════════════════════════════
-// FINANCIAL REPORTS
+// FINANCIAL REPORTS — Professional
 // ═══════════════════════════════════════
-function erpShowFinReport(type) {
-  document.querySelectorAll('.erp-tab').forEach(t => t.classList.remove('active'));
-  event && event.target && event.target.classList.add('active');
-  const container = document.getElementById('erpFinReportContent');
-  container.innerHTML = '<p style="text-align:center;padding:20px;">جاري التحميل...</p>';
+var _finCurrentTab = 'trial';
 
-  if (type === 'trial') {
-    window._apiBridge.withSuccessHandler(function(data) {
-      let html = `<div class="report-status ${data.isBalanced?'balanced':'unbalanced'}">${data.isBalanced?'الميزان متوازن':'الميزان غير متوازن!'}</div>
-        <table class="erp-table"><thead><tr><th>الرمز</th><th>الحساب</th><th>النوع</th><th>مدين</th><th>دائن</th></tr></thead><tbody>`;
-      (data.rows||[]).forEach(r => {
-        html += `<tr><td><code>${r.code}</code></td><td>${r.nameAR}</td><td>${r.type}</td>
-          <td class="text-green">${r.debit>0?r.debit.toFixed(2):''}</td>
-          <td class="text-red">${r.credit>0?r.credit.toFixed(2):''}</td></tr>`;
-      });
-      html += `<tr class="total-row"><td colspan="3"><strong>الإجمالي</strong></td><td class="text-green"><strong>${(data.totalDebit||0).toFixed(2)}</strong></td><td class="text-red"><strong>${(data.totalCredit||0).toFixed(2)}</strong></td></tr></tbody></table>`;
-      container.innerHTML = html;
-    }).getTrialBalance();
-  } else if (type === 'income') {
-    window._apiBridge.withSuccessHandler(function(data) {
-      let html = '<h3>الإيرادات</h3><table class="erp-table"><thead><tr><th>الرمز</th><th>الحساب</th><th>المبلغ</th></tr></thead><tbody>';
-      (data.revenue||[]).forEach(r => { html += `<tr><td><code>${r.code}</code></td><td>${r.name}</td><td class="text-green">${(r.balance||0).toFixed(2)}</td></tr>`; });
-      html += `<tr class="total-row"><td colspan="2"><strong>إجمالي الإيرادات</strong></td><td class="text-green"><strong>${(data.totalRevenue||0).toFixed(2)}</strong></td></tr></tbody></table>`;
-      html += '<h3>المصروفات</h3><table class="erp-table"><thead><tr><th>الرمز</th><th>الحساب</th><th>المبلغ</th></tr></thead><tbody>';
-      (data.expenses||[]).forEach(r => { html += `<tr><td><code>${r.code}</code></td><td>${r.name}</td><td class="text-red">${(r.balance||0).toFixed(2)}</td></tr>`; });
-      html += `<tr class="total-row"><td colspan="2"><strong>إجمالي المصروفات</strong></td><td class="text-red"><strong>${(data.totalExpenses||0).toFixed(2)}</strong></td></tr></tbody></table>`;
-      html += `<div class="net-income-banner ${data.netIncome>=0?'profit':'loss'}"><span>صافي الدخل</span><strong>${(data.netIncome||0).toFixed(2)} SAR</strong></div>`;
-      container.innerHTML = html;
-    }).getIncomeStatement({});
-  } else if (type === 'balance') {
-    window._apiBridge.withSuccessHandler(function(data) {
-      let html = '<div class="balance-sheet-grid"><div><h3>الأصول</h3><table class="erp-table"><tbody>';
-      (data.assets||[]).forEach(r => { html += `<tr><td>${r.name}</td><td>${(r.balance||0).toFixed(2)}</td></tr>`; });
-      html += `<tr class="total-row"><td><strong>إجمالي الأصول</strong></td><td><strong>${(data.totalAssets||0).toFixed(2)}</strong></td></tr></tbody></table></div>`;
-      html += '<div><h3>الالتزامات</h3><table class="erp-table"><tbody>';
-      (data.liabilities||[]).forEach(r => { html += `<tr><td>${r.name}</td><td>${(r.balance||0).toFixed(2)}</td></tr>`; });
-      html += `<tr class="total-row"><td><strong>إجمالي الالتزامات</strong></td><td><strong>${(data.totalLiabilities||0).toFixed(2)}</strong></td></tr></tbody></table>`;
-      html += '<h3>حقوق الملكية</h3><table class="erp-table"><tbody>';
-      (data.equity||[]).forEach(r => { html += `<tr><td>${r.name}</td><td>${(r.balance||0).toFixed(2)}</td></tr>`; });
-      html += `<tr class="total-row"><td><strong>إجمالي حقوق الملكية</strong></td><td><strong>${(data.totalEquity||0).toFixed(2)}</strong></td></tr></tbody></table></div></div>`;
-      html += `<div class="report-status ${data.isBalanced?'balanced':'unbalanced'}">${data.isBalanced?'الميزانية متوازنة':'الميزانية غير متوازنة!'}</div>`;
-      container.innerHTML = html;
-    }).getBalanceSheet();
-  }
+function erpShowFinReport(type, btn) {
+  _finCurrentTab = type;
+  document.querySelectorAll('.fin-tab').forEach(function(t) { t.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  else { var el = document.getElementById('finTab' + type.charAt(0).toUpperCase() + type.slice(1)); if (el) el.classList.add('active'); }
+
+  // Show/hide filters (only for trial balance)
+  var filtersEl = document.getElementById('finFilters');
+  if (filtersEl) filtersEl.style.display = type === 'trial' ? 'flex' : 'none';
+
+  erpApplyFinFilters();
+}
+
+function erpApplyFinFilters() {
+  var container = document.getElementById('erpFinReportContent');
+  container.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-spinner fa-spin" style="font-size:24px;"></i><p style="margin-top:10px;">جاري التحميل...</p></div>';
+
+  var filters = {};
+  var s = document.getElementById('finStartDate');
+  var e = document.getElementById('finEndDate');
+  var t = document.getElementById('finAccType');
+  var c = document.getElementById('finCreatedBy');
+  if (s && s.value) filters.startDate = s.value;
+  if (e && e.value) filters.endDate = e.value;
+  if (t && t.value) filters.accountType = t.value;
+  if (c && c.value) filters.createdBy = c.value;
+
+  if (_finCurrentTab === 'trial') _renderTrialBalance(container, filters);
+  else if (_finCurrentTab === 'income') _renderIncomeStatement(container);
+  else if (_finCurrentTab === 'balance') _renderBalanceSheet(container);
+}
+
+function _renderTrialBalance(container, filters) {
+  var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var typeLabels = {asset:'أصول',liability:'التزامات',equity:'حقوق ملكية',revenue:'إيرادات',expense:'مصروفات'};
+  var typeColors = {asset:'#3b82f6',liability:'#ef4444',equity:'#8b5cf6',revenue:'#16a34a',expense:'#f59e0b'};
+
+  window._apiBridge.withSuccessHandler(function(data) {
+    var rows = data.rows || [];
+    var tot = data.totals || {};
+
+    // Status banner
+    var statusHtml = '<div style="display:flex;align-items:center;gap:8px;padding:12px 18px;border-radius:12px;margin-bottom:14px;font-weight:800;font-size:14px;' +
+      (data.isBalanced ? 'background:#dcfce7;color:#166534;border:1px solid #bbf7d0;' : 'background:#fee2e2;color:#991b1b;border:1px solid #fecaca;') + '">' +
+      '<i class="fas ' + (data.isBalanced?'fa-check-circle':'fa-exclamation-triangle') + '"></i> ' +
+      (data.isBalanced ? 'الميزان متوازن' : 'الميزان غير متوازن!') + '</div>';
+
+    // Period label
+    var periodLabel = '';
+    if (filters.startDate || filters.endDate) {
+      periodLabel = '<div style="padding:8px 14px;border-radius:10px;background:#eff6ff;color:#1e40af;font-size:12px;font-weight:700;margin-bottom:12px;display:inline-block;"><i class="fas fa-calendar-alt" style="margin-left:4px;"></i> الفترة: ' + (filters.startDate||'البداية') + ' → ' + (filters.endDate||'الآن') + '</div>';
+    }
+
+    // Table
+    var html = statusHtml + periodLabel;
+    html += '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;">';
+    html += '<table class="erp-table" style="font-size:12px;margin:0;">';
+    html += '<thead><tr style="background:#1e293b;color:#fff;">' +
+      '<th rowspan="2" style="border-color:#334155;width:80px;text-align:center;">الرمز</th>' +
+      '<th rowspan="2" style="border-color:#334155;">اسم الحساب</th>' +
+      '<th rowspan="2" style="border-color:#334155;width:70px;text-align:center;">النوع</th>' +
+      '<th colspan="2" style="border-color:#334155;text-align:center;background:#1e40af;">رصيد أول المدة</th>' +
+      '<th colspan="2" style="border-color:#334155;text-align:center;background:#7c3aed;">حركة الفترة</th>' +
+      '<th colspan="2" style="border-color:#334155;text-align:center;background:#047857;">الرصيد النهائي</th>' +
+      '</tr><tr style="background:#334155;color:#e2e8f0;">' +
+      '<th style="border-color:#475569;width:100px;">مدين</th><th style="border-color:#475569;width:100px;">دائن</th>' +
+      '<th style="border-color:#475569;width:100px;">مدين</th><th style="border-color:#475569;width:100px;">دائن</th>' +
+      '<th style="border-color:#475569;width:100px;">مدين</th><th style="border-color:#475569;width:100px;">دائن</th>' +
+      '</tr></thead><tbody>';
+
+    var lastType = '';
+    rows.forEach(function(r) {
+      // Type group header
+      if (r.type !== lastType) {
+        lastType = r.type;
+        html += '<tr style="background:' + (typeColors[r.type]||'#f1f5f9') + '10;"><td colspan="9" style="font-weight:900;font-size:13px;color:' + (typeColors[r.type]||'#1e293b') + ';padding:8px 14px;"><i class="fas fa-folder-open" style="margin-left:6px;"></i>' + (typeLabels[r.type]||r.type) + '</td></tr>';
+      }
+      var indent = r.level > 1 ? (r.level - 1) * 18 : 0;
+      var weight = r.level <= 2 ? '800' : '400';
+      var hasData = r.openDebit || r.openCredit || r.periodDebit || r.periodCredit || r.closeDebit || r.closeCredit;
+      var rowBg = hasData ? '' : 'opacity:0.5;';
+
+      html += '<tr style="' + rowBg + '">' +
+        '<td style="text-align:center;"><code style="font-weight:700;font-size:11px;">' + r.code + '</code></td>' +
+        '<td style="padding-right:' + indent + 'px;font-weight:' + weight + ';font-size:' + (r.level<=2?'13px':'12px') + ';">' + r.nameAR + '</td>' +
+        '<td style="text-align:center;"><span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:9px;font-weight:800;background:' + (typeColors[r.type]||'#e2e8f0') + '18;color:' + (typeColors[r.type]||'#64748b') + ';">' + (r.typeLabel||'') + '</span></td>' +
+        '<td style="color:#1e40af;font-weight:700;text-align:left;">' + (r.openDebit ? fmt(r.openDebit) : '-') + '</td>' +
+        '<td style="color:#1e40af;font-weight:700;text-align:left;">' + (r.openCredit ? fmt(r.openCredit) : '-') + '</td>' +
+        '<td style="color:#7c3aed;font-weight:700;text-align:left;">' + (r.periodDebit ? fmt(r.periodDebit) : '-') + '</td>' +
+        '<td style="color:#7c3aed;font-weight:700;text-align:left;">' + (r.periodCredit ? fmt(r.periodCredit) : '-') + '</td>' +
+        '<td style="color:#047857;font-weight:800;text-align:left;">' + (r.closeDebit ? fmt(r.closeDebit) : '-') + '</td>' +
+        '<td style="color:#047857;font-weight:800;text-align:left;">' + (r.closeCredit ? fmt(r.closeCredit) : '-') + '</td>' +
+        '</tr>';
+    });
+
+    // Totals row
+    html += '<tr style="background:#1e293b;color:#fff;font-weight:900;font-size:13px;">' +
+      '<td colspan="3" style="border-color:#334155;">الإجمالي</td>' +
+      '<td style="border-color:#334155;text-align:left;">' + fmt(tot.openDebit) + '</td>' +
+      '<td style="border-color:#334155;text-align:left;">' + fmt(tot.openCredit) + '</td>' +
+      '<td style="border-color:#334155;text-align:left;">' + fmt(tot.periodDebit) + '</td>' +
+      '<td style="border-color:#334155;text-align:left;">' + fmt(tot.periodCredit) + '</td>' +
+      '<td style="border-color:#334155;text-align:left;">' + fmt(tot.closeDebit) + '</td>' +
+      '<td style="border-color:#334155;text-align:left;">' + fmt(tot.closeCredit) + '</td>' +
+      '</tr></tbody></table></div>';
+
+    container.innerHTML = html;
+  }).getTrialBalance(filters);
+}
+
+function _renderIncomeStatement(container) {
+  var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  window._apiBridge.withSuccessHandler(function(data) {
+    var html = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">' +
+      '<div style="background:#dcfce7;padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:#166534;font-weight:700;">إجمالي الإيرادات</div><div style="font-size:24px;font-weight:900;color:#16a34a;">' + fmt(data.totalRevenue) + '</div></div>' +
+      '<div style="background:#fee2e2;padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:#991b1b;font-weight:700;">إجمالي المصروفات</div><div style="font-size:24px;font-weight:900;color:#ef4444;">' + fmt(data.totalExpenses) + '</div></div>' +
+      '<div style="background:' + (data.netIncome>=0?'#eff6ff':'#fef3c7') + ';padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:' + (data.netIncome>=0?'#1e40af':'#92400e') + ';font-weight:700;">صافي الدخل</div><div style="font-size:24px;font-weight:900;color:' + (data.netIncome>=0?'#1e40af':'#ef4444') + ';">' + fmt(data.netIncome) + '</div></div>' +
+      '</div>';
+
+    // Revenue table
+    html += '<h3 style="color:#16a34a;margin:14px 0 8px;font-size:16px;"><i class="fas fa-arrow-trend-up" style="margin-left:6px;"></i> الإيرادات</h3>';
+    html += '<div style="overflow-x:auto;border-radius:12px;border:1px solid #e2e8f0;margin-bottom:16px;"><table class="erp-table" style="margin:0;font-size:13px;"><thead><tr><th>الرمز</th><th>اسم الحساب</th><th style="width:140px;">المبلغ</th></tr></thead><tbody>';
+    (data.revenue||[]).forEach(function(r) { html += '<tr><td><code>' + r.code + '</code></td><td style="font-weight:700;">' + r.name + '</td><td style="font-weight:800;color:#16a34a;">' + fmt(r.balance) + '</td></tr>'; });
+    html += '<tr style="background:#f0fdf4;font-weight:900;"><td colspan="2">إجمالي الإيرادات</td><td style="color:#16a34a;">' + fmt(data.totalRevenue) + '</td></tr></tbody></table></div>';
+
+    // Expenses table
+    html += '<h3 style="color:#ef4444;margin:14px 0 8px;font-size:16px;"><i class="fas fa-arrow-trend-down" style="margin-left:6px;"></i> المصروفات</h3>';
+    html += '<div style="overflow-x:auto;border-radius:12px;border:1px solid #e2e8f0;"><table class="erp-table" style="margin:0;font-size:13px;"><thead><tr><th>الرمز</th><th>اسم الحساب</th><th style="width:140px;">المبلغ</th></tr></thead><tbody>';
+    (data.expenses||[]).forEach(function(r) { html += '<tr><td><code>' + r.code + '</code></td><td style="font-weight:700;">' + r.name + '</td><td style="font-weight:800;color:#ef4444;">' + fmt(r.balance) + '</td></tr>'; });
+    html += '<tr style="background:#fef2f2;font-weight:900;"><td colspan="2">إجمالي المصروفات</td><td style="color:#ef4444;">' + fmt(data.totalExpenses) + '</td></tr></tbody></table></div>';
+
+    container.innerHTML = html;
+  }).getIncomeStatement({});
+}
+
+function _renderBalanceSheet(container) {
+  var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  window._apiBridge.withSuccessHandler(function(data) {
+    var statusStyle = data.isBalanced ? 'background:#dcfce7;color:#166534;border:1px solid #bbf7d0;' : 'background:#fee2e2;color:#991b1b;border:1px solid #fecaca;';
+    var html = '<div style="padding:12px 18px;border-radius:12px;margin-bottom:14px;font-weight:800;' + statusStyle + '"><i class="fas ' + (data.isBalanced?'fa-check-circle':'fa-exclamation-triangle') + '"></i> ' + (data.isBalanced?'الميزانية متوازنة':'الميزانية غير متوازنة!') + '</div>';
+
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">';
+
+    // Assets
+    html += '<div><h3 style="color:#3b82f6;margin-bottom:8px;font-size:16px;"><i class="fas fa-building" style="margin-left:6px;"></i> الأصول</h3>';
+    html += '<div style="border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;"><table class="erp-table" style="margin:0;font-size:13px;"><tbody>';
+    (data.assets||[]).forEach(function(r) { html += '<tr><td><code>' + (r.code||'') + '</code></td><td style="font-weight:700;">' + r.name + '</td><td style="font-weight:800;text-align:left;">' + fmt(r.balance) + '</td></tr>'; });
+    html += '<tr style="background:#eff6ff;font-weight:900;"><td colspan="2">إجمالي الأصول</td><td style="text-align:left;color:#1e40af;font-size:15px;">' + fmt(data.totalAssets) + '</td></tr></tbody></table></div></div>';
+
+    // Liabilities + Equity
+    html += '<div>';
+    html += '<h3 style="color:#ef4444;margin-bottom:8px;font-size:16px;"><i class="fas fa-handshake" style="margin-left:6px;"></i> الالتزامات</h3>';
+    html += '<div style="border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;margin-bottom:14px;"><table class="erp-table" style="margin:0;font-size:13px;"><tbody>';
+    (data.liabilities||[]).forEach(function(r) { html += '<tr><td><code>' + (r.code||'') + '</code></td><td style="font-weight:700;">' + r.name + '</td><td style="font-weight:800;text-align:left;">' + fmt(r.balance) + '</td></tr>'; });
+    html += '<tr style="background:#fef2f2;font-weight:900;"><td colspan="2">إجمالي الالتزامات</td><td style="text-align:left;color:#ef4444;">' + fmt(data.totalLiabilities) + '</td></tr></tbody></table></div>';
+
+    html += '<h3 style="color:#8b5cf6;margin-bottom:8px;font-size:16px;"><i class="fas fa-gem" style="margin-left:6px;"></i> حقوق الملكية</h3>';
+    html += '<div style="border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;"><table class="erp-table" style="margin:0;font-size:13px;"><tbody>';
+    (data.equity||[]).forEach(function(r) { html += '<tr><td><code>' + (r.code||'') + '</code></td><td style="font-weight:700;">' + r.name + '</td><td style="font-weight:800;text-align:left;">' + fmt(r.balance) + '</td></tr>'; });
+    html += '<tr style="background:#f5f3ff;font-weight:900;"><td colspan="2">إجمالي حقوق الملكية</td><td style="text-align:left;color:#8b5cf6;">' + fmt(data.totalEquity) + '</td></tr></tbody></table></div>';
+    html += '</div></div>';
+
+    container.innerHTML = html;
+  }).getBalanceSheet();
+}
+
+function erpPrintFinReport() {
+  var content = document.getElementById('erpFinReportContent');
+  if (!content) return;
+  var company = (state.settings && state.settings.name) || 'Moroccan Taste';
+  var titles = {trial:'ميزان المراجعة',income:'قائمة الدخل',balance:'الميزانية العمومية'};
+  var w = window.open('','_blank');
+  w.document.write('<html dir="rtl"><head><meta charset="UTF-8"><title>' + (titles[_finCurrentTab]||'') + '</title>' +
+    '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;direction:rtl;padding:20px;color:#1e293b;font-size:12px;}' +
+    'h2{text-align:center;margin-bottom:4px;}h3{margin:12px 0 6px;}' +
+    'table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ddd;padding:6px 8px;text-align:right;}th{background:#f1f5f9;font-weight:700;}' +
+    'code{font-weight:700;} .text-green{color:#16a34a;} .text-red{color:#ef4444;}' +
+    '@media print{body{padding:10px;font-size:11px;}}</style></head><body>' +
+    '<h2>' + company + '</h2><h3 style="text-align:center;color:#64748b;margin-bottom:14px;">' + (titles[_finCurrentTab]||'') + ' — ' + new Date().toLocaleDateString('en-GB') + '</h3>' +
+    content.innerHTML + '</body></html>');
+  w.document.close();
+  setTimeout(function() { w.print(); }, 400);
 }
 
 // ═══════════════════════════════════════

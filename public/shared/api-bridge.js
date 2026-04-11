@@ -93,7 +93,7 @@
     getVATSummary:       { method: 'GET',  url: '/erp/vat/summary', query: (f) => f },
     getVATReports:       { method: 'GET',  url: '/erp/vat/reports' },
     createVATReport:     { method: 'POST', url: '/erp/vat/reports' },
-    getTrialBalance:     { method: 'GET',  url: '/erp/reports/trial-balance' },
+    getTrialBalance:     { method: 'GET',  url: '/erp/reports/trial-balance', query: (f) => f },
     getIncomeStatement:  { method: 'GET',  url: '/erp/reports/income' },
     getBalanceSheet:     { method: 'GET',  url: '/erp/reports/balance-sheet' },
 

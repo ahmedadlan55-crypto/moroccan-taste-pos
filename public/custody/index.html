@@ -9,26 +9,43 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="MT Custody">
 
-  <!-- Auth gate — custody role only -->
+  <!-- Auth gate — custody role only + back button block -->
   <script>
     (function() {
       try {
         var token = localStorage.getItem('pos_token');
         var session = localStorage.getItem('pos_session');
         if (!token || !session) { window.location.replace('/'); return; }
-        // Only custody users can access this page
         var s = JSON.parse(session);
         var role = (s.role || '').toLowerCase();
         if (role !== 'custody') {
-          // Wrong role — redirect to correct page
           if (role === 'cashier') { window.location.replace('/pos/'); return; }
           window.location.replace('/'); return;
         }
-        // Prevent browser back to other pages
-        history.pushState(null, '', '/custody/');
-        window.addEventListener('popstate', function() {
-          history.pushState(null, '', '/custody/');
+
+        // Block back button — replace entire history
+        history.replaceState({ custody: true }, '', '/custody/');
+        // Push extra state so back goes to our state, not another page
+        history.pushState({ custody: true }, '', '/custody/');
+        window.addEventListener('popstate', function(e) {
+          // Always push back to custody
+          history.pushState({ custody: true }, '', '/custody/');
         });
+
+        // Handle bfcache (browser back/forward cache) — re-validates on pageshow
+        window.addEventListener('pageshow', function(e) {
+          if (e.persisted) {
+            // Page was restored from bfcache — re-check auth
+            var t = localStorage.getItem('pos_token');
+            var ss = localStorage.getItem('pos_session');
+            if (!t || !ss) { window.location.replace('/'); return; }
+            try {
+              var r = (JSON.parse(ss).role || '').toLowerCase();
+              if (r !== 'custody') { window.location.replace('/'); return; }
+            } catch(ex) { window.location.replace('/'); }
+          }
+        });
+
         document.addEventListener('DOMContentLoaded', function() {
           document.body.classList.add('authenticated');
         });
@@ -235,10 +252,12 @@
     </div>
   </div>
 
-  <!-- Image Viewer -->
-  <div id="viewer" class="img-viewer" style="display:none;" onclick="closeViewer()">
-    <img id="viewerImg" src="">
-    <button class="viewer-close"><i class="fas fa-times"></i></button>
+  <!-- Image/PDF Viewer -->
+  <div id="viewer" class="img-viewer" style="display:none;">
+    <div class="img-viewer-content" onclick="event.stopPropagation();">
+      <img id="viewerImg" src="">
+    </div>
+    <button class="viewer-close" onclick="closeViewer()"><i class="fas fa-times"></i></button>
   </div>
 
   <!-- Toast -->

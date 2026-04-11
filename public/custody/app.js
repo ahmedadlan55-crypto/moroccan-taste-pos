@@ -443,16 +443,40 @@
     var e = S.list.find(function(x) { return x.id === id; });
     if (e && e.invoiceImage) {
       if (e.invoiceImage.indexOf('application/pdf') !== -1) {
-        var w = window.open('', '_blank');
-        w.document.write('<html><body style="margin:0;"><iframe src="' + e.invoiceImage + '" style="width:100%;height:100vh;border:none;"></iframe></body></html>');
-        w.document.close();
+        // Show PDF in the same viewer modal using embed
+        el('viewerImg').style.display = 'none';
+        var pdfEmbed = document.getElementById('viewerPdf');
+        if (!pdfEmbed) {
+          pdfEmbed = document.createElement('embed');
+          pdfEmbed.id = 'viewerPdf';
+          pdfEmbed.style.cssText = 'width:95%;height:90vh;border-radius:12px;background:#fff;';
+          el('viewer').querySelector('.img-viewer-content') ?
+            el('viewer').querySelector('.img-viewer-content').appendChild(pdfEmbed) :
+            el('viewer').insertBefore(pdfEmbed, el('viewer').firstChild);
+        }
+        pdfEmbed.src = e.invoiceImage;
+        pdfEmbed.type = 'application/pdf';
+        pdfEmbed.style.display = 'block';
+        el('viewer').style.display = 'flex';
+        el('viewer').onclick = null; // Don't close on PDF click
       } else {
+        // Remove PDF embed if exists
+        var pdfEl = document.getElementById('viewerPdf');
+        if (pdfEl) pdfEl.style.display = 'none';
+        el('viewerImg').style.display = 'block';
         el('viewerImg').src = e.invoiceImage;
         el('viewer').style.display = 'flex';
+        el('viewer').onclick = closeViewer;
       }
     } else toast('لا توجد صورة', 'err');
   };
-  window.closeViewer = function() { el('viewer').style.display = 'none'; };
+  window.closeViewer = function() {
+    el('viewer').style.display = 'none';
+    var pdfEl = document.getElementById('viewerPdf');
+    if (pdfEl) { pdfEl.src = ''; pdfEl.style.display = 'none'; }
+    el('viewerImg').style.display = 'block';
+    el('viewer').onclick = closeViewer;
+  };
 
   // ─── Logout ───
   window.doLogout = function() {

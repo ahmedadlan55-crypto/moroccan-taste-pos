@@ -415,30 +415,47 @@ router.post('/expenses/:expId/post', async (req, res) => {
     const desc = 'عهدة ' + (exp.custody_number || '') + ' — ' + (exp.description || '');
 
     // Resolve GL account IDs from chart of accounts
-    // Expense account: use linked gl_account_id from expense, or find by code
+    // Helper: find account by code or type fallback
+    async function findGLAccount(codes, type) {
+      for (const code of codes) {
+        const [rows] = await db.query('SELECT id, code, name_ar FROM gl_accounts WHERE code = ?', [code]);
+        if (rows.length) return rows[0];
+      }
+      // Fallback: any account of this type
+      if (type) {
+        const [rows] = await db.query('SELECT id, code, name_ar FROM gl_accounts WHERE type = ? ORDER BY code LIMIT 1', [type]);
+        if (rows.length) return rows[0];
+      }
+      return null;
+    }
+
+    // Expense account: use linked gl_account_id, or search by code
     let expAccId = exp.gl_account_id || null;
-    let expAccCode = exp.gl_account_name ? '' : '6';
+    let expAccCode = '';
     let expAccName = exp.gl_account_name || 'مصروفات عهدة';
-    if (!expAccId) {
-      // Try to find expense account by code pattern (6xxx = expenses)
-      const [expAcc] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE code LIKE '6%' AND type='expense' ORDER BY code LIMIT 1");
-      if (expAcc.length) { expAccId = expAcc[0].id; expAccCode = expAcc[0].code; expAccName = expAcc[0].name_ar; }
-    } else {
+    if (expAccId) {
       const [accRow] = await db.query('SELECT code, name_ar FROM gl_accounts WHERE id = ?', [expAccId]);
       if (accRow.length) { expAccCode = accRow[0].code; expAccName = accRow[0].name_ar; }
+      else { expAccId = null; } // ID invalid, fallback below
+    }
+    if (!expAccId) {
+      const acc = await findGLAccount(['61','611','6'], 'expense');
+      if (acc) { expAccId = acc.id; expAccCode = acc.code; expAccName = acc.name_ar; }
     }
 
     // VAT account
     let vatAccId = null;
     if (vat > 0) {
-      const [vatAcc] = await db.query("SELECT id FROM gl_accounts WHERE code = '21301' OR (code LIKE '213%' AND type='liability') ORDER BY code LIMIT 1");
-      if (vatAcc.length) vatAccId = vatAcc[0].id;
+      const acc = await findGLAccount(['21301','213','2130'], 'liability');
+      if (acc) vatAccId = acc.id;
     }
 
-    // Custody/Cash account (asset — عهدة الموظف)
+    // Custody/Cash account (asset)
     let cusAccId = null;
-    const [cusAcc] = await db.query("SELECT id FROM gl_accounts WHERE code = '11101' OR (code LIKE '111%' AND type='asset') ORDER BY code LIMIT 1");
-    if (cusAcc.length) cusAccId = cusAcc[0].id;
+    const cusAcc = await findGLAccount(['11101','11102','111','1110'], 'asset');
+    if (cusAcc) cusAccId = cusAcc.id;
+
+    console.log('[CUSTODY POST] expAcc:', expAccId, expAccCode, '| vatAcc:', vatAccId, '| cusAcc:', cusAccId);
 
     // Insert journal header — status 'posted' with balance updates
     await db.query(

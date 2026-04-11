@@ -304,7 +304,8 @@ async function runMigrations() {
       ('costing_method','WEIGHTED_AVERAGE'),
       ('default_pricing_mode','fixed'),
       ('default_markup_pct','30'),
-      ('BranchName','')`);
+      ('BranchName',''),
+      ('inventory_method','perpetual')`);
   } catch (e) { console.log('[DB] Cost settings seed:', e.message.substring(0, 80)); }
 }
 

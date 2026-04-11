@@ -762,6 +762,10 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 .form-row { margin-bottom: 16px; }
 .form-row label { display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px; }
 
+/* Inventory Method Cards */
+.inv-method-card { background: #f8fafc; border: 2px solid #e2e8f0; border-radius: 16px; padding: 18px; transition: all 0.2s; }
+.inv-method-card:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.06); }
+
 /* Financial Report Tabs */
 .fin-tabs {
   display: flex; gap: 4px; margin-bottom: 14px;

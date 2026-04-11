@@ -10,7 +10,7 @@ Object.defineProperty(window, 'currentUser', { get: function() { return (typeof 
 // ═══════════════════════════════════════
 const erpSections = [
   'erpDashHome','erpCustomers','erpSuppliers','erpGLAccounts','erpGLJournals',
-  'erpPurchaseOrders','erpVATReports','erpZATCA','erpFinReports',
+  'erpPurchaseOrders','erpVATReports','erpZATCA','erpInventoryMethod','erpFinReports',
   'erpBranches','erpPeriods','erpAuditLog','erpCreditNotes',
   'erpWarehouses','erpWarehouseStock','erpStockTransfers',
   'erpARAging','erpAPAging','erpCustomerStatement','erpSupplierStatement'
@@ -34,6 +34,7 @@ function erpNav(sectionId) {
       case 'erpPurchaseOrders': erpLoadPOs(); break;
       case 'erpVATReports': erpLoadVATReports(); break;
       case 'erpZATCA': erpLoadZATCA(); break;
+      case 'erpInventoryMethod': erpLoadInventoryMethod(); break;
       case 'erpFinReports': erpShowFinReport('trial'); break;
       case 'erpBranches': erpLoadBranches(); break;
       case 'erpPeriods': erpLoadPeriods(); break;
@@ -706,6 +707,11 @@ function _renderJournalForm() {
     '</div>' +
     '<div class="form-row"><label>عنوان القيد / الوصف *</label><input class="form-control" id="erpJrnDesc" placeholder="مثال: تسجيل مبيعات يوم 10/4"></div>' +
     '<div class="form-row"><label>ملاحظات إضافية</label><input class="form-control" id="erpJrnRef" placeholder="اختياري..."></div>' +
+    '<div class="form-row" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.15);">' +
+      '<input type="checkbox" id="erpJrnIsOpening" style="width:18px;height:18px;accent-color:#f59e0b;">' +
+      '<label for="erpJrnIsOpening" style="margin:0;cursor:pointer;font-weight:700;color:#92400e;"><i class="fas fa-flag" style="margin-left:4px;color:#f59e0b;"></i> قيد افتتاحي (Opening Entry)</label>' +
+      '<span style="font-size:11px;color:#94a3b8;margin-right:auto;">يُحسب كرصيد أول المدة في ميزان المراجعة</span>' +
+    '</div>' +
     '<div class="form-row"><label>مرفق (صورة أو PDF)</label><div style="display:flex;gap:10px;align-items:center;"><label style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;cursor:pointer;background:rgba(59,130,246,0.06);color:#3b82f6;font-size:13px;font-weight:700;border:1.5px dashed rgba(59,130,246,0.2);" for="erpJrnAttach"><i class="fas fa-paperclip"></i> إرفاق ملف</label><input type="file" id="erpJrnAttach" accept="image/*,application/pdf" onchange="erpPickAttachment(this)" style="display:none;"><div id="jrnAttachPrev"></div></div></div>' +
     '<hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;">' +
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
@@ -857,13 +863,15 @@ function erpSaveJournal() {
     loader(false);
     if (res.success) { showToast('تم إنشاء القيد: ' + res.journalNumber); erpCloseModal(); erpLoadJournals(); }
     else showToast(res.error, true);
+  var isOpening = document.getElementById('erpJrnIsOpening') && document.getElementById('erpJrnIsOpening').checked;
   }).createJournalEntry({
     journalDate: document.getElementById('erpJrnDate').value,
-    referenceType: 'manual',
+    referenceType: isOpening ? 'opening' : 'manual',
     referenceId: '',
     description: desc,
     notes: document.getElementById('erpJrnRef').value,
     attachment: window._jrnAttachmentData || '',
+    isOpening: isOpening,
     entries: entries
   }, currentUser);
 }
@@ -1935,6 +1943,87 @@ function erpPrintFinReport() {
   w.document.close();
   setTimeout(function() { w.print(); }, 400);
 }
+
+// ═══════════════════════════════════════
+// INVENTORY METHOD & VALUATION (نوع الجرد)
+// ═══════════════════════════════════════
+function erpLoadInventoryMethod() {
+  window._apiBridge.withSuccessHandler(function(data) {
+    var method = data.method || 'perpetual';
+    // Highlight selected method
+    var perpCard = document.getElementById('invMethodPerpetual');
+    var periCard = document.getElementById('invMethodPeriodic');
+    if (perpCard) perpCard.style.cssText = method === 'perpetual' ? 'cursor:pointer;background:#f0fdf4;border:2px solid #16a34a;border-radius:16px;padding:18px;' : 'cursor:pointer;background:#f8fafc;border:2px solid #e2e8f0;border-radius:16px;padding:18px;opacity:0.7;';
+    if (periCard) periCard.style.cssText = method === 'periodic' ? 'cursor:pointer;background:#eff6ff;border:2px solid #3b82f6;border-radius:16px;padding:18px;' : 'cursor:pointer;background:#f8fafc;border:2px solid #e2e8f0;border-radius:16px;padding:18px;opacity:0.7;';
+    // Load valuation
+    erpLoadInventoryValuation();
+  }).getInventoryMethod();
+}
+
+window.erpSetInvMethod = function(method) {
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم تغيير نوع الجرد إلى: ' + (method==='perpetual'?'مستمر':'دوري')); erpLoadInventoryMethod(); }
+    else showToast(r.error, true);
+  }).setInventoryMethod({ method: method });
+};
+
+function erpLoadInventoryValuation() {
+  var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  window._apiBridge.withSuccessHandler(function(data) {
+    var container = document.getElementById('invValuationContent');
+    var html = '';
+
+    // Summary card
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">';
+    html += '<div style="background:#eff6ff;padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:#1e40af;font-weight:700;">إجمالي قيمة المخزون</div><div style="font-size:24px;font-weight:900;color:#1e40af;">' + fmt(data.totalValue) + ' SAR</div></div>';
+    html += '<div style="background:#f0fdf4;padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:#166534;font-weight:700;">عدد الأصناف</div><div style="font-size:24px;font-weight:900;color:#16a34a;">' + (data.itemCount||0) + '</div></div>';
+    html += '<div style="background:#fef3c7;padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:#92400e;font-weight:700;">نوع الجرد</div><div style="font-size:24px;font-weight:900;color:#f59e0b;">' + (data.method==='perpetual'?'مستمر':'دوري') + '</div></div>';
+    html += '</div>';
+
+    // Categories table
+    var cats = data.categories || {};
+    var catNames = Object.keys(cats);
+    if (catNames.length) {
+      html += '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;">';
+      html += '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+      html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">التصنيف</th><th style="padding:10px 14px;">عدد الأصناف</th><th style="padding:10px 14px;text-align:left;">القيمة الإجمالية</th></tr></thead><tbody>';
+      catNames.forEach(function(cat) {
+        var c = cats[cat];
+        html += '<tr style="border-bottom:1px solid #e2e8f0;">';
+        html += '<td style="padding:10px 14px;font-weight:800;"><i class="fas fa-box" style="color:#3b82f6;margin-left:6px;"></i>' + cat + '</td>';
+        html += '<td style="padding:10px 14px;">' + c.items.length + ' صنف</td>';
+        html += '<td style="padding:10px 14px;text-align:left;font-weight:800;color:#1e40af;">' + fmt(c.totalValue) + '</td>';
+        html += '</tr>';
+        // Show items under each category
+        c.items.forEach(function(item) {
+          html += '<tr style="background:#f8fafc;border-bottom:1px solid #f1f5f9;">';
+          html += '<td style="padding:6px 14px;padding-right:30px;font-size:12px;color:#475569;">' + item.name + '</td>';
+          html += '<td style="padding:6px 14px;font-size:12px;">' + item.stock + ' ' + (item.unit||'') + '</td>';
+          html += '<td style="padding:6px 14px;text-align:left;font-size:12px;font-weight:700;">' + fmt(item.value) + '</td>';
+          html += '</tr>';
+        });
+      });
+      html += '<tr style="background:#0f172a;color:#fff;font-weight:900;"><td style="padding:10px 14px;">الإجمالي</td><td></td><td style="padding:10px 14px;text-align:left;font-size:15px;">' + fmt(data.totalValue) + '</td></tr>';
+      html += '</tbody></table></div>';
+    } else {
+      html += '<div style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-inbox" style="font-size:32px;margin-bottom:8px;"></i><p>لا توجد أصناف مخزون</p></div>';
+    }
+
+    container.innerHTML = html;
+  }).getInventoryValuation();
+}
+
+window.erpSyncInventoryGL = function() {
+  if (!confirm('مزامنة تصنيفات المخزون مع دليل الحسابات؟\nسيتم إنشاء حسابات فرعية تحت "112 المخزون" لكل تصنيف.')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم المزامنة: ' + r.categoriesCreated + ' تصنيف جديد'); erpLoadAccountsList_(); erpLoadInventoryValuation(); }
+    else showToast(r.error, true);
+  }).syncInventoryGL();
+};
 
 // ═══════════════════════════════════════
 // BRANCHES

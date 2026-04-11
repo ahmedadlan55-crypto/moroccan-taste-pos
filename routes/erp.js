@@ -386,7 +386,8 @@ router.get('/gl/journals', async (req, res) => {
 // Create journal entry (status: draft — no balance update until posted)
 router.post('/gl/journals', async (req, res) => {
   try {
-    const { journalDate, referenceType, referenceId, description, entries, username, attachment, notes } = req.body;
+    const { journalDate, referenceType, referenceId, description, entries, username, attachment, notes, isOpening } = req.body;
+    const actualRefType = isOpening ? 'opening' : (referenceType || 'manual');
     const journalId = 'JRN-' + Date.now();
 
     const [lastJ] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
@@ -411,7 +412,7 @@ router.post('/gl/journals', async (req, res) => {
     await db.query(
       `INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, reference_id, description, total_debit, total_credit, status, created_by, attachment, notes)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [journalId, journalNumber, journalDate || new Date(), referenceType || 'manual', referenceId || '',
+      [journalId, journalNumber, journalDate || new Date(), actualRefType, referenceId || '',
        description || '', totalDebit, totalCredit, 'draft', username || '', attachment || null, notes || '']
     );
 
@@ -669,6 +670,98 @@ router.get('/gl/diagnose', async (req, res) => {
   } catch(e) { res.json({ error: e.message }); }
 });
 
+// ─── Inventory Method & Valuation ───
+
+// Get/Set inventory method
+router.get('/inventory-method', async (req, res) => {
+  try {
+    const [rows] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_method'");
+    res.json({ method: rows.length ? rows[0].setting_value : 'perpetual' });
+  } catch(e) { res.json({ method: 'perpetual' }); }
+});
+router.post('/inventory-method', async (req, res) => {
+  try {
+    const { method } = req.body;
+    if (!['perpetual','periodic'].includes(method)) return res.json({ success: false, error: 'Invalid method' });
+    await db.query("INSERT INTO settings (setting_key, setting_value) VALUES ('inventory_method',?) ON DUPLICATE KEY UPDATE setting_value=?", [method, method]);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// Inventory valuation — real-time stock value from inv_items
+router.get('/inventory-valuation', async (req, res) => {
+  try {
+    const [items] = await db.query('SELECT id, name, category, cost, stock, unit FROM inv_items WHERE active = 1');
+    const [methodRow] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_method'");
+    const method = methodRow.length ? methodRow[0].setting_value : 'perpetual';
+
+    // Group by category
+    const categories = {};
+    let totalValue = 0;
+    items.forEach(i => {
+      const cat = i.category || 'أخرى';
+      if (!categories[cat]) categories[cat] = { items: [], totalValue: 0 };
+      const val = (Number(i.stock)||0) * (Number(i.cost)||0);
+      categories[cat].items.push({ name: i.name, stock: Number(i.stock)||0, cost: Number(i.cost)||0, value: val, unit: i.unit });
+      categories[cat].totalValue += val;
+      totalValue += val;
+    });
+
+    res.json({ method, categories, totalValue, itemCount: items.length });
+  } catch(e) { res.json({ method: 'perpetual', categories: {}, totalValue: 0, itemCount: 0 }); }
+});
+
+// Sync inventory GL accounts — create accounts for each category under 112
+router.post('/gl/sync-inventory', async (req, res) => {
+  try {
+    // Ensure parent 112 exists
+    const [p112] = await db.query("SELECT id FROM gl_accounts WHERE code = '112'");
+    let parentId = p112.length ? p112[0].id : null;
+    if (!parentId) {
+      const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11'");
+      parentId = 'GL-112';
+      await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
+        [parentId, '112', 'المخزون', 'asset', p11.length ? p11[0].id : null, 3]);
+    }
+
+    // Get inventory categories
+    const [cats] = await db.query('SELECT DISTINCT category FROM inv_items WHERE active = 1 AND category IS NOT NULL AND category != ""');
+    let created = 0;
+
+    // Get existing children of 112
+    const [existing] = await db.query("SELECT code, name_ar FROM gl_accounts WHERE code LIKE '112%' AND code != '112' ORDER BY code");
+    const existingNames = existing.map(e => e.name_ar.toLowerCase());
+
+    for (const cat of cats) {
+      const catName = 'مخزون ' + cat.category;
+      if (existingNames.includes(catName.toLowerCase())) continue; // Already exists
+
+      // Find next code
+      const [lastChild] = await db.query("SELECT code FROM gl_accounts WHERE code LIKE '112%' AND code != '112' ORDER BY code DESC LIMIT 1");
+      let nextCode = '11201';
+      if (lastChild.length) {
+        const num = parseInt(lastChild[0].code.replace('112','')) || 0;
+        nextCode = '112' + String(num + 1).padStart(2, '0');
+      }
+      const id = 'GL-' + nextCode;
+      await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
+        [id, nextCode, catName, 'asset', parentId, 4]);
+
+      // Update balance with current stock value for this category
+      const [catItems] = await db.query('SELECT SUM(stock * cost) AS val FROM inv_items WHERE category = ? AND active = 1', [cat.category]);
+      const catValue = Number(catItems[0].val) || 0;
+      if (catValue > 0) await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [catValue, id]);
+      created++;
+    }
+
+    // Update parent 112 balance
+    const [totalVal] = await db.query('SELECT SUM(stock * cost) AS val FROM inv_items WHERE active = 1');
+    if (parentId) await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [Number(totalVal[0].val)||0, parentId]);
+
+    res.json({ success: true, categoriesCreated: created, totalCategories: cats.length });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
 // ─── Financial Reports ───
 
 // Trial Balance — Professional (ميزان المراجعة)
@@ -678,14 +771,14 @@ router.get('/reports/trial-balance', async (req, res) => {
     const { startDate, endDate, accountType, createdBy } = req.query;
     const [accounts] = await db.query('SELECT * FROM gl_accounts WHERE is_active = 1 ORDER BY code');
 
-    // Build journal filter for period
-    let jrnWhere = "j.status = 'posted'";
+    // Build journal filter for period (exclude opening entries — they go to opening balance)
+    let jrnWhere = "j.status = 'posted' AND j.reference_type != 'opening'";
     const jrnParams = [];
     if (startDate) { jrnWhere += ' AND DATE(j.journal_date) >= ?'; jrnParams.push(startDate); }
     if (endDate) { jrnWhere += ' AND DATE(j.journal_date) <= ?'; jrnParams.push(endDate); }
     if (createdBy) { jrnWhere += ' AND j.created_by = ?'; jrnParams.push(createdBy); }
 
-    // Get ALL movements from posted journals in period
+    // Get period movements (non-opening posted journals)
     const [periodEntries] = await db.query(
       `SELECT e.account_id, SUM(e.debit) AS totalDebit, SUM(e.credit) AS totalCredit
        FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
@@ -694,16 +787,31 @@ router.get('/reports/trial-balance', async (req, res) => {
     const periodMap = {};
     periodEntries.forEach(e => { periodMap[e.account_id] = { debit: Number(e.totalDebit)||0, credit: Number(e.totalCredit)||0 }; });
 
-    // Get opening balance (all posted entries BEFORE startDate)
+    // Opening balance = ALL opening entries + non-opening entries BEFORE startDate
     let openMap = {};
+    // 1. Opening entries (always included regardless of date — IAS 1)
+    const [openingEntries] = await db.query(
+      `SELECT e.account_id, SUM(e.debit) AS totalDebit, SUM(e.credit) AS totalCredit
+       FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
+       WHERE j.status = 'posted' AND j.reference_type = 'opening'
+       GROUP BY e.account_id`
+    );
+    openingEntries.forEach(e => {
+      openMap[e.account_id] = { debit: Number(e.totalDebit)||0, credit: Number(e.totalCredit)||0 };
+    });
+    // 2. Non-opening entries before startDate
     if (startDate) {
-      const [openEntries] = await db.query(
+      const [priorEntries] = await db.query(
         `SELECT e.account_id, SUM(e.debit) AS totalDebit, SUM(e.credit) AS totalCredit
          FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
-         WHERE j.status = 'posted' AND DATE(j.journal_date) < ?
+         WHERE j.status = 'posted' AND j.reference_type != 'opening' AND DATE(j.journal_date) < ?
          GROUP BY e.account_id`, [startDate]
       );
-      openEntries.forEach(e => { openMap[e.account_id] = { debit: Number(e.totalDebit)||0, credit: Number(e.totalCredit)||0 }; });
+      priorEntries.forEach(e => {
+        if (!openMap[e.account_id]) openMap[e.account_id] = { debit: 0, credit: 0 };
+        openMap[e.account_id].debit += Number(e.totalDebit)||0;
+        openMap[e.account_id].credit += Number(e.totalCredit)||0;
+      });
     }
 
     const typeLabels = {asset:'أصول',liability:'التزامات',equity:'حقوق ملكية',revenue:'إيرادات',expense:'مصروفات'};

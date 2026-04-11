@@ -63,6 +63,7 @@
           <div class="nav-item" data-erp-nav="erpGLAccounts" onclick="erpNav('erpGLAccounts')"><i class="fas fa-sitemap"></i><span>دليل الحسابات</span></div>
           <div class="nav-item" data-erp-nav="erpGLJournals" onclick="erpNav('erpGLJournals')"><i class="fas fa-book"></i><span>القيود المحاسبية</span></div>
           <div class="nav-item" data-erp-nav="erpPeriods" onclick="erpNav('erpPeriods')"><i class="fas fa-calendar-alt"></i><span>الفترات المحاسبية</span></div>
+          <div class="nav-item" data-erp-nav="erpInventoryMethod" onclick="erpNav('erpInventoryMethod')"><i class="fas fa-boxes-stacked"></i><span>نوع الجرد والمخزون</span></div>
           <div class="nav-item" data-erp-nav="erpFinReports" onclick="erpNav('erpFinReports')"><i class="fas fa-chart-bar"></i><span>التقارير المالية</span></div>
         </div>
 
@@ -1066,6 +1067,55 @@
       <thead><tr><th>الفاتورة</th><th>النوع</th><th>UUID</th><th>Hash</th><th>الحالة</th><th>التاريخ</th></tr></thead>
       <tbody id="erpZATCABody"><tr><td colspan="6" class="empty-msg">لا توجد فواتير ZATCA</td></tr></tbody>
     </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- INVENTORY METHOD & VALUATION (نوع الجرد والمخزون) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpInventoryMethod" class="dash-section hidden">
+  <div class="section-header" style="flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title"><i class="fas fa-boxes-stacked"></i> نوع الجرد وقيمة المخزون</h2>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-primary" onclick="erpSyncInventoryGL()" style="border-radius:10px;"><i class="fas fa-sync"></i> مزامنة مع دليل الحسابات</button>
+    </div>
+  </div>
+
+  <!-- Inventory Method Selection -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px;">
+    <div id="invMethodPerpetual" class="inv-method-card" onclick="erpSetInvMethod('perpetual')" style="cursor:pointer;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <i class="fas fa-sync-alt" style="font-size:24px;color:#16a34a;"></i>
+        <div>
+          <div style="font-size:16px;font-weight:900;color:#1e293b;">الجرد المستمر (Perpetual)</div>
+          <div style="font-size:12px;color:#64748b;">IAS 2 — تحديث لحظي مع كل عملية بيع</div>
+        </div>
+      </div>
+      <ul style="font-size:12px;color:#475569;padding-right:20px;line-height:1.8;">
+        <li>قيمة المخزون تتحدث لحظياً مع كل بيع</li>
+        <li>تكلفة البضاعة المباعة تُسجل مع كل فاتورة</li>
+        <li>مناسب للمطاعم والمقاهي</li>
+      </ul>
+    </div>
+    <div id="invMethodPeriodic" class="inv-method-card" onclick="erpSetInvMethod('periodic')" style="cursor:pointer;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <i class="fas fa-calendar-check" style="font-size:24px;color:#3b82f6;"></i>
+        <div>
+          <div style="font-size:16px;font-weight:900;color:#1e293b;">الجرد الدوري (Periodic)</div>
+          <div style="font-size:12px;color:#64748b;">IAS 2 — تحديث عند الجرد الفعلي فقط</div>
+        </div>
+      </div>
+      <ul style="font-size:12px;color:#475569;padding-right:20px;line-height:1.8;">
+        <li>قيمة المخزون تُحدّث فقط عند إجراء الجرد</li>
+        <li>COGS = مخزون أول + مشتريات − مخزون آخر</li>
+        <li>أبسط لكن أقل دقة</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Inventory Valuation -->
+  <div id="invValuationContent" style="min-height:100px;">
+    <div style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>
   </div>
 </div>
 

@@ -9,6 +9,7 @@
   const ROUTE_MAP = {
     // Auth
     checkLogin:          { method: 'POST', url: '/auth/login', body: (u,p) => ({username:u,password:p}) },
+    refreshToken:        { method: 'POST', url: '/auth/refresh-token' },
     getInitialAppData:   { method: 'GET',  url: (u) => '/auth/init/'+u },
 
     // Menu

@@ -27,6 +27,19 @@ router.post('/login', async (req, res) => {
 });
 
 
+// Refresh token (extend session while user is active)
+router.post('/refresh-token', (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.json({ success: false });
+    const oldToken = authHeader.split(' ')[1];
+    const decoded = jwt.verify(oldToken, process.env.JWT_SECRET, { ignoreExpiration: true });
+    // Issue new token with same payload
+    const token = jwt.sign({ id: decoded.id, username: decoded.username, role: decoded.role }, process.env.JWT_SECRET, { expiresIn: '24h' });
+    res.json({ success: true, token });
+  } catch (e) { res.json({ success: false }); }
+});
+
 // Get initial app data
 router.get('/init/:username', async (req, res) => {
   try {

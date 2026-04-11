@@ -683,6 +683,49 @@ function logout() {
 }
 
 // =========================================
+// Session Management — Activity tracking + Auto-refresh + Inactivity timeout
+// =========================================
+(function() {
+  var INACTIVITY_LIMIT = 15 * 60 * 1000; // 15 minutes
+  var REFRESH_INTERVAL = 10 * 60 * 1000; // 10 minutes
+  var CHECK_INTERVAL = 30 * 1000;        // check every 30 seconds
+  var lastActivity = Date.now();
+
+  // Track user activity
+  ['click', 'keydown', 'scroll', 'mousemove', 'touchstart'].forEach(function(evt) {
+    document.addEventListener(evt, function() { lastActivity = Date.now(); }, { passive: true });
+  });
+
+  // Check inactivity every 30 seconds
+  setInterval(function() {
+    var token = localStorage.getItem('pos_token');
+    if (!token) return; // not logged in
+    var idle = Date.now() - lastActivity;
+    if (idle >= INACTIVITY_LIMIT) {
+      // Auto-logout due to inactivity
+      if (typeof logout === 'function') {
+        logout();
+        showToast('تم تسجيل الخروج تلقائياً بسبب عدم النشاط', true);
+      }
+    }
+  }, CHECK_INTERVAL);
+
+  // Refresh token every 10 minutes (only if user is active)
+  setInterval(function() {
+    var token = localStorage.getItem('pos_token');
+    if (!token) return;
+    var idle = Date.now() - lastActivity;
+    if (idle < INACTIVITY_LIMIT && window._apiBridge) {
+      window._apiBridge.withSuccessHandler(function(r) {
+        if (r && r.success && r.token) {
+          localStorage.setItem('pos_token', r.token);
+        }
+      }).refreshToken();
+    }
+  }, REFRESH_INTERVAL);
+})();
+
+// =========================================
 // 3. Modals Management
 // =========================================
 function openModal(id) { show(id); setTimeout(() => q(id).classList.add("show"), 10); }

@@ -282,6 +282,10 @@ async function runMigrations() {
   await addColumnIfMissing('custodies', 'close_notes', "TEXT");
   // Extend custodies status ENUM to include close_pending
   try { await db.query("ALTER TABLE custodies MODIFY COLUMN status ENUM('active','closed','close_pending') DEFAULT 'active'"); } catch(e) {}
+  // GL account link on custody expenses
+  await addColumnIfMissing('custody_expenses', 'gl_account_id', "VARCHAR(50) DEFAULT NULL");
+  await addColumnIfMissing('custody_expenses', 'gl_account_name', "VARCHAR(200) DEFAULT ''");
+
   // Extend custody_expenses status ENUM to include override_pending + returned
   try { await db.query("ALTER TABLE custody_expenses MODIFY COLUMN status ENUM('pending','approved','rejected','posted','override_pending','returned') DEFAULT 'pending'"); } catch(e) {}
 
@@ -290,7 +294,8 @@ async function runMigrations() {
     await db.query(`INSERT IGNORE INTO settings (setting_key, setting_value) VALUES
       ('costing_method','WEIGHTED_AVERAGE'),
       ('default_pricing_mode','fixed'),
-      ('default_markup_pct','30')`);
+      ('default_markup_pct','30'),
+      ('BranchName','')`);
   } catch (e) { console.log('[DB] Cost settings seed:', e.message.substring(0, 80)); }
 }
 

@@ -56,7 +56,8 @@ router.get('/init/:username', async (req, res) => {
         name: settingsObj.CompanyName || 'Moroccan Taste',
         taxNumber: settingsObj.TaxNumber || '',
         currency: settingsObj.Currency || 'SAR',
-        logo: settingsObj.logo || ''
+        logo: settingsObj.logo || '',
+        branchName: settingsObj.BranchName || ''
       },
       kitaFeeRate: Number(settingsObj.KitaServiceFee) || 0,
       menu: menu.map(m => ({

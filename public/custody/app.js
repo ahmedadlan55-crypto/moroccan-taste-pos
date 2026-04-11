@@ -9,7 +9,7 @@
     user: '', custodyId: '', custodyNumber: '', userName: '',
     balance: 0, topups: 0, expenses: 0, list: [], imgData: '',
     custodyStatus: 'active',
-    // Temp storage for override flow
+    expenseAccounts: [], branchName: '', companyName: '',
     _pendingPayload: null
   };
 
@@ -54,6 +54,9 @@
       S.expenses = d.custody.totalExpenses;
       S.custodyStatus = d.custody.status || 'active';
       S.list = d.expenses || [];
+      S.expenseAccounts = d.expenseAccounts || [];
+      S.branchName = d.branchName || '';
+      S.companyName = d.companyName || '';
       render();
     }).withFailureHandler(function() {
       hideLoader();
@@ -74,6 +77,9 @@
       S.expenses = d.custody.totalExpenses;
       S.custodyStatus = d.custody.status || 'active';
       S.list = d.expenses || [];
+      S.expenseAccounts = d.expenseAccounts || [];
+      S.branchName = d.branchName || '';
+      S.companyName = d.companyName || '';
       render();
       toast('تم التحديث', 'ok');
     }).withFailureHandler(function() {
@@ -88,6 +94,12 @@
   function render() {
     el('headerName').textContent = S.userName;
     el('headerNum').textContent = S.custodyNumber;
+
+    // Branch name
+    if (S.branchName) {
+      el('branchBar').style.display = 'flex';
+      el('branchName').textContent = S.branchName;
+    }
     el('sBalance').textContent = fmt(S.balance);
     el('sTopups').textContent = fmt(S.topups);
     el('sExpenses').textContent = fmt(S.expenses);
@@ -196,6 +208,15 @@
     if (S.custodyStatus !== 'active') return toast('العهدة غير نشطة — لا يمكن إضافة مصروفات', 'err');
     _editingExpId = null;
     el('saveBtn').innerHTML = '<i class="fas fa-paper-plane"></i> إرسال المصروف';
+    // Populate expense type dropdown
+    var typeSelect = el('fExpType');
+    if (typeSelect) {
+      var opts = '<option value="">— اختر نوع المصروف —</option>';
+      S.expenseAccounts.forEach(function(a) {
+        opts += '<option value="' + a.id + '" data-name="' + esc(a.name) + '">' + a.code + ' — ' + esc(a.name) + '</option>';
+      });
+      typeSelect.innerHTML = opts;
+    }
     el('fDate').value = new Date().toISOString().split('T')[0];
     el('fAmt').value = '';
     el('fDesc').value = '';
@@ -211,6 +232,17 @@
   };
   window.closeModal = function() { el('sheet').style.display = 'none'; };
   window.togVat = function() { el('vatBox').style.display = el('fVat').value === '1' ? '' : 'none'; };
+
+  window.onExpTypeChange = function() {
+    var sel = el('fExpType');
+    if (sel && sel.value) {
+      var opt = sel.options[sel.selectedIndex];
+      var name = opt.getAttribute('data-name') || '';
+      // Auto-fill description if empty
+      var descEl = el('fDesc');
+      if (descEl && !descEl.value) descEl.value = name;
+    }
+  };
 
   // ─── Image / PDF ───
   window.pickImg = function(inp) {
@@ -248,6 +280,14 @@
     if (!desc || amt <= 0) { toast('البيان والقيمة مطلوبة', 'err'); return null; }
     var hasVat = el('fVat').value === '1';
     var vatRate = hasVat ? (Number(el('fVatR').value) || 15) : 0;
+    // GL account
+    var typeSel = el('fExpType');
+    var glAccountId = typeSel ? typeSel.value : '';
+    var glAccountName = '';
+    if (typeSel && typeSel.value) {
+      var opt = typeSel.options[typeSel.selectedIndex];
+      glAccountName = opt ? (opt.getAttribute('data-name') || '') : '';
+    }
     return {
       expenseDate: el('fDate').value,
       description: desc, amount: amt,
@@ -255,7 +295,9 @@
       invoiceImage: S.imgData || '',
       notes: el('fNotes').value.trim(),
       username: S.user,
-      overrideBalance: !!override
+      overrideBalance: !!override,
+      glAccountId: glAccountId,
+      glAccountName: glAccountName
     };
   }
 

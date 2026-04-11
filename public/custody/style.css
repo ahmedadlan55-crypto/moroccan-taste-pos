@@ -78,6 +78,15 @@ body{
   scroll-behavior:smooth;
 }
 
+/* ─── Branch Bar ─── */
+.branch-bar{
+  display:flex;align-items:center;gap:8px;
+  padding:8px 14px;margin:10px 14px 0;border-radius:10px;
+  background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.12);
+  font-size:13px;font-weight:700;color:var(--dblue);
+}
+.branch-bar i{font-size:14px;color:var(--blue);}
+
 /* ─── Stats Strip ─── */
 .stats-strip{display:flex;gap:8px;margin-bottom:16px;}
 .stat-card{

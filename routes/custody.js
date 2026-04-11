@@ -155,6 +155,24 @@ router.get('/my-custody', async (req, res) => {
     // Get topups
     const [topups] = await db.query('SELECT * FROM custody_topups WHERE custody_id = ? ORDER BY created_at DESC', [custody.id]);
 
+    // Get GL expense accounts for expense type dropdown
+    let expenseAccounts = [];
+    try {
+      const [glRows] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE type = 'expense' ORDER BY code");
+      expenseAccounts = glRows.map(g => ({ id: g.id, code: g.code, name: g.name_ar }));
+    } catch(e) {}
+
+    // Get company settings (branch name)
+    let branchName = '';
+    let companyName = '';
+    try {
+      const [settings] = await db.query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('CompanyName','BranchName')");
+      settings.forEach(s => {
+        if (s.setting_key === 'BranchName') branchName = s.setting_value || '';
+        if (s.setting_key === 'CompanyName') companyName = s.setting_value || '';
+      });
+    } catch(e) {}
+
     res.json({
       success: true,
       user: {
@@ -173,12 +191,16 @@ router.get('/my-custody', async (req, res) => {
         vatAmount: Number(e.vat_amount), totalWithVat: Number(e.total_with_vat),
         invoiceImage: e.invoice_image, notes: e.notes, status: e.status,
         rejectionReason: e.rejection_reason, createdBy: e.created_by,
-        approvedBy: e.approved_by, approvedAt: e.approved_at
+        approvedBy: e.approved_by, approvedAt: e.approved_at,
+        glAccountId: e.gl_account_id, glAccountName: e.gl_account_name
       })),
       topups: topups.map(t => ({
         id: t.id, amount: Number(t.amount), paymentMethod: t.payment_method,
         notes: t.notes, createdAt: t.created_at
-      }))
+      })),
+      expenseAccounts,
+      branchName,
+      companyName
     });
   } catch (e) { res.json({ error: e.message }); }
 });
@@ -250,7 +272,7 @@ router.get('/:id/expenses', async (req, res) => {
 
 router.post('/:id/expenses', async (req, res) => {
   try {
-    const { expenseDate, description, amount, hasVat, vatRate, invoiceImage, notes, username, overrideBalance } = req.body;
+    const { expenseDate, description, amount, hasVat, vatRate, invoiceImage, notes, username, overrideBalance, glAccountId, glAccountName } = req.body;
     const amt = Number(amount) || 0;
     if (amt <= 0 || !description) return res.json({ success: false, error: 'Amount and description required' });
     const vRate = hasVat ? (Number(vatRate) || 15) : 0;
@@ -275,10 +297,10 @@ router.post('/:id/expenses', async (req, res) => {
 
     const expId = 'CEXP-' + Date.now();
     await db.query(
-      `INSERT INTO custody_expenses (id, custody_id, expense_date, description, amount, has_vat, vat_rate, vat_amount, total_with_vat, invoice_image, notes, status, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO custody_expenses (id, custody_id, expense_date, description, amount, has_vat, vat_rate, vat_amount, total_with_vat, invoice_image, notes, status, created_by, gl_account_id, gl_account_name)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [expId, req.params.id, expenseDate || new Date(), description, amt, hasVat ? 1 : 0, vRate, vAmt, total,
-       invoiceImage || null, notes || '', status, username || '']
+       invoiceImage || null, notes || '', status, username || '', glAccountId || null, glAccountName || '']
     );
     res.json({ success: true, id: expId, status });
   } catch (e) { res.json({ success: false, error: e.message }); }

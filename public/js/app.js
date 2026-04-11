@@ -334,27 +334,54 @@ window.onload = function() {
       return;
     }
 
-    // Admin session → validate the JWT by fetching the protected template.
-    // If 200 → token valid → inject + initialize without showing login screen.
-    // If 401 → token expired → clear and show the login screen.
-    fetchAppTemplate()
-      .then(function(html) {
-        injectAppTemplate(html);
-        try {
-          var s = JSON.parse(saved);
-          state.user = s.user || '';
-          state.role = (s.role || '').toLowerCase();
-          if (q("#lUser")) q("#lUser").value = s.user || '';
-          if (q("#lPass") && s.pass) q("#lPass").value = s.pass;
-          if (q("#lRemember")) q("#lRemember").checked = true;
-        } catch(e) {}
-        loadCoreData();
-      })
-      .catch(function(err) {
-        // Token expired / invalid — clear and reveal the login screen
-        localStorage.removeItem("pos_token");
-        loader(false);
-      });
+    // Admin session → refresh token first, then load template.
+    // This ensures even expired tokens get renewed (using saved credentials as fallback).
+    function _tryLoadAdmin() {
+      fetchAppTemplate()
+        .then(function(html) {
+          injectAppTemplate(html);
+          try {
+            var s = JSON.parse(saved);
+            state.user = s.user || '';
+            state.role = (s.role || '').toLowerCase();
+            if (q("#lUser")) q("#lUser").value = s.user || '';
+            if (q("#lPass") && s.pass) q("#lPass").value = s.pass;
+            if (q("#lRemember")) q("#lRemember").checked = true;
+          } catch(e) {}
+          loadCoreData();
+        })
+        .catch(function(err) {
+          // Token invalid — try re-login with saved credentials
+          try {
+            var s = JSON.parse(saved);
+            if (s.user && s.pass) {
+              fetch('/api/auth/login', {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({username: s.user, password: s.pass})
+              }).then(function(r){return r.json();}).then(function(res) {
+                if (res.success && res.token) {
+                  localStorage.setItem('pos_token', res.token);
+                  _tryLoadAdmin(); // retry with new token
+                } else {
+                  localStorage.removeItem("pos_token");
+                  loader(false);
+                }
+              }).catch(function() { localStorage.removeItem("pos_token"); loader(false); });
+              return;
+            }
+          } catch(e) {}
+          localStorage.removeItem("pos_token");
+          loader(false);
+        });
+    }
+
+    // Try refreshing token first, then load
+    fetch('/api/auth/refresh-token', {
+      method: 'POST', headers: {'Content-Type':'application/json','Authorization':'Bearer '+token}
+    }).then(function(r){return r.json();}).then(function(res) {
+      if (res.success && res.token) localStorage.setItem('pos_token', res.token);
+      _tryLoadAdmin();
+    }).catch(function() { _tryLoadAdmin(); });
     return;
   }
 

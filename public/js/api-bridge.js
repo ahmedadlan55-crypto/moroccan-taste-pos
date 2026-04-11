@@ -98,8 +98,8 @@
     getVATReports:       { method: 'GET',  url: '/erp/vat/reports' },
     createVATReport:     { method: 'POST', url: '/erp/vat/reports' },
     getTrialBalance:     { method: 'GET',  url: '/erp/reports/trial-balance', query: (f) => f },
-    getIncomeStatement:  { method: 'GET',  url: '/erp/reports/income' },
-    getBalanceSheet:     { method: 'GET',  url: '/erp/reports/balance-sheet' },
+    getIncomeStatement:  { method: 'GET',  url: '/erp/reports/income', query: (f) => f },
+    getBalanceSheet:     { method: 'GET',  url: '/erp/reports/balance-sheet', query: (f) => f },
 
     // Users
     getAllUsernames:     { method: 'GET',  url: '/auth/users' },

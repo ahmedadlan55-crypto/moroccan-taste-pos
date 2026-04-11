@@ -1738,60 +1738,132 @@ function _renderTrialBalance(container, filters) {
   }).getTrialBalance(filters);
 }
 
+// ─── Income Statement — IFRS / IAS 1 ───
 function _renderIncomeStatement(container) {
   var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
-  window._apiBridge.withSuccessHandler(function(data) {
-    var html = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">' +
-      '<div style="background:#dcfce7;padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:#166534;font-weight:700;">إجمالي الإيرادات</div><div style="font-size:24px;font-weight:900;color:#16a34a;">' + fmt(data.totalRevenue) + '</div></div>' +
-      '<div style="background:#fee2e2;padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:#991b1b;font-weight:700;">إجمالي المصروفات</div><div style="font-size:24px;font-weight:900;color:#ef4444;">' + fmt(data.totalExpenses) + '</div></div>' +
-      '<div style="background:' + (data.netIncome>=0?'#eff6ff':'#fef3c7') + ';padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:' + (data.netIncome>=0?'#1e40af':'#92400e') + ';font-weight:700;">صافي الدخل</div><div style="font-size:24px;font-weight:900;color:' + (data.netIncome>=0?'#1e40af':'#ef4444') + ';">' + fmt(data.netIncome) + '</div></div>' +
-      '</div>';
+  var filters = {};
+  var s = document.getElementById('finStartDate'), e = document.getElementById('finEndDate');
+  if (s && s.value) filters.startDate = s.value;
+  if (e && e.value) filters.endDate = e.value;
 
-    // Revenue table
-    html += '<h3 style="color:#16a34a;margin:14px 0 8px;font-size:16px;"><i class="fas fa-arrow-trend-up" style="margin-left:6px;"></i> الإيرادات</h3>';
-    html += '<div style="overflow-x:auto;border-radius:12px;border:1px solid #e2e8f0;margin-bottom:16px;"><table class="erp-table" style="margin:0;font-size:13px;"><thead><tr><th>الرمز</th><th>اسم الحساب</th><th style="width:140px;">المبلغ</th></tr></thead><tbody>';
-    (data.revenue||[]).forEach(function(r) { html += '<tr><td><code>' + r.code + '</code></td><td style="font-weight:700;">' + r.name + '</td><td style="font-weight:800;color:#16a34a;">' + fmt(r.balance) + '</td></tr>'; });
-    html += '<tr style="background:#f0fdf4;font-weight:900;"><td colspan="2">إجمالي الإيرادات</td><td style="color:#16a34a;">' + fmt(data.totalRevenue) + '</td></tr></tbody></table></div>';
+  window._apiBridge.withSuccessHandler(function(d) {
+    var profitColor = function(v) { return v >= 0 ? '#16a34a' : '#ef4444'; };
+    var line = function(label, val, bold, bg, color) {
+      var style = (bold?'font-weight:900;font-size:14px;':'font-weight:600;') + (bg?'background:'+bg+';':'') + (color?'color:'+color+';':'');
+      return '<tr style="'+style+'"><td style="padding:8px 14px;">' + label + '</td><td style="text-align:left;padding:8px 14px;white-space:nowrap;">' + fmt(val) + '</td></tr>';
+    };
+    var items = function(list) {
+      return (list||[]).map(function(r) {
+        var indent = (r.level||3) > 2 ? ((r.level-2)*16) : 0;
+        return '<tr><td style="padding:6px 14px;padding-right:' + (14+indent) + 'px;color:#475569;"><code style="color:#94a3b8;margin-left:6px;font-size:11px;">' + r.code + '</code>' + r.name + '</td><td style="text-align:left;padding:6px 14px;">' + fmt(r.balance) + '</td></tr>';
+      }).join('');
+    };
 
-    // Expenses table
-    html += '<h3 style="color:#ef4444;margin:14px 0 8px;font-size:16px;"><i class="fas fa-arrow-trend-down" style="margin-left:6px;"></i> المصروفات</h3>';
-    html += '<div style="overflow-x:auto;border-radius:12px;border:1px solid #e2e8f0;"><table class="erp-table" style="margin:0;font-size:13px;"><thead><tr><th>الرمز</th><th>اسم الحساب</th><th style="width:140px;">المبلغ</th></tr></thead><tbody>';
-    (data.expenses||[]).forEach(function(r) { html += '<tr><td><code>' + r.code + '</code></td><td style="font-weight:700;">' + r.name + '</td><td style="font-weight:800;color:#ef4444;">' + fmt(r.balance) + '</td></tr>'; });
-    html += '<tr style="background:#fef2f2;font-weight:900;"><td colspan="2">إجمالي المصروفات</td><td style="color:#ef4444;">' + fmt(data.totalExpenses) + '</td></tr></tbody></table></div>';
+    var period = (filters.startDate || filters.endDate) ? '<div style="padding:8px 14px;border-radius:10px;background:#eff6ff;color:#1e40af;font-size:12px;font-weight:700;margin-bottom:12px;display:inline-block;"><i class="fas fa-calendar-alt" style="margin-left:4px;"></i> ' + (filters.startDate||'البداية') + ' → ' + (filters.endDate||'الآن') + '</div>' : '';
 
+    var html = period + '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+
+    // Header
+    html += '<thead><tr style="background:#1e293b;color:#fff;"><th style="padding:10px 14px;text-align:right;">البند</th><th style="padding:10px 14px;text-align:left;width:150px;">المبلغ (SAR)</th></tr></thead><tbody>';
+
+    // 1. Revenue
+    html += '<tr style="background:#f0fdf4;"><td colspan="2" style="padding:8px 14px;font-weight:900;color:#166534;font-size:14px;"><i class="fas fa-arrow-trend-up" style="margin-left:6px;"></i> الإيرادات</td></tr>';
+    html += items(d.revenue);
+    html += line('إجمالي الإيرادات', d.totalRevenue, true, '#dcfce7', '#166534');
+
+    // 2. Cost of Sales (COGS)
+    html += '<tr style="background:#fef3c7;"><td colspan="2" style="padding:8px 14px;font-weight:900;color:#92400e;font-size:14px;"><i class="fas fa-boxes-stacked" style="margin-left:6px;"></i> تكلفة المبيعات</td></tr>';
+    html += items(d.cogs);
+    html += line('إجمالي تكلفة المبيعات', d.totalCOGS, true, '#fef3c7', '#92400e');
+
+    // 3. Gross Profit
+    html += '<tr style="background:#1e40af;color:#fff;font-weight:900;font-size:15px;"><td style="padding:10px 14px;">مجمل الربح (Gross Profit)</td><td style="text-align:left;padding:10px 14px;">' + fmt(d.grossProfit) + '</td></tr>';
+
+    // 4. Operating Expenses
+    html += '<tr style="background:#fee2e2;"><td colspan="2" style="padding:8px 14px;font-weight:900;color:#991b1b;font-size:14px;"><i class="fas fa-arrow-trend-down" style="margin-left:6px;"></i> المصروفات التشغيلية</td></tr>';
+    html += items(d.opex);
+    html += line('إجمالي المصروفات التشغيلية', d.totalOpex, true, '#fee2e2', '#991b1b');
+
+    // 5. Operating Income
+    html += '<tr style="background:#7c3aed;color:#fff;font-weight:900;font-size:15px;"><td style="padding:10px 14px;">الربح التشغيلي (Operating Income)</td><td style="text-align:left;padding:10px 14px;">' + fmt(d.operatingIncome) + '</td></tr>';
+
+    // 6. Other Income
+    if ((d.otherIncome||[]).length) {
+      html += '<tr style="background:#f0fdf4;"><td colspan="2" style="padding:8px 14px;font-weight:800;color:#166534;"><i class="fas fa-plus-circle" style="margin-left:6px;"></i> إيرادات أخرى</td></tr>';
+      html += items(d.otherIncome);
+      html += line('إجمالي إيرادات أخرى', d.totalOtherInc, false, '#f0fdf4', '#166534');
+    }
+
+    // 7. Other Expenses
+    if ((d.otherExpense||[]).length) {
+      html += '<tr style="background:#fef2f2;"><td colspan="2" style="padding:8px 14px;font-weight:800;color:#991b1b;"><i class="fas fa-minus-circle" style="margin-left:6px;"></i> مصروفات أخرى</td></tr>';
+      html += items(d.otherExpense);
+      html += line('إجمالي مصروفات أخرى', d.totalOtherExp, false, '#fef2f2', '#991b1b');
+    }
+
+    // 8. Net Income
+    var niColor = d.netIncome >= 0 ? '#166534' : '#991b1b';
+    var niBg = d.netIncome >= 0 ? '#16a34a' : '#ef4444';
+    html += '<tr style="background:' + niBg + ';color:#fff;font-weight:900;font-size:16px;"><td style="padding:12px 14px;"><i class="fas fa-star" style="margin-left:6px;"></i> صافي الدخل (Net Income)</td><td style="text-align:left;padding:12px 14px;font-size:18px;">' + fmt(d.netIncome) + '</td></tr>';
+
+    html += '</tbody></table></div>';
     container.innerHTML = html;
-  }).getIncomeStatement({});
+  }).getIncomeStatement(filters);
 }
 
+// ─── Balance Sheet — IFRS / IAS 1 ───
 function _renderBalanceSheet(container) {
   var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
-  window._apiBridge.withSuccessHandler(function(data) {
-    var statusStyle = data.isBalanced ? 'background:#dcfce7;color:#166534;border:1px solid #bbf7d0;' : 'background:#fee2e2;color:#991b1b;border:1px solid #fecaca;';
-    var html = '<div style="padding:12px 18px;border-radius:12px;margin-bottom:14px;font-weight:800;' + statusStyle + '"><i class="fas ' + (data.isBalanced?'fa-check-circle':'fa-exclamation-triangle') + '"></i> ' + (data.isBalanced?'الميزانية متوازنة':'الميزانية غير متوازنة!') + '</div>';
+  var filters = {};
+  var e = document.getElementById('finEndDate');
+  if (e && e.value) filters.asOfDate = e.value;
 
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">';
+  window._apiBridge.withSuccessHandler(function(d) {
+    var section = function(title, icon, color, items, total, totalLabel) {
+      var h = '<tr style="background:' + color + '12;"><td colspan="3" style="padding:8px 14px;font-weight:900;color:' + color + ';font-size:14px;"><i class="fas ' + icon + '" style="margin-left:6px;"></i> ' + title + '</td></tr>';
+      (items||[]).forEach(function(r) {
+        var indent = (r.level||3) > 2 ? ((r.level-2)*16) : 0;
+        var style = r.isComputed ? 'font-style:italic;color:#7c3aed;' : '';
+        h += '<tr style="' + style + '"><td style="padding:6px 14px;"><code style="color:#94a3b8;font-size:11px;margin-left:6px;">' + (r.code||'') + '</code></td><td style="padding:6px 14px;padding-right:' + (14+indent) + 'px;font-weight:600;">' + r.name + '</td><td style="text-align:left;padding:6px 14px;font-weight:700;">' + fmt(r.balance) + '</td></tr>';
+      });
+      h += '<tr style="background:' + color + '18;font-weight:900;"><td colspan="2" style="padding:8px 14px;">' + totalLabel + '</td><td style="text-align:left;padding:8px 14px;color:' + color + ';font-size:15px;">' + fmt(total) + '</td></tr>';
+      return h;
+    };
 
-    // Assets
-    html += '<div><h3 style="color:#3b82f6;margin-bottom:8px;font-size:16px;"><i class="fas fa-building" style="margin-left:6px;"></i> الأصول</h3>';
-    html += '<div style="border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;"><table class="erp-table" style="margin:0;font-size:13px;"><tbody>';
-    (data.assets||[]).forEach(function(r) { html += '<tr><td><code>' + (r.code||'') + '</code></td><td style="font-weight:700;">' + r.name + '</td><td style="font-weight:800;text-align:left;">' + fmt(r.balance) + '</td></tr>'; });
-    html += '<tr style="background:#eff6ff;font-weight:900;"><td colspan="2">إجمالي الأصول</td><td style="text-align:left;color:#1e40af;font-size:15px;">' + fmt(data.totalAssets) + '</td></tr></tbody></table></div></div>';
+    var statusBg = d.isBalanced ? '#dcfce7' : '#fee2e2';
+    var statusColor = d.isBalanced ? '#166534' : '#991b1b';
+    var statusBorder = d.isBalanced ? '#bbf7d0' : '#fecaca';
 
-    // Liabilities + Equity
-    html += '<div>';
-    html += '<h3 style="color:#ef4444;margin-bottom:8px;font-size:16px;"><i class="fas fa-handshake" style="margin-left:6px;"></i> الالتزامات</h3>';
-    html += '<div style="border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;margin-bottom:14px;"><table class="erp-table" style="margin:0;font-size:13px;"><tbody>';
-    (data.liabilities||[]).forEach(function(r) { html += '<tr><td><code>' + (r.code||'') + '</code></td><td style="font-weight:700;">' + r.name + '</td><td style="font-weight:800;text-align:left;">' + fmt(r.balance) + '</td></tr>'; });
-    html += '<tr style="background:#fef2f2;font-weight:900;"><td colspan="2">إجمالي الالتزامات</td><td style="text-align:left;color:#ef4444;">' + fmt(data.totalLiabilities) + '</td></tr></tbody></table></div>';
+    var html = '<div style="padding:10px 16px;border-radius:12px;margin-bottom:14px;font-weight:800;font-size:13px;background:' + statusBg + ';color:' + statusColor + ';border:1px solid ' + statusBorder + ';display:flex;justify-content:space-between;align-items:center;">' +
+      '<span><i class="fas ' + (d.isBalanced?'fa-check-circle':'fa-exclamation-triangle') + '" style="margin-left:6px;"></i>' + (d.isBalanced?'الميزانية متوازنة':'الميزانية غير متوازنة!') + '</span>' +
+      '<span>كما في: ' + (d.asOfDate||'') + '</span></div>';
 
-    html += '<h3 style="color:#8b5cf6;margin-bottom:8px;font-size:16px;"><i class="fas fa-gem" style="margin-left:6px;"></i> حقوق الملكية</h3>';
-    html += '<div style="border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;"><table class="erp-table" style="margin:0;font-size:13px;"><tbody>';
-    (data.equity||[]).forEach(function(r) { html += '<tr><td><code>' + (r.code||'') + '</code></td><td style="font-weight:700;">' + r.name + '</td><td style="font-weight:800;text-align:left;">' + fmt(r.balance) + '</td></tr>'; });
-    html += '<tr style="background:#f5f3ff;font-weight:900;"><td colspan="2">إجمالي حقوق الملكية</td><td style="text-align:left;color:#8b5cf6;">' + fmt(data.totalEquity) + '</td></tr></tbody></table></div>';
-    html += '</div></div>';
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">';
 
+    // Left: Assets
+    html += '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
+    html += '<thead><tr style="background:#1e293b;color:#fff;"><th style="padding:10px 14px;" colspan="3">الأصول (Assets)</th></tr></thead><tbody>';
+    html += section('الأصول المتداولة', 'fa-coins', '#3b82f6', d.currentAssets, d.totCA, 'إجمالي الأصول المتداولة');
+    html += section('الأصول غير المتداولة', 'fa-building', '#1e40af', d.nonCurrentAssets, d.totNCA, 'إجمالي الأصول غير المتداولة');
+    html += '<tr style="background:#1e293b;color:#fff;font-weight:900;font-size:15px;"><td colspan="2" style="padding:10px 14px;">إجمالي الأصول</td><td style="text-align:left;padding:10px 14px;">' + fmt(d.totalAssets) + '</td></tr>';
+    html += '</tbody></table></div>';
+
+    // Right: Liabilities + Equity
+    html += '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
+    html += '<thead><tr style="background:#1e293b;color:#fff;"><th style="padding:10px 14px;" colspan="3">الالتزامات وحقوق الملكية</th></tr></thead><tbody>';
+    html += section('الالتزامات المتداولة', 'fa-clock', '#ef4444', d.currentLiab, d.totCL, 'إجمالي الالتزامات المتداولة');
+    if ((d.nonCurrentLiab||[]).length) {
+      html += section('الالتزامات غير المتداولة', 'fa-landmark', '#b91c1c', d.nonCurrentLiab, d.totNCL, 'إجمالي الالتزامات غير المتداولة');
+    }
+    html += '<tr style="background:#ef4444;color:#fff;font-weight:900;"><td colspan="2" style="padding:8px 14px;">إجمالي الالتزامات</td><td style="text-align:left;padding:8px 14px;">' + fmt(d.totalLiabilities) + '</td></tr>';
+    html += section('حقوق الملكية', 'fa-gem', '#8b5cf6', d.equityItems, d.totEq, 'إجمالي حقوق الملكية');
+    html += '<tr style="background:#1e293b;color:#fff;font-weight:900;font-size:15px;"><td colspan="2" style="padding:10px 14px;">إجمالي الالتزامات + حقوق الملكية</td><td style="text-align:left;padding:10px 14px;">' + fmt(d.totalLiabilities + d.totEq) + '</td></tr>';
+    html += '</tbody></table></div>';
+
+    html += '</div>';
     container.innerHTML = html;
-  }).getBalanceSheet();
+  }).getBalanceSheet(filters);
 }
 
 function erpPrintFinReport() {

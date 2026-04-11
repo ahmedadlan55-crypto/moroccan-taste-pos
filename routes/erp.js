@@ -580,50 +580,138 @@ router.get('/reports/trial-balance', async (req, res) => {
   } catch (e) { res.json({ isBalanced: false, rows: [], totals: {} }); }
 });
 
-// Income Statement (قائمة الدخل)
+// Income Statement — IFRS / IAS 1 (قائمة الدخل)
 router.get('/reports/income', async (req, res) => {
   try {
-    const [accounts] = await db.query("SELECT * FROM gl_accounts WHERE type IN ('revenue','expense') AND is_active = 1 ORDER BY code");
-    const revenue = [], expenses = [];
-    let totalRevenue = 0, totalExpenses = 0;
+    const { startDate, endDate } = req.query;
+    const [accounts] = await db.query("SELECT * FROM gl_accounts WHERE is_active = 1 ORDER BY code");
+
+    // Get period balances from gl_entries (not gl_accounts.balance)
+    let where = "j.status = 'posted'";
+    const params = [];
+    if (startDate) { where += ' AND DATE(j.journal_date) >= ?'; params.push(startDate); }
+    if (endDate) { where += ' AND DATE(j.journal_date) <= ?'; params.push(endDate); }
+    const [entries] = await db.query(
+      `SELECT e.account_id, SUM(e.debit) AS d, SUM(e.credit) AS c
+       FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
+       WHERE ${where} GROUP BY e.account_id`, params
+    );
+    const balMap = {};
+    entries.forEach(e => { balMap[e.account_id] = (Number(e.c)||0) - (Number(e.d)||0); }); // credit-positive for revenue
+
+    // Classify accounts by code prefix (IFRS categories)
+    // 4x = Revenue, 5x = COGS, 6x = Operating Expenses
+    const revenue = [], cogs = [], opex = [], otherIncome = [], otherExpense = [];
+    let totalRevenue = 0, totalCOGS = 0, totalOpex = 0, totalOtherInc = 0, totalOtherExp = 0;
 
     accounts.forEach(a => {
-      const bal = Math.abs(Number(a.balance) || 0);
-      if (bal === 0) return;
+      const net = balMap[a.id] || 0;
+      if (net === 0 && !a.code.match(/^[456]/)) return;
+      const bal = Math.abs(net);
+      const item = { code: a.code, name: a.name_ar, balance: bal, level: a.level };
+
       if (a.type === 'revenue') {
-        revenue.push({ code: a.code, name: a.name_ar, balance: bal });
-        totalRevenue += bal;
-      } else {
-        expenses.push({ code: a.code, name: a.name_ar, balance: bal });
-        totalExpenses += bal;
+        if (a.code.startsWith('42')) { otherIncome.push(item); totalOtherInc += bal; }
+        else { revenue.push(item); totalRevenue += bal; }
+      } else if (a.type === 'expense') {
+        if (a.code.startsWith('5')) { cogs.push(item); totalCOGS += bal; }
+        else if (a.code.startsWith('62') || a.code.startsWith('63') || a.code.startsWith('64')) { otherExpense.push(item); totalOtherExp += bal; }
+        else { opex.push(item); totalOpex += bal; }
       }
     });
 
-    res.json({ revenue, expenses, totalRevenue, totalExpenses, netIncome: totalRevenue - totalExpenses });
-  } catch (e) { res.json({ revenue: [], expenses: [], totalRevenue: 0, totalExpenses: 0, netIncome: 0 }); }
-});
-
-// Balance Sheet (الميزانية العمومية)
-router.get('/reports/balance-sheet', async (req, res) => {
-  try {
-    const [accounts] = await db.query("SELECT * FROM gl_accounts WHERE type IN ('asset','liability','equity') AND is_active = 1 ORDER BY code");
-    const assets = [], liabilities = [], equity = [];
-    let totalAssets = 0, totalLiabilities = 0, totalEquity = 0;
-
-    accounts.forEach(a => {
-      const bal = Math.abs(Number(a.balance) || 0);
-      if (bal === 0) return;
-      if (a.type === 'asset') { assets.push({ code: a.code, name: a.name_ar, balance: bal }); totalAssets += bal; }
-      else if (a.type === 'liability') { liabilities.push({ code: a.code, name: a.name_ar, balance: bal }); totalLiabilities += bal; }
-      else { equity.push({ code: a.code, name: a.name_ar, balance: bal }); totalEquity += bal; }
-    });
+    const grossProfit = totalRevenue - totalCOGS;
+    const operatingIncome = grossProfit - totalOpex;
+    const netIncome = operatingIncome + totalOtherInc - totalOtherExp;
 
     res.json({
-      assets, liabilities, equity,
-      totalAssets, totalLiabilities, totalEquity,
-      isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01
+      // IFRS sections
+      revenue, totalRevenue,
+      cogs, totalCOGS,
+      grossProfit,
+      opex, totalOpex,
+      operatingIncome,
+      otherIncome, totalOtherInc,
+      otherExpense, totalOtherExp,
+      netIncome,
+      period: { startDate: startDate || null, endDate: endDate || null }
     });
-  } catch (e) { res.json({ assets: [], liabilities: [], equity: [], totalAssets: 0, totalLiabilities: 0, totalEquity: 0, isBalanced: false }); }
+  } catch (e) { res.json({ revenue:[], cogs:[], opex:[], otherIncome:[], otherExpense:[], totalRevenue:0, totalCOGS:0, grossProfit:0, totalOpex:0, operatingIncome:0, totalOtherInc:0, totalOtherExp:0, netIncome:0 }); }
+});
+
+// Balance Sheet — IFRS / IAS 1 (الميزانية العمومية)
+router.get('/reports/balance-sheet', async (req, res) => {
+  try {
+    const { asOfDate } = req.query;
+    const [accounts] = await db.query("SELECT * FROM gl_accounts WHERE is_active = 1 ORDER BY code");
+
+    // Get balances from gl_entries up to asOfDate
+    let where = "j.status = 'posted'";
+    const params = [];
+    if (asOfDate) { where += ' AND DATE(j.journal_date) <= ?'; params.push(asOfDate); }
+    const [entries] = await db.query(
+      `SELECT e.account_id, SUM(e.debit) AS d, SUM(e.credit) AS c
+       FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
+       WHERE ${where} GROUP BY e.account_id`, params
+    );
+    const balMap = {};
+    entries.forEach(e => { balMap[e.account_id] = { debit: Number(e.d)||0, credit: Number(e.c)||0 }; });
+
+    // IFRS classification
+    // Current assets: 11x (cash, inventory, receivables)
+    // Non-current assets: 12x (fixed assets)
+    // Current liabilities: 21x
+    // Non-current liabilities: 22x (if any)
+    // Equity: 3x
+    const currentAssets = [], nonCurrentAssets = [], currentLiab = [], nonCurrentLiab = [], equityItems = [];
+    let totCA = 0, totNCA = 0, totCL = 0, totNCL = 0, totEq = 0;
+
+    // Calculate net income from revenue/expense accounts for equity section
+    let netIncome = 0;
+
+    accounts.forEach(a => {
+      const entry = balMap[a.id] || { debit: 0, credit: 0 };
+      const net = entry.debit - entry.credit; // positive = debit balance
+      if (net === 0) return;
+
+      const item = { code: a.code, name: a.name_ar, balance: 0, level: a.level };
+
+      if (a.type === 'asset') {
+        item.balance = net; // assets are debit-normal
+        if (a.code.startsWith('12')) { nonCurrentAssets.push(item); totNCA += item.balance; }
+        else { currentAssets.push(item); totCA += item.balance; }
+      } else if (a.type === 'liability') {
+        item.balance = Math.abs(net); // liabilities are credit-normal
+        if (a.code.startsWith('22')) { nonCurrentLiab.push(item); totNCL += item.balance; }
+        else { currentLiab.push(item); totCL += item.balance; }
+      } else if (a.type === 'equity') {
+        item.balance = Math.abs(net);
+        equityItems.push(item); totEq += item.balance;
+      } else if (a.type === 'revenue') {
+        netIncome += (entry.credit - entry.debit); // revenue credit-normal
+      } else if (a.type === 'expense') {
+        netIncome -= (entry.debit - entry.credit); // expenses reduce income
+      }
+    });
+
+    // Add net income to equity
+    if (Math.abs(netIncome) > 0.01) {
+      equityItems.push({ code: '', name: 'صافي ربح/خسارة الفترة', balance: netIncome, level: 3, isComputed: true });
+      totEq += netIncome;
+    }
+
+    const totalAssets = totCA + totNCA;
+    const totalLiabilities = totCL + totNCL;
+
+    res.json({
+      currentAssets, totCA, nonCurrentAssets, totNCA, totalAssets,
+      currentLiab, totCL, nonCurrentLiab, totNCL, totalLiabilities,
+      equityItems, totEq,
+      netIncome,
+      isBalanced: Math.abs(totalAssets - (totalLiabilities + totEq)) < 0.01,
+      asOfDate: asOfDate || new Date().toISOString().split('T')[0]
+    });
+  } catch (e) { res.json({ currentAssets:[], nonCurrentAssets:[], currentLiab:[], nonCurrentLiab:[], equityItems:[], totCA:0, totNCA:0, totCL:0, totNCL:0, totEq:0, totalAssets:0, totalLiabilities:0, netIncome:0, isBalanced:false }); }
 });
 
 // ─── VAT ───

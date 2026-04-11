@@ -334,13 +334,11 @@ window.onload = function() {
       return;
     }
 
-    // Helper: show login form when auto-login fails (removes session-gate CSS)
+    // Helper: show login form when auto-login fails
     function _showLoginFallback() {
       localStorage.removeItem("pos_token");
-      var gate = document.getElementById('session-gate');
-      if (gate) gate.remove();
-      var lv = document.getElementById('loginView');
-      if (lv) { lv.style.display = 'flex'; lv.style.visibility = 'visible'; }
+      // Remove has-session from <html> so CSS shows login again
+      document.documentElement.classList.remove('has-session');
       loader(false);
     }
 
@@ -573,7 +571,8 @@ function doLogin() {
       return;
     }
 
-    // ─── Admin → fetch the protected app template, inject it, then init ───
+    // ─── Admin → hide login immediately, then fetch template ───
+    document.documentElement.classList.add('has-session');
     fetchAppTemplate()
       .then(injectAppTemplate)
       .then(function() { loadCoreData(); })

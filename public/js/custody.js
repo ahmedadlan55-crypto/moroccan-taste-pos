@@ -171,32 +171,98 @@ window.createCustodyFn = function() {
 // TOPUP (تغذية الرصيد)
 // ═══════════════════════════════════════
 
+window._topupGLAccounts = { cash: [], bank: [] };
+
 window.openTopupModal = function(custodyId) {
+  // Load GL accounts for cash/bank selection
+  api.withSuccessHandler(function(accounts) {
+    var cashAccounts = (accounts || []).filter(function(a) {
+      // Cash/صناديق: code starts with 1110 or name contains صندوق/كاش/نقد
+      return (a.code && a.code.indexOf('1110') === 0) || (a.nameAr && (a.nameAr.indexOf('صندوق') >= 0 || a.nameAr.indexOf('نقد') >= 0 || a.nameAr.indexOf('كاش') >= 0));
+    });
+    var bankAccounts = (accounts || []).filter(function(a) {
+      // Bank: code starts with 1110 (but not cash) or name contains بنك/مصرف/حساب بنكي
+      return (a.code && (a.code.indexOf('11102') === 0 || a.code.indexOf('1111') === 0)) || (a.nameAr && (a.nameAr.indexOf('بنك') >= 0 || a.nameAr.indexOf('مصرف') >= 0));
+    });
+    // If no specific matches, show all 111xx assets
+    if (!cashAccounts.length && !bankAccounts.length) {
+      var allCash = (accounts || []).filter(function(a) { return a.type === 'asset' && a.code && a.code.indexOf('111') === 0; });
+      cashAccounts = allCash;
+      bankAccounts = allCash;
+    }
+    window._topupGLAccounts = { cash: cashAccounts, bank: bankAccounts };
+    _renderTopupModal(custodyId);
+  }).getGLAccounts();
+};
+
+function _renderTopupModal(custodyId) {
+  var cashOpts = window._topupGLAccounts.cash.map(function(a) {
+    return '<option value="' + a.id + '" data-code="' + a.code + '">' + a.code + ' — ' + (a.nameAr||'') + '</option>';
+  }).join('');
+  var bankOpts = window._topupGLAccounts.bank.map(function(a) {
+    return '<option value="' + a.id + '" data-code="' + a.code + '">' + a.code + ' — ' + (a.nameAr||'') + '</option>';
+  }).join('');
+
   var h = '<div class="modal-content"><div class="modal-title"><i class="fas fa-plus-circle" style="color:var(--success);"></i> تغذية رصيد العهدة<button class="modal-close" onclick="closeModal(\'#modalTopup\')">&times;</button></div>' +
     '<input type="hidden" id="topCusId" value="' + custodyId + '">' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
       '<div class="form-group"><label class="form-label">المبلغ *</label><input type="number" id="topAmount" class="form-control" step="0.01" min="0.01"></div>' +
-      '<div class="form-group"><label class="form-label">طريقة الدفع</label><select id="topMethod" class="form-control"><option value="cash">كاش</option><option value="transfer">تحويل</option><option value="other">أخرى</option></select></div>' +
+      '<div class="form-group"><label class="form-label">طريقة الدفع</label><select id="topMethod" class="form-control" onchange="onTopupMethodChange()"><option value="cash">كاش</option><option value="transfer">تحويل بنكي</option><option value="other">أخرى</option></select></div>' +
+    '</div>' +
+    '<div class="form-group" id="topGLAccountGroup">' +
+      '<label class="form-label"><i class="fas fa-wallet" style="color:var(--primary);margin-left:4px;"></i> الصندوق / مصدر التغذية *</label>' +
+      '<select id="topGLAccount" class="form-control">' +
+        '<option value="">— اختر الصندوق —</option>' + cashOpts +
+      '</select>' +
     '</div>' +
     '<div class="form-group"><label class="form-label">ملاحظات</label><input type="text" id="topNotes" class="form-control"></div>' +
-    '<div class="form-group"><label class="form-label">صورة الإيصال</label><input type="file" id="topReceipt" accept="image/*" onchange="handleCustodyImage(this,\'topReceiptPreview\')"><div id="topReceiptPreview" style="margin-top:8px;"></div></div>' +
+    '<div class="form-group"><label class="form-label">صورة الإيصال</label><input type="file" id="topReceipt" accept="image/*,application/pdf" onchange="handleCustodyImage(this,\'topReceiptPreview\')"><div id="topReceiptPreview" style="margin-top:8px;"></div></div>' +
     '<div style="display:flex;gap:10px;margin-top:15px;"><button class="btn btn-success" style="flex:1;" onclick="submitTopup()"><i class="fas fa-check"></i> تغذية</button><button class="btn btn-light" onclick="closeModal(\'#modalTopup\')">إلغاء</button></div></div>';
   if (!document.getElementById('modalTopup')) {
     var m = document.createElement('div'); m.id = 'modalTopup'; m.className = 'modal'; document.body.appendChild(m);
   }
   document.getElementById('modalTopup').innerHTML = h;
   openModal('#modalTopup');
+}
+
+window.onTopupMethodChange = function() {
+  var method = document.getElementById('topMethod').value;
+  var sel = document.getElementById('topGLAccount');
+  var label = document.querySelector('#topGLAccountGroup .form-label');
+  if (!sel) return;
+
+  if (method === 'cash') {
+    label.innerHTML = '<i class="fas fa-wallet" style="color:var(--success);margin-left:4px;"></i> الصندوق النقدي *';
+    sel.innerHTML = '<option value="">— اختر الصندوق —</option>' +
+      window._topupGLAccounts.cash.map(function(a) { return '<option value="' + a.id + '">' + a.code + ' — ' + (a.nameAr||'') + '</option>'; }).join('');
+  } else if (method === 'transfer') {
+    label.innerHTML = '<i class="fas fa-university" style="color:var(--primary);margin-left:4px;"></i> الحساب البنكي *';
+    sel.innerHTML = '<option value="">— اختر البنك —</option>' +
+      window._topupGLAccounts.bank.map(function(a) { return '<option value="' + a.id + '">' + a.code + ' — ' + (a.nameAr||'') + '</option>'; }).join('');
+  } else {
+    label.innerHTML = '<i class="fas fa-money-check" style="color:var(--warning);margin-left:4px;"></i> مصدر التغذية';
+    sel.innerHTML = '<option value="">— اختياري —</option>' +
+      window._topupGLAccounts.cash.concat(window._topupGLAccounts.bank).map(function(a) { return '<option value="' + a.id + '">' + a.code + ' — ' + (a.nameAr||'') + '</option>'; }).join('');
+  }
 };
 
 window.submitTopup = function() {
   var cusId = document.getElementById('topCusId').value;
   var amt = Number(document.getElementById('topAmount').value) || 0;
   if (amt <= 0) return showToast('أدخل المبلغ', true);
+  var method = document.getElementById('topMethod').value;
+  var glAccountEl = document.getElementById('topGLAccount');
+  var glAccountId = glAccountEl ? glAccountEl.value : '';
+  if ((method === 'cash' || method === 'transfer') && !glAccountId) {
+    return showToast(method === 'cash' ? 'اختر الصندوق النقدي' : 'اختر الحساب البنكي', true);
+  }
   var preview = document.getElementById('topReceiptPreview');
   var img = preview && preview.querySelector('img') ? preview.querySelector('img').src : '';
+  // Also check for hidden PDF img
+  if (!img && preview) { var hiddenImg = preview.querySelector('img[style*="display:none"]'); if (hiddenImg) img = hiddenImg.src; }
   loader(); api.withSuccessHandler(function(r) {
     loader(false); if (r.success) { closeModal('#modalTopup'); showToast('تم تغذية الرصيد'); loadCustodies(); } else showToast(r.error, true);
-  }).topupCustody(cusId, { amount: amt, paymentMethod: document.getElementById('topMethod').value, receiptImage: img, notes: document.getElementById('topNotes').value, username: state.user });
+  }).topupCustody(cusId, { amount: amt, paymentMethod: method, glAccountId: glAccountId, receiptImage: img, notes: document.getElementById('topNotes').value, username: state.user });
 };
 
 // ═══════════════════════════════════════

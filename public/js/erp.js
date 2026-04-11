@@ -1744,17 +1744,26 @@ function _renderTrialBalance(container, filters) {
   }).getTrialBalance(filters);
 }
 
-// Repair GL entries (fix NULL account_ids + recalculate balances)
+// Repair GL: fix NULL entries + create missing topup journals + recalculate
 window.erpRepairGL = function() {
-  if (!confirm('إصلاح القيود المعلقة وإعادة حساب الأرصدة؟')) return;
+  if (!confirm('إصلاح شامل:\n1. ربط القيود المعلقة بالحسابات\n2. إنشاء قيود تغذية العهد المفقودة\n3. إعادة حساب جميع الأرصدة\n\nمتابعة؟')) return;
   loader(true);
-  window._apiBridge.withSuccessHandler(function(r) {
-    loader(false);
-    if (r.success) {
-      showToast('تم الإصلاح: ' + r.nullFixed + ' قيد تم ربطه، ' + r.balancesRecalculated + ' حساب تم تحديث رصيده');
-      erpApplyFinFilters();
-      erpLoadAccountsList_();
-    } else showToast(r.error, true);
+  // Step 1: Fix NULL entries
+  window._apiBridge.withSuccessHandler(function(r1) {
+    // Step 2: Create missing topup journals
+    fetch('/api/erp/gl/repair-topups', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+      .then(function(r) { return r.json(); })
+      .then(function(r2) {
+        loader(false);
+        var msg = '';
+        if (r1.success) msg += 'قيود: ' + r1.nullFixed + ' تم ربطها، ' + (r1.accountsCreated||0) + ' حساب جديد. ';
+        if (r2.success) msg += 'تغذيات: ' + r2.topupsProcessed + ' قيد تغذية تم إنشاؤه. ';
+        msg += 'الأرصدة: تم إعادة حسابها.';
+        showToast(msg);
+        erpApplyFinFilters();
+        erpLoadAccountsList_();
+      })
+      .catch(function() { loader(false); showToast('خطأ في إصلاح التغذيات', true); });
   }).repairGLEntries();
 };
 

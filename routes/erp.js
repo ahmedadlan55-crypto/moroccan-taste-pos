@@ -566,6 +566,93 @@ router.post('/gl/repair', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
+// Repair: create GL entries for old custody topups that have no journal
+router.post('/gl/repair-topups', async (req, res) => {
+  try {
+    // Find topups without GL journals
+    const [topups] = await db.query(
+      `SELECT t.*, c.custody_number, c.user_name, c.user_id
+       FROM custody_topups t JOIN custodies c ON t.custody_id = c.id
+       WHERE NOT EXISTS (SELECT 1 FROM gl_journals j WHERE j.reference_type = 'custody_topup' AND j.reference_id = t.id)`
+    );
+    let created = 0;
+    for (const t of topups) {
+      const amt = Number(t.amount) || 0;
+      if (amt <= 0) continue;
+
+      // Find custody user GL account
+      let custAccId = null;
+      const [custAccRows] = await db.query("SELECT id, code FROM gl_accounts WHERE name_ar LIKE ? AND code LIKE '1130%'", ['عهدة ' + (t.user_name||'').substring(0,20) + '%']);
+      if (custAccRows.length) custAccId = custAccRows[0].id;
+      if (!custAccId) {
+        // Create it
+        const parentId = 'GL-1130';
+        await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
+          [parentId, '1130', 'عهد الموظفين', 'asset', null, 3]);
+        const [children] = await db.query("SELECT code FROM gl_accounts WHERE code LIKE '1130%' AND code != '1130' ORDER BY code DESC LIMIT 1");
+        let nextCode = '11301';
+        if (children.length) nextCode = '1130' + String((parseInt(children[0].code.replace('1130',''))||0)+1);
+        custAccId = 'GL-' + nextCode;
+        await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
+          [custAccId, nextCode, 'عهدة ' + (t.user_name||''), 'asset', parentId, 4]);
+      }
+
+      // Find a default cash account for old topups (11101)
+      let cashAccId = null;
+      const [cashAcc] = await db.query("SELECT id FROM gl_accounts WHERE code = '11101' OR (code LIKE '1110%' AND type='asset') ORDER BY code LIMIT 1");
+      if (cashAcc.length) cashAccId = cashAcc[0].id;
+
+      if (!custAccId) continue;
+
+      const jrnId = 'JRN-REPAIR-' + Date.now() + '-' + created;
+      const [lastJrn] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
+      let jrnNum = 1;
+      if (lastJrn.length && lastJrn[0].journal_number) {
+        const m = lastJrn[0].journal_number.match(/(\d+)/);
+        if (m) jrnNum = parseInt(m[1]) + 1;
+      }
+      const journalNumber = 'JV-' + String(jrnNum).padStart(6, '0');
+      const desc = 'تغذية عهدة ' + (t.custody_number||'') + ' — ' + (t.user_name||'');
+
+      await db.query(
+        `INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, reference_id, description, total_debit, total_credit, status, created_by, posted_by, posted_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [jrnId, journalNumber, t.created_at || new Date(), 'custody_topup', t.id, desc, amt, amt, 'posted', t.created_by||'', 'repair', new Date()]
+      );
+
+      // Debit custody account
+      await db.query(
+        'INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)',
+        ['GLE-R-'+Date.now()+'-'+created+'D', jrnId, custAccId, '', 'عهدة '+(t.user_name||''), amt, 0, desc]
+      );
+
+      // Credit cash (if available)
+      if (cashAccId) {
+        await db.query(
+          'INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)',
+          ['GLE-R-'+Date.now()+'-'+created+'C', jrnId, cashAccId, '11101', 'الصندوق', 0, amt, desc]
+        );
+      }
+      created++;
+    }
+
+    // Recalculate all balances
+    await db.query('UPDATE gl_accounts SET balance = 0');
+    const [allEntries] = await db.query(
+      `SELECT e.account_id, SUM(e.debit) AS d, SUM(e.credit) AS c
+       FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
+       WHERE j.status = 'posted' AND e.account_id IS NOT NULL
+       GROUP BY e.account_id`
+    );
+    for (const e of allEntries) {
+      const net = (Number(e.d)||0) - (Number(e.c)||0);
+      await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [net, e.account_id]);
+    }
+
+    res.json({ success: true, topupsProcessed: created, totalTopups: topups.length, balancesRecalculated: allEntries.length });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
 // Diagnostic: check GL data
 router.get('/gl/diagnose', async (req, res) => {
   try {

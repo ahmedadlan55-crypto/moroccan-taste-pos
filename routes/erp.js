@@ -498,19 +498,52 @@ router.delete('/gl/journals/:id', async (req, res) => {
 // Repair: fix gl_entries with NULL account_id by matching account_code
 router.post('/gl/repair', async (req, res) => {
   try {
-    const [nullEntries] = await db.query('SELECT e.id, e.account_code, e.account_name FROM gl_entries e WHERE e.account_id IS NULL');
-    let fixed = 0;
+    const [nullEntries] = await db.query('SELECT e.id, e.account_code, e.account_name, e.debit, e.credit FROM gl_entries e WHERE e.account_id IS NULL');
+    let fixed = 0, created = 0;
     for (const entry of nullEntries) {
-      // Try to find by code
       let accId = null;
+      // Try to find by code
       if (entry.account_code) {
         const [rows] = await db.query('SELECT id FROM gl_accounts WHERE code = ?', [entry.account_code]);
         if (rows.length) accId = rows[0].id;
       }
       // Try by name
       if (!accId && entry.account_name) {
-        const [rows] = await db.query('SELECT id FROM gl_accounts WHERE name_ar LIKE ?', ['%' + entry.account_name.substring(0, 20) + '%']);
+        const [rows] = await db.query('SELECT id FROM gl_accounts WHERE name_ar LIKE ?', ['%' + (entry.account_name||'').substring(0, 20) + '%']);
         if (rows.length) accId = rows[0].id;
+      }
+      // Auto-create if custody-related (عهدة) and not found
+      if (!accId && entry.account_name && entry.account_name.indexOf('عهدة') >= 0) {
+        const personName = entry.account_name.replace(/عهدة\s*/, '').trim();
+        if (personName) {
+          try {
+            // Ensure parent account exists
+            const parentCode = '1130';
+            const [parentRow] = await db.query('SELECT id FROM gl_accounts WHERE code = ?', [parentCode]);
+            let parentId = null;
+            if (!parentRow.length) {
+              const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11' OR code = '113' ORDER BY code DESC LIMIT 1");
+              parentId = p11.length ? p11[0].id : null;
+              await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
+                ['GL-1130', '1130', 'عهد الموظفين', 'asset', parentId, 3]);
+              parentId = 'GL-1130';
+            } else { parentId = parentRow[0].id; }
+            // Create child account
+            const [children] = await db.query("SELECT code FROM gl_accounts WHERE code LIKE '1130%' AND code != '1130' ORDER BY code DESC LIMIT 1");
+            let nextCode = '11301';
+            if (children.length) { nextCode = '1130' + String((parseInt(children[0].code.replace('1130',''))||0) + 1); }
+            const newId = 'GL-' + nextCode;
+            await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
+              [newId, nextCode, entry.account_name, 'asset', parentId, 4]);
+            accId = newId;
+            created++;
+          } catch(e) { console.log('[REPAIR] GL create error:', e.message); }
+        }
+      }
+      // Also handle مصروفات عهدة
+      if (!accId && entry.account_name && entry.account_name.indexOf('مصروفات') >= 0) {
+        const [expAcc] = await db.query("SELECT id FROM gl_accounts WHERE type = 'expense' ORDER BY code LIMIT 1");
+        if (expAcc.length) accId = expAcc[0].id;
       }
       if (accId) {
         await db.query('UPDATE gl_entries SET account_id = ? WHERE id = ?', [accId, entry.id]);
@@ -529,7 +562,7 @@ router.post('/gl/repair', async (req, res) => {
       const net = (Number(e.d)||0) - (Number(e.c)||0);
       await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [net, e.account_id]);
     }
-    res.json({ success: true, nullFixed: fixed, totalNull: nullEntries.length, balancesRecalculated: allEntries.length });
+    res.json({ success: true, nullFixed: fixed, accountsCreated: created, totalNull: nullEntries.length, balancesRecalculated: allEntries.length });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 

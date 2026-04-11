@@ -5,6 +5,46 @@ const router = require('express').Router();
 const db = require('../db/connection');
 
 // ═══════════════════════════════════════
+// GL ACCOUNT HELPERS — auto-create custody accounts in chart of accounts
+// ═══════════════════════════════════════
+
+// Ensure a parent "عهد الموظفين" group exists under assets (113xx)
+async function ensureCustodyParentAccount() {
+  const code = '1130';
+  const [existing] = await db.query('SELECT id FROM gl_accounts WHERE code = ?', [code]);
+  if (existing.length) return existing[0].id;
+  // Find parent 113 or 11
+  let parentId = null;
+  const [p113] = await db.query("SELECT id FROM gl_accounts WHERE code = '113'");
+  if (p113.length) parentId = p113[0].id;
+  else {
+    const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11'");
+    if (p11.length) parentId = p11[0].id;
+  }
+  const id = 'GL-' + code;
+  await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
+    [id, code, 'عهد الموظفين', 'asset', parentId, parentId ? 3 : 2]);
+  return id;
+}
+
+// Create a GL account for a specific custody user (e.g. 11301 — عهدة أحمد)
+async function createCustodyUserGLAccount(custodyUserName) {
+  const parentId = await ensureCustodyParentAccount();
+  // Find next code under 1130x
+  const [children] = await db.query("SELECT code FROM gl_accounts WHERE code LIKE '1130%' AND code != '1130' ORDER BY code DESC LIMIT 1");
+  let nextCode = '11301';
+  if (children.length) {
+    const lastNum = parseInt(children[0].code.replace('1130', '')) || 0;
+    nextCode = '1130' + String(lastNum + 1);
+  }
+  const id = 'GL-' + nextCode;
+  const name = 'عهدة ' + custodyUserName;
+  await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
+    [id, nextCode, name, 'asset', parentId, 4]);
+  return { id, code: nextCode, name };
+}
+
+// ═══════════════════════════════════════
 // CUSTODY USERS (مسؤولو العهدة)
 // ═══════════════════════════════════════
 
@@ -35,6 +75,8 @@ router.post('/users', async (req, res) => {
       'INSERT INTO custody_users (id, name, id_number, phone, job_title, notes, linked_username) VALUES (?,?,?,?,?,?,?)',
       [newId, name, idNumber || '', phone || '', jobTitle || '', notes || '', linkedUsername || '']
     );
+    // Auto-create GL account for this custody user
+    try { await createCustodyUserGLAccount(name); } catch(e) { console.log('[CUSTODY] GL account creation warning:', e.message); }
     res.json({ success: true, id: newId });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
@@ -450,12 +492,26 @@ router.post('/expenses/:expId/post', async (req, res) => {
       if (acc) vatAccId = acc.id;
     }
 
-    // Custody/Cash account (asset)
+    // Custody user GL account — find by name match "عهدة USERNAME"
     let cusAccId = null;
-    const cusAcc = await findGLAccount(['11101','11102','111','1110'], 'asset');
-    if (cusAcc) cusAccId = cusAcc.id;
+    let cusAccCode = '1130';
+    let cusAccName = 'عهدة ' + (exp.user_name || '');
+    const [cusAccRows] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE name_ar LIKE ? AND code LIKE '1130%'", ['عهدة ' + (exp.user_name||'').substring(0,20) + '%']);
+    if (cusAccRows.length) {
+      cusAccId = cusAccRows[0].id; cusAccCode = cusAccRows[0].code; cusAccName = cusAccRows[0].name_ar;
+    } else {
+      // Auto-create if missing
+      try {
+        const newAcc = await createCustodyUserGLAccount(exp.user_name || 'موظف');
+        cusAccId = newAcc.id; cusAccCode = newAcc.code; cusAccName = newAcc.name;
+      } catch(e) {
+        // Fallback to any asset account
+        const fallback = await findGLAccount(['11101','1110','111'], 'asset');
+        if (fallback) { cusAccId = fallback.id; cusAccCode = fallback.code; cusAccName = fallback.name_ar; }
+      }
+    }
 
-    console.log('[CUSTODY POST] expAcc:', expAccId, expAccCode, '| vatAcc:', vatAccId, '| cusAcc:', cusAccId);
+    console.log('[CUSTODY POST] expAcc:', expAccId, expAccCode, '| vatAcc:', vatAccId, '| cusAcc:', cusAccId, cusAccCode);
 
     // Insert journal header — status 'posted' with balance updates
     await db.query(
@@ -482,11 +538,11 @@ router.post('/expenses/:expId/post', async (req, res) => {
       if (vatAccId) await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [vat, vatAccId]);
     }
 
-    // Credit: Custody/Cash account
+    // Credit: Custody user account
     const gleCusId = 'GLE-' + Date.now() + '-3';
     await db.query(
       `INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)`,
-      [gleCusId, jrnId, cusAccId, '11101', 'عهدة الكاشير / صناديق نقاط البيع', 0, total, desc]
+      [gleCusId, jrnId, cusAccId, cusAccCode, cusAccName, 0, total, desc]
     );
     if (cusAccId) await db.query('UPDATE gl_accounts SET balance = balance - ? WHERE id = ?', [total, cusAccId]);
 

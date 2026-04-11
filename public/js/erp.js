@@ -278,7 +278,7 @@ function erpDeleteSupplier(id, name) {
 }
 
 // ═══════════════════════════════════════
-// GL ACCOUNTS
+// GL ACCOUNTS (دليل الحسابات)
 // ═══════════════════════════════════════
 let _erpAccounts = [];
 function erpLoadAccounts() {
@@ -288,71 +288,159 @@ function erpLoadAccounts() {
 }
 function erpLoadAccountsList_() {
   window._apiBridge.withSuccessHandler(function(list) {
-    _erpAccounts = list || [];
+    _erpAccounts = (list || []).map(a => ({
+      id: a.id, code: a.code, nameAr: a.nameAr, nameEn: a.nameEn,
+      type: a.type, parentId: a.parentId, level: Number(a.level)||1,
+      isActive: a.isActive, balance: Number(a.balance)||0
+    }));
     const tbody = document.getElementById('erpAccountsBody');
-    if (_erpAccounts.length === 0) { tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد حسابات</td></tr>'; return; }
+    if (!_erpAccounts.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد حسابات</td></tr>'; return; }
+
     const typeLabels = {asset:'أصول',liability:'التزامات',equity:'حقوق ملكية',revenue:'إيرادات',expense:'مصروفات'};
-    tbody.innerHTML = _erpAccounts.map(a => {
-      const indent = (Number(a.Level)||1) > 1 ? 'style="padding-right:'+ ((Number(a.Level)-1)*20) +'px"' : '';
-      return `<tr>
-        <td><code>${a.Code}</code></td><td ${indent}><strong>${a.NameAR}</strong></td><td>${a.NameEN||''}</td>
-        <td><span class="badge badge-${a.Type}">${typeLabels[a.Type]||a.Type}</span></td>
-        <td>${a.Level||1}</td><td class="${Number(a.Balance)>=0?'text-green':'text-red'}">${(Number(a.Balance)||0).toFixed(2)}</td>
-        <td><button class="btn-icon" onclick="erpEditAccount('${a.ID}')" title="\u062a\u0639\u062f\u064a\u0644"><i class="fas fa-edit"></i></button> <button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteAccount('${a.ID}','${a.Code}','${(a.NameAR||'').replace(/'/g,"\\&#39;")}')" title="\u062d\u0630\u0641"><i class="fas fa-trash"></i></button></td>
-      </tr>`;
+    const typeColors = {asset:'#3b82f6',liability:'#ef4444',equity:'#8b5cf6',revenue:'#16a34a',expense:'#f59e0b'};
+
+    // Build tree-ordered list
+    const byParent = {};
+    _erpAccounts.forEach(a => {
+      const pid = a.parentId || '__root__';
+      if (!byParent[pid]) byParent[pid] = [];
+      byParent[pid].push(a);
+    });
+    const ordered = [];
+    function walk(pid) {
+      const children = byParent[pid] || [];
+      children.sort((a,b) => a.code.localeCompare(b.code));
+      children.forEach(a => { ordered.push(a); walk(a.id); });
+    }
+    walk('__root__');
+    // Add any orphans not in tree
+    _erpAccounts.forEach(a => { if (!ordered.includes(a)) ordered.push(a); });
+
+    tbody.innerHTML = ordered.map(a => {
+      const lvl = a.level;
+      const indent = lvl > 1 ? (lvl - 1) * 22 : 0;
+      const isParent = !!byParent[a.id];
+      const weight = lvl <= 2 ? '900' : lvl === 3 ? '700' : '400';
+      const bgShade = lvl === 1 ? 'background:rgba(59,130,246,0.04);' : '';
+      const treeIcon = isParent
+        ? '<i class="fas fa-folder-open" style="color:' + (typeColors[a.type]||'#64748b') + ';margin-left:6px;font-size:12px;"></i>'
+        : '<i class="fas fa-file-alt" style="color:#94a3b8;margin-left:6px;font-size:11px;"></i>';
+      const bal = a.balance !== 0 ? '<span style="color:' + (a.balance >= 0 ? '#16a34a' : '#ef4444') + ';font-weight:700;">' + a.balance.toFixed(2) + '</span>' : '<span style="color:#cbd5e1;">0.00</span>';
+
+      return '<tr style="' + bgShade + '">' +
+        '<td><code style="font-weight:' + weight + ';font-size:' + (lvl<=2?'14px':'12px') + ';">' + a.code + '</code></td>' +
+        '<td style="padding-right:' + indent + 'px;font-weight:' + weight + ';font-size:' + (lvl<=2?'14px':'13px') + ';">' + treeIcon + (a.nameAr||'') + '</td>' +
+        '<td style="font-size:12px;color:#64748b;">' + (a.nameEn||'') + '</td>' +
+        '<td><span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;background:' + (typeColors[a.type]||'#e2e8f0') + '20;color:' + (typeColors[a.type]||'#64748b') + ';">' + (typeLabels[a.type]||a.type) + '</span></td>' +
+        '<td style="text-align:center;font-size:12px;">' + lvl + '</td>' +
+        '<td style="text-align:left;">' + bal + '</td>' +
+        '<td style="white-space:nowrap;">' +
+          '<button class="btn-icon" onclick="erpEditAccount(\'' + a.id + '\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
+          '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteAccount(\'' + a.id + '\',\'' + a.code + '\',\'' + (a.nameAr||'').replace(/'/g,'') + '\')" title="حذف"><i class="fas fa-trash"></i></button> ' +
+          (isParent ? '' : '<button class="btn-icon" style="color:#16a34a;" onclick="erpAddChildAccount(\'' + a.id + '\',\'' + a.code + '\')" title="إضافة فرعي"><i class="fas fa-plus-circle"></i></button>') +
+        '</td></tr>';
     }).join('');
   }).getGLAccounts();
 }
 
 function erpOpenAccountModal(data) {
   const d = data || {};
-  document.getElementById('erpModalTitle').textContent = d.ID ? 'تعديل حساب' : 'إضافة حساب جديد';
-  document.getElementById('erpModalBody').innerHTML = `
-    <input type="hidden" id="erpAccID" value="${d.ID||''}">
-    <div class="form-row"><label>رمز الحساب *</label><input class="form-control" id="erpAccCode" value="${d.Code||''}" ${d.ID?'readonly':''}></div>
-    <div class="form-row"><label>الاسم (عربي) *</label><input class="form-control" id="erpAccNameAR" value="${d.NameAR||''}"></div>
-    <div class="form-row"><label>الاسم (إنجليزي)</label><input class="form-control" id="erpAccNameEN" value="${d.NameEN||''}"></div>
-    <div class="form-row"><label>النوع *</label><select class="form-control" id="erpAccType">
-      <option value="asset" ${d.Type==='asset'?'selected':''}>أصول</option><option value="liability" ${d.Type==='liability'?'selected':''}>التزامات</option>
-      <option value="equity" ${d.Type==='equity'?'selected':''}>حقوق ملكية</option><option value="revenue" ${d.Type==='revenue'?'selected':''}>إيرادات</option>
-      <option value="expense" ${d.Type==='expense'?'selected':''}>مصروفات</option></select></div>
-    <div class="form-row"><label>الحساب الأب</label><select class="form-control" id="erpAccParent"><option value="">-- بدون --</option>${_erpAccounts.map(a=>`<option value="${a.ID}" ${d.ParentID===a.ID?'selected':''}>${a.Code} - ${a.NameAR}</option>`).join('')}</select></div>
-    <div class="form-row"><label>المستوى</label><input type="number" class="form-control" id="erpAccLevel" value="${d.Level||1}" min="1" max="5"></div>`;
+  const isEdit = !!d.id;
+  document.getElementById('erpModalTitle').textContent = isEdit ? 'تعديل حساب' : 'إضافة حساب جديد';
+
+  // Build parent options grouped by type
+  const parentOpts = _erpAccounts
+    .filter(a => a.level < 4)
+    .sort((a,b) => a.code.localeCompare(b.code))
+    .map(a => {
+      const indent = '\u00A0\u00A0'.repeat((a.level - 1));
+      const sel = d.parentId === a.id ? ' selected' : '';
+      return '<option value="' + a.id + '"' + sel + '>' + indent + a.code + ' — ' + a.nameAr + '</option>';
+    }).join('');
+
+  document.getElementById('erpModalBody').innerHTML =
+    '<input type="hidden" id="erpAccID" value="' + (d.id||'') + '">' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+      '<div class="form-row"><label>رمز الحساب *</label><input class="form-control" id="erpAccCode" value="' + (d.code||'') + '" ' + (isEdit?'readonly':'') + ' placeholder="مثال: 11201"></div>' +
+      '<div class="form-row"><label>النوع *</label><select class="form-control" id="erpAccType">' +
+        '<option value="asset"' + (d.type==='asset'?' selected':'') + '>أصول</option>' +
+        '<option value="liability"' + (d.type==='liability'?' selected':'') + '>التزامات</option>' +
+        '<option value="equity"' + (d.type==='equity'?' selected':'') + '>حقوق ملكية</option>' +
+        '<option value="revenue"' + (d.type==='revenue'?' selected':'') + '>إيرادات</option>' +
+        '<option value="expense"' + (d.type==='expense'?' selected':'') + '>مصروفات</option></select></div>' +
+    '</div>' +
+    '<div class="form-row"><label>الاسم (عربي) *</label><input class="form-control" id="erpAccNameAR" value="' + (d.nameAr||'') + '" placeholder="اسم الحساب بالعربي"></div>' +
+    '<div class="form-row"><label>الاسم (إنجليزي)</label><input class="form-control" id="erpAccNameEN" value="' + (d.nameEn||'') + '" placeholder="Account name in English"></div>' +
+    '<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;">' +
+      '<div class="form-row"><label>الحساب الرئيسي (الأب)</label><select class="form-control" id="erpAccParent"><option value="">— حساب رئيسي (بدون أب) —</option>' + parentOpts + '</select></div>' +
+      '<div class="form-row"><label>المستوى</label><input type="number" class="form-control" id="erpAccLevel" value="' + (d.level||1) + '" min="1" max="5"></div>' +
+    '</div>';
+
+  // Auto-set level when parent changes
+  setTimeout(function() {
+    var parentSel = document.getElementById('erpAccParent');
+    if (parentSel) parentSel.onchange = function() {
+      var pid = parentSel.value;
+      if (pid) {
+        var parent = _erpAccounts.find(function(a) { return a.id === pid; });
+        if (parent) document.getElementById('erpAccLevel').value = parent.level + 1;
+      } else {
+        document.getElementById('erpAccLevel').value = 1;
+      }
+    };
+  }, 50);
+
   document.getElementById('erpModalSaveBtn').onclick = erpSaveAccount;
   document.getElementById('erpModal').classList.remove('hidden');
 }
 
 function erpEditAccount(id) {
-  const a = _erpAccounts.find(x => String(x.ID) === String(id));
+  const a = _erpAccounts.find(x => x.id === id);
   if (a) erpOpenAccountModal(a);
 }
 
+function erpAddChildAccount(parentId, parentCode) {
+  const parent = _erpAccounts.find(x => x.id === parentId);
+  if (!parent) return;
+  erpOpenAccountModal({
+    parentId: parentId,
+    type: parent.type,
+    level: parent.level + 1,
+    code: parentCode
+  });
+  // Pre-fill code prefix and clear to let user complete
+  setTimeout(function() {
+    var codeEl = document.getElementById('erpAccCode');
+    if (codeEl) { codeEl.value = ''; codeEl.placeholder = parentCode + 'XX'; codeEl.focus(); }
+  }, 100);
+}
+
 function erpDeleteAccount(id, code, name) {
-  if (!confirm('\u0647\u0644 \u0623\u0646\u062a \u0645\u062a\u0623\u0643\u062f \u0645\u0646 \u062d\u0630\u0641 \u0627\u0644\u062d\u0633\u0627\u0628:\n' + code + ' - ' + name + '?')) return;
+  if (!confirm('هل أنت متأكد من حذف الحساب:\n' + code + ' — ' + name + '?')) return;
   loader(true);
   window._apiBridge.withSuccessHandler(function(res) {
     loader(false);
-    if (res.success) { showToast('\u062a\u0645 \u062d\u0630\u0641 \u0627\u0644\u062d\u0633\u0627\u0628 \u0628\u0646\u062c\u0627\u062d'); erpLoadAccounts(); }
-    else showToast(res.error, 'error');
-  }).deleteGLAccount(id, currentUser);
+    if (res.success) { showToast('تم حذف الحساب'); erpLoadAccounts(); }
+    else showToast(res.error, true);
+  }).deleteGLAccount(id);
 }
 
 function erpSaveAccount() {
   const data = {
-    ID: document.getElementById('erpAccID').value || '',
-    Code: document.getElementById('erpAccCode').value,
-    NameAR: document.getElementById('erpAccNameAR').value,
-    NameEN: document.getElementById('erpAccNameEN').value,
-    Type: document.getElementById('erpAccType').value,
-    ParentID: document.getElementById('erpAccParent').value,
-    Level: document.getElementById('erpAccLevel').value
+    id: document.getElementById('erpAccID').value || '',
+    code: document.getElementById('erpAccCode').value,
+    nameAr: document.getElementById('erpAccNameAR').value,
+    nameEn: document.getElementById('erpAccNameEN').value,
+    type: document.getElementById('erpAccType').value,
+    parentId: document.getElementById('erpAccParent').value,
+    level: document.getElementById('erpAccLevel').value
   };
-  if (!data.Code || !data.NameAR) return showToast('الرمز والاسم مطلوبان', 'error');
+  if (!data.code || !data.nameAr) return showToast('الرمز والاسم مطلوبان', true);
   loader(true);
   window._apiBridge.withSuccessHandler(function(res) {
     loader(false);
     if (res.success) { showToast('تم الحفظ'); erpCloseModal(); erpLoadAccounts(); }
-    else showToast(res.error, 'error');
+    else showToast(res.error, true);
   }).saveGLAccount(data, currentUser);
 }
 

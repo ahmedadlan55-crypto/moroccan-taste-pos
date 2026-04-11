@@ -79,6 +79,7 @@
     deleteSupplier:      { method: 'DELETE',url: (id) => '/erp/suppliers/'+id },
     getGLAccounts:       { method: 'GET',  url: '/erp/gl/accounts' },
     saveGLAccount:       { method: 'POST', url: '/erp/gl/accounts' },
+    deleteGLAccount:     { method: 'DELETE', url: (id) => '/erp/gl/accounts/' + id },
     getGLJournals:       { method: 'GET',  url: '/erp/gl/journals', query: (f) => f },
     createJournalEntry:  { method: 'POST', url: '/erp/gl/journals' },
     getGLEntries:        { method: 'GET',  url: (jid) => '/erp/gl/journals/'+jid+'/entries' },

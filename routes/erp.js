@@ -228,6 +228,119 @@ router.post('/gl/accounts', async (req, res) => {
   }
 });
 
+// Delete GL account
+router.delete('/gl/accounts/:id', async (req, res) => {
+  try {
+    // Check if account has children
+    const [children] = await db.query('SELECT id FROM gl_accounts WHERE parent_id = ?', [req.params.id]);
+    if (children.length) return res.json({ success: false, error: 'لا يمكن حذف حساب لديه حسابات فرعية' });
+    // Check if account has journal entries
+    const [entries] = await db.query('SELECT id FROM gl_entries WHERE account_id = ? LIMIT 1', [req.params.id]);
+    if (entries.length) return res.json({ success: false, error: 'لا يمكن حذف حساب مستخدم في قيود محاسبية' });
+    await db.query('DELETE FROM gl_accounts WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Seed cafe GL accounts (دليل حسابات المقهى)
+router.post('/gl/seed', async (req, res) => {
+  try {
+    const [existing] = await db.query('SELECT COUNT(*) AS cnt FROM gl_accounts');
+    if (existing[0].cnt > 0) return res.json({ success: true, msg: 'already seeded' });
+
+    const accounts = [
+      {code:'1',name:'الأصول',type:'asset',parent:null,level:1},
+      {code:'11',name:'الأصول المتداولة',type:'asset',parent:'1',level:2},
+      {code:'111',name:'النقدية والبنوك',type:'asset',parent:'11',level:3},
+      {code:'11101',name:'عهدة الكاشير / صناديق نقاط البيع (POS)',type:'asset',parent:'111',level:4},
+      {code:'11102',name:'الحسابات البنكية الجارية',type:'asset',parent:'111',level:4},
+      {code:'112',name:'المخزون',type:'asset',parent:'11',level:3},
+      {code:'11201',name:'مخزون المواد الخام (البن، الحليب، المنكهات)',type:'asset',parent:'112',level:4},
+      {code:'11202',name:'مخزون المنتجات الجاهزة (المخبوزات، الحلويات)',type:'asset',parent:'112',level:4},
+      {code:'11203',name:'مخزون مواد التغليف والتعبئة (الأكواب، الأكياس)',type:'asset',parent:'112',level:4},
+      {code:'113',name:'الذمم المدينة والأرصدة',type:'asset',parent:'11',level:3},
+      {code:'11301',name:'ذمم تطبيقات التوصيل (جاهز، هنقرستيشن..)',type:'asset',parent:'113',level:4},
+      {code:'11302',name:'سلف ومقدمات الموظفين',type:'asset',parent:'113',level:4},
+      {code:'11303',name:'إيجارات مدفوعة مقدماً',type:'asset',parent:'113',level:4},
+      {code:'12',name:'الأصول الثابتة',type:'asset',parent:'1',level:2},
+      {code:'121',name:'معدات وآلات الكافيه',type:'asset',parent:'12',level:3},
+      {code:'122',name:'أجهزة نقاط البيع والأنظمة',type:'asset',parent:'12',level:3},
+      {code:'123',name:'الأثاث والديكورات',type:'asset',parent:'12',level:3},
+      {code:'124',name:'مجمع إهلاك الأصول الثابتة',type:'asset',parent:'12',level:3},
+      {code:'2',name:'الالتزامات (الخصوم)',type:'liability',parent:null,level:1},
+      {code:'21',name:'الالتزامات المتداولة',type:'liability',parent:'2',level:2},
+      {code:'211',name:'الموردون والدائنون',type:'liability',parent:'21',level:3},
+      {code:'21101',name:'موردو المواد الغذائية والبن',type:'liability',parent:'211',level:4},
+      {code:'21102',name:'موردو التغليف والمعدات',type:'liability',parent:'211',level:4},
+      {code:'212',name:'المصروفات المستحقة',type:'liability',parent:'21',level:3},
+      {code:'21201',name:'رواتب وأجور مستحقة',type:'liability',parent:'212',level:4},
+      {code:'21202',name:'إيجارات عقود مستحقة الدفع',type:'liability',parent:'212',level:4},
+      {code:'21203',name:'فواتير منافع مستحقة',type:'liability',parent:'212',level:4},
+      {code:'213',name:'الضرائب',type:'liability',parent:'21',level:3},
+      {code:'21301',name:'ضريبة القيمة المضافة المستحقة (VAT)',type:'liability',parent:'213',level:4},
+      {code:'3',name:'حقوق الملكية',type:'equity',parent:null,level:1},
+      {code:'31',name:'رأس المال',type:'equity',parent:'3',level:2},
+      {code:'311',name:'رأس مال الشركاء أو المالك',type:'equity',parent:'31',level:3},
+      {code:'32',name:'الأرباح المبقاة',type:'equity',parent:'3',level:2},
+      {code:'321',name:'الأرباح أو الخسائر المرحلة',type:'equity',parent:'32',level:3},
+      {code:'33',name:'المسحوبات',type:'equity',parent:'3',level:2},
+      {code:'331',name:'جاري المالك (المسحوبات الشخصية)',type:'equity',parent:'33',level:3},
+      {code:'4',name:'الإيرادات',type:'revenue',parent:null,level:1},
+      {code:'41',name:'الإيرادات التشغيلية',type:'revenue',parent:'4',level:2},
+      {code:'411',name:'مبيعات نقاط البيع (POS)',type:'revenue',parent:'41',level:3},
+      {code:'41101',name:'مبيعات المشروبات الساخنة والباردة',type:'revenue',parent:'411',level:4},
+      {code:'41102',name:'مبيعات المأكولات والحلويات',type:'revenue',parent:'411',level:4},
+      {code:'41103',name:'مبيعات منتجات التجزئة',type:'revenue',parent:'411',level:4},
+      {code:'412',name:'مبيعات تطبيقات التوصيل',type:'revenue',parent:'41',level:3},
+      {code:'41201',name:'مبيعات تطبيقات التوصيل',type:'revenue',parent:'412',level:4},
+      {code:'42',name:'الإيرادات الأخرى',type:'revenue',parent:'4',level:2},
+      {code:'421',name:'إيرادات خدمات الحفلات الخارجية (Catering)',type:'revenue',parent:'42',level:3},
+      {code:'422',name:'إيرادات متنوعة',type:'revenue',parent:'42',level:3},
+      {code:'5',name:'تكلفة المبيعات (COGS)',type:'expense',parent:null,level:1},
+      {code:'51',name:'تكلفة المواد المستهلكة',type:'expense',parent:'5',level:2},
+      {code:'511',name:'تكلفة البن والمشروبات',type:'expense',parent:'51',level:3},
+      {code:'512',name:'تكلفة المأكولات والحلويات المباعة',type:'expense',parent:'51',level:3},
+      {code:'513',name:'تكلفة مواد التعبئة والتغليف',type:'expense',parent:'51',level:3},
+      {code:'52',name:'الهالك والتوالف',type:'expense',parent:'5',level:2},
+      {code:'521',name:'هالك المواد الغذائية والبن',type:'expense',parent:'52',level:3},
+      {code:'6',name:'المصروفات',type:'expense',parent:null,level:1},
+      {code:'61',name:'المصروفات التشغيلية',type:'expense',parent:'6',level:2},
+      {code:'611',name:'الرواتب والأجور',type:'expense',parent:'61',level:3},
+      {code:'612',name:'الإيجارات والمنافع',type:'expense',parent:'61',level:3},
+      {code:'61201',name:'إيجارات الفروع',type:'expense',parent:'612',level:4},
+      {code:'61202',name:'الكهرباء والماء',type:'expense',parent:'612',level:4},
+      {code:'61203',name:'اشتراكات الإنترنت والاتصالات',type:'expense',parent:'612',level:4},
+      {code:'613',name:'التشغيل والصيانة',type:'expense',parent:'61',level:3},
+      {code:'61301',name:'صيانة مكائن القهوة والمعدات',type:'expense',parent:'613',level:4},
+      {code:'61302',name:'أدوات النظافة والتعقيم',type:'expense',parent:'613',level:4},
+      {code:'614',name:'التسويق والعمولات',type:'expense',parent:'61',level:3},
+      {code:'61401',name:'عمولات تطبيقات التوصيل',type:'expense',parent:'614',level:4},
+      {code:'61402',name:'الحملات الإعلانية والتسويق',type:'expense',parent:'614',level:4},
+      {code:'62',name:'المصروفات العمومية والإدارية',type:'expense',parent:'6',level:2},
+      {code:'621',name:'رسوم اشتراكات الأنظمة والبرامج',type:'expense',parent:'62',level:3},
+      {code:'622',name:'الرسوم الحكومية والتراخيص',type:'expense',parent:'62',level:3},
+      {code:'623',name:'العمولات البنكية ورسوم شبكات الدفع',type:'expense',parent:'62',level:3},
+      {code:'624',name:'مصروفات الضيافة والنثريات',type:'expense',parent:'62',level:3},
+    ];
+
+    // Build a code→id map so parent references work
+    const codeToId = {};
+    for (const a of accounts) {
+      const id = 'GL-' + a.code;
+      codeToId[a.code] = id;
+    }
+    for (const a of accounts) {
+      const id = codeToId[a.code];
+      const parentId = a.parent ? (codeToId[a.parent] || null) : null;
+      await db.query(
+        'INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
+        [id, a.code, a.name, a.type, parentId, a.level]
+      );
+    }
+    res.json({ success: true, count: accounts.length });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 // ─── GL Journals ───
 
 router.get('/gl/journals', async (req, res) => {

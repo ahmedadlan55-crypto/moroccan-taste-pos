@@ -200,6 +200,7 @@ body{
 
 /* Override pending badge */
 .b-override_pending{background:#fef3c7;color:#92400e;}
+.b-returned{background:#e0e7ff;color:#4338ca;}
 
 /* ─── Bottom Sheet ─── */
 .bottom-sheet{position:fixed;inset:0;z-index:200;display:flex;align-items:flex-end;justify-content:center;}

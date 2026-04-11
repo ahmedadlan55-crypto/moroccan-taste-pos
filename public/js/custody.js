@@ -318,17 +318,24 @@ window.loadCustodyApprovals = function() {
         var sBadge = e.status === 'pending' ? '<span class="badge yellow">بانتظار</span>'
           : e.status === 'approved' ? '<span class="badge blue">معتمد</span>'
           : e.status === 'override_pending' ? '<span class="badge" style="background:#fef3c7;color:#92400e;">تجاوز رصيد</span>'
+          : e.status === 'returned' ? '<span class="badge" style="background:#e0e7ff;color:#4338ca;">مُرجع للتعديل</span>'
           : '<span class="badge green">مرحّل</span>';
         var imgBtn = e.invoiceImage ? '<button class="btn btn-light btn-sm" onclick="viewCustodyImage(\'' + e.id + '\')" title="عرض الفاتورة"><i class="fas fa-image"></i></button>' : '—';
         var actions = '';
+        // Delete + Return available on non-posted/approved expenses
+        var canManage = (e.status === 'pending' || e.status === 'override_pending' || e.status === 'rejected' || e.status === 'returned');
+        var manageActions = canManage ? '<button class="btn btn-light btn-sm" onclick="returnCustodyExpFn(\'' + e.id + '\')" title="إرجاع للتعديل"><i class="fas fa-undo"></i></button> ' +
+          '<button class="btn btn-danger btn-sm" onclick="deleteCustodyExpFn(\'' + e.id + '\')" title="حذف"><i class="fas fa-trash"></i></button>' : '';
         if (e.status === 'override_pending') {
           actions = '<button class="btn btn-warning btn-sm" onclick="approveOverrideFn(\'' + e.id + '\')" title="موافقة تجاوز"><i class="fas fa-check-double"></i></button> ' +
-            '<button class="btn btn-danger btn-sm" onclick="rejectCustodyExpFn(\'' + e.id + '\')" title="رفض"><i class="fas fa-times"></i></button>';
+            '<button class="btn btn-danger btn-sm" onclick="rejectCustodyExpFn(\'' + e.id + '\')" title="رفض"><i class="fas fa-times"></i></button> ' + manageActions;
         } else if (e.status === 'pending') {
           actions = '<button class="btn btn-success btn-sm" onclick="approveCustodyExpFn(\'' + e.id + '\')" title="موافقة"><i class="fas fa-check"></i></button> ' +
-            '<button class="btn btn-danger btn-sm" onclick="rejectCustodyExpFn(\'' + e.id + '\')" title="رفض"><i class="fas fa-times"></i></button>';
+            '<button class="btn btn-danger btn-sm" onclick="rejectCustodyExpFn(\'' + e.id + '\')" title="رفض"><i class="fas fa-times"></i></button> ' + manageActions;
         } else if (e.status === 'approved') {
           actions = '<button class="btn btn-primary btn-sm" onclick="postCustodyExpFn(\'' + e.id + '\')" title="ترحيل محاسبي"><i class="fas fa-book"></i></button>';
+        } else if (e.status === 'returned' || e.status === 'rejected') {
+          actions = manageActions;
         }
         h += '<tr>' +
           '<td><code style="font-size:11px;">' + (e.custodyNumber || '') + '</code></td>' +
@@ -373,6 +380,17 @@ window.rejectCustodyExpFn = function(expId) {
   var reason = prompt('سبب الرفض:');
   if (reason === null) return;
   loader(); api.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الرفض'); loadCustodyApprovals(); } else showToast(r.error, true); }).rejectCustodyExp(expId, state.user, reason);
+};
+
+window.deleteCustodyExpFn = function(expId) {
+  if (!confirm('حذف هذا المصروف نهائياً؟')) return;
+  loader(); api.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم حذف المصروف'); loadCustodyApprovals(); } else showToast(r.error, true); }).deleteCustodyExp(expId);
+};
+
+window.returnCustodyExpFn = function(expId) {
+  var reason = prompt('سبب الإرجاع / التعليمات للمسؤول:');
+  if (reason === null) return;
+  loader(); api.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم إرجاع المصروف للتعديل'); loadCustodyApprovals(); } else showToast(r.error, true); }).returnCustodyExp(expId, state.user, reason);
 };
 
 window.approveOverrideFn = function(expId) {

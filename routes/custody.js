@@ -301,6 +301,62 @@ router.post('/expenses/:expId/approve', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// Delete expense (admin only — pending/override_pending/rejected only)
+router.delete('/expenses/:expId', async (req, res) => {
+  try {
+    const [exps] = await db.query('SELECT * FROM custody_expenses WHERE id = ?', [req.params.expId]);
+    if (!exps.length) return res.json({ success: false, error: 'المصروف غير موجود' });
+    const exp = exps[0];
+    if (exp.status === 'approved' || exp.status === 'posted') {
+      return res.json({ success: false, error: 'لا يمكن حذف مصروف معتمد أو مرحّل' });
+    }
+    await db.query('DELETE FROM custody_expenses WHERE id = ?', [req.params.expId]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Return expense to user for editing
+router.post('/expenses/:expId/return', async (req, res) => {
+  try {
+    const { username, reason } = req.body;
+    const [exps] = await db.query('SELECT * FROM custody_expenses WHERE id = ?', [req.params.expId]);
+    if (!exps.length) return res.json({ success: false, error: 'المصروف غير موجود' });
+    const exp = exps[0];
+    if (exp.status === 'posted') return res.json({ success: false, error: 'لا يمكن إرجاع مصروف مرحّل' });
+    await db.query(
+      'UPDATE custody_expenses SET status = "returned", rejection_reason = ?, approved_by = ?, approved_at = ? WHERE id = ?',
+      [(reason || 'يرجى التعديل وإعادة الإرسال'), username || '', new Date(), req.params.expId]
+    );
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Update returned expense (user edits and resubmits)
+router.put('/expenses/:expId', async (req, res) => {
+  try {
+    const { expenseDate, description, amount, hasVat, vatRate, invoiceImage, notes, username } = req.body;
+    const [exps] = await db.query('SELECT * FROM custody_expenses WHERE id = ?', [req.params.expId]);
+    if (!exps.length) return res.json({ success: false, error: 'المصروف غير موجود' });
+    const exp = exps[0];
+    if (exp.status !== 'returned') return res.json({ success: false, error: 'فقط المصروفات المُرجعة يمكن تعديلها' });
+
+    const amt = Number(amount) || Number(exp.amount);
+    const vRate = hasVat ? (Number(vatRate) || 15) : 0;
+    const vAmt = hasVat ? amt * (vRate / 100) : 0;
+    const total = amt + vAmt;
+
+    await db.query(
+      `UPDATE custody_expenses SET expense_date=?, description=?, amount=?, has_vat=?, vat_rate=?, vat_amount=?, total_with_vat=?,
+       invoice_image=COALESCE(?,invoice_image), notes=?, status='pending', rejection_reason=NULL, approved_by=NULL, approved_at=NULL
+       WHERE id=?`,
+      [expenseDate || exp.expense_date, description || exp.description, amt,
+       hasVat ? 1 : 0, vRate, vAmt, total,
+       invoiceImage || null, notes || '', req.params.expId]
+    );
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 // Reject expense
 router.post('/expenses/:expId/reject', async (req, res) => {
   try {
@@ -479,7 +535,7 @@ router.get('/approval/pending', async (req, res) => {
     const [rows] = await db.query(
       `SELECT ce.*, c.custody_number, c.user_name FROM custody_expenses ce
        JOIN custodies c ON ce.custody_id = c.id
-       WHERE ce.status IN ('pending','approved','override_pending')
+       WHERE ce.status IN ('pending','approved','override_pending','returned')
        ORDER BY ce.created_at DESC`
     );
     res.json(rows.map(e => ({

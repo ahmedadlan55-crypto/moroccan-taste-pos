@@ -282,8 +282,8 @@ async function runMigrations() {
   await addColumnIfMissing('custodies', 'close_notes', "TEXT");
   // Extend custodies status ENUM to include close_pending
   try { await db.query("ALTER TABLE custodies MODIFY COLUMN status ENUM('active','closed','close_pending') DEFAULT 'active'"); } catch(e) {}
-  // Extend custody_expenses status ENUM to include override_pending
-  try { await db.query("ALTER TABLE custody_expenses MODIFY COLUMN status ENUM('pending','approved','rejected','posted','override_pending') DEFAULT 'pending'"); } catch(e) {}
+  // Extend custody_expenses status ENUM to include override_pending + returned
+  try { await db.query("ALTER TABLE custody_expenses MODIFY COLUMN status ENUM('pending','approved','rejected','posted','override_pending','returned') DEFAULT 'pending'"); } catch(e) {}
 
   // Seed cost settings into the existing key-value settings table
   try {

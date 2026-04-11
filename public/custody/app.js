@@ -143,14 +143,16 @@
         approved: 'تمت الموافقة',
         rejected: 'مرفوض',
         posted: 'تم الترحيل',
-        override_pending: 'طلب تجاوز رصيد'
+        override_pending: 'طلب تجاوز رصيد',
+        returned: 'مُرجع للتعديل'
       };
       var icons = {
         pending: 'fa-clock',
         approved: 'fa-check-circle',
         rejected: 'fa-times-circle',
         posted: 'fa-book',
-        override_pending: 'fa-exclamation-triangle'
+        override_pending: 'fa-exclamation-triangle',
+        returned: 'fa-edit'
       };
       var total = e.totalWithVat || e.amount || 0;
       var dt = '';
@@ -170,7 +172,13 @@
       if (e.status === 'rejected' && e.rejectionReason) {
         h += '<div class="ec-reject"><i class="fas fa-exclamation-triangle"></i> ' + esc(e.rejectionReason) + '</div>';
       }
-      if (e.invoiceImage || e.approvedBy) {
+      // Edit button for returned expenses
+      if (e.status === 'returned') {
+        h += '<div class="ec-foot">';
+        h += '<button class="ec-img-btn" style="background:rgba(67,56,202,0.1);color:#4338ca;" onclick="editExpense(\'' + e.id + '\')"><i class="fas fa-edit"></i> تعديل وإعادة إرسال</button>';
+        if (e.invoiceImage) h += '<button class="ec-img-btn" onclick="viewImg(\'' + e.id + '\')"><i class="fas fa-image"></i> الفاتورة</button>';
+        h += '</div>';
+      } else if (e.invoiceImage || e.approvedBy) {
         h += '<div class="ec-foot">';
         if (e.invoiceImage) h += '<button class="ec-img-btn" onclick="viewImg(\'' + e.id + '\')"><i class="fas fa-image"></i> الفاتورة</button>';
         else h += '<span></span>';
@@ -186,6 +194,8 @@
   window.openModal = function() {
     if (!S.custodyId) return toast('لا توجد عهدة', 'err');
     if (S.custodyStatus !== 'active') return toast('العهدة غير نشطة — لا يمكن إضافة مصروفات', 'err');
+    _editingExpId = null;
+    el('saveBtn').innerHTML = '<i class="fas fa-paper-plane"></i> إرسال المصروف';
     el('fDate').value = new Date().toISOString().split('T')[0];
     el('fAmt').value = '';
     el('fDesc').value = '';
@@ -253,6 +263,27 @@
   window.doSave = function() {
     var payload = buildPayload(false);
     if (!payload) return;
+
+    // If editing a returned expense, use update endpoint
+    if (_editingExpId) {
+      var editId = _editingExpId;
+      _editingExpId = null;
+      var btn = el('saveBtn');
+      btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري التعديل...';
+      api.withSuccessHandler(function(r) {
+        btn.disabled = false; btn.innerHTML = '<i class="fas fa-paper-plane"></i> إرسال المصروف';
+        if (r && r.success) {
+          closeModal();
+          toast('تم التعديل وإعادة الإرسال — بانتظار الموافقة', 'ok');
+          load();
+        } else toast((r && r.error) || 'فشل التعديل', 'err');
+      }).withFailureHandler(function() {
+        btn.disabled = false; btn.innerHTML = '<i class="fas fa-paper-plane"></i> إرسال المصروف';
+        toast('خطأ في الاتصال', 'err');
+      }).updateCustodyExp(editId, payload);
+      return;
+    }
+
     submitExpense(payload);
   };
 
@@ -331,6 +362,38 @@
       btn.disabled = false; btn.innerHTML = '<i class="fas fa-lock"></i> تأكيد طلب الإقفال';
       toast('خطأ في الاتصال', 'err');
     }).closeCustodyRequest(S.custodyId, { username: S.user, notes: el('closeNotes').value.trim() });
+  };
+
+  // ─── Edit returned expense ───
+  var _editingExpId = null;
+
+  window.editExpense = function(id) {
+    var e = S.list.find(function(x) { return x.id === id; });
+    if (!e) return;
+    _editingExpId = id;
+    // Fill form with existing data
+    try { el('fDate').value = e.expenseDate ? new Date(e.expenseDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]; } catch(x) { el('fDate').value = new Date().toISOString().split('T')[0]; }
+    el('fAmt').value = e.amount || '';
+    el('fDesc').value = e.description || '';
+    el('fVat').value = e.hasVat ? '1' : '0';
+    el('fVatR').value = e.vatRate || 15;
+    el('vatBox').style.display = e.hasVat ? '' : 'none';
+    el('fNotes').value = e.notes || '';
+    S.imgData = '';
+    if (e.invoiceImage) {
+      el('imgPrev').innerHTML = e.invoiceImage.indexOf('application/pdf') !== -1
+        ? '<div style="padding:10px;background:#f1f5f9;border-radius:12px;text-align:center;"><i class="fas fa-file-pdf" style="font-size:28px;color:#ef4444;"></i><p style="font-size:12px;">الملف الحالي</p></div>'
+        : '<img src="' + e.invoiceImage + '">';
+      el('uploadLabel').className = 'upload-area has-img';
+      el('uploadLabel').querySelector('span').textContent = 'تغيير الصورة';
+    } else {
+      el('imgPrev').innerHTML = '';
+      el('uploadLabel').className = 'upload-area';
+      el('uploadLabel').querySelector('span').textContent = 'اضغط لرفع صورة أو PDF';
+    }
+    // Change save button text
+    el('saveBtn').innerHTML = '<i class="fas fa-paper-plane"></i> تعديل وإعادة الإرسال';
+    el('sheet').style.display = 'flex';
   };
 
   // ─── Image Viewer ───

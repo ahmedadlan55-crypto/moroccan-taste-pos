@@ -35,7 +35,7 @@ function erpNav(sectionId) {
       case 'erpVATReports': erpLoadVATReports(); break;
       case 'erpZATCA': erpLoadZATCA(); break;
       case 'erpInventoryMethod': erpLoadInventoryMethod(); break;
-      case 'erpFinReports': erpShowFinReport('trial'); break;
+      case 'erpFinReports': erpBackToReportsHub(); break;
       case 'erpCostCenters': erpLoadCostCenters(); break;
       case 'erpMultiWarehouses': erpLoadMultiWarehouses(); break;
       case 'erpBranches': erpLoadBranchesFull(); break;
@@ -333,7 +333,7 @@ function _coaRenderNode(acc, open) {
   var icon = isGroup ? '<i class="fas fa-folder coa-node-icon folder"></i>' : '<i class="fas fa-file-alt coa-node-icon file"></i>';
   var activeClass = _coaSelectedId === acc.id ? ' active' : '';
 
-  var html = '<div class="coa-node" data-id="' + acc.id + '">';
+  var html = '<div class="coa-node" data-id="' + acc.id + '" data-level="' + (acc.level||1) + '">';
   html += '<div class="coa-node-row' + activeClass + '" style="padding-right:' + (10+indent) + 'px;" onclick="coaSelectNode(\'' + acc.id + '\')">';
   html += toggle + icon;
   html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
@@ -1991,15 +1991,24 @@ function erpLoadZATCA() {
 // ═══════════════════════════════════════
 var _finCurrentTab = 'trial';
 
+// Back to reports hub
+window.erpBackToReportsHub = function() {
+  var hub = document.getElementById('finReportsHub');
+  var filters = document.getElementById('finFilters');
+  var content = document.getElementById('erpFinReportContent');
+  if (hub) hub.style.display = '';
+  if (filters) filters.style.display = 'none';
+  if (content) content.innerHTML = '';
+};
+
 function erpShowFinReport(type, btn) {
   _finCurrentTab = type;
-  document.querySelectorAll('.fin-tab').forEach(function(t) { t.classList.remove('active'); });
-  if (btn) btn.classList.add('active');
-  else { var el = document.getElementById('finTab' + type.charAt(0).toUpperCase() + type.slice(1)); if (el) el.classList.add('active'); }
 
-  // Show/hide filters (only for trial balance)
+  // Hide hub, show filters + content
+  var hub = document.getElementById('finReportsHub');
   var filtersEl = document.getElementById('finFilters');
-  if (filtersEl) filtersEl.style.display = type === 'trial' ? 'flex' : 'none';
+  if (hub) hub.style.display = 'none';
+  if (filtersEl) filtersEl.style.display = 'flex';
 
   erpApplyFinFilters();
 }
@@ -2021,6 +2030,59 @@ function erpApplyFinFilters() {
   if (_finCurrentTab === 'trial') _renderTrialBalance(container, filters);
   else if (_finCurrentTab === 'income') _renderIncomeStatement(container);
   else if (_finCurrentTab === 'balance') _renderBalanceSheet(container);
+  else if (_finCurrentTab === 'pnl') _renderIncomeStatement(container); // P&L = Income Statement
+  else if (_finCurrentTab === 'cashflow') _renderCashFlow(container);
+  else if (_finCurrentTab === 'assets') _renderAssetsReport(container);
+}
+
+// Cash Flow Report (التدفقات النقدية)
+function _renderCashFlow(container) {
+  var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  // Cash flow = movements in cash/bank accounts (111xx)
+  window._apiBridge.withSuccessHandler(function(data) {
+    var rows = (data.rows || []).filter(function(r) { return r.code && r.code.indexOf('111') === 0; });
+    var html = '<h3 style="color:#06b6d4;margin-bottom:12px;"><i class="fas fa-exchange-alt" style="margin-left:6px;"></i> تقرير التدفقات النقدية</h3>';
+    html += '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
+    html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">الحساب</th><th>رصيد أول</th><th>تدفقات داخلة</th><th>تدفقات خارجة</th><th>الرصيد النهائي</th></tr></thead><tbody>';
+    var totOpen = 0, totIn = 0, totOut = 0, totClose = 0;
+    rows.forEach(function(r) {
+      var openBal = (r.openDebit||0) - (r.openCredit||0);
+      var closeBal = (r.closeDebit||0) - (r.closeCredit||0);
+      totOpen += openBal; totIn += r.periodDebit||0; totOut += r.periodCredit||0; totClose += closeBal;
+      html += '<tr><td style="font-weight:700;padding:8px 14px;">' + r.nameAR + ' <code style="color:#94a3b8;">' + r.code + '</code></td>' +
+        '<td style="text-align:left;">' + fmt(openBal) + '</td><td style="text-align:left;color:#16a34a;">' + fmt(r.periodDebit) + '</td>' +
+        '<td style="text-align:left;color:#ef4444;">' + fmt(r.periodCredit) + '</td><td style="text-align:left;font-weight:800;">' + fmt(closeBal) + '</td></tr>';
+    });
+    html += '<tr style="background:#0f172a;color:#fff;font-weight:900;"><td style="padding:10px 14px;">الإجمالي</td><td style="text-align:left;">' + fmt(totOpen) + '</td><td style="text-align:left;">' + fmt(totIn) + '</td><td style="text-align:left;">' + fmt(totOut) + '</td><td style="text-align:left;">' + fmt(totClose) + '</td></tr>';
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+  }).getTrialBalance({});
+}
+
+// Assets Report (تقرير الأصول)
+function _renderAssetsReport(container) {
+  var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  window._apiBridge.withSuccessHandler(function(data) {
+    var rows = (data.rows || []).filter(function(r) { return r.type === 'asset'; });
+    var html = '<h3 style="color:#8b5cf6;margin-bottom:12px;"><i class="fas fa-building" style="margin-left:6px;"></i> تقرير الأصول</h3>';
+    html += '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
+    html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">الرمز</th><th>اسم الحساب</th><th>رصيد أول مدين</th><th>رصيد أول دائن</th><th>حركة مدين</th><th>حركة دائن</th><th>رصيد نهائي مدين</th><th>رصيد نهائي دائن</th></tr></thead><tbody>';
+    var tot = {od:0,oc:0,pd:0,pc:0,cd:0,cc:0};
+    rows.forEach(function(r) {
+      tot.od+=r.openDebit||0; tot.oc+=r.openCredit||0; tot.pd+=r.periodDebit||0; tot.pc+=r.periodCredit||0; tot.cd+=r.closeDebit||0; tot.cc+=r.closeCredit||0;
+      var indent = ((r.level||1)-1)*14;
+      html += '<tr><td style="padding:8px 14px;"><code>' + r.code + '</code></td><td style="padding-right:' + indent + 'px;font-weight:' + (r.level<=2?'800':'400') + ';">' + r.nameAR + '</td>' +
+        '<td style="text-align:left;">' + fmt(r.openDebit) + '</td><td style="text-align:left;">' + fmt(r.openCredit) + '</td>' +
+        '<td style="text-align:left;">' + fmt(r.periodDebit) + '</td><td style="text-align:left;">' + fmt(r.periodCredit) + '</td>' +
+        '<td style="text-align:left;font-weight:700;">' + fmt(r.closeDebit) + '</td><td style="text-align:left;font-weight:700;">' + fmt(r.closeCredit) + '</td></tr>';
+    });
+    html += '<tr style="background:#0f172a;color:#fff;font-weight:900;"><td colspan="2" style="padding:10px 14px;">الإجمالي</td>' +
+      '<td style="text-align:left;">' + fmt(tot.od) + '</td><td style="text-align:left;">' + fmt(tot.oc) + '</td>' +
+      '<td style="text-align:left;">' + fmt(tot.pd) + '</td><td style="text-align:left;">' + fmt(tot.pc) + '</td>' +
+      '<td style="text-align:left;">' + fmt(tot.cd) + '</td><td style="text-align:left;">' + fmt(tot.cc) + '</td></tr>';
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+  }).getTrialBalance({accountType: 'asset'});
 }
 
 function _renderTrialBalance(container, filters) {

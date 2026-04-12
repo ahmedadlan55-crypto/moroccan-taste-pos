@@ -1186,18 +1186,52 @@
 <div id="erpFinReports" class="dash-section hidden">
   <div class="section-header" style="flex-wrap:wrap;gap:10px;">
     <h2 class="section-title"><i class="fas fa-chart-line"></i> التقارير المالية</h2>
-    <button class="btn btn-secondary" onclick="erpPrintFinReport()" style="border-radius:10px;"><i class="fas fa-print"></i> طباعة</button>
   </div>
 
-  <!-- Report Tabs -->
-  <div class="fin-tabs">
-    <button class="fin-tab active" id="finTabTrial" onclick="erpShowFinReport('trial',this)"><i class="fas fa-balance-scale"></i> ميزان المراجعة</button>
-    <button class="fin-tab" id="finTabIncome" onclick="erpShowFinReport('income',this)"><i class="fas fa-chart-pie"></i> قائمة الدخل</button>
-    <button class="fin-tab" id="finTabBalance" onclick="erpShowFinReport('balance',this)"><i class="fas fa-university"></i> الميزانية العمومية</button>
+  <!-- Reports Hub — Card Layout -->
+  <div id="finReportsHub">
+
+    <!-- تقارير الحسابات العامة -->
+    <div class="fin-report-group">
+      <div class="frg-header"><i class="fas fa-calculator"></i> تقارير الحسابات العامة</div>
+      <div class="frg-cards">
+        <div class="fr-card" onclick="erpShowFinReport('trial')"><div class="fr-icon" style="background:#ef4444;"><i class="fas fa-percentage"></i></div><div class="fr-name">ميزان المراجعة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('trial')"><i class="fas fa-eye"></i> عرض</button></div></div>
+        <div class="fr-card" onclick="erpShowFinReport('income')"><div class="fr-icon" style="background:#f59e0b;"><i class="fas fa-coins"></i></div><div class="fr-name">قائمة الدخل</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('income')"><i class="fas fa-eye"></i> عرض</button></div></div>
+        <div class="fr-card" onclick="erpShowFinReport('balance')"><div class="fr-icon" style="background:#ec4899;"><i class="fas fa-balance-scale-right"></i></div><div class="fr-name">الميزانية العمومية</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('balance')"><i class="fas fa-eye"></i> عرض</button></div></div>
+        <div class="fr-card" onclick="erpShowFinReport('pnl')"><div class="fr-icon" style="background:#84cc16;"><i class="fas fa-dollar-sign"></i></div><div class="fr-name">الربح والخسارة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('pnl')"><i class="fas fa-eye"></i> عرض</button></div></div>
+        <div class="fr-card" onclick="erpShowFinReport('cashflow')"><div class="fr-icon" style="background:#06b6d4;"><i class="fas fa-exchange-alt"></i></div><div class="fr-name">التدفقات النقدية</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('cashflow')"><i class="fas fa-eye"></i> عرض</button></div></div>
+        <div class="fr-card" onclick="erpShowFinReport('assets')"><div class="fr-icon" style="background:#8b5cf6;"><i class="fas fa-building"></i></div><div class="fr-name">الأصول</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('assets')"><i class="fas fa-eye"></i> عرض</button></div></div>
+      </div>
+    </div>
+
+    <!-- تقارير القيود اليومية -->
+    <div class="fin-report-group">
+      <div class="frg-header"><i class="fas fa-book"></i> تقارير القيود اليومية</div>
+      <div class="frg-cards">
+        <div class="fr-card" onclick="erpShowFinReport('trial')"><div class="fr-icon" style="background:#10b981;"><i class="fas fa-clipboard-list"></i></div><div class="fr-name">تقرير ميزان مراجعة مجاميع وأرصدة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('trial')"><i class="fas fa-eye"></i> عرض</button></div></div>
+        <div class="fr-card" onclick="erpShowFinReport('trial')"><div class="fr-icon" style="background:#14b8a6;"><i class="fas fa-file-invoice"></i></div><div class="fr-name">تقرير حساب مراجعة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('trial')"><i class="fas fa-eye"></i> عرض</button></div></div>
+        <div class="fr-card" onclick="erpShowFinReport('trial')"><div class="fr-icon" style="background:#3b82f6;"><i class="fas fa-file-alt"></i></div><div class="fr-name">تقرير ميزان مراجعة أرصدة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('trial')"><i class="fas fa-eye"></i> عرض</button></div></div>
+        <div class="fr-card" onclick="erpNav('erpGLAccounts')"><div class="fr-icon" style="background:#22c55e;"><i class="fas fa-sitemap"></i></div><div class="fr-name">حساب الأستاذ</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpNav('erpGLAccounts')"><i class="fas fa-eye"></i> عرض</button></div></div>
+        <div class="fr-card" onclick="erpNav('erpCostCenters')"><div class="fr-icon" style="background:#f97316;"><i class="fas fa-bullseye"></i></div><div class="fr-name">مراكز التكلفة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpNav('erpCostCenters')"><i class="fas fa-eye"></i> عرض</button></div></div>
+        <div class="fr-card" onclick="erpNav('erpGLJournals')"><div class="fr-icon" style="background:#0ea5e9;"><i class="fas fa-book-open"></i></div><div class="fr-name">تقرير القيود</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpNav('erpGLJournals')"><i class="fas fa-eye"></i> عرض</button></div></div>
+        <div class="fr-card" onclick="erpNav('erpGLAccounts')"><div class="fr-icon" style="background:#6366f1;"><i class="fas fa-folder-tree"></i></div><div class="fr-name">دليل الحسابات العامة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpNav('erpGLAccounts')"><i class="fas fa-eye"></i> عرض</button></div></div>
+      </div>
+    </div>
+
+    <!-- تقارير الضرائب -->
+    <div class="fin-report-group">
+      <div class="frg-header"><i class="fas fa-receipt"></i> تقارير الضرائب والإقرارات</div>
+      <div class="frg-cards">
+        <div class="fr-card" onclick="erpNav('erpVATReports')"><div class="fr-icon" style="background:#ef4444;"><i class="fas fa-percentage"></i></div><div class="fr-name">تقرير الضرائب</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpNav('erpVATReports')"><i class="fas fa-eye"></i> عرض</button></div></div>
+        <div class="fr-card" onclick="erpNav('erpVATReports')"><div class="fr-icon" style="background:#16a34a;"><i class="fas fa-file-invoice-dollar"></i></div><div class="fr-name">إقرار ضريبي</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpNav('erpVATReports')"><i class="fas fa-eye"></i> عرض</button></div></div>
+      </div>
+    </div>
+
   </div>
 
-  <!-- Filters -->
-  <div class="fin-filters" id="finFilters">
+  <!-- Filters (shown when viewing a specific report) -->
+  <div class="fin-filters" id="finFilters" style="display:none;">
+    <button class="btn btn-light" onclick="erpBackToReportsHub()" style="border-radius:10px;"><i class="fas fa-arrow-right"></i> رجوع</button>
     <div class="ff-group"><label>من تاريخ</label><input type="date" id="finStartDate" class="form-control"></div>
     <div class="ff-group"><label>إلى تاريخ</label><input type="date" id="finEndDate" class="form-control"></div>
     <div class="ff-group"><label>نوع الحساب</label>
@@ -1212,6 +1246,7 @@
     </div>
     <div class="ff-group"><label>المنشئ</label><input type="text" id="finCreatedBy" class="form-control" placeholder="اسم المستخدم"></div>
     <button class="btn btn-primary" onclick="erpApplyFinFilters()" style="align-self:flex-end;border-radius:10px;height:38px;"><i class="fas fa-filter"></i> تطبيق</button>
+    <button class="btn btn-secondary" onclick="erpPrintFinReport()" style="align-self:flex-end;border-radius:10px;height:38px;"><i class="fas fa-print"></i> طباعة</button>
   </div>
 
   <!-- Report Content -->

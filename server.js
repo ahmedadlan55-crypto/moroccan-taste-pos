@@ -313,6 +313,29 @@ async function runMigrations() {
   await addColumnIfMissing('custody_expenses', 'cost_center_name', "VARCHAR(200)");
   await addColumnIfMissing('custody_expenses', 'pre_approval_status', "ENUM('none','requested','approved','rejected') DEFAULT 'none'");
 
+  // Audit log table
+  await createTableIfMissing('audit_logs', `
+    CREATE TABLE audit_logs (
+      id VARCHAR(50) PRIMARY KEY,
+      action VARCHAR(100) NOT NULL,
+      entity_type VARCHAR(50),
+      entity_id VARCHAR(50),
+      username VARCHAR(100),
+      details LONGTEXT,
+      ip_address VARCHAR(50),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_audit_entity (entity_type, entity_id),
+      INDEX idx_audit_user (username),
+      INDEX idx_audit_date (created_at)
+    ) ENGINE=InnoDB
+  `);
+
+  // GL journals: add cost_center_id
+  await addColumnIfMissing('gl_journals', 'cost_center_id', "VARCHAR(50)");
+  await addColumnIfMissing('gl_journals', 'cost_center_name', "VARCHAR(200)");
+  // GL entries: add cost_center_id
+  await addColumnIfMissing('gl_entries', 'cost_center_id', "VARCHAR(50)");
+
   // Extend shortage status ENUM for existing tables
   try { await db.query("ALTER TABLE shortage_requests MODIFY COLUMN status ENUM('pending','approved','rejected','converted','partially_received','fully_received','closed') DEFAULT 'pending'"); } catch(e) {}
   // Extend PO status for partial receive

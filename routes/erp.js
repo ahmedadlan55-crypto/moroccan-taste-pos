@@ -392,7 +392,7 @@ router.get('/gl/journals', async (req, res) => {
 // Create journal entry (status: draft — no balance update until posted)
 router.post('/gl/journals', async (req, res) => {
   try {
-    const { journalDate, referenceType, referenceId, description, entries, username, attachment, notes, isOpening } = req.body;
+    const { journalDate, referenceType, referenceId, description, entries, username, attachment, notes, isOpening, costCenterId, costCenterName } = req.body;
     const actualRefType = isOpening ? 'opening' : (referenceType || 'manual');
     const journalId = 'JRN-' + Date.now();
 
@@ -416,11 +416,13 @@ router.post('/gl/journals', async (req, res) => {
     }
 
     await db.query(
-      `INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, reference_id, description, total_debit, total_credit, status, created_by, attachment, notes)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, reference_id, description, total_debit, total_credit, status, created_by, attachment, notes, cost_center_id, cost_center_name)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [journalId, journalNumber, journalDate || new Date(), actualRefType, referenceId || '',
-       description || '', totalDebit, totalCredit, 'draft', username || '', attachment || null, notes || '']
+       description || '', totalDebit, totalCredit, 'draft', username || '', attachment || null, notes || '', costCenterId || null, costCenterName || '']
     );
+    // Audit log
+    await auditLog('create_journal', 'gl_journal', journalId, username, { journalNumber, totalDebit, totalCredit, description }, req.ip);
 
     if (entries && entries.length) {
       for (const entry of entries) {
@@ -447,6 +449,7 @@ router.post('/gl/journals/:id/approve', async (req, res) => {
     if (jrn[0].status !== 'draft') return res.json({ success: false, error: 'فقط القيود المسودة يمكن اعتمادها' });
     await db.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?',
       [username || '', new Date(), req.params.id]);
+    await auditLog('approve_journal', 'gl_journal', req.params.id, username, {}, req.ip);
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
@@ -1240,6 +1243,35 @@ router.post('/vat/close-year', async (req, res) => {
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
+});
+
+// ─── Audit Log (سجل التدقيق) ───
+
+async function auditLog(action, entityType, entityId, username, details, ip) {
+  try {
+    const id = 'AUD-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
+    await db.query('INSERT INTO audit_logs (id, action, entity_type, entity_id, username, details, ip_address) VALUES (?,?,?,?,?,?,?)',
+      [id, action, entityType||'', entityId||'', username||'', typeof details === 'object' ? JSON.stringify(details) : (details||''), ip||'']);
+  } catch(e) { console.log('[AUDIT] Error:', e.message); }
+}
+
+router.get('/audit-logs', async (req, res) => {
+  try {
+    const { entityType, entityId, username, startDate, endDate, limit: lim } = req.query;
+    let query = 'SELECT * FROM audit_logs WHERE 1=1';
+    const params = [];
+    if (entityType) { query += ' AND entity_type = ?'; params.push(entityType); }
+    if (entityId) { query += ' AND entity_id = ?'; params.push(entityId); }
+    if (username) { query += ' AND username = ?'; params.push(username); }
+    if (startDate) { query += ' AND DATE(created_at) >= ?'; params.push(startDate); }
+    if (endDate) { query += ' AND DATE(created_at) <= ?'; params.push(endDate); }
+    query += ' ORDER BY created_at DESC LIMIT ' + (Number(lim) || 200);
+    const [rows] = await db.query(query, params);
+    res.json(rows.map(r => ({
+      id: r.id, action: r.action, entityType: r.entity_type, entityId: r.entity_id,
+      username: r.username, details: r.details, ip: r.ip_address, createdAt: r.created_at
+    })));
+  } catch(e) { res.json([]); }
 });
 
 // ─── Cost Centers (مراكز التكلفة) ───

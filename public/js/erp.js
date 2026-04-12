@@ -1046,6 +1046,7 @@ function _renderJournalForm() {
       '<label for="erpJrnIsOpening" style="margin:0;cursor:pointer;font-weight:700;color:#92400e;"><i class="fas fa-flag" style="margin-left:4px;color:#f59e0b;"></i> قيد افتتاحي (Opening Entry)</label>' +
       '<span style="font-size:11px;color:#94a3b8;margin-right:auto;">يُحسب كرصيد أول المدة في ميزان المراجعة</span>' +
     '</div>' +
+    '<div class="form-row"><label>مركز التكلفة</label><select class="form-control" id="erpJrnCC"><option value="">— بدون —</option></select></div>' +
     '<div class="form-row"><label>مرفق (صورة أو PDF)</label><div style="display:flex;gap:10px;align-items:center;"><label style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;cursor:pointer;background:rgba(59,130,246,0.06);color:#3b82f6;font-size:13px;font-weight:700;border:1.5px dashed rgba(59,130,246,0.2);" for="erpJrnAttach"><i class="fas fa-paperclip"></i> إرفاق ملف</label><input type="file" id="erpJrnAttach" accept="image/*,application/pdf" onchange="erpPickAttachment(this)" style="display:none;"><div id="jrnAttachPrev"></div></div></div>' +
     '<hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;">' +
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
@@ -1056,6 +1057,11 @@ function _renderJournalForm() {
     '<div class="jrn-balance-bar" id="erpJrnBalanceInfo">مدين: <strong>0.00</strong> | دائن: <strong>0.00</strong></div>';
 
   document.getElementById('erpModalSaveBtn').onclick = erpSaveJournal;
+  // Load cost centers for dropdown
+  window._apiBridge.withSuccessHandler(function(ccs) {
+    var sel = document.getElementById('erpJrnCC');
+    if (sel) { var opts = '<option value="">— بدون —</option>'; (ccs||[]).forEach(function(c) { opts += '<option value="' + c.id + '" data-name="' + (c.name||'') + '">' + c.code + ' — ' + c.name + '</option>'; }); sel.innerHTML = opts; }
+  }).getCostCenters();
   document.getElementById('erpModal').classList.remove('hidden');
 
   // Add 2 initial lines
@@ -1198,6 +1204,9 @@ function erpSaveJournal() {
     if (res.success) { showToast('تم إنشاء القيد: ' + res.journalNumber); erpCloseModal(); erpLoadJournals(); }
     else showToast(res.error, true);
   var isOpening = document.getElementById('erpJrnIsOpening') && document.getElementById('erpJrnIsOpening').checked;
+  var ccSel = document.getElementById('erpJrnCC');
+  var costCenterId = ccSel ? ccSel.value : '';
+  var costCenterName = ccSel && ccSel.value ? (ccSel.options[ccSel.selectedIndex].getAttribute('data-name')||'') : '';
   }).createJournalEntry({
     journalDate: document.getElementById('erpJrnDate').value,
     referenceType: isOpening ? 'opening' : 'manual',
@@ -1206,6 +1215,8 @@ function erpSaveJournal() {
     notes: document.getElementById('erpJrnRef').value,
     attachment: window._jrnAttachmentData || '',
     isOpening: isOpening,
+    costCenterId: costCenterId,
+    costCenterName: costCenterName,
     entries: entries
   }, currentUser);
 }
@@ -2679,22 +2690,28 @@ function erpClosePeriod(id) {
 // AUDIT LOG
 // ═══════════════════════════════════════
 function erpLoadAuditLog() {
-  const filters = {};
-  const u = document.getElementById('erpAuditUser');
-  const a = document.getElementById('erpAuditAction');
+  var filters = {};
+  var u = document.getElementById('erpAuditUser');
+  var a = document.getElementById('erpAuditAction');
   if (u && u.value) filters.username = u.value;
-  if (a && a.value) filters.action = a.value;
+  if (a && a.value) filters.entityType = a.value;
 
   window._apiBridge.withSuccessHandler(function(list) {
-    const tbody = document.getElementById('erpAuditBody');
-    if (!list || list.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">لا توجد سجلات</td></tr>'; return; }
-    tbody.innerHTML = list.slice(0,200).map(l => `<tr>
-      <td>${l.Timestamp ? new Date(l.Timestamp).toLocaleString('ar-SA') : ''}</td>
-      <td>${l.Username||''}</td>
-      <td><span class="badge badge-blue">${l.Action||''}</span></td>
-      <td>${l.TableName||''}</td><td><code>${l.RecordID||''}</code></td>
-      <td><small>${(l.NewValue||'').substring(0,50)}</small></td>
-    </tr>`).join('');
+    var tbody = document.getElementById('erpAuditBody');
+    if (!list || !list.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">لا توجد سجلات</td></tr>'; return; }
+    var actionLabels = {create_journal:'إنشاء قيد',approve_journal:'اعتماد قيد',post_journal:'ترحيل قيد',delete_journal:'حذف قيد',create_expense:'إنشاء مصروف',approve_expense:'اعتماد مصروف',create_shortage:'طلب نقص',approve_shortage:'اعتماد نقص',receive_approve:'اعتماد استلام'};
+    tbody.innerHTML = list.map(function(l) {
+      var dt = l.createdAt ? new Date(l.createdAt).toLocaleString('en-GB') : '';
+      var details = '';
+      try { var d = JSON.parse(l.details||'{}'); details = Object.keys(d).slice(0,3).map(function(k){ return k+': '+d[k]; }).join(', '); } catch(e) { details = (l.details||'').substring(0,60); }
+      return '<tr>' +
+        '<td style="font-size:12px;">' + dt + '</td>' +
+        '<td style="font-weight:700;">' + (l.username||'') + '</td>' +
+        '<td><span class="badge badge-blue">' + (actionLabels[l.action]||l.action) + '</span></td>' +
+        '<td>' + (l.entityType||'') + '</td>' +
+        '<td><code style="font-size:11px;">' + (l.entityId||'') + '</code></td>' +
+        '<td style="font-size:11px;color:#64748b;max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + details + '</td></tr>';
+    }).join('');
   }).getAuditLogs(filters);
 }
 

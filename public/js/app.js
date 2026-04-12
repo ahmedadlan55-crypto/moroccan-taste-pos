@@ -1110,24 +1110,205 @@ function promptPMIcon(idx) {
   if (icon) { state.paymentMethods[idx].Icon = icon; loadPayMethodsSettings(); }
 }
 
+// ═══════════════════════════════════════
+// Advanced Payment Method Modal
+// ═══════════════════════════════════════
+function openAdvancedPMModal(data) {
+  var d = data || {};
+  var isEdit = !!d.id;
+  var h = '<div class="modal-content modal-large"><div class="modal-title">' + (isEdit ? 'تعديل' : 'إضافة') + ' طريقة دفع<button class="modal-close" onclick="closeModal(\'#modalAdvPM\')">&times;</button></div>' +
+    '<input type="hidden" id="apmId" value="' + (d.id||'') + '">' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+      '<div class="form-group"><label class="form-label">الاسم EN *</label><input type="text" id="apmName" class="form-control" value="' + (d.name||'') + '"></div>' +
+      '<div class="form-group"><label class="form-label">الاسم AR</label><input type="text" id="apmNameAr" class="form-control" value="' + (d.nameAr||'') + '"></div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">' +
+      '<div class="form-group"><label class="form-label">الأيقونة</label><input type="text" id="apmIcon" class="form-control" value="' + (d.icon||'fa-money-bill') + '" placeholder="fa-wallet"></div>' +
+      '<div class="form-group"><label class="form-label">اللون</label><input type="color" id="apmColor" class="form-control" value="' + (d.color||'#3b82f6') + '" style="height:38px;"></div>' +
+      '<div class="form-group"><label class="form-label">رسوم %</label><input type="number" id="apmFee" class="form-control" value="' + (d.serviceFeeRate||0) + '" step="0.1"></div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0;">' +
+      '<label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input type="checkbox" id="apmReqRef" ' + (d.requireReference?'checked':'') + '> يتطلب مرجع</label>' +
+      '<label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input type="checkbox" id="apmReqTxn" ' + (d.requireTransactionNumber?'checked':'') + '> رقم عملية</label>' +
+      '<label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input type="checkbox" id="apmReqTerm" ' + (d.requireTerminal?'checked':'') + '> جهاز طرفي</label>' +
+      '<label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input type="checkbox" id="apmRefund" ' + (d.allowRefund!==false?'checked':'') + '> استرجاع</label>' +
+      '<label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input type="checkbox" id="apmCancel" ' + (d.allowCancel!==false?'checked':'') + '> إلغاء</label>' +
+      '<label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input type="checkbox" id="apmActive" ' + (d.isActive!==false?'checked':'') + '> مفعّل</label>' +
+    '</div>' +
+    '<div style="display:flex;gap:10px;margin-top:15px;"><button class="btn btn-primary" style="flex:1;" onclick="saveAdvancedPM()"><i class="fas fa-save"></i> حفظ</button><button class="btn btn-light" onclick="closeModal(\'#modalAdvPM\')">إلغاء</button></div></div>';
+  if (!document.getElementById('modalAdvPM')) { var m = document.createElement('div'); m.id = 'modalAdvPM'; m.className = 'modal'; document.body.appendChild(m); }
+  document.getElementById('modalAdvPM').innerHTML = h;
+  openModal('#modalAdvPM');
+}
+function saveAdvancedPM() {
+  var data = {
+    id: q('#apmId').value, name: q('#apmName').value, nameAr: q('#apmNameAr').value,
+    icon: q('#apmIcon').value, color: q('#apmColor').value, serviceFeeRate: Number(q('#apmFee').value)||0,
+    requireReference: q('#apmReqRef').checked, requireTransactionNumber: q('#apmReqTxn').checked,
+    requireTerminal: q('#apmReqTerm').checked, allowRefund: q('#apmRefund').checked,
+    allowCancel: q('#apmCancel').checked, isActive: q('#apmActive').checked
+  };
+  if (!data.name) return showToast('الاسم مطلوب', true);
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { closeModal('#modalAdvPM'); showToast('تم الحفظ'); loadPayMethodsSettings(); loadCoreData(); }
+    else showToast(r.error, true);
+  }).savePaymentMethodFull(data);
+}
+
+// ═══════════════════════════════════════
+// Discounts V2 Management
+// ═══════════════════════════════════════
+function loadDiscountsV2() {
+  var container = q('#discountsV2List');
+  if (!container) return;
+  api.withSuccessHandler(function(list) {
+    if (!list || !list.length) { container.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:10px;">لا توجد خصومات</p>'; return; }
+    var typeLabels = {percentage:'نسبة %',fixed:'مبلغ ثابت',promo_code:'كود خصم',automatic:'تلقائي'};
+    container.innerHTML = list.map(function(d) {
+      return '<div style="display:flex;gap:8px;align-items:center;background:#f8fafc;padding:10px 12px;border-radius:10px;border:1px solid #e2e8f0;margin-bottom:6px;">' +
+        '<span style="width:8px;height:8px;border-radius:50%;background:' + (d.enabled?'#16a34a':'#ef4444') + ';flex-shrink:0;"></span>' +
+        '<div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:13px;">' + d.name + '</div>' +
+        '<div style="font-size:11px;color:#64748b;">' + (typeLabels[d.type]||d.type) + ' — ' + (d.type==='percentage'?d.value+'%':d.value+' SAR') +
+        (d.requireCode?' | كود: '+d.code:'') + (d.requireApproval?' | يتطلب موافقة':'') + '</div></div>' +
+        '<button class="btn-icon" onclick="editDiscountV2(\'' + d.id + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
+        '<button class="btn-icon" style="color:#ef4444;" onclick="deleteDiscountV2(\'' + d.id + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+      '</div>';
+    }).join('');
+  }).getDiscountsV2();
+}
+var _discV2Cache = [];
+function openDiscountV2Modal(data) {
+  var d = data || {};
+  var h = '<div class="modal-content modal-large"><div class="modal-title">' + (d.id?'تعديل':'إضافة') + ' خصم<button class="modal-close" onclick="closeModal(\'#modalDiscV2\')">&times;</button></div>' +
+    '<input type="hidden" id="dv2Id" value="' + (d.id||'') + '">' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+      '<div class="form-group"><label class="form-label">اسم الخصم *</label><input type="text" id="dv2Name" class="form-control" value="' + (d.name||'') + '"></div>' +
+      '<div class="form-group"><label class="form-label">النوع</label><select id="dv2Type" class="form-control"><option value="percentage"' + (d.type==='percentage'?' selected':'') + '>نسبة %</option><option value="fixed"' + (d.type==='fixed'?' selected':'') + '>مبلغ ثابت</option><option value="promo_code"' + (d.type==='promo_code'?' selected':'') + '>كود خصم</option><option value="automatic"' + (d.type==='automatic'?' selected':'') + '>تلقائي</option></select></div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">' +
+      '<div class="form-group"><label class="form-label">القيمة</label><input type="number" id="dv2Value" class="form-control" value="' + (d.value||0) + '" step="0.01"></div>' +
+      '<div class="form-group"><label class="form-label">حد أقصى</label><input type="number" id="dv2Max" class="form-control" value="' + (d.maxAmount||0) + '" step="0.01"></div>' +
+      '<div class="form-group"><label class="form-label">حد أدنى طلب</label><input type="number" id="dv2Min" class="form-control" value="' + (d.minOrder||0) + '" step="0.01"></div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+      '<div class="form-group"><label class="form-label">من تاريخ</label><input type="date" id="dv2From" class="form-control" value="' + (d.validFrom?d.validFrom.substring(0,10):'') + '"></div>' +
+      '<div class="form-group"><label class="form-label">إلى تاريخ</label><input type="date" id="dv2To" class="form-control" value="' + (d.validTo?d.validTo.substring(0,10):'') + '"></div>' +
+    '</div>' +
+    '<div class="form-group"><label class="form-label">كود الخصم</label><input type="text" id="dv2Code" class="form-control" value="' + (d.code||'') + '" placeholder="DISCOUNT10"></div>' +
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:8px 0;">' +
+      '<label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input type="checkbox" id="dv2ReqCode" ' + (d.requireCode?'checked':'') + '> يتطلب كود</label>' +
+      '<label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input type="checkbox" id="dv2ReqApproval" ' + (d.requireApproval?'checked':'') + '> يتطلب موافقة</label>' +
+      '<label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input type="checkbox" id="dv2Enabled" ' + (d.enabled!==false?'checked':'') + '> مفعّل</label>' +
+    '</div>' +
+    '<div style="display:flex;gap:10px;margin-top:15px;"><button class="btn btn-primary" style="flex:1;" onclick="saveDiscountV2()"><i class="fas fa-save"></i> حفظ</button><button class="btn btn-light" onclick="closeModal(\'#modalDiscV2\')">إلغاء</button></div></div>';
+  if (!document.getElementById('modalDiscV2')) { var m = document.createElement('div'); m.id = 'modalDiscV2'; m.className = 'modal'; document.body.appendChild(m); }
+  document.getElementById('modalDiscV2').innerHTML = h;
+  openModal('#modalDiscV2');
+}
+function editDiscountV2(id) {
+  api.withSuccessHandler(function(list) {
+    _discV2Cache = list || [];
+    var d = _discV2Cache.find(function(x){return x.id===id;});
+    if (d) openDiscountV2Modal(d);
+  }).getDiscountsV2();
+}
+function saveDiscountV2() {
+  var data = {
+    id: q('#dv2Id').value, name: q('#dv2Name').value, type: q('#dv2Type').value,
+    value: Number(q('#dv2Value').value)||0, maxAmount: Number(q('#dv2Max').value)||0,
+    minOrder: Number(q('#dv2Min').value)||0, code: q('#dv2Code').value,
+    requireCode: q('#dv2ReqCode').checked, requireApproval: q('#dv2ReqApproval').checked,
+    enabled: q('#dv2Enabled').checked, validFrom: q('#dv2From').value||null, validTo: q('#dv2To').value||null
+  };
+  if (!data.name) return showToast('الاسم مطلوب', true);
+  loader(true);
+  api.withSuccessHandler(function(r) { loader(false); if (r.success) { closeModal('#modalDiscV2'); showToast('تم الحفظ'); loadDiscountsV2(); } else showToast(r.error, true); }).saveDiscountV2(data);
+}
+function deleteDiscountV2(id) {
+  if (!confirm('حذف هذا الخصم؟')) return;
+  loader(true);
+  api.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحذف'); loadDiscountsV2(); } else showToast(r.error, true); }).deleteDiscountV2(id);
+}
+
+// Load discounts on settings open
+(function() {
+  var origNav = window._origNavSettings;
+  if (!origNav) {
+    var _oldLoadDashSettings = window.loadDashSettings;
+    window.loadDashSettings = function() { if (_oldLoadDashSettings) _oldLoadDashSettings(); setTimeout(loadDiscountsV2, 300); };
+  }
+})();
+
 function openDiscountModal() {
   if (!state.cart.length) return showToast(t("emptyCart"), true);
   loader();
-  api.withSuccessHandler(discs => {
-    loader(false);
-    let h = "";
-    if (!discs.length) h = "<p style='text-align:center;'>لا توجد خصومات متاحة</p>";
-    discs.forEach(d => {
-      const valStr = d.type === "PERCENT" ? `${d.value}%` : `${d.value} ${state.settings.currency}`;
-      h += `<div class="card" style="margin-bottom:15px; cursor:pointer;" onclick="applyDiscount('${d.name}', '${d.type}', ${d.value})">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <h4 style="margin:0;">${d.name}</h4><strong style="color:var(--secondary); font-size:18px;">${valStr}</strong>
-        </div>
-      </div>`;
-    });
-    q("#discModalList").innerHTML = h;
-    openModal("#modalDiscount");
-  }).getDiscounts();
+  // Try v2 discounts first, fallback to legacy
+  api.withSuccessHandler(function(v2list) {
+    if (v2list && v2list.length) {
+      loader(false);
+      var now = new Date();
+      var sub = state.cart.reduce(function(s,c){return s+c.qty*c.price;},0);
+      // Filter: enabled + valid dates + min order
+      var valid = v2list.filter(function(d) {
+        if (!d.enabled) return false;
+        if (d.validFrom && new Date(d.validFrom) > now) return false;
+        if (d.validTo && new Date(d.validTo) < now) return false;
+        if (d.minOrder > 0 && sub < d.minOrder) return false;
+        return true;
+      });
+      var h = '';
+      if (!valid.length) h = '<p style="text-align:center;color:#94a3b8;">لا توجد خصومات متاحة</p>';
+      valid.forEach(function(d) {
+        var valStr = d.type === 'percentage' ? d.value + '%' : d.value + ' SAR';
+        var typeLabel = d.type==='percentage'?'نسبة':d.type==='fixed'?'مبلغ':d.type==='promo_code'?'كود':'تلقائي';
+        var badges = '';
+        if (d.requireCode) badges += '<span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;">كود</span> ';
+        if (d.requireApproval) badges += '<span style="font-size:10px;background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:4px;">موافقة</span> ';
+        if (d.maxAmount > 0) badges += '<span style="font-size:10px;background:#f1f5f9;color:#64748b;padding:1px 6px;border-radius:4px;">حد: ' + d.maxAmount + '</span>';
+        h += '<div class="card" style="margin-bottom:10px;cursor:pointer;padding:12px;border-radius:12px;" onclick="applyDiscountV2(\'' + d.id + '\',\'' + (d.name||'').replace(/'/g,'') + '\',\'' + d.type + '\',' + d.value + ',' + (d.maxAmount||0) + ',' + (d.requireCode?'true':'false') + ',' + (d.requireApproval?'true':'false') + ',\'' + (d.code||'') + '\')">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+            '<div><strong style="font-size:14px;">' + d.name + '</strong><div style="font-size:11px;color:#64748b;">' + typeLabel + ' ' + badges + '</div></div>' +
+            '<strong style="color:#8b5cf6;font-size:18px;">' + valStr + '</strong>' +
+          '</div></div>';
+      });
+      q('#discModalList').innerHTML = h;
+      openModal('#modalDiscount');
+    } else {
+      // Fallback to legacy discounts
+      api.withSuccessHandler(function(discs) {
+        loader(false);
+        var h = '';
+        if (!discs.length) h = '<p style="text-align:center;">لا توجد خصومات متاحة</p>';
+        discs.forEach(function(d) {
+          var valStr = d.type === 'PERCENT' ? d.value + '%' : d.value + ' SAR';
+          h += '<div class="card" style="margin-bottom:15px;cursor:pointer;" onclick="applyDiscount(\'' + d.name + '\',\'' + d.type + '\',' + d.value + ')"><div style="display:flex;justify-content:space-between;align-items:center;"><h4 style="margin:0;">' + d.name + '</h4><strong style="color:var(--secondary);font-size:18px;">' + valStr + '</strong></div></div>';
+        });
+        q('#discModalList').innerHTML = h;
+        openModal('#modalDiscount');
+      }).getDiscounts();
+    }
+  }).getDiscountsV2();
+}
+
+function applyDiscountV2(id, name, type, value, maxAmount, requireCode, requireApproval, code) {
+  if (requireCode) {
+    var entered = prompt('أدخل كود الخصم:');
+    if (!entered) return;
+    if (entered !== code) return showToast('كود الخصم غير صحيح', true);
+  }
+  if (requireApproval) {
+    var mgr = prompt('أدخل رمز موافقة المدير:');
+    if (!mgr) return showToast('الموافقة مطلوبة', true);
+  }
+  var sub = state.cart.reduce(function(s,c){return s+c.qty*c.price;},0);
+  var calc = type === 'percentage' ? sub * (value / 100) : value;
+  if (maxAmount > 0 && calc > maxAmount) calc = maxAmount;
+  state.currentDiscount = { name: name, amount: calc };
+  updateCart();
+  closeModal('#modalDiscount');
+  showToast('تم تطبيق الخصم: ' + name);
 }
 
 function applyDiscount(name, type, val) {

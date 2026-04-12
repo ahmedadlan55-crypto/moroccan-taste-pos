@@ -313,6 +313,61 @@ async function runMigrations() {
   await addColumnIfMissing('custody_expenses', 'cost_center_name', "VARCHAR(200)");
   await addColumnIfMissing('custody_expenses', 'pre_approval_status', "ENUM('none','requested','approved','rejected') DEFAULT 'none'");
 
+  // Dynamic Payment Methods (advanced)
+  await addColumnIfMissing('payment_methods', 'type', "VARCHAR(50) DEFAULT 'standard'");
+  await addColumnIfMissing('payment_methods', 'require_reference', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('payment_methods', 'require_transaction_number', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('payment_methods', 'require_terminal', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('payment_methods', 'allow_refund', "BOOLEAN DEFAULT TRUE");
+  await addColumnIfMissing('payment_methods', 'allow_cancel', "BOOLEAN DEFAULT TRUE");
+  await addColumnIfMissing('payment_methods', 'color', "VARCHAR(20) DEFAULT '#3b82f6'");
+
+  // Branch payment methods
+  await createTableIfMissing('branch_payment_methods', `
+    CREATE TABLE branch_payment_methods (
+      id VARCHAR(50) PRIMARY KEY,
+      branch_id VARCHAR(50) NOT NULL,
+      payment_method_id VARCHAR(50) NOT NULL,
+      enabled BOOLEAN DEFAULT TRUE,
+      display_order INT DEFAULT 0,
+      UNIQUE KEY uq_br_pm (branch_id, payment_method_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // Dynamic Discounts (advanced)
+  await createTableIfMissing('discounts_v2', `
+    CREATE TABLE discounts_v2 (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      type ENUM('percentage','fixed','promo_code','automatic') DEFAULT 'percentage',
+      value DECIMAL(10,2) DEFAULT 0,
+      max_amount DECIMAL(10,2) DEFAULT 0,
+      min_order DECIMAL(10,2) DEFAULT 0,
+      require_approval BOOLEAN DEFAULT FALSE,
+      require_code BOOLEAN DEFAULT FALSE,
+      code VARCHAR(50),
+      enabled BOOLEAN DEFAULT TRUE,
+      display_order INT DEFAULT 0,
+      valid_from DATE,
+      valid_to DATE,
+      apply_on ENUM('invoice','item','category') DEFAULT 'invoice',
+      color VARCHAR(20) DEFAULT '#8b5cf6',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  // Branch discounts
+  await createTableIfMissing('branch_discounts', `
+    CREATE TABLE branch_discounts (
+      id VARCHAR(50) PRIMARY KEY,
+      branch_id VARCHAR(50) NOT NULL,
+      discount_id VARCHAR(50) NOT NULL,
+      enabled BOOLEAN DEFAULT TRUE,
+      display_order INT DEFAULT 0,
+      UNIQUE KEY uq_br_disc (branch_id, discount_id)
+    ) ENGINE=InnoDB
+  `);
+
   // Audit log table
   await createTableIfMissing('audit_logs', `
     CREATE TABLE audit_logs (

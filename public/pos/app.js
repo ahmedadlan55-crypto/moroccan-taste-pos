@@ -420,8 +420,10 @@ window.renderSplitFields = function(total) {
   var container = q('#splitFields');
   if (!container) return;
   var isEn = state.lang === 'en';
+  // Split only between Cash and Card (مدى)
   var methods = (state.paymentMethods || []).filter(function(m) {
-    return m.IsActive !== false && m.IsActive !== 'FALSE' && String(m.Name || '').toLowerCase() !== 'split';
+    var n = String(m.Name || '').toLowerCase();
+    return (n === 'cash' || n === 'card') && m.IsActive !== false && m.IsActive !== 'FALSE';
   });
   container.innerHTML = methods.map(function(m) {
     // Prefer dict translation for core three methods (Cash/Card/Kita)

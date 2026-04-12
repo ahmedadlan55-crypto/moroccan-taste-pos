@@ -296,13 +296,13 @@ router.post('/gl/seed', async (req, res) => {
       {code:'42',name:'الإيرادات الأخرى',type:'revenue',parent:'4',level:2},
       {code:'421',name:'إيرادات خدمات الحفلات الخارجية (Catering)',type:'revenue',parent:'42',level:3},
       {code:'422',name:'إيرادات متنوعة',type:'revenue',parent:'42',level:3},
-      {code:'5',name:'تكلفة المبيعات (COGS)',type:'expense',parent:null,level:1},
-      {code:'51',name:'تكلفة المواد المستهلكة',type:'expense',parent:'5',level:2},
-      {code:'511',name:'تكلفة البن والمشروبات',type:'expense',parent:'51',level:3},
-      {code:'512',name:'تكلفة المأكولات والحلويات المباعة',type:'expense',parent:'51',level:3},
-      {code:'513',name:'تكلفة مواد التعبئة والتغليف',type:'expense',parent:'51',level:3},
-      {code:'52',name:'الهالك والتوالف',type:'expense',parent:'5',level:2},
-      {code:'521',name:'هالك المواد الغذائية والبن',type:'expense',parent:'52',level:3},
+      {code:'5',name:'تكلفة المبيعات (COGS)',type:'expense',parent:'6',level:2},
+      {code:'51',name:'تكلفة المواد المستهلكة',type:'expense',parent:'5',level:3},
+      {code:'511',name:'تكلفة البن والمشروبات',type:'expense',parent:'51',level:4},
+      {code:'512',name:'تكلفة المأكولات والحلويات المباعة',type:'expense',parent:'51',level:4},
+      {code:'513',name:'تكلفة مواد التعبئة والتغليف',type:'expense',parent:'51',level:4},
+      {code:'52',name:'الهالك والتوالف',type:'expense',parent:'5',level:3},
+      {code:'521',name:'هالك المواد الغذائية والبن',type:'expense',parent:'52',level:4},
       {code:'6',name:'المصروفات',type:'expense',parent:null,level:1},
       {code:'61',name:'المصروفات التشغيلية',type:'expense',parent:'6',level:2},
       {code:'611',name:'الرواتب والأجور',type:'expense',parent:'61',level:3},
@@ -568,6 +568,24 @@ router.post('/gl/repair', async (req, res) => {
 });
 
 // Repair: create GL entries for old custody topups that have no journal
+// Fix: move account code 5 (COGS) under code 6 (expenses)
+router.post('/gl/fix-tree', async (req, res) => {
+  try {
+    const [acc5] = await db.query("SELECT id FROM gl_accounts WHERE code = '5'");
+    const [acc6] = await db.query("SELECT id FROM gl_accounts WHERE code = '6'");
+    if (acc5.length && acc6.length) {
+      await db.query('UPDATE gl_accounts SET parent_id = ?, level = 2 WHERE id = ?', [acc6[0].id, acc5[0].id]);
+      // Fix children levels
+      await db.query("UPDATE gl_accounts SET level = 3 WHERE parent_id = ? AND level < 3", [acc5[0].id]);
+      const [children51] = await db.query("SELECT id FROM gl_accounts WHERE code LIKE '51%' AND code != '51'");
+      for (const c of children51) { await db.query('UPDATE gl_accounts SET level = 4 WHERE id = ?', [c.id]); }
+      const [children52] = await db.query("SELECT id FROM gl_accounts WHERE code LIKE '52%' AND code != '52'");
+      for (const c of children52) { await db.query('UPDATE gl_accounts SET level = 4 WHERE id = ?', [c.id]); }
+    }
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
 router.post('/gl/repair-topups', async (req, res) => {
   try {
     // Find topups without GL journals

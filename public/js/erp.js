@@ -737,36 +737,42 @@ function erpLoadJournals() {
 }
 
 function erpViewJournal(journalId) {
-  var j = _jrnCache.find(function(x) { return x.id === journalId; });
-  if (j && j.entries && j.entries.length) {
-    _renderJournalDetail(j);
-  } else {
-    window._apiBridge.withSuccessHandler(function(entries) {
-      _renderJournalDetail({ entries: entries || [], journalNumber: '', description: '', journalDate: '', status: '' });
-    }).getGLEntries(journalId);
-  }
+  // Always fetch fresh from full journal list to get all fields
+  window._apiBridge.withSuccessHandler(function(allJournals) {
+    var j = (allJournals||[]).find(function(x) { return x.id === journalId; });
+    if (j) {
+      _renderJournalDetail(j);
+    } else {
+      // Fallback: fetch entries only
+      window._apiBridge.withSuccessHandler(function(entries) {
+        _renderJournalDetail({ id: journalId, entries: entries || [], journalNumber: '—', description: '', journalDate: '', status: 'posted', createdBy: '' });
+      }).getGLEntries(journalId);
+    }
+  }).getGLJournals({});
 }
 
 function _renderJournalDetail(j) {
   var entries = j.entries || [];
-  var dt = j.journalDate ? new Date(j.journalDate).toLocaleDateString('en-GB') : '';
+  var dt = j.journalDate ? new Date(j.journalDate).toLocaleDateString('en-GB') : '—';
   var statusLabels = {draft:'مسودة',approved:'معتمد',posted:'مرحّل'};
+  var statusColors = {draft:'#f59e0b',approved:'#8b5cf6',posted:'#16a34a'};
 
-  var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px;">' +
-    '<div style="background:#f8fafc;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;">رقم القيد</span><strong style="font-size:16px;color:#1e40af;">' + (j.journalNumber||'') + '</strong></div>' +
-    '<div style="background:#f8fafc;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;">التاريخ</span><strong>' + dt + '</strong></div>' +
-    '<div style="background:#f8fafc;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;">الحالة</span><strong>' + (statusLabels[j.status]||j.status||'') + '</strong></div>' +
-    '<div style="background:#f0fdf4;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;"><i class="fas fa-user-edit" style="margin-left:3px;"></i> أنشأه</span><strong style="color:#16a34a;">' + (j.createdBy||'—') + '</strong></div>' +
-    (j.approvedBy ? '<div style="background:#eff6ff;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;"><i class="fas fa-user-check" style="margin-left:3px;"></i> اعتمده</span><strong style="color:#1e40af;">' + j.approvedBy + '</strong></div>' : '') +
-    (j.postedBy ? '<div style="background:#f0fdf4;padding:10px 14px;border-radius:12px;"><span style="font-size:11px;color:#64748b;display:block;"><i class="fas fa-user-shield" style="margin-left:3px;"></i> رحّله</span><strong style="color:#166534;">' + j.postedBy + '</strong></div>' : '') +
+  var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:14px;">' +
+    '<div style="background:#f8fafc;padding:10px 12px;border-radius:12px;"><span style="font-size:10px;color:#64748b;display:block;">رقم القيد</span><strong style="font-size:15px;color:#1e40af;">' + (j.journalNumber||'—') + '</strong></div>' +
+    '<div style="background:#f8fafc;padding:10px 12px;border-radius:12px;"><span style="font-size:10px;color:#64748b;display:block;">التاريخ</span><strong>' + dt + '</strong></div>' +
+    '<div style="background:#f8fafc;padding:10px 12px;border-radius:12px;"><span style="font-size:10px;color:#64748b;display:block;">الحالة</span><strong style="color:' + (statusColors[j.status]||'#64748b') + ';">' + (statusLabels[j.status]||j.status||'—') + '</strong></div>' +
+    '<div style="background:#f0fdf4;padding:10px 12px;border-radius:12px;"><span style="font-size:10px;color:#64748b;display:block;">أنشأه</span><strong style="color:#16a34a;">' + (j.createdBy||'—') + '</strong></div>' +
+    (j.approvedBy ? '<div style="background:#eff6ff;padding:10px 12px;border-radius:12px;"><span style="font-size:10px;color:#64748b;display:block;">اعتمده</span><strong style="color:#1e40af;">' + j.approvedBy + '</strong></div>' : '') +
+    (j.postedBy ? '<div style="background:#f0fdf4;padding:10px 12px;border-radius:12px;"><span style="font-size:10px;color:#64748b;display:block;">رحّله</span><strong style="color:#166534;">' + j.postedBy + '</strong></div>' : '') +
     '</div>';
-  if (j.description) html += '<div style="margin-bottom:14px;padding:10px 14px;background:#eff6ff;border-radius:12px;font-weight:700;color:#1e40af;"><i class="fas fa-file-alt" style="margin-left:6px;"></i>' + j.description + '</div>';
 
-  html += '<table class="erp-table" style="font-size:13px;"><thead><tr><th style="width:100px;">رقم الحساب</th><th>اسم الحساب</th><th>البيان</th><th style="width:110px;">مدين</th><th style="width:110px;">دائن</th></tr></thead><tbody>';
+  if (j.description) html += '<div style="margin-bottom:12px;padding:8px 14px;background:#eff6ff;border-radius:10px;font-weight:700;color:#1e40af;font-size:13px;"><i class="fas fa-file-alt" style="margin-left:6px;"></i>' + j.description + '</div>';
+
+  html += '<table class="erp-table" style="font-size:13px;"><thead><tr><th style="width:90px;">رقم الحساب</th><th>اسم الحساب</th><th>البيان</th><th style="width:100px;">مدين</th><th style="width:100px;">دائن</th></tr></thead><tbody>';
   var totalD = 0, totalC = 0;
   entries.forEach(function(e) {
     totalD += Number(e.debit)||0; totalC += Number(e.credit)||0;
-    html += '<tr><td><code style="font-weight:700;">' + (e.accountCode||'') + '</code></td><td style="font-weight:700;">' + (e.accountName||'') + '</td><td style="color:#64748b;">' + (e.description||'') + '</td>' +
+    html += '<tr><td><code style="font-weight:700;">' + (e.accountCode||'') + '</code></td><td style="font-weight:700;">' + (e.accountName||'') + '</td><td style="color:#64748b;font-size:12px;">' + (e.description||'') + '</td>' +
       '<td style="font-weight:800;color:#16a34a;">' + ((e.debit||0) > 0 ? Number(e.debit).toFixed(2) : '') + '</td>' +
       '<td style="font-weight:800;color:#ef4444;">' + ((e.credit||0) > 0 ? Number(e.credit).toFixed(2) : '') + '</td></tr>';
   });
@@ -774,17 +780,150 @@ function _renderJournalDetail(j) {
   html += '</tbody></table>';
 
   // Action buttons
-  html += '<div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">';
+  html += '<div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;flex-wrap:wrap;">';
   html += '<button class="btn btn-sm btn-secondary" onclick="erpPrintJournal(\'' + j.id + '\')" style="border-radius:10px;"><i class="fas fa-print"></i> طباعة</button>';
-  if (j.status === 'draft') html += '<button class="btn btn-sm btn-primary" onclick="erpApproveJournal(\'' + j.id + '\');erpCloseDetailModal();" style="border-radius:10px;background:#8b5cf6;"><i class="fas fa-check-circle"></i> اعتماد</button>';
-  if (j.status === 'approved') html += '<button class="btn btn-sm btn-primary" onclick="erpPostJournal(\'' + j.id + '\');erpCloseDetailModal();" style="border-radius:10px;background:#16a34a;"><i class="fas fa-share-square"></i> ترحيل</button>';
+  if (j.status === 'draft') {
+    html += '<button class="btn btn-sm" onclick="erpEditJournal(\'' + j.id + '\')" style="border-radius:10px;background:#3b82f6;color:#fff;"><i class="fas fa-edit"></i> تعديل</button>';
+    html += '<button class="btn btn-sm" onclick="erpApproveJournal(\'' + j.id + '\');erpCloseDetailModal();" style="border-radius:10px;background:#8b5cf6;color:#fff;"><i class="fas fa-check-circle"></i> اعتماد</button>';
+  }
+  if (j.status === 'approved') {
+    html += '<button class="btn btn-sm" onclick="erpPostJournal(\'' + j.id + '\');erpCloseDetailModal();" style="border-radius:10px;background:#16a34a;color:#fff;"><i class="fas fa-share-square"></i> ترحيل</button>';
+  }
   html += '</div>';
+
+  // Store for print
+  window._viewingJournal = j;
 
   document.getElementById('erpJournalDetailBody').innerHTML = html;
   document.getElementById('erpJournalDetailModal').classList.remove('hidden');
 }
 
 function erpCloseDetailModal() { document.getElementById('erpJournalDetailModal').classList.add('hidden'); }
+
+// ─── Edit Journal (draft only) ───
+var _editingJournalId = null;
+function erpEditJournal(journalId) {
+  var j = window._viewingJournal || _jrnCache.find(function(x) { return x.id === journalId; });
+  if (!j) return showToast('القيد غير موجود', true);
+  if (j.status !== 'draft') return showToast('فقط القيود المسودة يمكن تعديلها', true);
+  _editingJournalId = journalId;
+  erpCloseDetailModal();
+
+  // Open the journal creation modal with pre-filled data
+  if (_erpAccounts.length === 0) {
+    window._apiBridge.withSuccessHandler(function(list) {
+      _erpAccounts = (list || []).map(function(a) {
+        return { id: a.id, code: a.code, nameAr: a.nameAr, nameEn: a.nameEn, type: a.type, parentId: a.parentId, level: Number(a.level)||1, balance: Number(a.balance)||0 };
+      });
+      _renderEditJournalForm(j);
+    }).getGLAccounts();
+  } else {
+    _renderEditJournalForm(j);
+  }
+}
+
+function _renderEditJournalForm(j) {
+  document.getElementById('erpModalTitle').textContent = 'تعديل القيد — ' + (j.journalNumber||'');
+  _jrnLineCounter = 0;
+  var dt = j.journalDate ? new Date(j.journalDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+
+  document.getElementById('erpModalBody').innerHTML =
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+      '<div class="form-row"><label>تاريخ القيد *</label><input type="date" class="form-control" id="erpJrnDate" value="' + dt + '"></div>' +
+      '<div class="form-row"><label>رقم القيد</label><input class="form-control" id="erpJrnNum" value="' + (j.journalNumber||'') + '" readonly style="background:#f8fafc;color:#94a3b8;"></div>' +
+    '</div>' +
+    '<div class="form-row"><label>عنوان القيد / الوصف *</label><input class="form-control" id="erpJrnDesc" value="' + (j.description||'') + '"></div>' +
+    '<div class="form-row"><label>ملاحظات إضافية</label><input class="form-control" id="erpJrnRef" value="' + (j.notes||'') + '"></div>' +
+    '<div class="form-row" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.15);">' +
+      '<input type="checkbox" id="erpJrnIsOpening" style="width:18px;height:18px;accent-color:#f59e0b;"' + (j.referenceType==='opening'?' checked':'') + '>' +
+      '<label for="erpJrnIsOpening" style="margin:0;cursor:pointer;font-weight:700;color:#92400e;"><i class="fas fa-flag" style="margin-left:4px;color:#f59e0b;"></i> قيد افتتاحي</label>' +
+    '</div>' +
+    '<hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+      '<h4 style="margin:0;color:#1e293b;"><i class="fas fa-list-ol" style="color:#3b82f6;margin-left:6px;"></i> بنود القيد</h4>' +
+      '<button class="btn btn-sm btn-secondary" onclick="erpAddJrnLine()" style="border-radius:10px;"><i class="fas fa-plus"></i> إضافة سطر</button>' +
+    '</div>' +
+    '<div id="erpJrnLines"></div>' +
+    '<div class="jrn-balance-bar" id="erpJrnBalanceInfo">مدين: <strong>0.00</strong> | دائن: <strong>0.00</strong></div>';
+
+  document.getElementById('erpModalSaveBtn').onclick = erpSaveEditedJournal;
+  document.getElementById('erpModal').classList.remove('hidden');
+
+  // Add existing entries as lines
+  (j.entries||[]).forEach(function(e) {
+    erpAddJrnLine();
+    var lines = document.querySelectorAll('.jrn-entry-card');
+    var lastLine = lines[lines.length - 1];
+    if (lastLine) {
+      var sel = lastLine.querySelector('.jec-acc');
+      if (sel) {
+        // Select the right option
+        for (var i = 0; i < sel.options.length; i++) {
+          if (sel.options[i].value === e.accountId) { sel.selectedIndex = i; break; }
+        }
+        erpOnAccChange(sel);
+      }
+      var debitEl = lastLine.querySelector('.jec-debit');
+      var creditEl = lastLine.querySelector('.jec-credit');
+      var descEl = lastLine.querySelector('.jec-desc');
+      if (debitEl && e.debit > 0) debitEl.value = e.debit;
+      if (creditEl && e.credit > 0) creditEl.value = e.credit;
+      if (descEl) descEl.value = e.description || '';
+    }
+  });
+  erpCalcJrnBalance();
+}
+
+function erpSaveEditedJournal() {
+  // Delete old journal + create new one with same data
+  var journalId = _editingJournalId;
+  if (!journalId) return erpSaveJournal(); // fallback to normal save
+
+  // Gather entries same as erpSaveJournal
+  var lines = document.querySelectorAll('.jrn-entry-card');
+  var entries = [];
+  lines.forEach(function(line) {
+    var sel = line.querySelector('.jec-acc');
+    if (!sel || !sel.value) return;
+    var opt = sel.options[sel.selectedIndex];
+    var debit = Number(line.querySelector('.jec-debit').value) || 0;
+    var credit = Number(line.querySelector('.jec-credit').value) || 0;
+    var desc = line.querySelector('.jec-desc') ? line.querySelector('.jec-desc').value : '';
+    if (debit > 0 || credit > 0) {
+      entries.push({ accountId: sel.value, accountCode: opt.dataset.code || '', accountName: opt.dataset.name || '', debit: debit, credit: credit, description: desc });
+    }
+  });
+  if (entries.length < 2) return showToast('يجب إدخال بندين على الأقل', true);
+  var desc = document.getElementById('erpJrnDesc').value;
+  if (!desc) return showToast('عنوان القيد مطلوب', true);
+  var totalD = 0, totalC = 0;
+  entries.forEach(function(e) { totalD += e.debit; totalC += e.credit; });
+  if (Math.abs(totalD - totalC) > 0.01) return showToast('القيد غير متوازن', true);
+
+  loader(true);
+  // Step 1: Delete old journal
+  window._apiBridge.withSuccessHandler(function(delRes) {
+    // Step 2: Create new journal
+    var isOpening = document.getElementById('erpJrnIsOpening') && document.getElementById('erpJrnIsOpening').checked;
+    window._apiBridge.withSuccessHandler(function(res) {
+      loader(false);
+      _editingJournalId = null;
+      if (res.success) {
+        showToast('تم تعديل القيد: ' + res.journalNumber);
+        erpCloseModal();
+        erpLoadJournals();
+      } else showToast(res.error, true);
+    }).createJournalEntry({
+      journalDate: document.getElementById('erpJrnDate').value,
+      referenceType: isOpening ? 'opening' : 'manual',
+      referenceId: '',
+      description: desc,
+      notes: document.getElementById('erpJrnRef').value,
+      isOpening: isOpening,
+      entries: entries
+    }, currentUser);
+  }).deleteGLJournal(journalId);
+}
 
 function erpApproveJournal(id) {
   if (!confirm('اعتماد هذا القيد؟')) return;
@@ -814,8 +953,8 @@ function erpDeleteJournal(id, num) {
 }
 
 function erpPrintJournal(journalId) {
-  var j = _jrnCache.find(function(x) { return x.id === journalId; });
-  if (!j) return showToast('القيد غير موجود', true);
+  var j = window._viewingJournal || _jrnCache.find(function(x) { return x.id === journalId; });
+  if (!j) return showToast('القيد غير موجود — افتح التفاصيل أولاً', true);
   var dt = j.journalDate ? new Date(j.journalDate).toLocaleDateString('en-GB') : '';
   var company = (state.settings && state.settings.name) || 'Moroccan Taste';
   var statusLabels = {draft:'مسودة',approved:'معتمد',posted:'مرحّل'};
@@ -1949,23 +2088,28 @@ function _renderTrialBalance(container, filters) {
 window.erpRepairGL = function() {
   if (!confirm('إصلاح شامل:\n1. ربط القيود المعلقة بالحسابات\n2. إنشاء قيود تغذية العهد المفقودة\n3. إعادة حساب جميع الأرصدة\n\nمتابعة؟')) return;
   loader(true);
-  // Step 1: Fix NULL entries
-  window._apiBridge.withSuccessHandler(function(r1) {
-    // Step 2: Create missing topup journals
-    fetch('/api/erp/gl/repair-topups', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
-      .then(function(r) { return r.json(); })
-      .then(function(r2) {
-        loader(false);
-        var msg = '';
-        if (r1.success) msg += 'قيود: ' + r1.nullFixed + ' تم ربطها، ' + (r1.accountsCreated||0) + ' حساب جديد. ';
-        if (r2.success) msg += 'تغذيات: ' + r2.topupsProcessed + ' قيد تغذية تم إنشاؤه. ';
-        msg += 'الأرصدة: تم إعادة حسابها.';
-        showToast(msg);
-        erpApplyFinFilters();
-        erpLoadAccountsList_();
-      })
-      .catch(function() { loader(false); showToast('خطأ في إصلاح التغذيات', true); });
-  }).repairGLEntries();
+  // Step 0: Fix tree structure (COGS under expenses)
+  fetch('/api/erp/gl/fix-tree', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+    .then(function(r) { return r.json(); })
+    .then(function() {
+      // Step 1: Fix NULL entries
+      window._apiBridge.withSuccessHandler(function(r1) {
+        // Step 2: Create missing topup journals
+        fetch('/api/erp/gl/repair-topups', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+          .then(function(r) { return r.json(); })
+          .then(function(r2) {
+            loader(false);
+            var msg = 'تم الإصلاح. ';
+            if (r1.success) msg += r1.nullFixed + ' قيد تم ربطه. ';
+            if (r2.success && r2.topupsProcessed) msg += r2.topupsProcessed + ' تغذية. ';
+            msg += 'الأرصدة محدّثة.';
+            showToast(msg);
+            erpApplyFinFilters();
+            erpLoadAccountsList_();
+          })
+          .catch(function() { loader(false); showToast('خطأ في الإصلاح', true); });
+      }).repairGLEntries();
+    }).catch(function() { loader(false); });
 };
 
 // Export Trial Balance to Excel

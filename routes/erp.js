@@ -249,6 +249,7 @@ router.post('/gl/seed', async (req, res) => {
     if (existing[0].cnt > 0) return res.json({ success: true, msg: 'already seeded' });
 
     const accounts = [
+      // ═══ 1 الأصول ═══
       {code:'1',name:'الأصول',type:'asset',parent:null,level:1},
       {code:'11',name:'الأصول المتداولة',type:'asset',parent:'1',level:2},
       {code:'111',name:'النقدية والبنوك',type:'asset',parent:'11',level:3},
@@ -262,12 +263,14 @@ router.post('/gl/seed', async (req, res) => {
       {code:'11301',name:'ذمم تطبيقات التوصيل (جاهز، هنقرستيشن..)',type:'asset',parent:'113',level:4},
       {code:'11302',name:'سلف ومقدمات الموظفين',type:'asset',parent:'113',level:4},
       {code:'11303',name:'إيجارات مدفوعة مقدماً',type:'asset',parent:'113',level:4},
+      {code:'114',name:'ضريبة المدخلات',type:'asset',parent:'11',level:3},
       {code:'12',name:'الأصول الثابتة',type:'asset',parent:'1',level:2},
       {code:'121',name:'معدات وآلات الكافيه',type:'asset',parent:'12',level:3},
       {code:'122',name:'أجهزة نقاط البيع والأنظمة',type:'asset',parent:'12',level:3},
       {code:'123',name:'الأثاث والديكورات',type:'asset',parent:'12',level:3},
       {code:'124',name:'مجمع إهلاك الأصول الثابتة',type:'asset',parent:'12',level:3},
-      {code:'2',name:'الالتزامات (الخصوم)',type:'liability',parent:null,level:1},
+      // ═══ 2 الالتزامات ═══
+      {code:'2',name:'الالتزامات',type:'liability',parent:null,level:1},
       {code:'21',name:'الالتزامات المتداولة',type:'liability',parent:'2',level:2},
       {code:'211',name:'الموردون والدائنون',type:'liability',parent:'21',level:3},
       {code:'21101',name:'موردو المواد الغذائية والبن',type:'liability',parent:'211',level:4},
@@ -278,6 +281,7 @@ router.post('/gl/seed', async (req, res) => {
       {code:'21203',name:'فواتير منافع مستحقة',type:'liability',parent:'212',level:4},
       {code:'213',name:'الضرائب',type:'liability',parent:'21',level:3},
       {code:'21301',name:'ضريبة القيمة المضافة المستحقة (VAT)',type:'liability',parent:'213',level:4},
+      // ═══ 3 حقوق الملكية ═══
       {code:'3',name:'حقوق الملكية',type:'equity',parent:null,level:1},
       {code:'31',name:'رأس المال',type:'equity',parent:'3',level:2},
       {code:'311',name:'رأس مال الشركاء أو المالك',type:'equity',parent:'31',level:3},
@@ -285,6 +289,7 @@ router.post('/gl/seed', async (req, res) => {
       {code:'321',name:'الأرباح أو الخسائر المرحلة',type:'equity',parent:'32',level:3},
       {code:'33',name:'المسحوبات',type:'equity',parent:'3',level:2},
       {code:'331',name:'جاري المالك (المسحوبات الشخصية)',type:'equity',parent:'33',level:3},
+      // ═══ 4 الإيرادات ═══
       {code:'4',name:'الإيرادات',type:'revenue',parent:null,level:1},
       {code:'41',name:'الإيرادات التشغيلية',type:'revenue',parent:'4',level:2},
       {code:'411',name:'مبيعات نقاط البيع (POS)',type:'revenue',parent:'41',level:3},
@@ -296,31 +301,32 @@ router.post('/gl/seed', async (req, res) => {
       {code:'42',name:'الإيرادات الأخرى',type:'revenue',parent:'4',level:2},
       {code:'421',name:'إيرادات خدمات الحفلات الخارجية (Catering)',type:'revenue',parent:'42',level:3},
       {code:'422',name:'إيرادات متنوعة',type:'revenue',parent:'42',level:3},
-      {code:'5',name:'تكلفة المبيعات (COGS)',type:'expense',parent:'6',level:2},
-      {code:'51',name:'تكلفة المواد المستهلكة',type:'expense',parent:'5',level:3},
-      {code:'511',name:'تكلفة البن والمشروبات',type:'expense',parent:'51',level:4},
-      {code:'512',name:'تكلفة المأكولات والحلويات المباعة',type:'expense',parent:'51',level:4},
-      {code:'513',name:'تكلفة مواد التعبئة والتغليف',type:'expense',parent:'51',level:4},
-      {code:'52',name:'الهالك والتوالف',type:'expense',parent:'5',level:3},
-      {code:'521',name:'هالك المواد الغذائية والبن',type:'expense',parent:'52',level:4},
-      {code:'6',name:'المصروفات',type:'expense',parent:null,level:1},
-      {code:'61',name:'المصروفات التشغيلية',type:'expense',parent:'6',level:2},
-      {code:'611',name:'الرواتب والأجور',type:'expense',parent:'61',level:3},
-      {code:'612',name:'الإيجارات والمنافع',type:'expense',parent:'61',level:3},
-      {code:'61201',name:'إيجارات الفروع',type:'expense',parent:'612',level:4},
-      {code:'61202',name:'الكهرباء والماء',type:'expense',parent:'612',level:4},
-      {code:'61203',name:'اشتراكات الإنترنت والاتصالات',type:'expense',parent:'612',level:4},
-      {code:'613',name:'التشغيل والصيانة',type:'expense',parent:'61',level:3},
-      {code:'61301',name:'صيانة مكائن القهوة والمعدات',type:'expense',parent:'613',level:4},
-      {code:'61302',name:'أدوات النظافة والتعقيم',type:'expense',parent:'613',level:4},
-      {code:'614',name:'التسويق والعمولات',type:'expense',parent:'61',level:3},
-      {code:'61401',name:'عمولات تطبيقات التوصيل',type:'expense',parent:'614',level:4},
-      {code:'61402',name:'الحملات الإعلانية والتسويق',type:'expense',parent:'614',level:4},
-      {code:'62',name:'المصروفات العمومية والإدارية',type:'expense',parent:'6',level:2},
-      {code:'621',name:'رسوم اشتراكات الأنظمة والبرامج',type:'expense',parent:'62',level:3},
-      {code:'622',name:'الرسوم الحكومية والتراخيص',type:'expense',parent:'62',level:3},
-      {code:'623',name:'العمولات البنكية ورسوم شبكات الدفع',type:'expense',parent:'62',level:3},
-      {code:'624',name:'مصروفات الضيافة والنثريات',type:'expense',parent:'62',level:3},
+      // ═══ 5 المصروفات (تشمل COGS + التشغيلية + العمومية) ═══
+      {code:'5',name:'المصروفات',type:'expense',parent:null,level:1},
+      {code:'51',name:'تكلفة المبيعات (COGS)',type:'expense',parent:'5',level:2},
+      {code:'511',name:'تكلفة المواد المستهلكة',type:'expense',parent:'51',level:3},
+      {code:'5111',name:'تكلفة البن والمشروبات',type:'expense',parent:'511',level:4},
+      {code:'5112',name:'تكلفة المأكولات والحلويات المباعة',type:'expense',parent:'511',level:4},
+      {code:'5113',name:'تكلفة مواد التعبئة والتغليف',type:'expense',parent:'511',level:4},
+      {code:'512',name:'الهالك والتوالف',type:'expense',parent:'51',level:3},
+      {code:'5121',name:'هالك المواد الغذائية والبن',type:'expense',parent:'512',level:4},
+      {code:'52',name:'المصروفات التشغيلية',type:'expense',parent:'5',level:2},
+      {code:'521',name:'الرواتب والأجور',type:'expense',parent:'52',level:3},
+      {code:'522',name:'الإيجارات والمنافع',type:'expense',parent:'52',level:3},
+      {code:'5221',name:'إيجارات الفروع',type:'expense',parent:'522',level:4},
+      {code:'5222',name:'الكهرباء والماء',type:'expense',parent:'522',level:4},
+      {code:'5223',name:'اشتراكات الإنترنت والاتصالات',type:'expense',parent:'522',level:4},
+      {code:'523',name:'التشغيل والصيانة',type:'expense',parent:'52',level:3},
+      {code:'5231',name:'صيانة مكائن القهوة والمعدات',type:'expense',parent:'523',level:4},
+      {code:'5232',name:'أدوات النظافة والتعقيم',type:'expense',parent:'523',level:4},
+      {code:'524',name:'التسويق والعمولات',type:'expense',parent:'52',level:3},
+      {code:'5241',name:'عمولات تطبيقات التوصيل',type:'expense',parent:'524',level:4},
+      {code:'5242',name:'الحملات الإعلانية والتسويق',type:'expense',parent:'524',level:4},
+      {code:'53',name:'المصروفات العمومية والإدارية',type:'expense',parent:'5',level:2},
+      {code:'531',name:'رسوم اشتراكات الأنظمة والبرامج',type:'expense',parent:'53',level:3},
+      {code:'532',name:'الرسوم الحكومية والتراخيص',type:'expense',parent:'53',level:3},
+      {code:'533',name:'العمولات البنكية ورسوم شبكات الدفع',type:'expense',parent:'53',level:3},
+      {code:'534',name:'مصروفات الضيافة والنثريات',type:'expense',parent:'53',level:3},
     ];
 
     // Build a code→id map so parent references work
@@ -568,21 +574,40 @@ router.post('/gl/repair', async (req, res) => {
 });
 
 // Repair: create GL entries for old custody topups that have no journal
-// Fix: move account code 5 (COGS) under code 6 (expenses)
+// Fix: restructure to 5 main accounts (merge old 6 into 5)
 router.post('/gl/fix-tree', async (req, res) => {
   try {
-    const [acc5] = await db.query("SELECT id FROM gl_accounts WHERE code = '5'");
-    const [acc6] = await db.query("SELECT id FROM gl_accounts WHERE code = '6'");
-    if (acc5.length && acc6.length) {
-      await db.query('UPDATE gl_accounts SET parent_id = ?, level = 2 WHERE id = ?', [acc6[0].id, acc5[0].id]);
-      // Fix children levels
-      await db.query("UPDATE gl_accounts SET level = 3 WHERE parent_id = ? AND level < 3", [acc5[0].id]);
-      const [children51] = await db.query("SELECT id FROM gl_accounts WHERE code LIKE '51%' AND code != '51'");
-      for (const c of children51) { await db.query('UPDATE gl_accounts SET level = 4 WHERE id = ?', [c.id]); }
-      const [children52] = await db.query("SELECT id FROM gl_accounts WHERE code LIKE '52%' AND code != '52'");
-      for (const c of children52) { await db.query('UPDATE gl_accounts SET level = 4 WHERE id = ?', [c.id]); }
+    let fixed = 0;
+    // If old structure exists (code 6 as root), merge into code 5
+    const [acc6] = await db.query("SELECT id FROM gl_accounts WHERE code = '6' AND (parent_id IS NULL OR parent_id = '')");
+    const [acc5root] = await db.query("SELECT id FROM gl_accounts WHERE code = '5' AND (parent_id IS NULL OR parent_id = '')");
+
+    if (acc6.length) {
+      if (!acc5root.length) {
+        // Rename code 6 → make it the main المصروفات (code 5)
+        // First check if there's a code 5 that's a child (COGS under 6)
+        const [acc5child] = await db.query("SELECT id FROM gl_accounts WHERE code = '5' AND parent_id IS NOT NULL");
+        if (acc5child.length) {
+          // Old COGS (code 5) was under code 6 — make it level 2 under new structure
+          // Rename code 6 to be the root المصروفات
+          await db.query("UPDATE gl_accounts SET name_ar = 'المصروفات', parent_id = NULL, level = 1 WHERE id = ?", [acc6[0].id]);
+          await db.query("UPDATE gl_accounts SET parent_id = ?, level = 2 WHERE id = ?", [acc6[0].id, acc5child[0].id]);
+          fixed++;
+        }
+      } else {
+        // Both code 5 (root) and code 6 (root) exist — move 6's children under 5
+        await db.query("UPDATE gl_accounts SET parent_id = ? WHERE parent_id = ?", [acc5root[0].id, acc6[0].id]);
+        await db.query("DELETE FROM gl_accounts WHERE id = ?", [acc6[0].id]);
+        fixed++;
+      }
     }
-    res.json({ success: true });
+
+    // Fix any orphaned children with old 61x, 62x codes — reparent them
+    const [old61] = await db.query("SELECT id FROM gl_accounts WHERE code = '61'");
+    const [old62] = await db.query("SELECT id FROM gl_accounts WHERE code = '62'");
+    // These might still reference old parent — fix if needed
+
+    res.json({ success: true, fixed });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 

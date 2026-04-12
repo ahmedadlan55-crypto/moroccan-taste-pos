@@ -55,7 +55,7 @@
     updatePurchaseOrder: { method: 'PUT',  url: (id,d,u) => '/purchases/orders/'+id, body: (id,d,u) => ({...d,username:u}) },
     approvePurchaseOrder:{ method: 'POST', url: (id,u) => '/purchases/orders/'+id+'/approve', body: (id,u) => ({username:u}) },
     revertPurchaseOrder: { method: 'POST', url: (id,u) => '/purchases/orders/'+id+'/revert', body: (id,u) => ({username:u}) },
-    deletePurchaseOrder: { method: 'POST', url: (id,u) => '/purchases/orders/'+id, body: (id,u) => ({username:u}) },
+    deletePurchaseOrder: { method: 'DELETE', url: (id) => '/purchases/orders/'+id },
     getPOLines:          { method: 'GET',  url: (id) => '/purchases/orders/'+id+'/lines' },
 
     // Expenses

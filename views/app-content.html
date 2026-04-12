@@ -307,6 +307,7 @@
             <div class="sales-tab" onclick="switchWhTab('stocktake')" id="whtab_stocktake"><i class="fas fa-tasks"></i> <span>الجرد</span></div>
             <div class="sales-tab" onclick="switchWhTab('adjustments')" id="whtab_adjustments"><i class="fas fa-minus-circle"></i> <span>تعديل كمية</span></div>
             <div class="sales-tab" onclick="switchWhTab('transfers')" id="whtab_transfers"><i class="fas fa-exchange-alt"></i> <span>التحويلات</span></div>
+            <div class="sales-tab" onclick="switchWhTab('shortage')" id="whtab_shortage"><i class="fas fa-exclamation-triangle"></i> <span>طلبات النواقص</span></div>
           </div>
 
           <!-- Tab 1: مواد المخزون -->
@@ -394,6 +395,19 @@
               <table class="table">
                 <thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>الوجهة / المصدر</th><th>النوع</th><th>حالة الطلب</th><th>المسؤول</th><th>إجراءات</th></tr></thead>
                 <tbody id="tbTransfers"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab 5: طلبات النواقص -->
+          <div class="sales-tab-content" id="wh_shortage">
+            <div class="filter-bar" style="justify-content:space-between;align-items:center;">
+              <h3 style="margin:0;color:var(--primary);"><i class="fas fa-exclamation-triangle"></i> طلبات النواقص من الفروع</h3>
+            </div>
+            <div class="table-wrapper">
+              <table class="table">
+                <thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>الكاشير</th><th>عدد المواد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+                <tbody id="tbShortageRequests"><tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8;">جاري التحميل...</td></tr></tbody>
               </table>
             </div>
           </div>

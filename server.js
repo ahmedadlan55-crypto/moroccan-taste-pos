@@ -213,6 +213,43 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
+  // Shortage requests tables
+  await createTableIfMissing('shortage_requests', `
+    CREATE TABLE shortage_requests (
+      id VARCHAR(50) PRIMARY KEY,
+      request_number VARCHAR(20),
+      request_date DATETIME,
+      username VARCHAR(100),
+      notes TEXT,
+      status ENUM('pending','approved','rejected','converted') DEFAULT 'pending',
+      supply_mode ENUM('parent_company','warehouse') DEFAULT 'parent_company',
+      total_items INT DEFAULT 0,
+      approved_by VARCHAR(100),
+      approved_at DATETIME,
+      po_id VARCHAR(50),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('shortage_items', `
+    CREATE TABLE shortage_items (
+      id VARCHAR(50) PRIMARY KEY,
+      request_id VARCHAR(50) NOT NULL,
+      inv_item_id VARCHAR(50),
+      inv_item_name VARCHAR(200),
+      unit VARCHAR(50),
+      current_qty DECIMAL(12,2) DEFAULT 0,
+      min_qty DECIMAL(12,2) DEFAULT 0,
+      requested_qty DECIMAL(12,2) DEFAULT 0,
+      unit_price DECIMAL(10,4) DEFAULT 0,
+      FOREIGN KEY (request_id) REFERENCES shortage_requests(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB
+  `);
+
+  // Supply source setting
+  try {
+    await db.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('supply_source_mode','parent_company')");
+  } catch(e) {}
+
   // Security: account lockout columns
   await addColumnIfMissing('users', 'failed_attempts', "INT DEFAULT 0");
   await addColumnIfMissing('users', 'locked_until', "DATETIME DEFAULT NULL");

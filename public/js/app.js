@@ -2138,6 +2138,7 @@ function switchWhTab(tab) {
   if (tab === 'stocktake') loadDashStocktake();
   if (tab === 'adjustments') loadDashAdjustments();
   if (tab === 'transfers') loadDashTransfers();
+  if (tab === 'shortage') loadDashShortageRequests();
 }
 
 // =========================================
@@ -2998,6 +2999,119 @@ function deleteRecipeItem(menuId, menuName, invItemId) {
 // =========================================
 // 6.d. Transfers and Stocktake Stubs
 // =========================================
+// =========================================
+// Shortage Requests (طلبات النواقص)
+// =========================================
+function loadDashShortageRequests() {
+  api.withSuccessHandler(function(list) {
+    var tb = q('#tbShortageRequests');
+    if (!tb) return;
+    if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8;">لا توجد طلبات نواقص</td></tr>'; return; }
+    var statusBadge = function(s) {
+      if (s === 'pending') return '<span class="badge yellow">بانتظار</span>';
+      if (s === 'approved') return '<span class="badge blue">معتمد</span>';
+      if (s === 'converted') return '<span class="badge green">تم التحويل لأمر شراء</span>';
+      if (s === 'rejected') return '<span class="badge red">مرفوض</span>';
+      return '<span class="badge">' + s + '</span>';
+    };
+    tb.innerHTML = list.map(function(r) {
+      var dt = r.requestDate ? new Date(r.requestDate).toLocaleDateString('en-GB') : '';
+      var actions = '';
+      if (r.status === 'pending') {
+        actions = '<button class="btn btn-success btn-sm" onclick="approveShortageReq(\'' + r.id + '\')" title="اعتماد"><i class="fas fa-check"></i></button> ' +
+          '<button class="btn btn-danger btn-sm" onclick="rejectShortageReq(\'' + r.id + '\')" title="رفض"><i class="fas fa-times"></i></button>';
+      } else if (r.status === 'approved') {
+        actions = '<button class="btn btn-primary btn-sm" onclick="convertShortageToPO(\'' + r.id + '\')" title="تحويل لأمر شراء"><i class="fas fa-shopping-cart"></i> تحويل لـ PO</button>';
+      }
+      actions += ' <button class="btn btn-light btn-sm" onclick="viewShortageDetail(\'' + r.id + '\')" title="تفاصيل"><i class="fas fa-eye"></i></button>';
+      return '<tr>' +
+        '<td><code style="font-weight:800;color:#8b5cf6;">' + (r.requestNumber||'') + '</code></td>' +
+        '<td>' + dt + '</td>' +
+        '<td style="font-weight:700;">' + (r.username||'') + '</td>' +
+        '<td>' + (r.totalItems||0) + ' مادة</td>' +
+        '<td>' + statusBadge(r.status) + '</td>' +
+        '<td style="white-space:nowrap;">' + actions + '</td></tr>';
+    }).join('');
+  }).getShortageRequests();
+}
+
+function approveShortageReq(id) {
+  if (!confirm('اعتماد طلب النقص؟')) return;
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم اعتماد الطلب'); loadDashShortageRequests(); }
+    else showToast(r.error, true);
+  }).approveShortage(id, { username: state.user, supplyMode: 'parent_company' });
+}
+
+function rejectShortageReq(id) {
+  var reason = prompt('سبب الرفض:');
+  if (reason === null) return;
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم رفض الطلب'); loadDashShortageRequests(); }
+    else showToast(r.error, true);
+  }).rejectShortage(id, { username: state.user, reason: reason });
+}
+
+function convertShortageToPO(id) {
+  // Show supplier selection
+  api.withSuccessHandler(function(suppliers) {
+    var opts = (suppliers||[]).map(function(s) { return '<option value="' + s.id + '" data-name="' + (s.name||'') + '">' + (s.name||'') + '</option>'; }).join('');
+    var html = '<div class="modal-content"><div class="modal-title">تحويل طلب النقص لأمر شراء<button class="modal-close" onclick="closeModal(\'#modalConvertPO\')">&times;</button></div>' +
+      '<div class="form-group"><label class="form-label">المورد *</label><select id="convertSupplier" class="form-control"><option value="">— اختر المورد —</option>' + opts + '</select></div>' +
+      '<div style="display:flex;gap:10px;margin-top:15px;"><button class="btn btn-primary" style="flex:1;" onclick="doConvertShortageToPO(\'' + id + '\')"><i class="fas fa-shopping-cart"></i> تحويل لأمر شراء</button><button class="btn btn-light" onclick="closeModal(\'#modalConvertPO\')">إلغاء</button></div></div>';
+    if (!document.getElementById('modalConvertPO')) {
+      var m = document.createElement('div'); m.id = 'modalConvertPO'; m.className = 'modal'; document.body.appendChild(m);
+    }
+    document.getElementById('modalConvertPO').innerHTML = html;
+    openModal('#modalConvertPO');
+  }).getSuppliers();
+}
+
+function doConvertShortageToPO(id) {
+  var sel = q('#convertSupplier');
+  if (!sel || !sel.value) return showToast('اختر المورد', true);
+  var opt = sel.options[sel.selectedIndex];
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) {
+      closeModal('#modalConvertPO');
+      showToast('تم إنشاء أمر شراء: ' + r.poNumber);
+      loadDashShortageRequests();
+    } else showToast(r.error, true);
+  }).convertShortageToPO(id, { username: state.user, supplierId: sel.value, supplierName: opt.getAttribute('data-name')||'' });
+}
+
+function viewShortageDetail(id) {
+  api.withSuccessHandler(function(data) {
+    if (!data || data.error) return showToast(data && data.error || 'خطأ', true);
+    var items = data.items || [];
+    var html = '<div style="margin-bottom:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">' +
+      '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">رقم الطلب</div><div style="font-size:16px;font-weight:900;color:#8b5cf6;">' + (data.requestNumber||'') + '</div></div>' +
+      '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">الكاشير</div><div style="font-weight:800;">' + (data.username||'') + '</div></div>' +
+      '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">الحالة</div><div style="font-weight:800;">' + (data.status||'') + '</div></div>' +
+    '</div>';
+    html += '<table class="table" style="font-size:13px;"><thead><tr><th>المادة</th><th>الوحدة</th><th>المخزون الحالي</th><th>الحد الأدنى</th><th>الكمية المطلوبة</th></tr></thead><tbody>';
+    items.forEach(function(i) {
+      html += '<tr><td style="font-weight:700;">' + (i.invItemName||'') + '</td><td>' + (i.unit||'') + '</td>' +
+        '<td style="color:' + (i.currentQty <= i.minQty ? '#ef4444' : '#16a34a') + ';font-weight:700;">' + i.currentQty + '</td>' +
+        '<td>' + i.minQty + '</td><td style="font-weight:800;color:#8b5cf6;">' + i.requestedQty + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    if (!document.getElementById('modalShortageDetail')) {
+      var m = document.createElement('div'); m.id = 'modalShortageDetail'; m.className = 'modal';
+      m.innerHTML = '<div class="modal-content modal-large"><div class="modal-title">تفاصيل طلب النقص<button class="modal-close" onclick="closeModal(\'#modalShortageDetail\')">&times;</button></div><div id="shortageDetailBody"></div></div>';
+      document.body.appendChild(m);
+    }
+    document.getElementById('shortageDetailBody').innerHTML = html;
+    openModal('#modalShortageDetail');
+  }).getShortageRequest(id);
+}
+
 function loadDashTransfers() {
   q("#tbTransfers").innerHTML = "<tr><td colspan='7' style='text-align:center; padding:30px;'>قريباً: يتم برمجة نظام التحويلات بين الفروع...</td></tr>";
 }

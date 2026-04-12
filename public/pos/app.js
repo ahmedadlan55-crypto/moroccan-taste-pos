@@ -1636,3 +1636,112 @@ function _showStocktakeWhatsApp(stId, items) {
     glassToast(err.message || 'Failed to generate PDF', true);
   });
 }
+
+// ═══════════════════════════════════════
+// SHORTAGE REQUEST (طلب نواقص)
+// ═══════════════════════════════════════
+var _shrCart = [];
+var _shrAllItems = [];
+
+window.openShortageRequest = function() {
+  _shrCart = [];
+  if (q('#shrSearch')) q('#shrSearch').value = '';
+  if (q('#shrNotes')) q('#shrNotes').value = '';
+  if (q('#shrSearchResults')) q('#shrSearchResults').style.display = 'none';
+  _shrRenderCart();
+
+  // Load inventory items
+  api.withSuccessHandler(function(items) {
+    _shrAllItems = (items || []).map(function(i) {
+      return { id: i.id, name: i.name, category: i.category||'', stock: Number(i.stock)||0, minStock: Number(i.minStock||i.min_stock)||0, cost: Number(i.cost)||0, unit: i.unit||'', bigUnit: i.bigUnit||i.big_unit||'', convRate: Number(i.convRate||i.conv_rate)||1 };
+    });
+    openGlassModal('#modalShortage');
+  }).getInvItems();
+};
+
+window.shrFilterItems = function(query) {
+  var box = q('#shrSearchResults');
+  if (!query || query.length < 1) { box.style.display = 'none'; return; }
+  var ql = query.toLowerCase();
+  var matches = _shrAllItems.filter(function(i) {
+    return i.name.toLowerCase().indexOf(ql) >= 0 || (i.category||'').toLowerCase().indexOf(ql) >= 0;
+  }).filter(function(i) {
+    return !_shrCart.some(function(c) { return c.id === i.id; });
+  }).slice(0, 8);
+
+  if (!matches.length) { box.innerHTML = '<div style="padding:10px;color:#94a3b8;text-align:center;">لا توجد نتائج</div>'; box.style.display = 'block'; return; }
+
+  box.innerHTML = matches.map(function(i) {
+    var lowStock = i.stock <= i.minStock;
+    return '<div onclick="shrAddItem(\'' + i.id + '\')" style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;transition:background 0.1s;" onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'\'">' +
+      '<div><div style="font-weight:700;font-size:13px;">' + i.name + '</div><div style="font-size:11px;color:#94a3b8;">' + i.category + ' | ' + i.unit + '</div></div>' +
+      '<div style="text-align:left;"><div style="font-size:12px;font-weight:700;color:' + (lowStock?'#ef4444':'#16a34a') + ';">' + i.stock + ' ' + i.unit + '</div>' +
+      (lowStock ? '<div style="font-size:10px;color:#ef4444;">⚠ منخفض</div>' : '') + '</div></div>';
+  }).join('');
+  box.style.display = 'block';
+};
+
+window.shrAddItem = function(id) {
+  var item = _shrAllItems.find(function(i) { return i.id === id; });
+  if (!item || _shrCart.some(function(c) { return c.id === id; })) return;
+  var deficit = Math.max(0, item.minStock - item.stock);
+  _shrCart.push({
+    id: item.id, name: item.name, unit: item.unit, stock: item.stock,
+    minStock: item.minStock, cost: item.cost,
+    requestedQty: deficit > 0 ? deficit : 1
+  });
+  q('#shrSearch').value = '';
+  q('#shrSearchResults').style.display = 'none';
+  _shrRenderCart();
+};
+
+window.shrRemoveItem = function(id) {
+  _shrCart = _shrCart.filter(function(c) { return c.id !== id; });
+  _shrRenderCart();
+};
+
+window.shrUpdateQty = function(id, val) {
+  var item = _shrCart.find(function(c) { return c.id === id; });
+  if (item) item.requestedQty = Math.max(1, Number(val) || 1);
+};
+
+function _shrRenderCart() {
+  q('#shrCartCount').textContent = _shrCart.length;
+  var box = q('#shrCart');
+  if (!_shrCart.length) {
+    box.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8;"><i class="fas fa-inbox" style="font-size:24px;margin-bottom:6px;display:block;"></i>ابحث عن مادة وأضفها</div>';
+    return;
+  }
+  box.innerHTML = _shrCart.map(function(c) {
+    var lowStock = c.stock <= c.minStock;
+    return '<div style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:6px;background:#fff;">' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + c.name + '</div>' +
+        '<div style="font-size:11px;color:#94a3b8;">المخزون: <span style="color:' + (lowStock?'#ef4444':'#16a34a') + ';font-weight:700;">' + c.stock + '</span> | الحد: ' + c.minStock + '</div>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:4px;">' +
+        '<input type="number" value="' + c.requestedQty + '" min="1" style="width:60px;padding:6px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;text-align:center;" onchange="shrUpdateQty(\'' + c.id + '\',this.value)">' +
+        '<span style="font-size:11px;color:#64748b;">' + c.unit + '</span>' +
+      '</div>' +
+      '<button onclick="shrRemoveItem(\'' + c.id + '\')" style="border:none;background:none;color:#ef4444;font-size:16px;cursor:pointer;padding:4px;"><i class="fas fa-times"></i></button>' +
+    '</div>';
+  }).join('');
+}
+
+window.submitShortageRequest = function() {
+  if (!_shrCart.length) return glassToast('أضف مادة واحدة على الأقل', true);
+  var items = _shrCart.map(function(c) {
+    return { invItemId: c.id, invItemName: c.name, unit: c.unit, currentQty: c.stock, minQty: c.minStock, requestedQty: c.requestedQty, unitPrice: c.cost };
+  });
+  var data = { items: items, username: state.user, notes: (q('#shrNotes')||{}).value || '' };
+
+  api.withSuccessHandler(function(r) {
+    if (r && r.success) {
+      closeGlassModal('#modalShortage');
+      glassToast('تم إرسال طلب النقص: ' + r.requestNumber);
+      _shrCart = [];
+    } else {
+      glassToast((r && r.error) || 'فشل الإرسال', true);
+    }
+  }).createShortageRequest(data);
+};

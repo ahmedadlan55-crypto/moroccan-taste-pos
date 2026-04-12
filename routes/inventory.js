@@ -428,4 +428,149 @@ router.delete('/adjustments/:id', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// ═══════════════════════════════════════
+// SHORTAGE REQUESTS (طلبات النواقص)
+// ═══════════════════════════════════════
+
+// Create shortage request (from cashier)
+router.post('/shortage-requests', async (req, res) => {
+  try {
+    const { items, username, notes } = req.body;
+    if (!items || !items.length) return res.json({ success: false, error: 'أضف مادة واحدة على الأقل' });
+
+    const id = 'SHR-' + Date.now();
+    const [last] = await db.query('SELECT request_number FROM shortage_requests ORDER BY created_at DESC LIMIT 1');
+    let num = 1;
+    if (last.length && last[0].request_number) {
+      const m = last[0].request_number.match(/(\d+)/);
+      if (m) num = parseInt(m[1]) + 1;
+    }
+    const requestNumber = 'SHR-' + String(num).padStart(5, '0');
+
+    await db.query(
+      'INSERT INTO shortage_requests (id, request_number, request_date, username, notes, total_items) VALUES (?,?,?,?,?,?)',
+      [id, requestNumber, new Date(), username || '', notes || '', items.length]
+    );
+
+    for (const item of items) {
+      const itemId = 'SHRI-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+      await db.query(
+        'INSERT INTO shortage_items (id, request_id, inv_item_id, inv_item_name, unit, current_qty, min_qty, requested_qty, unit_price) VALUES (?,?,?,?,?,?,?,?,?)',
+        [itemId, id, item.invItemId || '', item.invItemName || '', item.unit || '', item.currentQty || 0, item.minQty || 0, item.requestedQty || 0, item.unitPrice || 0]
+      );
+    }
+
+    res.json({ success: true, id, requestNumber });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Get shortage requests
+router.get('/shortage-requests', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM shortage_requests ORDER BY created_at DESC LIMIT 200');
+    res.json(rows.map(r => ({
+      id: r.id, requestNumber: r.request_number, requestDate: r.request_date,
+      username: r.username, notes: r.notes, status: r.status,
+      supplyMode: r.supply_mode, totalItems: r.total_items,
+      approvedBy: r.approved_by, approvedAt: r.approved_at, poId: r.po_id
+    })));
+  } catch (e) { res.json([]); }
+});
+
+// Get single shortage request with items
+router.get('/shortage-requests/:id', async (req, res) => {
+  try {
+    const [reqs] = await db.query('SELECT * FROM shortage_requests WHERE id = ?', [req.params.id]);
+    if (!reqs.length) return res.json({ error: 'Not found' });
+    const r = reqs[0];
+    const [items] = await db.query('SELECT * FROM shortage_items WHERE request_id = ?', [req.params.id]);
+    res.json({
+      id: r.id, requestNumber: r.request_number, requestDate: r.request_date,
+      username: r.username, notes: r.notes, status: r.status,
+      supplyMode: r.supply_mode, totalItems: r.total_items,
+      approvedBy: r.approved_by, poId: r.po_id,
+      items: items.map(i => ({
+        id: i.id, invItemId: i.inv_item_id, invItemName: i.inv_item_name,
+        unit: i.unit, currentQty: Number(i.current_qty), minQty: Number(i.min_qty),
+        requestedQty: Number(i.requested_qty), unitPrice: Number(i.unit_price)
+      }))
+    });
+  } catch (e) { res.json({ error: e.message }); }
+});
+
+// Approve shortage request
+router.post('/shortage-requests/:id/approve', async (req, res) => {
+  try {
+    const { username, supplyMode } = req.body;
+    await db.query('UPDATE shortage_requests SET status = "approved", approved_by = ?, approved_at = ?, supply_mode = ? WHERE id = ?',
+      [username || '', new Date(), supplyMode || 'parent_company', req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Reject shortage request
+router.post('/shortage-requests/:id/reject', async (req, res) => {
+  try {
+    const { username, reason } = req.body;
+    await db.query('UPDATE shortage_requests SET status = "rejected", approved_by = ?, approved_at = ?, notes = CONCAT(COALESCE(notes,""), "\n[رفض: ' + (reason||'') + ']") WHERE id = ?',
+      [username || '', new Date(), req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Convert shortage to Purchase Order
+router.post('/shortage-requests/:id/convert-to-po', async (req, res) => {
+  try {
+    const { username, supplierId, supplierName } = req.body;
+    const [reqs] = await db.query('SELECT * FROM shortage_requests WHERE id = ?', [req.params.id]);
+    if (!reqs.length) return res.json({ success: false, error: 'الطلب غير موجود' });
+    const r = reqs[0];
+    if (r.status !== 'approved') return res.json({ success: false, error: 'الطلب يجب أن يكون معتمداً أولاً' });
+
+    const [items] = await db.query('SELECT * FROM shortage_items WHERE request_id = ?', [req.params.id]);
+
+    // Create PO
+    const poId = 'PO-' + Date.now();
+    const [lastPO] = await db.query('SELECT po_number FROM purchase_orders ORDER BY created_at DESC LIMIT 1');
+    let poNum = 1;
+    if (lastPO.length && lastPO[0].po_number) {
+      const m = lastPO[0].po_number.match(/(\d+)/);
+      if (m) poNum = parseInt(m[1]) + 1;
+    }
+    const poNumber = 'PO-' + String(poNum).padStart(5, '0');
+
+    let totalBeforeVat = 0;
+    const poLines = items.map(i => {
+      const qty = Number(i.requested_qty) || 0;
+      const price = Number(i.unit_price) || 0;
+      const lineTotal = qty * price;
+      totalBeforeVat += lineTotal;
+      return { itemId: i.inv_item_id, itemName: i.inv_item_name, unit: i.unit, qty, unitPrice: price, total: lineTotal };
+    });
+
+    const vatAmount = totalBeforeVat * 0.15;
+    const totalAfterVat = totalBeforeVat + vatAmount;
+
+    await db.query(
+      `INSERT INTO purchase_orders (id, po_number, supplier_id, supplier_name, po_date, expected_date, notes, status, total_before_vat, vat_amount, total_after_vat, created_by)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [poId, poNumber, supplierId || '', supplierName || '', new Date(), new Date(Date.now() + 7*86400000),
+       'من طلب نقص: ' + r.request_number, 'draft', totalBeforeVat, vatAmount, totalAfterVat, username || '']
+    );
+
+    for (const line of poLines) {
+      const lineId = 'POL-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+      await db.query(
+        'INSERT INTO po_lines (id, po_id, item_id, item_name, unit, qty, unit_price, vat_rate, vat_amount, total) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [lineId, poId, line.itemId, line.itemName, line.unit, line.qty, line.unitPrice, 15, line.total * 0.15, line.total * 1.15]
+      );
+    }
+
+    // Update shortage request
+    await db.query('UPDATE shortage_requests SET status = "converted", po_id = ? WHERE id = ?', [poId, req.params.id]);
+
+    res.json({ success: true, poId, poNumber });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 module.exports = router;

@@ -179,8 +179,18 @@
         </select>
       </div>
       <div class="field full">
+        <label>مركز التكلفة</label>
+        <select id="fCostCenter" class="fi">
+          <option value="">— اختياري —</option>
+        </select>
+      </div>
+      <div class="field full">
         <label>البيان</label>
         <input type="text" id="fDesc" class="fi" placeholder="وصف المصروف...">
+      </div>
+      <div class="field full" style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(245,158,11,0.06);border-radius:10px;border:1px solid rgba(245,158,11,0.15);">
+        <input type="checkbox" id="fPreApproval" style="width:18px;height:18px;accent-color:#f59e0b;">
+        <label for="fPreApproval" style="margin:0;cursor:pointer;font-weight:700;color:#92400e;font-size:13px;">طلب تعميد (موافقة مسبقة قبل الصرف)</label>
       </div>
       <div class="field-row">
         <div class="field">

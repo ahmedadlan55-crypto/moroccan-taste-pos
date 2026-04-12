@@ -385,7 +385,7 @@ router.get('/:id/expenses', async (req, res) => {
 
 router.post('/:id/expenses', async (req, res) => {
   try {
-    const { expenseDate, description, amount, hasVat, vatRate, invoiceImage, notes, username, overrideBalance, glAccountId, glAccountName } = req.body;
+    const { expenseDate, description, amount, hasVat, vatRate, invoiceImage, notes, username, overrideBalance, glAccountId, glAccountName, costCenterId, costCenterName, preApproval } = req.body;
     const amt = Number(amount) || 0;
     if (amt <= 0 || !description) return res.json({ success: false, error: 'Amount and description required' });
     const vRate = hasVat ? (Number(vatRate) || 15) : 0;
@@ -409,11 +409,12 @@ router.post('/:id/expenses', async (req, res) => {
     const status = overrideBalance ? 'override_pending' : 'pending';
 
     const expId = 'CEXP-' + Date.now();
+    const preApprovalStatus = preApproval ? 'requested' : 'none';
     await db.query(
-      `INSERT INTO custody_expenses (id, custody_id, expense_date, description, amount, has_vat, vat_rate, vat_amount, total_with_vat, invoice_image, notes, status, created_by, gl_account_id, gl_account_name)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO custody_expenses (id, custody_id, expense_date, description, amount, has_vat, vat_rate, vat_amount, total_with_vat, invoice_image, notes, status, created_by, gl_account_id, gl_account_name, cost_center_id, cost_center_name, pre_approval_status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [expId, req.params.id, expenseDate || new Date(), description, amt, hasVat ? 1 : 0, vRate, vAmt, total,
-       invoiceImage || null, notes || '', status, username || '', glAccountId || null, glAccountName || '']
+       invoiceImage || null, notes || '', preApproval ? 'pre_approval' : status, username || '', glAccountId || null, glAccountName || '', costCenterId || null, costCenterName || '', preApprovalStatus]
     );
     res.json({ success: true, id: expId, status });
   } catch (e) { res.json({ success: false, error: e.message }); }

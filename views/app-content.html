@@ -28,7 +28,8 @@
           <div class="nav-item" onclick="nav('warehouse')"><i class="fas fa-boxes-stacked"></i><span>إدارة المخزون</span></div>
           <div class="nav-item" onclick="nav('purchases')"><i class="fas fa-truck-loading"></i><span>المشتريات</span></div>
           <div class="nav-item" data-erp-nav="erpPurchaseOrders" onclick="erpNav('erpPurchaseOrders')"><i class="fas fa-shopping-cart"></i><span>أوامر الشراء</span></div>
-          <div class="nav-item" data-erp-nav="erpWarehouses" onclick="erpNav('erpWarehouses')"><i class="fas fa-warehouse"></i><span>إدارة المستودعات</span></div>
+          <div class="nav-item" data-erp-nav="erpCostCenters" onclick="erpNav('erpCostCenters')"><i class="fas fa-bullseye"></i><span>مراكز التكلفة</span></div>
+          <div class="nav-item" data-erp-nav="erpMultiWarehouses" onclick="erpNav('erpMultiWarehouses')"><i class="fas fa-warehouse"></i><span>إدارة المستودعات</span></div>
           <div class="nav-item" data-erp-nav="erpWarehouseStock" onclick="erpNav('erpWarehouseStock')"><i class="fas fa-boxes"></i><span>أرصدة المستودعات</span></div>
           <div class="nav-item" data-erp-nav="erpStockTransfers" onclick="erpNav('erpStockTransfers')"><i class="fas fa-exchange-alt"></i><span>التحويلات بين الفروع</span></div>
         </div>
@@ -1211,15 +1212,62 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- BRANCHES (الفروع) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- COST CENTERS (مراكز التكلفة) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpCostCenters" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-bullseye"></i> مراكز التكلفة</h2>
+    <button class="btn btn-primary" onclick="erpOpenCostCenterModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> إضافة مركز تكلفة</button>
+  </div>
+  <div class="erp-table-container" style="border-radius:14px;">
+    <table class="erp-table">
+      <thead><tr><th>الرمز</th><th>الاسم</th><th>النوع</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpCCBody"><tr><td colspan="5" class="empty-msg">لا توجد مراكز تكلفة</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- MULTI-WAREHOUSES (المستودعات المتعددة) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpMultiWarehouses" class="dash-section hidden">
+  <div class="section-header" style="flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title"><i class="fas fa-warehouse"></i> إدارة المستودعات</h2>
+    <div style="display:flex;gap:6px;">
+      <button class="btn btn-primary" onclick="erpOpenWarehouseModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> مستودع جديد</button>
+      <button class="btn btn-secondary" onclick="erpOpenTransferModal()" style="border-radius:12px;"><i class="fas fa-exchange-alt"></i> تحويل بين مستودعات</button>
+    </div>
+  </div>
+  <!-- Warehouses List -->
+  <div class="erp-table-container" style="border-radius:14px;margin-bottom:20px;">
+    <table class="erp-table">
+      <thead><tr><th>الرمز</th><th>الاسم</th><th>النوع</th><th>الفرع</th><th>المدير</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpWHBody"><tr><td colspan="7" class="empty-msg">لا توجد مستودعات</td></tr></tbody>
+    </table>
+  </div>
+  <!-- Transfers -->
+  <h3 style="font-size:16px;font-weight:800;color:#1e293b;margin-bottom:10px;"><i class="fas fa-exchange-alt" style="color:#3b82f6;margin-left:6px;"></i> سجل التحويلات</h3>
+  <div class="erp-table-container" style="border-radius:14px;">
+    <table class="erp-table">
+      <thead><tr><th>الرقم</th><th>من</th><th>إلى</th><th>التاريخ</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpTransfersBody"><tr><td colspan="6" class="empty-msg">لا توجد تحويلات</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- BRANCHES (إدارة الفروع — محسّنة) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpBranches" class="dash-section hidden">
   <div class="section-header">
     <h2 class="section-title"><i class="fas fa-code-branch"></i> إدارة الفروع</h2>
-    <button class="btn btn-primary" onclick="erpOpenBranchModal()"><i class="fas fa-plus"></i> إضافة فرع</button>
+    <button class="btn btn-primary" onclick="erpOpenBranchFullModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> إضافة فرع</button>
   </div>
-  <div class="erp-table-container">
+  <div class="erp-table-container" style="border-radius:14px;">
     <table class="erp-table">
-      <thead><tr><th>الرمز</th><th>الاسم</th><th>الموقع</th><th>النوع</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-      <tbody id="erpBranchesBody"><tr><td colspan="6" class="empty-msg">لا توجد فروع</td></tr></tbody>
+      <thead><tr><th>الرمز</th><th>الاسم</th><th>الموقع</th><th>المستودع</th><th>مركز التكلفة</th><th>المدير</th><th>التوريد</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpBranchesBody"><tr><td colspan="8" class="empty-msg">لا توجد فروع</td></tr></tbody>
     </table>
   </div>
 </div>

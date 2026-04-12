@@ -10,7 +10,7 @@ Object.defineProperty(window, 'currentUser', { get: function() { return (typeof 
 // ═══════════════════════════════════════
 const erpSections = [
   'erpDashHome','erpCustomers','erpSuppliers','erpGLAccounts','erpGLJournals',
-  'erpPurchaseOrders','erpVATReports','erpZATCA','erpInventoryMethod','erpFinReports',
+  'erpPurchaseOrders','erpVATReports','erpZATCA','erpInventoryMethod','erpFinReports','erpCostCenters','erpMultiWarehouses',
   'erpBranches','erpPeriods','erpAuditLog','erpCreditNotes',
   'erpWarehouses','erpWarehouseStock','erpStockTransfers',
   'erpARAging','erpAPAging','erpCustomerStatement','erpSupplierStatement'
@@ -36,7 +36,9 @@ function erpNav(sectionId) {
       case 'erpZATCA': erpLoadZATCA(); break;
       case 'erpInventoryMethod': erpLoadInventoryMethod(); break;
       case 'erpFinReports': erpShowFinReport('trial'); break;
-      case 'erpBranches': erpLoadBranches(); break;
+      case 'erpCostCenters': erpLoadCostCenters(); break;
+      case 'erpMultiWarehouses': erpLoadMultiWarehouses(); break;
+      case 'erpBranches': erpLoadBranchesFull(); break;
       case 'erpPeriods': erpLoadPeriods(); break;
       case 'erpAuditLog': erpLoadAuditLog(); break;
       case 'erpCreditNotes': erpLoadNotes(); break;
@@ -2361,6 +2363,236 @@ window.erpSyncInventoryGL = function() {
     else showToast(r.error, true);
   }).syncInventoryGL();
 };
+
+// ═══════════════════════════════════════
+// COST CENTERS (مراكز التكلفة)
+// ═══════════════════════════════════════
+var _ccList = [];
+function erpLoadCostCenters() {
+  window._apiBridge.withSuccessHandler(function(list) {
+    _ccList = list || [];
+    var tb = document.getElementById('erpCCBody');
+    if (!list.length) { tb.innerHTML = '<tr><td colspan="5" class="empty-msg">لا توجد مراكز تكلفة</td></tr>'; return; }
+    var typeLabels = {branch:'فرع',department:'قسم',project:'مشروع'};
+    tb.innerHTML = list.map(function(c) {
+      return '<tr><td><code>' + c.code + '</code></td><td style="font-weight:700;">' + c.name + '</td>' +
+        '<td><span class="badge badge-blue">' + (typeLabels[c.type]||c.type) + '</span></td>' +
+        '<td>' + (c.isActive ? '<span class="badge badge-green">نشط</span>' : '<span class="badge badge-red">معطّل</span>') + '</td>' +
+        '<td><button class="btn-icon" onclick="erpEditCC(\'' + c.id + '\')"><i class="fas fa-edit"></i></button> <button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteCC(\'' + c.id + '\')"><i class="fas fa-trash"></i></button></td></tr>';
+    }).join('');
+  }).getCostCenters();
+}
+function erpOpenCostCenterModal(data) {
+  var d = data || {};
+  document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل مركز تكلفة' : 'إضافة مركز تكلفة';
+  document.getElementById('erpModalBody').innerHTML =
+    '<input type="hidden" id="ccID" value="' + (d.id||'') + '">' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+      '<div class="form-row"><label>الرمز *</label><input class="form-control" id="ccCode" value="' + (d.code||'') + '"></div>' +
+      '<div class="form-row"><label>النوع</label><select class="form-control" id="ccType"><option value="branch"' + (d.type==='branch'?' selected':'') + '>فرع</option><option value="department"' + (d.type==='department'?' selected':'') + '>قسم</option><option value="project"' + (d.type==='project'?' selected':'') + '>مشروع</option></select></div>' +
+    '</div>' +
+    '<div class="form-row"><label>الاسم *</label><input class="form-control" id="ccName" value="' + (d.name||'') + '"></div>';
+  document.getElementById('erpModalSaveBtn').onclick = erpSaveCC;
+  document.getElementById('erpModal').classList.remove('hidden');
+}
+function erpEditCC(id) { var c = _ccList.find(function(x){return x.id===id;}); if(c) erpOpenCostCenterModal(c); }
+function erpSaveCC() {
+  var data = { id: document.getElementById('ccID').value, code: document.getElementById('ccCode').value, name: document.getElementById('ccName').value, type: document.getElementById('ccType').value };
+  if (!data.code || !data.name) return showToast('الرمز والاسم مطلوبان', true);
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحفظ'); erpCloseModal(); erpLoadCostCenters(); } else showToast(r.error, true); }).saveCostCenter(data);
+}
+function erpDeleteCC(id) {
+  if (!confirm('حذف مركز التكلفة؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحذف'); erpLoadCostCenters(); } else showToast(r.error, true); }).deleteCostCenter(id);
+}
+
+// ═══════════════════════════════════════
+// MULTI-WAREHOUSES (المستودعات المتعددة)
+// ═══════════════════════════════════════
+var _whList = [];
+function erpLoadMultiWarehouses() {
+  // Load warehouses
+  window._apiBridge.withSuccessHandler(function(list) {
+    _whList = list || [];
+    var tb = document.getElementById('erpWHBody');
+    if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد مستودعات</td></tr>'; return; }
+    var typeLabels = {branch:'فرعي',main:'رئيسي',production:'إنتاج',waste:'هدر',raw:'مواد خام',finished:'مواد تامة'};
+    tb.innerHTML = list.map(function(w) {
+      return '<tr><td><code>' + w.code + '</code></td><td style="font-weight:700;">' + w.name + '</td>' +
+        '<td><span class="badge badge-blue">' + (typeLabels[w.type]||w.type) + '</span></td>' +
+        '<td>' + (w.branchName||'—') + '</td><td>' + (w.manager||'—') + '</td>' +
+        '<td>' + (w.isActive ? '<span class="badge badge-green">نشط</span>' : '<span class="badge badge-red">معطّل</span>') + '</td>' +
+        '<td><button class="btn-icon" onclick="erpEditWH(\'' + w.id + '\')"><i class="fas fa-edit"></i></button> ' +
+        '<button class="btn-icon" style="color:#3b82f6;" onclick="erpViewWHStock(\'' + w.id + '\',\'' + (w.name||'').replace(/'/g,'') + '\')" title="أرصدة"><i class="fas fa-boxes"></i></button> ' +
+        '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteWH(\'' + w.id + '\')"><i class="fas fa-trash"></i></button></td></tr>';
+    }).join('');
+  }).getWarehousesList();
+  // Load transfers
+  window._apiBridge.withSuccessHandler(function(list) {
+    var tb = document.getElementById('erpTransfersBody');
+    if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="6" class="empty-msg">لا توجد تحويلات</td></tr>'; return; }
+    var sBadge = function(s) { return s==='completed'?'<span class="badge badge-green">مكتمل</span>':s==='draft'?'<span class="badge badge-yellow">مسودة</span>':'<span class="badge">'+s+'</span>'; };
+    tb.innerHTML = list.map(function(t) {
+      var dt = t.transferDate ? new Date(t.transferDate).toLocaleDateString('en-GB') : '';
+      var actions = t.status==='draft' ? '<button class="btn btn-success btn-sm" onclick="erpApproveTransfer(\'' + t.id + '\')"><i class="fas fa-check"></i></button>' : '';
+      return '<tr><td><code>' + (t.transferNumber||'') + '</code></td><td>' + t.fromWarehouse + '</td><td>' + t.toWarehouse + '</td><td>' + dt + '</td><td>' + sBadge(t.status) + '</td><td>' + actions + '</td></tr>';
+    }).join('');
+  }).getWarehouseTransfers();
+}
+function erpOpenWarehouseModal(data) {
+  var d = data || {};
+  // Load branches for dropdown
+  window._apiBridge.withSuccessHandler(function(branches) {
+    var brOpts = (branches||[]).map(function(b) { return '<option value="' + b.id + '"' + (d.branchId===b.id?' selected':'') + '>' + b.name + '</option>'; }).join('');
+    document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل مستودع' : 'مستودع جديد';
+    document.getElementById('erpModalBody').innerHTML =
+      '<input type="hidden" id="whID" value="' + (d.id||'') + '">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>الرمز *</label><input class="form-control" id="whCode" value="' + (d.code||'') + '"></div>' +
+        '<div class="form-row"><label>النوع</label><select class="form-control" id="whType"><option value="branch">فرعي</option><option value="main">رئيسي</option><option value="production">إنتاج</option><option value="waste">هدر</option><option value="raw">مواد خام</option><option value="finished">مواد تامة</option></select></div>' +
+      '</div>' +
+      '<div class="form-row"><label>الاسم *</label><input class="form-control" id="whName" value="' + (d.name||'') + '"></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>الفرع</label><select class="form-control" id="whBranch"><option value="">— بدون —</option>' + brOpts + '</select></div>' +
+        '<div class="form-row"><label>المدير</label><input class="form-control" id="whManager" value="' + (d.manager||'') + '"></div>' +
+      '</div>' +
+      '<div class="form-row"><label>الموقع</label><input class="form-control" id="whLocation" value="' + (d.location||'') + '"></div>';
+    if (d.type) document.getElementById('whType').value = d.type;
+    document.getElementById('erpModalSaveBtn').onclick = erpSaveWH;
+    document.getElementById('erpModal').classList.remove('hidden');
+  }).getBranchesFull();
+}
+function erpEditWH(id) { var w = _whList.find(function(x){return x.id===id;}); if(w) erpOpenWarehouseModal(w); }
+function erpSaveWH() {
+  var data = { id: document.getElementById('whID').value, code: document.getElementById('whCode').value, name: document.getElementById('whName').value, type: document.getElementById('whType').value, branchId: document.getElementById('whBranch').value, manager: document.getElementById('whManager').value, location: document.getElementById('whLocation').value };
+  if (!data.code || !data.name) return showToast('الرمز والاسم مطلوبان', true);
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحفظ'); erpCloseModal(); erpLoadMultiWarehouses(); } else showToast(r.error, true); }).saveWarehouse(data);
+}
+function erpDeleteWH(id) {
+  if (!confirm('حذف المستودع وجميع أرصدته؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحذف'); erpLoadMultiWarehouses(); } else showToast(r.error, true); }).deleteWarehouse(id);
+}
+function erpViewWHStock(whId, whName) {
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(items) {
+    loader(false);
+    var html = '<h3 style="margin-bottom:10px;">أرصدة مستودع: ' + whName + '</h3>';
+    if (!items.length) { html += '<p style="color:#94a3b8;text-align:center;padding:20px;">لا توجد أرصدة</p>'; }
+    else {
+      html += '<table class="erp-table" style="font-size:13px;"><thead><tr><th>المادة</th><th>التصنيف</th><th>الكمية</th><th>الوحدة</th></tr></thead><tbody>';
+      items.forEach(function(i) { html += '<tr><td style="font-weight:700;">' + i.itemName + '</td><td>' + (i.category||'') + '</td><td style="font-weight:800;color:#1e40af;">' + i.qty + '</td><td>' + (i.unit||'') + '</td></tr>'; });
+      html += '</tbody></table>';
+    }
+    document.getElementById('erpModalTitle').textContent = 'أرصدة المستودع';
+    document.getElementById('erpModalBody').innerHTML = html;
+    document.getElementById('erpModalSaveBtn').style.display = 'none';
+    document.getElementById('erpModal').classList.remove('hidden');
+    setTimeout(function() { document.getElementById('erpModalSaveBtn').style.display = ''; }, 100);
+  }).getWarehouseStockDetail(whId);
+}
+function erpOpenTransferModal() {
+  window._apiBridge.withSuccessHandler(function(whs) {
+    var opts = (whs||[]).map(function(w) { return '<option value="' + w.id + '">' + w.name + '</option>'; }).join('');
+    // Load items
+    window._apiBridge.withSuccessHandler(function(items) {
+      var itemOpts = (items||[]).map(function(i) { return '<option value="' + i.id + '" data-name="' + (i.name||'') + '">' + i.name + ' (' + (Number(i.stock)||0) + ' ' + (i.unit||'') + ')</option>'; }).join('');
+      document.getElementById('erpModalTitle').textContent = 'تحويل بين مستودعات';
+      document.getElementById('erpModalBody').innerHTML =
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+          '<div class="form-row"><label>من مستودع *</label><select class="form-control" id="trFrom">' + opts + '</select></div>' +
+          '<div class="form-row"><label>إلى مستودع *</label><select class="form-control" id="trTo">' + opts + '</select></div>' +
+        '</div>' +
+        '<div class="form-row"><label>المادة *</label><select class="form-control" id="trItem">' + itemOpts + '</select></div>' +
+        '<div class="form-row"><label>الكمية *</label><input type="number" class="form-control" id="trQty" min="1" step="1" value="1"></div>' +
+        '<div class="form-row"><label>ملاحظات</label><input class="form-control" id="trNotes" placeholder="اختياري"></div>';
+      document.getElementById('erpModalSaveBtn').onclick = erpSubmitTransfer;
+      document.getElementById('erpModal').classList.remove('hidden');
+    }).getInvItems();
+  }).getWarehousesList();
+}
+function erpSubmitTransfer() {
+  var from = document.getElementById('trFrom').value, to = document.getElementById('trTo').value;
+  if (from === to) return showToast('اختر مستودعين مختلفين', true);
+  var itemSel = document.getElementById('trItem');
+  var itemId = itemSel.value, itemName = itemSel.options[itemSel.selectedIndex].getAttribute('data-name')||'';
+  var qty = Number(document.getElementById('trQty').value) || 0;
+  if (!qty) return showToast('أدخل الكمية', true);
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم إنشاء التحويل: ' + r.transferNumber); erpCloseModal(); erpLoadMultiWarehouses(); }
+    else showToast(r.error, true);
+  }).createWarehouseTransfer({ fromWarehouseId: from, toWarehouseId: to, items: [{ itemId: itemId, itemName: itemName, qty: qty }], notes: document.getElementById('trNotes').value, username: currentUser });
+}
+function erpApproveTransfer(id) {
+  if (!confirm('اعتماد التحويل وتحديث الأرصدة؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم اعتماد التحويل'); erpLoadMultiWarehouses(); } else showToast(r.error, true); }).approveWarehouseTransfer(id, { username: currentUser });
+}
+
+// ═══════════════════════════════════════
+// BRANCHES (Enhanced — إدارة الفروع)
+// ═══════════════════════════════════════
+function erpLoadBranchesFull() {
+  window._apiBridge.withSuccessHandler(function(list) {
+    var tb = document.getElementById('erpBranchesBody');
+    if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد فروع</td></tr>'; return; }
+    var supplyLabels = {parent_company:'الشركة الأم',warehouse:'المستودع الرئيسي',auto:'تلقائي'};
+    tb.innerHTML = list.map(function(b) {
+      return '<tr><td><code>' + (b.code||'') + '</code></td><td style="font-weight:700;">' + b.name + '</td><td>' + (b.location||'—') + '</td>' +
+        '<td>' + (b.warehouseName||'—') + '</td><td>' + (b.costCenterName||'—') + '</td><td>' + (b.manager||'—') + '</td>' +
+        '<td><span class="badge badge-blue">' + (supplyLabels[b.supplyMode]||b.supplyMode) + '</span></td>' +
+        '<td><button class="btn-icon" onclick="erpEditBranchFull(\'' + b.id + '\')"><i class="fas fa-edit"></i></button></td></tr>';
+    }).join('');
+  }).getBranchesFull();
+}
+var _brFullList = [];
+function erpOpenBranchFullModal(data) {
+  var d = data || {};
+  // Load warehouses + cost centers for dropdowns
+  Promise.all([
+    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getWarehousesList(); }),
+    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getCostCenters(); })
+  ]).then(function(results) {
+    var whs = results[0]||[], ccs = results[1]||[];
+    var whOpts = whs.map(function(w) { return '<option value="' + w.id + '"' + (d.warehouseId===w.id?' selected':'') + '>' + w.name + '</option>'; }).join('');
+    var ccOpts = ccs.map(function(c) { return '<option value="' + c.id + '"' + (d.costCenterId===c.id?' selected':'') + '>' + c.code + ' — ' + c.name + '</option>'; }).join('');
+    document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل فرع' : 'إضافة فرع';
+    document.getElementById('erpModalBody').innerHTML =
+      '<input type="hidden" id="brfID" value="' + (d.id||'') + '">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>الرمز</label><input class="form-control" id="brfCode" value="' + (d.code||'') + '"></div>' +
+        '<div class="form-row"><label>الاسم *</label><input class="form-control" id="brfName" value="' + (d.name||'') + '"></div>' +
+      '</div>' +
+      '<div class="form-row"><label>الموقع</label><input class="form-control" id="brfLocation" value="' + (d.location||'') + '"></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>المستودع المرتبط</label><select class="form-control" id="brfWH"><option value="">— بدون —</option>' + whOpts + '</select></div>' +
+        '<div class="form-row"><label>مركز التكلفة</label><select class="form-control" id="brfCC"><option value="">— بدون —</option>' + ccOpts + '</select></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>المدير</label><input class="form-control" id="brfManager" value="' + (d.manager||'') + '"></div>' +
+        '<div class="form-row"><label>إعدادات التوريد</label><select class="form-control" id="brfSupply"><option value="parent_company"' + (d.supplyMode==='parent_company'?' selected':'') + '>الشركة الأم</option><option value="warehouse"' + (d.supplyMode==='warehouse'?' selected':'') + '>المستودع الرئيسي</option><option value="auto"' + (d.supplyMode==='auto'?' selected':'') + '>تلقائي</option></select></div>' +
+      '</div>';
+    document.getElementById('erpModalSaveBtn').onclick = erpSaveBranchFull;
+    document.getElementById('erpModal').classList.remove('hidden');
+  });
+}
+function erpEditBranchFull(id) {
+  window._apiBridge.withSuccessHandler(function(list) {
+    var b = (list||[]).find(function(x){return x.id===id;});
+    if (b) erpOpenBranchFullModal(b);
+  }).getBranchesFull();
+}
+function erpSaveBranchFull() {
+  var data = { id: document.getElementById('brfID').value, code: document.getElementById('brfCode').value, name: document.getElementById('brfName').value, location: document.getElementById('brfLocation').value, warehouseId: document.getElementById('brfWH').value, costCenterId: document.getElementById('brfCC').value, manager: document.getElementById('brfManager').value, supplyMode: document.getElementById('brfSupply').value };
+  if (!data.name) return showToast('الاسم مطلوب', true);
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحفظ'); erpCloseModal(); erpLoadBranchesFull(); } else showToast(r.error, true); }).saveBranchFull(data);
+}
 
 // ═══════════════════════════════════════
 // BRANCHES

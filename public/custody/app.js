@@ -217,6 +217,19 @@
       });
       typeSelect.innerHTML = opts;
     }
+    // Populate cost centers
+    var ccSelect = el('fCostCenter');
+    if (ccSelect) {
+      api.withSuccessHandler(function(ccs) {
+        var ccOpts = '<option value="">— اختياري —</option>';
+        (ccs||[]).forEach(function(c) { ccOpts += '<option value="' + c.id + '" data-name="' + esc(c.name) + '">' + c.code + ' — ' + esc(c.name) + '</option>'; });
+        ccSelect.innerHTML = ccOpts;
+      }).getCostCenters();
+    }
+    // Reset pre-approval checkbox
+    var preApprovalEl = el('fPreApproval');
+    if (preApprovalEl) preApprovalEl.checked = false;
+
     el('fDate').value = new Date().toISOString().split('T')[0];
     el('fAmt').value = '';
     el('fDesc').value = '';
@@ -288,6 +301,14 @@
       var opt = typeSel.options[typeSel.selectedIndex];
       glAccountName = opt ? (opt.getAttribute('data-name') || '') : '';
     }
+    // Cost center
+    var ccSel = el('fCostCenter');
+    var costCenterId = ccSel ? ccSel.value : '';
+    var costCenterName = '';
+    if (ccSel && ccSel.value) { var ccOpt = ccSel.options[ccSel.selectedIndex]; costCenterName = ccOpt ? (ccOpt.getAttribute('data-name')||'') : ''; }
+    // Pre-approval
+    var preApproval = el('fPreApproval') && el('fPreApproval').checked;
+
     return {
       expenseDate: el('fDate').value,
       description: desc, amount: amt,
@@ -297,7 +318,10 @@
       username: S.user,
       overrideBalance: !!override,
       glAccountId: glAccountId,
-      glAccountName: glAccountName
+      glAccountName: glAccountName,
+      costCenterId: costCenterId,
+      costCenterName: costCenterName,
+      preApproval: preApproval
     };
   }
 

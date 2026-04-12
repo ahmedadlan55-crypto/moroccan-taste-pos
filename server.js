@@ -245,6 +245,74 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
+  // Cost centers table
+  await createTableIfMissing('cost_centers', `
+    CREATE TABLE cost_centers (
+      id VARCHAR(50) PRIMARY KEY,
+      code VARCHAR(20) NOT NULL,
+      name VARCHAR(200) NOT NULL,
+      type ENUM('branch','department','project') DEFAULT 'branch',
+      parent_id VARCHAR(50),
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  // Warehouses table (multi-warehouse)
+  await createTableIfMissing('warehouses', `
+    CREATE TABLE warehouses (
+      id VARCHAR(50) PRIMARY KEY,
+      code VARCHAR(20) NOT NULL,
+      name VARCHAR(200) NOT NULL,
+      type ENUM('branch','main','production','waste','raw','finished') DEFAULT 'branch',
+      branch_id VARCHAR(50),
+      location VARCHAR(200),
+      manager VARCHAR(100),
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  // Warehouse stock (per-warehouse inventory)
+  await createTableIfMissing('warehouse_stock', `
+    CREATE TABLE warehouse_stock (
+      id VARCHAR(50) PRIMARY KEY,
+      warehouse_id VARCHAR(50) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      qty DECIMAL(12,2) DEFAULT 0,
+      UNIQUE KEY uq_wh_item (warehouse_id, item_id),
+      FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB
+  `);
+
+  // Warehouse transfers
+  await createTableIfMissing('warehouse_transfers', `
+    CREATE TABLE warehouse_transfers (
+      id VARCHAR(50) PRIMARY KEY,
+      transfer_number VARCHAR(20),
+      from_warehouse_id VARCHAR(50),
+      to_warehouse_id VARCHAR(50),
+      transfer_date DATETIME,
+      status ENUM('draft','approved','completed','cancelled') DEFAULT 'draft',
+      items_json LONGTEXT,
+      notes TEXT,
+      created_by VARCHAR(100),
+      approved_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  // Branches: add new columns
+  await addColumnIfMissing('branches', 'warehouse_id', "VARCHAR(50)");
+  await addColumnIfMissing('branches', 'cost_center_id', "VARCHAR(50)");
+  await addColumnIfMissing('branches', 'manager', "VARCHAR(100)");
+  await addColumnIfMissing('branches', 'supply_mode', "ENUM('parent_company','warehouse','auto') DEFAULT 'parent_company'");
+
+  // Custody expenses: add cost_center
+  await addColumnIfMissing('custody_expenses', 'cost_center_id', "VARCHAR(50)");
+  await addColumnIfMissing('custody_expenses', 'cost_center_name', "VARCHAR(200)");
+  await addColumnIfMissing('custody_expenses', 'pre_approval_status', "ENUM('none','requested','approved','rejected') DEFAULT 'none'");
+
   // Extend shortage status ENUM for existing tables
   try { await db.query("ALTER TABLE shortage_requests MODIFY COLUMN status ENUM('pending','approved','rejected','converted','partially_received','fully_received','closed') DEFAULT 'pending'"); } catch(e) {}
   // Extend PO status for partial receive

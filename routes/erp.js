@@ -1242,4 +1242,180 @@ router.post('/vat/close-year', async (req, res) => {
   }
 });
 
+// ─── Cost Centers (مراكز التكلفة) ───
+
+router.get('/cost-centers', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM cost_centers ORDER BY code');
+    res.json(rows.map(c => ({ id: c.id, code: c.code, name: c.name, type: c.type, parentId: c.parent_id, isActive: c.is_active })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/cost-centers', async (req, res) => {
+  try {
+    const { id, code, name, type, parentId } = req.body;
+    if (!code || !name) return res.json({ success: false, error: 'الرمز والاسم مطلوبان' });
+    if (id) {
+      await db.query('UPDATE cost_centers SET code=?, name=?, type=?, parent_id=? WHERE id=?', [code, name, type||'branch', parentId||null, id]);
+      return res.json({ success: true, id });
+    }
+    const newId = 'CC-' + Date.now();
+    await db.query('INSERT INTO cost_centers (id, code, name, type, parent_id) VALUES (?,?,?,?,?)', [newId, code, name, type||'branch', parentId||null]);
+    res.json({ success: true, id: newId });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.delete('/cost-centers/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM cost_centers WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// ─── Warehouses (المستودعات المتعددة) ───
+
+router.get('/warehouses-list', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT w.*, b.name AS branch_name FROM warehouses w LEFT JOIN branches b ON w.branch_id = b.id ORDER BY w.code');
+    res.json(rows.map(w => ({
+      id: w.id, code: w.code, name: w.name, type: w.type, branchId: w.branch_id, branchName: w.branch_name||'',
+      location: w.location, manager: w.manager, isActive: w.is_active
+    })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/warehouses-list', async (req, res) => {
+  try {
+    const { id, code, name, type, branchId, location, manager } = req.body;
+    if (!code || !name) return res.json({ success: false, error: 'الرمز والاسم مطلوبان' });
+    if (id) {
+      await db.query('UPDATE warehouses SET code=?, name=?, type=?, branch_id=?, location=?, manager=? WHERE id=?',
+        [code, name, type||'branch', branchId||null, location||'', manager||'', id]);
+      return res.json({ success: true, id });
+    }
+    const newId = 'WH-' + Date.now();
+    await db.query('INSERT INTO warehouses (id, code, name, type, branch_id, location, manager) VALUES (?,?,?,?,?,?,?)',
+      [newId, code, name, type||'branch', branchId||null, location||'', manager||'']);
+    res.json({ success: true, id: newId });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.delete('/warehouses-list/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM warehouse_stock WHERE warehouse_id = ?', [req.params.id]);
+    await db.query('DELETE FROM warehouses WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// Warehouse stock
+router.get('/warehouse-stock-detail/:whId', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT ws.*, i.name, i.category, i.unit, i.cost FROM warehouse_stock ws
+       JOIN inv_items i ON ws.item_id = i.id WHERE ws.warehouse_id = ? ORDER BY i.name`, [req.params.whId]);
+    res.json(rows.map(r => ({ itemId: r.item_id, itemName: r.name, category: r.category, unit: r.unit, qty: Number(r.qty), cost: Number(r.cost) })));
+  } catch(e) { res.json([]); }
+});
+
+// Warehouse transfers
+router.get('/warehouse-transfers', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT t.*, wf.name AS from_name, wt.name AS to_name FROM warehouse_transfers t
+       LEFT JOIN warehouses wf ON t.from_warehouse_id = wf.id
+       LEFT JOIN warehouses wt ON t.to_warehouse_id = wt.id ORDER BY t.created_at DESC LIMIT 200`);
+    res.json(rows.map(t => ({
+      id: t.id, transferNumber: t.transfer_number, fromWarehouse: t.from_name||'', toWarehouse: t.to_name||'',
+      fromId: t.from_warehouse_id, toId: t.to_warehouse_id,
+      transferDate: t.transfer_date, status: t.status, items: JSON.parse(t.items_json||'[]'),
+      notes: t.notes, createdBy: t.created_by, approvedBy: t.approved_by
+    })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/warehouse-transfers', async (req, res) => {
+  try {
+    const { fromWarehouseId, toWarehouseId, items, notes, username } = req.body;
+    if (!fromWarehouseId || !toWarehouseId || !items || !items.length) return res.json({ success: false, error: 'بيانات ناقصة' });
+
+    const id = 'WT-' + Date.now();
+    const [last] = await db.query('SELECT transfer_number FROM warehouse_transfers ORDER BY created_at DESC LIMIT 1');
+    let num = 1;
+    if (last.length && last[0].transfer_number) { const m = last[0].transfer_number.match(/(\d+)/); if (m) num = parseInt(m[1]) + 1; }
+    const transferNumber = 'TR-' + String(num).padStart(5, '0');
+
+    await db.query(
+      'INSERT INTO warehouse_transfers (id, transfer_number, from_warehouse_id, to_warehouse_id, transfer_date, items_json, notes, created_by) VALUES (?,?,?,?,?,?,?,?)',
+      [id, transferNumber, fromWarehouseId, toWarehouseId, new Date(), JSON.stringify(items), notes||'', username||'']
+    );
+    res.json({ success: true, id, transferNumber });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.post('/warehouse-transfers/:id/approve', async (req, res) => {
+  try {
+    const { username } = req.body;
+    const [transfers] = await db.query('SELECT * FROM warehouse_transfers WHERE id = ?', [req.params.id]);
+    if (!transfers.length) return res.json({ success: false, error: 'التحويل غير موجود' });
+    const t = transfers[0];
+    if (t.status !== 'draft') return res.json({ success: false, error: 'التحويل ليس في حالة مسودة' });
+
+    const items = JSON.parse(t.items_json || '[]');
+
+    // Move stock between warehouses
+    for (const item of items) {
+      const qty = Number(item.qty) || 0;
+      if (qty <= 0) continue;
+      // Decrease from source
+      await db.query(
+        'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE qty = qty - ?',
+        ['WS-' + Date.now() + '-' + Math.random().toString(36).substr(2,4), t.from_warehouse_id, item.itemId, -qty, qty]
+      );
+      // Increase in destination
+      await db.query(
+        'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE qty = qty + ?',
+        ['WS-' + Date.now() + '-' + Math.random().toString(36).substr(2,4), t.to_warehouse_id, item.itemId, qty, qty]
+      );
+    }
+
+    await db.query('UPDATE warehouse_transfers SET status = "completed", approved_by = ? WHERE id = ?', [username||'', req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// ─── Branches (enhanced) ───
+
+router.get('/branches-full', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT b.*, w.name AS warehouse_name, cc.name AS cost_center_name
+       FROM branches b LEFT JOIN warehouses w ON b.warehouse_id = w.id
+       LEFT JOIN cost_centers cc ON b.cost_center_id = cc.id ORDER BY b.name`);
+    res.json(rows.map(b => ({
+      id: b.id, code: b.code, name: b.name, location: b.location, type: b.type, isActive: b.is_active !== false,
+      warehouseId: b.warehouse_id, warehouseName: b.warehouse_name||'', costCenterId: b.cost_center_id, costCenterName: b.cost_center_name||'',
+      manager: b.manager||'', supplyMode: b.supply_mode||'parent_company'
+    })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/branches-full', async (req, res) => {
+  try {
+    const { id, code, name, location, type, warehouseId, costCenterId, manager, supplyMode } = req.body;
+    if (!name) return res.json({ success: false, error: 'الاسم مطلوب' });
+    if (id) {
+      await db.query(
+        'UPDATE branches SET code=?, name=?, location=?, type=?, warehouse_id=?, cost_center_id=?, manager=?, supply_mode=? WHERE id=?',
+        [code||'', name, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company', id]);
+      return res.json({ success: true, id });
+    }
+    const newId = 'BR-' + Date.now();
+    await db.query(
+      'INSERT INTO branches (id, code, name, location, type, warehouse_id, cost_center_id, manager, supply_mode) VALUES (?,?,?,?,?,?,?,?,?)',
+      [newId, code||'', name, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company']);
+    res.json({ success: true, id: newId });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
 module.exports = router;

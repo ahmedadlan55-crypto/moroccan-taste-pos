@@ -169,54 +169,60 @@
     <div id="mobCartTotal" class="mobile-cart-total">0.00 SAR</div>
   </div>
 
-  <!-- Floating Shift Controls + Printer button -->
-  <div class="float-actions">
-    <button class="float-btn float-btn-success" onclick="shiftOpen()" title="فتح وردية" data-i18n-title="openShift" aria-label="فتح وردية" data-i18n-aria-label="openShift">
-      <i class="fas fa-play"></i>
-    </button>
-    <button class="float-btn float-btn-danger" onclick="shiftCloseStart()" title="إغلاق الوردية" data-i18n-title="closeShift" aria-label="إغلاق الوردية" data-i18n-aria-label="closeShift">
-      <i class="fas fa-stop"></i>
-    </button>
-    <button class="float-btn float-btn-info" onclick="openPrinterSettings()" title="الطابعة الحرارية" data-i18n-title="printer" aria-label="الطابعة الحرارية" data-i18n-aria-label="printer">
-      <i class="fas fa-print"></i>
-    </button>
-    <button class="float-btn float-btn-warn" onclick="openCashierStocktake()" title="جرد المخزون" aria-label="جرد المخزون">
-      <i class="fas fa-clipboard-check"></i>
-    </button>
-    <button class="float-btn" onclick="openShortageRequest()" title="طلب نواقص" aria-label="طلب نواقص" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff;box-shadow:0 4px 14px rgba(139,92,246,0.4);">
-      <i class="fas fa-exclamation-triangle"></i>
-    </button>
+  <!-- Floating Actions — swipe handle + collapsible buttons -->
+  <div class="float-actions" id="floatActions">
+    <div class="float-handle" id="floatHandle" onclick="toggleFloatActions()">
+      <i class="fas fa-chevron-left" id="floatHandleIcon"></i>
+    </div>
+    <div class="float-btns" id="floatBtns">
+      <button class="float-btn float-btn-success" onclick="shiftOpen()" title="فتح وردية"><i class="fas fa-play"></i></button>
+      <button class="float-btn float-btn-danger" onclick="shiftCloseStart()" title="إغلاق الوردية"><i class="fas fa-stop"></i></button>
+      <button class="float-btn float-btn-info" onclick="openPrinterSettings()" title="الطابعة"><i class="fas fa-print"></i></button>
+      <button class="float-btn float-btn-warn" onclick="openCashierStocktake()" title="جرد المخزون"><i class="fas fa-clipboard-check"></i></button>
+      <button class="float-btn float-btn-purple" onclick="openShortageRequest()" title="طلب نواقص"><i class="fas fa-exclamation-triangle"></i></button>
+    </div>
   </div>
 
-  <!-- Cashier Stocktake Modal — persistent cart, full-screen height -->
-  <!-- Shortage Request Modal -->
+  <!-- Shortage Request Modal — stocktake-style table -->
   <div id="modalShortage" class="glass-modal hidden">
-    <div class="glass-modal-content" style="max-width:600px;max-height:90dvh;display:flex;flex-direction:column;">
+    <div class="glass-modal-content" style="max-width:750px;height:95dvh;display:flex;flex-direction:column;">
       <div class="glass-modal-title">
         <span><i class="fas fa-exclamation-triangle" style="color:#8b5cf6;"></i> <span>طلب نواقص</span></span>
         <button class="glass-modal-close" onclick="closeGlassModal('#modalShortage')">&times;</button>
       </div>
-      <div class="glass-modal-body" style="flex:1;overflow-y:auto;">
-        <!-- Search + Add -->
-        <div style="display:flex;gap:8px;margin-bottom:12px;">
-          <input type="text" id="shrSearch" class="form-control" placeholder="ابحث عن مادة..." oninput="shrFilterItems(this.value)" style="flex:1;">
+      <div class="glass-modal-body" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;">
+        <!-- Search -->
+        <div style="position:relative;margin-bottom:10px;flex-shrink:0;">
+          <div style="position:relative;">
+            <i class="fas fa-search" style="position:absolute;top:12px;right:12px;color:#94a3b8;"></i>
+            <input type="text" id="shrSearch" class="form-control glass-input" style="padding-right:36px;" placeholder="ابحث عن مادة..." oninput="shrFilterItems(this.value)" onfocus="shrFilterItems(q('#shrSearch').value)">
+            <div id="shrSearchResults" style="position:absolute;top:100%;left:0;right:0;z-index:200;background:rgba(255,255,255,0.98);backdrop-filter:blur(12px);border:1.5px solid rgba(226,232,240,0.8);border-radius:0 0 14px 14px;max-height:220px;overflow-y:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,0.12);"></div>
+          </div>
         </div>
-        <div id="shrSearchResults" style="max-height:180px;overflow-y:auto;margin-bottom:12px;display:none;"></div>
-
-        <!-- Cart -->
-        <h4 style="font-size:14px;font-weight:800;color:#1e293b;margin-bottom:8px;"><i class="fas fa-list" style="color:#8b5cf6;margin-left:4px;"></i> المواد المطلوبة <span id="shrCartCount" style="background:#8b5cf6;color:#fff;padding:1px 8px;border-radius:10px;font-size:11px;">0</span></h4>
-        <div id="shrCart"></div>
-
-        <div style="margin-top:12px;">
-          <label style="font-size:13px;font-weight:700;color:#475569;">ملاحظات</label>
-          <input type="text" id="shrNotes" class="form-control" placeholder="اختياري..." style="margin-top:4px;">
+        <!-- Table -->
+        <div style="flex:1;overflow-y:auto;min-height:0;">
+          <table class="table" style="font-size:12px;">
+            <thead><tr>
+              <th>المادة</th>
+              <th style="text-align:center;width:60px;">المخزون</th>
+              <th style="text-align:center;width:55px;">الحد</th>
+              <th style="text-align:center;width:65px;">الكمية</th>
+              <th style="text-align:center;width:50px;">الوحدة</th>
+              <th style="text-align:center;width:50px;">النقص</th>
+              <th style="width:35px;"></th>
+            </tr></thead>
+            <tbody id="shrBody"><tr><td colspan="7" style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-search" style="font-size:20px;display:block;margin-bottom:6px;"></i>ابحث عن مادة لإضافتها</td></tr></tbody>
+          </table>
+        </div>
+        <!-- Notes -->
+        <div class="form-group" style="flex-shrink:0;margin-top:8px;">
+          <input type="text" id="shrNotes" class="form-control glass-input" placeholder="ملاحظات (اختياري)">
         </div>
       </div>
-      <div class="glass-modal-actions">
-        <button class="btn btn-light" onclick="closeGlassModal('#modalShortage')">إلغاء</button>
-        <button class="btn btn-primary" onclick="submitShortageRequest()" style="background:#8b5cf6;border-color:#8b5cf6;">
-          <i class="fas fa-paper-plane"></i> إرسال الطلب
-        </button>
+      <div class="glass-modal-actions" style="flex-shrink:0;">
+        <button class="btn btn-primary" style="flex:1;background:#8b5cf6;border-color:#8b5cf6;" onclick="submitShortageRequest()"><i class="fas fa-paper-plane"></i> إرسال الطلب</button>
+        <button class="btn btn-light" onclick="closeGlassModal('#modalShortage')">إغلاق</button>
+        <button class="btn btn-danger btn-sm" onclick="_shrCart=[];_shrRenderCart();" style="padding:8px 12px;"><i class="fas fa-trash"></i></button>
       </div>
     </div>
   </div>

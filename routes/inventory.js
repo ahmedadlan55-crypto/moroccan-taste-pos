@@ -510,10 +510,40 @@ router.post('/receive-approve/:id', async (req, res) => {
       totalVat += vatAmount * qty;
     }
 
+    // Record differences in PO notes
+    const originalItems = JSON.parse(purchase.items_json || '[]');
+    let diffNotes = '';
+    receivedItems.forEach(function(ri) {
+      const orig = originalItems.find(function(o) { return (o.id||o.itemId) === (ri.invItemId||ri.id); });
+      const ordered = orig ? (Number(orig.qty)||0) : 0;
+      const received = Number(ri.receivedQty) || 0;
+      const diff = received - ordered;
+      if (diff !== 0) {
+        diffNotes += (ri.invItemName||ri.name||'') + ' — Ordered ' + ordered + ' — Received ' + received + ' — Diff ' + (diff>0?'+':'') + diff + '\n';
+      }
+    });
+
+    // Check if partial or full receive
+    const allReceived = receivedItems.every(function(ri) {
+      const orig = originalItems.find(function(o) { return (o.id||o.itemId) === (ri.invItemId||ri.id); });
+      return (Number(ri.receivedQty)||0) >= (orig ? Number(orig.qty)||0 : 0);
+    });
+
     // Update purchase status
     await db.query('UPDATE purchases SET status = "received", receive_status = "approved", receive_approved_by = ? WHERE id = ?', [username || '', req.params.id]);
     if (purchase.po_id) {
-      await db.query('UPDATE purchase_orders SET status = "received" WHERE id = ?', [purchase.po_id]);
+      const poStatus = allReceived ? 'received' : 'partially_received';
+      await db.query('UPDATE purchase_orders SET status = ? WHERE id = ?', [poStatus, purchase.po_id]);
+      // Save differences in PO notes
+      if (diffNotes) {
+        await db.query('UPDATE purchase_orders SET notes = CONCAT(COALESCE(notes,""), ?) WHERE id = ?', ['\n--- فروقات الاستلام ---\n' + diffNotes, purchase.po_id]);
+      }
+    }
+
+    // Update linked shortage request status
+    if (purchase.po_id) {
+      const shrStatus = allReceived ? 'fully_received' : 'partially_received';
+      await db.query("UPDATE shortage_requests SET status = ? WHERE po_id = ?", [shrStatus, purchase.po_id]);
     }
 
     // ─── GL Journal Entry ───

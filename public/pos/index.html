@@ -202,14 +202,22 @@
     </div>
   </div>
 
-  <!-- Shortage Request Modal — stocktake-style table -->
+  <!-- Shortage Request Modal — 2 tabs: history + new -->
   <div id="modalShortage" class="glass-modal hidden">
     <div class="glass-modal-content" style="max-width:750px;height:95dvh;display:flex;flex-direction:column;">
       <div class="glass-modal-title">
         <span><i class="fas fa-exclamation-triangle" style="color:#8b5cf6;"></i> <span data-i18n="shortageRequest">طلب نواقص</span></span>
         <button class="glass-modal-close" onclick="closeGlassModal('#modalShortage')">&times;</button>
       </div>
-      <div class="glass-modal-body" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;">
+      <!-- Tabs -->
+      <div style="display:flex;gap:4px;padding:0 14px;flex-shrink:0;">
+        <button class="btn btn-sm" id="shrTabNew" onclick="shrSwitchTab('new')" style="flex:1;border-radius:10px 10px 0 0;font-weight:800;background:#8b5cf6;color:#fff;"><i class="fas fa-plus"></i> <span data-i18n="newRequest">طلب جديد</span></button>
+        <button class="btn btn-sm btn-light" id="shrTabHistory" onclick="shrSwitchTab('history')" style="flex:1;border-radius:10px 10px 0 0;font-weight:700;"><i class="fas fa-history"></i> <span data-i18n="myRequests">طلباتي</span></button>
+      </div>
+      <!-- History Tab -->
+      <div id="shrHistoryPanel" style="flex:1;overflow-y:auto;display:none;padding:10px 14px;"></div>
+      <!-- New Request Tab -->
+      <div id="shrNewPanel" class="glass-modal-body" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;">
         <!-- Search -->
         <div style="position:relative;margin-bottom:10px;flex-shrink:0;">
           <div style="position:relative;">
@@ -238,10 +246,13 @@
           <input type="text" id="shrNotes" class="form-control glass-input" placeholder="ملاحظات (اختياري)" data-i18n-placeholder="notesOptional">
         </div>
       </div>
-      <div class="glass-modal-actions" style="flex-shrink:0;">
+      <div id="shrNewActions" class="glass-modal-actions" style="flex-shrink:0;">
         <button class="btn btn-primary" style="flex:1;background:#8b5cf6;border-color:#8b5cf6;" onclick="submitShortageRequest()"><i class="fas fa-paper-plane"></i> <span data-i18n="submitRequest">إرسال الطلب</span></button>
         <button class="btn btn-light" onclick="closeGlassModal('#modalShortage')" data-i18n="close">إغلاق</button>
         <button class="btn btn-danger btn-sm" onclick="_shrCart=[];_shrRenderCart();" style="padding:8px 12px;"><i class="fas fa-trash"></i></button>
+      </div>
+      <div id="shrHistoryActions" class="glass-modal-actions" style="flex-shrink:0;display:none;">
+        <button class="btn btn-light" style="flex:1;" onclick="closeGlassModal('#modalShortage')" data-i18n="close">إغلاق</button>
       </div>
     </div>
   </div>

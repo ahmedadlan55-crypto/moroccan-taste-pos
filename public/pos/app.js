@@ -1750,27 +1750,82 @@ setTimeout(function() {
 var _shrCart = [];
 var _shrAllItems = [];
 
+// Tab switching
+window.shrSwitchTab = function(tab) {
+  var newPanel = q('#shrNewPanel'), histPanel = q('#shrHistoryPanel');
+  var newAct = q('#shrNewActions'), histAct = q('#shrHistoryActions');
+  var tabNew = q('#shrTabNew'), tabHist = q('#shrTabHistory');
+  if (tab === 'history') {
+    if (newPanel) newPanel.style.display = 'none';
+    if (histPanel) histPanel.style.display = 'block';
+    if (newAct) newAct.style.display = 'none';
+    if (histAct) histAct.style.display = 'flex';
+    if (tabNew) { tabNew.style.background = '#e2e8f0'; tabNew.style.color = '#475569'; }
+    if (tabHist) { tabHist.style.background = '#8b5cf6'; tabHist.style.color = '#fff'; }
+    _shrLoadHistory();
+  } else {
+    if (newPanel) newPanel.style.display = 'flex';
+    if (histPanel) histPanel.style.display = 'none';
+    if (newAct) newAct.style.display = 'flex';
+    if (histAct) histAct.style.display = 'none';
+    if (tabNew) { tabNew.style.background = '#8b5cf6'; tabNew.style.color = '#fff'; }
+    if (tabHist) { tabHist.style.background = '#e2e8f0'; tabHist.style.color = '#475569'; }
+  }
+};
+
+// Load shortage history
+function _shrLoadHistory() {
+  var panel = q('#shrHistoryPanel');
+  if (!panel) return;
+  panel.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i></div>';
+  api.withSuccessHandler(function(list) {
+    var isEn = state.lang === 'en';
+    var statusLabels = isEn
+      ? {pending:'Pending',approved:'Approved',converted:'PO Created',rejected:'Rejected',partially_received:'Partial',fully_received:'Received',closed:'Closed'}
+      : {pending:'بانتظار',approved:'معتمد',converted:'تم التحويل لـ PO',rejected:'مرفوض',partially_received:'استلام جزئي',fully_received:'تم الاستلام',closed:'مغلق'};
+    var statusColors = {pending:'#f59e0b',approved:'#3b82f6',converted:'#8b5cf6',rejected:'#ef4444',partially_received:'#d97706',fully_received:'#16a34a',closed:'#64748b'};
+
+    if (!list || !list.length) {
+      panel.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-inbox" style="font-size:28px;display:block;margin-bottom:8px;"></i>' + (isEn?'No requests yet':'لا توجد طلبات بعد') + '</div>';
+      return;
+    }
+
+    var myRequests = list.filter(function(r) { return r.username === state.user; });
+    if (!myRequests.length) {
+      panel.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-inbox" style="font-size:28px;display:block;margin-bottom:8px;"></i>' + (isEn?'No requests from you':'لا توجد طلبات منك') + '</div>';
+      return;
+    }
+
+    var html = myRequests.map(function(r) {
+      var dt = '';
+      try { dt = new Date(r.requestDate).toLocaleDateString('en-GB'); } catch(e) {}
+      var sColor = statusColors[r.status] || '#64748b';
+      var sLabel = statusLabels[r.status] || r.status;
+      var canReceive = r.status === 'converted';
+
+      return '<div style="border:1.5px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:8px;background:#fff;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+          '<code style="font-weight:800;color:#8b5cf6;">' + (r.requestNumber||'') + '</code>' +
+          '<span style="font-size:11px;font-weight:800;padding:3px 10px;border-radius:8px;background:' + sColor + '18;color:' + sColor + ';">' + sLabel + '</span>' +
+        '</div>' +
+        '<div style="display:flex;gap:12px;font-size:12px;color:#64748b;">' +
+          '<span><i class="fas fa-calendar-day" style="margin-left:3px;"></i>' + dt + '</span>' +
+          '<span><i class="fas fa-boxes" style="margin-left:3px;"></i>' + (r.totalItems||0) + ' ' + (isEn?'items':'مادة') + '</span>' +
+        '</div>' +
+        (canReceive ? '<button class="btn btn-success btn-sm" style="margin-top:8px;border-radius:8px;width:100%;" onclick="closeGlassModal(\'#modalShortage\');openReceiveModal(\'' + r.id + '\')"><i class="fas fa-box-open"></i> ' + (isEn?'Receive Materials':t('receiveMaterials')) + '</button>' : '') +
+      '</div>';
+    }).join('');
+    panel.innerHTML = html;
+  }).getShortageRequests();
+}
+
 window.openShortageRequest = function() {
   _shrCart = [];
   if (q('#shrSearch')) q('#shrSearch').value = '';
   if (q('#shrNotes')) q('#shrNotes').value = '';
   if (q('#shrSearchResults')) q('#shrSearchResults').style.display = 'none';
   _shrRenderCart();
-
-  // Check if there are converted requests waiting for receive
-  api.withSuccessHandler(function(requests) {
-    var converted = (requests||[]).filter(function(r) { return r.status === 'converted'; });
-    if (converted.length) {
-      var banner = q('#shrBody');
-      if (banner) {
-        var rows = converted.map(function(r) {
-          return '<tr style="background:#f0fdf4;"><td colspan="5" style="font-weight:700;color:#16a34a;"><i class="fas fa-truck-loading" style="margin-left:4px;"></i>' + (r.requestNumber||'') + ' — ' + t('receiveMaterials') + '</td>' +
-            '<td colspan="2"><button class="btn btn-success btn-sm" onclick="closeGlassModal(\'#modalShortage\');openReceiveModal(\'' + r.id + '\')"><i class="fas fa-box-open"></i> استلام</button></td></tr>';
-        }).join('');
-        banner.insertAdjacentHTML('afterbegin', rows);
-      }
-    }
-  }).getShortageRequests();
+  shrSwitchTab('new'); // default to new request tab
 
   loader(true);
   api.withSuccessHandler(function(items) {
@@ -1793,11 +1848,11 @@ function _closeShrDropdown(e) {
 window.shrFilterItems = function(query) {
   var box = q('#shrSearchResults');
   var ql = (query||'').toLowerCase();
-  if (!ql) { box.style.display = 'none'; return; }
   var cartIds = _shrCart.map(function(c) { return c.id; });
-  var matches = _shrAllItems.filter(function(i) {
-    return cartIds.indexOf(i.id) === -1 && ((i.name||'').toLowerCase().indexOf(ql) >= 0 || (i.category||'').toLowerCase().indexOf(ql) >= 0);
-  }).slice(0, 10);
+  var available = _shrAllItems.filter(function(i) { return cartIds.indexOf(i.id) === -1; });
+  var matches = ql
+    ? available.filter(function(i) { return (i.name||'').toLowerCase().indexOf(ql) >= 0 || (i.category||'').toLowerCase().indexOf(ql) >= 0 || (i.id||'').toLowerCase().indexOf(ql) >= 0; })
+    : available;
 
   if (!matches.length) { box.innerHTML = '<div style="padding:12px;color:#94a3b8;text-align:center;">' + t('stNoResults') + '</div>'; box.style.display = 'block'; return; }
 

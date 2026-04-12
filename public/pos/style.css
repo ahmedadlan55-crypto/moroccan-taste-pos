@@ -659,23 +659,25 @@ body.ar .pwa-install-btn {
 .float-actions {
   position: fixed;
   bottom: 30px;
-  inset-inline-end: 0;
+  right: 0;
   display: flex;
   align-items: flex-end;
   z-index: 100;
   transition: transform 0.3s cubic-bezier(.4,0,.2,1);
 }
+[dir="rtl"] .float-actions { right: auto; left: 0; }
 .float-actions.collapsed .float-btns { transform: translateX(-100%); opacity: 0; pointer-events: none; }
 [dir="rtl"] .float-actions.collapsed .float-btns { transform: translateX(100%); }
 .float-handle {
-  width: 28px; height: 48px; border-radius: 14px 0 0 14px;
-  background: rgba(30,41,59,0.7); backdrop-filter: blur(8px);
+  width: 22px; height: 52px; border-radius: 12px 0 0 12px;
+  background: rgba(30,41,59,0.75); backdrop-filter: blur(8px);
   display: flex; align-items: center; justify-content: center;
-  color: #fff; font-size: 12px; cursor: pointer; z-index: 2;
+  color: #fff; font-size: 11px; cursor: pointer; z-index: 2;
   transition: background 0.2s;
   -webkit-tap-highlight-color: transparent;
+  margin-right: 0; /* flush to edge */
 }
-[dir="rtl"] .float-handle { border-radius: 0 14px 14px 0; }
+[dir="rtl"] .float-handle { border-radius: 0 12px 12px 0; margin-right: auto; margin-left: 0; }
 .float-handle:active { background: rgba(30,41,59,0.9); }
 .float-actions.collapsed .float-handle i { transform: rotate(180deg); }
 .float-btns {

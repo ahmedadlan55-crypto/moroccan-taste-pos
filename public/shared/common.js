@@ -164,7 +164,7 @@ window.dict = {
     stNoResults: 'لا توجد نتائج',
 
     // Shortage request
-    shortageRequest: 'طلب نواقص', receiveMaterials: 'استلام مواد',
+    shortageRequest: 'طلب نواقص', receiveMaterials: 'استلام مواد', newRequest: 'طلب جديد', myRequests: 'طلباتي',
     submitReceive: 'إرسال طلب الاستلام', submitRequest: 'إرسال الطلب',
     searchItem: 'ابحث عن مادة...', searchToAdd: 'ابحث عن مادة لإضافتها',
     notesOptional: 'ملاحظات (اختياري)', deficit: 'النقص', minStock: 'الحد',
@@ -340,7 +340,7 @@ window.dict = {
     stNoResults: 'No results',
 
     // Shortage request
-    shortageRequest: 'Shortage Request', receiveMaterials: 'Receive Materials',
+    shortageRequest: 'Shortage Request', receiveMaterials: 'Receive Materials', newRequest: 'New Request', myRequests: 'My Requests',
     submitReceive: 'Submit Receive Request', submitRequest: 'Submit Request',
     searchItem: 'Search for item...', searchToAdd: 'Search for an item to add',
     notesOptional: 'Notes (optional)', deficit: 'Deficit', minStock: 'Min',

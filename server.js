@@ -221,7 +221,7 @@ async function runMigrations() {
       request_date DATETIME,
       username VARCHAR(100),
       notes TEXT,
-      status ENUM('pending','approved','rejected','converted') DEFAULT 'pending',
+      status ENUM('pending','approved','rejected','converted','partially_received','fully_received','closed') DEFAULT 'pending',
       supply_mode ENUM('parent_company','warehouse') DEFAULT 'parent_company',
       total_items INT DEFAULT 0,
       approved_by VARCHAR(100),
@@ -244,6 +244,11 @@ async function runMigrations() {
       FOREIGN KEY (request_id) REFERENCES shortage_requests(id) ON DELETE CASCADE
     ) ENGINE=InnoDB
   `);
+
+  // Extend shortage status ENUM for existing tables
+  try { await db.query("ALTER TABLE shortage_requests MODIFY COLUMN status ENUM('pending','approved','rejected','converted','partially_received','fully_received','closed') DEFAULT 'pending'"); } catch(e) {}
+  // Extend PO status for partial receive
+  try { await db.query("ALTER TABLE purchase_orders MODIFY COLUMN status ENUM('draft','approved','received','cancelled','partially_received') DEFAULT 'draft'"); } catch(e) {}
 
   // Supply source setting
   try {

@@ -279,9 +279,11 @@ function erpDeleteSupplier(id, name) {
 }
 
 // ═══════════════════════════════════════
-// GL ACCOUNTS (دليل الحسابات)
+// GL ACCOUNTS — Tree View (دليل الحسابات)
 // ═══════════════════════════════════════
 let _erpAccounts = [];
+var _coaSelectedId = null;
+
 function erpLoadAccounts() {
   window._apiBridge.withSuccessHandler(function() {
     erpLoadAccountsList_();
@@ -294,55 +296,243 @@ function erpLoadAccountsList_() {
       type: a.type, parentId: a.parentId, level: Number(a.level)||1,
       isActive: a.isActive, balance: Number(a.balance)||0
     }));
-    const tbody = document.getElementById('erpAccountsBody');
-    if (!_erpAccounts.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد حسابات</td></tr>'; return; }
-
-    const typeLabels = {asset:'أصول',liability:'التزامات',equity:'حقوق ملكية',revenue:'إيرادات',expense:'مصروفات'};
-    const typeColors = {asset:'#3b82f6',liability:'#ef4444',equity:'#8b5cf6',revenue:'#16a34a',expense:'#f59e0b'};
-
-    // Build tree-ordered list
-    const byParent = {};
-    _erpAccounts.forEach(a => {
-      const pid = a.parentId || '__root__';
-      if (!byParent[pid]) byParent[pid] = [];
-      byParent[pid].push(a);
-    });
-    const ordered = [];
-    function walk(pid) {
-      const children = byParent[pid] || [];
-      children.sort((a,b) => a.code.localeCompare(b.code));
-      children.forEach(a => { ordered.push(a); walk(a.id); });
-    }
-    walk('__root__');
-    // Add any orphans not in tree
-    _erpAccounts.forEach(a => { if (!ordered.includes(a)) ordered.push(a); });
-
-    tbody.innerHTML = ordered.map(a => {
-      const lvl = a.level;
-      const indent = lvl > 1 ? (lvl - 1) * 22 : 0;
-      const isParent = !!byParent[a.id];
-      const weight = lvl <= 2 ? '900' : lvl === 3 ? '700' : '400';
-      const bgShade = lvl === 1 ? 'background:rgba(59,130,246,0.04);' : '';
-      const treeIcon = isParent
-        ? '<i class="fas fa-folder-open" style="color:' + (typeColors[a.type]||'#64748b') + ';margin-left:6px;font-size:12px;"></i>'
-        : '<i class="fas fa-file-alt" style="color:#94a3b8;margin-left:6px;font-size:11px;"></i>';
-      const bal = a.balance !== 0 ? '<span style="color:' + (a.balance >= 0 ? '#16a34a' : '#ef4444') + ';font-weight:700;">' + a.balance.toFixed(2) + '</span>' : '<span style="color:#cbd5e1;">0.00</span>';
-
-      return '<tr style="' + bgShade + '">' +
-        '<td><code style="font-weight:' + weight + ';font-size:' + (lvl<=2?'14px':'12px') + ';">' + a.code + '</code></td>' +
-        '<td style="padding-right:' + indent + 'px;font-weight:' + weight + ';font-size:' + (lvl<=2?'14px':'13px') + ';">' + treeIcon + (a.nameAr||'') + '</td>' +
-        '<td style="font-size:12px;color:#64748b;">' + (a.nameEn||'') + '</td>' +
-        '<td><span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;background:' + (typeColors[a.type]||'#e2e8f0') + '20;color:' + (typeColors[a.type]||'#64748b') + ';">' + (typeLabels[a.type]||a.type) + '</span></td>' +
-        '<td style="text-align:center;font-size:12px;">' + lvl + '</td>' +
-        '<td style="text-align:left;">' + bal + '</td>' +
-        '<td style="white-space:nowrap;">' +
-          '<button class="btn-icon" onclick="erpEditAccount(\'' + a.id + '\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
-          '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteAccount(\'' + a.id + '\',\'' + a.code + '\',\'' + (a.nameAr||'').replace(/'/g,'') + '\')" title="حذف"><i class="fas fa-trash"></i></button> ' +
-          (isParent ? '' : '<button class="btn-icon" style="color:#16a34a;" onclick="erpAddChildAccount(\'' + a.id + '\',\'' + a.code + '\')" title="إضافة فرعي"><i class="fas fa-plus-circle"></i></button>') +
-        '</td></tr>';
-    }).join('');
+    _coaBuildTree();
+    // Auto-select previously selected or show welcome
+    if (_coaSelectedId) coaSelectNode(_coaSelectedId);
   }).getGLAccounts();
 }
+
+// ─── Build children map ───
+function _coaChildrenOf(parentId) {
+  return _erpAccounts.filter(a => (a.parentId||null) === (parentId||null)).sort((a,b) => a.code.localeCompare(b.code));
+}
+function _coaIsGroup(id) { return _erpAccounts.some(a => a.parentId === id); }
+
+// ─── Build Tree Sidebar ───
+function _coaBuildTree() {
+  var container = document.getElementById('coaTreeBody');
+  if (!container) return;
+  var roots = _coaChildrenOf(null);
+  container.innerHTML = roots.map(a => _coaRenderNode(a, true)).join('');
+}
+
+function _coaRenderNode(acc, open) {
+  var children = _coaChildrenOf(acc.id);
+  var isGroup = children.length > 0;
+  var indent = ((acc.level||1) - 1) * 14;
+  var toggle = isGroup ? '<span class="coa-node-toggle"><i class="fas fa-chevron-down"></i></span>' : '<span class="coa-node-toggle"></span>';
+  var icon = isGroup ? '<i class="fas fa-folder coa-node-icon folder"></i>' : '<i class="fas fa-file-alt coa-node-icon file"></i>';
+  var activeClass = _coaSelectedId === acc.id ? ' active' : '';
+
+  var html = '<div class="coa-node" data-id="' + acc.id + '">';
+  html += '<div class="coa-node-row' + activeClass + '" style="padding-right:' + (10+indent) + 'px;" onclick="coaSelectNode(\'' + acc.id + '\')">';
+  html += toggle + icon;
+  html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
+  html += '</div>';
+  if (isGroup) {
+    html += '<div class="coa-node-children' + (open ? ' open' : '') + '">';
+    html += children.map(c => _coaRenderNode(c, false)).join('');
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+// ─── Tree: Toggle expand/collapse ───
+document.addEventListener('click', function(e) {
+  var toggle = e.target.closest('.coa-node-toggle');
+  if (toggle && toggle.querySelector('i')) {
+    e.stopPropagation();
+    var node = toggle.closest('.coa-node');
+    var children = node.querySelector('.coa-node-children');
+    if (children) {
+      children.classList.toggle('open');
+      var icon = toggle.querySelector('i');
+      icon.className = children.classList.contains('open') ? 'fas fa-chevron-down' : 'fas fa-chevron-left';
+    }
+  }
+});
+
+// ─── Tree: Select node ───
+window.coaSelectNode = function(id) {
+  _coaSelectedId = id;
+  // Highlight in tree
+  document.querySelectorAll('.coa-node-row').forEach(r => r.classList.remove('active'));
+  var row = document.querySelector('.coa-node[data-id="' + id + '"] > .coa-node-row');
+  if (row) row.classList.add('active');
+  // Expand parent chain
+  var acc = _erpAccounts.find(a => a.id === id);
+  if (acc) {
+    var parent = acc;
+    while (parent && parent.parentId) {
+      var parentNode = document.querySelector('.coa-node[data-id="' + parent.parentId + '"] > .coa-node-children');
+      if (parentNode) parentNode.classList.add('open');
+      parent = _erpAccounts.find(a => a.id === parent.parentId);
+    }
+  }
+
+  var isGroup = _coaIsGroup(id);
+  var main = document.getElementById('coaMainContent');
+  if (isGroup) {
+    _coaShowGroup(id, main);
+  } else {
+    _coaShowAccount(id, main);
+  }
+};
+
+// ─── Show Group (children as cards) ───
+function _coaShowGroup(id, container) {
+  var acc = _erpAccounts.find(a => a.id === id);
+  if (!acc) return;
+  var children = _coaChildrenOf(id);
+  var typeNature = {asset:'debit',expense:'debit',liability:'credit',equity:'credit',revenue:'credit'};
+  var natureLabels = {debit:'مدين',credit:'دائن'};
+  var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+
+  var html = '<div class="coa-group-header">';
+  html += '<div class="coa-group-title"><i class="fas fa-folder-open"></i> ' + (acc.nameAr||'') + ' <span class="coa-group-code">#' + acc.code + '</span></div>';
+  html += '<div style="display:flex;gap:6px;">';
+  html += '<button class="btn btn-sm btn-primary" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')" style="border-radius:10px;"><i class="fas fa-plus"></i> إضافة حساب</button>';
+  html += '<button class="btn btn-sm btn-light" onclick="erpEditAccount(\'' + acc.id + '\')" style="border-radius:10px;"><i class="fas fa-edit"></i></button>';
+  html += '</div></div>';
+
+  if (!children.length) {
+    html += '<div class="coa-empty"><i class="fas fa-inbox"></i><p>هذا الحساب فارغ</p></div>';
+    html += '<button class="coa-add-btn" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')"><i class="fas fa-plus-circle"></i> أضف حساب</button>';
+  } else {
+    html += '<div class="coa-cards">';
+    children.forEach(function(c) {
+      var isChild = _coaIsGroup(c.id);
+      var nature = typeNature[c.type] || 'debit';
+      html += '<div class="coa-card" onclick="coaSelectNode(\'' + c.id + '\')">';
+      html += '<i class="fas ' + (isChild?'fa-folder':'fa-file-alt') + ' coa-card-icon' + (isChild?'':' leaf') + '"></i>';
+      html += '<div class="coa-card-body">';
+      html += '<div class="coa-card-name">' + (c.nameAr||'') + '</div>';
+      html += '<div class="coa-card-sub"><span class="coa-card-code">#' + c.code + '</span>';
+      html += '<span class="coa-card-nature ' + nature + '">' + (natureLabels[nature]||'') + '</span></div>';
+      html += '</div>';
+      if (c.balance) html += '<div class="coa-card-bal">' + fmt(c.balance) + '</div>';
+      html += '<span class="coa-card-menu" onclick="event.stopPropagation();coaCardMenu(\'' + c.id + '\',this)" title="خيارات">&#8943;</span>';
+      html += '</div>';
+    });
+    html += '</div>';
+    html += '<button class="coa-add-btn" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')"><i class="fas fa-plus-circle"></i> أضف حساب</button>';
+  }
+  container.innerHTML = html;
+}
+
+// ─── Show Account Detail (transactions) ───
+function _coaShowAccount(id, container) {
+  var acc = _erpAccounts.find(a => a.id === id);
+  if (!acc) return;
+  var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var balColor = acc.balance >= 0 ? '#16a34a' : '#ef4444';
+
+  var html = '<div class="coa-acc-header">';
+  html += '<div><div class="coa-acc-name"><i class="fas fa-file-alt" style="color:#3b82f6;margin-left:8px;"></i>' + (acc.nameAr||'') + '</div>';
+  html += '<span class="coa-acc-code-badge">#' + acc.code + '</span></div>';
+  html += '<div class="coa-acc-bal-box"><div class="coa-acc-bal-label">الرصيد</div><div class="coa-acc-bal-val" style="color:' + balColor + ';">' + fmt(acc.balance) + '</div></div>';
+  html += '</div>';
+
+  // Action buttons
+  html += '<div style="display:flex;gap:6px;margin-bottom:16px;">';
+  html += '<button class="btn btn-sm btn-light" onclick="erpEditAccount(\'' + acc.id + '\')" style="border-radius:10px;"><i class="fas fa-edit"></i> تعديل</button>';
+  html += '<button class="btn btn-sm btn-light" style="border-radius:10px;color:#ef4444;" onclick="erpDeleteAccount(\'' + acc.id + '\',\'' + acc.code + '\',\'' + (acc.nameAr||'').replace(/'/g,'') + '\')"><i class="fas fa-trash"></i> حذف</button>';
+  html += '<button class="coa-add-btn" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')"><i class="fas fa-plus-circle"></i> إضافة فرعي</button>';
+  html += '</div>';
+
+  // Transactions table
+  html += '<h4 style="font-size:15px;font-weight:800;color:#1e293b;margin-bottom:10px;"><i class="fas fa-list-alt" style="color:#3b82f6;margin-left:6px;"></i> حركات الحساب</h4>';
+  html += '<div id="coaTransLoading" style="text-align:center;padding:20px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+  html += '<div id="coaTransTable"></div>';
+  container.innerHTML = html;
+
+  // Load transactions for this account
+  _coaLoadTransactions(id);
+}
+
+function _coaLoadTransactions(accountId) {
+  // Fetch all posted journals that have entries for this account
+  window._apiBridge.withSuccessHandler(function(journals) {
+    var rows = [];
+    var runningBal = 0;
+    (journals||[]).forEach(function(j) {
+      if (j.status !== 'posted') return;
+      (j.entries||[]).forEach(function(e) {
+        if (e.accountId !== accountId) return;
+        var d = Number(e.debit)||0, c = Number(e.credit)||0;
+        runningBal += (d - c);
+        rows.push({
+          date: j.journalDate, journalId: j.id, journalNumber: j.journalNumber,
+          description: j.description || e.description || '',
+          debit: d, credit: c, balance: runningBal
+        });
+      });
+    });
+
+    var loadingEl = document.getElementById('coaTransLoading');
+    if (loadingEl) loadingEl.style.display = 'none';
+    var tableEl = document.getElementById('coaTransTable');
+    if (!tableEl) return;
+    var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+
+    if (!rows.length) {
+      tableEl.innerHTML = '<div class="coa-empty"><i class="fas fa-inbox"></i><p>لا توجد حركات لهذا الحساب</p></div>';
+      return;
+    }
+
+    var html = '<div style="overflow-x:auto;border-radius:12px;border:1px solid #e2e8f0;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
+    html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 12px;">التاريخ</th><th>القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد بعد</th></tr></thead><tbody>';
+    rows.forEach(function(r) {
+      var dt = '';
+      try { dt = new Date(r.date).toLocaleDateString('en-GB'); } catch(e) {}
+      var balColor = r.balance >= 0 ? '#16a34a' : '#ef4444';
+      html += '<tr style="cursor:pointer;border-bottom:1px solid #f1f5f9;" onclick="erpViewJournal(\'' + r.journalId + '\')">';
+      html += '<td style="padding:8px 12px;">' + dt + '</td>';
+      html += '<td><code style="color:#3b82f6;font-weight:700;">' + (r.journalNumber||'') + '</code></td>';
+      html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + (r.description||'') + '</td>';
+      html += '<td style="font-weight:700;color:#16a34a;">' + (r.debit ? fmt(r.debit) : '') + '</td>';
+      html += '<td style="font-weight:700;color:#ef4444;">' + (r.credit ? fmt(r.credit) : '') + '</td>';
+      html += '<td style="font-weight:800;color:' + balColor + ';">' + fmt(r.balance) + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    tableEl.innerHTML = html;
+  }).getGLJournals({});
+}
+
+// ─── Card context menu ───
+window.coaCardMenu = function(id, el) {
+  var acc = _erpAccounts.find(a => a.id === id);
+  if (!acc) return;
+  // Simple: edit or delete
+  var choice = confirm('تعديل حساب "' + (acc.nameAr||'') + '"?\n\nاضغط إلغاء للحذف.');
+  if (choice) { erpEditAccount(id); }
+  else {
+    if (confirm('حذف "' + acc.code + ' — ' + (acc.nameAr||'') + '"؟')) erpDeleteAccount(id, acc.code, acc.nameAr||'');
+  }
+};
+
+// ─── Tree search filter ───
+window.coaFilterTree = function(query) {
+  var q = (query||'').toLowerCase();
+  document.querySelectorAll('.coa-node').forEach(function(node) {
+    var name = (node.querySelector('.coa-node-name')||{}).textContent || '';
+    if (!q || name.toLowerCase().indexOf(q) >= 0) {
+      node.style.display = '';
+      // Also expand parents
+      var parent = node.parentElement;
+      while (parent && parent.classList) {
+        if (parent.classList.contains('coa-node-children')) parent.classList.add('open');
+        parent = parent.parentElement;
+      }
+    } else {
+      // Only hide if no matching children
+      var hasMatch = node.querySelector('.coa-node-name') && Array.from(node.querySelectorAll('.coa-node-name')).some(function(n) { return n.textContent.toLowerCase().indexOf(q) >= 0; });
+      node.style.display = hasMatch ? '' : 'none';
+    }
+  });
+};
 
 function erpOpenAccountModal(data) {
   const d = data || {};
@@ -456,8 +646,11 @@ function erpDeleteAccount(id, code, name) {
   loader(true);
   window._apiBridge.withSuccessHandler(function(res) {
     loader(false);
-    if (res.success) { showToast('تم حذف الحساب'); erpLoadAccounts(); }
-    else showToast(res.error, true);
+    if (res.success) {
+      showToast('تم حذف الحساب');
+      if (_coaSelectedId === id) _coaSelectedId = null;
+      erpLoadAccounts();
+    } else showToast(res.error, true);
   }).deleteGLAccount(id);
 }
 

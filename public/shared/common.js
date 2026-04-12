@@ -163,6 +163,13 @@ window.dict = {
     stEmptyHint: 'ابحث عن مادة واضفها للبدء',
     stNoResults: 'لا توجد نتائج',
 
+    // Shortage request
+    shortageRequest: 'طلب نواقص', receiveMaterials: 'استلام مواد',
+    submitReceive: 'إرسال طلب الاستلام', submitRequest: 'إرسال الطلب',
+    searchItem: 'ابحث عن مادة...', searchToAdd: 'ابحث عن مادة لإضافتها',
+    notesOptional: 'ملاحظات (اختياري)', deficit: 'النقص', minStock: 'الحد',
+    stock: 'المخزون', item: 'المادة', qty: 'الكمية', unit: 'الوحدة',
+
     // Language toggle toast
     switchedAr: 'تم التحويل للعربية',
     switchedEn: 'Switched to English',
@@ -331,6 +338,13 @@ window.dict = {
     stAddFirst: 'Add items to the stocktake first', stEnterActual: 'Enter the actual count for at least one item',
     stEmptyHint: 'Search for an item and add it to start',
     stNoResults: 'No results',
+
+    // Shortage request
+    shortageRequest: 'Shortage Request', receiveMaterials: 'Receive Materials',
+    submitReceive: 'Submit Receive Request', submitRequest: 'Submit Request',
+    searchItem: 'Search for item...', searchToAdd: 'Search for an item to add',
+    notesOptional: 'Notes (optional)', deficit: 'Deficit', minStock: 'Min',
+    stock: 'Stock', item: 'Item', qty: 'Qty', unit: 'Unit',
 
     // Language toggle toast
     switchedAr: 'Switched to Arabic',

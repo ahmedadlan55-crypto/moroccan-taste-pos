@@ -250,6 +250,12 @@ async function runMigrations() {
     await db.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('supply_source_mode','parent_company')");
   } catch(e) {}
 
+  // Purchase receive workflow columns
+  await addColumnIfMissing('purchases', 'received_items_json', "LONGTEXT");
+  await addColumnIfMissing('purchases', 'receive_status', "ENUM('none','pending','approved') DEFAULT 'none'");
+  await addColumnIfMissing('purchases', 'received_by', "VARCHAR(100) DEFAULT ''");
+  await addColumnIfMissing('purchases', 'receive_approved_by', "VARCHAR(100) DEFAULT ''");
+
   // Security: account lockout columns
   await addColumnIfMissing('users', 'failed_attempts', "INT DEFAULT 0");
   await addColumnIfMissing('users', 'locked_until', "DATETIME DEFAULT NULL");

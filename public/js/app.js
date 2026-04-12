@@ -3000,9 +3000,30 @@ function deleteRecipeItem(menuId, menuName, invItemId) {
 // 6.d. Transfers and Stocktake Stubs
 // =========================================
 // =========================================
-// Shortage Requests (طلبات النواقص)
+// Shortage Requests + Receive Approval (طلبات النواقص + الاستلامات)
 // =========================================
 function loadDashShortageRequests() {
+  // Also load pending receives
+  api.withSuccessHandler(function(rcvList) {
+    var rcvTb = q('#tbShortageRequests');
+    if (rcvTb && rcvList && rcvList.length) {
+      var rcvRows = rcvList.map(function(r) {
+        var items = r.receivedItems || [];
+        return '<tr style="background:rgba(16,163,74,0.04);">' +
+          '<td><code style="font-weight:800;color:#16a34a;"><i class="fas fa-truck-loading"></i> استلام</code></td>' +
+          '<td>' + (r.poNumber || r.id) + '</td>' +
+          '<td style="font-weight:700;">' + (r.receivedBy||'') + '</td>' +
+          '<td>' + items.length + ' مادة</td>' +
+          '<td><span class="badge yellow">بانتظار الموافقة</span></td>' +
+          '<td style="white-space:nowrap;">' +
+            '<button class="btn btn-success btn-sm" onclick="approveReceiveReq(\'' + r.id + '\')" title="موافقة استلام"><i class="fas fa-check-double"></i> اعتماد الاستلام</button> ' +
+            '<button class="btn btn-light btn-sm" onclick="viewReceiveDetail(\'' + r.id + '\')" title="تفاصيل"><i class="fas fa-eye"></i></button>' +
+          '</td></tr>';
+      }).join('');
+      rcvTb.insertAdjacentHTML('afterbegin', rcvRows);
+    }
+  }).getReceiveRequests();
+
   api.withSuccessHandler(function(list) {
     var tb = q('#tbShortageRequests');
     if (!tb) return;
@@ -3110,6 +3131,45 @@ function viewShortageDetail(id) {
     document.getElementById('shortageDetailBody').innerHTML = html;
     openModal('#modalShortageDetail');
   }).getShortageRequest(id);
+}
+
+function approveReceiveReq(purchaseId) {
+  if (!confirm('اعتماد الاستلام وترحيل المواد للمخزون ودليل الحسابات؟')) return;
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) {
+      showToast('تم اعتماد الاستلام وترحيل القيد: ' + (r.journalNumber||''));
+      loadDashShortageRequests();
+      loadDashInvItems();
+    } else showToast(r.error, true);
+  }).approveReceive(purchaseId, { username: state.user });
+}
+
+function viewReceiveDetail(purchaseId) {
+  api.withSuccessHandler(function(list) {
+    var rcv = (list||[]).find(function(r) { return r.id === purchaseId; });
+    if (!rcv) return showToast('غير موجود', true);
+    var items = rcv.receivedItems || [];
+    var html = '<table class="table" style="font-size:13px;"><thead><tr><th>المادة</th><th>المطلوب</th><th>المستلم</th><th>الفرق</th><th>الوحدة</th></tr></thead><tbody>';
+    items.forEach(function(it) {
+      var diff = (Number(it.receivedQty)||0) - (Number(it.orderedQty)||0);
+      var diffColor = diff === 0 ? '#64748b' : (diff < 0 ? '#ef4444' : '#16a34a');
+      html += '<tr><td style="font-weight:700;">' + (it.invItemName||it.name||'') + '</td>' +
+        '<td style="text-align:center;color:#3b82f6;font-weight:700;">' + (it.orderedQty||it.qty||0) + '</td>' +
+        '<td style="text-align:center;font-weight:800;color:#16a34a;">' + (it.receivedQty||0) + '</td>' +
+        '<td style="text-align:center;font-weight:800;color:' + diffColor + ';">' + (diff>0?'+':'') + diff + '</td>' +
+        '<td style="text-align:center;color:#64748b;">' + (it.unit||'') + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    if (!document.getElementById('modalReceiveDetail')) {
+      var m = document.createElement('div'); m.id = 'modalReceiveDetail'; m.className = 'modal';
+      m.innerHTML = '<div class="modal-content modal-large"><div class="modal-title">تفاصيل الاستلام<button class="modal-close" onclick="closeModal(\'#modalReceiveDetail\')">&times;</button></div><div id="rcvDetailBody"></div></div>';
+      document.body.appendChild(m);
+    }
+    document.getElementById('rcvDetailBody').innerHTML = html;
+    openModal('#modalReceiveDetail');
+  }).getReceiveRequests();
 }
 
 function loadDashTransfers() {

@@ -429,6 +429,148 @@ router.delete('/adjustments/:id', async (req, res) => {
 });
 
 // ═══════════════════════════════════════
+// BRANCH RECEIVE (استلام المواد بالفرع)
+// ═══════════════════════════════════════
+
+// Submit receive request (cashier enters actual quantities)
+router.post('/receive-request', async (req, res) => {
+  try {
+    const { purchaseId, items, username, notes } = req.body;
+    if (!purchaseId || !items || !items.length) return res.json({ success: false, error: 'بيانات ناقصة' });
+
+    // Save received items to the purchase
+    await db.query(
+      'UPDATE purchases SET received_items_json = ?, receive_status = "pending", received_by = ? WHERE id = ?',
+      [JSON.stringify(items), username || '', purchaseId]
+    );
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// Get pending receive requests
+router.get('/receive-requests', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT p.id, p.supplier_name, p.total_price, p.items_json, p.received_items_json, p.received_by, p.po_id, p.receive_status,
+              po.po_number, po.supplier_name AS po_supplier
+       FROM purchases p LEFT JOIN purchase_orders po ON p.po_id = po.id
+       WHERE p.receive_status = 'pending'
+       ORDER BY p.purchase_date DESC`
+    );
+    res.json(rows.map(r => ({
+      id: r.id, supplierName: r.supplier_name || r.po_supplier || '', totalPrice: Number(r.total_price),
+      items: JSON.parse(r.items_json || '[]'), receivedItems: JSON.parse(r.received_items_json || '[]'),
+      receivedBy: r.received_by, poId: r.po_id, poNumber: r.po_number || '', receiveStatus: r.receive_status
+    })));
+  } catch(e) { res.json([]); }
+});
+
+// Approve receive — updates stock + creates GL journal
+router.post('/receive-approve/:id', async (req, res) => {
+  try {
+    const { username } = req.body;
+    const [purchases] = await db.query('SELECT * FROM purchases WHERE id = ? AND receive_status = "pending"', [req.params.id]);
+    if (!purchases.length) return res.json({ success: false, error: 'طلب الاستلام غير موجود أو تم اعتماده بالفعل' });
+
+    const purchase = purchases[0];
+    const receivedItems = JSON.parse(purchase.received_items_json || '[]');
+    if (!receivedItems.length) return res.json({ success: false, error: 'لا توجد مواد مستلمة' });
+
+    const now = new Date();
+    let totalNet = 0, totalVat = 0;
+
+    // Process each received item — update stock
+    for (const item of receivedItems) {
+      const qty = Number(item.receivedQty) || 0;
+      if (qty <= 0) continue;
+
+      const [invRows] = await db.query('SELECT * FROM inv_items WHERE id = ?', [item.invItemId || item.id]);
+      if (!invRows.length) continue;
+      const inv = invRows[0];
+
+      const unitPrice = Number(item.unitPrice) || Number(inv.cost) || 0;
+      const netPrice = unitPrice / 1.15; // remove VAT
+      const vatAmount = unitPrice - netPrice;
+
+      // WAC
+      const stockBefore = Number(inv.stock) || 0;
+      const currentCost = Number(inv.cost) || 0;
+      let newCost = stockBefore === 0 ? netPrice : ((stockBefore * currentCost) + (qty * netPrice)) / (stockBefore + qty);
+
+      await db.query('UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?', [qty, newCost, inv.id]);
+
+      // Record movement
+      const movId = 'MOV-RCV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+      await db.query(
+        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
+        [movId, now, inv.id, inv.name, 'in', qty, 'استلام نقص', username || '', 'PUR:' + req.params.id]
+      );
+
+      totalNet += netPrice * qty;
+      totalVat += vatAmount * qty;
+    }
+
+    // Update purchase status
+    await db.query('UPDATE purchases SET status = "received", receive_status = "approved", receive_approved_by = ? WHERE id = ?', [username || '', req.params.id]);
+    if (purchase.po_id) {
+      await db.query('UPDATE purchase_orders SET status = "received" WHERE id = ?', [purchase.po_id]);
+    }
+
+    // ─── GL Journal Entry ───
+    let journalNumber = '';
+    const totalGross = totalNet + totalVat;
+    if (totalGross > 0) {
+      const jrnId = 'JRN-RCV-' + Date.now();
+      const [lastJ] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
+      let jrnNum = 1;
+      if (lastJ.length && lastJ[0].journal_number) { const m = lastJ[0].journal_number.match(/(\d+)/); if (m) jrnNum = parseInt(m[1]) + 1; }
+      journalNumber = 'JV-' + String(jrnNum).padStart(6, '0');
+      const desc = 'استلام مواد — ' + (purchase.supplier_name || '');
+
+      await db.query(
+        `INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, reference_id, description, total_debit, total_credit, status, created_by, posted_by, posted_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [jrnId, journalNumber, now, 'purchase_receive', req.params.id, desc, totalGross, totalGross, 'posted', username||'', username||'', now]
+      );
+
+      // Debit: Inventory account (112)
+      let invAccId = null;
+      const [invAcc] = await db.query("SELECT id FROM gl_accounts WHERE code LIKE '112%' AND type='asset' ORDER BY code LIMIT 1");
+      if (invAcc.length) invAccId = invAcc[0].id;
+      if (invAccId) {
+        await db.query('INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)',
+          ['GLE-RCV-' + Date.now() + '-D1', jrnId, invAccId, '112', 'المخزون', totalNet, 0, desc]);
+        await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [totalNet, invAccId]);
+      }
+
+      // Debit: Input VAT (1430)
+      if (totalVat > 0) {
+        let vatAccId = null;
+        const [vatAcc] = await db.query("SELECT id FROM gl_accounts WHERE code = '1430' OR (code LIKE '213%' AND type='liability') ORDER BY code LIMIT 1");
+        if (vatAcc.length) vatAccId = vatAcc[0].id;
+        if (vatAccId) {
+          await db.query('INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)',
+            ['GLE-RCV-' + Date.now() + '-D2', jrnId, vatAccId, '1430', 'ضريبة المدخلات', totalVat, 0, 'ضريبة — ' + desc]);
+          await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [totalVat, vatAccId]);
+        }
+      }
+
+      // Credit: Suppliers/Payables (211)
+      let supAccId = null;
+      const [supAcc] = await db.query("SELECT id FROM gl_accounts WHERE code LIKE '211%' AND type='liability' ORDER BY code LIMIT 1");
+      if (supAcc.length) supAccId = supAcc[0].id;
+      if (supAccId) {
+        await db.query('INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)',
+          ['GLE-RCV-' + Date.now() + '-C', jrnId, supAccId, '211', 'الموردون والدائنون', 0, totalGross, desc]);
+        await db.query('UPDATE gl_accounts SET balance = balance - ? WHERE id = ?', [totalGross, supAccId]);
+      }
+    }
+
+    res.json({ success: true, journalNumber, totalNet, totalVat, totalGross });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// ═══════════════════════════════════════
 // SHORTAGE REQUESTS (طلبات النواقص)
 // ═══════════════════════════════════════
 

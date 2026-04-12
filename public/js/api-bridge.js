@@ -146,6 +146,7 @@
     approveShortage:     { method: 'POST', url: (id,d) => '/inventory/shortage-requests/' + id + '/approve', body: (id,d) => d },
     rejectShortage:      { method: 'POST', url: (id,d) => '/inventory/shortage-requests/' + id + '/reject', body: (id,d) => d },
     convertShortageToPO: { method: 'POST', url: (id,d) => '/inventory/shortage-requests/' + id + '/convert-to-po', body: (id,d) => d },
+    deleteShortageRequest:{ method: 'DELETE', url: (id) => '/inventory/shortage-requests/' + id },
 
     // Custody (العهد)
     getCustodyUsers:     { method: 'GET',  url: '/custody/users' },

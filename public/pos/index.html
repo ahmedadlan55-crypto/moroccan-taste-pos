@@ -249,7 +249,7 @@
       <div id="shrNewActions" class="glass-modal-actions" style="flex-shrink:0;">
         <button class="btn btn-primary" style="flex:1;background:#8b5cf6;border-color:#8b5cf6;" onclick="submitShortageRequest()"><i class="fas fa-paper-plane"></i> <span data-i18n="submitRequest">إرسال الطلب</span></button>
         <button class="btn btn-light" onclick="closeGlassModal('#modalShortage')" data-i18n="close">إغلاق</button>
-        <button class="btn btn-danger btn-sm" onclick="_shrCart=[];_shrRenderCart();" style="padding:8px 12px;"><i class="fas fa-trash"></i></button>
+        <button class="btn btn-danger btn-sm" onclick="_shrCart=[];localStorage.removeItem('pos_shortage_cart');_shrRenderCart();" style="padding:8px 12px;"><i class="fas fa-trash"></i></button>
       </div>
       <div id="shrHistoryActions" class="glass-modal-actions" style="flex-shrink:0;display:none;">
         <button class="btn btn-light" style="flex:1;" onclick="closeGlassModal('#modalShortage')" data-i18n="close">إغلاق</button>

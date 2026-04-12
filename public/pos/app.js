@@ -1747,8 +1747,11 @@ setTimeout(function() {
 // ═══════════════════════════════════════
 // SHORTAGE REQUEST — Stocktake-style (طلب نواقص)
 // ═══════════════════════════════════════
-var _shrCart = [];
+// Persistent cart (saved to localStorage)
+var _shrCart = _getShrCart();
 var _shrAllItems = [];
+function _getShrCart() { try { return JSON.parse(localStorage.getItem('pos_shortage_cart')||'[]'); } catch(e) { return []; } }
+function _saveShrCart() { try { localStorage.setItem('pos_shortage_cart', JSON.stringify(_shrCart)); } catch(e) {} }
 
 // Tab switching
 window.shrSwitchTab = function(tab) {
@@ -1820,7 +1823,7 @@ function _shrLoadHistory() {
 }
 
 window.openShortageRequest = function() {
-  _shrCart = [];
+  _shrCart = _getShrCart(); // Restore from localStorage
   if (q('#shrSearch')) q('#shrSearch').value = '';
   if (q('#shrNotes')) q('#shrNotes').value = '';
   if (q('#shrSearchResults')) q('#shrSearchResults').style.display = 'none';
@@ -1874,6 +1877,7 @@ window.shrAddItem = function(id) {
     stock: item.stock, minStock: item.minStock, cost: item.cost,
     requestedQty: deficit > 0 ? deficit : 1
   });
+  _saveShrCart();
   q('#shrSearch').value = '';
   q('#shrSearchResults').style.display = 'none';
   _shrRenderCart();
@@ -1881,11 +1885,12 @@ window.shrAddItem = function(id) {
 
 window.shrRemoveItem = function(idx) {
   _shrCart.splice(idx, 1);
+  _saveShrCart();
   _shrRenderCart();
 };
 
 window.shrUpdateQty = function(idx, val) {
-  if (_shrCart[idx]) _shrCart[idx].requestedQty = Math.max(1, Number(val) || 1);
+  if (_shrCart[idx]) { _shrCart[idx].requestedQty = Math.max(1, Number(val) || 1); _saveShrCart(); }
 };
 
 function _shrRenderCart() {
@@ -1925,7 +1930,7 @@ window.submitShortageRequest = function() {
       if (r && r.success) {
         closeGlassModal('#modalShortage');
         glassToast(t('shortageRequest') + ': ' + r.requestNumber);
-        _shrCart = [];
+        _shrCart = []; localStorage.removeItem('pos_shortage_cart');
       } else glassToast((r && r.error) || 'فشل الإرسال', true);
     }).withFailureHandler(function() { loader(false); glassToast(t('errorTitle'), true); }).createShortageRequest({ items: items, username: state.user, notes: (q('#shrNotes')||{}).value || '' });
   });

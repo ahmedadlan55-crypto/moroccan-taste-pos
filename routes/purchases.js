@@ -714,9 +714,15 @@ router.delete('/orders/:id', async (req, res) => {
   try {
     const [existing] = await db.query('SELECT status FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!existing.length) return res.json({ success: false, error: 'PO not found' });
-    if (existing[0].status === 'received') return res.json({ success: false, error: 'Cannot delete a received PO' });
 
+    // Delete linked purchases first
+    await db.query('DELETE FROM purchases WHERE po_id = ?', [req.params.id]);
+    // Delete PO lines
+    await db.query('DELETE FROM po_lines WHERE po_id = ?', [req.params.id]);
+    // Delete the PO
     await db.query('DELETE FROM purchase_orders WHERE id = ?', [req.params.id]);
+    // Reset linked shortage request
+    await db.query("UPDATE shortage_requests SET status = 'approved', po_id = NULL WHERE po_id = ?", [req.params.id]);
     res.json({ success: true });
   } catch (e) {
     res.json({ success: false, error: e.message });

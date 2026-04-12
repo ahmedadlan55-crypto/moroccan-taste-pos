@@ -3045,6 +3045,8 @@ function loadDashShortageRequests() {
         actions = '<button class="btn btn-primary btn-sm" onclick="convertShortageToPO(\'' + r.id + '\')" title="تحويل لأمر شراء"><i class="fas fa-shopping-cart"></i> تحويل لـ PO</button>';
       }
       actions += ' <button class="btn btn-light btn-sm" onclick="viewShortageDetail(\'' + r.id + '\')" title="تفاصيل"><i class="fas fa-eye"></i></button>';
+      var isDev = state.currentUser && (state.currentUser.isDeveloper || state.role === 'admin');
+      if (isDev) actions += ' <button class="btn btn-danger btn-sm" onclick="deleteShortageReq(\'' + r.id + '\',\'' + (r.requestNumber||'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>';
       return '<tr>' +
         '<td><code style="font-weight:800;color:#8b5cf6;">' + (r.requestNumber||'') + '</code></td>' +
         '<td>' + dt + '</td>' +
@@ -3105,6 +3107,16 @@ function doConvertShortageToPO(id) {
       loadDashShortageRequests();
     } else showToast(r.error, true);
   }).convertShortageToPO(id, { username: state.user, supplierId: sel.value, supplierName: opt.getAttribute('data-name')||'' });
+}
+
+function deleteShortageReq(id, num) {
+  if (!confirm('حذف طلب النقص ' + num + ' وجميع بنوده؟\nلا يمكن التراجع.')) return;
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم حذف الطلب'); loadDashShortageRequests(); }
+    else showToast(r.error, true);
+  }).deleteShortageRequest(id);
 }
 
 function viewShortageDetail(id) {

@@ -659,32 +659,31 @@ body.ar .pwa-install-btn {
 .float-actions {
   position: fixed;
   bottom: 30px;
-  right: 0;
-  display: flex;
-  align-items: flex-end;
   z-index: 100;
-  transition: transform 0.3s cubic-bezier(.4,0,.2,1);
+  display: flex;
+  align-items: center;
+  right: 0;
 }
 [dir="rtl"] .float-actions { right: auto; left: 0; }
-.float-actions.collapsed .float-btns { transform: translateX(-100%); opacity: 0; pointer-events: none; }
-[dir="rtl"] .float-actions.collapsed .float-btns { transform: translateX(100%); }
 .float-handle {
-  width: 22px; height: 52px; border-radius: 12px 0 0 12px;
-  background: rgba(30,41,59,0.75); backdrop-filter: blur(8px);
+  width: 18px; height: 60px;
+  background: rgba(30,41,59,0.8); backdrop-filter: blur(8px);
   display: flex; align-items: center; justify-content: center;
-  color: #fff; font-size: 11px; cursor: pointer; z-index: 2;
-  transition: background 0.2s;
+  color: #fff; font-size: 10px; cursor: pointer; z-index: 2;
   -webkit-tap-highlight-color: transparent;
-  margin-right: 0; /* flush to edge */
+  border-radius: 10px 0 0 10px;
 }
-[dir="rtl"] .float-handle { border-radius: 0 12px 12px 0; margin-right: auto; margin-left: 0; }
-.float-handle:active { background: rgba(30,41,59,0.9); }
+[dir="rtl"] .float-handle { border-radius: 0 10px 10px 0; }
+.float-handle:active { background: rgba(30,41,59,1); }
 .float-actions.collapsed .float-handle i { transform: rotate(180deg); }
 .float-btns {
-  display: flex; flex-direction: column; gap: 10px;
-  padding: 10px 14px 10px 8px;
-  transition: transform 0.3s cubic-bezier(.4,0,.2,1), opacity 0.25s;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 8px 10px;
+  transition: transform 0.3s cubic-bezier(.4,0,.2,1), opacity 0.2s;
+  transform-origin: right center;
 }
+[dir="rtl"] .float-btns { transform-origin: left center; }
+.float-actions.collapsed .float-btns { transform: scaleX(0); opacity: 0; pointer-events: none; width: 0; padding: 0; overflow: hidden; }
 .float-btn {
   width: 50px; height: 50px; border-radius: 50%; border: none;
   display: inline-flex; align-items: center; justify-content: center;

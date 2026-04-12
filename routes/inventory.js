@@ -690,6 +690,15 @@ router.post('/shortage-requests/:id/reject', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// Delete shortage request (developer only)
+router.delete('/shortage-requests/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM shortage_items WHERE request_id = ?', [req.params.id]);
+    await db.query('DELETE FROM shortage_requests WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 // Convert shortage to Purchase Order
 router.post('/shortage-requests/:id/convert-to-po', async (req, res) => {
   try {

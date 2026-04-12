@@ -10,7 +10,18 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(compression());
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(helmet({
+  contentSecurityPolicy: false,
+  referrerPolicy: { policy: 'same-origin' },
+  hsts: { maxAge: 31536000, includeSubDomains: true }
+}));
+// Additional security headers
+app.use(function(req, res, next) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Permissions-Policy', 'camera=self, microphone=()');
+  next();
+});
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -201,6 +212,10 @@ async function runMigrations() {
       FOREIGN KEY (adjustment_id) REFERENCES stock_adjustments(id) ON DELETE CASCADE
     ) ENGINE=InnoDB
   `);
+
+  // Security: account lockout columns
+  await addColumnIfMissing('users', 'failed_attempts', "INT DEFAULT 0");
+  await addColumnIfMissing('users', 'locked_until', "DATETIME DEFAULT NULL");
 
   // Add 'custody' role to users table ENUM
   try { await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody') DEFAULT 'cashier'"); } catch(e) {}

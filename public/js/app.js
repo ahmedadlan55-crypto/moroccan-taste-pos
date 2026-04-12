@@ -350,33 +350,14 @@ window.onload = function() {
           injectAppTemplate(html);
           try {
             var s = JSON.parse(saved);
-            state.user = s.user || '';
+            state.user = s.user || s.username || '';
             state.role = (s.role || '').toLowerCase();
-            if (q("#lUser")) q("#lUser").value = s.user || '';
-            if (q("#lPass") && s.pass) q("#lPass").value = s.pass;
-            if (q("#lRemember")) q("#lRemember").checked = true;
+            if (q("#lUser")) q("#lUser").value = state.user;
           } catch(e) {}
           loadCoreData();
         })
         .catch(function(err) {
-          // Token invalid — try re-login with saved credentials
-          try {
-            var s = JSON.parse(saved);
-            if (s.user && s.pass) {
-              fetch('/api/auth/login', {
-                method: 'POST', headers: {'Content-Type':'application/json'},
-                body: JSON.stringify({username: s.user, password: s.pass})
-              }).then(function(r){return r.json();}).then(function(res) {
-                if (res.success && res.token) {
-                  localStorage.setItem('pos_token', res.token);
-                  _tryLoadAdmin(); // retry with new token
-                } else {
-                  _showLoginFallback();
-                }
-              }).catch(function() { _showLoginFallback(); });
-              return;
-            }
-          } catch(e) {}
+          // Token invalid and can't refresh → show login
           _showLoginFallback();
         });
     }
@@ -555,8 +536,8 @@ function doLogin() {
     // Save token for secured API calls and templates
     localStorage.setItem("pos_token", res.token);
 
-    // Always save session so auto-login works on page reload
-    localStorage.setItem("pos_session", JSON.stringify({ user: u, pass: p, role: state.role }));
+    // Save session (NO password — only user + role for session restore)
+    localStorage.setItem("pos_session", JSON.stringify({ user: u, username: u, role: state.role }));
     localStorage.setItem("pos_last_view", state.role === 'cashier' ? 'pos' : state.role === 'custody' ? 'custody' : 'admin');
 
     // ─── Cashier → redirect to /pos/ ───
@@ -691,29 +672,15 @@ function viewPOS() { window.location.replace('/pos/'); }
 function viewAdmin() { if (state.role === "admin") { show("#adminView"); nav('home'); } }
 
 function logout() {
-  // Clear saved session and JWT
+  // Clear ALL session data
   localStorage.removeItem("pos_session");
   localStorage.removeItem("pos_token");
   localStorage.removeItem("pos_active_shift_id");
+  localStorage.removeItem("pos_last_view");
+  localStorage.removeItem("pos_last_section");
 
-  // Reset app state
-  state.user = ""; state.role = ""; state.shift = ""; state.cart = []; state.menu = []; state.categories = [];
-
-  // Re-engage the auth gate so nothing else is visible
-  document.body.classList.remove('authenticated');
-
-  // Wipe the injected template DOM (all sections + modals from views/app-content.html)
-  if (typeof clearInjectedTemplate === 'function') clearInjectedTemplate();
-
-  // Show the login view (still in the document — never injected)
-  show("#loginView");
-
-  // Clear login form
-  if (q("#lUser")) q("#lUser").value = "";
-  if (q("#lPass")) q("#lPass").value = "";
-  if (q("#lRemember")) q("#lRemember").checked = false;
-
-  showToast(state.lang === 'ar' ? 'تم تسجيل الخروج' : 'Logged out');
+  // Full page reload to / — cleanest way to reset everything
+  window.location.replace('/');
 }
 
 // =========================================

@@ -5,21 +5,92 @@ const db = require('../db/connection');
 const path = require('path');
 const verifyToken = require('./authMiddleware');
 
+// ─── In-memory rate limiter (per IP) ───
+const loginAttempts = {}; // { ip: { count, firstAttempt, blockedUntil } }
+const MAX_ATTEMPTS = 5;
+const WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+const BLOCK_MS = 15 * 60 * 1000;  // 15 minutes block
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const entry = loginAttempts[ip];
+  if (!entry) return { allowed: true };
+  if (entry.blockedUntil && now < entry.blockedUntil) {
+    const remaining = Math.ceil((entry.blockedUntil - now) / 60000);
+    return { allowed: false, remaining };
+  }
+  if (now - entry.firstAttempt > WINDOW_MS) {
+    delete loginAttempts[ip]; // Window expired, reset
+    return { allowed: true };
+  }
+  if (entry.count >= MAX_ATTEMPTS) {
+    entry.blockedUntil = now + BLOCK_MS;
+    const remaining = Math.ceil(BLOCK_MS / 60000);
+    return { allowed: false, remaining };
+  }
+  return { allowed: true };
+}
+function recordFailedAttempt(ip) {
+  const now = Date.now();
+  if (!loginAttempts[ip] || (now - loginAttempts[ip].firstAttempt > WINDOW_MS)) {
+    loginAttempts[ip] = { count: 1, firstAttempt: now };
+  } else {
+    loginAttempts[ip].count++;
+  }
+}
+function clearAttempts(ip) { delete loginAttempts[ip]; }
+
 // Serve protected app template
 router.get('/template', verifyToken, (req, res) => {
   res.sendFile(path.join(__dirname, '../views/app-content.html'));
 });
 
-// Login
+// Login — with rate limiting + account lockout
 router.post('/login', async (req, res) => {
   try {
+    const ip = req.ip || req.connection.remoteAddress || 'unknown';
     const { username, password } = req.body;
+
+    // Rate limit check
+    const rateCheck = checkRateLimit(ip);
+    if (!rateCheck.allowed) {
+      return res.json({ success: false, error: 'تم تجاوز الحد المسموح. حاول بعد ' + rateCheck.remaining + ' دقيقة' });
+    }
+
+    if (!username || !password) return res.json({ success: false, error: 'اسم المستخدم وكلمة المرور مطلوبان' });
+
     const [rows] = await db.query('SELECT * FROM users WHERE username = ? AND active = 1', [username]);
-    if (!rows.length) return res.json({ success: false, error: 'Invalid credentials' });
+    if (!rows.length) {
+      recordFailedAttempt(ip);
+      return res.json({ success: false, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' });
+    }
 
     const user = rows[0];
+
+    // Account lockout check
+    if (user.locked_until && new Date(user.locked_until) > new Date()) {
+      const remaining = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
+      return res.json({ success: false, error: 'الحساب مقفل. حاول بعد ' + remaining + ' دقيقة' });
+    }
+
     const valid = await bcrypt.compare(password, user.password);
-    if (!valid) return res.json({ success: false, error: 'Invalid credentials' });
+    if (!valid) {
+      recordFailedAttempt(ip);
+      // Increment DB failed attempts
+      const failedCount = (Number(user.failed_attempts) || 0) + 1;
+      if (failedCount >= MAX_ATTEMPTS) {
+        await db.query('UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?',
+          [failedCount, new Date(Date.now() + BLOCK_MS), user.id]);
+        return res.json({ success: false, error: 'تم قفل الحساب بعد ' + MAX_ATTEMPTS + ' محاولات فاشلة. حاول بعد 15 دقيقة' });
+      } else {
+        await db.query('UPDATE users SET failed_attempts = ? WHERE id = ?', [failedCount, user.id]);
+        return res.json({ success: false, error: 'كلمة المرور غير صحيحة. متبقي ' + (MAX_ATTEMPTS - failedCount) + ' محاولات' });
+      }
+    }
+
+    // Success — reset counters
+    clearAttempts(ip);
+    await db.query('UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?', [user.id]);
 
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.json({ success: true, username: user.username, role: user.role, token });

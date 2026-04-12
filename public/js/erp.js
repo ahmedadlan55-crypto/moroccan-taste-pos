@@ -292,16 +292,19 @@ function erpLoadAccounts() {
   }).seedCafeGLAccounts();
 }
 function erpLoadAccountsList_() {
-  window._apiBridge.withSuccessHandler(function(list) {
-    _erpAccounts = (list || []).map(a => ({
-      id: a.id, code: a.code, nameAr: a.nameAr, nameEn: a.nameEn,
-      type: a.type, parentId: a.parentId, level: Number(a.level)||1,
-      isActive: a.isActive, balance: Number(a.balance)||0
-    }));
-    _coaBuildTree();
-    // Auto-select previously selected or show welcome
-    if (_coaSelectedId) coaSelectNode(_coaSelectedId);
-  }).getGLAccounts();
+  // Sync inventory values to GL first (perpetual method)
+  window._apiBridge.withSuccessHandler(function() {
+    // Then load accounts
+    window._apiBridge.withSuccessHandler(function(list) {
+      _erpAccounts = (list || []).map(a => ({
+        id: a.id, code: a.code, nameAr: a.nameAr, nameEn: a.nameEn,
+        type: a.type, parentId: a.parentId, level: Number(a.level)||1,
+        isActive: a.isActive, balance: Number(a.balance)||0
+      }));
+      _coaBuildTree();
+      if (_coaSelectedId) coaSelectNode(_coaSelectedId);
+    }).getGLAccounts();
+  }).syncInventoryGL();
 }
 
 // ─── Build children map ───
@@ -314,15 +317,19 @@ function _coaIsGroup(id) { return _erpAccounts.some(a => a.parentId === id); }
 function _coaBuildTree() {
   var container = document.getElementById('coaTreeBody');
   if (!container) return;
-  var roots = _coaChildrenOf(null);
-  container.innerHTML = roots.map(a => _coaRenderNode(a, true)).join('');
+  // Only show level-1 accounts as roots (max 5: الأصول، الالتزامات، حقوق الملكية، الإيرادات، المصروفات)
+  var roots = _erpAccounts.filter(function(a) { return a.level === 1 && (!a.parentId || a.parentId === ''); }).sort(function(a,b) { return a.code.localeCompare(b.code); });
+  // Fallback: if no level-1 found, use parentId=null
+  if (!roots.length) roots = _coaChildrenOf(null);
+  container.innerHTML = roots.map(function(a) { return _coaRenderNode(a, false); }).join('');
 }
 
 function _coaRenderNode(acc, open) {
   var children = _coaChildrenOf(acc.id);
   var isGroup = children.length > 0;
   var indent = ((acc.level||1) - 1) * 14;
-  var toggle = isGroup ? '<span class="coa-node-toggle"><i class="fas fa-chevron-down"></i></span>' : '<span class="coa-node-toggle"></span>';
+  var chevronDir = open ? 'fa-chevron-down' : 'fa-chevron-left';
+  var toggle = isGroup ? '<span class="coa-node-toggle"><i class="fas ' + chevronDir + '"></i></span>' : '<span class="coa-node-toggle"></span>';
   var icon = isGroup ? '<i class="fas fa-folder coa-node-icon folder"></i>' : '<i class="fas fa-file-alt coa-node-icon file"></i>';
   var activeClass = _coaSelectedId === acc.id ? ' active' : '';
 

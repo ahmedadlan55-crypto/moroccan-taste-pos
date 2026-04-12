@@ -581,34 +581,46 @@ router.post('/gl/repair', async (req, res) => {
 router.post('/gl/fix-tree', async (req, res) => {
   try {
     let fixed = 0;
-    // If old structure exists (code 6 as root), merge into code 5
-    const [acc6] = await db.query("SELECT id FROM gl_accounts WHERE code = '6' AND (parent_id IS NULL OR parent_id = '')");
-    const [acc5root] = await db.query("SELECT id FROM gl_accounts WHERE code = '5' AND (parent_id IS NULL OR parent_id = '')");
 
+    // Force exactly 5 root accounts (level=1, parent=NULL)
+    // Valid roots: codes 1,2,3,4,5 (or 6 renamed to 5)
+    const validRootCodes = ['1','2','3','4','5'];
+
+    // If code 6 exists as root, merge it into code 5
+    const [acc6] = await db.query("SELECT id FROM gl_accounts WHERE code = '6'");
     if (acc6.length) {
-      if (!acc5root.length) {
-        // Rename code 6 → make it the main المصروفات (code 5)
-        // First check if there's a code 5 that's a child (COGS under 6)
-        const [acc5child] = await db.query("SELECT id FROM gl_accounts WHERE code = '5' AND parent_id IS NOT NULL");
-        if (acc5child.length) {
-          // Old COGS (code 5) was under code 6 — make it level 2 under new structure
-          // Rename code 6 to be the root المصروفات
-          await db.query("UPDATE gl_accounts SET name_ar = 'المصروفات', parent_id = NULL, level = 1 WHERE id = ?", [acc6[0].id]);
-          await db.query("UPDATE gl_accounts SET parent_id = ?, level = 2 WHERE id = ?", [acc6[0].id, acc5child[0].id]);
-          fixed++;
-        }
+      const [acc5] = await db.query("SELECT id FROM gl_accounts WHERE code = '5'");
+      if (acc5.length) {
+        // Move 6's children under 5
+        await db.query("UPDATE gl_accounts SET parent_id = ? WHERE parent_id = ?", [acc5[0].id, acc6[0].id]);
+        // Delete account 6
+        await db.query("DELETE FROM gl_accounts WHERE id = ? AND code = '6'", [acc6[0].id]);
+        fixed++;
       } else {
-        // Both code 5 (root) and code 6 (root) exist — move 6's children under 5
-        await db.query("UPDATE gl_accounts SET parent_id = ? WHERE parent_id = ?", [acc5root[0].id, acc6[0].id]);
-        await db.query("DELETE FROM gl_accounts WHERE id = ?", [acc6[0].id]);
+        // Rename 6 to become the root المصروفات (acts as 5)
+        await db.query("UPDATE gl_accounts SET code = '5', name_ar = 'المصروفات', parent_id = NULL, level = 1 WHERE id = ?", [acc6[0].id]);
         fixed++;
       }
     }
 
-    // Fix any orphaned children with old 61x, 62x codes — reparent them
-    const [old61] = await db.query("SELECT id FROM gl_accounts WHERE code = '61'");
-    const [old62] = await db.query("SELECT id FROM gl_accounts WHERE code = '62'");
-    // These might still reference old parent — fix if needed
+    // Fix any account with level > 1 that has no parent — find correct parent
+    const [orphans] = await db.query("SELECT id, code, level FROM gl_accounts WHERE level > 1 AND (parent_id IS NULL OR parent_id = '')");
+    for (const o of orphans) {
+      // Find parent by code prefix: e.g. code=11 → parent code=1, code=112 → parent code=11
+      let parentCode = o.code.substring(0, o.code.length - 1);
+      while (parentCode.length > 0) {
+        const [parent] = await db.query("SELECT id FROM gl_accounts WHERE code = ?", [parentCode]);
+        if (parent.length) {
+          await db.query("UPDATE gl_accounts SET parent_id = ? WHERE id = ?", [parent[0].id, o.id]);
+          fixed++;
+          break;
+        }
+        parentCode = parentCode.substring(0, parentCode.length - 1);
+      }
+    }
+
+    // Ensure all root accounts are level 1
+    await db.query("UPDATE gl_accounts SET level = 1, parent_id = NULL WHERE code IN ('1','2','3','4','5') AND (level != 1 OR parent_id IS NOT NULL)");
 
     res.json({ success: true, fixed });
   } catch(e) { res.json({ success: false, error: e.message }); }
@@ -800,7 +812,18 @@ router.post('/gl/sync-inventory', async (req, res) => {
       created++;
     }
 
-    // Update parent 112 balance
+    // Update ALL existing inventory category balances (perpetual sync)
+    const [allInvAccounts] = await db.query("SELECT id, name_ar FROM gl_accounts WHERE code LIKE '112%' AND code != '112'");
+    for (const acc of allInvAccounts) {
+      // Extract category name from "مخزون X" → "X"
+      const catName = (acc.name_ar || '').replace(/^مخزون\s*/, '');
+      if (catName) {
+        const [catVal] = await db.query('SELECT SUM(stock * cost) AS val FROM inv_items WHERE category = ? AND active = 1', [catName]);
+        await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [Number(catVal[0].val)||0, acc.id]);
+      }
+    }
+
+    // Update parent 112 balance (total of all inventory)
     const [totalVal] = await db.query('SELECT SUM(stock * cost) AS val FROM inv_items WHERE active = 1');
     if (parentId) await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [Number(totalVal[0].val)||0, parentId]);
 

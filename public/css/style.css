@@ -407,7 +407,8 @@ body.en .float-actions { right: auto; left: 30px; }
 /* =========================================
    6. Admin Dashboard (Sidebar & Layout)
    ========================================= */
-#adminView { height: 100vh; display: flex; background: var(--bg-color); overflow: hidden; }
+#adminView { height: 100vh; display: flex; flex-direction: row-reverse; background: var(--bg-color); overflow: hidden; }
+body.en #adminView { flex-direction: row; }
 
 /* Sidebar */
 .sidebar { width: 250px; background: var(--primary); color: var(--white); display: flex; flex-direction: column; transition: 0.3s ease; z-index: 20; }

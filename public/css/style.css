@@ -763,11 +763,11 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 /* ═══════════════════════════════════════
    Chart of Accounts — Tree + Panel Layout
    ═══════════════════════════════════════ */
-.coa-layout { display: flex; height: calc(100vh - 140px); gap: 0; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; background: #fff; }
+.coa-layout { display: flex; height: calc(100vh - 140px); gap: 0; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; background: #fff; direction: rtl; }
 
-/* Tree Sidebar — appears on RIGHT in RTL */
-.coa-tree-panel { width: 280px; min-width: 240px; border-inline-start: 1px solid #e2e8f0; background: #f8fafc; display: flex; flex-direction: column; overflow: hidden; order: 2; }
-.coa-main-panel { order: 1; }
+/* Tree Sidebar */
+.coa-tree-panel { width: 280px; min-width: 240px; border-left: 1px solid #e2e8f0; background: #f8fafc; display: flex; flex-direction: column; overflow: hidden; direction: rtl; }
+.coa-main-panel { flex: 1; overflow-y: auto; padding: 20px; background: #fff; direction: rtl; }
 .coa-tree-header { padding: 10px; border-bottom: 1px solid #e2e8f0; }
 .coa-search { width: 100%; padding: 8px 12px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 13px; font-family: inherit; background: #fff; }
 .coa-search:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
@@ -775,7 +775,7 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 
 /* Tree Node */
 .coa-node { cursor: pointer; user-select: none; }
-.coa-node-row { display: flex; align-items: center; gap: 6px; padding: 7px 10px; margin: 1px 6px; border-radius: 8px; font-size: 13px; transition: background 0.1s; }
+.coa-node-row { display: flex; align-items: center; gap: 6px; padding: 7px 10px; margin: 1px 6px; border-radius: 8px; font-size: 13px; transition: background 0.1s; direction: rtl; text-align: right; }
 .coa-node-row:hover { background: #e2e8f0; }
 .coa-node-row.active { background: #dbeafe; color: #1e40af; font-weight: 800; }
 .coa-node-toggle { width: 16px; text-align: center; font-size: 10px; color: #94a3b8; flex-shrink: 0; }

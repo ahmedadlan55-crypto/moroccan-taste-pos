@@ -1664,6 +1664,31 @@ function _loadDashHomeBody() {
       if (q("#dhLowStock")) q("#dhLowStock").innerHTML = lsHtml;
     }).getInvItems();
 
+    // ─── Pending Shortage Requests from Branches ───
+    api.withSuccessHandler(function(list) {
+      var container = q('#dhPendingShortages');
+      if (!container) return;
+      var pending = (list||[]).filter(function(r) { return r.status === 'pending'; });
+      if (!pending.length) {
+        container.innerHTML = '<div style="text-align:center;padding:16px;color:#94a3b8;font-size:13px;"><i class="fas fa-check-circle" style="color:#16a34a;margin-left:6px;"></i>لا توجد طلبات معلقة</div>';
+        return;
+      }
+      container.innerHTML = pending.map(function(r) {
+        var dt = '';
+        try { dt = new Date(r.requestDate).toLocaleDateString('en-GB') + ' ' + new Date(r.requestDate).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); } catch(e) {}
+        return '<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1.5px solid #e2e8f0;border-radius:12px;background:#fff;">' +
+          '<div style="width:42px;height:42px;border-radius:50%;background:#f3e8ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fas fa-store" style="color:#8b5cf6;font-size:18px;"></i></div>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-weight:800;font-size:14px;color:#1e293b;">' + (r.requestNumber||'') + ' — <span style="color:#8b5cf6;">' + (r.username||'') + '</span></div>' +
+            '<div style="font-size:12px;color:#64748b;display:flex;gap:10px;"><span><i class="fas fa-clock" style="margin-left:3px;"></i>' + dt + '</span><span><i class="fas fa-boxes" style="margin-left:3px;"></i>' + (r.totalItems||0) + ' مادة</span></div>' +
+          '</div>' +
+          '<div style="display:flex;gap:6px;">' +
+            '<button class="btn btn-sm btn-primary" onclick="viewAndApproveShortage(\'' + r.id + '\')" style="border-radius:8px;"><i class="fas fa-eye"></i> عرض</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }).getShortageRequests();
+
     // ─── Charts: destroy old before redraw ───
     if (state.charts) Object.values(state.charts).forEach(function(c) { if (c) c.destroy(); });
     state.charts = {};
@@ -3288,6 +3313,44 @@ function doConvertShortageToPO(id) {
       loadDashShortageRequests();
     } else showToast(r.error, true);
   }).convertShortageToPO(id, { username: state.user, supplierId: sel.value, supplierName: opt.getAttribute('data-name')||'' });
+}
+
+// View shortage + approve + convert to PO from dashboard
+function viewAndApproveShortage(id) {
+  loader(true);
+  api.withSuccessHandler(function(data) {
+    loader(false);
+    if (!data || data.error) return showToast(data && data.error || 'خطأ', true);
+    var items = data.items || [];
+    var html = '<div style="margin-bottom:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">' +
+      '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">رقم الطلب</div><div style="font-size:16px;font-weight:900;color:#8b5cf6;">' + (data.requestNumber||'') + '</div></div>' +
+      '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">الكاشير</div><div style="font-weight:800;">' + (data.username||'') + '</div></div>' +
+      '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">عدد المواد</div><div style="font-weight:800;">' + items.length + '</div></div>' +
+    '</div>';
+    html += '<table class="table" style="font-size:13px;"><thead><tr><th>المادة</th><th>الوحدة</th><th>المخزون</th><th>الحد</th><th>المطلوب</th></tr></thead><tbody>';
+    items.forEach(function(i) {
+      html += '<tr><td style="font-weight:700;">' + (i.invItemName||'') + '</td><td>' + (i.unit||'') + '</td>' +
+        '<td style="color:' + (i.currentQty <= i.minQty ? '#ef4444' : '#16a34a') + ';font-weight:700;">' + i.currentQty + '</td>' +
+        '<td>' + i.minQty + '</td><td style="font-weight:800;color:#8b5cf6;">' + i.requestedQty + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    html += '<div style="display:flex;gap:8px;margin-top:14px;">';
+    if (data.status === 'pending') {
+      html += '<button class="btn btn-success" style="flex:1;" onclick="closeModal(\'#modalShortageView\');approveShortageReq(\'' + id + '\')"><i class="fas fa-check"></i> اعتماد</button>';
+      html += '<button class="btn btn-danger" onclick="closeModal(\'#modalShortageView\');rejectShortageReq(\'' + id + '\')"><i class="fas fa-times"></i> رفض</button>';
+    }
+    if (data.status === 'approved') {
+      html += '<button class="btn btn-primary" style="flex:1;" onclick="closeModal(\'#modalShortageView\');convertShortageToPO(\'' + id + '\')"><i class="fas fa-shopping-cart"></i> تحويل لأمر شراء</button>';
+    }
+    html += '</div>';
+    if (!document.getElementById('modalShortageView')) {
+      var m = document.createElement('div'); m.id = 'modalShortageView'; m.className = 'modal';
+      m.innerHTML = '<div class="modal-content modal-large"><div class="modal-title">تفاصيل طلب النقص<button class="modal-close" onclick="closeModal(\'#modalShortageView\')">&times;</button></div><div id="shortageViewBody"></div></div>';
+      document.body.appendChild(m);
+    }
+    document.getElementById('shortageViewBody').innerHTML = html;
+    openModal('#modalShortageView');
+  }).getShortageRequest(id);
 }
 
 function deleteShortageReq(id, num) {

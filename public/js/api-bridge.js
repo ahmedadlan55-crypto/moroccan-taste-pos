@@ -191,6 +191,7 @@
     approveWarehouseTransfer:{ method: 'POST', url: (id,d) => '/erp/warehouse-transfers/' + id + '/approve', body: (id,d) => d },
     getBranchesFull:     { method: 'GET',  url: '/erp/branches-full' },
     saveBranchFull:      { method: 'POST', url: '/erp/branches-full' },
+    getPurchaseReports:  { method: 'GET',  url: '/erp/purchase-reports', query: (f) => f },
     getAdvancedFullReport: { method: 'GET', url: '/sales/report/advanced', query: (f) => f },
     getWarehouses:       { method: 'GET',  url: '/erp/warehouses' },
     getWarehouseStock:   { method: 'GET',  url: '/erp/warehouse-stock' },

@@ -10,7 +10,7 @@ Object.defineProperty(window, 'currentUser', { get: function() { return (typeof 
 // ═══════════════════════════════════════
 const erpSections = [
   'erpDashHome','erpCustomers','erpSuppliers','erpGLAccounts','erpGLJournals',
-  'erpPurchaseOrders','erpVATReports','erpZATCA','erpInventoryMethod','erpFinReports','erpCostCenters','erpMultiWarehouses',
+  'erpPurchaseOrders','erpVATReports','erpZATCA','erpInventoryMethod','erpFinReports','erpPurchaseReports','erpCostCenters','erpMultiWarehouses',
   'erpBranches','erpPeriods','erpAuditLog','erpCreditNotes',
   'erpWarehouses','erpWarehouseStock','erpStockTransfers',
   'erpARAging','erpAPAging','erpCustomerStatement','erpSupplierStatement'
@@ -36,6 +36,7 @@ function erpNav(sectionId) {
       case 'erpZATCA': erpLoadZATCA(); break;
       case 'erpInventoryMethod': erpLoadInventoryMethod(); break;
       case 'erpFinReports': erpBackToReportsHub(); break;
+      case 'erpPurchaseReports': erpInitPurchaseReports(); break;
       case 'erpCostCenters': erpLoadCostCenters(); break;
       case 'erpMultiWarehouses': erpLoadMultiWarehouses(); break;
       case 'erpBranches': erpLoadBranchesFull(); break;
@@ -327,20 +328,19 @@ function _coaBuildTree() {
 function _coaRenderNode(acc, open) {
   var children = _coaChildrenOf(acc.id);
   var isGroup = children.length > 0;
-  var indent = ((acc.level||1) - 1) * 14;
   var chevronDir = open ? 'fa-chevron-down' : 'fa-chevron-left';
-  var toggle = isGroup ? '<span class="coa-node-toggle"><i class="fas ' + chevronDir + '"></i></span>' : '<span class="coa-node-toggle"></span>';
+  var toggle = isGroup ? '<span class="coa-node-toggle"><i class="fas ' + chevronDir + '"></i></span>' : '<span class="coa-node-toggle" style="width:16px;"></span>';
   var icon = isGroup ? '<i class="fas fa-folder coa-node-icon folder"></i>' : '<i class="fas fa-file-alt coa-node-icon file"></i>';
   var activeClass = _coaSelectedId === acc.id ? ' active' : '';
 
   var html = '<div class="coa-node" data-id="' + acc.id + '" data-level="' + (acc.level||1) + '">';
-  html += '<div class="coa-node-row' + activeClass + '" style="padding-right:' + (10+indent) + 'px;" onclick="coaSelectNode(\'' + acc.id + '\')">';
+  html += '<div class="coa-node-row' + activeClass + '" onclick="coaSelectNode(\'' + acc.id + '\')">';
   html += toggle + icon;
   html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
   html += '</div>';
   if (isGroup) {
     html += '<div class="coa-node-children' + (open ? ' open' : '') + '">';
-    html += children.map(c => _coaRenderNode(c, false)).join('');
+    html += children.map(function(c) { return _coaRenderNode(c, false); }).join('');
     html += '</div>';
   }
   html += '</div>';
@@ -2442,6 +2442,74 @@ window.erpSyncInventoryGL = function() {
     if (r.success) { showToast('تم المزامنة: ' + r.categoriesCreated + ' تصنيف جديد'); erpLoadAccountsList_(); erpLoadInventoryValuation(); }
     else showToast(r.error, true);
   }).syncInventoryGL();
+};
+
+// ═══════════════════════════════════════
+// PURCHASE REPORTS (تقارير المشتريات)
+// ═══════════════════════════════════════
+function erpInitPurchaseReports() {
+  // Populate supplier + item dropdowns
+  window._apiBridge.withSuccessHandler(function(suppliers) {
+    var sel = document.getElementById('prRepSupplier');
+    if (sel) { sel.innerHTML = '<option value="">الكل</option>' + (suppliers||[]).map(function(s) { return '<option value="' + s.id + '">' + (s.name||'') + '</option>'; }).join(''); }
+  }).getSuppliers();
+  window._apiBridge.withSuccessHandler(function(items) {
+    var sel = document.getElementById('prRepItem');
+    if (sel) { sel.innerHTML = '<option value="">الكل</option>' + (items||[]).map(function(i) { return '<option value="' + i.id + '">' + (i.name||'') + '</option>'; }).join(''); }
+  }).getInvItems();
+}
+
+window.erpLoadPurchaseReport = function() {
+  var filters = {
+    startDate: (document.getElementById('prRepStart')||{}).value || '',
+    endDate: (document.getElementById('prRepEnd')||{}).value || '',
+    supplierId: (document.getElementById('prRepSupplier')||{}).value || '',
+    itemId: (document.getElementById('prRepItem')||{}).value || '',
+    reportType: (document.getElementById('prRepType')||{}).value || 'bySupplier'
+  };
+  var container = document.getElementById('prRepContent');
+  container.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin" style="font-size:24px;"></i></div>';
+
+  window._apiBridge.withSuccessHandler(function(data) {
+    var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    var rows = data.rows || [];
+    if (!rows.length) { container.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-inbox" style="font-size:28px;display:block;margin-bottom:8px;"></i>لا توجد بيانات</div>'; return; }
+
+    var html = '<div style="padding:10px 16px;border-radius:10px;background:#eff6ff;color:#1e40af;font-size:13px;font-weight:700;margin-bottom:14px;"><i class="fas fa-coins" style="margin-left:6px;"></i> إجمالي المشتريات: <strong>' + fmt(data.totalAmount) + ' SAR</strong> | ' + rows.length + ' سجل</div>';
+
+    html += '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
+
+    if (data.type === 'bySupplier') {
+      html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">المورد</th><th>عدد الفواتير</th><th>إجمالي الكمية</th><th>إجمالي المبلغ</th></tr></thead><tbody>';
+      rows.forEach(function(r) { html += '<tr><td style="font-weight:700;padding:8px 14px;">' + r.supplier + '</td><td style="text-align:center;">' + r.invoiceCount + '</td><td style="text-align:center;">' + r.totalQty + '</td><td style="font-weight:800;color:#1e40af;text-align:left;">' + fmt(r.totalAmount) + '</td></tr>'; });
+    } else if (data.type === 'byItem') {
+      html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">الصنف</th><th>الوحدة</th><th>إجمالي الكمية</th><th>متوسط السعر</th><th>عدد الموردين</th><th>إجمالي المبلغ</th></tr></thead><tbody>';
+      rows.forEach(function(r) { html += '<tr><td style="font-weight:700;padding:8px 14px;">' + r.itemName + '</td><td>' + (r.unit||'') + '</td><td style="text-align:center;">' + r.totalQty + '</td><td style="text-align:center;">' + fmt(r.avgPrice) + '</td><td style="text-align:center;">' + (r.supplierCount||0) + '</td><td style="font-weight:800;color:#1e40af;text-align:left;">' + fmt(r.totalAmount) + '</td></tr>'; });
+    } else if (data.type === 'bySupplierItem') {
+      html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">المورد</th><th>الصنف</th><th>الوحدة</th><th>الكمية</th><th>المبلغ</th></tr></thead><tbody>';
+      rows.forEach(function(r) { html += '<tr><td style="font-weight:700;padding:8px 14px;">' + r.supplierName + '</td><td style="font-weight:600;">' + r.itemName + '</td><td>' + (r.unit||'') + '</td><td style="text-align:center;">' + r.totalQty + '</td><td style="font-weight:800;color:#1e40af;text-align:left;">' + fmt(r.totalAmount) + '</td></tr>'; });
+    } else {
+      html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">التاريخ</th><th>المورد</th><th>الصنف</th><th>الوحدة</th><th>الكمية</th><th>السعر</th><th>المبلغ</th></tr></thead><tbody>';
+      rows.forEach(function(r) {
+        var dt = r.date ? new Date(r.date).toLocaleDateString('en-GB') : '';
+        html += '<tr><td style="padding:8px 14px;">' + dt + '</td><td style="font-weight:700;">' + r.supplierName + '</td><td>' + r.itemName + '</td><td>' + (r.unit||'') + '</td><td style="text-align:center;">' + r.qty + '</td><td style="text-align:center;">' + fmt(r.unitPrice) + '</td><td style="font-weight:800;color:#1e40af;text-align:left;">' + fmt(r.total) + '</td></tr>';
+      });
+    }
+
+    html += '<tr style="background:#0f172a;color:#fff;font-weight:900;"><td colspan="' + (data.type==='detailed'?6:data.type==='byItem'?5:data.type==='bySupplierItem'?4:3) + '" style="padding:10px 14px;">الإجمالي</td><td style="text-align:left;font-size:15px;">' + fmt(data.totalAmount) + '</td></tr>';
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+  }).getPurchaseReports(filters);
+};
+
+window.erpPrintPurchaseReport = function() {
+  var content = document.getElementById('prRepContent');
+  if (!content) return;
+  var company = (state.settings && state.settings.name) || 'Moroccan Taste';
+  var w = window.open('','_blank');
+  w.document.write('<html dir="rtl"><head><meta charset="UTF-8"><title>تقرير المشتريات</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;direction:rtl;padding:20px;color:#1e293b;font-size:12px;}h2{text-align:center;margin-bottom:4px;}table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ddd;padding:6px 8px;text-align:right;}th{background:#f1f5f9;font-weight:700;}@media print{body{padding:10px;}}</style></head><body><h2>' + company + '</h2><h3 style="text-align:center;color:#64748b;margin-bottom:14px;">تقرير المشتريات — ' + new Date().toLocaleDateString('en-GB') + '</h3>' + content.innerHTML + '</body></html>');
+  w.document.close();
+  setTimeout(function() { w.print(); }, 400);
 };
 
 // ═══════════════════════════════════════

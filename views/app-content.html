@@ -65,6 +65,7 @@
           <div class="nav-item" data-erp-nav="erpGLJournals" onclick="erpNav('erpGLJournals')"><i class="fas fa-book"></i><span>القيود المحاسبية</span></div>
           <div class="nav-item" data-erp-nav="erpPeriods" onclick="erpNav('erpPeriods')"><i class="fas fa-calendar-alt"></i><span>الفترات المحاسبية</span></div>
           <div class="nav-item" data-erp-nav="erpInventoryMethod" onclick="erpNav('erpInventoryMethod')"><i class="fas fa-boxes-stacked"></i><span>نوع الجرد والمخزون</span></div>
+          <div class="nav-item" data-erp-nav="erpPurchaseReports" onclick="erpNav('erpPurchaseReports')"><i class="fas fa-truck"></i><span>تقارير المشتريات</span></div>
           <div class="nav-item" data-erp-nav="erpFinReports" onclick="erpNav('erpFinReports')"><i class="fas fa-chart-bar"></i><span>التقارير المالية</span></div>
         </div>
 
@@ -1134,6 +1135,38 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- INVENTORY METHOD & VALUATION (نوع الجرد والمخزون) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- PURCHASE REPORTS (تقارير المشتريات) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpPurchaseReports" class="dash-section hidden">
+  <div class="section-header" style="flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title"><i class="fas fa-truck"></i> تقارير المشتريات</h2>
+    <button class="btn btn-secondary" onclick="erpPrintPurchaseReport()" style="border-radius:10px;"><i class="fas fa-print"></i> طباعة</button>
+  </div>
+
+  <!-- Filters -->
+  <div class="jrn-filter-bar" style="margin-bottom:14px;">
+    <div class="jfb-group"><label>من تاريخ</label><input type="date" id="prRepStart" class="form-control"></div>
+    <div class="jfb-group"><label>إلى تاريخ</label><input type="date" id="prRepEnd" class="form-control"></div>
+    <div class="jfb-group"><label>المورد</label><select id="prRepSupplier" class="form-control" style="min-width:160px;"><option value="">الكل</option></select></div>
+    <div class="jfb-group"><label>الصنف</label><select id="prRepItem" class="form-control" style="min-width:160px;"><option value="">الكل</option></select></div>
+    <div class="jfb-group"><label>نوع التقرير</label>
+      <select id="prRepType" class="form-control">
+        <option value="bySupplier">حسب المورد</option>
+        <option value="byItem">حسب الصنف</option>
+        <option value="bySupplierItem">حسب المورد والصنف</option>
+        <option value="detailed">تفصيلي (مورد + صنف + تاريخ)</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" onclick="erpLoadPurchaseReport()" style="align-self:flex-end;border-radius:10px;height:38px;"><i class="fas fa-search"></i> عرض</button>
+  </div>
+
+  <!-- Report Content -->
+  <div id="prRepContent" style="min-height:200px;">
+    <div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-truck" style="font-size:36px;display:block;margin-bottom:10px;"></i>اختر الفلاتر واضغط عرض</div>
+  </div>
+</div>
+
 <div id="erpInventoryMethod" class="dash-section hidden">
   <div class="section-header" style="flex-wrap:wrap;gap:10px;">
     <h2 class="section-title"><i class="fas fa-boxes-stacked"></i> نوع الجرد وقيمة المخزون</h2>

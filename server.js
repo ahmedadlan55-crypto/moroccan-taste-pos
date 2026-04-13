@@ -15,8 +15,13 @@ app.use(helmet({
   referrerPolicy: { policy: 'same-origin' },
   hsts: { maxAge: 31536000, includeSubDomains: true }
 }));
-// Additional security headers
+// No-cache for JS/CSS files to ensure updates are always loaded
 app.use(function(req, res, next) {
+  if (req.path.match(/\.(js|css)$/)) {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Permissions-Policy', 'camera=self, microphone=()');

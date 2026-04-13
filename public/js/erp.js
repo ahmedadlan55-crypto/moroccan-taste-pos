@@ -356,8 +356,7 @@ function _coaRenderNode(acc, open) {
   html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
   html += '</div>';
   if (isGroup) {
-    // Inline margin for indentation — guaranteed to work in RTL
-    html += '<div class="coa-node-children' + (open ? ' open' : '') + '" style="margin-right:30px;padding-right:10px;border-right:2px dotted #cbd5e1;">';
+    html += '<div class="coa-node-children' + (open ? ' open' : '') + '" style="margin-inline-start:30px;padding-inline-start:10px;border-inline-start:2px dotted #cbd5e1;">';
     html += children.map(function(c) { return _coaRenderNode(c, false); }).join('');
     html += '</div>';
   }

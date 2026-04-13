@@ -339,18 +339,25 @@ function _coaBuildTree() {
 function _coaRenderNode(acc, open) {
   var children = _coaChildrenOf(acc.id);
   var isGroup = children.length > 0;
+  var lvl = acc.level || 1;
   var chevronDir = open ? 'fa-chevron-down' : 'fa-chevron-left';
-  var toggle = isGroup ? '<span class="coa-node-toggle"><i class="fas ' + chevronDir + '"></i></span>' : '<span class="coa-node-toggle" style="width:16px;"></span>';
-  var icon = isGroup ? '<i class="fas fa-folder coa-node-icon folder"></i>' : '<i class="fas fa-file-alt coa-node-icon file"></i>';
+  var toggle = isGroup ? '<span class="coa-node-toggle"><i class="fas ' + chevronDir + '"></i></span>' : '<span style="width:16px;display:inline-block;"></span>';
+  var iconSize = lvl <= 1 ? 18 : lvl === 2 ? 16 : lvl === 3 ? 14 : 12;
+  var icon = isGroup
+    ? '<i class="fas fa-folder" style="color:#f59e0b;font-size:' + iconSize + 'px;"></i>'
+    : '<i class="fas fa-file-alt" style="color:#3b82f6;font-size:' + iconSize + 'px;"></i>';
+  var fontW = lvl <= 1 ? 900 : lvl === 2 ? 800 : lvl === 3 ? 600 : 400;
+  var fontSize = lvl <= 1 ? 15 : lvl === 2 ? 14 : lvl === 3 ? 13 : 12;
   var activeClass = _coaSelectedId === acc.id ? ' active' : '';
 
-  var html = '<div class="coa-node" data-id="' + acc.id + '" data-level="' + (acc.level||1) + '">';
-  html += '<div class="coa-node-row' + activeClass + '" onclick="coaSelectNode(\'' + acc.id + '\')">';
-  html += toggle + icon;
+  var html = '<div class="coa-node" data-id="' + acc.id + '" data-level="' + lvl + '">';
+  html += '<div class="coa-node-row' + activeClass + '" style="font-weight:' + fontW + ';font-size:' + fontSize + 'px;" onclick="coaSelectNode(\'' + acc.id + '\')">';
+  html += toggle + ' ' + icon + ' ';
   html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
   html += '</div>';
   if (isGroup) {
-    html += '<div class="coa-node-children' + (open ? ' open' : '') + '">';
+    // Inline margin for indentation — guaranteed to work in RTL
+    html += '<div class="coa-node-children' + (open ? ' open' : '') + '" style="margin-right:30px;padding-right:10px;border-right:2px dotted #cbd5e1;">';
     html += children.map(function(c) { return _coaRenderNode(c, false); }).join('');
     html += '</div>';
   }

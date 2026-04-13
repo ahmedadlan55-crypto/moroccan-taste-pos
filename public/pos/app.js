@@ -1817,6 +1817,7 @@ function _shrLoadHistory() {
           '<span><i class="fas fa-calendar-day" style="margin-left:3px;"></i>' + dt + '</span>' +
           '<span><i class="fas fa-boxes" style="margin-left:3px;"></i>' + (r.totalItems||0) + ' ' + (isEn?'items':'مادة') + '</span>' +
         '</div>' +
+        (r.status === 'pending' ? '<button class="btn btn-primary btn-sm" style="margin-top:8px;border-radius:8px;width:100%;" onclick="shrEditRequest(\'' + r.id + '\')"><i class="fas fa-edit"></i> ' + (isEn?'Edit Request':'تعديل الطلب') + '</button>' : '') +
         (canReceive ? '<button class="btn btn-success btn-sm" style="margin-top:8px;border-radius:8px;width:100%;" onclick="closeGlassModal(\'#modalShortage\');openReceiveModal(\'' + r.id + '\')"><i class="fas fa-box-open"></i> ' + (isEn?'Receive Materials':t('receiveMaterials')) + '</button>' : '') +
       '</div>';
     }).join('');
@@ -1824,13 +1825,40 @@ function _shrLoadHistory() {
   }).getShortageRequests();
 }
 
+var _shrEditingId = null; // If editing a pending request
+
+// Edit a pending shortage request — load its items into the cart
+window.shrEditRequest = function(requestId) {
+  loader(true);
+  api.withSuccessHandler(function(data) {
+    loader(false);
+    if (!data || data.error) return glassToast(data && data.error || t('errorTitle'), true);
+    if (data.status !== 'pending') return glassToast(state.lang==='en'?'Only pending requests can be edited':'فقط الطلبات المعلقة يمكن تعديلها', true);
+
+    // Load items into cart
+    _shrCart = (data.items || []).map(function(i) {
+      return { id: i.invItemId, name: i.invItemName, unit: i.unit||'', stock: Number(i.currentQty)||0, minStock: Number(i.minQty)||0, cost: Number(i.unitPrice)||0, requestedQty: Number(i.requestedQty)||1 };
+    });
+    _saveShrCart();
+    _shrEditingId = requestId;
+
+    // Switch to "new" tab with the loaded data
+    shrSwitchTab('new');
+    _shrRenderCart();
+
+    // Update submit button text
+    var submitBtn = q('#shrNewPanel') && q('#shrNewPanel').closest('.glass-modal-content');
+    glassToast(state.lang==='en'?'Request loaded for editing — modify and save':'تم تحميل الطلب للتعديل — عدّل واحفظ');
+  }).getShortageRequest(requestId);
+};
+
 window.openShortageRequest = function() {
   _shrCart = _getShrCart(); // Restore from localStorage
+  _shrEditingId = null;
   if (q('#shrSearch')) q('#shrSearch').value = '';
   if (q('#shrNotes')) q('#shrNotes').value = '';
   if (q('#shrSearchResults')) q('#shrSearchResults').style.display = 'none';
-  _shrRenderCart();
-  shrSwitchTab('new'); // default to new request tab
+  shrSwitchTab('new');
 
   loader(true);
   api.withSuccessHandler(function(items) {
@@ -1839,6 +1867,8 @@ window.openShortageRequest = function() {
       return { id: i.id, name: i.name, category: i.category||'', stock: Number(i.stock)||0, minStock: Number(i.minStock||i.min_stock)||0, cost: Number(i.cost)||0, unit: i.unit||'', bigUnit: i.bigUnit||i.big_unit||'', convRate: Number(i.convRate||i.conv_rate)||1 };
     });
     openGlassModal('#modalShortage');
+    // Render cart AFTER modal is open (DOM is visible)
+    setTimeout(function() { _shrRenderCart(); }, 50);
     // Close dropdown on outside click
     setTimeout(function() { document.addEventListener('click', _closeShrDropdown); }, 100);
   }).withFailureHandler(function() { loader(false); glassToast(t('errorTitle'), true); }).getInvItems();
@@ -1923,17 +1953,38 @@ window.submitShortageRequest = function() {
   var items = _shrCart.map(function(c) {
     return { invItemId: c.id, invItemName: c.name, unit: c.unit, currentQty: c.stock, minQty: c.minStock, requestedQty: c.requestedQty, unitPrice: c.cost };
   });
+  var isEdit = !!_shrEditingId;
+  var confirmMsg = isEdit
+    ? (state.lang==='en' ? 'Save changes to the request?' : 'حفظ التعديلات على الطلب؟')
+    : t('stConfirmMsg').replace('{n}', items.length);
 
-  glassConfirm(t('shortageRequest'), t('stConfirmMsg').replace('{n}', items.length), {}).then(function(ok) {
+  glassConfirm(t('shortageRequest'), confirmMsg, {}).then(function(ok) {
     if (!ok) return;
     loader(true);
-    api.withSuccessHandler(function(r) {
-      loader(false);
-      if (r && r.success) {
-        closeGlassModal('#modalShortage');
-        glassToast(t('shortageRequest') + ': ' + r.requestNumber);
-        _shrCart = []; localStorage.removeItem('pos_shortage_cart');
-      } else glassToast((r && r.error) || 'فشل الإرسال', true);
-    }).withFailureHandler(function() { loader(false); glassToast(t('errorTitle'), true); }).createShortageRequest({ items: items, username: state.user, notes: (q('#shrNotes')||{}).value || '' });
+
+    if (isEdit) {
+      // UPDATE existing pending request
+      api.withSuccessHandler(function(r) {
+        loader(false);
+        if (r && r.success) {
+          closeGlassModal('#modalShortage');
+          glassToast(state.lang==='en' ? 'Request updated' : 'تم تحديث الطلب');
+          _shrCart = []; localStorage.removeItem('pos_shortage_cart');
+          _shrEditingId = null;
+        } else glassToast((r && r.error) || t('errorTitle'), true);
+      }).withFailureHandler(function() { loader(false); glassToast(t('errorTitle'), true); })
+        .updateShortageRequest(_shrEditingId, { items: items, notes: (q('#shrNotes')||{}).value || '' });
+    } else {
+      // CREATE new request
+      api.withSuccessHandler(function(r) {
+        loader(false);
+        if (r && r.success) {
+          closeGlassModal('#modalShortage');
+          glassToast(t('shortageRequest') + ': ' + r.requestNumber);
+          _shrCart = []; localStorage.removeItem('pos_shortage_cart');
+        } else glassToast((r && r.error) || t('errorTitle'), true);
+      }).withFailureHandler(function() { loader(false); glassToast(t('errorTitle'), true); })
+        .createShortageRequest({ items: items, username: state.user, notes: (q('#shrNotes')||{}).value || '' });
+    }
   });
 };

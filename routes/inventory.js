@@ -690,6 +690,29 @@ router.post('/shortage-requests/:id/reject', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// Update pending shortage request (branch manager can edit before approval)
+router.put('/shortage-requests/:id', async (req, res) => {
+  try {
+    const { items, notes } = req.body;
+    const [reqs] = await db.query('SELECT status FROM shortage_requests WHERE id = ?', [req.params.id]);
+    if (!reqs.length) return res.json({ success: false, error: 'الطلب غير موجود' });
+    if (reqs[0].status !== 'pending') return res.json({ success: false, error: 'فقط الطلبات المعلقة يمكن تعديلها' });
+    if (!items || !items.length) return res.json({ success: false, error: 'أضف مادة واحدة على الأقل' });
+
+    // Delete old items and insert new ones
+    await db.query('DELETE FROM shortage_items WHERE request_id = ?', [req.params.id]);
+    for (const item of items) {
+      const itemId = 'SHRI-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+      await db.query(
+        'INSERT INTO shortage_items (id, request_id, inv_item_id, inv_item_name, unit, current_qty, min_qty, requested_qty, unit_price) VALUES (?,?,?,?,?,?,?,?,?)',
+        [itemId, req.params.id, item.invItemId||'', item.invItemName||'', item.unit||'', item.currentQty||0, item.minQty||0, item.requestedQty||0, item.unitPrice||0]
+      );
+    }
+    await db.query('UPDATE shortage_requests SET notes = ?, total_items = ? WHERE id = ?', [notes||'', items.length, req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 // Delete shortage request (developer only)
 router.delete('/shortage-requests/:id', async (req, res) => {
   try {

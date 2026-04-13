@@ -318,10 +318,21 @@ function _coaIsGroup(id) { return _erpAccounts.some(a => a.parentId === id); }
 function _coaBuildTree() {
   var container = document.getElementById('coaTreeBody');
   if (!container) return;
-  // Only show level-1 accounts as roots (max 5: الأصول، الالتزامات، حقوق الملكية، الإيرادات، المصروفات)
-  var roots = _erpAccounts.filter(function(a) { return a.level === 1 && (!a.parentId || a.parentId === ''); }).sort(function(a,b) { return a.code.localeCompare(b.code); });
-  // Fallback: if no level-1 found, use parentId=null
+
+  // Find ONLY the 5 main roots by code (1,2,3,4,5)
+  var mainCodes = ['1','2','3','4','5'];
+  var roots = _erpAccounts.filter(function(a) {
+    return mainCodes.indexOf(a.code) >= 0;
+  }).sort(function(a,b) { return a.code.localeCompare(b.code); });
+
+  // If no accounts with exact codes 1-5, fallback to level=1
+  if (!roots.length) {
+    roots = _erpAccounts.filter(function(a) { return a.level === 1; }).sort(function(a,b) { return a.code.localeCompare(b.code); });
+  }
+
+  // Final fallback: accounts with no parent
   if (!roots.length) roots = _coaChildrenOf(null);
+
   container.innerHTML = roots.map(function(a) { return _coaRenderNode(a, false); }).join('');
 }
 

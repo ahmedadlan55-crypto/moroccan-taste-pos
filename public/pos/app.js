@@ -1916,11 +1916,11 @@ window.shrFilterItems = function(query) {
 window.shrAddItem = function(id) {
   var item = _shrAllItems.find(function(i) { return i.id === id; });
   if (!item || _shrCart.some(function(c) { return c.id === id; })) return;
-  var deficit = Math.max(0, item.minStock - item.stock);
   _shrCart.push({
-    id: item.id, name: item.name, unit: item.unit, bigUnit: item.bigUnit, convRate: item.convRate,
+    id: item.id, name: item.name, unit: item.unit,
+    bigUnit: item.bigUnit || '', convRate: Number(item.convRate) || 1,
     stock: item.stock, minStock: item.minStock, cost: item.cost,
-    requestedQty: deficit > 0 ? deficit : 1
+    _bigInput: '', _smallInput: '', requestedQty: 0
   });
   _saveShrCart();
   q('#shrSearch').value = '';
@@ -1934,8 +1934,27 @@ window.shrRemoveItem = function(idx) {
   _shrRenderCart();
 };
 
-window.shrUpdateQty = function(idx, val) {
-  if (_shrCart[idx]) { _shrCart[idx].requestedQty = Math.max(1, Number(val) || 1); _saveShrCart(); }
+// Dual unit input — same pattern as stocktake
+window.shrUpdateDual = function(idx, bigVal, smallVal) {
+  var c = _shrCart[idx];
+  if (!c) return;
+  var cRate = Number(c.convRate) || 1;
+  var hasBig = c.bigUnit && cRate > 1;
+
+  if (bigVal !== null && bigVal !== undefined) c._bigInput = bigVal === '' ? '' : Number(bigVal);
+  if (smallVal !== null && smallVal !== undefined) c._smallInput = smallVal === '' ? '' : Number(smallVal);
+
+  var b = Number(c._bigInput) || 0;
+  var s = Number(c._smallInput) || 0;
+  var bigEmpty = c._bigInput === '' || c._bigInput === undefined;
+  var smallEmpty = c._smallInput === '' || c._smallInput === undefined;
+
+  if (bigEmpty && smallEmpty) {
+    c.requestedQty = 0;
+  } else {
+    c.requestedQty = hasBig ? (b * cRate) + s : s;
+  }
+  _saveShrCart();
 };
 
 function _shrRenderCart() {
@@ -1946,24 +1965,42 @@ function _shrRenderCart() {
     return;
   }
   tb.innerHTML = _shrCart.map(function(c, i) {
+    // Refresh from server cache
+    if (_shrAllItems.length) {
+      var fresh = _shrAllItems.find(function(x) { return x.id === c.id; });
+      if (fresh) {
+        c.bigUnit = fresh.bigUnit || c.bigUnit || '';
+        c.convRate = Number(fresh.convRate) || Number(c.convRate) || 1;
+        c.unit = fresh.unit || c.unit || '';
+        c.stock = Number(fresh.stock) || c.stock || 0;
+      }
+    }
+    var cRate = Number(c.convRate) || 1;
+    var hasBig = c.bigUnit && cRate > 1;
+    var bigVal = c._bigInput !== undefined && c._bigInput !== '' ? c._bigInput : '';
+    var smallVal = c._smallInput !== undefined && c._smallInput !== '' ? c._smallInput : '';
     var low = c.stock <= c.minStock;
-    var deficit = c.minStock - c.stock;
-    var deficitHtml = deficit > 0 ? '<span style="color:#ef4444;font-weight:800;">-' + deficit.toFixed(0) + '</span>' : '<span style="color:#16a34a;">0</span>';
-    return '<tr>' +
-      '<td style="font-weight:700;font-size:12px;">' + c.name + '</td>' +
-      '<td style="text-align:center;font-weight:700;color:' + (low?'#ef4444':'#16a34a') + ';">' + c.stock + '</td>' +
-      '<td style="text-align:center;color:#64748b;">' + c.minStock + '</td>' +
-      '<td style="text-align:center;"><input type="number" min="1" step="1" value="' + c.requestedQty + '" style="width:55px;padding:5px;border:1.5px solid #e2e8f0;border-radius:8px;text-align:center;font-weight:800;font-size:13px;" onchange="shrUpdateQty(' + i + ',this.value)"></td>' +
-      '<td style="text-align:center;font-size:11px;color:#64748b;">' + c.unit + '</td>' +
-      '<td style="text-align:center;">' + deficitHtml + '</td>' +
-      '<td style="text-align:center;"><button onclick="shrRemoveItem(' + i + ')" style="border:none;background:none;color:#ef4444;cursor:pointer;font-size:14px;"><i class="fas fa-trash"></i></button></td>' +
-    '</tr>';
+
+    var nameCell = '<td style="font-weight:700;font-size:12px;">' + c.name + '</td>';
+    var bigQtyCell = hasBig
+      ? '<td style="text-align:center;"><input type="number" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + bigVal + '" oninput="shrUpdateDual(' + i + ',this.value,null)" placeholder="0"></td>'
+      : '<td style="text-align:center;color:#e2e8f0;">—</td>';
+    var bigUnitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (hasBig ? c.bigUnit : '—') + '</td>';
+    var smallQtyCell = '<td style="text-align:center;"><input type="number" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + smallVal + '" oninput="shrUpdateDual(' + i + ',null,this.value)" placeholder="0"></td>';
+    var smallUnitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (c.unit||'') + '</td>';
+    var stockCell = '<td style="text-align:center;font-weight:700;color:' + (low?'#ef4444':'#16a34a') + ';font-size:12px;">' + c.stock + '</td>';
+    var delCell = '<td style="text-align:center;"><button onclick="shrRemoveItem(' + i + ')" style="border:none;background:none;color:#ef4444;cursor:pointer;font-size:14px;"><i class="fas fa-trash"></i></button></td>';
+
+    return '<tr>' + nameCell + bigQtyCell + bigUnitCell + smallQtyCell + smallUnitCell + stockCell + delCell + '</tr>';
   }).join('');
 }
 
 window.submitShortageRequest = function() {
   if (!_shrCart.length) return glassToast(t('stAddFirst'), true);
-  var items = _shrCart.map(function(c) {
+  // Filter only items with qty > 0
+  var validItems = _shrCart.filter(function(c) { return c.requestedQty > 0; });
+  if (!validItems.length) return glassToast(state.lang==='en'?'Enter quantity for at least one item':'أدخل كمية لمادة واحدة على الأقل', true);
+  var items = validItems.map(function(c) {
     return { invItemId: c.id, invItemName: c.name, unit: c.unit, currentQty: c.stock, minQty: c.minStock, requestedQty: c.requestedQty, unitPrice: c.cost };
   });
   var isEdit = !!_shrEditingId;

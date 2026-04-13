@@ -1817,7 +1817,7 @@ function _shrLoadHistory() {
           '<span><i class="fas fa-calendar-day" style="margin-left:3px;"></i>' + dt + '</span>' +
           '<span><i class="fas fa-boxes" style="margin-left:3px;"></i>' + (r.totalItems||0) + ' ' + (isEn?'items':'مادة') + '</span>' +
         '</div>' +
-        (r.status === 'pending' ? '<button class="btn btn-primary btn-sm" style="margin-top:8px;border-radius:8px;width:100%;" onclick="shrEditRequest(\'' + r.id + '\')"><i class="fas fa-edit"></i> ' + (isEn?'Edit Request':'تعديل الطلب') + '</button>' : '') +
+        (r.status === 'pending' ? '<div style="display:flex;gap:6px;margin-top:8px;"><button class="btn btn-primary btn-sm" style="flex:1;border-radius:8px;" onclick="shrEditRequest(\'' + r.id + '\')"><i class="fas fa-edit"></i> ' + (isEn?'Edit':'تعديل') + '</button><button class="btn btn-danger btn-sm" style="border-radius:8px;" onclick="shrDeleteRequest(\'' + r.id + '\',\'' + (r.requestNumber||'') + '\')"><i class="fas fa-trash"></i></button></div>' : '') +
         (canReceive ? '<button class="btn btn-success btn-sm" style="margin-top:8px;border-radius:8px;width:100%;" onclick="closeGlassModal(\'#modalShortage\');openReceiveModal(\'' + r.id + '\')"><i class="fas fa-box-open"></i> ' + (isEn?'Receive Materials':t('receiveMaterials')) + '</button>' : '') +
       '</div>';
     }).join('');
@@ -1850,6 +1850,19 @@ window.shrEditRequest = function(requestId) {
     var submitBtn = q('#shrNewPanel') && q('#shrNewPanel').closest('.glass-modal-content');
     glassToast(state.lang==='en'?'Request loaded for editing — modify and save':'تم تحميل الطلب للتعديل — عدّل واحفظ');
   }).getShortageRequest(requestId);
+};
+
+window.shrDeleteRequest = function(id, num) {
+  var isEn = state.lang === 'en';
+  glassConfirm(isEn?'Delete Request':'حذف الطلب', (isEn?'Delete shortage request ':'حذف طلب النقص ') + num + '?', {}).then(function(ok) {
+    if (!ok) return;
+    loader(true);
+    api.withSuccessHandler(function(r) {
+      loader(false);
+      if (r && r.success) { glassToast(isEn?'Request deleted':'تم حذف الطلب'); _shrLoadHistory(); }
+      else glassToast((r && r.error) || t('errorTitle'), true);
+    }).deleteShortageRequest(id);
+  });
 };
 
 window.openShortageRequest = function() {

@@ -168,6 +168,7 @@
     approveReceive:      { method: 'POST', url: (id,d) => '/inventory/receive-approve/' + id, body: (id,d) => d },
     createShortageRequest:{ method: 'POST', url: '/inventory/shortage-requests' },
     updateShortageRequest:{ method: 'PUT', url: (id,d) => '/inventory/shortage-requests/' + id, body: (id,d) => d },
+    deleteShortageRequest:{ method: 'DELETE', url: (id) => '/inventory/shortage-requests/' + id },
     getShortageRequests: { method: 'GET',  url: '/inventory/shortage-requests' },
     getShortageRequest:  { method: 'GET',  url: (id) => '/inventory/shortage-requests/' + id },
     approveShortage:     { method: 'POST', url: (id,d) => '/inventory/shortage-requests/' + id + '/approve', body: (id,d) => d },

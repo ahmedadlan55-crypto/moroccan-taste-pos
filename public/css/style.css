@@ -794,8 +794,20 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 .coa-node[data-level="4"] > .coa-node-row .coa-node-icon { font-size: 11px; }
 .coa-node-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .coa-node-code { font-size: 10px; color: #94a3b8; font-family: monospace; }
-.coa-node-children { display: none; border-right: 2px solid #e2e8f0; margin-right: 22px; padding-right: 6px; }
-[dir="rtl"] .coa-node-children { border-right: none; border-left: 2px solid #e2e8f0; margin-right: 0; margin-left: 22px; padding-right: 0; padding-left: 6px; }
+.coa-node-children {
+  display: none;
+  padding-right: 28px;
+  border-right: 2px dotted #cbd5e1;
+  margin-right: 12px;
+}
+[dir="rtl"] .coa-node-children {
+  padding-right: 0;
+  padding-left: 28px;
+  border-right: none;
+  border-left: 2px dotted #cbd5e1;
+  margin-right: 0;
+  margin-left: 12px;
+}
 .coa-node-children.open { display: block; }
 
 /* Main Panel */

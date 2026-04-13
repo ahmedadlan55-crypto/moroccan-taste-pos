@@ -2067,10 +2067,10 @@ function _renderCashFlow(container) {
       var closeBal = (r.closeDebit||0) - (r.closeCredit||0);
       totOpen += openBal; totIn += r.periodDebit||0; totOut += r.periodCredit||0; totClose += closeBal;
       html += '<tr><td style="font-weight:700;padding:8px 14px;">' + r.nameAR + ' <code style="color:#94a3b8;">' + r.code + '</code></td>' +
-        '<td style="text-align:left;">' + fmt(openBal) + '</td><td style="text-align:left;color:#16a34a;">' + fmt(r.periodDebit) + '</td>' +
-        '<td style="text-align:left;color:#ef4444;">' + fmt(r.periodCredit) + '</td><td style="text-align:left;font-weight:800;">' + fmt(closeBal) + '</td></tr>';
+        '<td style="text-align:start;">' + fmt(openBal) + '</td><td style="text-align:start;color:#16a34a;">' + fmt(r.periodDebit) + '</td>' +
+        '<td style="text-align:start;color:#ef4444;">' + fmt(r.periodCredit) + '</td><td style="text-align:start;font-weight:800;">' + fmt(closeBal) + '</td></tr>';
     });
-    html += '<tr style="background:#0f172a;color:#fff;font-weight:900;"><td style="padding:10px 14px;">الإجمالي</td><td style="text-align:left;">' + fmt(totOpen) + '</td><td style="text-align:left;">' + fmt(totIn) + '</td><td style="text-align:left;">' + fmt(totOut) + '</td><td style="text-align:left;">' + fmt(totClose) + '</td></tr>';
+    html += '<tr style="background:#0f172a;color:#fff;font-weight:900;"><td style="padding:10px 14px;">الإجمالي</td><td style="text-align:start;">' + fmt(totOpen) + '</td><td style="text-align:start;">' + fmt(totIn) + '</td><td style="text-align:start;">' + fmt(totOut) + '</td><td style="text-align:start;">' + fmt(totClose) + '</td></tr>';
     html += '</tbody></table></div>';
     container.innerHTML = html;
   }).getTrialBalance({});
@@ -2089,14 +2089,14 @@ function _renderAssetsReport(container) {
       tot.od+=r.openDebit||0; tot.oc+=r.openCredit||0; tot.pd+=r.periodDebit||0; tot.pc+=r.periodCredit||0; tot.cd+=r.closeDebit||0; tot.cc+=r.closeCredit||0;
       var indent = ((r.level||1)-1)*14;
       html += '<tr><td style="padding:8px 14px;"><code>' + r.code + '</code></td><td style="padding-right:' + indent + 'px;font-weight:' + (r.level<=2?'800':'400') + ';">' + r.nameAR + '</td>' +
-        '<td style="text-align:left;">' + fmt(r.openDebit) + '</td><td style="text-align:left;">' + fmt(r.openCredit) + '</td>' +
-        '<td style="text-align:left;">' + fmt(r.periodDebit) + '</td><td style="text-align:left;">' + fmt(r.periodCredit) + '</td>' +
-        '<td style="text-align:left;font-weight:700;">' + fmt(r.closeDebit) + '</td><td style="text-align:left;font-weight:700;">' + fmt(r.closeCredit) + '</td></tr>';
+        '<td style="text-align:start;">' + fmt(r.openDebit) + '</td><td style="text-align:start;">' + fmt(r.openCredit) + '</td>' +
+        '<td style="text-align:start;">' + fmt(r.periodDebit) + '</td><td style="text-align:start;">' + fmt(r.periodCredit) + '</td>' +
+        '<td style="text-align:start;font-weight:700;">' + fmt(r.closeDebit) + '</td><td style="text-align:start;font-weight:700;">' + fmt(r.closeCredit) + '</td></tr>';
     });
     html += '<tr style="background:#0f172a;color:#fff;font-weight:900;"><td colspan="2" style="padding:10px 14px;">الإجمالي</td>' +
-      '<td style="text-align:left;">' + fmt(tot.od) + '</td><td style="text-align:left;">' + fmt(tot.oc) + '</td>' +
-      '<td style="text-align:left;">' + fmt(tot.pd) + '</td><td style="text-align:left;">' + fmt(tot.pc) + '</td>' +
-      '<td style="text-align:left;">' + fmt(tot.cd) + '</td><td style="text-align:left;">' + fmt(tot.cc) + '</td></tr>';
+      '<td style="text-align:start;">' + fmt(tot.od) + '</td><td style="text-align:start;">' + fmt(tot.oc) + '</td>' +
+      '<td style="text-align:start;">' + fmt(tot.pd) + '</td><td style="text-align:start;">' + fmt(tot.pc) + '</td>' +
+      '<td style="text-align:start;">' + fmt(tot.cd) + '</td><td style="text-align:start;">' + fmt(tot.cc) + '</td></tr>';
     html += '</tbody></table></div>';
     container.innerHTML = html;
   }).getTrialBalance({accountType: 'asset'});
@@ -2157,7 +2157,7 @@ function _renderTrialBalance(container, filters) {
       var stripe = idx % 2 === 0 ? '#fff' : '#f8fafc';
       var rowStyle = 'background:' + (hasData ? stripe : '#fafafa') + ';' + (hasData ? '' : 'opacity:0.45;');
 
-      var cell = function(val, color) { return '<td style="padding:5px 10px;text-align:left;border:1px solid #e2e8f0;color:' + color + ';font-weight:' + (val?'700':'400') + ';">' + (val ? fmt(val) : '-') + '</td>'; };
+      var cell = function(val, color) { return '<td style="padding:5px 10px;text-align:start;border:1px solid #e2e8f0;color:' + color + ';font-weight:' + (val?'700':'400') + ';">' + (val ? fmt(val) : '-') + '</td>'; };
 
       html += '<tr style="' + rowStyle + '">' +
         '<td style="text-align:center;padding:5px 8px;border:1px solid #e2e8f0;"><code style="font-weight:700;font-size:11px;color:#475569;">' + r.code + '</code></td>' +
@@ -2169,7 +2169,7 @@ function _renderTrialBalance(container, filters) {
     });
 
     // Totals
-    var totCell = function(val) { return '<td style="padding:8px 10px;text-align:left;border:1px solid #334155;font-size:13px;">' + fmt(val) + '</td>'; };
+    var totCell = function(val) { return '<td style="padding:8px 10px;text-align:start;border:1px solid #334155;font-size:13px;">' + fmt(val) + '</td>'; };
     html += '<tr style="background:#0f172a;color:#fff;font-weight:900;">' +
       '<td colspan="2" style="padding:8px 12px;border:1px solid #334155;font-size:14px;">الإجمالي</td>' +
       totCell(tot.openDebit) + totCell(tot.openCredit) +
@@ -2246,12 +2246,12 @@ function _renderIncomeStatement(container) {
     var profitColor = function(v) { return v >= 0 ? '#16a34a' : '#ef4444'; };
     var line = function(label, val, bold, bg, color) {
       var style = (bold?'font-weight:900;font-size:14px;':'font-weight:600;') + (bg?'background:'+bg+';':'') + (color?'color:'+color+';':'');
-      return '<tr style="'+style+'"><td style="padding:8px 14px;">' + label + '</td><td style="text-align:left;padding:8px 14px;white-space:nowrap;">' + fmt(val) + '</td></tr>';
+      return '<tr style="'+style+'"><td style="padding:8px 14px;">' + label + '</td><td style="text-align:start;padding:8px 14px;white-space:nowrap;">' + fmt(val) + '</td></tr>';
     };
     var items = function(list) {
       return (list||[]).map(function(r) {
         var indent = (r.level||3) > 2 ? ((r.level-2)*16) : 0;
-        return '<tr><td style="padding:6px 14px;padding-right:' + (14+indent) + 'px;color:#475569;"><code style="color:#94a3b8;margin-left:6px;font-size:11px;">' + r.code + '</code>' + r.name + '</td><td style="text-align:left;padding:6px 14px;">' + fmt(r.balance) + '</td></tr>';
+        return '<tr><td style="padding:6px 14px;padding-right:' + (14+indent) + 'px;color:#475569;"><code style="color:#94a3b8;margin-left:6px;font-size:11px;">' + r.code + '</code>' + r.name + '</td><td style="text-align:start;padding:6px 14px;">' + fmt(r.balance) + '</td></tr>';
       }).join('');
     };
 
@@ -2261,7 +2261,7 @@ function _renderIncomeStatement(container) {
     html += '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
 
     // Header
-    html += '<thead><tr style="background:#1e293b;color:#fff;"><th style="padding:10px 14px;text-align:right;">البند</th><th style="padding:10px 14px;text-align:left;width:150px;">المبلغ (SAR)</th></tr></thead><tbody>';
+    html += '<thead><tr style="background:#1e293b;color:#fff;"><th style="padding:10px 14px;text-align:right;">البند</th><th style="padding:10px 14px;text-align:start;width:150px;">المبلغ (SAR)</th></tr></thead><tbody>';
 
     // 1. Revenue
     html += '<tr style="background:#f0fdf4;"><td colspan="2" style="padding:8px 14px;font-weight:900;color:#166534;font-size:14px;"><i class="fas fa-arrow-trend-up" style="margin-left:6px;"></i> الإيرادات</td></tr>';
@@ -2274,7 +2274,7 @@ function _renderIncomeStatement(container) {
     html += line('إجمالي تكلفة المبيعات', d.totalCOGS, true, '#fef3c7', '#92400e');
 
     // 3. Gross Profit
-    html += '<tr style="background:#1e40af;color:#fff;font-weight:900;font-size:15px;"><td style="padding:10px 14px;">مجمل الربح (Gross Profit)</td><td style="text-align:left;padding:10px 14px;">' + fmt(d.grossProfit) + '</td></tr>';
+    html += '<tr style="background:#1e40af;color:#fff;font-weight:900;font-size:15px;"><td style="padding:10px 14px;">مجمل الربح (Gross Profit)</td><td style="text-align:start;padding:10px 14px;">' + fmt(d.grossProfit) + '</td></tr>';
 
     // 4. Operating Expenses
     html += '<tr style="background:#fee2e2;"><td colspan="2" style="padding:8px 14px;font-weight:900;color:#991b1b;font-size:14px;"><i class="fas fa-arrow-trend-down" style="margin-left:6px;"></i> المصروفات التشغيلية</td></tr>';
@@ -2282,7 +2282,7 @@ function _renderIncomeStatement(container) {
     html += line('إجمالي المصروفات التشغيلية', d.totalOpex, true, '#fee2e2', '#991b1b');
 
     // 5. Operating Income
-    html += '<tr style="background:#7c3aed;color:#fff;font-weight:900;font-size:15px;"><td style="padding:10px 14px;">الربح التشغيلي (Operating Income)</td><td style="text-align:left;padding:10px 14px;">' + fmt(d.operatingIncome) + '</td></tr>';
+    html += '<tr style="background:#7c3aed;color:#fff;font-weight:900;font-size:15px;"><td style="padding:10px 14px;">الربح التشغيلي (Operating Income)</td><td style="text-align:start;padding:10px 14px;">' + fmt(d.operatingIncome) + '</td></tr>';
 
     // 6. Other Income
     if ((d.otherIncome||[]).length) {
@@ -2301,7 +2301,7 @@ function _renderIncomeStatement(container) {
     // 8. Net Income
     var niColor = d.netIncome >= 0 ? '#166534' : '#991b1b';
     var niBg = d.netIncome >= 0 ? '#16a34a' : '#ef4444';
-    html += '<tr style="background:' + niBg + ';color:#fff;font-weight:900;font-size:16px;"><td style="padding:12px 14px;"><i class="fas fa-star" style="margin-left:6px;"></i> صافي الدخل (Net Income)</td><td style="text-align:left;padding:12px 14px;font-size:18px;">' + fmt(d.netIncome) + '</td></tr>';
+    html += '<tr style="background:' + niBg + ';color:#fff;font-weight:900;font-size:16px;"><td style="padding:12px 14px;"><i class="fas fa-star" style="margin-left:6px;"></i> صافي الدخل (Net Income)</td><td style="text-align:start;padding:12px 14px;font-size:18px;">' + fmt(d.netIncome) + '</td></tr>';
 
     html += '</tbody></table></div>';
     container.innerHTML = html;
@@ -2321,9 +2321,9 @@ function _renderBalanceSheet(container) {
       (items||[]).forEach(function(r) {
         var indent = (r.level||3) > 2 ? ((r.level-2)*16) : 0;
         var style = r.isComputed ? 'font-style:italic;color:#7c3aed;' : '';
-        h += '<tr style="' + style + '"><td style="padding:6px 14px;"><code style="color:#94a3b8;font-size:11px;margin-left:6px;">' + (r.code||'') + '</code></td><td style="padding:6px 14px;padding-right:' + (14+indent) + 'px;font-weight:600;">' + r.name + '</td><td style="text-align:left;padding:6px 14px;font-weight:700;">' + fmt(r.balance) + '</td></tr>';
+        h += '<tr style="' + style + '"><td style="padding:6px 14px;"><code style="color:#94a3b8;font-size:11px;margin-left:6px;">' + (r.code||'') + '</code></td><td style="padding:6px 14px;padding-right:' + (14+indent) + 'px;font-weight:600;">' + r.name + '</td><td style="text-align:start;padding:6px 14px;font-weight:700;">' + fmt(r.balance) + '</td></tr>';
       });
-      h += '<tr style="background:' + color + '18;font-weight:900;"><td colspan="2" style="padding:8px 14px;">' + totalLabel + '</td><td style="text-align:left;padding:8px 14px;color:' + color + ';font-size:15px;">' + fmt(total) + '</td></tr>';
+      h += '<tr style="background:' + color + '18;font-weight:900;"><td colspan="2" style="padding:8px 14px;">' + totalLabel + '</td><td style="text-align:start;padding:8px 14px;color:' + color + ';font-size:15px;">' + fmt(total) + '</td></tr>';
       return h;
     };
 
@@ -2342,7 +2342,7 @@ function _renderBalanceSheet(container) {
     html += '<thead><tr style="background:#1e293b;color:#fff;"><th style="padding:10px 14px;" colspan="3">الأصول (Assets)</th></tr></thead><tbody>';
     html += section('الأصول المتداولة', 'fa-coins', '#3b82f6', d.currentAssets, d.totCA, 'إجمالي الأصول المتداولة');
     html += section('الأصول غير المتداولة', 'fa-building', '#1e40af', d.nonCurrentAssets, d.totNCA, 'إجمالي الأصول غير المتداولة');
-    html += '<tr style="background:#1e293b;color:#fff;font-weight:900;font-size:15px;"><td colspan="2" style="padding:10px 14px;">إجمالي الأصول</td><td style="text-align:left;padding:10px 14px;">' + fmt(d.totalAssets) + '</td></tr>';
+    html += '<tr style="background:#1e293b;color:#fff;font-weight:900;font-size:15px;"><td colspan="2" style="padding:10px 14px;">إجمالي الأصول</td><td style="text-align:start;padding:10px 14px;">' + fmt(d.totalAssets) + '</td></tr>';
     html += '</tbody></table></div>';
 
     // Right: Liabilities + Equity
@@ -2352,9 +2352,9 @@ function _renderBalanceSheet(container) {
     if ((d.nonCurrentLiab||[]).length) {
       html += section('الالتزامات غير المتداولة', 'fa-landmark', '#b91c1c', d.nonCurrentLiab, d.totNCL, 'إجمالي الالتزامات غير المتداولة');
     }
-    html += '<tr style="background:#ef4444;color:#fff;font-weight:900;"><td colspan="2" style="padding:8px 14px;">إجمالي الالتزامات</td><td style="text-align:left;padding:8px 14px;">' + fmt(d.totalLiabilities) + '</td></tr>';
+    html += '<tr style="background:#ef4444;color:#fff;font-weight:900;"><td colspan="2" style="padding:8px 14px;">إجمالي الالتزامات</td><td style="text-align:start;padding:8px 14px;">' + fmt(d.totalLiabilities) + '</td></tr>';
     html += section('حقوق الملكية', 'fa-gem', '#8b5cf6', d.equityItems, d.totEq, 'إجمالي حقوق الملكية');
-    html += '<tr style="background:#1e293b;color:#fff;font-weight:900;font-size:15px;"><td colspan="2" style="padding:10px 14px;">إجمالي الالتزامات + حقوق الملكية</td><td style="text-align:left;padding:10px 14px;">' + fmt(d.totalLiabilities + d.totEq) + '</td></tr>';
+    html += '<tr style="background:#1e293b;color:#fff;font-weight:900;font-size:15px;"><td colspan="2" style="padding:10px 14px;">إجمالي الالتزامات + حقوق الملكية</td><td style="text-align:start;padding:10px 14px;">' + fmt(d.totalLiabilities + d.totEq) + '</td></tr>';
     html += '</tbody></table></div>';
 
     html += '</div>';
@@ -2424,24 +2424,24 @@ function erpLoadInventoryValuation() {
     if (catNames.length) {
       html += '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;">';
       html += '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
-      html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">التصنيف</th><th style="padding:10px 14px;">عدد الأصناف</th><th style="padding:10px 14px;text-align:left;">القيمة الإجمالية</th></tr></thead><tbody>';
+      html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">التصنيف</th><th style="padding:10px 14px;">عدد الأصناف</th><th style="padding:10px 14px;text-align:start;">القيمة الإجمالية</th></tr></thead><tbody>';
       catNames.forEach(function(cat) {
         var c = cats[cat];
         html += '<tr style="border-bottom:1px solid #e2e8f0;">';
         html += '<td style="padding:10px 14px;font-weight:800;"><i class="fas fa-box" style="color:#3b82f6;margin-left:6px;"></i>' + cat + '</td>';
         html += '<td style="padding:10px 14px;">' + c.items.length + ' صنف</td>';
-        html += '<td style="padding:10px 14px;text-align:left;font-weight:800;color:#1e40af;">' + fmt(c.totalValue) + '</td>';
+        html += '<td style="padding:10px 14px;text-align:start;font-weight:800;color:#1e40af;">' + fmt(c.totalValue) + '</td>';
         html += '</tr>';
         // Show items under each category
         c.items.forEach(function(item) {
           html += '<tr style="background:#f8fafc;border-bottom:1px solid #f1f5f9;">';
           html += '<td style="padding:6px 14px;padding-right:30px;font-size:12px;color:#475569;">' + item.name + '</td>';
           html += '<td style="padding:6px 14px;font-size:12px;">' + item.stock + ' ' + (item.unit||'') + '</td>';
-          html += '<td style="padding:6px 14px;text-align:left;font-size:12px;font-weight:700;">' + fmt(item.value) + '</td>';
+          html += '<td style="padding:6px 14px;text-align:start;font-size:12px;font-weight:700;">' + fmt(item.value) + '</td>';
           html += '</tr>';
         });
       });
-      html += '<tr style="background:#0f172a;color:#fff;font-weight:900;"><td style="padding:10px 14px;">الإجمالي</td><td></td><td style="padding:10px 14px;text-align:left;font-size:15px;">' + fmt(data.totalValue) + '</td></tr>';
+      html += '<tr style="background:#0f172a;color:#fff;font-weight:900;"><td style="padding:10px 14px;">الإجمالي</td><td></td><td style="padding:10px 14px;text-align:start;font-size:15px;">' + fmt(data.totalValue) + '</td></tr>';
       html += '</tbody></table></div>';
     } else {
       html += '<div style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-inbox" style="font-size:32px;margin-bottom:8px;"></i><p>لا توجد أصناف مخزون</p></div>';
@@ -2498,22 +2498,22 @@ window.erpLoadPurchaseReport = function() {
 
     if (data.type === 'bySupplier') {
       html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">المورد</th><th>عدد الفواتير</th><th>إجمالي الكمية</th><th>إجمالي المبلغ</th></tr></thead><tbody>';
-      rows.forEach(function(r) { html += '<tr><td style="font-weight:700;padding:8px 14px;">' + r.supplier + '</td><td style="text-align:center;">' + r.invoiceCount + '</td><td style="text-align:center;">' + r.totalQty + '</td><td style="font-weight:800;color:#1e40af;text-align:left;">' + fmt(r.totalAmount) + '</td></tr>'; });
+      rows.forEach(function(r) { html += '<tr><td style="font-weight:700;padding:8px 14px;">' + r.supplier + '</td><td style="text-align:center;">' + r.invoiceCount + '</td><td style="text-align:center;">' + r.totalQty + '</td><td style="font-weight:800;color:#1e40af;text-align:start;">' + fmt(r.totalAmount) + '</td></tr>'; });
     } else if (data.type === 'byItem') {
       html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">الصنف</th><th>الوحدة</th><th>إجمالي الكمية</th><th>متوسط السعر</th><th>عدد الموردين</th><th>إجمالي المبلغ</th></tr></thead><tbody>';
-      rows.forEach(function(r) { html += '<tr><td style="font-weight:700;padding:8px 14px;">' + r.itemName + '</td><td>' + (r.unit||'') + '</td><td style="text-align:center;">' + r.totalQty + '</td><td style="text-align:center;">' + fmt(r.avgPrice) + '</td><td style="text-align:center;">' + (r.supplierCount||0) + '</td><td style="font-weight:800;color:#1e40af;text-align:left;">' + fmt(r.totalAmount) + '</td></tr>'; });
+      rows.forEach(function(r) { html += '<tr><td style="font-weight:700;padding:8px 14px;">' + r.itemName + '</td><td>' + (r.unit||'') + '</td><td style="text-align:center;">' + r.totalQty + '</td><td style="text-align:center;">' + fmt(r.avgPrice) + '</td><td style="text-align:center;">' + (r.supplierCount||0) + '</td><td style="font-weight:800;color:#1e40af;text-align:start;">' + fmt(r.totalAmount) + '</td></tr>'; });
     } else if (data.type === 'bySupplierItem') {
       html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">المورد</th><th>الصنف</th><th>الوحدة</th><th>الكمية</th><th>المبلغ</th></tr></thead><tbody>';
-      rows.forEach(function(r) { html += '<tr><td style="font-weight:700;padding:8px 14px;">' + r.supplierName + '</td><td style="font-weight:600;">' + r.itemName + '</td><td>' + (r.unit||'') + '</td><td style="text-align:center;">' + r.totalQty + '</td><td style="font-weight:800;color:#1e40af;text-align:left;">' + fmt(r.totalAmount) + '</td></tr>'; });
+      rows.forEach(function(r) { html += '<tr><td style="font-weight:700;padding:8px 14px;">' + r.supplierName + '</td><td style="font-weight:600;">' + r.itemName + '</td><td>' + (r.unit||'') + '</td><td style="text-align:center;">' + r.totalQty + '</td><td style="font-weight:800;color:#1e40af;text-align:start;">' + fmt(r.totalAmount) + '</td></tr>'; });
     } else {
       html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">التاريخ</th><th>المورد</th><th>الصنف</th><th>الوحدة</th><th>الكمية</th><th>السعر</th><th>المبلغ</th></tr></thead><tbody>';
       rows.forEach(function(r) {
         var dt = r.date ? new Date(r.date).toLocaleDateString('en-GB') : '';
-        html += '<tr><td style="padding:8px 14px;">' + dt + '</td><td style="font-weight:700;">' + r.supplierName + '</td><td>' + r.itemName + '</td><td>' + (r.unit||'') + '</td><td style="text-align:center;">' + r.qty + '</td><td style="text-align:center;">' + fmt(r.unitPrice) + '</td><td style="font-weight:800;color:#1e40af;text-align:left;">' + fmt(r.total) + '</td></tr>';
+        html += '<tr><td style="padding:8px 14px;">' + dt + '</td><td style="font-weight:700;">' + r.supplierName + '</td><td>' + r.itemName + '</td><td>' + (r.unit||'') + '</td><td style="text-align:center;">' + r.qty + '</td><td style="text-align:center;">' + fmt(r.unitPrice) + '</td><td style="font-weight:800;color:#1e40af;text-align:start;">' + fmt(r.total) + '</td></tr>';
       });
     }
 
-    html += '<tr style="background:#0f172a;color:#fff;font-weight:900;"><td colspan="' + (data.type==='detailed'?6:data.type==='byItem'?5:data.type==='bySupplierItem'?4:3) + '" style="padding:10px 14px;">الإجمالي</td><td style="text-align:left;font-size:15px;">' + fmt(data.totalAmount) + '</td></tr>';
+    html += '<tr style="background:#0f172a;color:#fff;font-weight:900;"><td colspan="' + (data.type==='detailed'?6:data.type==='byItem'?5:data.type==='bySupplierItem'?4:3) + '" style="padding:10px 14px;">الإجمالي</td><td style="text-align:start;font-size:15px;">' + fmt(data.totalAmount) + '</td></tr>';
     html += '</tbody></table></div>';
     container.innerHTML = html;
   }).getPurchaseReports(filters);

@@ -767,8 +767,9 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
    ═══════════════════════════════════════ */
 .coa-layout { display: flex; height: calc(100vh - 140px); gap: 0; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; background: #fff; }
 
-/* Tree Sidebar */
-.coa-tree-panel { width: 280px; min-width: 240px; border-left: 1px solid #e2e8f0; background: #f8fafc; display: flex; flex-direction: column; overflow: hidden; }
+/* Tree Sidebar — appears on RIGHT in RTL */
+.coa-tree-panel { width: 280px; min-width: 240px; border-inline-start: 1px solid #e2e8f0; background: #f8fafc; display: flex; flex-direction: column; overflow: hidden; order: 2; }
+.coa-main-panel { order: 1; }
 .coa-tree-header { padding: 10px; border-bottom: 1px solid #e2e8f0; }
 .coa-search { width: 100%; padding: 8px 12px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 13px; font-family: inherit; background: #fff; }
 .coa-search:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
@@ -834,7 +835,7 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 .coa-acc-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
 .coa-acc-name { font-size: 20px; font-weight: 900; color: #1e293b; }
 .coa-acc-code-badge { font-size: 12px; background: #f1f5f9; color: #64748b; padding: 4px 10px; border-radius: 8px; font-family: monospace; }
-.coa-acc-bal-box { text-align: left; }
+.coa-acc-bal-box { text-align: start; }
 .coa-acc-bal-label { font-size: 11px; color: #64748b; }
 .coa-acc-bal-val { font-size: 24px; font-weight: 900; }
 

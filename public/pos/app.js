@@ -1850,16 +1850,20 @@ window.shrEditRequest = function(requestId) {
       var convRate = orig ? (Number(orig.convRate)||1) : 1;
       var hasBig = bigUnit && convRate > 1;
       // Reverse-calculate big and small from total qty
+      // If qty is 0, default to 1 so user sees something to edit
+      if (qty <= 0) qty = 1;
       var bigVal = '', smallVal = '';
       if (hasBig && qty > 0) {
         bigVal = Math.floor(qty / convRate);
         smallVal = qty % convRate;
         if (bigVal === 0) bigVal = '';
-        if (smallVal === 0) smallVal = '';
+        if (smallVal === 0 && bigVal) smallVal = '';
+        else if (smallVal === 0) smallVal = qty; // show total in small if no big
       } else {
-        smallVal = qty > 0 ? qty : '';
+        smallVal = qty;
       }
-      return { id: i.invItemId, name: i.invItemName, unit: unit, bigUnit: bigUnit, convRate: convRate, stock: Number(i.currentQty)||0, minStock: Number(i.minQty)||0, cost: Number(i.unitPrice)||0, requestedQty: qty, _bigInput: bigVal, _smallInput: smallVal };
+      var totalQty = hasBig ? ((Number(bigVal)||0) * convRate) + (Number(smallVal)||0) : (Number(smallVal)||0);
+      return { id: i.invItemId, name: i.invItemName, unit: unit, bigUnit: bigUnit, convRate: convRate, stock: Number(i.currentQty)||0, minStock: Number(i.minQty)||0, cost: Number(i.unitPrice)||0, requestedQty: totalQty || qty, _bigInput: bigVal, _smallInput: smallVal };
     });
     _saveShrCart();
     _shrEditingId = requestId;

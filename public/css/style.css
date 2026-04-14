@@ -1283,7 +1283,8 @@ body.en .report-kpi-card.kpi-daily { border-right: none; border-left: 4px solid 
 .theme-fab {
   position: fixed;
   bottom: 25px;
-  right: 25px; /* RTL - left in LTR context */
+  left: 25px;
+  right: auto;
   background: var(--accent, #3b82f6);
   color: #fff;
   width: 55px;
@@ -1306,19 +1307,20 @@ body.en .report-kpi-card.kpi-daily { border-right: none; border-left: 4px solid 
 .theme-panel {
   position: fixed;
   top: 0;
-  right: -320px;
+  left: -320px;
+  right: auto;
   width: 300px;
   height: 100vh;
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(25px);
   z-index: 9999;
-  box-shadow: -10px 0 30px rgba(0,0,0,0.1);
-  transition: right 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 10px 0 30px rgba(0,0,0,0.1);
+  transition: left 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   display: flex;
   flex-direction: column;
 }
 .theme-panel.open {
-  right: 0;
+  left: 0;
 }
 
 .theme-panel-header {

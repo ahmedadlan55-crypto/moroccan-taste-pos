@@ -6167,15 +6167,17 @@ function applyCustomTheme() {
   const p = document.getElementById('themePickPrimary').value;
   const s = document.getElementById('themePickSecondary').value;
   const a = document.getElementById('themePickAccent').value;
-  
+  const txt = document.getElementById('themePickText') ? document.getElementById('themePickText').value : '';
+
   document.documentElement.style.setProperty('--primary', p);
   document.documentElement.style.setProperty('--secondary', s);
   document.documentElement.style.setProperty('--accent', a);
-  
+  if (txt) document.documentElement.style.setProperty('--text-dark', txt);
+
   // Remove preset highlights
   document.querySelectorAll('.theme-preset-card').forEach(c => c.classList.remove('active'));
-  
-  localStorage.setItem('mt_theme_pref', JSON.stringify({ primary: p, secondary: s, accent: a }));
+
+  localStorage.setItem('mt_theme_pref', JSON.stringify({ primary: p, secondary: s, accent: a, textColor: txt }));
 }
 
 function resetTheme() {
@@ -6190,7 +6192,8 @@ function initTheme() {
       document.documentElement.style.setProperty('--primary', t.primary);
       document.documentElement.style.setProperty('--secondary', t.secondary);
       document.documentElement.style.setProperty('--accent', t.accent);
-      
+      if (t.textColor) document.documentElement.style.setProperty('--text-dark', t.textColor);
+
       // Attempt to highlight preset or just set value
       let matched = false;
       for (const [name, colors] of Object.entries(THEME_PRESETS)) {

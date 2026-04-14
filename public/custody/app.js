@@ -175,11 +175,16 @@
       h += '<div class="ec-desc">' + esc(e.description || '') + '</div>';
       h += '<span class="ec-badge ' + bClass + '"><i class="fas ' + (icons[statusKey]||'fa-circle') + '"></i> ' + (labels[statusKey]||statusKey) + '</span>';
       h += '</div>';
+      // Show expense type (GL account) separately from description
+      if (e.glAccountName) {
+        h += '<div style="font-size:11px;color:#8b5cf6;font-weight:700;margin:2px 0;"><i class="fas fa-tag" style="margin-left:3px;"></i> ' + esc(e.glAccountName) + '</div>';
+      }
       h += '<div class="ec-amount">' + fmt(total) + ' <small>SAR</small></div>';
       h += '<div class="ec-meta">';
       if (dt) h += '<span><i class="fas fa-calendar-day"></i> ' + dt + '</span>';
       if (e.vatAmount > 0) h += '<span><i class="fas fa-percent"></i> ضريبة ' + fmt(e.vatAmount) + '</span>';
       if (e.notes) h += '<span><i class="fas fa-sticky-note"></i> ' + esc(e.notes) + '</span>';
+      if (e.costCenterName) h += '<span><i class="fas fa-bullseye"></i> ' + esc(e.costCenterName) + '</span>';
       h += '</div>';
       if (e.status === 'rejected' && e.rejectionReason) {
         h += '<div class="ec-reject"><i class="fas fa-exclamation-triangle"></i> ' + esc(e.rejectionReason) + '</div>';
@@ -245,6 +250,54 @@
   };
   window.closeModal = function() { el('sheet').style.display = 'none'; };
   window.togVat = function() { el('vatBox').style.display = el('fVat').value === '1' ? '' : 'none'; };
+
+  // Search/filter expense types
+  window.filterExpTypes = function(query) {
+    var sel = el('fExpType');
+    if (!sel) return;
+    var ql = (query||'').toLowerCase();
+    var options = sel.querySelectorAll('option');
+    var visibleCount = 0;
+    options.forEach(function(opt) {
+      if (!opt.value) { opt.style.display = ''; return; }
+      var show = opt.textContent.toLowerCase().indexOf(ql) >= 0;
+      opt.style.display = show ? '' : 'none';
+      if (show) visibleCount++;
+    });
+    sel.size = ql && visibleCount > 0 ? Math.min(6, visibleCount + 1) : 1;
+  };
+
+  // Add new expense type (creates GL expense account)
+  window.openAddExpenseType = function() {
+    var name = prompt('اسم نوع المصروف الجديد:');
+    if (!name) return;
+    // Find next expense account code
+    var maxCode = 0;
+    S.expenseAccounts.forEach(function(a) {
+      var num = parseInt(a.code) || 0;
+      if (num > maxCode) maxCode = num;
+    });
+    var newCode = String(maxCode + 1);
+
+    api.withSuccessHandler(function(r) {
+      if (r && r.success) {
+        toast('تم إضافة نوع المصروف: ' + name, 'ok');
+        // Reload expense accounts
+        api.withSuccessHandler(function(d) {
+          if (d && d.expenseAccounts) S.expenseAccounts = d.expenseAccounts;
+          // Rebuild dropdown
+          var typeSelect = el('fExpType');
+          if (typeSelect) {
+            var opts = '<option value="">— اختر نوع المصروف —</option>';
+            S.expenseAccounts.forEach(function(a) {
+              opts += '<option value="' + a.id + '" data-name="' + esc(a.name) + '">' + a.code + ' — ' + esc(a.name) + '</option>';
+            });
+            typeSelect.innerHTML = opts;
+          }
+        }).getMyCustody(S.user);
+      } else toast((r && r.error) || 'فشل', 'err');
+    }).saveGLAccount({ code: newCode, nameAr: name, type: 'expense', level: 3 });
+  };
 
   window.onExpTypeChange = function() {
     var sel = el('fExpType');

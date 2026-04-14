@@ -169,6 +169,7 @@ window.dict = {
     searchItem: 'ابحث عن مادة...', searchToAdd: 'ابحث عن مادة لإضافتها',
     notesOptional: 'ملاحظات (اختياري)', deficit: 'النقص', minStock: 'الحد',
     stock: 'المخزون', item: 'المادة', qty: 'الكمية', unit: 'الوحدة',
+    bigQty: 'كمية كبرى', bigUnit: 'وحدة كبرى', smallQty: 'كمية صغرى', smallUnit: 'وحدة صغرى',
 
     // Language toggle toast
     switchedAr: 'تم التحويل للعربية',
@@ -345,6 +346,7 @@ window.dict = {
     searchItem: 'Search for item...', searchToAdd: 'Search for an item to add',
     notesOptional: 'Notes (optional)', deficit: 'Deficit', minStock: 'Min',
     stock: 'Stock', item: 'Item', qty: 'Qty', unit: 'Unit',
+    bigQty: 'Big Qty', bigUnit: 'Big Unit', smallQty: 'Small Qty', smallUnit: 'Small Unit',
 
     // Language toggle toast
     switchedAr: 'Switched to Arabic',

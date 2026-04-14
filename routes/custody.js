@@ -738,7 +738,8 @@ router.get('/approval/pending', async (req, res) => {
       id: e.id, custodyId: e.custody_id, custodyNumber: e.custody_number, userName: e.user_name,
       expenseDate: e.expense_date, description: e.description,
       amount: Number(e.amount), vatAmount: Number(e.vat_amount), totalWithVat: Number(e.total_with_vat),
-      invoiceImage: e.invoice_image, notes: e.notes, status: e.status, createdBy: e.created_by
+      invoiceImage: e.invoice_image, notes: e.notes, status: e.status, createdBy: e.created_by,
+      glAccountName: e.gl_account_name || '', rejectionReason: e.rejection_reason || ''
     })));
   } catch (e) { res.json([]); }
 });

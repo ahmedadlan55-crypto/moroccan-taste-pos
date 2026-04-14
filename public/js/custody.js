@@ -378,7 +378,7 @@ window.loadCustodyApprovals = function() {
     }
 
     // Expenses
-    if (!expList.length && !h) { h = '<tr><td colspan="10" style="text-align:center;padding:30px;">لا توجد مصروفات معلقة</td></tr>'; }
+    if (!expList.length && !h) { h = '<tr><td colspan="12" style="text-align:center;padding:30px;">لا توجد مصروفات معلقة</td></tr>'; }
     else {
       expList.forEach(function(e) {
         var sBadge = e.status === 'pending' ? '<span class="badge yellow">بانتظار</span>'
@@ -407,7 +407,9 @@ window.loadCustodyApprovals = function() {
           '<td><code style="font-size:11px;">' + (e.custodyNumber || '') + '</code></td>' +
           '<td style="font-weight:700;">' + (e.userName || '') + '</td>' +
           '<td style="font-size:12px;">' + (e.expenseDate ? new Date(e.expenseDate).toLocaleDateString('en-GB') : '') + '</td>' +
+          '<td style="color:#8b5cf6;font-weight:700;font-size:12px;">' + (e.glAccountName || '—') + '</td>' +
           '<td>' + (e.description || '') + '</td>' +
+          '<td style="font-size:11px;color:#64748b;max-width:120px;overflow:hidden;text-overflow:ellipsis;">' + (e.notes || '—') + '</td>' +
           '<td style="font-weight:700;">' + formatVal(e.amount) + '</td>' +
           '<td>' + formatVal(e.vatAmount || 0) + '</td>' +
           '<td style="font-weight:900;color:var(--secondary);">' + formatVal(e.totalWithVat || e.amount) + '</td>' +

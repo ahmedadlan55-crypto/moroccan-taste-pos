@@ -292,6 +292,17 @@ router.post('/users/:username/toggle', async (req, res) => {
 });
 
 // DELETE /api/auth/users/:username
+// Reset user password
+router.post('/users/:username/reset-password', async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password || password.length < 4) return res.json({ success: false, error: 'كلمة المرور يجب أن تكون 4 أحرف على الأقل' });
+    const hashed = await bcrypt.hash(password, 10);
+    await db.query('UPDATE users SET password = ?, failed_attempts = 0, locked_until = NULL WHERE username = ?', [hashed, req.params.username]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 router.delete('/users/:username', async (req, res) => {
   try {
     if (req.params.username === 'admin') return res.json({ success: false, error: 'لا يمكن حذف المستخدم admin' });

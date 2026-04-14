@@ -113,6 +113,7 @@
     updateUser:          { method: 'PUT',  url: (u, d) => '/auth/users/' + u, body: (u, d) => d },
     toggleUserActive:    { method: 'POST', url: (u) => '/auth/users/' + u + '/toggle' },
     deleteUser:          { method: 'DELETE', url: (u) => '/auth/users/' + u },
+    resetPassword:       { method: 'POST', url: (u,p) => '/auth/users/' + u + '/reset-password', body: (u,p) => ({password:p}) },
     resetDatabase:       { method: 'POST', url: '/auth/reset-db' },
 
     // Misc

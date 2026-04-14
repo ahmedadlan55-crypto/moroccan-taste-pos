@@ -3727,6 +3727,7 @@ function loadDashUsers() {
     var roleLabel = function(r) {
       if (r === 'admin')   return '<span class="badge blue">مدير مؤسسة</span>';
       if (r === 'manager') return '<span class="badge orange">مدير فرع</span>';
+      if (r === 'custody') return '<span class="badge" style="background:#f3e8ff;color:#7c3aed;">مسؤول عهدة</span>';
       return '<span class="badge green">كاشير</span>';
     };
 
@@ -3734,12 +3735,14 @@ function loadDashUsers() {
     arr.forEach(function(u) {
       var devBadge = u.isDeveloper ? ' <span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;"><i class="fas fa-code"></i> مطور</span>' : '';
       h += '<tr>' +
-        '<td style="font-weight:bold; font-size:15px;">' + (u.displayName || '<span style="color:#94a3b8;">— لم يُحدد —</span>') + '</td>' +
-        '<td style="font-family:monospace; font-weight:600; color:var(--secondary);">' + (u.username || '') + '</td>' +
+        '<td style="font-weight:bold;font-size:14px;">' + (u.displayName || '<span style="color:#94a3b8;">—</span>') + '</td>' +
+        '<td style="font-family:monospace;font-weight:600;color:var(--secondary);">' + (u.username || '') + '</td>' +
         '<td>' + roleLabel(u.role) + devBadge + '</td>' +
         '<td>' + (u.active ? '<span class="badge green">نشط</span>' : '<span class="badge red">موقوف</span>') + '</td>' +
-        '<td>' + (u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-GB') : '—') + '</td>' +
-        '<td>' +
+        '<td style="text-align:center;">' +
+          '<button class="btn btn-sm btn-light" onclick="resetUserPassword(\'' + u.username + '\')" title="إعادة تعيين كلمة المرور" style="border-radius:8px;"><i class="fas fa-key"></i> إعادة تعيين</button>' +
+        '</td>' +
+        '<td style="white-space:nowrap;">' +
           '<button class="btn btn-light" style="padding:6px 10px;" onclick="editUsr(\'' + u.username + '\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
           '<button class="btn btn-light" style="padding:6px 10px;" onclick="toggUsr(\'' + u.username + '\')" title="تفعيل/إيقاف"><i class="fas fa-power-off"></i></button> ' +
           '<button class="btn btn-danger" style="padding:6px 10px;" onclick="delUsr(\'' + u.username + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
@@ -3749,6 +3752,18 @@ function loadDashUsers() {
     if (!arr.length) h = '<tr><td colspan="6" style="text-align:center;padding:20px;color:#94a3b8;">لا يوجد مستخدمين</td></tr>';
     q("#tbUsers").innerHTML = h;
   }).withFailureHandler(function(err) { loader(false); showToast(err.message || 'فشل تحميل المستخدمين', true); }).getUsers();
+}
+
+function resetUserPassword(username) {
+  var newPass = prompt('أدخل كلمة المرور الجديدة لـ ' + username + ':');
+  if (!newPass || newPass.length < 4) return showToast('كلمة المرور يجب أن تكون 4 أحرف على الأقل', true);
+  if (!confirm('إعادة تعيين كلمة مرور "' + username + '" إلى: ' + newPass + '؟')) return;
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r && r.success) showToast('تم إعادة تعيين كلمة المرور بنجاح');
+    else showToast((r && r.error) || 'فشل', true);
+  }).resetPassword(username, newPass);
 }
 
 var _editingUsername = '';

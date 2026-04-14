@@ -1835,9 +1835,26 @@ window.shrEditRequest = function(requestId) {
     if (!data || data.error) return glassToast(data && data.error || t('errorTitle'), true);
     if (data.status !== 'pending') return glassToast(state.lang==='en'?'Only pending requests can be edited':'فقط الطلبات المعلقة يمكن تعديلها', true);
 
-    // Load items into cart
+    // Load items into cart — restore dual unit values
     _shrCart = (data.items || []).map(function(i) {
-      return { id: i.invItemId, name: i.invItemName, unit: i.unit||'', stock: Number(i.currentQty)||0, minStock: Number(i.minQty)||0, cost: Number(i.unitPrice)||0, requestedQty: Number(i.requestedQty)||1 };
+      var qty = Number(i.requestedQty) || 0;
+      var unit = i.unit || '';
+      // Try to find the item in _shrAllItems for bigUnit/convRate
+      var orig = _shrAllItems.find(function(x) { return x.id === i.invItemId; });
+      var bigUnit = orig ? (orig.bigUnit||'') : '';
+      var convRate = orig ? (Number(orig.convRate)||1) : 1;
+      var hasBig = bigUnit && convRate > 1;
+      // Reverse-calculate big and small from total qty
+      var bigVal = '', smallVal = '';
+      if (hasBig && qty > 0) {
+        bigVal = Math.floor(qty / convRate);
+        smallVal = qty % convRate;
+        if (bigVal === 0) bigVal = '';
+        if (smallVal === 0) smallVal = '';
+      } else {
+        smallVal = qty > 0 ? qty : '';
+      }
+      return { id: i.invItemId, name: i.invItemName, unit: unit, bigUnit: bigUnit, convRate: convRate, stock: Number(i.currentQty)||0, minStock: Number(i.minQty)||0, cost: Number(i.unitPrice)||0, requestedQty: qty, _bigInput: bigVal, _smallInput: smallVal };
     });
     _saveShrCart();
     _shrEditingId = requestId;

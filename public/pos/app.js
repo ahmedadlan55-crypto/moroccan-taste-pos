@@ -1830,7 +1830,13 @@ var _shrEditingId = null; // If editing a pending request
 // Edit a pending shortage request — load its items into the cart
 window.shrEditRequest = function(requestId) {
   loader(true);
-  api.withSuccessHandler(function(data) {
+  // Load inventory items first (for bigUnit/convRate), then load request
+  api.withSuccessHandler(function(items) {
+    _shrAllItems = (items || []).map(function(i) {
+      return { id: i.id, name: i.name, category: i.category||'', stock: Number(i.stock)||0, minStock: Number(i.minStock||i.min_stock)||0, cost: Number(i.cost)||0, unit: i.unit||'', bigUnit: i.bigUnit||i.big_unit||'', convRate: Number(i.convRate||i.conv_rate)||1 };
+    });
+
+    api.withSuccessHandler(function(data) {
     loader(false);
     if (!data || data.error) return glassToast(data && data.error || t('errorTitle'), true);
     if (data.status !== 'pending') return glassToast(state.lang==='en'?'Only pending requests can be edited':'فقط الطلبات المعلقة يمكن تعديلها', true);
@@ -1839,7 +1845,6 @@ window.shrEditRequest = function(requestId) {
     _shrCart = (data.items || []).map(function(i) {
       var qty = Number(i.requestedQty) || 0;
       var unit = i.unit || '';
-      // Try to find the item in _shrAllItems for bigUnit/convRate
       var orig = _shrAllItems.find(function(x) { return x.id === i.invItemId; });
       var bigUnit = orig ? (orig.bigUnit||'') : '';
       var convRate = orig ? (Number(orig.convRate)||1) : 1;
@@ -1867,6 +1872,7 @@ window.shrEditRequest = function(requestId) {
     var submitBtn = q('#shrNewPanel') && q('#shrNewPanel').closest('.glass-modal-content');
     glassToast(state.lang==='en'?'Request loaded for editing — modify and save':'تم تحميل الطلب للتعديل — عدّل واحفظ');
   }).getShortageRequest(requestId);
+  }).getInvItems();
 };
 
 window.shrDeleteRequest = function(id, num) {

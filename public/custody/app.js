@@ -213,15 +213,11 @@
     if (S.custodyStatus !== 'active') return toast('العهدة غير نشطة — لا يمكن إضافة مصروفات', 'err');
     _editingExpId = null;
     el('saveBtn').innerHTML = '<i class="fas fa-paper-plane"></i> إرسال المصروف';
-    // Populate expense type dropdown
-    var typeSelect = el('fExpType');
-    if (typeSelect) {
-      var opts = '<option value="">— اختر نوع المصروف —</option>';
-      S.expenseAccounts.forEach(function(a) {
-        opts += '<option value="' + a.id + '" data-name="' + esc(a.name) + '">' + a.code + ' — ' + esc(a.name) + '</option>';
-      });
-      typeSelect.innerHTML = opts;
-    }
+    // Reset expense type search
+    if (el('fExpTypeSearch')) el('fExpTypeSearch').value = '';
+    if (el('fExpType')) el('fExpType').value = '';
+    if (el('fExpTypeName')) el('fExpTypeName').value = '';
+    if (el('fExpTypeDropdown')) el('fExpTypeDropdown').style.display = 'none';
     // Populate cost centers
     var ccSelect = el('fCostCenter');
     if (ccSelect) {
@@ -251,63 +247,63 @@
   window.closeModal = function() { el('sheet').style.display = 'none'; };
   window.togVat = function() { el('vatBox').style.display = el('fVat').value === '1' ? '' : 'none'; };
 
-  // Search/filter expense types
+  // Expense type search dropdown
   window.filterExpTypes = function(query) {
-    var sel = el('fExpType');
-    if (!sel) return;
+    var dropdown = el('fExpTypeDropdown');
+    if (!dropdown) return;
     var ql = (query||'').toLowerCase();
-    var options = sel.querySelectorAll('option');
-    var visibleCount = 0;
-    options.forEach(function(opt) {
-      if (!opt.value) { opt.style.display = ''; return; }
-      var show = opt.textContent.toLowerCase().indexOf(ql) >= 0;
-      opt.style.display = show ? '' : 'none';
-      if (show) visibleCount++;
+    var matches = S.expenseAccounts.filter(function(a) {
+      return a.name.toLowerCase().indexOf(ql) >= 0 || a.code.indexOf(ql) >= 0;
     });
-    sel.size = ql && visibleCount > 0 ? Math.min(6, visibleCount + 1) : 1;
+
+    if (!matches.length) {
+      dropdown.innerHTML = '<div style="padding:12px;color:#94a3b8;text-align:center;font-size:13px;">لا توجد نتائج</div>';
+      dropdown.style.display = 'block';
+      return;
+    }
+
+    dropdown.innerHTML = matches.map(function(a) {
+      return '<div onclick="selectExpType(\'' + a.id + '\',\'' + esc(a.name) + '\')" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;display:flex;justify-content:space-between;" onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'\'">' +
+        '<span style="font-weight:700;">' + esc(a.name) + '</span>' +
+        '<code style="color:#94a3b8;font-size:11px;">' + a.code + '</code></div>';
+    }).join('');
+    dropdown.style.display = 'block';
   };
 
-  // Add new expense type (creates GL expense account)
+  window.selectExpType = function(id, name) {
+    el('fExpType').value = id;
+    el('fExpTypeName').value = name;
+    el('fExpTypeSearch').value = name;
+    el('fExpTypeDropdown').style.display = 'none';
+  };
+
+  // Close dropdown on click outside
+  document.addEventListener('click', function(e) {
+    var dropdown = document.getElementById('fExpTypeDropdown');
+    var search = document.getElementById('fExpTypeSearch');
+    if (dropdown && search && !search.contains(e.target) && !dropdown.contains(e.target)) {
+      dropdown.style.display = 'none';
+    }
+  });
+
+  // Add new expense type
   window.openAddExpenseType = function() {
     var name = prompt('اسم نوع المصروف الجديد:');
     if (!name) return;
-    // Find next expense account code
     var maxCode = 0;
-    S.expenseAccounts.forEach(function(a) {
-      var num = parseInt(a.code) || 0;
-      if (num > maxCode) maxCode = num;
-    });
+    S.expenseAccounts.forEach(function(a) { var num = parseInt(a.code) || 0; if (num > maxCode) maxCode = num; });
     var newCode = String(maxCode + 1);
 
     api.withSuccessHandler(function(r) {
       if (r && r.success) {
         toast('تم إضافة نوع المصروف: ' + name, 'ok');
-        // Reload expense accounts
         api.withSuccessHandler(function(d) {
           if (d && d.expenseAccounts) S.expenseAccounts = d.expenseAccounts;
-          // Rebuild dropdown
-          var typeSelect = el('fExpType');
-          if (typeSelect) {
-            var opts = '<option value="">— اختر نوع المصروف —</option>';
-            S.expenseAccounts.forEach(function(a) {
-              opts += '<option value="' + a.id + '" data-name="' + esc(a.name) + '">' + a.code + ' — ' + esc(a.name) + '</option>';
-            });
-            typeSelect.innerHTML = opts;
-          }
+          // Auto-select the new one
+          selectExpType(r.id, name);
         }).getMyCustody(S.user);
       } else toast((r && r.error) || 'فشل', 'err');
     }).saveGLAccount({ code: newCode, nameAr: name, type: 'expense', level: 3 });
-  };
-
-  window.onExpTypeChange = function() {
-    var sel = el('fExpType');
-    if (sel && sel.value) {
-      var opt = sel.options[sel.selectedIndex];
-      var name = opt.getAttribute('data-name') || '';
-      // Auto-fill description if empty
-      var descEl = el('fDesc');
-      if (descEl && !descEl.value) descEl.value = name;
-    }
   };
 
   // ─── Image / PDF ───
@@ -347,21 +343,13 @@
     var hasVat = el('fVat').value === '1';
     var vatRate = hasVat ? (Number(el('fVatR').value) || 15) : 0;
     // GL account
-    var typeSel = el('fExpType');
-    var glAccountId = typeSel ? typeSel.value : '';
-    var glAccountName = '';
-    if (typeSel && typeSel.value) {
-      var opt = typeSel.options[typeSel.selectedIndex];
-      glAccountName = opt ? (opt.getAttribute('data-name') || '') : '';
-    }
+    var glAccountId = el('fExpType') ? el('fExpType').value : '';
+    var glAccountName = el('fExpTypeName') ? el('fExpTypeName').value : '';
     // Cost center
     var ccSel = el('fCostCenter');
     var costCenterId = ccSel ? ccSel.value : '';
     var costCenterName = '';
     if (ccSel && ccSel.value) { var ccOpt = ccSel.options[ccSel.selectedIndex]; costCenterName = ccOpt ? (ccOpt.getAttribute('data-name')||'') : ''; }
-    // Pre-approval
-    var preApproval = el('fPreApproval') && el('fPreApproval').checked;
-
     return {
       expenseDate: el('fDate').value,
       description: desc, amount: amt,
@@ -373,8 +361,7 @@
       glAccountId: glAccountId,
       glAccountName: glAccountName,
       costCenterId: costCenterId,
-      costCenterName: costCenterName,
-      preApproval: preApproval
+      costCenterName: costCenterName
     };
   }
 

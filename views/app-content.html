@@ -1348,37 +1348,27 @@
 <!-- MULTI-WAREHOUSES (المستودعات المتعددة) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpMultiWarehouses" class="dash-section hidden">
-  <div class="section-header" style="flex-wrap:wrap;gap:10px;">
-    <h2 class="section-title"><i class="fas fa-warehouse"></i> إدارة المستودعات</h2>
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-warehouse" style="color:#3b82f6;"></i> إدارة المستودعات</h2>
     <div style="display:flex;gap:6px;">
       <button class="btn btn-primary" onclick="erpOpenWarehouseModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> مستودع جديد</button>
       <button class="btn btn-success" onclick="erpOpenTransferModal()" style="border-radius:12px;"><i class="fas fa-exchange-alt"></i> تحويل جديد</button>
     </div>
   </div>
-  <!-- Stats Row -->
-  <div class="wh-stats">
-    <div class="wh-stat-card wh-total"><div class="wh-stat-icon"><i class="fas fa-warehouse"></i></div><div><div class="wh-stat-label">إجمالي المستودعات</div><div class="wh-stat-value" id="whStatTotal">0</div></div></div>
-    <div class="wh-stat-card wh-active"><div class="wh-stat-icon"><i class="fas fa-check-circle"></i></div><div><div class="wh-stat-label">المستودعات النشطة</div><div class="wh-stat-value" id="whStatActive">0</div></div></div>
-    <div class="wh-stat-card wh-value"><div class="wh-stat-icon"><i class="fas fa-coins"></i></div><div><div class="wh-stat-label">أنواع المستودعات</div><div class="wh-stat-value" id="whStatTypes">—</div></div></div>
-    <div class="wh-stat-card wh-transfers"><div class="wh-stat-icon"><i class="fas fa-exchange-alt"></i></div><div><div class="wh-stat-label">تحويلات معلقة</div><div class="wh-stat-value" id="whStatPending">0</div></div></div>
+  <div id="whStatsRow" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;"></div>
+  <div id="whTabsBar" style="display:flex;gap:0;background:#fff;border-radius:14px;padding:4px;border:1px solid #e2e8f0;margin-bottom:20px;">
+    <div class="whTabBtn whTabActive" onclick="whSwitchTab('warehouses')" style="flex:1;padding:12px 16px;text-align:center;font-weight:700;font-size:14px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;background:#0d47a1;color:#fff;transition:0.2s;"><i class="fas fa-boxes-stacked"></i> المستودعات</div>
+    <div class="whTabBtn" onclick="whSwitchTab('transfers')" style="flex:1;padding:12px 16px;text-align:center;font-weight:700;font-size:14px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;color:#64748b;transition:0.2s;"><i class="fas fa-exchange-alt"></i> التحويلات</div>
+    <div class="whTabBtn" onclick="whSwitchTab('stock')" style="flex:1;padding:12px 16px;text-align:center;font-weight:700;font-size:14px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;color:#64748b;transition:0.2s;"><i class="fas fa-cubes"></i> الأرصدة</div>
   </div>
-  <!-- Tabs -->
-  <div class="wh-tabs">
-    <div class="wh-tab active" onclick="whSwitchTab('warehouses')"><i class="fas fa-boxes-stacked"></i> <span>المستودعات</span></div>
-    <div class="wh-tab" onclick="whSwitchTab('transfers')"><i class="fas fa-exchange-alt"></i> <span>التحويلات</span></div>
-    <div class="wh-tab" onclick="whSwitchTab('stock')"><i class="fas fa-cubes"></i> <span>الأرصدة</span></div>
+  <div id="whTabWarehouses" style="display:block;">
+    <div id="whCardsGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;"><div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد مستودعات</div></div>
   </div>
-  <!-- Tab: Warehouses -->
-  <div class="wh-tab-content active" id="whTabWarehouses">
-    <div class="wh-cards-grid" id="whCardsGrid"><div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;">لا توجد مستودعات</div></div>
+  <div id="whTabTransfers" style="display:none;">
+    <div id="whTransferList"><div style="text-align:center;padding:40px;color:#94a3b8;font-style:italic;">لا توجد تحويلات</div></div>
   </div>
-  <!-- Tab: Transfers -->
-  <div class="wh-tab-content" id="whTabTransfers">
-    <div class="wh-transfer-list" id="whTransferList"><div style="text-align:center;padding:40px;color:#94a3b8;">لا توجد تحويلات</div></div>
-  </div>
-  <!-- Tab: Stock -->
-  <div class="wh-tab-content" id="whTabStock">
-    <div class="wh-stock-filter">
+  <div id="whTabStock" style="display:none;">
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
       <select id="whStockWhFilter" class="form-control" style="width:220px;" onchange="whLoadStockTab()"><option value="">كل المستودعات</option></select>
       <input type="text" id="whStockSearch" class="form-control" style="width:220px;" placeholder="بحث عن صنف..." oninput="whFilterStockTable()">
     </div>
@@ -1527,11 +1517,11 @@
 <!-- WORKFLOW: المناصب (Positions) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfPositions" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-id-badge"></i> المناصب الإدارية</h2>
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-id-badge" style="color:#3b82f6;"></i> المناصب الإدارية</h2>
     <button class="btn btn-primary" onclick="wfOpenPositionModal()"><i class="fas fa-plus"></i> منصب جديد</button>
   </div>
-  <div class="wf-pos-grid" id="wfPositionsGrid">
+  <div id="wfPositionsGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;">
     <div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد مناصب</div>
   </div>
 </div>
@@ -1540,11 +1530,11 @@
 <!-- WORKFLOW: أنواع المعاملات (Transaction Types) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfTypes" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-list-alt"></i> أنواع المعاملات</h2>
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-list-alt" style="color:#3b82f6;"></i> أنواع المعاملات</h2>
     <button class="btn btn-primary" onclick="wfOpenTypeModal()"><i class="fas fa-plus"></i> نوع جديد</button>
   </div>
-  <div class="wf-type-grid" id="wfTypesGrid">
+  <div id="wfTypesGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;">
     <div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد أنواع</div>
   </div>
 </div>
@@ -1553,8 +1543,8 @@
 <!-- WORKFLOW: خطوات سير العمل (Workflow Definitions) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfDefs" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-tasks"></i> خطوات سير العمل</h2>
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-tasks" style="color:#3b82f6;"></i> خطوات سير العمل</h2>
   </div>
   <div style="margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
     <label style="font-weight:700;">نوع المعاملة:</label>
@@ -1564,7 +1554,7 @@
     <button class="btn btn-primary btn-sm" onclick="wfOpenDefModal()"><i class="fas fa-plus"></i> خطوة جديدة</button>
   </div>
   <div id="wfDefsContainer">
-    <div class="wf-pipeline-empty">اختر نوع المعاملة أولاً</div>
+    <div style="text-align:center;padding:40px;color:#94a3b8;font-style:italic;background:#f8fafc;border-radius:14px;border:1px dashed #e2e8f0;">اختر نوع المعاملة أولاً</div>
   </div>
 </div>
 
@@ -1572,8 +1562,8 @@
 <!-- WORKFLOW: صندوق المعاملات (Transaction Inbox) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfInbox" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-inbox"></i> صندوق المعاملات</h2>
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-inbox" style="color:#3b82f6;"></i> صندوق المعاملات</h2>
     <div style="display:flex;gap:8px;">
       <select id="wfInboxStatusFilter" class="form-control" style="width:160px;" onchange="wfLoadInbox()">
         <option value="">كل الحالات</option>
@@ -1586,7 +1576,7 @@
       <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
     </div>
   </div>
-  <div class="wf-inbox-stats" id="wfInboxStats"></div>
+  <div id="wfInboxStats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;"></div>
   <div class="erp-table-container" style="border-radius:14px;">
     <table class="erp-table">
       <thead><tr><th>الحالة</th><th>الرقم</th><th>النوع</th><th>العنوان</th><th>المبلغ</th><th>الخطوة الحالية</th><th>المنصب</th><th>التاريخ</th><th>إجراءات</th></tr></thead>

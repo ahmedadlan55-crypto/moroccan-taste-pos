@@ -2665,13 +2665,25 @@ var _whList = [];
 var _whTypeLabels = {branch:'فرعي',main:'رئيسي',production:'إنتاج',waste:'هدر',raw:'مواد خام',finished:'مواد تامة'};
 
 function whSwitchTab(tab) {
-  document.querySelectorAll('.wh-tab').forEach(function(t) { t.classList.remove('active'); });
-  document.querySelectorAll('.wh-tab-content').forEach(function(c) { c.classList.remove('active'); });
   var tabMap = { warehouses: 'whTabWarehouses', transfers: 'whTabTransfers', stock: 'whTabStock' };
+  // Hide all tab contents
+  Object.values(tabMap).forEach(function(id) { document.getElementById(id).style.display = 'none'; });
+  // Show selected
+  document.getElementById(tabMap[tab]).style.display = 'block';
+  // Update tab button styles
+  var btns = document.querySelectorAll('.whTabBtn');
+  btns.forEach(function(b) { b.style.background = ''; b.style.color = '#64748b'; b.classList.remove('whTabActive'); });
   var idx = { warehouses: 0, transfers: 1, stock: 2 };
-  document.querySelectorAll('.wh-tab')[idx[tab]].classList.add('active');
-  document.getElementById(tabMap[tab]).classList.add('active');
+  btns[idx[tab]].style.background = '#0d47a1';
+  btns[idx[tab]].style.color = '#fff';
+  btns[idx[tab]].classList.add('whTabActive');
   if (tab === 'stock') whLoadStockTab();
+}
+
+function _whStatCard(bg, iconBg, iconColor, icon, label, value) {
+  return '<div style="background:' + bg + ';border:1px solid ' + iconBg + ';border-radius:16px;padding:20px;display:flex;align-items:center;gap:14px;">' +
+    '<div style="width:48px;height:48px;border-radius:14px;background:' + iconBg + ';color:' + iconColor + ';display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;"><i class="fas ' + icon + '"></i></div>' +
+    '<div><div style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:4px;">' + label + '</div><div style="font-size:26px;font-weight:900;color:#0f172a;">' + value + '</div></div></div>';
 }
 
 function erpLoadMultiWarehouses() {
@@ -2682,28 +2694,31 @@ function erpLoadMultiWarehouses() {
     var activeCount = list.filter(function(w) { return w.isActive; }).length;
     var types = {};
     list.forEach(function(w) { types[w.type] = true; });
-    // Update stats
-    document.getElementById('whStatTotal').textContent = list.length;
-    document.getElementById('whStatActive').textContent = activeCount;
-    document.getElementById('whStatTypes').textContent = Object.keys(types).length;
+    // Update stats with inline-styled cards
+    document.getElementById('whStatsRow').innerHTML =
+      _whStatCard('linear-gradient(135deg,#eff6ff,#dbeafe)', '#dbeafe', '#1e40af', 'fa-warehouse', 'إجمالي المستودعات', list.length) +
+      _whStatCard('linear-gradient(135deg,#f0fdf4,#dcfce7)', '#dcfce7', '#166534', 'fa-check-circle', 'المستودعات النشطة', activeCount) +
+      _whStatCard('linear-gradient(135deg,#fefce8,#fef9c3)', '#fef9c3', '#854d0e', 'fa-layer-group', 'أنواع المستودعات', Object.keys(types).length) +
+      _whStatCard('linear-gradient(135deg,#faf5ff,#f3e8ff)', '#f3e8ff', '#7c3aed', 'fa-exchange-alt', 'تحويلات معلقة', '<span id="whStatPending">0</span>');
     if (!list.length) { grid.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد مستودعات — اضغط "مستودع جديد"</div>'; return; }
     grid.innerHTML = list.map(function(w) {
-      return '<div class="wh-card">' +
-        '<div class="wh-card-header">' +
-          '<div class="wh-card-name">' + w.name + '</div>' +
+      var btnS = 'width:34px;height:34px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;';
+      return '<div style="background:#fff;border:1.5px solid #e2e8f0;border-radius:18px;padding:20px;transition:all 0.2s;">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">' +
+          '<div style="font-size:16px;font-weight:800;color:#1e293b;">' + w.name + '</div>' +
           '<span class="badge badge-blue">' + (_whTypeLabels[w.type]||w.type) + '</span>' +
         '</div>' +
-        '<div class="wh-card-meta">' +
-          '<div class="wh-card-meta-row"><i class="fas fa-code-branch"></i> ' + (w.branchName||'بدون فرع') + '</div>' +
-          '<div class="wh-card-meta-row"><i class="fas fa-user"></i> ' + (w.manager||'بدون مدير') + '</div>' +
-          '<div class="wh-card-meta-row"><i class="fas fa-hashtag"></i> <code>' + w.code + '</code></div>' +
+        '<div style="display:flex;flex-direction:column;gap:8px;">' +
+          '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#64748b;"><i class="fas fa-code-branch" style="width:16px;text-align:center;color:#94a3b8;"></i> ' + (w.branchName||'بدون فرع') + '</div>' +
+          '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#64748b;"><i class="fas fa-user" style="width:16px;text-align:center;color:#94a3b8;"></i> ' + (w.manager||'بدون مدير') + '</div>' +
+          '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#64748b;"><i class="fas fa-hashtag" style="width:16px;text-align:center;color:#94a3b8;"></i> <code>' + w.code + '</code></div>' +
         '</div>' +
-        '<div class="wh-card-footer">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid #f1f5f9;">' +
           (w.isActive ? '<span class="badge badge-green">نشط</span>' : '<span class="badge badge-red">معطّل</span>') +
-          '<div class="wh-card-actions">' +
-            '<button onclick="erpEditWH(\'' + w.id + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
-            '<button onclick="erpViewWHStock(\'' + w.id + '\',\'' + (w.name||'').replace(/'/g,'') + '\')" title="أرصدة"><i class="fas fa-boxes"></i></button>' +
-            '<button class="danger" onclick="erpDeleteWH(\'' + w.id + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+          '<div style="display:flex;gap:6px;">' +
+            '<button style="' + btnS + '" onclick="erpEditWH(\'' + w.id + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
+            '<button style="' + btnS + 'color:#3b82f6;" onclick="erpViewWHStock(\'' + w.id + '\',\'' + (w.name||'').replace(/'/g,'') + '\')" title="أرصدة"><i class="fas fa-boxes"></i></button>' +
+            '<button style="' + btnS + 'color:#ef4444;" onclick="erpDeleteWH(\'' + w.id + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -2724,19 +2739,21 @@ function erpLoadMultiWarehouses() {
       return;
     }
     var sBadge = function(s) { return s==='completed'?'<span class="badge badge-green">مكتمل</span>':s==='draft'?'<span class="badge badge-yellow">مسودة</span>':s==='cancelled'?'<span class="badge badge-red">ملغي</span>':'<span class="badge">'+s+'</span>'; };
+    var iconBgs = { draft: '#fef9c3', completed: '#dcfce7', cancelled: '#fee2e2' };
+    var iconClrs = { draft: '#ca8a04', completed: '#16a34a', cancelled: '#dc2626' };
     container.innerHTML = list.map(function(t) {
       if (t.status === 'draft') pendingCount++;
       var dt = t.transferDate ? new Date(t.transferDate).toLocaleDateString('en-GB') : '';
       var actions = '';
       if (t.status === 'draft') actions = '<button class="btn btn-success btn-sm" onclick="erpApproveTransfer(\'' + t.id + '\')"><i class="fas fa-check"></i> اعتماد</button>';
-      return '<div class="wh-transfer-item ' + t.status + '">' +
-        '<div class="wh-transfer-icon"><i class="fas fa-exchange-alt"></i></div>' +
-        '<div class="wh-transfer-body">' +
-          '<div class="wh-transfer-route">' + t.fromWarehouse + ' <span class="arrow"><i class="fas fa-arrow-left"></i></span> ' + t.toWarehouse + '</div>' +
-          '<div class="wh-transfer-date"><code>' + (t.transferNumber||'') + '</code> &bull; ' + dt + '</div>' +
+      return '<div style="display:flex;align-items:center;gap:14px;padding:14px 18px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;margin-bottom:8px;">' +
+        '<div style="width:42px;height:42px;border-radius:12px;background:' + (iconBgs[t.status]||'#eff6ff') + ';color:' + (iconClrs[t.status]||'#3b82f6') + ';display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;"><i class="fas fa-exchange-alt"></i></div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-weight:700;color:#1e293b;font-size:14px;display:flex;align-items:center;gap:6px;">' + t.fromWarehouse + ' <span style="color:#3b82f6;font-size:12px;"><i class="fas fa-arrow-left"></i></span> ' + t.toWarehouse + '</div>' +
+          '<div style="font-size:12px;color:#94a3b8;margin-top:2px;"><code>' + (t.transferNumber||'') + '</code> &bull; ' + dt + '</div>' +
         '</div>' +
         sBadge(t.status) +
-        '<div class="wh-transfer-actions">' + actions + '</div>' +
+        '<div style="display:flex;gap:6px;flex-shrink:0;">' + actions + '</div>' +
       '</div>';
     }).join('');
     document.getElementById('whStatPending').textContent = pendingCount;
@@ -3669,22 +3686,23 @@ function wfLoadPositions() {
     _wfPositions = list || [];
     if (!list.length) { grid.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد مناصب — اضغط "منصب جديد"</div>'; return; }
     var maxLevel = Math.max.apply(null, list.map(function(p) { return p.level || 0; })) || 1;
+    var btnS = 'width:32px;height:32px;border-radius:8px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;';
     grid.innerHTML = list.map(function(p) {
       var pct = Math.round(((p.level || 0) / maxLevel) * 100);
-      return '<div class="wf-pos-card">' +
-        '<div class="wf-pos-card-header">' +
-          '<div class="wf-pos-card-name"><i class="fas fa-id-badge" style="color:#3b82f6;margin-left:6px;"></i> ' + p.name + '</div>' +
+      return '<div style="background:#fff;border:1.5px solid #e2e8f0;border-radius:16px;padding:18px;">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">' +
+          '<div style="font-size:15px;font-weight:800;color:#1e293b;"><i class="fas fa-id-badge" style="color:#3b82f6;margin-left:6px;"></i> ' + p.name + '</div>' +
           (p.isActive !== false ? '<span class="badge badge-green">فعال</span>' : '<span class="badge badge-red">معطل</span>') +
         '</div>' +
-        '<div class="wf-pos-card-level">' +
-          '<span class="wf-level-label">المستوى ' + (p.level || 0) + '</span>' +
-          '<div class="wf-level-bar"><div class="wf-level-bar-fill" style="width:' + pct + '%;"></div></div>' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">' +
+          '<span style="font-size:12px;font-weight:700;color:#64748b;white-space:nowrap;">المستوى ' + (p.level || 0) + '</span>' +
+          '<div style="height:6px;border-radius:3px;background:#e2e8f0;flex:1;max-width:120px;overflow:hidden;"><div style="height:100%;border-radius:3px;background:linear-gradient(90deg,#3b82f6,#8b5cf6);width:' + pct + '%;"></div></div>' +
         '</div>' +
-        '<div class="wf-pos-card-footer">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:10px;border-top:1px solid #f1f5f9;">' +
           '<span style="font-size:12px;color:#94a3b8;">الصلاحية: ' + (p.level||0) + '</span>' +
-          '<div class="wf-pos-card-actions">' +
-            '<button onclick="wfEditPosition(\'' + p.id + '\')"><i class="fas fa-edit"></i></button>' +
-            '<button class="danger" onclick="wfDeletePosition(\'' + p.id + '\')"><i class="fas fa-trash"></i></button>' +
+          '<div style="display:flex;gap:6px;">' +
+            '<button style="' + btnS + '" onclick="wfEditPosition(\'' + p.id + '\')"><i class="fas fa-edit"></i></button>' +
+            '<button style="' + btnS + 'color:#ef4444;" onclick="wfDeletePosition(\'' + p.id + '\')"><i class="fas fa-trash"></i></button>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -3740,14 +3758,14 @@ function wfLoadTypes() {
     grid.innerHTML = list.map(function(t) {
       var icon = icons[t.code] || 'fa-file-alt';
       var color = colors[t.code] || '#2563eb';
-      return '<div class="wf-type-card">' +
-        '<div class="wf-type-icon" style="background:' + color + '15;color:' + color + ';"><i class="fas ' + icon + '"></i></div>' +
-        '<div class="wf-type-info">' +
-          '<div class="wf-type-name">' + t.name + '</div>' +
-          '<div class="wf-type-code">' + (t.code || '') + '</div>' +
+      return '<div style="display:flex;align-items:center;gap:14px;padding:18px;border:1.5px solid #e2e8f0;border-radius:16px;background:#fff;">' +
+        '<div style="width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;background:' + color + '15;color:' + color + ';"><i class="fas ' + icon + '"></i></div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:15px;font-weight:800;color:#1e293b;">' + t.name + '</div>' +
+          '<div style="font-size:12px;color:#94a3b8;font-family:monospace;margin-top:2px;">' + (t.code || '') + '</div>' +
         '</div>' +
         (t.isActive !== false ? '<span class="badge badge-green">فعال</span>' : '<span class="badge badge-red">معطل</span>') +
-        '<button class="btn-icon" style="margin-right:auto;" onclick="wfEditType(\'' + t.id + '\')"><i class="fas fa-edit"></i></button>' +
+        ' <button class="btn-icon" style="margin-right:8px;" onclick="wfEditType(\'' + t.id + '\')"><i class="fas fa-edit"></i></button>' +
       '</div>';
     }).join('');
   }).getWfTypes();
@@ -3803,26 +3821,34 @@ function wfLoadDefs() {
   var typeId = document.getElementById('wfDefsTypeFilter').value;
   var container = document.getElementById('wfDefsContainer');
   if (!typeId) { container.innerHTML = '<div class="wf-pipeline-empty">اختر نوع المعاملة أولاً</div>'; return; }
-  container.innerHTML = '<div class="wf-pipeline-empty"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+  container.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
   window._apiBridge.withSuccessHandler(function(list) {
     _wfDefs = list || [];
-    if (!list.length) { container.innerHTML = '<div class="wf-pipeline-empty">لا توجد خطوات — اضغط "خطوة جديدة" لإضافة أول خطوة</div>'; return; }
-    var html = '<div class="wf-pipeline">';
+    if (!list.length) { container.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-style:italic;background:#f8fafc;border-radius:14px;border:1px dashed #e2e8f0;">لا توجد خطوات — اضغط "خطوة جديدة"</div>'; return; }
+    var circleS = 'width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;position:relative;z-index:1;';
+    var bodyS = 'text-align:center;margin-top:10px;padding:12px 14px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;min-width:140px;box-shadow:0 2px 8px rgba(0,0,0,0.02);';
+    var permOn = 'width:24px;height:24px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;background:#dcfce7;color:#16a34a;';
+    var permOff = 'width:24px;height:24px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;background:#f1f5f9;color:#cbd5e1;';
+    var sBtn = 'width:28px;height:28px;border-radius:6px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-size:12px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;';
+    var html = '<div style="display:flex;align-items:flex-start;gap:0;overflow-x:auto;padding:20px 10px;">';
     list.forEach(function(w, i) {
-      if (i > 0) html += '<div class="wf-pipeline-arrow"><i class="fas fa-chevron-left"></i></div>';
-      html += '<div class="wf-pipeline-step' + (w.isFinal ? ' final' : '') + '">' +
-        '<div class="wf-step-circle">' + w.stepOrder + '</div>' +
-        '<div class="wf-step-body">' +
-          '<div class="wf-step-name">' + w.stepName + '</div>' +
-          '<div class="wf-step-position">' + (w.positionName || 'أي منصب') + '</div>' +
-          '<div class="wf-step-perms">' +
-            '<div class="perm-icon ' + (w.canEditAmount ? 'on' : 'off') + '" title="تعديل المبلغ"><i class="fas fa-edit"></i></div>' +
-            '<div class="perm-icon ' + (w.canReturn ? 'on' : 'off') + '" title="إرجاع"><i class="fas fa-undo"></i></div>' +
-            (w.isFinal ? '<div class="perm-icon on" title="نهائية"><i class="fas fa-flag-checkered"></i></div>' : '') +
+      if (i > 0) html += '<div style="display:flex;align-items:center;padding-top:14px;color:#94a3b8;font-size:18px;min-width:32px;justify-content:center;"><i class="fas fa-chevron-left"></i></div>';
+      var cBg = w.isFinal ? 'linear-gradient(135deg,#f0fdf4,#dcfce7)' : 'linear-gradient(135deg,#eff6ff,#dbeafe)';
+      var cBorder = w.isFinal ? '2.5px solid #86efac' : '2.5px solid #93c5fd';
+      var cColor = w.isFinal ? '#166534' : '#1e40af';
+      html += '<div style="display:flex;flex-direction:column;align-items:center;min-width:160px;max-width:200px;flex-shrink:0;">' +
+        '<div style="' + circleS + 'background:' + cBg + ';border:' + cBorder + ';color:' + cColor + ';">' + w.stepOrder + '</div>' +
+        '<div style="' + bodyS + '">' +
+          '<div style="font-size:13px;font-weight:800;color:#1e293b;margin-bottom:6px;">' + w.stepName + '</div>' +
+          '<div style="font-size:11.5px;color:#64748b;font-weight:600;">' + (w.positionName || 'أي منصب') + '</div>' +
+          '<div style="display:flex;gap:4px;justify-content:center;margin-top:6px;">' +
+            '<div style="' + (w.canEditAmount ? permOn : permOff) + '" title="تعديل المبلغ"><i class="fas fa-edit"></i></div>' +
+            '<div style="' + (w.canReturn ? permOn : permOff) + '" title="إرجاع"><i class="fas fa-undo"></i></div>' +
+            (w.isFinal ? '<div style="' + permOn + '" title="نهائية"><i class="fas fa-flag-checkered"></i></div>' : '') +
           '</div>' +
-          '<div class="wf-step-actions">' +
-            '<button onclick="wfEditDef(\'' + w.id + '\')"><i class="fas fa-edit"></i></button>' +
-            '<button class="danger" onclick="wfDeleteDef(\'' + w.id + '\')"><i class="fas fa-trash"></i></button>' +
+          '<div style="display:flex;gap:4px;justify-content:center;margin-top:8px;">' +
+            '<button style="' + sBtn + '" onclick="wfEditDef(\'' + w.id + '\')"><i class="fas fa-edit"></i></button>' +
+            '<button style="' + sBtn + 'color:#ef4444;" onclick="wfDeleteDef(\'' + w.id + '\')"><i class="fas fa-trash"></i></button>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -3909,9 +3935,12 @@ function wfLoadInbox() {
     var counts = { pending: 0, in_progress: 0, approved: 0, rejected: 0, closed: 0 };
     var statusLabelsAr = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
     list.forEach(function(t) { if (counts.hasOwnProperty(t.status)) counts[t.status]++; });
+    var dotClrs = { pending: '#f59e0b', in_progress: '#3b82f6', approved: '#10b981', rejected: '#ef4444', closed: '#6b7280' };
     var statsHtml = '';
     Object.keys(counts).forEach(function(k) {
-      statsHtml += '<div class="wf-inbox-stat"><span class="dot ' + k + '"></span><span>' + statusLabelsAr[k] + '</span><span class="count">' + counts[k] + '</span></div>';
+      statsHtml += '<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;font-weight:700;">' +
+        '<span style="width:10px;height:10px;border-radius:50%;background:' + (dotClrs[k]||'#94a3b8') + ';flex-shrink:0;"></span>' +
+        '<span>' + statusLabelsAr[k] + '</span><span style="font-weight:900;color:#0f172a;">' + counts[k] + '</span></div>';
     });
     document.getElementById('wfInboxStats').innerHTML = statsHtml;
 

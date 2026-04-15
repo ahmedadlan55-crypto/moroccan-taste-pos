@@ -45,6 +45,7 @@ app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/erp', require('./routes/erp'));
 app.use('/api/custody', require('./routes/custody'));
+app.use('/api/workflow', require('./routes/workflow'));
 
 // Catch-all for unimplemented API routes — return JSON instead of HTML
 app.all('/api/*', (req, res) => {
@@ -321,6 +322,139 @@ async function runMigrations() {
   await addColumnIfMissing('custody_expenses', 'cost_center_id', "VARCHAR(50)");
   await addColumnIfMissing('custody_expenses', 'cost_center_name', "VARCHAR(200)");
   await addColumnIfMissing('custody_expenses', 'pre_approval_status', "ENUM('none','requested','approved','rejected') DEFAULT 'none'");
+
+  // ═══════════════════════════════════════
+  // WORKFLOW ENGINE TABLES (نظام المعاملات)
+  // ═══════════════════════════════════════
+
+  // Administrative positions (المناصب الإدارية)
+  await createTableIfMissing('positions', `
+    CREATE TABLE positions (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      level INT DEFAULT 0,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  // Permissions (الصلاحيات)
+  await createTableIfMissing('permissions', `
+    CREATE TABLE permissions (
+      id VARCHAR(50) PRIMARY KEY,
+      code VARCHAR(100) NOT NULL UNIQUE,
+      description VARCHAR(200)
+    ) ENGINE=InnoDB
+  `);
+
+  // Position-Permission mapping
+  await createTableIfMissing('position_permissions', `
+    CREATE TABLE position_permissions (
+      id VARCHAR(50) PRIMARY KEY,
+      position_id VARCHAR(50) NOT NULL,
+      permission_id VARCHAR(50) NOT NULL,
+      UNIQUE KEY uq_pos_perm (position_id, permission_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // Transaction types (أنواع المعاملات)
+  await createTableIfMissing('transaction_types', `
+    CREATE TABLE transaction_types (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      code VARCHAR(50) NOT NULL,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  // Workflow definitions (خطوات المعاملة)
+  await createTableIfMissing('workflow_definitions', `
+    CREATE TABLE workflow_definitions (
+      id VARCHAR(50) PRIMARY KEY,
+      transaction_type_id VARCHAR(50) NOT NULL,
+      step_order INT NOT NULL,
+      step_name VARCHAR(200) NOT NULL,
+      required_position_id VARCHAR(50),
+      can_edit_amount BOOLEAN DEFAULT FALSE,
+      can_return_to_previous BOOLEAN DEFAULT TRUE,
+      is_final_step BOOLEAN DEFAULT FALSE,
+      FOREIGN KEY (transaction_type_id) REFERENCES transaction_types(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB
+  `);
+
+  // Workflow step users (optional — specific user for step)
+  await createTableIfMissing('workflow_step_users', `
+    CREATE TABLE workflow_step_users (
+      id VARCHAR(50) PRIMARY KEY,
+      workflow_definition_id VARCHAR(50) NOT NULL,
+      user_id VARCHAR(50) NOT NULL,
+      FOREIGN KEY (workflow_definition_id) REFERENCES workflow_definitions(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB
+  `);
+
+  // Transactions (المعاملات)
+  await createTableIfMissing('transactions', `
+    CREATE TABLE transactions (
+      id VARCHAR(50) PRIMARY KEY,
+      transaction_number VARCHAR(20),
+      transaction_type_id VARCHAR(50) NOT NULL,
+      created_by VARCHAR(100),
+      branch_id VARCHAR(50),
+      brand_id VARCHAR(50),
+      title VARCHAR(300) NOT NULL,
+      description TEXT,
+      amount DECIMAL(12,2) DEFAULT 0,
+      status ENUM('draft','pending','in_progress','rejected','approved','closed') DEFAULT 'draft',
+      current_step_id VARCHAR(50),
+      attachment LONGTEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (transaction_type_id) REFERENCES transaction_types(id)
+    ) ENGINE=InnoDB
+  `);
+
+  // Transaction steps log (سجل الحركات)
+  await createTableIfMissing('transaction_steps_log', `
+    CREATE TABLE transaction_steps_log (
+      id VARCHAR(50) PRIMARY KEY,
+      transaction_id VARCHAR(50) NOT NULL,
+      workflow_definition_id VARCHAR(50),
+      action_by VARCHAR(100),
+      action_type ENUM('create','approve','reject','return','forward','close') NOT NULL,
+      action_note TEXT,
+      attachment LONGTEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB
+  `);
+
+  // Link users to positions
+  await addColumnIfMissing('users', 'position_id', "VARCHAR(50)");
+
+  // Seed default positions
+  try {
+    const [posCount] = await db.query('SELECT COUNT(*) AS cnt FROM positions');
+    if (posCount[0].cnt === 0) {
+      await db.query("INSERT INTO positions (id, name, level) VALUES ('POS-1','محاسب',1),('POS-2','مدير مالي',2),('POS-3','مدير تنفيذي',3),('POS-4','مسؤول بنوك',2),('POS-5','مدير فرع',2)");
+    }
+  } catch(e) {}
+
+  // Seed default permissions
+  try {
+    const [permCount] = await db.query('SELECT COUNT(*) AS cnt FROM permissions');
+    if (permCount[0].cnt === 0) {
+      await db.query("INSERT INTO permissions (id, code, description) VALUES ('PERM-1','CREATE_REQUEST','إنشاء معاملة'),('PERM-2','APPROVE','موافقة'),('PERM-3','REJECT','رفض'),('PERM-4','RETURN','إرجاع'),('PERM-5','CLOSE','إقفال'),('PERM-6','VIEW_ALL','عرض الكل')");
+    }
+  } catch(e) {}
+
+  // Seed default transaction types
+  try {
+    const [ttCount] = await db.query('SELECT COUNT(*) AS cnt FROM transaction_types');
+    if (ttCount[0].cnt === 0) {
+      await db.query("INSERT INTO transaction_types (id, name, code) VALUES ('TT-1','طلب صرف مستحقات','EXPENSE_REQUEST'),('TT-2','طلب شراء','PURCHASE_REQUEST'),('TT-3','طلب أصل ثابت','ASSET_REQUEST')");
+    }
+  } catch(e) {}
 
   // Brands table (multi-brand support)
   await createTableIfMissing('brands', `

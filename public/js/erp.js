@@ -3087,7 +3087,7 @@ function erpOpenWarehouseModal(data) {
         loader(false);
         if (res.success) { showToast('تم حفظ المستودع'); erpCloseModal(); erpLoadWarehouses(); }
         else showToast(res.error, 'error');
-      }).saveWarehouse(d, currentUser);
+      }).saveWarehouseLegacy(d, currentUser);
     };
     document.getElementById('erpModal').classList.remove('hidden');
   }).getBranches();
@@ -3107,7 +3107,7 @@ function erpDeleteWarehouse(id) {
     loader(false);
     if (res.success) { showToast('تم حذف المستودع'); erpLoadWarehouses(); }
     else showToast(res.error, 'error');
-  }).deleteWarehouse(id, currentUser);
+  }).deleteWarehouseLegacy(id, currentUser);
 }
 
 // ═══════════════════════════════════════

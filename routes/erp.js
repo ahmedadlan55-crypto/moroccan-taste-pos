@@ -1548,6 +1548,152 @@ router.post('/warehouse-transfers/:id/approve', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
+// ─── Warehouses (Legacy §16 endpoints) ───
+
+router.get('/warehouses', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT w.*, b.name AS branch_name FROM warehouses w LEFT JOIN branches b ON w.branch_id = b.id ORDER BY w.code');
+    res.json(rows.map(w => ({
+      ID: w.id, Code: w.code, NameAR: w.name, NameEN: w.name, Type: w.type,
+      BranchID: w.branch_id, BranchName: w.branch_name||'', Location: w.location||'',
+      Manager: w.manager||'', IsActive: !!w.is_active, AllowNegativeStock: false
+    })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/warehouses', async (req, res) => {
+  try {
+    // Accept both PascalCase (legacy) and camelCase (new) fields
+    const id = req.body.ID || req.body.id;
+    const code = req.body.Code || req.body.code;
+    const name = req.body.NameAR || req.body.Name || req.body.name;
+    const type = req.body.Type || req.body.type || 'branch';
+    const branchId = req.body.BranchID || req.body.branchId;
+    const location = req.body.Location || req.body.location || '';
+    const manager = req.body.Manager || req.body.manager || '';
+    const isActive = req.body.IsActive !== undefined ? req.body.IsActive : true;
+    if (!code || !name) return res.json({ success: false, error: 'الرمز والاسم مطلوبان' });
+    if (id) {
+      await db.query('UPDATE warehouses SET code=?, name=?, type=?, branch_id=?, location=?, manager=?, is_active=? WHERE id=?',
+        [code, name, type, branchId||null, location, manager, isActive?1:0, id]);
+      return res.json({ success: true, id });
+    }
+    const newId = 'WH-' + Date.now();
+    await db.query('INSERT INTO warehouses (id, code, name, type, branch_id, location, manager, is_active) VALUES (?,?,?,?,?,?,?,?)',
+      [newId, code, name, type, branchId||null, location, manager, isActive?1:0]);
+    res.json({ success: true, id: newId });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.delete('/warehouses/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM warehouse_stock WHERE warehouse_id = ?', [req.params.id]);
+    await db.query('DELETE FROM warehouses WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// Warehouse stock (all warehouses combined view)
+router.get('/warehouse-stock', async (req, res) => {
+  try {
+    const whId = req.query.warehouseId || req.query.warehouse_id;
+    let query = `SELECT ws.*, i.name AS item_name, i.category, i.unit, i.cost, w.name AS warehouse_name
+                 FROM warehouse_stock ws
+                 JOIN inv_items i ON ws.item_id = i.id
+                 JOIN warehouses w ON ws.warehouse_id = w.id`;
+    const params = [];
+    if (whId) { query += ' WHERE ws.warehouse_id = ?'; params.push(whId); }
+    query += ' ORDER BY w.name, i.name';
+    const [rows] = await db.query(query, params);
+    res.json(rows.map(r => ({
+      ID: r.id, WarehouseID: r.warehouse_id, WarehouseName: r.warehouse_name,
+      ItemID: r.item_id, ItemName: r.item_name, Category: r.category||'',
+      Qty: Number(r.qty), Unit: r.unit||'', AvgCost: Number(r.cost)||0,
+      LastUpdated: r.updated_at || r.created_at || null
+    })));
+  } catch(e) { res.json([]); }
+});
+
+// Stock transfers
+router.get('/stock-transfers', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT t.*, wf.name AS from_name, wt.name AS to_name FROM warehouse_transfers t
+       LEFT JOIN warehouses wf ON t.from_warehouse_id = wf.id
+       LEFT JOIN warehouses wt ON t.to_warehouse_id = wt.id ORDER BY t.created_at DESC LIMIT 200`);
+    res.json(rows.map(t => ({
+      ID: t.id, TransferNumber: t.transfer_number, FromWarehouseID: t.from_warehouse_id,
+      FromWarehouseName: t.from_name||'', ToWarehouseID: t.to_warehouse_id,
+      ToWarehouseName: t.to_name||'', TransferDate: t.transfer_date,
+      Status: t.status, Items: JSON.parse(t.items_json||'[]'),
+      Notes: t.notes, RequestedBy: t.created_by, ApprovedBy: t.approved_by
+    })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/stock-transfers', async (req, res) => {
+  try {
+    const { fromWarehouseId, toWarehouseId, items, notes, username } = req.body;
+    if (!fromWarehouseId || !toWarehouseId || !items || !items.length) return res.json({ success: false, error: 'بيانات ناقصة' });
+    const id = 'WT-' + Date.now();
+    const [last] = await db.query('SELECT transfer_number FROM warehouse_transfers ORDER BY created_at DESC LIMIT 1');
+    let num = 1;
+    if (last.length && last[0].transfer_number) { const m = last[0].transfer_number.match(/(\d+)/); if (m) num = parseInt(m[1]) + 1; }
+    const transferNumber = 'TR-' + String(num).padStart(5, '0');
+    await db.query(
+      'INSERT INTO warehouse_transfers (id, transfer_number, from_warehouse_id, to_warehouse_id, transfer_date, items_json, notes, created_by) VALUES (?,?,?,?,?,?,?,?)',
+      [id, transferNumber, fromWarehouseId, toWarehouseId, new Date(), JSON.stringify(items), notes||'', username||'']);
+    res.json({ success: true, id, transferNumber });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.post('/stock-transfers/:id/approve', async (req, res) => {
+  try {
+    const { username } = req.body;
+    const [transfers] = await db.query('SELECT * FROM warehouse_transfers WHERE id = ?', [req.params.id]);
+    if (!transfers.length) return res.json({ success: false, error: 'التحويل غير موجود' });
+    const t = transfers[0];
+    if (t.status !== 'draft') return res.json({ success: false, error: 'التحويل ليس في حالة مسودة' });
+    const items = JSON.parse(t.items_json || '[]');
+    for (const item of items) {
+      const qty = Number(item.qty) || 0;
+      if (qty <= 0) continue;
+      await db.query(
+        'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE qty = qty - ?',
+        ['WS-' + Date.now() + '-' + Math.random().toString(36).substr(2,4), t.from_warehouse_id, item.itemId, -qty, qty]);
+      await db.query(
+        'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE qty = qty + ?',
+        ['WS-' + Date.now() + '-' + Math.random().toString(36).substr(2,4), t.to_warehouse_id, item.itemId, qty, qty]);
+    }
+    await db.query('UPDATE warehouse_transfers SET status = "completed", approved_by = ? WHERE id = ?', [username||'', req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.post('/stock-transfers/:id/cancel', async (req, res) => {
+  try {
+    const [transfers] = await db.query('SELECT * FROM warehouse_transfers WHERE id = ?', [req.params.id]);
+    if (!transfers.length) return res.json({ success: false, error: 'التحويل غير موجود' });
+    if (transfers[0].status !== 'draft') return res.json({ success: false, error: 'لا يمكن إلغاء تحويل مكتمل' });
+    await db.query('UPDATE warehouse_transfers SET status = "cancelled" WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.get('/stock-transfer-lines/:id', async (req, res) => {
+  try {
+    const [transfers] = await db.query('SELECT * FROM warehouse_transfers WHERE id = ?', [req.params.id]);
+    if (!transfers.length) return res.json([]);
+    const items = JSON.parse(transfers[0].items_json || '[]');
+    res.json(items.map(item => ({
+      ItemID: item.itemId, ItemName: item.itemName||'',
+      RequestedQty: Number(item.qty)||0, SentQty: Number(item.qty)||0,
+      ReceivedQty: transfers[0].status === 'completed' ? Number(item.qty)||0 : 0,
+      UnitCost: Number(item.cost)||0
+    })));
+  } catch(e) { res.json([]); }
+});
+
 // ─── Branches (enhanced) ───
 
 router.get('/branches-full', async (req, res) => {

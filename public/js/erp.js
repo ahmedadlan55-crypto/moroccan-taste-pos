@@ -2662,34 +2662,121 @@ function erpDeleteCC(id) {
 // MULTI-WAREHOUSES (المستودعات المتعددة)
 // ═══════════════════════════════════════
 var _whList = [];
+var _whTypeLabels = {branch:'فرعي',main:'رئيسي',production:'إنتاج',waste:'هدر',raw:'مواد خام',finished:'مواد تامة'};
+
+function whSwitchTab(tab) {
+  document.querySelectorAll('.wh-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.wh-tab-content').forEach(function(c) { c.classList.remove('active'); });
+  var tabMap = { warehouses: 'whTabWarehouses', transfers: 'whTabTransfers', stock: 'whTabStock' };
+  var idx = { warehouses: 0, transfers: 1, stock: 2 };
+  document.querySelectorAll('.wh-tab')[idx[tab]].classList.add('active');
+  document.getElementById(tabMap[tab]).classList.add('active');
+  if (tab === 'stock') whLoadStockTab();
+}
+
 function erpLoadMultiWarehouses() {
-  // Load warehouses
+  // Load warehouses → render cards
   window._apiBridge.withSuccessHandler(function(list) {
     _whList = list || [];
-    var tb = document.getElementById('erpWHBody');
-    if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد مستودعات</td></tr>'; return; }
-    var typeLabels = {branch:'فرعي',main:'رئيسي',production:'إنتاج',waste:'هدر',raw:'مواد خام',finished:'مواد تامة'};
-    tb.innerHTML = list.map(function(w) {
-      return '<tr><td><code>' + w.code + '</code></td><td style="font-weight:700;">' + w.name + '</td>' +
-        '<td><span class="badge badge-blue">' + (typeLabels[w.type]||w.type) + '</span></td>' +
-        '<td>' + (w.branchName||'—') + '</td><td>' + (w.manager||'—') + '</td>' +
-        '<td>' + (w.isActive ? '<span class="badge badge-green">نشط</span>' : '<span class="badge badge-red">معطّل</span>') + '</td>' +
-        '<td><button class="btn-icon" onclick="erpEditWH(\'' + w.id + '\')"><i class="fas fa-edit"></i></button> ' +
-        '<button class="btn-icon" style="color:#3b82f6;" onclick="erpViewWHStock(\'' + w.id + '\',\'' + (w.name||'').replace(/'/g,'') + '\')" title="أرصدة"><i class="fas fa-boxes"></i></button> ' +
-        '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteWH(\'' + w.id + '\')"><i class="fas fa-trash"></i></button></td></tr>';
+    var grid = document.getElementById('whCardsGrid');
+    var activeCount = list.filter(function(w) { return w.isActive; }).length;
+    var types = {};
+    list.forEach(function(w) { types[w.type] = true; });
+    // Update stats
+    document.getElementById('whStatTotal').textContent = list.length;
+    document.getElementById('whStatActive').textContent = activeCount;
+    document.getElementById('whStatTypes').textContent = Object.keys(types).length;
+    if (!list.length) { grid.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد مستودعات — اضغط "مستودع جديد"</div>'; return; }
+    grid.innerHTML = list.map(function(w) {
+      return '<div class="wh-card">' +
+        '<div class="wh-card-header">' +
+          '<div class="wh-card-name">' + w.name + '</div>' +
+          '<span class="badge badge-blue">' + (_whTypeLabels[w.type]||w.type) + '</span>' +
+        '</div>' +
+        '<div class="wh-card-meta">' +
+          '<div class="wh-card-meta-row"><i class="fas fa-code-branch"></i> ' + (w.branchName||'بدون فرع') + '</div>' +
+          '<div class="wh-card-meta-row"><i class="fas fa-user"></i> ' + (w.manager||'بدون مدير') + '</div>' +
+          '<div class="wh-card-meta-row"><i class="fas fa-hashtag"></i> <code>' + w.code + '</code></div>' +
+        '</div>' +
+        '<div class="wh-card-footer">' +
+          (w.isActive ? '<span class="badge badge-green">نشط</span>' : '<span class="badge badge-red">معطّل</span>') +
+          '<div class="wh-card-actions">' +
+            '<button onclick="erpEditWH(\'' + w.id + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
+            '<button onclick="erpViewWHStock(\'' + w.id + '\',\'' + (w.name||'').replace(/'/g,'') + '\')" title="أرصدة"><i class="fas fa-boxes"></i></button>' +
+            '<button class="danger" onclick="erpDeleteWH(\'' + w.id + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
     }).join('');
+    // Populate stock tab filter
+    var sel = document.getElementById('whStockWhFilter');
+    if (sel && sel.options.length <= 1) {
+      list.forEach(function(w) { var o = document.createElement('option'); o.value = w.id; o.textContent = w.name; sel.appendChild(o); });
+    }
   }).getWarehousesList();
-  // Load transfers
+  // Load transfers → render timeline
   window._apiBridge.withSuccessHandler(function(list) {
-    var tb = document.getElementById('erpTransfersBody');
-    if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="6" class="empty-msg">لا توجد تحويلات</td></tr>'; return; }
-    var sBadge = function(s) { return s==='completed'?'<span class="badge badge-green">مكتمل</span>':s==='draft'?'<span class="badge badge-yellow">مسودة</span>':'<span class="badge">'+s+'</span>'; };
-    tb.innerHTML = list.map(function(t) {
+    var container = document.getElementById('whTransferList');
+    var pendingCount = 0;
+    if (!list || !list.length) {
+      container.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-style:italic;">لا توجد تحويلات — اضغط "تحويل جديد"</div>';
+      document.getElementById('whStatPending').textContent = '0';
+      return;
+    }
+    var sBadge = function(s) { return s==='completed'?'<span class="badge badge-green">مكتمل</span>':s==='draft'?'<span class="badge badge-yellow">مسودة</span>':s==='cancelled'?'<span class="badge badge-red">ملغي</span>':'<span class="badge">'+s+'</span>'; };
+    container.innerHTML = list.map(function(t) {
+      if (t.status === 'draft') pendingCount++;
       var dt = t.transferDate ? new Date(t.transferDate).toLocaleDateString('en-GB') : '';
-      var actions = t.status==='draft' ? '<button class="btn btn-success btn-sm" onclick="erpApproveTransfer(\'' + t.id + '\')"><i class="fas fa-check"></i></button>' : '';
-      return '<tr><td><code>' + (t.transferNumber||'') + '</code></td><td>' + t.fromWarehouse + '</td><td>' + t.toWarehouse + '</td><td>' + dt + '</td><td>' + sBadge(t.status) + '</td><td>' + actions + '</td></tr>';
+      var actions = '';
+      if (t.status === 'draft') actions = '<button class="btn btn-success btn-sm" onclick="erpApproveTransfer(\'' + t.id + '\')"><i class="fas fa-check"></i> اعتماد</button>';
+      return '<div class="wh-transfer-item ' + t.status + '">' +
+        '<div class="wh-transfer-icon"><i class="fas fa-exchange-alt"></i></div>' +
+        '<div class="wh-transfer-body">' +
+          '<div class="wh-transfer-route">' + t.fromWarehouse + ' <span class="arrow"><i class="fas fa-arrow-left"></i></span> ' + t.toWarehouse + '</div>' +
+          '<div class="wh-transfer-date"><code>' + (t.transferNumber||'') + '</code> &bull; ' + dt + '</div>' +
+        '</div>' +
+        sBadge(t.status) +
+        '<div class="wh-transfer-actions">' + actions + '</div>' +
+      '</div>';
     }).join('');
+    document.getElementById('whStatPending').textContent = pendingCount;
   }).getWarehouseTransfers();
+}
+
+var _whStockData = [];
+function whLoadStockTab() {
+  var whId = document.getElementById('whStockWhFilter').value;
+  var tb = document.getElementById('whStockBody');
+  tb.innerHTML = '<tr><td colspan="4" class="empty-msg">جاري التحميل...</td></tr>';
+  if (!whId) {
+    // Load all warehouses stock
+    window._apiBridge.withSuccessHandler(function(list) {
+      _whStockData = list || [];
+      if (!list.length) { tb.innerHTML = '<tr><td colspan="4" class="empty-msg">لا توجد أرصدة</td></tr>'; return; }
+      tb.innerHTML = list.map(function(s) {
+        return '<tr><td>' + (s.WarehouseName||'') + '</td><td style="font-weight:700;">' + (s.ItemName||'') + '</td><td style="font-weight:800;color:#1e40af;">' + s.Qty + '</td><td>' + (s.Unit||'') + '</td></tr>';
+      }).join('');
+    }).getWarehouseStock();
+  } else {
+    window._apiBridge.withSuccessHandler(function(items) {
+      _whStockData = (items||[]).map(function(i) { return { WarehouseName: '', ItemName: i.itemName, Qty: i.qty, Unit: i.unit||'' }; });
+      if (!items.length) { tb.innerHTML = '<tr><td colspan="4" class="empty-msg">لا توجد أرصدة لهذا المستودع</td></tr>'; return; }
+      var whName = (document.getElementById('whStockWhFilter').selectedOptions[0]||{}).textContent||'';
+      tb.innerHTML = items.map(function(i) {
+        return '<tr><td>' + whName + '</td><td style="font-weight:700;">' + i.itemName + '</td><td style="font-weight:800;color:#1e40af;">' + i.qty + '</td><td>' + (i.unit||'') + '</td></tr>';
+      }).join('');
+    }).getWarehouseStockDetail(whId);
+  }
+}
+
+function whFilterStockTable() {
+  var q = (document.getElementById('whStockSearch').value||'').toLowerCase();
+  var tb = document.getElementById('whStockBody');
+  var filtered = _whStockData.filter(function(s) { return !q || (s.ItemName||'').toLowerCase().indexOf(q) > -1; });
+  if (!filtered.length) { tb.innerHTML = '<tr><td colspan="4" class="empty-msg">لا توجد نتائج</td></tr>'; return; }
+  tb.innerHTML = filtered.map(function(s) {
+    return '<tr><td>' + (s.WarehouseName||'') + '</td><td style="font-weight:700;">' + (s.ItemName||'') + '</td><td style="font-weight:800;color:#1e40af;">' + s.Qty + '</td><td>' + (s.Unit||'') + '</td></tr>';
+  }).join('');
 }
 function erpOpenWarehouseModal(data) {
   var d = data || {};
@@ -3576,21 +3663,31 @@ function erpModalSave() {
 // ─── المناصب (Positions) ───
 var _wfPositions = [];
 function wfLoadPositions() {
-  var tb = document.getElementById('wfPositionsBody');
-  tb.innerHTML = '<tr><td colspan="5" class="empty-msg">جاري التحميل...</td></tr>';
+  var grid = document.getElementById('wfPositionsGrid');
+  grid.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
   window._apiBridge.withSuccessHandler(function(list) {
     _wfPositions = list || [];
-    if (!list.length) { tb.innerHTML = '<tr><td colspan="5" class="empty-msg">لا توجد مناصب</td></tr>'; return; }
-    tb.innerHTML = list.map(function(p, i) {
-      return '<tr>' +
-        '<td>' + (i + 1) + '</td>' +
-        '<td style="font-weight:700;">' + p.name + '</td>' +
-        '<td><span class="badge badge-blue">' + (p.level || 0) + '</span></td>' +
-        '<td>' + (p.isActive !== false ? '<span class="badge badge-green">فعال</span>' : '<span class="badge badge-red">معطل</span>') + '</td>' +
-        '<td>' +
-          '<button class="btn-icon" onclick="wfEditPosition(\'' + p.id + '\')"><i class="fas fa-edit"></i></button> ' +
-          '<button class="btn-icon" style="color:#ef4444;" onclick="wfDeletePosition(\'' + p.id + '\')"><i class="fas fa-trash"></i></button>' +
-        '</td></tr>';
+    if (!list.length) { grid.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد مناصب — اضغط "منصب جديد"</div>'; return; }
+    var maxLevel = Math.max.apply(null, list.map(function(p) { return p.level || 0; })) || 1;
+    grid.innerHTML = list.map(function(p) {
+      var pct = Math.round(((p.level || 0) / maxLevel) * 100);
+      return '<div class="wf-pos-card">' +
+        '<div class="wf-pos-card-header">' +
+          '<div class="wf-pos-card-name"><i class="fas fa-id-badge" style="color:#3b82f6;margin-left:6px;"></i> ' + p.name + '</div>' +
+          (p.isActive !== false ? '<span class="badge badge-green">فعال</span>' : '<span class="badge badge-red">معطل</span>') +
+        '</div>' +
+        '<div class="wf-pos-card-level">' +
+          '<span class="wf-level-label">المستوى ' + (p.level || 0) + '</span>' +
+          '<div class="wf-level-bar"><div class="wf-level-bar-fill" style="width:' + pct + '%;"></div></div>' +
+        '</div>' +
+        '<div class="wf-pos-card-footer">' +
+          '<span style="font-size:12px;color:#94a3b8;">الصلاحية: ' + (p.level||0) + '</span>' +
+          '<div class="wf-pos-card-actions">' +
+            '<button onclick="wfEditPosition(\'' + p.id + '\')"><i class="fas fa-edit"></i></button>' +
+            '<button class="danger" onclick="wfDeletePosition(\'' + p.id + '\')"><i class="fas fa-trash"></i></button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
     }).join('');
   }).getWfPositions();
 }
@@ -3633,18 +3730,25 @@ function wfDeletePosition(id) {
 // ─── أنواع المعاملات (Transaction Types) ───
 var _wfTypes = [];
 function wfLoadTypes() {
-  var tb = document.getElementById('wfTypesBody');
-  tb.innerHTML = '<tr><td colspan="4" class="empty-msg">جاري التحميل...</td></tr>';
+  var grid = document.getElementById('wfTypesGrid');
+  grid.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
   window._apiBridge.withSuccessHandler(function(list) {
     _wfTypes = list || [];
-    if (!list.length) { tb.innerHTML = '<tr><td colspan="4" class="empty-msg">لا توجد أنواع</td></tr>'; return; }
-    tb.innerHTML = list.map(function(t) {
-      return '<tr>' +
-        '<td><code>' + (t.code || '') + '</code></td>' +
-        '<td style="font-weight:700;">' + t.name + '</td>' +
-        '<td>' + (t.isActive !== false ? '<span class="badge badge-green">فعال</span>' : '<span class="badge badge-red">معطل</span>') + '</td>' +
-        '<td><button class="btn-icon" onclick="wfEditType(\'' + t.id + '\')"><i class="fas fa-edit"></i></button></td>' +
-        '</tr>';
+    if (!list.length) { grid.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد أنواع — اضغط "نوع جديد"</div>'; return; }
+    var icons = { EXPENSE: 'fa-money-bill-wave', PURCHASE: 'fa-shopping-cart', ASSET: 'fa-building', PAYMENT: 'fa-credit-card' };
+    var colors = { EXPENSE: '#dc2626', PURCHASE: '#2563eb', ASSET: '#7c3aed', PAYMENT: '#059669' };
+    grid.innerHTML = list.map(function(t) {
+      var icon = icons[t.code] || 'fa-file-alt';
+      var color = colors[t.code] || '#2563eb';
+      return '<div class="wf-type-card">' +
+        '<div class="wf-type-icon" style="background:' + color + '15;color:' + color + ';"><i class="fas ' + icon + '"></i></div>' +
+        '<div class="wf-type-info">' +
+          '<div class="wf-type-name">' + t.name + '</div>' +
+          '<div class="wf-type-code">' + (t.code || '') + '</div>' +
+        '</div>' +
+        (t.isActive !== false ? '<span class="badge badge-green">فعال</span>' : '<span class="badge badge-red">معطل</span>') +
+        '<button class="btn-icon" style="margin-right:auto;" onclick="wfEditType(\'' + t.id + '\')"><i class="fas fa-edit"></i></button>' +
+      '</div>';
     }).join('');
   }).getWfTypes();
 }
@@ -3697,25 +3801,34 @@ function wfInitDefs() {
 
 function wfLoadDefs() {
   var typeId = document.getElementById('wfDefsTypeFilter').value;
-  var tb = document.getElementById('wfDefsBody');
-  if (!typeId) { tb.innerHTML = '<tr><td colspan="7" class="empty-msg">اختر نوع المعاملة أولاً</td></tr>'; return; }
-  tb.innerHTML = '<tr><td colspan="7" class="empty-msg">جاري التحميل...</td></tr>';
+  var container = document.getElementById('wfDefsContainer');
+  if (!typeId) { container.innerHTML = '<div class="wf-pipeline-empty">اختر نوع المعاملة أولاً</div>'; return; }
+  container.innerHTML = '<div class="wf-pipeline-empty"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
   window._apiBridge.withSuccessHandler(function(list) {
     _wfDefs = list || [];
-    if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد خطوات لهذا النوع</td></tr>'; return; }
-    tb.innerHTML = list.map(function(w) {
-      return '<tr>' +
-        '<td><span class="badge badge-blue" style="font-size:16px;font-weight:800;">' + w.stepOrder + '</span></td>' +
-        '<td style="font-weight:700;">' + w.stepName + '</td>' +
-        '<td>' + (w.positionName || '<span style="color:#94a3b8;">—</span>') + '</td>' +
-        '<td>' + (w.canEditAmount ? '<i class="fas fa-check-circle" style="color:#22c55e;"></i>' : '<i class="fas fa-times-circle" style="color:#cbd5e1;"></i>') + '</td>' +
-        '<td>' + (w.canReturn ? '<i class="fas fa-check-circle" style="color:#22c55e;"></i>' : '<i class="fas fa-times-circle" style="color:#cbd5e1;"></i>') + '</td>' +
-        '<td>' + (w.isFinal ? '<span class="badge badge-green">نهائية</span>' : '') + '</td>' +
-        '<td>' +
-          '<button class="btn-icon" onclick="wfEditDef(\'' + w.id + '\')"><i class="fas fa-edit"></i></button> ' +
-          '<button class="btn-icon" style="color:#ef4444;" onclick="wfDeleteDef(\'' + w.id + '\')"><i class="fas fa-trash"></i></button>' +
-        '</td></tr>';
-    }).join('');
+    if (!list.length) { container.innerHTML = '<div class="wf-pipeline-empty">لا توجد خطوات — اضغط "خطوة جديدة" لإضافة أول خطوة</div>'; return; }
+    var html = '<div class="wf-pipeline">';
+    list.forEach(function(w, i) {
+      if (i > 0) html += '<div class="wf-pipeline-arrow"><i class="fas fa-chevron-left"></i></div>';
+      html += '<div class="wf-pipeline-step' + (w.isFinal ? ' final' : '') + '">' +
+        '<div class="wf-step-circle">' + w.stepOrder + '</div>' +
+        '<div class="wf-step-body">' +
+          '<div class="wf-step-name">' + w.stepName + '</div>' +
+          '<div class="wf-step-position">' + (w.positionName || 'أي منصب') + '</div>' +
+          '<div class="wf-step-perms">' +
+            '<div class="perm-icon ' + (w.canEditAmount ? 'on' : 'off') + '" title="تعديل المبلغ"><i class="fas fa-edit"></i></div>' +
+            '<div class="perm-icon ' + (w.canReturn ? 'on' : 'off') + '" title="إرجاع"><i class="fas fa-undo"></i></div>' +
+            (w.isFinal ? '<div class="perm-icon on" title="نهائية"><i class="fas fa-flag-checkered"></i></div>' : '') +
+          '</div>' +
+          '<div class="wf-step-actions">' +
+            '<button onclick="wfEditDef(\'' + w.id + '\')"><i class="fas fa-edit"></i></button>' +
+            '<button class="danger" onclick="wfDeleteDef(\'' + w.id + '\')"><i class="fas fa-trash"></i></button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    });
+    html += '</div>';
+    container.innerHTML = html;
   }).getWfDefs(typeId);
 }
 
@@ -3782,34 +3895,50 @@ function wfDeleteDef(id) {
 // ─── صندوق المعاملات (Transaction Inbox) ───
 function wfLoadInbox() {
   var tb = document.getElementById('wfInboxBody');
-  tb.innerHTML = '<tr><td colspan="9" class="empty-msg">جاري التحميل...</td></tr>';
+  tb.innerHTML = '<tr><td colspan="9" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
   var status = (document.getElementById('wfInboxStatusFilter') || {}).value || '';
   var params = {};
   if (status) params.status = status;
   window._apiBridge.withSuccessHandler(function(list) {
-    if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="9" class="empty-msg">لا توجد معاملات</td></tr>'; return; }
-    var statusLabels = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
+    if (!list || !list.length) {
+      tb.innerHTML = '<tr><td colspan="9" class="empty-msg">لا توجد معاملات</td></tr>';
+      document.getElementById('wfInboxStats').innerHTML = '';
+      return;
+    }
+    // Build stats bar
+    var counts = { pending: 0, in_progress: 0, approved: 0, rejected: 0, closed: 0 };
+    var statusLabelsAr = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
+    list.forEach(function(t) { if (counts.hasOwnProperty(t.status)) counts[t.status]++; });
+    var statsHtml = '';
+    Object.keys(counts).forEach(function(k) {
+      statsHtml += '<div class="wf-inbox-stat"><span class="dot ' + k + '"></span><span>' + statusLabelsAr[k] + '</span><span class="count">' + counts[k] + '</span></div>';
+    });
+    document.getElementById('wfInboxStats').innerHTML = statsHtml;
+
     var statusColors = { pending: 'yellow', in_progress: 'blue', approved: 'green', rejected: 'red', closed: 'gray' };
+    var dotColors = { pending: '#f59e0b', in_progress: '#3b82f6', approved: '#10b981', rejected: '#ef4444', closed: '#6b7280' };
     tb.innerHTML = list.map(function(t) {
       var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '';
       var canAct = t.status === 'pending' || t.status === 'in_progress';
-      var actions = '<button class="btn btn-sm btn-secondary" onclick="wfViewTxn(\'' + t.id + '\')"><i class="fas fa-eye"></i></button> ';
+      var actions = '<div class="wf-inbox-actions">' +
+        '<button class="btn btn-sm btn-light" onclick="wfViewTxn(\'' + t.id + '\')"><i class="fas fa-eye"></i></button>';
       if (canAct) {
-        actions += '<button class="btn btn-sm btn-success" onclick="wfTxnAction(\'' + t.id + '\',\'approve\')"><i class="fas fa-check"></i></button> ';
-        actions += '<button class="btn btn-sm btn-danger" onclick="wfTxnAction(\'' + t.id + '\',\'reject\')"><i class="fas fa-times"></i></button> ';
-        actions += '<button class="btn btn-sm btn-warning" onclick="wfTxnAction(\'' + t.id + '\',\'return\')" title="إرجاع"><i class="fas fa-undo"></i></button>';
+        actions += '<button class="btn btn-sm btn-success" onclick="wfTxnAction(\'' + t.id + '\',\'approve\')"><i class="fas fa-check"></i></button>';
+        actions += '<button class="btn btn-sm btn-danger" onclick="wfTxnAction(\'' + t.id + '\',\'reject\')"><i class="fas fa-times"></i></button>';
+        actions += '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;" onclick="wfTxnAction(\'' + t.id + '\',\'return\')"><i class="fas fa-undo"></i></button>';
       }
-      return '<tr>' +
-        '<td><code>' + (t.txnNumber || '') + '</code></td>' +
-        '<td>' + (t.typeName || '') + '</td>' +
+      actions += '</div>';
+      return '<tr class="wf-inbox-row">' +
+        '<td><span class="wf-status-dot" style="background:' + (dotColors[t.status]||'#94a3b8') + ';"></span> <span class="badge badge-' + (statusColors[t.status]||'blue') + '">' + (statusLabelsAr[t.status]||t.status) + '</span></td>' +
+        '<td><span class="wf-txn-number">' + (t.txnNumber||'') + '</span></td>' +
+        '<td><span class="badge badge-blue">' + (t.typeName||'') + '</span></td>' +
         '<td style="font-weight:700;max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + t.title + '</td>' +
-        '<td style="font-weight:700;color:#1e40af;">' + (Number(t.amount) || 0).toLocaleString('en', {minimumFractionDigits: 2}) + '</td>' +
-        '<td>' + (t.currentStepName || '—') + '</td>' +
-        '<td>' + (t.currentPositionName || '—') + '</td>' +
-        '<td><span class="badge badge-' + (statusColors[t.status] || 'blue') + '">' + (statusLabels[t.status] || t.status) + '</span></td>' +
-        '<td>' + dt + '</td>' +
-        '<td style="white-space:nowrap;">' + actions + '</td>' +
-        '</tr>';
+        '<td><span class="wf-txn-amount">' + (Number(t.amount)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</span></td>' +
+        '<td>' + (t.currentStepName||'—') + '</td>' +
+        '<td>' + (t.currentPositionName||'—') + '</td>' +
+        '<td style="font-size:12px;color:#64748b;">' + dt + '</td>' +
+        '<td>' + actions + '</td>' +
+      '</tr>';
     }).join('');
   }).getWfTransactions(params);
 }
@@ -3884,17 +4013,17 @@ function wfViewTxn(id) {
     // Timeline
     html += '<h4 style="margin:16px 0 8px;border-top:1px solid #e2e8f0;padding-top:12px;"><i class="fas fa-history"></i> سجل الإجراءات</h4>';
     if (txn.logs && txn.logs.length) {
-      html += '<div style="position:relative;padding-right:20px;">';
+      html += '<div class="wf-timeline">';
       txn.logs.forEach(function(log) {
         var dt = log.createdAt ? new Date(log.createdAt).toLocaleString('en-GB') : '';
-        html += '<div style="position:relative;padding:10px 16px;margin-bottom:8px;background:#f8fafc;border-radius:8px;border-right:4px solid ' + (actionColors[log.actionType] || '#94a3b8') + ';">' +
+        html += '<div class="wf-timeline-item ' + (log.actionType || '') + '">' +
           '<div style="display:flex;justify-content:space-between;align-items:center;">' +
             '<span style="font-weight:700;color:' + (actionColors[log.actionType] || '#334155') + ';">' + (actionLabels[log.actionType] || log.actionType) + '</span>' +
             '<span style="font-size:12px;color:#94a3b8;">' + dt + '</span>' +
           '</div>' +
           '<div style="font-size:13px;color:#64748b;margin-top:2px;">' +
             (log.stepName ? '<span class="badge badge-blue" style="font-size:11px;">' + log.stepName + '</span> ' : '') +
-            (log.positionName ? '<span class="badge" style="font-size:11px;">' + log.positionName + '</span> ' : '') +
+            (log.positionName ? '<span class="badge badge-purple" style="font-size:11px;">' + log.positionName + '</span> ' : '') +
             'بواسطة: <strong>' + (log.actionBy || '—') + '</strong>' +
           '</div>' +
           (log.note ? '<div style="margin-top:4px;padding:4px 8px;background:#fff;border-radius:4px;font-size:13px;">' + log.note + '</div>' : '') +

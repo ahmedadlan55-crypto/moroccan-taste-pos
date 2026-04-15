@@ -1352,23 +1352,40 @@
     <h2 class="section-title"><i class="fas fa-warehouse"></i> إدارة المستودعات</h2>
     <div style="display:flex;gap:6px;">
       <button class="btn btn-primary" onclick="erpOpenWarehouseModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> مستودع جديد</button>
-      <button class="btn btn-secondary" onclick="erpOpenTransferModal()" style="border-radius:12px;"><i class="fas fa-exchange-alt"></i> تحويل بين مستودعات</button>
+      <button class="btn btn-success" onclick="erpOpenTransferModal()" style="border-radius:12px;"><i class="fas fa-exchange-alt"></i> تحويل جديد</button>
     </div>
   </div>
-  <!-- Warehouses List -->
-  <div class="erp-table-container" style="border-radius:14px;margin-bottom:20px;">
-    <table class="erp-table">
-      <thead><tr><th>الرمز</th><th>الاسم</th><th>النوع</th><th>الفرع</th><th>المدير</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-      <tbody id="erpWHBody"><tr><td colspan="7" class="empty-msg">لا توجد مستودعات</td></tr></tbody>
-    </table>
+  <!-- Stats Row -->
+  <div class="wh-stats">
+    <div class="wh-stat-card wh-total"><div class="wh-stat-icon"><i class="fas fa-warehouse"></i></div><div><div class="wh-stat-label">إجمالي المستودعات</div><div class="wh-stat-value" id="whStatTotal">0</div></div></div>
+    <div class="wh-stat-card wh-active"><div class="wh-stat-icon"><i class="fas fa-check-circle"></i></div><div><div class="wh-stat-label">المستودعات النشطة</div><div class="wh-stat-value" id="whStatActive">0</div></div></div>
+    <div class="wh-stat-card wh-value"><div class="wh-stat-icon"><i class="fas fa-coins"></i></div><div><div class="wh-stat-label">أنواع المستودعات</div><div class="wh-stat-value" id="whStatTypes">—</div></div></div>
+    <div class="wh-stat-card wh-transfers"><div class="wh-stat-icon"><i class="fas fa-exchange-alt"></i></div><div><div class="wh-stat-label">تحويلات معلقة</div><div class="wh-stat-value" id="whStatPending">0</div></div></div>
   </div>
-  <!-- Transfers -->
-  <h3 style="font-size:16px;font-weight:800;color:#1e293b;margin-bottom:10px;"><i class="fas fa-exchange-alt" style="color:#3b82f6;margin-left:6px;"></i> سجل التحويلات</h3>
-  <div class="erp-table-container" style="border-radius:14px;">
-    <table class="erp-table">
-      <thead><tr><th>الرقم</th><th>من</th><th>إلى</th><th>التاريخ</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-      <tbody id="erpTransfersBody"><tr><td colspan="6" class="empty-msg">لا توجد تحويلات</td></tr></tbody>
-    </table>
+  <!-- Tabs -->
+  <div class="wh-tabs">
+    <div class="wh-tab active" onclick="whSwitchTab('warehouses')"><i class="fas fa-boxes-stacked"></i> <span>المستودعات</span></div>
+    <div class="wh-tab" onclick="whSwitchTab('transfers')"><i class="fas fa-exchange-alt"></i> <span>التحويلات</span></div>
+    <div class="wh-tab" onclick="whSwitchTab('stock')"><i class="fas fa-cubes"></i> <span>الأرصدة</span></div>
+  </div>
+  <!-- Tab: Warehouses -->
+  <div class="wh-tab-content active" id="whTabWarehouses">
+    <div class="wh-cards-grid" id="whCardsGrid"><div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;">لا توجد مستودعات</div></div>
+  </div>
+  <!-- Tab: Transfers -->
+  <div class="wh-tab-content" id="whTabTransfers">
+    <div class="wh-transfer-list" id="whTransferList"><div style="text-align:center;padding:40px;color:#94a3b8;">لا توجد تحويلات</div></div>
+  </div>
+  <!-- Tab: Stock -->
+  <div class="wh-tab-content" id="whTabStock">
+    <div class="wh-stock-filter">
+      <select id="whStockWhFilter" class="form-control" style="width:220px;" onchange="whLoadStockTab()"><option value="">كل المستودعات</option></select>
+      <input type="text" id="whStockSearch" class="form-control" style="width:220px;" placeholder="بحث عن صنف..." oninput="whFilterStockTable()">
+    </div>
+    <div class="erp-table-container" style="border-radius:14px;">
+      <table class="erp-table"><thead><tr><th>المستودع</th><th>الصنف</th><th>الكمية</th><th>الوحدة</th></tr></thead>
+      <tbody id="whStockBody"><tr><td colspan="4" class="empty-msg">اختر مستودعاً أو اعرض الكل</td></tr></tbody></table>
+    </div>
   </div>
 </div>
 
@@ -1514,11 +1531,8 @@
     <h2 class="section-title"><i class="fas fa-id-badge"></i> المناصب الإدارية</h2>
     <button class="btn btn-primary" onclick="wfOpenPositionModal()"><i class="fas fa-plus"></i> منصب جديد</button>
   </div>
-  <div class="erp-table-container">
-    <table class="erp-table">
-      <thead><tr><th>#</th><th>المنصب</th><th>المستوى</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-      <tbody id="wfPositionsBody"><tr><td colspan="5" class="empty-msg">لا توجد مناصب</td></tr></tbody>
-    </table>
+  <div class="wf-pos-grid" id="wfPositionsGrid">
+    <div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد مناصب</div>
   </div>
 </div>
 
@@ -1530,11 +1544,8 @@
     <h2 class="section-title"><i class="fas fa-list-alt"></i> أنواع المعاملات</h2>
     <button class="btn btn-primary" onclick="wfOpenTypeModal()"><i class="fas fa-plus"></i> نوع جديد</button>
   </div>
-  <div class="erp-table-container">
-    <table class="erp-table">
-      <thead><tr><th>الرمز</th><th>الاسم</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-      <tbody id="wfTypesBody"><tr><td colspan="4" class="empty-msg">لا توجد أنواع</td></tr></tbody>
-    </table>
+  <div class="wf-type-grid" id="wfTypesGrid">
+    <div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد أنواع</div>
   </div>
 </div>
 
@@ -1545,18 +1556,15 @@
   <div class="section-header">
     <h2 class="section-title"><i class="fas fa-tasks"></i> خطوات سير العمل</h2>
   </div>
-  <div style="margin-bottom:16px;">
-    <label style="font-weight:700;margin-left:8px;">نوع المعاملة:</label>
-    <select id="wfDefsTypeFilter" class="form-control" style="width:280px;display:inline-block;" onchange="wfLoadDefs()">
+  <div style="margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <label style="font-weight:700;">نوع المعاملة:</label>
+    <select id="wfDefsTypeFilter" class="form-control" style="width:280px;" onchange="wfLoadDefs()">
       <option value="">— اختر نوع المعاملة —</option>
     </select>
-    <button class="btn btn-primary btn-sm" style="margin-right:8px;" onclick="wfOpenDefModal()"><i class="fas fa-plus"></i> خطوة جديدة</button>
+    <button class="btn btn-primary btn-sm" onclick="wfOpenDefModal()"><i class="fas fa-plus"></i> خطوة جديدة</button>
   </div>
-  <div class="erp-table-container">
-    <table class="erp-table">
-      <thead><tr><th>الترتيب</th><th>اسم الخطوة</th><th>المنصب المطلوب</th><th>تعديل المبلغ</th><th>إرجاع</th><th>خطوة نهائية</th><th>إجراءات</th></tr></thead>
-      <tbody id="wfDefsBody"><tr><td colspan="7" class="empty-msg">اختر نوع المعاملة أولاً</td></tr></tbody>
-    </table>
+  <div id="wfDefsContainer">
+    <div class="wf-pipeline-empty">اختر نوع المعاملة أولاً</div>
   </div>
 </div>
 
@@ -1578,9 +1586,10 @@
       <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
     </div>
   </div>
-  <div class="erp-table-container">
+  <div class="wf-inbox-stats" id="wfInboxStats"></div>
+  <div class="erp-table-container" style="border-radius:14px;">
     <table class="erp-table">
-      <thead><tr><th>الرقم</th><th>النوع</th><th>العنوان</th><th>المبلغ</th><th>الخطوة الحالية</th><th>المنصب المطلوب</th><th>الحالة</th><th>التاريخ</th><th>إجراءات</th></tr></thead>
+      <thead><tr><th>الحالة</th><th>الرقم</th><th>النوع</th><th>العنوان</th><th>المبلغ</th><th>الخطوة الحالية</th><th>المنصب</th><th>التاريخ</th><th>إجراءات</th></tr></thead>
       <tbody id="wfInboxBody"><tr><td colspan="9" class="empty-msg">لا توجد معاملات</td></tr></tbody>
     </table>
   </div>

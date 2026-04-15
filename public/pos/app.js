@@ -1817,6 +1817,7 @@ function _shrLoadHistory() {
           '<span><i class="fas fa-calendar-day" style="margin-left:3px;"></i>' + dt + '</span>' +
           '<span><i class="fas fa-boxes" style="margin-left:3px;"></i>' + (r.totalItems||0) + ' ' + (isEn?'items':'مادة') + '</span>' +
         '</div>' +
+        (r.status === 'rejected' && r.notes ? '<div style="margin-top:6px;padding:8px 10px;background:#fee2e2;border-radius:8px;font-size:12px;color:#991b1b;font-weight:600;"><i class="fas fa-exclamation-triangle" style="margin-left:4px;"></i>' + (r.notes.match(/\[رفض: (.+?)\]/) ? r.notes.match(/\[رفض: (.+?)\]/)[1] : r.notes) + '</div>' : '') +
         (r.status === 'pending' ? '<div style="display:flex;gap:6px;margin-top:8px;"><button class="btn btn-primary btn-sm" style="flex:1;border-radius:8px;" onclick="shrEditRequest(\'' + r.id + '\')"><i class="fas fa-edit"></i> ' + (isEn?'Edit':'تعديل') + '</button><button class="btn btn-danger btn-sm" style="border-radius:8px;" onclick="shrDeleteRequest(\'' + r.id + '\',\'' + (r.requestNumber||'') + '\')"><i class="fas fa-trash"></i></button></div>' : '') +
         (canReceive ? '<button class="btn btn-success btn-sm" style="margin-top:8px;border-radius:8px;width:100%;" onclick="closeGlassModal(\'#modalShortage\');openReceiveModal(\'' + r.id + '\')"><i class="fas fa-box-open"></i> ' + (isEn?'Receive Materials':t('receiveMaterials')) + '</button>' : '') +
       '</div>';

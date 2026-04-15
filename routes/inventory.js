@@ -684,8 +684,9 @@ router.post('/shortage-requests/:id/approve', async (req, res) => {
 router.post('/shortage-requests/:id/reject', async (req, res) => {
   try {
     const { username, reason } = req.body;
-    await db.query('UPDATE shortage_requests SET status = "rejected", approved_by = ?, approved_at = ?, notes = CONCAT(COALESCE(notes,""), "\n[رفض: ' + (reason||'') + ']") WHERE id = ?',
-      [username || '', new Date(), req.params.id]);
+    const rejectNote = '\n[رفض: ' + (reason || 'بدون سبب') + ']';
+    await db.query('UPDATE shortage_requests SET status = "rejected", approved_by = ?, approved_at = ?, notes = CONCAT(COALESCE(notes,""), ?) WHERE id = ?',
+      [username || '', new Date(), rejectNote, req.params.id]);
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });

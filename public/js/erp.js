@@ -13,7 +13,8 @@ const erpSections = [
   'erpPurchaseOrders','erpVATReports','erpZATCA','erpInventoryMethod','erpFinReports','erpPurchaseReports','erpBrands','erpCostCenters','erpMultiWarehouses',
   'erpBranches','erpPeriods','erpAuditLog','erpCreditNotes',
   'erpWarehouses','erpWarehouseStock','erpStockTransfers',
-  'erpARAging','erpAPAging','erpCustomerStatement','erpSupplierStatement'
+  'erpARAging','erpAPAging','erpCustomerStatement','erpSupplierStatement',
+  'erpWfPositions','erpWfTypes','erpWfDefs','erpWfInbox'
 ];
 
 function erpNav(sectionId) {
@@ -51,6 +52,10 @@ function erpNav(sectionId) {
       case 'erpAPAging': erpLoadAPAging(); break;
       case 'erpCustomerStatement': erpLoadCustomerStatementPage(); break;
       case 'erpSupplierStatement': erpLoadSupplierStatementPage(); break;
+      case 'erpWfPositions': wfLoadPositions(); break;
+      case 'erpWfTypes': wfLoadTypes(); break;
+      case 'erpWfDefs': wfInitDefs(); break;
+      case 'erpWfInbox': wfLoadInbox(); break;
     }
   }
   // Update sidebar active state
@@ -3045,7 +3050,7 @@ function erpLoadWarehouses() {
   }).getWarehouses();
 }
 
-function erpOpenWarehouseModal(data) {
+function erpOpenWarehouseModalLegacy(data) {
   const isEdit = data && data.ID;
   document.getElementById('erpModalTitle').textContent = isEdit ? 'تعديل مستودع' : 'مستودع جديد';
 
@@ -3096,7 +3101,7 @@ function erpOpenWarehouseModal(data) {
 function erpEditWarehouse(id) {
   window._apiBridge.withSuccessHandler(function(list) {
     const wh = (list||[]).find(w => w.ID === id);
-    if (wh) erpOpenWarehouseModal(wh);
+    if (wh) erpOpenWarehouseModalLegacy(wh);
   }).getWarehouses();
 }
 
@@ -3562,4 +3567,368 @@ function erpCloseModal() {
 }
 function erpModalSave() {
   // Placeholder — each modal sets its own save handler
+}
+
+// ═══════════════════════════════════════
+// WORKFLOW ENGINE — نظام المعاملات الداخلية
+// ═══════════════════════════════════════
+
+// ─── المناصب (Positions) ───
+var _wfPositions = [];
+function wfLoadPositions() {
+  var tb = document.getElementById('wfPositionsBody');
+  tb.innerHTML = '<tr><td colspan="5" class="empty-msg">جاري التحميل...</td></tr>';
+  window._apiBridge.withSuccessHandler(function(list) {
+    _wfPositions = list || [];
+    if (!list.length) { tb.innerHTML = '<tr><td colspan="5" class="empty-msg">لا توجد مناصب</td></tr>'; return; }
+    tb.innerHTML = list.map(function(p, i) {
+      return '<tr>' +
+        '<td>' + (i + 1) + '</td>' +
+        '<td style="font-weight:700;">' + p.name + '</td>' +
+        '<td><span class="badge badge-blue">' + (p.level || 0) + '</span></td>' +
+        '<td>' + (p.isActive !== false ? '<span class="badge badge-green">فعال</span>' : '<span class="badge badge-red">معطل</span>') + '</td>' +
+        '<td>' +
+          '<button class="btn-icon" onclick="wfEditPosition(\'' + p.id + '\')"><i class="fas fa-edit"></i></button> ' +
+          '<button class="btn-icon" style="color:#ef4444;" onclick="wfDeletePosition(\'' + p.id + '\')"><i class="fas fa-trash"></i></button>' +
+        '</td></tr>';
+    }).join('');
+  }).getWfPositions();
+}
+
+function wfOpenPositionModal(data) {
+  var d = data || {};
+  document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل منصب' : 'منصب جديد';
+  document.getElementById('erpModalBody').innerHTML =
+    '<input type="hidden" id="wfPosId" value="' + (d.id || '') + '">' +
+    '<div class="form-row"><label>اسم المنصب *</label><input class="form-control" id="wfPosName" value="' + (d.name || '') + '"></div>' +
+    '<div class="form-row"><label>المستوى (الأعلى = أكثر صلاحية)</label><input type="number" class="form-control" id="wfPosLevel" value="' + (d.level || 0) + '" min="0" max="100"></div>';
+  document.getElementById('erpModalSaveBtn').onclick = function() {
+    var name = document.getElementById('wfPosName').value;
+    if (!name) return showToast('اسم المنصب مطلوب', true);
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) {
+      loader(false);
+      if (r.success) { showToast('تم الحفظ'); erpCloseModal(); wfLoadPositions(); }
+      else showToast(r.error, true);
+    }).saveWfPosition({ id: document.getElementById('wfPosId').value || undefined, name: name, level: Number(document.getElementById('wfPosLevel').value) || 0 });
+  };
+  document.getElementById('erpModal').classList.remove('hidden');
+}
+
+function wfEditPosition(id) {
+  var p = _wfPositions.find(function(x) { return x.id === id; });
+  if (p) wfOpenPositionModal(p);
+}
+
+function wfDeletePosition(id) {
+  if (!confirm('حذف هذا المنصب؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم الحذف'); wfLoadPositions(); }
+    else showToast(r.error, true);
+  }).deleteWfPosition(id);
+}
+
+// ─── أنواع المعاملات (Transaction Types) ───
+var _wfTypes = [];
+function wfLoadTypes() {
+  var tb = document.getElementById('wfTypesBody');
+  tb.innerHTML = '<tr><td colspan="4" class="empty-msg">جاري التحميل...</td></tr>';
+  window._apiBridge.withSuccessHandler(function(list) {
+    _wfTypes = list || [];
+    if (!list.length) { tb.innerHTML = '<tr><td colspan="4" class="empty-msg">لا توجد أنواع</td></tr>'; return; }
+    tb.innerHTML = list.map(function(t) {
+      return '<tr>' +
+        '<td><code>' + (t.code || '') + '</code></td>' +
+        '<td style="font-weight:700;">' + t.name + '</td>' +
+        '<td>' + (t.isActive !== false ? '<span class="badge badge-green">فعال</span>' : '<span class="badge badge-red">معطل</span>') + '</td>' +
+        '<td><button class="btn-icon" onclick="wfEditType(\'' + t.id + '\')"><i class="fas fa-edit"></i></button></td>' +
+        '</tr>';
+    }).join('');
+  }).getWfTypes();
+}
+
+function wfOpenTypeModal(data) {
+  var d = data || {};
+  document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل نوع معاملة' : 'نوع معاملة جديد';
+  document.getElementById('erpModalBody').innerHTML =
+    '<input type="hidden" id="wfTypeId" value="' + (d.id || '') + '">' +
+    '<div class="form-row"><label>اسم النوع *</label><input class="form-control" id="wfTypeName" value="' + (d.name || '') + '"></div>' +
+    '<div class="form-row"><label>الرمز *</label><input class="form-control" id="wfTypeCode" value="' + (d.code || '') + '" placeholder="مثال: EXPENSE, PURCHASE"></div>';
+  document.getElementById('erpModalSaveBtn').onclick = function() {
+    var name = document.getElementById('wfTypeName').value;
+    var code = document.getElementById('wfTypeCode').value;
+    if (!name || !code) return showToast('الاسم والرمز مطلوبان', true);
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) {
+      loader(false);
+      if (r.success) { showToast('تم الحفظ'); erpCloseModal(); wfLoadTypes(); }
+      else showToast(r.error, true);
+    }).saveWfType({ id: document.getElementById('wfTypeId').value || undefined, name: name, code: code });
+  };
+  document.getElementById('erpModal').classList.remove('hidden');
+}
+
+function wfEditType(id) {
+  var t = _wfTypes.find(function(x) { return x.id === id; });
+  if (t) wfOpenTypeModal(t);
+}
+
+// ─── خطوات سير العمل (Workflow Definitions) ───
+var _wfDefs = [];
+function wfInitDefs() {
+  // Populate the type filter dropdown
+  var sel = document.getElementById('wfDefsTypeFilter');
+  window._apiBridge.withSuccessHandler(function(types) {
+    _wfTypes = types || [];
+    // Keep existing value
+    var curVal = sel.value;
+    sel.innerHTML = '<option value="">— اختر نوع المعاملة —</option>';
+    types.forEach(function(t) {
+      var opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.name + ' (' + t.code + ')';
+      sel.appendChild(opt);
+    });
+    if (curVal) { sel.value = curVal; wfLoadDefs(); }
+  }).getWfTypes();
+}
+
+function wfLoadDefs() {
+  var typeId = document.getElementById('wfDefsTypeFilter').value;
+  var tb = document.getElementById('wfDefsBody');
+  if (!typeId) { tb.innerHTML = '<tr><td colspan="7" class="empty-msg">اختر نوع المعاملة أولاً</td></tr>'; return; }
+  tb.innerHTML = '<tr><td colspan="7" class="empty-msg">جاري التحميل...</td></tr>';
+  window._apiBridge.withSuccessHandler(function(list) {
+    _wfDefs = list || [];
+    if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد خطوات لهذا النوع</td></tr>'; return; }
+    tb.innerHTML = list.map(function(w) {
+      return '<tr>' +
+        '<td><span class="badge badge-blue" style="font-size:16px;font-weight:800;">' + w.stepOrder + '</span></td>' +
+        '<td style="font-weight:700;">' + w.stepName + '</td>' +
+        '<td>' + (w.positionName || '<span style="color:#94a3b8;">—</span>') + '</td>' +
+        '<td>' + (w.canEditAmount ? '<i class="fas fa-check-circle" style="color:#22c55e;"></i>' : '<i class="fas fa-times-circle" style="color:#cbd5e1;"></i>') + '</td>' +
+        '<td>' + (w.canReturn ? '<i class="fas fa-check-circle" style="color:#22c55e;"></i>' : '<i class="fas fa-times-circle" style="color:#cbd5e1;"></i>') + '</td>' +
+        '<td>' + (w.isFinal ? '<span class="badge badge-green">نهائية</span>' : '') + '</td>' +
+        '<td>' +
+          '<button class="btn-icon" onclick="wfEditDef(\'' + w.id + '\')"><i class="fas fa-edit"></i></button> ' +
+          '<button class="btn-icon" style="color:#ef4444;" onclick="wfDeleteDef(\'' + w.id + '\')"><i class="fas fa-trash"></i></button>' +
+        '</td></tr>';
+    }).join('');
+  }).getWfDefs(typeId);
+}
+
+function wfOpenDefModal(data) {
+  var d = data || {};
+  var typeId = document.getElementById('wfDefsTypeFilter').value;
+  if (!typeId && !d.id) return showToast('اختر نوع المعاملة أولاً', true);
+  // Load positions for dropdown
+  window._apiBridge.withSuccessHandler(function(positions) {
+    var posOpts = (positions || []).map(function(p) {
+      return '<option value="' + p.id + '"' + (d.positionId === p.id ? ' selected' : '') + '>' + p.name + ' (مستوى ' + p.level + ')</option>';
+    }).join('');
+    document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل خطوة' : 'خطوة جديدة';
+    document.getElementById('erpModalBody').innerHTML =
+      '<input type="hidden" id="wfDefId" value="' + (d.id || '') + '">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>ترتيب الخطوة *</label><input type="number" class="form-control" id="wfDefOrder" value="' + (d.stepOrder || (_wfDefs.length + 1)) + '" min="1"></div>' +
+        '<div class="form-row"><label>اسم الخطوة *</label><input class="form-control" id="wfDefName" value="' + (d.stepName || '') + '"></div>' +
+      '</div>' +
+      '<div class="form-row"><label>المنصب المطلوب للموافقة</label><select class="form-control" id="wfDefPosition"><option value="">— أي منصب —</option>' + posOpts + '</select></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px;">' +
+        '<div class="form-row"><label><input type="checkbox" id="wfDefEditAmt" ' + (d.canEditAmount ? 'checked' : '') + '> السماح بتعديل المبلغ</label></div>' +
+        '<div class="form-row"><label><input type="checkbox" id="wfDefReturn" ' + (d.canReturn !== false ? 'checked' : '') + '> السماح بالإرجاع للخطوة السابقة</label></div>' +
+        '<div class="form-row"><label><input type="checkbox" id="wfDefFinal" ' + (d.isFinal ? 'checked' : '') + '> خطوة نهائية (إغلاق تلقائي)</label></div>' +
+      '</div>';
+    document.getElementById('erpModalSaveBtn').onclick = function() {
+      var stepName = document.getElementById('wfDefName').value;
+      if (!stepName) return showToast('اسم الخطوة مطلوب', true);
+      loader(true);
+      window._apiBridge.withSuccessHandler(function(r) {
+        loader(false);
+        if (r.success) { showToast('تم الحفظ'); erpCloseModal(); wfLoadDefs(); }
+        else showToast(r.error, true);
+      }).saveWfDef({
+        id: document.getElementById('wfDefId').value || undefined,
+        transactionTypeId: typeId,
+        stepOrder: Number(document.getElementById('wfDefOrder').value) || 1,
+        stepName: stepName,
+        positionId: document.getElementById('wfDefPosition').value || null,
+        canEditAmount: document.getElementById('wfDefEditAmt').checked,
+        canReturn: document.getElementById('wfDefReturn').checked,
+        isFinal: document.getElementById('wfDefFinal').checked
+      });
+    };
+    document.getElementById('erpModal').classList.remove('hidden');
+  }).getWfPositions();
+}
+
+function wfEditDef(id) {
+  var d = _wfDefs.find(function(x) { return x.id === id; });
+  if (d) wfOpenDefModal(d);
+}
+
+function wfDeleteDef(id) {
+  if (!confirm('حذف هذه الخطوة؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم الحذف'); wfLoadDefs(); }
+    else showToast(r.error, true);
+  }).deleteWfDef(id);
+}
+
+// ─── صندوق المعاملات (Transaction Inbox) ───
+function wfLoadInbox() {
+  var tb = document.getElementById('wfInboxBody');
+  tb.innerHTML = '<tr><td colspan="9" class="empty-msg">جاري التحميل...</td></tr>';
+  var status = (document.getElementById('wfInboxStatusFilter') || {}).value || '';
+  var params = {};
+  if (status) params.status = status;
+  window._apiBridge.withSuccessHandler(function(list) {
+    if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="9" class="empty-msg">لا توجد معاملات</td></tr>'; return; }
+    var statusLabels = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
+    var statusColors = { pending: 'yellow', in_progress: 'blue', approved: 'green', rejected: 'red', closed: 'gray' };
+    tb.innerHTML = list.map(function(t) {
+      var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '';
+      var canAct = t.status === 'pending' || t.status === 'in_progress';
+      var actions = '<button class="btn btn-sm btn-secondary" onclick="wfViewTxn(\'' + t.id + '\')"><i class="fas fa-eye"></i></button> ';
+      if (canAct) {
+        actions += '<button class="btn btn-sm btn-success" onclick="wfTxnAction(\'' + t.id + '\',\'approve\')"><i class="fas fa-check"></i></button> ';
+        actions += '<button class="btn btn-sm btn-danger" onclick="wfTxnAction(\'' + t.id + '\',\'reject\')"><i class="fas fa-times"></i></button> ';
+        actions += '<button class="btn btn-sm btn-warning" onclick="wfTxnAction(\'' + t.id + '\',\'return\')" title="إرجاع"><i class="fas fa-undo"></i></button>';
+      }
+      return '<tr>' +
+        '<td><code>' + (t.txnNumber || '') + '</code></td>' +
+        '<td>' + (t.typeName || '') + '</td>' +
+        '<td style="font-weight:700;max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + t.title + '</td>' +
+        '<td style="font-weight:700;color:#1e40af;">' + (Number(t.amount) || 0).toLocaleString('en', {minimumFractionDigits: 2}) + '</td>' +
+        '<td>' + (t.currentStepName || '—') + '</td>' +
+        '<td>' + (t.currentPositionName || '—') + '</td>' +
+        '<td><span class="badge badge-' + (statusColors[t.status] || 'blue') + '">' + (statusLabels[t.status] || t.status) + '</span></td>' +
+        '<td>' + dt + '</td>' +
+        '<td style="white-space:nowrap;">' + actions + '</td>' +
+        '</tr>';
+    }).join('');
+  }).getWfTransactions(params);
+}
+
+function wfOpenNewTxnModal() {
+  // Load transaction types and branches
+  Promise.all([
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getWfTypes(); }),
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getBranchesFull(); }),
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getBrands(); })
+  ]).then(function(results) {
+    var types = results[0] || [], branches = results[1] || [], brands = results[2] || [];
+    var typeOpts = types.map(function(t) { return '<option value="' + t.id + '">' + t.name + '</option>'; }).join('');
+    var branchOpts = branches.map(function(b) { return '<option value="' + b.id + '">' + b.name + '</option>'; }).join('');
+    var brandOpts = brands.map(function(b) { return '<option value="' + b.id + '">' + b.name + '</option>'; }).join('');
+    document.getElementById('erpModalTitle').textContent = 'معاملة جديدة';
+    document.getElementById('erpModalBody').innerHTML =
+      '<div class="form-row"><label>نوع المعاملة *</label><select class="form-control" id="wfNewType">' + typeOpts + '</select></div>' +
+      '<div class="form-row"><label>العنوان *</label><input class="form-control" id="wfNewTitle" placeholder="وصف مختصر للمعاملة"></div>' +
+      '<div class="form-row"><label>التفاصيل</label><textarea class="form-control" id="wfNewDesc" rows="3" placeholder="تفاصيل إضافية (اختياري)"></textarea></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>المبلغ</label><input type="number" class="form-control" id="wfNewAmount" step="0.01" min="0" value="0"></div>' +
+        '<div class="form-row"><label>البراند</label><select class="form-control" id="wfNewBrand"><option value="">— اختياري —</option>' + brandOpts + '</select></div>' +
+      '</div>' +
+      '<div class="form-row"><label>الفرع</label><select class="form-control" id="wfNewBranch"><option value="">— اختياري —</option>' + branchOpts + '</select></div>' +
+      '<div class="form-row"><label>مرفق (رابط أو وصف)</label><input class="form-control" id="wfNewAttach" placeholder="اختياري"></div>';
+    document.getElementById('erpModalSaveBtn').onclick = function() {
+      var title = document.getElementById('wfNewTitle').value;
+      var typeId = document.getElementById('wfNewType').value;
+      if (!title) return showToast('العنوان مطلوب', true);
+      loader(true);
+      window._apiBridge.withSuccessHandler(function(r) {
+        loader(false);
+        if (r.success) {
+          showToast('تم إنشاء المعاملة: ' + (r.txnNumber || ''));
+          erpCloseModal();
+          wfLoadInbox();
+        } else showToast(r.error, true);
+      }).createWfTransaction({
+        transactionTypeId: typeId,
+        title: title,
+        description: document.getElementById('wfNewDesc').value,
+        amount: Number(document.getElementById('wfNewAmount').value) || 0,
+        brandId: document.getElementById('wfNewBrand').value || null,
+        branchId: document.getElementById('wfNewBranch').value || null,
+        attachment: document.getElementById('wfNewAttach').value || null,
+        username: currentUser
+      });
+    };
+    document.getElementById('erpModal').classList.remove('hidden');
+  });
+}
+
+function wfViewTxn(id) {
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(txn) {
+    loader(false);
+    if (txn.error) return showToast(txn.error, true);
+    var statusLabels = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
+    var actionLabels = { create: 'إنشاء', approve: 'موافقة', reject: 'رفض', return: 'إرجاع', close: 'إغلاق' };
+    var actionColors = { create: '#3b82f6', approve: '#22c55e', reject: '#ef4444', return: '#f59e0b', close: '#6b7280' };
+    var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">' +
+      '<div><strong>الرقم:</strong> <code>' + (txn.txnNumber || '') + '</code></div>' +
+      '<div><strong>النوع:</strong> ' + (txn.typeName || '') + '</div>' +
+      '<div><strong>المنشئ:</strong> ' + (txn.createdBy || '') + '</div>' +
+      '<div><strong>المبلغ:</strong> <span style="font-weight:800;color:#1e40af;">' + Number(txn.amount).toLocaleString('en', {minimumFractionDigits: 2}) + '</span></div>' +
+      '<div><strong>الحالة:</strong> ' + (statusLabels[txn.status] || txn.status) + '</div>' +
+      '<div><strong>التاريخ:</strong> ' + (txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('en-GB') : '') + '</div>' +
+      '</div>';
+    if (txn.description) html += '<div style="margin-bottom:12px;"><strong>التفاصيل:</strong><p style="margin:4px 0;padding:8px;background:#f8fafc;border-radius:6px;">' + txn.description + '</p></div>';
+    if (txn.attachment) html += '<div style="margin-bottom:12px;"><strong>المرفق:</strong> ' + txn.attachment + '</div>';
+    // Timeline
+    html += '<h4 style="margin:16px 0 8px;border-top:1px solid #e2e8f0;padding-top:12px;"><i class="fas fa-history"></i> سجل الإجراءات</h4>';
+    if (txn.logs && txn.logs.length) {
+      html += '<div style="position:relative;padding-right:20px;">';
+      txn.logs.forEach(function(log) {
+        var dt = log.createdAt ? new Date(log.createdAt).toLocaleString('en-GB') : '';
+        html += '<div style="position:relative;padding:10px 16px;margin-bottom:8px;background:#f8fafc;border-radius:8px;border-right:4px solid ' + (actionColors[log.actionType] || '#94a3b8') + ';">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+            '<span style="font-weight:700;color:' + (actionColors[log.actionType] || '#334155') + ';">' + (actionLabels[log.actionType] || log.actionType) + '</span>' +
+            '<span style="font-size:12px;color:#94a3b8;">' + dt + '</span>' +
+          '</div>' +
+          '<div style="font-size:13px;color:#64748b;margin-top:2px;">' +
+            (log.stepName ? '<span class="badge badge-blue" style="font-size:11px;">' + log.stepName + '</span> ' : '') +
+            (log.positionName ? '<span class="badge" style="font-size:11px;">' + log.positionName + '</span> ' : '') +
+            'بواسطة: <strong>' + (log.actionBy || '—') + '</strong>' +
+          '</div>' +
+          (log.note ? '<div style="margin-top:4px;padding:4px 8px;background:#fff;border-radius:4px;font-size:13px;">' + log.note + '</div>' : '') +
+        '</div>';
+      });
+      html += '</div>';
+    } else {
+      html += '<p style="color:#94a3b8;text-align:center;">لا توجد إجراءات بعد</p>';
+    }
+    document.getElementById('erpModalTitle').textContent = 'تفاصيل المعاملة: ' + (txn.txnNumber || '');
+    document.getElementById('erpModalBody').innerHTML = html;
+    document.getElementById('erpModalSaveBtn').style.display = 'none';
+    document.getElementById('erpModal').classList.remove('hidden');
+    setTimeout(function() { document.getElementById('erpModalSaveBtn').style.display = ''; }, 100);
+  }).getWfTransaction(id);
+}
+
+function wfTxnAction(id, action) {
+  var actionNames = { approve: 'الموافقة على', reject: 'رفض', return: 'إرجاع', close: 'إغلاق' };
+  var note = '';
+  if (action === 'reject' || action === 'return') {
+    note = prompt(action === 'reject' ? 'سبب الرفض:' : 'سبب الإرجاع:');
+    if (note === null) return; // cancelled
+  } else {
+    if (!confirm('هل أنت متأكد من ' + (actionNames[action] || action) + ' هذه المعاملة؟')) return;
+    note = prompt('ملاحظة (اختياري):') || '';
+  }
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) {
+      var statusLabels = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
+      showToast('تم — الحالة الجديدة: ' + (statusLabels[r.newStatus] || r.newStatus));
+      wfLoadInbox();
+    } else showToast(r.error, true);
+  }).wfTransactionAction(id, { action: action, username: currentUser, note: note });
 }

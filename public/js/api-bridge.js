@@ -215,6 +215,19 @@
     getPaymentsList:     { method: 'GET',  url: '/erp/payments' },
     getReceiptsList:     { method: 'GET',  url: '/erp/receipts' },
     getZATCAInvoices:    { method: 'GET',  url: '/erp/zatca' },
+    // Workflow Engine
+    getWfPositions:      { method: 'GET',  url: '/workflow/positions' },
+    saveWfPosition:      { method: 'POST', url: '/workflow/positions' },
+    deleteWfPosition:    { method: 'DELETE', url: (id) => '/workflow/positions/' + id },
+    getWfTypes:          { method: 'GET',  url: '/workflow/transaction-types' },
+    saveWfType:          { method: 'POST', url: '/workflow/transaction-types' },
+    getWfDefs:           { method: 'GET',  url: (typeId) => '/workflow/workflow-definitions/' + typeId },
+    saveWfDef:           { method: 'POST', url: '/workflow/workflow-definitions' },
+    deleteWfDef:         { method: 'DELETE', url: (id) => '/workflow/workflow-definitions/' + id },
+    getWfTransactions:   { method: 'GET',  url: '/workflow/transactions', query: (f) => f },
+    getWfTransaction:    { method: 'GET',  url: (id) => '/workflow/transactions/' + id },
+    createWfTransaction: { method: 'POST', url: '/workflow/transactions' },
+    wfTransactionAction: { method: 'POST', url: (id,d) => '/workflow/transactions/' + id + '/action', body: (id,d) => d },
   };
 
   function buildUrl(route, args) {

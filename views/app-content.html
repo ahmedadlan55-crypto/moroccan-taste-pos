@@ -86,6 +86,18 @@
         <div class="nav-item" data-erp-nav="erpZATCA" onclick="erpNav('erpZATCA')"><i class="fas fa-stamp"></i><span>ZATCA</span></div>
         <div class="nav-item" data-erp-nav="erpCreditNotes" onclick="erpNav('erpCreditNotes')"><i class="fas fa-file-alt"></i><span>الإشعارات</span></div>
         <div class="nav-item" data-erp-nav="erpBranches" onclick="erpNav('erpBranches')"><i class="fas fa-code-branch"></i><span>الفروع</span></div>
+
+        <!-- ═══ المعاملات الداخلية (Workflow Engine) ═══ -->
+        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
+          <i class="fas fa-project-diagram"></i><span>المعاملات</span><i class="fas fa-chevron-down submenu-indicator"></i>
+        </div>
+        <div class="submenu">
+          <div class="nav-item" data-erp-nav="erpWfPositions" onclick="erpNav('erpWfPositions')"><i class="fas fa-id-badge"></i><span>المناصب</span></div>
+          <div class="nav-item" data-erp-nav="erpWfTypes" onclick="erpNav('erpWfTypes')"><i class="fas fa-list-alt"></i><span>أنواع المعاملات</span></div>
+          <div class="nav-item" data-erp-nav="erpWfDefs" onclick="erpNav('erpWfDefs')"><i class="fas fa-tasks"></i><span>خطوات سير العمل</span></div>
+          <div class="nav-item" data-erp-nav="erpWfInbox" onclick="erpNav('erpWfInbox')"><i class="fas fa-inbox"></i><span>صندوق المعاملات</span></div>
+        </div>
+
         <div class="nav-item" data-erp-nav="erpAuditLog" onclick="erpNav('erpAuditLog')"><i class="fas fa-history"></i><span>سجل العمليات</span></div>
       </div>
     </div>
@@ -1447,7 +1459,7 @@
 <div id="erpWarehouses" class="dash-section hidden">
   <div class="section-header">
     <h2 class="section-title"><i class="fas fa-warehouse"></i> إدارة المستودعات</h2>
-    <button class="btn btn-primary" onclick="erpOpenWarehouseModal()"><i class="fas fa-plus"></i> مستودع جديد</button>
+    <button class="btn btn-primary" onclick="erpOpenWarehouseModalLegacy()"><i class="fas fa-plus"></i> مستودع جديد</button>
   </div>
   <div class="erp-table-container">
     <table class="erp-table">
@@ -1490,6 +1502,86 @@
     <table class="erp-table">
       <thead><tr><th>رقم التحويل</th><th>من</th><th>إلى</th><th>التاريخ</th><th>الحالة</th><th>بواسطة</th><th>إجراءات</th></tr></thead>
       <tbody id="erpTransfersBody"><tr><td colspan="7" class="empty-msg">لا توجد تحويلات</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- WORKFLOW: المناصب (Positions) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpWfPositions" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-id-badge"></i> المناصب الإدارية</h2>
+    <button class="btn btn-primary" onclick="wfOpenPositionModal()"><i class="fas fa-plus"></i> منصب جديد</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>#</th><th>المنصب</th><th>المستوى</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="wfPositionsBody"><tr><td colspan="5" class="empty-msg">لا توجد مناصب</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- WORKFLOW: أنواع المعاملات (Transaction Types) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpWfTypes" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-list-alt"></i> أنواع المعاملات</h2>
+    <button class="btn btn-primary" onclick="wfOpenTypeModal()"><i class="fas fa-plus"></i> نوع جديد</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الرمز</th><th>الاسم</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="wfTypesBody"><tr><td colspan="4" class="empty-msg">لا توجد أنواع</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- WORKFLOW: خطوات سير العمل (Workflow Definitions) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpWfDefs" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-tasks"></i> خطوات سير العمل</h2>
+  </div>
+  <div style="margin-bottom:16px;">
+    <label style="font-weight:700;margin-left:8px;">نوع المعاملة:</label>
+    <select id="wfDefsTypeFilter" class="form-control" style="width:280px;display:inline-block;" onchange="wfLoadDefs()">
+      <option value="">— اختر نوع المعاملة —</option>
+    </select>
+    <button class="btn btn-primary btn-sm" style="margin-right:8px;" onclick="wfOpenDefModal()"><i class="fas fa-plus"></i> خطوة جديدة</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الترتيب</th><th>اسم الخطوة</th><th>المنصب المطلوب</th><th>تعديل المبلغ</th><th>إرجاع</th><th>خطوة نهائية</th><th>إجراءات</th></tr></thead>
+      <tbody id="wfDefsBody"><tr><td colspan="7" class="empty-msg">اختر نوع المعاملة أولاً</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- WORKFLOW: صندوق المعاملات (Transaction Inbox) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpWfInbox" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-inbox"></i> صندوق المعاملات</h2>
+    <div style="display:flex;gap:8px;">
+      <select id="wfInboxStatusFilter" class="form-control" style="width:160px;" onchange="wfLoadInbox()">
+        <option value="">كل الحالات</option>
+        <option value="pending">قيد الانتظار</option>
+        <option value="in_progress">قيد التنفيذ</option>
+        <option value="approved">معتمدة</option>
+        <option value="rejected">مرفوضة</option>
+        <option value="closed">مغلقة</option>
+      </select>
+      <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
+    </div>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الرقم</th><th>النوع</th><th>العنوان</th><th>المبلغ</th><th>الخطوة الحالية</th><th>المنصب المطلوب</th><th>الحالة</th><th>التاريخ</th><th>إجراءات</th></tr></thead>
+      <tbody id="wfInboxBody"><tr><td colspan="9" class="empty-msg">لا توجد معاملات</td></tr></tbody>
     </table>
   </div>
 </div>

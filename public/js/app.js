@@ -5416,19 +5416,44 @@ let currentShiftStartStr = "";
 function shiftOpen() {
   if (state.activeShiftId) return showToast("هناك وردية مفتوحة بالفعل", true);
   if (!confirm("هل أنت متأكد من فتح وردية بيع جديدة للموظف: " + state.user + "؟")) return;
-  
+
   loader(true);
-  api.withFailureHandler(err => {
-    loader(false); showToast(err.message, true);
-  }).withSuccessHandler(res => {
-    loader(false);
-    if(res.success) {
-      state.activeShiftId = res.shiftId;
-      updateShiftUI();
-      showToast("تم بدء الوردية بنجاح!");
-      // POS is no longer embedded in the admin view — stay on the current page
-    } else { showToast(res.error, true); }
-  }).openShift(state.user);
+  // Capture device info
+  var ua = navigator.userAgent || '';
+  var deviceName = '';
+  if (/iPhone/.test(ua)) deviceName = 'iPhone';
+  else if (/iPad/.test(ua)) deviceName = 'iPad';
+  else if (/Android/.test(ua)) { var m = ua.match(/Android[\s\S]*?;\s*([^;)]+)/); deviceName = m ? m[1].trim() : 'Android'; }
+  else if (/Windows/.test(ua)) deviceName = 'Windows PC';
+  else if (/Mac/.test(ua)) deviceName = 'Mac';
+  else deviceName = 'Desktop';
+  var extraData = { deviceInfo: deviceName + ' — ' + navigator.platform };
+
+  function _doOpen(data) {
+    api.withFailureHandler(function(err) {
+      loader(false); showToast(err.message, true);
+    }).withSuccessHandler(function(res) {
+      loader(false);
+      if(res.success) {
+        state.activeShiftId = res.shiftId;
+        updateShiftUI();
+        showToast("تم بدء الوردية بنجاح!");
+      } else { showToast(res.error, true); }
+    }).openShift(state.user, data);
+  }
+
+  // Capture geolocation
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(function(pos) {
+      extraData.geoLat = pos.coords.latitude;
+      extraData.geoLng = pos.coords.longitude;
+      fetch('https://nominatim.openstreetmap.org/reverse?lat=' + pos.coords.latitude + '&lon=' + pos.coords.longitude + '&format=json&accept-language=ar')
+        .then(function(r) { return r.json(); })
+        .then(function(d) { extraData.geoAddress = d.display_name || ''; })
+        .catch(function() {})
+        .finally(function() { _doOpen(extraData); });
+    }, function() { _doOpen(extraData); }, { timeout: 5000 });
+  } else { _doOpen(extraData); }
 }
 
 function shiftCloseStart() {

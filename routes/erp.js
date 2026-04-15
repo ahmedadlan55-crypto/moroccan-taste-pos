@@ -488,6 +488,107 @@ router.get('/gl/journals/:id/entries', async (req, res) => {
   } catch (e) { res.json([]); }
 });
 
+// Account ledger — get all transactions for a specific account
+router.get('/gl/account-ledger/:accountId', async (req, res) => {
+  try {
+    const accId = req.params.accountId;
+    // Get account info first
+    const [accRows] = await db.query('SELECT * FROM gl_accounts WHERE id = ?', [accId]);
+    const acc = accRows.length ? accRows[0] : null;
+    const accCode = acc ? acc.code : '';
+
+    // Query gl_entries joined with gl_journals — match by account_id OR account_code
+    const [rows] = await db.query(
+      `SELECT e.id, e.journal_id, e.account_id, e.account_code, e.debit, e.credit, e.description,
+              j.journal_number, j.journal_date, j.description AS journal_desc, j.status, j.reference_type, j.created_by
+       FROM gl_entries e
+       JOIN gl_journals j ON e.journal_id = j.id
+       WHERE (e.account_id = ? OR (e.account_code = ? AND e.account_code != ''))
+       ORDER BY j.journal_date ASC, j.created_at ASC`,
+      [accId, accCode]
+    );
+
+    let runningBal = 0;
+    const ledger = rows.map(r => {
+      const d = Number(r.debit) || 0;
+      const c = Number(r.credit) || 0;
+      runningBal += (d - c);
+      return {
+        id: r.id, journalId: r.journal_id, journalNumber: r.journal_number,
+        journalDate: r.journal_date, journalDesc: r.journal_desc || '',
+        entryDesc: r.description || '', referenceType: r.reference_type || '',
+        status: r.status, createdBy: r.created_by || '',
+        debit: d, credit: c, balance: runningBal
+      };
+    });
+
+    res.json({ success: true, accountName: acc ? acc.name_ar : '', accountCode: accCode, ledger });
+  } catch (e) { res.json({ success: false, ledger: [], error: e.message }); }
+});
+
+// Update journal — edit posted/draft/approved journal entries
+router.put('/gl/journals/:id', async (req, res) => {
+  try {
+    const journalId = req.params.id;
+    const { journalDate, description, notes, entries, username } = req.body;
+
+    const [jrnRows] = await db.query('SELECT * FROM gl_journals WHERE id = ?', [journalId]);
+    if (!jrnRows.length) return res.json({ success: false, error: 'القيد غير موجود' });
+    const jrn = jrnRows[0];
+
+    // Only manual/opening journals can be edited
+    if (jrn.reference_type !== 'manual' && jrn.reference_type !== 'opening') {
+      return res.json({ success: false, error: 'لا يمكن تعديل القيود التلقائية' });
+    }
+
+    // Validate balance
+    let totalDebit = 0, totalCredit = 0;
+    (entries || []).forEach(e => { totalDebit += Number(e.debit) || 0; totalCredit += Number(e.credit) || 0; });
+    if (Math.abs(totalDebit - totalCredit) > 0.01) return res.json({ success: false, error: 'القيد غير متوازن' });
+
+    // Step 1: If posted, reverse old balances
+    if (jrn.status === 'posted') {
+      const [oldEntries] = await db.query('SELECT * FROM gl_entries WHERE journal_id = ?', [journalId]);
+      for (const e of oldEntries) {
+        if (e.account_id) {
+          const reverseAmount = (Number(e.credit) || 0) - (Number(e.debit) || 0);
+          await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [reverseAmount, e.account_id]);
+        }
+      }
+    }
+
+    // Step 2: Delete old entries
+    await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [journalId]);
+
+    // Step 3: Update journal header
+    await db.query(
+      'UPDATE gl_journals SET journal_date=?, description=?, notes=?, total_debit=?, total_credit=? WHERE id=?',
+      [journalDate || jrn.journal_date, description || jrn.description, notes || '', totalDebit, totalCredit, journalId]
+    );
+
+    // Step 4: Insert new entries
+    for (const entry of (entries || [])) {
+      const entryId = 'GLE-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+      await db.query(
+        'INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)',
+        [entryId, journalId, entry.accountId || null, entry.accountCode || '', entry.accountName || '', entry.debit || 0, entry.credit || 0, entry.description || '']
+      );
+    }
+
+    // Step 5: If was posted, apply new balances
+    if (jrn.status === 'posted') {
+      for (const entry of (entries || [])) {
+        if (entry.accountId) {
+          const netAmount = (Number(entry.debit) || 0) - (Number(entry.credit) || 0);
+          await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [netAmount, entry.accountId]);
+        }
+      }
+    }
+
+    res.json({ success: true, journalNumber: jrn.journal_number });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 // Delete journal — reverse balances then delete
 router.delete('/gl/journals/:id', async (req, res) => {
   try {

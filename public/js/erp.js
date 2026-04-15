@@ -489,45 +489,36 @@ function _coaShowAccount(id, container) {
 }
 
 function _coaLoadTransactions(accountId) {
-  // Fetch all posted journals that have entries for this account
-  window._apiBridge.withSuccessHandler(function(journals) {
-    var rows = [];
-    var runningBal = 0;
-    (journals||[]).forEach(function(j) {
-      if (j.status !== 'posted') return;
-      (j.entries||[]).forEach(function(e) {
-        if (e.accountId !== accountId) return;
-        var d = Number(e.debit)||0, c = Number(e.credit)||0;
-        runningBal += (d - c);
-        rows.push({
-          date: j.journalDate, journalId: j.id, journalNumber: j.journalNumber,
-          description: j.description || e.description || '',
-          debit: d, credit: c, balance: runningBal
-        });
-      });
-    });
-
+  // Use dedicated account ledger endpoint — queries gl_entries directly by account_id/code
+  window._apiBridge.withSuccessHandler(function(res) {
     var loadingEl = document.getElementById('coaTransLoading');
     if (loadingEl) loadingEl.style.display = 'none';
     var tableEl = document.getElementById('coaTransTable');
     if (!tableEl) return;
     var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
 
+    var rows = (res && res.ledger) || [];
     if (!rows.length) {
       tableEl.innerHTML = '<div class="coa-empty"><i class="fas fa-inbox"></i><p>لا توجد حركات لهذا الحساب</p></div>';
       return;
     }
 
+    var refLabels = { manual: 'يدوي', opening: 'افتتاحي', sale: 'مبيعات', purchase: 'مشتريات', custody: 'عهدة', inventory: 'مخزون' };
+    var refColors = { manual: '#3b82f6', opening: '#7c3aed', sale: '#10b981', purchase: '#f59e0b', custody: '#ec4899', inventory: '#06b6d4' };
+
     var html = '<div style="overflow-x:auto;border-radius:12px;border:1px solid #e2e8f0;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
-    html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 12px;">التاريخ</th><th>القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد بعد</th></tr></thead><tbody>';
+    html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 12px;">التاريخ</th><th>القيد</th><th>النوع</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>';
     rows.forEach(function(r) {
       var dt = '';
-      try { dt = new Date(r.date).toLocaleDateString('en-GB'); } catch(e) {}
+      try { dt = new Date(r.journalDate).toLocaleDateString('en-GB'); } catch(e) {}
       var balColor = r.balance >= 0 ? '#16a34a' : '#ef4444';
-      html += '<tr style="cursor:pointer;border-bottom:1px solid #f1f5f9;" onclick="erpViewJournal(\'' + r.journalId + '\')">';
+      var refType = r.referenceType || 'manual';
+      var typeBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;background:' + (refColors[refType]||'#94a3b8') + '15;color:' + (refColors[refType]||'#94a3b8') + ';">' + (refLabels[refType]||refType) + '</span>';
+      html += '<tr style="cursor:pointer;border-bottom:1px solid #f1f5f9;" onclick="erpViewJournal(\'' + r.journalId + '\')" onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'\'">';
       html += '<td style="padding:8px 12px;">' + dt + '</td>';
       html += '<td><code style="color:#3b82f6;font-weight:700;">' + (r.journalNumber||'') + '</code></td>';
-      html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + (r.description||'') + '</td>';
+      html += '<td>' + typeBadge + '</td>';
+      html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + (r.journalDesc || r.entryDesc || '') + '</td>';
       html += '<td style="font-weight:700;color:#16a34a;">' + (r.debit ? fmt(r.debit) : '') + '</td>';
       html += '<td style="font-weight:700;color:#ef4444;">' + (r.credit ? fmt(r.credit) : '') + '</td>';
       html += '<td style="font-weight:800;color:' + balColor + ';">' + fmt(r.balance) + '</td>';
@@ -535,7 +526,7 @@ function _coaLoadTransactions(accountId) {
     });
     html += '</tbody></table></div>';
     tableEl.innerHTML = html;
-  }).getGLJournals({});
+  }).getAccountLedger(accountId);
 }
 
 // ─── Card context menu ───
@@ -817,10 +808,14 @@ function _renderJournalDetail(j) {
   html += '</tbody></table>';
 
   // Action buttons
+  var isManual = !j.referenceType || j.referenceType === 'manual' || j.referenceType === 'opening';
   html += '<div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;flex-wrap:wrap;">';
   html += '<button class="btn btn-sm btn-secondary" onclick="erpPrintJournal(\'' + j.id + '\')" style="border-radius:10px;"><i class="fas fa-print"></i> طباعة</button>';
-  if (j.status === 'draft') {
+  // Show edit button for ALL manual/opening journals regardless of status
+  if (isManual) {
     html += '<button class="btn btn-sm" onclick="erpEditJournal(\'' + j.id + '\')" style="border-radius:10px;background:#3b82f6;color:#fff;"><i class="fas fa-edit"></i> تعديل</button>';
+  }
+  if (j.status === 'draft') {
     html += '<button class="btn btn-sm" onclick="erpApproveJournal(\'' + j.id + '\');erpCloseDetailModal();" style="border-radius:10px;background:#8b5cf6;color:#fff;"><i class="fas fa-check-circle"></i> اعتماد</button>';
   }
   if (j.status === 'approved') {
@@ -842,7 +837,8 @@ var _editingJournalId = null;
 function erpEditJournal(journalId) {
   var j = window._viewingJournal || _jrnCache.find(function(x) { return x.id === journalId; });
   if (!j) return showToast('القيد غير موجود', true);
-  if (j.status !== 'draft') return showToast('فقط القيود المسودة يمكن تعديلها', true);
+  var isManual = !j.referenceType || j.referenceType === 'manual' || j.referenceType === 'opening';
+  if (!isManual) return showToast('لا يمكن تعديل القيود التلقائية', true);
   _editingJournalId = journalId;
   erpCloseDetailModal();
 
@@ -912,11 +908,10 @@ function _renderEditJournalForm(j) {
 }
 
 function erpSaveEditedJournal() {
-  // Delete old journal + create new one with same data
   var journalId = _editingJournalId;
-  if (!journalId) return erpSaveJournal(); // fallback to normal save
+  if (!journalId) return erpSaveJournal();
 
-  // Gather entries same as erpSaveJournal
+  // Gather entries
   var lines = document.querySelectorAll('.jrn-entry-card');
   var entries = [];
   lines.forEach(function(line) {
@@ -938,28 +933,22 @@ function erpSaveEditedJournal() {
   if (Math.abs(totalD - totalC) > 0.01) return showToast('القيد غير متوازن', true);
 
   loader(true);
-  // Step 1: Delete old journal
-  window._apiBridge.withSuccessHandler(function(delRes) {
-    // Step 2: Create new journal
-    var isOpening = document.getElementById('erpJrnIsOpening') && document.getElementById('erpJrnIsOpening').checked;
-    window._apiBridge.withSuccessHandler(function(res) {
-      loader(false);
-      _editingJournalId = null;
-      if (res.success) {
-        showToast('تم تعديل القيد: ' + res.journalNumber);
-        erpCloseModal();
-        erpLoadJournals();
-      } else showToast(res.error, true);
-    }).createJournalEntry({
-      journalDate: document.getElementById('erpJrnDate').value,
-      referenceType: isOpening ? 'opening' : 'manual',
-      referenceId: '',
-      description: desc,
-      notes: document.getElementById('erpJrnRef').value,
-      isOpening: isOpening,
-      entries: entries
-    }, currentUser);
-  }).deleteGLJournal(journalId);
+  // Use PUT endpoint — handles balance reversal/reapplication for posted journals
+  window._apiBridge.withSuccessHandler(function(res) {
+    loader(false);
+    _editingJournalId = null;
+    if (res.success) {
+      showToast('تم تعديل القيد: ' + (res.journalNumber || ''));
+      erpCloseModal();
+      erpLoadJournals();
+    } else showToast(res.error, true);
+  }).updateGLJournal(journalId, {
+    journalDate: document.getElementById('erpJrnDate').value,
+    description: desc,
+    notes: document.getElementById('erpJrnRef') ? document.getElementById('erpJrnRef').value : '',
+    entries: entries,
+    username: currentUser
+  });
 }
 
 function erpApproveJournal(id) {

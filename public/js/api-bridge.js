@@ -214,6 +214,8 @@
     getDebitNotes:       { method: 'GET',  url: '/erp/debit-notes' },
     getPaymentsList:     { method: 'GET',  url: '/erp/payments' },
     getReceiptsList:     { method: 'GET',  url: '/erp/receipts' },
+    getAccountLedger:    { method: 'GET',  url: (id) => '/erp/gl/account-ledger/' + id },
+    updateGLJournal:     { method: 'PUT',  url: (id,d) => '/erp/gl/journals/' + id, body: (id,d) => d },
     getZATCAInvoices:    { method: 'GET',  url: '/erp/zatca' },
     // Workflow Engine
     getWfPositions:      { method: 'GET',  url: '/workflow/positions' },

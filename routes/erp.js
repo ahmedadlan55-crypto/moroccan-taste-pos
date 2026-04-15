@@ -1450,16 +1450,16 @@ router.get('/warehouses-list', async (req, res) => {
 
 router.post('/warehouses-list', async (req, res) => {
   try {
-    const { id, code, name, type, branchId, location, manager } = req.body;
+    const { id, code, name, type, brandId, branchId, costCenterId, location, manager } = req.body;
     if (!code || !name) return res.json({ success: false, error: 'الرمز والاسم مطلوبان' });
     if (id) {
-      await db.query('UPDATE warehouses SET code=?, name=?, type=?, branch_id=?, location=?, manager=? WHERE id=?',
-        [code, name, type||'branch', branchId||null, location||'', manager||'', id]);
+      await db.query('UPDATE warehouses SET code=?, name=?, type=?, brand_id=?, branch_id=?, cost_center_id=?, location=?, manager=? WHERE id=?',
+        [code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'', id]);
       return res.json({ success: true, id });
     }
     const newId = 'WH-' + Date.now();
-    await db.query('INSERT INTO warehouses (id, code, name, type, branch_id, location, manager) VALUES (?,?,?,?,?,?,?)',
-      [newId, code, name, type||'branch', branchId||null, location||'', manager||'']);
+    await db.query('INSERT INTO warehouses (id, code, name, type, brand_id, branch_id, cost_center_id, location, manager) VALUES (?,?,?,?,?,?,?,?,?)',
+      [newId, code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'']);
     res.json({ success: true, id: newId });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });

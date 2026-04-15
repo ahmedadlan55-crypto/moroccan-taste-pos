@@ -355,6 +355,11 @@ function _coaRenderNode(acc, open) {
   html += '<div class="coa-node-row' + activeClass + '" style="font-weight:' + fontW + ';font-size:' + fontSize + 'px;" onclick="coaSelectNode(\'' + acc.id + '\')">';
   html += toggle + ' ' + icon + ' ';
   html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
+  // Show balance on the side
+  if (acc.balance && acc.balance !== 0) {
+    var balColor = acc.balance > 0 ? '#16a34a' : '#ef4444';
+    html += '<span style="font-size:10px;font-weight:800;color:' + balColor + ';margin-inline-start:auto;white-space:nowrap;">' + Number(acc.balance).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '</span>';
+  }
   html += '</div>';
   if (isGroup) {
     html += '<div class="coa-node-children' + (open ? ' open' : '') + '" style="margin-inline-start:30px;padding-inline-start:10px;border-inline-start:2px dotted #cbd5e1;">';
@@ -2683,9 +2688,16 @@ function erpLoadMultiWarehouses() {
 }
 function erpOpenWarehouseModal(data) {
   var d = data || {};
-  // Load branches for dropdown
-  window._apiBridge.withSuccessHandler(function(branches) {
-    var brOpts = (branches||[]).map(function(b) { return '<option value="' + b.id + '"' + (d.branchId===b.id?' selected':'') + '>' + b.name + '</option>'; }).join('');
+  // Load branches + brands + cost centers for dropdowns
+  Promise.all([
+    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getBranchesFull(); }),
+    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getBrands(); }),
+    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getCostCenters(); })
+  ]).then(function(results) {
+    var branches = results[0]||[], brands = results[1]||[], ccs = results[2]||[];
+    var brOpts = branches.map(function(b) { return '<option value="' + b.id + '"' + (d.branchId===b.id?' selected':'') + '>' + b.name + '</option>'; }).join('');
+    var brandOpts = brands.map(function(b) { return '<option value="' + b.id + '"' + (d.brandId===b.id?' selected':'') + '>' + b.name + '</option>'; }).join('');
+    var ccOpts = ccs.map(function(c) { return '<option value="' + c.id + '"' + (d.costCenterId===c.id?' selected':'') + '>' + c.code + ' — ' + c.name + '</option>'; }).join('');
     document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل مستودع' : 'مستودع جديد';
     document.getElementById('erpModalBody').innerHTML =
       '<input type="hidden" id="whID" value="' + (d.id||'') + '">' +
@@ -2695,18 +2707,22 @@ function erpOpenWarehouseModal(data) {
       '</div>' +
       '<div class="form-row"><label>الاسم *</label><input class="form-control" id="whName" value="' + (d.name||'') + '"></div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>البراند</label><select class="form-control" id="whBrand"><option value="">— بدون —</option>' + brandOpts + '</select></div>' +
         '<div class="form-row"><label>الفرع</label><select class="form-control" id="whBranch"><option value="">— بدون —</option>' + brOpts + '</select></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>مركز التكلفة</label><select class="form-control" id="whCC"><option value="">— بدون —</option>' + ccOpts + '</select></div>' +
         '<div class="form-row"><label>المدير</label><input class="form-control" id="whManager" value="' + (d.manager||'') + '"></div>' +
       '</div>' +
       '<div class="form-row"><label>الموقع</label><input class="form-control" id="whLocation" value="' + (d.location||'') + '"></div>';
     if (d.type) document.getElementById('whType').value = d.type;
     document.getElementById('erpModalSaveBtn').onclick = erpSaveWH;
     document.getElementById('erpModal').classList.remove('hidden');
-  }).getBranchesFull();
+  });
 }
 function erpEditWH(id) { var w = _whList.find(function(x){return x.id===id;}); if(w) erpOpenWarehouseModal(w); }
 function erpSaveWH() {
-  var data = { id: document.getElementById('whID').value, code: document.getElementById('whCode').value, name: document.getElementById('whName').value, type: document.getElementById('whType').value, branchId: document.getElementById('whBranch').value, manager: document.getElementById('whManager').value, location: document.getElementById('whLocation').value };
+  var data = { id: document.getElementById('whID').value, code: document.getElementById('whCode').value, name: document.getElementById('whName').value, type: document.getElementById('whType').value, brandId: (document.getElementById('whBrand')||{}).value||'', branchId: document.getElementById('whBranch').value, costCenterId: (document.getElementById('whCC')||{}).value||'', manager: document.getElementById('whManager').value, location: document.getElementById('whLocation').value };
   if (!data.code || !data.name) return showToast('الرمز والاسم مطلوبان', true);
   loader(true);
   window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحفظ'); erpCloseModal(); erpLoadMultiWarehouses(); } else showToast(r.error, true); }).saveWarehouse(data);

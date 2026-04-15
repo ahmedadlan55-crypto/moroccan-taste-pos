@@ -278,6 +278,10 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
+  // Warehouses: add brand + cost center columns
+  await addColumnIfMissing('warehouses', 'brand_id', "VARCHAR(50)");
+  await addColumnIfMissing('warehouses', 'cost_center_id', "VARCHAR(50)");
+
   // Warehouse stock (per-warehouse inventory)
   await createTableIfMissing('warehouse_stock', `
     CREATE TABLE warehouse_stock (

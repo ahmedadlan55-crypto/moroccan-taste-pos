@@ -29,8 +29,8 @@
     getInvoice:          { method: 'GET',  url: (id) => '/sales/invoice/'+id },
 
     // Shifts
-    openShift:           { method: 'POST', url: '/shifts/open', body: (u) => ({username:u}) },
-    startShift:          { method: 'POST', url: '/shifts/open', body: (u) => ({username:u}) },
+    openShift:           { method: 'POST', url: '/shifts/open', body: (u,d) => Object.assign({username:u}, d||{}) },
+    startShift:          { method: 'POST', url: '/shifts/open', body: (u,d) => Object.assign({username:u}, d||{}) },
     endShiftWithActuals: { method: 'POST', url: '/shifts/close', body: (id,u,c,cd,k) => ({shiftId:id,username:u,cash:c,card:cd,kita:k}) },
     getAllShifts:         { method: 'GET',  url: '/shifts' },
     getShiftDataForClosing: { method: 'GET', url: (id) => '/shifts/closing-data/'+id },

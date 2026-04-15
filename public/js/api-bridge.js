@@ -31,7 +31,7 @@
     bulkDeleteSales:     { method: 'POST', url: '/sales/bulk-delete', body: (ids) => ({ids:ids}) },
 
     // Shifts
-    openShift:           { method: 'POST', url: '/shifts/open', body: (u) => ({username:u}) },
+    openShift:           { method: 'POST', url: '/shifts/open', body: (u,d) => Object.assign({username:u}, d||{}) },
     startShift:          { method: 'POST', url: '/shifts/open', body: (u) => ({username:u}) },
     endShiftWithActuals: { method: 'POST', url: '/shifts/close', body: (id,u,c,cd,k) => ({shiftId:id,username:u,cash:c,card:cd,kita:k}) },
     getAllShifts:         { method: 'GET',  url: '/shifts' },

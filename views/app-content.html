@@ -438,10 +438,13 @@
 
         <!-- Section: Users -->
         <div id="sec_users" class="admin-section">
-          <div style="margin-bottom:20px;"><button class="btn btn-primary" onclick="tglUserM()"><i class="fas fa-user-plus"></i> إنشاء مستخدم جديد للمنظومة</button></div>
-          <div class="table-wrapper">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+            <h3 style="margin:0;font-size:18px;font-weight:800;color:#0f172a;display:flex;align-items:center;gap:8px;"><i class="fas fa-users-cog" style="color:#3b82f6;"></i> صلاحيات الموظفين</h3>
+            <button class="btn btn-primary" onclick="tglUserM()" style="border-radius:12px;"><i class="fas fa-user-plus"></i> إضافة موظف</button>
+          </div>
+          <div class="table-wrapper" style="overflow-x:auto;">
             <table class="table">
-              <thead><tr><th>اسم الموظف</th><th>اسم المستخدم</th><th>الصلاحيات</th><th>الحالة</th><th>كلمة المرور</th><th>إجراءات</th></tr></thead>
+              <thead><tr><th>الموظف</th><th>الصلاحيات</th><th>الحالة</th><th>كلمة المرور</th><th>إجراءات</th></tr></thead>
               <tbody id="tbUsers"></tbody>
             </table>
           </div>
@@ -582,28 +585,29 @@
         <div id="sec_shifts" class="admin-section">
           <!-- KPI Cards -->
           <div class="stat-grid" style="margin-bottom:16px;">
-            <div class="stat-card"><div class="stat-info"><h4>Total Shifts</h4><p id="shTotalCount">0</p></div><div class="stat-icon" style="background:#dbeafe;color:#2563eb;"><i class="fas fa-clock"></i></div></div>
-            <div class="stat-card"><div class="stat-info"><h4>Total Expected</h4><p id="shTotalExpected">0.00</p></div><div class="stat-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-calculator"></i></div></div>
-            <div class="stat-card"><div class="stat-info"><h4>Total Actual</h4><p id="shTotalActual">0.00</p></div><div class="stat-icon" style="background:#fef3c7;color:#d97706;"><i class="fas fa-cash-register"></i></div></div>
-            <div class="stat-card"><div class="stat-info"><h4>Total Variance</h4><p id="shTotalDiff">0.00</p></div><div class="stat-icon" style="background:#fee2e2;color:#ef4444;"><i class="fas fa-balance-scale"></i></div></div>
+            <div class="stat-card"><div class="stat-info"><h4>إجمالي المناوبات</h4><p id="shTotalCount">0</p></div><div class="stat-icon" style="background:#dbeafe;color:#2563eb;"><i class="fas fa-clock"></i></div></div>
+            <div class="stat-card"><div class="stat-info"><h4>المتوقع</h4><p id="shTotalExpected">0.00</p></div><div class="stat-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-calculator"></i></div></div>
+            <div class="stat-card"><div class="stat-info"><h4>الفعلي</h4><p id="shTotalActual">0.00</p></div><div class="stat-icon" style="background:#fef3c7;color:#d97706;"><i class="fas fa-cash-register"></i></div></div>
+            <div class="stat-card"><div class="stat-info"><h4>الفارق</h4><p id="shTotalDiff">0.00</p></div><div class="stat-icon" style="background:#fee2e2;color:#ef4444;"><i class="fas fa-balance-scale"></i></div></div>
           </div>
           <!-- Filters -->
           <div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
             <input type="date" id="shFilterDate" class="form-control" style="max-width:160px;" onchange="filterShifts()">
             <select id="shFilterCashier" class="form-control" style="max-width:160px;" onchange="filterShifts()">
-              <option value="">All Cashiers</option>
+              <option value="">كل الموظفين</option>
             </select>
-            <button class="btn btn-sm btn-light" onclick="document.getElementById('shFilterDate').value='';document.getElementById('shFilterCashier').value='';filterShifts();">Clear</button>
-            <button class="btn btn-sm btn-success" onclick="exportShiftsExcel()"><i class="fas fa-file-excel"></i> Export</button>
+            <button class="btn btn-sm btn-light" onclick="document.getElementById('shFilterDate').value='';document.getElementById('shFilterCashier').value='';filterShifts();">مسح</button>
+            <button class="btn btn-sm btn-success" onclick="exportShiftsExcel()"><i class="fas fa-file-excel"></i> تصدير</button>
           </div>
           <!-- Table -->
           <div class="table-wrapper" style="overflow-x:auto;">
             <table class="table" style="font-size:12px;">
               <thead><tr>
-                <th>Shift ID</th><th>Cashier</th><th>Start</th><th>End</th>
-                <th>Expected</th><th>Actual</th><th>Variance</th>
-                <th>Cash Diff</th><th>Card Diff</th><th>Kita Diff</th>
-                <th>Action</th>
+                <th>الموظف</th><th>البداية</th><th>النهاية</th>
+                <th>الموقع</th><th>الجهاز</th>
+                <th>المتوقع</th><th>الفعلي</th><th>الفارق</th>
+                <th>فارق نقد</th><th>فارق شبكة</th><th>فارق كيتا</th>
+                <th>إجراء</th>
               </tr></thead>
               <tbody id="tbShifts"></tbody>
             </table>
@@ -1921,8 +1925,13 @@
         <input type="text" id="muName" class="form-control" placeholder="مثال: EMP001 أو ahmad.s">
       </div>
       <div class="form-group">
-        <label class="form-label">كلمة المرور</label>
-        <input type="password" id="muPass" class="form-control" placeholder="******">
+        <label class="form-label">البريد الإلكتروني</label>
+        <input type="email" id="muEmail" class="form-control" placeholder="email@example.com">
+      </div>
+      <div class="form-group">
+        <label class="form-label">كلمة المرور <span style="font-size:11px;color:#94a3b8;font-weight:400;">(حروف + أرقام + رمز خاص)</span></label>
+        <input type="text" id="muPass" class="form-control" placeholder="مثال: Pass@123" oninput="checkPassStrength()" autocomplete="new-password">
+        <div id="muPassHint" style="margin-top:4px;"></div>
       </div>
       <div class="form-group">
         <label class="form-label">نوع الصلاحية</label>
@@ -1939,7 +1948,7 @@
           <span style="font-weight:700; color:#92400e;"><i class="fas fa-code"></i> صلاحية المطور (تصفير قاعدة البيانات + صلاحيات حساسة)</span>
         </label>
       </div>
-      <button class="btn btn-primary" style="width:100%; margin-top:15px;" onclick="saveUserFn()"><i class="fas fa-user-check"></i> حفظ المستخدم</button>
+      <button class="btn btn-primary" style="width:100%; margin-top:15px;border-radius:12px;" onclick="saveUserFn()"><i class="fas fa-user-check"></i> حفظ المستخدم</button>
     </div>
   </div>
 

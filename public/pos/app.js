@@ -760,21 +760,49 @@ window.shiftOpen = function() {
   glassConfirm(t('openShiftTitle'), t('openShiftMsg') + state.user + '?', { okText: t('openShiftBtn') }).then(function(ok) {
     if (!ok) return;
     loader(true);
-    api.withFailureHandler(function(err) { loader(false); glassToast(err.message, true); })
-      .withSuccessHandler(function(res) {
-        loader(false);
-        if (res.success) {
-          state.activeShiftId = res.shiftId;
-          saveState();
-          updateShiftUI();
-          renderHeader('pos', { showShift: true });
-          glassToast(t('shiftStarted'));
-        } else {
-          glassToast(res.error, true);
-        }
-      }).openShift(state.user);
+    // Capture device info
+    var deviceInfo = navigator.userAgent || '';
+    // Try to get a readable device name
+    var ua = deviceInfo;
+    var deviceName = '';
+    if (/iPhone/.test(ua)) deviceName = 'iPhone';
+    else if (/iPad/.test(ua)) deviceName = 'iPad';
+    else if (/Android/.test(ua)) { var m = ua.match(/Android[\s\S]*?;\s*([^;)]+)/); deviceName = m ? m[1].trim() : 'Android'; }
+    else if (/Windows/.test(ua)) deviceName = 'Windows PC';
+    else if (/Mac/.test(ua)) deviceName = 'Mac';
+    else deviceName = 'Desktop';
+    var extraData = { deviceInfo: deviceName + ' — ' + navigator.platform };
+    // Capture geolocation
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(function(pos) {
+        extraData.geoLat = pos.coords.latitude;
+        extraData.geoLng = pos.coords.longitude;
+        // Reverse geocode with a simple API (optional)
+        fetch('https://nominatim.openstreetmap.org/reverse?lat=' + pos.coords.latitude + '&lon=' + pos.coords.longitude + '&format=json&accept-language=ar')
+          .then(function(r) { return r.json(); })
+          .then(function(data) { extraData.geoAddress = data.display_name || ''; })
+          .catch(function() {})
+          .finally(function() { _doOpenShift(extraData); });
+      }, function() { _doOpenShift(extraData); }, { timeout: 5000 });
+    } else { _doOpenShift(extraData); }
   });
 };
+
+function _doOpenShift(extraData) {
+  api.withFailureHandler(function(err) { loader(false); glassToast(err.message, true); })
+    .withSuccessHandler(function(res) {
+      loader(false);
+      if (res.success) {
+        state.activeShiftId = res.shiftId;
+        saveState();
+        updateShiftUI();
+        renderHeader('pos', { showShift: true });
+        glassToast(t('shiftStarted'));
+      } else {
+        glassToast(res.error, true);
+      }
+    }).openShift(state.user, extraData);
+}
 
 window.shiftCloseStart = function() {
   if (!state.activeShiftId) return glassToast(t('noActiveShift'), true);

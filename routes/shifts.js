@@ -4,7 +4,8 @@ const db = require('../db/connection');
 // Open shift
 router.post('/open', async (req, res) => {
   try {
-    const { username } = req.body;
+    const { username, geoLat, geoLng, geoAddress, deviceInfo } = req.body;
+    const ip = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress || '';
 
     // Check if user already has an open shift
     const [existing] = await db.query('SELECT id FROM shifts WHERE username = ? AND status = "OPEN"', [username]);
@@ -16,8 +17,8 @@ router.post('/open', async (req, res) => {
     const now = new Date();
 
     await db.query(
-      'INSERT INTO shifts (id, username, start_time, status) VALUES (?, ?, ?, ?)',
-      [shiftId, username, now, 'OPEN']
+      'INSERT INTO shifts (id, username, start_time, status, geo_lat, geo_lng, geo_address, device_info, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [shiftId, username, now, 'OPEN', geoLat||null, geoLng||null, geoAddress||'', deviceInfo||'', ip]
     );
 
     res.json({ success: true, shiftId });
@@ -102,8 +103,15 @@ router.get('/', async (req, res) => {
     query += ' ORDER BY start_time DESC LIMIT 200';
 
     const [rows] = await db.query(query, params);
+    // Get user display names
+    let userMap = {};
+    try {
+      const [meta] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
+      if (meta.length) userMap = JSON.parse(meta[0].setting_value || '{}');
+    } catch(e) {}
     res.json(rows.map(s => ({
       id: s.id, username: s.username,
+      displayName: (userMap[s.username] && userMap[s.username].name) || s.username,
       startTime: s.start_time, endTime: s.end_time, status: s.status,
       totalTheoretical: Number(s.total_theoretical),
       theoreticalCash: Number(s.theoretical_cash),
@@ -114,7 +122,12 @@ router.get('/', async (req, res) => {
       actualKita: Number(s.actual_kita),
       diffCash: Number(s.diff_cash),
       diffCard: Number(s.diff_card),
-      diffKita: Number(s.diff_kita)
+      diffKita: Number(s.diff_kita),
+      geoLat: s.geo_lat ? Number(s.geo_lat) : null,
+      geoLng: s.geo_lng ? Number(s.geo_lng) : null,
+      geoAddress: s.geo_address || '',
+      deviceInfo: s.device_info || '',
+      ipAddress: s.ip_address || ''
     })));
   } catch (e) {
     res.json([]);

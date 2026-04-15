@@ -3734,22 +3734,25 @@ function loadDashUsers() {
     var h = '';
     arr.forEach(function(u) {
       var devBadge = u.isDeveloper ? ' <span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;"><i class="fas fa-code"></i> مطور</span>' : '';
+      var passDisplay = u.plainPass ? '<code style="background:#f1f5f9;padding:2px 8px;border-radius:6px;font-size:12px;letter-spacing:1px;">' + u.plainPass + '</code>' : '<span style="color:#cbd5e1;font-size:11px;">غير متاح</span>';
+      var emailDisplay = u.email ? '<div style="font-size:11px;color:#64748b;"><i class="fas fa-envelope" style="margin-left:3px;color:#94a3b8;"></i>' + u.email + '</div>' : '';
+      var btnS = 'width:34px;height:34px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;';
       h += '<tr>' +
-        '<td style="font-weight:bold;font-size:14px;">' + (u.displayName || '<span style="color:#94a3b8;">—</span>') + '</td>' +
-        '<td style="font-family:monospace;font-weight:600;color:var(--secondary);">' + (u.username || '') + '</td>' +
+        '<td><div style="font-weight:800;font-size:14px;color:#1e293b;">' + (u.displayName || '<span style="color:#94a3b8;">—</span>') + '</div><div style="font-size:11px;color:#94a3b8;font-family:monospace;">' + (u.username || '') + '</div>' + emailDisplay + '</td>' +
         '<td>' + roleLabel(u.role) + devBadge + '</td>' +
         '<td>' + (u.active ? '<span class="badge green">نشط</span>' : '<span class="badge red">موقوف</span>') + '</td>' +
-        '<td style="text-align:center;">' +
-          '<button class="btn btn-sm btn-light" onclick="resetUserPassword(\'' + u.username + '\')" title="إعادة تعيين كلمة المرور" style="border-radius:8px;"><i class="fas fa-key"></i> إعادة تعيين</button>' +
-        '</td>' +
+        '<td>' + passDisplay + '</td>' +
         '<td style="white-space:nowrap;">' +
-          '<button class="btn btn-light" style="padding:6px 10px;" onclick="editUsr(\'' + u.username + '\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
-          '<button class="btn btn-light" style="padding:6px 10px;" onclick="toggUsr(\'' + u.username + '\')" title="تفعيل/إيقاف"><i class="fas fa-power-off"></i></button> ' +
-          '<button class="btn btn-danger" style="padding:6px 10px;" onclick="delUsr(\'' + u.username + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+          '<div style="display:flex;gap:4px;">' +
+            '<button style="' + btnS + 'color:#3b82f6;" onclick="editUsr(\'' + u.username + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
+            '<button style="' + btnS + 'color:#f59e0b;" onclick="resetUserPassword(\'' + u.username + '\')" title="إعادة تعيين كلمة المرور"><i class="fas fa-key"></i></button>' +
+            '<button style="' + btnS + 'color:#10b981;" onclick="toggUsr(\'' + u.username + '\')" title="تفعيل/إيقاف"><i class="fas fa-power-off"></i></button>' +
+            '<button style="' + btnS + 'color:#ef4444;" onclick="delUsr(\'' + u.username + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+          '</div>' +
         '</td>' +
       '</tr>';
     });
-    if (!arr.length) h = '<tr><td colspan="6" style="text-align:center;padding:20px;color:#94a3b8;">لا يوجد مستخدمين</td></tr>';
+    if (!arr.length) h = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#94a3b8;">لا يوجد مستخدمين</td></tr>';
     q("#tbUsers").innerHTML = h;
   }).withFailureHandler(function(err) { loader(false); showToast(err.message || 'فشل تحميل المستخدمين', true); }).getUsers();
 }
@@ -3774,9 +3777,11 @@ function tglUserM() {
   q("#muName").value = '';
   q("#muName").disabled = false;
   q("#muPass").value = '';
-  q("#muPass").placeholder = '******';
+  q("#muPass").placeholder = 'حروف + أرقام + رمز (6 أحرف على الأقل)';
   q("#muRole").value = 'cashier';
+  if (q("#muEmail")) q("#muEmail").value = '';
   if (q("#muIsDeveloper")) q("#muIsDeveloper").checked = false;
+  if (q("#muPassHint")) q("#muPassHint").innerHTML = '';
   openModal('#modalUserForm');
 }
 
@@ -3787,12 +3792,35 @@ function editUsr(username) {
   q("#muModalTitle").innerText = 'تعديل المستخدم — ' + (u.displayName || u.username);
   q("#muDisplayName").value = u.displayName || '';
   q("#muName").value = u.username;
-  q("#muName").disabled = true; // username (employee number) cannot change
+  q("#muName").disabled = true;
   q("#muPass").value = '';
   q("#muPass").placeholder = 'اتركها فارغة لعدم التغيير';
   q("#muRole").value = u.role || 'cashier';
+  if (q("#muEmail")) q("#muEmail").value = u.email || '';
   if (q("#muIsDeveloper")) q("#muIsDeveloper").checked = !!u.isDeveloper;
+  if (q("#muPassHint")) q("#muPassHint").innerHTML = '';
   openModal('#modalUserForm');
+}
+
+function _validatePassword(p) {
+  var errors = [];
+  if (p.length < 6) errors.push('6 أحرف على الأقل');
+  if (!/[a-zA-Z]/.test(p)) errors.push('يجب أن تحتوي حروف');
+  if (!/[0-9]/.test(p)) errors.push('يجب أن تحتوي أرقام');
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"|,.<>\/?]/.test(p)) errors.push('يجب أن تحتوي رمز خاص (!@#$)');
+  return errors;
+}
+
+function checkPassStrength() {
+  var p = q("#muPass").value || '';
+  var hint = q("#muPassHint");
+  if (!hint || !p) { if(hint) hint.innerHTML = ''; return; }
+  var errors = _validatePassword(p);
+  if (errors.length === 0) {
+    hint.innerHTML = '<span style="color:#16a34a;font-size:11px;"><i class="fas fa-check-circle"></i> كلمة مرور قوية</span>';
+  } else {
+    hint.innerHTML = errors.map(function(e) { return '<span style="color:#ef4444;font-size:11px;"><i class="fas fa-times-circle"></i> ' + e + '</span>'; }).join('<br>');
+  }
 }
 
 function saveUserFn() {
@@ -3801,13 +3829,18 @@ function saveUserFn() {
   var password    = q("#muPass").value || '';
   var role        = q("#muRole").value || 'cashier';
   var isDeveloper = q("#muIsDeveloper") ? q("#muIsDeveloper").checked : false;
+  var email       = q("#muEmail") ? (q("#muEmail").value || '').trim() : '';
 
   if (!username) return showToast('الرقم الوظيفي مطلوب', true);
   if (!_editingUsername && !password) return showToast('كلمة المرور مطلوبة عند إنشاء مستخدم', true);
+  if (password) {
+    var passErrors = _validatePassword(password);
+    if (passErrors.length) return showToast('كلمة المرور: ' + passErrors[0], true);
+  }
 
   loader();
   if (_editingUsername) {
-    var payload = { displayName: displayName, role: role, isDeveloper: isDeveloper };
+    var payload = { displayName: displayName, role: role, isDeveloper: isDeveloper, email: email };
     if (password) payload.password = password;
     api.withFailureHandler(function(err){loader(false); showToast(err.message, true);})
        .withSuccessHandler(function(r) {
@@ -3816,7 +3849,7 @@ function saveUserFn() {
           else showToast((r && r.error) || 'فشل التحديث', true);
        }).updateUser(_editingUsername, payload);
   } else {
-    var data = { username: username, password: password, role: role, displayName: displayName, isDeveloper: isDeveloper };
+    var data = { username: username, password: password, role: role, displayName: displayName, isDeveloper: isDeveloper, email: email };
     api.withFailureHandler(function(err){loader(false); showToast(err.message, true);})
        .withSuccessHandler(function(r) {
           loader(false);
@@ -5683,19 +5716,23 @@ function renderShiftsTable(list) {
     var dCash=aCash-thCash, dCard=aCard-thCard, dKita=aKita-thKita;
     var dc=function(v){return v===0?'#64748b':(v>0?'#16a34a':'#ef4444');};
     var fs=function(v){return (v>0?'+':'')+formatVal(v);};
-    var diffBadge = tDiff===0?'<span class="badge green">Balanced</span>':(tDiff>0?'<span class="badge" style="background:#dcfce7;color:#166534;">+'+formatVal(tDiff)+'</span>':'<span class="badge red">'+formatVal(tDiff)+'</span>');
+    var diffBadge = tDiff===0?'<span class="badge green">متطابق</span>':(tDiff>0?'<span class="badge" style="background:#dcfce7;color:#166534;">+'+formatVal(tDiff)+'</span>':'<span class="badge red">'+formatVal(tDiff)+'</span>');
+    var empName = s.displayName || (state.userDisplayMap && state.userDisplayMap[s.username]) || s.username;
+    var geoHtml = s.geoAddress ? '<div style="font-size:10px;color:#64748b;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+s.geoAddress+'"><i class="fas fa-map-marker-alt" style="color:#ef4444;margin-left:3px;"></i>'+s.geoAddress+'</div>' : '<span style="font-size:10px;color:#cbd5e1;">—</span>';
+    var devHtml = s.deviceInfo ? '<span style="font-size:10px;color:#64748b;" title="'+s.deviceInfo+'"><i class="fas fa-mobile-alt" style="color:#3b82f6;margin-left:3px;"></i>'+s.deviceInfo+'</span>' : '';
     return '<tr>'+
-      '<td style="font-family:monospace;font-size:11px;color:#64748b;">'+s.id+'</td>'+
-      '<td style="font-weight:700;">'+s.username+'</td>'+
+      '<td style="font-weight:700;">'+empName+'<div style="font-size:10px;color:#94a3b8;">'+s.username+'</div></td>'+
       '<td style="font-size:12px;">'+fmtDT(s.startTime)+'</td>'+
-      '<td style="font-size:12px;">'+(s.endTime?fmtDT(s.endTime):'<span class="badge orange">Open</span>')+'</td>'+
+      '<td style="font-size:12px;">'+(s.endTime?fmtDT(s.endTime):'<span class="badge orange">مفتوحة</span>')+'</td>'+
+      '<td>'+geoHtml+'</td>'+
+      '<td>'+devHtml+'</td>'+
       '<td style="font-weight:700;">'+formatVal(tTheo)+'</td>'+
       '<td style="font-weight:900;color:var(--primary);">'+formatVal(tAct)+'</td>'+
       '<td>'+diffBadge+'</td>'+
       '<td style="color:'+dc(dCash)+';font-weight:600;font-size:12px;">'+fs(dCash)+'</td>'+
       '<td style="color:'+dc(dCard)+';font-weight:600;font-size:12px;">'+fs(dCard)+'</td>'+
       '<td style="color:'+dc(dKita)+';font-weight:600;font-size:12px;">'+fs(dKita)+'</td>'+
-      '<td><button class="btn btn-sm btn-primary" onclick=\'reprintShift('+JSON.stringify(s).replace(/'/g,"&#39;")+')\' title="Print"><i class="fas fa-print"></i></button></td>'+
+      '<td><button class="btn btn-sm btn-primary" onclick=\'reprintShift('+JSON.stringify(s).replace(/'/g,"&#39;")+')\' title="طباعة"><i class="fas fa-print"></i></button></td>'+
     '</tr>';
   }).join('');
   updateShiftTotals(list);

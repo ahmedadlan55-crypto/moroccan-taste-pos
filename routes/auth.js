@@ -201,12 +201,10 @@ async function setUserMeta(meta) {
 // GET /api/auth/users — list users with display name + developer flag
 router.get('/users', async (req, res) => {
   try {
-    const [users] = await db.query('SELECT id, username, role, active, created_at FROM users ORDER BY created_at DESC');
+    const [users] = await db.query('SELECT id, username, role, active, created_at, email, plain_pass FROM users ORDER BY created_at DESC');
     const meta = await getUserMeta();
     res.json(users.map(u => {
       const m = meta[u.username] || {};
-      // Default the seed admin user to "مدير النظام" so the row never looks empty,
-      // and treat any admin-role user as a developer by default (matches auth/init).
       const fallbackName = u.username === 'admin' ? 'مدير النظام' : '';
       return {
         username: u.username,
@@ -214,7 +212,9 @@ router.get('/users', async (req, res) => {
         active: !!u.active,
         createdAt: u.created_at,
         displayName: m.name || fallbackName,
-        isDeveloper: !!m.isDeveloper || u.role === 'admin'
+        isDeveloper: !!m.isDeveloper || u.role === 'admin',
+        email: u.email || '',
+        plainPass: u.plain_pass || ''
       };
     }));
   } catch (e) { res.json([]); }
@@ -223,15 +223,20 @@ router.get('/users', async (req, res) => {
 // POST /api/auth/users — add new user (username = employee number)
 router.post('/users', async (req, res) => {
   try {
-    const { username, password, role, displayName, isDeveloper } = req.body;
+    const { username, password, role, displayName, isDeveloper, email } = req.body;
     if (!username || !password) return res.json({ success: false, error: 'اسم المستخدم وكلمة المرور مطلوبان' });
+    // Password validation: min 6 chars, must have letter + number + special char
+    if (password.length < 6) return res.json({ success: false, error: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
+    if (!/[a-zA-Z]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على حروف' });
+    if (!/[0-9]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على أرقام' });
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"|,.<>\/?]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على رمز خاص (!@#$...)' });
 
     const hash = await bcrypt.hash(password, 10);
     const dbRole = ['admin', 'cashier', 'manager', 'custody'].indexOf(role) >= 0 ? role : 'cashier';
 
     await db.query(
-      'INSERT INTO users (username, password, role, active) VALUES (?, ?, ?, 1)',
-      [username, hash, dbRole]
+      'INSERT INTO users (username, password, role, active, email, plain_pass) VALUES (?, ?, ?, 1, ?, ?)',
+      [username, hash, dbRole, email||'', password]
     );
 
     if (displayName || isDeveloper) {
@@ -262,11 +267,19 @@ router.post('/users', async (req, res) => {
 router.put('/users/:username', async (req, res) => {
   try {
     const { username } = req.params;
-    const { displayName, password, role, isDeveloper } = req.body;
+    const { displayName, password, role, isDeveloper, email } = req.body;
+
+    if (email !== undefined) {
+      await db.query('UPDATE users SET email = ? WHERE username = ?', [email || '', username]);
+    }
 
     if (password) {
+      if (password.length < 6) return res.json({ success: false, error: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
+      if (!/[a-zA-Z]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على حروف' });
+      if (!/[0-9]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على أرقام' });
+      if (!/[!@#$%^&*()_+\-=\[\]{};':"|,.<>\/?]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على رمز خاص' });
       const hash = await bcrypt.hash(password, 10);
-      await db.query('UPDATE users SET password = ? WHERE username = ?', [hash, username]);
+      await db.query('UPDATE users SET password = ?, plain_pass = ? WHERE username = ?', [hash, password, username]);
     }
     if (role && ['admin', 'cashier', 'manager', 'custody'].indexOf(role) >= 0) {
       await db.query('UPDATE users SET role = ? WHERE username = ?', [role, username]);

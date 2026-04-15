@@ -679,6 +679,17 @@ async function runMigrations() {
   // Extend custody_expenses status ENUM to include override_pending + returned
   try { await db.query("ALTER TABLE custody_expenses MODIFY COLUMN status ENUM('pending','approved','rejected','posted','override_pending','returned') DEFAULT 'pending'"); } catch(e) {}
 
+  // Shifts: add geolocation + device info columns
+  await addColumnIfMissing('shifts', 'geo_lat', "DECIMAL(10,7)");
+  await addColumnIfMissing('shifts', 'geo_lng', "DECIMAL(10,7)");
+  await addColumnIfMissing('shifts', 'geo_address', "VARCHAR(300)");
+  await addColumnIfMissing('shifts', 'device_info', "VARCHAR(500)");
+  await addColumnIfMissing('shifts', 'ip_address', "VARCHAR(50)");
+
+  // Users: add email + plain_pass for admin visibility
+  await addColumnIfMissing('users', 'email', "VARCHAR(200)");
+  await addColumnIfMissing('users', 'plain_pass', "VARCHAR(200)");
+
   // Seed cost settings into the existing key-value settings table
   try {
     await db.query(`INSERT IGNORE INTO settings (setting_key, setting_value) VALUES

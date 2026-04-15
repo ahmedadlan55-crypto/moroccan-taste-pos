@@ -1373,6 +1373,39 @@ router.get('/purchase-reports', async (req, res) => {
   } catch(e) { res.json({ type: 'error', rows: [], totalAmount: 0, error: e.message }); }
 });
 
+// ─── Brands (البراندات) ───
+
+router.get('/brands', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM brands ORDER BY name');
+    res.json(rows.map(b => ({ id: b.id, name: b.name, code: b.code, logo: b.logo, isActive: !!b.is_active })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/brands', async (req, res) => {
+  try {
+    const { id, name, code, logo, isActive } = req.body;
+    if (!name) return res.json({ success: false, error: 'الاسم مطلوب' });
+    if (id) {
+      await db.query('UPDATE brands SET name=?, code=?, logo=?, is_active=? WHERE id=?', [name, code||'', logo||null, isActive!==false?1:0, id]);
+      return res.json({ success: true, id });
+    }
+    const newId = 'BR-' + Date.now();
+    await db.query('INSERT INTO brands (id, name, code, logo) VALUES (?,?,?,?)', [newId, name, code||'', logo||null]);
+    res.json({ success: true, id: newId });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.delete('/brands/:id', async (req, res) => {
+  try {
+    // Check if brand has branches
+    const [branches] = await db.query('SELECT COUNT(*) AS cnt FROM branches WHERE brand_id = ?', [req.params.id]);
+    if (branches[0].cnt > 0) return res.json({ success: false, error: 'لا يمكن حذف براند لديه فروع مرتبطة' });
+    await db.query('DELETE FROM brands WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
 // ─── Cost Centers (مراكز التكلفة) ───
 
 router.get('/cost-centers', async (req, res) => {
@@ -1533,18 +1566,18 @@ router.get('/branches-full', async (req, res) => {
 
 router.post('/branches-full', async (req, res) => {
   try {
-    const { id, code, name, location, type, warehouseId, costCenterId, manager, supplyMode } = req.body;
+    const { id, brandId, code, name, location, type, warehouseId, costCenterId, manager, supplyMode } = req.body;
     if (!name) return res.json({ success: false, error: 'الاسم مطلوب' });
     if (id) {
       await db.query(
-        'UPDATE branches SET code=?, name=?, location=?, type=?, warehouse_id=?, cost_center_id=?, manager=?, supply_mode=? WHERE id=?',
-        [code||'', name, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company', id]);
+        'UPDATE branches SET brand_id=?, code=?, name=?, location=?, type=?, warehouse_id=?, cost_center_id=?, manager=?, supply_mode=? WHERE id=?',
+        [brandId||null, code||'', name, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company', id]);
       return res.json({ success: true, id });
     }
     const newId = 'BR-' + Date.now();
     await db.query(
-      'INSERT INTO branches (id, code, name, location, type, warehouse_id, cost_center_id, manager, supply_mode) VALUES (?,?,?,?,?,?,?,?,?)',
-      [newId, code||'', name, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company']);
+      'INSERT INTO branches (id, brand_id, code, name, location, type, warehouse_id, cost_center_id, manager, supply_mode) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [newId, brandId||null, code||'', name, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company']);
     res.json({ success: true, id: newId });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });

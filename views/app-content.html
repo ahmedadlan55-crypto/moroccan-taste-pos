@@ -55,6 +55,7 @@
         <div style="border-top:1px solid rgba(255,255,255,0.1);margin:10px 0;padding-top:8px;">
           <div style="padding:4px 16px;font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:1px;">نظام ERP</div>
         </div>
+        <div class="nav-item" data-erp-nav="erpBrands" onclick="erpNav('erpBrands')"><i class="fas fa-tags"></i><span>البراندات</span></div>
         <div class="nav-item" data-erp-nav="erpDashHome" onclick="erpNav('erpDashHome')"><i class="fas fa-building"></i><span>لوحة ERP</span></div>
 
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
@@ -1302,6 +1303,22 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- COST CENTERS (مراكز التكلفة) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- BRANDS (البراندات) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpBrands" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-tags"></i> إدارة البراندات</h2>
+    <button class="btn btn-primary" onclick="erpOpenBrandModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> إضافة براند</button>
+  </div>
+  <div class="erp-table-container" style="border-radius:14px;">
+    <table class="erp-table">
+      <thead><tr><th>الشعار</th><th>الاسم</th><th>الرمز</th><th>الفروع</th><th>المنتجات</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpBrandsBody"><tr><td colspan="7" class="empty-msg">لا توجد براندات</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
 <div id="erpCostCenters" class="dash-section hidden">
   <div class="section-header">
     <h2 class="section-title"><i class="fas fa-bullseye"></i> مراكز التكلفة</h2>

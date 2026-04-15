@@ -10,7 +10,7 @@ Object.defineProperty(window, 'currentUser', { get: function() { return (typeof 
 // ═══════════════════════════════════════
 const erpSections = [
   'erpDashHome','erpCustomers','erpSuppliers','erpGLAccounts','erpGLJournals',
-  'erpPurchaseOrders','erpVATReports','erpZATCA','erpInventoryMethod','erpFinReports','erpPurchaseReports','erpCostCenters','erpMultiWarehouses',
+  'erpPurchaseOrders','erpVATReports','erpZATCA','erpInventoryMethod','erpFinReports','erpPurchaseReports','erpBrands','erpCostCenters','erpMultiWarehouses',
   'erpBranches','erpPeriods','erpAuditLog','erpCreditNotes',
   'erpWarehouses','erpWarehouseStock','erpStockTransfers',
   'erpARAging','erpAPAging','erpCustomerStatement','erpSupplierStatement'
@@ -36,6 +36,7 @@ function erpNav(sectionId) {
       case 'erpZATCA': erpLoadZATCA(); break;
       case 'erpInventoryMethod': erpLoadInventoryMethod(); break;
       case 'erpFinReports': erpBackToReportsHub(); break;
+      case 'erpBrands': erpLoadBrands(); break;
       case 'erpPurchaseReports': erpInitPurchaseReports(); break;
       case 'erpCostCenters': erpLoadCostCenters(); break;
       case 'erpMultiWarehouses': erpLoadMultiWarehouses(); break;
@@ -2462,6 +2463,80 @@ window.erpSyncInventoryGL = function() {
 };
 
 // ═══════════════════════════════════════
+// BRANDS (البراندات)
+// ═══════════════════════════════════════
+var _brandsList = [];
+function erpLoadBrands() {
+  window._apiBridge.withSuccessHandler(function(list) {
+    _brandsList = list || [];
+    var tb = document.getElementById('erpBrandsBody');
+    if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد براندات</td></tr>'; return; }
+    tb.innerHTML = list.map(function(b) {
+      var logoHtml = b.logo ? '<img src="' + b.logo + '" style="width:36px;height:36px;border-radius:8px;object-fit:cover;">' : '<i class="fas fa-store" style="font-size:24px;color:#94a3b8;"></i>';
+      return '<tr>' +
+        '<td>' + logoHtml + '</td>' +
+        '<td style="font-weight:800;font-size:14px;">' + b.name + '</td>' +
+        '<td><code>' + (b.code||'') + '</code></td>' +
+        '<td style="text-align:center;">—</td>' +
+        '<td style="text-align:center;">—</td>' +
+        '<td>' + (b.isActive ? '<span class="badge badge-green">نشط</span>' : '<span class="badge badge-red">معطّل</span>') + '</td>' +
+        '<td style="white-space:nowrap;">' +
+          '<button class="btn-icon" onclick="erpEditBrand(\'' + b.id + '\')"><i class="fas fa-edit"></i></button> ' +
+          '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteBrand(\'' + b.id + '\',\'' + (b.name||'').replace(/'/g,'') + '\')"><i class="fas fa-trash"></i></button>' +
+        '</td></tr>';
+    }).join('');
+  }).getBrands();
+}
+
+function erpOpenBrandModal(data) {
+  var d = data || {};
+  document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل براند' : 'إضافة براند جديد';
+  document.getElementById('erpModalBody').innerHTML =
+    '<input type="hidden" id="brandID" value="' + (d.id||'') + '">' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+      '<div class="form-row"><label>اسم البراند *</label><input class="form-control" id="brandName" value="' + (d.name||'') + '"></div>' +
+      '<div class="form-row"><label>الرمز</label><input class="form-control" id="brandCode" value="' + (d.code||'') + '" placeholder="MT"></div>' +
+    '</div>' +
+    '<div class="form-row"><label>شعار البراند</label><div style="display:flex;gap:10px;align-items:center;"><label style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;cursor:pointer;background:rgba(59,130,246,0.06);color:#3b82f6;font-size:13px;font-weight:700;border:1.5px dashed rgba(59,130,246,0.2);" for="brandLogoFile"><i class="fas fa-image"></i> رفع شعار</label><input type="file" id="brandLogoFile" accept="image/*" onchange="handleBrandLogo(this)" style="display:none;"><div id="brandLogoPreview">' + (d.logo ? '<img src="' + d.logo + '" style="width:50px;height:50px;border-radius:8px;object-fit:cover;">' : '') + '</div></div></div>';
+  document.getElementById('erpModalSaveBtn').onclick = erpSaveBrand;
+  document.getElementById('erpModal').classList.remove('hidden');
+}
+
+window._brandLogoData = '';
+window.handleBrandLogo = function(input) {
+  var file = input.files[0]; if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var img = new Image();
+    img.onload = function() {
+      var c = document.createElement('canvas'), mx = 400, w = img.width, h = img.height;
+      if (w > mx || h > mx) { var sc = Math.min(mx/w, mx/h); w *= sc; h *= sc; }
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      window._brandLogoData = c.toDataURL('image/jpeg', 0.85);
+      document.getElementById('brandLogoPreview').innerHTML = '<img src="' + window._brandLogoData + '" style="width:50px;height:50px;border-radius:8px;object-fit:cover;">';
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+};
+
+function erpEditBrand(id) { var b = _brandsList.find(function(x){return x.id===id;}); if(b) { window._brandLogoData = b.logo||''; erpOpenBrandModal(b); } }
+
+function erpSaveBrand() {
+  var data = { id: document.getElementById('brandID').value, name: document.getElementById('brandName').value, code: document.getElementById('brandCode').value, logo: window._brandLogoData || '' };
+  if (!data.name) return showToast('الاسم مطلوب', true);
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحفظ'); erpCloseModal(); erpLoadBrands(); } else showToast(r.error, true); }).saveBrand(data);
+}
+
+function erpDeleteBrand(id, name) {
+  if (!confirm('حذف البراند "' + name + '"؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحذف'); erpLoadBrands(); } else showToast(r.error, true); }).deleteBrand(id);
+}
+
+// ═══════════════════════════════════════
 // PURCHASE REPORTS (تقارير المشتريات)
 // ═══════════════════════════════════════
 function erpInitPurchaseReports() {
@@ -2718,17 +2793,20 @@ function erpLoadBranchesFull() {
 var _brFullList = [];
 function erpOpenBranchFullModal(data) {
   var d = data || {};
-  // Load warehouses + cost centers for dropdowns
+  // Load warehouses + cost centers + brands for dropdowns
   Promise.all([
     new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getWarehousesList(); }),
-    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getCostCenters(); })
+    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getCostCenters(); }),
+    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getBrands(); })
   ]).then(function(results) {
-    var whs = results[0]||[], ccs = results[1]||[];
+    var whs = results[0]||[], ccs = results[1]||[], brands = results[2]||[];
     var whOpts = whs.map(function(w) { return '<option value="' + w.id + '"' + (d.warehouseId===w.id?' selected':'') + '>' + w.name + '</option>'; }).join('');
     var ccOpts = ccs.map(function(c) { return '<option value="' + c.id + '"' + (d.costCenterId===c.id?' selected':'') + '>' + c.code + ' — ' + c.name + '</option>'; }).join('');
+    var brandOpts = brands.map(function(b) { return '<option value="' + b.id + '"' + (d.brandId===b.id?' selected':'') + '>' + b.name + '</option>'; }).join('');
     document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل فرع' : 'إضافة فرع';
     document.getElementById('erpModalBody').innerHTML =
       '<input type="hidden" id="brfID" value="' + (d.id||'') + '">' +
+      '<div class="form-row"><label>البراند *</label><select class="form-control" id="brfBrand"><option value="">— اختر البراند —</option>' + brandOpts + '</select></div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>الرمز</label><input class="form-control" id="brfCode" value="' + (d.code||'') + '"></div>' +
         '<div class="form-row"><label>الاسم *</label><input class="form-control" id="brfName" value="' + (d.name||'') + '"></div>' +
@@ -2753,7 +2831,7 @@ function erpEditBranchFull(id) {
   }).getBranchesFull();
 }
 function erpSaveBranchFull() {
-  var data = { id: document.getElementById('brfID').value, code: document.getElementById('brfCode').value, name: document.getElementById('brfName').value, location: document.getElementById('brfLocation').value, warehouseId: document.getElementById('brfWH').value, costCenterId: document.getElementById('brfCC').value, manager: document.getElementById('brfManager').value, supplyMode: document.getElementById('brfSupply').value };
+  var data = { id: document.getElementById('brfID').value, brandId: (document.getElementById('brfBrand')||{}).value||'', code: document.getElementById('brfCode').value, name: document.getElementById('brfName').value, location: document.getElementById('brfLocation').value, warehouseId: document.getElementById('brfWH').value, costCenterId: document.getElementById('brfCC').value, manager: document.getElementById('brfManager').value, supplyMode: document.getElementById('brfSupply').value };
   if (!data.name) return showToast('الاسم مطلوب', true);
   loader(true);
   window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحفظ'); erpCloseModal(); erpLoadBranchesFull(); } else showToast(r.error, true); }).saveBranchFull(data);

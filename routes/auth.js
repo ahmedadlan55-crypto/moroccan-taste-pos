@@ -92,8 +92,8 @@ router.post('/login', async (req, res) => {
     clearAttempts(ip);
     await db.query('UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?', [user.id]);
 
-    const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, process.env.JWT_SECRET, { expiresIn: '24h' });
-    res.json({ success: true, username: user.username, role: user.role, token });
+    const token = jwt.sign({ id: user.id, username: user.username, role: user.role, brandId: user.brand_id || '', branchId: user.branch_id || '' }, process.env.JWT_SECRET, { expiresIn: '24h' });
+    res.json({ success: true, username: user.username, role: user.role, token, brandId: user.brand_id || '', branchId: user.branch_id || '' });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
@@ -118,7 +118,17 @@ router.get('/init/:username', async (req, res) => {
     const settingsObj = {};
     settings.forEach(s => { settingsObj[s.setting_key] = s.setting_value; });
 
-    const [menu] = await db.query('SELECT * FROM menu WHERE active = 1 ORDER BY category, name');
+    // Get user's brand_id to filter menu
+    const [userRow] = await db.query('SELECT brand_id, branch_id FROM users WHERE username = ?', [req.params.username]);
+    const userBrandId = userRow.length ? userRow[0].brand_id : '';
+    const userBranchId = userRow.length ? userRow[0].branch_id : '';
+
+    // Menu filtered by brand (if user has a brand assigned)
+    const menuQuery = userBrandId
+      ? 'SELECT * FROM menu WHERE active = 1 AND (brand_id = ? OR brand_id IS NULL OR brand_id = "") ORDER BY category, name'
+      : 'SELECT * FROM menu WHERE active = 1 ORDER BY category, name';
+    const menuParams = userBrandId ? [userBrandId] : [];
+    const [menu] = await db.query(menuQuery, menuParams);
     const [payMethods] = await db.query('SELECT * FROM payment_methods ORDER BY sort_order');
     const [users] = await db.query('SELECT username FROM users WHERE active = 1');
 
@@ -146,15 +156,20 @@ router.get('/init/:username', async (req, res) => {
       kitaFeeRate: Number(settingsObj.KitaServiceFee) || 0,
       menu: menu.map(m => ({
         id: m.id, name: m.name, price: Number(m.price), category: m.category,
-        cost: Number(m.cost), stock: m.stock, minStock: m.min_stock, active: m.active
+        cost: Number(m.cost), stock: m.stock, minStock: m.min_stock, active: m.active,
+        brandId: m.brand_id || ''
       })),
       activeShiftId: shifts.length ? shifts[0].id : '',
       usernames: users.map(u => u.username),
+      brandId: userBrandId || '',
+      branchId: userBranchId || '',
       currentUser: {
         username: req.params.username,
         displayName: me.name || '',
         role: myRole,
-        isDeveloper: !!me.isDeveloper || myRole === 'admin'
+        isDeveloper: !!me.isDeveloper || myRole === 'admin',
+        brandId: userBrandId || '',
+        branchId: userBranchId || ''
       },
       userMeta: userMeta,
       paymentMethods: payMethods.map(p => ({

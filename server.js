@@ -318,6 +318,35 @@ async function runMigrations() {
   await addColumnIfMissing('custody_expenses', 'cost_center_name', "VARCHAR(200)");
   await addColumnIfMissing('custody_expenses', 'pre_approval_status', "ENUM('none','requested','approved','rejected') DEFAULT 'none'");
 
+  // Brands table (multi-brand support)
+  await createTableIfMissing('brands', `
+    CREATE TABLE brands (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      code VARCHAR(20),
+      logo LONGTEXT,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  // Add brand_id to existing tables
+  await addColumnIfMissing('branches', 'brand_id', "VARCHAR(50)");
+  await addColumnIfMissing('menu', 'brand_id', "VARCHAR(50)");
+  await addColumnIfMissing('users', 'brand_id', "VARCHAR(50)");
+  await addColumnIfMissing('users', 'branch_id', "VARCHAR(50)");
+  await addColumnIfMissing('inv_items', 'brand_id', "VARCHAR(50)");
+  await addColumnIfMissing('sales', 'brand_id', "VARCHAR(50)");
+  await addColumnIfMissing('sales', 'branch_id', "VARCHAR(50)");
+
+  // Create default brand if none exists
+  try {
+    const [brands] = await db.query('SELECT COUNT(*) AS cnt FROM brands');
+    if (brands[0].cnt === 0) {
+      await db.query("INSERT INTO brands (id, name, code) VALUES ('BR-DEFAULT', 'Moroccan Taste', 'MT')");
+    }
+  } catch(e) {}
+
   // Dynamic Payment Methods (advanced)
   await addColumnIfMissing('payment_methods', 'type', "VARCHAR(50) DEFAULT 'standard'");
   await addColumnIfMissing('payment_methods', 'require_reference', "BOOLEAN DEFAULT FALSE");

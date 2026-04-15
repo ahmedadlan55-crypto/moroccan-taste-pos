@@ -2859,39 +2859,150 @@ function erpViewWHStock(whId, whName) {
     setTimeout(function() { document.getElementById('erpModalSaveBtn').style.display = ''; }, 100);
   }).getWarehouseStockDetail(whId);
 }
+var _trAllItems = [];
+var _trCart = [];
+
 function erpOpenTransferModal() {
-  window._apiBridge.withSuccessHandler(function(whs) {
-    var opts = (whs||[]).map(function(w) { return '<option value="' + w.id + '">' + w.name + '</option>'; }).join('');
-    // Load items
-    window._apiBridge.withSuccessHandler(function(items) {
-      var itemOpts = (items||[]).map(function(i) { return '<option value="' + i.id + '" data-name="' + (i.name||'') + '">' + i.name + ' (' + (Number(i.stock)||0) + ' ' + (i.unit||'') + ')</option>'; }).join('');
-      document.getElementById('erpModalTitle').textContent = 'تحويل بين مستودعات';
-      document.getElementById('erpModalBody').innerHTML =
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-          '<div class="form-row"><label>من مستودع *</label><select class="form-control" id="trFrom">' + opts + '</select></div>' +
-          '<div class="form-row"><label>إلى مستودع *</label><select class="form-control" id="trTo">' + opts + '</select></div>' +
+  _trCart = [];
+  Promise.all([
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getWarehousesList(); }),
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getInvItems(); })
+  ]).then(function(results) {
+    var whs = results[0] || [];
+    _trAllItems = results[1] || [];
+    var opts = whs.map(function(w) { return '<option value="' + w.id + '">' + w.name + '</option>'; }).join('');
+
+    document.getElementById('erpModalTitle').textContent = 'تحويل بين مستودعات';
+    var box = document.querySelector('#erpModal .modal-box');
+    if (box) box.style.maxWidth = '750px';
+
+    document.getElementById('erpModalBody').innerHTML =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>من مستودع *</label><select class="form-control" id="trFrom">' + opts + '</select></div>' +
+        '<div class="form-row"><label>إلى مستودع *</label><select class="form-control" id="trTo">' + opts + '</select></div>' +
+      '</div>' +
+      '<div class="form-row"><label>ملاحظات</label><input class="form-control" id="trNotes" placeholder="اختياري"></div>' +
+      '<div style="border-top:1px solid #e2e8f0;margin:14px 0;padding-top:14px;">' +
+        '<div style="position:relative;margin-bottom:10px;">' +
+          '<i class="fas fa-search" style="position:absolute;top:12px;right:12px;color:#94a3b8;"></i>' +
+          '<input type="text" id="trSearch" class="form-control" style="padding-right:36px;" placeholder="ابحث عن مادة..." oninput="_trFilterItems()" onfocus="_trFilterItems()">' +
+          '<div id="trSearchResults" style="position:absolute;top:100%;left:0;right:0;z-index:200;background:rgba(255,255,255,0.98);border:1.5px solid #e2e8f0;border-radius:0 0 14px 14px;max-height:220px;overflow-y:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,0.12);"></div>' +
         '</div>' +
-        '<div class="form-row"><label>المادة *</label><select class="form-control" id="trItem">' + itemOpts + '</select></div>' +
-        '<div class="form-row"><label>الكمية *</label><input type="number" class="form-control" id="trQty" min="1" step="1" value="1"></div>' +
-        '<div class="form-row"><label>ملاحظات</label><input class="form-control" id="trNotes" placeholder="اختياري"></div>';
-      document.getElementById('erpModalSaveBtn').onclick = erpSubmitTransfer;
-      document.getElementById('erpModal').classList.remove('hidden');
-    }).getInvItems();
-  }).getWarehousesList();
+      '</div>' +
+      '<div style="max-height:300px;overflow-y:auto;">' +
+        '<table class="erp-table" style="font-size:13px;">' +
+          '<thead><tr><th>المادة</th><th style="text-align:center;">الرصيد</th><th style="text-align:center;">الوحدة الكبرى</th><th style="text-align:center;">الكمية كبرى</th><th style="text-align:center;">الوحدة الصغرى</th><th style="text-align:center;">الكمية صغرى</th><th style="text-align:center;">التكلفة</th><th></th></tr></thead>' +
+          '<tbody id="trCartBody"><tr><td colspan="8" class="empty-msg">ابحث وأضف المواد</td></tr></tbody>' +
+        '</table>' +
+      '</div>';
+
+    document.getElementById('erpModalSaveBtn').onclick = erpSubmitTransfer;
+    document.getElementById('erpModal').classList.remove('hidden');
+
+    // Close dropdown on outside click
+    setTimeout(function() {
+      document.addEventListener('click', function _trClose(e) {
+        if (!e.target.closest('#trSearch') && !e.target.closest('#trSearchResults')) {
+          var r = document.getElementById('trSearchResults');
+          if (r) r.style.display = 'none';
+        }
+      });
+    }, 100);
+  });
 }
+
+function _trFilterItems() {
+  var q = (document.getElementById('trSearch').value || '').toLowerCase();
+  var box = document.getElementById('trSearchResults');
+  var cartIds = _trCart.map(function(c) { return c.id; });
+  var available = _trAllItems.filter(function(i) { return cartIds.indexOf(i.id) === -1; });
+  var matches = q ? available.filter(function(i) {
+    return (i.name||'').toLowerCase().indexOf(q) >= 0 || (i.category||'').toLowerCase().indexOf(q) >= 0;
+  }) : available;
+
+  if (!matches.length) { box.innerHTML = '<div style="padding:12px;color:#94a3b8;text-align:center;">لا توجد نتائج</div>'; box.style.display = 'block'; return; }
+  box.innerHTML = matches.map(function(i) {
+    var stk = Number(i.stock) || 0;
+    var stkColor = stk <= (Number(i.minStock)||0) ? '#ef4444' : '#16a34a';
+    var bigU = i.bigUnit || i.big_unit || '';
+    var convR = Number(i.convRate || i.conv_rate) || 1;
+    var bigStk = bigU && convR > 1 ? Math.floor(stk / convR) : '';
+    var smallStk = bigU && convR > 1 ? (stk % convR) : stk;
+    return '<div onclick="_trAddItem(\'' + i.id + '\')" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid rgba(226,232,240,0.5);display:flex;justify-content:space-between;align-items:center;" onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'\'">' +
+      '<div><span style="font-weight:700;">' + i.name + '</span>' + (i.category ? '<div style="font-size:11px;color:#94a3b8;">' + i.category + '</div>' : '') + '</div>' +
+      '<div style="text-align:left;"><span style="font-size:12px;color:' + stkColor + ';font-weight:800;">' + stk + ' ' + (i.unit||'') + '</span>' +
+      (bigU && convR > 1 ? '<div style="font-size:10px;color:#64748b;">' + bigStk + ' ' + bigU + ' + ' + smallStk + ' ' + (i.unit||'') + '</div>' : '') +
+      '</div></div>';
+  }).join('');
+  box.style.display = 'block';
+}
+
+function _trAddItem(id) {
+  var item = _trAllItems.find(function(i) { return i.id === id; });
+  if (!item || _trCart.some(function(c) { return c.id === id; })) return;
+  _trCart.push({
+    id: item.id, name: item.name, unit: item.unit || '',
+    bigUnit: item.bigUnit || item.big_unit || '',
+    convRate: Number(item.convRate || item.conv_rate) || 1,
+    stock: Number(item.stock) || 0, cost: Number(item.cost) || 0,
+    _bigInput: '', _smallInput: ''
+  });
+  document.getElementById('trSearch').value = '';
+  document.getElementById('trSearchResults').style.display = 'none';
+  _trRenderCart();
+}
+
+function _trUpdateDual(idx, bigVal, smallVal) {
+  if (!_trCart[idx]) return;
+  if (bigVal !== null && bigVal !== undefined) _trCart[idx]._bigInput = bigVal === '' ? '' : Number(bigVal);
+  if (smallVal !== null && smallVal !== undefined) _trCart[idx]._smallInput = smallVal === '' ? '' : Number(smallVal);
+  _trRenderCart();
+}
+
+function _trRemoveItem(idx) {
+  _trCart.splice(idx, 1);
+  _trRenderCart();
+}
+
+function _trRenderCart() {
+  var tb = document.getElementById('trCartBody');
+  if (!_trCart.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-msg">ابحث وأضف المواد</td></tr>'; return; }
+  tb.innerHTML = _trCart.map(function(c, i) {
+    var hasBig = c.bigUnit && c.convRate > 1;
+    var bigStk = hasBig ? Math.floor(c.stock / c.convRate) : '';
+    var smallStk = hasBig ? (c.stock % c.convRate) : c.stock;
+    var inputS = 'width:60px;padding:5px;text-align:center;font-weight:800;border:1.5px solid #e2e8f0;border-radius:8px;';
+    return '<tr>' +
+      '<td style="font-weight:700;">' + c.name + '</td>' +
+      '<td style="text-align:center;font-weight:800;color:#1e40af;">' + c.stock + '</td>' +
+      '<td style="text-align:center;color:#64748b;">' + (hasBig ? c.bigUnit + ' <span style="font-size:11px;color:#94a3b8;">(' + bigStk + ')</span>' : '—') + '</td>' +
+      '<td style="text-align:center;">' + (hasBig ? '<input type="number" min="0" step="1" style="' + inputS + '" value="' + (c._bigInput === '' ? '' : c._bigInput) + '" oninput="_trUpdateDual(' + i + ',this.value,null)" placeholder="0">' : '—') + '</td>' +
+      '<td style="text-align:center;color:#64748b;">' + (c.unit || '') + ' <span style="font-size:11px;color:#94a3b8;">(' + smallStk + ')</span></td>' +
+      '<td style="text-align:center;"><input type="number" min="0" step="0.01" style="' + inputS + '" value="' + (c._smallInput === '' ? '' : c._smallInput) + '" oninput="_trUpdateDual(' + i + ',null,this.value)" placeholder="0"></td>' +
+      '<td style="text-align:center;font-size:12px;color:#64748b;">' + c.cost.toFixed(2) + '</td>' +
+      '<td><button style="width:28px;height:28px;border-radius:6px;border:1px solid #fecaca;background:#fee2e2;color:#ef4444;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;justify-content:center;" onclick="_trRemoveItem(' + i + ')"><i class="fas fa-times"></i></button></td>' +
+    '</tr>';
+  }).join('');
+}
+
 function erpSubmitTransfer() {
   var from = document.getElementById('trFrom').value, to = document.getElementById('trTo').value;
   if (from === to) return showToast('اختر مستودعين مختلفين', true);
-  var itemSel = document.getElementById('trItem');
-  var itemId = itemSel.value, itemName = itemSel.options[itemSel.selectedIndex].getAttribute('data-name')||'';
-  var qty = Number(document.getElementById('trQty').value) || 0;
-  if (!qty) return showToast('أدخل الكمية', true);
+  if (!_trCart.length) return showToast('أضف مواد أولاً', true);
+  // Build items with calculated quantities
+  var items = _trCart.map(function(c) {
+    var b = Number(c._bigInput) || 0;
+    var s = Number(c._smallInput) || 0;
+    var total = (c.bigUnit && c.convRate > 1) ? (b * c.convRate + s) : s;
+    return { itemId: c.id, itemName: c.name, qty: total, cost: c.cost };
+  }).filter(function(i) { return i.qty > 0; });
+  if (!items.length) return showToast('أدخل كميات المواد', true);
   loader(true);
   window._apiBridge.withSuccessHandler(function(r) {
     loader(false);
     if (r.success) { showToast('تم إنشاء التحويل: ' + r.transferNumber); erpCloseModal(); erpLoadMultiWarehouses(); }
     else showToast(r.error, true);
-  }).createWarehouseTransfer({ fromWarehouseId: from, toWarehouseId: to, items: [{ itemId: itemId, itemName: itemName, qty: qty }], notes: document.getElementById('trNotes').value, username: currentUser });
+  }).createWarehouseTransfer({ fromWarehouseId: from, toWarehouseId: to, items: items, notes: document.getElementById('trNotes').value, username: currentUser });
 }
 function erpApproveTransfer(id) {
   if (!confirm('اعتماد التحويل وتحديث الأرصدة؟')) return;
@@ -3286,7 +3397,7 @@ function erpLoadTransfers() {
 
 var erpTransferItems = [];
 
-function erpOpenTransferModal() {
+function erpOpenTransferModalLegacy() {
   erpTransferItems = [];
   document.getElementById('erpModalTitle').textContent = 'تحويل مخزون جديد';
 

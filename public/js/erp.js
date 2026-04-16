@@ -1042,15 +1042,18 @@ function _getLeafAccounts() {
   return _erpAccounts.filter(function(a) { return !parentIds[a.id]; });
 }
 
-// ─── Journal creation modal ───
+// ─── Journal creation — full page form ───
 var _jrnLineCounter = 0;
+var _jrnSelectedType = 'GL';
+var _jrnTypes = [{code:'GL',name:'يومية عامة'},{code:'OB',name:'افتتاحية'},{code:'RENT',name:'إدارة التأجير'}];
 
 function erpOpenJournalModal() {
-  document.getElementById('erpModalTitle').textContent = 'قيد محاسبي جديد';
   _jrnLineCounter = 0;
-
+  _jrnSelectedType = 'GL';
   if (_erpAccounts.length === 0) {
+    loader(true);
     window._apiBridge.withSuccessHandler(function(list) {
+      loader(false);
       _erpAccounts = (list || []).map(function(a) {
         return { id: a.id, code: a.code, nameAr: a.nameAr, nameEn: a.nameEn, type: a.type, parentId: a.parentId, level: Number(a.level)||1, balance: Number(a.balance)||0 };
       });
@@ -1063,72 +1066,125 @@ function erpOpenJournalModal() {
 
 function _renderJournalForm() {
   var today = new Date().toISOString().split('T')[0];
+  var typeName = (_jrnTypes.find(function(t){return t.code===_jrnSelectedType;})||{}).name || 'يومية عامة';
 
-  document.getElementById('erpModalBody').innerHTML =
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-      '<div class="form-row"><label>تاريخ القيد *</label><input type="date" class="form-control" id="erpJrnDate" value="' + today + '"></div>' +
-      '<div class="form-row"><label>رقم القيد</label><input class="form-control" id="erpJrnNum" placeholder="تلقائي" readonly style="background:#f8fafc;color:#94a3b8;"></div>' +
-    '</div>' +
-    '<div class="form-row"><label>عنوان القيد / الوصف *</label><input class="form-control" id="erpJrnDesc" placeholder="مثال: تسجيل مبيعات يوم 10/4"></div>' +
-    '<div class="form-row"><label>ملاحظات إضافية</label><input class="form-control" id="erpJrnRef" placeholder="اختياري..."></div>' +
-    '<div class="form-row" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.15);">' +
-      '<input type="checkbox" id="erpJrnIsOpening" style="width:18px;height:18px;accent-color:#f59e0b;">' +
-      '<label for="erpJrnIsOpening" style="margin:0;cursor:pointer;font-weight:700;color:#92400e;"><i class="fas fa-flag" style="margin-left:4px;color:#f59e0b;"></i> قيد افتتاحي (Opening Entry)</label>' +
-      '<span style="font-size:11px;color:#94a3b8;margin-right:auto;">يُحسب كرصيد أول المدة في ميزان المراجعة</span>' +
-    '</div>' +
-    '<div class="form-row"><label>مركز التكلفة</label><select class="form-control" id="erpJrnCC"><option value="">— بدون —</option></select></div>' +
-    '<div class="form-row"><label>مرفق (صورة أو PDF)</label><div style="display:flex;gap:10px;align-items:center;"><label style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;cursor:pointer;background:rgba(59,130,246,0.06);color:#3b82f6;font-size:13px;font-weight:700;border:1.5px dashed rgba(59,130,246,0.2);" for="erpJrnAttach"><i class="fas fa-paperclip"></i> إرفاق ملف</label><input type="file" id="erpJrnAttach" accept="image/*,application/pdf" onchange="erpPickAttachment(this)" style="display:none;"><div id="jrnAttachPrev"></div></div></div>' +
-    '<hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;">' +
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-      '<h4 style="margin:0;color:#1e293b;"><i class="fas fa-list-ol" style="color:#3b82f6;margin-left:6px;"></i> بنود القيد</h4>' +
-      '<button class="btn btn-sm btn-secondary" onclick="erpAddJrnLine()" style="border-radius:10px;"><i class="fas fa-plus"></i> إضافة سطر</button>' +
-    '</div>' +
-    '<div id="erpJrnLines"></div>' +
-    '<div class="jrn-balance-bar" id="erpJrnBalanceInfo">مدين: <strong>0.00</strong> | دائن: <strong>0.00</strong></div>';
-
-  document.getElementById('erpModalSaveBtn').onclick = erpSaveJournal;
-  // Load cost centers for dropdown
-  window._apiBridge.withSuccessHandler(function(ccs) {
-    var sel = document.getElementById('erpJrnCC');
-    if (sel) { var opts = '<option value="">— بدون —</option>'; (ccs||[]).forEach(function(c) { opts += '<option value="' + c.id + '" data-name="' + (c.name||'') + '">' + c.code + ' — ' + c.name + '</option>'; }); sel.innerHTML = opts; }
-  }).getCostCenters();
-  document.getElementById('erpModal').classList.remove('hidden');
+  // Use the full section area instead of the modal
+  var section = document.getElementById('erpGLJournals');
+  section.innerHTML =
+    '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:0;margin:10px 0;">' +
+      // Title bar
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:2px solid #0ea5e9;background:#f8fafc;border-radius:12px 12px 0 0;">' +
+        '<h3 style="margin:0;font-size:16px;color:#0f172a;"><i class="fas fa-file-invoice" style="color:#0ea5e9;margin-left:8px;"></i> القيود اليومية العامة</h3>' +
+        '<button onclick="erpLoadJournals()" style="padding:6px 16px;border-radius:8px;border:1px solid #e5e7eb;background:#fff;cursor:pointer;font-size:13px;font-weight:700;color:#64748b;"><i class="fas fa-arrow-right" style="margin-left:4px;"></i> رجوع للقائمة</button>' +
+      '</div>' +
+      // Header fields
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:12px;padding:16px 20px;background:#f1f5f9;border-bottom:1px solid #e5e7eb;">' +
+        '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">رقم الحركة *</label><input class="form-control" id="erpJrnNum" placeholder="تلقائي" readonly style="background:#e2e8f0;color:#94a3b8;"></div>' +
+        '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">التاريخ *</label><input type="date" class="form-control" id="erpJrnDate" value="' + today + '"></div>' +
+        '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">اليومية *</label><div style="display:flex;gap:4px;"><input class="form-control" id="erpJrnTypeName" value="' + typeName + '" readonly style="background:#e0f2fe;color:#0369a1;font-weight:700;cursor:pointer;" onclick="erpOpenJrnTypePicker()"><button onclick="erpOpenJrnTypePicker()" style="padding:6px 10px;border-radius:8px;border:1px solid #e5e7eb;background:#fff;cursor:pointer;"><i class="fas fa-pen"></i></button></div></div>' +
+        '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">النظام</label><input class="form-control" value="الحسابات العامة" readonly style="background:#f8fafc;color:#64748b;"></div>' +
+        '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">نوع الحركة</label><select class="form-control" id="erpJrnMovType"><option value="general">عام</option><option value="opening">افتتاحي</option><option value="closing">إقفال</option><option value="adjustment">تسوية</option></select></div>' +
+      '</div>' +
+      // Description fields
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 20px;border-bottom:1px solid #e5e7eb;">' +
+        '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">الوصف * (عربي)</label><input class="form-control" id="erpJrnDesc" placeholder="وصف القيد بالعربي..."></div>' +
+        '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">الوصف * (إنجليزي)</label><input class="form-control" id="erpJrnDescEn" placeholder="Description in English..."></div>' +
+      '</div>' +
+      // Toolbar
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 20px;border-bottom:1px solid #e5e7eb;">' +
+        '<div style="display:flex;align-items:center;gap:6px;">' +
+          '<span style="font-size:14px;font-weight:800;color:#1e293b;">تفاصيل القيد اليومي</span>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;">' +
+          '<button onclick="erpAddJrnLine()" style="width:30px;height:30px;border-radius:50%;border:none;background:#0ea5e9;color:#fff;cursor:pointer;font-size:14px;" title="إضافة سطر"><i class="fas fa-plus"></i></button>' +
+          '<label for="erpExcelUpload" style="width:30px;height:30px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;color:#16a34a;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;" title="استيراد من Excel"><i class="fas fa-file-excel"></i></label>' +
+          '<input type="file" id="erpExcelUpload" accept=".xlsx,.xls,.csv" onchange="erpImportExcel(this)" style="display:none;">' +
+        '</div>' +
+      '</div>' +
+      // Table
+      '<div style="overflow-x:auto;">' +
+        '<table style="width:100%;border-collapse:collapse;font-size:13px;" id="erpJrnTable">' +
+          '<thead><tr style="background:#f8fafc;border-bottom:2px solid #e5e7eb;">' +
+            '<th style="padding:10px 8px;text-align:right;font-weight:700;color:#475569;white-space:nowrap;">رقم الحساب</th>' +
+            '<th style="padding:10px 8px;text-align:right;font-weight:700;color:#475569;white-space:nowrap;">اسم الحساب</th>' +
+            '<th style="padding:10px 8px;text-align:right;font-weight:700;color:#475569;white-space:nowrap;width:120px;">مدين</th>' +
+            '<th style="padding:10px 8px;text-align:right;font-weight:700;color:#475569;white-space:nowrap;width:120px;">دائن</th>' +
+            '<th style="padding:10px 8px;text-align:right;font-weight:700;color:#475569;">الوصف</th>' +
+            '<th style="padding:10px 8px;text-align:right;font-weight:700;color:#475569;white-space:nowrap;">مركز التكلفة</th>' +
+            '<th style="padding:10px 4px;text-align:center;font-weight:700;color:#475569;width:50px;">خيارات</th>' +
+          '</tr></thead>' +
+          '<tbody id="erpJrnLines"></tbody>' +
+          '<tfoot><tr style="background:#f1f5f9;border-top:2px solid #cbd5e1;">' +
+            '<td colspan="2" style="padding:10px 8px;font-weight:800;color:#1e293b;">مجموع</td>' +
+            '<td style="padding:10px 8px;"><input class="form-control" id="erpJrnTotalD" readonly style="background:#ecfdf5;color:#166534;font-weight:900;text-align:center;border:none;" value="0.00"></td>' +
+            '<td style="padding:10px 8px;"><input class="form-control" id="erpJrnTotalC" readonly style="background:#fef2f2;color:#991b1b;font-weight:900;text-align:center;border:none;" value="0.00"></td>' +
+            '<td style="padding:10px 8px;font-weight:700;color:#64748b;">الفرق</td>' +
+            '<td style="padding:10px 8px;"><input class="form-control" id="erpJrnDiff" readonly style="font-weight:900;text-align:center;border:none;" value="0.00"></td>' +
+            '<td></td>' +
+          '</tr></tfoot>' +
+        '</table>' +
+      '</div>' +
+      // Paste hint
+      '<div style="padding:8px 20px;background:#fffbeb;border-top:1px solid #fde68a;font-size:11px;color:#92400e;">' +
+        '<i class="fas fa-lightbulb" style="margin-left:4px;"></i> نسخ من Excel: حدد الأعمدة (رقم الحساب | مدين | دائن | الوصف) ثم الصق هنا بـ Ctrl+V' +
+      '</div>' +
+      // Action buttons
+      '<div style="display:flex;align-items:center;gap:8px;padding:16px 20px;border-top:1px solid #e5e7eb;background:#f8fafc;border-radius:0 0 12px 12px;">' +
+        '<button onclick="erpSaveJournal(false)" style="padding:10px 28px;border-radius:8px;border:none;background:#1e40af;color:#fff;font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-save" style="margin-left:6px;"></i> حفظ</button>' +
+        '<button onclick="erpSaveJournal(true)" style="padding:10px 20px;border-radius:8px;border:2px solid #1e40af;background:#fff;color:#1e40af;font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-plus" style="margin-left:6px;"></i> حفظ و جديد</button>' +
+        '<button onclick="erpSaveAndPost()" style="padding:10px 20px;border-radius:8px;border:none;background:#ef4444;color:#fff;font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-check-double" style="margin-left:6px;"></i> حفظ وترحيل</button>' +
+        '<button onclick="erpLoadJournals()" style="padding:10px 20px;border-radius:8px;border:2px solid #e5e7eb;background:#fff;color:#475569;font-weight:800;font-size:14px;cursor:pointer;">إلغاء</button>' +
+      '</div>' +
+    '</div>';
 
   // Add 2 initial lines
   erpAddJrnLine();
   erpAddJrnLine();
+
+  // Setup paste listener on the whole section (catches Ctrl+V anywhere in the form)
+  var section = document.getElementById('erpGLJournals');
+  if (section) section.addEventListener('paste', erpPasteFromExcel);
 }
 
-function erpAddJrnLine() {
+function erpAddJrnLine(prefill) {
   _jrnLineCounter++;
-  var leafAccounts = _getLeafAccounts();
   var lineId = 'jln' + _jrnLineCounter;
-  var div = document.createElement('div');
-  div.className = 'jrn-entry-card';
-  div.id = lineId;
-  div.innerHTML =
-    '<div class="jec-header">' +
-      '<span class="jec-num">' + _jrnLineCounter + '</span>' +
-      '<button class="btn-icon" style="color:#ef4444;" onclick="erpRemoveJrnLine(\'' + lineId + '\')" title="حذف"><i class="fas fa-trash-alt"></i></button>' +
-    '</div>' +
-    '<div class="jec-account-wrap">' +
-      '<input type="text" class="form-control jec-search" placeholder="ابحث عن حساب..." oninput="erpFilterAccounts(this)">' +
-      '<select class="form-control jec-acc" onchange="erpOnAccChange(this)">' +
-        '<option value="">— اختر حساب —</option>' +
-        leafAccounts.map(function(a) {
-          var typeLabels = {asset:'أصول',liability:'التزامات',equity:'ملكية',revenue:'إيرادات',expense:'مصروفات'};
-          return '<option value="' + a.id + '" data-code="' + a.code + '" data-name="' + (a.nameAr||'') + '" data-type="' + a.type + '">' + a.code + ' — ' + (a.nameAr||'') + ' (' + (typeLabels[a.type]||'') + ')</option>';
-        }).join('') +
-      '</select>' +
-      '<div class="jec-path"></div>' +
-    '</div>' +
-    '<div class="jec-amounts">' +
-      '<div><label>مدين</label><input type="number" class="form-control jec-debit" step="0.01" min="0" placeholder="0.00" oninput="erpCalcJrnBalance()"></div>' +
-      '<div><label>دائن</label><input type="number" class="form-control jec-credit" step="0.01" min="0" placeholder="0.00" oninput="erpCalcJrnBalance()"></div>' +
-      '<div style="flex:2;"><label>وصف السطر</label><input type="text" class="form-control jec-desc" placeholder="اختياري..."></div>' +
-    '</div>';
+  var tr = document.createElement('tr');
+  tr.id = lineId;
+  tr.style.borderBottom = '1px solid #f1f5f9';
+  var p = prefill || {};
+  tr.innerHTML =
+    '<td style="padding:6px 4px;position:relative;">' +
+      '<input type="text" class="form-control jec-code" placeholder="رقم أو اسم..." value="' + (p.code||'') + '" style="font-size:13px;padding:8px;" oninput="erpSearchAccount(this)" onfocus="erpSearchAccount(this)">' +
+      '<input type="hidden" class="jec-acc-id" value="' + (p.id||'') + '">' +
+      '<div class="jec-dropdown" style="display:none;position:absolute;top:100%;right:0;left:0;z-index:100;background:#fff;border:1px solid #e5e7eb;border-radius:8px;max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1);"></div>' +
+    '</td>' +
+    '<td style="padding:6px 4px;"><input type="text" class="form-control jec-acc-name" placeholder="" value="' + (p.name||'') + '" readonly style="font-size:13px;padding:8px;background:#f8fafc;color:#334155;"></td>' +
+    '<td style="padding:6px 4px;"><input type="number" class="form-control jec-debit" step="0.01" min="0" placeholder="0" value="' + (p.debit||'') + '" style="font-size:13px;padding:8px;text-align:center;" oninput="erpCalcJrnBalance()"></td>' +
+    '<td style="padding:6px 4px;"><input type="number" class="form-control jec-credit" step="0.01" min="0" placeholder="0" value="' + (p.credit||'') + '" style="font-size:13px;padding:8px;text-align:center;" oninput="erpCalcJrnBalance()"></td>' +
+    '<td style="padding:6px 4px;"><input type="text" class="form-control jec-desc" placeholder="" value="' + (p.desc||'') + '" style="font-size:13px;padding:8px;"></td>' +
+    '<td style="padding:6px 4px;"><input type="text" class="form-control jec-cc" placeholder="" style="font-size:13px;padding:8px;background:#f8fafc;"></td>' +
+    '<td style="padding:6px 4px;text-align:center;"><button style="width:28px;height:28px;border-radius:6px;border:1px solid #fecaca;background:#fee2e2;color:#ef4444;cursor:pointer;font-size:11px;" onclick="erpRemoveJrnLine(\'' + lineId + '\')" title="حذف"><i class="fas fa-trash"></i></button></td>';
+  document.getElementById('erpJrnLines').appendChild(tr);
 
-  document.getElementById('erpJrnLines').appendChild(div);
+  // Auto-match account if prefilled
+  if (p.code && !p.id) _matchAccountByCode(tr, p.code);
+}
+
+function _matchAccountByCode(tr, code) {
+  var leafs = _getLeafAccounts();
+  var codeTrim = (code+'').trim();
+  var match = leafs.find(function(a) { return a.code === codeTrim; }) ||
+              leafs.find(function(a) { return (a.nameAr||'').indexOf(codeTrim) !== -1; }) ||
+              leafs.find(function(a) { return (a.code||'').indexOf(codeTrim) !== -1; });
+  if (match) {
+    tr.querySelector('.jec-acc-id').value = match.id;
+    tr.querySelector('.jec-acc-name').value = match.nameAr || '';
+    tr.querySelector('.jec-code').value = match.code;
+    tr.querySelector('.jec-code').style.color = '#166534';
+  } else {
+    tr.querySelector('.jec-code').style.color = '#dc2626';
+  }
 }
 
 window.erpRemoveJrnLine = function(lineId) {
@@ -1137,116 +1193,135 @@ window.erpRemoveJrnLine = function(lineId) {
   erpCalcJrnBalance();
 };
 
-// Searchable account filter
-window.erpFilterAccounts = function(input) {
-  var val = input.value.toLowerCase();
-  var select = input.parentElement.querySelector('.jec-acc');
-  var options = select.querySelectorAll('option');
-  var visibleCount = 0;
-  options.forEach(function(opt) {
-    if (!opt.value) { opt.style.display = ''; return; }
-    var text = opt.textContent.toLowerCase();
-    var show = text.indexOf(val) !== -1;
-    opt.style.display = show ? '' : 'none';
-    if (show) visibleCount++;
-  });
-  // Show dropdown only when searching
-  if (val && visibleCount > 0) {
-    select.size = Math.min(6, visibleCount + 1);
-    select.style.display = 'block';
-  } else if (!val) {
-    select.size = 0;
-    select.removeAttribute('size');
-    select.style.display = '';
-  }
+// Account search dropdown for table rows
+window.erpSearchAccount = function(input) {
+  var val = input.value.toLowerCase().trim();
+  var dd = input.parentElement.querySelector('.jec-dropdown');
+  if (!val || val.length < 1) { dd.style.display = 'none'; return; }
+  var leafs = _getLeafAccounts();
+  var matches = leafs.filter(function(a) {
+    return (a.code||'').indexOf(val) !== -1 || (a.nameAr||'').toLowerCase().indexOf(val) !== -1 || (a.nameEn||'').toLowerCase().indexOf(val) !== -1;
+  }).slice(0, 10);
+  if (!matches.length) { dd.style.display = 'none'; return; }
+  dd.innerHTML = matches.map(function(a) {
+    return '<div style="padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;" onmousedown="erpPickAccount(this,\'' + a.id + '\',\'' + a.code + '\',\'' + (a.nameAr||'').replace(/'/g,'') + '\')">' +
+      '<span style="font-weight:700;color:#0f172a;">' + a.code + '</span><span style="color:#64748b;">' + (a.nameAr||'') + '</span></div>';
+  }).join('');
+  dd.style.display = 'block';
 };
 
-// Close dropdown on click outside
+window.erpPickAccount = function(el, id, code, name) {
+  var tr = el.closest('tr');
+  tr.querySelector('.jec-acc-id').value = id;
+  tr.querySelector('.jec-code').value = code;
+  tr.querySelector('.jec-code').style.color = '#166534';
+  tr.querySelector('.jec-acc-name').value = name;
+  tr.querySelector('.jec-dropdown').style.display = 'none';
+};
+
+// Close dropdowns on click outside
 document.addEventListener('click', function(e) {
-  if (!e.target.closest('.jec-account-wrap')) {
-    document.querySelectorAll('.jec-acc[size]').forEach(function(s) {
-      s.removeAttribute('size');
-    });
+  if (!e.target.closest('.jec-dropdown') && !e.target.classList.contains('jec-code')) {
+    document.querySelectorAll('.jec-dropdown').forEach(function(d) { d.style.display = 'none'; });
   }
 });
 
-// Show account path on selection
-window.erpOnAccChange = function(select) {
-  var pathEl = select.parentElement.querySelector('.jec-path');
-  var searchEl = select.parentElement.querySelector('.jec-search');
-  // Close dropdown
-  select.removeAttribute('size');
-
-  if (!select.value) { pathEl.innerHTML = ''; if (searchEl) searchEl.value = ''; return; }
-  var opt = select.options[select.selectedIndex];
-  var path = _getAccountPath(select.value);
-  var typeLabels = {asset:'أصول',liability:'التزامات',equity:'ملكية',revenue:'إيرادات',expense:'مصروفات'};
-  var typeBadge = {asset:'#3b82f6',liability:'#ef4444',equity:'#8b5cf6',revenue:'#16a34a',expense:'#f59e0b'};
-  var type = opt.dataset.type || '';
-  pathEl.innerHTML = '<i class="fas fa-sitemap" style="color:#94a3b8;margin-left:4px;"></i> ' + path +
-    ' <span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:800;background:' + (typeBadge[type]||'#e2e8f0') + '18;color:' + (typeBadge[type]||'#64748b') + ';">' + (typeLabels[type]||type) + '</span>';
-  // Update search field with selected account
-  if (searchEl) { searchEl.value = opt.dataset.code + ' — ' + (opt.dataset.name||''); }
-};
-
 function erpCalcJrnBalance() {
   var totalD = 0, totalC = 0;
-  document.querySelectorAll('.jec-debit').forEach(function(el) { totalD += Number(el.value) || 0; });
-  document.querySelectorAll('.jec-credit').forEach(function(el) { totalC += Number(el.value) || 0; });
-  var bal = document.getElementById('erpJrnBalanceInfo');
-  var balanced = Math.abs(totalD - totalC) < 0.01;
-  bal.innerHTML = 'مدين: <strong style="color:#16a34a;">' + totalD.toFixed(2) + '</strong> | دائن: <strong style="color:#ef4444;">' + totalC.toFixed(2) + '</strong> | ' +
-    '<span style="display:inline-block;padding:2px 10px;border-radius:8px;font-weight:800;font-size:12px;background:' + (balanced?'#dcfce7':'#fee2e2') + ';color:' + (balanced?'#166534':'#991b1b') + ';">' +
-    (balanced?'<i class="fas fa-check-circle"></i> متوازن':'<i class="fas fa-exclamation-triangle"></i> غير متوازن — فرق: ' + Math.abs(totalD - totalC).toFixed(2)) + '</span>';
+  document.querySelectorAll('#erpJrnLines .jec-debit').forEach(function(el) { totalD += Number(el.value) || 0; });
+  document.querySelectorAll('#erpJrnLines .jec-credit').forEach(function(el) { totalC += Number(el.value) || 0; });
+  var diff = Math.abs(totalD - totalC);
+  var dEl = document.getElementById('erpJrnTotalD'); if (dEl) dEl.value = totalD.toFixed(2);
+  var cEl = document.getElementById('erpJrnTotalC'); if (cEl) cEl.value = totalC.toFixed(2);
+  var diffEl = document.getElementById('erpJrnDiff');
+  if (diffEl) {
+    diffEl.value = diff.toFixed(2);
+    diffEl.style.background = diff < 0.01 ? '#dcfce7' : '#fee2e2';
+    diffEl.style.color = diff < 0.01 ? '#166534' : '#991b1b';
+  }
 }
 
-function erpSaveJournal() {
-  var lines = document.querySelectorAll('.jrn-entry-card');
+function _gatherJrnEntries() {
+  var rows = document.querySelectorAll('#erpJrnLines tr');
   var entries = [];
-  lines.forEach(function(line) {
-    var sel = line.querySelector('.jec-acc');
-    if (!sel || !sel.value) return;
-    var opt = sel.options[sel.selectedIndex];
-    var debit = Number(line.querySelector('.jec-debit').value) || 0;
-    var credit = Number(line.querySelector('.jec-credit').value) || 0;
-    var desc = line.querySelector('.jec-desc') ? line.querySelector('.jec-desc').value : '';
+  rows.forEach(function(row) {
+    var accId = row.querySelector('.jec-acc-id');
+    if (!accId || !accId.value) return;
+    var debit = Number(row.querySelector('.jec-debit').value) || 0;
+    var credit = Number(row.querySelector('.jec-credit').value) || 0;
+    var desc = row.querySelector('.jec-desc') ? row.querySelector('.jec-desc').value : '';
+    var code = row.querySelector('.jec-code') ? row.querySelector('.jec-code').value : '';
+    var name = row.querySelector('.jec-acc-name') ? row.querySelector('.jec-acc-name').value : '';
     if (debit > 0 || credit > 0) {
-      entries.push({
-        accountId: sel.value,
-        accountCode: opt.dataset.code || '',
-        accountName: opt.dataset.name || '',
-        debit: debit, credit: credit,
-        description: desc
-      });
+      entries.push({ accountId: accId.value, accountCode: code, accountName: name, debit: debit, credit: credit, description: desc });
     }
   });
+  return entries;
+}
+
+function erpSaveJournal(andNew) {
+  var entries = _gatherJrnEntries();
   if (entries.length < 2) return showToast('يجب إدخال بندين على الأقل', true);
   var desc = document.getElementById('erpJrnDesc').value;
-  if (!desc) return showToast('عنوان القيد مطلوب', true);
+  if (!desc) return showToast('الوصف مطلوب', true);
 
   var totalD = 0, totalC = 0;
   entries.forEach(function(e) { totalD += e.debit; totalC += e.credit; });
-  if (Math.abs(totalD - totalC) > 0.01) return showToast('القيد غير متوازن — مدين: ' + totalD.toFixed(2) + ' | دائن: ' + totalC.toFixed(2), true);
+  if (Math.abs(totalD - totalC) > 0.01) return showToast('القيد غير متوازن — فرق: ' + Math.abs(totalD - totalC).toFixed(2), true);
+
+  var movType = (document.getElementById('erpJrnMovType')||{}).value || 'general';
+  var isOpening = _jrnSelectedType === 'OB' || movType === 'opening';
 
   loader(true);
   window._apiBridge.withSuccessHandler(function(res) {
     loader(false);
-    if (res.success) { showToast('تم إنشاء القيد: ' + res.journalNumber); erpCloseModal(); erpLoadJournals(); }
-    else showToast(res.error, true);
-  var isOpening = document.getElementById('erpJrnIsOpening') && document.getElementById('erpJrnIsOpening').checked;
-  var ccSel = document.getElementById('erpJrnCC');
-  var costCenterId = ccSel ? ccSel.value : '';
-  var costCenterName = ccSel && ccSel.value ? (ccSel.options[ccSel.selectedIndex].getAttribute('data-name')||'') : '';
+    if (res.success) {
+      showToast('تم إنشاء القيد: ' + res.journalNumber);
+      if (andNew) { _jrnLineCounter = 0; _renderJournalForm(); }
+      else erpLoadJournals();
+    } else showToast(res.error, true);
   }).createJournalEntry({
     journalDate: document.getElementById('erpJrnDate').value,
     referenceType: isOpening ? 'opening' : 'manual',
     referenceId: '',
     description: desc,
-    notes: document.getElementById('erpJrnRef').value,
+    notes: (document.getElementById('erpJrnDescEn')||{}).value || '',
     attachment: window._jrnAttachmentData || '',
     isOpening: isOpening,
-    costCenterId: costCenterId,
-    costCenterName: costCenterName,
+    entries: entries
+  }, currentUser);
+}
+
+function erpSaveAndPost() {
+  var entries = _gatherJrnEntries();
+  if (entries.length < 2) return showToast('يجب إدخال بندين على الأقل', true);
+  var desc = document.getElementById('erpJrnDesc').value;
+  if (!desc) return showToast('الوصف مطلوب', true);
+  var totalD = 0, totalC = 0;
+  entries.forEach(function(e) { totalD += e.debit; totalC += e.credit; });
+  if (Math.abs(totalD - totalC) > 0.01) return showToast('القيد غير متوازن', true);
+  if (!confirm('حفظ وترحيل القيد؟ سيتم تحديث أرصدة الحسابات.')) return;
+
+  var movType = (document.getElementById('erpJrnMovType')||{}).value || 'general';
+  var isOpening = _jrnSelectedType === 'OB' || movType === 'opening';
+
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(res) {
+    if (!res.success) { loader(false); return showToast(res.error, true); }
+    // Approve then post
+    window._apiBridge.withSuccessHandler(function() {
+      window._apiBridge.withSuccessHandler(function() {
+        loader(false);
+        showToast('تم حفظ وترحيل القيد: ' + res.journalNumber);
+        erpLoadJournals();
+      }).postGLJournal(res.id, currentUser);
+    }).approveGLJournal(res.id, currentUser);
+  }).createJournalEntry({
+    journalDate: document.getElementById('erpJrnDate').value,
+    referenceType: isOpening ? 'opening' : 'manual',
+    description: desc,
+    notes: (document.getElementById('erpJrnDescEn')||{}).value || '',
+    isOpening: isOpening,
     entries: entries
   }, currentUser);
 }
@@ -1275,6 +1350,124 @@ window.erpPickAttachment = function(input) {
     }
   };
   r.readAsDataURL(f);
+};
+
+// ─── Excel Paste (Ctrl+V) ───
+function erpPasteFromExcel(e) {
+  var text = (e.clipboardData || window.clipboardData).getData('text');
+  if (!text || text.indexOf('\t') === -1) return; // Not tabular data
+  e.preventDefault();
+  var lines = text.split('\n').filter(function(l) { return l.trim(); });
+  if (!lines.length) return;
+  // Clear existing empty rows
+  var tbody = document.getElementById('erpJrnLines');
+  var existingRows = tbody.querySelectorAll('tr');
+  var hasData = false;
+  existingRows.forEach(function(r) {
+    var d = Number(r.querySelector('.jec-debit').value)||0;
+    var c = Number(r.querySelector('.jec-credit').value)||0;
+    if (d > 0 || c > 0) hasData = true;
+  });
+  if (!hasData) { tbody.innerHTML = ''; _jrnLineCounter = 0; }
+  var added = 0;
+  lines.forEach(function(line) {
+    var cols = line.split('\t').map(function(c) { return c.trim(); });
+    if (cols.length < 2) return;
+    // Try to detect column order: account code/name, debit, credit, description
+    var code = cols[0] || '';
+    var debit = '', credit = '', desc = '';
+    if (cols.length >= 4) { debit = cols[1]; credit = cols[2]; desc = cols[3]; }
+    else if (cols.length === 3) { debit = cols[1]; credit = cols[2]; }
+    else if (cols.length === 2) { debit = cols[1]; }
+    // Clean numbers
+    debit = parseFloat((debit+'').replace(/[^0-9.\-]/g,'')) || '';
+    credit = parseFloat((credit+'').replace(/[^0-9.\-]/g,'')) || '';
+    erpAddJrnLine({ code: code, debit: debit, credit: credit, desc: desc });
+    added++;
+  });
+  erpCalcJrnBalance();
+  showToast('تم لصق ' + added + ' سطر من Excel');
+}
+
+// ─── Excel File Import ───
+window.erpImportExcel = function(input) {
+  var f = input.files[0]; if (!f) return;
+  var ext = f.name.split('.').pop().toLowerCase();
+  if (ext === 'csv') {
+    var reader = new FileReader();
+    reader.onload = function(e) { _parseExcelData(e.target.result, 'csv'); };
+    reader.readAsText(f);
+  } else {
+    // Load SheetJS from CDN if not available
+    if (typeof XLSX === 'undefined') {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js';
+      s.onload = function() { _readXlsx(f); };
+      document.head.appendChild(s);
+    } else { _readXlsx(f); }
+  }
+  input.value = '';
+};
+
+function _readXlsx(f) {
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var wb = XLSX.read(e.target.result, { type: 'array' });
+    var ws = wb.Sheets[wb.SheetNames[0]];
+    var csv = XLSX.utils.sheet_to_csv(ws);
+    _parseExcelData(csv, 'csv');
+  };
+  reader.readAsArrayBuffer(f);
+}
+
+function _parseExcelData(text, type) {
+  var sep = type === 'csv' ? ',' : '\t';
+  var lines = text.split('\n').filter(function(l) { return l.trim(); });
+  if (!lines.length) return showToast('ملف فارغ', true);
+  // Skip header row if first cell looks like a header
+  var first = lines[0].split(sep)[0].trim().toLowerCase();
+  if (first === 'account' || first === 'رقم الحساب' || first === 'الحساب' || first === 'code') lines.shift();
+  var tbody = document.getElementById('erpJrnLines');
+  tbody.innerHTML = ''; _jrnLineCounter = 0;
+  var added = 0;
+  lines.forEach(function(line) {
+    var cols = line.split(sep).map(function(c) { return c.trim().replace(/^"|"$/g, ''); });
+    if (cols.length < 2) return;
+    var code = cols[0]||'';
+    var debit = parseFloat((cols[1]||'').replace(/[^0-9.\-]/g,'')) || '';
+    var credit = parseFloat((cols[2]||'').replace(/[^0-9.\-]/g,'')) || '';
+    var desc = cols[3] || '';
+    erpAddJrnLine({ code: code, debit: debit, credit: credit, desc: desc });
+    added++;
+  });
+  erpCalcJrnBalance();
+  showToast('تم استيراد ' + added + ' سطر من الملف');
+}
+
+// ─── Journal Type Picker ───
+window.erpOpenJrnTypePicker = function() {
+  var html = '<div style="position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:6000;display:flex;align-items:center;justify-content:center;" id="jrnTypePicker" onclick="if(event.target===this)this.remove()">' +
+    '<div style="background:#fff;border-radius:16px;padding:24px;width:400px;max-width:90%;">' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:16px;"><h3 style="margin:0;">فضلا اختر يومية</h3><button onclick="document.getElementById(\'jrnTypePicker\').remove()" style="border:none;background:none;font-size:18px;cursor:pointer;">&times;</button></div>' +
+      '<table style="width:100%;border-collapse:collapse;">' +
+        '<thead><tr style="border-bottom:2px solid #e5e7eb;"><th style="padding:10px;text-align:right;">تعريف</th><th style="padding:10px;text-align:right;">الإسم</th></tr></thead>' +
+        '<tbody>' + _jrnTypes.map(function(t) {
+          return '<tr style="border-bottom:1px solid #f1f5f9;cursor:pointer;" onclick="erpSelectJrnType(\'' + t.code + '\',\'' + t.name + '\')" onmouseover="this.style.background=\'#f1f5f9\'" onmouseout="this.style.background=\'\'">' +
+            '<td style="padding:12px;font-weight:700;">' + t.code + '</td><td style="padding:12px;">' + t.name + '</td></tr>';
+        }).join('') +
+        '</tbody></table>' +
+    '</div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+};
+
+window.erpSelectJrnType = function(code, name) {
+  _jrnSelectedType = code;
+  var el = document.getElementById('erpJrnTypeName'); if (el) el.value = name;
+  var picker = document.getElementById('jrnTypePicker'); if (picker) picker.remove();
+  // Auto-set movement type for opening
+  if (code === 'OB') {
+    var mov = document.getElementById('erpJrnMovType'); if (mov) mov.value = 'opening';
+  }
 };
 
 // ═══════════════════════════════════════

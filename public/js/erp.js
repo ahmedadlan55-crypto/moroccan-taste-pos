@@ -4622,7 +4622,41 @@ function hrImportAttendance() {
   document.getElementById('erpModal').classList.remove('hidden');
 }
 
+function hrAddManualAttendance() {
+  // Load employees for dropdown
+  window._apiBridge.withSuccessHandler(function(emps) {
+    var empOpts = (emps||[]).map(function(e) { return '<option value="' + e.id + '">' + (e.fullName||e.employeeNumber) + '</option>'; }).join('');
+    document.getElementById('erpModalTitle').textContent = 'تسجيل حضور يدوي';
+    document.getElementById('erpModalBody').innerHTML =
+      '<div class="form-row"><label>الموظف *</label><select class="form-control" id="hrManAttEmp">' + empOpts + '</select></div>' +
+      '<div class="form-row"><label>التاريخ *</label><input type="date" class="form-control" id="hrManAttDate" value="' + new Date().toISOString().split('T')[0] + '"></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>وقت الحضور</label><input type="time" class="form-control" id="hrManAttIn" value="08:00"></div>' +
+        '<div class="form-row"><label>وقت الانصراف</label><input type="time" class="form-control" id="hrManAttOut" value="17:00"></div>' +
+      '</div>' +
+      '<div class="form-row"><label>ملاحظات</label><input class="form-control" id="hrManAttNotes" placeholder="اختياري"></div>';
+    document.getElementById('erpModalSaveBtn').onclick = function() {
+      var empId = document.getElementById('hrManAttEmp').value;
+      var attDate = document.getElementById('hrManAttDate').value;
+      var clockIn = document.getElementById('hrManAttIn').value;
+      var clockOut = document.getElementById('hrManAttOut').value;
+      if (!empId || !attDate) return showToast('اختر الموظف والتاريخ', true);
+      loader(true);
+      window._apiBridge.withSuccessHandler(function(r) {
+        loader(false);
+        if (r.success) { showToast('تم تسجيل الحضور'); erpCloseModal(); hrLoadAttendance(); }
+        else showToast(r.error, true);
+      }).clockHrAttendance({
+        employeeId: empId, date: attDate, clockIn: clockIn, clockOut: clockOut,
+        notes: document.getElementById('hrManAttNotes').value, source: 'manual'
+      });
+    };
+    document.getElementById('erpModal').classList.remove('hidden');
+  }).getHrEmployees({});
+}
+
 // ─── Leave Requests ───
+var _hrLeaveRequests = [];
 function hrLoadLeaveRequests() {
   var tb = document.getElementById('hrLeaveBody');
   tb.innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
@@ -4630,6 +4664,7 @@ function hrLoadLeaveRequests() {
   var st = (document.getElementById('hrLeaveStatus')||{}).value;
   if (st) params.status = st;
   window._apiBridge.withSuccessHandler(function(list) {
+    _hrLeaveRequests = list || [];
     if (!list||!list.length) { tb.innerHTML='<tr><td colspan="8" class="empty-msg">لا توجد طلبات</td></tr>'; return; }
     var statusLabels = {pending:'معلّقة',branch_approved:'معتمد مدير',hr_approved:'معتمد HR',rejected:'مرفوضة',cancelled:'ملغاة'};
     var statusColors = {pending:'yellow',branch_approved:'blue',hr_approved:'green',rejected:'red',cancelled:'gray'};

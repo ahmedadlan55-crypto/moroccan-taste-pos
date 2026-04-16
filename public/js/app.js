@@ -3442,10 +3442,20 @@ function viewReceiveDetail(purchaseId) {
 }
 
 function loadDashTransfers() {
-  q("#tbTransfers").innerHTML = "<tr><td colspan='7' style='text-align:center; padding:30px;'>قريباً: يتم برمجة نظام التحويلات بين الفروع...</td></tr>";
+  // Redirect to ERP multi-warehouse transfers
+  if (typeof erpNav === 'function') {
+    erpNav('erpMultiWarehouses');
+    // Switch to transfers tab
+    setTimeout(function() { if (typeof whSwitchTab === 'function') whSwitchTab('transfers'); }, 300);
+  } else {
+    q("#tbTransfers").innerHTML = "<tr><td colspan='7' style='text-align:center;padding:20px;'>استخدم قسم <b>إدارة المستودعات</b> في نظام ERP للتحويلات</td></tr>";
+  }
 }
 function openTransferModal() {
-  showToast("نظام التحويلات تحت التطوير", true);
+  if (typeof erpNav === 'function') {
+    erpNav('erpMultiWarehouses');
+    setTimeout(function() { if (typeof erpOpenTransferModal === 'function') erpOpenTransferModal(); }, 300);
+  } else showToast('افتح إدارة المستودعات من نظام ERP', true);
 }
 
 // =========================================

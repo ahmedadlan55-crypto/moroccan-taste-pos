@@ -18,6 +18,7 @@
           try { role = (JSON.parse(s).role || '').toLowerCase(); } catch(e) {}
           if (role === 'cashier') { window.location.replace('/pos/'); return; }
           if (role === 'custody') { window.location.replace('/custody/'); return; }
+          if (role === 'employee') { window.location.replace('/employee/'); return; }
           // Admin/manager — add has-session class to <html> so CSS hides login immediately
           document.documentElement.className += ' has-session';
         }

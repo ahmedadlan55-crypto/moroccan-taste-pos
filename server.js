@@ -150,7 +150,15 @@ app.all('/api/*', notFoundHandler);
 // Centralized error handler (MUST be last middleware)
 app.use(errorHandler);
 
-// SPA fallback
+// Standalone apps — serve their own index.html
+app.get('/employee', (req, res) => res.sendFile(path.join(__dirname, 'public', 'employee', 'index.html')));
+app.get('/employee/*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'employee', 'index.html')));
+app.get('/pos', (req, res) => res.sendFile(path.join(__dirname, 'public', 'pos', 'index.html')));
+app.get('/pos/*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'pos', 'index.html')));
+app.get('/custody', (req, res) => res.sendFile(path.join(__dirname, 'public', 'custody', 'index.html')));
+app.get('/custody/*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'custody', 'index.html')));
+
+// SPA fallback — main admin app
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });

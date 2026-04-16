@@ -46,6 +46,7 @@ app.use('/api/settings', require('./routes/settings'));
 app.use('/api/erp', require('./routes/erp'));
 app.use('/api/custody', require('./routes/custody'));
 app.use('/api/workflow', require('./routes/workflow'));
+app.use('/api/hr', require('./routes/hr'));
 
 // Catch-all for unimplemented API routes — return JSON instead of HTML
 app.all('/api/*', (req, res) => {
@@ -678,6 +679,266 @@ async function runMigrations() {
 
   // Extend custody_expenses status ENUM to include override_pending + returned
   try { await db.query("ALTER TABLE custody_expenses MODIFY COLUMN status ENUM('pending','approved','rejected','posted','override_pending','returned') DEFAULT 'pending'"); } catch(e) {}
+
+  // ═══════════════════════════════════════
+  // HR MODULE TABLES (نظام الموارد البشرية)
+  // ═══════════════════════════════════════
+
+  await createTableIfMissing('hr_departments', `
+    CREATE TABLE hr_departments (
+      id VARCHAR(50) PRIMARY KEY,
+      code VARCHAR(20) NOT NULL,
+      name VARCHAR(200) NOT NULL,
+      branch_id VARCHAR(50),
+      brand_id VARCHAR(50),
+      manager_employee_id VARCHAR(50),
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('hr_employees', `
+    CREATE TABLE hr_employees (
+      id VARCHAR(50) PRIMARY KEY,
+      employee_number VARCHAR(20) NOT NULL UNIQUE,
+      first_name VARCHAR(100) NOT NULL,
+      last_name VARCHAR(100),
+      full_name VARCHAR(200),
+      national_id VARCHAR(20),
+      passport_number VARCHAR(20),
+      iqama_number VARCHAR(20),
+      phone VARCHAR(20),
+      email VARCHAR(200),
+      gender ENUM('male','female') DEFAULT 'male',
+      date_of_birth DATE,
+      nationality VARCHAR(100),
+      branch_id VARCHAR(50),
+      brand_id VARCHAR(50),
+      department_id VARCHAR(50),
+      position_id VARCHAR(50),
+      job_title VARCHAR(200),
+      employment_type ENUM('full_time','part_time','hourly','contract') DEFAULT 'full_time',
+      salary_type ENUM('monthly','hourly') DEFAULT 'monthly',
+      basic_salary DECIMAL(12,2) DEFAULT 0,
+      hourly_rate DECIMAL(8,2) DEFAULT 0,
+      housing_allowance DECIMAL(12,2) DEFAULT 0,
+      transport_allowance DECIMAL(12,2) DEFAULT 0,
+      other_allowance DECIMAL(12,2) DEFAULT 0,
+      hire_date DATE,
+      contract_end_date DATE,
+      probation_end_date DATE,
+      status ENUM('active','suspended','terminated','on_leave') DEFAULT 'active',
+      termination_date DATE,
+      termination_reason TEXT,
+      bank_name VARCHAR(200),
+      bank_account VARCHAR(50),
+      bank_iban VARCHAR(50),
+      emergency_contact_name VARCHAR(200),
+      emergency_contact_phone VARCHAR(20),
+      emergency_contact_relation VARCHAR(100),
+      linked_user_id INT,
+      linked_username VARCHAR(100),
+      photo LONGTEXT,
+      notes TEXT,
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_emp_branch (branch_id),
+      INDEX idx_emp_brand (brand_id),
+      INDEX idx_emp_dept (department_id),
+      INDEX idx_emp_status (status)
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('hr_work_schedules', `
+    CREATE TABLE hr_work_schedules (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      branch_id VARCHAR(50),
+      work_start TIME NOT NULL DEFAULT '08:00:00',
+      work_end TIME NOT NULL DEFAULT '17:00:00',
+      break_minutes INT DEFAULT 60,
+      work_days VARCHAR(20) DEFAULT '0,1,2,3,4',
+      grace_minutes INT DEFAULT 15,
+      is_default BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('hr_attendance', `
+    CREATE TABLE hr_attendance (
+      id VARCHAR(50) PRIMARY KEY,
+      employee_id VARCHAR(50) NOT NULL,
+      attendance_date DATE NOT NULL,
+      clock_in DATETIME,
+      clock_out DATETIME,
+      total_hours DECIMAL(5,2) DEFAULT 0,
+      late_minutes INT DEFAULT 0,
+      early_leave_minutes INT DEFAULT 0,
+      overtime_minutes INT DEFAULT 0,
+      status ENUM('present','absent','leave','holiday','weekend') DEFAULT 'present',
+      source ENUM('fingerprint','pos','app','manual') DEFAULT 'manual',
+      device_id VARCHAR(100),
+      geo_lat DECIMAL(10,7),
+      geo_lng DECIMAL(10,7),
+      notes TEXT,
+      modified_by VARCHAR(100),
+      modified_reason TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_emp_date (employee_id, attendance_date),
+      INDEX idx_att_date (attendance_date),
+      INDEX idx_att_emp (employee_id)
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('hr_leave_types', `
+    CREATE TABLE hr_leave_types (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      code VARCHAR(20) NOT NULL,
+      default_days INT DEFAULT 0,
+      is_paid BOOLEAN DEFAULT TRUE,
+      requires_approval BOOLEAN DEFAULT TRUE,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('hr_leave_balances', `
+    CREATE TABLE hr_leave_balances (
+      id VARCHAR(50) PRIMARY KEY,
+      employee_id VARCHAR(50) NOT NULL,
+      leave_type_id VARCHAR(50) NOT NULL,
+      year INT NOT NULL,
+      total_days DECIMAL(5,1) DEFAULT 0,
+      used_days DECIMAL(5,1) DEFAULT 0,
+      remaining_days DECIMAL(5,1) DEFAULT 0,
+      UNIQUE KEY uq_bal (employee_id, leave_type_id, year),
+      INDEX idx_bal_emp (employee_id)
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('hr_leave_requests', `
+    CREATE TABLE hr_leave_requests (
+      id VARCHAR(50) PRIMARY KEY,
+      request_number VARCHAR(20),
+      employee_id VARCHAR(50) NOT NULL,
+      leave_type_id VARCHAR(50) NOT NULL,
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      days_count DECIMAL(5,1) DEFAULT 0,
+      reason TEXT,
+      status ENUM('pending','branch_approved','hr_approved','rejected','cancelled') DEFAULT 'pending',
+      branch_approver VARCHAR(100),
+      branch_approved_at DATETIME,
+      hr_approver VARCHAR(100),
+      hr_approved_at DATETIME,
+      rejection_reason TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_leave_emp (employee_id),
+      INDEX idx_leave_status (status)
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('hr_payroll_runs', `
+    CREATE TABLE hr_payroll_runs (
+      id VARCHAR(50) PRIMARY KEY,
+      run_number VARCHAR(20),
+      period_month INT NOT NULL,
+      period_year INT NOT NULL,
+      branch_id VARCHAR(50),
+      brand_id VARCHAR(50),
+      status ENUM('draft','calculated','approved','paid') DEFAULT 'draft',
+      total_gross DECIMAL(14,2) DEFAULT 0,
+      total_deductions DECIMAL(14,2) DEFAULT 0,
+      total_net DECIMAL(14,2) DEFAULT 0,
+      employee_count INT DEFAULT 0,
+      calculated_by VARCHAR(100),
+      approved_by VARCHAR(100),
+      approved_at DATETIME,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('hr_payroll_items', `
+    CREATE TABLE hr_payroll_items (
+      id VARCHAR(50) PRIMARY KEY,
+      payroll_run_id VARCHAR(50) NOT NULL,
+      employee_id VARCHAR(50) NOT NULL,
+      employee_name VARCHAR(200),
+      working_days INT DEFAULT 30,
+      actual_days INT DEFAULT 30,
+      absent_days INT DEFAULT 0,
+      leave_days_paid INT DEFAULT 0,
+      leave_days_unpaid INT DEFAULT 0,
+      late_minutes INT DEFAULT 0,
+      early_leave_minutes INT DEFAULT 0,
+      overtime_minutes INT DEFAULT 0,
+      basic_salary DECIMAL(12,2) DEFAULT 0,
+      housing_allowance DECIMAL(12,2) DEFAULT 0,
+      transport_allowance DECIMAL(12,2) DEFAULT 0,
+      other_allowance DECIMAL(12,2) DEFAULT 0,
+      overtime_amount DECIMAL(12,2) DEFAULT 0,
+      gross_salary DECIMAL(12,2) DEFAULT 0,
+      absence_deduction DECIMAL(12,2) DEFAULT 0,
+      late_deduction DECIMAL(12,2) DEFAULT 0,
+      advance_deduction DECIMAL(12,2) DEFAULT 0,
+      other_deduction DECIMAL(12,2) DEFAULT 0,
+      total_deductions DECIMAL(12,2) DEFAULT 0,
+      net_salary DECIMAL(12,2) DEFAULT 0,
+      INDEX idx_pi_run (payroll_run_id),
+      INDEX idx_pi_emp (employee_id)
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('hr_documents', `
+    CREATE TABLE hr_documents (
+      id VARCHAR(50) PRIMARY KEY,
+      employee_id VARCHAR(50) NOT NULL,
+      doc_type ENUM('contract','id','passport','iqama','certificate','medical','other') DEFAULT 'other',
+      title VARCHAR(200),
+      file_data LONGTEXT,
+      expiry_date DATE,
+      notes TEXT,
+      uploaded_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_doc_emp (employee_id)
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('hr_advances', `
+    CREATE TABLE hr_advances (
+      id VARCHAR(50) PRIMARY KEY,
+      employee_id VARCHAR(50) NOT NULL,
+      amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+      request_date DATE,
+      status ENUM('pending','approved','rejected','deducted') DEFAULT 'pending',
+      approved_by VARCHAR(100),
+      deduction_months INT DEFAULT 1,
+      remaining_amount DECIMAL(12,2) DEFAULT 0,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  // Seed default leave types
+  try {
+    await db.query(`INSERT IGNORE INTO hr_leave_types (id, name, code, default_days, is_paid) VALUES
+      ('LT-ANNUAL', 'إجازة سنوية', 'ANNUAL', 21, TRUE),
+      ('LT-SICK', 'إجازة مرضية', 'SICK', 10, TRUE),
+      ('LT-EMERGENCY', 'إجازة طارئة', 'EMERGENCY', 5, TRUE),
+      ('LT-UNPAID', 'إجازة بدون راتب', 'UNPAID', 0, FALSE)`);
+  } catch(e) {}
+
+  // Seed default work schedule
+  try {
+    await db.query(`INSERT IGNORE INTO hr_work_schedules (id, name, work_start, work_end, break_minutes, grace_minutes, is_default) VALUES
+      ('WS-DEFAULT', 'الدوام الرسمي', '08:00:00', '17:00:00', 60, 15, TRUE)`);
+  } catch(e) {}
+
+  // Users: link to employee
+  await addColumnIfMissing('users', 'employee_id', "VARCHAR(50)");
 
   // Shifts: add geolocation + device info columns
   await addColumnIfMissing('shifts', 'geo_lat', "DECIMAL(10,7)");

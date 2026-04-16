@@ -1,0 +1,1519 @@
+const router = require('express').Router();
+const db = require('../db/connection');
+
+// ═══════════════════════════════════════════════════════════════
+// HELPER: Ensure HR tables exist (auto-migrate)
+// ═══════════════════════════════════════════════════════════════
+
+let tablesReady = false;
+async function ensureTables() {
+  if (tablesReady) return;
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hr_departments (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      name_en VARCHAR(200),
+      manager_id VARCHAR(50),
+      parent_id VARCHAR(50),
+      description TEXT,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hr_employees (
+      id VARCHAR(50) PRIMARY KEY,
+      employee_number VARCHAR(30) UNIQUE,
+      first_name VARCHAR(100) NOT NULL,
+      last_name VARCHAR(100) NOT NULL,
+      national_id VARCHAR(30),
+      passport_number VARCHAR(30),
+      iqama_number VARCHAR(30),
+      phone VARCHAR(30),
+      email VARCHAR(100),
+      gender ENUM('male','female') DEFAULT 'male',
+      date_of_birth DATE,
+      nationality VARCHAR(50),
+      branch_id VARCHAR(50),
+      brand_id VARCHAR(50),
+      department_id VARCHAR(50),
+      position_id VARCHAR(50),
+      job_title VARCHAR(100),
+      employment_type ENUM('full_time','part_time','contract','temporary') DEFAULT 'full_time',
+      salary_type ENUM('monthly','hourly','daily') DEFAULT 'monthly',
+      basic_salary DECIMAL(12,2) DEFAULT 0,
+      hourly_rate DECIMAL(10,2) DEFAULT 0,
+      housing_allowance DECIMAL(12,2) DEFAULT 0,
+      transport_allowance DECIMAL(12,2) DEFAULT 0,
+      other_allowance DECIMAL(12,2) DEFAULT 0,
+      hire_date DATE,
+      contract_end_date DATE,
+      probation_end_date DATE,
+      termination_date DATE,
+      termination_reason TEXT,
+      status ENUM('active','suspended','terminated','on_leave') DEFAULT 'active',
+      bank_name VARCHAR(100),
+      bank_account VARCHAR(50),
+      bank_iban VARCHAR(50),
+      emergency_contact_name VARCHAR(100),
+      emergency_contact_phone VARCHAR(30),
+      emergency_contact_relation VARCHAR(50),
+      user_id INT,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      created_by VARCHAR(100)
+    ) ENGINE=InnoDB
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hr_work_schedules (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      start_time TIME NOT NULL,
+      end_time TIME NOT NULL,
+      break_minutes INT DEFAULT 0,
+      working_days VARCHAR(20) DEFAULT '1,2,3,4,5',
+      is_default BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hr_attendance (
+      id VARCHAR(50) PRIMARY KEY,
+      employee_id VARCHAR(50) NOT NULL,
+      attendance_date DATE NOT NULL,
+      clock_in DATETIME,
+      clock_out DATETIME,
+      total_hours DECIMAL(5,2) DEFAULT 0,
+      overtime_minutes INT DEFAULT 0,
+      late_minutes INT DEFAULT 0,
+      early_leave_minutes INT DEFAULT 0,
+      status ENUM('present','absent','leave','holiday') DEFAULT 'present',
+      source ENUM('manual','device','app','import') DEFAULT 'manual',
+      geo_lat DECIMAL(10,7),
+      geo_lng DECIMAL(10,7),
+      device_id VARCHAR(100),
+      notes TEXT,
+      modified_by VARCHAR(100),
+      modified_reason TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hr_leave_types (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      name_en VARCHAR(100),
+      default_days INT DEFAULT 0,
+      is_paid BOOLEAN DEFAULT TRUE,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hr_leave_balances (
+      id VARCHAR(50) PRIMARY KEY,
+      employee_id VARCHAR(50) NOT NULL,
+      leave_type_id VARCHAR(50) NOT NULL,
+      year INT NOT NULL,
+      total_days DECIMAL(5,1) DEFAULT 0,
+      used_days DECIMAL(5,1) DEFAULT 0,
+      remaining_days DECIMAL(5,1) DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_emp_type_year (employee_id, leave_type_id, year)
+    ) ENGINE=InnoDB
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hr_leave_requests (
+      id VARCHAR(50) PRIMARY KEY,
+      request_number VARCHAR(30),
+      employee_id VARCHAR(50) NOT NULL,
+      leave_type_id VARCHAR(50) NOT NULL,
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      days_count DECIMAL(5,1) DEFAULT 0,
+      reason TEXT,
+      status ENUM('pending','branch_approved','hr_approved','rejected','cancelled') DEFAULT 'pending',
+      branch_approved_by VARCHAR(100),
+      branch_approved_at DATETIME,
+      hr_approved_by VARCHAR(100),
+      hr_approved_at DATETIME,
+      rejected_by VARCHAR(100),
+      rejected_at DATETIME,
+      rejection_reason TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hr_payroll_runs (
+      id VARCHAR(50) PRIMARY KEY,
+      run_number VARCHAR(30),
+      month INT NOT NULL,
+      year INT NOT NULL,
+      branch_id VARCHAR(50),
+      brand_id VARCHAR(50),
+      status ENUM('draft','calculated','approved','paid') DEFAULT 'draft',
+      total_gross DECIMAL(14,2) DEFAULT 0,
+      total_deductions DECIMAL(14,2) DEFAULT 0,
+      total_net DECIMAL(14,2) DEFAULT 0,
+      employee_count INT DEFAULT 0,
+      approved_by VARCHAR(100),
+      approved_at DATETIME,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      created_by VARCHAR(100)
+    ) ENGINE=InnoDB
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hr_payroll_items (
+      id VARCHAR(50) PRIMARY KEY,
+      run_id VARCHAR(50) NOT NULL,
+      employee_id VARCHAR(50) NOT NULL,
+      employee_name VARCHAR(200),
+      employee_number VARCHAR(30),
+      basic_salary DECIMAL(12,2) DEFAULT 0,
+      housing_allowance DECIMAL(12,2) DEFAULT 0,
+      transport_allowance DECIMAL(12,2) DEFAULT 0,
+      other_allowance DECIMAL(12,2) DEFAULT 0,
+      overtime_amount DECIMAL(12,2) DEFAULT 0,
+      overtime_hours DECIMAL(6,2) DEFAULT 0,
+      gross_salary DECIMAL(12,2) DEFAULT 0,
+      absence_deduction DECIMAL(12,2) DEFAULT 0,
+      late_deduction DECIMAL(12,2) DEFAULT 0,
+      advance_deduction DECIMAL(12,2) DEFAULT 0,
+      other_deduction DECIMAL(12,2) DEFAULT 0,
+      total_deductions DECIMAL(12,2) DEFAULT 0,
+      net_salary DECIMAL(12,2) DEFAULT 0,
+      actual_days INT DEFAULT 0,
+      absent_days INT DEFAULT 0,
+      late_minutes INT DEFAULT 0,
+      leave_days DECIMAL(5,1) DEFAULT 0,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hr_advances (
+      id VARCHAR(50) PRIMARY KEY,
+      employee_id VARCHAR(50) NOT NULL,
+      amount DECIMAL(12,2) NOT NULL,
+      remaining DECIMAL(12,2) DEFAULT 0,
+      deduction_months INT DEFAULT 1,
+      monthly_deduction DECIMAL(12,2) DEFAULT 0,
+      request_date DATE,
+      status ENUM('pending','approved','rejected','fully_paid') DEFAULT 'pending',
+      approved_by VARCHAR(100),
+      approved_at DATETIME,
+      rejected_by VARCHAR(100),
+      rejected_at DATETIME,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hr_documents (
+      id VARCHAR(50) PRIMARY KEY,
+      employee_id VARCHAR(50) NOT NULL,
+      doc_type VARCHAR(50),
+      title VARCHAR(200),
+      file_data LONGTEXT,
+      expiry_date DATE,
+      notes TEXT,
+      uploaded_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  tablesReady = true;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HELPER: Seed default leave types
+// ═══════════════════════════════════════════════════════════════
+
+let leaveTypesSeeded = false;
+async function seedLeaveTypes() {
+  if (leaveTypesSeeded) return;
+  const [existing] = await db.query('SELECT COUNT(*) as cnt FROM hr_leave_types');
+  if (existing[0].cnt === 0) {
+    const defaults = [
+      { id: 'LT-' + Date.now(), name: 'سنوية', name_en: 'Annual', default_days: 21, is_paid: true },
+      { id: 'LT-' + (Date.now() + 1), name: 'مرضية', name_en: 'Sick', default_days: 10, is_paid: true },
+      { id: 'LT-' + (Date.now() + 2), name: 'طارئة', name_en: 'Emergency', default_days: 5, is_paid: true },
+      { id: 'LT-' + (Date.now() + 3), name: 'بدون راتب', name_en: 'Unpaid', default_days: 0, is_paid: false }
+    ];
+    for (const lt of defaults) {
+      await db.query(
+        'INSERT INTO hr_leave_types (id, name, name_en, default_days, is_paid) VALUES (?, ?, ?, ?, ?)',
+        [lt.id, lt.name, lt.name_en, lt.default_days, lt.is_paid]
+      );
+    }
+  }
+  leaveTypesSeeded = true;
+}
+
+// Middleware to ensure tables on every request
+router.use(async (req, res, next) => {
+  try {
+    await ensureTables();
+    next();
+  } catch (e) {
+    res.json({ success: false, error: 'HR table init failed: ' + e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// DEPARTMENTS
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/departments', async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT d.*,
+        (SELECT COUNT(*) FROM hr_employees e WHERE e.department_id = d.id AND e.status = 'active') as employee_count
+      FROM hr_departments d
+      ORDER BY d.name
+    `);
+    res.json(rows);
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/departments', async (req, res) => {
+  try {
+    const { id, name, nameEn, managerId, parentId, description, isActive } = req.body;
+    if (id) {
+      await db.query(
+        `UPDATE hr_departments SET name=?, name_en=?, manager_id=?, parent_id=?, description=?, is_active=? WHERE id=?`,
+        [name, nameEn || null, managerId || null, parentId || null, description || null, isActive !== false ? 1 : 0, id]
+      );
+      res.json({ success: true, id });
+    } else {
+      const newId = 'DEP-' + Date.now();
+      await db.query(
+        `INSERT INTO hr_departments (id, name, name_en, manager_id, parent_id, description, is_active) VALUES (?,?,?,?,?,?,?)`,
+        [newId, name, nameEn || null, managerId || null, parentId || null, description || null, isActive !== false ? 1 : 0]
+      );
+      res.json({ success: true, id: newId });
+    }
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.delete('/departments/:id', async (req, res) => {
+  try {
+    const [emps] = await db.query('SELECT COUNT(*) as cnt FROM hr_employees WHERE department_id = ?', [req.params.id]);
+    if (emps[0].cnt > 0) {
+      return res.json({ success: false, error: 'Cannot delete department with active employees' });
+    }
+    await db.query('DELETE FROM hr_departments WHERE id = ?', [req.params.id]);
+    res.json({ success: true, id: req.params.id });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// EMPLOYEES
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/employees', async (req, res) => {
+  try {
+    const { branch_id, brand_id, department_id, status, search } = req.query;
+    let sql = `
+      SELECT e.id, e.employee_number, CONCAT(e.first_name, ' ', e.last_name) as fullName,
+        e.phone, e.email, e.job_title as jobTitle,
+        COALESCE(d.name, '') as departmentName,
+        COALESCE(b.name, '') as branchName,
+        e.status, e.hire_date as hireDate, e.basic_salary as basicSalary,
+        e.department_id, e.branch_id, e.brand_id
+      FROM hr_employees e
+      LEFT JOIN hr_departments d ON e.department_id = d.id
+      LEFT JOIN branches b ON e.branch_id = b.id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (branch_id) { sql += ' AND e.branch_id = ?'; params.push(branch_id); }
+    if (brand_id) { sql += ' AND e.brand_id = ?'; params.push(brand_id); }
+    if (department_id) { sql += ' AND e.department_id = ?'; params.push(department_id); }
+    if (status) { sql += ' AND e.status = ?'; params.push(status); }
+    if (search) {
+      sql += ' AND (e.first_name LIKE ? OR e.last_name LIKE ? OR e.employee_number LIKE ? OR e.phone LIKE ?)';
+      const s = '%' + search + '%';
+      params.push(s, s, s, s);
+    }
+
+    sql += ' ORDER BY e.created_at DESC';
+    const [rows] = await db.query(sql, params);
+    res.json(rows);
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.get('/employees/:id', async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT e.*,
+        CONCAT(e.first_name, ' ', e.last_name) as fullName,
+        COALESCE(d.name, '') as departmentName,
+        COALESCE(b.name, '') as branchName
+      FROM hr_employees e
+      LEFT JOIN hr_departments d ON e.department_id = d.id
+      LEFT JOIN branches b ON e.branch_id = b.id
+      WHERE e.id = ?
+    `, [req.params.id]);
+
+    if (!rows.length) return res.json({ success: false, error: 'Employee not found' });
+    const emp = rows[0];
+
+    // Recent attendance (last 30 days)
+    const [attendance] = await db.query(
+      `SELECT * FROM hr_attendance WHERE employee_id = ? AND attendance_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) ORDER BY attendance_date DESC`,
+      [req.params.id]
+    );
+
+    // Leave balances (current year)
+    const currentYear = new Date().getFullYear();
+    const [leaveBalances] = await db.query(
+      `SELECT lb.*, lt.name as leave_type_name, lt.is_paid
+       FROM hr_leave_balances lb
+       LEFT JOIN hr_leave_types lt ON lb.leave_type_id = lt.id
+       WHERE lb.employee_id = ? AND lb.year = ?`,
+      [req.params.id, currentYear]
+    );
+
+    // Recent payroll items (last 3 months)
+    const [payrollItems] = await db.query(
+      `SELECT pi.*, pr.month, pr.year, pr.run_number
+       FROM hr_payroll_items pi
+       LEFT JOIN hr_payroll_runs pr ON pi.run_id = pr.id
+       WHERE pi.employee_id = ?
+       ORDER BY pr.year DESC, pr.month DESC
+       LIMIT 3`,
+      [req.params.id]
+    );
+
+    res.json({ ...emp, attendance, leaveBalances, payrollItems });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/employees', async (req, res) => {
+  try {
+    const b = req.body;
+    const empId = 'EMP-' + Date.now();
+
+    // Generate sequential employee number
+    const [maxNum] = await db.query(
+      `SELECT employee_number FROM hr_employees ORDER BY created_at DESC LIMIT 1`
+    );
+    let nextNum = 1;
+    if (maxNum.length && maxNum[0].employee_number) {
+      const match = maxNum[0].employee_number.match(/(\d+)$/);
+      if (match) nextNum = parseInt(match[1], 10) + 1;
+    }
+    const employeeNumber = 'EMP-' + String(nextNum).padStart(5, '0');
+
+    await db.query(
+      `INSERT INTO hr_employees (
+        id, employee_number, first_name, last_name, national_id, passport_number, iqama_number,
+        phone, email, gender, date_of_birth, nationality,
+        branch_id, brand_id, department_id, position_id, job_title,
+        employment_type, salary_type, basic_salary, hourly_rate,
+        housing_allowance, transport_allowance, other_allowance,
+        hire_date, contract_end_date, probation_end_date,
+        bank_name, bank_account, bank_iban,
+        emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
+        notes, status, created_by
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        empId, employeeNumber,
+        b.firstName, b.lastName, b.nationalId || null, b.passportNumber || null, b.iqamaNumber || null,
+        b.phone || null, b.email || null, b.gender || 'male', b.dateOfBirth || null, b.nationality || null,
+        b.branchId || null, b.brandId || null, b.departmentId || null, b.positionId || null, b.jobTitle || null,
+        b.employmentType || 'full_time', b.salaryType || 'monthly',
+        b.basicSalary || 0, b.hourlyRate || 0,
+        b.housingAllowance || 0, b.transportAllowance || 0, b.otherAllowance || 0,
+        b.hireDate || null, b.contractEndDate || null, b.probationEndDate || null,
+        b.bankName || null, b.bankAccount || null, b.bankIban || null,
+        b.emergencyContactName || null, b.emergencyContactPhone || null, b.emergencyContactRelation || null,
+        b.notes || null, 'active', b.username || null
+      ]
+    );
+
+    // Optionally create a user account
+    if (b.createUser && b.firstName) {
+      try {
+        const bcrypt = require('bcryptjs');
+        const uname = (b.firstName + '.' + b.lastName).toLowerCase().replace(/\s+/g, '');
+        const defaultPass = '123456';
+        const hash = await bcrypt.hash(defaultPass, 10);
+        await db.query(
+          `INSERT INTO users (username, password, role, active, email, plain_pass) VALUES (?,?,?,1,?,?)`,
+          [uname, hash, 'cashier', b.email || '', defaultPass]
+        );
+        const [userRow] = await db.query('SELECT id FROM users WHERE username = ?', [uname]);
+        if (userRow.length) {
+          await db.query('UPDATE hr_employees SET user_id = ? WHERE id = ?', [userRow[0].id, empId]);
+        }
+      } catch (userErr) {
+        // User creation failed (duplicate username, etc.) - employee is still created
+      }
+    }
+
+    res.json({ success: true, id: empId, employeeNumber });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.put('/employees/:id', async (req, res) => {
+  try {
+    const b = req.body;
+    const fields = [];
+    const params = [];
+
+    const mapping = {
+      firstName: 'first_name', lastName: 'last_name', nationalId: 'national_id',
+      passportNumber: 'passport_number', iqamaNumber: 'iqama_number', phone: 'phone',
+      email: 'email', gender: 'gender', dateOfBirth: 'date_of_birth', nationality: 'nationality',
+      branchId: 'branch_id', brandId: 'brand_id', departmentId: 'department_id',
+      positionId: 'position_id', jobTitle: 'job_title', employmentType: 'employment_type',
+      salaryType: 'salary_type', basicSalary: 'basic_salary', hourlyRate: 'hourly_rate',
+      housingAllowance: 'housing_allowance', transportAllowance: 'transport_allowance',
+      otherAllowance: 'other_allowance', hireDate: 'hire_date',
+      contractEndDate: 'contract_end_date', probationEndDate: 'probation_end_date',
+      bankName: 'bank_name', bankAccount: 'bank_account', bankIban: 'bank_iban',
+      emergencyContactName: 'emergency_contact_name', emergencyContactPhone: 'emergency_contact_phone',
+      emergencyContactRelation: 'emergency_contact_relation', notes: 'notes', status: 'status'
+    };
+
+    for (const [jsKey, dbCol] of Object.entries(mapping)) {
+      if (b[jsKey] !== undefined) {
+        fields.push(`${dbCol} = ?`);
+        params.push(b[jsKey]);
+      }
+    }
+
+    if (fields.length === 0) return res.json({ success: false, error: 'No fields to update' });
+
+    params.push(req.params.id);
+    await db.query(`UPDATE hr_employees SET ${fields.join(', ')} WHERE id = ?`, params);
+    res.json({ success: true, id: req.params.id });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/employees/:id/terminate', async (req, res) => {
+  try {
+    const { terminationDate, terminationReason } = req.body;
+    await db.query(
+      `UPDATE hr_employees SET status='terminated', termination_date=?, termination_reason=? WHERE id=?`,
+      [terminationDate || new Date().toISOString().slice(0, 10), terminationReason || null, req.params.id]
+    );
+    res.json({ success: true, id: req.params.id });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/employees/:id/suspend', async (req, res) => {
+  try {
+    await db.query(`UPDATE hr_employees SET status='suspended' WHERE id=?`, [req.params.id]);
+    res.json({ success: true, id: req.params.id });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/employees/:id/activate', async (req, res) => {
+  try {
+    await db.query(`UPDATE hr_employees SET status='active' WHERE id=?`, [req.params.id]);
+    res.json({ success: true, id: req.params.id });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// WORK SCHEDULES
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/schedules', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM hr_work_schedules ORDER BY name');
+    res.json(rows);
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/schedules', async (req, res) => {
+  try {
+    const { id, name, startTime, endTime, breakMinutes, workingDays, isDefault } = req.body;
+    if (id) {
+      await db.query(
+        `UPDATE hr_work_schedules SET name=?, start_time=?, end_time=?, break_minutes=?, working_days=?, is_default=? WHERE id=?`,
+        [name, startTime, endTime, breakMinutes || 0, workingDays || '1,2,3,4,5', isDefault ? 1 : 0, id]
+      );
+      res.json({ success: true, id });
+    } else {
+      const newId = 'SCH-' + Date.now();
+      if (isDefault) {
+        await db.query('UPDATE hr_work_schedules SET is_default = 0');
+      }
+      await db.query(
+        `INSERT INTO hr_work_schedules (id, name, start_time, end_time, break_minutes, working_days, is_default) VALUES (?,?,?,?,?,?,?)`,
+        [newId, name, startTime, endTime, breakMinutes || 0, workingDays || '1,2,3,4,5', isDefault ? 1 : 0]
+      );
+      res.json({ success: true, id: newId });
+    }
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ATTENDANCE
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/attendance', async (req, res) => {
+  try {
+    const { date, employee_id, branch_id, month, year } = req.query;
+    let sql = `
+      SELECT a.*, CONCAT(e.first_name, ' ', e.last_name) as employee_name, e.employee_number
+      FROM hr_attendance a
+      LEFT JOIN hr_employees e ON a.employee_id = e.id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (date) { sql += ' AND a.attendance_date = ?'; params.push(date); }
+    if (employee_id) { sql += ' AND a.employee_id = ?'; params.push(employee_id); }
+    if (branch_id) { sql += ' AND e.branch_id = ?'; params.push(branch_id); }
+    if (month && year) {
+      sql += ' AND MONTH(a.attendance_date) = ? AND YEAR(a.attendance_date) = ?';
+      params.push(parseInt(month), parseInt(year));
+    }
+
+    sql += ' ORDER BY a.attendance_date DESC, a.clock_in DESC';
+    const [rows] = await db.query(sql, params);
+    res.json(rows);
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/attendance/clock', async (req, res) => {
+  try {
+    const { employeeId, type, geoLat, geoLng, deviceId, source } = req.body;
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+
+    if (type === 'in') {
+      // Check if already clocked in today without clocking out
+      const [existing] = await db.query(
+        'SELECT id FROM hr_attendance WHERE employee_id = ? AND attendance_date = ? AND clock_out IS NULL',
+        [employeeId, today]
+      );
+      if (existing.length) {
+        return res.json({ success: false, error: 'Already clocked in today' });
+      }
+
+      const attId = 'ATT-' + Date.now();
+
+      // Calculate late minutes from work schedule
+      let lateMinutes = 0;
+      const [schedules] = await db.query('SELECT * FROM hr_work_schedules WHERE is_default = 1 LIMIT 1');
+      if (schedules.length) {
+        const schedule = schedules[0];
+        const startParts = schedule.start_time.split(':');
+        const scheduledStart = new Date(now);
+        scheduledStart.setHours(parseInt(startParts[0]), parseInt(startParts[1]), 0, 0);
+        if (now > scheduledStart) {
+          lateMinutes = Math.floor((now - scheduledStart) / 60000);
+        }
+      }
+
+      await db.query(
+        `INSERT INTO hr_attendance (id, employee_id, attendance_date, clock_in, late_minutes, status, source, geo_lat, geo_lng, device_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [attId, employeeId, today, now, lateMinutes, 'present', source || 'manual', geoLat || null, geoLng || null, deviceId || null]
+      );
+      res.json({ success: true, id: attId, lateMinutes });
+
+    } else if (type === 'out') {
+      // Find today's open record
+      const [existing] = await db.query(
+        'SELECT id, clock_in FROM hr_attendance WHERE employee_id = ? AND attendance_date = ? AND clock_out IS NULL ORDER BY clock_in DESC LIMIT 1',
+        [employeeId, today]
+      );
+      if (!existing.length) {
+        return res.json({ success: false, error: 'No clock-in record found for today' });
+      }
+
+      const record = existing[0];
+      const clockIn = new Date(record.clock_in);
+      const totalMinutes = Math.floor((now - clockIn) / 60000);
+      const totalHours = Math.round((totalMinutes / 60) * 100) / 100;
+
+      // Calculate overtime and early leave
+      let overtimeMinutes = 0;
+      let earlyLeaveMinutes = 0;
+      const [schedules] = await db.query('SELECT * FROM hr_work_schedules WHERE is_default = 1 LIMIT 1');
+      if (schedules.length) {
+        const schedule = schedules[0];
+        const endParts = schedule.end_time.split(':');
+        const scheduledEnd = new Date(now);
+        scheduledEnd.setHours(parseInt(endParts[0]), parseInt(endParts[1]), 0, 0);
+        const startParts = schedule.start_time.split(':');
+        const scheduledStart = new Date(now);
+        scheduledStart.setHours(parseInt(startParts[0]), parseInt(startParts[1]), 0, 0);
+
+        const scheduledMinutes = Math.floor((scheduledEnd - scheduledStart) / 60000) - (schedule.break_minutes || 0);
+
+        if (now < scheduledEnd) {
+          earlyLeaveMinutes = Math.floor((scheduledEnd - now) / 60000);
+        }
+        if (totalMinutes > scheduledMinutes) {
+          overtimeMinutes = totalMinutes - scheduledMinutes;
+        }
+      }
+
+      await db.query(
+        `UPDATE hr_attendance SET clock_out=?, total_hours=?, overtime_minutes=?, early_leave_minutes=? WHERE id=?`,
+        [now, totalHours, overtimeMinutes, earlyLeaveMinutes, record.id]
+      );
+      res.json({ success: true, id: record.id, totalHours, overtimeMinutes, earlyLeaveMinutes });
+
+    } else {
+      res.json({ success: false, error: 'Invalid type. Use "in" or "out"' });
+    }
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/attendance/import', async (req, res) => {
+  try {
+    const records = req.body;
+    if (!Array.isArray(records)) return res.json({ success: false, error: 'Expected array of records' });
+
+    let imported = 0;
+    let errors = [];
+
+    for (const rec of records) {
+      try {
+        // Look up employee by number
+        const [emp] = await db.query('SELECT id FROM hr_employees WHERE employee_number = ?', [rec.employeeNumber]);
+        if (!emp.length) {
+          errors.push(`Employee ${rec.employeeNumber} not found`);
+          continue;
+        }
+
+        const empId = emp[0].id;
+        const attDate = rec.date;
+
+        // Check for existing record
+        const [existing] = await db.query(
+          'SELECT id FROM hr_attendance WHERE employee_id = ? AND attendance_date = ?',
+          [empId, attDate]
+        );
+
+        const clockInDT = rec.clockIn ? new Date(attDate + 'T' + rec.clockIn) : null;
+        const clockOutDT = rec.clockOut ? new Date(attDate + 'T' + rec.clockOut) : null;
+
+        let totalHours = 0;
+        if (clockInDT && clockOutDT) {
+          totalHours = Math.round(((clockOutDT - clockInDT) / 3600000) * 100) / 100;
+        }
+
+        if (existing.length) {
+          await db.query(
+            `UPDATE hr_attendance SET clock_in=?, clock_out=?, total_hours=?, source='import' WHERE id=?`,
+            [clockInDT, clockOutDT, totalHours, existing[0].id]
+          );
+        } else {
+          const attId = 'ATT-' + Date.now() + '-' + imported;
+          await db.query(
+            `INSERT INTO hr_attendance (id, employee_id, attendance_date, clock_in, clock_out, total_hours, status, source) VALUES (?,?,?,?,?,?,?,?)`,
+            [attId, empId, attDate, clockInDT, clockOutDT, totalHours, 'present', 'import']
+          );
+        }
+        imported++;
+      } catch (recErr) {
+        errors.push(`Row error: ${recErr.message}`);
+      }
+    }
+
+    res.json({ success: true, imported, errors });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.put('/attendance/:id', async (req, res) => {
+  try {
+    const { clockIn, clockOut, status, notes, modifiedBy, modifiedReason } = req.body;
+    const fields = [];
+    const params = [];
+
+    if (clockIn !== undefined) { fields.push('clock_in = ?'); params.push(clockIn); }
+    if (clockOut !== undefined) { fields.push('clock_out = ?'); params.push(clockOut); }
+    if (status !== undefined) { fields.push('status = ?'); params.push(status); }
+    if (notes !== undefined) { fields.push('notes = ?'); params.push(notes); }
+    if (modifiedBy) { fields.push('modified_by = ?'); params.push(modifiedBy); }
+    if (modifiedReason) { fields.push('modified_reason = ?'); params.push(modifiedReason); }
+
+    // Recalculate total hours if both clock_in and clock_out are present
+    if (clockIn && clockOut) {
+      const cin = new Date(clockIn);
+      const cout = new Date(clockOut);
+      const totalHours = Math.round(((cout - cin) / 3600000) * 100) / 100;
+      fields.push('total_hours = ?');
+      params.push(totalHours);
+    }
+
+    if (fields.length === 0) return res.json({ success: false, error: 'No fields to update' });
+
+    params.push(req.params.id);
+    await db.query(`UPDATE hr_attendance SET ${fields.join(', ')} WHERE id = ?`, params);
+    res.json({ success: true, id: req.params.id });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.get('/attendance/summary', async (req, res) => {
+  try {
+    const { month, year, branch_id } = req.query;
+    const m = parseInt(month) || new Date().getMonth() + 1;
+    const y = parseInt(year) || new Date().getFullYear();
+
+    let empFilter = 'WHERE e.status = ?';
+    const empParams = ['active'];
+    if (branch_id) {
+      empFilter += ' AND e.branch_id = ?';
+      empParams.push(branch_id);
+    }
+
+    const [employees] = await db.query(
+      `SELECT e.id, e.employee_number, CONCAT(e.first_name, ' ', e.last_name) as fullName
+       FROM hr_employees e ${empFilter}`,
+      empParams
+    );
+
+    // Get total working days in the month (approx, excluding weekends Fri/Sat by default)
+    const daysInMonth = new Date(y, m, 0).getDate();
+    let workingDaysInMonth = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dayOfWeek = new Date(y, m - 1, d).getDay(); // 0=Sun, 5=Fri, 6=Sat
+      if (dayOfWeek !== 5 && dayOfWeek !== 6) workingDaysInMonth++;
+    }
+
+    const summary = [];
+    for (const emp of employees) {
+      const [records] = await db.query(
+        `SELECT * FROM hr_attendance
+         WHERE employee_id = ? AND MONTH(attendance_date) = ? AND YEAR(attendance_date) = ?`,
+        [emp.id, m, y]
+      );
+
+      let presentDays = 0;
+      let lateDays = 0;
+      let totalLateMinutes = 0;
+      let totalOvertimeMinutes = 0;
+
+      for (const r of records) {
+        if (r.status === 'present') presentDays++;
+        if (r.late_minutes > 0) {
+          lateDays++;
+          totalLateMinutes += r.late_minutes;
+        }
+        totalOvertimeMinutes += r.overtime_minutes || 0;
+      }
+
+      const absentDays = workingDaysInMonth - presentDays;
+
+      summary.push({
+        employeeId: emp.id,
+        employeeNumber: emp.employee_number,
+        employeeName: emp.fullName,
+        presentDays,
+        absentDays: absentDays > 0 ? absentDays : 0,
+        lateDays,
+        totalLateMinutes,
+        totalOvertimeMinutes,
+        workingDaysInMonth
+      });
+    }
+
+    res.json(summary);
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// LEAVE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/leave-types', async (req, res) => {
+  try {
+    await seedLeaveTypes();
+    const [rows] = await db.query('SELECT * FROM hr_leave_types ORDER BY name');
+    res.json(rows);
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/leave-types', async (req, res) => {
+  try {
+    const { id, name, nameEn, defaultDays, isPaid, isActive } = req.body;
+    if (id) {
+      await db.query(
+        `UPDATE hr_leave_types SET name=?, name_en=?, default_days=?, is_paid=?, is_active=? WHERE id=?`,
+        [name, nameEn || null, defaultDays || 0, isPaid !== false ? 1 : 0, isActive !== false ? 1 : 0, id]
+      );
+      res.json({ success: true, id });
+    } else {
+      const newId = 'LT-' + Date.now();
+      await db.query(
+        `INSERT INTO hr_leave_types (id, name, name_en, default_days, is_paid, is_active) VALUES (?,?,?,?,?,?)`,
+        [newId, name, nameEn || null, defaultDays || 0, isPaid !== false ? 1 : 0, isActive !== false ? 1 : 0]
+      );
+      res.json({ success: true, id: newId });
+    }
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.get('/leave-balances/:employeeId', async (req, res) => {
+  try {
+    await seedLeaveTypes();
+    const currentYear = new Date().getFullYear();
+    const [rows] = await db.query(
+      `SELECT lb.*, lt.name as leave_type_name, lt.name_en as leave_type_name_en, lt.is_paid
+       FROM hr_leave_balances lb
+       LEFT JOIN hr_leave_types lt ON lb.leave_type_id = lt.id
+       WHERE lb.employee_id = ? AND lb.year = ?`,
+      [req.params.employeeId, currentYear]
+    );
+    res.json(rows);
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/leave-balances/init', async (req, res) => {
+  try {
+    const { year, leaveTypeId, days } = req.body;
+    const targetYear = year || new Date().getFullYear();
+
+    const [activeEmps] = await db.query("SELECT id FROM hr_employees WHERE status = 'active'");
+    let created = 0;
+    let updated = 0;
+
+    for (const emp of activeEmps) {
+      const [existing] = await db.query(
+        'SELECT id FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND year = ?',
+        [emp.id, leaveTypeId, targetYear]
+      );
+
+      if (existing.length) {
+        await db.query(
+          'UPDATE hr_leave_balances SET total_days = ?, remaining_days = total_days - used_days WHERE id = ?',
+          [days, existing[0].id]
+        );
+        updated++;
+      } else {
+        const balId = 'LB-' + Date.now() + '-' + created;
+        await db.query(
+          `INSERT INTO hr_leave_balances (id, employee_id, leave_type_id, year, total_days, used_days, remaining_days) VALUES (?,?,?,?,?,0,?)`,
+          [balId, emp.id, leaveTypeId, targetYear, days, days]
+        );
+        created++;
+      }
+    }
+
+    res.json({ success: true, created, updated, total: activeEmps.length });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.get('/leave-requests', async (req, res) => {
+  try {
+    const { status, employee_id, branch_id } = req.query;
+    let sql = `
+      SELECT lr.*, CONCAT(e.first_name, ' ', e.last_name) as employee_name, e.employee_number,
+        lt.name as leave_type_name
+      FROM hr_leave_requests lr
+      LEFT JOIN hr_employees e ON lr.employee_id = e.id
+      LEFT JOIN hr_leave_types lt ON lr.leave_type_id = lt.id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (status) { sql += ' AND lr.status = ?'; params.push(status); }
+    if (employee_id) { sql += ' AND lr.employee_id = ?'; params.push(employee_id); }
+    if (branch_id) { sql += ' AND e.branch_id = ?'; params.push(branch_id); }
+
+    sql += ' ORDER BY lr.created_at DESC';
+    const [rows] = await db.query(sql, params);
+    res.json(rows);
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/leave-requests', async (req, res) => {
+  try {
+    const { employeeId, leaveTypeId, startDate, endDate, reason } = req.body;
+
+    // Calculate days count
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const daysCount = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+
+    if (daysCount <= 0) return res.json({ success: false, error: 'End date must be after start date' });
+
+    // Check leave balance
+    const currentYear = new Date().getFullYear();
+    const [balances] = await db.query(
+      'SELECT remaining_days FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND year = ?',
+      [employeeId, leaveTypeId, currentYear]
+    );
+
+    // Check if this leave type is paid (unpaid leave has no balance check)
+    const [leaveType] = await db.query('SELECT is_paid FROM hr_leave_types WHERE id = ?', [leaveTypeId]);
+    if (leaveType.length && leaveType[0].is_paid) {
+      if (!balances.length) {
+        return res.json({ success: false, error: 'No leave balance found. Please initialize balances first.' });
+      }
+      if (balances[0].remaining_days < daysCount) {
+        return res.json({ success: false, error: `Insufficient balance. Available: ${balances[0].remaining_days}, Requested: ${daysCount}` });
+      }
+    }
+
+    // Generate sequential request number
+    const [maxReq] = await db.query('SELECT request_number FROM hr_leave_requests ORDER BY created_at DESC LIMIT 1');
+    let nextReqNum = 1;
+    if (maxReq.length && maxReq[0].request_number) {
+      const match = maxReq[0].request_number.match(/(\d+)$/);
+      if (match) nextReqNum = parseInt(match[1], 10) + 1;
+    }
+    const requestNumber = 'LR-' + String(nextReqNum).padStart(5, '0');
+
+    const reqId = 'LREQ-' + Date.now();
+    await db.query(
+      `INSERT INTO hr_leave_requests (id, request_number, employee_id, leave_type_id, start_date, end_date, days_count, reason, status)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [reqId, requestNumber, employeeId, leaveTypeId, startDate, endDate, daysCount, reason || null, 'pending']
+    );
+
+    res.json({ success: true, id: reqId, requestNumber, daysCount });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/leave-requests/:id/approve', async (req, res) => {
+  try {
+    const { username, level } = req.body;
+    const now = new Date();
+
+    const [lr] = await db.query('SELECT * FROM hr_leave_requests WHERE id = ?', [req.params.id]);
+    if (!lr.length) return res.json({ success: false, error: 'Leave request not found' });
+    const request = lr[0];
+
+    if (level === 'branch') {
+      await db.query(
+        `UPDATE hr_leave_requests SET status='branch_approved', branch_approved_by=?, branch_approved_at=? WHERE id=?`,
+        [username, now, req.params.id]
+      );
+    } else if (level === 'hr') {
+      // Deduct from leave balance
+      const currentYear = new Date().getFullYear();
+      await db.query(
+        `UPDATE hr_leave_balances SET used_days = used_days + ?, remaining_days = remaining_days - ?
+         WHERE employee_id = ? AND leave_type_id = ? AND year = ?`,
+        [request.days_count, request.days_count, request.employee_id, request.leave_type_id, currentYear]
+      );
+
+      await db.query(
+        `UPDATE hr_leave_requests SET status='hr_approved', hr_approved_by=?, hr_approved_at=? WHERE id=?`,
+        [username, now, req.params.id]
+      );
+    } else {
+      return res.json({ success: false, error: 'Invalid approval level. Use "branch" or "hr"' });
+    }
+
+    res.json({ success: true, id: req.params.id, status: level === 'branch' ? 'branch_approved' : 'hr_approved' });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/leave-requests/:id/reject', async (req, res) => {
+  try {
+    const { username, reason } = req.body;
+    await db.query(
+      `UPDATE hr_leave_requests SET status='rejected', rejected_by=?, rejected_at=?, rejection_reason=? WHERE id=?`,
+      [username, new Date(), reason || null, req.params.id]
+    );
+    res.json({ success: true, id: req.params.id });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// PAYROLL
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/payroll-runs', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM hr_payroll_runs ORDER BY year DESC, month DESC');
+    res.json(rows);
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/payroll-runs', async (req, res) => {
+  try {
+    const { month, year, branchId, brandId, username } = req.body;
+    const runNumber = 'PR-' + year + '-' + String(month).padStart(2, '0');
+    const runId = 'PRUN-' + Date.now();
+
+    // Check for duplicate run
+    const [existing] = await db.query(
+      'SELECT id FROM hr_payroll_runs WHERE month = ? AND year = ? AND (branch_id = ? OR (branch_id IS NULL AND ? IS NULL))',
+      [month, year, branchId || null, branchId || null]
+    );
+    if (existing.length) {
+      return res.json({ success: false, error: 'Payroll run already exists for this period and branch' });
+    }
+
+    await db.query(
+      `INSERT INTO hr_payroll_runs (id, run_number, month, year, branch_id, brand_id, status, created_by) VALUES (?,?,?,?,?,?,?,?)`,
+      [runId, runNumber, month, year, branchId || null, brandId || null, 'draft', username || null]
+    );
+    res.json({ success: true, id: runId, runNumber });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/payroll-runs/:id/calculate', async (req, res) => {
+  try {
+    const runId = req.params.id;
+    const [runs] = await db.query('SELECT * FROM hr_payroll_runs WHERE id = ?', [runId]);
+    if (!runs.length) return res.json({ success: false, error: 'Payroll run not found' });
+    const run = runs[0];
+
+    // Get all active employees matching the run's branch/brand
+    let empSql = "SELECT * FROM hr_employees WHERE status = 'active'";
+    const empParams = [];
+    if (run.branch_id) { empSql += ' AND branch_id = ?'; empParams.push(run.branch_id); }
+    if (run.brand_id) { empSql += ' AND brand_id = ?'; empParams.push(run.brand_id); }
+    const [employees] = await db.query(empSql, empParams);
+
+    // Get working days in the month (exclude Fri/Sat)
+    const daysInMonth = new Date(run.year, run.month, 0).getDate();
+    let workingDaysInMonth = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dow = new Date(run.year, run.month - 1, d).getDay();
+      if (dow !== 5 && dow !== 6) workingDaysInMonth++;
+    }
+
+    let totalGross = 0;
+    let totalDeductions = 0;
+    let totalNet = 0;
+    let empCount = 0;
+
+    // Delete previous items for this run (recalculate)
+    await db.query('DELETE FROM hr_payroll_items WHERE run_id = ?', [runId]);
+
+    for (const emp of employees) {
+      // 1. Get attendance for the month
+      const [attRecords] = await db.query(
+        `SELECT * FROM hr_attendance WHERE employee_id = ? AND MONTH(attendance_date) = ? AND YEAR(attendance_date) = ?`,
+        [emp.id, run.month, run.year]
+      );
+
+      let actualDays = 0;
+      let totalLateMin = 0;
+      let totalOvertimeMin = 0;
+      for (const att of attRecords) {
+        if (att.status === 'present') actualDays++;
+        totalLateMin += att.late_minutes || 0;
+        totalOvertimeMin += att.overtime_minutes || 0;
+      }
+
+      // 2. Get approved leave days for the month
+      const [leaveRecords] = await db.query(
+        `SELECT lr.days_count, lt.is_paid
+         FROM hr_leave_requests lr
+         LEFT JOIN hr_leave_types lt ON lr.leave_type_id = lt.id
+         WHERE lr.employee_id = ? AND lr.status = 'hr_approved'
+           AND ((lr.start_date BETWEEN ? AND ?) OR (lr.end_date BETWEEN ? AND ?))`,
+        [
+          emp.id,
+          `${run.year}-${String(run.month).padStart(2, '0')}-01`,
+          `${run.year}-${String(run.month).padStart(2, '0')}-${daysInMonth}`,
+          `${run.year}-${String(run.month).padStart(2, '0')}-01`,
+          `${run.year}-${String(run.month).padStart(2, '0')}-${daysInMonth}`
+        ]
+      );
+
+      let paidLeaveDays = 0;
+      let unpaidLeaveDays = 0;
+      for (const lv of leaveRecords) {
+        if (lv.is_paid) paidLeaveDays += Number(lv.days_count);
+        else unpaidLeaveDays += Number(lv.days_count);
+      }
+
+      // 3. Calculate salary
+      const basicSalary = Number(emp.basic_salary) || 0;
+      const housingAllowance = Number(emp.housing_allowance) || 0;
+      const transportAllowance = Number(emp.transport_allowance) || 0;
+      const otherAllowance = Number(emp.other_allowance) || 0;
+
+      // Overtime: (basic/30/8) * 1.5 * overtime_hours
+      const overtimeHours = Math.round((totalOvertimeMin / 60) * 100) / 100;
+      const overtimeRate = (basicSalary / 30 / 8) * 1.5;
+      const overtimeAmount = Math.round(overtimeRate * overtimeHours * 100) / 100;
+
+      const gross = basicSalary + housingAllowance + transportAllowance + otherAllowance + overtimeAmount;
+
+      // Deductions
+      const absentDays = Math.max(0, workingDaysInMonth - actualDays - paidLeaveDays);
+      const absenceDeduction = Math.round((basicSalary / 30) * (absentDays + unpaidLeaveDays) * 100) / 100;
+      const lateDeduction = Math.round((basicSalary / 30 / 8 / 60) * totalLateMin * 100) / 100;
+
+      // Advance deductions
+      let advanceDeduction = 0;
+      const [advances] = await db.query(
+        "SELECT id, remaining, monthly_deduction FROM hr_advances WHERE employee_id = ? AND status = 'approved' AND remaining > 0",
+        [emp.id]
+      );
+      for (const adv of advances) {
+        const deduct = Math.min(Number(adv.remaining), Number(adv.monthly_deduction));
+        advanceDeduction += deduct;
+        const newRemaining = Number(adv.remaining) - deduct;
+        await db.query(
+          `UPDATE hr_advances SET remaining = ?, status = ? WHERE id = ?`,
+          [newRemaining, newRemaining <= 0 ? 'fully_paid' : 'approved', adv.id]
+        );
+      }
+
+      const totalDeduct = absenceDeduction + lateDeduction + advanceDeduction;
+      const net = Math.round((gross - totalDeduct) * 100) / 100;
+
+      // 4. Insert payroll item
+      const itemId = 'PI-' + Date.now() + '-' + empCount;
+      await db.query(
+        `INSERT INTO hr_payroll_items (
+          id, run_id, employee_id, employee_name, employee_number,
+          basic_salary, housing_allowance, transport_allowance, other_allowance,
+          overtime_amount, overtime_hours, gross_salary,
+          absence_deduction, late_deduction, advance_deduction, other_deduction, total_deductions,
+          net_salary, actual_days, absent_days, late_minutes, leave_days
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          itemId, runId, emp.id,
+          emp.first_name + ' ' + emp.last_name, emp.employee_number,
+          basicSalary, housingAllowance, transportAllowance, otherAllowance,
+          overtimeAmount, overtimeHours, Math.round(gross * 100) / 100,
+          absenceDeduction, lateDeduction, advanceDeduction, 0, Math.round(totalDeduct * 100) / 100,
+          net, actualDays, absentDays > 0 ? absentDays : 0, totalLateMin, paidLeaveDays + unpaidLeaveDays
+        ]
+      );
+
+      totalGross += gross;
+      totalDeductions += totalDeduct;
+      totalNet += net;
+      empCount++;
+    }
+
+    // Update run totals
+    await db.query(
+      `UPDATE hr_payroll_runs SET status='calculated', total_gross=?, total_deductions=?, total_net=?, employee_count=? WHERE id=?`,
+      [Math.round(totalGross * 100) / 100, Math.round(totalDeductions * 100) / 100, Math.round(totalNet * 100) / 100, empCount, runId]
+    );
+
+    res.json({ success: true, id: runId, employeeCount: empCount, totalGross: Math.round(totalGross * 100) / 100, totalNet: Math.round(totalNet * 100) / 100 });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/payroll-runs/:id/approve', async (req, res) => {
+  try {
+    const { username } = req.body;
+    await db.query(
+      `UPDATE hr_payroll_runs SET status='approved', approved_by=?, approved_at=? WHERE id=?`,
+      [username, new Date(), req.params.id]
+    );
+    res.json({ success: true, id: req.params.id });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.get('/payroll-runs/:id/items', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      'SELECT * FROM hr_payroll_items WHERE run_id = ? ORDER BY employee_name',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.get('/payroll-runs/:id/payslip/:empId', async (req, res) => {
+  try {
+    const [items] = await db.query(
+      'SELECT * FROM hr_payroll_items WHERE run_id = ? AND employee_id = ?',
+      [req.params.id, req.params.empId]
+    );
+    if (!items.length) return res.json({ success: false, error: 'Payslip not found' });
+
+    const item = items[0];
+
+    // Get employee details
+    const [emp] = await db.query(
+      `SELECT e.*, COALESCE(d.name,'') as department_name, COALESCE(b.name,'') as branch_name
+       FROM hr_employees e
+       LEFT JOIN hr_departments d ON e.department_id = d.id
+       LEFT JOIN branches b ON e.branch_id = b.id
+       WHERE e.id = ?`,
+      [req.params.empId]
+    );
+
+    // Get run details
+    const [run] = await db.query('SELECT * FROM hr_payroll_runs WHERE id = ?', [req.params.id]);
+
+    res.json({
+      payrollItem: item,
+      employee: emp.length ? emp[0] : null,
+      run: run.length ? run[0] : null
+    });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ADVANCES
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/advances', async (req, res) => {
+  try {
+    const { employee_id, status } = req.query;
+    let sql = `
+      SELECT a.*, CONCAT(e.first_name, ' ', e.last_name) as employee_name, e.employee_number
+      FROM hr_advances a
+      LEFT JOIN hr_employees e ON a.employee_id = e.id
+      WHERE 1=1
+    `;
+    const params = [];
+    if (employee_id) { sql += ' AND a.employee_id = ?'; params.push(employee_id); }
+    if (status) { sql += ' AND a.status = ?'; params.push(status); }
+    sql += ' ORDER BY a.created_at DESC';
+
+    const [rows] = await db.query(sql, params);
+    res.json(rows);
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/advances', async (req, res) => {
+  try {
+    const { employeeId, amount, requestDate, deductionMonths, notes } = req.body;
+    const advId = 'ADV-' + Date.now();
+    const months = deductionMonths || 1;
+    const monthlyDeduction = Math.round((amount / months) * 100) / 100;
+
+    await db.query(
+      `INSERT INTO hr_advances (id, employee_id, amount, remaining, deduction_months, monthly_deduction, request_date, notes, status)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [advId, employeeId, amount, amount, months, monthlyDeduction, requestDate || new Date().toISOString().slice(0, 10), notes || null, 'pending']
+    );
+    res.json({ success: true, id: advId });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/advances/:id/approve', async (req, res) => {
+  try {
+    const { username } = req.body;
+    await db.query(
+      `UPDATE hr_advances SET status='approved', approved_by=?, approved_at=? WHERE id=?`,
+      [username, new Date(), req.params.id]
+    );
+    res.json({ success: true, id: req.params.id });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/advances/:id/reject', async (req, res) => {
+  try {
+    const { username } = req.body;
+    await db.query(
+      `UPDATE hr_advances SET status='rejected', rejected_by=?, rejected_at=? WHERE id=?`,
+      [username, new Date(), req.params.id]
+    );
+    res.json({ success: true, id: req.params.id });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// DOCUMENTS
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/documents/:employeeId', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      'SELECT * FROM hr_documents WHERE employee_id = ? ORDER BY created_at DESC',
+      [req.params.employeeId]
+    );
+    res.json(rows);
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/documents', async (req, res) => {
+  try {
+    const { employeeId, docType, title, fileData, expiryDate, notes, username } = req.body;
+    const docId = 'DOC-' + Date.now();
+    await db.query(
+      `INSERT INTO hr_documents (id, employee_id, doc_type, title, file_data, expiry_date, notes, uploaded_by) VALUES (?,?,?,?,?,?,?,?)`,
+      [docId, employeeId, docType || null, title || null, fileData || null, expiryDate || null, notes || null, username || null]
+    );
+    res.json({ success: true, id: docId });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.delete('/documents/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM hr_documents WHERE id = ?', [req.params.id]);
+    res.json({ success: true, id: req.params.id });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/dashboard', async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const in30Days = new Date(now.getTime() + 30 * 86400000).toISOString().slice(0, 10);
+
+    // Total and active employees
+    const [totalEmps] = await db.query('SELECT COUNT(*) as cnt FROM hr_employees');
+    const [activeEmps] = await db.query("SELECT COUNT(*) as cnt FROM hr_employees WHERE status = 'active'");
+
+    // On leave count (approved leave requests that cover today)
+    const [onLeave] = await db.query(
+      "SELECT COUNT(DISTINCT employee_id) as cnt FROM hr_leave_requests WHERE status = 'hr_approved' AND start_date <= ? AND end_date >= ?",
+      [today, today]
+    );
+
+    // New hires this month
+    const [newHires] = await db.query(
+      'SELECT COUNT(*) as cnt FROM hr_employees WHERE hire_date >= ?',
+      [firstOfMonth]
+    );
+
+    // Today's attendance
+    const [presentToday] = await db.query(
+      "SELECT COUNT(*) as cnt FROM hr_attendance WHERE attendance_date = ? AND status = 'present'",
+      [today]
+    );
+    const [lateToday] = await db.query(
+      'SELECT COUNT(*) as cnt FROM hr_attendance WHERE attendance_date = ? AND late_minutes > 0',
+      [today]
+    );
+    const absentToday = Math.max(0, Number(activeEmps[0].cnt) - Number(presentToday[0].cnt));
+
+    // Pending leave requests
+    const [pendingLeave] = await db.query(
+      "SELECT COUNT(*) as cnt FROM hr_leave_requests WHERE status IN ('pending', 'branch_approved')"
+    );
+
+    // Pending advances
+    const [pendingAdv] = await db.query(
+      "SELECT COUNT(*) as cnt FROM hr_advances WHERE status = 'pending'"
+    );
+
+    // Upcoming contract expiry (next 30 days)
+    const [expiringContracts] = await db.query(
+      `SELECT id, employee_number, CONCAT(first_name, ' ', last_name) as fullName, contract_end_date
+       FROM hr_employees
+       WHERE status = 'active' AND contract_end_date IS NOT NULL AND contract_end_date BETWEEN ? AND ?
+       ORDER BY contract_end_date`,
+      [today, in30Days]
+    );
+
+    // Department breakdown
+    const [deptBreakdown] = await db.query(
+      `SELECT COALESCE(d.name, 'بدون قسم') as name, COUNT(e.id) as count
+       FROM hr_employees e
+       LEFT JOIN hr_departments d ON e.department_id = d.id
+       WHERE e.status = 'active'
+       GROUP BY e.department_id, d.name
+       ORDER BY count DESC`
+    );
+
+    res.json({
+      totalEmployees: totalEmps[0].cnt,
+      activeEmployees: activeEmps[0].cnt,
+      onLeaveCount: onLeave[0].cnt,
+      newHiresThisMonth: newHires[0].cnt,
+      todayAttendance: {
+        present: presentToday[0].cnt,
+        absent: absentToday,
+        late: lateToday[0].cnt
+      },
+      pendingLeaveRequests: pendingLeave[0].cnt,
+      pendingAdvances: pendingAdv[0].cnt,
+      upcomingContractExpiry: expiringContracts,
+      departmentBreakdown: deptBreakdown
+    });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+module.exports = router;

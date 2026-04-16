@@ -14,7 +14,8 @@ const erpSections = [
   'erpBranches','erpPeriods','erpAuditLog','erpCreditNotes',
   'erpWarehouses','erpWarehouseStock','erpStockTransfers',
   'erpARAging','erpAPAging','erpCustomerStatement','erpSupplierStatement',
-  'erpWfPositions','erpWfTypes','erpWfDefs','erpWfInbox'
+  'erpWfPositions','erpWfTypes','erpWfDefs','erpWfInbox',
+  'erpHrDashboard','erpHrEmployees','erpHrDepartments','erpHrAttendance','erpHrLeave','erpHrPayroll','erpHrAdvances'
 ];
 
 function erpNav(sectionId) {
@@ -56,6 +57,13 @@ function erpNav(sectionId) {
       case 'erpWfTypes': wfLoadTypes(); break;
       case 'erpWfDefs': wfInitDefs(); break;
       case 'erpWfInbox': wfLoadInbox(); break;
+      case 'erpHrDashboard': hrLoadDashboard(); break;
+      case 'erpHrEmployees': hrLoadEmployees(); break;
+      case 'erpHrDepartments': hrLoadDepartments(); break;
+      case 'erpHrAttendance': hrLoadAttendance(); break;
+      case 'erpHrLeave': hrLoadLeaveRequests(); break;
+      case 'erpHrPayroll': hrLoadPayrollRuns(); break;
+      case 'erpHrAdvances': hrLoadAdvances(); break;
     }
   }
   // Update sidebar active state
@@ -4189,4 +4197,564 @@ function wfTxnAction(id, action) {
       wfLoadInbox();
     } else showToast(r.error, true);
   }).wfTransactionAction(id, { action: action, username: currentUser, note: note });
+}
+
+// ═══════════════════════════════════════
+// HR MODULE — نظام الموارد البشرية
+// ═══════════════════════════════════════
+
+function _hrStatCard(bg, iconBg, iconClr, icon, label, value) {
+  return '<div style="background:' + bg + ';border:1px solid ' + iconBg + ';border-radius:16px;padding:20px;display:flex;align-items:center;gap:14px;">' +
+    '<div style="width:48px;height:48px;border-radius:14px;background:' + iconBg + ';color:' + iconClr + ';display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;"><i class="fas ' + icon + '"></i></div>' +
+    '<div><div style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:4px;">' + label + '</div><div style="font-size:26px;font-weight:900;color:#0f172a;">' + value + '</div></div></div>';
+}
+
+// ─── Dashboard ───
+function hrLoadDashboard() {
+  window._apiBridge.withSuccessHandler(function(d) {
+    document.getElementById('hrDashStats').innerHTML =
+      _hrStatCard('linear-gradient(135deg,#eff6ff,#dbeafe)','#dbeafe','#1e40af','fa-users','إجمالي الموظفين', d.totalEmployees||0) +
+      _hrStatCard('linear-gradient(135deg,#f0fdf4,#dcfce7)','#dcfce7','#166534','fa-user-check','الحاضرون اليوم', (d.todayAttendance||{}).present||0) +
+      _hrStatCard('linear-gradient(135deg,#fefce8,#fef9c3)','#fef9c3','#854d0e','fa-calendar-check','طلبات إجازة معلقة', d.pendingLeaveRequests||0) +
+      _hrStatCard('linear-gradient(135deg,#faf5ff,#f3e8ff)','#f3e8ff','#7c3aed','fa-user-plus','تعيينات هذا الشهر', d.newHiresThisMonth||0);
+    var att = d.todayAttendance || {};
+    document.getElementById('hrDashAttendance').innerHTML =
+      '<div style="display:flex;gap:16px;flex-wrap:wrap;">' +
+        '<div><span style="font-size:24px;font-weight:900;color:#16a34a;">' + (att.present||0) + '</span> <span style="color:#64748b;">حاضر</span></div>' +
+        '<div><span style="font-size:24px;font-weight:900;color:#ef4444;">' + (att.absent||0) + '</span> <span style="color:#64748b;">غائب</span></div>' +
+        '<div><span style="font-size:24px;font-weight:900;color:#f59e0b;">' + (att.late||0) + '</span> <span style="color:#64748b;">متأخر</span></div>' +
+      '</div>';
+    var alerts = [];
+    if (d.pendingLeaveRequests > 0) alerts.push('<div style="padding:8px 12px;background:#fef3c7;border-radius:8px;font-size:13px;"><i class="fas fa-exclamation-circle" style="color:#f59e0b;"></i> ' + d.pendingLeaveRequests + ' طلب إجازة بانتظار الموافقة</div>');
+    if (d.pendingAdvances > 0) alerts.push('<div style="padding:8px 12px;background:#fee2e2;border-radius:8px;font-size:13px;"><i class="fas fa-hand-holding-usd" style="color:#ef4444;"></i> ' + d.pendingAdvances + ' طلب سلفة معلق</div>');
+    if ((d.upcomingContractExpiry||[]).length > 0) alerts.push('<div style="padding:8px 12px;background:#fef9c3;border-radius:8px;font-size:13px;"><i class="fas fa-file-contract" style="color:#ca8a04;"></i> ' + d.upcomingContractExpiry.length + ' عقد ينتهي خلال 30 يوم</div>');
+    document.getElementById('hrDashAlerts').innerHTML = alerts.length ? alerts.join('') : '<div style="color:#94a3b8;">لا توجد تنبيهات</div>';
+  }).getHrDashboard();
+}
+
+// ─── Employees ───
+var _hrEmployees = [];
+function hrLoadEmployees() {
+  var tb = document.getElementById('hrEmployeesBody');
+  tb.innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+  var params = {};
+  var st = (document.getElementById('hrEmpStatusFilter')||{}).value;
+  if (st) params.status = st;
+  window._apiBridge.withSuccessHandler(function(list) {
+    _hrEmployees = list || [];
+    hrRenderEmployees(list);
+  }).getHrEmployees(params);
+}
+
+function hrFilterEmployees() {
+  var q = (document.getElementById('hrEmpSearch').value||'').toLowerCase();
+  var filtered = _hrEmployees.filter(function(e) {
+    return !q || (e.fullName||'').toLowerCase().indexOf(q)>=0 || (e.employeeNumber||'').toLowerCase().indexOf(q)>=0;
+  });
+  hrRenderEmployees(filtered);
+}
+
+function hrRenderEmployees(list) {
+  var tb = document.getElementById('hrEmployeesBody');
+  if (!list||!list.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-msg">لا يوجد موظفون</td></tr>'; return; }
+  var statusLabels = {active:'نشط',suspended:'مجمد',terminated:'منتهي',on_leave:'في إجازة'};
+  var statusColors = {active:'green',suspended:'orange',terminated:'red',on_leave:'blue'};
+  var btnS = 'width:32px;height:32px;border-radius:8px;border:1px solid #e2e8f0;background:#f8fafc;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;';
+  tb.innerHTML = list.map(function(e) {
+    return '<tr>' +
+      '<td><code style="font-weight:700;">' + (e.employeeNumber||'') + '</code></td>' +
+      '<td style="font-weight:800;color:#1e293b;">' + (e.fullName||'') + '</td>' +
+      '<td>' + (e.jobTitle||'—') + '</td>' +
+      '<td>' + (e.departmentName||'—') + '</td>' +
+      '<td>' + (e.branchName||'—') + '</td>' +
+      '<td style="font-weight:700;color:#1e40af;">' + (Number(e.basicSalary)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</td>' +
+      '<td><span class="badge badge-' + (statusColors[e.status]||'blue') + '">' + (statusLabels[e.status]||e.status) + '</span></td>' +
+      '<td><div style="display:flex;gap:4px;">' +
+        '<button style="' + btnS + 'color:#3b82f6;" onclick="hrViewEmployee(\'' + e.id + '\')" title="عرض"><i class="fas fa-eye"></i></button>' +
+        '<button style="' + btnS + 'color:#f59e0b;" onclick="hrEditEmployee(\'' + e.id + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
+      '</div></td>' +
+    '</tr>';
+  }).join('');
+}
+
+function hrViewEmployee(id) {
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(emp) {
+    loader(false);
+    if (!emp || emp.error) return showToast(emp.error||'خطأ', true);
+    var statusLabels = {active:'نشط',suspended:'مجمد',terminated:'منتهي',on_leave:'في إجازة'};
+    var empTypeLabels = {full_time:'دوام كامل',part_time:'دوام جزئي',hourly:'بالساعة',contract:'عقد'};
+    var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">' +
+      '<div><strong>الرقم الوظيفي:</strong> <code>' + (emp.employeeNumber||'') + '</code></div>' +
+      '<div><strong>الاسم:</strong> ' + (emp.fullName||'') + '</div>' +
+      '<div><strong>الهوية:</strong> ' + (emp.nationalId||'—') + '</div>' +
+      '<div><strong>الجوال:</strong> ' + (emp.phone||'—') + '</div>' +
+      '<div><strong>البريد:</strong> ' + (emp.email||'—') + '</div>' +
+      '<div><strong>الوظيفة:</strong> ' + (emp.jobTitle||'—') + '</div>' +
+      '<div><strong>القسم:</strong> ' + (emp.departmentName||'—') + '</div>' +
+      '<div><strong>الفرع:</strong> ' + (emp.branchName||'—') + '</div>' +
+      '<div><strong>نوع التوظيف:</strong> ' + (empTypeLabels[emp.employmentType]||emp.employmentType) + '</div>' +
+      '<div><strong>الحالة:</strong> <span class="badge badge-' + (emp.status==='active'?'green':'red') + '">' + (statusLabels[emp.status]||emp.status) + '</span></div>' +
+      '<div><strong>تاريخ التعيين:</strong> ' + (emp.hireDate ? new Date(emp.hireDate).toLocaleDateString('en-GB') : '—') + '</div>' +
+      '<div><strong>الراتب الأساسي:</strong> <span style="font-weight:900;color:#1e40af;">' + (Number(emp.basicSalary)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</span></div>' +
+    '</div>';
+    // Bank info
+    if (emp.bankName || emp.bankIban) {
+      html += '<div style="background:#f8fafc;padding:12px;border-radius:10px;margin-bottom:12px;"><strong><i class="fas fa-university"></i> البنك:</strong> ' + (emp.bankName||'') + ' | IBAN: ' + (emp.bankIban||'') + '</div>';
+    }
+    // Emergency contact
+    if (emp.emergencyContactName) {
+      html += '<div style="background:#fef2f2;padding:12px;border-radius:10px;margin-bottom:12px;"><strong><i class="fas fa-phone-alt"></i> طوارئ:</strong> ' + emp.emergencyContactName + ' — ' + (emp.emergencyContactPhone||'') + ' (' + (emp.emergencyContactRelation||'') + ')</div>';
+    }
+    // Leave balances
+    if (emp.leaveBalances && emp.leaveBalances.length) {
+      html += '<h4 style="margin:14px 0 8px;"><i class="fas fa-calendar-check" style="color:#3b82f6;"></i> أرصدة الإجازات</h4>';
+      html += '<div style="display:flex;gap:10px;flex-wrap:wrap;">';
+      emp.leaveBalances.forEach(function(lb) {
+        html += '<div style="padding:10px 16px;background:#f0fdf4;border:1px solid #dcfce7;border-radius:10px;text-align:center;">' +
+          '<div style="font-size:12px;font-weight:700;color:#64748b;">' + lb.leaveTypeName + '</div>' +
+          '<div style="font-size:20px;font-weight:900;color:#166534;">' + lb.remaining + '</div>' +
+          '<div style="font-size:10px;color:#94a3b8;">من ' + lb.total + ' يوم</div></div>';
+      });
+      html += '</div>';
+    }
+    document.getElementById('erpModalTitle').textContent = 'ملف الموظف: ' + (emp.fullName||'');
+    document.getElementById('erpModalBody').innerHTML = html;
+    var box = document.querySelector('#erpModal .modal-box');
+    if (box) box.style.maxWidth = '700px';
+    document.getElementById('erpModalSaveBtn').style.display = 'none';
+    document.getElementById('erpModal').classList.remove('hidden');
+    setTimeout(function() { document.getElementById('erpModalSaveBtn').style.display = ''; if(box) box.style.maxWidth=''; }, 100);
+  }).getHrEmployee(id);
+}
+
+function hrOpenEmployeeModal(data) {
+  var d = data || {};
+  Promise.all([
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getHrDepartments(); }),
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getBranchesFull(); }),
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getBrands(); }),
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getWfPositions(); })
+  ]).then(function(res) {
+    var depts = res[0]||[], branches = res[1]||[], brands = res[2]||[], positions = res[3]||[];
+    var deptOpts = depts.map(function(x){return '<option value="'+x.id+'"'+(d.departmentId===x.id?' selected':'')+'>'+x.name+'</option>';}).join('');
+    var brOpts = branches.map(function(x){return '<option value="'+x.id+'"'+(d.branchId===x.id?' selected':'')+'>'+x.name+'</option>';}).join('');
+    var brandOpts = brands.map(function(x){return '<option value="'+x.id+'"'+(d.brandId===x.id?' selected':'')+'>'+x.name+'</option>';}).join('');
+    var posOpts = positions.map(function(x){return '<option value="'+x.id+'"'+(d.positionId===x.id?' selected':'')+'>'+x.name+'</option>';}).join('');
+    document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل موظف' : 'إضافة موظف جديد';
+    var box = document.querySelector('#erpModal .modal-box');
+    if (box) box.style.maxWidth = '700px';
+    document.getElementById('erpModalBody').innerHTML =
+      '<input type="hidden" id="hrEmpId" value="'+(d.id||'')+'">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>الاسم الأول *</label><input class="form-control" id="hrEmpFirst" value="'+(d.firstName||'')+'"></div>' +
+        '<div class="form-row"><label>اسم العائلة</label><input class="form-control" id="hrEmpLast" value="'+(d.lastName||'')+'"></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>رقم الهوية</label><input class="form-control" id="hrEmpNatId" value="'+(d.nationalId||'')+'"></div>' +
+        '<div class="form-row"><label>الجوال</label><input class="form-control" id="hrEmpPhone" value="'+(d.phone||'')+'"></div>' +
+        '<div class="form-row"><label>البريد</label><input class="form-control" id="hrEmpEmail" value="'+(d.email||'')+'"></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>الفرع</label><select class="form-control" id="hrEmpBranch"><option value="">—</option>'+brOpts+'</select></div>' +
+        '<div class="form-row"><label>البراند</label><select class="form-control" id="hrEmpBrand"><option value="">—</option>'+brandOpts+'</select></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>القسم</label><select class="form-control" id="hrEmpDept"><option value="">—</option>'+deptOpts+'</select></div>' +
+        '<div class="form-row"><label>المنصب</label><select class="form-control" id="hrEmpPos"><option value="">—</option>'+posOpts+'</select></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>المسمى الوظيفي</label><input class="form-control" id="hrEmpTitle" value="'+(d.jobTitle||'')+'"></div>' +
+        '<div class="form-row"><label>نوع التوظيف</label><select class="form-control" id="hrEmpType"><option value="full_time">دوام كامل</option><option value="part_time">دوام جزئي</option><option value="hourly">بالساعة</option><option value="contract">عقد</option></select></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>الراتب الأساسي</label><input type="number" class="form-control" id="hrEmpSalary" value="'+(d.basicSalary||0)+'" step="0.01"></div>' +
+        '<div class="form-row"><label>بدل سكن</label><input type="number" class="form-control" id="hrEmpHousing" value="'+(d.housingAllowance||0)+'" step="0.01"></div>' +
+        '<div class="form-row"><label>بدل نقل</label><input type="number" class="form-control" id="hrEmpTransport" value="'+(d.transportAllowance||0)+'" step="0.01"></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>تاريخ التعيين</label><input type="date" class="form-control" id="hrEmpHireDate" value="'+(d.hireDate?d.hireDate.split('T')[0]:'')+'"></div>' +
+        '<div class="form-row"><label>نهاية العقد</label><input type="date" class="form-control" id="hrEmpContractEnd" value="'+(d.contractEndDate?d.contractEndDate.split('T')[0]:'')+'"></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>البنك</label><input class="form-control" id="hrEmpBank" value="'+(d.bankName||'')+'"></div>' +
+        '<div class="form-row"><label>رقم الحساب</label><input class="form-control" id="hrEmpBankAcc" value="'+(d.bankAccount||'')+'"></div>' +
+        '<div class="form-row"><label>IBAN</label><input class="form-control" id="hrEmpIban" value="'+(d.bankIban||'')+'"></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>جهة اتصال طوارئ</label><input class="form-control" id="hrEmpEmgName" value="'+(d.emergencyContactName||'')+'"></div>' +
+        '<div class="form-row"><label>جوال الطوارئ</label><input class="form-control" id="hrEmpEmgPhone" value="'+(d.emergencyContactPhone||'')+'"></div>' +
+        '<div class="form-row"><label>صلة القرابة</label><input class="form-control" id="hrEmpEmgRel" value="'+(d.emergencyContactRelation||'')+'"></div>' +
+      '</div>' +
+      (!d.id ? '<div class="form-row" style="margin-top:8px;"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;"><input type="checkbox" id="hrEmpCreateUser" checked style="width:18px;height:18px;accent-color:#3b82f6;"> <span style="font-weight:700;color:#1e40af;">إنشاء حساب دخول للنظام تلقائياً</span></label></div>' : '') +
+      '<div class="form-row"><label>ملاحظات</label><textarea class="form-control" id="hrEmpNotes" rows="2">'+(d.notes||'')+'</textarea></div>';
+    if (d.employmentType) document.getElementById('hrEmpType').value = d.employmentType;
+    document.getElementById('erpModalSaveBtn').onclick = hrSaveEmployee;
+    document.getElementById('erpModal').classList.remove('hidden');
+  });
+}
+
+function hrEditEmployee(id) {
+  var e = _hrEmployees.find(function(x){return x.id===id;});
+  if (e) hrOpenEmployeeModal(e);
+}
+
+function hrSaveEmployee() {
+  var id = document.getElementById('hrEmpId').value;
+  var data = {
+    firstName: document.getElementById('hrEmpFirst').value,
+    lastName: document.getElementById('hrEmpLast').value,
+    nationalId: document.getElementById('hrEmpNatId').value,
+    phone: document.getElementById('hrEmpPhone').value,
+    email: document.getElementById('hrEmpEmail').value,
+    branchId: document.getElementById('hrEmpBranch').value,
+    brandId: document.getElementById('hrEmpBrand').value,
+    departmentId: document.getElementById('hrEmpDept').value,
+    positionId: document.getElementById('hrEmpPos').value,
+    jobTitle: document.getElementById('hrEmpTitle').value,
+    employmentType: document.getElementById('hrEmpType').value,
+    basicSalary: Number(document.getElementById('hrEmpSalary').value)||0,
+    housingAllowance: Number(document.getElementById('hrEmpHousing').value)||0,
+    transportAllowance: Number(document.getElementById('hrEmpTransport').value)||0,
+    hireDate: document.getElementById('hrEmpHireDate').value,
+    contractEndDate: document.getElementById('hrEmpContractEnd').value,
+    bankName: document.getElementById('hrEmpBank').value,
+    bankAccount: document.getElementById('hrEmpBankAcc').value,
+    bankIban: document.getElementById('hrEmpIban').value,
+    emergencyContactName: document.getElementById('hrEmpEmgName').value,
+    emergencyContactPhone: document.getElementById('hrEmpEmgPhone').value,
+    emergencyContactRelation: document.getElementById('hrEmpEmgRel').value,
+    notes: document.getElementById('hrEmpNotes').value,
+    createUser: document.getElementById('hrEmpCreateUser') ? document.getElementById('hrEmpCreateUser').checked : false
+  };
+  if (!data.firstName) return showToast('الاسم الأول مطلوب', true);
+  loader(true);
+  if (id) {
+    window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم التحديث');erpCloseModal();hrLoadEmployees();}else showToast(r.error,true); }).updateHrEmployee(id, data);
+  } else {
+    window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم إضافة الموظف: '+(r.employeeNumber||''));erpCloseModal();hrLoadEmployees();}else showToast(r.error,true); }).saveHrEmployee(data);
+  }
+}
+
+// ─── Departments ───
+var _hrDepts = [];
+function hrLoadDepartments() {
+  var grid = document.getElementById('hrDepartmentsGrid');
+  grid.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;"><i class="fas fa-spinner fa-spin"></i></div>';
+  window._apiBridge.withSuccessHandler(function(list) {
+    _hrDepts = list||[];
+    if (!list.length) { grid.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;">لا توجد أقسام</div>'; return; }
+    grid.innerHTML = list.map(function(d) {
+      return '<div style="background:#fff;border:1.5px solid #e2e8f0;border-radius:16px;padding:18px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+          '<div style="font-size:15px;font-weight:800;color:#1e293b;"><i class="fas fa-building" style="color:#3b82f6;margin-left:6px;"></i> ' + d.name + '</div>' +
+          '<code style="color:#94a3b8;">' + (d.code||'') + '</code>' +
+        '</div>' +
+        '<div style="font-size:13px;color:#64748b;">الفرع: ' + (d.branchName||'—') + '</div>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid #f1f5f9;">' +
+          '<span style="font-size:13px;font-weight:700;color:#1e40af;">' + (d.employeeCount||0) + ' موظف</span>' +
+          '<div style="display:flex;gap:4px;">' +
+            '<button style="width:32px;height:32px;border-radius:8px;border:1px solid #e2e8f0;background:#f8fafc;color:#3b82f6;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;" onclick="hrEditDept(\''+d.id+'\')"><i class="fas fa-edit"></i></button>' +
+          '</div>' +
+        '</div></div>';
+    }).join('');
+  }).getHrDepartments();
+}
+
+function hrOpenDeptModal(data) {
+  var d = data||{};
+  document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل قسم' : 'قسم جديد';
+  window._apiBridge.withSuccessHandler(function(branches) {
+    var brOpts = (branches||[]).map(function(b){return '<option value="'+b.id+'"'+(d.branchId===b.id?' selected':'')+'>'+b.name+'</option>';}).join('');
+    document.getElementById('erpModalBody').innerHTML =
+      '<input type="hidden" id="hrDeptId" value="'+(d.id||'')+'">' +
+      '<div class="form-row"><label>اسم القسم *</label><input class="form-control" id="hrDeptName" value="'+(d.name||'')+'"></div>' +
+      '<div class="form-row"><label>الرمز *</label><input class="form-control" id="hrDeptCode" value="'+(d.code||'')+'"></div>' +
+      '<div class="form-row"><label>الفرع</label><select class="form-control" id="hrDeptBranch"><option value="">—</option>'+brOpts+'</select></div>';
+    document.getElementById('erpModalSaveBtn').onclick = function() {
+      var name = document.getElementById('hrDeptName').value;
+      if (!name) return showToast('اسم القسم مطلوب', true);
+      loader(true);
+      window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم الحفظ');erpCloseModal();hrLoadDepartments();}else showToast(r.error,true); }).saveHrDepartment({
+        id: document.getElementById('hrDeptId').value||undefined, name: name,
+        code: document.getElementById('hrDeptCode').value, branchId: document.getElementById('hrDeptBranch').value
+      });
+    };
+    document.getElementById('erpModal').classList.remove('hidden');
+  }).getBranchesFull();
+}
+function hrEditDept(id) { var d=_hrDepts.find(function(x){return x.id===id;}); if(d) hrOpenDeptModal(d); }
+
+// ─── Attendance ───
+function hrLoadAttendance() {
+  var tb = document.getElementById('hrAttBody');
+  tb.innerHTML = '<tr><td colspan="9" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  var params = {};
+  var dt = (document.getElementById('hrAttDate')||{}).value;
+  if (dt) params.date = dt;
+  var br = (document.getElementById('hrAttBranch')||{}).value;
+  if (br) params.branch_id = br;
+  window._apiBridge.withSuccessHandler(function(list) {
+    if (!list||!list.length) { tb.innerHTML='<tr><td colspan="9" class="empty-msg">لا توجد سجلات</td></tr>'; return; }
+    var srcLabels = {fingerprint:'بصمة',pos:'POS',app:'تطبيق',manual:'يدوي'};
+    var statusLabels = {present:'حاضر',absent:'غائب',leave:'إجازة',holiday:'عطلة',weekend:'إجازة أسبوعية'};
+    var statusColors = {present:'green',absent:'red',leave:'blue',holiday:'purple',weekend:'gray'};
+    tb.innerHTML = list.map(function(a) {
+      var ci = a.clockIn ? new Date(a.clockIn).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) : '—';
+      var co = a.clockOut ? new Date(a.clockOut).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) : '—';
+      return '<tr>' +
+        '<td style="font-weight:700;">' + (a.employeeName||'') + '</td>' +
+        '<td>' + (a.attendanceDate ? new Date(a.attendanceDate).toLocaleDateString('en-GB') : '') + '</td>' +
+        '<td style="color:#16a34a;font-weight:700;">' + ci + '</td>' +
+        '<td style="color:#ef4444;font-weight:700;">' + co + '</td>' +
+        '<td style="font-weight:700;">' + (Number(a.totalHours)||0).toFixed(1) + 'h</td>' +
+        '<td>' + (a.lateMinutes > 0 ? '<span style="color:#ef4444;font-weight:700;">' + a.lateMinutes + ' د</span>' : '—') + '</td>' +
+        '<td>' + (a.overtimeMinutes > 0 ? '<span style="color:#16a34a;font-weight:700;">' + a.overtimeMinutes + ' د</span>' : '—') + '</td>' +
+        '<td><span class="badge badge-blue">' + (srcLabels[a.source]||a.source) + '</span></td>' +
+        '<td><span class="badge badge-' + (statusColors[a.status]||'blue') + '">' + (statusLabels[a.status]||a.status) + '</span></td>' +
+      '</tr>';
+    }).join('');
+  }).getHrAttendance(params);
+}
+
+function hrImportAttendance() { showToast('استيراد البصمة: قيد التطوير', true); }
+
+// ─── Leave Requests ───
+function hrLoadLeaveRequests() {
+  var tb = document.getElementById('hrLeaveBody');
+  tb.innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  var params = {};
+  var st = (document.getElementById('hrLeaveStatus')||{}).value;
+  if (st) params.status = st;
+  window._apiBridge.withSuccessHandler(function(list) {
+    if (!list||!list.length) { tb.innerHTML='<tr><td colspan="8" class="empty-msg">لا توجد طلبات</td></tr>'; return; }
+    var statusLabels = {pending:'معلّقة',branch_approved:'معتمد مدير',hr_approved:'معتمد HR',rejected:'مرفوضة',cancelled:'ملغاة'};
+    var statusColors = {pending:'yellow',branch_approved:'blue',hr_approved:'green',rejected:'red',cancelled:'gray'};
+    tb.innerHTML = list.map(function(l) {
+      var canApprove = l.status==='pending'||l.status==='branch_approved';
+      var actions = '<button style="width:30px;height:30px;border-radius:8px;border:1px solid #e2e8f0;background:#f8fafc;color:#3b82f6;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;justify-content:center;" onclick="hrViewLeaveDetail(\''+l.id+'\')"><i class="fas fa-eye"></i></button> ';
+      if (canApprove) {
+        var level = l.status==='pending' ? 'branch' : 'hr';
+        actions += '<button class="btn btn-success btn-sm" onclick="hrApproveLeave(\''+l.id+'\',\''+level+'\')"><i class="fas fa-check"></i></button> ';
+        actions += '<button class="btn btn-danger btn-sm" onclick="hrRejectLeave(\''+l.id+'\')"><i class="fas fa-times"></i></button>';
+      }
+      return '<tr>' +
+        '<td><code>' + (l.requestNumber||'') + '</code></td>' +
+        '<td style="font-weight:700;">' + (l.employeeName||'') + '</td>' +
+        '<td><span class="badge badge-blue">' + (l.leaveTypeName||'') + '</span></td>' +
+        '<td>' + (l.startDate ? new Date(l.startDate).toLocaleDateString('en-GB') : '') + '</td>' +
+        '<td>' + (l.endDate ? new Date(l.endDate).toLocaleDateString('en-GB') : '') + '</td>' +
+        '<td style="font-weight:700;">' + (l.daysCount||0) + '</td>' +
+        '<td><span class="badge badge-' + (statusColors[l.status]||'blue') + '">' + (statusLabels[l.status]||l.status) + '</span></td>' +
+        '<td style="white-space:nowrap;">' + actions + '</td>' +
+      '</tr>';
+    }).join('');
+  }).getLeaveRequests(params);
+}
+
+function hrOpenLeaveRequestModal() {
+  Promise.all([
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getHrEmployees({status:'active'}); }),
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getHrLeaveTypes(); })
+  ]).then(function(res) {
+    var emps = res[0]||[], types = res[1]||[];
+    var empOpts = emps.map(function(e){return '<option value="'+e.id+'">'+e.fullName+' ('+e.employeeNumber+')</option>';}).join('');
+    var typeOpts = types.map(function(t){return '<option value="'+t.id+'">'+t.name+' ('+t.defaultDays+' يوم)</option>';}).join('');
+    document.getElementById('erpModalTitle').textContent = 'طلب إجازة جديد';
+    document.getElementById('erpModalBody').innerHTML =
+      '<div class="form-row"><label>الموظف *</label><select class="form-control" id="hrLeaveEmp">'+empOpts+'</select></div>' +
+      '<div class="form-row"><label>نوع الإجازة *</label><select class="form-control" id="hrLeaveType">'+typeOpts+'</select></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>من تاريخ *</label><input type="date" class="form-control" id="hrLeaveStart"></div>' +
+        '<div class="form-row"><label>إلى تاريخ *</label><input type="date" class="form-control" id="hrLeaveEnd"></div>' +
+      '</div>' +
+      '<div class="form-row"><label>السبب</label><textarea class="form-control" id="hrLeaveReason" rows="2"></textarea></div>';
+    document.getElementById('erpModalSaveBtn').onclick = function() {
+      var empId = document.getElementById('hrLeaveEmp').value;
+      var typeId = document.getElementById('hrLeaveType').value;
+      var start = document.getElementById('hrLeaveStart').value;
+      var end = document.getElementById('hrLeaveEnd').value;
+      if (!empId||!typeId||!start||!end) return showToast('جميع الحقول مطلوبة', true);
+      loader(true);
+      window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم تقديم الطلب');erpCloseModal();hrLoadLeaveRequests();}else showToast(r.error,true); }).createLeaveRequest({
+        employeeId:empId, leaveTypeId:typeId, startDate:start, endDate:end, reason:document.getElementById('hrLeaveReason').value
+      });
+    };
+    document.getElementById('erpModal').classList.remove('hidden');
+  });
+}
+
+function hrApproveLeave(id, level) {
+  if (!confirm('موافقة على الإجازة؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تمت الموافقة');hrLoadLeaveRequests();}else showToast(r.error,true); }).approveLeaveRequest(id, {username:currentUser, level:level});
+}
+
+function hrRejectLeave(id) {
+  var reason = prompt('سبب الرفض:');
+  if (reason===null) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم الرفض');hrLoadLeaveRequests();}else showToast(r.error,true); }).rejectLeaveRequest(id, {username:currentUser, reason:reason});
+}
+
+function hrViewLeaveDetail(id) { showToast('تفاصيل الطلب: قيد التطوير'); }
+
+// ─── Payroll ───
+function hrLoadPayrollRuns() {
+  var tb = document.getElementById('hrPayrollBody');
+  tb.innerHTML = '<tr><td colspan="9" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  window._apiBridge.withSuccessHandler(function(list) {
+    if (!list||!list.length) { tb.innerHTML='<tr><td colspan="9" class="empty-msg">لا توجد دورات رواتب</td></tr>'; return; }
+    var statusLabels = {draft:'مسودة',calculated:'محسوبة',approved:'معتمدة',paid:'مدفوعة'};
+    var statusColors = {draft:'yellow',calculated:'blue',approved:'green',paid:'purple'};
+    var months = ['','يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+    tb.innerHTML = list.map(function(r) {
+      var actions = '<button class="btn btn-sm btn-light" onclick="hrViewPayrollItems(\''+r.id+'\')"><i class="fas fa-eye"></i></button> ';
+      if (r.status==='draft') actions += '<button class="btn btn-sm btn-primary" onclick="hrCalculatePayroll(\''+r.id+'\')"><i class="fas fa-calculator"></i> حساب</button> ';
+      if (r.status==='calculated') actions += '<button class="btn btn-sm btn-success" onclick="hrApprovePayroll(\''+r.id+'\')"><i class="fas fa-check"></i> اعتماد</button>';
+      return '<tr>' +
+        '<td><code>' + (r.runNumber||'') + '</code></td>' +
+        '<td style="font-weight:700;">' + (months[r.periodMonth]||r.periodMonth) + ' ' + r.periodYear + '</td>' +
+        '<td>' + (r.branchName||'كل الفروع') + '</td>' +
+        '<td style="font-weight:700;">' + (r.employeeCount||0) + '</td>' +
+        '<td style="color:#16a34a;font-weight:700;">' + (Number(r.totalGross)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</td>' +
+        '<td style="color:#ef4444;">' + (Number(r.totalDeductions)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</td>' +
+        '<td style="font-weight:900;color:#1e40af;">' + (Number(r.totalNet)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</td>' +
+        '<td><span class="badge badge-' + (statusColors[r.status]||'blue') + '">' + (statusLabels[r.status]||r.status) + '</span></td>' +
+        '<td style="white-space:nowrap;">' + actions + '</td>' +
+      '</tr>';
+    }).join('');
+  }).getPayrollRuns();
+}
+
+function hrOpenPayrollRunModal() {
+  var now = new Date();
+  document.getElementById('erpModalTitle').textContent = 'دورة رواتب جديدة';
+  window._apiBridge.withSuccessHandler(function(branches) {
+    var brOpts = (branches||[]).map(function(b){return '<option value="'+b.id+'">'+b.name+'</option>';}).join('');
+    document.getElementById('erpModalBody').innerHTML =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>الشهر *</label><select class="form-control" id="hrPrMonth">' +
+          '<option value="1">يناير</option><option value="2">فبراير</option><option value="3">مارس</option><option value="4">أبريل</option>' +
+          '<option value="5">مايو</option><option value="6">يونيو</option><option value="7">يوليو</option><option value="8">أغسطس</option>' +
+          '<option value="9">سبتمبر</option><option value="10">أكتوبر</option><option value="11">نوفمبر</option><option value="12">ديسمبر</option>' +
+        '</select></div>' +
+        '<div class="form-row"><label>السنة *</label><input type="number" class="form-control" id="hrPrYear" value="'+now.getFullYear()+'"></div>' +
+      '</div>' +
+      '<div class="form-row"><label>الفرع</label><select class="form-control" id="hrPrBranch"><option value="">كل الفروع</option>'+brOpts+'</select></div>';
+    document.getElementById('hrPrMonth').value = now.getMonth() + 1;
+    document.getElementById('erpModalSaveBtn').onclick = function() {
+      loader(true);
+      window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم إنشاء الدورة');erpCloseModal();hrLoadPayrollRuns();}else showToast(r.error,true); }).createPayrollRun({
+        month: Number(document.getElementById('hrPrMonth').value),
+        year: Number(document.getElementById('hrPrYear').value),
+        branchId: document.getElementById('hrPrBranch').value
+      });
+    };
+    document.getElementById('erpModal').classList.remove('hidden');
+  }).getBranchesFull();
+}
+
+function hrCalculatePayroll(id) {
+  if (!confirm('حساب رواتب هذه الدورة؟ سيتم احتساب الرواتب من الحضور والإجازات.')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم حساب الرواتب لـ '+(r.count||0)+' موظف');hrLoadPayrollRuns();}else showToast(r.error,true); }).calculatePayroll(id, {username:currentUser});
+}
+
+function hrApprovePayroll(id) {
+  if (!confirm('اعتماد هذه الدورة؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم الاعتماد');hrLoadPayrollRuns();}else showToast(r.error,true); }).approvePayroll(id, {username:currentUser});
+}
+
+function hrViewPayrollItems(id) {
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(items) {
+    loader(false);
+    if (!items||!items.length) return showToast('لا توجد بنود', true);
+    var html = '<div style="max-height:400px;overflow-y:auto;"><table class="erp-table" style="font-size:12px;">' +
+      '<thead><tr><th>الموظف</th><th>الأساسي</th><th>البدلات</th><th>الإضافي</th><th>الإجمالي</th><th>الخصومات</th><th>الصافي</th></tr></thead><tbody>';
+    items.forEach(function(p) {
+      var allowances = (Number(p.housingAllowance)||0)+(Number(p.transportAllowance)||0)+(Number(p.otherAllowance)||0);
+      html += '<tr><td style="font-weight:700;">'+(p.employeeName||'')+'</td>' +
+        '<td>'+(Number(p.basicSalary)||0).toFixed(2)+'</td>' +
+        '<td>'+allowances.toFixed(2)+'</td>' +
+        '<td style="color:#16a34a;">'+(Number(p.overtimeAmount)||0).toFixed(2)+'</td>' +
+        '<td style="font-weight:700;">'+(Number(p.grossSalary)||0).toFixed(2)+'</td>' +
+        '<td style="color:#ef4444;">'+(Number(p.totalDeductions)||0).toFixed(2)+'</td>' +
+        '<td style="font-weight:900;color:#1e40af;">'+(Number(p.netSalary)||0).toFixed(2)+'</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    document.getElementById('erpModalTitle').textContent = 'بنود الرواتب';
+    document.getElementById('erpModalBody').innerHTML = html;
+    var box = document.querySelector('#erpModal .modal-box');
+    if (box) box.style.maxWidth = '800px';
+    document.getElementById('erpModalSaveBtn').style.display = 'none';
+    document.getElementById('erpModal').classList.remove('hidden');
+    setTimeout(function() { document.getElementById('erpModalSaveBtn').style.display = ''; if(box) box.style.maxWidth=''; }, 100);
+  }).getPayrollItems(id);
+}
+
+// ─── Advances ───
+function hrLoadAdvances() {
+  var tb = document.getElementById('hrAdvancesBody');
+  tb.innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  window._apiBridge.withSuccessHandler(function(list) {
+    if (!list||!list.length) { tb.innerHTML='<tr><td colspan="7" class="empty-msg">لا توجد سلف</td></tr>'; return; }
+    var statusLabels = {pending:'معلقة',approved:'معتمدة',rejected:'مرفوضة',deducted:'مخصومة'};
+    var statusColors = {pending:'yellow',approved:'green',rejected:'red',deducted:'purple'};
+    tb.innerHTML = list.map(function(a) {
+      var actions = '';
+      if (a.status==='pending') {
+        actions = '<button class="btn btn-success btn-sm" onclick="hrApproveAdvance(\''+a.id+'\')"><i class="fas fa-check"></i></button> ' +
+          '<button class="btn btn-danger btn-sm" onclick="hrRejectAdvance(\''+a.id+'\')"><i class="fas fa-times"></i></button>';
+      }
+      return '<tr>' +
+        '<td style="font-weight:700;">'+(a.employeeName||'')+'</td>' +
+        '<td style="font-weight:900;color:#1e40af;">'+(Number(a.amount)||0).toLocaleString('en',{minimumFractionDigits:2})+'</td>' +
+        '<td>'+(a.requestDate ? new Date(a.requestDate).toLocaleDateString('en-GB') : '')+'</td>' +
+        '<td>'+(a.deductionMonths||1)+' شهر</td>' +
+        '<td style="color:#ef4444;font-weight:700;">'+(Number(a.remainingAmount)||0).toLocaleString('en',{minimumFractionDigits:2})+'</td>' +
+        '<td><span class="badge badge-'+(statusColors[a.status]||'blue')+'">'+(statusLabels[a.status]||a.status)+'</span></td>' +
+        '<td style="white-space:nowrap;">'+actions+'</td>' +
+      '</tr>';
+    }).join('');
+  }).getHrAdvances({});
+}
+
+function hrOpenAdvanceModal() {
+  window._apiBridge.withSuccessHandler(function(emps) {
+    var empOpts = (emps||[]).map(function(e){return '<option value="'+e.id+'">'+e.fullName+' ('+e.employeeNumber+')</option>';}).join('');
+    document.getElementById('erpModalTitle').textContent = 'طلب سلفة جديد';
+    document.getElementById('erpModalBody').innerHTML =
+      '<div class="form-row"><label>الموظف *</label><select class="form-control" id="hrAdvEmp">'+empOpts+'</select></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>المبلغ *</label><input type="number" class="form-control" id="hrAdvAmount" min="1" step="0.01"></div>' +
+        '<div class="form-row"><label>عدد أشهر الخصم</label><input type="number" class="form-control" id="hrAdvMonths" min="1" value="1"></div>' +
+      '</div>' +
+      '<div class="form-row"><label>ملاحظات</label><textarea class="form-control" id="hrAdvNotes" rows="2"></textarea></div>';
+    document.getElementById('erpModalSaveBtn').onclick = function() {
+      var empId = document.getElementById('hrAdvEmp').value;
+      var amount = Number(document.getElementById('hrAdvAmount').value);
+      if (!empId||!amount) return showToast('الموظف والمبلغ مطلوبان', true);
+      loader(true);
+      window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم تقديم الطلب');erpCloseModal();hrLoadAdvances();}else showToast(r.error,true); }).createAdvance({
+        employeeId:empId, amount:amount, requestDate:new Date().toISOString().split('T')[0],
+        deductionMonths:Number(document.getElementById('hrAdvMonths').value)||1, notes:document.getElementById('hrAdvNotes').value
+      });
+    };
+    document.getElementById('erpModal').classList.remove('hidden');
+  }).getHrEmployees({status:'active'});
+}
+
+function hrApproveAdvance(id) {
+  if (!confirm('اعتماد السلفة؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم الاعتماد');hrLoadAdvances();}else showToast(r.error,true); }).approveAdvance(id, {username:currentUser});
+}
+
+function hrRejectAdvance(id) {
+  if (!confirm('رفض السلفة؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم الرفض');hrLoadAdvances();}else showToast(r.error,true); }).rejectAdvance(id, {username:currentUser});
 }

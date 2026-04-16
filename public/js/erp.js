@@ -2357,6 +2357,21 @@ function _renderTrialBalance(container, filters) {
       html += '<div style="padding:8px 14px;border-radius:10px;background:#eff6ff;color:#1e40af;font-size:12px;font-weight:700;margin-bottom:12px;display:inline-block;"><i class="fas fa-calendar-alt" style="margin-left:4px;"></i> الفترة: ' + (filters.startDate||'البداية') + ' → ' + (filters.endDate||'الآن') + '</div>';
     }
 
+    // Toggle: show leaf accounts only
+    var leafOnly = window._tbLeafOnly || false;
+    html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">';
+    html += '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:700;color:#334155;"><input type="checkbox" id="tbLeafToggle" ' + (leafOnly?'checked':'') + ' onchange="window._tbLeafOnly=this.checked;erpApplyFinFilters();" style="width:16px;height:16px;accent-color:#1e40af;"> عرض الحسابات الفرعية فقط</label>';
+    html += '<span style="font-size:11px;color:#94a3b8;"><i class="fas fa-info-circle"></i> الحسابات الرئيسية (المجاميع) تظهر باللون الأزرق</span>';
+    html += '</div>';
+
+    // Determine which accounts are parents (have children)
+    // Build a set of all parentId values — any account whose code appears as another's parent is a "parent account"
+    var parentIds = {};
+    rows.forEach(function(r) { if (r.parentId) parentIds[r.parentId] = true; });
+    // Map code→id so we can check if a row's code is someone's parent
+    var parentCodes = {};
+    rows.forEach(function(r) { if (parentIds[r.code]) parentCodes[r.code] = true; });
+
     // Table
     html += '<div id="trialBalanceTable" style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;">';
     html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
@@ -2373,24 +2388,43 @@ function _renderTrialBalance(container, filters) {
       '</tr></thead><tbody>';
 
     var lastType = '';
-    rows.forEach(function(r, idx) {
+    var visIdx = 0;
+    rows.forEach(function(r) {
+      // Check if this account is a parent (has children)
+      var isParentAcc = !!parentCodes[r.code] || r.level <= 1;
+
+      // In leaf-only mode, skip parent accounts (but keep type headers)
+      if (leafOnly && isParentAcc) return;
+
       if (r.type !== lastType) {
         lastType = r.type;
         html += '<tr style="background:' + (typeBg[r.type]||'#f8fafc') + ';"><td colspan="8" style="padding:8px 14px;font-weight:900;font-size:13px;color:' + (typeFg[r.type]||'#1e293b') + ';border:1px solid #e2e8f0;"><i class="fas ' + (typeIcons[r.type]||'fa-folder') + '" style="margin-left:8px;"></i>' + (typeLabels[r.type]||r.type) + '</td></tr>';
       }
       var indent = r.level > 1 ? (r.level - 1) * 16 : 0;
-      var isParent = r.level <= 2;
-      var weight = isParent ? '800' : '400';
-      var fontSize = isParent ? '13px' : '12px';
       var hasData = r.openDebit || r.openCredit || r.periodDebit || r.periodCredit || r.closeDebit || r.closeCredit;
-      var stripe = idx % 2 === 0 ? '#fff' : '#f8fafc';
-      var rowStyle = 'background:' + (hasData ? stripe : '#fafafa') + ';' + (hasData ? '' : 'opacity:0.45;');
+      var stripe = visIdx % 2 === 0 ? '#fff' : '#f8fafc';
+      visIdx++;
+
+      // Parent accounts: blue background, bold
+      var rowBg, nameColor, weight, fontSize;
+      if (isParentAcc) {
+        rowBg = '#eff6ff';
+        nameColor = '#1e40af';
+        weight = '800';
+        fontSize = '13px';
+      } else {
+        rowBg = hasData ? stripe : '#fafafa';
+        nameColor = '#1e293b';
+        weight = '400';
+        fontSize = '12px';
+      }
+      var rowStyle = 'background:' + rowBg + ';' + (!hasData && !isParentAcc ? 'opacity:0.45;' : '');
 
       var cell = function(val, color) { return '<td style="padding:5px 10px;text-align:start;border:1px solid #e2e8f0;color:' + color + ';font-weight:' + (val?'700':'400') + ';">' + (val ? fmt(val) : '-') + '</td>'; };
 
       html += '<tr style="' + rowStyle + '">' +
-        '<td style="text-align:center;padding:5px 8px;border:1px solid #e2e8f0;"><code style="font-weight:700;font-size:11px;color:#475569;">' + r.code + '</code></td>' +
-        '<td style="padding:5px 10px;padding-right:' + (10+indent) + 'px;font-weight:' + weight + ';font-size:' + fontSize + ';border:1px solid #e2e8f0;color:#1e293b;">' + r.nameAR + '</td>' +
+        '<td style="text-align:center;padding:5px 8px;border:1px solid #e2e8f0;"><code style="font-weight:700;font-size:11px;color:' + (isParentAcc?'#1e40af':'#475569') + ';">' + r.code + '</code></td>' +
+        '<td style="padding:5px 10px;padding-right:' + (10+indent) + 'px;font-weight:' + weight + ';font-size:' + fontSize + ';border:1px solid #e2e8f0;color:' + nameColor + ';">' + (isParentAcc?'<i class="fas fa-folder" style="margin-left:4px;font-size:10px;color:#3b82f6;"></i> ':'') + r.nameAR + '</td>' +
         cell(r.openDebit, '#1e40af') + cell(r.openCredit, '#1e40af') +
         cell(r.periodDebit, '#7c3aed') + cell(r.periodCredit, '#7c3aed') +
         cell(r.closeDebit, '#065f46') + cell(r.closeCredit, '#065f46') +

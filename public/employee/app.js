@@ -332,20 +332,103 @@ function loadMyTransactions() {
     }).join('');
   });
 }
+var _txnAccounts = [];
+var _txnCostCenters = [];
+var _txnEligibleUsers = [];
+
 function openTxnModal() {
+  // Load all data in parallel
   callAPI('GET', '/workflow/transaction-types', null, function(types) {
     document.getElementById('txnType').innerHTML = (types||[]).map(function(t) { return '<option value="' + t.id + '">' + t.name + '</option>'; }).join('');
   });
-  document.getElementById('txnJobTitle').value = empProfile ? (empProfile.job_title || '') : '';
+  callAPI('GET', '/erp/cost-centers', null, function(ccs) {
+    _txnCostCenters = ccs || [];
+    var sel = document.getElementById('txnCC');
+    if (sel) sel.innerHTML = '<option value="">— بدون —</option>' + _txnCostCenters.map(function(c) { return '<option value="' + c.id + '" data-name="' + (c.name||'') + '">' + (c.code||'') + ' — ' + (c.name||'') + '</option>'; }).join('');
+  });
+  callAPI('GET', '/erp/gl/accounts', null, function(list) {
+    _txnAccounts = (list || []).filter(function(a) {
+      // Leaf accounts only
+      var ids = {}; (list||[]).forEach(function(x) { if (x.parentId) ids[x.parentId] = true; });
+      return !ids[a.id];
+    });
+  });
+  callAPI('GET', '/workflow/eligible-users', null, function(users) {
+    _txnEligibleUsers = users || [];
+    var sel = document.getElementById('txnRecipient');
+    if (sel) sel.innerHTML = '<option value="">— اختر المستلم —</option>' + _txnEligibleUsers.map(function(u) { return '<option value="' + u.username + '">' + (u.fullName||u.username) + ' — ' + (u.positionName||'') + '</option>'; }).join('');
+  });
+  // Fill employee info
+  document.getElementById('txnSenderName').value = empProfile ? (empProfile.fullName || currentUser) : currentUser;
+  document.getElementById('txnJobTitle').value = empProfile ? (empProfile.job_title || empProfile.jobTitle || '') : '';
   document.getElementById('txnTitle').value = ''; document.getElementById('txnDesc').value = '';
   document.getElementById('txnAmount').value = '0'; document.getElementById('txnFile').value = '';
+  document.getElementById('txnAccSearch').value = ''; document.getElementById('txnAccId').value = '';
+  document.getElementById('txnAccName').value = '';
   document.getElementById('txnModal').classList.add('show');
 }
 function closeTxnModal() { document.getElementById('txnModal').classList.remove('show'); }
+
+// Account search for transaction
+window.txnSearchAccount = function(input) {
+  var val = input.value.toLowerCase().trim();
+  var dd = document.getElementById('txnAccDropdown');
+  if (!val) { dd.style.display = 'none'; return; }
+  var matches = _txnAccounts.filter(function(a) {
+    return (a.code||'').indexOf(val) !== -1 || (a.nameAr||'').toLowerCase().indexOf(val) !== -1;
+  }).slice(0, 8);
+  if (!matches.length) {
+    dd.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b;text-align:center;">لا توجد نتائج — <a href="#" onclick="txnAddNewAccount();return false;" style="color:#0ea5e9;font-weight:700;">إضافة حساب جديد</a></div>';
+    dd.style.display = 'block'; return;
+  }
+  dd.innerHTML = matches.map(function(a) {
+    return '<div style="padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid #f1f5f9;" onmousedown="txnPickAccount(\'' + a.id + '\',\'' + a.code + '\',\'' + (a.nameAr||'').replace(/'/g,'') + '\')">' +
+      '<span style="font-weight:700;">' + a.code + '</span> — ' + (a.nameAr||'') + '</div>';
+  }).join('');
+  dd.style.display = 'block';
+};
+
+window.txnPickAccount = function(id, code, name) {
+  document.getElementById('txnAccId').value = id;
+  document.getElementById('txnAccSearch').value = code + ' — ' + name;
+  document.getElementById('txnAccName').value = name;
+  document.getElementById('txnAccDropdown').style.display = 'none';
+};
+
+window.txnAddNewAccount = function() {
+  var name = prompt('اسم الحساب الجديد (سيُضاف تحت المصروفات):');
+  if (!name) return;
+  callAPI('POST', '/erp/gl/accounts', { nameAr: name, type: 'expense', parentId: '5' }, function(r) {
+    if (r && r.success) {
+      toast('تم إضافة الحساب: ' + name);
+      document.getElementById('txnAccId').value = r.id || '';
+      document.getElementById('txnAccSearch').value = name;
+      document.getElementById('txnAccName').value = name;
+      document.getElementById('txnAccDropdown').style.display = 'none';
+    } else toast(r ? r.error : 'فشل', true);
+  });
+};
+
 function submitTxn() {
   var title = document.getElementById('txnTitle').value, typeId = document.getElementById('txnType').value;
   if (!title || !typeId) return toast('اختر النوع واكتب العنوان', true);
-  var data = { transactionTypeId: typeId, title: title, description: document.getElementById('txnDesc').value, amount: Number(document.getElementById('txnAmount').value)||0, username: currentUser, branchId: empProfile ? empProfile.branch_id : '', brandId: empProfile ? empProfile.brand_id : '' };
+  var ccSel = document.getElementById('txnCC');
+  var data = {
+    transactionTypeId: typeId, title: title,
+    description: document.getElementById('txnDesc').value,
+    amount: Number(document.getElementById('txnAmount').value) || 0,
+    username: currentUser,
+    branchId: empProfile ? empProfile.branch_id : '',
+    brandId: empProfile ? empProfile.brand_id : '',
+    accountId: document.getElementById('txnAccId').value || '',
+    accountCode: (document.getElementById('txnAccSearch').value || '').split(' — ')[0] || '',
+    accountName: document.getElementById('txnAccName').value || '',
+    costCenterId: ccSel ? ccSel.value : '',
+    costCenterName: ccSel && ccSel.value ? (ccSel.options[ccSel.selectedIndex].getAttribute('data-name') || '') : '',
+    recipientUsername: (document.getElementById('txnRecipient') || {}).value || '',
+    senderName: empProfile ? (empProfile.fullName || currentUser) : currentUser,
+    senderPosition: empProfile ? (empProfile.job_title || empProfile.jobTitle || '') : ''
+  };
   var f = document.getElementById('txnFile');
   if (f.files && f.files[0]) {
     if (f.files[0].size > 5242880) return toast('الحد 5MB', true);
@@ -362,14 +445,55 @@ function viewMyTxn(id) {
   callAPI('GET', '/workflow/transactions/' + id, null, function(txn) {
     if (!txn || txn.error) return toast('خطأ', true);
     var sMap = {pending:'معلّق',in_progress:'قيد التنفيذ',approved:'معتمدة',rejected:'مرفوضة',closed:'مغلقة'};
-    var aMap = {create:'إنشاء',approve:'موافقة',reject:'رفض',return:'إرجاع',close:'إغلاق'};
-    var aClr = {create:'#0ea5e9',approve:'#10b981',reject:'#ef4444',return:'#f59e0b',close:'#6b7280'};
-    var h = '<div class="pf"><span>الرقم</span><b>'+(txn.txnNumber||'')+'</b></div><div class="pf"><span>النوع</span><b>'+(txn.typeName||'')+'</b></div><div class="pf"><span>الحالة</span><b>'+(sMap[txn.status]||txn.status)+'</b></div><div class="pf"><span>المبلغ</span><b>'+Number(txn.amount||0).toFixed(2)+'</b></div>';
-    if (txn.description) h += '<div class="card" style="margin:8px 0;"><p style="font-size:12px;">'+txn.description+'</p></div>';
-    if (txn.attachment && txn.attachment.startsWith && txn.attachment.startsWith('data:')) h += '<a href="'+txn.attachment+'" download style="color:#0ea5e9;font-size:12px;"><i class="fas fa-download"></i> تحميل المرفق</a>';
-    if (txn.logs && txn.logs.length) { h += '<div class="card" style="margin-top:8px;"><div class="card-t"><i class="fas fa-route"></i> المسار</div>';
-      txn.logs.forEach(function(l) { var c=aClr[l.actionType]||'#6b7280'; h += '<div style="padding:6px 0;border-right:3px solid '+c+';padding-right:8px;margin-bottom:4px;font-size:11px;"><b style="color:'+c+';">'+(aMap[l.actionType]||l.actionType)+'</b> — '+(l.actionBy||'')+(l.note?' | '+l.note:'')+'</div>'; });
-      h += '</div>'; }
+    var sClr = {pending:'#f59e0b',in_progress:'#0ea5e9',approved:'#10b981',rejected:'#ef4444',closed:'#6b7280'};
+    var aMap = {create:'إنشاء',approve:'موافقة',reject:'رفض',return:'إرجاع',close:'إغلاق',forward:'تحويل'};
+    var aClr = {create:'#0ea5e9',approve:'#10b981',reject:'#ef4444',return:'#f59e0b',close:'#6b7280',forward:'#8b5cf6'};
+    var aIcon = {create:'fa-plus-circle',approve:'fa-check-circle',reject:'fa-times-circle',return:'fa-undo',close:'fa-lock',forward:'fa-share'};
+    var sc = sClr[txn.status]||'#6b7280';
+
+    var h = '<div style="padding:12px;border-radius:12px;background:'+sc+'10;border:1px solid '+sc+'30;margin-bottom:12px;text-align:center;">';
+    h += '<span style="font-size:13px;font-weight:800;color:'+sc+';">'+(sMap[txn.status]||txn.status)+'</span></div>';
+
+    // Info grid
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">';
+    h += '<div class="pf"><span>الرقم</span><b>'+(txn.txnNumber||'')+'</b></div>';
+    h += '<div class="pf"><span>النوع</span><b>'+(txn.typeName||'')+'</b></div>';
+    h += '<div class="pf"><span>المبلغ</span><b style="color:#0ea5e9;">'+Number(txn.amount||0).toFixed(2)+'</b></div>';
+    h += '<div class="pf"><span>المرسل</span><b>'+(txn.senderName||txn.createdBy||'')+'</b></div>';
+    if (txn.senderPosition) h += '<div class="pf"><span>المنصب</span><b>'+txn.senderPosition+'</b></div>';
+    if (txn.accountName) h += '<div class="pf"><span>الحساب</span><b>'+(txn.accountCode||'')+' — '+txn.accountName+'</b></div>';
+    if (txn.costCenterName) h += '<div class="pf"><span>مركز التكلفة</span><b>'+txn.costCenterName+'</b></div>';
+    h += '</div>';
+
+    if (txn.description) h += '<div style="padding:8px 10px;border-radius:8px;background:#f8fafc;font-size:12px;color:#475569;margin-bottom:10px;">'+txn.description+'</div>';
+    if (txn.attachment && txn.attachment.startsWith && txn.attachment.startsWith('data:')) h += '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:4px;color:#0ea5e9;font-size:12px;font-weight:700;margin-bottom:10px;"><i class="fas fa-download"></i> تحميل المرفق</a>';
+
+    // Timeline
+    if (txn.logs && txn.logs.length) {
+      h += '<div style="margin-top:10px;"><div style="font-size:13px;font-weight:800;color:#1e293b;margin-bottom:8px;"><i class="fas fa-route" style="color:#0ea5e9;margin-left:4px;"></i> سير المعاملة</div>';
+      txn.logs.forEach(function(l, i) {
+        var c = aClr[l.actionType]||'#6b7280';
+        var icon = aIcon[l.actionType]||'fa-circle';
+        var dt = l.createdAt ? new Date(l.createdAt).toLocaleString('ar-SA',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+        var isLast = i === txn.logs.length - 1;
+        h += '<div style="display:flex;gap:10px;position:relative;">';
+        // Timeline line + dot
+        h += '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">';
+        h += '<div style="width:28px;height:28px;border-radius:50%;background:'+c+'18;display:flex;align-items:center;justify-content:center;"><i class="fas '+icon+'" style="font-size:12px;color:'+c+';"></i></div>';
+        if (!isLast) h += '<div style="width:2px;flex:1;background:'+c+'30;min-height:20px;"></div>';
+        h += '</div>';
+        // Content
+        h += '<div style="flex:1;padding-bottom:'+(isLast?'0':'12')+'px;">';
+        h += '<div style="font-size:12px;font-weight:800;color:'+c+';">'+(aMap[l.actionType]||l.actionType)+'</div>';
+        h += '<div style="font-size:11px;color:#64748b;">'+(l.actionBy||'')+(l.positionName?' — <span style="color:#1e40af;font-weight:700;">'+l.positionName+'</span>':'')+'</div>';
+        if (l.note) h += '<div style="font-size:11px;color:#334155;margin-top:2px;padding:4px 8px;border-radius:6px;background:#f1f5f9;">'+l.note+'</div>';
+        if (l.attachment && l.attachment.startsWith && l.attachment.startsWith('data:')) h += '<a href="'+l.attachment+'" download style="font-size:10px;color:#0ea5e9;"><i class="fas fa-paperclip"></i> مرفق</a>';
+        h += '<div style="font-size:10px;color:#94a3b8;margin-top:2px;">'+dt+'</div>';
+        h += '</div></div>';
+      });
+      h += '</div>';
+    }
+
     document.getElementById('txnDetailTitle').textContent = txn.txnNumber||'';
     document.getElementById('txnDetailBody').innerHTML = h;
     document.getElementById('txnDetailModal').classList.add('show');

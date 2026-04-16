@@ -107,10 +107,27 @@ router.delete('/workflow-definitions/:id', async (req, res) => {
 // TRANSACTIONS (المعاملات)
 // ═══════════════════════════════════════
 
+// Get eligible users (users with positions — can receive transactions)
+router.get('/eligible-users', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT u.id, u.username, u.full_name, u.role, p.name AS position_name, p.level AS position_level
+       FROM users u
+       LEFT JOIN positions p ON u.position_id = p.id
+       WHERE u.active = 1 AND u.position_id IS NOT NULL
+       ORDER BY p.level DESC, u.full_name`);
+    res.json(rows.map(r => ({
+      id: r.id, username: r.username, fullName: r.full_name || r.username,
+      role: r.role, positionName: r.position_name || '', positionLevel: r.position_level || 0
+    })));
+  } catch(e) { res.json([]); }
+});
+
 // Create new transaction
 router.post('/transactions', async (req, res) => {
   try {
-    const { transactionTypeId, title, description, amount, branchId, brandId, username, attachment } = req.body;
+    const { transactionTypeId, title, description, amount, branchId, brandId, username, attachment,
+            accountId, accountCode, accountName, costCenterId, costCenterName, recipientUsername, senderName, senderPosition } = req.body;
     if (!transactionTypeId || !title) return res.json({ success: false, error: 'نوع المعاملة والعنوان مطلوبان' });
 
     const id = 'TXN-' + Date.now();
@@ -124,14 +141,17 @@ router.post('/transactions', async (req, res) => {
     const currentStepId = firstStep.length ? firstStep[0].id : null;
 
     await db.query(
-      `INSERT INTO transactions (id, transaction_number, transaction_type_id, created_by, branch_id, brand_id, title, description, amount, status, current_step_id, attachment)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [id, txnNumber, transactionTypeId, username||'', branchId||null, brandId||null, title, description||'', amount||0, 'pending', currentStepId, attachment||null]
+      `INSERT INTO transactions (id, transaction_number, transaction_type_id, created_by, branch_id, brand_id, title, description, amount, status, current_step_id, attachment,
+       account_id, account_code, account_name, cost_center_id, cost_center_name, recipient_username, sender_name, sender_position)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [id, txnNumber, transactionTypeId, username||'', branchId||null, brandId||null, title, description||'', amount||0, 'pending', currentStepId, attachment||null,
+       accountId||null, accountCode||'', accountName||'', costCenterId||null, costCenterName||'', recipientUsername||'', senderName||'', senderPosition||'']
     );
 
     // Log creation
-    await db.query('INSERT INTO transaction_steps_log (id, transaction_id, action_by, action_type, action_note) VALUES (?,?,?,?,?)',
-      ['LOG-' + Date.now(), id, username||'', 'create', 'تم إنشاء المعاملة']);
+    await db.query(
+      'INSERT INTO transaction_steps_log (id, transaction_id, action_by, action_type, action_note, position_name) VALUES (?,?,?,?,?,?)',
+      ['LOG-' + Date.now(), id, username||'', 'create', 'تم إنشاء المعاملة', senderPosition||'']);
 
     res.json({ success: true, id, txnNumber });
   } catch(e) { res.json({ success: false, error: e.message }); }
@@ -207,8 +227,11 @@ router.get('/transactions/:id', async (req, res) => {
       createdBy: t.created_by, title: t.title, description: t.description,
       amount: Number(t.amount), status: t.status, branchId: t.branch_id, brandId: t.brand_id,
       attachment: t.attachment, createdAt: t.created_at,
+      accountId: t.account_id, accountCode: t.account_code, accountName: t.account_name,
+      costCenterId: t.cost_center_id, costCenterName: t.cost_center_name,
+      recipientUsername: t.recipient_username, senderName: t.sender_name, senderPosition: t.sender_position,
       logs: logs.map(l => ({
-        id: l.id, stepName: l.step_name || '', positionName: l.position_name || '',
+        id: l.id, stepName: l.step_name || '', positionName: l.position_name || l.position_name_col || '',
         actionBy: l.action_by, actionType: l.action_type, note: l.action_note,
         attachment: l.attachment, createdAt: l.created_at
       }))
@@ -274,10 +297,16 @@ router.post('/transactions/:id/action', async (req, res) => {
 
     await db.query('UPDATE transactions SET status = ?, current_step_id = ? WHERE id = ?', [newStatus, newStepId, req.params.id]);
 
+    // Get position name for log
+    let logPosName = '';
+    if (username) {
+      const [u] = await db.query('SELECT p.name FROM users u LEFT JOIN positions p ON u.position_id = p.id WHERE u.username = ?', [username]);
+      if (u.length) logPosName = u[0].name || '';
+    }
     // Log the action
     await db.query(
-      'INSERT INTO transaction_steps_log (id, transaction_id, workflow_definition_id, action_by, action_type, action_note, attachment) VALUES (?,?,?,?,?,?,?)',
-      ['LOG-' + Date.now() + '-' + Math.random().toString(36).substr(2,4), req.params.id, txn.current_step_id, username||'', action, note||'', attachment||null]);
+      'INSERT INTO transaction_steps_log (id, transaction_id, workflow_definition_id, action_by, action_type, action_note, attachment, position_name) VALUES (?,?,?,?,?,?,?,?)',
+      ['LOG-' + Date.now() + '-' + Math.random().toString(36).substr(2,4), req.params.id, txn.current_step_id, username||'', action, note||'', attachment||null, logPosName]);
 
     res.json({ success: true, newStatus });
   } catch(e) { res.json({ success: false, error: e.message }); }

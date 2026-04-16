@@ -4534,23 +4534,52 @@ function wfViewTxn(id) {
 
 function wfTxnAction(id, action) {
   var actionNames = { approve: 'الموافقة على', reject: 'رفض', return: 'إرجاع', close: 'إغلاق' };
-  var note = '';
-  if (action === 'reject' || action === 'return') {
-    note = prompt(action === 'reject' ? 'سبب الرفض:' : 'سبب الإرجاع:');
-    if (note === null) return; // cancelled
-  } else {
-    if (!confirm('هل أنت متأكد من ' + (actionNames[action] || action) + ' هذه المعاملة؟')) return;
-    note = prompt('ملاحظة (اختياري):') || '';
-  }
-  loader(true);
-  window._apiBridge.withSuccessHandler(function(r) {
-    loader(false);
-    if (r.success) {
-      var statusLabels = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
-      showToast('تم — الحالة الجديدة: ' + (statusLabels[r.newStatus] || r.newStatus));
-      wfLoadInbox();
-    } else showToast(r.error, true);
-  }).wfTransactionAction(id, { action: action, username: currentUser, note: note });
+  var aClrs = { approve: '#16a34a', reject: '#ef4444', return: '#f59e0b', close: '#6b7280' };
+  var aIcons = { approve: 'fa-check-circle', reject: 'fa-times-circle', return: 'fa-undo', close: 'fa-lock' };
+
+  // Show action dialog with note + attachment
+  var dlgId = 'wfActionDlg';
+  var old = document.getElementById(dlgId); if (old) old.remove();
+  var div = document.createElement('div');
+  div.id = dlgId;
+  div.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;';
+  div.innerHTML =
+    '<div style="background:#fff;border-radius:16px;padding:24px;width:440px;max-width:90%;box-shadow:0 20px 60px rgba(0,0,0,.15);">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">' +
+        '<div style="width:40px;height:40px;border-radius:50%;background:'+(aClrs[action]||'#6b7280')+'15;display:flex;align-items:center;justify-content:center;"><i class="fas '+(aIcons[action]||'fa-cog')+'" style="color:'+(aClrs[action]||'#6b7280')+';"></i></div>' +
+        '<h3 style="margin:0;font-size:16px;">'+(actionNames[action]||action)+' المعاملة</h3>' +
+      '</div>' +
+      '<div style="margin-bottom:12px;"><label style="font-size:12px;font-weight:700;color:#475569;">التعليق '+(action==='reject'?'(مطلوب) *':'(اختياري)')+'</label><textarea id="wfActNote" rows="3" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;resize:none;margin-top:4px;" placeholder="اكتب تعليقك هنا..."></textarea></div>' +
+      '<div style="margin-bottom:16px;"><label style="font-size:12px;font-weight:700;color:#475569;">مرفق (اختياري)</label><input type="file" id="wfActFile" accept=".pdf,.jpg,.jpeg,.png" style="width:100%;padding:8px;border:1.5px solid #e5e7eb;border-radius:10px;margin-top:4px;font-size:13px;"></div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+        '<button id="wfActOk" style="padding:10px 24px;border-radius:10px;border:none;background:'+(aClrs[action]||'#6b7280')+';color:#fff;font-weight:800;font-size:14px;cursor:pointer;">'+(actionNames[action]||action)+'</button>' +
+        '<button id="wfActCancel" style="padding:10px 20px;border-radius:10px;border:2px solid #e5e7eb;background:#fff;color:#64748b;font-weight:700;font-size:14px;cursor:pointer;">إلغاء</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(div);
+  div.querySelector('#wfActCancel').onclick = function() { div.remove(); };
+  div.addEventListener('click', function(e) { if (e.target === div) div.remove(); });
+
+  div.querySelector('#wfActOk').onclick = function() {
+    var note = document.getElementById('wfActNote').value;
+    if (action === 'reject' && !note) { showToast('سبب الرفض مطلوب', true); return; }
+    var fileInput = document.getElementById('wfActFile');
+    var doSend = function(attachment) {
+      div.remove();
+      loader(true);
+      window._apiBridge.withSuccessHandler(function(r) {
+        loader(false);
+        if (r.success) {
+          var statusLabels = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
+          showToast('تم — الحالة الجديدة: ' + (statusLabels[r.newStatus] || r.newStatus));
+          wfLoadInbox();
+        } else showToast(r.error, true);
+      }).wfTransactionAction(id, { action: action, username: currentUser, note: note, attachment: attachment || '' });
+    };
+    if (fileInput.files && fileInput.files[0]) {
+      var r = new FileReader(); r.onload = function(e) { doSend(e.target.result); }; r.readAsDataURL(fileInput.files[0]);
+    } else doSend('');
+  };
 }
 
 // ═══════════════════════════════════════

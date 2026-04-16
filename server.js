@@ -538,6 +538,18 @@ async function runMigrations() {
   // Link users to positions
   await addColumnIfMissing('users', 'position_id', "VARCHAR(50)");
 
+  // Transaction enhancements — accounting link + recipient
+  await addColumnIfMissing('transactions', 'account_id', "VARCHAR(50)");
+  await addColumnIfMissing('transactions', 'account_code', "VARCHAR(20)");
+  await addColumnIfMissing('transactions', 'account_name', "VARCHAR(200)");
+  await addColumnIfMissing('transactions', 'cost_center_id', "VARCHAR(50)");
+  await addColumnIfMissing('transactions', 'cost_center_name', "VARCHAR(200)");
+  await addColumnIfMissing('transactions', 'recipient_username', "VARCHAR(100)");
+  await addColumnIfMissing('transactions', 'sender_name', "VARCHAR(200)");
+  await addColumnIfMissing('transactions', 'sender_position', "VARCHAR(200)");
+  await addColumnIfMissing('transaction_steps_log', 'attachment', "LONGTEXT");
+  await addColumnIfMissing('transaction_steps_log', 'position_name', "VARCHAR(200)");
+
   // Seed default positions
   try {
     const [posCount] = await db.query('SELECT COUNT(*) AS cnt FROM positions');

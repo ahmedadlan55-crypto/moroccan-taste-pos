@@ -144,14 +144,41 @@ function loadHomeData() {
     // Stats
     var present = att.filter(function(a){return a.status==='present';}).length;
     var hours = att.reduce(function(s,a){return s+(Number(a.total_hours)||0);},0);
-    var late = att.filter(function(a){return (a.late_minutes||0)>0;}).length;
     var totalLateMin = att.reduce(function(s,a){return s+(Number(a.late_minutes)||0);},0);
-    var lateHrs = (totalLateMin/60).toFixed(1);
-    document.getElementById('homeStats').innerHTML =
-      '<div class="st"><i class="fas fa-check" style="color:#10b981;background:#ecfdf5;"></i><b>' + present + '</b><span>حضور</span></div>' +
-      '<div class="st"><i class="fas fa-clock" style="color:#0ea5e9;background:#e0f2fe;"></i><b>' + hours.toFixed(1) + '</b><span>ساعة</span></div>' +
-      '<div class="st"><i class="fas fa-exclamation" style="color:#f59e0b;background:#fffbeb;"></i><b>' + lateHrs + '</b><span>ساعة تأخير</span></div>' +
-      '<div class="st"><i class="fas fa-calendar" style="color:#8b5cf6;background:#f5f3ff;"></i><b>' + att.length + '</b><span>سجلات</span></div>';
+
+    // Format hours:minutes
+    var hrsH = Math.floor(hours); var hrsM = Math.round((hours - hrsH) * 60);
+    var hrsStr = hrsH + ':' + String(hrsM).padStart(2,'0');
+    var lateH = Math.floor(totalLateMin/60); var lateM = Math.round(totalLateMin%60);
+    var lateStr = lateH + ':' + String(lateM).padStart(2,'0');
+
+    // Accrued leave balance (daily accumulation)
+    var accrued = 0;
+    if (empProfile && empProfile.hire_date) {
+      var hd = new Date(empProfile.hire_date);
+      var yrs = (new Date() - hd) / (365.25 * 24 * 60 * 60 * 1000);
+      var annual = yrs >= 5 ? 30 : 21;
+      // Days elapsed this year
+      var jan1 = new Date(new Date().getFullYear(), 0, 1);
+      var daysElapsed = Math.floor((new Date() - jan1) / (24*60*60*1000));
+      accrued = Math.round((annual / 365) * daysElapsed * 100) / 100;
+    }
+    // Get used leave days
+    var usedLeave = 0;
+    callAPI('GET', '/hr/my-leave-balances?username=' + currentUser, null, function(bals) {
+      if (bals && Array.isArray(bals)) {
+        bals.forEach(function(b) { usedLeave += Number(b.used_days||0); });
+      }
+      var remainLeave = Math.max(0, accrued - usedLeave);
+      var leaveWhole = Math.floor(remainLeave);
+      var leaveHrs = Math.round((remainLeave - leaveWhole) * 9); // 9-hour day
+
+      document.getElementById('homeStats').innerHTML =
+        '<div class="st"><i class="fas fa-clock" style="color:#0ea5e9;background:#e0f2fe;"></i><b>' + hrsStr + '</b><span>ساعات العمل</span></div>' +
+        '<div class="st"><i class="fas fa-umbrella-beach" style="color:#10b981;background:#ecfdf5;"></i><b>' + leaveWhole + '<small style="font-size:11px;color:#64748b;">.' + leaveHrs + 'h</small></b><span>رصيد إجازة</span></div>' +
+        '<div class="st"><i class="fas fa-exclamation" style="color:#f59e0b;background:#fffbeb;"></i><b>' + lateStr + '</b><span>تأخير</span></div>' +
+        '<div class="st"><i class="fas fa-calendar-check" style="color:#8b5cf6;background:#f5f3ff;"></i><b>' + present + '</b><span>حضور</span></div>';
+    });
 
     // Recent attendance
     var ra = document.getElementById('recentAtt');

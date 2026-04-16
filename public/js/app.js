@@ -334,6 +334,12 @@ window.onload = function() {
       return;
     }
 
+    // Employee session → redirect straight to /employee/
+    if (savedRole === 'employee') {
+      window.location.replace('/employee/');
+      return;
+    }
+
     // Helper: show login form when auto-login fails
     function _showLoginFallback() {
       localStorage.removeItem("pos_token");
@@ -538,7 +544,7 @@ function doLogin() {
 
     // Save session (NO password — only user + role for session restore)
     localStorage.setItem("pos_session", JSON.stringify({ user: u, username: u, role: state.role }));
-    localStorage.setItem("pos_last_view", state.role === 'cashier' ? 'pos' : state.role === 'custody' ? 'custody' : 'admin');
+    localStorage.setItem("pos_last_view", state.role === 'cashier' ? 'pos' : state.role === 'custody' ? 'custody' : state.role === 'employee' ? 'employee' : 'admin');
 
     // ─── Cashier → redirect to /pos/ ───
     if (state.role === 'cashier') {
@@ -641,6 +647,13 @@ function initViews() {
   if (state.role === 'custody') {
     localStorage.setItem("pos_last_view", 'custody');
     window.location.replace('/custody/');
+    return;
+  }
+
+  // Employee role → redirect to employee self-service portal
+  if (state.role === 'employee') {
+    localStorage.setItem("pos_last_view", 'employee');
+    window.location.replace('/employee/');
     return;
   }
 
@@ -3725,9 +3738,10 @@ function loadDashUsers() {
     arr.forEach(function(u) { state.userDisplayMap[u.username] = u.displayName || u.username; });
 
     var roleLabel = function(r) {
-      if (r === 'admin')   return '<span class="badge blue">مدير مؤسسة</span>';
-      if (r === 'manager') return '<span class="badge orange">مدير فرع</span>';
-      if (r === 'custody') return '<span class="badge" style="background:#f3e8ff;color:#7c3aed;">مسؤول عهدة</span>';
+      if (r === 'admin')    return '<span class="badge blue">مدير مؤسسة</span>';
+      if (r === 'manager')  return '<span class="badge orange">مدير فرع</span>';
+      if (r === 'custody')  return '<span class="badge" style="background:#f3e8ff;color:#7c3aed;">مسؤول عهدة</span>';
+      if (r === 'employee') return '<span class="badge" style="background:#ecfdf5;color:#059669;">موظف</span>';
       return '<span class="badge green">كاشير</span>';
     };
 

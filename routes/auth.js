@@ -252,7 +252,7 @@ router.post('/users', async (req, res) => {
     if (!/[!@#$%^&*()_+\-=\[\]{};':"|,.<>\/?]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على رمز خاص (!@#$...)' });
 
     const hash = await bcrypt.hash(password, 10);
-    const dbRole = ['admin', 'cashier', 'manager', 'custody'].indexOf(role) >= 0 ? role : 'cashier';
+    const dbRole = ['admin', 'cashier', 'manager', 'custody', 'employee'].indexOf(role) >= 0 ? role : 'cashier';
 
     // Get default warehouse from branch
     let defaultWarehouseId = null;

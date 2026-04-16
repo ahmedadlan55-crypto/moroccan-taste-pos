@@ -682,8 +682,8 @@ async function runMigrations() {
   await addColumnIfMissing('users', 'failed_attempts', "INT DEFAULT 0");
   await addColumnIfMissing('users', 'locked_until', "DATETIME DEFAULT NULL");
 
-  // Add 'custody' role to users table ENUM
-  try { await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody') DEFAULT 'cashier'"); } catch(e) {}
+  // User roles ENUM — include 'employee' for employee portal
+  try { await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee') DEFAULT 'cashier'"); } catch(e) {}
 
   // Custody management tables (العهد)
   await createTableIfMissing('custody_users', `

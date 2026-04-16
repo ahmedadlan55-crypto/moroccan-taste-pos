@@ -4275,8 +4275,11 @@ function hrRenderEmployees(list) {
       '<td style="font-weight:700;color:#1e40af;">' + (Number(e.basicSalary)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</td>' +
       '<td><span class="badge badge-' + (statusColors[e.status]||'blue') + '">' + (statusLabels[e.status]||e.status) + '</span></td>' +
       '<td><div style="display:flex;gap:4px;">' +
-        '<button style="' + btnS + 'color:#3b82f6;" onclick="hrViewEmployee(\'' + e.id + '\')" title="عرض"><i class="fas fa-eye"></i></button>' +
+        '<button style="' + btnS + 'color:#3b82f6;" onclick="hrViewEmployee(\'' + e.id + '\')" title="عرض الملف"><i class="fas fa-eye"></i></button>' +
         '<button style="' + btnS + 'color:#f59e0b;" onclick="hrEditEmployee(\'' + e.id + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
+        (e.status === 'active' ? '<button style="' + btnS + 'color:#ef4444;" onclick="hrTerminateEmployee(\'' + e.id + '\')" title="إنهاء خدمة"><i class="fas fa-user-slash"></i></button>' : '') +
+        (e.status === 'suspended' ? '<button style="' + btnS + 'color:#10b981;" onclick="hrActivateEmployee(\'' + e.id + '\')" title="تنشيط"><i class="fas fa-play-circle"></i></button>' : '') +
+        '<button style="' + btnS + 'color:#dc2626;" onclick="hrDeleteEmployee(\'' + e.id + '\',\'' + (e.fullName||'').replace(/'/g,'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
       '</div></td>' +
     '</tr>';
   }).join('');

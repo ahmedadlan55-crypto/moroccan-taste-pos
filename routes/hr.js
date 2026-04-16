@@ -328,12 +328,16 @@ router.get('/employees', async (req, res) => {
   try {
     const { branch_id, brand_id, department_id, status, search } = req.query;
     let sql = `
-      SELECT e.id, e.employee_number, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) as fullName,
-        e.phone, e.email, e.job_title as jobTitle,
-        COALESCE(d.name, '') as departmentName,
-        COALESCE(b.name, '') as branchName,
-        e.status, e.hire_date as hireDate, e.basic_salary as basicSalary,
-        e.department_id, e.branch_id, e.brand_id
+      SELECT e.id, e.employee_number AS employeeNumber,
+        CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS fullName,
+        e.first_name AS firstName, e.last_name AS lastName,
+        e.phone, e.email, e.job_title AS jobTitle,
+        COALESCE(d.name, '') AS departmentName,
+        COALESCE(b.name, '') AS branchName,
+        e.status, e.hire_date AS hireDate, e.basic_salary AS basicSalary,
+        e.department_id AS departmentId, e.branch_id AS branchId, e.brand_id AS brandId,
+        e.employment_type AS employmentType, e.national_id AS nationalId,
+        e.linked_username AS linkedUsername
       FROM hr_employees e
       LEFT JOIN hr_departments d ON e.department_id = d.id
       LEFT JOIN branches b ON e.branch_id = b.id
@@ -362,17 +366,36 @@ router.get('/employees', async (req, res) => {
 router.get('/employees/:id', async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT e.*,
-        CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) as fullName,
-        COALESCE(d.name, '') as departmentName,
-        COALESCE(b.name, '') as branchName
+      SELECT e.id, e.employee_number AS employeeNumber,
+        e.first_name AS firstName, e.last_name AS lastName,
+        CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS fullName,
+        e.national_id AS nationalId, e.passport_number AS passportNumber,
+        e.iqama_number AS iqamaNumber, e.phone, e.email,
+        e.gender, e.date_of_birth AS dateOfBirth, e.nationality,
+        e.branch_id AS branchId, e.brand_id AS brandId,
+        e.department_id AS departmentId, e.position_id AS positionId,
+        e.job_title AS jobTitle, e.employment_type AS employmentType,
+        e.salary_type AS salaryType, e.basic_salary AS basicSalary,
+        e.hourly_rate AS hourlyRate, e.housing_allowance AS housingAllowance,
+        e.transport_allowance AS transportAllowance, e.other_allowance AS otherAllowance,
+        e.hire_date AS hireDate, e.contract_end_date AS contractEndDate,
+        e.probation_end_date AS probationEndDate, e.status,
+        e.termination_date AS terminationDate, e.termination_reason AS terminationReason,
+        e.bank_name AS bankName, e.bank_account AS bankAccount, e.bank_iban AS bankIban,
+        e.emergency_contact_name AS emergencyContactName,
+        e.emergency_contact_phone AS emergencyContactPhone,
+        e.emergency_contact_relation AS emergencyContactRelation,
+        e.linked_user_id AS linkedUserId, e.linked_username AS linkedUsername,
+        e.notes, e.created_at AS createdAt,
+        COALESCE(d.name, '') AS departmentName,
+        COALESCE(b.name, '') AS branchName
       FROM hr_employees e
       LEFT JOIN hr_departments d ON e.department_id = d.id
       LEFT JOIN branches b ON e.branch_id = b.id
       WHERE e.id = ?
     `, [req.params.id]);
 
-    if (!rows.length) return res.json({ success: false, error: 'Employee not found' });
+    if (!rows.length) return res.json({ success: false, error: 'الموظف غير موجود' });
     const emp = rows[0];
 
     // Recent attendance (last 30 days)
@@ -384,7 +407,10 @@ router.get('/employees/:id', async (req, res) => {
     // Leave balances (current year)
     const currentYear = new Date().getFullYear();
     const [leaveBalances] = await db.query(
-      `SELECT lb.*, lt.name as leave_type_name, lt.is_paid
+      `SELECT lb.id, lb.leave_type_id AS leaveTypeId,
+        lt.name AS leaveTypeName, lt.is_paid AS isPaid,
+        lb.total_days AS total, lb.used_days AS used,
+        lb.remaining_days AS remaining
        FROM hr_leave_balances lb
        LEFT JOIN hr_leave_types lt ON lb.leave_type_id = lt.id
        WHERE lb.employee_id = ? AND lb.year = ?`,

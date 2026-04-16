@@ -334,11 +334,7 @@ window.onload = function() {
       return;
     }
 
-    // Employee session → redirect straight to /employee/
-    if (savedRole === 'employee') {
-      window.location.replace('/employee/');
-      return;
-    }
+    // Employee role: no redirect — portal is independent at /employee/
 
     // Helper: show login form when auto-login fails
     function _showLoginFallback() {
@@ -650,14 +646,9 @@ function initViews() {
     return;
   }
 
-  // Employee role → redirect to employee self-service portal
-  if (state.role === 'employee') {
-    localStorage.setItem("pos_last_view", 'employee');
-    window.location.replace('/employee/');
-    return;
-  }
+  // Employee role: no redirect — portal is fully independent at /employee/
 
-  // Admin/Manager → show admin panel with full access
+  // Admin/Manager/Employee → show admin panel
   localStorage.setItem("pos_last_view", 'admin');
   show("#adminView");
   if (q("#adminUserLabel")) q("#adminUserLabel").innerText = state.user;

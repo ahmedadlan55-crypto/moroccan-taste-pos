@@ -7,7 +7,7 @@ var BASE_API = '/api';
 
 document.addEventListener('DOMContentLoaded', function() {
   try {
-    var session = JSON.parse(localStorage.getItem('pos_session') || '{}');
+    var session = JSON.parse(localStorage.getItem('emp_session') || '{}');
     currentUser = session.username || '';
     if (!currentUser || document.body.classList.contains('needs-login')) { showEmpLogin(); return; }
     startApp();
@@ -19,7 +19,7 @@ function callAPI(method, path, body, cb) {
   var xhr = new XMLHttpRequest();
   xhr.open(method, BASE_API + path, true);
   xhr.setRequestHeader('Content-Type', 'application/json');
-  var token = localStorage.getItem('pos_token');
+  var token = localStorage.getItem('emp_token');
   if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) return;
@@ -101,8 +101,8 @@ function doLogin() {
     btn.disabled = false; btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> دخول';
     if (err) return toast('خطأ في الاتصال: ' + err, true);
     if (r && r.success && r.token) {
-      localStorage.setItem('pos_token', r.token);
-      localStorage.setItem('pos_session', JSON.stringify({username:r.username,role:r.role,brandId:r.brandId||'',branchId:r.branchId||''}));
+      localStorage.setItem('emp_token', r.token);
+      localStorage.setItem('emp_session', JSON.stringify({username:r.username,role:r.role,brandId:r.brandId||'',branchId:r.branchId||''}));
       currentUser = r.username;
       var lp = document.getElementById('loginPage'); if (lp) lp.remove();
       document.body.classList.remove('needs-login');
@@ -111,7 +111,7 @@ function doLogin() {
   });
 }
 
-function doLogout() { localStorage.removeItem('pos_token'); localStorage.removeItem('pos_session'); location.reload(); }
+function doLogout() { localStorage.removeItem('emp_token'); localStorage.removeItem('emp_session'); location.reload(); }
 function doRefresh() { loadHomeData(); toast('تم التحديث'); }
 
 // ─── Navigation ───

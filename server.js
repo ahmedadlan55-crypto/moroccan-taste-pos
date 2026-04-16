@@ -80,39 +80,37 @@ app.use('/api/', function(req, res, next) {
 });
 
 // 7. Global JWT authentication for ALL API routes EXCEPT public ones
-const PUBLIC_PATHS = [
-  '/api/auth/login',
-  '/api/auth/refresh-token',
-  '/api/auth/init/',
-  '/api/settings',
-  '/api/menu',
-  '/api/hr/my-',
-  '/api/hr/leave-types',
-];
+// 7. Global JWT authentication
+// Auth module is FULLY public (login, refresh, init, users CRUD)
+// Other modules require token except specific paths
 app.use('/api/', function(req, res, next) {
-  // Skip OPTIONS (preflight)
   if (req.method === 'OPTIONS') return next();
 
-  // Check if this is a public path
-  const reqUrl = '/api' + req.path.replace(/\/$/, '');
-  for (var i = 0; i < PUBLIC_PATHS.length; i++) {
-    if (reqUrl.indexOf(PUBLIC_PATHS[i]) === 0) return next();
-  }
+  // Build full path for checking
+  var p = req.path || '';
+
+  // FULLY PUBLIC — no token needed
+  if (p.startsWith('/auth/')) return next();           // all auth endpoints
+  if (p.startsWith('/settings')) return next();        // settings
+  if (p.startsWith('/menu')) return next();            // menu
+  if (p.startsWith('/hr/my-')) return next();          // employee self-service
+  if (p.startsWith('/hr/leave-types')) return next();  // leave types list
+  if (p.startsWith('/hr/departments')) return next();  // departments list
 
   // Try to extract and verify JWT token
-  const authHeader = req.headers['authorization'];
+  var authHeader = req.headers['authorization'];
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
-      const token = authHeader.split(' ')[1];
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      var token = authHeader.split(' ')[1];
+      var decoded = jwt.verify(token, process.env.JWT_SECRET);
       req.user = decoded;
       return next();
     } catch (err) {
-      // Token invalid/expired
+      // Token invalid/expired — fall through to block
     }
   }
 
-  // No valid token — block the request
+  // No valid token — block
   return res.status(401).json({ success: false, error: 'غير مصرح — يرجى تسجيل الدخول' });
 });
 

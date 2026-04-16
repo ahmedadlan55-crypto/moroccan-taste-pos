@@ -4564,14 +4564,17 @@ function hrLoadAttendance() {
     tb.innerHTML = list.map(function(a) {
       var ci = a.clockIn ? new Date(a.clockIn).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) : '—';
       var co = a.clockOut ? new Date(a.clockOut).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) : '—';
+      var deviceHtml = a.deviceName ? '<div style="font-size:10px;color:#64748b;"><i class="fas fa-mobile-alt" style="color:#3b82f6;"></i> ' + a.deviceName + '</div>' : '';
+      var locInHtml = a.geoAddressIn ? '<div style="font-size:10px;color:#64748b;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + a.geoAddressIn + '"><i class="fas fa-map-marker-alt" style="color:#10b981;"></i> ' + a.geoAddressIn + '</div>' : '';
+      var locOutHtml = a.geoAddressOut ? '<div style="font-size:10px;color:#64748b;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + a.geoAddressOut + '"><i class="fas fa-map-marker-alt" style="color:#ef4444;"></i> ' + a.geoAddressOut + '</div>' : '';
       return '<tr>' +
         '<td style="font-weight:700;">' + (a.employeeName||'') + '</td>' +
         '<td>' + (a.attendanceDate ? new Date(a.attendanceDate).toLocaleDateString('en-GB') : '') + '</td>' +
-        '<td style="color:#16a34a;font-weight:700;">' + ci + '</td>' +
-        '<td style="color:#ef4444;font-weight:700;">' + co + '</td>' +
+        '<td style="color:#16a34a;font-weight:700;">' + ci + locInHtml + '</td>' +
+        '<td style="color:#ef4444;font-weight:700;">' + co + locOutHtml + '</td>' +
         '<td style="font-weight:700;">' + (Number(a.totalHours)||0).toFixed(1) + 'h</td>' +
         '<td>' + (a.lateMinutes > 0 ? '<span style="color:#ef4444;font-weight:700;">' + a.lateMinutes + ' د</span>' : '—') + '</td>' +
-        '<td>' + (a.overtimeMinutes > 0 ? '<span style="color:#16a34a;font-weight:700;">' + a.overtimeMinutes + ' د</span>' : '—') + '</td>' +
+        '<td>' + deviceHtml + '</td>' +
         '<td><span class="badge badge-blue">' + (srcLabels[a.source]||a.source) + '</span></td>' +
         '<td><span class="badge badge-' + (statusColors[a.status]||'blue') + '">' + (statusLabels[a.status]||a.status) + '</span></td>' +
       '</tr>';

@@ -94,6 +94,11 @@ async function ensureTables() {
       geo_lat DECIMAL(10,7),
       geo_lng DECIMAL(10,7),
       device_id VARCHAR(100),
+      device_name VARCHAR(200),
+      geo_address_in VARCHAR(500),
+      geo_lat_out DECIMAL(10,7),
+      geo_lng_out DECIMAL(10,7),
+      geo_address_out VARCHAR(500),
       notes TEXT,
       modified_by VARCHAR(100),
       modified_reason TEXT,
@@ -101,6 +106,12 @@ async function ensureTables() {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB
   `);
+  // Add missing columns if table already exists
+  try { await db.query('ALTER TABLE hr_attendance ADD COLUMN device_name VARCHAR(200)'); } catch(e) {}
+  try { await db.query('ALTER TABLE hr_attendance ADD COLUMN geo_address_in VARCHAR(500)'); } catch(e) {}
+  try { await db.query('ALTER TABLE hr_attendance ADD COLUMN geo_lat_out DECIMAL(10,7)'); } catch(e) {}
+  try { await db.query('ALTER TABLE hr_attendance ADD COLUMN geo_lng_out DECIMAL(10,7)'); } catch(e) {}
+  try { await db.query('ALTER TABLE hr_attendance ADD COLUMN geo_address_out VARCHAR(500)'); } catch(e) {}
   await db.query(`
     CREATE TABLE IF NOT EXISTS hr_leave_types (
       id VARCHAR(50) PRIMARY KEY,
@@ -661,9 +672,19 @@ router.get('/attendance', async (req, res) => {
       params.push(parseInt(month), parseInt(year));
     }
 
-    sql += ' ORDER BY a.attendance_date DESC, a.clock_in DESC';
+    sql += ' ORDER BY a.attendance_date DESC, a.clock_in DESC LIMIT 500';
     const [rows] = await db.query(sql, params);
-    res.json(rows);
+    res.json(rows.map(a => ({
+      id: a.id, employeeId: a.employee_id, employeeName: a.employee_name,
+      employeeNumber: a.employee_number, attendanceDate: a.attendance_date,
+      clockIn: a.clock_in, clockOut: a.clock_out, totalHours: Number(a.total_hours)||0,
+      lateMinutes: a.late_minutes||0, earlyLeaveMinutes: a.early_leave_minutes||0,
+      overtimeMinutes: a.overtime_minutes||0, status: a.status, source: a.source,
+      deviceName: a.device_name||'', deviceId: a.device_id||'',
+      geoLat: a.geo_lat, geoLng: a.geo_lng, geoAddressIn: a.geo_address_in||'',
+      geoLatOut: a.geo_lat_out, geoLngOut: a.geo_lng_out, geoAddressOut: a.geo_address_out||'',
+      notes: a.notes||''
+    })));
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
@@ -1612,35 +1633,47 @@ router.get('/my-attendance', async (req, res) => {
 router.post('/my-clock', async (req, res) => {
   try {
     const username = req.user ? req.user.username : req.body.username;
-    const { geoLat, geoLng, deviceInfo } = req.body;
+    const { geoLat, geoLng, geoAddress, deviceInfo, deviceName } = req.body;
     const [emp] = await db.query('SELECT id, first_name, last_name FROM hr_employees WHERE linked_username = ?', [username]);
-    if (!emp.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط' });
+    if (!emp.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط بحسابك — تواصل مع الإدارة' });
     const empId = emp[0].id;
     const today = new Date().toISOString().split('T')[0];
 
-    // Check if already clocked in today
+    // Detect device name from user agent
+    var ua = deviceInfo || '';
+    var devName = deviceName || '';
+    if (!devName && ua) {
+      if (/iPhone/.test(ua)) devName = 'iPhone';
+      else if (/iPad/.test(ua)) devName = 'iPad';
+      else if (/Android/.test(ua)) { var m = ua.match(/;\s*([^;)]+)\s*Build/); devName = m ? m[1].trim() : 'Android'; }
+      else if (/Windows/.test(ua)) devName = 'Windows PC';
+      else if (/Mac/.test(ua)) devName = 'Mac';
+      else devName = 'متصفح';
+    }
+
     const [existing] = await db.query(
       'SELECT * FROM hr_attendance WHERE employee_id = ? AND attendance_date = ?', [empId, today]
     );
 
     if (!existing.length) {
-      // Clock IN
+      // Clock IN — save device + geo location
       const id = 'ATT-' + Date.now();
       await db.query(
-        'INSERT INTO hr_attendance (id, employee_id, attendance_date, clock_in, status, source, geo_lat, geo_lng, device_id) VALUES (?,?,?,NOW(),?,?,?,?,?)',
-        [id, empId, today, 'present', 'app', geoLat || null, geoLng || null, deviceInfo || '']
+        `INSERT INTO hr_attendance (id, employee_id, attendance_date, clock_in, status, source,
+         geo_lat, geo_lng, geo_address_in, device_id, device_name) VALUES (?,?,?,NOW(),?,?,?,?,?,?,?)`,
+        [id, empId, today, 'present', 'app', geoLat||null, geoLng||null, geoAddress||'', ua, devName]
       );
-      res.json({ success: true, action: 'clock_in', time: new Date().toISOString(), message: 'تم تسجيل الحضور' });
+      res.json({ success: true, action: 'clock_in', time: new Date().toISOString(), message: 'تم تسجيل الحضور ✓' });
     } else if (!existing[0].clock_out) {
-      // Clock OUT
+      // Clock OUT — save geo location for exit
       const clockIn = new Date(existing[0].clock_in);
       const clockOut = new Date();
       const totalHours = ((clockOut - clockIn) / (1000 * 60 * 60)).toFixed(2);
       await db.query(
-        'UPDATE hr_attendance SET clock_out = NOW(), total_hours = ? WHERE id = ?',
-        [totalHours, existing[0].id]
+        'UPDATE hr_attendance SET clock_out=NOW(), total_hours=?, geo_lat_out=?, geo_lng_out=?, geo_address_out=? WHERE id=?',
+        [totalHours, geoLat||null, geoLng||null, geoAddress||'', existing[0].id]
       );
-      res.json({ success: true, action: 'clock_out', time: clockOut.toISOString(), totalHours, message: 'تم تسجيل الانصراف' });
+      res.json({ success: true, action: 'clock_out', time: clockOut.toISOString(), totalHours, message: 'تم تسجيل الانصراف ✓ (' + totalHours + ' ساعة)' });
     } else {
       res.json({ success: false, error: 'تم تسجيل الحضور والانصراف اليوم بالفعل' });
     }

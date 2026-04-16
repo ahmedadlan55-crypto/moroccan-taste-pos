@@ -77,7 +77,7 @@
     .modal-h button{width:26px;height:26px;border-radius:6px;background:#f1f5f9;border:none;font-size:14px;cursor:pointer;}
   </style>
   <script defer src="/shared/api-bridge.js"></script>
-  <script defer src="/employee/app.js?v=7"></script>
+  <script defer src="/employee/app.js?v=8"></script>
 </head>
 <body>
 <div class="toast" id="toast"></div>
@@ -112,16 +112,6 @@ function doLogin(){
   };xhr.send(JSON.stringify({username:u,password:p}));
 }
 document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.getElementById('loginPage')&&document.getElementById('loginPage').style.display!=='none')doLogin();});
-// Auth gate — if already logged in, hide login and show app
-(function(){
-  var tk=localStorage.getItem('emp_token'),ss=null;
-  try{ss=JSON.parse(localStorage.getItem('emp_session')||'null');}catch(e){}
-  if(tk&&ss&&ss.username){
-    document.getElementById('loginPage').style.display='none';
-    document.getElementById('app').style.display='flex';
-    window._empUser=ss.username;
-  }
-})();
 </script>
 <div id="app" style="display:none;">
   <div class="hdr">
@@ -158,5 +148,16 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
   <div class="modal-h"><span id="txnDetailTitle">تفاصيل المعاملة</span><button onclick="closeTxnDetail()">&times;</button></div>
   <div id="txnDetailBody"></div>
 </div></div>
+<script>
+(function(){
+  var tk=localStorage.getItem('emp_token'),ss=null;
+  try{ss=JSON.parse(localStorage.getItem('emp_session')||'null');}catch(e){}
+  if(tk&&ss&&ss.username){
+    document.getElementById('loginPage').style.display='none';
+    document.getElementById('app').style.display='flex';
+    window._empUser=ss.username;
+  }
+})();
+</script>
 </body>
 </html>

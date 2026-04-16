@@ -3382,7 +3382,11 @@ function erpOpenBranchFullModal(data) {
           '<div class="form-row"><label>خط الطول (Lng)</label><input type="number" step="0.0000001" class="form-control" id="brfGeoLng" value="' + (d.geoLng||'') + '" placeholder="46.6753"></div>' +
           '<div class="form-row"><label>نطاق (متر)</label><input type="number" class="form-control" id="brfGeoRadius" value="' + (d.geoRadius||100) + '" placeholder="100"></div>' +
         '</div>' +
-        '<button type="button" class="btn btn-sm btn-light" style="margin-top:6px;" onclick="brfGetMyLocation()"><i class="fas fa-crosshairs"></i> تحديد موقعي الحالي</button>' +
+        '<div style="display:flex;gap:6px;margin-top:6px;">' +
+          '<button type="button" class="btn btn-sm btn-light" onclick="brfGetMyLocation()"><i class="fas fa-crosshairs"></i> تحديد موقعي (GPS)</button>' +
+          '<button type="button" class="btn btn-sm" style="background:#4285f4;color:#fff;" onclick="brfOpenMap()"><i class="fas fa-map-marked-alt"></i> اختر من الخريطة</button>' +
+        '</div>' +
+        '<div id="brfMapContainer" style="display:none;margin-top:8px;border-radius:10px;overflow:hidden;border:1px solid #e5e7eb;height:250px;"></div>' +
       '</div>';
     document.getElementById('erpModalSaveBtn').onclick = erpSaveBranchFull;
     document.getElementById('erpModal').classList.remove('hidden');
@@ -3403,6 +3407,38 @@ function brfGetMyLocation() {
     showToast('تم تحديد الموقع ✓');
   }, function() { showToast('فشل تحديد الموقع', true); }, {enableHighAccuracy:true, timeout:10000});
 }
+
+window.brfOpenMap = function() {
+  var container = document.getElementById('brfMapContainer');
+  var lat = Number(document.getElementById('brfGeoLat').value) || 24.7136;
+  var lng = Number(document.getElementById('brfGeoLng').value) || 46.6753;
+  if (container.style.display === 'none') {
+    container.style.display = 'block';
+    container.innerHTML = '<iframe id="brfMapFrame" style="width:100%;height:100%;border:0;" src="https://maps.google.com/maps?q='+lat+','+lng+'&z=17&output=embed"></iframe>' +
+      '<div style="padding:8px;background:#fff;display:flex;gap:6px;align-items:center;">' +
+        '<input type="number" step="0.0000001" class="form-control" id="brfMapLat" value="'+lat+'" placeholder="Lat" style="flex:1;font-size:12px;">' +
+        '<input type="number" step="0.0000001" class="form-control" id="brfMapLng" value="'+lng+'" placeholder="Lng" style="flex:1;font-size:12px;">' +
+        '<button class="btn btn-sm btn-primary" onclick="brfApplyMapCoords()" style="white-space:nowrap;">تطبيق</button>' +
+        '<button class="btn btn-sm btn-light" onclick="brfRefreshMap()" style="white-space:nowrap;"><i class="fas fa-sync"></i></button>' +
+      '</div>';
+  } else {
+    container.style.display = 'none';
+  }
+};
+window.brfApplyMapCoords = function() {
+  var lat = document.getElementById('brfMapLat').value;
+  var lng = document.getElementById('brfMapLng').value;
+  document.getElementById('brfGeoLat').value = lat;
+  document.getElementById('brfGeoLng').value = lng;
+  showToast('تم تحديث الإحداثيات');
+  brfRefreshMap();
+};
+window.brfRefreshMap = function() {
+  var lat = document.getElementById('brfMapLat').value || document.getElementById('brfGeoLat').value;
+  var lng = document.getElementById('brfMapLng').value || document.getElementById('brfGeoLng').value;
+  var f = document.getElementById('brfMapFrame');
+  if (f) f.src = 'https://maps.google.com/maps?q='+lat+','+lng+'&z=17&output=embed';
+};
 
 function erpSaveBranchFull() {
   var data = {

@@ -1712,16 +1712,18 @@ router.post('/my-clock', async (req, res) => {
     // Device name (short — max 50 chars)
     var devName = (deviceName || 'متصفح').substring(0, 50);
 
-    // ─── LOCATION VALIDATION ───
-    // Check if branch has a location set
-    if (branchId && geoLat && geoLng) {
+    // ─── LOCATION VALIDATION (إجباري) ───
+    if (branchId) {
       const [branchRow] = await db.query('SELECT geo_lat, geo_lng, geo_radius FROM branches WHERE id = ?', [branchId]);
       if (branchRow.length && branchRow[0].geo_lat && branchRow[0].geo_lng) {
+        // Branch has location — GPS is REQUIRED
+        if (!geoLat || !geoLng) {
+          return res.json({ success: false, error: 'يجب السماح بتحديد الموقع لتسجيل الحضور' });
+        }
         const bLat = Number(branchRow[0].geo_lat);
         const bLng = Number(branchRow[0].geo_lng);
-        const radius = Number(branchRow[0].geo_radius) || 100; // default 100 meters
-        // Calculate distance using Haversine formula
-        const R = 6371000; // Earth radius in meters
+        const radius = Number(branchRow[0].geo_radius) || 1; // default 1 meter
+        const R = 6371000;
         const dLat = (Number(geoLat) - bLat) * Math.PI / 180;
         const dLng = (Number(geoLng) - bLng) * Math.PI / 180;
         const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
@@ -1729,7 +1731,7 @@ router.post('/my-clock', async (req, res) => {
                   Math.sin(dLng/2) * Math.sin(dLng/2);
         const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         if (dist > radius) {
-          return res.json({ success: false, error: 'أنت بعيد عن موقع العمل (' + Math.round(dist) + ' متر) — الحد المسموح ' + radius + ' متر' });
+          return res.json({ success: false, error: 'أنت بعيد عن الفرع بـ ' + Math.round(dist) + ' متر — المسموح ' + radius + ' متر فقط' });
         }
       }
     }

@@ -430,11 +430,11 @@ router.get('/employees/:id', async (req, res) => {
 
     // Recent payroll items (last 3 months)
     const [payrollItems] = await db.query(
-      `SELECT pi.*, pr.month, pr.year, pr.run_number
+      `SELECT pi.*, pr.period_month AS month, pr.period_year AS year, pr.run_number
        FROM hr_payroll_items pi
        LEFT JOIN hr_payroll_runs pr ON pi.run_id = pr.id
        WHERE pi.employee_id = ?
-       ORDER BY pr.year DESC, pr.month DESC
+       ORDER BY pr.period_year DESC, pr.period_month DESC
        LIMIT 3`,
       [req.params.id]
     );
@@ -1799,7 +1799,7 @@ router.get('/my-payslips', async (req, res) => {
     const [emp] = await db.query('SELECT id FROM hr_employees WHERE linked_username = ?', [username]);
     if (!emp.length) return res.json([]);
     const [rows] = await db.query(
-      'SELECT pi.*, pr.run_number, pr.month, pr.year FROM hr_payroll_items pi LEFT JOIN hr_payroll_runs pr ON pi.run_id = pr.id WHERE pi.employee_id = ? ORDER BY pr.year DESC, pr.month DESC',
+      'SELECT pi.*, pr.run_number, pr.period_month AS month, pr.period_year AS year FROM hr_payroll_items pi LEFT JOIN hr_payroll_runs pr ON pi.run_id = pr.id WHERE pi.employee_id = ? ORDER BY pr.period_year DESC, pr.period_month DESC',
       [emp[0].id]
     );
     res.json(rows);

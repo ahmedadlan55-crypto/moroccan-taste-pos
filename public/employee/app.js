@@ -13,9 +13,13 @@ document.addEventListener('DOMContentLoaded', function() {
   try {
     var session = JSON.parse(localStorage.getItem('pos_session') || '{}');
     currentUser = session.username || '';
-    if (!currentUser) { window.location.replace('/'); return; }
+    if (!currentUser || document.body.classList.contains('needs-login')) {
+      // Show login form inside the employee portal
+      showEmpLogin();
+      return;
+    }
     initApp();
-  } catch(e) { window.location.replace('/'); }
+  } catch(e) { showEmpLogin(); }
 });
 
 function initApp() {
@@ -79,7 +83,59 @@ function refreshData() {
 function doLogout() {
   localStorage.removeItem('pos_token');
   localStorage.removeItem('pos_session');
-  window.location.replace('/');
+  window.location.reload();
+}
+
+// ─── Self-contained login (independent from main app) ───
+function showEmpLogin() {
+  hideLoader();
+  document.getElementById('app').style.display = 'none';
+  // Create login form dynamically
+  var loginHtml = '<div style="display:flex;align-items:center;justify-content:center;min-height:100dvh;padding:20px;">' +
+    '<div style="background:rgba(255,255,255,0.85);backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,0.4);border-radius:24px;padding:40px 30px;width:100%;max-width:380px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.08);">' +
+      '<div style="width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#3b82f6,#1e40af);color:#fff;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 16px;"><i class="fas fa-user-tie"></i></div>' +
+      '<h1 style="font-size:22px;color:#0f172a;margin-bottom:6px;">بوابة الموظف</h1>' +
+      '<p style="color:#64748b;font-size:13px;margin-bottom:24px;">سجّل دخولك لتسجيل الحضور وعرض بياناتك</p>' +
+      '<input type="text" id="empLoginUser" placeholder="اسم المستخدم" style="width:100%;padding:14px 16px;border:1.5px solid #e2e8f0;border-radius:12px;font-size:15px;margin-bottom:10px;text-align:right;">' +
+      '<input type="password" id="empLoginPass" placeholder="كلمة المرور" style="width:100%;padding:14px 16px;border:1.5px solid #e2e8f0;border-radius:12px;font-size:15px;margin-bottom:16px;text-align:right;">' +
+      '<button onclick="empDoLogin()" style="width:100%;padding:14px;background:linear-gradient(135deg,#3b82f6,#1e40af);color:#fff;border:none;border-radius:12px;font-size:16px;font-weight:800;cursor:pointer;"><i class="fas fa-sign-in-alt"></i> دخول</button>' +
+    '</div></div>';
+  var loginDiv = document.createElement('div');
+  loginDiv.id = 'empLoginPage';
+  loginDiv.innerHTML = loginHtml;
+  document.body.appendChild(loginDiv);
+  // Enter key
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && document.getElementById('empLoginPage')) empDoLogin();
+  });
+}
+
+function empDoLogin() {
+  var u = document.getElementById('empLoginUser').value;
+  var p = document.getElementById('empLoginPass').value;
+  if (!u || !p) return toast('أدخل اسم المستخدم وكلمة المرور', true);
+
+  fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: u, password: p })
+  }).then(function(r) { return r.json(); }).then(function(r) {
+    if (r.success && r.token) {
+      localStorage.setItem('pos_token', r.token);
+      localStorage.setItem('pos_session', JSON.stringify({
+        username: r.username, role: r.role,
+        brandId: r.brandId || '', branchId: r.branchId || ''
+      }));
+      currentUser = r.username;
+      // Remove login page and show app
+      var lp = document.getElementById('empLoginPage');
+      if (lp) lp.remove();
+      document.body.classList.remove('needs-login');
+      initApp();
+    } else {
+      toast(r.error || 'فشل تسجيل الدخول', true);
+    }
+  }).catch(function(e) { toast('خطأ في الاتصال', true); });
 }
 
 // ═══════════════════════════════════════

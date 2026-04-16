@@ -15,12 +15,25 @@
       try {
         var token = localStorage.getItem('pos_token');
         var session = localStorage.getItem('pos_session');
-        if (!token || !session) { window.location.replace('/'); return; }
+        if (!token || !session) {
+          // No session — show login form (DON'T redirect to main login)
+          document.addEventListener('DOMContentLoaded', function() {
+            document.body.classList.add('authenticated');
+            document.body.classList.add('needs-login');
+          });
+          return;
+        }
+        // Has session — go directly to app
         history.replaceState({ emp: true }, '', '/employee/');
         history.pushState({ emp: true }, '', '/employee/');
         window.addEventListener('popstate', function() { history.pushState({ emp: true }, '', '/employee/'); });
         document.addEventListener('DOMContentLoaded', function() { document.body.classList.add('authenticated'); });
-      } catch (e) { window.location.replace('/'); }
+      } catch (e) {
+        document.addEventListener('DOMContentLoaded', function() {
+          document.body.classList.add('authenticated');
+          document.body.classList.add('needs-login');
+        });
+      }
     })();
   </script>
   <style>html,body{background:#0f172a;}body:not(.authenticated){visibility:hidden !important;}</style>

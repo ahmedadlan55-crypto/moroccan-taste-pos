@@ -4826,8 +4826,8 @@ function hrOpenEmployeeModal(data) {
         '<div class="form-row"><label>بدل نقل</label><input type="number" class="form-control" id="hrEmpTransport" value="'+(d.transportAllowance||0)+'" step="0.01"></div>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>تاريخ التعيين</label><input type="date" class="form-control" id="hrEmpHireDate" value="'+(d.hireDate?d.hireDate.split('T')[0]:'')+'"></div>' +
-        '<div class="form-row"><label>نهاية العقد</label><input type="date" class="form-control" id="hrEmpContractEnd" value="'+(d.contractEndDate?d.contractEndDate.split('T')[0]:'')+'"></div>' +
+        '<div class="form-row"><label>تاريخ التعيين</label><input type="date" class="form-control" id="hrEmpHireDate" value="'+(d.hireDate&&String(d.hireDate).length>5?String(d.hireDate).split('T')[0]:'')+'"></div>' +
+        '<div class="form-row"><label>نهاية العقد</label><input type="date" class="form-control" id="hrEmpContractEnd" value="'+(d.contractEndDate&&String(d.contractEndDate).length>5?String(d.contractEndDate).split('T')[0]:'')+'"></div>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label><i class="fas fa-clock" style="color:#10b981;"></i> بداية الدوام</label><input type="time" class="form-control" id="hrEmpWorkStart" value="'+(d.workStart||'08:00')+'"></div>' +

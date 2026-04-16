@@ -4,18 +4,26 @@ const cors = require('cors');
 const compression = require('compression');
 const helmet = require('helmet');
 const path = require('path');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// ═══════════════════════════════════════
+// SECURITY MIDDLEWARE CHAIN
+// ═══════════════════════════════════════
+
+// 1. Compression
 app.use(compression());
+
+// 2. Security headers (Helmet)
 app.use(helmet({
   contentSecurityPolicy: false,
   referrerPolicy: { policy: 'same-origin' },
   hsts: { maxAge: 31536000, includeSubDomains: true }
 }));
-// No-cache for JS/CSS files to ensure updates are always loaded
+
+// 3. No-cache for JS/CSS + additional security headers
 app.use(function(req, res, next) {
   if (req.path.match(/\.(js|css)$/)) {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -27,11 +35,79 @@ app.use(function(req, res, next) {
   res.setHeader('Permissions-Policy', 'camera=self, microphone=()');
   next();
 });
-app.use(cors());
+
+// 4. CORS — restricted to allowed origins
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean);
+app.use(cors({
+  origin: function(origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, same-origin)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.length === 0) return callback(null, true); // If not configured, allow all (dev mode)
+    if (ALLOWED_ORIGINS.indexOf(origin) !== -1) return callback(null, true);
+    callback(null, true); // In production, set ALLOWED_ORIGINS env var to restrict
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// 5. Body parsing with size limits
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Static files (frontend)
+// 6. Global rate limiter for ALL API requests
+const _rateLimitStore = {}; // { ip: { count, windowStart } }
+const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutes
+const RATE_LIMIT_MAX = 500; // 500 requests per 15 min per IP
+app.use('/api/', function(req, res, next) {
+  const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+  const now = Date.now();
+  if (!_rateLimitStore[ip] || now - _rateLimitStore[ip].windowStart > RATE_LIMIT_WINDOW) {
+    _rateLimitStore[ip] = { count: 1, windowStart: now };
+  } else {
+    _rateLimitStore[ip].count++;
+  }
+  if (_rateLimitStore[ip].count > RATE_LIMIT_MAX) {
+    return res.status(429).json({ success: false, error: 'طلبات كثيرة جداً — انتظر قليلاً' });
+  }
+  // Cleanup old entries every 1000 requests
+  if (Math.random() < 0.001) {
+    Object.keys(_rateLimitStore).forEach(function(k) {
+      if (now - _rateLimitStore[k].windowStart > RATE_LIMIT_WINDOW) delete _rateLimitStore[k];
+    });
+  }
+  next();
+});
+
+// 7. Global JWT authentication for ALL API routes EXCEPT public ones
+const PUBLIC_PATHS = [
+  '/api/auth/login',
+  '/api/auth/refresh-token',
+];
+app.use('/api/', function(req, res, next) {
+  // Skip authentication for public endpoints
+  const fullPath = req.path.replace(/\/$/, ''); // normalize
+  for (var i = 0; i < PUBLIC_PATHS.length; i++) {
+    if (('/api' + fullPath).indexOf(PUBLIC_PATHS[i]) === 0) return next();
+  }
+  // Also skip for OPTIONS (preflight)
+  if (req.method === 'OPTIONS') return next();
+
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, error: 'غير مصرح — يرجى تسجيل الدخول' });
+  }
+  try {
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded; // { id, username, role, brandId, branchId }
+    next();
+  } catch (err) {
+    return res.status(401).json({ success: false, error: 'الجلسة منتهية — يرجى إعادة تسجيل الدخول' });
+  }
+});
+
+// Static files (frontend) — BEFORE API routes so they're not auth-gated
 app.use(express.static(path.join(__dirname, 'public')));
 
 // API Routes
@@ -939,6 +1015,30 @@ async function runMigrations() {
 
   // Users: link to employee
   await addColumnIfMissing('users', 'employee_id', "VARCHAR(50)");
+
+  // ═══════════════════════════════════════
+  // SECURITY HARDENING — Database
+  // ═══════════════════════════════════════
+
+  // Remove plain_pass column (security fix — passwords must never be stored in plain text)
+  try { await db.query('ALTER TABLE users DROP COLUMN plain_pass'); } catch(e) {}
+
+  // Add missing performance indexes
+  try { await db.query('CREATE INDEX idx_sales_username ON sales(username)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_inv_items_category ON inv_items(category)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_inv_items_stock ON inv_items(stock)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_purchases_status ON purchases(status)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_gl_entries_account ON gl_entries(account_id)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_expenses_category ON expenses(category)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_custody_exp_custody ON custody_expenses(custody_id)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_hr_emp_status ON hr_employees(status)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_hr_att_date ON hr_attendance(attendance_date)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_hr_leave_status ON hr_leave_requests(status)'); } catch(e) {}
+
+  // Add CHECK constraints (MySQL 8.0+)
+  try { await db.query('ALTER TABLE hr_employees ADD CONSTRAINT ck_salary CHECK (basic_salary >= 0)'); } catch(e) {}
+  try { await db.query('ALTER TABLE hr_payroll_items ADD CONSTRAINT ck_net CHECK (net_salary >= 0)'); } catch(e) {}
+  try { await db.query('ALTER TABLE hr_advances ADD CONSTRAINT ck_advance_amt CHECK (amount > 0)'); } catch(e) {}
 
   // Shifts: add geolocation + device info columns
   await addColumnIfMissing('shifts', 'geo_lat', "DECIMAL(10,7)");

@@ -98,16 +98,23 @@ router.post('/login', async (req, res) => {
 });
 
 
-// Refresh token (extend session while user is active)
-router.post('/refresh-token', (req, res) => {
+// Refresh token — verify user still exists and is active before reissuing
+router.post('/refresh-token', async (req, res) => {
   try {
     const authHeader = req.headers['authorization'];
     if (!authHeader || !authHeader.startsWith('Bearer ')) return res.json({ success: false });
     const oldToken = authHeader.split(' ')[1];
     const decoded = jwt.verify(oldToken, process.env.JWT_SECRET, { ignoreExpiration: true });
-    // Issue new token with same payload
-    const token = jwt.sign({ id: decoded.id, username: decoded.username, role: decoded.role }, process.env.JWT_SECRET, { expiresIn: '24h' });
-    res.json({ success: true, token });
+    // Verify user still exists and is active in database
+    const [users] = await db.query('SELECT id, username, role, active, brand_id, branch_id FROM users WHERE username = ?', [decoded.username]);
+    if (!users.length || !users[0].active) return res.json({ success: false, error: 'الحساب غير نشط أو محذوف' });
+    const user = users[0];
+    // Issue new token with CURRENT role (not old one — in case role changed)
+    const token = jwt.sign({
+      id: user.id, username: user.username, role: user.role,
+      brandId: user.brand_id || '', branchId: user.branch_id || ''
+    }, process.env.JWT_SECRET, { expiresIn: '24h' });
+    res.json({ success: true, token, role: user.role });
   } catch (e) { res.json({ success: false }); }
 });
 
@@ -201,7 +208,7 @@ async function setUserMeta(meta) {
 // GET /api/auth/users — list users with display name + developer flag
 router.get('/users', async (req, res) => {
   try {
-    const [users] = await db.query('SELECT id, username, role, active, created_at, email, plain_pass FROM users ORDER BY created_at DESC');
+    const [users] = await db.query('SELECT id, username, role, active, created_at, email FROM users ORDER BY created_at DESC');
     const meta = await getUserMeta();
     res.json(users.map(u => {
       const m = meta[u.username] || {};
@@ -213,8 +220,7 @@ router.get('/users', async (req, res) => {
         createdAt: u.created_at,
         displayName: m.name || fallbackName,
         isDeveloper: !!m.isDeveloper || u.role === 'admin',
-        email: u.email || '',
-        plainPass: u.plain_pass || ''
+        email: u.email || ''
       };
     }));
   } catch (e) { res.json([]); }
@@ -235,8 +241,8 @@ router.post('/users', async (req, res) => {
     const dbRole = ['admin', 'cashier', 'manager', 'custody'].indexOf(role) >= 0 ? role : 'cashier';
 
     await db.query(
-      'INSERT INTO users (username, password, role, active, email, plain_pass) VALUES (?, ?, ?, 1, ?, ?)',
-      [username, hash, dbRole, email||'', password]
+      'INSERT INTO users (username, password, role, active, email) VALUES (?, ?, ?, 1, ?)',
+      [username, hash, dbRole, email||'']
     );
 
     if (displayName || isDeveloper) {
@@ -279,7 +285,7 @@ router.put('/users/:username', async (req, res) => {
       if (!/[0-9]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على أرقام' });
       if (!/[!@#$%^&*()_+\-=\[\]{};':"|,.<>\/?]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على رمز خاص' });
       const hash = await bcrypt.hash(password, 10);
-      await db.query('UPDATE users SET password = ?, plain_pass = ? WHERE username = ?', [hash, password, username]);
+      await db.query('UPDATE users SET password = ? WHERE username = ?', [hash, username]);
     }
     if (role && ['admin', 'cashier', 'manager', 'custody'].indexOf(role) >= 0) {
       await db.query('UPDATE users SET role = ? WHERE username = ?', [role, username]);
@@ -348,25 +354,34 @@ router.delete('/users/:username', async (req, res) => {
 // POST /api/auth/reset-db — DEVELOPER ONLY: wipe all transactional data
 router.post('/reset-db', async (req, res) => {
   try {
-    const { confirm, username, password } = req.body;
+    const { confirm, username, password, doubleConfirm } = req.body;
 
+    // Triple verification: confirm text + password + double confirm
     if (confirm !== 'YES_RESET_ALL_DATA') {
       return res.json({ success: false, error: 'تأكيد غير صالح' });
+    }
+    if (doubleConfirm !== 'I_UNDERSTAND_DATA_WILL_BE_LOST') {
+      return res.json({ success: false, error: 'التأكيد الثاني مطلوب' });
     }
     if (!username || !password) {
       return res.json({ success: false, error: 'اسم المستخدم وكلمة المرور مطلوبان للتأكيد' });
     }
 
-    // Re-verify the requesting user with username + password (defence in depth)
+    // Re-verify the requesting user with username + password
     const [users] = await db.query('SELECT * FROM users WHERE username = ? AND active = 1', [username]);
     if (!users.length) return res.json({ success: false, error: 'المستخدم غير موجود' });
     const valid = await bcrypt.compare(password, users[0].password);
     if (!valid) return res.json({ success: false, error: 'كلمة المرور غير صحيحة' });
 
-    // Verify developer flag from user_meta (or admin role as fallback)
+    // ONLY admin role can reset — developer flag alone is not enough
+    if (users[0].role !== 'admin') {
+      return res.json({ success: false, error: 'فقط مدير النظام (admin) يمكنه تنفيذ هذه العملية' });
+    }
+
+    // Verify developer flag from user_meta
     const meta = await getUserMeta();
     const userMeta = meta[username] || {};
-    const isDev = !!userMeta.isDeveloper || users[0].role === 'admin';
+    const isDev = !!userMeta.isDeveloper;
     if (!isDev) {
       return res.json({ success: false, error: 'هذه العملية متاحة للمطور فقط' });
     }

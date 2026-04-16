@@ -3734,7 +3734,7 @@ function loadDashUsers() {
     var h = '';
     arr.forEach(function(u) {
       var devBadge = u.isDeveloper ? ' <span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;"><i class="fas fa-code"></i> مطور</span>' : '';
-      var passDisplay = u.plainPass ? '<code style="background:#f1f5f9;padding:2px 8px;border-radius:6px;font-size:12px;letter-spacing:1px;">' + u.plainPass + '</code>' : '<span style="color:#cbd5e1;font-size:11px;">غير متاح</span>';
+      var passDisplay = '<span style="color:#94a3b8;font-size:11px;"><i class="fas fa-lock" style="margin-left:4px;"></i> مشفرة</span>';
       var emailDisplay = u.email ? '<div style="font-size:11px;color:#64748b;"><i class="fas fa-envelope" style="margin-left:3px;color:#94a3b8;"></i>' + u.email + '</div>' : '';
       var btnS = 'width:34px;height:34px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;';
       h += '<tr>' +

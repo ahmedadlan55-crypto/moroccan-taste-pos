@@ -4488,43 +4488,57 @@ function wfViewTxn(id) {
   window._apiBridge.withSuccessHandler(function(txn) {
     loader(false);
     if (txn.error) return showToast(txn.error, true);
-    var statusLabels = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
-    var actionLabels = { create: 'إنشاء', approve: 'موافقة', reject: 'رفض', return: 'إرجاع', close: 'إغلاق' };
-    var actionColors = { create: '#3b82f6', approve: '#22c55e', reject: '#ef4444', return: '#f59e0b', close: '#6b7280' };
-    var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">' +
-      '<div><strong>الرقم:</strong> <code>' + (txn.txnNumber || '') + '</code></div>' +
-      '<div><strong>النوع:</strong> ' + (txn.typeName || '') + '</div>' +
-      '<div><strong>المنشئ:</strong> ' + (txn.createdBy || '') + '</div>' +
-      '<div><strong>المبلغ:</strong> <span style="font-weight:800;color:#1e40af;">' + Number(txn.amount).toLocaleString('en', {minimumFractionDigits: 2}) + '</span></div>' +
-      '<div><strong>الحالة:</strong> ' + (statusLabels[txn.status] || txn.status) + '</div>' +
-      '<div><strong>التاريخ:</strong> ' + (txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('en-GB') : '') + '</div>' +
-      '</div>';
-    if (txn.description) html += '<div style="margin-bottom:12px;"><strong>التفاصيل:</strong><p style="margin:4px 0;padding:8px;background:#f8fafc;border-radius:6px;">' + txn.description + '</p></div>';
-    if (txn.attachment) html += '<div style="margin-bottom:12px;"><strong>المرفق:</strong> ' + txn.attachment + '</div>';
-    // Timeline
-    html += '<h4 style="margin:16px 0 8px;border-top:1px solid #e2e8f0;padding-top:12px;"><i class="fas fa-history"></i> سجل الإجراءات</h4>';
-    if (txn.logs && txn.logs.length) {
-      html += '<div class="wf-timeline">';
-      txn.logs.forEach(function(log) {
-        var dt = log.createdAt ? new Date(log.createdAt).toLocaleString('en-GB') : '';
-        html += '<div class="wf-timeline-item ' + (log.actionType || '') + '">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-            '<span style="font-weight:700;color:' + (actionColors[log.actionType] || '#334155') + ';">' + (actionLabels[log.actionType] || log.actionType) + '</span>' +
-            '<span style="font-size:12px;color:#94a3b8;">' + dt + '</span>' +
-          '</div>' +
-          '<div style="font-size:13px;color:#64748b;margin-top:2px;">' +
-            (log.stepName ? '<span class="badge badge-blue" style="font-size:11px;">' + log.stepName + '</span> ' : '') +
-            (log.positionName ? '<span class="badge badge-purple" style="font-size:11px;">' + log.positionName + '</span> ' : '') +
-            'بواسطة: <strong>' + (log.actionBy || '—') + '</strong>' +
-          '</div>' +
-          (log.note ? '<div style="margin-top:4px;padding:4px 8px;background:#fff;border-radius:4px;font-size:13px;">' + log.note + '</div>' : '') +
-        '</div>';
-      });
-      html += '</div>';
-    } else {
-      html += '<p style="color:#94a3b8;text-align:center;">لا توجد إجراءات بعد</p>';
+    var sMap = { pending:'قيد الانتظار', in_progress:'قيد التنفيذ', approved:'معتمدة', rejected:'مرفوضة', closed:'مغلقة' };
+    var sClr = { pending:'#f59e0b', in_progress:'#0ea5e9', approved:'#10b981', rejected:'#ef4444', closed:'#6b7280' };
+    var aMap = { create:'إنشاء', approve:'موافقة', reject:'رفض', return:'إرجاع', close:'إغلاق', forward:'تحويل' };
+    var aClr = { create:'#0ea5e9', approve:'#10b981', reject:'#ef4444', return:'#f59e0b', close:'#6b7280', forward:'#8b5cf6' };
+    var aIcon = { create:'fa-plus-circle', approve:'fa-check-circle', reject:'fa-times-circle', return:'fa-undo', close:'fa-lock', forward:'fa-share' };
+    var sc = sClr[txn.status]||'#6b7280';
+
+    // Status banner
+    var html = '<div style="padding:12px;border-radius:12px;background:'+sc+'15;border:1px solid '+sc+'30;text-align:center;margin-bottom:14px;"><span style="font-size:14px;font-weight:800;color:'+sc+';"><i class="fas fa-circle" style="font-size:8px;margin-left:6px;"></i> '+(sMap[txn.status]||txn.status)+'</span></div>';
+
+    // Info grid
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">';
+    var f = function(l,v,c) { return '<div style="padding:8px 12px;background:#f8fafc;border-radius:8px;"><span style="font-size:11px;color:#94a3b8;display:block;">'+l+'</span><span style="font-size:13px;font-weight:700;color:'+(c||'#1e293b')+';">'+v+'</span></div>'; };
+    html += f('رقم المعاملة', txn.txnNumber||'');
+    html += f('النوع', txn.typeName||'');
+    html += f('المرسل', (txn.senderName||txn.createdBy||'')+(txn.senderPosition?' — <span style="color:#0ea5e9;">'+txn.senderPosition+'</span>':''));
+    html += f('المبلغ', Number(txn.amount||0).toLocaleString('en',{minimumFractionDigits:2}), '#1e40af');
+    if (txn.accountName) html += f('الحساب المحاسبي', (txn.accountCode||'')+' — '+txn.accountName);
+    if (txn.costCenterName) html += f('مركز التكلفة', txn.costCenterName);
+    if (txn.recipientUsername) html += f('المستلم', txn.recipientUsername);
+    html += f('التاريخ', txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('ar-SA',{day:'numeric',month:'long',year:'numeric'}) : '');
+    html += '</div>';
+
+    if (txn.description) html += '<div style="padding:10px 14px;border-radius:10px;background:#f1f5f9;font-size:13px;color:#475569;margin-bottom:12px;">'+txn.description+'</div>';
+    if (txn.attachment && typeof txn.attachment === 'string' && txn.attachment.startsWith('data:')) {
+      html += '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;background:#eff6ff;color:#1e40af;font-size:12px;font-weight:700;margin-bottom:12px;text-decoration:none;"><i class="fas fa-download"></i> تحميل مرفق المعاملة</a>';
     }
-    document.getElementById('erpModalTitle').textContent = 'تفاصيل المعاملة: ' + (txn.txnNumber || '');
+
+    // Timeline
+    html += '<div style="border-top:1px solid #e5e7eb;padding-top:12px;margin-top:8px;"><div style="font-size:14px;font-weight:800;color:#1e293b;margin-bottom:10px;"><i class="fas fa-route" style="color:#0ea5e9;margin-left:6px;"></i> سير المعاملة</div>';
+    if (txn.logs && txn.logs.length) {
+      txn.logs.forEach(function(l, i) {
+        var c = aClr[l.actionType]||'#6b7280';
+        var icon = aIcon[l.actionType]||'fa-circle';
+        var dt = l.createdAt ? new Date(l.createdAt).toLocaleString('ar-SA',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+        var isLast = i === txn.logs.length - 1;
+        html += '<div style="display:flex;gap:12px;position:relative;">';
+        html += '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;"><div style="width:32px;height:32px;border-radius:50%;background:'+c+'15;display:flex;align-items:center;justify-content:center;"><i class="fas '+icon+'" style="font-size:14px;color:'+c+';"></i></div>';
+        if (!isLast) html += '<div style="width:2px;flex:1;background:'+c+'25;min-height:16px;"></div>';
+        html += '</div>';
+        html += '<div style="flex:1;padding-bottom:'+(isLast?'0':'14')+'px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-weight:800;color:'+c+';font-size:13px;">'+(aMap[l.actionType]||l.actionType)+'</span><span style="font-size:11px;color:#94a3b8;">'+dt+'</span></div>';
+        html += '<div style="font-size:12px;color:#64748b;margin-top:2px;">'+(l.actionBy||'')+(l.positionName?' — <span style="font-weight:700;color:#1e40af;">'+l.positionName+'</span>':'')+'</div>';
+        if (l.note) html += '<div style="margin-top:4px;padding:6px 10px;border-radius:8px;background:#f1f5f9;font-size:12px;color:#334155;">'+l.note+'</div>';
+        if (l.attachment && typeof l.attachment === 'string' && l.attachment.startsWith('data:')) html += '<a href="'+l.attachment+'" download style="display:inline-flex;align-items:center;gap:4px;margin-top:4px;font-size:11px;color:#0ea5e9;font-weight:700;"><i class="fas fa-paperclip"></i> مرفق</a>';
+        html += '</div></div>';
+      });
+    } else { html += '<p style="color:#94a3b8;text-align:center;font-size:13px;">لا توجد إجراءات بعد</p>'; }
+    html += '</div>';
+
+    document.getElementById('erpModalTitle').textContent = txn.txnNumber || 'تفاصيل المعاملة';
     document.getElementById('erpModalBody').innerHTML = html;
     document.getElementById('erpModalSaveBtn').style.display = 'none';
     document.getElementById('erpModal').classList.remove('hidden');

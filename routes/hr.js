@@ -497,7 +497,7 @@ router.post('/employees', async (req, res) => {
       ]
     );
 
-    // Optionally create a user account
+    // Optionally create a user account — auto-link branch, brand, position from HR data
     if (b.createUser && b.firstName) {
       try {
         const bcrypt = require('bcryptjs');
@@ -505,8 +505,8 @@ router.post('/employees', async (req, res) => {
         const defaultPass = b.userPassword || 'Pass@123';
         const hash = await bcrypt.hash(defaultPass, 10);
         await db.query(
-          'INSERT INTO users (username, password, role, active, email, employee_id) VALUES (?,?,?,1,?,?)',
-          [uname, hash, b.userRole || 'cashier', b.email || '', empId]
+          'INSERT INTO users (username, password, role, active, email, employee_id, brand_id, branch_id, position_id) VALUES (?,?,?,1,?,?,?,?,?)',
+          [uname, hash, b.userRole || 'employee', b.email || '', empId, b.brandId || null, b.branchId || null, b.positionId || null]
         );
         const [userRow] = await db.query('SELECT id FROM users WHERE username = ?', [uname]);
         if (userRow.length) {
@@ -1318,6 +1318,19 @@ router.post('/payroll-runs/:id/calculate', async (req, res) => {
         else unpaidLeaveDays += Number(lv.days_count);
       }
 
+      // Check if paid leave exceeds balance — excess = deducted from salary
+      let excessLeaveDays = 0;
+      const [leaveBal] = await db.query(
+        "SELECT remaining_days FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = 'LT-ANNUAL' AND year = ?",
+        [emp.id, run.year]);
+      if (leaveBal.length && paidLeaveDays > 0) {
+        const remaining = Number(leaveBal[0].remaining_days) || 0;
+        if (paidLeaveDays > remaining) {
+          excessLeaveDays = paidLeaveDays - remaining;
+          paidLeaveDays = remaining; // Only count what's in balance as paid
+        }
+      }
+
       // 3. Calculate salary
       const basicSalary = Number(emp.basic_salary) || 0;
       const housingAllowance = Number(emp.housing_allowance) || 0;
@@ -1332,9 +1345,10 @@ router.post('/payroll-runs/:id/calculate', async (req, res) => {
       const gross = basicSalary + housingAllowance + transportAllowance + otherAllowance + overtimeAmount;
 
       // Deductions
+      const dailyRate = basicSalary / 30;
       const absentDays = Math.max(0, workingDaysInMonth - actualDays - paidLeaveDays);
-      const absenceDeduction = Math.round((basicSalary / 30) * (absentDays + unpaidLeaveDays) * 100) / 100;
-      const lateDeduction = Math.round((basicSalary / 30 / 8 / 60) * totalLateMin * 100) / 100;
+      const absenceDeduction = Math.round(dailyRate * (absentDays + unpaidLeaveDays + excessLeaveDays) * 100) / 100;
+      const lateDeduction = Math.round((dailyRate / 9) * (totalLateMin / 60) * 100) / 100; // 9-hour workday
 
       // Advance deductions
       let advanceDeduction = 0;

@@ -270,12 +270,12 @@ router.post('/transactions/:id/action', async (req, res) => {
     if (!txns.length) return res.json({ success: false, error: 'المعاملة غير موجودة' });
     const txn = txns[0];
 
-    // Get current workflow step
-    const [currentStep] = await db.query('SELECT * FROM workflow_definitions WHERE id = ?', [txn.current_step_id]);
+    // Get current workflow step (if defined)
+    const [currentStep] = await db.query('SELECT * FROM workflow_definitions WHERE id = ?', [txn.current_step_id || 'NONE']);
     const step = currentStep.length ? currentStep[0] : null;
 
     // Update amount if allowed
-    if (newAmount !== undefined && step && step.can_edit_amount) {
+    if (newAmount !== undefined && (!step || step.can_edit_amount)) {
       await db.query('UPDATE transactions SET amount = ? WHERE id = ?', [Number(newAmount)||0, req.params.id]);
     }
 
@@ -283,26 +283,22 @@ router.post('/transactions/:id/action', async (req, res) => {
     let newStepId = txn.current_step_id;
 
     if (action === 'approve') {
-      // Find next step
-      const nextOrder = step ? step.step_order + 1 : 999;
-      const [nextStep] = await db.query(
-        'SELECT id, is_final_step FROM workflow_definitions WHERE transaction_type_id = ? AND step_order = ?',
-        [txn.transaction_type_id, nextOrder]);
-
-      if (nextStep.length) {
-        newStepId = nextStep[0].id;
-        newStatus = 'in_progress';
-      } else if (step && step.is_final_step) {
-        newStatus = 'closed';
-        newStepId = null;
+      if (step) {
+        // Workflow-defined steps — find next
+        const nextOrder = step.step_order + 1;
+        const [nextStep] = await db.query(
+          'SELECT id, is_final_step FROM workflow_definitions WHERE transaction_type_id = ? AND step_order = ?',
+          [txn.transaction_type_id, nextOrder]);
+        if (nextStep.length) { newStepId = nextStep[0].id; newStatus = 'in_progress'; }
+        else if (step.is_final_step) { newStatus = 'closed'; newStepId = null; }
+        else { newStatus = 'approved'; newStepId = null; }
       } else {
-        newStatus = 'approved';
-        newStepId = null;
+        // No workflow steps — direct approve by recipient
+        newStatus = 'approved'; newStepId = null;
       }
     } else if (action === 'reject') {
       newStatus = 'rejected';
     } else if (action === 'return') {
-      // Go back to previous step
       if (step) {
         const prevOrder = step.step_order - 1;
         const [prevStep] = await db.query(
@@ -312,8 +308,14 @@ router.post('/transactions/:id/action', async (req, res) => {
       }
       newStatus = 'pending';
     } else if (action === 'close') {
-      newStatus = 'closed';
-      newStepId = null;
+      newStatus = 'closed'; newStepId = null;
+    } else if (action === 'forward') {
+      // Forward to another user (req.body.forwardTo)
+      const forwardTo = req.body.forwardTo;
+      if (forwardTo) {
+        await db.query('UPDATE transactions SET recipient_username = ? WHERE id = ?', [forwardTo, req.params.id]);
+      }
+      newStatus = 'in_progress';
     }
 
     await db.query('UPDATE transactions SET status = ?, current_step_id = ? WHERE id = ?', [newStatus, newStepId, req.params.id]);

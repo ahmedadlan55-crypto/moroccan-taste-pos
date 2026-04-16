@@ -648,7 +648,7 @@ router.post('/gl/repair', async (req, res) => {
               [newId, nextCode, entry.account_name, 'asset', parentId, 4]);
             accId = newId;
             created++;
-          } catch(e) { console.log('[REPAIR] GL create error:', e.message); }
+          } catch(e) { /* Production: removed debug log */ }
         }
       }
       // Also handle مصروفات عهدة
@@ -1376,7 +1376,7 @@ async function auditLog(action, entityType, entityId, username, details, ip) {
     const id = 'AUD-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
     await db.query('INSERT INTO audit_logs (id, action, entity_type, entity_id, username, details, ip_address) VALUES (?,?,?,?,?,?,?)',
       [id, action, entityType||'', entityId||'', username||'', typeof details === 'object' ? JSON.stringify(details) : (details||''), ip||'']);
-  } catch(e) { console.log('[AUDIT] Error:', e.message); }
+  } catch(e) { /* Production: removed debug log */ }
 }
 
 router.get('/audit-logs', async (req, res) => {

@@ -108,10 +108,7 @@ function computeStockQty(item, inv) {
   }
 
   const stockQty = usedConvRate > 1 ? item.qty * usedConvRate : item.qty;
-  console.log('[CONV]', item.name,
-    'unit="' + item.unit + '"', 'unitType=' + item.unitType, 'itemConvRate=' + item.convRate,
-    'invBigUnit="' + inv.big_unit + '"', 'invConvRate=' + invConvRate,
-    '→ usedConvRate=' + usedConvRate, 'stockQty=' + stockQty);
+  // [LOG REMOVED] — debug conversion logging
   return { stockQty, usedConvRate };
 }
 
@@ -156,7 +153,7 @@ router.post('/receive/:id', async (req, res) => {
     const rawItems = JSON.parse(purchase.items_json || '[]');
     const items = rawItems.map(normPurchaseItem);
 
-    console.log('[RECEIVE] Purchase', id, '— processing', items.length, 'items');
+//     console.log('[RECEIVE] Purchase', id, '— processing', items.length, 'items');
 
     let count = 0;
     const skipped = [];
@@ -166,7 +163,7 @@ router.post('/receive/:id', async (req, res) => {
     for (const item of items) {
       if (item.qty <= 0) {
         skipped.push({ name: item.name, reason: 'qty=0' });
-        console.log('[RECEIVE]   skip', item.name, 'qty=0');
+//         console.log('[RECEIVE]   skip', item.name, 'qty=0');
         continue;
       }
 
@@ -174,7 +171,7 @@ router.post('/receive/:id', async (req, res) => {
       const inv = await resolveInvItem(item);
       if (!inv) {
         skipped.push({ name: item.name, reason: 'not found in inventory' });
-        console.log('[RECEIVE]   skip', item.name, '— not found in inventory (tried id=' + item.id + ', name=' + item.name + ')');
+//         console.log('[RECEIVE]   skip', item.name, '— not found in inventory (tried id=' + item.id + ', name=' + item.name + ')');
         continue;
       }
 
@@ -219,18 +216,12 @@ router.post('/receive/:id', async (req, res) => {
           'INSERT INTO purchase_lots (inv_item_id, purchase_id, received_date, qty_received, qty_remaining, unit_cost) VALUES (?,?,?,?,?,?)',
           [inv.id, id, now, stockQty, stockQty, costPerSmallUnit]
         );
-      } catch (lotErr) { console.warn('[RECEIVE] purchase_lots insert failed:', lotErr.message); }
+      } catch (lotErr) { /* purchase_lots warning suppressed */ }
 
       var convNote = usedConvRate > 1
         ? item.qty + ' ' + (item.unit || 'big') + ' × ' + usedConvRate + ' = ' + stockQty + ' ' + (inv.unit || 'unit')
         : '';
-      console.log('[RECEIVE]   ' + (affectedRows > 0 ? 'OK' : 'FAIL'),
-        inv.name, '(' + inv.id + ')',
-        'ordered=' + item.qty + (usedConvRate > 1 ? ' ' + (item.unit || 'big') : ''),
-        'stockQty=' + stockQty,
-        'stock: ' + stockBefore + ' → ' + (stockBefore + stockQty),
-        'affected=' + affectedRows,
-        convNote ? '(' + convNote + ')' : '');
+      // [LOG REMOVED] — receive item debug logging
 
       if (affectedRows === 0) {
         // The UPDATE silently affected 0 rows — the WHERE clause didn't
@@ -269,8 +260,8 @@ router.post('/receive/:id', async (req, res) => {
       try {
         const { recomputeMenuCostsForItems } = require('./pricing-utils');
         const recomputed = await recomputeMenuCostsForItems(updated.map(u => u.invId));
-        console.log('[RECEIVE] Cascade: recomputed', recomputed, 'menu items');
-      } catch (cascadeErr) { console.warn('[RECEIVE] Cascade failed:', cascadeErr.message); }
+        // [LOG REMOVED] — cascade recompute logging
+      } catch (cascadeErr) { /* cascade warning suppressed */ }
     }
 
     // Mark the purchase itself as received
@@ -291,7 +282,7 @@ router.post('/receive/:id', async (req, res) => {
       }
     }
 
-    console.log('[RECEIVE] Done — updated', count, 'items, skipped', skipped.length);
+//     console.log('[RECEIVE] Done — updated', count, 'items, skipped', skipped.length);
 
     // If we skipped every item, return an error so the frontend shows it.
     if (count === 0) {

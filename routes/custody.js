@@ -76,7 +76,7 @@ router.post('/users', async (req, res) => {
       [newId, name, idNumber || '', phone || '', jobTitle || '', notes || '', linkedUsername || '']
     );
     // Auto-create GL account for this custody user
-    try { await createCustodyUserGLAccount(name); } catch(e) { console.log('[CUSTODY] GL account creation warning:', e.message); }
+    try { await createCustodyUserGLAccount(name); } catch(e) { /* Production: removed debug log */ }
     res.json({ success: true, id: newId });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
@@ -305,7 +305,7 @@ router.post('/:id/topup', async (req, res) => {
       try {
         const newAcc = await createCustodyUserGLAccount(custName || 'موظف');
         custAccId = newAcc.id; custAccCode = newAcc.code;
-      } catch(e) { console.log('[TOPUP] GL account create failed:', e.message); }
+      } catch(e) { /* Production: removed debug log */ }
     }
 
     // Source account (cash box or bank) from GL
@@ -322,7 +322,7 @@ router.post('/:id/topup', async (req, res) => {
       if (defCash.length) { sourceAccId = defCash[0].id; sourceAccCode = defCash[0].code; sourceAccName = defCash[0].name_ar; }
     }
 
-    console.log('[TOPUP GL] custAcc:', custAccId, custAccCode, '| sourceAcc:', sourceAccId, sourceAccCode, '| amount:', amt);
+    // Production: removed debug log
 
     if (custAccId && sourceAccId) {
       const ts = Date.now();
@@ -357,9 +357,9 @@ router.post('/:id/topup', async (req, res) => {
       );
       await db.query('UPDATE gl_accounts SET balance = balance - ? WHERE id = ?', [amt, sourceAccId]);
 
-      console.log('[TOPUP GL] Journal created:', journalNumber, '| Debit:', custAccCode, amt, '| Credit:', sourceAccCode, amt);
+      // Production: removed debug log
     } else {
-      console.log('[TOPUP GL] SKIPPED — missing accounts. custAcc:', custAccId, '| sourceAcc:', sourceAccId);
+      // Production: removed debug log
     }
 
     res.json({ success: true, id: topupId });
@@ -583,7 +583,7 @@ router.post('/expenses/:expId/post', async (req, res) => {
       }
     }
 
-    console.log('[CUSTODY POST] expAcc:', expAccId, expAccCode, '| vatAcc:', vatAccId, '| cusAcc:', cusAccId, cusAccCode);
+    // Production: removed debug log
 
     // Insert journal header — status 'posted' with balance updates
     await db.query(

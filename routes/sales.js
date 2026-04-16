@@ -32,7 +32,7 @@ router.post('/', async (req, res) => {
       });
     });
 
-    console.log('[SALE] Order', orderId, '— processing', items.length, 'items, recipe table has', recipes.length, 'rows');
+    // Production: removed debug log
 
     // Diagnostic info to return to the frontend so we can verify deductions worked
     const recipesApplied = []; // [{ menuId, menuName, deductions: [{invId, invName, deducted, affected}] }]
@@ -45,12 +45,12 @@ router.post('/', async (req, res) => {
 
       // Stock deduction via recipe.
       if (!item.id) {
-        console.warn('[SALE]   item has no id —', item.name);
+        // Production: removed debug log
         itemsWithoutRecipe.push({ name: item.name, reason: 'no item id' });
         continue;
       }
       if (!recipeMap[item.id]) {
-        console.warn('[SALE]   no recipe for menu id=', item.id, '(' + item.name + ')');
+        // Production: removed debug log
         itemsWithoutRecipe.push({ id: item.id, name: item.name, reason: 'no recipe defined' });
         continue;
       }
@@ -66,10 +66,7 @@ router.post('/', async (req, res) => {
         );
         const affected = updateResult.affectedRows;
 
-        console.log('[SALE]   ' + (affected > 0 ? 'OK' : 'FAIL'),
-          'menu=' + item.id, '→', ing.invName, '(' + ing.invId + ')',
-          'deduct=' + deduct,
-          'affected=' + affected);
+        // Production: removed debug log
 
         // Record movement using a unique movement id (timestamp + random + counter)
         const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4) + '-' + deductions.length;
@@ -93,7 +90,7 @@ router.post('/', async (req, res) => {
       });
     }
 
-    console.log('[SALE] Done — recipes applied for', recipesApplied.length, 'items, missing recipe for', itemsWithoutRecipe.length);
+    // Production: removed debug log
 
     res.json({
       success: true,
@@ -102,7 +99,7 @@ router.post('/', async (req, res) => {
       itemsWithoutRecipe: itemsWithoutRecipe
     });
   } catch (e) {
-    console.error('[SALE] ERROR:', e.message);
+    // Production: removed debug log
     res.json({ success: false, error: e.message });
   }
 });
@@ -392,7 +389,7 @@ router.get('/report/advanced', async (req, res) => {
     });
 
   } catch (e) {
-    console.error('[REPORT] Advanced report error:', e.message);
+    // Production: removed debug log
     res.json({ success: false, error: e.message });
   }
 });

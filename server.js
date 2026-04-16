@@ -110,6 +110,17 @@ app.use('/api/', function(req, res, next) {
 // Static files (frontend) — BEFORE API routes so they're not auth-gated
 app.use(express.static(path.join(__dirname, 'public')));
 
+// 8. Audit logging middleware — auto-logs all POST/PUT/DELETE operations
+const { auditMiddleware } = require('./lib/auditLogger');
+app.use('/api/sales', auditMiddleware('sales'));
+app.use('/api/inventory', auditMiddleware('inventory'));
+app.use('/api/purchases', auditMiddleware('purchases'));
+app.use('/api/erp', auditMiddleware('erp'));
+app.use('/api/custody', auditMiddleware('custody'));
+app.use('/api/hr', auditMiddleware('hr'));
+app.use('/api/workflow', auditMiddleware('workflow'));
+app.use('/api/auth', auditMiddleware('auth'));
+
 // API Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/menu', require('./routes/menu'));
@@ -124,10 +135,12 @@ app.use('/api/custody', require('./routes/custody'));
 app.use('/api/workflow', require('./routes/workflow'));
 app.use('/api/hr', require('./routes/hr'));
 
-// Catch-all for unimplemented API routes — return JSON instead of HTML
-app.all('/api/*', (req, res) => {
-  res.json([]);
-});
+// Catch-all for unimplemented API routes
+const { notFoundHandler, errorHandler } = require('./lib/errorHandler');
+app.all('/api/*', notFoundHandler);
+
+// Centralized error handler (MUST be last middleware)
+app.use(errorHandler);
 
 // SPA fallback
 app.get('*', (req, res) => {
@@ -1022,6 +1035,33 @@ async function runMigrations() {
 
   // Remove plain_pass column (security fix — passwords must never be stored in plain text)
   try { await db.query('ALTER TABLE users DROP COLUMN plain_pass'); } catch(e) {}
+
+  // Ensure audit_logs table exists with proper structure
+  await createTableIfMissing('audit_logs', `
+    CREATE TABLE audit_logs (
+      id VARCHAR(50) PRIMARY KEY,
+      action VARCHAR(100) NOT NULL,
+      entity_type VARCHAR(50),
+      entity_id VARCHAR(100),
+      username VARCHAR(100),
+      details LONGTEXT,
+      ip_address VARCHAR(50),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_audit_entity (entity_type, entity_id),
+      INDEX idx_audit_user (username),
+      INDEX idx_audit_date (created_at),
+      INDEX idx_audit_action (action)
+    ) ENGINE=InnoDB
+  `);
+
+  // Soft delete columns on critical tables
+  await addColumnIfMissing('sales', 'deleted_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('hr_employees', 'deleted_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('gl_journals', 'deleted_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('purchases', 'deleted_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('inv_items', 'deleted_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('customers', 'deleted_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('suppliers', 'deleted_at', "DATETIME DEFAULT NULL");
 
   // Add missing performance indexes
   try { await db.query('CREATE INDEX idx_sales_username ON sales(username)'); } catch(e) {}

@@ -7,15 +7,10 @@ var BASE_API = '/api';
 
 document.addEventListener('DOMContentLoaded', function() {
   document.body.style.visibility = 'visible';
-  var token = localStorage.getItem('emp_token');
-  var session = null;
-  try { session = JSON.parse(localStorage.getItem('emp_session') || 'null'); } catch(e) {}
-  if (token && session && session.username) {
-    currentUser = session.username;
-    document.getElementById('loginPage').style.display = 'none';
+  if (window._empUser) {
+    currentUser = window._empUser;
     startApp();
   }
-  // else: login form is already visible in HTML
 });
 
 // ─── Direct API call (no dependency on api-bridge) ───

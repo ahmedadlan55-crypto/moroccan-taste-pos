@@ -4746,6 +4746,7 @@ function hrRenderEmployees(list) {
       '<td><div style="display:flex;gap:4px;">' +
         '<button style="' + btnS + 'color:#3b82f6;" onclick="hrViewEmployee(\'' + e.id + '\')" title="عرض الملف"><i class="fas fa-eye"></i></button>' +
         '<button style="' + btnS + 'color:#f59e0b;" onclick="hrEditEmployee(\'' + e.id + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
+        (e.status === 'active' ? '<button style="' + btnS + (e.ignoreLateMonth===new Date().toISOString().slice(0,7)?'background:#dcfce7;border-color:#86efac;':'') + 'color:#f59e0b;" onclick="hrToggleIgnoreLate(\'' + e.id + '\',\'' + (e.fullName||'').replace(/'/g,'') + '\')" title="' + (e.ignoreLateMonth===new Date().toISOString().slice(0,7)?'إلغاء تجاهل التأخير':'تجاهل التأخير هذا الشهر') + '"><i class="fas fa-clock"></i></button>' : '') +
         (e.status === 'active' ? '<button style="' + btnS + 'color:#ef4444;" onclick="hrTerminateEmployee(\'' + e.id + '\')" title="إنهاء خدمة"><i class="fas fa-user-slash"></i></button>' : '') +
         (e.status === 'suspended' ? '<button style="' + btnS + 'color:#10b981;" onclick="hrActivateEmployee(\'' + e.id + '\')" title="تنشيط"><i class="fas fa-play-circle"></i></button>' : '') +
         '<button style="' + btnS + 'color:#dc2626;" onclick="hrDeleteEmployee(\'' + e.id + '\',\'' + (e.fullName||'').replace(/'/g,'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
@@ -4898,6 +4899,19 @@ function hrEditEmployee(id) {
       showToast('فشل تحميل بيانات الموظف', true);
     }
   }).getHrEmployee(id);
+}
+
+function hrToggleIgnoreLate(id, name) {
+  erpConfirm('تجاهل التأخير', 'تجاهل جميع تأخيرات "' + name + '" لهذا الشهر؟\nسيحصل على راتبه كاملاً بدون خصم تأخير.', function() {
+    loader(true);
+    fetch('/api/hr/employees/' + id + '/ignore-late', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+      .then(function(r) { return r.json(); })
+      .then(function(r) {
+        loader(false);
+        if (r.success) { showToast(r.ignored ? 'تم تجاهل التأخير لهذا الشهر' : 'تم إلغاء تجاهل التأخير'); hrLoadEmployees(); }
+        else showToast(r.error, true);
+      });
+  }, { icon: 'fa-clock', color: '#f59e0b', okText: 'تأكيد' });
 }
 
 function hrTerminateEmployee(id) {

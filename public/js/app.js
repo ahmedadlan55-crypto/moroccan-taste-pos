@@ -3825,15 +3825,17 @@ function _loadUserDropdowns(brandVal, branchVal, positionVal) {
       sel.innerHTML += '<option value="' + b.id + '"' + (brandVal===b.id?' selected':'') + '>' + b.name + '</option>';
     });
   }).getBrands();
-  // Load branches
-  api.withSuccessHandler(function(branches) {
-    var sel = q('#muBranch');
-    if (!sel) return;
-    sel.innerHTML = '<option value="">— بدون —</option>';
-    (branches||[]).forEach(function(b) {
-      sel.innerHTML += '<option value="' + b.id + '"' + (branchVal===b.id?' selected':'') + '>' + b.name + '</option>';
-    });
-  }).getBranches();
+  // Load branches from ERP branches-full
+  fetch('/api/erp/branches-full', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+    .then(function(r) { return r.json(); })
+    .then(function(branches) {
+      var sel = q('#muBranch');
+      if (!sel) return;
+      sel.innerHTML = '<option value="">— بدون —</option>';
+      (branches||[]).forEach(function(b) {
+        sel.innerHTML += '<option value="' + b.id + '"' + (branchVal===b.id?' selected':'') + '>' + b.name + '</option>';
+      });
+    }).catch(function() {});
   // Load positions
   fetch('/api/workflow/positions', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
     .then(function(r) { return r.json(); })

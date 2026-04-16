@@ -351,8 +351,45 @@ function loadProfilePage() {
   var ws = e.work_start || e.workStart || '08:00';
   var we = e.work_end || e.workEnd || '17:00';
   var salary = Number(e.basic_salary || e.basicSalary || 0);
-  var fields = [['الرقم',e.employee_number],['الاسم',e.fullName],['الوظيفة',e.job_title||e.jobTitle],['الفرع',e.branchName],['الجوال',e.phone],['البريد',e.email],['ساعات الدوام',ws+' — '+we],['الراتب الأساسي',salary>0?salary.toLocaleString('en')+' SAR':'—']];
+  var fields = [['الرقم',e.employee_number],['الاسم',e.fullName],['الوظيفة',e.job_title||e.jobTitle],['الفرع',e.branchName],['الجوال',e.phone],['البريد',e.email],['ساعات الدوام',ws+' — '+we]];
   c.innerHTML = fields.map(function(f){return '<div class="pf"><span>'+f[0]+'</span><b>'+(f[1]||'—')+'</b></div>';}).join('');
+
+  // Calculate salary with late deductions for current month
+  callAPI('GET', '/hr/my-attendance?username=' + currentUser, null, function(rows) {
+    var att = rows || []; if (!Array.isArray(att)) att = [];
+    var now = new Date();
+    var thisMonth = att.filter(function(a) {
+      if (!a.attendance_date) return false;
+      var d = new Date(a.attendance_date);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    });
+    var totalLateMin = thisMonth.reduce(function(s,a){return s+(Number(a.late_minutes)||0);},0);
+    var dailyRate = salary / 30;
+    var hourlyRate = dailyRate / 9; // 9-hour workday
+
+    // Check if late is ignored this month
+    var currentMonth = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+    var ignoreMonth = empProfile ? (empProfile.ignore_late_month || '') : '';
+    var ignoreLate = ignoreMonth === currentMonth;
+
+    var lateDeduction = ignoreLate ? 0 : Math.round(hourlyRate * (totalLateMin / 60) * 100) / 100;
+    var netSalary = Math.round((salary - lateDeduction) * 100) / 100;
+
+    var salaryHtml = '<div style="background:#f8fafc;border-radius:12px;padding:14px;margin-top:10px;border:1px solid #e5e7eb;">';
+    salaryHtml += '<div style="font-size:13px;font-weight:800;color:#1e293b;margin-bottom:10px;"><i class="fas fa-money-bill-wave" style="color:#10b981;margin-left:6px;"></i> تفاصيل الراتب — ' + (now.toLocaleDateString('ar-SA',{month:'long'})) + '</div>';
+    salaryHtml += '<div class="pf"><span>الراتب الأساسي</span><b style="color:#1e40af;">' + salary.toLocaleString('en') + ' SAR</b></div>';
+    if (totalLateMin > 0 && !ignoreLate) {
+      var lateH = Math.floor(totalLateMin/60); var lateM = totalLateMin%60;
+      salaryHtml += '<div class="pf"><span>خصم تأخير (' + lateH + ':' + String(lateM).padStart(2,'0') + ')</span><b style="color:#ef4444;">- ' + lateDeduction.toLocaleString('en') + ' SAR</b></div>';
+    }
+    if (ignoreLate && totalLateMin > 0) {
+      salaryHtml += '<div style="padding:6px 10px;border-radius:8px;background:#dcfce7;color:#166534;font-size:11px;font-weight:700;margin:4px 0;"><i class="fas fa-check-circle" style="margin-left:4px;"></i> تم تجاهل التأخير هذا الشهر — الراتب كامل</div>';
+    }
+    salaryHtml += '<div class="pf" style="border-top:2px solid #e5e7eb;padding-top:8px;margin-top:4px;"><span style="font-weight:800;">الصافي المتوقع</span><b style="color:' + (lateDeduction > 0 ? '#f59e0b' : '#10b981') + ';font-size:18px;">' + netSalary.toLocaleString('en') + ' SAR</b></div>';
+    salaryHtml += '</div>';
+    c.innerHTML += salaryHtml;
+  });
+
   callAPI('GET', '/hr/my-payslips?username=' + currentUser, null, function(rows) {
     var s = rows||[]; if (!Array.isArray(s)) s = [];
     var months = ['','يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];

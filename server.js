@@ -1154,6 +1154,7 @@ async function runMigrations() {
   // Employee work schedule
   await addColumnIfMissing('hr_employees', 'work_start', "TIME DEFAULT '08:00:00'");
   await addColumnIfMissing('hr_employees', 'work_end', "TIME DEFAULT '17:00:00'");
+  await addColumnIfMissing('hr_employees', 'ignore_late_month', "VARCHAR(7)"); // e.g. "2026-04"
 
   // Fix device_id column size
   try { await db.query('ALTER TABLE hr_attendance MODIFY COLUMN device_id VARCHAR(500)'); } catch(e) {}

@@ -346,6 +346,7 @@ router.get('/employees', async (req, res) => {
         COALESCE(d.name, '') AS departmentName,
         COALESCE(b.name, '') AS branchName,
         e.status, e.hire_date AS hireDate, e.basic_salary AS basicSalary,
+        e.ignore_late_month AS ignoreLateMonth,
         e.department_id AS departmentId, e.branch_id AS branchId, e.brand_id AS brandId,
         e.employment_type AS employmentType, e.national_id AS nationalId,
         e.linked_username AS linkedUsername
@@ -579,6 +580,19 @@ router.post('/employees/:id/terminate', async (req, res) => {
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
+});
+
+// Toggle ignore late for current month
+router.post('/employees/:id/ignore-late', async (req, res) => {
+  try {
+    const currentMonth = new Date().toISOString().slice(0, 7); // "2026-04"
+    const [emp] = await db.query('SELECT ignore_late_month FROM hr_employees WHERE id = ?', [req.params.id]);
+    if (!emp.length) return res.json({ success: false, error: 'الموظف غير موجود' });
+    const isIgnored = emp[0].ignore_late_month === currentMonth;
+    await db.query('UPDATE hr_employees SET ignore_late_month = ? WHERE id = ?',
+      [isIgnored ? null : currentMonth, req.params.id]);
+    res.json({ success: true, ignored: !isIgnored, month: currentMonth });
+  } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
 router.post('/employees/:id/suspend', async (req, res) => {

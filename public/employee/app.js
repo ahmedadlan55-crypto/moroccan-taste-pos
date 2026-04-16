@@ -139,15 +139,17 @@ function loadHomeData() {
     var rec = att.find(function(a) { return a.attendance_date && a.attendance_date.substring(0,10) === today; });
     var cs = document.getElementById('clockSection');
     if (!rec) {
-      cs.innerHTML = '<button class="clock-btn clock-in" onclick="doClock()"><i class="fas fa-fingerprint"></i><div><div class="clock-lbl">تسجيل حضور</div><div class="clock-time" id="liveTime"></div></div></button>';
+      cs.innerHTML = '<button class="clock-btn ci" onclick="doClock()"><i class="fas fa-fingerprint"></i><div><div class="clock-lbl">تسجيل حضور</div><div class="clock-time" id="liveTime"></div></div></button>';
       startLiveClock();
     } else if (!rec.clock_out) {
       var ci = rec.clock_in ? new Date(rec.clock_in).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}) : '';
-      cs.innerHTML = '<button class="clock-btn clock-out" onclick="doClock()"><i class="fas fa-fingerprint"></i><div><div class="clock-lbl">تسجيل انصراف</div><div class="clock-time">حضرت ' + ci + '</div></div></button>';
+      cs.innerHTML = '<button class="clock-btn co" onclick="doClock()"><i class="fas fa-fingerprint"></i><div><div class="clock-lbl">تسجيل انصراف</div><div class="clock-time">دخول: ' + ci + '</div></div></button>';
     } else {
       var ci2 = rec.clock_in ? new Date(rec.clock_in).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}) : '';
       var co2 = rec.clock_out ? new Date(rec.clock_out).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}) : '';
-      cs.innerHTML = '<div class="clock-btn clock-done"><i class="fas fa-check-circle"></i><div><div class="clock-lbl">تم التسجيل ✓</div><div class="clock-time">' + ci2 + ' → ' + co2 + '</div></div></div>';
+      var hrs = (Number(rec.total_hours)||0);
+      var hrsStr = hrs >= 1 ? hrs.toFixed(1) + ' ساعة' : Math.round(hrs*60) + ' دقيقة';
+      cs.innerHTML = '<div class="clock-btn cd"><i class="fas fa-check-circle" style="color:#059669;"></i><div><div class="clock-lbl" style="color:#059669;">تم التسجيل ✓</div><div class="clock-time" style="color:#374151;">' + ci2 + ' → ' + co2 + ' | ' + hrsStr + '</div></div></div>';
     }
 
     // Stats
@@ -155,10 +157,10 @@ function loadHomeData() {
     var hours = att.reduce(function(s,a){return s+(Number(a.total_hours)||0);},0);
     var late = att.filter(function(a){return (a.late_minutes||0)>0;}).length;
     document.getElementById('homeStats').innerHTML =
-      '<div class="sc"><i class="fas fa-check" style="color:#10b981;background:#ecfdf5;"></i><b>' + present + '</b><span>حضور</span></div>' +
-      '<div class="sc"><i class="fas fa-clock" style="color:#3b82f6;background:#eff6ff;"></i><b>' + hours.toFixed(0) + '</b><span>ساعة</span></div>' +
-      '<div class="sc"><i class="fas fa-exclamation" style="color:#f59e0b;background:#fffbeb;"></i><b>' + late + '</b><span>تأخير</span></div>' +
-      '<div class="sc"><i class="fas fa-calendar" style="color:#8b5cf6;background:#f5f3ff;"></i><b>' + att.length + '</b><span>سجلات</span></div>';
+      '<div class="st"><i class="fas fa-check" style="color:#10b981;background:#ecfdf5;"></i><b>' + present + '</b><span>حضور</span></div>' +
+      '<div class="st"><i class="fas fa-clock" style="color:#0ea5e9;background:#e0f2fe;"></i><b>' + hours.toFixed(1) + '</b><span>ساعة</span></div>' +
+      '<div class="st"><i class="fas fa-exclamation" style="color:#f59e0b;background:#fffbeb;"></i><b>' + late + '</b><span>تأخير</span></div>' +
+      '<div class="st"><i class="fas fa-calendar" style="color:#8b5cf6;background:#f5f3ff;"></i><b>' + att.length + '</b><span>سجلات</span></div>';
 
     // Recent attendance
     var ra = document.getElementById('recentAtt');
@@ -167,7 +169,8 @@ function loadHomeData() {
       var d = a.attendance_date ? new Date(a.attendance_date).toLocaleDateString('ar-SA',{weekday:'short',day:'numeric',month:'short'}) : '';
       var ci = a.clock_in ? new Date(a.clock_in).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}) : '—';
       var co = a.clock_out ? new Date(a.clock_out).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}) : '⏳';
-      return '<div class="ar"><span class="ad">' + d + '</span><span class="at">' + ci + '→' + co + '</span><span class="ah">' + (Number(a.total_hours)||0).toFixed(1) + 'h</span></div>';
+      var h=Number(a.total_hours)||0; var hTxt=h>=1?h.toFixed(1)+'h':Math.round(h*60)+'m';
+      return '<div class="ar"><span class="ad">' + d + '</span><span class="at">' + ci + ' → ' + co + '</span><span class="ah">' + hTxt + '</span></div>';
     }).join('');
   });
 }

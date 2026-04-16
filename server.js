@@ -1103,6 +1103,10 @@ async function runMigrations() {
   await addColumnIfMissing('branches', 'geo_lng', "DECIMAL(10,7)");
   await addColumnIfMissing('branches', 'geo_radius', "INT DEFAULT 100");
 
+  // Employee work schedule
+  await addColumnIfMissing('hr_employees', 'work_start', "TIME DEFAULT '08:00:00'");
+  await addColumnIfMissing('hr_employees', 'work_end', "TIME DEFAULT '17:00:00'");
+
   // Fix device_id column size
   try { await db.query('ALTER TABLE hr_attendance MODIFY COLUMN device_id VARCHAR(500)'); } catch(e) {}
 

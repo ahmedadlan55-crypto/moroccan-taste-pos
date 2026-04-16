@@ -4428,6 +4428,10 @@ function hrOpenEmployeeModal(data) {
         '<div class="form-row"><label>تاريخ التعيين</label><input type="date" class="form-control" id="hrEmpHireDate" value="'+(d.hireDate?d.hireDate.split('T')[0]:'')+'"></div>' +
         '<div class="form-row"><label>نهاية العقد</label><input type="date" class="form-control" id="hrEmpContractEnd" value="'+(d.contractEndDate?d.contractEndDate.split('T')[0]:'')+'"></div>' +
       '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label><i class="fas fa-clock" style="color:#10b981;"></i> بداية الدوام</label><input type="time" class="form-control" id="hrEmpWorkStart" value="'+(d.workStart||'08:00')+'"></div>' +
+        '<div class="form-row"><label><i class="fas fa-clock" style="color:#ef4444;"></i> نهاية الدوام</label><input type="time" class="form-control" id="hrEmpWorkEnd" value="'+(d.workEnd||'17:00')+'"></div>' +
+      '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>البنك</label><input class="form-control" id="hrEmpBank" value="'+(d.bankName||'')+'"></div>' +
         '<div class="form-row"><label>رقم الحساب</label><input class="form-control" id="hrEmpBankAcc" value="'+(d.bankAccount||'')+'"></div>' +
@@ -4512,6 +4516,8 @@ function hrSaveEmployee() {
     transportAllowance: Number(document.getElementById('hrEmpTransport').value)||0,
     hireDate: document.getElementById('hrEmpHireDate').value,
     contractEndDate: document.getElementById('hrEmpContractEnd').value,
+    workStart: document.getElementById('hrEmpWorkStart').value || '08:00',
+    workEnd: document.getElementById('hrEmpWorkEnd').value || '17:00',
     bankName: document.getElementById('hrEmpBank').value,
     bankAccount: document.getElementById('hrEmpBankAcc').value,
     bankIban: document.getElementById('hrEmpIban').value,

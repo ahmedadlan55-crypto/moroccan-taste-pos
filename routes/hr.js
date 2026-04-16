@@ -397,7 +397,7 @@ router.get('/employees/:id', async (req, res) => {
         e.emergency_contact_phone AS emergencyContactPhone,
         e.emergency_contact_relation AS emergencyContactRelation,
         e.linked_user_id AS linkedUserId, e.linked_username AS linkedUsername,
-        e.notes, e.created_at AS createdAt,
+        e.notes, e.created_at AS createdAt, e.work_start AS workStart, e.work_end AS workEnd,
         COALESCE(d.name, '') AS departmentName,
         COALESCE(b.name, '') AS branchName
       FROM hr_employees e
@@ -471,8 +471,8 @@ router.post('/employees', async (req, res) => {
         hire_date, contract_end_date, probation_end_date,
         bank_name, bank_account, bank_iban,
         emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
-        notes, status, created_by
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        notes, status, created_by, work_start, work_end
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         empId, employeeNumber,
         b.firstName || '', b.lastName || '', b.nationalId || null, b.passportNumber || null, b.iqamaNumber || null,
@@ -488,7 +488,8 @@ router.post('/employees', async (req, res) => {
         b.probationEndDate && b.probationEndDate.length > 0 ? b.probationEndDate : null,
         b.bankName || null, b.bankAccount || null, b.bankIban || null,
         b.emergencyContactName || null, b.emergencyContactPhone || null, b.emergencyContactRelation || null,
-        b.notes || null, 'active', b.username || null
+        b.notes || null, 'active', b.username || null,
+        b.workStart || '08:00', b.workEnd || '17:00'
       ]
     );
 
@@ -536,7 +537,8 @@ router.put('/employees/:id', async (req, res) => {
       contractEndDate: 'contract_end_date', probationEndDate: 'probation_end_date',
       bankName: 'bank_name', bankAccount: 'bank_account', bankIban: 'bank_iban',
       emergencyContactName: 'emergency_contact_name', emergencyContactPhone: 'emergency_contact_phone',
-      emergencyContactRelation: 'emergency_contact_relation', notes: 'notes', status: 'status'
+      emergencyContactRelation: 'emergency_contact_relation', notes: 'notes', status: 'status',
+      workStart: 'work_start', workEnd: 'work_end'
     };
 
     var dateFields = ['date_of_birth', 'hire_date', 'contract_end_date', 'probation_end_date'];
@@ -1634,7 +1636,7 @@ router.post('/my-clock', async (req, res) => {
   try {
     const username = req.user ? req.user.username : req.body.username;
     const { geoLat, geoLng, geoAddress, deviceName } = req.body;
-    const [emp] = await db.query('SELECT e.id, e.first_name, e.branch_id FROM hr_employees e WHERE e.linked_username = ?', [username]);
+    const [emp] = await db.query('SELECT e.id, e.first_name, e.branch_id, e.work_start, e.work_end FROM hr_employees e WHERE e.linked_username = ?', [username]);
     if (!emp.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط بحسابك — تواصل مع الإدارة' });
     const empId = emp[0].id;
     const branchId = emp[0].branch_id;
@@ -1670,14 +1672,24 @@ router.post('/my-clock', async (req, res) => {
     );
 
     if (!existing.length) {
-      // Clock IN
+      // Clock IN — calculate late minutes
       const id = 'ATT-' + Date.now();
+      var lateMin = 0;
+      var workStart = emp[0].work_start || '08:00:00';
+      var wsParts = workStart.split(':');
+      var wsMinutes = parseInt(wsParts[0]||0) * 60 + parseInt(wsParts[1]||0);
+      var now = new Date();
+      var nowMinutes = now.getHours() * 60 + now.getMinutes();
+      if (nowMinutes > wsMinutes + 5) lateMin = nowMinutes - wsMinutes; // 5 min grace
+
       await db.query(
         `INSERT INTO hr_attendance (id, employee_id, attendance_date, clock_in, status, source,
-         geo_lat, geo_lng, geo_address_in, device_id, device_name) VALUES (?,?,?,NOW(),?,?,?,?,?,?,?)`,
-        [id, empId, today, 'present', 'app', geoLat||null, geoLng||null, geoAddress||'', devName, devName]
+         geo_lat, geo_lng, geo_address_in, device_id, device_name, late_minutes) VALUES (?,?,?,NOW(),?,?,?,?,?,?,?,?)`,
+        [id, empId, today, 'present', 'app', geoLat||null, geoLng||null, geoAddress||'', devName, devName, lateMin]
       );
-      res.json({ success: true, action: 'clock_in', time: new Date().toISOString(), message: 'تم تسجيل الحضور ✓' });
+      var msg = 'تم تسجيل الحضور ✓';
+      if (lateMin > 0) msg += ' (متأخر ' + lateMin + ' دقيقة)';
+      res.json({ success: true, action: 'clock_in', time: now.toISOString(), lateMinutes: lateMin, message: msg });
     } else if (!existing[0].clock_out) {
       // Clock OUT
       const clockIn = new Date(existing[0].clock_in);

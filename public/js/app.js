@@ -334,7 +334,11 @@ window.onload = function() {
       return;
     }
 
-    // Employee role: no redirect — portal is independent at /employee/
+    // Employee session → redirect straight to /employee/
+    if (savedRole === 'employee') {
+      window.location.replace('/employee/');
+      return;
+    }
 
     // Helper: show login form when auto-login fails
     function _showLoginFallback() {
@@ -551,6 +555,12 @@ function doLogin() {
     // ─── Custody → redirect to /custody/ ───
     if (state.role === 'custody') {
       window.location.replace('/custody/');
+      return;
+    }
+
+    // ─── Employee → redirect to /employee/ ───
+    if (state.role === 'employee') {
+      window.location.replace('/employee/');
       return;
     }
 

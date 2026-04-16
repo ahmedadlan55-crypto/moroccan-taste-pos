@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <title>بوابة الموظف</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-  <script>document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('ok');});</script>
+  <script>document.addEventListener('DOMContentLoaded',function(){document.body.style.visibility='visible';}); setTimeout(function(){document.body.style.visibility='visible';},500);</script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   <style>
     *{margin:0;padding:0;box-sizing:border-box;}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;direction:rtl;background:#fafbfc;color:#1a1a2e;height:100dvh;display:flex;flex-direction:column;overflow:hidden;max-width:100vw;}
-    body:not(.ok){visibility:hidden!important;}
+    body{visibility:hidden;}
     #app{display:none;flex-direction:column;height:100dvh;overflow:hidden;}
     .hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#fff;color:#1e293b;height:54px;flex-shrink:0;border-bottom:1px solid #eee;}
     .hdr-r{display:flex;align-items:center;gap:10px;flex:1;min-width:0;}
@@ -81,7 +81,17 @@
 </head>
 <body>
 <div class="toast" id="toast"></div>
-<div id="app">
+<div id="loginPage" class="login-w">
+  <div class="login-b">
+    <div style="width:56px;height:56px;border-radius:14px;background:#0ea5e9;color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;margin:0 auto 16px;"><i class="fas fa-user-tie"></i></div>
+    <h1>بوابة الموظف</h1>
+    <p style="color:#6b7280;font-size:12px;margin-bottom:24px;">سجّل دخولك لتسجيل الحضور</p>
+    <input type="text" id="lu" placeholder="اسم المستخدم">
+    <input type="password" id="lp" placeholder="كلمة المرور">
+    <button id="lbtn" onclick="doLogin()"><i class="fas fa-sign-in-alt"></i> دخول</button>
+  </div>
+</div>
+<div id="app" style="display:none;">
   <div class="hdr">
     <div class="hdr-r"><div class="hdr-av"><i class="fas fa-user-tie"></i></div><div><div class="hdr-n" id="hdrName">الموظف</div><div class="hdr-s" id="hdrSub"></div></div></div>
     <div class="hdr-b"><button onclick="doRefresh()"><i class="fas fa-sync-alt"></i></button><button style="background:rgba(239,68,68,.3);" onclick="doLogout()"><i class="fas fa-sign-out-alt"></i></button></div>

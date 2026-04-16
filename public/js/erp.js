@@ -4414,9 +4414,10 @@ function wfLoadInbox() {
       var actions = '<div class="wf-inbox-actions">' +
         '<button class="btn btn-sm btn-light" onclick="wfViewTxn(\'' + t.id + '\')"><i class="fas fa-eye"></i></button>';
       if (canAct) {
-        actions += '<button class="btn btn-sm btn-success" onclick="wfTxnAction(\'' + t.id + '\',\'approve\')"><i class="fas fa-check"></i></button>';
-        actions += '<button class="btn btn-sm btn-danger" onclick="wfTxnAction(\'' + t.id + '\',\'reject\')"><i class="fas fa-times"></i></button>';
-        actions += '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;" onclick="wfTxnAction(\'' + t.id + '\',\'return\')"><i class="fas fa-undo"></i></button>';
+        actions += '<button class="btn btn-sm btn-success" onclick="wfTxnAction(\'' + t.id + '\',\'approve\')" title="موافقة"><i class="fas fa-check"></i></button>';
+        actions += '<button class="btn btn-sm btn-danger" onclick="wfTxnAction(\'' + t.id + '\',\'reject\')" title="رفض"><i class="fas fa-times"></i></button>';
+        actions += '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;" onclick="wfTxnAction(\'' + t.id + '\',\'return\')" title="إرجاع"><i class="fas fa-undo"></i></button>';
+        actions += '<button class="btn btn-sm" style="background:#f3e8ff;color:#7c3aed;" onclick="wfForwardTxn(\'' + t.id + '\')" title="تحويل"><i class="fas fa-share"></i></button>';
       }
       actions += '</div>';
       return '<tr class="wf-inbox-row">' +
@@ -4424,6 +4425,7 @@ function wfLoadInbox() {
         '<td><span class="wf-txn-number">' + (t.txnNumber||'') + '</span></td>' +
         '<td><span class="badge badge-blue">' + (t.typeName||'') + '</span></td>' +
         '<td style="font-weight:700;max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + t.title + '</td>' +
+        '<td style="font-size:12px;">' + (t.createdBy||'') + '</td>' +
         '<td><span class="wf-txn-amount">' + (Number(t.amount)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</span></td>' +
         '<td>' + (t.currentStepName||'—') + '</td>' +
         '<td>' + (t.currentPositionName||'—') + '</td>' +
@@ -4599,6 +4601,45 @@ function wfTxnAction(id, action) {
 // ═══════════════════════════════════════
 // HR MODULE — نظام الموارد البشرية
 // ═══════════════════════════════════════
+
+// Forward transaction to another user
+function wfForwardTxn(id) {
+  // Load eligible users for forwarding
+  fetch('/api/workflow/eligible-users', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+    .then(function(r) { return r.json(); })
+    .then(function(users) {
+      var dlgId = 'wfForwardDlg';
+      var old = document.getElementById(dlgId); if (old) old.remove();
+      var div = document.createElement('div');
+      div.id = dlgId;
+      div.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;';
+      div.innerHTML =
+        '<div style="background:#fff;border-radius:16px;padding:24px;width:440px;max-width:90%;box-shadow:0 20px 60px rgba(0,0,0,.15);">' +
+          '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;"><div style="width:40px;height:40px;border-radius:50%;background:#f3e8ff;display:flex;align-items:center;justify-content:center;"><i class="fas fa-share" style="color:#7c3aed;"></i></div><h3 style="margin:0;">تحويل المعاملة</h3></div>' +
+          '<div style="margin-bottom:12px;"><label style="font-size:12px;font-weight:700;color:#475569;">تحويل إلى *</label><select id="wfFwdUser" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;margin-top:4px;"><option value="">— اختر —</option>' +
+          (users||[]).map(function(u) { return '<option value="' + u.username + '">' + (u.fullName||u.username) + ' — ' + (u.positionName||'') + '</option>'; }).join('') +
+          '</select></div>' +
+          '<div style="margin-bottom:16px;"><label style="font-size:12px;font-weight:700;color:#475569;">ملاحظة (اختياري)</label><textarea id="wfFwdNote" rows="2" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;resize:none;margin-top:4px;"></textarea></div>' +
+          '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+            '<button id="wfFwdOk" style="padding:10px 24px;border-radius:10px;border:none;background:#7c3aed;color:#fff;font-weight:800;font-size:14px;cursor:pointer;">تحويل</button>' +
+            '<button onclick="document.getElementById(\'wfForwardDlg\').remove()" style="padding:10px 20px;border-radius:10px;border:2px solid #e5e7eb;background:#fff;color:#64748b;font-weight:700;cursor:pointer;">إلغاء</button>' +
+          '</div></div>';
+      document.body.appendChild(div);
+      div.addEventListener('click', function(e) { if (e.target === div) div.remove(); });
+      document.getElementById('wfFwdOk').onclick = function() {
+        var forwardTo = document.getElementById('wfFwdUser').value;
+        if (!forwardTo) return showToast('اختر المستلم', true);
+        var note = document.getElementById('wfFwdNote').value || '';
+        div.remove();
+        loader(true);
+        window._apiBridge.withSuccessHandler(function(r) {
+          loader(false);
+          if (r.success) { showToast('تم تحويل المعاملة'); wfLoadInbox(); }
+          else showToast(r.error, true);
+        }).wfTransactionAction(id, { action: 'forward', username: currentUser, note: 'تحويل إلى ' + forwardTo + (note ? ' — ' + note : ''), forwardTo: forwardTo });
+      };
+    });
+}
 
 function _hrStatCard(bg, iconBg, iconClr, icon, label, value) {
   return '<div style="background:' + bg + ';border:1px solid ' + iconBg + ';border-radius:16px;padding:20px;display:flex;align-items:center;gap:14px;">' +

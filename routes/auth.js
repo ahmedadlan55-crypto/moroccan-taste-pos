@@ -321,7 +321,7 @@ router.put('/users/:username', async (req, res) => {
       const hash = await bcrypt.hash(password, 10);
       await db.query('UPDATE users SET password = ? WHERE username = ?', [hash, username]);
     }
-    if (role && ['admin', 'cashier', 'manager', 'custody'].indexOf(role) >= 0) {
+    if (role && ['admin', 'cashier', 'manager', 'custody', 'employee'].indexOf(role) >= 0) {
       await db.query('UPDATE users SET role = ? WHERE username = ?', [role, username]);
       // Auto-create custody_users record if switching to custody role
       if (role === 'custody') {

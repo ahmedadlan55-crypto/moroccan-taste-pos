@@ -23,9 +23,14 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initApp() {
-  // Use the shared api bridge
+  // Use the shared api bridge — wait until loaded
   var api = window._apiBridge;
-  if (!api) { setTimeout(initApp, 100); return; }
+  if (!api) {
+    if (initApp._retries > 20) { toast('فشل تحميل النظام — أعد تحديث الصفحة', true); hideLoader(); return; }
+    initApp._retries = (initApp._retries || 0) + 1;
+    setTimeout(initApp, 200);
+    return;
+  }
 
   // Load employee profile
   api.withSuccessHandler(function(r) {
@@ -115,27 +120,41 @@ function empDoLogin() {
   var p = document.getElementById('empLoginPass').value;
   if (!u || !p) return toast('أدخل اسم المستخدم وكلمة المرور', true);
 
-  fetch('/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: u, password: p })
-  }).then(function(r) { return r.json(); }).then(function(r) {
-    if (r.success && r.token) {
-      localStorage.setItem('pos_token', r.token);
-      localStorage.setItem('pos_session', JSON.stringify({
-        username: r.username, role: r.role,
-        brandId: r.brandId || '', branchId: r.branchId || ''
-      }));
-      currentUser = r.username;
-      // Remove login page and show app
-      var lp = document.getElementById('empLoginPage');
-      if (lp) lp.remove();
-      document.body.classList.remove('needs-login');
-      initApp();
-    } else {
-      toast(r.error || 'فشل تسجيل الدخول', true);
+  // Disable button while logging in
+  var btn = document.querySelector('#empLoginPage button');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الدخول...'; }
+
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/auth/login', true);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4) return;
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> دخول'; }
+    try {
+      var r = JSON.parse(xhr.responseText);
+      if (r.success && r.token) {
+        localStorage.setItem('pos_token', r.token);
+        localStorage.setItem('pos_session', JSON.stringify({
+          username: r.username, role: r.role,
+          brandId: r.brandId || '', branchId: r.branchId || ''
+        }));
+        currentUser = r.username;
+        var lp = document.getElementById('empLoginPage');
+        if (lp) lp.remove();
+        document.body.classList.remove('needs-login');
+        initApp();
+      } else {
+        toast(r.error || 'اسم المستخدم أو كلمة المرور غير صحيحة', true);
+      }
+    } catch(e) {
+      toast('خطأ في الاتصال — تأكد من اتصال الإنترنت (HTTP ' + xhr.status + ')', true);
     }
-  }).catch(function(e) { toast('خطأ في الاتصال', true); });
+  };
+  xhr.onerror = function() {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> دخول'; }
+    toast('لا يمكن الاتصال بالخادم — تحقق من الإنترنت', true);
+  };
+  xhr.send(JSON.stringify({ username: u, password: p }));
 }
 
 // ═══════════════════════════════════════

@@ -1409,16 +1409,22 @@ function erpPasteFromExcel(e) {
   lines.forEach(function(line) {
     var cols = line.split('\t').map(function(c) { return c.trim(); });
     if (cols.length < 2) return;
-    // Try to detect column order: account code/name, debit, credit, description
+    // Smart column detection:
+    // Could be: code|debit|credit|desc  OR  code|name|debit|credit|desc
     var code = cols[0] || '';
-    var debit = '', credit = '', desc = '';
-    if (cols.length >= 4) { debit = cols[1]; credit = cols[2]; desc = cols[3]; }
-    else if (cols.length === 3) { debit = cols[1]; credit = cols[2]; }
-    else if (cols.length === 2) { debit = cols[1]; }
-    // Clean numbers
+    var debit = '', credit = '', desc = '', name = '';
+    // Check if cols[1] is a number — if not, it's the account name
+    var col1IsNum = !isNaN(parseFloat((cols[1]||'').replace(/[^0-9.\-]/g,''))) && (cols[1]||'').replace(/[^0-9.\-\s]/g,'').trim() !== '';
+    if (col1IsNum) {
+      // Format: code | debit | credit | desc
+      debit = cols[1] || ''; credit = cols[2] || ''; desc = cols[3] || '';
+    } else {
+      // Format: code | name | debit | credit | desc
+      name = cols[1] || ''; debit = cols[2] || ''; credit = cols[3] || ''; desc = cols[4] || '';
+    }
     debit = parseFloat((debit+'').replace(/[^0-9.\-]/g,'')) || '';
     credit = parseFloat((credit+'').replace(/[^0-9.\-]/g,'')) || '';
-    erpAddJrnLine({ code: code, debit: debit, credit: credit, desc: desc });
+    erpAddJrnLine({ code: code, name: name, debit: debit, credit: credit, desc: desc });
     added++;
   });
   erpCalcJrnBalance();
@@ -1470,10 +1476,13 @@ function _parseExcelData(text, type) {
     var cols = line.split(sep).map(function(c) { return c.trim().replace(/^"|"$/g, ''); });
     if (cols.length < 2) return;
     var code = cols[0]||'';
-    var debit = parseFloat((cols[1]||'').replace(/[^0-9.\-]/g,'')) || '';
-    var credit = parseFloat((cols[2]||'').replace(/[^0-9.\-]/g,'')) || '';
-    var desc = cols[3] || '';
-    erpAddJrnLine({ code: code, debit: debit, credit: credit, desc: desc });
+    var col1IsNum = !isNaN(parseFloat((cols[1]||'').replace(/[^0-9.\-]/g,''))) && (cols[1]||'').replace(/[^0-9.\-\s]/g,'').trim() !== '';
+    var debit, credit, desc, name = '';
+    if (col1IsNum) { debit = cols[1]||''; credit = cols[2]||''; desc = cols[3]||''; }
+    else { name = cols[1]||''; debit = cols[2]||''; credit = cols[3]||''; desc = cols[4]||''; }
+    debit = parseFloat((debit+'').replace(/[^0-9.\-]/g,'')) || '';
+    credit = parseFloat((credit+'').replace(/[^0-9.\-]/g,'')) || '';
+    erpAddJrnLine({ code: code, name: name, debit: debit, credit: credit, desc: desc });
     added++;
   });
   erpCalcJrnBalance();

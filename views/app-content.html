@@ -30,8 +30,6 @@
           <div class="nav-item" data-erp-nav="erpPurchaseOrders" onclick="erpNav('erpPurchaseOrders')"><i class="fas fa-shopping-cart"></i><span>أوامر الشراء</span></div>
           <div class="nav-item" data-erp-nav="erpCostCenters" onclick="erpNav('erpCostCenters')"><i class="fas fa-bullseye"></i><span>مراكز التكلفة</span></div>
           <div class="nav-item" data-erp-nav="erpMultiWarehouses" onclick="erpNav('erpMultiWarehouses')"><i class="fas fa-warehouse"></i><span>إدارة المستودعات</span></div>
-          <div class="nav-item" data-erp-nav="erpWarehouseStock" onclick="erpNav('erpWarehouseStock')"><i class="fas fa-boxes"></i><span>أرصدة المستودعات</span></div>
-          <div class="nav-item" data-erp-nav="erpStockTransfers" onclick="erpNav('erpStockTransfers')"><i class="fas fa-exchange-alt"></i><span>التحويلات بين الفروع</span></div>
         </div>
 
         <div class="nav-item" onclick="nav('expenses')"><i class="fas fa-money-check-alt"></i><span>المصروفات</span></div>
@@ -1476,58 +1474,7 @@
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════ -->
-<!-- WAREHOUSES (المستودعات) §16 -->
-<!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpWarehouses" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-warehouse"></i> إدارة المستودعات</h2>
-    <button class="btn btn-primary" onclick="erpOpenWarehouseModalLegacy()"><i class="fas fa-plus"></i> مستودع جديد</button>
-  </div>
-  <div class="erp-table-container">
-    <table class="erp-table">
-      <thead><tr><th>الرمز</th><th>الاسم</th><th>النوع</th><th>الفرع</th><th>الموقع</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-      <tbody id="erpWarehousesBody"><tr><td colspan="7" class="empty-msg">لا توجد مستودعات</td></tr></tbody>
-    </table>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════ -->
-<!-- WAREHOUSE STOCK (أرصدة المستودعات) -->
-<!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpWarehouseStock" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-boxes"></i> أرصدة المستودعات</h2>
-    <div style="display:flex;gap:8px;align-items:center;">
-      <select id="erpStockWhFilter" class="form-control" style="width:200px;" onchange="erpLoadWarehouseStock()">
-        <option value="">كل المستودعات</option>
-      </select>
-      <button class="btn btn-secondary" onclick="erpExportReport('warehouse_stock')"><i class="fas fa-file-csv"></i> تصدير CSV</button>
-    </div>
-  </div>
-  <div class="erp-table-container">
-    <table class="erp-table">
-      <thead><tr><th>المستودع</th><th>الصنف</th><th>الكمية</th><th>متوسط التكلفة</th><th>القيمة</th><th>آخر تحديث</th></tr></thead>
-      <tbody id="erpWarehouseStockBody"><tr><td colspan="6" class="empty-msg">لا توجد أرصدة</td></tr></tbody>
-    </table>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════ -->
-<!-- STOCK TRANSFERS (التحويلات بين المستودعات) §16.9 -->
-<!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpStockTransfers" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-exchange-alt"></i> التحويلات بين المستودعات</h2>
-    <button class="btn btn-primary" onclick="erpOpenTransferModalLegacy()"><i class="fas fa-plus"></i> تحويل جديد</button>
-  </div>
-  <div class="erp-table-container">
-    <table class="erp-table">
-      <thead><tr><th>رقم التحويل</th><th>من</th><th>إلى</th><th>التاريخ</th><th>الحالة</th><th>بواسطة</th><th>إجراءات</th></tr></thead>
-      <tbody id="erpTransfersBody"><tr><td colspan="7" class="empty-msg">لا توجد تحويلات</td></tr></tbody>
-    </table>
-  </div>
-</div>
+<!-- LEGACY WAREHOUSE SECTIONS REMOVED — all functionality in erpMultiWarehouses with tabs -->
 
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- WORKFLOW: المناصب (Positions) -->

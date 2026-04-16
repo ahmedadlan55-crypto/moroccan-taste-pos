@@ -12,7 +12,7 @@ const erpSections = [
   'erpDashHome','erpCustomers','erpSuppliers','erpGLAccounts','erpGLJournals',
   'erpPurchaseOrders','erpVATReports','erpZATCA','erpInventoryMethod','erpFinReports','erpPurchaseReports','erpBrands','erpCostCenters','erpMultiWarehouses',
   'erpBranches','erpPeriods','erpAuditLog','erpCreditNotes',
-  'erpWarehouses','erpWarehouseStock','erpStockTransfers',
+  /* legacy warehouse sections removed */
   'erpARAging','erpAPAging','erpCustomerStatement','erpSupplierStatement',
   'erpWfPositions','erpWfTypes','erpWfDefs','erpWfInbox',
   'erpHrDashboard','erpHrEmployees','erpHrDepartments','erpHrAttendance','erpHrLeave','erpHrPayroll','erpHrAdvances'
@@ -46,9 +46,7 @@ function erpNav(sectionId) {
       case 'erpPeriods': erpLoadPeriods(); break;
       case 'erpAuditLog': erpLoadAuditLog(); break;
       case 'erpCreditNotes': erpLoadNotes(); break;
-      case 'erpWarehouses': erpLoadWarehouses(); break;
-      case 'erpWarehouseStock': erpLoadWarehouseStock(); break;
-      case 'erpStockTransfers': erpLoadTransfers(); break;
+      /* legacy warehouse nav cases removed */
       case 'erpARAging': erpLoadARAging(); break;
       case 'erpAPAging': erpLoadAPAging(); break;
       case 'erpCustomerStatement': erpLoadCustomerStatementPage(); break;
@@ -2474,6 +2472,7 @@ window.erpSyncInventoryGL = function() {
 // ═══════════════════════════════════════
 var _brandsList = [];
 function erpLoadBrands() {
+  // Use brands-stats endpoint to get actual counts
   window._apiBridge.withSuccessHandler(function(list) {
     _brandsList = list || [];
     var tb = document.getElementById('erpBrandsBody');
@@ -2484,15 +2483,15 @@ function erpLoadBrands() {
         '<td>' + logoHtml + '</td>' +
         '<td style="font-weight:800;font-size:14px;">' + b.name + '</td>' +
         '<td><code>' + (b.code||'') + '</code></td>' +
-        '<td style="text-align:center;">—</td>' +
-        '<td style="text-align:center;">—</td>' +
+        '<td style="text-align:center;font-weight:700;color:#1e40af;">' + (b.branchCount||0) + ' <span style="font-size:10px;color:#94a3b8;">فرع</span></td>' +
+        '<td style="text-align:center;font-weight:700;color:#16a34a;">' + (b.menuCount||0) + ' <span style="font-size:10px;color:#94a3b8;">منتج</span></td>' +
         '<td>' + (b.isActive ? '<span class="badge badge-green">نشط</span>' : '<span class="badge badge-red">معطّل</span>') + '</td>' +
         '<td style="white-space:nowrap;">' +
           '<button class="btn-icon" onclick="erpEditBrand(\'' + b.id + '\')"><i class="fas fa-edit"></i></button> ' +
           '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteBrand(\'' + b.id + '\',\'' + (b.name||'').replace(/'/g,'') + '\')"><i class="fas fa-trash"></i></button>' +
         '</td></tr>';
     }).join('');
-  }).getBrands();
+  }).getBrandsStats();
 }
 
 function erpOpenBrandModal(data) {
@@ -2742,7 +2741,7 @@ function erpLoadMultiWarehouses() {
       if (t.status === 'draft') pendingCount++;
       var dt = t.transferDate ? new Date(t.transferDate).toLocaleDateString('en-GB') : '';
       var actions = '';
-      if (t.status === 'draft') actions = '<button class="btn btn-success btn-sm" onclick="erpApproveTransfer(\'' + t.id + '\')"><i class="fas fa-check"></i> اعتماد</button>';
+      if (t.status === 'draft') actions = '<button class="btn btn-success btn-sm" onclick="erpApproveTransfer(\'' + t.id + '\')"><i class="fas fa-check"></i> اعتماد</button> <button class="btn btn-danger btn-sm" onclick="erpCancelTransfer(\'' + t.id + '\')"><i class="fas fa-times"></i> إلغاء</button>';
       return '<div style="display:flex;align-items:center;gap:14px;padding:14px 18px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;margin-bottom:8px;">' +
         '<div style="width:42px;height:42px;border-radius:12px;background:' + (iconBgs[t.status]||'#eff6ff') + ';color:' + (iconClrs[t.status]||'#3b82f6') + ';display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;"><i class="fas fa-exchange-alt"></i></div>' +
         '<div style="flex:1;min-width:0;">' +
@@ -3005,6 +3004,12 @@ function erpApproveTransfer(id) {
   if (!confirm('اعتماد التحويل وتحديث الأرصدة؟')) return;
   loader(true);
   window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم اعتماد التحويل'); erpLoadMultiWarehouses(); } else showToast(r.error, true); }).approveWarehouseTransfer(id, { username: currentUser });
+}
+
+function erpCancelTransfer(id) {
+  if (!confirm('إلغاء هذا التحويل؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم إلغاء التحويل'); erpLoadMultiWarehouses(); } else showToast(r.error, true); }).cancelWarehouseTransfer(id);
 }
 
 // ═══════════════════════════════════════

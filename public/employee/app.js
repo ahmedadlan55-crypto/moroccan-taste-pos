@@ -174,8 +174,29 @@ function loadHomeData() {
 
 // ─── Clock In/Out ───
 function doClock() {
-  toast('جاري البصمة...');
-  var data = { username: currentUser, deviceInfo: navigator.userAgent };
+  // Step 1: Try device biometrics (fingerprint/face)
+  if (window.PublicKeyCredential && navigator.credentials) {
+    // Try WebAuthn biometric
+    toast('ضع بصمتك...');
+    navigator.credentials.create({
+      publicKey: {
+        challenge: new Uint8Array(32),
+        rp: { name: 'بوابة الموظف' },
+        user: { id: new Uint8Array(16), name: currentUser, displayName: currentUser },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
+        timeout: 30000
+      }
+    }).then(function() { doClockWithLocation(); })
+      .catch(function() { doClockWithLocation(); }); // If biometrics unavailable, proceed anyway
+  } else {
+    doClockWithLocation();
+  }
+}
+
+function doClockWithLocation() {
+  toast('جاري تحديد الموقع...');
+  var data = { username: currentUser };
   // Device name
   var ua = navigator.userAgent;
   if (/iPhone/.test(ua)) data.deviceName = 'iPhone';
@@ -183,21 +204,20 @@ function doClock() {
   else if (/Android/.test(ua)) { var m = ua.match(/;\s*([^;)]+)\s*Build/); data.deviceName = m ? m[1].trim() : 'Android'; }
   else data.deviceName = 'متصفح';
 
-  // Get location
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(function(pos) {
-      data.geoLat = pos.coords.latitude;
-      data.geoLng = pos.coords.longitude;
-      // Reverse geocode
-      fetch('https://nominatim.openstreetmap.org/reverse?lat='+pos.coords.latitude+'&lon='+pos.coords.longitude+'&format=json&accept-language=ar')
-        .then(function(r){return r.json();})
-        .then(function(g){ data.geoAddress = g.display_name||''; sendClock(data); })
-        .catch(function(){ sendClock(data); });
-    }, function(err) {
-      toast('تعذر تحديد الموقع — سيتم التسجيل بدون موقع');
-      sendClock(data);
-    }, {timeout:8000, enableHighAccuracy:true});
-  } else { sendClock(data); }
+  // REQUIRE location
+  if (!navigator.geolocation) { toast('جهازك لا يدعم تحديد الموقع', true); return; }
+
+  navigator.geolocation.getCurrentPosition(function(pos) {
+    data.geoLat = pos.coords.latitude;
+    data.geoLng = pos.coords.longitude;
+    // Reverse geocode
+    fetch('https://nominatim.openstreetmap.org/reverse?lat='+pos.coords.latitude+'&lon='+pos.coords.longitude+'&format=json&accept-language=ar')
+      .then(function(r){return r.json();})
+      .then(function(g){ data.geoAddress = g.display_name||''; sendClock(data); })
+      .catch(function(){ sendClock(data); });
+  }, function(err) {
+    toast('يجب السماح بالموقع لتسجيل الحضور — افتح إعدادات المتصفح', true);
+  }, {timeout:10000, enableHighAccuracy:true});
 }
 
 function sendClock(data) {

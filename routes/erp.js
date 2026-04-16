@@ -1704,25 +1704,27 @@ router.get('/branches-full', async (req, res) => {
     res.json(rows.map(b => ({
       id: b.id, code: b.code, name: b.name, location: b.location, type: b.type, isActive: b.is_active !== false,
       warehouseId: b.warehouse_id, warehouseName: b.warehouse_name||'', costCenterId: b.cost_center_id, costCenterName: b.cost_center_name||'',
-      manager: b.manager||'', supplyMode: b.supply_mode||'parent_company'
+      manager: b.manager||'', supplyMode: b.supply_mode||'parent_company',
+      geoLat: b.geo_lat ? Number(b.geo_lat) : null, geoLng: b.geo_lng ? Number(b.geo_lng) : null,
+      geoRadius: b.geo_radius || 100
     })));
   } catch(e) { res.json([]); }
 });
 
 router.post('/branches-full', async (req, res) => {
   try {
-    const { id, brandId, code, name, location, type, warehouseId, costCenterId, manager, supplyMode } = req.body;
+    const { id, brandId, code, name, location, type, warehouseId, costCenterId, manager, supplyMode, geoLat, geoLng, geoRadius } = req.body;
     if (!name) return res.json({ success: false, error: 'الاسم مطلوب' });
     if (id) {
       await db.query(
-        'UPDATE branches SET brand_id=?, code=?, name=?, location=?, type=?, warehouse_id=?, cost_center_id=?, manager=?, supply_mode=? WHERE id=?',
-        [brandId||null, code||'', name, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company', id]);
+        'UPDATE branches SET brand_id=?, code=?, name=?, location=?, type=?, warehouse_id=?, cost_center_id=?, manager=?, supply_mode=?, geo_lat=?, geo_lng=?, geo_radius=? WHERE id=?',
+        [brandId||null, code||'', name, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company', geoLat||null, geoLng||null, geoRadius||100, id]);
       return res.json({ success: true, id });
     }
     const newId = 'BR-' + Date.now();
     await db.query(
-      'INSERT INTO branches (id, brand_id, code, name, location, type, warehouse_id, cost_center_id, manager, supply_mode) VALUES (?,?,?,?,?,?,?,?,?,?)',
-      [newId, brandId||null, code||'', name, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company']);
+      'INSERT INTO branches (id, brand_id, code, name, location, type, warehouse_id, cost_center_id, manager, supply_mode, geo_lat, geo_lng, geo_radius) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      [newId, brandId||null, code||'', name, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company', geoLat||null, geoLng||null, geoRadius||100]);
     res.json({ success: true, id: newId });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });

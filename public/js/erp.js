@@ -3057,6 +3057,15 @@ function erpOpenBranchFullModal(data) {
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>المدير</label><input class="form-control" id="brfManager" value="' + (d.manager||'') + '"></div>' +
         '<div class="form-row"><label>إعدادات التوريد</label><select class="form-control" id="brfSupply"><option value="parent_company"' + (d.supplyMode==='parent_company'?' selected':'') + '>الشركة الأم</option><option value="warehouse"' + (d.supplyMode==='warehouse'?' selected':'') + '>المستودع الرئيسي</option><option value="auto"' + (d.supplyMode==='auto'?' selected':'') + '>تلقائي</option></select></div>' +
+      '</div>' +
+      '<div style="border-top:1px solid #e2e8f0;margin-top:14px;padding-top:14px;">' +
+        '<h4 style="font-size:14px;font-weight:800;color:#1e293b;margin-bottom:10px;"><i class="fas fa-map-marker-alt" style="color:#ef4444;"></i> موقع الفرع (للبصمة)</h4>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">' +
+          '<div class="form-row"><label>خط العرض (Lat)</label><input type="number" step="0.0000001" class="form-control" id="brfGeoLat" value="' + (d.geoLat||'') + '" placeholder="24.7136"></div>' +
+          '<div class="form-row"><label>خط الطول (Lng)</label><input type="number" step="0.0000001" class="form-control" id="brfGeoLng" value="' + (d.geoLng||'') + '" placeholder="46.6753"></div>' +
+          '<div class="form-row"><label>نطاق (متر)</label><input type="number" class="form-control" id="brfGeoRadius" value="' + (d.geoRadius||100) + '" placeholder="100"></div>' +
+        '</div>' +
+        '<button type="button" class="btn btn-sm btn-light" style="margin-top:6px;" onclick="brfGetMyLocation()"><i class="fas fa-crosshairs"></i> تحديد موقعي الحالي</button>' +
       '</div>';
     document.getElementById('erpModalSaveBtn').onclick = erpSaveBranchFull;
     document.getElementById('erpModal').classList.remove('hidden');
@@ -3068,8 +3077,31 @@ function erpEditBranchFull(id) {
     if (b) erpOpenBranchFullModal(b);
   }).getBranchesFull();
 }
+function brfGetMyLocation() {
+  if (!navigator.geolocation) return showToast('المتصفح لا يدعم تحديد الموقع', true);
+  showToast('جاري تحديد الموقع...');
+  navigator.geolocation.getCurrentPosition(function(pos) {
+    document.getElementById('brfGeoLat').value = pos.coords.latitude.toFixed(7);
+    document.getElementById('brfGeoLng').value = pos.coords.longitude.toFixed(7);
+    showToast('تم تحديد الموقع ✓');
+  }, function() { showToast('فشل تحديد الموقع', true); }, {enableHighAccuracy:true, timeout:10000});
+}
+
 function erpSaveBranchFull() {
-  var data = { id: document.getElementById('brfID').value, brandId: (document.getElementById('brfBrand')||{}).value||'', code: document.getElementById('brfCode').value, name: document.getElementById('brfName').value, location: document.getElementById('brfLocation').value, warehouseId: document.getElementById('brfWH').value, costCenterId: document.getElementById('brfCC').value, manager: document.getElementById('brfManager').value, supplyMode: document.getElementById('brfSupply').value };
+  var data = {
+    id: document.getElementById('brfID').value,
+    brandId: (document.getElementById('brfBrand')||{}).value||'',
+    code: document.getElementById('brfCode').value,
+    name: document.getElementById('brfName').value,
+    location: document.getElementById('brfLocation').value,
+    warehouseId: document.getElementById('brfWH').value,
+    costCenterId: document.getElementById('brfCC').value,
+    manager: document.getElementById('brfManager').value,
+    supplyMode: document.getElementById('brfSupply').value,
+    geoLat: document.getElementById('brfGeoLat').value || null,
+    geoLng: document.getElementById('brfGeoLng').value || null,
+    geoRadius: Number(document.getElementById('brfGeoRadius').value) || 100
+  };
   if (!data.name) return showToast('الاسم مطلوب', true);
   loader(true);
   window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحفظ'); erpCloseModal(); erpLoadBranchesFull(); } else showToast(r.error, true); }).saveBranchFull(data);

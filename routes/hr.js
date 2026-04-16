@@ -1633,22 +1633,36 @@ router.get('/my-attendance', async (req, res) => {
 router.post('/my-clock', async (req, res) => {
   try {
     const username = req.user ? req.user.username : req.body.username;
-    const { geoLat, geoLng, geoAddress, deviceInfo, deviceName } = req.body;
-    const [emp] = await db.query('SELECT id, first_name, last_name FROM hr_employees WHERE linked_username = ?', [username]);
+    const { geoLat, geoLng, geoAddress, deviceName } = req.body;
+    const [emp] = await db.query('SELECT e.id, e.first_name, e.branch_id FROM hr_employees e WHERE e.linked_username = ?', [username]);
     if (!emp.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط بحسابك — تواصل مع الإدارة' });
     const empId = emp[0].id;
+    const branchId = emp[0].branch_id;
     const today = new Date().toISOString().split('T')[0];
 
-    // Detect device name from user agent
-    var ua = deviceInfo || '';
-    var devName = deviceName || '';
-    if (!devName && ua) {
-      if (/iPhone/.test(ua)) devName = 'iPhone';
-      else if (/iPad/.test(ua)) devName = 'iPad';
-      else if (/Android/.test(ua)) { var m = ua.match(/;\s*([^;)]+)\s*Build/); devName = m ? m[1].trim() : 'Android'; }
-      else if (/Windows/.test(ua)) devName = 'Windows PC';
-      else if (/Mac/.test(ua)) devName = 'Mac';
-      else devName = 'متصفح';
+    // Device name (short — max 50 chars)
+    var devName = (deviceName || 'متصفح').substring(0, 50);
+
+    // ─── LOCATION VALIDATION ───
+    // Check if branch has a location set
+    if (branchId && geoLat && geoLng) {
+      const [branchRow] = await db.query('SELECT geo_lat, geo_lng, geo_radius FROM branches WHERE id = ?', [branchId]);
+      if (branchRow.length && branchRow[0].geo_lat && branchRow[0].geo_lng) {
+        const bLat = Number(branchRow[0].geo_lat);
+        const bLng = Number(branchRow[0].geo_lng);
+        const radius = Number(branchRow[0].geo_radius) || 100; // default 100 meters
+        // Calculate distance using Haversine formula
+        const R = 6371000; // Earth radius in meters
+        const dLat = (Number(geoLat) - bLat) * Math.PI / 180;
+        const dLng = (Number(geoLng) - bLng) * Math.PI / 180;
+        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                  Math.cos(bLat * Math.PI/180) * Math.cos(Number(geoLat) * Math.PI/180) *
+                  Math.sin(dLng/2) * Math.sin(dLng/2);
+        const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        if (dist > radius) {
+          return res.json({ success: false, error: 'أنت بعيد عن موقع العمل (' + Math.round(dist) + ' متر) — الحد المسموح ' + radius + ' متر' });
+        }
+      }
     }
 
     const [existing] = await db.query(
@@ -1656,16 +1670,16 @@ router.post('/my-clock', async (req, res) => {
     );
 
     if (!existing.length) {
-      // Clock IN — save device + geo location
+      // Clock IN
       const id = 'ATT-' + Date.now();
       await db.query(
         `INSERT INTO hr_attendance (id, employee_id, attendance_date, clock_in, status, source,
          geo_lat, geo_lng, geo_address_in, device_id, device_name) VALUES (?,?,?,NOW(),?,?,?,?,?,?,?)`,
-        [id, empId, today, 'present', 'app', geoLat||null, geoLng||null, geoAddress||'', ua, devName]
+        [id, empId, today, 'present', 'app', geoLat||null, geoLng||null, geoAddress||'', devName, devName]
       );
       res.json({ success: true, action: 'clock_in', time: new Date().toISOString(), message: 'تم تسجيل الحضور ✓' });
     } else if (!existing[0].clock_out) {
-      // Clock OUT — save geo location for exit
+      // Clock OUT
       const clockIn = new Date(existing[0].clock_in);
       const clockOut = new Date();
       const totalHours = ((clockOut - clockIn) / (1000 * 60 * 60)).toFixed(2);

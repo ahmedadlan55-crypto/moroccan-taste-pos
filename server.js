@@ -1098,6 +1098,14 @@ async function runMigrations() {
   await addColumnIfMissing('shifts', 'device_info', "VARCHAR(500)");
   await addColumnIfMissing('shifts', 'ip_address', "VARCHAR(50)");
 
+  // Branch geolocation for attendance validation
+  await addColumnIfMissing('branches', 'geo_lat', "DECIMAL(10,7)");
+  await addColumnIfMissing('branches', 'geo_lng', "DECIMAL(10,7)");
+  await addColumnIfMissing('branches', 'geo_radius', "INT DEFAULT 100");
+
+  // Fix device_id column size
+  try { await db.query('ALTER TABLE hr_attendance MODIFY COLUMN device_id VARCHAR(500)'); } catch(e) {}
+
   // Users: email + warehouse link
   await addColumnIfMissing('users', 'email', "VARCHAR(200)");
   await addColumnIfMissing('users', 'default_warehouse_id', "VARCHAR(50)");

@@ -755,8 +755,9 @@ function erpLoadJournals() {
       } else if (j.status === 'approved') {
         actions += '<button class="btn-icon" style="color:#16a34a;" onclick="erpPostJournal(\'' + j.id + '\')" title="ترحيل"><i class="fas fa-share-square"></i></button> ';
         if (isDev) actions += '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>';
-      } else if (j.status === 'posted' && isDev) {
-        actions += '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف (مطور)"><i class="fas fa-trash"></i></button>';
+      } else if (j.status === 'posted') {
+        actions += '<button class="btn-icon" style="color:#f59e0b;" onclick="erpUnpostJournal(\'' + j.id + '\')" title="إلغاء الترحيل"><i class="fas fa-undo"></i></button> ';
+        if (isDev) actions += '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف (مطور)"><i class="fas fa-trash"></i></button>';
       }
       return '<tr style="' + (j.status==='draft'?'background:rgba(254,243,199,0.15);':'') + '">' +
         '<td><code style="font-weight:800;color:#1e40af;">' + (j.journalNumber||'') + '</code><div style="font-size:10px;color:#94a3b8;margin-top:2px;"><i class="fas fa-user" style="margin-left:2px;"></i>' + (j.createdBy||'') + '</div></td>' +
@@ -975,6 +976,17 @@ function erpPostJournal(id) {
   }).postGLJournal(id, currentUser);
 }
 
+function erpUnpostJournal(id) {
+  if (!confirm('إلغاء ترحيل القيد؟\nسيتم عكس أرصدة الحسابات وإرجاع القيد لحالة مسودة.')) return;
+  loader(true);
+  // Unpost = reverse balances then set status back to draft
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم إلغاء الترحيل — القيد أصبح مسودة'); erpLoadJournals(); erpLoadAccountsList_(); }
+    else showToast((r && r.error) || 'فشل إلغاء الترحيل', true);
+  }).unpostGLJournal(id, currentUser);
+}
+
 function erpDeleteJournal(id, num) {
   if (!confirm('حذف القيد ' + num + '؟\nسيتم عكس جميع الأرصدة المتأثرة.')) return;
   loader(true);
@@ -1159,7 +1171,7 @@ function erpAddJrnLine(prefill) {
       '<input type="hidden" class="jec-acc-id" value="' + (p.id||'') + '">' +
       '<div class="jec-dropdown" style="display:none;position:absolute;top:100%;right:0;left:0;z-index:100;background:#fff;border:1px solid #e5e7eb;border-radius:8px;max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1);"></div>' +
     '</td>' +
-    '<td style="padding:6px 4px;"><input type="text" class="form-control jec-acc-name" placeholder="" value="' + (p.name||'') + '" readonly style="font-size:13px;padding:8px;background:#f8fafc;color:#334155;"></td>' +
+    '<td style="padding:6px 4px;position:relative;"><input type="text" class="form-control jec-acc-name" placeholder="ابحث بالاسم..." value="' + (p.name||'') + '" style="font-size:13px;padding:8px;" oninput="erpSearchAccountByName(this)" onfocus="erpSearchAccountByName(this)"><div class="jec-dropdown-name" style="display:none;position:absolute;top:100%;right:0;left:0;z-index:100;background:#fff;border:1px solid #e5e7eb;border-radius:8px;max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1);"></div></td>' +
     '<td style="padding:6px 4px;"><input type="number" class="form-control jec-debit" step="0.01" min="0" placeholder="0" value="' + (p.debit||'') + '" style="font-size:13px;padding:8px;text-align:center;" oninput="erpCalcJrnBalance()"></td>' +
     '<td style="padding:6px 4px;"><input type="number" class="form-control jec-credit" step="0.01" min="0" placeholder="0" value="' + (p.credit||'') + '" style="font-size:13px;padding:8px;text-align:center;" oninput="erpCalcJrnBalance()"></td>' +
     '<td style="padding:6px 4px;"><input type="text" class="form-control jec-desc" placeholder="" value="' + (p.desc||'') + '" style="font-size:13px;padding:8px;"></td>' +
@@ -1217,12 +1229,30 @@ window.erpPickAccount = function(el, id, code, name) {
   tr.querySelector('.jec-code').style.color = '#166534';
   tr.querySelector('.jec-acc-name').value = name;
   tr.querySelector('.jec-dropdown').style.display = 'none';
+  var dd2 = tr.querySelector('.jec-dropdown-name'); if (dd2) dd2.style.display = 'none';
+};
+
+// Search by account NAME (اسم الحساب column)
+window.erpSearchAccountByName = function(input) {
+  var val = input.value.toLowerCase().trim();
+  var dd = input.parentElement.querySelector('.jec-dropdown-name');
+  if (!val || val.length < 1) { dd.style.display = 'none'; return; }
+  var leafs = _getLeafAccounts();
+  var matches = leafs.filter(function(a) {
+    return (a.nameAr||'').toLowerCase().indexOf(val) !== -1 || (a.nameEn||'').toLowerCase().indexOf(val) !== -1 || (a.code||'').indexOf(val) !== -1;
+  }).slice(0, 10);
+  if (!matches.length) { dd.style.display = 'none'; return; }
+  dd.innerHTML = matches.map(function(a) {
+    return '<div style="padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;" onmousedown="erpPickAccount(this,\'' + a.id + '\',\'' + a.code + '\',\'' + (a.nameAr||'').replace(/'/g,'') + '\')">' +
+      '<span style="color:#64748b;">' + (a.nameAr||'') + '</span><span style="font-weight:700;color:#0f172a;">' + a.code + '</span></div>';
+  }).join('');
+  dd.style.display = 'block';
 };
 
 // Close dropdowns on click outside
 document.addEventListener('click', function(e) {
-  if (!e.target.closest('.jec-dropdown') && !e.target.classList.contains('jec-code')) {
-    document.querySelectorAll('.jec-dropdown').forEach(function(d) { d.style.display = 'none'; });
+  if (!e.target.closest('.jec-dropdown') && !e.target.closest('.jec-dropdown-name') && !e.target.classList.contains('jec-code') && !e.target.classList.contains('jec-acc-name')) {
+    document.querySelectorAll('.jec-dropdown, .jec-dropdown-name').forEach(function(d) { d.style.display = 'none'; });
   }
 });
 

@@ -476,6 +476,27 @@ router.post('/gl/journals/:id/post', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// Unpost journal (posted → draft) — reverses account balances
+router.post('/gl/journals/:id/unpost', async (req, res) => {
+  try {
+    const [jrn] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [req.params.id]);
+    if (!jrn.length) return res.json({ success: false, error: 'القيد غير موجود' });
+    if (jrn[0].status !== 'posted') return res.json({ success: false, error: 'القيد ليس مرحّلاً' });
+
+    // Reverse account balances
+    const [entries] = await db.query('SELECT * FROM gl_entries WHERE journal_id = ?', [req.params.id]);
+    for (const e of entries) {
+      if (e.account_id) {
+        const netAmount = (Number(e.debit) || 0) - (Number(e.credit) || 0);
+        await db.query('UPDATE gl_accounts SET balance = balance - ? WHERE id = ?', [netAmount, e.account_id]);
+      }
+    }
+    await db.query('UPDATE gl_journals SET status = "draft", posted_by = NULL, posted_at = NULL, approved_by = NULL, approved_at = NULL WHERE id = ?',
+      [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 // Get entries for a specific journal
 router.get('/gl/journals/:id/entries', async (req, res) => {
   try {

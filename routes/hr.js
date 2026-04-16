@@ -328,7 +328,7 @@ router.get('/employees', async (req, res) => {
   try {
     const { branch_id, brand_id, department_id, status, search } = req.query;
     let sql = `
-      SELECT e.id, e.employee_number, CONCAT(e.first_name, ' ', e.last_name) as fullName,
+      SELECT e.id, e.employee_number, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) as fullName,
         e.phone, e.email, e.job_title as jobTitle,
         COALESCE(d.name, '') as departmentName,
         COALESCE(b.name, '') as branchName,
@@ -363,7 +363,7 @@ router.get('/employees/:id', async (req, res) => {
   try {
     const [rows] = await db.query(`
       SELECT e.*,
-        CONCAT(e.first_name, ' ', e.last_name) as fullName,
+        CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) as fullName,
         COALESCE(d.name, '') as departmentName,
         COALESCE(b.name, '') as branchName
       FROM hr_employees e
@@ -455,19 +455,19 @@ router.post('/employees', async (req, res) => {
     if (b.createUser && b.firstName) {
       try {
         const bcrypt = require('bcryptjs');
-        const uname = (b.firstName + '.' + b.lastName).toLowerCase().replace(/\s+/g, '');
-        const defaultPass = '123456';
+        const uname = (b.firstName + (b.lastName ? '.' + b.lastName : '')).toLowerCase().replace(/\s+/g, '');
+        const defaultPass = b.userPassword || 'Pass@123';
         const hash = await bcrypt.hash(defaultPass, 10);
         await db.query(
-          `INSERT INTO users (username, password, role, active, email, plain_pass) VALUES (?,?,?,1,?,?)`,
-          [uname, hash, 'cashier', b.email || '', defaultPass]
+          'INSERT INTO users (username, password, role, active, email, employee_id) VALUES (?,?,?,1,?,?)',
+          [uname, hash, b.userRole || 'cashier', b.email || '', empId]
         );
         const [userRow] = await db.query('SELECT id FROM users WHERE username = ?', [uname]);
         if (userRow.length) {
-          await db.query('UPDATE hr_employees SET user_id = ? WHERE id = ?', [userRow[0].id, empId]);
+          await db.query('UPDATE hr_employees SET linked_user_id = ?, linked_username = ? WHERE id = ?', [userRow[0].id, uname, empId]);
         }
       } catch (userErr) {
-        // User creation failed (duplicate username, etc.) - employee is still created
+        // User creation failed (duplicate username, etc.) — employee is still created
       }
     }
 
@@ -809,7 +809,7 @@ router.get('/attendance/summary', async (req, res) => {
     }
 
     const [employees] = await db.query(
-      `SELECT e.id, e.employee_number, CONCAT(e.first_name, ' ', e.last_name) as fullName
+      `SELECT e.id, e.employee_number, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) as fullName
        FROM hr_employees e ${empFilter}`,
       empParams
     );
@@ -1514,6 +1514,163 @@ router.get('/dashboard', async (req, res) => {
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// EMPLOYEE SELF-SERVICE — endpoints for the employee's own data
+// ═══════════════════════════════════════════════════════════════
+
+// GET my profile (employee linked to current user)
+router.get('/my-profile', async (req, res) => {
+  try {
+    const username = req.user ? req.user.username : req.query.username;
+    if (!username) return res.json({ success: false, error: 'غير مسجل الدخول' });
+    const [rows] = await db.query(`
+      SELECT e.*, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) as fullName,
+        COALESCE(d.name, '') as departmentName, COALESCE(b.name, '') as branchName
+      FROM hr_employees e
+      LEFT JOIN hr_departments d ON e.department_id = d.id
+      LEFT JOIN branches b ON e.branch_id = b.id
+      WHERE e.linked_username = ? OR e.email = ?
+    `, [username, username]);
+    if (!rows.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط بحسابك' });
+    res.json({ success: true, employee: rows[0] });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// GET my attendance this month
+router.get('/my-attendance', async (req, res) => {
+  try {
+    const username = req.user ? req.user.username : req.query.username;
+    const [emp] = await db.query('SELECT id FROM hr_employees WHERE linked_username = ?', [username]);
+    if (!emp.length) return res.json([]);
+    const month = req.query.month || new Date().getMonth() + 1;
+    const year = req.query.year || new Date().getFullYear();
+    const [rows] = await db.query(
+      'SELECT * FROM hr_attendance WHERE employee_id = ? AND MONTH(attendance_date) = ? AND YEAR(attendance_date) = ? ORDER BY attendance_date DESC',
+      [emp[0].id, month, year]
+    );
+    res.json(rows);
+  } catch (e) { res.json([]); }
+});
+
+// POST clock in/out for myself
+router.post('/my-clock', async (req, res) => {
+  try {
+    const username = req.user ? req.user.username : req.body.username;
+    const { geoLat, geoLng, deviceInfo } = req.body;
+    const [emp] = await db.query('SELECT id, first_name, last_name FROM hr_employees WHERE linked_username = ?', [username]);
+    if (!emp.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط' });
+    const empId = emp[0].id;
+    const today = new Date().toISOString().split('T')[0];
+
+    // Check if already clocked in today
+    const [existing] = await db.query(
+      'SELECT * FROM hr_attendance WHERE employee_id = ? AND attendance_date = ?', [empId, today]
+    );
+
+    if (!existing.length) {
+      // Clock IN
+      const id = 'ATT-' + Date.now();
+      await db.query(
+        'INSERT INTO hr_attendance (id, employee_id, attendance_date, clock_in, status, source, geo_lat, geo_lng, device_id) VALUES (?,?,?,NOW(),?,?,?,?,?)',
+        [id, empId, today, 'present', 'app', geoLat || null, geoLng || null, deviceInfo || '']
+      );
+      res.json({ success: true, action: 'clock_in', time: new Date().toISOString(), message: 'تم تسجيل الحضور' });
+    } else if (!existing[0].clock_out) {
+      // Clock OUT
+      const clockIn = new Date(existing[0].clock_in);
+      const clockOut = new Date();
+      const totalHours = ((clockOut - clockIn) / (1000 * 60 * 60)).toFixed(2);
+      await db.query(
+        'UPDATE hr_attendance SET clock_out = NOW(), total_hours = ? WHERE id = ?',
+        [totalHours, existing[0].id]
+      );
+      res.json({ success: true, action: 'clock_out', time: clockOut.toISOString(), totalHours, message: 'تم تسجيل الانصراف' });
+    } else {
+      res.json({ success: false, error: 'تم تسجيل الحضور والانصراف اليوم بالفعل' });
+    }
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// GET my leave balances
+router.get('/my-leave-balances', async (req, res) => {
+  try {
+    const username = req.user ? req.user.username : req.query.username;
+    const [emp] = await db.query('SELECT id FROM hr_employees WHERE linked_username = ?', [username]);
+    if (!emp.length) return res.json([]);
+    const year = req.query.year || new Date().getFullYear();
+    const [rows] = await db.query(
+      'SELECT lb.*, lt.name as leaveTypeName, lt.is_paid FROM hr_leave_balances lb LEFT JOIN hr_leave_types lt ON lb.leave_type_id = lt.id WHERE lb.employee_id = ? AND lb.year = ?',
+      [emp[0].id, year]
+    );
+    res.json(rows);
+  } catch (e) { res.json([]); }
+});
+
+// POST my leave request
+router.post('/my-leave-request', async (req, res) => {
+  try {
+    const username = req.user ? req.user.username : req.body.username;
+    const { leaveTypeId, startDate, endDate, reason } = req.body;
+    const [emp] = await db.query('SELECT id, first_name, last_name FROM hr_employees WHERE linked_username = ?', [username]);
+    if (!emp.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط' });
+
+    // Calculate days
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+
+    // Check balance
+    const year = start.getFullYear();
+    const [bal] = await db.query(
+      'SELECT remaining_days FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND year = ?',
+      [emp[0].id, leaveTypeId, year]
+    );
+    if (bal.length && bal[0].remaining_days < days) {
+      return res.json({ success: false, error: 'رصيد الإجازة غير كافٍ (المتبقي: ' + bal[0].remaining_days + ' يوم)' });
+    }
+
+    const id = 'LR-' + Date.now();
+    const [lastReq] = await db.query('SELECT request_number FROM hr_leave_requests ORDER BY created_at DESC LIMIT 1');
+    let num = 1;
+    if (lastReq.length && lastReq[0].request_number) { var m = lastReq[0].request_number.match(/(\d+)/); if (m) num = parseInt(m[1]) + 1; }
+    const reqNumber = 'LV-' + String(num).padStart(5, '0');
+
+    await db.query(
+      'INSERT INTO hr_leave_requests (id, request_number, employee_id, leave_type_id, start_date, end_date, days_count, reason, status) VALUES (?,?,?,?,?,?,?,?,?)',
+      [id, reqNumber, emp[0].id, leaveTypeId, startDate, endDate, days, reason || '', 'pending']
+    );
+    res.json({ success: true, id, requestNumber: reqNumber, message: 'تم تقديم طلب الإجازة — بانتظار الموافقة' });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// GET my leave requests
+router.get('/my-leave-requests', async (req, res) => {
+  try {
+    const username = req.user ? req.user.username : req.query.username;
+    const [emp] = await db.query('SELECT id FROM hr_employees WHERE linked_username = ?', [username]);
+    if (!emp.length) return res.json([]);
+    const [rows] = await db.query(
+      'SELECT lr.*, lt.name as leaveTypeName FROM hr_leave_requests lr LEFT JOIN hr_leave_types lt ON lr.leave_type_id = lt.id WHERE lr.employee_id = ? ORDER BY lr.created_at DESC',
+      [emp[0].id]
+    );
+    res.json(rows);
+  } catch (e) { res.json([]); }
+});
+
+// GET my payslips
+router.get('/my-payslips', async (req, res) => {
+  try {
+    const username = req.user ? req.user.username : req.query.username;
+    const [emp] = await db.query('SELECT id FROM hr_employees WHERE linked_username = ?', [username]);
+    if (!emp.length) return res.json([]);
+    const [rows] = await db.query(
+      'SELECT pi.*, pr.run_number, pr.month, pr.year FROM hr_payroll_items pi LEFT JOIN hr_payroll_runs pr ON pi.run_id = pr.id WHERE pi.employee_id = ? ORDER BY pr.year DESC, pr.month DESC',
+      [emp[0].id]
+    );
+    res.json(rows);
+  } catch (e) { res.json([]); }
 });
 
 module.exports = router;

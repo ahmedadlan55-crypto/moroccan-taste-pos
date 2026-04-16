@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>بوابة الموظف — Moroccan Taste</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root { --primary: #0f172a; --accent: #3b82f6; --success: #10b981; --danger: #ef4444; --warning: #f59e0b; --bg: #f8fafc; --card: #fff; --text: #1e293b; --muted: #64748b; --border: #e2e8f0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Tahoma, sans-serif; background: var(--bg); color: var(--text); min-height: 100dvh; direction: rtl; }
+
+    /* Login */
+    .login-page { display: flex; align-items: center; justify-content: center; min-height: 100dvh; padding: 20px; }
+    .login-box { background: var(--card); border-radius: 24px; padding: 40px 30px; width: 100%; max-width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,0.08); text-align: center; }
+    .login-box h1 { font-size: 24px; color: var(--primary); margin-bottom: 8px; }
+    .login-box p { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+    .login-box input { width: 100%; padding: 14px 16px; border: 1.5px solid var(--border); border-radius: 12px; font-size: 15px; margin-bottom: 12px; text-align: right; }
+    .login-box input:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+    .login-box button { width: 100%; padding: 14px; background: var(--accent); color: #fff; border: none; border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; }
+
+    /* App Shell */
+    .app { display: none; flex-direction: column; min-height: 100dvh; }
+    .app.active { display: flex; }
+    .app-header { background: var(--primary); color: #fff; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; }
+    .app-header h2 { font-size: 16px; font-weight: 800; }
+    .app-header .user-info { font-size: 12px; color: rgba(255,255,255,0.7); }
+    .logout-btn { background: none; border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 6px 12px; border-radius: 8px; font-size: 12px; cursor: pointer; }
+
+    /* Tab Bar */
+    .tab-bar { display: flex; background: var(--card); border-top: 1px solid var(--border); padding: 8px 0; position: sticky; bottom: 0; z-index: 100; box-shadow: 0 -4px 12px rgba(0,0,0,0.04); }
+    .tab-item { flex: 1; text-align: center; padding: 8px 4px; cursor: pointer; color: var(--muted); font-size: 10px; font-weight: 700; transition: 0.2s; }
+    .tab-item.active { color: var(--accent); }
+    .tab-item i { display: block; font-size: 20px; margin-bottom: 4px; }
+
+    /* Content */
+    .content { flex: 1; overflow-y: auto; padding: 16px; }
+    .page { display: none; }
+    .page.active { display: block; }
+
+    /* Cards */
+    .card { background: var(--card); border-radius: 16px; padding: 18px; margin-bottom: 12px; border: 1px solid var(--border); }
+    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .card-title { font-size: 15px; font-weight: 800; color: var(--primary); }
+
+    /* Stats */
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+    .stat-box { background: var(--card); border-radius: 14px; padding: 16px; border: 1px solid var(--border); text-align: center; }
+    .stat-box .val { font-size: 28px; font-weight: 900; color: var(--primary); }
+    .stat-box .lbl { font-size: 11px; color: var(--muted); font-weight: 700; margin-top: 4px; }
+
+    /* Clock Button */
+    .clock-btn { width: 100%; padding: 18px; border-radius: 16px; font-size: 18px; font-weight: 800; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 16px; }
+    .clock-btn.clock-in { background: linear-gradient(135deg, #10b981, #059669); color: #fff; box-shadow: 0 8px 24px rgba(16,185,129,0.3); }
+    .clock-btn.clock-out { background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; box-shadow: 0 8px 24px rgba(239,68,68,0.3); }
+    .clock-btn.done { background: #f1f5f9; color: var(--muted); cursor: default; }
+
+    /* Attendance List */
+    .att-item { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+    .att-date { font-weight: 700; font-size: 13px; min-width: 70px; }
+    .att-times { flex: 1; font-size: 12px; color: var(--muted); }
+    .att-hours { font-weight: 900; color: var(--accent); font-size: 14px; }
+
+    /* Leave */
+    .leave-card { display: flex; align-items: center; gap: 12px; padding: 14px; background: var(--card); border-radius: 12px; border: 1px solid var(--border); margin-bottom: 8px; }
+    .leave-icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+    .leave-info { flex: 1; }
+    .leave-name { font-weight: 700; font-size: 13px; }
+    .leave-bal { font-size: 12px; color: var(--muted); }
+    .leave-count { font-size: 20px; font-weight: 900; color: var(--primary); }
+
+    /* Form */
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+    .form-group select, .form-group input, .form-group textarea { width: 100%; padding: 12px; border: 1.5px solid var(--border); border-radius: 10px; font-size: 14px; }
+    .btn { padding: 14px; border-radius: 12px; font-size: 15px; font-weight: 700; border: none; cursor: pointer; width: 100%; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-light { background: #f1f5f9; color: var(--text); }
+
+    /* Badge */
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+    .badge-green { background: #dcfce7; color: #166534; }
+    .badge-yellow { background: #fef9c3; color: #854d0e; }
+    .badge-red { background: #fee2e2; color: #991b1b; }
+    .badge-blue { background: #dbeafe; color: #1e40af; }
+
+    /* Toast */
+    .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: var(--primary); color: #fff; padding: 12px 24px; border-radius: 12px; font-size: 14px; font-weight: 700; z-index: 9999; display: none; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+    .toast.show { display: block; animation: slideDown 0.3s ease; }
+    .toast.error { background: var(--danger); }
+    @keyframes slideDown { from { opacity: 0; transform: translateX(-50%) translateY(-20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+  </style>
+</head>
+<body>
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <!-- Login Page -->
+  <div class="login-page" id="loginPage">
+    <div class="login-box">
+      <i class="fas fa-user-circle" style="font-size:48px;color:var(--accent);margin-bottom:16px;"></i>
+      <h1>بوابة الموظف</h1>
+      <p>سجّل دخولك لعرض بياناتك وتسجيل الحضور</p>
+      <input type="text" id="loginUser" placeholder="اسم المستخدم" autocomplete="username">
+      <input type="password" id="loginPass" placeholder="كلمة المرور" autocomplete="current-password">
+      <button onclick="doLogin()"><i class="fas fa-sign-in-alt"></i> دخول</button>
+    </div>
+  </div>
+
+  <!-- App -->
+  <div class="app" id="app">
+    <div class="app-header">
+      <div>
+        <h2><i class="fas fa-user-circle"></i> <span id="empName">الموظف</span></h2>
+        <div class="user-info" id="empJobTitle"></div>
+      </div>
+      <button class="logout-btn" onclick="doLogout()"><i class="fas fa-sign-out-alt"></i> خروج</button>
+    </div>
+
+    <div class="content">
+      <!-- Page: Home -->
+      <div class="page active" id="pageHome">
+        <div id="clockSection"></div>
+        <div class="stats-grid" id="homeStats"></div>
+        <div class="card">
+          <div class="card-header"><div class="card-title"><i class="fas fa-history" style="color:var(--accent);"></i> آخر الحضور</div></div>
+          <div id="recentAttendance"></div>
+        </div>
+      </div>
+
+      <!-- Page: Attendance -->
+      <div class="page" id="pageAttendance">
+        <div class="card">
+          <div class="card-header"><div class="card-title"><i class="fas fa-calendar-check" style="color:var(--accent);"></i> سجل الحضور</div></div>
+          <div id="fullAttendance"></div>
+        </div>
+      </div>
+
+      <!-- Page: Leave -->
+      <div class="page" id="pageLeave">
+        <div class="card" style="margin-bottom:12px;">
+          <div class="card-header"><div class="card-title"><i class="fas fa-umbrella-beach" style="color:var(--warning);"></i> أرصدة الإجازات</div></div>
+          <div id="leaveBalances"></div>
+        </div>
+        <button class="btn btn-primary" onclick="showLeaveForm()" style="margin-bottom:12px;"><i class="fas fa-plus"></i> طلب إجازة</button>
+        <div id="leaveForm" style="display:none;"></div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">طلباتي</div></div>
+          <div id="myLeaveRequests"></div>
+        </div>
+      </div>
+
+      <!-- Page: Profile -->
+      <div class="page" id="pageProfile">
+        <div class="card">
+          <div class="card-header"><div class="card-title"><i class="fas fa-id-card" style="color:var(--accent);"></i> بياناتي</div></div>
+          <div id="profileData"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title"><i class="fas fa-money-bill-wave" style="color:var(--success);"></i> آخر الرواتب</div></div>
+          <div id="myPayslips"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab Bar -->
+    <div class="tab-bar">
+      <div class="tab-item active" onclick="switchPage('Home')"><i class="fas fa-home"></i>الرئيسية</div>
+      <div class="tab-item" onclick="switchPage('Attendance')"><i class="fas fa-clock"></i>الحضور</div>
+      <div class="tab-item" onclick="switchPage('Leave')"><i class="fas fa-calendar-alt"></i>الإجازات</div>
+      <div class="tab-item" onclick="switchPage('Profile')"><i class="fas fa-user"></i>ملفي</div>
+    </div>
+  </div>
+
+  <script>
+    var BASE = '/api';
+    var token = localStorage.getItem('emp_token');
+    var username = localStorage.getItem('emp_username');
+    var empData = null;
+
+    function toast(msg, isError) {
+      var t = document.getElementById('toast');
+      t.textContent = msg; t.className = 'toast show' + (isError ? ' error' : '');
+      setTimeout(function() { t.className = 'toast'; }, 3000);
+    }
+
+    function api(method, url, body) {
+      var opts = { method: method, headers: { 'Content-Type': 'application/json' } };
+      if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+      if (body) opts.body = JSON.stringify(body);
+      return fetch(BASE + url, opts).then(function(r) { return r.json(); });
+    }
+
+    // ─── Login ───
+    function doLogin() {
+      var u = document.getElementById('loginUser').value;
+      var p = document.getElementById('loginPass').value;
+      if (!u || !p) return toast('أدخل اسم المستخدم وكلمة المرور', true);
+      api('POST', '/auth/login', { username: u, password: p }).then(function(r) {
+        if (r.success && r.token) {
+          token = r.token; username = r.username;
+          localStorage.setItem('emp_token', token);
+          localStorage.setItem('emp_username', username);
+          loadApp();
+        } else toast(r.error || 'فشل تسجيل الدخول', true);
+      });
+    }
+
+    function doLogout() {
+      localStorage.removeItem('emp_token');
+      localStorage.removeItem('emp_username');
+      token = null; username = null;
+      document.getElementById('app').classList.remove('active');
+      document.getElementById('loginPage').style.display = '';
+    }
+
+    // ─── Load App ───
+    function loadApp() {
+      document.getElementById('loginPage').style.display = 'none';
+      document.getElementById('app').classList.add('active');
+      // Load profile
+      api('GET', '/hr/my-profile?username=' + username).then(function(r) {
+        if (r.success && r.employee) {
+          empData = r.employee;
+          document.getElementById('empName').textContent = r.employee.fullName || username;
+          document.getElementById('empJobTitle').textContent = (r.employee.jobTitle || '') + ' — ' + (r.employee.branchName || '');
+          loadHome();
+          loadProfile();
+        } else {
+          toast('لا يوجد ملف موظف مرتبط بحسابك', true);
+        }
+      });
+    }
+
+    // ─── Home Page ───
+    function loadHome() {
+      // Clock section
+      renderClockButton();
+      // Load attendance
+      api('GET', '/hr/my-attendance?username=' + username).then(function(rows) {
+        var att = rows || [];
+        // Stats
+        var present = att.filter(function(a) { return a.status === 'present'; }).length;
+        var totalHours = att.reduce(function(s, a) { return s + (Number(a.total_hours) || 0); }, 0);
+        var lateDays = att.filter(function(a) { return a.late_minutes > 0; }).length;
+        document.getElementById('homeStats').innerHTML =
+          '<div class="stat-box"><div class="val">' + present + '</div><div class="lbl">أيام الحضور</div></div>' +
+          '<div class="stat-box"><div class="val">' + totalHours.toFixed(0) + '</div><div class="lbl">ساعات العمل</div></div>' +
+          '<div class="stat-box"><div class="val">' + lateDays + '</div><div class="lbl">أيام تأخير</div></div>' +
+          '<div class="stat-box"><div class="val">' + att.length + '</div><div class="lbl">إجمالي السجلات</div></div>';
+        // Recent
+        var recent = att.slice(0, 5);
+        document.getElementById('recentAttendance').innerHTML = recent.length ?
+          recent.map(function(a) {
+            var d = a.attendance_date ? new Date(a.attendance_date).toLocaleDateString('ar-SA', {weekday:'short', day:'numeric', month:'short'}) : '';
+            var cin = a.clock_in ? new Date(a.clock_in).toLocaleTimeString('en', {hour:'2-digit', minute:'2-digit'}) : '—';
+            var cout = a.clock_out ? new Date(a.clock_out).toLocaleTimeString('en', {hour:'2-digit', minute:'2-digit'}) : '—';
+            return '<div class="att-item"><div class="att-date">' + d + '</div><div class="att-times">' + cin + ' → ' + cout + '</div><div class="att-hours">' + (Number(a.total_hours)||0).toFixed(1) + 'h</div></div>';
+          }).join('') : '<p style="text-align:center;color:var(--muted);padding:20px;">لا توجد سجلات</p>';
+      });
+    }
+
+    function renderClockButton() {
+      api('GET', '/hr/my-attendance?username=' + username).then(function(rows) {
+        var today = new Date().toISOString().split('T')[0];
+        var todayRecord = (rows||[]).find(function(a) { return a.attendance_date && a.attendance_date.substring(0,10) === today; });
+        var html = '';
+        if (!todayRecord) {
+          html = '<button class="clock-btn clock-in" onclick="clockAction()"><i class="fas fa-sign-in-alt"></i> تسجيل حضور</button>';
+        } else if (!todayRecord.clock_out) {
+          html = '<button class="clock-btn clock-out" onclick="clockAction()"><i class="fas fa-sign-out-alt"></i> تسجيل انصراف</button>';
+        } else {
+          html = '<button class="clock-btn done"><i class="fas fa-check-circle"></i> تم التسجيل اليوم</button>';
+        }
+        document.getElementById('clockSection').innerHTML = html;
+      });
+    }
+
+    function clockAction() {
+      var extra = {};
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(function(pos) {
+          extra.geoLat = pos.coords.latitude;
+          extra.geoLng = pos.coords.longitude;
+          doClockApi(extra);
+        }, function() { doClockApi(extra); }, { timeout: 5000 });
+      } else doClockApi(extra);
+    }
+
+    function doClockApi(extra) {
+      extra.username = username;
+      extra.deviceInfo = navigator.userAgent;
+      api('POST', '/hr/my-clock', extra).then(function(r) {
+        if (r.success) {
+          toast(r.message);
+          renderClockButton();
+          loadHome();
+        } else toast(r.error, true);
+      });
+    }
+
+    // ─── Attendance Page ───
+    function loadAttendancePage() {
+      api('GET', '/hr/my-attendance?username=' + username).then(function(rows) {
+        var att = rows || [];
+        document.getElementById('fullAttendance').innerHTML = att.length ?
+          att.map(function(a) {
+            var d = a.attendance_date ? new Date(a.attendance_date).toLocaleDateString('ar-SA', {weekday:'long', day:'numeric', month:'long'}) : '';
+            var cin = a.clock_in ? new Date(a.clock_in).toLocaleTimeString('en', {hour:'2-digit', minute:'2-digit'}) : '—';
+            var cout = a.clock_out ? new Date(a.clock_out).toLocaleTimeString('en', {hour:'2-digit', minute:'2-digit'}) : '<span class="badge badge-yellow">لم ينصرف</span>';
+            var late = a.late_minutes > 0 ? '<span class="badge badge-red">تأخير ' + a.late_minutes + ' د</span>' : '';
+            return '<div class="att-item"><div class="att-date">' + d + '</div><div class="att-times">' + cin + ' → ' + cout + ' ' + late + '</div><div class="att-hours">' + (Number(a.total_hours)||0).toFixed(1) + 'h</div></div>';
+          }).join('') : '<p style="text-align:center;color:var(--muted);padding:20px;">لا توجد سجلات</p>';
+      });
+    }
+
+    // ─── Leave Page ───
+    function loadLeavePage() {
+      // Balances
+      api('GET', '/hr/my-leave-balances?username=' + username).then(function(rows) {
+        var bals = rows || [];
+        var colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+        document.getElementById('leaveBalances').innerHTML = bals.length ?
+          bals.map(function(b, i) {
+            var c = colors[i % colors.length];
+            return '<div class="leave-card">' +
+              '<div class="leave-icon" style="background:' + c + '15;color:' + c + ';"><i class="fas fa-calendar-day"></i></div>' +
+              '<div class="leave-info"><div class="leave-name">' + (b.leaveTypeName || b.leave_type_name || '') + '</div>' +
+              '<div class="leave-bal">إجمالي: ' + b.total_days + ' | مستخدم: ' + b.used_days + '</div></div>' +
+              '<div class="leave-count">' + b.remaining_days + '</div></div>';
+          }).join('') : '<p style="text-align:center;color:var(--muted);padding:20px;">لا توجد أرصدة</p>';
+      });
+      // Requests
+      api('GET', '/hr/my-leave-requests?username=' + username).then(function(rows) {
+        var reqs = rows || [];
+        var statusMap = { pending: ['قيد الانتظار', 'badge-yellow'], branch_approved: ['موافق من المدير', 'badge-blue'], hr_approved: ['معتمدة', 'badge-green'], rejected: ['مرفوضة', 'badge-red'] };
+        document.getElementById('myLeaveRequests').innerHTML = reqs.length ?
+          reqs.map(function(r) {
+            var s = statusMap[r.status] || [r.status, 'badge-blue'];
+            var sd = r.start_date ? new Date(r.start_date).toLocaleDateString('en-GB') : '';
+            var ed = r.end_date ? new Date(r.end_date).toLocaleDateString('en-GB') : '';
+            return '<div class="leave-card"><div class="leave-info">' +
+              '<div class="leave-name">' + (r.leaveTypeName || r.leave_type_name || '') + ' — ' + r.days_count + ' يوم</div>' +
+              '<div class="leave-bal">' + sd + ' إلى ' + ed + '</div></div>' +
+              '<span class="badge ' + s[1] + '">' + s[0] + '</span></div>';
+          }).join('') : '<p style="text-align:center;color:var(--muted);padding:12px;">لا توجد طلبات</p>';
+      });
+    }
+
+    function showLeaveForm() {
+      api('GET', '/hr/leave-types').then(function(types) {
+        var opts = (types||[]).map(function(t) { return '<option value="' + t.id + '">' + t.name + '</option>'; }).join('');
+        document.getElementById('leaveForm').style.display = 'block';
+        document.getElementById('leaveForm').innerHTML =
+          '<div class="card"><div class="card-title" style="margin-bottom:12px;">طلب إجازة جديد</div>' +
+          '<div class="form-group"><label>نوع الإجازة</label><select id="lfType">' + opts + '</select></div>' +
+          '<div class="form-group"><label>من تاريخ</label><input type="date" id="lfStart"></div>' +
+          '<div class="form-group"><label>إلى تاريخ</label><input type="date" id="lfEnd"></div>' +
+          '<div class="form-group"><label>السبب</label><textarea id="lfReason" rows="2"></textarea></div>' +
+          '<button class="btn btn-primary" onclick="submitLeave()"><i class="fas fa-paper-plane"></i> تقديم الطلب</button>' +
+          '</div>';
+      });
+    }
+
+    function submitLeave() {
+      api('POST', '/hr/my-leave-request', {
+        username: username,
+        leaveTypeId: document.getElementById('lfType').value,
+        startDate: document.getElementById('lfStart').value,
+        endDate: document.getElementById('lfEnd').value,
+        reason: document.getElementById('lfReason').value
+      }).then(function(r) {
+        if (r.success) { toast(r.message); document.getElementById('leaveForm').style.display = 'none'; loadLeavePage(); }
+        else toast(r.error, true);
+      });
+    }
+
+    // ─── Profile Page ───
+    function loadProfile() {
+      if (!empData) return;
+      var e = empData;
+      var fields = [
+        ['الرقم الوظيفي', e.employee_number],
+        ['الاسم', e.fullName],
+        ['الوظيفة', e.job_title],
+        ['القسم', e.departmentName],
+        ['الفرع', e.branchName],
+        ['الجوال', e.phone],
+        ['البريد', e.email],
+        ['تاريخ التعيين', e.hire_date ? new Date(e.hire_date).toLocaleDateString('en-GB') : '—'],
+        ['نوع التوظيف', { full_time: 'دوام كامل', part_time: 'دوام جزئي', hourly: 'بالساعة', contract: 'عقد' }[e.employment_type] || e.employment_type],
+        ['الحالة', e.status === 'active' ? '<span class="badge badge-green">نشط</span>' : '<span class="badge badge-red">' + e.status + '</span>']
+      ];
+      document.getElementById('profileData').innerHTML = fields.map(function(f) {
+        return '<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);"><span style="color:var(--muted);font-size:13px;">' + f[0] + '</span><span style="font-weight:700;font-size:13px;">' + (f[1]||'—') + '</span></div>';
+      }).join('');
+      // Payslips
+      api('GET', '/hr/my-payslips?username=' + username).then(function(rows) {
+        var slips = rows || [];
+        document.getElementById('myPayslips').innerHTML = slips.length ?
+          slips.map(function(s) {
+            var months = ['', 'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+            return '<div class="leave-card">' +
+              '<div class="leave-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-file-invoice-dollar"></i></div>' +
+              '<div class="leave-info"><div class="leave-name">' + months[s.month||0] + ' ' + (s.year||'') + '</div>' +
+              '<div class="leave-bal">أساسي: ' + Number(s.basic_salary||0).toFixed(0) + ' | خصومات: ' + Number(s.total_deductions||0).toFixed(0) + '</div></div>' +
+              '<div class="leave-count" style="color:var(--success);">' + Number(s.net_salary||0).toFixed(0) + '</div></div>';
+          }).join('') : '<p style="text-align:center;color:var(--muted);padding:12px;">لا توجد رواتب</p>';
+      });
+    }
+
+    // ─── Navigation ───
+    function switchPage(name) {
+      document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+      document.querySelectorAll('.tab-item').forEach(function(t) { t.classList.remove('active'); });
+      document.getElementById('page' + name).classList.add('active');
+      event.currentTarget.classList.add('active');
+      if (name === 'Attendance') loadAttendancePage();
+      if (name === 'Leave') loadLeavePage();
+      if (name === 'Profile') loadProfile();
+    }
+
+    // ─── Auto-login ───
+    if (token && username) loadApp();
+    // Enter key
+    document.addEventListener('keydown', function(e) { if (e.key === 'Enter' && document.getElementById('loginPage').style.display !== 'none') doLogin(); });
+  </script>
+</body>
+</html>

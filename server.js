@@ -86,6 +86,8 @@ const PUBLIC_PATHS = [
   '/api/auth/init/',
   '/api/settings',
   '/api/menu',
+  '/api/hr/my-',
+  '/api/hr/leave-types',
 ];
 app.use('/api/', function(req, res, next) {
   // Skip OPTIONS (preflight)

@@ -438,13 +438,17 @@ router.post('/employees', async (req, res) => {
       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         empId, employeeNumber,
-        b.firstName, b.lastName, b.nationalId || null, b.passportNumber || null, b.iqamaNumber || null,
-        b.phone || null, b.email || null, b.gender || 'male', b.dateOfBirth || null, b.nationality || null,
+        b.firstName || '', b.lastName || '', b.nationalId || null, b.passportNumber || null, b.iqamaNumber || null,
+        b.phone || null, b.email || null, b.gender || 'male',
+        b.dateOfBirth && b.dateOfBirth.length > 0 ? b.dateOfBirth : null,
+        b.nationality || null,
         b.branchId || null, b.brandId || null, b.departmentId || null, b.positionId || null, b.jobTitle || null,
         b.employmentType || 'full_time', b.salaryType || 'monthly',
         b.basicSalary || 0, b.hourlyRate || 0,
         b.housingAllowance || 0, b.transportAllowance || 0, b.otherAllowance || 0,
-        b.hireDate || null, b.contractEndDate || null, b.probationEndDate || null,
+        b.hireDate && b.hireDate.length > 0 ? b.hireDate : null,
+        b.contractEndDate && b.contractEndDate.length > 0 ? b.contractEndDate : null,
+        b.probationEndDate && b.probationEndDate.length > 0 ? b.probationEndDate : null,
         b.bankName || null, b.bankAccount || null, b.bankIban || null,
         b.emergencyContactName || null, b.emergencyContactPhone || null, b.emergencyContactRelation || null,
         b.notes || null, 'active', b.username || null
@@ -498,10 +502,16 @@ router.put('/employees/:id', async (req, res) => {
       emergencyContactRelation: 'emergency_contact_relation', notes: 'notes', status: 'status'
     };
 
+    var dateFields = ['date_of_birth', 'hire_date', 'contract_end_date', 'probation_end_date'];
     for (const [jsKey, dbCol] of Object.entries(mapping)) {
       if (b[jsKey] !== undefined) {
         fields.push(`${dbCol} = ?`);
-        params.push(b[jsKey]);
+        // Handle empty date strings → NULL
+        if (dateFields.indexOf(dbCol) >= 0) {
+          params.push(b[jsKey] && b[jsKey].length > 0 ? b[jsKey] : null);
+        } else {
+          params.push(b[jsKey] === '' ? null : b[jsKey]);
+        }
       }
     }
 
@@ -544,6 +554,24 @@ router.post('/employees/:id/activate', async (req, res) => {
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
+});
+
+// DELETE employee (soft delete)
+router.delete('/employees/:id', async (req, res) => {
+  try {
+    // Soft delete — mark as deleted instead of removing
+    const [emp] = await db.query('SELECT first_name, last_name, linked_username FROM hr_employees WHERE id = ?', [req.params.id]);
+    if (!emp.length) return res.json({ success: false, error: 'الموظف غير موجود' });
+
+    await db.query('UPDATE hr_employees SET status = ?, deleted_at = NOW() WHERE id = ?', ['terminated', req.params.id]);
+
+    // Deactivate linked user account if exists
+    if (emp[0].linked_username) {
+      await db.query('UPDATE users SET active = 0 WHERE username = ?', [emp[0].linked_username]);
+    }
+
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════════════════════

@@ -4323,6 +4323,18 @@ function hrViewEmployee(id) {
       });
       html += '</div>';
     }
+    // Action buttons
+    html += '<div style="display:flex;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid #e2e8f0;flex-wrap:wrap;">';
+    html += '<button class="btn btn-sm" style="background:#3b82f6;color:#fff;border-radius:10px;padding:8px 16px;" onclick="erpCloseModal();hrEditEmployee(\'' + id + '\')"><i class="fas fa-edit"></i> تعديل</button>';
+    if (emp.status === 'active') {
+      html += '<button class="btn btn-sm" style="background:#f59e0b;color:#fff;border-radius:10px;padding:8px 16px;" onclick="hrSuspendEmployee(\'' + id + '\')"><i class="fas fa-pause-circle"></i> تجميد</button>';
+      html += '<button class="btn btn-sm" style="background:#ef4444;color:#fff;border-radius:10px;padding:8px 16px;" onclick="hrTerminateEmployee(\'' + id + '\')"><i class="fas fa-user-slash"></i> إنهاء خدمة</button>';
+    } else if (emp.status === 'suspended') {
+      html += '<button class="btn btn-sm" style="background:#10b981;color:#fff;border-radius:10px;padding:8px 16px;" onclick="hrActivateEmployee(\'' + id + '\')"><i class="fas fa-play-circle"></i> تنشيط</button>';
+    }
+    html += '<button class="btn btn-sm" style="background:#dc2626;color:#fff;border-radius:10px;padding:8px 16px;" onclick="hrDeleteEmployee(\'' + id + '\',\'' + (emp.fullName||'').replace(/'/g,'') + '\')"><i class="fas fa-trash"></i> حذف</button>';
+    html += '</div>';
+
     document.getElementById('erpModalTitle').textContent = 'ملف الموظف: ' + (emp.fullName||'');
     document.getElementById('erpModalBody').innerHTML = html;
     var box = document.querySelector('#erpModal .modal-box');
@@ -4402,6 +4414,48 @@ function hrOpenEmployeeModal(data) {
 function hrEditEmployee(id) {
   var e = _hrEmployees.find(function(x){return x.id===id;});
   if (e) hrOpenEmployeeModal(e);
+}
+
+function hrTerminateEmployee(id) {
+  var reason = prompt('سبب إنهاء الخدمة:');
+  if (reason === null) return;
+  if (!confirm('تأكيد إنهاء خدمة هذا الموظف؟ سيتم إيقاف حسابه أيضاً.')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم إنهاء خدمة الموظف'); erpCloseModal(); hrLoadEmployees(); }
+    else showToast(r.error, true);
+  }).terminateEmployee(id, { terminationReason: reason, terminationDate: new Date().toISOString().split('T')[0] });
+}
+
+function hrSuspendEmployee(id) {
+  if (!confirm('تأكيد تجميد هذا الموظف؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم تجميد الموظف'); erpCloseModal(); hrLoadEmployees(); }
+    else showToast(r.error, true);
+  }).suspendEmployee(id);
+}
+
+function hrActivateEmployee(id) {
+  if (!confirm('تأكيد إعادة تنشيط هذا الموظف؟')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم تنشيط الموظف'); erpCloseModal(); hrLoadEmployees(); }
+    else showToast(r.error, true);
+  }).activateEmployee(id);
+}
+
+function hrDeleteEmployee(id, name) {
+  if (!confirm('تأكيد حذف الموظف "' + name + '"؟\n\nسيتم إيقاف حسابه وحذف بياناته.')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) { showToast('تم حذف الموظف'); erpCloseModal(); hrLoadEmployees(); }
+    else showToast(r.error, true);
+  }).deleteHrEmployee(id);
 }
 
 function hrSaveEmployee() {

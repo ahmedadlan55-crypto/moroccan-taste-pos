@@ -3,82 +3,95 @@
 <head>
   <meta charset="UTF-8">
   <title>بوابة الموظف</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-  <meta name="theme-color" content="#1e40af">
-  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
   <script>
     (function(){try{var t=localStorage.getItem('pos_token'),s=localStorage.getItem('pos_session');
-    if(!t||!s){document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('authenticated','needs-login');});return;}
-    document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('authenticated');});
-    }catch(e){document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('authenticated','needs-login');});}})();
+    if(t&&s){document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('ok');});}
+    else{document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('ok','needs-login');});}
+    }catch(e){document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('ok','needs-login');});}})();
   </script>
-  <style>html,body{background:#f1f5f9;}body:not(.authenticated){visibility:hidden!important;}</style>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-  <link rel="stylesheet" href="/employee/style.css?v=3">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;direction:rtl;background:#f1f5f9;color:#1e293b;height:100dvh;display:flex;flex-direction:column;overflow:hidden;max-width:100vw;}
+    body:not(.ok){visibility:hidden!important;}
+    #app{display:none;flex-direction:column;height:100dvh;overflow:hidden;}
+    .hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:#1e40af;color:#fff;height:50px;flex-shrink:0;}
+    .hdr-r{display:flex;align-items:center;gap:8px;flex:1;min-width:0;}
+    .hdr-av{width:34px;height:34px;border-radius:8px;background:rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;}
+    .hdr-n{font-size:13px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .hdr-s{font-size:10px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .hdr-b{display:flex;gap:4px;flex-shrink:0;}
+    .hdr-b button{width:30px;height:30px;border-radius:6px;border:none;background:rgba(255,255,255,.15);color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+    .main{flex:1;overflow-y:auto;padding:10px;padding-bottom:60px;}
+    .clock-btn{width:100%;padding:16px;border-radius:14px;border:none;cursor:pointer;display:flex;align-items:center;gap:12px;margin-bottom:8px;font-family:inherit;text-align:right;color:#fff;}
+    .clock-btn i{font-size:28px;}
+    .clock-lbl{font-size:16px;font-weight:900;}
+    .clock-time{font-size:12px;opacity:.8;margin-top:2px;font-family:monospace;}
+    .ci{background:linear-gradient(135deg,#10b981,#059669);}
+    .co{background:linear-gradient(135deg,#ef4444,#dc2626);}
+    .cd{background:#fff;color:#64748b;border:1px solid #e2e8f0;cursor:default;}
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:8px;}
+    .st{background:#fff;border-radius:10px;padding:8px 4px;text-align:center;border:1px solid #f1f5f9;}
+    .st i{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;margin:0 auto 2px;}
+    .st b{display:block;font-size:16px;font-weight:900;}
+    .st span{font-size:8px;color:#64748b;font-weight:700;}
+    .card{background:#fff;border-radius:12px;padding:10px;margin-bottom:6px;}
+    .card-t{font-size:12px;font-weight:800;margin-bottom:6px;display:flex;align-items:center;gap:4px;}
+    .card-t i{color:#3b82f6;font-size:12px;}
+    .ar{display:flex;align-items:center;gap:4px;padding:6px 0;border-bottom:1px solid #f8fafc;font-size:11px;}
+    .ar:last-child{border-bottom:none;}
+    .ad{font-weight:700;min-width:55px;color:#475569;flex-shrink:0;}
+    .at{flex:1;color:#64748b;}
+    .ah{font-weight:900;color:#1e40af;flex-shrink:0;}
+    .meta{font-size:9px;color:#94a3b8;margin-top:1px;}
+    .lc{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f8fafc;font-size:12px;}
+    .lc:last-child{border-bottom:none;}
+    .pf{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f8fafc;font-size:11px;}
+    .pf:last-child{border-bottom:none;}
+    .pf span{color:#64748b;} .pf b{color:#1e293b;}
+    .badge{padding:2px 6px;border-radius:8px;font-size:9px;font-weight:700;background:#dbeafe;color:#1e40af;}
+    .empty{text-align:center;color:#94a3b8;padding:16px;font-size:12px;}
+    .bnav{display:flex;background:#fff;border-top:1px solid #e2e8f0;padding:4px 0;padding-bottom:calc(4px + env(safe-area-inset-bottom,0));position:fixed;bottom:0;left:0;right:0;z-index:50;}
+    .nt{flex:1;text-align:center;padding:4px;cursor:pointer;color:#94a3b8;font-size:9px;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:1px;}
+    .nt i{font-size:16px;}
+    .nt.active{color:#1e40af;}
+    .btn-m{width:100%;padding:10px;border-radius:10px;font-size:13px;font-weight:800;border:none;cursor:pointer;background:#3b82f6;color:#fff;margin-bottom:6px;}
+    .fg{margin-bottom:8px;} .fg label{display:block;font-size:10px;font-weight:700;color:#475569;margin-bottom:2px;}
+    .fi{width:100%;padding:9px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;}
+    .toast{position:fixed;top:8px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:8px;font-size:12px;font-weight:700;z-index:9999;display:none;max-width:90%;text-align:center;}
+    .toast.show{display:block;} .toast.ok{background:#0f172a;color:#fff;} .toast.err{background:#ef4444;color:#fff;}
+    .page{display:none;} .page.active{display:block;}
+    .login-w{display:flex;align-items:center;justify-content:center;min-height:100dvh;padding:16px;}
+    .login-b{background:#fff;border-radius:16px;padding:28px 18px;width:100%;max-width:320px;text-align:center;}
+    .login-b h1{font-size:18px;margin-bottom:4px;} .login-b p{color:#64748b;font-size:11px;margin-bottom:16px;}
+    .login-b input{width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;margin-bottom:8px;text-align:right;}
+    .login-b button{width:100%;padding:12px;background:#1e40af;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:800;cursor:pointer;}
+    .modal{position:fixed;inset:0;z-index:5000;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;transition:.2s;}
+    .modal.show{opacity:1;pointer-events:all;}
+    .modal-c{background:#fff;border-radius:14px 14px 0 0;padding:16px;width:100%;max-width:380px;transform:translateY(100%);transition:transform .3s;}
+    .modal.show .modal-c{transform:translateY(0);}
+    .modal-h{display:flex;justify-content:space-between;font-size:14px;font-weight:800;margin-bottom:10px;}
+    .modal-h button{width:26px;height:26px;border-radius:6px;background:#f1f5f9;border:none;font-size:14px;cursor:pointer;}
+  </style>
   <script defer src="/shared/api-bridge.js"></script>
-  <script defer src="/employee/app.js?v=3"></script>
+  <script defer src="/employee/app.js?v=4"></script>
 </head>
 <body>
-<!-- No loader — app shows instantly -->
 <div class="toast" id="toast"></div>
-
-<div id="app" style="display:none;">
-  <!-- Header -->
-  <header id="hdr">
-    <div class="hdr-r">
-      <div class="hdr-av"><i class="fas fa-user-tie"></i></div>
-      <div class="hdr-info"><div class="hdr-name" id="hdrName">الموظف</div><div class="hdr-sub" id="hdrSub"></div></div>
-    </div>
-    <div class="hdr-btns">
-      <button onclick="doRefresh()"><i class="fas fa-sync-alt"></i></button>
-      <button class="red" onclick="doLogout()"><i class="fas fa-sign-out-alt"></i></button>
-    </div>
-  </header>
-
-  <!-- Content -->
-  <main id="content">
-    <!-- HOME -->
-    <div class="page active" id="pghome">
-      <div id="clockSection"></div>
-      <div class="stats" id="homeStats"></div>
-      <div class="card"><div class="card-t"><i class="fas fa-history"></i> آخر الحضور</div><div id="recentAtt"></div></div>
-    </div>
-    <!-- ATTENDANCE -->
-    <div class="page" id="pgatt">
-      <div class="card"><div class="card-t"><i class="fas fa-calendar-check"></i> سجل الحضور</div><div id="attList"></div></div>
-    </div>
-    <!-- LEAVE -->
-    <div class="page" id="pgleave">
-      <div class="card"><div class="card-t"><i class="fas fa-umbrella-beach"></i> أرصدة الإجازات</div><div id="leaveBals"></div></div>
-      <button class="btn-main" onclick="openLeaveForm()"><i class="fas fa-plus"></i> طلب إجازة</button>
-      <div class="card"><div class="card-t"><i class="fas fa-list"></i> طلباتي</div><div id="leaveReqs"></div></div>
-    </div>
-    <!-- PROFILE -->
-    <div class="page" id="pgme">
-      <div class="card"><div class="card-t"><i class="fas fa-id-card"></i> بياناتي</div><div id="profileInfo"></div></div>
-      <div class="card"><div class="card-t"><i class="fas fa-money-bill-wave"></i> الرواتب</div><div id="payslips"></div></div>
-    </div>
-  </main>
-
-  <!-- Bottom Nav -->
-  <nav class="bnav">
-    <div class="nav-tab active" onclick="navTo('home',this)"><i class="fas fa-home"></i>الرئيسية</div>
-    <div class="nav-tab" onclick="navTo('att',this)"><i class="fas fa-fingerprint"></i>البصمة</div>
-    <div class="nav-tab" onclick="navTo('leave',this)"><i class="fas fa-calendar"></i>إجازات</div>
-    <div class="nav-tab" onclick="navTo('me',this)"><i class="fas fa-user"></i>ملفي</div>
-  </nav>
-</div>
-
-<!-- Leave Modal -->
-<div class="modal" id="leaveModal">
-  <div class="modal-c">
-    <div class="modal-h"><span><i class="fas fa-calendar-plus"></i> طلب إجازة</span><button onclick="closeLeaveForm()">&times;</button></div>
-    <div class="fg"><label>النوع</label><select class="fi" id="lfType"></select></div>
-    <div class="fg"><label>من</label><input type="date" class="fi" id="lfStart"></div>
-    <div class="fg"><label>إلى</label><input type="date" class="fi" id="lfEnd"></div>
-    <div class="fg"><label>السبب</label><textarea class="fi" id="lfReason" rows="2"></textarea></div>
-    <button class="btn-main" onclick="submitLeave()"><i class="fas fa-paper-plane"></i> تقديم</button>
+<div id="app">
+  <div class="hdr">
+    <div class="hdr-r"><div class="hdr-av"><i class="fas fa-user-tie"></i></div><div><div class="hdr-n" id="hdrName">الموظف</div><div class="hdr-s" id="hdrSub"></div></div></div>
+    <div class="hdr-b"><button onclick="doRefresh()"><i class="fas fa-sync-alt"></i></button><button style="background:rgba(239,68,68,.3);" onclick="doLogout()"><i class="fas fa-sign-out-alt"></i></button></div>
   </div>
+  <div class="main">
+    <div class="page active" id="pghome"><div id="clockSection"></div><div class="stats" id="homeStats"></div><div class="card"><div class="card-t"><i class="fas fa-history"></i> آخر الحضور</div><div id="recentAtt"></div></div></div>
+    <div class="page" id="pgatt"><div class="card"><div class="card-t"><i class="fas fa-calendar-check"></i> سجل الحضور</div><div id="attList"></div></div></div>
+    <div class="page" id="pgleave"><div class="card"><div class="card-t"><i class="fas fa-umbrella-beach"></i> أرصدة الإجازات</div><div id="leaveBals"></div></div><button class="btn-m" onclick="openLeaveForm()"><i class="fas fa-plus"></i> طلب إجازة</button><div class="card"><div class="card-t"><i class="fas fa-list"></i> طلباتي</div><div id="leaveReqs"></div></div></div>
+    <div class="page" id="pgme"><div class="card"><div class="card-t"><i class="fas fa-id-card"></i> بياناتي</div><div id="profileInfo"></div></div><div class="card"><div class="card-t"><i class="fas fa-money-bill-wave"></i> الرواتب</div><div id="payslips"></div></div></div>
+  </div>
+  <nav class="bnav"><div class="nt active" onclick="navTo('home',this)"><i class="fas fa-home"></i>الرئيسية</div><div class="nt" onclick="navTo('att',this)"><i class="fas fa-fingerprint"></i>البصمة</div><div class="nt" onclick="navTo('leave',this)"><i class="fas fa-calendar"></i>إجازات</div><div class="nt" onclick="navTo('me',this)"><i class="fas fa-user"></i>ملفي</div></nav>
 </div>
+<div class="modal" id="leaveModal"><div class="modal-c"><div class="modal-h"><span><i class="fas fa-calendar-plus"></i> طلب إجازة</span><button onclick="closeLeaveForm()">&times;</button></div><div class="fg"><label>النوع</label><select class="fi" id="lfType"></select></div><div class="fg"><label>من</label><input type="date" class="fi" id="lfStart"></div><div class="fg"><label>إلى</label><input type="date" class="fi" id="lfEnd"></div><div class="fg"><label>السبب</label><textarea class="fi" id="lfReason" rows="2"></textarea></div><button class="btn-m" onclick="submitLeave()"><i class="fas fa-paper-plane"></i> تقديم</button></div></div>
 </body>
 </html>

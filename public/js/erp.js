@@ -4603,7 +4603,19 @@ function hrLoadAttendance() {
   var br = (document.getElementById('hrAttBranch')||{}).value;
   if (br) params.branch_id = br;
   window._apiBridge.withSuccessHandler(function(list) {
-    if (!list||!list.length) { tb.innerHTML='<tr><td colspan="9" class="empty-msg">لا توجد سجلات</td></tr>'; return; }
+    if (!list||!list.length) { tb.innerHTML='<tr><td colspan="9" class="empty-msg">لا توجد سجلات</td></tr>'; document.getElementById('hrAttSummary').innerHTML=''; return; }
+    // Summary stats cards
+    var totalEmp = list.length;
+    var totalHrs = list.reduce(function(s,a){return s+(Number(a.totalHours)||0);},0);
+    var totalLateMin = list.reduce(function(s,a){return s+(Number(a.lateMinutes)||0);},0);
+    var lateCount = list.filter(function(a){return (a.lateMinutes||0)>0;}).length;
+    var avgHrs = totalEmp ? (totalHrs/totalEmp).toFixed(1) : '0';
+    var sm = document.getElementById('hrAttSummary');
+    sm.innerHTML =
+      '<div style="background:#fff;border-radius:14px;padding:16px;border:1px solid #e5e7eb;text-align:center;"><div style="font-size:28px;font-weight:900;color:#0f172a;">' + totalEmp + '</div><div style="font-size:12px;color:#64748b;margin-top:4px;"><i class="fas fa-users" style="color:#3b82f6;"></i> سجلات</div></div>' +
+      '<div style="background:#fff;border-radius:14px;padding:16px;border:1px solid #e5e7eb;text-align:center;"><div style="font-size:28px;font-weight:900;color:#0ea5e9;">' + totalHrs.toFixed(1) + '</div><div style="font-size:12px;color:#64748b;margin-top:4px;"><i class="fas fa-clock" style="color:#0ea5e9;"></i> إجمالي الساعات</div></div>' +
+      '<div style="background:#fff;border-radius:14px;padding:16px;border:1px solid #e5e7eb;text-align:center;"><div style="font-size:28px;font-weight:900;color:#10b981;">' + avgHrs + '</div><div style="font-size:12px;color:#64748b;margin-top:4px;"><i class="fas fa-chart-bar" style="color:#10b981;"></i> متوسط ساعات</div></div>' +
+      '<div style="background:#fff;border-radius:14px;padding:16px;border:1px solid #e5e7eb;text-align:center;"><div style="font-size:28px;font-weight:900;color:' + (lateCount>0?'#ef4444':'#10b981') + ';">' + (totalLateMin/60).toFixed(1) + '</div><div style="font-size:12px;color:#64748b;margin-top:4px;"><i class="fas fa-exclamation-triangle" style="color:#f59e0b;"></i> ساعات تأخير (' + lateCount + ' موظف)</div></div>';
     var srcLabels = {fingerprint:'بصمة',pos:'POS',app:'تطبيق',manual:'يدوي'};
     var statusLabels = {present:'حاضر',absent:'غائب',leave:'إجازة',holiday:'عطلة',weekend:'إجازة أسبوعية'};
     var statusColors = {present:'green',absent:'red',leave:'blue',holiday:'purple',weekend:'gray'};

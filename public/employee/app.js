@@ -231,14 +231,28 @@ function loadAttPage() {
   callAPI('GET', '/hr/my-attendance?username=' + currentUser, null, function(rows) {
     var att = rows||[];
     if (!Array.isArray(att)) att = [];
+    // Stats cards for attendance page
+    var statsEl = document.getElementById('attStats');
+    if (statsEl) {
+      var present = att.filter(function(a){return a.status==='present';}).length;
+      var hours = att.reduce(function(s,a){return s+(Number(a.total_hours)||0);},0);
+      var totalLateMin = att.reduce(function(s,a){return s+(Number(a.late_minutes)||0);},0);
+      var lateCount = att.filter(function(a){return (a.late_minutes||0)>0;}).length;
+      statsEl.innerHTML =
+        '<div class="st"><i class="fas fa-check" style="color:#10b981;background:#ecfdf5;"></i><b>' + present + '</b><span>حضور</span></div>' +
+        '<div class="st"><i class="fas fa-clock" style="color:#0ea5e9;background:#e0f2fe;"></i><b>' + hours.toFixed(1) + '</b><span>ساعة عمل</span></div>' +
+        '<div class="st"><i class="fas fa-exclamation" style="color:#f59e0b;background:#fffbeb;"></i><b>' + (totalLateMin/60).toFixed(1) + '</b><span>ساعة تأخير</span></div>' +
+        '<div class="st"><i class="fas fa-user-clock" style="color:#ef4444;background:#fef2f2;"></i><b>' + lateCount + '</b><span>مرات تأخير</span></div>';
+    }
     if (!att.length) { c.innerHTML = '<p class="empty">لا توجد سجلات</p>'; return; }
     c.innerHTML = att.map(function(a) {
       var d = a.attendance_date ? new Date(a.attendance_date).toLocaleDateString('ar-SA',{weekday:'long',day:'numeric',month:'long'}) : '';
       var ci = a.clock_in ? new Date(a.clock_in).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}) : '—';
       var co = a.clock_out ? new Date(a.clock_out).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}) : '⏳';
+      var lateTxt = (a.late_minutes||0) > 0 ? '<div class="meta" style="color:#ef4444;"><i class="fas fa-exclamation-circle"></i> تأخير ' + a.late_minutes + ' د</div>' : '';
       var dev = a.device_name ? '<div class="meta"><i class="fas fa-mobile-alt"></i> ' + a.device_name + '</div>' : '';
       var loc = a.geo_address_in ? '<div class="meta"><i class="fas fa-map-marker-alt" style="color:#10b981;"></i> ' + a.geo_address_in.substring(0,50) + '</div>' : '';
-      return '<div class="ar"><span class="ad">' + d + '</span><span class="at">' + ci + ' → ' + co + dev + loc + '</span><span class="ah">' + (Number(a.total_hours)||0).toFixed(1) + 'h</span></div>';
+      return '<div class="ar"><span class="ad">' + d + '</span><span class="at">' + ci + ' → ' + co + lateTxt + dev + loc + '</span><span class="ah">' + (Number(a.total_hours)||0).toFixed(1) + 'h</span></div>';
     }).join('');
   });
 }

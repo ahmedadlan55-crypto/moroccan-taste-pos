@@ -4579,7 +4579,48 @@ function hrLoadAttendance() {
   }).getHrAttendance(params);
 }
 
-function hrImportAttendance() { showToast('استيراد البصمة: قيد التطوير', true); }
+function hrImportAttendance() {
+  document.getElementById('erpModalTitle').textContent = 'استيراد سجلات البصمة';
+  document.getElementById('erpModalBody').innerHTML =
+    '<div style="margin-bottom:14px;padding:14px;background:#eff6ff;border:1px solid #dbeafe;border-radius:12px;">' +
+      '<p style="font-weight:700;color:#1e40af;margin-bottom:8px;"><i class="fas fa-info-circle"></i> صيغة الملف المطلوبة (CSV):</p>' +
+      '<code style="display:block;background:#fff;padding:10px;border-radius:8px;font-size:12px;direction:ltr;text-align:left;">' +
+        'employeeNumber,date,clockIn,clockOut<br>' +
+        'EMP-00001,2026-04-16,08:00,17:00<br>' +
+        'EMP-00002,2026-04-16,08:15,16:45' +
+      '</code>' +
+    '</div>' +
+    '<div class="form-row"><label>اختر ملف CSV</label><input type="file" id="hrAttFile" accept=".csv" class="form-control"></div>' +
+    '<div id="hrAttPreview" style="margin-top:10px;"></div>';
+  document.getElementById('erpModalSaveBtn').onclick = function() {
+    var file = document.getElementById('hrAttFile').files[0];
+    if (!file) return showToast('اختر ملف CSV', true);
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var lines = e.target.result.split('\\n').filter(function(l) { return l.trim(); });
+      if (lines.length < 2) return showToast('الملف فارغ', true);
+      var records = [];
+      for (var i = 1; i < lines.length; i++) {
+        var cols = lines[i].split(',');
+        if (cols.length >= 4) {
+          records.push({ employeeNumber: cols[0].trim(), date: cols[1].trim(), clockIn: cols[2].trim(), clockOut: cols[3].trim() });
+        }
+      }
+      if (!records.length) return showToast('لا توجد بيانات صالحة', true);
+      loader(true);
+      window._apiBridge.withSuccessHandler(function(r) {
+        loader(false);
+        if (r.success) {
+          showToast('تم استيراد ' + r.imported + ' سجل' + (r.errors && r.errors.length ? ' (' + r.errors.length + ' أخطاء)' : ''));
+          erpCloseModal();
+          hrLoadAttendance();
+        } else showToast(r.error, true);
+      }).importHrAttendance(records);
+    };
+    reader.readAsText(file);
+  };
+  document.getElementById('erpModal').classList.remove('hidden');
+}
 
 // ─── Leave Requests ───
 function hrLoadLeaveRequests() {
@@ -4659,7 +4700,29 @@ function hrRejectLeave(id) {
   window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم الرفض');hrLoadLeaveRequests();}else showToast(r.error,true); }).rejectLeaveRequest(id, {username:currentUser, reason:reason});
 }
 
-function hrViewLeaveDetail(id) { showToast('تفاصيل الطلب: قيد التطوير'); }
+function hrViewLeaveDetail(id) {
+  // Find the leave request and show details
+  var req = (_hrLeaveRequests||[]).find(function(r) { return r.id === id; });
+  if (!req) return showToast('الطلب غير موجود', true);
+  var statusLabels = { pending: 'قيد الانتظار', branch_approved: 'موافق من المدير', hr_approved: 'معتمدة', rejected: 'مرفوضة' };
+  var statusColors = { pending: '#f59e0b', branch_approved: '#3b82f6', hr_approved: '#16a34a', rejected: '#ef4444' };
+  var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+    '<div><strong>رقم الطلب:</strong> <code>' + (req.requestNumber||req.request_number||'') + '</code></div>' +
+    '<div><strong>الموظف:</strong> ' + (req.employeeName||req.employee_name||'') + '</div>' +
+    '<div><strong>النوع:</strong> ' + (req.leaveTypeName||req.leave_type_name||'') + '</div>' +
+    '<div><strong>عدد الأيام:</strong> <span style="font-weight:900;color:#1e40af;">' + (req.daysCount||req.days_count||0) + '</span></div>' +
+    '<div><strong>من:</strong> ' + (req.startDate||req.start_date ? new Date(req.startDate||req.start_date).toLocaleDateString('en-GB') : '') + '</div>' +
+    '<div><strong>إلى:</strong> ' + (req.endDate||req.end_date ? new Date(req.endDate||req.end_date).toLocaleDateString('en-GB') : '') + '</div>' +
+    '<div><strong>الحالة:</strong> <span style="color:' + (statusColors[req.status]||'#64748b') + ';font-weight:800;">' + (statusLabels[req.status]||req.status) + '</span></div>' +
+    '</div>';
+  if (req.reason) html += '<div style="margin-top:12px;"><strong>السبب:</strong><p style="padding:8px;background:#f8fafc;border-radius:8px;margin-top:4px;">' + req.reason + '</p></div>';
+  if (req.rejectionReason||req.rejection_reason) html += '<div style="margin-top:8px;padding:10px;background:#fee2e2;border-radius:8px;"><strong style="color:#ef4444;">سبب الرفض:</strong> ' + (req.rejectionReason||req.rejection_reason) + '</div>';
+  document.getElementById('erpModalTitle').textContent = 'تفاصيل طلب الإجازة';
+  document.getElementById('erpModalBody').innerHTML = html;
+  document.getElementById('erpModalSaveBtn').style.display = 'none';
+  document.getElementById('erpModal').classList.remove('hidden');
+  setTimeout(function() { document.getElementById('erpModalSaveBtn').style.display = ''; }, 100);
+}
 
 // ─── Payroll ───
 function hrLoadPayrollRuns() {

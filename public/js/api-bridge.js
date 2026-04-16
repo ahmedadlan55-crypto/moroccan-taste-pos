@@ -246,6 +246,7 @@
     getHrSchedules:      { method: 'GET',  url: '/hr/schedules' },
     saveHrSchedule:      { method: 'POST', url: '/hr/schedules' },
     getHrAttendance:     { method: 'GET',  url: '/hr/attendance', query: (f) => f },
+    importHrAttendance:  { method: 'POST', url: '/hr/attendance/import' },
     clockAttendance:     { method: 'POST', url: '/hr/attendance/clock' },
     importAttendance:    { method: 'POST', url: '/hr/attendance/import' },
     editAttendance:      { method: 'PUT',  url: (id,d) => '/hr/attendance/' + id, body: (id,d) => d },

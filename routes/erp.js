@@ -428,10 +428,10 @@ router.post('/gl/journals', async (req, res) => {
       for (const entry of entries) {
         const entryId = 'GLE-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
         await db.query(
-          `INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description)
-           VALUES (?,?,?,?,?,?,?,?)`,
+          `INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description, cost_center_id)
+           VALUES (?,?,?,?,?,?,?,?,?)`,
           [entryId, journalId, entry.accountId || null, entry.accountCode || '',
-           entry.accountName || '', entry.debit || 0, entry.credit || 0, entry.description || '']
+           entry.accountName || '', entry.debit || 0, entry.credit || 0, entry.description || '', entry.costCenterId || null]
         );
       }
     }

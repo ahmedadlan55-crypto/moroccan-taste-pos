@@ -1056,12 +1056,15 @@ function _getLeafAccounts() {
 
 // ─── Journal creation — full page form ───
 var _jrnLineCounter = 0;
+var _jrnCostCenters = [];
 var _jrnSelectedType = 'GL';
 var _jrnTypes = [{code:'GL',name:'يومية عامة'},{code:'OB',name:'افتتاحية'},{code:'RENT',name:'إدارة التأجير'}];
 
 function erpOpenJournalModal() {
   _jrnLineCounter = 0;
   _jrnSelectedType = 'GL';
+  // Load cost centers
+  window._apiBridge.withSuccessHandler(function(ccs) { _jrnCostCenters = ccs || []; }).getCostCenters();
   if (_erpAccounts.length === 0) {
     loader(true);
     window._apiBridge.withSuccessHandler(function(list) {
@@ -1175,7 +1178,7 @@ function erpAddJrnLine(prefill) {
     '<td style="padding:6px 4px;"><input type="number" class="form-control jec-debit" step="0.01" min="0" placeholder="0" value="' + (p.debit||'') + '" style="font-size:13px;padding:8px;text-align:center;" oninput="erpCalcJrnBalance()"></td>' +
     '<td style="padding:6px 4px;"><input type="number" class="form-control jec-credit" step="0.01" min="0" placeholder="0" value="' + (p.credit||'') + '" style="font-size:13px;padding:8px;text-align:center;" oninput="erpCalcJrnBalance()"></td>' +
     '<td style="padding:6px 4px;"><input type="text" class="form-control jec-desc" placeholder="" value="' + (p.desc||'') + '" style="font-size:13px;padding:8px;"></td>' +
-    '<td style="padding:6px 4px;"><input type="text" class="form-control jec-cc" placeholder="" style="font-size:13px;padding:8px;background:#f8fafc;"></td>' +
+    '<td style="padding:6px 4px;"><select class="form-control jec-cc" style="font-size:12px;padding:6px;"><option value="">—</option>' + _jrnCostCenters.map(function(c){return '<option value="'+c.id+'" data-name="'+(c.name||'')+'">'+c.code+' — '+(c.name||'')+'</option>';}).join('') + '</select></td>' +
     '<td style="padding:6px 4px;text-align:center;"><button style="width:28px;height:28px;border-radius:6px;border:1px solid #fecaca;background:#fee2e2;color:#ef4444;cursor:pointer;font-size:11px;" onclick="erpRemoveJrnLine(\'' + lineId + '\')" title="حذف"><i class="fas fa-trash"></i></button></td>';
   document.getElementById('erpJrnLines').appendChild(tr);
 
@@ -1283,7 +1286,10 @@ function _gatherJrnEntries() {
     var code = row.querySelector('.jec-code') ? row.querySelector('.jec-code').value : '';
     var name = row.querySelector('.jec-acc-name') ? row.querySelector('.jec-acc-name').value : '';
     if (debit > 0 || credit > 0) {
-      entries.push({ accountId: accId.value, accountCode: code, accountName: name, debit: debit, credit: credit, description: desc });
+      var ccSel = row.querySelector('.jec-cc');
+      var ccId = ccSel ? ccSel.value : '';
+      var ccName = ccSel && ccSel.value ? (ccSel.options[ccSel.selectedIndex].getAttribute('data-name')||'') : '';
+      entries.push({ accountId: accId.value, accountCode: code, accountName: name, debit: debit, credit: credit, description: desc, costCenterId: ccId, costCenterName: ccName });
     }
   });
   return entries;

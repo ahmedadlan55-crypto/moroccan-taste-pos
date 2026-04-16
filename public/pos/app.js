@@ -132,6 +132,10 @@ document.addEventListener('DOMContentLoaded', function() {
     state.menu = res.menu || [];
     state.categories = [...new Set(state.menu.map(function(i) { return i.category; }))].filter(function(c) { return c && String(c).trim() !== ''; });
     state.activeShiftId = res.activeShiftId || '';
+    // Store branch/brand/warehouse context for inventory operations
+    state.brandId = res.brandId || '';
+    state.branchId = res.branchId || '';
+    state.warehouseId = res.warehouseId || '';
 
     try { localStorage.setItem('pos_menu_cache', JSON.stringify({ ts: Date.now(), menu: state.menu })); } catch (e) {}
     saveState();
@@ -1507,7 +1511,7 @@ window.submitCashierStocktake = function() {
     }).withFailureHandler(function(err) {
       loader(false);
       glassToast(err.message || t('errorTitle'), true);
-    }).submitStocktake(itemsToSend, state.user, notes);
+    }).submitStocktake(itemsToSend, state.user, notes, state.warehouseId, state.branchId);
   });
 };
 
@@ -2090,7 +2094,7 @@ window.submitShortageRequest = function() {
           _shrCart = []; localStorage.removeItem('pos_shortage_cart');
         } else glassToast((r && r.error) || t('errorTitle'), true);
       }).withFailureHandler(function() { loader(false); glassToast(t('errorTitle'), true); })
-        .createShortageRequest({ items: items, username: state.user, notes: (q('#shrNotes')||{}).value || '' });
+        .createShortageRequest({ items: items, username: state.user, notes: (q('#shrNotes')||{}).value || '', warehouseId: state.warehouseId || '', branchId: state.branchId || '' });
     }
   });
 };

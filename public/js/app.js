@@ -3737,11 +3737,13 @@ function loadDashUsers() {
       var passDisplay = '<span style="color:#94a3b8;font-size:11px;"><i class="fas fa-lock" style="margin-left:4px;"></i> مشفرة</span>';
       var emailDisplay = u.email ? '<div style="font-size:11px;color:#64748b;"><i class="fas fa-envelope" style="margin-left:3px;color:#94a3b8;"></i>' + u.email + '</div>' : '';
       var btnS = 'width:34px;height:34px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;';
+      var brandDisplay = u.brandName ? '<span class="badge" style="background:#f3e8ff;color:#7c3aed;font-size:10px;">' + u.brandName + '</span>' : '';
+      var branchDisplay = u.branchName ? '<span class="badge badge-blue" style="font-size:10px;">' + u.branchName + '</span>' : '';
       h += '<tr>' +
         '<td><div style="font-weight:800;font-size:14px;color:#1e293b;">' + (u.displayName || '<span style="color:#94a3b8;">—</span>') + '</div><div style="font-size:11px;color:#94a3b8;font-family:monospace;">' + (u.username || '') + '</div>' + emailDisplay + '</td>' +
         '<td>' + roleLabel(u.role) + devBadge + '</td>' +
+        '<td>' + brandDisplay + ' ' + branchDisplay + '</td>' +
         '<td>' + (u.active ? '<span class="badge green">نشط</span>' : '<span class="badge red">موقوف</span>') + '</td>' +
-        '<td>' + passDisplay + '</td>' +
         '<td style="white-space:nowrap;">' +
           '<div style="display:flex;gap:4px;">' +
             '<button style="' + btnS + 'color:#3b82f6;" onclick="editUsr(\'' + u.username + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
@@ -3783,7 +3785,29 @@ function tglUserM() {
   if (q("#muEmail")) q("#muEmail").value = '';
   if (q("#muIsDeveloper")) q("#muIsDeveloper").checked = false;
   if (q("#muPassHint")) q("#muPassHint").innerHTML = '';
+  _loadUserDropdowns();
   openModal('#modalUserForm');
+}
+
+function _loadUserDropdowns(brandVal, branchVal) {
+  // Load brands
+  api.withSuccessHandler(function(brands) {
+    var sel = q('#muBrand');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— بدون —</option>';
+    (brands||[]).forEach(function(b) {
+      sel.innerHTML += '<option value="' + b.id + '"' + (brandVal===b.id?' selected':'') + '>' + b.name + '</option>';
+    });
+  }).getBrands();
+  // Load branches
+  api.withSuccessHandler(function(branches) {
+    var sel = q('#muBranch');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— بدون —</option>';
+    (branches||[]).forEach(function(b) {
+      sel.innerHTML += '<option value="' + b.id + '"' + (branchVal===b.id?' selected':'') + '>' + b.name + '</option>';
+    });
+  }).getBranches();
 }
 
 function editUsr(username) {
@@ -3800,6 +3824,7 @@ function editUsr(username) {
   if (q("#muEmail")) q("#muEmail").value = u.email || '';
   if (q("#muIsDeveloper")) q("#muIsDeveloper").checked = !!u.isDeveloper;
   if (q("#muPassHint")) q("#muPassHint").innerHTML = '';
+  _loadUserDropdowns(u.brandId, u.branchId);
   openModal('#modalUserForm');
 }
 
@@ -3831,6 +3856,8 @@ function saveUserFn() {
   var role        = q("#muRole").value || 'cashier';
   var isDeveloper = q("#muIsDeveloper") ? q("#muIsDeveloper").checked : false;
   var email       = q("#muEmail") ? (q("#muEmail").value || '').trim() : '';
+  var brandId     = q("#muBrand") ? q("#muBrand").value : '';
+  var branchId    = q("#muBranch") ? q("#muBranch").value : '';
 
   if (!username) return showToast('الرقم الوظيفي مطلوب', true);
   if (!_editingUsername && !password) return showToast('كلمة المرور مطلوبة عند إنشاء مستخدم', true);
@@ -3841,7 +3868,7 @@ function saveUserFn() {
 
   loader();
   if (_editingUsername) {
-    var payload = { displayName: displayName, role: role, isDeveloper: isDeveloper, email: email };
+    var payload = { displayName: displayName, role: role, isDeveloper: isDeveloper, email: email, brandId: brandId, branchId: branchId };
     if (password) payload.password = password;
     api.withFailureHandler(function(err){loader(false); showToast(err.message, true);})
        .withSuccessHandler(function(r) {
@@ -3850,7 +3877,7 @@ function saveUserFn() {
           else showToast((r && r.error) || 'فشل التحديث', true);
        }).updateUser(_editingUsername, payload);
   } else {
-    var data = { username: username, password: password, role: role, displayName: displayName, isDeveloper: isDeveloper, email: email };
+    var data = { username: username, password: password, role: role, displayName: displayName, isDeveloper: isDeveloper, email: email, brandId: brandId, branchId: branchId };
     api.withFailureHandler(function(err){loader(false); showToast(err.message, true);})
        .withSuccessHandler(function(r) {
           loader(false);

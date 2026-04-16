@@ -108,7 +108,7 @@ function computeStockQty(item, inv) {
   }
 
   const stockQty = usedConvRate > 1 ? item.qty * usedConvRate : item.qty;
-  // [LOG REMOVED] — debug conversion logging
+  // Production: removed debug log
   return { stockQty, usedConvRate };
 }
 
@@ -141,8 +141,10 @@ async function resolveInvItem(item) {
 router.post('/receive/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { username, includesVAT } = req.body;
+    const { username, includesVAT, warehouseId: reqWarehouseId } = req.body;
     const now = new Date();
+    // Determine target warehouse (from request, user default, or null)
+    const warehouseId = reqWarehouseId || (req.user && req.user.default_warehouse_id) || null;
 
     const [purchases] = await db.query('SELECT * FROM purchases WHERE id = ?', [id]);
     if (!purchases.length) return res.json({ success: false, error: 'Purchase not found' });
@@ -153,7 +155,7 @@ router.post('/receive/:id', async (req, res) => {
     const rawItems = JSON.parse(purchase.items_json || '[]');
     const items = rawItems.map(normPurchaseItem);
 
-//     console.log('[RECEIVE] Purchase', id, '— processing', items.length, 'items');
+    // Production: removed debug log
 
     let count = 0;
     const skipped = [];
@@ -163,7 +165,7 @@ router.post('/receive/:id', async (req, res) => {
     for (const item of items) {
       if (item.qty <= 0) {
         skipped.push({ name: item.name, reason: 'qty=0' });
-//         console.log('[RECEIVE]   skip', item.name, 'qty=0');
+        // Production: removed debug log
         continue;
       }
 
@@ -171,7 +173,7 @@ router.post('/receive/:id', async (req, res) => {
       const inv = await resolveInvItem(item);
       if (!inv) {
         skipped.push({ name: item.name, reason: 'not found in inventory' });
-//         console.log('[RECEIVE]   skip', item.name, '— not found in inventory (tried id=' + item.id + ', name=' + item.name + ')');
+        // Production: removed debug log
         continue;
       }
 
@@ -210,18 +212,27 @@ router.post('/receive/:id', async (req, res) => {
       );
       let affectedRows = result.affectedRows;
 
+      // ─── UPDATE WAREHOUSE STOCK (per-warehouse inventory) ───
+      if (warehouseId) {
+        const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+        await db.query(
+          'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE qty = qty + ?',
+          [wsId, warehouseId, inv.id, stockQty, stockQty]
+        );
+      }
+
       // ─── PURCHASE LOT (for future FIFO) ───
       try {
         await db.query(
           'INSERT INTO purchase_lots (inv_item_id, purchase_id, received_date, qty_received, qty_remaining, unit_cost) VALUES (?,?,?,?,?,?)',
           [inv.id, id, now, stockQty, stockQty, costPerSmallUnit]
         );
-      } catch (lotErr) { /* purchase_lots warning suppressed */ }
+      } catch (lotErr) { /* Production: removed debug log */ }
 
       var convNote = usedConvRate > 1
         ? item.qty + ' ' + (item.unit || 'big') + ' × ' + usedConvRate + ' = ' + stockQty + ' ' + (inv.unit || 'unit')
         : '';
-      // [LOG REMOVED] — receive item debug logging
+      // Production: removed debug log
 
       if (affectedRows === 0) {
         // The UPDATE silently affected 0 rows — the WHERE clause didn't
@@ -237,8 +248,8 @@ router.post('/receive/:id', async (req, res) => {
       // stale/missing id.
       const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4) + '-' + count;
       await db.query(
-        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
-        [movId, now, inv.id, inv.name, 'in', stockQty, 'مشتريات', username || '', 'PUR: ' + id]
+        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [movId, now, inv.id, inv.name, 'in', stockQty, 'مشتريات', username || '', 'PUR: ' + id, warehouseId || null]
       );
 
       updated.push({
@@ -260,8 +271,8 @@ router.post('/receive/:id', async (req, res) => {
       try {
         const { recomputeMenuCostsForItems } = require('./pricing-utils');
         const recomputed = await recomputeMenuCostsForItems(updated.map(u => u.invId));
-        // [LOG REMOVED] — cascade recompute logging
-      } catch (cascadeErr) { /* cascade warning suppressed */ }
+        // Production: removed debug log
+      } catch (cascadeErr) { /* Production: removed debug log */ }
     }
 
     // Mark the purchase itself as received
@@ -282,7 +293,7 @@ router.post('/receive/:id', async (req, res) => {
       }
     }
 
-//     console.log('[RECEIVE] Done — updated', count, 'items, skipped', skipped.length);
+    // Production: removed debug log
 
     // If we skipped every item, return an error so the frontend shows it.
     if (count === 0) {

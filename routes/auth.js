@@ -125,10 +125,11 @@ router.get('/init/:username', async (req, res) => {
     const settingsObj = {};
     settings.forEach(s => { settingsObj[s.setting_key] = s.setting_value; });
 
-    // Get user's brand_id to filter menu
-    const [userRow] = await db.query('SELECT brand_id, branch_id FROM users WHERE username = ?', [req.params.username]);
+    // Get user's brand_id, branch_id, warehouse_id
+    const [userRow] = await db.query('SELECT brand_id, branch_id, default_warehouse_id FROM users WHERE username = ?', [req.params.username]);
     const userBrandId = userRow.length ? userRow[0].brand_id : '';
     const userBranchId = userRow.length ? userRow[0].branch_id : '';
+    const userWarehouseId = userRow.length ? userRow[0].default_warehouse_id : '';
 
     // Menu filtered by brand (if user has a brand assigned)
     const menuQuery = userBrandId
@@ -170,13 +171,15 @@ router.get('/init/:username', async (req, res) => {
       usernames: users.map(u => u.username),
       brandId: userBrandId || '',
       branchId: userBranchId || '',
+      warehouseId: userWarehouseId || '',
       currentUser: {
         username: req.params.username,
         displayName: me.name || '',
         role: myRole,
         isDeveloper: !!me.isDeveloper || myRole === 'admin',
         brandId: userBrandId || '',
-        branchId: userBranchId || ''
+        branchId: userBranchId || '',
+        warehouseId: userWarehouseId || ''
       },
       userMeta: userMeta,
       paymentMethods: payMethods.map(p => ({
@@ -208,7 +211,15 @@ async function setUserMeta(meta) {
 // GET /api/auth/users — list users with display name + developer flag
 router.get('/users', async (req, res) => {
   try {
-    const [users] = await db.query('SELECT id, username, role, active, created_at, email FROM users ORDER BY created_at DESC');
+    const [users] = await db.query(`
+      SELECT u.id, u.username, u.role, u.active, u.created_at, u.email,
+        u.brand_id, u.branch_id, u.default_warehouse_id,
+        COALESCE(br.name,'') AS branchName, COALESCE(bd.name,'') AS brandName
+      FROM users u
+      LEFT JOIN branches br ON u.branch_id = br.id
+      LEFT JOIN brands bd ON u.brand_id = bd.id
+      ORDER BY u.created_at DESC
+    `);
     const meta = await getUserMeta();
     res.json(users.map(u => {
       const m = meta[u.username] || {};
@@ -220,7 +231,10 @@ router.get('/users', async (req, res) => {
         createdAt: u.created_at,
         displayName: m.name || fallbackName,
         isDeveloper: !!m.isDeveloper || u.role === 'admin',
-        email: u.email || ''
+        email: u.email || '',
+        brandId: u.brand_id || '', brandName: u.brandName || '',
+        branchId: u.branch_id || '', branchName: u.branchName || '',
+        warehouseId: u.default_warehouse_id || ''
       };
     }));
   } catch (e) { res.json([]); }
@@ -229,9 +243,9 @@ router.get('/users', async (req, res) => {
 // POST /api/auth/users — add new user (username = employee number)
 router.post('/users', async (req, res) => {
   try {
-    const { username, password, role, displayName, isDeveloper, email } = req.body;
+    const { username, password, role, displayName, isDeveloper, email, brandId, branchId } = req.body;
     if (!username || !password) return res.json({ success: false, error: 'اسم المستخدم وكلمة المرور مطلوبان' });
-    // Password validation: min 6 chars, must have letter + number + special char
+    // Password validation
     if (password.length < 6) return res.json({ success: false, error: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
     if (!/[a-zA-Z]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على حروف' });
     if (!/[0-9]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على أرقام' });
@@ -240,9 +254,16 @@ router.post('/users', async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     const dbRole = ['admin', 'cashier', 'manager', 'custody'].indexOf(role) >= 0 ? role : 'cashier';
 
+    // Get default warehouse from branch
+    let defaultWarehouseId = null;
+    if (branchId) {
+      const [branchRow] = await db.query('SELECT warehouse_id FROM branches WHERE id = ?', [branchId]);
+      if (branchRow.length && branchRow[0].warehouse_id) defaultWarehouseId = branchRow[0].warehouse_id;
+    }
+
     await db.query(
-      'INSERT INTO users (username, password, role, active, email) VALUES (?, ?, ?, 1, ?)',
-      [username, hash, dbRole, email||'']
+      'INSERT INTO users (username, password, role, active, email, brand_id, branch_id, default_warehouse_id) VALUES (?, ?, ?, 1, ?, ?, ?, ?)',
+      [username, hash, dbRole, email||'', brandId||null, branchId||null, defaultWarehouseId]
     );
 
     if (displayName || isDeveloper) {
@@ -273,10 +294,23 @@ router.post('/users', async (req, res) => {
 router.put('/users/:username', async (req, res) => {
   try {
     const { username } = req.params;
-    const { displayName, password, role, isDeveloper, email } = req.body;
+    const { displayName, password, role, isDeveloper, email, brandId, branchId } = req.body;
 
     if (email !== undefined) {
       await db.query('UPDATE users SET email = ? WHERE username = ?', [email || '', username]);
+    }
+
+    // Update brand + branch + auto-resolve warehouse
+    if (brandId !== undefined || branchId !== undefined) {
+      if (brandId !== undefined) await db.query('UPDATE users SET brand_id = ? WHERE username = ?', [brandId || null, username]);
+      if (branchId !== undefined) {
+        let whId = null;
+        if (branchId) {
+          const [br] = await db.query('SELECT warehouse_id FROM branches WHERE id = ?', [branchId]);
+          if (br.length && br[0].warehouse_id) whId = br[0].warehouse_id;
+        }
+        await db.query('UPDATE users SET branch_id = ?, default_warehouse_id = ? WHERE username = ?', [branchId || null, whId, username]);
+      }
     }
 
     if (password) {

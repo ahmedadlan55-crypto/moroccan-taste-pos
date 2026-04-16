@@ -186,7 +186,7 @@ router.get('/live', async (req, res) => {
 // Submit a new stocktake: adjusts stock + records movements + persists the report
 router.post('/stocktakes', async (req, res) => {
   try {
-    const { items, username, notes } = req.body;
+    const { items, username, notes, warehouseId, branchId } = req.body;
     if (!items || !items.length) return res.json({ success: false, error: 'No items' });
 
     const now = new Date();
@@ -194,10 +194,10 @@ router.post('/stocktakes', async (req, res) => {
     let adjustedCount = 0;
     let totalVariance = 0;
 
-    // Insert header FIRST so the FK on stocktake_items doesn't fail
+    // Insert header with warehouse + branch reference
     await db.query(
-      'INSERT INTO stocktakes (id, stocktake_date, username, notes, status, items_count, total_variance) VALUES (?,?,?,?,?,?,?)',
-      [stId, now, username || '', notes || '', 'completed', 0, 0]
+      'INSERT INTO stocktakes (id, stocktake_date, username, notes, status, items_count, total_variance, warehouse_id, branch_id) VALUES (?,?,?,?,?,?,?,?,?)',
+      [stId, now, username || '', notes || '', 'completed', 0, 0, warehouseId || null, branchId || null]
     );
 
     for (const item of items) {
@@ -218,16 +218,25 @@ router.post('/stocktakes', async (req, res) => {
         [stId, itemId, invName, invUnit, sysQty, actQty, diff]
       );
 
-      // Update actual stock
+      // Update central stock
       await db.query('UPDATE inv_items SET stock = ? WHERE id = ?', [actQty, itemId]);
 
-      // Record movement
+      // Update warehouse stock if warehouse specified
+      if (warehouseId) {
+        const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+        await db.query(
+          'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE qty = ?',
+          [wsId, warehouseId, itemId, actQty, actQty]
+        );
+      }
+
+      // Record movement with warehouse reference
       const movType = diff > 0 ? 'in' : 'out';
       const movQty = Math.abs(diff);
       const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
       await db.query(
-        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
-        [movId, now, itemId, invName, movType, movQty, 'جرد', username || '', 'ST: ' + stId]
+        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [movId, now, itemId, invName, movType, movQty, 'جرد', username || '', 'ST: ' + stId, warehouseId || null]
       );
 
       totalVariance += diff;
@@ -607,7 +616,7 @@ router.post('/receive-approve/:id', async (req, res) => {
 // Create shortage request (from cashier)
 router.post('/shortage-requests', async (req, res) => {
   try {
-    const { items, username, notes } = req.body;
+    const { items, username, notes, warehouseId, branchId } = req.body;
     if (!items || !items.length) return res.json({ success: false, error: 'أضف مادة واحدة على الأقل' });
 
     const id = 'SHR-' + Date.now();
@@ -620,8 +629,8 @@ router.post('/shortage-requests', async (req, res) => {
     const requestNumber = 'SHR-' + String(num).padStart(5, '0');
 
     await db.query(
-      'INSERT INTO shortage_requests (id, request_number, request_date, username, notes, total_items) VALUES (?,?,?,?,?,?)',
-      [id, requestNumber, new Date(), username || '', notes || '', items.length]
+      'INSERT INTO shortage_requests (id, request_number, request_date, username, notes, total_items, branch_id, warehouse_id) VALUES (?,?,?,?,?,?,?,?)',
+      [id, requestNumber, new Date(), username || '', notes || '', items.length, branchId || null, warehouseId || null]
     );
 
     for (const item of items) {

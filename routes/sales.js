@@ -5,7 +5,8 @@ const db = require('../db/connection');
 router.post('/', async (req, res) => {
   try {
     const { items, total, totalFinal, paymentMethod, discountName, discountAmount, kitaServiceFee, splitDetails } = req.body;
-    const { username, shiftId } = req.body;
+    const { username, shiftId, warehouseId: reqWhId } = req.body;
+    const warehouseId = reqWhId || (req.user && req.user.default_warehouse_id) || null;
     const orderId = shiftId + '-' + Date.now();
     const now = new Date();
 
@@ -59,20 +60,26 @@ router.post('/', async (req, res) => {
       for (const ing of recipeMap[item.id]) {
         const deduct = ing.qtyUsed * item.qty;
 
-        // CRITICAL: capture affectedRows so we know if the inv row exists.
+        // CRITICAL: deduct from central inventory
         const [updateResult] = await db.query(
           'UPDATE inv_items SET stock = stock - ? WHERE id = ?',
           [deduct, ing.invId]
         );
         const affected = updateResult.affectedRows;
 
-        // Production: removed debug log
+        // Deduct from warehouse stock (branch-specific)
+        if (warehouseId) {
+          await db.query(
+            'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
+            [deduct, warehouseId, ing.invId]
+          );
+        }
 
-        // Record movement using a unique movement id (timestamp + random + counter)
+        // Record movement with warehouse reference
         const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4) + '-' + deductions.length;
         await db.query(
-          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
-          [movId, now, ing.invId, ing.invName, 'out', deduct, 'مبيعات', username, orderId]
+          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          [movId, now, ing.invId, ing.invName, 'out', deduct, 'مبيعات', username, orderId, warehouseId || null]
         );
 
         deductions.push({

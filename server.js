@@ -1100,9 +1100,24 @@ async function runMigrations() {
   await addColumnIfMissing('shifts', 'device_info', "VARCHAR(500)");
   await addColumnIfMissing('shifts', 'ip_address', "VARCHAR(50)");
 
-  // Users: add email + plain_pass for admin visibility
+  // Users: email + warehouse link
   await addColumnIfMissing('users', 'email', "VARCHAR(200)");
-  await addColumnIfMissing('users', 'plain_pass', "VARCHAR(200)");
+  await addColumnIfMissing('users', 'default_warehouse_id', "VARCHAR(50)");
+
+  // ═══════════════════════════════════════
+  // WAREHOUSE-BASED INVENTORY RESTRUCTURE
+  // ═══════════════════════════════════════
+  // Link all inventory operations to specific warehouses
+  await addColumnIfMissing('inventory_movements', 'warehouse_id', "VARCHAR(50)");
+  await addColumnIfMissing('stocktakes', 'warehouse_id', "VARCHAR(50)");
+  await addColumnIfMissing('stocktakes', 'branch_id', "VARCHAR(50)");
+  await addColumnIfMissing('shortage_requests', 'branch_id', "VARCHAR(50)");
+  await addColumnIfMissing('shortage_requests', 'warehouse_id', "VARCHAR(50)");
+  await addColumnIfMissing('stock_adjustments', 'warehouse_id', "VARCHAR(50)");
+  await addColumnIfMissing('purchases', 'warehouse_id', "VARCHAR(50)");
+  // Performance indexes
+  try { await db.query('CREATE INDEX idx_wh_stock_item ON warehouse_stock(item_id)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_inv_mov_wh ON inventory_movements(warehouse_id)'); } catch(e) {}
 
   // Seed cost settings into the existing key-value settings table
   try {

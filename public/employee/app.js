@@ -157,10 +157,12 @@ function loadHomeData() {
     var present = att.filter(function(a){return a.status==='present';}).length;
     var hours = att.reduce(function(s,a){return s+(Number(a.total_hours)||0);},0);
     var late = att.filter(function(a){return (a.late_minutes||0)>0;}).length;
+    var totalLateMin = att.reduce(function(s,a){return s+(Number(a.late_minutes)||0);},0);
+    var lateHrs = (totalLateMin/60).toFixed(1);
     document.getElementById('homeStats').innerHTML =
       '<div class="st"><i class="fas fa-check" style="color:#10b981;background:#ecfdf5;"></i><b>' + present + '</b><span>حضور</span></div>' +
       '<div class="st"><i class="fas fa-clock" style="color:#0ea5e9;background:#e0f2fe;"></i><b>' + hours.toFixed(1) + '</b><span>ساعة</span></div>' +
-      '<div class="st"><i class="fas fa-exclamation" style="color:#f59e0b;background:#fffbeb;"></i><b>' + late + '</b><span>تأخير</span></div>' +
+      '<div class="st"><i class="fas fa-exclamation" style="color:#f59e0b;background:#fffbeb;"></i><b>' + lateHrs + '</b><span>ساعة تأخير</span></div>' +
       '<div class="st"><i class="fas fa-calendar" style="color:#8b5cf6;background:#f5f3ff;"></i><b>' + att.length + '</b><span>سجلات</span></div>';
 
     // Recent attendance
@@ -301,7 +303,10 @@ function loadProfilePage() {
   var c = document.getElementById('profileInfo');
   if (!empProfile) { c.innerHTML = '<p class="empty">لا يوجد ملف موظف مرتبط</p>'; return; }
   var e = empProfile;
-  var fields = [['الرقم',e.employee_number],['الاسم',e.fullName],['الوظيفة',e.job_title||e.jobTitle],['الفرع',e.branchName],['الجوال',e.phone],['البريد',e.email]];
+  var ws = e.work_start || e.workStart || '08:00';
+  var we = e.work_end || e.workEnd || '17:00';
+  var salary = Number(e.basic_salary || e.basicSalary || 0);
+  var fields = [['الرقم',e.employee_number],['الاسم',e.fullName],['الوظيفة',e.job_title||e.jobTitle],['الفرع',e.branchName],['الجوال',e.phone],['البريد',e.email],['ساعات الدوام',ws+' — '+we],['الراتب الأساسي',salary>0?salary.toLocaleString('en')+' SAR':'—']];
   c.innerHTML = fields.map(function(f){return '<div class="pf"><span>'+f[0]+'</span><b>'+(f[1]||'—')+'</b></div>';}).join('');
   callAPI('GET', '/hr/my-payslips?username=' + currentUser, null, function(rows) {
     var s = rows||[]; if (!Array.isArray(s)) s = [];

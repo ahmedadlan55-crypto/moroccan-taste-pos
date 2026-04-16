@@ -4451,8 +4451,16 @@ function hrOpenEmployeeModal(data) {
 }
 
 function hrEditEmployee(id) {
-  var e = _hrEmployees.find(function(x){return x.id===id;});
-  if (e) hrOpenEmployeeModal(e);
+  // Load FULL employee data (not from list which has limited fields)
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(emp) {
+    loader(false);
+    if (emp && !emp.error) {
+      hrOpenEmployeeModal(emp);
+    } else {
+      showToast('فشل تحميل بيانات الموظف', true);
+    }
+  }).getHrEmployee(id);
 }
 
 function hrTerminateEmployee(id) {

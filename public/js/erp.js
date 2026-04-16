@@ -4605,6 +4605,8 @@ function hrLoadAttendance() {
       var deviceHtml = a.deviceName ? '<div style="font-size:10px;color:#64748b;"><i class="fas fa-mobile-alt" style="color:#3b82f6;"></i> ' + a.deviceName + '</div>' : '';
       var locInHtml = a.geoAddressIn ? '<div style="font-size:10px;color:#64748b;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + a.geoAddressIn + '"><i class="fas fa-map-marker-alt" style="color:#10b981;"></i> ' + a.geoAddressIn + '</div>' : '';
       var locOutHtml = a.geoAddressOut ? '<div style="font-size:10px;color:#64748b;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + a.geoAddressOut + '"><i class="fas fa-map-marker-alt" style="color:#ef4444;"></i> ' + a.geoAddressOut + '</div>' : '';
+      var isDev = state && state.isDeveloper;
+      var delBtn = isDev ? '<button style="width:28px;height:28px;border-radius:6px;border:1px solid #fecaca;background:#fee2e2;color:#ef4444;cursor:pointer;font-size:11px;display:inline-flex;align-items:center;justify-content:center;" onclick="hrDeleteAttendance(\'' + a.id + '\',\'' + (a.employeeName||'').replace(/'/g,'') + '\')" title="حذف البصمة"><i class="fas fa-trash"></i></button>' : '';
       return '<tr>' +
         '<td style="font-weight:700;">' + (a.employeeName||'') + '</td>' +
         '<td>' + (a.attendanceDate ? new Date(a.attendanceDate).toLocaleDateString('en-GB') : '') + '</td>' +
@@ -4614,10 +4616,20 @@ function hrLoadAttendance() {
         '<td>' + (a.lateMinutes > 0 ? '<span style="color:#ef4444;font-weight:700;">' + a.lateMinutes + ' د</span>' : '—') + '</td>' +
         '<td>' + deviceHtml + '</td>' +
         '<td><span class="badge badge-blue">' + (srcLabels[a.source]||a.source) + '</span></td>' +
-        '<td><span class="badge badge-' + (statusColors[a.status]||'blue') + '">' + (statusLabels[a.status]||a.status) + '</span></td>' +
+        '<td>' + delBtn + '</td>' +
       '</tr>';
     }).join('');
   }).getHrAttendance(params);
+}
+
+function hrDeleteAttendance(id, empName) {
+  if (!confirm('حذف بصمة "' + empName + '"؟\n\nسيتم حذفها من قاعدة البيانات نهائياً.')) return;
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم حذف البصمة'); hrLoadAttendance(); }
+    else showToast((r && r.error) || 'فشل الحذف', true);
+  }).deleteHrAttendance(id);
 }
 
 function hrImportAttendance() {

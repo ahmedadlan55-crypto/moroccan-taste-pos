@@ -248,6 +248,7 @@
     getHrAttendance:     { method: 'GET',  url: '/hr/attendance', query: (f) => f },
     importHrAttendance:  { method: 'POST', url: '/hr/attendance/import' },
     clockHrAttendance:   { method: 'POST', url: '/hr/attendance/clock' },
+    deleteHrAttendance:  { method: 'DELETE', url: (id) => '/hr/attendance/' + id },
     clockAttendance:     { method: 'POST', url: '/hr/attendance/clock' },
     importAttendance:    { method: 'POST', url: '/hr/attendance/import' },
     editAttendance:      { method: 'PUT',  url: (id,d) => '/hr/attendance/' + id, body: (id,d) => d },

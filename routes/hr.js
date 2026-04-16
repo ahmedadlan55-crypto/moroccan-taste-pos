@@ -840,6 +840,26 @@ router.post('/attendance/import', async (req, res) => {
   }
 });
 
+// DELETE attendance record (developer only)
+router.delete('/attendance/:id', async (req, res) => {
+  try {
+    // Verify requester is developer/admin
+    const username = req.user ? req.user.username : '';
+    const role = req.user ? req.user.role : '';
+    if (role !== 'admin') {
+      // Check developer flag
+      const [meta] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
+      let isDev = false;
+      if (meta.length) {
+        try { const m = JSON.parse(meta[0].setting_value || '{}'); isDev = !!(m[username] && m[username].isDeveloper); } catch(e) {}
+      }
+      if (!isDev) return res.json({ success: false, error: 'هذه العملية متاحة للمطور فقط' });
+    }
+    await db.query('DELETE FROM hr_attendance WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 router.put('/attendance/:id', async (req, res) => {
   try {
     const { clockIn, clockOut, status, notes, modifiedBy, modifiedReason } = req.body;

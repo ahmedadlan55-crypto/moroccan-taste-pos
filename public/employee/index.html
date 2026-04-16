@@ -12,14 +12,14 @@
     document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('authenticated');});
     }catch(e){document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('authenticated','needs-login');});}})();
   </script>
-  <style>html,body{background:#0f172a;}body:not(.authenticated){visibility:hidden!important;}</style>
+  <style>html,body{background:#f1f5f9;}body:not(.authenticated){visibility:hidden!important;}</style>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   <link rel="stylesheet" href="/employee/style.css?v=3">
   <script defer src="/shared/api-bridge.js"></script>
   <script defer src="/employee/app.js?v=3"></script>
 </head>
 <body>
-<div id="loader"><div class="spinner"></div><p>جاري التحميل...</p></div>
+<!-- No loader — app shows instantly -->
 <div class="toast" id="toast"></div>
 
 <div id="app" style="display:none;">

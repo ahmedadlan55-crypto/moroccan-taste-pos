@@ -32,7 +32,8 @@ function callAPI(method, path, body, cb) {
 
 // ─── Start App ───
 function startApp() {
-  hideLoader();
+  // Show app IMMEDIATELY — no loader, no waiting
+  var ld = document.getElementById('loader'); if (ld) ld.style.display = 'none';
   var app = document.getElementById('app');
   app.style.display = 'flex';
 

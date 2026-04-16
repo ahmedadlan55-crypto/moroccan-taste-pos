@@ -2,6 +2,40 @@
 // ERP Frontend Logic — MASTER_ERP_SYSTEM_SPEC Compliant
 // ====================================================================
 
+// ─── Professional Confirm Dialog ───
+function erpConfirm(title, message, onOk, opts) {
+  opts = opts || {};
+  var color = opts.color || '#1e40af';
+  var icon = opts.icon || 'fa-question-circle';
+  var okText = opts.okText || 'تأكيد';
+  var cancelText = opts.cancelText || 'إلغاء';
+  var id = 'erpConfirmDlg';
+  var old = document.getElementById(id); if (old) old.remove();
+  var div = document.createElement('div');
+  div.id = id;
+  // Inject keyframes if not already
+  if (!document.getElementById('erpConfirmCSS')) {
+    var st = document.createElement('style'); st.id = 'erpConfirmCSS';
+    st.textContent = '@keyframes erpFadeIn{from{opacity:0}to{opacity:1}}@keyframes erpScaleIn{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}';
+    document.head.appendChild(st);
+  }
+  div.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;animation:erpFadeIn .15s ease;';
+  div.innerHTML =
+    '<div style="background:#fff;border-radius:16px;padding:28px;width:420px;max-width:90%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.15);animation:erpScaleIn .2s ease;">' +
+      '<div style="width:56px;height:56px;border-radius:50%;background:' + color + '15;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;"><i class="fas ' + icon + '" style="font-size:24px;color:' + color + ';"></i></div>' +
+      '<h3 style="margin:0 0 8px;font-size:17px;color:#0f172a;">' + title + '</h3>' +
+      '<p style="margin:0 0 24px;font-size:13px;color:#64748b;line-height:1.6;">' + message + '</p>' +
+      '<div style="display:flex;gap:10px;justify-content:center;">' +
+        '<button id="erpConfirmOk" style="padding:10px 32px;border-radius:10px;border:none;background:' + color + ';color:#fff;font-weight:800;font-size:14px;cursor:pointer;">' + okText + '</button>' +
+        '<button id="erpConfirmCancel" style="padding:10px 24px;border-radius:10px;border:2px solid #e5e7eb;background:#fff;color:#64748b;font-weight:700;font-size:14px;cursor:pointer;">' + cancelText + '</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(div);
+  div.querySelector('#erpConfirmOk').onclick = function() { div.remove(); if (onOk) onOk(); };
+  div.querySelector('#erpConfirmCancel').onclick = function() { div.remove(); };
+  div.addEventListener('click', function(e) { if (e.target === div) div.remove(); });
+}
+
 // Bridge: currentUser from POS state
 Object.defineProperty(window, 'currentUser', { get: function() { return (typeof state !== 'undefined' && state.user) ? state.user : ''; } });
 
@@ -712,8 +746,16 @@ function erpSaveAccount() {
 // ═══════════════════════════════════════
 // ─── Journal cache ───
 var _jrnCache = [];
+var _jrnListHTML = ''; // Stores original journal list HTML
 
 function erpLoadJournals() {
+  // Restore original list HTML if we were in form mode
+  if (_jrnListHTML) {
+    var sec = document.getElementById('erpGLJournals');
+    if (sec && !document.getElementById('erpJournalsBody')) {
+      sec.innerHTML = _jrnListHTML;
+    }
+  }
   var filters = {};
   var s = document.getElementById('erpJrnStartDate');
   var e = document.getElementById('erpJrnEndDate');
@@ -959,41 +1001,44 @@ function erpSaveEditedJournal() {
 }
 
 function erpApproveJournal(id) {
-  if (!confirm('اعتماد هذا القيد؟')) return;
-  loader(true);
-  window._apiBridge.withSuccessHandler(function(r) {
-    loader(false);
-    if (r.success) { showToast('تم اعتماد القيد'); erpLoadJournals(); } else showToast(r.error, true);
-  }).approveGLJournal(id, currentUser);
+  erpConfirm('اعتماد القيد', 'هل تريد اعتماد هذا القيد؟', function() {
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) {
+      loader(false);
+      if (r.success) { showToast('تم اعتماد القيد'); erpLoadJournals(); } else showToast(r.error, true);
+    }).approveGLJournal(id, currentUser);
+  }, {icon:'fa-check-circle', color:'#8b5cf6', okText:'اعتماد'});
 }
 
 function erpPostJournal(id) {
-  if (!confirm('ترحيل القيد إلى ميزان المراجعة ودفتر الأستاذ؟\nسيتم تحديث أرصدة الحسابات.')) return;
-  loader(true);
-  window._apiBridge.withSuccessHandler(function(r) {
-    loader(false);
-    if (r.success) { showToast('تم ترحيل القيد وتحديث الأرصدة'); erpLoadJournals(); erpLoadAccountsList_(); } else showToast(r.error, true);
-  }).postGLJournal(id, currentUser);
+  erpConfirm('ترحيل القيد', 'سيتم ترحيل القيد إلى ميزان المراجعة ودفتر الأستاذ وتحديث أرصدة الحسابات.', function() {
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) {
+      loader(false);
+      if (r.success) { showToast('تم ترحيل القيد وتحديث الأرصدة'); erpLoadJournals(); erpLoadAccountsList_(); } else showToast(r.error, true);
+    }).postGLJournal(id, currentUser);
+  }, {icon:'fa-share-square', color:'#16a34a', okText:'ترحيل'});
 }
 
 function erpUnpostJournal(id) {
-  if (!confirm('إلغاء ترحيل القيد؟\nسيتم عكس أرصدة الحسابات وإرجاع القيد لحالة مسودة.')) return;
-  loader(true);
-  // Unpost = reverse balances then set status back to draft
-  window._apiBridge.withSuccessHandler(function(r) {
-    loader(false);
-    if (r && r.success) { showToast('تم إلغاء الترحيل — القيد أصبح مسودة'); erpLoadJournals(); erpLoadAccountsList_(); }
-    else showToast((r && r.error) || 'فشل إلغاء الترحيل', true);
-  }).unpostGLJournal(id, currentUser);
+  erpConfirm('إلغاء الترحيل', 'سيتم عكس أرصدة الحسابات وإرجاع القيد لحالة مسودة.', function() {
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) {
+      loader(false);
+      if (r && r.success) { showToast('تم إلغاء الترحيل — القيد أصبح مسودة'); erpLoadJournals(); erpLoadAccountsList_(); }
+      else showToast((r && r.error) || 'فشل إلغاء الترحيل', true);
+    }).unpostGLJournal(id, currentUser);
+  }, {icon:'fa-undo', color:'#f59e0b', okText:'إلغاء الترحيل'});
 }
 
 function erpDeleteJournal(id, num) {
-  if (!confirm('حذف القيد ' + num + '؟\nسيتم عكس جميع الأرصدة المتأثرة.')) return;
-  loader(true);
-  window._apiBridge.withSuccessHandler(function(r) {
-    loader(false);
-    if (r.success) { showToast('تم حذف القيد'); erpLoadJournals(); erpLoadAccountsList_(); } else showToast(r.error, true);
-  }).deleteGLJournal(id);
+  erpConfirm('حذف القيد ' + num, 'سيتم عكس جميع الأرصدة المتأثرة وحذف القيد نهائياً.', function() {
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) {
+      loader(false);
+      if (r.success) { showToast('تم حذف القيد'); erpLoadJournals(); erpLoadAccountsList_(); } else showToast(r.error, true);
+    }).deleteGLJournal(id);
+  }, {icon:'fa-trash-alt', color:'#ef4444', okText:'حذف'});
 }
 
 function erpPrintJournal(journalId) {
@@ -1083,8 +1128,9 @@ function _renderJournalForm() {
   var today = new Date().toISOString().split('T')[0];
   var typeName = (_jrnTypes.find(function(t){return t.code===_jrnSelectedType;})||{}).name || 'يومية عامة';
 
-  // Use the full section area instead of the modal
+  // Save original list HTML so we can restore it
   var section = document.getElementById('erpGLJournals');
+  if (!_jrnListHTML) _jrnListHTML = section.innerHTML;
   section.innerHTML =
     '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:0;margin:10px 0;">' +
       // Title bar
@@ -1336,23 +1382,21 @@ function erpSaveAndPost() {
   var totalD = 0, totalC = 0;
   entries.forEach(function(e) { totalD += e.debit; totalC += e.credit; });
   if (Math.abs(totalD - totalC) > 0.01) return showToast('القيد غير متوازن', true);
-  if (!confirm('حفظ وترحيل القيد؟ سيتم تحديث أرصدة الحسابات.')) return;
-
   var movType = (document.getElementById('erpJrnMovType')||{}).value || 'general';
   var isOpening = _jrnSelectedType === 'OB' || movType === 'opening';
 
-  loader(true);
-  window._apiBridge.withSuccessHandler(function(res) {
-    if (!res.success) { loader(false); return showToast(res.error, true); }
-    // Approve then post
-    window._apiBridge.withSuccessHandler(function() {
+  erpConfirm('حفظ وترحيل', 'سيتم حفظ القيد وترحيله مباشرة وتحديث أرصدة الحسابات.', function() {
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(res) {
+      if (!res.success) { loader(false); return showToast(res.error, true); }
       window._apiBridge.withSuccessHandler(function() {
-        loader(false);
-        showToast('تم حفظ وترحيل القيد: ' + res.journalNumber);
-        erpLoadJournals();
-      }).postGLJournal(res.id, currentUser);
-    }).approveGLJournal(res.id, currentUser);
-  }).createJournalEntry({
+        window._apiBridge.withSuccessHandler(function() {
+          loader(false);
+          showToast('تم حفظ وترحيل القيد: ' + res.journalNumber);
+          erpLoadJournals();
+        }).postGLJournal(res.id, currentUser);
+      }).approveGLJournal(res.id, currentUser);
+    }).createJournalEntry({
     journalDate: document.getElementById('erpJrnDate').value,
     referenceType: isOpening ? 'opening' : 'manual',
     description: desc,
@@ -1360,6 +1404,7 @@ function erpSaveAndPost() {
     isOpening: isOpening,
     entries: entries
   }, currentUser);
+  }, {icon:'fa-check-double', color:'#ef4444', okText:'حفظ وترحيل'});
 }
 
 // ─── Attachment handler ───

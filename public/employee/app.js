@@ -76,15 +76,17 @@ function toast(msg, err) {
 
 // ─── Login ───
 function showEmpLogin() {
-  hideLoader();
+  var ld = document.getElementById('loader'); if (ld) ld.style.display = 'none';
   document.getElementById('app').style.display = 'none';
   var d = document.createElement('div'); d.id = 'loginPage';
-  d.innerHTML = '<div class="login-wrap"><div class="login-box">' +
-    '<div class="login-icon"><i class="fas fa-user-tie"></i></div>' +
-    '<h1>بوابة الموظف</h1><p>سجّل دخولك لتسجيل الحضور</p>' +
-    '<input type="text" id="lu" placeholder="اسم المستخدم">' +
-    '<input type="password" id="lp" placeholder="كلمة المرور">' +
-    '<button id="lbtn" onclick="doLogin()"><i class="fas fa-sign-in-alt"></i> دخول</button>' +
+  d.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100dvh;padding:16px;background:#f1f5f9;">' +
+    '<div style="background:#fff;border-radius:20px;padding:32px 22px;width:100%;max-width:340px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,0.06);">' +
+      '<div style="width:56px;height:56px;border-radius:14px;background:#1e40af;color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;margin:0 auto 14px;"><i class="fas fa-user-tie"></i></div>' +
+      '<h1 style="font-size:20px;color:#0f172a;margin-bottom:4px;font-family:inherit;">بوابة الموظف</h1>' +
+      '<p style="color:#64748b;font-size:12px;margin-bottom:20px;">سجّل دخولك لتسجيل الحضور</p>' +
+      '<input type="text" id="lu" placeholder="اسم المستخدم" style="width:100%;padding:12px 14px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:15px;margin-bottom:10px;text-align:right;font-family:inherit;">' +
+      '<input type="password" id="lp" placeholder="كلمة المرور" style="width:100%;padding:12px 14px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:15px;margin-bottom:14px;text-align:right;font-family:inherit;">' +
+      '<button id="lbtn" onclick="doLogin()" style="width:100%;padding:13px;background:#1e40af;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;"><i class="fas fa-sign-in-alt"></i> دخول</button>' +
     '</div></div>';
   document.body.appendChild(d);
   document.addEventListener('keydown', function(e) { if (e.key==='Enter' && document.getElementById('loginPage')) doLogin(); });

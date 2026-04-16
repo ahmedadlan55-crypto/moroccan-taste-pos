@@ -213,11 +213,13 @@ router.get('/users', async (req, res) => {
   try {
     const [users] = await db.query(`
       SELECT u.id, u.username, u.role, u.active, u.created_at, u.email,
-        u.brand_id, u.branch_id, u.default_warehouse_id,
-        COALESCE(br.name,'') AS branchName, COALESCE(bd.name,'') AS brandName
+        u.brand_id, u.branch_id, u.default_warehouse_id, u.position_id,
+        COALESCE(br.name,'') AS branchName, COALESCE(bd.name,'') AS brandName,
+        COALESCE(p.name,'') AS positionName
       FROM users u
       LEFT JOIN branches br ON u.branch_id = br.id
       LEFT JOIN brands bd ON u.brand_id = bd.id
+      LEFT JOIN positions p ON u.position_id = p.id
       ORDER BY u.created_at DESC
     `);
     const meta = await getUserMeta();
@@ -234,7 +236,8 @@ router.get('/users', async (req, res) => {
         email: u.email || '',
         brandId: u.brand_id || '', brandName: u.brandName || '',
         branchId: u.branch_id || '', branchName: u.branchName || '',
-        warehouseId: u.default_warehouse_id || ''
+        warehouseId: u.default_warehouse_id || '',
+        positionId: u.position_id || '', positionName: u.positionName || ''
       };
     }));
   } catch (e) { res.json([]); }
@@ -261,9 +264,10 @@ router.post('/users', async (req, res) => {
       if (branchRow.length && branchRow[0].warehouse_id) defaultWarehouseId = branchRow[0].warehouse_id;
     }
 
+    const positionId = req.body.positionId || null;
     await db.query(
-      'INSERT INTO users (username, password, role, active, email, brand_id, branch_id, default_warehouse_id) VALUES (?, ?, ?, 1, ?, ?, ?, ?)',
-      [username, hash, dbRole, email||'', brandId||null, branchId||null, defaultWarehouseId]
+      'INSERT INTO users (username, password, role, active, email, brand_id, branch_id, default_warehouse_id, position_id) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)',
+      [username, hash, dbRole, email||'', brandId||null, branchId||null, defaultWarehouseId, positionId]
     );
 
     if (displayName || isDeveloper) {
@@ -294,7 +298,11 @@ router.post('/users', async (req, res) => {
 router.put('/users/:username', async (req, res) => {
   try {
     const { username } = req.params;
-    const { displayName, password, role, isDeveloper, email, brandId, branchId } = req.body;
+    const { displayName, password, role, isDeveloper, email, brandId, branchId, positionId } = req.body;
+
+    if (positionId !== undefined) {
+      await db.query('UPDATE users SET position_id = ? WHERE username = ?', [positionId || null, username]);
+    }
 
     if (email !== undefined) {
       await db.query('UPDATE users SET email = ? WHERE username = ?', [email || '', username]);

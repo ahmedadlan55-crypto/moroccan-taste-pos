@@ -3814,7 +3814,7 @@ function tglUserM() {
   openModal('#modalUserForm');
 }
 
-function _loadUserDropdowns(brandVal, branchVal) {
+function _loadUserDropdowns(brandVal, branchVal, positionVal) {
   // Load brands
   api.withSuccessHandler(function(brands) {
     var sel = q('#muBrand');
@@ -3833,6 +3833,17 @@ function _loadUserDropdowns(brandVal, branchVal) {
       sel.innerHTML += '<option value="' + b.id + '"' + (branchVal===b.id?' selected':'') + '>' + b.name + '</option>';
     });
   }).getBranches();
+  // Load positions
+  fetch('/api/workflow/positions', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+    .then(function(r) { return r.json(); })
+    .then(function(positions) {
+      var sel = q('#muPosition');
+      if (!sel) return;
+      sel.innerHTML = '<option value="">— بدون —</option>';
+      (positions||[]).forEach(function(p) {
+        sel.innerHTML += '<option value="' + p.id + '"' + (positionVal===p.id?' selected':'') + '>' + p.name + ' (مستوى ' + p.level + ')</option>';
+      });
+    }).catch(function() {});
 }
 
 function editUsr(username) {
@@ -3849,7 +3860,7 @@ function editUsr(username) {
   if (q("#muEmail")) q("#muEmail").value = u.email || '';
   if (q("#muIsDeveloper")) q("#muIsDeveloper").checked = !!u.isDeveloper;
   if (q("#muPassHint")) q("#muPassHint").innerHTML = '';
-  _loadUserDropdowns(u.brandId, u.branchId);
+  _loadUserDropdowns(u.brandId, u.branchId, u.positionId);
   openModal('#modalUserForm');
 }
 
@@ -3883,6 +3894,7 @@ function saveUserFn() {
   var email       = q("#muEmail") ? (q("#muEmail").value || '').trim() : '';
   var brandId     = q("#muBrand") ? q("#muBrand").value : '';
   var branchId    = q("#muBranch") ? q("#muBranch").value : '';
+  var positionId  = q("#muPosition") ? q("#muPosition").value : '';
 
   if (!username) return showToast('الرقم الوظيفي مطلوب', true);
   if (!_editingUsername && !password) return showToast('كلمة المرور مطلوبة عند إنشاء مستخدم', true);
@@ -3893,7 +3905,7 @@ function saveUserFn() {
 
   loader();
   if (_editingUsername) {
-    var payload = { displayName: displayName, role: role, isDeveloper: isDeveloper, email: email, brandId: brandId, branchId: branchId };
+    var payload = { displayName: displayName, role: role, isDeveloper: isDeveloper, email: email, brandId: brandId, branchId: branchId, positionId: positionId };
     if (password) payload.password = password;
     api.withFailureHandler(function(err){loader(false); showToast(err.message, true);})
        .withSuccessHandler(function(r) {
@@ -3902,7 +3914,7 @@ function saveUserFn() {
           else showToast((r && r.error) || 'فشل التحديث', true);
        }).updateUser(_editingUsername, payload);
   } else {
-    var data = { username: username, password: password, role: role, displayName: displayName, isDeveloper: isDeveloper, email: email, brandId: brandId, branchId: branchId };
+    var data = { username: username, password: password, role: role, displayName: displayName, isDeveloper: isDeveloper, email: email, brandId: brandId, branchId: branchId, positionId: positionId };
     api.withFailureHandler(function(err){loader(false); showToast(err.message, true);})
        .withSuccessHandler(function(r) {
           loader(false);

@@ -1024,11 +1024,20 @@ router.post('/leave-balances/init', async (req, res) => {
     const { year, leaveTypeId, days } = req.body;
     const targetYear = year || new Date().getFullYear();
 
-    const [activeEmps] = await db.query("SELECT id FROM hr_employees WHERE status = 'active'");
+    const [activeEmps] = await db.query("SELECT id, hire_date FROM hr_employees WHERE status = 'active'");
     let created = 0;
     let updated = 0;
 
     for (const emp of activeEmps) {
+      // Auto-calculate annual leave: 30 days if 5+ years, 21 days otherwise
+      let totalDays = days;
+      if (leaveTypeId === 'LT-ANNUAL' && !days) {
+        const hireDate = emp.hire_date ? new Date(emp.hire_date) : new Date();
+        const yearsOfService = (new Date().getFullYear() - hireDate.getFullYear());
+        totalDays = yearsOfService >= 5 ? 30 : 21;
+      }
+      if (!totalDays) totalDays = 21;
+
       const [existing] = await db.query(
         'SELECT id FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND year = ?',
         [emp.id, leaveTypeId, targetYear]
@@ -1037,14 +1046,14 @@ router.post('/leave-balances/init', async (req, res) => {
       if (existing.length) {
         await db.query(
           'UPDATE hr_leave_balances SET total_days = ?, remaining_days = total_days - used_days WHERE id = ?',
-          [days, existing[0].id]
+          [totalDays, existing[0].id]
         );
         updated++;
       } else {
         const balId = 'LB-' + Date.now() + '-' + created;
         await db.query(
           `INSERT INTO hr_leave_balances (id, employee_id, leave_type_id, year, total_days, used_days, remaining_days) VALUES (?,?,?,?,?,0,?)`,
-          [balId, emp.id, leaveTypeId, targetYear, days, days]
+          [balId, emp.id, leaveTypeId, targetYear, totalDays, totalDays]
         );
         created++;
       }
@@ -1099,14 +1108,18 @@ router.post('/leave-requests', async (req, res) => {
       [employeeId, leaveTypeId, currentYear]
     );
 
-    // Check if this leave type is paid (unpaid leave has no balance check)
+    // Check if this leave type is paid
     const [leaveType] = await db.query('SELECT is_paid FROM hr_leave_types WHERE id = ?', [leaveTypeId]);
+    let excessDays = 0;
+    let deductFromSalary = false;
     if (leaveType.length && leaveType[0].is_paid) {
       if (!balances.length) {
-        return res.json({ success: false, error: 'No leave balance found. Please initialize balances first.' });
+        return res.json({ success: false, error: 'لا يوجد رصيد إجازات. يرجى تهيئة الأرصدة أولاً.' });
       }
       if (balances[0].remaining_days < daysCount) {
-        return res.json({ success: false, error: `Insufficient balance. Available: ${balances[0].remaining_days}, Requested: ${daysCount}` });
+        // Allow but flag excess for salary deduction
+        excessDays = daysCount - balances[0].remaining_days;
+        deductFromSalary = true;
       }
     }
 
@@ -1126,7 +1139,23 @@ router.post('/leave-requests', async (req, res) => {
       [reqId, requestNumber, employeeId, leaveTypeId, startDate, endDate, daysCount, reason || null, 'pending']
     );
 
-    res.json({ success: true, id: reqId, requestNumber, daysCount });
+    // Calculate daily cost for salary deduction info
+    let dailyCost = 0;
+    if (deductFromSalary) {
+      const [emp] = await db.query('SELECT basic_salary, work_start, work_end FROM hr_employees WHERE id = ?', [employeeId]);
+      if (emp.length) {
+        const salary = Number(emp[0].basic_salary) || 0;
+        dailyCost = Math.round((salary / 30) * 100) / 100; // Daily rate based on 30-day month
+      }
+    }
+
+    res.json({
+      success: true, id: reqId, requestNumber, daysCount,
+      excessDays: excessDays,
+      deductFromSalary: deductFromSalary,
+      deductionAmount: deductFromSalary ? Math.round(excessDays * dailyCost * 100) / 100 : 0,
+      warning: deductFromSalary ? 'الإجازة تتجاوز الرصيد بـ ' + excessDays + ' يوم — سيتم خصم ' + Math.round(excessDays * dailyCost) + ' من الراتب' : ''
+    });
   } catch (e) {
     res.json({ success: false, error: e.message });
   }

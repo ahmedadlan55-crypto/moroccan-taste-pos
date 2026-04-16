@@ -554,7 +554,7 @@ async function runMigrations() {
   try {
     const [posCount] = await db.query('SELECT COUNT(*) AS cnt FROM positions');
     if (posCount[0].cnt === 0) {
-      await db.query("INSERT INTO positions (id, name, level) VALUES ('POS-1','محاسب',1),('POS-2','مدير مالي',2),('POS-3','مدير تنفيذي',3),('POS-4','مسؤول بنوك',2),('POS-5','مدير فرع',2)");
+      await db.query("INSERT INTO positions (id, name, level) VALUES ('POS-0','موظف',1),('POS-1','محاسب',2),('POS-5','مدير فرع',3),('POS-4','مسؤول بنوك',3),('POS-2','مدير مالي',4),('POS-3','مدير تنفيذي',5),('POS-6','مدير عام',6)");
     }
   } catch(e) {}
 

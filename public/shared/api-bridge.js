@@ -190,6 +190,15 @@
     getPaymentsList:     { method: 'GET',  url: '/erp/payments' },
     getReceiptsList:     { method: 'GET',  url: '/erp/receipts' },
     getZATCAInvoices:    { method: 'GET',  url: '/erp/zatca' },
+    // Employee self-service
+    getMyProfile:        { method: 'GET',  url: (u) => '/hr/my-profile?username=' + u },
+    getMyAttendance:     { method: 'GET',  url: (u) => '/hr/my-attendance?username=' + u },
+    myClock:             { method: 'POST', url: '/hr/my-clock' },
+    getMyLeaveBalances:  { method: 'GET',  url: (u) => '/hr/my-leave-balances?username=' + u },
+    myLeaveRequest:      { method: 'POST', url: '/hr/my-leave-request' },
+    getMyLeaveRequests:  { method: 'GET',  url: (u) => '/hr/my-leave-requests?username=' + u },
+    getMyPayslips:       { method: 'GET',  url: (u) => '/hr/my-payslips?username=' + u },
+    getHrLeaveTypes:     { method: 'GET',  url: '/hr/leave-types' },
   };
 
   function buildUrl(route, args) {

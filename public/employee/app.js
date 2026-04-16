@@ -310,7 +310,7 @@ function loadMyTransactions() {
     if (!txns.length) { c.innerHTML = '<p class="empty">لا توجد معاملات</p>'; return; }
     c.innerHTML = txns.map(function(t) {
       var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('ar-SA',{day:'numeric',month:'short'}) : '';
-      return '<div class="ar" style="cursor:pointer;padding:12px 0;" onclick="viewMyTxn('"'"''+t.id+'"'"'")"><div style="flex:1;"><div style="font-weight:800;font-size:13px;">' + t.title + '</div><div class="meta">' + (t.typeName||'') + ' | ' + dt + '</div></div><span class="badge">' + (sMap[t.status]||t.status) + '</span></div>';
+      return '<div class="ar" style="cursor:pointer;padding:12px 0;" onclick="viewMyTxn(\x27'+t.id+'\x27)"><div style="flex:1;"><div style="font-weight:800;font-size:13px;">' + t.title + '</div><div class="meta">' + (t.typeName||'') + ' | ' + dt + '</div></div><span class="badge">' + (sMap[t.status]||t.status) + '</span></div>';
     }).join('');
   });
 }

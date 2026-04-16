@@ -91,6 +91,21 @@
     <button id="lbtn" onclick="doLogin()"><i class="fas fa-sign-in-alt"></i> دخول</button>
   </div>
 </div>
+<script>
+function doLogin(){
+  var u=document.getElementById('lu').value,p=document.getElementById('lp').value;
+  if(!u||!p){var t=document.getElementById('toast');t.textContent='أدخل البيانات';t.className='toast show err';setTimeout(function(){t.className='toast';},3e3);return;}
+  var btn=document.getElementById('lbtn');btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin"></i>';
+  var xhr=new XMLHttpRequest();xhr.open('POST','/api/auth/login',true);xhr.setRequestHeader('Content-Type','application/json');
+  xhr.onreadystatechange=function(){if(xhr.readyState!==4)return;btn.disabled=false;btn.innerHTML='<i class="fas fa-sign-in-alt"></i> دخول';
+    try{var r=JSON.parse(xhr.responseText);
+      if(r&&r.success&&r.token){localStorage.setItem('emp_token',r.token);localStorage.setItem('emp_session',JSON.stringify({username:r.username,role:r.role,brandId:r.brandId||'',branchId:r.branchId||''}));location.reload();}
+      else{var t=document.getElementById('toast');t.textContent=r?r.error:'فشل الدخول';t.className='toast show err';setTimeout(function(){t.className='toast';},3e3);}
+    }catch(e){var t=document.getElementById('toast');t.textContent='خطأ في الاتصال';t.className='toast show err';setTimeout(function(){t.className='toast';},3e3);}
+  };xhr.send(JSON.stringify({username:u,password:p}));
+}
+document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.getElementById('loginPage').style.display!=='none')doLogin();});
+</script>
 <div id="app" style="display:none;">
   <div class="hdr">
     <div class="hdr-r"><div class="hdr-av"><i class="fas fa-user-tie"></i></div><div><div class="hdr-n" id="hdrName">الموظف</div><div class="hdr-s" id="hdrSub"></div></div></div>

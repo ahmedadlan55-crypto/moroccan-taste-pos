@@ -16,28 +16,11 @@ const PORT = process.env.PORT || 3000;
 // 1. Compression
 app.use(compression());
 
-// 2. Security headers (Helmet) — enterprise-grade
+// 2. Security headers (Helmet)
 app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdnjs.cloudflare.com", "https://cdn.jsdelivr.net"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com", "https://fonts.googleapis.com"],
-      fontSrc: ["'self'", "https://cdnjs.cloudflare.com", "https://fonts.gstatic.com"],
-      imgSrc: ["'self'", "data:", "blob:"],
-      connectSrc: ["'self'", "https://nominatim.openstreetmap.org"],
-      frameSrc: ["'none'"],
-      objectSrc: ["'none'"],
-      baseUri: ["'self'"],
-      formAction: ["'self'"]
-    }
-  },
+  contentSecurityPolicy: false,  // Disabled — app uses inline scripts/styles extensively
   referrerPolicy: { policy: 'same-origin' },
-  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
-  noSniff: true,
-  xssFilter: true,
-  dnsPrefetchControl: { allow: false },
-  permittedCrossDomainPolicies: { permittedPolicies: 'none' }
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true }
 }));
 
 // 3. No-cache for JS/CSS + additional security headers
@@ -100,28 +83,35 @@ app.use('/api/', function(req, res, next) {
 const PUBLIC_PATHS = [
   '/api/auth/login',
   '/api/auth/refresh-token',
+  '/api/auth/init/',
+  '/api/settings',
+  '/api/menu',
 ];
 app.use('/api/', function(req, res, next) {
-  // Skip authentication for public endpoints
-  const fullPath = req.path.replace(/\/$/, ''); // normalize
-  for (var i = 0; i < PUBLIC_PATHS.length; i++) {
-    if (('/api' + fullPath).indexOf(PUBLIC_PATHS[i]) === 0) return next();
-  }
-  // Also skip for OPTIONS (preflight)
+  // Skip OPTIONS (preflight)
   if (req.method === 'OPTIONS') return next();
 
+  // Check if this is a public path
+  const reqUrl = '/api' + req.path.replace(/\/$/, '');
+  for (var i = 0; i < PUBLIC_PATHS.length; i++) {
+    if (reqUrl.indexOf(PUBLIC_PATHS[i]) === 0) return next();
+  }
+
+  // Try to extract and verify JWT token
   const authHeader = req.headers['authorization'];
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ success: false, error: 'غير مصرح — يرجى تسجيل الدخول' });
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      req.user = decoded;
+      return next();
+    } catch (err) {
+      // Token invalid/expired
+    }
   }
-  try {
-    const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // { id, username, role, brandId, branchId }
-    next();
-  } catch (err) {
-    return res.status(401).json({ success: false, error: 'الجلسة منتهية — يرجى إعادة تسجيل الدخول' });
-  }
+
+  // No valid token — block the request
+  return res.status(401).json({ success: false, error: 'غير مصرح — يرجى تسجيل الدخول' });
 });
 
 // Static files (frontend) — BEFORE API routes so they're not auth-gated

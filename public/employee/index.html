@@ -95,10 +95,31 @@
     <div class="page active" id="pghome"><div id="clockSection"></div><div class="stats" id="homeStats"></div><div class="card"><div class="card-t"><i class="fas fa-history"></i> آخر الحضور</div><div id="recentAtt"></div></div></div>
     <div class="page" id="pgatt"><div class="card"><div class="card-t"><i class="fas fa-calendar-check"></i> سجل الحضور</div><div id="attList"></div></div></div>
     <div class="page" id="pgleave"><div class="card"><div class="card-t"><i class="fas fa-umbrella-beach"></i> أرصدة الإجازات</div><div id="leaveBals"></div></div><button class="btn-m" onclick="openLeaveForm()"><i class="fas fa-plus"></i> طلب إجازة</button><div class="card"><div class="card-t"><i class="fas fa-list"></i> طلباتي</div><div id="leaveReqs"></div></div></div>
+    <div class="page" id="pgtxn">
+      <button class="btn-m" onclick="openTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
+      <div class="card"><div class="card-t"><i class="fas fa-file-alt"></i> معاملاتي</div><div id="myTxnList"></div></div>
+    </div>
     <div class="page" id="pgme"><div class="card"><div class="card-t"><i class="fas fa-id-card"></i> بياناتي</div><div id="profileInfo"></div></div><div class="card"><div class="card-t"><i class="fas fa-money-bill-wave"></i> الرواتب</div><div id="payslips"></div></div></div>
   </div>
-  <nav class="bnav"><div class="nt active" onclick="navTo('home',this)"><i class="fas fa-home"></i>الرئيسية</div><div class="nt" onclick="navTo('att',this)"><i class="fas fa-fingerprint"></i>البصمة</div><div class="nt" onclick="navTo('leave',this)"><i class="fas fa-calendar"></i>إجازات</div><div class="nt" onclick="navTo('me',this)"><i class="fas fa-user"></i>ملفي</div></nav>
+  <nav class="bnav"><div class="nt active" onclick="navTo('home',this)"><i class="fas fa-home"></i>الرئيسية</div><div class="nt" onclick="navTo('att',this)"><i class="fas fa-fingerprint"></i>البصمة</div><div class="nt" onclick="navTo('txn',this)"><i class="fas fa-file-alt"></i>معاملات</div><div class="nt" onclick="navTo('leave',this)"><i class="fas fa-calendar"></i>إجازات</div><div class="nt" onclick="navTo('me',this)"><i class="fas fa-user"></i>ملفي</div></nav>
 </div>
+<!-- Leave Modal -->
 <div class="modal" id="leaveModal"><div class="modal-c"><div class="modal-h"><span><i class="fas fa-calendar-plus"></i> طلب إجازة</span><button onclick="closeLeaveForm()">&times;</button></div><div class="fg"><label>النوع</label><select class="fi" id="lfType"></select></div><div class="fg"><label>من</label><input type="date" class="fi" id="lfStart"></div><div class="fg"><label>إلى</label><input type="date" class="fi" id="lfEnd"></div><div class="fg"><label>السبب</label><textarea class="fi" id="lfReason" rows="2"></textarea></div><button class="btn-m" onclick="submitLeave()"><i class="fas fa-paper-plane"></i> تقديم</button></div></div>
+<!-- Transaction Modal -->
+<div class="modal" id="txnModal"><div class="modal-c" style="max-height:90dvh;">
+  <div class="modal-h"><span><i class="fas fa-file-alt"></i> معاملة جديدة</span><button onclick="closeTxnModal()">&times;</button></div>
+  <div class="fg"><label>نوع المعاملة *</label><select class="fi" id="txnType"></select></div>
+  <div class="fg"><label>العنوان *</label><input class="fi" id="txnTitle" placeholder="وصف مختصر للمعاملة"></div>
+  <div class="fg"><label>التفاصيل</label><textarea class="fi" id="txnDesc" rows="3" placeholder="تفاصيل إضافية"></textarea></div>
+  <div class="fg"><label>المبلغ (اختياري)</label><input type="number" class="fi" id="txnAmount" step="0.01" min="0" value="0"></div>
+  <div class="fg"><label>المسمى الوظيفي</label><input class="fi" id="txnJobTitle" readonly style="background:#f3f4f6;color:#6b7280;"></div>
+  <div class="fg"><label><i class="fas fa-paperclip"></i> مرفق (PDF)</label><input type="file" class="fi" id="txnFile" accept=".pdf,.jpg,.jpeg,.png" style="padding:8px;"></div>
+  <button class="btn-m" onclick="submitTxn()"><i class="fas fa-paper-plane"></i> إرسال المعاملة</button>
+</div></div>
+<!-- Transaction Detail Modal -->
+<div class="modal" id="txnDetailModal"><div class="modal-c" style="max-height:90dvh;">
+  <div class="modal-h"><span id="txnDetailTitle">تفاصيل المعاملة</span><button onclick="closeTxnDetail()">&times;</button></div>
+  <div id="txnDetailBody"></div>
+</div></div>
 </body>
 </html>

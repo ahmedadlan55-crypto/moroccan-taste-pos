@@ -121,6 +121,7 @@ function navTo(pg, el) {
   document.getElementById('pg'+pg).classList.add('active');
   if (el) el.classList.add('active');
   if (pg==='att') loadAttPage();
+  if (pg==='txn') loadMyTransactions();
   if (pg==='leave') loadLeavePage();
   if (pg==='me') loadProfilePage();
   if (pg==='home') loadHomeData();
@@ -308,3 +309,63 @@ function loadProfilePage() {
     document.getElementById('payslips').innerHTML = s.length ? s.map(function(p){return '<div class="lc"><div class="ln">'+months[p.month||0]+' '+(p.year||'')+'</div><div class="lr" style="color:#10b981;">'+Number(p.net_salary||0).toFixed(0)+' SAR</div></div>';}).join('') : '<p class="empty">لا توجد رواتب</p>';
   });
 }
+
+// TRANSACTIONS
+function loadMyTransactions() {
+  var c = document.getElementById('myTxnList');
+  c.innerHTML = '<p class="empty"><i class="fas fa-spinner fa-spin"></i></p>';
+  callAPI('GET', '/workflow/my-transactions?username=' + currentUser, null, function(rows) {
+    var txns = rows || []; if (!Array.isArray(txns)) txns = [];
+    var sMap = {pending:'معلّق',in_progress:'قيد التنفيذ',approved:'معتمدة',rejected:'مرفوضة',closed:'مغلقة'};
+    var sClr = {pending:'#f59e0b',in_progress:'#0ea5e9',approved:'#10b981',rejected:'#ef4444',closed:'#6b7280'};
+    if (!txns.length) { c.innerHTML = '<p class="empty">لا توجد معاملات</p>'; return; }
+    c.innerHTML = txns.map(function(t) {
+      var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('ar-SA',{day:'numeric',month:'short'}) : '';
+      return '<div class="ar" style="cursor:pointer;padding:12px 0;" onclick="viewMyTxn('"'"''+t.id+'"'"'")"><div style="flex:1;"><div style="font-weight:800;font-size:13px;">' + t.title + '</div><div class="meta">' + (t.typeName||'') + ' | ' + dt + '</div></div><span class="badge">' + (sMap[t.status]||t.status) + '</span></div>';
+    }).join('');
+  });
+}
+function openTxnModal() {
+  callAPI('GET', '/workflow/transaction-types', null, function(types) {
+    document.getElementById('txnType').innerHTML = (types||[]).map(function(t) { return '<option value="' + t.id + '">' + t.name + '</option>'; }).join('');
+  });
+  document.getElementById('txnJobTitle').value = empProfile ? (empProfile.job_title || '') : '';
+  document.getElementById('txnTitle').value = ''; document.getElementById('txnDesc').value = '';
+  document.getElementById('txnAmount').value = '0'; document.getElementById('txnFile').value = '';
+  document.getElementById('txnModal').classList.add('show');
+}
+function closeTxnModal() { document.getElementById('txnModal').classList.remove('show'); }
+function submitTxn() {
+  var title = document.getElementById('txnTitle').value, typeId = document.getElementById('txnType').value;
+  if (!title || !typeId) return toast('اختر النوع واكتب العنوان', true);
+  var data = { transactionTypeId: typeId, title: title, description: document.getElementById('txnDesc').value, amount: Number(document.getElementById('txnAmount').value)||0, username: currentUser, branchId: empProfile ? empProfile.branch_id : '', brandId: empProfile ? empProfile.brand_id : '' };
+  var f = document.getElementById('txnFile');
+  if (f.files && f.files[0]) {
+    if (f.files[0].size > 5242880) return toast('الحد 5MB', true);
+    var r = new FileReader(); r.onload = function(e) { data.attachment = e.target.result; _doTxn(data); }; r.readAsDataURL(f.files[0]);
+  } else _doTxn(data);
+}
+function _doTxn(data) {
+  toast('جاري الإرسال...'); callAPI('POST', '/workflow/transactions', data, function(r, e) {
+    if (e) return toast('خطأ: '+e, true);
+    if (r && r.success) { toast('تم: '+(r.txnNumber||'')); closeTxnModal(); loadMyTransactions(); } else toast(r?r.error:'فشل', true);
+  });
+}
+function viewMyTxn(id) {
+  callAPI('GET', '/workflow/transactions/' + id, null, function(txn) {
+    if (!txn || txn.error) return toast('خطأ', true);
+    var sMap = {pending:'معلّق',in_progress:'قيد التنفيذ',approved:'معتمدة',rejected:'مرفوضة',closed:'مغلقة'};
+    var aMap = {create:'إنشاء',approve:'موافقة',reject:'رفض',return:'إرجاع',close:'إغلاق'};
+    var aClr = {create:'#0ea5e9',approve:'#10b981',reject:'#ef4444',return:'#f59e0b',close:'#6b7280'};
+    var h = '<div class="pf"><span>الرقم</span><b>'+(txn.txnNumber||'')+'</b></div><div class="pf"><span>النوع</span><b>'+(txn.typeName||'')+'</b></div><div class="pf"><span>الحالة</span><b>'+(sMap[txn.status]||txn.status)+'</b></div><div class="pf"><span>المبلغ</span><b>'+Number(txn.amount||0).toFixed(2)+'</b></div>';
+    if (txn.description) h += '<div class="card" style="margin:8px 0;"><p style="font-size:12px;">'+txn.description+'</p></div>';
+    if (txn.attachment && txn.attachment.startsWith && txn.attachment.startsWith('data:')) h += '<a href="'+txn.attachment+'" download style="color:#0ea5e9;font-size:12px;"><i class="fas fa-download"></i> تحميل المرفق</a>';
+    if (txn.logs && txn.logs.length) { h += '<div class="card" style="margin-top:8px;"><div class="card-t"><i class="fas fa-route"></i> المسار</div>';
+      txn.logs.forEach(function(l) { var c=aClr[l.actionType]||'#6b7280'; h += '<div style="padding:6px 0;border-right:3px solid '+c+';padding-right:8px;margin-bottom:4px;font-size:11px;"><b style="color:'+c+';">'+(aMap[l.actionType]||l.actionType)+'</b> — '+(l.actionBy||'')+(l.note?' | '+l.note:'')+'</div>'; });
+      h += '</div>'; }
+    document.getElementById('txnDetailTitle').textContent = txn.txnNumber||'';
+    document.getElementById('txnDetailBody').innerHTML = h;
+    document.getElementById('txnDetailModal').classList.add('show');
+  });
+}
+function closeTxnDetail() { document.getElementById('txnDetailModal').classList.remove('show'); }

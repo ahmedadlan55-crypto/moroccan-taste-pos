@@ -94,6 +94,8 @@ app.use('/api/', function(req, res, next) {
   if (p.startsWith('/settings')) return next();        // settings
   if (p.startsWith('/menu')) return next();            // menu
   if (p.startsWith('/hr/my-')) return next();          // employee self-service
+  if (p.startsWith('/workflow/my-')) return next();    // employee transactions
+  if (p.startsWith('/workflow/transaction-types')) return next();
   if (p.startsWith('/hr/leave-types')) return next();  // leave types list
   if (p.startsWith('/hr/departments')) return next();  // departments list
 

@@ -199,6 +199,11 @@
     getMyLeaveRequests:  { method: 'GET',  url: (u) => '/hr/my-leave-requests?username=' + u },
     getMyPayslips:       { method: 'GET',  url: (u) => '/hr/my-payslips?username=' + u },
     getHrLeaveTypes:     { method: 'GET',  url: '/hr/leave-types' },
+    // Workflow self-service
+    getMyTransactions:   { method: 'GET',  url: (u) => '/workflow/my-transactions?username=' + u },
+    getTransactionTypes: { method: 'GET',  url: '/workflow/transaction-types' },
+    createMyTransaction: { method: 'POST', url: '/workflow/transactions' },
+    getMyTxnDetail:      { method: 'GET',  url: (id) => '/workflow/transactions/' + id },
   };
 
   function buildUrl(route, args) {

@@ -137,6 +137,31 @@ router.post('/transactions', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
+// Get MY transactions (employee self-service)
+router.get('/my-transactions', async (req, res) => {
+  try {
+    const username = req.query.username || (req.user && req.user.username) || '';
+    const [rows] = await db.query(
+      `SELECT t.*, tt.name AS type_name, tt.code AS type_code,
+              wd.step_name AS current_step_name, p.name AS current_position_name
+       FROM transactions t
+       JOIN transaction_types tt ON t.transaction_type_id = tt.id
+       LEFT JOIN workflow_definitions wd ON t.current_step_id = wd.id
+       LEFT JOIN positions p ON wd.required_position_id = p.id
+       WHERE t.created_by = ?
+       ORDER BY t.created_at DESC LIMIT 100`, [username]);
+    res.json(rows.map(t => ({
+      id: t.id, txnNumber: t.transaction_number, typeId: t.transaction_type_id,
+      typeName: t.type_name, typeCode: t.type_code,
+      title: t.title, description: t.description, amount: Number(t.amount),
+      status: t.status, currentStepName: t.current_step_name || '',
+      currentPositionName: t.current_position_name || '',
+      attachment: t.attachment ? true : false,
+      createdAt: t.created_at
+    })));
+  } catch(e) { res.json([]); }
+});
+
 // Get transactions (filtered by position/user)
 router.get('/transactions', async (req, res) => {
   try {

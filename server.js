@@ -25,7 +25,7 @@ app.use(helmet({
 
 // 3. No-cache for JS/CSS + additional security headers
 app.use(function(req, res, next) {
-  if (req.path.match(/\.(js|css)$/)) {
+  if (req.path.match(/\.(js|css|html)$/) || req.path.endsWith('/') || !req.path.includes('.')) {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');

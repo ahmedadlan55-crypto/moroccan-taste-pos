@@ -3764,8 +3764,9 @@ function loadDashUsers() {
       var btnS = 'width:34px;height:34px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;';
       var brandDisplay = u.brandName ? '<span class="badge" style="background:#f3e8ff;color:#7c3aed;font-size:10px;">' + u.brandName + '</span>' : '';
       var branchDisplay = u.branchName ? '<span class="badge badge-blue" style="font-size:10px;">' + u.branchName + '</span>' : '';
+      var posDisplay = u.positionName ? '<div style="font-size:10px;margin-top:2px;"><span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:6px;background:#e0f2fe;color:#0369a1;font-weight:700;"><i class="fas fa-id-badge"></i>' + u.positionName + '</span></div>' : '';
       h += '<tr>' +
-        '<td><div style="font-weight:800;font-size:14px;color:#1e293b;">' + (u.displayName || '<span style="color:#94a3b8;">—</span>') + '</div><div style="font-size:11px;color:#94a3b8;font-family:monospace;">' + (u.username || '') + '</div>' + emailDisplay + '</td>' +
+        '<td><div style="font-weight:800;font-size:14px;color:#1e293b;">' + (u.displayName || '<span style="color:#94a3b8;">—</span>') + '</div><div style="font-size:11px;color:#94a3b8;font-family:monospace;">' + (u.username || '') + '</div>' + emailDisplay + posDisplay + '</td>' +
         '<td>' + roleLabel(u.role) + devBadge + '</td>' +
         '<td>' + brandDisplay + ' ' + branchDisplay + '</td>' +
         '<td>' + (u.active ? '<span class="badge green">نشط</span>' : '<span class="badge red">موقوف</span>') + '</td>' +

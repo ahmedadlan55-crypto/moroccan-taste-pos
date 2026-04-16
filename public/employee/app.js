@@ -261,12 +261,28 @@ function loadAttPage() {
 // LEAVE PAGE
 // ═══════════════════════════════════════
 function loadLeavePage() {
+  // Show years of service + entitlement
+  var yearsInfo = '';
+  if (empProfile && empProfile.hire_date) {
+    var hd = new Date(empProfile.hire_date);
+    var yrs = new Date().getFullYear() - hd.getFullYear();
+    var entitlement = yrs >= 5 ? 30 : 21;
+    yearsInfo = '<div style="padding:8px 12px;border-radius:10px;background:#eff6ff;color:#1e40af;font-size:12px;font-weight:700;margin-bottom:8px;"><i class="fas fa-briefcase" style="margin-left:4px;"></i> سنوات الخدمة: ' + yrs + ' سنة — الاستحقاق السنوي: ' + entitlement + ' يوم</div>';
+  }
   callAPI('GET', '/hr/my-leave-balances?username=' + currentUser, null, function(rows) {
     var bals = rows||[]; if (!Array.isArray(bals)) bals = [];
     var c = document.getElementById('leaveBals');
-    c.innerHTML = bals.length ? bals.map(function(b) {
-      return '<div class="lc"><div class="ln">' + (b.leaveTypeName||b.leave_type_name||'—') + '</div><div class="lr">' + (b.remaining_days||0) + ' يوم</div></div>';
+    var html = yearsInfo;
+    html += bals.length ? bals.map(function(b) {
+      var total = Number(b.total_days||0), used = Number(b.used_days||0), rem = Number(b.remaining_days||0);
+      var pct = total > 0 ? Math.round((used/total)*100) : 0;
+      var barClr = rem <= 3 ? '#ef4444' : rem <= 7 ? '#f59e0b' : '#10b981';
+      return '<div class="lc" style="flex-direction:column;align-items:stretch;gap:4px;">' +
+        '<div style="display:flex;justify-content:space-between;"><span style="font-weight:700;">' + (b.leaveTypeName||b.leave_type_name||'—') + '</span><span style="color:#0ea5e9;font-weight:800;">' + rem + ' / ' + total + ' يوم</span></div>' +
+        '<div style="height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + barClr + ';border-radius:3px;"></div></div>' +
+        '</div>';
     }).join('') : '<p class="empty">لا توجد أرصدة</p>';
+    c.innerHTML = html;
   });
   callAPI('GET', '/hr/my-leave-requests?username=' + currentUser, null, function(rows) {
     var reqs = rows||[]; if (!Array.isArray(reqs)) reqs = [];
@@ -353,10 +369,10 @@ function openTxnModal() {
       return !ids[a.id];
     });
   });
-  callAPI('GET', '/workflow/eligible-users', null, function(users) {
+  callAPI('GET', '/workflow/eligible-users?sender=' + currentUser, null, function(users) {
     _txnEligibleUsers = users || [];
     var sel = document.getElementById('txnRecipient');
-    if (sel) sel.innerHTML = '<option value="">— اختر المستلم —</option>' + _txnEligibleUsers.map(function(u) { return '<option value="' + u.username + '">' + (u.fullName||u.username) + ' — ' + (u.positionName||'') + '</option>'; }).join('');
+    if (sel) sel.innerHTML = '<option value="">— اختر المستلم —</option>' + _txnEligibleUsers.map(function(u) { return '<option value="' + u.username + '">' + (u.fullName||u.username) + ' — ' + (u.positionName||'') + (u.branchName?' | '+u.branchName:'') + '</option>'; }).join('');
   });
   // Fill employee info
   document.getElementById('txnSenderName').value = empProfile ? (empProfile.fullName || currentUser) : currentUser;

@@ -108,17 +108,38 @@ router.delete('/workflow-definitions/:id', async (req, res) => {
 // ═══════════════════════════════════════
 
 // Get eligible users (users with positions — can receive transactions)
+// If senderUsername provided, only show users with higher position level
 router.get('/eligible-users', async (req, res) => {
   try {
+    const senderUsername = req.query.sender || '';
+    let senderLevel = 0;
+    if (senderUsername) {
+      const [su] = await db.query(
+        'SELECT p.level FROM users u LEFT JOIN positions p ON u.position_id = p.id WHERE u.username = ?', [senderUsername]);
+      if (su.length) senderLevel = Number(su[0].level) || 0;
+    }
+
     const [rows] = await db.query(
-      `SELECT u.id, u.username, u.full_name, u.role, p.name AS position_name, p.level AS position_level
+      `SELECT u.id, u.username, u.full_name, u.role, p.name AS position_name, p.level AS position_level,
+              COALESCE(br.name,'') AS branch_name
        FROM users u
        LEFT JOIN positions p ON u.position_id = p.id
-       WHERE u.active = 1 AND u.position_id IS NOT NULL
+       LEFT JOIN branches br ON u.branch_id = br.id
+       WHERE u.active = 1 AND (u.position_id IS NOT NULL OR u.role = 'admin')
        ORDER BY p.level DESC, u.full_name`);
-    res.json(rows.map(r => ({
+
+    var filtered = rows.filter(function(r) {
+      // Admin always visible
+      if (r.role === 'admin') return true;
+      // If sender specified, only show higher level positions
+      if (senderLevel > 0) return (Number(r.position_level) || 0) > senderLevel;
+      return true;
+    });
+
+    res.json(filtered.map(r => ({
       id: r.id, username: r.username, fullName: r.full_name || r.username,
-      role: r.role, positionName: r.position_name || '', positionLevel: r.position_level || 0
+      role: r.role, positionName: r.position_name || (r.role === 'admin' ? 'مدير النظام' : ''),
+      positionLevel: r.position_level || 0, branchName: r.branch_name || ''
     })));
   } catch(e) { res.json([]); }
 });

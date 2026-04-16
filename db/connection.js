@@ -35,7 +35,9 @@ if (dbUrl) {
     queueLimit: 50,
     charset: 'utf8mb4',
     enableKeepAlive: true,
-    keepAliveInitialDelay: 30000
+    keepAliveInitialDelay: 30000,
+    connectTimeout: 10000,      // 10s connection timeout
+    idleTimeout: 60000          // 60s idle timeout
   };
 }
 

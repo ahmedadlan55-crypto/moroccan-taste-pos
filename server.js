@@ -16,11 +16,28 @@ const PORT = process.env.PORT || 3000;
 // 1. Compression
 app.use(compression());
 
-// 2. Security headers (Helmet)
+// 2. Security headers (Helmet) — enterprise-grade
 app.use(helmet({
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdnjs.cloudflare.com", "https://cdn.jsdelivr.net"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://cdnjs.cloudflare.com", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      connectSrc: ["'self'", "https://nominatim.openstreetmap.org"],
+      frameSrc: ["'none'"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"]
+    }
+  },
   referrerPolicy: { policy: 'same-origin' },
-  hsts: { maxAge: 31536000, includeSubDomains: true }
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+  noSniff: true,
+  xssFilter: true,
+  dnsPrefetchControl: { allow: false },
+  permittedCrossDomainPolicies: { permittedPolicies: 'none' }
 }));
 
 // 3. No-cache for JS/CSS + additional security headers
@@ -1074,6 +1091,10 @@ async function runMigrations() {
   try { await db.query('CREATE INDEX idx_hr_emp_status ON hr_employees(status)'); } catch(e) {}
   try { await db.query('CREATE INDEX idx_hr_att_date ON hr_attendance(attendance_date)'); } catch(e) {}
   try { await db.query('CREATE INDEX idx_hr_leave_status ON hr_leave_requests(status)'); } catch(e) {}
+
+  // 2FA support
+  await addColumnIfMissing('users', 'totp_secret', "VARCHAR(100)");
+  await addColumnIfMissing('users', 'totp_enabled', "BOOLEAN DEFAULT FALSE");
 
   // Add CHECK constraints (MySQL 8.0+)
   try { await db.query('ALTER TABLE hr_employees ADD CONSTRAINT ck_salary CHECK (basic_salary >= 0)'); } catch(e) {}

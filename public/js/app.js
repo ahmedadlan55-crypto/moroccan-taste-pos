@@ -3746,6 +3746,7 @@ function loadDashUsers() {
           '<div style="display:flex;gap:4px;">' +
             '<button style="' + btnS + 'color:#3b82f6;" onclick="editUsr(\'' + u.username + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
             '<button style="' + btnS + 'color:#f59e0b;" onclick="resetUserPassword(\'' + u.username + '\')" title="إعادة تعيين كلمة المرور"><i class="fas fa-key"></i></button>' +
+            '<button style="' + btnS + 'color:#8b5cf6;" onclick="setup2FA(\'' + u.username + '\')" title="تفعيل 2FA"><i class="fas fa-shield-alt"></i></button>' +
             '<button style="' + btnS + 'color:#10b981;" onclick="toggUsr(\'' + u.username + '\')" title="تفعيل/إيقاف"><i class="fas fa-power-off"></i></button>' +
             '<button style="' + btnS + 'color:#ef4444;" onclick="delUsr(\'' + u.username + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
           '</div>' +
@@ -3878,6 +3879,35 @@ function delUsr(u) {
         if (r && r.success) { showToast('تم الحذف'); loadDashUsers(); }
         else showToast((r && r.error) || 'فشل الحذف', true);
      }).deleteUser(u);
+}
+
+// ─── Two-Factor Authentication (2FA) ───
+function setup2FA(username) {
+  if (!confirm('تفعيل التحقق الثنائي (2FA) للمستخدم "' + username + '"؟\n\nسيحتاج تطبيق Google Authenticator أو Authy.')) return;
+  loader(true);
+  api.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) {
+      var html = '<div style="text-align:center;padding:20px;">' +
+        '<h3 style="margin-bottom:12px;"><i class="fas fa-shield-alt" style="color:#8b5cf6;"></i> التحقق الثنائي</h3>' +
+        '<p style="margin-bottom:16px;color:#64748b;">افتح تطبيق <b>Google Authenticator</b> وأضف حساب جديد باستخدام المفتاح التالي:</p>' +
+        '<div style="background:#f1f5f9;padding:16px;border-radius:12px;margin-bottom:16px;">' +
+          '<code style="font-size:18px;font-weight:900;letter-spacing:3px;color:#1e293b;word-break:break-all;">' + r.secret + '</code>' +
+        '</div>' +
+        '<p style="font-size:12px;color:#94a3b8;">أو امسح QR Code (إذا متاح) من الرابط:<br/><code style="font-size:10px;">' + (r.uri||'') + '</code></p>' +
+        '<div style="margin-top:16px;padding:12px;background:#f0fdf4;border:1px solid #dcfce7;border-radius:10px;">' +
+          '<i class="fas fa-check-circle" style="color:#16a34a;"></i> تم تفعيل 2FA بنجاح للمستخدم <b>' + username + '</b>' +
+        '</div></div>';
+      showToast('تم تفعيل 2FA');
+      // Show in modal
+      if (typeof openModal === 'function') {
+        q("#muModalTitle").innerText = 'التحقق الثنائي — ' + username;
+        q(".modal-content", q("#modalUserForm")).querySelector('.form-group') ?
+          (q("#modalUserForm .modal-content").innerHTML = '<div class="modal-title"><span>' + username + ' — 2FA</span><button class="modal-close" onclick="closeModal(\'#modalUserForm\')">&times;</button></div>' + html) :
+          alert('المفتاح السري:\n\n' + r.secret + '\n\nأضفه في تطبيق Google Authenticator');
+      }
+    } else showToast(r.error, true);
+  }).setup2FA({ username: username });
 }
 
 // ─── Developer-only DB reset ───

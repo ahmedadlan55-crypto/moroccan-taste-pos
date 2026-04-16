@@ -416,4 +416,55 @@ router.post('/reset-db', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════
+// TWO-FACTOR AUTHENTICATION (2FA)
+// ═══════════════════════════════════════
+const { generateSecret, verifyTOTP, generateOTPAuthURI } = require('../lib/twoFactor');
+
+// POST /api/auth/2fa/setup — generate 2FA secret for a user
+router.post('/2fa/setup', async (req, res) => {
+  try {
+    const { username } = req.body;
+    if (!username) return res.json({ success: false, error: 'اسم المستخدم مطلوب' });
+    const secret = generateSecret();
+    // Store secret in users table
+    await addColumnIfMissing('users', 'totp_secret', "VARCHAR(100)");
+    await db.query('UPDATE users SET totp_secret = ? WHERE username = ?', [secret, username]);
+    const uri = generateOTPAuthURI(secret, username, 'MoroccanTaste');
+    res.json({ success: true, secret, uri, message: 'امسح QR Code بتطبيق Google Authenticator' });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// POST /api/auth/2fa/verify — verify a 2FA code
+router.post('/2fa/verify', async (req, res) => {
+  try {
+    const { username, code } = req.body;
+    if (!username || !code) return res.json({ success: false, error: 'اسم المستخدم والرمز مطلوبان' });
+    const [users] = await db.query('SELECT totp_secret FROM users WHERE username = ?', [username]);
+    if (!users.length || !users[0].totp_secret) return res.json({ success: false, error: 'التحقق الثنائي غير مفعّل' });
+    const valid = verifyTOTP(users[0].totp_secret, code);
+    res.json({ success: valid, error: valid ? undefined : 'الرمز غير صحيح' });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// POST /api/auth/2fa/disable — disable 2FA for a user
+router.post('/2fa/disable', async (req, res) => {
+  try {
+    const { username } = req.body;
+    await db.query('UPDATE users SET totp_secret = NULL WHERE username = ?', [username]);
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Helper for migration — add column if missing
+async function addColumnIfMissing(table, column, definition) {
+  try {
+    const [cols] = await db.query(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+      [table, column]
+    );
+    if (!cols.length) await db.query('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition);
+  } catch(e) {}
+}
+
 module.exports = router;

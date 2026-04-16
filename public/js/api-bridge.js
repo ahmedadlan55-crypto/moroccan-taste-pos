@@ -214,6 +214,9 @@
     getDebitNotes:       { method: 'GET',  url: '/erp/debit-notes' },
     getPaymentsList:     { method: 'GET',  url: '/erp/payments' },
     getReceiptsList:     { method: 'GET',  url: '/erp/receipts' },
+    setup2FA:            { method: 'POST', url: '/auth/2fa/setup' },
+    verify2FA:           { method: 'POST', url: '/auth/2fa/verify' },
+    disable2FA:          { method: 'POST', url: '/auth/2fa/disable' },
     getAccountLedger:    { method: 'GET',  url: (id) => '/erp/gl/account-ledger/' + id },
     // HR Module
     getHrDashboard:      { method: 'GET',  url: '/hr/dashboard' },

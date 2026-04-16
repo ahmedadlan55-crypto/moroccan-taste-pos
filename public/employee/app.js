@@ -26,6 +26,7 @@ function callAPI(method, path, body, cb) {
   if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) return;
+    if (xhr.status === 401) { doLogout(); return; }
     try { cb(JSON.parse(xhr.responseText), null); }
     catch(e) { cb(null, 'HTTP ' + xhr.status); }
   };

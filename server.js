@@ -948,9 +948,9 @@ async function runMigrations() {
   await createTableIfMissing('hr_payroll_runs', `
     CREATE TABLE hr_payroll_runs (
       id VARCHAR(50) PRIMARY KEY,
-      run_number VARCHAR(20),
-      period_month INT NOT NULL,
-      period_year INT NOT NULL,
+      run_number VARCHAR(30),
+      month INT NOT NULL,
+      year INT NOT NULL,
       branch_id VARCHAR(50),
       brand_id VARCHAR(50),
       status ENUM('draft','calculated','approved','paid') DEFAULT 'draft',
@@ -958,33 +958,28 @@ async function runMigrations() {
       total_deductions DECIMAL(14,2) DEFAULT 0,
       total_net DECIMAL(14,2) DEFAULT 0,
       employee_count INT DEFAULT 0,
-      calculated_by VARCHAR(100),
       approved_by VARCHAR(100),
       approved_at DATETIME,
       notes TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      created_by VARCHAR(100)
     ) ENGINE=InnoDB
   `);
 
   await createTableIfMissing('hr_payroll_items', `
     CREATE TABLE hr_payroll_items (
       id VARCHAR(50) PRIMARY KEY,
-      payroll_run_id VARCHAR(50) NOT NULL,
+      run_id VARCHAR(50) NOT NULL,
       employee_id VARCHAR(50) NOT NULL,
       employee_name VARCHAR(200),
-      working_days INT DEFAULT 30,
-      actual_days INT DEFAULT 30,
-      absent_days INT DEFAULT 0,
-      leave_days_paid INT DEFAULT 0,
-      leave_days_unpaid INT DEFAULT 0,
-      late_minutes INT DEFAULT 0,
-      early_leave_minutes INT DEFAULT 0,
-      overtime_minutes INT DEFAULT 0,
+      employee_number VARCHAR(30),
       basic_salary DECIMAL(12,2) DEFAULT 0,
       housing_allowance DECIMAL(12,2) DEFAULT 0,
       transport_allowance DECIMAL(12,2) DEFAULT 0,
       other_allowance DECIMAL(12,2) DEFAULT 0,
       overtime_amount DECIMAL(12,2) DEFAULT 0,
+      overtime_hours DECIMAL(6,2) DEFAULT 0,
       gross_salary DECIMAL(12,2) DEFAULT 0,
       absence_deduction DECIMAL(12,2) DEFAULT 0,
       late_deduction DECIMAL(12,2) DEFAULT 0,
@@ -992,10 +987,42 @@ async function runMigrations() {
       other_deduction DECIMAL(12,2) DEFAULT 0,
       total_deductions DECIMAL(12,2) DEFAULT 0,
       net_salary DECIMAL(12,2) DEFAULT 0,
-      INDEX idx_pi_run (payroll_run_id),
+      actual_days INT DEFAULT 0,
+      absent_days INT DEFAULT 0,
+      late_minutes INT DEFAULT 0,
+      leave_days INT DEFAULT 0,
+      INDEX idx_pi_run (run_id),
       INDEX idx_pi_emp (employee_id)
     ) ENGINE=InnoDB
   `);
+
+  // Fix column name mismatches in existing production payroll tables
+  try {
+    const [cols] = await db.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'hr_payroll_runs' AND COLUMN_NAME = 'period_month'`
+    );
+    if (cols.length) {
+      await db.query(`ALTER TABLE hr_payroll_runs CHANGE period_month month INT NOT NULL`);
+      await db.query(`ALTER TABLE hr_payroll_runs CHANGE period_year year INT NOT NULL`);
+      console.log('[DB] Migration: renamed hr_payroll_runs period_month→month, period_year→year');
+    }
+  } catch (e) { console.log('[DB] Payroll runs migration:', e.message.substring(0, 120)); }
+  try {
+    const [cols] = await db.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'hr_payroll_items' AND COLUMN_NAME = 'payroll_run_id'`
+    );
+    if (cols.length) {
+      await db.query(`ALTER TABLE hr_payroll_items CHANGE payroll_run_id run_id VARCHAR(50) NOT NULL`);
+      console.log('[DB] Migration: renamed hr_payroll_items payroll_run_id→run_id');
+    }
+  } catch (e) { console.log('[DB] Payroll items migration:', e.message.substring(0, 120)); }
+  // Add missing columns to hr_payroll_items for existing tables
+  await addColumnIfMissing('hr_payroll_items', 'employee_number', "VARCHAR(30)");
+  await addColumnIfMissing('hr_payroll_items', 'overtime_hours', "DECIMAL(6,2) DEFAULT 0");
+  await addColumnIfMissing('hr_payroll_items', 'actual_days', "INT DEFAULT 0");
+  await addColumnIfMissing('hr_payroll_items', 'absent_days', "INT DEFAULT 0");
+  await addColumnIfMissing('hr_payroll_items', 'late_minutes', "INT DEFAULT 0");
+  await addColumnIfMissing('hr_payroll_items', 'leave_days', "INT DEFAULT 0");
 
   await createTableIfMissing('hr_documents', `
     CREATE TABLE hr_documents (

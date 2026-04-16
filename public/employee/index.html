@@ -2,150 +2,83 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <title>بوابة الموظف — Moroccan Taste</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#0d47a1">
+  <title>بوابة الموظف</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#1e40af">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="MT Employee">
-
-  <!-- Auth gate -->
   <script>
-    (function() {
-      try {
-        var token = localStorage.getItem('pos_token');
-        var session = localStorage.getItem('pos_session');
-        if (!token || !session) {
-          // No session — show login form (DON'T redirect to main login)
-          document.addEventListener('DOMContentLoaded', function() {
-            document.body.classList.add('authenticated');
-            document.body.classList.add('needs-login');
-          });
-          return;
-        }
-        // Has session — go directly to app
-        history.replaceState({ emp: true }, '', '/employee/');
-        history.pushState({ emp: true }, '', '/employee/');
-        window.addEventListener('popstate', function() { history.pushState({ emp: true }, '', '/employee/'); });
-        document.addEventListener('DOMContentLoaded', function() { document.body.classList.add('authenticated'); });
-      } catch (e) {
-        document.addEventListener('DOMContentLoaded', function() {
-          document.body.classList.add('authenticated');
-          document.body.classList.add('needs-login');
-        });
-      }
-    })();
+    (function(){try{var t=localStorage.getItem('pos_token'),s=localStorage.getItem('pos_session');
+    if(!t||!s){document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('authenticated','needs-login');});return;}
+    document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('authenticated');});
+    }catch(e){document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('authenticated','needs-login');});}})();
   </script>
-  <style>html,body{background:#0f172a;}body:not(.authenticated){visibility:hidden !important;}</style>
-
-  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <style>html,body{background:#0f172a;}body:not(.authenticated){visibility:hidden!important;}</style>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-  <link rel="stylesheet" href="/employee/style.css">
-
+  <link rel="stylesheet" href="/employee/style.css?v=3">
   <script defer src="/shared/api-bridge.js"></script>
-  <script defer src="/employee/app.js"></script>
+  <script defer src="/employee/app.js?v=3"></script>
 </head>
 <body>
+<div id="loader"><div class="spinner"></div><p>جاري التحميل...</p></div>
+<div class="toast" id="toast"></div>
 
-  <!-- Loader -->
-  <div id="loader">
-    <div class="loader-ring"></div>
-    <p>جاري التحميل...</p>
-  </div>
-
-  <!-- Toast -->
-  <div class="toast-bar" id="toast"></div>
-
-  <!-- Main App Shell -->
-  <div id="app" style="display:none;">
-
-    <!-- Top Bar -->
-    <header id="topBar">
-      <div class="tb-right">
-        <div class="tb-avatar"><i class="fas fa-user-tie"></i></div>
-        <div>
-          <div class="tb-title" id="headerName">بوابة الموظف</div>
-          <div class="tb-sub" id="headerSub"></div>
-        </div>
-      </div>
-      <div class="tb-actions">
-        <button class="tb-btn" onclick="refreshData()" title="تحديث"><i class="fas fa-sync-alt"></i></button>
-        <button class="tb-btn logout-btn" onclick="doLogout()" title="خروج"><i class="fas fa-sign-out-alt"></i></button>
-      </div>
-    </header>
-
-    <!-- Scrollable Content -->
-    <main id="mainContent">
-
-      <!-- Page: Home -->
-      <div class="page active" id="pageHome">
-        <div id="clockSection"></div>
-        <div class="stats-strip" id="homeStats"></div>
-        <div class="g-card">
-          <div class="g-card-title"><i class="fas fa-history"></i> آخر الحضور</div>
-          <div id="recentAtt"></div>
-        </div>
-      </div>
-
-      <!-- Page: Attendance -->
-      <div class="page" id="pageAttendance">
-        <div class="g-card">
-          <div class="g-card-title"><i class="fas fa-calendar-check"></i> سجل الحضور الشهري</div>
-          <div id="fullAtt"></div>
-        </div>
-      </div>
-
-      <!-- Page: Leave -->
-      <div class="page" id="pageLeave">
-        <div class="g-card" style="margin-bottom:10px;">
-          <div class="g-card-title"><i class="fas fa-umbrella-beach"></i> أرصدة الإجازات</div>
-          <div id="leaveBalances"></div>
-        </div>
-        <button class="btn btn-primary" id="btnNewLeave" onclick="openLeaveModal()" style="margin-bottom:12px;"><i class="fas fa-plus"></i> طلب إجازة</button>
-        <div class="g-card">
-          <div class="g-card-title"><i class="fas fa-list-alt"></i> طلباتي</div>
-          <div id="myLeaveReqs"></div>
-        </div>
-      </div>
-
-      <!-- Page: Profile -->
-      <div class="page" id="pageProfile">
-        <div class="g-card">
-          <div class="g-card-title"><i class="fas fa-id-card"></i> بياناتي الشخصية</div>
-          <div id="profileInfo"></div>
-        </div>
-        <div class="g-card">
-          <div class="g-card-title"><i class="fas fa-money-bill-wave"></i> كشف الرواتب</div>
-          <div id="payslips"></div>
-        </div>
-      </div>
-
-    </main>
-
-    <!-- Bottom Navigation -->
-    <nav class="bottom-nav">
-      <div class="nav-tab active" onclick="navTo('Home',this)"><i class="fas fa-home"></i><span>الرئيسية</span></div>
-      <div class="nav-tab" onclick="navTo('Attendance',this)"><i class="fas fa-clock"></i><span>الحضور</span></div>
-      <div class="nav-tab" onclick="navTo('Leave',this)"><i class="fas fa-calendar-alt"></i><span>الإجازات</span></div>
-      <div class="nav-tab" onclick="navTo('Profile',this)"><i class="fas fa-user"></i><span>ملفي</span></div>
-    </nav>
-
-  </div>
-
-  <!-- Leave Request Modal -->
-  <div class="g-modal" id="leaveModal">
-    <div class="g-modal-content">
-      <div class="g-modal-title">
-        <span><i class="fas fa-calendar-plus" style="color:var(--blue);margin-left:6px;"></i> طلب إجازة</span>
-        <button class="g-modal-close" onclick="closeLeaveModal()">&times;</button>
-      </div>
-      <div class="form-group"><label>نوع الإجازة</label><select class="form-input" id="lfType"></select></div>
-      <div class="form-group"><label>من تاريخ</label><input type="date" class="form-input" id="lfStart"></div>
-      <div class="form-group"><label>إلى تاريخ</label><input type="date" class="form-input" id="lfEnd"></div>
-      <div class="form-group"><label>السبب</label><textarea class="form-input" id="lfReason" rows="2" placeholder="اختياري"></textarea></div>
-      <button class="btn btn-primary" onclick="submitLeave()"><i class="fas fa-paper-plane"></i> تقديم الطلب</button>
+<div id="app" style="display:none;">
+  <!-- Header -->
+  <header id="hdr">
+    <div class="hdr-r">
+      <div class="hdr-av"><i class="fas fa-user-tie"></i></div>
+      <div class="hdr-info"><div class="hdr-name" id="hdrName">الموظف</div><div class="hdr-sub" id="hdrSub"></div></div>
     </div>
-  </div>
+    <div class="hdr-btns">
+      <button onclick="doRefresh()"><i class="fas fa-sync-alt"></i></button>
+      <button class="red" onclick="doLogout()"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </header>
 
+  <!-- Content -->
+  <main id="content">
+    <!-- HOME -->
+    <div class="page active" id="pghome">
+      <div id="clockSection"></div>
+      <div class="stats" id="homeStats"></div>
+      <div class="card"><div class="card-t"><i class="fas fa-history"></i> آخر الحضور</div><div id="recentAtt"></div></div>
+    </div>
+    <!-- ATTENDANCE -->
+    <div class="page" id="pgatt">
+      <div class="card"><div class="card-t"><i class="fas fa-calendar-check"></i> سجل الحضور</div><div id="attList"></div></div>
+    </div>
+    <!-- LEAVE -->
+    <div class="page" id="pgleave">
+      <div class="card"><div class="card-t"><i class="fas fa-umbrella-beach"></i> أرصدة الإجازات</div><div id="leaveBals"></div></div>
+      <button class="btn-main" onclick="openLeaveForm()"><i class="fas fa-plus"></i> طلب إجازة</button>
+      <div class="card"><div class="card-t"><i class="fas fa-list"></i> طلباتي</div><div id="leaveReqs"></div></div>
+    </div>
+    <!-- PROFILE -->
+    <div class="page" id="pgme">
+      <div class="card"><div class="card-t"><i class="fas fa-id-card"></i> بياناتي</div><div id="profileInfo"></div></div>
+      <div class="card"><div class="card-t"><i class="fas fa-money-bill-wave"></i> الرواتب</div><div id="payslips"></div></div>
+    </div>
+  </main>
+
+  <!-- Bottom Nav -->
+  <nav class="bnav">
+    <div class="nav-tab active" onclick="navTo('home',this)"><i class="fas fa-home"></i>الرئيسية</div>
+    <div class="nav-tab" onclick="navTo('att',this)"><i class="fas fa-fingerprint"></i>البصمة</div>
+    <div class="nav-tab" onclick="navTo('leave',this)"><i class="fas fa-calendar"></i>إجازات</div>
+    <div class="nav-tab" onclick="navTo('me',this)"><i class="fas fa-user"></i>ملفي</div>
+  </nav>
+</div>
+
+<!-- Leave Modal -->
+<div class="modal" id="leaveModal">
+  <div class="modal-c">
+    <div class="modal-h"><span><i class="fas fa-calendar-plus"></i> طلب إجازة</span><button onclick="closeLeaveForm()">&times;</button></div>
+    <div class="fg"><label>النوع</label><select class="fi" id="lfType"></select></div>
+    <div class="fg"><label>من</label><input type="date" class="fi" id="lfStart"></div>
+    <div class="fg"><label>إلى</label><input type="date" class="fi" id="lfEnd"></div>
+    <div class="fg"><label>السبب</label><textarea class="fi" id="lfReason" rows="2"></textarea></div>
+    <button class="btn-main" onclick="submitLeave()"><i class="fas fa-paper-plane"></i> تقديم</button>
+  </div>
+</div>
 </body>
 </html>

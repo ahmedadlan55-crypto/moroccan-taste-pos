@@ -6,12 +6,15 @@ var currentUser = '';
 var BASE_API = '/api';
 
 document.addEventListener('DOMContentLoaded', function() {
-  try {
-    var session = JSON.parse(localStorage.getItem('emp_session') || '{}');
-    currentUser = session.username || '';
-    if (!currentUser || document.body.classList.contains('needs-login')) { showEmpLogin(); return; }
+  var token = localStorage.getItem('emp_token');
+  var session = null;
+  try { session = JSON.parse(localStorage.getItem('emp_session') || 'null'); } catch(e) {}
+  if (token && session && session.username) {
+    currentUser = session.username;
     startApp();
-  } catch(e) { showEmpLogin(); }
+  } else {
+    showEmpLogin();
+  }
 });
 
 // ─── Direct API call (no dependency on api-bridge) ───

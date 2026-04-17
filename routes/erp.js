@@ -1604,10 +1604,22 @@ router.delete('/cost-centers/:id', async (req, res) => {
 
 router.get('/warehouses-list', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT w.*, b.name AS branch_name FROM warehouses w LEFT JOIN branches b ON w.branch_id = b.id ORDER BY w.code');
+    const [rows] = await db.query(`
+      SELECT w.*,
+        b.name AS branch_name,
+        bd.name AS brand_name,
+        cc.name AS cost_center_name
+      FROM warehouses w
+      LEFT JOIN branches b ON w.branch_id = b.id
+      LEFT JOIN brands bd ON w.brand_id = bd.id
+      LEFT JOIN cost_centers cc ON w.cost_center_id = cc.id
+      ORDER BY w.code`);
     res.json(rows.map(w => ({
-      id: w.id, code: w.code, name: w.name, type: w.type, branchId: w.branch_id, branchName: w.branch_name||'',
-      location: w.location, manager: w.manager, isActive: w.is_active
+      id: w.id, code: w.code, name: w.name, type: w.type,
+      branchId: w.branch_id || '', branchName: w.branch_name||'',
+      brandId: w.brand_id || '', brandName: w.brand_name||'',
+      costCenterId: w.cost_center_id || '', costCenterName: w.cost_center_name||'',
+      location: w.location||'', manager: w.manager||'', isActive: w.is_active
     })));
   } catch(e) { res.json([]); }
 });

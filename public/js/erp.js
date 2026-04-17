@@ -5326,7 +5326,11 @@ function hrLoadPayrollRuns() {
     tb.innerHTML = list.map(function(r) {
       var actions = '<button class="btn btn-sm btn-light" onclick="hrViewPayrollItems(\''+r.id+'\')" title="عرض"><i class="fas fa-eye"></i></button> ';
       if (r.status==='draft') actions += '<button class="btn btn-sm btn-primary" onclick="hrCalculatePayroll(\''+r.id+'\')"><i class="fas fa-calculator"></i> حساب</button> ';
-      if (r.status==='calculated') actions += '<button class="btn btn-sm btn-success" onclick="hrApprovePayroll(\''+r.id+'\')"><i class="fas fa-check"></i> اعتماد</button>';
+      if (r.status==='calculated') {
+        actions += '<button class="btn btn-sm btn-success" onclick="hrApprovePayroll(\''+r.id+'\')"><i class="fas fa-check"></i> اعتماد</button> ';
+        actions += '<button class="btn btn-sm" style="background:#f59e0b;color:#fff;" onclick="hrRecalculatePayroll(\''+r.id+'\')" title="إعادة احتساب"><i class="fas fa-sync-alt"></i></button>';
+      }
+      if (r.status==='approved') actions += ' <button class="btn btn-sm" style="background:#f59e0b;color:#fff;" onclick="hrRecalculatePayroll(\''+r.id+'\')" title="إعادة احتساب"><i class="fas fa-sync-alt"></i></button>';
       if (r.status==='calculated' || r.status==='approved' || r.status==='paid') actions += ' <button class="btn btn-sm" style="background:#16a34a;color:#fff;" onclick="hrExportPayroll(\''+r.id+'\')" title="تصدير Excel"><i class="fas fa-file-excel"></i></button>';
       var m = r.periodMonth || r.month;
       var y = r.periodYear || r.year;
@@ -5374,9 +5378,17 @@ function hrOpenPayrollRunModal() {
 }
 
 function hrCalculatePayroll(id) {
-  if (!confirm('حساب رواتب هذه الدورة؟ سيتم احتساب الرواتب من الحضور والإجازات.')) return;
-  loader(true);
-  window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم حساب الرواتب لـ '+(r.count||0)+' موظف');hrLoadPayrollRuns();}else showToast(r.error,true); }).calculatePayroll(id, {username:currentUser});
+  erpConfirm('حساب الرواتب', 'سيتم احتساب الرواتب من الحضور والإجازات والاستثناءات.', function() {
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم حساب الرواتب لـ '+(r.employeeCount||r.count||0)+' موظف');hrLoadPayrollRuns();}else showToast(r.error,true); }).calculatePayroll(id, {username:currentUser});
+  }, { icon:'fa-calculator', color:'#1e40af', okText:'حساب' });
+}
+
+function hrRecalculatePayroll(id) {
+  erpConfirm('إعادة احتساب الرواتب', 'سيتم حذف البنود الحالية وإعادة الاحتساب من جديد بناءً على آخر البيانات (الحضور، الاستثناءات، السلف).', function() {
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم إعادة الاحتساب لـ '+(r.employeeCount||r.count||0)+' موظف');hrLoadPayrollRuns();}else showToast(r.error,true); }).calculatePayroll(id, {username:currentUser});
+  }, { icon:'fa-sync-alt', color:'#f59e0b', okText:'إعادة احتساب' });
 }
 
 function hrApprovePayroll(id) {

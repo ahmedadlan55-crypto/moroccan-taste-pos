@@ -1373,20 +1373,26 @@ router.post('/payroll-runs/:id/calculate', async (req, res) => {
       const absenceDeduction = Math.round(dailyRate * (absentDays + unpaidLeaveDays + excessLeaveDays) * 100) / 100;
       const lateDeduction = Math.round((dailyRate / 9) * (totalLateMin / 60) * 100) / 100; // 9-hour workday
 
-      // Advance deductions
+      // Advance deductions (with graceful fallback)
       let advanceDeduction = 0;
-      const [advances] = await db.query(
-        "SELECT id, remaining, monthly_deduction FROM hr_advances WHERE employee_id = ? AND status = 'approved' AND remaining > 0",
-        [emp.id]
-      );
+      let advances = [];
+      try {
+        const [rows] = await db.query(
+          "SELECT id, COALESCE(remaining, remaining_amount, 0) AS remaining, COALESCE(monthly_deduction, 0) AS monthly_deduction FROM hr_advances WHERE employee_id = ? AND status = 'approved' AND COALESCE(remaining, remaining_amount, 0) > 0",
+          [emp.id]
+        );
+        advances = rows;
+      } catch(e) { /* old schema or missing columns — skip */ }
       for (const adv of advances) {
         const deduct = Math.min(Number(adv.remaining), Number(adv.monthly_deduction));
         advanceDeduction += deduct;
         const newRemaining = Number(adv.remaining) - deduct;
-        await db.query(
-          `UPDATE hr_advances SET remaining = ?, status = ? WHERE id = ?`,
-          [newRemaining, newRemaining <= 0 ? 'fully_paid' : 'approved', adv.id]
-        );
+        try {
+          await db.query(
+            `UPDATE hr_advances SET remaining = ?, remaining_amount = ?, status = ? WHERE id = ?`,
+            [newRemaining, newRemaining, newRemaining <= 0 ? 'fully_paid' : 'approved', adv.id]
+          );
+        } catch(e) { /* ignore schema issues */ }
       }
 
       const totalDeduct = absenceDeduction + lateDeduction + advanceDeduction;

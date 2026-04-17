@@ -1040,6 +1040,10 @@ async function runMigrations() {
   await addColumnIfMissing('hr_payroll_runs', 'created_by', "VARCHAR(100)");
   await addColumnIfMissing('hr_payroll_runs', 'updated_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
 
+  // hr_advances missing columns
+  await addColumnIfMissing('hr_advances', 'remaining', "DECIMAL(12,2) DEFAULT 0");
+  await addColumnIfMissing('hr_advances', 'monthly_deduction', "DECIMAL(12,2) DEFAULT 0");
+
   await createTableIfMissing('hr_documents', `
     CREATE TABLE hr_documents (
       id VARCHAR(50) PRIMARY KEY,

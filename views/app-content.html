@@ -78,6 +78,19 @@
           <div class="nav-item" data-erp-nav="erpAPAging" onclick="erpNav('erpAPAging')"><i class="fas fa-truck-loading"></i><span>أعمار ذمم الموردين</span></div>
         </div>
 
+        <!-- ═══ إدارة النقد ═══ -->
+        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
+          <i class="fas fa-cash-register"></i><span>إدارة النقد</span><i class="fas fa-chevron-down submenu-indicator"></i>
+        </div>
+        <div class="submenu">
+          <div class="nav-item" data-erp-nav="erpCashDash" onclick="erpNav('erpCashDash')"><i class="fas fa-chart-line"></i><span>نظرة عامة</span></div>
+          <div class="nav-item" data-erp-nav="erpCashBoxes" onclick="erpNav('erpCashBoxes')"><i class="fas fa-cash-register"></i><span>الصناديق</span></div>
+          <div class="nav-item" data-erp-nav="erpBankAccounts" onclick="erpNav('erpBankAccounts')"><i class="fas fa-university"></i><span>البنوك</span></div>
+          <div class="nav-item" data-erp-nav="erpCashReceipts" onclick="erpNav('erpCashReceipts')"><i class="fas fa-hand-holding-usd"></i><span>سندات القبض</span></div>
+          <div class="nav-item" data-erp-nav="erpCashPayments" onclick="erpNav('erpCashPayments')"><i class="fas fa-money-bill-wave"></i><span>سندات الصرف</span></div>
+          <div class="nav-item" data-erp-nav="erpCashTransfers" onclick="erpNav('erpCashTransfers')"><i class="fas fa-exchange-alt"></i><span>التحويلات</span></div>
+        </div>
+
         <!-- ═══ الضرائب والفوترة الإلكترونية ═══ -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
           <i class="fas fa-percent"></i><span>الضرائب والفوترة</span><i class="fas fa-chevron-down submenu-indicator"></i>
@@ -1569,6 +1582,73 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- HR: لوحة الموارد البشرية -->
 <!-- ══════════════════════════════════════════════════════════════ -->
+<!-- ════════════ إدارة النقد ════════════ -->
+<div id="erpCashDash" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-cash-register" style="color:#16a34a;"></i> إدارة النقد — نظرة عامة</h2>
+  </div>
+  <div id="cashDashKpis" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;"></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:20px;"><h3 style="font-size:15px;font-weight:800;margin-bottom:12px;"><i class="fas fa-cash-register" style="color:#16a34a;"></i> الصناديق</h3><div id="cashDashBoxes">جاري التحميل...</div></div>
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:20px;"><h3 style="font-size:15px;font-weight:800;margin-bottom:12px;"><i class="fas fa-university" style="color:#3b82f6;"></i> البنوك</h3><div id="cashDashBanks">جاري التحميل...</div></div>
+  </div>
+</div>
+
+<div id="erpCashBoxes" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-cash-register" style="color:#16a34a;"></i> الصناديق النقدية</h2>
+    <button class="btn btn-primary" onclick="cashOpenBoxModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> صندوق جديد</button>
+  </div>
+  <div id="cashBoxesGrid"></div>
+</div>
+
+<div id="erpBankAccounts" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-university" style="color:#3b82f6;"></i> الحسابات البنكية</h2>
+    <button class="btn btn-primary" onclick="cashOpenBankModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> حساب بنكي جديد</button>
+  </div>
+  <div id="bankAccountsGrid"></div>
+</div>
+
+<div id="erpCashReceipts" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-hand-holding-usd" style="color:#10b981;"></i> سندات القبض</h2>
+    <button class="btn btn-primary" onclick="cashOpenReceiptModal()" style="border-radius:12px;background:#10b981;"><i class="fas fa-plus"></i> سند قبض جديد</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الرقم</th><th>التاريخ</th><th>المصدر</th><th>الوجهة</th><th style="text-align:start;">المبلغ</th><th>الوصف</th><th>القيد</th></tr></thead>
+      <tbody id="cashReceiptsBody"><tr><td colspan="7" class="empty-msg">جاري التحميل...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="erpCashPayments" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-money-bill-wave" style="color:#ef4444;"></i> سندات الصرف</h2>
+    <button class="btn btn-primary" onclick="cashOpenPaymentModal()" style="border-radius:12px;background:#ef4444;"><i class="fas fa-plus"></i> سند صرف جديد</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الرقم</th><th>التاريخ</th><th>المستفيد</th><th>المصدر</th><th style="text-align:start;">المبلغ</th><th>الوصف</th><th>القيد</th></tr></thead>
+      <tbody id="cashPaymentsBody"><tr><td colspan="7" class="empty-msg">جاري التحميل...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="erpCashTransfers" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-exchange-alt" style="color:#8b5cf6;"></i> التحويلات</h2>
+    <button class="btn btn-primary" onclick="cashOpenTransferModal()" style="border-radius:12px;background:#8b5cf6;"><i class="fas fa-plus"></i> تحويل جديد</button>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الرقم</th><th>التاريخ</th><th>من</th><th>إلى</th><th style="text-align:start;">المبلغ</th><th>الوصف</th></tr></thead>
+      <tbody id="cashTransfersBody"><tr><td colspan="6" class="empty-msg">جاري التحميل...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
 <div id="erpHrDashboard" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-chart-pie" style="color:#3b82f6;"></i> لوحة الموارد البشرية</h2>

@@ -30,7 +30,9 @@ window.ensureQRCode = function() {
 };
 window.ensureErpJs = function() {
   if (window._erpJsLoaded) return Promise.resolve();
-  return loadScript('/js/erp.js').then(function() { window._erpJsLoaded = true; });
+  return loadScript('/js/erp.js')
+    .then(function() { return loadScript('/js/cash-mgmt.js'); })
+    .then(function() { window._erpJsLoaded = true; });
 };
 
 window.ensureCustodyJs = function() {

@@ -140,6 +140,7 @@ app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/erp', require('./routes/erp'));
 app.use('/api/custody', require('./routes/custody'));
+app.use('/api/cash', require('./routes/cash'));
 app.use('/api/workflow', require('./routes/workflow'));
 app.use('/api/hr', require('./routes/hr'));
 
@@ -1191,6 +1192,160 @@ async function runMigrations() {
   await addColumnIfMissing('hr_employees', 'nature_allowance', "DECIMAL(12,2) DEFAULT 0");
   await addColumnIfMissing('hr_employees', 'social_insurance_rate', "DECIMAL(5,2) DEFAULT 0");
   await addColumnIfMissing('hr_employees', 'fixed_deduction', "DECIMAL(12,2) DEFAULT 0");
+
+  // ═══ Cash Management Module ═══
+  await createTableIfMissing('cash_boxes', `
+    CREATE TABLE cash_boxes (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      code VARCHAR(30),
+      type ENUM('main','branch','petty') DEFAULT 'branch',
+      branch_id VARCHAR(50),
+      brand_id VARCHAR(50),
+      keeper_username VARCHAR(100),
+      currency VARCHAR(10) DEFAULT 'SAR',
+      balance DECIMAL(14,2) DEFAULT 0,
+      gl_account_id VARCHAR(50),
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_cb_branch (branch_id)
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('bank_accounts', `
+    CREATE TABLE bank_accounts (
+      id VARCHAR(50) PRIMARY KEY,
+      bank_name VARCHAR(200) NOT NULL,
+      account_name VARCHAR(200),
+      account_number VARCHAR(100),
+      iban VARCHAR(50),
+      currency VARCHAR(10) DEFAULT 'SAR',
+      branch_id VARCHAR(50),
+      brand_id VARCHAR(50),
+      balance DECIMAL(14,2) DEFAULT 0,
+      gl_account_id VARCHAR(50),
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('cash_receipts', `
+    CREATE TABLE cash_receipts (
+      id VARCHAR(50) PRIMARY KEY,
+      receipt_number VARCHAR(30),
+      receipt_date DATE NOT NULL,
+      destination_type ENUM('cash','bank') NOT NULL,
+      destination_id VARCHAR(50) NOT NULL,
+      source_type ENUM('customer','employee','rent','sales','other') DEFAULT 'other',
+      source_id VARCHAR(50),
+      source_name VARCHAR(200),
+      amount DECIMAL(14,2) NOT NULL,
+      reference VARCHAR(200),
+      description TEXT,
+      attachment LONGTEXT,
+      journal_id VARCHAR(50),
+      status ENUM('draft','posted','cancelled') DEFAULT 'posted',
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_cr_date (receipt_date),
+      INDEX idx_cr_dest (destination_type, destination_id)
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('cash_payments', `
+    CREATE TABLE cash_payments (
+      id VARCHAR(50) PRIMARY KEY,
+      payment_number VARCHAR(30),
+      payment_date DATE NOT NULL,
+      source_type ENUM('cash','bank') NOT NULL,
+      source_id VARCHAR(50) NOT NULL,
+      recipient_type ENUM('supplier','employee','expense','other') DEFAULT 'other',
+      recipient_id VARCHAR(50),
+      recipient_name VARCHAR(200),
+      expense_account_id VARCHAR(50),
+      amount DECIMAL(14,2) NOT NULL,
+      reference VARCHAR(200),
+      description TEXT,
+      attachment LONGTEXT,
+      journal_id VARCHAR(50),
+      status ENUM('draft','posted','cancelled') DEFAULT 'posted',
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_cp_date (payment_date),
+      INDEX idx_cp_src (source_type, source_id)
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('cash_transfers', `
+    CREATE TABLE cash_transfers (
+      id VARCHAR(50) PRIMARY KEY,
+      transfer_number VARCHAR(30),
+      transfer_date DATE NOT NULL,
+      from_type ENUM('cash','bank') NOT NULL,
+      from_id VARCHAR(50) NOT NULL,
+      to_type ENUM('cash','bank') NOT NULL,
+      to_id VARCHAR(50) NOT NULL,
+      amount DECIMAL(14,2) NOT NULL,
+      description TEXT,
+      journal_id VARCHAR(50),
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('advance_payments', `
+    CREATE TABLE advance_payments (
+      id VARCHAR(50) PRIMARY KEY,
+      number VARCHAR(30),
+      payment_date DATE NOT NULL,
+      party_type ENUM('supplier','employee','rent','other') NOT NULL,
+      party_id VARCHAR(50),
+      party_name VARCHAR(200),
+      total_amount DECIMAL(14,2) NOT NULL,
+      settled_amount DECIMAL(14,2) DEFAULT 0,
+      remaining DECIMAL(14,2) DEFAULT 0,
+      source_type ENUM('cash','bank') NOT NULL,
+      source_id VARCHAR(50) NOT NULL,
+      description TEXT,
+      status ENUM('active','fully_settled','cancelled') DEFAULT 'active',
+      journal_id VARCHAR(50),
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('cash_credit_notes', `
+    CREATE TABLE cash_credit_notes (
+      id VARCHAR(50) PRIMARY KEY,
+      number VARCHAR(30),
+      note_date DATE NOT NULL,
+      note_type ENUM('credit','debit') NOT NULL,
+      party_type ENUM('supplier','customer') NOT NULL,
+      party_id VARCHAR(50),
+      party_name VARCHAR(200),
+      amount DECIMAL(14,2) NOT NULL,
+      reason TEXT,
+      journal_id VARCHAR(50),
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('frozen_debts', `
+    CREATE TABLE frozen_debts (
+      id VARCHAR(50) PRIMARY KEY,
+      number VARCHAR(30),
+      freeze_date DATE NOT NULL,
+      customer_id VARCHAR(50),
+      customer_name VARCHAR(200),
+      amount DECIMAL(14,2) NOT NULL,
+      reason TEXT,
+      status ENUM('frozen','recovered','written_off') DEFAULT 'frozen',
+      journal_id VARCHAR(50),
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
 
   // ═══ HR System Expansion: Shifts, Overtime, Exceptions, Audit ═══
   await createTableIfMissing('hr_shifts', `

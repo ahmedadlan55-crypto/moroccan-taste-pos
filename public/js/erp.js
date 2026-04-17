@@ -50,7 +50,8 @@ const erpSections = [
   'erpARAging','erpAPAging','erpCustomerStatement','erpSupplierStatement',
   'erpWfPositions','erpWfTypes','erpWfDefs','erpWfInbox',
   'erpHrDashboard','erpHrEmployees','erpHrDepartments','erpHrAttendance','erpHrLeave','erpHrPayroll','erpHrAdvances',
-  'erpHrShifts','erpHrOvertime','erpHrExceptions'
+  'erpHrShifts','erpHrOvertime','erpHrExceptions',
+  'erpCashDash','erpCashBoxes','erpBankAccounts','erpCashReceipts','erpCashPayments','erpCashTransfers'
 ];
 
 function erpNav(sectionId) {
@@ -117,6 +118,12 @@ function erpNav(sectionId) {
       case 'erpHrShifts': hrLoadShifts(); break;
       case 'erpHrOvertime': hrLoadOvertimeEntries(); break;
       case 'erpHrExceptions': hrLoadExceptions(); break;
+      case 'erpCashDash': cashLoadDashboard(); break;
+      case 'erpCashBoxes': cashLoadBoxes(); break;
+      case 'erpBankAccounts': cashLoadBanks(); break;
+      case 'erpCashReceipts': cashLoadReceipts(); break;
+      case 'erpCashPayments': cashLoadPayments(); break;
+      case 'erpCashTransfers': cashLoadTransfers(); break;
     }
   }
   // Update sidebar active state

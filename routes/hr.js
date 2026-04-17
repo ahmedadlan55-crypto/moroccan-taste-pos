@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const hrRules = require('../lib/hrRules');
+const hrGLPosting = require('../lib/hrGLPosting');
 
 // ═══════════════════════════════════════════════════════════════
 // HELPER: Ensure HR tables exist (auto-migrate)
@@ -539,6 +540,14 @@ router.post('/employees', async (req, res) => {
       ]
     );
 
+    // Update new allowance/deduction fields (separate for schema resilience)
+    try {
+      await db.query(
+        `UPDATE hr_employees SET food_allowance=?, communication_allowance=?, education_allowance=?, nature_allowance=?, social_insurance_rate=?, fixed_deduction=? WHERE id=?`,
+        [Number(b.foodAllowance)||0, Number(b.communicationAllowance)||0, Number(b.educationAllowance)||0, Number(b.natureAllowance)||0, Number(b.socialInsuranceRate)||0, Number(b.fixedDeduction)||0, empId]
+      );
+    } catch(e) { /* columns may not exist yet in old DB */ }
+
     // Optionally create a user account — auto-link branch, brand, position from HR data
     if (b.createUser && b.firstName) {
       try {
@@ -579,7 +588,11 @@ router.put('/employees/:id', async (req, res) => {
       positionId: 'position_id', jobTitle: 'job_title', employmentType: 'employment_type',
       salaryType: 'salary_type', basicSalary: 'basic_salary', hourlyRate: 'hourly_rate',
       housingAllowance: 'housing_allowance', transportAllowance: 'transport_allowance',
-      otherAllowance: 'other_allowance', hireDate: 'hire_date',
+      otherAllowance: 'other_allowance',
+      foodAllowance: 'food_allowance', communicationAllowance: 'communication_allowance',
+      educationAllowance: 'education_allowance', natureAllowance: 'nature_allowance',
+      socialInsuranceRate: 'social_insurance_rate', fixedDeduction: 'fixed_deduction',
+      hireDate: 'hire_date',
       contractEndDate: 'contract_end_date', probationEndDate: 'probation_end_date',
       bankName: 'bank_name', bankAccount: 'bank_account', bankIban: 'bank_iban',
       emergencyContactName: 'emergency_contact_name', emergencyContactPhone: 'emergency_contact_phone',
@@ -1395,18 +1408,30 @@ router.post('/payroll-runs/:id/calculate', async (req, res) => {
         }
       }
 
-      // 3. Calculate salary
+      // 3. Calculate salary — include all allowance types
       const basicSalary = Number(emp.basic_salary) || 0;
       const housingAllowance = Number(emp.housing_allowance) || 0;
       const transportAllowance = Number(emp.transport_allowance) || 0;
       const otherAllowance = Number(emp.other_allowance) || 0;
+      const foodAllowance = Number(emp.food_allowance) || 0;
+      const communicationAllowance = Number(emp.communication_allowance) || 0;
+      const educationAllowance = Number(emp.education_allowance) || 0;
+      const natureAllowance = Number(emp.nature_allowance) || 0;
 
       // Overtime: (basic/30/8) * 1.5 * overtime_hours
       const overtimeHours = Math.round((totalOvertimeMin / 60) * 100) / 100;
       const overtimeRate = (basicSalary / 30 / 8) * 1.5;
       const overtimeAmount = Math.round(overtimeRate * overtimeHours * 100) / 100;
 
-      const gross = basicSalary + housingAllowance + transportAllowance + otherAllowance + overtimeAmount;
+      const totalAllowances = housingAllowance + transportAllowance + otherAllowance + foodAllowance + communicationAllowance + educationAllowance + natureAllowance;
+      const gross = basicSalary + totalAllowances + overtimeAmount;
+
+      // Social insurance (employee share — deducted from salary)
+      const insuranceRate = Number(emp.social_insurance_rate) || 0;
+      const socialInsurance = Math.round((basicSalary * insuranceRate / 100) * 100) / 100;
+
+      // Fixed monthly deduction (contract-level)
+      const fixedDeduction = Number(emp.fixed_deduction) || 0;
 
       // Deductions
       const dailyRate = basicSalary / 30;
@@ -1436,25 +1461,27 @@ router.post('/payroll-runs/:id/calculate', async (req, res) => {
         } catch(e) { /* ignore schema issues */ }
       }
 
-      const totalDeduct = absenceDeduction + lateDeduction + advanceDeduction;
+      const totalDeduct = absenceDeduction + lateDeduction + advanceDeduction + socialInsurance + fixedDeduction;
       const net = Math.round((gross - totalDeduct) * 100) / 100;
 
-      // 4. Insert payroll item
+      // 4. Insert payroll item (with all new fields)
       const itemId = 'PI-' + Date.now() + '-' + empCount;
       await db.query(
         `INSERT INTO hr_payroll_items (
           id, run_id, employee_id, employee_name, employee_number,
           basic_salary, housing_allowance, transport_allowance, other_allowance,
+          food_allowance, communication_allowance, education_allowance, nature_allowance,
           overtime_amount, overtime_hours, gross_salary,
-          absence_deduction, late_deduction, advance_deduction, other_deduction, total_deductions,
+          absence_deduction, late_deduction, advance_deduction, social_insurance, fixed_deduction, other_deduction, total_deductions,
           net_salary, actual_days, absent_days, late_minutes, leave_days
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           itemId, runId, emp.id,
           emp.first_name + ' ' + emp.last_name, emp.employee_number,
           basicSalary, housingAllowance, transportAllowance, otherAllowance,
+          foodAllowance, communicationAllowance, educationAllowance, natureAllowance,
           overtimeAmount, overtimeHours, Math.round(gross * 100) / 100,
-          absenceDeduction, lateDeduction, advanceDeduction, 0, Math.round(totalDeduct * 100) / 100,
+          absenceDeduction, lateDeduction, advanceDeduction, socialInsurance, fixedDeduction, 0, Math.round(totalDeduct * 100) / 100,
           net, actualDays, absentDays > 0 ? absentDays : 0, totalLateMin, paidLeaveDays + unpaidLeaveDays
         ]
       );
@@ -1484,7 +1511,33 @@ router.post('/payroll-runs/:id/approve', async (req, res) => {
       `UPDATE hr_payroll_runs SET status='approved', approved_by=?, approved_at=? WHERE id=?`,
       [username, new Date(), req.params.id]
     );
-    res.json({ success: true, id: req.params.id });
+    // Auto-post to GL (accrual + deductions journals)
+    let glResult = null;
+    try {
+      glResult = await hrGLPosting.postPayrollJournals(req.params.id, username);
+    } catch (glErr) {
+      // Don't fail the approval — log the GL error and continue
+      console.error('[Payroll GL] Failed to post journals:', glErr.message);
+      return res.json({ success: true, id: req.params.id, glWarning: 'تم الاعتماد لكن فشل ترحيل القيود: ' + glErr.message });
+    }
+    res.json({
+      success: true, id: req.params.id,
+      glPosted: !!glResult,
+      accrualJournal: glResult && glResult.accrual ? glResult.accrual.journalNumber : null,
+      deductionsJournal: glResult && glResult.deductions ? glResult.deductions.journalNumber : null
+    });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// Pay payroll run — creates payment journal (bank → payable)
+router.post('/payroll-runs/:id/pay', async (req, res) => {
+  try {
+    const { username, bankAccountId } = req.body;
+    if (!bankAccountId) return res.json({ success: false, error: 'اختر حساب البنك/الصندوق' });
+    const result = await hrGLPosting.postPayrollPaymentJournal(req.params.id, bankAccountId, username);
+    res.json(result);
   } catch (e) {
     res.json({ success: false, error: e.message });
   }

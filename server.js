@@ -1035,6 +1035,16 @@ async function runMigrations() {
   await addColumnIfMissing('hr_payroll_items', 'absent_days', "INT DEFAULT 0");
   await addColumnIfMissing('hr_payroll_items', 'late_minutes', "INT DEFAULT 0");
   await addColumnIfMissing('hr_payroll_items', 'leave_days', "INT DEFAULT 0");
+  // New allowance & deduction fields for payroll items
+  await addColumnIfMissing('hr_payroll_items', 'food_allowance', "DECIMAL(12,2) DEFAULT 0");
+  await addColumnIfMissing('hr_payroll_items', 'communication_allowance', "DECIMAL(12,2) DEFAULT 0");
+  await addColumnIfMissing('hr_payroll_items', 'education_allowance', "DECIMAL(12,2) DEFAULT 0");
+  await addColumnIfMissing('hr_payroll_items', 'nature_allowance', "DECIMAL(12,2) DEFAULT 0");
+  await addColumnIfMissing('hr_payroll_items', 'social_insurance', "DECIMAL(12,2) DEFAULT 0");
+  await addColumnIfMissing('hr_payroll_items', 'fixed_deduction', "DECIMAL(12,2) DEFAULT 0");
+  await addColumnIfMissing('hr_payroll_runs', 'journal_id_accrual', "VARCHAR(50)");
+  await addColumnIfMissing('hr_payroll_runs', 'journal_id_deductions', "VARCHAR(50)");
+  await addColumnIfMissing('hr_payroll_runs', 'journal_id_payment', "VARCHAR(50)");
 
   // Add missing columns to hr_payroll_runs for existing tables
   await addColumnIfMissing('hr_payroll_runs', 'created_by', "VARCHAR(100)");
@@ -1174,6 +1184,13 @@ async function runMigrations() {
   await addColumnIfMissing('hr_employees', 'work_end', "TIME DEFAULT '17:00:00'");
   await addColumnIfMissing('hr_employees', 'ignore_late_month', "VARCHAR(7)");
   await addColumnIfMissing('hr_employees', 'shift_id', "VARCHAR(50)");
+  // Additional allowances & deductions for flexible contracts
+  await addColumnIfMissing('hr_employees', 'food_allowance', "DECIMAL(12,2) DEFAULT 0");
+  await addColumnIfMissing('hr_employees', 'communication_allowance', "DECIMAL(12,2) DEFAULT 0");
+  await addColumnIfMissing('hr_employees', 'education_allowance', "DECIMAL(12,2) DEFAULT 0");
+  await addColumnIfMissing('hr_employees', 'nature_allowance', "DECIMAL(12,2) DEFAULT 0");
+  await addColumnIfMissing('hr_employees', 'social_insurance_rate', "DECIMAL(5,2) DEFAULT 0");
+  await addColumnIfMissing('hr_employees', 'fixed_deduction', "DECIMAL(12,2) DEFAULT 0");
 
   // ═══ HR System Expansion: Shifts, Overtime, Exceptions, Audit ═══
   await createTableIfMissing('hr_shifts', `

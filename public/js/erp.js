@@ -4905,10 +4905,22 @@ function hrOpenEmployeeModal(data) {
         '<div class="form-row"><label>المسمى الوظيفي</label><input class="form-control" id="hrEmpTitle" value="'+(d.jobTitle||'')+'"></div>' +
         '<div class="form-row"><label>نوع التوظيف</label><select class="form-control" id="hrEmpType"><option value="full_time">دوام كامل</option><option value="part_time">دوام جزئي</option><option value="hourly">بالساعة</option><option value="contract">عقد</option></select></div>' +
       '</div>' +
+      '<div style="padding:10px 14px;background:#eff6ff;border-radius:10px;margin:8px 0;font-size:12px;font-weight:800;color:#1e40af;"><i class="fas fa-coins"></i> الراتب والبدلات</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>الراتب الأساسي</label><input type="number" class="form-control" id="hrEmpSalary" value="'+(d.basicSalary||0)+'" step="0.01"></div>' +
-        '<div class="form-row"><label>بدل سكن</label><input type="number" class="form-control" id="hrEmpHousing" value="'+(d.housingAllowance||0)+'" step="0.01"></div>' +
-        '<div class="form-row"><label>بدل نقل</label><input type="number" class="form-control" id="hrEmpTransport" value="'+(d.transportAllowance||0)+'" step="0.01"></div>' +
+        '<div class="form-row"><label>الراتب الأساسي</label><input type="number" class="form-control" id="hrEmpSalary" value="'+(d.basicSalary||d.basic_salary||0)+'" step="0.01"></div>' +
+        '<div class="form-row"><label>بدل سكن</label><input type="number" class="form-control" id="hrEmpHousing" value="'+(d.housingAllowance||d.housing_allowance||0)+'" step="0.01"></div>' +
+        '<div class="form-row"><label>بدل نقل</label><input type="number" class="form-control" id="hrEmpTransport" value="'+(d.transportAllowance||d.transport_allowance||0)+'" step="0.01"></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>بدل طعام</label><input type="number" class="form-control" id="hrEmpFood" value="'+(d.foodAllowance||d.food_allowance||0)+'" step="0.01"></div>' +
+        '<div class="form-row"><label>بدل اتصالات</label><input type="number" class="form-control" id="hrEmpComm" value="'+(d.communicationAllowance||d.communication_allowance||0)+'" step="0.01"></div>' +
+        '<div class="form-row"><label>بدل تعليم</label><input type="number" class="form-control" id="hrEmpEdu" value="'+(d.educationAllowance||d.education_allowance||0)+'" step="0.01"></div>' +
+        '<div class="form-row"><label>بدل طبيعة عمل</label><input type="number" class="form-control" id="hrEmpNature" value="'+(d.natureAllowance||d.nature_allowance||0)+'" step="0.01"></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>بدلات أخرى</label><input type="number" class="form-control" id="hrEmpOther" value="'+(d.otherAllowance||d.other_allowance||0)+'" step="0.01"></div>' +
+        '<div class="form-row"><label>% تأمين اجتماعي (حصة الموظف)</label><input type="number" class="form-control" id="hrEmpInsRate" value="'+(d.socialInsuranceRate||d.social_insurance_rate||0)+'" step="0.01" placeholder="مثال: 9"></div>' +
+        '<div class="form-row"><label>خصم ثابت شهري</label><input type="number" class="form-control" id="hrEmpFixedDed" value="'+(d.fixedDeduction||d.fixed_deduction||0)+'" step="0.01"></div>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>تاريخ التعيين</label><input type="date" class="form-control" id="hrEmpHireDate" value="'+(d.hireDate&&String(d.hireDate).length>5?String(d.hireDate).split('T')[0]:'')+'"></div>' +
@@ -5021,6 +5033,13 @@ function hrSaveEmployee() {
     basicSalary: Number(document.getElementById('hrEmpSalary').value)||0,
     housingAllowance: Number(document.getElementById('hrEmpHousing').value)||0,
     transportAllowance: Number(document.getElementById('hrEmpTransport').value)||0,
+    foodAllowance: Number((document.getElementById('hrEmpFood')||{}).value)||0,
+    communicationAllowance: Number((document.getElementById('hrEmpComm')||{}).value)||0,
+    educationAllowance: Number((document.getElementById('hrEmpEdu')||{}).value)||0,
+    natureAllowance: Number((document.getElementById('hrEmpNature')||{}).value)||0,
+    otherAllowance: Number((document.getElementById('hrEmpOther')||{}).value)||0,
+    socialInsuranceRate: Number((document.getElementById('hrEmpInsRate')||{}).value)||0,
+    fixedDeduction: Number((document.getElementById('hrEmpFixedDed')||{}).value)||0,
     hireDate: document.getElementById('hrEmpHireDate').value,
     contractEndDate: document.getElementById('hrEmpContractEnd').value,
     workStart: document.getElementById('hrEmpWorkStart').value || '08:00',

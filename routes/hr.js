@@ -299,21 +299,61 @@ router.get('/departments', async (req, res) => {
 
 router.post('/departments', async (req, res) => {
   try {
-    const { id, name, nameEn, managerId, parentId, description, isActive } = req.body;
-    if (id) {
-      await db.query(
-        `UPDATE hr_departments SET name=?, name_en=?, manager_id=?, parent_id=?, description=?, is_active=? WHERE id=?`,
-        [name, nameEn || null, managerId || null, parentId || null, description || null, isActive !== false ? 1 : 0, id]
-      );
-      res.json({ success: true, id });
-    } else {
-      const newId = 'DEP-' + Date.now();
-      await db.query(
-        `INSERT INTO hr_departments (id, name, name_en, manager_id, parent_id, description, is_active) VALUES (?,?,?,?,?,?,?)`,
-        [newId, name, nameEn || null, managerId || null, parentId || null, description || null, isActive !== false ? 1 : 0]
-      );
-      res.json({ success: true, id: newId });
+    const { id, name, nameEn, code, branchId, managerId, parentId, description, isActive } = req.body;
+    if (!name) return res.json({ success: false, error: 'اسم القسم مطلوب' });
+
+    // Auto-generate code if not provided
+    let finalCode = code;
+    if (!finalCode) {
+      const [maxRow] = await db.query("SELECT code FROM hr_departments WHERE code LIKE 'DEP-%' ORDER BY CAST(SUBSTRING(code, 5) AS UNSIGNED) DESC LIMIT 1");
+      let nextNum = 1;
+      if (maxRow.length && maxRow[0].code) {
+        const m = maxRow[0].code.match(/(\d+)/);
+        if (m) nextNum = parseInt(m[1]) + 1;
+      }
+      finalCode = 'DEP-' + String(nextNum).padStart(3, '0');
     }
+
+    if (id) {
+      // Build dynamic update based on existing columns (tolerate missing name_en)
+      const fields = ['name=?'];
+      const params = [name];
+      try {
+        const [col] = await db.query("SHOW COLUMNS FROM hr_departments LIKE 'name_en'");
+        if (col.length) { fields.push('name_en=?'); params.push(nameEn || null); }
+      } catch(e) {}
+      try {
+        const [col] = await db.query("SHOW COLUMNS FROM hr_departments LIKE 'code'");
+        if (col.length) { fields.push('code=?'); params.push(finalCode); }
+      } catch(e) {}
+      try {
+        const [col] = await db.query("SHOW COLUMNS FROM hr_departments LIKE 'branch_id'");
+        if (col.length) { fields.push('branch_id=?'); params.push(branchId || null); }
+      } catch(e) {}
+      params.push(id);
+      await db.query(`UPDATE hr_departments SET ${fields.join(', ')} WHERE id=?`, params);
+      return res.json({ success: true, id, code: finalCode });
+    }
+
+    // Insert — check which columns exist
+    const newId = 'DEP-' + Date.now();
+    const cols = ['id', 'name'];
+    const vals = [newId, name];
+    try {
+      const [c] = await db.query("SHOW COLUMNS FROM hr_departments LIKE 'name_en'");
+      if (c.length) { cols.push('name_en'); vals.push(nameEn || null); }
+    } catch(e) {}
+    try {
+      const [c] = await db.query("SHOW COLUMNS FROM hr_departments LIKE 'code'");
+      if (c.length) { cols.push('code'); vals.push(finalCode); }
+    } catch(e) {}
+    try {
+      const [c] = await db.query("SHOW COLUMNS FROM hr_departments LIKE 'branch_id'");
+      if (c.length) { cols.push('branch_id'); vals.push(branchId || null); }
+    } catch(e) {}
+    const placeholders = cols.map(() => '?').join(',');
+    await db.query(`INSERT INTO hr_departments (${cols.join(',')}) VALUES (${placeholders})`, vals);
+    res.json({ success: true, id: newId, code: finalCode });
   } catch (e) {
     res.json({ success: false, error: e.message });
   }

@@ -1044,6 +1044,11 @@ async function runMigrations() {
   await addColumnIfMissing('hr_advances', 'remaining', "DECIMAL(12,2) DEFAULT 0");
   await addColumnIfMissing('hr_advances', 'monthly_deduction', "DECIMAL(12,2) DEFAULT 0");
 
+  // hr_departments missing columns
+  await addColumnIfMissing('hr_departments', 'name_en', "VARCHAR(200)");
+  await addColumnIfMissing('hr_departments', 'code', "VARCHAR(50)");
+  await addColumnIfMissing('hr_departments', 'branch_id', "VARCHAR(50)");
+
   // Expand hr_exceptions ENUM to include excuse_absence (for existing tables)
   try {
     await db.query("ALTER TABLE hr_exceptions MODIFY COLUMN exception_type ENUM('ignore_late','ignore_early_leave','ignore_overtime','adjust_attendance','grant_day','excuse_absence') NOT NULL");

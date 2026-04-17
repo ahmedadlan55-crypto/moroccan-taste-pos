@@ -5059,7 +5059,7 @@ function hrOpenDeptModal(data) {
     document.getElementById('erpModalBody').innerHTML =
       '<input type="hidden" id="hrDeptId" value="'+(d.id||'')+'">' +
       '<div class="form-row"><label>اسم القسم *</label><input class="form-control" id="hrDeptName" value="'+(d.name||'')+'"></div>' +
-      '<div class="form-row"><label>الرمز *</label><input class="form-control" id="hrDeptCode" value="'+(d.code||'')+'"></div>' +
+      '<div class="form-row"><label>الرمز</label><input class="form-control" id="hrDeptCode" value="'+(d.code||'')+'" placeholder="تلقائي — اتركه فارغاً" style="background:'+(d.code?'#fff':'#f8fafc')+';color:'+(d.code?'#000':'#94a3b8')+';"></div>' +
       '<div class="form-row"><label>الفرع</label><select class="form-control" id="hrDeptBranch"><option value="">—</option>'+brOpts+'</select></div>';
     document.getElementById('erpModalSaveBtn').onclick = function() {
       var name = document.getElementById('hrDeptName').value;

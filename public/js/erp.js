@@ -54,6 +54,21 @@ const erpSections = [
 ];
 
 function erpNav(sectionId) {
+  // Save last section for persistence across refreshes
+  try { localStorage.setItem('pos_last_section', 'erp:' + sectionId); } catch(e) {}
+  // Update active state on sidebar
+  document.querySelectorAll('[data-erp-nav]').forEach(el => el.classList.remove('active'));
+  var activeNavEl = document.querySelector('[data-erp-nav="'+sectionId+'"]');
+  if (activeNavEl) {
+    activeNavEl.classList.add('active');
+    // Auto-open parent submenu if collapsed
+    var parent = activeNavEl.closest('.submenu');
+    if (parent && !parent.classList.contains('open')) {
+      parent.classList.add('open');
+      var toggle = parent.previousElementSibling;
+      if (toggle && toggle.classList.contains('has-submenu')) toggle.classList.add('open');
+    }
+  }
   // Hide all POS admin sections
   document.querySelectorAll('.admin-section').forEach(s => s.classList.remove('active'));
   // Hide all ERP dash sections

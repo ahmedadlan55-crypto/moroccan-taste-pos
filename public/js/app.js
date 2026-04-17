@@ -666,7 +666,15 @@ function initViews() {
   {
     // Admin/manager → restore last section or default to home
     var lastSection = localStorage.getItem("pos_last_section") || 'home';
-    nav(lastSection);
+    if (lastSection.indexOf('erp:') === 0) {
+      // ERP section — load ERP nav
+      var erpSec = lastSection.substring(4);
+      if (typeof erpNav === 'function') {
+        try { erpNav(erpSec); } catch(e) { nav('home'); }
+      } else { nav('home'); }
+    } else {
+      nav(lastSection);
+    }
   }
   // Use usernames already loaded from getInitialAppData (no extra API call)
   const users = (state.users || []).map(u => u.username);
@@ -1568,7 +1576,16 @@ function nav(sectionId) {
   localStorage.setItem("pos_last_section", sectionId);
   qs(".nav-item").forEach(el => el.classList.remove("active"));
   var navEl = q('.nav-item[onclick="nav(\''+sectionId+'\')"]');
-  if (navEl) navEl.classList.add("active");
+  if (navEl) {
+    navEl.classList.add("active");
+    // Auto-open parent submenu if collapsed
+    var parent = navEl.closest('.submenu');
+    if (parent && !parent.classList.contains('open')) {
+      parent.classList.add('open');
+      var toggle = parent.previousElementSibling;
+      if (toggle && toggle.classList.contains('has-submenu')) toggle.classList.add('open');
+    }
+  }
 
   // Stop any previous auto-refresh interval (only the home dashboard polls)
   if (state._dashAutoRefresh) { clearInterval(state._dashAutoRefresh); state._dashAutoRefresh = null; }

@@ -183,6 +183,10 @@ function fetchAppTemplate() {
   });
 }
 
+// ─── Section HTML Cache — lazy-mounting ───
+window._sectionHTMLCache = {};     // sectionId → outerHTML (cached from template)
+window._mountedSections = {};      // sectionId → true if already in DOM
+
 function injectAppTemplate(html) {
   // If already injected (DOM already has #adminView), do nothing
   if (document.getElementById('adminView')) return;
@@ -201,14 +205,42 @@ function injectAppTemplate(html) {
   var container = document.createElement('div');
   container.innerHTML = html;
 
-  // Insert each top-level child of the container before the marker (or before the first script)
+  // Extract ALL admin-section + dash-section children → cache them, remove from DOM tree
+  // Keep only the sidebar + main content frame + modals
+  var extracted = 0;
+  var toCache = container.querySelectorAll('.admin-section, .dash-section');
+  toCache.forEach(function(el) {
+    var id = el.id;
+    if (!id) return;
+    window._sectionHTMLCache[id] = el.outerHTML;
+    el.parentNode.removeChild(el);
+    extracted++;
+  });
+  console.log('[Lazy] Cached ' + extracted + ' sections for on-demand mounting');
+
+  // Insert remaining children (sidebar + shell + modals) before the marker
   var insertBefore = marker || document.querySelector('script[src="/js/api-bridge.js"]') || document.querySelector('script[src="/js/app.js"]');
   while (container.firstChild) {
     document.body.insertBefore(container.firstChild, insertBefore);
   }
-  // Remove the marker (we keep the position by inserting before it)
   if (marker && marker.parentNode) marker.parentNode.removeChild(marker);
 }
+
+// Mount a section from cache into the DOM (lazy) — called by nav/erpNav
+window.mountSection = function(sectionId) {
+  if (window._mountedSections[sectionId]) return true; // already mounted
+  var html = window._sectionHTMLCache[sectionId];
+  if (!html) return false; // section doesn't exist in template
+  // Find the main content area or a suitable mount point
+  var mountPoint = document.querySelector('.admin-content') || document.querySelector('.main-content') || document.getElementById('adminView') || document.body;
+  var wrapper = document.createElement('div');
+  wrapper.innerHTML = html;
+  while (wrapper.firstChild) {
+    mountPoint.appendChild(wrapper.firstChild);
+  }
+  window._mountedSections[sectionId] = true;
+  return true;
+};
 
 // Wipe injected template back out — used by logout
 function clearInjectedTemplate() {
@@ -1574,6 +1606,8 @@ function toggleSubmenu(element) {
 
 function nav(sectionId) {
   localStorage.setItem("pos_last_section", sectionId);
+  // Lazy-mount the section on first access
+  if (typeof mountSection === 'function') mountSection('sec_' + sectionId);
   qs(".nav-item").forEach(el => el.classList.remove("active"));
   var navEl = q('.nav-item[onclick="nav(\''+sectionId+'\')"]');
   if (navEl) {

@@ -56,6 +56,8 @@ const erpSections = [
 function erpNav(sectionId) {
   // Save last section for persistence across refreshes
   try { localStorage.setItem('pos_last_section', 'erp:' + sectionId); } catch(e) {}
+  // Lazy-mount the section on first access
+  if (typeof mountSection === 'function') mountSection(sectionId);
   // Update active state on sidebar
   document.querySelectorAll('[data-erp-nav]').forEach(el => el.classList.remove('active'));
   var activeNavEl = document.querySelector('[data-erp-nav="'+sectionId+'"]');

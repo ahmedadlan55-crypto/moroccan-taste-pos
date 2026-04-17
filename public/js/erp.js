@@ -5324,9 +5324,10 @@ function hrLoadPayrollRuns() {
     var statusColors = {draft:'yellow',calculated:'blue',approved:'green',paid:'purple'};
     var months = ['','يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
     tb.innerHTML = list.map(function(r) {
-      var actions = '<button class="btn btn-sm btn-light" onclick="hrViewPayrollItems(\''+r.id+'\')"><i class="fas fa-eye"></i></button> ';
+      var actions = '<button class="btn btn-sm btn-light" onclick="hrViewPayrollItems(\''+r.id+'\')" title="عرض"><i class="fas fa-eye"></i></button> ';
       if (r.status==='draft') actions += '<button class="btn btn-sm btn-primary" onclick="hrCalculatePayroll(\''+r.id+'\')"><i class="fas fa-calculator"></i> حساب</button> ';
       if (r.status==='calculated') actions += '<button class="btn btn-sm btn-success" onclick="hrApprovePayroll(\''+r.id+'\')"><i class="fas fa-check"></i> اعتماد</button>';
+      if (r.status==='calculated' || r.status==='approved' || r.status==='paid') actions += ' <button class="btn btn-sm" style="background:#16a34a;color:#fff;" onclick="hrExportPayroll(\''+r.id+'\')" title="تصدير Excel"><i class="fas fa-file-excel"></i></button>';
       var m = r.periodMonth || r.month;
       var y = r.periodYear || r.year;
       return '<tr>' +
@@ -5388,12 +5389,24 @@ function hrViewPayrollItems(id) {
   loader(true);
   window._apiBridge.withSuccessHandler(function(items) {
     loader(false);
-    if (!items||!items.length) return showToast('لا توجد بنود', true);
-    var html = '<div style="max-height:400px;overflow-y:auto;"><table class="erp-table" style="font-size:12px;">' +
-      '<thead><tr><th>الموظف</th><th>الأساسي</th><th>البدلات</th><th>الإضافي</th><th>الإجمالي</th><th>الخصومات</th><th>الصافي</th></tr></thead><tbody>';
+    if (!items||!items.length) return showToast('لا توجد بنود — اضغط زر "حساب" أولاً', true);
+    var totals = { basic:0, allow:0, ot:0, gross:0, ded:0, net:0 };
+    var html = '<div style="display:flex;justify-content:space-between;margin-bottom:10px;align-items:center;">';
+    html += '<span style="font-size:12px;color:#64748b;">إجمالي الموظفين: <b>'+items.length+'</b></span>';
+    html += '<button class="btn btn-sm" style="background:#16a34a;color:#fff;border-radius:8px;" onclick="hrExportPayroll(\''+id+'\')"><i class="fas fa-file-excel"></i> تصدير Excel</button>';
+    html += '</div>';
+    html += '<div style="max-height:400px;overflow-y:auto;"><table class="erp-table" style="font-size:12px;">' +
+      '<thead><tr><th>الرقم</th><th>الموظف</th><th>الأساسي</th><th>البدلات</th><th>الإضافي</th><th>الإجمالي</th><th>الخصومات</th><th>الصافي</th></tr></thead><tbody>';
     items.forEach(function(p) {
       var allowances = (Number(p.housingAllowance)||0)+(Number(p.transportAllowance)||0)+(Number(p.otherAllowance)||0);
-      html += '<tr><td style="font-weight:700;">'+(p.employeeName||'')+'</td>' +
+      totals.basic += Number(p.basicSalary)||0;
+      totals.allow += allowances;
+      totals.ot += Number(p.overtimeAmount)||0;
+      totals.gross += Number(p.grossSalary)||0;
+      totals.ded += Number(p.totalDeductions)||0;
+      totals.net += Number(p.netSalary)||0;
+      html += '<tr><td><code style="font-size:11px;">'+(p.employeeNumber||'')+'</code></td>' +
+        '<td style="font-weight:700;">'+(p.employeeName||'—')+'</td>' +
         '<td>'+(Number(p.basicSalary)||0).toFixed(2)+'</td>' +
         '<td>'+allowances.toFixed(2)+'</td>' +
         '<td style="color:#16a34a;">'+(Number(p.overtimeAmount)||0).toFixed(2)+'</td>' +
@@ -5401,16 +5414,39 @@ function hrViewPayrollItems(id) {
         '<td style="color:#ef4444;">'+(Number(p.totalDeductions)||0).toFixed(2)+'</td>' +
         '<td style="font-weight:900;color:#1e40af;">'+(Number(p.netSalary)||0).toFixed(2)+'</td></tr>';
     });
+    // Totals row
+    html += '<tr style="background:#f1f5f9;font-weight:900;">' +
+      '<td colspan="2" style="text-align:center;">الإجمالي</td>' +
+      '<td>'+totals.basic.toFixed(2)+'</td>' +
+      '<td>'+totals.allow.toFixed(2)+'</td>' +
+      '<td style="color:#16a34a;">'+totals.ot.toFixed(2)+'</td>' +
+      '<td>'+totals.gross.toFixed(2)+'</td>' +
+      '<td style="color:#ef4444;">'+totals.ded.toFixed(2)+'</td>' +
+      '<td style="color:#1e40af;font-size:14px;">'+totals.net.toFixed(2)+'</td></tr>';
     html += '</tbody></table></div>';
     document.getElementById('erpModalTitle').textContent = 'بنود الرواتب';
     document.getElementById('erpModalBody').innerHTML = html;
     var box = document.querySelector('#erpModal .modal-box');
-    if (box) box.style.maxWidth = '800px';
+    if (box) box.style.maxWidth = '900px';
     document.getElementById('erpModalSaveBtn').style.display = 'none';
     document.getElementById('erpModal').classList.remove('hidden');
     setTimeout(function() { document.getElementById('erpModalSaveBtn').style.display = ''; if(box) box.style.maxWidth=''; }, 100);
   }).getPayrollItems(id);
 }
+
+window.hrExportPayroll = function(id) {
+  var url = '/api/hr/payroll-runs/' + id + '/export';
+  var token = localStorage.getItem('pos_token');
+  fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r) { return r.blob().then(function(blob) { return { blob: blob, headers: r.headers }; }); })
+    .then(function(res) {
+      var link = document.createElement('a');
+      link.href = URL.createObjectURL(res.blob);
+      link.download = 'payroll_' + id + '.csv';
+      document.body.appendChild(link); link.click(); link.remove();
+      showToast('تم التصدير');
+    }).catch(function(){ showToast('فشل التصدير', true); });
+};
 
 // ─── Advances ───
 function hrLoadAdvances() {

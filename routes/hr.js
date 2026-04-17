@@ -1455,10 +1455,79 @@ router.get('/payroll-runs/:id/items', async (req, res) => {
       'SELECT * FROM hr_payroll_items WHERE run_id = ? ORDER BY employee_name',
       [req.params.id]
     );
-    res.json(rows);
+    res.json(rows.map(r => ({
+      id: r.id, runId: r.run_id, employeeId: r.employee_id,
+      employeeName: r.employee_name || '', employeeNumber: r.employee_number || '',
+      basicSalary: Number(r.basic_salary)||0,
+      housingAllowance: Number(r.housing_allowance)||0,
+      transportAllowance: Number(r.transport_allowance)||0,
+      otherAllowance: Number(r.other_allowance)||0,
+      overtimeAmount: Number(r.overtime_amount)||0,
+      overtimeHours: Number(r.overtime_hours)||0,
+      grossSalary: Number(r.gross_salary)||0,
+      absenceDeduction: Number(r.absence_deduction)||0,
+      lateDeduction: Number(r.late_deduction)||0,
+      advanceDeduction: Number(r.advance_deduction)||0,
+      otherDeduction: Number(r.other_deduction)||0,
+      totalDeductions: Number(r.total_deductions)||0,
+      netSalary: Number(r.net_salary)||0,
+      actualDays: r.actual_days||0, absentDays: r.absent_days||0,
+      lateMinutes: r.late_minutes||0, leaveDays: r.leave_days||0
+    })));
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
+});
+
+// Excel export for payroll run
+router.get('/payroll-runs/:id/export', async (req, res) => {
+  try {
+    const [runs] = await db.query(
+      `SELECT pr.*, COALESCE(b.name,'') AS branch_name FROM hr_payroll_runs pr LEFT JOIN branches b ON pr.branch_id=b.id WHERE pr.id = ?`,
+      [req.params.id]);
+    if (!runs.length) return res.status(404).json({ success:false, error: 'الدورة غير موجودة' });
+    const run = runs[0];
+    const [items] = await db.query('SELECT * FROM hr_payroll_items WHERE run_id = ? ORDER BY employee_name', [req.params.id]);
+
+    const months = ['','يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+    const headers = ['الرقم','الاسم','الأساسي','بدل سكن','بدل نقل','بدل أخرى','إضافي','الإجمالي','خصم غياب','خصم تأخير','خصم سلف','خصم أخرى','إجمالي الخصم','الصافي','أيام عمل','أيام غياب','د. تأخير','أيام إجازة'];
+    const bom = '\uFEFF';
+    const rows = [headers.join(',')];
+    let totals = { basic:0, housing:0, transport:0, other:0, ot:0, gross:0, absD:0, lateD:0, advD:0, othD:0, totalD:0, net:0 };
+    items.forEach(i => {
+      totals.basic += Number(i.basic_salary)||0;
+      totals.housing += Number(i.housing_allowance)||0;
+      totals.transport += Number(i.transport_allowance)||0;
+      totals.other += Number(i.other_allowance)||0;
+      totals.ot += Number(i.overtime_amount)||0;
+      totals.gross += Number(i.gross_salary)||0;
+      totals.absD += Number(i.absence_deduction)||0;
+      totals.lateD += Number(i.late_deduction)||0;
+      totals.advD += Number(i.advance_deduction)||0;
+      totals.othD += Number(i.other_deduction)||0;
+      totals.totalD += Number(i.total_deductions)||0;
+      totals.net += Number(i.net_salary)||0;
+      rows.push([
+        i.employee_number||'', '"'+(i.employee_name||'').replace(/"/g,'""')+'"',
+        (Number(i.basic_salary)||0).toFixed(2), (Number(i.housing_allowance)||0).toFixed(2),
+        (Number(i.transport_allowance)||0).toFixed(2), (Number(i.other_allowance)||0).toFixed(2),
+        (Number(i.overtime_amount)||0).toFixed(2), (Number(i.gross_salary)||0).toFixed(2),
+        (Number(i.absence_deduction)||0).toFixed(2), (Number(i.late_deduction)||0).toFixed(2),
+        (Number(i.advance_deduction)||0).toFixed(2), (Number(i.other_deduction)||0).toFixed(2),
+        (Number(i.total_deductions)||0).toFixed(2), (Number(i.net_salary)||0).toFixed(2),
+        i.actual_days||0, i.absent_days||0, i.late_minutes||0, i.leave_days||0
+      ].join(','));
+    });
+    rows.push(['','الإجمالي', totals.basic.toFixed(2), totals.housing.toFixed(2), totals.transport.toFixed(2),
+      totals.other.toFixed(2), totals.ot.toFixed(2), totals.gross.toFixed(2),
+      totals.absD.toFixed(2), totals.lateD.toFixed(2), totals.advD.toFixed(2), totals.othD.toFixed(2),
+      totals.totalD.toFixed(2), totals.net.toFixed(2), '','','',''].join(','));
+
+    const filename = 'payroll_' + (run.run_number || req.params.id) + '_' + (months[run.month]||'') + '_' + run.year + '.csv';
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + encodeURIComponent(filename) + '"');
+    res.send(bom + rows.join('\r\n'));
+  } catch (e) { res.status(500).json({ success:false, error: e.message }); }
 });
 
 router.get('/payroll-runs/:id/payslip/:empId', async (req, res) => {

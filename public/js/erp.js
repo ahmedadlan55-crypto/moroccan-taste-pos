@@ -381,6 +381,16 @@ function _coaChildrenOf(parentId) {
 }
 function _coaIsGroup(id) { return _erpAccounts.some(a => a.parentId === id); }
 
+// Rollup balance: sum self + all descendants (for parent/folder accounts)
+function _coaRollupBalance(accId) {
+  var acc = _erpAccounts.find(function(a) { return a.id === accId; });
+  if (!acc) return 0;
+  var total = Number(acc.balance) || 0;
+  var children = _coaChildrenOf(accId);
+  children.forEach(function(c) { total += _coaRollupBalance(c.id); });
+  return total;
+}
+
 // ─── Build Tree Sidebar ───
 function _coaBuildTree() {
   var container = document.getElementById('coaTreeBody');
@@ -421,10 +431,13 @@ function _coaRenderNode(acc, open) {
   html += '<div class="coa-node-row' + activeClass + '" style="font-weight:' + fontW + ';font-size:' + fontSize + 'px;" onclick="coaSelectNode(\'' + acc.id + '\')">';
   html += toggle + ' ' + icon + ' ';
   html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
-  // Show balance on the side
-  if (acc.balance && acc.balance !== 0) {
-    var balColor = acc.balance > 0 ? '#16a34a' : '#ef4444';
-    html += '<span style="font-size:10px;font-weight:800;color:' + balColor + ';margin-inline-start:auto;white-space:nowrap;">' + Number(acc.balance).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '</span>';
+  // Show balance (rollup for parents, own for leaves)
+  var displayBal = isGroup ? _coaRollupBalance(acc.id) : (Number(acc.balance) || 0);
+  if (displayBal !== 0) {
+    var balColor = displayBal > 0 ? '#16a34a' : '#ef4444';
+    var balBg = isGroup ? (displayBal > 0 ? '#dcfce7' : '#fee2e2') : 'transparent';
+    var padding = isGroup ? '2px 8px' : '0';
+    html += '<span style="font-size:' + (isGroup ? 11 : 10) + 'px;font-weight:800;color:' + balColor + ';margin-inline-start:auto;white-space:nowrap;background:' + balBg + ';padding:' + padding + ';border-radius:6px;">' + Number(displayBal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '</span>';
   }
   html += '</div>';
   if (isGroup) {

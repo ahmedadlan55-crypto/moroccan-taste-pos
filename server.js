@@ -1036,6 +1036,10 @@ async function runMigrations() {
   await addColumnIfMissing('hr_payroll_items', 'late_minutes', "INT DEFAULT 0");
   await addColumnIfMissing('hr_payroll_items', 'leave_days', "INT DEFAULT 0");
 
+  // Add missing columns to hr_payroll_runs for existing tables
+  await addColumnIfMissing('hr_payroll_runs', 'created_by', "VARCHAR(100)");
+  await addColumnIfMissing('hr_payroll_runs', 'updated_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+
   await createTableIfMissing('hr_documents', `
     CREATE TABLE hr_documents (
       id VARCHAR(50) PRIMARY KEY,

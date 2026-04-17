@@ -1044,6 +1044,11 @@ async function runMigrations() {
   await addColumnIfMissing('hr_advances', 'remaining', "DECIMAL(12,2) DEFAULT 0");
   await addColumnIfMissing('hr_advances', 'monthly_deduction', "DECIMAL(12,2) DEFAULT 0");
 
+  // Expand hr_exceptions ENUM to include excuse_absence (for existing tables)
+  try {
+    await db.query("ALTER TABLE hr_exceptions MODIFY COLUMN exception_type ENUM('ignore_late','ignore_early_leave','ignore_overtime','adjust_attendance','grant_day','excuse_absence') NOT NULL");
+  } catch(e) { /* already has the value or table doesn't exist yet */ }
+
   await createTableIfMissing('hr_documents', `
     CREATE TABLE hr_documents (
       id VARCHAR(50) PRIMARY KEY,
@@ -1235,7 +1240,7 @@ async function runMigrations() {
     CREATE TABLE hr_exceptions (
       id VARCHAR(50) PRIMARY KEY,
       employee_id VARCHAR(50) NOT NULL,
-      exception_type ENUM('ignore_late','ignore_early_leave','ignore_overtime','adjust_attendance','grant_day') NOT NULL,
+      exception_type ENUM('ignore_late','ignore_early_leave','ignore_overtime','adjust_attendance','grant_day','excuse_absence') NOT NULL,
       start_date DATE NOT NULL,
       end_date DATE NOT NULL,
       new_clock_in TIME,

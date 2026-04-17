@@ -1309,7 +1309,8 @@ router.post('/payroll-runs/:id/calculate', async (req, res) => {
     for (const emp of employees) {
       // Use Rules Engine for unified calculation (applies shifts + exceptions automatically)
       const monthly = await hrRules.calculateMonthlyAttendance(emp.id, run.year, run.month);
-      let actualDays = monthly.presentDays;
+      // Excused days count as worked (no absence deduction)
+      let actualDays = monthly.presentDays + (monthly.excusedDays || 0);
       let totalLateMin = monthly.totalLateMinutes;
       let totalOvertimeMin = monthly.totalOvertimeMinutes;
       // Backward compat: still query attendance for stats not in rules engine

@@ -5698,8 +5698,8 @@ function hrLoadExceptions() {
   if (document.getElementById('hrExcActiveOnly').checked) params.active = '1';
   window._apiBridge.withSuccessHandler(function(list) {
     if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد استثناءات</td></tr>'; return; }
-    var tMap = {ignore_late:'تجاهل تأخير',ignore_early_leave:'تجاهل انصراف مبكر',ignore_overtime:'تجاهل إضافي',adjust_attendance:'تعديل حضور',grant_day:'منح يوم'};
-    var tClr = {ignore_late:'#f59e0b',ignore_early_leave:'#f59e0b',ignore_overtime:'#8b5cf6',adjust_attendance:'#0ea5e9',grant_day:'#10b981'};
+    var tMap = {ignore_late:'تجاهل تأخير',ignore_early_leave:'تجاهل انصراف مبكر',ignore_overtime:'تجاهل إضافي',adjust_attendance:'تعديل حضور',grant_day:'منح يوم',excuse_absence:'تبرير غياب'};
+    var tClr = {ignore_late:'#f59e0b',ignore_early_leave:'#f59e0b',ignore_overtime:'#8b5cf6',adjust_attendance:'#0ea5e9',grant_day:'#10b981',excuse_absence:'#16a34a'};
     tb.innerHTML = list.map(function(x) {
       var sd = x.startDate ? new Date(x.startDate).toLocaleDateString('en-GB') : '';
       var ed = x.endDate ? new Date(x.endDate).toLocaleDateString('en-GB') : '';
@@ -5728,6 +5728,7 @@ function hrOpenExceptionModal() {
         '<option value="ignore_overtime">تجاهل الإضافي</option>' +
         '<option value="adjust_attendance">تعديل الحضور (ساعات محددة)</option>' +
         '<option value="grant_day">منح يوم عمل</option>' +
+        '<option value="excuse_absence">تبرير غياب (مأذون/مرضي بدون خصم)</option>' +
       '</select></div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>من تاريخ *</label><input type="date" class="form-control" id="excStart" value="'+today+'"></div>' +

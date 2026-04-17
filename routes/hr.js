@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const db = require('../db/connection');
+const hrRules = require('../lib/hrRules');
 
 // ═══════════════════════════════════════════════════════════════
 // HELPER: Ensure HR tables exist (auto-migrate)
@@ -1294,20 +1295,16 @@ router.post('/payroll-runs/:id/calculate', async (req, res) => {
     await db.query('DELETE FROM hr_payroll_items WHERE run_id = ?', [runId]);
 
     for (const emp of employees) {
-      // 1. Get attendance for the month
+      // Use Rules Engine for unified calculation (applies shifts + exceptions automatically)
+      const monthly = await hrRules.calculateMonthlyAttendance(emp.id, run.year, run.month);
+      let actualDays = monthly.presentDays;
+      let totalLateMin = monthly.totalLateMinutes;
+      let totalOvertimeMin = monthly.totalOvertimeMinutes;
+      // Backward compat: still query attendance for stats not in rules engine
       const [attRecords] = await db.query(
         `SELECT * FROM hr_attendance WHERE employee_id = ? AND MONTH(attendance_date) = ? AND YEAR(attendance_date) = ?`,
         [emp.id, run.month, run.year]
       );
-
-      let actualDays = 0;
-      let totalLateMin = 0;
-      let totalOvertimeMin = 0;
-      for (const att of attRecords) {
-        if (att.status === 'present') actualDays++;
-        totalLateMin += att.late_minutes || 0;
-        totalOvertimeMin += att.overtime_minutes || 0;
-      }
 
       // 2. Get approved leave days for the month
       const [leaveRecords] = await db.query(
@@ -1867,6 +1864,298 @@ router.get('/my-payslips', async (req, res) => {
     );
     res.json(rows);
   } catch (e) { res.json([]); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// SHIFTS (الشفتات)
+// ═══════════════════════════════════════════════════════════════
+router.get('/shifts', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM hr_shifts WHERE is_active = 1 ORDER BY start_time');
+    res.json(rows.map(s => ({
+      id: s.id, name: s.name, code: s.code, startTime: s.start_time, endTime: s.end_time,
+      breakMinutes: s.break_minutes, graceLateMinutes: s.grace_late_minutes,
+      graceEarlyLeaveMinutes: s.grace_early_leave_minutes,
+      allowOvertimeBefore: !!s.allow_overtime_before, allowOvertimeAfter: !!s.allow_overtime_after,
+      workDays: s.work_days || '0,1,2,3,4', isDefault: !!s.is_default
+    })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/shifts', async (req, res) => {
+  try {
+    const { id, name, code, startTime, endTime, breakMinutes, graceLateMinutes, graceEarlyLeaveMinutes,
+            allowOvertimeBefore, allowOvertimeAfter, workDays, isDefault, username } = req.body;
+    if (!name || !startTime || !endTime) return res.json({ success: false, error: 'الاسم وأوقات الدوام مطلوبة' });
+    if (isDefault) await db.query('UPDATE hr_shifts SET is_default = 0');
+    if (id) {
+      await db.query(
+        `UPDATE hr_shifts SET name=?, code=?, start_time=?, end_time=?, break_minutes=?, grace_late_minutes=?,
+         grace_early_leave_minutes=?, allow_overtime_before=?, allow_overtime_after=?, work_days=?, is_default=? WHERE id=?`,
+        [name, code||'', startTime, endTime, breakMinutes||60, graceLateMinutes||5, graceEarlyLeaveMinutes||0,
+         allowOvertimeBefore?1:0, allowOvertimeAfter?1:0, workDays||'0,1,2,3,4', isDefault?1:0, id]);
+      await hrRules.auditLog(username, 'update_shift', 'hr_shifts', id, req.body, req.ip);
+      return res.json({ success: true, id });
+    }
+    const newId = 'SH-' + Date.now();
+    await db.query(
+      `INSERT INTO hr_shifts (id, name, code, start_time, end_time, break_minutes, grace_late_minutes,
+       grace_early_leave_minutes, allow_overtime_before, allow_overtime_after, work_days, is_default)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [newId, name, code||'', startTime, endTime, breakMinutes||60, graceLateMinutes||5, graceEarlyLeaveMinutes||0,
+       allowOvertimeBefore?1:0, allowOvertimeAfter?1:0, workDays||'0,1,2,3,4', isDefault?1:0]);
+    await hrRules.auditLog(username, 'create_shift', 'hr_shifts', newId, req.body, req.ip);
+    res.json({ success: true, id: newId });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.delete('/shifts/:id', async (req, res) => {
+  try {
+    await db.query('UPDATE hr_shifts SET is_active = 0 WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.post('/employees/:id/assign-shift', async (req, res) => {
+  try {
+    const { shiftId, username } = req.body;
+    await db.query('UPDATE hr_employees SET shift_id = ? WHERE id = ?', [shiftId || null, req.params.id]);
+    await hrRules.auditLog(username, 'assign_shift', 'hr_employees', req.params.id, { shiftId }, req.ip);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// OVERTIME RULES & ENTRIES
+// ═══════════════════════════════════════════════════════════════
+router.get('/overtime-rules', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM hr_overtime_rules WHERE is_active = 1 ORDER BY day_type');
+    res.json(rows.map(r => ({
+      id: r.id, name: r.name, dayType: r.day_type,
+      multiplier: Number(r.multiplier), minMinutes: r.min_minutes,
+      requireApproval: !!r.require_approval
+    })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/overtime-rules', async (req, res) => {
+  try {
+    const { id, name, dayType, multiplier, minMinutes, requireApproval, username } = req.body;
+    if (!name || !dayType) return res.json({ success: false, error: 'الاسم ونوع اليوم مطلوبان' });
+    if (id) {
+      await db.query(
+        'UPDATE hr_overtime_rules SET name=?, day_type=?, multiplier=?, min_minutes=?, require_approval=? WHERE id=?',
+        [name, dayType, multiplier||1.5, minMinutes||30, requireApproval?1:0, id]);
+      return res.json({ success: true, id });
+    }
+    const newId = 'OT-' + Date.now();
+    await db.query(
+      'INSERT INTO hr_overtime_rules (id, name, day_type, multiplier, min_minutes, require_approval) VALUES (?,?,?,?,?,?)',
+      [newId, name, dayType, multiplier||1.5, minMinutes||30, requireApproval?1:0]);
+    await hrRules.auditLog(username, 'create_overtime_rule', 'hr_overtime_rules', newId, req.body, req.ip);
+    res.json({ success: true, id: newId });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.get('/overtime-entries', async (req, res) => {
+  try {
+    const { status, from, to, employee_id } = req.query;
+    let sql = `SELECT oe.*, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name, e.employee_number, r.name AS rule_name
+               FROM hr_overtime_entries oe
+               LEFT JOIN hr_employees e ON oe.employee_id = e.id
+               LEFT JOIN hr_overtime_rules r ON oe.rule_id = r.id
+               WHERE 1=1`;
+    const params = [];
+    if (status) { sql += ' AND oe.status = ?'; params.push(status); }
+    if (employee_id) { sql += ' AND oe.employee_id = ?'; params.push(employee_id); }
+    if (from) { sql += ' AND oe.entry_date >= ?'; params.push(from); }
+    if (to) { sql += ' AND oe.entry_date <= ?'; params.push(to); }
+    sql += ' ORDER BY oe.entry_date DESC LIMIT 500';
+    const [rows] = await db.query(sql, params);
+    res.json(rows.map(r => ({
+      id: r.id, employeeId: r.employee_id, employeeName: r.employee_name, employeeNumber: r.employee_number,
+      entryDate: r.entry_date, minutes: r.minutes, multiplier: Number(r.multiplier),
+      amount: Number(r.amount), status: r.status, ruleName: r.rule_name,
+      approvedBy: r.approved_by, approvedAt: r.approved_at, note: r.note
+    })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/overtime-entries/:id/approve', async (req, res) => {
+  try {
+    const { username } = req.body;
+    await db.query('UPDATE hr_overtime_entries SET status=\'approved\', approved_by=?, approved_at=NOW() WHERE id=?', [username||'', req.params.id]);
+    await hrRules.auditLog(username, 'approve_overtime', 'hr_overtime_entries', req.params.id, {}, req.ip);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.post('/overtime-entries/:id/reject', async (req, res) => {
+  try {
+    const { username, note } = req.body;
+    await db.query('UPDATE hr_overtime_entries SET status=\'rejected\', approved_by=?, approved_at=NOW(), note=? WHERE id=?',
+      [username||'', note||'', req.params.id]);
+    await hrRules.auditLog(username, 'reject_overtime', 'hr_overtime_entries', req.params.id, {note}, req.ip);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// EXCEPTIONS (ignore_late, ignore_overtime, adjust_attendance)
+// ═══════════════════════════════════════════════════════════════
+router.get('/exceptions', async (req, res) => {
+  try {
+    const { employee_id, type, active } = req.query;
+    let sql = `SELECT x.*, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name, e.employee_number
+               FROM hr_exceptions x
+               LEFT JOIN hr_employees e ON x.employee_id = e.id
+               WHERE 1=1`;
+    const params = [];
+    if (employee_id) { sql += ' AND x.employee_id = ?'; params.push(employee_id); }
+    if (type) { sql += ' AND x.exception_type = ?'; params.push(type); }
+    if (active === '1') { sql += ' AND CURDATE() BETWEEN x.start_date AND x.end_date'; }
+    sql += ' ORDER BY x.created_at DESC LIMIT 500';
+    const [rows] = await db.query(sql, params);
+    res.json(rows.map(r => ({
+      id: r.id, employeeId: r.employee_id, employeeName: r.employee_name, employeeNumber: r.employee_number,
+      type: r.exception_type, startDate: r.start_date, endDate: r.end_date,
+      newClockIn: r.new_clock_in, newClockOut: r.new_clock_out,
+      reason: r.reason, approvedBy: r.approved_by, createdBy: r.created_by, createdAt: r.created_at
+    })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/exceptions', async (req, res) => {
+  try {
+    const { employeeId, type, startDate, endDate, newClockIn, newClockOut, reason, username } = req.body;
+    if (!employeeId || !type || !startDate || !endDate) return res.json({ success: false, error: 'البيانات ناقصة' });
+    const id = 'EXC-' + Date.now();
+    await db.query(
+      `INSERT INTO hr_exceptions (id, employee_id, exception_type, start_date, end_date, new_clock_in, new_clock_out, reason, approved_by, created_by)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [id, employeeId, type, startDate, endDate, newClockIn||null, newClockOut||null, reason||'', username||'', username||'']);
+    await hrRules.auditLog(username, 'create_exception', 'hr_exceptions', id, req.body, req.ip);
+    res.json({ success: true, id });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.delete('/exceptions/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM hr_exceptions WHERE id = ?', [req.params.id]);
+    await hrRules.auditLog(req.query.username, 'delete_exception', 'hr_exceptions', req.params.id, {}, req.ip);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// HR DASHBOARD
+// ═══════════════════════════════════════════════════════════════
+router.get('/dashboard', async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0,10);
+    const monthStart = today.slice(0,7) + '-01';
+
+    const [[{ totalActive }]] = await db.query("SELECT COUNT(*) AS totalActive FROM hr_employees WHERE status = 'active'");
+    const [[{ presentToday }]] = await db.query("SELECT COUNT(DISTINCT employee_id) AS presentToday FROM hr_attendance WHERE attendance_date = ?", [today]);
+    const [[{ lateToday }]] = await db.query("SELECT COUNT(*) AS lateToday FROM hr_attendance WHERE attendance_date = ? AND late_minutes > 0", [today]);
+    const [[{ onLeaveToday }]] = await db.query(
+      "SELECT COUNT(*) AS onLeaveToday FROM hr_leave_requests WHERE status IN ('hr_approved','branch_approved') AND ? BETWEEN start_date AND end_date", [today]);
+    const absentToday = Math.max(0, totalActive - presentToday - onLeaveToday);
+
+    const [[{ pendingLeave }]] = await db.query("SELECT COUNT(*) AS pendingLeave FROM hr_leave_requests WHERE status = 'pending'");
+    const [[{ pendingOT }]] = await db.query("SELECT COUNT(*) AS pendingOT FROM hr_overtime_entries WHERE status = 'pending'");
+    let pendingAdv = 0;
+    try { const [[r]] = await db.query("SELECT COUNT(*) AS pendingAdv FROM hr_advances WHERE status = 'pending'"); pendingAdv = r.pendingAdv; } catch(e) {}
+
+    const [[{ monthOTMin }]] = await db.query("SELECT COALESCE(SUM(minutes),0) AS monthOTMin FROM hr_overtime_entries WHERE status = 'approved' AND entry_date >= ?", [monthStart]);
+    const [[{ monthLateMin }]] = await db.query("SELECT COALESCE(SUM(late_minutes),0) AS monthLateMin FROM hr_attendance WHERE attendance_date >= ?", [monthStart]);
+
+    res.json({
+      totalActive, presentToday, absentToday, lateToday, onLeaveToday,
+      pendingLeave, pendingOT, pendingAdv,
+      monthOvertimeHours: Math.round((monthOTMin/60)*100)/100,
+      monthLateHours: Math.round((monthLateMin/60)*100)/100
+    });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.get('/dashboard/alerts', async (req, res) => {
+  try {
+    const alerts = [];
+    const today = new Date().toISOString().slice(0,10);
+    const monthStart = today.slice(0,7) + '-01';
+
+    // Employees with >10 hours late this month
+    const [heavyLate] = await db.query(
+      `SELECT a.employee_id, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name, SUM(a.late_minutes) AS totalMin
+       FROM hr_attendance a JOIN hr_employees e ON a.employee_id = e.id
+       WHERE a.attendance_date >= ? GROUP BY a.employee_id HAVING totalMin > 600`, [monthStart]);
+    heavyLate.forEach(h => alerts.push({ type:'warning', icon:'fa-exclamation-triangle', color:'#f59e0b',
+      title: h.name + ' — تأخير تراكمي ' + Math.round(h.totalMin/60) + ' ساعة', link: 'employee:'+h.employee_id }));
+
+    // Employees with no clock-out today (open attendance)
+    const [noOut] = await db.query(
+      `SELECT a.employee_id, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name
+       FROM hr_attendance a JOIN hr_employees e ON a.employee_id = e.id
+       WHERE a.attendance_date = ? AND a.clock_out IS NULL`, [today]);
+    noOut.forEach(n => alerts.push({ type:'info', icon:'fa-clock', color:'#0ea5e9',
+      title: n.name + ' — لم يسجل انصراف اليوم', link: 'employee:'+n.employee_id }));
+
+    // Pending overtime approvals
+    const [pendOT] = await db.query(
+      `SELECT COUNT(*) AS cnt FROM hr_overtime_entries WHERE status = 'pending'`);
+    if (pendOT[0].cnt > 0) alerts.push({ type:'action', icon:'fa-hourglass-half', color:'#8b5cf6',
+      title: pendOT[0].cnt + ' ساعة إضافية تنتظر الاعتماد', link: 'overtime' });
+
+    // Contracts ending within 30 days
+    const [expiring] = await db.query(
+      `SELECT id, CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, contract_end_date
+       FROM hr_employees WHERE contract_end_date IS NOT NULL AND contract_end_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)`);
+    expiring.forEach(e => alerts.push({ type:'warning', icon:'fa-file-contract', color:'#ef4444',
+      title: e.name + ' — عقد ينتهي ' + new Date(e.contract_end_date).toLocaleDateString('en-GB'), link:'employee:'+e.id }));
+
+    res.json(alerts);
+  } catch(e) { res.json([]); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// AUDIT LOG
+// ═══════════════════════════════════════════════════════════════
+router.get('/audit', async (req, res) => {
+  try {
+    const { entity_type, entity_id, from, to } = req.query;
+    let sql = 'SELECT * FROM hr_audit_log WHERE 1=1';
+    const params = [];
+    if (entity_type) { sql += ' AND entity_type = ?'; params.push(entity_type); }
+    if (entity_id) { sql += ' AND entity_id = ?'; params.push(entity_id); }
+    if (from) { sql += ' AND created_at >= ?'; params.push(from); }
+    if (to) { sql += ' AND created_at <= ?'; params.push(to); }
+    sql += ' ORDER BY created_at DESC LIMIT 200';
+    const [rows] = await db.query(sql, params);
+    res.json(rows);
+  } catch(e) { res.json([]); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ATTENDANCE CALCULATION (using Rules Engine)
+// ═══════════════════════════════════════════════════════════════
+router.get('/attendance/calculate-daily', async (req, res) => {
+  try {
+    const { employee_id, date } = req.query;
+    if (!employee_id || !date) return res.json({ success: false, error: 'المعطيات ناقصة' });
+    const result = await hrRules.calculateDailyAttendance(employee_id, date);
+    res.json(result);
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.get('/attendance/calculate-monthly', async (req, res) => {
+  try {
+    const { employee_id, year, month } = req.query;
+    if (!employee_id || !year || !month) return res.json({ success: false, error: 'المعطيات ناقصة' });
+    const result = await hrRules.calculateMonthlyAttendance(employee_id, parseInt(year), parseInt(month));
+    res.json(result);
+  } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
 module.exports = router;

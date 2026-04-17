@@ -49,7 +49,8 @@ const erpSections = [
   /* legacy warehouse sections removed */
   'erpARAging','erpAPAging','erpCustomerStatement','erpSupplierStatement',
   'erpWfPositions','erpWfTypes','erpWfDefs','erpWfInbox',
-  'erpHrDashboard','erpHrEmployees','erpHrDepartments','erpHrAttendance','erpHrLeave','erpHrPayroll','erpHrAdvances'
+  'erpHrDashboard','erpHrEmployees','erpHrDepartments','erpHrAttendance','erpHrLeave','erpHrPayroll','erpHrAdvances',
+  'erpHrShifts','erpHrOvertime','erpHrExceptions'
 ];
 
 function erpNav(sectionId) {
@@ -96,6 +97,9 @@ function erpNav(sectionId) {
       case 'erpHrLeave': hrLoadLeaveRequests(); break;
       case 'erpHrPayroll': hrLoadPayrollRuns(); break;
       case 'erpHrAdvances': hrLoadAdvances(); break;
+      case 'erpHrShifts': hrLoadShifts(); break;
+      case 'erpHrOvertime': hrLoadOvertimeEntries(); break;
+      case 'erpHrExceptions': hrLoadExceptions(); break;
     }
   }
   // Update sidebar active state
@@ -4685,25 +4689,52 @@ function _hrStatCard(bg, iconBg, iconClr, icon, label, value) {
 
 // ─── Dashboard ───
 function hrLoadDashboard() {
+  // Load KPIs from new endpoint
   window._apiBridge.withSuccessHandler(function(d) {
     document.getElementById('hrDashStats').innerHTML =
-      _hrStatCard('linear-gradient(135deg,#eff6ff,#dbeafe)','#dbeafe','#1e40af','fa-users','إجمالي الموظفين', d.totalEmployees||0) +
-      _hrStatCard('linear-gradient(135deg,#f0fdf4,#dcfce7)','#dcfce7','#166534','fa-user-check','الحاضرون اليوم', (d.todayAttendance||{}).present||0) +
-      _hrStatCard('linear-gradient(135deg,#fefce8,#fef9c3)','#fef9c3','#854d0e','fa-calendar-check','طلبات إجازة معلقة', d.pendingLeaveRequests||0) +
-      _hrStatCard('linear-gradient(135deg,#faf5ff,#f3e8ff)','#f3e8ff','#7c3aed','fa-user-plus','تعيينات هذا الشهر', d.newHiresThisMonth||0);
-    var att = d.todayAttendance || {};
+      _hrStatCard('linear-gradient(135deg,#eff6ff,#dbeafe)','#dbeafe','#1e40af','fa-users','إجمالي النشطين', d.totalActive||0) +
+      _hrStatCard('linear-gradient(135deg,#f0fdf4,#dcfce7)','#dcfce7','#166534','fa-user-check','الحاضرون اليوم', d.presentToday||0) +
+      _hrStatCard('linear-gradient(135deg,#fef2f2,#fee2e2)','#fee2e2','#991b1b','fa-user-times','الغائبون اليوم', d.absentToday||0) +
+      _hrStatCard('linear-gradient(135deg,#eff6ff,#dbeafe)','#dbeafe','#1e40af','fa-umbrella-beach','في إجازة', d.onLeaveToday||0);
+
+    // Second row KPIs
+    var extraStats = document.getElementById('hrDashExtraStats');
+    if (!extraStats) {
+      extraStats = document.createElement('div');
+      extraStats.id = 'hrDashExtraStats';
+      extraStats.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;';
+      document.getElementById('hrDashStats').parentNode.insertBefore(extraStats, document.getElementById('hrDashStats').nextSibling);
+    }
+    extraStats.innerHTML =
+      _hrStatCard('linear-gradient(135deg,#fef3c7,#fde68a)','#fde68a','#92400e','fa-clock','متأخرون اليوم', d.lateToday||0) +
+      _hrStatCard('linear-gradient(135deg,#fef3c7,#fde68a)','#fde68a','#92400e','fa-business-time','ساعات إضافي الشهر', (d.monthOvertimeHours||0).toFixed(1)) +
+      _hrStatCard('linear-gradient(135deg,#faf5ff,#f3e8ff)','#f3e8ff','#7c3aed','fa-hourglass-half','إضافي معلّق', d.pendingOT||0) +
+      _hrStatCard('linear-gradient(135deg,#fef2f2,#fee2e2)','#fee2e2','#991b1b','fa-clock','ساعات تأخير الشهر', (d.monthLateHours||0).toFixed(1));
+
+    // Attendance breakdown
     document.getElementById('hrDashAttendance').innerHTML =
       '<div style="display:flex;gap:16px;flex-wrap:wrap;">' +
-        '<div><span style="font-size:24px;font-weight:900;color:#16a34a;">' + (att.present||0) + '</span> <span style="color:#64748b;">حاضر</span></div>' +
-        '<div><span style="font-size:24px;font-weight:900;color:#ef4444;">' + (att.absent||0) + '</span> <span style="color:#64748b;">غائب</span></div>' +
-        '<div><span style="font-size:24px;font-weight:900;color:#f59e0b;">' + (att.late||0) + '</span> <span style="color:#64748b;">متأخر</span></div>' +
+        '<div><span style="font-size:24px;font-weight:900;color:#16a34a;">' + (d.presentToday||0) + '</span> <span style="color:#64748b;">حاضر</span></div>' +
+        '<div><span style="font-size:24px;font-weight:900;color:#ef4444;">' + (d.absentToday||0) + '</span> <span style="color:#64748b;">غائب</span></div>' +
+        '<div><span style="font-size:24px;font-weight:900;color:#f59e0b;">' + (d.lateToday||0) + '</span> <span style="color:#64748b;">متأخر</span></div>' +
+        '<div><span style="font-size:24px;font-weight:900;color:#0ea5e9;">' + (d.onLeaveToday||0) + '</span> <span style="color:#64748b;">إجازة</span></div>' +
       '</div>';
-    var alerts = [];
-    if (d.pendingLeaveRequests > 0) alerts.push('<div style="padding:8px 12px;background:#fef3c7;border-radius:8px;font-size:13px;"><i class="fas fa-exclamation-circle" style="color:#f59e0b;"></i> ' + d.pendingLeaveRequests + ' طلب إجازة بانتظار الموافقة</div>');
-    if (d.pendingAdvances > 0) alerts.push('<div style="padding:8px 12px;background:#fee2e2;border-radius:8px;font-size:13px;"><i class="fas fa-hand-holding-usd" style="color:#ef4444;"></i> ' + d.pendingAdvances + ' طلب سلفة معلق</div>');
-    if ((d.upcomingContractExpiry||[]).length > 0) alerts.push('<div style="padding:8px 12px;background:#fef9c3;border-radius:8px;font-size:13px;"><i class="fas fa-file-contract" style="color:#ca8a04;"></i> ' + d.upcomingContractExpiry.length + ' عقد ينتهي خلال 30 يوم</div>');
-    document.getElementById('hrDashAlerts').innerHTML = alerts.length ? alerts.join('') : '<div style="color:#94a3b8;">لا توجد تنبيهات</div>';
-  }).getHrDashboard();
+  }).getHrDashboardV2();
+
+  // Load alerts from new endpoint
+  window._apiBridge.withSuccessHandler(function(alerts) {
+    var html = '';
+    if (!alerts || !alerts.length) {
+      html = '<div style="color:#94a3b8;text-align:center;padding:20px;">لا توجد تنبيهات 🎉</div>';
+    } else {
+      html = alerts.map(function(a) {
+        return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:'+(a.color||'#94a3b8')+'15;border-right:4px solid '+(a.color||'#94a3b8')+';border-radius:8px;font-size:13px;margin-bottom:6px;">' +
+          '<i class="fas '+(a.icon||'fa-info-circle')+'" style="color:'+(a.color||'#94a3b8')+';"></i>' +
+          '<span>'+a.title+'</span></div>';
+      }).join('');
+    }
+    document.getElementById('hrDashAlerts').innerHTML = html;
+  }).getHrDashboardAlerts();
 }
 
 // ─── Employees ───
@@ -5441,4 +5472,251 @@ function hrRejectAdvance(id) {
   if (!confirm('رفض السلفة؟')) return;
   loader(true);
   window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم الرفض');hrLoadAdvances();}else showToast(r.error,true); }).rejectAdvance(id, {username:currentUser});
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HR SHIFTS
+// ═══════════════════════════════════════════════════════════════
+var _hrShifts = [];
+function hrLoadShifts() {
+  var c = document.getElementById('hrShiftsList');
+  c.innerHTML = '<div style="text-align:center;padding:30px;"><i class="fas fa-spinner fa-spin"></i></div>';
+  window._apiBridge.withSuccessHandler(function(list) {
+    _hrShifts = list || [];
+    if (!list.length) { c.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">لا توجد شفتات — اضغط "شفت جديد"</div>'; return; }
+    var days = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+    c.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;">' +
+      list.map(function(s) {
+        var workDaysArr = (s.workDays||'').split(',').map(function(x){return days[parseInt(x)]||x;}).join(', ');
+        return '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px;"><div><h3 style="font-size:15px;font-weight:800;margin:0;color:#0f172a;">'+s.name+(s.isDefault?' <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#dcfce7;color:#166534;">افتراضي</span>':'')+'</h3><div style="font-size:11px;color:#94a3b8;margin-top:2px;">'+(s.code||'')+'</div></div>' +
+            '<div style="display:flex;gap:4px;"><button class="btn-icon" style="color:#3b82f6;" onclick="hrEditShift(\''+s.id+'\')" title="تعديل"><i class="fas fa-edit"></i></button><button class="btn-icon" style="color:#ef4444;" onclick="hrDeleteShift(\''+s.id+'\')" title="حذف"><i class="fas fa-trash"></i></button></div></div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;"><div><span style="color:#94a3b8;">البداية:</span> <b style="color:#10b981;">'+s.startTime+'</b></div><div><span style="color:#94a3b8;">النهاية:</span> <b style="color:#ef4444;">'+s.endTime+'</b></div><div><span style="color:#94a3b8;">الاستراحة:</span> <b>'+s.breakMinutes+' د</b></div><div><span style="color:#94a3b8;">سماحية التأخير:</span> <b>'+s.graceLateMinutes+' د</b></div></div>' +
+          '<div style="font-size:11px;color:#64748b;margin-top:10px;"><i class="fas fa-calendar" style="margin-left:4px;"></i> '+workDaysArr+'</div>' +
+          (s.allowOvertimeAfter||s.allowOvertimeBefore?'<div style="font-size:11px;color:#f59e0b;margin-top:4px;"><i class="fas fa-clock"></i> مسموح إضافي'+(s.allowOvertimeBefore?' قبل':'')+(s.allowOvertimeAfter?' بعد':'')+' الدوام</div>':'') +
+        '</div>';
+      }).join('') + '</div>';
+  }).getHrShifts();
+}
+
+function hrOpenShiftModal() { hrEditShift(null); }
+function hrEditShift(id) {
+  var s = id ? _hrShifts.find(function(x){return x.id===id;}) : null;
+  var d = s || { startTime:'08:00', endTime:'17:00', breakMinutes:60, graceLateMinutes:5, graceEarlyLeaveMinutes:0, workDays:'0,1,2,3,4', allowOvertimeAfter:true };
+  var days = [['0','الأحد'],['1','الاثنين'],['2','الثلاثاء'],['3','الأربعاء'],['4','الخميس'],['5','الجمعة'],['6','السبت']];
+  var selectedDays = (d.workDays||'').split(',');
+  document.getElementById('erpModalTitle').textContent = id ? 'تعديل شفت' : 'شفت جديد';
+  document.getElementById('erpModalBody').innerHTML =
+    '<input type="hidden" id="shId" value="'+(d.id||'')+'">' +
+    '<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;">' +
+      '<div class="form-row"><label>اسم الشفت *</label><input class="form-control" id="shName" value="'+(d.name||'')+'"></div>' +
+      '<div class="form-row"><label>الرمز</label><input class="form-control" id="shCode" value="'+(d.code||'')+'"></div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">' +
+      '<div class="form-row"><label>بداية الدوام *</label><input type="time" class="form-control" id="shStart" value="'+d.startTime+'"></div>' +
+      '<div class="form-row"><label>نهاية الدوام *</label><input type="time" class="form-control" id="shEnd" value="'+d.endTime+'"></div>' +
+      '<div class="form-row"><label>الاستراحة (د)</label><input type="number" class="form-control" id="shBreak" value="'+d.breakMinutes+'"></div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+      '<div class="form-row"><label>سماحية التأخير (د)</label><input type="number" class="form-control" id="shGraceL" value="'+d.graceLateMinutes+'"></div>' +
+      '<div class="form-row"><label>سماحية الانصراف المبكر (د)</label><input type="number" class="form-control" id="shGraceE" value="'+d.graceEarlyLeaveMinutes+'"></div>' +
+    '</div>' +
+    '<div class="form-row"><label>أيام العمل</label><div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+      days.map(function(dy) {
+        return '<label style="display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border:1px solid #e5e7eb;border-radius:8px;cursor:pointer;background:#fff;"><input type="checkbox" class="shDay" value="'+dy[0]+'"'+(selectedDays.indexOf(dy[0])>=0?' checked':'')+'> '+dy[1]+'</label>';
+      }).join('') + '</div></div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">' +
+      '<label style="display:flex;align-items:center;gap:6px;padding:8px 12px;background:#f8fafc;border-radius:8px;cursor:pointer;"><input type="checkbox" id="shOtBefore"'+(d.allowOvertimeBefore?' checked':'')+'> إضافي قبل الدوام</label>' +
+      '<label style="display:flex;align-items:center;gap:6px;padding:8px 12px;background:#f8fafc;border-radius:8px;cursor:pointer;"><input type="checkbox" id="shOtAfter"'+(d.allowOvertimeAfter?' checked':'')+'> إضافي بعد الدوام</label>' +
+      '<label style="display:flex;align-items:center;gap:6px;padding:8px 12px;background:#fef3c7;border-radius:8px;cursor:pointer;"><input type="checkbox" id="shDefault"'+(d.isDefault?' checked':'')+'> شفت افتراضي</label>' +
+    '</div>';
+  document.getElementById('erpModalSaveBtn').onclick = hrSaveShift;
+  document.getElementById('erpModal').classList.remove('hidden');
+}
+
+function hrSaveShift() {
+  var workDays = [];
+  document.querySelectorAll('.shDay:checked').forEach(function(c){ workDays.push(c.value); });
+  var data = {
+    id: document.getElementById('shId').value || undefined,
+    name: document.getElementById('shName').value,
+    code: document.getElementById('shCode').value,
+    startTime: document.getElementById('shStart').value + ':00',
+    endTime: document.getElementById('shEnd').value + ':00',
+    breakMinutes: Number(document.getElementById('shBreak').value)||60,
+    graceLateMinutes: Number(document.getElementById('shGraceL').value)||5,
+    graceEarlyLeaveMinutes: Number(document.getElementById('shGraceE').value)||0,
+    workDays: workDays.join(','),
+    allowOvertimeBefore: document.getElementById('shOtBefore').checked,
+    allowOvertimeAfter: document.getElementById('shOtAfter').checked,
+    isDefault: document.getElementById('shDefault').checked,
+    username: currentUser
+  };
+  if (!data.name) return showToast('الاسم مطلوب', true);
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم الحفظ');erpCloseModal();hrLoadShifts();}else showToast(r.error,true); }).saveHrShift(data);
+}
+
+function hrDeleteShift(id) {
+  erpConfirm('حذف الشفت', 'هل أنت متأكد من حذف هذا الشفت؟', function() {
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) { loader(false); if(r.success){showToast('تم الحذف');hrLoadShifts();}else showToast(r.error,true); }).deleteHrShift(id);
+  }, { icon:'fa-trash', color:'#ef4444', okText:'حذف' });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HR OVERTIME ENTRIES
+// ═══════════════════════════════════════════════════════════════
+function hrLoadOvertimeEntries() {
+  var tb = document.getElementById('hrOtEntriesBody');
+  tb.innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  var params = {};
+  var st = (document.getElementById('hrOtStatusFilter')||{}).value;
+  if (st) params.status = st;
+  window._apiBridge.withSuccessHandler(function(list) {
+    if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد سجلات إضافي</td></tr>'; return; }
+    var sMap = {pending:'معلقة',approved:'معتمدة',rejected:'مرفوضة'};
+    var sClr = {pending:'#f59e0b',approved:'#10b981',rejected:'#ef4444'};
+    tb.innerHTML = list.map(function(o) {
+      var dt = o.entryDate ? new Date(o.entryDate).toLocaleDateString('en-GB') : '';
+      var hrs = Math.floor(o.minutes/60) + ':' + String(o.minutes%60).padStart(2,'0');
+      var actions = '';
+      if (o.status === 'pending') {
+        actions = '<button class="btn btn-sm btn-success" onclick="hrApproveOt(\''+o.id+'\')"><i class="fas fa-check"></i></button> ' +
+                  '<button class="btn btn-sm btn-danger" onclick="hrRejectOt(\''+o.id+'\')"><i class="fas fa-times"></i></button>';
+      }
+      return '<tr>' +
+        '<td style="font-weight:700;">'+(o.employeeName||'')+'<div style="font-size:10px;color:#94a3b8;">'+(o.employeeNumber||'')+'</div></td>' +
+        '<td>'+dt+'</td>' +
+        '<td style="font-weight:800;color:#0ea5e9;">'+hrs+'</td>' +
+        '<td><span class="badge" style="background:#fef3c7;color:#92400e;">'+o.multiplier+'x</span></td>' +
+        '<td style="font-size:12px;">'+(o.ruleName||'—')+'</td>' +
+        '<td><span class="badge" style="background:'+sClr[o.status]+'20;color:'+sClr[o.status]+';">'+(sMap[o.status]||o.status)+'</span></td>' +
+        '<td>'+actions+'</td>' +
+      '</tr>';
+    }).join('');
+  }).getHrOvertimeEntries(params);
+}
+
+function hrApproveOt(id) {
+  erpConfirm('اعتماد الإضافي', 'هل توافق على هذه الساعات الإضافية؟', function() {
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r){ loader(false); if(r.success){showToast('تم الاعتماد');hrLoadOvertimeEntries();}else showToast(r.error,true); }).approveOvertime(id, currentUser);
+  }, { icon:'fa-check-circle', color:'#10b981', okText:'اعتماد' });
+}
+
+function hrRejectOt(id) {
+  erpConfirm('رفض الإضافي', 'سيتم رفض هذه الساعات الإضافية.', function() {
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r){ loader(false); if(r.success){showToast('تم الرفض');hrLoadOvertimeEntries();}else showToast(r.error,true); }).rejectOvertime(id, currentUser, '');
+  }, { icon:'fa-times-circle', color:'#ef4444', okText:'رفض' });
+}
+
+function hrOpenOtRulesModal() {
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(rules) {
+    loader(false);
+    document.getElementById('erpModalTitle').textContent = 'قواعد الإضافي';
+    var html = '<div style="font-size:12px;color:#64748b;margin-bottom:10px;">قواعد حساب الإضافي حسب نوع اليوم</div>';
+    html += '<div style="display:flex;flex-direction:column;gap:10px;">';
+    (rules||[]).forEach(function(r) {
+      var typeLabel = {workday:'يوم عمل',restday:'يوم راحة',holiday:'عطلة رسمية'}[r.dayType]||r.dayType;
+      html += '<div style="padding:12px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:8px;align-items:center;">';
+      html += '<div><b>'+r.name+'</b><div style="font-size:11px;color:#94a3b8;">'+typeLabel+'</div></div>';
+      html += '<div><span style="font-size:11px;color:#94a3b8;">المعامل</span><div style="font-weight:800;color:#f59e0b;">'+r.multiplier+'x</div></div>';
+      html += '<div><span style="font-size:11px;color:#94a3b8;">الحد الأدنى</span><div style="font-weight:700;">'+r.minMinutes+' د</div></div>';
+      html += '<div><span style="font-size:11px;color:#94a3b8;">اعتماد</span><div>'+(r.requireApproval?'<span style="color:#10b981;">✓</span>':'<span style="color:#ef4444;">✗</span>')+'</div></div>';
+      html += '</div>';
+    });
+    html += '</div><p style="font-size:11px;color:#64748b;margin-top:12px;"><i class="fas fa-info-circle"></i> لتعديل القواعد استخدم API: POST /api/hr/overtime-rules</p>';
+    document.getElementById('erpModalBody').innerHTML = html;
+    document.getElementById('erpModalSaveBtn').style.display = 'none';
+    document.getElementById('erpModal').classList.remove('hidden');
+    setTimeout(function(){ document.getElementById('erpModalSaveBtn').style.display=''; }, 100);
+  }).getHrOvertimeRules();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HR EXCEPTIONS
+// ═══════════════════════════════════════════════════════════════
+function hrLoadExceptions() {
+  var tb = document.getElementById('hrExcBody');
+  tb.innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  var params = {};
+  var t = document.getElementById('hrExcTypeFilter').value;
+  if (t) params.type = t;
+  if (document.getElementById('hrExcActiveOnly').checked) params.active = '1';
+  window._apiBridge.withSuccessHandler(function(list) {
+    if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد استثناءات</td></tr>'; return; }
+    var tMap = {ignore_late:'تجاهل تأخير',ignore_early_leave:'تجاهل انصراف مبكر',ignore_overtime:'تجاهل إضافي',adjust_attendance:'تعديل حضور',grant_day:'منح يوم'};
+    var tClr = {ignore_late:'#f59e0b',ignore_early_leave:'#f59e0b',ignore_overtime:'#8b5cf6',adjust_attendance:'#0ea5e9',grant_day:'#10b981'};
+    tb.innerHTML = list.map(function(x) {
+      var sd = x.startDate ? new Date(x.startDate).toLocaleDateString('en-GB') : '';
+      var ed = x.endDate ? new Date(x.endDate).toLocaleDateString('en-GB') : '';
+      return '<tr><td style="font-weight:700;">'+(x.employeeName||'')+'<div style="font-size:10px;color:#94a3b8;">'+(x.employeeNumber||'')+'</div></td>' +
+        '<td><span class="badge" style="background:'+tClr[x.type]+'20;color:'+tClr[x.type]+';">'+(tMap[x.type]||x.type)+'</span></td>' +
+        '<td>'+sd+'</td><td>'+ed+'</td>' +
+        '<td style="font-size:12px;">'+(x.reason||'—')+'</td>' +
+        '<td style="font-size:11px;color:#64748b;">'+(x.createdBy||'')+'</td>' +
+        '<td><button class="btn-icon" style="color:#ef4444;" onclick="hrDeleteException(\''+x.id+'\')" title="حذف"><i class="fas fa-trash"></i></button></td></tr>';
+    }).join('');
+  }).getHrExceptions(params);
+}
+
+function hrOpenExceptionModal() {
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(emps) {
+    loader(false);
+    var empOpts = (emps||[]).map(function(e){return '<option value="'+e.id+'">'+(e.fullName||'')+' — '+(e.employeeNumber||'')+'</option>';}).join('');
+    var today = new Date().toISOString().slice(0,10);
+    document.getElementById('erpModalTitle').textContent = 'استثناء جديد';
+    document.getElementById('erpModalBody').innerHTML =
+      '<div class="form-row"><label>الموظف *</label><select class="form-control" id="excEmp"><option value="">— اختر —</option>'+empOpts+'</select></div>' +
+      '<div class="form-row"><label>نوع الاستثناء *</label><select class="form-control" id="excType" onchange="hrExcTypeChanged()">' +
+        '<option value="ignore_late">تجاهل التأخير</option>' +
+        '<option value="ignore_early_leave">تجاهل الانصراف المبكر</option>' +
+        '<option value="ignore_overtime">تجاهل الإضافي</option>' +
+        '<option value="adjust_attendance">تعديل الحضور (ساعات محددة)</option>' +
+        '<option value="grant_day">منح يوم عمل</option>' +
+      '</select></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>من تاريخ *</label><input type="date" class="form-control" id="excStart" value="'+today+'"></div>' +
+        '<div class="form-row"><label>إلى تاريخ *</label><input type="date" class="form-control" id="excEnd" value="'+today+'"></div>' +
+      '</div>' +
+      '<div id="excAdjustFields" style="display:none;"><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>وقت الدخول الجديد</label><input type="time" class="form-control" id="excNewIn"></div>' +
+        '<div class="form-row"><label>وقت الخروج الجديد</label><input type="time" class="form-control" id="excNewOut"></div>' +
+      '</div></div>' +
+      '<div class="form-row"><label>السبب</label><textarea class="form-control" id="excReason" rows="2"></textarea></div>';
+    document.getElementById('erpModalSaveBtn').onclick = hrSaveException;
+    document.getElementById('erpModal').classList.remove('hidden');
+  }).getHrEmployees({ status: 'active' });
+}
+
+window.hrExcTypeChanged = function() {
+  var t = document.getElementById('excType').value;
+  document.getElementById('excAdjustFields').style.display = t === 'adjust_attendance' ? 'block' : 'none';
+};
+
+function hrSaveException() {
+  var data = {
+    employeeId: document.getElementById('excEmp').value,
+    type: document.getElementById('excType').value,
+    startDate: document.getElementById('excStart').value,
+    endDate: document.getElementById('excEnd').value,
+    newClockIn: document.getElementById('excNewIn').value || null,
+    newClockOut: document.getElementById('excNewOut').value || null,
+    reason: document.getElementById('excReason').value,
+    username: currentUser
+  };
+  if (!data.employeeId || !data.type || !data.startDate || !data.endDate) return showToast('البيانات ناقصة', true);
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r){ loader(false); if(r.success){showToast('تم إضافة الاستثناء');erpCloseModal();hrLoadExceptions();}else showToast(r.error,true); }).saveHrException(data);
+}
+
+function hrDeleteException(id) {
+  erpConfirm('حذف الاستثناء', 'هل أنت متأكد؟', function() {
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r){ loader(false); if(r.success){showToast('تم الحذف');hrLoadExceptions();}else showToast(r.error,true); }).deleteHrException(id);
+  }, { icon:'fa-trash', color:'#ef4444', okText:'حذف' });
 }

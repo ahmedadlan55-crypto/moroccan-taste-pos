@@ -1154,7 +1154,114 @@ async function runMigrations() {
   // Employee work schedule
   await addColumnIfMissing('hr_employees', 'work_start', "TIME DEFAULT '08:00:00'");
   await addColumnIfMissing('hr_employees', 'work_end', "TIME DEFAULT '17:00:00'");
-  await addColumnIfMissing('hr_employees', 'ignore_late_month', "VARCHAR(7)"); // e.g. "2026-04"
+  await addColumnIfMissing('hr_employees', 'ignore_late_month', "VARCHAR(7)");
+  await addColumnIfMissing('hr_employees', 'shift_id', "VARCHAR(50)");
+
+  // ═══ HR System Expansion: Shifts, Overtime, Exceptions, Audit ═══
+  await createTableIfMissing('hr_shifts', `
+    CREATE TABLE hr_shifts (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      code VARCHAR(20),
+      start_time TIME NOT NULL,
+      end_time TIME NOT NULL,
+      break_minutes INT DEFAULT 60,
+      grace_late_minutes INT DEFAULT 5,
+      grace_early_leave_minutes INT DEFAULT 0,
+      allow_overtime_before BOOLEAN DEFAULT FALSE,
+      allow_overtime_after BOOLEAN DEFAULT TRUE,
+      work_days VARCHAR(20) DEFAULT '0,1,2,3,4',
+      is_default BOOLEAN DEFAULT FALSE,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  try {
+    const [sCount] = await db.query('SELECT COUNT(*) AS cnt FROM hr_shifts');
+    if (sCount[0].cnt === 0) {
+      await db.query("INSERT INTO hr_shifts (id, name, code, start_time, end_time, break_minutes, grace_late_minutes, is_default, allow_overtime_after) VALUES ('SH-MORNING','الشفت الصباحي','MORNING','08:00:00','17:00:00',60,5,1,1),('SH-EVENING','الشفت المسائي','EVENING','16:00:00','00:00:00',60,5,0,1)");
+    }
+  } catch(e) {}
+
+  await createTableIfMissing('hr_overtime_rules', `
+    CREATE TABLE hr_overtime_rules (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      day_type ENUM('workday','restday','holiday') DEFAULT 'workday',
+      multiplier DECIMAL(4,2) DEFAULT 1.50,
+      min_minutes INT DEFAULT 30,
+      require_approval BOOLEAN DEFAULT TRUE,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  try {
+    const [oCount] = await db.query('SELECT COUNT(*) AS cnt FROM hr_overtime_rules');
+    if (oCount[0].cnt === 0) {
+      await db.query("INSERT INTO hr_overtime_rules (id, name, day_type, multiplier, min_minutes, require_approval) VALUES ('OT-WORK','إضافي يوم عمل','workday',1.50,30,1),('OT-REST','إضافي يوم راحة','restday',2.00,30,1),('OT-HOLIDAY','إضافي عطلة رسمية','holiday',2.50,30,1)");
+    }
+  } catch(e) {}
+
+  await createTableIfMissing('hr_overtime_entries', `
+    CREATE TABLE hr_overtime_entries (
+      id VARCHAR(50) PRIMARY KEY,
+      employee_id VARCHAR(50) NOT NULL,
+      attendance_id VARCHAR(50),
+      entry_date DATE NOT NULL,
+      minutes INT NOT NULL,
+      rule_id VARCHAR(50),
+      multiplier DECIMAL(4,2) DEFAULT 1.50,
+      amount DECIMAL(12,2) DEFAULT 0,
+      status ENUM('pending','approved','rejected') DEFAULT 'pending',
+      approved_by VARCHAR(100),
+      approved_at DATETIME,
+      note TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_ot_emp (employee_id),
+      INDEX idx_ot_date (entry_date)
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('hr_exceptions', `
+    CREATE TABLE hr_exceptions (
+      id VARCHAR(50) PRIMARY KEY,
+      employee_id VARCHAR(50) NOT NULL,
+      exception_type ENUM('ignore_late','ignore_early_leave','ignore_overtime','adjust_attendance','grant_day') NOT NULL,
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      new_clock_in TIME,
+      new_clock_out TIME,
+      reason TEXT,
+      approved_by VARCHAR(100),
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_exc_emp (employee_id),
+      INDEX idx_exc_date (start_date, end_date)
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('hr_audit_log', `
+    CREATE TABLE hr_audit_log (
+      id VARCHAR(50) PRIMARY KEY,
+      actor VARCHAR(100),
+      action VARCHAR(100) NOT NULL,
+      entity_type VARCHAR(50),
+      entity_id VARCHAR(50),
+      details TEXT,
+      ip VARCHAR(50),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_audit_entity (entity_type, entity_id),
+      INDEX idx_audit_date (created_at)
+    ) ENGINE=InnoDB
+  `);
+
+  // Enhance hr_attendance with extra fields for proper calculation
+  await addColumnIfMissing('hr_attendance', 'early_leave_minutes', "INT DEFAULT 0");
+  await addColumnIfMissing('hr_attendance', 'overtime_minutes', "INT DEFAULT 0");
+  await addColumnIfMissing('hr_attendance', 'shift_id', "VARCHAR(50)");
+  await addColumnIfMissing('hr_attendance', 'is_adjusted', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('hr_attendance', 'adjustment_reason', "TEXT");
 
   // Fix device_id column size
   try { await db.query('ALTER TABLE hr_attendance MODIFY COLUMN device_id VARCHAR(500)'); } catch(e) {}

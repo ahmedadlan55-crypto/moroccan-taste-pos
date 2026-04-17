@@ -222,6 +222,23 @@
     verify2FA:           { method: 'POST', url: '/auth/2fa/verify' },
     disable2FA:          { method: 'POST', url: '/auth/2fa/disable' },
     getAccountLedger:    { method: 'GET',  url: (id) => '/erp/gl/account-ledger/' + id },
+    // HR Module — New endpoints (Shifts, Exceptions, Overtime, Dashboard v2)
+    getHrShifts:         { method: 'GET',  url: '/hr/shifts' },
+    saveHrShift:         { method: 'POST', url: '/hr/shifts' },
+    deleteHrShift:       { method: 'DELETE', url: (id) => '/hr/shifts/' + id },
+    assignEmployeeShift: { method: 'POST', url: (id,d) => '/hr/employees/' + id + '/assign-shift', body: (id,d) => d },
+    getHrOvertimeRules:  { method: 'GET',  url: '/hr/overtime-rules' },
+    saveHrOvertimeRule:  { method: 'POST', url: '/hr/overtime-rules' },
+    getHrOvertimeEntries:{ method: 'GET',  url: '/hr/overtime-entries', query: (f) => f },
+    approveOvertime:     { method: 'POST', url: (id,u) => '/hr/overtime-entries/' + id + '/approve', body: (id,u) => ({username:u}) },
+    rejectOvertime:      { method: 'POST', url: (id,u,n) => '/hr/overtime-entries/' + id + '/reject', body: (id,u,n) => ({username:u,note:n}) },
+    getHrExceptions:     { method: 'GET',  url: '/hr/exceptions', query: (f) => f },
+    saveHrException:     { method: 'POST', url: '/hr/exceptions' },
+    deleteHrException:   { method: 'DELETE', url: (id) => '/hr/exceptions/' + id },
+    getHrDashboardV2:    { method: 'GET',  url: '/hr/dashboard' },
+    getHrDashboardAlerts:{ method: 'GET',  url: '/hr/dashboard/alerts' },
+    getHrAuditLog:       { method: 'GET',  url: '/hr/audit', query: (f) => f },
+
     // HR Module
     getHrDashboard:      { method: 'GET',  url: '/hr/dashboard' },
     getHrDepartments:    { method: 'GET',  url: '/hr/departments' },

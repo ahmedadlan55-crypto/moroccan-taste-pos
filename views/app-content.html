@@ -105,6 +105,9 @@
           <div class="nav-item" onclick="nav('users')"><i class="fas fa-user-shield"></i><span>المستخدمون والصلاحيات</span></div>
           <div class="nav-item" data-erp-nav="erpHrDepartments" onclick="erpNav('erpHrDepartments')"><i class="fas fa-building"></i><span>الأقسام</span></div>
           <div class="nav-item" data-erp-nav="erpHrAttendance" onclick="erpNav('erpHrAttendance')"><i class="fas fa-fingerprint"></i><span>الحضور والانصراف</span></div>
+          <div class="nav-item" data-erp-nav="erpHrShifts" onclick="erpNav('erpHrShifts')"><i class="fas fa-clock"></i><span>الشفتات</span></div>
+          <div class="nav-item" data-erp-nav="erpHrOvertime" onclick="erpNav('erpHrOvertime')"><i class="fas fa-business-time"></i><span>الإضافي</span></div>
+          <div class="nav-item" data-erp-nav="erpHrExceptions" onclick="erpNav('erpHrExceptions')"><i class="fas fa-exclamation-triangle"></i><span>الاستثناءات</span></div>
           <div class="nav-item" data-erp-nav="erpHrLeave" onclick="erpNav('erpHrLeave')"><i class="fas fa-calendar-check"></i><span>الإجازات</span></div>
           <div class="nav-item" data-erp-nav="erpHrPayroll" onclick="erpNav('erpHrPayroll')"><i class="fas fa-money-check-alt"></i><span>الرواتب</span></div>
           <div class="nav-item" data-erp-nav="erpHrAdvances" onclick="erpNav('erpHrAdvances')"><i class="fas fa-hand-holding-usd"></i><span>السلف</span></div>
@@ -1568,6 +1571,64 @@
       <h3 style="font-size:15px;font-weight:800;margin-bottom:12px;"><i class="fas fa-exclamation-triangle" style="color:#ef4444;"></i> تنبيهات</h3>
       <div id="hrDashAlerts" style="font-size:14px;color:#64748b;">جاري التحميل...</div>
     </div>
+  </div>
+</div>
+
+<!-- HR: الشفتات -->
+<div id="erpHrShifts" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-clock" style="color:#3b82f6;"></i> إدارة الشفتات</h2>
+    <button class="btn btn-primary" onclick="hrOpenShiftModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> شفت جديد</button>
+  </div>
+  <div id="hrShiftsList"></div>
+</div>
+
+<!-- HR: الإضافي -->
+<div id="erpHrOvertime" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-business-time" style="color:#f59e0b;"></i> ساعات الإضافي</h2>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <select id="hrOtStatusFilter" class="form-control" style="width:150px;" onchange="hrLoadOvertimeEntries()">
+        <option value="pending" selected>معلقة</option>
+        <option value="approved">معتمدة</option>
+        <option value="rejected">مرفوضة</option>
+        <option value="">الكل</option>
+      </select>
+      <button class="btn btn-light" onclick="hrOpenOtRulesModal()" style="border-radius:10px;"><i class="fas fa-cog"></i> قواعد الإضافي</button>
+    </div>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الموظف</th><th>التاريخ</th><th>المدة</th><th>المعامل</th><th>القاعدة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="hrOtEntriesBody"><tr><td colspan="7" class="empty-msg">جاري التحميل...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- HR: الاستثناءات -->
+<div id="erpHrExceptions" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-exclamation-triangle" style="color:#f59e0b;"></i> الاستثناءات</h2>
+    <button class="btn btn-primary" onclick="hrOpenExceptionModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> استثناء جديد</button>
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+    <select id="hrExcTypeFilter" class="form-control" style="width:200px;" onchange="hrLoadExceptions()">
+      <option value="">كل الأنواع</option>
+      <option value="ignore_late">تجاهل تأخير</option>
+      <option value="ignore_early_leave">تجاهل انصراف مبكر</option>
+      <option value="ignore_overtime">تجاهل إضافي</option>
+      <option value="adjust_attendance">تعديل حضور</option>
+      <option value="grant_day">منح يوم</option>
+    </select>
+    <label style="display:flex;align-items:center;gap:6px;padding:8px 12px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;cursor:pointer;">
+      <input type="checkbox" id="hrExcActiveOnly" onchange="hrLoadExceptions()" checked> نشط فقط
+    </label>
+  </div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead><tr><th>الموظف</th><th>النوع</th><th>من</th><th>إلى</th><th>السبب</th><th>بواسطة</th><th>إجراء</th></tr></thead>
+      <tbody id="hrExcBody"><tr><td colspan="7" class="empty-msg">جاري التحميل...</td></tr></tbody>
+    </table>
   </div>
 </div>
 

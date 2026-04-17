@@ -1232,8 +1232,20 @@ router.post('/leave-requests/:id/reject', async (req, res) => {
 
 router.get('/payroll-runs', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM hr_payroll_runs ORDER BY year DESC, month DESC');
-    res.json(rows);
+    const [rows] = await db.query(`
+      SELECT pr.*, COALESCE(b.name,'') AS branch_name
+      FROM hr_payroll_runs pr
+      LEFT JOIN branches b ON pr.branch_id = b.id
+      ORDER BY pr.year DESC, pr.month DESC`);
+    res.json(rows.map(r => ({
+      id: r.id, runNumber: r.run_number,
+      month: r.month, year: r.year, periodMonth: r.month, periodYear: r.year,
+      branchId: r.branch_id, branchName: r.branch_name || '',
+      brandId: r.brand_id, status: r.status,
+      totalGross: Number(r.total_gross)||0, totalDeductions: Number(r.total_deductions)||0,
+      totalNet: Number(r.total_net)||0, employeeCount: r.employee_count||0,
+      createdBy: r.created_by, createdAt: r.created_at
+    })));
   } catch (e) {
     res.json({ success: false, error: e.message });
   }

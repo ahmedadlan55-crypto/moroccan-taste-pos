@@ -5327,9 +5327,11 @@ function hrLoadPayrollRuns() {
       var actions = '<button class="btn btn-sm btn-light" onclick="hrViewPayrollItems(\''+r.id+'\')"><i class="fas fa-eye"></i></button> ';
       if (r.status==='draft') actions += '<button class="btn btn-sm btn-primary" onclick="hrCalculatePayroll(\''+r.id+'\')"><i class="fas fa-calculator"></i> حساب</button> ';
       if (r.status==='calculated') actions += '<button class="btn btn-sm btn-success" onclick="hrApprovePayroll(\''+r.id+'\')"><i class="fas fa-check"></i> اعتماد</button>';
+      var m = r.periodMonth || r.month;
+      var y = r.periodYear || r.year;
       return '<tr>' +
-        '<td><code>' + (r.runNumber||'') + '</code></td>' +
-        '<td style="font-weight:700;">' + (months[r.periodMonth]||r.periodMonth) + ' ' + r.periodYear + '</td>' +
+        '<td><code>' + (r.runNumber || r.run_number || '') + '</code></td>' +
+        '<td style="font-weight:700;">' + (months[m]||m||'') + ' ' + (y||'') + '</td>' +
         '<td>' + (r.branchName||'كل الفروع') + '</td>' +
         '<td style="font-weight:700;">' + (r.employeeCount||0) + '</td>' +
         '<td style="color:#16a34a;font-weight:700;">' + (Number(r.totalGross)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</td>' +

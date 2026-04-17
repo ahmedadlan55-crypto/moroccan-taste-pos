@@ -2762,11 +2762,25 @@ window.erpSetInvMethod = function(method) {
   }).setInventoryMethod({ method: method });
 };
 
-function erpLoadInventoryValuation() {
+function erpLoadInventoryValuation(filters) {
   var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
-  window._apiBridge.withSuccessHandler(function(data) {
+  filters = filters || {};
+  var q = 'by=brand';
+  if (filters.brand_id) q += '&brand_id=' + filters.brand_id;
+  if (filters.warehouse_id) q += '&warehouse_id=' + filters.warehouse_id;
+  var token = localStorage.getItem('pos_token');
+  fetch('/api/erp/inventory-valuation?' + q, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
     var container = document.getElementById('invValuationContent');
     var html = '';
+
+    // Filter bar — brand + warehouse
+    html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">';
+    html += '<span style="font-weight:700;color:#475569;"><i class="fas fa-filter"></i> فلتر:</span>';
+    html += '<select id="invValBrandFilter" class="form-control" style="width:200px;" onchange="erpReloadInvValuation()"><option value="">كل البراندات</option></select>';
+    html += '<select id="invValWhFilter" class="form-control" style="width:220px;" onchange="erpReloadInvValuation()"><option value="">كل المستودعات</option></select>';
+    html += '</div>';
 
     // Summary card
     html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">';
@@ -2774,6 +2788,35 @@ function erpLoadInventoryValuation() {
     html += '<div style="background:#f0fdf4;padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:#166534;font-weight:700;">عدد الأصناف</div><div style="font-size:24px;font-weight:900;color:#16a34a;">' + (data.itemCount||0) + '</div></div>';
     html += '<div style="background:#fef3c7;padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:#92400e;font-weight:700;">نوع الجرد</div><div style="font-size:24px;font-weight:900;color:#f59e0b;">' + (data.method==='perpetual'?'مستمر':'دوري') + '</div></div>';
     html += '</div>';
+
+    // By Brand breakdown (if available)
+    if (data.byBrand && Object.keys(data.byBrand).length) {
+      html += '<div style="margin-bottom:14px;"><h3 style="font-size:14px;font-weight:800;margin-bottom:8px;"><i class="fas fa-tags" style="color:#8b5cf6;"></i> تقييم حسب البراند</h3>';
+      html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;">';
+      Object.keys(data.byBrand).forEach(function(k) {
+        var b = data.byBrand[k];
+        html += '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px;">' +
+          '<div style="font-weight:800;color:#1e293b;margin-bottom:6px;"><i class="fas fa-store" style="color:#8b5cf6;margin-left:6px;"></i>' + b.brandName + '</div>' +
+          '<div style="font-size:22px;font-weight:900;color:#1e40af;">' + fmt(b.totalValue) + '</div>' +
+          '<div style="font-size:11px;color:#94a3b8;">' + b.items + ' صنف</div></div>';
+      });
+      html += '</div></div>';
+    }
+
+    // By Warehouse breakdown (if available)
+    if (data.byWarehouse && Object.keys(data.byWarehouse).length) {
+      html += '<div style="margin-bottom:14px;"><h3 style="font-size:14px;font-weight:800;margin-bottom:8px;"><i class="fas fa-warehouse" style="color:#0ea5e9;"></i> تقييم حسب المستودع</h3>';
+      html += '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
+      html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">المستودع</th><th>البراند</th><th>عدد الأصناف</th><th style="text-align:start;">القيمة</th></tr></thead><tbody>';
+      Object.keys(data.byWarehouse).forEach(function(k) {
+        var w = data.byWarehouse[k];
+        html += '<tr style="border-bottom:1px solid #e2e8f0;"><td style="padding:10px 14px;font-weight:800;">' + w.warehouseName + '</td>' +
+          '<td style="padding:10px 14px;">' + (w.brandName||'—') + '</td>' +
+          '<td style="padding:10px 14px;">' + w.items.length + '</td>' +
+          '<td style="padding:10px 14px;text-align:start;font-weight:800;color:#1e40af;">' + fmt(w.totalValue) + '</td></tr>';
+      });
+      html += '</tbody></table></div></div>';
+    }
 
     // Categories table
     var cats = data.categories || {};
@@ -2805,8 +2848,29 @@ function erpLoadInventoryValuation() {
     }
 
     container.innerHTML = html;
-  }).getInventoryValuation();
+    // Populate filter dropdowns
+    var bSel = document.getElementById('invValBrandFilter');
+    var wSel = document.getElementById('invValWhFilter');
+    if (bSel) {
+      window._apiBridge.withSuccessHandler(function(brands) {
+        bSel.innerHTML = '<option value="">كل البراندات</option>' + (brands||[]).map(function(b){return '<option value="'+b.id+'"'+(filters.brand_id===b.id?' selected':'')+'>'+b.name+'</option>';}).join('');
+      }).getBrands();
+    }
+    if (wSel) {
+      fetch('/api/erp/warehouses', { headers: { 'Authorization': 'Bearer ' + token } })
+        .then(function(r){return r.json();})
+        .then(function(whs){
+          wSel.innerHTML = '<option value="">كل المستودعات</option>' + (whs||[]).map(function(w){return '<option value="'+w.id+'"'+(filters.warehouse_id===w.id?' selected':'')+'>'+(w.name||'')+'</option>';}).join('');
+        }).catch(function(){});
+    }
+  }).catch(function(e){ console.error(e); });
 }
+
+window.erpReloadInvValuation = function() {
+  var b = (document.getElementById('invValBrandFilter')||{}).value || '';
+  var w = (document.getElementById('invValWhFilter')||{}).value || '';
+  erpLoadInventoryValuation({ brand_id: b, warehouse_id: w });
+};
 
 window.erpSyncInventoryGL = function() {
   if (!confirm('مزامنة تصنيفات المخزون مع دليل الحسابات؟\nسيتم إنشاء حسابات فرعية تحت "112 المخزون" لكل تصنيف.')) return;

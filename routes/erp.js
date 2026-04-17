@@ -868,14 +868,57 @@ router.post('/inventory-method', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-// Inventory valuation — real-time stock value from inv_items
+// Inventory valuation — real-time stock value (per-warehouse or aggregated)
 router.get('/inventory-valuation', async (req, res) => {
   try {
-    const [items] = await db.query('SELECT id, name, category, cost, stock, unit FROM inv_items WHERE active = 1');
+    const { brand_id, warehouse_id, by } = req.query; // by = 'warehouse' | 'brand' | 'category'
     const [methodRow] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_method'");
     const method = methodRow.length ? methodRow[0].setting_value : 'perpetual';
 
-    // Group by category
+    // If per-warehouse/brand breakdown requested — use warehouse_stock
+    if (by === 'warehouse' || by === 'brand' || warehouse_id || brand_id) {
+      let sql = `
+        SELECT ws.warehouse_id, w.name AS warehouse_name, w.brand_id, COALESCE(br.name,'') AS brand_name,
+               ws.item_id, i.name AS item_name, i.category, i.unit, i.cost,
+               ws.qty
+        FROM warehouse_stock ws
+        JOIN warehouses w ON ws.warehouse_id = w.id
+        LEFT JOIN brands br ON w.brand_id = br.id
+        JOIN inv_items i ON ws.item_id = i.id
+        WHERE i.active = 1 AND w.is_active = 1`;
+      const params = [];
+      if (brand_id) { sql += ' AND w.brand_id = ?'; params.push(brand_id); }
+      if (warehouse_id) { sql += ' AND ws.warehouse_id = ?'; params.push(warehouse_id); }
+      const [rows] = await db.query(sql, params);
+
+      const byBrand = {}, byWarehouse = {}, byCategory = {};
+      let totalValue = 0; let totalQty = 0;
+      rows.forEach(r => {
+        const val = (Number(r.qty)||0) * (Number(r.cost)||0);
+        totalValue += val;
+        totalQty += Number(r.qty) || 0;
+
+        // By brand
+        const bKey = r.brand_id || 'no_brand';
+        if (!byBrand[bKey]) byBrand[bKey] = { brandId: r.brand_id, brandName: r.brand_name || 'بدون براند', totalValue: 0, items: 0 };
+        byBrand[bKey].totalValue += val; byBrand[bKey].items++;
+
+        // By warehouse
+        if (!byWarehouse[r.warehouse_id]) byWarehouse[r.warehouse_id] = { warehouseId: r.warehouse_id, warehouseName: r.warehouse_name, brandName: r.brand_name, totalValue: 0, items: [] };
+        byWarehouse[r.warehouse_id].totalValue += val;
+        byWarehouse[r.warehouse_id].items.push({ name: r.item_name, qty: Number(r.qty)||0, cost: Number(r.cost)||0, value: val, unit: r.unit, category: r.category });
+
+        // By category
+        const cat = r.category || 'أخرى';
+        if (!byCategory[cat]) byCategory[cat] = { totalValue: 0, items: [] };
+        byCategory[cat].totalValue += val;
+        byCategory[cat].items.push({ name: r.item_name, stock: Number(r.qty)||0, cost: Number(r.cost)||0, value: val, unit: r.unit });
+      });
+      return res.json({ method, totalValue, totalQty, itemCount: rows.length, byBrand, byWarehouse, categories: byCategory });
+    }
+
+    // Default: aggregate from inv_items
+    const [items] = await db.query('SELECT id, name, category, cost, stock, unit FROM inv_items WHERE active = 1');
     const categories = {};
     let totalValue = 0;
     items.forEach(i => {
@@ -886,9 +929,8 @@ router.get('/inventory-valuation', async (req, res) => {
       categories[cat].totalValue += val;
       totalValue += val;
     });
-
     res.json({ method, categories, totalValue, itemCount: items.length });
-  } catch(e) { res.json({ method: 'perpetual', categories: {}, totalValue: 0, itemCount: 0 }); }
+  } catch(e) { res.json({ method: 'perpetual', categories: {}, totalValue: 0, itemCount: 0, error: e.message }); }
 });
 
 // Sync inventory GL accounts — create accounts for each category under 112

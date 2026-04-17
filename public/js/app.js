@@ -229,10 +229,12 @@ function injectAppTemplate(html) {
 // Mount a section from cache into the DOM (lazy) — called by nav/erpNav
 window.mountSection = function(sectionId) {
   if (window._mountedSections[sectionId]) return true; // already mounted
+  if (document.getElementById(sectionId)) { window._mountedSections[sectionId] = true; return true; }
   var html = window._sectionHTMLCache[sectionId];
   if (!html) return false; // section doesn't exist in template
-  // Find the main content area or a suitable mount point
-  var mountPoint = document.querySelector('.admin-content') || document.querySelector('.main-content') || document.getElementById('adminView') || document.body;
+  // Mount inside .admin-main (where sections originally lived)
+  var mountPoint = document.querySelector('.admin-main') || document.querySelector('.admin-content');
+  if (!mountPoint) return false;
   var wrapper = document.createElement('div');
   wrapper.innerHTML = html;
   while (wrapper.firstChild) {

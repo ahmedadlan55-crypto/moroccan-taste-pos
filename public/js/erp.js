@@ -4817,12 +4817,14 @@ function wfOpenNewTxnModal() {
     new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getBranchesFull(); }),
     new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getBrands(); }),
     new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getWfDashFilters(); }),
-    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getRecipientsDirectory(); })
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getRecipientsDirectory(); }),
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getExpenseCategories(); })
   ]).then(function(results) {
     var types = results[0] || [], branches = results[1] || [], brands = results[2] || [];
     var filters = results[3] || { departments: [] };
     _wfNewRecipientsDir = results[4] || [];
     _wfNewSelectedRecipients = {};
+    var expCategories = results[5] || [];
 
     var typeOpts = '<option value="">اختر —</option>' + types.map(function(t) {
       return '<option value="' + t.id + '">' + t.name + (t.code?' ['+t.code+']':'') + '</option>';
@@ -4832,6 +4834,9 @@ function wfOpenNewTxnModal() {
     }).join('');
     var branchOpts = branches.map(function(b) { return '<option value="' + b.id + '">' + b.name + (b.code?' ['+b.code+']':'') + '</option>'; }).join('');
     var brandOpts = brands.map(function(b) { return '<option value="' + b.id + '">' + b.name + '</option>'; }).join('');
+    var expenseOpts = '<option value="">— بدون —</option>' + expCategories.map(function(c) {
+      return '<option value="' + c.id + '" data-name="' + (c.name||'').replace(/"/g,'&quot;') + '">' + c.name + '</option>';
+    }).join('');
 
     // Widen the modal to fit two columns
     var modalBox = document.querySelector('#erpModal .erp-modal-box');
@@ -4927,6 +4932,24 @@ function wfOpenNewTxnModal() {
           '<div class="wfnt-row">' +
             '<label>المبلغ</label>' +
             '<input type="number" class="wfnt-input" id="wfNewAmount" step="0.01" min="0" value="0">' +
+          '</div>' +
+
+          '<div class="wfnt-row">' +
+            '<label>نوع المصروف</label>' +
+            '<select class="wfnt-sel" id="wfnExpCat">' + expenseOpts + '</select>' +
+          '</div>' +
+
+          '<div class="wfnt-row">' +
+            '<label>تاريخ الاستحقاق</label>' +
+            '<input type="date" class="wfnt-input" id="wfnDueDate">' +
+          '</div>' +
+
+          '<div class="wfnt-row">' +
+            '<label>نطاق المعاملة</label>' +
+            '<select class="wfnt-sel" id="wfnScope">' +
+              '<option value="internal" selected>داخلية</option>' +
+              '<option value="external">خارجية</option>' +
+            '</select>' +
           '</div>' +
 
           '<div class="wfnt-row">' +
@@ -5139,6 +5162,10 @@ function _wfSubmitNewTxn(asDraft) {
       brandId: document.getElementById('wfNewBrand').value || null,
       branchId: document.getElementById('wfNewBranch').value || null,
       deptId: document.getElementById('wfnIssuingDept').value || null,
+      expenseCategoryId: document.getElementById('wfnExpCat').value || null,
+      expenseCategoryName: (function(){ var s = document.getElementById('wfnExpCat'); return s && s.selectedIndex > 0 ? (s.options[s.selectedIndex].getAttribute('data-name') || s.options[s.selectedIndex].text) : ''; })(),
+      dueDate: document.getElementById('wfnDueDate').value || null,
+      scope: document.getElementById('wfnScope').value || 'internal',
       recipients: recipients,
       recipientUsername: pickedRecipientUsername,
       attachment: attachmentDataUrl || null,
@@ -5156,6 +5183,8 @@ function _wfSubmitNewTxn(asDraft) {
 
 function wfViewTxn(id) {
   loader(true);
+  // Mark as read (best-effort — ignore failure)
+  try { window._apiBridge.withSuccessHandler(function(){}).markTxnRead(id, { username: currentUser }); } catch(e) {}
   window._apiBridge.withSuccessHandler(function(txn) {
     loader(false);
     if (txn.error) return showToast(txn.error, true);
@@ -6631,41 +6660,99 @@ function wfLoadIncoming() {
   }).getWfIncoming({ username: currentUser });
 }
 
-// ─── صندوق الصادر (Outgoing) ───
+// ─── صندوق الصادر (Outgoing) — enterprise layout ───
+var _wfOutboxInitialized = false;
+
+function _wfInitOutboxFilters() {
+  if (_wfOutboxInitialized) return;
+  window._apiBridge.withSuccessHandler(function(types) {
+    var sel = document.getElementById('woxFType');
+    if (sel) sel.innerHTML = '<option value="">اختر</option>' + (types||[]).map(function(t){return '<option value="'+t.id+'">'+t.name+'</option>';}).join('');
+  }).getWfTypes();
+  window._apiBridge.withSuccessHandler(function(cats) {
+    var sel = document.getElementById('woxFExpense');
+    if (sel) sel.innerHTML = '<option value="">اختر</option>' + (cats||[]).map(function(c){return '<option value="'+c.id+'">'+c.name+'</option>';}).join('');
+  }).getExpenseCategories();
+  _wfOutboxInitialized = true;
+}
+
+function wfResetOutboxFilters() {
+  ['woxFTxnNumber','woxFSubject','woxFPendingAt','woxFFrom','woxFTo',
+   'woxFRecipient','woxFImportance','woxFStatus','woxFType',
+   'woxFRead','woxFOverdue','woxFExpense'].forEach(function(id) {
+    var el = document.getElementById(id); if (el) el.value = '';
+  });
+  wfLoadOutbox();
+}
+
+var _wfOutStatusAr = { pending:'قيد الانتظار', in_progress:'قيد التشغيل', approved:'معتمدة', rejected:'مطلوب التعديل', closed:'منتهية', draft:'مسودة' };
+var _wfOutStatusClr = { pending:'#f59e0b', in_progress:'#16a34a', approved:'#0ea5e9', rejected:'#ea580c', closed:'#64748b', draft:'#94a3b8' };
+var _wfOutImpAr = { critical:'عاجل', high:'عالي', medium:'عادي', low:'منخفض' };
+var _wfOutImpClr = { critical:'#dc2626', high:'#ea580c', medium:'#16a34a', low:'#10b981' };
+
 function wfLoadOutbox() {
+  _wfInitOutboxFilters();
   var tb = document.getElementById('wfOutboxBody');
   if (!tb) return;
-  tb.innerHTML = '<tr><td colspan="10" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
-  var status = (document.getElementById('wfOutboxStatusFilter') || {}).value || '';
+  tb.innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+
+  var filters = { username: currentUser };
+  var map = {
+    txnNumber: 'woxFTxnNumber', subject: 'woxFSubject', pendingAt: 'woxFPendingAt',
+    startDate: 'woxFFrom', endDate: 'woxFTo', recipientUsername: 'woxFRecipient',
+    importance: 'woxFImportance', status: 'woxFStatus', typeId: 'woxFType',
+    readStatus: 'woxFRead', overdue: 'woxFOverdue', expenseCategoryId: 'woxFExpense'
+  };
+  Object.keys(map).forEach(function(k) {
+    var el = document.getElementById(map[k]);
+    if (el && el.value) filters[k] = el.value;
+  });
+
+  // Summary cards
+  window._apiBridge.withSuccessHandler(function(s) {
+    var box = document.getElementById('wfOutboxSummary');
+    if (!box) return;
+    var card = function(label, value, color) {
+      return '<div style="background:#fff;border:1px solid '+color+'30;border-right:4px solid '+color+';border-radius:10px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">' +
+        '<span style="font-size:12px;color:#64748b;font-weight:700;">' + label + '</span>' +
+        '<span style="font-size:22px;font-weight:900;color:'+color+';">' + (value||0) + '</span>' +
+      '</div>';
+    };
+    var og = (s && s.outgoing) || {}, ig = (s && s.incoming) || {};
+    box.innerHTML =
+      card('مجموع المعاملات الصادرة', og.total||0, '#0ea5e9') +
+      card('المعاملات الصادرة المعلقة', og.open||0, '#f59e0b') +
+      card('مجموع المعاملات الواردة', ig.total||0, '#16a34a') +
+      card('الواردة المعلقة', ig.open||0, '#ef4444');
+  }).getWfOutboxSummary({ username: currentUser });
+
   window._apiBridge.withSuccessHandler(function(list) {
     if (!list || !list.length) {
-      tb.innerHTML = '<tr><td colspan="10" class="empty-msg">لا توجد معاملات</td></tr>';
+      tb.innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد معاملات مطابقة</td></tr>';
       return;
     }
     tb.innerHTML = list.map(function(t) {
-      var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '';
-      var canEdit = (t.status==='pending' || t.status==='draft');
-      var actions = '<button class="btn btn-sm btn-light" onclick="wfViewTxn(\''+t.id+'\')"><i class="fas fa-eye"></i></button>';
-      if (canEdit) {
-        actions += ' <button class="btn btn-sm" style="background:#eff6ff;color:#1e40af;" onclick="wfEditOutboxTxn(\''+t.id+'\')" title="تعديل"><i class="fas fa-edit"></i></button>';
-        actions += ' <button class="btn btn-sm btn-danger" onclick="wfCancelOutboxTxn(\''+t.id+'\')" title="إلغاء"><i class="fas fa-trash"></i></button>';
-      }
-      return '<tr>' +
-        '<td>'+_wfImpBadge(t.importance||'medium')+'</td>' +
-        '<td>'+_wfStatBadge(t.status)+'</td>' +
-        '<td style="font-family:monospace;font-size:10px;">'+(t.txnNumber||'')+'</td>' +
-        '<td><span class="badge badge-blue">'+(t.typeName||'')+'</span></td>' +
-        '<td style="font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis;">'+t.title+'</td>' +
-        '<td>'+Number(t.amount||0).toLocaleString('en',{minimumFractionDigits:2})+'</td>' +
-        '<td style="font-size:11px;"><div style="font-weight:700;color:#1e40af;">'+(t.currentAssignee||'—')+'</div>'+
-          (t.currentRoleName ? '<div style="font-size:10px;color:#8b5cf6;font-weight:700;"><i class="fas fa-id-badge" style="font-size:8px;"></i> '+t.currentRoleName+'</div>' : '') +
-        '</td>' +
-        '<td style="font-size:11px;">'+(t.currentStepName||'—')+'</td>' +
-        '<td style="font-size:11px;color:#64748b;">'+dt+'</td>' +
-        '<td>'+actions+'</td>' +
+      var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-CA') : '';
+      var serialColor = t.isRead ? '#1e40af' : '#0ea5e9';
+      var statusAr = _wfOutStatusAr[t.status] || t.status;
+      var statusClr = _wfOutStatusClr[t.status] || '#64748b';
+      var impAr = _wfOutImpAr[t.importance || 'medium'];
+      var impClr = _wfOutImpClr[t.importance || 'medium'];
+      var scopeAr = t.scope === 'external' ? 'خارجية' : 'داخلية';
+      var overdue = t.isOverdue ? ' <i class="fas fa-clock" title="تجاوزت المدة" style="color:#dc2626;margin-right:4px;"></i>' : '';
+      var unread = t.isRead ? '' : ' <span style="background:#ef4444;color:#fff;border-radius:50%;width:7px;height:7px;display:inline-block;margin-right:3px;" title="غير مقروءة"></span>';
+      return '<tr style="cursor:pointer;" onclick="wfViewTxn(\''+t.id+'\')">' +
+        '<td style="font-family:monospace;font-weight:800;color:'+serialColor+';font-size:11px;">'+(t.txnNumber||'')+unread+'</td>' +
+        '<td style="font-size:12px;">'+dt+overdue+'</td>' +
+        '<td style="font-size:12px;">'+(t.issuingEntityName || t.deptName || t.branchName || '—')+'</td>' +
+        '<td style="font-weight:700;max-width:280px;overflow:hidden;text-overflow:ellipsis;">'+(t.subject||t.title||'')+(t.expenseCategoryName?'<div style="font-size:10px;color:#8b5cf6;font-weight:700;"><i class="fas fa-tag" style="font-size:8px;"></i> '+t.expenseCategoryName+'</div>':'')+'</td>' +
+        '<td style="font-weight:800;color:'+impClr+';">'+impAr+'</td>' +
+        '<td style="color:#0ea5e9;font-weight:700;">'+scopeAr+'</td>' +
+        '<td style="font-weight:800;color:'+statusClr+';">'+statusAr+'</td>' +
+        '<td onclick="event.stopPropagation();"><button class="btn btn-sm" style="background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;" onclick="wfViewTxn(\''+t.id+'\')"><i class="fas fa-route"></i> سير المعاملة</button></td>' +
       '</tr>';
     }).join('');
-  }).getWfOutbox({ username: currentUser, status: status });
+  }).getWfOutbox(filters);
 }
 
 function wfEditOutboxTxn(id) {

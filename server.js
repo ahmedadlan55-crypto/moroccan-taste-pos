@@ -1530,6 +1530,55 @@ async function runMigrations() {
   await addColumnIfMissing('transactions', 'issuing_entity_name', "VARCHAR(300) DEFAULT ''");
   await addColumnIfMissing('transactions', 'hijri_date', "VARCHAR(20) DEFAULT ''");
 
+  // Expense categories (نوع المصروف) — admin-maintained list used on transactions
+  await createTableIfMissing('expense_categories', `
+    CREATE TABLE expense_categories (
+      id VARCHAR(50) PRIMARY KEY,
+      code VARCHAR(20) DEFAULT '',
+      name VARCHAR(200) NOT NULL,
+      gl_account_code VARCHAR(20) DEFAULT '',
+      gl_account_id VARCHAR(50) DEFAULT '',
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  // Seed common Saudi expense categories if empty
+  try {
+    const [ec] = await db.query('SELECT COUNT(*) AS cnt FROM expense_categories');
+    if (ec[0].cnt === 0) {
+      await db.query(`INSERT INTO expense_categories (id, code, name) VALUES
+        ('EXP-SAL','SAL','رواتب وأجور'),
+        ('EXP-RNT','RNT','إيجارات'),
+        ('EXP-UTL','UTL','كهرباء ومياه'),
+        ('EXP-COM','COM','اتصالات وإنترنت'),
+        ('EXP-MNT','MNT','صيانة وإصلاح'),
+        ('EXP-CLN','CLN','نظافة'),
+        ('EXP-RAW','RAW','مواد خام ومؤن'),
+        ('EXP-PKG','PKG','تعبئة وتغليف'),
+        ('EXP-TRP','TRP','نقل ومواصلات'),
+        ('EXP-FUL','FUL','وقود ومحروقات'),
+        ('EXP-OFF','OFF','قرطاسية ومستلزمات مكتبية'),
+        ('EXP-ADV','ADV','دعاية وإعلان'),
+        ('EXP-GOV','GOV','رسوم حكومية'),
+        ('EXP-INS','INS','تأمينات'),
+        ('EXP-LEG','LEG','خدمات قانونية واستشارات'),
+        ('EXP-BNK','BNK','عمولات بنكية'),
+        ('EXP-AST','AST','أصول ثابتة ومعدات'),
+        ('EXP-TRN','TRN','تدريب وتطوير'),
+        ('EXP-HOS','HOS','ضيافة'),
+        ('EXP-MSC','MSC','متفرقات')`);
+    }
+  } catch(e) {}
+
+  // Transaction: expense category + read tracking + SLA due date
+  await addColumnIfMissing('transactions', 'expense_category_id', "VARCHAR(50)");
+  await addColumnIfMissing('transactions', 'expense_category_name', "VARCHAR(200) DEFAULT ''");
+  await addColumnIfMissing('transactions', 'is_read', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('transactions', 'read_by', "VARCHAR(100) DEFAULT ''");
+  await addColumnIfMissing('transactions', 'read_at', "DATETIME");
+  await addColumnIfMissing('transactions', 'due_date', "DATE");
+  await addColumnIfMissing('transactions', 'transaction_scope', "ENUM('internal','external') DEFAULT 'internal'");
+
   // Multi-recipient table (الجهات الصادر إليها)
   await createTableIfMissing('txn_recipients', `
     CREATE TABLE txn_recipients (

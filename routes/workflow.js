@@ -677,6 +677,46 @@ router.put('/org-tree/:employeeId', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
+// ═══════════════════════════════════════
+// EXPENSE CATEGORIES (نوع المصروف)
+// ═══════════════════════════════════════
+
+router.get('/expense-categories', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM expense_categories WHERE is_active = 1 OR is_active IS NULL ORDER BY name');
+    res.json(rows.map(r => ({
+      id: r.id, code: r.code || '', name: r.name,
+      glAccountId: r.gl_account_id || '', glAccountCode: r.gl_account_code || '',
+      isActive: r.is_active !== false
+    })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/expense-categories', async (req, res) => {
+  try {
+    const { id, code, name, glAccountId, glAccountCode, isActive } = req.body;
+    if (!name) return res.json({ success: false, error: 'الاسم مطلوب' });
+    if (id) {
+      await db.query(
+        'UPDATE expense_categories SET code=?, name=?, gl_account_id=?, gl_account_code=?, is_active=? WHERE id=?',
+        [code||'', name, glAccountId||'', glAccountCode||'', isActive!==false?1:0, id]);
+      return res.json({ success: true, id });
+    }
+    const newId = 'EXP-' + Date.now();
+    await db.query(
+      'INSERT INTO expense_categories (id, code, name, gl_account_id, gl_account_code, is_active) VALUES (?,?,?,?,?,?)',
+      [newId, code||'', name, glAccountId||'', glAccountCode||'', isActive!==false?1:0]);
+    res.json({ success: true, id: newId });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+router.delete('/expense-categories/:id', async (req, res) => {
+  try {
+    await db.query('UPDATE expense_categories SET is_active = 0 WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
 // Recipient directory — full list for the "Recipients" table in the new-txn modal.
 // Returns users + their position + dept; each row carries a code (employee_number
 // or a synthesized one) and a displayable name.
@@ -766,7 +806,9 @@ router.post('/transactions', async (req, res) => {
       subject, contentHtml, contentSecrecy, attachmentsSecrecy,
       issuingEntityId, issuingEntityName, hijriDate,
       recipients,              // [{ username?, positionId?, code?, name, needsResponse }]
-      saveAsDraft              // if true, status = 'draft' regardless of routing
+      saveAsDraft,             // if true, status = 'draft' regardless of routing
+      expenseCategoryId, expenseCategoryName,
+      dueDate, scope
     } = req.body;
 
     if (!transactionTypeId || !title) return res.json({ success: false, error: 'نوع المعاملة والعنوان مطلوبان' });
@@ -885,6 +927,22 @@ router.post('/transactions', async (req, res) => {
        recipientUsername||'', senderName||'', senderPosition||'', initiatorPositionId||null]
     );
 
+    // Expense category + due date + scope (optional — update after main insert to
+    // avoid ballooning the VALUES list and to keep this addition surgical)
+    if (expenseCategoryId || dueDate || scope) {
+      const sets = []; const vals = [];
+      if (expenseCategoryId !== undefined) {
+        sets.push('expense_category_id=?'); vals.push(expenseCategoryId || null);
+        sets.push('expense_category_name=?'); vals.push(expenseCategoryName || '');
+      }
+      if (dueDate) { sets.push('due_date=?'); vals.push(dueDate); }
+      if (scope)   { sets.push('transaction_scope=?'); vals.push(scope === 'external' ? 'external' : 'internal'); }
+      if (sets.length) {
+        vals.push(id);
+        try { await db.query(`UPDATE transactions SET ${sets.join(', ')} WHERE id = ?`, vals); } catch(e) {}
+      }
+    }
+
     // Multi-recipients (optional)
     if (Array.isArray(recipients) && recipients.length) {
       for (const r of recipients) {
@@ -951,18 +1009,90 @@ function _mapTxn(t) {
   };
 }
 
-// OUTBOX — transactions I created (صندوق الصادر)
+// OUTBOX — transactions I created (صندوق الصادر) with rich filters
 router.get('/outbox', async (req, res) => {
   try {
     const username = req.query.username || (req.user && req.user.username) || '';
-    const status = req.query.status || '';
+    const {
+      status, typeId, importance,
+      startDate, endDate,       // from/to transaction date
+      txnNumber,                // رقم المعاملة
+      subject,                  // الموضوع (LIKE)
+      recipientUsername,        // تصدير إلى جهة
+      pendingAt,                // معلقة عند (current_assignee)
+      readStatus,               // 'read' | 'unread'
+      overdue,                  // '1' if due_date < NOW and still open
+      expenseCategoryId,
+      scope                     // 'internal' | 'external'
+    } = req.query;
+
     let sql = _txnSelectSQL() + ' WHERE t.created_by = ?';
     const params = [username];
-    if (status) { sql += ' AND t.status = ?'; params.push(status); }
-    sql += ' ORDER BY t.created_at DESC LIMIT 200';
+    if (status)              { sql += ' AND t.status = ?'; params.push(status); }
+    if (typeId)              { sql += ' AND t.transaction_type_id = ?'; params.push(typeId); }
+    if (importance)          { sql += ' AND t.importance = ?'; params.push(importance); }
+    if (startDate)           { sql += ' AND DATE(t.created_at) >= ?'; params.push(startDate); }
+    if (endDate)             { sql += ' AND DATE(t.created_at) <= ?'; params.push(endDate); }
+    if (txnNumber)           { sql += ' AND t.transaction_number LIKE ?'; params.push('%' + txnNumber + '%'); }
+    if (subject)             { sql += ' AND (t.subject LIKE ? OR t.title LIKE ?)'; params.push('%' + subject + '%', '%' + subject + '%'); }
+    if (recipientUsername)   { sql += ' AND (t.recipient_username = ? OR t.id IN (SELECT transaction_id FROM txn_recipients WHERE recipient_username = ?))'; params.push(recipientUsername, recipientUsername); }
+    if (pendingAt)           { sql += ' AND t.current_assignee = ?'; params.push(pendingAt); }
+    if (readStatus === 'read')     { sql += ' AND t.is_read = 1'; }
+    if (readStatus === 'unread')   { sql += ' AND (t.is_read = 0 OR t.is_read IS NULL)'; }
+    if (overdue === '1')     { sql += " AND t.due_date IS NOT NULL AND t.due_date < CURDATE() AND t.status IN ('pending','in_progress')"; }
+    if (expenseCategoryId)   { sql += ' AND t.expense_category_id = ?'; params.push(expenseCategoryId); }
+    if (scope)               { sql += ' AND t.transaction_scope = ?'; params.push(scope); }
+    sql += ' ORDER BY t.created_at DESC LIMIT 500';
+
     const [rows] = await db.query(sql, params);
-    res.json(rows.map(_mapTxn));
+    res.json(rows.map(r => Object.assign(_mapTxn(r), {
+      subject: r.subject || r.title,
+      expenseCategoryId: r.expense_category_id || '',
+      expenseCategoryName: r.expense_category_name || '',
+      isRead: !!r.is_read,
+      readAt: r.read_at,
+      dueDate: r.due_date,
+      scope: r.transaction_scope || 'internal',
+      isOverdue: r.due_date && new Date(r.due_date) < new Date() && (r.status === 'pending' || r.status === 'in_progress')
+    })));
   } catch(e) { res.json([]); }
+});
+
+// Summary stats for the outbox bottom panel
+router.get('/outbox-summary', async (req, res) => {
+  try {
+    const username = req.query.username || (req.user && req.user.username) || '';
+    const [rows] = await db.query(
+      `SELECT
+         SUM(CASE WHEN status IN ('pending','in_progress') THEN 1 ELSE 0 END) AS open_out,
+         SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed_out,
+         SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected_out,
+         COUNT(*) AS total_out
+       FROM transactions WHERE created_by = ?`, [username]);
+    const [inRows] = await db.query(
+      `SELECT
+         SUM(CASE WHEN status IN ('pending','in_progress') THEN 1 ELSE 0 END) AS open_in,
+         SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed_in,
+         COUNT(*) AS total_in
+       FROM transactions WHERE current_assignee = ? OR recipient_username = ?`,
+      [username, username]);
+    const r = rows[0] || {}, ri = inRows[0] || {};
+    res.json({
+      outgoing: { open: Number(r.open_out)||0, closed: Number(r.closed_out)||0, rejected: Number(r.rejected_out)||0, total: Number(r.total_out)||0 },
+      incoming: { open: Number(ri.open_in)||0, closed: Number(ri.closed_in)||0, total: Number(ri.total_in)||0 }
+    });
+  } catch(e) { res.json({ outgoing: {}, incoming: {} }); }
+});
+
+// Mark a transaction as read (for حالة القراءة)
+router.post('/transactions/:id/mark-read', async (req, res) => {
+  try {
+    const { username } = req.body;
+    await db.query(
+      `UPDATE transactions SET is_read = 1, read_by = ?, read_at = NOW() WHERE id = ? AND (is_read = 0 OR is_read IS NULL)`,
+      [username || '', req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
 // INCOMING BOX — transactions awaiting my action (صندوق الوارد)

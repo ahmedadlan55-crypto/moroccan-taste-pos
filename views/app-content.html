@@ -1651,27 +1651,116 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<!-- WORKFLOW: صندوق الصادر (Outgoing Box) -->
+<!-- WORKFLOW: صندوق الصادر (Outgoing Box) — enterprise layout -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfOutgoing" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-paper-plane" style="color:#0ea5e9;"></i> صندوق الصادر — معاملاتي</h2>
-    <div style="display:flex;gap:8px;">
-      <select id="wfOutboxStatusFilter" class="form-control" style="width:160px;" onchange="wfLoadOutbox()">
-        <option value="">كل الحالات</option>
-        <option value="pending">قيد الانتظار</option>
-        <option value="in_progress">قيد التنفيذ</option>
-        <option value="approved">معتمدة</option>
-        <option value="rejected">مرفوضة</option>
-        <option value="closed">مغلقة</option>
-      </select>
-      <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-paper-plane" style="color:#0ea5e9;"></i> المعاملات الصادرة</h2>
+  </div>
+
+  <!-- Filter panel -->
+  <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:14px;">
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px 16px;">
+      <!-- Row 1 -->
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;">
+        <label style="font-size:12px;font-weight:700;color:#475569;">رقم المعاملة</label>
+        <input id="woxFTxnNumber" class="form-control-sm" placeholder="10/1031/25/...">
+      </div>
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;">
+        <label style="font-size:12px;font-weight:700;color:#475569;">الموضوع</label>
+        <input id="woxFSubject" class="form-control-sm" placeholder="بحث جزئي...">
+      </div>
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;">
+        <label style="font-size:12px;font-weight:700;color:#475569;">معلقة عند</label>
+        <input id="woxFPendingAt" class="form-control-sm" placeholder="اسم مستخدم المسؤول الحالي">
+      </div>
+      <!-- Row 2 -->
+      <div style="display:grid;grid-template-columns:120px 1fr 1fr;gap:6px;align-items:center;">
+        <label style="font-size:12px;font-weight:700;color:#475569;">من تاريخ المعاملة</label>
+        <input type="date" id="woxFFrom" class="form-control-sm">
+        <input type="date" id="woxFTo" class="form-control-sm" placeholder="إلى">
+      </div>
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;">
+        <label style="font-size:12px;font-weight:700;color:#475569;">تصدير إلى جهة</label>
+        <input id="woxFRecipient" class="form-control-sm" placeholder="اسم المستخدم المستلم">
+      </div>
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;">
+        <label style="font-size:12px;font-weight:700;color:#475569;">درجة الأهمية</label>
+        <select id="woxFImportance" class="form-control-sm">
+          <option value="">اختر</option>
+          <option value="critical">عاجل</option>
+          <option value="high">عالي</option>
+          <option value="medium">عادي</option>
+          <option value="low">منخفض</option>
+        </select>
+      </div>
+      <!-- Row 3 -->
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;">
+        <label style="font-size:12px;font-weight:700;color:#475569;">حالة المعاملة</label>
+        <select id="woxFStatus" class="form-control-sm">
+          <option value="">اختر</option>
+          <option value="pending">قيد الانتظار</option>
+          <option value="in_progress">قيد التشغيل</option>
+          <option value="approved">معتمدة</option>
+          <option value="rejected">مطلوب التعديل</option>
+          <option value="closed">منتهية</option>
+          <option value="draft">مسودة</option>
+        </select>
+      </div>
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;">
+        <label style="font-size:12px;font-weight:700;color:#475569;">نوع المعاملة</label>
+        <select id="woxFType" class="form-control-sm"><option value="">اختر</option></select>
+      </div>
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;">
+        <label style="font-size:12px;font-weight:700;color:#475569;">حالة القراءة</label>
+        <select id="woxFRead" class="form-control-sm">
+          <option value="">اختر</option>
+          <option value="read">مقروءة</option>
+          <option value="unread">غير مقروءة</option>
+        </select>
+      </div>
+      <!-- Row 4 -->
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;">
+        <label style="font-size:12px;font-weight:700;color:#475569;">تجاوزت المدة؟</label>
+        <select id="woxFOverdue" class="form-control-sm">
+          <option value="">اختر</option>
+          <option value="1">نعم</option>
+        </select>
+      </div>
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;">
+        <label style="font-size:12px;font-weight:700;color:#475569;">نوع المصروف</label>
+        <select id="woxFExpense" class="form-control-sm"><option value="">اختر</option></select>
+      </div>
+      <div></div>
     </div>
+    <div style="display:flex;gap:8px;justify-content:center;margin-top:14px;">
+      <button class="btn btn-primary" onclick="wfLoadOutbox()"><i class="fas fa-search"></i> بحث</button>
+      <button class="btn btn-light" onclick="wfResetOutboxFilters()"><i class="fas fa-redo"></i> إعادة</button>
+    </div>
+  </div>
+
+  <!-- Summary stats -->
+  <div id="wfOutboxSummary" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;"></div>
+
+  <!-- Add + Table -->
+  <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+    <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> إضافة معاملة داخلية</button>
   </div>
   <div class="erp-table-container" style="border-radius:14px;">
     <table class="erp-table">
-      <thead><tr><th>الأهمية</th><th>الحالة</th><th>الرقم</th><th>النوع</th><th>العنوان</th><th>المبلغ</th><th>المسؤول حالياً</th><th>الخطوة</th><th>التاريخ</th><th>إجراءات</th></tr></thead>
-      <tbody id="wfOutboxBody"><tr><td colspan="10" class="empty-msg">لا توجد معاملات</td></tr></tbody>
+      <thead>
+        <tr>
+          <th style="min-width:140px;">مسلسل المعاملة</th>
+          <th>تاريخ المعاملة</th>
+          <th>جهة التحرير</th>
+          <th>الموضوع</th>
+          <th>درجة الأهمية</th>
+          <th>نوع المعاملة</th>
+          <th>حالة المعاملة</th>
+          <th>سير المعاملة</th>
+        </tr>
+      </thead>
+      <tbody id="wfOutboxBody"><tr><td colspan="8" class="empty-msg">لا توجد معاملات</td></tr></tbody>
     </table>
   </div>
 </div>

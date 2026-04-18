@@ -4444,14 +4444,26 @@ function wfLoadDefs() {
       var cBg = w.isFinal ? 'linear-gradient(135deg,#f0fdf4,#dcfce7)' : 'linear-gradient(135deg,#eff6ff,#dbeafe)';
       var cBorder = w.isFinal ? '2.5px solid #86efac' : '2.5px solid #93c5fd';
       var cColor = w.isFinal ? '#166534' : '#1e40af';
-      html += '<div style="display:flex;flex-direction:column;align-items:center;min-width:160px;max-width:200px;flex-shrink:0;">' +
+      var roleChip = w.positionName
+        ? '<div style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:#ede9fe;color:#6d28d9;border-radius:8px;font-size:11px;font-weight:700;margin-top:4px;"><i class="fas fa-id-badge"></i>' + w.positionName + '</div>'
+        : '<div style="color:#94a3b8;font-size:11px;margin-top:4px;">أي منصب</div>';
+      var scopeChips = '<div style="display:flex;gap:3px;justify-content:center;margin-top:5px;flex-wrap:wrap;">';
+      if (w.requireSameBranch !== false) scopeChips += '<span style="padding:1px 6px;background:#dbeafe;color:#1e40af;border-radius:6px;font-size:9px;font-weight:700;">نفس الفرع</span>';
+      if (w.requireSameDepartment) scopeChips += '<span style="padding:1px 6px;background:#ede9fe;color:#6d28d9;border-radius:6px;font-size:9px;font-weight:700;">نفس القسم</span>';
+      if (w.assignmentStrategy === 'first') scopeChips += '<span style="padding:1px 6px;background:#fef3c7;color:#92400e;border-radius:6px;font-size:9px;font-weight:700;">الأول</span>';
+      else scopeChips += '<span style="padding:1px 6px;background:#dcfce7;color:#166534;border-radius:6px;font-size:9px;font-weight:700;">الأقل انشغالاً</span>';
+      scopeChips += '</div>';
+      html += '<div style="display:flex;flex-direction:column;align-items:center;min-width:170px;max-width:220px;flex-shrink:0;">' +
         '<div style="' + circleS + 'background:' + cBg + ';border:' + cBorder + ';color:' + cColor + ';">' + w.stepOrder + '</div>' +
         '<div style="' + bodyS + '">' +
-          '<div style="font-size:13px;font-weight:800;color:#1e293b;margin-bottom:6px;">' + w.stepName + '</div>' +
-          '<div style="font-size:11.5px;color:#64748b;font-weight:600;">' + (w.positionName || 'أي منصب') + '</div>' +
+          '<div style="font-size:13px;font-weight:800;color:#1e293b;margin-bottom:4px;">' + w.stepName + '</div>' +
+          roleChip +
+          scopeChips +
           '<div style="display:flex;gap:4px;justify-content:center;margin-top:6px;">' +
-            '<div style="' + (w.canEditAmount ? permOn : permOff) + '" title="تعديل المبلغ"><i class="fas fa-edit"></i></div>' +
+            '<div style="' + ((w.canApprove !== false) ? permOn : permOff) + '" title="الموافقة"><i class="fas fa-check"></i></div>' +
+            '<div style="' + ((w.canReject  !== false) ? permOn : permOff) + '" title="الرفض"><i class="fas fa-times"></i></div>' +
             '<div style="' + (w.canReturn ? permOn : permOff) + '" title="إرجاع"><i class="fas fa-undo"></i></div>' +
+            '<div style="' + (w.canEditAmount ? permOn : permOff) + '" title="تعديل المبلغ"><i class="fas fa-dollar-sign"></i></div>' +
             (w.isFinal ? '<div style="' + permOn + '" title="نهائية"><i class="fas fa-flag-checkered"></i></div>' : '') +
           '</div>' +
           '<div style="display:flex;gap:4px;justify-content:center;margin-top:8px;">' +
@@ -4475,18 +4487,50 @@ function wfOpenDefModal(data) {
     var posOpts = (positions || []).map(function(p) {
       return '<option value="' + p.id + '"' + (d.positionId === p.id ? ' selected' : '') + '>' + p.name + ' (مستوى ' + p.level + ')</option>';
     }).join('');
+    var reqBranch = (d.requireSameBranch === undefined) ? true : !!d.requireSameBranch;
+    var reqDept   = !!d.requireSameDepartment;
+    var strategy  = d.assignmentStrategy || 'least_busy';
+    var cApprove  = (d.canApprove === undefined) ? true : !!d.canApprove;
+    var cReject   = (d.canReject  === undefined) ? true : !!d.canReject;
+    var cEdit     = !!d.canEdit;
+
     document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل خطوة' : 'خطوة جديدة';
     document.getElementById('erpModalBody').innerHTML =
       '<input type="hidden" id="wfDefId" value="' + (d.id || '') + '">' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>ترتيب الخطوة *</label><input type="number" class="form-control" id="wfDefOrder" value="' + (d.stepOrder || (_wfDefs.length + 1)) + '" min="1"></div>' +
-        '<div class="form-row"><label>اسم الخطوة *</label><input class="form-control" id="wfDefName" value="' + (d.stepName || '') + '"></div>' +
+        '<div class="form-row"><label>اسم الخطوة *</label><input class="form-control" id="wfDefName" value="' + (d.stepName || '').replace(/"/g,'&quot;') + '"></div>' +
       '</div>' +
-      '<div class="form-row"><label>المنصب المطلوب للموافقة</label><select class="form-control" id="wfDefPosition"><option value="">— أي منصب —</option>' + posOpts + '</select></div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px;">' +
-        '<div class="form-row"><label><input type="checkbox" id="wfDefEditAmt" ' + (d.canEditAmount ? 'checked' : '') + '> السماح بتعديل المبلغ</label></div>' +
-        '<div class="form-row"><label><input type="checkbox" id="wfDefReturn" ' + (d.canReturn !== false ? 'checked' : '') + '> السماح بالإرجاع للخطوة السابقة</label></div>' +
-        '<div class="form-row"><label><input type="checkbox" id="wfDefFinal" ' + (d.isFinal ? 'checked' : '') + '> خطوة نهائية (إغلاق تلقائي)</label></div>' +
+
+      '<div class="form-row"><label><i class="fas fa-id-badge" style="color:#8b5cf6;"></i> المسمى الوظيفي المسؤول (Role) *</label>' +
+        '<select class="form-control" id="wfDefPosition"><option value="">— أي منصب —</option>' + posOpts + '</select>' +
+        '<div style="font-size:11px;color:#64748b;margin-top:4px;"><i class="fas fa-info-circle"></i> سيتم اختيار الموظف تلقائياً حسب هذا المسمى.</div>' +
+      '</div>' +
+
+      '<div style="border:1px dashed #c7d2fe;background:#eff6ff;border-radius:12px;padding:10px 12px;margin-top:6px;">' +
+        '<div style="font-size:12px;font-weight:800;color:#1e40af;margin-bottom:8px;"><i class="fas fa-filter"></i> قواعد اختيار الموظف</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">' +
+          '<label style="display:flex;align-items:center;gap:6px;background:#fff;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:12px;"><input type="checkbox" id="wfDefReqBranch" ' + (reqBranch?'checked':'') + '> نفس الفرع</label>' +
+          '<label style="display:flex;align-items:center;gap:6px;background:#fff;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:12px;"><input type="checkbox" id="wfDefReqDept" ' + (reqDept?'checked':'') + '> نفس القسم</label>' +
+        '</div>' +
+        '<div class="form-row" style="margin-bottom:0;"><label style="font-size:11.5px;">طريقة التوزيع</label>' +
+          '<select class="form-control" id="wfDefStrategy">' +
+            '<option value="least_busy"' + (strategy==='least_busy'?' selected':'') + '>الأقل انشغالاً (least busy)</option>' +
+            '<option value="first"' + (strategy==='first'?' selected':'') + '>الأول في القائمة (first)</option>' +
+          '</select>' +
+        '</div>' +
+      '</div>' +
+
+      '<div style="border:1px dashed #bbf7d0;background:#f0fdf4;border-radius:12px;padding:10px 12px;margin-top:10px;">' +
+        '<div style="font-size:12px;font-weight:800;color:#166534;margin-bottom:8px;"><i class="fas fa-check-circle"></i> صلاحيات هذه الخطوة</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">' +
+          '<label style="display:flex;align-items:center;gap:6px;background:#fff;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:12px;"><input type="checkbox" id="wfDefCApprove" ' + (cApprove?'checked':'') + '> الموافقة</label>' +
+          '<label style="display:flex;align-items:center;gap:6px;background:#fff;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:12px;"><input type="checkbox" id="wfDefCReject" ' + (cReject?'checked':'') + '> الرفض</label>' +
+          '<label style="display:flex;align-items:center;gap:6px;background:#fff;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:12px;"><input type="checkbox" id="wfDefReturn" ' + (d.canReturn !== false ? 'checked' : '') + '> الإرجاع</label>' +
+          '<label style="display:flex;align-items:center;gap:6px;background:#fff;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:12px;"><input type="checkbox" id="wfDefCEdit" ' + (cEdit?'checked':'') + '> التعديل</label>' +
+          '<label style="display:flex;align-items:center;gap:6px;background:#fff;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:12px;"><input type="checkbox" id="wfDefEditAmt" ' + (d.canEditAmount ? 'checked' : '') + '> تعديل المبلغ</label>' +
+          '<label style="display:flex;align-items:center;gap:6px;background:#fff;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:12px;"><input type="checkbox" id="wfDefFinal" ' + (d.isFinal ? 'checked' : '') + '> خطوة نهائية</label>' +
+        '</div>' +
       '</div>';
     document.getElementById('erpModalSaveBtn').onclick = function() {
       var stepName = document.getElementById('wfDefName').value;
@@ -4504,7 +4548,13 @@ function wfOpenDefModal(data) {
         positionId: document.getElementById('wfDefPosition').value || null,
         canEditAmount: document.getElementById('wfDefEditAmt').checked,
         canReturn: document.getElementById('wfDefReturn').checked,
-        isFinal: document.getElementById('wfDefFinal').checked
+        canApprove: document.getElementById('wfDefCApprove').checked,
+        canReject: document.getElementById('wfDefCReject').checked,
+        canEdit: document.getElementById('wfDefCEdit').checked,
+        isFinal: document.getElementById('wfDefFinal').checked,
+        requireSameBranch: document.getElementById('wfDefReqBranch').checked,
+        requireSameDepartment: document.getElementById('wfDefReqDept').checked,
+        assignmentStrategy: document.getElementById('wfDefStrategy').value || 'least_busy'
       });
     };
     document.getElementById('erpModal').classList.remove('hidden');
@@ -4587,7 +4637,8 @@ function wfLoadInbox() {
         '<td style="font-size:12px;">' + (t.deptName||t.deptCode||'—') + '</td>' +
         '<td style="font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis;">' + t.title + '</td>' +
         '<td><span class="wf-txn-amount">' + (Number(t.amount)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</span></td>' +
-        '<td style="font-size:12px;color:#1e40af;font-weight:700;">' + (t.currentAssignee||t.currentPositionName||'—') + '</td>' +
+        '<td style="font-size:12px;"><div style="font-weight:700;color:#1e40af;">' + (t.currentAssignee||'—') + '</div>' +
+        (t.currentRoleName ? '<div style="font-size:10px;color:#8b5cf6;font-weight:700;"><i class="fas fa-id-badge" style="font-size:8px;"></i> ' + t.currentRoleName + '</div>' : '') + '</td>' +
         '<td style="font-size:12px;color:#64748b;">' + dt + '</td>' +
         '<td>' + actions + '</td>' +
       '</tr>';
@@ -4710,7 +4761,8 @@ function wfViewTxn(id) {
     if (txn.branchName) html += f('الفرع', txn.branchName + (txn.branchCode?' ['+txn.branchCode+']':''));
     if (txn.deptName) html += f('القسم', txn.deptName + (txn.deptCode?' ['+txn.deptCode+']':''));
     html += f('المرسل', (txn.senderName||txn.createdBy||'')+(txn.senderPosition?' — <span style="color:#0ea5e9;">'+txn.senderPosition+'</span>':''));
-    if (txn.currentAssignee) html += f('المسؤول الحالي', txn.currentAssignee, '#1e40af');
+    if (txn.currentAssignee) html += f('المسؤول الحالي', txn.currentAssignee + (txn.currentRoleName ? ' — <span style="color:#8b5cf6;">'+txn.currentRoleName+'</span>' : ''), '#1e40af');
+    else if (txn.currentRoleName) html += f('المسمى الوظيفي الحالي', txn.currentRoleName, '#8b5cf6');
     html += f('المبلغ', Number(txn.amount||0).toLocaleString('en',{minimumFractionDigits:2}), '#1e40af');
     if (txn.accountName) html += f('الحساب المحاسبي', (txn.accountCode||'')+' — '+txn.accountName);
     if (txn.costCenterName) html += f('مركز التكلفة', txn.costCenterName);
@@ -6052,7 +6104,7 @@ function wfLoadDashboard() {
           '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-code-branch"></i> الفرع</span><b>'+(t.branchName||t.branchCode||'—')+'</b></div>' +
           '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-building"></i> القسم</span><b>'+(t.deptName||t.deptCode||'—')+'</b></div>' +
           '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-tag"></i> النوع</span><b>'+(t.typeName||'')+'</b></div>' +
-          '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-user"></i> مسؤول</span><b style="color:#1e40af;">'+(t.currentAssignee||t.currentPositionName||'—')+'</b></div>' +
+          '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-user"></i> مسؤول</span><b style="color:#1e40af;">'+(t.currentAssignee||'—')+(t.currentRoleName?' <small style="color:#8b5cf6;font-weight:700;">('+t.currentRoleName+')</small>':'')+'</b></div>' +
           (Number(t.amount) ? '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-money-bill"></i> المبلغ</span><b style="color:#0ea5e9;">'+Number(t.amount).toLocaleString('en',{minimumFractionDigits:2})+'</b></div>' : '') +
         '</div>' +
         '<div style="text-align:left;font-size:10px;color:#94a3b8;">'+dt+'</div>' +
@@ -6134,7 +6186,9 @@ function wfLoadOutbox() {
         '<td><span class="badge badge-blue">'+(t.typeName||'')+'</span></td>' +
         '<td style="font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis;">'+t.title+'</td>' +
         '<td>'+Number(t.amount||0).toLocaleString('en',{minimumFractionDigits:2})+'</td>' +
-        '<td style="font-size:11px;color:#1e40af;font-weight:700;">'+(t.currentAssignee||t.currentPositionName||'—')+'</td>' +
+        '<td style="font-size:11px;"><div style="font-weight:700;color:#1e40af;">'+(t.currentAssignee||'—')+'</div>'+
+          (t.currentRoleName ? '<div style="font-size:10px;color:#8b5cf6;font-weight:700;"><i class="fas fa-id-badge" style="font-size:8px;"></i> '+t.currentRoleName+'</div>' : '') +
+        '</td>' +
         '<td style="font-size:11px;">'+(t.currentStepName||'—')+'</td>' +
         '<td style="font-size:11px;color:#64748b;">'+dt+'</td>' +
         '<td>'+actions+'</td>' +

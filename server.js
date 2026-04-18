@@ -1515,6 +1515,17 @@ async function runMigrations() {
   await addColumnIfMissing('transactions', 'type_code', "VARCHAR(10) DEFAULT ''");
   await addColumnIfMissing('transactions', 'daily_serial', "INT DEFAULT 0");
   await addColumnIfMissing('transactions', 'current_assignee', "VARCHAR(100) DEFAULT ''");
+  // Role snapshot — which job-title is currently responsible (independent of person)
+  await addColumnIfMissing('transactions', 'current_role_id', "VARCHAR(50)");
+  await addColumnIfMissing('transactions', 'current_role_name', "VARCHAR(200) DEFAULT ''");
+
+  // Workflow step routing flags — role-based employee resolution rules
+  await addColumnIfMissing('workflow_definitions', 'require_same_branch', "BOOLEAN DEFAULT TRUE");
+  await addColumnIfMissing('workflow_definitions', 'require_same_department', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('workflow_definitions', 'assignment_strategy', "VARCHAR(20) DEFAULT 'least_busy'");
+  await addColumnIfMissing('workflow_definitions', 'can_approve', "BOOLEAN DEFAULT TRUE");
+  await addColumnIfMissing('workflow_definitions', 'can_reject', "BOOLEAN DEFAULT TRUE");
+  await addColumnIfMissing('workflow_definitions', 'can_edit', "BOOLEAN DEFAULT FALSE");
 
   // Daily counter per (branch, dept, type, date) — strict serial generation
   await createTableIfMissing('txn_daily_counter', `

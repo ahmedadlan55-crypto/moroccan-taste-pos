@@ -704,7 +704,8 @@ function viewMyTxn(id) {
     h += '<div class="pf"><span>المرسل</span><b>'+(txn.senderName||txn.createdBy||'')+'</b></div>';
     if (txn.branchName) h += '<div class="pf"><span>الفرع</span><b>'+txn.branchName+'</b></div>';
     if (txn.deptName) h += '<div class="pf"><span>القسم</span><b>'+txn.deptName+'</b></div>';
-    if (txn.currentAssignee) h += '<div class="pf"><span>المسؤول</span><b style="color:#1e40af;">'+txn.currentAssignee+'</b></div>';
+    if (txn.currentAssignee) h += '<div class="pf"><span>المسؤول</span><b style="color:#1e40af;">'+txn.currentAssignee+(txn.currentRoleName?' <small style="color:#8b5cf6;">('+txn.currentRoleName+')</small>':'')+'</b></div>';
+    else if (txn.currentRoleName) h += '<div class="pf"><span>الدور الحالي</span><b style="color:#8b5cf6;">'+txn.currentRoleName+'</b></div>';
     if (txn.senderPosition) h += '<div class="pf"><span>المنصب</span><b>'+txn.senderPosition+'</b></div>';
     if (txn.accountName) h += '<div class="pf"><span>الحساب</span><b>'+(txn.accountCode||'')+' — '+txn.accountName+'</b></div>';
     if (txn.costCenterName) h += '<div class="pf"><span>مركز التكلفة</span><b>'+txn.costCenterName+'</b></div>';

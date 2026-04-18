@@ -41,6 +41,71 @@ async function nextDailySerial(branchCode, deptCode, typeCode) {
   return rows.length ? rows[0].last_serial : 1;
 }
 
+// ═══════════════════════════════════════
+// ROLE-BASED ASSIGNEE RESOLVER
+// (spec §5: find employee by job_title + branch + department,
+//  pick least-busy, fall back gracefully when no match)
+// ═══════════════════════════════════════
+
+async function resolveAssigneeForStep(step, branchId, deptId) {
+  if (!step || !step.required_position_id) return { username: '', employeeId: '', roleName: '' };
+  const roleId = step.required_position_id;
+  const [roleRow] = await db.query('SELECT name FROM positions WHERE id = ?', [roleId]);
+  const roleName = roleRow.length ? roleRow[0].name : '';
+
+  const strat = step.assignment_strategy || 'least_busy';
+  const needBranch = step.require_same_branch !== 0 && step.require_same_branch !== false;
+  const needDept   = step.require_same_department === 1 || step.require_same_department === true;
+
+  // Try progressively broader matches:
+  //   1. exact (role + branch + dept) — only if both flags set
+  //   2. role + branch (if branch required)
+  //   3. role only (final fallback)
+  const attempts = [];
+  if (needBranch && needDept && branchId && deptId) {
+    attempts.push({ branch: branchId, dept: deptId, label: 'exact' });
+  }
+  if (needBranch && branchId) attempts.push({ branch: branchId, dept: null, label: 'branch' });
+  attempts.push({ branch: null, dept: null, label: 'any' });
+
+  for (const a of attempts) {
+    const params = [roleId];
+    let where = `e.position_id = ? AND e.status = 'active'`;
+    if (a.branch) { where += ' AND e.branch_id = ?'; params.push(a.branch); }
+    if (a.dept)   { where += ' AND e.department_id = ?'; params.push(a.dept); }
+
+    let order;
+    if (strat === 'first') order = 'e.created_at ASC';
+    else {
+      // least_busy: count open transactions currently assigned to the user
+      order = `(
+        SELECT COUNT(*) FROM transactions t
+        WHERE t.current_assignee = e.linked_username
+          AND t.status IN ('pending','in_progress')
+      ) ASC, e.created_at ASC`;
+    }
+
+    const [rows] = await db.query(
+      `SELECT e.id AS emp_id, e.linked_username, e.first_name, e.last_name
+       FROM hr_employees e
+       WHERE ${where} AND e.linked_username IS NOT NULL AND e.linked_username <> ''
+       ORDER BY ${order}
+       LIMIT 1`, params);
+    if (rows.length) {
+      return { username: rows[0].linked_username, employeeId: rows[0].emp_id, roleName, matchedAt: a.label };
+    }
+  }
+
+  // Last-ditch: match via users.position_id (for admin / non-HR users)
+  const [u] = await db.query(
+    `SELECT username FROM users WHERE position_id = ? AND active = 1
+     ORDER BY (SELECT COUNT(*) FROM transactions t WHERE t.current_assignee = users.username
+              AND t.status IN ('pending','in_progress')) ASC, id ASC LIMIT 1`, [roleId]);
+  if (u.length) return { username: u[0].username, employeeId: '', roleName, matchedAt: 'user_fallback' };
+
+  return { username: '', employeeId: '', roleName, matchedAt: 'none' };
+}
+
 // Resolve employee profile by linked_username or user_id
 async function resolveEmployee(username) {
   if (!username) return null;
@@ -183,23 +248,57 @@ router.get('/workflow-definitions/:typeId', async (req, res) => {
     res.json(rows.map(w => ({
       id: w.id, stepOrder: w.step_order, stepName: w.step_name,
       positionId: w.required_position_id, positionName: w.position_name || '',
-      canEditAmount: !!w.can_edit_amount, canReturn: !!w.can_return_to_previous, isFinal: !!w.is_final_step
+      canEditAmount: !!w.can_edit_amount,
+      canReturn: !!w.can_return_to_previous,
+      canApprove: w.can_approve === null || w.can_approve === undefined ? true : !!w.can_approve,
+      canReject:  w.can_reject  === null || w.can_reject  === undefined ? true : !!w.can_reject,
+      canEdit:    !!w.can_edit,
+      isFinal: !!w.is_final_step,
+      requireSameBranch: w.require_same_branch === null || w.require_same_branch === undefined ? true : !!w.require_same_branch,
+      requireSameDepartment: !!w.require_same_department,
+      assignmentStrategy: w.assignment_strategy || 'least_busy'
     })));
   } catch(e) { res.json([]); }
 });
 
 router.post('/workflow-definitions', async (req, res) => {
   try {
-    const { id, transactionTypeId, stepOrder, stepName, positionId, canEditAmount, canReturn, isFinal } = req.body;
+    const {
+      id, transactionTypeId, stepOrder, stepName, positionId,
+      canEditAmount, canReturn, canApprove, canReject, canEdit, isFinal,
+      requireSameBranch, requireSameDepartment, assignmentStrategy
+    } = req.body;
     if (!transactionTypeId || !stepName) return res.json({ success: false, error: 'البيانات ناقصة' });
+    const rb = requireSameBranch !== false ? 1 : 0;
+    const rd = requireSameDepartment ? 1 : 0;
+    const strat = ['least_busy','first','round_robin'].includes(assignmentStrategy) ? assignmentStrategy : 'least_busy';
+    const cApprove = canApprove !== false ? 1 : 0;
+    const cReject  = canReject  !== false ? 1 : 0;
+    const cEdit    = canEdit ? 1 : 0;
     if (id) {
-      await db.query('UPDATE workflow_definitions SET step_order=?, step_name=?, required_position_id=?, can_edit_amount=?, can_return_to_previous=?, is_final_step=? WHERE id=?',
-        [stepOrder||1, stepName, positionId||null, canEditAmount?1:0, canReturn!==false?1:0, isFinal?1:0, id]);
+      await db.query(
+        `UPDATE workflow_definitions SET
+           step_order=?, step_name=?, required_position_id=?,
+           can_edit_amount=?, can_return_to_previous=?, is_final_step=?,
+           require_same_branch=?, require_same_department=?, assignment_strategy=?,
+           can_approve=?, can_reject=?, can_edit=?
+         WHERE id=?`,
+        [stepOrder||1, stepName, positionId||null,
+         canEditAmount?1:0, canReturn!==false?1:0, isFinal?1:0,
+         rb, rd, strat, cApprove, cReject, cEdit, id]);
       return res.json({ success: true, id });
     }
     const newId = 'WD-' + Date.now();
-    await db.query('INSERT INTO workflow_definitions (id, transaction_type_id, step_order, step_name, required_position_id, can_edit_amount, can_return_to_previous, is_final_step) VALUES (?,?,?,?,?,?,?,?)',
-      [newId, transactionTypeId, stepOrder||1, stepName, positionId||null, canEditAmount?1:0, canReturn!==false?1:0, isFinal?1:0]);
+    await db.query(
+      `INSERT INTO workflow_definitions (
+         id, transaction_type_id, step_order, step_name, required_position_id,
+         can_edit_amount, can_return_to_previous, is_final_step,
+         require_same_branch, require_same_department, assignment_strategy,
+         can_approve, can_reject, can_edit
+       ) VALUES (?,?,?,?,?, ?,?,?, ?,?,?, ?,?,?)`,
+      [newId, transactionTypeId, stepOrder||1, stepName, positionId||null,
+       canEditAmount?1:0, canReturn!==false?1:0, isFinal?1:0,
+       rb, rd, strat, cApprove, cReject, cEdit]);
     res.json({ success: true, id: newId });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
@@ -370,17 +469,31 @@ router.post('/transactions', async (req, res) => {
     const txnNumber = [branchCode, deptCode, typeCode, ymd, String(serial).padStart(4,'0')].join('-');
     const id = 'TXN-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
 
-    // Find first workflow step
-    const [firstStep] = await db.query(
-      'SELECT id, required_position_id FROM workflow_definitions WHERE transaction_type_id = ? ORDER BY step_order LIMIT 1',
+    // Find first workflow step with full routing flags
+    const [firstStepRows] = await db.query(
+      `SELECT id, required_position_id, require_same_branch, require_same_department, assignment_strategy
+       FROM workflow_definitions
+       WHERE transaction_type_id = ?
+       ORDER BY step_order LIMIT 1`,
       [transactionTypeId]);
-    const currentStepId = firstStep.length ? firstStep[0].id : null;
+    const firstStep = firstStepRows.length ? firstStepRows[0] : null;
+    const currentStepId = firstStep ? firstStep.id : null;
+    const currentRoleId = firstStep ? (firstStep.required_position_id || null) : null;
 
-    // Determine initial assignee: explicit recipient > workflow step position holder > first manager
+    // Determine initial assignee:
+    //   1. explicit recipient override (if sender picked one)
+    //   2. role+branch+dept matched employee (spec §5)
+    //   3. sender's direct manager (fallback)
     let currentAssignee = recipientUsername || '';
-    if (!currentAssignee && firstStep.length && firstStep[0].required_position_id) {
-      const [u] = await db.query('SELECT username FROM users WHERE position_id = ? AND active = 1 LIMIT 1', [firstStep[0].required_position_id]);
-      if (u.length) currentAssignee = u[0].username;
+    let currentRoleName = '';
+    if (!currentAssignee && firstStep && firstStep.required_position_id) {
+      const resolved = await resolveAssigneeForStep(firstStep, finalBranchId, finalDeptId);
+      currentAssignee = resolved.username;
+      currentRoleName = resolved.roleName;
+    }
+    if (!currentRoleName && currentRoleId) {
+      const [rn] = await db.query('SELECT name FROM positions WHERE id = ?', [currentRoleId]);
+      if (rn.length) currentRoleName = rn[0].name;
     }
     if (!currentAssignee && sender.managerId) {
       const [mgr] = await db.query('SELECT linked_username FROM hr_employees WHERE id = ?', [sender.managerId]);
@@ -395,14 +508,16 @@ router.post('/transactions', async (req, res) => {
          id, transaction_number, transaction_type_id, type_code, daily_serial,
          created_by, branch_id, branch_code, branch_name, brand_id,
          dept_id, dept_code, dept_name,
-         title, description, amount, importance, status, current_step_id, current_assignee, attachment,
+         title, description, amount, importance, status,
+         current_step_id, current_role_id, current_role_name, current_assignee, attachment,
          account_id, account_code, account_name, cost_center_id, cost_center_name,
          recipient_username, sender_name, sender_position)
-       VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?)`,
+       VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?)`,
       [id, txnNumber, transactionTypeId, typeCode, serial,
        username||'', finalBranchId||null, branchCode, branchName, brandId||null,
        finalDeptId||null, deptCode, deptName,
-       title, description||'', amount||0, validImportance, initialStatus, currentStepId, currentAssignee, attachment||null,
+       title, description||'', amount||0, validImportance, initialStatus,
+       currentStepId, currentRoleId, currentRoleName, currentAssignee, attachment||null,
        accountId||null, accountCode||'', accountName||'', costCenterId||null, costCenterName||'',
        recipientUsername||'', senderName||'', senderPosition||'']
     );
@@ -444,7 +559,9 @@ function _mapTxn(t) {
     importance: t.importance || 'medium',
     status: t.status,
     currentStepId: t.current_step_id, currentStepName: t.current_step_name || '',
-    currentPositionName: t.current_position_name || '',
+    currentPositionName: t.current_position_name || t.current_role_name || '',
+    currentRoleId: t.current_role_id || '',
+    currentRoleName: t.current_role_name || t.current_position_name || '',
     currentAssignee: t.current_assignee || '',
     attachment: t.attachment ? true : false,
     accountCode: t.account_code || '', accountName: t.account_name || '',
@@ -667,7 +784,7 @@ router.post('/transactions/:id/action', async (req, res) => {
     if (!txns.length) return res.json({ success: false, error: 'المعاملة غير موجودة' });
     const txn = txns[0];
 
-    // Permission check
+    // Permission check (two layers: employee-wide + step-specific)
     const perms = await getPermissions(username);
     const permMap = { approve: 'canApprove', reject: 'canReject', return: 'canReturn', forward: 'canForward', close: 'canClose' };
     if (permMap[action] && perms.isEmployee && perms[permMap[action]] === false) {
@@ -678,6 +795,13 @@ router.post('/transactions/:id/action', async (req, res) => {
     const [currentStep] = await db.query('SELECT * FROM workflow_definitions WHERE id = ?', [txn.current_step_id || 'NONE']);
     const step = currentStep.length ? currentStep[0] : null;
 
+    // Step-level permission: the step definition may restrict specific actions
+    if (step) {
+      if (action === 'approve' && step.can_approve === 0) return res.json({ success: false, error: 'هذه الخطوة لا تسمح بالموافقة' });
+      if (action === 'reject'  && step.can_reject  === 0) return res.json({ success: false, error: 'هذه الخطوة لا تسمح بالرفض' });
+      if (action === 'return'  && step.can_return_to_previous === 0) return res.json({ success: false, error: 'هذه الخطوة لا تسمح بالإرجاع' });
+    }
+
     if (newAmount !== undefined && (!step || step.can_edit_amount)) {
       await db.query('UPDATE transactions SET amount = ? WHERE id = ?', [Number(newAmount)||0, req.params.id]);
     }
@@ -685,60 +809,79 @@ router.post('/transactions/:id/action', async (req, res) => {
     let newStatus = txn.status;
     let newStepId = txn.current_step_id;
     let newAssignee = txn.current_assignee;
+    let newRoleId = txn.current_role_id || null;
+    let newRoleName = txn.current_role_name || '';
+
+    const applyStep = async (stepRow) => {
+      newStepId = stepRow.id;
+      newRoleId = stepRow.required_position_id || null;
+      if (stepRow.required_position_id) {
+        const resolved = await resolveAssigneeForStep(stepRow, txn.branch_id, txn.dept_id);
+        newAssignee = resolved.username;
+        newRoleName = resolved.roleName || '';
+      } else {
+        newAssignee = '';
+        newRoleName = '';
+      }
+    };
 
     if (action === 'approve') {
       if (step) {
         const nextOrder = step.step_order + 1;
         const [nextStep] = await db.query(
-          'SELECT id, required_position_id, is_final_step FROM workflow_definitions WHERE transaction_type_id = ? AND step_order = ?',
+          `SELECT id, required_position_id, is_final_step, require_same_branch,
+                  require_same_department, assignment_strategy
+           FROM workflow_definitions
+           WHERE transaction_type_id = ? AND step_order = ?`,
           [txn.transaction_type_id, nextOrder]);
         if (nextStep.length) {
-          newStepId = nextStep[0].id; newStatus = 'in_progress';
-          // Route to next step's position holder
-          if (nextStep[0].required_position_id) {
-            const [u] = await db.query('SELECT username FROM users WHERE position_id = ? AND active = 1 LIMIT 1', [nextStep[0].required_position_id]);
-            newAssignee = u.length ? u[0].username : '';
-          } else newAssignee = '';
+          newStatus = 'in_progress';
+          await applyStep(nextStep[0]);
         } else if (step.is_final_step) {
-          newStatus = 'closed'; newStepId = null; newAssignee = '';
+          newStatus = 'closed'; newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
         } else {
-          newStatus = 'approved'; newStepId = null; newAssignee = '';
+          newStatus = 'approved'; newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
         }
       } else {
-        newStatus = 'approved'; newStepId = null; newAssignee = '';
+        newStatus = 'approved'; newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
       }
     } else if (action === 'reject') {
       newStatus = 'rejected';
       newAssignee = txn.created_by;
+      newRoleId = null; newRoleName = '';
     } else if (action === 'return') {
       if (step) {
         const prevOrder = step.step_order - 1;
         const [prevStep] = await db.query(
-          'SELECT id, required_position_id FROM workflow_definitions WHERE transaction_type_id = ? AND step_order = ?',
+          `SELECT id, required_position_id, require_same_branch,
+                  require_same_department, assignment_strategy
+           FROM workflow_definitions
+           WHERE transaction_type_id = ? AND step_order = ?`,
           [txn.transaction_type_id, prevOrder]);
         if (prevStep.length) {
-          newStepId = prevStep[0].id;
-          if (prevStep[0].required_position_id) {
-            const [u] = await db.query('SELECT username FROM users WHERE position_id = ? AND active = 1 LIMIT 1', [prevStep[0].required_position_id]);
-            newAssignee = u.length ? u[0].username : txn.created_by;
-          } else newAssignee = txn.created_by;
+          await applyStep(prevStep[0]);
+          if (!newAssignee) newAssignee = txn.created_by;
         } else {
           newAssignee = txn.created_by;
+          newRoleId = null; newRoleName = '';
         }
       } else {
         newAssignee = txn.created_by;
       }
       newStatus = 'pending';
     } else if (action === 'close') {
-      newStatus = 'closed'; newStepId = null; newAssignee = '';
+      newStatus = 'closed'; newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
     } else if (action === 'forward') {
       if (!forwardTo) return res.json({ success: false, error: 'حدد المستلم الجديد' });
       newAssignee = forwardTo;
       newStatus = 'in_progress';
+      // Role doesn't change on forward — keep current_role_id/name
     }
 
-    await db.query('UPDATE transactions SET status = ?, current_step_id = ?, current_assignee = ? WHERE id = ?',
-      [newStatus, newStepId, newAssignee || '', req.params.id]);
+    await db.query(
+      `UPDATE transactions SET status = ?, current_step_id = ?, current_assignee = ?,
+              current_role_id = ?, current_role_name = ? WHERE id = ?`,
+      [newStatus, newStepId, newAssignee || '', newRoleId, newRoleName, req.params.id]);
 
     const logId = 'LOG-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
     await db.query(

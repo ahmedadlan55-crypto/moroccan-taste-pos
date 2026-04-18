@@ -295,7 +295,17 @@ router.post('/workflow-definitions', async (req, res) => {
       canEditAmount, canReturn, canApprove, canReject, canEdit, isFinal,
       requireSameBranch, requireSameDepartment, assignmentStrategy
     } = req.body;
-    if (!transactionTypeId || !stepName) return res.json({ success: false, error: 'البيانات ناقصة' });
+    if (!transactionTypeId) return res.json({ success: false, error: 'نوع المعاملة مطلوب' });
+    // Auto-generate step name from role name when blank
+    let finalStepName = (stepName || '').trim();
+    if (!finalStepName) {
+      let roleName = 'خطوة';
+      if (positionId) {
+        const [r] = await db.query('SELECT name FROM positions WHERE id = ?', [positionId]);
+        if (r.length) roleName = r[0].name;
+      }
+      finalStepName = roleName + ' — خطوة ' + (Number(stepOrder) || 1);
+    }
     const rb = requireSameBranch !== false ? 1 : 0;
     const rd = requireSameDepartment ? 1 : 0;
     const strat = ['least_busy','first','round_robin'].includes(assignmentStrategy) ? assignmentStrategy : 'least_busy';
@@ -310,7 +320,7 @@ router.post('/workflow-definitions', async (req, res) => {
            require_same_branch=?, require_same_department=?, assignment_strategy=?,
            can_approve=?, can_reject=?, can_edit=?
          WHERE id=?`,
-        [stepOrder||1, stepName, positionId||null,
+        [stepOrder||1, finalStepName, positionId||null,
          canEditAmount?1:0, canReturn!==false?1:0, isFinal?1:0,
          rb, rd, strat, cApprove, cReject, cEdit, id]);
       return res.json({ success: true, id });
@@ -323,7 +333,7 @@ router.post('/workflow-definitions', async (req, res) => {
          require_same_branch, require_same_department, assignment_strategy,
          can_approve, can_reject, can_edit
        ) VALUES (?,?,?,?,?, ?,?,?, ?,?,?, ?,?,?)`,
-      [newId, transactionTypeId, stepOrder||1, stepName, positionId||null,
+      [newId, transactionTypeId, stepOrder||1, finalStepName, positionId||null,
        canEditAmount?1:0, canReturn!==false?1:0, isFinal?1:0,
        rb, rd, strat, cApprove, cReject, cEdit]);
     res.json({ success: true, id: newId });
@@ -334,6 +344,73 @@ router.delete('/workflow-definitions/:id', async (req, res) => {
   try {
     await db.query('DELETE FROM workflow_definitions WHERE id = ?', [req.params.id]);
     res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// Replace the ENTIRE step sequence for a transaction type in one call.
+// Body: { transactionTypeId, steps: [{ stepOrder?, stepName?, positionId,
+//   canApprove, canReject, canReturn, canEditAmount, canEdit, isFinal,
+//   requireSameBranch, requireSameDepartment, assignmentStrategy }, ...] }
+// Step name may be empty → auto-generated from the role name.
+router.post('/workflow-definitions/bulk', async (req, res) => {
+  try {
+    const { transactionTypeId, steps } = req.body;
+    if (!transactionTypeId) return res.json({ success: false, error: 'نوع المعاملة مطلوب' });
+    if (!Array.isArray(steps) || !steps.length) return res.json({ success: false, error: 'يجب إضافة خطوة واحدة على الأقل' });
+
+    // Preload role names so we can auto-generate step names
+    const roleIds = [...new Set(steps.map(s => s.positionId).filter(Boolean))];
+    const roleMap = {};
+    if (roleIds.length) {
+      const placeholders = roleIds.map(() => '?').join(',');
+      const [rn] = await db.query(`SELECT id, name FROM positions WHERE id IN (${placeholders})`, roleIds);
+      rn.forEach(r => { roleMap[r.id] = r.name; });
+    }
+
+    // Validate: at least one final step
+    const hasFinal = steps.some(s => s.isFinal === true || s.isFinal === 1);
+    if (!hasFinal) {
+      // Auto-mark the last step as final if none is set
+      steps[steps.length - 1].isFinal = true;
+    }
+
+    // Replace: wipe existing then insert fresh
+    await db.query('DELETE FROM workflow_definitions WHERE transaction_type_id = ?', [transactionTypeId]);
+
+    const insertedIds = [];
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i];
+      const stepOrder = Number(s.stepOrder) || (i + 1);
+      // Auto-generate step name from role when empty
+      let stepName = (s.stepName || '').trim();
+      if (!stepName) {
+        const roleName = s.positionId ? (roleMap[s.positionId] || 'خطوة') : 'خطوة';
+        stepName = roleName + ' — خطوة ' + stepOrder;
+      }
+      const rb = s.requireSameBranch !== false ? 1 : 0;
+      const rd = s.requireSameDepartment ? 1 : 0;
+      const strat = ['least_busy','first','round_robin'].includes(s.assignmentStrategy) ? s.assignmentStrategy : 'least_busy';
+      const cApprove = s.canApprove !== false ? 1 : 0;
+      const cReject  = s.canReject  !== false ? 1 : 0;
+      const cEdit    = s.canEdit ? 1 : 0;
+      const cEditAmt = s.canEditAmount ? 1 : 0;
+      const cReturn  = s.canReturn !== false ? 1 : 0;
+      const isFinal  = (s.isFinal === true || s.isFinal === 1) ? 1 : 0;
+
+      const id = 'WD-' + Date.now() + '-' + i + '-' + Math.random().toString(36).substr(2, 4);
+      await db.query(
+        `INSERT INTO workflow_definitions (
+           id, transaction_type_id, step_order, step_name, required_position_id,
+           can_edit_amount, can_return_to_previous, is_final_step,
+           require_same_branch, require_same_department, assignment_strategy,
+           can_approve, can_reject, can_edit
+         ) VALUES (?,?,?,?,?, ?,?,?, ?,?,?, ?,?,?)`,
+        [id, transactionTypeId, stepOrder, stepName, s.positionId || null,
+         cEditAmt, cReturn, isFinal, rb, rd, strat, cApprove, cReject, cEdit]);
+      insertedIds.push(id);
+    }
+
+    res.json({ success: true, count: insertedIds.length, ids: insertedIds });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
@@ -462,6 +539,11 @@ router.post('/transactions', async (req, res) => {
 
     if (!transactionTypeId || !title) return res.json({ success: false, error: 'نوع المعاملة والعنوان مطلوبان' });
 
+    // Creation is OPEN to all departments/branches by design.
+    // Any employee can initiate any transaction type — routing happens
+    // downstream via workflow_definitions (role + branch/dept scoping).
+    // The only gate is an explicit per-employee `can_create_txn = false`
+    // flag (admin toggle on the Org Tree page).
     const sender = await getPermissions(username);
     if (sender && sender.canCreate === false) return res.json({ success: false, error: 'ليس لديك صلاحية إنشاء معاملة' });
 

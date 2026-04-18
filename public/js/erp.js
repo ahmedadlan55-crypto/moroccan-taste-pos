@@ -4635,9 +4635,12 @@ function wfOpenDefModal(data) {
       '<input type="hidden" id="wfDefId" value="' + (d.id || '') + '">' +
       '<input type="hidden" id="wfDefTypeId" value="' + (typeId || '') + '">' +
       typeSelectorHtml +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+      '<div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;">' +
         '<div class="form-row"><label>ترتيب الخطوة *</label><input type="number" class="form-control" id="wfDefOrder" value="' + (d.stepOrder || (_wfDefs.length + 1)) + '" min="1"></div>' +
-        '<div class="form-row"><label>اسم الخطوة *</label><input class="form-control" id="wfDefName" value="' + (d.stepName || '').replace(/"/g,'&quot;') + '"></div>' +
+        '<div class="form-row"><label>اسم الخطوة <span style="color:#94a3b8;font-weight:normal;">(اختياري)</span></label>' +
+          '<input class="form-control" id="wfDefName" value="' + (d.stepName || '').replace(/"/g,'&quot;') + '" placeholder="مثال: مراجعة المحاسب">' +
+          '<div style="font-size:11px;color:#64748b;margin-top:4px;line-height:1.5;"><i class="fas fa-info-circle" style="color:#0ea5e9;"></i> هذا هو العنوان الإداري الظاهر في شريط المسار وعمود «الخطوة الحالية» وسجل الحركة. إن تركته فارغاً سيُولَّد تلقائياً من اسم المنصب.</div>' +
+        '</div>' +
       '</div>' +
 
       '<div class="form-row"><label><i class="fas fa-id-badge" style="color:#8b5cf6;"></i> المسمى الوظيفي المسؤول (Role) *</label>' +
@@ -4671,8 +4674,7 @@ function wfOpenDefModal(data) {
         '</div>' +
       '</div>';
     document.getElementById('erpModalSaveBtn').onclick = function() {
-      var stepName = document.getElementById('wfDefName').value;
-      if (!stepName) return showToast('اسم الخطوة مطلوب', true);
+      var stepName = document.getElementById('wfDefName').value;  // optional — backend auto-generates if empty
       // Resolve type: pre-selected, editing-record, or picker
       var finalTypeId = document.getElementById('wfDefTypeId').value;
       var picker = document.getElementById('wfDefTypePicker');
@@ -6759,4 +6761,210 @@ function erpPrintGLLedger() {
     '<div style="text-align:center;margin-top:20px;"><button onclick="window.print()" style="padding:8px 20px;background:#0ea5e9;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;">طباعة</button></div>' +
     '</body></html>');
   w.document.close();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// WORKFLOW BULK BUILDER — تعريف المسار الكامل (كل الخطوات دفعة واحدة)
+// ═════════════════════════════════════════════════════════════════════════════
+
+var _wfBulkSteps = [];  // working array of step objects in the builder
+var _wfBulkPositions = [];
+var _wfBulkTypes = [];
+
+function wfOpenBulkBuilder() {
+  // Resolve the target transaction type (from whichever mode is active)
+  var typeId = '';
+  if (_wfDefsMode === 'type') typeId = document.getElementById('wfDefsTypeFilter').value;
+  // Load types, positions, and existing steps (if type already picked)
+  Promise.all([
+    new Promise(function(r){ window._apiBridge.withSuccessHandler(r).getWfTypes(); }),
+    new Promise(function(r){ window._apiBridge.withSuccessHandler(r).getWfPositions(); })
+  ]).then(function(results) {
+    _wfBulkTypes = results[0] || [];
+    _wfBulkPositions = (results[1] || []).slice().sort(function(a,b){return (a.level||0)-(b.level||0);});
+
+    var tOpts = _wfBulkTypes.map(function(t) {
+      return '<option value="' + t.id + '"' + (typeId===t.id?' selected':'') + '>' + t.name + ' (' + (t.code||'') + ')</option>';
+    }).join('');
+
+    document.getElementById('erpModalTitle').textContent = 'تعريف المسار الكامل للمعاملة';
+    document.getElementById('erpModalBody').innerHTML =
+      '<div style="padding:12px;border-radius:12px;background:#eff6ff;border:1px solid #bfdbfe;margin-bottom:14px;font-size:12.5px;color:#1e40af;line-height:1.6;">' +
+        '<i class="fas fa-info-circle"></i> <b>كيف يعمل هذا المحرر:</b> أضف كل الخطوات من البداية إلى النهاية في جدول واحد، ثم اضغط «حفظ المسار». سيتم استبدال كل الخطوات الحالية لهذا النوع بالقائمة الجديدة. <b>اسم الخطوة اختياري</b> — إن تركته فارغاً يُولَّد تلقائياً من اسم المنصب.' +
+      '</div>' +
+      '<div class="form-row"><label>نوع المعاملة *</label>' +
+        '<select class="form-control" id="wfBulkType" onchange="wfBulkReload()"><option value="">— اختر النوع —</option>' + tOpts + '</select>' +
+      '</div>' +
+      '<div id="wfBulkStepsWrap" style="margin-top:12px;"></div>' +
+      '<div style="display:flex;gap:8px;margin-top:12px;">' +
+        '<button type="button" class="btn btn-primary btn-sm" onclick="wfBulkAddRow()"><i class="fas fa-plus"></i> خطوة جديدة</button>' +
+        '<button type="button" class="btn btn-light btn-sm" onclick="wfBulkClear()"><i class="fas fa-trash"></i> مسح الكل</button>' +
+      '</div>';
+
+    document.getElementById('erpModalSaveBtn').textContent = 'حفظ المسار';
+    document.getElementById('erpModalSaveBtn').onclick = wfBulkSave;
+
+    document.getElementById('erpModal').classList.remove('hidden');
+
+    if (typeId) wfBulkReload();
+    else {
+      _wfBulkSteps = [];
+      _wfRenderBulkSteps();
+    }
+  });
+}
+
+function wfBulkReload() {
+  var typeId = document.getElementById('wfBulkType').value;
+  if (!typeId) { _wfBulkSteps = []; _wfRenderBulkSteps(); return; }
+  window._apiBridge.withSuccessHandler(function(list) {
+    _wfBulkSteps = (list||[]).map(function(w) {
+      return {
+        stepOrder: w.stepOrder,
+        stepName: w.stepName || '',
+        positionId: w.positionId || '',
+        canApprove: w.canApprove !== false,
+        canReject:  w.canReject  !== false,
+        canReturn:  !!w.canReturn,
+        canEditAmount: !!w.canEditAmount,
+        canEdit: !!w.canEdit,
+        isFinal: !!w.isFinal,
+        requireSameBranch: w.requireSameBranch !== false,
+        requireSameDepartment: !!w.requireSameDepartment,
+        assignmentStrategy: w.assignmentStrategy || 'least_busy'
+      };
+    });
+    if (!_wfBulkSteps.length) wfBulkAddRow();
+    else _wfRenderBulkSteps();
+  }).getWfDefs(typeId);
+}
+
+function wfBulkAddRow() {
+  _wfBulkSteps.push({
+    stepOrder: _wfBulkSteps.length + 1,
+    stepName: '',
+    positionId: '',
+    canApprove: true, canReject: true, canReturn: _wfBulkSteps.length > 0, canEditAmount: false, canEdit: false,
+    isFinal: false,
+    requireSameBranch: true, requireSameDepartment: false,
+    assignmentStrategy: 'least_busy'
+  });
+  _wfRenderBulkSteps();
+}
+
+function wfBulkClear() {
+  if (!confirm('مسح جميع الخطوات؟')) return;
+  _wfBulkSteps = [];
+  _wfRenderBulkSteps();
+}
+
+function wfBulkRemoveRow(i) {
+  _wfBulkSteps.splice(i, 1);
+  // Renumber
+  _wfBulkSteps.forEach(function(s, idx){ s.stepOrder = idx + 1; });
+  _wfRenderBulkSteps();
+}
+
+function wfBulkMove(i, dir) {
+  var j = i + dir;
+  if (j < 0 || j >= _wfBulkSteps.length) return;
+  var tmp = _wfBulkSteps[i]; _wfBulkSteps[i] = _wfBulkSteps[j]; _wfBulkSteps[j] = tmp;
+  _wfBulkSteps.forEach(function(s, idx){ s.stepOrder = idx + 1; });
+  _wfRenderBulkSteps();
+}
+
+function _wfBulkCapture() {
+  // Read all rows back into _wfBulkSteps before rerendering or saving
+  for (var i = 0; i < _wfBulkSteps.length; i++) {
+    var nameEl = document.getElementById('wfbName_' + i);
+    var posEl = document.getElementById('wfbPos_' + i);
+    if (!nameEl) continue;
+    _wfBulkSteps[i].stepName = nameEl.value;
+    _wfBulkSteps[i].positionId = posEl.value;
+    _wfBulkSteps[i].canApprove = document.getElementById('wfbCAp_' + i).checked;
+    _wfBulkSteps[i].canReject  = document.getElementById('wfbCRj_' + i).checked;
+    _wfBulkSteps[i].canReturn  = document.getElementById('wfbCRt_' + i).checked;
+    _wfBulkSteps[i].canEditAmount = document.getElementById('wfbCEa_' + i).checked;
+    _wfBulkSteps[i].isFinal = document.getElementById('wfbCFn_' + i).checked;
+    _wfBulkSteps[i].requireSameBranch = document.getElementById('wfbRqB_' + i).checked;
+    _wfBulkSteps[i].requireSameDepartment = document.getElementById('wfbRqD_' + i).checked;
+    _wfBulkSteps[i].assignmentStrategy = document.getElementById('wfbStr_' + i).value;
+  }
+}
+
+function _wfRenderBulkSteps() {
+  _wfBulkCapture();
+  var wrap = document.getElementById('wfBulkStepsWrap');
+  if (!wrap) return;
+  if (!_wfBulkSteps.length) {
+    wrap.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;font-style:italic;background:#f8fafc;border-radius:12px;border:1px dashed #e2e8f0;">لا توجد خطوات — اضغط «خطوة جديدة» للإضافة</div>';
+    return;
+  }
+  var posOpts = _wfBulkPositions.map(function(p) {
+    return '<option value="' + p.id + '">' + p.name + ' (L' + (p.level||'?') + ')</option>';
+  }).join('');
+
+  var html = '<div style="display:flex;flex-direction:column;gap:10px;">';
+  _wfBulkSteps.forEach(function(s, i) {
+    var roleOpts = '<option value="">— بدون —</option>' + posOpts;
+    // Mark selected
+    roleOpts = roleOpts.replace('value="' + s.positionId + '"', 'value="' + s.positionId + '" selected');
+    var lineColor = s.isFinal ? '#16a34a' : '#3b82f6';
+    html += '<div style="background:#fff;border:1.5px solid ' + lineColor + '40;border-radius:12px;padding:10px 12px;">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+        '<div style="width:32px;height:32px;border-radius:50%;background:' + lineColor + ';color:#fff;font-size:13px;font-weight:900;display:flex;align-items:center;justify-content:center;">' + (i+1) + '</div>' +
+        '<div style="flex:1;display:grid;grid-template-columns:2fr 3fr;gap:8px;">' +
+          '<select class="form-control" id="wfbPos_' + i + '" onchange="_wfRenderBulkSteps()">' + roleOpts + '</select>' +
+          '<input class="form-control" id="wfbName_' + i + '" value="' + (s.stepName||'').replace(/"/g,'&quot;') + '" placeholder="اسم الخطوة (اختياري — سيُولَّد من المنصب)">' +
+        '</div>' +
+        '<div style="display:flex;gap:2px;">' +
+          '<button type="button" onclick="wfBulkMove(' + i + ',-1)" style="width:28px;height:28px;border:1px solid #e2e8f0;background:#f8fafc;border-radius:6px;cursor:pointer;font-size:11px;" title="للأعلى"><i class="fas fa-arrow-up"></i></button>' +
+          '<button type="button" onclick="wfBulkMove(' + i + ',1)" style="width:28px;height:28px;border:1px solid #e2e8f0;background:#f8fafc;border-radius:6px;cursor:pointer;font-size:11px;" title="للأسفل"><i class="fas fa-arrow-down"></i></button>' +
+          '<button type="button" onclick="wfBulkRemoveRow(' + i + ')" style="width:28px;height:28px;border:1px solid #fecaca;background:#fee2e2;color:#ef4444;border-radius:6px;cursor:pointer;font-size:11px;" title="حذف"><i class="fas fa-trash"></i></button>' +
+        '</div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;font-size:11px;">' +
+        '<label style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:#f8fafc;border-radius:6px;cursor:pointer;"><input type="checkbox" id="wfbCAp_' + i + '"' + (s.canApprove!==false?' checked':'') + '> موافقة</label>' +
+        '<label style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:#f8fafc;border-radius:6px;cursor:pointer;"><input type="checkbox" id="wfbCRj_' + i + '"' + (s.canReject!==false?' checked':'') + '> رفض</label>' +
+        '<label style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:#f8fafc;border-radius:6px;cursor:pointer;"><input type="checkbox" id="wfbCRt_' + i + '"' + (s.canReturn?' checked':'') + '> إرجاع</label>' +
+        '<label style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:#f8fafc;border-radius:6px;cursor:pointer;"><input type="checkbox" id="wfbCEa_' + i + '"' + (s.canEditAmount?' checked':'') + '> تعديل مبلغ</label>' +
+        '<label style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:#dbeafe;border-radius:6px;cursor:pointer;"><input type="checkbox" id="wfbRqB_' + i + '"' + (s.requireSameBranch!==false?' checked':'') + '> نفس الفرع</label>' +
+        '<label style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:#ede9fe;border-radius:6px;cursor:pointer;"><input type="checkbox" id="wfbRqD_' + i + '"' + (s.requireSameDepartment?' checked':'') + '> نفس القسم</label>' +
+        '<select class="form-control" id="wfbStr_' + i + '" style="padding:4px 6px;font-size:10px;">' +
+          '<option value="least_busy"' + (s.assignmentStrategy==='least_busy'?' selected':'') + '>الأقل انشغالاً</option>' +
+          '<option value="first"' + (s.assignmentStrategy==='first'?' selected':'') + '>الأول</option>' +
+        '</select>' +
+        '<label style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:#dcfce7;border-radius:6px;cursor:pointer;"><input type="checkbox" id="wfbCFn_' + i + '"' + (s.isFinal?' checked':'') + '> نهائية <i class="fas fa-flag-checkered"></i></label>' +
+      '</div>' +
+    '</div>';
+  });
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+function wfBulkSave() {
+  _wfBulkCapture();
+  var typeId = document.getElementById('wfBulkType').value;
+  if (!typeId) return showToast('اختر نوع المعاملة', true);
+  if (!_wfBulkSteps.length) return showToast('أضف خطوة واحدة على الأقل', true);
+  // Validate: every step must have a role
+  for (var i = 0; i < _wfBulkSteps.length; i++) {
+    if (!_wfBulkSteps[i].positionId) return showToast('الخطوة ' + (i+1) + ': اختر المنصب الإداري', true);
+  }
+  if (!_wfBulkSteps.some(function(s){return s.isFinal;})) {
+    if (!confirm('لا توجد خطوة نهائية — سيتم اعتبار آخر خطوة نهائية تلقائياً. متابعة؟')) return;
+  }
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) {
+      showToast('تم حفظ المسار — ' + r.count + ' خطوة');
+      erpCloseModal();
+      // If we're in type mode, select this type and reload; if in role mode, just reload
+      if (_wfDefsMode === 'type') {
+        document.getElementById('wfDefsTypeFilter').value = typeId;
+      }
+      wfLoadDefs();
+    } else showToast(r.error || 'فشل الحفظ', true);
+  }).saveWfDefsBulk({ transactionTypeId: typeId, steps: _wfBulkSteps });
 }

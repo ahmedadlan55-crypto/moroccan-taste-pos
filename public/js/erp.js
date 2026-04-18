@@ -104,6 +104,7 @@ function erpNav(sectionId) {
       case 'erpAPAging': erpLoadAPAging(); break;
       case 'erpCustomerStatement': erpLoadCustomerStatementPage(); break;
       case 'erpSupplierStatement': erpLoadSupplierStatementPage(); break;
+      case 'erpGLLedgerReport': erpInitGLLedgerReport(); break;
       case 'erpWfPositions': wfLoadPositions(); break;
       case 'erpWfTypes': wfLoadTypes(); break;
       case 'erpWfDefs': wfInitDefs(); break;
@@ -6262,4 +6263,302 @@ function wfEditOrgEmp(id) {
     });
   };
   document.getElementById('erpModal').classList.remove('hidden');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// GL LEDGER REPORT — تقرير دفتر الأستاذ لحساب محدد
+// ═════════════════════════════════════════════════════════════════════════════
+
+var _glLedgerAccounts = [];
+var _glLedgerData = null;
+
+function erpInitGLLedgerReport() {
+  // Load accounts list for the search box
+  window._apiBridge.withSuccessHandler(function(list) {
+    _glLedgerAccounts = list || [];
+  }).getGLAccounts();
+  // Default dates: first of month → today
+  var now = new Date();
+  var firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  var fromEl = document.getElementById('erpGLFrom');
+  var toEl = document.getElementById('erpGLTo');
+  if (fromEl && !fromEl.value) fromEl.value = firstOfMonth.toISOString().split('T')[0];
+  if (toEl && !toEl.value) toEl.value = now.toISOString().split('T')[0];
+}
+
+function erpFilterGLAccounts() {
+  var q = (document.getElementById('erpGLSearch').value || '').toLowerCase().trim();
+  var res = document.getElementById('erpGLAccResults');
+  if (!res) return;
+  var list = _glLedgerAccounts || [];
+  // Prefer leaf accounts but allow any (running-balance valid for any level)
+  var filtered = q ? list.filter(function(a) {
+    return (a.code||'').toLowerCase().indexOf(q) !== -1 ||
+           (a.nameAr||'').toLowerCase().indexOf(q) !== -1 ||
+           (a.nameEn||'').toLowerCase().indexOf(q) !== -1;
+  }) : list.slice(0, 30);
+  if (!filtered.length) {
+    res.innerHTML = '<div class="sd-result-item" style="color:#94a3b8;">لا توجد نتائج</div>';
+  } else {
+    var typeClrs = { asset:'#16a34a', liability:'#ef4444', equity:'#8b5cf6', revenue:'#0ea5e9', expense:'#f59e0b' };
+    res.innerHTML = filtered.slice(0, 25).map(function(a) {
+      var safe = String(a.nameAr||a.nameEn||'').replace(/'/g, "\\'").replace(/"/g,'&quot;');
+      var clr = typeClrs[a.type] || '#64748b';
+      return '<div class="sd-result-item" style="display:flex;align-items:center;gap:6px;" onclick="erpSelectGLAccount(\''+a.id+'\',\''+(a.code||'')+'\',\''+safe+'\',\''+(a.type||'')+'\')">' +
+        '<span style="width:8px;height:8px;border-radius:50%;background:'+clr+';flex-shrink:0;"></span>' +
+        '<code style="color:'+clr+';font-weight:700;font-size:11px;">'+(a.code||'')+'</code>' +
+        '<span style="flex:1;">'+(a.nameAr||a.nameEn||'')+'</span>' +
+        '<span class="sd-item-meta">'+(a.type||'')+'</span>' +
+      '</div>';
+    }).join('');
+  }
+  res.classList.add('open');
+}
+
+function erpSelectGLAccount(id, code, name, type) {
+  document.getElementById('erpGLSearch').value = (code ? code + ' — ' : '') + name;
+  document.getElementById('erpGLAccId').value = id;
+  document.getElementById('erpGLAccCode').value = code || '';
+  document.getElementById('erpGLAccName').value = name || '';
+  document.getElementById('erpGLAccType').value = type || '';
+  document.getElementById('erpGLAccResults').classList.remove('open');
+  // Auto-load on selection
+  erpLoadGLLedgerReport();
+}
+
+function erpResetGLLedger() {
+  document.getElementById('erpGLSearch').value = '';
+  document.getElementById('erpGLAccId').value = '';
+  document.getElementById('erpGLAccCode').value = '';
+  document.getElementById('erpGLAccName').value = '';
+  document.getElementById('erpGLAccType').value = '';
+  var now = new Date();
+  var fm = new Date(now.getFullYear(), now.getMonth(), 1);
+  document.getElementById('erpGLFrom').value = fm.toISOString().split('T')[0];
+  document.getElementById('erpGLTo').value = now.toISOString().split('T')[0];
+  document.getElementById('erpGLStatus').value = '';
+  document.getElementById('erpGLInfo').innerHTML = '';
+  document.getElementById('erpGLSummary').innerHTML = '';
+  document.getElementById('erpGLLedgerBody').innerHTML = '<tr><td colspan="8" class="empty-msg">اختر الحساب ثم اضغط عرض</td></tr>';
+}
+
+function erpLoadGLLedgerReport() {
+  var accId = document.getElementById('erpGLAccId').value;
+  if (!accId) return showToast('اختر الحساب أولاً', 'error');
+  var from = document.getElementById('erpGLFrom').value;
+  var to = document.getElementById('erpGLTo').value;
+  var status = document.getElementById('erpGLStatus').value;
+  var tbody = document.getElementById('erpGLLedgerBody');
+  tbody.innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+
+  var filters = {};
+  if (from) filters.startDate = from;
+  if (to) filters.endDate = to;
+  if (status) filters.status = status;
+
+  window._apiBridge.withSuccessHandler(function(res) {
+    _glLedgerData = res;
+    if (!res || !res.success) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-msg" style="color:#ef4444;">'+((res&&res.error)||'خطأ')+'</td></tr>';
+      return;
+    }
+    _erpRenderGLLedger(res);
+  }).getAccountLedger(accId, filters);
+}
+
+function _erpRenderGLLedger(res) {
+  var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var typeLabels = { asset:'أصول', liability:'التزامات', equity:'حقوق ملكية', revenue:'إيرادات', expense:'مصروفات' };
+  var typeClrs = { asset:'#16a34a', liability:'#ef4444', equity:'#8b5cf6', revenue:'#0ea5e9', expense:'#f59e0b' };
+  var acc = res.account || {};
+  var tClr = typeClrs[acc.type] || '#64748b';
+
+  // Info card
+  var periodStr = (res.period && res.period.startDate ? res.period.startDate : '—') + ' → ' + (res.period && res.period.endDate ? res.period.endDate : '—');
+  document.getElementById('erpGLInfo').innerHTML =
+    '<div style="display:flex;gap:16px;padding:12px 16px;background:linear-gradient(135deg,#f8fafc,'+tClr+'10);border-radius:12px;border:1px solid '+tClr+'30;flex-wrap:wrap;align-items:center;">' +
+      '<div style="display:flex;align-items:center;gap:8px;"><i class="fas fa-sitemap" style="color:'+tClr+';"></i>' +
+        '<code style="color:'+tClr+';font-weight:800;font-size:14px;background:#fff;padding:3px 10px;border-radius:8px;">'+(acc.code||'')+'</code>' +
+        '<strong style="font-size:15px;">'+(acc.nameAr||res.accountName||'')+'</strong>' +
+      '</div>' +
+      '<div style="padding:3px 10px;background:'+tClr+'20;color:'+tClr+';border-radius:8px;font-size:11px;font-weight:800;">'+(typeLabels[acc.type]||acc.type||'')+'</div>' +
+      '<div style="font-size:12px;color:#64748b;"><i class="fas fa-calendar"></i> الفترة: <b>'+periodStr+'</b></div>' +
+    '</div>';
+
+  // Summary cards: opening + total debits + total credits + net movement + closing
+  var opening = Number(res.opening||0);
+  var td = Number(res.totals && res.totals.debit || 0);
+  var tc = Number(res.totals && res.totals.credit || 0);
+  var net = td - tc;
+  var closing = Number(res.closing||0);
+  var closingColor = closing >= 0 ? '#16a34a' : '#ef4444';
+  var openingColor = opening >= 0 ? '#16a34a' : '#ef4444';
+  var netColor = net >= 0 ? '#16a34a' : '#ef4444';
+
+  // Contextual label for balance sign based on account type
+  // asset/expense: debit normal → positive = مدين
+  // liability/equity/revenue: credit normal → positive balance in our running (d-c) means مدين (abnormal)
+  var natureDr = (acc.type === 'asset' || acc.type === 'expense');
+  var balLabel = function(v) {
+    if (v === 0) return 'متطابق';
+    var isDr = v > 0;
+    if (natureDr) return isDr ? 'مدين' : 'دائن (رصيد غير طبيعي)';
+    return isDr ? 'مدين (رصيد غير طبيعي)' : 'دائن';
+  };
+
+  document.getElementById('erpGLSummary').innerHTML =
+    '<div class="fin-card"><span class="fin-label">الرصيد الافتتاحي</span><span class="fin-val" style="color:'+openingColor+';">'+fmt(Math.abs(opening))+'</span><span style="font-size:10px;color:#64748b;display:block;margin-top:2px;">'+balLabel(opening)+'</span></div>' +
+    '<div class="fin-card"><span class="fin-label">إجمالي المدين</span><span class="fin-val text-green">'+fmt(td)+'</span><span style="font-size:10px;color:#64748b;display:block;margin-top:2px;">'+(res.totals?res.totals.count:0)+' عملية</span></div>' +
+    '<div class="fin-card"><span class="fin-label">إجمالي الدائن</span><span class="fin-val text-red">'+fmt(tc)+'</span></div>' +
+    '<div class="fin-card"><span class="fin-label">صافي الحركة</span><span class="fin-val" style="color:'+netColor+';">'+(net>=0?'+':'-')+fmt(Math.abs(net))+'</span></div>' +
+    '<div class="fin-card highlight"><span class="fin-label">الرصيد الختامي</span><span class="fin-val" style="color:'+closingColor+';">'+fmt(Math.abs(closing))+'</span><span style="font-size:10px;color:#64748b;display:block;margin-top:2px;">'+balLabel(closing)+'</span></div>';
+
+  // Table rows — prepend opening-balance row, append closing-balance row
+  var tbody = document.getElementById('erpGLLedgerBody');
+  var refLabels = { manual:'يدوي', opening:'افتتاحي', sale:'مبيعات', purchase:'مشتريات', custody:'عهدة', inventory:'مخزون', cash:'نقد', payroll:'رواتب' };
+  var refColors = { manual:'#3b82f6', opening:'#7c3aed', sale:'#10b981', purchase:'#f59e0b', custody:'#ec4899', inventory:'#06b6d4', cash:'#0ea5e9', payroll:'#6366f1' };
+
+  var html = '';
+  // Opening balance row
+  html += '<tr style="background:#eff6ff;font-weight:700;">' +
+    '<td>—</td>' +
+    '<td>'+ (res.period && res.period.startDate || '—') +'</td>' +
+    '<td colspan="3" style="color:#1e40af;"><i class="fas fa-flag"></i> الرصيد الافتتاحي</td>' +
+    '<td style="color:#16a34a;">'+(opening>0?fmt(opening):'')+'</td>' +
+    '<td style="color:#ef4444;">'+(opening<0?fmt(Math.abs(opening)):'')+'</td>' +
+    '<td style="font-weight:900;color:'+openingColor+';">'+fmt(Math.abs(opening))+'</td>' +
+  '</tr>';
+
+  if (!res.ledger || !res.ledger.length) {
+    html += '<tr><td colspan="8" class="empty-msg">لا توجد حركات في هذه الفترة</td></tr>';
+  } else {
+    res.ledger.forEach(function(r, i) {
+      var dt = '';
+      try { dt = new Date(r.journalDate).toLocaleDateString('en-GB'); } catch(e) {}
+      var rt = r.referenceType || 'manual';
+      var badge = '<span style="padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;background:'+(refColors[rt]||'#94a3b8')+'15;color:'+(refColors[rt]||'#94a3b8')+';">'+(refLabels[rt]||rt)+'</span>';
+      var balClr = r.balance >= 0 ? '#16a34a' : '#ef4444';
+      var statusBadge = r.status === 'draft' ? '<span style="padding:1px 6px;border-radius:4px;font-size:9px;background:#fef3c7;color:#92400e;margin-right:4px;">مسودة</span>' : '';
+      html += '<tr style="cursor:pointer;" onclick="erpViewJournal(\''+r.journalId+'\')" onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'\'">';
+      html += '<td>'+(i+1)+'</td>';
+      html += '<td>'+dt+'</td>';
+      html += '<td><code style="color:#3b82f6;font-weight:700;font-size:11px;">'+(r.journalNumber||'')+'</code>'+statusBadge+'</td>';
+      html += '<td>'+badge+'</td>';
+      html += '<td style="max-width:260px;">'+(r.entryDesc||r.journalDesc||'')+'</td>';
+      html += '<td style="font-weight:700;color:#16a34a;">'+(r.debit?fmt(r.debit):'')+'</td>';
+      html += '<td style="font-weight:700;color:#ef4444;">'+(r.credit?fmt(r.credit):'')+'</td>';
+      html += '<td style="font-weight:800;color:'+balClr+';">'+fmt(r.balance)+'</td>';
+      html += '</tr>';
+    });
+  }
+
+  // Totals row
+  html += '<tr style="background:#f0fdf4;font-weight:800;border-top:2px solid #16a34a;">' +
+    '<td colspan="5" style="text-align:left;color:#166534;">إجمالي الحركة في الفترة ('+(res.totals?res.totals.count:0)+' قيد)</td>' +
+    '<td style="color:#16a34a;">'+fmt(td)+'</td>' +
+    '<td style="color:#ef4444;">'+fmt(tc)+'</td>' +
+    '<td style="color:'+netColor+';">'+(net>=0?'+':'-')+fmt(Math.abs(net))+'</td>' +
+  '</tr>';
+  // Closing balance
+  html += '<tr style="background:#fef3c7;font-weight:900;">' +
+    '<td>—</td>' +
+    '<td>'+ (res.period && res.period.endDate || '—') +'</td>' +
+    '<td colspan="3" style="color:#92400e;"><i class="fas fa-flag-checkered"></i> الرصيد الختامي</td>' +
+    '<td style="color:#16a34a;">'+(closing>0?fmt(closing):'')+'</td>' +
+    '<td style="color:#ef4444;">'+(closing<0?fmt(Math.abs(closing)):'')+'</td>' +
+    '<td style="font-weight:900;color:'+closingColor+';font-size:14px;">'+fmt(Math.abs(closing))+'</td>' +
+  '</tr>';
+
+  tbody.innerHTML = html;
+}
+
+function erpExportGLLedger() {
+  if (!_glLedgerData || !_glLedgerData.success) return showToast('اعرض التقرير أولاً', 'error');
+  var d = _glLedgerData;
+  var acc = d.account || {};
+  var period = (d.period && d.period.startDate || '—') + ' → ' + (d.period && d.period.endDate || '—');
+  var wsData = [
+    ['دفتر الأستاذ — تقرير حساب'],
+    ['الحساب: ' + (acc.code||'') + ' — ' + (acc.nameAr||'')],
+    ['الفترة: ' + period],
+    [],
+    ['#','التاريخ','رقم القيد','النوع','البيان','مدين','دائن','الرصيد']
+  ];
+  var opening = Number(d.opening||0);
+  wsData.push(['', d.period && d.period.startDate || '', '', 'افتتاحي', 'الرصيد الافتتاحي',
+    opening>0?opening:0, opening<0?Math.abs(opening):0, opening]);
+  (d.ledger||[]).forEach(function(r, i) {
+    var dt = '';
+    try { dt = new Date(r.journalDate).toLocaleDateString('en-GB'); } catch(e) {}
+    wsData.push([i+1, dt, r.journalNumber||'', r.referenceType||'', r.entryDesc||r.journalDesc||'',
+      r.debit||0, r.credit||0, r.balance]);
+  });
+  var td = d.totals && d.totals.debit || 0;
+  var tc = d.totals && d.totals.credit || 0;
+  var closing = Number(d.closing||0);
+  wsData.push([]);
+  wsData.push(['','','','','الإجمالي', td, tc, td - tc]);
+  wsData.push(['','','','','الرصيد الختامي','','', closing]);
+  var wb = XLSX.utils.book_new();
+  var ws = XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols'] = [{wch:5},{wch:12},{wch:14},{wch:12},{wch:35},{wch:12},{wch:12},{wch:14}];
+  XLSX.utils.book_append_sheet(wb, ws, 'دفتر الأستاذ');
+  var fname = 'دفتر_أستاذ_' + (acc.code||'') + '_' + new Date().toISOString().split('T')[0] + '.xlsx';
+  XLSX.writeFile(wb, fname);
+}
+
+function erpPrintGLLedger() {
+  if (!_glLedgerData || !_glLedgerData.success) return showToast('اعرض التقرير أولاً', 'error');
+  var d = _glLedgerData;
+  var acc = d.account || {};
+  var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var period = (d.period && d.period.startDate || '—') + ' → ' + (d.period && d.period.endDate || '—');
+  var opening = Number(d.opening||0), closing = Number(d.closing||0);
+  var td = Number(d.totals && d.totals.debit || 0), tc = Number(d.totals && d.totals.credit || 0);
+  var rowsHtml = '<tr style="background:#eff6ff;font-weight:700;"><td>—</td><td>'+(d.period && d.period.startDate || '—')+'</td><td colspan="3">الرصيد الافتتاحي</td>' +
+    '<td>'+(opening>0?fmt(opening):'')+'</td><td>'+(opening<0?fmt(Math.abs(opening)):'')+'</td><td>'+fmt(Math.abs(opening))+'</td></tr>';
+  (d.ledger||[]).forEach(function(r, i) {
+    var dt = '';
+    try { dt = new Date(r.journalDate).toLocaleDateString('en-GB'); } catch(e) {}
+    rowsHtml += '<tr>' +
+      '<td>'+(i+1)+'</td><td>'+dt+'</td><td>'+(r.journalNumber||'')+'</td>' +
+      '<td>'+(r.referenceType||'')+'</td><td>'+(r.entryDesc||r.journalDesc||'')+'</td>' +
+      '<td>'+(r.debit?fmt(r.debit):'')+'</td><td>'+(r.credit?fmt(r.credit):'')+'</td>' +
+      '<td style="font-weight:700;">'+fmt(r.balance)+'</td>' +
+    '</tr>';
+  });
+  rowsHtml += '<tr style="background:#f0fdf4;font-weight:800;"><td colspan="5" style="text-align:left;">الإجمالي ('+(d.totals?d.totals.count:0)+' قيد)</td>' +
+    '<td>'+fmt(td)+'</td><td>'+fmt(tc)+'</td><td>'+fmt(td-tc)+'</td></tr>';
+  rowsHtml += '<tr style="background:#fef3c7;font-weight:900;"><td>—</td><td>'+(d.period && d.period.endDate || '—')+'</td><td colspan="3">الرصيد الختامي</td>' +
+    '<td>'+(closing>0?fmt(closing):'')+'</td><td>'+(closing<0?fmt(Math.abs(closing)):'')+'</td><td>'+fmt(Math.abs(closing))+'</td></tr>';
+
+  var w = window.open('', '_blank', 'width=900,height=700');
+  w.document.write('<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>دفتر الأستاذ — '+(acc.nameAr||'')+'</title>' +
+    '<style>body{font-family:Arial,sans-serif;direction:rtl;padding:20px;font-size:12px;color:#1e293b;}' +
+    'h2{text-align:center;margin-bottom:4px;}h4{text-align:center;color:#64748b;margin:0 0 14px;font-weight:normal;}' +
+    '.info{display:flex;justify-content:space-between;margin:12px 0;font-size:12px;background:#f8fafc;padding:10px 14px;border-radius:6px;border:1px solid #e2e8f0;}' +
+    'table{width:100%;border-collapse:collapse;margin:10px 0;}th,td{border:1px solid #ccc;padding:6px 8px;text-align:right;font-size:11px;}' +
+    'th{background:#0f172a;color:#fff;}' +
+    '.summary{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:10px 0;}' +
+    '.summary div{padding:8px;border:1px solid #e2e8f0;border-radius:6px;text-align:center;background:#f8fafc;}' +
+    '.summary b{display:block;font-size:14px;margin-top:2px;}' +
+    '@media print{body{padding:8px;}button{display:none;}}' +
+    '</style></head><body>' +
+    '<h2>دفتر الأستاذ — تقرير حساب</h2>' +
+    '<h4>'+(acc.code||'')+' — '+(acc.nameAr||'')+'</h4>' +
+    '<div class="info"><div><b>الحساب:</b> '+(acc.code||'')+' — '+(acc.nameAr||'')+'</div>' +
+    '<div><b>النوع:</b> '+(acc.type||'')+'</div>' +
+    '<div><b>الفترة:</b> '+period+'</div></div>' +
+    '<div class="summary">' +
+      '<div>افتتاحي<b>'+fmt(Math.abs(opening))+'</b></div>' +
+      '<div>إجمالي مدين<b>'+fmt(td)+'</b></div>' +
+      '<div>إجمالي دائن<b>'+fmt(tc)+'</b></div>' +
+      '<div>صافي الحركة<b>'+fmt(td-tc)+'</b></div>' +
+      '<div>الختامي<b>'+fmt(Math.abs(closing))+'</b></div>' +
+    '</div>' +
+    '<table><thead><tr><th>#</th><th>التاريخ</th><th>رقم القيد</th><th>النوع</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead>' +
+    '<tbody>'+rowsHtml+'</tbody></table>' +
+    '<div style="text-align:center;margin-top:20px;"><button onclick="window.print()" style="padding:8px 20px;background:#0ea5e9;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;">طباعة</button></div>' +
+    '</body></html>');
+  w.document.close();
 }

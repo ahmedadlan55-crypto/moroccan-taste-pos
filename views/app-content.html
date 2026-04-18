@@ -74,6 +74,7 @@
           <div class="nav-item" data-erp-nav="erpSuppliers" onclick="erpNav('erpSuppliers')"><i class="fas fa-truck"></i><span>الموردين</span></div>
           <div class="nav-item" data-erp-nav="erpCustomerStatement" onclick="erpNav('erpCustomerStatement')"><i class="fas fa-file-invoice-dollar"></i><span>كشف حساب عميل</span></div>
           <div class="nav-item" data-erp-nav="erpSupplierStatement" onclick="erpNav('erpSupplierStatement')"><i class="fas fa-file-invoice"></i><span>كشف حساب مورد</span></div>
+          <div class="nav-item" data-erp-nav="erpGLLedgerReport" onclick="erpNav('erpGLLedgerReport')"><i class="fas fa-book"></i><span>دفتر الأستاذ</span></div>
           <div class="nav-item" data-erp-nav="erpARAging" onclick="erpNav('erpARAging')"><i class="fas fa-user-clock"></i><span>أعمار ذمم العملاء</span></div>
           <div class="nav-item" data-erp-nav="erpAPAging" onclick="erpNav('erpAPAging')"><i class="fas fa-truck-loading"></i><span>أعمار ذمم الموردين</span></div>
         </div>
@@ -2030,6 +2031,71 @@
     <table class="erp-table">
       <thead><tr><th>التاريخ</th><th>النوع</th><th>المرجع</th><th>الوصف</th><th style="color:#ef4444;">مدين</th><th style="color:#16a34a;">دائن</th><th>الرصيد</th></tr></thead>
       <tbody id="erpSupStmtBody"><tr><td colspan="7" class="empty-msg">اختر المورد ثم اضغط عرض</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- GL LEDGER REPORT (دفتر الأستاذ / تقرير حساب الأستاذ) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpGLLedgerReport" class="dash-section hidden">
+  <div class="section-header">
+    <h2 class="section-title"><i class="fas fa-book" style="color:#10b981;"></i> دفتر الأستاذ — تقرير حساب</h2>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-success" onclick="erpExportGLLedger()"><i class="fas fa-file-excel"></i> تصدير Excel</button>
+      <button class="btn btn-secondary" onclick="erpPrintGLLedger()"><i class="fas fa-print"></i> طباعة</button>
+    </div>
+  </div>
+
+  <div class="erp-filters" style="align-items:flex-end;">
+    <div class="filter-search" style="min-width:320px;position:relative;">
+      <i class="fas fa-sitemap"></i>
+      <input type="text" id="erpGLSearch" class="form-control-sm" placeholder="ابحث برقم الحساب أو اسمه..." oninput="erpFilterGLAccounts()" onfocus="erpFilterGLAccounts()" autocomplete="off">
+      <input type="hidden" id="erpGLAccId">
+      <input type="hidden" id="erpGLAccName">
+      <input type="hidden" id="erpGLAccCode">
+      <input type="hidden" id="erpGLAccType">
+      <div class="sd-results" id="erpGLAccResults" style="position:absolute;top:100%;right:0;left:0;z-index:50;max-height:280px;overflow-y:auto;"></div>
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;">من تاريخ</label>
+      <input type="date" id="erpGLFrom" class="form-control-sm">
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;">إلى تاريخ</label>
+      <input type="date" id="erpGLTo" class="form-control-sm">
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;">الحالة</label>
+      <select id="erpGLStatus" class="form-control-sm">
+        <option value="">المرحّلة فقط</option>
+        <option value="posted">مرحّلة</option>
+        <option value="approved">معتمدة</option>
+        <option value="draft">مسودة</option>
+        <option value="all">الكل</option>
+      </select>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="erpLoadGLLedgerReport()"><i class="fas fa-search"></i> عرض</button>
+    <button class="btn btn-light btn-sm" onclick="erpResetGLLedger()"><i class="fas fa-redo"></i></button>
+  </div>
+
+  <div id="erpGLInfo" style="margin-bottom:10px;"></div>
+  <div id="erpGLSummary" class="fin-grid" style="margin-bottom:12px;"></div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>التاريخ</th>
+          <th>رقم القيد</th>
+          <th>النوع</th>
+          <th>البيان</th>
+          <th style="color:#16a34a;">مدين</th>
+          <th style="color:#ef4444;">دائن</th>
+          <th>الرصيد</th>
+        </tr>
+      </thead>
+      <tbody id="erpGLLedgerBody"><tr><td colspan="8" class="empty-msg">اختر الحساب ثم اضغط عرض</td></tr></tbody>
     </table>
   </div>
 </div>

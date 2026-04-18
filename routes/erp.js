@@ -513,37 +513,80 @@ router.get('/gl/journals/:id/entries', async (req, res) => {
 router.get('/gl/account-ledger/:accountId', async (req, res) => {
   try {
     const accId = req.params.accountId;
-    // Get account info first
+    const { startDate, endDate, status, includeDraft } = req.query;
+
     const [accRows] = await db.query('SELECT * FROM gl_accounts WHERE id = ?', [accId]);
     const acc = accRows.length ? accRows[0] : null;
-    const accCode = acc ? acc.code : '';
+    if (!acc) return res.json({ success: false, ledger: [], error: 'الحساب غير موجود' });
+    const accCode = acc.code || '';
+    const accType = acc.type || '';
 
-    // Query gl_entries joined with gl_journals — match by account_id OR account_code
-    const [rows] = await db.query(
+    // Status filter: by default include posted + approved (active accounting entries)
+    const statusClause = (status && status !== 'all')
+      ? 'AND j.status = ?'
+      : (includeDraft === '1' ? '' : "AND j.status IN ('posted','approved')");
+    const statusParams = (status && status !== 'all') ? [status] : [];
+
+    // 1) Opening balance — sum of all entries strictly BEFORE startDate
+    let opening = 0;
+    if (startDate) {
+      const [openRows] = await db.query(
+        `SELECT COALESCE(SUM(e.debit),0) AS d, COALESCE(SUM(e.credit),0) AS c
+         FROM gl_entries e
+         JOIN gl_journals j ON e.journal_id = j.id
+         WHERE (e.account_id = ? OR (e.account_code = ? AND e.account_code != ''))
+           AND j.journal_date < ? ${statusClause}`,
+        [accId, accCode, startDate, ...statusParams]
+      );
+      opening = Number(openRows[0].d || 0) - Number(openRows[0].c || 0);
+    }
+
+    // 2) Entries within the date range
+    let sql =
       `SELECT e.id, e.journal_id, e.account_id, e.account_code, e.debit, e.credit, e.description,
-              j.journal_number, j.journal_date, j.description AS journal_desc, j.status, j.reference_type, j.created_by
+              j.journal_number, j.journal_date, j.description AS journal_desc, j.status,
+              j.reference_type, j.reference_id, j.created_by, j.created_at
        FROM gl_entries e
        JOIN gl_journals j ON e.journal_id = j.id
        WHERE (e.account_id = ? OR (e.account_code = ? AND e.account_code != ''))
-       ORDER BY j.journal_date ASC, j.created_at ASC`,
-      [accId, accCode]
-    );
+         ${statusClause}`;
+    const params = [accId, accCode, ...statusParams];
+    if (startDate) { sql += ' AND j.journal_date >= ?'; params.push(startDate); }
+    if (endDate)   { sql += ' AND j.journal_date <= ?'; params.push(endDate); }
+    sql += ' ORDER BY j.journal_date ASC, j.created_at ASC, e.id ASC';
 
-    let runningBal = 0;
+    const [rows] = await db.query(sql, params);
+
+    let runningBal = opening;
+    let totalDebit = 0, totalCredit = 0;
     const ledger = rows.map(r => {
       const d = Number(r.debit) || 0;
       const c = Number(r.credit) || 0;
       runningBal += (d - c);
+      totalDebit += d; totalCredit += c;
       return {
         id: r.id, journalId: r.journal_id, journalNumber: r.journal_number,
         journalDate: r.journal_date, journalDesc: r.journal_desc || '',
         entryDesc: r.description || '', referenceType: r.reference_type || '',
+        referenceId: r.reference_id || '',
         status: r.status, createdBy: r.created_by || '',
         debit: d, credit: c, balance: runningBal
       };
     });
 
-    res.json({ success: true, accountName: acc ? acc.name_ar : '', accountCode: accCode, ledger });
+    res.json({
+      success: true,
+      account: {
+        id: acc.id, code: accCode, nameAr: acc.name_ar, nameEn: acc.name_en || '',
+        type: accType, level: acc.level || 0, parentId: acc.parent_id || ''
+      },
+      accountName: acc.name_ar, accountCode: accCode,
+      period: { startDate: startDate || null, endDate: endDate || null },
+      opening,
+      totals: { debit: totalDebit, credit: totalCredit, net: totalDebit - totalCredit, count: ledger.length },
+      closing: runningBal,
+      ledger
+    });
   } catch (e) { res.json({ success: false, ledger: [], error: e.message }); }
 });
 

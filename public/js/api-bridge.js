@@ -221,7 +221,7 @@
     setup2FA:            { method: 'POST', url: '/auth/2fa/setup' },
     verify2FA:           { method: 'POST', url: '/auth/2fa/verify' },
     disable2FA:          { method: 'POST', url: '/auth/2fa/disable' },
-    getAccountLedger:    { method: 'GET',  url: (id) => '/erp/gl/account-ledger/' + id },
+    getAccountLedger:    { method: 'GET',  url: (id,f) => '/erp/gl/account-ledger/' + id, query: (id,f) => f || {} },
     // HR Module — New endpoints (Shifts, Exceptions, Overtime, Dashboard v2)
     getHrShifts:         { method: 'GET',  url: '/hr/shifts' },
     saveHrShift:         { method: 'POST', url: '/hr/shifts' },

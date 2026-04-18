@@ -5496,7 +5496,12 @@ function hrRenderEmployees(list) {
       '<td>' + (e.jobTitle||'—') + '</td>' +
       '<td>' + (e.departmentName||'—') + '</td>' +
       '<td>' + (e.branchName||'—') + '</td>' +
-      '<td style="font-weight:700;color:#1e40af;">' + (Number(e.basicSalary)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</td>' +
+      '<td style="font-weight:700;color:#1e40af;">' +
+        '<div title="أساسي: ' + (Number(e.basicSalary)||0).toFixed(2) + '&#10;بدلات: ' + (Number(e.totalAllowances)||0).toFixed(2) + '">' +
+          (Number(e.grossSalary != null ? e.grossSalary : e.basicSalary)||0).toLocaleString('en',{minimumFractionDigits:2}) +
+        '</div>' +
+        (Number(e.totalAllowances) > 0 ? '<div style="font-size:10px;color:#94a3b8;font-weight:600;">أساسي ' + Number(e.basicSalary||0).toFixed(0) + ' + بدلات ' + Number(e.totalAllowances).toFixed(0) + '</div>' : '') +
+      '</td>' +
       '<td><span class="badge badge-' + (statusColors[e.status]||'blue') + '">' + (statusLabels[e.status]||e.status) + '</span></td>' +
       '<td><div style="display:flex;gap:4px;">' +
         '<button style="' + btnS + 'color:#3b82f6;" onclick="hrViewEmployee(\'' + e.id + '\')" title="عرض الملف"><i class="fas fa-eye"></i></button>' +

@@ -1459,6 +1459,8 @@ async function runMigrations() {
   // Users: email + warehouse link
   await addColumnIfMissing('users', 'email', "VARCHAR(200)");
   await addColumnIfMissing('users', 'default_warehouse_id', "VARCHAR(50)");
+  await addColumnIfMissing('users', 'phone', "VARCHAR(30)");
+  await addColumnIfMissing('users', 'full_name', "VARCHAR(200)");
 
   // ═══════════════════════════════════════
   // WAREHOUSE-BASED INVENTORY RESTRUCTURE

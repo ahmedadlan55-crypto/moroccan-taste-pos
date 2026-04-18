@@ -158,6 +158,8 @@
     getCostCenters:      { method: 'GET',  url: '/erp/cost-centers' },
     getWarehousesList:   { method: 'GET',  url: '/erp/warehouses-list' },
     getBranchesFull:     { method: 'GET',  url: '/erp/branches-full' },
+    getBrands:           { method: 'GET',  url: '/erp/brands' },
+    getWfPositions:      { method: 'GET',  url: '/workflow/positions' },
     getDiscountsV2:      { method: 'GET',  url: '/settings/discounts-v2' },
     saveDiscountV2:      { method: 'POST', url: '/settings/discounts-v2' },
     deleteDiscountV2:    { method: 'DELETE', url: (id) => '/settings/discounts-v2/' + id },

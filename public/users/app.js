@@ -84,16 +84,47 @@ window.loadUsers = function() {
   }).getUsers();
 };
 
+// Load branches, brands, positions for the dropdowns (cached after first call)
+var _muBranches = null, _muBrands = null, _muPositions = null;
+function _muLoadDropdowns(cb) {
+  function done() {
+    if (_muBranches && _muBrands && _muPositions) {
+      var brOpt = '<option value="">— بدون —</option>' + _muBranches.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+(b.code?' ['+b.code+']':'')+'</option>';}).join('');
+      var bdOpt = '<option value="">— الكل —</option>' + _muBrands.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('');
+      var poOpt = '<option value="">— بدون —</option>' + _muPositions.map(function(p){return '<option value="'+p.id+'">'+(p.name||'')+'</option>';}).join('');
+      q('#muBranch').innerHTML = brOpt;
+      q('#muBrand').innerHTML = bdOpt;
+      q('#muPosition').innerHTML = poOpt;
+      if (cb) cb();
+    }
+  }
+  api.withSuccessHandler(function(list){ _muBranches = list || []; done(); }).getBranchesFull();
+  api.withSuccessHandler(function(list){ _muBrands = list || []; done(); }).getBrands();
+  api.withSuccessHandler(function(list){ _muPositions = list || []; done(); }).getWfPositions();
+}
+
+window.muTogglePass = function() {
+  var el = q('#muPass'), eye = q('#muPassEye');
+  if (el.type === 'password') { el.type = 'text'; eye.className = 'fas fa-eye-slash'; }
+  else { el.type = 'password'; eye.className = 'fas fa-eye'; }
+};
+
 window.openUserForm = function() {
   _editingUsername = '';
   q('#userModalTitle').innerHTML = '<i class="fas fa-user-plus"></i> إضافة موظف جديد';
   q('#muDisplayName').value = '';
   q('#muName').value = '';
   q('#muName').disabled = false;
+  q('#muNameHint').style.display = 'none';
+  q('#muEmail').value = '';
+  q('#muPhone').value = '';
   q('#muPass').value = '';
   q('#muPass').placeholder = '******';
   q('#muRole').value = 'cashier';
   q('#muIsDeveloper').checked = false;
+  _muLoadDropdowns(function() {
+    q('#muBranch').value = ''; q('#muBrand').value = ''; q('#muPosition').value = '';
+  });
   openGlassModal('#modalUserForm');
 };
 
@@ -104,11 +135,20 @@ window.editUser = function(username) {
   q('#userModalTitle').innerHTML = '<i class="fas fa-user-edit"></i> تعديل المستخدم — ' + (u.displayName || u.username);
   q('#muDisplayName').value = u.displayName || '';
   q('#muName').value = u.username;
-  q('#muName').disabled = true; // username is the primary key — cannot change after creation
+  // Allow renaming for everyone except the sacred 'admin' user
+  q('#muName').disabled = (username === 'admin');
+  q('#muNameHint').style.display = (username === 'admin') ? 'none' : 'block';
+  q('#muEmail').value = u.email || '';
+  q('#muPhone').value = u.phone || '';
   q('#muPass').value = '';
   q('#muPass').placeholder = 'اتركها فارغة لعدم التغيير';
   q('#muRole').value = u.role || 'cashier';
   q('#muIsDeveloper').checked = !!u.isDeveloper;
+  _muLoadDropdowns(function() {
+    q('#muBranch').value = u.branchId || '';
+    q('#muBrand').value = u.brandId || '';
+    q('#muPosition').value = u.positionId || '';
+  });
   openGlassModal('#modalUserForm');
 };
 
@@ -118,6 +158,11 @@ window.saveUser = function() {
   var password    = q('#muPass').value || '';
   var role        = q('#muRole').value || 'cashier';
   var isDeveloper = q('#muIsDeveloper').checked;
+  var email       = (q('#muEmail').value || '').trim();
+  var phone       = (q('#muPhone').value || '').trim();
+  var brandId     = q('#muBrand').value || '';
+  var branchId    = q('#muBranch').value || '';
+  var positionId  = q('#muPosition').value || '';
 
   if (!username) return showToast('الرقم الوظيفي مطلوب', true);
   if (!_editingUsername && !password) return showToast('كلمة المرور مطلوبة عند إنشاء مستخدم', true);
@@ -139,11 +184,23 @@ window.saveUser = function() {
   };
 
   if (_editingUsername) {
-    var payload = { displayName: displayName, role: role, isDeveloper: isDeveloper };
+    var payload = {
+      displayName: displayName, role: role, isDeveloper: isDeveloper,
+      email: email, phone: phone,
+      brandId: brandId || null, branchId: branchId || null, positionId: positionId || null
+    };
     if (password) payload.password = password;
+    // Rename username if changed and allowed
+    if (username && username !== _editingUsername && _editingUsername !== 'admin') {
+      payload.newUsername = username;
+    }
     api.withFailureHandler(fail).withSuccessHandler(done).updateUser(_editingUsername, payload);
   } else {
-    var data = { username: username, password: password, role: role, displayName: displayName, isDeveloper: isDeveloper };
+    var data = {
+      username: username, password: password, role: role, displayName: displayName,
+      isDeveloper: isDeveloper, email: email, phone: phone,
+      brandId: brandId || null, branchId: branchId || null, positionId: positionId || null
+    };
     api.withFailureHandler(fail).withSuccessHandler(done).addUser(data);
   }
 };

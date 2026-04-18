@@ -219,9 +219,19 @@ async function setUserMeta(meta) {
 // GET /api/auth/users — list users with display name + developer flag
 router.get('/users', async (req, res) => {
   try {
+    // Detect optional columns (phone/full_name were added via migration)
+    let hasPhone = true, hasFullName = true;
+    try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'phone'"); hasPhone = !!c.length; } catch(e) { hasPhone = false; }
+    try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'full_name'"); hasFullName = !!c.length; } catch(e) { hasFullName = false; }
+
+    const extraCols = [
+      hasPhone    ? 'u.phone'     : "'' AS phone",
+      hasFullName ? 'u.full_name' : "'' AS full_name"
+    ];
     const [users] = await db.query(`
       SELECT u.id, u.username, u.role, u.active, u.created_at, u.email,
         u.brand_id, u.branch_id, u.default_warehouse_id, u.position_id,
+        ${extraCols.join(', ')},
         COALESCE(br.name,'') AS branchName, COALESCE(bd.name,'') AS brandName,
         COALESCE(p.name,'') AS positionName
       FROM users u
@@ -239,9 +249,10 @@ router.get('/users', async (req, res) => {
         role: u.role,
         active: !!u.active,
         createdAt: u.created_at,
-        displayName: m.name || fallbackName,
+        displayName: u.full_name || m.name || fallbackName,
         isDeveloper: !!m.isDeveloper || u.role === 'admin',
         email: u.email || '',
+        phone: u.phone || '',
         brandId: u.brand_id || '', brandName: u.brandName || '',
         branchId: u.branch_id || '', branchName: u.branchName || '',
         warehouseId: u.default_warehouse_id || '',
@@ -254,7 +265,7 @@ router.get('/users', async (req, res) => {
 // POST /api/auth/users — add new user (username = employee number)
 router.post('/users', async (req, res) => {
   try {
-    const { username, password, role, displayName, isDeveloper, email, brandId, branchId } = req.body;
+    const { username, password, role, displayName, isDeveloper, email, brandId, branchId, phone } = req.body;
     if (!username || !password) return res.json({ success: false, error: 'اسم المستخدم وكلمة المرور مطلوبان' });
     // Password validation
     if (password.length < 6) return res.json({ success: false, error: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
@@ -277,6 +288,9 @@ router.post('/users', async (req, res) => {
       'INSERT INTO users (username, password, role, active, email, brand_id, branch_id, default_warehouse_id, position_id) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)',
       [username, hash, dbRole, email||'', brandId||null, branchId||null, defaultWarehouseId, positionId]
     );
+    // Apply optional extras (phone + full_name) — tolerate old schemas without the columns
+    if (phone) { try { await db.query('UPDATE users SET phone = ? WHERE username = ?', [phone, username]); } catch(e) {} }
+    if (displayName) { try { await db.query('UPDATE users SET full_name = ? WHERE username = ?', [displayName, username]); } catch(e) {} }
 
     if (displayName || isDeveloper) {
       const meta = await getUserMeta();
@@ -302,11 +316,57 @@ router.post('/users', async (req, res) => {
   }
 });
 
-// PUT /api/auth/users/:username — update display name, password, role
+// PUT /api/auth/users/:username — update display name, password, role, and everything else
 router.put('/users/:username', async (req, res) => {
   try {
-    const { username } = req.params;
-    const { displayName, password, role, isDeveloper, email, brandId, branchId, positionId } = req.body;
+    let { username } = req.params;
+    const {
+      displayName, password, role, isDeveloper,
+      email, brandId, branchId, positionId,
+      newUsername, phone
+    } = req.body;
+
+    // Username rename (primary-key change) — cascade to related tables
+    if (newUsername && newUsername !== username) {
+      const safe = String(newUsername).trim();
+      if (!/^[A-Za-z0-9_.@-]{2,50}$/.test(safe)) {
+        return res.json({ success: false, error: 'اسم المستخدم الجديد غير صالح (أحرف/أرقام/نقطة/شرطة فقط، 2-50)' });
+      }
+      if (username === 'admin') return res.json({ success: false, error: 'لا يمكن تغيير اسم المستخدم admin' });
+      const [taken] = await db.query('SELECT 1 FROM users WHERE username = ? LIMIT 1', [safe]);
+      if (taken.length) return res.json({ success: false, error: 'اسم المستخدم الجديد مستخدم بالفعل' });
+
+      // Apply rename atomically-ish: users table first, then cascade snapshots.
+      // Foreign-key columns that reference username as text (denormalized) are
+      // updated best-effort — wrap each in try/catch to tolerate older schemas.
+      await db.query('UPDATE users SET username = ? WHERE username = ?', [safe, username]);
+      const cascadeUpdates = [
+        ['hr_employees', 'linked_username'],
+        ['transactions', 'created_by'],
+        ['transactions', 'current_assignee'],
+        ['transactions', 'recipient_username'],
+        ['transaction_steps_log', 'action_by'],
+        ['txn_recipients', 'recipient_username'],
+        ['custody_users', 'linked_username'],
+        ['hr_advances', 'approved_by'],
+        ['hr_advances', 'rejected_by'],
+        ['hr_leave_requests', 'branch_approved_by'],
+        ['hr_leave_requests', 'hr_approved_by'],
+        ['hr_leave_requests', 'rejected_by'],
+        ['audit_log', 'username']
+      ];
+      for (const [tbl, col] of cascadeUpdates) {
+        try { await db.query('UPDATE ' + tbl + ' SET ' + col + ' = ? WHERE ' + col + ' = ?', [safe, username]); } catch(e) {}
+      }
+
+      // Migrate the user's meta entry under the new key
+      try {
+        const meta = await getUserMeta();
+        if (meta[username]) { meta[safe] = meta[username]; delete meta[username]; await setUserMeta(meta); }
+      } catch(e) {}
+
+      username = safe;  // use the new name for the remaining updates below
+    }
 
     if (positionId !== undefined) {
       await db.query('UPDATE users SET position_id = ? WHERE username = ?', [positionId || null, username]);
@@ -314,6 +374,12 @@ router.put('/users/:username', async (req, res) => {
 
     if (email !== undefined) {
       await db.query('UPDATE users SET email = ? WHERE username = ?', [email || '', username]);
+    }
+    if (phone !== undefined) {
+      try { await db.query('UPDATE users SET phone = ? WHERE username = ?', [phone || '', username]); } catch(e) {}
+    }
+    if (displayName !== undefined) {
+      try { await db.query('UPDATE users SET full_name = ? WHERE username = ?', [displayName || '', username]); } catch(e) {}
     }
 
     // Update brand + branch + auto-resolve warehouse

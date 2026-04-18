@@ -419,6 +419,26 @@ router.delete('/departments/:id', async (req, res) => {
 router.get('/employees', async (req, res) => {
   try {
     const { branch_id, brand_id, department_id, status, search } = req.query;
+    // Detect optional allowance columns (schema may not have all of them)
+    async function colExists(col) {
+      try { const [c] = await db.query("SHOW COLUMNS FROM hr_employees LIKE '" + col + "'"); return !!c.length; }
+      catch(e) { return false; }
+    }
+    const hasFood  = await colExists('food_allowance');
+    const hasComm  = await colExists('communication_allowance');
+    const hasEdu   = await colExists('education_allowance');
+    const hasNat   = await colExists('nature_allowance');
+
+    const allowanceCols = [
+      'COALESCE(e.housing_allowance,0) AS housingAllowance',
+      'COALESCE(e.transport_allowance,0) AS transportAllowance',
+      'COALESCE(e.other_allowance,0) AS otherAllowance'
+    ];
+    if (hasFood) allowanceCols.push('COALESCE(e.food_allowance,0) AS foodAllowance');
+    if (hasComm) allowanceCols.push('COALESCE(e.communication_allowance,0) AS communicationAllowance');
+    if (hasEdu)  allowanceCols.push('COALESCE(e.education_allowance,0) AS educationAllowance');
+    if (hasNat)  allowanceCols.push('COALESCE(e.nature_allowance,0) AS natureAllowance');
+
     let sql = `
       SELECT e.id, e.employee_number AS employeeNumber,
         CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS fullName,
@@ -426,7 +446,9 @@ router.get('/employees', async (req, res) => {
         e.phone, e.email, e.job_title AS jobTitle,
         COALESCE(d.name, '') AS departmentName,
         COALESCE(b.name, '') AS branchName,
-        e.status, e.hire_date AS hireDate, e.basic_salary AS basicSalary,
+        e.status, e.hire_date AS hireDate,
+        COALESCE(e.basic_salary,0) AS basicSalary,
+        ${allowanceCols.join(', ')},
         e.ignore_late_month AS ignoreLateMonth,
         e.department_id AS departmentId, e.branch_id AS branchId, e.brand_id AS brandId,
         e.employment_type AS employmentType, e.national_id AS nationalId,
@@ -450,7 +472,29 @@ router.get('/employees', async (req, res) => {
 
     sql += ' ORDER BY e.created_at DESC';
     const [rows] = await db.query(sql, params);
-    res.json(rows);
+    // Compute gross salary = basic + all allowances
+    res.json(rows.map(r => {
+      const basic  = Number(r.basicSalary) || 0;
+      const housing = Number(r.housingAllowance) || 0;
+      const transport = Number(r.transportAllowance) || 0;
+      const food = Number(r.foodAllowance) || 0;
+      const comm = Number(r.communicationAllowance) || 0;
+      const edu  = Number(r.educationAllowance) || 0;
+      const nat  = Number(r.natureAllowance) || 0;
+      const other = Number(r.otherAllowance) || 0;
+      const totalAllowances = housing + transport + food + comm + edu + nat + other;
+      return Object.assign({}, r, {
+        housingAllowance: housing,
+        transportAllowance: transport,
+        foodAllowance: food,
+        communicationAllowance: comm,
+        educationAllowance: edu,
+        natureAllowance: nat,
+        otherAllowance: other,
+        totalAllowances: totalAllowances,
+        grossSalary: basic + totalAllowances
+      });
+    }));
   } catch (e) {
     res.json({ success: false, error: e.message });
   }

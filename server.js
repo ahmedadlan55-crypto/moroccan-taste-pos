@@ -1518,6 +1518,8 @@ async function runMigrations() {
   // Role snapshot — which job-title is currently responsible (independent of person)
   await addColumnIfMissing('transactions', 'current_role_id', "VARCHAR(50)");
   await addColumnIfMissing('transactions', 'current_role_name', "VARCHAR(200) DEFAULT ''");
+  // Initiator's position — used to look up the per-position workflow chain
+  await addColumnIfMissing('transactions', 'initiator_position_id', "VARCHAR(50)");
 
   // Workflow step routing flags — role-based employee resolution rules
   await addColumnIfMissing('workflow_definitions', 'require_same_branch', "BOOLEAN DEFAULT TRUE");
@@ -1526,6 +1528,32 @@ async function runMigrations() {
   await addColumnIfMissing('workflow_definitions', 'can_approve', "BOOLEAN DEFAULT TRUE");
   await addColumnIfMissing('workflow_definitions', 'can_reject', "BOOLEAN DEFAULT TRUE");
   await addColumnIfMissing('workflow_definitions', 'can_edit', "BOOLEAN DEFAULT FALSE");
+
+  // Position-indexed workflow path — the primary routing source.
+  // Each initiator position has its OWN isolated chain (no mixing between
+  // positions). When an employee creates a transaction, we look up their
+  // position_id here and use that chain; the transaction type is just a
+  // label (does not affect routing).
+  await createTableIfMissing('position_workflow_steps', `
+    CREATE TABLE position_workflow_steps (
+      id VARCHAR(60) PRIMARY KEY,
+      initiator_position_id VARCHAR(50) NOT NULL,
+      step_order INT NOT NULL,
+      step_name VARCHAR(200) DEFAULT '',
+      required_position_id VARCHAR(50),
+      is_final_step BOOLEAN DEFAULT FALSE,
+      can_approve BOOLEAN DEFAULT TRUE,
+      can_reject BOOLEAN DEFAULT TRUE,
+      can_return_to_previous BOOLEAN DEFAULT TRUE,
+      can_edit BOOLEAN DEFAULT FALSE,
+      can_edit_amount BOOLEAN DEFAULT FALSE,
+      require_same_branch BOOLEAN DEFAULT TRUE,
+      require_same_department BOOLEAN DEFAULT FALSE,
+      assignment_strategy VARCHAR(20) DEFAULT 'least_busy',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_initiator (initiator_position_id, step_order)
+    ) ENGINE=InnoDB
+  `);
 
   // Daily counter per (branch, dept, type, date) — strict serial generation
   await createTableIfMissing('txn_daily_counter', `

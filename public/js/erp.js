@@ -107,7 +107,7 @@ function erpNav(sectionId) {
       case 'erpGLLedgerReport': erpInitGLLedgerReport(); break;
       case 'erpWfPositions': wfLoadPositions(); break;
       case 'erpWfTypes': wfLoadTypes(); break;
-      case 'erpWfDefs': wfInitDefs(); break;
+      case 'erpWfDefs': wfLoadPositionSummary(); break;
       case 'erpWfInbox': wfLoadInbox(); break;
       case 'erpWfDashboard': wfInitDashboard(); break;
       case 'erpWfIncoming': wfLoadIncoming(); break;
@@ -7006,4 +7006,116 @@ function wfBulkSave() {
       wfLoadDefs();
     } else showToast(r.error || 'فشل الحفظ', true);
   }).saveWfDefsBulk(payload);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PER-POSITION WORKFLOW PATHS — كل منصب له مسار خاص به
+// ═════════════════════════════════════════════════════════════════════════════
+
+var _wfPositions = [];
+var _wfCurrentInitiatorId = '';   // which position's path is being edited
+
+function wfLoadPositionSummary() {
+  var grid = document.getElementById('wfPositionSummaryGrid');
+  if (!grid) return;
+  grid.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;grid-column:1/-1;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+  window._apiBridge.withSuccessHandler(function(list) {
+    _wfPositions = list || [];
+    if (!list.length) {
+      grid.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;background:#f8fafc;border-radius:14px;border:1px dashed #e2e8f0;">لا توجد مناصب مُعرَّفة. اذهب إلى «المناصب» وأضف المناصب أولاً.</div>';
+      return;
+    }
+    grid.innerHTML = list.map(function(p) {
+      var hasPath = p.stepCount > 0;
+      var levelColor = ['#94a3b8','#0ea5e9','#10b981','#f59e0b','#ef4444','#8b5cf6','#1e40af','#111827'][Math.min(Number(p.level)||0, 7)];
+      return '<div style="background:#fff;border:2px solid ' + (hasPath ? '#a78bfa' : '#e2e8f0') + ';border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px;transition:transform .15s,box-shadow .15s;cursor:pointer;" onclick="wfOpenPositionPathBuilder(\'' + p.id + '\')" onmouseover="this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 6px 16px rgba(139,92,246,.15)\';" onmouseout="this.style.transform=\'\';this.style.boxShadow=\'\';">' +
+        '<div style="display:flex;align-items:center;gap:10px;">' +
+          '<div style="width:44px;height:44px;border-radius:12px;background:' + levelColor + ';color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;"><i class="fas fa-id-badge"></i></div>' +
+          '<div style="flex:1;">' +
+            '<div style="font-size:15px;font-weight:800;color:#0f172a;">' + p.name + '</div>' +
+            '<div style="font-size:11px;color:#64748b;">Level ' + (p.level||'?') + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="border-top:1px dashed #e5e7eb;padding-top:10px;display:flex;justify-content:space-between;align-items:center;">' +
+          (hasPath
+            ? '<div><div style="font-size:11px;color:#64748b;">عدد الخطوات</div><div style="font-size:22px;font-weight:900;color:#8b5cf6;">' + p.stepCount + ' <small style="font-size:11px;color:#94a3b8;">خطوة</small></div></div>'
+            : '<div><div style="font-size:12px;color:#94a3b8;font-style:italic;">لا يوجد مسار بعد</div></div>'
+          ) +
+          '<button class="btn btn-sm" style="background:#ede9fe;color:#6d28d9;" onclick="event.stopPropagation();wfOpenPositionPathBuilder(\'' + p.id + '\')"><i class="fas fa-edit"></i> ' + (hasPath?'تعديل':'إنشاء') + '</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }).getPositionWorkflowsSummary();
+}
+
+function wfOpenPositionPathBuilder(initiatorPosId) {
+  _wfCurrentInitiatorId = initiatorPosId;
+  Promise.all([
+    new Promise(function(r){ window._apiBridge.withSuccessHandler(r).getWfPositions(); }),
+    new Promise(function(r){ window._apiBridge.withSuccessHandler(r).getPositionWorkflow(initiatorPosId); })
+  ]).then(function(results) {
+    _wfBulkPositions = (results[0] || []).slice().sort(function(a,b){return (a.level||0)-(b.level||0);});
+    var existing = results[1] || [];
+    var initiator = _wfBulkPositions.find(function(p){return p.id === initiatorPosId;}) || {};
+
+    document.getElementById('erpModalTitle').textContent = 'مسار المنصب: ' + (initiator.name || '');
+    document.getElementById('erpModalBody').innerHTML =
+      '<div style="padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,#ede9fe,#ddd6fe);border:1px solid #a78bfa;margin-bottom:14px;font-size:12.5px;color:#5b21b6;line-height:1.7;">' +
+        '<i class="fas fa-user-tie" style="font-size:16px;"></i> <b>المنصب البادئ:</b> <span style="font-weight:900;font-size:14px;color:#4c1d95;">' + (initiator.name||'') + ' (Level ' + (initiator.level||'?') + ')</span><br>' +
+        'هذا المسار <b>خاص بهذا المنصب فقط</b> ولا يتداخل مع مسارات المناصب الأخرى. عندما يبدأ موظف يحمل هذا المنصب أي معاملة، يمر عبر هذه الخطوات بالتسلسل.' +
+      '</div>' +
+      '<input type="hidden" id="wfPpInitiatorId" value="' + initiatorPosId + '">' +
+      '<div style="font-size:13px;font-weight:800;color:#0f172a;margin-bottom:8px;"><i class="fas fa-route" style="color:#8b5cf6;"></i> تسلسل خطوات الاعتماد:</div>' +
+      '<div id="wfBulkStepsWrap"></div>' +
+      '<div style="display:flex;gap:8px;margin-top:12px;">' +
+        '<button type="button" class="btn btn-primary btn-sm" onclick="wfBulkAddRow()"><i class="fas fa-plus"></i> إضافة خطوة</button>' +
+        '<button type="button" class="btn btn-light btn-sm" onclick="wfBulkClear()"><i class="fas fa-trash"></i> مسح الكل</button>' +
+      '</div>';
+
+    document.getElementById('erpModalSaveBtn').textContent = 'حفظ مسار ' + (initiator.name||'');
+    document.getElementById('erpModalSaveBtn').onclick = wfSavePositionPath;
+    document.getElementById('erpModal').classList.remove('hidden');
+
+    // Prefill from existing chain
+    _wfBulkSteps = existing.map(function(w) {
+      return {
+        stepOrder: w.stepOrder,
+        stepName: w.stepName || '',
+        positionId: w.positionId || '',
+        canApprove: w.canApprove !== false,
+        canReject:  w.canReject  !== false,
+        canReturn:  w.canReturn  !== false,
+        canEditAmount: !!w.canEditAmount,
+        canEdit: !!w.canEdit,
+        isFinal: !!w.isFinal,
+        requireSameBranch: w.requireSameBranch !== false,
+        requireSameDepartment: !!w.requireSameDepartment,
+        assignmentStrategy: w.assignmentStrategy || 'least_busy'
+      };
+    });
+    if (!_wfBulkSteps.length) wfBulkAddRow();
+    else _wfRenderBulkSteps();
+  });
+}
+
+function wfSavePositionPath() {
+  _wfBulkCapture();
+  var initiatorPositionId = document.getElementById('wfPpInitiatorId').value;
+  if (!initiatorPositionId) return showToast('تعذر تحديد المنصب البادئ', true);
+  if (!_wfBulkSteps.length) return showToast('أضف خطوة واحدة على الأقل', true);
+  for (var i = 0; i < _wfBulkSteps.length; i++) {
+    if (!_wfBulkSteps[i].positionId) return showToast('الخطوة ' + (i+1) + ': اختر المنصب المسؤول', true);
+  }
+  if (!_wfBulkSteps.some(function(s){return s.isFinal;})) {
+    if (!confirm('لا توجد خطوة نهائية — سيتم اعتبار آخر خطوة نهائية تلقائياً. متابعة؟')) return;
+  }
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r.success) {
+      showToast('تم حفظ مسار المنصب — ' + r.count + ' خطوة');
+      erpCloseModal();
+      wfLoadPositionSummary();
+    } else showToast(r.error || 'فشل الحفظ', true);
+  }).savePositionWorkflow({ initiatorPositionId: initiatorPositionId, steps: _wfBulkSteps });
 }

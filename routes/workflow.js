@@ -47,6 +47,48 @@ async function nextDailySerial(branchCode, deptCode, typeCode) {
 //  pick least-busy, fall back gracefully when no match)
 // ═══════════════════════════════════════
 
+// Look up a step in position_workflow_steps (by initiator + step order).
+// Used by create/approve/return. Returns null if no chain is defined for this
+// initiator (fall back to legacy workflow_definitions per type).
+async function getPositionStep(initiatorPositionId, stepOrder) {
+  if (!initiatorPositionId) return null;
+  const [rows] = await db.query(
+    `SELECT * FROM position_workflow_steps WHERE initiator_position_id = ? AND step_order = ?`,
+    [initiatorPositionId, stepOrder]);
+  return rows.length ? rows[0] : null;
+}
+
+// Find the FIRST step in the initiator's chain
+async function getInitiatorFirstStep(initiatorPositionId) {
+  if (!initiatorPositionId) return null;
+  const [rows] = await db.query(
+    `SELECT * FROM position_workflow_steps WHERE initiator_position_id = ? ORDER BY step_order ASC LIMIT 1`,
+    [initiatorPositionId]);
+  return rows.length ? rows[0] : null;
+}
+
+// Normalize a position_workflow_steps row to the same shape used by the
+// existing resolver/action logic (which expects workflow_definitions columns).
+function _normalizePositionStep(r) {
+  if (!r) return null;
+  return {
+    id: r.id,
+    step_order: r.step_order,
+    step_name: r.step_name,
+    required_position_id: r.required_position_id,
+    is_final_step: r.is_final_step,
+    can_approve: r.can_approve,
+    can_reject: r.can_reject,
+    can_return_to_previous: r.can_return_to_previous,
+    can_edit: r.can_edit,
+    can_edit_amount: r.can_edit_amount,
+    require_same_branch: r.require_same_branch,
+    require_same_department: r.require_same_department,
+    assignment_strategy: r.assignment_strategy,
+    _source: 'position'
+  };
+}
+
 async function resolveAssigneeForStep(step, branchId, deptId) {
   if (!step || !step.required_position_id) return { username: '', employeeId: '', roleName: '' };
   const roleId = step.required_position_id;
@@ -425,6 +467,121 @@ router.post('/workflow-definitions/bulk', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
+// ═══════════════════════════════════════
+// PER-POSITION WORKFLOW (new primary model)
+// Each initiator position has its own isolated chain.
+// ═══════════════════════════════════════
+
+// Return the chain for a given initiator position
+router.get('/position-workflow/:initiatorPositionId', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT s.*, p.name AS required_position_name
+       FROM position_workflow_steps s
+       LEFT JOIN positions p ON s.required_position_id = p.id
+       WHERE s.initiator_position_id = ?
+       ORDER BY s.step_order`, [req.params.initiatorPositionId]);
+    res.json(rows.map(w => ({
+      id: w.id,
+      initiatorPositionId: w.initiator_position_id,
+      stepOrder: w.step_order,
+      stepName: w.step_name || '',
+      positionId: w.required_position_id,
+      positionName: w.required_position_name || '',
+      isFinal: !!w.is_final_step,
+      canApprove: w.can_approve === null || w.can_approve === undefined ? true : !!w.can_approve,
+      canReject:  w.can_reject  === null || w.can_reject  === undefined ? true : !!w.can_reject,
+      canReturn:  w.can_return_to_previous === null || w.can_return_to_previous === undefined ? true : !!w.can_return_to_previous,
+      canEdit:    !!w.can_edit,
+      canEditAmount: !!w.can_edit_amount,
+      requireSameBranch: w.require_same_branch === null || w.require_same_branch === undefined ? true : !!w.require_same_branch,
+      requireSameDepartment: !!w.require_same_department,
+      assignmentStrategy: w.assignment_strategy || 'least_busy'
+    })));
+  } catch(e) { res.json([]); }
+});
+
+// List all initiator positions with step counts (summary)
+router.get('/position-workflows-summary', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT p.id, p.name, p.level,
+              (SELECT COUNT(*) FROM position_workflow_steps s WHERE s.initiator_position_id = p.id) AS step_count
+       FROM positions p
+       WHERE p.is_active = 1 OR p.is_active IS NULL
+       ORDER BY p.level ASC, p.name`);
+    res.json(rows.map(r => ({
+      id: r.id, name: r.name, level: Number(r.level) || 0,
+      stepCount: Number(r.step_count) || 0
+    })));
+  } catch(e) { res.json([]); }
+});
+
+// Replace the entire chain for a given initiator position (atomic)
+router.post('/position-workflow/bulk', async (req, res) => {
+  try {
+    const { initiatorPositionId, steps } = req.body;
+    if (!initiatorPositionId) return res.json({ success: false, error: 'المنصب البادئ مطلوب' });
+    if (!Array.isArray(steps) || !steps.length) return res.json({ success: false, error: 'يجب إضافة خطوة واحدة على الأقل' });
+
+    // Preload role names for auto-generated step names
+    const roleIds = [...new Set(steps.map(s => s.positionId).filter(Boolean))];
+    const roleMap = {};
+    if (roleIds.length) {
+      const placeholders = roleIds.map(() => '?').join(',');
+      const [rn] = await db.query(`SELECT id, name FROM positions WHERE id IN (${placeholders})`, roleIds);
+      rn.forEach(r => { roleMap[r.id] = r.name; });
+    }
+
+    // Auto-mark last step final if none set
+    const hasFinal = steps.some(s => s.isFinal === true || s.isFinal === 1);
+    if (!hasFinal) steps[steps.length - 1].isFinal = true;
+
+    // Replace
+    await db.query('DELETE FROM position_workflow_steps WHERE initiator_position_id = ?', [initiatorPositionId]);
+
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i];
+      const stepOrder = Number(s.stepOrder) || (i + 1);
+      let stepName = (s.stepName || '').trim();
+      if (!stepName) {
+        const roleName = s.positionId ? (roleMap[s.positionId] || 'خطوة') : 'خطوة';
+        stepName = roleName + ' — خطوة ' + stepOrder;
+      }
+      const rb = s.requireSameBranch !== false ? 1 : 0;
+      const rd = s.requireSameDepartment ? 1 : 0;
+      const strat = ['least_busy','first','round_robin'].includes(s.assignmentStrategy) ? s.assignmentStrategy : 'least_busy';
+      const cApprove = s.canApprove !== false ? 1 : 0;
+      const cReject  = s.canReject  !== false ? 1 : 0;
+      const cReturn  = s.canReturn !== false ? 1 : 0;
+      const cEdit    = s.canEdit ? 1 : 0;
+      const cEditAmt = s.canEditAmount ? 1 : 0;
+      const isFinal  = (s.isFinal === true || s.isFinal === 1) ? 1 : 0;
+
+      const id = 'PWF-' + Date.now() + '-' + i + '-' + Math.random().toString(36).substr(2, 4);
+      await db.query(
+        `INSERT INTO position_workflow_steps (
+           id, initiator_position_id, step_order, step_name, required_position_id,
+           is_final_step, can_approve, can_reject, can_return_to_previous, can_edit, can_edit_amount,
+           require_same_branch, require_same_department, assignment_strategy
+         ) VALUES (?,?,?,?,?, ?,?,?,?,?,?, ?,?,?)`,
+        [id, initiatorPositionId, stepOrder, stepName, s.positionId || null,
+         isFinal, cApprove, cReject, cReturn, cEdit, cEditAmt,
+         rb, rd, strat]);
+    }
+
+    res.json({ success: true, count: steps.length, initiatorPositionId });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// Delete all steps for an initiator position
+router.delete('/position-workflow/:initiatorPositionId', async (req, res) => {
+  try {
+    await db.query('DELETE FROM position_workflow_steps WHERE initiator_position_id = ?', [req.params.initiatorPositionId]);
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
 // Return the current default chain — inferred from whichever transaction type
 // has workflow_definitions (they should all be identical when using the default
 // builder). Falls back to an empty array if nothing defined yet.
@@ -616,14 +773,26 @@ router.post('/transactions', async (req, res) => {
     const txnNumber = [branchCode, deptCode, typeCode, ymd, String(serial).padStart(4,'0')].join('-');
     const id = 'TXN-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
 
-    // Find first workflow step with full routing flags
-    const [firstStepRows] = await db.query(
-      `SELECT id, required_position_id, require_same_branch, require_same_department, assignment_strategy
-       FROM workflow_definitions
-       WHERE transaction_type_id = ?
-       ORDER BY step_order LIMIT 1`,
-      [transactionTypeId]);
-    const firstStep = firstStepRows.length ? firstStepRows[0] : null;
+    // Resolve the workflow chain:
+    //   1. PRIMARY — initiator's position has its own chain (position_workflow_steps)
+    //   2. FALLBACK — legacy per-type chain (workflow_definitions)
+    let firstStep = null;
+    let stepSource = 'type';
+    const initiatorPositionId = sender.positionId || '';
+    if (initiatorPositionId) {
+      const posFirst = await getInitiatorFirstStep(initiatorPositionId);
+      if (posFirst) { firstStep = _normalizePositionStep(posFirst); stepSource = 'position'; }
+    }
+    if (!firstStep) {
+      const [firstStepRows] = await db.query(
+        `SELECT id, required_position_id, require_same_branch, require_same_department,
+                assignment_strategy, is_final_step, step_order
+         FROM workflow_definitions
+         WHERE transaction_type_id = ?
+         ORDER BY step_order LIMIT 1`,
+        [transactionTypeId]);
+      firstStep = firstStepRows.length ? firstStepRows[0] : null;
+    }
     const currentStepId = firstStep ? firstStep.id : null;
     const currentRoleId = firstStep ? (firstStep.required_position_id || null) : null;
 
@@ -658,15 +827,15 @@ router.post('/transactions', async (req, res) => {
          title, description, amount, importance, status,
          current_step_id, current_role_id, current_role_name, current_assignee, attachment,
          account_id, account_code, account_name, cost_center_id, cost_center_name,
-         recipient_username, sender_name, sender_position)
-       VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?)`,
+         recipient_username, sender_name, sender_position, initiator_position_id)
+       VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?)`,
       [id, txnNumber, transactionTypeId, typeCode, serial,
        username||'', finalBranchId||null, branchCode, branchName, brandId||null,
        finalDeptId||null, deptCode, deptName,
        title, description||'', amount||0, validImportance, initialStatus,
        currentStepId, currentRoleId, currentRoleName, currentAssignee, attachment||null,
        accountId||null, accountCode||'', accountName||'', costCenterId||null, costCenterName||'',
-       recipientUsername||'', senderName||'', senderPosition||'']
+       recipientUsername||'', senderName||'', senderPosition||'', initiatorPositionId||null]
     );
 
     // Log creation
@@ -938,9 +1107,18 @@ router.post('/transactions/:id/action', async (req, res) => {
       return res.json({ success: false, error: 'ليس لديك صلاحية ' + action });
     }
 
-    // Get current workflow step (if defined)
-    const [currentStep] = await db.query('SELECT * FROM workflow_definitions WHERE id = ?', [txn.current_step_id || 'NONE']);
-    const step = currentStep.length ? currentStep[0] : null;
+    // Get current workflow step — check position chain first, fall back to legacy type chain
+    let step = null;
+    if (txn.current_step_id) {
+      // Check position_workflow_steps first
+      const [posRow] = await db.query('SELECT * FROM position_workflow_steps WHERE id = ?', [txn.current_step_id]);
+      if (posRow.length) {
+        step = _normalizePositionStep(posRow[0]);
+      } else {
+        const [legacy] = await db.query('SELECT * FROM workflow_definitions WHERE id = ?', [txn.current_step_id]);
+        if (legacy.length) step = legacy[0];
+      }
+    }
 
     // Step-level permission: the step definition may restrict specific actions
     if (step) {
@@ -972,18 +1150,31 @@ router.post('/transactions/:id/action', async (req, res) => {
       }
     };
 
+    // Helper: look up the next/prev step respecting the chain source
+    //   - if current step came from position_workflow_steps → use that table
+    //   - else fall back to workflow_definitions (legacy per-type)
+    const getSiblingStep = async (order) => {
+      if (step && step._source === 'position' && txn.initiator_position_id) {
+        const [r] = await db.query(
+          'SELECT * FROM position_workflow_steps WHERE initiator_position_id = ? AND step_order = ?',
+          [txn.initiator_position_id, order]);
+        return r.length ? _normalizePositionStep(r[0]) : null;
+      }
+      const [r] = await db.query(
+        `SELECT id, required_position_id, is_final_step, require_same_branch,
+                require_same_department, assignment_strategy, step_order
+         FROM workflow_definitions
+         WHERE transaction_type_id = ? AND step_order = ?`,
+        [txn.transaction_type_id, order]);
+      return r.length ? r[0] : null;
+    };
+
     if (action === 'approve') {
       if (step) {
-        const nextOrder = step.step_order + 1;
-        const [nextStep] = await db.query(
-          `SELECT id, required_position_id, is_final_step, require_same_branch,
-                  require_same_department, assignment_strategy
-           FROM workflow_definitions
-           WHERE transaction_type_id = ? AND step_order = ?`,
-          [txn.transaction_type_id, nextOrder]);
-        if (nextStep.length) {
+        const nextStep = await getSiblingStep(step.step_order + 1);
+        if (nextStep) {
           newStatus = 'in_progress';
-          await applyStep(nextStep[0]);
+          await applyStep(nextStep);
         } else if (step.is_final_step) {
           newStatus = 'closed'; newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
         } else {
@@ -998,15 +1189,9 @@ router.post('/transactions/:id/action', async (req, res) => {
       newRoleId = null; newRoleName = '';
     } else if (action === 'return') {
       if (step) {
-        const prevOrder = step.step_order - 1;
-        const [prevStep] = await db.query(
-          `SELECT id, required_position_id, require_same_branch,
-                  require_same_department, assignment_strategy
-           FROM workflow_definitions
-           WHERE transaction_type_id = ? AND step_order = ?`,
-          [txn.transaction_type_id, prevOrder]);
-        if (prevStep.length) {
-          await applyStep(prevStep[0]);
+        const prevStep = await getSiblingStep(step.step_order - 1);
+        if (prevStep) {
+          await applyStep(prevStep);
           if (!newAssignee) newAssignee = txn.created_by;
         } else {
           newAssignee = txn.created_by;

@@ -347,18 +347,31 @@ router.delete('/workflow-definitions/:id', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-// Replace the ENTIRE step sequence for a transaction type in one call.
-// Body: { transactionTypeId, steps: [{ stepOrder?, stepName?, positionId,
-//   canApprove, canReject, canReturn, canEditAmount, canEdit, isFinal,
-//   requireSameBranch, requireSameDepartment, assignmentStrategy }, ...] }
-// Step name may be empty → auto-generated from the role name.
+// Replace the ENTIRE step sequence — applies to ALL transaction types by
+// default (role-based default chain), OR to a specific type if transactionTypeId
+// is provided. This matches the spec: a single administrative chain
+// (محاسب → مدير مالي → مدير تنفيذي → …) governs every transaction regardless
+// of type.
+// Body: { transactionTypeId? (omit = all types),
+//         steps: [{ stepOrder?, stepName?, positionId, canApprove, canReject,
+//           canReturn, canEditAmount, canEdit, isFinal,
+//           requireSameBranch, requireSameDepartment, assignmentStrategy }, ...] }
 router.post('/workflow-definitions/bulk', async (req, res) => {
   try {
-    const { transactionTypeId, steps } = req.body;
-    if (!transactionTypeId) return res.json({ success: false, error: 'نوع المعاملة مطلوب' });
+    const { transactionTypeId, steps, applyToAllTypes } = req.body;
     if (!Array.isArray(steps) || !steps.length) return res.json({ success: false, error: 'يجب إضافة خطوة واحدة على الأقل' });
 
-    // Preload role names so we can auto-generate step names
+    // Determine target types: one specific, or all
+    let targetTypes;
+    if (transactionTypeId && !applyToAllTypes) {
+      targetTypes = [transactionTypeId];
+    } else {
+      const [all] = await db.query('SELECT id FROM transaction_types WHERE is_active = 1 OR is_active IS NULL');
+      targetTypes = all.map(r => r.id);
+      if (!targetTypes.length) return res.json({ success: false, error: 'لا توجد أنواع معاملات معرّفة' });
+    }
+
+    // Preload role names for auto-generated step names
     const roleIds = [...new Set(steps.map(s => s.positionId).filter(Boolean))];
     const roleMap = {};
     if (roleIds.length) {
@@ -367,51 +380,76 @@ router.post('/workflow-definitions/bulk', async (req, res) => {
       rn.forEach(r => { roleMap[r.id] = r.name; });
     }
 
-    // Validate: at least one final step
+    // Auto-mark last step final if none set
     const hasFinal = steps.some(s => s.isFinal === true || s.isFinal === 1);
-    if (!hasFinal) {
-      // Auto-mark the last step as final if none is set
-      steps[steps.length - 1].isFinal = true;
-    }
+    if (!hasFinal) steps[steps.length - 1].isFinal = true;
 
-    // Replace: wipe existing then insert fresh
-    await db.query('DELETE FROM workflow_definitions WHERE transaction_type_id = ?', [transactionTypeId]);
+    let totalInserted = 0;
+    for (const typeId of targetTypes) {
+      // Replace: wipe then insert fresh for this type
+      await db.query('DELETE FROM workflow_definitions WHERE transaction_type_id = ?', [typeId]);
 
-    const insertedIds = [];
-    for (let i = 0; i < steps.length; i++) {
-      const s = steps[i];
-      const stepOrder = Number(s.stepOrder) || (i + 1);
-      // Auto-generate step name from role when empty
-      let stepName = (s.stepName || '').trim();
-      if (!stepName) {
-        const roleName = s.positionId ? (roleMap[s.positionId] || 'خطوة') : 'خطوة';
-        stepName = roleName + ' — خطوة ' + stepOrder;
+      for (let i = 0; i < steps.length; i++) {
+        const s = steps[i];
+        const stepOrder = Number(s.stepOrder) || (i + 1);
+        let stepName = (s.stepName || '').trim();
+        if (!stepName) {
+          const roleName = s.positionId ? (roleMap[s.positionId] || 'خطوة') : 'خطوة';
+          stepName = roleName + ' — خطوة ' + stepOrder;
+        }
+        const rb = s.requireSameBranch !== false ? 1 : 0;
+        const rd = s.requireSameDepartment ? 1 : 0;
+        const strat = ['least_busy','first','round_robin'].includes(s.assignmentStrategy) ? s.assignmentStrategy : 'least_busy';
+        const cApprove = s.canApprove !== false ? 1 : 0;
+        const cReject  = s.canReject  !== false ? 1 : 0;
+        const cEdit    = s.canEdit ? 1 : 0;
+        const cEditAmt = s.canEditAmount ? 1 : 0;
+        const cReturn  = s.canReturn !== false ? 1 : 0;
+        const isFinal  = (s.isFinal === true || s.isFinal === 1) ? 1 : 0;
+
+        const id = 'WD-' + Date.now() + '-' + i + '-' + Math.random().toString(36).substr(2, 4);
+        await db.query(
+          `INSERT INTO workflow_definitions (
+             id, transaction_type_id, step_order, step_name, required_position_id,
+             can_edit_amount, can_return_to_previous, is_final_step,
+             require_same_branch, require_same_department, assignment_strategy,
+             can_approve, can_reject, can_edit
+           ) VALUES (?,?,?,?,?, ?,?,?, ?,?,?, ?,?,?)`,
+          [id, typeId, stepOrder, stepName, s.positionId || null,
+           cEditAmt, cReturn, isFinal, rb, rd, strat, cApprove, cReject, cEdit]);
+        totalInserted++;
       }
-      const rb = s.requireSameBranch !== false ? 1 : 0;
-      const rd = s.requireSameDepartment ? 1 : 0;
-      const strat = ['least_busy','first','round_robin'].includes(s.assignmentStrategy) ? s.assignmentStrategy : 'least_busy';
-      const cApprove = s.canApprove !== false ? 1 : 0;
-      const cReject  = s.canReject  !== false ? 1 : 0;
-      const cEdit    = s.canEdit ? 1 : 0;
-      const cEditAmt = s.canEditAmount ? 1 : 0;
-      const cReturn  = s.canReturn !== false ? 1 : 0;
-      const isFinal  = (s.isFinal === true || s.isFinal === 1) ? 1 : 0;
-
-      const id = 'WD-' + Date.now() + '-' + i + '-' + Math.random().toString(36).substr(2, 4);
-      await db.query(
-        `INSERT INTO workflow_definitions (
-           id, transaction_type_id, step_order, step_name, required_position_id,
-           can_edit_amount, can_return_to_previous, is_final_step,
-           require_same_branch, require_same_department, assignment_strategy,
-           can_approve, can_reject, can_edit
-         ) VALUES (?,?,?,?,?, ?,?,?, ?,?,?, ?,?,?)`,
-        [id, transactionTypeId, stepOrder, stepName, s.positionId || null,
-         cEditAmt, cReturn, isFinal, rb, rd, strat, cApprove, cReject, cEdit]);
-      insertedIds.push(id);
     }
 
-    res.json({ success: true, count: insertedIds.length, ids: insertedIds });
+    res.json({ success: true, count: totalInserted, typesAffected: targetTypes.length, steps: steps.length });
   } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// Return the current default chain — inferred from whichever transaction type
+// has workflow_definitions (they should all be identical when using the default
+// builder). Falls back to an empty array if nothing defined yet.
+router.get('/default-workflow', async (req, res) => {
+  try {
+    const [anyType] = await db.query(
+      `SELECT wd.*, p.name AS position_name
+       FROM workflow_definitions wd
+       LEFT JOIN positions p ON wd.required_position_id = p.id
+       WHERE wd.transaction_type_id IN (SELECT id FROM transaction_types ORDER BY id LIMIT 1)
+       ORDER BY wd.step_order`);
+    res.json(anyType.map(w => ({
+      stepOrder: w.step_order, stepName: w.step_name,
+      positionId: w.required_position_id, positionName: w.position_name || '',
+      canEditAmount: !!w.can_edit_amount,
+      canReturn: !!w.can_return_to_previous,
+      canApprove: w.can_approve === null || w.can_approve === undefined ? true : !!w.can_approve,
+      canReject:  w.can_reject  === null || w.can_reject  === undefined ? true : !!w.can_reject,
+      canEdit:    !!w.can_edit,
+      isFinal: !!w.is_final_step,
+      requireSameBranch: w.require_same_branch === null || w.require_same_branch === undefined ? true : !!w.require_same_branch,
+      requireSameDepartment: !!w.require_same_department,
+      assignmentStrategy: w.assignment_strategy || 'least_busy'
+    })));
+  } catch(e) { res.json([]); }
 });
 
 // ═══════════════════════════════════════

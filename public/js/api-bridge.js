@@ -303,6 +303,7 @@
     getWfDefs:           { method: 'GET',  url: (typeId) => '/workflow/workflow-definitions/' + typeId },
     getWfDefsByRole:     { method: 'GET',  url: (posId)  => '/workflow/workflow-definitions-by-role/' + posId },
     saveWfDefsBulk:      { method: 'POST', url: '/workflow/workflow-definitions/bulk' },
+    getDefaultWorkflow:  { method: 'GET',  url: '/workflow/default-workflow' },
     saveWfDef:           { method: 'POST', url: '/workflow/workflow-definitions' },
     deleteWfDef:         { method: 'DELETE', url: (id) => '/workflow/workflow-definitions/' + id },
     getWfTransactions:   { method: 'GET',  url: '/workflow/transactions', query: (f) => f },

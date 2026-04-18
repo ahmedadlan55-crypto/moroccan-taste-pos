@@ -6772,53 +6772,59 @@ var _wfBulkPositions = [];
 var _wfBulkTypes = [];
 
 function wfOpenBulkBuilder() {
-  // Resolve the target transaction type (from whichever mode is active)
-  var typeId = '';
-  if (_wfDefsMode === 'type') typeId = document.getElementById('wfDefsTypeFilter').value;
-  // Load types, positions, and existing steps (if type already picked)
+  // Default mode: applies to ALL transaction types (position-based default chain)
+  // Load types, positions, and the current default chain
   Promise.all([
     new Promise(function(r){ window._apiBridge.withSuccessHandler(r).getWfTypes(); }),
-    new Promise(function(r){ window._apiBridge.withSuccessHandler(r).getWfPositions(); })
+    new Promise(function(r){ window._apiBridge.withSuccessHandler(r).getWfPositions(); }),
+    new Promise(function(r){ window._apiBridge.withSuccessHandler(r).getDefaultWorkflow(); })
   ]).then(function(results) {
     _wfBulkTypes = results[0] || [];
     _wfBulkPositions = (results[1] || []).slice().sort(function(a,b){return (a.level||0)-(b.level||0);});
+    var defaultChain = results[2] || [];
 
+    // Advanced picker options (optional — hidden by default)
     var tOpts = _wfBulkTypes.map(function(t) {
-      return '<option value="' + t.id + '"' + (typeId===t.id?' selected':'') + '>' + t.name + ' (' + (t.code||'') + ')</option>';
+      return '<option value="' + t.id + '">' + t.name + ' (' + (t.code||'') + ')</option>';
     }).join('');
 
-    document.getElementById('erpModalTitle').textContent = 'تعريف المسار الكامل للمعاملة';
+    document.getElementById('erpModalTitle').textContent = 'تعريف المسار الإداري — حسب المنصب';
     document.getElementById('erpModalBody').innerHTML =
-      '<div style="padding:12px;border-radius:12px;background:#eff6ff;border:1px solid #bfdbfe;margin-bottom:14px;font-size:12.5px;color:#1e40af;line-height:1.6;">' +
-        '<i class="fas fa-info-circle"></i> <b>كيف يعمل هذا المحرر:</b> أضف كل الخطوات من البداية إلى النهاية في جدول واحد، ثم اضغط «حفظ المسار». سيتم استبدال كل الخطوات الحالية لهذا النوع بالقائمة الجديدة. <b>اسم الخطوة اختياري</b> — إن تركته فارغاً يُولَّد تلقائياً من اسم المنصب.' +
+      '<div style="padding:12px;border-radius:12px;background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #86efac;margin-bottom:14px;font-size:12.5px;color:#166534;line-height:1.7;">' +
+        '<i class="fas fa-sitemap" style="font-size:16px;color:#16a34a;"></i> <b>المسار الإداري الافتراضي:</b>' +
+        ' عرّف <b>تسلسل المناصب</b> مرة واحدة (مثلاً: محاسب → مدير مالي → مدير تنفيذي → مسؤول بنوك → محاسب إقفال → مدير تنفيذي).' +
+        ' <b>سيُطبَّق تلقائياً على جميع أنواع المعاملات</b> ('+ _wfBulkTypes.length +' نوع). لا تحتاج لتعريف مسار لكل نوع على حدة.' +
       '</div>' +
-      '<div class="form-row"><label>نوع المعاملة *</label>' +
-        '<select class="form-control" id="wfBulkType" onchange="wfBulkReload()"><option value="">— اختر النوع —</option>' + tOpts + '</select>' +
+
+      '<div style="display:flex;gap:10px;align-items:center;background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;padding:10px 14px;margin-bottom:14px;">' +
+        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700;color:#0f172a;font-size:13px;flex:1;">' +
+          '<input type="radio" name="wfBulkScope" id="wfBulkScopeAll" value="all" checked onchange="_wfBulkUpdateScope()">' +
+          '<i class="fas fa-globe" style="color:#16a34a;"></i> افتراضي لكل الأنواع ('+ _wfBulkTypes.length +' نوع)' +
+        '</label>' +
+        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#64748b;">' +
+          '<input type="radio" name="wfBulkScope" id="wfBulkScopeOne" value="one" onchange="_wfBulkUpdateScope()">' +
+          'تخصيص لنوع محدد (متقدم)' +
+        '</label>' +
       '</div>' +
-      '<div id="wfBulkStepsWrap" style="margin-top:12px;"></div>' +
+
+      '<div id="wfBulkTypePickerWrap" style="display:none;margin-bottom:12px;">' +
+        '<label style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:4px;display:block;">نوع المعاملة</label>' +
+        '<select class="form-control" id="wfBulkType"><option value="">— اختر النوع —</option>' + tOpts + '</select>' +
+      '</div>' +
+
+      '<div style="font-size:13px;font-weight:800;color:#0f172a;margin-bottom:8px;"><i class="fas fa-id-badge" style="color:#8b5cf6;"></i> تسلسل المناصب:</div>' +
+      '<div id="wfBulkStepsWrap"></div>' +
       '<div style="display:flex;gap:8px;margin-top:12px;">' +
-        '<button type="button" class="btn btn-primary btn-sm" onclick="wfBulkAddRow()"><i class="fas fa-plus"></i> خطوة جديدة</button>' +
+        '<button type="button" class="btn btn-primary btn-sm" onclick="wfBulkAddRow()"><i class="fas fa-plus"></i> إضافة منصب</button>' +
         '<button type="button" class="btn btn-light btn-sm" onclick="wfBulkClear()"><i class="fas fa-trash"></i> مسح الكل</button>' +
       '</div>';
 
-    document.getElementById('erpModalSaveBtn').textContent = 'حفظ المسار';
+    document.getElementById('erpModalSaveBtn').textContent = 'حفظ وتطبيق على الكل';
     document.getElementById('erpModalSaveBtn').onclick = wfBulkSave;
-
     document.getElementById('erpModal').classList.remove('hidden');
 
-    if (typeId) wfBulkReload();
-    else {
-      _wfBulkSteps = [];
-      _wfRenderBulkSteps();
-    }
-  });
-}
-
-function wfBulkReload() {
-  var typeId = document.getElementById('wfBulkType').value;
-  if (!typeId) { _wfBulkSteps = []; _wfRenderBulkSteps(); return; }
-  window._apiBridge.withSuccessHandler(function(list) {
-    _wfBulkSteps = (list||[]).map(function(w) {
+    // Prefill with existing default chain if any
+    _wfBulkSteps = defaultChain.map(function(w) {
       return {
         stepOrder: w.stepOrder,
         stepName: w.stepName || '',
@@ -6836,7 +6842,25 @@ function wfBulkReload() {
     });
     if (!_wfBulkSteps.length) wfBulkAddRow();
     else _wfRenderBulkSteps();
-  }).getWfDefs(typeId);
+  });
+}
+
+function _wfBulkUpdateScope() {
+  var isOne = document.getElementById('wfBulkScopeOne').checked;
+  var wrap = document.getElementById('wfBulkTypePickerWrap');
+  var saveBtn = document.getElementById('erpModalSaveBtn');
+  if (isOne) {
+    wrap.style.display = 'block';
+    saveBtn.textContent = 'حفظ للنوع المحدد';
+  } else {
+    wrap.style.display = 'none';
+    saveBtn.textContent = 'حفظ وتطبيق على الكل';
+  }
+}
+
+function wfBulkReload() {
+  // Legacy entry kept for the per-type flow if ever called elsewhere
+  _wfRenderBulkSteps();
 }
 
 function wfBulkAddRow() {
@@ -6944,9 +6968,13 @@ function _wfRenderBulkSteps() {
 
 function wfBulkSave() {
   _wfBulkCapture();
-  var typeId = document.getElementById('wfBulkType').value;
-  if (!typeId) return showToast('اختر نوع المعاملة', true);
-  if (!_wfBulkSteps.length) return showToast('أضف خطوة واحدة على الأقل', true);
+  var scopeOne = document.getElementById('wfBulkScopeOne') && document.getElementById('wfBulkScopeOne').checked;
+  var typeId = '';
+  if (scopeOne) {
+    typeId = (document.getElementById('wfBulkType') || {}).value || '';
+    if (!typeId) return showToast('اختر نوع المعاملة المخصصة', true);
+  }
+  if (!_wfBulkSteps.length) return showToast('أضف منصباً واحداً على الأقل', true);
   // Validate: every step must have a role
   for (var i = 0; i < _wfBulkSteps.length; i++) {
     if (!_wfBulkSteps[i].positionId) return showToast('الخطوة ' + (i+1) + ': اختر المنصب الإداري', true);
@@ -6954,17 +6982,28 @@ function wfBulkSave() {
   if (!_wfBulkSteps.some(function(s){return s.isFinal;})) {
     if (!confirm('لا توجد خطوة نهائية — سيتم اعتبار آخر خطوة نهائية تلقائياً. متابعة؟')) return;
   }
+
+  var payload = { steps: _wfBulkSteps };
+  if (scopeOne) payload.transactionTypeId = typeId;
+  else payload.applyToAllTypes = true;
+
+  // Confirm destructive global replace
+  if (!scopeOne) {
+    if (!confirm('سيتم تطبيق هذا المسار على جميع أنواع المعاملات واستبدال أي مسارات حالية. متابعة؟')) return;
+  }
+
   loader(true);
   window._apiBridge.withSuccessHandler(function(r) {
     loader(false);
     if (r.success) {
-      showToast('تم حفظ المسار — ' + r.count + ' خطوة');
+      var msg = 'تم حفظ المسار — ' + r.count + ' خطوة';
+      if (r.typesAffected > 1) msg += ' × ' + r.typesAffected + ' نوع';
+      showToast(msg);
       erpCloseModal();
-      // If we're in type mode, select this type and reload; if in role mode, just reload
-      if (_wfDefsMode === 'type') {
+      if (scopeOne && _wfDefsMode === 'type') {
         document.getElementById('wfDefsTypeFilter').value = typeId;
       }
       wfLoadDefs();
     } else showToast(r.error || 'فشل الحفظ', true);
-  }).saveWfDefsBulk({ transactionTypeId: typeId, steps: _wfBulkSteps });
+  }).saveWfDefsBulk(payload);
 }

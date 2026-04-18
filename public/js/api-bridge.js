@@ -301,6 +301,7 @@
     getWfTypes:          { method: 'GET',  url: '/workflow/transaction-types' },
     saveWfType:          { method: 'POST', url: '/workflow/transaction-types' },
     getWfDefs:           { method: 'GET',  url: (typeId) => '/workflow/workflow-definitions/' + typeId },
+    getWfDefsByRole:     { method: 'GET',  url: (posId)  => '/workflow/workflow-definitions-by-role/' + posId },
     saveWfDef:           { method: 'POST', url: '/workflow/workflow-definitions' },
     deleteWfDef:         { method: 'DELETE', url: (id) => '/workflow/workflow-definitions/' + id },
     getWfTransactions:   { method: 'GET',  url: '/workflow/transactions', query: (f) => f },

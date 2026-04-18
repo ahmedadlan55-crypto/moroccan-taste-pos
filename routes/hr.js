@@ -1137,10 +1137,15 @@ router.get('/leave-requests', async (req, res) => {
   try {
     const { status, employee_id, branch_id } = req.query;
     let sql = `
-      SELECT lr.*, CONCAT(e.first_name, ' ', e.last_name) as employee_name, e.employee_number,
-        lt.name as leave_type_name
+      SELECT lr.*,
+             CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS employee_name,
+             e.employee_number,
+             b.name AS branch_name,
+             lt.name AS leave_type_name,
+             lt.is_paid AS leave_type_paid
       FROM hr_leave_requests lr
       LEFT JOIN hr_employees e ON lr.employee_id = e.id
+      LEFT JOIN branches b ON e.branch_id = b.id
       LEFT JOIN hr_leave_types lt ON lr.leave_type_id = lt.id
       WHERE 1=1
     `;
@@ -1152,7 +1157,30 @@ router.get('/leave-requests', async (req, res) => {
 
     sql += ' ORDER BY lr.created_at DESC';
     const [rows] = await db.query(sql, params);
-    res.json(rows);
+    res.json(rows.map(r => ({
+      id: r.id,
+      employeeId: r.employee_id,
+      employeeName: (r.employee_name || '').trim(),
+      employeeNumber: r.employee_number || '',
+      branchName: r.branch_name || '',
+      leaveTypeId: r.leave_type_id,
+      leaveTypeName: r.leave_type_name || '',
+      leaveTypePaid: !!r.leave_type_paid,
+      startDate: r.start_date,
+      endDate: r.end_date,
+      daysCount: Number(r.days_count) || 0,
+      reason: r.reason || '',
+      status: r.status,
+      branchApprovedBy: r.branch_approved_by || '',
+      branchApprovedAt: r.branch_approved_at,
+      hrApprovedBy: r.hr_approved_by || '',
+      hrApprovedAt: r.hr_approved_at,
+      rejectedBy: r.rejected_by || '',
+      rejectedAt: r.rejected_at,
+      rejectionReason: r.rejection_reason || '',
+      createdAt: r.created_at,
+      updatedAt: r.updated_at
+    })));
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
@@ -1439,24 +1467,24 @@ router.post('/payroll-runs/:id/calculate', async (req, res) => {
       const absenceDeduction = Math.round(dailyRate * (absentDays + unpaidLeaveDays + excessLeaveDays) * 100) / 100;
       const lateDeduction = Math.round((dailyRate / 9) * (totalLateMin / 60) * 100) / 100; // 9-hour workday
 
-      // Advance deductions (with graceful fallback)
+      // Advance deductions — only 'approved' advances with remaining > 0
       let advanceDeduction = 0;
       let advances = [];
       try {
         const [rows] = await db.query(
-          "SELECT id, COALESCE(remaining, remaining_amount, 0) AS remaining, COALESCE(monthly_deduction, 0) AS monthly_deduction FROM hr_advances WHERE employee_id = ? AND status = 'approved' AND COALESCE(remaining, remaining_amount, 0) > 0",
+          "SELECT id, COALESCE(remaining, amount, 0) AS remaining, COALESCE(monthly_deduction, 0) AS monthly_deduction FROM hr_advances WHERE employee_id = ? AND status = 'approved' AND COALESCE(remaining, amount, 0) > 0",
           [emp.id]
         );
         advances = rows;
-      } catch(e) { /* old schema or missing columns — skip */ }
+      } catch(e) { /* old schema — skip */ }
       for (const adv of advances) {
-        const deduct = Math.min(Number(adv.remaining), Number(adv.monthly_deduction));
+        const deduct = Math.min(Number(adv.remaining), Number(adv.monthly_deduction) || Number(adv.remaining));
         advanceDeduction += deduct;
-        const newRemaining = Number(adv.remaining) - deduct;
+        const newRemaining = Math.max(0, Number(adv.remaining) - deduct);
         try {
           await db.query(
-            `UPDATE hr_advances SET remaining = ?, remaining_amount = ?, status = ? WHERE id = ?`,
-            [newRemaining, newRemaining, newRemaining <= 0 ? 'fully_paid' : 'approved', adv.id]
+            `UPDATE hr_advances SET remaining = ?, status = ? WHERE id = ?`,
+            [newRemaining, newRemaining <= 0 ? 'fully_paid' : 'approved', adv.id]
           );
         } catch(e) { /* ignore schema issues */ }
       }
@@ -1665,9 +1693,15 @@ router.get('/advances', async (req, res) => {
   try {
     const { employee_id, status } = req.query;
     let sql = `
-      SELECT a.*, CONCAT(e.first_name, ' ', e.last_name) as employee_name, e.employee_number
+      SELECT a.*,
+             CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS employee_name,
+             e.employee_number,
+             b.name AS branch_name,
+             d.name AS dept_name
       FROM hr_advances a
       LEFT JOIN hr_employees e ON a.employee_id = e.id
+      LEFT JOIN branches b ON e.branch_id = b.id
+      LEFT JOIN hr_departments d ON e.department_id = d.id
       WHERE 1=1
     `;
     const params = [];
@@ -1676,7 +1710,34 @@ router.get('/advances', async (req, res) => {
     sql += ' ORDER BY a.created_at DESC';
 
     const [rows] = await db.query(sql, params);
-    res.json(rows);
+    res.json(rows.map(a => {
+      const amount = Number(a.amount) || 0;
+      const remaining = Number(a.remaining != null ? a.remaining : amount);
+      const paid = Math.max(0, amount - remaining);
+      return {
+        id: a.id,
+        employeeId: a.employee_id,
+        employeeName: (a.employee_name || '').trim(),
+        employeeNumber: a.employee_number || '',
+        branchName: a.branch_name || '',
+        deptName: a.dept_name || '',
+        amount: amount,
+        remaining: remaining,
+        remainingAmount: remaining,  // alias for legacy frontend
+        paid: paid,
+        deductionMonths: Number(a.deduction_months) || 1,
+        monthlyDeduction: Number(a.monthly_deduction) || 0,
+        requestDate: a.request_date,
+        status: a.status,
+        approvedBy: a.approved_by || '',
+        approvedAt: a.approved_at,
+        rejectedBy: a.rejected_by || '',
+        rejectedAt: a.rejected_at,
+        notes: a.notes || '',
+        createdAt: a.created_at,
+        updatedAt: a.updated_at
+      };
+    }));
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
@@ -1703,9 +1764,15 @@ router.post('/advances', async (req, res) => {
 router.post('/advances/:id/approve', async (req, res) => {
   try {
     const { username } = req.body;
+    // Make sure `remaining` equals `amount` when approving if not already set
+    const [adv] = await db.query('SELECT amount, remaining FROM hr_advances WHERE id = ?', [req.params.id]);
+    if (!adv.length) return res.json({ success: false, error: 'السلفة غير موجودة' });
+    const amount = Number(adv[0].amount) || 0;
+    const currentRemaining = adv[0].remaining == null ? amount : Number(adv[0].remaining);
+    const newRemaining = currentRemaining > 0 ? currentRemaining : amount;
     await db.query(
-      `UPDATE hr_advances SET status='approved', approved_by=?, approved_at=? WHERE id=?`,
-      [username, new Date(), req.params.id]
+      `UPDATE hr_advances SET status='approved', approved_by=?, approved_at=?, remaining=? WHERE id=?`,
+      [username || '', new Date(), newRemaining, req.params.id]
     );
     res.json({ success: true, id: req.params.id });
   } catch (e) {

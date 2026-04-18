@@ -239,6 +239,33 @@ router.delete('/transaction-types/:id', async (req, res) => {
 // WORKFLOW DEFINITIONS (خطوات المعاملة)
 // ═══════════════════════════════════════
 
+// All steps where a specific position is responsible (across transaction types)
+router.get('/workflow-definitions-by-role/:positionId', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT wd.*, p.name AS position_name, tt.name AS type_name, tt.code AS type_code
+       FROM workflow_definitions wd
+       LEFT JOIN positions p ON wd.required_position_id = p.id
+       LEFT JOIN transaction_types tt ON wd.transaction_type_id = tt.id
+       WHERE wd.required_position_id = ?
+       ORDER BY tt.name, wd.step_order`, [req.params.positionId]);
+    res.json(rows.map(w => ({
+      id: w.id, stepOrder: w.step_order, stepName: w.step_name,
+      transactionTypeId: w.transaction_type_id, typeName: w.type_name || '', typeCode: w.type_code || '',
+      positionId: w.required_position_id, positionName: w.position_name || '',
+      canEditAmount: !!w.can_edit_amount,
+      canReturn: !!w.can_return_to_previous,
+      canApprove: w.can_approve === null || w.can_approve === undefined ? true : !!w.can_approve,
+      canReject:  w.can_reject  === null || w.can_reject  === undefined ? true : !!w.can_reject,
+      canEdit:    !!w.can_edit,
+      isFinal: !!w.is_final_step,
+      requireSameBranch: w.require_same_branch === null || w.require_same_branch === undefined ? true : !!w.require_same_branch,
+      requireSameDepartment: !!w.require_same_department,
+      assignmentStrategy: w.assignment_strategy || 'least_busy'
+    })));
+  } catch(e) { res.json([]); }
+});
+
 router.get('/workflow-definitions/:typeId', async (req, res) => {
   try {
     const [rows] = await db.query(

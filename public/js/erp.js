@@ -4407,25 +4407,141 @@ function wfEditType(id) {
 
 // ─── خطوات سير العمل (Workflow Definitions) ───
 var _wfDefs = [];
+var _wfDefsMode = 'role'; // 'role' | 'type'
+
+function wfDefsSetMode(mode) {
+  _wfDefsMode = mode;
+  var roleBtn = document.getElementById('wfDefsModeRole');
+  var typeBtn = document.getElementById('wfDefsModeType');
+  var roleWrap = document.getElementById('wfDefsRoleFilterWrap');
+  var typeWrap = document.getElementById('wfDefsTypeFilterWrap');
+  if (mode === 'role') {
+    roleBtn.style.background='#fff'; roleBtn.style.color='#0ea5e9'; roleBtn.style.boxShadow='0 1px 3px rgba(0,0,0,.05)';
+    typeBtn.style.background='transparent'; typeBtn.style.color='#64748b'; typeBtn.style.boxShadow='none';
+    roleWrap.style.display='flex'; typeWrap.style.display='none';
+  } else {
+    typeBtn.style.background='#fff'; typeBtn.style.color='#0ea5e9'; typeBtn.style.boxShadow='0 1px 3px rgba(0,0,0,.05)';
+    roleBtn.style.background='transparent'; roleBtn.style.color='#64748b'; roleBtn.style.boxShadow='none';
+    typeWrap.style.display='flex'; roleWrap.style.display='none';
+  }
+  wfLoadDefs();
+}
+
 function wfInitDefs() {
-  // Populate the type filter dropdown
-  var sel = document.getElementById('wfDefsTypeFilter');
-  window._apiBridge.withSuccessHandler(function(types) {
-    _wfTypes = types || [];
-    // Keep existing value
-    var curVal = sel.value;
-    sel.innerHTML = '<option value="">— اختر نوع المعاملة —</option>';
-    types.forEach(function(t) {
+  // Populate both dropdowns — roles (default) and types
+  var roleSel = document.getElementById('wfDefsRoleFilter');
+  var typeSel = document.getElementById('wfDefsTypeFilter');
+
+  Promise.all([
+    new Promise(function(r){ window._apiBridge.withSuccessHandler(r).getWfTypes(); }),
+    new Promise(function(r){ window._apiBridge.withSuccessHandler(r).getWfPositions(); })
+  ]).then(function(results) {
+    _wfTypes = results[0] || [];
+    var positions = results[1] || [];
+
+    // Fill type dropdown
+    var curType = typeSel.value;
+    typeSel.innerHTML = '<option value="">— اختر نوع المعاملة —</option>';
+    _wfTypes.forEach(function(t) {
       var opt = document.createElement('option');
-      opt.value = t.id;
-      opt.textContent = t.name + ' (' + t.code + ')';
-      sel.appendChild(opt);
+      opt.value = t.id; opt.textContent = t.name + ' (' + (t.code||'') + ')';
+      typeSel.appendChild(opt);
     });
-    if (curVal) { sel.value = curVal; wfLoadDefs(); }
-  }).getWfTypes();
+    if (curType) typeSel.value = curType;
+
+    // Fill role dropdown — sorted by level asc (workforce order)
+    var curRole = roleSel.value;
+    roleSel.innerHTML = '<option value="">— اختر المنصب —</option>';
+    positions.slice().sort(function(a,b){return (a.level||0)-(b.level||0);}).forEach(function(p) {
+      var opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name + ' (Level ' + (p.level||'?') + ')';
+      roleSel.appendChild(opt);
+    });
+    if (curRole) roleSel.value = curRole;
+
+    // Default mode: role-based view
+    wfDefsSetMode(_wfDefsMode || 'role');
+    if ((_wfDefsMode === 'role' && curRole) || (_wfDefsMode === 'type' && curType)) wfLoadDefs();
+  });
 }
 
 function wfLoadDefs() {
+  if (_wfDefsMode === 'role') return _wfLoadDefsByRole();
+  return _wfLoadDefsByType();
+}
+
+function _wfLoadDefsByRole() {
+  var posId = document.getElementById('wfDefsRoleFilter').value;
+  var container = document.getElementById('wfDefsContainer');
+  if (!posId) {
+    container.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-style:italic;background:#f8fafc;border-radius:14px;border:1px dashed #e2e8f0;">اختر المنصب الإداري أولاً</div>';
+    return;
+  }
+  container.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+  window._apiBridge.withSuccessHandler(function(list) {
+    _wfDefs = list || [];
+    if (!list.length) {
+      container.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-style:italic;background:#f8fafc;border-radius:14px;border:1px dashed #e2e8f0;">لا توجد خطوات مرتبطة بهذا المنصب</div>';
+      return;
+    }
+    // Group by transaction type
+    var byType = {};
+    list.forEach(function(w) {
+      var k = w.transactionTypeId || 'unknown';
+      if (!byType[k]) byType[k] = { typeName: w.typeName || '', typeCode: w.typeCode || '', steps: [] };
+      byType[k].steps.push(w);
+    });
+
+    var permOn = 'width:22px;height:22px;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;background:#dcfce7;color:#16a34a;';
+    var permOff = 'width:22px;height:22px;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;background:#f1f5f9;color:#cbd5e1;';
+    var sBtn = 'width:26px;height:26px;border-radius:5px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-size:11px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;';
+
+    var html = '<div style="display:flex;flex-direction:column;gap:14px;">';
+    Object.keys(byType).forEach(function(k) {
+      var g = byType[k];
+      html += '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed #e5e7eb;">' +
+          '<div style="width:36px;height:36px;border-radius:10px;background:#eff6ff;color:#1e40af;display:flex;align-items:center;justify-content:center;"><i class="fas fa-list-alt"></i></div>' +
+          '<div><div style="font-size:14px;font-weight:800;color:#0f172a;">' + g.typeName + '</div>' +
+          '<div style="font-size:11px;color:#64748b;font-family:monospace;">' + g.typeCode + '</div></div>' +
+          '<div style="margin-right:auto;font-size:11px;color:#64748b;">' + g.steps.length + ' خطوة</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+      g.steps.forEach(function(w) {
+        var cBg = w.isFinal ? 'linear-gradient(135deg,#f0fdf4,#dcfce7)' : 'linear-gradient(135deg,#eff6ff,#dbeafe)';
+        var cColor = w.isFinal ? '#166534' : '#1e40af';
+        html += '<div style="min-width:180px;background:' + cBg + ';border-radius:10px;padding:10px 12px;">' +
+          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' +
+            '<div style="width:22px;height:22px;border-radius:50%;background:' + cColor + ';color:#fff;font-size:11px;font-weight:900;display:flex;align-items:center;justify-content:center;">' + w.stepOrder + '</div>' +
+            '<div style="font-size:12px;font-weight:800;color:#0f172a;">' + w.stepName + '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:3px;justify-content:flex-start;margin-top:4px;flex-wrap:wrap;">' +
+            (w.requireSameBranch!==false ? '<span style="padding:1px 5px;background:#dbeafe;color:#1e40af;border-radius:4px;font-size:9px;font-weight:700;">نفس الفرع</span>' : '') +
+            (w.requireSameDepartment ? '<span style="padding:1px 5px;background:#ede9fe;color:#6d28d9;border-radius:4px;font-size:9px;font-weight:700;">نفس القسم</span>' : '') +
+            '<span style="padding:1px 5px;background:#dcfce7;color:#166534;border-radius:4px;font-size:9px;font-weight:700;">' + (w.assignmentStrategy === 'first' ? 'الأول' : 'الأقل انشغالاً') + '</span>' +
+          '</div>' +
+          '<div style="display:flex;gap:3px;justify-content:flex-start;margin-top:6px;">' +
+            '<div style="' + ((w.canApprove !== false) ? permOn : permOff) + '" title="موافقة"><i class="fas fa-check"></i></div>' +
+            '<div style="' + ((w.canReject !== false) ? permOn : permOff) + '" title="رفض"><i class="fas fa-times"></i></div>' +
+            '<div style="' + (w.canReturn ? permOn : permOff) + '" title="إرجاع"><i class="fas fa-undo"></i></div>' +
+            '<div style="' + (w.canEditAmount ? permOn : permOff) + '" title="تعديل المبلغ"><i class="fas fa-dollar-sign"></i></div>' +
+            (w.isFinal ? '<div style="' + permOn + '" title="نهائية"><i class="fas fa-flag-checkered"></i></div>' : '') +
+          '</div>' +
+          '<div style="display:flex;gap:4px;margin-top:6px;">' +
+            '<button style="' + sBtn + '" onclick="wfEditDef(\'' + w.id + '\')"><i class="fas fa-edit"></i></button>' +
+            '<button style="' + sBtn + 'color:#ef4444;" onclick="wfDeleteDef(\'' + w.id + '\')"><i class="fas fa-trash"></i></button>' +
+          '</div>' +
+        '</div>';
+      });
+      html += '</div></div>';
+    });
+    html += '</div>';
+    container.innerHTML = html;
+  }).getWfDefsByRole(posId);
+}
+
+function _wfLoadDefsByType() {
   var typeId = document.getElementById('wfDefsTypeFilter').value;
   var container = document.getElementById('wfDefsContainer');
   if (!typeId) { container.innerHTML = '<div class="wf-pipeline-empty">اختر نوع المعاملة أولاً</div>'; return; }
@@ -4481,7 +4597,14 @@ function wfLoadDefs() {
 function wfOpenDefModal(data) {
   var d = data || {};
   var typeId = document.getElementById('wfDefsTypeFilter').value;
-  if (!typeId && !d.id) return showToast('اختر نوع المعاملة أولاً', true);
+  // In role mode: the selected type isn't set — we ask via dropdown inside the modal.
+  // If editing, the type comes from the record.
+  if (!typeId) typeId = d.transactionTypeId || '';
+  if (!typeId && !d.id && _wfDefsMode === 'type') return showToast('اختر نوع المعاملة أولاً', true);
+  // Pre-fill role if in role mode and creating new
+  if (!d.positionId && _wfDefsMode === 'role' && !d.id) {
+    d.positionId = document.getElementById('wfDefsRoleFilter').value || '';
+  }
   // Load positions for dropdown
   window._apiBridge.withSuccessHandler(function(positions) {
     var posOpts = (positions || []).map(function(p) {
@@ -4494,9 +4617,24 @@ function wfOpenDefModal(data) {
     var cReject   = (d.canReject  === undefined) ? true : !!d.canReject;
     var cEdit     = !!d.canEdit;
 
+    // Type picker — shown only when creating from role mode (no pre-selected type)
+    var typeSelectorHtml = '';
+    var needTypeSelector = !typeId && !d.id;
+    if (needTypeSelector) {
+      var tOpts = (_wfTypes||[]).map(function(t) {
+        return '<option value="' + t.id + '">' + t.name + ' (' + (t.code||'') + ')</option>';
+      }).join('');
+      typeSelectorHtml =
+        '<div class="form-row"><label><i class="fas fa-list-alt" style="color:#3b82f6;"></i> نوع المعاملة *</label>' +
+          '<select class="form-control" id="wfDefTypePicker"><option value="">— اختر النوع —</option>' + tOpts + '</select>' +
+        '</div>';
+    }
+
     document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل خطوة' : 'خطوة جديدة';
     document.getElementById('erpModalBody').innerHTML =
       '<input type="hidden" id="wfDefId" value="' + (d.id || '') + '">' +
+      '<input type="hidden" id="wfDefTypeId" value="' + (typeId || '') + '">' +
+      typeSelectorHtml +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>ترتيب الخطوة *</label><input type="number" class="form-control" id="wfDefOrder" value="' + (d.stepOrder || (_wfDefs.length + 1)) + '" min="1"></div>' +
         '<div class="form-row"><label>اسم الخطوة *</label><input class="form-control" id="wfDefName" value="' + (d.stepName || '').replace(/"/g,'&quot;') + '"></div>' +
@@ -4535,6 +4673,12 @@ function wfOpenDefModal(data) {
     document.getElementById('erpModalSaveBtn').onclick = function() {
       var stepName = document.getElementById('wfDefName').value;
       if (!stepName) return showToast('اسم الخطوة مطلوب', true);
+      // Resolve type: pre-selected, editing-record, or picker
+      var finalTypeId = document.getElementById('wfDefTypeId').value;
+      var picker = document.getElementById('wfDefTypePicker');
+      if (!finalTypeId && picker) finalTypeId = picker.value;
+      if (!finalTypeId && d.transactionTypeId) finalTypeId = d.transactionTypeId;
+      if (!finalTypeId) return showToast('اختر نوع المعاملة', true);
       loader(true);
       window._apiBridge.withSuccessHandler(function(r) {
         loader(false);
@@ -4542,7 +4686,7 @@ function wfOpenDefModal(data) {
         else showToast(r.error, true);
       }).saveWfDef({
         id: document.getElementById('wfDefId').value || undefined,
-        transactionTypeId: typeId,
+        transactionTypeId: finalTypeId,
         stepOrder: Number(document.getElementById('wfDefOrder').value) || 1,
         stepName: stepName,
         positionId: document.getElementById('wfDefPosition').value || null,
@@ -5709,8 +5853,8 @@ function hrLoadAdvances() {
   tb.innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
   window._apiBridge.withSuccessHandler(function(list) {
     if (!list||!list.length) { tb.innerHTML='<tr><td colspan="7" class="empty-msg">لا توجد سلف</td></tr>'; return; }
-    var statusLabels = {pending:'معلقة',approved:'معتمدة',rejected:'مرفوضة',deducted:'مخصومة'};
-    var statusColors = {pending:'yellow',approved:'green',rejected:'red',deducted:'purple'};
+    var statusLabels = {pending:'معلقة',approved:'معتمدة',rejected:'مرفوضة',fully_paid:'مسددة بالكامل',deducted:'مخصومة'};
+    var statusColors = {pending:'yellow',approved:'green',rejected:'red',fully_paid:'purple',deducted:'purple'};
     tb.innerHTML = list.map(function(a) {
       var actions = '';
       if (a.status==='pending') {

@@ -286,13 +286,52 @@ router.use(async (req, res, next) => {
 
 router.get('/departments', async (req, res) => {
   try {
-    const [rows] = await db.query(`
+    const { branch_id, branchId } = req.query;
+    const filterBranch = branch_id || branchId || '';
+    // Detect whether branch_id column exists (tolerate old schemas)
+    let hasBranchCol = true;
+    try {
+      const [c] = await db.query("SHOW COLUMNS FROM hr_departments LIKE 'branch_id'");
+      hasBranchCol = !!c.length;
+    } catch(e) { hasBranchCol = false; }
+
+    const joinBranch = hasBranchCol
+      ? 'LEFT JOIN branches b ON d.branch_id = b.id'
+      : '';
+    const branchName = hasBranchCol ? 'b.name' : 'NULL';
+    const branchCode = hasBranchCol ? 'b.code' : 'NULL';
+    const branchIdCol = hasBranchCol ? 'd.branch_id' : 'NULL';
+
+    let sql = `
       SELECT d.*,
+        ${branchIdCol} AS branch_id_val,
+        ${branchName} AS branch_name,
+        ${branchCode} AS branch_code,
         (SELECT COUNT(*) FROM hr_employees e WHERE e.department_id = d.id AND e.status = 'active') as employee_count
       FROM hr_departments d
-      ORDER BY d.name
-    `);
-    res.json(rows);
+      ${joinBranch}
+    `;
+    const params = [];
+    if (filterBranch && hasBranchCol) { sql += ' WHERE d.branch_id = ?'; params.push(filterBranch); }
+    sql += ' ORDER BY d.name';
+
+    const [rows] = await db.query(sql, params);
+    res.json(rows.map(d => ({
+      id: d.id,
+      name: d.name || '',
+      nameEn: d.name_en || '',
+      code: d.code || '',
+      branchId: d.branch_id_val || d.branch_id || '',
+      branchName: d.branch_name || '',
+      branchCode: d.branch_code || '',
+      managerId: d.manager_id || '',
+      parentId: d.parent_id || '',
+      description: d.description || '',
+      isActive: d.is_active !== false,
+      employeeCount: Number(d.employee_count) || 0,
+      createdAt: d.created_at,
+      updatedAt: d.updated_at
+    })));
   } catch (e) {
     res.json({ success: false, error: e.message });
   }

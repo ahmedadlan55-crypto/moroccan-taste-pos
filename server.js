@@ -143,6 +143,7 @@ app.use('/api/custody', require('./routes/custody'));
 app.use('/api/cash', require('./routes/cash'));
 app.use('/api/workflow', require('./routes/workflow'));
 app.use('/api/hr', require('./routes/hr'));
+app.use('/api/erp', require('./routes/erp-core'));
 
 // Catch-all for unimplemented API routes
 const { notFoundHandler, errorHandler } = require('./lib/errorHandler');
@@ -1486,6 +1487,303 @@ async function runMigrations() {
       ('BranchName',''),
       ('inventory_method','perpetual')`);
   } catch (e) { console.log('[DB] Cost settings seed:', e.message.substring(0, 80)); }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // ERP CORE v3 — MULTI-BRAND MULTI-BRANCH FRANCHISE TABLES (DESIGN DOC)
+  // ═══════════════════════════════════════════════════════════════════
+
+  // 1) Companies — the legal entity owning brands/branches (multi-tenant root)
+  await createTableIfMissing('companies', `
+    CREATE TABLE companies (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      legal_name VARCHAR(300) DEFAULT '',
+      cr_number VARCHAR(30) DEFAULT '',
+      tax_number VARCHAR(30) DEFAULT '',
+      country VARCHAR(50) DEFAULT 'SA',
+      city VARCHAR(100) DEFAULT '',
+      base_currency VARCHAR(3) DEFAULT 'SAR',
+      fiscal_year_start DATE,
+      logo_url TEXT,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  try {
+    const [cnt] = await db.query('SELECT COUNT(*) AS c FROM companies');
+    if (cnt[0].c === 0) {
+      await db.query("INSERT INTO companies (id, name, base_currency, fiscal_year_start) VALUES ('CO-MAIN','الشركة الرئيسية','SAR','2026-01-01')");
+    }
+  } catch(e) {}
+
+  // Link brands/branches to the company (optional — default CO-MAIN)
+  await addColumnIfMissing('brands', 'company_id', "VARCHAR(50) DEFAULT 'CO-MAIN'");
+  await addColumnIfMissing('brands', 'royalty_type', "ENUM('percentage','fixed','mixed','none') DEFAULT 'none'");
+  await addColumnIfMissing('brands', 'royalty_value', "DECIMAL(12,4) DEFAULT 0");
+  await addColumnIfMissing('brands', 'royalty_base', "ENUM('gross_sales','net_sales','none') DEFAULT 'gross_sales'");
+  await addColumnIfMissing('brands', 'royalty_fixed_component', "DECIMAL(12,2) DEFAULT 0");
+  await addColumnIfMissing('brands', 'franchise_fee', "DECIMAL(14,2) DEFAULT 0");
+  await addColumnIfMissing('brands', 'contract_start', "DATE");
+  await addColumnIfMissing('brands', 'contract_end', "DATE");
+  await addColumnIfMissing('branches', 'company_id', "VARCHAR(50) DEFAULT 'CO-MAIN'");
+
+  // 2) Item categories (hierarchical)
+  await createTableIfMissing('item_categories', `
+    CREATE TABLE item_categories (
+      id VARCHAR(50) PRIMARY KEY,
+      company_id VARCHAR(50) DEFAULT 'CO-MAIN',
+      brand_id VARCHAR(50),
+      parent_id VARCHAR(50),
+      name VARCHAR(200) NOT NULL,
+      code VARCHAR(30) DEFAULT '',
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_parent (parent_id), INDEX idx_brand (brand_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // 3) Units + unit_conversions
+  await createTableIfMissing('units', `
+    CREATE TABLE units (
+      id VARCHAR(20) PRIMARY KEY,
+      name_ar VARCHAR(100) NOT NULL,
+      name_en VARCHAR(100) DEFAULT '',
+      type ENUM('weight','volume','count','length') DEFAULT 'count'
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('unit_conversions', `
+    CREATE TABLE unit_conversions (
+      id VARCHAR(50) PRIMARY KEY,
+      from_unit VARCHAR(20) NOT NULL,
+      to_unit VARCHAR(20) NOT NULL,
+      factor DECIMAL(14,6) NOT NULL,
+      UNIQUE KEY uq_conv (from_unit, to_unit)
+    ) ENGINE=InnoDB
+  `);
+  try {
+    const [uc] = await db.query('SELECT COUNT(*) AS c FROM units');
+    if (uc[0].c === 0) {
+      await db.query("INSERT INTO units (id, name_ar, name_en, type) VALUES ('KG','كيلوجرام','kg','weight'),('G','جرام','g','weight'),('L','لتر','L','volume'),('ML','مليلتر','ml','volume'),('PCS','قطعة','pcs','count'),('BOX','صندوق','box','count'),('PACK','علبة','pack','count'),('DOZ','دزينة','dozen','count')");
+      await db.query("INSERT INTO unit_conversions (id, from_unit, to_unit, factor) VALUES ('UC-1','KG','G',1000),('UC-2','G','KG',0.001),('UC-3','L','ML',1000),('UC-4','ML','L',0.001),('UC-5','DOZ','PCS',12),('UC-6','PCS','DOZ',0.083333)");
+    }
+  } catch(e) {}
+
+  // 4) Price lists (برند/فرع-specific pricing)
+  await createTableIfMissing('price_lists', `
+    CREATE TABLE price_lists (
+      id VARCHAR(50) PRIMARY KEY,
+      company_id VARCHAR(50) DEFAULT 'CO-MAIN',
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      name VARCHAR(200) NOT NULL,
+      is_default BOOLEAN DEFAULT FALSE,
+      valid_from DATE,
+      valid_to DATE,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_brand_branch (brand_id, branch_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('price_list_items', `
+    CREATE TABLE price_list_items (
+      id VARCHAR(60) PRIMARY KEY,
+      price_list_id VARCHAR(50) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      price DECIMAL(14,4) NOT NULL,
+      min_price DECIMAL(14,4) DEFAULT 0,
+      valid_from DATE,
+      valid_to DATE,
+      UNIQUE KEY uq_pli (price_list_id, item_id),
+      INDEX idx_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // 5) BOM / Recipes (وصفات الإنتاج)
+  await createTableIfMissing('bom', `
+    CREATE TABLE bom (
+      id VARCHAR(50) PRIMARY KEY,
+      product_id VARCHAR(50) NOT NULL,
+      version INT DEFAULT 1,
+      yield_quantity DECIMAL(10,4) DEFAULT 1,
+      yield_unit VARCHAR(20) DEFAULT 'PCS',
+      is_active BOOLEAN DEFAULT TRUE,
+      effective_from DATE,
+      effective_to DATE,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_product (product_id, is_active)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('bom_lines', `
+    CREATE TABLE bom_lines (
+      id VARCHAR(60) PRIMARY KEY,
+      bom_id VARCHAR(50) NOT NULL,
+      component_item_id VARCHAR(50) NOT NULL,
+      quantity DECIMAL(12,4) NOT NULL,
+      unit VARCHAR(20) DEFAULT 'PCS',
+      waste_pct DECIMAL(5,2) DEFAULT 0,
+      INDEX idx_bom (bom_id), INDEX idx_component (component_item_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // 6) Purchase receipts (منفصل عن PO لدعم الاستلام الجزئي)
+  await createTableIfMissing('purchase_receipts', `
+    CREATE TABLE purchase_receipts (
+      id VARCHAR(50) PRIMARY KEY,
+      company_id VARCHAR(50) DEFAULT 'CO-MAIN',
+      po_id VARCHAR(50),
+      supplier_id VARCHAR(50),
+      receipt_number VARCHAR(30) UNIQUE,
+      receipt_date DATE NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      subtotal DECIMAL(14,2) DEFAULT 0,
+      vat_amount DECIMAL(14,2) DEFAULT 0,
+      total DECIMAL(14,2) DEFAULT 0,
+      status ENUM('draft','posted','cancelled') DEFAULT 'draft',
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_po (po_id), INDEX idx_date (receipt_date)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('purchase_receipt_lines', `
+    CREATE TABLE purchase_receipt_lines (
+      id VARCHAR(60) PRIMARY KEY,
+      receipt_id VARCHAR(50) NOT NULL,
+      po_line_id VARCHAR(50),
+      item_id VARCHAR(50) NOT NULL,
+      quantity DECIMAL(14,4) NOT NULL,
+      unit VARCHAR(20) DEFAULT 'PCS',
+      unit_cost DECIMAL(14,4) NOT NULL,
+      vat_rate DECIMAL(5,2) DEFAULT 15,
+      line_total DECIMAL(14,2) NOT NULL,
+      INDEX idx_receipt (receipt_id), INDEX idx_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // 7) POS terminals
+  await createTableIfMissing('pos_terminals', `
+    CREATE TABLE pos_terminals (
+      id VARCHAR(50) PRIMARY KEY,
+      company_id VARCHAR(50) DEFAULT 'CO-MAIN',
+      branch_id VARCHAR(50) NOT NULL,
+      name VARCHAR(200) NOT NULL,
+      code VARCHAR(30),
+      device_id VARCHAR(100),
+      last_sync_at DATETIME,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_branch (branch_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // 8) Accounting periods (period lock)
+  await createTableIfMissing('accounting_periods', `
+    CREATE TABLE accounting_periods (
+      id VARCHAR(50) PRIMARY KEY,
+      company_id VARCHAR(50) DEFAULT 'CO-MAIN',
+      period_name VARCHAR(20) NOT NULL,
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      status ENUM('open','soft_closed','closed') DEFAULT 'open',
+      closed_by VARCHAR(100),
+      closed_at DATETIME,
+      notes TEXT,
+      UNIQUE KEY uq_period (company_id, period_name),
+      INDEX idx_dates (start_date, end_date)
+    ) ENGINE=InnoDB
+  `);
+
+  // 9) Royalty runs (franchise fee accruals)
+  await createTableIfMissing('royalty_runs', `
+    CREATE TABLE royalty_runs (
+      id VARCHAR(50) PRIMARY KEY,
+      company_id VARCHAR(50) DEFAULT 'CO-MAIN',
+      brand_id VARCHAR(50) NOT NULL,
+      period_id VARCHAR(50),
+      run_date DATE NOT NULL,
+      period_start DATE NOT NULL,
+      period_end DATE NOT NULL,
+      gross_sales DECIMAL(14,2) DEFAULT 0,
+      net_sales DECIMAL(14,2) DEFAULT 0,
+      royalty_type ENUM('percentage','fixed','mixed','none') DEFAULT 'percentage',
+      royalty_value DECIMAL(12,4) DEFAULT 0,
+      fixed_component DECIMAL(12,2) DEFAULT 0,
+      royalty_amount DECIMAL(14,2) DEFAULT 0,
+      status ENUM('draft','approved','invoiced','paid','cancelled') DEFAULT 'draft',
+      gl_journal_id VARCHAR(50),
+      approved_by VARCHAR(100),
+      approved_at DATETIME,
+      paid_at DATETIME,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_brand_period (brand_id, period_start)
+    ) ENGINE=InnoDB
+  `);
+
+  // 10) Waste entries (formalize)
+  await createTableIfMissing('waste_entries', `
+    CREATE TABLE waste_entries (
+      id VARCHAR(50) PRIMARY KEY,
+      company_id VARCHAR(50) DEFAULT 'CO-MAIN',
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      warehouse_id VARCHAR(50) NOT NULL,
+      cost_center_id VARCHAR(50),
+      waste_date DATE NOT NULL,
+      reason ENUM('expired','damaged','spill','prep_loss','customer_return','other') DEFAULT 'other',
+      total_cost DECIMAL(14,2) DEFAULT 0,
+      notes TEXT,
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_dims (brand_id, branch_id, waste_date)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('waste_entry_items', `
+    CREATE TABLE waste_entry_items (
+      id VARCHAR(60) PRIMARY KEY,
+      waste_id VARCHAR(50) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      quantity DECIMAL(14,4) NOT NULL,
+      unit VARCHAR(20) DEFAULT 'PCS',
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      line_cost DECIMAL(14,2) DEFAULT 0,
+      INDEX idx_waste (waste_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // 11) ZATCA Phase 2 compliance fields on sales (invoices)
+  await addColumnIfMissing('sales', 'invoice_uuid', "VARCHAR(36)");
+  await addColumnIfMissing('sales', 'invoice_hash', "VARCHAR(100)");
+  await addColumnIfMissing('sales', 'previous_invoice_hash', "VARCHAR(100)");
+  await addColumnIfMissing('sales', 'zatca_type', "ENUM('standard','simplified','credit_note','debit_note') DEFAULT 'simplified'");
+  await addColumnIfMissing('sales', 'zatca_submitted_at', "DATETIME");
+  await addColumnIfMissing('sales', 'zatca_status', "ENUM('pending','submitted','accepted','rejected') DEFAULT 'pending'");
+
+  // 12) Item categories and cost method on inv_items
+  await addColumnIfMissing('inv_items', 'category_id', "VARCHAR(50)");
+  await addColumnIfMissing('inv_items', 'cost_method', "ENUM('wavg','fifo','standard') DEFAULT 'wavg'");
+  await addColumnIfMissing('inv_items', 'standard_cost', "DECIMAL(14,4) DEFAULT 0");
+  await addColumnIfMissing('inv_items', 'min_stock', "DECIMAL(14,4) DEFAULT 0");
+  await addColumnIfMissing('inv_items', 'max_stock', "DECIMAL(14,4) DEFAULT 0");
+  await addColumnIfMissing('inv_items', 'is_sellable', "BOOLEAN DEFAULT TRUE");
+  await addColumnIfMissing('inv_items', 'is_inventoried', "BOOLEAN DEFAULT TRUE");
+
+  // 13) Auto-seed accounting periods for current year (if not already)
+  try {
+    const [cp] = await db.query('SELECT COUNT(*) AS c FROM accounting_periods');
+    if (cp[0].c === 0) {
+      const y = new Date().getFullYear();
+      for (let m = 1; m <= 12; m++) {
+        const mm = String(m).padStart(2, '0');
+        const last = new Date(y, m, 0).getDate();
+        await db.query(
+          `INSERT IGNORE INTO accounting_periods (id, period_name, start_date, end_date, status) VALUES (?,?,?,?,?)`,
+          [`AP-${y}-${mm}`, `${y}-${mm}`, `${y}-${mm}-01`, `${y}-${mm}-${String(last).padStart(2,'0')}`, 'open']
+        );
+      }
+    }
+  } catch(e) {}
 
   // ═══════════════════════════════════════
   // WORKFLOW ENGINE v2 — نظام المعاملات المتكامل

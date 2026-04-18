@@ -308,6 +308,7 @@
     savePositionWorkflow:{ method: 'POST', url: '/workflow/position-workflow/bulk' },
     deletePositionWorkflow: { method: 'DELETE', url: (posId) => '/workflow/position-workflow/' + posId },
     getPositionWorkflowsSummary: { method: 'GET', url: '/workflow/position-workflows-summary' },
+    getRecipientsDirectory: { method: 'GET', url: '/workflow/recipients-directory' },
     saveWfDef:           { method: 'POST', url: '/workflow/workflow-definitions' },
     deleteWfDef:         { method: 'DELETE', url: (id) => '/workflow/workflow-definitions/' + id },
     getWfTransactions:   { method: 'GET',  url: '/workflow/transactions', query: (f) => f },

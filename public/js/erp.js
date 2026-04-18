@@ -4792,74 +4792,366 @@ function wfLoadInbox() {
   }).getWfTransactions(params);
 }
 
+// ───────────────────────── Helpers ─────────────────────────
+
+// Quick Hijri approximation (Umm al-Qura is too heavy to ship). Deviation ±1 day ok.
+function _gregToHijri(g) {
+  var jd = Math.floor((g.getTime() + g.getTimezoneOffset()*60000)/86400000) + 2440588;
+  var l = jd - 1948440 + 10632;
+  var n = Math.floor((l - 1)/10631);
+  l = l - 10631*n + 354;
+  var j = (Math.floor((10985-l)/5316))*(Math.floor((50*l)/17719)) + (Math.floor(l/5670))*(Math.floor((43*l)/15238));
+  l = l - (Math.floor((30-j)/15))*(Math.floor((17719*j)/50)) - (Math.floor(j/16))*(Math.floor((15238*j)/43)) + 29;
+  var m = Math.floor((24*l)/709);
+  var d = l - Math.floor((709*m)/24);
+  var y = 30*n + j - 30;
+  return y + '/' + String(m).padStart(2,'0') + '/' + String(d).padStart(2,'0');
+}
+
+var _wfNewRecipientsDir = [];
+var _wfNewSelectedRecipients = {};  // { userId: {username, code, name, needsResponse} }
+
 function wfOpenNewTxnModal() {
   Promise.all([
     new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getWfTypes(); }),
     new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getBranchesFull(); }),
     new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getBrands(); }),
     new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getWfDashFilters(); }),
-    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getWfEligibleUsers({ sender: currentUser }); })
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getRecipientsDirectory(); })
   ]).then(function(results) {
     var types = results[0] || [], branches = results[1] || [], brands = results[2] || [];
     var filters = results[3] || { departments: [] };
-    var users = results[4] || [];
-    var typeOpts = types.map(function(t) { return '<option value="' + t.id + '">' + t.name + (t.code?' ['+t.code+']':'') + '</option>'; }).join('');
+    _wfNewRecipientsDir = results[4] || [];
+    _wfNewSelectedRecipients = {};
+
+    var typeOpts = '<option value="">اختر —</option>' + types.map(function(t) {
+      return '<option value="' + t.id + '">' + t.name + (t.code?' ['+t.code+']':'') + '</option>';
+    }).join('');
+    var deptOpts = '<option value="">—</option>' + (filters.departments||[]).map(function(d) {
+      return '<option value="' + d.id + '">' + d.name + (d.code?' ['+d.code+']':'') + '</option>';
+    }).join('');
     var branchOpts = branches.map(function(b) { return '<option value="' + b.id + '">' + b.name + (b.code?' ['+b.code+']':'') + '</option>'; }).join('');
     var brandOpts = brands.map(function(b) { return '<option value="' + b.id + '">' + b.name + '</option>'; }).join('');
-    var deptOpts = (filters.departments||[]).map(function(d) { return '<option value="' + d.id + '">' + d.name + (d.code?' ['+d.code+']':'') + '</option>'; }).join('');
-    var userOpts = '<option value="">— يُحدد تلقائياً حسب سير العمل —</option>' + users.map(function(u) { return '<option value="' + u.username + '">' + (u.fullName||u.username) + ' — ' + (u.positionName||'') + '</option>'; }).join('');
-    document.getElementById('erpModalTitle').textContent = 'معاملة جديدة';
+
+    // Widen the modal to fit two columns
+    var modalBox = document.querySelector('#erpModal .erp-modal-box');
+    if (modalBox) modalBox.style.maxWidth = '1180px';
+
+    var now = new Date();
+    var gregStr = now.toISOString().slice(0,10) + ' ' + now.toTimeString().slice(0,8);
+    var hijriStr = _gregToHijri(now);
+
+    var impOpts =
+      '<option value="low">منخفضة</option>' +
+      '<option value="medium" selected>عادي</option>' +
+      '<option value="high">عالية</option>' +
+      '<option value="critical">عاجلة</option>';
+    var secOpts =
+      '<option value="normal" selected>عادي</option>' +
+      '<option value="confidential">سري</option>' +
+      '<option value="secret">سري للغاية</option>' +
+      '<option value="top_secret">سري جداً للغاية</option>';
+
+    // RTL two-column body — styled like government ECM systems
+    document.getElementById('erpModalTitle').textContent = 'إضافة معاملة';
     document.getElementById('erpModalBody').innerHTML =
-      '<div class="form-row"><label>نوع المعاملة *</label><select class="form-control" id="wfNewType">' + typeOpts + '</select></div>' +
-      '<div class="form-row"><label>العنوان *</label><input class="form-control" id="wfNewTitle" placeholder="وصف مختصر"></div>' +
-      '<div class="form-row"><label>التفاصيل</label><textarea class="form-control" id="wfNewDesc" rows="3"></textarea></div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>درجة الأهمية</label><select class="form-control" id="wfNewImp">' +
-          '<option value="low">منخفض (Low)</option>' +
-          '<option value="medium" selected>متوسط (Medium)</option>' +
-          '<option value="high">عالي (High)</option>' +
-          '<option value="critical">عاجل (Critical)</option>' +
-        '</select></div>' +
-        '<div class="form-row"><label>المبلغ</label><input type="number" class="form-control" id="wfNewAmount" step="0.01" min="0" value="0"></div>' +
+      '<style>' +
+        '.wfnt-sec{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:14px;}' +
+        '.wfnt-sec-h{font-size:13px;font-weight:800;color:#1e40af;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;gap:6px;}' +
+        '.wfnt-row{display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:center;margin-bottom:10px;}' +
+        '.wfnt-row label{font-size:12px;color:#334155;font-weight:700;}' +
+        '.wfnt-row label .req{color:#ef4444;margin-right:2px;}' +
+        '.wfnt-input,.wfnt-sel{width:100%;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;background:#fff;font-family:inherit;}' +
+        '.wfnt-input:focus,.wfnt-sel:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.15);}' +
+        '.wfnt-input[readonly]{background:#f8fafc;color:#64748b;cursor:not-allowed;}' +
+        '.wfnt-tbl{width:100%;border-collapse:collapse;font-size:12px;}' +
+        '.wfnt-tbl th{background:#f1f5f9;padding:8px;font-weight:700;color:#475569;border-bottom:1px solid #e2e8f0;text-align:center;}' +
+        '.wfnt-tbl td{padding:6px 8px;border-bottom:1px solid #f1f5f9;text-align:center;}' +
+        '.wfnt-tbl tr:hover{background:#f8fafc;}' +
+        '.wfnt-rtb-wrap{border:1px solid #cbd5e1;border-radius:6px;}' +
+        '.wfnt-rtb-bar{display:flex;gap:2px;padding:6px;background:#f8fafc;border-bottom:1px solid #e2e8f0;border-radius:6px 6px 0 0;flex-wrap:wrap;}' +
+        '.wfnt-rtb-btn{width:28px;height:28px;border:1px solid transparent;background:transparent;border-radius:5px;cursor:pointer;color:#475569;font-size:12px;display:inline-flex;align-items:center;justify-content:center;}' +
+        '.wfnt-rtb-btn:hover{background:#e2e8f0;}' +
+        '.wfnt-rtb-ed{min-height:200px;padding:12px;font-size:13px;line-height:1.7;outline:none;direction:rtl;}' +
+        '.wfnt-rtb-ed:empty:before{content:"اكتب نص المعاملة هنا...";color:#94a3b8;}' +
+      '</style>' +
+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">' +
+        // ── Column A: البيانات الأساسية ──
+        '<div class="wfnt-sec">' +
+          '<div class="wfnt-sec-h"><i class="fas fa-file-alt"></i> البيانات الأساسية</div>' +
+
+          '<div class="wfnt-row">' +
+            '<label>تاريخ المعاملة</label>' +
+            '<div style="display:flex;gap:6px;">' +
+              '<input class="wfnt-input" id="wfnDateG" value="' + gregStr + '" readonly style="flex:1;">' +
+              '<input class="wfnt-input" id="wfnDateH" value="' + hijriStr + '" readonly style="width:120px;text-align:center;color:#8b5cf6;font-weight:700;">' +
+            '</div>' +
+          '</div>' +
+
+          '<div class="wfnt-row">' +
+            '<label>جهة التحرير</label>' +
+            '<select class="wfnt-sel" id="wfnIssuingDept">' + deptOpts + '</select>' +
+          '</div>' +
+
+          '<div class="wfnt-row">' +
+            '<label>الفرع</label>' +
+            '<select class="wfnt-sel" id="wfNewBranch"><option value="">—</option>' + branchOpts + '</select>' +
+          '</div>' +
+
+          '<div class="wfnt-row">' +
+            '<label>الموضوع</label>' +
+            '<input class="wfnt-input" id="wfNewTitle" placeholder="عنوان مختصر للمعاملة">' +
+          '</div>' +
+
+          '<div class="wfnt-row">' +
+            '<label>درجة الأهمية</label>' +
+            '<select class="wfnt-sel" id="wfNewImp">' + impOpts + '</select>' +
+          '</div>' +
+
+          '<div class="wfnt-row">' +
+            '<label><span class="req">*</span> سرية المحتوى</label>' +
+            '<select class="wfnt-sel" id="wfnContentSecrecy">' + secOpts + '</select>' +
+          '</div>' +
+
+          '<div class="wfnt-row">' +
+            '<label><span class="req">*</span> سرية المرفقات</label>' +
+            '<select class="wfnt-sel" id="wfnAttSecrecy">' + secOpts + '</select>' +
+          '</div>' +
+
+          '<div class="wfnt-row">' +
+            '<label><span class="req">*</span> نوع النموذج</label>' +
+            '<select class="wfnt-sel" id="wfNewType">' + typeOpts + '</select>' +
+          '</div>' +
+
+          '<div class="wfnt-row">' +
+            '<label>المبلغ</label>' +
+            '<input type="number" class="wfnt-input" id="wfNewAmount" step="0.01" min="0" value="0">' +
+          '</div>' +
+
+          '<div class="wfnt-row">' +
+            '<label>البراند</label>' +
+            '<select class="wfnt-sel" id="wfNewBrand"><option value="">—</option>' + brandOpts + '</select>' +
+          '</div>' +
+        '</div>' +
+
+        // ── Column B: الجهات الصادر إليها ──
+        '<div class="wfnt-sec">' +
+          '<div class="wfnt-sec-h"><i class="fas fa-paper-plane"></i> الجهات الصادر إليها</div>' +
+          '<input class="wfnt-input" id="wfnRcpFilter" placeholder="ابحث عن مستلم (اسم/كود)..." style="margin-bottom:8px;" oninput="_wfRenderRecipientTable()">' +
+          '<div style="max-height:360px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;">' +
+            '<table class="wfnt-tbl"><thead><tr>' +
+              '<th style="width:36px;"><input type="checkbox" id="wfnRcpAll" onchange="_wfToggleAllRecipients(this.checked)"></th>' +
+              '<th>رمز الجهة</th><th>جهة التحرير</th><th>يحتاج إلى رد</th>' +
+            '</tr></thead><tbody id="wfnRcpBody"></tbody></table>' +
+          '</div>' +
+          '<div id="wfnRcpCount" style="margin-top:6px;font-size:11px;color:#64748b;"></div>' +
+        '</div>' +
       '</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>الفرع</label><select class="form-control" id="wfNewBranch"><option value="">—</option>' + branchOpts + '</select></div>' +
-        '<div class="form-row"><label>القسم</label><select class="form-control" id="wfNewDept"><option value="">—</option>' + deptOpts + '</select></div>' +
+
+      // ── Content + attachments ──
+      '<div class="wfnt-sec">' +
+        '<div class="wfnt-sec-h"><i class="fas fa-paragraph"></i> محتوى المعاملة</div>' +
+        '<div class="wfnt-rtb-wrap">' +
+          '<div class="wfnt-rtb-bar">' +
+            '<button type="button" class="wfnt-rtb-btn" onclick="_wfRtb(\'bold\')" title="عريض"><b>B</b></button>' +
+            '<button type="button" class="wfnt-rtb-btn" onclick="_wfRtb(\'italic\')" title="مائل"><i>I</i></button>' +
+            '<button type="button" class="wfnt-rtb-btn" onclick="_wfRtb(\'underline\')" title="تحته خط"><u>U</u></button>' +
+            '<button type="button" class="wfnt-rtb-btn" onclick="_wfRtb(\'strikeThrough\')" title="يتوسطه خط"><s>S</s></button>' +
+            '<span style="width:1px;background:#e2e8f0;margin:2px 4px;"></span>' +
+            '<button type="button" class="wfnt-rtb-btn" onclick="_wfRtb(\'justifyRight\')"><i class="fas fa-align-right"></i></button>' +
+            '<button type="button" class="wfnt-rtb-btn" onclick="_wfRtb(\'justifyCenter\')"><i class="fas fa-align-center"></i></button>' +
+            '<button type="button" class="wfnt-rtb-btn" onclick="_wfRtb(\'justifyLeft\')"><i class="fas fa-align-left"></i></button>' +
+            '<span style="width:1px;background:#e2e8f0;margin:2px 4px;"></span>' +
+            '<button type="button" class="wfnt-rtb-btn" onclick="_wfRtb(\'insertUnorderedList\')"><i class="fas fa-list-ul"></i></button>' +
+            '<button type="button" class="wfnt-rtb-btn" onclick="_wfRtb(\'insertOrderedList\')"><i class="fas fa-list-ol"></i></button>' +
+          '</div>' +
+          '<div class="wfnt-rtb-ed" id="wfnContentHtml" contenteditable="true"></div>' +
+        '</div>' +
       '</div>' +
-      '<div class="form-row"><label>البراند</label><select class="form-control" id="wfNewBrand"><option value="">—</option>' + brandOpts + '</select></div>' +
-      '<div class="form-row"><label>المستلم</label><select class="form-control" id="wfNewRecipient">' + userOpts + '</select></div>' +
-      '<div class="form-row"><label>مرفق (وصف/رابط)</label><input class="form-control" id="wfNewAttach" placeholder="اختياري"></div>';
-    document.getElementById('erpModalSaveBtn').onclick = function() {
-      var title = document.getElementById('wfNewTitle').value;
-      var typeId = document.getElementById('wfNewType').value;
-      if (!title) return showToast('العنوان مطلوب', true);
-      loader(true);
-      window._apiBridge.withSuccessHandler(function(r) {
-        loader(false);
-        if (r.success) {
-          showToast('تم إنشاء المعاملة: ' + (r.txnNumber || ''));
-          erpCloseModal();
-          // refresh whatever is open
-          if (document.getElementById('erpWfInbox') && !document.getElementById('erpWfInbox').classList.contains('hidden')) wfLoadInbox();
-          if (document.getElementById('erpWfDashboard') && !document.getElementById('erpWfDashboard').classList.contains('hidden')) wfLoadDashboard();
-          if (document.getElementById('erpWfOutgoing') && !document.getElementById('erpWfOutgoing').classList.contains('hidden')) wfLoadOutbox();
-        } else showToast(r.error, true);
-      }).createWfTransaction({
-        transactionTypeId: typeId,
-        title: title,
-        description: document.getElementById('wfNewDesc').value,
-        amount: Number(document.getElementById('wfNewAmount').value) || 0,
-        importance: document.getElementById('wfNewImp').value || 'medium',
-        brandId: document.getElementById('wfNewBrand').value || null,
-        branchId: document.getElementById('wfNewBranch').value || null,
-        deptId: document.getElementById('wfNewDept').value || null,
-        recipientUsername: document.getElementById('wfNewRecipient').value || '',
-        attachment: document.getElementById('wfNewAttach').value || null,
-        username: currentUser
-      });
-    };
+
+      '<div class="wfnt-sec">' +
+        '<div class="wfnt-sec-h"><i class="fas fa-paperclip"></i> المرفقات</div>' +
+        '<input type="file" id="wfNewFile" multiple accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx">' +
+        '<div id="wfNewFileList" style="font-size:11px;color:#64748b;margin-top:6px;"></div>' +
+      '</div>';
+
+    // Footer: replace the single save button with save / draft / cancel
+    var footer = document.getElementById('erpModalFooter') || document.querySelector('#erpModal .modal-footer');
+    if (footer) {
+      footer.innerHTML =
+        '<button class="btn btn-primary" id="erpModalSaveBtn"><i class="fas fa-check"></i> حفظ</button>' +
+        '<button class="btn" id="wfnSaveDraftBtn" style="background:#64748b;color:#fff;"><i class="fas fa-thumbtack"></i> حفظ كمسودة</button>' +
+        '<button class="btn btn-secondary" onclick="wfCloseNewTxnModal()"><i class="fas fa-times"></i> إلغاء</button>';
+    }
+
+    // Pre-fill issuing department from current user's profile
+    window._apiBridge.withSuccessHandler(function(prof) {
+      if (prof && prof.deptId) {
+        var sel = document.getElementById('wfnIssuingDept');
+        if (sel) sel.value = prof.deptId;
+      }
+      if (prof && prof.branchId) {
+        var bsel = document.getElementById('wfNewBranch');
+        if (bsel) bsel.value = prof.branchId;
+      }
+    }).getWfMyProfile({ username: currentUser });
+
+    // File input change → list files
+    document.getElementById('wfNewFile').addEventListener('change', function(e) {
+      var list = document.getElementById('wfNewFileList');
+      if (!e.target.files.length) { list.innerHTML = ''; return; }
+      list.innerHTML = Array.from(e.target.files).map(function(f) {
+        return '<div><i class="fas fa-file"></i> ' + f.name + ' <span style="color:#94a3b8;">(' + Math.round(f.size/1024) + ' KB)</span></div>';
+      }).join('');
+    });
+
+    _wfRenderRecipientTable();
+
+    document.getElementById('erpModalSaveBtn').onclick = function() { _wfSubmitNewTxn(false); };
+    document.getElementById('wfnSaveDraftBtn').onclick = function() { _wfSubmitNewTxn(true); };
+
     document.getElementById('erpModal').classList.remove('hidden');
   });
+}
+
+function wfCloseNewTxnModal() {
+  var modalBox = document.querySelector('#erpModal .erp-modal-box');
+  if (modalBox) modalBox.style.maxWidth = '';  // reset
+  // Restore default footer for other modals that reuse it
+  var footer = document.getElementById('erpModalFooter') || document.querySelector('#erpModal .modal-footer');
+  if (footer) {
+    footer.innerHTML =
+      '<button class="btn btn-secondary" onclick="erpCloseModal()">إلغاء</button>' +
+      '<button class="btn btn-primary" id="erpModalSaveBtn" onclick="erpModalSave()">حفظ</button>';
+  }
+  erpCloseModal();
+}
+
+// ─── Rich-text helper for the content editor ───
+function _wfRtb(cmd) {
+  try { document.execCommand(cmd, false, null); document.getElementById('wfnContentHtml').focus(); } catch(e) {}
+}
+
+// ─── Recipients table ───
+function _wfRenderRecipientTable() {
+  var tbody = document.getElementById('wfnRcpBody');
+  var countEl = document.getElementById('wfnRcpCount');
+  if (!tbody) return;
+  var q = ((document.getElementById('wfnRcpFilter') || {}).value || '').toLowerCase();
+  var list = _wfNewRecipientsDir.filter(function(r) {
+    if (!q) return true;
+    return (r.fullName||'').toLowerCase().indexOf(q) !== -1 ||
+           (r.code||'').toLowerCase().indexOf(q) !== -1 ||
+           (r.position||'').toLowerCase().indexOf(q) !== -1;
+  });
+  tbody.innerHTML = list.map(function(r) {
+    var key = r.userId;
+    var sel = _wfNewSelectedRecipients[key];
+    var checked = sel ? 'checked' : '';
+    var needs = (sel && sel.needsResponse) ? 'checked' : '';
+    return '<tr>' +
+      '<td><input type="checkbox" data-rcp="' + key + '" ' + checked + ' onchange="_wfToggleRecipient(\'' + key + '\', this.checked)"></td>' +
+      '<td style="font-family:monospace;color:#475569;">' + (r.code||'—') + '</td>' +
+      '<td style="text-align:right;padding-right:8px;">' +
+        '<div style="font-weight:700;color:#0f172a;">' + (r.fullName||'') + '</div>' +
+        '<div style="font-size:10px;color:#64748b;">' + (r.position||'') + (r.branchName?' • '+r.branchName:'') + '</div>' +
+      '</td>' +
+      '<td><input type="checkbox" data-needs="' + key + '" ' + needs + ' ' + (checked?'':'disabled') + ' onchange="_wfToggleRecipientNeedsResp(\'' + key + '\', this.checked)"></td>' +
+    '</tr>';
+  }).join('');
+  var count = Object.keys(_wfNewSelectedRecipients).length;
+  if (countEl) countEl.innerHTML = 'المحدَّد: <b style="color:#1e40af;">' + count + '</b> من ' + _wfNewRecipientsDir.length;
+}
+
+function _wfToggleRecipient(key, on) {
+  if (on) {
+    var r = _wfNewRecipientsDir.find(function(x){return String(x.userId) === String(key);});
+    if (r) _wfNewSelectedRecipients[key] = { userId: r.userId, username: r.username, code: r.code, name: r.fullName, needsResponse: false };
+  } else {
+    delete _wfNewSelectedRecipients[key];
+  }
+  _wfRenderRecipientTable();
+}
+
+function _wfToggleRecipientNeedsResp(key, on) {
+  if (_wfNewSelectedRecipients[key]) {
+    _wfNewSelectedRecipients[key].needsResponse = !!on;
+  }
+  var countEl = document.getElementById('wfnRcpCount');
+  if (countEl) {
+    var count = Object.keys(_wfNewSelectedRecipients).length;
+    countEl.innerHTML = 'المحدَّد: <b style="color:#1e40af;">' + count + '</b> من ' + _wfNewRecipientsDir.length;
+  }
+}
+
+function _wfToggleAllRecipients(on) {
+  if (on) {
+    _wfNewRecipientsDir.forEach(function(r) {
+      _wfNewSelectedRecipients[r.userId] = { userId: r.userId, username: r.username, code: r.code, name: r.fullName, needsResponse: false };
+    });
+  } else {
+    _wfNewSelectedRecipients = {};
+  }
+  _wfRenderRecipientTable();
+}
+
+function _wfSubmitNewTxn(asDraft) {
+  var title = document.getElementById('wfNewTitle').value;
+  var typeId = document.getElementById('wfNewType').value;
+  if (!title) return showToast('الموضوع مطلوب', true);
+  if (!typeId) return showToast('اختر نوع النموذج', true);
+
+  var recipients = Object.values(_wfNewSelectedRecipients).map(function(r) {
+    return { username: r.username, code: r.code, name: r.name, needsResponse: r.needsResponse };
+  });
+  var pickedRecipientUsername = recipients.length === 1 ? recipients[0].username : '';
+
+  var contentEd = document.getElementById('wfnContentHtml');
+  var contentHtml = contentEd ? contentEd.innerHTML : '';
+  var contentText = contentEd ? (contentEd.innerText || contentEd.textContent || '') : '';
+
+  var files = document.getElementById('wfNewFile').files;
+  var send = function(attachmentDataUrl) {
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) {
+      loader(false);
+      if (r.success) {
+        showToast((asDraft?'تم الحفظ كمسودة: ':'تم إنشاء المعاملة: ') + (r.txnNumber || ''));
+        wfCloseNewTxnModal();
+        if (document.getElementById('erpWfInbox') && !document.getElementById('erpWfInbox').classList.contains('hidden')) wfLoadInbox();
+        if (document.getElementById('erpWfDashboard') && !document.getElementById('erpWfDashboard').classList.contains('hidden')) wfLoadDashboard();
+        if (document.getElementById('erpWfOutgoing') && !document.getElementById('erpWfOutgoing').classList.contains('hidden')) wfLoadOutbox();
+      } else showToast(r.error, true);
+    }).createWfTransaction({
+      transactionTypeId: typeId,
+      title: title,
+      subject: title,
+      description: contentText.slice(0, 2000),
+      contentHtml: contentHtml,
+      amount: Number(document.getElementById('wfNewAmount').value) || 0,
+      importance: document.getElementById('wfNewImp').value || 'medium',
+      contentSecrecy: document.getElementById('wfnContentSecrecy').value || 'normal',
+      attachmentsSecrecy: document.getElementById('wfnAttSecrecy').value || 'normal',
+      issuingEntityId: document.getElementById('wfnIssuingDept').value || null,
+      issuingEntityName: (function(){ var s = document.getElementById('wfnIssuingDept'); return s && s.selectedIndex > 0 ? s.options[s.selectedIndex].text : ''; })(),
+      hijriDate: document.getElementById('wfnDateH').value || '',
+      brandId: document.getElementById('wfNewBrand').value || null,
+      branchId: document.getElementById('wfNewBranch').value || null,
+      deptId: document.getElementById('wfnIssuingDept').value || null,
+      recipients: recipients,
+      recipientUsername: pickedRecipientUsername,
+      attachment: attachmentDataUrl || null,
+      saveAsDraft: !!asDraft,
+      username: currentUser
+    });
+  };
+  if (files && files[0]) {
+    if (files[0].size > 10485760) return showToast('أقصى حجم للملف 10MB', true);
+    var fr = new FileReader();
+    fr.onload = function(e) { send(e.target.result); };
+    fr.readAsDataURL(files[0]);
+  } else send(null);
 }
 
 function wfViewTxn(id) {
@@ -4915,7 +5207,40 @@ function wfViewTxn(id) {
     html += f('التاريخ', txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('ar-SA',{day:'numeric',month:'long',year:'numeric'}) : '');
     html += '</div>';
 
-    if (txn.description) html += '<div style="padding:10px 14px;border-radius:10px;background:#f1f5f9;font-size:13px;color:#475569;margin-bottom:12px;">'+txn.description+'</div>';
+    // Secrecy badges
+    var secMap = { normal:{l:'عادي',c:'#16a34a'}, confidential:{l:'سري',c:'#ea580c'}, secret:{l:'سري للغاية',c:'#dc2626'}, top_secret:{l:'سري جداً للغاية',c:'#7c2d12'} };
+    if (txn.contentSecrecy || txn.attachmentsSecrecy) {
+      var cS = secMap[txn.contentSecrecy||'normal'] || secMap.normal;
+      var aS = secMap[txn.attachmentsSecrecy||'normal'] || secMap.normal;
+      html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">' +
+        '<span style="padding:4px 10px;border-radius:8px;background:'+cS.c+'15;color:'+cS.c+';font-size:11px;font-weight:800;"><i class="fas fa-shield-alt"></i> سرية المحتوى: '+cS.l+'</span>' +
+        '<span style="padding:4px 10px;border-radius:8px;background:'+aS.c+'15;color:'+aS.c+';font-size:11px;font-weight:800;"><i class="fas fa-paperclip"></i> سرية المرفقات: '+aS.l+'</span>' +
+        (txn.hijriDate ? '<span style="padding:4px 10px;border-radius:8px;background:#ede9fe;color:#6d28d9;font-size:11px;font-weight:800;"><i class="fas fa-moon"></i> ' + txn.hijriDate + '</span>' : '') +
+      '</div>';
+    }
+
+    // Content: prefer HTML when available
+    if (txn.contentHtml && txn.contentHtml.trim()) {
+      html += '<div style="padding:14px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;font-size:13px;color:#1e293b;line-height:1.8;margin-bottom:12px;">'+txn.contentHtml+'</div>';
+    } else if (txn.description) {
+      html += '<div style="padding:10px 14px;border-radius:10px;background:#f1f5f9;font-size:13px;color:#475569;margin-bottom:12px;">'+txn.description+'</div>';
+    }
+
+    // Recipients (multi)
+    if (txn.recipients && txn.recipients.length) {
+      html += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-bottom:12px;">' +
+        '<div style="font-size:12px;font-weight:800;color:#1e40af;margin-bottom:8px;"><i class="fas fa-paper-plane"></i> الجهات الصادر إليها ('+txn.recipients.length+')</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+      txn.recipients.forEach(function(r) {
+        html += '<div style="padding:4px 10px;border-radius:8px;background:#eff6ff;color:#1e40af;font-size:11px;display:inline-flex;align-items:center;gap:4px;">' +
+          (r.code ? '<code style="font-size:10px;color:#64748b;">'+r.code+'</code>' : '') +
+          '<b>'+(r.name||r.username||'')+'</b>' +
+          (r.needsResponse ? ' <span style="color:#ea580c;font-size:9px;">يحتاج رد</span>' : '') +
+          (r.responseReceived ? ' <i class="fas fa-check" style="color:#16a34a;"></i>' : '') +
+        '</div>';
+      });
+      html += '</div></div>';
+    }
     if (txn.attachment && typeof txn.attachment === 'string' && txn.attachment.startsWith('data:')) {
       html += '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;background:#eff6ff;color:#1e40af;font-size:12px;font-weight:700;margin-bottom:12px;text-decoration:none;"><i class="fas fa-download"></i> تحميل مرفق المعاملة</a>';
     }

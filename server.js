@@ -1521,6 +1521,33 @@ async function runMigrations() {
   // Initiator's position — used to look up the per-position workflow chain
   await addColumnIfMissing('transactions', 'initiator_position_id', "VARCHAR(50)");
 
+  // Enterprise-style fields (subject, secrecy, rich content, draft marker)
+  await addColumnIfMissing('transactions', 'subject', "VARCHAR(500) DEFAULT ''");
+  await addColumnIfMissing('transactions', 'content_secrecy', "ENUM('normal','confidential','secret','top_secret') DEFAULT 'normal'");
+  await addColumnIfMissing('transactions', 'attachments_secrecy', "ENUM('normal','confidential','secret','top_secret') DEFAULT 'normal'");
+  await addColumnIfMissing('transactions', 'content_html', "LONGTEXT");
+  await addColumnIfMissing('transactions', 'issuing_entity_id', "VARCHAR(50)");
+  await addColumnIfMissing('transactions', 'issuing_entity_name', "VARCHAR(300) DEFAULT ''");
+  await addColumnIfMissing('transactions', 'hijri_date', "VARCHAR(20) DEFAULT ''");
+
+  // Multi-recipient table (الجهات الصادر إليها)
+  await createTableIfMissing('txn_recipients', `
+    CREATE TABLE txn_recipients (
+      id VARCHAR(60) PRIMARY KEY,
+      transaction_id VARCHAR(50) NOT NULL,
+      recipient_type VARCHAR(30) DEFAULT 'user',
+      recipient_id VARCHAR(50),
+      recipient_username VARCHAR(100) DEFAULT '',
+      recipient_code VARCHAR(30) DEFAULT '',
+      recipient_name VARCHAR(300) DEFAULT '',
+      needs_response BOOLEAN DEFAULT FALSE,
+      response_received BOOLEAN DEFAULT FALSE,
+      response_at DATETIME,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_txn (transaction_id)
+    ) ENGINE=InnoDB
+  `);
+
   // Workflow step routing flags — role-based employee resolution rules
   await addColumnIfMissing('workflow_definitions', 'require_same_branch', "BOOLEAN DEFAULT TRUE");
   await addColumnIfMissing('workflow_definitions', 'require_same_department', "BOOLEAN DEFAULT FALSE");

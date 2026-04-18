@@ -677,6 +677,38 @@ router.put('/org-tree/:employeeId', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
+// Recipient directory — full list for the "Recipients" table in the new-txn modal.
+// Returns users + their position + dept; each row carries a code (employee_number
+// or a synthesized one) and a displayable name.
+router.get('/recipients-directory', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT u.id AS user_id, u.username, u.full_name, u.role,
+              p.id AS position_id, p.name AS position_name, p.level AS position_level,
+              b.name AS branch_name,
+              e.id AS emp_id, e.employee_number, e.first_name, e.last_name,
+              e.job_title, d.name AS dept_name
+       FROM users u
+       LEFT JOIN positions p ON u.position_id = p.id
+       LEFT JOIN branches b ON u.branch_id = b.id
+       LEFT JOIN hr_employees e ON e.linked_username = u.username
+       LEFT JOIN hr_departments d ON e.department_id = d.id
+       WHERE u.active = 1 AND (u.position_id IS NOT NULL OR u.role = 'admin' OR e.id IS NOT NULL)
+       ORDER BY p.level DESC, u.username`);
+    res.json(rows.map(r => {
+      const fullName = (((r.first_name||'') + ' ' + (r.last_name||'')).trim()) || r.full_name || r.username;
+      const position = r.position_name || r.job_title || (r.role === 'admin' ? 'مدير النظام' : '');
+      const code = r.employee_number || (r.user_id ? ('U-' + r.user_id) : '');
+      return {
+        userId: r.user_id, username: r.username, fullName,
+        code, position, positionId: r.position_id || '',
+        branchName: r.branch_name || '', deptName: r.dept_name || '',
+        displayName: fullName + (position ? (' — ' + position) : '') + (r.branch_name ? (' | ' + r.branch_name) : '')
+      };
+    }));
+  } catch(e) { res.json([]); }
+});
+
 // Eligible recipients — users with positions (higher level than sender by default)
 router.get('/eligible-users', async (req, res) => {
   try {
@@ -729,7 +761,12 @@ router.post('/transactions', async (req, res) => {
       transactionTypeId, title, description, amount, branchId, brandId, username, attachment,
       accountId, accountCode, accountName, costCenterId, costCenterName,
       recipientUsername, senderName, senderPosition,
-      importance, deptId
+      importance, deptId,
+      // Enterprise fields
+      subject, contentHtml, contentSecrecy, attachmentsSecrecy,
+      issuingEntityId, issuingEntityName, hijriDate,
+      recipients,              // [{ username?, positionId?, code?, name, needsResponse }]
+      saveAsDraft              // if true, status = 'draft' regardless of routing
     } = req.body;
 
     if (!transactionTypeId || !title) return res.json({ success: false, error: 'نوع المعاملة والعنوان مطلوبان' });
@@ -817,26 +854,52 @@ router.post('/transactions', async (req, res) => {
     }
 
     const validImportance = ['critical','high','medium','low'].includes(importance) ? importance : 'medium';
-    const initialStatus = currentAssignee || currentStepId ? 'pending' : 'draft';
+    const secrecyValues = ['normal','confidential','secret','top_secret'];
+    const finalContentSecrecy = secrecyValues.includes(contentSecrecy) ? contentSecrecy : 'normal';
+    const finalAttSecrecy     = secrecyValues.includes(attachmentsSecrecy) ? attachmentsSecrecy : 'normal';
+    const finalSubject = (subject || title || '').slice(0, 500);
+    const finalIssuingEntityId   = issuingEntityId || sender.deptId || sender.branchId || '';
+    const finalIssuingEntityName = issuingEntityName || sender.deptName || sender.branchName || '';
+    // Draft mode overrides routing — transaction parked in creator's outbox only
+    const initialStatus = saveAsDraft ? 'draft'
+                        : ((currentAssignee || currentStepId) ? 'pending' : 'draft');
 
     await db.query(
       `INSERT INTO transactions (
          id, transaction_number, transaction_type_id, type_code, daily_serial,
          created_by, branch_id, branch_code, branch_name, brand_id,
          dept_id, dept_code, dept_name,
-         title, description, amount, importance, status,
-         current_step_id, current_role_id, current_role_name, current_assignee, attachment,
+         title, subject, description, content_html, amount, importance,
+         content_secrecy, attachments_secrecy, issuing_entity_id, issuing_entity_name, hijri_date,
+         status, current_step_id, current_role_id, current_role_name, current_assignee, attachment,
          account_id, account_code, account_name, cost_center_id, cost_center_name,
          recipient_username, sender_name, sender_position, initiator_position_id)
-       VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?)`,
+       VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?)`,
       [id, txnNumber, transactionTypeId, typeCode, serial,
        username||'', finalBranchId||null, branchCode, branchName, brandId||null,
        finalDeptId||null, deptCode, deptName,
-       title, description||'', amount||0, validImportance, initialStatus,
-       currentStepId, currentRoleId, currentRoleName, currentAssignee, attachment||null,
+       title, finalSubject, description||'', contentHtml||null, amount||0, validImportance,
+       finalContentSecrecy, finalAttSecrecy, finalIssuingEntityId||null, finalIssuingEntityName, hijriDate||'',
+       initialStatus, currentStepId, currentRoleId, currentRoleName, currentAssignee, attachment||null,
        accountId||null, accountCode||'', accountName||'', costCenterId||null, costCenterName||'',
        recipientUsername||'', senderName||'', senderPosition||'', initiatorPositionId||null]
     );
+
+    // Multi-recipients (optional)
+    if (Array.isArray(recipients) && recipients.length) {
+      for (const r of recipients) {
+        if (!r || (!r.username && !r.name && !r.positionId)) continue;
+        const recId = 'RCP-' + Date.now() + '-' + Math.random().toString(36).substr(2,5);
+        await db.query(
+          `INSERT INTO txn_recipients
+             (id, transaction_id, recipient_type, recipient_id, recipient_username,
+              recipient_code, recipient_name, needs_response)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          [recId, id, r.type || (r.positionId ? 'position' : 'user'),
+           r.id || r.positionId || null, r.username || '',
+           r.code || '', r.name || '', r.needsResponse ? 1 : 0]);
+      }
+    }
 
     // Log creation
     const logId = 'LOG-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
@@ -1021,10 +1084,25 @@ router.get('/transactions/:id', async (req, res) => {
     // Multi attachments
     const [atts] = await db.query('SELECT id, file_name, mime_type, uploaded_by, uploaded_at, log_id FROM txn_attachments WHERE transaction_id = ? ORDER BY uploaded_at', [req.params.id]);
 
+    // Recipients (multi)
+    const [recipientRows] = await db.query('SELECT * FROM txn_recipients WHERE transaction_id = ? ORDER BY created_at', [req.params.id]);
+
     res.json({
       ..._mapTxn(t),
       description: t.description,
       attachmentDataUrl: t.attachment || '',
+      subject: t.subject || '',
+      contentHtml: t.content_html || '',
+      contentSecrecy: t.content_secrecy || 'normal',
+      attachmentsSecrecy: t.attachments_secrecy || 'normal',
+      issuingEntityId: t.issuing_entity_id || '',
+      issuingEntityName: t.issuing_entity_name || '',
+      hijriDate: t.hijri_date || '',
+      recipients: recipientRows.map(r => ({
+        id: r.id, type: r.recipient_type, username: r.recipient_username,
+        code: r.recipient_code, name: r.recipient_name,
+        needsResponse: !!r.needs_response, responseReceived: !!r.response_received
+      })),
       workflowPath: steps.map(s => ({
         id: s.id, stepOrder: s.step_order, stepName: s.step_name,
         positionName: s.position_name || '', isFinal: !!s.is_final_step,

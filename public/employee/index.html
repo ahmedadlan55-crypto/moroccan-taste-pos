@@ -77,7 +77,7 @@
     .modal-h button{width:26px;height:26px;border-radius:6px;background:#f1f5f9;border:none;font-size:14px;cursor:pointer;}
   </style>
   <script defer src="/shared/api-bridge.js"></script>
-  <script defer src="/employee/app.js?v=14"></script>
+  <script defer src="/employee/app.js?v=15"></script>
 </head>
 <body>
 <div class="toast" id="toast"></div>
@@ -120,8 +120,24 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
     <div class="page" id="pgatt"><div class="stats" id="attStats"></div><div class="card"><div class="card-t"><i class="fas fa-calendar-check"></i> سجل الحضور</div><div id="attList"></div></div></div>
     <div class="page" id="pgleave"><div class="card"><div class="card-t"><i class="fas fa-umbrella-beach"></i> أرصدة الإجازات</div><div id="leaveBals"></div></div><button class="btn-m" onclick="openLeaveForm()"><i class="fas fa-plus"></i> طلب إجازة</button><div class="card"><div class="card-t"><i class="fas fa-list"></i> طلباتي</div><div id="leaveReqs"></div></div></div>
     <div class="page" id="pgtxn">
-      <button class="btn-m" onclick="openTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
-      <div class="card"><div class="card-t"><i class="fas fa-file-alt"></i> معاملاتي</div><div id="myTxnList"></div></div>
+      <!-- Tab switcher: Incoming / Outgoing -->
+      <div style="display:flex;gap:4px;background:#f1f5f9;border-radius:12px;padding:4px;margin-bottom:12px;">
+        <button id="txnTabInc" onclick="txnSwitchTab('inc')" style="flex:1;padding:10px;border:none;background:#fff;color:#0ea5e9;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.05);">
+          <i class="fas fa-inbox"></i> الوارد <span id="txnIncBadge" style="background:#ef4444;color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;margin-right:4px;display:none;">0</span>
+        </button>
+        <button id="txnTabOut" onclick="txnSwitchTab('out')" style="flex:1;padding:10px;border:none;background:transparent;color:#64748b;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;">
+          <i class="fas fa-paper-plane"></i> الصادر
+        </button>
+      </div>
+      <!-- Incoming subpage -->
+      <div id="txnSubInc">
+        <div class="card"><div class="card-t"><i class="fas fa-inbox"></i> في انتظار إجرائي</div><div id="incomingTxnList"></div></div>
+      </div>
+      <!-- Outgoing subpage -->
+      <div id="txnSubOut" style="display:none;">
+        <button class="btn-m" onclick="openTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
+        <div class="card"><div class="card-t"><i class="fas fa-paper-plane"></i> معاملاتي المرسلة</div><div id="myTxnList"></div></div>
+      </div>
     </div>
     <div class="page" id="pgme"><div class="card"><div class="card-t"><i class="fas fa-id-card"></i> بياناتي</div><div id="profileInfo"></div></div><div class="card"><div class="card-t"><i class="fas fa-money-bill-wave"></i> الرواتب</div><div id="payslips"></div></div></div>
   </div>
@@ -138,6 +154,14 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
     <div class="fg"><label><i class="fas fa-id-badge"></i> المسمى الوظيفي</label><input class="fi" id="txnJobTitle" readonly style="background:#f3f4f6;color:#6b7280;"></div>
   </div>
   <div class="fg"><label>نوع المعاملة *</label><select class="fi" id="txnType"></select></div>
+  <div class="fg"><label>درجة الأهمية *</label>
+    <select class="fi" id="txnImportance">
+      <option value="low">منخفض (Low) — أخضر</option>
+      <option value="medium" selected>متوسط (Medium) — أصفر</option>
+      <option value="high">عالي (High) — برتقالي</option>
+      <option value="critical">عاجل (Critical) — أحمر</option>
+    </select>
+  </div>
   <div class="fg"><label>العنوان *</label><input class="fi" id="txnTitle" placeholder="وصف مختصر للمعاملة"></div>
   <!-- Account search -->
   <div class="fg" style="position:relative;">

@@ -116,10 +116,14 @@
           <i class="fas fa-project-diagram"></i><span>المعاملات</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
+          <div class="nav-item" data-erp-nav="erpWfDashboard" onclick="erpNav('erpWfDashboard')"><i class="fas fa-th-large"></i><span>لوحة المعاملات</span></div>
+          <div class="nav-item" data-erp-nav="erpWfIncoming" onclick="erpNav('erpWfIncoming')"><i class="fas fa-inbox"></i><span>صندوق الوارد</span></div>
+          <div class="nav-item" data-erp-nav="erpWfOutgoing" onclick="erpNav('erpWfOutgoing')"><i class="fas fa-paper-plane"></i><span>صندوق الصادر</span></div>
+          <div class="nav-item" data-erp-nav="erpWfInbox" onclick="erpNav('erpWfInbox')"><i class="fas fa-list"></i><span>جميع المعاملات</span></div>
+          <div class="nav-item" data-erp-nav="erpWfOrgTree" onclick="erpNav('erpWfOrgTree')"><i class="fas fa-sitemap"></i><span>الشجرة الإدارية</span></div>
           <div class="nav-item" data-erp-nav="erpWfPositions" onclick="erpNav('erpWfPositions')"><i class="fas fa-id-badge"></i><span>المناصب</span></div>
           <div class="nav-item" data-erp-nav="erpWfTypes" onclick="erpNav('erpWfTypes')"><i class="fas fa-list-alt"></i><span>أنواع المعاملات</span></div>
           <div class="nav-item" data-erp-nav="erpWfDefs" onclick="erpNav('erpWfDefs')"><i class="fas fa-tasks"></i><span>خطوات سير العمل</span></div>
-          <div class="nav-item" data-erp-nav="erpWfInbox" onclick="erpNav('erpWfInbox')"><i class="fas fa-inbox"></i><span>صندوق المعاملات</span></div>
         </div>
 
         <!-- ═══ الموارد البشرية (HR) ═══ -->
@@ -1552,11 +1556,11 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<!-- WORKFLOW: صندوق المعاملات (Transaction Inbox) -->
+<!-- WORKFLOW: جميع المعاملات (All Transactions) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfInbox" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-inbox" style="color:#3b82f6;"></i> صندوق المعاملات</h2>
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-list" style="color:#3b82f6;"></i> جميع المعاملات</h2>
     <div style="display:flex;gap:8px;">
       <select id="wfInboxStatusFilter" class="form-control" style="width:160px;" onchange="wfLoadInbox()">
         <option value="">كل الحالات</option>
@@ -1572,8 +1576,116 @@
   <div id="wfInboxStats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;"></div>
   <div class="erp-table-container" style="border-radius:14px;">
     <table class="erp-table">
-      <thead><tr><th>الحالة</th><th>الرقم</th><th>النوع</th><th>العنوان</th><th>المبلغ</th><th>الخطوة الحالية</th><th>المنصب</th><th>التاريخ</th><th>إجراءات</th></tr></thead>
-      <tbody id="wfInboxBody"><tr><td colspan="9" class="empty-msg">لا توجد معاملات</td></tr></tbody>
+      <thead><tr><th>الأهمية</th><th>الحالة</th><th>الرقم</th><th>النوع</th><th>الفرع</th><th>القسم</th><th>العنوان</th><th>المبلغ</th><th>المسؤول الحالي</th><th>التاريخ</th><th>إجراءات</th></tr></thead>
+      <tbody id="wfInboxBody"><tr><td colspan="11" class="empty-msg">لا توجد معاملات</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- WORKFLOW: Dashboard (لوحة معاملات مع كروت الأهمية) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpWfDashboard" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-th-large" style="color:#3b82f6;"></i> لوحة المعاملات الإدارية</h2>
+    <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
+  </div>
+
+  <!-- Importance summary strip -->
+  <div id="wfDashImportance" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px;"></div>
+
+  <!-- Filter bar -->
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;">
+    <div><label style="font-size:11px;font-weight:700;color:#64748b;">الفرع</label>
+      <select id="wfDashFBranch" class="form-control" onchange="wfLoadDashboard()"><option value="">كل الفروع</option></select></div>
+    <div><label style="font-size:11px;font-weight:700;color:#64748b;">القسم</label>
+      <select id="wfDashFDept" class="form-control" onchange="wfLoadDashboard()"><option value="">كل الأقسام</option></select></div>
+    <div><label style="font-size:11px;font-weight:700;color:#64748b;">درجة الأهمية</label>
+      <select id="wfDashFImp" class="form-control" onchange="wfLoadDashboard()">
+        <option value="">كل الدرجات</option>
+        <option value="critical">عاجل (Critical)</option>
+        <option value="high">عالي (High)</option>
+        <option value="medium">متوسط (Medium)</option>
+        <option value="low">منخفض (Low)</option>
+      </select></div>
+    <div><label style="font-size:11px;font-weight:700;color:#64748b;">نوع المعاملة</label>
+      <select id="wfDashFType" class="form-control" onchange="wfLoadDashboard()"><option value="">كل الأنواع</option></select></div>
+    <div><label style="font-size:11px;font-weight:700;color:#64748b;">الحالة</label>
+      <select id="wfDashFStatus" class="form-control" onchange="wfLoadDashboard()">
+        <option value="">مفتوحة فقط</option>
+        <option value="pending">قيد الانتظار</option>
+        <option value="in_progress">قيد التنفيذ</option>
+        <option value="approved">معتمدة</option>
+        <option value="rejected">مرفوضة</option>
+        <option value="closed">مغلقة</option>
+      </select></div>
+    <div style="display:flex;align-items:flex-end;"><button class="btn btn-light" onclick="wfResetDashFilters()" style="width:100%;"><i class="fas fa-redo"></i> إعادة</button></div>
+  </div>
+
+  <!-- Cards grid -->
+  <div id="wfDashCards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;">
+    <div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">جاري التحميل...</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- WORKFLOW: صندوق الوارد (Incoming Box) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpWfIncoming" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-inbox" style="color:#10b981;"></i> صندوق الوارد — في انتظار إجراء</h2>
+    <button class="btn btn-light" onclick="wfLoadIncoming()"><i class="fas fa-sync"></i> تحديث</button>
+  </div>
+  <div id="wfIncomingStats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;"></div>
+  <div class="erp-table-container" style="border-radius:14px;">
+    <table class="erp-table">
+      <thead><tr><th>الأهمية</th><th>الرقم</th><th>النوع</th><th>المرسل</th><th>الفرع/القسم</th><th>العنوان</th><th>المبلغ</th><th>الخطوة</th><th>التاريخ</th><th>إجراءات</th></tr></thead>
+      <tbody id="wfIncomingBody"><tr><td colspan="10" class="empty-msg">لا توجد معاملات بانتظارك</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- WORKFLOW: صندوق الصادر (Outgoing Box) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpWfOutgoing" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-paper-plane" style="color:#0ea5e9;"></i> صندوق الصادر — معاملاتي</h2>
+    <div style="display:flex;gap:8px;">
+      <select id="wfOutboxStatusFilter" class="form-control" style="width:160px;" onchange="wfLoadOutbox()">
+        <option value="">كل الحالات</option>
+        <option value="pending">قيد الانتظار</option>
+        <option value="in_progress">قيد التنفيذ</option>
+        <option value="approved">معتمدة</option>
+        <option value="rejected">مرفوضة</option>
+        <option value="closed">مغلقة</option>
+      </select>
+      <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
+    </div>
+  </div>
+  <div class="erp-table-container" style="border-radius:14px;">
+    <table class="erp-table">
+      <thead><tr><th>الأهمية</th><th>الحالة</th><th>الرقم</th><th>النوع</th><th>العنوان</th><th>المبلغ</th><th>المسؤول حالياً</th><th>الخطوة</th><th>التاريخ</th><th>إجراءات</th></tr></thead>
+      <tbody id="wfOutboxBody"><tr><td colspan="10" class="empty-msg">لا توجد معاملات</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- WORKFLOW: الشجرة الإدارية (Organizational Tree) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpWfOrgTree" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-sitemap" style="color:#8b5cf6;"></i> الشجرة الإدارية</h2>
+    <button class="btn btn-light" onclick="wfLoadOrgTree()"><i class="fas fa-sync"></i> تحديث</button>
+  </div>
+  <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:12px;margin-bottom:14px;font-size:13px;color:#1e40af;">
+    <i class="fas fa-info-circle"></i> إدارة المدراء المباشرين والمستويات الإدارية والصلاحيات لكل موظف. الصلاحيات: إنشاء، موافقة، رفض، إرجاع، تحويل، إغلاق.
+  </div>
+  <div class="erp-table-container" style="border-radius:14px;">
+    <table class="erp-table">
+      <thead><tr><th>الموظف</th><th>الوظيفة</th><th>الفرع</th><th>القسم</th><th>المستوى</th><th>المدير المباشر</th><th>الصلاحيات</th><th>تعديل</th></tr></thead>
+      <tbody id="wfOrgBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody>
     </table>
   </div>
 </div>

@@ -109,7 +109,7 @@ function navTo(pg, el) {
   document.getElementById('pg'+pg).classList.add('active');
   if (el) el.classList.add('active');
   if (pg==='att') loadAttPage();
-  if (pg==='txn') loadMyTransactions();
+  if (pg==='txn') { txnSwitchTab('inc'); loadIncomingTxns(); loadMyTransactions(); }
   if (pg==='leave') loadLeavePage();
   if (pg==='me') loadProfilePage();
   if (pg==='home') loadHomeData();
@@ -397,19 +397,160 @@ function loadProfilePage() {
   });
 }
 
-// TRANSACTIONS
+// TRANSACTIONS — Common helpers
+var _impColors = { critical:'#dc2626', high:'#ea580c', medium:'#ca8a04', low:'#16a34a' };
+var _impBgs    = { critical:'#fee2e2', high:'#ffedd5', medium:'#fef9c3', low:'#dcfce7' };
+var _impLabels = { critical:'عاجل', high:'عالي', medium:'متوسط', low:'منخفض' };
+var _statMap   = { pending:'معلّق', in_progress:'قيد التنفيذ', approved:'معتمدة', rejected:'مرفوضة', closed:'مغلقة', draft:'مسودة' };
+var _statClr   = { pending:'#f59e0b', in_progress:'#0ea5e9', approved:'#10b981', rejected:'#ef4444', closed:'#6b7280', draft:'#94a3b8' };
+
+function _impBadge(i) {
+  var c = _impColors[i]||'#6b7280', bg = _impBgs[i]||'#f3f4f6';
+  return '<span style="padding:2px 8px;border-radius:6px;background:'+bg+';color:'+c+';font-size:10px;font-weight:800;"><i class="fas fa-circle" style="font-size:6px;margin-left:3px;"></i>'+(_impLabels[i]||i)+'</span>';
+}
+
+function _statBadge(s) {
+  var c = _statClr[s]||'#94a3b8';
+  return '<span style="padding:2px 8px;border-radius:6px;background:'+c+'20;color:'+c+';font-size:10px;font-weight:800;">'+(_statMap[s]||s)+'</span>';
+}
+
+function txnSwitchTab(which) {
+  var inc = document.getElementById('txnSubInc'), out = document.getElementById('txnSubOut');
+  var tInc = document.getElementById('txnTabInc'), tOut = document.getElementById('txnTabOut');
+  if (which === 'inc') {
+    inc.style.display = ''; out.style.display = 'none';
+    tInc.style.background='#fff'; tInc.style.color='#0ea5e9'; tInc.style.boxShadow='0 1px 3px rgba(0,0,0,.05)';
+    tOut.style.background='transparent'; tOut.style.color='#64748b'; tOut.style.boxShadow='none';
+    loadIncomingTxns();
+  } else {
+    inc.style.display = 'none'; out.style.display = '';
+    tOut.style.background='#fff'; tOut.style.color='#0ea5e9'; tOut.style.boxShadow='0 1px 3px rgba(0,0,0,.05)';
+    tInc.style.background='transparent'; tInc.style.color='#64748b'; tInc.style.boxShadow='none';
+    loadMyTransactions();
+  }
+}
+
+// Incoming — transactions awaiting my action
+function loadIncomingTxns() {
+  var c = document.getElementById('incomingTxnList');
+  if (!c) return;
+  c.innerHTML = '<p class="empty"><i class="fas fa-spinner fa-spin"></i></p>';
+  callAPI('GET', '/workflow/incoming?username=' + encodeURIComponent(currentUser), null, function(rows) {
+    var list = rows || []; if (!Array.isArray(list)) list = [];
+    // Update badge
+    var bd = document.getElementById('txnIncBadge');
+    if (bd) { if (list.length) { bd.style.display = 'inline-block'; bd.textContent = list.length; } else { bd.style.display = 'none'; } }
+    if (!list.length) { c.innerHTML = '<p class="empty">لا توجد معاملات بانتظارك</p>'; return; }
+    c.innerHTML = list.map(function(t) {
+      var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('ar-SA',{day:'numeric',month:'short'}) : '';
+      return '<div style="border-bottom:1px solid #f5f5f5;padding:10px 0;">' +
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' + _impBadge(t.importance||'medium') + _statBadge(t.status) + '</div>' +
+        '<div onclick="viewMyTxn(\''+t.id+'\')" style="cursor:pointer;">' +
+          '<div style="font-weight:800;font-size:13px;color:#0f172a;">' + (t.title||'') + '</div>' +
+          '<div style="font-size:10px;font-family:monospace;color:#64748b;margin-top:2px;">'+(t.txnNumber||'')+'</div>' +
+          '<div class="meta">' + (t.typeName||'') + ' • ' + (t.senderName||t.createdBy||'') + ' • ' + dt + '</div>' +
+          (Number(t.amount) ? '<div style="margin-top:2px;color:#0ea5e9;font-weight:800;font-size:12px;">'+Number(t.amount).toLocaleString('en',{minimumFractionDigits:2})+' ر.س</div>' : '') +
+        '</div>' +
+        '<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">' +
+          '<button onclick="empAct(\''+t.id+'\',\'approve\')" style="flex:1;padding:8px;border:none;background:#10b981;color:#fff;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-check"></i> قبول</button>' +
+          '<button onclick="empAct(\''+t.id+'\',\'reject\')" style="flex:1;padding:8px;border:none;background:#ef4444;color:#fff;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-times"></i> رفض</button>' +
+          '<button onclick="empAct(\''+t.id+'\',\'return\')" style="flex:1;padding:8px;border:none;background:#f59e0b;color:#fff;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-undo"></i> إرجاع</button>' +
+          '<button onclick="empFwd(\''+t.id+'\')" style="flex:1;padding:8px;border:none;background:#8b5cf6;color:#fff;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-share"></i> تحويل</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  });
+}
+
+function empAct(id, action) {
+  var labels = { approve: 'قبول', reject: 'رفض', return: 'إرجاع' };
+  var note = '';
+  if (action === 'reject') {
+    note = prompt('سبب الرفض (مطلوب):');
+    if (!note) return toast('مطلوب ذكر السبب', true);
+  } else {
+    note = prompt('ملاحظة (اختياري):') || '';
+  }
+  toast('جاري ' + labels[action] + '...');
+  callAPI('POST', '/workflow/transactions/' + id + '/action', {
+    action: action, username: currentUser, note: note
+  }, function(r) {
+    if (r && r.success) { toast('تم'); loadIncomingTxns(); loadMyTransactions(); }
+    else toast(r ? r.error : 'فشل', true);
+  });
+}
+
+function empFwd(id) {
+  callAPI('GET', '/workflow/eligible-users?sender=' + encodeURIComponent(currentUser), null, function(users) {
+    if (!users || !users.length) return toast('لا يوجد مستلم محتمل', true);
+    var opts = users.map(function(u, i) { return (i+1)+') '+(u.fullName||u.username)+' — '+(u.positionName||''); }).join('\n');
+    var pick = prompt('تحويل إلى:\n'+opts+'\n\nأدخل رقم الاختيار:');
+    var idx = parseInt(pick) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= users.length) return toast('اختيار غير صالح', true);
+    var note = prompt('ملاحظة (اختياري):') || '';
+    callAPI('POST', '/workflow/transactions/' + id + '/action', {
+      action: 'forward', username: currentUser, forwardTo: users[idx].username,
+      note: 'تحويل إلى ' + users[idx].username + (note ? ' — ' + note : '')
+    }, function(r) {
+      if (r && r.success) { toast('تم التحويل'); loadIncomingTxns(); }
+      else toast(r ? r.error : 'فشل', true);
+    });
+  });
+}
+
 function loadMyTransactions() {
   var c = document.getElementById('myTxnList');
+  if (!c) return;
   c.innerHTML = '<p class="empty"><i class="fas fa-spinner fa-spin"></i></p>';
-  callAPI('GET', '/workflow/my-transactions?username=' + currentUser, null, function(rows) {
+  callAPI('GET', '/workflow/outbox?username=' + encodeURIComponent(currentUser), null, function(rows) {
     var txns = rows || []; if (!Array.isArray(txns)) txns = [];
-    var sMap = {pending:'معلّق',in_progress:'قيد التنفيذ',approved:'معتمدة',rejected:'مرفوضة',closed:'مغلقة'};
-    var sClr = {pending:'#f59e0b',in_progress:'#0ea5e9',approved:'#10b981',rejected:'#ef4444',closed:'#6b7280'};
     if (!txns.length) { c.innerHTML = '<p class="empty">لا توجد معاملات</p>'; return; }
     c.innerHTML = txns.map(function(t) {
       var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('ar-SA',{day:'numeric',month:'short'}) : '';
-      return '<div class="ar" style="cursor:pointer;padding:12px 0;" onclick="viewMyTxn(\x27'+t.id+'\x27)"><div style="flex:1;"><div style="font-weight:800;font-size:13px;">' + t.title + '</div><div class="meta">' + (t.typeName||'') + ' | ' + dt + '</div></div><span class="badge">' + (sMap[t.status]||t.status) + '</span></div>';
+      var canEdit = (t.status==='pending' || t.status==='draft');
+      var actBtns = '';
+      if (canEdit) {
+        actBtns = '<div style="display:flex;gap:4px;margin-top:6px;">' +
+          '<button onclick="event.stopPropagation();empEditTxn(\''+t.id+'\')" style="flex:1;padding:6px;border:none;background:#eff6ff;color:#1e40af;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-edit"></i> تعديل</button>' +
+          '<button onclick="event.stopPropagation();empCancelTxn(\''+t.id+'\')" style="flex:1;padding:6px;border:none;background:#fef2f2;color:#991b1b;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-trash"></i> إلغاء</button>' +
+        '</div>';
+      }
+      return '<div style="border-bottom:1px solid #f5f5f5;padding:10px 0;">' +
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' + _impBadge(t.importance||'medium') + _statBadge(t.status) + '</div>' +
+        '<div onclick="viewMyTxn(\''+t.id+'\')" style="cursor:pointer;">' +
+          '<div style="font-weight:800;font-size:13px;color:#0f172a;">' + (t.title||'') + '</div>' +
+          '<div style="font-size:10px;font-family:monospace;color:#64748b;margin-top:2px;">'+(t.txnNumber||'')+'</div>' +
+          '<div class="meta">' + (t.typeName||'') + ' • ' + dt + ' • مسؤول: <b style="color:#1e40af;">' + (t.currentAssignee||t.currentPositionName||'—') + '</b></div>' +
+        '</div>' +
+        actBtns +
+      '</div>';
     }).join('');
+  });
+}
+
+function empEditTxn(id) {
+  callAPI('GET', '/workflow/transactions/'+id, null, function(txn) {
+    if (!txn || txn.error) return toast('غير موجود', true);
+    var title = prompt('العنوان:', txn.title || '');
+    if (title === null) return;
+    var desc = prompt('التفاصيل:', txn.description || '');
+    if (desc === null) return;
+    var amt = prompt('المبلغ:', Number(txn.amount||0));
+    if (amt === null) return;
+    callAPI('PUT', '/workflow/transactions/'+id, {
+      username: currentUser, title: title, description: desc, amount: Number(amt)||0
+    }, function(r) {
+      if (r && r.success) { toast('تم الحفظ'); loadMyTransactions(); }
+      else toast(r ? r.error : 'فشل', true);
+    });
+  });
+}
+
+function empCancelTxn(id) {
+  if (!confirm('إلغاء المعاملة نهائياً؟')) return;
+  callAPI('DELETE', '/workflow/transactions/'+id+'?username='+encodeURIComponent(currentUser), null, function(r) {
+    if (r && r.success) { toast('تم الإلغاء'); loadMyTransactions(); }
+    else toast(r ? r.error : 'فشل', true);
   });
 }
 var _txnAccounts = [];
@@ -493,13 +634,16 @@ function submitTxn() {
   var title = document.getElementById('txnTitle').value, typeId = document.getElementById('txnType').value;
   if (!title || !typeId) return toast('اختر النوع واكتب العنوان', true);
   var ccSel = document.getElementById('txnCC');
+  var impEl = document.getElementById('txnImportance');
   var data = {
     transactionTypeId: typeId, title: title,
     description: document.getElementById('txnDesc').value,
     amount: Number(document.getElementById('txnAmount').value) || 0,
+    importance: impEl ? impEl.value : 'medium',
     username: currentUser,
     branchId: empProfile ? empProfile.branch_id : '',
     brandId: empProfile ? empProfile.brand_id : '',
+    deptId: empProfile ? empProfile.department_id : '',
     accountId: document.getElementById('txnAccId').value || '',
     accountCode: (document.getElementById('txnAccSearch').value || '').split(' — ')[0] || '',
     accountName: document.getElementById('txnAccName').value || '',
@@ -518,7 +662,7 @@ function submitTxn() {
 function _doTxn(data) {
   toast('جاري الإرسال...'); callAPI('POST', '/workflow/transactions', data, function(r, e) {
     if (e) return toast('خطأ: '+e, true);
-    if (r && r.success) { toast('تم: '+(r.txnNumber||'')); closeTxnModal(); loadMyTransactions(); } else toast(r?r.error:'فشل', true);
+    if (r && r.success) { toast('تم: '+(r.txnNumber||'')); closeTxnModal(); txnSwitchTab('out'); loadMyTransactions(); } else toast(r?r.error:'فشل', true);
   });
 }
 function viewMyTxn(id) {
@@ -531,15 +675,36 @@ function viewMyTxn(id) {
     var aIcon = {create:'fa-plus-circle',approve:'fa-check-circle',reject:'fa-times-circle',return:'fa-undo',close:'fa-lock',forward:'fa-share'};
     var sc = sClr[txn.status]||'#6b7280';
 
-    var h = '<div style="padding:12px;border-radius:12px;background:'+sc+'10;border:1px solid '+sc+'30;margin-bottom:12px;text-align:center;">';
-    h += '<span style="font-size:13px;font-weight:800;color:'+sc+';">'+(sMap[txn.status]||txn.status)+'</span></div>';
+    var ic = _impColors[txn.importance]||'#6b7280';
+    var il = _impLabels[txn.importance]||txn.importance;
+    var h = '<div style="display:flex;gap:6px;margin-bottom:12px;">' +
+      '<div style="flex:1;padding:8px;border-radius:10px;background:'+sc+'15;border:1px solid '+sc+'30;text-align:center;"><span style="font-size:11px;font-weight:800;color:'+sc+';">'+(sMap[txn.status]||txn.status)+'</span></div>' +
+      '<div style="flex:1;padding:8px;border-radius:10px;background:'+ic+'15;border:1px solid '+ic+'40;text-align:center;"><span style="font-size:11px;font-weight:800;color:'+ic+';"><i class="fas fa-circle" style="font-size:6px;margin-left:4px;"></i>'+il+'</span></div>' +
+    '</div>';
+
+    // Workflow path
+    if (txn.workflowPath && txn.workflowPath.length) {
+      h += '<div style="padding:8px;border-radius:10px;background:#f8fafc;border:1px solid #e5e7eb;margin-bottom:10px;">' +
+        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:6px;"><i class="fas fa-route" style="color:#8b5cf6;"></i> المسار الإداري</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:3px;align-items:center;">';
+      txn.workflowPath.forEach(function(s, i) {
+        var clr = s.isCurrent ? '#0ea5e9' : (s.isPast ? '#10b981' : '#94a3b8');
+        var bg  = s.isCurrent ? '#e0f2fe' : (s.isPast ? '#dcfce7' : '#f1f5f9');
+        h += '<div style="padding:4px 8px;border-radius:8px;background:'+bg+';border:1px solid '+clr+';font-size:9px;color:'+clr+';font-weight:800;"><i class="fas '+(s.isCurrent?'fa-arrow-right':s.isPast?'fa-check':'fa-circle')+'" style="font-size:7px;margin-left:3px;"></i>'+s.stepName+'</div>';
+        if (i < txn.workflowPath.length - 1) h += '<i class="fas fa-chevron-left" style="color:#cbd5e1;font-size:8px;"></i>';
+      });
+      h += '</div></div>';
+    }
 
     // Info grid
     h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">';
-    h += '<div class="pf"><span>الرقم</span><b>'+(txn.txnNumber||'')+'</b></div>';
+    h += '<div class="pf"><span>الرقم</span><b style="font-family:monospace;font-size:10px;">'+(txn.txnNumber||'')+'</b></div>';
     h += '<div class="pf"><span>النوع</span><b>'+(txn.typeName||'')+'</b></div>';
     h += '<div class="pf"><span>المبلغ</span><b style="color:#0ea5e9;">'+Number(txn.amount||0).toFixed(2)+'</b></div>';
     h += '<div class="pf"><span>المرسل</span><b>'+(txn.senderName||txn.createdBy||'')+'</b></div>';
+    if (txn.branchName) h += '<div class="pf"><span>الفرع</span><b>'+txn.branchName+'</b></div>';
+    if (txn.deptName) h += '<div class="pf"><span>القسم</span><b>'+txn.deptName+'</b></div>';
+    if (txn.currentAssignee) h += '<div class="pf"><span>المسؤول</span><b style="color:#1e40af;">'+txn.currentAssignee+'</b></div>';
     if (txn.senderPosition) h += '<div class="pf"><span>المنصب</span><b>'+txn.senderPosition+'</b></div>';
     if (txn.accountName) h += '<div class="pf"><span>الحساب</span><b>'+(txn.accountCode||'')+' — '+txn.accountName+'</b></div>';
     if (txn.costCenterName) h += '<div class="pf"><span>مركز التكلفة</span><b>'+txn.costCenterName+'</b></div>';

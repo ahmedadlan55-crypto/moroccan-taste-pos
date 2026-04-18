@@ -307,6 +307,16 @@
     getWfTransaction:    { method: 'GET',  url: (id) => '/workflow/transactions/' + id },
     createWfTransaction: { method: 'POST', url: '/workflow/transactions' },
     wfTransactionAction: { method: 'POST', url: (id,d) => '/workflow/transactions/' + id + '/action', body: (id,d) => d },
+    updateWfTransaction: { method: 'PUT',  url: (id,d) => '/workflow/transactions/' + id, body: (id,d) => d },
+    deleteWfTransaction: { method: 'DELETE', url: (id,u) => '/workflow/transactions/' + id + '?username=' + encodeURIComponent(u||'') },
+    getWfOutbox:         { method: 'GET',  url: '/workflow/outbox', query: (f) => f },
+    getWfIncoming:       { method: 'GET',  url: '/workflow/incoming', query: (f) => f },
+    getWfDashboard:      { method: 'GET',  url: '/workflow/dashboard-cards', query: (f) => f },
+    getWfDashFilters:    { method: 'GET',  url: '/workflow/dashboard-filters' },
+    getWfOrgTree:        { method: 'GET',  url: '/workflow/org-tree' },
+    updateWfOrg:         { method: 'PUT',  url: (id,d) => '/workflow/org-tree/' + id, body: (id,d) => d },
+    getWfMyProfile:      { method: 'GET',  url: '/workflow/my-profile', query: (f) => f },
+    getWfEligibleUsers:  { method: 'GET',  url: '/workflow/eligible-users', query: (f) => f },
   };
 
   function buildUrl(route, args) {

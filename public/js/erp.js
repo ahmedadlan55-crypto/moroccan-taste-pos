@@ -108,6 +108,10 @@ function erpNav(sectionId) {
       case 'erpWfTypes': wfLoadTypes(); break;
       case 'erpWfDefs': wfInitDefs(); break;
       case 'erpWfInbox': wfLoadInbox(); break;
+      case 'erpWfDashboard': wfInitDashboard(); break;
+      case 'erpWfIncoming': wfLoadIncoming(); break;
+      case 'erpWfOutgoing': wfLoadOutbox(); break;
+      case 'erpWfOrgTree': wfLoadOrgTree(); break;
       case 'erpHrDashboard': hrLoadDashboard(); break;
       case 'erpHrEmployees': hrLoadEmployees(); break;
       case 'erpHrDepartments': hrLoadDepartments(); break;
@@ -4522,33 +4526,45 @@ function wfDeleteDef(id) {
 }
 
 // ─── صندوق المعاملات (Transaction Inbox) ───
+// ─── shared helpers for workflow UI ────────────────────────────
+window._wfImpColors = { critical:'#dc2626', high:'#ea580c', medium:'#ca8a04', low:'#16a34a' };
+window._wfImpBgs    = { critical:'#fee2e2', high:'#ffedd5', medium:'#fef9c3', low:'#dcfce7' };
+window._wfImpLabels = { critical:'عاجل', high:'عالي', medium:'متوسط', low:'منخفض' };
+window._wfStatLbl   = { pending:'قيد الانتظار', in_progress:'قيد التنفيذ', approved:'معتمدة', rejected:'مرفوضة', closed:'مغلقة', draft:'مسودة' };
+window._wfStatClrs  = { pending:'#f59e0b', in_progress:'#3b82f6', approved:'#10b981', rejected:'#ef4444', closed:'#6b7280', draft:'#94a3b8' };
+
+function _wfImpBadge(imp) {
+  var c = window._wfImpColors[imp] || '#6b7280';
+  var bg = window._wfImpBgs[imp] || '#f3f4f6';
+  return '<span style="padding:3px 10px;border-radius:8px;background:'+bg+';color:'+c+';font-size:11px;font-weight:800;"><i class="fas fa-circle" style="font-size:7px;margin-left:4px;"></i>'+(window._wfImpLabels[imp]||imp)+'</span>';
+}
+
+function _wfStatBadge(s) {
+  var c = window._wfStatClrs[s] || '#94a3b8';
+  return '<span style="padding:3px 10px;border-radius:8px;background:'+c+'20;color:'+c+';font-size:11px;font-weight:800;">'+(window._wfStatLbl[s]||s)+'</span>';
+}
+
 function wfLoadInbox() {
   var tb = document.getElementById('wfInboxBody');
-  tb.innerHTML = '<tr><td colspan="9" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+  tb.innerHTML = '<tr><td colspan="11" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
   var status = (document.getElementById('wfInboxStatusFilter') || {}).value || '';
   var params = {};
   if (status) params.status = status;
   window._apiBridge.withSuccessHandler(function(list) {
     if (!list || !list.length) {
-      tb.innerHTML = '<tr><td colspan="9" class="empty-msg">لا توجد معاملات</td></tr>';
+      tb.innerHTML = '<tr><td colspan="11" class="empty-msg">لا توجد معاملات</td></tr>';
       document.getElementById('wfInboxStats').innerHTML = '';
       return;
     }
-    // Build stats bar
-    var counts = { pending: 0, in_progress: 0, approved: 0, rejected: 0, closed: 0 };
-    var statusLabelsAr = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
+    var counts = { pending:0, in_progress:0, approved:0, rejected:0, closed:0 };
     list.forEach(function(t) { if (counts.hasOwnProperty(t.status)) counts[t.status]++; });
-    var dotClrs = { pending: '#f59e0b', in_progress: '#3b82f6', approved: '#10b981', rejected: '#ef4444', closed: '#6b7280' };
     var statsHtml = '';
     Object.keys(counts).forEach(function(k) {
       statsHtml += '<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;font-weight:700;">' +
-        '<span style="width:10px;height:10px;border-radius:50%;background:' + (dotClrs[k]||'#94a3b8') + ';flex-shrink:0;"></span>' +
-        '<span>' + statusLabelsAr[k] + '</span><span style="font-weight:900;color:#0f172a;">' + counts[k] + '</span></div>';
+        '<span style="width:10px;height:10px;border-radius:50%;background:' + (window._wfStatClrs[k]||'#94a3b8') + ';flex-shrink:0;"></span>' +
+        '<span>' + window._wfStatLbl[k] + '</span><span style="font-weight:900;color:#0f172a;">' + counts[k] + '</span></div>';
     });
     document.getElementById('wfInboxStats').innerHTML = statsHtml;
-
-    var statusColors = { pending: 'yellow', in_progress: 'blue', approved: 'green', rejected: 'red', closed: 'gray' };
-    var dotColors = { pending: '#f59e0b', in_progress: '#3b82f6', approved: '#10b981', rejected: '#ef4444', closed: '#6b7280' };
     tb.innerHTML = list.map(function(t) {
       var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '';
       var canAct = t.status === 'pending' || t.status === 'in_progress';
@@ -4562,14 +4578,15 @@ function wfLoadInbox() {
       }
       actions += '</div>';
       return '<tr class="wf-inbox-row">' +
-        '<td><span class="wf-status-dot" style="background:' + (dotColors[t.status]||'#94a3b8') + ';"></span> <span class="badge badge-' + (statusColors[t.status]||'blue') + '">' + (statusLabelsAr[t.status]||t.status) + '</span></td>' +
-        '<td><span class="wf-txn-number">' + (t.txnNumber||'') + '</span></td>' +
+        '<td>' + _wfImpBadge(t.importance||'medium') + '</td>' +
+        '<td>' + _wfStatBadge(t.status) + '</td>' +
+        '<td><span class="wf-txn-number" style="font-size:11px;font-family:monospace;">' + (t.txnNumber||'') + '</span></td>' +
         '<td><span class="badge badge-blue">' + (t.typeName||'') + '</span></td>' +
-        '<td style="font-weight:700;max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + t.title + '</td>' +
-        '<td style="font-size:12px;">' + (t.createdBy||'') + '</td>' +
+        '<td style="font-size:12px;">' + (t.branchName||t.branchCode||'—') + '</td>' +
+        '<td style="font-size:12px;">' + (t.deptName||t.deptCode||'—') + '</td>' +
+        '<td style="font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis;">' + t.title + '</td>' +
         '<td><span class="wf-txn-amount">' + (Number(t.amount)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</span></td>' +
-        '<td>' + (t.currentStepName||'—') + '</td>' +
-        '<td>' + (t.currentPositionName||'—') + '</td>' +
+        '<td style="font-size:12px;color:#1e40af;font-weight:700;">' + (t.currentAssignee||t.currentPositionName||'—') + '</td>' +
         '<td style="font-size:12px;color:#64748b;">' + dt + '</td>' +
         '<td>' + actions + '</td>' +
       '</tr>';
@@ -4578,27 +4595,42 @@ function wfLoadInbox() {
 }
 
 function wfOpenNewTxnModal() {
-  // Load transaction types and branches
   Promise.all([
     new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getWfTypes(); }),
     new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getBranchesFull(); }),
-    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getBrands(); })
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getBrands(); }),
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getWfDashFilters(); }),
+    new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getWfEligibleUsers({ sender: currentUser }); })
   ]).then(function(results) {
     var types = results[0] || [], branches = results[1] || [], brands = results[2] || [];
-    var typeOpts = types.map(function(t) { return '<option value="' + t.id + '">' + t.name + '</option>'; }).join('');
-    var branchOpts = branches.map(function(b) { return '<option value="' + b.id + '">' + b.name + '</option>'; }).join('');
+    var filters = results[3] || { departments: [] };
+    var users = results[4] || [];
+    var typeOpts = types.map(function(t) { return '<option value="' + t.id + '">' + t.name + (t.code?' ['+t.code+']':'') + '</option>'; }).join('');
+    var branchOpts = branches.map(function(b) { return '<option value="' + b.id + '">' + b.name + (b.code?' ['+b.code+']':'') + '</option>'; }).join('');
     var brandOpts = brands.map(function(b) { return '<option value="' + b.id + '">' + b.name + '</option>'; }).join('');
+    var deptOpts = (filters.departments||[]).map(function(d) { return '<option value="' + d.id + '">' + d.name + (d.code?' ['+d.code+']':'') + '</option>'; }).join('');
+    var userOpts = '<option value="">— يُحدد تلقائياً حسب سير العمل —</option>' + users.map(function(u) { return '<option value="' + u.username + '">' + (u.fullName||u.username) + ' — ' + (u.positionName||'') + '</option>'; }).join('');
     document.getElementById('erpModalTitle').textContent = 'معاملة جديدة';
     document.getElementById('erpModalBody').innerHTML =
       '<div class="form-row"><label>نوع المعاملة *</label><select class="form-control" id="wfNewType">' + typeOpts + '</select></div>' +
-      '<div class="form-row"><label>العنوان *</label><input class="form-control" id="wfNewTitle" placeholder="وصف مختصر للمعاملة"></div>' +
-      '<div class="form-row"><label>التفاصيل</label><textarea class="form-control" id="wfNewDesc" rows="3" placeholder="تفاصيل إضافية (اختياري)"></textarea></div>' +
+      '<div class="form-row"><label>العنوان *</label><input class="form-control" id="wfNewTitle" placeholder="وصف مختصر"></div>' +
+      '<div class="form-row"><label>التفاصيل</label><textarea class="form-control" id="wfNewDesc" rows="3"></textarea></div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>درجة الأهمية</label><select class="form-control" id="wfNewImp">' +
+          '<option value="low">منخفض (Low)</option>' +
+          '<option value="medium" selected>متوسط (Medium)</option>' +
+          '<option value="high">عالي (High)</option>' +
+          '<option value="critical">عاجل (Critical)</option>' +
+        '</select></div>' +
         '<div class="form-row"><label>المبلغ</label><input type="number" class="form-control" id="wfNewAmount" step="0.01" min="0" value="0"></div>' +
-        '<div class="form-row"><label>البراند</label><select class="form-control" id="wfNewBrand"><option value="">— اختياري —</option>' + brandOpts + '</select></div>' +
       '</div>' +
-      '<div class="form-row"><label>الفرع</label><select class="form-control" id="wfNewBranch"><option value="">— اختياري —</option>' + branchOpts + '</select></div>' +
-      '<div class="form-row"><label>مرفق (رابط أو وصف)</label><input class="form-control" id="wfNewAttach" placeholder="اختياري"></div>';
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>الفرع</label><select class="form-control" id="wfNewBranch"><option value="">—</option>' + branchOpts + '</select></div>' +
+        '<div class="form-row"><label>القسم</label><select class="form-control" id="wfNewDept"><option value="">—</option>' + deptOpts + '</select></div>' +
+      '</div>' +
+      '<div class="form-row"><label>البراند</label><select class="form-control" id="wfNewBrand"><option value="">—</option>' + brandOpts + '</select></div>' +
+      '<div class="form-row"><label>المستلم</label><select class="form-control" id="wfNewRecipient">' + userOpts + '</select></div>' +
+      '<div class="form-row"><label>مرفق (وصف/رابط)</label><input class="form-control" id="wfNewAttach" placeholder="اختياري"></div>';
     document.getElementById('erpModalSaveBtn').onclick = function() {
       var title = document.getElementById('wfNewTitle').value;
       var typeId = document.getElementById('wfNewType').value;
@@ -4609,15 +4641,21 @@ function wfOpenNewTxnModal() {
         if (r.success) {
           showToast('تم إنشاء المعاملة: ' + (r.txnNumber || ''));
           erpCloseModal();
-          wfLoadInbox();
+          // refresh whatever is open
+          if (document.getElementById('erpWfInbox') && !document.getElementById('erpWfInbox').classList.contains('hidden')) wfLoadInbox();
+          if (document.getElementById('erpWfDashboard') && !document.getElementById('erpWfDashboard').classList.contains('hidden')) wfLoadDashboard();
+          if (document.getElementById('erpWfOutgoing') && !document.getElementById('erpWfOutgoing').classList.contains('hidden')) wfLoadOutbox();
         } else showToast(r.error, true);
       }).createWfTransaction({
         transactionTypeId: typeId,
         title: title,
         description: document.getElementById('wfNewDesc').value,
         amount: Number(document.getElementById('wfNewAmount').value) || 0,
+        importance: document.getElementById('wfNewImp').value || 'medium',
         brandId: document.getElementById('wfNewBrand').value || null,
         branchId: document.getElementById('wfNewBranch').value || null,
+        deptId: document.getElementById('wfNewDept').value || null,
+        recipientUsername: document.getElementById('wfNewRecipient').value || '',
         attachment: document.getElementById('wfNewAttach').value || null,
         username: currentUser
       });
@@ -4637,20 +4675,44 @@ function wfViewTxn(id) {
     var aClr = { create:'#0ea5e9', approve:'#10b981', reject:'#ef4444', return:'#f59e0b', close:'#6b7280', forward:'#8b5cf6' };
     var aIcon = { create:'fa-plus-circle', approve:'fa-check-circle', reject:'fa-times-circle', return:'fa-undo', close:'fa-lock', forward:'fa-share' };
     var sc = sClr[txn.status]||'#6b7280';
+    var impColors = window._wfImpColors || {}, impLabels = window._wfImpLabels || {};
+    var ic = impColors[txn.importance]||'#6b7280';
 
-    // Status banner
-    var html = '<div style="padding:12px;border-radius:12px;background:'+sc+'15;border:1px solid '+sc+'30;text-align:center;margin-bottom:14px;"><span style="font-size:14px;font-weight:800;color:'+sc+';"><i class="fas fa-circle" style="font-size:8px;margin-left:6px;"></i> '+(sMap[txn.status]||txn.status)+'</span></div>';
+    // Status + importance banner
+    var html = '<div style="display:flex;gap:8px;margin-bottom:14px;">' +
+      '<div style="flex:1;padding:10px;border-radius:10px;background:'+sc+'15;border:1px solid '+sc+'30;text-align:center;"><span style="font-size:13px;font-weight:800;color:'+sc+';">الحالة: '+(sMap[txn.status]||txn.status)+'</span></div>' +
+      '<div style="flex:1;padding:10px;border-radius:10px;background:'+ic+'15;border:1px solid '+ic+'40;text-align:center;"><span style="font-size:13px;font-weight:800;color:'+ic+';"><i class="fas fa-circle" style="font-size:7px;margin-left:6px;"></i> أهمية: '+(impLabels[txn.importance]||txn.importance)+'</span></div>' +
+    '</div>';
+
+    // Workflow path visualization
+    if (txn.workflowPath && txn.workflowPath.length) {
+      html += '<div style="padding:12px;border-radius:10px;background:#f8fafc;border:1px solid #e2e8f0;margin-bottom:14px;">' +
+        '<div style="font-size:12px;color:#64748b;font-weight:700;margin-bottom:8px;"><i class="fas fa-route" style="color:#8b5cf6;"></i> المسار الإداري (Workflow Path)</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">';
+      txn.workflowPath.forEach(function(s, i) {
+        var clr = s.isCurrent ? '#0ea5e9' : (s.isPast ? '#10b981' : '#94a3b8');
+        var bg  = s.isCurrent ? '#e0f2fe' : (s.isPast ? '#dcfce7' : '#f1f5f9');
+        html += '<div style="padding:6px 12px;border-radius:10px;background:'+bg+';border:1px solid '+clr+';font-size:11px;color:'+clr+';font-weight:800;">' +
+          '<i class="fas '+(s.isCurrent?'fa-arrow-right':s.isPast?'fa-check':'fa-circle')+'" style="font-size:9px;margin-left:4px;"></i> ' +
+          s.stepName + (s.positionName ? ' <span style="opacity:.7;">('+s.positionName+')</span>' : '') +
+        '</div>';
+        if (i < txn.workflowPath.length - 1) html += '<i class="fas fa-chevron-left" style="color:#cbd5e1;font-size:10px;"></i>';
+      });
+      html += '</div></div>';
+    }
 
     // Info grid
     html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">';
     var f = function(l,v,c) { return '<div style="padding:8px 12px;background:#f8fafc;border-radius:8px;"><span style="font-size:11px;color:#94a3b8;display:block;">'+l+'</span><span style="font-size:13px;font-weight:700;color:'+(c||'#1e293b')+';">'+v+'</span></div>'; };
     html += f('رقم المعاملة', txn.txnNumber||'');
     html += f('النوع', txn.typeName||'');
+    if (txn.branchName) html += f('الفرع', txn.branchName + (txn.branchCode?' ['+txn.branchCode+']':''));
+    if (txn.deptName) html += f('القسم', txn.deptName + (txn.deptCode?' ['+txn.deptCode+']':''));
     html += f('المرسل', (txn.senderName||txn.createdBy||'')+(txn.senderPosition?' — <span style="color:#0ea5e9;">'+txn.senderPosition+'</span>':''));
+    if (txn.currentAssignee) html += f('المسؤول الحالي', txn.currentAssignee, '#1e40af');
     html += f('المبلغ', Number(txn.amount||0).toLocaleString('en',{minimumFractionDigits:2}), '#1e40af');
     if (txn.accountName) html += f('الحساب المحاسبي', (txn.accountCode||'')+' — '+txn.accountName);
     if (txn.costCenterName) html += f('مركز التكلفة', txn.costCenterName);
-    if (txn.recipientUsername) html += f('المستلم', txn.recipientUsername);
     html += f('التاريخ', txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('ar-SA',{day:'numeric',month:'long',year:'numeric'}) : '');
     html += '</div>';
 
@@ -4729,7 +4791,11 @@ function wfTxnAction(id, action) {
         if (r.success) {
           var statusLabels = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
           showToast('تم — الحالة الجديدة: ' + (statusLabels[r.newStatus] || r.newStatus));
-          wfLoadInbox();
+          // Refresh whichever view is active
+          if (document.getElementById('erpWfInbox') && !document.getElementById('erpWfInbox').classList.contains('hidden')) wfLoadInbox();
+          if (document.getElementById('erpWfIncoming') && !document.getElementById('erpWfIncoming').classList.contains('hidden')) wfLoadIncoming();
+          if (document.getElementById('erpWfDashboard') && !document.getElementById('erpWfDashboard').classList.contains('hidden')) wfLoadDashboard();
+          if (document.getElementById('erpWfOutgoing') && !document.getElementById('erpWfOutgoing').classList.contains('hidden')) wfLoadOutbox();
         } else showToast(r.error, true);
       }).wfTransactionAction(id, { action: action, username: currentUser, note: note, attachment: attachment || '' });
     };
@@ -4775,8 +4841,12 @@ function wfForwardTxn(id) {
         loader(true);
         window._apiBridge.withSuccessHandler(function(r) {
           loader(false);
-          if (r.success) { showToast('تم تحويل المعاملة'); wfLoadInbox(); }
-          else showToast(r.error, true);
+          if (r.success) {
+            showToast('تم تحويل المعاملة');
+            if (document.getElementById('erpWfInbox') && !document.getElementById('erpWfInbox').classList.contains('hidden')) wfLoadInbox();
+            if (document.getElementById('erpWfIncoming') && !document.getElementById('erpWfIncoming').classList.contains('hidden')) wfLoadIncoming();
+            if (document.getElementById('erpWfDashboard') && !document.getElementById('erpWfDashboard').classList.contains('hidden')) wfLoadDashboard();
+          } else showToast(r.error, true);
         }).wfTransactionAction(id, { action: 'forward', username: currentUser, note: 'تحويل إلى ' + forwardTo + (note ? ' — ' + note : ''), forwardTo: forwardTo });
       };
     });
@@ -5890,4 +5960,306 @@ function hrDeleteException(id) {
     loader(true);
     window._apiBridge.withSuccessHandler(function(r){ loader(false); if(r.success){showToast('تم الحذف');hrLoadExceptions();}else showToast(r.error,true); }).deleteHrException(id);
   }, { icon:'fa-trash', color:'#ef4444', okText:'حذف' });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// WORKFLOW v2 — Dashboard / Incoming / Outgoing / Org Tree (Admin UI)
+// ═════════════════════════════════════════════════════════════════════════════
+
+window._wfDashDeptsAll = [];
+
+function wfInitDashboard() {
+  window._apiBridge.withSuccessHandler(function(f) {
+    var bSel = document.getElementById('wfDashFBranch');
+    var dSel = document.getElementById('wfDashFDept');
+    var tSel = document.getElementById('wfDashFType');
+    if (!bSel) return;
+    bSel.innerHTML = '<option value="">كل الفروع</option>' + (f.branches||[]).map(function(b) { return '<option value="' + b.id + '">' + b.name + '</option>'; }).join('');
+    window._wfDashDeptsAll = f.departments || [];
+    dSel.innerHTML = '<option value="">كل الأقسام</option>' + window._wfDashDeptsAll.map(function(d) { return '<option value="' + d.id + '" data-branch="' + (d.branchId||'') + '">' + d.name + '</option>'; }).join('');
+    tSel.innerHTML = '<option value="">كل الأنواع</option>' + (f.types||[]).map(function(t) { return '<option value="' + t.id + '">' + t.name + '</option>'; }).join('');
+    bSel.onchange = function() { wfFilterDeptsByBranch(); wfLoadDashboard(); };
+    // Importance summary cards
+    var counts = f.counts || {};
+    var total = (counts.critical||0) + (counts.high||0) + (counts.medium||0) + (counts.low||0);
+    var imp = document.getElementById('wfDashImportance');
+    function card(key, icon, labelAr) {
+      var c = window._wfImpColors[key], bg = window._wfImpBgs[key], n = counts[key]||0;
+      return '<div style="background:linear-gradient(135deg,'+bg+','+bg+'80);border:1px solid '+c+'40;border-radius:14px;padding:14px;display:flex;align-items:center;gap:12px;cursor:pointer;" onclick="document.getElementById(\'wfDashFImp\').value=\''+key+'\';wfLoadDashboard();">' +
+        '<div style="width:42px;height:42px;border-radius:12px;background:'+c+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;"><i class="fas '+icon+'"></i></div>' +
+        '<div><div style="font-size:11px;color:'+c+';font-weight:800;">'+labelAr+'</div><div style="font-size:24px;font-weight:900;color:#0f172a;">'+n+'</div></div>' +
+        '</div>';
+    }
+    imp.innerHTML =
+      '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px;display:flex;align-items:center;gap:12px;cursor:pointer;" onclick="wfResetDashFilters()">' +
+        '<div style="width:42px;height:42px;border-radius:12px;background:#0ea5e9;color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;"><i class="fas fa-layer-group"></i></div>' +
+        '<div><div style="font-size:11px;color:#64748b;font-weight:800;">كل المعاملات المفتوحة</div><div style="font-size:24px;font-weight:900;color:#0f172a;">'+total+'</div></div>' +
+      '</div>' +
+      card('critical','fa-exclamation-triangle','عاجل (Critical)') +
+      card('high','fa-fire','عالي (High)') +
+      card('medium','fa-minus','متوسط (Medium)') +
+      card('low','fa-leaf','منخفض (Low)');
+    wfLoadDashboard();
+  }).getWfDashFilters();
+}
+
+function wfFilterDeptsByBranch() {
+  var bId = document.getElementById('wfDashFBranch').value;
+  var dSel = document.getElementById('wfDashFDept');
+  var current = dSel.value;
+  var filtered = bId ? window._wfDashDeptsAll.filter(function(d){return !d.branchId || d.branchId === bId;}) : window._wfDashDeptsAll;
+  dSel.innerHTML = '<option value="">كل الأقسام</option>' + filtered.map(function(d) { return '<option value="' + d.id + '">' + d.name + '</option>'; }).join('');
+  if (filtered.some(function(d){return d.id===current;})) dSel.value = current;
+}
+
+function wfResetDashFilters() {
+  ['wfDashFBranch','wfDashFDept','wfDashFImp','wfDashFType','wfDashFStatus'].forEach(function(id) {
+    var el = document.getElementById(id); if (el) el.value = '';
+  });
+  wfFilterDeptsByBranch();
+  wfLoadDashboard();
+}
+
+function wfLoadDashboard() {
+  var cards = document.getElementById('wfDashCards');
+  if (!cards) return;
+  cards.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+  var params = {
+    branchId: document.getElementById('wfDashFBranch').value || '',
+    deptId:   document.getElementById('wfDashFDept').value || '',
+    importance: document.getElementById('wfDashFImp').value || '',
+    typeId:   document.getElementById('wfDashFType').value || '',
+    status:   document.getElementById('wfDashFStatus').value || ''
+  };
+  window._apiBridge.withSuccessHandler(function(list) {
+    if (!list || !list.length) {
+      cards.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد معاملات مطابقة</div>';
+      return;
+    }
+    cards.innerHTML = list.map(function(t) {
+      var c = window._wfImpColors[t.importance]||'#6b7280';
+      var bg = window._wfImpBgs[t.importance]||'#f3f4f6';
+      var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '';
+      return '<div onclick="wfViewTxn(\''+t.id+'\')" style="cursor:pointer;background:#fff;border:2px solid '+c+';border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:8px;transition:transform .15s;box-shadow:0 2px 8px '+c+'20;" onmouseover="this.style.transform=\'translateY(-3px)\';" onmouseout="this.style.transform=\'\';">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">' +
+          _wfImpBadge(t.importance||'medium') + _wfStatBadge(t.status) +
+        '</div>' +
+        '<div style="font-family:monospace;font-size:10px;color:#64748b;">'+(t.txnNumber||'')+'</div>' +
+        '<div style="font-size:14px;font-weight:800;color:#0f172a;line-height:1.4;max-height:42px;overflow:hidden;">'+(t.title||'')+'</div>' +
+        '<div style="font-size:11px;color:#475569;max-height:34px;overflow:hidden;">'+((t.description||'').substring(0,120))+(((t.description||'').length>120)?'…':'')+'</div>' +
+        '<div style="border-top:1px dashed #e5e7eb;padding-top:8px;display:flex;flex-direction:column;gap:3px;font-size:11px;">' +
+          '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-code-branch"></i> الفرع</span><b>'+(t.branchName||t.branchCode||'—')+'</b></div>' +
+          '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-building"></i> القسم</span><b>'+(t.deptName||t.deptCode||'—')+'</b></div>' +
+          '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-tag"></i> النوع</span><b>'+(t.typeName||'')+'</b></div>' +
+          '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-user"></i> مسؤول</span><b style="color:#1e40af;">'+(t.currentAssignee||t.currentPositionName||'—')+'</b></div>' +
+          (Number(t.amount) ? '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-money-bill"></i> المبلغ</span><b style="color:#0ea5e9;">'+Number(t.amount).toLocaleString('en',{minimumFractionDigits:2})+'</b></div>' : '') +
+        '</div>' +
+        '<div style="text-align:left;font-size:10px;color:#94a3b8;">'+dt+'</div>' +
+      '</div>';
+    }).join('');
+  }).getWfDashboard(params);
+}
+
+// ─── صندوق الوارد (Incoming) ───
+function wfLoadIncoming() {
+  var tb = document.getElementById('wfIncomingBody');
+  if (!tb) return;
+  tb.innerHTML = '<tr><td colspan="10" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+  window._apiBridge.withSuccessHandler(function(list) {
+    var stats = document.getElementById('wfIncomingStats');
+    if (!list || !list.length) {
+      tb.innerHTML = '<tr><td colspan="10" class="empty-msg">لا توجد معاملات بانتظارك</td></tr>';
+      if (stats) stats.innerHTML = '';
+      return;
+    }
+    // Importance stats
+    var counts = { critical:0, high:0, medium:0, low:0 };
+    list.forEach(function(t) { if (counts.hasOwnProperty(t.importance)) counts[t.importance]++; });
+    if (stats) {
+      stats.innerHTML = Object.keys(counts).map(function(k) {
+        var c = window._wfImpColors[k];
+        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;background:#fff;border:1px solid '+c+'30;border-radius:10px;font-size:13px;font-weight:700;">' +
+          '<span style="width:10px;height:10px;border-radius:50%;background:'+c+';"></span>' +
+          '<span>'+window._wfImpLabels[k]+'</span><span style="font-weight:900;color:#0f172a;">'+counts[k]+'</span></div>';
+      }).join('');
+    }
+    tb.innerHTML = list.map(function(t) {
+      var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '';
+      var actions =
+        '<button class="btn btn-sm btn-light" onclick="wfViewTxn(\''+t.id+'\')"><i class="fas fa-eye"></i></button> ' +
+        '<button class="btn btn-sm btn-success" onclick="wfTxnAction(\''+t.id+'\',\'approve\')" title="موافقة"><i class="fas fa-check"></i></button> ' +
+        '<button class="btn btn-sm btn-danger" onclick="wfTxnAction(\''+t.id+'\',\'reject\')" title="رفض"><i class="fas fa-times"></i></button> ' +
+        '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;" onclick="wfTxnAction(\''+t.id+'\',\'return\')" title="إرجاع"><i class="fas fa-undo"></i></button> ' +
+        '<button class="btn btn-sm" style="background:#f3e8ff;color:#7c3aed;" onclick="wfForwardTxn(\''+t.id+'\')" title="تحويل"><i class="fas fa-share"></i></button>';
+      return '<tr>' +
+        '<td>'+_wfImpBadge(t.importance||'medium')+'</td>' +
+        '<td style="font-family:monospace;font-size:10px;">'+(t.txnNumber||'')+'</td>' +
+        '<td><span class="badge badge-blue">'+(t.typeName||'')+'</span></td>' +
+        '<td style="font-size:12px;">'+(t.senderName||t.createdBy||'—')+'</td>' +
+        '<td style="font-size:11px;">'+(t.branchName||'—')+'<div style="color:#94a3b8;font-size:10px;">'+(t.deptName||'')+'</div></td>' +
+        '<td style="font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis;">'+t.title+'</td>' +
+        '<td>'+Number(t.amount||0).toLocaleString('en',{minimumFractionDigits:2})+'</td>' +
+        '<td style="font-size:11px;">'+(t.currentStepName||'—')+'</td>' +
+        '<td style="font-size:11px;color:#64748b;">'+dt+'</td>' +
+        '<td>'+actions+'</td>' +
+      '</tr>';
+    }).join('');
+  }).getWfIncoming({ username: currentUser });
+}
+
+// ─── صندوق الصادر (Outgoing) ───
+function wfLoadOutbox() {
+  var tb = document.getElementById('wfOutboxBody');
+  if (!tb) return;
+  tb.innerHTML = '<tr><td colspan="10" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+  var status = (document.getElementById('wfOutboxStatusFilter') || {}).value || '';
+  window._apiBridge.withSuccessHandler(function(list) {
+    if (!list || !list.length) {
+      tb.innerHTML = '<tr><td colspan="10" class="empty-msg">لا توجد معاملات</td></tr>';
+      return;
+    }
+    tb.innerHTML = list.map(function(t) {
+      var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '';
+      var canEdit = (t.status==='pending' || t.status==='draft');
+      var actions = '<button class="btn btn-sm btn-light" onclick="wfViewTxn(\''+t.id+'\')"><i class="fas fa-eye"></i></button>';
+      if (canEdit) {
+        actions += ' <button class="btn btn-sm" style="background:#eff6ff;color:#1e40af;" onclick="wfEditOutboxTxn(\''+t.id+'\')" title="تعديل"><i class="fas fa-edit"></i></button>';
+        actions += ' <button class="btn btn-sm btn-danger" onclick="wfCancelOutboxTxn(\''+t.id+'\')" title="إلغاء"><i class="fas fa-trash"></i></button>';
+      }
+      return '<tr>' +
+        '<td>'+_wfImpBadge(t.importance||'medium')+'</td>' +
+        '<td>'+_wfStatBadge(t.status)+'</td>' +
+        '<td style="font-family:monospace;font-size:10px;">'+(t.txnNumber||'')+'</td>' +
+        '<td><span class="badge badge-blue">'+(t.typeName||'')+'</span></td>' +
+        '<td style="font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis;">'+t.title+'</td>' +
+        '<td>'+Number(t.amount||0).toLocaleString('en',{minimumFractionDigits:2})+'</td>' +
+        '<td style="font-size:11px;color:#1e40af;font-weight:700;">'+(t.currentAssignee||t.currentPositionName||'—')+'</td>' +
+        '<td style="font-size:11px;">'+(t.currentStepName||'—')+'</td>' +
+        '<td style="font-size:11px;color:#64748b;">'+dt+'</td>' +
+        '<td>'+actions+'</td>' +
+      '</tr>';
+    }).join('');
+  }).getWfOutbox({ username: currentUser, status: status });
+}
+
+function wfEditOutboxTxn(id) {
+  window._apiBridge.withSuccessHandler(function(txn) {
+    if (!txn || txn.error) return showToast('غير موجود', true);
+    document.getElementById('erpModalTitle').textContent = 'تعديل المعاملة — ' + (txn.txnNumber||'');
+    document.getElementById('erpModalBody').innerHTML =
+      '<div class="form-row"><label>العنوان *</label><input class="form-control" id="wfEdTitle" value="'+(txn.title||'').replace(/"/g,'&quot;')+'"></div>' +
+      '<div class="form-row"><label>التفاصيل</label><textarea class="form-control" id="wfEdDesc" rows="3">'+(txn.description||'')+'</textarea></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>المبلغ</label><input type="number" class="form-control" id="wfEdAmount" step="0.01" min="0" value="'+Number(txn.amount||0)+'"></div>' +
+        '<div class="form-row"><label>الأهمية</label><select class="form-control" id="wfEdImp">' +
+          ['low','medium','high','critical'].map(function(i){return '<option value="'+i+'"'+(i===(txn.importance||'medium')?' selected':'')+'>'+(window._wfImpLabels[i]||i)+'</option>';}).join('') +
+        '</select></div>' +
+      '</div>';
+    document.getElementById('erpModalSaveBtn').onclick = function() {
+      loader(true);
+      window._apiBridge.withSuccessHandler(function(r) {
+        loader(false);
+        if (r.success) { showToast('تم الحفظ'); erpCloseModal(); wfLoadOutbox(); }
+        else showToast(r.error, true);
+      }).updateWfTransaction(id, {
+        title: document.getElementById('wfEdTitle').value,
+        description: document.getElementById('wfEdDesc').value,
+        amount: Number(document.getElementById('wfEdAmount').value)||0,
+        importance: document.getElementById('wfEdImp').value,
+        username: currentUser
+      });
+    };
+    document.getElementById('erpModal').classList.remove('hidden');
+  }).getWfTransaction(id);
+}
+
+function wfCancelOutboxTxn(id) {
+  erpConfirm('إلغاء المعاملة', 'هل أنت متأكد من إلغاء المعاملة؟ لن يمكن استرجاعها.', function() {
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) {
+      loader(false);
+      if (r.success) { showToast('تم الإلغاء'); wfLoadOutbox(); }
+      else showToast(r.error, true);
+    }).deleteWfTransaction(id, currentUser);
+  }, { icon:'fa-trash', color:'#ef4444', okText:'إلغاء' });
+}
+
+// ─── Org Tree (Admin-only) ───
+function wfLoadOrgTree() {
+  var tb = document.getElementById('wfOrgBody');
+  if (!tb) return;
+  tb.innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  window._apiBridge.withSuccessHandler(function(list) {
+    window._wfOrgEmps = list || [];
+    if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-msg">لا يوجد موظفون</td></tr>'; return; }
+    var empsById = {};
+    list.forEach(function(e) { empsById[e.id] = e; });
+    tb.innerHTML = list.map(function(e) {
+      var mgr = e.managerId && empsById[e.managerId] ? empsById[e.managerId].fullName : '—';
+      var p = e.permissions || {};
+      var chips = [
+        ['create','إنشاء','#0ea5e9'], ['approve','موافقة','#10b981'],
+        ['reject','رفض','#ef4444'], ['return','إرجاع','#f59e0b'],
+        ['forward','تحويل','#8b5cf6'], ['close','إغلاق','#6b7280']
+      ].map(function(x) {
+        var active = p[x[0]];
+        return '<span style="padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;margin:2px;display:inline-block;'+
+          (active ? ('background:'+x[2]+'20;color:'+x[2]) : 'background:#f3f4f6;color:#94a3b8;')+'">'+x[1]+'</span>';
+      }).join('');
+      return '<tr>' +
+        '<td><div style="font-weight:800;">'+(e.fullName||'')+'</div><div style="font-size:10px;color:#94a3b8;">'+(e.username||'—')+'</div></td>' +
+        '<td>'+(e.jobTitle||e.positionName||'—')+'</td>' +
+        '<td>'+(e.branchName||'—')+'</td>' +
+        '<td>'+(e.deptName||'—')+'</td>' +
+        '<td><span class="badge badge-blue">L'+(e.workflowLevel||1)+'</span></td>' +
+        '<td style="font-size:12px;">'+mgr+'</td>' +
+        '<td>'+chips+'</td>' +
+        '<td><button class="btn btn-sm btn-primary" onclick="wfEditOrgEmp(\''+e.id+'\')"><i class="fas fa-edit"></i></button></td>' +
+      '</tr>';
+    }).join('');
+  }).getWfOrgTree();
+}
+
+function wfEditOrgEmp(id) {
+  var emp = (window._wfOrgEmps||[]).find(function(x){return x.id===id;});
+  if (!emp) return;
+  var others = (window._wfOrgEmps||[]).filter(function(x){return x.id!==id;});
+  var mgrOpts = '<option value="">—</option>' + others.map(function(e) {
+    return '<option value="'+e.id+'"'+(emp.managerId===e.id?' selected':'')+'>'+(e.fullName||'')+' — '+(e.positionName||e.jobTitle||'')+'</option>';
+  }).join('');
+  var p = emp.permissions || {};
+  function chk(k, l) {
+    return '<label style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;background:#f8fafc;cursor:pointer;"><input type="checkbox" id="wfOrgPerm_'+k+'"'+(p[k]?' checked':'')+'> '+l+'</label>';
+  }
+  document.getElementById('erpModalTitle').textContent = 'تعديل صلاحيات الموظف — ' + (emp.fullName||'');
+  document.getElementById('erpModalBody').innerHTML =
+    '<div style="padding:10px;background:#eff6ff;border-radius:10px;margin-bottom:12px;font-size:13px;">' +
+      '<div><b>'+(emp.fullName||'')+'</b> — '+(emp.jobTitle||emp.positionName||'')+'</div>' +
+      '<div style="font-size:11px;color:#64748b;">'+(emp.branchName||'—')+' • '+(emp.deptName||'—')+'</div>' +
+    '</div>' +
+    '<div class="form-row"><label>المدير المباشر</label><select class="form-control" id="wfOrgMgr">'+mgrOpts+'</select></div>' +
+    '<div class="form-row"><label>المستوى الإداري (Level)</label><select class="form-control" id="wfOrgLevel">' +
+      [1,2,3,4,5,6,7].map(function(n){return '<option value="'+n+'"'+(n===emp.workflowLevel?' selected':'')+'>Level '+n+'</option>';}).join('') +
+    '</select></div>' +
+    '<div class="form-row"><label>الصلاحيات في المعاملات</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">' +
+      chk('create','إنشاء') + chk('approve','موافقة') + chk('reject','رفض') +
+      chk('return','إرجاع') + chk('forward','تحويل') + chk('close','إغلاق') +
+    '</div></div>';
+  document.getElementById('erpModalSaveBtn').onclick = function() {
+    var perms = {};
+    ['create','approve','reject','return','forward','close'].forEach(function(k) {
+      perms[k] = document.getElementById('wfOrgPerm_'+k).checked;
+    });
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) {
+      loader(false);
+      if (r.success) { showToast('تم الحفظ'); erpCloseModal(); wfLoadOrgTree(); }
+      else showToast(r.error, true);
+    }).updateWfOrg(id, {
+      managerId: document.getElementById('wfOrgMgr').value || null,
+      workflowLevel: Number(document.getElementById('wfOrgLevel').value) || 1,
+      permissions: perms
+    });
+  };
+  document.getElementById('erpModal').classList.remove('hidden');
 }

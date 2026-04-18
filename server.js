@@ -1484,6 +1484,93 @@ async function runMigrations() {
       ('BranchName',''),
       ('inventory_method','perpetual')`);
   } catch (e) { console.log('[DB] Cost settings seed:', e.message.substring(0, 80)); }
+
+  // ═══════════════════════════════════════
+  // WORKFLOW ENGINE v2 — نظام المعاملات المتكامل
+  // ═══════════════════════════════════════
+
+  // Branch / Department short codes (for BR-DEP-TYP-YYYYMMDD-0001 numbering)
+  await addColumnIfMissing('branches', 'code', "VARCHAR(10) DEFAULT ''");
+  await addColumnIfMissing('hr_departments', 'code', "VARCHAR(10) DEFAULT ''");
+  await addColumnIfMissing('hr_departments', 'branch_id', "VARCHAR(50)");
+
+  // Employee hierarchy / permissions
+  await addColumnIfMissing('hr_employees', 'manager_id', "VARCHAR(50)");
+  await addColumnIfMissing('hr_employees', 'workflow_level', "INT DEFAULT 1");
+  await addColumnIfMissing('hr_employees', 'can_create_txn', "BOOLEAN DEFAULT TRUE");
+  await addColumnIfMissing('hr_employees', 'can_approve_txn', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('hr_employees', 'can_reject_txn', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('hr_employees', 'can_return_txn', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('hr_employees', 'can_forward_txn', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('hr_employees', 'can_close_txn', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('hr_employees', 'linked_username', "VARCHAR(100)");
+
+  // Transaction enhancements: importance, branch/dept snapshot, type code, daily serial, current assignee
+  await addColumnIfMissing('transactions', 'importance', "ENUM('critical','high','medium','low') DEFAULT 'medium'");
+  await addColumnIfMissing('transactions', 'branch_code', "VARCHAR(10) DEFAULT ''");
+  await addColumnIfMissing('transactions', 'branch_name', "VARCHAR(200) DEFAULT ''");
+  await addColumnIfMissing('transactions', 'dept_id', "VARCHAR(50)");
+  await addColumnIfMissing('transactions', 'dept_code', "VARCHAR(10) DEFAULT ''");
+  await addColumnIfMissing('transactions', 'dept_name', "VARCHAR(200) DEFAULT ''");
+  await addColumnIfMissing('transactions', 'type_code', "VARCHAR(10) DEFAULT ''");
+  await addColumnIfMissing('transactions', 'daily_serial', "INT DEFAULT 0");
+  await addColumnIfMissing('transactions', 'current_assignee', "VARCHAR(100) DEFAULT ''");
+
+  // Daily counter per (branch, dept, type, date) — strict serial generation
+  await createTableIfMissing('txn_daily_counter', `
+    CREATE TABLE txn_daily_counter (
+      counter_key VARCHAR(80) PRIMARY KEY,
+      last_serial INT NOT NULL DEFAULT 0,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  // Multi-attachment table (complements single-attachment column)
+  await createTableIfMissing('txn_attachments', `
+    CREATE TABLE txn_attachments (
+      id VARCHAR(60) PRIMARY KEY,
+      transaction_id VARCHAR(50) NOT NULL,
+      log_id VARCHAR(60),
+      file_name VARCHAR(300),
+      mime_type VARCHAR(80),
+      data_url LONGTEXT,
+      uploaded_by VARCHAR(100),
+      uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_txn (transaction_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // Seed default branch code if empty
+  try {
+    await db.query("UPDATE branches SET code = UPPER(SUBSTRING(IFNULL(name,'BR'),1,3)) WHERE code IS NULL OR code = ''");
+  } catch(e) {}
+  try {
+    await db.query("UPDATE hr_departments SET code = UPPER(SUBSTRING(IFNULL(name,'DEP'),1,3)) WHERE code IS NULL OR code = ''");
+  } catch(e) {}
+  try {
+    await db.query("UPDATE transaction_types SET code = UPPER(SUBSTRING(IFNULL(name,'TXN'),1,3)) WHERE code IS NULL OR code = ''");
+  } catch(e) {}
+
+  // Seed useful transaction types if none cover common admin flows
+  try {
+    const [ttNames] = await db.query("SELECT code FROM transaction_types");
+    const existing = new Set(ttNames.map(r => r.code));
+    const seeds = [
+      ['TT-EXP','طلب صرف مستحقات','EXP'],
+      ['TT-PUR','طلب شراء','PUR'],
+      ['TT-AST','طلب أصل ثابت','AST'],
+      ['TT-MNT','طلب صيانة','MNT'],
+      ['TT-LEV','طلب إجازة','LEV'],
+      ['TT-HIR','طلب توظيف','HIR'],
+      ['TT-TRF','طلب نقل','TRF'],
+      ['TT-ADV','طلب سلفة','ADV']
+    ];
+    for (const [id, name, code] of seeds) {
+      if (!existing.has(code)) {
+        try { await db.query('INSERT IGNORE INTO transaction_types (id, name, code) VALUES (?,?,?)', [id, name, code]); } catch(e) {}
+      }
+    }
+  } catch(e) {}
 }
 
 app.listen(PORT, async () => {

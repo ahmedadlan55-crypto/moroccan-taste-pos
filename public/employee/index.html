@@ -77,111 +77,127 @@
     .modal-h button{width:26px;height:26px;border-radius:6px;background:#f1f5f9;border:none;font-size:14px;cursor:pointer;}
   </style>
   <script defer src="/shared/api-bridge.js"></script>
-  <script defer src="/employee/app.js?v=15"></script>
+  <style>
+    .lang-btn{width:40px;height:34px;border-radius:10px;border:1.5px solid #bae6fd;background:#e0f2fe;color:#0369a1;font-size:11px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;letter-spacing:.5px;}
+    .lang-btn:active{background:#bae6fd;}
+    html[lang="en"] body{direction:ltr;}
+    html[lang="en"] .hdr-n,html[lang="en"] .hdr-s{text-align:left;}
+  </style>
+  <script defer src="/employee/app.js?v=16"></script>
 </head>
 <body>
 <div class="toast" id="toast"></div>
 <div id="loginPage" class="login-w">
   <div class="login-b">
+    <button type="button" onclick="toggleLang()" class="lang-btn" style="position:absolute;top:16px;right:16px;" id="langToggleBtn" title="Language">EN</button>
     <div style="width:56px;height:56px;border-radius:14px;background:#0ea5e9;color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;margin:0 auto 16px;"><i class="fas fa-user-tie"></i></div>
-    <h1>بوابة الموظف</h1>
-    <p style="color:#6b7280;font-size:12px;margin-bottom:24px;">سجّل دخولك لتسجيل الحضور</p>
-    <input type="text" id="lu" placeholder="اسم المستخدم">
-    <input type="password" id="lp" placeholder="كلمة المرور">
-    <button id="lbtn" onclick="doLogin()"><i class="fas fa-sign-in-alt"></i> دخول</button>
+    <h1 data-i18n="login.title">بوابة الموظف</h1>
+    <p style="color:#6b7280;font-size:12px;margin-bottom:24px;" data-i18n="login.sub">سجّل دخولك لتسجيل الحضور</p>
+    <input type="text" id="lu" placeholder="اسم المستخدم" data-i18n-placeholder="login.u">
+    <input type="password" id="lp" placeholder="كلمة المرور" data-i18n-placeholder="login.p">
+    <button id="lbtn" onclick="doLogin()"><i class="fas fa-sign-in-alt"></i> <span data-i18n="login.btn">دخول</span></button>
   </div>
 </div>
 <script>
 function _toast(m){var t=document.getElementById('toast');t.textContent=m;t.className='toast show err';setTimeout(function(){t.className='toast';},3500);}
+function _tr(key, fallback){ try { return (window.t && window.t(key)) || fallback; } catch(e){ return fallback; } }
 function doLogin(){
   var u=document.getElementById('lu').value,p=document.getElementById('lp').value;
-  if(!u||!p)return _toast('أدخل البيانات');
+  if(!u||!p)return _toast(_tr('login.fill','أدخل البيانات'));
   var btn=document.getElementById('lbtn');btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin"></i>';
   var xhr=new XMLHttpRequest();xhr.open('POST','/api/auth/login',true);xhr.setRequestHeader('Content-Type','application/json');
-  xhr.onreadystatechange=function(){if(xhr.readyState!==4)return;btn.disabled=false;btn.innerHTML='<i class="fas fa-sign-in-alt"></i> دخول';
+  xhr.onreadystatechange=function(){if(xhr.readyState!==4)return;btn.disabled=false;btn.innerHTML='<i class="fas fa-sign-in-alt"></i> '+_tr('login.btn','دخول');
     try{var r=JSON.parse(xhr.responseText);
       if(r&&r.success&&r.token){
         localStorage.setItem('emp_token',r.token);
         localStorage.setItem('emp_session',JSON.stringify({username:r.username,role:r.role,brandId:r.brandId||'',branchId:r.branchId||''}));
         location.reload();
-      } else _toast(r?r.error:'فشل الدخول');
-    }catch(e){_toast('خطأ في الاتصال: '+e.message);}
+      } else _toast(r?r.error:_tr('login.failed','فشل الدخول'));
+    }catch(e){_toast(_tr('login.error','خطأ في الاتصال')+': '+e.message);}
   };xhr.send(JSON.stringify({username:u,password:p}));
 }
 document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.getElementById('loginPage')&&document.getElementById('loginPage').style.display!=='none')doLogin();});
 </script>
 <div id="app" style="display:none;">
   <div class="hdr">
-    <div class="hdr-r"><div class="hdr-av"><i class="fas fa-user-tie"></i></div><div><div class="hdr-n" id="hdrName">الموظف</div><div class="hdr-s" id="hdrSub"></div></div></div>
-    <div class="hdr-b"><button onclick="doRefresh()"><i class="fas fa-sync-alt"></i></button><button style="background:rgba(239,68,68,.3);" onclick="doLogout()"><i class="fas fa-sign-out-alt"></i></button></div>
+    <div class="hdr-r"><div class="hdr-av"><i class="fas fa-user-tie"></i></div><div><div class="hdr-n" id="hdrName" data-i18n="header.employee">الموظف</div><div class="hdr-s" id="hdrSub"></div></div></div>
+    <div class="hdr-b">
+      <button onclick="toggleLang()" class="lang-btn" id="langToggleBtn" title="Language">EN</button>
+      <button onclick="doRefresh()" title="Refresh"><i class="fas fa-sync-alt"></i></button>
+      <button style="background:rgba(239,68,68,.3);" onclick="doLogout()" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
   </div>
   <div class="main">
-    <div class="page active" id="pghome"><div id="clockSection"></div><div class="stats" id="homeStats"></div><div class="card"><div class="card-t"><i class="fas fa-history"></i> آخر الحضور</div><div id="recentAtt"></div></div></div>
-    <div class="page" id="pgatt"><div class="stats" id="attStats"></div><div class="card"><div class="card-t"><i class="fas fa-calendar-check"></i> سجل الحضور</div><div id="attList"></div></div></div>
-    <div class="page" id="pgleave"><div class="card"><div class="card-t"><i class="fas fa-umbrella-beach"></i> أرصدة الإجازات</div><div id="leaveBals"></div></div><button class="btn-m" onclick="openLeaveForm()"><i class="fas fa-plus"></i> طلب إجازة</button><div class="card"><div class="card-t"><i class="fas fa-list"></i> طلباتي</div><div id="leaveReqs"></div></div></div>
+    <div class="page active" id="pghome"><div id="clockSection"></div><div class="stats" id="homeStats"></div><div class="card"><div class="card-t"><i class="fas fa-history"></i> <span data-i18n="home.recent">آخر الحضور</span></div><div id="recentAtt"></div></div></div>
+    <div class="page" id="pgatt"><div class="stats" id="attStats"></div><div class="card"><div class="card-t"><i class="fas fa-calendar-check"></i> <span data-i18n="att.log">سجل الحضور</span></div><div id="attList"></div></div></div>
+    <div class="page" id="pgleave"><div class="card"><div class="card-t"><i class="fas fa-umbrella-beach"></i> <span data-i18n="leave.balances">أرصدة الإجازات</span></div><div id="leaveBals"></div></div><button class="btn-m" onclick="openLeaveForm()"><i class="fas fa-plus"></i> <span data-i18n="leave.newBtn">طلب إجازة</span></button><div class="card"><div class="card-t"><i class="fas fa-list"></i> <span data-i18n="leave.myRequests">طلباتي</span></div><div id="leaveReqs"></div></div></div>
     <div class="page" id="pgtxn">
       <!-- Tab switcher: Incoming / Outgoing -->
       <div style="display:flex;gap:4px;background:#f1f5f9;border-radius:12px;padding:4px;margin-bottom:12px;">
         <button id="txnTabInc" onclick="txnSwitchTab('inc')" style="flex:1;padding:10px;border:none;background:#fff;color:#0ea5e9;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.05);">
-          <i class="fas fa-inbox"></i> الوارد <span id="txnIncBadge" style="background:#ef4444;color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;margin-right:4px;display:none;">0</span>
+          <i class="fas fa-inbox"></i> <span data-i18n="txn.tab.inc" data-i18n-label>الوارد</span> <span id="txnIncBadge" style="background:#ef4444;color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;margin-right:4px;display:none;">0</span>
         </button>
         <button id="txnTabOut" onclick="txnSwitchTab('out')" style="flex:1;padding:10px;border:none;background:transparent;color:#64748b;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;">
-          <i class="fas fa-paper-plane"></i> الصادر
+          <i class="fas fa-paper-plane"></i> <span data-i18n="txn.tab.out" data-i18n-label>الصادر</span>
         </button>
       </div>
       <!-- Incoming subpage -->
       <div id="txnSubInc">
-        <div class="card"><div class="card-t"><i class="fas fa-inbox"></i> في انتظار إجرائي</div><div id="incomingTxnList"></div></div>
+        <div class="card"><div class="card-t"><i class="fas fa-inbox"></i> <span data-i18n="txn.awaitingMe">في انتظار إجرائي</span></div><div id="incomingTxnList"></div></div>
       </div>
       <!-- Outgoing subpage -->
       <div id="txnSubOut" style="display:none;">
-        <button class="btn-m" onclick="openTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
-        <div class="card"><div class="card-t"><i class="fas fa-paper-plane"></i> معاملاتي المرسلة</div><div id="myTxnList"></div></div>
+        <button class="btn-m" onclick="openTxnModal()"><i class="fas fa-plus"></i> <span data-i18n="txn.newBtn">معاملة جديدة</span></button>
+        <div class="card"><div class="card-t"><i class="fas fa-paper-plane"></i> <span data-i18n="txn.mySent">معاملاتي المرسلة</span></div><div id="myTxnList"></div></div>
       </div>
     </div>
-    <div class="page" id="pgme"><div class="card"><div class="card-t"><i class="fas fa-id-card"></i> بياناتي</div><div id="profileInfo"></div></div><div class="card"><div class="card-t"><i class="fas fa-money-bill-wave"></i> الرواتب</div><div id="payslips"></div></div></div>
+    <div class="page" id="pgme"><div class="card"><div class="card-t"><i class="fas fa-id-card"></i> <span data-i18n="profile.info">بياناتي</span></div><div id="profileInfo"></div></div><div class="card"><div class="card-t"><i class="fas fa-money-bill-wave"></i> <span data-i18n="profile.salaries">الرواتب</span></div><div id="payslips"></div></div></div>
   </div>
-  <nav class="bnav"><div class="nt active" onclick="navTo('home',this)"><i class="fas fa-home"></i>الرئيسية</div><div class="nt" onclick="navTo('att',this)"><i class="fas fa-fingerprint"></i>البصمة</div><div class="nt" onclick="navTo('txn',this)"><i class="fas fa-file-alt"></i>معاملات</div><div class="nt" onclick="navTo('leave',this)"><i class="fas fa-calendar"></i>إجازات</div><div class="nt" onclick="navTo('me',this)"><i class="fas fa-user"></i>ملفي</div></nav>
+  <nav class="bnav">
+    <div class="nt active" onclick="navTo('home',this)"><i class="fas fa-home"></i><span data-i18n="nav.home">الرئيسية</span></div>
+    <div class="nt" onclick="navTo('att',this)"><i class="fas fa-fingerprint"></i><span data-i18n="nav.att">البصمة</span></div>
+    <div class="nt" onclick="navTo('txn',this)"><i class="fas fa-file-alt"></i><span data-i18n="nav.txn">معاملات</span></div>
+    <div class="nt" onclick="navTo('leave',this)"><i class="fas fa-calendar"></i><span data-i18n="nav.leave">إجازات</span></div>
+    <div class="nt" onclick="navTo('me',this)"><i class="fas fa-user"></i><span data-i18n="nav.me">ملفي</span></div>
+  </nav>
 </div>
 <!-- Leave Modal -->
-<div class="modal" id="leaveModal"><div class="modal-c"><div class="modal-h"><span><i class="fas fa-calendar-plus"></i> طلب إجازة</span><button onclick="closeLeaveForm()">&times;</button></div><div class="fg"><label>النوع</label><select class="fi" id="lfType"></select></div><div class="fg"><label>من</label><input type="date" class="fi" id="lfStart"></div><div class="fg"><label>إلى</label><input type="date" class="fi" id="lfEnd"></div><div class="fg"><label>السبب</label><textarea class="fi" id="lfReason" rows="2"></textarea></div><button class="btn-m" onclick="submitLeave()"><i class="fas fa-paper-plane"></i> تقديم</button></div></div>
+<div class="modal" id="leaveModal"><div class="modal-c"><div class="modal-h"><span><i class="fas fa-calendar-plus"></i> <span data-i18n="leave.modalTitle">طلب إجازة</span></span><button onclick="closeLeaveForm()">&times;</button></div><div class="fg"><label data-i18n="leave.type">النوع</label><select class="fi" id="lfType"></select></div><div class="fg"><label data-i18n="leave.from">من</label><input type="date" class="fi" id="lfStart"></div><div class="fg"><label data-i18n="leave.to">إلى</label><input type="date" class="fi" id="lfEnd"></div><div class="fg"><label data-i18n="leave.reason">السبب</label><textarea class="fi" id="lfReason" rows="2"></textarea></div><button class="btn-m" onclick="submitLeave()"><i class="fas fa-paper-plane"></i> <span data-i18n="leave.submit">تقديم</span></button></div></div>
 <!-- Transaction Modal -->
 <div class="modal" id="txnModal"><div class="modal-c" style="max-height:90dvh;overflow-y:auto;">
-  <div class="modal-h"><span><i class="fas fa-file-alt"></i> معاملة جديدة</span><button onclick="closeTxnModal()">&times;</button></div>
-  <!-- Sender info -->
+  <div class="modal-h"><span><i class="fas fa-file-alt"></i> <span data-i18n="tm.title">معاملة جديدة</span></span><button onclick="closeTxnModal()">&times;</button></div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-    <div class="fg"><label><i class="fas fa-user"></i> اسم المرسل</label><input class="fi" id="txnSenderName" readonly style="background:#f0fdf4;color:#166534;font-weight:700;"></div>
-    <div class="fg"><label><i class="fas fa-id-badge"></i> المسمى الوظيفي</label><input class="fi" id="txnJobTitle" readonly style="background:#f3f4f6;color:#6b7280;"></div>
+    <div class="fg"><label><i class="fas fa-user"></i> <span data-i18n="tm.senderName">اسم المرسل</span></label><input class="fi" id="txnSenderName" readonly style="background:#f0fdf4;color:#166534;font-weight:700;"></div>
+    <div class="fg"><label><i class="fas fa-id-badge"></i> <span data-i18n="tm.jobTitle">المسمى الوظيفي</span></label><input class="fi" id="txnJobTitle" readonly style="background:#f3f4f6;color:#6b7280;"></div>
   </div>
-  <div class="fg"><label>نوع المعاملة *</label><select class="fi" id="txnType"></select></div>
-  <div class="fg"><label>درجة الأهمية *</label>
+  <div class="fg"><label data-i18n="tm.type">نوع المعاملة *</label><select class="fi" id="txnType"></select></div>
+  <div class="fg"><label data-i18n="tm.importance">درجة الأهمية *</label>
     <select class="fi" id="txnImportance">
-      <option value="low">منخفض (Low) — أخضر</option>
-      <option value="medium" selected>متوسط (Medium) — أصفر</option>
-      <option value="high">عالي (High) — برتقالي</option>
-      <option value="critical">عاجل (Critical) — أحمر</option>
+      <option value="low" data-i18n="tm.imp.low">منخفض (Low) — أخضر</option>
+      <option value="medium" selected data-i18n="tm.imp.medium">متوسط (Medium) — أصفر</option>
+      <option value="high" data-i18n="tm.imp.high">عالي (High) — برتقالي</option>
+      <option value="critical" data-i18n="tm.imp.critical">عاجل (Critical) — أحمر</option>
     </select>
   </div>
-  <div class="fg"><label>العنوان *</label><input class="fi" id="txnTitle" placeholder="وصف مختصر للمعاملة"></div>
-  <!-- Account search -->
+  <div class="fg"><label data-i18n="tm.titleLabel">العنوان *</label><input class="fi" id="txnTitle" placeholder="وصف مختصر للمعاملة" data-i18n-placeholder="tm.titlePH"></div>
   <div class="fg" style="position:relative;">
-    <label><i class="fas fa-sitemap"></i> الحساب المحاسبي</label>
-    <input class="fi" id="txnAccSearch" placeholder="ابحث برقم أو اسم الحساب..." oninput="txnSearchAccount(this)" onfocus="txnSearchAccount(this)">
+    <label><i class="fas fa-sitemap"></i> <span data-i18n="tm.glAccount">الحساب المحاسبي</span></label>
+    <input class="fi" id="txnAccSearch" placeholder="ابحث برقم أو اسم الحساب..." data-i18n-placeholder="tm.glSearch" oninput="txnSearchAccount(this)" onfocus="txnSearchAccount(this)">
     <input type="hidden" id="txnAccId"><input type="hidden" id="txnAccName">
     <div id="txnAccDropdown" style="display:none;position:absolute;top:100%;right:0;left:0;z-index:200;background:#fff;border:1px solid #e5e7eb;border-radius:10px;max-height:180px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1);"></div>
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-    <div class="fg"><label><i class="fas fa-building"></i> مركز التكلفة</label><select class="fi" id="txnCC"><option value="">— بدون —</option></select></div>
-    <div class="fg"><label><i class="fas fa-money-bill-wave"></i> المبلغ</label><input type="number" class="fi" id="txnAmount" step="0.01" min="0" value="0"></div>
+    <div class="fg"><label><i class="fas fa-building"></i> <span data-i18n="tm.costCenter">مركز التكلفة</span></label><select class="fi" id="txnCC"><option value="" data-i18n="tm.noCC">— بدون —</option></select></div>
+    <div class="fg"><label><i class="fas fa-money-bill-wave"></i> <span data-i18n="tm.amount">المبلغ</span></label><input type="number" class="fi" id="txnAmount" step="0.01" min="0" value="0"></div>
   </div>
-  <div class="fg"><label><i class="fas fa-user-check"></i> إرسال إلى (المستلم) *</label><select class="fi" id="txnRecipient"><option value="">— اختر —</option></select></div>
-  <div class="fg"><label>التفاصيل</label><textarea class="fi" id="txnDesc" rows="2" placeholder="تفاصيل إضافية"></textarea></div>
-  <div class="fg"><label><i class="fas fa-paperclip"></i> مرفق</label><input type="file" class="fi" id="txnFile" accept=".pdf,.jpg,.jpeg,.png" style="padding:8px;"></div>
-  <button class="btn-m" onclick="submitTxn()"><i class="fas fa-paper-plane"></i> إرسال المعاملة</button>
+  <div class="fg"><label><i class="fas fa-user-check"></i> <span data-i18n="tm.recipient">إرسال إلى (المستلم) *</span></label><select class="fi" id="txnRecipient"><option value="" data-i18n="tm.selectRecipient">— اختر —</option></select></div>
+  <div class="fg"><label data-i18n="tm.details">التفاصيل</label><textarea class="fi" id="txnDesc" rows="2" placeholder="تفاصيل إضافية" data-i18n-placeholder="tm.detailsPH"></textarea></div>
+  <div class="fg"><label><i class="fas fa-paperclip"></i> <span data-i18n="tm.attachment">مرفق</span></label><input type="file" class="fi" id="txnFile" accept=".pdf,.jpg,.jpeg,.png" style="padding:8px;"></div>
+  <button class="btn-m" onclick="submitTxn()"><i class="fas fa-paper-plane"></i> <span data-i18n="tm.send">إرسال المعاملة</span></button>
 </div></div>
 <!-- Transaction Detail Modal -->
 <div class="modal" id="txnDetailModal"><div class="modal-c" style="max-height:90dvh;">
-  <div class="modal-h"><span id="txnDetailTitle">تفاصيل المعاملة</span><button onclick="closeTxnDetail()">&times;</button></div>
+  <div class="modal-h"><span id="txnDetailTitle" data-i18n="td.title">تفاصيل المعاملة</span><button onclick="closeTxnDetail()">&times;</button></div>
   <div id="txnDetailBody"></div>
 </div></div>
 </body>

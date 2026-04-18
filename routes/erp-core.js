@@ -18,6 +18,7 @@
  */
 const router = require('express').Router();
 const db = require('../db/connection');
+const gl = require('../lib/glPosting');
 
 // ═══════════════════════════════════════
 // HELPERS
@@ -488,11 +489,52 @@ router.post('/royalty-runs/compute', async (req, res) => {
 router.post('/royalty-runs/:id/approve', async (req, res) => {
   try {
     const { username } = req.body;
+    const [rr] = await db.query('SELECT * FROM royalty_runs WHERE id = ?', [req.params.id]);
+    if (!rr.length) return res.json({ success: false, error: 'الاحتساب غير موجود' });
+    if (rr[0].status !== 'draft') return res.json({ success: false, error: 'لا يمكن الاعتماد — الحالة ليست مسودة' });
+
+    const run = rr[0];
+    const amt = Number(run.royalty_amount) || 0;
+
     await db.query(
-      `UPDATE royalty_runs SET status='approved', approved_by=?, approved_at=NOW()
-       WHERE id=? AND status='draft'`,
-      [username||'', req.params.id]);
-    res.json({ success: true });
+      `UPDATE royalty_runs SET status='approved', approved_by=?, approved_at=NOW() WHERE id=?`,
+      [username || '', req.params.id]);
+
+    // ═══ AUTO GL POSTING ═══
+    // Dr Franchise Fee Expense (brand dimension) / Cr Franchise Royalty Payable
+    let postResult = { success: true };
+    if (amt > 0) {
+      postResult = await gl.postJournal(db, {
+        journalDate: run.run_date || new Date().toISOString().slice(0, 10),
+        description: 'Royalty accrual — ' + (run.period_start || '') + ' to ' + (run.period_end || ''),
+        referenceType: 'RoyaltyRun',
+        referenceId: req.params.id,
+        entries: [
+          {
+            accountCode: '6100',                 // Franchise Fee Expense
+            debit: amt, credit: 0,
+            description: 'Franchise royalty expense',
+            brandId: run.brand_id
+          },
+          {
+            accountCode: '2310',                 // Royalty Payable
+            debit: 0, credit: amt,
+            description: 'Royalty liability to brand owner',
+            brandId: run.brand_id
+          }
+        ],
+        postedBy: username || ''
+      });
+      if (postResult.journalId) {
+        await db.query('UPDATE royalty_runs SET gl_journal_id = ? WHERE id = ?', [postResult.journalId, req.params.id]);
+      }
+    }
+    res.json({
+      success: true,
+      journalId: postResult.journalId || null,
+      journalNumber: postResult.journalNumber || null,
+      postingWarning: postResult.success ? null : postResult.error
+    });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
@@ -568,6 +610,51 @@ router.post('/waste-entries', async (req, res) => {
          VALUES (?,?,?,?,?,?,?)`,
         [genId('WEI'), id, it.itemId, Number(it.quantity)||0, it.unit||'PCS',
          Number(it.unitCost)||0, Math.round(lineCost * 100) / 100]);
+      // ═══ INVENTORY MOVEMENT (waste reduces stock) ═══
+      try {
+        await db.query(
+          `INSERT INTO inventory_movements (id, item_id, warehouse_id, txn_type, quantity, unit_cost, total_cost, reference_type, reference_id, created_by, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,NOW())`,
+          [genId('IM'), it.itemId, warehouseId, 'waste',
+           -(Number(it.quantity)||0), Number(it.unitCost)||0, -(Math.round(lineCost*100)/100),
+           'WasteEntry', id, createdBy||'']);
+      } catch(e) { /* older schema — inventory_movements may lack needed fields */ }
+    }
+
+    // ═══ AUTO GL POSTING ═══
+    // Dr Waste Expense (cost_center) / Cr Inventory (warehouse)
+    if (total > 0) {
+      const post = await gl.postJournal(db, {
+        journalDate: wasteDate || new Date().toISOString().slice(0, 10),
+        description: 'Waste — ' + (reason || 'other'),
+        referenceType: 'WasteEntry',
+        referenceId: id,
+        entries: [
+          {
+            accountCode: '5200',       // Waste Expense
+            debit: total, credit: 0,
+            description: 'Waste cost',
+            branchId: branchId || null,
+            brandId: brandId || null,
+            costCenterId: costCenterId || null
+          },
+          {
+            accountCode: '1200',       // Inventory (reduction)
+            debit: 0, credit: total,
+            description: 'Inventory reduction (waste)',
+            branchId: branchId || null,
+            brandId: brandId || null,
+            warehouseId: warehouseId
+          }
+        ],
+        postedBy: createdBy || ''
+      });
+      return res.json({
+        success: true, id, totalCost: total,
+        journalId: post.journalId || null,
+        journalNumber: post.journalNumber || null,
+        postingWarning: post.success ? null : post.error
+      });
     }
     res.json({ success: true, id, totalCost: total });
   } catch(e) { res.json({ success: false, error: e.message }); }
@@ -611,7 +698,7 @@ router.get('/purchase-receipts', async (req, res) => {
 
 router.post('/purchase-receipts', async (req, res) => {
   try {
-    const { poId, supplierId, warehouseId, receiptDate, createdBy, lines } = req.body;
+    const { poId, supplierId, warehouseId, receiptDate, createdBy, lines, brandId, branchId } = req.body;
     if (!warehouseId || !Array.isArray(lines) || !lines.length)
       return res.json({ success: false, error: 'المستودع والأسطر مطلوبة' });
 
@@ -668,8 +755,388 @@ router.post('/purchase-receipts', async (req, res) => {
           [0, id]);
       } catch(e) {}
     }
-    res.json({ success: true, id, receiptNumber: rcpNumber, total });
+
+    // ═══ AUTO GL POSTING ═══
+    // Dr Inventory (subtotal, by warehouse) + Dr Input VAT / Cr Accounts Payable
+    const entries = [];
+    entries.push({
+      accountCode: '1200',              // Inventory
+      debit: Math.round(subtotal * 100) / 100,
+      credit: 0,
+      description: 'Goods received — ' + rcpNumber,
+      branchId: branchId || null,
+      brandId: brandId || null,
+      warehouseId: warehouseId
+    });
+    if (vat > 0) {
+      entries.push({
+        accountCode: '1290',            // Input VAT
+        debit: Math.round(vat * 100) / 100,
+        credit: 0,
+        description: 'Input VAT — ' + rcpNumber,
+        branchId: branchId || null, brandId: brandId || null
+      });
+    }
+    entries.push({
+      accountCode: '2100',              // Accounts Payable
+      debit: 0,
+      credit: Math.round((subtotal + vat) * 100) / 100,
+      description: 'Supplier liability — ' + rcpNumber,
+      brandId: brandId || null
+    });
+    const post = await gl.postJournal(db, {
+      journalDate: receiptDate || new Date().toISOString().slice(0, 10),
+      description: 'Purchase receipt ' + rcpNumber,
+      referenceType: 'PurchaseReceipt',
+      referenceId: id,
+      entries,
+      postedBy: createdBy || ''
+    });
+
+    res.json({
+      success: true, id, receiptNumber: rcpNumber, total,
+      journalId: post.journalId || null,
+      journalNumber: post.journalNumber || null,
+      postingWarning: post.success ? null : post.error
+    });
   } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// ACCOUNTING REPORTS — Trial Balance, P&L, Balance Sheet
+// ═══════════════════════════════════════════════════════════════════════
+
+// Helper: detect optional dimension columns on gl_entries (tolerate old schemas)
+async function _dimCols() {
+  const present = {};
+  for (const col of ['brand_id', 'branch_id', 'cost_center_id', 'warehouse_id']) {
+    try {
+      const [c] = await db.query("SHOW COLUMNS FROM gl_entries LIKE '" + col + "'");
+      present[col] = !!c.length;
+    } catch(e) { present[col] = false; }
+  }
+  return present;
+}
+
+/**
+ * GET /erp/reports/trial-balance?from=&to=&branch=&brand=&costCenter=&includeZero=
+ *   Returns every account with opening balance, period movement (debit/credit),
+ *   and closing balance. Filters by dimensions if provided.
+ */
+router.get('/reports/trial-balance', async (req, res) => {
+  try {
+    const { from, to, branch, brand, costCenter, includeZero } = req.query;
+    const dim = await _dimCols();
+
+    // Build dimension filter clause (only applies if the column exists)
+    const where = [];
+    const params = [];
+    if (branch && dim.branch_id) { where.push('e.branch_id = ?'); params.push(branch); }
+    if (brand && dim.brand_id)   { where.push('e.brand_id = ?');  params.push(brand); }
+    if (costCenter && dim.cost_center_id) { where.push('e.cost_center_id = ?'); params.push(costCenter); }
+    const dimClause = where.length ? ' AND ' + where.join(' AND ') : '';
+
+    // Only count posted journals
+    const statusClause = " AND j.status = 'posted'";
+
+    // 1) Opening balance: all entries strictly BEFORE `from`
+    let openingMap = {};
+    if (from) {
+      const [openRows] = await db.query(
+        `SELECT e.account_id,
+                COALESCE(SUM(e.debit),0)  AS d,
+                COALESCE(SUM(e.credit),0) AS c
+         FROM gl_entries e
+         JOIN gl_journals j ON e.journal_id = j.id
+         WHERE j.journal_date < ? ${statusClause} ${dimClause}
+         GROUP BY e.account_id`,
+        [from, ...params]);
+      openRows.forEach(r => {
+        openingMap[r.account_id] = Number(r.d) - Number(r.c);
+      });
+    }
+
+    // 2) Period movement
+    let sql = `
+      SELECT e.account_id,
+             COALESCE(SUM(e.debit),0)  AS period_debit,
+             COALESCE(SUM(e.credit),0) AS period_credit,
+             COUNT(*) AS row_count
+      FROM gl_entries e
+      JOIN gl_journals j ON e.journal_id = j.id
+      WHERE 1=1 ${statusClause}`;
+    const movParams = [...params];
+    if (from) { sql += ' AND j.journal_date >= ?'; movParams.push(from); }
+    if (to)   { sql += ' AND j.journal_date <= ?'; movParams.push(to); }
+    sql += dimClause + ' GROUP BY e.account_id';
+    const [movRows] = await db.query(sql, movParams);
+
+    // 3) Load all active accounts to join against
+    const [accts] = await db.query(
+      `SELECT id, code, name_ar, type, parent_id
+       FROM gl_accounts WHERE is_active = 1 OR is_active IS NULL
+       ORDER BY code`);
+
+    const movementMap = {};
+    movRows.forEach(r => { movementMap[r.account_id] = r; });
+
+    const rows = accts.map(a => {
+      const opening = Number(openingMap[a.id] || 0);
+      const mov = movementMap[a.id] || { period_debit: 0, period_credit: 0, row_count: 0 };
+      const d = Number(mov.period_debit) || 0;
+      const c = Number(mov.period_credit) || 0;
+      const closing = opening + d - c;
+      return {
+        accountId: a.id,
+        code: a.code,
+        nameAr: a.name_ar,
+        type: a.type,
+        opening: Math.round(opening * 100) / 100,
+        periodDebit: Math.round(d * 100) / 100,
+        periodCredit: Math.round(c * 100) / 100,
+        net: Math.round((d - c) * 100) / 100,
+        closing: Math.round(closing * 100) / 100,
+        rowCount: Number(mov.row_count) || 0
+      };
+    });
+
+    const filtered = includeZero === '1' ? rows : rows.filter(r =>
+      r.opening !== 0 || r.periodDebit !== 0 || r.periodCredit !== 0 || r.closing !== 0);
+
+    // Totals for balance verification
+    const totals = filtered.reduce((t, r) => ({
+      opening: t.opening + r.opening,
+      periodDebit: t.periodDebit + r.periodDebit,
+      periodCredit: t.periodCredit + r.periodCredit,
+      closing: t.closing + r.closing
+    }), { opening: 0, periodDebit: 0, periodCredit: 0, closing: 0 });
+
+    res.json({
+      success: true,
+      filters: { from: from || null, to: to || null, branch: branch || null, brand: brand || null, costCenter: costCenter || null },
+      rows: filtered,
+      totals: {
+        opening: Math.round(totals.opening * 100) / 100,
+        periodDebit: Math.round(totals.periodDebit * 100) / 100,
+        periodCredit: Math.round(totals.periodCredit * 100) / 100,
+        closing: Math.round(totals.closing * 100) / 100,
+        isBalanced: Math.abs(totals.periodDebit - totals.periodCredit) < 0.01
+      }
+    });
+  } catch(e) { res.json({ success: false, error: e.message, rows: [], totals: {} }); }
+});
+
+/**
+ * GET /erp/reports/pnl?from=&to=&branch=&brand=&costCenter=&groupBy=
+ *   Revenue − Expenses = Net Profit. Accounts hierarchy is respected
+ *   (shows detail + group totals).
+ *   groupBy: 'account' (default) | 'type' | 'brand' | 'branch' | 'cost_center'
+ */
+router.get('/reports/pnl', async (req, res) => {
+  try {
+    const { from, to, branch, brand, costCenter, groupBy } = req.query;
+    const dim = await _dimCols();
+
+    const where = [`(a.type = 'revenue' OR a.type = 'expense')`];
+    const params = [];
+    if (branch && dim.branch_id) { where.push('e.branch_id = ?'); params.push(branch); }
+    if (brand && dim.brand_id)   { where.push('e.brand_id = ?');  params.push(brand); }
+    if (costCenter && dim.cost_center_id) { where.push('e.cost_center_id = ?'); params.push(costCenter); }
+    if (from) { where.push('j.journal_date >= ?'); params.push(from); }
+    if (to)   { where.push('j.journal_date <= ?'); params.push(to); }
+    where.push("j.status = 'posted'");
+
+    // Group by selector
+    let groupCol = 'a.id';
+    let groupFields = 'a.id, a.code, a.name_ar, a.type';
+    if (groupBy === 'type')          { groupCol = 'a.type';          groupFields = 'a.type'; }
+    else if (groupBy === 'brand' && dim.brand_id) {
+      groupCol = 'e.brand_id, a.type';
+      groupFields = "e.brand_id, a.type, (SELECT name FROM brands b WHERE b.id = e.brand_id) AS dim_name";
+    }
+    else if (groupBy === 'branch' && dim.branch_id) {
+      groupCol = 'e.branch_id, a.type';
+      groupFields = "e.branch_id, a.type, (SELECT name FROM branches br WHERE br.id = e.branch_id) AS dim_name";
+    }
+    else if (groupBy === 'cost_center' && dim.cost_center_id) {
+      groupCol = 'e.cost_center_id, a.type';
+      groupFields = "e.cost_center_id, a.type, (SELECT name FROM cost_centers c WHERE c.id = e.cost_center_id) AS dim_name";
+    }
+
+    const sql = `
+      SELECT ${groupFields},
+             COALESCE(SUM(e.debit),0)  AS total_debit,
+             COALESCE(SUM(e.credit),0) AS total_credit
+      FROM gl_entries e
+      JOIN gl_journals j ON e.journal_id = j.id
+      JOIN gl_accounts a ON e.account_id = a.id
+      WHERE ${where.join(' AND ')}
+      GROUP BY ${groupCol}
+      ORDER BY a.type DESC, a.code`;
+
+    const [rows] = await db.query(sql, params);
+
+    // Revenue: credit - debit (natural credit)
+    // Expense: debit - credit (natural debit)
+    const mapped = rows.map(r => {
+      const d = Number(r.total_debit) || 0;
+      const c = Number(r.total_credit) || 0;
+      const amount = r.type === 'revenue' ? (c - d) : (d - c);
+      return {
+        accountId: r.id || null, code: r.code || '', nameAr: r.name_ar || '',
+        dimensionValue: r.brand_id || r.branch_id || r.cost_center_id || null,
+        dimensionName: r.dim_name || '',
+        type: r.type,
+        amount: Math.round(amount * 100) / 100,
+        totalDebit: Math.round(d * 100) / 100,
+        totalCredit: Math.round(c * 100) / 100
+      };
+    });
+
+    const totalRevenue = mapped.filter(r => r.type === 'revenue').reduce((s, r) => s + r.amount, 0);
+    const totalExpense = mapped.filter(r => r.type === 'expense').reduce((s, r) => s + r.amount, 0);
+    const netProfit = totalRevenue - totalExpense;
+
+    res.json({
+      success: true,
+      filters: { from: from || null, to: to || null, branch: branch || null, brand: brand || null, costCenter: costCenter || null, groupBy: groupBy || 'account' },
+      revenue: mapped.filter(r => r.type === 'revenue'),
+      expenses: mapped.filter(r => r.type === 'expense'),
+      summary: {
+        totalRevenue: Math.round(totalRevenue * 100) / 100,
+        totalExpense: Math.round(totalExpense * 100) / 100,
+        netProfit: Math.round(netProfit * 100) / 100,
+        grossMargin: totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 10000) / 100 : 0
+      }
+    });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+/**
+ * GET /erp/reports/balance-sheet?asOf=&branch=&brand=
+ *   Assets / Liabilities / Equity as of a specific date.
+ *   Assets   = Σ(debit − credit) for asset accounts
+ *   Liabilities = Σ(credit − debit) for liability accounts
+ *   Equity   = Σ(credit − debit) for equity accounts + current-period retained earnings
+ */
+router.get('/reports/balance-sheet', async (req, res) => {
+  try {
+    const { asOf, branch, brand } = req.query;
+    const dim = await _dimCols();
+    const cutoff = asOf || new Date().toISOString().slice(0, 10);
+
+    const where = [];
+    const params = [];
+    if (branch && dim.branch_id) { where.push('e.branch_id = ?'); params.push(branch); }
+    if (brand && dim.brand_id)   { where.push('e.brand_id = ?');  params.push(brand); }
+    where.push("j.status = 'posted'");
+    where.push('j.journal_date <= ?'); params.push(cutoff);
+
+    // Aggregate per account (including non-posted accounts, 0 balance)
+    const [balances] = await db.query(
+      `SELECT a.id, a.code, a.name_ar, a.type, a.parent_id,
+              COALESCE(SUM(e.debit),0)  AS total_debit,
+              COALESCE(SUM(e.credit),0) AS total_credit
+       FROM gl_accounts a
+       LEFT JOIN gl_entries e ON a.id = e.account_id
+       LEFT JOIN gl_journals j ON e.journal_id = j.id
+       WHERE (a.type IN ('asset','liability','equity','revenue','expense'))
+         AND (e.id IS NULL OR (${where.join(' AND ')}))
+       GROUP BY a.id
+       ORDER BY a.type, a.code`, params);
+
+    const assets = [], liabilities = [], equity = [];
+    let revMinusExp = 0;  // retained earnings (current period net profit)
+    balances.forEach(r => {
+      const d = Number(r.total_debit) || 0;
+      const c = Number(r.total_credit) || 0;
+      const bal = r.type === 'asset' || r.type === 'expense' ? d - c : c - d;
+      const rounded = Math.round(bal * 100) / 100;
+      const row = { code: r.code, nameAr: r.name_ar, type: r.type, balance: rounded };
+      if (r.type === 'asset')          assets.push(row);
+      else if (r.type === 'liability') liabilities.push(row);
+      else if (r.type === 'equity')    equity.push(row);
+      else if (r.type === 'revenue')   revMinusExp += (c - d);
+      else if (r.type === 'expense')   revMinusExp -= (d - c);
+    });
+
+    // Add retained earnings line to equity
+    const retainedEarnings = Math.round(revMinusExp * 100) / 100;
+    equity.push({ code: '~RE', nameAr: 'الأرباح المحتجزة (الفترة الحالية)', type: 'equity', balance: retainedEarnings });
+
+    const totalAssets      = Math.round(assets.reduce((s, r) => s + r.balance, 0) * 100) / 100;
+    const totalLiabilities = Math.round(liabilities.reduce((s, r) => s + r.balance, 0) * 100) / 100;
+    const totalEquity      = Math.round(equity.reduce((s, r) => s + r.balance, 0) * 100) / 100;
+    const difference       = Math.round((totalAssets - (totalLiabilities + totalEquity)) * 100) / 100;
+
+    res.json({
+      success: true,
+      asOf: cutoff,
+      filters: { branch: branch || null, brand: brand || null },
+      assets, liabilities, equity,
+      totals: {
+        assets: totalAssets,
+        liabilities: totalLiabilities,
+        equity: totalEquity,
+        liabilitiesPlusEquity: Math.round((totalLiabilities + totalEquity) * 100) / 100,
+        difference,
+        isBalanced: Math.abs(difference) < 0.01
+      }
+    });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+/**
+ * GET /erp/reports/profitability?from=&to=&dimension=
+ *   Quick profitability breakdown by dimension (brand/branch/cost_center).
+ *   Returns Revenue - Expenses per dimension value.
+ */
+router.get('/reports/profitability', async (req, res) => {
+  try {
+    const { from, to, dimension } = req.query;
+    const dim = await _dimCols();
+    const col = dimension === 'branch' ? 'branch_id'
+              : dimension === 'cost_center' ? 'cost_center_id'
+              : 'brand_id';
+    if (!dim[col]) return res.json({ success: false, error: 'العمود غير مدعوم: ' + col });
+
+    const table = col === 'brand_id' ? 'brands'
+                : col === 'branch_id' ? 'branches'
+                : 'cost_centers';
+
+    let sql = `
+      SELECT e.${col} AS dim_id,
+             (SELECT name FROM ${table} x WHERE x.id = e.${col}) AS dim_name,
+             SUM(CASE WHEN a.type='revenue' THEN e.credit - e.debit ELSE 0 END) AS revenue,
+             SUM(CASE WHEN a.type='expense' THEN e.debit - e.credit ELSE 0 END) AS expenses
+      FROM gl_entries e
+      JOIN gl_journals j ON e.journal_id = j.id
+      JOIN gl_accounts a ON e.account_id = a.id
+      WHERE j.status='posted' AND e.${col} IS NOT NULL
+        AND (a.type='revenue' OR a.type='expense')`;
+    const params = [];
+    if (from) { sql += ' AND j.journal_date >= ?'; params.push(from); }
+    if (to)   { sql += ' AND j.journal_date <= ?'; params.push(to); }
+    sql += ` GROUP BY e.${col} ORDER BY (revenue - expenses) DESC`;
+
+    const [rows] = await db.query(sql, params);
+    res.json({
+      success: true,
+      dimension: col,
+      rows: rows.map(r => {
+        const rev = Number(r.revenue) || 0;
+        const exp = Number(r.expenses) || 0;
+        const profit = rev - exp;
+        return {
+          id: r.dim_id, name: r.dim_name || '—',
+          revenue: Math.round(rev * 100) / 100,
+          expenses: Math.round(exp * 100) / 100,
+          profit: Math.round(profit * 100) / 100,
+          margin: rev > 0 ? Math.round((profit / rev) * 10000) / 100 : 0
+        };
+      })
+    });
+  } catch(e) { res.json({ success: false, error: e.message, rows: [] }); }
 });
 
 module.exports = router;

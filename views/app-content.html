@@ -1637,6 +1637,13 @@
     <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
   </div>
 
+  <!-- Quick-switch tabs between Dashboard / Incoming / Outgoing -->
+  <div class="wf-tabs" style="display:flex;gap:6px;margin-bottom:16px;background:#f1f5f9;padding:5px;border-radius:12px;width:fit-content;">
+    <button class="wf-tab-btn active" onclick="erpNav('erpWfDashboard')" style="padding:9px 18px;border:none;background:#fff;color:#0f172a;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.06);"><i class="fas fa-th-large" style="color:#3b82f6;"></i> اللوحة</button>
+    <button class="wf-tab-btn" onclick="erpNav('erpWfIncoming')" style="padding:9px 18px;border:none;background:transparent;color:#64748b;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;"><i class="fas fa-inbox"></i> الوارد <span id="wfTabInCount" style="background:#10b98120;color:#059669;padding:1px 6px;border-radius:8px;font-size:10px;margin-right:4px;display:none;"></span></button>
+    <button class="wf-tab-btn" onclick="erpNav('erpWfOutgoing')" style="padding:9px 18px;border:none;background:transparent;color:#64748b;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;"><i class="fas fa-paper-plane"></i> الصادر <span id="wfTabOutCount" style="background:#0ea5e920;color:#0369a1;padding:1px 6px;border-radius:8px;font-size:10px;margin-right:4px;display:none;"></span></button>
+  </div>
+
   <!-- Importance summary strip -->
   <div id="wfDashImportance" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px;"></div>
 
@@ -1682,6 +1689,14 @@
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-inbox" style="color:#10b981;"></i> صندوق الوارد — في انتظار إجراء</h2>
     <button class="btn btn-light" onclick="wfLoadIncoming()"><i class="fas fa-sync"></i> تحديث</button>
   </div>
+
+  <!-- Quick-switch tabs -->
+  <div class="wf-tabs" style="display:flex;gap:6px;margin-bottom:16px;background:#f1f5f9;padding:5px;border-radius:12px;width:fit-content;">
+    <button class="wf-tab-btn" onclick="erpNav('erpWfDashboard')" style="padding:9px 18px;border:none;background:transparent;color:#64748b;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;"><i class="fas fa-th-large"></i> اللوحة</button>
+    <button class="wf-tab-btn active" onclick="erpNav('erpWfIncoming')" style="padding:9px 18px;border:none;background:#fff;color:#0f172a;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.06);"><i class="fas fa-inbox" style="color:#10b981;"></i> الوارد</button>
+    <button class="wf-tab-btn" onclick="erpNav('erpWfOutgoing')" style="padding:9px 18px;border:none;background:transparent;color:#64748b;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;"><i class="fas fa-paper-plane"></i> الصادر</button>
+  </div>
+
   <div id="wfIncomingStats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;"></div>
   <div class="erp-table-container" style="border-radius:14px;">
     <table class="erp-table">
@@ -1697,6 +1712,13 @@
 <div id="erpWfOutgoing" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-paper-plane" style="color:#0ea5e9;"></i> المعاملات الصادرة</h2>
+  </div>
+
+  <!-- Quick-switch tabs -->
+  <div class="wf-tabs" style="display:flex;gap:6px;margin-bottom:16px;background:#f1f5f9;padding:5px;border-radius:12px;width:fit-content;">
+    <button class="wf-tab-btn" onclick="erpNav('erpWfDashboard')" style="padding:9px 18px;border:none;background:transparent;color:#64748b;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;"><i class="fas fa-th-large"></i> اللوحة</button>
+    <button class="wf-tab-btn" onclick="erpNav('erpWfIncoming')" style="padding:9px 18px;border:none;background:transparent;color:#64748b;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;"><i class="fas fa-inbox"></i> الوارد</button>
+    <button class="wf-tab-btn active" onclick="erpNav('erpWfOutgoing')" style="padding:9px 18px;border:none;background:#fff;color:#0f172a;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.06);"><i class="fas fa-paper-plane" style="color:#0ea5e9;"></i> الصادر</button>
   </div>
 
   <!-- Filter panel -->

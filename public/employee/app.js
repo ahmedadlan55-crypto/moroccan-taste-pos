@@ -56,6 +56,12 @@ var I18N = {
     'common.empty.incoming': 'لا توجد معاملات بانتظارك',
     'common.done': 'تم',
     'common.refreshed': 'تم التحديث',
+    'common.cancelBtn': 'إلغاء',
+    'common.closeBtn': 'إغلاق',
+    'common.network': 'شبكة',
+    'common.browser': 'متصفح',
+    'common.errorPrefix': 'خطأ: ',
+    'common.connError': 'خطأ في الاتصال: ',
     // Leave
     'leave.balances': 'أرصدة الإجازات',
     'leave.days': 'يوم',
@@ -88,8 +94,11 @@ var I18N = {
     'txn.edit': 'تعديل',
     'txn.cancel': 'إلغاء',
     'txn.responsible': 'مسؤول',
-    'txn.rejectReason': 'سبب الرفض (مطلوب):',
-    'txn.noteOptional': 'ملاحظة (اختياري):',
+    'txn.rejectReason': 'سبب الرفض',
+    'txn.returnReason': 'سبب الإرجاع',
+    'txn.noteOptional': 'ملاحظة (اختياري)',
+    'txn.notePlaceholder': 'اكتب تعليقك هنا...',
+    'txn.notePlaceholderRequired': 'اكتب سبب القرار والملاحظات التي تريد إبلاغ المرسل بها...',
     'txn.reasonRequired': 'مطلوب ذكر السبب',
     'txn.forwardPrompt': 'تحويل إلى:\n{list}\n\nأدخل رقم الاختيار:',
     'txn.invalidChoice': 'اختيار غير صالح',
@@ -130,6 +139,20 @@ var I18N = {
     'txn.typeLabel': 'النوع',
     'txn.currentRoleLabel': 'الدور الحالي',
     'txn.downloadAttachment': 'تحميل المرفق',
+    'txn.content': 'محتوى المعاملة',
+    'txn.recipientsTitle': 'الجهات الصادر إليها',
+    'txn.needsResponse': 'يحتاج رد',
+    'txn.workflowPath': 'سير المعاملة',
+    'txn.attachmentLbl': 'مرفق',
+    'txn.secrecyContent': 'سرية المحتوى',
+    'txn.secrecyAttachments': 'سرية المرفقات',
+    'txn.sec.normal': 'عادي',
+    'txn.sec.confidential': 'سري',
+    'txn.sec.secret': 'سري للغاية',
+    'txn.sec.top_secret': 'سري جداً للغاية',
+    'txn.clock.locationFail': 'يجب السماح بالموقع',
+    'txn.clock.regFail': 'فشل التسجيل',
+    'rpName': 'بوابة الموظف',
     // New transaction modal
     'tm.title': 'معاملة جديدة',
     'tm.senderName': 'اسم المرسل',
@@ -230,6 +253,12 @@ var I18N = {
     'common.empty.incoming': 'No transactions awaiting you',
     'common.done': 'Done',
     'common.refreshed': 'Refreshed',
+    'common.cancelBtn': 'Cancel',
+    'common.closeBtn': 'Close',
+    'common.network': 'network',
+    'common.browser': 'Browser',
+    'common.errorPrefix': 'Error: ',
+    'common.connError': 'Connection error: ',
     'leave.balances': 'Leave Balances',
     'leave.days': 'days',
     'leave.yearsSvc': 'Years of service',
@@ -260,8 +289,11 @@ var I18N = {
     'txn.edit': 'Edit',
     'txn.cancel': 'Cancel',
     'txn.responsible': 'Assigned',
-    'txn.rejectReason': 'Rejection reason (required):',
-    'txn.noteOptional': 'Note (optional):',
+    'txn.rejectReason': 'Rejection reason',
+    'txn.returnReason': 'Return reason',
+    'txn.noteOptional': 'Note (optional)',
+    'txn.notePlaceholder': 'Write your comment here...',
+    'txn.notePlaceholderRequired': 'Write the reason and notes you want to share with the sender...',
     'txn.reasonRequired': 'Reason required',
     'txn.forwardPrompt': 'Forward to:\n{list}\n\nEnter the number:',
     'txn.invalidChoice': 'Invalid choice',
@@ -302,6 +334,20 @@ var I18N = {
     'txn.typeLabel': 'Type',
     'txn.currentRoleLabel': 'Current Role',
     'txn.downloadAttachment': 'Download attachment',
+    'txn.content': 'Transaction content',
+    'txn.recipientsTitle': 'Recipients',
+    'txn.needsResponse': 'needs response',
+    'txn.workflowPath': 'Workflow progress',
+    'txn.attachmentLbl': 'attachment',
+    'txn.secrecyContent': 'Content secrecy',
+    'txn.secrecyAttachments': 'Attachments secrecy',
+    'txn.sec.normal': 'Normal',
+    'txn.sec.confidential': 'Confidential',
+    'txn.sec.secret': 'Secret',
+    'txn.sec.top_secret': 'Top Secret',
+    'txn.clock.locationFail': 'Location permission required',
+    'txn.clock.regFail': 'Registration failed',
+    'rpName': 'Employee Portal',
     'tm.title': 'New Transaction',
     'tm.senderName': 'Sender Name',
     'tm.jobTitle': 'Job Title',
@@ -392,6 +438,8 @@ function applyLangToStaticDOM() {
   document.documentElement.setAttribute('lang', currentLang);
   document.documentElement.setAttribute('dir', currentLang === 'ar' ? 'rtl' : 'ltr');
   document.body.style.direction = currentLang === 'ar' ? 'rtl' : 'ltr';
+  // Browser tab title
+  try { document.title = t('login.title'); } catch(e) {}
   // Static text via data-i18n attributes
   document.querySelectorAll('[data-i18n]').forEach(function(el) {
     var key = el.getAttribute('data-i18n');
@@ -443,7 +491,7 @@ function callAPI(method, path, body, cb) {
     try { cb(JSON.parse(xhr.responseText), null); }
     catch(e) { cb(null, 'HTTP ' + xhr.status); }
   };
-  xhr.onerror = function() { cb(null, 'شبكة'); };
+  xhr.onerror = function() { cb(null, t('common.network')); };
   xhr.send(body ? JSON.stringify(body) : null);
 }
 
@@ -496,12 +544,12 @@ document.addEventListener('keydown', function(e) { if (e.key==='Enter' && docume
 
 function doLogin() {
   var u = document.getElementById('lu').value, p = document.getElementById('lp').value;
-  if (!u || !p) return toast('أدخل البيانات', true);
+  if (!u || !p) return toast(t('login.fill'), true);
   var btn = document.getElementById('lbtn');
   btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
   callAPI('POST', '/auth/login', {username:u, password:p}, function(r, err) {
-    btn.disabled = false; btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> دخول';
-    if (err) return toast('خطأ في الاتصال: ' + err, true);
+    btn.disabled = false; btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> ' + t('login.btn');
+    if (err) return toast(t('common.connError') + err, true);
     if (r && r.success && r.token) {
       localStorage.setItem('emp_token', r.token);
       localStorage.setItem('emp_session', JSON.stringify({username:r.username,role:r.role,brandId:r.brandId||'',branchId:r.branchId||''}));
@@ -616,7 +664,7 @@ function doClock() {
     navigator.credentials.create({
       publicKey: {
         challenge: new Uint8Array(32),
-        rp: { name: 'بوابة الموظف' },
+        rp: { name: t('rpName') },
         user: { id: new Uint8Array(16), name: currentUser, displayName: currentUser },
         pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
         authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
@@ -637,7 +685,7 @@ function doClockWithLocation() {
   if (/iPhone/.test(ua)) data.deviceName = 'iPhone';
   else if (/iPad/.test(ua)) data.deviceName = 'iPad';
   else if (/Android/.test(ua)) { var m = ua.match(/;\s*([^;)]+)\s*Build/); data.deviceName = m ? m[1].trim() : 'Android'; }
-  else data.deviceName = currentLang === 'en' ? 'Browser' : 'متصفح';
+  else data.deviceName = t('common.browser');
 
   // REQUIRE location
   if (!navigator.geolocation) { toast(t('clock.deviceNoGeo'), true); return; }
@@ -656,9 +704,9 @@ function doClockWithLocation() {
 
 function sendClock(data) {
   callAPI('POST', '/hr/my-clock', data, function(r, err) {
-    if (err) return toast('خطأ: ' + err, true);
+    if (err) return toast(t('common.errorPrefix') + err, true);
     if (r && r.success) { toast(r.message); loadHomeData(); }
-    else toast(r ? r.error : 'فشل التسجيل', true);
+    else toast(r ? r.error : t('txn.clock.regFail'), true);
   });
 }
 
@@ -892,38 +940,96 @@ function loadIncomingTxns() {
 }
 
 function empAct(id, action) {
-  var note = '';
-  if (action === 'reject') {
-    note = prompt(t('txn.rejectReason'));
-    if (!note) return toast(t('txn.reasonRequired'), true);
-  } else {
-    note = prompt(t('txn.noteOptional')) || '';
-  }
-  var actionLabels = { approve: t('txn.act.approve'), reject: t('txn.act.reject'), return: t('txn.act.return') };
-  toast(actionLabels[action] || action);
-  callAPI('POST', '/workflow/transactions/' + id + '/action', {
-    action: action, username: currentUser, note: note
-  }, function(r) {
-    if (r && r.success) { toast(t('common.done')); loadIncomingTxns(); loadMyTransactions(); }
-    else toast(r ? r.error : t('txn.failed'), true);
-  });
+  // Open a proper modal (not browser prompt) with textarea + optional attachment
+  var required = (action === 'reject' || action === 'return');
+  var aClrs = { approve: '#10b981', reject: '#ef4444', return: '#f59e0b', close: '#6b7280' };
+  var aIcons = { approve: 'fa-check-circle', reject: 'fa-times-circle', return: 'fa-undo', close: 'fa-lock' };
+  var aTitles = { approve: t('txn.act.approve'), reject: t('txn.act.reject'), return: t('txn.act.return'), close: t('txn.act.close') };
+  var labelKey = action === 'return' ? 'txn.returnReason' : (action === 'reject' ? 'txn.rejectReason' : 'txn.noteOptional');
+
+  var old = document.getElementById('empActionDlg'); if (old) old.remove();
+  var div = document.createElement('div');
+  div.id = 'empActionDlg';
+  div.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:14px;';
+  div.innerHTML =
+    '<div style="background:#fff;border-radius:14px;padding:18px;width:100%;max-width:420px;box-shadow:0 20px 50px rgba(0,0,0,.2);">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">' +
+        '<div style="width:38px;height:38px;border-radius:50%;background:'+aClrs[action]+'15;display:flex;align-items:center;justify-content:center;"><i class="fas '+aIcons[action]+'" style="color:'+aClrs[action]+';"></i></div>' +
+        '<h3 style="margin:0;font-size:15px;font-weight:800;">'+aTitles[action]+'</h3>' +
+      '</div>' +
+      '<div style="margin-bottom:10px;">' +
+        '<label style="font-size:12px;font-weight:700;color:#475569;display:block;margin-bottom:4px;">'+t(labelKey)+(required?' <span style="color:#ef4444;">*</span>':'')+'</label>' +
+        '<textarea id="empActNote" rows="4" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;resize:vertical;font-family:inherit;" placeholder="'+t(required?'txn.notePlaceholderRequired':'txn.notePlaceholder')+'"></textarea>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+        '<button id="empActCancelBtn" style="padding:10px 18px;border:2px solid #e5e7eb;background:#fff;color:#64748b;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;">'+t('common.cancelBtn')+'</button>' +
+        '<button id="empActOkBtn" style="padding:10px 22px;border:none;background:'+aClrs[action]+';color:#fff;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;">'+aTitles[action]+'</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(div);
+  div.addEventListener('click', function(e) { if (e.target === div) div.remove(); });
+  div.querySelector('#empActCancelBtn').onclick = function() { div.remove(); };
+  setTimeout(function(){ var ta=document.getElementById('empActNote'); if(ta) ta.focus(); }, 50);
+
+  div.querySelector('#empActOkBtn').onclick = function() {
+    var note = (document.getElementById('empActNote').value||'').trim();
+    if (required && !note) { toast(t('txn.reasonRequired'), true); return; }
+    div.remove();
+    var actionLabels = { approve: t('txn.act.approve'), reject: t('txn.act.reject'), return: t('txn.act.return') };
+    toast(actionLabels[action] || action);
+    callAPI('POST', '/workflow/transactions/' + id + '/action', {
+      action: action, username: currentUser, note: note
+    }, function(r) {
+      if (r && r.success) { toast(t('common.done')); loadIncomingTxns(); loadMyTransactions(); }
+      else toast(r ? r.error : t('txn.failed'), true);
+    });
+  };
 }
 
 function empFwd(id) {
   callAPI('GET', '/workflow/eligible-users?sender=' + encodeURIComponent(currentUser), null, function(users) {
     if (!users || !users.length) return toast(t('txn.noRecipient'), true);
-    var opts = users.map(function(u, i) { return (i+1)+') '+(u.fullName||u.username)+' — '+(u.positionName||''); }).join('\n');
-    var pick = prompt(t('txn.forwardPrompt', { list: opts }));
-    var idx = parseInt(pick) - 1;
-    if (isNaN(idx) || idx < 0 || idx >= users.length) return toast(t('txn.invalidChoice'), true);
-    var note = prompt(t('txn.noteOptional')) || '';
-    callAPI('POST', '/workflow/transactions/' + id + '/action', {
-      action: 'forward', username: currentUser, forwardTo: users[idx].username,
-      note: t('txn.act.forward') + ': ' + users[idx].username + (note ? ' — ' + note : '')
-    }, function(r) {
-      if (r && r.success) { toast(t('txn.forwarded')); loadIncomingTxns(); }
-      else toast(r ? r.error : t('txn.failed'), true);
-    });
+
+    var old = document.getElementById('empFwdDlg'); if (old) old.remove();
+    var div = document.createElement('div');
+    div.id = 'empFwdDlg';
+    div.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:14px;';
+    var opts = users.map(function(u) { return '<option value="'+u.username+'">'+(u.fullName||u.username)+(u.positionName?' — '+u.positionName:'')+'</option>'; }).join('');
+    div.innerHTML =
+      '<div style="background:#fff;border-radius:14px;padding:18px;width:100%;max-width:420px;box-shadow:0 20px 50px rgba(0,0,0,.2);">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">' +
+          '<div style="width:38px;height:38px;border-radius:50%;background:#8b5cf615;display:flex;align-items:center;justify-content:center;"><i class="fas fa-share" style="color:#8b5cf6;"></i></div>' +
+          '<h3 style="margin:0;font-size:15px;font-weight:800;">'+t('txn.forward')+'</h3>' +
+        '</div>' +
+        '<div style="margin-bottom:10px;">' +
+          '<label style="font-size:12px;font-weight:700;color:#475569;display:block;margin-bottom:4px;">'+t('tm.recipient')+'</label>' +
+          '<select id="empFwdTo" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;font-family:inherit;">'+opts+'</select>' +
+        '</div>' +
+        '<div style="margin-bottom:10px;">' +
+          '<label style="font-size:12px;font-weight:700;color:#475569;display:block;margin-bottom:4px;">'+t('txn.noteOptional')+'</label>' +
+          '<textarea id="empFwdNote" rows="3" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;resize:vertical;font-family:inherit;" placeholder="'+t('txn.notePlaceholder')+'"></textarea>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+          '<button id="empFwdCancelBtn" style="padding:10px 18px;border:2px solid #e5e7eb;background:#fff;color:#64748b;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;">'+t('common.cancelBtn')+'</button>' +
+          '<button id="empFwdOkBtn" style="padding:10px 22px;border:none;background:#8b5cf6;color:#fff;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;">'+t('txn.forward')+'</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(div);
+    div.addEventListener('click', function(e) { if (e.target === div) div.remove(); });
+    div.querySelector('#empFwdCancelBtn').onclick = function() { div.remove(); };
+    div.querySelector('#empFwdOkBtn').onclick = function() {
+      var toUser = document.getElementById('empFwdTo').value;
+      var note = (document.getElementById('empFwdNote').value||'').trim();
+      if (!toUser) return toast(t('txn.invalidChoice'), true);
+      div.remove();
+      callAPI('POST', '/workflow/transactions/' + id + '/action', {
+        action: 'forward', username: currentUser, forwardTo: toUser,
+        note: t('txn.act.forward') + ': ' + toUser + (note ? ' — ' + note : '')
+      }, function(r) {
+        if (r && r.success) { toast(t('txn.forwarded')); loadIncomingTxns(); }
+        else toast(r ? r.error : t('txn.failed'), true);
+      });
+    };
   });
 }
 
@@ -1107,7 +1213,7 @@ function viewMyTxn(id) {
 
     var ic = _impColors[txn.importance]||'#6b7280';
     var il = _impLabels[txn.importance]||txn.importance;
-    var secMap = {normal:'عادي', confidential:'سري', secret:'سري للغاية', top_secret:'سري جداً للغاية'};
+    var secMap = {normal:t('txn.sec.normal'), confidential:t('txn.sec.confidential'), secret:t('txn.sec.secret'), top_secret:t('txn.sec.top_secret')};
     var h = '';
     // Prominent subject/title at the top
     var titleText = txn.subject || txn.title || '';
@@ -1121,8 +1227,8 @@ function viewMyTxn(id) {
     // Secrecy badges
     if (txn.contentSecrecy || txn.attachmentsSecrecy) {
       h += '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">' +
-        '<span style="padding:3px 8px;border-radius:6px;background:#f3e8ff;color:#6d28d9;font-size:10px;font-weight:800;"><i class="fas fa-shield-alt"></i> سرية المحتوى: '+(secMap[txn.contentSecrecy]||'عادي')+'</span>' +
-        '<span style="padding:3px 8px;border-radius:6px;background:#fef3c7;color:#92400e;font-size:10px;font-weight:800;"><i class="fas fa-paperclip"></i> سرية المرفقات: '+(secMap[txn.attachmentsSecrecy]||'عادي')+'</span>' +
+        '<span style="padding:3px 8px;border-radius:6px;background:#f3e8ff;color:#6d28d9;font-size:10px;font-weight:800;"><i class="fas fa-shield-alt"></i> '+t('txn.secrecyContent')+': '+(secMap[txn.contentSecrecy]||secMap.normal)+'</span>' +
+        '<span style="padding:3px 8px;border-radius:6px;background:#fef3c7;color:#92400e;font-size:10px;font-weight:800;"><i class="fas fa-paperclip"></i> '+t('txn.secrecyAttachments')+': '+(secMap[txn.attachmentsSecrecy]||secMap.normal)+'</span>' +
       '</div>';
     }
 
@@ -1158,7 +1264,7 @@ function viewMyTxn(id) {
     // Full content — prefer HTML, fall back to plain description
     if (txn.contentHtml && txn.contentHtml.trim()) {
       h += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:#fff;font-size:13px;color:#1e293b;line-height:1.8;margin-bottom:10px;">' +
-        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:6px;"><i class="fas fa-file-alt"></i> محتوى المعاملة</div>' +
+        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:6px;"><i class="fas fa-file-alt"></i> '+t('txn.content')+'</div>' +
         txn.contentHtml +
       '</div>';
     } else if (txn.description) {
@@ -1167,27 +1273,28 @@ function viewMyTxn(id) {
     // Multi-recipients
     if (Array.isArray(txn.recipients) && txn.recipients.length) {
       h += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-bottom:10px;">' +
-        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:6px;"><i class="fas fa-paper-plane"></i> الجهات الصادر إليها</div>' +
+        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:6px;"><i class="fas fa-paper-plane"></i> '+t('txn.recipientsTitle')+'</div>' +
         '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
       txn.recipients.forEach(function(r) {
         h += '<span style="padding:3px 8px;border-radius:6px;background:#eff6ff;color:#1e40af;font-size:11px;">' +
           (r.code?'<code style="font-size:9px;color:#64748b;">'+r.code+'</code> ':'') +
           '<b>'+(r.name||r.username||'')+'</b>' +
-          (r.needsResponse?' <span style="color:#ea580c;font-size:9px;">يحتاج رد</span>':'') +
+          (r.needsResponse?' <span style="color:#ea580c;font-size:9px;">'+t('txn.needsResponse')+'</span>':'') +
           (r.responseReceived?' <i class="fas fa-check" style="color:#16a34a;"></i>':'') +
         '</span>';
       });
       h += '</div></div>';
     }
-    if (txn.attachment && txn.attachment.startsWith && txn.attachment.startsWith('data:')) h += '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:4px;color:#0ea5e9;font-size:12px;font-weight:700;margin-bottom:10px;"><i class="fas fa-download"></i> تحميل المرفق</a>';
+    if (txn.attachment && txn.attachment.startsWith && txn.attachment.startsWith('data:')) h += '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:4px;color:#0ea5e9;font-size:12px;font-weight:700;margin-bottom:10px;"><i class="fas fa-download"></i> '+t('txn.downloadAttachment')+'</a>';
 
     // Timeline
     if (txn.logs && txn.logs.length) {
-      h += '<div style="margin-top:10px;"><div style="font-size:13px;font-weight:800;color:#1e293b;margin-bottom:8px;"><i class="fas fa-route" style="color:#0ea5e9;margin-left:4px;"></i> سير المعاملة</div>';
+      var tlLocale = currentLang === 'en' ? 'en-US' : 'ar-SA';
+      h += '<div style="margin-top:10px;"><div style="font-size:13px;font-weight:800;color:#1e293b;margin-bottom:8px;"><i class="fas fa-route" style="color:#0ea5e9;margin-left:4px;"></i> '+t('txn.workflowPath')+'</div>';
       txn.logs.forEach(function(l, i) {
         var c = aClr[l.actionType]||'#6b7280';
         var icon = aIcon[l.actionType]||'fa-circle';
-        var dt = l.createdAt ? new Date(l.createdAt).toLocaleString('ar-SA',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+        var dt = l.createdAt ? new Date(l.createdAt).toLocaleString(tlLocale,{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
         var isLast = i === txn.logs.length - 1;
         h += '<div style="display:flex;gap:10px;position:relative;">';
         // Timeline line + dot
@@ -1200,7 +1307,7 @@ function viewMyTxn(id) {
         h += '<div style="font-size:12px;font-weight:800;color:'+c+';">'+(aMap[l.actionType]||l.actionType)+'</div>';
         h += '<div style="font-size:11px;color:#64748b;">'+(l.actionBy||'')+(l.positionName?' — <span style="color:#1e40af;font-weight:700;">'+l.positionName+'</span>':'')+'</div>';
         if (l.note) h += '<div style="font-size:11px;color:#334155;margin-top:2px;padding:4px 8px;border-radius:6px;background:#f1f5f9;">'+l.note+'</div>';
-        if (l.attachment && l.attachment.startsWith && l.attachment.startsWith('data:')) h += '<a href="'+l.attachment+'" download style="font-size:10px;color:#0ea5e9;"><i class="fas fa-paperclip"></i> مرفق</a>';
+        if (l.attachment && l.attachment.startsWith && l.attachment.startsWith('data:')) h += '<a href="'+l.attachment+'" download style="font-size:10px;color:#0ea5e9;"><i class="fas fa-paperclip"></i> '+t('txn.attachmentLbl')+'</a>';
         h += '<div style="font-size:10px;color:#94a3b8;margin-top:2px;">'+dt+'</div>';
         h += '</div></div>';
       });

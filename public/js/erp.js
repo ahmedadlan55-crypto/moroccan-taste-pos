@@ -5425,7 +5425,7 @@ function wfTxnAction(id, action) {
         '<div style="width:40px;height:40px;border-radius:50%;background:'+(aClrs[action]||'#6b7280')+'15;display:flex;align-items:center;justify-content:center;"><i class="fas '+(aIcons[action]||'fa-cog')+'" style="color:'+(aClrs[action]||'#6b7280')+';"></i></div>' +
         '<h3 style="margin:0;font-size:16px;">'+(actionNames[action]||action)+' المعاملة</h3>' +
       '</div>' +
-      '<div style="margin-bottom:12px;"><label style="font-size:12px;font-weight:700;color:#475569;">التعليق '+(action==='reject'?'(مطلوب) *':'(اختياري)')+'</label><textarea id="wfActNote" rows="3" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;resize:none;margin-top:4px;" placeholder="اكتب تعليقك هنا..."></textarea></div>' +
+      '<div style="margin-bottom:12px;"><label style="font-size:12px;font-weight:700;color:#475569;">'+(action==='return'?'سبب الإرجاع (مطلوب) *':(action==='reject'?'سبب الرفض (مطلوب) *':'التعليق (اختياري)'))+'</label><textarea id="wfActNote" rows="3" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;resize:none;margin-top:4px;" placeholder="'+(action==='return'?'اكتب سبب الإرجاع والملاحظات التي تريد إبلاغ المرسل بها...':'اكتب تعليقك هنا...')+'"></textarea></div>' +
       '<div style="margin-bottom:16px;"><label style="font-size:12px;font-weight:700;color:#475569;">مرفق (اختياري)</label><input type="file" id="wfActFile" accept=".pdf,.jpg,.jpeg,.png" style="width:100%;padding:8px;border:1.5px solid #e5e7eb;border-radius:10px;margin-top:4px;font-size:13px;"></div>' +
       '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
         '<button id="wfActOk" style="padding:10px 24px;border-radius:10px;border:none;background:'+(aClrs[action]||'#6b7280')+';color:#fff;font-weight:800;font-size:14px;cursor:pointer;">'+(actionNames[action]||action)+'</button>' +
@@ -5437,8 +5437,9 @@ function wfTxnAction(id, action) {
   div.addEventListener('click', function(e) { if (e.target === div) div.remove(); });
 
   div.querySelector('#wfActOk').onclick = function() {
-    var note = document.getElementById('wfActNote').value;
+    var note = (document.getElementById('wfActNote').value||'').trim();
     if (action === 'reject' && !note) { showToast('سبب الرفض مطلوب', true); return; }
+    if (action === 'return' && !note) { showToast('سبب الإرجاع مطلوب — اكتب ما تريد إبلاغ المرسل به', true); return; }
     var fileInput = document.getElementById('wfActFile');
     var doSend = function(attachment) {
       div.remove();

@@ -1899,6 +1899,10 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
+  // Transaction number column widened to fit BR-DEP-TYP-YYYYMMDD-NNNN format
+  // (legacy schemas had VARCHAR(20) which truncates the v2 structured number).
+  try { await db.query("ALTER TABLE transactions MODIFY COLUMN transaction_number VARCHAR(80)"); } catch(e) {}
+
   // GL entries — accounting dimensions per spec (brand/branch/warehouse/cost_center on every line)
   await addColumnIfMissing('gl_entries', 'brand_id', "VARCHAR(50)");
   await addColumnIfMissing('gl_entries', 'branch_id', "VARCHAR(50)");

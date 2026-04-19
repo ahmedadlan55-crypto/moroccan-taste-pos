@@ -849,7 +849,13 @@ router.post('/transactions', async (req, res) => {
     // Daily serial
     const ymd = todayYmd();
     const serial = await nextDailySerial(branchCode, deptCode, typeCode);
-    const txnNumber = [branchCode, deptCode, typeCode, ymd, String(serial).padStart(4,'0')].join('-');
+    // Clamp each part so the full number always fits in a VARCHAR(80) column.
+    // Structured format: BR-DEP-TYP-YYYYMMDD-0001 (6 chars per code × 3 + 4 separators + 8 + 4 = 34 max)
+    const _clamp = (s, n) => String(s || '').slice(0, n);
+    const txnNumber = [
+      _clamp(branchCode, 6), _clamp(deptCode, 6), _clamp(typeCode, 6),
+      ymd, String(serial).padStart(4, '0')
+    ].join('-');
     const id = 'TXN-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
 
     // Resolve the workflow chain:

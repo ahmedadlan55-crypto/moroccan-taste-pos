@@ -14,21 +14,62 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 
-// Mojibake fixer: detects strings that were saved as Latin-1 bytes of UTF-8
-// Arabic (classic "ط·ظ„ط¨" or "ÙƒÙ„Ù…Ø©" garbage) and restores them.
-// Heuristic: if the string contains characters in U+0080-U+00FF AND NO actual
-// Arabic code points (U+0600-U+06FF), attempt round-trip through Latin-1→UTF-8.
+// Mojibake fixer: repairs UTF-8 Arabic text that was decoded through a
+// single-byte codepage (Latin-1 or Windows-1252). Produces forms like
+// "Ø·Ù„Ø¨" (cp1252) or "ÙƒÙ„Ù…Ø©" (latin1) instead of "طلب" / "كلمة".
+//
+// Strategy: try both latin1 and cp1252 round-trips. For each candidate,
+// score by number of Arabic code points produced; take the best, provided
+// it's strictly more Arabic than the original.
+const _CP1252_MAP = {  // extra Windows-1252 mappings vs Latin-1
+  0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84,
+  0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88,
+  0x2030: 0x89, 0x0160: 0x8A, 0x2039: 0x8B, 0x0152: 0x8C,
+  0x017D: 0x8E, 0x2018: 0x91, 0x2019: 0x92, 0x201C: 0x93,
+  0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97,
+  0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B,
+  0x0153: 0x9C, 0x017E: 0x9E, 0x0178: 0x9F
+};
+// cp1252 "undefined" slots that most implementations pass through identically
+const _CP1252_PASSTHRU = new Set([0x81, 0x8D, 0x8F, 0x90, 0x9D]);
+function _toBytesViaCp1252(s) {
+  const bytes = [];
+  for (let i = 0; i < s.length; i++) {
+    const cp = s.charCodeAt(i);
+    if (cp < 0x80 || (cp >= 0xA0 && cp <= 0xFF)) bytes.push(cp);
+    else if (_CP1252_MAP[cp] !== undefined) bytes.push(_CP1252_MAP[cp]);
+    else if (_CP1252_PASSTHRU.has(cp)) bytes.push(cp);
+    else return null;  // unrepresentable — bail
+  }
+  return Buffer.from(bytes);
+}
+function _arabicCount(s) {
+  const m = s.match(/[\u0600-\u06FF]/g);
+  return m ? m.length : 0;
+}
 function fixMojibake(s) {
   if (!s || typeof s !== 'string') return s;
-  const hasHighLatin = /[\u0080-\u00FF]/.test(s);
-  const hasArabic = /[\u0600-\u06FF]/.test(s);
-  if (!hasHighLatin || hasArabic) return s;
+  // Fast path: no suspicious bytes at all
+  if (!/[\u0080-\u00FF\u0152\u0153\u0160\u0161\u017D\u017E\u0178\u0192\u02C6\u02DC\u2013\u2014\u2018-\u201E\u2020-\u2022\u2026\u2030\u2039\u203A\u20AC\u2122]/.test(s)) return s;
+  const origArabic = _arabicCount(s);
+  let best = { text: s, score: origArabic };
+  // Try latin1 round-trip
   try {
-    const recovered = Buffer.from(s, 'latin1').toString('utf8');
-    // Only accept the conversion if it produced Arabic characters
-    if (/[\u0600-\u06FF]/.test(recovered)) return recovered;
+    const r = Buffer.from(s, 'latin1').toString('utf8');
+    const sc = _arabicCount(r);
+    if (sc > best.score) best = { text: r, score: sc };
   } catch(e) {}
-  return s;
+  // Try cp1252 round-trip
+  try {
+    const bytes = _toBytesViaCp1252(s);
+    if (bytes) {
+      const r = bytes.toString('utf8');
+      const sc = _arabicCount(r);
+      if (sc > best.score) best = { text: r, score: sc };
+    }
+  } catch(e) {}
+  // Only accept a repair if it produced strictly more Arabic than the original
+  return best.score > origArabic ? best.text : s;
 }
 
 // Apply fixMojibake to every string field in an object (shallow)

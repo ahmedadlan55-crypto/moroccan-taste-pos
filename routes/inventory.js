@@ -186,13 +186,15 @@ router.get('/live', async (req, res) => {
 // Submit a new stocktake: adjusts stock + records movements + persists the report
 router.post('/stocktakes', async (req, res) => {
   try {
-    const { items, username, notes, warehouseId, branchId } = req.body;
+    const { items, username, notes, warehouseId, branchId, brandId } = req.body;
     if (!items || !items.length) return res.json({ success: false, error: 'No items' });
 
     const now = new Date();
     const stId = 'ST-' + Date.now();
     let adjustedCount = 0;
     let totalVariance = 0;
+    let totalGainCost = 0;    // surplus (diff > 0) at avg cost
+    let totalLossCost = 0;    // shortage (diff < 0) at avg cost
 
     // Insert header with warehouse + branch reference
     await db.query(
@@ -208,9 +210,13 @@ router.post('/stocktakes', async (req, res) => {
       if (Math.abs(diff) < 0.001) continue;
 
       // Get item info for the record
-      const [inv] = await db.query('SELECT name, unit FROM inv_items WHERE id = ?', [itemId]);
+      const [inv] = await db.query('SELECT name, unit, COALESCE(avg_cost,0) AS avg_cost FROM inv_items WHERE id = ?', [itemId]);
       const invName = inv.length ? inv[0].name : '';
       const invUnit = inv.length ? (inv[0].unit || '') : '';
+      const invCost = inv.length ? (Number(inv[0].avg_cost) || 0) : 0;
+      const varianceCost = Math.abs(diff) * invCost;
+      if (diff > 0) totalGainCost += varianceCost;
+      else          totalLossCost += varianceCost;
 
       // Save stocktake line
       await db.query(
@@ -255,7 +261,51 @@ router.post('/stocktakes', async (req, res) => {
       await recomputeAllMenuCosts();
     } catch (e) {}
 
-    res.json({ success: true, stocktakeId: stId, adjustedCount });
+    // ═══ AUTO GL POSTING — Stock Count Variance ═══
+    // Surplus: Dr Inventory / Cr Stock Gain (revenue)
+    // Shortage: Dr Stock Variance Expense / Cr Inventory
+    // We post ONE consolidated journal with both legs if both directions exist.
+    let postingWarning = null;
+    if (totalGainCost > 0 || totalLossCost > 0) {
+      try {
+        const gl = require('../lib/glPosting');
+        const entries = [];
+        if (totalGainCost > 0) {
+          const g = Math.round(totalGainCost * 100) / 100;
+          entries.push({ accountCode: '1200', debit: g, credit: 0,
+            description: 'Inventory surplus (stocktake)',
+            branchId: branchId || null, brandId: brandId || null, warehouseId: warehouseId || null });
+          entries.push({ accountCode: '4910', debit: 0, credit: g,
+            description: 'Stock count gain',
+            branchId: branchId || null, brandId: brandId || null });
+        }
+        if (totalLossCost > 0) {
+          const l = Math.round(totalLossCost * 100) / 100;
+          entries.push({ accountCode: '5300', debit: l, credit: 0,
+            description: 'Inventory shortage (stocktake)',
+            branchId: branchId || null, brandId: brandId || null });
+          entries.push({ accountCode: '1200', debit: 0, credit: l,
+            description: 'Inventory reduction (stocktake)',
+            branchId: branchId || null, brandId: brandId || null, warehouseId: warehouseId || null });
+        }
+        const post = await gl.postJournal(db, {
+          journalDate: now.toISOString().slice(0, 10),
+          description: 'Stock count variance — ' + stId,
+          referenceType: 'Stocktake',
+          referenceId: stId,
+          entries,
+          postedBy: username || ''
+        });
+        if (!post.success) postingWarning = post.error;
+      } catch(e) { postingWarning = e.message; }
+    }
+
+    res.json({
+      success: true, stocktakeId: stId, adjustedCount,
+      totalGainCost: Math.round(totalGainCost * 100) / 100,
+      totalLossCost: Math.round(totalLossCost * 100) / 100,
+      postingWarning
+    });
   } catch (e) {
     res.json({ success: false, error: e.message });
   }

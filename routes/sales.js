@@ -1,5 +1,39 @@
 const router = require('express').Router();
 const db = require('../db/connection');
+const gl = require('../lib/glPosting');
+const zatca = require('../lib/zatca');
+
+const VAT_RATE = Number(process.env.VAT_RATE) || 15;
+const SELLER_NAME_FALLBACK = process.env.COMPANY_NAME || 'Moroccan Taste';
+const SELLER_VAT_FALLBACK = process.env.TAX_NUMBER || '';
+
+// Map payment method keys → GL account codes.
+// cash → 1110 (Cash), card/mada/stc/online → 1120 (Bank), kita/credit → 1150 (AR)
+function _payToAccountCode(method) {
+  const m = (method || '').toLowerCase();
+  if (m === 'cash' || m.startsWith('cash')) return '1110';
+  if (m === 'kita' || m === 'credit' || m === 'ar' || m.indexOf('ذمم') >= 0) return '1150';
+  // default card/bank
+  return '1120';
+}
+
+// Parse the split payment string from sales.js above ("cash:150/card:80") into
+// [{ code, amount }] for separate debit lines.
+function _parseSplitPayments(payStr, total) {
+  const out = [];
+  if (!payStr || payStr.indexOf(':') < 0) {
+    out.push({ code: _payToAccountCode(payStr), amount: Number(total) || 0 });
+    return out;
+  }
+  const parts = payStr.split('/');
+  parts.forEach(p => {
+    const [k, v] = p.split(':');
+    const amt = Number(v) || 0;
+    if (amt > 0) out.push({ code: _payToAccountCode(k), amount: amt });
+  });
+  if (!out.length) out.push({ code: _payToAccountCode(payStr), amount: Number(total) || 0 });
+  return out;
+}
 
 // Save order
 router.post('/', async (req, res) => {
@@ -16,9 +50,47 @@ router.post('/', async (req, res) => {
       payStr = Object.entries(splitDetails).filter(([k,v]) => v > 0).map(([k,v]) => k+':'+Math.round(v)).join('/');
     }
 
+    // Compute net + VAT for ZATCA + accounting (invTotal = VAT-inclusive gross)
+    const invTotal = Number(totalFinal) || 0;
+    const net = Math.round((invTotal / (1 + VAT_RATE / 100)) * 100) / 100;
+    const vat = Math.round((invTotal - net) * 100) / 100;
+
+    // ═══ ZATCA Phase 2 stamp (UUID + hash chain + QR) ═══
+    // Load seller details — company + branch names if available
+    let sellerName = SELLER_NAME_FALLBACK, sellerVat = SELLER_VAT_FALLBACK;
+    try {
+      const [cRow] = await db.query("SELECT name, tax_number FROM companies WHERE id='CO-MAIN' LIMIT 1");
+      if (cRow.length) {
+        if (cRow[0].name) sellerName = cRow[0].name;
+        if (cRow[0].tax_number) sellerVat = cRow[0].tax_number;
+      }
+    } catch(e) {}
+
+    let zatcaStamp = {};
+    try {
+      zatcaStamp = await zatca.stampSale(db, {
+        orderId,
+        createdAt: now,
+        total: invTotal,
+        vatAmount: vat,
+        lines: items.map(it => ({ name: it.name, qty: it.qty, unitPrice: it.price, lineTotal: it.qty * it.price }))
+      }, { name: sellerName, vatNumber: sellerVat });
+    } catch(e) {
+      zatcaStamp = { uuid: null, invoiceHash: null, previousInvoiceHash: null, qrBase64: null };
+    }
+
     // Insert sale
     await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee) VALUES (?,?,?,?,?,?,?,?,?,?)',
       [orderId, now, JSON.stringify(items), totalFinal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0]);
+
+    // Stamp ZATCA fields back (tolerate schemas without these columns)
+    if (zatcaStamp.uuid) {
+      try {
+        await db.query(
+          `UPDATE sales SET invoice_uuid=?, invoice_hash=?, previous_invoice_hash=?, zatca_type=? WHERE id=?`,
+          [zatcaStamp.uuid, zatcaStamp.invoiceHash, zatcaStamp.previousInvoiceHash || null, 'simplified', orderId]);
+      } catch(e) { /* older schema — ignore */ }
+    }
 
     // Build recipe map: menu_id → [{ invId, invName, qtyUsed }]
     // Fetch ingredient name too so the inventory_movements row carries it.
@@ -99,11 +171,124 @@ router.post('/', async (req, res) => {
 
     // Production: removed debug log
 
+    // ═══════════════════════════════════════════════════════════════
+    // AUTO GL POSTING — Revenue + VAT + COGS
+    // Two journals are conceptually one transaction (A + B), we combine
+    // them into a single balanced journal:
+    //   Dr Cash/Card/AR    totalFinal (split by payment)
+    //   Cr Sales Revenue   net (totalFinal / (1 + VAT_RATE/100))
+    //   Cr Output VAT      totalFinal - net
+    //   Dr COGS            totalCogs
+    //   Cr Inventory       totalCogs
+    // All lines carry brand_id + branch_id; COGS/Inventory also carry warehouse_id.
+    // ═══════════════════════════════════════════════════════════════
+    let postingWarning = null;
+    try {
+      if (invTotal > 0) {
+        // Compute total COGS from deductions × avg_cost
+        const invIds = [...new Set(recipesApplied.flatMap(r => r.deductions.map(d => d.invId)))];
+        let costMap = {};
+        if (invIds.length) {
+          const placeholders = invIds.map(() => '?').join(',');
+          const [rows] = await db.query(
+            `SELECT id, COALESCE(avg_cost, 0) AS avg_cost FROM inv_items WHERE id IN (${placeholders})`,
+            invIds);
+          rows.forEach(r => { costMap[r.id] = Number(r.avg_cost) || 0; });
+        }
+        let totalCogs = 0;
+        recipesApplied.forEach(r => {
+          r.deductions.forEach(d => {
+            totalCogs += (Number(d.deducted) || 0) * (costMap[d.invId] || 0);
+          });
+        });
+        totalCogs = Math.round(totalCogs * 100) / 100;
+
+        // Pull brand + branch from the user context (best-effort)
+        let brandId = req.body.brandId || (req.user && req.user.brand_id) || null;
+        let branchId = req.body.branchId || (req.user && req.user.branch_id) || null;
+        if (!brandId || !branchId) {
+          try {
+            const [u] = await db.query('SELECT brand_id, branch_id FROM users WHERE username = ? LIMIT 1', [username]);
+            if (u.length) {
+              brandId = brandId || u[0].brand_id;
+              branchId = branchId || u[0].branch_id;
+            }
+          } catch(e) {}
+        }
+
+        const paymentDebits = _parseSplitPayments(payStr, invTotal);
+
+        const entries = [];
+        // Debit(s) — by payment method (one per split)
+        paymentDebits.forEach(pd => {
+          entries.push({
+            accountCode: pd.code,
+            debit: Math.round(pd.amount * 100) / 100, credit: 0,
+            description: 'Sale receipt — ' + orderId,
+            branchId: branchId || null, brandId: brandId || null
+          });
+        });
+        // Credit Sales Revenue (net)
+        entries.push({
+          accountCode: '4100',
+          debit: 0, credit: net,
+          description: 'Sales revenue — ' + orderId,
+          branchId: branchId || null, brandId: brandId || null
+        });
+        // Credit Output VAT (if any)
+        if (vat > 0) {
+          entries.push({
+            accountCode: '2210',
+            debit: 0, credit: vat,
+            description: 'Output VAT — ' + orderId,
+            branchId: branchId || null, brandId: brandId || null
+          });
+        }
+        // COGS leg (if any cost)
+        if (totalCogs > 0) {
+          entries.push({
+            accountCode: '5100',
+            debit: totalCogs, credit: 0,
+            description: 'COGS — ' + orderId,
+            branchId: branchId || null, brandId: brandId || null,
+            warehouseId: warehouseId || null
+          });
+          entries.push({
+            accountCode: '1200',
+            debit: 0, credit: totalCogs,
+            description: 'Inventory reduction (sale) — ' + orderId,
+            branchId: branchId || null, brandId: brandId || null,
+            warehouseId: warehouseId || null
+          });
+        }
+
+        const post = await gl.postJournal(db, {
+          journalDate: now.toISOString().slice(0, 10),
+          description: 'Sale ' + orderId + ' (' + (payStr || '—') + ')',
+          referenceType: 'Sale',
+          referenceId: orderId,
+          entries,
+          postedBy: username || ''
+        });
+        if (!post.success) postingWarning = post.error;
+      }
+    } catch (e) {
+      postingWarning = e.message;
+    }
+
     res.json({
       success: true,
       orderId,
       recipesApplied: recipesApplied,
-      itemsWithoutRecipe: itemsWithoutRecipe
+      itemsWithoutRecipe: itemsWithoutRecipe,
+      postingWarning: postingWarning,
+      zatca: {
+        uuid: zatcaStamp.uuid || null,
+        invoiceHash: zatcaStamp.invoiceHash || null,
+        previousInvoiceHash: zatcaStamp.previousInvoiceHash || null,
+        qrBase64: zatcaStamp.qrBase64 || null
+      },
+      totals: { total: invTotal, net, vat }
     });
   } catch (e) {
     // Production: removed debug log

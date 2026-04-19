@@ -1139,4 +1139,543 @@ router.get('/reports/profitability', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message, rows: [] }); }
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// EXTENDED REPORTS — Cash Flow / Aging / Inventory / Sales / Waste / Royalty
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /erp/reports/cash-flow?from=&to=&branch=&brand=
+ * Direct-method cash flow. Classifies movements on cash/bank accounts
+ * into three categories based on the contra account's type:
+ *   Operating: revenue / expense / COGS / input VAT / output VAT
+ *   Investing: fixed assets / long-term assets
+ *   Financing: equity / long-term liabilities
+ */
+router.get('/reports/cash-flow', async (req, res) => {
+  try {
+    const { from, to, branch, brand } = req.query;
+    const dim = await _dimCols();
+
+    const where = [];
+    const params = [];
+    where.push("j.status = 'posted'");
+    // Only cash/bank accounts (1110 or 1120)
+    where.push("ca.code IN ('1110','1120')");
+    if (from) { where.push('j.journal_date >= ?'); params.push(from); }
+    if (to)   { where.push('j.journal_date <= ?'); params.push(to); }
+    if (branch && dim.branch_id) { where.push('ce.branch_id = ?'); params.push(branch); }
+    if (brand && dim.brand_id)   { where.push('ce.brand_id = ?');  params.push(brand); }
+
+    // Self-join gl_entries to find contra lines on the same journal.
+    // cash_entry (ce) is the cash/bank entry; contra (cc) is the matched non-cash side.
+    const sql = `
+      SELECT ce.debit AS cash_in, ce.credit AS cash_out,
+             j.journal_date, j.description, j.reference_type, j.reference_id, j.id AS journal_id,
+             cc.account_id AS contra_acc_id, ca2.code AS contra_code, ca2.type AS contra_type, ca2.name_ar AS contra_name
+      FROM gl_entries ce
+      JOIN gl_accounts ca ON ce.account_id = ca.id
+      JOIN gl_journals j ON ce.journal_id = j.id
+      JOIN gl_entries cc ON cc.journal_id = ce.journal_id AND cc.id != ce.id
+      JOIN gl_accounts ca2 ON cc.account_id = ca2.id
+      WHERE ${where.join(' AND ')}
+      ORDER BY j.journal_date`;
+    const [rows] = await db.query(sql, params);
+
+    // Classify each cash movement
+    const opening = {}; // { 'in': 0, 'out': 0, by category }
+    const flows = { operating: 0, investing: 0, financing: 0, other: 0 };
+    const byCategory = {};  // bucket → [{date, description, amount}]
+
+    rows.forEach(r => {
+      const cashIn = Number(r.cash_in) || 0;
+      const cashOut = Number(r.cash_out) || 0;
+      const netCash = cashIn - cashOut;  // + = in, - = out
+      if (netCash === 0) return;
+
+      let bucket = 'operating';
+      const ct = (r.contra_type || '').toLowerCase();
+      const cc = r.contra_code || '';
+      if (cc.startsWith('15') || cc.startsWith('16')) bucket = 'investing';
+      else if (cc.startsWith('3') || cc.startsWith('25')) bucket = 'financing';
+      else if (ct === 'revenue' || ct === 'expense' || cc === '1200' || cc === '1290' || cc === '2210') bucket = 'operating';
+      else if (ct === 'asset') bucket = (cc.startsWith('15') ? 'investing' : 'operating');
+      else if (ct === 'liability') bucket = (cc.startsWith('25') || cc.startsWith('3') ? 'financing' : 'operating');
+      else if (ct === 'equity') bucket = 'financing';
+      else bucket = 'other';
+
+      flows[bucket] += netCash;
+      if (!byCategory[bucket]) byCategory[bucket] = [];
+      byCategory[bucket].push({
+        date: r.journal_date,
+        description: r.description || '',
+        contra: cc + ' — ' + (r.contra_name || ''),
+        referenceType: r.reference_type,
+        referenceId: r.reference_id,
+        amount: Math.round(netCash * 100) / 100
+      });
+    });
+
+    // Opening & closing cash balances
+    const [ob] = await db.query(
+      `SELECT COALESCE(SUM(e.debit),0) AS d, COALESCE(SUM(e.credit),0) AS c
+       FROM gl_entries e
+       JOIN gl_accounts a ON e.account_id = a.id
+       JOIN gl_journals j ON e.journal_id = j.id
+       WHERE a.code IN ('1110','1120') AND j.status='posted'
+         AND j.journal_date < ?`, [from || '1900-01-01']);
+    const openingCash = Number(ob[0].d || 0) - Number(ob[0].c || 0);
+    const netChange = flows.operating + flows.investing + flows.financing + flows.other;
+    const closingCash = openingCash + netChange;
+
+    res.json({
+      success: true,
+      period: { from: from || null, to: to || null },
+      filters: { branch: branch || null, brand: brand || null },
+      openingCash: Math.round(openingCash * 100) / 100,
+      closingCash: Math.round(closingCash * 100) / 100,
+      netChange: Math.round(netChange * 100) / 100,
+      flows: {
+        operating: Math.round(flows.operating * 100) / 100,
+        investing: Math.round(flows.investing * 100) / 100,
+        financing: Math.round(flows.financing * 100) / 100,
+        other: Math.round(flows.other * 100) / 100
+      },
+      details: byCategory
+    });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+/**
+ * GET /erp/reports/ar-aging?asOf=
+ * Outstanding customer receivables bucketed by age (current, 1-30, 31-60, 61-90, 90+).
+ * Currently pulls open invoices from sales where payment was 'kita'/'credit'/AR.
+ */
+router.get('/reports/ar-aging', async (req, res) => {
+  try {
+    const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+    // Detect whether sales has customer fields
+    let hasCustomer = true;
+    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'customer_name'"); hasCustomer = !!c.length; } catch(e) { hasCustomer = false; }
+
+    // Pull AR postings from GL (credit accounts 1150) - the gold-standard source
+    const [arRows] = await db.query(
+      `SELECT e.description, j.journal_date, j.reference_type, j.reference_id,
+              COALESCE(e.debit,0) AS d, COALESCE(e.credit,0) AS c
+       FROM gl_entries e
+       JOIN gl_accounts a ON e.account_id = a.id
+       JOIN gl_journals j ON e.journal_id = j.id
+       WHERE a.code = '1150' AND j.status='posted' AND j.journal_date <= ?`,
+      [asOf]);
+
+    // Group by reference_id (the sale / customer id)
+    const open = {};
+    arRows.forEach(r => {
+      const ref = r.reference_id || '(unknown)';
+      if (!open[ref]) open[ref] = { ref, description: r.description, date: r.journal_date, debit: 0, credit: 0 };
+      open[ref].debit += Number(r.d) || 0;
+      open[ref].credit += Number(r.c) || 0;
+      // Track earliest date
+      if (!open[ref].date || new Date(r.journal_date) < new Date(open[ref].date)) open[ref].date = r.journal_date;
+    });
+
+    const buckets = { current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0 };
+    const items = [];
+    const asOfMs = new Date(asOf).getTime();
+    Object.values(open).forEach(o => {
+      const outstanding = Math.round((o.debit - o.credit) * 100) / 100;
+      if (outstanding <= 0) return;
+      const days = Math.floor((asOfMs - new Date(o.date).getTime()) / (24 * 3600 * 1000));
+      let bucket = 'current';
+      if (days > 90) bucket = '90_plus';
+      else if (days > 60) bucket = '61_90';
+      else if (days > 30) bucket = '31_60';
+      else if (days > 0) bucket = '1_30';
+      buckets[bucket] += outstanding;
+      items.push({
+        reference: o.ref, description: o.description || '',
+        invoiceDate: o.date, days, bucket,
+        outstanding
+      });
+    });
+
+    res.json({
+      success: true,
+      asOf,
+      totals: {
+        current: Math.round(buckets.current * 100) / 100,
+        '1_30': Math.round(buckets['1_30'] * 100) / 100,
+        '31_60': Math.round(buckets['31_60'] * 100) / 100,
+        '61_90': Math.round(buckets['61_90'] * 100) / 100,
+        '90_plus': Math.round(buckets['90_plus'] * 100) / 100,
+        grand: Math.round(Object.values(buckets).reduce((s, v) => s + v, 0) * 100) / 100
+      },
+      items: items.sort((a, b) => b.days - a.days)
+    });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+/**
+ * GET /erp/reports/ap-aging?asOf=
+ * Outstanding supplier payables — same bucketing on account 2100.
+ */
+router.get('/reports/ap-aging', async (req, res) => {
+  try {
+    const asOf = req.query.asOf || new Date().toISOString().slice(0, 10);
+
+    const [apRows] = await db.query(
+      `SELECT e.description, j.journal_date, j.reference_type, j.reference_id,
+              COALESCE(e.debit,0) AS d, COALESCE(e.credit,0) AS c
+       FROM gl_entries e
+       JOIN gl_accounts a ON e.account_id = a.id
+       JOIN gl_journals j ON e.journal_id = j.id
+       WHERE a.code = '2100' AND j.status='posted' AND j.journal_date <= ?`,
+      [asOf]);
+
+    const open = {};
+    apRows.forEach(r => {
+      const ref = r.reference_id || '(unknown)';
+      if (!open[ref]) open[ref] = { ref, description: r.description, date: r.journal_date, debit: 0, credit: 0 };
+      open[ref].debit += Number(r.d) || 0;
+      open[ref].credit += Number(r.c) || 0;
+      if (!open[ref].date || new Date(r.journal_date) < new Date(open[ref].date)) open[ref].date = r.journal_date;
+    });
+
+    const buckets = { current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0 };
+    const items = [];
+    const asOfMs = new Date(asOf).getTime();
+    Object.values(open).forEach(o => {
+      // For AP, outstanding = credit - debit (liability normal)
+      const outstanding = Math.round((o.credit - o.debit) * 100) / 100;
+      if (outstanding <= 0) return;
+      const days = Math.floor((asOfMs - new Date(o.date).getTime()) / (24 * 3600 * 1000));
+      let bucket = 'current';
+      if (days > 90) bucket = '90_plus';
+      else if (days > 60) bucket = '61_90';
+      else if (days > 30) bucket = '31_60';
+      else if (days > 0) bucket = '1_30';
+      buckets[bucket] += outstanding;
+      items.push({
+        reference: o.ref, description: o.description || '',
+        invoiceDate: o.date, days, bucket,
+        outstanding
+      });
+    });
+
+    res.json({
+      success: true,
+      asOf,
+      totals: {
+        current: Math.round(buckets.current * 100) / 100,
+        '1_30': Math.round(buckets['1_30'] * 100) / 100,
+        '31_60': Math.round(buckets['31_60'] * 100) / 100,
+        '61_90': Math.round(buckets['61_90'] * 100) / 100,
+        '90_plus': Math.round(buckets['90_plus'] * 100) / 100,
+        grand: Math.round(Object.values(buckets).reduce((s, v) => s + v, 0) * 100) / 100
+      },
+      items: items.sort((a, b) => b.days - a.days)
+    });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+/**
+ * GET /erp/reports/inventory-valuation?warehouse=&brand=
+ * Shows current stock × avg_cost per item, grouped by warehouse.
+ */
+router.get('/reports/inventory-valuation', async (req, res) => {
+  try {
+    const { warehouse, brand } = req.query;
+    // Prefer warehouse_stock when available; fall back to inv_items.stock
+    let hasWS = true;
+    try { const [t] = await db.query("SHOW TABLES LIKE 'warehouse_stock'"); hasWS = !!t.length; } catch(e) { hasWS = false; }
+
+    let sql, params = [];
+    if (hasWS) {
+      sql = `
+        SELECT ws.warehouse_id, w.name AS warehouse_name,
+               i.id AS item_id, i.name AS item_name, i.sku, i.unit,
+               i.brand_id, b.name AS brand_name,
+               COALESCE(ws.qty, 0) AS qty,
+               COALESCE(i.avg_cost, 0) AS avg_cost
+        FROM warehouse_stock ws
+        JOIN inv_items i ON ws.item_id = i.id
+        LEFT JOIN warehouses w ON ws.warehouse_id = w.id
+        LEFT JOIN brands b ON i.brand_id = b.id
+        WHERE COALESCE(ws.qty,0) > 0`;
+      if (warehouse) { sql += ' AND ws.warehouse_id = ?'; params.push(warehouse); }
+      if (brand)     { sql += ' AND i.brand_id = ?';      params.push(brand); }
+      sql += ' ORDER BY w.name, i.name';
+    } else {
+      sql = `SELECT '' AS warehouse_id, '' AS warehouse_name,
+             i.id AS item_id, i.name AS item_name, i.sku, i.unit,
+             i.brand_id, b.name AS brand_name,
+             COALESCE(i.stock, 0) AS qty, COALESCE(i.avg_cost, 0) AS avg_cost
+             FROM inv_items i LEFT JOIN brands b ON i.brand_id = b.id
+             WHERE COALESCE(i.stock,0) > 0`;
+      if (brand) { sql += ' AND i.brand_id = ?'; params.push(brand); }
+      sql += ' ORDER BY i.name';
+    }
+
+    const [rows] = await db.query(sql, params);
+    const items = rows.map(r => {
+      const q = Number(r.qty) || 0;
+      const c = Number(r.avg_cost) || 0;
+      return {
+        warehouseId: r.warehouse_id || '',
+        warehouseName: r.warehouse_name || '',
+        itemId: r.item_id, itemName: r.item_name, sku: r.sku || '', unit: r.unit || '',
+        brandId: r.brand_id || '', brandName: r.brand_name || '',
+        qty: q, avgCost: c,
+        value: Math.round(q * c * 100) / 100
+      };
+    });
+
+    // Group totals by warehouse
+    const byWarehouse = {};
+    let grandQty = 0, grandValue = 0;
+    items.forEach(it => {
+      const key = it.warehouseId || '(default)';
+      if (!byWarehouse[key]) byWarehouse[key] = { warehouseId: it.warehouseId, warehouseName: it.warehouseName, itemCount: 0, totalQty: 0, totalValue: 0 };
+      byWarehouse[key].itemCount++;
+      byWarehouse[key].totalQty += it.qty;
+      byWarehouse[key].totalValue += it.value;
+      grandQty += it.qty;
+      grandValue += it.value;
+    });
+
+    res.json({
+      success: true,
+      filters: { warehouse: warehouse || null, brand: brand || null },
+      items,
+      byWarehouse: Object.values(byWarehouse).map(w => ({
+        ...w,
+        totalQty: Math.round(w.totalQty * 100) / 100,
+        totalValue: Math.round(w.totalValue * 100) / 100
+      })),
+      grand: {
+        itemCount: items.length,
+        totalQty: Math.round(grandQty * 100) / 100,
+        totalValue: Math.round(grandValue * 100) / 100
+      }
+    });
+  } catch(e) { res.json({ success: false, error: e.message, items: [] }); }
+});
+
+/**
+ * GET /erp/reports/sales-analytics?from=&to=&branch=&brand=&groupBy=
+ * Sales analytics with multiple breakdowns in a single response.
+ * groupBy: 'daily' (default) | 'payment' | 'cashier' | 'hour' | 'top_items' | 'all'
+ */
+router.get('/reports/sales-analytics', async (req, res) => {
+  try {
+    const { from, to, branch, brand, groupBy } = req.query;
+    const by = groupBy || 'all';
+
+    // Detect fields we need
+    let hasBranch = true, hasBrand = true;
+    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'branch_id'"); hasBranch = !!c.length; } catch(e) { hasBranch = false; }
+    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'brand_id'"); hasBrand = !!c.length; } catch(e) { hasBrand = false; }
+
+    const where = ["(s.status IS NULL OR s.status != 'void')"];
+    const params = [];
+    if (from) { where.push('DATE(s.order_date) >= ?'); params.push(from); }
+    if (to)   { where.push('DATE(s.order_date) <= ?'); params.push(to); }
+    if (branch && hasBranch) { where.push('s.branch_id = ?'); params.push(branch); }
+    if (brand && hasBrand)   { where.push('s.brand_id = ?');  params.push(brand); }
+    const whereClause = where.join(' AND ');
+
+    const out = { filters: { from: from || null, to: to || null, branch: branch || null, brand: brand || null } };
+
+    // Headline totals
+    const [hd] = await db.query(
+      `SELECT COUNT(*) AS cnt, COALESCE(SUM(total_final),0) AS total, COALESCE(AVG(total_final),0) AS avg_ticket
+       FROM sales s WHERE ${whereClause}`, params);
+    out.headline = {
+      invoiceCount: Number(hd[0].cnt) || 0,
+      total: Math.round(Number(hd[0].total) * 100) / 100,
+      avgTicket: Math.round(Number(hd[0].avg_ticket) * 100) / 100
+    };
+
+    if (by === 'daily' || by === 'all') {
+      const [d] = await db.query(
+        `SELECT DATE(s.order_date) AS d, COUNT(*) AS cnt, COALESCE(SUM(total_final),0) AS total
+         FROM sales s WHERE ${whereClause}
+         GROUP BY DATE(s.order_date) ORDER BY DATE(s.order_date)`, params);
+      out.daily = d.map(r => ({ date: r.d, count: Number(r.cnt), total: Math.round(Number(r.total) * 100) / 100 }));
+    }
+    if (by === 'payment' || by === 'all') {
+      const [p] = await db.query(
+        `SELECT s.payment_method AS method, COUNT(*) AS cnt, COALESCE(SUM(total_final),0) AS total
+         FROM sales s WHERE ${whereClause}
+         GROUP BY s.payment_method ORDER BY total DESC`, params);
+      out.byPayment = p.map(r => ({ method: r.method || 'unknown', count: Number(r.cnt), total: Math.round(Number(r.total) * 100) / 100 }));
+    }
+    if (by === 'cashier' || by === 'all') {
+      const [c] = await db.query(
+        `SELECT s.username AS cashier, COUNT(*) AS cnt, COALESCE(SUM(total_final),0) AS total, COALESCE(AVG(total_final),0) AS avg_ticket
+         FROM sales s WHERE ${whereClause}
+         GROUP BY s.username ORDER BY total DESC`, params);
+      out.byCashier = c.map(r => ({
+        cashier: r.cashier || '', count: Number(r.cnt),
+        total: Math.round(Number(r.total) * 100) / 100,
+        avgTicket: Math.round(Number(r.avg_ticket) * 100) / 100
+      }));
+    }
+    if (by === 'hour' || by === 'all') {
+      const [h] = await db.query(
+        `SELECT HOUR(s.order_date) AS hr, COUNT(*) AS cnt, COALESCE(SUM(total_final),0) AS total
+         FROM sales s WHERE ${whereClause}
+         GROUP BY HOUR(s.order_date) ORDER BY hr`, params);
+      out.byHour = h.map(r => ({ hour: Number(r.hr), count: Number(r.cnt), total: Math.round(Number(r.total) * 100) / 100 }));
+    }
+    if (by === 'top_items' || by === 'all') {
+      const [ti] = await db.query(
+        `SELECT si.item_name AS name, SUM(si.qty) AS qty, SUM(si.total) AS total
+         FROM sales_items si JOIN sales s ON si.order_id = s.id
+         WHERE ${whereClause}
+         GROUP BY si.item_name ORDER BY qty DESC LIMIT 25`, params);
+      out.topItems = ti.map(r => ({ name: r.name || '', qty: Number(r.qty) || 0, total: Math.round(Number(r.total) * 100) / 100 }));
+    }
+
+    res.json({ success: true, ...out });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+/**
+ * GET /erp/reports/waste-analytics?from=&to=&brand=&branch=
+ * Waste as % of sales, top-wasted items, by reason, trend.
+ */
+router.get('/reports/waste-analytics', async (req, res) => {
+  try {
+    const { from, to, brand, branch } = req.query;
+    const where = [];
+    const params = [];
+    if (from) { where.push('w.waste_date >= ?'); params.push(from); }
+    if (to)   { where.push('w.waste_date <= ?'); params.push(to); }
+    if (brand)  { where.push('w.brand_id = ?');  params.push(brand); }
+    if (branch) { where.push('w.branch_id = ?'); params.push(branch); }
+    const wc = where.length ? ' WHERE ' + where.join(' AND ') : '';
+
+    // Total waste cost
+    const [tot] = await db.query(`SELECT COALESCE(SUM(total_cost),0) AS total_waste FROM waste_entries w ${wc}`, params);
+    const totalWaste = Number(tot[0].total_waste) || 0;
+
+    // Total sales for the same filters (for % calculation)
+    const sWhere = [];
+    const sParams = [];
+    let hasSBranch = true, hasSBrand = true;
+    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'branch_id'"); hasSBranch = !!c.length; } catch(e) { hasSBranch = false; }
+    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'brand_id'"); hasSBrand = !!c.length; } catch(e) { hasSBrand = false; }
+    if (from) { sWhere.push('DATE(s.order_date) >= ?'); sParams.push(from); }
+    if (to)   { sWhere.push('DATE(s.order_date) <= ?'); sParams.push(to); }
+    if (brand && hasSBrand)   { sWhere.push('s.brand_id = ?');  sParams.push(brand); }
+    if (branch && hasSBranch) { sWhere.push('s.branch_id = ?'); sParams.push(branch); }
+    const [sales] = await db.query(`SELECT COALESCE(SUM(total_final),0) AS total_sales FROM sales s ${sWhere.length ? ' WHERE ' + sWhere.join(' AND ') : ''}`, sParams);
+    const totalSales = Number(sales[0].total_sales) || 0;
+    const wastePctOfSales = totalSales > 0 ? Math.round((totalWaste / totalSales) * 10000) / 100 : 0;
+
+    // Top wasted items
+    const [topItems] = await db.query(
+      `SELECT wi.item_id, i.name AS item_name, i.sku,
+              SUM(wi.quantity) AS total_qty, SUM(wi.line_cost) AS total_cost
+       FROM waste_entry_items wi
+       JOIN waste_entries w ON wi.waste_id = w.id
+       LEFT JOIN inv_items i ON wi.item_id = i.id
+       ${wc}
+       GROUP BY wi.item_id, i.name, i.sku
+       ORDER BY total_cost DESC LIMIT 20`, params);
+
+    // By reason
+    const [byReason] = await db.query(
+      `SELECT w.reason, COUNT(*) AS cnt, COALESCE(SUM(w.total_cost),0) AS total_cost
+       FROM waste_entries w ${wc} GROUP BY w.reason ORDER BY total_cost DESC`, params);
+
+    // Monthly trend
+    const [trend] = await db.query(
+      `SELECT DATE_FORMAT(w.waste_date, '%Y-%m') AS ym, COALESCE(SUM(w.total_cost),0) AS total
+       FROM waste_entries w ${wc} GROUP BY ym ORDER BY ym`, params);
+
+    res.json({
+      success: true,
+      filters: { from: from || null, to: to || null, brand: brand || null, branch: branch || null },
+      summary: {
+        totalWasteCost: Math.round(totalWaste * 100) / 100,
+        totalSales: Math.round(totalSales * 100) / 100,
+        wastePctOfSales
+      },
+      topItems: topItems.map(r => ({
+        itemId: r.item_id, itemName: r.item_name || '(?)', sku: r.sku || '',
+        totalQty: Number(r.total_qty) || 0,
+        totalCost: Math.round(Number(r.total_cost) * 100) / 100
+      })),
+      byReason: byReason.map(r => ({
+        reason: r.reason,
+        count: Number(r.cnt) || 0,
+        totalCost: Math.round(Number(r.total_cost) * 100) / 100
+      })),
+      trend: trend.map(r => ({
+        period: r.ym,
+        total: Math.round(Number(r.total) * 100) / 100
+      }))
+    });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+/**
+ * GET /erp/reports/royalty-reconciliation?brand=&year=
+ * Per-month: computed royalty vs. paid amount.
+ */
+router.get('/reports/royalty-reconciliation', async (req, res) => {
+  try {
+    const { brand, year } = req.query;
+    const y = year || String(new Date().getFullYear());
+
+    const where = [];
+    const params = [];
+    where.push("YEAR(rr.period_start) = ?"); params.push(y);
+    if (brand) { where.push('rr.brand_id = ?'); params.push(brand); }
+
+    const [runs] = await db.query(
+      `SELECT rr.*, b.name AS brand_name
+       FROM royalty_runs rr
+       LEFT JOIN brands b ON rr.brand_id = b.id
+       WHERE ${where.join(' AND ')}
+       ORDER BY rr.period_start`, params);
+
+    const rows = runs.map(r => {
+      const amt = Number(r.royalty_amount) || 0;
+      const paid = r.status === 'paid' ? amt : 0;
+      return {
+        id: r.id, brandId: r.brand_id, brandName: r.brand_name || '',
+        periodStart: r.period_start, periodEnd: r.period_end, runDate: r.run_date,
+        grossSales: Number(r.gross_sales) || 0,
+        netSales: Number(r.net_sales) || 0,
+        royaltyType: r.royalty_type,
+        royaltyAmount: amt,
+        paid,
+        outstanding: Math.round((amt - paid) * 100) / 100,
+        status: r.status, paidAt: r.paid_at,
+        journalId: r.gl_journal_id || null
+      };
+    });
+
+    const totals = rows.reduce((t, r) => ({
+      accrued: t.accrued + r.royaltyAmount,
+      paid: t.paid + r.paid,
+      outstanding: t.outstanding + r.outstanding
+    }), { accrued: 0, paid: 0, outstanding: 0 });
+
+    res.json({
+      success: true,
+      year: y,
+      filters: { brand: brand || null },
+      rows,
+      totals: {
+        accrued: Math.round(totals.accrued * 100) / 100,
+        paid: Math.round(totals.paid * 100) / 100,
+        outstanding: Math.round(totals.outstanding * 100) / 100
+      }
+    });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
 module.exports = router;

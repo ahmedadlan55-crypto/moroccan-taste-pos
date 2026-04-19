@@ -1,5 +1,17 @@
 const router = require('express').Router();
 const db = require('../db/connection');
+const gl = require('../lib/glPosting');
+
+const VAT_RATE = Number(process.env.VAT_RATE) || 15;
+
+// Map an expense payment method → GL credit account code
+// (cash/card/stc → bank or cash; supplier/ap → AP)
+function _expensePaymentCredit(method) {
+  const m = (method || '').toLowerCase();
+  if (m === 'bank' || m === 'card' || m === 'mada' || m === 'stc' || m === 'stc_pay' || m === 'transfer') return '1120';
+  if (m === 'credit' || m === 'ap' || m === 'supplier' || m === 'عاجل') return '2100';
+  return '1110';  // default = cash
+}
 
 // Get expenses (with date filters)
 router.get('/', async (req, res) => {
@@ -25,10 +37,17 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Add expense
+// Add expense (with optional auto-GL posting)
 router.post('/', async (req, res) => {
   try {
-    const { category, description, amount, paymentMethod, username, notes, date } = req.body;
+    const {
+      category, description, amount, paymentMethod, username, notes, date,
+      // Optional GL / dimension hints
+      accountCode,        // e.g. '5200' — overrides category-based fallback
+      hasVat,             // if true, amount is VAT-inclusive; split net + input VAT
+      brandId, branchId, costCenterId
+    } = req.body;
+
     const expenseId = 'EXP-' + Date.now();
     const expenseDate = date ? new Date(date) : new Date();
 
@@ -37,7 +56,52 @@ router.post('/', async (req, res) => {
       [expenseId, expenseDate, category || '', description || '', amount || 0, paymentMethod || 'Cash', username || '', notes || '']
     );
 
-    res.json({ success: true, id: expenseId });
+    // ═══ AUTO GL POSTING ═══
+    // Dr Expense Account (from accountCode or 5200 default) + optional Dr Input VAT
+    // Cr Cash / Bank / AP (depending on payment method)
+    let postingWarning = null;
+    const totalAmount = Number(amount) || 0;
+    if (totalAmount > 0) {
+      try {
+        let net = totalAmount, vat = 0;
+        if (hasVat) {
+          net = Math.round((totalAmount / (1 + VAT_RATE / 100)) * 100) / 100;
+          vat = Math.round((totalAmount - net) * 100) / 100;
+        }
+        const expAcct = accountCode || '5200';   // default: waste/misc expense bucket
+        const payAcct = _expensePaymentCredit(paymentMethod);
+
+        const entries = [
+          { accountCode: expAcct, debit: net, credit: 0,
+            description: 'Expense — ' + (description || category || expenseId),
+            branchId: branchId || null, brandId: brandId || null, costCenterId: costCenterId || null }
+        ];
+        if (vat > 0) {
+          entries.push({
+            accountCode: '1290', debit: vat, credit: 0,
+            description: 'Input VAT — ' + expenseId,
+            branchId: branchId || null, brandId: brandId || null
+          });
+        }
+        entries.push({
+          accountCode: payAcct, debit: 0, credit: totalAmount,
+          description: 'Payment — ' + (paymentMethod || 'cash'),
+          brandId: brandId || null
+        });
+
+        const post = await gl.postJournal(db, {
+          journalDate: expenseDate.toISOString().slice(0, 10),
+          description: 'Expense ' + expenseId + ' — ' + (description || category || ''),
+          referenceType: 'Expense',
+          referenceId: expenseId,
+          entries,
+          postedBy: username || ''
+        });
+        if (!post.success) postingWarning = post.error;
+      } catch(e) { postingWarning = e.message; }
+    }
+
+    res.json({ success: true, id: expenseId, postingWarning });
   } catch (e) {
     res.json({ success: false, error: e.message });
   }

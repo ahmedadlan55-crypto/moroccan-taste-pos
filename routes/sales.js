@@ -191,7 +191,7 @@ router.post('/', async (req, res) => {
         if (invIds.length) {
           const placeholders = invIds.map(() => '?').join(',');
           const [rows] = await db.query(
-            `SELECT id, COALESCE(avg_cost, 0) AS avg_cost FROM inv_items WHERE id IN (${placeholders})`,
+            `SELECT id, COALESCE(cost, 0) AS avg_cost FROM inv_items WHERE id IN (${placeholders})`,
             invIds);
           rows.forEach(r => { costMap[r.id] = Number(r.avg_cost) || 0; });
         }

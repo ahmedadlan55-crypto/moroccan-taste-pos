@@ -138,12 +138,14 @@ app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/purchases', require('./routes/purchases'));
 app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/settings', require('./routes/settings'));
+// ERP v3 (erp-core) is mounted first so its newer, schema-aware reports
+// take precedence over any same-path legacy handler in routes/erp.js
+app.use('/api/erp', require('./routes/erp-core'));
 app.use('/api/erp', require('./routes/erp'));
 app.use('/api/custody', require('./routes/custody'));
 app.use('/api/cash', require('./routes/cash'));
 app.use('/api/workflow', require('./routes/workflow'));
 app.use('/api/hr', require('./routes/hr'));
-app.use('/api/erp', require('./routes/erp-core'));
 
 // Catch-all for unimplemented API routes
 const { notFoundHandler, errorHandler } = require('./lib/errorHandler');
@@ -1896,6 +1898,12 @@ async function runMigrations() {
       INDEX idx_txn (transaction_id)
     ) ENGINE=InnoDB
   `);
+
+  // GL entries — accounting dimensions per spec (brand/branch/warehouse/cost_center on every line)
+  await addColumnIfMissing('gl_entries', 'brand_id', "VARCHAR(50)");
+  await addColumnIfMissing('gl_entries', 'branch_id', "VARCHAR(50)");
+  await addColumnIfMissing('gl_entries', 'warehouse_id', "VARCHAR(50)");
+  try { await db.query('CREATE INDEX idx_gle_dims ON gl_entries(brand_id, branch_id)'); } catch(e) {}
 
   // Workflow step routing flags — role-based employee resolution rules
   await addColumnIfMissing('workflow_definitions', 'require_same_branch', "BOOLEAN DEFAULT TRUE");

@@ -198,7 +198,7 @@ router.post('/price-lists', async (req, res) => {
 router.get('/price-lists/:id/items', async (req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT li.*, i.name AS item_name, i.sku, i.unit
+      `SELECT li.*, i.name AS item_name, i.id AS sku, i.unit
        FROM price_list_items li
        LEFT JOIN inv_items i ON li.item_id = i.id
        WHERE li.price_list_id = ?
@@ -290,7 +290,7 @@ router.post('/bom', async (req, res) => {
 router.get('/bom/:id/lines', async (req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT bl.*, i.name AS item_name, i.sku, i.avg_cost
+      `SELECT bl.*, i.name AS item_name, i.id AS sku, COALESCE(i.cost,0) AS avg_cost
        FROM bom_lines bl
        LEFT JOIN inv_items i ON bl.component_item_id = i.id
        WHERE bl.bom_id = ?`, [req.params.id]);
@@ -455,7 +455,7 @@ router.post('/royalty-runs/compute', async (req, res) => {
               COALESCE(SUM(total_amount - COALESCE(vat_amount,0)),0) AS net
        FROM sales
        WHERE brand_id = ? AND DATE(created_at) BETWEEN ? AND ?
-         AND (status IS NULL OR status != 'void')`,
+         AND (deleted_at IS NULL)`,
       [brandId, periodStart, periodEnd]);
     const gross = Number(agg[0].gross) || 0;
     const net = Number(agg[0].net) || 0;
@@ -663,7 +663,7 @@ router.post('/waste-entries', async (req, res) => {
 router.get('/waste-entries/:id/items', async (req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT wi.*, i.name AS item_name, i.sku
+      `SELECT wi.*, i.name AS item_name, i.id AS sku
        FROM waste_entry_items wi LEFT JOIN inv_items i ON wi.item_id = i.id
        WHERE wi.waste_id = ?`, [req.params.id]);
     res.json(rows.map(l => ({
@@ -1117,7 +1117,9 @@ router.get('/reports/profitability', async (req, res) => {
     const params = [];
     if (from) { sql += ' AND j.journal_date >= ?'; params.push(from); }
     if (to)   { sql += ' AND j.journal_date <= ?'; params.push(to); }
-    sql += ` GROUP BY e.${col} ORDER BY (revenue - expenses) DESC`;
+    sql += ` GROUP BY e.${col}
+             ORDER BY (SUM(CASE WHEN a.type='revenue' THEN e.credit - e.debit ELSE 0 END)
+                     - SUM(CASE WHEN a.type='expense' THEN e.debit - e.credit ELSE 0 END)) DESC`;
 
     const [rows] = await db.query(sql, params);
     res.json({
@@ -1392,10 +1394,10 @@ router.get('/reports/inventory-valuation', async (req, res) => {
     if (hasWS) {
       sql = `
         SELECT ws.warehouse_id, w.name AS warehouse_name,
-               i.id AS item_id, i.name AS item_name, i.sku, i.unit,
+               i.id AS item_id, i.name AS item_name, i.id AS sku, i.unit,
                i.brand_id, b.name AS brand_name,
                COALESCE(ws.qty, 0) AS qty,
-               COALESCE(i.avg_cost, 0) AS avg_cost
+               COALESCE(i.cost, 0) AS avg_cost
         FROM warehouse_stock ws
         JOIN inv_items i ON ws.item_id = i.id
         LEFT JOIN warehouses w ON ws.warehouse_id = w.id
@@ -1406,9 +1408,9 @@ router.get('/reports/inventory-valuation', async (req, res) => {
       sql += ' ORDER BY w.name, i.name';
     } else {
       sql = `SELECT '' AS warehouse_id, '' AS warehouse_name,
-             i.id AS item_id, i.name AS item_name, i.sku, i.unit,
+             i.id AS item_id, i.name AS item_name, i.id AS sku, i.unit,
              i.brand_id, b.name AS brand_name,
-             COALESCE(i.stock, 0) AS qty, COALESCE(i.avg_cost, 0) AS avg_cost
+             COALESCE(i.stock, 0) AS qty, COALESCE(i.cost, 0) AS avg_cost
              FROM inv_items i LEFT JOIN brands b ON i.brand_id = b.id
              WHERE COALESCE(i.stock,0) > 0`;
       if (brand) { sql += ' AND i.brand_id = ?'; params.push(brand); }
@@ -1475,7 +1477,7 @@ router.get('/reports/sales-analytics', async (req, res) => {
     try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'branch_id'"); hasBranch = !!c.length; } catch(e) { hasBranch = false; }
     try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'brand_id'"); hasBrand = !!c.length; } catch(e) { hasBrand = false; }
 
-    const where = ["(s.status IS NULL OR s.status != 'void')"];
+    const where = ["(s.deleted_at IS NULL)"];
     const params = [];
     if (from) { where.push('DATE(s.order_date) >= ?'); params.push(from); }
     if (to)   { where.push('DATE(s.order_date) <= ?'); params.push(to); }
@@ -1575,13 +1577,13 @@ router.get('/reports/waste-analytics', async (req, res) => {
 
     // Top wasted items
     const [topItems] = await db.query(
-      `SELECT wi.item_id, i.name AS item_name, i.sku,
+      `SELECT wi.item_id, i.name AS item_name, i.id AS sku,
               SUM(wi.quantity) AS total_qty, SUM(wi.line_cost) AS total_cost
        FROM waste_entry_items wi
        JOIN waste_entries w ON wi.waste_id = w.id
        LEFT JOIN inv_items i ON wi.item_id = i.id
        ${wc}
-       GROUP BY wi.item_id, i.name, i.sku
+       GROUP BY wi.item_id, i.name, i.id
        ORDER BY total_cost DESC LIMIT 20`, params);
 
     // By reason

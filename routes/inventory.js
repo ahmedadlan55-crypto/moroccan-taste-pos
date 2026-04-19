@@ -210,7 +210,7 @@ router.post('/stocktakes', async (req, res) => {
       if (Math.abs(diff) < 0.001) continue;
 
       // Get item info for the record
-      const [inv] = await db.query('SELECT name, unit, COALESCE(avg_cost,0) AS avg_cost FROM inv_items WHERE id = ?', [itemId]);
+      const [inv] = await db.query('SELECT name, unit, COALESCE(cost,0) AS avg_cost FROM inv_items WHERE id = ?', [itemId]);
       const invName = inv.length ? inv[0].name : '';
       const invUnit = inv.length ? (inv[0].unit || '') : '';
       const invCost = inv.length ? (Number(inv[0].avg_cost) || 0) : 0;

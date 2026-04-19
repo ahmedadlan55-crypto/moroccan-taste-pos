@@ -108,6 +108,24 @@ function erpNav(sectionId) {
       case 'erpWfPositions': wfLoadPositions(); break;
       case 'erpWfTypes': wfLoadTypes(); break;
       case 'erpWfDefs': wfLoadPositionSummary(); break;
+      // ═══ ERP v3 standard reports ═══
+      case 'erpRptTrialBalance':   erpLoadTrialBalance(); break;
+      case 'erpRptPnL':             erpLoadPnL(); break;
+      case 'erpRptBalanceSheet':   erpLoadBalanceSheet(); break;
+      case 'erpRptCashFlow':       erpLoadCashFlow(); break;
+      case 'erpRptProfitability':  erpLoadProfitability(); break;
+      case 'erpRptInventoryVal':   erpLoadInventoryValuation(); break;
+      case 'erpRptSalesAnalytics': erpLoadSalesAnalytics(); break;
+      case 'erpRptWasteAnalytics': erpLoadWasteAnalytics(); break;
+      case 'erpRptRoyaltyRecon':   erpLoadRoyaltyRecon(); break;
+      // ═══ Entity management ═══
+      case 'erpCompanies':       erpLoadCompanies(); break;
+      case 'erpPriceLists':      erpLoadPriceLists(); break;
+      case 'erpBOM':             erpLoadBOM(); break;
+      case 'erpWasteEntries':    erpLoadWasteEntries(); break;
+      case 'erpRoyaltyRuns':     erpLoadRoyaltyRuns(); break;
+      case 'erpPosTerminals':    erpLoadPosTerminals(); break;
+      case 'erpItemCategories':  erpLoadItemCategories(); break;
       case 'erpWfInbox': wfLoadInbox(); break;
       case 'erpWfDashboard': wfInitDashboard(); break;
       case 'erpWfIncoming': wfLoadIncoming(); break;
@@ -7535,4 +7553,704 @@ function wfSavePositionPath() {
       wfLoadPositionSummary();
     } else showToast(r.error || 'فشل الحفظ', true);
   }).savePositionWorkflow({ initiatorPositionId: initiatorPositionId, steps: _wfBulkSteps });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ERP v3 — STANDARD REPORTS (Trial Balance, P&L, Balance Sheet, Cash Flow,
+// Profitability, Inventory Valuation, Sales Analytics, Waste Analytics, Royalty)
+// Plus admin CRUD for: Companies, Price Lists, BOM, Waste Entries, Royalty
+// Runs, POS Terminals, Item Categories.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Shared helpers
+function _erpFmt(n) { return Number(n||0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}); }
+function _erpKpi(label, value, color) {
+  color = color || '#0f172a';
+  return '<div class="erp-rpt-card"><span class="lbl">'+label+'</span><span class="val" style="color:'+color+';">'+value+'</span></div>';
+}
+function _erpToken() { return localStorage.getItem('pos_token'); }
+function _erpGet(path, cb) {
+  fetch('/api' + path, { headers: { 'Authorization': 'Bearer ' + _erpToken() } })
+    .then(function(r) { return r.json(); })
+    .then(cb)
+    .catch(function(err) { cb({ success: false, error: err.message }); });
+}
+function _erpPost(path, body, cb) {
+  fetch('/api' + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + _erpToken() },
+    body: JSON.stringify(body)
+  }).then(function(r){return r.json();}).then(cb).catch(function(err){ cb({success:false, error:err.message}); });
+}
+function _erpDelete(path, cb) {
+  fetch('/api' + path, {
+    method: 'DELETE',
+    headers: { 'Authorization': 'Bearer ' + _erpToken() }
+  }).then(function(r){return r.json();}).then(cb).catch(function(err){ cb({success:false, error:err.message}); });
+}
+
+function _erpPopulateBranchOptions(selectIds) {
+  _erpGet('/erp/branches-full', function(list) {
+    var opts = '<option value="">الكل</option>' + (list||[]).map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('');
+    selectIds.forEach(function(id) { var el = document.getElementById(id); if (el) el.innerHTML = opts; });
+  });
+}
+function _erpPopulateBrandOptions(selectIds) {
+  _erpGet('/erp/brands', function(list) {
+    var opts = '<option value="">الكل</option>' + (list||[]).map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('');
+    selectIds.forEach(function(id) { var el = document.getElementById(id); if (el) el.innerHTML = opts; });
+  });
+}
+
+// ─── Trial Balance ───
+function erpLoadTrialBalance() {
+  _erpPopulateBranchOptions(['tbBranch']);
+  _erpPopulateBrandOptions(['tbBrand']);
+  var from = (document.getElementById('tbFrom')||{}).value || '';
+  var to   = (document.getElementById('tbTo')||{}).value || '';
+  var branch = (document.getElementById('tbBranch')||{}).value || '';
+  var brand  = (document.getElementById('tbBrand')||{}).value || '';
+  var inclZero = (document.getElementById('tbZero')||{}).value || '0';
+  var qs = new URLSearchParams({ from, to, branch, brand, includeZero: inclZero }).toString();
+  document.getElementById('tbBody').innerHTML = '<tr><td colspan="6" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  _erpGet('/erp/reports/trial-balance?' + qs, function(r) {
+    if (!r.success) { document.getElementById('tbBody').innerHTML = '<tr><td colspan="6" class="empty-msg" style="color:#ef4444;">'+(r.error||'خطأ')+'</td></tr>'; return; }
+    var rows = r.rows || [];
+    if (!rows.length) { document.getElementById('tbBody').innerHTML = '<tr><td colspan="6" class="empty-msg">لا توجد بيانات</td></tr>'; }
+    else {
+      document.getElementById('tbBody').innerHTML = rows.map(function(a){
+        var typeClr = {asset:'#0ea5e9',liability:'#ef4444',equity:'#8b5cf6',revenue:'#16a34a',expense:'#f59e0b'}[a.type]||'#64748b';
+        var typeAr = {asset:'أصل',liability:'خصم',equity:'حقوق',revenue:'إيراد',expense:'مصروف'}[a.type]||a.type;
+        return '<tr><td><code>'+(a.code||'')+'</code> '+(a.nameAr||'')+'</td>'+
+          '<td><span style="color:'+typeClr+';font-weight:700;">'+typeAr+'</span></td>'+
+          '<td>'+_erpFmt(a.opening)+'</td>'+
+          '<td style="color:#16a34a;">'+_erpFmt(a.periodDebit)+'</td>'+
+          '<td style="color:#ef4444;">'+_erpFmt(a.periodCredit)+'</td>'+
+          '<td style="font-weight:700;">'+_erpFmt(a.closing)+'</td></tr>';
+      }).join('');
+    }
+    var t = r.totals || {};
+    document.getElementById('tbSummary').innerHTML =
+      _erpKpi('مجموع المدين', _erpFmt(t.periodDebit), '#16a34a') +
+      _erpKpi('مجموع الدائن', _erpFmt(t.periodCredit), '#ef4444') +
+      _erpKpi('الفرق', _erpFmt((t.periodDebit||0)-(t.periodCredit||0)), t.isBalanced?'#16a34a':'#ef4444') +
+      _erpKpi('متوازن', t.isBalanced?'نعم':'لا', t.isBalanced?'#16a34a':'#ef4444');
+  });
+}
+
+// ─── P&L ───
+function erpLoadPnL() {
+  _erpPopulateBranchOptions(['plBranch']);
+  _erpPopulateBrandOptions(['plBrand']);
+  var from = (document.getElementById('plFrom')||{}).value || '';
+  var to   = (document.getElementById('plTo')||{}).value || '';
+  var branch = (document.getElementById('plBranch')||{}).value || '';
+  var brand  = (document.getElementById('plBrand')||{}).value || '';
+  var groupBy = (document.getElementById('plGroupBy')||{}).value || 'account';
+  var qs = new URLSearchParams({ from, to, branch, brand, groupBy }).toString();
+  _erpGet('/erp/reports/pnl?' + qs, function(r) {
+    if (!r.success) { showToast(r.error||'خطأ', true); return; }
+    var rev = r.revenue || [], exp = r.expenses || [];
+    var s = r.summary || {};
+    var pc = s.netProfit >= 0 ? '#16a34a' : '#ef4444';
+    document.getElementById('plSummary').innerHTML =
+      _erpKpi('إجمالي الإيرادات', _erpFmt(s.totalRevenue), '#16a34a') +
+      _erpKpi('إجمالي المصروفات', _erpFmt(s.totalExpense), '#ef4444') +
+      _erpKpi('صافي الربح/الخسارة', _erpFmt(s.netProfit), pc) +
+      _erpKpi('هامش الربح %', (s.grossMargin||0)+'%', pc);
+    document.getElementById('plRevenueBody').innerHTML = rev.length ? rev.map(function(a){
+      return '<tr><td><code>'+(a.code||'')+'</code> '+(a.nameAr||a.dimensionName||'')+'</td><td style="color:#16a34a;font-weight:700;">'+_erpFmt(a.amount)+'</td></tr>';
+    }).join('') : '<tr><td colspan="2" class="empty-msg">—</td></tr>';
+    document.getElementById('plExpenseBody').innerHTML = exp.length ? exp.map(function(a){
+      return '<tr><td><code>'+(a.code||'')+'</code> '+(a.nameAr||a.dimensionName||'')+'</td><td style="color:#ef4444;font-weight:700;">'+_erpFmt(a.amount)+'</td></tr>';
+    }).join('') : '<tr><td colspan="2" class="empty-msg">—</td></tr>';
+  });
+}
+
+// ─── Balance Sheet ───
+function erpLoadBalanceSheet() {
+  _erpPopulateBranchOptions(['bsBranch']);
+  _erpPopulateBrandOptions(['bsBrand']);
+  var asOf = (document.getElementById('bsAsOf')||{}).value || '';
+  var branch = (document.getElementById('bsBranch')||{}).value || '';
+  var brand  = (document.getElementById('bsBrand')||{}).value || '';
+  var qs = new URLSearchParams({ asOf, branch, brand }).toString();
+  _erpGet('/erp/reports/balance-sheet?' + qs, function(r) {
+    if (!r.success) { showToast(r.error||'خطأ', true); return; }
+    var t = r.totals || {};
+    var bc = t.isBalanced ? '#16a34a' : '#ef4444';
+    document.getElementById('bsSummary').innerHTML =
+      _erpKpi('الأصول', _erpFmt(t.assets), '#0ea5e9') +
+      _erpKpi('الخصوم', _erpFmt(t.liabilities), '#ef4444') +
+      _erpKpi('حقوق الملكية', _erpFmt(t.equity), '#8b5cf6') +
+      _erpKpi('الفرق', _erpFmt(t.difference), bc);
+    var fillTbl = function(id, arr, color){
+      document.getElementById(id).innerHTML = (arr||[]).length ? arr.filter(function(x){return x.balance!==0;}).map(function(a){
+        return '<tr><td><code>'+(a.code||'')+'</code> '+(a.nameAr||'')+'</td><td style="color:'+color+';font-weight:700;">'+_erpFmt(a.balance)+'</td></tr>';
+      }).join('') : '<tr><td colspan="2" class="empty-msg">—</td></tr>';
+    };
+    fillTbl('bsAssetsBody', r.assets, '#0ea5e9');
+    fillTbl('bsLiabBody',   r.liabilities, '#ef4444');
+    fillTbl('bsEquityBody', r.equity, '#8b5cf6');
+  });
+}
+
+// ─── Cash Flow ───
+function erpLoadCashFlow() {
+  _erpPopulateBranchOptions(['cfBranch']);
+  _erpPopulateBrandOptions(['cfBrand']);
+  var from = (document.getElementById('cfFrom')||{}).value || '';
+  var to   = (document.getElementById('cfTo')||{}).value || '';
+  var branch = (document.getElementById('cfBranch')||{}).value || '';
+  var brand  = (document.getElementById('cfBrand')||{}).value || '';
+  var qs = new URLSearchParams({ from, to, branch, brand }).toString();
+  _erpGet('/erp/reports/cash-flow?' + qs, function(r) {
+    if (!r.success) { showToast(r.error||'خطأ', true); return; }
+    var f = r.flows || {};
+    document.getElementById('cfSummary').innerHTML =
+      _erpKpi('الرصيد الافتتاحي', _erpFmt(r.openingCash), '#64748b') +
+      _erpKpi('نشاط تشغيلي', _erpFmt(f.operating), f.operating>=0?'#16a34a':'#ef4444') +
+      _erpKpi('نشاط استثماري', _erpFmt(f.investing), '#8b5cf6') +
+      _erpKpi('نشاط تمويلي', _erpFmt(f.financing), '#0ea5e9') +
+      _erpKpi('صافي التغيير', _erpFmt(r.netChange), r.netChange>=0?'#16a34a':'#ef4444') +
+      _erpKpi('الرصيد الختامي', _erpFmt(r.closingCash), '#16a34a');
+    var d = r.details || {};
+    var makeSection = function(title, color, items) {
+      if (!items || !items.length) return '';
+      var rows = items.map(function(x){
+        return '<tr><td>'+(x.date||'').slice(0,10)+'</td><td>'+(x.description||'')+'</td><td>'+(x.contra||'')+'</td><td style="color:'+(x.amount>=0?'#16a34a':'#ef4444')+';font-weight:700;">'+_erpFmt(x.amount)+'</td></tr>';
+      }).join('');
+      return '<h4 style="color:'+color+';margin-top:14px;">'+title+'</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>التاريخ</th><th>الوصف</th><th>الحساب المقابل</th><th>المبلغ</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    };
+    document.getElementById('cfDetails').innerHTML =
+      makeSection('الأنشطة التشغيلية', '#16a34a', d.operating) +
+      makeSection('الأنشطة الاستثمارية', '#8b5cf6', d.investing) +
+      makeSection('الأنشطة التمويلية', '#0ea5e9', d.financing) +
+      makeSection('أخرى', '#64748b', d.other);
+  });
+}
+
+// ─── Profitability by dimension ───
+function erpLoadProfitability() {
+  var from = (document.getElementById('profFrom')||{}).value || '';
+  var to   = (document.getElementById('profTo')||{}).value || '';
+  var dim  = (document.getElementById('profDim')||{}).value || 'brand';
+  var qs = new URLSearchParams({ from, to, dimension: dim }).toString();
+  document.getElementById('profBody').innerHTML = '<tr><td colspan="6" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  _erpGet('/erp/reports/profitability?' + qs, function(r) {
+    if (!r.success) { document.getElementById('profBody').innerHTML = '<tr><td colspan="6" class="empty-msg" style="color:#ef4444;">'+(r.error||'خطأ')+'</td></tr>'; return; }
+    var rows = r.rows || [];
+    if (!rows.length) { document.getElementById('profBody').innerHTML = '<tr><td colspan="6" class="empty-msg">لا توجد بيانات</td></tr>'; return; }
+    document.getElementById('profBody').innerHTML = rows.map(function(x, i){
+      var pc = x.profit>=0?'#16a34a':'#ef4444';
+      return '<tr><td>'+(i+1)+'</td><td>'+(x.name||'')+'</td>'+
+        '<td style="color:#16a34a;">'+_erpFmt(x.revenue)+'</td>'+
+        '<td style="color:#ef4444;">'+_erpFmt(x.expenses)+'</td>'+
+        '<td style="color:'+pc+';font-weight:800;">'+_erpFmt(x.profit)+'</td>'+
+        '<td style="color:'+pc+';">'+x.margin+'%</td></tr>';
+    }).join('');
+  });
+}
+
+// ─── Inventory Valuation ───
+function erpLoadInventoryValuation() {
+  _erpPopulateBrandOptions(['ivBrand']);
+  _erpGet('/erp/warehouses-list', function(whs) {
+    var opts = '<option value="">الكل</option>' + (whs||[]).map(function(w){return '<option value="'+w.id+'">'+(w.name||'')+'</option>';}).join('');
+    var el = document.getElementById('ivWh'); if (el) el.innerHTML = opts;
+  });
+  var wh = (document.getElementById('ivWh')||{}).value || '';
+  var brand = (document.getElementById('ivBrand')||{}).value || '';
+  var qs = new URLSearchParams({ warehouse: wh, brand }).toString();
+  _erpGet('/erp/reports/inventory-valuation?' + qs, function(r) {
+    if (!r.success) { showToast(r.error||'خطأ', true); return; }
+    var g = r.grand || {};
+    document.getElementById('ivSummary').innerHTML =
+      _erpKpi('عدد الأصناف', (g.itemCount||0), '#0ea5e9') +
+      _erpKpi('إجمالي الكمية', _erpFmt(g.totalQty), '#64748b') +
+      _erpKpi('إجمالي القيمة', _erpFmt(g.totalValue), '#16a34a');
+    var bw = r.byWarehouse || [];
+    document.getElementById('ivByWarehouse').innerHTML = bw.length ? ('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;">' + bw.map(function(w){
+      return '<div class="erp-rpt-card"><div><div class="lbl">'+(w.warehouseName||'')+' ('+w.itemCount+' صنف)</div><div class="val">'+_erpFmt(w.totalValue)+'</div></div></div>';
+    }).join('') + '</div>') : '';
+    var items = r.items || [];
+    document.getElementById('ivBody').innerHTML = items.length ? items.map(function(x){
+      return '<tr><td>'+(x.itemName||'')+'<div style="font-size:10px;color:#94a3b8;">'+(x.sku||'')+'</div></td><td>'+(x.warehouseName||'')+'</td><td>'+_erpFmt(x.qty)+' '+(x.unit||'')+'</td><td>'+_erpFmt(x.avgCost)+'</td><td style="font-weight:700;">'+_erpFmt(x.value)+'</td></tr>';
+    }).join('') : '<tr><td colspan="5" class="empty-msg">لا توجد أصناف</td></tr>';
+  });
+}
+
+// ─── Sales Analytics ───
+function erpLoadSalesAnalytics() {
+  _erpPopulateBranchOptions(['saBranch']);
+  _erpPopulateBrandOptions(['saBrand']);
+  var from = (document.getElementById('saFrom')||{}).value || '';
+  var to   = (document.getElementById('saTo')||{}).value || '';
+  var branch = (document.getElementById('saBranch')||{}).value || '';
+  var brand  = (document.getElementById('saBrand')||{}).value || '';
+  var qs = new URLSearchParams({ from, to, branch, brand, groupBy: 'all' }).toString();
+  _erpGet('/erp/reports/sales-analytics?' + qs, function(r) {
+    if (!r.success) { showToast(r.error||'خطأ', true); return; }
+    var h = r.headline || {};
+    document.getElementById('saHeadline').innerHTML =
+      _erpKpi('عدد الفواتير', (h.invoiceCount||0), '#0ea5e9') +
+      _erpKpi('الإجمالي', _erpFmt(h.total), '#16a34a') +
+      _erpKpi('متوسط الفاتورة', _erpFmt(h.avgTicket), '#8b5cf6');
+    document.getElementById('saDailyBody').innerHTML = (r.daily||[]).map(function(d){return '<tr><td>'+(d.date||'').slice(0,10)+'</td><td>'+d.count+'</td><td>'+_erpFmt(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="3" class="empty-msg">—</td></tr>';
+    document.getElementById('saPayBody').innerHTML = (r.byPayment||[]).map(function(d){return '<tr><td>'+(d.method||'')+'</td><td>'+d.count+'</td><td>'+_erpFmt(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="3" class="empty-msg">—</td></tr>';
+    document.getElementById('saCashierBody').innerHTML = (r.byCashier||[]).map(function(d){return '<tr><td>'+(d.cashier||'')+'</td><td>'+d.count+'</td><td>'+_erpFmt(d.avgTicket)+'</td><td>'+_erpFmt(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="4" class="empty-msg">—</td></tr>';
+    document.getElementById('saTopBody').innerHTML = (r.topItems||[]).map(function(d,i){return '<tr><td>'+(i+1)+'</td><td>'+(d.name||'')+'</td><td>'+_erpFmt(d.qty)+'</td><td>'+_erpFmt(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="4" class="empty-msg">—</td></tr>';
+  });
+}
+
+// ─── Waste Analytics ───
+function erpLoadWasteAnalytics() {
+  _erpPopulateBranchOptions(['waBranch']);
+  _erpPopulateBrandOptions(['waBrand']);
+  var from = (document.getElementById('waFrom')||{}).value || '';
+  var to   = (document.getElementById('waTo')||{}).value || '';
+  var branch = (document.getElementById('waBranch')||{}).value || '';
+  var brand  = (document.getElementById('waBrand')||{}).value || '';
+  var qs = new URLSearchParams({ from, to, branch, brand }).toString();
+  _erpGet('/erp/reports/waste-analytics?' + qs, function(r) {
+    if (!r.success) { showToast(r.error||'خطأ', true); return; }
+    var s = r.summary || {};
+    document.getElementById('waSummary').innerHTML =
+      _erpKpi('إجمالي تكلفة الهدر', _erpFmt(s.totalWasteCost), '#ef4444') +
+      _erpKpi('إجمالي المبيعات', _erpFmt(s.totalSales), '#16a34a') +
+      _erpKpi('الهدر % من المبيعات', (s.wastePctOfSales||0)+'%', (s.wastePctOfSales||0)>5?'#ef4444':'#f59e0b');
+    document.getElementById('waTopBody').innerHTML = (r.topItems||[]).map(function(d){return '<tr><td>'+(d.itemName||'')+'</td><td>'+_erpFmt(d.totalQty)+'</td><td>'+_erpFmt(d.totalCost)+'</td></tr>';}).join('') || '<tr><td colspan="3" class="empty-msg">—</td></tr>';
+    var reasonMap = {expired:'منتهي الصلاحية',damaged:'تالف',spill:'انسكاب',prep_loss:'خسارة تحضير',customer_return:'إرجاع عميل',other:'أخرى'};
+    document.getElementById('waReasonBody').innerHTML = (r.byReason||[]).map(function(d){return '<tr><td>'+(reasonMap[d.reason]||d.reason||'')+'</td><td>'+d.count+'</td><td>'+_erpFmt(d.totalCost)+'</td></tr>';}).join('') || '<tr><td colspan="3" class="empty-msg">—</td></tr>';
+  });
+}
+
+// ─── Royalty Reconciliation ───
+function erpLoadRoyaltyRecon() {
+  _erpPopulateBrandOptions(['rrBrand']);
+  var year = (document.getElementById('rrYear')||{}).value || new Date().getFullYear();
+  if (!document.getElementById('rrYear').value) document.getElementById('rrYear').value = year;
+  var brand = (document.getElementById('rrBrand')||{}).value || '';
+  var qs = new URLSearchParams({ year, brand }).toString();
+  _erpGet('/erp/reports/royalty-reconciliation?' + qs, function(r) {
+    if (!r.success) { showToast(r.error||'خطأ', true); return; }
+    var t = r.totals || {};
+    document.getElementById('rrSummary').innerHTML =
+      _erpKpi('إجمالي المستحق', _erpFmt(t.accrued), '#8b5cf6') +
+      _erpKpi('المدفوع', _erpFmt(t.paid), '#16a34a') +
+      _erpKpi('المتبقي', _erpFmt(t.outstanding), (t.outstanding>0?'#ef4444':'#16a34a'));
+    var rows = r.rows || [];
+    var statMap = {draft:'مسودة',approved:'معتمد',invoiced:'مفوتر',paid:'مدفوع',cancelled:'ملغى'};
+    document.getElementById('rrBody').innerHTML = rows.length ? rows.map(function(x){
+      return '<tr><td>'+(x.periodStart||'').slice(0,10)+' → '+(x.periodEnd||'').slice(0,10)+'</td>'+
+        '<td>'+(x.brandName||'')+'</td>'+
+        '<td>'+_erpFmt(x.grossSales)+'</td>'+
+        '<td>'+_erpFmt(x.netSales)+'</td>'+
+        '<td style="font-weight:700;">'+_erpFmt(x.royaltyAmount)+'</td>'+
+        '<td style="color:#16a34a;">'+_erpFmt(x.paid)+'</td>'+
+        '<td style="color:'+(x.outstanding>0?'#ef4444':'#16a34a')+';font-weight:700;">'+_erpFmt(x.outstanding)+'</td>'+
+        '<td><span class="badge badge-blue">'+(statMap[x.status]||x.status)+'</span></td></tr>';
+    }).join('') : '<tr><td colspan="8" class="empty-msg">لا توجد بيانات لهذه السنة</td></tr>';
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ENTITY MANAGEMENT PAGES
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─── Companies ───
+function erpLoadCompanies() {
+  document.getElementById('companiesBody').innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  _erpGet('/erp/companies', function(list) {
+    if (!Array.isArray(list) || !list.length) { document.getElementById('companiesBody').innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد شركات</td></tr>'; return; }
+    document.getElementById('companiesBody').innerHTML = list.map(function(c){
+      return '<tr><td><code>'+c.id+'</code></td><td style="font-weight:700;">'+c.name+'</td><td>'+(c.taxNumber||'—')+'</td><td>'+(c.crNumber||'—')+'</td><td>'+(c.city||'—')+'</td><td>'+(c.baseCurrency||'SAR')+'</td>'+
+        '<td><button class="btn btn-sm btn-primary" onclick="erpOpenCompanyModal(\''+c.id+'\')"><i class="fas fa-edit"></i></button></td></tr>';
+    }).join('');
+  });
+}
+function erpOpenCompanyModal(id) {
+  var doRender = function(d) {
+    d = d || {};
+    document.getElementById('erpModalTitle').textContent = d.id ? ('تعديل شركة — '+d.name) : 'شركة جديدة';
+    document.getElementById('erpModalBody').innerHTML =
+      '<input type="hidden" id="coId" value="'+(d.id||'')+'">'+
+      '<div class="form-row"><label>الاسم *</label><input class="form-control" id="coName" value="'+(d.name||'').replace(/"/g,'&quot;')+'"></div>'+
+      '<div class="form-row"><label>الاسم القانوني</label><input class="form-control" id="coLegal" value="'+(d.legalName||'').replace(/"/g,'&quot;')+'"></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-row"><label>الرقم الضريبي</label><input class="form-control" id="coTax" value="'+(d.taxNumber||'')+'"></div><div class="form-row"><label>السجل التجاري</label><input class="form-control" id="coCR" value="'+(d.crNumber||'')+'"></div></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;"><div class="form-row"><label>الدولة</label><input class="form-control" id="coCountry" value="'+(d.country||'SA')+'"></div><div class="form-row"><label>المدينة</label><input class="form-control" id="coCity" value="'+(d.city||'')+'"></div><div class="form-row"><label>العملة</label><input class="form-control" id="coCur" value="'+(d.baseCurrency||'SAR')+'"></div></div>'+
+      '<div class="form-row"><label>بداية السنة المالية</label><input type="date" class="form-control" id="coFY" value="'+(d.fiscalYearStart||'').slice(0,10)+'"></div>';
+    document.getElementById('erpModalSaveBtn').onclick = function() {
+      _erpPost('/erp/companies', {
+        id: document.getElementById('coId').value || undefined,
+        name: document.getElementById('coName').value,
+        legalName: document.getElementById('coLegal').value,
+        taxNumber: document.getElementById('coTax').value,
+        crNumber: document.getElementById('coCR').value,
+        country: document.getElementById('coCountry').value,
+        city: document.getElementById('coCity').value,
+        baseCurrency: document.getElementById('coCur').value,
+        fiscalYearStart: document.getElementById('coFY').value || null
+      }, function(r){ if (r.success){showToast('تم الحفظ');erpCloseModal();erpLoadCompanies();}else showToast(r.error||'فشل',true); });
+    };
+    document.getElementById('erpModal').classList.remove('hidden');
+  };
+  if (id) _erpGet('/erp/companies', function(list){ doRender((list||[]).find(function(x){return x.id===id;})); });
+  else doRender();
+}
+
+// ─── Price Lists ───
+function erpLoadPriceLists() {
+  document.getElementById('priceListsBody').innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  _erpGet('/erp/price-lists', function(list) {
+    if (!Array.isArray(list) || !list.length) { document.getElementById('priceListsBody').innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد قوائم أسعار</td></tr>'; return; }
+    document.getElementById('priceListsBody').innerHTML = list.map(function(p){
+      return '<tr><td style="font-weight:700;">'+(p.name||'')+'</td><td>'+(p.brandName||'—')+'</td><td>'+(p.branchName||'—')+'</td>'+
+        '<td>'+(p.isDefault?'<i class="fas fa-check" style="color:#16a34a;"></i>':'')+'</td>'+
+        '<td><span class="badge badge-blue">'+(p.itemCount||0)+'</span></td>'+
+        '<td>'+((p.validFrom||'').slice(0,10)||'—')+'</td><td>'+((p.validTo||'').slice(0,10)||'—')+'</td>'+
+        '<td><button class="btn btn-sm btn-primary" onclick="erpOpenPriceListModal(\''+p.id+'\')"><i class="fas fa-edit"></i></button> '+
+        '<button class="btn btn-sm" style="background:#dbeafe;color:#1e40af;" onclick="erpViewPriceListItems(\''+p.id+'\',\''+(p.name||'').replace(/'/g,"\\'")+'\')"><i class="fas fa-list"></i></button></td></tr>';
+    }).join('');
+  });
+}
+function erpOpenPriceListModal(id) {
+  Promise.all([new Promise(function(r){_erpGet('/erp/brands',r);}), new Promise(function(r){_erpGet('/erp/branches-full',r);})]).then(function(res){
+    var brands = res[0]||[], branches = res[1]||[];
+    var d = {};
+    var render = function(){
+      var brOpts = '<option value="">— عام —</option>' + brands.map(function(b){return '<option value="'+b.id+'"'+(d.brandId===b.id?' selected':'')+'>'+b.name+'</option>';}).join('');
+      var bchOpts = '<option value="">— عام —</option>' + branches.map(function(b){return '<option value="'+b.id+'"'+(d.branchId===b.id?' selected':'')+'>'+b.name+'</option>';}).join('');
+      document.getElementById('erpModalTitle').textContent = d.id ? ('تعديل قائمة — '+d.name) : 'قائمة أسعار جديدة';
+      document.getElementById('erpModalBody').innerHTML =
+        '<input type="hidden" id="plId" value="'+(d.id||'')+'">'+
+        '<div class="form-row"><label>الاسم *</label><input class="form-control" id="plName" value="'+(d.name||'').replace(/"/g,'&quot;')+'"></div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-row"><label>البراند</label><select class="form-control" id="plBrandSel">'+brOpts+'</select></div><div class="form-row"><label>الفرع</label><select class="form-control" id="plBranchSel">'+bchOpts+'</select></div></div>'+
+        '<div class="form-row"><label><input type="checkbox" id="plDefault" '+(d.isDefault?'checked':'')+'> افتراضية</label></div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-row"><label>فعالة من</label><input type="date" class="form-control" id="plFromDate" value="'+(d.validFrom||'').slice(0,10)+'"></div><div class="form-row"><label>إلى</label><input type="date" class="form-control" id="plToDate" value="'+(d.validTo||'').slice(0,10)+'"></div></div>';
+      document.getElementById('erpModalSaveBtn').onclick = function() {
+        _erpPost('/erp/price-lists', {
+          id: document.getElementById('plId').value || undefined,
+          name: document.getElementById('plName').value,
+          brandId: document.getElementById('plBrandSel').value || null,
+          branchId: document.getElementById('plBranchSel').value || null,
+          isDefault: document.getElementById('plDefault').checked,
+          validFrom: document.getElementById('plFromDate').value || null,
+          validTo: document.getElementById('plToDate').value || null
+        }, function(r){ if(r.success){showToast('تم');erpCloseModal();erpLoadPriceLists();}else showToast(r.error||'فشل',true); });
+      };
+      document.getElementById('erpModal').classList.remove('hidden');
+    };
+    if (id) _erpGet('/erp/price-lists', function(list){ d = (list||[]).find(function(x){return x.id===id;}) || {}; render(); });
+    else render();
+  });
+}
+function erpViewPriceListItems(id, name) {
+  _erpGet('/erp/price-lists/'+id+'/items', function(items) {
+    document.getElementById('erpModalTitle').textContent = 'أصناف القائمة — '+name;
+    document.getElementById('erpModalBody').innerHTML =
+      '<div class="erp-table-container"><table class="erp-table"><thead><tr><th>الصنف</th><th>SKU</th><th>السعر</th><th>إجراء</th></tr></thead><tbody>'+
+      ((items||[]).length ? items.map(function(i){return '<tr><td>'+i.itemName+'</td><td>'+i.sku+'</td><td>'+_erpFmt(i.price)+'</td><td><button class="btn btn-sm btn-danger" onclick="erpDeletePLItem(\''+i.id+'\',\''+id+'\',\''+name.replace(/\'/g,"\\'")+'\')"><i class="fas fa-trash"></i></button></td></tr>';}).join('') : '<tr><td colspan="4" class="empty-msg">لا توجد أصناف</td></tr>')+
+      '</tbody></table></div>';
+    document.getElementById('erpModalSaveBtn').style.display = 'none';
+    document.getElementById('erpModal').classList.remove('hidden');
+  });
+}
+function erpDeletePLItem(itemId, plId, plName) {
+  if (!confirm('حذف هذا السطر؟')) return;
+  _erpDelete('/erp/price-list-items/'+itemId, function(r){ if(r.success){showToast('حُذف');erpViewPriceListItems(plId, plName);}else showToast(r.error||'فشل',true); });
+}
+
+// ─── BOM ───
+function erpLoadBOM() {
+  document.getElementById('bomBody').innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  _erpGet('/erp/bom', function(list){
+    if (!Array.isArray(list) || !list.length) { document.getElementById('bomBody').innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد وصفات</td></tr>'; return; }
+    document.getElementById('bomBody').innerHTML = list.map(function(b){
+      return '<tr><td style="font-weight:700;">'+(b.productName||b.productId)+'</td><td>v'+b.version+'</td><td>'+_erpFmt(b.yieldQuantity)+' '+(b.yieldUnit||'')+'</td><td><span class="badge badge-blue">'+b.lineCount+'</span></td><td>'+((b.effectiveFrom||'').slice(0,10)||'—')+'</td><td>'+((b.effectiveTo||'').slice(0,10)||'—')+'</td>'+
+        '<td><button class="btn btn-sm btn-primary" onclick="erpOpenBomModal(\''+b.id+'\')"><i class="fas fa-edit"></i></button> '+
+        '<button class="btn btn-sm" style="background:#dbeafe;color:#1e40af;" onclick="erpViewBomLines(\''+b.id+'\',\''+(b.productName||'').replace(/\'/g,"\\'")+'\')"><i class="fas fa-list"></i></button> '+
+        '<button class="btn btn-sm btn-danger" onclick="erpDeleteBom(\''+b.id+'\')"><i class="fas fa-trash"></i></button></td></tr>';
+    }).join('');
+  });
+}
+function erpOpenBomModal(id) {
+  _erpGet('/inventory/items', function(items) {
+    var itemList = items || [];
+    var d = {};
+    var render = function(){
+      var prodOpts = '<option value="">— اختر —</option>' + itemList.map(function(i){return '<option value="'+i.id+'"'+(d.productId===i.id?' selected':'')+'>'+(i.name||'')+'</option>';}).join('');
+      document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل وصفة' : 'وصفة جديدة';
+      document.getElementById('erpModalBody').innerHTML =
+        '<input type="hidden" id="bomIdF" value="'+(d.id||'')+'">'+
+        '<div class="form-row"><label>المنتج الجاهز *</label><select class="form-control" id="bomProduct">'+prodOpts+'</select></div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-row"><label>الإصدار</label><input type="number" class="form-control" id="bomVersion" value="'+(d.version||1)+'"></div><div class="form-row"><label>الإنتاجية</label><input type="number" step="0.0001" class="form-control" id="bomYield" value="'+(d.yieldQuantity||1)+'"></div></div>'+
+        '<div class="form-row"><label>ملاحظات</label><textarea class="form-control" id="bomNotes">'+(d.notes||'')+'</textarea></div>';
+      document.getElementById('erpModalSaveBtn').onclick = function() {
+        _erpPost('/erp/bom', {
+          id: document.getElementById('bomIdF').value || undefined,
+          productId: document.getElementById('bomProduct').value,
+          version: Number(document.getElementById('bomVersion').value) || 1,
+          yieldQuantity: Number(document.getElementById('bomYield').value) || 1,
+          notes: document.getElementById('bomNotes').value
+        }, function(r){ if(r.success){showToast('تم');erpCloseModal();erpLoadBOM();}else showToast(r.error||'فشل',true); });
+      };
+      document.getElementById('erpModal').classList.remove('hidden');
+    };
+    if (id) _erpGet('/erp/bom', function(list){ d = (list||[]).find(function(x){return x.id===id;}) || {}; render(); });
+    else render();
+  });
+}
+function erpViewBomLines(bomId, productName) {
+  _erpGet('/erp/bom/'+bomId+'/lines', function(lines) {
+    document.getElementById('erpModalTitle').textContent = 'مكونات: '+productName;
+    document.getElementById('erpModalBody').innerHTML =
+      '<div class="erp-table-container"><table class="erp-table"><thead><tr><th>المكوّن</th><th>الكمية</th><th>الوحدة</th><th>الهدر %</th><th>التكلفة</th></tr></thead><tbody>'+
+      ((lines||[]).length ? lines.map(function(l){return '<tr><td>'+l.itemName+'</td><td>'+_erpFmt(l.quantity)+'</td><td>'+l.unit+'</td><td>'+l.wastePct+'%</td><td>'+_erpFmt(l.lineCost)+'</td></tr>';}).join('') : '<tr><td colspan="5" class="empty-msg">لا توجد مكونات</td></tr>')+
+      '</tbody></table></div>';
+    document.getElementById('erpModalSaveBtn').style.display = 'none';
+    document.getElementById('erpModal').classList.remove('hidden');
+  });
+}
+function erpDeleteBom(id) {
+  if (!confirm('حذف الوصفة؟')) return;
+  _erpDelete('/erp/bom/'+id, function(r){ if(r.success){showToast('حُذفت');erpLoadBOM();}else showToast(r.error||'فشل',true); });
+}
+
+// ─── Waste Entries ───
+function erpLoadWasteEntries() {
+  _erpPopulateBranchOptions(['weBranch']);
+  _erpPopulateBrandOptions(['weBrand']);
+  var params = new URLSearchParams({
+    from: document.getElementById('weFrom').value,
+    to:   document.getElementById('weTo').value,
+    branch_id: document.getElementById('weBranch').value,
+    brand_id:  document.getElementById('weBrand').value
+  }).toString();
+  document.getElementById('weBody').innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  _erpGet('/erp/waste-entries?'+params, function(list){
+    if (!Array.isArray(list) || !list.length) { document.getElementById('weBody').innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد سجلات</td></tr>'; return; }
+    var reasonMap = {expired:'منتهي',damaged:'تالف',spill:'انسكاب',prep_loss:'تحضير',customer_return:'إرجاع',other:'أخرى'};
+    document.getElementById('weBody').innerHTML = list.map(function(w){
+      return '<tr><td>'+(w.wasteDate||'').slice(0,10)+'</td><td>'+(w.branchName||'—')+'</td><td>'+(w.brandName||'—')+'</td><td>'+(reasonMap[w.reason]||w.reason)+'</td><td>'+(w.costCenterName||'—')+'</td>'+
+        '<td style="font-weight:700;color:#ef4444;">'+_erpFmt(w.totalCost)+'</td>'+
+        '<td><button class="btn btn-sm btn-light" onclick="erpViewWasteItems(\''+w.id+'\')"><i class="fas fa-list"></i></button></td></tr>';
+    }).join('');
+  });
+}
+function erpViewWasteItems(id) {
+  _erpGet('/erp/waste-entries/'+id+'/items', function(items) {
+    document.getElementById('erpModalTitle').textContent = 'أصناف الهدر';
+    document.getElementById('erpModalBody').innerHTML = '<div class="erp-table-container"><table class="erp-table"><thead><tr><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>تكلفة الوحدة</th><th>الإجمالي</th></tr></thead><tbody>'+
+      ((items||[]).length ? items.map(function(i){return '<tr><td>'+i.itemName+'</td><td>'+_erpFmt(i.quantity)+'</td><td>'+i.unit+'</td><td>'+_erpFmt(i.unitCost)+'</td><td>'+_erpFmt(i.lineCost)+'</td></tr>';}).join('') : '<tr><td colspan="5" class="empty-msg">—</td></tr>') + '</tbody></table></div>';
+    document.getElementById('erpModalSaveBtn').style.display = 'none';
+    document.getElementById('erpModal').classList.remove('hidden');
+  });
+}
+function erpOpenWasteModal() {
+  Promise.all([
+    new Promise(function(r){_erpGet('/erp/branches-full',r);}),
+    new Promise(function(r){_erpGet('/erp/brands',r);}),
+    new Promise(function(r){_erpGet('/erp/warehouses-list',r);}),
+    new Promise(function(r){_erpGet('/erp/cost-centers',r);}),
+    new Promise(function(r){_erpGet('/inventory/items',r);})
+  ]).then(function(res){
+    var branches = res[0]||[], brands = res[1]||[], whs = res[2]||[], ccs = res[3]||[], items = res[4]||[];
+    var reasons = [['expired','منتهي الصلاحية'],['damaged','تالف'],['spill','انسكاب'],['prep_loss','خسارة تحضير'],['customer_return','إرجاع عميل'],['other','أخرى']];
+    document.getElementById('erpModalTitle').textContent = 'تسجيل هدر جديد';
+    document.getElementById('erpModalBody').innerHTML =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+
+      '<div class="form-row"><label>التاريخ</label><input type="date" class="form-control" id="wnDate" value="'+new Date().toISOString().slice(0,10)+'"></div>'+
+      '<div class="form-row"><label>السبب</label><select class="form-control" id="wnReason">'+reasons.map(function(r){return '<option value="'+r[0]+'">'+r[1]+'</option>';}).join('')+'</select></div></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+
+      '<div class="form-row"><label>الفرع</label><select class="form-control" id="wnBranch"><option value="">—</option>'+branches.map(function(b){return '<option value="'+b.id+'">'+b.name+'</option>';}).join('')+'</select></div>'+
+      '<div class="form-row"><label>البراند</label><select class="form-control" id="wnBrand"><option value="">—</option>'+brands.map(function(b){return '<option value="'+b.id+'">'+b.name+'</option>';}).join('')+'</select></div></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+
+      '<div class="form-row"><label>المستودع *</label><select class="form-control" id="wnWh"><option value="">—</option>'+whs.map(function(w){return '<option value="'+w.id+'">'+w.name+'</option>';}).join('')+'</select></div>'+
+      '<div class="form-row"><label>مركز التكلفة</label><select class="form-control" id="wnCC"><option value="">—</option>'+ccs.map(function(c){return '<option value="'+c.id+'">'+(c.name||c.code)+'</option>';}).join('')+'</select></div></div>'+
+      '<div class="form-row"><label>ملاحظات</label><textarea class="form-control" id="wnNotes" rows="2"></textarea></div>'+
+      '<h4 style="margin:14px 0 6px;"><i class="fas fa-boxes"></i> الأصناف المهدورة</h4>'+
+      '<div id="wnItems"></div>'+
+      '<button class="btn btn-light btn-sm" onclick="erpWasteAddRow()"><i class="fas fa-plus"></i> صنف جديد</button>';
+    window._wnItemOptions = '<option value="">—</option>' + items.map(function(i){return '<option value="'+i.id+'" data-cost="'+(i.avg_cost||0)+'" data-unit="'+(i.unit||'PCS')+'">'+(i.name||'')+'</option>';}).join('');
+    erpWasteAddRow(); erpWasteAddRow();
+    document.getElementById('erpModalSaveBtn').onclick = function() {
+      var items = [];
+      document.querySelectorAll('.wn-item-row').forEach(function(row){
+        var s = row.querySelector('.wn-item-sel');
+        var q = row.querySelector('.wn-item-qty');
+        var c = row.querySelector('.wn-item-cost');
+        if (s.value && Number(q.value)>0) items.push({ itemId: s.value, quantity: Number(q.value), unit: s.options[s.selectedIndex].getAttribute('data-unit'), unitCost: Number(c.value)||0 });
+      });
+      if (!items.length) return showToast('أضف صنفاً واحداً على الأقل', true);
+      _erpPost('/erp/waste-entries', {
+        wasteDate: document.getElementById('wnDate').value,
+        reason: document.getElementById('wnReason').value,
+        branchId: document.getElementById('wnBranch').value || null,
+        brandId: document.getElementById('wnBrand').value || null,
+        warehouseId: document.getElementById('wnWh').value,
+        costCenterId: document.getElementById('wnCC').value || null,
+        notes: document.getElementById('wnNotes').value,
+        createdBy: currentUser,
+        items: items
+      }, function(r){ if(r.success){showToast('تم — إجمالي: '+_erpFmt(r.totalCost));erpCloseModal();erpLoadWasteEntries();}else showToast(r.error||'فشل',true); });
+    };
+    document.getElementById('erpModal').classList.remove('hidden');
+  });
+}
+function erpWasteAddRow() {
+  var c = document.getElementById('wnItems');
+  var div = document.createElement('div');
+  div.className = 'wn-item-row';
+  div.style.cssText = 'display:grid;grid-template-columns:3fr 1fr 1fr auto;gap:6px;margin-bottom:6px;';
+  div.innerHTML = '<select class="form-control wn-item-sel" onchange="this.parentNode.querySelector(\'.wn-item-cost\').value=this.options[this.selectedIndex].getAttribute(\'data-cost\')||0">'+window._wnItemOptions+'</select>'+
+    '<input type="number" step="0.001" class="form-control wn-item-qty" placeholder="الكمية">'+
+    '<input type="number" step="0.0001" class="form-control wn-item-cost" placeholder="تكلفة الوحدة">'+
+    '<button class="btn btn-sm btn-danger" onclick="this.parentNode.remove()"><i class="fas fa-times"></i></button>';
+  c.appendChild(div);
+}
+
+// ─── Royalty Runs ───
+function erpLoadRoyaltyRuns() {
+  document.getElementById('rrunsBody').innerHTML = '<tr><td colspan="9" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  _erpGet('/erp/royalty-runs', function(list) {
+    if (!Array.isArray(list) || !list.length) { document.getElementById('rrunsBody').innerHTML = '<tr><td colspan="9" class="empty-msg">لا توجد احتسابات</td></tr>'; return; }
+    var statMap = {draft:'مسودة',approved:'معتمد',invoiced:'مفوتر',paid:'مدفوع',cancelled:'ملغى'};
+    var statClr = {draft:'yellow',approved:'blue',invoiced:'purple',paid:'green',cancelled:'red'};
+    document.getElementById('rrunsBody').innerHTML = list.map(function(r){
+      var btns = '';
+      if (r.status === 'draft') btns += '<button class="btn btn-sm btn-success" onclick="erpRoyaltyApprove(\''+r.id+'\')"><i class="fas fa-check"></i> اعتماد</button> ';
+      if (r.status === 'approved' || r.status === 'invoiced') btns += '<button class="btn btn-sm" style="background:#dcfce7;color:#166534;" onclick="erpRoyaltyMarkPaid(\''+r.id+'\')"><i class="fas fa-dollar-sign"></i> دفع</button> ';
+      if (r.status === 'draft') btns += '<button class="btn btn-sm btn-danger" onclick="erpRoyaltyDelete(\''+r.id+'\')"><i class="fas fa-trash"></i></button>';
+      return '<tr><td>'+(r.runDate||'').slice(0,10)+'</td><td>'+(r.brandName||'')+'</td><td>'+(r.periodStart||'').slice(0,10)+' → '+(r.periodEnd||'').slice(0,10)+'</td>'+
+        '<td>'+_erpFmt(r.grossSales)+'</td><td>'+_erpFmt(r.netSales)+'</td><td>'+(r.royaltyType||'')+'</td>'+
+        '<td style="font-weight:700;">'+_erpFmt(r.royaltyAmount)+'</td>'+
+        '<td><span class="badge badge-'+statClr[r.status]+'">'+(statMap[r.status]||r.status)+'</span></td>'+
+        '<td>'+btns+'</td></tr>';
+    }).join('');
+  });
+}
+function erpOpenRoyaltyComputeModal() {
+  _erpGet('/erp/brands', function(brands) {
+    document.getElementById('erpModalTitle').textContent = 'احتساب فرانشايز جديد';
+    document.getElementById('erpModalBody').innerHTML =
+      '<div class="form-row"><label>البراند *</label><select class="form-control" id="rrnBrand">'+(brands||[]).map(function(b){return '<option value="'+b.id+'">'+b.name+'</option>';}).join('')+'</select></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-row"><label>بداية الفترة *</label><input type="date" class="form-control" id="rrnStart"></div><div class="form-row"><label>نهاية الفترة *</label><input type="date" class="form-control" id="rrnEnd"></div></div>';
+    document.getElementById('erpModalSaveBtn').onclick = function() {
+      var d = { brandId: document.getElementById('rrnBrand').value, periodStart: document.getElementById('rrnStart').value, periodEnd: document.getElementById('rrnEnd').value };
+      if (!d.brandId || !d.periodStart || !d.periodEnd) return showToast('البيانات مطلوبة', true);
+      _erpPost('/erp/royalty-runs/compute', d, function(r){
+        if (r.success) { showToast('تم — المستحق: '+_erpFmt(r.royaltyAmount)); erpCloseModal(); erpLoadRoyaltyRuns(); }
+        else showToast(r.error||'فشل', true);
+      });
+    };
+    document.getElementById('erpModal').classList.remove('hidden');
+  });
+}
+function erpRoyaltyApprove(id) {
+  if (!confirm('اعتماد الاحتساب وإنشاء قيد محاسبي؟')) return;
+  _erpPost('/erp/royalty-runs/'+id+'/approve', { username: currentUser }, function(r){
+    if (r.success) { showToast('اعتُمد — قيد #'+(r.journalNumber||'')); erpLoadRoyaltyRuns(); }
+    else showToast(r.error||'فشل', true);
+  });
+}
+function erpRoyaltyMarkPaid(id) {
+  if (!confirm('تأكيد الدفع؟')) return;
+  _erpPost('/erp/royalty-runs/'+id+'/mark-paid', {}, function(r){ if(r.success){showToast('تم');erpLoadRoyaltyRuns();}else showToast(r.error||'فشل',true); });
+}
+function erpRoyaltyDelete(id) {
+  if (!confirm('حذف المسودة؟')) return;
+  _erpDelete('/erp/royalty-runs/'+id, function(r){ if(r.success){showToast('حُذفت');erpLoadRoyaltyRuns();}else showToast(r.error||'فشل',true); });
+}
+
+// ─── POS Terminals ───
+function erpLoadPosTerminals() {
+  document.getElementById('posTermBody').innerHTML = '<tr><td colspan="6" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  _erpGet('/erp/pos-terminals', function(list) {
+    if (!Array.isArray(list) || !list.length) { document.getElementById('posTermBody').innerHTML = '<tr><td colspan="6" class="empty-msg">لا توجد أجهزة</td></tr>'; return; }
+    document.getElementById('posTermBody').innerHTML = list.map(function(t){
+      return '<tr><td style="font-weight:700;">'+(t.name||'')+'</td><td><code>'+(t.code||'')+'</code></td><td>'+(t.branchName||'')+'</td><td>'+(t.deviceId||'—')+'</td><td>'+(t.lastSyncAt||'—')+'</td>'+
+        '<td><button class="btn btn-sm btn-primary" onclick="erpOpenPosTerminalModal(\''+t.id+'\')"><i class="fas fa-edit"></i></button> '+
+        '<button class="btn btn-sm btn-danger" onclick="erpDeletePosTerminal(\''+t.id+'\')"><i class="fas fa-trash"></i></button></td></tr>';
+    }).join('');
+  });
+}
+function erpOpenPosTerminalModal(id) {
+  _erpGet('/erp/branches-full', function(branches){
+    var d = {};
+    var render = function(){
+      var bOpts = (branches||[]).map(function(b){return '<option value="'+b.id+'"'+(d.branchId===b.id?' selected':'')+'>'+b.name+'</option>';}).join('');
+      document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل جهاز' : 'جهاز POS جديد';
+      document.getElementById('erpModalBody').innerHTML =
+        '<input type="hidden" id="ptId" value="'+(d.id||'')+'">'+
+        '<div class="form-row"><label>الاسم *</label><input class="form-control" id="ptName" value="'+(d.name||'')+'"></div>'+
+        '<div class="form-row"><label>الرمز</label><input class="form-control" id="ptCode" value="'+(d.code||'')+'"></div>'+
+        '<div class="form-row"><label>الفرع *</label><select class="form-control" id="ptBranch">'+bOpts+'</select></div>'+
+        '<div class="form-row"><label>معرّف الجهاز</label><input class="form-control" id="ptDev" value="'+(d.deviceId||'')+'"></div>';
+      document.getElementById('erpModalSaveBtn').onclick = function() {
+        _erpPost('/erp/pos-terminals', {
+          id: document.getElementById('ptId').value || undefined,
+          name: document.getElementById('ptName').value,
+          code: document.getElementById('ptCode').value,
+          branchId: document.getElementById('ptBranch').value,
+          deviceId: document.getElementById('ptDev').value
+        }, function(r){ if(r.success){showToast('تم');erpCloseModal();erpLoadPosTerminals();}else showToast(r.error||'فشل',true); });
+      };
+      document.getElementById('erpModal').classList.remove('hidden');
+    };
+    if (id) _erpGet('/erp/pos-terminals', function(list){ d = (list||[]).find(function(x){return x.id===id;}) || {}; render(); });
+    else render();
+  });
+}
+function erpDeletePosTerminal(id) {
+  if (!confirm('تعطيل الجهاز؟')) return;
+  _erpDelete('/erp/pos-terminals/'+id, function(r){ if(r.success){showToast('تم');erpLoadPosTerminals();}else showToast(r.error||'فشل',true); });
+}
+
+// ─── Item Categories ───
+function erpLoadItemCategories() {
+  document.getElementById('catBody').innerHTML = '<tr><td colspan="6" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  _erpGet('/erp/item-categories', function(list) {
+    if (!Array.isArray(list) || !list.length) { document.getElementById('catBody').innerHTML = '<tr><td colspan="6" class="empty-msg">لا توجد تصنيفات</td></tr>'; return; }
+    document.getElementById('catBody').innerHTML = list.map(function(c){
+      return '<tr><td style="font-weight:700;">'+(c.name||'')+'</td><td><code>'+(c.code||'')+'</code></td><td>'+(c.parentName||'—')+'</td><td>'+(c.brandId||'—')+'</td><td><span class="badge badge-blue">'+c.itemCount+'</span></td>'+
+        '<td><button class="btn btn-sm btn-primary" onclick="erpOpenCategoryModal(\''+c.id+'\')"><i class="fas fa-edit"></i></button> '+
+        '<button class="btn btn-sm btn-danger" onclick="erpDeleteCategory(\''+c.id+'\')"><i class="fas fa-trash"></i></button></td></tr>';
+    }).join('');
+  });
+}
+function erpOpenCategoryModal(id) {
+  Promise.all([
+    new Promise(function(r){_erpGet('/erp/item-categories',r);}),
+    new Promise(function(r){_erpGet('/erp/brands',r);})
+  ]).then(function(res){
+    var cats = res[0]||[], brands = res[1]||[];
+    var d = {};
+    var render = function() {
+      var parentOpts = '<option value="">— جذر —</option>' + cats.filter(function(c){return c.id!==d.id;}).map(function(c){return '<option value="'+c.id+'"'+(d.parentId===c.id?' selected':'')+'>'+c.name+'</option>';}).join('');
+      var brOpts = '<option value="">— عام —</option>' + brands.map(function(b){return '<option value="'+b.id+'"'+(d.brandId===b.id?' selected':'')+'>'+b.name+'</option>';}).join('');
+      document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل تصنيف' : 'تصنيف جديد';
+      document.getElementById('erpModalBody').innerHTML =
+        '<input type="hidden" id="catId" value="'+(d.id||'')+'">'+
+        '<div class="form-row"><label>الاسم *</label><input class="form-control" id="catName" value="'+(d.name||'').replace(/"/g,'&quot;')+'"></div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-row"><label>الرمز</label><input class="form-control" id="catCode" value="'+(d.code||'')+'"></div><div class="form-row"><label>التصنيف الأب</label><select class="form-control" id="catParent">'+parentOpts+'</select></div></div>'+
+        '<div class="form-row"><label>البراند</label><select class="form-control" id="catBrand">'+brOpts+'</select></div>';
+      document.getElementById('erpModalSaveBtn').onclick = function() {
+        _erpPost('/erp/item-categories', {
+          id: document.getElementById('catId').value || undefined,
+          name: document.getElementById('catName').value,
+          code: document.getElementById('catCode').value,
+          parentId: document.getElementById('catParent').value || null,
+          brandId: document.getElementById('catBrand').value || null
+        }, function(r){ if(r.success){showToast('تم');erpCloseModal();erpLoadItemCategories();}else showToast(r.error||'فشل',true); });
+      };
+      document.getElementById('erpModal').classList.remove('hidden');
+    };
+    if (id) { d = (cats||[]).find(function(x){return x.id===id;}) || {}; }
+    render();
+  });
+}
+function erpDeleteCategory(id) {
+  if (!confirm('حذف التصنيف؟')) return;
+  _erpDelete('/erp/item-categories/'+id, function(r){ if(r.success){showToast('تم');erpLoadItemCategories();}else showToast(r.error||'فشل',true); });
 }

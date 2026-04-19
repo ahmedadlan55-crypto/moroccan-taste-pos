@@ -3860,6 +3860,7 @@ function tglUserM() {
   q("#muDisplayName").value = '';
   q("#muName").value = '';
   q("#muName").disabled = false;
+  if (q("#muNameHint")) q("#muNameHint").style.display = 'none';
   q("#muPass").value = '';
   q("#muPass").placeholder = 'حروف + أرقام + رمز (6 أحرف على الأقل)';
   q("#muRole").value = 'cashier';
@@ -3911,7 +3912,13 @@ function editUsr(username) {
   q("#muModalTitle").innerText = 'تعديل المستخدم — ' + (u.displayName || u.username);
   q("#muDisplayName").value = u.displayName || '';
   q("#muName").value = u.username;
-  q("#muName").disabled = true;
+  // Allow rename for every user except the protected 'admin' account.
+  // The backend does the rename + cascades to all related tables
+  // (hr_employees.linked_username, transactions.created_by, etc.)
+  var isAdmin = (username === 'admin');
+  q("#muName").disabled = isAdmin;
+  var hint = q("#muNameHint");
+  if (hint) hint.style.display = isAdmin ? 'none' : 'block';
   q("#muPass").value = '';
   q("#muPass").placeholder = 'اتركها فارغة لعدم التغيير';
   q("#muRole").value = u.role || 'cashier';
@@ -3965,6 +3972,10 @@ function saveUserFn() {
   if (_editingUsername) {
     var payload = { displayName: displayName, role: role, isDeveloper: isDeveloper, email: email, brandId: brandId, branchId: branchId, positionId: positionId };
     if (password) payload.password = password;
+    // If the login username changed (and it's not 'admin'), request a cascade rename.
+    if (username && username !== _editingUsername && _editingUsername !== 'admin') {
+      payload.newUsername = username;
+    }
     api.withFailureHandler(function(err){loader(false); showToast(err.message, true);})
        .withSuccessHandler(function(r) {
           loader(false);

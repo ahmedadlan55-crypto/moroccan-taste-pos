@@ -2665,12 +2665,13 @@
     <div class="modal-content">
       <div class="modal-title"><span id="muModalTitle">إضافة موظف جديد</span><button class="modal-close" onclick="closeModal('#modalUserForm')">&times;</button></div>
       <div class="form-group">
-        <label class="form-label">اسم الموظف الكامل (يظهر في التقارير)</label>
+        <label class="form-label"><i class="fas fa-file-signature" style="color:#0ea5e9;"></i> اسم الموظف الكامل <span style="font-size:11px;color:#94a3b8;font-weight:400;">(يظهر في التقارير الرسمية والفواتير)</span></label>
         <input type="text" id="muDisplayName" class="form-control" placeholder="مثال: أحمد محمد العبدالله">
       </div>
       <div class="form-group">
-        <label class="form-label">الرقم الوظيفي / اسم الدخول</label>
-        <input type="text" id="muName" class="form-control" placeholder="مثال: EMP001 أو ahmad.s">
+        <label class="form-label"><i class="fas fa-key" style="color:#f59e0b;"></i> اسم تسجيل الدخول <span style="font-size:11px;color:#94a3b8;font-weight:400;">(يُستخدم للدخول فقط — أحرف إنجليزية وأرقام)</span></label>
+        <input type="text" id="muName" class="form-control" placeholder="مثال: ahmed.s أو EMP001" pattern="[A-Za-z0-9_.@-]{2,50}" dir="ltr" style="text-align:left;">
+        <div id="muNameHint" style="font-size:10px;color:#94a3b8;margin-top:3px;display:none;"><i class="fas fa-info-circle"></i> تغيير اسم الدخول يُطبَّق على كل المراجع في النظام.</div>
       </div>
       <div class="form-group">
         <label class="form-label">البريد الإلكتروني</label>

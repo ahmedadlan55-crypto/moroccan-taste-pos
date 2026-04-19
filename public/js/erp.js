@@ -5314,11 +5314,97 @@ function wfViewTxn(id) {
     } else { html += '<p style="color:#94a3b8;text-align:center;font-size:13px;">لا توجد إجراءات بعد</p>'; }
     html += '</div>';
 
+    // Toolbar: print + edit (edit only when still editable by the creator)
+    var canEdit = (txn.status === 'pending' || txn.status === 'draft') && (txn.createdBy === currentUser);
+    var toolbar = '<div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:10px;flex-wrap:wrap;">' +
+      '<button class="btn btn-sm" style="background:#eff6ff;color:#1e40af;" onclick="wfPrintTxn(\''+txn.id+'\')"><i class="fas fa-print"></i> طباعة</button>' +
+      (canEdit ? '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;" onclick="wfEditOutboxTxn(\''+txn.id+'\')"><i class="fas fa-edit"></i> تعديل</button>' : '') +
+      (canEdit ? '<button class="btn btn-sm btn-danger" onclick="wfCancelOutboxTxn(\''+txn.id+'\')"><i class="fas fa-trash"></i> إلغاء</button>' : '') +
+    '</div>';
     document.getElementById('erpModalTitle').textContent = txn.txnNumber || 'تفاصيل المعاملة';
-    document.getElementById('erpModalBody').innerHTML = html;
+    document.getElementById('erpModalBody').innerHTML = toolbar + html;
     document.getElementById('erpModalSaveBtn').style.display = 'none';
     document.getElementById('erpModal').classList.remove('hidden');
     setTimeout(function() { document.getElementById('erpModalSaveBtn').style.display = ''; }, 100);
+    // Cache the last-viewed transaction for the print window
+    window._wfLastViewedTxn = txn;
+  }).getWfTransaction(id);
+}
+
+// Print-friendly standalone window — government-style paper layout
+function wfPrintTxn(id) {
+  window._apiBridge.withSuccessHandler(function(txn) {
+    if (!txn || txn.error) { showToast('تعذّر الطباعة', true); return; }
+    var sMap = { pending:'قيد الانتظار', in_progress:'قيد التنفيذ', approved:'معتمدة', rejected:'مرفوضة', closed:'مغلقة', draft:'مسودة' };
+    var iMap = { critical:'عاجل', high:'عالي', medium:'عادي', low:'منخفض' };
+    var secMap = { normal:'عادي', confidential:'سري', secret:'سري للغاية', top_secret:'سري جداً للغاية' };
+    var aMap = { create:'إنشاء', approve:'موافقة', reject:'رفض', return:'إرجاع', close:'إغلاق', forward:'تحويل' };
+    var w = window.open('', '_blank', 'width=900,height=700');
+    var rows = (txn.logs||[]).map(function(l, i) {
+      var dt = l.createdAt ? new Date(l.createdAt).toLocaleString('ar-SA', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
+      return '<tr><td>'+(i+1)+'</td><td>'+(aMap[l.actionType]||l.actionType)+'</td><td>'+(l.actionBy||'')+(l.positionName?' ('+l.positionName+')':'')+'</td><td>'+(l.note||'')+'</td><td>'+dt+'</td></tr>';
+    }).join('');
+    var recipientsRows = (txn.recipients||[]).map(function(r) {
+      return '<tr><td>'+(r.code||'')+'</td><td>'+(r.name||r.username||'')+'</td><td>'+(r.needsResponse?'نعم':'—')+'</td><td>'+(r.responseReceived?'✓':'—')+'</td></tr>';
+    }).join('');
+    var pathStr = (txn.workflowPath||[]).map(function(s) {
+      return (s.isCurrent?'➤ ':s.isPast?'✓ ':'○ ') + s.stepName + (s.positionName?' ('+s.positionName+')':'');
+    }).join('  ←  ');
+
+    w.document.write('<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8">' +
+      '<title>معاملة '+(txn.txnNumber||'')+'</title>' +
+      '<style>' +
+      'body{font-family:Arial,"Segoe UI",sans-serif;direction:rtl;padding:30px 40px;color:#111827;}' +
+      'h1,h2,h3{margin:4px 0;}' +
+      '.hdr{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #1e40af;padding-bottom:10px;margin-bottom:16px;}' +
+      '.hdr .co{font-size:16px;font-weight:800;color:#1e40af;}' +
+      '.hdr .no{font-family:monospace;font-size:13px;color:#64748b;}' +
+      '.title-block{text-align:center;margin:20px 0;padding:14px;background:#f8fafc;border-radius:10px;}' +
+      '.title-block h2{font-size:18px;color:#0f172a;margin-bottom:6px;}' +
+      '.badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:8px;}' +
+      '.badge{padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700;}' +
+      '.b-status{background:#dbeafe;color:#1e40af;} .b-imp{background:#fee2e2;color:#991b1b;} .b-sec{background:#f3e8ff;color:#6d28d9;}' +
+      '.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin:14px 0;font-size:12px;}' +
+      '.info-grid div{padding:4px 0;border-bottom:1px dotted #e5e7eb;}' +
+      '.info-grid b{color:#1e40af;}' +
+      '.content-box{border:1px solid #cbd5e1;border-radius:8px;padding:14px;margin:14px 0;background:#fff;min-height:140px;font-size:13px;line-height:1.8;}' +
+      '.path{background:#ede9fe;border:1px solid #a78bfa;border-radius:8px;padding:10px 14px;margin:12px 0;font-size:12px;color:#5b21b6;font-weight:700;}' +
+      'table{width:100%;border-collapse:collapse;margin:10px 0;font-size:11px;}' +
+      'th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:right;}' +
+      'th{background:#f1f5f9;font-weight:800;}' +
+      '.footer{margin-top:30px;display:grid;grid-template-columns:1fr 1fr;gap:30px;font-size:11px;}' +
+      '.sig-box{border-top:1px solid #111;padding-top:4px;text-align:center;min-height:60px;}' +
+      '@media print{body{padding:15px 20px;} .noprint{display:none;}}' +
+      '</style></head><body>' +
+      '<div class="hdr"><div class="co">المذاق المغربي — نظام المعاملات الإدارية</div><div class="no">رقم المعاملة: <b>'+(txn.txnNumber||'')+'</b></div></div>' +
+      '<div class="title-block"><h2>'+(txn.subject||txn.title||'')+'</h2>' +
+      '<div class="badges">' +
+        '<span class="badge b-status">الحالة: '+(sMap[txn.status]||txn.status)+'</span>' +
+        '<span class="badge b-imp">الأهمية: '+(iMap[txn.importance]||txn.importance)+'</span>' +
+        '<span class="badge b-sec">سرية المحتوى: '+(secMap[txn.contentSecrecy]||'عادي')+'</span>' +
+      '</div></div>' +
+      '<div class="info-grid">' +
+        '<div><b>النوع:</b> '+(txn.typeName||'')+'</div>' +
+        '<div><b>التاريخ:</b> '+(txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('ar-SA',{day:'numeric',month:'long',year:'numeric'}) : '')+'</div>' +
+        (txn.hijriDate?'<div><b>التاريخ الهجري:</b> '+txn.hijriDate+'</div>':'') +
+        '<div><b>المرسل:</b> '+(txn.senderName||txn.createdBy||'')+(txn.senderPosition?' — '+txn.senderPosition:'')+'</div>' +
+        (txn.issuingEntityName?'<div><b>جهة التحرير:</b> '+txn.issuingEntityName+'</div>':'') +
+        (txn.branchName?'<div><b>الفرع:</b> '+txn.branchName+'</div>':'') +
+        (txn.deptName?'<div><b>القسم:</b> '+txn.deptName+'</div>':'') +
+        (txn.currentAssignee?'<div><b>المسؤول الحالي:</b> '+txn.currentAssignee+(txn.currentRoleName?' — '+txn.currentRoleName:'')+'</div>':'') +
+        (Number(txn.amount)?'<div><b>المبلغ:</b> '+Number(txn.amount).toLocaleString('en',{minimumFractionDigits:2})+' ر.س</div>':'') +
+        (txn.expenseCategoryName?'<div><b>نوع المصروف:</b> '+txn.expenseCategoryName+'</div>':'') +
+      '</div>' +
+      (pathStr ? '<div class="path"><i class="fas fa-route"></i> المسار الإداري: '+pathStr+'</div>' : '') +
+      '<h3>محتوى المعاملة</h3>' +
+      '<div class="content-box">'+(txn.contentHtml || txn.description || '—')+'</div>' +
+      (recipientsRows ? '<h3>الجهات الصادر إليها</h3><table><thead><tr><th>الرمز</th><th>الجهة</th><th>يحتاج إلى رد</th><th>تم الرد</th></tr></thead><tbody>'+recipientsRows+'</tbody></table>' : '') +
+      (rows ? '<h3>سجل الحركة</h3><table><thead><tr><th>#</th><th>الإجراء</th><th>المُنفّذ</th><th>ملاحظة</th><th>التاريخ/الوقت</th></tr></thead><tbody>'+rows+'</tbody></table>' : '') +
+      '<div class="footer"><div class="sig-box">توقيع المُرسِل</div><div class="sig-box">توقيع المُستلم</div></div>' +
+      '<div style="text-align:center;margin-top:20px;" class="noprint"><button onclick="window.print()" style="padding:10px 28px;border:none;background:#1e40af;color:#fff;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;">🖨️ اطبع الآن</button> <button onclick="window.close()" style="padding:10px 20px;border:2px solid #cbd5e1;background:#fff;color:#64748b;border-radius:8px;font-size:14px;cursor:pointer;margin-right:6px;">إغلاق</button></div>' +
+      '</body></html>');
+    w.document.close();
+    setTimeout(function(){ try { w.focus(); } catch(e){} }, 300);
   }).getWfTransaction(id);
 }
 

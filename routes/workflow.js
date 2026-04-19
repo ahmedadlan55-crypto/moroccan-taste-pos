@@ -881,12 +881,43 @@ router.post('/transactions', async (req, res) => {
     const currentStepId = firstStep ? firstStep.id : null;
     const currentRoleId = firstStep ? (firstStep.required_position_id || null) : null;
 
-    // Determine initial assignee:
-    //   1. explicit recipient override (if sender picked one)
-    //   2. role+branch+dept matched employee (spec §5)
-    //   3. sender's direct manager (fallback)
-    let currentAssignee = recipientUsername || '';
+    // Determine initial assignee with a layered fallback so an explicit
+    // recipient selection ALWAYS wins over the position-chain default.
+    //   1. recipientUsername (top-level, explicit single pick from the modal)
+    //   2. recipients[0].username (multi-recipient payload; use the first)
+    //   3. recipients[0] lookup by code (employee_number) — handles UIs that
+    //      sent the employee number without a resolved username
+    //   4. recipients[0] lookup by full name — last-ditch
+    //   5. position-chain resolution (initiator's workflow default)
+    //   6. initiator's direct manager (ultimate fallback)
+    let currentAssignee = (recipientUsername || '').trim();
     let currentRoleName = '';
+    if (!currentAssignee && Array.isArray(recipients) && recipients.length) {
+      const first = recipients[0] || {};
+      if (first.username && String(first.username).trim()) {
+        currentAssignee = String(first.username).trim();
+      } else if (first.code) {
+        // Employee number lookup
+        try {
+          const [u] = await db.query(
+            `SELECT linked_username FROM hr_employees
+             WHERE employee_number = ? AND linked_username IS NOT NULL AND linked_username != '' LIMIT 1`,
+            [first.code]);
+          if (u.length) currentAssignee = u[0].linked_username;
+        } catch(e) {}
+      }
+      if (!currentAssignee && first.name) {
+        // Full-name lookup against hr_employees
+        try {
+          const [u] = await db.query(
+            `SELECT linked_username FROM hr_employees
+             WHERE CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) LIKE ?
+               AND linked_username IS NOT NULL AND linked_username != '' LIMIT 1`,
+            ['%' + first.name + '%']);
+          if (u.length) currentAssignee = u[0].linked_username;
+        } catch(e) {}
+      }
+    }
     if (!currentAssignee && firstStep && firstStep.required_position_id) {
       const resolved = await resolveAssigneeForStep(firstStep, finalBranchId, finalDeptId);
       currentAssignee = resolved.username;
@@ -895,6 +926,16 @@ router.post('/transactions', async (req, res) => {
     if (!currentRoleName && currentRoleId) {
       const [rn] = await db.query('SELECT name FROM positions WHERE id = ?', [currentRoleId]);
       if (rn.length) currentRoleName = rn[0].name;
+    }
+    // If explicit recipient was used, stamp their current role for display
+    if (currentAssignee && !currentRoleName) {
+      try {
+        const [pr] = await db.query(
+          `SELECT p.name FROM hr_employees e
+           LEFT JOIN positions p ON e.position_id = p.id
+           WHERE e.linked_username = ? LIMIT 1`, [currentAssignee]);
+        if (pr.length && pr[0].name) currentRoleName = pr[0].name;
+      } catch(e) {}
     }
     if (!currentAssignee && sender.managerId) {
       const [mgr] = await db.query('SELECT linked_username FROM hr_employees WHERE id = ?', [sender.managerId]);

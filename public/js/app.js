@@ -1608,8 +1608,57 @@ function toggleSubmenu(element) {
   }
 }
 
+// ═══ Admin navigation history stack — allows back/forward between sections ═══
+window._navHistory = window._navHistory || [];
+window._navFuture  = window._navFuture  || [];
+window._navSilent  = false;  // set to true when programmatic nav shouldn't be recorded
+
+window.navBack = function() {
+  if (!window._navHistory.length) return;
+  var current = localStorage.getItem('pos_last_section') || 'home';
+  var prev = window._navHistory.pop();
+  window._navFuture.push(current);
+  window._navSilent = true;
+  try { nav(prev); } finally { window._navSilent = false; }
+  _updateNavBackBtn();
+};
+window.navForward = function() {
+  if (!window._navFuture.length) return;
+  var current = localStorage.getItem('pos_last_section') || 'home';
+  var next = window._navFuture.pop();
+  window._navHistory.push(current);
+  window._navSilent = true;
+  try { nav(next); } finally { window._navSilent = false; }
+  _updateNavBackBtn();
+};
+function _updateNavBackBtn() {
+  var back = document.getElementById('navBackBtn');
+  var fwd  = document.getElementById('navFwdBtn');
+  if (back) back.disabled = window._navHistory.length === 0;
+  if (fwd)  fwd.disabled  = window._navFuture.length === 0;
+}
+
+// Alt+← / Alt+→ shortcuts for section back/forward
+document.addEventListener('keydown', function(e) {
+  if (!e.altKey) return;
+  if (e.key === 'ArrowRight' || e.key === 'Backspace') { e.preventDefault(); navBack(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); navForward(); }
+});
+
 function nav(sectionId) {
+  // Push the PREVIOUS section onto the back stack before switching.
+  if (!window._navSilent) {
+    var prev = localStorage.getItem('pos_last_section');
+    if (prev && prev !== sectionId) {
+      window._navHistory.push(prev);
+      // Cap history at 50 entries
+      if (window._navHistory.length > 50) window._navHistory.shift();
+      // Manual nav invalidates the forward stack
+      window._navFuture = [];
+    }
+  }
   localStorage.setItem("pos_last_section", sectionId);
+  _updateNavBackBtn();
   // Lazy-mount the section on first access
   if (typeof mountSection === 'function') mountSection('sec_' + sectionId);
   qs(".nav-item").forEach(el => el.classList.remove("active"));

@@ -1107,10 +1107,24 @@ function viewMyTxn(id) {
 
     var ic = _impColors[txn.importance]||'#6b7280';
     var il = _impLabels[txn.importance]||txn.importance;
-    var h = '<div style="display:flex;gap:6px;margin-bottom:12px;">' +
-      '<div style="flex:1;padding:8px;border-radius:10px;background:'+sc+'15;border:1px solid '+sc+'30;text-align:center;"><span style="font-size:11px;font-weight:800;color:'+sc+';">'+(sMap[txn.status]||txn.status)+'</span></div>' +
-      '<div style="flex:1;padding:8px;border-radius:10px;background:'+ic+'15;border:1px solid '+ic+'40;text-align:center;"><span style="font-size:11px;font-weight:800;color:'+ic+';"><i class="fas fa-circle" style="font-size:6px;margin-left:4px;"></i>'+il+'</span></div>' +
+    var secMap = {normal:'عادي', confidential:'سري', secret:'سري للغاية', top_secret:'سري جداً للغاية'};
+    var h = '';
+    // Prominent subject/title at the top
+    var titleText = txn.subject || txn.title || '';
+    if (titleText) {
+      h += '<h3 style="margin:0 0 10px;color:#0f172a;font-size:16px;font-weight:900;line-height:1.4;">'+titleText+'</h3>';
+    }
+    h += '<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">' +
+      '<div style="flex:1;min-width:100px;padding:8px;border-radius:10px;background:'+sc+'15;border:1px solid '+sc+'30;text-align:center;"><span style="font-size:11px;font-weight:800;color:'+sc+';">'+(sMap[txn.status]||txn.status)+'</span></div>' +
+      '<div style="flex:1;min-width:100px;padding:8px;border-radius:10px;background:'+ic+'15;border:1px solid '+ic+'40;text-align:center;"><span style="font-size:11px;font-weight:800;color:'+ic+';"><i class="fas fa-circle" style="font-size:6px;margin-left:4px;"></i>'+il+'</span></div>' +
     '</div>';
+    // Secrecy badges
+    if (txn.contentSecrecy || txn.attachmentsSecrecy) {
+      h += '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">' +
+        '<span style="padding:3px 8px;border-radius:6px;background:#f3e8ff;color:#6d28d9;font-size:10px;font-weight:800;"><i class="fas fa-shield-alt"></i> سرية المحتوى: '+(secMap[txn.contentSecrecy]||'عادي')+'</span>' +
+        '<span style="padding:3px 8px;border-radius:6px;background:#fef3c7;color:#92400e;font-size:10px;font-weight:800;"><i class="fas fa-paperclip"></i> سرية المرفقات: '+(secMap[txn.attachmentsSecrecy]||'عادي')+'</span>' +
+      '</div>';
+    }
 
     // Workflow path
     if (txn.workflowPath && txn.workflowPath.length) {
@@ -1141,7 +1155,30 @@ function viewMyTxn(id) {
     if (txn.costCenterName) h += '<div class="pf"><span>'+t('txn.costCenterLabel')+'</span><b>'+txn.costCenterName+'</b></div>';
     h += '</div>';
 
-    if (txn.description) h += '<div style="padding:8px 10px;border-radius:8px;background:#f8fafc;font-size:12px;color:#475569;margin-bottom:10px;">'+txn.description+'</div>';
+    // Full content — prefer HTML, fall back to plain description
+    if (txn.contentHtml && txn.contentHtml.trim()) {
+      h += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:#fff;font-size:13px;color:#1e293b;line-height:1.8;margin-bottom:10px;">' +
+        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:6px;"><i class="fas fa-file-alt"></i> محتوى المعاملة</div>' +
+        txn.contentHtml +
+      '</div>';
+    } else if (txn.description) {
+      h += '<div style="padding:10px 12px;border-radius:10px;background:#f8fafc;font-size:12px;color:#475569;margin-bottom:10px;line-height:1.7;">'+txn.description+'</div>';
+    }
+    // Multi-recipients
+    if (Array.isArray(txn.recipients) && txn.recipients.length) {
+      h += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-bottom:10px;">' +
+        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:6px;"><i class="fas fa-paper-plane"></i> الجهات الصادر إليها</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
+      txn.recipients.forEach(function(r) {
+        h += '<span style="padding:3px 8px;border-radius:6px;background:#eff6ff;color:#1e40af;font-size:11px;">' +
+          (r.code?'<code style="font-size:9px;color:#64748b;">'+r.code+'</code> ':'') +
+          '<b>'+(r.name||r.username||'')+'</b>' +
+          (r.needsResponse?' <span style="color:#ea580c;font-size:9px;">يحتاج رد</span>':'') +
+          (r.responseReceived?' <i class="fas fa-check" style="color:#16a34a;"></i>':'') +
+        '</span>';
+      });
+      h += '</div></div>';
+    }
     if (txn.attachment && txn.attachment.startsWith && txn.attachment.startsWith('data:')) h += '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:4px;color:#0ea5e9;font-size:12px;font-weight:700;margin-bottom:10px;"><i class="fas fa-download"></i> تحميل المرفق</a>';
 
     // Timeline
@@ -1170,7 +1207,7 @@ function viewMyTxn(id) {
       h += '</div>';
     }
 
-    document.getElementById('txnDetailTitle').textContent = txn.txnNumber||'';
+    document.getElementById('txnDetailTitle').textContent = (txn.subject || txn.title || txn.txnNumber || '');
     document.getElementById('txnDetailBody').innerHTML = h;
     document.getElementById('txnDetailModal').classList.add('show');
   });

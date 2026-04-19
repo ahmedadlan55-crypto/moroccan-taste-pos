@@ -155,12 +155,22 @@ app.all('/api/*', notFoundHandler);
 app.use(errorHandler);
 
 // Standalone apps — serve their own index.html
-app.get('/employee', (req, res) => res.sendFile(path.join(__dirname, 'public', 'employee', 'index.html')));
-app.get('/employee/*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'employee', 'index.html')));
-app.get('/pos', (req, res) => res.sendFile(path.join(__dirname, 'public', 'pos', 'index.html')));
-app.get('/pos/*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'pos', 'index.html')));
-app.get('/custody', (req, res) => res.sendFile(path.join(__dirname, 'public', 'custody', 'index.html')));
-app.get('/custody/*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'custody', 'index.html')));
+// Protected app shells — explicitly opt out of bfcache so that a logged-out
+// user pressing browser-back cannot see the authenticated view.
+function sendProtectedApp(file) {
+  return function(req, res) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.sendFile(path.join(__dirname, 'public', file));
+  };
+}
+app.get('/employee',    sendProtectedApp('employee/index.html'));
+app.get('/employee/*',  sendProtectedApp('employee/index.html'));
+app.get('/pos',         sendProtectedApp('pos/index.html'));
+app.get('/pos/*',       sendProtectedApp('pos/index.html'));
+app.get('/custody',     sendProtectedApp('custody/index.html'));
+app.get('/custody/*',   sendProtectedApp('custody/index.html'));
 
 // SPA fallback — main admin app
 app.get('*', (req, res) => {

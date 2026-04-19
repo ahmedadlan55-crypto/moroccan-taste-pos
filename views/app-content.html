@@ -187,7 +187,11 @@
     <!-- Main Content Area -->
     <div class="admin-content">
       <div class="admin-header">
-        <div class="admin-header-title">لوحة تحكم المدير</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button id="navBackBtn" onclick="navBack()" class="btn btn-light" title="رجوع (Alt+رجوع)" disabled style="min-width:36px;padding:8px 10px;opacity:.95;"><i class="fas fa-arrow-right"></i></button>
+          <button id="navFwdBtn" onclick="navForward()" class="btn btn-light" title="تقديم (Alt+تقديم)" disabled style="min-width:36px;padding:8px 10px;opacity:.95;"><i class="fas fa-arrow-left"></i></button>
+          <div class="admin-header-title">لوحة تحكم المدير</div>
+        </div>
         <div class="admin-header-actions">
           <div class="admin-user-badge"><div class="admin-avatar"><i class="fas fa-user"></i></div><span id="adminUserLabel">Admin</span></div>
           <button class="btn btn-light" style="color:var(--danger);" onclick="logout()"><i class="fas fa-sign-out-alt"></i> تسجيل خروج</button>

@@ -14,6 +14,32 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 
+// Mojibake fixer: detects strings that were saved as Latin-1 bytes of UTF-8
+// Arabic (classic "ط·ظ„ط¨" or "ÙƒÙ„Ù…Ø©" garbage) and restores them.
+// Heuristic: if the string contains characters in U+0080-U+00FF AND NO actual
+// Arabic code points (U+0600-U+06FF), attempt round-trip through Latin-1→UTF-8.
+function fixMojibake(s) {
+  if (!s || typeof s !== 'string') return s;
+  const hasHighLatin = /[\u0080-\u00FF]/.test(s);
+  const hasArabic = /[\u0600-\u06FF]/.test(s);
+  if (!hasHighLatin || hasArabic) return s;
+  try {
+    const recovered = Buffer.from(s, 'latin1').toString('utf8');
+    // Only accept the conversion if it produced Arabic characters
+    if (/[\u0600-\u06FF]/.test(recovered)) return recovered;
+  } catch(e) {}
+  return s;
+}
+
+// Apply fixMojibake to every string field in an object (shallow)
+function fixObj(o) {
+  if (!o || typeof o !== 'object') return o;
+  for (const k of Object.keys(o)) {
+    if (typeof o[k] === 'string') o[k] = fixMojibake(o[k]);
+  }
+  return o;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────
 
 function todayYmd(d) {
@@ -1032,14 +1058,14 @@ function _txnSelectSQL() {
 }
 
 function _mapTxn(t) {
-  return {
+  return fixObj({
     id: t.id, txnNumber: t.transaction_number,
     typeId: t.transaction_type_id, typeName: t.type_name, typeCode: t.type_code || t.type_code_real,
     createdBy: t.created_by,
     branchId: t.branch_id, branchCode: t.branch_code || t.branch_code_resolved || '', branchName: t.branch_name || t.branch_name_resolved || '',
     brandId: t.brand_id,
     deptId: t.dept_id, deptCode: t.dept_code || t.dept_code_resolved || '', deptName: t.dept_name || t.dept_name_resolved || '',
-    title: t.title, description: t.description, amount: Number(t.amount),
+    title: t.title, subject: t.subject || t.title || '', description: t.description, amount: Number(t.amount),
     importance: t.importance || 'medium',
     status: t.status,
     currentStepId: t.current_step_id, currentStepName: t.current_step_name || '',
@@ -1053,7 +1079,7 @@ function _mapTxn(t) {
     recipientUsername: t.recipient_username || '',
     senderName: t.sender_name || '', senderPosition: t.sender_position || '',
     createdAt: t.created_at, updatedAt: t.updated_at
-  };
+  });
 }
 
 // OUTBOX — transactions I created (صندوق الصادر) with rich filters
@@ -1266,27 +1292,27 @@ router.get('/transactions/:id', async (req, res) => {
 
     res.json({
       ..._mapTxn(t),
-      description: t.description,
+      description: fixMojibake(t.description),
       attachmentDataUrl: t.attachment || '',
-      subject: t.subject || '',
-      contentHtml: t.content_html || '',
+      subject: fixMojibake(t.subject || t.title || ''),
+      contentHtml: fixMojibake(t.content_html || ''),
       contentSecrecy: t.content_secrecy || 'normal',
       attachmentsSecrecy: t.attachments_secrecy || 'normal',
       issuingEntityId: t.issuing_entity_id || '',
-      issuingEntityName: t.issuing_entity_name || '',
+      issuingEntityName: fixMojibake(t.issuing_entity_name || ''),
       hijriDate: t.hijri_date || '',
-      recipients: recipientRows.map(r => ({
+      recipients: recipientRows.map(r => fixObj({
         id: r.id, type: r.recipient_type, username: r.recipient_username,
         code: r.recipient_code, name: r.recipient_name,
         needsResponse: !!r.needs_response, responseReceived: !!r.response_received
       })),
-      workflowPath: steps.map(s => ({
+      workflowPath: steps.map(s => fixObj({
         id: s.id, stepOrder: s.step_order, stepName: s.step_name,
         positionName: s.position_name || '', isFinal: !!s.is_final_step,
         isCurrent: s.id === t.current_step_id,
         isPast: t.current_step_id ? steps.findIndex(x => x.id === t.current_step_id) > steps.findIndex(x => x.id === s.id) : true
       })),
-      logs: logs.map(l => ({
+      logs: logs.map(l => fixObj({
         id: l.id, stepName: l.step_name || '',
         positionName: l.position_name || l.position_name_from_def || '',
         actionBy: l.action_by, actionType: l.action_type,

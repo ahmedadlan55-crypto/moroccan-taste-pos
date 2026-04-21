@@ -2392,7 +2392,7 @@ function _menuRenderFilteredMenu() {
       grows.forEach(function(row) { h += renderRow(row); });
     });
   } else {
-    filtered.forEach(renderRow);
+    filtered.forEach(function(row) { h += renderRow(row); });
   }
 
   if (q("#tbMenu")) q("#tbMenu").innerHTML = h;

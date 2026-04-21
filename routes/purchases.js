@@ -426,18 +426,24 @@ router.delete('/:id', async (req, res) => {
 
 // ─── Purchase Orders ───
 
-// Get purchase orders
+// Get purchase orders (brand-aware)
 router.get('/orders', async (req, res) => {
   try {
-    let query = 'SELECT * FROM purchase_orders WHERE 1=1';
+    let query = `SELECT po.*, b.name AS brand_name, br.name AS branch_name
+                 FROM purchase_orders po
+                 LEFT JOIN brands b ON b.id = po.brand_id
+                 LEFT JOIN branches br ON br.id = po.branch_id
+                 WHERE 1=1`;
     const params = [];
 
-    if (req.query.status) { query += ' AND status = ?'; params.push(req.query.status); }
-    if (req.query.supplierId) { query += ' AND supplier_id = ?'; params.push(req.query.supplierId); }
-    if (req.query.startDate) { query += ' AND po_date >= ?'; params.push(req.query.startDate); }
-    if (req.query.endDate) { query += ' AND po_date <= ?'; params.push(req.query.endDate); }
+    if (req.query.status)     { query += ' AND po.status = ?';        params.push(req.query.status); }
+    if (req.query.supplierId) { query += ' AND po.supplier_id = ?';   params.push(req.query.supplierId); }
+    if (req.query.brandId)    { query += ' AND po.brand_id = ?';      params.push(req.query.brandId); }
+    if (req.query.branchId)   { query += ' AND po.branch_id = ?';     params.push(req.query.branchId); }
+    if (req.query.startDate)  { query += ' AND po.po_date >= ?';      params.push(req.query.startDate); }
+    if (req.query.endDate)    { query += ' AND po.po_date <= ?';      params.push(req.query.endDate); }
 
-    query += ' ORDER BY created_at DESC LIMIT 200';
+    query += ' ORDER BY po.created_at DESC LIMIT 200';
 
     const [orders] = await db.query(query, params);
     const result = [];
@@ -450,6 +456,8 @@ router.get('/orders', async (req, res) => {
         totalBeforeVat: Number(po.total_before_vat), vatAmount: Number(po.vat_amount),
         totalAfterVat: Number(po.total_after_vat), notes: po.notes,
         createdBy: po.created_by, approvedBy: po.approved_by, approvedAt: po.approved_at,
+        brandId: po.brand_id || '', brand_id: po.brand_id || '', brandName: po.brand_name || '',
+        branchId: po.branch_id || '', branchName: po.branch_name || '',
         lines: lines.map(l => ({
           id: l.id, itemId: l.item_id, itemName: l.item_name,
           unit: l.unit || '',
@@ -473,7 +481,7 @@ router.get('/orders', async (req, res) => {
 // backward-compatible with the ERP UI which sends {items, date}.
 router.post('/orders', async (req, res) => {
   try {
-    const { supplierId, supplierName, notes, username } = req.body;
+    const { supplierId, supplierName, notes, username, brandId, branchId } = req.body;
     const poDate = req.body.poDate || req.body.date;
     const expectedDate = req.body.expectedDate;
     // Support both `lines` (legacy) and `items` (ERP UI)
@@ -504,10 +512,11 @@ router.post('/orders', async (req, res) => {
     }
 
     await db.query(
-      `INSERT INTO purchase_orders (id, po_number, supplier_id, supplier_name, po_date, expected_date, status, total_before_vat, vat_amount, total_after_vat, notes, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO purchase_orders (id, po_number, supplier_id, supplier_name, po_date, expected_date, status, total_before_vat, vat_amount, total_after_vat, notes, created_by, brand_id, branch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [poId, poNumber, supplierId || null, supplierName || '', poDate || new Date(), expectedDate || null,
-       'draft', totalBeforeVat, totalVat, totalBeforeVat + totalVat, notes || '', username || '']
+       'draft', totalBeforeVat, totalVat, totalBeforeVat + totalVat, notes || '', username || '',
+       brandId || null, branchId || null]
     );
 
     // Insert lines

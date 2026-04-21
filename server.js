@@ -2210,6 +2210,15 @@ async function runMigrations() {
   await addColumnIfMissing('transactions', 'reference_type', "VARCHAR(40)");
   await addColumnIfMissing('transactions', 'reference_id', "VARCHAR(60)");
 
+  // ═══ Brand-awareness for procurement + shortage ═══
+  await addColumnIfMissing('suppliers',          'brand_id',  "VARCHAR(50)");
+  await addColumnIfMissing('purchases',          'brand_id',  "VARCHAR(50)");
+  await addColumnIfMissing('purchases',          'branch_id', "VARCHAR(50)");
+  await addColumnIfMissing('purchase_orders',    'brand_id',  "VARCHAR(50)");
+  await addColumnIfMissing('purchase_orders',    'branch_id', "VARCHAR(50)");
+  await addColumnIfMissing('shortage_requests',  'brand_id',  "VARCHAR(50)");
+  await addColumnIfMissing('shortage_requests',  'branch_id', "VARCHAR(50)");
+
   // Notifications (Phase D preparation)
   await createTableIfMissing('notifications', `
     CREATE TABLE notifications (

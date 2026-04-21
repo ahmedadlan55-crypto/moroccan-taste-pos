@@ -686,8 +686,23 @@ router.post('/receive-approve/:id', async (req, res) => {
 // Create shortage request (from cashier)
 router.post('/shortage-requests', async (req, res) => {
   try {
-    const { items, username, notes, warehouseId, branchId } = req.body;
+    const { items, username, notes, warehouseId, branchId, brandId } = req.body;
     if (!items || !items.length) return res.json({ success: false, error: 'أضف مادة واحدة على الأقل' });
+
+    // Auto-resolve brand from user's HR profile if not supplied
+    let resolvedBrandId = brandId || null;
+    let resolvedBranchId = branchId || null;
+    if (!resolvedBrandId && username) {
+      try {
+        const [u] = await db.query(
+          'SELECT brand_id, branch_id FROM users WHERE username = ? LIMIT 1',
+          [username]);
+        if (u.length) {
+          resolvedBrandId = resolvedBrandId || u[0].brand_id;
+          resolvedBranchId = resolvedBranchId || u[0].branch_id;
+        }
+      } catch(e) {}
+    }
 
     const id = 'SHR-' + Date.now();
     const [last] = await db.query('SELECT request_number FROM shortage_requests ORDER BY created_at DESC LIMIT 1');
@@ -699,8 +714,8 @@ router.post('/shortage-requests', async (req, res) => {
     const requestNumber = 'SHR-' + String(num).padStart(5, '0');
 
     await db.query(
-      'INSERT INTO shortage_requests (id, request_number, request_date, username, notes, total_items, branch_id, warehouse_id) VALUES (?,?,?,?,?,?,?,?)',
-      [id, requestNumber, new Date(), username || '', notes || '', items.length, branchId || null, warehouseId || null]
+      'INSERT INTO shortage_requests (id, request_number, request_date, username, notes, total_items, branch_id, warehouse_id, brand_id) VALUES (?,?,?,?,?,?,?,?,?)',
+      [id, requestNumber, new Date(), username || '', notes || '', items.length, resolvedBranchId, warehouseId || null, resolvedBrandId]
     );
 
     for (const item of items) {
@@ -711,19 +726,32 @@ router.post('/shortage-requests', async (req, res) => {
       );
     }
 
-    res.json({ success: true, id, requestNumber });
+    res.json({ success: true, id, requestNumber, brandId: resolvedBrandId });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// Get shortage requests
+// Get shortage requests (brand-aware)
 router.get('/shortage-requests', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM shortage_requests ORDER BY created_at DESC LIMIT 200');
+    const { brandId, status, branchId } = req.query;
+    let sql = `SELECT r.*, b.name AS brand_name, br.name AS branch_name
+               FROM shortage_requests r
+               LEFT JOIN brands b ON b.id = r.brand_id
+               LEFT JOIN branches br ON br.id = r.branch_id
+               WHERE 1=1`;
+    const params = [];
+    if (brandId)  { sql += ' AND r.brand_id = ?';  params.push(brandId); }
+    if (status)   { sql += ' AND r.status = ?';    params.push(status); }
+    if (branchId) { sql += ' AND r.branch_id = ?'; params.push(branchId); }
+    sql += ' ORDER BY r.created_at DESC LIMIT 200';
+    const [rows] = await db.query(sql, params);
     res.json(rows.map(r => ({
       id: r.id, requestNumber: r.request_number, requestDate: r.request_date,
       username: r.username, notes: r.notes, status: r.status,
       supplyMode: r.supply_mode, totalItems: r.total_items,
-      approvedBy: r.approved_by, approvedAt: r.approved_at, poId: r.po_id
+      approvedBy: r.approved_by, approvedAt: r.approved_at, poId: r.po_id,
+      brandId: r.brand_id || '', brand_id: r.brand_id || '', brandName: r.brand_name || '',
+      branchId: r.branch_id || '', branchName: r.branch_name || ''
     })));
   } catch (e) { res.json([]); }
 });

@@ -2372,6 +2372,31 @@ async function runMigrations() {
       }
     } catch(e) { console.warn('[txn_types dedupe]', e.message); }
 
+    // Step 1b: FINAL cleanup — remove any aliased rows that didn't get
+    // merged in the first pass (because the canonical code didn't exist
+    // at the time of dedupe). Now that the seeds are about to run, we
+    // also handle the reverse case: delete the old row regardless of
+    // whether the canonical has been inserted yet (it will be inserted
+    // in step 2 below).
+    try {
+      const legacyToRemove = ['TRF', 'ceo', 'hr', 'maintenance', 'PURCHASE_REQUEST', 'ASSET_REQUEST'];
+      for (const legacyCode of legacyToRemove) {
+        const [row] = await db.query('SELECT id FROM transaction_types WHERE code = ? LIMIT 1', [legacyCode]);
+        if (!row.length) continue;
+        // Re-point any workflow links to the canonical first
+        const canonMap = { TRF: 'TRF-EMP', ceo: 'DECISION', hr: 'HIR', maintenance: 'MNT', PURCHASE_REQUEST: 'PUR', ASSET_REQUEST: 'AST' };
+        const canonCode = canonMap[legacyCode];
+        const [canonRow] = await db.query('SELECT id FROM transaction_types WHERE code = ? LIMIT 1', [canonCode]);
+        if (canonRow.length) {
+          try {
+            await db.query('UPDATE transactions SET transaction_type_id = ? WHERE transaction_type_id = ?', [canonRow[0].id, row[0].id]);
+            await db.query('UPDATE workflow_definitions SET transaction_type_id = ? WHERE transaction_type_id = ?', [canonRow[0].id, row[0].id]);
+          } catch(e) {}
+        }
+        try { await db.query('DELETE FROM transaction_types WHERE id = ?', [row[0].id]); } catch(e) {}
+      }
+    } catch(e) { console.warn('[txn_types final dedupe]', e.message); }
+
     // Step 2: insert or update each canonical type
     for (const [code, name, category, requires_payment, gl_template, icon, iconColor, sortOrder, desc] of types) {
       const id = 'TT-' + code;

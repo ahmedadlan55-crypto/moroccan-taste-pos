@@ -40,7 +40,16 @@ const erpSections = [
   'erpWfPositions','erpWfTypes','erpWfDefs','erpWfInbox',
   'erpHrDashboard','erpHrEmployees','erpHrDepartments','erpHrAttendance','erpHrLeave','erpHrPayroll','erpHrAdvances',
   'erpHrShifts','erpHrOvertime','erpHrExceptions',
-  'erpCashDash','erpCashBoxes','erpBankAccounts','erpCashReceipts','erpCashPayments','erpCashTransfers'
+  'erpCashDash','erpCashBoxes','erpBankAccounts','erpCashReceipts','erpCashPayments','erpCashTransfers',
+  // Warehouse Phase 1/2/3
+  'erpWhHierarchy','erpStockIssues','erpProductionOrders','erpExpiryAlerts','erpSlowMoving','erpTurnover',
+  'erpWasteEntries','erpBOM','erpItemCategories','erpCompanies','erpPriceLists','erpRoyaltyRuns','erpPosTerminals',
+  // Workflow
+  'erpWfDashboard','erpWfIncoming','erpWfOutgoing','erpWfOrgTree',
+  // Reports
+  'erpRptTrialBalance','erpRptPnL','erpRptBalanceSheet','erpRptCashFlow','erpRptProfitability',
+  'erpRptInventoryVal','erpRptSalesAnalytics','erpRptWasteAnalytics','erpRptRoyaltyRecon',
+  'erpGLLedgerReport'
 ];
 
 function erpNav(sectionId) {
@@ -136,6 +145,13 @@ function erpNav(sectionId) {
       case 'erpCashReceipts': cashLoadReceipts(); break;
       case 'erpCashPayments': cashLoadPayments(); break;
       case 'erpCashTransfers': cashLoadTransfers(); break;
+      // ═══ Warehouse Phase 1/2/3 ═══
+      case 'erpWhHierarchy':     if (typeof whhLoad === 'function') whhLoad(); break;
+      case 'erpStockIssues':     if (typeof siLoad === 'function') siLoad(); break;
+      case 'erpProductionOrders':if (typeof prdLoadInit === 'function') prdLoadInit(); break;
+      case 'erpExpiryAlerts':    if (typeof expLoad === 'function') expLoad(); break;
+      case 'erpSlowMoving':      if (typeof slowLoad === 'function') slowLoad(); break;
+      case 'erpTurnover':        if (typeof turnLoad === 'function') turnLoad(); break;
     }
   }
   // Update sidebar active state

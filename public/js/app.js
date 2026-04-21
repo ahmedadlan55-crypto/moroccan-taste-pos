@@ -1,19 +1,27 @@
 // =========================================
 // 0. Lazy script loader — defer Chart.js / XLSX / QRCode / erp.js until needed
 // =========================================
+// Cache-bust our own /js/ files so browser always pulls the latest build.
+// (CDN libs are left alone since they use immutable versioned URLs.)
+window._appBuildId = window._appBuildId || ('b' + Date.now());  // per-tab cache buster
 window._loadedScripts = window._loadedScripts || {};
 window.loadScript = function(url) {
-  if (window._loadedScripts[url] === true) return Promise.resolve();
-  if (window._loadedScripts[url] && window._loadedScripts[url].then) return window._loadedScripts[url];
+  // Append ?v= build id only for same-origin /js/ files
+  var final = url;
+  if (/^\/js\//.test(url) && url.indexOf('?') < 0) {
+    final = url + '?v=' + window._appBuildId;
+  }
+  if (window._loadedScripts[final] === true) return Promise.resolve();
+  if (window._loadedScripts[final] && window._loadedScripts[final].then) return window._loadedScripts[final];
   var p = new Promise(function(resolve, reject) {
     var s = document.createElement('script');
-    s.src = url;
+    s.src = final;
     s.async = false; // preserve order if multiple loads happen
-    s.onload  = function() { window._loadedScripts[url] = true; resolve(); };
-    s.onerror = function() { delete window._loadedScripts[url]; reject(new Error('فشل تحميل ' + url)); };
+    s.onload  = function() { window._loadedScripts[final] = true; resolve(); };
+    s.onerror = function() { delete window._loadedScripts[final]; reject(new Error('فشل تحميل ' + url)); };
     document.head.appendChild(s);
   });
-  window._loadedScripts[url] = p;
+  window._loadedScripts[final] = p;
   return p;
 };
 window.ensureChartJs = function() {

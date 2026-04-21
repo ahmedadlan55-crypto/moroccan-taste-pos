@@ -116,7 +116,17 @@ app.use('/api/', function(req, res, next) {
 });
 
 // Static files (frontend) — BEFORE API routes so they're not auth-gated
-app.use(express.static(path.join(__dirname, 'public')));
+// Send no-cache for HTML + JS + CSS so users always get latest code
+// (CDN libs are not affected — they use their own versioned URLs)
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: function(res, filePath) {
+    if (/\.(html|js|css)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 
 // 8. Audit logging middleware — auto-logs all POST/PUT/DELETE operations
 const { auditMiddleware } = require('./lib/auditLogger');

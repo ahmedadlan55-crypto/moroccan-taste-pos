@@ -1727,6 +1727,238 @@
 }
 
 /* ──────────────────────────────────────────────────────────────
+ * 21c. ADVANCED FILTER BAR (Odoo/Notion-style filter UX)
+ * ────────────────────────────────────────────────────────────── */
+.wo-filterbar {
+  background: var(--wo-surface);
+  border: 1px solid var(--wo-border);
+  border-radius: var(--wo-radius-md);
+  padding: var(--wo-space-3) var(--wo-space-4);
+  margin-bottom: var(--wo-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--wo-space-3);
+  box-shadow: var(--wo-elev-1);
+}
+.wo-filterbar-row {
+  display: flex;
+  gap: var(--wo-space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.wo-filterbar-search {
+  flex: 1;
+  min-width: 200px;
+  position: relative;
+}
+.wo-filterbar-search input {
+  width: 100%;
+  padding: 10px 40px 10px 14px;
+  border: 1.5px solid var(--wo-border);
+  border-radius: var(--wo-radius);
+  font-size: var(--wo-text-body);
+  background: var(--wo-surface-2);
+  transition: border-color var(--wo-dur-1), background var(--wo-dur-1);
+  font-family: inherit;
+}
+.wo-filterbar-search input:focus-visible {
+  outline: none;
+  border-color: var(--wo-info-ring);
+  background: var(--wo-surface);
+  box-shadow: var(--wo-elev-focus);
+}
+.wo-filterbar-search .wo-search-icon {
+  position: absolute;
+  inset-inline-end: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--wo-on-surface-subtle);
+  pointer-events: none;
+}
+
+/* Quick-filter chip toggles */
+.wo-quickfilter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wo-space-1);
+  padding: 6px 12px;
+  border-radius: var(--wo-radius-full);
+  background: var(--wo-surface-2);
+  border: 1.5px solid var(--wo-border);
+  color: var(--wo-on-surface-muted);
+  font-size: var(--wo-text-caption);
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--wo-dur-2) var(--wo-ease);
+  white-space: nowrap;
+  font-family: inherit;
+}
+.wo-quickfilter:hover {
+  background: var(--wo-surface-3);
+  border-color: var(--wo-border-strong);
+}
+.wo-quickfilter.active {
+  background: var(--wo-info-bg);
+  color: var(--wo-info);
+  border-color: var(--wo-info-ring);
+}
+.wo-quickfilter.active.success-tint { background: var(--wo-success-bg); color: var(--wo-success); border-color: var(--wo-success-ring); }
+.wo-quickfilter.active.warning-tint { background: var(--wo-warning-bg); color: var(--wo-warning); border-color: var(--wo-warning-ring); }
+.wo-quickfilter.active.danger-tint  { background: var(--wo-danger-bg);  color: var(--wo-danger);  border-color: var(--wo-danger-ring); }
+.wo-quickfilter.active.purple-tint  { background: var(--wo-purple-bg);  color: var(--wo-purple);  border-color: var(--wo-purple-ring); }
+
+/* Active-filter tags row (removable chips) */
+.wo-filtertags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wo-space-2);
+  align-items: center;
+}
+.wo-filtertag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 10px;
+  border-radius: var(--wo-radius-full);
+  background: var(--wo-info-bg);
+  color: var(--wo-info);
+  font-size: var(--wo-text-caption);
+  font-weight: 700;
+}
+.wo-filtertag button {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: var(--wo-info);
+  color: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--wo-dur-1);
+}
+.wo-filtertag button:hover { background: #075985; }
+.wo-filtertags-empty {
+  font-size: var(--wo-text-caption);
+  color: var(--wo-on-surface-subtle);
+  font-style: italic;
+}
+.wo-results-count {
+  margin-inline-start: auto;
+  font-size: var(--wo-text-caption);
+  font-weight: 700;
+  color: var(--wo-on-surface-muted);
+  display: flex;
+  align-items: center;
+  gap: var(--wo-space-2);
+}
+
+/* Advanced filter panel (collapsible) */
+.wo-advanced-panel {
+  background: var(--wo-surface-1);
+  border: 1px solid var(--wo-border);
+  border-radius: var(--wo-radius);
+  padding: var(--wo-space-4);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--wo-space-3);
+  animation: wo-advpanel-in var(--wo-dur-3) var(--wo-ease-out);
+}
+@keyframes wo-advpanel-in {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 600px; }
+}
+.wo-advanced-panel.hidden { display: none; }
+
+/* Range pair (min/max) inputs side by side */
+.wo-range-pair {
+  display: grid;
+  grid-template-columns: 1fr 14px 1fr;
+  gap: 6px;
+  align-items: center;
+}
+.wo-range-pair .wo-input {
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.wo-range-pair-sep {
+  text-align: center;
+  color: var(--wo-on-surface-subtle);
+  font-size: 12px;
+}
+
+/* Saved views dropdown */
+.wo-saved-views {
+  position: relative;
+  display: inline-block;
+}
+.wo-saved-views-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  inset-inline-end: 0;
+  min-width: 240px;
+  background: var(--wo-surface);
+  border: 1px solid var(--wo-border);
+  border-radius: var(--wo-radius);
+  box-shadow: var(--wo-elev-3);
+  z-index: 100;
+  overflow: hidden;
+  animation: wo-advpanel-in var(--wo-dur-2) var(--wo-ease-out);
+}
+.wo-saved-views-menu.hidden { display: none; }
+.wo-saved-view-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: var(--wo-text-body);
+  color: var(--wo-on-surface);
+  border-bottom: 1px solid var(--wo-surface-3);
+  transition: background var(--wo-dur-1);
+  gap: 8px;
+}
+.wo-saved-view-item:hover { background: var(--wo-surface-2); }
+.wo-saved-view-item:last-child { border-bottom: none; }
+.wo-saved-view-item .delete-btn {
+  opacity: 0;
+  width: 24px; height: 24px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: var(--wo-danger);
+  cursor: pointer;
+  transition: opacity var(--wo-dur-1);
+}
+.wo-saved-view-item:hover .delete-btn { opacity: 1; }
+.wo-saved-view-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--wo-on-surface-subtle);
+  font-size: var(--wo-text-caption);
+  font-style: italic;
+}
+
+/* Group-by headers in table */
+.wo-group-header td {
+  background: linear-gradient(90deg, var(--wo-info-bg) 0%, var(--wo-surface-2) 100%) !important;
+  font-weight: 800;
+  color: var(--wo-info);
+  padding: 10px 14px !important;
+  border-bottom: 2px solid var(--wo-info-ring) !important;
+  font-size: var(--wo-text-body);
+}
+.wo-group-header .wo-group-count {
+  padding: 2px 8px;
+  border-radius: var(--wo-radius-full);
+  background: var(--wo-info);
+  color: #fff;
+  font-size: var(--wo-text-caption);
+  margin-inline-start: 8px;
+}
+
+/* ──────────────────────────────────────────────────────────────
  * 22. LEGACY CLASS SHIMS — keep old HTML working during migration
  *
  * Purpose: legacy `.btn` / `.form-control` / `.modal` markup that has

@@ -394,10 +394,104 @@
 
           <div class="wo-metric-strip" id="menuMetrics"></div>
 
-          <section class="wo-toolbar" role="search" aria-label="تصفية المنيو">
-            <div class="wo-field" style="grid-column:1/-1;">
-              <label class="wo-field-label" for="menuSearchQ"><i class="fas fa-magnifying-glass"></i>بحث</label>
-              <input type="text" id="menuSearchQ" class="wo-input" placeholder="ابحث بالاسم أو الكود أو التصنيف..." oninput="loadDashMenu()">
+          <!-- ═══ Advanced Filter Bar (Odoo/Notion-style) ═══ -->
+          <section class="wo-filterbar" role="search" aria-label="تصفية المنيو المتقدمة">
+            <!-- Row 1: search + toggle + views -->
+            <div class="wo-filterbar-row">
+              <div class="wo-filterbar-search">
+                <input type="text" id="menuSearchQ" placeholder="🔍 ابحث بالاسم، الكود، البراند، التصنيف..." oninput="menuApplyFilters()">
+                <i class="fas fa-magnifying-glass wo-search-icon"></i>
+              </div>
+              <button class="wo-btn wo-btn-secondary" onclick="menuToggleAdvanced()" id="menuAdvToggleBtn">
+                <i class="fas fa-sliders"></i><span>فلتر متقدم</span>
+              </button>
+              <div class="wo-saved-views">
+                <button class="wo-btn wo-btn-secondary" onclick="menuToggleSavedViews()">
+                  <i class="fas fa-bookmark"></i><span>الحفظ المحفوظ</span>
+                </button>
+                <div class="wo-saved-views-menu hidden" id="menuSavedViewsMenu"></div>
+              </div>
+              <button class="wo-btn wo-btn-ghost" onclick="menuResetFilters()" title="إزالة كل الفلاتر">
+                <i class="fas fa-xmark"></i><span>مسح</span>
+              </button>
+            </div>
+
+            <!-- Row 2: quick-filter chips -->
+            <div class="wo-filterbar-row">
+              <button class="wo-quickfilter success-tint" data-qf="active" onclick="menuToggleQuickFilter('active')"><i class="fas fa-circle-check"></i> نشط فقط</button>
+              <button class="wo-quickfilter danger-tint"  data-qf="inactive" onclick="menuToggleQuickFilter('inactive')"><i class="fas fa-circle-xmark"></i> متوقف</button>
+              <button class="wo-quickfilter warning-tint" data-qf="noRecipe" onclick="menuToggleQuickFilter('noRecipe')"><i class="fas fa-exclamation"></i> بدون مقادير</button>
+              <button class="wo-quickfilter success-tint" data-qf="highMargin" onclick="menuToggleQuickFilter('highMargin')"><i class="fas fa-arrow-trend-up"></i> ربح عالي (&gt;40%)</button>
+              <button class="wo-quickfilter warning-tint" data-qf="lowMargin" onclick="menuToggleQuickFilter('lowMargin')"><i class="fas fa-arrow-trend-down"></i> ربح منخفض (&lt;20%)</button>
+              <button class="wo-quickfilter danger-tint"  data-qf="loss" onclick="menuToggleQuickFilter('loss')"><i class="fas fa-triangle-exclamation"></i> خاسر</button>
+              <button class="wo-quickfilter purple-tint"  data-qf="variable" onclick="menuToggleQuickFilter('variable')"><i class="fas fa-arrows-rotate"></i> تكلفة متغيرة</button>
+              <button class="wo-quickfilter"              data-qf="fixed" onclick="menuToggleQuickFilter('fixed')"><i class="fas fa-lock"></i> تكلفة ثابتة</button>
+            </div>
+
+            <!-- Row 3: advanced panel (hidden by default) -->
+            <div class="wo-advanced-panel hidden" id="menuAdvPanel">
+              <div class="wo-field">
+                <label class="wo-field-label"><i class="fas fa-store"></i> البراند</label>
+                <select id="menuFilterBrand" class="wo-select" onchange="menuApplyFilters()">
+                  <option value="">كل البراندات</option>
+                </select>
+              </div>
+              <div class="wo-field">
+                <label class="wo-field-label"><i class="fas fa-tag"></i> التصنيف</label>
+                <select id="menuFilterCategory" class="wo-select" onchange="menuApplyFilters()">
+                  <option value="">كل التصنيفات</option>
+                </select>
+              </div>
+              <div class="wo-field">
+                <label class="wo-field-label"><i class="fas fa-coins"></i> سعر البيع (ر.س)</label>
+                <div class="wo-range-pair">
+                  <input type="number" id="menuFilterPriceMin" class="wo-input" placeholder="من" oninput="menuApplyFilters()">
+                  <span class="wo-range-pair-sep">—</span>
+                  <input type="number" id="menuFilterPriceMax" class="wo-input" placeholder="إلى" oninput="menuApplyFilters()">
+                </div>
+              </div>
+              <div class="wo-field">
+                <label class="wo-field-label"><i class="fas fa-percent"></i> هامش الربح %</label>
+                <div class="wo-range-pair">
+                  <input type="number" id="menuFilterMarginMin" class="wo-input" placeholder="من" oninput="menuApplyFilters()">
+                  <span class="wo-range-pair-sep">—</span>
+                  <input type="number" id="menuFilterMarginMax" class="wo-input" placeholder="إلى" oninput="menuApplyFilters()">
+                </div>
+              </div>
+              <div class="wo-field">
+                <label class="wo-field-label"><i class="fas fa-sort"></i> ترتيب حسب</label>
+                <div style="display:flex;gap:4px;">
+                  <select id="menuSortBy" class="wo-select" onchange="menuApplyFilters()" style="flex:1;">
+                    <option value="">افتراضي</option>
+                    <option value="name">الاسم</option>
+                    <option value="price">سعر البيع</option>
+                    <option value="cost">التكلفة</option>
+                    <option value="profit">الربح</option>
+                    <option value="margin">هامش الربح</option>
+                  </select>
+                  <button id="menuSortDir" class="wo-btn wo-btn-secondary" onclick="menuToggleSortDir()" style="padding:8px 12px;" title="عكس الاتجاه"><i class="fas fa-arrow-down-wide-short"></i></button>
+                </div>
+              </div>
+              <div class="wo-field">
+                <label class="wo-field-label"><i class="fas fa-layer-group"></i> تجميع</label>
+                <select id="menuGroupBy" class="wo-select" onchange="menuApplyFilters()">
+                  <option value="">بدون تجميع</option>
+                  <option value="category">حسب التصنيف</option>
+                  <option value="brand">حسب البراند</option>
+                  <option value="pricingMode">حسب نوع التسعير</option>
+                  <option value="profitBand">حسب شريحة الربح</option>
+                </select>
+              </div>
+              <div class="wo-field" style="grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+                <button class="wo-btn wo-btn-secondary" onclick="menuSaveCurrentView()"><i class="fas fa-bookmark"></i><span>حفظ هذا العرض</span></button>
+                <button class="wo-btn wo-btn-ghost" onclick="menuResetFilters()"><i class="fas fa-rotate-left"></i><span>استعادة الافتراضي</span></button>
+              </div>
+            </div>
+
+            <!-- Row 4: active filter tags + results count -->
+            <div class="wo-filterbar-row" style="padding-top:4px;border-top:1px dashed var(--wo-border);">
+              <div class="wo-filtertags" id="menuActiveFilters"><span class="wo-filtertags-empty">لا توجد فلاتر مفعّلة — كل المنتجات معروضة</span></div>
+              <div class="wo-results-count" id="menuResultsCount">—</div>
             </div>
           </section>
 

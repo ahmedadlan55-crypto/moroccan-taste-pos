@@ -2146,11 +2146,399 @@ function exportSelectedSales() {
   }).catch(function(e){ showToast(e.message, true); });
 }
 
-// Inventory Management
+// ═══════════════════════════════════════════════════════════════════
+// MENU ADVANCED FILTER SYSTEM (enterprise-grade)
+// ═══════════════════════════════════════════════════════════════════
+window._menuFilterState = window._menuFilterState || {
+  search: '',
+  quickFilters: [],       // ['active', 'noRecipe', 'highMargin', ...]
+  brand: '',
+  category: '',
+  priceMin: null, priceMax: null,
+  marginMin: null, marginMax: null,
+  sortBy: '',
+  sortDir: 'asc',         // 'asc' or 'desc'
+  groupBy: ''
+};
+window._menuEnriched = [];   // cached enriched menu data
+window._menuAllRecipes = [];
+
+// Save/load filter state in localStorage (key: mt_menu_filter_state)
+function _menuSaveState() {
+  try { localStorage.setItem('mt_menu_filter_state', JSON.stringify(window._menuFilterState)); } catch(e) {}
+}
+function _menuLoadState() {
+  try {
+    var s = localStorage.getItem('mt_menu_filter_state');
+    if (s) Object.assign(window._menuFilterState, JSON.parse(s));
+  } catch(e) {}
+}
+
+// Open/close advanced panel
+window.menuToggleAdvanced = function() {
+  var panel = q('#menuAdvPanel');
+  var btn = q('#menuAdvToggleBtn');
+  if (!panel) return;
+  panel.classList.toggle('hidden');
+  if (btn) btn.classList.toggle('wo-btn-primary', !panel.classList.contains('hidden'));
+};
+
+// Quick-filter toggles
+window.menuToggleQuickFilter = function(name) {
+  var s = window._menuFilterState;
+  var i = s.quickFilters.indexOf(name);
+  if (i >= 0) s.quickFilters.splice(i, 1);
+  else {
+    // Mutually-exclusive sets
+    var exclusives = {
+      active: 'inactive', inactive: 'active',
+      highMargin: ['lowMargin','loss'], lowMargin: ['highMargin','loss'], loss: ['highMargin','lowMargin'],
+      variable: 'fixed', fixed: 'variable'
+    };
+    var ex = exclusives[name];
+    if (ex) (Array.isArray(ex)?ex:[ex]).forEach(function(e){ var j=s.quickFilters.indexOf(e); if(j>=0) s.quickFilters.splice(j,1); });
+    s.quickFilters.push(name);
+  }
+  _menuSyncToUI();
+  menuApplyFilters();
+};
+
+// Sort direction toggle
+window.menuToggleSortDir = function() {
+  var s = window._menuFilterState;
+  s.sortDir = s.sortDir === 'asc' ? 'desc' : 'asc';
+  var btn = q('#menuSortDir i');
+  if (btn) btn.className = 'fas fa-arrow-' + (s.sortDir === 'asc' ? 'down-wide-short' : 'up-short-wide');
+  menuApplyFilters();
+};
+
+// Reset all filters
+window.menuResetFilters = function() {
+  window._menuFilterState = {
+    search: '', quickFilters: [], brand: '', category: '',
+    priceMin: null, priceMax: null, marginMin: null, marginMax: null,
+    sortBy: '', sortDir: 'asc', groupBy: ''
+  };
+  _menuSyncToUI();
+  menuApplyFilters();
+};
+
+// Sync filter state → UI inputs
+function _menuSyncToUI() {
+  var s = window._menuFilterState;
+  if (q('#menuSearchQ')) q('#menuSearchQ').value = s.search;
+  if (q('#menuFilterBrand')) q('#menuFilterBrand').value = s.brand;
+  if (q('#menuFilterCategory')) q('#menuFilterCategory').value = s.category;
+  if (q('#menuFilterPriceMin')) q('#menuFilterPriceMin').value = s.priceMin != null ? s.priceMin : '';
+  if (q('#menuFilterPriceMax')) q('#menuFilterPriceMax').value = s.priceMax != null ? s.priceMax : '';
+  if (q('#menuFilterMarginMin')) q('#menuFilterMarginMin').value = s.marginMin != null ? s.marginMin : '';
+  if (q('#menuFilterMarginMax')) q('#menuFilterMarginMax').value = s.marginMax != null ? s.marginMax : '';
+  if (q('#menuSortBy')) q('#menuSortBy').value = s.sortBy;
+  if (q('#menuGroupBy')) q('#menuGroupBy').value = s.groupBy;
+  // Quick-filter chip highlights
+  qs('.wo-quickfilter').forEach(function(el) {
+    var qf = el.getAttribute('data-qf');
+    el.classList.toggle('active', s.quickFilters.indexOf(qf) >= 0);
+  });
+}
+
+// Sync UI inputs → filter state
+function _menuReadFromUI() {
+  var s = window._menuFilterState;
+  s.search = (q('#menuSearchQ') ? q('#menuSearchQ').value : '') || '';
+  s.brand = (q('#menuFilterBrand') ? q('#menuFilterBrand').value : '') || '';
+  s.category = (q('#menuFilterCategory') ? q('#menuFilterCategory').value : '') || '';
+  s.priceMin = q('#menuFilterPriceMin') && q('#menuFilterPriceMin').value !== '' ? Number(q('#menuFilterPriceMin').value) : null;
+  s.priceMax = q('#menuFilterPriceMax') && q('#menuFilterPriceMax').value !== '' ? Number(q('#menuFilterPriceMax').value) : null;
+  s.marginMin = q('#menuFilterMarginMin') && q('#menuFilterMarginMin').value !== '' ? Number(q('#menuFilterMarginMin').value) : null;
+  s.marginMax = q('#menuFilterMarginMax') && q('#menuFilterMarginMax').value !== '' ? Number(q('#menuFilterMarginMax').value) : null;
+  s.sortBy = (q('#menuSortBy') ? q('#menuSortBy').value : '') || '';
+  s.groupBy = (q('#menuGroupBy') ? q('#menuGroupBy').value : '') || '';
+}
+
+// Apply all filters to the enriched cache and render
+window.menuApplyFilters = function() {
+  _menuReadFromUI();
+  _menuSaveState();
+  _menuRenderFilteredMenu();
+};
+
+// Filter + sort + group + render
+function _menuRenderFilteredMenu() {
+  var s = window._menuFilterState;
+  var enriched = window._menuEnriched || [];
+  var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(v){return String(v||'');};
+
+  // Apply text search (normalized: name/id/category/brand)
+  var search = (s.search||'').toLowerCase().trim();
+  var filtered = enriched.filter(function(row) {
+    var i = row.item;
+    if (search) {
+      var hay = ((i.name||'')+' '+(i.id||'')+' '+(i.category||'')+' '+(i.brandName||'')).toLowerCase();
+      if (hay.indexOf(search) < 0) return false;
+    }
+    if (s.brand && i.brandId !== s.brand) return false;
+    if (s.category && i.category !== s.category) return false;
+    if (s.priceMin != null && row.sellPrice < s.priceMin) return false;
+    if (s.priceMax != null && row.sellPrice > s.priceMax) return false;
+    if (s.marginMin != null && row.margin < s.marginMin) return false;
+    if (s.marginMax != null && row.margin > s.marginMax) return false;
+    // Quick filters
+    var qf = s.quickFilters;
+    if (qf.indexOf('active') >= 0 && !i.active) return false;
+    if (qf.indexOf('inactive') >= 0 && i.active) return false;
+    if (qf.indexOf('noRecipe') >= 0 && row.ings.length > 0) return false;
+    if (qf.indexOf('highMargin') >= 0 && row.margin <= 40) return false;
+    if (qf.indexOf('lowMargin') >= 0 && (row.margin >= 20 || row.margin < 0)) return false;
+    if (qf.indexOf('loss') >= 0 && row.profit >= 0) return false;
+    if (qf.indexOf('variable') >= 0 && i.pricingMode !== 'variable') return false;
+    if (qf.indexOf('fixed') >= 0 && i.pricingMode === 'variable') return false;
+    return true;
+  });
+
+  // Sort
+  if (s.sortBy) {
+    var dir = s.sortDir === 'desc' ? -1 : 1;
+    filtered.sort(function(a, b) {
+      var av, bv;
+      if (s.sortBy === 'name') { av = (a.item.name||''); bv = (b.item.name||''); return dir * av.localeCompare(bv, 'ar'); }
+      if (s.sortBy === 'price') { av = a.sellPrice; bv = b.sellPrice; }
+      else if (s.sortBy === 'cost') { av = a.recipeCost; bv = b.recipeCost; }
+      else if (s.sortBy === 'profit') { av = a.profit; bv = b.profit; }
+      else if (s.sortBy === 'margin') { av = a.margin; bv = b.margin; }
+      else return 0;
+      return dir * (av - bv);
+    });
+  }
+
+  // Group
+  var groups = null;
+  if (s.groupBy) {
+    groups = {};
+    filtered.forEach(function(row) {
+      var key = '';
+      if (s.groupBy === 'category') key = row.item.category || 'بدون تصنيف';
+      else if (s.groupBy === 'brand') key = row.item.brandName || 'بدون براند';
+      else if (s.groupBy === 'pricingMode') key = row.item.pricingMode === 'variable' ? 'تكلفة متغيرة' : 'تكلفة ثابتة';
+      else if (s.groupBy === 'profitBand') {
+        if (row.profit < 0) key = 'خاسر';
+        else if (row.margin > 40) key = 'ربح عالي (>40%)';
+        else if (row.margin > 20) key = 'ربح متوسط (20-40%)';
+        else key = 'ربح منخفض (<20%)';
+      }
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(row);
+    });
+  }
+
+  // Render active filter tags
+  _menuRenderActiveFilterTags();
+
+  // Render results count
+  var countEl = q('#menuResultsCount');
+  if (countEl) countEl.innerHTML = '<i class="fas fa-list-ul"></i> <b>' + filtered.length + '</b> من <b>' + enriched.length + '</b> منتج';
+
+  // Build table HTML
+  var h = '';
+  var renderRow = function(row) {
+    var i = row.item;
+    var profitClass = row.profit < 0 ? 'loss' : (row.margin > 40 ? 'high' : (row.margin > 20 ? 'medium' : 'low'));
+    var priceBadge = (i.pricingMode === 'variable')
+      ? '<span class="wo-chip info flat"><i class="fas fa-arrows-rotate"></i> تكلفة متغيرة</span>'
+      : '<span class="wo-chip warning flat"><i class="fas fa-lock"></i> تكلفة ثابتة</span>';
+    var costDisplay = row.ings.length
+      ? '<span class="wo-money neg">' + formatVal(row.recipeCost) + '</span> <span class="wo-text-subtle wo-text-caption">· ' + row.ings.length + ' مكوّن</span>'
+      : '<span class="wo-text-subtle wo-text-caption" style="font-style:italic;">لا توجد مقادير</span>';
+    var statusChip = i.active ? '<span class="wo-chip success">نشط</span>' : '<span class="wo-chip neutral">متوقف</span>';
+    var brandChip = i.brandName
+      ? '<span class="wo-chip purple"><i class="fas fa-store"></i> '+esc(i.brandName)+'</span>'
+      : '<span class="wo-chip neutral flat" style="opacity:.6;"><i class="fas fa-minus"></i> بدون</span>';
+    return '<tr>'+
+      '<td data-label="الكود"><code>'+esc(i.id||'')+'</code></td>'+
+      '<td data-label="المنتج"><div style="display:flex;flex-direction:column;gap:4px;"><b>'+esc(i.name||'')+'</b>'+priceBadge+'</div></td>'+
+      '<td data-label="البراند">'+brandChip+'</td>'+
+      '<td data-label="التصنيف"><span class="wo-chip neutral flat">'+esc(i.category||'—')+'</span></td>'+
+      '<td data-label="سعر البيع" class="num strong">'+formatVal(row.sellPrice)+'</td>'+
+      '<td data-label="تكلفة المقادير" class="num">'+costDisplay+'</td>'+
+      '<td data-label="الربح" class="num"><span class="wo-money '+(row.profit>=0?'pos':'neg')+'">'+formatVal(row.profit)+'</span></td>'+
+      '<td data-label="هامش الربح"><span class="wo-profit-bar '+profitClass+'">'+row.margin.toFixed(1)+'%</span></td>'+
+      '<td data-label="الحالة">'+statusChip+'</td>'+
+      '<td data-label="الإجراءات"><div class="wo-actions">'+
+        '<button class="wo-icon-btn info" onclick="openRecipeModal(\''+i.id+'\',\''+String(i.name||'').replace(/\'/g,"\\\'")+'\')" title="المقادير" aria-label="مقادير"><i class="fas fa-blender"></i></button>'+
+        '<button class="wo-icon-btn" onclick="openInvM(\'edit\',\''+i.id+'\')" title="تعديل" aria-label="تعديل"><i class="fas fa-pen"></i></button>'+
+        '<button class="wo-icon-btn danger" onclick="delInv(\''+i.id+'\')" title="حذف" aria-label="حذف"><i class="fas fa-trash"></i></button>'+
+      '</div></td>'+
+    '</tr>';
+  };
+
+  if (!filtered.length) {
+    h = '<tr><td colspan="10">' +
+      (typeof _woEmpty === 'function'
+        ? _woEmpty('fa-filter-circle-xmark', 'لا توجد نتائج مطابقة',
+            (enriched.length ? 'جرّب تعديل الفلاتر أو امسحها بالكامل.' : 'ابدأ بإضافة أول منتج في المنيو.'),
+            enriched.length
+              ? '<button class="wo-btn wo-btn-secondary" onclick="menuResetFilters()"><i class="fas fa-rotate-left"></i><span>مسح الفلاتر</span></button>'
+              : '<button class="wo-btn wo-btn-primary" onclick="openInvM(\'add\')"><i class="fas fa-plus"></i><span>إضافة منتج</span></button>')
+        : '<div style="text-align:center;padding:30px;">لا توجد نتائج</div>') +
+    '</td></tr>';
+  } else if (groups) {
+    Object.keys(groups).sort(function(a,b){return a.localeCompare(b,'ar');}).forEach(function(gKey) {
+      var grows = groups[gKey];
+      var gTotalPrice = grows.reduce(function(s,r){return s + r.sellPrice;}, 0);
+      var gTotalProfit = grows.reduce(function(s,r){return s + r.profit;}, 0);
+      h += '<tr class="wo-group-header"><td colspan="10"><i class="fas fa-folder-open"></i> ' + esc(gKey) + '<span class="wo-group-count">' + grows.length + '</span>' +
+        '<span class="wo-text-subtle wo-text-caption" style="margin-inline-start:12px;">إجمالي سعر البيع: <b>' + formatVal(gTotalPrice) + '</b> · صافي الربح: <b>' + formatVal(gTotalProfit) + '</b></span>' +
+        '</td></tr>';
+      grows.forEach(function(row) { h += renderRow(row); });
+    });
+  } else {
+    filtered.forEach(renderRow);
+  }
+
+  if (q("#tbMenu")) q("#tbMenu").innerHTML = h;
+  if (q("#tbInv")) q("#tbInv").innerHTML = h;
+}
+
+// Active filter tags (removable chips)
+function _menuRenderActiveFilterTags() {
+  var s = window._menuFilterState;
+  var tags = [];
+  var esc = function(v){return String(v||'').replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
+  var makeTag = function(label, onRemove) {
+    return '<span class="wo-filtertag">' + label + '<button onclick="' + onRemove + '" title="إزالة"><i class="fas fa-xmark"></i></button></span>';
+  };
+
+  if (s.search) tags.push(makeTag('🔍 ' + esc(s.search), "q('#menuSearchQ').value='';menuApplyFilters()"));
+  if (s.brand) {
+    var b = q('#menuFilterBrand');
+    var bn = b ? (b.options[b.selectedIndex]||{}).text : s.brand;
+    tags.push(makeTag('🏪 ' + esc(bn), "q('#menuFilterBrand').value='';menuApplyFilters()"));
+  }
+  if (s.category) tags.push(makeTag('🏷️ ' + esc(s.category), "q('#menuFilterCategory').value='';menuApplyFilters()"));
+  if (s.priceMin != null) tags.push(makeTag('سعر ≥ ' + s.priceMin, "q('#menuFilterPriceMin').value='';menuApplyFilters()"));
+  if (s.priceMax != null) tags.push(makeTag('سعر ≤ ' + s.priceMax, "q('#menuFilterPriceMax').value='';menuApplyFilters()"));
+  if (s.marginMin != null) tags.push(makeTag('ربح ≥ ' + s.marginMin + '%', "q('#menuFilterMarginMin').value='';menuApplyFilters()"));
+  if (s.marginMax != null) tags.push(makeTag('ربح ≤ ' + s.marginMax + '%', "q('#menuFilterMarginMax').value='';menuApplyFilters()"));
+
+  var qfLabels = {
+    active:'نشط فقط', inactive:'متوقف', noRecipe:'بدون مقادير',
+    highMargin:'ربح عالي', lowMargin:'ربح منخفض', loss:'خاسر',
+    variable:'تكلفة متغيرة', fixed:'تكلفة ثابتة'
+  };
+  s.quickFilters.forEach(function(qf) {
+    tags.push(makeTag(qfLabels[qf] || qf, "menuToggleQuickFilter('" + qf + "')"));
+  });
+
+  if (s.sortBy) {
+    var sbLabels = { name:'الاسم', price:'السعر', cost:'التكلفة', profit:'الربح', margin:'الهامش' };
+    tags.push(makeTag('↕ ' + (sbLabels[s.sortBy] || s.sortBy) + (s.sortDir==='desc'?' ↓':' ↑'), "q('#menuSortBy').value='';menuApplyFilters()"));
+  }
+  if (s.groupBy) {
+    var gbLabels = { category:'التصنيف', brand:'البراند', pricingMode:'نوع التسعير', profitBand:'شريحة الربح' };
+    tags.push(makeTag('📂 تجميع: ' + (gbLabels[s.groupBy] || s.groupBy), "q('#menuGroupBy').value='';menuApplyFilters()"));
+  }
+
+  var el = q('#menuActiveFilters');
+  if (el) el.innerHTML = tags.length ? tags.join('') : '<span class="wo-filtertags-empty">لا توجد فلاتر مفعّلة — كل المنتجات معروضة</span>';
+}
+
+// Populate brand + category dropdowns from actual data
+function _menuPopulateFilterDropdowns() {
+  var enriched = window._menuEnriched || [];
+  var brands = {}, cats = {};
+  enriched.forEach(function(r) {
+    if (r.item.brandId) brands[r.item.brandId] = r.item.brandName || r.item.brandId;
+    if (r.item.category) cats[r.item.category] = true;
+  });
+  var brSel = q('#menuFilterBrand');
+  if (brSel) {
+    var current = brSel.value;
+    brSel.innerHTML = '<option value="">كل البراندات</option>' +
+      Object.keys(brands).map(function(id){return '<option value="'+id+'">'+brands[id]+'</option>';}).join('');
+    if (current) brSel.value = current;
+  }
+  var catSel = q('#menuFilterCategory');
+  if (catSel) {
+    var currentC = catSel.value;
+    catSel.innerHTML = '<option value="">كل التصنيفات</option>' +
+      Object.keys(cats).sort().map(function(c){return '<option value="'+c+'">'+c+'</option>';}).join('');
+    if (currentC) catSel.value = currentC;
+  }
+}
+
+// Saved views (localStorage key: mt_menu_saved_views)
+window.menuToggleSavedViews = function() {
+  var menu = q('#menuSavedViewsMenu');
+  if (!menu) return;
+  if (menu.classList.contains('hidden')) {
+    _menuRenderSavedViews();
+    menu.classList.remove('hidden');
+    setTimeout(function() {
+      document.addEventListener('click', _menuSavedViewsOutside);
+    }, 100);
+  } else {
+    menu.classList.add('hidden');
+    document.removeEventListener('click', _menuSavedViewsOutside);
+  }
+};
+function _menuSavedViewsOutside(e) {
+  var menu = q('#menuSavedViewsMenu');
+  if (menu && !menu.contains(e.target) && !e.target.closest('.wo-saved-views button')) {
+    menu.classList.add('hidden');
+    document.removeEventListener('click', _menuSavedViewsOutside);
+  }
+}
+function _menuRenderSavedViews() {
+  var menu = q('#menuSavedViewsMenu');
+  if (!menu) return;
+  var views = [];
+  try { views = JSON.parse(localStorage.getItem('mt_menu_saved_views') || '[]'); } catch(e) {}
+  if (!views.length) {
+    menu.innerHTML = '<div class="wo-saved-view-empty">لا توجد عروض محفوظة<br><span style="font-size:10px;">استخدم زر "حفظ هذا العرض" في الفلتر المتقدم</span></div>';
+    return;
+  }
+  menu.innerHTML = views.map(function(v, idx) {
+    return '<div class="wo-saved-view-item" onclick="menuLoadSavedView(' + idx + ')"><span><i class="fas fa-bookmark" style="color:#8b5cf6;margin-inline-end:6px;"></i>' + v.name + '</span><button class="delete-btn" onclick="event.stopPropagation();menuDeleteSavedView(' + idx + ')"><i class="fas fa-trash"></i></button></div>';
+  }).join('');
+}
+window.menuSaveCurrentView = function() {
+  WoModal.prompt({
+    icon: 'fa-bookmark', iconColor: 'purple',
+    title: 'حفظ العرض الحالي',
+    message: 'سيتم حفظ الفلاتر الحالية باسم مخصص لاستدعائها سريعاً لاحقاً.',
+    placeholder: 'مثلاً: منتجات الصيف الرابحة',
+    validate: function(v) { return v && v.trim().length ? null : 'الاسم مطلوب'; }
+  }).then(function(name) {
+    if (!name) return;
+    var views = [];
+    try { views = JSON.parse(localStorage.getItem('mt_menu_saved_views') || '[]'); } catch(e) {}
+    views.push({ name: name.trim(), state: JSON.parse(JSON.stringify(window._menuFilterState)) });
+    localStorage.setItem('mt_menu_saved_views', JSON.stringify(views));
+    showToast('تم حفظ العرض');
+  });
+};
+window.menuLoadSavedView = function(idx) {
+  var views = [];
+  try { views = JSON.parse(localStorage.getItem('mt_menu_saved_views') || '[]'); } catch(e) {}
+  if (!views[idx]) return;
+  window._menuFilterState = Object.assign({}, views[idx].state);
+  _menuSyncToUI();
+  menuApplyFilters();
+  var menu = q('#menuSavedViewsMenu'); if (menu) menu.classList.add('hidden');
+  showToast('تم تحميل العرض: ' + views[idx].name);
+};
+window.menuDeleteSavedView = function(idx) {
+  var views = [];
+  try { views = JSON.parse(localStorage.getItem('mt_menu_saved_views') || '[]'); } catch(e) {}
+  views.splice(idx, 1);
+  localStorage.setItem('mt_menu_saved_views', JSON.stringify(views));
+  _menuRenderSavedViews();
+};
+
 // ─── Menu section ───
 function loadDashMenu() {
   loader();
-  var search = (q("#menuSearchQ") ? q("#menuSearchQ").value : '').toLowerCase();
+  _menuLoadState();
   api.withSuccessHandler(function(m) {
     state.menu = m || [];
     api.withSuccessHandler(function(recipes) {
@@ -2158,17 +2546,14 @@ function loadDashMenu() {
         loader(false);
         cachedRawItems = raws || [];
         var allRecipes = recipes || [];
+        window._menuAllRecipes = allRecipes;
         var list = state.menu;
-        if (search) list = list.filter(function(i){ return (i.name||'').toLowerCase().includes(search) || (i.id||'').toLowerCase().includes(search) || (i.category||'').toLowerCase().includes(search); });
-        // Compute aggregate metrics
+
+        // Build the enriched cache ONCE per data-load (filters operate on this)
         var totalItems = list.length;
         var activeItems = list.filter(function(i){return i.active;}).length;
-        var totalSellValue = 0;
-        var totalCostValue = 0;
-        var totalMargin = 0;
-        var marginCount = 0;
-        var lossCount = 0;
-        var enriched = list.map(function(i) {
+        var totalSellValue = 0, totalCostValue = 0, totalMargin = 0, marginCount = 0, lossCount = 0;
+        window._menuEnriched = list.map(function(i) {
           var sellPrice = Number(i.price)||0;
           var netSell = sellPrice / 1.15;
           var ings = allRecipes.filter(function(r){ return String(r.menuId).trim()===String(i.id).trim(); });
@@ -2187,7 +2572,7 @@ function loadDashMenu() {
         });
         var avgMargin = marginCount ? (totalMargin / marginCount) : 0;
 
-        // Update metric strip (only if target exists — new UI)
+        // Metric strip — based on ALL data (not filtered)
         var metricsEl = document.getElementById('menuMetrics');
         if (metricsEl && typeof _woMetric === 'function') {
           metricsEl.innerHTML =
@@ -2199,54 +2584,10 @@ function loadDashMenu() {
               lossCount?'danger':'purple');
         }
 
-        var h = '';
-        var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
-
-        if (!list.length) {
-          h = '<tr><td colspan="10">' +
-            (typeof _woEmpty === 'function'
-              ? _woEmpty('fa-utensils', 'لا توجد منتجات', 'ابدأ بإضافة أول منتج في المنيو، أو استورد قائمة من ملف Excel.',
-                '<button class="wo-btn wo-btn-primary" onclick="openInvM(\'add\')"><i class="fas fa-plus"></i><span>إضافة منتج</span></button>')
-              : '<div style="text-align:center;padding:30px;">لا توجد منتجات</div>') +
-          '</td></tr>';
-        } else {
-          enriched.forEach(function(row) {
-            try {
-              var i = row.item;
-              var profitClass = row.profit < 0 ? 'loss' : (row.margin > 40 ? 'high' : (row.margin > 20 ? 'medium' : 'low'));
-              var priceBadge = (i.pricingMode === 'variable')
-                ? '<span class="wo-chip info flat"><i class="fas fa-arrows-rotate"></i> تكلفة متغيرة</span>'
-                : '<span class="wo-chip warning flat"><i class="fas fa-lock"></i> تكلفة ثابتة</span>';
-              var costDisplay = row.ings.length
-                ? '<span class="wo-money neg">' + formatVal(row.recipeCost) + '</span> <span class="wo-text-subtle wo-text-caption">· ' + row.ings.length + ' مكوّن</span>'
-                : '<span class="wo-text-subtle wo-text-caption" style="font-style:italic;">لا توجد مقادير</span>';
-              var statusChip = i.active
-                ? '<span class="wo-chip success">نشط</span>'
-                : '<span class="wo-chip neutral">متوقف</span>';
-              var brandChip = i.brandName
-                ? '<span class="wo-chip purple"><i class="fas fa-store"></i> '+esc(i.brandName)+'</span>'
-                : '<span class="wo-chip neutral flat" style="opacity:.6;"><i class="fas fa-minus"></i> بدون</span>';
-              h += '<tr>'+
-                '<td data-label="الكود"><code>'+esc(i.id||'')+'</code></td>'+
-                '<td data-label="المنتج"><div style="display:flex;flex-direction:column;gap:4px;"><b>'+esc(i.name||'')+'</b>'+priceBadge+'</div></td>'+
-                '<td data-label="البراند">'+brandChip+'</td>'+
-                '<td data-label="التصنيف"><span class="wo-chip neutral flat">'+esc(i.category||'—')+'</span></td>'+
-                '<td data-label="سعر البيع" class="num strong">'+formatVal(row.sellPrice)+'</td>'+
-                '<td data-label="تكلفة المقادير" class="num">'+costDisplay+'</td>'+
-                '<td data-label="الربح" class="num"><span class="wo-money '+(row.profit>=0?'pos':'neg')+'">'+formatVal(row.profit)+'</span></td>'+
-                '<td data-label="هامش الربح"><span class="wo-profit-bar '+profitClass+'">'+row.margin.toFixed(1)+'%</span></td>'+
-                '<td data-label="الحالة">'+statusChip+'</td>'+
-                '<td data-label="الإجراءات"><div class="wo-actions">'+
-                  '<button class="wo-icon-btn info" onclick="openRecipeModal(\''+i.id+'\',\''+String(i.name||'').replace(/\'/g,"\\\'")+'\')" title="المقادير" aria-label="مقادير"><i class="fas fa-blender"></i></button>'+
-                  '<button class="wo-icon-btn" onclick="openInvM(\'edit\',\''+i.id+'\')" title="تعديل" aria-label="تعديل"><i class="fas fa-pen"></i></button>'+
-                  '<button class="wo-icon-btn danger" onclick="delInv(\''+i.id+'\')" title="حذف" aria-label="حذف"><i class="fas fa-trash"></i></button>'+
-                '</div></td>'+
-              '</tr>';
-            } catch(ex) { console.error(ex); }
-          });
-        }
-        if (q("#tbMenu")) q("#tbMenu").innerHTML = h;
-        if (q("#tbInv")) q("#tbInv").innerHTML = h;
+        // Populate filter dropdowns from data + sync UI + run filters
+        _menuPopulateFilterDropdowns();
+        _menuSyncToUI();
+        _menuRenderFilteredMenu();
       }).getInvItems();
     }).getRecipes();
   }).getMenuAll();

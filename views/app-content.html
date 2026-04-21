@@ -1106,6 +1106,16 @@
     <button class="btn btn-primary" onclick="erpOpenSupplierModal()"><i class="fas fa-plus"></i> إضافة مورد</button>
   </div>
   <div id="erpSupDebugInfo" style="display:none;background:#fef3c7;padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;border:1px solid #fbbf24;direction:ltr;text-align:left;"></div>
+  <!-- Quick-filter chips -->
+  <div class="wo-filterbar-row" style="padding:0 4px 10px;margin-bottom:6px;">
+    <button class="wo-quickfilter" data-sup-qf="all"       onclick="erpSupQuickFilter('all')"><i class="fas fa-list"></i>الكل</button>
+    <button class="wo-quickfilter" data-sup-qf="active"    onclick="erpSupQuickFilter('active')"><i class="fas fa-circle-check"></i>النشطون</button>
+    <button class="wo-quickfilter" data-sup-qf="inactive"  onclick="erpSupQuickFilter('inactive')"><i class="fas fa-ban"></i>الموقوفون</button>
+    <button class="wo-quickfilter" data-sup-qf="nobrand"   onclick="erpSupQuickFilter('nobrand')"><i class="fas fa-store-slash"></i>بدون براند</button>
+    <button class="wo-quickfilter" data-sup-qf="withBalance" onclick="erpSupQuickFilter('withBalance')"><i class="fas fa-hand-holding-usd"></i>لديه رصيد مستحق</button>
+    <button class="wo-quickfilter" onclick="erpSupResetFilters()" style="border-style:dashed;"><i class="fas fa-xmark"></i>مسح</button>
+    <span id="erpSupResultsCount" class="wo-results-count" style="margin-inline-start:auto;"></span>
+  </div>
   <div class="erp-filters">
     <div class="filter-search">
       <i class="fas fa-search"></i>
@@ -1229,6 +1239,19 @@
       <div class="po-sum-card highlight-approved"><span class="po-sum-label">معتمد</span><span class="po-sum-val" id="erpPOApprovedCount">0</span></div>
       <div class="po-sum-card highlight-received"><span class="po-sum-label">مستلم</span><span class="po-sum-val" id="erpPOReceivedCount">0</span></div>
       <div class="po-sum-card"><span class="po-sum-label">إجمالي القيمة مع الضريبة</span><span class="po-sum-val" id="erpPOTotalValue">0.00</span></div>
+    </div>
+    <!-- Quick-filter chips (Odoo-style presets) -->
+    <div class="wo-filterbar-row" style="padding:0 4px 10px;margin-bottom:6px;">
+      <button class="wo-quickfilter" data-po-qf="all"       onclick="erpPOQuickFilter('all')"><i class="fas fa-list"></i>الكل</button>
+      <button class="wo-quickfilter" data-po-qf="draft"     onclick="erpPOQuickFilter('draft')"><i class="fas fa-file-lines"></i>مسودة</button>
+      <button class="wo-quickfilter" data-po-qf="approved"  onclick="erpPOQuickFilter('approved')"><i class="fas fa-check"></i>معتمد</button>
+      <button class="wo-quickfilter" data-po-qf="received"  onclick="erpPOQuickFilter('received')"><i class="fas fa-truck"></i>مستلم</button>
+      <button class="wo-quickfilter" data-po-qf="today"     onclick="erpPOQuickFilter('today')"><i class="fas fa-calendar-day"></i>اليوم</button>
+      <button class="wo-quickfilter" data-po-qf="week"      onclick="erpPOQuickFilter('week')"><i class="fas fa-calendar-week"></i>آخر 7 أيام</button>
+      <button class="wo-quickfilter" data-po-qf="month"     onclick="erpPOQuickFilter('month')"><i class="fas fa-calendar"></i>هذا الشهر</button>
+      <button class="wo-quickfilter" data-po-qf="large"     onclick="erpPOQuickFilter('large')"><i class="fas fa-arrow-up-wide-short"></i>كبيرة القيمة (&gt;10k)</button>
+      <button class="wo-quickfilter" onclick="erpPOResetFilters()" style="border-style:dashed;"><i class="fas fa-xmark"></i>مسح</button>
+      <span id="erpPOResultsCount" class="wo-results-count" style="margin-inline-start:auto;"></span>
     </div>
     <div class="erp-filters">
       <div class="filter-search"><i class="fas fa-search"></i>
@@ -1921,6 +1944,18 @@
   </header>
 
   <div class="wo-metric-strip" id="prdMetrics"></div>
+
+  <!-- Quick-filter chips (Odoo-style presets) -->
+  <div class="wo-filterbar-row" style="padding:0 4px 10px;">
+    <button class="wo-quickfilter" data-prd-qf="all"        onclick="prdApplyQuickFilter('all')"><i class="fas fa-list"></i>الكل</button>
+    <button class="wo-quickfilter" data-prd-qf="planned"    onclick="prdApplyQuickFilter('planned')"><i class="fas fa-clipboard-list"></i>مخطط</button>
+    <button class="wo-quickfilter" data-prd-qf="active"     onclick="prdApplyQuickFilter('active')"><i class="fas fa-gears"></i>قيد التنفيذ</button>
+    <button class="wo-quickfilter" data-prd-qf="completed"  onclick="prdApplyQuickFilter('completed')"><i class="fas fa-circle-check"></i>مكتمل</button>
+    <button class="wo-quickfilter" data-prd-qf="week"       onclick="prdApplyQuickFilter('week')"><i class="fas fa-calendar-week"></i>هذا الأسبوع</button>
+    <button class="wo-quickfilter" data-prd-qf="month"      onclick="prdApplyQuickFilter('month')"><i class="fas fa-calendar"></i>هذا الشهر</button>
+    <button class="wo-quickfilter" onclick="prdResetFilters()" style="border-style:dashed;"><i class="fas fa-xmark"></i>مسح الفلاتر</button>
+    <span id="prdResultsCount" class="wo-results-count" style="margin-inline-start:auto;"></span>
+  </div>
 
   <section class="wo-toolbar" role="search" aria-label="تصفية أوامر الإنتاج">
     <div class="wo-field">

@@ -322,12 +322,42 @@ function erpFilterSuppliersTable() {
   const q = (document.getElementById('erpSupSearch')?.value || '').toLowerCase();
   const bId = (document.getElementById('erpSupFBrand')?.value || '');
   const st  = (document.getElementById('erpSupFStatus')?.value || '');
+  const noBrandChip = document.querySelector('[data-sup-qf="nobrand"].active');
+  const balChip     = document.querySelector('[data-sup-qf="withBalance"].active');
   let filtered = _erpSuppliers;
   if (q)   filtered = filtered.filter(s => (s.name||'').toLowerCase().includes(q) || (s.phone||'').includes(q) || (s.vatNumber||'').includes(q));
   if (bId) filtered = filtered.filter(s => String(s.brandId||'') === String(bId));
   if (st === 'active')   filtered = filtered.filter(s => s.isActive !== false);
   if (st === 'inactive') filtered = filtered.filter(s => s.isActive === false);
+  if (noBrandChip) filtered = filtered.filter(s => !s.brandId);
+  if (balChip)     filtered = filtered.filter(s => Number(s.balance||0) > 0);
+  var rc = document.getElementById('erpSupResultsCount');
+  if (rc) {
+    var totalBal = filtered.reduce(function(sum,x){return sum + Number(x.balance||0);},0);
+    rc.innerHTML = '<i class="fas fa-circle-info"></i> <b>'+filtered.length+'</b> مورد · رصيد إجمالي: <b>'+totalBal.toLocaleString('en',{minimumFractionDigits:2})+'</b>';
+  }
   erpRenderSuppliersTable(filtered);
+}
+
+function _erpSupSetQuickChip(k) {
+  document.querySelectorAll('[data-sup-qf]').forEach(function(el){
+    el.classList.toggle('active', el.getAttribute('data-sup-qf') === k);
+  });
+}
+function erpSupQuickFilter(k) {
+  _erpSupSetQuickChip(k);
+  var st = document.getElementById('erpSupFStatus');
+  if (st) st.value = '';
+  if (k === 'active')   st.value = 'active';
+  else if (k === 'inactive') st.value = 'inactive';
+  erpFilterSuppliersTable();
+}
+function erpSupResetFilters() {
+  ['erpSupSearch','erpSupFBrand','erpSupFStatus'].forEach(function(id){
+    var e = document.getElementById(id); if (e) e.value = '';
+  });
+  _erpSupSetQuickChip('');
+  erpFilterSuppliersTable();
 }
 
 function erpRenderSuppliersTable(list) {
@@ -1723,14 +1753,53 @@ function erpFilterPOTable() {
   const brandId = document.getElementById('erpPOFBrand')?.value || '';
   const from    = document.getElementById('erpPOFFrom')?.value || '';
   const to      = document.getElementById('erpPOFTo')?.value || '';
-  erpRenderPOTable(_erpPOAllData.filter(function(po) {
+  const largeChip = document.querySelector('[data-po-qf="large"].active');
+  var filtered = _erpPOAllData.filter(function(po) {
     if (search && !((po.poNumber || '').toLowerCase().includes(search) || (po.supplierName || '').toLowerCase().includes(search))) return false;
     if (status && po.status !== status) return false;
     if (brandId && String(po.brandId||po.brand_id||'') !== String(brandId)) return false;
     if (from && po.poDate && String(po.poDate).slice(0,10) < from) return false;
     if (to   && po.poDate && String(po.poDate).slice(0,10) > to)   return false;
+    if (largeChip && Number(po.totalAfterVat||0) < 10000) return false;
     return true;
-  }));
+  });
+  var rc = document.getElementById('erpPOResultsCount');
+  if (rc) {
+    var totalVal = filtered.reduce(function(s,p){return s + Number(p.totalAfterVat||0);},0);
+    rc.innerHTML = '<i class="fas fa-circle-info"></i> <b>'+filtered.length+'</b> أمر شراء · قيمة: <b>'+totalVal.toLocaleString('en',{minimumFractionDigits:2})+'</b>';
+  }
+  erpRenderPOTable(filtered);
+}
+
+function _erpPOSetQuickChip(k) {
+  document.querySelectorAll('[data-po-qf]').forEach(function(el){
+    el.classList.toggle('active', el.getAttribute('data-po-qf') === k);
+  });
+}
+function erpPOQuickFilter(k) {
+  _erpPOSetQuickChip(k);
+  var st = document.getElementById('erpPOStatusFilter');
+  var from = document.getElementById('erpPOFFrom');
+  var to   = document.getElementById('erpPOFTo');
+  if (st)   st.value = '';
+  if (from) from.value = '';
+  if (to)   to.value = '';
+  var today = new Date(); var fmt = function(d){return d.toISOString().slice(0,10);};
+  if (k === 'draft')     st.value = 'draft';
+  else if (k === 'approved') st.value = 'approved';
+  else if (k === 'received') st.value = 'received';
+  else if (k === 'today')    { from.value = fmt(today); to.value = fmt(today); }
+  else if (k === 'week')     { var d = new Date(today); d.setDate(d.getDate()-7); from.value = fmt(d); to.value = fmt(today); }
+  else if (k === 'month')    { var d = new Date(today.getFullYear(), today.getMonth(), 1); from.value = fmt(d); to.value = fmt(today); }
+  // 'large' handled purely in erpFilterPOTable via the .active chip detection
+  erpFilterPOTable();
+}
+function erpPOResetFilters() {
+  ['erpPOSearch','erpPOStatusFilter','erpPOFBrand','erpPOFFrom','erpPOFTo'].forEach(function(id){
+    var e = document.getElementById(id); if (e) e.value = '';
+  });
+  _erpPOSetQuickChip('');
+  erpFilterPOTable();
 }
 
 function erpRenderPOTable(list) {
@@ -9359,6 +9428,38 @@ function prdLoadInit() {
     });
   });
 }
+
+// Quick-filter presets for production orders
+function _prdSetQuickChip(k) {
+  document.querySelectorAll('[data-prd-qf]').forEach(function(el){
+    el.classList.toggle('active', el.getAttribute('data-prd-qf') === k);
+  });
+}
+function prdApplyQuickFilter(k) {
+  _prdSetQuickChip(k);
+  var st = document.getElementById('prdFStatus');
+  var from = document.getElementById('prdFFrom');
+  var to = document.getElementById('prdFTo');
+  // reset date range + status (quick-filter overrides, not composes)
+  if (st)   st.value = '';
+  if (from) from.value = '';
+  if (to)   to.value = '';
+  var today = new Date();
+  var fmt = function(d){return d.toISOString().slice(0,10);};
+  if (k === 'planned')   st.value = 'planned';
+  else if (k === 'completed') st.value = 'completed';
+  else if (k === 'active') { /* combined in filter below */ }
+  else if (k === 'week')  { var d=new Date(today); d.setDate(d.getDate()-7); from.value=fmt(d); to.value=fmt(today); }
+  else if (k === 'month') { var d=new Date(today.getFullYear(),today.getMonth(),1); from.value=fmt(d); to.value=fmt(today); }
+  prdLoad();
+}
+function prdResetFilters() {
+  ['prdFStatus','prdFWh','prdFBrand','prdFFrom','prdFTo'].forEach(function(id){
+    var e = document.getElementById(id); if (e) e.value = '';
+  });
+  _prdSetQuickChip('');
+  prdLoad();
+}
 function prdLoad() {
   var body = document.getElementById('prdBody');
   if (!body) return;
@@ -9376,6 +9477,11 @@ function prdLoad() {
   if (to) q += '&dateTo=' + to;
   _erpGet('/erp/production-orders?1=1' + q, function(rows){
     if (!Array.isArray(rows)) rows = [];
+    // Client-side composite status filter (active = released + in_progress)
+    var activeChip = document.querySelector('[data-prd-qf="active"].active');
+    if (activeChip) rows = rows.filter(function(r){ return r.status==='released' || r.status==='in_progress'; });
+    var rc = document.getElementById('prdResultsCount');
+    if (rc) rc.innerHTML = '<i class="fas fa-circle-info"></i> <b>'+rows.length+'</b> أمر إنتاج';
     // Metrics
     var metrics = document.getElementById('prdMetrics');
     if (metrics) {

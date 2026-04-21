@@ -1,0 +1,709 @@
+/* ═══════════════════════════════════════════════════════════════════════
+ * Moroccan Taste POS — Warehouse Operations Design System
+ *
+ * Follows:
+ *   • Google Material Design 3 (elevation + motion tokens)
+ *   • Apple HIG (typography hierarchy + focus rings)
+ *   • Microsoft Fluent (acrylic surfaces + reveal motion)
+ *   • Ant Design (status semantics + data density)
+ *   • IBM Carbon (8pt grid + productivity patterns)
+ *   • WCAG 2.2 (AA contrast, focus-visible, reduced motion)
+ *
+ * Apollo to the 6 new sections: erpWhHierarchy, erpStockIssues,
+ * erpProductionOrders, erpExpiryAlerts, erpSlowMoving, erpTurnover.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ──────────────────────────────────────────────────────────────
+ * 1. DESIGN TOKENS
+ * ────────────────────────────────────────────────────────────── */
+:root {
+  /* Spacing — 8pt grid */
+  --wo-space-1: 4px;   /* micro */
+  --wo-space-2: 8px;   /* base */
+  --wo-space-3: 12px;  /* stack tight */
+  --wo-space-4: 16px;  /* stack */
+  --wo-space-5: 20px;
+  --wo-space-6: 24px;  /* section pad */
+  --wo-space-8: 32px;
+  --wo-space-10: 40px;
+  --wo-space-12: 48px;
+  --wo-space-16: 64px;
+
+  /* Radius */
+  --wo-radius-sm: 6px;   /* chips */
+  --wo-radius: 10px;     /* inputs, buttons */
+  --wo-radius-md: 14px;  /* cards */
+  --wo-radius-lg: 20px;  /* hero surfaces */
+  --wo-radius-full: 999px;
+
+  /* Elevation — layered shadows for depth */
+  --wo-elev-0: none;
+  --wo-elev-1: 0 1px 2px rgba(15,23,42,.04), 0 1px 3px rgba(15,23,42,.03);
+  --wo-elev-2: 0 2px 4px rgba(15,23,42,.04), 0 4px 12px rgba(15,23,42,.05);
+  --wo-elev-3: 0 4px 8px rgba(15,23,42,.04), 0 12px 24px rgba(15,23,42,.08);
+  --wo-elev-4: 0 8px 16px rgba(15,23,42,.06), 0 24px 48px rgba(15,23,42,.12);
+  --wo-elev-focus: 0 0 0 3px rgba(59,130,246,.25);
+
+  /* Typography scale */
+  --wo-font: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  --wo-text-display: 24px;
+  --wo-text-title:   18px;
+  --wo-text-body:    14px;
+  --wo-text-label:   12px;
+  --wo-text-caption: 11px;
+  --wo-text-micro:   10px;
+
+  /* Motion — curves + durations */
+  --wo-ease: cubic-bezier(.4,0,.2,1);          /* standard */
+  --wo-ease-out: cubic-bezier(0,0,.2,1);
+  --wo-ease-emphasized: cubic-bezier(.2,0,0,1);
+  --wo-dur-1: 120ms;  /* micro */
+  --wo-dur-2: 180ms;  /* standard */
+  --wo-dur-3: 240ms;  /* soft */
+  --wo-dur-4: 320ms;  /* emphasized */
+
+  /* Surface colors */
+  --wo-surface: #ffffff;
+  --wo-surface-1: #fafbfc;
+  --wo-surface-2: #f8fafc;
+  --wo-surface-3: #f1f5f9;
+  --wo-on-surface: #0f172a;
+  --wo-on-surface-muted: #475569;
+  --wo-on-surface-subtle: #64748b;
+  --wo-border: #e5e7eb;
+  --wo-border-strong: #cbd5e1;
+
+  /* Semantic status (paired fg/bg/ring) */
+  --wo-success: #059669;    --wo-success-bg: #d1fae5;    --wo-success-ring: #10b981;
+  --wo-warning: #d97706;    --wo-warning-bg: #fef3c7;    --wo-warning-ring: #f59e0b;
+  --wo-danger:  #dc2626;    --wo-danger-bg:  #fee2e2;    --wo-danger-ring:  #ef4444;
+  --wo-info:    #0369a1;    --wo-info-bg:    #e0f2fe;    --wo-info-ring:    #0ea5e9;
+  --wo-neutral: #475569;    --wo-neutral-bg: #f1f5f9;    --wo-neutral-ring: #64748b;
+  --wo-purple:  #6d28d9;    --wo-purple-bg:  #ede9fe;    --wo-purple-ring:  #8b5cf6;
+
+  /* Status specific to workflow */
+  --wo-draft:     var(--wo-neutral);    --wo-draft-bg:     var(--wo-neutral-bg);
+  --wo-approved:  var(--wo-info);       --wo-approved-bg:  var(--wo-info-bg);
+  --wo-issued:    var(--wo-warning);    --wo-issued-bg:    var(--wo-warning-bg);
+  --wo-received:  var(--wo-success);    --wo-received-bg:  var(--wo-success-bg);
+  --wo-cancelled: var(--wo-danger);     --wo-cancelled-bg: var(--wo-danger-bg);
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * 2. SECTION ROOT — applies to all 6 warehouse-ops sections
+ * ────────────────────────────────────────────────────────────── */
+.wo-section {
+  padding: var(--wo-space-6);
+  max-width: 1440px;
+  margin: 0 auto;
+  font-family: var(--wo-font);
+  color: var(--wo-on-surface);
+  animation: wo-section-in var(--wo-dur-3) var(--wo-ease-out);
+}
+@keyframes wo-section-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wo-section { animation: none; }
+  * { transition-duration: 0ms !important; }
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * 3. PAGE HEADER
+ * ────────────────────────────────────────────────────────────── */
+.wo-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--wo-space-4);
+  margin-bottom: var(--wo-space-6);
+  flex-wrap: wrap;
+}
+.wo-header-titles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wo-space-1);
+}
+.wo-header h1 {
+  font-size: var(--wo-text-display);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--wo-on-surface);
+  display: flex;
+  align-items: center;
+  gap: var(--wo-space-3);
+  margin: 0;
+  line-height: 1.15;
+}
+.wo-header h1 .wo-icon-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--wo-radius-md);
+  background: var(--wo-info-bg);
+  color: var(--wo-info);
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.wo-header h1 .wo-icon-slot.warn    { background: var(--wo-warning-bg); color: var(--wo-warning); }
+.wo-header h1 .wo-icon-slot.danger  { background: var(--wo-danger-bg);  color: var(--wo-danger); }
+.wo-header h1 .wo-icon-slot.success { background: var(--wo-success-bg); color: var(--wo-success); }
+.wo-header h1 .wo-icon-slot.purple  { background: var(--wo-purple-bg);  color: var(--wo-purple); }
+.wo-header-sub {
+  font-size: var(--wo-text-body);
+  color: var(--wo-on-surface-subtle);
+  font-weight: 500;
+  padding-inline-start: 56px;
+  line-height: 1.5;
+}
+.wo-header-actions {
+  display: flex;
+  gap: var(--wo-space-2);
+  align-items: center;
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * 4. METRIC STRIP — KPI cards at top
+ * ────────────────────────────────────────────────────────────── */
+.wo-metric-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--wo-space-3);
+  margin-bottom: var(--wo-space-6);
+}
+.wo-metric {
+  background: var(--wo-surface);
+  border: 1px solid var(--wo-border);
+  border-radius: var(--wo-radius-md);
+  padding: var(--wo-space-4) var(--wo-space-5);
+  display: flex;
+  align-items: center;
+  gap: var(--wo-space-4);
+  transition: box-shadow var(--wo-dur-2) var(--wo-ease),
+              transform var(--wo-dur-2) var(--wo-ease),
+              border-color var(--wo-dur-2) var(--wo-ease);
+  position: relative;
+  overflow: hidden;
+}
+.wo-metric:hover {
+  box-shadow: var(--wo-elev-2);
+  transform: translateY(-1px);
+  border-color: var(--wo-border-strong);
+}
+.wo-metric-icon {
+  width: 44px; height: 44px;
+  border-radius: var(--wo-radius);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  font-size: 18px;
+}
+.wo-metric-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wo-metric-label {
+  font-size: var(--wo-text-caption);
+  font-weight: 700;
+  color: var(--wo-on-surface-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.wo-metric-value {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--wo-on-surface);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.wo-metric-delta {
+  font-size: var(--wo-text-caption);
+  font-weight: 700;
+  margin-top: 2px;
+  display: inline-flex; align-items: center; gap: 3px;
+}
+.wo-metric-delta.up   { color: var(--wo-success); }
+.wo-metric-delta.down { color: var(--wo-danger); }
+.wo-metric.accent-info    { border-top: 3px solid var(--wo-info-ring); }
+.wo-metric.accent-success { border-top: 3px solid var(--wo-success-ring); }
+.wo-metric.accent-warning { border-top: 3px solid var(--wo-warning-ring); }
+.wo-metric.accent-danger  { border-top: 3px solid var(--wo-danger-ring); }
+.wo-metric.accent-purple  { border-top: 3px solid var(--wo-purple-ring); }
+
+/* ──────────────────────────────────────────────────────────────
+ * 5. FILTER TOOLBAR
+ * ────────────────────────────────────────────────────────────── */
+.wo-toolbar {
+  background: var(--wo-surface);
+  border: 1px solid var(--wo-border);
+  border-radius: var(--wo-radius-md);
+  padding: var(--wo-space-4);
+  margin-bottom: var(--wo-space-4);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--wo-space-3);
+  align-items: end;
+}
+.wo-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wo-space-1);
+  min-width: 0;
+}
+.wo-field-label {
+  font-size: var(--wo-text-caption);
+  font-weight: 700;
+  color: var(--wo-on-surface-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: var(--wo-space-1);
+}
+.wo-input,
+.wo-select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid var(--wo-border);
+  border-radius: var(--wo-radius);
+  font-size: var(--wo-text-body);
+  background: var(--wo-surface);
+  color: var(--wo-on-surface);
+  font-family: inherit;
+  transition: border-color var(--wo-dur-1), box-shadow var(--wo-dur-2);
+  line-height: 1.4;
+}
+.wo-input::placeholder { color: var(--wo-on-surface-subtle); }
+.wo-input:hover,
+.wo-select:hover { border-color: var(--wo-border-strong); }
+.wo-input:focus-visible,
+.wo-select:focus-visible {
+  outline: none;
+  border-color: var(--wo-info-ring);
+  box-shadow: var(--wo-elev-focus);
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * 6. BUTTONS
+ * ────────────────────────────────────────────────────────────── */
+.wo-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--wo-space-2);
+  padding: 10px 18px;
+  border: 1px solid transparent;
+  border-radius: var(--wo-radius);
+  font-size: var(--wo-text-body);
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--wo-dur-2) var(--wo-ease);
+  user-select: none;
+  min-height: 40px;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.wo-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--wo-elev-focus);
+}
+.wo-btn:active { transform: scale(0.98); }
+.wo-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.wo-btn-primary {
+  background: var(--wo-info);
+  color: #fff;
+  box-shadow: var(--wo-elev-1);
+}
+.wo-btn-primary:hover:not(:disabled) {
+  background: #075985;
+  box-shadow: var(--wo-elev-2);
+}
+.wo-btn-secondary {
+  background: var(--wo-surface);
+  color: var(--wo-on-surface);
+  border-color: var(--wo-border);
+}
+.wo-btn-secondary:hover:not(:disabled) {
+  background: var(--wo-surface-3);
+  border-color: var(--wo-border-strong);
+}
+.wo-btn-success { background: var(--wo-success); color: #fff; }
+.wo-btn-success:hover:not(:disabled) { background: #047857; }
+.wo-btn-warning { background: var(--wo-warning); color: #fff; }
+.wo-btn-warning:hover:not(:disabled) { background: #b45309; }
+.wo-btn-danger  { background: var(--wo-danger); color: #fff; }
+.wo-btn-danger:hover:not(:disabled)  { background: #b91c1c; }
+
+.wo-btn-ghost {
+  background: transparent;
+  color: var(--wo-on-surface-muted);
+  padding: 8px 12px;
+}
+.wo-btn-ghost:hover:not(:disabled) {
+  background: var(--wo-surface-3);
+  color: var(--wo-on-surface);
+}
+
+/* Icon-only button */
+.wo-icon-btn {
+  width: 36px; height: 36px;
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--wo-radius-sm);
+  background: transparent;
+  color: var(--wo-on-surface-muted);
+  cursor: pointer;
+  transition: all var(--wo-dur-1) var(--wo-ease);
+  font-size: 14px;
+}
+.wo-icon-btn:hover {
+  background: var(--wo-surface-3);
+  color: var(--wo-on-surface);
+  border-color: var(--wo-border);
+}
+.wo-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--wo-elev-focus);
+}
+.wo-icon-btn.danger:hover  { color: var(--wo-danger);  background: var(--wo-danger-bg); }
+.wo-icon-btn.success:hover { color: var(--wo-success); background: var(--wo-success-bg); }
+.wo-icon-btn.warning:hover { color: var(--wo-warning); background: var(--wo-warning-bg); }
+.wo-icon-btn.info:hover    { color: var(--wo-info);    background: var(--wo-info-bg); }
+
+/* ──────────────────────────────────────────────────────────────
+ * 7. STATUS CHIP
+ * ────────────────────────────────────────────────────────────── */
+.wo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wo-space-1);
+  padding: 4px 10px;
+  border-radius: var(--wo-radius-full);
+  font-size: var(--wo-text-caption);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.wo-chip::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.wo-chip.neutral   { background: var(--wo-neutral-bg); color: var(--wo-neutral); }
+.wo-chip.info      { background: var(--wo-info-bg);    color: var(--wo-info); }
+.wo-chip.success   { background: var(--wo-success-bg); color: var(--wo-success); }
+.wo-chip.warning   { background: var(--wo-warning-bg); color: var(--wo-warning); }
+.wo-chip.danger    { background: var(--wo-danger-bg);  color: var(--wo-danger); }
+.wo-chip.purple    { background: var(--wo-purple-bg);  color: var(--wo-purple); }
+
+/* No dot variant */
+.wo-chip.flat::before { display: none; }
+
+/* Severity tier badges (expiry) */
+.wo-chip.expired  { background: var(--wo-danger-bg);  color: var(--wo-danger);  animation: wo-pulse 2s ease-in-out infinite; }
+.wo-chip.critical { background: var(--wo-danger-bg);  color: var(--wo-danger); }
+.wo-chip.soon     { background: var(--wo-warning-bg); color: var(--wo-warning); }
+.wo-chip.ok       { background: var(--wo-info-bg);    color: var(--wo-info); }
+@keyframes wo-pulse {
+  0%,100% { opacity: 1; }
+  50%     { opacity: 0.55; }
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * 8. DATA TABLE
+ * ────────────────────────────────────────────────────────────── */
+.wo-table-surface {
+  background: var(--wo-surface);
+  border: 1px solid var(--wo-border);
+  border-radius: var(--wo-radius-md);
+  overflow: hidden;
+  box-shadow: var(--wo-elev-1);
+}
+.wo-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--wo-text-body);
+}
+.wo-table thead th {
+  background: var(--wo-surface-2);
+  padding: var(--wo-space-3) var(--wo-space-4);
+  text-align: start;
+  font-size: var(--wo-text-caption);
+  font-weight: 700;
+  color: var(--wo-on-surface-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--wo-border);
+  white-space: nowrap;
+  position: sticky; top: 0;
+}
+.wo-table tbody td {
+  padding: var(--wo-space-3) var(--wo-space-4);
+  color: var(--wo-on-surface);
+  border-bottom: 1px solid var(--wo-surface-3);
+  vertical-align: middle;
+  font-variant-numeric: tabular-nums;
+}
+.wo-table tbody tr { transition: background var(--wo-dur-1); }
+.wo-table tbody tr:hover td { background: var(--wo-surface-2); }
+.wo-table tbody tr:last-child td { border-bottom: none; }
+.wo-table .num    { text-align: end; font-variant-numeric: tabular-nums; font-weight: 600; }
+.wo-table .strong { font-weight: 800; color: var(--wo-on-surface); }
+.wo-table code    { font-family: 'SF Mono', Consolas, 'Courier New', monospace;
+                    font-size: 11px; color: var(--wo-on-surface-muted);
+                    background: var(--wo-surface-3); padding: 2px 6px;
+                    border-radius: 4px; }
+
+/* Row states */
+.wo-table tr.row-critical { background: linear-gradient(90deg, var(--wo-danger-bg) 0%, transparent 100%); }
+.wo-table tr.row-warning  { background: linear-gradient(90deg, var(--wo-warning-bg) 0%, transparent 100%); }
+
+/* Actions cell */
+.wo-actions {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * 9. EMPTY STATE
+ * ────────────────────────────────────────────────────────────── */
+.wo-empty {
+  padding: var(--wo-space-16) var(--wo-space-6);
+  text-align: center;
+  color: var(--wo-on-surface-subtle);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--wo-space-3);
+}
+.wo-empty i { font-size: 48px; color: var(--wo-border-strong); }
+.wo-empty-title { font-size: var(--wo-text-title); font-weight: 700; color: var(--wo-on-surface-muted); }
+.wo-empty-sub   { font-size: var(--wo-text-body);  color: var(--wo-on-surface-subtle); max-width: 420px; line-height: 1.5; }
+.wo-empty .wo-btn { margin-top: var(--wo-space-2); }
+
+/* ──────────────────────────────────────────────────────────────
+ * 10. SKELETON LOADER (not spinner)
+ * ────────────────────────────────────────────────────────────── */
+.wo-skel {
+  background: linear-gradient(
+    90deg,
+    var(--wo-surface-3) 0%,
+    var(--wo-surface-2) 50%,
+    var(--wo-surface-3) 100%
+  );
+  background-size: 200% 100%;
+  animation: wo-shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--wo-radius-sm);
+  display: inline-block;
+}
+@keyframes wo-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.wo-skel.line { height: 14px; width: 100%; }
+.wo-skel.line-sm { height: 10px; width: 60%; }
+.wo-skel.circle { width: 36px; height: 36px; border-radius: 50%; }
+
+/* ──────────────────────────────────────────────────────────────
+ * 11. WAREHOUSE HIERARCHY TREE CARD
+ * ────────────────────────────────────────────────────────────── */
+.wh-tree { display: flex; flex-direction: column; gap: var(--wo-space-3); }
+
+.wh-node {
+  background: var(--wo-surface);
+  border: 1px solid var(--wo-border);
+  border-radius: var(--wo-radius-md);
+  overflow: hidden;
+  transition: box-shadow var(--wo-dur-2) var(--wo-ease),
+              border-color var(--wo-dur-2) var(--wo-ease);
+}
+.wh-node:hover { box-shadow: var(--wo-elev-2); border-color: var(--wo-border-strong); }
+.wh-node.main {
+  border-color: var(--wo-warning-ring);
+  background: linear-gradient(180deg, #fffdf7 0%, var(--wo-surface) 40%);
+}
+
+.wh-node-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--wo-space-4) var(--wo-space-5);
+  gap: var(--wo-space-3);
+}
+.wh-node-info { display: flex; align-items: center; gap: var(--wo-space-3); min-width: 0; }
+.wh-node-icon {
+  width: 44px; height: 44px;
+  border-radius: var(--wo-radius);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--wo-info-bg);
+  color: var(--wo-info);
+  font-size: 18px;
+  flex-shrink: 0;
+}
+.wh-node.main .wh-node-icon {
+  background: var(--wo-warning-bg);
+  color: var(--wo-warning);
+}
+.wh-node-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wh-node-name {
+  font-size: var(--wo-text-title);
+  font-weight: 800;
+  color: var(--wo-on-surface);
+  line-height: 1.3;
+}
+.wh-node-meta {
+  font-size: var(--wo-text-caption);
+  color: var(--wo-on-surface-subtle);
+  display: flex; gap: var(--wo-space-2); align-items: center; flex-wrap: wrap;
+}
+
+.wh-node-actions {
+  padding: 0 var(--wo-space-5) var(--wo-space-4);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--wo-space-3);
+  align-items: end;
+}
+
+.wh-children {
+  padding: var(--wo-space-3) var(--wo-space-5) var(--wo-space-4);
+  background: var(--wo-surface-2);
+  border-top: 1px solid var(--wo-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--wo-space-2);
+}
+.wh-children-label {
+  font-size: var(--wo-text-caption);
+  font-weight: 700;
+  color: var(--wo-on-surface-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: flex; align-items: center; gap: var(--wo-space-2);
+  margin-bottom: var(--wo-space-1);
+}
+.wh-child {
+  background: var(--wo-surface);
+  border: 1px solid var(--wo-border);
+  border-radius: var(--wo-radius);
+  padding: 10px var(--wo-space-4);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--wo-space-3);
+  transition: border-color var(--wo-dur-1), background var(--wo-dur-1);
+}
+.wh-child:hover {
+  border-color: var(--wo-border-strong);
+  background: var(--wo-surface-1);
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * 12. INFO BANNER
+ * ────────────────────────────────────────────────────────────── */
+.wo-banner {
+  background: var(--wo-info-bg);
+  border: 1px solid color-mix(in srgb, var(--wo-info-ring) 30%, transparent);
+  border-start-start-radius: var(--wo-radius-md);
+  border-start-end-radius: var(--wo-radius-md);
+  border-end-start-radius: var(--wo-radius-md);
+  border-end-end-radius: var(--wo-radius-md);
+  padding: var(--wo-space-4) var(--wo-space-5);
+  margin-bottom: var(--wo-space-4);
+  display: flex;
+  gap: var(--wo-space-3);
+  align-items: flex-start;
+}
+.wo-banner-icon {
+  width: 32px; height: 32px;
+  border-radius: var(--wo-radius-sm);
+  background: var(--wo-info);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.wo-banner-body { display: flex; flex-direction: column; gap: var(--wo-space-1); flex: 1; min-width: 0; }
+.wo-banner-title { font-weight: 800; font-size: var(--wo-text-body); color: var(--wo-info); }
+.wo-banner-body ul { list-style: none; padding: 0; margin: 0; }
+.wo-banner-body ul li {
+  font-size: var(--wo-text-body);
+  color: var(--wo-on-surface-muted);
+  padding: 2px 0;
+  padding-inline-start: 18px;
+  position: relative;
+  line-height: 1.6;
+}
+.wo-banner-body ul li::before {
+  content: '\f00c';
+  font-family: 'Font Awesome 6 Free';
+  font-weight: 900;
+  position: absolute;
+  inset-inline-start: 0; top: 4px;
+  font-size: 10px;
+  color: var(--wo-info);
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * 13. RESPONSIVE
+ * ────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .wo-section { padding: var(--wo-space-4); }
+  .wo-header h1 { font-size: 20px; }
+  .wo-header h1 .wo-icon-slot { width: 36px; height: 36px; font-size: 16px; }
+  .wo-header-sub { padding-inline-start: 48px; }
+  .wo-metric-strip { grid-template-columns: repeat(2, 1fr); gap: var(--wo-space-2); }
+  .wo-metric { padding: var(--wo-space-3); }
+  .wo-metric-value { font-size: 18px; }
+  .wo-toolbar { grid-template-columns: 1fr; }
+  .wo-table thead { display: none; }
+  .wo-table, .wo-table tbody, .wo-table tr, .wo-table td { display: block; width: 100%; }
+  .wo-table tbody tr {
+    background: var(--wo-surface);
+    border: 1px solid var(--wo-border);
+    border-radius: var(--wo-radius);
+    margin-bottom: var(--wo-space-2);
+    padding: var(--wo-space-3);
+  }
+  .wo-table tbody td {
+    border-bottom: none;
+    padding: var(--wo-space-1) 0;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .wo-table tbody td::before {
+    content: attr(data-label);
+    font-size: var(--wo-text-caption);
+    font-weight: 700;
+    color: var(--wo-on-surface-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * 14. UTILITIES
+ * ────────────────────────────────────────────────────────────── */
+.wo-stack    { display: flex; flex-direction: column; gap: var(--wo-space-3); }
+.wo-row      { display: flex; gap: var(--wo-space-3); align-items: center; }
+.wo-row.wrap { flex-wrap: wrap; }
+.wo-spacer   { flex: 1; }
+.wo-mt-4     { margin-top: var(--wo-space-4); }
+.wo-mb-4     { margin-bottom: var(--wo-space-4); }
+.wo-text-muted { color: var(--wo-on-surface-muted); }
+.wo-text-subtle { color: var(--wo-on-surface-subtle); }
+.wo-text-caption { font-size: var(--wo-text-caption); }
+.wo-text-label { font-size: var(--wo-text-label); font-weight: 700; }
+
+/* Focus-visible for all interactive elements */
+.wo-section *:focus-visible {
+  outline: none;
+  box-shadow: var(--wo-elev-focus);
+  border-radius: var(--wo-radius-sm);
+}

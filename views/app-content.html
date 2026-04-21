@@ -888,31 +888,101 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- ERP MAIN DASHBOARD -->
 <!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpDashHome" class="dash-section hidden">
-  <h2 class="section-title"><i class="fas fa-building"></i> لوحة تحكم ERP</h2>
-  <div id="erpKPICards" class="kpi-grid-erp">
-    <div class="erp-kpi-card bg-blue"><div class="erp-kpi-icon"><i class="fas fa-users"></i></div><div class="erp-kpi-body"><div class="erp-kpi-val" id="erpCustCount">0</div><div class="erp-kpi-label">العملاء</div></div></div>
-    <div class="erp-kpi-card bg-green"><div class="erp-kpi-icon"><i class="fas fa-truck"></i></div><div class="erp-kpi-body"><div class="erp-kpi-val" id="erpSupCount">0</div><div class="erp-kpi-label">الموردين</div></div></div>
-    <div class="erp-kpi-card bg-purple"><div class="erp-kpi-icon"><i class="fas fa-book"></i></div><div class="erp-kpi-body"><div class="erp-kpi-val" id="erpJrnCount">0</div><div class="erp-kpi-label">القيود</div></div></div>
-    <div class="erp-kpi-card bg-orange"><div class="erp-kpi-icon"><i class="fas fa-code-branch"></i></div><div class="erp-kpi-body"><div class="erp-kpi-val" id="erpBrCount">0</div><div class="erp-kpi-label">الفروع</div></div></div>
-  </div>
-  <div class="erp-financial-summary">
-    <h3><i class="fas fa-chart-pie"></i> الملخص المالي</h3>
-    <div class="fin-grid">
-      <div class="fin-card"><span class="fin-label">إجمالي الأصول</span><span class="fin-val" id="erpTotalAssets">0.00</span></div>
-      <div class="fin-card"><span class="fin-label">إجمالي الالتزامات</span><span class="fin-val" id="erpTotalLiab">0.00</span></div>
-      <div class="fin-card"><span class="fin-label">حقوق الملكية</span><span class="fin-val" id="erpTotalEquity">0.00</span></div>
-      <div class="fin-card"><span class="fin-label">إجمالي الإيرادات</span><span class="fin-val text-green" id="erpTotalRev">0.00</span></div>
-      <div class="fin-card"><span class="fin-label">إجمالي المصروفات</span><span class="fin-val text-red" id="erpTotalExp">0.00</span></div>
-      <div class="fin-card highlight"><span class="fin-label">صافي الدخل</span><span class="fin-val" id="erpNetIncome">0.00</span></div>
+<div id="erpDashHome" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot"><i class="fas fa-chart-line"></i></span>لوحة تحكم ERP</h1>
+      <p class="wo-header-sub">نظرة شاملة على الأداء المالي والتشغيلي — كل البيانات تُحدَّث تلقائياً.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-secondary" onclick="erpLoadDashHome()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+    </div>
+  </header>
+
+  <!-- Primary KPIs -->
+  <div class="wo-metric-strip" id="erpDashPrimaryKpis">
+    <div class="wo-metric accent-info">
+      <div class="wo-metric-icon" style="background:var(--wo-info-bg);color:var(--wo-info);"><i class="fas fa-users"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">العملاء</div><div class="wo-metric-value" id="erpCustCount">—</div></div>
+    </div>
+    <div class="wo-metric accent-success">
+      <div class="wo-metric-icon" style="background:var(--wo-success-bg);color:var(--wo-success);"><i class="fas fa-truck"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">الموردين</div><div class="wo-metric-value" id="erpSupCount">—</div></div>
+    </div>
+    <div class="wo-metric accent-purple">
+      <div class="wo-metric-icon" style="background:var(--wo-purple-bg);color:var(--wo-purple);"><i class="fas fa-book"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">القيود المحاسبية</div><div class="wo-metric-value" id="erpJrnCount">—</div></div>
+    </div>
+    <div class="wo-metric accent-warning">
+      <div class="wo-metric-icon" style="background:var(--wo-warning-bg);color:var(--wo-warning);"><i class="fas fa-code-branch"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">الفروع</div><div class="wo-metric-value" id="erpBrCount">—</div></div>
     </div>
   </div>
-  <div class="erp-vat-summary">
-    <h3><i class="fas fa-percent"></i> ملخص ضريبة القيمة المضافة</h3>
-    <div class="vat-grid">
-      <div class="vat-card"><span class="vat-label">ضريبة المخرجات</span><span class="vat-val" id="erpVATOutput">0.00</span></div>
-      <div class="vat-card"><span class="vat-label">ضريبة المدخلات</span><span class="vat-val" id="erpVATInput">0.00</span></div>
-      <div class="vat-card highlight"><span class="vat-label">صافي الضريبة</span><span class="vat-val" id="erpVATNet">0.00</span></div>
+
+  <!-- Workflow + Payment KPIs (Phase C/D) -->
+  <h3 style="font-size:15px;font-weight:800;margin:20px 0 12px;color:#0f172a;display:flex;align-items:center;gap:8px;"><i class="fas fa-clipboard-check" style="color:#3b82f6;"></i> المعاملات والمدفوعات</h3>
+  <div class="wo-metric-strip" id="erpDashWorkflowKpis">
+    <div class="wo-metric accent-warning">
+      <div class="wo-metric-icon" style="background:var(--wo-warning-bg);color:var(--wo-warning);"><i class="fas fa-hourglass-half"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">معاملات قيد الانتظار</div><div class="wo-metric-value" id="dhPendingTxns">—</div></div>
+    </div>
+    <div class="wo-metric accent-info">
+      <div class="wo-metric-icon" style="background:var(--wo-info-bg);color:var(--wo-info);"><i class="fas fa-spinner"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">مدفوعات قيد التنفيذ</div><div class="wo-metric-value" id="dhPendingPayments">—</div></div>
+    </div>
+    <div class="wo-metric accent-success">
+      <div class="wo-metric-icon" style="background:var(--wo-success-bg);color:var(--wo-success);"><i class="fas fa-check-double"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">مقفلة اليوم</div><div class="wo-metric-value" id="dhClosedToday">—</div></div>
+    </div>
+    <div class="wo-metric accent-danger">
+      <div class="wo-metric-icon" style="background:var(--wo-danger-bg);color:var(--wo-danger);"><i class="fas fa-triangle-exclamation"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">إجراءات تحتاج انتباهك</div><div class="wo-metric-value" id="dhMyInbox">—</div></div>
+    </div>
+  </div>
+
+  <!-- Financial summary -->
+  <h3 style="font-size:15px;font-weight:800;margin:24px 0 12px;color:#0f172a;display:flex;align-items:center;gap:8px;"><i class="fas fa-chart-pie" style="color:#8b5cf6;"></i> الملخص المالي</h3>
+  <div class="wo-metric-strip">
+    <div class="wo-metric accent-info">
+      <div class="wo-metric-icon" style="background:var(--wo-info-bg);color:var(--wo-info);"><i class="fas fa-vault"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">إجمالي الأصول</div><div class="wo-metric-value wo-money" id="erpTotalAssets">0.00</div></div>
+    </div>
+    <div class="wo-metric accent-warning">
+      <div class="wo-metric-icon" style="background:var(--wo-warning-bg);color:var(--wo-warning);"><i class="fas fa-scale-unbalanced"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">إجمالي الالتزامات</div><div class="wo-metric-value wo-money" id="erpTotalLiab">0.00</div></div>
+    </div>
+    <div class="wo-metric accent-purple">
+      <div class="wo-metric-icon" style="background:var(--wo-purple-bg);color:var(--wo-purple);"><i class="fas fa-hand-holding-dollar"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">حقوق الملكية</div><div class="wo-metric-value wo-money" id="erpTotalEquity">0.00</div></div>
+    </div>
+    <div class="wo-metric accent-success">
+      <div class="wo-metric-icon" style="background:var(--wo-success-bg);color:var(--wo-success);"><i class="fas fa-sack-dollar"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">الإيرادات</div><div class="wo-metric-value wo-money pos" id="erpTotalRev">0.00</div></div>
+    </div>
+    <div class="wo-metric accent-danger">
+      <div class="wo-metric-icon" style="background:var(--wo-danger-bg);color:var(--wo-danger);"><i class="fas fa-receipt"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">المصروفات</div><div class="wo-metric-value wo-money neg" id="erpTotalExp">0.00</div></div>
+    </div>
+    <div class="wo-metric" style="border-top:3px solid #0369a1;background:linear-gradient(135deg,#eff6ff,#fff);">
+      <div class="wo-metric-icon" style="background:var(--wo-info);color:#fff;"><i class="fas fa-chart-line"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">صافي الدخل</div><div class="wo-metric-value wo-money" id="erpNetIncome" style="font-size:24px;">0.00</div></div>
+    </div>
+  </div>
+
+  <!-- VAT summary -->
+  <h3 style="font-size:15px;font-weight:800;margin:24px 0 12px;color:#0f172a;display:flex;align-items:center;gap:8px;"><i class="fas fa-percent" style="color:#10b981;"></i> ملخص ضريبة القيمة المضافة</h3>
+  <div class="wo-metric-strip">
+    <div class="wo-metric accent-success">
+      <div class="wo-metric-icon" style="background:var(--wo-success-bg);color:var(--wo-success);"><i class="fas fa-arrow-up-from-bracket"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">ضريبة المخرجات</div><div class="wo-metric-value wo-money" id="erpVATOutput">0.00</div></div>
+    </div>
+    <div class="wo-metric accent-warning">
+      <div class="wo-metric-icon" style="background:var(--wo-warning-bg);color:var(--wo-warning);"><i class="fas fa-arrow-down-to-bracket"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">ضريبة المدخلات</div><div class="wo-metric-value wo-money" id="erpVATInput">0.00</div></div>
+    </div>
+    <div class="wo-metric" style="border-top:3px solid #8b5cf6;background:linear-gradient(135deg,#f3e8ff,#fff);">
+      <div class="wo-metric-icon" style="background:var(--wo-purple);color:#fff;"><i class="fas fa-building-columns"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">صافي الضريبة المستحقة</div><div class="wo-metric-value wo-money" id="erpVATNet">0.00</div></div>
     </div>
   </div>
 </div>

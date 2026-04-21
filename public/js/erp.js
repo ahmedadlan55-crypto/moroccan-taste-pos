@@ -147,27 +147,53 @@ function erpNav(sectionId) {
 // ═══════════════════════════════════════
 // ERP DASHBOARD
 // ═══════════════════════════════════════
-function erpLoadDashboard() {
+function erpLoadDashboard() { return erpLoadDashHome(); }
+
+function erpLoadDashHome() {
+  var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var setT = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
+
+  // Main financial + counts from legacy endpoint
   window._apiBridge.withSuccessHandler(function(data) {
     if (!data || !data.success) return;
-    document.getElementById('erpCustCount').textContent = data.counts.customers || 0;
-    document.getElementById('erpSupCount').textContent = data.counts.suppliers || 0;
-    document.getElementById('erpJrnCount').textContent = data.counts.journals || 0;
-    document.getElementById('erpBrCount').textContent = data.counts.branches || 0;
-    document.getElementById('erpTotalAssets').textContent = (data.financial.totalAssets||0).toFixed(2);
-    document.getElementById('erpTotalLiab').textContent = (data.financial.totalLiabilities||0).toFixed(2);
-    document.getElementById('erpTotalEquity').textContent = (data.financial.totalEquity||0).toFixed(2);
-    document.getElementById('erpTotalRev').textContent = (data.financial.totalRevenue||0).toFixed(2);
-    document.getElementById('erpTotalExp').textContent = (data.financial.totalExpenses||0).toFixed(2);
-    const ni = data.financial.netIncome || 0;
-    const niEl = document.getElementById('erpNetIncome');
-    niEl.textContent = ni.toFixed(2);
-    niEl.className = 'fin-val ' + (ni >= 0 ? 'text-green' : 'text-red');
-    document.getElementById('erpVATOutput').textContent = (data.vat.totalOutputVAT||0).toFixed(2);
-    document.getElementById('erpVATInput').textContent = (data.vat.totalInputVAT||0).toFixed(2);
-    document.getElementById('erpVATNet').textContent = (data.vat.netVAT||0).toFixed(2);
+    setT('erpCustCount',  data.counts.customers || 0);
+    setT('erpSupCount',   data.counts.suppliers || 0);
+    setT('erpJrnCount',   data.counts.journals  || 0);
+    setT('erpBrCount',    data.counts.branches  || 0);
+    setT('erpTotalAssets', fmt(data.financial.totalAssets));
+    setT('erpTotalLiab',   fmt(data.financial.totalLiabilities));
+    setT('erpTotalEquity', fmt(data.financial.totalEquity));
+    setT('erpTotalRev',    fmt(data.financial.totalRevenue));
+    setT('erpTotalExp',    fmt(data.financial.totalExpenses));
+    var ni = data.financial.netIncome || 0;
+    setT('erpNetIncome', fmt(ni));
+    var niEl = document.getElementById('erpNetIncome');
+    if (niEl) niEl.className = 'wo-metric-value wo-money ' + (ni >= 0 ? 'pos' : 'neg');
+    setT('erpVATOutput', fmt(data.vat.totalOutputVAT));
+    setT('erpVATInput',  fmt(data.vat.totalInputVAT));
+    setT('erpVATNet',    fmt(data.vat.netVAT));
   }).getERPDashboardData();
+
+  // New: Workflow KPIs (Phase D) — read from /api/workflow/inbox + /api/erp/payments
+  var token = localStorage.getItem('pos_token') || '';
+  var username = (typeof state !== 'undefined' && state.user) || '';
+  Promise.all([
+    fetch('/api/workflow/transactions?status=pending&limit=1000', { headers: { 'Authorization': 'Bearer ' + token } }).then(function(r){return r.json();}).catch(function(){return [];}),
+    fetch('/api/erp/payments?status=authorized',                   { headers: { 'Authorization': 'Bearer ' + token } }).then(function(r){return r.json();}).catch(function(){return [];}),
+    fetch('/api/erp/payments?status=closed&dateFrom=' + new Date().toISOString().slice(0,10), { headers: { 'Authorization': 'Bearer ' + token } }).then(function(r){return r.json();}).catch(function(){return [];}),
+    fetch('/api/workflow/incoming' + (username ? '?username=' + encodeURIComponent(username) : ''), { headers: { 'Authorization': 'Bearer ' + token } }).then(function(r){return r.json();}).catch(function(){return [];})
+  ]).then(function(all) {
+    var pendingTxns = Array.isArray(all[0]) ? all[0].length : 0;
+    var pendingPayments = Array.isArray(all[1]) ? all[1].length : 0;
+    var closedToday = Array.isArray(all[2]) ? all[2].length : 0;
+    var myInbox = Array.isArray(all[3]) ? all[3].length : 0;
+    setT('dhPendingTxns', pendingTxns);
+    setT('dhPendingPayments', pendingPayments);
+    setT('dhClosedToday', closedToday);
+    setT('dhMyInbox', myInbox);
+  }).catch(function(){ /* silent */ });
 }
+window.erpLoadDashHome = erpLoadDashHome;
 
 // ═══════════════════════════════════════
 // CUSTOMERS CRUD

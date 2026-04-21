@@ -155,6 +155,7 @@ app.use('/api/erp', require('./routes/warehouse-ops'));
 app.use('/api/erp', require('./routes/payments'));
 app.use('/api/erp', require('./routes/notifications'));
 app.use('/api/erp', require('./routes/erp'));
+app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/custody', require('./routes/custody'));
 app.use('/api/cash', require('./routes/cash'));
 app.use('/api/workflow', require('./routes/workflow'));

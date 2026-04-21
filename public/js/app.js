@@ -1824,13 +1824,319 @@ function nav(sectionId) {
   if (sectionId === 'custodyReports') { ensureCustodyJs().then(function() { loadCustodies(); }); }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Enterprise Command Center — الرئيسية (new unified dashboard)
+// Uses single aggregator endpoint: GET /api/dashboard/overview
+// ═══════════════════════════════════════════════════════════════════
+window._ccFilters = { preset: 'week', from: '', to: '', brandId: '', branchId: '' };
+var _ccClockInterval = null;
+var _ccBrandsLoaded = false;
+var _ccBranchesLoaded = false;
+
+function _ccEsc(s){ if(s===null||s===undefined) return ''; return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function _ccFmt(n, fractionDigits) {
+  n = Number(n || 0);
+  return n.toLocaleString('en', { minimumFractionDigits: fractionDigits!=null?fractionDigits:2, maximumFractionDigits: fractionDigits!=null?fractionDigits:2 });
+}
+function _ccDeltaClass(d) { if (d > 0.5) return 'up'; if (d < -0.5) return 'down'; return 'flat'; }
+function _ccDeltaIcon(d)  { if (d > 0.5) return '<i class="fas fa-arrow-up"></i>'; if (d < -0.5) return '<i class="fas fa-arrow-down"></i>'; return '<i class="fas fa-minus"></i>'; }
+
+function _ccStartClock() {
+  if (_ccClockInterval) return;
+  var tick = function() {
+    var el = q('#ccClock'); if (!el) return;
+    var n = new Date();
+    el.textContent = n.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  };
+  tick();
+  _ccClockInterval = setInterval(tick, 1000);
+}
+
+window.ccSetPreset = function(p) {
+  window._ccFilters.preset = p;
+  window._ccFilters.from = '';
+  window._ccFilters.to   = '';
+  document.querySelectorAll('[data-cc-preset]').forEach(function(el){
+    el.classList.toggle('active', el.getAttribute('data-cc-preset') === p);
+  });
+  if (q('#ccFFrom')) q('#ccFFrom').value = '';
+  if (q('#ccFTo'))   q('#ccFTo').value = '';
+  loadDashHome();
+};
+
+window.ccApplyCustomRange = function() {
+  var f = q('#ccFFrom') ? q('#ccFFrom').value : '';
+  var t = q('#ccFTo')   ? q('#ccFTo').value : '';
+  if (f || t) {
+    window._ccFilters.preset = '';
+    window._ccFilters.from = f;
+    window._ccFilters.to   = t || f;
+    document.querySelectorAll('[data-cc-preset]').forEach(function(el){ el.classList.remove('active'); });
+    loadDashHome();
+  }
+};
+
+window.ccResetFilters = function() {
+  window._ccFilters = { preset: 'week', from: '', to: '', brandId: '', branchId: '' };
+  if (q('#ccFBrand'))  q('#ccFBrand').value = '';
+  if (q('#ccFBranch')) q('#ccFBranch').value = '';
+  if (q('#ccFFrom'))   q('#ccFFrom').value = '';
+  if (q('#ccFTo'))     q('#ccFTo').value = '';
+  document.querySelectorAll('[data-cc-preset]').forEach(function(el){
+    el.classList.toggle('active', el.getAttribute('data-cc-preset') === 'week');
+  });
+  loadDashHome();
+};
+
+window.ccExportPdf = function() {
+  showToast('تصدير PDF — قيد التطوير');
+};
+
+function _ccPopulateBrandBranchSelects() {
+  var hdr = { 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') };
+  if (!_ccBrandsLoaded) {
+    fetch('/api/erp/brands', { headers: hdr }).then(function(r){return r.json();}).then(function(brs){
+      var sel = q('#ccFBrand'); if (!sel) return;
+      sel.innerHTML = '<option value="">كل البراندات</option>' +
+        (brs||[]).map(function(b){return '<option value="'+b.id+'">'+_ccEsc(b.name||'')+'</option>';}).join('');
+      sel.onchange = function(){ window._ccFilters.brandId = this.value; loadDashHome(); };
+      _ccBrandsLoaded = true;
+    }).catch(function(){});
+  }
+  if (!_ccBranchesLoaded) {
+    fetch('/api/erp/branches-full', { headers: hdr }).then(function(r){return r.json();}).then(function(bnrs){
+      var sel = q('#ccFBranch'); if (!sel) return;
+      sel.innerHTML = '<option value="">كل الفروع</option>' +
+        (bnrs||[]).map(function(b){return '<option value="'+b.id+'">'+_ccEsc(b.name||'')+'</option>';}).join('');
+      sel.onchange = function(){ window._ccFilters.branchId = this.value; loadDashHome(); };
+      _ccBranchesLoaded = true;
+    }).catch(function(){});
+  }
+}
+
 function loadDashHome() {
-  loader();
+  _ccStartClock();
+  _ccPopulateBrandBranchSelects();
   // Lazy-load Chart.js the first time the dashboard is opened
-  ensureChartJs().then(_loadDashHomeBody).catch(function(e) {
-    loader(false); showToast(e.message || 'فشل تحميل المكتبات', true);
+  ensureChartJs().then(_ccFetchAndRender).catch(function(e) {
+    showToast(e.message || 'فشل تحميل المكتبات', true);
   });
 }
+
+function _ccFetchAndRender() {
+  var f = window._ccFilters;
+  var params = [];
+  if (f.preset)   params.push('preset='   + encodeURIComponent(f.preset));
+  if (f.from)     params.push('from='     + encodeURIComponent(f.from));
+  if (f.to)       params.push('to='       + encodeURIComponent(f.to));
+  if (f.brandId)  params.push('brandId='  + encodeURIComponent(f.brandId));
+  if (f.branchId) params.push('branchId=' + encodeURIComponent(f.branchId));
+  var url = '/api/dashboard/overview' + (params.length ? '?' + params.join('&') : '');
+  var hdr = { 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') };
+
+  fetch(url, { headers: hdr }).then(function(r){return r.json();}).then(function(d){
+    if (!d || d.error) { showToast(d && d.error || 'فشل تحميل الداش بورد', true); return; }
+    _ccRenderAll(d);
+  }).catch(function(e){
+    showToast((e && e.message) || 'خطأ شبكة', true);
+  });
+}
+
+function _ccRenderAll(d) {
+  // Period label
+  if (q('#ccPeriodLabel')) {
+    q('#ccPeriodLabel').innerHTML = '<i class="fas fa-calendar-range"></i> من <b>'+d.period.from+'</b> إلى <b>'+d.period.to+'</b> ('+d.period.rangeDays+' يوم)';
+  }
+
+  // KPIs
+  _ccSetKpi('ccKpiSales',  d.kpi.sales.value,    d.kpi.sales.delta, true);
+  _ccSetKpi('ccKpiOrders', d.kpi.orders.value,   d.kpi.orders.delta, false, 0);
+  _ccSetKpi('ccKpiAvg',    d.kpi.avgTicket.value,d.kpi.avgTicket.delta, true);
+  _ccSetKpi('ccKpiExp',    d.kpi.expenses.value, d.kpi.expenses.delta, true, 2, true);
+  _ccSetKpi('ccKpiPur',    d.kpi.purchases.value,d.kpi.purchases.delta, true, 2, true);
+  _ccSetKpi('ccKpiNet',    d.kpi.netIncome.value,d.kpi.netIncome.delta, true);
+  if (q('#ccKpiMargin')) q('#ccKpiMargin').textContent = _ccFmt(d.kpi.grossMargin.value, 1) + '%';
+
+  // Operational pulse
+  if (q('#ccOpShifts'))   q('#ccOpShifts').textContent   = d.ops.openShifts;
+  if (q('#ccOpTxns'))     q('#ccOpTxns').textContent     = d.ops.openTransactions;
+  if (q('#ccOpPayments')) q('#ccOpPayments').innerHTML   = d.ops.pendingPayments.count + ' <small style="font-size:11px;color:#64748b;font-weight:600;">(' + _ccFmt(d.ops.pendingPayments.amount) + ')</small>';
+  if (q('#ccOpAR'))       q('#ccOpAR').innerHTML         = d.ops.arOutstanding.count + ' <small style="font-size:11px;color:#64748b;font-weight:600;">(' + _ccFmt(d.ops.arOutstanding.amount) + ')</small>';
+  if (q('#ccOpAP'))       q('#ccOpAP').innerHTML         = d.ops.apOutstanding.count + ' <small style="font-size:11px;color:#64748b;font-weight:600;">(' + _ccFmt(d.ops.apOutstanding.amount) + ')</small>';
+  if (q('#ccOpCash'))     q('#ccOpCash').textContent     = _ccFmt(d.ops.cashInHand);
+  if (q('#ccOpLow'))      q('#ccOpLow').textContent      = d.ops.lowStockCount;
+  if (q('#ccOpExp'))      q('#ccOpExp').textContent      = d.ops.expiringCount;
+
+  // Charts — destroy previous
+  if (state.charts) Object.values(state.charts).forEach(function(c){ if (c && c.destroy) c.destroy(); });
+  state.charts = {};
+
+  _ccRenderDailyChart(d.charts.dailySales);
+  _ccRenderHourlyChart(d.charts.hourlyToday);
+  _ccRenderTopItemsChart(d.charts.topItems);
+  _ccRenderTopBrandsChart(d.charts.topBrands);
+
+  // Rankings
+  _ccRenderRankingList('ccTopCashiers', d.charts.topCashiers, function(r){ return { name: r.name, meta: r.orders + ' طلب', val: _ccFmt(r.total) }; });
+  _ccRenderRankingList('ccTopBrands',   d.charts.topBrands,   function(r){ return { name: r.name, meta: r.count + ' مشترى', val: _ccFmt(r.total) }; });
+  _ccRenderRankingList('ccTopProducts', d.charts.topItems,    function(r){ return { name: r.name, meta: _ccFmt(r.qty, 0) + ' وحدة', val: _ccFmt(r.revenue) }; });
+
+  // Alerts
+  _ccRenderLowStock(d.alerts.lowStock);
+  _ccRenderExpiring(d.alerts.expiringSoon);
+  _ccRenderShortages();
+}
+
+function _ccSetKpi(id, value, delta, isMoney, digits, invertDelta) {
+  var v = q('#'+id); if (v) v.textContent = _ccFmt(value, digits!=null?digits:2);
+  var dEl = q('#'+id+'Delta');
+  if (dEl) {
+    var deltaNum = Number(delta || 0);
+    // For expenses/purchases, going DOWN is good — invert the color
+    var effective = invertDelta ? -deltaNum : deltaNum;
+    var cls = _ccDeltaClass(effective);
+    var arrow = deltaNum > 0.5 ? '<i class="fas fa-arrow-up"></i>' : (deltaNum < -0.5 ? '<i class="fas fa-arrow-down"></i>' : '<i class="fas fa-minus"></i>');
+    dEl.className = 'cc-kpi-delta ' + cls;
+    dEl.innerHTML = arrow + ' ' + (deltaNum > 0 ? '+' : '') + deltaNum.toFixed(1) + '% <small style="color:var(--wo-on-surface-subtle);font-weight:600;">vs الفترة السابقة</small>';
+  }
+}
+
+function _ccRenderDailyChart(rows) {
+  var ctx = q('#dailySalesChartCtx'); if (!ctx || typeof Chart === 'undefined') return;
+  var labels = (rows||[]).map(function(r){ var p = String(r.date).split('-'); return p[2]+'/'+p[1]; });
+  var data = (rows||[]).map(function(r){ return Number(r.total||0); });
+  state.charts.daily = new Chart(ctx.getContext('2d'), {
+    type: 'line',
+    data: { labels: labels, datasets: [{
+      label: 'المبيعات (SAR)', data: data,
+      borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,0.12)',
+      borderWidth: 3, pointBackgroundColor: '#fff', pointBorderColor: '#6366f1', pointBorderWidth: 2, pointRadius: 4, fill: true, tension: 0.4
+    }] },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, grid: { color: '#f1f5f9' } }, x: { grid: { display: false } } } }
+  });
+}
+
+function _ccRenderHourlyChart(rows) {
+  var ctx = q('#hourlySalesChartCtx'); if (!ctx || typeof Chart === 'undefined') return;
+  var byHour = new Array(24).fill(0);
+  (rows||[]).forEach(function(r){ byHour[r.hour] = Number(r.total||0); });
+  state.charts.hourly = new Chart(ctx.getContext('2d'), {
+    type: 'bar',
+    data: { labels: byHour.map(function(_,h){return h+':00';}),
+      datasets: [{ label: 'ساعات اليوم (SAR)', data: byHour,
+        backgroundColor: '#10b981', borderRadius: 4 }] },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+  });
+}
+
+function _ccRenderTopItemsChart(rows) {
+  var ctx = q('#topItemsChartCtx'); if (!ctx || typeof Chart === 'undefined') return;
+  var top = (rows||[]).slice(0, 8);
+  if (!top.length) {
+    ctx.getContext('2d').clearRect(0,0,ctx.width,ctx.height);
+    return;
+  }
+  state.charts.topItems = new Chart(ctx.getContext('2d'), {
+    type: 'doughnut',
+    data: { labels: top.map(function(r){return r.name;}),
+      datasets: [{ data: top.map(function(r){return r.revenue;}),
+        backgroundColor: ['#f59e0b','#3b82f6','#ec4899','#8b5cf6','#14b8a6','#f43f5e','#84cc16','#06b6d4'],
+        borderWidth: 2, hoverOffset: 6 }] },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } },
+      cutout: '65%' }
+  });
+}
+
+function _ccRenderTopBrandsChart(rows) {
+  var ctx = q('#topBrandsChartCtx'); if (!ctx || typeof Chart === 'undefined') return;
+  var top = (rows||[]).filter(function(r){ return r.total > 0; });
+  if (!top.length) {
+    ctx.getContext('2d').clearRect(0,0,ctx.width,ctx.height);
+    return;
+  }
+  state.charts.topBrands = new Chart(ctx.getContext('2d'), {
+    type: 'bar',
+    data: { labels: top.map(function(r){return r.name;}),
+      datasets: [{ label: 'مشتريات حسب البراند (SAR)', data: top.map(function(r){return r.total;}),
+        backgroundColor: '#8b5cf6', borderRadius: 4 }] },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
+  });
+}
+
+function _ccRenderRankingList(containerId, rows, fmt) {
+  var el = q('#'+containerId); if (!el) return;
+  if (!rows || !rows.length) {
+    el.innerHTML = '<div class="wo-empty" style="padding:20px;"><i class="fas fa-inbox"></i><span>لا توجد بيانات</span></div>';
+    return;
+  }
+  el.innerHTML = rows.slice(0, 5).map(function(r, i) {
+    var o = fmt(r);
+    return '<div class="cc-rank-row r-'+(i+1)+'">' +
+      '<div class="cc-rank-medal">'+(i+1)+'</div>' +
+      '<div class="cc-rank-main"><div class="cc-rank-name">'+_ccEsc(o.name||'')+'</div><div class="cc-rank-meta">'+_ccEsc(o.meta||'')+'</div></div>' +
+      '<div class="cc-rank-val">'+_ccEsc(o.val||'')+'</div>' +
+    '</div>';
+  }).join('');
+}
+
+function _ccRenderLowStock(rows) {
+  var el = q('#dhLowStock'); if (!el) return;
+  if (!rows || !rows.length) {
+    el.innerHTML = '<div class="wo-empty" style="padding:20px;color:var(--wo-success-fg);"><i class="fas fa-check-circle"></i><span>المخزون ممتاز — لا نواقص</span></div>';
+    return;
+  }
+  el.innerHTML = rows.map(function(r){
+    return '<div class="cc-rank-row">' +
+      '<div class="cc-rank-medal" style="background:var(--wo-danger-bg);color:var(--wo-danger);"><i class="fas fa-exclamation"></i></div>' +
+      '<div class="cc-rank-main"><div class="cc-rank-name">'+_ccEsc(r.name)+'</div><div class="cc-rank-meta">المخزون الحالي: '+r.stock+' '+_ccEsc(r.unit)+' · الحد: '+r.minStock+'</div></div>' +
+      '<div class="cc-rank-val" style="color:var(--wo-danger-fg);">-'+_ccFmt(r.shortfall,0)+'</div>' +
+    '</div>';
+  }).join('');
+}
+
+function _ccRenderExpiring(rows) {
+  var el = q('#ccExpiring'); if (!el) return;
+  if (!rows || !rows.length) {
+    el.innerHTML = '<div class="wo-empty" style="padding:20px;color:var(--wo-success-fg);"><i class="fas fa-check-circle"></i><span>لا أصناف قريبة الانتهاء</span></div>';
+    return;
+  }
+  el.innerHTML = rows.map(function(r){
+    var urgent = r.daysLeft != null && r.daysLeft <= 7;
+    return '<div class="cc-rank-row">' +
+      '<div class="cc-rank-medal" style="background:'+(urgent?'var(--wo-danger-bg)':'var(--wo-warning-bg)')+';color:'+(urgent?'var(--wo-danger)':'var(--wo-warning)')+';"><i class="fas fa-hourglass-half"></i></div>' +
+      '<div class="cc-rank-main"><div class="cc-rank-name">'+_ccEsc(r.name)+'</div><div class="cc-rank-meta">'+(r.batchNumber?'دفعة '+_ccEsc(r.batchNumber)+' · ':'')+'ينتهي في '+_ccEsc(r.expiryDate||'—')+'</div></div>' +
+      '<div class="cc-rank-val" style="color:'+(urgent?'var(--wo-danger-fg)':'var(--wo-warning-fg)')+';">'+(r.daysLeft!=null?r.daysLeft+' يوم':'—')+'</div>' +
+    '</div>';
+  }).join('');
+}
+
+function _ccRenderShortages() {
+  // Reuse the existing getShortageRequests endpoint
+  var hdr = { 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') };
+  fetch('/api/inventory/shortage-requests', { headers: hdr }).then(function(r){return r.json();}).then(function(list){
+    var el = q('#dhPendingShortages'); if (!el) return;
+    var pending = (list||[]).filter(function(r){ return r.status === 'pending'; });
+    if (!pending.length) {
+      el.innerHTML = '<div class="wo-empty" style="padding:20px;color:var(--wo-success-fg);"><i class="fas fa-check-circle"></i><span>لا طلبات معلقة</span></div>';
+      return;
+    }
+    el.innerHTML = pending.slice(0, 8).map(function(r) {
+      var dt = r.requestDate ? new Date(r.requestDate).toLocaleDateString('en-GB') : '';
+      return '<div class="cc-rank-row" onclick="viewAndApproveShortage(\''+r.id+'\')" style="cursor:pointer;">' +
+        '<div class="cc-rank-medal" style="background:var(--wo-purple-bg);color:var(--wo-purple);"><i class="fas fa-store"></i></div>' +
+        '<div class="cc-rank-main"><div class="cc-rank-name">'+_ccEsc(r.requestNumber||'')+' — '+_ccEsc(r.username||'')+'</div><div class="cc-rank-meta">'+dt+' · '+(r.totalItems||0)+' مادة'+(r.brandName?' · '+_ccEsc(r.brandName):'')+'</div></div>' +
+        '<div class="cc-rank-val" style="color:var(--wo-purple);"><i class="fas fa-chevron-left"></i></div>' +
+      '</div>';
+    }).join('');
+  }).catch(function(){});
+}
+// Legacy body — retained as shim in case anything still references it.
+// The new command center uses /api/dashboard/overview via _ccFetchAndRender.
 function _loadDashHomeBody() {
   // Build the date range: last 7 days through today (LOCAL dates).
   var today = new Date();

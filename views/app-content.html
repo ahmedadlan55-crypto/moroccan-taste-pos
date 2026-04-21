@@ -218,61 +218,190 @@
         
         <!-- Section: Overview (Home) -->
         <div id="sec_home" class="admin-section active">
-          <div class="stat-grid">
-            <div class="stat-card">
-              <div class="stat-info"><h4>إجمالي مبيعات اليوم</h4><p id="dhTotalSale">0.00</p></div>
-              <div class="stat-icon" style="background:#e0e7ff; color:#4f46e5;"><i class="fas fa-money-bill-trend-up"></i></div>
+          <!-- ════════════ Enterprise Command Center (unified dashboard) ════════════ -->
+
+          <!-- Header: title + period presets + live clock -->
+          <div class="cc-header">
+            <div class="cc-header-titles">
+              <h1 class="cc-title"><i class="fas fa-gauge-high" style="color:var(--wo-info-fg);"></i> مركز القيادة التنفيذي</h1>
+              <div class="cc-subtitle">
+                <span class="cc-live-dot"></span>
+                <span>رؤية شاملة على أداء جميع الفروع والبراندات — يُحدَّث تلقائياً كل 30 ثانية</span>
+                <span class="cc-clock" id="ccClock">—:—</span>
+              </div>
             </div>
-            <div class="stat-card">
-              <div class="stat-info"><h4>عدد طلبات اليوم</h4><p id="dhTotalOrders">0</p></div>
-              <div class="stat-icon" style="background:#dcfce7; color:#16a34a;"><i class="fas fa-shopping-bag"></i></div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-info"><h4>مبيعات الكاش</h4><p id="dhTotalCash">0.00</p></div>
-              <div class="stat-icon" style="background:#fef9c3; color:#ca8a04;"><i class="fas fa-coins"></i></div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-info"><h4>مبيعات الشبكة</h4><p id="dhTotalCard">0.00</p></div>
-              <div class="stat-icon" style="background:#fee2e2; color:#dc2626;"><i class="fas fa-credit-card"></i></div>
-            </div>
-          </div>
-          
-          <style>
-            .dash-chart-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px; }
-            @media (max-width:992px) { .dash-chart-grid { grid-template-columns:1fr; } }
-          </style>
-          
-          <div class="dash-chart-grid">
-            <div class="dash-box" style="display:flex; flex-direction:column;">
-              <h3 class="dash-box-title">حركة المبيعات (آخر 7 أيام)</h3>
-              <div style="flex:1; position:relative; min-height:280px;"><canvas id="dailySalesChartCtx"></canvas></div>
-            </div>
-            <div class="dash-box" style="display:flex; flex-direction:column;">
-              <h3 class="dash-box-title">أكثر ساعات العمل مبيعاً</h3>
-              <div style="flex:1; position:relative; min-height:280px;"><canvas id="hourlySalesChartCtx"></canvas></div>
-            </div>
-            <div class="dash-box" style="display:flex; flex-direction:column;">
-              <h3 class="dash-box-title">أكثر العناصر مبيعاً (المنتجات)</h3>
-              <div style="flex:1; position:relative; min-height:280px;"><canvas id="topItemsChartCtx"></canvas></div>
-            </div>
-            <div class="dash-box" style="display:flex; flex-direction:column;">
-              <h3 class="dash-box-title">مبيعات الشيفتات (حسب الموظف)</h3>
-              <div style="flex:1; position:relative; min-height:280px;"><canvas id="userSalesChartCtx"></canvas></div>
-            </div>
-          </div>
-          
-          <!-- Pending Shortage Requests from Branches -->
-          <div class="dash-box" style="margin-bottom:20px;" id="dashShortageBox">
-            <h3 class="dash-box-title" style="color:#8b5cf6;"><i class="fas fa-exclamation-triangle"></i> طلبات النواقص المعلقة من الفروع</h3>
-            <div id="dhPendingShortages" style="display:flex;flex-direction:column;gap:8px;">
-              <div style="text-align:center;padding:20px;color:#94a3b8;font-size:13px;">جاري التحميل...</div>
+            <div class="cc-header-actions">
+              <button class="wo-btn wo-btn-secondary" onclick="loadDashHome()" title="تحديث الآن"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+              <button class="wo-btn wo-btn-secondary" onclick="ccExportPdf()" title="تصدير PDF"><i class="fas fa-file-pdf"></i><span>تصدير</span></button>
             </div>
           </div>
 
-          <div class="dash-row">
-            <div class="dash-box" style="width:100%;">
-              <h3 class="dash-box-title" style="color:var(--danger);"><i class="fas fa-exclamation-triangle"></i> نواقص المخزون والتنبيهات</h3>
-              <div id="dhLowStock" style="display:flex; flex-direction:column; gap:10px;"></div>
+          <!-- ─── Advanced filter bar: brand / branch / preset chips / custom dates ─── -->
+          <div class="wo-filterbar">
+            <!-- Period preset chips (one-click) -->
+            <div class="wo-filterbar-row">
+              <div style="font-size:11px;font-weight:800;color:var(--wo-on-surface-subtle);margin-inline-end:4px;"><i class="fas fa-calendar-check"></i> الفترة:</div>
+              <button class="wo-quickfilter" data-cc-preset="today"     onclick="ccSetPreset('today')"><i class="fas fa-calendar-day"></i>اليوم</button>
+              <button class="wo-quickfilter" data-cc-preset="yesterday" onclick="ccSetPreset('yesterday')"><i class="fas fa-backward-step"></i>أمس</button>
+              <button class="wo-quickfilter active" data-cc-preset="week" onclick="ccSetPreset('week')"><i class="fas fa-calendar-week"></i>آخر 7 أيام</button>
+              <button class="wo-quickfilter" data-cc-preset="month"     onclick="ccSetPreset('month')"><i class="fas fa-calendar"></i>هذا الشهر</button>
+              <button class="wo-quickfilter" data-cc-preset="quarter"   onclick="ccSetPreset('quarter')"><i class="fas fa-chart-line"></i>الربع</button>
+              <button class="wo-quickfilter" data-cc-preset="year"      onclick="ccSetPreset('year')"><i class="fas fa-calendar-days"></i>السنة</button>
+              <span class="wo-results-count" id="ccPeriodLabel" style="margin-inline-start:auto;"></span>
+            </div>
+            <!-- Brand/branch/custom dates row -->
+            <div class="wo-filterbar-row">
+              <div class="wo-field" style="flex:1;min-width:200px;">
+                <label class="wo-field-label" for="ccFBrand"><i class="fas fa-store" style="color:var(--wo-purple);"></i>البراند</label>
+                <select id="ccFBrand" class="wo-select" onchange="loadDashHome()"><option value="">كل البراندات</option></select>
+              </div>
+              <div class="wo-field" style="flex:1;min-width:200px;">
+                <label class="wo-field-label" for="ccFBranch"><i class="fas fa-map-marker-alt" style="color:var(--wo-info-fg);"></i>الفرع</label>
+                <select id="ccFBranch" class="wo-select" onchange="loadDashHome()"><option value="">كل الفروع</option></select>
+              </div>
+              <div class="wo-field">
+                <label class="wo-field-label" for="ccFFrom"><i class="fas fa-calendar"></i>من</label>
+                <input type="date" id="ccFFrom" class="wo-input" onchange="ccApplyCustomRange()">
+              </div>
+              <div class="wo-field">
+                <label class="wo-field-label" for="ccFTo"><i class="fas fa-calendar-check"></i>إلى</label>
+                <input type="date" id="ccFTo" class="wo-input" onchange="ccApplyCustomRange()">
+              </div>
+              <div class="wo-field" style="align-self:flex-end;">
+                <button class="wo-btn wo-btn-secondary" onclick="ccResetFilters()" style="height:42px;"><i class="fas fa-xmark"></i><span>مسح</span></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- ─── EXECUTIVE KPIs (7 big tiles with deltas) ─── -->
+          <div class="cc-section-title"><i class="fas fa-crown" style="color:#f59e0b;"></i> المؤشرات التنفيذية <span class="cc-section-sub">مقارنة بالفترة السابقة نفسها</span></div>
+          <div class="cc-kpi-grid" id="ccKpiGrid">
+            <div class="cc-kpi accent-info">
+              <div class="cc-kpi-head"><i class="fas fa-money-bill-trend-up"></i><span>إجمالي المبيعات</span></div>
+              <div class="cc-kpi-val" id="ccKpiSales">—</div>
+              <div class="cc-kpi-delta" id="ccKpiSalesDelta">—</div>
+            </div>
+            <div class="cc-kpi accent-success">
+              <div class="cc-kpi-head"><i class="fas fa-receipt"></i><span>عدد الطلبات</span></div>
+              <div class="cc-kpi-val" id="ccKpiOrders">—</div>
+              <div class="cc-kpi-delta" id="ccKpiOrdersDelta">—</div>
+            </div>
+            <div class="cc-kpi accent-purple">
+              <div class="cc-kpi-head"><i class="fas fa-receipt"></i><span>متوسط الفاتورة</span></div>
+              <div class="cc-kpi-val" id="ccKpiAvg">—</div>
+              <div class="cc-kpi-delta" id="ccKpiAvgDelta">—</div>
+            </div>
+            <div class="cc-kpi accent-warning">
+              <div class="cc-kpi-head"><i class="fas fa-arrow-trend-down"></i><span>المصروفات</span></div>
+              <div class="cc-kpi-val" id="ccKpiExp">—</div>
+              <div class="cc-kpi-delta" id="ccKpiExpDelta">—</div>
+            </div>
+            <div class="cc-kpi accent-danger">
+              <div class="cc-kpi-head"><i class="fas fa-truck-ramp-box"></i><span>المشتريات</span></div>
+              <div class="cc-kpi-val" id="ccKpiPur">—</div>
+              <div class="cc-kpi-delta" id="ccKpiPurDelta">—</div>
+            </div>
+            <div class="cc-kpi accent-info" style="border-top-width:4px;">
+              <div class="cc-kpi-head"><i class="fas fa-sack-dollar"></i><span>صافي الدخل</span></div>
+              <div class="cc-kpi-val" id="ccKpiNet">—</div>
+              <div class="cc-kpi-delta" id="ccKpiNetDelta">—</div>
+            </div>
+            <div class="cc-kpi accent-success" style="border-top-width:4px;">
+              <div class="cc-kpi-head"><i class="fas fa-percent"></i><span>هامش الربح الإجمالي</span></div>
+              <div class="cc-kpi-val" id="ccKpiMargin">—</div>
+              <div class="cc-kpi-delta" style="color:var(--wo-on-surface-subtle);font-size:11px;">(المبيعات − المشتريات) ÷ المبيعات</div>
+            </div>
+          </div>
+
+          <!-- ─── OPERATIONAL PULSE (8 live tiles) ─── -->
+          <div class="cc-section-title"><i class="fas fa-heart-pulse" style="color:#ef4444;"></i> النبض التشغيلي <span class="cc-section-sub">تنبيهات تتطلب انتباهك الآن</span></div>
+          <div class="cc-op-grid">
+            <div class="cc-op info"    onclick="nav('shifts')">
+              <div class="cc-op-icon"><i class="fas fa-clock"></i></div>
+              <div class="cc-op-body"><div class="cc-op-val" id="ccOpShifts">—</div><div class="cc-op-lbl">مناوبات مفتوحة</div></div>
+            </div>
+            <div class="cc-op warning" onclick="erpNav('erpMyInbox')">
+              <div class="cc-op-icon"><i class="fas fa-clipboard-check"></i></div>
+              <div class="cc-op-body"><div class="cc-op-val" id="ccOpTxns">—</div><div class="cc-op-lbl">معاملات مفتوحة</div></div>
+            </div>
+            <div class="cc-op purple"  onclick="erpNav('erpPayments')">
+              <div class="cc-op-icon"><i class="fas fa-money-check-dollar"></i></div>
+              <div class="cc-op-body"><div class="cc-op-val" id="ccOpPayments">—</div><div class="cc-op-lbl">مدفوعات قيد التنفيذ</div></div>
+            </div>
+            <div class="cc-op success" onclick="erpNav('erpARAging')">
+              <div class="cc-op-icon"><i class="fas fa-hand-holding-usd"></i></div>
+              <div class="cc-op-body"><div class="cc-op-val" id="ccOpAR">—</div><div class="cc-op-lbl">ذمم عملاء</div></div>
+            </div>
+            <div class="cc-op danger"  onclick="erpNav('erpAPAging')">
+              <div class="cc-op-icon"><i class="fas fa-credit-card"></i></div>
+              <div class="cc-op-body"><div class="cc-op-val" id="ccOpAP">—</div><div class="cc-op-lbl">ذمم موردين</div></div>
+            </div>
+            <div class="cc-op info"    onclick="nav('shifts')">
+              <div class="cc-op-icon"><i class="fas fa-vault"></i></div>
+              <div class="cc-op-body"><div class="cc-op-val" id="ccOpCash">—</div><div class="cc-op-lbl">النقد في الصندوق</div></div>
+            </div>
+            <div class="cc-op warning" onclick="nav('warehouse')">
+              <div class="cc-op-icon"><i class="fas fa-triangle-exclamation"></i></div>
+              <div class="cc-op-body"><div class="cc-op-val" id="ccOpLow">—</div><div class="cc-op-lbl">أصناف تحت الحد الأدنى</div></div>
+            </div>
+            <div class="cc-op danger"  onclick="erpNav('erpExpiryAlerts')">
+              <div class="cc-op-icon"><i class="fas fa-hourglass-end"></i></div>
+              <div class="cc-op-body"><div class="cc-op-val" id="ccOpExp">—</div><div class="cc-op-lbl">انتهاء صلاحية قريب</div></div>
+            </div>
+          </div>
+
+          <!-- ─── CHARTS GRID (4 panels) ─── -->
+          <div class="cc-section-title"><i class="fas fa-chart-column" style="color:var(--wo-info-fg);"></i> لوحات المخططات</div>
+          <div class="cc-chart-grid">
+            <div class="cc-chart-box">
+              <div class="cc-chart-head"><i class="fas fa-chart-line"></i><span>حركة المبيعات (الفترة المختارة)</span></div>
+              <div class="cc-chart-canvas"><canvas id="dailySalesChartCtx"></canvas></div>
+            </div>
+            <div class="cc-chart-box">
+              <div class="cc-chart-head"><i class="fas fa-chart-column"></i><span>ذروة المبيعات (ساعات اليوم)</span></div>
+              <div class="cc-chart-canvas"><canvas id="hourlySalesChartCtx"></canvas></div>
+            </div>
+            <div class="cc-chart-box">
+              <div class="cc-chart-head"><i class="fas fa-boxes-stacked"></i><span>أكثر المنتجات مبيعاً</span></div>
+              <div class="cc-chart-canvas"><canvas id="topItemsChartCtx"></canvas></div>
+            </div>
+            <div class="cc-chart-box">
+              <div class="cc-chart-head"><i class="fas fa-store"></i><span>توزيع المشتريات حسب البراند</span></div>
+              <div class="cc-chart-canvas"><canvas id="topBrandsChartCtx"></canvas></div>
+            </div>
+          </div>
+
+          <!-- ─── TOP PERFORMERS (3 columns) ─── -->
+          <div class="cc-section-title"><i class="fas fa-trophy" style="color:#f59e0b;"></i> أفضل الأداء</div>
+          <div class="cc-rank-grid">
+            <div class="cc-rank-col">
+              <div class="cc-rank-head"><i class="fas fa-user-gear"></i> أفضل كاشيرين</div>
+              <div class="cc-rank-body" id="ccTopCashiers"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>—</span></div></div>
+            </div>
+            <div class="cc-rank-col">
+              <div class="cc-rank-head"><i class="fas fa-store"></i> أفضل البراندات</div>
+              <div class="cc-rank-body" id="ccTopBrands"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>—</span></div></div>
+            </div>
+            <div class="cc-rank-col">
+              <div class="cc-rank-head"><i class="fas fa-boxes-stacked"></i> أفضل المنتجات</div>
+              <div class="cc-rank-body" id="ccTopProducts"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>—</span></div></div>
+            </div>
+          </div>
+
+          <!-- ─── ALERTS PANEL (3 columns) ─── -->
+          <div class="cc-section-title"><i class="fas fa-bell" style="color:#ef4444;"></i> التنبيهات الحية</div>
+          <div class="cc-rank-grid">
+            <div class="cc-rank-col">
+              <div class="cc-rank-head" style="color:#ef4444;"><i class="fas fa-triangle-exclamation"></i> نواقص المخزون</div>
+              <div class="cc-rank-body" id="dhLowStock"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>—</span></div></div>
+            </div>
+            <div class="cc-rank-col">
+              <div class="cc-rank-head" style="color:#f59e0b;"><i class="fas fa-hourglass-half"></i> قريب الانتهاء (30 يوم)</div>
+              <div class="cc-rank-body" id="ccExpiring"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>—</span></div></div>
+            </div>
+            <div class="cc-rank-col">
+              <div class="cc-rank-head" style="color:#8b5cf6;"><i class="fas fa-store"></i> طلبات نواقص من الفروع</div>
+              <div class="cc-rank-body" id="dhPendingShortages"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>—</span></div></div>
             </div>
           </div>
         </div>

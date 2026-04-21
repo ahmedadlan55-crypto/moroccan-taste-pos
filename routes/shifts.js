@@ -178,4 +178,63 @@ router.get('/closing-data/:shiftId', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// DELETE shift
+// - Hard-delete by default
+// - ?unlinkSales=1 to detach sales from this shift (set shift_id=NULL)
+//   instead of keeping them linked to a deleted shift
+// - Refuses to delete shifts with linked sales unless ?force=1 is passed
+// ═══════════════════════════════════════════════════════════════════
+router.delete('/:shiftId', async (req, res) => {
+  try {
+    const { shiftId } = req.params;
+    const force = req.query.force === '1' || req.query.force === 'true';
+    const unlinkSales = req.query.unlinkSales === '1' || req.query.unlinkSales === 'true';
+
+    // Confirm the shift exists
+    const [rows] = await db.query('SELECT id, status FROM shifts WHERE id = ?', [shiftId]);
+    if (!rows.length) return res.json({ success: false, error: 'المناوبة غير موجودة' });
+
+    // Count linked sales for safety
+    const [cntRows] = await db.query('SELECT COUNT(*) AS c FROM sales WHERE shift_id = ?', [shiftId]);
+    const linkedCount = Number(cntRows[0].c || 0);
+
+    if (linkedCount > 0 && !force && !unlinkSales) {
+      return res.json({
+        success: false,
+        requiresConfirm: true,
+        linkedSales: linkedCount,
+        error: 'المناوبة مرتبطة بـ '+linkedCount+' عملية بيع — أضف force=1 لحذفها مع فصل المبيعات، أو unlinkSales=1 لفصل المبيعات فقط ثم الحذف.'
+      });
+    }
+
+    // Unlink sales (set shift_id = NULL) rather than cascade-deleting them —
+    // losing sales data is almost always a bigger problem than losing a shift record.
+    if (linkedCount > 0) {
+      await db.query('UPDATE sales SET shift_id = NULL WHERE shift_id = ?', [shiftId]);
+    }
+
+    await db.query('DELETE FROM shifts WHERE id = ?', [shiftId]);
+    res.json({ success: true, deleted: shiftId, unlinkedSales: linkedCount });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// Bulk delete
+router.post('/bulk-delete', async (req, res) => {
+  try {
+    const { ids, unlinkSales } = req.body;
+    if (!ids || !ids.length) return res.json({ success: false, error: 'لم يُحدَّد أي معرّف' });
+    const placeholders = ids.map(() => '?').join(',');
+    if (unlinkSales) {
+      await db.query('UPDATE sales SET shift_id = NULL WHERE shift_id IN ('+placeholders+')', ids);
+    }
+    const [r] = await db.query('DELETE FROM shifts WHERE id IN ('+placeholders+')', ids);
+    res.json({ success: true, deleted: r.affectedRows || ids.length });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
 module.exports = router;

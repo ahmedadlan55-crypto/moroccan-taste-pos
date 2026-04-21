@@ -7229,11 +7229,59 @@ function renderShiftsTable(list) {
       '<td style="color:'+dc(dCash)+';font-weight:600;font-size:12px;">'+fs(dCash)+'</td>'+
       '<td style="color:'+dc(dCard)+';font-weight:600;font-size:12px;">'+fs(dCard)+'</td>'+
       '<td style="color:'+dc(dKita)+';font-weight:600;font-size:12px;">'+fs(dKita)+'</td>'+
-      '<td><button class="btn btn-sm btn-primary" onclick=\'reprintShift('+JSON.stringify(s).replace(/'/g,"&#39;")+')\' title="طباعة"><i class="fas fa-print"></i></button></td>'+
+      '<td style="white-space:nowrap;">' +
+        '<button class="btn btn-sm btn-primary" onclick=\'reprintShift('+JSON.stringify(s).replace(/'/g,"&#39;")+')\' title="طباعة"><i class="fas fa-print"></i></button> ' +
+        '<button class="btn btn-sm btn-danger" onclick="delShiftFn(\''+s.id+'\',\''+(s.username||'').replace(/[\'"]/g,'')+'\')" title="حذف المناوبة"><i class="fas fa-trash"></i></button>' +
+      '</td>'+
     '</tr>';
   }).join('');
   updateShiftTotals(list);
 }
+
+// ─── Delete a closed shift (admin) ───
+window.delShiftFn = function(shiftId, cashier) {
+  var proceed = function(mode) {
+    // mode: 'unlink' (detach sales then delete) | 'force' (delete even with linked sales)
+    var qs = mode === 'force' ? '?force=1' : (mode === 'unlink' ? '?unlinkSales=1' : '');
+    var hdr = { 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') };
+    loader(true);
+    fetch('/api/shifts/' + encodeURIComponent(shiftId) + qs, { method:'DELETE', headers: hdr })
+      .then(function(r){ return r.json(); })
+      .then(function(r){
+        loader(false);
+        if (r.success) {
+          showToast('تم حذف المناوبة' + (r.unlinkedSales ? ' (فُصلت '+r.unlinkedSales+' فاتورة)' : ''));
+          loadDashShifts();
+        } else if (r.requiresConfirm) {
+          // Two-step confirm: ask whether to unlink sales first
+          if (window.WoModal && WoModal.confirm) {
+            WoModal.confirm({
+              icon: 'fa-triangle-exclamation', iconColor: 'warning',
+              title: 'المناوبة مرتبطة بـ '+r.linkedSales+' فاتورة',
+              message: 'سيتم فصل الفواتير عن المناوبة (لن تُحذف الفواتير) ثم حذف سجل المناوبة فقط. هل تريد المتابعة؟',
+              confirmText: 'فصل الفواتير وحذف', cancelText: 'إلغاء', danger: true
+            }).then(function(ok){ if (ok) proceed('unlink'); });
+          } else {
+            if (confirm('المناوبة مرتبطة بـ '+r.linkedSales+' فاتورة. سيتم فصل الفواتير عنها ثم حذف المناوبة. متابعة؟')) proceed('unlink');
+          }
+        } else {
+          showToast(r.error || 'فشل الحذف', true);
+        }
+      })
+      .catch(function(e){ loader(false); showToast((e&&e.message)||'خطأ شبكة', true); });
+  };
+
+  if (window.WoModal && WoModal.confirm) {
+    WoModal.confirm({
+      icon: 'fa-trash', iconColor: 'danger',
+      title: 'حذف سجل المناوبة؟',
+      message: 'المناوبة: <code>'+shiftId+'</code>' + (cashier ? ' · الموظف: <b>'+cashier+'</b>' : '') + '<br><br>سيتم حذف سجل المناوبة نهائياً. الفواتير المرتبطة (إن وُجدت) سيُطلب منك إجراء إضافي.',
+      confirmText: 'حذف المناوبة', cancelText: 'إلغاء', danger: true
+    }).then(function(ok){ if (ok) proceed(''); });
+  } else {
+    if (confirm('حذف سجل المناوبة '+shiftId+'؟')) proceed('');
+  }
+};
 function updateShiftTotals(list) {
   var tExp=0,tAct=0,tDiff=0,count=0;
   list.forEach(function(s){

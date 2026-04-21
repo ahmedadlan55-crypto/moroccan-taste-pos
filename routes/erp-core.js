@@ -237,16 +237,22 @@ router.delete('/price-list-items/:id', async (req, res) => {
 // ═══════════════════════════════════════
 router.get('/bom', async (req, res) => {
   try {
-    const { product_id } = req.query;
-    let sql = `SELECT b.*, i.name AS product_name,
+    const { product_id, brandId } = req.query;
+    let sql = `SELECT b.*, i.name AS product_name, i.brand_id AS brand_id,
+               br.name AS brand_name,
                (SELECT COUNT(*) FROM bom_lines bl WHERE bl.bom_id = b.id) AS line_count
-               FROM bom b LEFT JOIN inv_items i ON b.product_id = i.id WHERE 1=1`;
+               FROM bom b
+               LEFT JOIN inv_items i ON b.product_id = i.id
+               LEFT JOIN brands br ON br.id = i.brand_id
+               WHERE 1=1`;
     const params = [];
     if (product_id) { sql += ' AND b.product_id = ?'; params.push(product_id); }
+    if (brandId)    { sql += ' AND i.brand_id = ?';   params.push(brandId); }
     sql += ' ORDER BY i.name, b.version DESC';
     const [rows] = await db.query(sql, params);
     res.json(rows.map(b => ({
       id: b.id, productId: b.product_id, productName: b.product_name || '',
+      brandId: b.brand_id || null, brandName: b.brand_name || '',
       version: b.version, yieldQuantity: Number(b.yield_quantity) || 1,
       yieldUnit: b.yield_unit || 'PCS', isActive: b.is_active !== false,
       effectiveFrom: b.effective_from, effectiveTo: b.effective_to,

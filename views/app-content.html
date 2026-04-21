@@ -1111,12 +1111,20 @@
       <i class="fas fa-search"></i>
       <input type="text" id="erpSupSearch" class="form-control-sm" placeholder="بحث بالاسم أو الهاتف أو الرقم الضريبي..." oninput="erpFilterSuppliersTable()">
     </div>
+    <select id="erpSupFBrand" class="form-control-sm" style="max-width:220px;" onchange="erpFilterSuppliersTable()">
+      <option value="">كل البراندات</option>
+    </select>
+    <select id="erpSupFStatus" class="form-control-sm" style="max-width:180px;" onchange="erpFilterSuppliersTable()">
+      <option value="">كل الحالات</option>
+      <option value="active">نشط فقط</option>
+      <option value="inactive">معطل فقط</option>
+    </select>
     <button class="btn btn-sm btn-secondary" onclick="erpLoadSuppliers()"><i class="fas fa-sync-alt"></i> تحديث</button>
   </div>
   <div class="erp-table-container">
     <table class="erp-table" id="erpSuppliersTable">
-      <thead><tr><th>الرقم</th><th>الاسم</th><th>الرقم الضريبي</th><th>الهاتف</th><th>شروط الدفع</th><th>الرصيد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-      <tbody id="erpSuppliersBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody>
+      <thead><tr><th>الرقم</th><th>الاسم</th><th>البراند</th><th>الرقم الضريبي</th><th>الهاتف</th><th>شروط الدفع</th><th>الرصيد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpSuppliersBody"><tr><td colspan="9" class="empty-msg">جاري التحميل...</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -1226,14 +1234,19 @@
       <div class="filter-search"><i class="fas fa-search"></i>
         <input type="text" id="erpPOSearch" class="form-control-sm" placeholder="بحث برقم الأمر أو المورد..." oninput="erpFilterPOTable()">
       </div>
+      <select class="form-control-sm" id="erpPOFBrand" style="max-width:200px;" onchange="erpFilterPOTable()">
+        <option value="">كل البراندات</option>
+      </select>
       <select class="form-control-sm" id="erpPOStatusFilter" onchange="erpFilterPOTable()">
         <option value="">كل الحالات</option><option value="draft">مسودة</option><option value="approved">معتمد</option><option value="received">مستلم</option><option value="cancelled">ملغي</option>
       </select>
+      <input type="date" id="erpPOFFrom" class="form-control-sm" style="max-width:160px;" oninput="erpFilterPOTable()" placeholder="من">
+      <input type="date" id="erpPOFTo"   class="form-control-sm" style="max-width:160px;" oninput="erpFilterPOTable()" placeholder="إلى">
     </div>
     <div class="erp-table-container">
       <table class="erp-table" id="erpPOTable">
-        <thead><tr><th>رقم الأمر</th><th>المورد</th><th>التاريخ</th><th>قبل الضريبة</th><th>مع الضريبة</th><th>الحالة</th><th>المعتمد</th><th>إجراءات</th></tr></thead>
-        <tbody id="erpPOBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody>
+        <thead><tr><th>رقم الأمر</th><th>المورد</th><th>البراند</th><th>التاريخ</th><th>قبل الضريبة</th><th>مع الضريبة</th><th>الحالة</th><th>المعتمد</th><th>إجراءات</th></tr></thead>
+        <tbody id="erpPOBody"><tr><td colspan="9" class="empty-msg">جاري التحميل...</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -1257,6 +1270,16 @@
               oninput="erpFilterPOSuppliers()" onfocus="erpFilterPOSuppliers()">
             <input type="hidden" id="erpPOSupplierId">
             <div class="sd-results" id="erpPOSupplierResults"></div>
+          </div>
+        </div>
+        <div class="form-row-2col">
+          <div class="form-group">
+            <label class="form-label"><i class="fas fa-store" style="color:#8b5cf6;"></i> البراند</label>
+            <select id="erpPOBrand" class="form-control"><option value="">— عام —</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label"><i class="fas fa-map-marker-alt" style="color:#06b6d4;"></i> الفرع</label>
+            <select id="erpPOBranch" class="form-control"><option value="">— الكل —</option></select>
           </div>
         </div>
         <div class="form-row-2col">
@@ -1912,6 +1935,10 @@
       </select>
     </div>
     <div class="wo-field">
+      <label class="wo-field-label" for="prdFBrand"><i class="fas fa-store"></i>البراند</label>
+      <select id="prdFBrand" class="wo-select" onchange="prdLoad()"><option value="">كل البراندات</option></select>
+    </div>
+    <div class="wo-field">
       <label class="wo-field-label" for="prdFWh"><i class="fas fa-warehouse"></i>المستودع</label>
       <select id="prdFWh" class="wo-select" onchange="prdLoad()"><option value="">كل المستودعات</option></select>
     </div>
@@ -1930,6 +1957,7 @@
       <thead>
         <tr>
           <th scope="col">رقم الأمر</th>
+          <th scope="col">البراند</th>
           <th scope="col">المنتج</th>
           <th scope="col" class="num">الكمية</th>
           <th scope="col">المستودع</th>
@@ -1941,7 +1969,7 @@
         </tr>
       </thead>
       <tbody id="prdBody">
-        <tr><td colspan="9"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+        <tr><td colspan="10"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
       </tbody>
     </table>
   </div>

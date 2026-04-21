@@ -384,22 +384,28 @@ router.post('/stock-issues/:id/cancel', async (req, res) => {
 
 router.get('/production-orders', async (req, res) => {
   try {
-    const { status, warehouseId, dateFrom, dateTo } = req.query;
+    const { status, warehouseId, dateFrom, dateTo, brandId, branchId } = req.query;
     let sql = `
       SELECT po.*,
              b.product_id AS bom_product_id,
              i.name AS product_name, i.unit AS product_unit,
              w.name AS warehouse_name, w.code AS warehouse_code,
-             wo.name AS output_warehouse_name
+             wo.name AS output_warehouse_name,
+             br.name AS brand_name,
+             bn.name AS branch_name
       FROM production_orders po
       LEFT JOIN bom b ON b.id = po.bom_id
       LEFT JOIN inv_items i ON i.id = po.product_id
       LEFT JOIN warehouses w ON w.id = po.warehouse_id
       LEFT JOIN warehouses wo ON wo.id = po.output_warehouse_id
+      LEFT JOIN brands br ON br.id = po.brand_id
+      LEFT JOIN branches bn ON bn.id = po.branch_id
       WHERE 1=1`;
     const params = [];
     if (status)      { sql += ' AND po.status=?'; params.push(status); }
     if (warehouseId) { sql += ' AND po.warehouse_id=?'; params.push(warehouseId); }
+    if (brandId)     { sql += ' AND po.brand_id=?';  params.push(brandId); }
+    if (branchId)    { sql += ' AND po.branch_id=?'; params.push(branchId); }
     if (dateFrom)    { sql += ' AND po.planned_date >= ?'; params.push(dateFrom); }
     if (dateTo)      { sql += ' AND po.planned_date <= ?'; params.push(dateTo); }
     sql += ' ORDER BY po.created_at DESC LIMIT 500';

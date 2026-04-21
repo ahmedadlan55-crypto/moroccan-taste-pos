@@ -10478,6 +10478,172 @@ window.openRecordPaymentModal = function(opts) {
   });
 };
 
+// ═══════════════════════════════════════════════════════════════════
+// NOTIFICATION CENTER (Phase D) — bell icon + dropdown panel
+// ═══════════════════════════════════════════════════════════════════
+window._notifPanelOpen = false;
+window._notifPollTimer = null;
+
+window.loadNotificationCount = function() {
+  var token = localStorage.getItem('pos_token') || '';
+  var username = (typeof state !== 'undefined' && state.user) || '';
+  if (!username) return;
+  fetch('/api/erp/notifications/unread-count?username=' + encodeURIComponent(username), {
+    headers: { 'Authorization': 'Bearer ' + token }
+  })
+    .then(function(r){return r.json();})
+    .then(function(r) {
+      var badge = document.getElementById('adminNotifBadge');
+      if (!badge) return;
+      var count = (r && r.count) || 0;
+      if (count > 0) {
+        badge.textContent = count > 99 ? '99+' : count;
+        badge.style.display = 'flex';
+      } else {
+        badge.style.display = 'none';
+      }
+    })
+    .catch(function(){});
+};
+
+window.toggleNotificationCenter = function() {
+  if (window._notifPanelOpen) return closeNotificationCenter();
+  openNotificationCenter();
+};
+
+window.openNotificationCenter = function() {
+  closeNotificationCenter();  // ensure clean state
+  var token = localStorage.getItem('pos_token') || '';
+  var username = (typeof state !== 'undefined' && state.user) || '';
+
+  var panel = document.createElement('div');
+  panel.id = 'notifPanel';
+  panel.style.cssText = 'position:fixed;top:64px;inset-inline-end:16px;width:380px;max-height:520px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 20px 50px rgba(15,23,42,.15);z-index:9998;overflow:hidden;display:flex;flex-direction:column;animation:notifPanelIn 240ms cubic-bezier(.2,0,0,1);';
+  panel.innerHTML =
+    '<div style="padding:14px 16px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;">' +
+      '<div style="display:flex;align-items:center;gap:10px;"><i class="fas fa-bell" style="color:#0ea5e9;"></i><b style="font-size:15px;">الإشعارات</b></div>' +
+      '<button onclick="markAllNotificationsRead()" style="border:none;background:none;color:#0369a1;font-size:12px;font-weight:700;cursor:pointer;">تمييز الكل كمقروء</button>' +
+    '</div>' +
+    '<div id="notifList" style="flex:1;overflow-y:auto;padding:8px;">' +
+      '<div style="padding:30px;text-align:center;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>' +
+    '</div>';
+  document.body.appendChild(panel);
+
+  // Inject animation style
+  if (!document.getElementById('notifCSS')) {
+    var st = document.createElement('style'); st.id = 'notifCSS';
+    st.textContent = '@keyframes notifPanelIn{from{opacity:0;transform:translateY(-10px);}to{opacity:1;transform:translateY(0);}}';
+    document.head.appendChild(st);
+  }
+
+  window._notifPanelOpen = true;
+
+  // Click-outside close
+  setTimeout(function(){
+    document.addEventListener('click', _notifOutsideClick);
+  }, 100);
+
+  // Fetch list
+  fetch('/api/erp/notifications?username=' + encodeURIComponent(username) + '&limit=30', {
+    headers: { 'Authorization': 'Bearer ' + token }
+  })
+    .then(function(r){return r.json();})
+    .then(function(list) {
+      var body = document.getElementById('notifList');
+      if (!body) return;
+      if (!Array.isArray(list) || !list.length) {
+        body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:#94a3b8;"><i class="fas fa-bell-slash" style="font-size:32px;display:block;margin-bottom:10px;"></i><div style="font-weight:700;">لا توجد إشعارات</div></div>';
+        return;
+      }
+      body.innerHTML = list.map(function(n) {
+        var icon = n.icon || 'fa-circle-info';
+        var color = n.icon_color || 'info';
+        var unread = n.is_read === 0 || n.is_read === false;
+        var dt = n.created_at ? new Date(n.created_at).toLocaleString('ar-SA',{hour:'2-digit',minute:'2-digit',day:'numeric',month:'short'}) : '';
+        return '<div onclick="handleNotifClick(\''+n.id+'\',\''+(n.link_type||'')+'\',\''+(n.link_id||'')+'\')" style="display:flex;gap:10px;padding:10px 12px;border-radius:10px;cursor:pointer;transition:background 180ms;'+(unread?'background:#eff6ff;':'')+'" onmouseover="this.style.background=\''+(unread?'#dbeafe':'#f8fafc')+'\'" onmouseout="this.style.background=\''+(unread?'#eff6ff':'transparent')+'\'">' +
+          '<div style="width:32px;height:32px;flex-shrink:0;border-radius:8px;background:var(--wo-'+color+'-bg,#dbeafe);color:var(--wo-'+color+',#0369a1);display:flex;align-items:center;justify-content:center;"><i class="fas '+icon+'" style="font-size:13px;"></i></div>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-weight:'+(unread?'800':'600')+';font-size:13px;color:#0f172a;">'+(n.title||'')+'</div>' +
+            (n.body ? '<div style="font-size:11px;color:#64748b;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+n.body+'</div>' : '') +
+            '<div style="font-size:10px;color:#94a3b8;margin-top:2px;">'+dt+'</div>' +
+          '</div>' +
+          (unread ? '<div style="width:8px;height:8px;border-radius:50%;background:#0ea5e9;flex-shrink:0;margin-top:12px;"></div>' : '') +
+        '</div>';
+      }).join('');
+    })
+    .catch(function() {
+      var body = document.getElementById('notifList');
+      if (body) body.innerHTML = '<div style="padding:20px;text-align:center;color:#ef4444;">خطأ في التحميل</div>';
+    });
+};
+
+window.closeNotificationCenter = function() {
+  var p = document.getElementById('notifPanel');
+  if (p) p.remove();
+  window._notifPanelOpen = false;
+  document.removeEventListener('click', _notifOutsideClick);
+};
+
+function _notifOutsideClick(e) {
+  var panel = document.getElementById('notifPanel');
+  var bell = document.getElementById('adminNotifBell');
+  if (panel && !panel.contains(e.target) && bell && !bell.contains(e.target)) {
+    closeNotificationCenter();
+  }
+}
+
+window.handleNotifClick = function(id, linkType, linkId) {
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/notifications/' + id + '/read', {
+    method: 'POST', headers: { 'Authorization': 'Bearer ' + token }
+  }).catch(function(){});
+  closeNotificationCenter();
+  loadNotificationCount();
+  // Deep link
+  if (linkType === 'transaction' && linkId) {
+    if (typeof wfViewTxn === 'function') wfViewTxn(linkId);
+  } else if (linkType === 'payment' && linkId) {
+    // Future: open payment detail
+    showToast('فتح الدفعة: ' + linkId);
+  }
+};
+
+window.markAllNotificationsRead = function() {
+  var token = localStorage.getItem('pos_token') || '';
+  var username = (typeof state !== 'undefined' && state.user) || '';
+  fetch('/api/erp/notifications/read-all', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify({ username: username })
+  })
+    .then(function(r){return r.json();})
+    .then(function() {
+      loadNotificationCount();
+      var panel = document.getElementById('notifPanel');
+      if (panel) {
+        panel.querySelectorAll('div[onclick^="handleNotifClick"]').forEach(function(el) {
+          el.style.background = 'transparent';
+          el.style.fontWeight = '600';
+          var dot = el.querySelector('div[style*="border-radius:50%"][style*="#0ea5e9"]');
+          if (dot) dot.remove();
+        });
+      }
+    })
+    .catch(function(){});
+};
+
+// Auto-start polling when admin mounts (every 60s)
+(function(){
+  var checkInterval = setInterval(function() {
+    if (typeof state !== 'undefined' && state.user && document.getElementById('adminNotifBell')) {
+      loadNotificationCount();
+      if (window._notifPollTimer) return;
+      window._notifPollTimer = setInterval(loadNotificationCount, 60000);
+    }
+  }, 2000);
+  setTimeout(function(){ clearInterval(checkInterval); }, 30000);  // stop probing after 30s
+})();
+
 // Internal: run authorize → pay → close in sequence for a newly-created payment
 function _pmRunFullFlow(paymentId, receiptData, cb) {
   var token = localStorage.getItem('pos_token') || '';

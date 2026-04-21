@@ -205,6 +205,10 @@
         </div>
         <div class="admin-header-actions">
           <button id="adminLangToggle" class="btn btn-light" onclick="toggleLang()" title="Toggle language / تغيير اللغة" style="min-width:60px;font-weight:800;"><i class="fas fa-language"></i> <span data-i18n="admin.toggleLang">English</span></button>
+          <div id="adminNotifBell" onclick="toggleNotificationCenter()" style="position:relative;width:40px;height:40px;border-radius:10px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background 180ms;" title="الإشعارات">
+            <i class="fas fa-bell" style="color:#64748b;"></i>
+            <span id="adminNotifBadge" style="display:none;position:absolute;top:4px;right:4px;min-width:18px;height:18px;border-radius:9px;background:#ef4444;color:#fff;font-size:10px;font-weight:800;display:none;align-items:center;justify-content:center;padding:0 5px;">0</span>
+          </div>
           <div class="admin-user-badge"><div class="admin-avatar"><i class="fas fa-user"></i></div><span id="adminUserLabel">Admin</span></div>
           <button class="btn btn-light" style="color:var(--danger);" onclick="logout()"><i class="fas fa-sign-out-alt"></i> <span data-i18n="admin.logout">تسجيل خروج</span></button>
         </div>

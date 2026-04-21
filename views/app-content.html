@@ -12,30 +12,38 @@
         <div class="nav-item" onclick="nav('sales')"><i class="fas fa-receipt"></i><span>المبيعات</span></div>
 
         <!-- ═══ مجموعة المنيو (المنتجات + الوصفات) ═══ -->
-        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-utensils"></i><span>المنيو</span><i class="fas fa-chevron-down submenu-indicator"></i>
-        </div>
-        <div class="submenu">
-          <div class="nav-item" onclick="nav('menu')"><i class="fas fa-clipboard-list"></i><span>قائمة المنيو</span></div>
-          <div class="nav-item" onclick="nav('recipes')"><i class="fas fa-blender"></i><span>المقادير والوصفات</span></div>
-        </div>
+        <!-- ═══ المنيو ═══ -->
+        <div class="nav-item" onclick="nav('menu')"><i class="fas fa-utensils"></i><span>قائمة المنيو</span></div>
 
-        <!-- ═══ مجموعة المستودعات (المخزون والمشتريات) ═══ -->
+        <!-- ═══ مجموعة المستودعات الموحّدة (كل ما يتعلق بالمخزون والإنتاج) ═══ -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-warehouse"></i><span>المستودعات</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-warehouse"></i><span>المستودعات والإنتاج</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" onclick="nav('warehouse')"><i class="fas fa-boxes-stacked"></i><span>إدارة المخزون</span></div>
+          <!-- أساسيات -->
+          <div class="nav-item" onclick="nav('warehouse')"><i class="fas fa-boxes-stacked"></i><span>إدارة المخزون والجرد</span></div>
+          <div class="nav-item" data-erp-nav="erpMultiWarehouses" onclick="erpNav('erpMultiWarehouses')"><i class="fas fa-building"></i><span>المستودعات المتعددة</span></div>
+          <div class="nav-item" data-erp-nav="erpWhHierarchy" onclick="erpNav('erpWhHierarchy')"><i class="fas fa-sitemap"></i><span>هيكل المستودعات (رئيسي/فرعي)</span></div>
+          <div class="nav-item" data-erp-nav="erpInventoryMethod" onclick="erpNav('erpInventoryMethod')"><i class="fas fa-balance-scale"></i><span>نوع الجرد وقيمة المخزون</span></div>
+
+          <!-- الإنتاج والوصفات -->
+          <div class="nav-item" data-erp-nav="erpBOM" onclick="erpNav('erpBOM')"><i class="fas fa-blender"></i><span>الوصفات (BOM)</span></div>
+          <div class="nav-item" data-erp-nav="erpProductionOrders" onclick="erpNav('erpProductionOrders')"><i class="fas fa-industry"></i><span>أوامر الإنتاج</span></div>
+
+          <!-- المشتريات والحركة -->
           <div class="nav-item" onclick="nav('purchases')"><i class="fas fa-truck-loading"></i><span>المشتريات</span></div>
           <div class="nav-item" data-erp-nav="erpPurchaseOrders" onclick="erpNav('erpPurchaseOrders')"><i class="fas fa-shopping-cart"></i><span>أوامر الشراء</span></div>
-          <div class="nav-item" data-erp-nav="erpCostCenters" onclick="erpNav('erpCostCenters')"><i class="fas fa-bullseye"></i><span>مراكز التكلفة</span></div>
-          <div class="nav-item" data-erp-nav="erpMultiWarehouses" onclick="erpNav('erpMultiWarehouses')"><i class="fas fa-warehouse"></i><span>إدارة المستودعات</span></div>
-          <div class="nav-item" data-erp-nav="erpWhHierarchy" onclick="erpNav('erpWhHierarchy')"><i class="fas fa-sitemap"></i><span>هيكل المستودعات (رئيسي/فرعي)</span></div>
           <div class="nav-item" data-erp-nav="erpStockIssues" onclick="erpNav('erpStockIssues')"><i class="fas fa-truck-arrow-right"></i><span>إذونات الصرف</span></div>
-          <div class="nav-item" data-erp-nav="erpProductionOrders" onclick="erpNav('erpProductionOrders')"><i class="fas fa-industry"></i><span>أوامر الإنتاج</span></div>
+          <div class="nav-item" data-erp-nav="erpWasteEntries" onclick="erpNav('erpWasteEntries')"><i class="fas fa-dumpster"></i><span>قيود الهدر</span></div>
+
+          <!-- التقارير والتنبيهات -->
           <div class="nav-item" data-erp-nav="erpExpiryAlerts" onclick="erpNav('erpExpiryAlerts')"><i class="fas fa-hourglass-half"></i><span>تنبيهات انتهاء الصلاحية</span></div>
           <div class="nav-item" data-erp-nav="erpSlowMoving" onclick="erpNav('erpSlowMoving')"><i class="fas fa-snowflake"></i><span>أصناف بطيئة الحركة</span></div>
-          <div class="nav-item" data-erp-nav="erpTurnover" onclick="erpNav('erpTurnover')"><i class="fas fa-sync-alt"></i><span>دوران المخزون</span></div>
+          <div class="nav-item" data-erp-nav="erpTurnover" onclick="erpNav('erpTurnover')"><i class="fas fa-rotate"></i><span>دوران المخزون</span></div>
+
+          <!-- الإعدادات المحاسبية المرتبطة -->
+          <div class="nav-item" data-erp-nav="erpCostCenters" onclick="erpNav('erpCostCenters')"><i class="fas fa-bullseye"></i><span>مراكز التكلفة</span></div>
+          <div class="nav-item" data-erp-nav="erpItemCategories" onclick="erpNav('erpItemCategories')"><i class="fas fa-tags"></i><span>تصنيفات الأصناف</span></div>
         </div>
 
         <div class="nav-item" onclick="nav('expenses')"><i class="fas fa-money-check-alt"></i><span>المصروفات</span></div>
@@ -67,7 +75,6 @@
           <div class="nav-item" data-erp-nav="erpGLAccounts" onclick="erpNav('erpGLAccounts')"><i class="fas fa-sitemap"></i><span>دليل الحسابات</span></div>
           <div class="nav-item" data-erp-nav="erpGLJournals" onclick="erpNav('erpGLJournals')"><i class="fas fa-book"></i><span>القيود المحاسبية</span></div>
           <div class="nav-item" data-erp-nav="erpPeriods" onclick="erpNav('erpPeriods')"><i class="fas fa-calendar-alt"></i><span>الفترات المحاسبية</span></div>
-          <div class="nav-item" data-erp-nav="erpInventoryMethod" onclick="erpNav('erpInventoryMethod')"><i class="fas fa-boxes-stacked"></i><span>نوع الجرد والمخزون</span></div>
           <div class="nav-item" data-erp-nav="erpPurchaseReports" onclick="erpNav('erpPurchaseReports')"><i class="fas fa-truck"></i><span>تقارير المشتريات</span></div>
           <div class="nav-item" data-erp-nav="erpFinReports" onclick="erpNav('erpFinReports')"><i class="fas fa-chart-bar"></i><span>التقارير المالية</span></div>
         </div>
@@ -128,11 +135,8 @@
         <div class="submenu">
           <div class="nav-item" data-erp-nav="erpCompanies" onclick="erpNav('erpCompanies')"><i class="fas fa-city"></i><span>الشركات</span></div>
           <div class="nav-item" data-erp-nav="erpPriceLists" onclick="erpNav('erpPriceLists')"><i class="fas fa-tags"></i><span>قوائم الأسعار</span></div>
-          <div class="nav-item" data-erp-nav="erpBOM" onclick="erpNav('erpBOM')"><i class="fas fa-utensils"></i><span>الوصفات (BOM)</span></div>
-          <div class="nav-item" data-erp-nav="erpWasteEntries" onclick="erpNav('erpWasteEntries')"><i class="fas fa-dumpster"></i><span>قيود الهدر</span></div>
           <div class="nav-item" data-erp-nav="erpRoyaltyRuns" onclick="erpNav('erpRoyaltyRuns')"><i class="fas fa-receipt"></i><span>احتساب الفرانشايز</span></div>
           <div class="nav-item" data-erp-nav="erpPosTerminals" onclick="erpNav('erpPosTerminals')"><i class="fas fa-desktop"></i><span>أجهزة POS</span></div>
-          <div class="nav-item" data-erp-nav="erpItemCategories" onclick="erpNav('erpItemCategories')"><i class="fas fa-sitemap"></i><span>تصنيفات الأصناف</span></div>
         </div>
 
         <!-- ═══ الضرائب والفوترة الإلكترونية ═══ -->
@@ -365,52 +369,57 @@
           </div>
         </div>
 
-        <!-- Section: Inventory Management (Menu & Recipes) -->
-        <!-- ═══ قسم المنيو — قائمة المنتجات ═══ -->
-        <div id="sec_menu" class="admin-section">
-          <div class="filter-bar" style="justify-content:space-between; align-items:center;">
-            <div class="form-group" style="flex:1; max-width:400px; margin:0;">
-              <input type="text" id="menuSearchQ" class="form-control" placeholder="البحث باسم المنتج أو الكود..." oninput="loadDashMenu()">
+        <!-- ═══ قسم المنيو — قائمة المنتجات (Redesigned) ═══ -->
+        <div id="sec_menu" class="admin-section wo-section">
+          <header class="wo-header">
+            <div class="wo-header-titles">
+              <h1><span class="wo-icon-slot"><i class="fas fa-utensils"></i></span>قائمة المنيو</h1>
+              <p class="wo-header-sub">إدارة الأصناف المعروضة للبيع — التكلفة تُحسب تلقائياً من وصفة BOM المرتبطة، وهامش الربح يظهر مباشرة.</p>
             </div>
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-              <button class="btn btn-success" onclick="exportMenuExcel()"><i class="fas fa-file-excel"></i> تصدير</button>
-              <label class="btn btn-secondary" style="margin:0;cursor:pointer;"><i class="fas fa-file-upload"></i> استيراد
+            <div class="wo-header-actions">
+              <button class="wo-btn wo-btn-secondary" onclick="exportMenuExcel()" title="تصدير Excel"><i class="fas fa-file-excel"></i><span>تصدير</span></button>
+              <label class="wo-btn wo-btn-secondary" style="cursor:pointer;margin:0;">
+                <i class="fas fa-file-upload"></i><span>استيراد</span>
                 <input type="file" id="menuImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importMenuExcel(this)">
               </label>
-              <button class="btn btn-primary" onclick="openInvM('add')"><i class="fas fa-plus"></i> إضافة منتج</button>
+              <button class="wo-btn wo-btn-primary" onclick="openInvM('add')"><i class="fas fa-plus"></i><span>منتج جديد</span></button>
             </div>
-          </div>
-          <div class="table-wrapper">
-            <table class="table">
-              <thead><tr><th>الكود</th><th>المنتج</th><th>التصنيف</th><th>سعر البيع</th><th>تكلفة المقادير</th><th>الربح</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-              <tbody id="tbMenu"></tbody>
+          </header>
+
+          <div class="wo-metric-strip" id="menuMetrics"></div>
+
+          <section class="wo-toolbar" role="search" aria-label="تصفية المنيو">
+            <div class="wo-field" style="grid-column:1/-1;">
+              <label class="wo-field-label" for="menuSearchQ"><i class="fas fa-magnifying-glass"></i>بحث</label>
+              <input type="text" id="menuSearchQ" class="wo-input" placeholder="ابحث بالاسم أو الكود أو التصنيف..." oninput="loadDashMenu()">
+            </div>
+          </section>
+
+          <div class="wo-table-surface">
+            <table class="wo-table" role="table">
+              <thead>
+                <tr>
+                  <th scope="col">الكود</th>
+                  <th scope="col">المنتج</th>
+                  <th scope="col">التصنيف</th>
+                  <th scope="col" class="num">سعر البيع</th>
+                  <th scope="col" class="num">تكلفة المقادير</th>
+                  <th scope="col" class="num">الربح</th>
+                  <th scope="col">هامش الربح</th>
+                  <th scope="col">الحالة</th>
+                  <th scope="col">الإجراءات</th>
+                </tr>
+              </thead>
+              <tbody id="tbMenu">
+                <tr><td colspan="9"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+              </tbody>
             </table>
           </div>
         </div>
 
-        <!-- ═══ قسم المقادير — الوصفات المرتبطة بكل منتج ═══ -->
-        <div id="sec_recipes" class="admin-section">
-          <div class="filter-bar" style="justify-content:space-between; align-items:center;">
-            <div class="form-group" style="flex:1; max-width:400px; margin:0;">
-              <input type="text" id="recipeSearchQ" class="form-control" placeholder="البحث باسم المنتج أو المقدار..." oninput="loadDashRecipes()">
-            </div>
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-              <button class="btn btn-success" onclick="exportRecipesExcel()"><i class="fas fa-file-excel"></i> تصدير</button>
-              <label class="btn btn-secondary" style="margin:0;cursor:pointer;"><i class="fas fa-file-upload"></i> استيراد
-                <input type="file" id="recipeImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importRecipesExcel(this)">
-              </label>
-              <button class="btn btn-primary" onclick="openRecipeModalNew()"><i class="fas fa-plus"></i> إضافة مقادير</button>
-            </div>
-          </div>
-          <div class="table-wrapper">
-            <table class="table">
-              <thead><tr><th>كود المنتج</th><th>اسم المنتج</th><th>المادة الخام</th><th>الوحدة</th><th>الكمية المستخدمة</th><th>تكلفة المادة</th><th>التكلفة الإجمالية</th><th>إجراءات</th></tr></thead>
-              <tbody id="tbRecipes"></tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Keep old sec_inventory as hidden alias so any legacy nav('inventory') call still works -->
+        <!-- sec_recipes (legacy) was removed — BOM is now unified under erpBOM with a proper UI. -->
+        <!-- sec_inventory stub kept as alias so any legacy nav('inventory') call still works -->
+        <div id="sec_recipes" class="admin-section" style="display:none;"></div>
         <div id="sec_inventory" class="admin-section" style="display:none;"></div>
 
         <!-- Section: Raw Materials (INV_Items) -->
@@ -1284,49 +1293,63 @@
   </div>
 </div>
 
-<div id="erpInventoryMethod" class="dash-section hidden">
-  <div class="section-header" style="flex-wrap:wrap;gap:10px;">
-    <h2 class="section-title"><i class="fas fa-boxes-stacked"></i> نوع الجرد وقيمة المخزون</h2>
-    <div style="display:flex;gap:8px;">
-      <button class="btn btn-primary" onclick="erpSyncInventoryGL()" style="border-radius:10px;"><i class="fas fa-sync"></i> مزامنة مع دليل الحسابات</button>
+<div id="erpInventoryMethod" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot"><i class="fas fa-balance-scale"></i></span>نوع الجرد وقيمة المخزون</h1>
+      <p class="wo-header-sub">تحديد طريقة محاسبة المخزون وفق المعيار الدولي IAS 2 — تُطبَّق على كل الفروع والمستودعات.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-primary" onclick="erpSyncInventoryGL()"><i class="fas fa-rotate"></i><span>مزامنة GL</span></button>
+    </div>
+  </header>
+
+  <div class="wo-metric-strip" id="invMethodMetrics"></div>
+
+  <h3 style="font-size:15px;font-weight:800;margin:0 0 12px;color:#0f172a;"><i class="fas fa-hand-pointer" style="color:#3b82f6;"></i> اختر نظام الجرد</h3>
+
+  <div class="wo-choice-grid">
+    <div id="invMethodPerpetual" class="wo-choice" role="button" tabindex="0" onclick="erpSetInvMethod('perpetual')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();erpSetInvMethod('perpetual');}">
+      <div class="wo-choice-head">
+        <div class="wo-choice-icon success"><i class="fas fa-arrows-rotate"></i></div>
+        <div>
+          <div class="wo-choice-title">الجرد المستمر (Perpetual)</div>
+          <div class="wo-choice-sub">IAS 2 · موصى به للمطاعم</div>
+        </div>
+      </div>
+      <div class="wo-choice-body">
+        <ul>
+          <li>قيمة المخزون تتحدّث <b>لحظياً</b> مع كل عملية بيع أو صرف</li>
+          <li>تكلفة البضاعة المباعة (COGS) تُسجَّل تلقائياً مع كل فاتورة</li>
+          <li>دقة عالية — مناسب للمطاعم والمقاهي وسلاسل التجزئة</li>
+          <li>يتطلّب ترحيل محاسبي مع كل حركة (متاح في النظام)</li>
+        </ul>
+      </div>
+    </div>
+
+    <div id="invMethodPeriodic" class="wo-choice" role="button" tabindex="0" onclick="erpSetInvMethod('periodic')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();erpSetInvMethod('periodic');}">
+      <div class="wo-choice-head">
+        <div class="wo-choice-icon warning"><i class="fas fa-calendar-check"></i></div>
+        <div>
+          <div class="wo-choice-title">الجرد الدوري (Periodic)</div>
+          <div class="wo-choice-sub">IAS 2 · للأعمال البسيطة</div>
+        </div>
+      </div>
+      <div class="wo-choice-body">
+        <ul>
+          <li>قيمة المخزون تُحدَّث <b>فقط</b> عند إجراء الجرد الفعلي</li>
+          <li>COGS = المخزون الأول + المشتريات − المخزون الآخر</li>
+          <li>أبسط من ناحية التشغيل لكن أقل دقة في اللحظة</li>
+          <li>مناسب للأعمال ذات الحركة البطيئة أو المحدودة</li>
+        </ul>
+      </div>
     </div>
   </div>
 
-  <!-- Inventory Method Selection -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px;">
-    <div id="invMethodPerpetual" class="inv-method-card" onclick="erpSetInvMethod('perpetual')" style="cursor:pointer;">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-        <i class="fas fa-sync-alt" style="font-size:24px;color:#16a34a;"></i>
-        <div>
-          <div style="font-size:16px;font-weight:900;color:#1e293b;">الجرد المستمر (Perpetual)</div>
-          <div style="font-size:12px;color:#64748b;">IAS 2 — تحديث لحظي مع كل عملية بيع</div>
-        </div>
-      </div>
-      <ul style="font-size:12px;color:#475569;padding-right:20px;line-height:1.8;">
-        <li>قيمة المخزون تتحدث لحظياً مع كل بيع</li>
-        <li>تكلفة البضاعة المباعة تُسجل مع كل فاتورة</li>
-        <li>مناسب للمطاعم والمقاهي</li>
-      </ul>
-    </div>
-    <div id="invMethodPeriodic" class="inv-method-card" onclick="erpSetInvMethod('periodic')" style="cursor:pointer;">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-        <i class="fas fa-calendar-check" style="font-size:24px;color:#3b82f6;"></i>
-        <div>
-          <div style="font-size:16px;font-weight:900;color:#1e293b;">الجرد الدوري (Periodic)</div>
-          <div style="font-size:12px;color:#64748b;">IAS 2 — تحديث عند الجرد الفعلي فقط</div>
-        </div>
-      </div>
-      <ul style="font-size:12px;color:#475569;padding-right:20px;line-height:1.8;">
-        <li>قيمة المخزون تُحدّث فقط عند إجراء الجرد</li>
-        <li>COGS = مخزون أول + مشتريات − مخزون آخر</li>
-        <li>أبسط لكن أقل دقة</li>
-      </ul>
-    </div>
-  </div>
+  <h3 style="font-size:15px;font-weight:800;margin:24px 0 12px;color:#0f172a;"><i class="fas fa-sack-dollar" style="color:#f59e0b;"></i> تقييم المخزون الحالي</h3>
 
-  <!-- Inventory Valuation -->
-  <div id="invValuationContent" style="min-height:100px;">
-    <div style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>
+  <div id="invValuationContent">
+    <div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري تحميل التقييم...</span></div>
   </div>
 </div>
 
@@ -2731,22 +2754,66 @@
 </div>
 
 <!-- BOM (Recipes) -->
-<div id="erpBOM" class="dash-section hidden">
-  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;"><h2 class="section-title"><i class="fas fa-utensils"></i> الوصفات (BOM)</h2><button class="btn btn-primary" onclick="erpOpenBomModal()"><i class="fas fa-plus"></i> وصفة جديدة</button></div>
-  <div class="erp-table-container"><table class="erp-table"><thead><tr><th>المنتج</th><th>الإصدار</th><th>الإنتاجية</th><th>عدد المكونات</th><th>فعّالة من</th><th>إلى</th><th>إجراءات</th></tr></thead><tbody id="bomBody"><tr><td colspan="7" class="empty-msg">جاري التحميل...</td></tr></tbody></table></div>
+<div id="erpBOM" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot purple"><i class="fas fa-blender"></i></span>الوصفات — المقادير (BOM)</h1>
+      <p class="wo-header-sub">كل وصفة تحدد المنتج النهائي + المواد الخام المستهلكة + الإنتاجية (Yield) + نسبة الهدر — يُستخدم لاحقاً في أوامر الإنتاج.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-secondary" onclick="erpLoadBOM()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="erpOpenBomModal()"><i class="fas fa-plus"></i><span>وصفة جديدة</span></button>
+    </div>
+  </header>
+
+  <div class="wo-metric-strip" id="bomMetrics"></div>
+
+  <div class="wo-table-surface">
+    <table class="wo-table" role="table">
+      <thead>
+        <tr>
+          <th scope="col">المنتج</th>
+          <th scope="col" class="num">الإصدار</th>
+          <th scope="col" class="num">الإنتاجية</th>
+          <th scope="col" class="num">المكونات</th>
+          <th scope="col">فعّالة من</th>
+          <th scope="col">إلى</th>
+          <th scope="col">الحالة</th>
+          <th scope="col">الإجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="bomBody">
+        <tr><td colspan="8"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+      </tbody>
+    </table>
+  </div>
 </div>
 
-<!-- Waste Entries -->
-<div id="erpWasteEntries" class="dash-section hidden">
-  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;"><h2 class="section-title"><i class="fas fa-dumpster"></i> قيود الهدر</h2><button class="btn btn-primary" onclick="erpOpenWasteModal()"><i class="fas fa-plus"></i> تسجيل هدر</button></div>
-  <div class="erp-rpt-filter">
-    <div><label>من تاريخ</label><input type="date" id="weFrom" class="form-control-sm"></div>
-    <div><label>إلى تاريخ</label><input type="date" id="weTo" class="form-control-sm"></div>
-    <div><label>الفرع</label><select id="weBranch" class="form-control-sm"><option value="">الكل</option></select></div>
-    <div><label>البراند</label><select id="weBrand" class="form-control-sm"><option value="">الكل</option></select></div>
-    <div><button class="btn btn-primary btn-sm" onclick="erpLoadWasteEntries()"><i class="fas fa-search"></i> بحث</button></div>
+<!-- Waste Entries (Redesigned) -->
+<div id="erpWasteEntries" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot danger"><i class="fas fa-dumpster"></i></span>قيود الهدر</h1>
+      <p class="wo-header-sub">تسجيل المواد التالفة/المنتهية/المهدورة — تُرحَّل تلقائياً GL (مدين مصروف الهدر / دائن المخزون).</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-primary" onclick="erpOpenWasteModal()"><i class="fas fa-plus"></i><span>تسجيل هدر</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="weMetrics"></div>
+  <section class="wo-toolbar" role="search" aria-label="تصفية قيود الهدر">
+    <div class="wo-field"><label class="wo-field-label" for="weFrom"><i class="fas fa-calendar"></i> من تاريخ</label><input type="date" id="weFrom" class="wo-input"></div>
+    <div class="wo-field"><label class="wo-field-label" for="weTo"><i class="fas fa-calendar-check"></i> إلى تاريخ</label><input type="date" id="weTo" class="wo-input"></div>
+    <div class="wo-field"><label class="wo-field-label" for="weBranch"><i class="fas fa-code-branch"></i> الفرع</label><select id="weBranch" class="wo-select"><option value="">الكل</option></select></div>
+    <div class="wo-field"><label class="wo-field-label" for="weBrand"><i class="fas fa-tags"></i> البراند</label><select id="weBrand" class="wo-select"><option value="">الكل</option></select></div>
+    <div class="wo-field" style="align-self:flex-end;"><button class="wo-btn wo-btn-primary" onclick="erpLoadWasteEntries()"><i class="fas fa-search"></i><span>بحث</span></button></div>
+  </section>
+  <div class="wo-table-surface">
+    <table class="wo-table" role="table">
+      <thead><tr><th>التاريخ</th><th>الفرع</th><th>البراند</th><th>السبب</th><th>مركز التكلفة</th><th class="num">التكلفة</th><th>الإجراءات</th></tr></thead>
+      <tbody id="weBody"><tr><td colspan="7"><div class="wo-empty"><i class="fas fa-filter"></i><div class="wo-empty-title">حدّد الفترة ثم اضغط بحث</div><div class="wo-empty-sub">ستظهر قيود الهدر المسجّلة ضمن النطاق المحدد.</div></div></td></tr></tbody>
+    </table>
   </div>
-  <div class="erp-table-container"><table class="erp-table"><thead><tr><th>التاريخ</th><th>الفرع</th><th>البراند</th><th>السبب</th><th>مركز التكلفة</th><th>التكلفة</th><th>إجراءات</th></tr></thead><tbody id="weBody"><tr><td colspan="7" class="empty-msg">اضغط بحث</td></tr></tbody></table></div>
 </div>
 
 <!-- Royalty Runs -->

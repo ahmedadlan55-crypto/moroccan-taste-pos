@@ -2773,11 +2773,24 @@ function erpPrintFinReport() {
 function erpLoadInventoryMethod() {
   window._apiBridge.withSuccessHandler(function(data) {
     var method = data.method || 'perpetual';
-    // Highlight selected method
+    // Apply active state using the new design-system class
     var perpCard = document.getElementById('invMethodPerpetual');
     var periCard = document.getElementById('invMethodPeriodic');
-    if (perpCard) perpCard.style.cssText = method === 'perpetual' ? 'cursor:pointer;background:#f0fdf4;border:2px solid #16a34a;border-radius:16px;padding:18px;' : 'cursor:pointer;background:#f8fafc;border:2px solid #e2e8f0;border-radius:16px;padding:18px;opacity:0.7;';
-    if (periCard) periCard.style.cssText = method === 'periodic' ? 'cursor:pointer;background:#eff6ff;border:2px solid #3b82f6;border-radius:16px;padding:18px;' : 'cursor:pointer;background:#f8fafc;border:2px solid #e2e8f0;border-radius:16px;padding:18px;opacity:0.7;';
+    if (perpCard) perpCard.classList.toggle('active', method === 'perpetual');
+    if (periCard) periCard.classList.toggle('active', method === 'periodic');
+    // Update metric strip
+    var metrics = document.getElementById('invMethodMetrics');
+    if (metrics && typeof _woMetric === 'function') {
+      metrics.innerHTML =
+        _woMetric(method==='perpetual'?'fa-arrows-rotate':'fa-calendar-check',
+                  method==='perpetual'?'success':'warning',
+                  'الطريقة المفعّلة',
+                  method==='perpetual'?'الجرد المستمر':'الجرد الدوري',
+                  method==='perpetual'?'success':'warning') +
+        _woMetric('fa-shield-halved', 'info', 'المعيار المحاسبي', 'IAS 2', 'info') +
+        _woMetric('fa-receipt', 'purple', 'احتساب COGS', method==='perpetual'?'لحظي (كل بيع)':'دوري (كل جرد)', 'purple') +
+        _woMetric('fa-building-columns', 'info', 'ترحيل GL', method==='perpetual'?'تلقائي مع البيع':'عند الجرد', 'info');
+    }
     // Load valuation
     erpLoadInventoryValuation();
   }).getInventoryMethod();
@@ -8050,53 +8063,262 @@ function erpDeletePLItem(itemId, plId, plName) {
 
 // ─── BOM ───
 function erpLoadBOM() {
-  document.getElementById('bomBody').innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  var body = document.getElementById('bomBody');
+  if (!body) return;
+  body.innerHTML = (typeof _woLoadingRow === 'function')
+    ? _woLoadingRow(8) + _woLoadingRow(8)
+    : '<tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr>';
   _erpGet('/erp/bom', function(list){
-    if (!Array.isArray(list) || !list.length) { document.getElementById('bomBody').innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد وصفات</td></tr>'; return; }
-    document.getElementById('bomBody').innerHTML = list.map(function(b){
-      return '<tr><td style="font-weight:700;">'+(b.productName||b.productId)+'</td><td>v'+b.version+'</td><td>'+_erpFmt(b.yieldQuantity)+' '+(b.yieldUnit||'')+'</td><td><span class="badge badge-blue">'+b.lineCount+'</span></td><td>'+((b.effectiveFrom||'').slice(0,10)||'—')+'</td><td>'+((b.effectiveTo||'').slice(0,10)||'—')+'</td>'+
-        '<td><button class="btn btn-sm btn-primary" onclick="erpOpenBomModal(\''+b.id+'\')"><i class="fas fa-edit"></i></button> '+
-        '<button class="btn btn-sm" style="background:#dbeafe;color:#1e40af;" onclick="erpViewBomLines(\''+b.id+'\',\''+(b.productName||'').replace(/\'/g,"\\'")+'\')"><i class="fas fa-list"></i></button> '+
-        '<button class="btn btn-sm btn-danger" onclick="erpDeleteBom(\''+b.id+'\')"><i class="fas fa-trash"></i></button></td></tr>';
+    if (!Array.isArray(list)) list = [];
+    var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
+    // Metrics
+    var metrics = document.getElementById('bomMetrics');
+    if (metrics && typeof _woMetric === 'function') {
+      var activeBoms = list.filter(function(b){return !b.effectiveTo || new Date(b.effectiveTo) > new Date();}).length;
+      var totalComponents = list.reduce(function(s,b){return s + Number(b.lineCount||0);}, 0);
+      var avgYield = list.length ? list.reduce(function(s,b){return s + Number(b.yieldQuantity||1);}, 0)/list.length : 0;
+      metrics.innerHTML =
+        _woMetric('fa-blender', 'purple', 'إجمالي الوصفات', list.length, 'purple') +
+        _woMetric('fa-circle-check', 'success', 'فعّالة حالياً', activeBoms, 'success') +
+        _woMetric('fa-layer-group', 'info', 'إجمالي المكونات', totalComponents, 'info') +
+        _woMetric('fa-gauge-high', 'warning', 'متوسط الإنتاجية', avgYield.toFixed(2), 'warning');
+    }
+    if (!list.length) {
+      body.innerHTML = '<tr><td colspan="8">' +
+        ((typeof _woEmpty === 'function')
+          ? _woEmpty('fa-blender', 'لا توجد وصفات بعد',
+              'ابدأ بإنشاء أول وصفة — حدّد المنتج النهائي ثم أضف مكوناته من المواد الخام.',
+              '<button class="wo-btn wo-btn-primary" onclick="erpOpenBomModal()"><i class="fas fa-plus"></i><span>وصفة جديدة</span></button>')
+          : 'لا توجد وصفات') +
+        '</td></tr>';
+      return;
+    }
+    body.innerHTML = list.map(function(b){
+      var isActive = !b.effectiveTo || new Date(b.effectiveTo) > new Date();
+      var statusChip = isActive ? '<span class="wo-chip success">فعّالة</span>' : '<span class="wo-chip neutral">منتهية</span>';
+      var from = (b.effectiveFrom||'').slice(0,10) || '—';
+      var to = (b.effectiveTo||'').slice(0,10) || '—';
+      return '<tr>' +
+        '<td data-label="المنتج"><b>'+esc(b.productName||b.productId)+'</b></td>' +
+        '<td data-label="الإصدار" class="num"><code>v'+(b.version||1)+'</code></td>' +
+        '<td data-label="الإنتاجية" class="num"><b>'+_erpFmt(b.yieldQuantity)+'</b> <span class="wo-text-subtle wo-text-caption">'+esc(b.yieldUnit||'')+'</span></td>' +
+        '<td data-label="المكونات" class="num"><span class="wo-chip info flat">'+(b.lineCount||0)+'</span></td>' +
+        '<td data-label="من تاريخ" class="wo-text-subtle wo-text-caption">'+from+'</td>' +
+        '<td data-label="إلى تاريخ" class="wo-text-subtle wo-text-caption">'+to+'</td>' +
+        '<td data-label="الحالة">'+statusChip+'</td>' +
+        '<td data-label="الإجراءات"><div class="wo-actions">' +
+          '<button class="wo-icon-btn info" onclick="erpViewBomLines(\''+esc(b.id)+'\',\''+esc((b.productName||'').replace(/\'/g,"\\\'"))+'\')" title="عرض المكونات" aria-label="المكونات"><i class="fas fa-list-ul"></i></button>' +
+          '<button class="wo-icon-btn" onclick="erpOpenBomModal(\''+esc(b.id)+'\')" title="تعديل الوصفة" aria-label="تعديل"><i class="fas fa-pen"></i></button>' +
+          '<button class="wo-icon-btn danger" onclick="erpDeleteBom(\''+esc(b.id)+'\')" title="حذف" aria-label="حذف"><i class="fas fa-trash"></i></button>' +
+        '</div></td>' +
+      '</tr>';
     }).join('');
   });
 }
+
 function erpOpenBomModal(id) {
   _erpGet('/inventory/items', function(items) {
     var itemList = items || [];
-    var d = {};
-    var render = function(){
-      var prodOpts = '<option value="">— اختر —</option>' + itemList.map(function(i){return '<option value="'+i.id+'"'+(d.productId===i.id?' selected':'')+'>'+(i.name||'')+'</option>';}).join('');
-      document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل وصفة' : 'وصفة جديدة';
-      document.getElementById('erpModalBody').innerHTML =
-        '<input type="hidden" id="bomIdF" value="'+(d.id||'')+'">'+
-        '<div class="form-row"><label>المنتج الجاهز *</label><select class="form-control" id="bomProduct">'+prodOpts+'</select></div>'+
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-row"><label>الإصدار</label><input type="number" class="form-control" id="bomVersion" value="'+(d.version||1)+'"></div><div class="form-row"><label>الإنتاجية</label><input type="number" step="0.0001" class="form-control" id="bomYield" value="'+(d.yieldQuantity||1)+'"></div></div>'+
-        '<div class="form-row"><label>ملاحظات</label><textarea class="form-control" id="bomNotes">'+(d.notes||'')+'</textarea></div>';
-      document.getElementById('erpModalSaveBtn').onclick = function() {
-        _erpPost('/erp/bom', {
-          id: document.getElementById('bomIdF').value || undefined,
-          productId: document.getElementById('bomProduct').value,
-          version: Number(document.getElementById('bomVersion').value) || 1,
-          yieldQuantity: Number(document.getElementById('bomYield').value) || 1,
-          notes: document.getElementById('bomNotes').value
-        }, function(r){ if(r.success){showToast('تم');erpCloseModal();erpLoadBOM();}else showToast(r.error||'فشل',true); });
-      };
-      document.getElementById('erpModal').classList.remove('hidden');
+    var bomData = {};
+    var lines = [];  // ingredient rows
+    var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
+
+    var renderLinesTable = function() {
+      var tbody = document.getElementById('bomLinesRows');
+      if (!tbody) return;
+      var itemOpts = '<option value="">— اختر مكوّن —</option>' +
+        itemList.map(function(i){return '<option value="'+esc(i.id)+'" data-unit="'+esc(i.unit||'')+'" data-cost="'+(i.cost||0)+'">'+esc(i.name||'')+'</option>';}).join('');
+
+      if (!lines.length) {
+        tbody.innerHTML = '<div class="wo-ing-empty"><i class="fas fa-leaf" style="font-size:24px;display:block;margin-bottom:6px;"></i>لم تُضف مكونات بعد — اضغط "+ إضافة مكوّن" للبدء</div>';
+      } else {
+        tbody.innerHTML = lines.map(function(l, idx){
+          var selOpts = itemOpts.replace('value="'+esc(l.itemId)+'"', 'value="'+esc(l.itemId)+'" selected');
+          return '<div class="wo-ing-row">' +
+            '<select onchange="_bomUpdateLine('+idx+',\'itemId\',this.value);_bomRecalcTotal();">'+selOpts+'</select>' +
+            '<input type="number" step="0.0001" placeholder="الكمية" value="'+(l.quantity||'')+'" oninput="_bomUpdateLine('+idx+',\'quantity\',this.value);_bomRecalcTotal();">' +
+            '<input type="number" step="1" min="0" max="100" placeholder="هدر %" value="'+(l.wastePct||0)+'" oninput="_bomUpdateLine('+idx+',\'wastePct\',this.value);_bomRecalcTotal();">' +
+            '<input type="text" readonly class="wo-money" value="'+_bomLineCost(l, itemList).toFixed(2)+'" style="text-align:center;background:var(--wo-surface-2)!important;">' +
+            '<button class="wo-icon-btn danger" onclick="_bomRemoveLine('+idx+')" aria-label="حذف"><i class="fas fa-xmark"></i></button>' +
+          '</div>';
+        }).join('');
+      }
     };
-    if (id) _erpGet('/erp/bom', function(list){ d = (list||[]).find(function(x){return x.id===id;}) || {}; render(); });
-    else render();
+
+    window._bomUpdateLine = function(idx, field, value) {
+      if (lines[idx]) {
+        lines[idx][field] = field === 'quantity' || field === 'wastePct' ? Number(value) : value;
+      }
+    };
+    window._bomRemoveLine = function(idx) {
+      lines.splice(idx, 1);
+      renderLinesTable();
+      _bomRecalcTotal();
+    };
+    window._bomAddLine = function() {
+      lines.push({ itemId: '', quantity: 0, wastePct: 0 });
+      renderLinesTable();
+    };
+    window._bomRecalcTotal = function() {
+      var total = lines.reduce(function(s,l){return s + _bomLineCost(l, itemList);}, 0);
+      var yield_ = Number(document.getElementById('bomYield').value) || 1;
+      var perUnit = yield_ > 0 ? total / yield_ : 0;
+      var el = document.getElementById('bomCostTotal');
+      if (el) el.textContent = total.toFixed(2);
+      var elUnit = document.getElementById('bomCostPerUnit');
+      if (elUnit) elUnit.textContent = perUnit.toFixed(4);
+    };
+
+    var render = function(){
+      var prodOpts = '<option value="">— اختر المنتج —</option>' +
+        itemList.map(function(i){return '<option value="'+esc(i.id)+'"'+(bomData.productId===i.id?' selected':'')+'>'+esc(i.name||'')+'</option>';}).join('');
+
+      var modalHtml =
+        '<div class="wo-modal-overlay open" id="bomModal" onclick="if(event.target.id===\'bomModal\')_bomClose()">' +
+          '<div class="wo-modal wo-modal-lg">' +
+            '<div class="wo-modal-header">' +
+              '<div class="wo-modal-icon purple"><i class="fas fa-blender"></i></div>' +
+              '<div class="wo-modal-titles">' +
+                '<div class="wo-modal-title">'+(bomData.id?'تعديل وصفة':'وصفة جديدة')+'</div>' +
+                '<div class="wo-modal-sub">حدّد المنتج + الإنتاجية، ثم أضف المكونات بكمياتها ونسبة الهدر</div>' +
+              '</div>' +
+              '<button class="wo-modal-close" onclick="_bomClose()" aria-label="إغلاق"><i class="fas fa-xmark"></i></button>' +
+            '</div>' +
+            '<div class="wo-modal-body">' +
+              '<input type="hidden" id="bomIdF" value="'+esc(bomData.id||'')+'">' +
+              '<div class="wo-form-row single">' +
+                '<div class="wo-label-stack">' +
+                  '<label class="wo-field-label" for="bomProduct"><i class="fas fa-box"></i> المنتج النهائي *</label>' +
+                  '<select class="wo-select" id="bomProduct">'+prodOpts+'</select>' +
+                '</div>' +
+              '</div>' +
+              '<div class="wo-form-row">' +
+                '<div class="wo-label-stack">' +
+                  '<label class="wo-field-label" for="bomVersion"><i class="fas fa-code-branch"></i> الإصدار</label>' +
+                  '<input type="number" class="wo-input" id="bomVersion" value="'+(bomData.version||1)+'" min="1">' +
+                '</div>' +
+                '<div class="wo-label-stack">' +
+                  '<label class="wo-field-label" for="bomYield"><i class="fas fa-gauge-high"></i> الإنتاجية (yield)</label>' +
+                  '<input type="number" step="0.0001" class="wo-input" id="bomYield" value="'+(bomData.yieldQuantity||1)+'" oninput="_bomRecalcTotal()">' +
+                '</div>' +
+              '</div>' +
+              '<div>' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+                  '<label class="wo-field-label"><i class="fas fa-list"></i> المكونات</label>' +
+                  '<button type="button" class="wo-btn wo-btn-secondary" onclick="_bomAddLine()" style="padding:6px 14px;min-height:32px;font-size:12px;"><i class="fas fa-plus"></i><span>إضافة مكوّن</span></button>' +
+                '</div>' +
+                '<div class="wo-ing-editor">' +
+                  '<div id="bomLinesRows"></div>' +
+                  '<div class="wo-ing-total">' +
+                    '<span><i class="fas fa-calculator"></i> إجمالي تكلفة الوصفة</span>' +
+                    '<span><b id="bomCostTotal">0.00</b> · تكلفة الوحدة <b id="bomCostPerUnit">0.0000</b></span>' +
+                  '</div>' +
+                '</div>' +
+              '</div>' +
+              '<div class="wo-label-stack">' +
+                '<label class="wo-field-label" for="bomNotes"><i class="fas fa-note-sticky"></i> ملاحظات</label>' +
+                '<textarea class="wo-textarea" id="bomNotes" rows="2">'+esc(bomData.notes||'')+'</textarea>' +
+              '</div>' +
+            '</div>' +
+            '<div class="wo-modal-footer">' +
+              '<button class="wo-btn wo-btn-secondary" onclick="_bomClose()">إلغاء</button>' +
+              '<button class="wo-btn wo-btn-primary" onclick="_bomSave()"><i class="fas fa-save"></i><span>حفظ الوصفة</span></button>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+
+      var existing = document.getElementById('bomModal');
+      if (existing) existing.remove();
+      document.body.insertAdjacentHTML('beforeend', modalHtml);
+      renderLinesTable();
+      _bomRecalcTotal();
+    };
+
+    window._bomClose = function() {
+      var m = document.getElementById('bomModal');
+      if (m) m.remove();
+    };
+    window._bomSave = function() {
+      var payload = {
+        id: document.getElementById('bomIdF').value || undefined,
+        productId: document.getElementById('bomProduct').value,
+        version: Number(document.getElementById('bomVersion').value) || 1,
+        yieldQuantity: Number(document.getElementById('bomYield').value) || 1,
+        notes: document.getElementById('bomNotes').value,
+        lines: lines.filter(function(l){return l.itemId && Number(l.quantity)>0;})
+      };
+      if (!payload.productId) return showToast('اختر المنتج', true);
+      _erpPost('/erp/bom', payload, function(r){
+        if (r.success) { showToast('تم حفظ الوصفة'); _bomClose(); erpLoadBOM(); }
+        else showToast(r.error||'فشل الحفظ', true);
+      });
+    };
+
+    if (id) {
+      _erpGet('/erp/bom', function(list){
+        bomData = (list||[]).find(function(x){return x.id===id;}) || {};
+        _erpGet('/erp/bom/'+id+'/lines', function(dbLines) {
+          lines = (dbLines||[]).map(function(l){return { itemId: l.itemId, quantity: Number(l.quantity), wastePct: Number(l.wastePct||0) };});
+          render();
+        });
+      });
+    } else {
+      render();
+    }
   });
 }
+
+function _bomLineCost(line, itemList) {
+  var item = (itemList||[]).find(function(i){return i.id === line.itemId;});
+  var unitCost = item ? Number(item.cost||0) : 0;
+  var qty = Number(line.quantity||0);
+  var waste = Number(line.wastePct||0) / 100;
+  return qty * (1 + waste) * unitCost;
+}
+
 function erpViewBomLines(bomId, productName) {
   _erpGet('/erp/bom/'+bomId+'/lines', function(lines) {
-    document.getElementById('erpModalTitle').textContent = 'مكونات: '+productName;
-    document.getElementById('erpModalBody').innerHTML =
-      '<div class="erp-table-container"><table class="erp-table"><thead><tr><th>المكوّن</th><th>الكمية</th><th>الوحدة</th><th>الهدر %</th><th>التكلفة</th></tr></thead><tbody>'+
-      ((lines||[]).length ? lines.map(function(l){return '<tr><td>'+l.itemName+'</td><td>'+_erpFmt(l.quantity)+'</td><td>'+l.unit+'</td><td>'+l.wastePct+'%</td><td>'+_erpFmt(l.lineCost)+'</td></tr>';}).join('') : '<tr><td colspan="5" class="empty-msg">لا توجد مكونات</td></tr>')+
-      '</tbody></table></div>';
-    document.getElementById('erpModalSaveBtn').style.display = 'none';
-    document.getElementById('erpModal').classList.remove('hidden');
+    var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
+    var rows = (lines||[]).map(function(l){
+      return '<tr>' +
+        '<td><b>'+esc(l.itemName)+'</b></td>' +
+        '<td class="num">'+_erpFmt(l.quantity)+'</td>' +
+        '<td>'+esc(l.unit)+'</td>' +
+        '<td class="num"><span class="wo-chip '+(l.wastePct>10?'warning':'neutral')+' flat">'+l.wastePct+'%</span></td>' +
+        '<td class="num wo-money">'+_erpFmt(l.lineCost)+'</td>' +
+      '</tr>';
+    }).join('');
+    var total = (lines||[]).reduce(function(s,l){return s + Number(l.lineCost||0);}, 0);
+
+    var html =
+      '<div class="wo-modal-overlay open" id="bomViewModal" onclick="if(event.target.id===\'bomViewModal\')document.getElementById(\'bomViewModal\').remove()">' +
+        '<div class="wo-modal">' +
+          '<div class="wo-modal-header">' +
+            '<div class="wo-modal-icon purple"><i class="fas fa-list-ul"></i></div>' +
+            '<div class="wo-modal-titles">' +
+              '<div class="wo-modal-title">'+esc(productName)+'</div>' +
+              '<div class="wo-modal-sub">مكونات الوصفة · '+(lines||[]).length+' مكوّن</div>' +
+            '</div>' +
+            '<button class="wo-modal-close" onclick="document.getElementById(\'bomViewModal\').remove()" aria-label="إغلاق"><i class="fas fa-xmark"></i></button>' +
+          '</div>' +
+          '<div class="wo-modal-body" style="padding:0;">' +
+            '<div class="wo-table-surface" style="border:none;border-radius:0;box-shadow:none;">' +
+              '<table class="wo-table">' +
+                '<thead><tr><th>المكوّن</th><th class="num">الكمية</th><th>الوحدة</th><th class="num">الهدر %</th><th class="num">التكلفة</th></tr></thead>' +
+                '<tbody>'+(rows||'<tr><td colspan="5"><div class="wo-empty">لا توجد مكونات</div></td></tr>')+'</tbody>' +
+                (rows ? '<tfoot><tr><td colspan="4" style="text-align:end;font-weight:800;">إجمالي التكلفة</td><td class="num strong">'+total.toFixed(2)+'</td></tr></tfoot>' : '') +
+              '</table>' +
+            '</div>' +
+          '</div>' +
+          '<div class="wo-modal-footer">' +
+            '<button class="wo-btn wo-btn-secondary" onclick="document.getElementById(\'bomViewModal\').remove()">إغلاق</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    var existing = document.getElementById('bomViewModal');
+    if (existing) existing.remove();
+    document.body.insertAdjacentHTML('beforeend', html);
   });
 }
 function erpDeleteBom(id) {
@@ -8104,7 +8326,7 @@ function erpDeleteBom(id) {
   _erpDelete('/erp/bom/'+id, function(r){ if(r.success){showToast('حُذفت');erpLoadBOM();}else showToast(r.error||'فشل',true); });
 }
 
-// ─── Waste Entries ───
+// ─── Waste Entries (Redesigned) ───
 function erpLoadWasteEntries() {
   _erpPopulateBranchOptions(['weBranch']);
   _erpPopulateBrandOptions(['weBrand']);
@@ -8114,14 +8336,45 @@ function erpLoadWasteEntries() {
     branch_id: document.getElementById('weBranch').value,
     brand_id:  document.getElementById('weBrand').value
   }).toString();
-  document.getElementById('weBody').innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  var body = document.getElementById('weBody');
+  body.innerHTML = (typeof _woLoadingRow === 'function') ? _woLoadingRow(7) + _woLoadingRow(7) : '<tr><td colspan="7">جاري التحميل...</td></tr>';
   _erpGet('/erp/waste-entries?'+params, function(list){
-    if (!Array.isArray(list) || !list.length) { document.getElementById('weBody').innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد سجلات</td></tr>'; return; }
+    if (!Array.isArray(list)) list = [];
+    var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
+    // Metrics
+    var metrics = document.getElementById('weMetrics');
+    if (metrics && typeof _woMetric === 'function') {
+      var totalCost = list.reduce(function(s,w){return s + Number(w.totalCost||0);}, 0);
+      var reasons = {};
+      list.forEach(function(w){ reasons[w.reason] = (reasons[w.reason]||0) + 1; });
+      var topReason = Object.keys(reasons).sort(function(a,b){return reasons[b]-reasons[a];})[0] || '—';
+      var rMap = {expired:'منتهي',damaged:'تالف',spill:'انسكاب',prep_loss:'تحضير',customer_return:'إرجاع',other:'أخرى'};
+      metrics.innerHTML =
+        _woMetric('fa-dumpster', 'danger', 'إجمالي القيود', list.length, 'danger') +
+        _woMetric('fa-sack-dollar', 'warning', 'إجمالي الخسارة', totalCost.toLocaleString('en',{minimumFractionDigits:2}), 'warning') +
+        _woMetric('fa-chart-pie', 'info', 'أكثر سبب', rMap[topReason] || topReason, 'info') +
+        _woMetric('fa-scale-balanced', 'purple', 'متوسط القيد', list.length ? (totalCost/list.length).toFixed(2) : '0.00', 'purple');
+    }
+    if (!list.length) {
+      body.innerHTML = '<tr><td colspan="7">' +
+        ((typeof _woEmpty === 'function')
+          ? _woEmpty('fa-shield-heart', 'لا توجد قيود هدر في الفترة المحددة', 'وسّع نطاق التاريخ أو جرّب فروعاً أخرى.')
+          : 'لا توجد سجلات') +
+        '</td></tr>';
+      return;
+    }
     var reasonMap = {expired:'منتهي',damaged:'تالف',spill:'انسكاب',prep_loss:'تحضير',customer_return:'إرجاع',other:'أخرى'};
-    document.getElementById('weBody').innerHTML = list.map(function(w){
-      return '<tr><td>'+(w.wasteDate||'').slice(0,10)+'</td><td>'+(w.branchName||'—')+'</td><td>'+(w.brandName||'—')+'</td><td>'+(reasonMap[w.reason]||w.reason)+'</td><td>'+(w.costCenterName||'—')+'</td>'+
-        '<td style="font-weight:700;color:#ef4444;">'+_erpFmt(w.totalCost)+'</td>'+
-        '<td><button class="btn btn-sm btn-light" onclick="erpViewWasteItems(\''+w.id+'\')"><i class="fas fa-list"></i></button></td></tr>';
+    var reasonClr = {expired:'danger',damaged:'warning',spill:'info',prep_loss:'purple',customer_return:'neutral',other:'neutral'};
+    body.innerHTML = list.map(function(w){
+      return '<tr>' +
+        '<td data-label="التاريخ">'+esc((w.wasteDate||'').slice(0,10))+'</td>' +
+        '<td data-label="الفرع"><b>'+esc(w.branchName||'—')+'</b></td>' +
+        '<td data-label="البراند">'+esc(w.brandName||'—')+'</td>' +
+        '<td data-label="السبب"><span class="wo-chip '+(reasonClr[w.reason]||'neutral')+'">'+(reasonMap[w.reason]||w.reason||'')+'</span></td>' +
+        '<td data-label="مركز التكلفة" class="wo-text-subtle wo-text-caption">'+esc(w.costCenterName||'—')+'</td>' +
+        '<td data-label="التكلفة" class="num"><span class="wo-money neg">'+_erpFmt(w.totalCost)+'</span></td>' +
+        '<td data-label="الإجراءات"><div class="wo-actions"><button class="wo-icon-btn info" onclick="erpViewWasteItems(\''+esc(w.id)+'\')" title="التفاصيل" aria-label="تفاصيل"><i class="fas fa-list-ul"></i></button></div></td>' +
+      '</tr>';
     }).join('');
   });
 }

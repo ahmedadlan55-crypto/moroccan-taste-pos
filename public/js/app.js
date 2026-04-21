@@ -2061,48 +2061,88 @@ function loadDashMenu() {
         var allRecipes = recipes || [];
         var list = state.menu;
         if (search) list = list.filter(function(i){ return (i.name||'').toLowerCase().includes(search) || (i.id||'').toLowerCase().includes(search) || (i.category||'').toLowerCase().includes(search); });
+        // Compute aggregate metrics
+        var totalItems = list.length;
+        var activeItems = list.filter(function(i){return i.active;}).length;
+        var totalSellValue = 0;
+        var totalCostValue = 0;
+        var totalMargin = 0;
+        var marginCount = 0;
+        var lossCount = 0;
+        var enriched = list.map(function(i) {
+          var sellPrice = Number(i.price)||0;
+          var netSell = sellPrice / 1.15;
+          var ings = allRecipes.filter(function(r){ return String(r.menuId).trim()===String(i.id).trim(); });
+          var recipeCost = 0;
+          ings.forEach(function(ing){
+            var raw = cachedRawItems.find(function(r){ return String(r.id)===String(ing.invItemId); });
+            var uCost = raw ? (Number(raw.cost) || 0) : 0;
+            recipeCost += ing.qtyUsed * uCost;
+          });
+          var profit = netSell - recipeCost;
+          var margin = netSell > 0 ? (profit/netSell*100) : 0;
+          totalSellValue += netSell; totalCostValue += recipeCost;
+          if (ings.length) { totalMargin += margin; marginCount++; }
+          if (profit < 0) lossCount++;
+          return { item: i, sellPrice: sellPrice, netSell: netSell, ings: ings, recipeCost: recipeCost, profit: profit, margin: margin };
+        });
+        var avgMargin = marginCount ? (totalMargin / marginCount) : 0;
+
+        // Update metric strip (only if target exists — new UI)
+        var metricsEl = document.getElementById('menuMetrics');
+        if (metricsEl && typeof _woMetric === 'function') {
+          metricsEl.innerHTML =
+            _woMetric('fa-utensils', 'info', 'إجمالي المنتجات', totalItems + ' / ' + activeItems + ' نشط', 'info') +
+            _woMetric('fa-tag', 'success', 'إجمالي أسعار البيع (صافي)', totalSellValue.toLocaleString('en',{minimumFractionDigits:2}), 'success') +
+            _woMetric('fa-coins', 'warning', 'إجمالي التكاليف', totalCostValue.toLocaleString('en',{minimumFractionDigits:2}), 'warning') +
+            _woMetric(lossCount?'fa-triangle-exclamation':'fa-chart-line', lossCount?'danger':'purple',
+              'متوسط هامش الربح', avgMargin.toFixed(1) + '%' + (lossCount ? ' · ' + lossCount + ' خاسر' : ''),
+              lossCount?'danger':'purple');
+        }
+
         var h = '';
-        if (!list.length) { h = '<tr><td colspan="8" style="text-align:center;padding:30px;">لا توجد منتجات</td></tr>'; }
-        else {
-          list.forEach(function(i) {
+        var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
+
+        if (!list.length) {
+          h = '<tr><td colspan="9">' +
+            (typeof _woEmpty === 'function'
+              ? _woEmpty('fa-utensils', 'لا توجد منتجات', 'ابدأ بإضافة أول منتج في المنيو، أو استورد قائمة من ملف Excel.',
+                '<button class="wo-btn wo-btn-primary" onclick="openInvM(\'add\')"><i class="fas fa-plus"></i><span>إضافة منتج</span></button>')
+              : '<div style="text-align:center;padding:30px;">لا توجد منتجات</div>') +
+          '</td></tr>';
+        } else {
+          enriched.forEach(function(row) {
             try {
-              var sellPrice = Number(i.price)||0;
-              var netSell = sellPrice / 1.15;
-              var ings = allRecipes.filter(function(r){ return String(r.menuId).trim()===String(i.id).trim(); });
-              var recipeCost = 0;
-              ings.forEach(function(ing){
-                var raw = cachedRawItems.find(function(r){ return String(r.id)===String(ing.invItemId); });
-                var cRate = raw ? (Number(raw.convRate)||1) : 1;
-                var uCost = raw ? (Number(raw.cost) || 0) : 0;
-                recipeCost += ing.qtyUsed * uCost;
-              });
-              var profit = netSell - recipeCost;
-              var margin = netSell > 0 ? (profit/netSell*100) : 0;
-              var profitColor = profit >= 0 ? '#16a34a' : '#ef4444';
-              var costDisplay = ings.length
-                ? '<span style="font-weight:800;color:#ef4444;">' + formatVal(recipeCost) + '</span> <span style="font-size:11px;color:#64748b;">(' + ings.length + ' مكوّن)</span>'
-                : '<span style="color:#94a3b8;font-size:11px;">لا توجد مقادير</span>';
+              var i = row.item;
+              var profitClass = row.profit < 0 ? 'loss' : (row.margin > 40 ? 'high' : (row.margin > 20 ? 'medium' : 'low'));
               var priceBadge = (i.pricingMode === 'variable')
-                ? '<div style="font-size:10px;"><span class="badge" style="background:#dbeafe;color:#1e40af;">🔄 تكلفة متغيرة</span></div>'
-                : '<div style="font-size:10px;"><span class="badge" style="background:#fef3c7;color:#92400e;">🔒 تكلفة ثابتة</span></div>';
+                ? '<span class="wo-chip info flat"><i class="fas fa-arrows-rotate"></i> تكلفة متغيرة</span>'
+                : '<span class="wo-chip warning flat"><i class="fas fa-lock"></i> تكلفة ثابتة</span>';
+              var costDisplay = row.ings.length
+                ? '<span class="wo-money neg">' + formatVal(row.recipeCost) + '</span> <span class="wo-text-subtle wo-text-caption">· ' + row.ings.length + ' مكوّن</span>'
+                : '<span class="wo-text-subtle wo-text-caption" style="font-style:italic;">لا توجد مقادير</span>';
+              var statusChip = i.active
+                ? '<span class="wo-chip success">نشط</span>'
+                : '<span class="wo-chip neutral">متوقف</span>';
               h += '<tr>'+
-                '<td><code style="font-size:11px;color:#64748b;">'+(i.id||'')+'</code></td>'+
-                '<td style="font-weight:800;">'+(i.name||'')+priceBadge+'</td>'+
-                '<td><span class="badge" style="background:#e2e8f0;color:#475569;">'+(i.category||'')+'</span></td>'+
-                '<td style="font-weight:700;">'+formatVal(sellPrice)+'</td>'+
-                '<td>'+costDisplay+'</td>'+
-                '<td style="color:'+profitColor+';font-weight:800;">'+formatVal(profit)+'<div style="font-size:10px;">'+margin.toFixed(0)+'%</div></td>'+
-                '<td>'+(i.active?'<i class="fas fa-check-circle" style="color:var(--success);"></i>':'<i class="fas fa-times-circle" style="color:var(--danger);"></i>')+'</td>'+
-                '<td style="white-space:nowrap;">'+
-                  '<button class="btn btn-primary" style="padding:5px 8px;" onclick="openRecipeModal(\''+i.id+'\',\''+String(i.name||'').replace(/'/g,"\\'")+'\')" title="مقادير"><i class="fas fa-blender"></i></button> '+
-                  '<button class="btn btn-light" style="padding:5px 8px;" onclick="openInvM(\'edit\',\''+i.id+'\')" title="تعديل"><i class="fas fa-edit"></i></button> '+
-                  '<button class="btn btn-danger" style="padding:5px 8px;" onclick="delInv(\''+i.id+'\')" title="حذف"><i class="fas fa-trash"></i></button>'+
-                '</td></tr>';
+                '<td data-label="الكود"><code>'+esc(i.id||'')+'</code></td>'+
+                '<td data-label="المنتج"><div style="display:flex;flex-direction:column;gap:4px;"><b>'+esc(i.name||'')+'</b>'+priceBadge+'</div></td>'+
+                '<td data-label="التصنيف"><span class="wo-chip neutral flat">'+esc(i.category||'—')+'</span></td>'+
+                '<td data-label="سعر البيع" class="num strong">'+formatVal(row.sellPrice)+'</td>'+
+                '<td data-label="تكلفة المقادير" class="num">'+costDisplay+'</td>'+
+                '<td data-label="الربح" class="num"><span class="wo-money '+(row.profit>=0?'pos':'neg')+'">'+formatVal(row.profit)+'</span></td>'+
+                '<td data-label="هامش الربح"><span class="wo-profit-bar '+profitClass+'">'+row.margin.toFixed(1)+'%</span></td>'+
+                '<td data-label="الحالة">'+statusChip+'</td>'+
+                '<td data-label="الإجراءات"><div class="wo-actions">'+
+                  '<button class="wo-icon-btn info" onclick="openRecipeModal(\''+i.id+'\',\''+String(i.name||'').replace(/\'/g,"\\\'")+'\')" title="المقادير" aria-label="مقادير"><i class="fas fa-blender"></i></button>'+
+                  '<button class="wo-icon-btn" onclick="openInvM(\'edit\',\''+i.id+'\')" title="تعديل" aria-label="تعديل"><i class="fas fa-pen"></i></button>'+
+                  '<button class="wo-icon-btn danger" onclick="delInv(\''+i.id+'\')" title="حذف" aria-label="حذف"><i class="fas fa-trash"></i></button>'+
+                '</div></td>'+
+              '</tr>';
             } catch(ex) { console.error(ex); }
           });
         }
         if (q("#tbMenu")) q("#tbMenu").innerHTML = h;
-        // Also update old tbInv for backward compat
         if (q("#tbInv")) q("#tbInv").innerHTML = h;
       }).getInvItems();
     }).getRecipes();

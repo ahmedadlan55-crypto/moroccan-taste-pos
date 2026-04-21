@@ -141,6 +141,7 @@ app.use('/api/settings', require('./routes/settings'));
 // ERP v3 (erp-core) is mounted first so its newer, schema-aware reports
 // take precedence over any same-path legacy handler in routes/erp.js
 app.use('/api/erp', require('./routes/erp-core'));
+app.use('/api/erp', require('./routes/warehouse-ops'));
 app.use('/api/erp', require('./routes/erp'));
 app.use('/api/custody', require('./routes/custody'));
 app.use('/api/cash', require('./routes/cash'));
@@ -1976,6 +1977,175 @@ async function runMigrations() {
       INDEX idx_txn (transaction_id)
     ) ENGINE=InnoDB
   `);
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 1 — Main/Branch Warehouse Hierarchy + Stock Issues
+  // ═══════════════════════════════════════════════════════════
+
+  // Warehouses: hierarchy + main flag
+  await addColumnIfMissing('warehouses', 'parent_warehouse_id', "VARCHAR(50) NULL");
+  await addColumnIfMissing('warehouses', 'is_main', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('warehouses', 'description', "VARCHAR(500)");
+
+  // Stock Issues — central warehouse issues stock to branches/sub-warehouses
+  await createTableIfMissing('stock_issues', `
+    CREATE TABLE stock_issues (
+      id VARCHAR(60) PRIMARY KEY,
+      issue_number VARCHAR(40) NOT NULL,
+      from_warehouse_id VARCHAR(50) NOT NULL,
+      to_warehouse_id VARCHAR(50) NOT NULL,
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      issue_date DATE,
+      status ENUM('draft','approved','issued','received','cancelled') DEFAULT 'draft',
+      total_cost DECIMAL(14,4) DEFAULT 0,
+      notes TEXT,
+      gl_journal_id VARCHAR(60),
+      created_by VARCHAR(100),
+      approved_by VARCHAR(100),
+      issued_by VARCHAR(100),
+      received_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      approved_at DATETIME,
+      issued_at DATETIME,
+      received_at DATETIME,
+      INDEX idx_from (from_warehouse_id),
+      INDEX idx_to (to_warehouse_id),
+      INDEX idx_status (status)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('stock_issue_items', `
+    CREATE TABLE stock_issue_items (
+      id VARCHAR(60) PRIMARY KEY,
+      issue_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      qty_requested DECIMAL(14,4) DEFAULT 0,
+      qty_issued DECIMAL(14,4) DEFAULT 0,
+      qty_received DECIMAL(14,4) DEFAULT 0,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      line_total DECIMAL(14,4) DEFAULT 0,
+      notes VARCHAR(400),
+      INDEX idx_issue (issue_id),
+      INDEX idx_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('stock_issue_counter', `
+    CREATE TABLE stock_issue_counter (
+      ymd CHAR(8) NOT NULL,
+      last_serial INT NOT NULL DEFAULT 0,
+      PRIMARY KEY (ymd)
+    ) ENGINE=InnoDB
+  `);
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 2 — Production Orders
+  // ═══════════════════════════════════════════════════════════
+
+  await createTableIfMissing('production_orders', `
+    CREATE TABLE production_orders (
+      id VARCHAR(60) PRIMARY KEY,
+      order_number VARCHAR(40) NOT NULL,
+      bom_id VARCHAR(60) NOT NULL,
+      product_id VARCHAR(60) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      output_warehouse_id VARCHAR(50),
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      qty_planned DECIMAL(14,4) DEFAULT 0,
+      qty_produced DECIMAL(14,4) DEFAULT 0,
+      qty_scrap DECIMAL(14,4) DEFAULT 0,
+      status ENUM('planned','released','in_progress','completed','closed','cancelled') DEFAULT 'planned',
+      materials_cost DECIMAL(14,4) DEFAULT 0,
+      labor_cost DECIMAL(14,4) DEFAULT 0,
+      overhead_cost DECIMAL(14,4) DEFAULT 0,
+      total_cost DECIMAL(14,4) DEFAULT 0,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      notes TEXT,
+      gl_release_id VARCHAR(60),
+      gl_complete_id VARCHAR(60),
+      created_by VARCHAR(100),
+      released_by VARCHAR(100),
+      completed_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      planned_date DATE,
+      released_at DATETIME,
+      completed_at DATETIME,
+      INDEX idx_bom (bom_id),
+      INDEX idx_status (status)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('production_consumption', `
+    CREATE TABLE production_consumption (
+      id VARCHAR(60) PRIMARY KEY,
+      production_order_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      qty_planned DECIMAL(14,4) DEFAULT 0,
+      qty_actual DECIMAL(14,4) DEFAULT 0,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      total_cost DECIMAL(14,4) DEFAULT 0,
+      lot_id VARCHAR(60),
+      consumed_at DATETIME,
+      INDEX idx_prod (production_order_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('production_output', `
+    CREATE TABLE production_output (
+      id VARCHAR(60) PRIMARY KEY,
+      production_order_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      qty DECIMAL(14,4) DEFAULT 0,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      total_cost DECIMAL(14,4) DEFAULT 0,
+      batch_number VARCHAR(80),
+      expiry_date DATE,
+      produced_at DATETIME,
+      INDEX idx_prod (production_order_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('production_counter', `
+    CREATE TABLE production_counter (
+      ymd CHAR(8) NOT NULL,
+      last_serial INT NOT NULL DEFAULT 0,
+      PRIMARY KEY (ymd)
+    ) ENGINE=InnoDB
+  `);
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 3 — Real Cost Accounting: FIFO / WAC / Batch / Expiry
+  // ═══════════════════════════════════════════════════════════
+
+  // Purchase lots: add batch/expiry tracking
+  await addColumnIfMissing('purchase_lots', 'batch_number', "VARCHAR(80)");
+  await addColumnIfMissing('purchase_lots', 'expiry_date', "DATE NULL");
+  await addColumnIfMissing('purchase_lots', 'warehouse_id', "VARCHAR(50)");
+  await addColumnIfMissing('purchase_lots', 'received_at', "DATETIME NULL");
+
+  // Cost history — every cost change is recorded
+  await createTableIfMissing('item_cost_history', `
+    CREATE TABLE item_cost_history (
+      id VARCHAR(60) PRIMARY KEY,
+      item_id VARCHAR(50) NOT NULL,
+      warehouse_id VARCHAR(50),
+      method VARCHAR(20) DEFAULT 'WAC',
+      old_cost DECIMAL(14,4) DEFAULT 0,
+      new_cost DECIMAL(14,4) DEFAULT 0,
+      old_qty DECIMAL(14,4) DEFAULT 0,
+      new_qty DECIMAL(14,4) DEFAULT 0,
+      trigger_type VARCHAR(40),
+      reference_id VARCHAR(60),
+      changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      changed_by VARCHAR(100),
+      INDEX idx_item (item_id),
+      INDEX idx_date (changed_at)
+    ) ENGINE=InnoDB
+  `);
+
+  // Warehouse stock: add average cost per warehouse
+  await addColumnIfMissing('warehouse_stock', 'avg_cost', "DECIMAL(14,4) DEFAULT 0");
+  await addColumnIfMissing('warehouse_stock', 'last_cost', "DECIMAL(14,4) DEFAULT 0");
+  await addColumnIfMissing('warehouse_stock', 'last_updated', "TIMESTAMP NULL");
 
   // Seed default branch code if empty
   try {

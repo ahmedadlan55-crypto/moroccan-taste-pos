@@ -30,6 +30,12 @@
           <div class="nav-item" data-erp-nav="erpPurchaseOrders" onclick="erpNav('erpPurchaseOrders')"><i class="fas fa-shopping-cart"></i><span>أوامر الشراء</span></div>
           <div class="nav-item" data-erp-nav="erpCostCenters" onclick="erpNav('erpCostCenters')"><i class="fas fa-bullseye"></i><span>مراكز التكلفة</span></div>
           <div class="nav-item" data-erp-nav="erpMultiWarehouses" onclick="erpNav('erpMultiWarehouses')"><i class="fas fa-warehouse"></i><span>إدارة المستودعات</span></div>
+          <div class="nav-item" data-erp-nav="erpWhHierarchy" onclick="erpNav('erpWhHierarchy')"><i class="fas fa-sitemap"></i><span>هيكل المستودعات (رئيسي/فرعي)</span></div>
+          <div class="nav-item" data-erp-nav="erpStockIssues" onclick="erpNav('erpStockIssues')"><i class="fas fa-truck-arrow-right"></i><span>إذونات الصرف</span></div>
+          <div class="nav-item" data-erp-nav="erpProductionOrders" onclick="erpNav('erpProductionOrders')"><i class="fas fa-industry"></i><span>أوامر الإنتاج</span></div>
+          <div class="nav-item" data-erp-nav="erpExpiryAlerts" onclick="erpNav('erpExpiryAlerts')"><i class="fas fa-hourglass-half"></i><span>تنبيهات انتهاء الصلاحية</span></div>
+          <div class="nav-item" data-erp-nav="erpSlowMoving" onclick="erpNav('erpSlowMoving')"><i class="fas fa-snowflake"></i><span>أصناف بطيئة الحركة</span></div>
+          <div class="nav-item" data-erp-nav="erpTurnover" onclick="erpNav('erpTurnover')"><i class="fas fa-sync-alt"></i><span>دوران المخزون</span></div>
         </div>
 
         <div class="nav-item" onclick="nav('expenses')"><i class="fas fa-money-check-alt"></i><span>المصروفات</span></div>
@@ -1551,6 +1557,159 @@
 </div>
 
 <!-- LEGACY WAREHOUSE SECTIONS REMOVED — all functionality in erpMultiWarehouses with tabs -->
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- PHASE 1 — WAREHOUSE HIERARCHY (Main / Branch) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpWhHierarchy" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-sitemap" style="color:#0ea5e9;"></i> هيكل المستودعات — رئيسي وفرعي</h2>
+    <button class="btn btn-light" onclick="whhLoad()"><i class="fas fa-sync"></i> تحديث</button>
+  </div>
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:14px;">
+    <p style="font-size:12px;color:#64748b;line-height:1.7;margin-bottom:6px;"><i class="fas fa-info-circle" style="color:#3b82f6;"></i> <b>كيف يعمل؟</b></p>
+    <ul style="font-size:12px;color:#334155;padding-right:22px;line-height:1.8;">
+      <li>كل برند يمكن أن يكون له <b>مستودع رئيسي واحد</b> (is_main = 1)</li>
+      <li>المستودعات الفرعية تُربط بالمستودع الرئيسي كأب (parent_warehouse_id)</li>
+      <li>المستودع الرئيسي يستلم المشتريات، ويصدر إذونات صرف للفروع</li>
+      <li>كل حركة ترحيل GL تلقائي: Dr مخزون الفروع / Cr المخزون الرئيسي</li>
+    </ul>
+  </div>
+  <div id="whhBody"><div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div></div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- PHASE 1 — STOCK ISSUES (إذونات الصرف) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpStockIssues" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-truck-arrow-right" style="color:#10b981;"></i> إذونات الصرف — من المستودع الرئيسي للفروع</h2>
+    <button class="btn btn-primary" onclick="siOpenNewModal()"><i class="fas fa-plus"></i> إذن صرف جديد</button>
+  </div>
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;">
+    <div><label style="font-size:11px;font-weight:700;color:#64748b;">الحالة</label>
+      <select id="siFStatus" class="form-control" onchange="siLoad()">
+        <option value="">الكل</option>
+        <option value="draft">مسودة</option>
+        <option value="approved">معتمد</option>
+        <option value="issued">تم الصرف</option>
+        <option value="received">تم الاستلام</option>
+        <option value="cancelled">ملغى</option>
+      </select></div>
+    <div><label style="font-size:11px;font-weight:700;color:#64748b;">من تاريخ</label>
+      <input type="date" id="siFFrom" class="form-control" onchange="siLoad()"></div>
+    <div><label style="font-size:11px;font-weight:700;color:#64748b;">إلى تاريخ</label>
+      <input type="date" id="siFTo" class="form-control" onchange="siLoad()"></div>
+  </div>
+  <div class="erp-table-container" style="border-radius:14px;">
+    <table class="erp-table">
+      <thead><tr><th>الرقم</th><th>التاريخ</th><th>من</th><th>إلى</th><th>الأصناف</th><th>التكلفة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="siBody"><tr><td colspan="8" class="empty-msg">لا توجد إذونات صرف</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- PHASE 2 — PRODUCTION ORDERS (أوامر الإنتاج) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpProductionOrders" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-industry" style="color:#f59e0b;"></i> أوامر الإنتاج</h2>
+    <button class="btn btn-primary" onclick="prdOpenNewModal()"><i class="fas fa-plus"></i> أمر إنتاج جديد</button>
+  </div>
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;">
+    <div><label style="font-size:11px;font-weight:700;color:#64748b;">الحالة</label>
+      <select id="prdFStatus" class="form-control" onchange="prdLoad()">
+        <option value="">الكل</option>
+        <option value="planned">مخطط</option>
+        <option value="released">مُطلق</option>
+        <option value="in_progress">قيد التنفيذ</option>
+        <option value="completed">مكتمل</option>
+        <option value="cancelled">ملغى</option>
+      </select></div>
+    <div><label style="font-size:11px;font-weight:700;color:#64748b;">المستودع</label>
+      <select id="prdFWh" class="form-control" onchange="prdLoad()"><option value="">كل المستودعات</option></select></div>
+    <div><label style="font-size:11px;font-weight:700;color:#64748b;">من تاريخ</label>
+      <input type="date" id="prdFFrom" class="form-control" onchange="prdLoad()"></div>
+    <div><label style="font-size:11px;font-weight:700;color:#64748b;">إلى تاريخ</label>
+      <input type="date" id="prdFTo" class="form-control" onchange="prdLoad()"></div>
+  </div>
+  <div class="erp-table-container" style="border-radius:14px;">
+    <table class="erp-table">
+      <thead><tr><th>الرقم</th><th>المنتج</th><th>الكمية</th><th>المستودع</th><th>المواد</th><th>العمالة</th><th>إجمالي</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="prdBody"><tr><td colspan="9" class="empty-msg">لا توجد أوامر إنتاج</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- PHASE 3 — EXPIRY ALERTS -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpExpiryAlerts" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-hourglass-half" style="color:#ef4444;"></i> تنبيهات انتهاء الصلاحية</h2>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <label style="font-size:12px;color:#64748b;">خلال</label>
+      <select id="expDays" class="form-control" style="width:120px;" onchange="expLoad()">
+        <option value="7">7 أيام</option>
+        <option value="14">14 يوم</option>
+        <option value="30" selected>30 يوم</option>
+        <option value="60">60 يوم</option>
+        <option value="90">90 يوم</option>
+      </select>
+    </div>
+  </div>
+  <div class="erp-table-container" style="border-radius:14px;">
+    <table class="erp-table">
+      <thead><tr><th>الصنف</th><th>المستودع</th><th>رقم الدفعة</th><th>الكمية المتبقية</th><th>تاريخ الانتهاء</th><th>الأيام المتبقية</th><th>تكلفة الوحدة</th></tr></thead>
+      <tbody id="expBody"><tr><td colspan="7" class="empty-msg">لا توجد دفعات قرب الانتهاء</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- PHASE 3 — SLOW MOVING ITEMS -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpSlowMoving" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-snowflake" style="color:#0ea5e9;"></i> الأصناف بطيئة الحركة</h2>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <label style="font-size:12px;color:#64748b;">بدون حركة خلال</label>
+      <select id="slowDays" class="form-control" style="width:120px;" onchange="slowLoad()">
+        <option value="30">30 يوم</option>
+        <option value="60" selected>60 يوم</option>
+        <option value="90">90 يوم</option>
+        <option value="180">180 يوم</option>
+      </select>
+    </div>
+  </div>
+  <div class="erp-table-container" style="border-radius:14px;">
+    <table class="erp-table">
+      <thead><tr><th>الصنف</th><th>المستودع</th><th>الكمية</th><th>تكلفة الوحدة</th><th>القيمة الإجمالية</th><th>آخر حركة</th><th>أيام بدون حركة</th></tr></thead>
+      <tbody id="slowBody"><tr><td colspan="7" class="empty-msg">لا توجد أصناف بطيئة</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- PHASE 3 — INVENTORY TURNOVER -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpTurnover" class="dash-section hidden">
+  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-sync-alt" style="color:#8b5cf6;"></i> دوران المخزون</h2>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <input type="date" id="turnFrom" class="form-control" style="width:150px;">
+      <input type="date" id="turnTo" class="form-control" style="width:150px;">
+      <button class="btn btn-primary" onclick="turnLoad()"><i class="fas fa-search"></i> عرض</button>
+    </div>
+  </div>
+  <div class="erp-table-container" style="border-radius:14px;">
+    <table class="erp-table">
+      <thead><tr><th>الصنف</th><th>الوحدة</th><th>المستهلك</th><th>COGS</th><th>الرصيد الحالي</th><th>القيمة</th><th>معدل الدوران</th><th>أيام البيع</th></tr></thead>
+      <tbody id="turnBody"><tr><td colspan="8" class="empty-msg">لم يتم التحميل — اختر تاريخاً واضغط عرض</td></tr></tbody>
+    </table>
+  </div>
+</div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- WORKFLOW: المناصب (Positions) -->

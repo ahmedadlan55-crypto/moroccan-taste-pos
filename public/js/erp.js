@@ -8341,3 +8341,464 @@ function erpDeleteCategory(id) {
   if (!confirm('حذف التصنيف؟')) return;
   _erpDelete('/erp/item-categories/'+id, function(r){ if(r.success){showToast('تم');erpLoadItemCategories();}else showToast(r.error||'فشل',true); });
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// PHASE 1 — WAREHOUSE HIERARCHY
+// ═══════════════════════════════════════════════════════════════════
+
+function whhLoad() {
+  var body = document.getElementById('whhBody');
+  if (!body) return;
+  body.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i></div>';
+  _erpGet('/erp/warehouses/hierarchy', function(rows) {
+    if (!Array.isArray(rows)) rows = [];
+    if (!rows.length) { body.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-style:italic;">لا توجد مستودعات</div>'; return; }
+    // Group by parent
+    var byBrand = {};
+    rows.forEach(function(r) {
+      var k = r.brand_id || '__none__';
+      if (!byBrand[k]) byBrand[k] = { mains: [], others: [] };
+      if (r.is_main) byBrand[k].mains.push(r);
+      else if (!r.parent_warehouse_id) byBrand[k].others.push(r);
+    });
+    // Build tree with children
+    var html = '';
+    Object.keys(byBrand).forEach(function(brandKey) {
+      var group = byBrand[brandKey];
+      group.mains.forEach(function(m) {
+        var children = rows.filter(function(r){return r.parent_warehouse_id === m.id;});
+        html += _whhCardHTML(m, children, rows);
+      });
+      group.others.forEach(function(m) {
+        html += _whhCardHTML(m, [], rows);
+      });
+    });
+    if (!html) html = '<div style="text-align:center;padding:40px;color:#94a3b8;">لا توجد مستودعات</div>';
+    body.innerHTML = html;
+  });
+}
+function _whhCardHTML(wh, children, allRows) {
+  var mainBadge = wh.is_main
+    ? '<span style="padding:3px 9px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:10px;font-weight:800;"><i class="fas fa-star"></i> رئيسي</span>'
+    : (wh.parent_warehouse_id
+       ? '<span style="padding:3px 9px;border-radius:999px;background:#dbeafe;color:#1e40af;font-size:10px;font-weight:800;"><i class="fas fa-level-down-alt"></i> فرعي</span>'
+       : '<span style="padding:3px 9px;border-radius:999px;background:#f1f5f9;color:#64748b;font-size:10px;font-weight:800;">مستقل</span>');
+  var parentOpts = '<option value="">— بدون أب —</option>' +
+    allRows.filter(function(r){return r.id !== wh.id && (r.is_main || !r.parent_warehouse_id);})
+           .map(function(r){var sel=(r.id===wh.parent_warehouse_id)?' selected':''; return '<option value="'+r.id+'"'+sel+'>'+(r.name||'')+(r.is_main?' (رئيسي)':'')+'</option>';}).join('');
+  var html =
+    '<div style="background:#fff;border:'+(wh.is_main?'2px solid #f59e0b':'1px solid #e5e7eb')+';border-radius:14px;padding:14px;margin-bottom:12px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px;flex-wrap:wrap;">' +
+        '<div style="display:flex;align-items:center;gap:10px;">' +
+          '<i class="fas fa-warehouse" style="color:'+(wh.is_main?'#f59e0b':'#3b82f6')+';font-size:20px;"></i>' +
+          '<div><div style="font-weight:800;font-size:15px;">'+(wh.name||'')+'</div>' +
+          '<div style="font-size:11px;color:#64748b;"><code>'+(wh.code||'')+'</code> '+(wh.location?' • '+wh.location:'')+'</div></div>' +
+        '</div>' +
+        mainBadge +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">' +
+        (!wh.is_main
+          ? '<div><label style="font-size:11px;font-weight:700;color:#475569;">المستودع الأب</label><select class="form-control" onchange="whhSetParent(\''+wh.id+'\',this.value)">'+parentOpts+'</select></div>'
+          : '<div></div>') +
+        (!wh.is_main
+          ? '<div style="display:flex;align-items:flex-end;"><button class="btn btn-warning" style="width:100%;" onclick="whhSetMain(\''+wh.id+'\')"><i class="fas fa-star"></i> تعيين كرئيسي</button></div>'
+          : '<div></div>') +
+      '</div>';
+  if (children.length) {
+    html += '<div style="padding-right:20px;border-right:3px dashed #e5e7eb;margin-top:10px;">' +
+      '<div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:6px;"><i class="fas fa-level-down-alt"></i> المستودعات الفرعية ('+children.length+')</div>';
+    children.forEach(function(c) {
+      html += '<div style="background:#f8fafc;border-radius:8px;padding:8px 12px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;">' +
+        '<div><b>'+(c.name||'')+'</b> <code style="font-size:10px;color:#64748b;">'+(c.code||'')+'</code></div>' +
+        '<button class="btn-icon" onclick="whhSetParent(\''+c.id+'\',\'\')" title="فصل" style="color:#ef4444;"><i class="fas fa-unlink"></i></button>' +
+      '</div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+function whhSetMain(id) {
+  if (!confirm('تعيين هذا المستودع كرئيسي للبرند؟ (سيتم إزالة العلم من المستودعات الأخرى)')) return;
+  _erpPost('/erp/warehouses/'+id+'/set-main', {}, function(r){
+    if (r.success) { showToast('تم التعيين'); whhLoad(); }
+    else showToast(r.error||'فشل', true);
+  });
+}
+function whhSetParent(id, parentId) {
+  _erpPost('/erp/warehouses/'+id+'/set-parent', { parentId: parentId }, function(r){
+    if (r.success) { showToast('تم'); whhLoad(); }
+    else showToast(r.error||'فشل', true);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PHASE 1 — STOCK ISSUES
+// ═══════════════════════════════════════════════════════════════════
+
+function siLoad() {
+  var body = document.getElementById('siBody');
+  if (!body) return;
+  body.innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  var q = '';
+  var status = document.getElementById('siFStatus').value;
+  var from = document.getElementById('siFFrom').value;
+  var to = document.getElementById('siFTo').value;
+  if (status) q += '&status=' + status;
+  if (from) q += '&dateFrom=' + from;
+  if (to) q += '&dateTo=' + to;
+  _erpGet('/erp/stock-issues?1=1' + q, function(rows) {
+    if (!Array.isArray(rows) || !rows.length) {
+      body.innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد إذونات صرف</td></tr>';
+      return;
+    }
+    var statusMap = {draft:'مسودة',approved:'معتمد',issued:'تم الصرف',received:'تم الاستلام',cancelled:'ملغى'};
+    var statusClr = {draft:'#64748b',approved:'#0ea5e9',issued:'#f59e0b',received:'#10b981',cancelled:'#ef4444'};
+    body.innerHTML = rows.map(function(r){
+      var clr = statusClr[r.status]||'#6b7280';
+      var actions = '<button class="btn-icon" onclick="siView(\''+r.id+'\')" title="عرض" style="color:#0ea5e9;"><i class="fas fa-eye"></i></button> ';
+      if (r.status === 'draft') actions += '<button class="btn-icon" onclick="siApprove(\''+r.id+'\')" title="اعتماد" style="color:#10b981;"><i class="fas fa-check"></i></button> <button class="btn-icon" onclick="siCancel(\''+r.id+'\')" title="إلغاء" style="color:#ef4444;"><i class="fas fa-times"></i></button>';
+      if (['draft','approved'].includes(r.status)) actions += ' <button class="btn-icon" onclick="siIssue(\''+r.id+'\')" title="صرف" style="color:#f59e0b;"><i class="fas fa-paper-plane"></i></button>';
+      if (r.status === 'issued') actions += ' <button class="btn-icon" onclick="siReceive(\''+r.id+'\')" title="استلام" style="color:#10b981;"><i class="fas fa-inbox"></i></button>';
+      return '<tr>' +
+        '<td><code style="font-size:11px;">'+(r.issue_number||'')+'</code></td>' +
+        '<td>'+(r.issue_date||'')+'</td>' +
+        '<td>'+(r.from_warehouse_name||'—')+'</td>' +
+        '<td>'+(r.to_warehouse_name||'—')+'</td>' +
+        '<td>'+(r.line_count||0)+'</td>' +
+        '<td><b>'+Number(r.total_cost||0).toLocaleString('en',{minimumFractionDigits:2})+'</b></td>' +
+        '<td><span style="padding:3px 10px;border-radius:999px;background:'+clr+'15;color:'+clr+';font-size:11px;font-weight:800;">'+(statusMap[r.status]||r.status)+'</span></td>' +
+        '<td>'+actions+'</td>' +
+      '</tr>';
+    }).join('');
+  });
+}
+function siOpenNewModal() {
+  _erpGet('/erp/warehouses-list', function(whs) {
+    _erpGet('/erp/items', function(items) {
+      var whOpts = (whs||[]).map(function(w){return '<option value="'+w.id+'" data-brand="'+(w.brand_id||'')+'" data-main="'+(w.is_main?1:0)+'">'+(w.name||'')+(w.is_main?' ★ رئيسي':'')+'</option>';}).join('');
+      var itemOpts = (items||[]).map(function(i){return '<option value="'+i.id+'">'+(i.name||'')+' ('+(i.unit||'')+')</option>';}).join('');
+      document.getElementById('erpModalTitle').textContent = 'إذن صرف جديد';
+      document.getElementById('erpModalBody').innerHTML =
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+          '<div class="form-row"><label>من مستودع *</label><select class="form-control" id="siFrom"><option value="">—</option>'+whOpts+'</select></div>' +
+          '<div class="form-row"><label>إلى مستودع *</label><select class="form-control" id="siTo"><option value="">—</option>'+whOpts+'</select></div>' +
+        '</div>' +
+        '<div class="form-row"><label>التاريخ</label><input type="date" class="form-control" id="siDate" value="'+new Date().toISOString().slice(0,10)+'"></div>' +
+        '<div class="form-row"><label>الأصناف *</label>' +
+          '<div style="display:flex;gap:6px;margin-bottom:6px;">' +
+            '<select class="form-control" id="siItemPick">'+itemOpts+'</select>' +
+            '<input type="number" class="form-control" id="siItemQty" placeholder="الكمية" style="width:120px;" min="0" step="0.001">' +
+            '<button class="btn btn-primary" onclick="siAddItem()"><i class="fas fa-plus"></i></button>' +
+          '</div>' +
+          '<table class="erp-table" style="font-size:12px;"><thead><tr><th>الصنف</th><th>الكمية</th><th></th></tr></thead><tbody id="siItemsRows"><tr><td colspan="3" style="color:#94a3b8;text-align:center;">لم تُضف أصناف</td></tr></tbody></table>' +
+        '</div>' +
+        '<div class="form-row"><label>ملاحظات</label><textarea class="form-control" id="siNotes" rows="2"></textarea></div>';
+      document.getElementById('erpModalSaveBtn').onclick = siSubmitNew;
+      document.getElementById('erpModal').classList.remove('hidden');
+      window._siItems = [];
+    });
+  });
+}
+function siAddItem() {
+  var sel = document.getElementById('siItemPick');
+  var qty = Number(document.getElementById('siItemQty').value) || 0;
+  if (!sel.value || qty <= 0) return showToast('اختر صنفاً وأدخل كمية', true);
+  if (!window._siItems) window._siItems = [];
+  var name = sel.options[sel.selectedIndex].text;
+  window._siItems.push({ itemId: sel.value, itemName: name, qtyRequested: qty });
+  document.getElementById('siItemQty').value = '';
+  _siRenderItems();
+}
+function _siRenderItems() {
+  var tb = document.getElementById('siItemsRows');
+  if (!tb) return;
+  if (!window._siItems || !window._siItems.length) { tb.innerHTML = '<tr><td colspan="3" style="color:#94a3b8;text-align:center;">لم تُضف أصناف</td></tr>'; return; }
+  tb.innerHTML = window._siItems.map(function(it, i){
+    return '<tr><td>'+it.itemName+'</td><td>'+it.qtyRequested+'</td><td><button class="btn-icon" style="color:#ef4444;" onclick="window._siItems.splice('+i+',1);_siRenderItems();"><i class="fas fa-times"></i></button></td></tr>';
+  }).join('');
+}
+function siSubmitNew() {
+  var fromWh = document.getElementById('siFrom').value;
+  var toWh = document.getElementById('siTo').value;
+  var items = window._siItems || [];
+  if (!fromWh || !toWh) return showToast('اختر المستودعات', true);
+  if (!items.length) return showToast('أضف أصنافاً', true);
+  _erpPost('/erp/stock-issues', {
+    fromWarehouseId: fromWh, toWarehouseId: toWh,
+    issueDate: document.getElementById('siDate').value,
+    notes: document.getElementById('siNotes').value,
+    items: items,
+    createdBy: currentUser
+  }, function(r){
+    if (r.success) { showToast('تم إنشاء إذن صرف رقم '+r.issueNumber); erpCloseModal(); siLoad(); }
+    else showToast(r.error||'فشل', true);
+  });
+}
+function siView(id) {
+  _erpGet('/erp/stock-issues/'+id, function(d){
+    if (!d || d.error) return showToast(d?d.error:'فشل', true);
+    var itemsHtml = (d.items||[]).map(function(it){
+      return '<tr><td>'+(it.item_name||'')+'</td><td>'+(it.qty_requested||0)+'</td><td>'+(it.qty_issued||0)+'</td><td>'+(it.qty_received||0)+'</td><td>'+Number(it.unit_cost||0).toFixed(4)+'</td><td>'+Number(it.line_total||0).toFixed(2)+'</td></tr>';
+    }).join('');
+    document.getElementById('erpModalTitle').textContent = 'إذن صرف — '+d.issue_number;
+    document.getElementById('erpModalBody').innerHTML =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px;">' +
+        '<div><small>من</small><div><b>'+(d.from_warehouse_name||'—')+'</b></div></div>' +
+        '<div><small>إلى</small><div><b>'+(d.to_warehouse_name||'—')+'</b></div></div>' +
+        '<div><small>الحالة</small><div>'+(d.status||'')+'</div></div>' +
+        '<div><small>التكلفة الإجمالية</small><div><b>'+Number(d.total_cost||0).toFixed(2)+'</b></div></div>' +
+      '</div>' +
+      '<table class="erp-table" style="font-size:12px;"><thead><tr><th>الصنف</th><th>مطلوب</th><th>مصروف</th><th>مستلم</th><th>تكلفة الوحدة</th><th>إجمالي السطر</th></tr></thead><tbody>'+itemsHtml+'</tbody></table>' +
+      (d.notes ? '<div style="margin-top:10px;padding:8px 12px;background:#f8fafc;border-radius:8px;font-size:12px;"><b>ملاحظات:</b> '+d.notes+'</div>' : '');
+    document.getElementById('erpModalSaveBtn').style.display = 'none';
+    document.getElementById('erpModal').classList.remove('hidden');
+    setTimeout(function(){ var b=document.getElementById('erpModalSaveBtn'); if(b) b.style.display=''; }, 200);
+  });
+}
+function siApprove(id) {
+  _erpPost('/erp/stock-issues/'+id+'/approve', { approvedBy: currentUser }, function(r){
+    if (r.success) { showToast('تم الاعتماد'); siLoad(); } else showToast(r.error||'فشل', true);
+  });
+}
+function siIssue(id) {
+  if (!confirm('صرف الكميات من المستودع الرئيسي الآن؟ (سيتم ترحيل GL تلقائياً)')) return;
+  _erpPost('/erp/stock-issues/'+id+'/issue', { issuedBy: currentUser }, function(r){
+    if (r.success) { showToast('تم الصرف + ترحيل قيد GL'); siLoad(); } else showToast(r.error||'فشل', true);
+  });
+}
+function siReceive(id) {
+  if (!confirm('تأكيد استلام الكميات في المستودع الفرعي؟')) return;
+  _erpPost('/erp/stock-issues/'+id+'/receive', { receivedBy: currentUser }, function(r){
+    if (r.success) { showToast('تم الاستلام'); siLoad(); } else showToast(r.error||'فشل', true);
+  });
+}
+function siCancel(id) {
+  if (!confirm('إلغاء هذا الإذن؟')) return;
+  _erpPost('/erp/stock-issues/'+id+'/cancel', {}, function(r){
+    if (r.success) { showToast('تم الإلغاء'); siLoad(); } else showToast(r.error||'فشل', true);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PHASE 2 — PRODUCTION ORDERS
+// ═══════════════════════════════════════════════════════════════════
+
+function prdLoadInit() {
+  _erpGet('/erp/warehouses-list', function(whs) {
+    var opts = '<option value="">كل المستودعات</option>' + (whs||[]).map(function(w){return '<option value="'+w.id+'">'+(w.name||'')+'</option>';}).join('');
+    var f = document.getElementById('prdFWh'); if (f) f.innerHTML = opts;
+    prdLoad();
+  });
+}
+function prdLoad() {
+  var body = document.getElementById('prdBody');
+  if (!body) return;
+  body.innerHTML = '<tr><td colspan="9" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  var q = '';
+  var st = document.getElementById('prdFStatus').value;
+  var wh = document.getElementById('prdFWh').value;
+  var from = document.getElementById('prdFFrom').value;
+  var to = document.getElementById('prdFTo').value;
+  if (st) q += '&status=' + st;
+  if (wh) q += '&warehouseId=' + wh;
+  if (from) q += '&dateFrom=' + from;
+  if (to) q += '&dateTo=' + to;
+  _erpGet('/erp/production-orders?1=1' + q, function(rows){
+    if (!Array.isArray(rows) || !rows.length) { body.innerHTML = '<tr><td colspan="9" class="empty-msg">لا توجد أوامر إنتاج</td></tr>'; return; }
+    var sMap = {planned:'مخطط',released:'مُطلق',in_progress:'قيد التنفيذ',completed:'مكتمل',closed:'مغلق',cancelled:'ملغى'};
+    var sClr = {planned:'#64748b',released:'#0ea5e9',in_progress:'#f59e0b',completed:'#10b981',closed:'#6b7280',cancelled:'#ef4444'};
+    body.innerHTML = rows.map(function(r){
+      var clr = sClr[r.status]||'#6b7280';
+      var actions = '<button class="btn-icon" onclick="prdView(\''+r.id+'\')" title="عرض" style="color:#0ea5e9;"><i class="fas fa-eye"></i></button>';
+      if (r.status === 'planned') actions += ' <button class="btn-icon" onclick="prdRelease(\''+r.id+'\')" title="إطلاق" style="color:#f59e0b;"><i class="fas fa-play"></i></button>';
+      if (r.status === 'released') actions += ' <button class="btn-icon" onclick="prdComplete(\''+r.id+'\')" title="إكمال" style="color:#10b981;"><i class="fas fa-flag-checkered"></i></button>';
+      return '<tr>' +
+        '<td><code style="font-size:11px;">'+(r.order_number||'')+'</code></td>' +
+        '<td>'+(r.product_name||'')+'</td>' +
+        '<td>'+(r.qty_planned||0)+' '+(r.product_unit||'')+'</td>' +
+        '<td>'+(r.warehouse_name||'')+'</td>' +
+        '<td>'+Number(r.materials_cost||0).toFixed(2)+'</td>' +
+        '<td>'+Number(r.labor_cost||0).toFixed(2)+'</td>' +
+        '<td><b>'+Number(r.total_cost||0).toLocaleString('en',{minimumFractionDigits:2})+'</b></td>' +
+        '<td><span style="padding:3px 10px;border-radius:999px;background:'+clr+'15;color:'+clr+';font-size:11px;font-weight:800;">'+(sMap[r.status]||r.status)+'</span></td>' +
+        '<td>'+actions+'</td>' +
+      '</tr>';
+    }).join('');
+  });
+}
+function prdOpenNewModal() {
+  _erpGet('/erp/bom', function(boms){
+    _erpGet('/erp/warehouses-list', function(whs){
+      var bomOpts = (boms||[]).map(function(b){return '<option value="'+b.id+'">'+(b.product_name||b.product_id)+' (يُنتج '+(b.yield_quantity||1)+' '+(b.yield_unit||'')+')</option>';}).join('');
+      var whOpts = (whs||[]).map(function(w){return '<option value="'+w.id+'">'+(w.name||'')+'</option>';}).join('');
+      document.getElementById('erpModalTitle').textContent = 'أمر إنتاج جديد';
+      document.getElementById('erpModalBody').innerHTML =
+        '<div class="form-row"><label>وصفة BOM *</label><select class="form-control" id="prdBom"><option value="">—</option>'+bomOpts+'</select></div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+          '<div class="form-row"><label>الكمية المخططة *</label><input type="number" class="form-control" id="prdQty" step="0.001" min="0"></div>' +
+          '<div class="form-row"><label>التاريخ المخطط</label><input type="date" class="form-control" id="prdDate" value="'+new Date().toISOString().slice(0,10)+'"></div>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+          '<div class="form-row"><label>مستودع المواد الخام *</label><select class="form-control" id="prdWh"><option value="">—</option>'+whOpts+'</select></div>' +
+          '<div class="form-row"><label>مستودع المنتج التام</label><select class="form-control" id="prdWhOut"><option value="">(نفس مستودع المواد)</option>'+whOpts+'</select></div>' +
+        '</div>' +
+        '<div class="form-row"><label>ملاحظات</label><textarea class="form-control" id="prdNotes" rows="2"></textarea></div>';
+      document.getElementById('erpModalSaveBtn').onclick = prdSubmitNew;
+      document.getElementById('erpModal').classList.remove('hidden');
+    });
+  });
+}
+function prdSubmitNew() {
+  var bomId = document.getElementById('prdBom').value;
+  var qty = Number(document.getElementById('prdQty').value);
+  var wh = document.getElementById('prdWh').value;
+  if (!bomId || !qty || !wh) return showToast('أكمل الحقول المطلوبة', true);
+  _erpPost('/erp/production-orders', {
+    bomId: bomId, qtyPlanned: qty, warehouseId: wh,
+    outputWarehouseId: document.getElementById('prdWhOut').value,
+    plannedDate: document.getElementById('prdDate').value,
+    notes: document.getElementById('prdNotes').value,
+    createdBy: currentUser
+  }, function(r){
+    if (r.success) { showToast('تم إنشاء أمر إنتاج '+r.orderNumber); erpCloseModal(); prdLoad(); }
+    else showToast(r.error||'فشل', true);
+  });
+}
+function prdView(id) {
+  _erpGet('/erp/production-orders/'+id, function(d){
+    if (!d || d.error) return showToast(d?d.error:'فشل', true);
+    var consHtml = (d.consumption||[]).map(function(c){
+      return '<tr><td>'+(c.item_name||'')+'</td><td>'+(c.qty_planned||0)+'</td><td>'+(c.qty_actual||0)+'</td><td>'+Number(c.unit_cost||0).toFixed(4)+'</td><td>'+Number(c.total_cost||0).toFixed(2)+'</td></tr>';
+    }).join('');
+    var outHtml = (d.output||[]).map(function(o){
+      return '<tr><td>'+(o.item_name||'')+'</td><td>'+(o.qty||0)+'</td><td>'+Number(o.unit_cost||0).toFixed(4)+'</td><td>'+Number(o.total_cost||0).toFixed(2)+'</td><td>'+(o.batch_number||'—')+'</td><td>'+(o.expiry_date||'—')+'</td></tr>';
+    }).join('');
+    document.getElementById('erpModalTitle').textContent = 'أمر إنتاج — '+d.order_number;
+    document.getElementById('erpModalBody').innerHTML =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px;">' +
+        '<div><small>المنتج</small><div><b>'+(d.product_name||'')+'</b></div></div>' +
+        '<div><small>الحالة</small><div>'+(d.status||'')+'</div></div>' +
+        '<div><small>الكمية</small><div>'+(d.qty_planned||0)+' (أُنتج: '+(d.qty_produced||0)+')</div></div>' +
+        '<div><small>الإجمالي</small><div><b>'+Number(d.total_cost||0).toFixed(2)+'</b></div></div>' +
+        '<div><small>مواد</small><div>'+Number(d.materials_cost||0).toFixed(2)+'</div></div>' +
+        '<div><small>عمالة + غير مباشرة</small><div>'+Number(Number(d.labor_cost||0)+Number(d.overhead_cost||0)).toFixed(2)+'</div></div>' +
+      '</div>' +
+      '<h4 style="margin:12px 0 6px;font-size:13px;"><i class="fas fa-boxes"></i> استهلاك المواد الخام</h4>' +
+      '<table class="erp-table" style="font-size:12px;"><thead><tr><th>الصنف</th><th>مخطط</th><th>فعلي</th><th>تكلفة</th><th>إجمالي</th></tr></thead><tbody>'+(consHtml||'<tr><td colspan="5" style="color:#94a3b8;text-align:center;">—</td></tr>')+'</tbody></table>' +
+      '<h4 style="margin:12px 0 6px;font-size:13px;"><i class="fas fa-check-double"></i> المنتج النهائي</h4>' +
+      '<table class="erp-table" style="font-size:12px;"><thead><tr><th>الصنف</th><th>الكمية</th><th>تكلفة الوحدة</th><th>إجمالي</th><th>دفعة</th><th>انتهاء</th></tr></thead><tbody>'+(outHtml||'<tr><td colspan="6" style="color:#94a3b8;text-align:center;">لم يُكتمل بعد</td></tr>')+'</tbody></table>';
+    document.getElementById('erpModal').classList.remove('hidden');
+  });
+}
+function prdRelease(id) {
+  var labor = prompt('تكلفة العمالة (اختياري):', '0');
+  if (labor === null) return;
+  var overhead = prompt('التكاليف غير المباشرة (اختياري):', '0');
+  if (overhead === null) return;
+  _erpPost('/erp/production-orders/'+id+'/release', {
+    releasedBy: currentUser,
+    laborCost: Number(labor)||0,
+    overheadCost: Number(overhead)||0
+  }, function(r){
+    if (r.success) { showToast('تم الإطلاق — تكلفة المواد: '+Number(r.materialsCost).toFixed(2)); prdLoad(); }
+    else showToast(r.error||'فشل', true);
+  });
+}
+function prdComplete(id) {
+  var qty = prompt('الكمية المُنتجة فعلياً:');
+  if (!qty || Number(qty) <= 0) return showToast('كمية غير صحيحة', true);
+  var scrap = prompt('كمية الهدر (اختياري):', '0');
+  if (scrap === null) return;
+  var batch = prompt('رقم الدفعة (اختياري):', '');
+  var expiry = prompt('تاريخ الانتهاء (YYYY-MM-DD، اختياري):', '');
+  _erpPost('/erp/production-orders/'+id+'/complete', {
+    completedBy: currentUser,
+    qtyProduced: Number(qty),
+    qtyScrap: Number(scrap)||0,
+    batchNumber: batch||'',
+    expiryDate: expiry||null
+  }, function(r){
+    if (r.success) { showToast('تم الإنتاج — تكلفة الوحدة: '+Number(r.unitCost).toFixed(4)); prdLoad(); }
+    else showToast(r.error||'فشل', true);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PHASE 3 — EXPIRY / SLOW / TURNOVER
+// ═══════════════════════════════════════════════════════════════════
+
+function expLoad() {
+  var days = document.getElementById('expDays').value;
+  var body = document.getElementById('expBody');
+  body.innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  _erpGet('/erp/expiry-alerts?days=' + days, function(rows){
+    if (!Array.isArray(rows) || !rows.length) {
+      body.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد دفعات قريبة من الانتهاء</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(function(r){
+      var days = Number(r.days_remaining);
+      var clr = days < 0 ? '#ef4444' : (days < 7 ? '#f59e0b' : '#0ea5e9');
+      return '<tr style="background:'+clr+'10;">' +
+        '<td>'+(r.item_name||'')+'</td>' +
+        '<td>'+(r.warehouse_name||'—')+'</td>' +
+        '<td><code>'+(r.batch_number||'—')+'</code></td>' +
+        '<td>'+(r.qty_remaining||0)+'</td>' +
+        '<td>'+(r.expiry_date||'')+'</td>' +
+        '<td style="color:'+clr+';font-weight:800;">'+days+' يوم'+(days<0?' (منتهي!)':'')+'</td>' +
+        '<td>'+Number(r.unit_cost||0).toFixed(4)+'</td>' +
+      '</tr>';
+    }).join('');
+  });
+}
+function slowLoad() {
+  var days = document.getElementById('slowDays').value;
+  var body = document.getElementById('slowBody');
+  body.innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  _erpGet('/erp/slow-moving?days=' + days, function(rows){
+    if (!Array.isArray(rows) || !rows.length) {
+      body.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد أصناف بطيئة</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(function(r){
+      return '<tr>' +
+        '<td>'+(r.item_name||'')+'</td>' +
+        '<td>'+(r.warehouse_name||'—')+'</td>' +
+        '<td>'+(r.qty||0)+' '+(r.unit||'')+'</td>' +
+        '<td>'+Number(r.avg_cost||0).toFixed(4)+'</td>' +
+        '<td><b>'+Number(r.stock_value||0).toLocaleString('en',{minimumFractionDigits:2})+'</b></td>' +
+        '<td style="font-size:11px;color:#64748b;">'+(r.last_updated||'—').toString().slice(0,10)+'</td>' +
+        '<td style="color:#ef4444;font-weight:800;">'+(r.days_since_movement||0)+' يوم</td>' +
+      '</tr>';
+    }).join('');
+  });
+}
+function turnLoad() {
+  var from = document.getElementById('turnFrom').value;
+  var to = document.getElementById('turnTo').value;
+  var body = document.getElementById('turnBody');
+  body.innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  var q = [];
+  if (from) q.push('dateFrom=' + from);
+  if (to) q.push('dateTo=' + to);
+  _erpGet('/erp/inventory-turnover' + (q.length ? '?' + q.join('&') : ''), function(res){
+    var rows = (res && res.items) || [];
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد بيانات</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(function(r){
+      return '<tr>' +
+        '<td>'+(r.item_name||'')+'</td>' +
+        '<td>'+(r.unit||'')+'</td>' +
+        '<td>'+Number(r.total_consumed||0).toFixed(2)+'</td>' +
+        '<td>'+Number(r.cogs||0).toFixed(2)+'</td>' +
+        '<td>'+Number(r.current_qty||0).toFixed(2)+'</td>' +
+        '<td>'+Number(r.current_value||0).toFixed(2)+'</td>' +
+        '<td><b>'+Number(r.turnover_ratio||0).toFixed(2)+'</b></td>' +
+        '<td>'+(r.days_to_sell!==null?r.days_to_sell+' يوم':'—')+'</td>' +
+      '</tr>';
+    }).join('');
+  });
+}

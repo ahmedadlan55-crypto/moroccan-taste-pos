@@ -44,7 +44,7 @@ router.get('/payments', async (req, res) => {
       SELECT p.*,
              b.name AS brand_name,
              br.name AS branch_name,
-             ba.name AS bank_account_name,
+             COALESCE(ba.account_name, ba.bank_name) AS bank_account_name,
              cb.name AS cash_box_name
       FROM payment_records p
       LEFT JOIN brands b ON b.id = p.brand_id
@@ -73,7 +73,7 @@ router.get('/payments/:id', async (req, res) => {
     const [rows] = await db.query(`
       SELECT p.*,
              b.name AS brand_name, br.name AS branch_name,
-             ba.name AS bank_account_name, cb.name AS cash_box_name,
+             COALESCE(ba.account_name, ba.bank_name) AS bank_account_name, cb.name AS cash_box_name,
              j.journal_number AS gl_journal_number
       FROM payment_records p
       LEFT JOIN brands b ON b.id = p.brand_id

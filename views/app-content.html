@@ -3367,43 +3367,72 @@
 
   <!-- Modal: Live Stocktake Form -->
   <div class="modal" id="modalStocktakeForm">
-    <div class="modal-content" style="max-width:900px; max-height:90vh; display:flex; flex-direction:column;">
-      <div class="modal-title" style="flex-shrink:0;">
-        <i class="fas fa-tasks" style="color:var(--primary);"></i> عملية جرد وتسوية مخزون (جديدة)
-      </div>
-      
-      <div style="flex-shrink:0; background:#f8fafc; padding:15px; border-radius:12px; margin-bottom:15px; border:1px solid #e2e8f0; display:flex; gap:15px; flex-wrap:wrap;">
-        <div style="flex:1;">
-          <label class="form-label" style="font-size:13px; font-weight:700;">بحث وتصفية المواد الخام السريعة:</label>
-          <input type="text" id="stSearch" class="form-control" placeholder="اسم المادة..." oninput="filterStItems()">
+    <div class="modal-content" style="max-width:960px; max-height:92vh; display:flex; flex-direction:column; padding:0;">
+      <div style="padding:16px 20px;border-bottom:1px solid #e5e7eb;background:linear-gradient(135deg,#eff6ff,#fff);display:flex;justify-content:space-between;align-items:center;flex-shrink:0;border-top-left-radius:16px;border-top-right-radius:16px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="width:42px;height:42px;border-radius:10px;background:#dbeafe;color:#1e40af;display:flex;align-items:center;justify-content:center;font-size:18px;"><i class="fas fa-tasks"></i></div>
+          <div>
+            <div style="font-size:16px;font-weight:800;color:#0f172a;">عملية جرد وتسوية مخزون</div>
+            <div style="font-size:11px;color:#64748b;">ابحث عن المادة وأضفها، ثم أدخل الرصيد الفعلي — يحفظ ما أدخلته حتى الاعتماد</div>
+          </div>
         </div>
-        <div style="flex:1;">
-          <label class="form-label" style="font-size:13px; font-weight:700;">ملاحظات الجرد (اختياري):</label>
-          <input type="text" id="stNotes" class="form-control" placeholder="سبب التسوية (كسر، تالف، جرد دوري)">
-        </div>
-      </div>
-      
-      <div style="flex:1; overflow-y:auto; border:1px solid #e2e8f0; border-radius:12px; margin-bottom:15px;">
-        <table class="table" style="background:#fff; margin:0;">
-          <thead style="position:sticky; top:0; z-index:10; box-shadow:0 2px 4px rgba(0,0,0,0.05);">
-            <tr>
-              <th>كود المادة</th>
-              <th>وصف المادة الخام</th>
-              <th>رصيد النظام الحالي</th>
-              <th style="width:160px;">الرصيد الفعلي (جرد)</th>
-              <th style="text-align:left;">الفارق</th>
-            </tr>
-          </thead>
-          <tbody id="tbStBody">
-            <!-- Items loaded via JS -->
-          </tbody>
-        </table>
+        <button class="modal-close" onclick="closeModal('#modalStocktakeForm')" style="margin:0;">&times;</button>
       </div>
 
-      <div style="flex-shrink:0;">
-        <button class="btn btn-primary" style="width:100%; font-size:16px; padding:15px;" onclick="saveStocktakeFn()">
-          <i class="fas fa-check-double"></i> اعتماد وتسجيل التسوية الجردية للمخزون
-        </button>
+      <div style="padding:16px 20px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:14px;">
+
+        <!-- Info strip with restore if there's saved state -->
+        <div id="stRestoreBanner" style="display:none;background:#fef3c7;border:1px solid #f59e0b;border-radius:10px;padding:10px 14px;font-size:12px;color:#92400e;">
+          <i class="fas fa-circle-info"></i> يوجد جرد محفوظ محلياً من جلسة سابقة — <b id="stRestoreCount">0</b> صنف.
+          <button onclick="_stRestoreDraft()" style="margin-inline-start:8px;padding:4px 10px;border:1px solid #f59e0b;background:#fff;color:#b45309;border-radius:6px;font-weight:700;cursor:pointer;">استعادة</button>
+          <button onclick="_stDiscardDraft()" style="margin-inline-start:4px;padding:4px 10px;border:none;background:transparent;color:#92400e;cursor:pointer;">تجاهل</button>
+        </div>
+
+        <!-- Search box (Odoo-style) -->
+        <div class="wo-label-stack">
+          <label class="wo-field-label"><i class="fas fa-magnifying-glass"></i> ابحث وأضف مادة للجرد</label>
+          <div id="stPickerHost"></div>
+        </div>
+
+        <!-- Notes + warehouse selector -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="wo-label-stack">
+            <label class="wo-field-label"><i class="fas fa-warehouse"></i> المستودع</label>
+            <select id="stWarehouse" class="wo-select"><option value="">— المستودع الرئيسي —</option></select>
+          </div>
+          <div class="wo-label-stack">
+            <label class="wo-field-label"><i class="fas fa-note-sticky"></i> ملاحظة الجرد</label>
+            <input type="text" id="stNotes" class="wo-input" placeholder="سبب التسوية (كسر، تالف، جرد دوري)...">
+          </div>
+        </div>
+
+        <!-- Items grid -->
+        <div id="stItemsBox" style="flex:1;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;background:#fff;">
+          <table class="wo-table" style="margin:0;">
+            <thead>
+              <tr>
+                <th style="width:36px;">#</th>
+                <th>المادة</th>
+                <th class="num">رصيد النظام</th>
+                <th class="num" style="width:150px;">الرصيد الفعلي</th>
+                <th class="num" style="width:130px;">الفارق</th>
+                <th style="width:40px;"></th>
+              </tr>
+            </thead>
+            <tbody id="tbStBody">
+              <tr><td colspan="6"><div class="wo-empty" style="padding:40px;"><i class="fas fa-magnifying-glass"></i><div class="wo-empty-title">لم تُضف مواد بعد</div><div class="wo-empty-sub">استخدم صندوق البحث أعلاه لإضافة المواد التي تريد جردها</div></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Summary strip -->
+        <div id="stSummary" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;"></div>
+      </div>
+
+      <div style="padding:14px 20px;border-top:1px solid #e5e7eb;background:#f8fafc;display:flex;gap:10px;justify-content:flex-end;flex-shrink:0;border-bottom-left-radius:16px;border-bottom-right-radius:16px;">
+        <button class="wo-btn wo-btn-ghost" onclick="_stDiscardDraft();closeModal('#modalStocktakeForm');">إلغاء</button>
+        <button class="wo-btn wo-btn-secondary" onclick="_stSaveDraft(true)"><i class="fas fa-save"></i><span>حفظ مسودة</span></button>
+        <button class="wo-btn wo-btn-primary" onclick="saveStocktakeFn()"><i class="fas fa-check-double"></i><span>اعتماد الجرد</span></button>
       </div>
     </div>
   </div>

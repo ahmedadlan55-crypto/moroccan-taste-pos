@@ -1382,7 +1382,194 @@
 }
 
 /* ──────────────────────────────────────────────────────────────
- * 20. UTILITIES
+ * 20. ITEM PICKER — Odoo-style searchable autocomplete
+ * ────────────────────────────────────────────────────────────── */
+.wo-picker {
+  position: relative;
+  width: 100%;
+}
+.wo-picker-input {
+  width: 100%;
+  padding: 10px 38px 10px 12px;
+  border: 1.5px solid var(--wo-border);
+  border-radius: var(--wo-radius);
+  font-size: var(--wo-text-body);
+  background: var(--wo-surface);
+  color: var(--wo-on-surface);
+  font-family: inherit;
+  transition: border-color var(--wo-dur-1), box-shadow var(--wo-dur-2);
+}
+.wo-picker-input::placeholder { color: var(--wo-on-surface-subtle); }
+.wo-picker-input:focus-visible {
+  outline: none;
+  border-color: var(--wo-info-ring);
+  box-shadow: var(--wo-elev-focus);
+}
+.wo-picker-search-icon {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 12px;
+  transform: translateY(-50%);
+  color: var(--wo-on-surface-subtle);
+  pointer-events: none;
+  font-size: 14px;
+}
+
+.wo-picker-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 340px;
+  overflow-y: auto;
+  background: var(--wo-surface);
+  border: 1px solid var(--wo-border);
+  border-radius: var(--wo-radius-md);
+  box-shadow: var(--wo-elev-3);
+  z-index: 10001;
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+  transition: opacity var(--wo-dur-2) var(--wo-ease),
+              transform var(--wo-dur-2) var(--wo-ease);
+}
+.wo-picker.open .wo-picker-dropdown {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.wo-picker-option {
+  display: flex;
+  align-items: center;
+  gap: var(--wo-space-3);
+  padding: 10px var(--wo-space-3);
+  cursor: pointer;
+  border-bottom: 1px solid var(--wo-surface-3);
+  transition: background var(--wo-dur-1);
+}
+.wo-picker-option:last-child { border-bottom: none; }
+.wo-picker-option:hover,
+.wo-picker-option.active { background: var(--wo-info-bg); }
+.wo-picker-option.active { outline: 2px solid var(--wo-info); outline-offset: -2px; }
+.wo-picker-option-icon {
+  width: 36px; height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--wo-radius-sm);
+  background: var(--wo-surface-3);
+  color: var(--wo-on-surface-muted);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
+.wo-picker-option-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.wo-picker-option-title {
+  font-size: var(--wo-text-body);
+  font-weight: 700;
+  color: var(--wo-on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wo-picker-option-meta {
+  font-size: var(--wo-text-caption);
+  color: var(--wo-on-surface-subtle);
+  display: flex; gap: 8px; align-items: center;
+  flex-wrap: wrap;
+}
+.wo-picker-option-meta code {
+  font-family: 'SF Mono', Consolas, monospace;
+  background: var(--wo-surface-3);
+  color: var(--wo-on-surface-muted);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+.wo-picker-option-right {
+  flex-shrink: 0;
+  text-align: end;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wo-picker-empty {
+  padding: var(--wo-space-6) var(--wo-space-4);
+  text-align: center;
+  color: var(--wo-on-surface-subtle);
+  font-style: italic;
+  font-size: var(--wo-text-body);
+}
+.wo-picker-hint {
+  padding: 8px var(--wo-space-3);
+  font-size: var(--wo-text-caption);
+  color: var(--wo-on-surface-subtle);
+  background: var(--wo-surface-2);
+  border-bottom: 1px solid var(--wo-border);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.wo-picker-kbd {
+  background: var(--wo-surface);
+  border: 1px solid var(--wo-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: monospace;
+  font-size: 10px;
+  color: var(--wo-on-surface-muted);
+}
+
+/* Added-item chips list (after selecting from picker) */
+.wo-picker-chips {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wo-space-2);
+  margin-top: var(--wo-space-3);
+}
+.wo-picker-chip {
+  display: grid;
+  grid-template-columns: auto 1fr 140px 140px 36px;
+  gap: var(--wo-space-2);
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--wo-surface);
+  border: 1px solid var(--wo-border);
+  border-radius: var(--wo-radius);
+  transition: border-color var(--wo-dur-1);
+}
+.wo-picker-chip:hover { border-color: var(--wo-border-strong); }
+.wo-picker-chip-num {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--wo-info-bg);
+  color: var(--wo-info);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+}
+.wo-picker-chip-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.wo-picker-chip-name { font-weight: 700; font-size: var(--wo-text-body); color: var(--wo-on-surface); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wo-picker-chip-meta { font-size: var(--wo-text-caption); color: var(--wo-on-surface-subtle); }
+.wo-picker-chip input {
+  border: 1px solid var(--wo-border);
+  background: var(--wo-surface-2);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: var(--wo-text-body);
+  font-family: inherit;
+  font-weight: 600;
+  text-align: center;
+  min-width: 0;
+}
+.wo-picker-chip input:focus-visible {
+  outline: none;
+  background: var(--wo-info-bg);
+  border-color: var(--wo-info-ring);
+}
+@media (max-width: 640px) {
+  .wo-picker-chip { grid-template-columns: auto 1fr 80px 36px; }
+  .wo-picker-chip > :nth-child(3) { grid-row: 2; grid-column: 2 / span 3; }
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * 21. UTILITIES
  * ────────────────────────────────────────────────────────────── */
 .wo-stack    { display: flex; flex-direction: column; gap: var(--wo-space-3); }
 .wo-row      { display: flex; gap: var(--wo-space-3); align-items: center; }

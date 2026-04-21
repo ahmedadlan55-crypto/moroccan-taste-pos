@@ -3893,101 +3893,252 @@ function deleteStocktake(stId) {
   }).deleteStocktake(stId);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// STOCKTAKE — Odoo-style add-item flow with localStorage draft
+// ═══════════════════════════════════════════════════════════════════
+
+// Global state: items added to current stocktake session
+window._stSession = window._stSession || {
+  items: [],    // [{ id, name, category, unit, sysStock, actual, diff }]
+  notes: '',
+  warehouseId: ''
+};
+var ST_DRAFT_KEY = 'mt_stocktake_draft_v2';
+
+function _stLoadAvailableItems() {
+  // Loads all inv_items + live stock into cachedStItems (Odoo-style)
+  return new Promise(function(resolve) {
+    api.withSuccessHandler(function(items) {
+      cachedStItems = items || [];
+      resolve(cachedStItems);
+    }).getLiveInventory();
+  });
+}
+
 function startStocktake() {
   loader();
-  api.withSuccessHandler(items => {
+  _stLoadAvailableItems().then(function() {
     loader(false);
-    cachedStItems = items || [];
+
+    // Load warehouses
+    var token = localStorage.getItem('pos_token') || '';
+    fetch('/api/erp/warehouses-list', { headers: { 'Authorization': 'Bearer ' + token } })
+      .then(function(r){return r.json();})
+      .then(function(whs){
+        var sel = q('#stWarehouse');
+        if (sel) {
+          sel.innerHTML = '<option value="">— المستودع الرئيسي —</option>' +
+            (whs||[]).map(function(w){return '<option value="'+w.id+'">'+(w.name||'')+'</option>';}).join('');
+        }
+      }).catch(function(){});
+
+    // Check for existing draft
+    var draft = _stGetSavedDraft();
+    if (draft && draft.items && draft.items.length) {
+      var banner = q('#stRestoreBanner');
+      var cnt = q('#stRestoreCount');
+      if (banner) banner.style.display = '';
+      if (cnt) cnt.textContent = draft.items.length;
+      // Don't auto-restore — wait for user confirmation
+      window._stSession = { items: [], notes: '', warehouseId: '' };
+    } else {
+      // Fresh session
+      window._stSession = { items: [], notes: '', warehouseId: '' };
+      var banner = q('#stRestoreBanner');
+      if (banner) banner.style.display = 'none';
+    }
+    q("#stNotes").value = '';
     renderStItems();
-    q("#stSearch").value = "";
-    q("#stNotes").value = "";
+
+    // Mount Odoo-style picker
+    var host = q('#stPickerHost');
+    if (host && window.WoItemPicker) {
+      WoItemPicker.mount(host, {
+        items: cachedStItems,
+        placeholder: 'ابحث عن مادة بالاسم أو الكود أو التصنيف... (Enter للإضافة)',
+        getExcludeIds: function() { return window._stSession.items.map(function(i){return String(i.id);}); },
+        onSelect: function(item) {
+          _stAddItem(item);
+        }
+      });
+    }
+
     openModal("#modalStocktakeForm");
-  }).getLiveInventory();
+  });
 }
 
-function filterStItems() { renderStItems(); }
+function _stAddItem(item) {
+  // Prevent duplicates
+  if (window._stSession.items.some(function(i){return String(i.id)===String(item.id);})) return;
+  var sysStock = Number(item.currentStock || item.stock || 0);
+  window._stSession.items.push({
+    id: item.id,
+    name: item.name,
+    category: item.category || '',
+    unit: item.unit || '',
+    bigUnit: item.bigUnit || '',
+    convRate: Number(item.convRate) || 1,
+    cost: Number(item.cost) || 0,
+    sysStock: sysStock,
+    actual: sysStock,  // default to sys; user will change
+    diff: 0
+  });
+  renderStItems();
+  _stSaveDraft(false);  // auto-save draft
+}
+
+function _stRemoveItem(idx) {
+  window._stSession.items.splice(idx, 1);
+  renderStItems();
+  _stSaveDraft(false);
+}
+
+function _stUpdateActual(idx, value) {
+  if (window._stSession.items[idx]) {
+    var actual = Number(value) || 0;
+    window._stSession.items[idx].actual = actual;
+    window._stSession.items[idx].diff = actual - window._stSession.items[idx].sysStock;
+    _stSaveDraft(false);
+    // Update only the diff cell and summary (avoid full re-render to preserve focus)
+    var row = document.querySelector('#tbStBody tr[data-st-idx="'+idx+'"]');
+    if (row) {
+      var diffCell = row.querySelector('.st-diff-cell');
+      if (diffCell) diffCell.innerHTML = _stDiffHtml(window._stSession.items[idx].diff, window._stSession.items[idx].unit);
+    }
+    _stRenderSummary();
+  }
+}
+
+function _stDiffHtml(diff, unit) {
+  var u = unit ? ' <span style="font-size:10px;color:#94a3b8;">'+unit+'</span>' : '';
+  if (Math.abs(diff) < 0.0001) return '<span style="color:#64748b;"><i class="fas fa-equals"></i> 0.00'+u+'</span>';
+  if (diff > 0) return '<span style="color:#059669;background:#d1fae5;padding:2px 8px;border-radius:6px;font-weight:700;"><i class="fas fa-arrow-up"></i> +'+diff.toFixed(2)+u+'</span>';
+  return '<span style="color:#dc2626;background:#fee2e2;padding:2px 8px;border-radius:6px;font-weight:700;"><i class="fas fa-arrow-down"></i> '+diff.toFixed(2)+u+'</span>';
+}
 
 function renderStItems() {
-  const search = q("#stSearch").value.toLowerCase();
-  let list = cachedStItems;
-  if(search) list = list.filter(i => String(i.name||"").toLowerCase().includes(search));
-  
-  let h = "";
-  list.forEach(i => {
-    // Current system stock
-    let curStock = Number(i.currentStock).toFixed(2);
-    h += `<tr data-stid="${i.id}">
-      <td style="font-family:monospace; color:var(--text-light); font-size:12px;">${i.id}</td>
-      <td style="font-weight:700;">${i.name} <div style="font-size:11px; color:#64748b;">${i.category}</div></td>
-      <td style="background:#f8fafc; font-weight:bold; color:var(--primary);">${curStock} ${i.unit||''}</td>
-      <td>
-        <div style="display:flex; align-items:center; gap:5px;">
-          <input type="number" class="form-control st-actual-input" style="width:100px; margin:0; padding:6px;" data-sys="${curStock}" value="${curStock}" oninput="calcStDiff(this)">
-          <span style="font-size:12px; color:#64748b;">${i.unit||''}</span>
-        </div>
-      </td>
-      <td class="st-diff-cell" style="font-weight:900; direction:ltr; text-align:left;">
-        <span style="color:var(--text-light);"><i class="fas fa-equals"></i> 0.00</span>
-      </td>
-    </tr>`;
-  });
-  q("#tbStBody").innerHTML = h;
+  var tb = q('#tbStBody');
+  if (!tb) return;
+  var items = window._stSession.items || [];
+  if (!items.length) {
+    tb.innerHTML = '<tr><td colspan="6"><div class="wo-empty" style="padding:40px;"><i class="fas fa-magnifying-glass"></i><div class="wo-empty-title">لم تُضف مواد بعد</div><div class="wo-empty-sub">استخدم صندوق البحث أعلاه لإضافة المواد التي تريد جردها — اضغط Enter لإضافة السريع، أو انقر من القائمة المنسدلة</div></div></td></tr>';
+    _stRenderSummary();
+    return;
+  }
+  tb.innerHTML = items.map(function(i, idx){
+    return '<tr data-st-idx="'+idx+'">' +
+      '<td style="color:#8b5cf6;font-weight:800;">'+(idx+1)+'</td>' +
+      '<td><b>'+_escHtml(i.name)+'</b>' +
+        '<div style="font-size:11px;color:#64748b;"><code style="background:#f1f5f9;padding:1px 5px;border-radius:4px;">'+_escHtml(i.id)+'</code>'+(i.category?' · '+_escHtml(i.category):'')+'</div></td>' +
+      '<td class="num"><b style="color:#1e40af;">'+i.sysStock.toFixed(2)+'</b> <span style="font-size:10px;color:#94a3b8;">'+_escHtml(i.unit||'')+'</span></td>' +
+      '<td class="num"><input type="number" step="0.001" value="'+i.actual+'" class="form-control" style="width:100%;text-align:center;font-weight:700;color:#059669;padding:6px;" oninput="_stUpdateActual('+idx+',this.value)" onfocus="this.select()"></td>' +
+      '<td class="num st-diff-cell">'+_stDiffHtml(i.diff, i.unit)+'</td>' +
+      '<td><button class="wo-icon-btn danger" onclick="_stRemoveItem('+idx+')" title="حذف من الجرد"><i class="fas fa-xmark"></i></button></td>' +
+    '</tr>';
+  }).join('');
+  _stRenderSummary();
 }
 
-function calcStDiff(inputNode) {
-  let sys = Number(inputNode.getAttribute('data-sys')) || 0;
-  let act = Number(inputNode.value) || 0;
-  let diff = act - sys;
-  let cell = inputNode.closest('tr').querySelector('.st-diff-cell');
-  
-  if (diff === 0) {
-    cell.innerHTML = '<span style="color:var(--text-light);"><i class="fas fa-equals"></i> 0.00</span>';
-  } else if (diff > 0) {
-    cell.innerHTML = `<span style="color:var(--success); background:#f0fdf4; padding:2px 6px; border-radius:4px;"><i class="fas fa-arrow-up"></i> +${diff.toFixed(2)}</span>`;
-  } else {
-    cell.innerHTML = `<span style="color:var(--danger); background:#fef2f2; padding:2px 6px; border-radius:4px;"><i class="fas fa-arrow-down"></i> ${diff.toFixed(2)}</span>`;
+function _stRenderSummary() {
+  var sum = q('#stSummary');
+  if (!sum) return;
+  var items = window._stSession.items || [];
+  var total = items.length;
+  var surplus = items.filter(function(i){return i.diff > 0.0001;});
+  var shortage = items.filter(function(i){return i.diff < -0.0001;});
+  var matched = total - surplus.length - shortage.length;
+  var totalVariance = items.reduce(function(s,i){return s + (i.diff * (Number(i.cost)||0));}, 0);
+  var chip = function(icon, color, label, val) {
+    return '<div style="background:#fff;border:1px solid #e5e7eb;border-left:3px solid '+color+';border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:10px;">' +
+      '<div style="width:32px;height:32px;border-radius:8px;background:'+color+'15;color:'+color+';display:flex;align-items:center;justify-content:center;"><i class="fas '+icon+'"></i></div>' +
+      '<div><div style="font-size:10px;color:#64748b;font-weight:700;">'+label+'</div><div style="font-size:18px;font-weight:900;color:#0f172a;">'+val+'</div></div>' +
+    '</div>';
+  };
+  sum.innerHTML =
+    chip('fa-boxes-stacked', '#0ea5e9', 'إجمالي المواد المُضافة', total) +
+    chip('fa-arrow-up', '#10b981', 'فائض', surplus.length) +
+    chip('fa-arrow-down', '#ef4444', 'نقص', shortage.length) +
+    chip(totalVariance>=0?'fa-plus':'fa-minus', totalVariance>=0?'#059669':'#dc2626', 'صافي تكلفة الفرق', (totalVariance>=0?'+':'')+totalVariance.toFixed(2));
+}
+
+// ─── Draft save/restore (localStorage) ───
+function _stGetSavedDraft() {
+  try { return JSON.parse(localStorage.getItem(ST_DRAFT_KEY) || 'null'); } catch(e) { return null; }
+}
+window._stSaveDraft = function(showFeedback) {
+  var data = {
+    items: window._stSession.items,
+    notes: (q('#stNotes')||{}).value || '',
+    warehouseId: (q('#stWarehouse')||{}).value || '',
+    savedAt: new Date().toISOString()
+  };
+  try {
+    localStorage.setItem(ST_DRAFT_KEY, JSON.stringify(data));
+    if (showFeedback) showToast('تم حفظ مسودة الجرد محلياً — يمكنك الاستمرار لاحقاً');
+  } catch(e) {
+    if (showFeedback) showToast('تعذر حفظ المسودة', true);
   }
+};
+window._stRestoreDraft = function() {
+  var d = _stGetSavedDraft();
+  if (!d) return;
+  window._stSession.items = d.items || [];
+  q('#stNotes').value = d.notes || '';
+  if (d.warehouseId && q('#stWarehouse')) q('#stWarehouse').value = d.warehouseId;
+  renderStItems();
+  var banner = q('#stRestoreBanner');
+  if (banner) banner.style.display = 'none';
+  showToast('تم استعادة المسودة (' + d.items.length + ' صنف)');
+};
+window._stDiscardDraft = function() {
+  try { localStorage.removeItem(ST_DRAFT_KEY); } catch(e) {}
+  window._stSession = { items: [], notes: '', warehouseId: '' };
+  var banner = q('#stRestoreBanner');
+  if (banner) banner.style.display = 'none';
+  renderStItems();
+};
+
+// Escape HTML for safety
+function _escHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
 }
 
 function saveStocktakeFn() {
-  const rows = q("#tbStBody").querySelectorAll('tr');
-  const itemsToAdjust = [];
-  
-  rows.forEach(r => {
-    let id = r.getAttribute('data-stid');
-    let inputNode = r.querySelector('.st-actual-input');
-    if(inputNode) {
-      let sys = Number(inputNode.getAttribute('data-sys')) || 0;
-      let act = Number(inputNode.value) || 0;
-      let diff = act - sys;
-      if (Math.abs(diff) > 0.001) { // Only send items with actual differences
-        itemsToAdjust.push({ id: id, diff: diff, sys: sys, actual: act });
-      }
-    }
-  });
+  var items = window._stSession.items || [];
+  // Only send items with actual differences
+  var itemsToAdjust = items
+    .filter(function(i){ return Math.abs(i.diff) > 0.001; })
+    .map(function(i){ return { id: i.id, diff: i.diff, sys: i.sysStock, actual: i.actual }; });
 
-  if(itemsToAdjust.length === 0) {
-    return showToast("لا توجد فوارق لتسويتها. الرصيد الفعلي يطابق النظام.", true);
+  if (!items.length) {
+    return showToast('لم تُضف أي مواد للجرد — أضف المواد من صندوق البحث أولاً', true);
+  }
+  if (itemsToAdjust.length === 0) {
+    return showToast('لا توجد فوارق لتسويتها — كل الأرصدة الفعلية تطابق النظام', true);
   }
 
-  if (!confirm(`سيتم إجراء تسوية جردية لعدد (${itemsToAdjust.length}) أصناف.. هل أنت متأكد؟`)) return;
+  if (!confirm('سيتم اعتماد تسوية جردية لعدد (' + itemsToAdjust.length + ') صنف من أصل (' + items.length + ') تم جردها. هل أنت متأكد؟')) return;
 
   loader(true);
-  const notes = q("#stNotes").value;
-  api.withFailureHandler(err => {
+  var notes = q('#stNotes').value || '';
+  var warehouseId = (q('#stWarehouse')||{}).value || '';
+  api.withFailureHandler(function(err) {
     loader(false); showToast(err.message, true);
-  }).withSuccessHandler(res => {
+  }).withSuccessHandler(function(res) {
     loader(false);
-    if(res.success) {
-      closeModal("#modalStocktakeForm");
-      showToast("تم اعتماد التسويـة بنجاح وانعكس الرصيد فوراً ✓");
+    if (res.success) {
+      closeModal('#modalStocktakeForm');
+      try { localStorage.removeItem(ST_DRAFT_KEY); } catch(e) {}
+      window._stSession = { items: [], notes: '', warehouseId: '' };
+      showToast('تم اعتماد التسوية بنجاح — انعكس الرصيد فوراً ✓');
       loadDashStocktake();
       loadDashInvItems();
       loadLiveInventory();
     } else {
       showToast(res.error, true);
     }
-  }).submitStocktake(itemsToAdjust, state.user, notes);
+  }).submitStocktake(itemsToAdjust, state.user, notes, warehouseId);
 }
 
 

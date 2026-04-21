@@ -8191,23 +8191,25 @@ function erpOpenBomModal(id) {
     var renderLinesTable = function() {
       var tbody = document.getElementById('bomLinesRows');
       if (!tbody) return;
-      var itemOpts = '<option value="">— اختر مكوّن —</option>' +
-        itemList.map(function(i){return '<option value="'+esc(i.id)+'" data-unit="'+esc(i.unit||'')+'" data-cost="'+(i.cost||0)+'">'+esc(i.name||'')+'</option>';}).join('');
 
       if (!lines.length) {
-        tbody.innerHTML = '<div class="wo-ing-empty"><i class="fas fa-leaf" style="font-size:24px;display:block;margin-bottom:6px;"></i>لم تُضف مكونات بعد — اضغط "+ إضافة مكوّن" للبدء</div>';
-      } else {
-        tbody.innerHTML = lines.map(function(l, idx){
-          var selOpts = itemOpts.replace('value="'+esc(l.itemId)+'"', 'value="'+esc(l.itemId)+'" selected');
-          return '<div class="wo-ing-row">' +
-            '<select onchange="_bomUpdateLine('+idx+',\'itemId\',this.value);_bomRecalcTotal();">'+selOpts+'</select>' +
-            '<input type="number" step="0.0001" placeholder="الكمية" value="'+(l.quantity||'')+'" oninput="_bomUpdateLine('+idx+',\'quantity\',this.value);_bomRecalcTotal();">' +
-            '<input type="number" step="1" min="0" max="100" placeholder="هدر %" value="'+(l.wastePct||0)+'" oninput="_bomUpdateLine('+idx+',\'wastePct\',this.value);_bomRecalcTotal();">' +
-            '<input type="text" readonly class="wo-money" value="'+_bomLineCost(l, itemList).toFixed(2)+'" style="text-align:center;background:var(--wo-surface-2)!important;">' +
-            '<button class="wo-icon-btn danger" onclick="_bomRemoveLine('+idx+')" aria-label="حذف"><i class="fas fa-xmark"></i></button>' +
-          '</div>';
-        }).join('');
+        tbody.innerHTML = '<div class="wo-ing-empty"><i class="fas fa-magnifying-glass" style="font-size:24px;display:block;margin-bottom:6px;color:var(--wo-info);"></i>ابحث عن المكوّن في الصندوق أعلاه واختره من القائمة — سيُضاف هنا تلقائياً</div>';
+        return;
       }
+      tbody.innerHTML = '<div class="wo-picker-chips">' + lines.map(function(l, idx){
+        var it = itemList.find(function(x){return String(x.id)===String(l.itemId);}) || {};
+        var lineCost = _bomLineCost(l, itemList);
+        return '<div class="wo-picker-chip">' +
+          '<div class="wo-picker-chip-num">'+(idx+1)+'</div>' +
+          '<div class="wo-picker-chip-main">' +
+            '<div class="wo-picker-chip-name">'+esc(it.name||l.itemId||'—')+'</div>' +
+            '<div class="wo-picker-chip-meta"><code>'+esc(it.id||l.itemId)+'</code> · '+esc(it.unit||'')+(it.category?' · '+esc(it.category):'')+' · تكلفة الوحدة: <b>'+Number(it.cost||0).toFixed(4)+'</b></div>' +
+          '</div>' +
+          '<input type="number" step="0.0001" placeholder="الكمية" value="'+(l.quantity||'')+'" oninput="_bomUpdateLine('+idx+',\'quantity\',this.value);_bomRecalcTotal();" title="الكمية ('+esc(it.unit||'وحدة')+')">' +
+          '<input type="number" step="1" min="0" max="100" placeholder="هدر %" value="'+(l.wastePct||0)+'" oninput="_bomUpdateLine('+idx+',\'wastePct\',this.value);_bomRecalcTotal();" title="نسبة الهدر %">' +
+          '<button class="wo-icon-btn danger" onclick="_bomRemoveLine('+idx+')" aria-label="حذف" title="حذف المكوّن"><i class="fas fa-xmark"></i></button>' +
+        '</div>';
+      }).join('') + '</div>';
     };
 
     window._bomUpdateLine = function(idx, field, value) {
@@ -8220,9 +8222,13 @@ function erpOpenBomModal(id) {
       renderLinesTable();
       _bomRecalcTotal();
     };
+    // Legacy function — now the picker auto-adds; kept so old calls still work
     window._bomAddLine = function() {
-      lines.push({ itemId: '', quantity: 0, wastePct: 0 });
-      renderLinesTable();
+      var hostEl = document.getElementById('bomPickerHost');
+      if (hostEl) {
+        var input = hostEl.querySelector('.wo-picker-input');
+        if (input) input.focus();
+      }
     };
     window._bomRecalcTotal = function() {
       var total = lines.reduce(function(s,l){return s + _bomLineCost(l, itemList);}, 0);
@@ -8269,10 +8275,11 @@ function erpOpenBomModal(id) {
               '</div>' +
               '<div>' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-                  '<label class="wo-field-label"><i class="fas fa-list"></i> المكونات</label>' +
-                  '<button type="button" class="wo-btn wo-btn-secondary" onclick="_bomAddLine()" style="padding:6px 14px;min-height:32px;font-size:12px;"><i class="fas fa-plus"></i><span>إضافة مكوّن</span></button>' +
+                  '<label class="wo-field-label"><i class="fas fa-magnifying-glass"></i> ابحث وأضف المكونات</label>' +
+                  '<span class="wo-text-subtle wo-text-caption"><span class="wo-picker-kbd">Enter</span> لإضافة · <span class="wo-picker-kbd">↑↓</span> للتنقل</span>' +
                 '</div>' +
-                '<div class="wo-ing-editor">' +
+                '<div id="bomPickerHost"></div>' +
+                '<div class="wo-ing-editor" style="margin-top:10px;">' +
                   '<div id="bomLinesRows"></div>' +
                   '<div class="wo-ing-total">' +
                     '<span><i class="fas fa-calculator"></i> إجمالي تكلفة الوصفة</span>' +
@@ -8297,6 +8304,21 @@ function erpOpenBomModal(id) {
       document.body.insertAdjacentHTML('beforeend', modalHtml);
       renderLinesTable();
       _bomRecalcTotal();
+
+      // Mount Odoo-style picker for ingredient search
+      var pickerHost = document.getElementById('bomPickerHost');
+      if (pickerHost && window.WoItemPicker) {
+        WoItemPicker.mount(pickerHost, {
+          items: itemList,
+          placeholder: 'ابحث عن مادة خام بالاسم أو الكود أو التصنيف...',
+          getExcludeIds: function() { return lines.map(function(l){return l.itemId;}); },
+          onSelect: function(item) {
+            lines.push({ itemId: item.id, quantity: 1, wastePct: 0 });
+            renderLinesTable();
+            _bomRecalcTotal();
+          }
+        });
+      }
     };
 
     window._bomClose = function() {
@@ -9843,3 +9865,153 @@ function _wzPersistStep(stepId, skip, cb) {
   }
   cb(true);
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// WoItemPicker — reusable Odoo-style searchable item picker
+//
+// Usage:
+//   WoItemPicker.mount(inputEl, {
+//     items: [{id, name, category, unit, cost, brandName, stock}],  // array of items
+//     placeholder: 'ابحث عن مادة...',
+//     onSelect: function(item) { ... }   // called when user picks an item
+//   });
+// ═══════════════════════════════════════════════════════════════════
+window.WoItemPicker = (function() {
+  var esc = function(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
+  };
+
+  // Normalize Arabic text for search (strip diacritics + unify alef/taa/yaa)
+  function normalize(s) {
+    if (!s) return '';
+    return String(s).toLowerCase()
+      .replace(/[\u064B-\u0652\u0670]/g, '')   // diacritics
+      .replace(/[إأآا]/g, 'ا').replace(/ى/g, 'ي').replace(/ؤ/g, 'و').replace(/ئ/g, 'ي').replace(/ة/g, 'ه')
+      .trim();
+  }
+
+  function filterItems(items, query) {
+    var q = normalize(query);
+    if (!q) return items.slice(0, 50);
+    var tokens = q.split(/\s+/).filter(Boolean);
+    return items.filter(function(it) {
+      var hay = normalize((it.name||'') + ' ' + (it.id||'') + ' ' + (it.category||'') + ' ' + (it.brandName||'') + ' ' + (it.unit||''));
+      return tokens.every(function(t) { return hay.indexOf(t) >= 0; });
+    }).slice(0, 50);
+  }
+
+  function renderDropdown(items, activeIdx, excludeIds) {
+    excludeIds = excludeIds || [];
+    var used = new Set(excludeIds.map(String));
+    var filtered = items.filter(function(i){ return !used.has(String(i.id)); });
+    if (!filtered.length) {
+      return '<div class="wo-picker-empty"><i class="fas fa-search-minus" style="font-size:20px;display:block;margin-bottom:6px;"></i>لا توجد نتائج مطابقة</div>';
+    }
+    var hint = '<div class="wo-picker-hint"><span><i class="fas fa-info-circle"></i> اضغط على المادة أو استخدم الأسهم ↑↓ ثم Enter</span><span>'+filtered.length+' نتيجة</span></div>';
+    return hint + filtered.map(function(it, i) {
+      var stockInfo = it.stock !== undefined ? 'مخزون: <b>'+it.stock+'</b> '+esc(it.unit||'') : '';
+      var costInfo = it.cost !== undefined && it.cost !== null ? '<b>'+Number(it.cost).toFixed(4)+'</b><small style="color:var(--wo-on-surface-subtle);">/'+esc(it.unit||'')+'</small>' : '';
+      return '<div class="wo-picker-option'+(i===activeIdx?' active':'')+'" data-idx="'+i+'" data-id="'+esc(it.id)+'">' +
+        '<div class="wo-picker-option-icon"><i class="fas fa-box"></i></div>' +
+        '<div class="wo-picker-option-main">' +
+          '<div class="wo-picker-option-title">'+esc(it.name||'')+'</div>' +
+          '<div class="wo-picker-option-meta">' +
+            (it.category ? '<span><i class="fas fa-tag"></i> '+esc(it.category)+'</span>' : '') +
+            (it.brandName ? '<span style="color:var(--wo-purple);"><i class="fas fa-store"></i> '+esc(it.brandName)+'</span>' : '') +
+            '<code>'+esc(it.id||'')+'</code>' +
+          '</div>' +
+        '</div>' +
+        (costInfo || stockInfo ? '<div class="wo-picker-option-right">'+costInfo+(stockInfo?'<div class="wo-picker-option-meta">'+stockInfo+'</div>':'')+'</div>' : '') +
+      '</div>';
+    }).join('');
+  }
+
+  function mount(hostEl, options) {
+    options = options || {};
+    var items = options.items || [];
+    var placeholder = options.placeholder || 'ابحث عن مادة بالاسم أو الكود...';
+    var onSelect = options.onSelect || function(){};
+    var getExclude = options.getExcludeIds || function(){ return []; };
+
+    // Build DOM
+    hostEl.innerHTML =
+      '<div class="wo-picker" data-wo-picker="1">' +
+        '<input type="text" class="wo-picker-input" placeholder="'+esc(placeholder)+'" autocomplete="off">' +
+        '<i class="fas fa-search wo-picker-search-icon"></i>' +
+        '<div class="wo-picker-dropdown"></div>' +
+      '</div>';
+
+    var wrap = hostEl.querySelector('.wo-picker');
+    var input = hostEl.querySelector('.wo-picker-input');
+    var dd = hostEl.querySelector('.wo-picker-dropdown');
+    var activeIdx = 0;
+    var currentList = [];
+
+    function refresh() {
+      var excl = getExclude();
+      var q = input.value;
+      currentList = filterItems(items, q).filter(function(i){ return excl.indexOf(String(i.id)) < 0 && excl.indexOf(i.id) < 0; });
+      if (activeIdx >= currentList.length) activeIdx = Math.max(0, currentList.length - 1);
+      dd.innerHTML = renderDropdown(items.filter(function(i){ return excl.indexOf(String(i.id)) < 0 && excl.indexOf(i.id) < 0; }).filter(function(i){
+        // reapply query filter (filterItems already does but we need the post-exclude list)
+        return currentList.some(function(x){ return x.id === i.id; });
+      }).slice(0, 50), activeIdx, []);
+    }
+
+    function open() {
+      wrap.classList.add('open');
+      refresh();
+    }
+    function close() {
+      wrap.classList.remove('open');
+    }
+
+    input.addEventListener('focus', open);
+    input.addEventListener('input', function(){ activeIdx = 0; refresh(); });
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); activeIdx = Math.min(activeIdx+1, currentList.length-1); refresh(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); activeIdx = Math.max(activeIdx-1, 0); refresh(); }
+      else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (currentList[activeIdx]) {
+          var picked = currentList[activeIdx];
+          onSelect(picked);
+          input.value = '';
+          activeIdx = 0;
+          refresh();
+          // Keep focus on input for next selection (Odoo-style)
+          setTimeout(function(){ input.focus(); }, 10);
+        }
+      } else if (e.key === 'Escape') {
+        close();
+        input.blur();
+      }
+    });
+    dd.addEventListener('mousedown', function(e) {
+      var opt = e.target.closest('.wo-picker-option');
+      if (!opt) return;
+      e.preventDefault();
+      var id = opt.getAttribute('data-id');
+      var picked = currentList.find(function(x){ return String(x.id) === id; });
+      if (picked) {
+        onSelect(picked);
+        input.value = '';
+        activeIdx = 0;
+        refresh();
+        setTimeout(function(){ input.focus(); }, 10);
+      }
+    });
+    document.addEventListener('click', function(e) {
+      if (!wrap.contains(e.target)) close();
+    });
+
+    return {
+      focus: function(){ input.focus(); },
+      setItems: function(newItems){ items = newItems || []; refresh(); },
+      clear: function(){ input.value = ''; refresh(); }
+    };
+  }
+
+  return { mount: mount, filterItems: filterItems };
+})();

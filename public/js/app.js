@@ -2104,7 +2104,7 @@ function loadDashMenu() {
         var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
 
         if (!list.length) {
-          h = '<tr><td colspan="9">' +
+          h = '<tr><td colspan="10">' +
             (typeof _woEmpty === 'function'
               ? _woEmpty('fa-utensils', 'لا توجد منتجات', 'ابدأ بإضافة أول منتج في المنيو، أو استورد قائمة من ملف Excel.',
                 '<button class="wo-btn wo-btn-primary" onclick="openInvM(\'add\')"><i class="fas fa-plus"></i><span>إضافة منتج</span></button>')
@@ -2124,9 +2124,13 @@ function loadDashMenu() {
               var statusChip = i.active
                 ? '<span class="wo-chip success">نشط</span>'
                 : '<span class="wo-chip neutral">متوقف</span>';
+              var brandChip = i.brandName
+                ? '<span class="wo-chip purple"><i class="fas fa-store"></i> '+esc(i.brandName)+'</span>'
+                : '<span class="wo-chip neutral flat" style="opacity:.6;"><i class="fas fa-minus"></i> بدون</span>';
               h += '<tr>'+
                 '<td data-label="الكود"><code>'+esc(i.id||'')+'</code></td>'+
                 '<td data-label="المنتج"><div style="display:flex;flex-direction:column;gap:4px;"><b>'+esc(i.name||'')+'</b>'+priceBadge+'</div></td>'+
+                '<td data-label="البراند">'+brandChip+'</td>'+
                 '<td data-label="التصنيف"><span class="wo-chip neutral flat">'+esc(i.category||'—')+'</span></td>'+
                 '<td data-label="سعر البيع" class="num strong">'+formatVal(row.sellPrice)+'</td>'+
                 '<td data-label="تكلفة المقادير" class="num">'+costDisplay+'</td>'+
@@ -2887,7 +2891,7 @@ function loadDashInvItems() {
 function renderInvTable(list) {
     
     let h = "";
-    if(!list.length) h = "<tr><td colspan='9' style='text-align:center;'>\u0644\u0627 \u062a\u0648\u062c\u062f \u0645\u0648\u0627\u062f \u062e\u0627\u0645 \u0645\u0633\u062c\u0644\u0629</td></tr>";
+    if(!list.length) h = "<tr><td colspan='10' style='text-align:center;'>\u0644\u0627 \u062a\u0648\u062c\u062f \u0645\u0648\u0627\u062f \u062e\u0627\u0645 \u0645\u0633\u062c\u0644\u0629</td></tr>";
     else {
       let grandTotal = 0;
       list.forEach(i => {
@@ -2914,9 +2918,13 @@ function renderInvTable(list) {
             <div style="font-size:12px; color:#16a34a;"><i class="fas fa-tag"></i> ${formatVal(smallCost)} SAR/${i.unit || '\u062d\u0628\u0629'}</div>
           `;
 
+          let brandHtml = i.brandName
+            ? `<span class="badge" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-store"></i> ${i.brandName}</span>`
+            : `<span class="badge" style="background:#f1f5f9;color:#94a3b8;"><i class="fas fa-minus"></i> بدون</span>`;
           h += `<tr>
             <td style="font-family:monospace; color:var(--text-light); font-size:12px;">${i.id || ''}</td>
             <td style="font-weight:800; color:var(--text-dark);">${i.name || ''}</td>
+            <td>${brandHtml}</td>
             <td><span class="badge" style="background:#e2e8f0; color:#475569;">${i.category || ''}</span></td>
             <td style="background:#f8fafc; border-right:2px solid #e2e8f0;">${bigUnitDisplay}</td>
             <td style="background:#f0fdf4;">${smallUnitDisplay}</td>
@@ -2931,7 +2939,7 @@ function renderInvTable(list) {
           </tr>`;
         } catch (ex) { console.error(ex); }
       });
-      h += `<tr style="background:#f8fafc; border-top:2px solid var(--border);"><td colspan="5" style="font-weight:900; text-align:center;">\u0625\u062c\u0645\u0627\u0644\u064a \u0642\u064a\u0645\u0629 \u0627\u0644\u0645\u062e\u0632\u0648\u0646</td><td style="font-weight:900; color:#7c3aed; font-size:16px;">${formatVal(grandTotal)} SAR</td><td colspan="3"></td></tr>`;
+      h += `<tr style="background:#f8fafc; border-top:2px solid var(--border);"><td colspan="6" style="font-weight:900; text-align:center;">\u0625\u062c\u0645\u0627\u0644\u064a \u0642\u064a\u0645\u0629 \u0627\u0644\u0645\u062e\u0632\u0648\u0646</td><td style="font-weight:900; color:#7c3aed; font-size:16px;">${formatVal(grandTotal)} SAR</td><td colspan="3"></td></tr>`;
     }
     if(q("#tbRawItems")) q("#tbRawItems").innerHTML = h;
 }

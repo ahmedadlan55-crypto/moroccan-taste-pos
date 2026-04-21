@@ -311,6 +311,30 @@ router.delete('/bom/:id', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
+// Bulk-assign brand to rows that currently have no brand.
+// Body: { brandId, force? (default false — only updates null/empty), targets? (['menu','inv_items'] — default both) }
+router.post('/brands/assign-default', async (req, res) => {
+  try {
+    const { brandId, force, targets } = req.body;
+    if (!brandId) return res.json({ success: false, error: 'brandId مطلوب' });
+    const [b] = await db.query('SELECT id, name FROM brands WHERE id = ?', [brandId]);
+    if (!b.length) return res.json({ success: false, error: 'البراند غير موجود' });
+    const useTargets = Array.isArray(targets) && targets.length ? targets : ['menu','inv_items'];
+    const result = { success: true, brandId, brandName: b[0].name, menuUpdated: 0, itemsUpdated: 0 };
+    const whereClause = force ? '1=1' : "(brand_id IS NULL OR brand_id = '')";
+
+    if (useTargets.indexOf('menu') >= 0) {
+      const [r] = await db.query('UPDATE menu SET brand_id = ? WHERE ' + whereClause, [brandId]);
+      result.menuUpdated = r.affectedRows || 0;
+    }
+    if (useTargets.indexOf('inv_items') >= 0) {
+      const [r] = await db.query('UPDATE inv_items SET brand_id = ? WHERE ' + whereClause, [brandId]);
+      result.itemsUpdated = r.affectedRows || 0;
+    }
+    res.json(result);
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
 // Clone a BOM to a new product (optionally a different brand)
 // Accepts: itemId OR componentItemId in line objects — tolerates either naming.
 router.post('/bom/:id/clone', async (req, res) => {

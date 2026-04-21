@@ -236,41 +236,78 @@
             </div>
           </div>
 
-          <!-- ─── Advanced filter bar: brand / branch / preset chips / custom dates ─── -->
-          <div class="wo-filterbar">
-            <!-- Period preset chips (one-click) -->
+          <!-- ─── Advanced filter bar: brand / branch / 13 presets + compare mode + custom dates ─── -->
+          <div class="wo-filterbar cc-filterbar">
+            <!-- Row 1: Brand + Branch + Compare mode + Custom dates + Reset -->
             <div class="wo-filterbar-row">
-              <div style="font-size:11px;font-weight:800;color:var(--wo-on-surface-subtle);margin-inline-end:4px;"><i class="fas fa-calendar-check"></i> الفترة:</div>
-              <button class="wo-quickfilter" data-cc-preset="today"     onclick="ccSetPreset('today')"><i class="fas fa-calendar-day"></i>اليوم</button>
-              <button class="wo-quickfilter" data-cc-preset="yesterday" onclick="ccSetPreset('yesterday')"><i class="fas fa-backward-step"></i>أمس</button>
-              <button class="wo-quickfilter active" data-cc-preset="week" onclick="ccSetPreset('week')"><i class="fas fa-calendar-week"></i>آخر 7 أيام</button>
-              <button class="wo-quickfilter" data-cc-preset="month"     onclick="ccSetPreset('month')"><i class="fas fa-calendar"></i>هذا الشهر</button>
-              <button class="wo-quickfilter" data-cc-preset="quarter"   onclick="ccSetPreset('quarter')"><i class="fas fa-chart-line"></i>الربع</button>
-              <button class="wo-quickfilter" data-cc-preset="year"      onclick="ccSetPreset('year')"><i class="fas fa-calendar-days"></i>السنة</button>
-              <span class="wo-results-count" id="ccPeriodLabel" style="margin-inline-start:auto;"></span>
-            </div>
-            <!-- Brand/branch/custom dates row -->
-            <div class="wo-filterbar-row">
-              <div class="wo-field" style="flex:1;min-width:200px;">
+              <div class="wo-field" style="flex:1;min-width:180px;">
                 <label class="wo-field-label" for="ccFBrand"><i class="fas fa-store" style="color:var(--wo-purple);"></i>البراند</label>
-                <select id="ccFBrand" class="wo-select" onchange="loadDashHome()"><option value="">كل البراندات</option></select>
+                <select id="ccFBrand" class="wo-select"><option value="">كل البراندات</option></select>
               </div>
-              <div class="wo-field" style="flex:1;min-width:200px;">
+              <div class="wo-field" style="flex:1;min-width:180px;">
                 <label class="wo-field-label" for="ccFBranch"><i class="fas fa-map-marker-alt" style="color:var(--wo-info-fg);"></i>الفرع</label>
-                <select id="ccFBranch" class="wo-select" onchange="loadDashHome()"><option value="">كل الفروع</option></select>
+                <select id="ccFBranch" class="wo-select"><option value="">كل الفروع</option></select>
+              </div>
+              <div class="wo-field" style="flex:1;min-width:180px;">
+                <label class="wo-field-label" for="ccFCompare"><i class="fas fa-code-compare" style="color:#10b981;"></i>مقارنة مع</label>
+                <select id="ccFCompare" class="wo-select" onchange="ccSetCompareMode(this.value)">
+                  <option value="previous">الفترة السابقة</option>
+                  <option value="yearago">نفس الفترة السنة الماضية</option>
+                  <option value="none">بدون مقارنة</option>
+                </select>
               </div>
               <div class="wo-field">
-                <label class="wo-field-label" for="ccFFrom"><i class="fas fa-calendar"></i>من</label>
+                <label class="wo-field-label" for="ccFFrom"><i class="fas fa-calendar"></i>من تاريخ</label>
                 <input type="date" id="ccFFrom" class="wo-input" onchange="ccApplyCustomRange()">
               </div>
               <div class="wo-field">
-                <label class="wo-field-label" for="ccFTo"><i class="fas fa-calendar-check"></i>إلى</label>
+                <label class="wo-field-label" for="ccFTo"><i class="fas fa-calendar-check"></i>إلى تاريخ</label>
                 <input type="date" id="ccFTo" class="wo-input" onchange="ccApplyCustomRange()">
               </div>
               <div class="wo-field" style="align-self:flex-end;">
-                <button class="wo-btn wo-btn-secondary" onclick="ccResetFilters()" style="height:42px;"><i class="fas fa-xmark"></i><span>مسح</span></button>
+                <button class="wo-btn wo-btn-secondary" onclick="ccResetFilters()" style="height:42px;" title="مسح كل الفلاتر"><i class="fas fa-xmark"></i><span>مسح</span></button>
               </div>
             </div>
+
+            <!-- Row 2: 13 Advanced period preset chips -->
+            <div class="wo-filterbar-row cc-preset-row">
+              <div class="cc-preset-label"><i class="fas fa-calendar-check"></i> الفترة:</div>
+
+              <div class="cc-preset-group">
+                <span class="cc-preset-group-title">اليوم والأمس</span>
+                <button class="wo-quickfilter" data-cc-preset="today"     onclick="ccSetPreset('today')"><i class="fas fa-calendar-day"></i>اليوم</button>
+                <button class="wo-quickfilter" data-cc-preset="yesterday" onclick="ccSetPreset('yesterday')"><i class="fas fa-backward-step"></i>أمس</button>
+              </div>
+
+              <div class="cc-preset-group">
+                <span class="cc-preset-group-title">الأسابيع</span>
+                <button class="wo-quickfilter" data-cc-preset="thisweek" onclick="ccSetPreset('thisweek')"><i class="fas fa-calendar-week"></i>هذا الأسبوع</button>
+                <button class="wo-quickfilter" data-cc-preset="lastweek" onclick="ccSetPreset('lastweek')"><i class="fas fa-calendar-week"></i>الأسبوع الماضي</button>
+                <button class="wo-quickfilter active" data-cc-preset="last7" onclick="ccSetPreset('last7')"><i class="fas fa-calendar"></i>آخر 7 أيام</button>
+                <button class="wo-quickfilter" data-cc-preset="last14" onclick="ccSetPreset('last14')"><i class="fas fa-calendar"></i>آخر 14 يوم</button>
+              </div>
+
+              <div class="cc-preset-group">
+                <span class="cc-preset-group-title">الشهور</span>
+                <button class="wo-quickfilter" data-cc-preset="thismonth" onclick="ccSetPreset('thismonth')"><i class="fas fa-calendar"></i>هذا الشهر</button>
+                <button class="wo-quickfilter" data-cc-preset="lastmonth" onclick="ccSetPreset('lastmonth')"><i class="fas fa-calendar"></i>الشهر الماضي</button>
+                <button class="wo-quickfilter" data-cc-preset="last30"    onclick="ccSetPreset('last30')"><i class="fas fa-calendar"></i>آخر 30 يوم</button>
+                <button class="wo-quickfilter" data-cc-preset="last90"    onclick="ccSetPreset('last90')"><i class="fas fa-calendar"></i>آخر 90 يوم</button>
+              </div>
+
+              <div class="cc-preset-group">
+                <span class="cc-preset-group-title">الأرباع والسنوات</span>
+                <button class="wo-quickfilter" data-cc-preset="thisquarter" onclick="ccSetPreset('thisquarter')"><i class="fas fa-chart-line"></i>هذا الربع</button>
+                <button class="wo-quickfilter" data-cc-preset="lastquarter" onclick="ccSetPreset('lastquarter')"><i class="fas fa-chart-line"></i>الربع الماضي</button>
+                <button class="wo-quickfilter" data-cc-preset="thisyear"    onclick="ccSetPreset('thisyear')"><i class="fas fa-calendar-days"></i>هذه السنة</button>
+                <button class="wo-quickfilter" data-cc-preset="lastyear"    onclick="ccSetPreset('lastyear')"><i class="fas fa-calendar-days"></i>السنة الماضية</button>
+              </div>
+
+              <span class="wo-results-count" id="ccPeriodLabel" style="margin-inline-start:auto;"></span>
+            </div>
+
+            <!-- Row 3: Active filter tags (show currently applied filters as removable chips) -->
+            <div class="wo-filterbar-row" id="ccActiveTags" style="display:none;gap:6px;padding-top:4px;border-top:1px dashed var(--wo-border);"></div>
           </div>
 
           <!-- ─── EXECUTIVE KPIs (7 big tiles with deltas) ─── -->

@@ -3,10 +3,22 @@ const db = require('../db/connection');
 
 // ═══════════════════════════════════════════════════════════════════
 // Enterprise Command Center — single-call aggregator
-// GET /api/dashboard/overview?brandId=&branchId=&from=YYYY-MM-DD&to=YYYY-MM-DD&preset=today|week|month|quarter|year
+// GET /api/dashboard/overview?brandId=&branchId=&from=YYYY-MM-DD&to=YYYY-MM-DD
+//   &preset=today|yesterday|thisWeek|lastWeek|last7|last14|last30|last90
+//          |thisMonth|lastMonth|thisQuarter|lastQuarter|thisYear|lastYear
+//   &compare=previous|yearAgo|none
 // ═══════════════════════════════════════════════════════════════════
 
 function _ymd(d) { return d.toISOString().slice(0, 10); }
+
+function _startOfWeek(d) {  // Saturday as week start (Arabic / Middle-East convention)
+  const nd = new Date(d);
+  const dow = nd.getDay(); // 0=Sun..6=Sat
+  const diff = (dow + 1) % 7; // Sat=6 → 0, Sun=0 → 1, etc.
+  nd.setDate(nd.getDate() - diff);
+  nd.setHours(0,0,0,0);
+  return nd;
+}
 
 function _resolvePeriod(query) {
   const now = new Date();
@@ -15,19 +27,73 @@ function _resolvePeriod(query) {
   let to   = query.to   || today;
 
   const p = (query.preset || '').toLowerCase();
-  if (p === 'today')   { from = today; to = today; }
-  else if (p === 'yesterday') {
-    const y = new Date(now); y.setDate(y.getDate() - 1);
-    from = _ymd(y); to = from;
+  const yyyy = now.getFullYear();
+  const mm   = now.getMonth();
+  const dd   = now.getDate();
+
+  switch (p) {
+    case 'today':       from = to = today; break;
+    case 'yesterday': {
+      const y = new Date(now); y.setDate(y.getDate() - 1);
+      from = to = _ymd(y); break;
+    }
+    case 'thisweek': {
+      const s = _startOfWeek(now);
+      from = _ymd(s); to = today; break;
+    }
+    case 'lastweek': {
+      const s = _startOfWeek(now); s.setDate(s.getDate() - 7);
+      const e = new Date(s); e.setDate(e.getDate() + 6);
+      from = _ymd(s); to = _ymd(e); break;
+    }
+    case 'last7':   { const d = new Date(now); d.setDate(d.getDate() - 6);   from = _ymd(d); to = today; break; }
+    case 'last14':  { const d = new Date(now); d.setDate(d.getDate() - 13);  from = _ymd(d); to = today; break; }
+    case 'last30':  { const d = new Date(now); d.setDate(d.getDate() - 29);  from = _ymd(d); to = today; break; }
+    case 'last90':  { const d = new Date(now); d.setDate(d.getDate() - 89);  from = _ymd(d); to = today; break; }
+    case 'thismonth':   { from = _ymd(new Date(yyyy, mm, 1));             to = today; break; }
+    case 'lastmonth': {
+      const s = new Date(yyyy, mm - 1, 1);
+      const e = new Date(yyyy, mm, 0);
+      from = _ymd(s); to = _ymd(e); break;
+    }
+    case 'thisquarter': { const qs = Math.floor(mm/3)*3; from = _ymd(new Date(yyyy, qs, 1)); to = today; break; }
+    case 'lastquarter': {
+      const qs = Math.floor(mm/3)*3;
+      const s = new Date(yyyy, qs - 3, 1);
+      const e = new Date(yyyy, qs, 0);
+      from = _ymd(s); to = _ymd(e); break;
+    }
+    case 'thisyear':    { from = _ymd(new Date(yyyy, 0, 1)); to = today; break; }
+    case 'lastyear': {
+      const s = new Date(yyyy - 1, 0, 1);
+      const e = new Date(yyyy - 1, 11, 31);
+      from = _ymd(s); to = _ymd(e); break;
+    }
+    case 'week':  { const d = new Date(now); d.setDate(d.getDate() - 6);   from = _ymd(d); to = today; break; } // legacy alias
+    case 'month': { from = _ymd(new Date(yyyy, mm, 1)); to = today; break; }                                    // legacy alias
+    case 'quarter':{ const qs = Math.floor(mm/3)*3; from = _ymd(new Date(yyyy, qs, 1)); to = today; break; }    // legacy alias
+    case 'year':  { from = _ymd(new Date(yyyy, 0, 1)); to = today; break; }                                     // legacy alias
   }
-  else if (p === 'week')    { const d=new Date(now); d.setDate(d.getDate()-6); from = _ymd(d); to = today; }
-  else if (p === 'month')   { const d=new Date(now.getFullYear(), now.getMonth(), 1); from = _ymd(d); to = today; }
-  else if (p === 'quarter') { const qStart = Math.floor(now.getMonth()/3)*3; const d=new Date(now.getFullYear(), qStart, 1); from = _ymd(d); to = today; }
-  else if (p === 'year')    { const d=new Date(now.getFullYear(), 0, 1); from = _ymd(d); to = today; }
   return { from, to, preset: p };
 }
 
-function _sum(rows, col) { return rows.reduce((s, r) => s + Number(r[col] || 0), 0); }
+function _computeCompareWindow(from, to, compareMode) {
+  const fromD = new Date(from + 'T00:00:00');
+  const toD   = new Date(to   + 'T00:00:00');
+  const rangeDays = Math.max(1, Math.round((toD - fromD) / 86400000) + 1);
+
+  if (compareMode === 'none') return { from: null, to: null, rangeDays, mode: 'none' };
+  if (compareMode === 'yearago') {
+    const s = new Date(fromD); s.setFullYear(s.getFullYear() - 1);
+    const e = new Date(toD);   e.setFullYear(e.getFullYear() - 1);
+    return { from: _ymd(s), to: _ymd(e), rangeDays, mode: 'yearAgo' };
+  }
+  // default: immediately previous window of the same length
+  const prevTo   = new Date(fromD); prevTo.setDate(prevTo.getDate() - 1);
+  const prevFrom = new Date(prevTo); prevFrom.setDate(prevFrom.getDate() - (rangeDays - 1));
+  return { from: _ymd(prevFrom), to: _ymd(prevTo), rangeDays, mode: 'previous' };
+}
+
 function _pctChange(curr, prev) {
   if (!prev || prev === 0) return curr > 0 ? 100 : 0;
   return ((curr - prev) / prev) * 100;
@@ -37,87 +103,117 @@ router.get('/overview', async (req, res) => {
   try {
     const { brandId, branchId } = req.query;
     const { from, to } = _resolvePeriod(req.query);
+    const compareMode = (req.query.compare || 'previous').toLowerCase();
+    const prev = _computeCompareWindow(from, to, compareMode);
 
-    // Previous-period window (same length, immediately before "from") for
-    // week-over-week comparisons
-    const fromD = new Date(from + 'T00:00:00');
-    const toD   = new Date(to   + 'T00:00:00');
-    const rangeDays = Math.max(1, Math.round((toD - fromD) / 86400000) + 1);
-    const prevTo   = new Date(fromD); prevTo.setDate(prevTo.getDate() - 1);
-    const prevFrom = new Date(prevTo); prevFrom.setDate(prevFrom.getDate() - (rangeDays - 1));
+    // Filter fragments: apply brand+branch to EVERY table that has those columns
+    // Each table's owner appends its own alias to AND-clauses (we inline them
+    // below per-query since fragments differ by alias).
+    const hasBrand  = !!brandId;
+    const hasBranch = !!branchId;
 
-    const brandFilter  = brandId  ? ' AND brand_id = ?'  : '';
-    const branchFilter = branchId ? ' AND branch_id = ?' : '';
-    const brandParam   = brandId  ? [brandId] : [];
-    const branchParam  = branchId ? [branchId] : [];
+    // Helper to add filters for a given alias (e.g. 's' for sales, 'p' for purchases)
+    function flt(alias) {
+      let sql = '';
+      const p = [];
+      if (hasBrand)  { sql += ` AND ${alias}.brand_id = ?`;  p.push(brandId); }
+      if (hasBranch) { sql += ` AND ${alias}.branch_id = ?`; p.push(branchId); }
+      return { sql, p };
+    }
 
-    // ─── PARALLEL queries (use Promise.all for speed) ───
+    const sF = flt('s');  // sales
+    const eF = flt('e');  // expenses
+    const pF = flt('p');  // purchases
+
+    // Runner: executes the per-period queries for a given date window
+    async function periodQueries(f, t) {
+      const [sales, expenses, purchases, orders] = await Promise.all([
+        db.query(
+          `SELECT COALESCE(SUM(s.total_final),0) AS v, COUNT(*) AS c
+           FROM sales s WHERE DATE(s.order_date) BETWEEN ? AND ? ${sF.sql}`,
+          [f, t, ...sF.p]),
+        db.query(
+          `SELECT COALESCE(SUM(e.amount),0) AS v FROM expenses e
+           WHERE DATE(e.expense_date) BETWEEN ? AND ? ${eF.sql}`,
+          [f, t, ...eF.p]),
+        db.query(
+          `SELECT COALESCE(SUM(p.total_price),0) AS v FROM purchases p
+           WHERE DATE(p.purchase_date) BETWEEN ? AND ? ${pF.sql}`,
+          [f, t, ...pF.p]),
+        db.query(
+          `SELECT COUNT(*) AS c FROM sales s WHERE DATE(s.order_date) BETWEEN ? AND ? ${sF.sql}`,
+          [f, t, ...sF.p])
+      ]);
+      return {
+        salesV: Number(sales[0][0].v || 0),
+        salesC: Number(sales[0][0].c || 0),
+        expV:   Number(expenses[0][0].v || 0),
+        purV:   Number(purchases[0][0].v || 0),
+        ordersC:Number(orders[0][0].c || 0)
+      };
+    }
+
+    const currP = await periodQueries(from, to);
+    const prevP = prev.from
+      ? await periodQueries(prev.from, prev.to)
+      : { salesV:0, salesC:0, expV:0, purV:0, ordersC:0 };
+
+    // Non-period queries — run in parallel
     const [
-      salesCurr, salesPrev, ordersCurr, ordersPrev,
-      expCurr, expPrev, purCurr, purPrev,
-      dailySales, hourlyToday, topItems, topCashiers,
+      dailySales, hourlyToday, topItems, topCashiers, topBrands, topBranches,
       lowStock, expiringSoon,
       openTxns, pendingPayments, overdueAR, overdueAP,
       openShifts, cashPosition, bankBalances,
-      suppliersCnt, customersCnt, brandsCnt, branchesCnt,
-      topBrands
+      suppliersCnt, customersCnt, brandsCnt, branchesCnt
     ] = await Promise.all([
-      // Sales total in range
-      db.query(
-        `SELECT COALESCE(SUM(total_final),0) AS v, COUNT(*) AS c
-         FROM sales WHERE DATE(order_date) BETWEEN ? AND ?`,
-        [from, to]),
-      db.query(
-        `SELECT COALESCE(SUM(total_final),0) AS v, COUNT(*) AS c
-         FROM sales WHERE DATE(order_date) BETWEEN ? AND ?`,
-        [_ymd(prevFrom), _ymd(prevTo)]),
-      // Orders (per-row count; kept separately for clarity)
-      db.query(
-        `SELECT COUNT(*) AS c FROM sales WHERE DATE(order_date) BETWEEN ? AND ?`,
-        [from, to]),
-      db.query(
-        `SELECT COUNT(*) AS c FROM sales WHERE DATE(order_date) BETWEEN ? AND ?`,
-        [_ymd(prevFrom), _ymd(prevTo)]),
-      // Expenses
-      db.query(
-        `SELECT COALESCE(SUM(amount),0) AS v FROM expenses WHERE DATE(expense_date) BETWEEN ? AND ?`,
-        [from, to]),
-      db.query(
-        `SELECT COALESCE(SUM(amount),0) AS v FROM expenses WHERE DATE(expense_date) BETWEEN ? AND ?`,
-        [_ymd(prevFrom), _ymd(prevTo)]),
-      // Purchases
-      db.query(
-        `SELECT COALESCE(SUM(total_price),0) AS v FROM purchases WHERE DATE(purchase_date) BETWEEN ? AND ? ${brandFilter} ${branchFilter}`,
-        [from, to, ...brandParam, ...branchParam]),
-      db.query(
-        `SELECT COALESCE(SUM(total_price),0) AS v FROM purchases WHERE DATE(purchase_date) BETWEEN ? AND ? ${brandFilter} ${branchFilter}`,
-        [_ymd(prevFrom), _ymd(prevTo), ...brandParam, ...branchParam]),
       // Daily sales trend (for chart)
       db.query(
-        `SELECT DATE(order_date) AS d,
-                COALESCE(SUM(total_final),0) AS total,
+        `SELECT DATE(s.order_date) AS d,
+                COALESCE(SUM(s.total_final),0) AS total,
                 COUNT(*) AS cnt
-         FROM sales WHERE DATE(order_date) BETWEEN ? AND ?
-         GROUP BY DATE(order_date) ORDER BY d`,
-        [from, to]),
+         FROM sales s WHERE DATE(s.order_date) BETWEEN ? AND ? ${sF.sql}
+         GROUP BY DATE(s.order_date) ORDER BY d`,
+        [from, to, ...sF.p]),
       // Hourly today (for chart)
       db.query(
-        `SELECT HOUR(order_date) AS h, COALESCE(SUM(total_final),0) AS total
-         FROM sales WHERE DATE(order_date) = CURDATE()
-         GROUP BY HOUR(order_date) ORDER BY h`),
-      // Top 10 items in range
+        `SELECT HOUR(s.order_date) AS h, COALESCE(SUM(s.total_final),0) AS total
+         FROM sales s WHERE DATE(s.order_date) = CURDATE() ${sF.sql}
+         GROUP BY HOUR(s.order_date) ORDER BY h`,
+        [...sF.p]),
+      // Top items in range (brand-filtered via the parent sale)
       db.query(
-        `SELECT item_name AS name, SUM(qty) AS qty, SUM(line_total) AS rev
+        `SELECT si.item_name AS name, SUM(si.qty) AS qty, SUM(si.line_total) AS rev
          FROM sale_items si JOIN sales s ON s.id = si.sale_id
-         WHERE DATE(s.order_date) BETWEEN ? AND ?
-         GROUP BY item_name ORDER BY rev DESC LIMIT 10`,
-        [from, to]).catch(() => [[]]),
+         WHERE DATE(s.order_date) BETWEEN ? AND ? ${sF.sql}
+         GROUP BY si.item_name ORDER BY rev DESC LIMIT 10`,
+        [from, to, ...sF.p]).catch(() => [[]]),
       // Top cashiers
       db.query(
-        `SELECT username, COUNT(*) AS orders, COALESCE(SUM(total_final),0) AS total
-         FROM sales WHERE DATE(order_date) BETWEEN ? AND ?
-         GROUP BY username ORDER BY total DESC LIMIT 5`,
-        [from, to]),
+        `SELECT s.username, COUNT(*) AS orders, COALESCE(SUM(s.total_final),0) AS total
+         FROM sales s WHERE DATE(s.order_date) BETWEEN ? AND ? ${sF.sql}
+         GROUP BY s.username ORDER BY total DESC LIMIT 5`,
+        [from, to, ...sF.p]),
+      // Top brands (purchases + sales combined per brand)
+      db.query(
+        `SELECT b.id, b.name,
+                COALESCE((SELECT SUM(total_price) FROM purchases p2
+                          WHERE p2.brand_id = b.id
+                            AND DATE(p2.purchase_date) BETWEEN ? AND ?),0) AS purchases_total,
+                COALESCE((SELECT SUM(total_final) FROM sales s2
+                          WHERE s2.brand_id = b.id
+                            AND DATE(s2.order_date) BETWEEN ? AND ?),0) AS sales_total,
+                COALESCE((SELECT COUNT(*) FROM purchases p3 WHERE p3.brand_id = b.id
+                          AND DATE(p3.purchase_date) BETWEEN ? AND ?),0) AS purchase_count
+         FROM brands b
+         ORDER BY (sales_total + purchases_total) DESC LIMIT 5`,
+        [from, to, from, to, from, to]).catch(() => [[]]),
+      // Top branches (by sales)
+      db.query(
+        `SELECT br.id, br.name, COALESCE(SUM(s.total_final),0) AS total, COUNT(s.id) AS cnt
+         FROM branches br LEFT JOIN sales s ON s.branch_id = br.id
+           AND DATE(s.order_date) BETWEEN ? AND ?
+         GROUP BY br.id, br.name ORDER BY total DESC LIMIT 5`,
+        [from, to]).catch(() => [[]]),
       // Low stock items
       db.query(
         `SELECT id, name, stock, min_stock, unit FROM inv_items
@@ -136,56 +232,53 @@ router.get('/overview', async (req, res) => {
       db.query(
         `SELECT COUNT(*) AS c, COALESCE(SUM(amount),0) AS v FROM payment_records
          WHERE status IN ('requested','authorized')`).catch(() => [[{c:0, v:0}]]),
-      // AR overdue (customers owing)
+      // AR outstanding (customers owing)
       db.query(
         `SELECT COUNT(*) AS c, COALESCE(SUM(balance),0) AS v FROM customers
          WHERE balance > 0 AND is_active = 1`).catch(() => [[{c:0, v:0}]]),
-      // AP overdue (suppliers we owe)
+      // AP outstanding (suppliers we owe)
       db.query(
         `SELECT COUNT(*) AS c, COALESCE(SUM(balance),0) AS v FROM suppliers
-         WHERE balance > 0 AND is_active = 1`).catch(() => [[{c:0, v:0}]]),
+         WHERE balance > 0 AND is_active = 1 ${hasBrand?'AND brand_id = ?':''}`,
+        hasBrand ? [brandId] : []).catch(() => [[{c:0, v:0}]]),
       // Open shifts
       db.query(`SELECT COUNT(*) AS c FROM shifts WHERE status='OPEN'`),
-      // Cash position (sum of today's cash sales - today's expenses paid cash)
+      // Cash position
       db.query(`SELECT
           (SELECT COALESCE(SUM(amount),0) FROM sale_payments sp
             JOIN sales s ON s.id = sp.sale_id
-            WHERE DATE(s.order_date) = CURDATE() AND sp.method = 'cash')
+            WHERE DATE(s.order_date) = CURDATE() AND sp.method = 'cash' ${sF.sql})
           -
-          (SELECT COALESCE(SUM(amount),0) FROM expenses
-            WHERE DATE(expense_date) = CURDATE() AND payment_method = 'cash')
-          AS cash`).catch(() => [[{cash:0}]]),
+          (SELECT COALESCE(SUM(amount),0) FROM expenses e
+            WHERE DATE(e.expense_date) = CURDATE() AND e.payment_method = 'cash' ${eF.sql})
+          AS cash`,
+        [...sF.p, ...eF.p]).catch(() => [[{cash:0}]]),
       // Bank balances
       db.query(
         `SELECT account_name, bank_name, current_balance FROM bank_accounts
          WHERE is_active = 1 ORDER BY current_balance DESC LIMIT 10`).catch(() => [[]]),
       // Counts
-      db.query(`SELECT COUNT(*) AS c FROM suppliers WHERE is_active = 1`),
+      db.query(`SELECT COUNT(*) AS c FROM suppliers WHERE is_active = 1 ${hasBrand?'AND brand_id = ?':''}`, hasBrand?[brandId]:[]),
       db.query(`SELECT COUNT(*) AS c FROM customers WHERE is_active = 1`),
       db.query(`SELECT COUNT(*) AS c FROM brands`).catch(() => [[{c:0}]]),
-      db.query(`SELECT COUNT(*) AS c FROM branches`).catch(() => [[{c:0}]]),
-      // Top brands by purchase value
-      db.query(
-        `SELECT b.id, b.name, COALESCE(SUM(p.total_price),0) AS total, COUNT(p.id) AS cnt
-         FROM brands b LEFT JOIN purchases p ON p.brand_id = b.id
-             AND DATE(p.purchase_date) BETWEEN ? AND ?
-         GROUP BY b.id, b.name ORDER BY total DESC LIMIT 5`,
-        [from, to]).catch(() => [[]])
+      db.query(`SELECT COUNT(*) AS c FROM branches`).catch(() => [[{c:0}]])
     ]);
 
-    // Extract values
-    const salesV = Number(salesCurr[0][0].v || 0);
-    const salesC = Number(salesCurr[0][0].c || 0);
-    const salesVPrev = Number(salesPrev[0][0].v || 0);
-    const ordersC = Number(ordersCurr[0][0].c || 0);
-    const ordersCPrev = Number(ordersPrev[0][0].c || 0);
-    const expV = Number(expCurr[0][0].v || 0);
-    const expVPrev = Number(expPrev[0][0].v || 0);
-    const purV = Number(purCurr[0][0].v || 0);
-    const purVPrev = Number(purPrev[0][0].v || 0);
+    const salesV = currP.salesV;
+    const ordersC = currP.ordersC;
+    const expV = currP.expV;
+    const purV = currP.purV;
+    const salesVPrev  = prevP.salesV;
+    const ordersCPrev = prevP.ordersC;
+    const expVPrev    = prevP.expV;
+    const purVPrev    = prevP.purV;
 
     res.json({
-      period: { from, to, rangeDays, prevFrom: _ymd(prevFrom), prevTo: _ymd(prevTo) },
+      period: {
+        from, to,
+        rangeDays: prev.rangeDays,
+        prevFrom: prev.from, prevTo: prev.to, compareMode: prev.mode
+      },
       filters: { brandId: brandId || '', branchId: branchId || '' },
 
       // Executive KPIs
@@ -223,11 +316,16 @@ router.get('/overview', async (req, res) => {
 
       // Charts
       charts: {
-        dailySales:  dailySales[0].map(r => ({ date: _ymd(new Date(r.d)), total: Number(r.total), count: Number(r.cnt) })),
-        hourlyToday: hourlyToday[0].map(r => ({ hour: Number(r.h), total: Number(r.total) })),
-        topItems:    topItems[0].map(r => ({ name: r.name, qty: Number(r.qty), revenue: Number(r.rev) })),
-        topCashiers: topCashiers[0].map(r => ({ name: r.username, orders: Number(r.orders), total: Number(r.total) })),
-        topBrands:   topBrands[0].map(r => ({ id: r.id, name: r.name, total: Number(r.total), count: Number(r.cnt) }))
+        dailySales:   dailySales[0].map(r => ({ date: _ymd(new Date(r.d)), total: Number(r.total), count: Number(r.cnt) })),
+        hourlyToday:  hourlyToday[0].map(r => ({ hour: Number(r.h), total: Number(r.total) })),
+        topItems:     topItems[0].map(r => ({ name: r.name, qty: Number(r.qty), revenue: Number(r.rev) })),
+        topCashiers:  topCashiers[0].map(r => ({ name: r.username, orders: Number(r.orders), total: Number(r.total) })),
+        topBrands:    topBrands[0].map(r => ({ id: r.id, name: r.name,
+                         total: Number(r.purchases_total) + Number(r.sales_total),
+                         purchases: Number(r.purchases_total),
+                         sales: Number(r.sales_total),
+                         count: Number(r.purchase_count) })),
+        topBranches:  topBranches[0].map(r => ({ id: r.id, name: r.name, total: Number(r.total), count: Number(r.cnt) }))
       },
 
       // Alerts lists

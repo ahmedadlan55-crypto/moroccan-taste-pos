@@ -88,11 +88,26 @@ router.post('/', async (req, res) => {
     const expenseId = 'EXP-' + Date.now();
     const expenseDate = date ? new Date(date) : new Date();
 
-    // Insert expense row (unchanged)
+    // Resolve brand/branch from the creator's HR profile if not supplied
+    let resolvedBrandId  = brandId  || null;
+    let resolvedBranchId = branchId || null;
+    if ((!resolvedBrandId || !resolvedBranchId) && username) {
+      try {
+        const [u] = await db.query(
+          'SELECT brand_id, branch_id FROM users WHERE username = ? LIMIT 1', [username]);
+        if (u.length) {
+          if (!resolvedBrandId)  resolvedBrandId  = u[0].brand_id  || null;
+          if (!resolvedBranchId) resolvedBranchId = u[0].branch_id || null;
+        }
+      } catch(e) { /* no-op — column may not yet exist in dev */ }
+    }
+
+    // Insert expense row (with brand/branch if columns present)
     await db.query(
-      'INSERT INTO expenses (id, expense_date, category, description, amount, payment_method, username, notes) VALUES (?,?,?,?,?,?,?,?)',
+      'INSERT INTO expenses (id, expense_date, category, description, amount, payment_method, username, notes, brand_id, branch_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
       [expenseId, expenseDate, category || '', description || '', amount || 0,
-       paymentMethod || 'Cash', username || '', notes || '']);
+       paymentMethod || 'Cash', username || '', notes || '',
+       resolvedBrandId, resolvedBranchId]);
 
     const totalAmount = Number(amount) || 0;
     const useWorkflow = !forceLegacy && await _hasExpenseWorkflow();

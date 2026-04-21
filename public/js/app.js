@@ -1828,7 +1828,18 @@ function nav(sectionId) {
 // Enterprise Command Center — الرئيسية (new unified dashboard)
 // Uses single aggregator endpoint: GET /api/dashboard/overview
 // ═══════════════════════════════════════════════════════════════════
-window._ccFilters = { preset: 'week', from: '', to: '', brandId: '', branchId: '' };
+window._ccFilters = { preset: 'last7', from: '', to: '', brandId: '', branchId: '', compare: 'previous' };
+window._ccPresetLabels = {
+  today: 'اليوم', yesterday: 'أمس',
+  thisweek: 'هذا الأسبوع', lastweek: 'الأسبوع الماضي',
+  last7: 'آخر 7 أيام', last14: 'آخر 14 يوم',
+  thismonth: 'هذا الشهر', lastmonth: 'الشهر الماضي',
+  last30: 'آخر 30 يوم', last90: 'آخر 90 يوم',
+  thisquarter: 'هذا الربع', lastquarter: 'الربع الماضي',
+  thisyear: 'هذه السنة', lastyear: 'السنة الماضية',
+  week: 'آخر 7 أيام', month: 'هذا الشهر', quarter: 'هذا الربع', year: 'هذه السنة'
+};
+window._ccCompareLabels = { previous: 'الفترة السابقة', yearago: 'نفس الفترة السنة الماضية', none: 'بدون مقارنة' };
 var _ccClockInterval = null;
 var _ccBrandsLoaded = false;
 var _ccBranchesLoaded = false;
@@ -1877,14 +1888,20 @@ window.ccApplyCustomRange = function() {
 };
 
 window.ccResetFilters = function() {
-  window._ccFilters = { preset: 'week', from: '', to: '', brandId: '', branchId: '' };
-  if (q('#ccFBrand'))  q('#ccFBrand').value = '';
-  if (q('#ccFBranch')) q('#ccFBranch').value = '';
-  if (q('#ccFFrom'))   q('#ccFFrom').value = '';
-  if (q('#ccFTo'))     q('#ccFTo').value = '';
+  window._ccFilters = { preset: 'last7', from: '', to: '', brandId: '', branchId: '', compare: 'previous' };
+  if (q('#ccFBrand'))   q('#ccFBrand').value = '';
+  if (q('#ccFBranch'))  q('#ccFBranch').value = '';
+  if (q('#ccFCompare')) q('#ccFCompare').value = 'previous';
+  if (q('#ccFFrom'))    q('#ccFFrom').value = '';
+  if (q('#ccFTo'))      q('#ccFTo').value = '';
   document.querySelectorAll('[data-cc-preset]').forEach(function(el){
-    el.classList.toggle('active', el.getAttribute('data-cc-preset') === 'week');
+    el.classList.toggle('active', el.getAttribute('data-cc-preset') === 'last7');
   });
+  loadDashHome();
+};
+
+window.ccSetCompareMode = function(mode) {
+  window._ccFilters.compare = mode || 'previous';
   loadDashHome();
 };
 
@@ -1894,21 +1911,35 @@ window.ccExportPdf = function() {
 
 function _ccPopulateBrandBranchSelects() {
   var hdr = { 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') };
-  if (!_ccBrandsLoaded) {
+  // Always (re)bind onchange — even if the selects were previously populated,
+  // the user may have navigated away and come back, losing the handler.
+  var bSel = q('#ccFBrand');
+  if (bSel) {
+    bSel.onchange = function(){
+      window._ccFilters.brandId = this.value || '';
+      loadDashHome();
+    };
+  }
+  var brSel = q('#ccFBranch');
+  if (brSel) {
+    brSel.onchange = function(){
+      window._ccFilters.branchId = this.value || '';
+      loadDashHome();
+    };
+  }
+  if (!_ccBrandsLoaded && bSel) {
     fetch('/api/erp/brands', { headers: hdr }).then(function(r){return r.json();}).then(function(brs){
-      var sel = q('#ccFBrand'); if (!sel) return;
-      sel.innerHTML = '<option value="">كل البراندات</option>' +
+      bSel.innerHTML = '<option value="">كل البراندات</option>' +
         (brs||[]).map(function(b){return '<option value="'+b.id+'">'+_ccEsc(b.name||'')+'</option>';}).join('');
-      sel.onchange = function(){ window._ccFilters.brandId = this.value; loadDashHome(); };
+      if (window._ccFilters.brandId) bSel.value = window._ccFilters.brandId;
       _ccBrandsLoaded = true;
     }).catch(function(){});
   }
-  if (!_ccBranchesLoaded) {
+  if (!_ccBranchesLoaded && brSel) {
     fetch('/api/erp/branches-full', { headers: hdr }).then(function(r){return r.json();}).then(function(bnrs){
-      var sel = q('#ccFBranch'); if (!sel) return;
-      sel.innerHTML = '<option value="">كل الفروع</option>' +
+      brSel.innerHTML = '<option value="">كل الفروع</option>' +
         (bnrs||[]).map(function(b){return '<option value="'+b.id+'">'+_ccEsc(b.name||'')+'</option>';}).join('');
-      sel.onchange = function(){ window._ccFilters.branchId = this.value; loadDashHome(); };
+      if (window._ccFilters.branchId) brSel.value = window._ccFilters.branchId;
       _ccBranchesLoaded = true;
     }).catch(function(){});
   }
@@ -1931,21 +1962,70 @@ function _ccFetchAndRender() {
   if (f.to)       params.push('to='       + encodeURIComponent(f.to));
   if (f.brandId)  params.push('brandId='  + encodeURIComponent(f.brandId));
   if (f.branchId) params.push('branchId=' + encodeURIComponent(f.branchId));
+  if (f.compare)  params.push('compare='  + encodeURIComponent(f.compare));
   var url = '/api/dashboard/overview' + (params.length ? '?' + params.join('&') : '');
   var hdr = { 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') };
 
   fetch(url, { headers: hdr }).then(function(r){return r.json();}).then(function(d){
     if (!d || d.error) { showToast(d && d.error || 'فشل تحميل الداش بورد', true); return; }
     _ccRenderAll(d);
+    _ccRenderActiveTags();
   }).catch(function(e){
     showToast((e && e.message) || 'خطأ شبكة', true);
   });
 }
 
+// Render the currently-applied filters as removable chips
+function _ccRenderActiveTags() {
+  var box = q('#ccActiveTags'); if (!box) return;
+  var f = window._ccFilters;
+  var tags = [];
+  if (f.preset && window._ccPresetLabels[f.preset]) {
+    tags.push({ label: 'الفترة: ' + window._ccPresetLabels[f.preset], key: 'preset' });
+  } else if (f.from || f.to) {
+    tags.push({ label: 'تاريخ: ' + (f.from||'') + ' → ' + (f.to||''), key: 'dates' });
+  }
+  if (f.brandId) {
+    var bSel = q('#ccFBrand');
+    var name = bSel && bSel.selectedOptions[0] ? bSel.selectedOptions[0].textContent : f.brandId;
+    tags.push({ label: 'البراند: ' + name, key: 'brand' });
+  }
+  if (f.branchId) {
+    var brSel = q('#ccFBranch');
+    var name = brSel && brSel.selectedOptions[0] ? brSel.selectedOptions[0].textContent : f.branchId;
+    tags.push({ label: 'الفرع: ' + name, key: 'branch' });
+  }
+  if (f.compare && f.compare !== 'previous') {
+    tags.push({ label: 'مقارنة: ' + (window._ccCompareLabels[f.compare]||f.compare), key: 'compare' });
+  }
+  if (!tags.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'flex';
+  box.innerHTML = '<span style="font-size:11px;font-weight:800;color:var(--wo-on-surface-subtle);padding:0 6px;">الفلاتر المُطبَّقة:</span>' +
+    tags.map(function(t){
+      return '<span class="cc-active-tag"><i class="fas fa-filter"></i>' + _ccEsc(t.label) +
+        '<button type="button" onclick="ccClearTag(\''+t.key+'\')" aria-label="إزالة"><i class="fas fa-xmark"></i></button></span>';
+    }).join('');
+}
+
+window.ccClearTag = function(key) {
+  var f = window._ccFilters;
+  if (key === 'preset')  { f.preset = 'last7'; document.querySelectorAll('[data-cc-preset]').forEach(function(el){ el.classList.toggle('active', el.getAttribute('data-cc-preset')==='last7'); }); }
+  if (key === 'dates')   { f.from = ''; f.to = ''; if (q('#ccFFrom')) q('#ccFFrom').value = ''; if (q('#ccFTo')) q('#ccFTo').value = ''; f.preset = 'last7'; document.querySelectorAll('[data-cc-preset]').forEach(function(el){ el.classList.toggle('active', el.getAttribute('data-cc-preset')==='last7'); }); }
+  if (key === 'brand')   { f.brandId = '';  if (q('#ccFBrand'))   q('#ccFBrand').value = ''; }
+  if (key === 'branch')  { f.branchId = ''; if (q('#ccFBranch'))  q('#ccFBranch').value = ''; }
+  if (key === 'compare') { f.compare = 'previous'; if (q('#ccFCompare')) q('#ccFCompare').value = 'previous'; }
+  loadDashHome();
+};
+
 function _ccRenderAll(d) {
-  // Period label
+  // Period label (include compare window if enabled)
   if (q('#ccPeriodLabel')) {
-    q('#ccPeriodLabel').innerHTML = '<i class="fas fa-calendar-range"></i> من <b>'+d.period.from+'</b> إلى <b>'+d.period.to+'</b> ('+d.period.rangeDays+' يوم)';
+    var cmp = '';
+    if (d.period.compareMode && d.period.compareMode !== 'none' && d.period.prevFrom && d.period.prevTo) {
+      var lbl = window._ccCompareLabels[d.period.compareMode] || '';
+      cmp = ' · <span style="color:var(--wo-on-surface-subtle);font-weight:600;">مقارنة مع '+lbl+': '+d.period.prevFrom+' → '+d.period.prevTo+'</span>';
+    }
+    q('#ccPeriodLabel').innerHTML = '<i class="fas fa-calendar-range"></i> من <b>'+d.period.from+'</b> إلى <b>'+d.period.to+'</b> ('+d.period.rangeDays+' يوم)' + cmp;
   }
 
   // KPIs
@@ -1991,13 +2071,16 @@ function _ccSetKpi(id, value, delta, isMoney, digits, invertDelta) {
   var v = q('#'+id); if (v) v.textContent = _ccFmt(value, digits!=null?digits:2);
   var dEl = q('#'+id+'Delta');
   if (dEl) {
+    var mode = window._ccFilters.compare || 'previous';
+    if (mode === 'none') { dEl.className = 'cc-kpi-delta flat'; dEl.innerHTML = '<small style="color:var(--wo-on-surface-subtle);font-weight:600;">بدون مقارنة</small>'; return; }
     var deltaNum = Number(delta || 0);
     // For expenses/purchases, going DOWN is good — invert the color
     var effective = invertDelta ? -deltaNum : deltaNum;
     var cls = _ccDeltaClass(effective);
     var arrow = deltaNum > 0.5 ? '<i class="fas fa-arrow-up"></i>' : (deltaNum < -0.5 ? '<i class="fas fa-arrow-down"></i>' : '<i class="fas fa-minus"></i>');
+    var lbl   = mode === 'yearago' ? 'vs نفس الفترة السنة الماضية' : 'vs الفترة السابقة';
     dEl.className = 'cc-kpi-delta ' + cls;
-    dEl.innerHTML = arrow + ' ' + (deltaNum > 0 ? '+' : '') + deltaNum.toFixed(1) + '% <small style="color:var(--wo-on-surface-subtle);font-weight:600;">vs الفترة السابقة</small>';
+    dEl.innerHTML = arrow + ' ' + (deltaNum > 0 ? '+' : '') + deltaNum.toFixed(1) + '% <small style="color:var(--wo-on-surface-subtle);font-weight:600;">'+lbl+'</small>';
   }
 }
 

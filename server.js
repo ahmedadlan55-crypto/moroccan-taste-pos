@@ -2229,6 +2229,8 @@ async function runMigrations() {
   await addColumnIfMissing('purchase_orders',    'branch_id', "VARCHAR(50)");
   await addColumnIfMissing('shortage_requests',  'brand_id',  "VARCHAR(50)");
   await addColumnIfMissing('shortage_requests',  'branch_id', "VARCHAR(50)");
+  await addColumnIfMissing('expenses',           'brand_id',  "VARCHAR(50)");
+  await addColumnIfMissing('expenses',           'branch_id', "VARCHAR(50)");
 
   // Notifications (Phase D preparation)
   await createTableIfMissing('notifications', `

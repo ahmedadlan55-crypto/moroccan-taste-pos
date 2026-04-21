@@ -920,49 +920,74 @@ router.get('/inventory-valuation', async (req, res) => {
 
     // If per-warehouse/brand breakdown requested — use warehouse_stock
     if (by === 'warehouse' || by === 'brand' || warehouse_id || brand_id) {
+      // Detect whether Phase-3 avg_cost column exists on warehouse_stock
+      let hasAvgCost = false;
+      try {
+        const [cols] = await db.query("SHOW COLUMNS FROM warehouse_stock LIKE 'avg_cost'");
+        hasAvgCost = cols.length > 0;
+      } catch(e) { hasAvgCost = false; }
+
+      const costExpr = hasAvgCost
+        ? 'COALESCE(NULLIF(ws.avg_cost, 0), i.cost, 0)'
+        : 'COALESCE(i.cost, 0)';
+
       let sql = `
         SELECT ws.warehouse_id, w.name AS warehouse_name, w.brand_id, COALESCE(br.name,'') AS brand_name,
-               ws.item_id, i.name AS item_name, i.category, i.unit, i.cost,
-               ws.qty
+               ws.item_id, i.name AS item_name, i.category, i.unit,
+               ${costExpr} AS cost,
+               COALESCE(ws.qty, 0) AS qty
         FROM warehouse_stock ws
         JOIN warehouses w ON ws.warehouse_id = w.id
         LEFT JOIN brands br ON w.brand_id = br.id
         JOIN inv_items i ON ws.item_id = i.id
-        WHERE i.active = 1 AND w.is_active = 1`;
+        WHERE COALESCE(i.active,1) = 1 AND COALESCE(w.is_active,1) = 1`;
       const params = [];
       if (brand_id) { sql += ' AND w.brand_id = ?'; params.push(brand_id); }
       if (warehouse_id) { sql += ' AND ws.warehouse_id = ?'; params.push(warehouse_id); }
-      const [rows] = await db.query(sql, params);
+      sql += ' ORDER BY w.name, i.name';
+      let rows = [];
+      try {
+        const [r] = await db.query(sql, params);
+        rows = r;
+      } catch(e) {
+        // warehouse_stock may not exist yet — fall through to inv_items path
+        console.warn('[inventory-valuation] warehouse_stock query failed, falling back:', e.message);
+        rows = [];
+      }
 
-      const byBrand = {}, byWarehouse = {}, byCategory = {};
-      let totalValue = 0; let totalQty = 0;
-      rows.forEach(r => {
-        const val = (Number(r.qty)||0) * (Number(r.cost)||0);
-        totalValue += val;
-        totalQty += Number(r.qty) || 0;
+      // If we got rows from warehouse_stock, use them
+      if (rows.length) {
+        const byBrand = {}, byWarehouse = {}, byCategory = {};
+        let totalValue = 0; let totalQty = 0;
+        rows.forEach(r => {
+          const val = (Number(r.qty)||0) * (Number(r.cost)||0);
+          totalValue += val;
+          totalQty += Number(r.qty) || 0;
 
-        // By brand
-        const bKey = r.brand_id || 'no_brand';
-        if (!byBrand[bKey]) byBrand[bKey] = { brandId: r.brand_id, brandName: r.brand_name || 'بدون براند', totalValue: 0, items: 0 };
-        byBrand[bKey].totalValue += val; byBrand[bKey].items++;
+          const bKey = r.brand_id || 'no_brand';
+          if (!byBrand[bKey]) byBrand[bKey] = { brandId: r.brand_id, brandName: r.brand_name || 'بدون براند', totalValue: 0, items: 0 };
+          byBrand[bKey].totalValue += val; byBrand[bKey].items++;
 
-        // By warehouse
-        if (!byWarehouse[r.warehouse_id]) byWarehouse[r.warehouse_id] = { warehouseId: r.warehouse_id, warehouseName: r.warehouse_name, brandName: r.brand_name, totalValue: 0, items: [] };
-        byWarehouse[r.warehouse_id].totalValue += val;
-        byWarehouse[r.warehouse_id].items.push({ name: r.item_name, qty: Number(r.qty)||0, cost: Number(r.cost)||0, value: val, unit: r.unit, category: r.category });
+          if (!byWarehouse[r.warehouse_id]) byWarehouse[r.warehouse_id] = { warehouseId: r.warehouse_id, warehouseName: r.warehouse_name, brandName: r.brand_name, totalValue: 0, items: [] };
+          byWarehouse[r.warehouse_id].totalValue += val;
+          byWarehouse[r.warehouse_id].items.push({ name: r.item_name, qty: Number(r.qty)||0, cost: Number(r.cost)||0, value: val, unit: r.unit, category: r.category });
 
-        // By category
-        const cat = r.category || 'أخرى';
-        if (!byCategory[cat]) byCategory[cat] = { totalValue: 0, items: [] };
-        byCategory[cat].totalValue += val;
-        byCategory[cat].items.push({ name: r.item_name, stock: Number(r.qty)||0, cost: Number(r.cost)||0, value: val, unit: r.unit });
-      });
-      return res.json({ method, totalValue, totalQty, itemCount: rows.length, byBrand, byWarehouse, categories: byCategory });
+          const cat = r.category || 'أخرى';
+          if (!byCategory[cat]) byCategory[cat] = { totalValue: 0, items: [] };
+          byCategory[cat].totalValue += val;
+          byCategory[cat].items.push({ name: r.item_name, stock: Number(r.qty)||0, cost: Number(r.cost)||0, value: val, unit: r.unit });
+        });
+        return res.json({ method, totalValue, totalQty, itemCount: rows.length, byBrand, byWarehouse, categories: byCategory });
+      }
+      // If warehouse_stock query returned no rows, fall through to inv_items aggregate
     }
 
-    // Default: aggregate from inv_items
-    const [items] = await db.query('SELECT id, name, category, cost, stock, unit FROM inv_items WHERE active = 1');
+    // Default: aggregate from inv_items (used when no warehouse_stock data yet)
+    const [items] = await db.query(
+      "SELECT id, name, category, COALESCE(cost,0) AS cost, COALESCE(stock,0) AS stock, unit " +
+      "FROM inv_items WHERE COALESCE(active,1) = 1");
     const categories = {};
+    const byBrand = {};
     let totalValue = 0;
     items.forEach(i => {
       const cat = i.category || 'أخرى';
@@ -972,8 +997,11 @@ router.get('/inventory-valuation', async (req, res) => {
       categories[cat].totalValue += val;
       totalValue += val;
     });
-    res.json({ method, categories, totalValue, itemCount: items.length });
-  } catch(e) { res.json({ method: 'perpetual', categories: {}, totalValue: 0, itemCount: 0, error: e.message }); }
+    res.json({ method, categories, totalValue, itemCount: items.length, byBrand: {}, byWarehouse: {} });
+  } catch(e) {
+    console.error('[inventory-valuation] error:', e);
+    res.json({ method: 'perpetual', categories: {}, totalValue: 0, itemCount: 0, byBrand: {}, byWarehouse: {}, error: e.message });
+  }
 });
 
 // Sync inventory GL accounts — create accounts for each category under 112

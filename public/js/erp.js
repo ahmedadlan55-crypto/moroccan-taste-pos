@@ -2806,107 +2806,171 @@ window.erpSetInvMethod = function(method) {
 };
 
 function erpLoadInventoryValuation(filters) {
+  var container = document.getElementById('invValuationContent');
+  if (!container) return;
+  var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
   var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
   filters = filters || {};
   var q = 'by=brand';
-  if (filters.brand_id) q += '&brand_id=' + filters.brand_id;
-  if (filters.warehouse_id) q += '&warehouse_id=' + filters.warehouse_id;
-  var token = localStorage.getItem('pos_token');
-  fetch('/api/erp/inventory-valuation?' + q, { headers: { 'Authorization': 'Bearer ' + token } })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-    var container = document.getElementById('invValuationContent');
-    var html = '';
+  if (filters.brand_id) q += '&brand_id=' + encodeURIComponent(filters.brand_id);
+  if (filters.warehouse_id) q += '&warehouse_id=' + encodeURIComponent(filters.warehouse_id);
 
-    // Filter bar — brand + warehouse
-    html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">';
-    html += '<span style="font-weight:700;color:#475569;"><i class="fas fa-filter"></i> فلتر:</span>';
-    html += '<select id="invValBrandFilter" class="form-control" style="width:200px;" onchange="erpReloadInvValuation()"><option value="">كل البراندات</option></select>';
-    html += '<select id="invValWhFilter" class="form-control" style="width:220px;" onchange="erpReloadInvValuation()"><option value="">كل المستودعات</option></select>';
-    html += '</div>';
+  container.innerHTML =
+    '<div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><div class="wo-empty-title">جاري تحميل التقييم...</div></div>';
 
-    // Summary card
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">';
-    html += '<div style="background:#eff6ff;padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:#1e40af;font-weight:700;">إجمالي قيمة المخزون</div><div style="font-size:24px;font-weight:900;color:#1e40af;">' + fmt(data.totalValue) + ' SAR</div></div>';
-    html += '<div style="background:#f0fdf4;padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:#166534;font-weight:700;">عدد الأصناف</div><div style="font-size:24px;font-weight:900;color:#16a34a;">' + (data.itemCount||0) + '</div></div>';
-    html += '<div style="background:#fef3c7;padding:16px;border-radius:14px;text-align:center;"><div style="font-size:12px;color:#92400e;font-weight:700;">نوع الجرد</div><div style="font-size:24px;font-weight:900;color:#f59e0b;">' + (data.method==='perpetual'?'مستمر':'دوري') + '</div></div>';
-    html += '</div>';
+  _erpGet('/erp/inventory-valuation?' + q, function(data) {
+    try {
+      if (!data || data.error) {
+        container.innerHTML =
+          '<div class="wo-empty">' +
+            '<i class="fas fa-triangle-exclamation" style="color:var(--wo-danger);"></i>' +
+            '<div class="wo-empty-title">تعذّر تحميل التقييم</div>' +
+            '<div class="wo-empty-sub">'+esc((data && data.error) || 'خطأ غير متوقع — راجع اتصال الخادم')+'</div>' +
+            '<button class="wo-btn wo-btn-primary" onclick="erpLoadInventoryValuation()"><i class="fas fa-rotate"></i><span>إعادة المحاولة</span></button>' +
+          '</div>';
+        return;
+      }
 
-    // By Brand breakdown (if available)
-    if (data.byBrand && Object.keys(data.byBrand).length) {
-      html += '<div style="margin-bottom:14px;"><h3 style="font-size:14px;font-weight:800;margin-bottom:8px;"><i class="fas fa-tags" style="color:#8b5cf6;"></i> تقييم حسب البراند</h3>';
-      html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;">';
-      Object.keys(data.byBrand).forEach(function(k) {
-        var b = data.byBrand[k];
-        html += '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px;">' +
-          '<div style="font-weight:800;color:#1e293b;margin-bottom:6px;"><i class="fas fa-store" style="color:#8b5cf6;margin-left:6px;"></i>' + b.brandName + '</div>' +
-          '<div style="font-size:22px;font-weight:900;color:#1e40af;">' + fmt(b.totalValue) + '</div>' +
-          '<div style="font-size:11px;color:#94a3b8;">' + b.items + ' صنف</div></div>';
-      });
-      html += '</div></div>';
-    }
+      var byBrand = data.byBrand || {};
+      var byWh = data.byWarehouse || {};
+      var cats = data.categories || {};
+      var hasData = data.itemCount > 0 || Object.keys(cats).length > 0;
 
-    // By Warehouse breakdown (if available)
-    if (data.byWarehouse && Object.keys(data.byWarehouse).length) {
-      html += '<div style="margin-bottom:14px;"><h3 style="font-size:14px;font-weight:800;margin-bottom:8px;"><i class="fas fa-warehouse" style="color:#0ea5e9;"></i> تقييم حسب المستودع</h3>';
-      html += '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
-      html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">المستودع</th><th>البراند</th><th>عدد الأصناف</th><th style="text-align:start;">القيمة</th></tr></thead><tbody>';
-      Object.keys(data.byWarehouse).forEach(function(k) {
-        var w = data.byWarehouse[k];
-        html += '<tr style="border-bottom:1px solid #e2e8f0;"><td style="padding:10px 14px;font-weight:800;">' + w.warehouseName + '</td>' +
-          '<td style="padding:10px 14px;">' + (w.brandName||'—') + '</td>' +
-          '<td style="padding:10px 14px;">' + w.items.length + '</td>' +
-          '<td style="padding:10px 14px;text-align:start;font-weight:800;color:#1e40af;">' + fmt(w.totalValue) + '</td></tr>';
-      });
-      html += '</tbody></table></div></div>';
-    }
+      var html = '';
 
-    // Categories table
-    var cats = data.categories || {};
-    var catNames = Object.keys(cats);
-    if (catNames.length) {
-      html += '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;">';
-      html += '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
-      html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">التصنيف</th><th style="padding:10px 14px;">عدد الأصناف</th><th style="padding:10px 14px;text-align:start;">القيمة الإجمالية</th></tr></thead><tbody>';
-      catNames.forEach(function(cat) {
-        var c = cats[cat];
-        html += '<tr style="border-bottom:1px solid #e2e8f0;">';
-        html += '<td style="padding:10px 14px;font-weight:800;"><i class="fas fa-box" style="color:#3b82f6;margin-left:6px;"></i>' + cat + '</td>';
-        html += '<td style="padding:10px 14px;">' + c.items.length + ' صنف</td>';
-        html += '<td style="padding:10px 14px;text-align:start;font-weight:800;color:#1e40af;">' + fmt(c.totalValue) + '</td>';
-        html += '</tr>';
-        // Show items under each category
-        c.items.forEach(function(item) {
-          html += '<tr style="background:#f8fafc;border-bottom:1px solid #f1f5f9;">';
-          html += '<td style="padding:6px 14px;padding-right:30px;font-size:12px;color:#475569;">' + item.name + '</td>';
-          html += '<td style="padding:6px 14px;font-size:12px;">' + item.stock + ' ' + (item.unit||'') + '</td>';
-          html += '<td style="padding:6px 14px;text-align:start;font-size:12px;font-weight:700;">' + fmt(item.value) + '</td>';
-          html += '</tr>';
+      // Filter bar using wo-toolbar
+      html += '<section class="wo-toolbar" aria-label="تصفية التقييم">' +
+        '<div class="wo-field">' +
+          '<label class="wo-field-label"><i class="fas fa-tags"></i> البراند</label>' +
+          '<select id="invValBrandFilter" class="wo-select" onchange="erpReloadInvValuation()"><option value="">كل البراندات</option></select>' +
+        '</div>' +
+        '<div class="wo-field">' +
+          '<label class="wo-field-label"><i class="fas fa-warehouse"></i> المستودع</label>' +
+          '<select id="invValWhFilter" class="wo-select" onchange="erpReloadInvValuation()"><option value="">كل المستودعات</option></select>' +
+        '</div>' +
+        '<div class="wo-field" style="align-self:flex-end;">' +
+          '<button class="wo-btn wo-btn-secondary" onclick="erpLoadInventoryValuation()"><i class="fas fa-rotate"></i><span>تحديث</span></button>' +
+        '</div>' +
+      '</section>';
+
+      // Summary metric strip (uses wo-metric)
+      if (typeof _woMetric === 'function') {
+        html += '<div class="wo-metric-strip">' +
+          _woMetric('fa-sack-dollar', 'success', 'إجمالي قيمة المخزون', fmt(data.totalValue) + ' ر.س', 'success') +
+          _woMetric('fa-boxes-stacked', 'info', 'عدد الأصناف', (data.itemCount||0), 'info') +
+          _woMetric('fa-warehouse', 'purple', 'عدد المستودعات', Object.keys(byWh).length || 1, 'purple') +
+          _woMetric('fa-scale-balanced', 'warning', 'طريقة الاحتساب', (data.method==='perpetual'?'مستمر':'دوري'), 'warning') +
+        '</div>';
+      }
+
+      if (!hasData) {
+        html +=
+          '<div class="wo-empty">' +
+            '<i class="fas fa-inbox"></i>' +
+            '<div class="wo-empty-title">لا توجد أصناف في المخزون</div>' +
+            '<div class="wo-empty-sub">أضف أصنافاً من صفحة المنيو، أو أدخل رصيد افتتاحي من صفحة الجرد.</div>' +
+          '</div>';
+        container.innerHTML = html;
+        _erpPopulateValuationFilters(filters);
+        return;
+      }
+
+      // Per-brand cards
+      if (Object.keys(byBrand).length) {
+        html += '<h3 class="wo-section-heading" style="font-size:14px;font-weight:800;margin:24px 0 12px;color:#0f172a;"><i class="fas fa-tags" style="color:#8b5cf6;"></i> تقييم حسب البراند</h3>';
+        html += '<div class="wo-metric-strip">';
+        Object.keys(byBrand).forEach(function(k) {
+          var b = byBrand[k];
+          html +=
+            '<div class="wo-metric accent-purple">' +
+              '<div class="wo-metric-icon" style="background:var(--wo-purple-bg);color:var(--wo-purple);"><i class="fas fa-store"></i></div>' +
+              '<div class="wo-metric-body">' +
+                '<div class="wo-metric-label">'+esc(b.brandName||'بدون براند')+'</div>' +
+                '<div class="wo-metric-value">'+fmt(b.totalValue)+'</div>' +
+                '<div class="wo-text-subtle wo-text-caption">'+b.items+' صنف</div>' +
+              '</div>' +
+            '</div>';
         });
-      });
-      html += '<tr style="background:#0f172a;color:#fff;font-weight:900;"><td style="padding:10px 14px;">الإجمالي</td><td></td><td style="padding:10px 14px;text-align:start;font-size:15px;">' + fmt(data.totalValue) + '</td></tr>';
-      html += '</tbody></table></div>';
-    } else {
-      html += '<div style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-inbox" style="font-size:32px;margin-bottom:8px;"></i><p>لا توجد أصناف مخزون</p></div>';
-    }
+        html += '</div>';
+      }
 
-    container.innerHTML = html;
-    // Populate filter dropdowns
-    var bSel = document.getElementById('invValBrandFilter');
-    var wSel = document.getElementById('invValWhFilter');
-    if (bSel) {
-      window._apiBridge.withSuccessHandler(function(brands) {
-        bSel.innerHTML = '<option value="">كل البراندات</option>' + (brands||[]).map(function(b){return '<option value="'+b.id+'"'+(filters.brand_id===b.id?' selected':'')+'>'+b.name+'</option>';}).join('');
-      }).getBrands();
+      // Per-warehouse table
+      if (Object.keys(byWh).length) {
+        html += '<h3 style="font-size:14px;font-weight:800;margin:24px 0 12px;color:#0f172a;"><i class="fas fa-warehouse" style="color:#0ea5e9;"></i> تقييم حسب المستودع</h3>';
+        html += '<div class="wo-table-surface"><table class="wo-table"><thead><tr>' +
+          '<th>المستودع</th><th>البراند</th><th class="num">عدد الأصناف</th><th class="num">القيمة</th>' +
+          '</tr></thead><tbody>';
+        Object.keys(byWh).forEach(function(k) {
+          var w = byWh[k];
+          html += '<tr>' +
+            '<td data-label="المستودع"><b>'+esc(w.warehouseName||'—')+'</b></td>' +
+            '<td data-label="البراند">'+esc(w.brandName||'—')+'</td>' +
+            '<td data-label="عدد الأصناف" class="num">'+(w.items?w.items.length:0)+'</td>' +
+            '<td data-label="القيمة" class="num strong"><span class="wo-money pos">'+fmt(w.totalValue)+'</span></td>' +
+          '</tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+
+      // Categories breakdown
+      if (Object.keys(cats).length) {
+        html += '<h3 style="font-size:14px;font-weight:800;margin:24px 0 12px;color:#0f172a;"><i class="fas fa-sitemap" style="color:#3b82f6;"></i> تقييم حسب التصنيف</h3>';
+        html += '<div class="wo-table-surface"><table class="wo-table"><thead><tr>' +
+          '<th>التصنيف / الصنف</th><th class="num">الكمية</th><th class="num">القيمة</th>' +
+          '</tr></thead><tbody>';
+        Object.keys(cats).forEach(function(cat) {
+          var c = cats[cat];
+          html += '<tr style="background:var(--wo-surface-2);">' +
+            '<td colspan="2" style="font-weight:800;"><i class="fas fa-folder-open" style="color:#3b82f6;margin-left:6px;"></i>'+esc(cat)+' <span class="wo-text-subtle wo-text-caption">· '+(c.items?c.items.length:0)+' صنف</span></td>' +
+            '<td class="num strong"><span class="wo-money pos">'+fmt(c.totalValue)+'</span></td>' +
+          '</tr>';
+          (c.items||[]).forEach(function(item) {
+            html += '<tr>' +
+              '<td style="padding-inline-start:36px;" data-label="الصنف" class="wo-text-muted">'+esc(item.name||'')+'</td>' +
+              '<td data-label="الكمية" class="num">'+fmt(item.stock||0)+' <span class="wo-text-subtle wo-text-caption">'+esc(item.unit||'')+'</span></td>' +
+              '<td data-label="القيمة" class="num"><span class="wo-money">'+fmt(item.value||0)+'</span></td>' +
+            '</tr>';
+          });
+        });
+        html += '</tbody><tfoot><tr>' +
+          '<td colspan="2" style="text-align:end;font-weight:800;">الإجمالي الكلّي</td>' +
+          '<td class="num strong" style="font-size:15px;"><span class="wo-money pos">'+fmt(data.totalValue)+'</span></td>' +
+          '</tr></tfoot></table></div>';
+      }
+
+      container.innerHTML = html;
+      _erpPopulateValuationFilters(filters);
+    } catch(ex) {
+      console.error('[inventory-valuation] render error:', ex);
+      container.innerHTML =
+        '<div class="wo-empty">' +
+          '<i class="fas fa-triangle-exclamation" style="color:var(--wo-danger);"></i>' +
+          '<div class="wo-empty-title">خطأ في عرض التقييم</div>' +
+          '<div class="wo-empty-sub">'+esc(ex.message||'خطأ غير متوقع')+'</div>' +
+          '<button class="wo-btn wo-btn-primary" onclick="erpLoadInventoryValuation()"><i class="fas fa-rotate"></i><span>إعادة المحاولة</span></button>' +
+        '</div>';
     }
-    if (wSel) {
-      fetch('/api/erp/warehouses', { headers: { 'Authorization': 'Bearer ' + token } })
-        .then(function(r){return r.json();})
-        .then(function(whs){
-          wSel.innerHTML = '<option value="">كل المستودعات</option>' + (whs||[]).map(function(w){return '<option value="'+w.id+'"'+(filters.warehouse_id===w.id?' selected':'')+'>'+(w.name||'')+'</option>';}).join('');
-        }).catch(function(){});
-    }
-  }).catch(function(e){ console.error(e); });
+  });
+}
+
+function _erpPopulateValuationFilters(filters) {
+  filters = filters || {};
+  var bSel = document.getElementById('invValBrandFilter');
+  var wSel = document.getElementById('invValWhFilter');
+  if (bSel) {
+    _erpGet('/erp/brands', function(brands) {
+      if (!Array.isArray(brands)) brands = [];
+      bSel.innerHTML = '<option value="">كل البراندات</option>' +
+        brands.map(function(b){return '<option value="'+b.id+'"'+(filters.brand_id===b.id?' selected':'')+'>'+(b.name||'')+'</option>';}).join('');
+    });
+  }
+  if (wSel) {
+    _erpGet('/erp/warehouses-list', function(whs) {
+      if (!Array.isArray(whs)) whs = [];
+      wSel.innerHTML = '<option value="">كل المستودعات</option>' +
+        whs.map(function(w){return '<option value="'+w.id+'"'+(filters.warehouse_id===w.id?' selected':'')+'>'+(w.name||'')+'</option>';}).join('');
+    });
+  }
 }
 
 window.erpReloadInvValuation = function() {

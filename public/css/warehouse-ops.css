@@ -773,8 +773,62 @@
   transition: transform var(--wo-dur-4) var(--wo-ease-emphasized),
               opacity var(--wo-dur-3) var(--wo-ease);
 }
+.wo-modal.wo-modal-sm  { max-width: 420px; }
 .wo-modal.wo-modal-lg  { max-width: 820px; }
 .wo-modal.wo-modal-xl  { max-width: 1100px; }
+
+/* Message modals (confirm/alert) — no header/footer separation, body-only */
+.wo-modal-message {
+  padding: var(--wo-space-6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--wo-space-3);
+}
+.wo-modal-message-icon {
+  width: 64px; height: 64px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px;
+  flex-shrink: 0;
+  animation: wo-modal-icon-pop var(--wo-dur-4) var(--wo-ease-emphasized);
+}
+.wo-modal-message-icon.info    { background: var(--wo-info-bg);    color: var(--wo-info); }
+.wo-modal-message-icon.success { background: var(--wo-success-bg); color: var(--wo-success); }
+.wo-modal-message-icon.warn    { background: var(--wo-warning-bg); color: var(--wo-warning); }
+.wo-modal-message-icon.danger  { background: var(--wo-danger-bg);  color: var(--wo-danger); }
+.wo-modal-message-icon.purple  { background: var(--wo-purple-bg);  color: var(--wo-purple); }
+@keyframes wo-modal-icon-pop {
+  0%   { transform: scale(0); opacity: 0; }
+  60%  { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.wo-modal-message-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--wo-on-surface);
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+}
+.wo-modal-message-text {
+  font-size: var(--wo-text-body);
+  color: var(--wo-on-surface-muted);
+  line-height: 1.6;
+  max-width: 380px;
+}
+.wo-modal-message-input {
+  width: 100%;
+  max-width: 340px;
+  margin-top: var(--wo-space-2);
+}
+.wo-modal-message-error {
+  font-size: var(--wo-text-caption);
+  color: var(--wo-danger);
+  font-weight: 700;
+  margin-top: -4px;
+  min-height: 16px;
+}
 .wo-modal-header {
   display: flex;
   align-items: center;
@@ -1587,4 +1641,53 @@
   outline: none;
   box-shadow: var(--wo-elev-focus);
   border-radius: var(--wo-radius-sm);
+}
+
+/* ──────────────────────────────────────────────────────────────
+ * 22. LEGACY CLASS SHIMS — keep old HTML working during migration
+ *
+ * Purpose: legacy `.btn` / `.form-control` / `.modal` markup that has
+ * not yet been migrated to wo-* should at least pick up the new tokens
+ * for consistency. These are ADDITIVE (do not override); legacy
+ * `style.css` rules still apply first, these refine what they can.
+ * ────────────────────────────────────────────────────────────── */
+
+/* Improve visual density of legacy erp-tables to match wo-table */
+.erp-table tbody tr { transition: background 120ms ease; }
+.erp-table tbody tr:hover td { background: var(--wo-surface-2) !important; }
+.erp-table th { text-transform: uppercase; letter-spacing: .05em; font-size: 11px; }
+
+/* Legacy modal overlay — unify backdrop look with wo-modal */
+.modal.hidden ~ .modal-backdrop,
+.modal-overlay:not(.wo-modal-overlay) {
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+/* Soft rounding for legacy buttons + inputs (so they don't look harsh
+ * next to wo-* siblings) */
+.btn:not(.wo-btn) {
+  transition: box-shadow 180ms ease, transform 120ms ease, background-color 180ms ease;
+}
+.btn:not(.wo-btn):hover { box-shadow: 0 2px 6px rgba(15,23,42,.08); }
+.btn:not(.wo-btn):active { transform: scale(.98); }
+
+.form-control:not(.wo-input):not(.wo-select) {
+  transition: border-color 120ms ease, box-shadow 180ms ease;
+}
+.form-control:not(.wo-input):not(.wo-select):focus-visible {
+  outline: none;
+  box-shadow: var(--wo-elev-focus);
+}
+
+/* Normalize legacy `.section-header` spacing across screens */
+.section-header { margin-bottom: var(--wo-space-4); }
+.section-header h2.section-title { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; }
+
+/* Utility for quick pages to opt into wo-section-like spacing without
+ * a full migration */
+.dash-section.wo-polish {
+  padding: var(--wo-space-6);
+  max-width: 1440px;
+  margin: 0 auto;
 }

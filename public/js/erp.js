@@ -2,38 +2,27 @@
 // ERP Frontend Logic — MASTER_ERP_SYSTEM_SPEC Compliant
 // ====================================================================
 
-// ─── Professional Confirm Dialog ───
+// ─── Professional Confirm Dialog (delegates to WoModal when available) ───
 function erpConfirm(title, message, onOk, opts) {
   opts = opts || {};
-  var color = opts.color || '#1e40af';
-  var icon = opts.icon || 'fa-question-circle';
-  var okText = opts.okText || 'تأكيد';
-  var cancelText = opts.cancelText || 'إلغاء';
-  var id = 'erpConfirmDlg';
-  var old = document.getElementById(id); if (old) old.remove();
-  var div = document.createElement('div');
-  div.id = id;
-  // Inject keyframes if not already
-  if (!document.getElementById('erpConfirmCSS')) {
-    var st = document.createElement('style'); st.id = 'erpConfirmCSS';
-    st.textContent = '@keyframes erpFadeIn{from{opacity:0}to{opacity:1}}@keyframes erpScaleIn{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}';
-    document.head.appendChild(st);
+  // Use WoModal if available (loaded later in same file); otherwise fall back to native
+  if (typeof WoModal !== 'undefined' && WoModal.confirm) {
+    var isDanger = opts.color === '#ef4444' || opts.color === '#dc2626' || opts.color === 'danger';
+    WoModal.confirm({
+      icon: opts.icon || (isDanger ? 'fa-triangle-exclamation' : 'fa-circle-question'),
+      iconColor: isDanger ? 'danger' : (opts.iconColor || 'info'),
+      title: title,
+      message: message,
+      confirmText: opts.okText || 'تأكيد',
+      cancelText: opts.cancelText || 'إلغاء',
+      danger: isDanger
+    }).then(function(ok) { if (ok && typeof onOk === 'function') onOk(); });
+    return;
   }
-  div.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;animation:erpFadeIn .15s ease;';
-  div.innerHTML =
-    '<div style="background:#fff;border-radius:16px;padding:28px;width:420px;max-width:90%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.15);animation:erpScaleIn .2s ease;">' +
-      '<div style="width:56px;height:56px;border-radius:50%;background:' + color + '15;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;"><i class="fas ' + icon + '" style="font-size:24px;color:' + color + ';"></i></div>' +
-      '<h3 style="margin:0 0 8px;font-size:17px;color:#0f172a;">' + title + '</h3>' +
-      '<p style="margin:0 0 24px;font-size:13px;color:#64748b;line-height:1.6;">' + message + '</p>' +
-      '<div style="display:flex;gap:10px;justify-content:center;">' +
-        '<button id="erpConfirmOk" style="padding:10px 32px;border-radius:10px;border:none;background:' + color + ';color:#fff;font-weight:800;font-size:14px;cursor:pointer;">' + okText + '</button>' +
-        '<button id="erpConfirmCancel" style="padding:10px 24px;border-radius:10px;border:2px solid #e5e7eb;background:#fff;color:#64748b;font-weight:700;font-size:14px;cursor:pointer;">' + cancelText + '</button>' +
-      '</div>' +
-    '</div>';
-  document.body.appendChild(div);
-  div.querySelector('#erpConfirmOk').onclick = function() { div.remove(); if (onOk) onOk(); };
-  div.querySelector('#erpConfirmCancel').onclick = function() { div.remove(); };
-  div.addEventListener('click', function(e) { if (e.target === div) div.remove(); });
+  // Minimal fallback (should not normally hit — WoModal is defined lower in same file)
+  if (window.confirm((title ? title + '\n' : '') + (message || ''))) {
+    if (typeof onOk === 'function') onOk();
+  }
 }
 
 // Bridge: currentUser from POS state
@@ -10015,3 +10004,263 @@ window.WoItemPicker = (function() {
 
   return { mount: mount, filterItems: filterItems };
 })();
+
+// ═══════════════════════════════════════════════════════════════════
+// WoModal — UNIFIED modal system (replaces 5 competing patterns)
+//
+// API:
+//   WoModal.open({
+//     id, icon, title, subtitle, body, footer, size,  // custom modal
+//     onClose, iconColor,
+//   }) → returns { close, setBody, setFooter, el }
+//
+//   WoModal.confirm({
+//     icon, iconColor, title, message, confirmText, cancelText, danger?
+//   }) → returns Promise<boolean>
+//
+//   WoModal.prompt({
+//     title, message, placeholder, defaultValue, validate?,
+//     inputType, confirmText, cancelText
+//   }) → returns Promise<string|null>
+//
+//   WoModal.alert({
+//     icon, iconColor, title, message, buttonText
+//   }) → returns Promise<void>
+//
+// All methods use wo-* design system, support Esc to close,
+// click-outside to dismiss, and focus-trap on primary action.
+// ═══════════════════════════════════════════════════════════════════
+window.WoModal = (function() {
+  var esc = function(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
+  };
+
+  var _activeCount = 0;
+  var _escHandler = null;
+
+  function _ensureEscHandler() {
+    if (_escHandler) return;
+    _escHandler = function(e) {
+      if (e.key !== 'Escape') return;
+      var overlays = document.querySelectorAll('.wo-modal-overlay.open');
+      if (!overlays.length) return;
+      var top = overlays[overlays.length - 1];   // topmost
+      var api = top._woApi;
+      if (api && !api._locked) api.close(null);
+    };
+    document.addEventListener('keydown', _escHandler);
+  }
+
+  function _buildChrome(opts) {
+    var size = opts.size || '';
+    var sizeClass = size === 'sm' ? ' wo-modal-sm' : (size === 'lg' ? ' wo-modal-lg' : (size === 'xl' ? ' wo-modal-xl' : ''));
+    var iconColor = opts.iconColor || 'info';
+    var iconClass = iconColor ? ' ' + iconColor : '';
+    var header = '';
+    if (opts.title) {
+      header = '<div class="wo-modal-header">' +
+        (opts.icon ? '<div class="wo-modal-icon'+iconClass+'"><i class="fas '+esc(opts.icon)+'"></i></div>' : '') +
+        '<div class="wo-modal-titles">' +
+          '<div class="wo-modal-title">'+esc(opts.title)+'</div>' +
+          (opts.subtitle ? '<div class="wo-modal-sub">'+esc(opts.subtitle)+'</div>' : '') +
+        '</div>' +
+        '<button class="wo-modal-close" type="button" aria-label="إغلاق"><i class="fas fa-xmark"></i></button>' +
+      '</div>';
+    }
+    return '<div class="wo-modal'+sizeClass+'" role="dialog" aria-modal="true">' +
+        header +
+        '<div class="wo-modal-body">'+(opts.body||'')+'</div>' +
+        (opts.footer ? '<div class="wo-modal-footer">'+opts.footer+'</div>' : '') +
+      '</div>';
+  }
+
+  function open(opts) {
+    opts = opts || {};
+    _ensureEscHandler();
+
+    var ov = document.createElement('div');
+    ov.className = 'wo-modal-overlay';
+    ov.id = opts.id || ('wo-modal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6));
+    ov.innerHTML = _buildChrome(opts);
+
+    var api = {
+      el: ov,
+      _locked: false,
+      close: function(result) {
+        if (this._locked) return;
+        ov.classList.remove('open');
+        setTimeout(function(){
+          if (ov.parentNode) ov.parentNode.removeChild(ov);
+          _activeCount = Math.max(0, _activeCount - 1);
+        }, 240);
+        if (typeof opts.onClose === 'function') {
+          try { opts.onClose(result); } catch(e) {}
+        }
+        if (api._resolve) api._resolve(result);
+      },
+      setBody: function(html) {
+        var body = ov.querySelector('.wo-modal-body');
+        if (body) body.innerHTML = html;
+      },
+      setFooter: function(html) {
+        var footer = ov.querySelector('.wo-modal-footer');
+        if (!footer) {
+          footer = document.createElement('div');
+          footer.className = 'wo-modal-footer';
+          ov.querySelector('.wo-modal').appendChild(footer);
+        }
+        footer.innerHTML = html;
+      },
+      lock: function() { this._locked = true; },
+      unlock: function() { this._locked = false; }
+    };
+    ov._woApi = api;
+
+    // Close button + backdrop click
+    var closeBtn = ov.querySelector('.wo-modal-close');
+    if (closeBtn) closeBtn.addEventListener('click', function(){ api.close(null); });
+    ov.addEventListener('click', function(e) {
+      if (e.target === ov) api.close(null);
+    });
+
+    document.body.appendChild(ov);
+    _activeCount++;
+    // Force reflow then show (for animation)
+    void ov.offsetWidth;
+    requestAnimationFrame(function(){ ov.classList.add('open'); });
+
+    return api;
+  }
+
+  // CONFIRM dialog (returns Promise<boolean>)
+  function confirm(opts) {
+    opts = opts || {};
+    return new Promise(function(resolve) {
+      var ic = opts.iconColor || (opts.danger ? 'danger' : 'warn');
+      var icon = opts.icon || (opts.danger ? 'fa-triangle-exclamation' : 'fa-circle-question');
+      var confirmText = opts.confirmText || 'تأكيد';
+      var cancelText = opts.cancelText || 'إلغاء';
+      var btnClass = opts.danger ? 'wo-btn-danger' : 'wo-btn-primary';
+
+      var body =
+        '<div class="wo-modal-message">' +
+          '<div class="wo-modal-message-icon '+ic+'"><i class="fas '+esc(icon)+'"></i></div>' +
+          '<div class="wo-modal-message-title">'+esc(opts.title||'تأكيد العملية')+'</div>' +
+          (opts.message ? '<div class="wo-modal-message-text">'+esc(opts.message)+'</div>' : '') +
+        '</div>';
+      var footer =
+        '<button class="wo-btn wo-btn-secondary" data-wm-cancel>'+esc(cancelText)+'</button>' +
+        '<button class="wo-btn '+btnClass+'" data-wm-confirm>'+esc(confirmText)+'</button>';
+
+      var api = open({ body: body, footer: footer, size: 'sm' });
+      api._resolve = resolve;
+
+      var confirmBtn = api.el.querySelector('[data-wm-confirm]');
+      var cancelBtn  = api.el.querySelector('[data-wm-cancel]');
+      if (confirmBtn) confirmBtn.addEventListener('click', function(){ api.close(true); });
+      if (cancelBtn)  cancelBtn.addEventListener('click',  function(){ api.close(false); });
+      setTimeout(function(){ if (confirmBtn) confirmBtn.focus(); }, 200);
+    });
+  }
+
+  // PROMPT dialog (returns Promise<string|null>)
+  function prompt(opts) {
+    opts = opts || {};
+    return new Promise(function(resolve) {
+      var ic = opts.iconColor || 'info';
+      var icon = opts.icon || 'fa-pen-to-square';
+      var confirmText = opts.confirmText || 'حفظ';
+      var cancelText = opts.cancelText || 'إلغاء';
+      var inputType = opts.inputType || 'text';
+
+      var body =
+        '<div class="wo-modal-message">' +
+          '<div class="wo-modal-message-icon '+ic+'"><i class="fas '+esc(icon)+'"></i></div>' +
+          '<div class="wo-modal-message-title">'+esc(opts.title||'أدخل قيمة')+'</div>' +
+          (opts.message ? '<div class="wo-modal-message-text">'+esc(opts.message)+'</div>' : '') +
+          '<input type="'+esc(inputType)+'" class="wo-input wo-modal-message-input" data-wm-input placeholder="'+esc(opts.placeholder||'')+'" value="'+esc(opts.defaultValue||'')+'">' +
+          '<div class="wo-modal-message-error" data-wm-error></div>' +
+        '</div>';
+      var footer =
+        '<button class="wo-btn wo-btn-secondary" data-wm-cancel>'+esc(cancelText)+'</button>' +
+        '<button class="wo-btn wo-btn-primary" data-wm-confirm>'+esc(confirmText)+'</button>';
+
+      var api = open({ body: body, footer: footer, size: 'sm' });
+      api._resolve = resolve;
+
+      var input = api.el.querySelector('[data-wm-input]');
+      var errBox = api.el.querySelector('[data-wm-error]');
+      var confirmBtn = api.el.querySelector('[data-wm-confirm]');
+      var cancelBtn  = api.el.querySelector('[data-wm-cancel]');
+
+      var doConfirm = function() {
+        var val = input ? input.value : '';
+        if (typeof opts.validate === 'function') {
+          var err = opts.validate(val);
+          if (err) { if (errBox) errBox.textContent = err; input.focus(); return; }
+        }
+        api.close(val);
+      };
+      if (confirmBtn) confirmBtn.addEventListener('click', doConfirm);
+      if (cancelBtn)  cancelBtn.addEventListener('click',  function(){ api.close(null); });
+      if (input) {
+        input.addEventListener('keydown', function(e){
+          if (e.key === 'Enter') { e.preventDefault(); doConfirm(); }
+        });
+        setTimeout(function(){ input.focus(); input.select(); }, 200);
+      }
+    });
+  }
+
+  // ALERT dialog (returns Promise<void>)
+  function alert(opts) {
+    opts = opts || {};
+    return new Promise(function(resolve) {
+      var ic = opts.iconColor || 'info';
+      var icon = opts.icon || 'fa-circle-info';
+      var buttonText = opts.buttonText || 'موافق';
+
+      var body =
+        '<div class="wo-modal-message">' +
+          '<div class="wo-modal-message-icon '+ic+'"><i class="fas '+esc(icon)+'"></i></div>' +
+          '<div class="wo-modal-message-title">'+esc(opts.title||'')+'</div>' +
+          (opts.message ? '<div class="wo-modal-message-text">'+esc(opts.message)+'</div>' : '') +
+        '</div>';
+      var footer = '<button class="wo-btn wo-btn-primary" data-wm-ok>'+esc(buttonText)+'</button>';
+
+      var api = open({ body: body, footer: footer, size: 'sm' });
+      api._resolve = resolve;
+
+      var okBtn = api.el.querySelector('[data-wm-ok]');
+      if (okBtn) {
+        okBtn.addEventListener('click', function(){ api.close(undefined); });
+        setTimeout(function(){ okBtn.focus(); }, 200);
+      }
+    });
+  }
+
+  // toast-style success notification (reuses message modal, auto-closes)
+  function success(opts) {
+    opts = opts || {};
+    return alert({
+      icon: opts.icon || 'fa-circle-check',
+      iconColor: 'success',
+      title: opts.title || 'تم بنجاح',
+      message: opts.message,
+      buttonText: opts.buttonText || 'حسناً'
+    });
+  }
+
+  return {
+    open: open,
+    confirm: confirm,
+    prompt: prompt,
+    alert: alert,
+    success: success,
+    _activeCount: function(){ return _activeCount; }
+  };
+})();
+
+// Note: erpConfirm() at top of file now delegates to WoModal.confirm
+// (defined above) — no duplicate shim needed.

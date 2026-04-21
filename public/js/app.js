@@ -278,7 +278,45 @@ const dict = {
     shiftClose: "إغلاق الوردية", cashAmount: "المبلغ النقدي (كاش)", cardAmount: "مدى / شبكة", kitaAmount: "كيتا / آجل",
     confirmClose: "اعتماد الجرد وإغلاق الوردية", cancel: "إلغاء",
     enterAmounts: "أدخل المبالغ الفعلية في الدرج:", shiftReport: "تقرير إغلاق الوردية",
-    categories: "التصنيفات", allItems: "الكل", outOfStock: "نفذ", inStock: "متوفر"
+    categories: "التصنيفات", allItems: "الكل", outOfStock: "نفذ", inStock: "متوفر",
+
+    // ═══ Admin ERP translations (Phase A foundation) ═══
+    "admin.dashboard": "لوحة تحكم المدير",
+    "admin.save": "حفظ", "admin.cancel": "إلغاء", "admin.delete": "حذف", "admin.edit": "تعديل",
+    "admin.add": "إضافة", "admin.search": "بحث", "admin.filter": "تصفية", "admin.refresh": "تحديث",
+    "admin.export": "تصدير", "admin.import": "استيراد", "admin.close": "إغلاق", "admin.apply": "تطبيق",
+    "admin.back": "رجوع", "admin.next": "التالي", "admin.prev": "السابق", "admin.submit": "إرسال",
+    "admin.confirm": "تأكيد", "admin.yes": "نعم", "admin.no": "لا", "admin.loading": "جاري التحميل...",
+    "admin.empty": "لا توجد بيانات", "admin.error": "خطأ", "admin.success": "تم بنجاح",
+    "admin.logout": "تسجيل خروج", "admin.toggleLang": "English",
+    // Menu items
+    "admin.nav.menu": "المنيو", "admin.nav.warehouse": "المستودعات والإنتاج",
+    "admin.nav.purchases": "المشتريات", "admin.nav.expenses": "المصروفات",
+    "admin.nav.custody": "العهد", "admin.nav.shifts": "سجل المناوبات",
+    "admin.nav.reports": "التقارير", "admin.nav.settings": "الإعدادات",
+    "admin.nav.erp": "نظام ERP", "admin.nav.accounting": "المحاسبة",
+    "admin.nav.customers": "العملاء والموردين", "admin.nav.cashMgmt": "إدارة النقد",
+    "admin.nav.general": "الإدارة العامة", "admin.nav.txns": "المعاملات",
+    "admin.nav.hr": "الموارد البشرية",
+    // Transactions
+    "txn.status.pending": "قيد الانتظار", "txn.status.in_progress": "قيد التنفيذ",
+    "txn.status.approved": "معتمدة", "txn.status.rejected": "مرفوضة",
+    "txn.status.closed": "مغلقة", "txn.status.draft": "مسودة", "txn.status.returned": "مُرجعة",
+    "txn.imp.critical": "عاجل", "txn.imp.high": "عالي", "txn.imp.medium": "متوسط", "txn.imp.low": "منخفض",
+    "txn.act.approve": "الموافقة", "txn.act.reject": "الرفض",
+    "txn.act.return": "الإرجاع", "txn.act.forward": "التحويل", "txn.act.close": "الإغلاق",
+    "txn.field.subject": "الموضوع", "txn.field.content": "المحتوى",
+    "txn.field.amount": "المبلغ", "txn.field.type": "نوع المعاملة",
+    "txn.field.importance": "درجة الأهمية", "txn.field.recipient": "المستلم",
+    "txn.field.note": "الملاحظة", "txn.field.attachment": "المرفق",
+    "txn.validation.noteRequired": "الملاحظة مطلوبة لهذا الإجراء",
+    // Payment
+    "pay.method.cash": "نقدي", "pay.method.bank": "تحويل بنكي",
+    "pay.method.cheque": "شيك", "pay.method.wire": "حوالة",
+    "pay.status.requested": "مطلوب", "pay.status.authorized": "معتمد",
+    "pay.status.paid": "مدفوع", "pay.status.closed": "مُقفل",
+    "pay.receipt": "إيصال الدفع", "pay.uploadReceipt": "ارفع إيصال الدفع",
+    "pay.bankAccount": "الحساب البنكي", "pay.recordPayment": "تسجيل الدفع"
   },
   en: {
     login: "Login", errLogin: "Login failed",
@@ -295,10 +333,48 @@ const dict = {
     shiftClose: "Close Shift", cashAmount: "Cash Amount", cardAmount: "Card / Network", kitaAmount: "Kita / Credit",
     confirmClose: "Confirm & Close Shift", cancel: "Cancel",
     enterAmounts: "Enter actual drawer amounts:", shiftReport: "Shift Close Report",
-    categories: "Categories", allItems: "All", outOfStock: "Out", inStock: "In Stock"
+    categories: "Categories", allItems: "All", outOfStock: "Out", inStock: "In Stock",
+
+    // ═══ Admin ERP translations ═══
+    "admin.dashboard": "Admin Dashboard",
+    "admin.save": "Save", "admin.cancel": "Cancel", "admin.delete": "Delete", "admin.edit": "Edit",
+    "admin.add": "Add", "admin.search": "Search", "admin.filter": "Filter", "admin.refresh": "Refresh",
+    "admin.export": "Export", "admin.import": "Import", "admin.close": "Close", "admin.apply": "Apply",
+    "admin.back": "Back", "admin.next": "Next", "admin.prev": "Previous", "admin.submit": "Submit",
+    "admin.confirm": "Confirm", "admin.yes": "Yes", "admin.no": "No", "admin.loading": "Loading...",
+    "admin.empty": "No data", "admin.error": "Error", "admin.success": "Done",
+    "admin.logout": "Logout", "admin.toggleLang": "العربية",
+    "admin.nav.menu": "Menu", "admin.nav.warehouse": "Warehouses & Production",
+    "admin.nav.purchases": "Purchases", "admin.nav.expenses": "Expenses",
+    "admin.nav.custody": "Custody", "admin.nav.shifts": "Shifts",
+    "admin.nav.reports": "Reports", "admin.nav.settings": "Settings",
+    "admin.nav.erp": "ERP System", "admin.nav.accounting": "Accounting",
+    "admin.nav.customers": "Customers & Suppliers", "admin.nav.cashMgmt": "Cash Management",
+    "admin.nav.general": "General Admin", "admin.nav.txns": "Transactions",
+    "admin.nav.hr": "Human Resources",
+    "txn.status.pending": "Pending", "txn.status.in_progress": "In Progress",
+    "txn.status.approved": "Approved", "txn.status.rejected": "Rejected",
+    "txn.status.closed": "Closed", "txn.status.draft": "Draft", "txn.status.returned": "Returned",
+    "txn.imp.critical": "Critical", "txn.imp.high": "High", "txn.imp.medium": "Medium", "txn.imp.low": "Low",
+    "txn.act.approve": "Approve", "txn.act.reject": "Reject",
+    "txn.act.return": "Return", "txn.act.forward": "Forward", "txn.act.close": "Close",
+    "txn.field.subject": "Subject", "txn.field.content": "Content",
+    "txn.field.amount": "Amount", "txn.field.type": "Transaction Type",
+    "txn.field.importance": "Importance", "txn.field.recipient": "Recipient",
+    "txn.field.note": "Note", "txn.field.attachment": "Attachment",
+    "txn.validation.noteRequired": "Note is required for this action",
+    "pay.method.cash": "Cash", "pay.method.bank": "Bank Transfer",
+    "pay.method.cheque": "Cheque", "pay.method.wire": "Wire",
+    "pay.status.requested": "Requested", "pay.status.authorized": "Authorized",
+    "pay.status.paid": "Paid", "pay.status.closed": "Closed",
+    "pay.receipt": "Payment Receipt", "pay.uploadReceipt": "Upload Payment Receipt",
+    "pay.bankAccount": "Bank Account", "pay.recordPayment": "Record Payment"
   }
 };
-const t = k => dict[state.lang][k] || k;
+const t = k => (dict[state.lang] && dict[state.lang][k]) || (dict.ar && dict.ar[k]) || k;
+// Expose t + dict globally so erp.js + inline code can use them
+window.t = t;
+window.dict = dict;
 
 // Notifications & Loaders
 function loader(showLoader = true) {
@@ -447,13 +523,36 @@ function toggleLang() {
 }
 
 function translateUI() {
+  // text nodes
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.getAttribute('data-i18n');
-    if (dict[state.lang][key]) {
-      el.textContent = dict[state.lang][key];
-    }
+    const val = t(key);
+    if (val) el.textContent = val;
   });
+  // placeholder attributes (inputs)
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    const val = t(key);
+    if (val) el.setAttribute('placeholder', val);
+  });
+  // title attributes (tooltips)
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const key = el.getAttribute('data-i18n-title');
+    const val = t(key);
+    if (val) el.setAttribute('title', val);
+  });
+  // HTML variant (supports nested icons + bold tags)
+  document.querySelectorAll('[data-i18n-html]').forEach(el => {
+    const key = el.getAttribute('data-i18n-html');
+    const icon = el.getAttribute('data-i18n-icon') || '';
+    const val = t(key);
+    if (val) el.innerHTML = (icon ? '<i class="' + icon + '"></i> ' : '') + val;
+  });
+  // Update document title (if set)
+  var titleKey = document.documentElement.getAttribute('data-i18n-title');
+  if (titleKey) { try { document.title = t(titleKey); } catch(e) {} }
 }
+window.translateUI = translateUI;
 
 // =========================================
 // Branding (Logo + Company Name)

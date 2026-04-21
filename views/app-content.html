@@ -439,10 +439,13 @@
           <!-- Tab 1: مواد المخزون -->
           <div class="sales-tab-content active" id="wh_items">
             <div class="filter-bar" style="justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-              <div style="display:flex; gap:8px; flex:1; max-width:600px; flex-wrap:wrap; align-items:center;">
+              <div style="display:flex; gap:8px; flex:1; max-width:800px; flex-wrap:wrap; align-items:center;">
                 <div class="form-group" style="flex:1; min-width:180px; margin:0;">
                   <input type="text" id="rawSearchQ" class="form-control" placeholder="بحث بالاسم أو الكود..." oninput="filterInvItems()">
                 </div>
+                <select id="rawBrandFilter" class="form-control" style="max-width:180px;background:linear-gradient(135deg,#faf5ff,#fff);border-color:#d8b4fe;" onchange="filterInvItems()">
+                  <option value="">🏪 كل البراندات</option>
+                </select>
                 <select id="rawCatFilter" class="form-control" style="max-width:160px;" onchange="filterInvItems()">
                   <option value="">كل التصنيفات</option>
                 </select>
@@ -471,13 +474,18 @@
 
           <!-- Tab 2: المخزون الفعلي -->
           <div class="sales-tab-content" id="wh_live">
-            <div class="filter-bar" style="justify-content:space-between; align-items:center;">
+            <div class="filter-bar" style="justify-content:space-between; align-items:center;flex-wrap:wrap;gap:10px;">
               <h3 style="margin:0; color:var(--primary);"><i class="fas fa-cubes"></i> سجل المخزون الفعلي (Live Ledger)</h3>
-              <button class="btn btn-primary" onclick="loadLiveInventory()"><i class="fas fa-sync"></i> تحديث السجل</button>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <select id="liveBrandFilter" class="form-control" style="max-width:200px;background:linear-gradient(135deg,#faf5ff,#fff);border-color:#d8b4fe;" onchange="loadLiveInventory()">
+                  <option value="">🏪 كل البراندات</option>
+                </select>
+                <button class="btn btn-primary" onclick="loadLiveInventory()"><i class="fas fa-sync"></i> تحديث</button>
+              </div>
             </div>
             <div class="table-wrapper">
               <table class="table">
-                <thead><tr><th>المادة الخام</th><th>التصنيف</th><th>الجرد الافتتاحي</th><th>إجمالي المشتريات (+)</th><th>المستهلك بالمبيعات (-)</th><th>الرصيد الفعلي الحالي</th><th>الحالة</th></tr></thead>
+                <thead><tr><th>المادة الخام</th><th>البراند</th><th>التصنيف</th><th>الجرد الافتتاحي</th><th>إجمالي المشتريات (+)</th><th>المستهلك بالمبيعات (-)</th><th>الرصيد الفعلي الحالي</th><th>الحالة</th></tr></thead>
                 <tbody id="tbLiveInventory"></tbody>
               </table>
             </div>
@@ -485,13 +493,18 @@
 
           <!-- Tab 3: الجرد -->
           <div class="sales-tab-content" id="wh_stocktake">
-            <div class="filter-bar" style="justify-content:space-between; align-items:center;">
+            <div class="filter-bar" style="justify-content:space-between; align-items:center;flex-wrap:wrap;gap:10px;">
               <h3 style="margin:0; color:var(--primary);"><i class="fas fa-tasks"></i> عمليات الجرد والتسويات</h3>
-              <button class="btn btn-primary" onclick="startStocktake()"><i class="fas fa-play"></i> بدء عملية جرد جديدة</button>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <select id="stocktakeBrandFilter" class="form-control" style="max-width:200px;background:linear-gradient(135deg,#faf5ff,#fff);border-color:#d8b4fe;" onchange="loadStocktakeList()">
+                  <option value="">🏪 كل البراندات</option>
+                </select>
+                <button class="btn btn-primary" onclick="startStocktake()"><i class="fas fa-play"></i> بدء عملية جرد جديدة</button>
+              </div>
             </div>
             <div class="table-wrapper">
               <table class="table">
-                <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>القائم بالجرد</th><th>عدد الأصناف</th><th>إجمالي التباين</th><th>إجراءات</th></tr></thead>
+                <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>البراند</th><th>القائم بالجرد</th><th>عدد الأصناف</th><th>إجمالي التباين</th><th>إجراءات</th></tr></thead>
                 <tbody id="tbStocktake"></tbody>
               </table>
             </div>
@@ -499,13 +512,18 @@
 
           <!-- Tab: تعديل كمية -->
           <div class="sales-tab-content" id="wh_adjustments">
-            <div class="filter-bar" style="justify-content:space-between; align-items:center;">
+            <div class="filter-bar" style="justify-content:space-between; align-items:center;flex-wrap:wrap;gap:10px;">
               <h3 style="margin:0; color:var(--primary);"><i class="fas fa-minus-circle"></i> محاضر تعديل الكمية</h3>
-              <button class="btn btn-danger" onclick="openAdjustmentModal()"><i class="fas fa-plus"></i> إنشاء محضر تعديل كمية</button>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <select id="adjBrandFilter" class="form-control" style="max-width:200px;background:linear-gradient(135deg,#faf5ff,#fff);border-color:#d8b4fe;" onchange="loadAdjustmentsList()">
+                  <option value="">🏪 كل البراندات</option>
+                </select>
+                <button class="btn btn-danger" onclick="openAdjustmentModal()"><i class="fas fa-plus"></i> محضر تعديل كمية</button>
+              </div>
             </div>
             <div class="table-wrapper">
               <table class="table">
-                <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>السبب</th><th>بواسطة</th><th>عدد الأصناف</th><th>إجمالي التكلفة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+                <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>البراند</th><th>السبب</th><th>بواسطة</th><th>عدد الأصناف</th><th>إجمالي التكلفة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
                 <tbody id="tbAdjustments"></tbody>
               </table>
             </div>
@@ -513,13 +531,18 @@
 
           <!-- Tab 4: التحويلات -->
           <div class="sales-tab-content" id="wh_transfers">
-            <div class="filter-bar" style="justify-content:space-between; align-items:center;">
+            <div class="filter-bar" style="justify-content:space-between; align-items:center;flex-wrap:wrap;gap:10px;">
               <h3 style="margin:0; color:var(--primary);"><i class="fas fa-exchange-alt"></i> طلبات التحويل من/إلى الفروع</h3>
-              <button class="btn btn-primary" onclick="openTransferModal()"><i class="fas fa-plus"></i> إنشاء طلب تحويل جديد</button>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <select id="transferBrandFilter" class="form-control" style="max-width:200px;background:linear-gradient(135deg,#faf5ff,#fff);border-color:#d8b4fe;" onchange="loadTransfersList()">
+                  <option value="">🏪 كل البراندات</option>
+                </select>
+                <button class="btn btn-primary" onclick="openTransferModal()"><i class="fas fa-plus"></i> إنشاء طلب تحويل</button>
+              </div>
             </div>
             <div class="table-wrapper">
               <table class="table">
-                <thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>الوجهة / المصدر</th><th>النوع</th><th>حالة الطلب</th><th>المسؤول</th><th>إجراءات</th></tr></thead>
+                <thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>البراند</th><th>الوجهة / المصدر</th><th>النوع</th><th>حالة الطلب</th><th>المسؤول</th><th>إجراءات</th></tr></thead>
                 <tbody id="tbTransfers"></tbody>
               </table>
             </div>
@@ -527,13 +550,19 @@
 
           <!-- Tab 5: طلبات النواقص -->
           <div class="sales-tab-content" id="wh_shortage">
-            <div class="filter-bar" style="justify-content:space-between;align-items:center;">
+            <div class="filter-bar" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
               <h3 style="margin:0;color:var(--primary);"><i class="fas fa-exclamation-triangle"></i> طلبات النواقص من الفروع</h3>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <select id="shortageBrandFilter" class="form-control" style="max-width:200px;background:linear-gradient(135deg,#faf5ff,#fff);border-color:#d8b4fe;" onchange="loadShortageRequests()">
+                  <option value="">🏪 كل البراندات</option>
+                </select>
+                <button class="btn btn-secondary" onclick="loadShortageRequests()"><i class="fas fa-sync"></i> تحديث</button>
+              </div>
             </div>
             <div class="table-wrapper">
               <table class="table">
-                <thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>الكاشير</th><th>عدد المواد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-                <tbody id="tbShortageRequests"><tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8;">جاري التحميل...</td></tr></tbody>
+                <thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>البراند</th><th>الكاشير</th><th>عدد المواد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+                <tbody id="tbShortageRequests"><tr><td colspan="7" style="text-align:center;padding:30px;color:#94a3b8;">جاري التحميل...</td></tr></tbody>
               </table>
             </div>
           </div>

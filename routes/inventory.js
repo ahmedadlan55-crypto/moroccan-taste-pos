@@ -146,16 +146,21 @@ router.post('/stock-update', async (req, res) => {
   }
 });
 
-// Get live inventory (current stock with movements summary)
+// Get live inventory (current stock with movements summary). Optional ?brandId= filter.
 router.get('/live', async (req, res) => {
   try {
-    const [items] = await db.query('SELECT * FROM inv_items WHERE active = 1 ORDER BY category, name');
+    const { brandId } = req.query;
+    let sql = 'SELECT i.*, b.name AS brand_name FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id WHERE i.active = 1';
+    const params = [];
+    if (brandId) { sql += ' AND i.brand_id = ?'; params.push(brandId); }
+    sql += ' ORDER BY i.category, i.name';
+    const [items] = await db.query(sql, params);
 
     // Aggregate inventory movements per item: total purchased (in) and total consumed (out)
     const [movRows] = await db.query(
       "SELECT item_id, type, SUM(qty) AS totalQty FROM inventory_movements GROUP BY item_id, type"
     );
-    const movMap = {}; // itemId → { in: number, out: number }
+    const movMap = {};
     movRows.forEach(r => {
       const id = r.item_id;
       if (!movMap[id]) movMap[id] = { in: 0, out: 0 };
@@ -166,25 +171,33 @@ router.get('/live', async (req, res) => {
     const result = items.map(i => {
       const m = movMap[i.id] || { in: 0, out: 0 };
       const currentStock = Number(i.stock) || 0;
-      // Initial stock = current + consumed - purchased
-      // (i.e. what was on hand before any movements were recorded)
       const initialStock = currentStock + m.out - m.in;
+      // Determine status for UI convenience
+      let status = 'جيد';
+      if (currentStock <= 0) status = 'نفد';
+      else if (currentStock <= (Number(i.min_stock) || 0)) status = 'منخفض';
       return {
         id: i.id,
         name: i.name,
         category: i.category || '',
         unit: i.unit || 'حبة',
+        bigUnit: i.big_unit || '',
+        convRate: Number(i.conv_rate) || 1,
         initialStock: initialStock,
         purchasedQty: m.in,
         consumedQty: m.out,
         currentStock: currentStock,
         minStock: Number(i.min_stock) || 0,
-        cost: Number(i.cost) || 0
+        cost: Number(i.cost) || 0,
+        status: status,
+        brandId: i.brand_id || '',
+        brand_id: i.brand_id || '',
+        brandName: i.brand_name || ''
       };
     });
     res.json(result);
   } catch (e) {
-    res.json([]);
+    res.json({ error: e.message });
   }
 });
 

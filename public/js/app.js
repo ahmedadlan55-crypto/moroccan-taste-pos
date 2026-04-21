@@ -2865,12 +2865,14 @@ function filterInvItems() {
 function applyInvFilters(items) {
   var search = (q("#rawSearchQ")?.value||'').toLowerCase();
   var cat = q("#rawCatFilter")?.value||'';
+  var brandF = q("#rawBrandFilter")?.value||'';
   var stockF = q("#rawStockFilter")?.value||'';
   return items.filter(function(i){
-    var matchSearch = !search || (i.name||'').toLowerCase().includes(search) || (i.id||'').toLowerCase().includes(search) || (i.category||'').toLowerCase().includes(search);
+    var matchSearch = !search || (i.name||'').toLowerCase().includes(search) || (i.id||'').toLowerCase().includes(search) || (i.category||'').toLowerCase().includes(search) || (i.brandName||'').toLowerCase().includes(search);
     var matchCat = !cat || (i.category||'') === cat;
+    var matchBrand = !brandF || (brandF === '__none__' ? !i.brandId : i.brandId === brandF);
     var matchStock = !stockF || (stockF==='low' && i.stock<=i.minStock && i.stock>0) || (stockF==='out' && i.stock<=0) || (stockF==='ok' && i.stock>i.minStock);
-    return matchSearch && matchCat && matchStock;
+    return matchSearch && matchCat && matchBrand && matchStock;
   });
 }
 function populateInvCatFilter() {
@@ -2878,6 +2880,30 @@ function populateInvCatFilter() {
   if (!sel || !cachedRawItems) return;
   var cats = []; cachedRawItems.forEach(function(i){ if(i.category && cats.indexOf(i.category)<0) cats.push(i.category); });
   sel.innerHTML = '<option value="">كل التصنيفات</option>' + cats.map(function(c){ return '<option value="'+c+'">'+c+'</option>'; }).join('');
+  // Also populate brand filter from live data
+  _populateWhBrandFilters();
+}
+
+// Populate all warehouse-tab brand filter dropdowns from /api/erp/brands
+function _populateWhBrandFilters() {
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/brands', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(list){
+      if (!Array.isArray(list)) list = [];
+      var opts = '<option value="">🏪 كل البراندات</option>' +
+        list.map(function(b){ return '<option value="'+b.id+'">'+(b.name||'')+(b.code?' ('+b.code+')':'')+'</option>'; }).join('') +
+        '<option value="__none__">— بدون براند —</option>';
+      ['#rawBrandFilter','#liveBrandFilter','#stocktakeBrandFilter','#adjBrandFilter','#transferBrandFilter','#shortageBrandFilter'].forEach(function(sel){
+        var el = q(sel);
+        if (el) {
+          var current = el.value;
+          el.innerHTML = opts;
+          if (current) el.value = current;
+        }
+      });
+    })
+    .catch(function(){});
 }
 function loadDashInvItems() {
   loader();
@@ -3428,7 +3454,15 @@ function loadDashShortageRequests() {
   api.withSuccessHandler(function(list) {
     var tb = q('#tbShortageRequests');
     if (!tb) return;
-    if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8;">لا توجد طلبات نواقص</td></tr>'; return; }
+    if (!list) list = [];
+    // Apply brand filter (client-side)
+    var brandF = q('#shortageBrandFilter') ? q('#shortageBrandFilter').value : '';
+    if (brandF) {
+      list = list.filter(function(r){
+        return brandF === '__none__' ? !r.brandId : r.brandId === brandF;
+      });
+    }
+    if (!list.length) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:#94a3b8;">لا توجد طلبات نواقص</td></tr>'; return; }
     var statusBadge = function(s) {
       if (s === 'pending') return '<span class="badge yellow">بانتظار</span>';
       if (s === 'approved') return '<span class="badge blue">معتمد</span>';
@@ -3448,9 +3482,13 @@ function loadDashShortageRequests() {
       actions += ' <button class="btn btn-light btn-sm" onclick="viewShortageDetail(\'' + r.id + '\')" title="تفاصيل"><i class="fas fa-eye"></i></button>';
       var isDev = state.currentUser && (state.currentUser.isDeveloper || state.role === 'admin');
       if (isDev) actions += ' <button class="btn btn-danger btn-sm" onclick="deleteShortageReq(\'' + r.id + '\',\'' + (r.requestNumber||'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>';
+      var brandHtml = r.brandName
+        ? '<span class="badge" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-store"></i> ' + r.brandName + '</span>'
+        : '<span class="badge" style="background:#f1f5f9;color:#94a3b8;">—</span>';
       return '<tr>' +
         '<td><code style="font-weight:800;color:#8b5cf6;">' + (r.requestNumber||'') + '</code></td>' +
         '<td>' + dt + '</td>' +
+        '<td>' + brandHtml + '</td>' +
         '<td style="font-weight:700;">' + (r.username||'') + '</td>' +
         '<td>' + (r.totalItems||0) + ' مادة</td>' +
         '<td>' + statusBadge(r.status) + '</td>' +
@@ -3458,6 +3496,24 @@ function loadDashShortageRequests() {
     }).join('');
   }).getShortageRequests();
 }
+
+// Stand-alone loader alias for the UI button
+window.loadShortageRequests = function() {
+  _populateWhBrandFilters();
+  if (typeof loadDashShortageRequests === 'function') loadDashShortageRequests();
+};
+window.loadStocktakeList = function() {
+  _populateWhBrandFilters();
+  if (typeof loadDashStocktake === 'function') loadDashStocktake();
+};
+window.loadAdjustmentsList = function() {
+  _populateWhBrandFilters();
+  if (typeof loadDashAdjustments === 'function') loadDashAdjustments();
+};
+window.loadTransfersList = function() {
+  _populateWhBrandFilters();
+  if (typeof loadDashTransfers === 'function') loadDashTransfers();
+};
 
 function approveShortageReq(id) {
   if (!confirm('اعتماد طلب النقص؟')) return;
@@ -3645,6 +3701,8 @@ function openTransferModal() {
 // =========================================
 function loadLiveInventory() {
   loader(true);
+  _populateWhBrandFilters();
+  var brandF = q("#liveBrandFilter") ? q("#liveBrandFilter").value : '';
   api.withFailureHandler(err => {
     loader(false);
     showToast(err.message || "فشل تحميل المخزون الفعلي", true);
@@ -3653,27 +3711,43 @@ function loadLiveInventory() {
     let h = "";
     if (res.error) {
       showToast(res.error, true);
-      h = `<tr><td colspan="7" style="text-align:center;color:red;">${res.error}</td></tr>`;
+      h = `<tr><td colspan="8" style="text-align:center;color:red;">${res.error}</td></tr>`;
     } else if (!res || res.length === 0) {
-      h = "<tr><td colspan='7' style='text-align:center;'>لا توجد مواد مخزون. الرجاء إضافة مواد خام وتحديث الأرصدة.</td></tr>";
+      h = "<tr><td colspan='8' style='text-align:center;'>لا توجد مواد مخزون. الرجاء إضافة مواد خام وتحديث الأرصدة.</td></tr>";
     } else {
-      res.forEach(item => {
-        let statusBadge = '';
-        if (item.status === 'نفد') statusBadge = '<span class="badge red">نفد</span>';
-        else if (item.status === 'منخفض') statusBadge = '<span class="badge" style="background:#fef3c7; color:#92400e;">منخفض</span>';
-        else statusBadge = '<span class="badge green">جيد</span>';
+      // Apply client-side brand filter (getLiveInventory doesn't currently support brandId param)
+      let filtered = res;
+      if (brandF) {
+        filtered = res.filter(function(i){
+          return brandF === '__none__' ? !i.brandId : i.brandId === brandF;
+        });
+      }
+      if (!filtered.length) {
+        h = "<tr><td colspan='8' style='text-align:center;color:#94a3b8;padding:30px;'>لا توجد مواد ضمن البراند المحدد</td></tr>";
+      } else {
+        filtered.forEach(item => {
+          let statusBadge = '';
+          if (item.status === 'نفد') statusBadge = '<span class="badge red">نفد</span>';
+          else if (item.status === 'منخفض') statusBadge = '<span class="badge" style="background:#fef3c7; color:#92400e;">منخفض</span>';
+          else statusBadge = '<span class="badge green">جيد</span>';
 
-        let unitDisplay = (item.bigUnit && Number(item.convRate) > 1) ? `${item.unit} (${item.convRate} حبة بالـ ${item.bigUnit})` : (item.unit || '');
-        h += `<tr>
-          <td style="font-weight:700;">${item.name}</td>
-          <td>${item.category}</td>
-          <td style="color:#64748b;">${item.initialStock} ${item.unit}</td>
-          <td style="color:#16a34a; font-weight:700;">+${item.purchasedQty} ${item.unit} <br><small style="color:#94a3b8">${unitDisplay}</small></td>
-          <td style="color:#e11d48; font-weight:700;">-${item.consumedQty} ${item.unit}</td>
-          <td style="font-size:16px; font-weight:900; color:var(--primary);">${item.currentStock} ${item.unit}</td>
-          <td>${statusBadge}</td>
-        </tr>`;
-      });
+          let brandHtml = item.brandName
+            ? `<span class="badge" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-store"></i> ${item.brandName}</span>`
+            : `<span class="badge" style="background:#f1f5f9;color:#94a3b8;">بدون</span>`;
+
+          let unitDisplay = (item.bigUnit && Number(item.convRate) > 1) ? `${item.unit} (${item.convRate} حبة بالـ ${item.bigUnit})` : (item.unit || '');
+          h += `<tr>
+            <td style="font-weight:700;">${item.name}</td>
+            <td>${brandHtml}</td>
+            <td>${item.category}</td>
+            <td style="color:#64748b;">${item.initialStock} ${item.unit}</td>
+            <td style="color:#16a34a; font-weight:700;">+${item.purchasedQty} ${item.unit} <br><small style="color:#94a3b8">${unitDisplay}</small></td>
+            <td style="color:#e11d48; font-weight:700;">-${item.consumedQty} ${item.unit}</td>
+            <td style="font-size:16px; font-weight:900; color:var(--primary);">${item.currentStock} ${item.unit}</td>
+            <td>${statusBadge}</td>
+          </tr>`;
+        });
+      }
     }
     const tb = q("#tbLiveInventory");
     if (tb) tb.innerHTML = h;

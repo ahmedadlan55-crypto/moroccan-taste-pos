@@ -1475,11 +1475,28 @@ router.post('/transactions/:id/action', async (req, res) => {
     // Helper: look up the next/prev step respecting the chain source
     //   - if current step came from position_workflow_steps → use that table
     //   - else fall back to workflow_definitions (legacy per-type)
+    // Phase C: when multiple rows exist at the SAME step_order, amount-based
+    // routing picks the row where amount_from <= txn.amount <= amount_to
+    // (amount_to = NULL means unlimited). This enables: accountant < 50k,
+    // finance manager < 500k, CEO otherwise — all at the same logical "step".
+    const txnAmount = Number(txn.amount) || 0;
     const getSiblingStep = async (order) => {
       if (step && step._source === 'position' && txn.initiator_position_id) {
-        const [r] = await db.query(
-          'SELECT * FROM position_workflow_steps WHERE initiator_position_id = ? AND step_order = ?',
-          [txn.initiator_position_id, order]);
+        // Try amount-matched row first
+        let [r] = await db.query(
+          `SELECT * FROM position_workflow_steps
+           WHERE initiator_position_id = ? AND step_order = ?
+             AND COALESCE(amount_from, 0) <= ?
+             AND (amount_to IS NULL OR amount_to >= ?)
+           ORDER BY COALESCE(amount_from, 0) DESC
+           LIMIT 1`,
+          [txn.initiator_position_id, order, txnAmount, txnAmount]);
+        // Fallback: any row at that order (no amount filter defined)
+        if (!r.length) {
+          [r] = await db.query(
+            'SELECT * FROM position_workflow_steps WHERE initiator_position_id = ? AND step_order = ?',
+            [txn.initiator_position_id, order]);
+        }
         return r.length ? _normalizePositionStep(r[0]) : null;
       }
       const [r] = await db.query(

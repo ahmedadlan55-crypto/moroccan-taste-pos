@@ -142,6 +142,8 @@ app.use('/api/settings', require('./routes/settings'));
 // take precedence over any same-path legacy handler in routes/erp.js
 app.use('/api/erp', require('./routes/erp-core'));
 app.use('/api/erp', require('./routes/warehouse-ops'));
+app.use('/api/erp', require('./routes/payments'));
+app.use('/api/erp', require('./routes/notifications'));
 app.use('/api/erp', require('./routes/erp'));
 app.use('/api/custody', require('./routes/custody'));
 app.use('/api/cash', require('./routes/cash'));
@@ -2146,6 +2148,85 @@ async function runMigrations() {
   await addColumnIfMissing('warehouse_stock', 'avg_cost', "DECIMAL(14,4) DEFAULT 0");
   await addColumnIfMissing('warehouse_stock', 'last_cost', "DECIMAL(14,4) DEFAULT 0");
   await addColumnIfMissing('warehouse_stock', 'last_updated', "TIMESTAMP NULL");
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE C — PAYMENT FLOW
+  // Unified payment records + amount-based approval routing
+  // ═══════════════════════════════════════════════════════════
+
+  await createTableIfMissing('payment_records', `
+    CREATE TABLE payment_records (
+      id VARCHAR(60) PRIMARY KEY,
+      payment_number VARCHAR(40) NOT NULL,
+      transaction_id VARCHAR(50),
+      reference_type VARCHAR(40),
+      reference_id VARCHAR(60),
+      direction ENUM('out','in') DEFAULT 'out',
+      amount DECIMAL(14,4) NOT NULL DEFAULT 0,
+      currency VARCHAR(10) DEFAULT 'SAR',
+      payment_method ENUM('cash','bank','cheque','wire','card') DEFAULT 'bank',
+      bank_account_id VARCHAR(50),
+      cash_box_id VARCHAR(50),
+      expense_account_code VARCHAR(20),
+      counter_account_code VARCHAR(20),
+      receipt_attachment LONGTEXT,
+      receipt_number VARCHAR(80),
+      receipt_date DATE,
+      status ENUM('requested','authorized','paid','closed','cancelled') DEFAULT 'requested',
+      gl_journal_id VARCHAR(60),
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      cost_center_id VARCHAR(50),
+      requested_by VARCHAR(100),
+      authorized_by VARCHAR(100),
+      paid_by VARCHAR(100),
+      requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      authorized_at DATETIME,
+      paid_at DATETIME,
+      closed_at DATETIME,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_txn (transaction_id),
+      INDEX idx_status (status),
+      INDEX idx_ref (reference_type, reference_id)
+    ) ENGINE=InnoDB
+  `);
+
+  await createTableIfMissing('payment_counter', `
+    CREATE TABLE payment_counter (
+      ymd CHAR(8) NOT NULL,
+      last_serial INT NOT NULL DEFAULT 0,
+      PRIMARY KEY (ymd)
+    ) ENGINE=InnoDB
+  `);
+
+  // Position workflow steps: amount-based routing
+  await addColumnIfMissing('position_workflow_steps', 'amount_from', "DECIMAL(14,4) DEFAULT 0");
+  await addColumnIfMissing('position_workflow_steps', 'amount_to',   "DECIMAL(14,4) DEFAULT NULL");
+  // Transactions: link to payment record (for payment-bearing flows)
+  await addColumnIfMissing('transactions', 'payment_record_id', "VARCHAR(60)");
+  await addColumnIfMissing('transactions', 'requires_payment', "BOOLEAN DEFAULT FALSE");
+
+  // Notifications (Phase D preparation)
+  await createTableIfMissing('notifications', `
+    CREATE TABLE notifications (
+      id VARCHAR(60) PRIMARY KEY,
+      user_username VARCHAR(100) NOT NULL,
+      type VARCHAR(40),
+      title VARCHAR(300),
+      body TEXT,
+      link_type VARCHAR(40),
+      link_id VARCHAR(60),
+      is_read BOOLEAN DEFAULT FALSE,
+      icon VARCHAR(40),
+      icon_color VARCHAR(20),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      read_at DATETIME,
+      INDEX idx_user (user_username),
+      INDEX idx_unread (user_username, is_read)
+    ) ENGINE=InnoDB
+  `);
 
   // Seed default branch code if empty
   try {

@@ -10290,3 +10290,219 @@ window.WoModal = (function() {
 
 // Note: erpConfirm() at top of file now delegates to WoModal.confirm
 // (defined above) — no duplicate shim needed.
+
+// ═══════════════════════════════════════════════════════════════════
+// PAYMENT RECORDS — Unified "Record Payment" Modal (Phase C)
+//
+// Launch from:
+//   - Expense approval final step
+//   - AP aging row (pay supplier)
+//   - AR aging row (record customer receipt)
+//   - Transaction detail (status=approved, requires_payment=true)
+//
+// Flow: requested → authorized → paid → closed (GL posts at close)
+// ═══════════════════════════════════════════════════════════════════
+window.openRecordPaymentModal = function(opts) {
+  opts = opts || {};
+  var esc = function(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
+  };
+  var direction = opts.direction || 'out';   // 'out' = pay supplier/expense, 'in' = receive from customer
+  var title = direction === 'out' ? 'تسجيل دفعة خارجة' : 'تسجيل دفعة واردة';
+  var subtitle = direction === 'out'
+    ? 'سيُنشأ قيد محاسبي تلقائي عند الإقفال (Dr مصروف/مورد، Cr بنك/نقد)'
+    : 'سيُنشأ قيد محاسبي تلقائي عند الإقفال (Dr بنك/نقد، Cr عميل/إيراد)';
+
+  // Load bank accounts + cash boxes in parallel
+  var token = localStorage.getItem('pos_token') || '';
+  Promise.all([
+    fetch('/api/erp/bank-accounts', { headers: { 'Authorization': 'Bearer ' + token } }).then(function(r){return r.json();}).catch(function(){return [];}),
+    fetch('/api/erp/cash-boxes',    { headers: { 'Authorization': 'Bearer ' + token } }).then(function(r){return r.json();}).catch(function(){return [];})
+  ]).then(function(data) {
+    var banks = Array.isArray(data[0]) ? data[0] : [];
+    var boxes = Array.isArray(data[1]) ? data[1] : [];
+    var bankOpts = banks.map(function(b){return '<option value="'+esc(b.id)+'">'+esc(b.name||b.bankName||'Bank')+(b.accountNumber?' · '+esc(b.accountNumber):'')+'</option>';}).join('');
+    var cashOpts = boxes.map(function(c){return '<option value="'+esc(c.id)+'">'+esc(c.name||'Cash')+'</option>';}).join('');
+
+    var body =
+      '<div style="display:flex;flex-direction:column;gap:12px;">' +
+        '<div class="wo-form-row">' +
+          '<div class="wo-label-stack">' +
+            '<label class="wo-field-label"><i class="fas fa-coins"></i> المبلغ *</label>' +
+            '<input type="number" step="0.01" id="pmAmount" class="wo-input" value="'+(opts.amount||'')+'" placeholder="0.00" '+(opts.amount?'':'')+'>' +
+          '</div>' +
+          '<div class="wo-label-stack">' +
+            '<label class="wo-field-label"><i class="fas fa-credit-card"></i> طريقة الدفع</label>' +
+            '<select id="pmMethod" class="wo-select" onchange="_pmToggleFields()">' +
+              '<option value="bank">تحويل بنكي</option>' +
+              '<option value="cash">نقدي</option>' +
+              '<option value="cheque">شيك</option>' +
+              '<option value="wire">حوالة</option>' +
+            '</select>' +
+          '</div>' +
+        '</div>' +
+
+        '<div id="pmBankGroup" class="wo-label-stack">' +
+          '<label class="wo-field-label"><i class="fas fa-building-columns"></i> الحساب البنكي</label>' +
+          '<select id="pmBank" class="wo-select"><option value="">— اختر —</option>'+bankOpts+'</select>' +
+        '</div>' +
+
+        '<div id="pmCashGroup" class="wo-label-stack" style="display:none;">' +
+          '<label class="wo-field-label"><i class="fas fa-cash-register"></i> صندوق النقد</label>' +
+          '<select id="pmCash" class="wo-select"><option value="">— اختر —</option>'+cashOpts+'</select>' +
+        '</div>' +
+
+        '<div class="wo-form-row">' +
+          '<div class="wo-label-stack">' +
+            '<label class="wo-field-label"><i class="fas fa-hashtag"></i> رقم الإيصال</label>' +
+            '<input type="text" id="pmReceiptNum" class="wo-input" placeholder="رقم المرجع">' +
+          '</div>' +
+          '<div class="wo-label-stack">' +
+            '<label class="wo-field-label"><i class="fas fa-calendar"></i> تاريخ الإيصال</label>' +
+            '<input type="date" id="pmReceiptDate" class="wo-input" value="'+new Date().toISOString().slice(0,10)+'">' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="wo-label-stack">' +
+          '<label class="wo-field-label"><i class="fas fa-paperclip"></i> صورة الإيصال <span class="wo-text-subtle wo-text-caption">(إلزامي عند تنفيذ الدفع)</span></label>' +
+          '<input type="file" id="pmReceiptFile" accept=".pdf,.jpg,.jpeg,.png" class="wo-input">' +
+        '</div>' +
+
+        '<div class="wo-label-stack">' +
+          '<label class="wo-field-label"><i class="fas fa-note-sticky"></i> ملاحظات</label>' +
+          '<textarea id="pmNotes" class="wo-textarea" rows="2">'+(opts.notes||'')+'</textarea>' +
+        '</div>' +
+      '</div>';
+
+    var footer =
+      '<button class="wo-btn wo-btn-secondary" id="pmCancel">إلغاء</button>' +
+      '<button class="wo-btn wo-btn-primary" id="pmSubmit"><i class="fas fa-check"></i><span>تسجيل الدفعة</span></button>';
+
+    var modal = WoModal.open({
+      icon: direction === 'out' ? 'fa-money-bill-transfer' : 'fa-money-bill-wave',
+      iconColor: direction === 'out' ? 'warn' : 'success',
+      title: title,
+      subtitle: subtitle,
+      body: body, footer: footer, size: 'lg'
+    });
+
+    window._pmToggleFields = function() {
+      var m = document.getElementById('pmMethod').value;
+      document.getElementById('pmBankGroup').style.display = (m === 'cash') ? 'none' : '';
+      document.getElementById('pmCashGroup').style.display = (m === 'cash') ? '' : 'none';
+    };
+
+    modal.el.querySelector('#pmCancel').onclick = function(){ modal.close(null); };
+    modal.el.querySelector('#pmSubmit').onclick = function() {
+      var amount = Number(document.getElementById('pmAmount').value);
+      if (!amount || amount <= 0) return showToast('المبلغ مطلوب', true);
+      var method = document.getElementById('pmMethod').value;
+      var bankId = document.getElementById('pmBank').value || '';
+      var cashId = document.getElementById('pmCash').value || '';
+      if (method !== 'cash' && !bankId) return showToast('اختر الحساب البنكي', true);
+      if (method === 'cash' && !cashId) return showToast('اختر صندوق النقد', true);
+
+      var fileInput = document.getElementById('pmReceiptFile');
+      var submitWithReceipt = function(receiptData) {
+        modal.lock();
+        loader(true);
+        var payload = {
+          transactionId: opts.transactionId || null,
+          referenceType: opts.referenceType || 'manual',
+          referenceId: opts.referenceId || null,
+          direction: direction,
+          amount: amount,
+          paymentMethod: method,
+          bankAccountId: method === 'cash' ? null : bankId,
+          cashBoxId: method === 'cash' ? cashId : null,
+          expenseAccountCode: opts.expenseAccountCode || null,
+          counterAccountCode: opts.counterAccountCode || null,
+          brandId: opts.brandId || null,
+          branchId: opts.branchId || null,
+          costCenterId: opts.costCenterId || null,
+          notes: document.getElementById('pmNotes').value || '',
+          requestedBy: currentUser
+        };
+        fetch('/api/erp/payments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: JSON.stringify(payload)
+        })
+        .then(function(r){ return r.json(); })
+        .then(function(r) {
+          loader(false); modal.unlock();
+          if (r && r.success) {
+            var pid = r.id;
+            // If receipt uploaded + user wants full flow: authorize → pay → close (atomic)
+            if (opts.atomic !== false && receiptData) {
+              _pmRunFullFlow(pid, {
+                receiptAttachment: receiptData,
+                receiptNumber: document.getElementById('pmReceiptNum').value,
+                receiptDate: document.getElementById('pmReceiptDate').value
+              }, function(finalResult) {
+                modal.close(finalResult);
+                if (finalResult && finalResult.success) {
+                  WoModal.success({
+                    title: 'تمت الدفعة',
+                    message: 'رقم الدفعة: ' + r.paymentNumber + ' — القيد ' + (finalResult.glJournalId ? 'مُرحَّل في دفتر الأستاذ' : 'سيُرحَّل لاحقاً')
+                  });
+                } else {
+                  showToast((finalResult && finalResult.error) || 'فشل الإقفال', true);
+                }
+                if (typeof opts.onSuccess === 'function') opts.onSuccess(r);
+              });
+            } else {
+              modal.close(r);
+              showToast('تم تسجيل طلب الدفع — رقم ' + r.paymentNumber);
+              if (typeof opts.onSuccess === 'function') opts.onSuccess(r);
+            }
+          } else {
+            showToast((r && r.error) || 'فشل إنشاء طلب الدفع', true);
+          }
+        })
+        .catch(function(err){
+          loader(false); modal.unlock();
+          showToast('خطأ: ' + err.message, true);
+        });
+      };
+
+      if (fileInput.files && fileInput.files[0]) {
+        var fr = new FileReader();
+        fr.onload = function(e){ submitWithReceipt(e.target.result); };
+        fr.readAsDataURL(fileInput.files[0]);
+      } else {
+        submitWithReceipt(null);
+      }
+    };
+  });
+};
+
+// Internal: run authorize → pay → close in sequence for a newly-created payment
+function _pmRunFullFlow(paymentId, receiptData, cb) {
+  var token = localStorage.getItem('pos_token') || '';
+  var H = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
+
+  var step = function(endpoint, body) {
+    return fetch('/api/erp/payments/' + paymentId + '/' + endpoint, {
+      method: 'POST', headers: H, body: JSON.stringify(body || {})
+    }).then(function(r){return r.json();});
+  };
+
+  step('authorize', { authorizedBy: currentUser })
+    .then(function(r){
+      if (!r.success) throw new Error(r.error || 'authorize failed');
+      return step('pay', {
+        paidBy: currentUser,
+        receiptAttachment: receiptData.receiptAttachment,
+        receiptNumber: receiptData.receiptNumber,
+        receiptDate: receiptData.receiptDate
+      });
+    })
+    .then(function(r){
+      if (!r.success) throw new Error(r.error || 'pay failed');
+      return step('close', { closedBy: currentUser });
+    })
+    .then(function(r){ cb(r); })
+    .catch(function(err){ cb({ success: false, error: err.message }); });
+}

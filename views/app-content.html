@@ -154,6 +154,7 @@
           <i class="fas fa-layer-group"></i><span>الإدارة العامة</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
+          <div class="nav-item" onclick="wzOpen()" style="background:linear-gradient(90deg,rgba(139,92,246,.15),transparent);"><i class="fas fa-wand-magic-sparkles" style="color:#a78bfa;"></i><span>معالج براند جديد</span></div>
           <div class="nav-item" data-erp-nav="erpBrands" onclick="erpNav('erpBrands')"><i class="fas fa-tags"></i><span>البراندات</span></div>
           <div class="nav-item" data-erp-nav="erpBranches" onclick="erpNav('erpBranches')"><i class="fas fa-code-branch"></i><span>الفروع</span></div>
           <div class="nav-item" data-erp-nav="erpAuditLog" onclick="erpNav('erpAuditLog')"><i class="fas fa-history"></i><span>سجل العمليات</span></div>
@@ -1437,15 +1438,21 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- BRANDS (البراندات) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpBrands" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-tags"></i> إدارة البراندات</h2>
-    <button class="btn btn-primary" onclick="erpOpenBrandModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> إضافة براند</button>
-  </div>
-  <div class="erp-table-container" style="border-radius:14px;">
-    <table class="erp-table">
-      <thead><tr><th>الشعار</th><th>الاسم</th><th>الرمز</th><th>الفروع</th><th>المنتجات</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-      <tbody id="erpBrandsBody"><tr><td colspan="7" class="empty-msg">لا توجد براندات</td></tr></tbody>
+<div id="erpBrands" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot purple"><i class="fas fa-tags"></i></span>إدارة البراندات</h1>
+      <p class="wo-header-sub">كل براند له فروعه ومستودعاته ومنيوه ومواده الخام منفصلة — استخدم المعالج لإنشاء براند كامل دفعة واحدة.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-primary" onclick="wzOpen()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);"><i class="fas fa-wand-magic-sparkles"></i><span>معالج إنشاء براند كامل</span></button>
+      <button class="wo-btn wo-btn-secondary" onclick="erpOpenBrandModal()"><i class="fas fa-plus"></i><span>براند يدوي</span></button>
+    </div>
+  </header>
+  <div class="wo-table-surface">
+    <table class="wo-table">
+      <thead><tr><th>الشعار</th><th>الاسم</th><th>الرمز</th><th class="num">الفروع</th><th class="num">المنتجات</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="erpBrandsBody"><tr><td colspan="7"><div class="wo-empty"><i class="fas fa-tags"></i><div class="wo-empty-title">لا توجد براندات</div><div class="wo-empty-sub">ابدأ بإنشاء أول براند عبر المعالج التفاعلي — خطوات مُيسَّرة تُنشئ كل شيء دفعة واحدة.</div><button class="wo-btn wo-btn-primary" onclick="wzOpen()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);"><i class="fas fa-wand-magic-sparkles"></i><span>فتح المعالج</span></button></div></td></tr></tbody>
     </table>
   </div>
 </div>

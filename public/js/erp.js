@@ -8173,6 +8173,7 @@ function erpLoadBOM() {
         '<td data-label="الإجراءات"><div class="wo-actions">' +
           '<button class="wo-icon-btn info" onclick="erpViewBomLines(\''+esc(b.id)+'\',\''+esc((b.productName||'').replace(/\'/g,"\\\'"))+'\')" title="عرض المكونات" aria-label="المكونات"><i class="fas fa-list-ul"></i></button>' +
           '<button class="wo-icon-btn" onclick="erpOpenBomModal(\''+esc(b.id)+'\')" title="تعديل الوصفة" aria-label="تعديل"><i class="fas fa-pen"></i></button>' +
+          '<button class="wo-icon-btn" onclick="erpCloneBom(\''+esc(b.id)+'\',\''+esc((b.productName||'').replace(/\'/g,"\\\'"))+'\')" title="استنساخ لمنتج آخر" aria-label="استنساخ" style="color:var(--wo-purple);"><i class="fas fa-clone"></i></button>' +
           '<button class="wo-icon-btn danger" onclick="erpDeleteBom(\''+esc(b.id)+'\')" title="حذف" aria-label="حذف"><i class="fas fa-trash"></i></button>' +
         '</div></td>' +
       '</tr>';
@@ -8310,6 +8311,7 @@ function erpOpenBomModal(id) {
         yieldQuantity: Number(document.getElementById('bomYield').value) || 1,
         notes: document.getElementById('bomNotes').value,
         lines: lines.filter(function(l){return l.itemId && Number(l.quantity)>0;})
+                    .map(function(l){return { componentItemId: l.itemId, itemId: l.itemId, quantity: l.quantity, wastePct: l.wastePct };})
       };
       if (!payload.productId) return showToast('اختر المنتج', true);
       _erpPost('/erp/bom', payload, function(r){
@@ -9265,4 +9267,579 @@ function turnLoad() {
       '</tr>';
     }).join('');
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// BOM CLONE — استنساخ وصفة إلى منتج آخر (أو لبراند مختلف)
+// ═══════════════════════════════════════════════════════════════════
+
+function erpCloneBom(bomId, srcProductName) {
+  _erpGet('/inventory/items', function(items) {
+    items = items || [];
+    var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
+    var opts = items.map(function(i){return '<option value="'+esc(i.id)+'">'+esc(i.name||'')+(i.brand_id?' · '+esc(i.brand_id):'')+'</option>';}).join('');
+
+    var old = document.getElementById('bomCloneModal'); if (old) old.remove();
+    var html =
+      '<div class="wo-modal-overlay open" id="bomCloneModal" onclick="if(event.target.id===\'bomCloneModal\')document.getElementById(\'bomCloneModal\').remove()">' +
+        '<div class="wo-modal">' +
+          '<div class="wo-modal-header">' +
+            '<div class="wo-modal-icon purple"><i class="fas fa-clone"></i></div>' +
+            '<div class="wo-modal-titles">' +
+              '<div class="wo-modal-title">استنساخ وصفة</div>' +
+              '<div class="wo-modal-sub">نسخ المكونات من: '+esc(srcProductName||'')+'</div>' +
+            '</div>' +
+            '<button class="wo-modal-close" onclick="document.getElementById(\'bomCloneModal\').remove()" aria-label="إغلاق"><i class="fas fa-xmark"></i></button>' +
+          '</div>' +
+          '<div class="wo-modal-body">' +
+            '<div class="wo-banner" style="margin:0;">' +
+              '<div class="wo-banner-icon"><i class="fas fa-info"></i></div>' +
+              '<div class="wo-banner-body">' +
+                '<div class="wo-banner-title">كيف يعمل الاستنساخ؟</div>' +
+                '<ul><li>نسخة طبق الأصل من المكونات والكميات ونسبة الهدر</li><li>تُربط بمنتج جديد (يمكن أن يكون لبراند مختلف)</li><li>تبقى الوصفة المصدر كما هي دون تغيير</li></ul>' +
+              '</div>' +
+            '</div>' +
+            '<div class="wo-label-stack">' +
+              '<label class="wo-field-label"><i class="fas fa-box"></i> المنتج الجديد *</label>' +
+              '<select class="wo-select" id="bomCloneTarget"><option value="">— اختر —</option>'+opts+'</select>' +
+            '</div>' +
+            '<div class="wo-form-row">' +
+              '<div class="wo-label-stack">' +
+                '<label class="wo-field-label"><i class="fas fa-code-branch"></i> رقم الإصدار</label>' +
+                '<input type="number" class="wo-input" id="bomCloneVer" value="1" min="1">' +
+              '</div>' +
+              '<div class="wo-label-stack">' +
+                '<label class="wo-field-label"><i class="fas fa-copy"></i> خيار</label>' +
+                '<select class="wo-select" id="bomCloneMode"><option value="with-lines">نسخ مع المكونات</option><option value="header-only">نسخ الهيكل فقط (بدون مكونات)</option></select>' +
+              '</div>' +
+            '</div>' +
+            '<div class="wo-label-stack">' +
+              '<label class="wo-field-label"><i class="fas fa-note-sticky"></i> ملاحظات</label>' +
+              '<textarea class="wo-textarea" id="bomCloneNotes" rows="2" placeholder="ملاحظات اختيارية..."></textarea>' +
+            '</div>' +
+          '</div>' +
+          '<div class="wo-modal-footer">' +
+            '<button class="wo-btn wo-btn-secondary" onclick="document.getElementById(\'bomCloneModal\').remove()">إلغاء</button>' +
+            '<button class="wo-btn wo-btn-primary" onclick="_erpDoCloneBom(\''+esc(bomId)+'\')"><i class="fas fa-clone"></i><span>إنشاء النسخة</span></button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    document.body.insertAdjacentHTML('beforeend', html);
+  });
+}
+
+window._erpDoCloneBom = function(srcId) {
+  var target = document.getElementById('bomCloneTarget').value;
+  if (!target) return showToast('اختر المنتج الجديد', true);
+  var mode = document.getElementById('bomCloneMode').value;
+  _erpPost('/erp/bom/'+srcId+'/clone', {
+    newProductId: target,
+    newVersion: Number(document.getElementById('bomCloneVer').value) || 1,
+    copyLines: mode === 'with-lines',
+    notes: document.getElementById('bomCloneNotes').value
+  }, function(r){
+    if (r.success) {
+      showToast('تم الاستنساخ — وصفة جديدة برقم '+r.id);
+      var m = document.getElementById('bomCloneModal'); if (m) m.remove();
+      if (typeof erpLoadBOM === 'function') erpLoadBOM();
+    } else showToast(r.error||'فشل الاستنساخ', true);
+  });
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// BRAND SETUP WIZARD — معالج إنشاء براند كامل
+// ═══════════════════════════════════════════════════════════════════
+
+window._wz = {
+  current: 0,
+  data: {
+    brand: { id: null, name: '', code: '', vat: '', logo: '' },
+    branches: [],        // [{id, name, code, location}]
+    warehouses: [],      // auto-generated, [{id, name, code, role}]
+    categories: [],      // [{id, name}]
+    items: [],           // raw materials added manually
+    menuItems: []        // menu items added manually
+  },
+  steps: [
+    { id: 'brand',       label: 'البراند',      icon: 'fa-store' },
+    { id: 'branches',    label: 'الفروع',       icon: 'fa-code-branch' },
+    { id: 'warehouses',  label: 'المستودعات',   icon: 'fa-warehouse' },
+    { id: 'categories',  label: 'التصنيفات',    icon: 'fa-tags' },
+    { id: 'items',       label: 'المواد الخام', icon: 'fa-boxes-stacked' },
+    { id: 'menu',        label: 'المنيو',       icon: 'fa-utensils' },
+    { id: 'done',        label: 'إتمام',        icon: 'fa-circle-check' }
+  ]
+};
+
+function wzOpen() {
+  // Reset state
+  window._wz.current = 0;
+  window._wz.data = {
+    brand: { id: null, name: '', code: '', vat: '', logo: '' },
+    branches: [{ name: '', code: '', location: '' }],
+    warehouses: [],
+    categories: [],
+    items: [],
+    menuItems: []
+  };
+
+  var old = document.getElementById('wzOverlay'); if (old) old.remove();
+  var html =
+    '<div class="wz-overlay" id="wzOverlay">' +
+      '<div class="wz">' +
+        '<div class="wz-header">' +
+          '<div class="wz-title-block">' +
+            '<div class="wz-title-icon"><i class="fas fa-wand-magic-sparkles"></i></div>' +
+            '<div><div class="wz-title">معالج إنشاء براند كامل</div><div class="wz-sub">7 خطوات · دقائق معدودة · كل شيء يُنشأ تلقائياً</div></div>' +
+          '</div>' +
+          '<button class="wz-close" onclick="wzClose()" aria-label="إغلاق"><i class="fas fa-xmark"></i></button>' +
+        '</div>' +
+        '<div class="wz-stepper" id="wzStepper"></div>' +
+        '<div class="wz-progress"><div class="wz-progress-fill" id="wzProgressFill" style="width:0%;"></div></div>' +
+        '<div class="wz-body" id="wzBody"></div>' +
+        '<div class="wz-footer">' +
+          '<div class="wz-footer-left">' +
+            '<button class="wo-btn wo-btn-ghost" id="wzBack" onclick="wzPrev()"><i class="fas fa-arrow-right"></i><span>السابق</span></button>' +
+          '</div>' +
+          '<div class="wz-footer-right">' +
+            '<button class="wo-btn wo-btn-secondary" id="wzSkip" onclick="wzNext(true)"><span>تخطي</span></button>' +
+            '<button class="wo-btn wo-btn-primary" id="wzNext" onclick="wzNext(false)"><span>التالي</span><i class="fas fa-arrow-left"></i></button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+  setTimeout(function(){
+    document.getElementById('wzOverlay').classList.add('open');
+    wzRender();
+  }, 20);
+  document.addEventListener('keydown', _wzKeyHandler);
+}
+window.wzOpen = wzOpen;
+
+function _wzKeyHandler(e) {
+  if (!document.getElementById('wzOverlay')) return;
+  if (e.key === 'Escape') wzClose();
+}
+
+function wzClose() {
+  var ov = document.getElementById('wzOverlay');
+  if (!ov) return;
+  if (window._wz.data.brand.id && window._wz.current < 6) {
+    if (!confirm('هل تريد إغلاق المعالج؟ البيانات المُنشأة (البراند، الفروع، ...) ستبقى محفوظة.')) return;
+  }
+  ov.classList.remove('open');
+  setTimeout(function(){ ov.remove(); }, 240);
+  document.removeEventListener('keydown', _wzKeyHandler);
+}
+window.wzClose = wzClose;
+
+function wzRender() {
+  var s = window._wz.current;
+  var steps = window._wz.steps;
+  // Stepper
+  var stepperHtml = '';
+  steps.forEach(function(st, i){
+    var cls = i < s ? 'done' : (i === s ? 'active' : '');
+    stepperHtml += '<div class="wz-step '+cls+'">' +
+      '<div class="wz-step-num">'+(i<s?'<i class="fas fa-check"></i>':(i+1))+'</div>' +
+      '<span class="wz-step-label">'+st.label+'</span>' +
+    '</div>';
+    if (i < steps.length - 1) stepperHtml += '<div class="wz-step-sep '+(i<s?'done':'')+'"></div>';
+  });
+  document.getElementById('wzStepper').innerHTML = stepperHtml;
+  // Progress
+  document.getElementById('wzProgressFill').style.width = (s / (steps.length-1) * 100) + '%';
+
+  // Body
+  var body = document.getElementById('wzBody');
+  var stepId = steps[s].id;
+  body.innerHTML = '<div class="wz-step-content">' + _wzStepHtml(stepId) + '</div>';
+
+  // Buttons state
+  document.getElementById('wzBack').style.visibility = (s === 0 || s === steps.length-1) ? 'hidden' : 'visible';
+  var skipBtn = document.getElementById('wzSkip');
+  var nextBtn = document.getElementById('wzNext');
+  var skipable = ['categories','items','menu'].indexOf(stepId) >= 0;
+  skipBtn.style.display = skipable ? 'inline-flex' : 'none';
+  if (s === steps.length - 1) {
+    nextBtn.innerHTML = '<i class="fas fa-check"></i><span>إغلاق</span>';
+  } else if (stepId === 'menu') {
+    nextBtn.innerHTML = '<span>إنهاء المعالج</span><i class="fas fa-check"></i>';
+  } else {
+    nextBtn.innerHTML = '<span>التالي</span><i class="fas fa-arrow-left"></i>';
+  }
+}
+
+function _wzStepHtml(stepId) {
+  var d = window._wz.data;
+  switch(stepId) {
+    case 'brand': return _wzBrandStep(d);
+    case 'branches': return _wzBranchesStep(d);
+    case 'warehouses': return _wzWarehousesStep(d);
+    case 'categories': return _wzCategoriesStep(d);
+    case 'items': return _wzItemsStep(d);
+    case 'menu': return _wzMenuStep(d);
+    case 'done': return _wzDoneStep(d);
+  }
+  return '';
+}
+
+// ────── STEP 1: البراند ──────
+function _wzBrandStep(d) {
+  var b = d.brand;
+  return '' +
+    '<h2 class="wz-step-heading"><i class="fas fa-store" style="color:#8b5cf6;"></i> معلومات البراند الأساسية</h2>' +
+    '<p class="wz-step-desc">ابدأ بتعريف البراند — هذا هو المظلة التي تنتظم تحتها الفروع والمستودعات والمنيو والمخزون.</p>' +
+    '<div class="wo-form-row">' +
+      '<div class="wo-label-stack">' +
+        '<label class="wo-field-label"><i class="fas fa-tag"></i> اسم البراند *</label>' +
+        '<input type="text" class="wo-input" id="wzBrandName" value="'+(b.name||'')+'" placeholder="مثال: Moroccan Taste">' +
+      '</div>' +
+      '<div class="wo-label-stack">' +
+        '<label class="wo-field-label"><i class="fas fa-hashtag"></i> الرمز المختصر *</label>' +
+        '<input type="text" class="wo-input" id="wzBrandCode" value="'+(b.code||'')+'" placeholder="MT" maxlength="10" style="text-transform:uppercase;">' +
+      '</div>' +
+    '</div>' +
+    '<div class="wo-form-row">' +
+      '<div class="wo-label-stack">' +
+        '<label class="wo-field-label"><i class="fas fa-file-invoice"></i> الرقم الضريبي</label>' +
+        '<input type="text" class="wo-input" id="wzBrandVat" value="'+(b.vat||'')+'" placeholder="3100xxxxxxxxxxx" maxlength="15">' +
+      '</div>' +
+      '<div class="wo-label-stack">' +
+        '<label class="wo-field-label"><i class="fas fa-image"></i> رابط الشعار (اختياري)</label>' +
+        '<input type="url" class="wo-input" id="wzBrandLogo" value="'+(b.logo||'')+'" placeholder="https://...">' +
+      '</div>' +
+    '</div>';
+}
+
+// ────── STEP 2: الفروع ──────
+function _wzBranchesStep(d) {
+  var rows = (d.branches||[]).map(function(br, i){
+    return '<div class="wz-list-row">' +
+      '<input type="text" placeholder="اسم الفرع (مثال: الرياض الرئيسي)" value="'+(br.name||'')+'" oninput="window._wz.data.branches['+i+'].name=this.value">' +
+      '<input type="text" placeholder="الرمز" maxlength="8" value="'+(br.code||'')+'" oninput="window._wz.data.branches['+i+'].code=this.value.toUpperCase()" style="text-transform:uppercase;">' +
+      '<input type="text" placeholder="المدينة/الموقع" value="'+(br.location||'')+'" oninput="window._wz.data.branches['+i+'].location=this.value">' +
+      '<button class="wo-icon-btn danger" onclick="_wzRemoveBranch('+i+')" '+(d.branches.length<=1?'disabled':'')+' aria-label="حذف"><i class="fas fa-xmark"></i></button>' +
+    '</div>';
+  }).join('');
+  return '' +
+    '<h2 class="wz-step-heading"><i class="fas fa-code-branch" style="color:#0ea5e9;"></i> الفروع</h2>' +
+    '<p class="wz-step-desc">أضف كل فرع ستعمل به تحت هذا البراند. لاحقاً سيُنشأ لكل فرع مستودع فرعي مربوط بالمستودع الرئيسي تلقائياً.</p>' +
+    '<div class="wz-list-builder">' +
+      (rows || '<div class="wz-list-empty">لا توجد فروع — أضف الفرع الأول</div>') +
+    '</div>' +
+    '<div style="margin-top:12px;">' +
+      '<button class="wo-btn wo-btn-secondary" onclick="_wzAddBranch()"><i class="fas fa-plus"></i><span>إضافة فرع</span></button>' +
+    '</div>';
+}
+window._wzAddBranch = function() {
+  window._wz.data.branches.push({ name: '', code: '', location: '' });
+  wzRender();
+};
+window._wzRemoveBranch = function(i) {
+  if (window._wz.data.branches.length <= 1) return;
+  window._wz.data.branches.splice(i, 1);
+  wzRender();
+};
+
+// ────── STEP 3: المستودعات ──────
+function _wzWarehousesStep(d) {
+  // Auto-generate list if not already generated
+  if (!d.warehouses.length) {
+    d.warehouses = [
+      { name: d.brand.name + ' — المستودع الرئيسي', code: (d.brand.code||'WH') + '-MAIN', role: 'main' }
+    ];
+    (d.branches||[]).forEach(function(br){
+      d.warehouses.push({
+        name: 'مخزن ' + (br.name||'—'),
+        code: (d.brand.code||'WH') + '-' + (br.code||'SUB'),
+        role: 'branch',
+        branch_code: br.code
+      });
+    });
+  }
+  var rows = d.warehouses.map(function(w, i){
+    var icon = w.role === 'main' ? 'fa-star' : 'fa-warehouse';
+    var color = w.role === 'main' ? '#f59e0b' : '#0ea5e9';
+    return '<div class="wz-list-row" style="grid-template-columns:28px 1fr 140px;">' +
+      '<i class="fas '+icon+'" style="color:'+color+';"></i>' +
+      '<input type="text" value="'+w.name+'" oninput="window._wz.data.warehouses['+i+'].name=this.value">' +
+      '<input type="text" value="'+w.code+'" oninput="window._wz.data.warehouses['+i+'].code=this.value">' +
+    '</div>';
+  }).join('');
+  return '' +
+    '<h2 class="wz-step-heading"><i class="fas fa-warehouse" style="color:#3b82f6;"></i> المستودعات</h2>' +
+    '<p class="wz-step-desc">سيتم إنشاء هيكل شجري تلقائياً: مستودع رئيسي واحد يتفرع منه مستودع لكل فرع. يمكنك تعديل الأسماء والرموز.</p>' +
+    '<div class="wz-preview">' +
+      '<div class="wz-preview-title"><i class="fas fa-sitemap"></i> الهيكل الناتج</div>' +
+      '<ul class="wz-preview-list">' +
+        '<li><b>المستودع الرئيسي</b> يستلم المشتريات ويصدر إذونات الصرف</li>' +
+        '<li><b>'+((d.branches||[]).length)+' مستودع فرعي</b> (واحد لكل فرع)</li>' +
+        '<li>كل المستودعات الفرعية تُربط بالرئيسي كأب (parent)</li>' +
+      '</ul>' +
+    '</div>' +
+    '<div class="wz-list-builder">'+rows+'</div>';
+}
+
+// ────── STEP 4: التصنيفات ──────
+function _wzCategoriesStep(d) {
+  var rows = (d.categories||[]).map(function(c, i){
+    return '<div class="wz-list-row" style="grid-template-columns:1fr 36px;">' +
+      '<input type="text" placeholder="اسم التصنيف" value="'+(c.name||'')+'" oninput="window._wz.data.categories['+i+'].name=this.value">' +
+      '<button class="wo-icon-btn danger" onclick="_wzRemoveCat('+i+')" aria-label="حذف"><i class="fas fa-xmark"></i></button>' +
+    '</div>';
+  }).join('');
+  var suggestions = ['لحوم وأسماك','منتجات ألبان','خضار وفواكه','صلصات وتوابل','عجائن وخبز','مشروبات','معلبات','مواد تنظيف'];
+  var sugHtml = suggestions.map(function(s){return '<button class="wo-chip info" style="border:none;cursor:pointer;padding:6px 12px;" onclick="_wzAddCatSuggestion(\''+s+'\')"><i class="fas fa-plus"></i> '+s+'</button>';}).join(' ');
+  return '' +
+    '<h2 class="wz-step-heading"><i class="fas fa-tags" style="color:#10b981;"></i> تصنيفات المواد <span class="wo-chip neutral flat" style="font-size:11px;margin-right:6px;">اختياري</span></h2>' +
+    '<p class="wz-step-desc">تصنيفات تنظم المواد الخام وتُسهّل التقارير. يمكن تخطي هذه الخطوة وإضافتها لاحقاً من صفحة "تصنيفات الأصناف".</p>' +
+    '<div style="margin-bottom:14px;">' +
+      '<div class="wo-field-label" style="margin-bottom:6px;">اقتراحات سريعة:</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:6px;">'+sugHtml+'</div>' +
+    '</div>' +
+    '<div class="wz-list-builder">' +
+      (rows || '<div class="wz-list-empty">لم تُضَف تصنيفات بعد</div>') +
+    '</div>' +
+    '<div style="margin-top:12px;">' +
+      '<button class="wo-btn wo-btn-secondary" onclick="_wzAddCat()"><i class="fas fa-plus"></i><span>إضافة تصنيف</span></button>' +
+    '</div>';
+}
+window._wzAddCat = function(){ window._wz.data.categories.push({name:''}); wzRender(); };
+window._wzRemoveCat = function(i){ window._wz.data.categories.splice(i,1); wzRender(); };
+window._wzAddCatSuggestion = function(name){
+  if (window._wz.data.categories.some(function(c){return c.name === name;})) return;
+  window._wz.data.categories.push({ name: name });
+  wzRender();
+};
+
+// ────── STEP 5: المواد الخام ──────
+function _wzItemsStep(d) {
+  var rows = (d.items||[]).map(function(it, i){
+    var catOpts = '<option value="">—</option>' + (d.categories||[]).map(function(c){
+      var sel = c.name === it.category ? ' selected' : '';
+      return '<option value="'+c.name+'"'+sel+'>'+c.name+'</option>';
+    }).join('');
+    return '<div class="wz-list-row" style="grid-template-columns:1.5fr 1fr 80px 100px 36px;">' +
+      '<input type="text" placeholder="اسم المادة" value="'+(it.name||'')+'" oninput="window._wz.data.items['+i+'].name=this.value">' +
+      '<select oninput="window._wz.data.items['+i+'].category=this.value">'+catOpts+'</select>' +
+      '<input type="text" placeholder="الوحدة" value="'+(it.unit||'')+'" oninput="window._wz.data.items['+i+'].unit=this.value">' +
+      '<input type="number" step="0.001" placeholder="التكلفة" value="'+(it.cost||'')+'" oninput="window._wz.data.items['+i+'].cost=Number(this.value)||0">' +
+      '<button class="wo-icon-btn danger" onclick="_wzRemoveItem('+i+')" aria-label="حذف"><i class="fas fa-xmark"></i></button>' +
+    '</div>';
+  }).join('');
+  return '' +
+    '<h2 class="wz-step-heading"><i class="fas fa-boxes-stacked" style="color:#f59e0b;"></i> المواد الخام <span class="wo-chip neutral flat" style="font-size:11px;margin-right:6px;">اختياري</span></h2>' +
+    '<p class="wz-step-desc">أضف بعض المواد الأساسية الآن، أو تخطَّ وأكمل لاحقاً من "إدارة المخزون" — يمكنك استيراد Excel كبير دفعة واحدة من هناك.</p>' +
+    '<div class="wz-list-builder">' +
+      (rows || '<div class="wz-list-empty">لم تُضف مواد — اضغط "إضافة" أو تخطَّ هذه الخطوة</div>') +
+    '</div>' +
+    '<div style="margin-top:12px;display:flex;gap:8px;">' +
+      '<button class="wo-btn wo-btn-secondary" onclick="_wzAddItem()"><i class="fas fa-plus"></i><span>إضافة مادة</span></button>' +
+    '</div>';
+}
+window._wzAddItem = function(){ window._wz.data.items.push({name:'',category:'',unit:'جرام',cost:0}); wzRender(); };
+window._wzRemoveItem = function(i){ window._wz.data.items.splice(i,1); wzRender(); };
+
+// ────── STEP 6: المنيو ──────
+function _wzMenuStep(d) {
+  var rows = (d.menuItems||[]).map(function(m, i){
+    return '<div class="wz-list-row" style="grid-template-columns:1.5fr 1fr 100px 36px;">' +
+      '<input type="text" placeholder="اسم المنتج" value="'+(m.name||'')+'" oninput="window._wz.data.menuItems['+i+'].name=this.value">' +
+      '<input type="text" placeholder="التصنيف" value="'+(m.category||'')+'" oninput="window._wz.data.menuItems['+i+'].category=this.value">' +
+      '<input type="number" step="0.01" placeholder="السعر" value="'+(m.price||'')+'" oninput="window._wz.data.menuItems['+i+'].price=Number(this.value)||0">' +
+      '<button class="wo-icon-btn danger" onclick="_wzRemoveMenu('+i+')" aria-label="حذف"><i class="fas fa-xmark"></i></button>' +
+    '</div>';
+  }).join('');
+  return '' +
+    '<h2 class="wz-step-heading"><i class="fas fa-utensils" style="color:#ef4444;"></i> منتجات المنيو <span class="wo-chip neutral flat" style="font-size:11px;margin-right:6px;">اختياري</span></h2>' +
+    '<p class="wz-step-desc">أضف بعض منتجات المنيو للبدء، أو تخطَّ وأضفها لاحقاً من "قائمة المنيو" — مع إمكانية استيراد Excel.</p>' +
+    '<div class="wz-list-builder">' +
+      (rows || '<div class="wz-list-empty">لم تُضف منتجات بعد</div>') +
+    '</div>' +
+    '<div style="margin-top:12px;">' +
+      '<button class="wo-btn wo-btn-secondary" onclick="_wzAddMenu()"><i class="fas fa-plus"></i><span>إضافة منتج</span></button>' +
+    '</div>';
+}
+window._wzAddMenu = function(){ window._wz.data.menuItems.push({name:'',category:'',price:0}); wzRender(); };
+window._wzRemoveMenu = function(i){ window._wz.data.menuItems.splice(i,1); wzRender(); };
+
+// ────── STEP 7: إتمام ──────
+function _wzDoneStep(d) {
+  var b = d.brand;
+  return '' +
+    '<div class="wz-success">' +
+      '<div class="wz-success-icon"><i class="fas fa-check"></i></div>' +
+      '<div class="wz-success-title">تم إنشاء البراند بنجاح!</div>' +
+      '<div class="wz-success-sub">براند <b>'+(b.name||'')+'</b> ('+(b.code||'')+') جاهز الآن — يمكنك متابعة إضافة الوصفات وربطها بالمنيو من الصفحات المخصصة.</div>' +
+      '<div class="wz-summary">' +
+        '<div class="wz-summary-card"><div class="wz-summary-val">1</div><div class="wz-summary-lbl">براند</div></div>' +
+        '<div class="wz-summary-card"><div class="wz-summary-val">'+(d.branches||[]).length+'</div><div class="wz-summary-lbl">فرع</div></div>' +
+        '<div class="wz-summary-card"><div class="wz-summary-val">'+(d.warehouses||[]).length+'</div><div class="wz-summary-lbl">مستودع</div></div>' +
+        '<div class="wz-summary-card"><div class="wz-summary-val">'+(d.categories||[]).length+'</div><div class="wz-summary-lbl">تصنيف</div></div>' +
+        '<div class="wz-summary-card"><div class="wz-summary-val">'+(d.items||[]).filter(function(x){return x.name;}).length+'</div><div class="wz-summary-lbl">مادة خام</div></div>' +
+        '<div class="wz-summary-card"><div class="wz-summary-val">'+(d.menuItems||[]).filter(function(x){return x.name;}).length+'</div><div class="wz-summary-lbl">منتج منيو</div></div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">' +
+        '<button class="wo-btn wo-btn-primary" onclick="wzClose();erpNav(\'erpBrands\');"><i class="fas fa-store"></i><span>فتح صفحة البراندات</span></button>' +
+        '<button class="wo-btn wo-btn-secondary" onclick="wzClose();erpNav(\'erpBOM\');"><i class="fas fa-blender"></i><span>ربط الوصفات (BOM)</span></button>' +
+        '<button class="wo-btn wo-btn-secondary" onclick="wzClose();nav(\'menu\');"><i class="fas fa-utensils"></i><span>المنيو</span></button>' +
+      '</div>' +
+    '</div>';
+}
+
+// ────── Navigation + persistence ──────
+window.wzPrev = function() {
+  if (window._wz.current > 0) { window._wz.current--; wzRender(); }
+};
+window.wzNext = function(skip) {
+  var s = window._wz.current;
+  var stepId = window._wz.steps[s].id;
+  if (s === window._wz.steps.length - 1) { wzClose(); return; }
+
+  if (!skip) {
+    var err = _wzValidateStep(stepId);
+    if (err) return showToast(err, true);
+  }
+  // Persist current step's data to server
+  _wzPersistStep(stepId, skip, function(ok) {
+    if (!ok) return;
+    window._wz.current++;
+    wzRender();
+  });
+};
+
+function _wzValidateStep(stepId) {
+  var d = window._wz.data;
+  switch(stepId) {
+    case 'brand':
+      var n = (document.getElementById('wzBrandName')||{}).value;
+      var c = (document.getElementById('wzBrandCode')||{}).value;
+      if (!n || !c) return 'الاسم والرمز مطلوبان';
+      d.brand.name = n; d.brand.code = c.toUpperCase();
+      d.brand.vat = (document.getElementById('wzBrandVat')||{}).value || '';
+      d.brand.logo = (document.getElementById('wzBrandLogo')||{}).value || '';
+      return '';
+    case 'branches':
+      var valid = d.branches.filter(function(b){return b.name && b.code;});
+      if (!valid.length) return 'أضف فرعاً واحداً على الأقل';
+      return '';
+    case 'warehouses':
+      var allOk = d.warehouses.every(function(w){return w.name && w.code;});
+      if (!allOk) return 'أكمل كل أسماء ورموز المستودعات';
+      return '';
+  }
+  return '';
+}
+
+function _wzPersistStep(stepId, skip, cb) {
+  var d = window._wz.data;
+  switch(stepId) {
+    case 'brand':
+      _erpPost('/erp/brands', { name: d.brand.name, code: d.brand.code, vatNumber: d.brand.vat, logo: d.brand.logo }, function(r){
+        if (r && (r.success || r.id)) {
+          d.brand.id = r.id || r.brandId;
+          cb(true);
+        } else { showToast(r.error||'فشل إنشاء البراند', true); cb(false); }
+      });
+      return;
+    case 'branches':
+      var valid = d.branches.filter(function(b){return b.name && b.code;});
+      var idx = 0;
+      var next = function() {
+        if (idx >= valid.length) return cb(true);
+        var br = valid[idx++];
+        _erpPost('/erp/branches', { name: br.name, code: br.code, location: br.location, brandId: d.brand.id }, function(r){
+          if (r && (r.success || r.id)) { br.id = r.id || r.branchId; next(); }
+          else { showToast(r.error||'فشل إنشاء فرع: '+br.name, true); cb(false); }
+        });
+      };
+      next();
+      return;
+    case 'warehouses':
+      var idx2 = 0;
+      var createdMain = null;
+      var nextW = function() {
+        if (idx2 >= d.warehouses.length) {
+          // Link sub-warehouses to main
+          if (!createdMain) return cb(true);
+          var subs = d.warehouses.filter(function(w){return w.role !== 'main' && w.id;});
+          var j = 0;
+          var linkNext = function() {
+            if (j >= subs.length) return cb(true);
+            _erpPost('/erp/warehouses/'+subs[j].id+'/set-parent', { parentId: createdMain.id }, function(){
+              j++; linkNext();
+            });
+          };
+          // Mark main
+          _erpPost('/erp/warehouses/'+createdMain.id+'/set-main', {}, function(){ linkNext(); });
+          return;
+        }
+        var w = d.warehouses[idx2++];
+        // Find branch_id if role is branch
+        var branch = (d.branches||[]).find(function(b){return b.code === w.branch_code;});
+        _erpPost('/erp/warehouses', {
+          name: w.name, code: w.code,
+          type: w.role === 'main' ? 'main' : 'branch',
+          brandId: d.brand.id,
+          branchId: branch ? branch.id : null,
+          is_main: w.role === 'main' ? 1 : 0
+        }, function(r){
+          if (r && (r.success || r.id)) {
+            w.id = r.id || r.warehouseId;
+            if (w.role === 'main') createdMain = w;
+            nextW();
+          } else { showToast(r.error||'فشل إنشاء مستودع: '+w.name, true); cb(false); }
+        });
+      };
+      nextW();
+      return;
+    case 'categories':
+      if (skip) return cb(true);
+      var valid3 = d.categories.filter(function(c){return c.name;});
+      if (!valid3.length) return cb(true);
+      var k = 0;
+      var nextC = function() {
+        if (k >= valid3.length) return cb(true);
+        _erpPost('/erp/item-categories', { name: valid3[k].name, brandId: d.brand.id }, function(r){
+          if (r && (r.success || r.id)) valid3[k].id = r.id;
+          k++; nextC();
+        });
+      };
+      nextC();
+      return;
+    case 'items':
+      if (skip) return cb(true);
+      var valid4 = d.items.filter(function(it){return it.name;});
+      if (!valid4.length) return cb(true);
+      var m = 0;
+      var nextI = function() {
+        if (m >= valid4.length) return cb(true);
+        var it = valid4[m++];
+        _erpPost('/inventory/items', {
+          name: it.name, category: it.category || '',
+          unit: it.unit || 'PCS', cost: it.cost || 0,
+          brandId: d.brand.id, active: true
+        }, function(){ nextI(); });
+      };
+      nextI();
+      return;
+    case 'menu':
+      if (skip) return cb(true);
+      var valid5 = d.menuItems.filter(function(mi){return mi.name;});
+      if (!valid5.length) return cb(true);
+      var p = 0;
+      var nextM = function() {
+        if (p >= valid5.length) return cb(true);
+        var mi = valid5[p++];
+        _erpPost('/menu', {
+          name: mi.name, category: mi.category || '',
+          price: mi.price || 0, brandId: d.brand.id, active: true
+        }, function(){ nextM(); });
+      };
+      nextM();
+      return;
+  }
+  cb(true);
 }

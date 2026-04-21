@@ -272,15 +272,16 @@ router.post('/bom', async (req, res) => {
         [bomId, productId, Number(version)||1, Number(yieldQuantity)||1, yieldUnit||'PCS',
          effectiveFrom||null, effectiveTo||null, notes||'']);
     }
-    // Replace lines if provided
+    // Replace lines if provided — accept both `itemId` and `componentItemId` (frontend flexibility)
     if (Array.isArray(lines)) {
       await db.query('DELETE FROM bom_lines WHERE bom_id = ?', [bomId]);
       for (const l of lines) {
-        if (!l.componentItemId) continue;
+        const compId = l.componentItemId || l.itemId;
+        if (!compId) continue;
         await db.query(
           `INSERT INTO bom_lines (id, bom_id, component_item_id, quantity, unit, waste_pct)
            VALUES (?,?,?,?,?,?)`,
-          [genId('BL'), bomId, l.componentItemId, Number(l.quantity)||0, l.unit||'PCS', Number(l.wastePct)||0]);
+          [genId('BL'), bomId, compId, Number(l.quantity)||0, l.unit||'PCS', Number(l.wastePct)||0]);
       }
     }
     res.json({ success: true, id: bomId });
@@ -307,6 +308,44 @@ router.delete('/bom/:id', async (req, res) => {
   try {
     await db.query('UPDATE bom SET is_active = 0 WHERE id = ?', [req.params.id]);
     res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// Clone a BOM to a new product (optionally a different brand)
+// Accepts: itemId OR componentItemId in line objects — tolerates either naming.
+router.post('/bom/:id/clone', async (req, res) => {
+  try {
+    const srcId = req.params.id;
+    const { newProductId, newVersion, notes, copyLines } = req.body;
+    if (!newProductId) return res.json({ success: false, error: 'المنتج الجديد مطلوب' });
+
+    // Load source BOM
+    const [srcRows] = await db.query('SELECT * FROM bom WHERE id = ?', [srcId]);
+    if (!srcRows.length) return res.json({ success: false, error: 'الوصفة المصدر غير موجودة' });
+    const src = srcRows[0];
+
+    // Create new BOM
+    const newId = genId('BOM');
+    await db.query(
+      `INSERT INTO bom (id, product_id, version, yield_quantity, yield_unit, notes, is_active)
+       VALUES (?,?,?,?,?,?,1)`,
+      [newId, newProductId, Number(newVersion) || 1,
+       Number(src.yield_quantity) || 1, src.yield_unit || 'PCS',
+       notes || (src.notes ? '[نسخة من ' + srcId + '] ' + src.notes : 'نسخة من وصفة ' + srcId)]);
+
+    // Copy lines unless explicitly disabled
+    if (copyLines !== false) {
+      const [lines] = await db.query('SELECT * FROM bom_lines WHERE bom_id = ?', [srcId]);
+      for (const l of lines) {
+        await db.query(
+          `INSERT INTO bom_lines (id, bom_id, component_item_id, quantity, unit, waste_pct)
+           VALUES (?,?,?,?,?,?)`,
+          [genId('BL'), newId, l.component_item_id,
+           Number(l.quantity) || 0, l.unit || 'PCS', Number(l.waste_pct) || 0]);
+      }
+    }
+
+    res.json({ success: true, id: newId });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 

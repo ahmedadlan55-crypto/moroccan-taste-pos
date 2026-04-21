@@ -317,8 +317,79 @@ router.delete('/positions/:id', async (req, res) => {
 
 router.get('/transaction-types', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM transaction_types ORDER BY name');
-    res.json(rows.map(t => ({ id: t.id, name: t.name, code: t.code, isActive: !!t.is_active })));
+    const { category, requiresPayment } = req.query;
+    let sql = 'SELECT * FROM transaction_types WHERE 1=1';
+    const params = [];
+    if (category) { sql += ' AND category = ?'; params.push(category); }
+    if (requiresPayment === '1') sql += ' AND requires_payment = 1';
+    if (requiresPayment === '0') sql += ' AND requires_payment = 0';
+    sql += ' ORDER BY sort_order ASC, name ASC';
+    const [rows] = await db.query(sql, params);
+    res.json(rows.map(t => ({
+      id: t.id, name: t.name, code: t.code, isActive: !!t.is_active,
+      category: t.category || 'administrative',
+      requiresPayment: !!t.requires_payment,
+      glTemplateCode: t.gl_template_code || null,
+      icon: t.icon || 'fa-file-alt',
+      iconColor: t.icon_color || 'info',
+      description: t.description || '',
+      sortOrder: t.sort_order || 100
+    })));
+  } catch(e) { res.json([]); }
+});
+
+// Grouped by category — convenient for the "new transaction" wizard
+router.get('/transaction-types/grouped', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM transaction_types ORDER BY category, sort_order ASC, name ASC');
+    const groups = { financial: [], administrative: [], procurement: [], operational: [], hr: [] };
+    const labels = {
+      financial:      { label: 'مالية',         icon: 'fa-sack-dollar',     color: 'warning' },
+      administrative: { label: 'إدارية',        icon: 'fa-building',         color: 'info' },
+      procurement:    { label: 'مشتريات',       icon: 'fa-cart-shopping',    color: 'success' },
+      operational:    { label: 'تشغيلية',       icon: 'fa-industry',         color: 'purple' },
+      hr:             { label: 'موارد بشرية',   icon: 'fa-users',            color: 'info' }
+    };
+    rows.forEach(t => {
+      const cat = t.category || 'administrative';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push({
+        id: t.id, name: t.name, code: t.code, isActive: !!t.is_active,
+        category: cat, requiresPayment: !!t.requires_payment,
+        glTemplateCode: t.gl_template_code || null,
+        icon: t.icon || 'fa-file-alt', iconColor: t.icon_color || 'info',
+        description: t.description || ''
+      });
+    });
+    res.json({
+      groups: Object.keys(groups).map(cat => ({
+        category: cat, label: labels[cat] ? labels[cat].label : cat,
+        icon: labels[cat] ? labels[cat].icon : 'fa-folder',
+        color: labels[cat] ? labels[cat].color : 'neutral',
+        types: groups[cat]
+      })),
+      total: rows.length
+    });
+  } catch(e) { res.json({ groups: [], total: 0, error: e.message }); }
+});
+
+// GL templates (for UI preview of "what journal will post")
+router.get('/gl-templates', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM transaction_gl_templates ORDER BY code');
+    res.json(rows);
+  } catch(e) { res.json([]); }
+});
+
+// Default approval chain for a given transaction type
+router.get('/transaction-types/:code/default-chain', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT * FROM txn_type_default_chain
+       WHERE transaction_type_code = ?
+       ORDER BY step_order ASC, amount_from ASC`,
+      [req.params.code]);
+    res.json(rows);
   } catch(e) { res.json([]); }
 });
 

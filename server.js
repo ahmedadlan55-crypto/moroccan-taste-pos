@@ -2241,26 +2241,262 @@ async function runMigrations() {
     await db.query("UPDATE transaction_types SET code = UPPER(SUBSTRING(IFNULL(name,'TXN'),1,3)) WHERE code IS NULL OR code = ''");
   } catch(e) {}
 
-  // Seed useful transaction types if none cover common admin flows
+  // ═══════════════════════════════════════════════════════════
+  // TRANSACTION GL TEMPLATES — reusable debit/credit templates
+  // One template = one type of journal (e.g. "expense_out" = Dr expense / Cr bank).
+  // Referenced from transaction_types.gl_template_code so that when a
+  // transaction of that type gets paid/closed, the engine knows HOW to post.
+  // ═══════════════════════════════════════════════════════════
+  await createTableIfMissing('transaction_gl_templates', `
+    CREATE TABLE transaction_gl_templates (
+      code VARCHAR(40) PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      description VARCHAR(400),
+      debit_account_hint VARCHAR(20),
+      credit_account_hint VARCHAR(20),
+      posts_on ENUM('approval','payment','receipt','stocktake','manual') DEFAULT 'payment',
+      example_memo VARCHAR(300),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
+  // ═══════════════════════════════════════════════════════════
+  // APPROVAL CHAIN DEFAULTS — per transaction type + amount threshold
+  // Populated so new workflows have sensible defaults without manual setup.
+  // ═══════════════════════════════════════════════════════════
+  await createTableIfMissing('txn_type_default_chain', `
+    CREATE TABLE txn_type_default_chain (
+      id VARCHAR(60) PRIMARY KEY,
+      transaction_type_code VARCHAR(40) NOT NULL,
+      step_order INT NOT NULL,
+      role_required VARCHAR(100),
+      amount_from DECIMAL(14,4) DEFAULT 0,
+      amount_to DECIMAL(14,4) DEFAULT NULL,
+      is_final_step BOOLEAN DEFAULT FALSE,
+      INDEX idx_code (transaction_type_code, step_order)
+    ) ENGINE=InnoDB
+  `);
+
+  // Extend transaction_types with category + payment flag + GL template
+  await addColumnIfMissing('transaction_types', 'category',
+    "ENUM('financial','administrative','procurement','operational','hr') DEFAULT 'administrative'");
+  await addColumnIfMissing('transaction_types', 'requires_payment', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('transaction_types', 'gl_template_code', "VARCHAR(40)");
+  await addColumnIfMissing('transaction_types', 'icon', "VARCHAR(40) DEFAULT 'fa-file-alt'");
+  await addColumnIfMissing('transaction_types', 'icon_color', "VARCHAR(20) DEFAULT 'info'");
+  await addColumnIfMissing('transaction_types', 'description', "VARCHAR(400)");
+  await addColumnIfMissing('transaction_types', 'sort_order', "INT DEFAULT 100");
+
+  // ═══ COMPLETE TAXONOMY — 44 standard transaction types ═══
+  // Categories: financial / administrative / procurement / operational / hr
+  //
+  // Format: [code, name_ar, category, requires_payment, gl_template, icon, icon_color, sort_order, description]
   try {
-    const [ttNames] = await db.query("SELECT code FROM transaction_types");
-    const existing = new Set(ttNames.map(r => r.code));
-    const seeds = [
-      ['TT-EXP','طلب صرف مستحقات','EXP'],
-      ['TT-PUR','طلب شراء','PUR'],
-      ['TT-AST','طلب أصل ثابت','AST'],
-      ['TT-MNT','طلب صيانة','MNT'],
-      ['TT-LEV','طلب إجازة','LEV'],
-      ['TT-HIR','طلب توظيف','HIR'],
-      ['TT-TRF','طلب نقل','TRF'],
-      ['TT-ADV','طلب سلفة','ADV']
+    const types = [
+      // ── FINANCIAL (10) ──
+      ['EXP',          'طلب صرف مصروف عام',     'financial',     1, 'expense_out',  'fa-receipt',           'warning', 110, 'مصروفات تشغيلية: كهرباء، ماء، اتصالات، قرطاسية'],
+      ['PAY',          'طلب سداد مورد',          'financial',     1, 'ap_payment',   'fa-money-bill-transfer','warning', 120, 'دفع فاتورة مورد معتمدة (AP)'],
+      ['REC',          'تسجيل تحصيل عميل',       'financial',     0, 'ar_receipt',   'fa-hand-holding-dollar','success', 130, 'استلام دفعة من عميل (AR)'],
+      ['REF',          'طلب استرداد مبلغ',       'financial',     1, 'refund',       'fa-rotate-left',       'danger',  140, 'إرجاع مبلغ لعميل (فواتير مرتجعة)'],
+      ['TRF-BANK',     'تحويل بين حسابات بنكية', 'financial',     1, 'bank_transfer','fa-right-left',        'info',    150, 'نقل رصيد بين حسابات بنكية'],
+      ['TRF-CASH',     'تحويل بين صناديق نقدية', 'financial',     1, 'cash_transfer','fa-cash-register',     'info',    160, 'نقل نقد بين الفروع/الصناديق'],
+      ['CUSTODY-ADD',  'تغذية عهدة',             'financial',     1, 'custody_load', 'fa-wallet',            'purple',  170, 'إضافة مبلغ لعهدة موظف'],
+      ['CUSTODY-STL',  'تسوية عهدة',             'financial',     0, 'custody_stl',  'fa-scale-balanced',    'purple',  180, 'تقديم إيصالات العهدة وتسويتها'],
+      ['WRITE-OFF',    'شطب ديون/أصول',          'financial',     0, 'write_off',    'fa-ban',               'danger',  190, 'شطب دين معدوم أو أصل تالف'],
+      ['ADJ-JRN',      'قيد تسوية يدوي',         'financial',     0, 'manual_jrn',   'fa-pen-to-square',     'neutral', 199, 'قيد محاسبي مخصص باعتماد رسمي'],
+      // ── ADMINISTRATIVE (8) ──
+      ['MEMO',         'مذكرة داخلية',            'administrative', 0, null,           'fa-envelope',          'info',    210, 'تعميم أو إخطار بين الأقسام'],
+      ['DECISION',     'قرار إداري',              'administrative', 0, null,           'fa-gavel',             'warning', 220, 'قرار رسمي (تعديل سياسة، إجراءات جديدة)'],
+      ['LETTER',       'خطاب رسمي',               'administrative', 0, null,           'fa-envelope-open-text','info',    230, 'مراسلة خارجية (جهات حكومية، شركاء)'],
+      ['CONTRACT',     'عقد جديد/تجديد',          'administrative', 0, null,           'fa-file-contract',     'purple',  240, 'عقد مع مورد أو عميل'],
+      ['POLICY',       'سياسة داخلية',            'administrative', 0, null,           'fa-book',              'neutral', 250, 'وثيقة سياسة (خصم، إرجاع، عمل)'],
+      ['AUDIT',        'تقرير مراجعة',            'administrative', 0, null,           'fa-magnifying-glass-chart','info',260, 'تقرير تدقيق داخلي'],
+      ['COMPLAINT',    'شكوى',                    'administrative', 0, null,           'fa-triangle-exclamation','warning',270, 'شكوى من عميل أو موظف'],
+      ['APPROVAL',     'طلب موافقة عامة',         'administrative', 0, null,           'fa-check-circle',      'info',    280, 'أي موافقة إدارية غير مصنفة'],
+      // ── PROCUREMENT (6) ──
+      ['PUR',          'طلب شراء (PR)',           'procurement',   0, null,           'fa-cart-plus',         'info',    310, 'طلب من القسم لشراء مادة — يحوَّل لـ PO'],
+      ['PO',           'أمر شراء (Purchase Order)','procurement',  1, 'po',           'fa-cart-shopping',     'warning', 320, 'أمر رسمي للمورد'],
+      ['GRN',          'استلام بضاعة (GRN)',      'procurement',   0, 'grn',          'fa-truck-ramp-box',    'success', 330, 'استلام فعلي من المورد'],
+      ['RTV',          'إرجاع للمورد',            'procurement',   0, 'rtv',          'fa-truck-fast',        'danger',  340, 'إرجاع بضاعة تالفة للمورد'],
+      ['PRICE-NEG',    'تفاوض سعر',               'procurement',   0, null,           'fa-handshake',         'neutral', 350, 'طلب مراجعة سعر مع مورد'],
+      ['SUP-REG',      'تسجيل مورد جديد',         'procurement',   0, null,           'fa-user-plus',         'success', 360, 'إضافة مورد للقائمة المعتمدة'],
+      // ── OPERATIONAL (9) ──
+      ['SALE',         'فاتورة بيع (POS)',        'operational',   0, 'sale',         'fa-cash-register',     'success', 410, 'بيع منتج عبر الكاشير'],
+      ['STK-ISS',      'إذن صرف مخزني',           'operational',   0, 'stock_issue',  'fa-truck-arrow-right', 'warning', 420, 'صرف مواد من المستودع الرئيسي للفرع'],
+      ['STK-TRF',      'تحويل بين مستودعات',      'operational',   0, 'stock_trf',    'fa-shuffle',           'info',    430, 'نقل بين مخزنين'],
+      ['STK-ADJ',      'تسوية جرد',               'operational',   0, 'stocktake',    'fa-clipboard-check',   'warning', 440, 'فروقات الجرد الفعلي vs النظام'],
+      ['WASTE',        'تسجيل هدر',               'operational',   0, 'waste',        'fa-dumpster',          'danger',  450, 'تلف، انسكاب، انتهاء صلاحية'],
+      ['PROD-ORD',     'أمر إنتاج',               'operational',   0, 'prod_release', 'fa-industry',          'purple',  460, 'تصنيع من مواد خام'],
+      ['PROD-CMP',     'إكمال إنتاج',             'operational',   0, 'prod_complete','fa-flag-checkered',    'success', 470, 'تحويل WIP لمنتج تام'],
+      ['MNT',          'طلب صيانة',               'operational',   1, 'expense_out',  'fa-screwdriver-wrench','warning', 480, 'صيانة معدات/أجهزة'],
+      ['AST',          'طلب أصل ثابت',            'operational',   1, 'fixed_asset',  'fa-building',          'purple',  490, 'شراء معدة/أثاث/أجهزة'],
+      // ── HR (11) ──
+      ['HIR',          'طلب توظيف',               'hr',            0, null,           'fa-user-plus',         'success', 510, 'طلب توظيف موظف جديد'],
+      ['LEV',          'طلب إجازة',               'hr',            0, null,           'fa-umbrella-beach',    'info',    520, 'سنوية/مرضية/اضطرارية'],
+      ['ADV',          'طلب سلفة',                'hr',            1, 'employee_adv', 'fa-sack-dollar',       'warning', 530, 'سلفة موظف على الراتب'],
+      ['LOAN',         'قرض موظف',                'hr',            1, 'employee_loan','fa-hand-holding-dollar','warning',540, 'قرض طويل الأجل من الشركة'],
+      ['OVT',          'طلب ساعات إضافية',        'hr',            0, null,           'fa-clock',             'info',    550, 'احتساب overtime'],
+      ['TRF-EMP',      'طلب نقل موظف',            'hr',            0, null,           'fa-person-walking-arrow-right','info',560,'نقل بين الفروع/الأقسام'],
+      ['PROMO',        'طلب ترقية',               'hr',            0, null,           'fa-arrow-up-right-dots','success',570, 'ترقية موظف'],
+      ['TERM',         'طلب إنهاء خدمة',          'hr',            1, 'end_of_service','fa-user-slash',       'danger',  580, 'فصل/استقالة'],
+      ['WARN',         'إنذار تأديبي',            'hr',            0, null,           'fa-triangle-exclamation','danger',590, 'إنذار تأديبي'],
+      ['PAYROLL',      'تشغيل الرواتب',           'hr',            1, 'payroll',      'fa-money-check-dollar','warning', 599, 'دفعة رواتب شهرية'],
+      ['EOS',          'مكافأة نهاية خدمة',       'hr',            1, 'eos',          'fa-handshake-angle',   'purple',  598, 'حساب مكافأة رحيل']
     ];
-    for (const [id, name, code] of seeds) {
-      if (!existing.has(code)) {
-        try { await db.query('INSERT IGNORE INTO transaction_types (id, name, code) VALUES (?,?,?)', [id, name, code]); } catch(e) {}
+
+    // Step 1: dedupe existing — merge duplicates keeping the first one
+    try {
+      // Map legacy/duplicate codes to canonical ones (keep data, delete duplicates)
+      const aliasMap = {
+        'PURCHASE_REQUEST': 'PUR',
+        'ASSET_REQUEST':    'AST',
+        'maintenance':      'MNT',
+        'ceo':              'DECISION',
+        'hr':               'HIR'
+      };
+      for (const [oldCode, newCode] of Object.entries(aliasMap)) {
+        const [exists] = await db.query('SELECT id FROM transaction_types WHERE code = ? LIMIT 1', [newCode]);
+        if (!exists.length) continue;
+        const [dup] = await db.query('SELECT id FROM transaction_types WHERE code = ? LIMIT 1', [oldCode]);
+        if (!dup.length) continue;
+        // Re-point any transactions using the old code to the new code
+        try {
+          await db.query(
+            'UPDATE transactions SET transaction_type_id = ? WHERE transaction_type_id = ?',
+            [exists[0].id, dup[0].id]);
+          await db.query(
+            'UPDATE workflow_definitions SET transaction_type_id = ? WHERE transaction_type_id = ?',
+            [exists[0].id, dup[0].id]);
+        } catch(e) {}
+        await db.query('DELETE FROM transaction_types WHERE id = ?', [dup[0].id]);
+      }
+    } catch(e) { console.warn('[txn_types dedupe]', e.message); }
+
+    // Step 2: insert or update each canonical type
+    for (const [code, name, category, requires_payment, gl_template, icon, iconColor, sortOrder, desc] of types) {
+      const id = 'TT-' + code;
+      const [existing] = await db.query('SELECT id FROM transaction_types WHERE code = ? LIMIT 1', [code]);
+      if (existing.length) {
+        // Update meta (keep existing id)
+        try {
+          await db.query(
+            `UPDATE transaction_types SET name=?, category=?, requires_payment=?, gl_template_code=?,
+             icon=?, icon_color=?, sort_order=?, description=? WHERE code = ?`,
+            [name, category, requires_payment ? 1 : 0, gl_template, icon, iconColor, sortOrder, desc, code]);
+        } catch(e) {}
+      } else {
+        try {
+          await db.query(
+            `INSERT INTO transaction_types
+             (id, code, name, category, requires_payment, gl_template_code, icon, icon_color, sort_order, description)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            [id, code, name, category, requires_payment ? 1 : 0, gl_template, icon, iconColor, sortOrder, desc]);
+        } catch(e) {}
       }
     }
-  } catch(e) {}
+  } catch(e) { console.warn('[txn_types seed]', e.message); }
+
+  // ═══ GL TEMPLATES SEED ═══
+  // [code, name, description, debit_hint, credit_hint, posts_on, memo]
+  try {
+    const templates = [
+      ['expense_out',    'مصروف مدفوع',              'Dr مصروف / Cr بنك أو نقد',                   '5100', '1120', 'payment',  'Expense payment'],
+      ['ap_payment',     'سداد مورد',                'Dr ذمم موردين (AP) / Cr بنك',                '2100', '1120', 'payment',  'AP payment'],
+      ['ar_receipt',     'تحصيل عميل',               'Dr بنك / Cr ذمم عملاء (AR)',                 '1120', '1150', 'receipt',  'AR receipt'],
+      ['refund',         'استرداد لعميل',            'Dr إيراد مرتجع / Cr بنك',                    '4900', '1120', 'payment',  'Customer refund'],
+      ['bank_transfer',  'تحويل بنكي',               'Dr بنك (الوجهة) / Cr بنك (المصدر)',          '1120', '1120', 'payment',  'Bank transfer'],
+      ['cash_transfer',  'تحويل نقدي',               'Dr نقد (الوجهة) / Cr نقد (المصدر)',          '1110', '1110', 'payment',  'Cash transfer'],
+      ['custody_load',   'تغذية عهدة',               'Dr ذمم عهدة / Cr بنك',                       '1290', '1120', 'payment',  'Custody load'],
+      ['custody_stl',    'تسوية عهدة',               'Dr مصاريف / Cr ذمم عهدة',                    '5100', '1290', 'approval', 'Custody settlement'],
+      ['write_off',      'شطب دين/أصول',             'Dr خسارة شطب / Cr AR أو أصل',                '5800', '1150', 'approval', 'Write-off'],
+      ['manual_jrn',     'قيد تسوية يدوي',           'حسب القيد المُحرَّر',                         null,    null,  'manual',   'Manual adjustment'],
+      ['sale',           'فاتورة بيع',               'Dr كاش / Cr إيراد + Cr VAT / Dr COGS / Cr مخزون', '1110','4100','manual', 'POS sale'],
+      ['stock_issue',    'إذن صرف مخزني',            'Dr مخزون الفروع / Cr المخزون الرئيسي',       '1210', '1200', 'approval', 'Stock issue'],
+      ['stock_trf',      'تحويل مخزون',              'Dr مخزن الوجهة / Cr مخزن المصدر',            '1200', '1200', 'approval', 'Stock transfer'],
+      ['stocktake',      'تسوية جرد',                'Dr/Cr فروقات الجرد vs مخزون',                '5300', '1200', 'stocktake','Stocktake variance'],
+      ['waste',          'قيد هدر',                  'Dr مصروف الهدر / Cr مخزون',                  '5200', '1200', 'approval', 'Waste posting'],
+      ['prod_release',   'إطلاق إنتاج',              'Dr WIP / Cr مواد خام + عمالة + overhead',    '1220', '1200', 'approval', 'Production release'],
+      ['prod_complete',  'إكمال إنتاج',              'Dr منتجات تامة / Cr WIP',                    '1230', '1220', 'approval', 'Production complete'],
+      ['fixed_asset',    'شراء أصل ثابت',            'Dr أصول ثابتة / Cr بنك أو AP',               '1500', '2100', 'payment',  'Fixed asset purchase'],
+      ['grn',            'استلام بضاعة',             'Dr مخزون + Dr VAT مدخلات / Cr AP',           '1200', '2100', 'receipt',  'Goods receipt'],
+      ['rtv',            'إرجاع للمورد',             'Dr AP / Cr مخزون',                           '2100', '1200', 'approval', 'Return to vendor'],
+      ['po',             'أمر شراء',                 '(لا قيد عند الإنشاء — يُرحَّل عند الاستلام)', null,   null,  'receipt',  'Purchase order'],
+      ['employee_adv',   'سلفة موظف',                'Dr ذمم موظفين / Cr بنك',                     '1291', '1120', 'payment',  'Employee advance'],
+      ['employee_loan',  'قرض موظف',                 'Dr قرض موظفين / Cr بنك',                     '1292', '1120', 'payment',  'Employee loan'],
+      ['payroll',        'رواتب',                    'Dr مصاريف رواتب / Cr بنك + استقطاعات',       '5400', '1120', 'payment',  'Payroll run'],
+      ['end_of_service', 'إنهاء خدمة',               'Dr مستحقات نهاية خدمة / Cr بنك',             '2400', '1120', 'payment',  'End of service'],
+      ['eos',            'مكافأة نهاية خدمة',        'Dr مصاريف مكافآت / Cr نقد أو بنك',           '5410', '1120', 'payment',  'EOS benefit']
+    ];
+    for (const [code, name, desc, dr, cr, posts, memo] of templates) {
+      try {
+        await db.query(
+          `INSERT INTO transaction_gl_templates (code, name, description, debit_account_hint, credit_account_hint, posts_on, example_memo)
+           VALUES (?,?,?,?,?,?,?)
+           ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description),
+             debit_account_hint=VALUES(debit_account_hint), credit_account_hint=VALUES(credit_account_hint),
+             posts_on=VALUES(posts_on), example_memo=VALUES(example_memo)`,
+          [code, name, desc, dr, cr, posts, memo]);
+      } catch(e) {}
+    }
+  } catch(e) { console.warn('[gl_templates seed]', e.message); }
+
+  // ═══ DEFAULT APPROVAL CHAINS ═══
+  // Amount-based tiers per transaction type.
+  // Roles: المحاسب / مدير الفرع / المدير المالي / المدير العام
+  try {
+    const chains = [
+      // code, step, role, amount_from, amount_to, isFinal
+      // Expenses
+      ['EXP', 1, 'accountant',       0,      5000,   false],
+      ['EXP', 1, 'branch_manager',   5001,   50000,  false],
+      ['EXP', 1, 'finance_manager',  50001,  500000, false],
+      ['EXP', 1, 'ceo',              500001, null,   false],
+      ['EXP', 2, 'finance_manager',  0,      null,   true],   // finalization
+      // AP Payments
+      ['PAY', 1, 'accountant',       0,      50000,  false],
+      ['PAY', 1, 'finance_manager',  50001,  500000, false],
+      ['PAY', 1, 'ceo',              500001, null,   false],
+      ['PAY', 2, 'finance_manager',  0,      null,   true],
+      // Purchase orders
+      ['PO',  1, 'branch_manager',   0,      20000,  false],
+      ['PO',  1, 'finance_manager',  20001,  200000, false],
+      ['PO',  1, 'ceo',              200001, null,   false],
+      ['PO',  2, 'finance_manager',  0,      null,   true],
+      // Asset request
+      ['AST', 1, 'branch_manager',   0,      10000,  false],
+      ['AST', 1, 'finance_manager',  10001,  100000, false],
+      ['AST', 1, 'ceo',              100001, null,   false],
+      ['AST', 2, 'finance_manager',  0,      null,   true],
+      // Maintenance
+      ['MNT', 1, 'branch_manager',   0,      5000,   false],
+      ['MNT', 1, 'finance_manager',  5001,   null,   false],
+      ['MNT', 2, 'finance_manager',  0,      null,   true],
+      // HR
+      ['LEV', 1, 'branch_manager',   0,      null,   false],
+      ['LEV', 2, 'hr_manager',       0,      null,   true],
+      ['ADV', 1, 'branch_manager',   0,      null,   false],
+      ['ADV', 2, 'finance_manager',  0,      null,   true],
+      ['HIR', 1, 'hr_manager',       0,      null,   false],
+      ['HIR', 2, 'ceo',              0,      null,   true],
+      ['TERM',1, 'hr_manager',       0,      null,   false],
+      ['TERM',2, 'ceo',              0,      null,   true],
+      // Operational
+      ['STK-ISS', 1, 'warehouse_keeper', 0, null, false],
+      ['STK-ISS', 2, 'branch_manager',   0, null, true],
+      ['WASTE',   1, 'branch_manager',   0, null, false],
+      ['WASTE',   2, 'finance_manager',  0, null, true],
+    ];
+    for (const [code, step, role, af, at, isFinal] of chains) {
+      const id = 'TTC-' + code + '-' + step + '-' + (af || 0);
+      try {
+        await db.query(
+          `INSERT IGNORE INTO txn_type_default_chain
+           (id, transaction_type_code, step_order, role_required, amount_from, amount_to, is_final_step)
+           VALUES (?,?,?,?,?,?,?)`,
+          [id, code, step, role, af, at, isFinal ? 1 : 0]);
+      } catch(e) {}
+    }
+  } catch(e) { console.warn('[chain seed]', e.message); }
 }
 
 app.listen(PORT, async () => {

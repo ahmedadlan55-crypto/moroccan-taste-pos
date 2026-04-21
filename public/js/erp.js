@@ -5522,13 +5522,19 @@ function wfPrintTxn(id) {
   }).getWfTransaction(id);
 }
 
-// Unified transaction action modal — uses WoModal (Phase B)
-// Supports: approve, reject, return, close. Shared with employee portal via window.wfTxnAction.
+// ═══════════════════════════════════════════════════════════════════
+// Unified transaction action modal — WoModal-based (Phase B)
+// Return action: now gets enterprise-grade treatment (preset reasons
+// + target step preview + context banner + validation).
+// ═══════════════════════════════════════════════════════════════════
 function wfTxnAction(id, action) {
-  var actionNames = { approve: 'الموافقة', reject: 'الرفض', return: 'الإرجاع', close: 'الإغلاق' };
-  var aIcons = { approve: 'fa-check-circle', reject: 'fa-times-circle', return: 'fa-rotate-left', close: 'fa-lock' };
-  var aColors = { approve: 'success', reject: 'danger', return: 'warn', close: 'neutral' };
-  var requiredNote = (action === 'reject' || action === 'return');
+  // Route to specialized return modal
+  if (action === 'return') return wfReturnModal(id);
+
+  var actionNames = { approve: 'الموافقة', reject: 'الرفض', close: 'الإغلاق' };
+  var aIcons = { approve: 'fa-check-circle', reject: 'fa-times-circle', close: 'fa-lock' };
+  var aColors = { approve: 'success', reject: 'danger', close: 'neutral' };
+  var requiredNote = (action === 'reject');
   var title = (actionNames[action] || action) + ' — معاملة';
 
   var body =
@@ -5536,13 +5542,11 @@ function wfTxnAction(id, action) {
       '<div class="wo-label-stack">' +
         '<label class="wo-field-label">' +
           '<i class="fas fa-comment"></i> ' +
-          (action === 'return' ? 'سبب الإرجاع' : (action === 'reject' ? 'سبب الرفض' : 'التعليق')) +
+          (action === 'reject' ? 'سبب الرفض' : 'التعليق') +
           (requiredNote ? ' <span style="color:var(--wo-danger);">*</span>' : ' <span class="wo-text-subtle wo-text-caption">(اختياري)</span>') +
         '</label>' +
         '<textarea id="wfActNote" class="wo-textarea" rows="4" placeholder="' +
-          (action === 'return' ? 'اكتب سبب الإرجاع والملاحظات التي تريد إبلاغ المرسل بها...' :
-           action === 'reject' ? 'اذكر سبب الرفض بوضوح للمرسل...' :
-           'أضف تعليقاً أو ملاحظة...') + '"></textarea>' +
+          (action === 'reject' ? 'اذكر سبب الرفض بوضوح للمرسل...' : 'أضف تعليقاً أو ملاحظة...') + '"></textarea>' +
       '</div>' +
       '<div class="wo-label-stack">' +
         '<label class="wo-field-label"><i class="fas fa-paperclip"></i> مرفق <span class="wo-text-subtle wo-text-caption">(اختياري)</span></label>' +
@@ -5552,18 +5556,15 @@ function wfTxnAction(id, action) {
 
   var footer =
     '<button class="wo-btn wo-btn-secondary" id="wfActCancel">إلغاء</button>' +
-    '<button class="wo-btn wo-btn-' + (action === 'reject' ? 'danger' : action === 'return' ? 'warning' : 'primary') + '" id="wfActOk">' +
+    '<button class="wo-btn wo-btn-' + (action === 'reject' ? 'danger' : 'primary') + '" id="wfActOk">' +
       '<i class="fas ' + aIcons[action] + '"></i><span>' + actionNames[action] + '</span>' +
     '</button>';
 
   var modal = WoModal.open({
-    icon: aIcons[action],
-    iconColor: aColors[action],
+    icon: aIcons[action], iconColor: aColors[action],
     title: title,
     subtitle: 'سيتم تسجيل هذا الإجراء في سجل المعاملة',
-    body: body,
-    footer: footer,
-    size: 'sm'
+    body: body, footer: footer, size: 'sm'
   });
 
   modal.el.querySelector('#wfActCancel').onclick = function() { modal.close(null); };
@@ -5572,35 +5573,238 @@ function wfTxnAction(id, action) {
   modal.el.querySelector('#wfActOk').onclick = function() {
     var note = (document.getElementById('wfActNote').value || '').trim();
     if (requiredNote && !note) {
-      showToast(action === 'reject' ? 'سبب الرفض مطلوب' : 'سبب الإرجاع مطلوب — اكتب ما تريد إبلاغ المرسل به', true);
+      showToast('سبب الرفض مطلوب', true);
       return;
     }
     var fileInput = document.getElementById('wfActFile');
-    var doSend = function(attachment) {
-      modal.lock();
-      loader(true);
-      window._apiBridge.withSuccessHandler(function(r) {
-        loader(false); modal.unlock();
-        if (r.success) {
-          var statusLabels = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
-          modal.close(r);
-          showToast('تم — الحالة الجديدة: ' + (statusLabels[r.newStatus] || r.newStatus));
-          // Refresh whichever view is active
-          ['erpWfInbox','erpWfIncoming','erpWfDashboard','erpWfOutgoing'].forEach(function(sec) {
-            var el = document.getElementById(sec);
-            if (el && !el.classList.contains('hidden')) {
-              var fn = { erpWfInbox: wfLoadInbox, erpWfIncoming: wfLoadIncoming,
-                         erpWfDashboard: wfLoadDashboard, erpWfOutgoing: wfLoadOutbox }[sec];
-              if (typeof fn === 'function') fn();
-            }
-          });
-        } else showToast(r.error, true);
-      }).wfTransactionAction(id, { action: action, username: currentUser, note: note, attachment: attachment || '' });
-    };
-    if (fileInput.files && fileInput.files[0]) {
-      var fr = new FileReader(); fr.onload = function(e) { doSend(e.target.result); }; fr.readAsDataURL(fileInput.files[0]);
-    } else doSend('');
+    _wfSubmitAction(modal, id, action, note, fileInput);
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// RETURN MODAL — Enterprise-grade UX
+// Preset reason categories + detail text + target-step preview
+// ═══════════════════════════════════════════════════════════════════
+function wfReturnModal(id) {
+  var esc = function(s) { if (s === null || s === undefined) return ''; return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+
+  // Preset return reasons (organized categories)
+  var reasons = [
+    { group: 'بيانات ناقصة', items: [
+      { code: 'missing_attachment', label: 'مرفقات ناقصة', icon: 'fa-paperclip',           detail: 'المعاملة تحتاج لإرفاق مستندات داعمة (فاتورة، عقد، إيصال).' },
+      { code: 'missing_amount',     label: 'مبلغ غير محدد', icon: 'fa-coins',              detail: 'المبلغ غير صحيح أو غير موضح.' },
+      { code: 'missing_details',    label: 'تفاصيل غير كافية', icon: 'fa-circle-info',     detail: 'وصف المعاملة غير كافٍ للاعتماد — يحتاج توضيح أكثر.' }
+    ]},
+    { group: 'بيانات خاطئة', items: [
+      { code: 'wrong_amount',       label: 'مبلغ خاطئ',     icon: 'fa-calculator',          detail: 'المبلغ المذكور لا يتطابق مع المستندات.' },
+      { code: 'wrong_category',     label: 'تصنيف خاطئ',    icon: 'fa-tag',                 detail: 'فئة/نوع المعاملة لا تناسب المحتوى.' },
+      { code: 'wrong_account',      label: 'حساب محاسبي خاطئ', icon: 'fa-file-invoice-dollar', detail: 'الحساب المُختار غير مناسب لهذا النوع من الصرف.' },
+      { code: 'wrong_recipient',    label: 'مستلم/جهة خاطئة', icon: 'fa-user-xmark',        detail: 'الموجه إليه غير صحيح — يجب إعادة التوجيه لجهة أخرى.' }
+    ]},
+    { group: 'يحتاج مراجعة', items: [
+      { code: 'needs_clarification', label: 'يحتاج توضيح',  icon: 'fa-question-circle',     detail: 'الطلب يحتاج لتوضيحات إضافية قبل الاعتماد.' },
+      { code: 'needs_approval',      label: 'يحتاج موافقة أعلى', icon: 'fa-user-tie',       detail: 'المبلغ أو طبيعة الطلب تتطلّب موافقة جهة إدارية أعلى.' },
+      { code: 'policy_violation',    label: 'مخالفة سياسة',  icon: 'fa-triangle-exclamation',detail: 'الطلب يخالف سياسة داخلية (حدود إنفاق، مورد غير معتمد، إلخ).' },
+      { code: 'budget_exceeded',     label: 'تجاوز الميزانية', icon: 'fa-chart-line',         detail: 'المبلغ يتجاوز الميزانية المخصصة لهذا البند.' }
+    ]},
+    { group: 'أخرى', items: [
+      { code: 'duplicate',           label: 'معاملة مكررة',  icon: 'fa-copy',                detail: 'طلب مشابه سُجّل مسبقاً — لا داعي لتكراره.' },
+      { code: 'other',               label: 'سبب آخر',       icon: 'fa-ellipsis-h',          detail: 'اكتب السبب بالتفصيل في خانة الملاحظة.' }
+    ]}
+  ];
+
+  // Build reason grid
+  var reasonsHtml = reasons.map(function(grp) {
+    return '<div style="margin-bottom:12px;">' +
+      '<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">' + grp.group + '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px;">' +
+      grp.items.map(function(r) {
+        return '<button type="button" class="wo-return-reason" data-code="' + r.code + '" data-label="' + esc(r.label) + '" data-detail="' + esc(r.detail) + '" ' +
+          'style="padding:10px 12px;border:1.5px solid var(--wo-border);background:#fff;border-radius:10px;cursor:pointer;text-align:start;font-family:inherit;transition:all 180ms;display:flex;align-items:center;gap:8px;font-size:12px;color:#334155;">' +
+          '<i class="fas ' + r.icon + '" style="color:#f59e0b;width:16px;"></i>' +
+          '<span style="font-weight:700;">' + r.label + '</span>' +
+        '</button>';
+      }).join('') +
+      '</div></div>';
+  }).join('');
+
+  var body =
+    // Context banner (filled via API after open)
+    '<div id="wfRetContext" class="wo-banner" style="margin:0;background:#fef3c7;border:1px solid #f59e0b40;">' +
+      '<div class="wo-banner-icon" style="background:#f59e0b;"><i class="fas fa-rotate-left"></i></div>' +
+      '<div class="wo-banner-body" style="flex:1;">' +
+        '<div class="wo-banner-title" style="color:#b45309;">إرجاع المعاملة</div>' +
+        '<div style="font-size:12px;color:#78350f;margin-top:2px;">' +
+          '<span id="wfRetContextTxn">جاري تحميل معلومات المعاملة...</span>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    // Target step preview
+    '<div id="wfRetTarget" style="padding:10px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;margin-top:10px;display:flex;align-items:center;gap:10px;">' +
+      '<i class="fas fa-arrow-turn-up" style="color:#1e40af;font-size:14px;"></i>' +
+      '<div style="flex:1;font-size:12px;color:#1e3a8a;">' +
+        '<b>ستعود المعاملة إلى:</b> <span id="wfRetTargetStep">الخطوة السابقة في سير الموافقات</span>' +
+      '</div>' +
+    '</div>' +
+
+    // Preset reasons
+    '<div style="margin-top:14px;">' +
+      '<label class="wo-field-label" style="margin-bottom:8px;display:block;"><i class="fas fa-list-check"></i> اختر سبب الإرجاع</label>' +
+      reasonsHtml +
+    '</div>' +
+
+    // Selected reason preview
+    '<div id="wfRetSelectedBox" style="display:none;padding:10px 14px;background:#f3e8ff;border:1px solid #c4b5fd;border-radius:10px;margin-top:10px;">' +
+      '<div style="font-size:11px;color:#7c3aed;font-weight:800;margin-bottom:4px;"><i class="fas fa-check-circle"></i> السبب المختار:</div>' +
+      '<div id="wfRetSelectedLabel" style="font-size:13px;font-weight:700;color:#5b21b6;"></div>' +
+      '<div id="wfRetSelectedDetail" style="font-size:11px;color:#6d28d9;margin-top:4px;"></div>' +
+    '</div>' +
+
+    // Note
+    '<div class="wo-label-stack" style="margin-top:14px;">' +
+      '<label class="wo-field-label"><i class="fas fa-comment"></i> تفاصيل إضافية للمرسل <span style="color:var(--wo-danger);">*</span></label>' +
+      '<textarea id="wfActNote" class="wo-textarea" rows="4" placeholder="اكتب بوضوح ما تريد من المرسل تصحيحه أو تزويده..." oninput="_wfRetValidate()"></textarea>' +
+      '<div id="wfRetNoteErr" style="font-size:11px;color:var(--wo-danger);font-weight:700;min-height:14px;"></div>' +
+    '</div>' +
+
+    // Optional attachment
+    '<div class="wo-label-stack" style="margin-top:10px;">' +
+      '<label class="wo-field-label"><i class="fas fa-paperclip"></i> مرفق توضيحي <span class="wo-text-subtle wo-text-caption">(اختياري — صورة شاشة مثلاً)</span></label>' +
+      '<input type="file" id="wfActFile" accept=".pdf,.jpg,.jpeg,.png" class="wo-input">' +
+    '</div>';
+
+  var footer =
+    '<button class="wo-btn wo-btn-secondary" id="wfActCancel">إلغاء</button>' +
+    '<button class="wo-btn wo-btn-warning" id="wfActOk" disabled style="opacity:.5;cursor:not-allowed;">' +
+      '<i class="fas fa-rotate-left"></i><span>إرجاع المعاملة</span>' +
+    '</button>';
+
+  var modal = WoModal.open({
+    icon: 'fa-rotate-left', iconColor: 'warn',
+    title: 'إرجاع المعاملة للمرسل',
+    subtitle: 'المعاملة ستعود للخطوة السابقة مع ملاحظاتك — سيستلم المرسل إشعاراً',
+    body: body, footer: footer, size: 'lg'
+  });
+
+  // Load transaction context + target step
+  if (window._apiBridge && window._apiBridge.withSuccessHandler) {
+    window._apiBridge.withSuccessHandler(function(txn) {
+      if (!txn || txn.error) return;
+      var ctxEl = document.getElementById('wfRetContextTxn');
+      if (ctxEl) {
+        ctxEl.innerHTML = '<b>رقم:</b> <code>' + esc(txn.txnNumber||'') + '</code> · ' +
+          '<b>الموضوع:</b> ' + esc(txn.subject || txn.title || '—') + ' · ' +
+          '<b>المرسل:</b> ' + esc(txn.senderName || txn.createdBy || '—') +
+          (txn.amount ? ' · <b>المبلغ:</b> ' + Number(txn.amount).toLocaleString('en',{minimumFractionDigits:2}) : '');
+      }
+      // Target step preview
+      var tgtEl = document.getElementById('wfRetTargetStep');
+      if (tgtEl && Array.isArray(txn.workflowPath)) {
+        var currentIdx = txn.workflowPath.findIndex(function(s){return s.isCurrent;});
+        if (currentIdx > 0) {
+          var prev = txn.workflowPath[currentIdx - 1];
+          tgtEl.innerHTML = '<span style="font-weight:800;color:#1e40af;">' + esc(prev.stepName||'') + '</span>' +
+            (prev.positionName ? ' <small style="color:#3730a3;">(' + esc(prev.positionName) + ')</small>' : '');
+        } else {
+          tgtEl.textContent = 'المرسل الأصلي (' + esc(txn.senderName || txn.createdBy || '—') + ')';
+        }
+      }
+    }).getWfTransaction(id);
+  }
+
+  // Reason button handlers
+  modal.el.querySelectorAll('.wo-return-reason').forEach(function(btn) {
+    btn.onclick = function() {
+      // Deselect all
+      modal.el.querySelectorAll('.wo-return-reason').forEach(function(b) {
+        b.style.borderColor = 'var(--wo-border)';
+        b.style.background = '#fff';
+        b.style.color = '#334155';
+      });
+      // Select current
+      btn.style.borderColor = '#f59e0b';
+      btn.style.background = '#fef3c7';
+      btn.style.color = '#b45309';
+
+      var code = btn.getAttribute('data-code');
+      var label = btn.getAttribute('data-label');
+      var detail = btn.getAttribute('data-detail');
+      window._wfRetSelectedReason = { code: code, label: label, detail: detail };
+
+      // Show preview
+      document.getElementById('wfRetSelectedBox').style.display = '';
+      document.getElementById('wfRetSelectedLabel').textContent = label;
+      document.getElementById('wfRetSelectedDetail').textContent = detail;
+
+      // Pre-fill note with the detail if empty
+      var noteEl = document.getElementById('wfActNote');
+      if (noteEl && !noteEl.value.trim()) noteEl.value = detail;
+      _wfRetValidate();
+    };
+  });
+
+  // Validate (enable/disable OK button)
+  window._wfRetValidate = function() {
+    var hasReason = !!window._wfRetSelectedReason;
+    var note = (document.getElementById('wfActNote').value || '').trim();
+    var okBtn = document.getElementById('wfActOk');
+    var errEl = document.getElementById('wfRetNoteErr');
+    var ready = hasReason && note.length >= 10;
+    if (okBtn) {
+      okBtn.disabled = !ready;
+      okBtn.style.opacity = ready ? '1' : '.5';
+      okBtn.style.cursor = ready ? 'pointer' : 'not-allowed';
+    }
+    if (errEl) {
+      if (!hasReason) errEl.textContent = 'اختر سبب الإرجاع أولاً من الأعلى';
+      else if (note.length < 10) errEl.textContent = 'اكتب ملاحظة واضحة (10 حروف على الأقل)';
+      else errEl.textContent = '';
+    }
+  };
+
+  modal.el.querySelector('#wfActCancel').onclick = function() {
+    window._wfRetSelectedReason = null;
+    modal.close(null);
+  };
+
+  modal.el.querySelector('#wfActOk').onclick = function() {
+    if (!window._wfRetSelectedReason) { showToast('اختر سبب الإرجاع', true); return; }
+    var note = (document.getElementById('wfActNote').value || '').trim();
+    if (note.length < 10) { showToast('اكتب ملاحظة واضحة (10 حروف على الأقل)', true); return; }
+    // Compose final note with reason code + label
+    var finalNote = '[' + window._wfRetSelectedReason.label + '] ' + note;
+    var fileInput = document.getElementById('wfActFile');
+    _wfSubmitAction(modal, id, 'return', finalNote, fileInput);
+  };
+}
+
+// Shared submit helper
+function _wfSubmitAction(modal, id, action, note, fileInput) {
+  var doSend = function(attachment) {
+    modal.lock();
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) {
+      loader(false); modal.unlock();
+      if (r.success) {
+        var statusLabels = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
+        window._wfRetSelectedReason = null;
+        modal.close(r);
+        showToast('تم — الحالة الجديدة: ' + (statusLabels[r.newStatus] || r.newStatus));
+        ['erpWfInbox','erpWfIncoming','erpWfDashboard','erpWfOutgoing'].forEach(function(sec) {
+          var el = document.getElementById(sec);
+          if (el && !el.classList.contains('hidden')) {
+            var fn = { erpWfInbox: wfLoadInbox, erpWfIncoming: wfLoadIncoming,
+                       erpWfDashboard: wfLoadDashboard, erpWfOutgoing: wfLoadOutbox }[sec];
+            if (typeof fn === 'function') fn();
+          }
+        });
+      } else showToast(r.error, true);
+    }).wfTransactionAction(id, { action: action, username: currentUser, note: note, attachment: attachment || '' });
+  };
+  if (fileInput && fileInput.files && fileInput.files[0]) {
+    var fr = new FileReader(); fr.onload = function(e) { doSend(e.target.result); }; fr.readAsDataURL(fileInput.files[0]);
+  } else doSend('');
 }
 
 // ═══════════════════════════════════════

@@ -5406,13 +5406,35 @@ function wfViewTxn(id) {
     } else { html += '<p style="color:#94a3b8;text-align:center;font-size:13px;">لا توجد إجراءات بعد</p>'; }
     html += '</div>';
 
-    // Toolbar: print + edit (edit only when still editable by the creator)
+    // Phase B.1: Enhanced toolbar with inline action buttons
+    // — so admins don't have to close+reopen modal to approve/reject
     var canEdit = (txn.status === 'pending' || txn.status === 'draft') && (txn.createdBy === currentUser);
-    var toolbar = '<div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:10px;flex-wrap:wrap;">' +
-      '<button class="btn btn-sm" style="background:#eff6ff;color:#1e40af;" onclick="wfPrintTxn(\''+txn.id+'\')"><i class="fas fa-print"></i> طباعة</button>' +
-      (canEdit ? '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;" onclick="wfEditOutboxTxn(\''+txn.id+'\')"><i class="fas fa-edit"></i> تعديل</button>' : '') +
-      (canEdit ? '<button class="btn btn-sm btn-danger" onclick="wfCancelOutboxTxn(\''+txn.id+'\')"><i class="fas fa-trash"></i> إلغاء</button>' : '') +
-    '</div>';
+    var isAssignedToMe = (txn.current_assignee === currentUser || txn.currentAssignee === currentUser);
+    var canActOnIt = isAssignedToMe && (txn.status === 'pending' || txn.status === 'in_progress');
+    var requiresPayment = (txn.requires_payment === 1 || txn.requires_payment === true || txn.requiresPayment);
+    var isApprovedPendingPayment = txn.status === 'approved' && requiresPayment && !txn.payment_record_id;
+
+    var toolbar = '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap;padding:10px 14px;background:#f8fafc;border-radius:10px;border:1px solid #e5e7eb;">' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+
+    // Primary actions — if assigned to current user
+    if (canActOnIt) {
+      toolbar +=
+        '<button class="wo-btn wo-btn-success" style="padding:8px 16px;font-size:13px;" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'approve\')"><i class="fas fa-check"></i><span>اعتماد</span></button>' +
+        '<button class="wo-btn wo-btn-danger" style="padding:8px 16px;font-size:13px;" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'reject\')"><i class="fas fa-xmark"></i><span>رفض</span></button>' +
+        '<button class="wo-btn wo-btn-warning" style="padding:8px 16px;font-size:13px;" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'return\')"><i class="fas fa-rotate-left"></i><span>إرجاع</span></button>';
+    }
+    // Payment action — when approved + requires payment + no payment record yet
+    if (isApprovedPendingPayment) {
+      toolbar += '<button class="wo-btn wo-btn-primary" style="padding:8px 16px;font-size:13px;background:linear-gradient(135deg,#0369a1,#0284c7);" onclick="erpCloseModal();openRecordPaymentModal({transactionId:\''+txn.id+'\',referenceType:\'transaction\',referenceId:\''+txn.id+'\',direction:\'out\',amount:'+(Number(txn.amount)||0)+',brandId:\''+(txn.brandId||txn.brand_id||'')+'\',branchId:\''+(txn.branchId||txn.branch_id||'')+'\',onSuccess:function(){loadDashboard&&loadDashboard();}})"><i class="fas fa-money-bill-transfer"></i><span>تسجيل دفعة</span></button>';
+    }
+
+    toolbar += '</div><div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+      '<button class="wo-btn wo-btn-secondary" style="padding:8px 14px;font-size:12px;" onclick="wfPrintTxn(\''+txn.id+'\')"><i class="fas fa-print"></i><span>طباعة</span></button>' +
+      (canEdit ? '<button class="wo-btn wo-btn-secondary" style="padding:8px 14px;font-size:12px;" onclick="wfEditOutboxTxn(\''+txn.id+'\')"><i class="fas fa-pen"></i><span>تعديل</span></button>' : '') +
+      (canEdit ? '<button class="wo-btn wo-btn-danger" style="padding:8px 14px;font-size:12px;" onclick="wfCancelOutboxTxn(\''+txn.id+'\')"><i class="fas fa-trash"></i><span>إلغاء</span></button>' : '') +
+    '</div></div>';
+
     document.getElementById('erpModalTitle').textContent = txn.txnNumber || 'تفاصيل المعاملة';
     document.getElementById('erpModalBody').innerHTML = toolbar + html;
     document.getElementById('erpModalSaveBtn').style.display = 'none';

@@ -2207,6 +2207,8 @@ async function runMigrations() {
   // Transactions: link to payment record (for payment-bearing flows)
   await addColumnIfMissing('transactions', 'payment_record_id', "VARCHAR(60)");
   await addColumnIfMissing('transactions', 'requires_payment', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('transactions', 'reference_type', "VARCHAR(40)");
+  await addColumnIfMissing('transactions', 'reference_id', "VARCHAR(60)");
 
   // Notifications (Phase D preparation)
   await createTableIfMissing('notifications', `

@@ -6,15 +6,22 @@ const db = require('../db/connection');
 // Get purchases (with filters)
 router.get('/', async (req, res) => {
   try {
-    let query = 'SELECT * FROM purchases WHERE 1=1';
+    let query = `SELECT p.*, b.name AS brand_name, br.name AS branch_name
+                 FROM purchases p
+                 LEFT JOIN brands   b  ON b.id  = p.brand_id
+                 LEFT JOIN branches br ON br.id = p.branch_id
+                 WHERE 1=1`;
     const params = [];
 
-    if (req.query.startDate) { query += ' AND DATE(purchase_date) >= ?'; params.push(req.query.startDate); }
-    if (req.query.endDate) { query += ' AND DATE(purchase_date) <= ?'; params.push(req.query.endDate); }
-    if (req.query.supplierId) { query += ' AND supplier_id = ?'; params.push(req.query.supplierId); }
-    if (req.query.status) { query += ' AND status = ?'; params.push(req.query.status); }
+    if (req.query.startDate) { query += ' AND DATE(p.purchase_date) >= ?'; params.push(req.query.startDate); }
+    if (req.query.endDate)   { query += ' AND DATE(p.purchase_date) <= ?'; params.push(req.query.endDate); }
+    if (req.query.supplierId){ query += ' AND p.supplier_id = ?';          params.push(req.query.supplierId); }
+    if (req.query.status)    { query += ' AND p.status = ?';               params.push(req.query.status); }
+    if (req.query.brandId)   { query += ' AND p.brand_id = ?';             params.push(req.query.brandId); }
+    if (req.query.branchId)  { query += ' AND p.branch_id = ?';            params.push(req.query.branchId); }
+    if (req.query.paymentMethod) { query += ' AND p.payment_method = ?';   params.push(req.query.paymentMethod); }
 
-    query += ' ORDER BY purchase_date DESC LIMIT 500';
+    query += ' ORDER BY p.purchase_date DESC LIMIT 500';
 
     const [rows] = await db.query(query, params);
     res.json(rows.map(p => ({
@@ -22,7 +29,9 @@ router.get('/', async (req, res) => {
       itemName: p.item_name, itemId: p.item_id,
       qty: Number(p.qty), unitPrice: Number(p.unit_price), totalPrice: Number(p.total_price),
       paymentMethod: p.payment_method, username: p.username, notes: p.notes,
-      status: p.status, items: JSON.parse(p.items_json || '[]'), itemsJson: p.items_json || '[]', poId: p.po_id
+      status: p.status, items: JSON.parse(p.items_json || '[]'), itemsJson: p.items_json || '[]', poId: p.po_id,
+      brandId: p.brand_id || '', brandName: p.brand_name || '',
+      branchId: p.branch_id || '', branchName: p.branch_name || ''
     })));
   } catch (e) {
     res.json([]);
@@ -32,9 +41,19 @@ router.get('/', async (req, res) => {
 // Add purchase batch
 router.post('/', async (req, res) => {
   try {
-    const { supplierName, supplierId, items, paymentMethod, username, notes, poId } = req.body;
+    const { supplierName, supplierId, items, paymentMethod, username, notes, poId, brandId, branchId } = req.body;
     const now = new Date();
     const purchaseId = 'PUR-' + Date.now();
+
+    // Resolve brand/branch from supplier if not provided
+    let resolvedBrandId = brandId || null;
+    let resolvedBranchId = branchId || null;
+    if (!resolvedBrandId && supplierId) {
+      try {
+        const [sRows] = await db.query('SELECT brand_id FROM suppliers WHERE id = ? LIMIT 1', [supplierId]);
+        if (sRows.length && sRows[0].brand_id) resolvedBrandId = sRows[0].brand_id;
+      } catch(e) { /* no-op */ }
+    }
 
     let totalPrice = 0;
     if (items && items.length) {
@@ -44,15 +63,16 @@ router.post('/', async (req, res) => {
     }
 
     await db.query(
-      `INSERT INTO purchases (id, purchase_date, supplier_name, supplier_id, item_name, item_id, qty, unit_price, total_price, payment_method, username, notes, status, items_json, po_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO purchases (id, purchase_date, supplier_name, supplier_id, item_name, item_id, qty, unit_price, total_price, payment_method, username, notes, status, items_json, po_id, brand_id, branch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [purchaseId, now, supplierName || '', supplierId || null,
        items && items.length === 1 ? items[0].name : 'متعدد',
        items && items.length === 1 ? items[0].id : null,
        items && items.length === 1 ? items[0].qty : 0,
        items && items.length === 1 ? items[0].unitPrice : 0,
        totalPrice, paymentMethod || 'آجل', username || '', notes || '',
-       'draft', JSON.stringify(items || []), poId || null]
+       'draft', JSON.stringify(items || []), poId || null,
+       resolvedBrandId, resolvedBranchId]
     );
 
     res.json({ success: true, id: purchaseId });

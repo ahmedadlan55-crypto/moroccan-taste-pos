@@ -5385,72 +5385,173 @@ function delExpFn(id) {
 // =========================================
 // 9. Purchases Management
 // =========================================
+var _purAllData = [];
+
+function _purEsc(s){ if(s===null||s===undefined) return ''; return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
+function _purPopulateFilterDropdowns() {
+  // Brands via direct fetch (no API bridge dependency)
+  fetch('/api/erp/brands', { headers:{ 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') }})
+    .then(function(r){return r.json();}).then(function(brs){
+      var sel = q('#fpurBrand');
+      if (sel) sel.innerHTML = '<option value="">كل البراندات</option>' +
+        (brs||[]).map(function(b){return '<option value="'+b.id+'">'+_purEsc(b.name||'')+'</option>';}).join('');
+    }).catch(function(){});
+  // Suppliers via bridge
+  api.withSuccessHandler(function(sups){
+    state.suppliersList = sups || [];
+    var sel = q('#fpurSupplier');
+    if (sel) sel.innerHTML = '<option value="">كل الموردين</option>' +
+      (sups||[]).map(function(s){return '<option value="'+s.id+'">'+_purEsc(s.name||'')+'</option>';}).join('');
+  }).getSuppliers();
+}
+
 function loadDashPurchases() {
-  // Pre-load suppliers & items so dropdowns are ready when modal opens
-  api.withSuccessHandler(sups => { state.suppliersList = sups || []; }).getSuppliers();
+  // Populate filter dropdowns once per section open
+  _purPopulateFilterDropdowns();
   api.withSuccessHandler(items => { state.purInvItems = items || []; }).getInvItems();
-  loader();
+  var tb = q("#tbPurchases");
+  if (tb) tb.innerHTML = "<tr><td colspan='12'><div class='wo-empty'><i class='fas fa-spinner fa-spin'></i><span>جاري التحميل...</span></div></td></tr>";
+
   const filters = {};
   const start = q("#fpurStart") ? q("#fpurStart").value : "";
   const end = q("#fpurEnd") ? q("#fpurEnd").value : "";
   if (start) filters.startDate = start;
   if (end) filters.endDate = end;
-  
-  api.withSuccessHandler(res => {
-    loader(false);
+
+  api.withSuccessHandler(function(res){
     if (res && res.error) {
       showToast(res.error, true);
-      q("#tbPurchases").innerHTML = `<tr><td colspan='9' style='text-align:center; padding:30px; color:var(--danger);'>${res.error}</td></tr>`;
+      if (tb) tb.innerHTML = "<tr><td colspan='12'><div class='wo-empty'><i class='fas fa-triangle-exclamation' style='color:var(--wo-danger-fg);'></i><span>"+res.error+"</span></div></td></tr>";
       return;
     }
-    const arr = res || [];
-    let totalAmt = 0;
-    let h = "";
-    if (!arr.length) {
-      h = "<tr><td colspan='9' style='text-align:center; padding:30px; color:var(--text-light);'>لا توجد مشتريات مسجلة</td></tr>";
-    } else {
-      state.purchasesCache = arr;
-      arr.forEach((p, idx) => {
-        totalAmt += p.totalPrice;
-        const payBadge = p.paymentMethod === 'Cash'
-          ? '<span class="badge green">كاش</span>'
-          : (p.paymentMethod === 'آجل'
-            ? '<span class="badge yellow">آجل</span>'
-            : `<span class="badge blue">${p.paymentMethod}</span>`);
-        const statusBadge = (p.status === 'received')
-          ? '<span class="badge green">\u062a\u0645 \u0627\u0644\u0627\u0633\u062a\u0644\u0627\u0645</span>'
-          : '<span class="badge" style="background:#fef3c7;color:#92400e;">\u0628\u0627\u0646\u062a\u0638\u0627\u0631 \u0627\u0644\u0627\u0633\u062a\u0644\u0627\u0645</span>';
-        const receiveBtn = (p.status !== 'received')
-          ? `<button class="btn btn-success" style="padding:6px 12px;" onclick="receivePurFn('${p.id}')" title="\u0627\u0633\u062a\u0644\u0627\u0645 \u0644\u0644\u0645\u062e\u0632\u0648\u0646"><i class="fas fa-check-double"></i></button> `
-          : `<button class="btn btn-light" style="padding:6px 12px;color:#d97706;border:1px solid #d97706;" onclick="revertReceivePurFn('${p.id}')" title="\u0627\u0644\u062a\u0631\u0627\u062c\u0639 \u0639\u0646 \u0627\u0644\u0627\u0633\u062a\u0644\u0627\u0645"><i class="fas fa-undo"></i></button> `;
-        var hasItems = p.itemsJson && p.itemsJson.length > 5;
-        var itemLabel = hasItems ? '<i class="fas fa-box-open" style="color:var(--accent);margin-left:4px;"></i> '+p.itemName : p.itemName;
-        // المبلغ المُدخل بدون ضريبة — الضريبة تُضاف عليه
-        var purNet = p.totalPrice;
-        var purVAT = Math.round(purNet*0.15*100)/100;
-        var purTotal = Math.round((purNet + purVAT)*100)/100;
-        h += '<tr>'+
-          '<td>'+(p.date ? new Date(p.date).toLocaleString('ar-SA') : '—')+'</td>'+
-          '<td style="font-weight:600;">'+p.supplierName+'</td>'+
-          '<td>'+itemLabel+'</td>'+
-          '<td style="text-align:center;">'+p.qty+'</td>'+
-          '<td>'+formatVal(purNet)+'</td>'+
-          '<td style="color:#d97706;font-weight:600;">'+formatVal(purVAT)+'</td>'+
-          '<td style="font-weight:900; color:var(--secondary);">'+formatVal(purTotal)+'</td>'+
-          '<td>'+payBadge+'</td>'+
-          '<td>'+statusBadge+'</td>'+
-          '<td>'+p.username+'</td>'+
-          '<td style="white-space:nowrap;">'+receiveBtn+
-            '<button class="btn btn-primary" style="padding:6px 12px;" onclick="printPurchaseCached('+idx+')" title="طباعة"><i class="fas fa-print"></i></button> '+
-            '<button class="btn btn-danger" style="padding:6px 12px;" onclick="delPurFn(\''+p.id+'\')"><i class="fas fa-trash"></i></button>'+
-          '</td></tr>';
-      });
-    }
-    q("#tbPurchases").innerHTML = h;
-    q("#purTotalAmt").innerText = formatVal(totalAmt);
-    q("#purTotalCount").innerText = arr.length;
+    _purAllData = res || [];
+    state.purchasesCache = _purAllData;
+    purApplyFilters();
   }).getPurchases(Object.keys(filters).length ? filters : null);
 }
+
+// Apply all in-memory filters (brand/supplier/status/payment/search/chips) and render
+window.purApplyFilters = function() {
+  var arr = _purAllData || [];
+  var bId = q('#fpurBrand')   ? q('#fpurBrand').value   : '';
+  var sId = q('#fpurSupplier')? q('#fpurSupplier').value: '';
+  var st  = q('#fpurStatus')  ? q('#fpurStatus').value  : '';
+  var pay = q('#fpurPay')     ? q('#fpurPay').value     : '';
+  var sq  = q('#fpurSearch')  ? (q('#fpurSearch').value||'').toLowerCase().trim() : '';
+  var largeChip = document.querySelector('[data-pur-qf="large"].active');
+
+  var filtered = arr.filter(function(p){
+    if (bId && String(p.brandId||'') !== bId) return false;
+    if (sId && String(p.supplierId||'') !== sId) return false;
+    if (st  && String(p.status||'') !== st) return false;
+    if (pay && String(p.paymentMethod||'') !== pay) return false;
+    if (largeChip && Number(p.totalPrice||0) < 5000) return false;
+    if (sq) {
+      var hay = ((p.id||'') + ' ' + (p.supplierName||'') + ' ' + (p.itemName||'') + ' ' + (p.username||'')).toLowerCase();
+      if (hay.indexOf(sq) < 0) return false;
+    }
+    return true;
+  });
+
+  // Summary counters
+  var totalNet = 0, totalVAT = 0, pending = 0;
+  filtered.forEach(function(p){
+    var n = Number(p.totalPrice||0);
+    totalNet += n;
+    totalVAT += n * 0.15;
+    if ((p.status||'') !== 'received') pending++;
+  });
+  if (q('#purTotalAmt'))    q('#purTotalAmt').innerText    = formatVal(totalNet);
+  if (q('#purTotalCount'))  q('#purTotalCount').innerText  = filtered.length;
+  if (q('#purPendingCount'))q('#purPendingCount').innerText= pending;
+  if (q('#purTotalVAT'))    q('#purTotalVAT').innerText    = formatVal(totalVAT);
+  if (q('#purResultsCount'))q('#purResultsCount').innerHTML=
+    '<i class="fas fa-circle-info"></i> <b>'+filtered.length+'</b> فاتورة · صافي: <b>'+formatVal(totalNet)+'</b> · شامل الضريبة: <b>'+formatVal(totalNet*1.15)+'</b>';
+
+  var h = "";
+  if (!filtered.length) {
+    h = "<tr><td colspan='12'><div class='wo-empty'><i class='fas fa-inbox'></i><span>لا توجد فواتير مطابقة للفلترة</span></div></td></tr>";
+  } else {
+    filtered.forEach(function(p, idx){
+      var realIdx = _purAllData.indexOf(p);
+      var payBadge = p.paymentMethod === 'Cash'
+        ? '<span class="wo-chip success"><i class="fas fa-money-bill"></i> كاش</span>'
+        : (p.paymentMethod === 'آجل'
+            ? '<span class="wo-chip warning"><i class="fas fa-clock-rotate-left"></i> آجل</span>'
+            : '<span class="wo-chip info"><i class="fas fa-university"></i> '+_purEsc(p.paymentMethod||'')+'</span>');
+      var statusBadge = (p.status === 'received')
+        ? '<span class="wo-chip success"><i class="fas fa-check"></i> تم الاستلام</span>'
+        : '<span class="wo-chip warning"><i class="fas fa-hourglass-half"></i> بانتظار</span>';
+      var receiveBtn = (p.status !== 'received')
+        ? '<button class="wo-icon-btn success" onclick="receivePurFn(\''+p.id+'\')" title="استلام للمخزون" aria-label="استلام"><i class="fas fa-check-double"></i></button>'
+        : '<button class="wo-icon-btn warning" onclick="revertReceivePurFn(\''+p.id+'\')" title="التراجع عن الاستلام" aria-label="تراجع"><i class="fas fa-undo"></i></button>';
+      var hasMany = p.itemsJson && p.itemsJson.length > 5;
+      var itemLabel = hasMany
+        ? '<i class="fas fa-box-open" style="color:var(--wo-info-fg);margin-inline-end:4px;"></i><span>'+_purEsc(p.itemName||'')+'</span>'
+        : _purEsc(p.itemName||'');
+      var brandChip = p.brandName
+        ? '<span class="wo-chip purple"><i class="fas fa-store"></i> '+_purEsc(p.brandName)+'</span>'
+        : '<span class="wo-text-subtle wo-text-caption">عام</span>';
+      var net   = Number(p.totalPrice||0);
+      var vat   = Math.round(net * 0.15 * 100) / 100;
+      var total = Math.round((net + vat) * 100) / 100;
+      h += '<tr>'+
+        '<td data-label="التاريخ"><code style="font-size:11px;">'+(p.date ? new Date(p.date).toLocaleString('ar-SA',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—')+'</code></td>'+
+        '<td data-label="البراند">'+brandChip+'</td>'+
+        '<td data-label="المورد"><b>'+_purEsc(p.supplierName||'')+'</b></td>'+
+        '<td data-label="المادة">'+itemLabel+'</td>'+
+        '<td data-label="الكمية" class="num">'+p.qty+'</td>'+
+        '<td data-label="الصافي" class="num">'+formatVal(net)+'</td>'+
+        '<td data-label="الضريبة" class="num" style="color:#d97706;font-weight:700;">'+formatVal(vat)+'</td>'+
+        '<td data-label="الإجمالي" class="num strong">'+formatVal(total)+'</td>'+
+        '<td data-label="الدفع">'+payBadge+'</td>'+
+        '<td data-label="الحالة">'+statusBadge+'</td>'+
+        '<td data-label="المستخدم"><span class="wo-text-subtle wo-text-caption">'+_purEsc(p.username||'')+'</span></td>'+
+        '<td data-label="الإجراءات"><div class="wo-actions">'+receiveBtn+
+          '<button class="wo-icon-btn info" onclick="printPurchaseCached('+realIdx+')" title="طباعة" aria-label="طباعة"><i class="fas fa-print"></i></button>'+
+          '<button class="wo-icon-btn danger" onclick="delPurFn(\''+p.id+'\')" title="حذف" aria-label="حذف"><i class="fas fa-trash"></i></button>'+
+        '</div></td>'+
+      '</tr>';
+    });
+  }
+  if (q('#tbPurchases')) q('#tbPurchases').innerHTML = h;
+};
+
+// Quick-filter preset chips
+function _purSetQuickChip(k) {
+  document.querySelectorAll('[data-pur-qf]').forEach(function(el){
+    el.classList.toggle('active', el.getAttribute('data-pur-qf') === k);
+  });
+}
+window.purQuickFilter = function(k) {
+  _purSetQuickChip(k);
+  var start = q('#fpurStart'), end = q('#fpurEnd');
+  var st = q('#fpurStatus'), pay = q('#fpurPay');
+  if (start) start.value = '';
+  if (end)   end.value = '';
+  if (st)    st.value = '';
+  if (pay)   pay.value = '';
+  var today = new Date(); var fmt = function(d){return d.toISOString().slice(0,10);};
+  var needReload = false;
+  if (k === 'today')    { start.value = fmt(today); end.value = fmt(today); needReload = true; }
+  else if (k === 'week'){ var d = new Date(today); d.setDate(d.getDate()-7); start.value = fmt(d); end.value = fmt(today); needReload = true; }
+  else if (k === 'month'){ var d = new Date(today.getFullYear(), today.getMonth(), 1); start.value = fmt(d); end.value = fmt(today); needReload = true; }
+  else if (k === 'pending')  st.value = 'draft';
+  else if (k === 'received') st.value = 'received';
+  else if (k === 'cash')     pay.value = 'Cash';
+  else if (k === 'credit')   pay.value = 'آجل';
+  // 'large' handled purely in purApplyFilters via chip .active
+  if (needReload) loadDashPurchases();
+  else purApplyFilters();
+};
+window.purResetFilters = function() {
+  ['fpurSearch','fpurBrand','fpurSupplier','fpurStatus','fpurPay','fpurStart','fpurEnd'].forEach(function(id){
+    var e = q('#'+id); if (e) e.value = '';
+  });
+  _purSetQuickChip('');
+  loadDashPurchases();
+};
 
 let purCart = [];
 
@@ -5460,6 +5561,8 @@ function openPurModal() {
   q("#purItemSearch").value = ""; q("#purItem").value = ""; q("#purItemId").value = "";
   q("#purQty").value = "1"; q("#purUnitPrice").value = "";
   if (q("#purInvDate")) q("#purInvDate").value = new Date().toISOString().split('T')[0];
+  if (q("#purBrand")) q("#purBrand").value = '';
+  if (q("#purBranch")) q("#purBranch").value = '';
   purCart = [];
   renderPurCart();
 
@@ -5471,6 +5574,22 @@ function openPurModal() {
   // Load suppliers + inventory items
   api.withSuccessHandler(sups => { state.suppliersList = sups || []; }).getSuppliers();
   api.withSuccessHandler(items => { state.purInvItems = items || []; }).getInvItems();
+
+  // Populate brand + branch selectors
+  var hdr = { 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') };
+  fetch('/api/erp/brands', { headers: hdr })
+    .then(function(r){return r.json();}).then(function(brs){
+      var sel = q('#purBrand');
+      if (sel) sel.innerHTML = '<option value="">— عام (يُستنتج من المورد) —</option>' +
+        (brs||[]).map(function(b){return '<option value="'+b.id+'">'+_purEsc(b.name||'')+'</option>';}).join('');
+    }).catch(function(){});
+  fetch('/api/erp/branches-full', { headers: hdr })
+    .then(function(r){return r.json();}).then(function(bnrs){
+      var sel = q('#purBranch');
+      if (sel) sel.innerHTML = '<option value="">— الكل —</option>' +
+        (bnrs||[]).map(function(b){return '<option value="'+b.id+'">'+_purEsc(b.name||'')+'</option>';}).join('');
+    }).catch(function(){});
+
   openModal('#modalPurForm');
 }
 
@@ -5584,6 +5703,8 @@ function savePurBatchFn() {
     username: state.user,
     notes: notes,
     invoiceDate: invDate,
+    brandId:  q("#purBrand")  ? (q("#purBrand").value  || null) : null,
+    branchId: q("#purBranch") ? (q("#purBranch").value || null) : null,
     items: purCart
   };
 

@@ -760,54 +760,130 @@
           <div id="custodyReportBody" style="padding:10px;"></div>
         </div>
 
-        <!-- Section: Purchases -->
+        <!-- Section: Purchases (فواتير الشراء) — Enterprise redesign -->
         <div id="sec_purchases" class="admin-section">
-          <div class="po-form-grid">
-            <div class="po-summary-cards" style="grid-column: 1 / -1; margin-bottom: 25px;">
-              <div class="po-sum-card" style="background: linear-gradient(135deg, #1e293b, #0f172a); display: flex; align-items: center; gap: 16px; text-align: right; border-color: #334155;">
-                <div class="icon" style="background: rgba(59,130,246,0.15); color: #3b82f6; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 12px; font-size: 20px;"><i class="fas fa-shopping-cart"></i></div>
-                <div class="info" style="flex: 1;">
-                  <div class="lbl" style="color: #94a3b8; font-size: 13px; font-weight: 700; margin-bottom: 4px;">إجمالي المشتريات</div>
-                  <div class="val" id="purTotalAmt" style="color: #e2e8f0; font-size: 24px; font-weight: 800;">0.00</div>
-                </div>
-              </div>
-              <div class="po-sum-card" style="background: linear-gradient(135deg, #16a34a, #14532d); display: flex; align-items: center; gap: 16px; text-align: right; border-color: #166534;">
-                <div class="icon" style="background: rgba(255,255,255,0.15); color: #fff; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 12px; font-size: 20px;"><i class="fas fa-file-invoice"></i></div>
-                <div class="info" style="flex: 1;">
-                  <div class="lbl" style="color: #bbf7d0; font-size: 13px; font-weight: 700; margin-bottom: 4px;">عدد العمليات</div>
-                  <div class="val" id="purTotalCount" style="color: #fff; font-size: 24px; font-weight: 800;">0</div>
-                </div>
-              </div>
-              <div class="po-sum-card" style="background: transparent; border: 2px dashed #cbd5e1; display:flex; align-items:center; justify-content:center; cursor:pointer; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); box-shadow:none; border-radius:16px;" onclick="openPurModal()" onmouseover="this.style.borderColor='#3b82f6'; this.style.backgroundColor='#eff6ff';" onmouseout="this.style.borderColor='#cbd5e1'; this.style.backgroundColor='transparent';">
-                <div style="text-align:center; color:#3b82f6;">
-                  <i class="fas fa-plus-circle" style="font-size:24px; margin-bottom:8px;"></i>
-                  <div style="font-weight:800; font-size:15px;">إضافة فاتورة شراء</div>
-                </div>
+          <!-- KPI metric strip -->
+          <div class="wo-metric-strip" style="margin-bottom:16px;">
+            <div class="wo-metric">
+              <div class="wo-metric-icon info"><i class="fas fa-shopping-cart"></i></div>
+              <div class="wo-metric-body">
+                <div class="wo-metric-label">إجمالي المشتريات</div>
+                <div class="wo-metric-value" id="purTotalAmt">0.00</div>
               </div>
             </div>
+            <div class="wo-metric">
+              <div class="wo-metric-icon success"><i class="fas fa-file-invoice"></i></div>
+              <div class="wo-metric-body">
+                <div class="wo-metric-label">عدد الفواتير</div>
+                <div class="wo-metric-value" id="purTotalCount">0</div>
+              </div>
+            </div>
+            <div class="wo-metric">
+              <div class="wo-metric-icon warning"><i class="fas fa-clock"></i></div>
+              <div class="wo-metric-body">
+                <div class="wo-metric-label">بانتظار الاستلام</div>
+                <div class="wo-metric-value" id="purPendingCount">0</div>
+              </div>
+            </div>
+            <div class="wo-metric">
+              <div class="wo-metric-icon danger"><i class="fas fa-coins"></i></div>
+              <div class="wo-metric-body">
+                <div class="wo-metric-label">ضريبة 15%</div>
+                <div class="wo-metric-value" id="purTotalVAT">0.00</div>
+              </div>
+            </div>
+            <button class="wo-btn wo-btn-primary" onclick="openPurModal()" style="align-self:stretch;min-height:60px;"><i class="fas fa-plus"></i><span>فاتورة جديدة</span></button>
+          </div>
 
-            <!-- فواتير الشراء -->
-            <div class="po-form-section" style="grid-column: 1 / -1;">
-              <h3 class="sec-title"><i class="fas fa-list"></i> سجل المشتريات</h3>
-              
-              <div class="po-add-row" style="margin-bottom: 20px; align-items: flex-end;">
-                <div>
-                  <label>من تاريخ</label>
-                  <input type="date" id="fpurStart" class="form-control">
-                </div>
-                <div>
-                  <label>إلى تاريخ</label>
-                  <input type="date" id="fpurEnd" class="form-control">
-                </div>
-                <button class="btn btn-primary" style="height:48px;" onclick="loadDashPurchases()"><i class="fas fa-filter"></i> تصفية</button>
-              </div>
-              
-              <div class="table-responsive">
-                <table class="po-lines-table">
-                  <thead><tr><th>التاريخ</th><th>المورد</th><th>المادة</th><th>الكمية</th><th>الصافي</th><th style="color:#d97706;">الضريبة 15%</th><th>الإجمالي</th><th>الدفع</th><th>الحالة</th><th>المستخدم</th><th>إجراءات</th></tr></thead>
-                  <tbody id="tbPurchases"></tbody>
-                </table>
-              </div>
+          <!-- Quick-filter chip row (Odoo-style presets) -->
+          <div class="wo-filterbar-row" style="padding:0 4px 10px;margin-bottom:6px;">
+            <button class="wo-quickfilter" data-pur-qf="all"       onclick="purQuickFilter('all')"><i class="fas fa-list"></i>الكل</button>
+            <button class="wo-quickfilter" data-pur-qf="today"     onclick="purQuickFilter('today')"><i class="fas fa-calendar-day"></i>اليوم</button>
+            <button class="wo-quickfilter" data-pur-qf="week"      onclick="purQuickFilter('week')"><i class="fas fa-calendar-week"></i>آخر 7 أيام</button>
+            <button class="wo-quickfilter" data-pur-qf="month"     onclick="purQuickFilter('month')"><i class="fas fa-calendar"></i>هذا الشهر</button>
+            <button class="wo-quickfilter" data-pur-qf="pending"   onclick="purQuickFilter('pending')"><i class="fas fa-hourglass-half"></i>بانتظار الاستلام</button>
+            <button class="wo-quickfilter" data-pur-qf="received"  onclick="purQuickFilter('received')"><i class="fas fa-truck-ramp-box"></i>تم الاستلام</button>
+            <button class="wo-quickfilter" data-pur-qf="cash"      onclick="purQuickFilter('cash')"><i class="fas fa-money-bill-wave"></i>كاش</button>
+            <button class="wo-quickfilter" data-pur-qf="credit"    onclick="purQuickFilter('credit')"><i class="fas fa-clock-rotate-left"></i>آجل</button>
+            <button class="wo-quickfilter" data-pur-qf="large"     onclick="purQuickFilter('large')"><i class="fas fa-arrow-up-wide-short"></i>كبيرة القيمة (&gt;5k)</button>
+            <button class="wo-quickfilter" onclick="purResetFilters()" style="border-style:dashed;"><i class="fas fa-xmark"></i>مسح</button>
+            <span id="purResultsCount" class="wo-results-count" style="margin-inline-start:auto;"></span>
+          </div>
+
+          <!-- Advanced filter toolbar -->
+          <section class="wo-toolbar" role="search" aria-label="تصفية فواتير الشراء" style="margin-bottom:16px;">
+            <div class="wo-field">
+              <label class="wo-field-label" for="fpurSearch"><i class="fas fa-search"></i>بحث</label>
+              <input type="text" id="fpurSearch" class="wo-input" placeholder="رقم الفاتورة أو المورد أو الصنف..." oninput="purApplyFilters()">
+            </div>
+            <div class="wo-field">
+              <label class="wo-field-label" for="fpurBrand"><i class="fas fa-store" style="color:#8b5cf6;"></i>البراند</label>
+              <select id="fpurBrand" class="wo-select" onchange="purApplyFilters()"><option value="">كل البراندات</option></select>
+            </div>
+            <div class="wo-field">
+              <label class="wo-field-label" for="fpurSupplier"><i class="fas fa-truck"></i>المورد</label>
+              <select id="fpurSupplier" class="wo-select" onchange="purApplyFilters()"><option value="">كل الموردين</option></select>
+            </div>
+            <div class="wo-field">
+              <label class="wo-field-label" for="fpurStatus"><i class="fas fa-flag"></i>الحالة</label>
+              <select id="fpurStatus" class="wo-select" onchange="purApplyFilters()">
+                <option value="">كل الحالات</option>
+                <option value="draft">بانتظار الاستلام</option>
+                <option value="received">تم الاستلام</option>
+              </select>
+            </div>
+            <div class="wo-field">
+              <label class="wo-field-label" for="fpurPay"><i class="fas fa-credit-card"></i>الدفع</label>
+              <select id="fpurPay" class="wo-select" onchange="purApplyFilters()">
+                <option value="">كل طرق الدفع</option>
+                <option value="Cash">كاش</option>
+                <option value="آجل">آجل</option>
+                <option value="Bank">تحويل بنكي</option>
+              </select>
+            </div>
+            <div class="wo-field">
+              <label class="wo-field-label" for="fpurStart"><i class="fas fa-calendar"></i>من تاريخ</label>
+              <input type="date" id="fpurStart" class="wo-input" onchange="loadDashPurchases()">
+            </div>
+            <div class="wo-field">
+              <label class="wo-field-label" for="fpurEnd"><i class="fas fa-calendar-check"></i>إلى تاريخ</label>
+              <input type="date" id="fpurEnd" class="wo-input" onchange="loadDashPurchases()">
+            </div>
+            <div class="wo-field" style="align-self:flex-end;">
+              <button class="wo-btn wo-btn-secondary" onclick="loadDashPurchases()" style="height:42px;"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+            </div>
+          </section>
+
+          <!-- Table -->
+          <div class="wo-section" style="padding:0;overflow:hidden;">
+            <div class="wo-section-header" style="padding:14px 18px;border-bottom:1px solid var(--wo-border);">
+              <h3 style="margin:0;font-size:15px;display:flex;align-items:center;gap:8px;color:var(--wo-on-surface);">
+                <i class="fas fa-list" style="color:var(--wo-info-fg);"></i>
+                سجل المشتريات
+              </h3>
+            </div>
+            <div class="wo-table-surface" style="border-radius:0;box-shadow:none;">
+              <table class="wo-table" role="table">
+                <thead>
+                  <tr>
+                    <th scope="col">التاريخ</th>
+                    <th scope="col">البراند</th>
+                    <th scope="col">المورد</th>
+                    <th scope="col">المادة</th>
+                    <th scope="col" class="num">الكمية</th>
+                    <th scope="col" class="num">الصافي</th>
+                    <th scope="col" class="num" style="color:#d97706;">الضريبة 15%</th>
+                    <th scope="col" class="num">الإجمالي</th>
+                    <th scope="col">الدفع</th>
+                    <th scope="col">الحالة</th>
+                    <th scope="col">المستخدم</th>
+                    <th scope="col">إجراءات</th>
+                  </tr>
+                </thead>
+                <tbody id="tbPurchases">
+                  <tr><td colspan="12"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -3555,6 +3631,17 @@
         <div class="form-group" style="margin:0;"><label class="form-label">تاريخ الفاتورة</label><input type="date" id="purInvDate" class="form-control"></div>
         <div class="form-group" style="margin:0;"><label class="form-label">طريقة الدفع</label>
           <select id="purPay" class="form-control"><option value="Cash">كاش</option><option value="Card">بطاقة</option><option value="آجل">آجل</option><option value="Transfer">تحويل</option></select>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:15px;">
+        <div class="form-group" style="margin:0;">
+          <label class="form-label"><i class="fas fa-store" style="color:#8b5cf6;"></i> البراند</label>
+          <select id="purBrand" class="form-control"><option value="">— عام (يُستنتج من المورد) —</option></select>
+          <small style="color:#64748b;font-size:11px;">إذا تركته فارغاً وكان للمورد براند محدد، سيُنسب إليه تلقائياً.</small>
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label class="form-label"><i class="fas fa-map-marker-alt" style="color:#06b6d4;"></i> الفرع</label>
+          <select id="purBranch" class="form-control"><option value="">— الكل —</option></select>
         </div>
       </div>
       <div class="form-group"><label class="form-label">ملاحظات (رقم الفاتورة)</label><input type="text" id="purNotes" class="form-control" placeholder="ملاحظات"></div>

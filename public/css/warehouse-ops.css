@@ -1644,6 +1644,89 @@
 }
 
 /* ──────────────────────────────────────────────────────────────
+ * 21b. WORKFLOW STEPS (Ant Design-style horizontal stepper)
+ * ────────────────────────────────────────────────────────────── */
+.wo-steps {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  padding: var(--wo-space-4);
+  background: var(--wo-surface-1);
+  border: 1px solid var(--wo-border);
+  border-radius: var(--wo-radius-md);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.wo-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  min-width: 110px;
+  position: relative;
+  text-align: center;
+}
+.wo-step + .wo-step::before {
+  content: '';
+  position: absolute;
+  top: 16px;
+  inset-inline-end: 50%;
+  width: 100%;
+  height: 2px;
+  background: var(--wo-border);
+  z-index: 0;
+}
+.wo-step.done + .wo-step::before,
+.wo-step.active + .wo-step::before { background: var(--wo-success); }
+.wo-step-icon {
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  background: var(--wo-surface-3);
+  color: var(--wo-on-surface-subtle);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  font-weight: 800;
+  position: relative;
+  z-index: 1;
+  transition: all var(--wo-dur-3) var(--wo-ease-emphasized);
+  border: 2px solid transparent;
+}
+.wo-step.done .wo-step-icon {
+  background: var(--wo-success);
+  color: #fff;
+  border-color: var(--wo-success);
+}
+.wo-step.active .wo-step-icon {
+  background: var(--wo-info);
+  color: #fff;
+  border-color: var(--wo-info);
+  box-shadow: 0 0 0 4px var(--wo-info-bg);
+}
+.wo-step.rejected .wo-step-icon {
+  background: var(--wo-danger);
+  color: #fff;
+  border-color: var(--wo-danger);
+}
+.wo-step-title {
+  font-size: var(--wo-text-caption);
+  font-weight: 700;
+  color: var(--wo-on-surface-muted);
+  margin-top: 6px;
+  max-width: 120px;
+}
+.wo-step.active .wo-step-title { color: var(--wo-info); }
+.wo-step.done .wo-step-title { color: var(--wo-success); }
+.wo-step-sub {
+  font-size: 10px;
+  color: var(--wo-on-surface-subtle);
+  margin-top: 2px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ──────────────────────────────────────────────────────────────
  * 22. LEGACY CLASS SHIMS — keep old HTML working during migration
  *
  * Purpose: legacy `.btn` / `.form-control` / `.modal` markup that has

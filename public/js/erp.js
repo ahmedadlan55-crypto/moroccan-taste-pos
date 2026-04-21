@@ -5474,57 +5474,83 @@ function wfPrintTxn(id) {
   }).getWfTransaction(id);
 }
 
+// Unified transaction action modal — uses WoModal (Phase B)
+// Supports: approve, reject, return, close. Shared with employee portal via window.wfTxnAction.
 function wfTxnAction(id, action) {
-  var actionNames = { approve: 'الموافقة على', reject: 'رفض', return: 'إرجاع', close: 'إغلاق' };
-  var aClrs = { approve: '#16a34a', reject: '#ef4444', return: '#f59e0b', close: '#6b7280' };
-  var aIcons = { approve: 'fa-check-circle', reject: 'fa-times-circle', return: 'fa-undo', close: 'fa-lock' };
+  var actionNames = { approve: 'الموافقة', reject: 'الرفض', return: 'الإرجاع', close: 'الإغلاق' };
+  var aIcons = { approve: 'fa-check-circle', reject: 'fa-times-circle', return: 'fa-rotate-left', close: 'fa-lock' };
+  var aColors = { approve: 'success', reject: 'danger', return: 'warn', close: 'neutral' };
+  var requiredNote = (action === 'reject' || action === 'return');
+  var title = (actionNames[action] || action) + ' — معاملة';
 
-  // Show action dialog with note + attachment
-  var dlgId = 'wfActionDlg';
-  var old = document.getElementById(dlgId); if (old) old.remove();
-  var div = document.createElement('div');
-  div.id = dlgId;
-  div.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;';
-  div.innerHTML =
-    '<div style="background:#fff;border-radius:16px;padding:24px;width:440px;max-width:90%;box-shadow:0 20px 60px rgba(0,0,0,.15);">' +
-      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">' +
-        '<div style="width:40px;height:40px;border-radius:50%;background:'+(aClrs[action]||'#6b7280')+'15;display:flex;align-items:center;justify-content:center;"><i class="fas '+(aIcons[action]||'fa-cog')+'" style="color:'+(aClrs[action]||'#6b7280')+';"></i></div>' +
-        '<h3 style="margin:0;font-size:16px;">'+(actionNames[action]||action)+' المعاملة</h3>' +
+  var body =
+    '<div style="display:flex;flex-direction:column;gap:12px;">' +
+      '<div class="wo-label-stack">' +
+        '<label class="wo-field-label">' +
+          '<i class="fas fa-comment"></i> ' +
+          (action === 'return' ? 'سبب الإرجاع' : (action === 'reject' ? 'سبب الرفض' : 'التعليق')) +
+          (requiredNote ? ' <span style="color:var(--wo-danger);">*</span>' : ' <span class="wo-text-subtle wo-text-caption">(اختياري)</span>') +
+        '</label>' +
+        '<textarea id="wfActNote" class="wo-textarea" rows="4" placeholder="' +
+          (action === 'return' ? 'اكتب سبب الإرجاع والملاحظات التي تريد إبلاغ المرسل بها...' :
+           action === 'reject' ? 'اذكر سبب الرفض بوضوح للمرسل...' :
+           'أضف تعليقاً أو ملاحظة...') + '"></textarea>' +
       '</div>' +
-      '<div style="margin-bottom:12px;"><label style="font-size:12px;font-weight:700;color:#475569;">'+(action==='return'?'سبب الإرجاع (مطلوب) *':(action==='reject'?'سبب الرفض (مطلوب) *':'التعليق (اختياري)'))+'</label><textarea id="wfActNote" rows="3" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;resize:none;margin-top:4px;" placeholder="'+(action==='return'?'اكتب سبب الإرجاع والملاحظات التي تريد إبلاغ المرسل بها...':'اكتب تعليقك هنا...')+'"></textarea></div>' +
-      '<div style="margin-bottom:16px;"><label style="font-size:12px;font-weight:700;color:#475569;">مرفق (اختياري)</label><input type="file" id="wfActFile" accept=".pdf,.jpg,.jpeg,.png" style="width:100%;padding:8px;border:1.5px solid #e5e7eb;border-radius:10px;margin-top:4px;font-size:13px;"></div>' +
-      '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
-        '<button id="wfActOk" style="padding:10px 24px;border-radius:10px;border:none;background:'+(aClrs[action]||'#6b7280')+';color:#fff;font-weight:800;font-size:14px;cursor:pointer;">'+(actionNames[action]||action)+'</button>' +
-        '<button id="wfActCancel" style="padding:10px 20px;border-radius:10px;border:2px solid #e5e7eb;background:#fff;color:#64748b;font-weight:700;font-size:14px;cursor:pointer;">إلغاء</button>' +
+      '<div class="wo-label-stack">' +
+        '<label class="wo-field-label"><i class="fas fa-paperclip"></i> مرفق <span class="wo-text-subtle wo-text-caption">(اختياري)</span></label>' +
+        '<input type="file" id="wfActFile" accept=".pdf,.jpg,.jpeg,.png" class="wo-input">' +
       '</div>' +
     '</div>';
-  document.body.appendChild(div);
-  div.querySelector('#wfActCancel').onclick = function() { div.remove(); };
-  div.addEventListener('click', function(e) { if (e.target === div) div.remove(); });
 
-  div.querySelector('#wfActOk').onclick = function() {
-    var note = (document.getElementById('wfActNote').value||'').trim();
-    if (action === 'reject' && !note) { showToast('سبب الرفض مطلوب', true); return; }
-    if (action === 'return' && !note) { showToast('سبب الإرجاع مطلوب — اكتب ما تريد إبلاغ المرسل به', true); return; }
+  var footer =
+    '<button class="wo-btn wo-btn-secondary" id="wfActCancel">إلغاء</button>' +
+    '<button class="wo-btn wo-btn-' + (action === 'reject' ? 'danger' : action === 'return' ? 'warning' : 'primary') + '" id="wfActOk">' +
+      '<i class="fas ' + aIcons[action] + '"></i><span>' + actionNames[action] + '</span>' +
+    '</button>';
+
+  var modal = WoModal.open({
+    icon: aIcons[action],
+    iconColor: aColors[action],
+    title: title,
+    subtitle: 'سيتم تسجيل هذا الإجراء في سجل المعاملة',
+    body: body,
+    footer: footer,
+    size: 'sm'
+  });
+
+  modal.el.querySelector('#wfActCancel').onclick = function() { modal.close(null); };
+  setTimeout(function(){ var ta = document.getElementById('wfActNote'); if (ta) ta.focus(); }, 220);
+
+  modal.el.querySelector('#wfActOk').onclick = function() {
+    var note = (document.getElementById('wfActNote').value || '').trim();
+    if (requiredNote && !note) {
+      showToast(action === 'reject' ? 'سبب الرفض مطلوب' : 'سبب الإرجاع مطلوب — اكتب ما تريد إبلاغ المرسل به', true);
+      return;
+    }
     var fileInput = document.getElementById('wfActFile');
     var doSend = function(attachment) {
-      div.remove();
+      modal.lock();
       loader(true);
       window._apiBridge.withSuccessHandler(function(r) {
-        loader(false);
+        loader(false); modal.unlock();
         if (r.success) {
           var statusLabels = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
+          modal.close(r);
           showToast('تم — الحالة الجديدة: ' + (statusLabels[r.newStatus] || r.newStatus));
           // Refresh whichever view is active
-          if (document.getElementById('erpWfInbox') && !document.getElementById('erpWfInbox').classList.contains('hidden')) wfLoadInbox();
-          if (document.getElementById('erpWfIncoming') && !document.getElementById('erpWfIncoming').classList.contains('hidden')) wfLoadIncoming();
-          if (document.getElementById('erpWfDashboard') && !document.getElementById('erpWfDashboard').classList.contains('hidden')) wfLoadDashboard();
-          if (document.getElementById('erpWfOutgoing') && !document.getElementById('erpWfOutgoing').classList.contains('hidden')) wfLoadOutbox();
+          ['erpWfInbox','erpWfIncoming','erpWfDashboard','erpWfOutgoing'].forEach(function(sec) {
+            var el = document.getElementById(sec);
+            if (el && !el.classList.contains('hidden')) {
+              var fn = { erpWfInbox: wfLoadInbox, erpWfIncoming: wfLoadIncoming,
+                         erpWfDashboard: wfLoadDashboard, erpWfOutgoing: wfLoadOutbox }[sec];
+              if (typeof fn === 'function') fn();
+            }
+          });
         } else showToast(r.error, true);
       }).wfTransactionAction(id, { action: action, username: currentUser, note: note, attachment: attachment || '' });
     };
     if (fileInput.files && fileInput.files[0]) {
-      var r = new FileReader(); r.onload = function(e) { doSend(e.target.result); }; r.readAsDataURL(fileInput.files[0]);
+      var fr = new FileReader(); fr.onload = function(e) { doSend(e.target.result); }; fr.readAsDataURL(fileInput.files[0]);
     } else doSend('');
   };
 }

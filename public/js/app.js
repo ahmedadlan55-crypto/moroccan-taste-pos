@@ -2328,27 +2328,50 @@ function _importRecipesBody(input) {
 function loadDashInv() { loadDashMenu(); }
 
 function openInvM(mode, id = null) {
-  if (mode === 'add') {
-    q("#iMdlTitle").innerText = "إضافة منتج جديد";
-    q("#miId").value = ""; q("#miName").value = ""; q("#miCat").value = "عام";
-    q("#miPrice").value = ""; q("#miCost").value = "0"; q("#miActive").checked = true;
-    q("#miComputedCost").value = "0"; q("#miMarkupPct").value = "30";
-    q("#miPricingFixed").checked = true;
-  } else {
-    q("#iMdlTitle").innerText = "تعديل المنتج";
-    let d = state.menu.find(x => x.id === id);
-    if (!d) return;
-    q("#miId").value = d.id || ""; q("#miName").value = d.name || ""; q("#miCat").value = d.category || "";
-    q("#miPrice").value = d.price || ""; q("#miCost").value = d.cost || "0";
-    q("#miComputedCost").value = d.computedCost || "0";
-    q("#miMarkupPct").value = d.markupPct || "30";
-    q("#miActive").checked = !!d.active;
-    // Set pricing mode radio
-    if (d.pricingMode === 'variable') { q("#miPricingVariable").checked = true; }
-    else { q("#miPricingFixed").checked = true; }
-  }
-  togglePricingMode();
-  openModal("#modalInvForm");
+  // Load brand options first (every time — brand list may change)
+  _loadBrandOptions('#miBrand', function() {
+    if (mode === 'add') {
+      q("#iMdlTitle").innerText = "إضافة منتج جديد";
+      q("#miId").value = ""; q("#miName").value = ""; q("#miCat").value = "عام";
+      q("#miPrice").value = ""; q("#miCost").value = "0"; q("#miActive").checked = true;
+      q("#miComputedCost").value = "0"; q("#miMarkupPct").value = "30";
+      q("#miPricingFixed").checked = true;
+      if (q("#miBrand")) q("#miBrand").value = '';
+    } else {
+      q("#iMdlTitle").innerText = "تعديل المنتج";
+      let d = state.menu.find(x => x.id === id);
+      if (!d) return;
+      q("#miId").value = d.id || ""; q("#miName").value = d.name || ""; q("#miCat").value = d.category || "";
+      q("#miPrice").value = d.price || ""; q("#miCost").value = d.cost || "0";
+      q("#miComputedCost").value = d.computedCost || "0";
+      q("#miMarkupPct").value = d.markupPct || "30";
+      q("#miActive").checked = !!d.active;
+      if (q("#miBrand")) q("#miBrand").value = d.brandId || d.brand_id || '';
+      // Set pricing mode radio
+      if (d.pricingMode === 'variable') { q("#miPricingVariable").checked = true; }
+      else { q("#miPricingFixed").checked = true; }
+    }
+    togglePricingMode();
+    openModal("#modalInvForm");
+  });
+}
+
+// Shared helper: load /api/erp/brands into a <select>
+function _loadBrandOptions(selector, done) {
+  var el = typeof selector === 'string' ? q(selector) : selector;
+  if (!el) { if (done) done(); return; }
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/brands', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(list){
+      if (!Array.isArray(list)) list = [];
+      var current = el.value;
+      el.innerHTML = '<option value="">— بدون براند (عام) —</option>' +
+        list.map(function(b){ return '<option value="'+b.id+'">'+(b.name||'')+(b.code?' ('+b.code+')':'')+'</option>'; }).join('');
+      if (current) el.value = current;
+      if (done) done();
+    })
+    .catch(function(){ if (done) done(); });
 }
 
 // Toggle: variable cost (from recipes/inventory) vs fixed cost (manual).
@@ -2371,6 +2394,7 @@ function saveInv() {
   var pricingMode = q('input[name="miPricingMode"]:checked') ? q('input[name="miPricingMode"]:checked').value : 'fixed';
   const d = {
     id: q("#miId").value, name: q("#miName").value, category: q("#miCat").value,
+    brandId: (q("#miBrand") ? q("#miBrand").value : '') || '',
     price: q("#miPrice").value, cost: q("#miCost").value, stock: 9999, minStock: 0, active: q("#miActive").checked,
     pricingMode: pricingMode,
     markupPct: q("#miMarkupPct") ? q("#miMarkupPct").value : 30
@@ -2913,25 +2937,29 @@ function renderInvTable(list) {
 }
 
 function openRawModal(id = null) {
-  if (!id) {
-    q("#rMdlTitle").innerText = "إضافة مادة خام جديدة للمستودع";
-    q("#mrId").value = ""; q("#mrName").value = ""; q("#mrCat").value = "";
-    q("#mrCost").value = "0"; q("#mrBigUnit").value = ""; q("#mrUnit").value = "حبة"; q("#mrConvRate").value = "1";
-    q("#mrStock").value = "0"; q("#mrMin").value = "0";
-    if(q("#mrSmallCost")) q("#mrSmallCost").value = "0";
-  } else {
-    q("#rMdlTitle").innerText = "تعديل مادة خام";
-    let d = cachedRawItems.find(x => x.id === id);
-    if (!d) return;
-    q("#mrId").value = d.id; q("#mrName").value = d.name; q("#mrCat").value = d.category;
-    // inv_items.cost is per small unit. The form #mrCost shows per BIG unit.
-    var cRate = Number(d.convRate) || 1;
-    q("#mrCost").value = (cRate > 1 ? d.cost * cRate : d.cost).toFixed(2);
-    q("#mrBigUnit").value = d.bigUnit || ""; q("#mrUnit").value = d.unit || "حبة"; q("#mrConvRate").value = d.convRate || 1;
-    q("#mrStock").value = d.stock; q("#mrMin").value = d.minStock;
-  }
-  calcSmallUnitCost();
-  openModal("#modalRawForm");
+  _loadBrandOptions('#mrBrand', function() {
+    if (!id) {
+      q("#rMdlTitle").innerText = "إضافة مادة خام جديدة للمستودع";
+      q("#mrId").value = ""; q("#mrName").value = ""; q("#mrCat").value = "";
+      q("#mrCost").value = "0"; q("#mrBigUnit").value = ""; q("#mrUnit").value = "حبة"; q("#mrConvRate").value = "1";
+      q("#mrStock").value = "0"; q("#mrMin").value = "0";
+      if(q("#mrSmallCost")) q("#mrSmallCost").value = "0";
+      if (q("#mrBrand")) q("#mrBrand").value = '';
+    } else {
+      q("#rMdlTitle").innerText = "تعديل مادة خام";
+      let d = cachedRawItems.find(x => x.id === id);
+      if (!d) return;
+      q("#mrId").value = d.id; q("#mrName").value = d.name; q("#mrCat").value = d.category;
+      // inv_items.cost is per small unit. The form #mrCost shows per BIG unit.
+      var cRate = Number(d.convRate) || 1;
+      q("#mrCost").value = (cRate > 1 ? d.cost * cRate : d.cost).toFixed(2);
+      q("#mrBigUnit").value = d.bigUnit || ""; q("#mrUnit").value = d.unit || "حبة"; q("#mrConvRate").value = d.convRate || 1;
+      q("#mrStock").value = d.stock; q("#mrMin").value = d.minStock;
+      if (q("#mrBrand")) q("#mrBrand").value = d.brandId || d.brand_id || '';
+    }
+    calcSmallUnitCost();
+    openModal("#modalRawForm");
+  });
 }
 
 function saveRawItem() {
@@ -2941,6 +2969,7 @@ function saveRawItem() {
   var costPerSmall = cRateInput > 1 ? bigCostInput / cRateInput : bigCostInput;
   const d = {
     id: q("#mrId").value, name: q("#mrName").value, category: q("#mrCat").value,
+    brandId: (q("#mrBrand") ? q("#mrBrand").value : '') || '',
     cost: costPerSmall, bigUnit: q("#mrBigUnit").value, unit: q("#mrUnit").value, convRate: q("#mrConvRate").value,
     stock: q("#mrStock").value, minStock: q("#mrMin").value, active: true
   };

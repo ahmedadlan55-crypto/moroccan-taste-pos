@@ -1,13 +1,19 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 
-// Get all menu items (active only)
+// Get all menu items (active only). Optional ?brandId= filter.
 router.get('/', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM menu WHERE active = 1 ORDER BY category, name');
+    const { brandId } = req.query;
+    let sql = 'SELECT m.*, b.name AS brand_name FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE m.active = 1';
+    const params = [];
+    if (brandId) { sql += ' AND m.brand_id = ?'; params.push(brandId); }
+    sql += ' ORDER BY m.category, m.name';
+    const [rows] = await db.query(sql, params);
     res.json(rows.map(m => ({
       id: m.id, name: m.name, price: Number(m.price), category: m.category,
       cost: Number(m.cost), stock: m.stock, minStock: m.min_stock, active: m.active, rowIndex: m.id,
+      brandId: m.brand_id || '', brand_id: m.brand_id || '', brandName: m.brand_name || '',
       computedCost: Number(m.computed_cost) || 0, pricingMode: m.pricing_mode || 'fixed', markupPct: Number(m.markup_pct) || 30
     })));
   } catch (e) { res.json([]); }
@@ -16,10 +22,16 @@ router.get('/', async (req, res) => {
 // Get all menu items (including inactive)
 router.get('/all', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM menu ORDER BY category, name');
+    const { brandId } = req.query;
+    let sql = 'SELECT m.*, b.name AS brand_name FROM menu m LEFT JOIN brands b ON b.id = m.brand_id';
+    const params = [];
+    if (brandId) { sql += ' WHERE m.brand_id = ?'; params.push(brandId); }
+    sql += ' ORDER BY m.category, m.name';
+    const [rows] = await db.query(sql, params);
     res.json(rows.map(m => ({
       id: m.id, name: m.name, price: Number(m.price), category: m.category,
       cost: Number(m.cost), stock: m.stock, minStock: m.min_stock, active: m.active,
+      brandId: m.brand_id || '', brand_id: m.brand_id || '', brandName: m.brand_name || '',
       computedCost: Number(m.computed_cost) || 0, pricingMode: m.pricing_mode || 'fixed', markupPct: Number(m.markup_pct) || 30
     })));
   } catch (e) { res.json([]); }
@@ -28,12 +40,12 @@ router.get('/all', async (req, res) => {
 // Add menu item
 router.post('/', async (req, res) => {
   try {
-    const { name, price, category, cost, stock, minStock, active, pricingMode, markupPct } = req.body;
+    const { name, price, category, cost, stock, minStock, active, pricingMode, markupPct, brandId } = req.body;
     const id = 'MENU-' + Date.now();
     await db.query(
-      'INSERT INTO menu (id, name, price, category, cost, stock, min_stock, active, pricing_mode, markup_pct) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO menu (id, name, price, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
       [id, name, price, category || 'عام', cost || 0, stock || 9999, minStock || 0, active !== false,
-       pricingMode || 'fixed', markupPct || 30]);
+       pricingMode || 'fixed', markupPct || 30, brandId || null]);
     res.json({ success: true, id });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
@@ -41,12 +53,13 @@ router.post('/', async (req, res) => {
 // Update menu item
 router.put('/:id', async (req, res) => {
   try {
-    const { name, price, category, cost, stock, minStock, active, pricingMode, markupPct } = req.body;
+    const { name, price, category, cost, stock, minStock, active, pricingMode, markupPct, brandId } = req.body;
     // Price is ALWAYS manual (user sets it). pricing_mode only controls
     // whether the COST comes from recipes (variable) or manual input (fixed).
     await db.query(
-      'UPDATE menu SET name=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?, pricing_mode=?, markup_pct=? WHERE id=?',
-      [name, price, category, cost || 0, stock, minStock, active, pricingMode || 'variable', markupPct || 0, req.params.id]);
+      'UPDATE menu SET name=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?, pricing_mode=?, markup_pct=?, brand_id=? WHERE id=?',
+      [name, price, category, cost || 0, stock, minStock, active, pricingMode || 'variable', markupPct || 0,
+       brandId || null, req.params.id]);
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });

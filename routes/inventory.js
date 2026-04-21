@@ -1,14 +1,20 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 
-// Get all inventory items
+// Get all inventory items. Optional ?brandId= filter.
 router.get('/items', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM inv_items ORDER BY category, name');
+    const { brandId } = req.query;
+    let sql = 'SELECT i.*, b.name AS brand_name FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id';
+    const params = [];
+    if (brandId) { sql += ' WHERE i.brand_id = ?'; params.push(brandId); }
+    sql += ' ORDER BY i.category, i.name';
+    const [rows] = await db.query(sql, params);
     res.json(rows.map(i => ({
       id: i.id, name: i.name, category: i.category,
       cost: Number(i.cost), stock: Number(i.stock), minStock: Number(i.min_stock),
-      unit: i.unit, bigUnit: i.big_unit, convRate: Number(i.conv_rate), active: i.active
+      unit: i.unit, bigUnit: i.big_unit, convRate: Number(i.conv_rate), active: i.active,
+      brandId: i.brand_id || '', brand_id: i.brand_id || '', brandName: i.brand_name || ''
     })));
   } catch (e) {
     res.json([]);
@@ -18,15 +24,16 @@ router.get('/items', async (req, res) => {
 // Save inventory item (insert or update)
 router.post('/items', async (req, res) => {
   try {
-    const { id, name, category, cost, stock, minStock, unit, bigUnit, convRate, active } = req.body;
+    const { id, name, category, cost, stock, minStock, unit, bigUnit, convRate, active, brandId } = req.body;
+    const brandIdVal = brandId || null;
 
     if (id) {
       // Check if exists
       const [existing] = await db.query('SELECT id FROM inv_items WHERE id = ?', [id]);
       if (existing.length) {
         await db.query(
-          `UPDATE inv_items SET name=?, category=?, cost=?, stock=?, min_stock=?, unit=?, big_unit=?, conv_rate=?, active=? WHERE id=?`,
-          [name, category || '', cost || 0, stock || 0, minStock || 0, unit || 'حبة', bigUnit || null, convRate || 1, active !== false, id]
+          `UPDATE inv_items SET name=?, category=?, cost=?, stock=?, min_stock=?, unit=?, big_unit=?, conv_rate=?, active=?, brand_id=? WHERE id=?`,
+          [name, category || '', cost || 0, stock || 0, minStock || 0, unit || 'حبة', bigUnit || null, convRate || 1, active !== false, brandIdVal, id]
         );
         return res.json({ success: true, id });
       }
@@ -34,8 +41,8 @@ router.post('/items', async (req, res) => {
 
     const newId = id || 'INV-' + Date.now();
     await db.query(
-      `INSERT INTO inv_items (id, name, category, cost, stock, min_stock, unit, big_unit, conv_rate, active) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [newId, name, category || '', cost || 0, stock || 0, minStock || 0, unit || 'حبة', bigUnit || null, convRate || 1, active !== false]
+      `INSERT INTO inv_items (id, name, category, cost, stock, min_stock, unit, big_unit, conv_rate, active, brand_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [newId, name, category || '', cost || 0, stock || 0, minStock || 0, unit || 'حبة', bigUnit || null, convRate || 1, active !== false, brandIdVal]
     );
 
     res.json({ success: true, id: newId });

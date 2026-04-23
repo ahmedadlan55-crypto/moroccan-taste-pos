@@ -8431,10 +8431,12 @@ window.erpTrialExport = function(format) {
   if (format === 'csv') {
     var hdr = ['الاسم','الكود','النوع','مدين قبل','دائن قبل','مدين الحركات','دائن الحركات','مدين بعد','دائن بعد','مدين الرصيد','دائن الرصيد'];
     var csv = hdr.join(',') + '\n' + rows.map(function(r){
-      var beforeD = r.opening > 0 ? r.opening : 0;
-      var beforeC = r.opening < 0 ? -r.opening : 0;
-      var afterD  = r.closing > 0 ? r.closing : 0;
-      var afterC  = r.closing < 0 ? -r.closing : 0;
+      var op = Number(r.opening||0);
+      var cl = r.closing != null ? Number(r.closing) : (r.net != null ? Number(r.net) : (op + Number(r.periodDebit||0) - Number(r.periodCredit||0)));
+      var beforeD = op > 0 ? op : 0;
+      var beforeC = op < 0 ? -op : 0;
+      var afterD  = cl > 0 ? cl : 0;
+      var afterC  = cl < 0 ? -cl : 0;
       return [r.nameAr||'', r.code||'', r.type||'',
         beforeD, beforeC, r.periodDebit||0, r.periodCredit||0,
         afterD, afterC, afterD, afterC].map(function(v){
@@ -8451,8 +8453,10 @@ window.erpTrialExport = function(format) {
       ensureXlsx().then(function(){
         var data = [['الاسم','الكود','النوع','مدين قبل','دائن قبل','مدين الحركات','دائن الحركات','مدين بعد','دائن بعد']];
         rows.forEach(function(r){
-          var bD = r.opening>0?r.opening:0, bC = r.opening<0?-r.opening:0;
-          var aD = r.closing>0?r.closing:0, aC = r.closing<0?-r.closing:0;
+          var op = Number(r.opening||0);
+          var cl = r.closing != null ? Number(r.closing) : (r.net != null ? Number(r.net) : (op + Number(r.periodDebit||0) - Number(r.periodCredit||0)));
+          var bD = op>0?op:0, bC = op<0?-op:0;
+          var aD = cl>0?cl:0, aC = cl<0?-cl:0;
           data.push([r.nameAr||'', r.code||'', r.type||'', bD, bC, r.periodDebit||0, r.periodCredit||0, aD, aC]);
         });
         var ws = XLSX.utils.aoa_to_sheet(data);
@@ -8476,10 +8480,11 @@ function _filterTbRows(rows) {
     var isMain = !a.parentId || a.code && a.code.length <= 1;
     if (accType === 'main' && !isMain) return false;
     if (accType === 'sub'  &&  isMain) return false;
-    if (parent && a.parentId !== parent && a.id !== parent) return false;
+    if (parent && a.parentId !== parent && a.id !== parent && a.accountId !== parent) return false;
     // Scope filter
     if (scope === 'nonzero') {
-      var anyMove = (a.periodDebit||0) > 0 || (a.periodCredit||0) > 0 || Math.abs(a.opening||0) > 0.005 || Math.abs(a.closing||0) > 0.005;
+      var bal = a.closing != null ? a.closing : (a.net != null ? a.net : (a.opening||0));
+      var anyMove = (a.periodDebit||0) > 0 || (a.periodCredit||0) > 0 || Math.abs(a.opening||0) > 0.005 || Math.abs(bal) > 0.005;
       if (!anyMove) return false;
     }
     // Level mode (compute level from code length: '1'=1, '11'=2, '111'=3, etc.)
@@ -8572,10 +8577,13 @@ function _renderTrialBalanceTable() {
   // Compute totals
   var tot = { beforeD:0, beforeC:0, moveD:0, moveC:0, afterD:0, afterC:0 };
   body.innerHTML = rows.map(function(a){
-    var op = Number(a.opening||0), cl = Number(a.closing||0);
+    // Backend returns: opening, periodDebit, periodCredit, net (not 'closing')
+    // Compute closing = opening + periodDebit - periodCredit (or use net if provided)
+    var op = Number(a.opening||0);
+    var pd = Number(a.periodDebit||0), pc = Number(a.periodCredit||0);
+    var cl = a.closing != null ? Number(a.closing) : (a.net != null ? Number(a.net) : (op + pd - pc));
     var bD = op > 0 ? op : 0, bC = op < 0 ? -op : 0;
     var aD = cl > 0 ? cl : 0, aC = cl < 0 ? -cl : 0;
-    var pd = Number(a.periodDebit||0), pc = Number(a.periodCredit||0);
     tot.beforeD += bD; tot.beforeC += bC;
     tot.moveD   += pd; tot.moveC   += pc;
     tot.afterD  += aD; tot.afterC  += aC;

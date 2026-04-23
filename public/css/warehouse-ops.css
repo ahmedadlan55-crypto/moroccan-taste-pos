@@ -2689,6 +2689,7 @@
   margin-bottom: 0;
   padding: 0 4px;
   align-items: flex-end;
+  flex-wrap: wrap;
 }
 .tb-lvl {
   padding: 9px 18px;
@@ -2803,6 +2804,52 @@
   font-weight: 800;
   color: #475569;
 }
+/* Expand / collapse toggle button (tree) */
+.tb-row-toggle {
+  background: #fff;
+  color: #10b981;
+  border: 1.5px solid #10b981;
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  font-size: 10px;
+  cursor: pointer;
+  margin-inline-end: 10px;
+  vertical-align: middle;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.tb-row-toggle:hover {
+  background: #10b981;
+  color: #fff;
+  transform: scale(1.08);
+}
+.tb-row-toggle.open {
+  background: #10b981;
+  color: #fff;
+}
+.tb-row-toggle.open:hover { background: #059669; }
+.tb-row-leaf {
+  display: inline-block;
+  width: 22px; height: 22px;
+  margin-inline-end: 10px;
+  vertical-align: middle;
+  position: relative;
+}
+.tb-row-leaf::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 50%;
+  top: 50%;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #cbd5e1;
+  transform: translate(-50%, -50%);
+}
+/* legacy alias — kept for any inline references */
 .tb-row-plus {
   background: #10b981;
   color: #fff;
@@ -2853,7 +2900,7 @@
   font-size: 11px;
 }
 
-/* Sub-row indentation for level expansion */
+/* Sub-row indentation for level expansion (legacy — replaced by tb-lv-N + inline padding) */
 .tb-report-table tbody tr.tb-sub td:first-child {
   padding-inline-start: 36px;
   font-weight: 600;
@@ -2861,4 +2908,64 @@
 }
 .tb-report-table tbody tr.tb-sub-2 td:first-child { padding-inline-start: 56px; }
 .tb-report-table tbody tr.tb-sub-3 td:first-child { padding-inline-start: 76px; }
+
+/* Tree-view rows — depth styling + parent row highlight */
+.tb-report-table tbody tr.tb-lv-0 {
+  background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+  font-weight: 900;
+}
+.tb-report-table tbody tr.tb-lv-0 > td {
+  font-weight: 800;
+  font-size: 13px;
+  padding: 14px 8px;
+  border-bottom: 2px solid #e5e7eb;
+}
+.tb-report-table tbody tr.tb-lv-0:hover { background: #f1f5f9; }
+.tb-report-table tbody tr.tb-lv-1 > td { font-size: 12.5px; padding: 11px 8px; }
+.tb-report-table tbody tr.tb-lv-2 > td { font-size: 12px; padding: 10px 8px; color: #475569; }
+.tb-report-table tbody tr.tb-lv-3 > td,
+.tb-report-table tbody tr.tb-lv-4 > td,
+.tb-report-table tbody tr.tb-lv-5 > td { font-size: 11.5px; padding: 9px 8px; color: #64748b; }
+
+/* Parent row chevron indicator (before the toggle button) */
+.tb-report-table tbody tr.tb-parent-row > td:first-child {
+  font-weight: 800;
+  color: #0f172a;
+}
+
+/* Zero placeholder — subtle gray dash instead of ugly "0.00" */
+.tb-zero {
+  color: #cbd5e1;
+  font-weight: 400;
+  font-family: 'SF Mono', Consolas, monospace;
+}
+
+/* Bulk expand/collapse tools next to level tabs */
+.tb-bulk-tools {
+  margin-inline-start: auto;
+  display: flex;
+  gap: 6px;
+  padding-bottom: 4px;
+}
+.tb-bulk-btn {
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1.5px solid #cbd5e1;
+  background: #fff;
+  color: #64748b;
+  font-size: 11.5px;
+  font-weight: 800;
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s;
+}
+.tb-bulk-btn:hover {
+  background: #10b981;
+  color: #fff;
+  border-color: #10b981;
+}
+.tb-bulk-btn i { font-size: 10px; }
 

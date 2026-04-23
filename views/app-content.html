@@ -3463,7 +3463,7 @@
     </div>
   </div>
 
-  <!-- ─── Level Tabs ─── -->
+  <!-- ─── Level Tabs + Bulk Expand/Collapse ─── -->
   <div class="tb-level-tabs" id="tbLevelTabs" style="display:none;">
     <button class="tb-lvl-plus" onclick="erpTrialAddLevel()" title="إضافة مستوى إضافي"><i class="fas fa-plus"></i></button>
     <button class="tb-lvl active" data-lvl="1" onclick="erpTrialSetLevel(1)">مستوى 1</button>
@@ -3471,6 +3471,10 @@
     <button class="tb-lvl" data-lvl="3" onclick="erpTrialSetLevel(3)">مستوى 3</button>
     <button class="tb-lvl" data-lvl="4" onclick="erpTrialSetLevel(4)">مستوى 4</button>
     <button class="tb-lvl" data-lvl="5" onclick="erpTrialSetLevel(5)">مستوى 5</button>
+    <div class="tb-bulk-tools">
+      <button class="tb-bulk-btn" onclick="erpTrialExpandAll()" title="فتح كل الفروع"><i class="fas fa-angle-double-down"></i> فتح الكل</button>
+      <button class="tb-bulk-btn" onclick="erpTrialCollapseAll()" title="طي كل الفروع"><i class="fas fa-angle-double-up"></i> طي الكل</button>
+    </div>
   </div>
 
   <!-- ─── Report Table (8 columns: name + code + 3 paired debit/credit groups + balance) ─── -->

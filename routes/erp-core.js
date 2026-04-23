@@ -949,23 +949,60 @@ router.get('/reports/trial-balance', async (req, res) => {
     const movementMap = {};
     movRows.forEach(r => { movementMap[r.account_id] = r; });
 
+    // Build a parent→children map to enable recursive roll-up
+    const childrenOf = {};
+    accts.forEach(a => {
+      const pid = a.parent_id || null;
+      if (!childrenOf[pid]) childrenOf[pid] = [];
+      childrenOf[pid].push(a);
+    });
+    const hasChildren = (id) => !!(childrenOf[id] && childrenOf[id].length);
+
+    // Compute aggregated (own + descendants') totals for each account
+    const directRaw = {};  // account_id → { opening, d, c }
+    accts.forEach(a => {
+      directRaw[a.id] = {
+        opening: Number(openingMap[a.id] || 0),
+        d: Number((movementMap[a.id]||{}).period_debit || 0),
+        c: Number((movementMap[a.id]||{}).period_credit || 0)
+      };
+    });
+    const aggregatedCache = {};
+    function aggregate(id) {
+      if (aggregatedCache[id]) return aggregatedCache[id];
+      const self = directRaw[id] || { opening:0, d:0, c:0 };
+      let agg = { opening: self.opening, d: self.d, c: self.c };
+      (childrenOf[id] || []).forEach(ch => {
+        const childAgg = aggregate(ch.id);
+        agg.opening += childAgg.opening;
+        agg.d       += childAgg.d;
+        agg.c       += childAgg.c;
+      });
+      aggregatedCache[id] = agg;
+      return agg;
+    }
+
     const rows = accts.map(a => {
-      const opening = Number(openingMap[a.id] || 0);
-      const mov = movementMap[a.id] || { period_debit: 0, period_credit: 0, row_count: 0 };
-      const d = Number(mov.period_debit) || 0;
-      const c = Number(mov.period_credit) || 0;
+      const agg = aggregate(a.id);
+      const opening = agg.opening;
+      const d = agg.d, c = agg.c;
       const closing = opening + d - c;
+      // Derive level from code length (1 char=1, 11=2, 111=3, ...)
+      const level = a.code ? String(a.code).length : 1;
       return {
         accountId: a.id,
         code: a.code,
         nameAr: a.name_ar,
         type: a.type,
+        parentId: a.parent_id || null,
+        level: Math.min(level, 9),
+        hasChildren: hasChildren(a.id),
         opening: Math.round(opening * 100) / 100,
         periodDebit: Math.round(d * 100) / 100,
         periodCredit: Math.round(c * 100) / 100,
         net: Math.round((d - c) * 100) / 100,
         closing: Math.round(closing * 100) / 100,
-        rowCount: Number(mov.row_count) || 0
+        rowCount: Number((movementMap[a.id]||{}).row_count || 0)
       };
     });
 

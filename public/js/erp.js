@@ -8390,6 +8390,9 @@ function _erpPopulateBrandOptions(selectIds) {
 // ═══════════════════════════════════════════════════════════════════
 window._tbCache = null;            // cached server response (so level switches don't re-hit)
 window._tbActiveLevel = null;      // null = default (show all), or number 1..N
+window._tbExpanded = new Set();    // accountIds currently expanded
+window._tbRowsById = {};           // accountId → row object (for quick lookup)
+window._tbChildrenOf = {};         // parentId → [row, ...] (for tree traversal)
 
 function erpTrialReset() {
   ['tbFrom','tbTo','tbAccountType','tbParent','tbAddedBy','tbScope','tbLevelMode','tbBalanceMode','tbBranch','tbBrand'].forEach(function(id){
@@ -8562,23 +8565,71 @@ function erpLoadTrialBalance() {
   });
 }
 
+// Build quick-lookup maps (id→row, parent→children) — called once per data load
+function _tbBuildTreeMaps(rows) {
+  window._tbRowsById = {};
+  window._tbChildrenOf = {};
+  rows.forEach(function(r) {
+    _tbRowsById[r.accountId] = r;
+    var pid = r.parentId || null;
+    if (!_tbChildrenOf[pid]) _tbChildrenOf[pid] = [];
+    _tbChildrenOf[pid].push(r);
+  });
+}
+
+// Build the display list respecting the tree expansion state:
+//  - Start with ROOT rows (parentId missing OR parent not in filtered set)
+//  - For each expanded row, splice in its children recursively
+function _tbBuildDisplayList(filteredRows) {
+  // Filter set of accountIds (for quick lookup)
+  var filteredIds = new Set(filteredRows.map(function(r){return r.accountId;}));
+  // Roots = rows whose parent is not in the filtered set
+  var roots = filteredRows.filter(function(r){
+    return !r.parentId || !filteredIds.has(r.parentId);
+  });
+  // Sort roots by code for stable order
+  roots.sort(function(a,b){ return String(a.code||'').localeCompare(String(b.code||'')); });
+  // Recursive expand
+  var output = [];
+  function visit(row, depth) {
+    row._depth = depth;  // for indentation
+    output.push(row);
+    if (_tbExpanded.has(row.accountId)) {
+      var children = (_tbChildrenOf[row.accountId] || [])
+        .filter(function(c){ return filteredIds.has(c.accountId); })
+        .sort(function(a,b){ return String(a.code||'').localeCompare(String(b.code||'')); });
+      children.forEach(function(c){ visit(c, depth + 1); });
+    }
+  }
+  roots.forEach(function(r){ visit(r, 0); });
+  return output;
+}
+
 function _renderTrialBalanceTable() {
   if (!_tbCache) return;
   var rows = _filterTbRows(_tbCache.rows || []);
+  _tbBuildTreeMaps(rows);
   var body = document.getElementById('tbBody');
   if (!rows.length) {
     body.innerHTML = '<tr><td colspan="10" class="tb-empty">لا توجد بيانات تطابق الفلتر</td></tr>';
     document.getElementById('tbTotals').style.display = 'none';
     return;
   }
+
+  // Build tree-aware display list (roots + expanded descendants)
+  var displayList = _tbBuildDisplayList(rows);
+
   // Account type colors for visual cues
   var typeMap = { asset:'#0ea5e9', liability:'#ef4444', equity:'#8b5cf6', revenue:'#16a34a', expense:'#f59e0b' };
   var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
-  // Compute totals
+
+  // Compute totals from ROOT nodes only (since parents already include children's totals)
   var tot = { beforeD:0, beforeC:0, moveD:0, moveC:0, afterD:0, afterC:0 };
-  body.innerHTML = rows.map(function(a){
-    // Backend returns: opening, periodDebit, periodCredit, net (not 'closing')
-    // Compute closing = opening + periodDebit - periodCredit (or use net if provided)
+  var filteredIds = new Set(rows.map(function(r){return r.accountId;}));
+  rows.forEach(function(a){
+    // A row is a root iff its parent isn't in the filtered set
+    var isRoot = !a.parentId || !filteredIds.has(a.parentId);
+    if (!isRoot) return;
     var op = Number(a.opening||0);
     var pd = Number(a.periodDebit||0), pc = Number(a.periodCredit||0);
     var cl = a.closing != null ? Number(a.closing) : (a.net != null ? Number(a.net) : (op + pd - pc));
@@ -8587,19 +8638,45 @@ function _renderTrialBalanceTable() {
     tot.beforeD += bD; tot.beforeC += bC;
     tot.moveD   += pd; tot.moveC   += pc;
     tot.afterD  += aD; tot.afterC  += aC;
-    var lvl = a.level || (a.code ? Math.min(5, a.code.length) : 1);
-    var indentClass = lvl > 1 ? 'tb-sub' : '';
-    if (lvl > 2) indentClass += ' tb-sub-' + Math.min(3, lvl - 1);
+  });
+
+  body.innerHTML = displayList.map(function(a){
+    var op = Number(a.opening||0);
+    var pd = Number(a.periodDebit||0), pc = Number(a.periodCredit||0);
+    var cl = a.closing != null ? Number(a.closing) : (a.net != null ? Number(a.net) : (op + pd - pc));
+    var bD = op > 0 ? op : 0, bC = op < 0 ? -op : 0;
+    var aD = cl > 0 ? cl : 0, aC = cl < 0 ? -cl : 0;
+
+    var depth = a._depth || 0;
     var clrBar = typeMap[a.type] || '#94a3b8';
-    return '<tr class="'+indentClass+'">' +
-      '<td><span style="display:inline-block;width:3px;height:14px;background:'+clrBar+';margin-inline-end:8px;vertical-align:middle;border-radius:2px;"></span><button class="tb-row-plus" title="عرض الحسابات الفرعية"><i class="fas fa-plus"></i></button>'+(a.nameAr||'')+'</td>' +
-      '<td>'+(a.code||'')+'</td>' +
-      '<td>'+(bD?fmt(bD):'')+'</td><td>'+(bC?fmt(bC):'')+'</td>' +
-      '<td>'+(pd?fmt(pd):'')+'</td><td>'+(pc?fmt(pc):'')+'</td>' +
-      '<td>'+(aD?fmt(aD):'')+'</td><td>'+(aC?fmt(aC):'')+'</td>' +
-      '<td>'+(aD?fmt(aD):'')+'</td><td>'+(aC?fmt(aC):'')+'</td>' +
+    var isExpanded = _tbExpanded.has(a.accountId);
+    var canExpand = a.hasChildren !== false;
+    // Determine if this account has filtered-in children (we might hide the +
+    // if it has no visible descendants)
+    var kids = _tbChildrenOf[a.accountId] || [];
+    var hasFilteredChildren = kids.some(function(c){ return filteredIds.has(c.accountId); });
+
+    var toggleBtn;
+    if (hasFilteredChildren) {
+      toggleBtn = '<button class="tb-row-toggle '+(isExpanded?'open':'')+'" onclick="erpTrialToggleRow(\''+a.accountId+'\')" title="'+(isExpanded?'طي':'عرض')+' الحسابات الفرعية"><i class="fas fa-'+(isExpanded?'minus':'plus')+'"></i></button>';
+    } else {
+      toggleBtn = '<span class="tb-row-leaf" title="حساب نهائي (لا فروع)"></span>';
+    }
+
+    // Indent based on depth; bold parent rows
+    var indentStyle = 'padding-inline-start:'+(16 + depth * 24)+'px;';
+    var nameStyle = depth === 0 ? 'font-weight:900;color:#0f172a;' : (depth === 1 ? 'font-weight:700;color:#1e293b;' : 'font-weight:600;color:#475569;');
+
+    return '<tr class="tb-lv-'+depth+' '+(hasFilteredChildren?'tb-parent-row':'')+'" data-account="'+a.accountId+'" data-depth="'+depth+'">' +
+      '<td style="'+indentStyle+'"><span style="display:inline-block;width:3px;height:16px;background:'+clrBar+';margin-inline-end:6px;vertical-align:middle;border-radius:2px;"></span>'+toggleBtn+'<span style="'+nameStyle+'">'+(a.nameAr||'')+'</span></td>' +
+      '<td><code style="color:#64748b;font-size:11px;">'+(a.code||'')+'</code></td>' +
+      '<td>'+(bD?fmt(bD):'<span class="tb-zero">—</span>')+'</td><td>'+(bC?fmt(bC):'<span class="tb-zero">—</span>')+'</td>' +
+      '<td>'+(pd?'<span style="color:#16a34a;font-weight:700;">'+fmt(pd)+'</span>':'<span class="tb-zero">—</span>')+'</td><td>'+(pc?'<span style="color:#ef4444;font-weight:700;">'+fmt(pc)+'</span>':'<span class="tb-zero">—</span>')+'</td>' +
+      '<td>'+(aD?fmt(aD):'<span class="tb-zero">—</span>')+'</td><td>'+(aC?fmt(aC):'<span class="tb-zero">—</span>')+'</td>' +
+      '<td><b>'+(aD?fmt(aD):'<span class="tb-zero">—</span>')+'</b></td><td><b>'+(aC?fmt(aC):'<span class="tb-zero">—</span>')+'</b></td>' +
     '</tr>';
   }).join('');
+
   document.getElementById('tbTotBeforeD').textContent = fmt(tot.beforeD);
   document.getElementById('tbTotBeforeC').textContent = fmt(tot.beforeC);
   document.getElementById('tbTotMoveD').textContent   = fmt(tot.moveD);
@@ -8609,6 +8686,39 @@ function _renderTrialBalanceTable() {
   document.getElementById('tbTotBalD').textContent    = fmt(tot.afterD);
   document.getElementById('tbTotBalC').textContent    = fmt(tot.afterC);
 }
+
+// Toggle a specific row's expansion state + re-render
+window.erpTrialToggleRow = function(accountId) {
+  if (_tbExpanded.has(accountId)) {
+    _tbExpanded.delete(accountId);
+    // Also collapse any descendants that were expanded (cleanup)
+    function collapseDesc(pid) {
+      (_tbChildrenOf[pid] || []).forEach(function(c){
+        if (_tbExpanded.has(c.accountId)) {
+          _tbExpanded.delete(c.accountId);
+          collapseDesc(c.accountId);
+        }
+      });
+    }
+    collapseDesc(accountId);
+  } else {
+    _tbExpanded.add(accountId);
+  }
+  _renderTrialBalanceTable();
+};
+
+// Bulk helpers: expand all / collapse all
+window.erpTrialExpandAll = function() {
+  var rows = _filterTbRows(_tbCache && _tbCache.rows || []);
+  rows.forEach(function(r){
+    if (r.hasChildren !== false) _tbExpanded.add(r.accountId);
+  });
+  _renderTrialBalanceTable();
+};
+window.erpTrialCollapseAll = function() {
+  _tbExpanded.clear();
+  _renderTrialBalanceTable();
+};
 
 window.erpTrialSetLevel = function(lvl) {
   _tbActiveLevel = Number(lvl);
@@ -8634,9 +8744,13 @@ window.erpTrialAddLevel = function() {
 };
 
 // Re-render on filter change (within the cached dataset, no network)
+// Reset expansion state when filters change (so user doesn't see stale state)
 ['tbAccountType','tbParent','tbScope','tbLevelMode','tbBalanceMode','tbAddedBy'].forEach(function(id){
   document.addEventListener('change', function(e){
-    if (e.target && e.target.id === id && _tbCache) _renderTrialBalanceTable();
+    if (e.target && e.target.id === id && _tbCache) {
+      _tbExpanded.clear();
+      _renderTrialBalanceTable();
+    }
   });
 });
 

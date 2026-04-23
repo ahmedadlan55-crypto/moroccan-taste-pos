@@ -2215,6 +2215,12 @@ async function runMigrations() {
   // Position workflow steps: amount-based routing
   await addColumnIfMissing('position_workflow_steps', 'amount_from', "DECIMAL(14,4) DEFAULT 0");
   await addColumnIfMissing('position_workflow_steps', 'amount_to',   "DECIMAL(14,4) DEFAULT NULL");
+  // Multi-path support — each initiator position can have several
+  // alternate workflow paths labeled by path_key + path_name.
+  // 'default' = the primary path (backward compatible).
+  await addColumnIfMissing('position_workflow_steps', 'path_key',   "VARCHAR(50) DEFAULT 'default'");
+  await addColumnIfMissing('position_workflow_steps', 'path_name',  "VARCHAR(200) DEFAULT 'المسار الأساسي'");
+  await addColumnIfMissing('position_workflow_steps', 'description',"TEXT");
   // Transactions: link to payment record (for payment-bearing flows)
   await addColumnIfMissing('transactions', 'payment_record_id', "VARCHAR(60)");
   await addColumnIfMissing('transactions', 'requires_payment', "BOOLEAN DEFAULT FALSE");

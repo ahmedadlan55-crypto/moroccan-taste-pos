@@ -234,9 +234,17 @@ async function resolveEmployee(username) {
 // Check the user's permissions set (falls back to position-level defaults if not an HR employee)
 async function getPermissions(username) {
   const emp = await resolveEmployee(username);
+  // Resolve role from users table (always — employees may not have it set)
+  let userRole = '';
+  try {
+    const [r] = await db.query('SELECT role FROM users WHERE username = ? LIMIT 1', [username]);
+    if (r.length) userRole = (r[0].role || '').toLowerCase();
+  } catch(_) {}
+
   if (emp) {
     return {
       isEmployee: true,
+      role: userRole,
       employeeId: emp.id,
       managerId: emp.manager_id || '',
       level: Number(emp.workflow_level) || Number(emp.position_level) || 1,
@@ -263,10 +271,11 @@ async function getPermissions(username) {
             b.name AS branch_name, b.code AS branch_code
      FROM users u LEFT JOIN positions p ON u.position_id = p.id
      LEFT JOIN branches b ON u.branch_id = b.id WHERE u.username = ? LIMIT 1`, [username]);
-  if (!u.length) return { isEmployee: false, level: 0, canCreate: true };
+  if (!u.length) return { isEmployee: false, role: '', level: 0, canCreate: true };
   const isAdmin = u[0].role === 'admin';
   return {
     isEmployee: false,
+    role: (u[0].role || '').toLowerCase(),
     userId: u[0].id,
     level: Number(u[0].position_level) || (isAdmin ? 99 : 1),
     branchId: u[0].branch_id || '',
@@ -611,17 +620,27 @@ router.post('/workflow-definitions/bulk', async (req, res) => {
 // ═══════════════════════════════════════
 
 // Return the chain for a given initiator position
+// GET steps for a given initiator position.
+// ?pathKey=default (default) returns one specific path.
+// Without pathKey, returns ALL paths grouped by path_key.
 router.get('/position-workflow/:initiatorPositionId', async (req, res) => {
   try {
+    const pathKey = req.query.pathKey;
+    const params = [req.params.initiatorPositionId];
+    let where = 'WHERE s.initiator_position_id = ?';
+    if (pathKey) { where += " AND COALESCE(s.path_key,'default') = ?"; params.push(pathKey); }
     const [rows] = await db.query(
       `SELECT s.*, p.name AS required_position_name
        FROM position_workflow_steps s
        LEFT JOIN positions p ON s.required_position_id = p.id
-       WHERE s.initiator_position_id = ?
-       ORDER BY s.step_order`, [req.params.initiatorPositionId]);
+       ${where}
+       ORDER BY COALESCE(s.path_key,'default'), s.step_order`, params);
     res.json(rows.map(w => ({
       id: w.id,
       initiatorPositionId: w.initiator_position_id,
+      pathKey: w.path_key || 'default',
+      pathName: w.path_name || 'المسار الأساسي',
+      description: w.description || '',
       stepOrder: w.step_order,
       stepName: w.step_name || '',
       positionId: w.required_position_id,
@@ -635,6 +654,28 @@ router.get('/position-workflow/:initiatorPositionId', async (req, res) => {
       requireSameBranch: w.require_same_branch === null || w.require_same_branch === undefined ? true : !!w.require_same_branch,
       requireSameDepartment: !!w.require_same_department,
       assignmentStrategy: w.assignment_strategy || 'least_busy'
+    })));
+  } catch(e) { res.json([]); }
+});
+
+// List ALL paths for an initiator position (one row per path_key)
+router.get('/position-workflow/:initiatorPositionId/paths', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT COALESCE(path_key,'default') AS path_key,
+              MAX(COALESCE(path_name,'المسار الأساسي')) AS path_name,
+              MAX(COALESCE(description,'')) AS description,
+              COUNT(*) AS step_count
+       FROM position_workflow_steps
+       WHERE initiator_position_id = ?
+       GROUP BY COALESCE(path_key,'default')
+       ORDER BY path_key`,
+      [req.params.initiatorPositionId]);
+    res.json(rows.map(r => ({
+      pathKey: r.path_key,
+      pathName: r.path_name,
+      description: r.description,
+      stepCount: Number(r.step_count) || 0
     })));
   } catch(e) { res.json([]); }
 });
@@ -655,10 +696,16 @@ router.get('/position-workflows-summary', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
-// Replace the entire chain for a given initiator position (atomic)
+// Replace the chain for a given initiator position + pathKey (atomic).
+// If pathKey is omitted, defaults to 'default' (backward compat).
+// Other paths under the same initiator are NOT touched.
 router.post('/position-workflow/bulk', async (req, res) => {
   try {
     const { initiatorPositionId, steps } = req.body;
+    const pathKey = (req.body.pathKey || 'default').toString().trim().slice(0, 50) || 'default';
+    const pathName = (req.body.pathName || 'المسار الأساسي').toString().slice(0, 200);
+    const description = (req.body.description || '').toString().slice(0, 1000);
+
     if (!initiatorPositionId) return res.json({ success: false, error: 'المنصب البادئ مطلوب' });
     if (!Array.isArray(steps) || !steps.length) return res.json({ success: false, error: 'يجب إضافة خطوة واحدة على الأقل' });
 
@@ -675,8 +722,11 @@ router.post('/position-workflow/bulk', async (req, res) => {
     const hasFinal = steps.some(s => s.isFinal === true || s.isFinal === 1);
     if (!hasFinal) steps[steps.length - 1].isFinal = true;
 
-    // Replace
-    await db.query('DELETE FROM position_workflow_steps WHERE initiator_position_id = ?', [initiatorPositionId]);
+    // Replace ONLY this (initiator, path) — leave other paths intact
+    await db.query(
+      `DELETE FROM position_workflow_steps
+       WHERE initiator_position_id = ? AND COALESCE(path_key,'default') = ?`,
+      [initiatorPositionId, pathKey]);
 
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i];
@@ -701,14 +751,27 @@ router.post('/position-workflow/bulk', async (req, res) => {
         `INSERT INTO position_workflow_steps (
            id, initiator_position_id, step_order, step_name, required_position_id,
            is_final_step, can_approve, can_reject, can_return_to_previous, can_edit, can_edit_amount,
-           require_same_branch, require_same_department, assignment_strategy
-         ) VALUES (?,?,?,?,?, ?,?,?,?,?,?, ?,?,?)`,
+           require_same_branch, require_same_department, assignment_strategy,
+           path_key, path_name, description
+         ) VALUES (?,?,?,?,?, ?,?,?,?,?,?, ?,?,?, ?,?,?)`,
         [id, initiatorPositionId, stepOrder, stepName, s.positionId || null,
          isFinal, cApprove, cReject, cReturn, cEdit, cEditAmt,
-         rb, rd, strat]);
+         rb, rd, strat,
+         pathKey, pathName, description]);
     }
 
-    res.json({ success: true, count: steps.length, initiatorPositionId });
+    res.json({ success: true, count: steps.length, initiatorPositionId, pathKey, pathName });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// Delete one specific path (or all paths if pathKey is omitted)
+router.delete('/position-workflow/:initiatorPositionId/path/:pathKey', async (req, res) => {
+  try {
+    await db.query(
+      `DELETE FROM position_workflow_steps
+       WHERE initiator_position_id = ? AND COALESCE(path_key,'default') = ?`,
+      [req.params.initiatorPositionId, req.params.pathKey]);
+    res.json({ success: true });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
@@ -888,18 +951,47 @@ router.get('/recipients-directory', async (req, res) => {
 });
 
 // Eligible recipients — users with positions (higher level than sender by default)
+// ═══════════════════════════════════════════════════════════════════
+// /eligible-users — who CAN this sender create a transaction for?
+//
+// New rules (replaces the old level-based filter):
+//   1. ADMIN role + EXECUTIVE positions (CEO / Owner / level >= 9) →
+//      can send to EVERY active user with a position OR HR profile
+//      (no restrictions). Reason: top management coordinates everyone.
+//   2. Sender HAS a defined workflow chain in position_workflow_steps:
+//      → eligible = users holding any position that appears in:
+//        a) the sender's OWN chain (forward — manager / approver chain)
+//        b) any OTHER position's chain that includes the sender's
+//           position (backward — so a manager can also send to a
+//           subordinate whose workflow lands on the manager).
+//        + the sender themselves can NOT be a recipient.
+//   3. Sender has NO chain defined → fall back to anyone above their
+//      level in the same branch (legacy behavior, kept for compat).
+//
+// Optional ?branchOnly=1 filters to same-branch users only.
+// ═══════════════════════════════════════════════════════════════════
 router.get('/eligible-users', async (req, res) => {
   try {
     const senderUsername = req.query.sender || '';
     const branchOnly = req.query.branchOnly === '1';
-    let senderLevel = 0, senderBranchId = '';
+
+    // Resolve sender's identity + workflow context
+    let senderRole = '';
+    let senderLevel = 0;
+    let senderBranchId = '';
+    let senderPositionId = null;
     if (senderUsername) {
       const p = await getPermissions(senderUsername);
-      senderLevel = Number(p.level) || 0;
-      senderBranchId = p.branchId || '';
+      senderRole       = (p.role || '').toLowerCase();
+      senderLevel      = Number(p.level) || 0;
+      senderBranchId   = p.branchId || '';
+      senderPositionId = p.positionId || null;
     }
+
+    // Pull the candidate pool (all active employees that have a position
+    // OR an HR profile OR the admin role)
     const [rows] = await db.query(
-      `SELECT u.id, u.username, u.full_name, u.role, u.branch_id,
+      `SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.position_id,
               p.name AS position_name, p.level AS position_level,
               COALESCE(br.name,'') AS branch_name,
               e.id AS emp_id, e.first_name, e.last_name, e.job_title, e.workflow_level
@@ -907,25 +999,77 @@ router.get('/eligible-users', async (req, res) => {
        LEFT JOIN positions p ON u.position_id = p.id
        LEFT JOIN branches br ON u.branch_id = br.id
        LEFT JOIN hr_employees e ON e.linked_username = u.username
-       WHERE u.active = 1 AND (u.position_id IS NOT NULL OR u.role = 'admin' OR e.id IS NOT NULL)
+       WHERE u.active = 1
+         AND (u.position_id IS NOT NULL OR u.role = 'admin' OR e.id IS NOT NULL)
        ORDER BY p.level DESC, u.full_name`);
+
+    // EXECUTIVE OVERRIDE: admin role or position level ≥ 9 (CEO/owner)
+    // can send to everyone (except themselves)
+    const isExecutive = senderRole === 'admin' || senderLevel >= 9;
+
+    let allowedPositionIds = null;  // null = no restriction (executive)
+    if (!isExecutive && senderPositionId) {
+      // 1. Forward direction: positions appearing in the sender's chain
+      const [forward] = await db.query(
+        `SELECT DISTINCT required_position_id AS pid
+         FROM position_workflow_steps
+         WHERE initiator_position_id = ? AND required_position_id IS NOT NULL`,
+        [senderPositionId]);
+
+      // 2. Backward direction: positions whose chain includes the sender
+      // (so the sender can reply / send back to subordinates that route to them)
+      const [backward] = await db.query(
+        `SELECT DISTINCT initiator_position_id AS pid
+         FROM position_workflow_steps
+         WHERE required_position_id = ?`,
+        [senderPositionId]);
+
+      const set = new Set();
+      forward.forEach(r => r.pid && set.add(r.pid));
+      backward.forEach(r => r.pid && set.add(r.pid));
+      // Always include same-position colleagues (peer transactions)
+      set.add(senderPositionId);
+
+      allowedPositionIds = set.size ? set : null;
+    }
+
     let filtered = rows.filter(r => {
+      // Always allow admin role to be a recipient (top of chain)
       if (r.role === 'admin') return true;
-      const level = Number(r.workflow_level) || Number(r.position_level) || 0;
-      if (senderLevel > 0 && level <= senderLevel) return false;
+      // Skip the sender themselves
+      if (senderUsername && r.username === senderUsername) return false;
+
+      if (isExecutive) {
+        // Executive sender → no further restrictions
+      } else if (allowedPositionIds) {
+        // Sender HAS a chain → only positions in the allowed set
+        if (!allowedPositionIds.has(r.position_id)) return false;
+      } else {
+        // Sender has NO chain → fall back to legacy level-based filter
+        const level = Number(r.workflow_level) || Number(r.position_level) || 0;
+        if (senderLevel > 0 && level <= senderLevel) return false;
+      }
+
+      // Branch filter (opt-in via ?branchOnly=1)
       if (branchOnly && senderBranchId && r.branch_id && r.branch_id !== senderBranchId) return false;
       return true;
     });
+
     res.json(filtered.map(r => ({
-      id: r.id, username: r.username,
+      id: r.id,
+      username: r.username,
       fullName: ((r.first_name||'') + ' ' + (r.last_name||'')).trim() || r.full_name || r.username,
       role: r.role,
+      positionId:   r.position_id || '',
       positionName: r.position_name || r.job_title || (r.role === 'admin' ? 'مدير النظام' : ''),
       positionLevel: Number(r.workflow_level) || Number(r.position_level) || 0,
       branchName: r.branch_name || '',
       branchId: r.branch_id || ''
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    console.error('eligible-users error:', e);
+    res.json([]);
+  }
 });
 
 // ═══════════════════════════════════════

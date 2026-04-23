@@ -1429,22 +1429,41 @@ function viewMyTxn(id) {
     var sbg = sBg[txn.status]||'#f1f5f9';
     var statusLabel = sMap[txn.status]||txn.status;
 
-    // ═══ HEADER — Title + status pill + "stopped at" badge ═══
+    // ═══ HEADER — Title + Sender card (very prominent) ═══
     var titleText = txn.subject || txn.title || '';
+    var senderName = txn.senderName || txn.createdBy || '';
+    var senderPos  = txn.senderPosition || '';
+    var senderInitial = senderName ? senderName.charAt(0).toUpperCase() : '?';
     var h = '';
-    // 1. Title
+
+    // PROMINENT TITLE BANNER — gradient + large title + sender avatar
+    h += '<div style="border-radius:14px;padding:16px 18px;margin-bottom:12px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#fff;box-shadow:0 4px 12px rgba(15,23,42,.15);">';
+    // Title row
     if (titleText) {
-      h += '<h3 style="margin:0 0 6px;color:#0f172a;font-size:18px;font-weight:900;line-height:1.4;">'+_esc(titleText)+'</h3>';
+      h += '<h3 style="margin:0 0 10px;color:#fff;font-size:22px;font-weight:900;line-height:1.35;letter-spacing:-0.01em;">'+_esc(titleText)+'</h3>';
     }
-    // 2. Compact meta row: number · type · amount · date
+    // Sender card
+    h += '<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(255,255,255,.08);border-radius:10px;border:1px solid rgba(255,255,255,.12);">' +
+      '<div style="width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:900;flex-shrink:0;">'+_esc(senderInitial)+'</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;">المُرسِل</div>' +
+        '<div style="font-size:14.5px;font-weight:900;color:#fff;margin-top:1px;">'+_esc(senderName||'—')+'</div>' +
+        (senderPos ? '<div style="font-size:11px;color:#cbd5e1;font-weight:600;margin-top:1px;"><i class="fas fa-id-badge" style="color:#fbbf24;font-size:10px;margin-inline-end:3px;"></i>'+_esc(senderPos)+'</div>' : '') +
+      '</div>' +
+    '</div>';
+    h += '</div>';
+
+    // Compact meta row: number · type · amount · date
     var metaParts = [];
-    if (txn.txnNumber) metaParts.push('<code style="font-size:10px;color:#64748b;">'+_esc(txn.txnNumber)+'</code>');
-    if (txn.typeName) metaParts.push('<span style="color:#64748b;">'+_esc(txn.typeName)+'</span>');
-    if (Number(txn.amount||0) > 0) metaParts.push('<span style="color:#0ea5e9;font-weight:800;">'+Number(txn.amount).toLocaleString('en',{minimumFractionDigits:2})+' ر.س</span>');
+    if (txn.txnNumber) metaParts.push('<code style="font-size:11px;color:#64748b;background:#f1f5f9;padding:2px 8px;border-radius:5px;font-weight:700;">'+_esc(txn.txnNumber)+'</code>');
+    if (txn.typeName) metaParts.push('<span style="color:#475569;font-weight:700;"><i class="fas fa-tag" style="color:#94a3b8;font-size:9px;margin-inline-end:3px;"></i>'+_esc(txn.typeName)+'</span>');
+    if (Number(txn.amount||0) > 0) metaParts.push('<span style="color:#0ea5e9;font-weight:900;font-size:13px;"><i class="fas fa-coins" style="font-size:10px;margin-inline-end:3px;"></i>'+Number(txn.amount).toLocaleString('en',{minimumFractionDigits:2})+' ر.س</span>');
     if (txn.createdAt) {
-      try { metaParts.push('<span style="color:#94a3b8;">'+new Date(txn.createdAt).toLocaleDateString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',year:'numeric'})+'</span>'); } catch(_){}
+      try { metaParts.push('<span style="color:#94a3b8;"><i class="far fa-clock" style="font-size:10px;margin-inline-end:3px;"></i>'+new Date(txn.createdAt).toLocaleDateString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',year:'numeric'})+'</span>'); } catch(_){}
     }
-    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:11.5px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed #e5e7eb;">' + metaParts.join(' · ') + '</div>';
+    if (metaParts.length) {
+      h += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:11.5px;margin-bottom:12px;padding:8px 10px;background:#fafbfc;border-radius:9px;border:1px solid #f1f5f9;">' + metaParts.join('<span style="color:#cbd5e1;">·</span>') + '</div>';
+    }
 
     // 3. STATUS + STOPPED-AT — the most important info anyone needs at a glance
     h += '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">';
@@ -1492,18 +1511,21 @@ function viewMyTxn(id) {
       '</div>';
     }
 
-    // 5. CONTENT — the actual transaction content, prominent and large
-    h += '<div style="border:1.5px solid #0ea5e9;border-radius:14px;background:linear-gradient(180deg,#f0f9ff,#fff);padding:16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(14,165,233,.08);">';
-    h += '<div style="font-size:10px;font-weight:800;color:#0369a1;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;"><i class="fas fa-file-lines"></i> محتوى المعاملة</div>';
+    // 5. CONTENT — very prominent card with icon header
+    h += '<div style="position:relative;border:2px solid #0ea5e9;border-radius:16px;background:linear-gradient(180deg,#f0f9ff 0%,#fff 60%);padding:18px 18px 16px;margin-bottom:12px;box-shadow:0 6px 16px rgba(14,165,233,.10);">';
+    // Floating header label
+    h += '<div style="position:absolute;top:-10px;inset-inline-start:14px;background:#0ea5e9;color:#fff;padding:3px 12px;border-radius:7px;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;box-shadow:0 2px 4px rgba(14,165,233,.3);">' +
+      '<i class="fas fa-file-lines" style="font-size:10px;margin-inline-end:4px;"></i>محتوى المعاملة' +
+    '</div>';
     if (txn.contentHtml && txn.contentHtml.trim()) {
-      h += '<div style="font-size:14px;color:#0f172a;line-height:1.85;">' + txn.contentHtml + '</div>';
+      h += '<div style="font-size:15px;color:#0f172a;line-height:1.95;font-weight:500;margin-top:6px;">' + txn.contentHtml + '</div>';
     } else if (txn.description) {
-      h += '<div style="font-size:14px;color:#0f172a;line-height:1.85;white-space:pre-wrap;">' + _esc(txn.description) + '</div>';
+      h += '<div style="font-size:15px;color:#0f172a;line-height:1.95;font-weight:500;white-space:pre-wrap;margin-top:6px;">' + _esc(txn.description) + '</div>';
     } else {
-      h += '<div style="font-size:12px;color:#64748b;font-style:italic;">— لا يوجد محتوى —</div>';
+      h += '<div style="font-size:13px;color:#94a3b8;font-style:italic;text-align:center;padding:14px;margin-top:6px;"><i class="fas fa-file-circle-question" style="font-size:24px;display:block;margin-bottom:8px;"></i>لا يوجد محتوى</div>';
     }
     if (txn.attachment && txn.attachment.startsWith && txn.attachment.startsWith('data:')) {
-      h += '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:6px;color:#0ea5e9;font-size:12px;font-weight:800;margin-top:10px;padding:6px 12px;background:#fff;border:1.5px solid #0ea5e9;border-radius:8px;text-decoration:none;"><i class="fas fa-download"></i> تحميل المرفق</a>';
+      h += '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:6px;color:#0ea5e9;font-size:12.5px;font-weight:800;margin-top:14px;padding:8px 14px;background:#fff;border:1.5px solid #0ea5e9;border-radius:10px;text-decoration:none;"><i class="fas fa-download"></i> تحميل المرفق الأصلي</a>';
     }
     h += '</div>';
 
@@ -1517,20 +1539,9 @@ function viewMyTxn(id) {
 
     // 7. WORKFLOW SECTION — hidden by default
     h += '<div id="wfDetailWrap" style="display:none;">';
-    // 7a. Workflow path (compact horizontal stepper)
-    if (txn.workflowPath && txn.workflowPath.length) {
-      h += '<div style="padding:10px;border-radius:10px;background:#f8fafc;border:1px solid #e5e7eb;margin-bottom:10px;">' +
-        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:8px;"><i class="fas fa-route" style="color:#8b5cf6;"></i> مسار الموافقات</div>' +
-        '<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">';
-      txn.workflowPath.forEach(function(s, i) {
-        var clr = s.isCurrent ? '#0ea5e9' : (s.isPast ? '#10b981' : '#94a3b8');
-        var bg  = s.isCurrent ? '#e0f2fe' : (s.isPast ? '#dcfce7' : '#f1f5f9');
-        var icn = s.isCurrent ? 'fa-arrow-left' : (s.isPast ? 'fa-check' : 'fa-circle');
-        h += '<div style="padding:5px 10px;border-radius:8px;background:'+bg+';border:1px solid '+clr+';font-size:10px;color:'+clr+';font-weight:800;"><i class="fas '+icn+'" style="font-size:8px;margin-left:4px;"></i>'+_esc(s.stepName||s.positionName||'')+'</div>';
-        if (i < txn.workflowPath.length - 1) h += '<i class="fas fa-chevron-left" style="color:#cbd5e1;font-size:9px;"></i>';
-      });
-      h += '</div></div>';
-    }
+    // (Workflow path stepper intentionally hidden — per user request, not
+    // shown to anyone. Only the action log + recipients + 'stopped at'
+    // banner above are surfaced.)
 
     // 7b. Recipients
     if (Array.isArray(txn.recipients) && txn.recipients.length) {

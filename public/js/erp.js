@@ -8112,36 +8112,168 @@ function wfLoadPositionSummary() {
   }).getPositionWorkflowsSummary();
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Position-Path Builder — supports MULTIPLE alternate paths per position
+// (e.g. accountant has paths: 'salary-approval' + 'expense-approval')
+// Each path has a key + display name + free-form description.
+// ═══════════════════════════════════════════════════════════════════
+window._wfCurrentPathKey  = 'default';
+window._wfCurrentPathName = 'المسار الأساسي';
+window._wfCurrentPathDesc = '';
+window._wfAvailablePaths  = [];
+
 function wfOpenPositionPathBuilder(initiatorPosId) {
   _wfCurrentInitiatorId = initiatorPosId;
   Promise.all([
     new Promise(function(r){ window._apiBridge.withSuccessHandler(r).getWfPositions(); }),
-    new Promise(function(r){ window._apiBridge.withSuccessHandler(r).getPositionWorkflow(initiatorPosId); })
+    fetch('/api/workflow/position-workflow/' + initiatorPosId + '/paths', {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+    }).then(function(x){return x.json();}).catch(function(){return [];})
   ]).then(function(results) {
     _wfBulkPositions = (results[0] || []).slice().sort(function(a,b){return (a.level||0)-(b.level||0);});
-    var existing = results[1] || [];
+    var paths = Array.isArray(results[1]) ? results[1] : [];
+    _wfAvailablePaths = paths;
+    // Default to the first path or 'default'
+    var initialKey = paths.length ? paths[0].pathKey : 'default';
+    var initialName = paths.length ? paths[0].pathName : 'المسار الأساسي';
+    var initialDesc = paths.length ? paths[0].description : '';
+    _wfCurrentPathKey  = initialKey;
+    _wfCurrentPathName = initialName;
+    _wfCurrentPathDesc = initialDesc;
+
     var initiator = _wfBulkPositions.find(function(p){return p.id === initiatorPosId;}) || {};
 
-    document.getElementById('erpModalTitle').textContent = 'مسار المنصب: ' + (initiator.name || '');
+    // Path tabs
+    var tabsHtml = paths.map(function(p) {
+      var active = p.pathKey === initialKey;
+      return '<button type="button" data-pathkey="' + p.pathKey + '" onclick="wfSwitchPath(\'' + p.pathKey + '\')" ' +
+        'style="padding:8px 14px;border-radius:9px 9px 0 0;border:1.5px solid ' + (active?'#8b5cf6':'#e2e8f0') + ';' +
+        'border-bottom:' + (active?'2px solid #fff':'1.5px solid #8b5cf6') + ';' +
+        'background:' + (active?'#fff':'#f8fafc') + ';color:' + (active?'#6d28d9':'#64748b') + ';' +
+        'font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;margin-inline-end:-1.5px;">' +
+        '<i class="fas fa-route"></i>' + _woEscapeHtml(p.pathName) +
+        ' <span style="background:#ede9fe;color:#6d28d9;padding:1px 6px;border-radius:8px;font-size:9px;">' + p.stepCount + '</span>' +
+        '</button>';
+    }).join('');
+    var newPathBtn = '<button type="button" onclick="wfNewPath()" style="padding:8px 12px;border-radius:9px 9px 0 0;border:1.5px dashed #94a3b8;background:transparent;color:#475569;font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;"><i class="fas fa-plus"></i> مسار جديد</button>';
+
+    document.getElementById('erpModalTitle').textContent = 'مسارات المنصب: ' + (initiator.name || '');
     document.getElementById('erpModalBody').innerHTML =
+      // Header banner
       '<div style="padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,#ede9fe,#ddd6fe);border:1px solid #a78bfa;margin-bottom:14px;font-size:12.5px;color:#5b21b6;line-height:1.7;">' +
         '<i class="fas fa-user-tie" style="font-size:16px;"></i> <b>المنصب البادئ:</b> <span style="font-weight:900;font-size:14px;color:#4c1d95;">' + (initiator.name||'') + ' (Level ' + (initiator.level||'?') + ')</span><br>' +
-        'هذا المسار <b>خاص بهذا المنصب فقط</b> ولا يتداخل مع مسارات المناصب الأخرى. عندما يبدأ موظف يحمل هذا المنصب أي معاملة، يمر عبر هذه الخطوات بالتسلسل.' +
+        '<span style="font-size:12px;color:#6d28d9;">' +
+          '💡 يمكنك تعريف <b>عدة مسارات بديلة</b> لهذا المنصب (مثلاً: مسار اعتماد الراتب، مسار اعتماد المصروفات). ' +
+          'كل مسار له اسم وخطوات مستقلة. الموظف يختار المسار المناسب عند إنشاء معاملة.' +
+        '</span>' +
       '</div>' +
       '<input type="hidden" id="wfPpInitiatorId" value="' + initiatorPosId + '">' +
-      '<div style="font-size:13px;font-weight:800;color:#0f172a;margin-bottom:8px;"><i class="fas fa-route" style="color:#8b5cf6;"></i> تسلسل خطوات الاعتماد:</div>' +
+      '<input type="hidden" id="wfPpPathKey" value="' + initialKey + '">' +
+
+      // Path tabs row
+      '<div style="display:flex;gap:0;flex-wrap:wrap;align-items:flex-end;border-bottom:1.5px solid #8b5cf6;padding-bottom:0;margin-bottom:14px;">' +
+        tabsHtml + newPathBtn +
+      '</div>' +
+
+      // Path name + description
+      '<div style="display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-bottom:14px;">' +
+        '<div>' +
+          '<label style="font-size:11px;font-weight:800;color:#475569;display:block;margin-bottom:4px;">' +
+            '<i class="fas fa-tag"></i> اسم المسار' +
+          '</label>' +
+          '<input id="wfPpPathName" type="text" value="' + _woEscapeHtml(initialName) + '" placeholder="مثلاً: اعتماد المصروفات" style="width:100%;padding:9px;border:1.5px solid #e5e7eb;border-radius:9px;font-size:13px;font-weight:700;font-family:inherit;">' +
+          '<small style="color:#94a3b8;font-size:10px;">يظهر للموظف عند اختيار المسار</small>' +
+        '</div>' +
+        '<div>' +
+          '<label style="font-size:11px;font-weight:800;color:#475569;display:block;margin-bottom:4px;">' +
+            '<i class="fas fa-circle-info"></i> وصف المسار <small style="font-weight:400;color:#94a3b8;">(للموظفين — متى يستخدم هذا المسار)</small>' +
+          '</label>' +
+          '<input id="wfPpPathDesc" type="text" value="' + _woEscapeHtml(initialDesc) + '" placeholder="مثلاً: للمصروفات أقل من 5000 — يمر بمدير القسم ثم المالية" style="width:100%;padding:9px;border:1.5px solid #e5e7eb;border-radius:9px;font-size:12.5px;font-family:inherit;">' +
+        '</div>' +
+      '</div>' +
+
+      // Steps section
+      '<div style="font-size:13px;font-weight:800;color:#0f172a;margin-bottom:8px;display:flex;align-items:center;gap:6px;">' +
+        '<i class="fas fa-list-ol" style="color:#8b5cf6;"></i> تسلسل خطوات الاعتماد لهذا المسار' +
+      '</div>' +
+      '<div style="font-size:11px;color:#64748b;margin-bottom:10px;line-height:1.6;">' +
+        'كل خطوة = منصب واحد سيستلم المعاملة بعد المنصب السابق. الترتيب يحدد التتابع. آخر خطوة عادةً <b>هي النهائية</b> (الاعتماد النهائي).' +
+      '</div>' +
       '<div id="wfBulkStepsWrap"></div>' +
-      '<div style="display:flex;gap:8px;margin-top:12px;">' +
+      '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">' +
         '<button type="button" class="btn btn-primary btn-sm" onclick="wfBulkAddRow()"><i class="fas fa-plus"></i> إضافة خطوة</button>' +
         '<button type="button" class="btn btn-light btn-sm" onclick="wfBulkClear()"><i class="fas fa-trash"></i> مسح الكل</button>' +
+        (paths.length > 0 ?
+          '<button type="button" class="btn btn-sm" style="background:#fee2e2;color:#991b1b;margin-inline-start:auto;" onclick="wfDeletePath()"><i class="fas fa-times"></i> حذف هذا المسار كله</button>' : ''
+        ) +
       '</div>';
 
-    document.getElementById('erpModalSaveBtn').textContent = 'حفظ مسار ' + (initiator.name||'');
+    document.getElementById('erpModalSaveBtn').textContent = 'حفظ المسار';
     document.getElementById('erpModalSaveBtn').onclick = wfSavePositionPath;
     document.getElementById('erpModal').classList.remove('hidden');
 
-    // Prefill from existing chain
-    _wfBulkSteps = existing.map(function(w) {
+    // Prefill steps from the active path
+    if (paths.length) {
+      _wfLoadPathSteps(initiatorPosId, initialKey);
+    } else {
+      _wfBulkSteps = [];
+      wfBulkAddRow();
+    }
+  });
+}
+
+window.wfSwitchPath = function(pathKey) {
+  // Save current path first if it has unsaved data
+  if (window._wfBulkSteps && window._wfBulkSteps.length) {
+    if (!confirm('سيتم تجاهل التغييرات غير المحفوظة في المسار الحالي. متابعة؟')) return;
+  }
+  var initiatorId = document.getElementById('wfPpInitiatorId').value;
+  // Re-render the modal — easier than DOM-juggling — but seed chosen path
+  _wfCurrentPathKey = pathKey;
+  wfOpenPositionPathBuilder(initiatorId);
+};
+
+window.wfNewPath = function() {
+  var initiatorId = document.getElementById('wfPpInitiatorId').value;
+  var name = prompt('اسم المسار الجديد (مثلاً: اعتماد المشتريات):');
+  if (!name || !name.trim()) return;
+  var key = name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^\u0600-\u06ff\u0750-\u077f\w\-]+/g, '').slice(0, 40) || ('path-'+Date.now());
+  // Switch UI to a fresh empty path with the new key
+  document.getElementById('wfPpInitiatorId').value = initiatorId;
+  document.getElementById('wfPpPathKey').value = key;
+  document.getElementById('wfPpPathName').value = name.trim();
+  document.getElementById('wfPpPathDesc').value = '';
+  _wfCurrentPathKey  = key;
+  _wfCurrentPathName = name.trim();
+  _wfCurrentPathDesc = '';
+  _wfBulkSteps = [];
+  wfBulkAddRow();
+};
+
+window.wfDeletePath = function() {
+  var initiatorId = document.getElementById('wfPpInitiatorId').value;
+  var key = document.getElementById('wfPpPathKey').value || 'default';
+  var name = document.getElementById('wfPpPathName').value || key;
+  if (!confirm('حذف المسار "' + name + '" بالكامل؟ سيُحذف نهائياً ولن يستطيع أحد استخدامه.')) return;
+  loader(true);
+  fetch('/api/workflow/position-workflow/' + initiatorId + '/path/' + encodeURIComponent(key), {
+    method: 'DELETE',
+    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+  }).then(function(r){return r.json();}).then(function(r) {
+    loader(false);
+    if (r.success) {
+      showToast('تم حذف المسار: ' + name);
+      erpCloseModal();
+      wfLoadPositionSummary();
+    } else showToast(r.error || 'فشل الحذف', true);
+  });
+};
+
+function _wfLoadPathSteps(initiatorPosId, pathKey) {
+  fetch('/api/workflow/position-workflow/' + initiatorPosId + '?pathKey=' + encodeURIComponent(pathKey), {
+    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+  }).then(function(r){return r.json();}).then(function(steps) {
+    _wfBulkSteps = (steps || []).map(function(w) {
       return {
         stepOrder: w.stepOrder,
         stepName: w.stepName || '',
@@ -8165,7 +8297,11 @@ function wfOpenPositionPathBuilder(initiatorPosId) {
 function wfSavePositionPath() {
   _wfBulkCapture();
   var initiatorPositionId = document.getElementById('wfPpInitiatorId').value;
+  var pathKey  = document.getElementById('wfPpPathKey').value || 'default';
+  var pathName = (document.getElementById('wfPpPathName').value || 'المسار الأساسي').trim();
+  var description = (document.getElementById('wfPpPathDesc').value || '').trim();
   if (!initiatorPositionId) return showToast('تعذر تحديد المنصب البادئ', true);
+  if (!pathName)            return showToast('أدخل اسم المسار', true);
   if (!_wfBulkSteps.length) return showToast('أضف خطوة واحدة على الأقل', true);
   for (var i = 0; i < _wfBulkSteps.length; i++) {
     if (!_wfBulkSteps[i].positionId) return showToast('الخطوة ' + (i+1) + ': اختر المنصب المسؤول', true);
@@ -8177,11 +8313,17 @@ function wfSavePositionPath() {
   window._apiBridge.withSuccessHandler(function(r) {
     loader(false);
     if (r.success) {
-      showToast('تم حفظ مسار المنصب — ' + r.count + ' خطوة');
+      showToast('تم حفظ المسار "' + pathName + '" — ' + r.count + ' خطوة');
       erpCloseModal();
       wfLoadPositionSummary();
     } else showToast(r.error || 'فشل الحفظ', true);
-  }).savePositionWorkflow({ initiatorPositionId: initiatorPositionId, steps: _wfBulkSteps });
+  }).savePositionWorkflow({
+    initiatorPositionId: initiatorPositionId,
+    pathKey: pathKey,
+    pathName: pathName,
+    description: description,
+    steps: _wfBulkSteps
+  });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

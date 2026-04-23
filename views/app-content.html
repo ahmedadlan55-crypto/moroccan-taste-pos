@@ -3359,17 +3359,156 @@
 
 <!-- Trial Balance -->
 <div id="erpRptTrialBalance" class="dash-section hidden">
-  <div class="section-header"><h2 class="section-title"><i class="fas fa-balance-scale"></i> ميزان المراجعة</h2></div>
-  <div class="erp-rpt-filter">
-    <div><label>من تاريخ</label><input type="date" id="tbFrom" class="form-control-sm"></div>
-    <div><label>إلى تاريخ</label><input type="date" id="tbTo" class="form-control-sm"></div>
-    <div><label>الفرع</label><select id="tbBranch" class="form-control-sm"><option value="">الكل</option></select></div>
-    <div><label>البراند</label><select id="tbBrand" class="form-control-sm"><option value="">الكل</option></select></div>
-    <div><label>تضمين الحسابات الصفرية</label><select id="tbZero" class="form-control-sm"><option value="0">لا</option><option value="1">نعم</option></select></div>
-    <div><button class="btn btn-primary btn-sm" onclick="erpLoadTrialBalance()"><i class="fas fa-search"></i> عرض</button></div>
+  <!-- ─── Report header: title + toolbar (print / export) ─── -->
+  <div class="tb-top">
+    <h2 class="tb-title"><i class="fas fa-balance-scale"></i> تقرير ميزان مراجعة مجاميع وأرصدة</h2>
+    <div class="tb-actions">
+      <button class="tb-btn" onclick="erpTrialPrint()"><i class="fas fa-print"></i> طباعة</button>
+      <div class="tb-export-wrap">
+        <button class="tb-btn tb-btn-primary" onclick="erpTrialToggleExport(this)"><i class="fas fa-download"></i> خيارات التصدير <i class="fas fa-caret-down"></i></button>
+        <div class="tb-export-menu" id="tbExportMenu">
+          <div onclick="erpTrialExport('xlsx')"><i class="fas fa-file-excel" style="color:#16a34a;"></i> Excel (XLSX)</div>
+          <div onclick="erpTrialExport('csv')"><i class="fas fa-file-csv" style="color:#0ea5e9;"></i> CSV</div>
+          <div onclick="erpTrialExport('pdf')"><i class="fas fa-file-pdf" style="color:#dc2626;"></i> PDF</div>
+        </div>
+      </div>
+    </div>
   </div>
-  <div id="tbSummary" class="erp-rpt-kpi"></div>
-  <div class="erp-table-container"><table class="erp-table"><thead><tr><th>الحساب</th><th>النوع</th><th>افتتاحي</th><th style="color:#16a34a;">مدين الفترة</th><th style="color:#ef4444;">دائن الفترة</th><th>ختامي</th></tr></thead><tbody id="tbBody"><tr><td colspan="6" class="empty-msg">حدد الفترة واضغط عرض</td></tr></tbody></table></div>
+
+  <!-- ─── Advanced Filter Card ─── -->
+  <div class="tb-filters-card">
+    <!-- Row 1 -->
+    <div class="tb-filter-grid">
+      <div class="tb-field">
+        <label>الفترة من / إلى</label>
+        <div class="tb-date-range">
+          <input type="date" id="tbFrom">
+          <span class="tb-sep">→</span>
+          <input type="date" id="tbTo">
+        </div>
+      </div>
+      <div class="tb-field">
+        <label>نوع الحساب</label>
+        <select id="tbAccountType">
+          <option value="main">حساب رئيسي</option>
+          <option value="sub">حساب فرعي</option>
+          <option value="both" selected>الكل (رئيسي + فرعي)</option>
+        </select>
+      </div>
+      <div class="tb-field">
+        <label>حساب رئيسي</label>
+        <select id="tbParent"><option value="">الكل</option></select>
+      </div>
+      <div class="tb-field">
+        <label>أضيفت بواسطة</label>
+        <select id="tbAddedBy"><option value="">الكل</option></select>
+      </div>
+    </div>
+    <!-- Row 2 -->
+    <div class="tb-filter-grid">
+      <div class="tb-field">
+        <label>عرض جميع الحسابات</label>
+        <select id="tbScope">
+          <option value="all" selected>عرض جميع الحسابات</option>
+          <option value="nonzero">الحسابات ذات الأرصدة فقط</option>
+          <option value="active">الحسابات النشطة</option>
+        </select>
+      </div>
+      <div class="tb-field">
+        <label>المستويات</label>
+        <select id="tbLevelMode">
+          <option value="default" selected>المستويات الإفتراضية</option>
+          <option value="1">مستوى 1 فقط</option>
+          <option value="2">مستوى 2 فقط</option>
+          <option value="3">مستوى 3 فقط</option>
+          <option value="4">مستوى 4 فقط</option>
+          <option value="5">مستوى 5 فقط</option>
+          <option value="leaf">الحسابات الأخيرة (ورقية) فقط</option>
+        </select>
+      </div>
+      <div class="tb-field">
+        <label>الرصيد قبل</label>
+        <select id="tbBalanceMode">
+          <option value="net" selected>عرض صافي الأرصدة</option>
+          <option value="debit-credit">عرض مدين ودائن منفصلين</option>
+          <option value="debit-only">المدين فقط</option>
+          <option value="credit-only">الدائن فقط</option>
+        </select>
+      </div>
+      <div class="tb-field">
+        <label>الفرع / البراند</label>
+        <div class="tb-date-range">
+          <select id="tbBranch"><option value="">كل الفروع</option></select>
+          <select id="tbBrand"><option value="">كل البراندات</option></select>
+        </div>
+      </div>
+    </div>
+    <!-- Actions -->
+    <div class="tb-filter-actions">
+      <button class="tb-btn tb-btn-ghost" onclick="erpTrialReset()"><i class="fas fa-xmark"></i> إلغاء الفلتر</button>
+      <button class="tb-btn tb-btn-success" onclick="erpLoadTrialBalance()"><i class="fas fa-chart-line"></i> عرض التقرير</button>
+    </div>
+  </div>
+
+  <!-- ─── Branded Report Banner (shown after loading) ─── -->
+  <div id="tbBrandBanner" class="tb-brand-banner" style="display:none;">
+    <div class="tb-brand-left">
+      <div class="tb-brand-logo"><i class="fas fa-scale-balanced"></i></div>
+    </div>
+    <div class="tb-brand-center">
+      <h3>تقرير ميزان مراجعة مجاميع وأرصدة</h3>
+      <div class="tb-brand-sub">من <span id="tbBnFrom">—</span> إلى <span id="tbBnTo">—</span></div>
+      <div class="tb-brand-sub" id="tbBnCompany">—</div>
+      <div class="tb-brand-sub">العملة: الجميع (إلى SAR)</div>
+    </div>
+  </div>
+
+  <!-- ─── Level Tabs ─── -->
+  <div class="tb-level-tabs" id="tbLevelTabs" style="display:none;">
+    <button class="tb-lvl-plus" onclick="erpTrialAddLevel()" title="إضافة مستوى إضافي"><i class="fas fa-plus"></i></button>
+    <button class="tb-lvl active" data-lvl="1" onclick="erpTrialSetLevel(1)">مستوى 1</button>
+    <button class="tb-lvl" data-lvl="2" onclick="erpTrialSetLevel(2)">مستوى 2</button>
+    <button class="tb-lvl" data-lvl="3" onclick="erpTrialSetLevel(3)">مستوى 3</button>
+    <button class="tb-lvl" data-lvl="4" onclick="erpTrialSetLevel(4)">مستوى 4</button>
+    <button class="tb-lvl" data-lvl="5" onclick="erpTrialSetLevel(5)">مستوى 5</button>
+  </div>
+
+  <!-- ─── Report Table (8 columns: name + code + 3 paired debit/credit groups + balance) ─── -->
+  <div class="tb-table-wrap" id="tbTableWrap" style="display:none;">
+    <table class="tb-report-table">
+      <thead>
+        <tr class="tb-thead-groups">
+          <th rowspan="2" class="tb-th-name"><button class="tb-th-plus" title="إضافة عمود"><i class="fas fa-plus"></i></button> الاسم</th>
+          <th rowspan="2">الكود</th>
+          <th colspan="2" class="tb-grp tb-grp-before">الرصيد قبل</th>
+          <th colspan="2" class="tb-grp tb-grp-move">رصيد الحركات</th>
+          <th colspan="2" class="tb-grp tb-grp-after">الرصيد بعد</th>
+          <th colspan="2" class="tb-grp tb-grp-bal">الأرصدة</th>
+        </tr>
+        <tr class="tb-thead-subs">
+          <th class="tb-th-dc">مدين <small>(SAR)</small></th><th class="tb-th-dc">دائن <small>(SAR)</small></th>
+          <th class="tb-th-dc">مدين <small>(SAR)</small></th><th class="tb-th-dc">دائن <small>(SAR)</small></th>
+          <th class="tb-th-dc">مدين <small>(SAR)</small></th><th class="tb-th-dc">دائن <small>(SAR)</small></th>
+          <th class="tb-th-dc">مدين <small>(SAR)</small></th><th class="tb-th-dc">دائن <small>(SAR)</small></th>
+        </tr>
+      </thead>
+      <tbody id="tbBody">
+        <tr><td colspan="10" class="tb-empty">اضغط "عرض التقرير" لتوليد ميزان المراجعة</td></tr>
+      </tbody>
+      <tfoot>
+        <tr class="tb-totals" id="tbTotals" style="display:none;">
+          <td>الإجمالي</td><td></td>
+          <td id="tbTotBeforeD">0.00</td><td id="tbTotBeforeC">0.00</td>
+          <td id="tbTotMoveD">0.00</td><td id="tbTotMoveC">0.00</td>
+          <td id="tbTotAfterD">0.00</td><td id="tbTotAfterC">0.00</td>
+          <td id="tbTotBalD">0.00</td><td id="tbTotBalC">0.00</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <!-- Legacy KPI (kept for backward compat; hidden when table renders) -->
+  <div id="tbSummary" class="erp-rpt-kpi" style="display:none;"></div>
 </div>
 
 <!-- Profit & Loss -->

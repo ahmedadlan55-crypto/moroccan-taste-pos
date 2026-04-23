@@ -8382,40 +8382,255 @@ function _erpPopulateBrandOptions(selectIds) {
 }
 
 // ─── Trial Balance ───
+// ═══════════════════════════════════════════════════════════════════
+// Trial Balance — Yumsar-style professional layout
+// Defaults: current year, all accounts, default levels, net balance
+// Filters: account type (main/sub/both), parent account, added-by,
+//          scope, level mode, balance mode, branch, brand
+// ═══════════════════════════════════════════════════════════════════
+window._tbCache = null;            // cached server response (so level switches don't re-hit)
+window._tbActiveLevel = null;      // null = default (show all), or number 1..N
+
+function erpTrialReset() {
+  ['tbFrom','tbTo','tbAccountType','tbParent','tbAddedBy','tbScope','tbLevelMode','tbBalanceMode','tbBranch','tbBrand'].forEach(function(id){
+    var el = document.getElementById(id); if (!el) return;
+    if (el.tagName === 'SELECT') {
+      // first option (default)
+      el.selectedIndex = 0;
+    } else el.value = '';
+  });
+  _tbCache = null; _tbActiveLevel = null;
+  document.getElementById('tbBody').innerHTML = '<tr><td colspan="10" class="tb-empty">اضغط "عرض التقرير" لتوليد ميزان المراجعة</td></tr>';
+  document.getElementById('tbBrandBanner').style.display = 'none';
+  document.getElementById('tbLevelTabs').style.display = 'none';
+  document.getElementById('tbTableWrap').style.display = 'none';
+  document.getElementById('tbTotals').style.display = 'none';
+}
+
+window.erpTrialToggleExport = function(btn) {
+  var menu = document.getElementById('tbExportMenu');
+  if (menu) menu.classList.toggle('open');
+  // close on outside click
+  setTimeout(function(){
+    document.addEventListener('mousedown', function close(e){
+      if (!menu.contains(e.target) && e.target !== btn) {
+        menu.classList.remove('open');
+        document.removeEventListener('mousedown', close);
+      }
+    });
+  }, 0);
+};
+
+window.erpTrialPrint = function() { window.print(); };
+
+window.erpTrialExport = function(format) {
+  var menu = document.getElementById('tbExportMenu');
+  if (menu) menu.classList.remove('open');
+  if (!_tbCache || !_tbCache.rows) return showToast('اعرض التقرير أولاً', true);
+  var rows = _filterTbRows(_tbCache.rows);
+  if (format === 'csv') {
+    var hdr = ['الاسم','الكود','النوع','مدين قبل','دائن قبل','مدين الحركات','دائن الحركات','مدين بعد','دائن بعد','مدين الرصيد','دائن الرصيد'];
+    var csv = hdr.join(',') + '\n' + rows.map(function(r){
+      var beforeD = r.opening > 0 ? r.opening : 0;
+      var beforeC = r.opening < 0 ? -r.opening : 0;
+      var afterD  = r.closing > 0 ? r.closing : 0;
+      var afterC  = r.closing < 0 ? -r.closing : 0;
+      return [r.nameAr||'', r.code||'', r.type||'',
+        beforeD, beforeC, r.periodDebit||0, r.periodCredit||0,
+        afterD, afterC, afterD, afterC].map(function(v){
+        var s = String(v).replace(/"/g,'""');
+        return '"'+s+'"';
+      }).join(',');
+    }).join('\n');
+    var blob = new Blob([new Uint8Array([0xEF,0xBB,0xBF]), csv], { type:'text/csv;charset=utf-8' });
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'trial-balance-' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
+  } else if (format === 'xlsx') {
+    if (typeof ensureXlsx === 'function') {
+      ensureXlsx().then(function(){
+        var data = [['الاسم','الكود','النوع','مدين قبل','دائن قبل','مدين الحركات','دائن الحركات','مدين بعد','دائن بعد']];
+        rows.forEach(function(r){
+          var bD = r.opening>0?r.opening:0, bC = r.opening<0?-r.opening:0;
+          var aD = r.closing>0?r.closing:0, aC = r.closing<0?-r.closing:0;
+          data.push([r.nameAr||'', r.code||'', r.type||'', bD, bC, r.periodDebit||0, r.periodCredit||0, aD, aC]);
+        });
+        var ws = XLSX.utils.aoa_to_sheet(data);
+        var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Trial Balance');
+        XLSX.writeFile(wb, 'trial-balance-' + new Date().toISOString().slice(0,10) + '.xlsx');
+      });
+    } else showToast('Excel library not loaded', true);
+  } else {
+    erpTrialPrint();
+  }
+};
+
+function _filterTbRows(rows) {
+  var accType  = (document.getElementById('tbAccountType')||{}).value || 'both';
+  var parent   = (document.getElementById('tbParent')||{}).value || '';
+  var scope    = (document.getElementById('tbScope')||{}).value || 'all';
+  var levelMode = (document.getElementById('tbLevelMode')||{}).value || 'default';
+
+  return rows.filter(function(a){
+    // Determine if account is main (top-level) or sub by code length / parent
+    var isMain = !a.parentId || a.code && a.code.length <= 1;
+    if (accType === 'main' && !isMain) return false;
+    if (accType === 'sub'  &&  isMain) return false;
+    if (parent && a.parentId !== parent && a.id !== parent) return false;
+    // Scope filter
+    if (scope === 'nonzero') {
+      var anyMove = (a.periodDebit||0) > 0 || (a.periodCredit||0) > 0 || Math.abs(a.opening||0) > 0.005 || Math.abs(a.closing||0) > 0.005;
+      if (!anyMove) return false;
+    }
+    // Level mode (compute level from code length: '1'=1, '11'=2, '111'=3, etc.)
+    var lvl = a.level || (a.code ? Math.min(5, a.code.length) : 1);
+    if (_tbActiveLevel) {
+      if (lvl !== _tbActiveLevel) return false;
+    } else if (levelMode !== 'default') {
+      if (levelMode === 'leaf') {
+        // Show only leaf accounts (those that don't have children)
+        var hasChild = rows.some(function(x){ return x.parentId === a.id; });
+        if (hasChild) return false;
+      } else {
+        var n = Number(levelMode);
+        if (lvl !== n) return false;
+      }
+    }
+    return true;
+  });
+}
+
 function erpLoadTrialBalance() {
   _erpPopulateBranchOptions(['tbBranch']);
   _erpPopulateBrandOptions(['tbBrand']);
-  var from = (document.getElementById('tbFrom')||{}).value || '';
-  var to   = (document.getElementById('tbTo')||{}).value || '';
+  // Default the date range to current year if empty
+  if (!document.getElementById('tbFrom').value) {
+    document.getElementById('tbFrom').value = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10);
+  }
+  if (!document.getElementById('tbTo').value) {
+    document.getElementById('tbTo').value = new Date().toISOString().slice(0,10);
+  }
+  var from   = document.getElementById('tbFrom').value;
+  var to     = document.getElementById('tbTo').value;
   var branch = (document.getElementById('tbBranch')||{}).value || '';
   var brand  = (document.getElementById('tbBrand')||{}).value || '';
-  var inclZero = (document.getElementById('tbZero')||{}).value || '0';
-  var qs = new URLSearchParams({ from, to, branch, brand, includeZero: inclZero }).toString();
-  document.getElementById('tbBody').innerHTML = '<tr><td colspan="6" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  var qs = new URLSearchParams({ from: from, to: to, branch: branch, brand: brand, includeZero: '1' }).toString();
+
+  document.getElementById('tbTableWrap').style.display = '';
+  document.getElementById('tbBody').innerHTML = '<tr><td colspan="10" class="tb-empty"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+
   _erpGet('/erp/reports/trial-balance?' + qs, function(r) {
-    if (!r.success) { document.getElementById('tbBody').innerHTML = '<tr><td colspan="6" class="empty-msg" style="color:#ef4444;">'+(r.error||'خطأ')+'</td></tr>'; return; }
-    var rows = r.rows || [];
-    if (!rows.length) { document.getElementById('tbBody').innerHTML = '<tr><td colspan="6" class="empty-msg">لا توجد بيانات</td></tr>'; }
-    else {
-      document.getElementById('tbBody').innerHTML = rows.map(function(a){
-        var typeClr = {asset:'#0ea5e9',liability:'#ef4444',equity:'#8b5cf6',revenue:'#16a34a',expense:'#f59e0b'}[a.type]||'#64748b';
-        var typeAr = {asset:'أصل',liability:'خصم',equity:'حقوق',revenue:'إيراد',expense:'مصروف'}[a.type]||a.type;
-        return '<tr><td><code>'+(a.code||'')+'</code> '+(a.nameAr||'')+'</td>'+
-          '<td><span style="color:'+typeClr+';font-weight:700;">'+typeAr+'</span></td>'+
-          '<td>'+_erpFmt(a.opening)+'</td>'+
-          '<td style="color:#16a34a;">'+_erpFmt(a.periodDebit)+'</td>'+
-          '<td style="color:#ef4444;">'+_erpFmt(a.periodCredit)+'</td>'+
-          '<td style="font-weight:700;">'+_erpFmt(a.closing)+'</td></tr>';
-      }).join('');
+    if (!r.success) {
+      document.getElementById('tbBody').innerHTML = '<tr><td colspan="10" class="tb-empty" style="color:#ef4444;">'+(r.error||'خطأ')+'</td></tr>';
+      return;
     }
-    var t = r.totals || {};
-    document.getElementById('tbSummary').innerHTML =
-      _erpKpi('مجموع المدين', _erpFmt(t.periodDebit), '#16a34a') +
-      _erpKpi('مجموع الدائن', _erpFmt(t.periodCredit), '#ef4444') +
-      _erpKpi('الفرق', _erpFmt((t.periodDebit||0)-(t.periodCredit||0)), t.isBalanced?'#16a34a':'#ef4444') +
-      _erpKpi('متوازن', t.isBalanced?'نعم':'لا', t.isBalanced?'#16a34a':'#ef4444');
+    _tbCache = r;
+    _tbActiveLevel = null;
+    // Populate parent dropdown (only top-level accounts)
+    var psel = document.getElementById('tbParent');
+    if (psel && psel.options.length <= 1) {
+      var topAccounts = (r.rows||[]).filter(function(a){ return !a.parentId || (a.code && a.code.length <= 1); });
+      psel.innerHTML = '<option value="">الكل</option>' +
+        topAccounts.map(function(a){return '<option value="'+a.id+'">'+(a.code||'')+' — '+(a.nameAr||'')+'</option>';}).join('');
+    }
+    // Populate added-by dropdown
+    var asel = document.getElementById('tbAddedBy');
+    if (asel && asel.options.length <= 1) {
+      fetch('/api/auth/users-list', { headers:{ 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') }})
+        .then(function(x){return x.json();}).then(function(users){
+          if (!Array.isArray(users)) return;
+          asel.innerHTML = '<option value="">الكل</option>' + users.map(function(u){return '<option value="'+u.username+'">'+(u.fullName||u.username)+'</option>';}).join('');
+        }).catch(function(){});
+    }
+    // Show branded header + level tabs
+    document.getElementById('tbBnFrom').textContent = from;
+    document.getElementById('tbBnTo').textContent = to;
+    fetch('/api/erp/companies', { headers:{ 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') }})
+      .then(function(x){return x.json();}).then(function(companies){
+        var c = Array.isArray(companies) && companies.length ? companies[0] : null;
+        document.getElementById('tbBnCompany').textContent = c ? (c.name || c.nameAr || 'الشركة') : 'الشركة';
+      }).catch(function(){});
+    document.getElementById('tbBrandBanner').style.display = 'flex';
+    document.getElementById('tbLevelTabs').style.display = 'flex';
+    document.getElementById('tbTotals').style.display = '';
+    _renderTrialBalanceTable();
   });
 }
+
+function _renderTrialBalanceTable() {
+  if (!_tbCache) return;
+  var rows = _filterTbRows(_tbCache.rows || []);
+  var body = document.getElementById('tbBody');
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="10" class="tb-empty">لا توجد بيانات تطابق الفلتر</td></tr>';
+    document.getElementById('tbTotals').style.display = 'none';
+    return;
+  }
+  // Account type colors for visual cues
+  var typeMap = { asset:'#0ea5e9', liability:'#ef4444', equity:'#8b5cf6', revenue:'#16a34a', expense:'#f59e0b' };
+  var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  // Compute totals
+  var tot = { beforeD:0, beforeC:0, moveD:0, moveC:0, afterD:0, afterC:0 };
+  body.innerHTML = rows.map(function(a){
+    var op = Number(a.opening||0), cl = Number(a.closing||0);
+    var bD = op > 0 ? op : 0, bC = op < 0 ? -op : 0;
+    var aD = cl > 0 ? cl : 0, aC = cl < 0 ? -cl : 0;
+    var pd = Number(a.periodDebit||0), pc = Number(a.periodCredit||0);
+    tot.beforeD += bD; tot.beforeC += bC;
+    tot.moveD   += pd; tot.moveC   += pc;
+    tot.afterD  += aD; tot.afterC  += aC;
+    var lvl = a.level || (a.code ? Math.min(5, a.code.length) : 1);
+    var indentClass = lvl > 1 ? 'tb-sub' : '';
+    if (lvl > 2) indentClass += ' tb-sub-' + Math.min(3, lvl - 1);
+    var clrBar = typeMap[a.type] || '#94a3b8';
+    return '<tr class="'+indentClass+'">' +
+      '<td><span style="display:inline-block;width:3px;height:14px;background:'+clrBar+';margin-inline-end:8px;vertical-align:middle;border-radius:2px;"></span><button class="tb-row-plus" title="عرض الحسابات الفرعية"><i class="fas fa-plus"></i></button>'+(a.nameAr||'')+'</td>' +
+      '<td>'+(a.code||'')+'</td>' +
+      '<td>'+(bD?fmt(bD):'')+'</td><td>'+(bC?fmt(bC):'')+'</td>' +
+      '<td>'+(pd?fmt(pd):'')+'</td><td>'+(pc?fmt(pc):'')+'</td>' +
+      '<td>'+(aD?fmt(aD):'')+'</td><td>'+(aC?fmt(aC):'')+'</td>' +
+      '<td>'+(aD?fmt(aD):'')+'</td><td>'+(aC?fmt(aC):'')+'</td>' +
+    '</tr>';
+  }).join('');
+  document.getElementById('tbTotBeforeD').textContent = fmt(tot.beforeD);
+  document.getElementById('tbTotBeforeC').textContent = fmt(tot.beforeC);
+  document.getElementById('tbTotMoveD').textContent   = fmt(tot.moveD);
+  document.getElementById('tbTotMoveC').textContent   = fmt(tot.moveC);
+  document.getElementById('tbTotAfterD').textContent  = fmt(tot.afterD);
+  document.getElementById('tbTotAfterC').textContent  = fmt(tot.afterC);
+  document.getElementById('tbTotBalD').textContent    = fmt(tot.afterD);
+  document.getElementById('tbTotBalC').textContent    = fmt(tot.afterC);
+}
+
+window.erpTrialSetLevel = function(lvl) {
+  _tbActiveLevel = Number(lvl);
+  document.querySelectorAll('.tb-lvl').forEach(function(el){
+    el.classList.toggle('active', Number(el.getAttribute('data-lvl')) === _tbActiveLevel);
+  });
+  _renderTrialBalanceTable();
+};
+
+window.erpTrialAddLevel = function() {
+  var tabs = document.getElementById('tbLevelTabs');
+  if (!tabs) return;
+  // Find the highest existing level
+  var max = 0;
+  tabs.querySelectorAll('.tb-lvl').forEach(function(el){ max = Math.max(max, Number(el.getAttribute('data-lvl')||0)); });
+  var nl = max + 1;
+  var btn = document.createElement('button');
+  btn.className = 'tb-lvl';
+  btn.setAttribute('data-lvl', nl);
+  btn.onclick = function(){ erpTrialSetLevel(nl); };
+  btn.textContent = 'مستوى ' + nl;
+  tabs.appendChild(btn);
+};
+
+// Re-render on filter change (within the cached dataset, no network)
+['tbAccountType','tbParent','tbScope','tbLevelMode','tbBalanceMode','tbAddedBy'].forEach(function(id){
+  document.addEventListener('change', function(e){
+    if (e.target && e.target.id === id && _tbCache) _renderTrialBalanceTable();
+  });
+});
 
 // ─── P&L ───
 function erpLoadPnL() {

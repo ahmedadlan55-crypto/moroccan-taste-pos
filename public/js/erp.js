@@ -11223,7 +11223,7 @@ window.openRecordPaymentModal = function(opts) {
   // Load bank accounts + cash boxes in parallel
   var token = localStorage.getItem('pos_token') || '';
   Promise.all([
-    fetch('/api/erp/bank-accounts', { headers: { 'Authorization': 'Bearer ' + token } }).then(function(r){return r.json();}).catch(function(){return [];}),
+    fetch('/api/cash/bank-accounts', { headers: { 'Authorization': 'Bearer ' + token } }).then(function(r){return r.json();}).catch(function(){return [];}),
     fetch('/api/erp/cash-boxes',    { headers: { 'Authorization': 'Bearer ' + token } }).then(function(r){return r.json();}).catch(function(){return [];})
   ]).then(function(data) {
     var banks = Array.isArray(data[0]) ? data[0] : [];
@@ -11584,37 +11584,30 @@ function _pmRunFullFlow(paymentId, receiptData, cb) {
 // (uses /api/dashboard/overview which we already aggregate)
 // ═══════════════════════════════════════════════════════════════════
 function erpLoadReportsHub() {
-  // Pull headline numbers from the dashboard aggregator endpoint
-  fetch('/api/dashboard/overview?preset=thismonth', {
-    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
-  }).then(function(r){return r.json();}).then(function(d){
-    if (!d || d.error) return;
-    var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
-    var setT = function(id, v){ var e = document.getElementById(id); if (e) e.textContent = v; };
-    // Compute totals from kpi (sales - expenses)
-    var sales = d.kpi && d.kpi.sales ? d.kpi.sales.value : 0;
-    var exp   = d.kpi && d.kpi.expenses ? d.kpi.expenses.value : 0;
-    var net   = sales - exp;
-    setT('rhNetIncome',   fmt(net));
-    // Try to load balance-sheet snapshot for assets/liab/equity
-    fetch('/api/erp/reports/balance-sheet?asOf=' + new Date().toISOString().slice(0,10), {
-      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
-    }).then(function(x){return x.json();}).then(function(bs){
-      if (bs && bs.success) {
-        setT('rhTotalAssets', fmt(bs.totalAssets || 0));
-        setT('rhTotalLiab',   fmt(bs.totalLiabilities || 0));
-        setT('rhEquity',      fmt(bs.totalEquity || 0));
-      } else {
-        setT('rhTotalAssets', '0.00');
-        setT('rhTotalLiab',   '0.00');
-        setT('rhEquity',      '0.00');
-      }
+  var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var setT = function(id, v){ var e = document.getElementById(id); if (e) e.textContent = v; };
+  var hdr = { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') };
+
+  // Headline KPIs from balance-sheet (totals nested)
+  fetch('/api/erp/reports/balance-sheet?asOf=' + new Date().toISOString().slice(0,10), { headers: hdr })
+    .then(function(x){return x.json();}).then(function(bs){
+      var t = (bs && bs.totals) || {};
+      setT('rhTotalAssets', fmt(t.assets || 0));
+      setT('rhTotalLiab',   fmt(t.liabilities || 0));
+      setT('rhEquity',      fmt(t.equity || 0));
     }).catch(function(){
-      setT('rhTotalAssets', '—');
-      setT('rhTotalLiab',   '—');
-      setT('rhEquity',      '—');
+      setT('rhTotalAssets', '—'); setT('rhTotalLiab', '—'); setT('rhEquity', '—');
     });
-  });
+
+  // Net income from this month's P&L
+  var now = new Date();
+  var mFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10);
+  var mTo   = now.toISOString().slice(0,10);
+  fetch('/api/erp/reports/pnl?from=' + mFrom + '&to=' + mTo, { headers: hdr })
+    .then(function(x){return x.json();}).then(function(pnl){
+      var s = (pnl && pnl.summary) || {};
+      setT('rhNetIncome', fmt(s.netProfit || 0));
+    }).catch(function(){ setT('rhNetIncome', '—'); });
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -11645,13 +11638,19 @@ function erpLoadEquityChanges() {
       headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
     }).then(function(r){return r.json();})
   ]).then(function(results) {
-    var openBs = results[0] || {};
+    var openBs  = results[0] || {};
     var closeBs = results[1] || {};
-    var pnl = results[2] || {};
-    var openCapital  = Number(openBs.totalCapital || 0);
-    var openRetained = Number(openBs.totalRetained || (openBs.totalEquity - openCapital) || 0);
-    var netIncome    = Number(pnl.netIncome || (pnl.totalRevenue - pnl.totalExpenses) || 0);
-    var closeCapital = Number(closeBs.totalCapital || openCapital);
+    var pnl     = results[2] || {};
+    // Sum equity rows by code prefix: 31xx = capital, 32xx/33xx = retained
+    var sumByPrefix = function(rows, prefixes) {
+      return (rows || []).filter(function(r){
+        return prefixes.some(function(p){ return String(r.code||'').indexOf(p) === 0; });
+      }).reduce(function(s, r){ return s + Number(r.balance || 0); }, 0);
+    };
+    var openCapital  = sumByPrefix(openBs.equity, ['31']);
+    var openRetained = sumByPrefix(openBs.equity, ['32','33']) || ((openBs.totals||{}).equity - openCapital) || 0;
+    var closeCapital = sumByPrefix(closeBs.equity, ['31']) || openCapital;
+    var netIncome    = Number((pnl.summary||{}).netProfit || 0);
     var capitalChange = closeCapital - openCapital;
 
     var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
@@ -11705,16 +11704,24 @@ function erpLoadFinRatios() {
     var bs  = results[0] || {};
     var pnl = results[1] || {};
 
-    // Pull figures (with safe defaults)
-    var totalAssets       = Number(bs.totalAssets       || 0);
-    var currentAssets     = Number(bs.currentAssets     || totalAssets); // fallback
-    var inventory         = Number(bs.totalInventory    || 0);
-    var totalLiabilities  = Number(bs.totalLiabilities  || 0);
-    var currentLiab       = Number(bs.currentLiabilities|| totalLiabilities);
-    var equity            = Number(bs.totalEquity       || 0);
-    var revenue           = Number(pnl.totalRevenue     || 0);
-    var cogs              = Number(pnl.totalCogs        || pnl.totalExpenses * 0.6 || 0);
-    var netIncome         = Number(pnl.netIncome        || (revenue - Number(pnl.totalExpenses||0)));
+    // Pull figures from the actual response shape (totals + summary nested)
+    var bst   = (bs.totals || {});
+    var psum  = (pnl.summary || {});
+    var sumByPrefix = function(rows, prefixes) {
+      return (rows || []).filter(function(r){
+        return prefixes.some(function(p){ return String(r.code||'').indexOf(p) === 0; });
+      }).reduce(function(s, r){ return s + Number(r.balance || 0); }, 0);
+    };
+    var totalAssets       = Number(bst.assets || 0);
+    var currentAssets     = sumByPrefix(bs.assets, ['11']) || totalAssets;          // 11xx = current assets
+    var inventory         = sumByPrefix(bs.assets, ['112']) || 0;                   // 112x = inventory
+    var totalLiabilities  = Number(bst.liabilities || 0);
+    var currentLiab       = sumByPrefix(bs.liabilities, ['21']) || totalLiabilities;// 21xx = current liab
+    var equity            = Number(bst.equity || 0);
+    var revenue           = Number(psum.totalRevenue || 0);
+    var totalExp          = Number(psum.totalExpense || 0);
+    var cogs              = sumByPrefix(pnl.expenses, ['51']) || (totalExp * 0.6);  // 51xx = COGS
+    var netIncome         = Number(psum.netProfit || (revenue - totalExp));
 
     // Compute ratios
     var safeDiv = function(a,b){ return b ? a/b : 0; };
@@ -11803,7 +11810,7 @@ function erpLoadBankRecon() {
   // Populate bank accounts dropdown
   var brBank = document.getElementById('brBank');
   if (brBank && brBank.options.length <= 1) {
-    fetch('/api/erp/bank-accounts', {
+    fetch('/api/cash/bank-accounts', {
       headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
     }).then(function(r){return r.json();}).then(function(banks){
       brBank.innerHTML = '<option value="">— اختر البنك —</option>' +

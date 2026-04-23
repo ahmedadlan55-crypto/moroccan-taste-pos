@@ -488,10 +488,19 @@ function callAPI(method, path, body, cb) {
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) return;
     if (xhr.status === 401) { doLogout(); return; }
-    try { cb(JSON.parse(xhr.responseText), null); }
-    catch(e) { cb(null, 'HTTP ' + xhr.status); }
+    // Step 1: parse the response (may throw on invalid JSON)
+    var parsed = null, parseErr = null;
+    try { parsed = JSON.parse(xhr.responseText); }
+    catch(e) { parseErr = 'HTTP ' + xhr.status; }
+    // Step 2: invoke the callback OUTSIDE the parse try/catch so that
+    // bugs inside the caller's code don't masquerade as network errors.
+    // Any crash inside cb is logged but swallowed (user sees no spurious toast).
+    try { cb(parseErr ? null : parsed, parseErr); }
+    catch(cbErr) {
+      try { console.error('callAPI callback crashed for', method, path, cbErr); } catch(_) {}
+    }
   };
-  xhr.onerror = function() { cb(null, t('common.network')); };
+  xhr.onerror = function() { try { cb(null, t('common.network')); } catch(_) {} };
   xhr.send(body ? JSON.stringify(body) : null);
 }
 
@@ -1215,9 +1224,11 @@ function empEditTxn(id) {
       // Importance: switch the visual card
       txnSetImportance(txn.importance || 'medium');
       // Type: select (may be locked since changing type changes the workflow chain)
+      // Backend returns typeId (not transactionTypeId)
       var typeSel = document.getElementById('txnType');
-      if (typeSel && txn.transactionTypeId) {
-        typeSel.value = txn.transactionTypeId;
+      var tid = txn.typeId || txn.transactionTypeId;
+      if (typeSel && tid) {
+        typeSel.value = tid;
         typeSel.disabled = true; typeSel.style.background = '#f3f4f6';
       }
       // Recipient: also locked — changing recipient mid-flow is not allowed
@@ -1408,7 +1419,7 @@ function viewMyTxn(id) {
     var sc = sClr[txn.status]||'#6b7280';
 
     var ic = _impColors[txn.importance]||'#6b7280';
-    var il = _impLabels[txn.importance]||txn.importance;
+    var il = _impLabel(txn.importance) || txn.importance;
     var secMap = {normal:t('txn.sec.normal'), confidential:t('txn.sec.confidential'), secret:t('txn.sec.secret'), top_secret:t('txn.sec.top_secret')};
     var h = '';
     // Prominent subject/title at the top

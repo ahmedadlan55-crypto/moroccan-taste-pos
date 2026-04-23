@@ -8632,116 +8632,318 @@ window.erpTrialAddLevel = function() {
   });
 });
 
-// ─── P&L ───
+// ─── helpers shared by the new enhanced reports ───
+function _erpPopulateCostCenterOptions(ids) {
+  if (!ids || !ids.length) return;
+  fetch('/api/erp/cost-centers', { headers:{ 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') }})
+    .then(function(r){return r.json();}).then(function(arr){
+      if (!Array.isArray(arr)) return;
+      var opts = '<option value="">الكل</option>' + arr.map(function(c){return '<option value="'+c.id+'">'+(c.code||'')+' — '+(c.name||'')+'</option>';}).join('');
+      ids.forEach(function(id){ var el = document.getElementById(id); if (el && el.options.length <= 1) el.innerHTML = opts; });
+    }).catch(function(){});
+}
+function _erpDeltaHtml(curr, prev, invertColor) {
+  if (!prev) return '';
+  var pct = ((curr - prev) / Math.abs(prev)) * 100;
+  if (Math.abs(pct) < 0.5) return '<span style="color:#94a3b8;">— بدون تغيير</span>';
+  var goingUp = pct > 0;
+  var good = invertColor ? !goingUp : goingUp;
+  var color = good ? '#16a34a' : '#ef4444';
+  var arrow = goingUp ? '<i class="fas fa-arrow-up"></i>' : '<i class="fas fa-arrow-down"></i>';
+  return '<span style="color:'+color+';">' + arrow + ' ' + (pct>0?'+':'') + pct.toFixed(1) + '%</span>';
+}
+
+// ═══ P&L — enhanced ═══
+window.erpPnLReset = function() {
+  ['plFrom','plTo','plBrand','plBranch','plCC','plGroupBy','plCompare'].forEach(function(id){
+    var el = document.getElementById(id); if (!el) return;
+    if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
+  });
+  document.getElementById('plBranded').style.display = 'none';
+  document.getElementById('plKpis').style.display = 'none';
+  document.getElementById('plDetails').innerHTML = '';
+};
+
 function erpLoadPnL() {
   _erpPopulateBranchOptions(['plBranch']);
   _erpPopulateBrandOptions(['plBrand']);
-  var from = (document.getElementById('plFrom')||{}).value || '';
-  var to   = (document.getElementById('plTo')||{}).value || '';
-  var branch = (document.getElementById('plBranch')||{}).value || '';
-  var brand  = (document.getElementById('plBrand')||{}).value || '';
+  _erpPopulateCostCenterOptions(['plCC']);
+  // default to current year if empty
+  if (!document.getElementById('plFrom').value) document.getElementById('plFrom').value = new Date(new Date().getFullYear(),0,1).toISOString().slice(0,10);
+  if (!document.getElementById('plTo').value)   document.getElementById('plTo').value   = new Date().toISOString().slice(0,10);
+  var from = document.getElementById('plFrom').value;
+  var to   = document.getElementById('plTo').value;
+  var branch  = (document.getElementById('plBranch')||{}).value || '';
+  var brand   = (document.getElementById('plBrand')||{}).value || '';
+  var costCenter = (document.getElementById('plCC')||{}).value || '';
   var groupBy = (document.getElementById('plGroupBy')||{}).value || 'account';
-  var qs = new URLSearchParams({ from, to, branch, brand, groupBy }).toString();
-  _erpGet('/erp/reports/pnl?' + qs, function(r) {
+  var compare = (document.getElementById('plCompare')||{}).value || 'none';
+
+  document.getElementById('plDetails').innerHTML = '<div class="empty-msg" style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+
+  // Compute comparison window if requested
+  var prevQs = null;
+  if (compare !== 'none') {
+    var fromD = new Date(from + 'T00:00:00');
+    var toD   = new Date(to   + 'T00:00:00');
+    if (compare === 'previous') {
+      var rangeMs = toD - fromD;
+      var prevTo   = new Date(fromD); prevTo.setDate(prevTo.getDate() - 1);
+      var prevFrom = new Date(prevTo); prevFrom.setTime(prevFrom.getTime() - rangeMs);
+      prevQs = new URLSearchParams({ from: prevFrom.toISOString().slice(0,10), to: prevTo.toISOString().slice(0,10), branch:branch, brand:brand, costCenter:costCenter, groupBy:groupBy }).toString();
+    } else if (compare === 'yearago') {
+      var pf = new Date(fromD); pf.setFullYear(pf.getFullYear()-1);
+      var pt = new Date(toD);   pt.setFullYear(pt.getFullYear()-1);
+      prevQs = new URLSearchParams({ from: pf.toISOString().slice(0,10), to: pt.toISOString().slice(0,10), branch:branch, brand:brand, costCenter:costCenter, groupBy:groupBy }).toString();
+    }
+  }
+
+  var currQs = new URLSearchParams({ from, to, branch, brand, costCenter, groupBy }).toString();
+  var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+
+  Promise.all([
+    fetch('/api/erp/reports/pnl?' + currQs, { headers:{'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') }}).then(function(r){return r.json();}),
+    prevQs ? fetch('/api/erp/reports/pnl?' + prevQs, { headers:{'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') }}).then(function(r){return r.json();}) : Promise.resolve(null)
+  ]).then(function(results) {
+    var r = results[0], prev = results[1];
     if (!r.success) { showToast(r.error||'خطأ', true); return; }
-    var rev = r.revenue || [], exp = r.expenses || [];
+
+    document.getElementById('plBnFrom').textContent = from;
+    document.getElementById('plBnTo').textContent = to;
+    var dimLbl = brand ? ' · براند محدد' : (branch ? ' · فرع محدد' : (costCenter ? ' · مركز تكلفة' : ''));
+    document.getElementById('plBnDim').textContent = dimLbl;
+    document.getElementById('plBranded').style.display = 'flex';
+
     var s = r.summary || {};
-    var pc = s.netProfit >= 0 ? '#16a34a' : '#ef4444';
-    document.getElementById('plSummary').innerHTML =
-      _erpKpi('إجمالي الإيرادات', _erpFmt(s.totalRevenue), '#16a34a') +
-      _erpKpi('إجمالي المصروفات', _erpFmt(s.totalExpense), '#ef4444') +
-      _erpKpi('صافي الربح/الخسارة', _erpFmt(s.netProfit), pc) +
-      _erpKpi('هامش الربح %', (s.grossMargin||0)+'%', pc);
-    document.getElementById('plRevenueBody').innerHTML = rev.length ? rev.map(function(a){
-      return '<tr><td><code>'+(a.code||'')+'</code> '+(a.nameAr||a.dimensionName||'')+'</td><td style="color:#16a34a;font-weight:700;">'+_erpFmt(a.amount)+'</td></tr>';
-    }).join('') : '<tr><td colspan="2" class="empty-msg">—</td></tr>';
-    document.getElementById('plExpenseBody').innerHTML = exp.length ? exp.map(function(a){
-      return '<tr><td><code>'+(a.code||'')+'</code> '+(a.nameAr||a.dimensionName||'')+'</td><td style="color:#ef4444;font-weight:700;">'+_erpFmt(a.amount)+'</td></tr>';
-    }).join('') : '<tr><td colspan="2" class="empty-msg">—</td></tr>';
+    var ps = (prev && prev.summary) || {};
+    document.getElementById('plKpis').style.display = 'grid';
+    document.getElementById('plKpiRevenue').textContent = fmt(s.totalRevenue) + ' ر.س';
+    document.getElementById('plKpiExpense').textContent = fmt(s.totalExpense) + ' ر.س';
+    document.getElementById('plKpiMargin').textContent  = (s.grossMargin||0).toFixed(2) + '%';
+    document.getElementById('plKpiNet').textContent     = fmt(s.netProfit) + ' ر.س';
+    document.getElementById('plKpiNet').style.color     = s.netProfit >= 0 ? '#16a34a' : '#ef4444';
+    if (prev) {
+      document.getElementById('plKpiRevenueDelta').innerHTML = _erpDeltaHtml(s.totalRevenue, ps.totalRevenue, false);
+      document.getElementById('plKpiExpenseDelta').innerHTML = _erpDeltaHtml(s.totalExpense, ps.totalExpense, true);
+      document.getElementById('plKpiNetDelta').innerHTML     = _erpDeltaHtml(s.netProfit,    ps.netProfit, false);
+    }
+
+    var rev = r.revenue || [], exp = r.expenses || [];
+    var detailsHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">' +
+      // Revenue panel
+      '<div class="erp-rpt-panel" style="background:#fff;border:1px solid #e5e7eb;border-top:3px solid #16a34a;border-radius:12px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);">' +
+        '<h4 style="margin:0 0 10px;color:#16a34a;display:flex;align-items:center;gap:8px;font-size:14px;font-weight:800;"><i class="fas fa-arrow-up"></i> الإيرادات <span style="margin-inline-start:auto;font-size:13px;color:#15803d;">'+fmt(s.totalRevenue)+'</span></h4>' +
+        '<table class="erp-table" style="font-size:12.5px;"><thead><tr><th>الحساب</th><th class="num" style="text-align:start;">المبلغ</th></tr></thead><tbody>' +
+        (rev.length ? rev.map(function(a){
+          return '<tr><td><code style="color:#94a3b8;">'+(a.code||'')+'</code> '+(a.nameAr||a.dimensionName||'')+'</td><td style="color:#16a34a;font-weight:700;text-align:start;">'+fmt(a.amount)+'</td></tr>';
+        }).join('') : '<tr><td colspan="2" class="empty-msg">لا توجد إيرادات</td></tr>') +
+        '</tbody></table>' +
+      '</div>' +
+      // Expenses panel
+      '<div class="erp-rpt-panel" style="background:#fff;border:1px solid #e5e7eb;border-top:3px solid #ef4444;border-radius:12px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);">' +
+        '<h4 style="margin:0 0 10px;color:#ef4444;display:flex;align-items:center;gap:8px;font-size:14px;font-weight:800;"><i class="fas fa-arrow-down"></i> المصروفات <span style="margin-inline-start:auto;font-size:13px;color:#b91c1c;">'+fmt(s.totalExpense)+'</span></h4>' +
+        '<table class="erp-table" style="font-size:12.5px;"><thead><tr><th>الحساب</th><th class="num" style="text-align:start;">المبلغ</th></tr></thead><tbody>' +
+        (exp.length ? exp.map(function(a){
+          return '<tr><td><code style="color:#94a3b8;">'+(a.code||'')+'</code> '+(a.nameAr||a.dimensionName||'')+'</td><td style="color:#ef4444;font-weight:700;text-align:start;">'+fmt(a.amount)+'</td></tr>';
+        }).join('') : '<tr><td colspan="2" class="empty-msg">لا توجد مصروفات</td></tr>') +
+        '</tbody></table>' +
+      '</div>' +
+    '</div>' +
+    // Net income final row
+    '<div style="margin-top:14px;padding:16px 20px;background:linear-gradient(135deg,'+(s.netProfit>=0?'#dcfce7':'#fee2e2')+','+(s.netProfit>=0?'#bbf7d0':'#fecaca')+');border-radius:12px;display:flex;justify-content:space-between;align-items:center;">' +
+      '<div><div style="font-size:12px;color:#475569;font-weight:800;">صافي الربح (الخسارة) للفترة</div><div style="font-size:24px;font-weight:900;color:'+(s.netProfit>=0?'#15803d':'#991b1b')+';">'+fmt(s.netProfit)+' ر.س</div></div>' +
+      '<div style="text-align:end;"><div style="font-size:11px;color:#475569;font-weight:700;">هامش الربح</div><div style="font-size:18px;font-weight:900;color:'+(s.grossMargin>=0?'#15803d':'#991b1b')+';">'+(s.grossMargin||0).toFixed(2)+'%</div></div>' +
+    '</div>';
+    document.getElementById('plDetails').innerHTML = detailsHtml;
+  }).catch(function(e) {
+    document.getElementById('plDetails').innerHTML = '<div class="empty-msg" style="color:#ef4444;text-align:center;padding:20px;">خطأ: '+e.message+'</div>';
   });
 }
 
-// ─── Balance Sheet ───
+// ═══ Balance Sheet — enhanced ═══
+window.erpBSReset = function() {
+  ['bsAsOf','bsBrand','bsBranch','bsView'].forEach(function(id){
+    var el = document.getElementById(id); if (!el) return;
+    if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
+  });
+  document.getElementById('bsBranded').style.display = 'none';
+  document.getElementById('bsKpis').style.display = 'none';
+  document.getElementById('bsDetails').innerHTML = '';
+};
+
 function erpLoadBalanceSheet() {
   _erpPopulateBranchOptions(['bsBranch']);
   _erpPopulateBrandOptions(['bsBrand']);
-  var asOf = (document.getElementById('bsAsOf')||{}).value || '';
+  if (!document.getElementById('bsAsOf').value) document.getElementById('bsAsOf').value = new Date().toISOString().slice(0,10);
+  var asOf = document.getElementById('bsAsOf').value;
   var branch = (document.getElementById('bsBranch')||{}).value || '';
   var brand  = (document.getElementById('bsBrand')||{}).value || '';
+  var view   = (document.getElementById('bsView')||{}).value || 'grouped';
+
+  document.getElementById('bsDetails').innerHTML = '<div class="empty-msg" style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+
   var qs = new URLSearchParams({ asOf, branch, brand }).toString();
   _erpGet('/erp/reports/balance-sheet?' + qs, function(r) {
     if (!r.success) { showToast(r.error||'خطأ', true); return; }
     var t = r.totals || {};
-    var bc = t.isBalanced ? '#16a34a' : '#ef4444';
-    document.getElementById('bsSummary').innerHTML =
-      _erpKpi('الأصول', _erpFmt(t.assets), '#0ea5e9') +
-      _erpKpi('الخصوم', _erpFmt(t.liabilities), '#ef4444') +
-      _erpKpi('حقوق الملكية', _erpFmt(t.equity), '#8b5cf6') +
-      _erpKpi('الفرق', _erpFmt(t.difference), bc);
-    var fillTbl = function(id, arr, color){
-      document.getElementById(id).innerHTML = (arr||[]).length ? arr.filter(function(x){return x.balance!==0;}).map(function(a){
-        return '<tr><td><code>'+(a.code||'')+'</code> '+(a.nameAr||'')+'</td><td style="color:'+color+';font-weight:700;">'+_erpFmt(a.balance)+'</td></tr>';
+    var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    document.getElementById('bsBnDate').textContent = asOf;
+    document.getElementById('bsBranded').style.display = 'flex';
+    document.getElementById('bsKpis').style.display = 'grid';
+    document.getElementById('bsKpiAssets').textContent = fmt(t.assets);
+    document.getElementById('bsKpiLiab').textContent   = fmt(t.liabilities);
+    document.getElementById('bsKpiEquity').textContent = fmt(t.equity);
+    if (t.isBalanced) {
+      document.getElementById('bsKpiBalance').innerHTML = '<i class="fas fa-check-circle" style="color:#16a34a;"></i> متوازنة';
+    } else {
+      document.getElementById('bsKpiBalance').innerHTML = '<i class="fas fa-times-circle" style="color:#ef4444;"></i> فرق ' + fmt(t.difference);
+    }
+
+    var rowHtml = function(arr, color){
+      var nz = (arr||[]).filter(function(x){return x.balance !== 0;});
+      return nz.length ? nz.map(function(a){
+        return '<tr><td><code style="color:#94a3b8;">'+(a.code||'')+'</code> '+(a.nameAr||'')+'</td><td style="color:'+color+';font-weight:700;text-align:start;">'+fmt(a.balance)+'</td></tr>';
       }).join('') : '<tr><td colspan="2" class="empty-msg">—</td></tr>';
     };
-    fillTbl('bsAssetsBody', r.assets, '#0ea5e9');
-    fillTbl('bsLiabBody',   r.liabilities, '#ef4444');
-    fillTbl('bsEquityBody', r.equity, '#8b5cf6');
+
+    if (view === 'vertical') {
+      // Vertical IFRS-style layout
+      var html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:18px 24px;box-shadow:0 1px 3px rgba(0,0,0,.04);">';
+      html += '<div style="margin-bottom:16px;"><h4 style="margin:0 0 8px;color:#0ea5e9;border-bottom:2px solid #0ea5e9;padding-bottom:6px;font-size:15px;font-weight:800;"><i class="fas fa-coins"></i> الأصول</h4>';
+      html += '<table class="erp-table" style="font-size:12.5px;"><tbody>'+rowHtml(r.assets, '#0ea5e9')+'</tbody><tfoot><tr style="background:#dbeafe;font-weight:900;"><td>إجمالي الأصول</td><td style="color:#0ea5e9;text-align:start;">'+fmt(t.assets)+'</td></tr></tfoot></table></div>';
+      html += '<div style="margin-bottom:16px;"><h4 style="margin:0 0 8px;color:#ef4444;border-bottom:2px solid #ef4444;padding-bottom:6px;font-size:15px;font-weight:800;"><i class="fas fa-file-invoice"></i> الخصوم</h4>';
+      html += '<table class="erp-table" style="font-size:12.5px;"><tbody>'+rowHtml(r.liabilities, '#ef4444')+'</tbody><tfoot><tr style="background:#fee2e2;font-weight:900;"><td>إجمالي الخصوم</td><td style="color:#ef4444;text-align:start;">'+fmt(t.liabilities)+'</td></tr></tfoot></table></div>';
+      html += '<div><h4 style="margin:0 0 8px;color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:6px;font-size:15px;font-weight:800;"><i class="fas fa-user-tie"></i> حقوق الملكية</h4>';
+      html += '<table class="erp-table" style="font-size:12.5px;"><tbody>'+rowHtml(r.equity, '#8b5cf6')+'</tbody><tfoot><tr style="background:#f3e8ff;font-weight:900;"><td>إجمالي حقوق الملكية</td><td style="color:#8b5cf6;text-align:start;">'+fmt(t.equity)+'</td></tr><tr style="background:#1e293b;color:#fff;font-weight:900;"><td>إجمالي الخصوم + حقوق الملكية</td><td style="color:#fbbf24;text-align:start;">'+fmt(t.liabilitiesPlusEquity)+'</td></tr></tfoot></table></div></div>';
+      document.getElementById('bsDetails').innerHTML = html;
+    } else {
+      // 3-column grouped layout
+      var panel = function(title, color, icon, body, total) {
+        return '<div style="background:#fff;border:1px solid #e5e7eb;border-top:3px solid '+color+';border-radius:12px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);">' +
+          '<h4 style="margin:0 0 10px;color:'+color+';display:flex;align-items:center;gap:8px;font-size:14px;font-weight:800;"><i class="fas '+icon+'"></i> '+title+' <span style="margin-inline-start:auto;font-size:13px;">'+fmt(total)+'</span></h4>' +
+          '<table class="erp-table" style="font-size:12.5px;"><thead><tr><th>الحساب</th><th class="num" style="text-align:start;">الرصيد</th></tr></thead><tbody>'+body+'</tbody></table>' +
+        '</div>';
+      };
+      document.getElementById('bsDetails').innerHTML = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">' +
+        panel('الأصول',     '#0ea5e9', 'fa-coins',         rowHtml(r.assets,'#0ea5e9'),       t.assets) +
+        panel('الخصوم',      '#ef4444', 'fa-file-invoice',  rowHtml(r.liabilities,'#ef4444'),  t.liabilities) +
+        panel('حقوق الملكية', '#8b5cf6', 'fa-user-tie',      rowHtml(r.equity,'#8b5cf6'),       t.equity) +
+      '</div>';
+    }
   });
 }
 
-// ─── Cash Flow ───
+// ═══ Cash Flow — enhanced ═══
+window.erpCFReset = function() {
+  ['cfFrom','cfTo','cfBrand','cfBranch','cfMethod'].forEach(function(id){
+    var el = document.getElementById(id); if (!el) return;
+    if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
+  });
+  document.getElementById('cfBranded').style.display = 'none';
+  document.getElementById('cfSummary').style.display = 'none';
+  document.getElementById('cfDetails').innerHTML = '';
+};
 function erpLoadCashFlow() {
   _erpPopulateBranchOptions(['cfBranch']);
   _erpPopulateBrandOptions(['cfBrand']);
-  var from = (document.getElementById('cfFrom')||{}).value || '';
-  var to   = (document.getElementById('cfTo')||{}).value || '';
+  if (!document.getElementById('cfFrom').value) document.getElementById('cfFrom').value = new Date(new Date().getFullYear(),0,1).toISOString().slice(0,10);
+  if (!document.getElementById('cfTo').value)   document.getElementById('cfTo').value   = new Date().toISOString().slice(0,10);
+  var from = document.getElementById('cfFrom').value;
+  var to   = document.getElementById('cfTo').value;
   var branch = (document.getElementById('cfBranch')||{}).value || '';
   var brand  = (document.getElementById('cfBrand')||{}).value || '';
   var qs = new URLSearchParams({ from, to, branch, brand }).toString();
+  document.getElementById('cfDetails').innerHTML = '<div class="empty-msg" style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+
   _erpGet('/erp/reports/cash-flow?' + qs, function(r) {
     if (!r.success) { showToast(r.error||'خطأ', true); return; }
     var f = r.flows || {};
-    document.getElementById('cfSummary').innerHTML =
-      _erpKpi('الرصيد الافتتاحي', _erpFmt(r.openingCash), '#64748b') +
-      _erpKpi('نشاط تشغيلي', _erpFmt(f.operating), f.operating>=0?'#16a34a':'#ef4444') +
-      _erpKpi('نشاط استثماري', _erpFmt(f.investing), '#8b5cf6') +
-      _erpKpi('نشاط تمويلي', _erpFmt(f.financing), '#0ea5e9') +
-      _erpKpi('صافي التغيير', _erpFmt(r.netChange), r.netChange>=0?'#16a34a':'#ef4444') +
-      _erpKpi('الرصيد الختامي', _erpFmt(r.closingCash), '#16a34a');
+    var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    document.getElementById('cfBnFrom').textContent = from;
+    document.getElementById('cfBnTo').textContent = to;
+    document.getElementById('cfBranded').style.display = 'flex';
+
+    var mk = function(lbl, val, color, icon) {
+      return '<div class="wo-metric"><div class="wo-metric-icon" style="background:'+color+'22;color:'+color+';"><i class="fas '+icon+'"></i></div><div class="wo-metric-body"><div class="wo-metric-label">'+lbl+'</div><div class="wo-metric-value" style="color:'+color+';">'+fmt(val)+'</div></div></div>';
+    };
+    var cfS = document.getElementById('cfSummary');
+    cfS.style.display = 'grid';
+    cfS.innerHTML =
+      mk('الرصيد الافتتاحي', r.openingCash, '#64748b', 'fa-play') +
+      mk('نشاط تشغيلي',     f.operating,   f.operating>=0?'#16a34a':'#ef4444', 'fa-gears') +
+      mk('نشاط استثماري',   f.investing,   '#8b5cf6', 'fa-chart-line') +
+      mk('نشاط تمويلي',     f.financing,   '#0ea5e9', 'fa-building-columns') +
+      mk('صافي التغيير',    r.netChange,   r.netChange>=0?'#16a34a':'#ef4444', 'fa-arrow-trend-up') +
+      mk('الرصيد الختامي',   r.closingCash, '#16a34a', 'fa-flag-checkered');
+
     var d = r.details || {};
-    var makeSection = function(title, color, items) {
+    var makeSection = function(title, color, icon, items) {
       if (!items || !items.length) return '';
       var rows = items.map(function(x){
-        return '<tr><td>'+(x.date||'').slice(0,10)+'</td><td>'+(x.description||'')+'</td><td>'+(x.contra||'')+'</td><td style="color:'+(x.amount>=0?'#16a34a':'#ef4444')+';font-weight:700;">'+_erpFmt(x.amount)+'</td></tr>';
+        return '<tr><td>'+(x.date||'').slice(0,10)+'</td><td>'+(x.description||'')+'</td><td style="color:#94a3b8;">'+(x.contra||'')+'</td><td style="color:'+(x.amount>=0?'#16a34a':'#ef4444')+';font-weight:700;text-align:start;">'+fmt(x.amount)+'</td></tr>';
       }).join('');
-      return '<h4 style="color:'+color+';margin-top:14px;">'+title+'</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>التاريخ</th><th>الوصف</th><th>الحساب المقابل</th><th>المبلغ</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+      return '<div style="background:#fff;border:1px solid #e5e7eb;border-top:3px solid '+color+';border-radius:12px;padding:14px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);">' +
+        '<h4 style="margin:0 0 10px;color:'+color+';font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas '+icon+'"></i> '+title+'</h4>' +
+        '<table class="erp-table" style="font-size:12.5px;"><thead><tr><th>التاريخ</th><th>الوصف</th><th>الحساب المقابل</th><th class="num" style="text-align:start;">المبلغ</th></tr></thead><tbody>'+rows+'</tbody></table>' +
+      '</div>';
     };
     document.getElementById('cfDetails').innerHTML =
-      makeSection('الأنشطة التشغيلية', '#16a34a', d.operating) +
-      makeSection('الأنشطة الاستثمارية', '#8b5cf6', d.investing) +
-      makeSection('الأنشطة التمويلية', '#0ea5e9', d.financing) +
-      makeSection('أخرى', '#64748b', d.other);
+      makeSection('الأنشطة التشغيلية', '#16a34a', 'fa-gears', d.operating) +
+      makeSection('الأنشطة الاستثمارية', '#8b5cf6', 'fa-chart-line', d.investing) +
+      makeSection('الأنشطة التمويلية', '#0ea5e9', 'fa-building-columns', d.financing) +
+      makeSection('أخرى', '#64748b', 'fa-ellipsis', d.other);
   });
 }
 
-// ─── Profitability by dimension ───
+// ═══ Profitability by dimension — enhanced ═══
+window.erpProfReset = function() {
+  ['profFrom','profTo','profDim','profSort'].forEach(function(id){
+    var el = document.getElementById(id); if (!el) return;
+    if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
+  });
+  document.getElementById('profBranded').style.display = 'none';
+  document.getElementById('profBody').innerHTML = '<tr><td colspan="7" class="empty-msg">حدد البُعد والفترة</td></tr>';
+};
 function erpLoadProfitability() {
-  var from = (document.getElementById('profFrom')||{}).value || '';
-  var to   = (document.getElementById('profTo')||{}).value || '';
+  if (!document.getElementById('profFrom').value) document.getElementById('profFrom').value = new Date(new Date().getFullYear(),0,1).toISOString().slice(0,10);
+  if (!document.getElementById('profTo').value)   document.getElementById('profTo').value   = new Date().toISOString().slice(0,10);
+  var from = document.getElementById('profFrom').value;
+  var to   = document.getElementById('profTo').value;
   var dim  = (document.getElementById('profDim')||{}).value || 'brand';
+  var sort = (document.getElementById('profSort')||{}).value || 'profit_desc';
+  var dimLabels = { brand:'البراند', branch:'الفرع', cost_center:'مركز التكلفة' };
+  document.getElementById('profBnFrom').textContent = from;
+  document.getElementById('profBnTo').textContent = to;
+  document.getElementById('profBnDim').textContent = 'حسب ' + (dimLabels[dim]||dim);
+  document.getElementById('profBranded').style.display = 'flex';
+
   var qs = new URLSearchParams({ from, to, dimension: dim }).toString();
-  document.getElementById('profBody').innerHTML = '<tr><td colspan="6" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  document.getElementById('profBody').innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
   _erpGet('/erp/reports/profitability?' + qs, function(r) {
-    if (!r.success) { document.getElementById('profBody').innerHTML = '<tr><td colspan="6" class="empty-msg" style="color:#ef4444;">'+(r.error||'خطأ')+'</td></tr>'; return; }
-    var rows = r.rows || [];
-    if (!rows.length) { document.getElementById('profBody').innerHTML = '<tr><td colspan="6" class="empty-msg">لا توجد بيانات</td></tr>'; return; }
+    if (!r.success) { document.getElementById('profBody').innerHTML = '<tr><td colspan="7" class="empty-msg" style="color:#ef4444;">'+(r.error||'خطأ')+'</td></tr>'; return; }
+    var rows = (r.rows || []).slice();
+    if (!rows.length) { document.getElementById('profBody').innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد بيانات</td></tr>'; return; }
+    // Apply sort
+    if (sort === 'profit_asc')  rows.sort(function(a,b){ return (a.profit||0) - (b.profit||0); });
+    else if (sort === 'margin_desc') rows.sort(function(a,b){ return (b.margin||0) - (a.margin||0); });
+    else if (sort === 'revenue_desc')rows.sort(function(a,b){ return (b.revenue||0) - (a.revenue||0); });
+    else rows.sort(function(a,b){ return (b.profit||0) - (a.profit||0); });
+    // Compute max profit for visual bars
+    var maxProfit = Math.max.apply(null, rows.map(function(x){ return Math.abs(x.profit||0); }));
+    var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
     document.getElementById('profBody').innerHTML = rows.map(function(x, i){
       var pc = x.profit>=0?'#16a34a':'#ef4444';
-      return '<tr><td>'+(i+1)+'</td><td>'+(x.name||'')+'</td>'+
-        '<td style="color:#16a34a;">'+_erpFmt(x.revenue)+'</td>'+
-        '<td style="color:#ef4444;">'+_erpFmt(x.expenses)+'</td>'+
-        '<td style="color:'+pc+';font-weight:800;">'+_erpFmt(x.profit)+'</td>'+
-        '<td style="color:'+pc+';">'+x.margin+'%</td></tr>';
+      var barPct = maxProfit ? Math.round(Math.abs(x.profit||0) / maxProfit * 100) : 0;
+      var medal = i < 3 ? '<span style="background:'+['#fbbf24','#d1d5db','#fb923c'][i]+';color:#fff;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;">'+(i+1)+'</span>' : (i+1);
+      return '<tr>' +
+        '<td>'+medal+'</td>' +
+        '<td style="font-weight:800;">'+(x.name||'')+'</td>'+
+        '<td style="color:#16a34a;font-weight:700;">'+fmt(x.revenue)+'</td>'+
+        '<td style="color:#ef4444;font-weight:700;">'+fmt(x.expenses)+'</td>'+
+        '<td style="color:'+pc+';font-weight:900;font-size:13px;">'+fmt(x.profit)+'</td>'+
+        '<td style="color:'+pc+';font-weight:800;">'+x.margin+'%</td>'+
+        '<td style="min-width:100px;"><div style="background:#f1f5f9;border-radius:4px;height:8px;overflow:hidden;"><div style="height:100%;width:'+barPct+'%;background:'+pc+';border-radius:4px;"></div></div></td>'+
+      '</tr>';
     }).join('');
   });
 }

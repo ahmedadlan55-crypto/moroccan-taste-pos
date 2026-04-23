@@ -3511,65 +3511,190 @@
   <div id="tbSummary" class="erp-rpt-kpi" style="display:none;"></div>
 </div>
 
-<!-- Profit & Loss -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- Profit & Loss — قائمة الدخل الشامل (Yumsar-style) -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
 <div id="erpRptPnL" class="dash-section hidden">
-  <div class="section-header"><h2 class="section-title"><i class="fas fa-chart-line"></i> قائمة الدخل (P&amp;L)</h2></div>
-  <div class="erp-rpt-filter">
-    <div><label>من تاريخ</label><input type="date" id="plFrom" class="form-control-sm"></div>
-    <div><label>إلى تاريخ</label><input type="date" id="plTo" class="form-control-sm"></div>
-    <div><label>الفرع</label><select id="plBranch" class="form-control-sm"><option value="">الكل</option></select></div>
-    <div><label>البراند</label><select id="plBrand" class="form-control-sm"><option value="">الكل</option></select></div>
-    <div><label>التجميع</label><select id="plGroupBy" class="form-control-sm"><option value="account">حسب الحساب</option><option value="type">حسب النوع</option><option value="brand">حسب البراند</option><option value="branch">حسب الفرع</option><option value="cost_center">حسب مركز التكلفة</option></select></div>
-    <div><button class="btn btn-primary btn-sm" onclick="erpLoadPnL()"><i class="fas fa-search"></i> عرض</button></div>
+  <div class="tb-top">
+    <h2 class="tb-title"><i class="fas fa-chart-line"></i> قائمة الدخل الشامل (Profit & Loss)</h2>
+    <div class="tb-actions">
+      <button class="tb-btn" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>
+    </div>
   </div>
-  <div id="plSummary" class="erp-rpt-kpi"></div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-    <div><h4 style="color:#16a34a;"><i class="fas fa-arrow-up"></i> الإيرادات</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>الحساب</th><th>المبلغ</th></tr></thead><tbody id="plRevenueBody"><tr><td colspan="2" class="empty-msg">—</td></tr></tbody></table></div></div>
-    <div><h4 style="color:#ef4444;"><i class="fas fa-arrow-down"></i> المصروفات</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>الحساب</th><th>المبلغ</th></tr></thead><tbody id="plExpenseBody"><tr><td colspan="2" class="empty-msg">—</td></tr></tbody></table></div></div>
+  <div class="tb-filters-card">
+    <div class="tb-filter-grid">
+      <div class="tb-field"><label>الفترة من / إلى</label><div class="tb-date-range"><input type="date" id="plFrom"><span class="tb-sep">→</span><input type="date" id="plTo"></div></div>
+      <div class="tb-field"><label>البراند</label><select id="plBrand"><option value="">كل البراندات</option></select></div>
+      <div class="tb-field"><label>الفرع</label><select id="plBranch"><option value="">كل الفروع</option></select></div>
+      <div class="tb-field"><label>مركز التكلفة</label><select id="plCC"><option value="">الكل</option></select></div>
+    </div>
+    <div class="tb-filter-grid">
+      <div class="tb-field"><label>تجميع البيانات حسب</label>
+        <select id="plGroupBy">
+          <option value="account">حسب الحساب (افتراضي)</option>
+          <option value="type">حسب النوع</option>
+          <option value="brand">حسب البراند</option>
+          <option value="branch">حسب الفرع</option>
+          <option value="cost_center">حسب مركز التكلفة</option>
+        </select>
+      </div>
+      <div class="tb-field"><label>المقارنة مع</label>
+        <select id="plCompare">
+          <option value="none">بدون مقارنة</option>
+          <option value="previous">الفترة السابقة (نفس الطول)</option>
+          <option value="yearago">نفس الفترة السنة الماضية</option>
+        </select>
+      </div>
+    </div>
+    <div class="tb-filter-actions">
+      <button class="tb-btn tb-btn-ghost" onclick="erpPnLReset()"><i class="fas fa-xmark"></i> إلغاء الفلتر</button>
+      <button class="tb-btn tb-btn-success" onclick="erpLoadPnL()"><i class="fas fa-chart-line"></i> عرض التقرير</button>
+    </div>
   </div>
+
+  <div id="plBranded" class="tb-brand-banner" style="display:none;">
+    <div class="tb-brand-left"><div class="tb-brand-logo" style="background:linear-gradient(135deg,#10b981,#16a34a);"><i class="fas fa-chart-line"></i></div></div>
+    <div class="tb-brand-center">
+      <h3>قائمة الدخل الشامل</h3>
+      <div class="tb-brand-sub">من <span id="plBnFrom">—</span> إلى <span id="plBnTo">—</span><span id="plBnDim" style="margin-inline-start:8px;color:#8b5cf6;font-weight:700;"></span></div>
+    </div>
+  </div>
+
+  <!-- KPI strip -->
+  <div id="plKpis" class="wo-metric-strip" style="display:none;margin-bottom:14px;">
+    <div class="wo-metric accent-success"><div class="wo-metric-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-arrow-up"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي الإيرادات</div><div class="wo-metric-value" id="plKpiRevenue">—</div><div id="plKpiRevenueDelta" style="font-size:11px;font-weight:700;margin-top:2px;"></div></div></div>
+    <div class="wo-metric accent-danger"><div class="wo-metric-icon" style="background:#fee2e2;color:#dc2626;"><i class="fas fa-arrow-down"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي المصروفات</div><div class="wo-metric-value" id="plKpiExpense">—</div><div id="plKpiExpenseDelta" style="font-size:11px;font-weight:700;margin-top:2px;"></div></div></div>
+    <div class="wo-metric accent-info"><div class="wo-metric-icon" style="background:#dbeafe;color:#1e40af;"><i class="fas fa-percent"></i></div><div class="wo-metric-body"><div class="wo-metric-label">هامش الربح</div><div class="wo-metric-value" id="plKpiMargin">—</div></div></div>
+    <div class="wo-metric accent-purple"><div class="wo-metric-icon" style="background:#f3e8ff;color:#7c3aed;"><i class="fas fa-coins"></i></div><div class="wo-metric-body"><div class="wo-metric-label">صافي الدخل</div><div class="wo-metric-value" id="plKpiNet">—</div><div id="plKpiNetDelta" style="font-size:11px;font-weight:700;margin-top:2px;"></div></div></div>
+  </div>
+
+  <div id="plDetails"></div>
 </div>
 
-<!-- Balance Sheet -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- Balance Sheet — قائمة المركز المالي (Yumsar-style) -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
 <div id="erpRptBalanceSheet" class="dash-section hidden">
-  <div class="section-header"><h2 class="section-title"><i class="fas fa-landmark"></i> الميزانية العمومية</h2></div>
-  <div class="erp-rpt-filter">
-    <div><label>حتى تاريخ</label><input type="date" id="bsAsOf" class="form-control-sm"></div>
-    <div><label>الفرع</label><select id="bsBranch" class="form-control-sm"><option value="">الكل</option></select></div>
-    <div><label>البراند</label><select id="bsBrand" class="form-control-sm"><option value="">الكل</option></select></div>
-    <div><button class="btn btn-primary btn-sm" onclick="erpLoadBalanceSheet()"><i class="fas fa-search"></i> عرض</button></div>
+  <div class="tb-top">
+    <h2 class="tb-title"><i class="fas fa-landmark"></i> قائمة المركز المالي (Balance Sheet)</h2>
+    <div class="tb-actions"><button class="tb-btn" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button></div>
   </div>
-  <div id="bsSummary" class="erp-rpt-kpi"></div>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
-    <div><h4 style="color:#0ea5e9;"><i class="fas fa-coins"></i> الأصول</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>الحساب</th><th>الرصيد</th></tr></thead><tbody id="bsAssetsBody"><tr><td colspan="2" class="empty-msg">—</td></tr></tbody></table></div></div>
-    <div><h4 style="color:#ef4444;"><i class="fas fa-file-invoice"></i> الخصوم</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>الحساب</th><th>الرصيد</th></tr></thead><tbody id="bsLiabBody"><tr><td colspan="2" class="empty-msg">—</td></tr></tbody></table></div></div>
-    <div><h4 style="color:#8b5cf6;"><i class="fas fa-user-tie"></i> حقوق الملكية</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>الحساب</th><th>الرصيد</th></tr></thead><tbody id="bsEquityBody"><tr><td colspan="2" class="empty-msg">—</td></tr></tbody></table></div></div>
+  <div class="tb-filters-card">
+    <div class="tb-filter-grid">
+      <div class="tb-field"><label>كما في تاريخ</label><input type="date" id="bsAsOf"></div>
+      <div class="tb-field"><label>البراند</label><select id="bsBrand"><option value="">كل البراندات</option></select></div>
+      <div class="tb-field"><label>الفرع</label><select id="bsBranch"><option value="">كل الفروع</option></select></div>
+      <div class="tb-field"><label>طريقة العرض</label>
+        <select id="bsView">
+          <option value="grouped">مجمَّع (3 أعمدة)</option>
+          <option value="vertical">عمودي تفصيلي (IFRS)</option>
+        </select>
+      </div>
+    </div>
+    <div class="tb-filter-actions">
+      <button class="tb-btn tb-btn-ghost" onclick="erpBSReset()"><i class="fas fa-xmark"></i> إلغاء</button>
+      <button class="tb-btn tb-btn-success" onclick="erpLoadBalanceSheet()"><i class="fas fa-landmark"></i> عرض التقرير</button>
+    </div>
   </div>
+
+  <div id="bsBranded" class="tb-brand-banner" style="display:none;">
+    <div class="tb-brand-left"><div class="tb-brand-logo" style="background:linear-gradient(135deg,#3b82f6,#1e40af);"><i class="fas fa-landmark"></i></div></div>
+    <div class="tb-brand-center">
+      <h3>قائمة المركز المالي</h3>
+      <div class="tb-brand-sub">كما في <span id="bsBnDate">—</span></div>
+    </div>
+  </div>
+
+  <div id="bsKpis" class="wo-metric-strip" style="display:none;margin-bottom:14px;">
+    <div class="wo-metric accent-info"><div class="wo-metric-icon" style="background:#dbeafe;color:#1e40af;"><i class="fas fa-coins"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي الأصول</div><div class="wo-metric-value" id="bsKpiAssets">—</div></div></div>
+    <div class="wo-metric accent-warning"><div class="wo-metric-icon" style="background:#fee2e2;color:#dc2626;"><i class="fas fa-file-invoice"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي الخصوم</div><div class="wo-metric-value" id="bsKpiLiab">—</div></div></div>
+    <div class="wo-metric accent-purple"><div class="wo-metric-icon" style="background:#f3e8ff;color:#7c3aed;"><i class="fas fa-user-tie"></i></div><div class="wo-metric-body"><div class="wo-metric-label">حقوق الملكية</div><div class="wo-metric-value" id="bsKpiEquity">—</div></div></div>
+    <div class="wo-metric accent-success"><div class="wo-metric-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-check"></i></div><div class="wo-metric-body"><div class="wo-metric-label">المعادلة المحاسبية</div><div class="wo-metric-value" id="bsKpiBalance" style="font-size:14px;">—</div></div></div>
+  </div>
+
+  <div id="bsDetails"></div>
 </div>
 
-<!-- Cash Flow -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- Cash Flow — قائمة التدفقات النقدية (Yumsar-style) -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
 <div id="erpRptCashFlow" class="dash-section hidden">
-  <div class="section-header"><h2 class="section-title"><i class="fas fa-water"></i> قائمة التدفقات النقدية</h2></div>
-  <div class="erp-rpt-filter">
-    <div><label>من تاريخ</label><input type="date" id="cfFrom" class="form-control-sm"></div>
-    <div><label>إلى تاريخ</label><input type="date" id="cfTo" class="form-control-sm"></div>
-    <div><label>الفرع</label><select id="cfBranch" class="form-control-sm"><option value="">الكل</option></select></div>
-    <div><label>البراند</label><select id="cfBrand" class="form-control-sm"><option value="">الكل</option></select></div>
-    <div><button class="btn btn-primary btn-sm" onclick="erpLoadCashFlow()"><i class="fas fa-search"></i> عرض</button></div>
+  <div class="tb-top">
+    <h2 class="tb-title"><i class="fas fa-water"></i> قائمة التدفقات النقدية (Cash Flow)</h2>
+    <div class="tb-actions"><button class="tb-btn" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button></div>
   </div>
-  <div id="cfSummary" class="erp-rpt-kpi"></div>
+  <div class="tb-filters-card">
+    <div class="tb-filter-grid">
+      <div class="tb-field"><label>الفترة من / إلى</label><div class="tb-date-range"><input type="date" id="cfFrom"><span class="tb-sep">→</span><input type="date" id="cfTo"></div></div>
+      <div class="tb-field"><label>البراند</label><select id="cfBrand"><option value="">كل البراندات</option></select></div>
+      <div class="tb-field"><label>الفرع</label><select id="cfBranch"><option value="">كل الفروع</option></select></div>
+      <div class="tb-field"><label>طريقة العرض</label>
+        <select id="cfMethod">
+          <option value="indirect">طريقة غير مباشرة (افتراضي)</option>
+          <option value="direct">طريقة مباشرة</option>
+        </select>
+      </div>
+    </div>
+    <div class="tb-filter-actions">
+      <button class="tb-btn tb-btn-ghost" onclick="erpCFReset()"><i class="fas fa-xmark"></i> إلغاء</button>
+      <button class="tb-btn tb-btn-success" onclick="erpLoadCashFlow()"><i class="fas fa-water"></i> عرض التقرير</button>
+    </div>
+  </div>
+
+  <div id="cfBranded" class="tb-brand-banner" style="display:none;">
+    <div class="tb-brand-left"><div class="tb-brand-logo" style="background:linear-gradient(135deg,#06b6d4,#0891b2);"><i class="fas fa-water"></i></div></div>
+    <div class="tb-brand-center">
+      <h3>قائمة التدفقات النقدية</h3>
+      <div class="tb-brand-sub">من <span id="cfBnFrom">—</span> إلى <span id="cfBnTo">—</span></div>
+    </div>
+  </div>
+
+  <div id="cfSummary" class="wo-metric-strip" style="display:none;margin-bottom:14px;"></div>
   <div id="cfDetails"></div>
 </div>
 
-<!-- Profitability by dimension -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- Profitability by Dimension — الربحية حسب البُعد (Yumsar-style) -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
 <div id="erpRptProfitability" class="dash-section hidden">
-  <div class="section-header"><h2 class="section-title"><i class="fas fa-dollar-sign"></i> الربحية حسب البُعد</h2></div>
-  <div class="erp-rpt-filter">
-    <div><label>من تاريخ</label><input type="date" id="profFrom" class="form-control-sm"></div>
-    <div><label>إلى تاريخ</label><input type="date" id="profTo" class="form-control-sm"></div>
-    <div><label>البُعد</label><select id="profDim" class="form-control-sm"><option value="brand">حسب البراند</option><option value="branch">حسب الفرع</option><option value="cost_center">حسب مركز التكلفة</option></select></div>
-    <div><button class="btn btn-primary btn-sm" onclick="erpLoadProfitability()"><i class="fas fa-search"></i> عرض</button></div>
+  <div class="tb-top">
+    <h2 class="tb-title"><i class="fas fa-dollar-sign"></i> الربحية حسب البُعد</h2>
+    <div class="tb-actions"><button class="tb-btn" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button></div>
   </div>
-  <div class="erp-table-container"><table class="erp-table"><thead><tr><th>#</th><th>البند</th><th style="color:#16a34a;">الإيراد</th><th style="color:#ef4444;">المصروفات</th><th>الربح</th><th>الهامش %</th></tr></thead><tbody id="profBody"><tr><td colspan="6" class="empty-msg">حدد البُعد والفترة</td></tr></tbody></table></div>
+  <div class="tb-filters-card">
+    <div class="tb-filter-grid">
+      <div class="tb-field"><label>الفترة من / إلى</label><div class="tb-date-range"><input type="date" id="profFrom"><span class="tb-sep">→</span><input type="date" id="profTo"></div></div>
+      <div class="tb-field"><label>البُعد التحليلي</label>
+        <select id="profDim">
+          <option value="brand">حسب البراند</option>
+          <option value="branch">حسب الفرع</option>
+          <option value="cost_center">حسب مركز التكلفة</option>
+        </select>
+      </div>
+      <div class="tb-field"><label>الترتيب حسب</label>
+        <select id="profSort">
+          <option value="profit_desc">الربح (الأعلى)</option>
+          <option value="profit_asc">الربح (الأدنى)</option>
+          <option value="margin_desc">الهامش %</option>
+          <option value="revenue_desc">الإيراد (الأعلى)</option>
+        </select>
+      </div>
+    </div>
+    <div class="tb-filter-actions">
+      <button class="tb-btn tb-btn-ghost" onclick="erpProfReset()"><i class="fas fa-xmark"></i> إلغاء</button>
+      <button class="tb-btn tb-btn-success" onclick="erpLoadProfitability()"><i class="fas fa-dollar-sign"></i> عرض التقرير</button>
+    </div>
+  </div>
+
+  <div id="profBranded" class="tb-brand-banner" style="display:none;">
+    <div class="tb-brand-left"><div class="tb-brand-logo" style="background:linear-gradient(135deg,#84cc16,#65a30d);"><i class="fas fa-dollar-sign"></i></div></div>
+    <div class="tb-brand-center">
+      <h3>الربحية حسب البُعد</h3>
+      <div class="tb-brand-sub">من <span id="profBnFrom">—</span> إلى <span id="profBnTo">—</span> · <span id="profBnDim">—</span></div>
+    </div>
+  </div>
+
+  <div class="erp-table-container"><table class="erp-table"><thead><tr><th>#</th><th>البند</th><th style="color:#16a34a;">الإيراد</th><th style="color:#ef4444;">المصروفات</th><th>الربح</th><th>الهامش %</th><th style="text-align:center;">الأداء</th></tr></thead><tbody id="profBody"><tr><td colspan="7" class="empty-msg">حدد البُعد والفترة</td></tr></tbody></table></div>
 </div>
 
 <!-- Inventory Valuation -->

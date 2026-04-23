@@ -1408,129 +1408,192 @@ function _doTxn(data) {
     if (r && r.success) { toast(t('tm.txnNumberCreated') + ': ' + (r.txnNumber||'')); closeTxnModal(); txnSwitchTab('out'); loadMyTransactions(); } else toast(r?r.error:t('txn.failed'), true);
   });
 }
+function _esc(s){ if (s==null) return ''; return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
 function viewMyTxn(id) {
   callAPI('GET', '/workflow/transactions/' + id, null, function(txn) {
-    if (!txn || txn.error) return toast(t('txn.failed'), true);
-    var sMap = { pending:t('txn.status.pending'), in_progress:t('txn.status.in_progress'), approved:t('txn.status.approved'), rejected:t('txn.status.rejected'), closed:t('txn.status.closed') };
-    var sClr = {pending:'#f59e0b',in_progress:'#0ea5e9',approved:'#10b981',rejected:'#ef4444',closed:'#6b7280'};
-    var aMap = { create:t('txn.act.create'), approve:t('txn.act.approve'), reject:t('txn.act.reject'), return:t('txn.act.return'), close:t('txn.act.close'), forward:t('txn.act.forward') };
-    var aClr = {create:'#0ea5e9',approve:'#10b981',reject:'#ef4444',return:'#f59e0b',close:'#6b7280',forward:'#8b5cf6'};
-    var aIcon = {create:'fa-plus-circle',approve:'fa-check-circle',reject:'fa-times-circle',return:'fa-undo',close:'fa-lock',forward:'fa-share'};
-    var sc = sClr[txn.status]||'#6b7280';
+    if (!txn || txn.error) {
+      toast(t('txn.failed') || 'فشل تحميل المعاملة', true);
+      console.error('viewMyTxn — empty/error response:', txn);
+      return;
+    }
+    // Cache for the toggle button
+    window._currentViewedTxn = txn;
 
+    var sMap = { pending:'قيد الانتظار', in_progress:'قيد التنفيذ', approved:'معتمدة', rejected:'مرفوضة', returned:'مُعادة للمرسل', closed:'مغلقة' };
+    var sClr = { pending:'#f59e0b', in_progress:'#0ea5e9', approved:'#10b981', rejected:'#ef4444', returned:'#f97316', closed:'#6b7280' };
+    var sBg  = { pending:'#fef3c7', in_progress:'#e0f2fe', approved:'#dcfce7', rejected:'#fee2e2', returned:'#ffedd5', closed:'#f1f5f9' };
     var ic = _impColors[txn.importance]||'#6b7280';
     var il = _impLabel(txn.importance) || txn.importance;
-    var secMap = {normal:t('txn.sec.normal'), confidential:t('txn.sec.confidential'), secret:t('txn.sec.secret'), top_secret:t('txn.sec.top_secret')};
-    var h = '';
-    // Prominent subject/title at the top
+    var sc = sClr[txn.status]||'#6b7280';
+    var sbg = sBg[txn.status]||'#f1f5f9';
+    var statusLabel = sMap[txn.status]||txn.status;
+
+    // ═══ HEADER — Title + status pill + "stopped at" badge ═══
     var titleText = txn.subject || txn.title || '';
+    var h = '';
+    // 1. Title
     if (titleText) {
-      h += '<h3 style="margin:0 0 10px;color:#0f172a;font-size:16px;font-weight:900;line-height:1.4;">'+titleText+'</h3>';
+      h += '<h3 style="margin:0 0 6px;color:#0f172a;font-size:18px;font-weight:900;line-height:1.4;">'+_esc(titleText)+'</h3>';
     }
-    h += '<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">' +
-      '<div style="flex:1;min-width:100px;padding:8px;border-radius:10px;background:'+sc+'15;border:1px solid '+sc+'30;text-align:center;"><span style="font-size:11px;font-weight:800;color:'+sc+';">'+(sMap[txn.status]||txn.status)+'</span></div>' +
-      '<div style="flex:1;min-width:100px;padding:8px;border-radius:10px;background:'+ic+'15;border:1px solid '+ic+'40;text-align:center;"><span style="font-size:11px;font-weight:800;color:'+ic+';"><i class="fas fa-circle" style="font-size:6px;margin-left:4px;"></i>'+il+'</span></div>' +
+    // 2. Compact meta row: number · type · amount · date
+    var metaParts = [];
+    if (txn.txnNumber) metaParts.push('<code style="font-size:10px;color:#64748b;">'+_esc(txn.txnNumber)+'</code>');
+    if (txn.typeName) metaParts.push('<span style="color:#64748b;">'+_esc(txn.typeName)+'</span>');
+    if (Number(txn.amount||0) > 0) metaParts.push('<span style="color:#0ea5e9;font-weight:800;">'+Number(txn.amount).toLocaleString('en',{minimumFractionDigits:2})+' ر.س</span>');
+    if (txn.createdAt) {
+      try { metaParts.push('<span style="color:#94a3b8;">'+new Date(txn.createdAt).toLocaleDateString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',year:'numeric'})+'</span>'); } catch(_){}
+    }
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:11.5px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed #e5e7eb;">' + metaParts.join(' · ') + '</div>';
+
+    // 3. STATUS + STOPPED-AT — the most important info anyone needs at a glance
+    h += '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">';
+    // Status pill
+    h += '<div style="flex:1;min-width:130px;padding:10px 12px;border-radius:12px;background:'+sbg+';border:1.5px solid '+sc+';">' +
+      '<div style="font-size:9px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.05em;">الحالة</div>' +
+      '<div style="font-size:14px;font-weight:900;color:'+sc+';margin-top:2px;"><i class="fas fa-circle" style="font-size:7px;margin-left:4px;"></i>'+_esc(statusLabel)+'</div>' +
     '</div>';
-    // Secrecy badges
-    if (txn.contentSecrecy || txn.attachmentsSecrecy) {
-      h += '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">' +
-        '<span style="padding:3px 8px;border-radius:6px;background:#f3e8ff;color:#6d28d9;font-size:10px;font-weight:800;"><i class="fas fa-shield-alt"></i> '+t('txn.secrecyContent')+': '+(secMap[txn.contentSecrecy]||secMap.normal)+'</span>' +
-        '<span style="padding:3px 8px;border-radius:6px;background:#fef3c7;color:#92400e;font-size:10px;font-weight:800;"><i class="fas fa-paperclip"></i> '+t('txn.secrecyAttachments')+': '+(secMap[txn.attachmentsSecrecy]||secMap.normal)+'</span>' +
+    // Importance pill
+    h += '<div style="flex:1;min-width:130px;padding:10px 12px;border-radius:12px;background:'+ic+'15;border:1.5px solid '+ic+'40;">' +
+      '<div style="font-size:9px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.05em;">الأهمية</div>' +
+      '<div style="font-size:14px;font-weight:900;color:'+ic+';margin-top:2px;"><i class="fas fa-bolt" style="font-size:10px;margin-left:4px;"></i>'+_esc(il)+'</div>' +
+    '</div>';
+    h += '</div>';
+
+    // 4. STOPPED-AT — visible to EVERYONE (the user's specific request)
+    if (txn.status === 'pending' || txn.status === 'in_progress') {
+      var stoppedName = txn.currentAssignee || txn.currentPositionName || txn.currentRoleName || '—';
+      var stoppedRole = (txn.currentAssignee && txn.currentRoleName) ? txn.currentRoleName : '';
+      h += '<div style="padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,#fef3c7,#fff);border:1.5px solid #f59e0b;margin-bottom:10px;display:flex;align-items:center;gap:10px;">' +
+        '<div style="width:40px;height:40px;border-radius:50%;background:#f59e0b;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;"><i class="fas fa-pause"></i></div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:10px;font-weight:800;color:#92400e;text-transform:uppercase;letter-spacing:.04em;">المعاملة متوقفة الآن عند</div>' +
+          '<div style="font-size:14px;font-weight:900;color:#78350f;margin-top:2px;">' + _esc(stoppedName) +
+            (stoppedRole ? ' <small style="color:#a16207;font-weight:700;">— '+_esc(stoppedRole)+'</small>' : '') +
+          '</div>' +
+          (txn.currentStepName ? '<div style="font-size:11px;color:#a16207;margin-top:2px;">الخطوة: '+_esc(txn.currentStepName)+'</div>' : '') +
+        '</div>' +
+      '</div>';
+    } else if (txn.status === 'returned') {
+      h += '<div style="padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,#ffedd5,#fff);border:1.5px solid #f97316;margin-bottom:10px;display:flex;align-items:center;gap:10px;">' +
+        '<div style="width:40px;height:40px;border-radius:50%;background:#f97316;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;"><i class="fas fa-undo"></i></div>' +
+        '<div style="flex:1;"><div style="font-size:10px;font-weight:800;color:#9a3412;text-transform:uppercase;">تم إرجاع المعاملة للمرسل</div>' +
+        '<div style="font-size:13px;font-weight:800;color:#7c2d12;margin-top:2px;">يحتاج المرسل لتصحيح وإعادة الإرسال</div></div>' +
+      '</div>';
+    } else if (txn.status === 'approved' || txn.status === 'closed') {
+      h += '<div style="padding:10px 14px;border-radius:10px;background:#dcfce7;border:1px solid #86efac;margin-bottom:10px;display:flex;align-items:center;gap:10px;">' +
+        '<i class="fas fa-check-circle" style="color:#16a34a;font-size:20px;"></i>' +
+        '<div style="font-size:13px;font-weight:800;color:#15803d;">تمت ' + (txn.status==='closed'?'إقفال':'الموافقة على') + ' المعاملة</div>' +
+      '</div>';
+    } else if (txn.status === 'rejected') {
+      h += '<div style="padding:10px 14px;border-radius:10px;background:#fee2e2;border:1px solid #fca5a5;margin-bottom:10px;display:flex;align-items:center;gap:10px;">' +
+        '<i class="fas fa-times-circle" style="color:#dc2626;font-size:20px;"></i>' +
+        '<div style="font-size:13px;font-weight:800;color:#991b1b;">تم رفض المعاملة</div>' +
       '</div>';
     }
 
-    // Workflow path
+    // 5. CONTENT — the actual transaction content, prominent and large
+    h += '<div style="border:1.5px solid #0ea5e9;border-radius:14px;background:linear-gradient(180deg,#f0f9ff,#fff);padding:16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(14,165,233,.08);">';
+    h += '<div style="font-size:10px;font-weight:800;color:#0369a1;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;"><i class="fas fa-file-lines"></i> محتوى المعاملة</div>';
+    if (txn.contentHtml && txn.contentHtml.trim()) {
+      h += '<div style="font-size:14px;color:#0f172a;line-height:1.85;">' + txn.contentHtml + '</div>';
+    } else if (txn.description) {
+      h += '<div style="font-size:14px;color:#0f172a;line-height:1.85;white-space:pre-wrap;">' + _esc(txn.description) + '</div>';
+    } else {
+      h += '<div style="font-size:12px;color:#64748b;font-style:italic;">— لا يوجد محتوى —</div>';
+    }
+    if (txn.attachment && txn.attachment.startsWith && txn.attachment.startsWith('data:')) {
+      h += '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:6px;color:#0ea5e9;font-size:12px;font-weight:800;margin-top:10px;padding:6px 12px;background:#fff;border:1.5px solid #0ea5e9;border-radius:8px;text-decoration:none;"><i class="fas fa-download"></i> تحميل المرفق</a>';
+    }
+    h += '</div>';
+
+    // 6. TOGGLE BUTTON — show full workflow timeline on demand
+    var hasWorkflow = (txn.workflowPath && txn.workflowPath.length) || (txn.logs && txn.logs.length) || (txn.recipients && txn.recipients.length);
+    if (hasWorkflow) {
+      h += '<button onclick="toggleWorkflowView()" id="wfToggleBtn" style="width:100%;padding:13px;border-radius:12px;border:1.5px dashed #8b5cf6;background:#faf5ff;color:#6d28d9;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px;">' +
+        '<i class="fas fa-route"></i><span id="wfToggleLabel">عرض سير المعاملة</span><i class="fas fa-chevron-down" id="wfToggleChevron" style="font-size:11px;transition:transform .2s;"></i>' +
+      '</button>';
+    }
+
+    // 7. WORKFLOW SECTION — hidden by default
+    h += '<div id="wfDetailWrap" style="display:none;">';
+    // 7a. Workflow path (compact horizontal stepper)
     if (txn.workflowPath && txn.workflowPath.length) {
-      h += '<div style="padding:8px;border-radius:10px;background:#f8fafc;border:1px solid #e5e7eb;margin-bottom:10px;">' +
-        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:6px;"><i class="fas fa-route" style="color:#8b5cf6;"></i> '+t('txn.pathTitle')+'</div>' +
-        '<div style="display:flex;flex-wrap:wrap;gap:3px;align-items:center;">';
+      h += '<div style="padding:10px;border-radius:10px;background:#f8fafc;border:1px solid #e5e7eb;margin-bottom:10px;">' +
+        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:8px;"><i class="fas fa-route" style="color:#8b5cf6;"></i> مسار الموافقات</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">';
       txn.workflowPath.forEach(function(s, i) {
         var clr = s.isCurrent ? '#0ea5e9' : (s.isPast ? '#10b981' : '#94a3b8');
         var bg  = s.isCurrent ? '#e0f2fe' : (s.isPast ? '#dcfce7' : '#f1f5f9');
-        h += '<div style="padding:4px 8px;border-radius:8px;background:'+bg+';border:1px solid '+clr+';font-size:9px;color:'+clr+';font-weight:800;"><i class="fas '+(s.isCurrent?'fa-arrow-right':s.isPast?'fa-check':'fa-circle')+'" style="font-size:7px;margin-left:3px;"></i>'+s.stepName+'</div>';
-        if (i < txn.workflowPath.length - 1) h += '<i class="fas '+(currentLang==='en'?'fa-chevron-right':'fa-chevron-left')+'" style="color:#cbd5e1;font-size:8px;"></i>';
+        var icn = s.isCurrent ? 'fa-arrow-left' : (s.isPast ? 'fa-check' : 'fa-circle');
+        h += '<div style="padding:5px 10px;border-radius:8px;background:'+bg+';border:1px solid '+clr+';font-size:10px;color:'+clr+';font-weight:800;"><i class="fas '+icn+'" style="font-size:8px;margin-left:4px;"></i>'+_esc(s.stepName||s.positionName||'')+'</div>';
+        if (i < txn.workflowPath.length - 1) h += '<i class="fas fa-chevron-left" style="color:#cbd5e1;font-size:9px;"></i>';
       });
       h += '</div></div>';
     }
 
-    // Info grid
-    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">';
-    h += '<div class="pf"><span>'+t('txn.numberLabel')+'</span><b style="font-family:monospace;font-size:10px;">'+(txn.txnNumber||'')+'</b></div>';
-    h += '<div class="pf"><span>'+t('txn.typeLabel')+'</span><b>'+(txn.typeName||'')+'</b></div>';
-    h += '<div class="pf"><span>'+t('tm.amount')+'</span><b style="color:#0ea5e9;">'+Number(txn.amount||0).toFixed(2)+'</b></div>';
-    h += '<div class="pf"><span>'+t('txn.senderLabel')+'</span><b>'+(txn.senderName||txn.createdBy||'')+'</b></div>';
-    if (txn.branchName) h += '<div class="pf"><span>'+t('txn.branchLabel')+'</span><b>'+txn.branchName+'</b></div>';
-    if (txn.deptName) h += '<div class="pf"><span>'+t('txn.deptLabel')+'</span><b>'+txn.deptName+'</b></div>';
-    if (txn.currentAssignee) h += '<div class="pf"><span>'+t('txn.responsible')+'</span><b style="color:#1e40af;">'+txn.currentAssignee+(txn.currentRoleName?' <small style="color:#8b5cf6;">('+txn.currentRoleName+')</small>':'')+'</b></div>';
-    else if (txn.currentRoleName) h += '<div class="pf"><span>'+t('txn.currentRoleLabel')+'</span><b style="color:#8b5cf6;">'+txn.currentRoleName+'</b></div>';
-    if (txn.senderPosition) h += '<div class="pf"><span>'+t('txn.positionLabel')+'</span><b>'+txn.senderPosition+'</b></div>';
-    if (txn.accountName) h += '<div class="pf"><span>'+t('txn.accountLabel')+'</span><b>'+(txn.accountCode||'')+' — '+txn.accountName+'</b></div>';
-    if (txn.costCenterName) h += '<div class="pf"><span>'+t('txn.costCenterLabel')+'</span><b>'+txn.costCenterName+'</b></div>';
-    h += '</div>';
-
-    // Full content — prefer HTML, fall back to plain description
-    if (txn.contentHtml && txn.contentHtml.trim()) {
-      h += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:#fff;font-size:13px;color:#1e293b;line-height:1.8;margin-bottom:10px;">' +
-        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:6px;"><i class="fas fa-file-alt"></i> '+t('txn.content')+'</div>' +
-        txn.contentHtml +
-      '</div>';
-    } else if (txn.description) {
-      h += '<div style="padding:10px 12px;border-radius:10px;background:#f8fafc;font-size:12px;color:#475569;margin-bottom:10px;line-height:1.7;">'+txn.description+'</div>';
-    }
-    // Multi-recipients
+    // 7b. Recipients
     if (Array.isArray(txn.recipients) && txn.recipients.length) {
-      h += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-bottom:10px;">' +
-        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:6px;"><i class="fas fa-paper-plane"></i> '+t('txn.recipientsTitle')+'</div>' +
+      h += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-bottom:10px;background:#fff;">' +
+        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:6px;"><i class="fas fa-paper-plane"></i> المستلمون</div>' +
         '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
       txn.recipients.forEach(function(r) {
-        h += '<span style="padding:3px 8px;border-radius:6px;background:#eff6ff;color:#1e40af;font-size:11px;">' +
-          (r.code?'<code style="font-size:9px;color:#64748b;">'+r.code+'</code> ':'') +
-          '<b>'+(r.name||r.username||'')+'</b>' +
-          (r.needsResponse?' <span style="color:#ea580c;font-size:9px;">'+t('txn.needsResponse')+'</span>':'') +
+        h += '<span style="padding:4px 10px;border-radius:8px;background:#eff6ff;color:#1e40af;font-size:11px;">' +
+          (r.code?'<code style="font-size:9px;color:#64748b;">'+_esc(r.code)+'</code> ':'') +
+          '<b>'+_esc(r.name||r.username||'')+'</b>' +
           (r.responseReceived?' <i class="fas fa-check" style="color:#16a34a;"></i>':'') +
         '</span>';
       });
       h += '</div></div>';
     }
-    if (txn.attachment && txn.attachment.startsWith && txn.attachment.startsWith('data:')) h += '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:4px;color:#0ea5e9;font-size:12px;font-weight:700;margin-bottom:10px;"><i class="fas fa-download"></i> '+t('txn.downloadAttachment')+'</a>';
 
-    // Timeline
+    // 7c. Detailed timeline — who replied with what + attachments
     if (txn.logs && txn.logs.length) {
-      var tlLocale = currentLang === 'en' ? 'en-US' : 'ar-SA';
-      h += '<div style="margin-top:10px;"><div style="font-size:13px;font-weight:800;color:#1e293b;margin-bottom:8px;"><i class="fas fa-route" style="color:#0ea5e9;margin-left:4px;"></i> '+t('txn.workflowPath')+'</div>';
+      var aMap = { create:'إنشاء', approve:'موافقة', reject:'رفض', return:'إرجاع', close:'إقفال', forward:'تحويل' };
+      var aClr = { create:'#0ea5e9', approve:'#10b981', reject:'#ef4444', return:'#f97316', close:'#6b7280', forward:'#8b5cf6' };
+      var aIcon = { create:'fa-plus-circle', approve:'fa-check-circle', reject:'fa-times-circle', return:'fa-undo', close:'fa-lock', forward:'fa-share' };
+      h += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:12px;margin-bottom:10px;background:#fff;">';
+      h += '<div style="font-size:11px;font-weight:900;color:#0f172a;margin-bottom:10px;"><i class="fas fa-clock-rotate-left" style="color:#8b5cf6;margin-left:4px;"></i> سجل الإجراءات (ماذا قال كل قسم)</div>';
       txn.logs.forEach(function(l, i) {
         var c = aClr[l.actionType]||'#6b7280';
         var icon = aIcon[l.actionType]||'fa-circle';
-        var dt = l.createdAt ? new Date(l.createdAt).toLocaleString(tlLocale,{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+        var label = aMap[l.actionType]||l.actionType;
+        var dt = '';
+        if (l.createdAt) { try { dt = new Date(l.createdAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(_){} }
         var isLast = i === txn.logs.length - 1;
         h += '<div style="display:flex;gap:10px;position:relative;">';
-        // Timeline line + dot
-        h += '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">';
-        h += '<div style="width:28px;height:28px;border-radius:50%;background:'+c+'18;display:flex;align-items:center;justify-content:center;"><i class="fas '+icon+'" style="font-size:12px;color:'+c+';"></i></div>';
+        h += '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">' +
+          '<div style="width:32px;height:32px;border-radius:50%;background:'+c+'18;display:flex;align-items:center;justify-content:center;border:2px solid '+c+';"><i class="fas '+icon+'" style="font-size:13px;color:'+c+';"></i></div>';
         if (!isLast) h += '<div style="width:2px;flex:1;background:'+c+'30;min-height:20px;"></div>';
         h += '</div>';
-        // Content
-        h += '<div style="flex:1;padding-bottom:'+(isLast?'0':'12')+'px;">';
-        h += '<div style="font-size:12px;font-weight:800;color:'+c+';">'+(aMap[l.actionType]||l.actionType)+'</div>';
-        h += '<div style="font-size:11px;color:#64748b;">'+(l.actionBy||'')+(l.positionName?' — <span style="color:#1e40af;font-weight:700;">'+l.positionName+'</span>':'')+'</div>';
-        if (l.note) h += '<div style="font-size:11px;color:#334155;margin-top:2px;padding:4px 8px;border-radius:6px;background:#f1f5f9;">'+l.note+'</div>';
-        if (l.attachment && l.attachment.startsWith && l.attachment.startsWith('data:')) h += '<a href="'+l.attachment+'" download style="font-size:10px;color:#0ea5e9;"><i class="fas fa-paperclip"></i> '+t('txn.attachmentLbl')+'</a>';
-        h += '<div style="font-size:10px;color:#94a3b8;margin-top:2px;">'+dt+'</div>';
+        h += '<div style="flex:1;padding-bottom:'+(isLast?'0':'14')+'px;min-width:0;">';
+        h += '<div style="font-size:13px;font-weight:900;color:'+c+';">'+_esc(label)+'</div>';
+        h += '<div style="font-size:11.5px;color:#1e293b;font-weight:700;margin-top:2px;">'+_esc(l.actionBy||'—')+(l.positionName?' <span style="color:#8b5cf6;font-weight:700;">— '+_esc(l.positionName)+'</span>':'')+'</div>';
+        if (l.note) {
+          h += '<div style="font-size:12px;color:#334155;margin-top:6px;padding:8px 10px;border-radius:8px;background:#f8fafc;border:1px solid #f1f5f9;line-height:1.6;">' +
+            '<div style="font-size:9px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:3px;letter-spacing:.04em;"><i class="fas fa-quote-right"></i> رد القسم</div>' +
+            _esc(l.note) +
+          '</div>';
+        }
+        if (l.attachment && l.attachment.startsWith && l.attachment.startsWith('data:')) {
+          h += '<a href="'+l.attachment+'" download style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#0ea5e9;font-weight:800;margin-top:6px;padding:4px 10px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;text-decoration:none;"><i class="fas fa-paperclip"></i> مرفق هذا القسم</a>';
+        }
+        if (dt) h += '<div style="font-size:10px;color:#94a3b8;margin-top:4px;"><i class="far fa-clock"></i> '+dt+'</div>';
         h += '</div></div>';
       });
       h += '</div>';
     }
+    h += '</div>'; // end #wfDetailWrap
 
     // ─── Action buttons (visible only to the creator + when editable) ───
     var isCreator = (txn.createdBy === currentUser);
     var canEdit = isCreator && (txn.status === 'pending' || txn.status === 'draft');
-    // Determine if any action other than 'create' has been taken
     var hasActions = (txn.logs || []).some(function(l){ return l.actionType && l.actionType !== 'create'; });
     if (hasActions) canEdit = false;
     if (canEdit) {
       h += '<div class="td-action-btns">' +
-        '<button class="td-edit-btn" onclick="closeTxnDetail();empEditTxn(\''+txn.id+'\')"><i class="fas fa-edit"></i> تعديل المعاملة</button>' +
-        '<button class="td-cancel-btn" onclick="empCancelTxn(\''+txn.id+'\')"><i class="fas fa-trash"></i> إلغاء</button>' +
+        '<button class="td-edit-btn" onclick="closeTxnDetail();empEditTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-edit"></i> تعديل المعاملة</button>' +
+        '<button class="td-cancel-btn" onclick="empCancelTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-trash"></i> إلغاء</button>' +
         '<button class="td-close-btn" onclick="closeTxnDetail()">إغلاق</button>' +
       '</div>';
     } else {
@@ -1542,6 +1605,19 @@ function viewMyTxn(id) {
     document.getElementById('txnDetailModal').classList.add('show');
   });
 }
+
+window.toggleWorkflowView = function() {
+  var wrap = document.getElementById('wfDetailWrap');
+  var lbl  = document.getElementById('wfToggleLabel');
+  var chev = document.getElementById('wfToggleChevron');
+  var btn  = document.getElementById('wfToggleBtn');
+  if (!wrap) return;
+  var isHidden = wrap.style.display === 'none';
+  wrap.style.display = isHidden ? '' : 'none';
+  if (lbl) lbl.textContent = isHidden ? 'إخفاء سير المعاملة' : 'عرض سير المعاملة';
+  if (chev) chev.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
+  if (btn) btn.style.background = isHidden ? '#ede9fe' : '#faf5ff';
+};
 function closeTxnDetail() { document.getElementById('txnDetailModal').classList.remove('show'); }
 
 // ═══════════════════════════════════════════════════════════════════

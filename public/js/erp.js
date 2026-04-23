@@ -5820,14 +5820,17 @@ function wfReturnModal(id) {
       '<input type="file" id="wfActFile" accept=".pdf,.jpg,.jpeg,.png" class="wo-input">' +
     '</div>';
 
+  // Note: button is NEVER disabled at the DOM level — we validate
+  // on click and toast clear feedback instead. This avoids the browser
+  // swallowing clicks while the disabled flag is briefly set.
   var footer =
     '<button class="wo-btn wo-btn-secondary" id="wfActCancel">إلغاء</button>' +
-    '<button class="wo-btn wo-btn-warning" id="wfActOk" disabled style="opacity:.5;cursor:not-allowed;">' +
+    '<button class="wo-btn wo-btn-warning" id="wfActOk">' +
       '<i class="fas fa-rotate-left"></i><span>إرجاع المعاملة</span>' +
     '</button>';
 
   var modal = WoModal.open({
-    icon: 'fa-rotate-left', iconColor: 'warn',
+    icon: 'fa-rotate-left', iconColor: 'warning',
     title: 'إرجاع المعاملة للمرسل',
     subtitle: 'المعاملة ستعود للخطوة السابقة مع ملاحظاتك — سيستلم المرسل إشعاراً',
     body: body, footer: footer, size: 'lg'
@@ -5890,66 +5893,115 @@ function wfReturnModal(id) {
     };
   });
 
-  // Validate (enable/disable OK button)
+  // Validate — only updates the inline error message (no longer toggles disabled).
+  // Click handler does the real check at click time.
   window._wfRetValidate = function() {
     var hasReason = !!window._wfRetSelectedReason;
-    var note = (document.getElementById('wfActNote').value || '').trim();
-    var okBtn = document.getElementById('wfActOk');
+    var noteEl = document.getElementById('wfActNote');
+    var note = noteEl ? (noteEl.value || '').trim() : '';
     var errEl = document.getElementById('wfRetNoteErr');
-    var ready = hasReason && note.length >= 10;
-    if (okBtn) {
-      okBtn.disabled = !ready;
-      okBtn.style.opacity = ready ? '1' : '.5';
-      okBtn.style.cursor = ready ? 'pointer' : 'not-allowed';
-    }
     if (errEl) {
-      if (!hasReason) errEl.textContent = 'اختر سبب الإرجاع أولاً من الأعلى';
+      if (!hasReason)            errEl.textContent = 'اختر سبب الإرجاع أولاً من الأعلى';
       else if (note.length < 10) errEl.textContent = 'اكتب ملاحظة واضحة (10 حروف على الأقل)';
-      else errEl.textContent = '';
+      else                        errEl.textContent = '';
     }
   };
 
-  modal.el.querySelector('#wfActCancel').onclick = function() {
+  var cancelBtn = modal.el.querySelector('#wfActCancel');
+  if (cancelBtn) cancelBtn.onclick = function() {
     window._wfRetSelectedReason = null;
     modal.close(null);
   };
 
-  modal.el.querySelector('#wfActOk').onclick = function() {
-    if (!window._wfRetSelectedReason) { showToast('اختر سبب الإرجاع', true); return; }
-    var note = (document.getElementById('wfActNote').value || '').trim();
-    if (note.length < 10) { showToast('اكتب ملاحظة واضحة (10 حروف على الأقل)', true); return; }
-    // Compose final note with reason code + label
-    var finalNote = '[' + window._wfRetSelectedReason.label + '] ' + note;
-    var fileInput = document.getElementById('wfActFile');
-    _wfSubmitAction(modal, id, 'return', finalNote, fileInput);
+  var okBtn = modal.el.querySelector('#wfActOk');
+  if (okBtn) okBtn.onclick = function(ev) {
+    try {
+      ev && ev.preventDefault && ev.preventDefault();
+      if (!window._wfRetSelectedReason) {
+        showToast('اختر سبب الإرجاع من الأعلى', true);
+        // scroll to top of modal so user sees the reason cards
+        var body = modal.el.querySelector('.wo-modal-body');
+        if (body) body.scrollTop = 0;
+        return;
+      }
+      var noteEl = document.getElementById('wfActNote');
+      var note = noteEl ? (noteEl.value || '').trim() : '';
+      if (note.length < 10) {
+        showToast('اكتب ملاحظة واضحة (10 حروف على الأقل)', true);
+        if (noteEl) noteEl.focus();
+        return;
+      }
+      // Compose final note with reason label
+      var finalNote = '[' + window._wfRetSelectedReason.label + '] ' + note;
+      var fileInput = document.getElementById('wfActFile');
+      _wfSubmitAction(modal, id, 'return', finalNote, fileInput);
+    } catch (clickErr) {
+      console.error('wfReturnModal click error:', clickErr);
+      showToast('خطأ غير متوقع: ' + (clickErr && clickErr.message || clickErr), true);
+    }
   };
 }
 
-// Shared submit helper
+// Shared submit helper — defensive against missing API bridge / lock methods
 function _wfSubmitAction(modal, id, action, note, fileInput) {
   var doSend = function(attachment) {
-    modal.lock();
+    try { modal.lock && modal.lock(); } catch(_){}
     loader(true);
-    window._apiBridge.withSuccessHandler(function(r) {
-      loader(false); modal.unlock();
-      if (r.success) {
-        var statusLabels = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة' };
-        window._wfRetSelectedReason = null;
-        modal.close(r);
-        showToast('تم — الحالة الجديدة: ' + (statusLabels[r.newStatus] || r.newStatus));
-        ['erpWfInbox','erpWfIncoming','erpWfDashboard','erpWfOutgoing'].forEach(function(sec) {
-          var el = document.getElementById(sec);
-          if (el && !el.classList.contains('hidden')) {
-            var fn = { erpWfInbox: wfLoadInbox, erpWfIncoming: wfLoadIncoming,
-                       erpWfDashboard: wfLoadDashboard, erpWfOutgoing: wfLoadOutbox }[sec];
-            if (typeof fn === 'function') fn();
-          }
-        });
-      } else showToast(r.error, true);
-    }).wfTransactionAction(id, { action: action, username: currentUser, note: note, attachment: attachment || '' });
+    if (!window._apiBridge || typeof window._apiBridge.withSuccessHandler !== 'function') {
+      loader(false);
+      try { modal.unlock && modal.unlock(); } catch(_){}
+      showToast('خطأ: API bridge غير متاح', true);
+      return;
+    }
+    var done = false;
+    var settle = function() {
+      if (done) return;
+      done = true;
+      loader(false);
+      try { modal.unlock && modal.unlock(); } catch(_){}
+    };
+    // Safety net: if no response in 30s, unlock the UI
+    var timeout = setTimeout(function() {
+      if (done) return;
+      settle();
+      showToast('انتهت المهلة — جرّب مرة أخرى', true);
+    }, 30000);
+
+    window._apiBridge
+      .withSuccessHandler(function(r) {
+        clearTimeout(timeout);
+        settle();
+        if (!r) { showToast('لا توجد استجابة من الخادم', true); return; }
+        if (r.success) {
+          var statusLabels = { pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', approved: 'معتمدة', rejected: 'مرفوضة', closed: 'مغلقة', returned: 'تم الإرجاع' };
+          window._wfRetSelectedReason = null;
+          modal.close(r);
+          showToast('تم — الحالة الجديدة: ' + (statusLabels[r.newStatus] || r.newStatus || 'تم الإجراء'));
+          ['erpWfInbox','erpWfIncoming','erpWfDashboard','erpWfOutgoing'].forEach(function(sec) {
+            var el = document.getElementById(sec);
+            if (el && !el.classList.contains('hidden')) {
+              var fn = { erpWfInbox: wfLoadInbox, erpWfIncoming: wfLoadIncoming,
+                         erpWfDashboard: wfLoadDashboard, erpWfOutgoing: wfLoadOutbox }[sec];
+              if (typeof fn === 'function') try { fn(); } catch(_){}
+            }
+          });
+        } else {
+          showToast(r.error || 'فشل الإجراء', true);
+        }
+      })
+      .withFailureHandler(function(err) {
+        clearTimeout(timeout);
+        settle();
+        console.error('wfTransactionAction failed:', err);
+        showToast('فشل الاتصال بالخادم: ' + (err && err.message || err), true);
+      })
+      .wfTransactionAction(id, { action: action, username: currentUser, note: note, attachment: attachment || '' });
   };
   if (fileInput && fileInput.files && fileInput.files[0]) {
-    var fr = new FileReader(); fr.onload = function(e) { doSend(e.target.result); }; fr.readAsDataURL(fileInput.files[0]);
+    var fr = new FileReader();
+    fr.onload  = function(e) { doSend(e.target.result); };
+    fr.onerror = function()  { doSend(''); showToast('تعذّر قراءة المرفق — تم الإرسال بدونه', true); };
+    fr.readAsDataURL(fileInput.files[0]);
   } else doSend('');
 }
 

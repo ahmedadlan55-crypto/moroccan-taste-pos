@@ -75,8 +75,6 @@
           <div class="nav-item" data-erp-nav="erpGLAccounts" onclick="erpNav('erpGLAccounts')"><i class="fas fa-sitemap"></i><span>دليل الحسابات</span></div>
           <div class="nav-item" data-erp-nav="erpGLJournals" onclick="erpNav('erpGLJournals')"><i class="fas fa-book"></i><span>القيود المحاسبية</span></div>
           <div class="nav-item" data-erp-nav="erpPeriods" onclick="erpNav('erpPeriods')"><i class="fas fa-calendar-alt"></i><span>الفترات المحاسبية</span></div>
-          <div class="nav-item" data-erp-nav="erpPurchaseReports" onclick="erpNav('erpPurchaseReports')"><i class="fas fa-truck"></i><span>تقارير المشتريات</span></div>
-          <div class="nav-item" data-erp-nav="erpFinReports" onclick="erpNav('erpFinReports')"><i class="fas fa-chart-bar"></i><span>التقارير المالية</span></div>
         </div>
 
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
@@ -87,9 +85,6 @@
           <div class="nav-item" data-erp-nav="erpSuppliers" onclick="erpNav('erpSuppliers')"><i class="fas fa-truck"></i><span>الموردين</span></div>
           <div class="nav-item" data-erp-nav="erpCustomerStatement" onclick="erpNav('erpCustomerStatement')"><i class="fas fa-file-invoice-dollar"></i><span>كشف حساب عميل</span></div>
           <div class="nav-item" data-erp-nav="erpSupplierStatement" onclick="erpNav('erpSupplierStatement')"><i class="fas fa-file-invoice"></i><span>كشف حساب مورد</span></div>
-          <div class="nav-item" data-erp-nav="erpGLLedgerReport" onclick="erpNav('erpGLLedgerReport')"><i class="fas fa-book"></i><span>دفتر الأستاذ</span></div>
-          <div class="nav-item" data-erp-nav="erpARAging" onclick="erpNav('erpARAging')"><i class="fas fa-user-clock"></i><span>أعمار ذمم العملاء</span></div>
-          <div class="nav-item" data-erp-nav="erpAPAging" onclick="erpNav('erpAPAging')"><i class="fas fa-truck-loading"></i><span>أعمار ذمم الموردين</span></div>
         </div>
 
         <!-- ═══ إدارة النقد ═══ -->
@@ -105,27 +100,45 @@
           <div class="nav-item" data-erp-nav="erpCashTransfers" onclick="erpNav('erpCashTransfers')"><i class="fas fa-exchange-alt"></i><span>التحويلات</span></div>
         </div>
 
-        <!-- ═══ التقارير المالية المتقدمة ═══ -->
+        <!-- ═══ التقارير المالية (موحدة — IFRS / المعايير الدولية) ═══ -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-chart-pie"></i><span>التقارير المالية المعيارية</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-chart-pie"></i><span>التقارير المالية</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpRptTrialBalance" onclick="erpNav('erpRptTrialBalance')"><i class="fas fa-balance-scale"></i><span>ميزان المراجعة</span></div>
-          <div class="nav-item" data-erp-nav="erpRptPnL" onclick="erpNav('erpRptPnL')"><i class="fas fa-chart-line"></i><span>قائمة الدخل (P&amp;L)</span></div>
-          <div class="nav-item" data-erp-nav="erpRptBalanceSheet" onclick="erpNav('erpRptBalanceSheet')"><i class="fas fa-landmark"></i><span>الميزانية العمومية</span></div>
-          <div class="nav-item" data-erp-nav="erpRptCashFlow" onclick="erpNav('erpRptCashFlow')"><i class="fas fa-water"></i><span>قائمة التدفقات النقدية</span></div>
-          <div class="nav-item" data-erp-nav="erpRptProfitability" onclick="erpNav('erpRptProfitability')"><i class="fas fa-dollar-sign"></i><span>الربحية حسب البُعد</span></div>
-        </div>
+          <!-- مركز التقارير -->
+          <div class="nav-item" data-erp-nav="erpRptHub" onclick="erpNav('erpRptHub')" style="background:linear-gradient(90deg,rgba(14,165,233,.15),transparent);font-weight:800;"><i class="fas fa-th-large" style="color:#0ea5e9;"></i><span>مركز التقارير المالية</span></div>
 
-        <!-- ═══ تقارير التشغيل ═══ -->
-        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-chart-area"></i><span>تقارير التشغيل</span><i class="fas fa-chevron-down submenu-indicator"></i>
-        </div>
-        <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpRptInventoryVal" onclick="erpNav('erpRptInventoryVal')"><i class="fas fa-warehouse"></i><span>تقييم المخزون</span></div>
+          <!-- ─── القوائم المالية الأساسية (IFRS / IAS 1) ─── -->
+          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;">القوائم المالية الأساسية (IFRS)</div>
+          <div class="nav-item" data-erp-nav="erpRptTrialBalance"  onclick="erpNav('erpRptTrialBalance')"><i class="fas fa-balance-scale"></i><span>ميزان المراجعة</span></div>
+          <div class="nav-item" data-erp-nav="erpRptPnL"           onclick="erpNav('erpRptPnL')"><i class="fas fa-chart-line"></i><span>قائمة الدخل الشامل</span></div>
+          <div class="nav-item" data-erp-nav="erpRptBalanceSheet"  onclick="erpNav('erpRptBalanceSheet')"><i class="fas fa-landmark"></i><span>قائمة المركز المالي</span></div>
+          <div class="nav-item" data-erp-nav="erpRptCashFlow"      onclick="erpNav('erpRptCashFlow')"><i class="fas fa-water"></i><span>قائمة التدفقات النقدية</span></div>
+          <div class="nav-item" data-erp-nav="erpRptEquityChanges" onclick="erpNav('erpRptEquityChanges')"><i class="fas fa-coins"></i><span>التغيرات في حقوق الملكية</span></div>
+
+          <!-- ─── التحليلات المالية ─── -->
+          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;">التحليل المالي</div>
+          <div class="nav-item" data-erp-nav="erpRptFinRatios"     onclick="erpNav('erpRptFinRatios')"><i class="fas fa-calculator"></i><span>المؤشرات والنسب المالية</span></div>
+          <div class="nav-item" data-erp-nav="erpRptProfitability" onclick="erpNav('erpRptProfitability')"><i class="fas fa-dollar-sign"></i><span>الربحية حسب البُعد</span></div>
           <div class="nav-item" data-erp-nav="erpRptSalesAnalytics" onclick="erpNav('erpRptSalesAnalytics')"><i class="fas fa-chart-bar"></i><span>تحليل المبيعات</span></div>
+
+          <!-- ─── التسويات والذمم ─── -->
+          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;">التسويات والذمم</div>
+          <div class="nav-item" data-erp-nav="erpRptBankRecon"     onclick="erpNav('erpRptBankRecon')"><i class="fas fa-university"></i><span>تسوية البنوك</span></div>
+          <div class="nav-item" data-erp-nav="erpARAging"          onclick="erpNav('erpARAging')"><i class="fas fa-user-clock"></i><span>أعمار ذمم العملاء</span></div>
+          <div class="nav-item" data-erp-nav="erpAPAging"          onclick="erpNav('erpAPAging')"><i class="fas fa-truck-loading"></i><span>أعمار ذمم الموردين</span></div>
+          <div class="nav-item" data-erp-nav="erpGLLedgerReport"   onclick="erpNav('erpGLLedgerReport')"><i class="fas fa-book"></i><span>دفتر الأستاذ العام</span></div>
+
+          <!-- ─── التشغيل والمخزون ─── -->
+          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;">التشغيل والمخزون</div>
+          <div class="nav-item" data-erp-nav="erpRptInventoryVal"  onclick="erpNav('erpRptInventoryVal')"><i class="fas fa-warehouse"></i><span>تقييم المخزون</span></div>
           <div class="nav-item" data-erp-nav="erpRptWasteAnalytics" onclick="erpNav('erpRptWasteAnalytics')"><i class="fas fa-trash-alt"></i><span>تحليل الهدر</span></div>
-          <div class="nav-item" data-erp-nav="erpRptRoyaltyRecon" onclick="erpNav('erpRptRoyaltyRecon')"><i class="fas fa-handshake"></i><span>تسوية الفرانشايز</span></div>
+          <div class="nav-item" data-erp-nav="erpRptRoyaltyRecon"  onclick="erpNav('erpRptRoyaltyRecon')"><i class="fas fa-handshake"></i><span>تسوية الفرانشايز</span></div>
+
+          <!-- ─── الضرائب والمشتريات ─── -->
+          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;">الضرائب والمشتريات</div>
+          <div class="nav-item" data-erp-nav="erpVATReports"       onclick="erpNav('erpVATReports')"><i class="fas fa-percent"></i><span>تقارير الضريبة</span></div>
+          <div class="nav-item" data-erp-nav="erpPurchaseReports"  onclick="erpNav('erpPurchaseReports')"><i class="fas fa-truck"></i><span>تقارير المشتريات</span></div>
         </div>
 
         <!-- ═══ الإدارة المتقدمة (ERP v3) ═══ -->
@@ -1842,78 +1855,307 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<!-- FINANCIAL REPORTS (التقارير المالية) -->
-<!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpFinReports" class="dash-section hidden">
-  <div class="section-header" style="flex-wrap:wrap;gap:10px;">
-    <h2 class="section-title"><i class="fas fa-chart-line"></i> التقارير المالية</h2>
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- التقارير المالية — مركز التقارير (Reports Hub) — IFRS / IAS 1 compliant -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div id="erpRptHub" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot info"><i class="fas fa-chart-pie"></i></span>مركز التقارير المالية</h1>
+      <p class="wo-header-sub">منظومة تقارير شاملة وفق المعايير الدولية لإعداد التقارير المالية (IFRS / IAS 1) — تشمل القوائم الأساسية، التحليل المالي، التسويات، والتقارير التشغيلية. كل تقرير يدعم التصدير + الطباعة + الفلترة بالفترة والبراند والفرع.</p>
+    </div>
+  </header>
+
+  <!-- Quick KPIs (snapshot of key indicators) -->
+  <div class="wo-metric-strip" id="rhKpis">
+    <div class="wo-metric accent-info">
+      <div class="wo-metric-icon" style="background:var(--wo-info-bg);color:var(--wo-info);"><i class="fas fa-coins"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">إجمالي الأصول</div><div class="wo-metric-value" id="rhTotalAssets">—</div></div>
+    </div>
+    <div class="wo-metric accent-warning">
+      <div class="wo-metric-icon" style="background:var(--wo-warning-bg);color:var(--wo-warning);"><i class="fas fa-scale-unbalanced"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">إجمالي الالتزامات</div><div class="wo-metric-value" id="rhTotalLiab">—</div></div>
+    </div>
+    <div class="wo-metric accent-purple">
+      <div class="wo-metric-icon" style="background:var(--wo-purple-bg);color:var(--wo-purple);"><i class="fas fa-user-tie"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">حقوق الملكية</div><div class="wo-metric-value" id="rhEquity">—</div></div>
+    </div>
+    <div class="wo-metric accent-success">
+      <div class="wo-metric-icon" style="background:var(--wo-success-bg);color:var(--wo-success);"><i class="fas fa-arrow-trend-up"></i></div>
+      <div class="wo-metric-body"><div class="wo-metric-label">صافي الدخل (هذا الشهر)</div><div class="wo-metric-value" id="rhNetIncome">—</div></div>
+    </div>
   </div>
 
-  <!-- Reports Hub — Card Layout -->
-  <div id="finReportsHub">
-
-    <!-- تقارير الحسابات العامة -->
-    <div class="fin-report-group">
-      <div class="frg-header"><i class="fas fa-calculator"></i> تقارير الحسابات العامة</div>
-      <div class="frg-cards">
-        <div class="fr-card" onclick="erpShowFinReport('trial')"><div class="fr-icon" style="background:#ef4444;"><i class="fas fa-percentage"></i></div><div class="fr-name">ميزان المراجعة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('trial')"><i class="fas fa-eye"></i> عرض</button></div></div>
-        <div class="fr-card" onclick="erpShowFinReport('income')"><div class="fr-icon" style="background:#f59e0b;"><i class="fas fa-coins"></i></div><div class="fr-name">قائمة الدخل</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('income')"><i class="fas fa-eye"></i> عرض</button></div></div>
-        <div class="fr-card" onclick="erpShowFinReport('balance')"><div class="fr-icon" style="background:#ec4899;"><i class="fas fa-balance-scale-right"></i></div><div class="fr-name">الميزانية العمومية</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('balance')"><i class="fas fa-eye"></i> عرض</button></div></div>
-        <div class="fr-card" onclick="erpShowFinReport('pnl')"><div class="fr-icon" style="background:#84cc16;"><i class="fas fa-dollar-sign"></i></div><div class="fr-name">الربح والخسارة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('pnl')"><i class="fas fa-eye"></i> عرض</button></div></div>
-        <div class="fr-card" onclick="erpShowFinReport('cashflow')"><div class="fr-icon" style="background:#06b6d4;"><i class="fas fa-exchange-alt"></i></div><div class="fr-name">التدفقات النقدية</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('cashflow')"><i class="fas fa-eye"></i> عرض</button></div></div>
-        <div class="fr-card" onclick="erpShowFinReport('assets')"><div class="fr-icon" style="background:#8b5cf6;"><i class="fas fa-building"></i></div><div class="fr-name">الأصول</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('assets')"><i class="fas fa-eye"></i> عرض</button></div></div>
+  <!-- ─── Group 1: Core IFRS Statements (5 tiles) ─── -->
+  <div class="rh-group">
+    <div class="rh-group-head">
+      <div>
+        <h3><i class="fas fa-landmark" style="color:#0ea5e9;"></i> القوائم المالية الأساسية</h3>
+        <p>المجموعة الأساسية للقوائم المالية المطلوبة وفق المعيار <b>IAS 1</b> (Presentation of Financial Statements). تُمثّل البصمة المالية الكاملة للمنشأة.</p>
+      </div>
+      <span class="rh-badge ifrs">IFRS · IAS 1</span>
+    </div>
+    <div class="rh-grid">
+      <div class="rh-card" onclick="erpNav('erpRptTrialBalance')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#fee2e2,#fecaca);color:#dc2626;"><i class="fas fa-balance-scale"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">ميزان المراجعة</div>
+          <div class="rh-desc">جميع الحسابات بأرصدتها المدينة والدائنة — للتحقق من توازن الدفاتر قبل إصدار القوائم.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpRptPnL')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#dcfce7,#bbf7d0);color:#16a34a;"><i class="fas fa-chart-line"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">قائمة الدخل الشامل</div>
+          <div class="rh-desc">الإيرادات − المصروفات = الربح/الخسارة لفترة مالية محددة. الأساس لقياس الأداء التشغيلي.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpRptBalanceSheet')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#dbeafe,#bfdbfe);color:#1d4ed8;"><i class="fas fa-landmark"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">قائمة المركز المالي</div>
+          <div class="rh-desc">الأصول = الالتزامات + حقوق الملكية في تاريخ محدد — صورة لحظية للمنشأة.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpRptCashFlow')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#cffafe,#a5f3fc);color:#0891b2;"><i class="fas fa-water"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">قائمة التدفقات النقدية</div>
+          <div class="rh-desc">تدفقات النقد من الأنشطة التشغيلية والاستثمارية والتمويلية — يقيس قدرة المنشأة على توليد النقد.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpRptEquityChanges')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#fef3c7,#fde68a);color:#b45309;"><i class="fas fa-coins"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">التغيرات في حقوق الملكية</div>
+          <div class="rh-desc">رأس المال الافتتاحي + الأرباح المحتجزة + الإضافات/السحوبات — يكمل الصورة المالية لـ IAS 1.</div>
+          <span class="rh-tag-new">جديد</span>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
       </div>
     </div>
+  </div>
 
-    <!-- تقارير القيود اليومية -->
-    <div class="fin-report-group">
-      <div class="frg-header"><i class="fas fa-book"></i> تقارير القيود اليومية</div>
-      <div class="frg-cards">
-        <div class="fr-card" onclick="erpShowFinReport('trial')"><div class="fr-icon" style="background:#10b981;"><i class="fas fa-clipboard-list"></i></div><div class="fr-name">تقرير ميزان مراجعة مجاميع وأرصدة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('trial')"><i class="fas fa-eye"></i> عرض</button></div></div>
-        <div class="fr-card" onclick="erpShowFinReport('trial')"><div class="fr-icon" style="background:#14b8a6;"><i class="fas fa-file-invoice"></i></div><div class="fr-name">تقرير حساب مراجعة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('trial')"><i class="fas fa-eye"></i> عرض</button></div></div>
-        <div class="fr-card" onclick="erpShowFinReport('trial')"><div class="fr-icon" style="background:#3b82f6;"><i class="fas fa-file-alt"></i></div><div class="fr-name">تقرير ميزان مراجعة أرصدة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpShowFinReport('trial')"><i class="fas fa-eye"></i> عرض</button></div></div>
-        <div class="fr-card" onclick="erpNav('erpGLAccounts')"><div class="fr-icon" style="background:#22c55e;"><i class="fas fa-sitemap"></i></div><div class="fr-name">حساب الأستاذ</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpNav('erpGLAccounts')"><i class="fas fa-eye"></i> عرض</button></div></div>
-        <div class="fr-card" onclick="erpNav('erpCostCenters')"><div class="fr-icon" style="background:#f97316;"><i class="fas fa-bullseye"></i></div><div class="fr-name">مراكز التكلفة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpNav('erpCostCenters')"><i class="fas fa-eye"></i> عرض</button></div></div>
-        <div class="fr-card" onclick="erpNav('erpGLJournals')"><div class="fr-icon" style="background:#0ea5e9;"><i class="fas fa-book-open"></i></div><div class="fr-name">تقرير القيود</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpNav('erpGLJournals')"><i class="fas fa-eye"></i> عرض</button></div></div>
-        <div class="fr-card" onclick="erpNav('erpGLAccounts')"><div class="fr-icon" style="background:#6366f1;"><i class="fas fa-folder-tree"></i></div><div class="fr-name">دليل الحسابات العامة</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpNav('erpGLAccounts')"><i class="fas fa-eye"></i> عرض</button></div></div>
+  <!-- ─── Group 2: Financial Analytics (3 tiles) ─── -->
+  <div class="rh-group">
+    <div class="rh-group-head">
+      <div>
+        <h3><i class="fas fa-chart-bar" style="color:#8b5cf6;"></i> التحليل المالي والمؤشرات</h3>
+        <p>تحليلات أعمق تساعد الإدارة على اتخاذ القرارات — السيولة، الربحية، الكفاءة، والملاءة المالية.</p>
+      </div>
+      <span class="rh-badge analytics">Management Analytics</span>
+    </div>
+    <div class="rh-grid">
+      <div class="rh-card" onclick="erpNav('erpRptFinRatios')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#f3e8ff,#e9d5ff);color:#7c3aed;"><i class="fas fa-calculator"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">المؤشرات والنسب المالية</div>
+          <div class="rh-desc">نسب السيولة (Current Ratio, Quick Ratio) + الربحية (Gross/Net Margin, ROA, ROE) + الكفاءة + المديونية — مع تحليل وتفسير لكل مؤشر.</div>
+          <span class="rh-tag-new">جديد</span>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpRptProfitability')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#ecfccb,#d9f99d);color:#65a30d;"><i class="fas fa-dollar-sign"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">الربحية حسب البُعد</div>
+          <div class="rh-desc">تحليل الربحية حسب البراند / الفرع / مركز التكلفة — يكشف الجهات الأكثر ربحية والأقل أداءً.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpRptSalesAnalytics')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#dbeafe,#93c5fd);color:#2563eb;"><i class="fas fa-chart-bar"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">تحليل المبيعات</div>
+          <div class="rh-desc">المبيعات اليومية + طريقة الدفع + الكاشير + الأصناف الأكثر مبيعاً — رؤية تشغيلية كاملة.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
       </div>
     </div>
+  </div>
 
-    <!-- تقارير الضرائب -->
-    <div class="fin-report-group">
-      <div class="frg-header"><i class="fas fa-receipt"></i> تقارير الضرائب والإقرارات</div>
-      <div class="frg-cards">
-        <div class="fr-card" onclick="erpNav('erpVATReports')"><div class="fr-icon" style="background:#ef4444;"><i class="fas fa-percentage"></i></div><div class="fr-name">تقرير الضرائب</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpNav('erpVATReports')"><i class="fas fa-eye"></i> عرض</button></div></div>
-        <div class="fr-card" onclick="erpNav('erpVATReports')"><div class="fr-icon" style="background:#16a34a;"><i class="fas fa-file-invoice-dollar"></i></div><div class="fr-name">إقرار ضريبي</div><div class="fr-actions"><button class="fr-btn" onclick="event.stopPropagation();erpNav('erpVATReports')"><i class="fas fa-eye"></i> عرض</button></div></div>
+  <!-- ─── Group 3: Reconciliations & Receivables (4 tiles) ─── -->
+  <div class="rh-group">
+    <div class="rh-group-head">
+      <div>
+        <h3><i class="fas fa-handshake" style="color:#0ea5e9;"></i> التسويات والذمم</h3>
+        <p>تتبع التسويات البنكية، الديون المستحقة على العملاء، والمبالغ المستحقة للموردين، ودفتر الأستاذ التفصيلي.</p>
+      </div>
+      <span class="rh-badge reco">Reconciliation</span>
+    </div>
+    <div class="rh-grid">
+      <div class="rh-card" onclick="erpNav('erpRptBankRecon')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#dbeafe,#93c5fd);color:#1e40af;"><i class="fas fa-university"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">تسوية البنوك</div>
+          <div class="rh-desc">مقارنة الأرصدة الدفترية مع كشوف البنك — كشف الفروقات المعلقة والشيكات تحت التحصيل.</div>
+          <span class="rh-tag-new">جديد</span>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpARAging')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#dcfce7,#86efac);color:#15803d;"><i class="fas fa-user-clock"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">أعمار ذمم العملاء</div>
+          <div class="rh-desc">المبالغ المستحقة من العملاء مقسّمة حسب فترات التأخير (0-30، 31-60، 61-90، 90+ يوم).</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpAPAging')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#fee2e2,#fca5a5);color:#b91c1c;"><i class="fas fa-truck-loading"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">أعمار ذمم الموردين</div>
+          <div class="rh-desc">المبالغ المستحقة للموردين حسب فترة التأخير — لإدارة جدول السداد والحفاظ على العلاقات.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpGLLedgerReport')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#f1f5f9,#cbd5e1);color:#475569;"><i class="fas fa-book"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">دفتر الأستاذ العام</div>
+          <div class="rh-desc">الحركة التفصيلية لكل حساب — كل قيد بترتيبه الزمني مع الرصيد الجاري.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
       </div>
     </div>
-
   </div>
 
-  <!-- Filters (shown when viewing a specific report) -->
-  <div class="fin-filters" id="finFilters" style="display:none;">
-    <button class="btn btn-light" onclick="erpBackToReportsHub()" style="border-radius:10px;"><i class="fas fa-arrow-right"></i> رجوع</button>
-    <div class="ff-group"><label>من تاريخ</label><input type="date" id="finStartDate" class="form-control"></div>
-    <div class="ff-group"><label>إلى تاريخ</label><input type="date" id="finEndDate" class="form-control"></div>
-    <div class="ff-group"><label>نوع الحساب</label>
-      <select id="finAccType" class="form-control">
-        <option value="">الكل</option>
-        <option value="asset">أصول</option>
-        <option value="liability">التزامات</option>
-        <option value="equity">حقوق ملكية</option>
-        <option value="revenue">إيرادات</option>
-        <option value="expense">مصروفات</option>
-      </select>
+  <!-- ─── Group 4: Operational (3 tiles) ─── -->
+  <div class="rh-group">
+    <div class="rh-group-head">
+      <div>
+        <h3><i class="fas fa-warehouse" style="color:#f59e0b;"></i> التشغيل والمخزون</h3>
+        <p>تقارير تشغيلية مهمة لمراقبة المخزون، الهدر، وحساب الإتاوات للفرانشايز.</p>
+      </div>
+      <span class="rh-badge ops">Operations</span>
     </div>
-    <div class="ff-group"><label>المنشئ</label><input type="text" id="finCreatedBy" class="form-control" placeholder="اسم المستخدم"></div>
-    <button class="btn btn-primary" onclick="erpApplyFinFilters()" style="align-self:flex-end;border-radius:10px;height:38px;"><i class="fas fa-filter"></i> تطبيق</button>
-    <button class="btn btn-secondary" onclick="erpPrintFinReport()" style="align-self:flex-end;border-radius:10px;height:38px;"><i class="fas fa-print"></i> طباعة</button>
+    <div class="rh-grid">
+      <div class="rh-card" onclick="erpNav('erpRptInventoryVal')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#fef3c7,#fde68a);color:#a16207;"><i class="fas fa-warehouse"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">تقييم المخزون</div>
+          <div class="rh-desc">قيمة المخزون الحالي حسب طريقة المتوسط المرجح — لكل صنف ومستودع.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpRptWasteAnalytics')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#fee2e2,#fca5a5);color:#dc2626;"><i class="fas fa-trash-alt"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">تحليل الهدر</div>
+          <div class="rh-desc">أكثر الأصناف هدراً + أسباب الهدر + التكلفة المُهدَرة — لاتخاذ قرارات تقليل الفاقد.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpRptRoyaltyRecon')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;"><i class="fas fa-handshake"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">تسوية الفرانشايز</div>
+          <div class="rh-desc">حساب الإتاوات المستحقة على المبيعات حسب البراند — مع المتابعة والمتأخرات.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+    </div>
   </div>
 
-  <!-- Report Content -->
-  <div id="erpFinReportContent" class="fin-report-content">
-    <!-- Will be filled dynamically -->
+  <!-- ─── Group 5: Tax & Procurement (2 tiles) ─── -->
+  <div class="rh-group">
+    <div class="rh-group-head">
+      <div>
+        <h3><i class="fas fa-receipt" style="color:#16a34a;"></i> الضرائب والمشتريات</h3>
+        <p>تقارير الإقرارات الضريبية لـ ZATCA + تحليل المشتريات والموردين.</p>
+      </div>
+      <span class="rh-badge tax">VAT · ZATCA</span>
+    </div>
+    <div class="rh-grid">
+      <div class="rh-card" onclick="erpNav('erpVATReports')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#dcfce7,#86efac);color:#15803d;"><i class="fas fa-percent"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">تقارير الضريبة</div>
+          <div class="rh-desc">ضريبة المخرجات − ضريبة المدخلات = صافي الضريبة المستحقة — جاهز للإقرار الربعي.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpPurchaseReports')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#dbeafe,#bfdbfe);color:#1d4ed8;"><i class="fas fa-truck"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">تقارير المشتريات</div>
+          <div class="rh-desc">إجمالي المشتريات حسب المورد + البراند + الفترة — تحليل لإدارة سلسلة الإمداد.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+    </div>
   </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- NEW: قائمة التغيرات في حقوق الملكية (IAS 1 — Statement of Changes in Equity) -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div id="erpRptEquityChanges" class="dash-section hidden">
+  <div class="section-header"><h2 class="section-title"><i class="fas fa-coins"></i> قائمة التغيرات في حقوق الملكية</h2></div>
+  <div style="background:#fef3c7;padding:10px 14px;border-radius:10px;margin-bottom:14px;font-size:12.5px;color:#854d0e;line-height:1.7;">
+    <i class="fas fa-info-circle"></i> <b>تعريف:</b> تُظهر هذه القائمة جميع التغييرات في حقوق الملكية خلال فترة محددة — رأس المال الافتتاحي + صافي الدخل + الإضافات (مساهمات الملاك) − السحوبات (التوزيعات) = حقوق الملكية الختامية. <b>متطلب IAS 1.</b>
+  </div>
+  <div class="erp-rpt-filter">
+    <div><label>من تاريخ</label><input type="date" id="ecFrom" class="form-control-sm"></div>
+    <div><label>إلى تاريخ</label><input type="date" id="ecTo" class="form-control-sm"></div>
+    <div><label>البراند</label><select id="ecBrand" class="form-control-sm"><option value="">الكل</option></select></div>
+    <div><button class="btn btn-primary btn-sm" onclick="erpLoadEquityChanges()"><i class="fas fa-search"></i> عرض</button></div>
+  </div>
+  <div id="ecSummary" class="erp-rpt-kpi"></div>
+  <div class="erp-table-container">
+    <table class="erp-table">
+      <thead>
+        <tr>
+          <th>البند</th>
+          <th>رأس المال</th>
+          <th>الأرباح المحتجزة</th>
+          <th>الإحتياطيات</th>
+          <th class="num">الإجمالي</th>
+        </tr>
+      </thead>
+      <tbody id="ecBody"><tr><td colspan="5" class="empty-msg">حدد الفترة واضغط عرض</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- NEW: المؤشرات والنسب المالية (Financial Ratios Dashboard) -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div id="erpRptFinRatios" class="dash-section hidden">
+  <div class="section-header"><h2 class="section-title"><i class="fas fa-calculator"></i> المؤشرات والنسب المالية</h2></div>
+  <div style="background:#f3e8ff;padding:10px 14px;border-radius:10px;margin-bottom:14px;font-size:12.5px;color:#5b21b6;line-height:1.7;">
+    <i class="fas fa-lightbulb"></i> <b>لماذا المؤشرات المالية؟</b> أرقام القوائم المالية وحدها لا تكفي — النِسَب تحوّل الأرقام إلى رؤى قابلة للتفسير: هل المنشأة قادرة على سداد التزاماتها (السيولة)؟ هل تربح بكفاءة (الربحية)؟ هل تستخدم أصولها بشكل جيد (الكفاءة)؟ هل ديونها تحت السيطرة (الملاءة)؟
+  </div>
+  <div class="erp-rpt-filter">
+    <div><label>كما في تاريخ</label><input type="date" id="frAsOf" class="form-control-sm"></div>
+    <div><label>البراند</label><select id="frBrand" class="form-control-sm"><option value="">الكل</option></select></div>
+    <div><button class="btn btn-primary btn-sm" onclick="erpLoadFinRatios()"><i class="fas fa-search"></i> حساب</button></div>
+  </div>
+  <div id="frRatiosGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:14px;">
+    <div class="empty-msg" style="grid-column:1/-1;text-align:center;padding:30px;color:#94a3b8;">اضغط "حساب" لعرض المؤشرات المالية</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- NEW: تسوية البنوك (Bank Reconciliation) -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div id="erpRptBankRecon" class="dash-section hidden">
+  <div class="section-header"><h2 class="section-title"><i class="fas fa-university"></i> تسوية البنوك</h2></div>
+  <div style="background:#dbeafe;padding:10px 14px;border-radius:10px;margin-bottom:14px;font-size:12.5px;color:#1e40af;line-height:1.7;">
+    <i class="fas fa-info-circle"></i> <b>التسوية البنكية:</b> مقارنة الرصيد الدفتري لحسابك البنكي (في الدفاتر) مع رصيد كشف الحساب من البنك. الفروق المعتادة: شيكات تحت التحصيل، إيداعات في الطريق، رسوم بنكية لم تُسجَّل، أخطاء قيد. الهدف: التأكد من تطابق رصيدنا مع البنك.
+  </div>
+  <div class="erp-rpt-filter">
+    <div><label>الحساب البنكي</label><select id="brBank" class="form-control-sm"><option value="">— اختر البنك —</option></select></div>
+    <div><label>كما في تاريخ</label><input type="date" id="brAsOf" class="form-control-sm"></div>
+    <div><label>رصيد البنك (من الكشف)</label><input type="number" id="brBankBalance" class="form-control-sm" step="0.01" placeholder="مثلاً: 50000"></div>
+    <div><button class="btn btn-primary btn-sm" onclick="erpLoadBankRecon()"><i class="fas fa-search"></i> تسوية</button></div>
+  </div>
+  <div id="brSummary" class="erp-rpt-kpi"></div>
+  <div id="brDetails"></div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->

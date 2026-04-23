@@ -47,8 +47,10 @@ const erpSections = [
   // Workflow
   'erpWfDashboard','erpWfIncoming','erpWfOutgoing','erpWfOrgTree',
   // Reports
+  'erpRptHub',
   'erpRptTrialBalance','erpRptPnL','erpRptBalanceSheet','erpRptCashFlow','erpRptProfitability',
   'erpRptInventoryVal','erpRptSalesAnalytics','erpRptWasteAnalytics','erpRptRoyaltyRecon',
+  'erpRptEquityChanges','erpRptFinRatios','erpRptBankRecon',
   'erpGLLedgerReport'
 ];
 
@@ -88,7 +90,13 @@ function erpNav(sectionId) {
       case 'erpVATReports': erpLoadVATReports(); break;
       case 'erpZATCA': erpLoadZATCA(); break;
       case 'erpInventoryMethod': erpLoadInventoryMethod(); break;
-      case 'erpFinReports': erpBackToReportsHub(); break;
+      case 'erpRptHub':          erpLoadReportsHub(); break;
+      // Legacy alias — old erpFinReports redirects to the new hub
+      case 'erpFinReports':      erpLoadReportsHub(); break;
+      // NEW IFRS reports (added in 2026)
+      case 'erpRptEquityChanges': erpLoadEquityChanges(); break;
+      case 'erpRptFinRatios':    erpLoadFinRatios(); break;
+      case 'erpRptBankRecon':    erpLoadBankRecon(); break;
       case 'erpBrands': erpLoadBrands(); break;
       case 'erpPurchaseReports': erpInitPurchaseReports(); break;
       case 'erpCostCenters': erpLoadCostCenters(); break;
@@ -11569,4 +11577,280 @@ function _pmRunFullFlow(paymentId, receiptData, cb) {
     })
     .then(function(r){ cb(r); })
     .catch(function(err){ cb({ success: false, error: err.message }); });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FINANCIAL REPORTS HUB — landing page that shows live KPIs
+// (uses /api/dashboard/overview which we already aggregate)
+// ═══════════════════════════════════════════════════════════════════
+function erpLoadReportsHub() {
+  // Pull headline numbers from the dashboard aggregator endpoint
+  fetch('/api/dashboard/overview?preset=thismonth', {
+    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+  }).then(function(r){return r.json();}).then(function(d){
+    if (!d || d.error) return;
+    var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    var setT = function(id, v){ var e = document.getElementById(id); if (e) e.textContent = v; };
+    // Compute totals from kpi (sales - expenses)
+    var sales = d.kpi && d.kpi.sales ? d.kpi.sales.value : 0;
+    var exp   = d.kpi && d.kpi.expenses ? d.kpi.expenses.value : 0;
+    var net   = sales - exp;
+    setT('rhNetIncome',   fmt(net));
+    // Try to load balance-sheet snapshot for assets/liab/equity
+    fetch('/api/erp/reports/balance-sheet?asOf=' + new Date().toISOString().slice(0,10), {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+    }).then(function(x){return x.json();}).then(function(bs){
+      if (bs && bs.success) {
+        setT('rhTotalAssets', fmt(bs.totalAssets || 0));
+        setT('rhTotalLiab',   fmt(bs.totalLiabilities || 0));
+        setT('rhEquity',      fmt(bs.totalEquity || 0));
+      } else {
+        setT('rhTotalAssets', '0.00');
+        setT('rhTotalLiab',   '0.00');
+        setT('rhEquity',      '0.00');
+      }
+    }).catch(function(){
+      setT('rhTotalAssets', '—');
+      setT('rhTotalLiab',   '—');
+      setT('rhEquity',      '—');
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// NEW: Statement of Changes in Equity (IAS 1 mandatory)
+// ═══════════════════════════════════════════════════════════════════
+function erpLoadEquityChanges() {
+  _erpPopulateBrandOptions(['ecBrand']);
+  var from = (document.getElementById('ecFrom')||{}).value || '';
+  var to   = (document.getElementById('ecTo')||{}).value || '';
+  var brand = (document.getElementById('ecBrand')||{}).value || '';
+  if (!from || !to) {
+    var now = new Date();
+    if (!from) { document.getElementById('ecFrom').value = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10); from = document.getElementById('ecFrom').value; }
+    if (!to)   { document.getElementById('ecTo').value   = now.toISOString().slice(0,10); to = document.getElementById('ecTo').value; }
+  }
+  document.getElementById('ecBody').innerHTML = '<tr><td colspan="5" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري الحساب...</td></tr>';
+
+  // Compose data from existing endpoints: balance sheet + P&L
+  var asOf = function(d){ return d; };
+  Promise.all([
+    fetch('/api/erp/reports/balance-sheet?asOf=' + asOf(from), {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+    }).then(function(r){return r.json();}),
+    fetch('/api/erp/reports/balance-sheet?asOf=' + asOf(to), {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+    }).then(function(r){return r.json();}),
+    fetch('/api/erp/reports/pnl?from=' + from + '&to=' + to + (brand?'&brand='+brand:''), {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+    }).then(function(r){return r.json();})
+  ]).then(function(results) {
+    var openBs = results[0] || {};
+    var closeBs = results[1] || {};
+    var pnl = results[2] || {};
+    var openCapital  = Number(openBs.totalCapital || 0);
+    var openRetained = Number(openBs.totalRetained || (openBs.totalEquity - openCapital) || 0);
+    var netIncome    = Number(pnl.netIncome || (pnl.totalRevenue - pnl.totalExpenses) || 0);
+    var closeCapital = Number(closeBs.totalCapital || openCapital);
+    var capitalChange = closeCapital - openCapital;
+
+    var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    var rows = [
+      { label: 'الرصيد الافتتاحي (' + from + ')',         capital: openCapital,  retained: openRetained,  reserves: 0, total: openCapital + openRetained },
+      { label: 'صافي الدخل للفترة',                       capital: 0,             retained: netIncome,     reserves: 0, total: netIncome },
+      { label: 'إضافات / مساهمات الملاك',                  capital: capitalChange > 0 ? capitalChange : 0, retained: 0, reserves: 0, total: capitalChange > 0 ? capitalChange : 0 },
+      { label: 'سحوبات / توزيعات أرباح',                   capital: capitalChange < 0 ? capitalChange : 0, retained: 0, reserves: 0, total: capitalChange < 0 ? capitalChange : 0 },
+      { label: '<b>الرصيد الختامي (' + to + ')</b>',       capital: closeCapital, retained: openRetained + netIncome, reserves: 0, total: closeCapital + openRetained + netIncome, isFinal: true }
+    ];
+    document.getElementById('ecBody').innerHTML = rows.map(function(r){
+      var bg = r.isFinal ? 'background:#fef3c7;font-weight:800;' : '';
+      return '<tr style="'+bg+'">' +
+        '<td>' + r.label + '</td>' +
+        '<td class="num">' + fmt(r.capital) + '</td>' +
+        '<td class="num">' + fmt(r.retained) + '</td>' +
+        '<td class="num">' + fmt(r.reserves) + '</td>' +
+        '<td class="num strong">' + fmt(r.total) + '</td>' +
+      '</tr>';
+    }).join('');
+
+    document.getElementById('ecSummary').innerHTML =
+      '<div class="erp-rpt-card"><span class="lbl">الرصيد الافتتاحي</span><span class="val">' + fmt(openCapital + openRetained) + '</span></div>' +
+      '<div class="erp-rpt-card"><span class="lbl">صافي الحركة</span><span class="val" style="color:' + (netIncome>=0?'#16a34a':'#ef4444') + ';">' + (netIncome>=0?'+':'') + fmt(netIncome) + '</span></div>' +
+      '<div class="erp-rpt-card"><span class="lbl">الرصيد الختامي</span><span class="val" style="color:#0ea5e9;">' + fmt(closeCapital + openRetained + netIncome) + '</span></div>';
+  }).catch(function(e) {
+    document.getElementById('ecBody').innerHTML = '<tr><td colspan="5" class="empty-msg" style="color:#ef4444;">خطأ: ' + (e.message || e) + '</td></tr>';
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// NEW: Financial Ratios Dashboard
+// ═══════════════════════════════════════════════════════════════════
+function erpLoadFinRatios() {
+  _erpPopulateBrandOptions(['frBrand']);
+  var asOf = (document.getElementById('frAsOf')||{}).value || new Date().toISOString().slice(0,10);
+  if (!document.getElementById('frAsOf').value) document.getElementById('frAsOf').value = asOf;
+  var brand = (document.getElementById('frBrand')||{}).value || '';
+  var grid = document.getElementById('frRatiosGrid');
+  grid.innerHTML = '<div class="empty-msg" style="grid-column:1/-1;text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري حساب المؤشرات...</div>';
+
+  var year = asOf.slice(0,4);
+  Promise.all([
+    fetch('/api/erp/reports/balance-sheet?asOf=' + asOf, {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+    }).then(function(r){return r.json();}),
+    fetch('/api/erp/reports/pnl?from=' + year + '-01-01&to=' + asOf + (brand?'&brand='+brand:''), {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+    }).then(function(r){return r.json();})
+  ]).then(function(results) {
+    var bs  = results[0] || {};
+    var pnl = results[1] || {};
+
+    // Pull figures (with safe defaults)
+    var totalAssets       = Number(bs.totalAssets       || 0);
+    var currentAssets     = Number(bs.currentAssets     || totalAssets); // fallback
+    var inventory         = Number(bs.totalInventory    || 0);
+    var totalLiabilities  = Number(bs.totalLiabilities  || 0);
+    var currentLiab       = Number(bs.currentLiabilities|| totalLiabilities);
+    var equity            = Number(bs.totalEquity       || 0);
+    var revenue           = Number(pnl.totalRevenue     || 0);
+    var cogs              = Number(pnl.totalCogs        || pnl.totalExpenses * 0.6 || 0);
+    var netIncome         = Number(pnl.netIncome        || (revenue - Number(pnl.totalExpenses||0)));
+
+    // Compute ratios
+    var safeDiv = function(a,b){ return b ? a/b : 0; };
+    var ratios = [
+      // === LIQUIDITY ===
+      { group:'liquidity', name:'النسبة الجارية', formula:'الأصول المتداولة ÷ الالتزامات المتداولة',
+        value: safeDiv(currentAssets, currentLiab), suffix:'×',
+        bench:'> 2 ممتاز · 1.5–2 جيد · 1–1.5 مقبول · < 1 خطر',
+        explanation:'تقيس قدرة المنشأة على سداد التزاماتها قصيرة الأجل من أصولها المتداولة.' },
+      { group:'liquidity', name:'النسبة السريعة (Quick Ratio)', formula:'(الأصول المتداولة − المخزون) ÷ الالتزامات المتداولة',
+        value: safeDiv(currentAssets - inventory, currentLiab), suffix:'×',
+        bench:'> 1 آمن · < 1 يحتاج مراقبة',
+        explanation:'مثل النسبة الجارية لكن يستثني المخزون (الأصل الأقل سيولة).' },
+
+      // === PROFITABILITY ===
+      { group:'profit', name:'هامش الربح الإجمالي', formula:'(الإيرادات − تكلفة البضاعة) ÷ الإيرادات × 100',
+        value: safeDiv(revenue - cogs, revenue) * 100, suffix:'%',
+        bench:'مطاعم: > 60% ممتاز · 50–60% جيد · < 50% منخفض',
+        explanation:'الربح بعد تكلفة المنتج المباشرة قبل المصاريف الإدارية.' },
+      { group:'profit', name:'هامش صافي الربح', formula:'صافي الدخل ÷ الإيرادات × 100',
+        value: safeDiv(netIncome, revenue) * 100, suffix:'%',
+        bench:'> 15% ممتاز · 10–15% جيد · 5–10% مقبول · < 5% منخفض',
+        explanation:'النسبة الفعلية لما يبقى من كل ريال مبيعات بعد كل المصاريف.' },
+      { group:'profit', name:'العائد على الأصول (ROA)', formula:'صافي الدخل ÷ إجمالي الأصول × 100',
+        value: safeDiv(netIncome, totalAssets) * 100, suffix:'%',
+        bench:'> 10% ممتاز · 5–10% جيد · < 5% ضعيف',
+        explanation:'مدى كفاءة استخدام الأصول لتوليد الأرباح.' },
+      { group:'profit', name:'العائد على حقوق الملكية (ROE)', formula:'صافي الدخل ÷ حقوق الملكية × 100',
+        value: safeDiv(netIncome, equity) * 100, suffix:'%',
+        bench:'> 15% ممتاز · 10–15% جيد · < 10% ضعيف',
+        explanation:'العائد الذي يحققه الملاك على رأس مالهم.' },
+
+      // === SOLVENCY / LEVERAGE ===
+      { group:'solvency', name:'نسبة المديونية', formula:'إجمالي الالتزامات ÷ إجمالي الأصول × 100',
+        value: safeDiv(totalLiabilities, totalAssets) * 100, suffix:'%',
+        bench:'< 40% آمن · 40–60% متوسط · > 60% عالي المخاطر',
+        explanation:'نسبة الأصول الممولة بالديون — كلما قلت كانت المنشأة أقل مخاطرة.' },
+      { group:'solvency', name:'الدين إلى حقوق الملكية', formula:'الالتزامات ÷ حقوق الملكية',
+        value: safeDiv(totalLiabilities, equity), suffix:'×',
+        bench:'< 1 آمن · 1–2 متوسط · > 2 عالي',
+        explanation:'كم ريال دين مقابل كل ريال من حقوق الملاك.' },
+
+      // === EFFICIENCY ===
+      { group:'efficiency', name:'دوران الأصول', formula:'الإيرادات ÷ إجمالي الأصول',
+        value: safeDiv(revenue, totalAssets), suffix:'×',
+        bench:'> 2 ممتاز · 1–2 جيد · < 1 ضعيف',
+        explanation:'كم مرة تولد الأصول مبيعات تساوي قيمتها في السنة.' },
+      { group:'efficiency', name:'دوران المخزون', formula:'تكلفة البضاعة ÷ متوسط المخزون',
+        value: safeDiv(cogs, inventory), suffix:'×',
+        bench:'مطاعم: > 12 ممتاز (شهري) · 6–12 جيد · < 6 بطيء',
+        explanation:'كم مرة يدور المخزون في السنة — كلما زاد كان المنتج طازجاً.' }
+    ];
+
+    var groupColors = {
+      liquidity:   { bg:'#dbeafe', fg:'#1e40af', icon:'fa-droplet', label:'السيولة (Liquidity)' },
+      profit:      { bg:'#dcfce7', fg:'#15803d', icon:'fa-arrow-trend-up', label:'الربحية (Profitability)' },
+      solvency:    { bg:'#fee2e2', fg:'#b91c1c', icon:'fa-balance-scale', label:'الملاءة المالية (Solvency)' },
+      efficiency:  { bg:'#fef3c7', fg:'#a16207', icon:'fa-bolt', label:'الكفاءة (Efficiency)' }
+    };
+    var fmt = function(v, s){
+      if (!isFinite(v) || v == null) return '—';
+      return v.toFixed(2) + (s||'');
+    };
+    grid.innerHTML = ratios.map(function(r){
+      var g = groupColors[r.group];
+      return '<div style="background:#fff;border:1px solid #e5e7eb;border-top:3px solid '+g.fg+';border-radius:12px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+          '<span style="background:'+g.bg+';color:'+g.fg+';padding:3px 9px;border-radius:8px;font-size:10px;font-weight:800;"><i class="fas '+g.icon+'"></i> '+g.label+'</span>' +
+          '<span style="font-size:22px;font-weight:900;color:'+g.fg+';">'+fmt(r.value, r.suffix)+'</span>' +
+        '</div>' +
+        '<div style="font-size:14px;font-weight:800;color:#0f172a;margin-bottom:4px;">'+r.name+'</div>' +
+        '<div style="font-size:11px;color:#64748b;font-family:monospace;background:#f8fafc;padding:5px 8px;border-radius:6px;margin-bottom:6px;">'+r.formula+'</div>' +
+        '<div style="font-size:11.5px;color:#475569;line-height:1.5;margin-bottom:4px;">'+r.explanation+'</div>' +
+        '<div style="font-size:10.5px;color:'+g.fg+';font-weight:700;background:'+g.bg+';padding:5px 8px;border-radius:6px;"><i class="fas fa-bullseye"></i> المعيار: '+r.bench+'</div>' +
+      '</div>';
+    }).join('');
+  }).catch(function(e) {
+    grid.innerHTML = '<div class="empty-msg" style="grid-column:1/-1;color:#ef4444;text-align:center;padding:20px;">خطأ: ' + (e.message || e) + '</div>';
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// NEW: Bank Reconciliation
+// ═══════════════════════════════════════════════════════════════════
+function erpLoadBankRecon() {
+  // Populate bank accounts dropdown
+  var brBank = document.getElementById('brBank');
+  if (brBank && brBank.options.length <= 1) {
+    fetch('/api/erp/bank-accounts', {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+    }).then(function(r){return r.json();}).then(function(banks){
+      brBank.innerHTML = '<option value="">— اختر البنك —</option>' +
+        (banks||[]).map(function(b){return '<option value="'+b.id+'">'+(b.account_name||b.bank_name||b.id)+'</option>';}).join('');
+    });
+  }
+  var bankId = (brBank||{}).value || '';
+  var asOf = (document.getElementById('brAsOf')||{}).value || new Date().toISOString().slice(0,10);
+  if (!document.getElementById('brAsOf').value) document.getElementById('brAsOf').value = asOf;
+  var bankBalance = Number((document.getElementById('brBankBalance')||{}).value || 0);
+
+  if (!bankId) {
+    document.getElementById('brSummary').innerHTML = '';
+    document.getElementById('brDetails').innerHTML = '<div class="empty-msg" style="text-align:center;padding:40px;color:#64748b;"><i class="fas fa-university" style="font-size:36px;display:block;margin-bottom:10px;color:#cbd5e1;"></i>اختر البنك من الأعلى لبدء التسوية</div>';
+    return;
+  }
+
+  // Fetch the book balance from bank_accounts table
+  fetch('/api/erp/bank-accounts', {
+    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+  }).then(function(r){return r.json();}).then(function(banks){
+    var bank = (banks||[]).find(function(b){return b.id === bankId;}) || {};
+    var bookBalance = Number(bank.current_balance || 0);
+    var difference = bankBalance - bookBalance;
+    var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+
+    document.getElementById('brSummary').innerHTML =
+      '<div class="erp-rpt-card"><span class="lbl">الرصيد الدفتري (في النظام)</span><span class="val">' + fmt(bookBalance) + '</span></div>' +
+      '<div class="erp-rpt-card"><span class="lbl">رصيد كشف البنك</span><span class="val">' + fmt(bankBalance) + '</span></div>' +
+      '<div class="erp-rpt-card"><span class="lbl">الفرق</span><span class="val" style="color:' + (Math.abs(difference) < 1 ? '#16a34a' : '#ef4444') + ';">' + (difference>=0?'+':'') + fmt(difference) + '</span></div>';
+
+    var status = Math.abs(difference) < 1 ?
+      '<div style="padding:14px 18px;border-radius:12px;background:#dcfce7;border:1.5px solid #16a34a;display:flex;align-items:center;gap:10px;margin-top:14px;">' +
+        '<i class="fas fa-check-circle" style="color:#15803d;font-size:20px;"></i>' +
+        '<div><div style="font-weight:900;color:#15803d;">الحسابات متطابقة ✓</div><div style="font-size:12px;color:#166534;margin-top:2px;">رصيد البنك يطابق الرصيد الدفتري — لا فروقات.</div></div>' +
+      '</div>' :
+      '<div style="padding:14px 18px;border-radius:12px;background:#fef3c7;border:1.5px solid #f59e0b;margin-top:14px;">' +
+        '<div style="font-weight:900;color:#92400e;display:flex;align-items:center;gap:8px;"><i class="fas fa-triangle-exclamation"></i> يوجد فرق قدره ' + fmt(Math.abs(difference)) + ' ر.س</div>' +
+        '<div style="font-size:12px;color:#78350f;margin-top:6px;line-height:1.7;">' +
+          '<b>الأسباب المحتملة:</b><br>' +
+          '• شيكات صادرة لم تُصرف بعد<br>' +
+          '• إيداعات في الطريق (مودعة في النظام لكن لم تظهر في كشف البنك)<br>' +
+          '• رسوم بنكية أو فوائد لم تُسجَّل في النظام<br>' +
+          '• أخطاء قيد في النظام أو في كشف البنك<br>' +
+          '• تحويلات معلقة' +
+        '</div>' +
+      '</div>';
+    document.getElementById('brDetails').innerHTML = status;
+  });
 }

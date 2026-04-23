@@ -3390,9 +3390,11 @@
       <div class="tb-field">
         <label>نوع الحساب</label>
         <select id="tbAccountType">
-          <option value="main">حساب رئيسي</option>
-          <option value="sub">حساب فرعي</option>
           <option value="both" selected>الكل (رئيسي + فرعي)</option>
+          <option value="main">رئيسي فقط (مستوى 1)</option>
+          <option value="sub">فرعي فقط (بدون مستوى 1)</option>
+          <option value="leaf">الحسابات النهائية فقط (بلا فروع)</option>
+          <option value="no-parents">بدون الحسابات الرئيسية</option>
         </select>
       </div>
       <div class="tb-field">

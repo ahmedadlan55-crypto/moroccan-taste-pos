@@ -8478,30 +8478,38 @@ function _filterTbRows(rows) {
   var scope    = (document.getElementById('tbScope')||{}).value || 'all';
   var levelMode = (document.getElementById('tbLevelMode')||{}).value || 'default';
 
+  // Pre-compute the set of row accountIds (for hasChild detection)
+  var rowIds = new Set(rows.map(function(r){return r.accountId;}));
+
   return rows.filter(function(a){
-    // Determine if account is main (top-level) or sub by code length / parent
-    var isMain = !a.parentId || a.code && a.code.length <= 1;
-    if (accType === 'main' && !isMain) return false;
-    if (accType === 'sub'  &&  isMain) return false;
+    var lvl = a.level || (a.code ? Math.min(9, String(a.code).length) : 1);
+    var isLevel1 = lvl === 1;
+    var isLeaf = a.hasChildren === false
+                 || !rows.some(function(x){ return x.parentId === a.accountId; });
+
+    // Account type filter (5 options)
+    if (accType === 'main'       && !isLevel1) return false;
+    if (accType === 'sub'        &&  isLevel1) return false;
+    if (accType === 'leaf'       && !isLeaf)   return false;
+    if (accType === 'no-parents' &&  isLevel1) return false;   // hides roots only
+    // 'both' → no filter
+
     if (parent && a.parentId !== parent && a.id !== parent && a.accountId !== parent) return false;
+
     // Scope filter
     if (scope === 'nonzero') {
       var bal = a.closing != null ? a.closing : (a.net != null ? a.net : (a.opening||0));
       var anyMove = (a.periodDebit||0) > 0 || (a.periodCredit||0) > 0 || Math.abs(a.opening||0) > 0.005 || Math.abs(bal) > 0.005;
       if (!anyMove) return false;
     }
-    // Level mode (compute level from code length: '1'=1, '11'=2, '111'=3, etc.)
-    var lvl = a.level || (a.code ? Math.min(5, a.code.length) : 1);
-    if (_tbActiveLevel) {
-      if (lvl !== _tbActiveLevel) return false;
-    } else if (levelMode !== 'default') {
+
+    // Level mode (only applies when NO active-level tab is selected)
+    if (!_tbActiveLevel && levelMode !== 'default') {
       if (levelMode === 'leaf') {
-        // Show only leaf accounts (those that don't have children)
-        var hasChild = rows.some(function(x){ return x.parentId === a.id; });
-        if (hasChild) return false;
+        if (!isLeaf) return false;
       } else {
         var n = Number(levelMode);
-        if (lvl !== n) return false;
+        if (!isNaN(n) && lvl !== n) return false;
       }
     }
     return true;
@@ -8720,11 +8728,25 @@ window.erpTrialCollapseAll = function() {
   _renderTrialBalanceTable();
 };
 
+// Clicking 'Level N' auto-expands the tree DOWN TO that level so the
+// user sees ALL parents with their children drilled open — matching the
+// Yumsar reference where clicking 'Level 5' shows the full hierarchy.
 window.erpTrialSetLevel = function(lvl) {
-  _tbActiveLevel = Number(lvl);
+  _tbActiveLevel = null;              // not a flat filter any more — it expands
+  var targetLvl = Number(lvl);
   document.querySelectorAll('.tb-lvl').forEach(function(el){
-    el.classList.toggle('active', Number(el.getAttribute('data-lvl')) === _tbActiveLevel);
+    el.classList.toggle('active', Number(el.getAttribute('data-lvl')) === targetLvl);
   });
+  // Auto-expand: open every account whose level < targetLvl (so its
+  // children become visible). Accounts at the target level themselves
+  // are not auto-expanded.
+  _tbExpanded.clear();
+  if (_tbCache && Array.isArray(_tbCache.rows)) {
+    _tbCache.rows.forEach(function(a){
+      var l = a.level || (a.code ? Math.min(9, String(a.code).length) : 1);
+      if (l < targetLvl && a.hasChildren !== false) _tbExpanded.add(a.accountId);
+    });
+  }
   _renderTrialBalanceTable();
 };
 

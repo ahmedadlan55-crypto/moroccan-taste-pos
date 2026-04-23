@@ -715,37 +715,155 @@ function sendClock(data) {
 // ═══════════════════════════════════════
 // ATTENDANCE PAGE
 // ═══════════════════════════════════════
+// Attendance state + presets
+window._attState = { preset: 'thismonth', from: '', to: '' };
+function _attResolveRange(preset) {
+  var now = new Date();
+  var ymd = function(d){ return d.toISOString().slice(0,10); };
+  if (preset === 'thisweek') { var d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 1) % 7)); return { from: ymd(d), to: ymd(now) }; }
+  if (preset === 'thismonth') return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: ymd(now) };
+  if (preset === 'lastmonth') { var s = new Date(now.getFullYear(), now.getMonth() - 1, 1); var e = new Date(now.getFullYear(), now.getMonth(), 0); return { from: ymd(s), to: ymd(e) }; }
+  if (preset === 'last30') { var d = new Date(now); d.setDate(d.getDate() - 29); return { from: ymd(d), to: ymd(now) }; }
+  return { from: ymd(now), to: ymd(now) };
+}
+window.attSetPreset = function(p) {
+  window._attState.preset = p;
+  document.querySelectorAll('[data-attp]').forEach(function(el){ el.classList.toggle('active', el.getAttribute('data-attp') === p); });
+  loadAttPage();
+};
+
 function loadAttPage() {
   var c = document.getElementById('attList');
-  c.innerHTML = '<p class="empty"><i class="fas fa-spinner fa-spin"></i></p>';
-  callAPI('GET', '/hr/my-attendance?username=' + currentUser, null, function(rows) {
-    var att = rows||[];
-    if (!Array.isArray(att)) att = [];
-    // Stats cards for attendance page
-    var statsEl = document.getElementById('attStats');
-    if (statsEl) {
-      var present = att.filter(function(a){return a.status==='present';}).length;
-      var hours = att.reduce(function(s,a){return s+(Number(a.total_hours)||0);},0);
-      var totalLateMin = att.reduce(function(s,a){return s+(Number(a.late_minutes)||0);},0);
-      var lateCount = att.filter(function(a){return (a.late_minutes||0)>0;}).length;
-      statsEl.innerHTML =
-        '<div class="st"><i class="fas fa-check" style="color:#10b981;background:#ecfdf5;"></i><b>' + present + '</b><span>'+t('stats.present')+'</span></div>' +
-        '<div class="st"><i class="fas fa-clock" style="color:#0ea5e9;background:#e0f2fe;"></i><b>' + hours.toFixed(1) + '</b><span>'+t('att.workHours')+'</span></div>' +
-        '<div class="st"><i class="fas fa-exclamation" style="color:#f59e0b;background:#fffbeb;"></i><b>' + (totalLateMin/60).toFixed(1) + '</b><span>'+t('att.lateHours')+'</span></div>' +
-        '<div class="st"><i class="fas fa-user-clock" style="color:#ef4444;background:#fef2f2;"></i><b>' + lateCount + '</b><span>'+t('att.lateCount')+'</span></div>';
+  if (c) c.innerHTML = '<p class="empty"><i class="fas fa-spinner fa-spin"></i></p>';
+  var range = _attResolveRange(window._attState.preset || 'thismonth');
+  window._attState.from = range.from;
+  window._attState.to = range.to;
+  var lbl = document.getElementById('attRangeLabel');
+  if (lbl) lbl.textContent = range.from + ' → ' + range.to;
+
+  callAPI('GET', '/hr/my-attendance-full?username=' + encodeURIComponent(currentUser) + '&from=' + range.from + '&to=' + range.to, null, function(d) {
+    if (!d || d.success === false) {
+      var msg = (d && d.error) || 'فشل تحميل البيانات';
+      if (c) c.innerHTML = '<p class="empty" style="color:#ef4444;"><i class="fas fa-triangle-exclamation"></i> ' + msg + '</p>';
+      // Clear stats
+      var statsEl = document.getElementById('attStats');
+      if (statsEl) statsEl.innerHTML = '';
+      return;
     }
-    if (!att.length) { c.innerHTML = '<p class="empty">'+t('common.empty.att')+'</p>'; return; }
-    var localeCode = currentLang === 'en' ? 'en-US' : 'ar-SA';
-    c.innerHTML = att.map(function(a) {
-      var d = a.attendance_date ? new Date(a.attendance_date).toLocaleDateString(localeCode,{weekday:'long',day:'numeric',month:'long'}) : '';
-      var ci = a.clock_in ? new Date(a.clock_in).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}) : '—';
-      var co = a.clock_out ? new Date(a.clock_out).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}) : '⏳';
-      var lateTxt = (a.late_minutes||0) > 0 ? '<div class="meta" style="color:#ef4444;"><i class="fas fa-exclamation-circle"></i> '+t('att.lateMinutes',{n:a.late_minutes})+'</div>' : '';
-      var dev = a.device_name ? '<div class="meta"><i class="fas fa-mobile-alt"></i> ' + a.device_name + '</div>' : '';
-      var loc = a.geo_address_in ? '<div class="meta"><i class="fas fa-map-marker-alt" style="color:#10b981;"></i> ' + a.geo_address_in.substring(0,50) + '</div>' : '';
-      return '<div class="ar"><span class="ad">' + d + '</span><span class="at">' + ci + ' → ' + co + lateTxt + dev + loc + '</span><span class="ah">' + (Number(a.total_hours)||0).toFixed(1) + 'h</span></div>';
-    }).join('');
+    _attRender(d);
   });
+}
+
+function _attFmt(v, dig) { return Number(v||0).toLocaleString('en', { minimumFractionDigits: dig!=null?dig:1, maximumFractionDigits: dig!=null?dig:1 }); }
+
+function _attRender(d) {
+  var tot = d.totals || {};
+  // KPI strip — 4 tiles
+  var statsEl = document.getElementById('attStats');
+  if (statsEl) {
+    statsEl.innerHTML =
+      '<div class="st"><i class="fas fa-check" style="color:#10b981;background:#ecfdf5;"></i><b>' + (tot.present||0) + '</b><span>أيام حضور</span></div>' +
+      '<div class="st"><i class="fas fa-times" style="color:#ef4444;background:#fef2f2;"></i><b>' + (tot.absent||0) + '</b><span>أيام غياب</span></div>' +
+      '<div class="st"><i class="fas fa-clock" style="color:#0ea5e9;background:#e0f2fe;"></i><b>' + _attFmt(tot.workingHours||0) + '</b><span>س. عمل</span></div>' +
+      '<div class="st"><i class="fas fa-exclamation" style="color:#f59e0b;background:#fffbeb;"></i><b>' + _attFmt(tot.lateHours||0) + '</b><span>س. تأخير</span></div>';
+  }
+
+  // Days count
+  var dc = document.getElementById('attDaysCount');
+  if (dc) dc.textContent = (d.days||[]).length + ' يوم';
+
+  // Calendar grid (only the FIRST month in the range to keep it readable)
+  _attRenderCalendar(d);
+
+  // Daily list
+  var c = document.getElementById('attList');
+  if (!c) return;
+  if (!d.days || !d.days.length) { c.innerHTML = '<p class="empty">لا توجد سجلات</p>'; return; }
+  // Render newest first
+  var rows = d.days.slice().reverse().filter(function(r){ return r.status !== 'future'; });
+  c.innerHTML = rows.map(_attRowHtml).join('');
+}
+
+function _attRowHtml(r) {
+  var statusInfo = {
+    present: { icon:'fa-check', label:'حاضر' },
+    late:    { icon:'fa-exclamation', label:'متأخر' },
+    absent:  { icon:'fa-user-xmark', label:'غياب كامل' },
+    leave:   { icon:'fa-umbrella-beach', label:'إجازة' },
+    weekend: { icon:'fa-mug-hot', label:'عطلة' },
+    holiday: { icon:'fa-gift', label:'إجازة رسمية' },
+    partial: { icon:'fa-hourglass-half', label:'دخول بدون انصراف' }
+  };
+  var stKey = r.status === 'present' && r.lateMinutes > 0 ? 'late' : r.status;
+  var info = statusInfo[stKey] || statusInfo.present;
+  var dateLbl = r.date ? new Date(r.date).toLocaleDateString('ar-SA-u-nu-latn', { weekday:'short', day:'2-digit', month:'2-digit' }) : '—';
+  var timesHtml = '';
+  if (r.clockIn) {
+    var ci = new Date(r.clockIn).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
+    var co = r.clockOut ? new Date(r.clockOut).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'}) : '—';
+    timesHtml = '<i class="fas fa-clock" style="color:#94a3b8;font-size:9px;margin-inline-end:3px;"></i>' + ci + ' ← ' + co + ' · ' + _attFmt(r.totalHours) + ' س';
+  } else if (r.status === 'absent') {
+    timesHtml = '<i class="fas fa-user-xmark" style="color:#ef4444;font-size:9px;margin-inline-end:3px;"></i>لم يُسجَّل دخول أو خروج';
+  } else if (r.status === 'weekend') {
+    timesHtml = '<i class="fas fa-bed" style="color:#94a3b8;font-size:9px;margin-inline-end:3px;"></i>يوم عطلة أسبوعية';
+  } else if (r.status === 'leave') {
+    timesHtml = '<i class="fas fa-umbrella-beach" style="color:#1e40af;font-size:9px;margin-inline-end:3px;"></i>' + (r.notes || 'إجازة معتمدة');
+  }
+  var pillsHtml = '';
+  if (r.lateMinutes > 0)     pillsHtml += '<span class="att-status-pill late"><i class="fas fa-arrow-down"></i> -' + r.lateMinutes + ' د</span>';
+  if (r.overtimeMinutes > 0) pillsHtml += '<span class="att-status-pill present"><i class="fas fa-arrow-up"></i> +' + r.overtimeMinutes + ' د</span>';
+  if (!pillsHtml) pillsHtml = '<span class="att-status-pill ' + stKey + '">' + info.label + '</span>';
+  return '<div class="att-row">' +
+    '<div class="att-row-icon ' + stKey + '"><i class="fas ' + info.icon + '"></i></div>' +
+    '<div class="att-row-main"><div class="att-row-date">' + dateLbl + '</div><div class="att-row-meta">' + timesHtml + '</div></div>' +
+    '<div class="att-row-vals">' + pillsHtml + '</div>' +
+  '</div>';
+}
+
+function _attRenderCalendar(d) {
+  var grid = document.getElementById('attCalendarGrid');
+  var monthLbl = document.getElementById('attCalendarMonth');
+  if (!grid) return;
+  if (!d.days || !d.days.length) { grid.innerHTML = '<div class="empty">لا توجد بيانات</div>'; return; }
+  // Pick the month containing the LAST day of the range
+  var anchor = new Date(d.days[d.days.length - 1].date);
+  var year = anchor.getFullYear();
+  var month = anchor.getMonth(); // 0-indexed
+  if (monthLbl) monthLbl.textContent = anchor.toLocaleDateString('ar-SA-u-nu-latn', { month:'long', year:'numeric' });
+  // Build day-of-month → day data lookup for days in the active month within the range
+  var dayMap = {};
+  d.days.forEach(function(r) {
+    var dt = new Date(r.date);
+    if (dt.getFullYear() === year && dt.getMonth() === month) dayMap[dt.getDate()] = r;
+  });
+  // First-day-of-month + count
+  var firstDow = new Date(year, month, 1).getDay();         // 0=Sun..6=Sat
+  // We render Sat-first (Saudi week). Convert: Sat=0 col, Sun=1 col, ..., Fri=6 col
+  var startCol = (firstDow + 1) % 7;                        // Sat→0, Sun→1, ..., Fri→6
+  var lastDate = new Date(year, month + 1, 0).getDate();
+  var todayYmd = new Date().toISOString().slice(0,10);
+  var html = '';
+  // Empty cells before day 1
+  for (var i = 0; i < startCol; i++) html += '<div class="att-cal-cell empty"></div>';
+  for (var day = 1; day <= lastDate; day++) {
+    var r = dayMap[day];
+    var status = r ? r.status : 'future';
+    if (r && r.status === 'present' && r.lateMinutes > 0) status = 'late';
+    var isToday = r ? (r.date === todayYmd) : (new Date(year, month, day).toISOString().slice(0,10) === todayYmd);
+    var marks = '';
+    if (r) {
+      if (r.lateMinutes > 0)     marks += '<span class="att-cal-mark" style="left:3px;color:#dc2626;">L</span>';
+      if (r.overtimeMinutes > 0) marks += '<span class="att-cal-mark" style="right:3px;color:#16a34a;">+</span>';
+    }
+    var title = '';
+    if (r) {
+      title = r.date + ' — ' + status;
+      if (r.totalHours) title += ' (' + r.totalHours + 'h)';
+      if (r.lateMinutes) title += ' متأخر ' + r.lateMinutes + 'د';
+    }
+    html += '<div class="att-cal-cell ' + status + (isToday?' today':'') + '" title="' + title + '"><span class="att-cal-day">' + day + '</span>' + marks + '</div>';
+  }
+  grid.innerHTML = html;
 }
 
 // ═══════════════════════════════════════
@@ -1066,23 +1184,99 @@ function loadMyTransactions() {
   });
 }
 
+// ─── Edit a sent transaction using the redesigned modal in edit mode ───
+window._editingTxnId = null;
 function empEditTxn(id) {
+  // First fetch the existing transaction to know what to prefill
   callAPI('GET', '/workflow/transactions/'+id, null, function(txn) {
-    if (!txn || txn.error) return toast(t('txn.notFound'), true);
-    var title = prompt(t('txn.titlePrompt'), txn.title || '');
-    if (title === null) return;
-    var desc = prompt(t('txn.descPrompt'), txn.description || '');
-    if (desc === null) return;
-    var amt = prompt(t('txn.amountPrompt'), Number(txn.amount||0));
-    if (amt === null) return;
-    callAPI('PUT', '/workflow/transactions/'+id, {
-      username: currentUser, title: title, description: desc, amount: Number(amt)||0
-    }, function(r) {
-      if (r && r.success) { toast(t('txn.saved')); loadMyTransactions(); }
-      else toast(r ? r.error : t('txn.failed'), true);
-    });
+    if (!txn || txn.error) return toast(t('txn.notFound') || 'المعاملة غير موجودة', true);
+    // Open the standard modal first (loads all dropdown data)
+    openTxnModal();
+    // Then prefill it after a short tick so the dropdowns have populated
+    window._editingTxnId = id;
+    setTimeout(function(){
+      // Switch the modal title + button label
+      var titleSpan = document.querySelector('#txnModal .modal-h span');
+      if (titleSpan) titleSpan.innerHTML = '<i class="fas fa-edit" style="color:#1e40af;"></i> تعديل المعاملة';
+      var sendBtn = document.querySelector('#txnModal button.btn-m[onclick="submitTxn()"]');
+      if (sendBtn) {
+        sendBtn.innerHTML = '<i class="fas fa-save"></i> حفظ التعديلات';
+        sendBtn.setAttribute('onclick', 'submitTxnEdit()');
+        sendBtn.style.background = '#1e40af';
+      }
+      // Hide draft banner — we are editing a real txn, not restoring a draft
+      var banner = document.getElementById('txnDraftBanner');
+      if (banner) banner.style.display = 'none';
+      // Populate the form fields
+      var setVal = function(id,v){ var e=document.getElementById(id); if (e) e.value = (v==null?'':v); };
+      setVal('txnTitle', txn.title || '');
+      setVal('txnDesc',  txn.description || '');
+      setVal('txnAmount', Number(txn.amount||0));
+      // Importance: switch the visual card
+      txnSetImportance(txn.importance || 'medium');
+      // Type: select (may be locked since changing type changes the workflow chain)
+      var typeSel = document.getElementById('txnType');
+      if (typeSel && txn.transactionTypeId) {
+        typeSel.value = txn.transactionTypeId;
+        typeSel.disabled = true; typeSel.style.background = '#f3f4f6';
+      }
+      // Recipient: also locked — changing recipient mid-flow is not allowed
+      var recSel = document.getElementById('txnRecipient');
+      if (recSel) {
+        // Set placeholder option to show recipient was set at create time
+        if (txn.currentAssignee) {
+          var alreadyOpt = Array.from(recSel.options).find(function(o){ return o.value === txn.currentAssignee; });
+          if (alreadyOpt) recSel.value = txn.currentAssignee;
+        }
+        recSel.disabled = true; recSel.style.background = '#f3f4f6';
+      }
+      // GL account
+      if (txn.accountCode || txn.accountName) {
+        setVal('txnAccSearch', (txn.accountCode||'') + ' — ' + (txn.accountName||''));
+        setVal('txnAccId', txn.accountId || '');
+        setVal('txnAccName', txn.accountName || '');
+      }
+      // Cost center
+      var ccSel = document.getElementById('txnCC');
+      if (ccSel && txn.costCenterId) ccSel.value = txn.costCenterId;
+      txnValidateTitle();
+    }, 350);
   });
 }
+
+window.submitTxnEdit = function() {
+  if (!window._editingTxnId) return;
+  var id = window._editingTxnId;
+  var title = document.getElementById('txnTitle').value;
+  var desc = document.getElementById('txnDesc').value;
+  var amount = Number(document.getElementById('txnAmount').value) || 0;
+  var importance = (document.getElementById('txnImportance')||{}).value || 'medium';
+  if (!title || title.trim().length < 5) return toast('العنوان قصير جداً (5 أحرف على الأقل)', true);
+  toast('جاري الحفظ...');
+  callAPI('PUT', '/workflow/transactions/'+id, {
+    username: currentUser, title: title, description: desc, amount: amount, importance: importance
+  }, function(r) {
+    if (r && r.success) {
+      toast('✓ تم حفظ التعديلات');
+      window._editingTxnId = null;
+      // Restore the modal back to "create" mode so it works next time
+      var titleSpan = document.querySelector('#txnModal .modal-h span');
+      if (titleSpan) titleSpan.innerHTML = '<i class="fas fa-file-alt" style="color:#0ea5e9;"></i> معاملة جديدة';
+      var sendBtn = document.querySelector('#txnModal button.btn-m[onclick="submitTxnEdit()"]');
+      if (sendBtn) {
+        sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i> إرسال المعاملة';
+        sendBtn.setAttribute('onclick', 'submitTxn()');
+        sendBtn.style.background = '#0ea5e9';
+      }
+      var typeSel = document.getElementById('txnType'); if (typeSel) { typeSel.disabled = false; typeSel.style.background = ''; }
+      var recSel  = document.getElementById('txnRecipient'); if (recSel) { recSel.disabled = false; recSel.style.background = ''; }
+      closeTxnModal();
+      loadMyTransactions();
+    } else {
+      toast(r ? r.error : 'فشل الحفظ', true);
+    }
+  });
+};
 
 function empCancelTxn(id) {
   if (!confirm(t('txn.confirmCancel'))) return;
@@ -1314,6 +1508,22 @@ function viewMyTxn(id) {
         h += '</div></div>';
       });
       h += '</div>';
+    }
+
+    // ─── Action buttons (visible only to the creator + when editable) ───
+    var isCreator = (txn.createdBy === currentUser);
+    var canEdit = isCreator && (txn.status === 'pending' || txn.status === 'draft');
+    // Determine if any action other than 'create' has been taken
+    var hasActions = (txn.logs || []).some(function(l){ return l.actionType && l.actionType !== 'create'; });
+    if (hasActions) canEdit = false;
+    if (canEdit) {
+      h += '<div class="td-action-btns">' +
+        '<button class="td-edit-btn" onclick="closeTxnDetail();empEditTxn(\''+txn.id+'\')"><i class="fas fa-edit"></i> تعديل المعاملة</button>' +
+        '<button class="td-cancel-btn" onclick="empCancelTxn(\''+txn.id+'\')"><i class="fas fa-trash"></i> إلغاء</button>' +
+        '<button class="td-close-btn" onclick="closeTxnDetail()">إغلاق</button>' +
+      '</div>';
+    } else {
+      h += '<div class="td-action-btns"><button class="td-close-btn" style="flex:1;" onclick="closeTxnDetail()">إغلاق</button></div>';
     }
 
     document.getElementById('txnDetailTitle').textContent = (txn.subject || txn.title || txn.txnNumber || '');

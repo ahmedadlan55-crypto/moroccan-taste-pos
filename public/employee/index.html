@@ -122,6 +122,76 @@
     .tm-validation{font-size:10px;font-weight:700;margin-top:3px;display:none;}
     .tm-validation.err{color:#dc2626;display:block;}
     .tm-validation.ok{color:#16a34a;display:block;}
+
+    /* ─── Attendance calendar ─── */
+    .att-cal-head{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin:8px 0 6px;}
+    .att-cal-head span{text-align:center;font-size:10px;font-weight:800;color:#94a3b8;padding:4px 0;}
+    .att-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+    .att-cal-cell{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:8px;font-size:11px;font-weight:800;border:1.5px solid transparent;position:relative;cursor:pointer;transition:transform .12s;}
+    .att-cal-cell:active{transform:scale(.94);}
+    .att-cal-cell.empty{background:transparent;cursor:default;}
+    .att-cal-cell.present{background:#dcfce7;color:#15803d;border-color:#86efac;}
+    .att-cal-cell.late   {background:#fef9c3;color:#854d0e;border-color:#fde047;}
+    .att-cal-cell.absent {background:#fee2e2;color:#991b1b;border-color:#fca5a5;}
+    .att-cal-cell.leave  {background:#dbeafe;color:#1e40af;border-color:#93c5fd;}
+    .att-cal-cell.weekend{background:#f1f5f9;color:#94a3b8;border-color:#e2e8f0;}
+    .att-cal-cell.holiday{background:#f3e8ff;color:#6d28d9;border-color:#c4b5fd;}
+    .att-cal-cell.partial{background:#ffedd5;color:#9a3412;border-color:#fdba74;}
+    .att-cal-cell.future {background:#fff;color:#cbd5e1;border-color:#f1f5f9;cursor:default;}
+    .att-cal-cell.today  {box-shadow:0 0 0 2px #0ea5e9;}
+    .att-cal-day{font-size:13px;line-height:1;}
+    .att-cal-mark{position:absolute;bottom:3px;font-size:7px;font-weight:900;}
+    .att-leg{display:inline-block;width:11px;height:11px;border-radius:3px;margin-inline-end:3px;vertical-align:middle;border:1px solid;}
+    .att-leg.present{background:#dcfce7;border-color:#86efac;}
+    .att-leg.late{background:#fef9c3;border-color:#fde047;}
+    .att-leg.absent{background:#fee2e2;border-color:#fca5a5;}
+    .att-leg.leave{background:#dbeafe;border-color:#93c5fd;}
+    .att-leg.weekend{background:#f1f5f9;border-color:#e2e8f0;}
+    .att-leg.partial{background:#ffedd5;border-color:#fdba74;}
+
+    /* Daily list rows */
+    .att-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px dashed #f1f5f9;font-size:12.5px;}
+    .att-row:last-child{border-bottom:none;}
+    .att-row-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;}
+    .att-row-icon.present{background:#dcfce7;color:#15803d;}
+    .att-row-icon.late   {background:#fef9c3;color:#854d0e;}
+    .att-row-icon.absent {background:#fee2e2;color:#991b1b;}
+    .att-row-icon.leave  {background:#dbeafe;color:#1e40af;}
+    .att-row-icon.weekend{background:#f1f5f9;color:#94a3b8;}
+    .att-row-icon.partial{background:#ffedd5;color:#9a3412;}
+    .att-row-main{flex:1;min-width:0;}
+    .att-row-date{font-weight:800;color:#0f172a;font-size:13px;}
+    .att-row-meta{font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;}
+    .att-row-vals{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:11px;font-weight:700;flex-shrink:0;}
+    .att-status-pill{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:8px;font-size:10px;font-weight:800;}
+    .att-status-pill.present{background:#dcfce7;color:#15803d;}
+    .att-status-pill.late   {background:#fef9c3;color:#854d0e;}
+    .att-status-pill.absent {background:#fee2e2;color:#991b1b;}
+    .att-status-pill.leave  {background:#dbeafe;color:#1e40af;}
+    .att-status-pill.weekend{background:#f1f5f9;color:#94a3b8;}
+    .att-status-pill.partial{background:#ffedd5;color:#9a3412;}
+
+    /* ─── Transaction detail modal — enhanced ─── */
+    .td-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;}
+    .td-meta{padding:10px;border-radius:10px;background:#f8fafc;border:1px solid #f1f5f9;}
+    .td-meta-lbl{font-size:9.5px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:2px;letter-spacing:.04em;}
+    .td-meta-val{font-size:13px;font-weight:800;color:#0f172a;}
+    .td-status-bar{display:flex;gap:4px;margin-bottom:12px;}
+    .td-status-bar > div{flex:1;padding:8px 4px;border-radius:8px;text-align:center;font-size:10px;font-weight:800;border:1.5px solid;}
+    .td-section{padding:10px 0;border-bottom:1px dashed #f1f5f9;}
+    .td-section-h{font-size:11px;font-weight:800;color:#0ea5e9;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;display:flex;align-items:center;gap:6px;}
+    .td-content-box{background:#fafbfc;padding:10px;border-radius:10px;font-size:12.5px;color:#374151;line-height:1.6;border:1px solid #f1f5f9;white-space:pre-wrap;}
+    .td-action-btns{display:flex;gap:6px;margin-top:14px;}
+    .td-action-btns button{flex:1;padding:11px;border:none;border-radius:10px;font-weight:800;font-size:12.5px;cursor:pointer;}
+    .td-edit-btn{background:#eff6ff;color:#1e40af;}
+    .td-cancel-btn{background:#fef2f2;color:#991b1b;}
+    .td-close-btn{background:#f1f5f9;color:#475569;}
+    .td-timeline{display:flex;flex-direction:column;gap:8px;}
+    .td-timeline-item{display:flex;gap:10px;padding:8px;background:#fafbfc;border-radius:10px;font-size:11.5px;}
+    .td-tl-dot{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;flex-shrink:0;}
+    .td-tl-body{flex:1;}
+    .td-tl-action{font-weight:800;}
+    .td-tl-meta{font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;}
   </style>
   <script defer src="/shared/api-bridge.js"></script>
   <style>
@@ -130,7 +200,7 @@
     html[lang="en"] body{direction:ltr;}
     html[lang="en"] .hdr-n,html[lang="en"] .hdr-s{text-align:left;}
   </style>
-  <script defer src="/employee/app.js?v=17"></script>
+  <script defer src="/employee/app.js?v=18"></script>
 </head>
 <body>
 <div class="toast" id="toast"></div>
@@ -176,7 +246,54 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
   </div>
   <div class="main">
     <div class="page active" id="pghome"><div id="clockSection"></div><div class="stats" id="homeStats"></div><div class="card"><div class="card-t"><i class="fas fa-history"></i> <span data-i18n="home.recent">آخر الحضور</span></div><div id="recentAtt"></div></div></div>
-    <div class="page" id="pgatt"><div class="stats" id="attStats"></div><div class="card"><div class="card-t"><i class="fas fa-calendar-check"></i> <span data-i18n="att.log">سجل الحضور</span></div><div id="attList"></div></div></div>
+    <div class="page" id="pgatt">
+      <!-- Period chips -->
+      <div class="card" style="padding:10px 12px;">
+        <div style="font-size:12px;font-weight:800;color:#475569;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+          <i class="fas fa-calendar-check" style="color:#0ea5e9;"></i><span>سجل الحضور</span>
+          <span id="attRangeLabel" style="margin-inline-start:auto;font-weight:700;color:#0ea5e9;font-size:11px;">—</span>
+        </div>
+        <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">
+          <button class="hours-chip" data-attp="thisweek" onclick="attSetPreset('thisweek')">هذا الأسبوع</button>
+          <button class="hours-chip active" data-attp="thismonth" onclick="attSetPreset('thismonth')">هذا الشهر</button>
+          <button class="hours-chip" data-attp="lastmonth" onclick="attSetPreset('lastmonth')">الشهر الماضي</button>
+          <button class="hours-chip" data-attp="last30" onclick="attSetPreset('last30')">آخر 30 يوم</button>
+        </div>
+      </div>
+
+      <!-- KPI strip: present / absent / late / hours -->
+      <div class="stats" id="attStats"></div>
+
+      <!-- Calendar grid (1 month at a time) -->
+      <div class="card" id="attCalendarCard" style="padding:14px;">
+        <div class="card-t" style="display:flex;justify-content:space-between;align-items:center;">
+          <span><i class="fas fa-calendar-days"></i> الشهر</span>
+          <span id="attCalendarMonth" style="font-size:12px;font-weight:700;color:#0ea5e9;">—</span>
+        </div>
+        <div class="att-cal-head">
+          <span>س</span><span>ح</span><span>ن</span><span>ث</span><span>ر</span><span>خ</span><span>ج</span>
+        </div>
+        <div id="attCalendarGrid" class="att-cal-grid"></div>
+        <!-- Color legend -->
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;font-size:10px;font-weight:700;justify-content:center;">
+          <span><span class="att-leg present"></span> حاضر</span>
+          <span><span class="att-leg late"></span> متأخر</span>
+          <span><span class="att-leg absent"></span> غياب</span>
+          <span><span class="att-leg leave"></span> إجازة</span>
+          <span><span class="att-leg weekend"></span> عطلة</span>
+          <span><span class="att-leg partial"></span> دخول بدون انصراف</span>
+        </div>
+      </div>
+
+      <!-- Daily detail list -->
+      <div class="card">
+        <div class="card-t" style="display:flex;justify-content:space-between;align-items:center;">
+          <span><i class="fas fa-list"></i> التفاصيل اليومية</span>
+          <span id="attDaysCount" style="font-size:11px;color:#64748b;font-weight:700;">—</span>
+        </div>
+        <div id="attList"></div>
+      </div>
+    </div>
     <div class="page" id="pgleave"><div class="card"><div class="card-t"><i class="fas fa-umbrella-beach"></i> <span data-i18n="leave.balances">أرصدة الإجازات</span></div><div id="leaveBals"></div></div><button class="btn-m" onclick="openLeaveForm()"><i class="fas fa-plus"></i> <span data-i18n="leave.newBtn">طلب إجازة</span></button><div class="card"><div class="card-t"><i class="fas fa-list"></i> <span data-i18n="leave.myRequests">طلباتي</span></div><div id="leaveReqs"></div></div></div>
     <div class="page" id="pgtxn">
       <!-- Tab switcher: Incoming / Outgoing -->

@@ -2490,6 +2490,172 @@ router.get('/attendance/calculate-monthly', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// MY ATTENDANCE FULL — fills in absent + weekend days for a date range
+// GET /api/hr/my-attendance-full?from=YYYY-MM-DD&to=YYYY-MM-DD
+//   (defaults: current month from day 1 → today)
+// Returns:
+//   { success, employee, period: {from,to,workDays,daysOff},
+//     totals: {present, absent, late, weekend, leave, holiday,
+//              workingHours, lateHours, overtimeHours},
+//     days: [...]  // one row per calendar day in the range
+//   }
+// ═══════════════════════════════════════════════════════════════════
+router.get('/my-attendance-full', async (req, res) => {
+  try {
+    const username = req.user ? req.user.username : req.query.username;
+    if (!username) return res.json({ success: false, error: 'غير مسجل الدخول' });
+
+    const [empRows] = await db.query(
+      `SELECT e.id, e.first_name, e.last_name, e.employee_number, e.hire_date,
+              e.work_start, e.work_end, e.branch_id,
+              COALESCE(b.name,'') AS branch_name
+       FROM hr_employees e LEFT JOIN branches b ON b.id = e.branch_id
+       WHERE e.linked_username = ? OR e.email = ? LIMIT 1`,
+      [username, username]);
+    if (!empRows.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط بحسابك' });
+    const emp = empRows[0];
+
+    // Date range: default is current month → today
+    const today = new Date();
+    const defaultFrom = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0,10);
+    const defaultTo   = today.toISOString().slice(0,10);
+    const from = req.query.from || defaultFrom;
+    const to   = req.query.to   || defaultTo;
+
+    // Resolve work-days CSV from default schedule (or fall back to Sun-Thu)
+    let workDaysCSV = '0,1,2,3,4';  // 0=Sun, 4=Thu (Saudi 5-day)
+    try {
+      const [sched] = await db.query(`SELECT work_days FROM hr_work_schedules WHERE is_default = 1 LIMIT 1`);
+      if (sched.length && sched[0].work_days) workDaysCSV = sched[0].work_days;
+    } catch(e) { /* no-op */ }
+    const workDaysSet = new Set(workDaysCSV.split(',').map(s => Number(s.trim())));
+
+    // Pull existing attendance + leave/holiday for the range
+    const [attRows] = await db.query(
+      `SELECT attendance_date AS d, clock_in, clock_out, total_hours,
+              late_minutes, early_leave_minutes, overtime_minutes,
+              status, source, device_name, geo_address_in, geo_address_out, notes
+       FROM hr_attendance
+       WHERE employee_id = ? AND attendance_date BETWEEN ? AND ?
+       ORDER BY attendance_date ASC`,
+      [emp.id, from, to]);
+
+    const attMap = {};
+    attRows.forEach(r => { attMap[r.d.toISOString().slice(0,10)] = r; });
+
+    // Pull approved leave requests overlapping the range
+    let leaveRanges = [];
+    try {
+      const [lrows] = await db.query(
+        `SELECT lr.start_date, lr.end_date, lt.name AS type_name
+         FROM hr_leave_requests lr
+         LEFT JOIN hr_leave_types lt ON lt.id = lr.leave_type_id
+         WHERE lr.employee_id = ?
+           AND lr.status IN ('hr_approved','approved','branch_approved')
+           AND lr.end_date >= ? AND lr.start_date <= ?`,
+        [emp.id, from, to]);
+      leaveRanges = lrows.map(r => ({
+        from: new Date(r.start_date).toISOString().slice(0,10),
+        to:   new Date(r.end_date).toISOString().slice(0,10),
+        type: r.type_name || 'إجازة'
+      }));
+    } catch(e) { /* leave_requests may not exist in some envs */ }
+    function leaveOnDate(ymd) {
+      return leaveRanges.find(l => ymd >= l.from && ymd <= l.to);
+    }
+
+    // Iterate every calendar day in [from, to]
+    const fromD = new Date(from + 'T00:00:00');
+    const toD   = new Date(to   + 'T00:00:00');
+    const days = [];
+    const totals = { present:0, absent:0, late:0, weekend:0, leave:0, holiday:0,
+                     workingHours:0, lateHours:0, overtimeHours:0 };
+    const todayYmd = new Date().toISOString().slice(0,10);
+
+    for (let d = new Date(fromD); d <= toD; d.setDate(d.getDate() + 1)) {
+      const ymd = d.toISOString().slice(0,10);
+      const dow = d.getDay();          // 0=Sun..6=Sat
+      const isWorkDay = workDaysSet.has(dow);
+      const isFuture  = ymd > todayYmd;
+      const att = attMap[ymd];
+      const lv  = leaveOnDate(ymd);
+
+      let row = {
+        date: ymd,
+        dayOfWeek: dow,
+        isWorkDay,
+        isToday: ymd === todayYmd,
+        isFuture,
+        clockIn: null, clockOut: null,
+        totalHours: 0, lateMinutes: 0, earlyLeaveMinutes: 0, overtimeMinutes: 0,
+        status: 'absent',
+        source: null, deviceName: '', notes: ''
+      };
+
+      if (att) {
+        // Real attendance row exists
+        row.clockIn  = att.clock_in;
+        row.clockOut = att.clock_out;
+        row.totalHours = Number(att.total_hours || 0);
+        row.lateMinutes = Number(att.late_minutes || 0);
+        row.earlyLeaveMinutes = Number(att.early_leave_minutes || 0);
+        row.overtimeMinutes = Number(att.overtime_minutes || 0);
+        row.status = att.status || 'present';
+        // If clocked in but never clocked out and the day is past, mark partial
+        if (att.clock_in && !att.clock_out && !row.isToday && !row.isFuture) row.status = 'partial';
+        row.source = att.source || null;
+        row.deviceName = att.device_name || '';
+        row.notes = att.notes || '';
+        totals.workingHours += row.totalHours;
+        totals.lateHours    += row.lateMinutes / 60;
+        totals.overtimeHours+= row.overtimeMinutes / 60;
+        if (row.status === 'present' || row.status === 'partial') totals.present++;
+        if (row.lateMinutes > 0) totals.late++;
+      } else if (lv) {
+        row.status = 'leave';
+        row.notes = lv.type;
+        totals.leave++;
+      } else if (!isWorkDay) {
+        row.status = 'weekend';
+        totals.weekend++;
+      } else if (isFuture) {
+        row.status = 'future';   // not counted toward absent
+      } else {
+        // Past or today, no record, was a working day → ABSENT
+        row.status = 'absent';
+        totals.absent++;
+      }
+
+      days.push(row);
+    }
+
+    // Round totals
+    totals.workingHours = Math.round(totals.workingHours * 100) / 100;
+    totals.lateHours    = Math.round(totals.lateHours    * 100) / 100;
+    totals.overtimeHours= Math.round(totals.overtimeHours* 100) / 100;
+
+    res.json({
+      success: true,
+      employee: {
+        id: emp.id,
+        name: (emp.first_name || '') + ' ' + (emp.last_name || ''),
+        employeeNumber: emp.employee_number,
+        branchName: emp.branch_name,
+        hireDate: emp.hire_date,
+        workStart: emp.work_start,
+        workEnd: emp.work_end
+      },
+      period: { from, to, workDaysCSV, totalDays: days.length },
+      totals,
+      days
+    });
+  } catch (e) {
+    console.error('my-attendance-full error:', e);
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // MY HOURS & PAY — overtime + late tracking for the logged-in employee
 // GET /api/hr/my-hours-summary?from=YYYY-MM-DD&to=YYYY-MM-DD
 //   (defaults: current month)

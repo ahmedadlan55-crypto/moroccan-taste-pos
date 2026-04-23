@@ -2489,4 +2489,183 @@ router.get('/attendance/calculate-monthly', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// MY HOURS & PAY — overtime + late tracking for the logged-in employee
+// GET /api/hr/my-hours-summary?from=YYYY-MM-DD&to=YYYY-MM-DD
+//   (defaults: current month)
+// Returns per-day breakdown of overtime + late hours WITH computed
+// monetary value (using employee's hourly_rate or basic_salary/contractedHours)
+// + monthly totals + comparison vs previous month.
+// ═══════════════════════════════════════════════════════════════════
+router.get('/my-hours-summary', async (req, res) => {
+  try {
+    const username = req.user ? req.user.username : req.query.username;
+    if (!username) return res.json({ success: false, error: 'غير مسجل الدخول' });
+
+    // Resolve the employee row for this username
+    const [empRows] = await db.query(
+      `SELECT e.id, e.first_name, e.last_name, e.employee_number,
+              e.basic_salary, e.hourly_rate, e.salary_type, e.work_start, e.work_end,
+              e.branch_id, COALESCE(b.name,'') AS branch_name,
+              COALESCE(d.name,'') AS department_name
+       FROM hr_employees e
+       LEFT JOIN branches b ON b.id = e.branch_id
+       LEFT JOIN hr_departments d ON d.id = e.department_id
+       WHERE e.linked_username = ? OR e.email = ?
+       LIMIT 1`,
+      [username, username]);
+    if (!empRows.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط بحسابك' });
+    const emp = empRows[0];
+
+    // Date range (default current month)
+    const today = new Date();
+    const defaultFrom = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0,10);
+    const defaultTo   = today.toISOString().slice(0,10);
+    const from = req.query.from || defaultFrom;
+    const to   = req.query.to   || defaultTo;
+
+    // Compute previous-period window (same length)
+    const fromD = new Date(from + 'T00:00:00');
+    const toD   = new Date(to   + 'T00:00:00');
+    const rangeDays = Math.max(1, Math.round((toD - fromD) / 86400000) + 1);
+    const prevTo   = new Date(fromD); prevTo.setDate(prevTo.getDate() - 1);
+    const prevFrom = new Date(prevTo); prevFrom.setDate(prevFrom.getDate() - (rangeDays - 1));
+    const ymd = (d) => d.toISOString().slice(0,10);
+
+    // Compute hourly rate. If salary_type='hourly' use hourly_rate directly.
+    // Otherwise derive from basic_salary / (work-days × work-hours).
+    // Saudi standard: 30 days × 8 hours = 240 monthly contracted hours.
+    let hourlyRate = Number(emp.hourly_rate || 0);
+    if (!hourlyRate || emp.salary_type === 'monthly') {
+      const monthly = Number(emp.basic_salary || 0);
+      hourlyRate = monthly > 0 ? monthly / 240 : 0;
+    }
+
+    // Saudi labor law standard multipliers (configurable later via overtime_rules)
+    const OVERTIME_MULTIPLIER = 1.5;   // 150% of base hourly rate
+    const LATE_DEDUCTION_MULT = 1.0;   // late = full hourly rate deducted
+
+    // Pull attendance for the current window (per-day rows)
+    const [attCurr] = await db.query(
+      `SELECT attendance_date AS d, late_minutes, overtime_minutes, early_leave_minutes,
+              total_hours, status, clock_in, clock_out
+       FROM hr_attendance
+       WHERE employee_id = ? AND attendance_date BETWEEN ? AND ?
+       ORDER BY attendance_date DESC`,
+      [emp.id, from, to]);
+
+    // Same for previous window (just totals, not per-row detail)
+    const [attPrev] = await db.query(
+      `SELECT COALESCE(SUM(late_minutes),0) AS late_min,
+              COALESCE(SUM(overtime_minutes),0) AS ot_min,
+              COALESCE(SUM(total_hours),0) AS total_h,
+              COUNT(*) AS days
+       FROM hr_attendance
+       WHERE employee_id = ? AND attendance_date BETWEEN ? AND ?`,
+      [emp.id, ymd(prevFrom), ymd(prevTo)]);
+
+    // Build per-day rows with monetary values
+    const rows = attCurr.map(r => {
+      const lateMin = Number(r.late_minutes || 0);
+      const otMin   = Number(r.overtime_minutes || 0);
+      const earlyMin= Number(r.early_leave_minutes || 0);
+      const lateHrs = lateMin / 60;
+      const otHrs   = otMin / 60;
+      const earlyHrs= earlyMin / 60;
+      const lateValue = Math.round(lateHrs * hourlyRate * LATE_DEDUCTION_MULT * 100) / 100;
+      const otValue   = Math.round(otHrs   * hourlyRate * OVERTIME_MULTIPLIER  * 100) / 100;
+      const earlyValue= Math.round(earlyHrs* hourlyRate * LATE_DEDUCTION_MULT * 100) / 100;
+      return {
+        date: r.d ? ymd(new Date(r.d)) : null,
+        clockIn:  r.clock_in,
+        clockOut: r.clock_out,
+        totalHours: Number(r.total_hours || 0),
+        lateMinutes: lateMin,
+        lateHours: Math.round(lateHrs * 100) / 100,
+        lateValue: lateValue,                  // SAR deducted for being late
+        overtimeMinutes: otMin,
+        overtimeHours: Math.round(otHrs * 100) / 100,
+        overtimeValue: otValue,                // SAR earned in overtime
+        earlyLeaveMinutes: earlyMin,
+        earlyLeaveHours: Math.round(earlyHrs * 100) / 100,
+        earlyLeaveValue: earlyValue,           // SAR deducted for early leave
+        netImpact: Math.round((otValue - lateValue - earlyValue) * 100) / 100,
+        status: r.status
+      };
+    });
+
+    // Aggregate totals
+    const sum = (k) => rows.reduce((s, r) => s + Number(r[k] || 0), 0);
+    const tot = {
+      days: rows.length,
+      lateMinutes: sum('lateMinutes'),
+      lateHours: Math.round(sum('lateHours') * 100) / 100,
+      lateValue: Math.round(sum('lateValue') * 100) / 100,
+      overtimeMinutes: sum('overtimeMinutes'),
+      overtimeHours: Math.round(sum('overtimeHours') * 100) / 100,
+      overtimeValue: Math.round(sum('overtimeValue') * 100) / 100,
+      earlyLeaveMinutes: sum('earlyLeaveMinutes'),
+      earlyLeaveHours: Math.round(sum('earlyLeaveHours') * 100) / 100,
+      earlyLeaveValue: Math.round(sum('earlyLeaveValue') * 100) / 100,
+      totalHours: Math.round(sum('totalHours') * 100) / 100,
+      netImpact: Math.round(sum('netImpact') * 100) / 100,
+      // Days where the employee was late at least once
+      lateDays: rows.filter(r => r.lateMinutes > 0).length,
+      overtimeDays: rows.filter(r => r.overtimeMinutes > 0).length
+    };
+
+    // Previous period totals (raw)
+    const prev = attPrev[0];
+    const prevTotals = {
+      lateMinutes: Number(prev.late_min || 0),
+      lateHours: Math.round((Number(prev.late_min || 0) / 60) * 100) / 100,
+      lateValue: Math.round((Number(prev.late_min || 0) / 60) * hourlyRate * LATE_DEDUCTION_MULT * 100) / 100,
+      overtimeMinutes: Number(prev.ot_min || 0),
+      overtimeHours: Math.round((Number(prev.ot_min || 0) / 60) * 100) / 100,
+      overtimeValue: Math.round((Number(prev.ot_min || 0) / 60) * hourlyRate * OVERTIME_MULTIPLIER * 100) / 100,
+      totalHours: Number(prev.total_h || 0),
+      days: Number(prev.days || 0)
+    };
+
+    const pct = (curr, p) => (!p || p === 0) ? (curr > 0 ? 100 : 0) : ((curr - p) / p) * 100;
+    const deltas = {
+      lateHours: pct(tot.lateHours, prevTotals.lateHours),
+      overtimeHours: pct(tot.overtimeHours, prevTotals.overtimeHours),
+      lateValue: pct(tot.lateValue, prevTotals.lateValue),
+      overtimeValue: pct(tot.overtimeValue, prevTotals.overtimeValue)
+    };
+
+    res.json({
+      success: true,
+      employee: {
+        id: emp.id,
+        name: (emp.first_name || '') + ' ' + (emp.last_name || ''),
+        employeeNumber: emp.employee_number,
+        branchName: emp.branch_name,
+        departmentName: emp.department_name,
+        salaryType: emp.salary_type,
+        basicSalary: Number(emp.basic_salary || 0),
+        hourlyRate: Math.round(hourlyRate * 100) / 100,
+        workStart: emp.work_start,
+        workEnd: emp.work_end
+      },
+      period: {
+        from, to, rangeDays,
+        prevFrom: ymd(prevFrom), prevTo: ymd(prevTo)
+      },
+      multipliers: {
+        overtime: OVERTIME_MULTIPLIER,
+        lateDeduction: LATE_DEDUCTION_MULT
+      },
+      totals: tot,
+      previousTotals: prevTotals,
+      deltas: deltas,
+      rows: rows
+    });
+  } catch (e) {
+    console.error('my-hours-summary error:', e);
+    res.json({ success: false, error: e.message });
+  }
+});
+
 module.exports = router;

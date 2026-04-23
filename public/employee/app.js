@@ -566,14 +566,16 @@ function doRefresh() { loadHomeData(); toast(t('common.refreshed')); }
 // ─── Navigation ───
 function navTo(pg, el) {
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
-  document.querySelectorAll('.nav-tab').forEach(function(t){t.classList.remove('active');});
-  document.getElementById('pg'+pg).classList.add('active');
+  document.querySelectorAll('.nt').forEach(function(t){t.classList.remove('active');});
+  var pageEl = document.getElementById('pg'+pg);
+  if (pageEl) pageEl.classList.add('active');
   if (el) el.classList.add('active');
   if (pg==='att') loadAttPage();
   if (pg==='txn') { txnSwitchTab('inc'); loadIncomingTxns(); loadMyTransactions(); }
   if (pg==='leave') loadLeavePage();
   if (pg==='me') loadProfilePage();
   if (pg==='home') loadHomeData();
+  if (pg==='hours') loadHoursPage();
 }
 
 // ═══════════════════════════════════════
@@ -1320,3 +1322,271 @@ function viewMyTxn(id) {
   });
 }
 function closeTxnDetail() { document.getElementById('txnDetailModal').classList.remove('show'); }
+
+// ═══════════════════════════════════════════════════════════════════
+// MY HOURS & PAY — overtime + late tracking page
+// ═══════════════════════════════════════════════════════════════════
+window._hoursState = { preset: 'thismonth', from: '', to: '' };
+var _hoursPresetLabels = {
+  thisweek:'هذا الأسبوع', thismonth:'هذا الشهر', lastmonth:'الشهر الماضي',
+  last30:'آخر 30 يوم', last90:'آخر 90 يوم'
+};
+
+function _hoursResolveRange(preset) {
+  var now = new Date();
+  var ymd = function(d){ return d.toISOString().slice(0,10); };
+  if (preset === 'thisweek') {
+    var d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 1) % 7));
+    return { from: ymd(d), to: ymd(now) };
+  }
+  if (preset === 'thismonth') return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: ymd(now) };
+  if (preset === 'lastmonth') {
+    var s = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    var e = new Date(now.getFullYear(), now.getMonth(), 0);
+    return { from: ymd(s), to: ymd(e) };
+  }
+  if (preset === 'last30') { var d = new Date(now); d.setDate(d.getDate() - 29); return { from: ymd(d), to: ymd(now) }; }
+  if (preset === 'last90') { var d = new Date(now); d.setDate(d.getDate() - 89); return { from: ymd(d), to: ymd(now) }; }
+  return { from: ymd(now), to: ymd(now) };
+}
+
+window.hoursSetPreset = function(p) {
+  window._hoursState.preset = p;
+  document.querySelectorAll('[data-hp]').forEach(function(el){
+    el.classList.toggle('active', el.getAttribute('data-hp') === p);
+  });
+  loadHoursPage();
+};
+
+function loadHoursPage() {
+  var range = _hoursResolveRange(window._hoursState.preset);
+  window._hoursState.from = range.from;
+  window._hoursState.to   = range.to;
+  var lbl = document.getElementById('hoursRangeLabel');
+  if (lbl) lbl.textContent = range.from + ' → ' + range.to;
+  // Show loading state
+  var tbl = document.getElementById('hoursTable');
+  if (tbl) tbl.innerHTML = '<div class="empty"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+
+  callAPI('GET', '/hr/my-hours-summary?username=' + encodeURIComponent(currentUser) + '&from=' + range.from + '&to=' + range.to, null, function(d) {
+    if (!d || d.success === false) {
+      var msg = (d && d.error) || 'فشل تحميل البيانات';
+      if (tbl) tbl.innerHTML = '<div class="empty" style="color:#ef4444;"><i class="fas fa-triangle-exclamation"></i> ' + msg + '</div>';
+      // Clear KPIs
+      ['hkpiOTHours','hkpiOTValue','hkpiLateHours','hkpiLateValue'].forEach(function(id){ var e=document.getElementById(id); if (e) e.textContent='—'; });
+      return;
+    }
+    _hoursRender(d);
+  });
+}
+
+function _hoursFmt(v, d) { return Number(v||0).toLocaleString('en', { minimumFractionDigits: d!=null?d:2, maximumFractionDigits: d!=null?d:2 }); }
+function _hoursDeltaHtml(delta, invertColor) {
+  var n = Number(delta || 0);
+  if (Math.abs(n) < 0.5) return '<span style="color:#94a3b8;">— بدون تغيير</span>';
+  var goingUp = n > 0;
+  // For "late hours" / "late deduction", going UP is BAD; for "overtime", UP is GOOD
+  var good = invertColor ? !goingUp : goingUp;
+  var cls = good ? 'up' : 'down';
+  var arrow = goingUp ? '<i class="fas fa-arrow-up"></i>' : '<i class="fas fa-arrow-down"></i>';
+  return '<span class="'+cls+'">' + arrow + ' ' + (n>0?'+':'') + n.toFixed(1) + '%</span>';
+}
+
+function _hoursRender(d) {
+  var tot = d.totals, prev = d.previousTotals, delt = d.deltas;
+  // KPI values
+  var setT = function(id, txt){ var e=document.getElementById(id); if (e) e.innerHTML = txt; };
+  setT('hkpiOTHours',   _hoursFmt(tot.overtimeHours, 1) + '<small style="font-size:11px;color:#94a3b8;font-weight:600;margin-inline-start:4px;">س</small>');
+  setT('hkpiOTValue',   _hoursFmt(tot.overtimeValue) + '<small style="font-size:11px;color:#94a3b8;font-weight:600;margin-inline-start:4px;">ر.س</small>');
+  setT('hkpiLateHours', _hoursFmt(tot.lateHours, 1) + '<small style="font-size:11px;color:#94a3b8;font-weight:600;margin-inline-start:4px;">س</small>');
+  setT('hkpiLateValue', _hoursFmt(tot.lateValue) + '<small style="font-size:11px;color:#94a3b8;font-weight:600;margin-inline-start:4px;">ر.س</small>');
+
+  // Delta sub-labels (relative to previous identical-length window)
+  var sub = function(id, html, cls){
+    var e = document.getElementById(id);
+    if (e) { e.className = 'hours-kpi-sub ' + (cls||''); e.innerHTML = html; }
+  };
+  // Compute per-tile direction class for the parent .hours-kpi-sub
+  function dCls(n, invertColor){
+    if (Math.abs(n) < 0.5) return '';
+    var good = invertColor ? n < 0 : n > 0;
+    return good ? 'up' : 'down';
+  }
+  sub('hkpiOTHoursDelta', _hoursDeltaHtml(delt.overtimeHours, false) + ' <span style="color:#94a3b8;">vs الفترة السابقة</span>', dCls(delt.overtimeHours, false));
+  sub('hkpiOTValueDelta', _hoursDeltaHtml(delt.overtimeValue, false) + ' <span style="color:#94a3b8;">vs الفترة السابقة</span>', dCls(delt.overtimeValue, false));
+  sub('hkpiLateHoursDelta', _hoursDeltaHtml(delt.lateHours, true) + ' <span style="color:#94a3b8;">vs الفترة السابقة</span>', dCls(delt.lateHours, true));
+  sub('hkpiLateValueDelta', _hoursDeltaHtml(delt.lateValue, true) + ' <span style="color:#94a3b8;">vs الفترة السابقة</span>', dCls(delt.lateValue, true));
+
+  // Net impact card
+  var netVal = document.getElementById('hoursNetVal');
+  var netSub = document.getElementById('hoursNetSub');
+  var netCard = document.getElementById('hoursNetCard');
+  var net = Number(tot.netImpact || 0);
+  if (netVal) {
+    netVal.textContent = (net >= 0 ? '+' : '') + _hoursFmt(net) + ' ر.س';
+    netVal.style.color = net > 0 ? '#16a34a' : (net < 0 ? '#ef4444' : '#475569');
+  }
+  if (netSub) netSub.textContent = (net > 0 ? 'مكاسب صافية من الإضافي بعد خصم التأخير' : (net < 0 ? 'خصم صافي من الراتب' : 'متعادل — لا تأثير على الراتب'));
+  if (netCard) {
+    netCard.style.background = net > 0 ? 'linear-gradient(135deg,#dcfce7,#fff)' :
+                              (net < 0 ? 'linear-gradient(135deg,#fee2e2,#fff)' :
+                                         '#fff');
+  }
+  var rateVal = document.getElementById('hoursRateVal');
+  if (rateVal) rateVal.textContent = _hoursFmt(d.employee.hourlyRate) + ' ر.س';
+
+  // Days count
+  var dc = document.getElementById('hoursDaysCount');
+  if (dc) dc.textContent = (d.rows||[]).length + ' يوم';
+
+  // Per-day table
+  var tbl = document.getElementById('hoursTable');
+  if (!tbl) return;
+  if (!d.rows || !d.rows.length) {
+    tbl.innerHTML = '<div class="empty"><i class="fas fa-inbox"></i> لا توجد سجلات حضور في هذه الفترة</div>';
+    return;
+  }
+  tbl.innerHTML = d.rows.map(function(r){
+    var dateLbl = r.date ? new Date(r.date).toLocaleDateString('en-GB', { weekday:'short', day:'2-digit', month:'2-digit' }) : '—';
+    var times = '';
+    if (r.clockIn) {
+      var ci = new Date(r.clockIn).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'});
+      var co = r.clockOut ? new Date(r.clockOut).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'}) : '—';
+      times = ci + ' ← ' + co + ' (' + _hoursFmt(r.totalHours, 1) + ' س)';
+    }
+    var otPill = r.overtimeMinutes > 0 ?
+      '<span class="hours-pill ot"><i class="fas fa-arrow-up"></i> +' + _hoursFmt(r.overtimeHours, 1) + ' س = ' + _hoursFmt(r.overtimeValue) + ' ر.س</span>' :
+      '<span class="hours-pill zero">—</span>';
+    var latePill = r.lateMinutes > 0 ?
+      '<span class="hours-pill late"><i class="fas fa-arrow-down"></i> -' + _hoursFmt(r.lateHours, 1) + ' س = -' + _hoursFmt(r.lateValue) + ' ر.س</span>' :
+      '<span class="hours-pill zero">—</span>';
+    return '<div class="hours-row">' +
+      '<div><div class="hours-row-date">'+dateLbl+'</div><div class="hours-row-meta">'+times+'</div></div>' +
+      '<div class="hours-row-vals">' + otPill + latePill + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// TRANSACTION MODAL — draft persistence + importance card UI
+// ═══════════════════════════════════════════════════════════════════
+var _txnDraftKey = function() { return 'emp_txn_draft_' + (currentUser || 'anon'); };
+
+window.txnSetImportance = function(level) {
+  var hidden = document.getElementById('txnImportance');
+  if (hidden) hidden.value = level;
+  document.querySelectorAll('.tm-imp-card').forEach(function(el){
+    el.classList.toggle('active', el.getAttribute('data-imp') === level);
+  });
+  txnSaveDraft();
+};
+
+window.txnValidateTitle = function() {
+  var v = document.getElementById('txnTitle').value.trim();
+  var el = document.getElementById('txnTitleVal');
+  if (!el) return;
+  if (!v) { el.className = 'tm-validation'; el.textContent = ''; return; }
+  if (v.length < 5) { el.className = 'tm-validation err'; el.textContent = '✗ العنوان قصير جداً (5 أحرف على الأقل)'; return; }
+  el.className = 'tm-validation ok';
+  el.textContent = '✓ عنوان صالح';
+  // Update char counter on description as well
+  var dEl = document.getElementById('txnDesc');
+  var cEl = document.getElementById('txnDescCount');
+  if (dEl && cEl) cEl.textContent = (dEl.value || '').length + ' / 2000';
+};
+
+window.txnSaveDraft = function() {
+  try {
+    var d = {
+      type:       (document.getElementById('txnType')||{}).value || '',
+      importance: (document.getElementById('txnImportance')||{}).value || 'medium',
+      title:      (document.getElementById('txnTitle')||{}).value || '',
+      desc:       (document.getElementById('txnDesc')||{}).value || '',
+      accId:      (document.getElementById('txnAccId')||{}).value || '',
+      accSearch:  (document.getElementById('txnAccSearch')||{}).value || '',
+      cc:         (document.getElementById('txnCC')||{}).value || '',
+      amount:     (document.getElementById('txnAmount')||{}).value || '',
+      recipient:  (document.getElementById('txnRecipient')||{}).value || ''
+    };
+    localStorage.setItem(_txnDraftKey(), JSON.stringify(d));
+  } catch(e) {}
+  // Update char counter on each save
+  var dEl = document.getElementById('txnDesc');
+  var cEl = document.getElementById('txnDescCount');
+  if (dEl && cEl) cEl.textContent = (dEl.value || '').length + ' / 2000';
+};
+
+window.txnLoadDraft = function() {
+  try {
+    var raw = localStorage.getItem(_txnDraftKey());
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch(e) { return null; }
+};
+
+window.txnDiscardDraft = function() {
+  try { localStorage.removeItem(_txnDraftKey()); } catch(e) {}
+  // Clear all fields
+  ['txnTitle','txnDesc','txnAccSearch','txnAccId','txnAccName','txnAmount','txnFile'].forEach(function(id){
+    var e = document.getElementById(id); if (e) { if (e.tagName === 'SELECT') e.value=''; else e.value=''; }
+  });
+  if (document.getElementById('txnImportance')) document.getElementById('txnImportance').value = 'medium';
+  txnSetImportance('medium');
+  if (document.getElementById('txnAmount')) document.getElementById('txnAmount').value = '0';
+  var b = document.getElementById('txnDraftBanner'); if (b) b.style.display = 'none';
+  toast('تم تفريغ المسودة');
+};
+
+// Wrap the original openTxnModal to also restore draft + show context badges
+var _origOpenTxnModal = window.openTxnModal;
+window.openTxnModal = function() {
+  if (_origOpenTxnModal) _origOpenTxnModal();
+  // Show brand + branch context badges
+  var badges = document.getElementById('txnContextBadges');
+  if (badges && empProfile) {
+    var html = '';
+    if (empProfile.branchName || empProfile.branch_name) {
+      html += '<span class="tm-ctx-badge"><i class="fas fa-map-marker-alt"></i> ' + (empProfile.branchName || empProfile.branch_name || '') + '</span>';
+    }
+    if (empProfile.departmentName || empProfile.department_name) {
+      html += '<span class="tm-ctx-badge" style="background:#fef3c7;color:#92400e;border-color:#fde68a;"><i class="fas fa-building"></i> ' + (empProfile.departmentName || empProfile.department_name || '') + '</span>';
+    }
+    badges.innerHTML = html;
+  }
+  // Restore draft
+  setTimeout(function(){
+    var d = txnLoadDraft();
+    if (!d) return;
+    var hasContent = d.title || d.desc || (d.amount && d.amount !== '0');
+    if (!hasContent) return;
+    var setVal = function(id, v){ var e=document.getElementById(id); if (e && v != null) e.value = v; };
+    setVal('txnTitle', d.title);
+    setVal('txnDesc', d.desc);
+    setVal('txnAmount', d.amount);
+    if (d.importance) txnSetImportance(d.importance);
+    if (d.accSearch) setVal('txnAccSearch', d.accSearch);
+    if (d.accId)     setVal('txnAccId', d.accId);
+    var banner = document.getElementById('txnDraftBanner');
+    if (banner) banner.style.display = 'flex';
+    txnValidateTitle();
+  }, 250);
+};
+
+// Auto-clear draft on successful submit (wraps _doTxn)
+var _origDoTxn = window._doTxn;
+window._doTxn = function(data) {
+  toast(t('tm.sending'));
+  callAPI('POST', '/workflow/transactions', data, function(r, e) {
+    if (e) return toast(t('login.error') + ': ' + e, true);
+    if (r && r.success) {
+      // Clear draft on success
+      try { localStorage.removeItem(_txnDraftKey()); } catch(_) {}
+      var banner = document.getElementById('txnDraftBanner'); if (banner) banner.style.display = 'none';
+      toast(t('tm.txnNumberCreated') + ': ' + (r.txnNumber||''));
+      closeTxnModal();
+      txnSwitchTab('out');
+      loadMyTransactions();
+    } else toast(r ? r.error : t('txn.failed'), true);
+  });
+};
+

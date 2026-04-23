@@ -75,6 +75,53 @@
     .modal.show .modal-c{transform:translateY(0);}
     .modal-h{display:flex;justify-content:space-between;font-size:14px;font-weight:800;margin-bottom:10px;}
     .modal-h button{width:26px;height:26px;border-radius:6px;background:#f1f5f9;border:none;font-size:14px;cursor:pointer;}
+
+    /* ─── Hours/overtime section ─── */
+    .hours-chip{padding:7px 12px;border-radius:9px;border:1.5px solid #e5e7eb;background:#fff;font-size:11.5px;font-weight:800;cursor:pointer;color:#64748b;white-space:nowrap;font-family:inherit;flex-shrink:0;}
+    .hours-chip.active{background:#0ea5e9;color:#fff;border-color:#0ea5e9;}
+    .hours-kpi-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;}
+    .hours-kpi{background:#fff;border-radius:14px;padding:12px;border:1px solid #f0f0f0;border-top:3px solid #e5e7eb;display:flex;gap:10px;align-items:flex-start;}
+    .hours-kpi.success{border-top-color:#10b981;}
+    .hours-kpi.danger{border-top-color:#ef4444;}
+    .hours-kpi.bold{background:linear-gradient(180deg,#fff,#f8fafc);}
+    .hours-kpi-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
+    .hours-kpi.success .hours-kpi-icon{background:#dcfce7;color:#16a34a;}
+    .hours-kpi.danger .hours-kpi-icon{background:#fee2e2;color:#dc2626;}
+    .hours-kpi-body{flex:1;min-width:0;}
+    .hours-kpi-lbl{font-size:11px;color:#64748b;font-weight:700;margin-bottom:2px;}
+    .hours-kpi-val{font-size:18px;font-weight:900;color:#0f172a;letter-spacing:-0.01em;line-height:1.1;}
+    .hours-kpi-sub{font-size:10px;color:#94a3b8;font-weight:600;margin-top:3px;display:flex;align-items:center;gap:3px;}
+    .hours-kpi-sub.up{color:#16a34a;} .hours-kpi-sub.down{color:#ef4444;}
+    .hours-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px dashed #f1f5f9;font-size:12.5px;}
+    .hours-row:last-child{border-bottom:none;}
+    .hours-row-date{font-weight:800;color:#0f172a;min-width:60px;}
+    .hours-row-meta{font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;}
+    .hours-row-vals{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:11px;font-weight:700;}
+    .hours-pill{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:8px;font-size:10px;font-weight:800;}
+    .hours-pill.ot{background:#dcfce7;color:#15803d;}
+    .hours-pill.late{background:#fee2e2;color:#b91c1c;}
+    .hours-pill.zero{background:#f1f5f9;color:#94a3b8;}
+
+    /* ─── Enhanced transaction modal ─── */
+    .tm-section{padding:10px 0;border-bottom:1px dashed #f1f5f9;}
+    .tm-section:last-of-type{border-bottom:none;}
+    .tm-section-h{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;color:#0ea5e9;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px;}
+    .tm-section-h i{font-size:11px;}
+    .tm-ctx-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:9px;background:#f0f9ff;color:#0369a1;font-size:11px;font-weight:700;border:1px solid #bae6fd;}
+    .tm-required-mark{color:#ef4444;font-weight:900;}
+    .tm-draft-banner{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;padding:8px 10px;border-radius:10px;font-size:11.5px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px;}
+    .tm-imp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;}
+    .tm-imp-card{padding:8px 4px;border-radius:9px;border:1.5px solid #e5e7eb;background:#fff;cursor:pointer;text-align:center;transition:all .15s;}
+    .tm-imp-card.active{transform:scale(1.02);border-width:2px;}
+    .tm-imp-card[data-imp="low"].active{background:#dcfce7;border-color:#16a34a;color:#15803d;}
+    .tm-imp-card[data-imp="medium"].active{background:#fef9c3;border-color:#ca8a04;color:#854d0e;}
+    .tm-imp-card[data-imp="high"].active{background:#ffedd5;border-color:#ea580c;color:#9a3412;}
+    .tm-imp-card[data-imp="critical"].active{background:#fee2e2;border-color:#dc2626;color:#991b1b;}
+    .tm-imp-card i{font-size:14px;display:block;margin-bottom:2px;}
+    .tm-imp-card span{font-size:10px;font-weight:800;}
+    .tm-validation{font-size:10px;font-weight:700;margin-top:3px;display:none;}
+    .tm-validation.err{color:#dc2626;display:block;}
+    .tm-validation.ok{color:#16a34a;display:block;}
   </style>
   <script defer src="/shared/api-bridge.js"></script>
   <style>
@@ -83,7 +130,7 @@
     html[lang="en"] body{direction:ltr;}
     html[lang="en"] .hdr-n,html[lang="en"] .hdr-s{text-align:left;}
   </style>
-  <script defer src="/employee/app.js?v=16"></script>
+  <script defer src="/employee/app.js?v=17"></script>
 </head>
 <body>
 <div class="toast" id="toast"></div>
@@ -151,11 +198,91 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
         <div class="card"><div class="card-t"><i class="fas fa-paper-plane"></i> <span data-i18n="txn.mySent">معاملاتي المرسلة</span></div><div id="myTxnList"></div></div>
       </div>
     </div>
+    <!-- ─── NEW: ساعاتي وأجوري — overtime + late tracking ─── -->
+    <div class="page" id="pghours">
+      <!-- Period filter chips -->
+      <div class="card" style="padding:10px 12px;">
+        <div style="font-size:12px;font-weight:800;color:#475569;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+          <i class="fas fa-calendar-check" style="color:#0ea5e9;"></i>
+          <span>الفترة المعروضة</span>
+          <span id="hoursRangeLabel" style="margin-inline-start:auto;font-weight:700;color:#0ea5e9;font-size:11px;">—</span>
+        </div>
+        <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">
+          <button class="hours-chip" data-hp="thisweek" onclick="hoursSetPreset('thisweek')">هذا الأسبوع</button>
+          <button class="hours-chip active" data-hp="thismonth" onclick="hoursSetPreset('thismonth')">هذا الشهر</button>
+          <button class="hours-chip" data-hp="lastmonth" onclick="hoursSetPreset('lastmonth')">الشهر الماضي</button>
+          <button class="hours-chip" data-hp="last30" onclick="hoursSetPreset('last30')">آخر 30 يوم</button>
+          <button class="hours-chip" data-hp="last90" onclick="hoursSetPreset('last90')">آخر 90 يوم</button>
+        </div>
+      </div>
+
+      <!-- KPI grid: 4 tiles (overtime hours / overtime value / late hours / late value) -->
+      <div class="hours-kpi-grid">
+        <div class="hours-kpi success">
+          <div class="hours-kpi-icon"><i class="fas fa-clock-rotate-left"></i></div>
+          <div class="hours-kpi-body">
+            <div class="hours-kpi-lbl">ساعات إضافية</div>
+            <div class="hours-kpi-val" id="hkpiOTHours">—</div>
+            <div class="hours-kpi-sub" id="hkpiOTHoursDelta">—</div>
+          </div>
+        </div>
+        <div class="hours-kpi success bold">
+          <div class="hours-kpi-icon"><i class="fas fa-sack-dollar"></i></div>
+          <div class="hours-kpi-body">
+            <div class="hours-kpi-lbl">قيمة الإضافي</div>
+            <div class="hours-kpi-val" id="hkpiOTValue">—</div>
+            <div class="hours-kpi-sub" id="hkpiOTValueDelta">—</div>
+          </div>
+        </div>
+        <div class="hours-kpi danger">
+          <div class="hours-kpi-icon"><i class="fas fa-hourglass-half"></i></div>
+          <div class="hours-kpi-body">
+            <div class="hours-kpi-lbl">ساعات تأخير</div>
+            <div class="hours-kpi-val" id="hkpiLateHours">—</div>
+            <div class="hours-kpi-sub" id="hkpiLateHoursDelta">—</div>
+          </div>
+        </div>
+        <div class="hours-kpi danger bold">
+          <div class="hours-kpi-icon"><i class="fas fa-money-bill-trend-up" style="transform:rotate(180deg);"></i></div>
+          <div class="hours-kpi-body">
+            <div class="hours-kpi-lbl">خصم التأخير</div>
+            <div class="hours-kpi-val" id="hkpiLateValue">—</div>
+            <div class="hours-kpi-sub" id="hkpiLateValueDelta">—</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Net impact bar (highlights total income/loss for the period) -->
+      <div class="card" id="hoursNetCard">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-size:12px;color:#64748b;font-weight:700;">صافي الأثر على الراتب</div>
+            <div id="hoursNetVal" style="font-size:24px;font-weight:900;letter-spacing:-0.02em;">—</div>
+            <div id="hoursNetSub" style="font-size:11px;color:#94a3b8;font-weight:600;margin-top:2px;">يستند إلى أجر الساعة</div>
+          </div>
+          <div id="hoursRateBadge" style="text-align:left;font-size:11px;color:#64748b;">
+            <div>أجر الساعة: <b id="hoursRateVal" style="color:#0ea5e9;">—</b></div>
+            <div style="margin-top:2px;">معامل الإضافي: <b style="color:#16a34a;">×1.5</b></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Per-day breakdown table -->
+      <div class="card">
+        <div class="card-t" style="display:flex;justify-content:space-between;align-items:center;">
+          <span><i class="fas fa-list-ul"></i> التفاصيل اليومية</span>
+          <span id="hoursDaysCount" style="font-size:11px;color:#64748b;font-weight:700;">—</span>
+        </div>
+        <div id="hoursTable"></div>
+      </div>
+    </div>
+
     <div class="page" id="pgme"><div class="card"><div class="card-t"><i class="fas fa-id-card"></i> <span data-i18n="profile.info">بياناتي</span></div><div id="profileInfo"></div></div><div class="card"><div class="card-t"><i class="fas fa-money-bill-wave"></i> <span data-i18n="profile.salaries">الرواتب</span></div><div id="payslips"></div></div></div>
   </div>
   <nav class="bnav">
     <div class="nt active" onclick="navTo('home',this)"><i class="fas fa-home"></i><span data-i18n="nav.home">الرئيسية</span></div>
     <div class="nt" onclick="navTo('att',this)"><i class="fas fa-fingerprint"></i><span data-i18n="nav.att">البصمة</span></div>
+    <div class="nt" onclick="navTo('hours',this)"><i class="fas fa-clock-rotate-left"></i><span>ساعاتي</span></div>
     <div class="nt" onclick="navTo('txn',this)"><i class="fas fa-file-alt"></i><span data-i18n="nav.txn">معاملات</span></div>
     <div class="nt" onclick="navTo('leave',this)"><i class="fas fa-calendar"></i><span data-i18n="nav.leave">إجازات</span></div>
     <div class="nt" onclick="navTo('me',this)"><i class="fas fa-user"></i><span data-i18n="nav.me">ملفي</span></div>
@@ -163,37 +290,88 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
 </div>
 <!-- Leave Modal -->
 <div class="modal" id="leaveModal"><div class="modal-c"><div class="modal-h"><span><i class="fas fa-calendar-plus"></i> <span data-i18n="leave.modalTitle">طلب إجازة</span></span><button onclick="closeLeaveForm()">&times;</button></div><div class="fg"><label data-i18n="leave.type">النوع</label><select class="fi" id="lfType"></select></div><div class="fg"><label data-i18n="leave.from">من</label><input type="date" class="fi" id="lfStart"></div><div class="fg"><label data-i18n="leave.to">إلى</label><input type="date" class="fi" id="lfEnd"></div><div class="fg"><label data-i18n="leave.reason">السبب</label><textarea class="fi" id="lfReason" rows="2"></textarea></div><button class="btn-m" onclick="submitLeave()"><i class="fas fa-paper-plane"></i> <span data-i18n="leave.submit">تقديم</span></button></div></div>
-<!-- Transaction Modal -->
+<!-- Transaction Modal — Enterprise redesign with sections + draft persistence + validation -->
 <div class="modal" id="txnModal"><div class="modal-c" style="max-height:90dvh;overflow-y:auto;">
-  <div class="modal-h"><span><i class="fas fa-file-alt"></i> <span data-i18n="tm.title">معاملة جديدة</span></span><button onclick="closeTxnModal()">&times;</button></div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-    <div class="fg"><label><i class="fas fa-user"></i> <span data-i18n="tm.senderName">اسم المرسل</span></label><input class="fi" id="txnSenderName" readonly style="background:#f0fdf4;color:#166534;font-weight:700;"></div>
-    <div class="fg"><label><i class="fas fa-id-badge"></i> <span data-i18n="tm.jobTitle">المسمى الوظيفي</span></label><input class="fi" id="txnJobTitle" readonly style="background:#f3f4f6;color:#6b7280;"></div>
+  <div class="modal-h">
+    <span><i class="fas fa-file-alt" style="color:#0ea5e9;"></i> <span data-i18n="tm.title">معاملة جديدة</span></span>
+    <button onclick="closeTxnModal()">&times;</button>
   </div>
-  <div class="fg"><label data-i18n="tm.type">نوع المعاملة *</label><select class="fi" id="txnType"></select></div>
-  <div class="fg"><label data-i18n="tm.importance">درجة الأهمية *</label>
-    <select class="fi" id="txnImportance">
-      <option value="low" data-i18n="tm.imp.low">منخفض (Low) — أخضر</option>
-      <option value="medium" selected data-i18n="tm.imp.medium">متوسط (Medium) — أصفر</option>
-      <option value="high" data-i18n="tm.imp.high">عالي (High) — برتقالي</option>
-      <option value="critical" data-i18n="tm.imp.critical">عاجل (Critical) — أحمر</option>
-    </select>
+
+  <!-- Draft restore banner (shown when localStorage has a saved draft) -->
+  <div id="txnDraftBanner" class="tm-draft-banner" style="display:none;">
+    <i class="fas fa-floppy-disk"></i>
+    <span style="flex:1;">تم استعادة مسودة محفوظة — يمكنك المتابعة من حيث توقفت</span>
+    <button type="button" onclick="txnDiscardDraft()" style="background:transparent;border:none;color:#9a3412;cursor:pointer;font-size:11px;font-weight:800;text-decoration:underline;">تفريغ</button>
   </div>
-  <div class="fg"><label data-i18n="tm.titleLabel">العنوان *</label><input class="fi" id="txnTitle" placeholder="وصف مختصر للمعاملة" data-i18n-placeholder="tm.titlePH"></div>
-  <div class="fg" style="position:relative;">
-    <label><i class="fas fa-sitemap"></i> <span data-i18n="tm.glAccount">الحساب المحاسبي</span></label>
-    <input class="fi" id="txnAccSearch" placeholder="ابحث برقم أو اسم الحساب..." data-i18n-placeholder="tm.glSearch" oninput="txnSearchAccount(this)" onfocus="txnSearchAccount(this)">
-    <input type="hidden" id="txnAccId"><input type="hidden" id="txnAccName">
-    <div id="txnAccDropdown" style="display:none;position:absolute;top:100%;right:0;left:0;z-index:200;background:#fff;border:1px solid #e5e7eb;border-radius:10px;max-height:180px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1);"></div>
+
+  <!-- ─── Section 1: Sender context ─── -->
+  <div class="tm-section">
+    <div class="tm-section-h"><i class="fas fa-user-circle"></i> <span>بيانات المُرسِل (تُملأ تلقائياً)</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      <div class="fg" style="margin:0;"><label><i class="fas fa-user"></i> <span data-i18n="tm.senderName">الاسم</span></label><input class="fi" id="txnSenderName" readonly style="background:#f0fdf4;color:#166534;font-weight:700;font-size:13px;"></div>
+      <div class="fg" style="margin:0;"><label><i class="fas fa-id-badge"></i> <span data-i18n="tm.jobTitle">المسمى</span></label><input class="fi" id="txnJobTitle" readonly style="background:#f3f4f6;color:#6b7280;font-size:13px;"></div>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;" id="txnContextBadges">
+      <!-- Brand + Branch badges injected by openTxnModal() -->
+    </div>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-    <div class="fg"><label><i class="fas fa-building"></i> <span data-i18n="tm.costCenter">مركز التكلفة</span></label><select class="fi" id="txnCC"><option value="" data-i18n="tm.noCC">— بدون —</option></select></div>
-    <div class="fg"><label><i class="fas fa-money-bill-wave"></i> <span data-i18n="tm.amount">المبلغ</span></label><input type="number" class="fi" id="txnAmount" step="0.01" min="0" value="0"></div>
+
+  <!-- ─── Section 2: Type + Importance ─── -->
+  <div class="tm-section">
+    <div class="tm-section-h"><i class="fas fa-layer-group"></i> <span>نوع المعاملة</span></div>
+    <div class="fg" style="margin:0 0 10px;"><label data-i18n="tm.type">نوع المعاملة <span class="tm-required-mark">*</span></label><select class="fi" id="txnType" onchange="txnSaveDraft()"></select></div>
+    <div class="fg" style="margin:0;">
+      <label data-i18n="tm.importance">درجة الأهمية <span class="tm-required-mark">*</span></label>
+      <input type="hidden" id="txnImportance" value="medium">
+      <div class="tm-imp-grid">
+        <div class="tm-imp-card" data-imp="low" onclick="txnSetImportance('low')"><i class="fas fa-leaf"></i><span>منخفض</span></div>
+        <div class="tm-imp-card active" data-imp="medium" onclick="txnSetImportance('medium')"><i class="fas fa-circle-dot"></i><span>متوسط</span></div>
+        <div class="tm-imp-card" data-imp="high" onclick="txnSetImportance('high')"><i class="fas fa-fire"></i><span>عالي</span></div>
+        <div class="tm-imp-card" data-imp="critical" onclick="txnSetImportance('critical')"><i class="fas fa-bolt"></i><span>عاجل</span></div>
+      </div>
+    </div>
   </div>
-  <div class="fg"><label><i class="fas fa-user-check"></i> <span data-i18n="tm.recipient">إرسال إلى (المستلم) *</span></label><select class="fi" id="txnRecipient"><option value="" data-i18n="tm.selectRecipient">— اختر —</option></select></div>
-  <div class="fg"><label data-i18n="tm.details">التفاصيل</label><textarea class="fi" id="txnDesc" rows="2" placeholder="تفاصيل إضافية" data-i18n-placeholder="tm.detailsPH"></textarea></div>
-  <div class="fg"><label><i class="fas fa-paperclip"></i> <span data-i18n="tm.attachment">مرفق</span></label><input type="file" class="fi" id="txnFile" accept=".pdf,.jpg,.jpeg,.png" style="padding:8px;"></div>
-  <button class="btn-m" onclick="submitTxn()"><i class="fas fa-paper-plane"></i> <span data-i18n="tm.send">إرسال المعاملة</span></button>
+
+  <!-- ─── Section 3: Subject + Description ─── -->
+  <div class="tm-section">
+    <div class="tm-section-h"><i class="fas fa-pen"></i> <span>محتوى المعاملة</span></div>
+    <div class="fg" style="margin:0 0 8px;">
+      <label data-i18n="tm.titleLabel">العنوان <span class="tm-required-mark">*</span></label>
+      <input class="fi" id="txnTitle" placeholder="وصف مختصر للمعاملة" data-i18n-placeholder="tm.titlePH" oninput="txnSaveDraft();txnValidateTitle()" maxlength="200">
+      <div id="txnTitleVal" class="tm-validation"></div>
+    </div>
+    <div class="fg" style="margin:0;"><label data-i18n="tm.details">التفاصيل</label><textarea class="fi" id="txnDesc" rows="3" placeholder="تفاصيل إضافية..." data-i18n-placeholder="tm.detailsPH" oninput="txnSaveDraft()" maxlength="2000"></textarea>
+      <div id="txnDescCount" style="font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;text-align:left;">0 / 2000</div>
+    </div>
+  </div>
+
+  <!-- ─── Section 4: Financial (collapsible — only shown when type needs it) ─── -->
+  <div class="tm-section" id="txnFinSection">
+    <div class="tm-section-h"><i class="fas fa-money-bill-wave"></i> <span>الجانب المالي (اختياري)</span></div>
+    <div class="fg" style="position:relative;margin:0 0 8px;">
+      <label><i class="fas fa-sitemap"></i> <span data-i18n="tm.glAccount">الحساب المحاسبي</span></label>
+      <input class="fi" id="txnAccSearch" placeholder="ابحث برقم أو اسم الحساب..." data-i18n-placeholder="tm.glSearch" oninput="txnSearchAccount(this)" onfocus="txnSearchAccount(this)">
+      <input type="hidden" id="txnAccId"><input type="hidden" id="txnAccName">
+      <div id="txnAccDropdown" style="display:none;position:absolute;top:100%;right:0;left:0;z-index:200;background:#fff;border:1px solid #e5e7eb;border-radius:10px;max-height:180px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1);"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      <div class="fg" style="margin:0;"><label><i class="fas fa-building"></i> <span data-i18n="tm.costCenter">مركز التكلفة</span></label><select class="fi" id="txnCC" onchange="txnSaveDraft()"><option value="" data-i18n="tm.noCC">— بدون —</option></select></div>
+      <div class="fg" style="margin:0;"><label><i class="fas fa-coins"></i> <span data-i18n="tm.amount">المبلغ (SAR)</span></label><input type="number" class="fi" id="txnAmount" step="0.01" min="0" value="0" oninput="txnSaveDraft()"></div>
+    </div>
+  </div>
+
+  <!-- ─── Section 5: Routing (recipient + attachment) ─── -->
+  <div class="tm-section">
+    <div class="tm-section-h"><i class="fas fa-route"></i> <span>التوجيه والمرفقات</span></div>
+    <div class="fg" style="margin:0 0 8px;"><label><i class="fas fa-user-check"></i> <span data-i18n="tm.recipient">إرسال إلى (المستلم) <span class="tm-required-mark">*</span></span></label><select class="fi" id="txnRecipient" onchange="txnSaveDraft()"><option value="" data-i18n="tm.selectRecipient">— اختر المستلم —</option></select></div>
+    <div class="fg" style="margin:0;"><label><i class="fas fa-paperclip"></i> <span data-i18n="tm.attachment">مرفق (PDF / صورة، حتى 5MB)</span></label><input type="file" class="fi" id="txnFile" accept=".pdf,.jpg,.jpeg,.png" style="padding:8px;"></div>
+  </div>
+
+  <!-- Action buttons -->
+  <div style="display:flex;gap:8px;margin-top:12px;">
+    <button class="btn-m" onclick="submitTxn()" style="flex:2;"><i class="fas fa-paper-plane"></i> <span data-i18n="tm.send">إرسال المعاملة</span></button>
+    <button class="btn-m" onclick="txnDiscardDraft()" style="flex:1;background:#f1f5f9;color:#475569;"><i class="fas fa-trash"></i> تفريغ</button>
+  </div>
 </div></div>
 <!-- Transaction Detail Modal -->
 <div class="modal" id="txnDetailModal"><div class="modal-c" style="max-height:90dvh;">

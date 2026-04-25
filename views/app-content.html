@@ -1861,10 +1861,49 @@
 <div id="erpRptHub" class="dash-section hidden wo-section">
   <header class="wo-header">
     <div class="wo-header-titles">
-      <h1><span class="wo-icon-slot info"><i class="fas fa-chart-pie"></i></span>مركز التقارير المالية</h1>
-      <p class="wo-header-sub">منظومة تقارير شاملة وفق المعايير الدولية لإعداد التقارير المالية (IFRS / IAS 1) — تشمل القوائم الأساسية، التحليل المالي، التسويات، والتقارير التشغيلية. كل تقرير يدعم التصدير + الطباعة + الفلترة بالفترة والبراند والفرع.</p>
+      <h1><span class="wo-icon-slot info"><i class="fas fa-chart-pie"></i></span>مركز التقارير المالية المتكامل</h1>
+      <p class="wo-header-sub">منظومة تقارير شاملة وفق المعايير الدولية لإعداد التقارير المالية (IFRS) ومعايير المحاسبة المقبولة (GAAP) — مصمَّمة بمعايير SAP وOracle وMicrosoft Dynamics. جميع التقارير قابلة للفلترة، التدقيق، والتصدير، وتعرض بيانات حقيقية فقط من قاعدة البيانات (لا توليد أو تعديل).</p>
     </div>
   </header>
+
+  <!-- ─── IFRS/GAAP Compliance Badge Strip ─── -->
+  <div class="rh-compliance">
+    <div class="rh-compliance-item">
+      <i class="fas fa-shield-halved"></i>
+      <div>
+        <div class="rh-comp-lbl">معايير IFRS</div>
+        <div class="rh-comp-val">IAS 1, 2, 7, 12, 16 · IFRS 15, 16</div>
+      </div>
+    </div>
+    <div class="rh-compliance-item">
+      <i class="fas fa-balance-scale-right"></i>
+      <div>
+        <div class="rh-comp-lbl">معايير GAAP</div>
+        <div class="rh-comp-val">Matching · Recognition · Consistency · Disclosure</div>
+      </div>
+    </div>
+    <div class="rh-compliance-item">
+      <i class="fas fa-database"></i>
+      <div>
+        <div class="rh-comp-lbl">مصدر البيانات</div>
+        <div class="rh-comp-val">قاعدة البيانات الفعلية فقط — لا توليد ولا تعديل</div>
+      </div>
+    </div>
+    <div class="rh-compliance-item">
+      <i class="fas fa-file-export"></i>
+      <div>
+        <div class="rh-comp-lbl">صيغ التصدير</div>
+        <div class="rh-comp-val">Excel · PDF · CSV · Print</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Quick Search across all reports ─── -->
+  <div class="rh-search-wrap">
+    <i class="fas fa-search"></i>
+    <input type="text" id="rhSearch" placeholder="ابحث عن تقرير... (مثل: ميزان مراجعة، دخل، تدفقات، ربحية، ضريبة)" oninput="rhFilterReports(this.value)">
+    <span class="rh-search-count" id="rhSearchCount"></span>
+  </div>
 
   <!-- Quick KPIs (snapshot of key indicators) -->
   <div class="wo-metric-strip" id="rhKpis">
@@ -2088,6 +2127,139 @@
         <i class="fas fa-arrow-left rh-arrow"></i>
       </div>
     </div>
+  </div>
+
+  <!-- ─── Group 6: Audit & Control (NEW per spec) ─── -->
+  <div class="rh-group">
+    <div class="rh-group-head">
+      <div>
+        <h3><i class="fas fa-user-shield" style="color:#dc2626;"></i> التدقيق والرقابة</h3>
+        <p>تتبّع جميع الحركات على القيود والمستخدمين والعمليات الحساسة — أساسي للحوكمة وضوابط الرقابة الداخلية.</p>
+      </div>
+      <span class="rh-badge audit">Audit Trail</span>
+    </div>
+    <div class="rh-grid">
+      <div class="rh-card" onclick="erpNav('erpRptAuditLog')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#fee2e2,#fca5a5);color:#dc2626;"><i class="fas fa-clipboard-list"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">سجل التدقيق الكامل</div>
+          <div class="rh-desc">كل عملية في النظام: من فعلها، متى، ماذا غيّر، والقيمة قبل وبعد. غير قابل للحذف أو التعديل (Immutable).</div>
+          <span class="rh-tag-new">جديد</span>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpGLJournals')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;"><i class="fas fa-book-open"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">القيود اليومية</div>
+          <div class="rh-desc">جميع القيود المحاسبية مع حالة الاعتماد والترحيل + إمكانية المراجعة قبل الإقفال الشهري.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpAuditLog')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#f1f5f9,#cbd5e1);color:#475569;"><i class="fas fa-history"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">سجل عمليات النظام</div>
+          <div class="rh-desc">سجل عمليات المستخدمين على النظام (تسجيل دخول، إنشاء، تعديل، حذف) — لأغراض الأمن السيبراني.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer compliance note -->
+  <div class="rh-footer-note">
+    <i class="fas fa-info-circle"></i>
+    <div>
+      <b>إخلاء مسؤولية محاسبي:</b> تعرض جميع التقارير بيانات حقيقية مستخرجة مباشرة من قاعدة البيانات وفقاً لمعايير IFRS وGAAP.
+      <b>النظام لا ينشئ أو يعدِّل أي بيانات</b> — يمكن للمراجع المالي الاعتماد على هذه التقارير لأغراض الإقفال الشهري والإقرار الضريبي والتدقيق الخارجي.
+      جميع المبالغ بالريال السعودي (SAR) ما لم يُذكر غير ذلك.
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- NEW: سجل التدقيق الكامل (Audit Log Report) -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div id="erpRptAuditLog" class="dash-section hidden">
+  <div class="tb-top">
+    <h2 class="tb-title"><i class="fas fa-clipboard-list"></i> سجل التدقيق الكامل (Audit Trail)</h2>
+    <div class="tb-actions">
+      <button class="tb-btn" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>
+      <button class="tb-btn tb-btn-primary" onclick="erpAuditExport()"><i class="fas fa-download"></i> تصدير CSV</button>
+    </div>
+  </div>
+
+  <!-- Compliance note -->
+  <div style="background:#fef3c7;padding:12px 16px;border-radius:10px;margin-bottom:14px;font-size:12.5px;color:#854d0e;line-height:1.7;border:1px solid #fde68a;">
+    <i class="fas fa-shield-halved" style="color:#a16207;"></i>
+    <b>سجل غير قابل للتعديل (Immutable):</b> كل عملية تُسجَّل تلقائياً مع توقيت دقيق + اسم المستخدم + IP + القيمة قبل/بعد. لا يمكن لأي شخص — بما في ذلك المدير — حذف أو تعديل سطر من هذا السجل. أساسي لمعايير الحوكمة الداخلية ومتطلبات التدقيق الخارجي.
+  </div>
+
+  <div class="tb-filters-card">
+    <div class="tb-filter-grid">
+      <div class="tb-field"><label>الفترة من</label><input type="date" id="auditFrom"></div>
+      <div class="tb-field"><label>الفترة إلى</label><input type="date" id="auditTo"></div>
+      <div class="tb-field"><label>المستخدم</label><select id="auditUser"><option value="">الكل</option></select></div>
+      <div class="tb-field"><label>الكيان (الجدول)</label><select id="auditEntity">
+        <option value="">الكل</option>
+        <option value="sales">المبيعات</option>
+        <option value="purchases">المشتريات</option>
+        <option value="inventory">المخزون</option>
+        <option value="erp">المحاسبة</option>
+        <option value="custody">العهد</option>
+        <option value="hr">الموارد البشرية</option>
+        <option value="workflow">المعاملات</option>
+        <option value="auth">الدخول/الصلاحيات</option>
+      </select></div>
+    </div>
+    <div class="tb-filter-grid">
+      <div class="tb-field"><label>نوع العملية</label><select id="auditAction">
+        <option value="">الكل</option>
+        <option value="create">إنشاء</option>
+        <option value="update">تعديل</option>
+        <option value="delete">حذف</option>
+        <option value="login">تسجيل دخول</option>
+        <option value="logout">تسجيل خروج</option>
+        <option value="approve">اعتماد</option>
+        <option value="reject">رفض</option>
+        <option value="post">ترحيل</option>
+      </select></div>
+      <div class="tb-field"><label>بحث في النص</label><input type="text" id="auditSearch" placeholder="رقم وثيقة، وصف، إلخ..."></div>
+    </div>
+    <div class="tb-filter-actions">
+      <button class="tb-btn tb-btn-purple" onclick="erpAuditReset()"><i class="fas fa-times"></i> إلغاء الفلتر</button>
+      <button class="tb-btn tb-btn-success" onclick="erpLoadAuditLog()"><i class="fas fa-search"></i> عرض السجل</button>
+    </div>
+  </div>
+
+  <div id="auditBranded" class="tb-brand-banner" style="display:none;">
+    <div class="tb-brand-left"><div class="tb-brand-logo" style="background:linear-gradient(135deg,#dc2626,#991b1b);"><i class="fas fa-clipboard-list"></i></div></div>
+    <div class="tb-brand-center">
+      <h3>سجل التدقيق الكامل</h3>
+      <div class="tb-brand-sub">من <span id="auditBnFrom">—</span> إلى <span id="auditBnTo">—</span></div>
+    </div>
+  </div>
+
+  <div id="auditKpis" class="wo-metric-strip" style="display:none;margin-bottom:14px;"></div>
+
+  <div class="erp-table-container" style="border-radius:12px;overflow:hidden;">
+    <table class="erp-table" id="auditTable" style="font-size:12.5px;">
+      <thead>
+        <tr>
+          <th>التوقيت</th>
+          <th>المستخدم</th>
+          <th>IP</th>
+          <th>الكيان</th>
+          <th>العملية</th>
+          <th>الوثيقة / السجل</th>
+          <th>التفاصيل</th>
+        </tr>
+      </thead>
+      <tbody id="auditBody">
+        <tr><td colspan="7" class="empty-msg">حدد الفترة واضغط <b>عرض السجل</b></td></tr>
+      </tbody>
+    </table>
   </div>
 </div>
 

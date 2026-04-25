@@ -97,6 +97,7 @@ function erpNav(sectionId) {
       case 'erpRptEquityChanges': erpLoadEquityChanges(); break;
       case 'erpRptFinRatios':    erpLoadFinRatios(); break;
       case 'erpRptBankRecon':    erpLoadBankRecon(); break;
+      case 'erpRptAuditLog':     erpLoadAuditLog(); break;
       case 'erpBrands': erpLoadBrands(); break;
       case 'erpPurchaseReports': erpInitPurchaseReports(); break;
       case 'erpCostCenters': erpLoadCostCenters(); break;
@@ -12674,6 +12675,160 @@ function erpLoadFinRatios() {
 // ═══════════════════════════════════════════════════════════════════
 // NEW: Bank Reconciliation
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// Reports Hub — search across cards
+// ═══════════════════════════════════════════════════════════════════
+window.rhFilterReports = function(query) {
+  var q = (query || '').trim().toLowerCase();
+  // Arabic normalization for fuzzy match
+  var norm = function(s) {
+    return String(s||'').toLowerCase()
+      .replace(/[ً-ْٰ]/g, '')
+      .replace(/[إأآا]/g, 'ا').replace(/ى/g, 'ي').replace(/ؤ/g, 'و').replace(/ئ/g, 'ي').replace(/ة/g, 'ه');
+  };
+  var nq = norm(q);
+  var visibleCount = 0;
+  document.querySelectorAll('#erpRptHub .rh-card').forEach(function(card){
+    if (!nq) { card.classList.remove('rh-hidden'); visibleCount++; return; }
+    var name = norm(card.querySelector('.rh-name') ? card.querySelector('.rh-name').textContent : '');
+    var desc = norm(card.querySelector('.rh-desc') ? card.querySelector('.rh-desc').textContent : '');
+    var matched = name.indexOf(nq) >= 0 || desc.indexOf(nq) >= 0;
+    card.classList.toggle('rh-hidden', !matched);
+    if (matched) visibleCount++;
+  });
+  // Hide empty groups
+  document.querySelectorAll('#erpRptHub .rh-group').forEach(function(g){
+    var hasVisible = g.querySelectorAll('.rh-card:not(.rh-hidden)').length > 0;
+    g.classList.toggle('rh-hidden', !hasVisible);
+  });
+  var cnt = document.getElementById('rhSearchCount');
+  if (cnt) cnt.textContent = nq ? visibleCount + ' تقرير' : '';
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Audit Log — full system audit trail (immutable)
+// Backed by audit_logs table populated via auditMiddleware in server.js
+// ═══════════════════════════════════════════════════════════════════
+window._auditCache = null;
+
+window.erpAuditReset = function() {
+  ['auditFrom','auditTo','auditUser','auditEntity','auditAction','auditSearch'].forEach(function(id){
+    var el = document.getElementById(id); if (!el) return;
+    if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
+  });
+  document.getElementById('auditBranded').style.display = 'none';
+  document.getElementById('auditKpis').style.display = 'none';
+  document.getElementById('auditBody').innerHTML = '<tr><td colspan="7" class="empty-msg">حدد الفترة واضغط <b>عرض السجل</b></td></tr>';
+  _auditCache = null;
+};
+
+function erpLoadAuditLog() {
+  // Default to last 7 days if dates empty
+  if (!document.getElementById('auditFrom').value) {
+    var d = new Date(); d.setDate(d.getDate()-7);
+    document.getElementById('auditFrom').value = d.toISOString().slice(0,10);
+  }
+  if (!document.getElementById('auditTo').value) {
+    document.getElementById('auditTo').value = new Date().toISOString().slice(0,10);
+  }
+  // Populate user dropdown once
+  var usel = document.getElementById('auditUser');
+  if (usel && usel.options.length <= 1) {
+    fetch('/api/auth/users-list', { headers:{ 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') }})
+      .then(function(r){return r.json();}).then(function(users){
+        if (!Array.isArray(users)) return;
+        usel.innerHTML = '<option value="">الكل</option>' + users.map(function(u){
+          return '<option value="'+u.username+'">'+(u.fullName||u.username)+'</option>';
+        }).join('');
+      }).catch(function(){});
+  }
+  var from = document.getElementById('auditFrom').value;
+  var to   = document.getElementById('auditTo').value;
+  var user = (document.getElementById('auditUser')||{}).value || '';
+  var entity = (document.getElementById('auditEntity')||{}).value || '';
+  var action = (document.getElementById('auditAction')||{}).value || '';
+  var search = (document.getElementById('auditSearch')||{}).value || '';
+
+  document.getElementById('auditBody').innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري تحميل السجل...</td></tr>';
+
+  var qs = new URLSearchParams({ from, to, user, entity, action, search }).toString();
+  fetch('/api/erp/audit-logs?' + qs, {
+    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+  }).then(function(r){return r.json();}).then(function(rows){
+    if (!Array.isArray(rows)) rows = (rows && rows.rows) || [];
+    _auditCache = rows;
+    document.getElementById('auditBnFrom').textContent = from;
+    document.getElementById('auditBnTo').textContent = to;
+    document.getElementById('auditBranded').style.display = 'flex';
+
+    // KPIs
+    var byAction = {};
+    rows.forEach(function(r){
+      var a = (r.action||'unknown').toLowerCase();
+      byAction[a] = (byAction[a]||0) + 1;
+    });
+    var mk = function(lbl, val, color, icon) {
+      return '<div class="wo-metric"><div class="wo-metric-icon" style="background:'+color+'22;color:'+color+';"><i class="fas '+icon+'"></i></div><div class="wo-metric-body"><div class="wo-metric-label">'+lbl+'</div><div class="wo-metric-value" style="color:'+color+';">'+val+'</div></div></div>';
+    };
+    var kpis = document.getElementById('auditKpis');
+    kpis.style.display = 'grid';
+    kpis.innerHTML =
+      mk('إجمالي العمليات', rows.length, '#0ea5e9', 'fa-list') +
+      mk('إنشاء', byAction.create||0, '#16a34a', 'fa-plus') +
+      mk('تعديل', byAction.update||0, '#f59e0b', 'fa-edit') +
+      mk('حذف', byAction.delete||0, '#ef4444', 'fa-trash') +
+      mk('اعتماد', byAction.approve||0, '#10b981', 'fa-check') +
+      mk('دخول/خروج', (byAction.login||0)+(byAction.logout||0), '#8b5cf6', 'fa-sign-in-alt');
+
+    // Render
+    var tbody = document.getElementById('auditBody');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد عمليات في هذه الفترة</td></tr>';
+      return;
+    }
+    var actionColors = { create:'#16a34a', update:'#f59e0b', delete:'#ef4444', login:'#8b5cf6', logout:'#94a3b8', approve:'#10b981', reject:'#ef4444', post:'#0ea5e9' };
+    var actionLabels = { create:'إنشاء', update:'تعديل', delete:'حذف', login:'دخول', logout:'خروج', approve:'اعتماد', reject:'رفض', post:'ترحيل' };
+    var entityLabels = { sales:'مبيعات', purchases:'مشتريات', inventory:'مخزون', erp:'محاسبة', custody:'عهد', hr:'موارد بشرية', workflow:'معاملات', auth:'صلاحيات' };
+    var fmtDate = function(v){ try { var d = new Date(v); return d.toLocaleDateString('en-GB') + ' ' + d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); } catch(_){ return ''; } };
+    tbody.innerHTML = rows.map(function(r){
+      var a = (r.action||'').toLowerCase();
+      var clr = actionColors[a] || '#64748b';
+      var ent = (r.entity||'').toLowerCase();
+      return '<tr>' +
+        '<td style="white-space:nowrap;font-family:monospace;font-size:11px;">'+fmtDate(r.createdAt||r.timestamp||r.created_at)+'</td>' +
+        '<td style="font-weight:700;color:#0369a1;">'+_woEscapeHtml(r.username||'—')+'</td>' +
+        '<td style="font-family:monospace;font-size:11px;color:#94a3b8;">'+_woEscapeHtml(r.ip||r.ip_address||'—')+'</td>' +
+        '<td><span class="wo-chip neutral">'+_woEscapeHtml(entityLabels[ent]||ent||'—')+'</span></td>' +
+        '<td><span style="background:'+clr+'15;color:'+clr+';padding:3px 10px;border-radius:6px;font-weight:800;font-size:11px;">'+_woEscapeHtml(actionLabels[a]||a||'—')+'</span></td>' +
+        '<td style="font-family:monospace;font-size:11px;">'+_woEscapeHtml(r.documentRef||r.reference||r.entity_id||'—')+'</td>' +
+        '<td style="font-size:12px;color:#475569;max-width:300px;">'+_woEscapeHtml(r.description||r.details||'')+'</td>' +
+      '</tr>';
+    }).join('');
+  }).catch(function(e){
+    document.getElementById('auditBody').innerHTML = '<tr><td colspan="7" class="empty-msg" style="color:#ef4444;">خطأ: ' + (e.message||'فشل تحميل السجل') + '</td></tr>';
+  });
+}
+
+window.erpAuditExport = function() {
+  if (!_auditCache || !_auditCache.length) return showToast('اعرض السجل أولاً', true);
+  var lines = ['التوقيت,المستخدم,IP,الكيان,العملية,الوثيقة,التفاصيل'];
+  _auditCache.forEach(function(r){
+    lines.push([
+      r.createdAt||r.timestamp||r.created_at||'',
+      r.username||'',
+      r.ip||r.ip_address||'',
+      r.entity||'',
+      r.action||'',
+      r.documentRef||r.reference||r.entity_id||'',
+      (r.description||r.details||'').replace(/[\r\n]+/g,' ')
+    ].map(function(v){ return '"'+String(v).replace(/"/g,'""')+'"'; }).join(','));
+  });
+  var blob = new Blob([new Uint8Array([0xEF,0xBB,0xBF]), lines.join('\n')], { type:'text/csv;charset=utf-8' });
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'audit-log-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+};
+
 function erpLoadBankRecon() {
   // Populate bank accounts dropdown
   var brBank = document.getElementById('brBank');

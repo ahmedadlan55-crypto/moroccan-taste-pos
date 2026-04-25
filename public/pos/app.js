@@ -140,6 +140,9 @@ document.addEventListener('DOMContentLoaded', function() {
     try { localStorage.setItem('pos_menu_cache', JSON.stringify({ ts: Date.now(), menu: state.menu })); } catch (e) {}
     saveState();
 
+    // ─── V3: load richer payment methods + active channels + discounts ───
+    posLoadV3Data();
+
     renderPayButtons();
     renderMenuGrid();
     updateCart();
@@ -2098,3 +2101,496 @@ window.submitShortageRequest = function() {
     }
   });
 };
+
+/* ═════════════════════════════════════════════════════════════════════════
+ * POS V3 — Channels, Dynamic Payment Methods, V3 Discounts, V3 Shift Close
+ * Implements قسم_إدارة_الدفع_والقنوات_والخصومات spec on the cashier side.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+state.channels = [];
+state.activeChannel = null;          // currently-selected channel object
+state.channelPriceMap = {};          // itemId → channelPrice (for active channel)
+state.paymentMethodsV3 = [];         // V3 payment methods (with groups/fees/icons)
+state.discountsV3 = [];              // V3 discounts (line+invoice+preset+manual)
+state.lineDiscounts = {};            // cart-index → { name, type, value, amount }
+state._v3CashDenoms = [1, 5, 10, 20, 50, 100, 200, 500];
+
+// Generic fetch helper for V3 endpoints (re-uses pos_token)
+function _posCallAPI(method, path, body, cb) {
+  var opts = { method: (method||'GET').toUpperCase(), headers: { 'Content-Type': 'application/json' } };
+  var token = localStorage.getItem('pos_token');
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+  if (body && opts.method !== 'GET' && opts.method !== 'DELETE') opts.body = JSON.stringify(body);
+  fetch(path.charAt(0)==='/' ? '/api'+path : path, opts)
+    .then(function(r){ return r.json().catch(function(){ return null; }); })
+    .then(function(d){ if (cb) cb(d); })
+    .catch(function(err){ console.error('[POS V3] callAPI err:', err); if (cb) cb({ success:false, error:String(err && err.message || err) }); });
+}
+
+function _posFmt(n) { return Number(n||0).toFixed(2); }
+
+// ─── 1. Load V3 data on init ────────────────────────────────────────────
+window.posLoadV3Data = function() {
+  // Load 3 things in parallel: active channels, V3 payment methods, V3 discounts
+  _posCallAPI('GET', '/sales-channels/active', null, function(rows) {
+    state.channels = Array.isArray(rows) ? rows : [];
+    _posRenderChannelSelector();
+    // Auto-select first or restore from localStorage
+    var savedChId = localStorage.getItem('pos_active_channel_id');
+    var found = state.channels.find(function(c){ return c.id === savedChId; });
+    if (found) posSetChannel(found.id);
+    else if (state.channels.length) posSetChannel(state.channels[0].id);
+  });
+  _posCallAPI('GET', '/settings/payment-methods-full', null, function(rows) {
+    state.paymentMethodsV3 = Array.isArray(rows) ? rows : [];
+    if (state.paymentMethodsV3.length) {
+      // Replace state.paymentMethods so renderPayButtons uses V3 (in old format for back-compat)
+      state.paymentMethods = state.paymentMethodsV3.map(function(p){
+        return {
+          ID: p.id, Name: p.name || p.nameAr, NameAR: p.nameAr || p.name,
+          Icon: p.icon || 'fa-money-bill', IsActive: p.isActive,
+          ServiceFeeRate: Number(p.serviceFeeRate || 0), SortOrder: p.sortOrder || 0,
+          GroupType: p.groupType || 'cash',
+          AllowManualTotal: p.allowManualTotal,
+          ShowInShiftClose: p.showInShiftClose !== false,
+          ShowInReports: p.showInReports !== false,
+          ServiceFeeType: p.serviceFeeType || 'none',
+          ServiceFeeValue: Number(p.serviceFeeValue || 0)
+        };
+      });
+      renderPayButtons();
+    }
+  });
+  _posCallAPI('GET', '/settings/discounts-v2-full', null, function(rows) {
+    state.discountsV3 = Array.isArray(rows) ? rows : [];
+  });
+};
+
+// ─── 2. Channel Selector ────────────────────────────────────────────────
+function _posRenderChannelSelector() {
+  var sel = q('#posChannelSel');
+  if (!sel) return;
+  if (!state.channels.length) {
+    sel.innerHTML = '<option value="">— لا توجد قنوات —</option>';
+    return;
+  }
+  sel.innerHTML = state.channels.map(function(c){
+    return '<option value="' + c.id + '"><i class="fas ' + (c.icon||'fa-store') + '"></i> ' + (c.name||c.id) + '</option>';
+  }).join('');
+}
+
+window.posSetChannel = function(channelId) {
+  var ch = state.channels.find(function(c){ return c.id === channelId; });
+  if (!ch) return;
+  if (state.cart.length && state.activeChannel && state.activeChannel.id !== channelId) {
+    glassConfirm('تغيير القناة', 'تغيير القناة سيُفرغ السلة الحالية (لمنع خلط الأسعار). هل تتابع؟', { okText: 'نعم، أفرغ السلة', danger: true }).then(function(ok){
+      if (!ok) {
+        var sel = q('#posChannelSel');
+        if (sel && state.activeChannel) sel.value = state.activeChannel.id;
+        return;
+      }
+      state.cart = [];
+      state.lineDiscounts = {};
+      state.currentDiscount = { name:'', amount:0 };
+      _doSetChannel(ch);
+    });
+  } else {
+    _doSetChannel(ch);
+  }
+};
+
+function _doSetChannel(ch) {
+  state.activeChannel = ch;
+  localStorage.setItem('pos_active_channel_id', ch.id);
+  var label = q('#posChannelPriceLabel');
+  if (label) {
+    label.innerHTML = ch.priceListId
+      ? '<i class="fas fa-link" style="color:#22c55e;"></i> ' + (ch.priceListName || 'قائمة أسعار خاصة')
+      : '<span style="color:#94a3b8;">قائمة أسعار افتراضية</span>';
+  }
+  var sel = q('#posChannelSel');
+  if (sel) sel.value = ch.id;
+
+  // Load price list items for this channel (override menu prices)
+  if (ch.priceListId) {
+    _posCallAPI('GET', '/erp/price-lists/' + ch.priceListId + '/items', null, function(rows) {
+      state.channelPriceMap = {};
+      (rows || []).forEach(function(r) {
+        state.channelPriceMap[r.itemId || r.item_id] = Number(r.price || 0);
+      });
+      _posApplyChannelPrices();
+    });
+  } else {
+    state.channelPriceMap = {};
+    _posApplyChannelPrices();
+  }
+}
+
+function _posApplyChannelPrices() {
+  // Re-render menu grid so prices reflect channel
+  if (typeof renderMenuGrid === 'function') renderMenuGrid();
+  if (typeof updateCart === 'function') updateCart();
+}
+
+// Hook: get effective price for an item (channel override or default)
+window.posGetItemPrice = function(item) {
+  if (!item) return 0;
+  if (state.channelPriceMap && state.channelPriceMap[item.id] != null) {
+    return Number(state.channelPriceMap[item.id]);
+  }
+  return Number(item.price || 0);
+};
+
+window.posOnChannelChange = function() {
+  var sel = q('#posChannelSel');
+  if (!sel || !sel.value) return;
+  posSetChannel(sel.value);
+};
+
+// ─── 3. Discounts V3 — line + invoice modals ────────────────────────────
+window.posOpenLineDiscountModal = function() {
+  if (!state.cart.length) return glassToast('السلة فارغة', true);
+  var lineDiscounts = (state.discountsV3 || []).filter(function(d){
+    return d.enabled && d.showInPos !== false && (d.discountScope === 'line' || d.discountScope === 'preset' || d.discountScope === 'manual');
+  });
+
+  // Build cart-line picker first
+  var cartHtml = '<div style="font-weight:800;margin-bottom:10px;">اختر الصنف من السلة:</div>';
+  cartHtml += '<div class="pos-line-disc-list">' + state.cart.map(function(c, i){
+    var existing = state.lineDiscounts[i];
+    var price = posGetItemPrice(c);
+    return '<div class="pos-line-disc-row" onclick="posSelectLineForDiscount(' + i + ')">' +
+      '<div><div style="font-weight:700;">' + c.name + '</div><div style="font-size:11px;color:#64748b;">' + c.qty + ' × ' + _posFmt(price) + '</div></div>' +
+      '<div>' + (existing ? '<span style="color:#22c55e;font-weight:700;"><i class="fas fa-check"></i> -' + _posFmt(existing.amount) + '</span>' : '<i class="fas fa-arrow-left"></i>') + '</div>' +
+    '</div>';
+  }).join('') + '</div>';
+
+  q('#discModalList').innerHTML = cartHtml;
+  state._lineDiscountStep = 'pick-line';
+  state._lineDiscountList = lineDiscounts;
+  openGlassModal('#modalDiscount');
+};
+
+window.posSelectLineForDiscount = function(idx) {
+  state._lineDiscountIdx = idx;
+  var lineDiscounts = state._lineDiscountList || [];
+  var c = state.cart[idx];
+  var lineTotal = c.qty * posGetItemPrice(c);
+
+  var html = '<div style="background:#dbeafe;padding:10px;border-radius:10px;margin-bottom:14px;">' +
+    '<div style="font-weight:800;">' + c.name + '</div>' +
+    '<div style="font-size:12px;color:#1e3a8a;">إجمالي السطر: ' + _posFmt(lineTotal) + ' SAR</div>' +
+  '</div>';
+
+  if (lineDiscounts.length) {
+    html += '<div style="font-weight:800;margin-bottom:8px;">خصومات جاهزة:</div>';
+    html += lineDiscounts.map(function(d){
+      var valStr = d.type === 'percentage' ? d.value + '%' : _posFmt(d.value) + ' SAR';
+      var canApply = !d.minOrder || lineTotal >= d.minOrder;
+      return '<div class="pos-disc-card' + (canApply?'':' disabled') + '" onclick="' + (canApply?"posApplyLineDiscount('"+d.id+"')":'') + '">' +
+        '<div><i class="fas ' + (d.icon||'fa-tag') + '" style="color:' + (d.color||'#8b5cf6') + ';"></i> <b>' + d.name + '</b></div>' +
+        '<div style="color:' + (d.color||'#8b5cf6') + ';font-weight:800;">' + valStr + '</div>' +
+      '</div>';
+    }).join('');
+  }
+  html += '<div class="pos-disc-manual">' +
+    '<div style="font-weight:800;margin-bottom:6px;">أو أدخل خصم يدوي:</div>' +
+    '<div style="display:flex;gap:8px;align-items:center;">' +
+      '<select id="posLineDiscType" class="form-control glass-input" style="flex:1;"><option value="percentage">نسبة %</option><option value="fixed">مبلغ ثابت</option></select>' +
+      '<input id="posLineDiscValue" type="number" step="0.01" min="0" class="form-control glass-input" placeholder="القيمة" style="flex:1;">' +
+      '<button class="btn btn-primary" onclick="posApplyManualLineDiscount()">تطبيق</button>' +
+    '</div>' +
+    '<div style="font-size:11px;color:#94a3b8;margin-top:6px;">قد يتطلب الخصم اليدوي صلاحية المدير.</div>' +
+  '</div>';
+  html += '<button class="btn btn-light" style="width:100%;margin-top:10px;" onclick="posOpenLineDiscountModal()"><i class="fas fa-arrow-right"></i> رجوع</button>';
+
+  q('#discModalList').innerHTML = html;
+};
+
+window.posApplyLineDiscount = function(discId) {
+  var d = (state._lineDiscountList || []).find(function(x){return x.id===discId;});
+  if (!d) return;
+  var idx = state._lineDiscountIdx;
+  var c = state.cart[idx];
+  var lineTotal = c.qty * posGetItemPrice(c);
+  var amt = d.type === 'percentage' ? lineTotal * (d.value/100) : Number(d.value);
+  if (d.maxAmount && amt > d.maxAmount) amt = d.maxAmount;
+  if (amt > lineTotal) amt = lineTotal;
+  state.lineDiscounts[idx] = { name: d.name, type: d.type, value: d.value, amount: amt, discountId: d.id, glAccountId: d.glAccountId };
+  closeGlassModal('#modalDiscount');
+  glassToast('تم تطبيق خصم: ' + d.name + ' (' + _posFmt(amt) + ' SAR)');
+  updateCart();
+};
+
+window.posApplyManualLineDiscount = function() {
+  var type = q('#posLineDiscType').value;
+  var val = Number(q('#posLineDiscValue').value) || 0;
+  if (val <= 0) return glassToast('أدخل قيمة موجبة', true);
+  var idx = state._lineDiscountIdx;
+  var c = state.cart[idx];
+  var lineTotal = c.qty * posGetItemPrice(c);
+  var amt = type === 'percentage' ? lineTotal * (val/100) : val;
+  if (amt > lineTotal) amt = lineTotal;
+  state.lineDiscounts[idx] = { name: 'يدوي', type: type, value: val, amount: amt, discountId: null, glAccountId: null };
+  closeGlassModal('#modalDiscount');
+  glassToast('تم تطبيق خصم يدوي');
+  updateCart();
+};
+
+window.posOpenInvoiceDiscountModal = function() {
+  if (!state.cart.length) return glassToast('السلة فارغة', true);
+  var invDiscounts = (state.discountsV3 || []).filter(function(d){
+    return d.enabled && d.showInPos !== false && (d.discountScope === 'invoice' || d.discountScope === 'preset' || d.discountScope === 'manual');
+  });
+  var subtotal = state.cart.reduce(function(s, c){ return s + (c.qty * posGetItemPrice(c)); }, 0);
+
+  var html = '<div style="background:#fef3c7;padding:10px;border-radius:10px;margin-bottom:14px;">' +
+    '<div style="font-weight:800;">إجمالي الفاتورة: ' + _posFmt(subtotal) + ' SAR</div>' +
+  '</div>';
+
+  if (invDiscounts.length) {
+    html += '<div style="font-weight:800;margin-bottom:8px;">خصومات جاهزة على الفاتورة:</div>';
+    html += invDiscounts.map(function(d){
+      var valStr = d.type === 'percentage' ? d.value + '%' : _posFmt(d.value) + ' SAR';
+      var canApply = !d.minOrder || subtotal >= d.minOrder;
+      return '<div class="pos-disc-card' + (canApply?'':' disabled') + '" onclick="' + (canApply?"posApplyInvoiceDiscount('"+d.id+"')":'') + '">' +
+        '<div><i class="fas ' + (d.icon||'fa-receipt') + '" style="color:' + (d.color||'#8b5cf6') + ';"></i> <b>' + d.name + '</b>' + (d.minOrder ? ' <small style="color:#94a3b8;">(حد أدنى: '+_posFmt(d.minOrder)+')</small>':'') + '</div>' +
+        '<div style="color:' + (d.color||'#8b5cf6') + ';font-weight:800;">' + valStr + '</div>' +
+      '</div>';
+    }).join('');
+  }
+  html += '<div class="pos-disc-manual">' +
+    '<div style="font-weight:800;margin-bottom:6px;">أو أدخل خصم يدوي:</div>' +
+    '<div style="display:flex;gap:8px;align-items:center;">' +
+      '<select id="posInvDiscType" class="form-control glass-input" style="flex:1;"><option value="percentage">نسبة %</option><option value="fixed">مبلغ ثابت</option></select>' +
+      '<input id="posInvDiscValue" type="number" step="0.01" min="0" class="form-control glass-input" placeholder="القيمة" style="flex:1;">' +
+      '<button class="btn btn-primary" onclick="posApplyManualInvoiceDiscount()">تطبيق</button>' +
+    '</div>' +
+  '</div>';
+  if (state.currentDiscount.amount > 0) {
+    html += '<button class="btn btn-light" style="width:100%;margin-top:10px;color:#b91c1c;" onclick="posClearInvoiceDiscount()"><i class="fas fa-times"></i> إلغاء الخصم الحالي (' + _posFmt(state.currentDiscount.amount) + ')</button>';
+  }
+
+  state._discListSnapshot = invDiscounts;
+  q('#discModalList').innerHTML = html;
+  openGlassModal('#modalDiscount');
+};
+
+window.posApplyInvoiceDiscount = function(discId) {
+  var d = (state._discListSnapshot || []).find(function(x){return x.id===discId;});
+  if (!d) return;
+  var subtotal = state.cart.reduce(function(s, c){ return s + (c.qty * posGetItemPrice(c)); }, 0);
+  var amt = d.type === 'percentage' ? subtotal * (d.value/100) : Number(d.value);
+  if (d.maxAmount && amt > d.maxAmount) amt = d.maxAmount;
+  if (d.maxPerInvoice && amt > d.maxPerInvoice) amt = d.maxPerInvoice;
+  if (amt > subtotal) amt = subtotal;
+  state.currentDiscount = { name: d.name, amount: amt, discountId: d.id, glAccountId: d.glAccountId };
+  closeGlassModal('#modalDiscount');
+  glassToast('تم تطبيق خصم: ' + d.name + ' (' + _posFmt(amt) + ' SAR)');
+  updateCart();
+};
+
+window.posApplyManualInvoiceDiscount = function() {
+  var type = q('#posInvDiscType').value;
+  var val = Number(q('#posInvDiscValue').value) || 0;
+  if (val <= 0) return glassToast('أدخل قيمة موجبة', true);
+  var subtotal = state.cart.reduce(function(s, c){ return s + (c.qty * posGetItemPrice(c)); }, 0);
+  var amt = type === 'percentage' ? subtotal * (val/100) : val;
+  if (amt > subtotal) amt = subtotal;
+  state.currentDiscount = { name: 'يدوي', amount: amt, discountId: null, glAccountId: null };
+  closeGlassModal('#modalDiscount');
+  glassToast('تم تطبيق خصم يدوي');
+  updateCart();
+};
+
+window.posClearInvoiceDiscount = function() {
+  state.currentDiscount = { name:'', amount: 0 };
+  closeGlassModal('#modalDiscount');
+  updateCart();
+};
+
+// ─── 4. V3 Shift Close — denominations + electronic reconciliation ─────
+window.shiftCloseStart = function() {
+  if (!state.activeShiftId) return glassToast(t ? t('noActiveShift') : 'لا توجد وردية مفتوحة', true);
+
+  // Reset state
+  state._scExpected = { cash: 0, total: 0, byMethod: {} };
+  state._scDenomCounts = {};
+
+  // Render denominations table
+  var denomBody = q('#scDenomBody');
+  if (denomBody) {
+    denomBody.innerHTML = state._v3CashDenoms.map(function(d){
+      return '<tr>' +
+        '<td><strong>' + d + ' SAR</strong></td>' +
+        '<td><input type="number" min="0" step="1" class="form-control glass-input sc-denom-input" data-denom="' + d + '" value="0" oninput="scV3Recalc()"></td>' +
+        '<td><span class="sc-denom-total" data-denom="' + d + '">0.00</span></td>' +
+      '</tr>';
+    }).join('');
+  }
+  q('#scNotes').value = '';
+
+  // Load expected per method
+  _posCallAPI('GET', '/shifts/closing-data-v3/' + state.activeShiftId, null, function(d) {
+    if (!d || d.error) {
+      glassToast((d && d.error) || 'فشل تحميل بيانات الجلسة', true);
+      return;
+    }
+    state._scExpected.total = Number(d.expectedTotal || 0);
+    state._scExpected.byMethod = d.expected || {};
+    var methods = d.methods || [];
+
+    // Identify cash methods (groupType=cash)
+    var cashExp = 0;
+    var elecMethods = [];
+    methods.forEach(function(m){
+      if ((m.groupType||'cash').toLowerCase() === 'cash') cashExp += Number(m.expectedAmount || 0);
+      else elecMethods.push(m);
+    });
+    // Also fold any 'cash' key from expected into cashExp if no method matched
+    if (cashExp === 0 && d.expected && d.expected.cash) cashExp = Number(d.expected.cash);
+    state._scExpected.cash = cashExp;
+
+    q('#scExpectedCash').textContent = _posFmt(cashExp) + ' SAR';
+
+    // Render electronic methods table
+    var elecBody = q('#scElecBody');
+    if (elecBody) {
+      if (!elecMethods.length) {
+        elecBody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:14px;">لا توجد طرق دفع إلكترونية مفعّلة</td></tr>';
+      } else {
+        elecBody.innerHTML = elecMethods.map(function(m){
+          var exp = Number(m.expectedAmount || 0);
+          return '<tr data-pmid="' + m.id + '" data-pmname="' + (m.name||'').toLowerCase() + '">' +
+            '<td><i class="fas ' + (m.icon||'fa-credit-card') + '" style="color:' + (m.color||'#3b82f6') + ';"></i> <strong>' + (m.nameAr || m.name) + '</strong></td>' +
+            '<td>' + _posFmt(exp) + '</td>' +
+            '<td><input type="number" min="0" step="0.01" class="form-control glass-input sc-elec-input" data-pmid="' + m.id + '" data-pmname="' + (m.name||'').toLowerCase() + '" data-expected="' + exp + '" value="' + _posFmt(exp) + '" oninput="scV3Recalc()"></td>' +
+            '<td class="sc-elec-diff" data-pmid="' + m.id + '">0.00</td>' +
+          '</tr>';
+        }).join('');
+      }
+    }
+    scV3Recalc();
+    openGlassModal('#modalShiftClose');
+  });
+};
+
+window.scV3Recalc = function() {
+  var actualCash = 0;
+  var denoms = document.querySelectorAll('.sc-denom-input');
+  denoms.forEach(function(inp){
+    var denom = Number(inp.dataset.denom);
+    var cnt = Number(inp.value) || 0;
+    var sum = denom * cnt;
+    var totEl = document.querySelector('.sc-denom-total[data-denom="' + denom + '"]');
+    if (totEl) totEl.textContent = _posFmt(sum);
+    actualCash += sum;
+  });
+  q('#scActualCash').textContent = _posFmt(actualCash) + ' SAR';
+  var diffCash = actualCash - (state._scExpected.cash || 0);
+  var diffEl = q('#scDiffCash');
+  if (diffEl) {
+    diffEl.textContent = (diffCash >= 0 ? '+' : '') + _posFmt(diffCash) + ' SAR';
+    diffEl.style.color = Math.abs(diffCash) < 0.01 ? '#16a34a' : (diffCash < 0 ? '#dc2626' : '#d97706');
+  }
+
+  // Electronic
+  var elecActual = 0;
+  document.querySelectorAll('.sc-elec-input').forEach(function(inp){
+    var act = Number(inp.value) || 0;
+    var exp = Number(inp.dataset.expected) || 0;
+    var df = act - exp;
+    elecActual += act;
+    var diffCell = document.querySelector('.sc-elec-diff[data-pmid="' + inp.dataset.pmid + '"]');
+    if (diffCell) {
+      diffCell.textContent = (df >= 0 ? '+' : '') + _posFmt(df);
+      diffCell.style.color = Math.abs(df) < 0.01 ? '#16a34a' : (df < 0 ? '#dc2626' : '#d97706');
+    }
+  });
+
+  // Summary
+  q('#scTotalExpected').textContent = _posFmt(state._scExpected.total) + ' SAR';
+  q('#scTotalCashActual').textContent = _posFmt(actualCash) + ' SAR';
+  q('#scTotalElecActual').textContent = _posFmt(elecActual) + ' SAR';
+  var totDiff = (actualCash + elecActual) - (state._scExpected.total || 0);
+  var totDiffEl = q('#scTotalDiff');
+  if (totDiffEl) {
+    totDiffEl.textContent = (totDiff >= 0 ? '+' : '') + _posFmt(totDiff) + ' SAR';
+    totDiffEl.style.color = Math.abs(totDiff) < 0.01 ? '#16a34a' : (totDiff < 0 ? '#dc2626' : '#d97706');
+  }
+};
+
+window.scV3ConfirmClose = function() {
+  if (!state.activeShiftId) return;
+  // Build payload
+  var denoms = [];
+  document.querySelectorAll('.sc-denom-input').forEach(function(inp){
+    denoms.push({ value: Number(inp.dataset.denom), count: Number(inp.value) || 0, kind: Number(inp.dataset.denom) <= 1 ? 'coin' : 'note' });
+  });
+  var paymentTotals = {};
+  document.querySelectorAll('.sc-elec-input').forEach(function(inp){
+    var key = inp.dataset.pmname || inp.dataset.pmid;
+    paymentTotals[key] = Number(inp.value) || 0;
+  });
+  var payload = {
+    shiftId: state.activeShiftId,
+    openingFloat: 0,
+    denominations: denoms,
+    paymentTotals: paymentTotals,
+    notes: q('#scNotes').value || ''
+  };
+
+  glassConfirm('تأكيد إغلاق الوردية', 'سيتم تسجيل بيانات الإغلاق وإقفال الجلسة. هل تتابع؟', { okText: 'إغلاق الوردية', danger: true }).then(function(ok){
+    if (!ok) return;
+    loader(true);
+    _posCallAPI('POST', '/shifts/close-v3', payload, function(r){
+      loader(false);
+      if (r && r.success) {
+        var closedShiftId = state.activeShiftId;
+        state.activeShiftId = '';
+        saveState();
+        localStorage.removeItem('pos_active_shift_id');
+        updateShiftUI();
+        renderHeader('pos', { showShift: true });
+        closeGlassModal('#modalShiftClose');
+        glassToast('تم إغلاق الوردية بنجاح');
+        // Show summary report
+        scV3ShowReport(closedShiftId, r);
+      } else {
+        glassToast((r && r.error) || 'فشل إغلاق الوردية', true);
+      }
+    });
+  });
+};
+
+window.scV3Print = function() {
+  var w = window.open('', '_blank');
+  if (!w) return glassToast('تعذّر فتح نافذة الطباعة', true);
+  var title = 'تقرير إغلاق الوردية - ' + (state.activeShiftId || '');
+  var html = '<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>' + title + '</title>' +
+    '<style>body{font-family:Arial,sans-serif;padding:20px;}h2{color:#1e3a8a;border-bottom:2px solid #1e3a8a;padding-bottom:6px;}table{width:100%;border-collapse:collapse;margin:10px 0;}th,td{border:1px solid #cbd5e1;padding:6px 10px;text-align:right;}th{background:#dbeafe;}</style>' +
+    '</head><body>' +
+    '<h2>تقرير إغلاق الوردية</h2>' +
+    '<p>الكاشير: ' + (state.user || '—') + ' | التاريخ: ' + new Date().toLocaleString('ar-SA') + '</p>' +
+    document.querySelector('.sc-v3-modal').innerHTML.replace(/<button[^>]*>.*?<\/button>/g,'') +
+    '</body></html>';
+  w.document.write(html);
+  w.document.close();
+  setTimeout(function(){ w.print(); }, 500);
+};
+
+function scV3ShowReport(shiftId, r) {
+  var html = '<div style="padding:14px;">' +
+    '<h3 style="color:#16a34a;"><i class="fas fa-check-circle"></i> تم إغلاق الوردية</h3>' +
+    '<p style="color:#475569;">رقم الوردية: <code>' + shiftId + '</code></p>' +
+    '<table style="width:100%;border-collapse:collapse;margin-top:10px;">' +
+      '<tr><td style="padding:6px;border-bottom:1px solid #e2e8f0;">إجمالي متوقع</td><td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + _posFmt(r.expectedTotal||0) + ' SAR</td></tr>' +
+      '<tr><td style="padding:6px;border-bottom:1px solid #e2e8f0;">إجمالي فعلي</td><td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + _posFmt(r.actualTotal||0) + ' SAR</td></tr>' +
+      '<tr><td style="padding:6px;">الفرق</td><td style="padding:6px;text-align:left;font-weight:700;color:' + (Math.abs(r.variance||0) < 0.01 ? '#16a34a' : '#dc2626') + ';">' + _posFmt(r.variance||0) + ' SAR</td></tr>' +
+    '</table>' +
+    '<p style="margin-top:10px;color:#475569;font-size:13px;">عدد الفواتير: ' + (r.orderCount||0) + '</p>' +
+  '</div>';
+  q('#shiftReportBody').innerHTML = html;
+  openGlassModal('#modalShiftReport');
+}
+

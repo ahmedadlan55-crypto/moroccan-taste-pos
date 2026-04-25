@@ -206,19 +206,19 @@ router.post('/payment-methods-full', async (req, res) => {
       );
       return res.json({ success: true, id });
     }
-    const newId = 'PM-' + Date.now();
-    await db.query(
+    // payment_methods.id is INT AUTO_INCREMENT — let MySQL assign the id
+    const [result] = await db.query(
       `INSERT INTO payment_methods (
-         id, name, name_ar, icon, is_active, service_fee_rate, sort_order, type,
+         name, name_ar, icon, is_active, service_fee_rate, sort_order, type,
          require_reference, require_transaction_number, require_terminal,
          allow_refund, allow_cancel, color,
          group_type, gl_account_id, cost_center_id,
          allow_manual_total, show_in_shift_close, show_in_reports,
          service_fee_type, service_fee_value, description
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [newId].concat(params)
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      params
     );
-    res.json({ success: true, id: newId });
+    res.json({ success: true, id: result.insertId });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 

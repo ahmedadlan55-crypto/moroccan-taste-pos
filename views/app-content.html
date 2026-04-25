@@ -2035,6 +2035,22 @@
         </div>
         <i class="fas fa-arrow-left rh-arrow"></i>
       </div>
+      <div class="rh-card" onclick="erpNav('erpRptSalesByChannel')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#fef3c7,#fde68a);color:#d97706;"><i class="fas fa-store"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">المبيعات حسب القناة</div>
+          <div class="rh-desc">تحليل الإيرادات لكل قناة (هنقرستيشن/كيتا/المنيو الرئيسي) مع العمولات والخصومات والصافي بعد العمولات.</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
+      <div class="rh-card" onclick="erpNav('erpRptDiscountsGiven')">
+        <div class="rh-icon" style="background:linear-gradient(135deg,#fce7f3,#fbcfe8);color:#be185d;"><i class="fas fa-percent"></i></div>
+        <div class="rh-body">
+          <div class="rh-name">الخصومات الممنوحة</div>
+          <div class="rh-desc">تتبع كل خصم تم تطبيقه — عدد الاستخدامات، إجمالي القيمة، المتوسط، حسب النطاق (فاتورة/صنف/يدوي).</div>
+        </div>
+        <i class="fas fa-arrow-left rh-arrow"></i>
+      </div>
     </div>
   </div>
 
@@ -3995,6 +4011,80 @@
     <div><h4>طريقة الدفع</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>الطريقة</th><th>الفواتير</th><th>الإجمالي</th></tr></thead><tbody id="saPayBody"></tbody></table></div></div>
     <div><h4>الكاشير</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>الكاشير</th><th>الفواتير</th><th>متوسط</th><th>الإجمالي</th></tr></thead><tbody id="saCashierBody"></tbody></table></div></div>
     <div><h4>أفضل الأصناف</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>الإجمالي</th></tr></thead><tbody id="saTopBody"></tbody></table></div></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- V3 SALES BY CHANNEL — Hangerstation / Keeta / main / app / phone     -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div id="erpRptSalesByChannel" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot warning"><i class="fas fa-store"></i></span>المبيعات حسب القناة</h1>
+      <p class="wo-header-sub">تحليل الإيرادات لكل قناة بيع — مع العمولات ورسوم الخدمة والصافي بعد العمولات.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-primary" onclick="erpLoadSalesByChannel()"><i class="fas fa-search"></i><span>عرض</span></button>
+    </div>
+  </header>
+  <section class="wo-toolbar" role="search">
+    <div class="wo-field"><label class="wo-field-label" for="sbcFrom"><i class="fas fa-calendar"></i> من</label><input type="date" id="sbcFrom" class="wo-input"></div>
+    <div class="wo-field"><label class="wo-field-label" for="sbcTo"><i class="fas fa-calendar-check"></i> إلى</label><input type="date" id="sbcTo" class="wo-input"></div>
+    <div class="wo-field"><label class="wo-field-label" for="sbcBrand"><i class="fas fa-tags"></i> البراند</label><select id="sbcBrand" class="wo-select"><option value="">الكل</option></select></div>
+  </section>
+  <div class="wo-metric-strip" id="sbcMetrics"></div>
+  <div class="wo-table-surface">
+    <table class="wo-table">
+      <thead>
+        <tr>
+          <th>القناة</th>
+          <th class="num">عدد الفواتير</th>
+          <th class="num">إجمالي قبل الخصم</th>
+          <th class="num">الخصومات</th>
+          <th class="num">صافي المبيعات</th>
+          <th class="num">العمولة %</th>
+          <th class="num">العمولة</th>
+          <th class="num">رسوم خدمة</th>
+          <th class="num">صافي بعد العمولات</th>
+        </tr>
+      </thead>
+      <tbody id="sbcBody"><tr><td colspan="9"><div class="wo-empty"><i class="fas fa-filter"></i><div class="wo-empty-title">حدّد الفترة ثم اضغط عرض</div></div></td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- V3 DISCOUNTS GIVEN — usage report                                    -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div id="erpRptDiscountsGiven" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot purple"><i class="fas fa-percent"></i></span>الخصومات الممنوحة</h1>
+      <p class="wo-header-sub">كل خصم تم تطبيقه — عدد الاستخدامات، إجمالي القيمة، المتوسط، حسب النطاق.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-primary" onclick="erpLoadDiscountsGiven()"><i class="fas fa-search"></i><span>عرض</span></button>
+    </div>
+  </header>
+  <section class="wo-toolbar" role="search">
+    <div class="wo-field"><label class="wo-field-label" for="dgFrom"><i class="fas fa-calendar"></i> من</label><input type="date" id="dgFrom" class="wo-input"></div>
+    <div class="wo-field"><label class="wo-field-label" for="dgTo"><i class="fas fa-calendar-check"></i> إلى</label><input type="date" id="dgTo" class="wo-input"></div>
+  </section>
+  <div class="wo-metric-strip" id="dgMetrics"></div>
+  <div class="wo-table-surface">
+    <table class="wo-table">
+      <thead>
+        <tr>
+          <th>اسم الخصم</th>
+          <th>النوع</th>
+          <th>النطاق</th>
+          <th class="num">عدد الاستخدامات</th>
+          <th class="num">إجمالي الخصم</th>
+          <th class="num">المتوسط</th>
+        </tr>
+      </thead>
+      <tbody id="dgBody"><tr><td colspan="6"><div class="wo-empty"><i class="fas fa-filter"></i><div class="wo-empty-title">حدّد الفترة ثم اضغط عرض</div></div></td></tr></tbody>
+    </table>
   </div>
 </div>
 

@@ -543,7 +543,13 @@ window.doCheckout = function() {
     discountName: state.currentDiscount.name,
     discountAmount: state.currentDiscount.amount,
     kitaServiceFee: serviceFee,
-    splitDetails: splitDetails
+    splitDetails: splitDetails,
+    // ─── V3 metadata: channel + discount IDs (for reports + GL routing) ───
+    channelId: state.activeChannel ? state.activeChannel.id : null,
+    channelName: state.activeChannel ? state.activeChannel.name : null,
+    discountId: state.currentDiscount.discountId || null,
+    discountGlAccountId: state.currentDiscount.glAccountId || null,
+    lineDiscounts: Object.keys(state.lineDiscounts || {}).length ? state.lineDiscounts : null
   };
 
   var send = function() {
@@ -2227,7 +2233,16 @@ function _doSetChannel(ch) {
 }
 
 function _posApplyChannelPrices() {
-  // Re-render menu grid so prices reflect channel
+  // Apply channel prices: snapshot each menu item's original price (once) then
+  // override with channel price if present.
+  (state.menu || []).forEach(function(m) {
+    if (m._origPrice == null) m._origPrice = Number(m.price || 0);
+    if (state.channelPriceMap && state.channelPriceMap[m.id] != null) {
+      m.price = Number(state.channelPriceMap[m.id]);
+    } else {
+      m.price = m._origPrice;
+    }
+  });
   if (typeof renderMenuGrid === 'function') renderMenuGrid();
   if (typeof updateCart === 'function') updateCart();
 }

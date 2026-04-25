@@ -17,22 +17,61 @@ function _payToAccountCode(method) {
   return '1120';
 }
 
-// Parse the split payment string from sales.js above ("cash:150/card:80") into
-// [{ code, amount }] for separate debit lines.
-function _parseSplitPayments(payStr, total) {
+// Build a payment-method → GL account code map by joining payment_methods.gl_account_id → gl_accounts.code
+// Returns: { 'cash': '1110', 'card': '1120', 'hunger station': '4150', ... }
+async function _buildPmGlMap(db) {
+  const map = {};
+  try {
+    const [rows] = await db.query(`
+      SELECT pm.name, pm.name_ar, ga.code AS gl_code
+        FROM payment_methods pm
+        LEFT JOIN gl_accounts ga ON ga.id = pm.gl_account_id
+       WHERE pm.is_active = 1 AND pm.gl_account_id IS NOT NULL AND pm.gl_account_id <> ''
+    `);
+    rows.forEach(r => {
+      if (r.gl_code) {
+        if (r.name) map[String(r.name).toLowerCase()] = r.gl_code;
+        if (r.name_ar) map[String(r.name_ar).toLowerCase()] = r.gl_code;
+      }
+    });
+  } catch(e) { /* gl_account_id column may be missing on very old schemas — ignore */ }
+  return map;
+}
+
+// V3: parse split payment using the dynamic GL map (falls back to legacy mapping)
+function _parseSplitPaymentsV3(payStr, total, pmGlMap) {
   const out = [];
+  const lookup = (name) => {
+    const k = String(name || '').toLowerCase();
+    return (pmGlMap && pmGlMap[k]) || _payToAccountCode(name);
+  };
   if (!payStr || payStr.indexOf(':') < 0) {
-    out.push({ code: _payToAccountCode(payStr), amount: Number(total) || 0 });
+    out.push({ code: lookup(payStr), amount: Number(total) || 0 });
     return out;
   }
   const parts = payStr.split('/');
   parts.forEach(p => {
     const [k, v] = p.split(':');
     const amt = Number(v) || 0;
-    if (amt > 0) out.push({ code: _payToAccountCode(k), amount: amt });
+    if (amt > 0) out.push({ code: lookup(k), amount: amt });
   });
-  if (!out.length) out.push({ code: _payToAccountCode(payStr), amount: Number(total) || 0 });
+  if (!out.length) out.push({ code: lookup(payStr), amount: Number(total) || 0 });
   return out;
+}
+
+// V3: resolve discount GL account id → code (with fallback to 4901 'Sales Discounts')
+async function _resolveDiscountGlCode(db, glAccountId) {
+  if (!glAccountId) return '4901'; // default Sales Discount account
+  try {
+    const [rows] = await db.query('SELECT code FROM gl_accounts WHERE id = ? LIMIT 1', [glAccountId]);
+    if (rows.length && rows[0].code) return rows[0].code;
+  } catch(e) {}
+  return '4901';
+}
+
+// Back-compat shim — old code still calls _parseSplitPayments
+function _parseSplitPayments(payStr, total) {
+  return _parseSplitPaymentsV3(payStr, total, null);
 }
 
 // Save order
@@ -40,9 +79,20 @@ router.post('/', async (req, res) => {
   try {
     const { items, total, totalFinal, paymentMethod, discountName, discountAmount, kitaServiceFee, splitDetails } = req.body;
     const { username, shiftId, warehouseId: reqWhId } = req.body;
+    // ─── V3: optional channel + discount metadata from POS ───
+    const { channelId, channelName, discountId, discountGlAccountId, lineDiscounts: lineDiscPayload } = req.body;
     const warehouseId = reqWhId || (req.user && req.user.default_warehouse_id) || null;
     const orderId = shiftId + '-' + Date.now();
     const now = new Date();
+
+    // ─── V3: Resolve channel name from DB if id provided ───
+    let resolvedChannelName = channelName || null;
+    if (channelId && !resolvedChannelName) {
+      try {
+        const [chRow] = await db.query('SELECT name FROM sales_channels WHERE id = ?', [channelId]);
+        if (chRow.length) resolvedChannelName = chRow[0].name;
+      } catch(e) {}
+    }
 
     // Determine payment method string
     let payStr = paymentMethod;
@@ -79,9 +129,18 @@ router.post('/', async (req, res) => {
       zatcaStamp = { uuid: null, invoiceHash: null, previousInvoiceHash: null, qrBase64: null };
     }
 
-    // Insert sale
+    // Insert sale (legacy columns)
     await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee) VALUES (?,?,?,?,?,?,?,?,?,?)',
       [orderId, now, JSON.stringify(items), totalFinal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0]);
+
+    // ─── V3: Persist channel + discount metadata (post-insert update so it works on older deploys) ───
+    try {
+      await db.query(
+        `UPDATE sales SET channel_id=?, channel_name=?, discount_id=?, discount_gl_id=?, line_discounts_json=? WHERE id=?`,
+        [channelId || null, resolvedChannelName || null, discountId || null, discountGlAccountId || null,
+         lineDiscPayload ? JSON.stringify(lineDiscPayload) : null, orderId]
+      );
+    } catch(e) { /* columns may be missing on very old deploys — ignore */ }
 
     // Stamp ZATCA fields back (tolerate schemas without these columns)
     if (zatcaStamp.uuid) {
@@ -268,23 +327,25 @@ router.post('/', async (req, res) => {
           } catch(e) {}
         }
 
-        const paymentDebits = _parseSplitPayments(payStr, invTotal);
+        // V3: Build dynamic payment method → GL code map
+        const pmGlMap = await _buildPmGlMap(db);
+        const paymentDebits = _parseSplitPaymentsV3(payStr, invTotal, pmGlMap);
 
         const entries = [];
-        // Debit(s) — by payment method (one per split)
+        // Debit(s) — by payment method (one per split, GL routed dynamically)
         paymentDebits.forEach(pd => {
           entries.push({
             accountCode: pd.code,
             debit: Math.round(pd.amount * 100) / 100, credit: 0,
-            description: 'Sale receipt — ' + orderId,
+            description: 'Sale receipt — ' + orderId + (resolvedChannelName ? ' (' + resolvedChannelName + ')' : ''),
             branchId: branchId || null, brandId: brandId || null
           });
         });
-        // Credit Sales Revenue (net)
+        // Credit Sales Revenue (net) — GROSS revenue (post-discount net) at minimum
         entries.push({
           accountCode: '4100',
           debit: 0, credit: net,
-          description: 'Sales revenue — ' + orderId,
+          description: 'Sales revenue — ' + orderId + (resolvedChannelName ? ' (' + resolvedChannelName + ')' : ''),
           branchId: branchId || null, brandId: brandId || null
         });
         // Credit Output VAT (if any)
@@ -296,6 +357,28 @@ router.post('/', async (req, res) => {
             branchId: branchId || null, brandId: brandId || null
           });
         }
+
+        // ─── V3: Discount entry (Dr Discount Allowed / Cr Sales Revenue add-back) ───
+        // This makes the discount visible in GL while keeping net revenue == post-discount
+        // (the add-back to 4100 cancels by adding gross-revenue contribution that the
+        // discount took away). The net effect: Discount account shows the discount amount.
+        const discAmt = Number(discountAmount) || 0;
+        if (discAmt > 0) {
+          const discCode = await _resolveDiscountGlCode(db, discountGlAccountId);
+          entries.push({
+            accountCode: discCode,
+            debit: discAmt, credit: 0,
+            description: 'Sales discount — ' + orderId + (discountName ? ' (' + discountName + ')' : ''),
+            branchId: branchId || null, brandId: brandId || null
+          });
+          entries.push({
+            accountCode: '4100',
+            debit: 0, credit: discAmt,
+            description: 'Sales discount add-back (gross revenue) — ' + orderId,
+            branchId: branchId || null, brandId: brandId || null
+          });
+        }
+
         // COGS leg (if any cost)
         if (totalCogs > 0) {
           entries.push({

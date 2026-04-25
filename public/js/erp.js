@@ -123,6 +123,8 @@ function erpNav(sectionId) {
       case 'erpRptProfitability':  erpLoadProfitability(); break;
       case 'erpRptInventoryVal':   erpLoadInventoryValuation(); break;
       case 'erpRptSalesAnalytics': erpLoadSalesAnalytics(); break;
+      case 'erpRptSalesByChannel': if (typeof erpLoadSalesByChannel === 'function') erpLoadSalesByChannel(); break;
+      case 'erpRptDiscountsGiven': if (typeof erpLoadDiscountsGiven === 'function') erpLoadDiscountsGiven(); break;
       case 'erpRptWasteAnalytics': erpLoadWasteAnalytics(); break;
       case 'erpRptRoyaltyRecon':   erpLoadRoyaltyRecon(); break;
       // ═══ Entity management ═══
@@ -15295,4 +15297,137 @@ function erpViewProductionDetail(id) {
     });
   });
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+ * V3 — Sales by Channel + Discounts Given reports
+ * ═══════════════════════════════════════════════════════════════════ */
+function erpLoadSalesByChannel() {
+  // Populate brand filter (once)
+  callAPI('GET', '/erp/brands', null, function(brs) {
+    var sel = document.getElementById('sbcBrand');
+    if (sel && sel.options.length <= 1) {
+      sel.innerHTML = '<option value="">الكل</option>' + (brs||[]).map(function(b){
+        return '<option value="' + b.id + '">' + _v3EscapeHtml(b.name) + '</option>';
+      }).join('');
+    }
+  });
+
+  var qs = [];
+  var f = (document.getElementById('sbcFrom')||{}).value;
+  var t = (document.getElementById('sbcTo')||{}).value;
+  var b = (document.getElementById('sbcBrand')||{}).value;
+  if (f) qs.push('from=' + encodeURIComponent(f));
+  if (t) qs.push('to=' + encodeURIComponent(t));
+  if (b) qs.push('brand=' + encodeURIComponent(b));
+  var path = '/erp/reports/sales-by-channel' + (qs.length ? '?' + qs.join('&') : '');
+
+  callAPI('GET', path, null, function(r) {
+    if (!r || !r.success) {
+      var tbody = document.getElementById('sbcBody');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="9"><div class="wo-empty"><i class="fas fa-triangle-exclamation"></i><div class="wo-empty-title">' + ((r && r.error) || 'فشل التحميل') + '</div></div></td></tr>';
+      return;
+    }
+    _renderSalesByChannel(r);
+  });
+}
+
+function _renderSalesByChannel(r) {
+  var rows = r.rows || [];
+  var totals = r.totals || {};
+
+  var metrics = document.getElementById('sbcMetrics');
+  if (metrics) {
+    metrics.innerHTML =
+      _v3MetricCard('fa-store', 'عدد القنوات', rows.length, '#3b82f6') +
+      _v3MetricCard('fa-receipt', 'إجمالي الفواتير', totals.count || 0, '#8b5cf6') +
+      _v3MetricCard('fa-coins', 'صافي المبيعات', _v3Fmt(totals.net) + ' ر.س', '#22c55e') +
+      _v3MetricCard('fa-percent', 'إجمالي العمولات', _v3Fmt(totals.commission) + ' ر.س', '#f59e0b') +
+      _v3MetricCard('fa-tag', 'إجمالي الخصومات', _v3Fmt(totals.discount) + ' ر.س', '#ef4444') +
+      _v3MetricCard('fa-arrow-down', 'صافي بعد العمولات', _v3Fmt(totals.netAfterCommission) + ' ر.س', '#06b6d4');
+  }
+
+  var tbody = document.getElementById('sbcBody');
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="9"><div class="wo-empty"><i class="fas fa-folder-open"></i><div class="wo-empty-title">لا توجد مبيعات في هذه الفترة</div></div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(function(c) {
+    return '<tr>' +
+      '<td><span class="v3-icon-badge" style="background:'+(c.color||'#3b82f6')+'1a;color:'+(c.color||'#3b82f6')+';"><i class="fas '+(c.icon||'fa-store')+'"></i></span> <strong>' + _v3EscapeHtml(c.channelName) + '</strong></td>' +
+      '<td class="num">' + (c.orderCount||0) + '</td>' +
+      '<td class="num">' + _v3Fmt(c.grossSales) + '</td>' +
+      '<td class="num" style="color:#dc2626;">' + (c.totalDiscount > 0 ? '-' + _v3Fmt(c.totalDiscount) : '0.00') + '</td>' +
+      '<td class="num" style="font-weight:800;color:#15803d;">' + _v3Fmt(c.netSales) + '</td>' +
+      '<td class="num">' + Number(c.commissionPct||0).toFixed(2) + '%</td>' +
+      '<td class="num" style="color:#d97706;">' + _v3Fmt(c.commission) + '</td>' +
+      '<td class="num" style="color:#d97706;">' + _v3Fmt(c.serviceFee) + '</td>' +
+      '<td class="num" style="font-weight:900;color:#0e7490;">' + _v3Fmt(c.netAfterCommission) + '</td>' +
+    '</tr>';
+  }).join('') + (totals.count ? '<tr style="background:#f1f5f9;font-weight:900;border-top:2px solid #cbd5e1;">' +
+    '<td>الإجمالي</td>' +
+    '<td class="num">' + (totals.count||0) + '</td>' +
+    '<td class="num">' + _v3Fmt(totals.gross) + '</td>' +
+    '<td class="num" style="color:#dc2626;">-' + _v3Fmt(totals.discount) + '</td>' +
+    '<td class="num" style="color:#15803d;">' + _v3Fmt(totals.net) + '</td>' +
+    '<td></td>' +
+    '<td class="num" style="color:#d97706;">' + _v3Fmt(totals.commission) + '</td>' +
+    '<td class="num" style="color:#d97706;">' + _v3Fmt(totals.serviceFee) + '</td>' +
+    '<td class="num" style="color:#0e7490;">' + _v3Fmt(totals.netAfterCommission) + '</td>' +
+  '</tr>' : '');
+}
+
+function erpLoadDiscountsGiven() {
+  var qs = [];
+  var f = (document.getElementById('dgFrom')||{}).value;
+  var t = (document.getElementById('dgTo')||{}).value;
+  if (f) qs.push('from=' + encodeURIComponent(f));
+  if (t) qs.push('to=' + encodeURIComponent(t));
+  var path = '/erp/reports/discounts-given' + (qs.length ? '?' + qs.join('&') : '');
+
+  callAPI('GET', path, null, function(r) {
+    if (!r || !r.success) {
+      var tbody = document.getElementById('dgBody');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="6"><div class="wo-empty"><i class="fas fa-triangle-exclamation"></i><div class="wo-empty-title">' + ((r && r.error) || 'فشل التحميل') + '</div></div></td></tr>';
+      return;
+    }
+    _renderDiscountsGiven(r);
+  });
+}
+
+function _renderDiscountsGiven(r) {
+  var rows = r.rows || [];
+  var totals = r.totals || {};
+  var typeLabels = { percentage:'نسبة', fixed:'ثابت', promo_code:'كود', automatic:'تلقائي' };
+  var scopeLabels = { line:'صنف', invoice:'فاتورة', preset:'جاهز', manual:'يدوي' };
+
+  var metrics = document.getElementById('dgMetrics');
+  if (metrics) {
+    metrics.innerHTML =
+      _v3MetricCard('fa-tag', 'أنواع الخصومات المستخدمة', rows.length, '#8b5cf6') +
+      _v3MetricCard('fa-receipt', 'إجمالي الاستخدامات', totals.uses || 0, '#3b82f6') +
+      _v3MetricCard('fa-coins', 'إجمالي قيمة الخصومات', _v3Fmt(totals.amount) + ' ر.س', '#dc2626') +
+      _v3MetricCard('fa-calculator', 'متوسط لكل استخدام', totals.uses ? _v3Fmt(totals.amount / totals.uses) + ' ر.س' : '0.00', '#06b6d4');
+  }
+
+  var tbody = document.getElementById('dgBody');
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6"><div class="wo-empty"><i class="fas fa-folder-open"></i><div class="wo-empty-title">لا توجد خصومات في هذه الفترة</div></div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(function(d) {
+    return '<tr>' +
+      '<td><strong>' + _v3EscapeHtml(d.discountName) + '</strong></td>' +
+      '<td><span class="wo-chip">' + (typeLabels[d.type] || d.type) + '</span></td>' +
+      '<td><span class="wo-chip">' + (scopeLabels[d.scope] || d.scope) + '</span></td>' +
+      '<td class="num">' + (d.useCount||0) + '</td>' +
+      '<td class="num" style="font-weight:800;color:#dc2626;">' + _v3Fmt(d.totalDiscount) + '</td>' +
+      '<td class="num">' + _v3Fmt(d.avgDiscount) + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
 

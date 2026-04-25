@@ -1649,6 +1649,144 @@ router.get('/reports/sales-analytics', async (req, res) => {
 });
 
 /**
+ * GET /erp/reports/sales-by-channel?from=&to=&brand=
+ * V3 Sales breakdown by channel (Hangerstation / Keeta / main / etc.)
+ * Returns per-channel: order count, gross sales, total discounts, net sales,
+ * commission (if defined), service fees.
+ */
+router.get('/reports/sales-by-channel', async (req, res) => {
+  try {
+    const { from, to, brand } = req.query;
+    // Verify channel_id column exists (migration may not have run on very old deploys)
+    let hasChannel = true;
+    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'channel_id'"); hasChannel = !!c.length; } catch(e) { hasChannel = false; }
+    if (!hasChannel) return res.json({ success: true, rows: [], totals: { gross:0, discount:0, net:0, count:0 }, note: 'channel_id column missing' });
+
+    const where = ["s.deleted_at IS NULL"];
+    const params = [];
+    if (from) { where.push('DATE(s.order_date) >= ?'); params.push(from); }
+    if (to)   { where.push('DATE(s.order_date) <= ?'); params.push(to); }
+    if (brand) {
+      // brand may live on s.brand_id only on some deploys; tolerate absence
+      try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'brand_id'"); if (c.length) { where.push('s.brand_id = ?'); params.push(brand); } } catch(e) {}
+    }
+    const whereClause = where.length ? ('WHERE ' + where.join(' AND ')) : '';
+
+    const [rows] = await db.query(`
+      SELECT
+        COALESCE(s.channel_id, '__none__') AS channel_id,
+        COALESCE(s.channel_name, c.name, 'بدون قناة') AS channel_name,
+        COALESCE(c.icon, 'fa-store') AS icon,
+        COALESCE(c.color, '#64748b') AS color,
+        COALESCE(c.commission_pct, 0) AS commission_pct,
+        COALESCE(c.service_fee_pct, 0) AS service_fee_pct,
+        COUNT(*) AS order_count,
+        SUM(s.total_final + COALESCE(s.discount_amount, 0)) AS gross_sales,
+        SUM(COALESCE(s.discount_amount, 0)) AS total_discount,
+        SUM(s.total_final) AS net_sales
+      FROM sales s
+      LEFT JOIN sales_channels c ON c.id = s.channel_id
+      ${whereClause}
+      GROUP BY s.channel_id, channel_name, icon, color, commission_pct, service_fee_pct
+      ORDER BY net_sales DESC
+    `, params);
+
+    const out = rows.map(r => {
+      const net = Number(r.net_sales || 0);
+      const commPct = Number(r.commission_pct || 0);
+      const feePct = Number(r.service_fee_pct || 0);
+      const commission = net * (commPct / 100);
+      const serviceFee = net * (feePct / 100);
+      return {
+        channelId: r.channel_id === '__none__' ? null : r.channel_id,
+        channelName: r.channel_name,
+        icon: r.icon,
+        color: r.color,
+        orderCount: Number(r.order_count || 0),
+        grossSales: Number(r.gross_sales || 0),
+        totalDiscount: Number(r.total_discount || 0),
+        netSales: net,
+        commissionPct: commPct,
+        commission: commission,
+        serviceFeePct: feePct,
+        serviceFee: serviceFee,
+        netAfterCommission: net - commission - serviceFee
+      };
+    });
+
+    const totals = out.reduce((acc, r) => {
+      acc.gross += r.grossSales;
+      acc.discount += r.totalDiscount;
+      acc.net += r.netSales;
+      acc.commission += r.commission;
+      acc.serviceFee += r.serviceFee;
+      acc.count += r.orderCount;
+      return acc;
+    }, { gross: 0, discount: 0, net: 0, commission: 0, serviceFee: 0, count: 0 });
+    totals.netAfterCommission = totals.net - totals.commission - totals.serviceFee;
+
+    res.json({ success: true, rows: out, totals: totals, filters: { from, to, brand } });
+  } catch(e) {
+    console.error('sales-by-channel error:', e);
+    res.json({ success: false, error: e.message, rows: [], totals: {} });
+  }
+});
+
+/**
+ * GET /erp/reports/discounts-given?from=&to=
+ * V3 Discount usage report: per-discount totals (count, sum, avg)
+ */
+router.get('/reports/discounts-given', async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    let hasDiscId = true;
+    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'discount_id'"); hasDiscId = !!c.length; } catch(e) { hasDiscId = false; }
+    if (!hasDiscId) return res.json({ success: true, rows: [], totals: {}, note: 'discount_id column missing' });
+
+    const where = ["s.deleted_at IS NULL", "COALESCE(s.discount_amount, 0) > 0"];
+    const params = [];
+    if (from) { where.push('DATE(s.order_date) >= ?'); params.push(from); }
+    if (to)   { where.push('DATE(s.order_date) <= ?'); params.push(to); }
+    const whereClause = where.length ? ('WHERE ' + where.join(' AND ')) : '';
+
+    const [rows] = await db.query(`
+      SELECT
+        COALESCE(s.discount_id, '__manual__') AS discount_id,
+        COALESCE(s.discount_name, d.name, 'يدوي') AS discount_name,
+        COALESCE(d.type, '—') AS type,
+        COALESCE(d.discount_scope, '—') AS scope,
+        COUNT(*) AS use_count,
+        SUM(s.discount_amount) AS total_discount,
+        AVG(s.discount_amount) AS avg_discount
+      FROM sales s
+      LEFT JOIN discounts_v2 d ON d.id = s.discount_id
+      ${whereClause}
+      GROUP BY s.discount_id, discount_name, type, scope
+      ORDER BY total_discount DESC
+    `, params);
+
+    const out = rows.map(r => ({
+      discountId: r.discount_id === '__manual__' ? null : r.discount_id,
+      discountName: r.discount_name,
+      type: r.type,
+      scope: r.scope,
+      useCount: Number(r.use_count || 0),
+      totalDiscount: Number(r.total_discount || 0),
+      avgDiscount: Number(r.avg_discount || 0)
+    }));
+    const totals = out.reduce((acc, r) => {
+      acc.uses += r.useCount;
+      acc.amount += r.totalDiscount;
+      return acc;
+    }, { uses: 0, amount: 0 });
+    res.json({ success: true, rows: out, totals: totals, filters: { from, to } });
+  } catch(e) {
+    console.error('discounts-given error:', e);
+    res.json({ success: false, error: e.message });
+  }
+});
+
+/**
  * GET /erp/reports/waste-analytics?from=&to=&brand=&branch=
  * Waste as % of sales, top-wasted items, by reason, trend.
  */

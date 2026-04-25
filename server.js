@@ -788,6 +788,17 @@ async function runMigrations() {
   await addColumnIfMissing('shifts', 'actual_total', "DECIMAL(14,4) DEFAULT 0");
   await addColumnIfMissing('shifts', 'variance_total', "DECIMAL(14,4) DEFAULT 0");
 
+  // ─── Sales: V3 channel + discount tracking (for reports + GL routing) ───
+  await addColumnIfMissing('sales', 'channel_id', "VARCHAR(50) DEFAULT NULL");
+  await addColumnIfMissing('sales', 'channel_name', "VARCHAR(200) DEFAULT NULL");
+  await addColumnIfMissing('sales', 'discount_id', "VARCHAR(50) DEFAULT NULL");
+  await addColumnIfMissing('sales', 'discount_name', "VARCHAR(200) DEFAULT NULL");
+  await addColumnIfMissing('sales', 'discount_amount', "DECIMAL(14,4) DEFAULT 0");
+  await addColumnIfMissing('sales', 'discount_gl_id', "VARCHAR(50) DEFAULT NULL");
+  await addColumnIfMissing('sales', 'line_discounts_json', "LONGTEXT");
+  try { await db.query('CREATE INDEX idx_sales_channel ON sales(channel_id)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_sales_discount ON sales(discount_id)'); } catch(e) {}
+
   // Audit log table
   await createTableIfMissing('audit_logs', `
     CREATE TABLE audit_logs (

@@ -148,6 +148,7 @@ app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/purchases', require('./routes/purchases'));
 app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/sales-channels', require('./routes/sales-channels'));
 // ERP v3 (erp-core) is mounted first so its newer, schema-aware reports
 // take precedence over any same-path legacy handler in routes/erp.js
 app.use('/api/erp', require('./routes/erp-core'));
@@ -685,6 +686,90 @@ async function runMigrations() {
       UNIQUE KEY uq_br_disc (branch_id, discount_id)
     ) ENGINE=InnoDB
   `);
+
+  // ─── Payment Methods v3: enterprise fields (group, GL, cost center, fees, advanced flags) ───
+  await addColumnIfMissing('payment_methods', 'group_type', "ENUM('cash','electronic','voucher','loyalty','transfer','other') DEFAULT 'cash'");
+  await addColumnIfMissing('payment_methods', 'gl_account_id', "VARCHAR(50) DEFAULT NULL");
+  await addColumnIfMissing('payment_methods', 'cost_center_id', "VARCHAR(50) DEFAULT NULL");
+  await addColumnIfMissing('payment_methods', 'allow_manual_total', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('payment_methods', 'show_in_shift_close', "BOOLEAN DEFAULT TRUE");
+  await addColumnIfMissing('payment_methods', 'show_in_reports', "BOOLEAN DEFAULT TRUE");
+  await addColumnIfMissing('payment_methods', 'service_fee_type', "ENUM('percent','fixed','none') DEFAULT 'none'");
+  await addColumnIfMissing('payment_methods', 'service_fee_value', "DECIMAL(14,4) DEFAULT 0");
+  await addColumnIfMissing('payment_methods', 'description', "TEXT");
+  await addColumnIfMissing('payment_methods', 'created_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+  await addColumnIfMissing('payment_methods', 'updated_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+
+  // ─── Sales Channels (المنيو الرئيسي / هنقرستيشن / كيتا / تطبيق_خاص / طلب_هاتفي) ───
+  await createTableIfMissing('sales_channels', `
+    CREATE TABLE sales_channels (
+      id VARCHAR(50) PRIMARY KEY,
+      code VARCHAR(50) UNIQUE,
+      name VARCHAR(200) NOT NULL,
+      name_en VARCHAR(200),
+      channel_type ENUM('dine_in','takeaway','delivery','aggregator','phone','app','online') DEFAULT 'dine_in',
+      price_list_id VARCHAR(50) DEFAULT NULL,
+      icon VARCHAR(60) DEFAULT 'fa-store',
+      color VARCHAR(20) DEFAULT '#3b82f6',
+      commission_pct DECIMAL(5,2) DEFAULT 0,
+      service_fee_pct DECIMAL(5,2) DEFAULT 0,
+      gl_revenue_account VARCHAR(50) DEFAULT NULL,
+      gl_commission_account VARCHAR(50) DEFAULT NULL,
+      requires_external_ref BOOLEAN DEFAULT FALSE,
+      allow_discount BOOLEAN DEFAULT TRUE,
+      is_active BOOLEAN DEFAULT TRUE,
+      display_order INT DEFAULT 0,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_channel_type (channel_type),
+      INDEX idx_price_list (price_list_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // Seed default sales channels (idempotent)
+  try {
+    const [chCnt] = await db.query('SELECT COUNT(*) AS c FROM sales_channels');
+    if (chCnt[0].c === 0) {
+      await db.query(`INSERT INTO sales_channels (id, code, name, channel_type, icon, color, display_order, is_active) VALUES
+        ('CH-MAIN','MAIN','المنيو الرئيسي','dine_in','fa-utensils','#3b82f6',1,1),
+        ('CH-HUNGER','HUNGERSTATION','هنقرستيشن','aggregator','fa-motorcycle','#fbbf24',2,1),
+        ('CH-KEETA','KEETA','كيتا','aggregator','fa-bicycle','#ef4444',3,1),
+        ('CH-APP','APP','تطبيق خاص','app','fa-mobile-screen','#8b5cf6',4,1),
+        ('CH-PHONE','PHONE','طلب هاتفي','phone','fa-phone','#10b981',5,1)`);
+    }
+  } catch(e) {}
+
+  // ─── Discounts v2: GL link + permission level ───
+  await addColumnIfMissing('discounts_v2', 'gl_account_id', "VARCHAR(50) DEFAULT NULL");
+  await addColumnIfMissing('discounts_v2', 'discount_scope', "ENUM('line','invoice','preset','manual') DEFAULT 'invoice'");
+  await addColumnIfMissing('discounts_v2', 'min_role', "ENUM('cashier','manager','admin') DEFAULT 'cashier'");
+  await addColumnIfMissing('discounts_v2', 'max_per_invoice', "DECIMAL(14,4) DEFAULT 0");
+  await addColumnIfMissing('discounts_v2', 'show_in_pos', "BOOLEAN DEFAULT TRUE");
+  await addColumnIfMissing('discounts_v2', 'icon', "VARCHAR(60) DEFAULT 'fa-tag'");
+  await addColumnIfMissing('discounts_v2', 'description', "TEXT");
+
+  // ─── Shift close: cash denominations table ───
+  await createTableIfMissing('shift_close_denominations', `
+    CREATE TABLE shift_close_denominations (
+      id VARCHAR(60) PRIMARY KEY,
+      shift_id VARCHAR(50) NOT NULL,
+      denomination DECIMAL(10,2) NOT NULL,
+      kind ENUM('coin','note') DEFAULT 'note',
+      count INT DEFAULT 0,
+      total DECIMAL(14,4) GENERATED ALWAYS AS (denomination * count) STORED,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_shift (shift_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // Shifts: dynamic payment-method totals (JSON) + cash counted
+  await addColumnIfMissing('shifts', 'payment_totals_json', "LONGTEXT");
+  await addColumnIfMissing('shifts', 'denominations_json', "LONGTEXT");
+  await addColumnIfMissing('shifts', 'cashier_notes', "TEXT");
+  await addColumnIfMissing('shifts', 'opening_float', "DECIMAL(14,4) DEFAULT 0");
+  await addColumnIfMissing('shifts', 'expected_total', "DECIMAL(14,4) DEFAULT 0");
+  await addColumnIfMissing('shifts', 'actual_total', "DECIMAL(14,4) DEFAULT 0");
+  await addColumnIfMissing('shifts', 'variance_total', "DECIMAL(14,4) DEFAULT 0");
 
   // Audit log table
   await createTableIfMissing('audit_logs', `

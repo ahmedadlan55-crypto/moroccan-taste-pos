@@ -89,6 +89,141 @@ router.post('/close', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// V3 — Enhanced shift close: dynamic payment methods + cash denominations
+// Body: {
+//   shiftId,
+//   openingFloat: <number>,
+//   denominations: [{ value, count, kind: 'note'|'coin' }...],
+//   paymentTotals: { <pmId>: <actualAmount>, ... },
+//   notes
+// }
+// ═══════════════════════════════════════════════════════════════════
+router.post('/close-v3', async (req, res) => {
+  try {
+    const { shiftId, openingFloat, denominations, paymentTotals, notes } = req.body;
+    if (!shiftId) return res.json({ success: false, error: 'shiftId مطلوب' });
+    const now = new Date();
+
+    // 1. Build expected totals from sales (per payment method)
+    const [sales] = await db.query('SELECT payment_method, total_final FROM sales WHERE shift_id = ?', [shiftId]);
+    const expected = {}; // { method: amount }
+    let expectedTotal = 0;
+    for (const s of sales) {
+      const total = Number(s.total_final) || 0;
+      const pm = (s.payment_method || 'cash').toLowerCase();
+      if (pm.includes('/')) {
+        for (const part of pm.split('/')) {
+          const [m, a] = part.split(':');
+          const val = Number(a) || 0;
+          expected[m] = (expected[m] || 0) + val;
+          expectedTotal += val;
+        }
+      } else {
+        expected[pm] = (expected[pm] || 0) + total;
+        expectedTotal += total;
+      }
+    }
+
+    // 2. Sum cash from denominations (if provided)
+    let cashCounted = 0;
+    const denomList = Array.isArray(denominations) ? denominations : [];
+    for (const d of denomList) {
+      cashCounted += (Number(d.value) || 0) * (Number(d.count) || 0);
+    }
+    cashCounted += Number(openingFloat || 0); // Returns the opening float on top of counted
+
+    // 3. Variance per method
+    const actuals = paymentTotals || {};
+    if (cashCounted > 0 && actuals.cash == null) actuals.cash = cashCounted;
+    let actualTotal = 0;
+    for (const k in actuals) actualTotal += Number(actuals[k] || 0);
+    const variance = actualTotal - expectedTotal;
+
+    // 4. Persist denominations
+    await db.query('DELETE FROM shift_close_denominations WHERE shift_id = ?', [shiftId]);
+    for (let i = 0; i < denomList.length; i++) {
+      const d = denomList[i];
+      const cnt = Number(d.count) || 0;
+      if (cnt > 0) {
+        const did = 'DEN-' + shiftId + '-' + i;
+        await db.query(
+          'INSERT INTO shift_close_denominations (id, shift_id, denomination, kind, count) VALUES (?,?,?,?,?)',
+          [did, shiftId, Number(d.value) || 0, d.kind || 'note', cnt]
+        );
+      }
+    }
+
+    // 5. Update the shift row with full close data
+    await db.query(
+      `UPDATE shifts SET
+         end_time = ?, status = 'closed',
+         opening_float = ?, expected_total = ?, actual_total = ?, variance_total = ?,
+         payment_totals_json = ?, denominations_json = ?, cashier_notes = ?,
+         total_theoretical = ?, theoretical_cash = ?, actual_cash = ?, diff_cash = ?
+       WHERE id = ?`,
+      [
+        now,
+        Number(openingFloat || 0), expectedTotal, actualTotal, variance,
+        JSON.stringify({ expected, actuals }), JSON.stringify(denomList), notes || '',
+        expectedTotal, expected.cash || 0, actuals.cash || 0, (Number(actuals.cash || 0) - (expected.cash || 0)),
+        shiftId
+      ]
+    );
+
+    res.json({
+      success: true,
+      shiftId,
+      expected, actuals, expectedTotal, actualTotal, variance,
+      cashCounted, denominations: denomList,
+      orderCount: sales.length
+    });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// Closing data v3 — returns expected totals per dynamic payment method
+router.get('/closing-data-v3/:shiftId', async (req, res) => {
+  try {
+    const { shiftId } = req.params;
+    // Pull all enabled methods so the cashier sees the full reconciliation grid
+    const [methods] = await db.query(
+      "SELECT id, name, name_ar, icon, color, group_type FROM payment_methods WHERE is_active = 1 AND show_in_shift_close != 0 ORDER BY sort_order, name"
+    );
+    const [sales] = await db.query('SELECT payment_method, total_final FROM sales WHERE shift_id = ?', [shiftId]);
+
+    const expected = {}; // keyed by method code (lowercased name)
+    let expectedTotal = 0;
+    let orderCount = sales.length;
+    for (const s of sales) {
+      const total = Number(s.total_final) || 0;
+      const pm = (s.payment_method || 'cash').toLowerCase();
+      if (pm.includes('/')) {
+        for (const part of pm.split('/')) {
+          const [m, a] = part.split(':');
+          const val = Number(a) || 0;
+          expected[m] = (expected[m] || 0) + val;
+          expectedTotal += val;
+        }
+      } else {
+        expected[pm] = (expected[pm] || 0) + total;
+        expectedTotal += total;
+      }
+    }
+    res.json({
+      methods: methods.map(m => ({
+        id: m.id, name: m.name, nameAr: m.name_ar, icon: m.icon, color: m.color,
+        groupType: m.group_type,
+        expectedAmount: expected[(m.name||'').toLowerCase()] || expected[m.id] || 0
+      })),
+      expected, expectedTotal, orderCount
+    });
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
+
 // Get all shifts
 router.get('/', async (req, res) => {
   try {

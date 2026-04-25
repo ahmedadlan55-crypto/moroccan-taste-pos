@@ -128,6 +128,11 @@ function erpNav(sectionId) {
       // ═══ Entity management ═══
       case 'erpCompanies':       erpLoadCompanies(); break;
       case 'erpPriceLists':      erpLoadPriceLists(); break;
+      // ═══ Payment / Channels / Discounts (V3) ═══
+      case 'erpPaymentMethodsV3':  if (typeof erpLoadPaymentMethodsV3 === 'function') erpLoadPaymentMethodsV3(); break;
+      case 'erpSalesChannels':     if (typeof erpLoadSalesChannels === 'function') erpLoadSalesChannels(); break;
+      case 'erpDiscountsV3':       if (typeof erpLoadDiscountsV3 === 'function') erpLoadDiscountsV3(); break;
+      case 'erpShiftCloseAdmin':   if (typeof erpLoadShiftCloseAdmin === 'function') erpLoadShiftCloseAdmin(); break;
       case 'erpBOM':             erpLoadBOM(); break;
       case 'erpWasteEntries':    erpLoadWasteEntries(); break;
       case 'erpRoyaltyRuns':     erpLoadRoyaltyRuns(); break;
@@ -12216,12 +12221,22 @@ window.WoModal = (function() {
     });
   }
 
+  // Close the topmost open modal (for inline onclick handlers in modal footers)
+  function closeTop(result) {
+    var overlays = document.querySelectorAll('.wo-modal-overlay.open');
+    if (!overlays.length) return;
+    var top = overlays[overlays.length - 1];
+    var api = top._woApi;
+    if (api && !api._locked) api.close(result == null ? null : result);
+  }
+
   return {
     open: open,
     confirm: confirm,
     prompt: prompt,
     alert: alert,
     success: success,
+    close: closeTop,
     _activeCount: function(){ return _activeCount; }
   };
 })();
@@ -13047,3 +13062,943 @@ function erpLoadBankRecon() {
     document.getElementById('brDetails').innerHTML = status;
   });
 }
+
+/* ═════════════════════════════════════════════════════════════════════════
+ * PAYMENT / CHANNELS / DISCOUNTS / SHIFT-CLOSE — V3 ADMIN MODULE
+ * ═════════════════════════════════════════════════════════════════════════
+ * Backed by:
+ *   /api/settings/payment-methods-full          (GET/POST)
+ *   /api/settings/payment-methods-full/:id      (DELETE)
+ *   /api/sales-channels/                        (GET/POST/DELETE/PATCH)
+ *   /api/settings/discounts-v2-full             (GET/POST)
+ *   /api/settings/discounts-v2/:id              (DELETE)
+ *   /api/shifts/                                (GET)
+ *   /api/shifts/closing-data-v3/:shiftId        (GET)
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+// Icon library used by both Payment Methods and Sales Channels
+window._iconLibrary = [
+  // Cash & Money
+  'fa-money-bill','fa-money-bill-wave','fa-money-bill-1','fa-coins','fa-sack-dollar','fa-wallet',
+  // Cards & Electronic
+  'fa-credit-card','fa-cc-visa','fa-cc-mastercard','fa-cc-amex','fa-cc-jcb','fa-cc-diners-club','fa-cc-discover',
+  // Apps & QR
+  'fa-mobile-screen','fa-mobile','fa-qrcode','fa-barcode','fa-tablet-screen-button',
+  // Aggregators / Delivery
+  'fa-motorcycle','fa-bicycle','fa-truck','fa-truck-fast','fa-store','fa-utensils','fa-pizza-slice','fa-burger',
+  // Vouchers
+  'fa-ticket','fa-receipt','fa-gift','fa-tag','fa-tags','fa-percent',
+  // Transfer
+  'fa-building-columns','fa-money-bill-transfer','fa-paypal','fa-stripe','fa-apple-pay','fa-google-pay',
+  // Other
+  'fa-circle-dollar-to-slot','fa-piggy-bank','fa-hand-holding-dollar','fa-cash-register','fa-phone','fa-headset',
+  'fa-globe','fa-link','fa-cube','fa-crown','fa-star','fa-heart'
+];
+
+// Cached lists for the V3 admin UIs
+window._pmV3Cache = [];
+window._chCache = [];
+window._discV3Cache = [];
+
+// ─── Helpers ────────────────────────────────────────────────────────────
+function _v3EscapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function _v3Fmt(n) {
+  return Number(n||0).toLocaleString('ar-SA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function _v3Toast(msg, isErr) {
+  if (typeof showToast === 'function') showToast(msg, isErr); else alert(msg);
+}
+
+// Group labels (for payment methods)
+var _pmGroupLabels = {
+  cash: 'كاش', electronic: 'إلكتروني', voucher: 'قسيمة',
+  loyalty: 'ولاء', transfer: 'تحويل', other: 'أخرى'
+};
+var _pmGroupColors = {
+  cash: '#22c55e', electronic: '#3b82f6', voucher: '#f59e0b',
+  loyalty: '#8b5cf6', transfer: '#06b6d4', other: '#64748b'
+};
+
+// Channel-type labels
+var _chTypeLabels = {
+  dine_in: 'صالة', takeaway: 'سفري', delivery: 'توصيل',
+  aggregator: 'تطبيق وسيط', phone: 'هاتفي', app: 'تطبيق خاص', online: 'إلكتروني'
+};
+
+// Discount scope/type labels
+var _discScopeLabels = { line: 'على صنف', invoice: 'على فاتورة', preset: 'جاهز', manual: 'يدوي' };
+var _discTypeLabels = { percentage: 'نسبة %', fixed: 'مبلغ ثابت', promo_code: 'كود ترويجي', automatic: 'تلقائي' };
+var _discRoleLabels = { cashier: 'كاشير', manager: 'مدير', admin: 'أدمن' };
+
+// Build an icon picker grid (returns HTML string + binds click via inline handler)
+function _v3IconGridHtml(currentIcon, targetInputId) {
+  var html = '<div class="v3-icon-grid">';
+  for (var i = 0; i < window._iconLibrary.length; i++) {
+    var ic = window._iconLibrary[i];
+    var sel = (ic === currentIcon) ? ' v3-icon-sel' : '';
+    html += '<button type="button" class="v3-icon-tile' + sel + '" onclick="_v3PickIcon(\'' + targetInputId + '\',\'' + ic + '\')">' +
+            '<i class="fas ' + ic + '"></i></button>';
+  }
+  html += '</div>';
+  return html;
+}
+function _v3PickIcon(targetId, ic) {
+  var inp = document.getElementById(targetId);
+  if (inp) inp.value = ic;
+  var prev = document.getElementById(targetId + '_preview');
+  if (prev) prev.className = 'fas ' + ic;
+  // Visual feedback: re-highlight selected tile
+  var grid = inp && inp.closest('.v3-icon-picker-wrap');
+  if (grid) {
+    var tiles = grid.querySelectorAll('.v3-icon-tile');
+    tiles.forEach(function(t){ t.classList.remove('v3-icon-sel'); });
+    var idx = window._iconLibrary.indexOf(ic);
+    if (idx >= 0 && tiles[idx]) tiles[idx].classList.add('v3-icon-sel');
+  }
+}
+
+// Fetch GL accounts (cached)
+window._v3GlAccountsCache = null;
+function _v3LoadGlAccounts(cb) {
+  if (window._v3GlAccountsCache) { cb(window._v3GlAccountsCache); return; }
+  callAPI('GET', '/erp/chart-of-accounts', null, function(rows) {
+    var arr = Array.isArray(rows) ? rows : (rows && rows.accounts ? rows.accounts : []);
+    window._v3GlAccountsCache = arr;
+    cb(arr);
+  });
+}
+function _v3GlAccountOptions(selectedId) {
+  if (!window._v3GlAccountsCache) return '<option value="">— لم تُحمَّل —</option>';
+  var opts = '<option value="">— لا ربط GL —</option>';
+  for (var i = 0; i < window._v3GlAccountsCache.length; i++) {
+    var a = window._v3GlAccountsCache[i];
+    var sel = (a.id === selectedId || a.account_id === selectedId) ? ' selected' : '';
+    opts += '<option value="' + (a.id || a.account_id) + '"' + sel + '>' +
+            (a.code || a.account_code || '') + ' — ' + _v3EscapeHtml(a.name || a.account_name || '') + '</option>';
+  }
+  return opts;
+}
+
+// Fetch cost centers (cached)
+window._v3CostCentersCache = null;
+function _v3LoadCostCenters(cb) {
+  if (window._v3CostCentersCache) { cb(window._v3CostCentersCache); return; }
+  callAPI('GET', '/erp/cost-centers', null, function(rows) {
+    var arr = Array.isArray(rows) ? rows : (rows && rows.centers ? rows.centers : []);
+    window._v3CostCentersCache = arr;
+    cb(arr);
+  });
+}
+function _v3CostCenterOptions(selectedId) {
+  if (!window._v3CostCentersCache) return '<option value="">— لم تُحمَّل —</option>';
+  var opts = '<option value="">— لا مركز تكلفة —</option>';
+  for (var i = 0; i < window._v3CostCentersCache.length; i++) {
+    var c = window._v3CostCentersCache[i];
+    var sel = (c.id === selectedId) ? ' selected' : '';
+    opts += '<option value="' + c.id + '"' + sel + '>' + _v3EscapeHtml(c.name || c.code || c.id) + '</option>';
+  }
+  return opts;
+}
+
+// Fetch price lists (cached)
+window._v3PriceListsCache = null;
+function _v3LoadPriceLists(cb) {
+  if (window._v3PriceListsCache) { cb(window._v3PriceListsCache); return; }
+  callAPI('GET', '/erp/price-lists', null, function(rows) {
+    var arr = Array.isArray(rows) ? rows : [];
+    window._v3PriceListsCache = arr;
+    cb(arr);
+  });
+}
+function _v3PriceListOptions(selectedId) {
+  if (!window._v3PriceListsCache) return '<option value="">— لم تُحمَّل —</option>';
+  var opts = '<option value="">— لا قائمة محددة —</option>';
+  for (var i = 0; i < window._v3PriceListsCache.length; i++) {
+    var p = window._v3PriceListsCache[i];
+    var sel = (p.id === selectedId) ? ' selected' : '';
+    opts += '<option value="' + p.id + '"' + sel + '>' + _v3EscapeHtml(p.name || p.id) + '</option>';
+  }
+  return opts;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * PAYMENT METHODS V3
+ * ═══════════════════════════════════════════════════════════════════ */
+function erpLoadPaymentMethodsV3() {
+  callAPI('GET', '/settings/payment-methods-full', null, function(rows) {
+    window._pmV3Cache = Array.isArray(rows) ? rows : [];
+    _v3LoadGlAccounts(function(){}); // warm cache
+    _v3RenderPmV3();
+  });
+}
+
+function _v3RenderPmV3() {
+  var rows = window._pmV3Cache || [];
+  var search = (document.getElementById('pmV3Search')||{}).value || '';
+  var grpFlt = (document.getElementById('pmV3Group')||{}).value || '';
+  var stFlt = (document.getElementById('pmV3Status')||{}).value || '';
+  var s = search.trim().toLowerCase();
+
+  var filtered = rows.filter(function(p) {
+    if (s && (p.name||'').toLowerCase().indexOf(s) < 0 && (p.nameAr||'').toLowerCase().indexOf(s) < 0) return false;
+    if (grpFlt && (p.groupType||'cash') !== grpFlt) return false;
+    if (stFlt !== '' && (p.isActive ? '1':'0') !== stFlt) return false;
+    return true;
+  });
+
+  // Metrics strip
+  var counts = { cash:0, electronic:0, voucher:0, loyalty:0, transfer:0, other:0, active:0, total: rows.length };
+  rows.forEach(function(p){
+    var g = p.groupType||'cash'; if (counts[g]!=null) counts[g]++;
+    if (p.isActive) counts.active++;
+  });
+  var metrics = document.getElementById('pmV3Metrics');
+  if (metrics) {
+    metrics.innerHTML =
+      _v3MetricCard('fa-list', 'إجمالي الطرق', counts.total, '#3b82f6') +
+      _v3MetricCard('fa-toggle-on', 'مفعّلة', counts.active, '#22c55e') +
+      _v3MetricCard('fa-money-bill', 'كاش', counts.cash, '#22c55e') +
+      _v3MetricCard('fa-credit-card', 'إلكتروني', counts.electronic, '#3b82f6') +
+      _v3MetricCard('fa-ticket', 'قسائم/ولاء', counts.voucher + counts.loyalty, '#8b5cf6') +
+      _v3MetricCard('fa-money-bill-transfer', 'تحويلات', counts.transfer, '#06b6d4');
+  }
+
+  var tbody = document.getElementById('pmV3Body');
+  if (!tbody) return;
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="10"><div class="wo-empty"><i class="fas fa-folder-open"></i><div class="wo-empty-title">لا توجد طرق دفع</div><div class="wo-empty-sub">اضغط زر "طريقة دفع جديدة" لإضافة الأولى.</div></div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(function(p) {
+    var grp = p.groupType||'cash';
+    var feeText = p.serviceFeeType === 'percent' ? (Number(p.serviceFeeValue||0)+'%') :
+                  p.serviceFeeType === 'fixed'   ? (_v3Fmt(p.serviceFeeValue)+' ر.س') : '—';
+    return '<tr>' +
+      '<td>'+ (p.sortOrder||0) +'</td>' +
+      '<td><span class="v3-icon-badge" style="background:'+(p.color||'#3b82f6')+'1a;color:'+(p.color||'#3b82f6')+';"><i class="fas '+(p.icon||'fa-money-bill')+'"></i></span></td>' +
+      '<td><div style="font-weight:800;">'+ _v3EscapeHtml(p.nameAr||p.name) +'</div><div style="font-size:11px;color:#64748b;">'+ _v3EscapeHtml(p.name) +'</div></td>' +
+      '<td><span class="wo-chip" style="background:'+(_pmGroupColors[grp]||'#64748b')+'1a;color:'+(_pmGroupColors[grp]||'#64748b')+';font-weight:700;">'+ (_pmGroupLabels[grp]||grp) +'</span></td>' +
+      '<td>'+ feeText +'</td>' +
+      '<td style="font-size:11px;color:#475569;">'+ (p.glAccountId ? '<i class="fas fa-link" style="color:#22c55e;"></i> '+_v3EscapeHtml(p.glAccountId) : '<span style="color:#94a3b8;">—</span>') +'</td>' +
+      '<td>'+ (p.showInShiftClose ? '<i class="fas fa-check-circle" style="color:#22c55e;"></i>' : '<i class="fas fa-times-circle" style="color:#cbd5e1;"></i>') +'</td>' +
+      '<td>'+ (p.showInReports ? '<i class="fas fa-check-circle" style="color:#22c55e;"></i>' : '<i class="fas fa-times-circle" style="color:#cbd5e1;"></i>') +'</td>' +
+      '<td>'+ (p.isActive ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مفعّل</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;">معطّل</span>') +'</td>' +
+      '<td>' +
+        '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpOpenPmV3Modal(\''+ p.id +'\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
+        '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpDeletePmV3(\''+ p.id +'\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function erpFilterPmV3() { _v3RenderPmV3(); }
+
+function _v3MetricCard(icon, label, value, color) {
+  return '<div class="wo-metric"><div class="wo-metric-icon" style="background:'+color+'1a;color:'+color+';"><i class="fas '+icon+'"></i></div>' +
+         '<div class="wo-metric-body"><div class="wo-metric-value">'+ value +'</div><div class="wo-metric-label">'+ label +'</div></div></div>';
+}
+
+function erpOpenPmV3Modal(id) {
+  // Ensure GL + cost centers loaded BEFORE rendering (so dropdowns are populated)
+  _v3LoadGlAccounts(function() {
+    _v3LoadCostCenters(function() {
+      _v3OpenPmV3ModalInner(id);
+    });
+  });
+}
+
+function _v3OpenPmV3ModalInner(id) {
+  var p = id ? (window._pmV3Cache||[]).find(function(x){return x.id===id;}) : null;
+  var pm = p || {
+    id:'', name:'', nameAr:'', icon:'fa-money-bill', color:'#3b82f6',
+    isActive:true, sortOrder:0, type:'standard', groupType:'cash',
+    serviceFeeType:'none', serviceFeeValue:0, serviceFeeRate:0,
+    glAccountId:'', costCenterId:'',
+    requireReference:false, requireTransactionNumber:false, requireTerminal:false,
+    allowRefund:true, allowCancel:true, allowManualTotal:false,
+    showInShiftClose:true, showInReports:true,
+    description:''
+  };
+
+  var html =
+    '<form id="pmV3Form" onsubmit="event.preventDefault();_v3SavePm();" class="v3-form">' +
+
+    // Section: Basic info
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-circle-info"></i> البيانات الأساسية</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">الاسم بالعربية *</label><input id="pmF_nameAr" class="wo-input" value="'+ _v3EscapeHtml(pm.nameAr) +'" required></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الاسم بالإنجليزية</label><input id="pmF_name" class="wo-input" value="'+ _v3EscapeHtml(pm.name) +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">المجموعة *</label>' +
+          '<select id="pmF_groupType" class="wo-select">' +
+            ['cash','electronic','voucher','loyalty','transfer','other'].map(function(k){
+              return '<option value="'+k+'"'+(pm.groupType===k?' selected':'')+'>'+_pmGroupLabels[k]+'</option>';
+            }).join('') +
+          '</select>' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">ترتيب العرض</label><input id="pmF_sortOrder" type="number" class="wo-input" value="'+ (pm.sortOrder||0) +'"></div>' +
+      '</div>' +
+    '</div>' +
+
+    // Section: Icon & Color
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-palette"></i> الأيقونة واللون</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field">' +
+          '<label class="wo-field-label">الأيقونة الحالية</label>' +
+          '<div style="display:flex;align-items:center;gap:10px;">' +
+            '<span class="v3-icon-badge v3-icon-badge-lg" id="pmF_icon_box" style="background:'+(pm.color||'#3b82f6')+'1a;color:'+(pm.color||'#3b82f6')+';"><i id="pmF_icon_preview" class="fas '+(pm.icon||'fa-money-bill')+'"></i></span>' +
+            '<input id="pmF_icon" class="wo-input" value="'+ _v3EscapeHtml(pm.icon||'fa-money-bill') +'" style="flex:1;" oninput="document.getElementById(\'pmF_icon_preview\').className=\'fas \'+this.value;">' +
+          '</div>' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">اللون</label><input id="pmF_color" type="color" class="wo-input" value="'+ (pm.color||'#3b82f6') +'" oninput="document.getElementById(\'pmF_icon_box\').style.background=this.value+\'1a\';document.getElementById(\'pmF_icon_box\').style.color=this.value;"></div>' +
+      '</div>' +
+      '<div class="v3-icon-picker-wrap" style="margin-top:10px;">' +
+        '<label class="wo-field-label" style="margin-bottom:6px;display:block;">اختر من المكتبة:</label>' +
+        _v3IconGridHtml(pm.icon||'fa-money-bill', 'pmF_icon') +
+      '</div>' +
+    '</div>' +
+
+    // Section: Service fee
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-percent"></i> رسوم الخدمة</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">نوع الرسوم</label>' +
+          '<select id="pmF_serviceFeeType" class="wo-select">' +
+            '<option value="none"'+(pm.serviceFeeType==='none'?' selected':'')+'>بدون رسوم</option>' +
+            '<option value="percent"'+(pm.serviceFeeType==='percent'?' selected':'')+'>نسبة %</option>' +
+            '<option value="fixed"'+(pm.serviceFeeType==='fixed'?' selected':'')+'>مبلغ ثابت</option>' +
+          '</select>' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">قيمة الرسوم</label><input id="pmF_serviceFeeValue" type="number" step="0.01" class="wo-input" value="'+ (pm.serviceFeeValue||0) +'"></div>' +
+      '</div>' +
+    '</div>' +
+
+    // Section: GL & Cost Center
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-link"></i> الربط المحاسبي</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">حساب GL</label><select id="pmF_glAccountId" class="wo-select">'+ _v3GlAccountOptions(pm.glAccountId) +'</select></div>' +
+        '<div class="wo-field"><label class="wo-field-label">مركز التكلفة</label><select id="pmF_costCenterId" class="wo-select">'+ _v3CostCenterOptions(pm.costCenterId) +'</select></div>' +
+      '</div>' +
+    '</div>' +
+
+    // Section: Advanced flags
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-sliders"></i> خصائص متقدمة</h4>' +
+      '<div class="v3-grid-2">' +
+        '<label class="v3-checkbox"><input type="checkbox" id="pmF_isActive" '+(pm.isActive?'checked':'')+'><span>مفعّل في النظام</span></label>' +
+        '<label class="v3-checkbox"><input type="checkbox" id="pmF_allowManualTotal" '+(pm.allowManualTotal?'checked':'')+'><span>السماح بإدخال إجمالي يدوي</span></label>' +
+        '<label class="v3-checkbox"><input type="checkbox" id="pmF_showInShiftClose" '+(pm.showInShiftClose?'checked':'')+'><span>إظهار في إغلاق الشيفت</span></label>' +
+        '<label class="v3-checkbox"><input type="checkbox" id="pmF_showInReports" '+(pm.showInReports?'checked':'')+'><span>إظهار في التقارير</span></label>' +
+        '<label class="v3-checkbox"><input type="checkbox" id="pmF_requireReference" '+(pm.requireReference?'checked':'')+'><span>يتطلب مرجع</span></label>' +
+        '<label class="v3-checkbox"><input type="checkbox" id="pmF_requireTransactionNumber" '+(pm.requireTransactionNumber?'checked':'')+'><span>يتطلب رقم عملية</span></label>' +
+        '<label class="v3-checkbox"><input type="checkbox" id="pmF_requireTerminal" '+(pm.requireTerminal?'checked':'')+'><span>يتطلب جهاز</span></label>' +
+        '<label class="v3-checkbox"><input type="checkbox" id="pmF_allowRefund" '+(pm.allowRefund?'checked':'')+'><span>يسمح بالاسترجاع</span></label>' +
+        '<label class="v3-checkbox"><input type="checkbox" id="pmF_allowCancel" '+(pm.allowCancel?'checked':'')+'><span>يسمح بالإلغاء</span></label>' +
+      '</div>' +
+      '<div class="wo-field" style="margin-top:10px;"><label class="wo-field-label">وصف</label><textarea id="pmF_description" class="wo-input" rows="2">'+ _v3EscapeHtml(pm.description||'') +'</textarea></div>' +
+    '</div>' +
+
+    '<input type="hidden" id="pmF_id" value="'+ _v3EscapeHtml(pm.id||'') +'">' +
+    '</form>';
+
+  WoModal.open({
+    icon: 'fa-wallet', iconColor: '#3b82f6',
+    title: id ? 'تعديل طريقة دفع' : 'طريقة دفع جديدة',
+    subtitle: 'اضبط البيانات الأساسية، الأيقونة، الرسوم، الربط المحاسبي والخصائص.',
+    body: html,
+    size: 'lg',
+    footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+            '<button class="wo-btn wo-btn-primary" onclick="_v3SavePm()"><i class="fas fa-save"></i> حفظ</button>'
+  });
+}
+
+function _v3SavePm() {
+  var data = {
+    id: document.getElementById('pmF_id').value || null,
+    name: document.getElementById('pmF_name').value.trim(),
+    nameAr: document.getElementById('pmF_nameAr').value.trim(),
+    icon: document.getElementById('pmF_icon').value.trim() || 'fa-money-bill',
+    color: document.getElementById('pmF_color').value || '#3b82f6',
+    isActive: document.getElementById('pmF_isActive').checked,
+    sortOrder: Number(document.getElementById('pmF_sortOrder').value) || 0,
+    groupType: document.getElementById('pmF_groupType').value,
+    serviceFeeType: document.getElementById('pmF_serviceFeeType').value,
+    serviceFeeValue: Number(document.getElementById('pmF_serviceFeeValue').value) || 0,
+    serviceFeeRate: Number(document.getElementById('pmF_serviceFeeValue').value) || 0, // back-compat
+    glAccountId: document.getElementById('pmF_glAccountId').value || null,
+    costCenterId: document.getElementById('pmF_costCenterId').value || null,
+    allowManualTotal: document.getElementById('pmF_allowManualTotal').checked,
+    showInShiftClose: document.getElementById('pmF_showInShiftClose').checked,
+    showInReports: document.getElementById('pmF_showInReports').checked,
+    requireReference: document.getElementById('pmF_requireReference').checked,
+    requireTransactionNumber: document.getElementById('pmF_requireTransactionNumber').checked,
+    requireTerminal: document.getElementById('pmF_requireTerminal').checked,
+    allowRefund: document.getElementById('pmF_allowRefund').checked,
+    allowCancel: document.getElementById('pmF_allowCancel').checked,
+    description: document.getElementById('pmF_description').value
+  };
+  if (!data.nameAr) { _v3Toast('الاسم بالعربية مطلوب', true); return; }
+  if (!data.name) data.name = data.nameAr;
+
+  callAPI('POST', '/settings/payment-methods-full', data, function(r) {
+    if (r && r.success) {
+      _v3Toast('تم الحفظ');
+      WoModal.close();
+      erpLoadPaymentMethodsV3();
+    } else {
+      _v3Toast((r && r.error) || 'فشل الحفظ', true);
+    }
+  });
+}
+
+function erpDeletePmV3(id) {
+  WoModal.confirm({
+    title: 'حذف طريقة الدفع',
+    message: 'هل أنت متأكد من حذف هذه الطريقة؟ لن يتم حذفها من المبيعات السابقة.',
+    confirmText: 'حذف',
+    danger: true
+  }).then(function(ok) {
+    if (!ok) return;
+    callAPI('DELETE', '/settings/payment-methods-full/' + id, null, function(r) {
+      if (r && r.success) { _v3Toast('تم الحذف'); erpLoadPaymentMethodsV3(); }
+      else _v3Toast((r && r.error) || 'فشل الحذف', true);
+    });
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * SALES CHANNELS
+ * ═══════════════════════════════════════════════════════════════════ */
+function erpLoadSalesChannels() {
+  _v3LoadPriceLists(function() {});
+  callAPI('GET', '/sales-channels/', null, function(rows) {
+    window._chCache = Array.isArray(rows) ? rows : (rows && rows.channels ? rows.channels : []);
+    _v3RenderChannels();
+  });
+}
+
+function _v3RenderChannels() {
+  var rows = window._chCache || [];
+  // Metrics
+  var metrics = document.getElementById('chMetrics');
+  if (metrics) {
+    var active = rows.filter(function(c){return c.isActive;}).length;
+    var withList = rows.filter(function(c){return c.priceListId;}).length;
+    var byType = {};
+    rows.forEach(function(c){ byType[c.channelType] = (byType[c.channelType]||0)+1; });
+    metrics.innerHTML =
+      _v3MetricCard('fa-store', 'إجمالي القنوات', rows.length, '#3b82f6') +
+      _v3MetricCard('fa-toggle-on', 'مفعّلة', active, '#22c55e') +
+      _v3MetricCard('fa-tags', 'مربوطة بقائمة أسعار', withList, '#8b5cf6') +
+      _v3MetricCard('fa-utensils', 'صالة', byType.dine_in||0, '#06b6d4') +
+      _v3MetricCard('fa-motorcycle', 'تطبيقات وسيطة', byType.aggregator||0, '#fbbf24') +
+      _v3MetricCard('fa-mobile-screen', 'تطبيق/هاتف', (byType.app||0)+(byType.phone||0), '#10b981');
+  }
+
+  var tbody = document.getElementById('chBody');
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="10"><div class="wo-empty"><i class="fas fa-folder-open"></i><div class="wo-empty-title">لا توجد قنوات</div><div class="wo-empty-sub">اضغط زر "قناة جديدة" للإضافة.</div></div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(function(c) {
+    return '<tr>' +
+      '<td>'+ (c.displayOrder||0) +'</td>' +
+      '<td><span class="v3-icon-badge" style="background:'+(c.color||'#3b82f6')+'1a;color:'+(c.color||'#3b82f6')+';"><i class="fas '+(c.icon||'fa-store')+'"></i></span></td>' +
+      '<td><div style="font-weight:800;">'+ _v3EscapeHtml(c.name) +'</div></td>' +
+      '<td><code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:11px;">'+ _v3EscapeHtml(c.code||'') +'</code></td>' +
+      '<td><span class="wo-chip">'+ (_chTypeLabels[c.channelType]||c.channelType) +'</span></td>' +
+      '<td>'+ (c.priceListName ? '<i class="fas fa-link" style="color:#22c55e;"></i> '+_v3EscapeHtml(c.priceListName) : '<span style="color:#94a3b8;">— لا قائمة —</span>') +'</td>' +
+      '<td>'+ Number(c.commissionPct||0).toFixed(2) +'%</td>' +
+      '<td>'+ Number(c.serviceFeePct||0).toFixed(2) +'%</td>' +
+      '<td>'+ (c.isActive ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مفعّلة</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;">معطّلة</span>') +'</td>' +
+      '<td>' +
+        '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpOpenChannelModal(\''+ c.id +'\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
+        '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpToggleChannel(\''+ c.id +'\')" title="تفعيل/تعطيل"><i class="fas fa-power-off"></i></button> ' +
+        '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpDeleteChannel(\''+ c.id +'\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function erpOpenChannelModal(id) {
+  _v3LoadPriceLists(function() {
+    _v3LoadGlAccounts(function() {
+      _v3OpenChannelModalInner(id);
+    });
+  });
+}
+
+function _v3OpenChannelModalInner(id) {
+  var c = id ? (window._chCache||[]).find(function(x){return x.id===id;}) : null;
+  var ch = c || {
+    id:'', code:'', name:'', nameEn:'', channelType:'dine_in', priceListId:'',
+    icon:'fa-store', color:'#3b82f6', commissionPct:0, serviceFeePct:0,
+    glRevenueAccount:'', glCommissionAccount:'',
+    requiresExternalRef:false, allowDiscount:true, isActive:true,
+    displayOrder:0, notes:''
+  };
+
+  var html =
+    '<form id="chForm" onsubmit="event.preventDefault();_v3SaveChannel();" class="v3-form">' +
+
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-circle-info"></i> البيانات الأساسية</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">الاسم *</label><input id="chF_name" class="wo-input" value="'+ _v3EscapeHtml(ch.name) +'" required></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الاسم بالإنجليزية</label><input id="chF_nameEn" class="wo-input" value="'+ _v3EscapeHtml(ch.nameEn||'') +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الرمز *</label><input id="chF_code" class="wo-input" value="'+ _v3EscapeHtml(ch.code) +'" required '+(id?'readonly':'')+'></div>' +
+        '<div class="wo-field"><label class="wo-field-label">النوع *</label>' +
+          '<select id="chF_channelType" class="wo-select">' +
+            Object.keys(_chTypeLabels).map(function(k){
+              return '<option value="'+k+'"'+(ch.channelType===k?' selected':'')+'>'+_chTypeLabels[k]+'</option>';
+            }).join('') +
+          '</select>' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">قائمة الأسعار المرتبطة</label><select id="chF_priceListId" class="wo-select">'+ _v3PriceListOptions(ch.priceListId) +'</select></div>' +
+        '<div class="wo-field"><label class="wo-field-label">ترتيب العرض</label><input id="chF_displayOrder" type="number" class="wo-input" value="'+ (ch.displayOrder||0) +'"></div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-palette"></i> الأيقونة واللون</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field">' +
+          '<label class="wo-field-label">الأيقونة</label>' +
+          '<div style="display:flex;align-items:center;gap:10px;">' +
+            '<span class="v3-icon-badge v3-icon-badge-lg" id="chF_icon_box" style="background:'+(ch.color||'#3b82f6')+'1a;color:'+(ch.color||'#3b82f6')+';"><i id="chF_icon_preview" class="fas '+(ch.icon||'fa-store')+'"></i></span>' +
+            '<input id="chF_icon" class="wo-input" value="'+ _v3EscapeHtml(ch.icon||'fa-store') +'" style="flex:1;" oninput="document.getElementById(\'chF_icon_preview\').className=\'fas \'+this.value;">' +
+          '</div>' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">اللون</label><input id="chF_color" type="color" class="wo-input" value="'+ (ch.color||'#3b82f6') +'" oninput="document.getElementById(\'chF_icon_box\').style.background=this.value+\'1a\';document.getElementById(\'chF_icon_box\').style.color=this.value;"></div>' +
+      '</div>' +
+      '<div class="v3-icon-picker-wrap" style="margin-top:10px;">' +
+        '<label class="wo-field-label" style="margin-bottom:6px;display:block;">اختر من المكتبة:</label>' +
+        _v3IconGridHtml(ch.icon||'fa-store', 'chF_icon') +
+      '</div>' +
+    '</div>' +
+
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-percent"></i> العمولة والرسوم</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">عمولة القناة %</label><input id="chF_commissionPct" type="number" step="0.01" class="wo-input" value="'+ (ch.commissionPct||0) +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">رسوم خدمة %</label><input id="chF_serviceFeePct" type="number" step="0.01" class="wo-input" value="'+ (ch.serviceFeePct||0) +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">حساب الإيراد GL</label><select id="chF_glRevenueAccount" class="wo-select">'+ _v3GlAccountOptions(ch.glRevenueAccount) +'</select></div>' +
+        '<div class="wo-field"><label class="wo-field-label">حساب العمولة GL</label><select id="chF_glCommissionAccount" class="wo-select">'+ _v3GlAccountOptions(ch.glCommissionAccount) +'</select></div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-sliders"></i> خصائص متقدمة</h4>' +
+      '<div class="v3-grid-2">' +
+        '<label class="v3-checkbox"><input type="checkbox" id="chF_isActive" '+(ch.isActive?'checked':'')+'><span>القناة مفعّلة</span></label>' +
+        '<label class="v3-checkbox"><input type="checkbox" id="chF_requiresExternalRef" '+(ch.requiresExternalRef?'checked':'')+'><span>تتطلب مرجع خارجي (رقم طلب)</span></label>' +
+        '<label class="v3-checkbox"><input type="checkbox" id="chF_allowDiscount" '+(ch.allowDiscount?'checked':'')+'><span>تسمح بالخصومات</span></label>' +
+      '</div>' +
+      '<div class="wo-field" style="margin-top:10px;"><label class="wo-field-label">ملاحظات</label><textarea id="chF_notes" class="wo-input" rows="2">'+ _v3EscapeHtml(ch.notes||'') +'</textarea></div>' +
+    '</div>' +
+
+    '<input type="hidden" id="chF_id" value="'+ _v3EscapeHtml(ch.id||'') +'">' +
+    '</form>';
+
+  WoModal.open({
+    icon: 'fa-store', iconColor: '#8b5cf6',
+    title: id ? 'تعديل قناة بيع' : 'قناة بيع جديدة',
+    subtitle: 'كل قناة مرتبطة بقائمة أسعار محددة لمنع خلط الأسعار في نفس الفاتورة.',
+    body: html,
+    size: 'lg',
+    footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+            '<button class="wo-btn wo-btn-primary" onclick="_v3SaveChannel()"><i class="fas fa-save"></i> حفظ</button>'
+  });
+}
+
+function _v3SaveChannel() {
+  var data = {
+    id: document.getElementById('chF_id').value || null,
+    code: document.getElementById('chF_code').value.trim().toUpperCase(),
+    name: document.getElementById('chF_name').value.trim(),
+    nameEn: document.getElementById('chF_nameEn').value.trim(),
+    channelType: document.getElementById('chF_channelType').value,
+    priceListId: document.getElementById('chF_priceListId').value || null,
+    icon: document.getElementById('chF_icon').value.trim() || 'fa-store',
+    color: document.getElementById('chF_color').value || '#3b82f6',
+    commissionPct: Number(document.getElementById('chF_commissionPct').value) || 0,
+    serviceFeePct: Number(document.getElementById('chF_serviceFeePct').value) || 0,
+    glRevenueAccount: document.getElementById('chF_glRevenueAccount').value || null,
+    glCommissionAccount: document.getElementById('chF_glCommissionAccount').value || null,
+    requiresExternalRef: document.getElementById('chF_requiresExternalRef').checked,
+    allowDiscount: document.getElementById('chF_allowDiscount').checked,
+    isActive: document.getElementById('chF_isActive').checked,
+    displayOrder: Number(document.getElementById('chF_displayOrder').value) || 0,
+    notes: document.getElementById('chF_notes').value
+  };
+  if (!data.name) { _v3Toast('الاسم مطلوب', true); return; }
+  if (!data.code) { _v3Toast('الرمز مطلوب', true); return; }
+
+  callAPI('POST', '/sales-channels/', data, function(r) {
+    if (r && r.success) { _v3Toast('تم الحفظ'); WoModal.close(); erpLoadSalesChannels(); }
+    else _v3Toast((r && r.error) || 'فشل الحفظ', true);
+  });
+}
+
+function erpToggleChannel(id) {
+  callAPI('PATCH', '/sales-channels/' + id + '/toggle', null, function(r) {
+    if (r && r.success) { _v3Toast('تم'); erpLoadSalesChannels(); }
+    else _v3Toast((r && r.error) || 'فشل', true);
+  });
+}
+
+function erpDeleteChannel(id) {
+  WoModal.confirm({
+    title: 'حذف قناة بيع',
+    message: 'هل أنت متأكد؟ لا يمكن التراجع عن الحذف.',
+    confirmText: 'حذف',
+    danger: true
+  }).then(function(ok) {
+    if (!ok) return;
+    callAPI('DELETE', '/sales-channels/' + id, null, function(r) {
+      if (r && r.success) { _v3Toast('تم الحذف'); erpLoadSalesChannels(); }
+      else _v3Toast((r && r.error) || 'فشل الحذف', true);
+    });
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * DISCOUNTS V3
+ * ═══════════════════════════════════════════════════════════════════ */
+function erpLoadDiscountsV3() {
+  callAPI('GET', '/settings/discounts-v2-full', null, function(rows) {
+    window._discV3Cache = Array.isArray(rows) ? rows : [];
+    _v3LoadGlAccounts(function(){});
+    _v3RenderDiscV3();
+  });
+}
+
+function _v3RenderDiscV3() {
+  var rows = window._discV3Cache || [];
+  var search = (document.getElementById('discV3Search')||{}).value || '';
+  var scopeFlt = (document.getElementById('discV3Scope')||{}).value || '';
+  var typeFlt = (document.getElementById('discV3Type')||{}).value || '';
+  var s = search.trim().toLowerCase();
+
+  var filtered = rows.filter(function(d) {
+    if (s && (d.name||'').toLowerCase().indexOf(s) < 0 && (d.code||'').toLowerCase().indexOf(s) < 0) return false;
+    if (scopeFlt && (d.discountScope||'invoice') !== scopeFlt) return false;
+    if (typeFlt && d.type !== typeFlt) return false;
+    return true;
+  });
+
+  var metrics = document.getElementById('discV3Metrics');
+  if (metrics) {
+    var active = rows.filter(function(d){return d.enabled;}).length;
+    var byScope = {line:0, invoice:0, preset:0, manual:0};
+    rows.forEach(function(d){ var k = d.discountScope||'invoice'; if (byScope[k]!=null) byScope[k]++; });
+    metrics.innerHTML =
+      _v3MetricCard('fa-list', 'إجمالي', rows.length, '#3b82f6') +
+      _v3MetricCard('fa-toggle-on', 'مفعّلة', active, '#22c55e') +
+      _v3MetricCard('fa-receipt', 'على فاتورة', byScope.invoice, '#f59e0b') +
+      _v3MetricCard('fa-cube', 'على صنف', byScope.line, '#06b6d4') +
+      _v3MetricCard('fa-bolt', 'جاهزة', byScope.preset, '#8b5cf6') +
+      _v3MetricCard('fa-pen', 'يدوية', byScope.manual, '#64748b');
+  }
+
+  var tbody = document.getElementById('discV3Body');
+  if (!tbody) return;
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="11"><div class="wo-empty"><i class="fas fa-folder-open"></i><div class="wo-empty-title">لا توجد خصومات</div></div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(function(d) {
+    var valueDisplay = d.type === 'percentage' ? (Number(d.value||0)+'%') : (_v3Fmt(d.value)+' ر.س');
+    return '<tr>' +
+      '<td>'+ (d.displayOrder||0) +'</td>' +
+      '<td><span class="v3-icon-badge" style="background:'+(d.color||'#8b5cf6')+'1a;color:'+(d.color||'#8b5cf6')+';"><i class="fas '+(d.icon||'fa-tag')+'"></i></span></td>' +
+      '<td><div style="font-weight:800;">'+ _v3EscapeHtml(d.name) +'</div>'+ (d.code ? '<div style="font-size:11px;color:#64748b;"><code>'+_v3EscapeHtml(d.code)+'</code></div>':'') +'</td>' +
+      '<td><span class="wo-chip">'+ (_discScopeLabels[d.discountScope]||d.discountScope||'invoice') +'</span></td>' +
+      '<td><span class="wo-chip">'+ (_discTypeLabels[d.type]||d.type) +'</span></td>' +
+      '<td style="font-weight:800;">'+ valueDisplay +'</td>' +
+      '<td>'+ (d.maxAmount ? _v3Fmt(d.maxAmount)+' ر.س' : '<span style="color:#94a3b8;">—</span>') +'</td>' +
+      '<td><span class="wo-chip" style="background:#e0e7ff;color:#3730a3;">'+ (_discRoleLabels[d.minRole]||d.minRole||'cashier') +'</span></td>' +
+      '<td style="font-size:11px;color:#475569;">'+ (d.glAccountId ? '<i class="fas fa-link" style="color:#22c55e;"></i> '+_v3EscapeHtml(d.glAccountId) : '<span style="color:#94a3b8;">—</span>') +'</td>' +
+      '<td>'+ (d.enabled ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مفعّل</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;">معطّل</span>') +'</td>' +
+      '<td>' +
+        '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpOpenDiscV3Modal(\''+ d.id +'\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
+        '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpDeleteDiscV3(\''+ d.id +'\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function erpFilterDiscV3() { _v3RenderDiscV3(); }
+
+function erpOpenDiscV3Modal(id) {
+  _v3LoadGlAccounts(function() {
+    _v3OpenDiscV3ModalInner(id);
+  });
+}
+
+function _v3OpenDiscV3ModalInner(id) {
+  var d = id ? (window._discV3Cache||[]).find(function(x){return x.id===id;}) : null;
+  var dc = d || {
+    id:'', name:'', type:'percentage', value:0, maxAmount:0, minOrder:0,
+    requireApproval:false, requireCode:false, code:'',
+    enabled:true, displayOrder:0, validFrom:null, validTo:null,
+    applyOn:'invoice', color:'#8b5cf6',
+    glAccountId:'', discountScope:'invoice', minRole:'cashier',
+    maxPerInvoice:0, showInPos:true, icon:'fa-tag', description:''
+  };
+
+  var html =
+    '<form id="discF" onsubmit="event.preventDefault();_v3SaveDiscV3();" class="v3-form">' +
+
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-circle-info"></i> البيانات الأساسية</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">الاسم *</label><input id="discF_name" class="wo-input" value="'+ _v3EscapeHtml(dc.name) +'" required></div>' +
+        '<div class="wo-field"><label class="wo-field-label">النطاق *</label>' +
+          '<select id="discF_scope" class="wo-select">' +
+            Object.keys(_discScopeLabels).map(function(k){
+              return '<option value="'+k+'"'+(dc.discountScope===k?' selected':'')+'>'+_discScopeLabels[k]+'</option>';
+            }).join('') +
+          '</select>' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">النوع *</label>' +
+          '<select id="discF_type" class="wo-select">' +
+            Object.keys(_discTypeLabels).map(function(k){
+              return '<option value="'+k+'"'+(dc.type===k?' selected':'')+'>'+_discTypeLabels[k]+'</option>';
+            }).join('') +
+          '</select>' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">القيمة *</label><input id="discF_value" type="number" step="0.01" class="wo-input" value="'+ (dc.value||0) +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الحد الأقصى للخصم</label><input id="discF_maxAmount" type="number" step="0.01" class="wo-input" value="'+ (dc.maxAmount||0) +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الحد الأدنى للطلب</label><input id="discF_minOrder" type="number" step="0.01" class="wo-input" value="'+ (dc.minOrder||0) +'"></div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-shield-halved"></i> الصلاحيات والكود</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">أدنى دور مسموح</label>' +
+          '<select id="discF_minRole" class="wo-select">' +
+            Object.keys(_discRoleLabels).map(function(k){
+              return '<option value="'+k+'"'+(dc.minRole===k?' selected':'')+'>'+_discRoleLabels[k]+'</option>';
+            }).join('') +
+          '</select>' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">حد أقصى لكل فاتورة</label><input id="discF_maxPerInvoice" type="number" step="0.01" class="wo-input" value="'+ (dc.maxPerInvoice||0) +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">كود الترويج (إن وُجد)</label><input id="discF_code" class="wo-input" value="'+ _v3EscapeHtml(dc.code||'') +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">حساب GL</label><select id="discF_glAccountId" class="wo-select">'+ _v3GlAccountOptions(dc.glAccountId) +'</select></div>' +
+        '<div class="wo-field"><label class="wo-field-label">صالح من</label><input id="discF_validFrom" type="date" class="wo-input" value="'+ (dc.validFrom||'') +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">صالح إلى</label><input id="discF_validTo" type="date" class="wo-input" value="'+ (dc.validTo||'') +'"></div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-palette"></i> الأيقونة واللون</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field">' +
+          '<label class="wo-field-label">الأيقونة</label>' +
+          '<div style="display:flex;align-items:center;gap:10px;">' +
+            '<span class="v3-icon-badge v3-icon-badge-lg" id="discF_icon_box" style="background:'+(dc.color||'#8b5cf6')+'1a;color:'+(dc.color||'#8b5cf6')+';"><i id="discF_icon_preview" class="fas '+(dc.icon||'fa-tag')+'"></i></span>' +
+            '<input id="discF_icon" class="wo-input" value="'+ _v3EscapeHtml(dc.icon||'fa-tag') +'" style="flex:1;" oninput="document.getElementById(\'discF_icon_preview\').className=\'fas \'+this.value;">' +
+          '</div>' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">اللون</label><input id="discF_color" type="color" class="wo-input" value="'+ (dc.color||'#8b5cf6') +'" oninput="document.getElementById(\'discF_icon_box\').style.background=this.value+\'1a\';document.getElementById(\'discF_icon_box\').style.color=this.value;"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">ترتيب العرض</label><input id="discF_displayOrder" type="number" class="wo-input" value="'+ (dc.displayOrder||0) +'"></div>' +
+      '</div>' +
+      '<div class="v3-icon-picker-wrap" style="margin-top:10px;">' +
+        '<label class="wo-field-label" style="margin-bottom:6px;display:block;">اختر من المكتبة:</label>' +
+        _v3IconGridHtml(dc.icon||'fa-tag', 'discF_icon') +
+      '</div>' +
+    '</div>' +
+
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-sliders"></i> خصائص</h4>' +
+      '<div class="v3-grid-2">' +
+        '<label class="v3-checkbox"><input type="checkbox" id="discF_enabled" '+(dc.enabled?'checked':'')+'><span>الخصم مفعّل</span></label>' +
+        '<label class="v3-checkbox"><input type="checkbox" id="discF_showInPos" '+(dc.showInPos?'checked':'')+'><span>إظهار في POS</span></label>' +
+        '<label class="v3-checkbox"><input type="checkbox" id="discF_requireApproval" '+(dc.requireApproval?'checked':'')+'><span>يتطلب موافقة المدير</span></label>' +
+        '<label class="v3-checkbox"><input type="checkbox" id="discF_requireCode" '+(dc.requireCode?'checked':'')+'><span>يتطلب إدخال كود</span></label>' +
+      '</div>' +
+      '<div class="wo-field" style="margin-top:10px;"><label class="wo-field-label">وصف</label><textarea id="discF_description" class="wo-input" rows="2">'+ _v3EscapeHtml(dc.description||'') +'</textarea></div>' +
+    '</div>' +
+
+    '<input type="hidden" id="discF_id" value="'+ _v3EscapeHtml(dc.id||'') +'">' +
+    '</form>';
+
+  WoModal.open({
+    icon: 'fa-tags', iconColor: '#8b5cf6',
+    title: id ? 'تعديل خصم' : 'خصم جديد',
+    subtitle: 'حدد النطاق (صنف/فاتورة/جاهز/يدوي)، النوع، الحد الأقصى، أدنى صلاحية، وربط GL.',
+    body: html,
+    size: 'lg',
+    footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+            '<button class="wo-btn wo-btn-primary" onclick="_v3SaveDiscV3()"><i class="fas fa-save"></i> حفظ</button>'
+  });
+}
+
+function _v3SaveDiscV3() {
+  var data = {
+    id: document.getElementById('discF_id').value || null,
+    name: document.getElementById('discF_name').value.trim(),
+    type: document.getElementById('discF_type').value,
+    value: Number(document.getElementById('discF_value').value) || 0,
+    maxAmount: Number(document.getElementById('discF_maxAmount').value) || 0,
+    minOrder: Number(document.getElementById('discF_minOrder').value) || 0,
+    requireApproval: document.getElementById('discF_requireApproval').checked,
+    requireCode: document.getElementById('discF_requireCode').checked,
+    code: document.getElementById('discF_code').value.trim(),
+    enabled: document.getElementById('discF_enabled').checked,
+    displayOrder: Number(document.getElementById('discF_displayOrder').value) || 0,
+    validFrom: document.getElementById('discF_validFrom').value || null,
+    validTo: document.getElementById('discF_validTo').value || null,
+    applyOn: 'invoice',
+    color: document.getElementById('discF_color').value || '#8b5cf6',
+    icon: document.getElementById('discF_icon').value || 'fa-tag',
+    glAccountId: document.getElementById('discF_glAccountId').value || null,
+    discountScope: document.getElementById('discF_scope').value,
+    minRole: document.getElementById('discF_minRole').value,
+    maxPerInvoice: Number(document.getElementById('discF_maxPerInvoice').value) || 0,
+    showInPos: document.getElementById('discF_showInPos').checked,
+    description: document.getElementById('discF_description').value
+  };
+  if (!data.name) { _v3Toast('الاسم مطلوب', true); return; }
+
+  callAPI('POST', '/settings/discounts-v2-full', data, function(r) {
+    if (r && r.success) { _v3Toast('تم الحفظ'); WoModal.close(); erpLoadDiscountsV3(); }
+    else _v3Toast((r && r.error) || 'فشل الحفظ', true);
+  });
+}
+
+function erpDeleteDiscV3(id) {
+  WoModal.confirm({
+    title: 'حذف خصم',
+    message: 'هل أنت متأكد من حذف هذا الخصم؟',
+    confirmText: 'حذف',
+    danger: true
+  }).then(function(ok) {
+    if (!ok) return;
+    callAPI('DELETE', '/settings/discounts-v2/' + id, null, function(r) {
+      if (r && r.success) { _v3Toast('تم الحذف'); erpLoadDiscountsV3(); }
+      else _v3Toast((r && r.error) || 'فشل الحذف', true);
+    });
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * SHIFT CLOSE ADMIN
+ * ═══════════════════════════════════════════════════════════════════ */
+function erpLoadShiftCloseAdmin() {
+  var qs = [];
+  var f = (document.getElementById('scaFrom')||{}).value;
+  var t = (document.getElementById('scaTo')||{}).value;
+  var u = (document.getElementById('scaUser')||{}).value;
+  var s = (document.getElementById('scaStatus')||{}).value;
+  if (f) qs.push('startDate=' + encodeURIComponent(f));
+  if (t) qs.push('endDate=' + encodeURIComponent(t));
+  if (u) qs.push('username=' + encodeURIComponent(u));
+  if (s) qs.push('status=' + encodeURIComponent(s));
+  var path = '/shifts/' + (qs.length ? '?' + qs.join('&') : '');
+
+  callAPI('GET', path, null, function(rows) {
+    var arr = Array.isArray(rows) ? rows : [];
+    _v3RenderShiftClose(arr);
+  }, '/api');
+}
+
+function _v3RenderShiftClose(arr) {
+  var metrics = document.getElementById('scaMetrics');
+  if (metrics) {
+    var open = arr.filter(function(s){return (s.status||'').toUpperCase()==='OPEN';}).length;
+    var closed = arr.length - open;
+    var totalExpected = 0, totalActual = 0, totalVar = 0;
+    arr.forEach(function(s){
+      totalExpected += Number(s.totalTheoretical||0);
+      totalActual += Number(s.actualCash||0) + Number(s.actualCard||0) + Number(s.actualKita||0);
+      totalVar += Number(s.diffCash||0) + Number(s.diffCard||0) + Number(s.diffKita||0);
+    });
+    metrics.innerHTML =
+      _v3MetricCard('fa-list', 'إجمالي الجلسات', arr.length, '#3b82f6') +
+      _v3MetricCard('fa-door-open', 'مفتوحة', open, '#f59e0b') +
+      _v3MetricCard('fa-door-closed', 'مغلقة', closed, '#22c55e') +
+      _v3MetricCard('fa-calculator', 'متوقع', _v3Fmt(totalExpected) + ' ر.س', '#06b6d4') +
+      _v3MetricCard('fa-coins', 'فعلي', _v3Fmt(totalActual) + ' ر.س', '#8b5cf6') +
+      _v3MetricCard(totalVar >= 0 ? 'fa-arrow-up' : 'fa-arrow-down', 'الفرق', _v3Fmt(totalVar) + ' ر.س', totalVar >= 0 ? '#22c55e' : '#ef4444');
+  }
+
+  var tbody = document.getElementById('scaBody');
+  if (!tbody) return;
+  if (!arr.length) {
+    tbody.innerHTML = '<tr><td colspan="9"><div class="wo-empty"><i class="fas fa-folder-open"></i><div class="wo-empty-title">لا توجد جلسات</div></div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = arr.map(function(s) {
+    var actual = Number(s.actualCash||0) + Number(s.actualCard||0) + Number(s.actualKita||0);
+    var diff = Number(s.diffCash||0) + Number(s.diffCard||0) + Number(s.diffKita||0);
+    var diffColor = Math.abs(diff) < 1 ? '#22c55e' : (diff < 0 ? '#ef4444' : '#f59e0b');
+    var statusChip = (s.status||'').toUpperCase() === 'OPEN' ?
+      '<span class="wo-chip" style="background:#fef3c7;color:#92400e;font-weight:700;">مفتوحة</span>' :
+      '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مغلقة</span>';
+    return '<tr>' +
+      '<td>'+ (s.startTime ? new Date(s.startTime).toLocaleDateString('ar-SA') : '—') +'</td>' +
+      '<td><div style="font-weight:800;">'+ _v3EscapeHtml(s.displayName||s.username) +'</div><div style="font-size:11px;color:#64748b;">'+ _v3EscapeHtml(s.username) +'</div></td>' +
+      '<td>'+ (s.startTime ? new Date(s.startTime).toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'}) : '—') +'</td>' +
+      '<td>'+ (s.endTime ? new Date(s.endTime).toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'}) : '—') +'</td>' +
+      '<td style="font-weight:700;">'+ _v3Fmt(s.totalTheoretical) +'</td>' +
+      '<td style="font-weight:700;">'+ _v3Fmt(actual) +'</td>' +
+      '<td style="color:'+ diffColor +';font-weight:800;">'+ _v3Fmt(diff) +'</td>' +
+      '<td>'+ statusChip +'</td>' +
+      '<td><button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpViewShiftDetail(\''+ s.id +'\')" title="تفاصيل"><i class="fas fa-eye"></i></button></td>' +
+    '</tr>';
+  }).join('');
+}
+
+function erpViewShiftDetail(shiftId) {
+  callAPI('GET', '/shifts/closing-data-v3/' + shiftId, null, function(data) {
+    var methods = (data && data.methods) || [];
+    var html = '<div style="padding:6px 0;">' +
+      '<div style="margin-bottom:14px;padding:14px;background:linear-gradient(135deg,#dbeafe,#eff6ff);border-radius:10px;border:1px solid #bfdbfe;">' +
+        '<div style="font-size:13px;color:#1e40af;font-weight:700;">جلسة الشيفت: '+ _v3EscapeHtml(shiftId) +'</div>' +
+        '<div style="font-size:24px;font-weight:900;color:#1e3a8a;margin-top:4px;">'+ _v3Fmt(data.expectedTotal) +' ر.س</div>' +
+        '<div style="font-size:11px;color:#3730a3;margin-top:2px;">عدد الفواتير: '+ (data.orderCount||0) +'</div>' +
+      '</div>' +
+      '<table class="wo-table" style="margin-top:10px;">' +
+        '<thead><tr><th>الأيقونة</th><th>طريقة الدفع</th><th>المجموعة</th><th class="num">المتوقع</th></tr></thead>' +
+        '<tbody>' +
+          (methods.length ? methods.map(function(m) {
+            return '<tr>' +
+              '<td><span class="v3-icon-badge" style="background:'+(m.color||'#3b82f6')+'1a;color:'+(m.color||'#3b82f6')+';"><i class="fas '+(m.icon||'fa-money-bill')+'"></i></span></td>' +
+              '<td style="font-weight:700;">'+ _v3EscapeHtml(m.nameAr||m.name) +'</td>' +
+              '<td><span class="wo-chip">'+ (_pmGroupLabels[m.groupType]||m.groupType) +'</span></td>' +
+              '<td class="num" style="font-weight:800;">'+ _v3Fmt(m.expectedAmount) +'</td>' +
+            '</tr>';
+          }).join('') : '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:14px;">لا بيانات</td></tr>') +
+        '</tbody>' +
+      '</table>' +
+    '</div>';
+
+    WoModal.open({
+      icon: 'fa-cash-register', iconColor: '#22c55e',
+      title: 'تفاصيل جلسة الإغلاق',
+      subtitle: 'العرض للقراءة فقط — لا يمكن تعديل بيانات الفواتير من هنا.',
+      body: html,
+      size: 'md',
+      footer: '<button class="wo-btn wo-btn-primary" onclick="WoModal.close()">إغلاق</button>'
+    });
+  });
+}
+
+function erpExportShiftCloseAdmin() {
+  _v3Toast('سيتم دعم التصدير قريباً');
+}
+

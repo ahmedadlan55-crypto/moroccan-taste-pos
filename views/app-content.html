@@ -152,6 +152,17 @@
           <div class="nav-item" data-erp-nav="erpPosTerminals" onclick="erpNav('erpPosTerminals')"><i class="fas fa-desktop"></i><span>أجهزة POS</span></div>
         </div>
 
+        <!-- ═══ إدارة الدفع والقنوات والخصومات ═══ -->
+        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
+          <i class="fas fa-credit-card"></i><span>إدارة الدفع والقنوات</span><i class="fas fa-chevron-down submenu-indicator"></i>
+        </div>
+        <div class="submenu">
+          <div class="nav-item" data-erp-nav="erpPaymentMethodsV3" onclick="erpNav('erpPaymentMethodsV3')"><i class="fas fa-wallet"></i><span>طرق الدفع</span></div>
+          <div class="nav-item" data-erp-nav="erpSalesChannels" onclick="erpNav('erpSalesChannels')"><i class="fas fa-store"></i><span>قنوات البيع</span></div>
+          <div class="nav-item" data-erp-nav="erpDiscountsV3" onclick="erpNav('erpDiscountsV3')"><i class="fas fa-tags"></i><span>الخصومات</span></div>
+          <div class="nav-item" data-erp-nav="erpShiftCloseAdmin" onclick="erpNav('erpShiftCloseAdmin')"><i class="fas fa-cash-register"></i><span>إغلاق الشيفت</span></div>
+        </div>
+
         <!-- ═══ الضرائب والفوترة الإلكترونية ═══ -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
           <i class="fas fa-percent"></i><span>الضرائب والفوترة</span><i class="fas fa-chevron-down submenu-indicator"></i>
@@ -4091,6 +4102,208 @@
 <div id="erpPosTerminals" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;"><h2 class="section-title"><i class="fas fa-desktop"></i> أجهزة POS</h2><button class="btn btn-primary" onclick="erpOpenPosTerminalModal()"><i class="fas fa-plus"></i> جهاز جديد</button></div>
   <div class="erp-table-container"><table class="erp-table"><thead><tr><th>الاسم</th><th>الرمز</th><th>الفرع</th><th>معرّف الجهاز</th><th>آخر مزامنة</th><th>إجراءات</th></tr></thead><tbody id="posTermBody"><tr><td colspan="6" class="empty-msg">جاري التحميل...</td></tr></tbody></table></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- PAYMENT METHODS V3 — enterprise-grade with icon library, GL link,    -->
+<!-- groups (cash/electronic/voucher/loyalty/transfer), advanced flags     -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div id="erpPaymentMethodsV3" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot info"><i class="fas fa-wallet"></i></span>طرق الدفع</h1>
+      <p class="wo-header-sub">إدارة طرق الدفع المدعومة في نقاط البيع — كل طريقة لها مجموعة (كاش/إلكتروني/قسيمة/ولاء/تحويل)، رسوم خدمة، ربط بحساب GL ومركز تكلفة.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-secondary" onclick="erpLoadPaymentMethodsV3()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="erpOpenPmV3Modal()"><i class="fas fa-plus"></i><span>طريقة دفع جديدة</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="pmV3Metrics"></div>
+  <section class="wo-toolbar" role="search" aria-label="تصفية طرق الدفع">
+    <div class="wo-field"><label class="wo-field-label" for="pmV3Search"><i class="fas fa-search"></i> بحث</label><input id="pmV3Search" class="wo-input" placeholder="اسم / كود..." oninput="erpFilterPmV3()"></div>
+    <div class="wo-field"><label class="wo-field-label" for="pmV3Group"><i class="fas fa-layer-group"></i> المجموعة</label>
+      <select id="pmV3Group" class="wo-select" onchange="erpFilterPmV3()">
+        <option value="">الكل</option>
+        <option value="cash">كاش</option>
+        <option value="electronic">إلكتروني</option>
+        <option value="voucher">قسيمة</option>
+        <option value="loyalty">ولاء</option>
+        <option value="transfer">تحويل</option>
+        <option value="other">أخرى</option>
+      </select>
+    </div>
+    <div class="wo-field"><label class="wo-field-label" for="pmV3Status"><i class="fas fa-toggle-on"></i> الحالة</label>
+      <select id="pmV3Status" class="wo-select" onchange="erpFilterPmV3()">
+        <option value="">الكل</option><option value="1">مفعّل</option><option value="0">معطّل</option>
+      </select>
+    </div>
+  </section>
+  <div class="wo-table-surface">
+    <table class="wo-table" role="table">
+      <thead>
+        <tr>
+          <th>الترتيب</th>
+          <th>الأيقونة</th>
+          <th>الاسم</th>
+          <th>المجموعة</th>
+          <th>رسوم الخدمة</th>
+          <th>حساب GL</th>
+          <th>إغلاق الشيفت</th>
+          <th>التقارير</th>
+          <th>الحالة</th>
+          <th>إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="pmV3Body">
+        <tr><td colspan="10"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- SALES CHANNELS — main menu / Hangerstation / Keeta / app / phone     -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div id="erpSalesChannels" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot purple"><i class="fas fa-store"></i></span>قنوات البيع</h1>
+      <p class="wo-header-sub">المنيو الرئيسي، هنقرستيشن، كيتا، تطبيق خاص، طلب هاتفي — كل قناة مرتبطة بقائمة أسعار محددة (لا يُسمح بخلط الأسعار في فاتورة واحدة).</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-secondary" onclick="erpLoadSalesChannels()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="erpOpenChannelModal()"><i class="fas fa-plus"></i><span>قناة جديدة</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="chMetrics"></div>
+  <div class="wo-table-surface">
+    <table class="wo-table" role="table">
+      <thead>
+        <tr>
+          <th>الترتيب</th>
+          <th>الأيقونة</th>
+          <th>الاسم</th>
+          <th>الكود</th>
+          <th>النوع</th>
+          <th>قائمة الأسعار</th>
+          <th>عمولة %</th>
+          <th>رسوم خدمة %</th>
+          <th>الحالة</th>
+          <th>إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="chBody">
+        <tr><td colspan="10"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- DISCOUNTS V3 — line/invoice/preset/manual + permissions + GL         -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div id="erpDiscountsV3" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot warning"><i class="fas fa-tags"></i></span>الخصومات</h1>
+      <p class="wo-header-sub">خصم على صنف، خصم على فاتورة، خصومات جاهزة (Preset)، أو خصم يدوي بصلاحية. كل خصم له حد أقصى وربط بحساب GL لتسجيل الأثر المحاسبي.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-secondary" onclick="erpLoadDiscountsV3()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="erpOpenDiscV3Modal()"><i class="fas fa-plus"></i><span>خصم جديد</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="discV3Metrics"></div>
+  <section class="wo-toolbar" role="search">
+    <div class="wo-field"><label class="wo-field-label" for="discV3Search"><i class="fas fa-search"></i> بحث</label><input id="discV3Search" class="wo-input" placeholder="اسم / كود..." oninput="erpFilterDiscV3()"></div>
+    <div class="wo-field"><label class="wo-field-label" for="discV3Scope"><i class="fas fa-bullseye"></i> النطاق</label>
+      <select id="discV3Scope" class="wo-select" onchange="erpFilterDiscV3()">
+        <option value="">الكل</option>
+        <option value="line">على صنف</option>
+        <option value="invoice">على فاتورة</option>
+        <option value="preset">جاهز (Preset)</option>
+        <option value="manual">يدوي</option>
+      </select>
+    </div>
+    <div class="wo-field"><label class="wo-field-label" for="discV3Type"><i class="fas fa-percent"></i> النوع</label>
+      <select id="discV3Type" class="wo-select" onchange="erpFilterDiscV3()">
+        <option value="">الكل</option>
+        <option value="percentage">نسبة</option>
+        <option value="fixed">مبلغ ثابت</option>
+        <option value="promo_code">كود ترويجي</option>
+        <option value="automatic">تلقائي</option>
+      </select>
+    </div>
+  </section>
+  <div class="wo-table-surface">
+    <table class="wo-table" role="table">
+      <thead>
+        <tr>
+          <th>الترتيب</th>
+          <th>الأيقونة</th>
+          <th>الاسم</th>
+          <th>النطاق</th>
+          <th>النوع</th>
+          <th>القيمة</th>
+          <th>الحد الأقصى</th>
+          <th>أدنى صلاحية</th>
+          <th>حساب GL</th>
+          <th>الحالة</th>
+          <th>إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="discV3Body">
+        <tr><td colspan="11"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- SHIFT CLOSE ADMIN — admin view of all closures + denominations log   -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div id="erpShiftCloseAdmin" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot success"><i class="fas fa-cash-register"></i></span>إغلاق الشيفت — لوحة الإدارة</h1>
+      <p class="wo-header-sub">عرض جميع جلسات الإغلاق مع تفصيل الفئات النقدية، التسويات الإلكترونية، والفروقات. لا يمكن تعديل بيانات الفواتير من هنا.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-secondary" onclick="erpLoadShiftCloseAdmin()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="erpExportShiftCloseAdmin()"><i class="fas fa-file-excel"></i><span>تصدير</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="scaMetrics"></div>
+  <section class="wo-toolbar" role="search">
+    <div class="wo-field"><label class="wo-field-label" for="scaFrom"><i class="fas fa-calendar"></i> من</label><input type="date" id="scaFrom" class="wo-input"></div>
+    <div class="wo-field"><label class="wo-field-label" for="scaTo"><i class="fas fa-calendar-check"></i> إلى</label><input type="date" id="scaTo" class="wo-input"></div>
+    <div class="wo-field"><label class="wo-field-label" for="scaUser"><i class="fas fa-user"></i> الكاشير</label><input id="scaUser" class="wo-input" placeholder="username..."></div>
+    <div class="wo-field"><label class="wo-field-label" for="scaStatus"><i class="fas fa-toggle-on"></i> الحالة</label>
+      <select id="scaStatus" class="wo-select"><option value="">الكل</option><option value="OPEN">مفتوحة</option><option value="closed">مغلقة</option></select>
+    </div>
+    <div class="wo-field" style="align-self:flex-end;"><button class="wo-btn wo-btn-primary" onclick="erpLoadShiftCloseAdmin()"><i class="fas fa-search"></i><span>بحث</span></button></div>
+  </section>
+  <div class="wo-table-surface">
+    <table class="wo-table" role="table">
+      <thead>
+        <tr>
+          <th>التاريخ</th>
+          <th>الكاشير</th>
+          <th>الافتتاح</th>
+          <th>الإغلاق</th>
+          <th>المتوقع</th>
+          <th>الفعلي</th>
+          <th>الفرق</th>
+          <th>الحالة</th>
+          <th>إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="scaBody">
+        <tr><td colspan="9"><div class="wo-empty"><i class="fas fa-filter"></i><div class="wo-empty-title">حدّد الفترة ثم اضغط بحث</div></div></td></tr>
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <!-- Item Categories -->

@@ -408,4 +408,27 @@
   window.google = window.google || {};
   window.google.script = window.google.script || {};
   window.google.script.run = createApiProxy();
+
+  // ─── Generic callAPI helper for admin code ────────────────────────────
+  // Usage: callAPI('GET', '/settings/payment-methods-full', null, function(data) {...});
+  //        callAPI('POST', '/sales-channels/', {name:'X'}, function(r) {...});
+  // The path may start with '/' (auto-prefixed with /api) or be a full URL.
+  window.callAPI = function(method, path, body, cb, errCb) {
+    var url = path;
+    if (path && path.charAt(0) === '/' && path.indexOf('/api') !== 0) url = '/api' + path;
+    var opts = { method: (method||'GET').toUpperCase(), headers: { 'Content-Type': 'application/json' } };
+    var token = localStorage.getItem('pos_token');
+    if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+    if (body !== null && body !== undefined && opts.method !== 'GET' && opts.method !== 'DELETE') {
+      opts.body = (typeof body === 'string') ? body : JSON.stringify(body);
+    }
+    fetch(url, opts)
+      .then(function(r) { return r.json().catch(function(){ return null; }); })
+      .then(function(data) { if (typeof cb === 'function') cb(data); })
+      .catch(function(err) {
+        console.error('callAPI error:', method, url, err);
+        if (typeof errCb === 'function') errCb(err);
+        else if (typeof cb === 'function') cb({ success:false, error: String(err && err.message || err) });
+      });
+  };
 })();

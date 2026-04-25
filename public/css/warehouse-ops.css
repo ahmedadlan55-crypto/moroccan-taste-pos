@@ -3491,3 +3491,128 @@
 }
 .tb-bulk-btn i { font-size: 10px; }
 
+/* ═══════════════════════════════════════════════════════════════════
+ * SECTION 26 — PAYMENT/CHANNELS/DISCOUNTS V3 ADMIN
+ * Icon library picker + form sections + checkboxes
+ * ═══════════════════════════════════════════════════════════════════ */
+.v3-icon-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  font-size: 16px;
+  background: #eff6ff;
+  color: #3b82f6;
+}
+.v3-icon-badge-lg {
+  width: 56px; height: 56px;
+  font-size: 24px;
+  border-radius: 14px;
+}
+
+.v3-icon-picker-wrap {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+}
+.v3-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
+  gap: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.v3-icon-tile {
+  display: flex; align-items: center; justify-content: center;
+  width: 46px; height: 46px;
+  border-radius: 10px;
+  border: 1.5px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+  font-size: 18px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.v3-icon-tile:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+  background: #eff6ff;
+  transform: scale(1.06);
+}
+.v3-icon-tile.v3-icon-sel {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
+}
+
+.v3-form { padding: 4px 0; }
+.v3-form-section {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.v3-section-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: #1e293b;
+  margin: 0 0 12px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex; align-items: center; gap: 8px;
+}
+.v3-section-title i { color: #3b82f6; }
+
+.v3-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px 14px;
+}
+
+.v3-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-size: 13px;
+  color: #334155;
+  font-weight: 600;
+}
+.v3-checkbox:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+.v3-checkbox input[type=checkbox] {
+  width: 18px; height: 18px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+  margin: 0;
+}
+.v3-checkbox input[type=checkbox]:checked + span { color: #1e40af; }
+
+/* Wo button size variant for inline action cells */
+.wo-btn.wo-btn-sm {
+  padding: 6px 10px;
+  font-size: 12px;
+  min-height: 30px;
+}
+.wo-btn.wo-btn-danger {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.wo-btn.wo-btn-danger:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+

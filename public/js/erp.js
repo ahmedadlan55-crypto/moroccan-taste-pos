@@ -13082,23 +13082,30 @@ function erpLoadBankRecon() {
  * ═════════════════════════════════════════════════════════════════════════ */
 
 // Icon library used by both Payment Methods and Sales Channels
+// All icons VERIFIED to exist in Font Awesome 6.0.0 Free (solid weight 'fas')
 window._iconLibrary = [
-  // Cash & Money
-  'fa-money-bill','fa-money-bill-wave','fa-money-bill-1','fa-coins','fa-sack-dollar','fa-wallet',
-  // Cards & Electronic
-  'fa-credit-card','fa-cc-visa','fa-cc-mastercard','fa-cc-amex','fa-cc-jcb','fa-cc-diners-club','fa-cc-discover',
-  // Apps & QR
-  'fa-mobile-screen','fa-mobile','fa-qrcode','fa-barcode','fa-tablet-screen-button',
+  // Cash & Money (solid)
+  'fa-money-bill','fa-money-bill-wave','fa-money-bill-alt','fa-coins','fa-wallet','fa-money-check',
+  'fa-money-check-alt','fa-dollar-sign','fa-hand-holding-usd',
+  // Cards
+  'fa-credit-card','fa-money-check-alt',
+  // Mobile & Codes
+  'fa-mobile','fa-mobile-alt','fa-tablet','fa-tablet-alt','fa-qrcode','fa-barcode',
   // Aggregators / Delivery
-  'fa-motorcycle','fa-bicycle','fa-truck','fa-truck-fast','fa-store','fa-utensils','fa-pizza-slice','fa-burger',
-  // Vouchers
-  'fa-ticket','fa-receipt','fa-gift','fa-tag','fa-tags','fa-percent',
-  // Transfer
-  'fa-building-columns','fa-money-bill-transfer','fa-paypal','fa-stripe','fa-apple-pay','fa-google-pay',
-  // Other
-  'fa-circle-dollar-to-slot','fa-piggy-bank','fa-hand-holding-dollar','fa-cash-register','fa-phone','fa-headset',
-  'fa-globe','fa-link','fa-cube','fa-crown','fa-star','fa-heart'
+  'fa-motorcycle','fa-bicycle','fa-truck','fa-shipping-fast','fa-store','fa-store-alt',
+  'fa-utensils','fa-pizza-slice','fa-hamburger','fa-concierge-bell',
+  // Vouchers / Discounts
+  'fa-ticket-alt','fa-receipt','fa-gift','fa-tag','fa-tags','fa-percent','fa-percentage',
+  // Bank / Transfer
+  'fa-university','fa-piggy-bank','fa-cash-register','fa-exchange-alt','fa-file-invoice-dollar',
+  // Communication
+  'fa-phone','fa-phone-alt','fa-headset','fa-globe','fa-link',
+  // Generic
+  'fa-cube','fa-crown','fa-star','fa-heart','fa-bookmark','fa-flag','fa-bolt','fa-fire','fa-leaf'
 ];
+
+// De-dupe (in case any names repeated)
+window._iconLibrary = window._iconLibrary.filter(function(v,i,a){ return a.indexOf(v)===i; });
 
 // Cached lists for the V3 admin UIs
 window._pmV3Cache = [];
@@ -13166,11 +13173,12 @@ function _v3PickIcon(targetId, ic) {
   }
 }
 
-// Fetch GL accounts (cached)
+// Fetch GL accounts (cached) — uses /erp/gl/accounts which returns
+// {id, code, nameAr, nameEn, type, parentId, level, isActive, balance}
 window._v3GlAccountsCache = null;
 function _v3LoadGlAccounts(cb) {
   if (window._v3GlAccountsCache) { cb(window._v3GlAccountsCache); return; }
-  callAPI('GET', '/erp/chart-of-accounts', null, function(rows) {
+  callAPI('GET', '/erp/gl/accounts', null, function(rows) {
     var arr = Array.isArray(rows) ? rows : (rows && rows.accounts ? rows.accounts : []);
     window._v3GlAccountsCache = arr;
     cb(arr);
@@ -13228,6 +13236,261 @@ function _v3PriceListOptions(selectedId) {
     opts += '<option value="' + p.id + '"' + sel + '>' + _v3EscapeHtml(p.name || p.id) + '</option>';
   }
   return opts;
+}
+
+/* ─── V3 Searchable Picker (with optional quick-add) ────────────────────
+ * Usage:
+ *   1. In modal HTML:
+ *      <div class="v3-picker-host" id="myPicker"></div>
+ *      <input type="hidden" id="myPicker_value" value="initialId">
+ *   2. After WoModal.open(...):
+ *      _v3MountSearchPicker('myPicker', {
+ *        items: [{id, label, sub}],
+ *        selected: initialId,
+ *        placeholder: 'ابحث...',
+ *        emptyLabel: '— لا اختيار —',
+ *        addLabel: '+ إنشاء جديد',
+ *        onAddNew: function(query, cb) { ... cb(newItem) },
+ *        onChange: function(id, item) { ... }
+ *      });
+ *   The picker writes the chosen id into #{hostId}_value (hidden input).
+ * ─────────────────────────────────────────────────────────────────────── */
+function _v3MountSearchPicker(hostId, opts) {
+  var host = document.getElementById(hostId);
+  if (!host) { console.warn('[V3] Picker host not found:', hostId); return; }
+  opts = opts || {};
+  var items = opts.items || [];
+  var selected = opts.selected || '';
+  var placeholder = opts.placeholder || 'ابحث...';
+  var emptyLabel = opts.emptyLabel || '— لا اختيار —';
+  var addLabel = opts.addLabel || '';
+  var onChange = opts.onChange || function(){};
+  var onAddNew = opts.onAddNew || null;
+
+  function findItem(id) { return items.find(function(it){ return String(it.id) === String(id); }); }
+
+  function render() {
+    var sel = findItem(selected);
+    var displayHtml = sel
+      ? '<span class="v3p-display-text"><b>'+ _v3EscapeHtml(sel.label) +'</b>'+ (sel.sub ? '<small> · '+_v3EscapeHtml(sel.sub)+'</small>' : '') +'</span>'
+      : '<span class="v3p-display-empty">'+ _v3EscapeHtml(emptyLabel) +'</span>';
+    host.innerHTML =
+      '<div class="v3-picker' + (selected ? ' has-value' : '') + '">' +
+        '<button type="button" class="v3-picker-display" data-act="open">' + displayHtml + '<i class="fas fa-chevron-down"></i></button>' +
+        (selected ? '<button type="button" class="v3-picker-clear" data-act="clear" title="مسح"><i class="fas fa-xmark"></i></button>' : '') +
+        '<div class="v3-picker-pop" hidden>' +
+          '<div class="v3-picker-search-row"><i class="fas fa-search"></i><input type="text" class="v3-picker-search" placeholder="'+ _v3EscapeHtml(placeholder) +'" autocomplete="off"></div>' +
+          '<div class="v3-picker-list"></div>' +
+          (addLabel && onAddNew ? '<button type="button" class="v3-picker-add" data-act="add"><i class="fas fa-plus"></i> '+ _v3EscapeHtml(addLabel) +'</button>' : '') +
+        '</div>' +
+      '</div>';
+
+    var pop = host.querySelector('.v3-picker-pop');
+    var listEl = host.querySelector('.v3-picker-list');
+    var searchEl = host.querySelector('.v3-picker-search');
+    var displayBtn = host.querySelector('[data-act="open"]');
+    var clearBtn = host.querySelector('[data-act="clear"]');
+    var addBtn = host.querySelector('[data-act="add"]');
+
+    function renderList(query) {
+      var q = (query||'').trim().toLowerCase();
+      var arr = items.filter(function(it){
+        if (!q) return true;
+        return (it.label||'').toLowerCase().indexOf(q) >= 0 || (it.sub||'').toLowerCase().indexOf(q) >= 0 || String(it.id).toLowerCase().indexOf(q) >= 0;
+      }).slice(0, 200);
+      if (!arr.length) {
+        listEl.innerHTML = '<div class="v3-picker-empty"><i class="fas fa-search-minus"></i> لا توجد نتائج</div>';
+        return;
+      }
+      listEl.innerHTML = arr.map(function(it){
+        var isSel = String(it.id) === String(selected);
+        return '<div class="v3-picker-item' + (isSel ? ' selected' : '') + '" data-id="'+ _v3EscapeHtml(String(it.id)) +'">' +
+          '<div class="v3-picker-item-main">' +
+            '<div class="v3-picker-item-label">'+ _v3EscapeHtml(it.label||'') +'</div>' +
+            (it.sub ? '<div class="v3-picker-item-sub">'+ _v3EscapeHtml(it.sub) +'</div>' : '') +
+          '</div>' +
+          (isSel ? '<i class="fas fa-check" style="color:#22c55e;"></i>' : '') +
+        '</div>';
+      }).join('');
+    }
+
+    function open() {
+      pop.removeAttribute('hidden');
+      renderList('');
+      setTimeout(function(){ if (searchEl) searchEl.focus(); }, 50);
+    }
+    function close() { pop.setAttribute('hidden', ''); }
+
+    displayBtn.addEventListener('click', function(e){ e.stopPropagation(); pop.hasAttribute('hidden') ? open() : close(); });
+    if (clearBtn) clearBtn.addEventListener('click', function(e){
+      e.stopPropagation();
+      selected = '';
+      onChange('', null);
+      render();
+    });
+    searchEl.addEventListener('input', function(){ renderList(searchEl.value); });
+    listEl.addEventListener('click', function(e){
+      var row = e.target.closest('.v3-picker-item');
+      if (!row) return;
+      selected = row.dataset.id;
+      onChange(selected, findItem(selected));
+      render();
+    });
+    if (addBtn) addBtn.addEventListener('click', function(e){
+      e.stopPropagation();
+      var q = searchEl.value || '';
+      onAddNew(q, function(newItem) {
+        if (!newItem || !newItem.id) return;
+        items.push(newItem);
+        selected = newItem.id;
+        onChange(selected, newItem);
+        render();
+      });
+    });
+    // close on outside click
+    document.addEventListener('click', function _outside(e){
+      if (!host.contains(e.target)) close();
+    }, { once: false });
+  }
+
+  // Setup hidden input that tracks the selection
+  var hidden = document.getElementById(hostId + '_value');
+  if (!hidden) {
+    hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.id = hostId + '_value';
+    host.appendChild(hidden);
+  }
+  hidden.value = selected || '';
+
+  // Wire onChange to keep hidden input in sync
+  var origOnChange = onChange;
+  onChange = function(id, item) {
+    hidden.value = id || '';
+    origOnChange(id, item);
+  };
+
+  render();
+}
+
+// Quick-add new GL account helper
+function _v3QuickAddGlAccount(query, cb) {
+  var html =
+    '<div class="v3-form" style="padding:6px 0;">' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">الكود *</label><input id="qaglCode" class="wo-input" value="" required></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الاسم *</label><input id="qaglName" class="wo-input" value="'+ _v3EscapeHtml(query||'') +'" required></div>' +
+        '<div class="wo-field"><label class="wo-field-label">النوع</label>' +
+          '<select id="qaglType" class="wo-select">' +
+            '<option value="asset">أصول</option>' +
+            '<option value="liability">التزامات</option>' +
+            '<option value="equity">حقوق ملكية</option>' +
+            '<option value="revenue">إيرادات</option>' +
+            '<option value="expense">مصروفات</option>' +
+          '</select>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  WoModal.open({
+    icon: 'fa-plus', iconColor: '#22c55e',
+    title: 'إنشاء حساب GL جديد',
+    subtitle: 'سيتم إضافة الحساب لشجرة الحسابات.',
+    body: html, size: 'sm',
+    footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+            '<button class="wo-btn wo-btn-primary" id="qaglSaveBtn"><i class="fas fa-save"></i> حفظ</button>'
+  });
+  setTimeout(function() {
+    var btn = document.getElementById('qaglSaveBtn');
+    if (!btn) return;
+    btn.addEventListener('click', function() {
+      var code = (document.getElementById('qaglCode').value || '').trim();
+      var name = (document.getElementById('qaglName').value || '').trim();
+      var type = document.getElementById('qaglType').value || 'asset';
+      if (!code || !name) { _v3Toast('الكود والاسم مطلوبان', true); return; }
+      callAPI('POST', '/erp/gl/accounts', { code: code, nameAr: name, nameEn: name, type: type, level: 1 }, function(r) {
+        console.log('[V3] Quick-add GL response:', r);
+        if (r && (r.success || r.id)) {
+          var newId = r.id || r.accountId || code;
+          var newItem = { id: newId, label: code + ' — ' + name, sub: type };
+          window._v3GlAccountsCache = (window._v3GlAccountsCache || []).concat([{ id: newId, code: code, name: name, name_ar: name, type: type }]);
+          _v3Toast('تم الإنشاء');
+          WoModal.close();
+          cb(newItem);
+        } else {
+          _v3Toast((r && r.error) || 'فشل الإنشاء', true);
+          console.error('[V3] Quick-add GL failed:', r);
+        }
+      });
+    });
+  }, 100);
+}
+
+// Quick-add new cost center helper
+function _v3QuickAddCostCenter(query, cb) {
+  var html =
+    '<div class="v3-form" style="padding:6px 0;">' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">الكود *</label><input id="qaccCode" class="wo-input" value="" required></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الاسم *</label><input id="qaccName" class="wo-input" value="'+ _v3EscapeHtml(query||'') +'" required></div>' +
+        '<div class="wo-field"><label class="wo-field-label">النوع</label>' +
+          '<select id="qaccType" class="wo-select">' +
+            '<option value="branch">فرع</option>' +
+            '<option value="department">قسم</option>' +
+            '<option value="project">مشروع</option>' +
+            '<option value="product_line">خط منتجات</option>' +
+            '<option value="other">أخرى</option>' +
+          '</select>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  WoModal.open({
+    icon: 'fa-plus', iconColor: '#06b6d4',
+    title: 'إنشاء مركز تكلفة جديد',
+    body: html, size: 'sm',
+    footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+            '<button class="wo-btn wo-btn-primary" id="qaccSaveBtn"><i class="fas fa-save"></i> حفظ</button>'
+  });
+  setTimeout(function() {
+    var btn = document.getElementById('qaccSaveBtn');
+    if (!btn) return;
+    btn.addEventListener('click', function() {
+      var code = (document.getElementById('qaccCode').value || '').trim();
+      var name = (document.getElementById('qaccName').value || '').trim();
+      var type = document.getElementById('qaccType').value || 'department';
+      if (!code || !name) { _v3Toast('الكود والاسم مطلوبان', true); return; }
+      callAPI('POST', '/erp/cost-centers', { code: code, name: name, type: type, isActive: true }, function(r) {
+        if (r && (r.success || r.id)) {
+          var newId = r.id || code;
+          var newItem = { id: newId, label: name, sub: code };
+          window._v3CostCentersCache = (window._v3CostCentersCache || []).concat([{ id: newId, code: code, name: name, type: type }]);
+          _v3Toast('تم الإنشاء');
+          WoModal.close();
+          cb(newItem);
+        } else {
+          _v3Toast((r && r.error) || 'فشل الإنشاء', true);
+        }
+      });
+    });
+  }, 100);
+}
+
+// Helper: convert GL accounts cache to picker items
+// API returns {id, code, nameAr, nameEn, type, parentId, level}
+function _v3GlPickerItems() {
+  return (window._v3GlAccountsCache || []).map(function(a){
+    var name = a.nameAr || a.name_ar || a.name || a.account_name || '';
+    var code = a.code || a.account_code || '';
+    return {
+      id: a.id || a.account_id,
+      label: code + (name ? (' — ' + name) : ''),
+      sub: a.type || ''
+    };
+  });
+}
+function _v3CostPickerItems() {
+  return (window._v3CostCentersCache || []).map(function(c){
+    return { id: c.id, label: c.name || c.code || c.id, sub: c.code || c.type || '' };
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -13384,12 +13647,12 @@ function _v3OpenPmV3ModalInner(id) {
       '</div>' +
     '</div>' +
 
-    // Section: GL & Cost Center
+    // Section: GL & Cost Center (with searchable + add-new pickers)
     '<div class="v3-form-section">' +
       '<h4 class="v3-section-title"><i class="fas fa-link"></i> الربط المحاسبي</h4>' +
       '<div class="v3-grid-2">' +
-        '<div class="wo-field"><label class="wo-field-label">حساب GL</label><select id="pmF_glAccountId" class="wo-select">'+ _v3GlAccountOptions(pm.glAccountId) +'</select></div>' +
-        '<div class="wo-field"><label class="wo-field-label">مركز التكلفة</label><select id="pmF_costCenterId" class="wo-select">'+ _v3CostCenterOptions(pm.costCenterId) +'</select></div>' +
+        '<div class="wo-field"><label class="wo-field-label">حساب GL</label><div class="v3-picker-host" id="pmF_glPicker"></div></div>' +
+        '<div class="wo-field"><label class="wo-field-label">مركز التكلفة</label><div class="v3-picker-host" id="pmF_ccPicker"></div></div>' +
       '</div>' +
     '</div>' +
 
@@ -13422,45 +13685,93 @@ function _v3OpenPmV3ModalInner(id) {
     footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
             '<button class="wo-btn wo-btn-primary" onclick="_v3SavePm()"><i class="fas fa-save"></i> حفظ</button>'
   });
+
+  // Mount searchable pickers for GL + Cost Center (with quick-add)
+  setTimeout(function() {
+    _v3MountSearchPicker('pmF_glPicker', {
+      items: _v3GlPickerItems(),
+      selected: pm.glAccountId || '',
+      placeholder: 'ابحث في شجرة الحسابات...',
+      emptyLabel: '— لا ربط GL —',
+      addLabel: 'إنشاء حساب GL جديد',
+      onAddNew: _v3QuickAddGlAccount
+    });
+    _v3MountSearchPicker('pmF_ccPicker', {
+      items: _v3CostPickerItems(),
+      selected: pm.costCenterId || '',
+      placeholder: 'ابحث في مراكز التكلفة...',
+      emptyLabel: '— لا مركز تكلفة —',
+      addLabel: 'إنشاء مركز تكلفة جديد',
+      onAddNew: _v3QuickAddCostCenter
+    });
+  }, 80);
+}
+
+// Safe field reader — returns '' if element missing instead of throwing
+function _v3FldVal(id, fallback) {
+  var el = document.getElementById(id);
+  if (!el) { console.warn('[V3] Missing field:', id); return (fallback == null ? '' : fallback); }
+  return el.value;
+}
+function _v3FldChecked(id) {
+  var el = document.getElementById(id);
+  if (!el) { console.warn('[V3] Missing checkbox:', id); return false; }
+  return !!el.checked;
 }
 
 function _v3SavePm() {
-  var data = {
-    id: document.getElementById('pmF_id').value || null,
-    name: document.getElementById('pmF_name').value.trim(),
-    nameAr: document.getElementById('pmF_nameAr').value.trim(),
-    icon: document.getElementById('pmF_icon').value.trim() || 'fa-money-bill',
-    color: document.getElementById('pmF_color').value || '#3b82f6',
-    isActive: document.getElementById('pmF_isActive').checked,
-    sortOrder: Number(document.getElementById('pmF_sortOrder').value) || 0,
-    groupType: document.getElementById('pmF_groupType').value,
-    serviceFeeType: document.getElementById('pmF_serviceFeeType').value,
-    serviceFeeValue: Number(document.getElementById('pmF_serviceFeeValue').value) || 0,
-    serviceFeeRate: Number(document.getElementById('pmF_serviceFeeValue').value) || 0, // back-compat
-    glAccountId: document.getElementById('pmF_glAccountId').value || null,
-    costCenterId: document.getElementById('pmF_costCenterId').value || null,
-    allowManualTotal: document.getElementById('pmF_allowManualTotal').checked,
-    showInShiftClose: document.getElementById('pmF_showInShiftClose').checked,
-    showInReports: document.getElementById('pmF_showInReports').checked,
-    requireReference: document.getElementById('pmF_requireReference').checked,
-    requireTransactionNumber: document.getElementById('pmF_requireTransactionNumber').checked,
-    requireTerminal: document.getElementById('pmF_requireTerminal').checked,
-    allowRefund: document.getElementById('pmF_allowRefund').checked,
-    allowCancel: document.getElementById('pmF_allowCancel').checked,
-    description: document.getElementById('pmF_description').value
-  };
-  if (!data.nameAr) { _v3Toast('الاسم بالعربية مطلوب', true); return; }
-  if (!data.name) data.name = data.nameAr;
-
-  callAPI('POST', '/settings/payment-methods-full', data, function(r) {
-    if (r && r.success) {
-      _v3Toast('تم الحفظ');
-      WoModal.close();
-      erpLoadPaymentMethodsV3();
-    } else {
-      _v3Toast((r && r.error) || 'فشل الحفظ', true);
+  try {
+    if (typeof callAPI !== 'function') {
+      _v3Toast('callAPI غير محمّل — أعد تحميل الصفحة', true);
+      console.error('[V3] callAPI is undefined — api-bridge.js not loaded');
+      return;
     }
-  });
+
+    var data = {
+      id: _v3FldVal('pmF_id') || null,
+      name: (_v3FldVal('pmF_name') || '').trim(),
+      nameAr: (_v3FldVal('pmF_nameAr') || '').trim(),
+      icon: (_v3FldVal('pmF_icon') || '').trim() || 'fa-money-bill',
+      color: _v3FldVal('pmF_color') || '#3b82f6',
+      isActive: _v3FldChecked('pmF_isActive'),
+      sortOrder: Number(_v3FldVal('pmF_sortOrder', 0)) || 0,
+      groupType: _v3FldVal('pmF_groupType') || 'cash',
+      serviceFeeType: _v3FldVal('pmF_serviceFeeType') || 'none',
+      serviceFeeValue: Number(_v3FldVal('pmF_serviceFeeValue', 0)) || 0,
+      serviceFeeRate: Number(_v3FldVal('pmF_serviceFeeValue', 0)) || 0, // back-compat
+      glAccountId: _v3FldVal('pmF_glPicker_value') || null,
+      costCenterId: _v3FldVal('pmF_ccPicker_value') || null,
+      allowManualTotal: _v3FldChecked('pmF_allowManualTotal'),
+      showInShiftClose: _v3FldChecked('pmF_showInShiftClose'),
+      showInReports: _v3FldChecked('pmF_showInReports'),
+      requireReference: _v3FldChecked('pmF_requireReference'),
+      requireTransactionNumber: _v3FldChecked('pmF_requireTransactionNumber'),
+      requireTerminal: _v3FldChecked('pmF_requireTerminal'),
+      allowRefund: _v3FldChecked('pmF_allowRefund'),
+      allowCancel: _v3FldChecked('pmF_allowCancel'),
+      description: _v3FldVal('pmF_description')
+    };
+    if (!data.nameAr) { _v3Toast('الاسم بالعربية مطلوب', true); return; }
+    if (!data.name) data.name = data.nameAr;
+
+    console.log('[V3] Saving payment method:', data);
+
+    callAPI('POST', '/settings/payment-methods-full', data, function(r) {
+      console.log('[V3] Save response:', r);
+      if (r && r.success) {
+        _v3Toast('تم الحفظ');
+        WoModal.close();
+        erpLoadPaymentMethodsV3();
+      } else {
+        var msg = (r && r.error) || 'فشل الحفظ — راجع Console';
+        _v3Toast(msg, true);
+        console.error('[V3] Save failed:', r);
+      }
+    });
+  } catch (err) {
+    console.error('[V3] _v3SavePm threw:', err);
+    _v3Toast('خطأ: ' + (err && err.message || err), true);
+  }
 }
 
 function erpDeletePmV3(id) {
@@ -13596,8 +13907,8 @@ function _v3OpenChannelModalInner(id) {
       '<div class="v3-grid-2">' +
         '<div class="wo-field"><label class="wo-field-label">عمولة القناة %</label><input id="chF_commissionPct" type="number" step="0.01" class="wo-input" value="'+ (ch.commissionPct||0) +'"></div>' +
         '<div class="wo-field"><label class="wo-field-label">رسوم خدمة %</label><input id="chF_serviceFeePct" type="number" step="0.01" class="wo-input" value="'+ (ch.serviceFeePct||0) +'"></div>' +
-        '<div class="wo-field"><label class="wo-field-label">حساب الإيراد GL</label><select id="chF_glRevenueAccount" class="wo-select">'+ _v3GlAccountOptions(ch.glRevenueAccount) +'</select></div>' +
-        '<div class="wo-field"><label class="wo-field-label">حساب العمولة GL</label><select id="chF_glCommissionAccount" class="wo-select">'+ _v3GlAccountOptions(ch.glCommissionAccount) +'</select></div>' +
+        '<div class="wo-field"><label class="wo-field-label">حساب الإيراد GL</label><div class="v3-picker-host" id="chF_glRevPicker"></div></div>' +
+        '<div class="wo-field"><label class="wo-field-label">حساب العمولة GL</label><div class="v3-picker-host" id="chF_glCommPicker"></div></div>' +
       '</div>' +
     '</div>' +
 
@@ -13623,35 +13934,62 @@ function _v3OpenChannelModalInner(id) {
     footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
             '<button class="wo-btn wo-btn-primary" onclick="_v3SaveChannel()"><i class="fas fa-save"></i> حفظ</button>'
   });
+
+  setTimeout(function() {
+    _v3MountSearchPicker('chF_glRevPicker', {
+      items: _v3GlPickerItems(),
+      selected: ch.glRevenueAccount || '',
+      placeholder: 'ابحث عن حساب الإيراد...',
+      emptyLabel: '— لا ربط GL —',
+      addLabel: 'إنشاء حساب GL جديد',
+      onAddNew: _v3QuickAddGlAccount
+    });
+    _v3MountSearchPicker('chF_glCommPicker', {
+      items: _v3GlPickerItems(),
+      selected: ch.glCommissionAccount || '',
+      placeholder: 'ابحث عن حساب العمولة...',
+      emptyLabel: '— لا ربط GL —',
+      addLabel: 'إنشاء حساب GL جديد',
+      onAddNew: _v3QuickAddGlAccount
+    });
+  }, 80);
 }
 
 function _v3SaveChannel() {
-  var data = {
-    id: document.getElementById('chF_id').value || null,
-    code: document.getElementById('chF_code').value.trim().toUpperCase(),
-    name: document.getElementById('chF_name').value.trim(),
-    nameEn: document.getElementById('chF_nameEn').value.trim(),
-    channelType: document.getElementById('chF_channelType').value,
-    priceListId: document.getElementById('chF_priceListId').value || null,
-    icon: document.getElementById('chF_icon').value.trim() || 'fa-store',
-    color: document.getElementById('chF_color').value || '#3b82f6',
-    commissionPct: Number(document.getElementById('chF_commissionPct').value) || 0,
-    serviceFeePct: Number(document.getElementById('chF_serviceFeePct').value) || 0,
-    glRevenueAccount: document.getElementById('chF_glRevenueAccount').value || null,
-    glCommissionAccount: document.getElementById('chF_glCommissionAccount').value || null,
-    requiresExternalRef: document.getElementById('chF_requiresExternalRef').checked,
-    allowDiscount: document.getElementById('chF_allowDiscount').checked,
-    isActive: document.getElementById('chF_isActive').checked,
-    displayOrder: Number(document.getElementById('chF_displayOrder').value) || 0,
-    notes: document.getElementById('chF_notes').value
-  };
-  if (!data.name) { _v3Toast('الاسم مطلوب', true); return; }
-  if (!data.code) { _v3Toast('الرمز مطلوب', true); return; }
+  try {
+    if (typeof callAPI !== 'function') { _v3Toast('callAPI غير محمّل — أعد التحميل', true); return; }
+    var data = {
+      id: _v3FldVal('chF_id') || null,
+      code: (_v3FldVal('chF_code') || '').trim().toUpperCase(),
+      name: (_v3FldVal('chF_name') || '').trim(),
+      nameEn: (_v3FldVal('chF_nameEn') || '').trim(),
+      channelType: _v3FldVal('chF_channelType') || 'dine_in',
+      priceListId: _v3FldVal('chF_priceListId') || null,
+      icon: (_v3FldVal('chF_icon') || '').trim() || 'fa-store',
+      color: _v3FldVal('chF_color') || '#3b82f6',
+      commissionPct: Number(_v3FldVal('chF_commissionPct', 0)) || 0,
+      serviceFeePct: Number(_v3FldVal('chF_serviceFeePct', 0)) || 0,
+      glRevenueAccount: _v3FldVal('chF_glRevPicker_value') || null,
+      glCommissionAccount: _v3FldVal('chF_glCommPicker_value') || null,
+      requiresExternalRef: _v3FldChecked('chF_requiresExternalRef'),
+      allowDiscount: _v3FldChecked('chF_allowDiscount'),
+      isActive: _v3FldChecked('chF_isActive'),
+      displayOrder: Number(_v3FldVal('chF_displayOrder', 0)) || 0,
+      notes: _v3FldVal('chF_notes')
+    };
+    if (!data.name) { _v3Toast('الاسم مطلوب', true); return; }
+    if (!data.code) { _v3Toast('الرمز مطلوب', true); return; }
 
-  callAPI('POST', '/sales-channels/', data, function(r) {
-    if (r && r.success) { _v3Toast('تم الحفظ'); WoModal.close(); erpLoadSalesChannels(); }
-    else _v3Toast((r && r.error) || 'فشل الحفظ', true);
-  });
+    console.log('[V3] Saving channel:', data);
+    callAPI('POST', '/sales-channels/', data, function(r) {
+      console.log('[V3] Channel save response:', r);
+      if (r && r.success) { _v3Toast('تم الحفظ'); WoModal.close(); erpLoadSalesChannels(); }
+      else { _v3Toast((r && r.error) || 'فشل الحفظ', true); console.error('[V3] Channel save failed:', r); }
+    });
+  } catch (err) {
+    console.error('[V3] _v3SaveChannel threw:', err);
+    _v3Toast('خطأ: ' + (err && err.message || err), true);
+  }
 }
 
 function erpToggleChannel(id) {
@@ -13801,7 +14139,7 @@ function _v3OpenDiscV3ModalInner(id) {
         '</div>' +
         '<div class="wo-field"><label class="wo-field-label">حد أقصى لكل فاتورة</label><input id="discF_maxPerInvoice" type="number" step="0.01" class="wo-input" value="'+ (dc.maxPerInvoice||0) +'"></div>' +
         '<div class="wo-field"><label class="wo-field-label">كود الترويج (إن وُجد)</label><input id="discF_code" class="wo-input" value="'+ _v3EscapeHtml(dc.code||'') +'"></div>' +
-        '<div class="wo-field"><label class="wo-field-label">حساب GL</label><select id="discF_glAccountId" class="wo-select">'+ _v3GlAccountOptions(dc.glAccountId) +'</select></div>' +
+        '<div class="wo-field"><label class="wo-field-label">حساب GL</label><div class="v3-picker-host" id="discF_glPicker"></div></div>' +
         '<div class="wo-field"><label class="wo-field-label">صالح من</label><input id="discF_validFrom" type="date" class="wo-input" value="'+ (dc.validFrom||'') +'"></div>' +
         '<div class="wo-field"><label class="wo-field-label">صالح إلى</label><input id="discF_validTo" type="date" class="wo-input" value="'+ (dc.validTo||'') +'"></div>' +
       '</div>' +
@@ -13849,39 +14187,58 @@ function _v3OpenDiscV3ModalInner(id) {
     footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
             '<button class="wo-btn wo-btn-primary" onclick="_v3SaveDiscV3()"><i class="fas fa-save"></i> حفظ</button>'
   });
+
+  setTimeout(function() {
+    _v3MountSearchPicker('discF_glPicker', {
+      items: _v3GlPickerItems(),
+      selected: dc.glAccountId || '',
+      placeholder: 'ابحث عن حساب GL...',
+      emptyLabel: '— لا ربط GL —',
+      addLabel: 'إنشاء حساب GL جديد',
+      onAddNew: _v3QuickAddGlAccount
+    });
+  }, 80);
 }
 
 function _v3SaveDiscV3() {
-  var data = {
-    id: document.getElementById('discF_id').value || null,
-    name: document.getElementById('discF_name').value.trim(),
-    type: document.getElementById('discF_type').value,
-    value: Number(document.getElementById('discF_value').value) || 0,
-    maxAmount: Number(document.getElementById('discF_maxAmount').value) || 0,
-    minOrder: Number(document.getElementById('discF_minOrder').value) || 0,
-    requireApproval: document.getElementById('discF_requireApproval').checked,
-    requireCode: document.getElementById('discF_requireCode').checked,
-    code: document.getElementById('discF_code').value.trim(),
-    enabled: document.getElementById('discF_enabled').checked,
-    displayOrder: Number(document.getElementById('discF_displayOrder').value) || 0,
-    validFrom: document.getElementById('discF_validFrom').value || null,
-    validTo: document.getElementById('discF_validTo').value || null,
-    applyOn: 'invoice',
-    color: document.getElementById('discF_color').value || '#8b5cf6',
-    icon: document.getElementById('discF_icon').value || 'fa-tag',
-    glAccountId: document.getElementById('discF_glAccountId').value || null,
-    discountScope: document.getElementById('discF_scope').value,
-    minRole: document.getElementById('discF_minRole').value,
-    maxPerInvoice: Number(document.getElementById('discF_maxPerInvoice').value) || 0,
-    showInPos: document.getElementById('discF_showInPos').checked,
-    description: document.getElementById('discF_description').value
-  };
-  if (!data.name) { _v3Toast('الاسم مطلوب', true); return; }
+  try {
+    if (typeof callAPI !== 'function') { _v3Toast('callAPI غير محمّل — أعد التحميل', true); return; }
+    var data = {
+      id: _v3FldVal('discF_id') || null,
+      name: (_v3FldVal('discF_name') || '').trim(),
+      type: _v3FldVal('discF_type') || 'percentage',
+      value: Number(_v3FldVal('discF_value', 0)) || 0,
+      maxAmount: Number(_v3FldVal('discF_maxAmount', 0)) || 0,
+      minOrder: Number(_v3FldVal('discF_minOrder', 0)) || 0,
+      requireApproval: _v3FldChecked('discF_requireApproval'),
+      requireCode: _v3FldChecked('discF_requireCode'),
+      code: (_v3FldVal('discF_code') || '').trim(),
+      enabled: _v3FldChecked('discF_enabled'),
+      displayOrder: Number(_v3FldVal('discF_displayOrder', 0)) || 0,
+      validFrom: _v3FldVal('discF_validFrom') || null,
+      validTo: _v3FldVal('discF_validTo') || null,
+      applyOn: 'invoice',
+      color: _v3FldVal('discF_color') || '#8b5cf6',
+      icon: _v3FldVal('discF_icon') || 'fa-tag',
+      glAccountId: _v3FldVal('discF_glPicker_value') || null,
+      discountScope: _v3FldVal('discF_scope') || 'invoice',
+      minRole: _v3FldVal('discF_minRole') || 'cashier',
+      maxPerInvoice: Number(_v3FldVal('discF_maxPerInvoice', 0)) || 0,
+      showInPos: _v3FldChecked('discF_showInPos'),
+      description: _v3FldVal('discF_description')
+    };
+    if (!data.name) { _v3Toast('الاسم مطلوب', true); return; }
 
-  callAPI('POST', '/settings/discounts-v2-full', data, function(r) {
-    if (r && r.success) { _v3Toast('تم الحفظ'); WoModal.close(); erpLoadDiscountsV3(); }
-    else _v3Toast((r && r.error) || 'فشل الحفظ', true);
-  });
+    console.log('[V3] Saving discount:', data);
+    callAPI('POST', '/settings/discounts-v2-full', data, function(r) {
+      console.log('[V3] Discount save response:', r);
+      if (r && r.success) { _v3Toast('تم الحفظ'); WoModal.close(); erpLoadDiscountsV3(); }
+      else { _v3Toast((r && r.error) || 'فشل الحفظ', true); console.error('[V3] Discount save failed:', r); }
+    });
+  } catch (err) {
+    console.error('[V3] _v3SaveDiscV3 threw:', err);
+    _v3Toast('خطأ: ' + (err && err.message || err), true);
+  }
 }
 
 function erpDeleteDiscV3(id) {
@@ -14337,33 +14694,41 @@ function _openFinishedModalInner(id, brand, semiList) {
 }
 
 function _bmSaveFinished() {
-  var brand = window._bmCurrentBrand || { id:'' };
-  var data = {
-    name: document.getElementById('bmF_name').value.trim(),
-    price: Number(document.getElementById('bmF_price').value) || 0,
-    category: document.getElementById('bmF_category').value.trim() || 'عام',
-    cost: Number(document.getElementById('bmF_cost').value) || 0,
-    stock: Number(document.getElementById('bmF_stock').value) || 0,
-    minStock: Number(document.getElementById('bmF_minStock').value) || 0,
-    active: document.getElementById('bmF_active').checked,
-    pricingMode: document.getElementById('bmF_pricingMode').value,
-    markupPct: 30,
-    brandId: brand.id,
-    isSemiFinished: false,
-    productionUnit: 'pcs',
-    consumesSemiId: document.getElementById('bmF_consumesSemiId').value || null,
-    consumesSemiQty: Number(document.getElementById('bmF_consumesSemiQty').value) || 0,
-    salesWarehouseId: document.getElementById('bmF_salesWarehouseId').value || null
-  };
-  if (!data.name) { _v3Toast('اسم المنتج مطلوب', true); return; }
+  try {
+    if (typeof callAPI !== 'function') { _v3Toast('callAPI غير محمّل — أعد التحميل', true); return; }
+    var brand = window._bmCurrentBrand || { id:'' };
+    var data = {
+      name: (_v3FldVal('bmF_name') || '').trim(),
+      price: Number(_v3FldVal('bmF_price', 0)) || 0,
+      category: (_v3FldVal('bmF_category') || '').trim() || 'عام',
+      cost: Number(_v3FldVal('bmF_cost', 0)) || 0,
+      stock: Number(_v3FldVal('bmF_stock', 0)) || 0,
+      minStock: Number(_v3FldVal('bmF_minStock', 0)) || 0,
+      active: _v3FldChecked('bmF_active'),
+      pricingMode: _v3FldVal('bmF_pricingMode') || 'fixed',
+      markupPct: 30,
+      brandId: brand.id,
+      isSemiFinished: false,
+      productionUnit: 'pcs',
+      consumesSemiId: _v3FldVal('bmF_consumesSemiId') || null,
+      consumesSemiQty: Number(_v3FldVal('bmF_consumesSemiQty', 0)) || 0,
+      salesWarehouseId: _v3FldVal('bmF_salesWarehouseId') || null
+    };
+    if (!data.name) { _v3Toast('اسم المنتج مطلوب', true); return; }
 
-  var id = document.getElementById('bmF_id').value;
-  var method = id ? 'PUT' : 'POST';
-  var path = id ? ('/menu/' + id) : '/menu';
-  callAPI(method, path, data, function(r) {
-    if (r && r.success) { _v3Toast('تم الحفظ'); WoModal.close(); erpLoadBrandMenu(); }
-    else _v3Toast((r && r.error) || 'فشل الحفظ', true);
-  });
+    var id = _v3FldVal('bmF_id');
+    var method = id ? 'PUT' : 'POST';
+    var path = id ? ('/menu/' + id) : '/menu';
+    console.log('[V3] Saving finished product:', method, path, data);
+    callAPI(method, path, data, function(r) {
+      console.log('[V3] Product save response:', r);
+      if (r && r.success) { _v3Toast('تم الحفظ'); WoModal.close(); erpLoadBrandMenu(); }
+      else { _v3Toast((r && r.error) || 'فشل الحفظ', true); console.error('[V3] Product save failed:', r); }
+    });
+  } catch (err) {
+    console.error('[V3] _bmSaveFinished threw:', err);
+    _v3Toast('خطأ: ' + (err && err.message || err), true);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -14508,38 +14873,45 @@ function _openSemiFinishedInner(id, brandsList, currentBrand) {
 }
 
 function _sfSave() {
-  var data = {
-    name: document.getElementById('sfF_name').value.trim(),
-    brandId: document.getElementById('sfF_brandId').value,
-    category: document.getElementById('sfF_category').value.trim() || 'منتجات غير تامة',
-    cost: Number(document.getElementById('sfF_cost').value) || 0,
-    stock: Number(document.getElementById('sfF_stock').value) || 0,
-    minStock: 0,
-    active: document.getElementById('sfF_active').checked,
-    pricingMode: 'variable',
-    markupPct: 0,
-    price: 0,
-    isSemiFinished: true,
-    productionUnit: document.getElementById('sfF_productionUnit').value,
-    productionWarehouseId: document.getElementById('sfF_productionWarehouseId').value || null,
-    consumesSemiId: null,
-    consumesSemiQty: 0
-  };
-  if (!data.name) { _v3Toast('الاسم مطلوب', true); return; }
-  if (!data.brandId) { _v3Toast('البراند مطلوب', true); return; }
+  try {
+    if (typeof callAPI !== 'function') { _v3Toast('callAPI غير محمّل — أعد التحميل', true); return; }
+    var data = {
+      name: (_v3FldVal('sfF_name') || '').trim(),
+      brandId: _v3FldVal('sfF_brandId'),
+      category: (_v3FldVal('sfF_category') || '').trim() || 'منتجات غير تامة',
+      cost: Number(_v3FldVal('sfF_cost', 0)) || 0,
+      stock: Number(_v3FldVal('sfF_stock', 0)) || 0,
+      minStock: 0,
+      active: _v3FldChecked('sfF_active'),
+      pricingMode: 'variable',
+      markupPct: 0,
+      price: 0,
+      isSemiFinished: true,
+      productionUnit: _v3FldVal('sfF_productionUnit') || 'pcs',
+      productionWarehouseId: _v3FldVal('sfF_productionWarehouseId') || null,
+      consumesSemiId: null,
+      consumesSemiQty: 0
+    };
+    if (!data.name) { _v3Toast('الاسم مطلوب', true); return; }
+    if (!data.brandId) { _v3Toast('البراند مطلوب', true); return; }
 
-  var id = document.getElementById('sfF_id').value;
-  var method = id ? 'PUT' : 'POST';
-  var path = id ? ('/menu/' + id) : '/menu';
-  callAPI(method, path, data, function(r) {
-    if (r && r.success) {
-      _v3Toast('تم الحفظ');
-      WoModal.close();
-      // Refresh whichever page user is on
-      if (window._bmCurrentBrand) erpLoadBrandMenu();
-      erpLoadSemiFinished();
-    } else _v3Toast((r && r.error) || 'فشل الحفظ', true);
-  });
+    var id = _v3FldVal('sfF_id');
+    var method = id ? 'PUT' : 'POST';
+    var path = id ? ('/menu/' + id) : '/menu';
+    console.log('[V3] Saving semi-finished:', method, path, data);
+    callAPI(method, path, data, function(r) {
+      console.log('[V3] Semi-finished save response:', r);
+      if (r && r.success) {
+        _v3Toast('تم الحفظ');
+        WoModal.close();
+        if (window._bmCurrentBrand) erpLoadBrandMenu();
+        erpLoadSemiFinished();
+      } else { _v3Toast((r && r.error) || 'فشل الحفظ', true); console.error('[V3] Semi-finished save failed:', r); }
+    });
+  } catch (err) {
+    console.error('[V3] _sfSave threw:', err);
+    _v3Toast('خطأ: ' + (err && err.message || err), true);
+  }
 }
 
 // BOM editor for a semi-finished — uses the existing recipe table (menu_id → ingredients)
@@ -14616,30 +14988,39 @@ function _bomAddLine() {
 }
 
 function _bomSave() {
-  var lines = document.querySelectorAll('#bomTbl tbody tr.bom-line');
-  var ingredients = [];
-  lines.forEach(function(tr) {
-    var sel = tr.querySelector('.bom-inv');
-    var qty = tr.querySelector('.bom-qty');
-    var unit = tr.querySelector('.bom-unit');
-    if (!sel.value || Number(qty.value) <= 0) return;
-    var opt = sel.options[sel.selectedIndex];
-    ingredients.push({
-      invItemId: sel.value,
-      invItemName: opt.dataset.name || '',
-      qtyUsed: Number(qty.value) || 0,
-      unit: unit.value || 'g'
+  try {
+    if (typeof callAPI !== 'function') { _v3Toast('callAPI غير محمّل — أعد التحميل', true); return; }
+    var lines = document.querySelectorAll('#bomTbl tbody tr.bom-line');
+    var ingredients = [];
+    lines.forEach(function(tr) {
+      var sel = tr.querySelector('.bom-inv');
+      var qtyEl = tr.querySelector('.bom-qty');
+      var unitEl = tr.querySelector('.bom-unit');
+      if (!sel || !sel.value) return;
+      var qty = qtyEl ? (Number(qtyEl.value) || 0) : 0;
+      if (qty <= 0) return;
+      var opt = sel.options[sel.selectedIndex];
+      ingredients.push({
+        invItemId: sel.value,
+        invItemName: (opt && opt.dataset && opt.dataset.name) || '',
+        qtyUsed: qty,
+        unit: (unitEl && unitEl.value) || 'g'
+      });
     });
-  });
-  if (!ingredients.length) { _v3Toast('أضف مكون واحد على الأقل', true); return; }
+    if (!ingredients.length) { _v3Toast('أضف مكون واحد على الأقل', true); return; }
 
-  // Existing menu/recipes endpoint expects (menuId, menuName, ingredients) signature
-  var menuName = (window._bmItemsCache||window._sfItemsCache||[]).find(function(m){return m.id===window._bomMenuId;});
-  menuName = menuName ? menuName.name : window._bomMenuId;
-  callAPI('POST', '/menu/recipes/' + window._bomMenuId, { menuName: menuName, ingredients: ingredients }, function(r) {
-    if (r && r.success) { _v3Toast('تم حفظ الوصفة'); WoModal.close(); }
-    else _v3Toast((r && r.error) || 'فشل الحفظ', true);
-  });
+    var menuName = (window._bmItemsCache||window._sfItemsCache||[]).find(function(m){return m.id===window._bomMenuId;});
+    menuName = menuName ? menuName.name : window._bomMenuId;
+    console.log('[V3] Saving BOM:', window._bomMenuId, ingredients);
+    callAPI('POST', '/menu/recipes/' + window._bomMenuId, { menuName: menuName, ingredients: ingredients }, function(r) {
+      console.log('[V3] BOM save response:', r);
+      if (r && r.success) { _v3Toast('تم حفظ الوصفة'); WoModal.close(); }
+      else { _v3Toast((r && r.error) || 'فشل الحفظ', true); console.error('[V3] BOM save failed:', r); }
+    });
+  } catch (err) {
+    console.error('[V3] _bomSave threw:', err);
+    _v3Toast('خطأ: ' + (err && err.message || err), true);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -14817,47 +15198,55 @@ function _poFilterSemis() {
 }
 
 function _poSave() {
-  var warehouseId = document.getElementById('poF_warehouseId').value;
-  var brandId = document.getElementById('poF_brandId').value;
-  var orderDate = document.getElementById('poF_date').value;
-  var notes = document.getElementById('poF_notes').value;
-  if (!warehouseId) { _v3Toast('المستودع مطلوب', true); return; }
+  try {
+    if (typeof callAPI !== 'function') { _v3Toast('callAPI غير محمّل — أعد التحميل', true); return; }
+    var warehouseId = _v3FldVal('poF_warehouseId');
+    var brandId = _v3FldVal('poF_brandId');
+    var orderDate = _v3FldVal('poF_date');
+    var notes = _v3FldVal('poF_notes');
+    if (!warehouseId) { _v3Toast('المستودع مطلوب', true); return; }
 
-  var lines = document.querySelectorAll('#poTbl tbody tr.po-line');
-  var orders = [];
-  lines.forEach(function(tr) {
-    var sel = tr.querySelector('.po-product');
-    var qty = Number(tr.querySelector('.po-qty').value) || 0;
-    if (!sel.value || qty <= 0) return;
-    orders.push({
-      productId: sel.value,
-      qtyPlanned: qty,
-      brandId: brandId || (sel.options[sel.selectedIndex].dataset.brand || null),
-      warehouseId: warehouseId,
-      orderDate: orderDate,
-      notes: notes
+    var lines = document.querySelectorAll('#poTbl tbody tr.po-line');
+    var orders = [];
+    lines.forEach(function(tr) {
+      var sel = tr.querySelector('.po-product');
+      var qtyEl = tr.querySelector('.po-qty');
+      var qty = qtyEl ? (Number(qtyEl.value) || 0) : 0;
+      if (!sel || !sel.value || qty <= 0) return;
+      orders.push({
+        productId: sel.value,
+        qtyPlanned: qty,
+        brandId: brandId || (sel.options[sel.selectedIndex].dataset.brand || null),
+        warehouseId: warehouseId,
+        orderDate: orderDate,
+        notes: notes
+      });
     });
-  });
-  if (!orders.length) { _v3Toast('أضف منتج واحد على الأقل', true); return; }
+    if (!orders.length) { _v3Toast('أضف منتج واحد على الأقل', true); return; }
 
-  // The existing /api/erp/production-orders endpoint takes one product per call.
-  // Loop through and create them sequentially; report progress at the end.
-  var done = 0, failed = 0;
-  orders.forEach(function(o) {
-    callAPI('POST', '/erp/production-orders', o, function(r) {
-      if (r && r.success) done++;
-      else failed++;
-      if (done + failed === orders.length) {
-        if (failed === 0) {
-          _v3Toast('تم إنشاء ' + done + ' أمر إنتاج');
-          WoModal.close();
-          erpLoadProductionOrders();
-        } else {
-          _v3Toast('نجح ' + done + ' / فشل ' + failed, true);
+    console.log('[V3] Saving production orders:', orders);
+    var done = 0, failed = 0, errors = [];
+    orders.forEach(function(o) {
+      callAPI('POST', '/erp/production-orders', o, function(r) {
+        console.log('[V3] PO save response:', r);
+        if (r && r.success) done++;
+        else { failed++; if (r && r.error) errors.push(r.error); }
+        if (done + failed === orders.length) {
+          if (failed === 0) {
+            _v3Toast('تم إنشاء ' + done + ' أمر إنتاج');
+            WoModal.close();
+            erpLoadProductionOrders();
+          } else {
+            _v3Toast('نجح ' + done + ' / فشل ' + failed + (errors.length ? ' — ' + errors[0] : ''), true);
+            console.error('[V3] PO errors:', errors);
+          }
         }
-      }
+      });
     });
-  });
+  } catch (err) {
+    console.error('[V3] _poSave threw:', err);
+    _v3Toast('خطأ: ' + (err && err.message || err), true);
+  }
 }
 
 function erpReleaseProduction(id) {

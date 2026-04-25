@@ -279,6 +279,23 @@ async function runMigrations() {
   await addColumnIfMissing('menu', 'pricing_mode', "VARCHAR(20) DEFAULT 'fixed'");
   await addColumnIfMissing('menu', 'markup_pct', "DECIMAL(5,2) DEFAULT 30");
 
+  // ─── Semi-finished products (منتجات غير تامة / نصف مصنعة) ───
+  // is_semi_finished = TRUE → this menu row is an intermediate (e.g. براد شاي مغربي)
+  // production_unit   = display unit for production output (براد، لتر، صحن، قطعة)
+  // consumes_semi_id  = if TRUE finished product, points to the semi-finished it consumes
+  // consumes_semi_qty = how many units of semi consumed per 1 of this finished product
+  // production_warehouse_id = default warehouse where this is produced into
+  await addColumnIfMissing('menu', 'is_semi_finished', "BOOLEAN DEFAULT FALSE");
+  await addColumnIfMissing('menu', 'production_unit', "VARCHAR(30) DEFAULT 'pcs'");
+  await addColumnIfMissing('menu', 'consumes_semi_id', "VARCHAR(50) DEFAULT NULL");
+  await addColumnIfMissing('menu', 'consumes_semi_qty', "DECIMAL(14,4) DEFAULT 0");
+  await addColumnIfMissing('menu', 'production_warehouse_id', "VARCHAR(50) DEFAULT NULL");
+  await addColumnIfMissing('menu', 'sales_warehouse_id', "VARCHAR(50) DEFAULT NULL");
+
+  // Index for finding semi-finished consumers
+  try { await db.query('CREATE INDEX idx_menu_semi_id ON menu(is_semi_finished)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_menu_consumes_semi ON menu(consumes_semi_id)'); } catch(e) {}
+
   // Purchase lots — for future FIFO support (populated on receive, not consumed yet)
   await createTableIfMissing('purchase_lots', `
     CREATE TABLE purchase_lots (

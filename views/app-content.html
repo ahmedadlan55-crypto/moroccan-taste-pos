@@ -163,6 +163,16 @@
           <div class="nav-item" data-erp-nav="erpShiftCloseAdmin" onclick="erpNav('erpShiftCloseAdmin')"><i class="fas fa-cash-register"></i><span>إغلاق الشيفت</span></div>
         </div>
 
+        <!-- ═══ المنيو والإنتاج ═══ -->
+        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
+          <i class="fas fa-utensils"></i><span>المنيو والإنتاج</span><i class="fas fa-chevron-down submenu-indicator"></i>
+        </div>
+        <div class="submenu">
+          <div class="nav-item" data-erp-nav="erpMenuHub" onclick="erpNav('erpMenuHub')"><i class="fas fa-layer-group"></i><span>إدارة المنيو والبرندات</span></div>
+          <div class="nav-item" data-erp-nav="erpSemiFinished" onclick="erpNav('erpSemiFinished')"><i class="fas fa-blender"></i><span>المنتجات غير التامة</span></div>
+          <div class="nav-item" data-erp-nav="erpProductionOrders" onclick="erpNav('erpProductionOrders')"><i class="fas fa-industry"></i><span>أوامر الإنتاج</span></div>
+        </div>
+
         <!-- ═══ الضرائب والفوترة الإلكترونية ═══ -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
           <i class="fas fa-percent"></i><span>الضرائب والفوترة</span><i class="fas fa-chevron-down submenu-indicator"></i>
@@ -4301,6 +4311,177 @@
       </thead>
       <tbody id="scaBody">
         <tr><td colspan="9"><div class="wo-empty"><i class="fas fa-filter"></i><div class="wo-empty-title">حدّد الفترة ثم اضغط بحث</div></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- MENU HUB — brand grid (entry point for menu management)               -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div id="erpMenuHub" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot purple"><i class="fas fa-layer-group"></i></span>إدارة المنيو والبرندات</h1>
+      <p class="wo-header-sub">اختر براند للدخول إلى منيوه وإدارة منتجاته (تامة وغير تامة).</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-secondary" onclick="erpLoadMenuHub()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="erpOpenBrandModal()"><i class="fas fa-plus"></i><span>براند جديد</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="mhMetrics"></div>
+  <section class="wo-toolbar" role="search" aria-label="بحث وتصفية البرندات">
+    <div class="wo-field" style="flex:1;"><label class="wo-field-label" for="mhSearch"><i class="fas fa-search"></i> بحث براند</label><input id="mhSearch" class="wo-input" placeholder="اسم البراند..." oninput="erpFilterMenuHub()"></div>
+    <div class="wo-field"><label class="wo-field-label" for="mhStatus"><i class="fas fa-toggle-on"></i> الحالة</label>
+      <select id="mhStatus" class="wo-select" onchange="erpFilterMenuHub()"><option value="">الكل</option><option value="1">مفعّل</option><option value="0">معطّل</option></select>
+    </div>
+  </section>
+  <div id="mhBrandGrid" class="mh-brand-grid">
+    <div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- BRAND MENU PAGE — per-brand product list (opened by clicking a brand) -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div id="erpBrandMenu" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1>
+        <span class="wo-icon-slot info"><i class="fas fa-utensils"></i></span>
+        <span>منيو </span><span id="bmBrandName" style="color:#3b82f6;">—</span>
+      </h1>
+      <p class="wo-header-sub">إدارة منتجات هذا البراند: تامة (تباع للعميل) وغير تامة (نصف مصنعة تُستهلك في الإنتاج).</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-secondary" onclick="erpNav('erpMenuHub')"><i class="fas fa-arrow-right"></i><span>رجوع للبرندات</span></button>
+      <button class="wo-btn wo-btn-secondary" onclick="erpLoadBrandMenu()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="erpOpenAddProductChooser()"><i class="fas fa-plus"></i><span>منتج جديد</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="bmMetrics"></div>
+  <section class="wo-toolbar" role="search">
+    <div class="wo-field" style="flex:1;"><label class="wo-field-label" for="bmSearch"><i class="fas fa-search"></i> بحث</label><input id="bmSearch" class="wo-input" placeholder="اسم المنتج..." oninput="erpFilterBrandMenu()"></div>
+    <div class="wo-field"><label class="wo-field-label" for="bmType"><i class="fas fa-tag"></i> النوع</label>
+      <select id="bmType" class="wo-select" onchange="erpFilterBrandMenu()">
+        <option value="">الكل</option>
+        <option value="finished">تام (للبيع)</option>
+        <option value="semi">غير تام (نصف مصنع)</option>
+      </select>
+    </div>
+    <div class="wo-field"><label class="wo-field-label" for="bmCategory"><i class="fas fa-folder"></i> الفئة</label>
+      <select id="bmCategory" class="wo-select" onchange="erpFilterBrandMenu()"><option value="">الكل</option></select>
+    </div>
+    <div class="wo-field"><label class="wo-field-label" for="bmStatus"><i class="fas fa-toggle-on"></i> الحالة</label>
+      <select id="bmStatus" class="wo-select" onchange="erpFilterBrandMenu()"><option value="">الكل</option><option value="1">مفعّل</option><option value="0">معطّل</option></select>
+    </div>
+  </section>
+  <div class="wo-table-surface">
+    <table class="wo-table">
+      <thead>
+        <tr>
+          <th>اسم المنتج</th>
+          <th>النوع</th>
+          <th>الفئة</th>
+          <th class="num">السعر</th>
+          <th class="num">المخزون</th>
+          <th>يستهلك من</th>
+          <th>الحالة</th>
+          <th>إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="bmBody">
+        <tr><td colspan="8"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- SEMI-FINISHED PRODUCTS — global view across all brands                -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div id="erpSemiFinished" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot warning"><i class="fas fa-blender"></i></span>المنتجات غير التامة</h1>
+      <p class="wo-header-sub">المنتجات نصف المصنعة (مثل: براد شاي مغربي) — تُنتَج عبر أوامر الإنتاج وتُستهلك عند بيع المنتجات التامة.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-secondary" onclick="erpLoadSemiFinished()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="erpOpenSemiFinishedModal()"><i class="fas fa-plus"></i><span>منتج غير تام جديد</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="sfMetrics"></div>
+  <section class="wo-toolbar" role="search">
+    <div class="wo-field" style="flex:1;"><label class="wo-field-label" for="sfSearch"><i class="fas fa-search"></i> بحث</label><input id="sfSearch" class="wo-input" placeholder="اسم المنتج..." oninput="erpFilterSemiFinished()"></div>
+    <div class="wo-field"><label class="wo-field-label" for="sfBrand"><i class="fas fa-tags"></i> البراند</label>
+      <select id="sfBrand" class="wo-select" onchange="erpFilterSemiFinished()"><option value="">الكل</option></select>
+    </div>
+  </section>
+  <div class="wo-table-surface">
+    <table class="wo-table">
+      <thead>
+        <tr>
+          <th>الاسم</th>
+          <th>البراند</th>
+          <th>وحدة الإنتاج</th>
+          <th class="num">المخزون</th>
+          <th class="num">عدد المكونات</th>
+          <th>المستودع الافتراضي</th>
+          <th>الحالة</th>
+          <th>إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="sfBody">
+        <tr><td colspan="8"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- PRODUCTION ORDERS                                                     -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div id="erpProductionOrders" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot success"><i class="fas fa-industry"></i></span>أوامر الإنتاج</h1>
+      <p class="wo-header-sub">إنشاء أوامر إنتاج لمنتج غير تام واحد أو أكثر دفعة واحدة — يخصم المكونات من المستودع ويضيف الكمية المنتجة.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-secondary" onclick="erpLoadProductionOrders()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="erpOpenProductionOrderModal()"><i class="fas fa-plus"></i><span>أمر إنتاج جديد</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="poMetrics"></div>
+  <section class="wo-toolbar" role="search">
+    <div class="wo-field"><label class="wo-field-label" for="poFrom"><i class="fas fa-calendar"></i> من</label><input type="date" id="poFrom" class="wo-input"></div>
+    <div class="wo-field"><label class="wo-field-label" for="poTo"><i class="fas fa-calendar-check"></i> إلى</label><input type="date" id="poTo" class="wo-input"></div>
+    <div class="wo-field"><label class="wo-field-label" for="poBrandFlt"><i class="fas fa-tags"></i> البراند</label>
+      <select id="poBrandFlt" class="wo-select"><option value="">الكل</option></select>
+    </div>
+    <div class="wo-field"><label class="wo-field-label" for="poStatusFlt"><i class="fas fa-toggle-on"></i> الحالة</label>
+      <select id="poStatusFlt" class="wo-select"><option value="">الكل</option><option value="planned">مخطط</option><option value="released">مُطلَق</option><option value="completed">مكتمل</option></select>
+    </div>
+    <div class="wo-field" style="align-self:flex-end;"><button class="wo-btn wo-btn-primary" onclick="erpLoadProductionOrders()"><i class="fas fa-search"></i><span>بحث</span></button></div>
+  </section>
+  <div class="wo-table-surface">
+    <table class="wo-table">
+      <thead>
+        <tr>
+          <th>الرقم</th>
+          <th>التاريخ</th>
+          <th>البراند</th>
+          <th>المنتجات</th>
+          <th class="num">إجمالي الكميات</th>
+          <th>المستودع</th>
+          <th>الحالة</th>
+          <th>إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="poOrdersBody">
+        <tr><td colspan="8"><div class="wo-empty"><i class="fas fa-filter"></i><div class="wo-empty-title">حدّد الفترة ثم اضغط بحث</div></div></td></tr>
       </tbody>
     </table>
   </div>

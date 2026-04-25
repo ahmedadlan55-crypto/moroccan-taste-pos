@@ -105,25 +105,77 @@ router.post('/', async (req, res) => {
       });
     });
 
+    // ─── NEW: Build semi-finished consumption map ───
+    // For finished products that consume from a semi-finished (e.g. كوب شاي مغربي → براد شاي مغربي)
+    const [menuRows] = await db.query(
+      'SELECT id, name, consumes_semi_id, consumes_semi_qty FROM menu WHERE consumes_semi_id IS NOT NULL AND consumes_semi_id <> ""'
+    );
+    const semiConsumeMap = {};
+    for (const m of menuRows) {
+      semiConsumeMap[m.id] = { semiId: m.consumes_semi_id, semiQty: Number(m.consumes_semi_qty || 0) };
+    }
+    // Lookup semi-finished names for movement logs
+    const semiNameMap = {};
+    if (Object.keys(semiConsumeMap).length) {
+      const semiIds = [...new Set(Object.values(semiConsumeMap).map(x => x.semiId))];
+      const [semiRows] = await db.query(
+        `SELECT id, name FROM menu WHERE id IN (${semiIds.map(()=>'?').join(',')})`,
+        semiIds
+      );
+      semiRows.forEach(r => { semiNameMap[r.id] = r.name; });
+    }
+
     // Production: removed debug log
 
     // Diagnostic info to return to the frontend so we can verify deductions worked
     const recipesApplied = []; // [{ menuId, menuName, deductions: [{invId, invName, deducted, affected}] }]
     const itemsWithoutRecipe = []; // menu items that have no recipe attached
+    const semiDeductions = []; // [{ menuId, menuName, semiId, semiName, qty }]
 
     for (const item of items) {
       // sales_items log row
       await db.query('INSERT INTO sales_items (order_id, order_date, item_name, qty, price, total, payment_method, username, shift_id) VALUES (?,?,?,?,?,?,?,?,?)',
         [orderId, now, item.name, item.qty, item.price, item.qty * item.price, payStr, username, shiftId]);
 
-      // Stock deduction via recipe.
+      // Stock deduction
       if (!item.id) {
-        // Production: removed debug log
         itemsWithoutRecipe.push({ name: item.name, reason: 'no item id' });
         continue;
       }
+
+      // ─── NEW PATH: semi-finished consumption ───
+      // If this finished product consumes from a semi-finished, deduct from the semi
+      // (in warehouse_stock keyed by the semi's menu.id) instead of raw recipe.
+      if (semiConsumeMap[item.id]) {
+        const sc = semiConsumeMap[item.id];
+        const consumed = sc.semiQty * item.qty;
+        // Update menu.stock for the semi-finished (central total)
+        await db.query('UPDATE menu SET stock = GREATEST(0, stock - ?) WHERE id = ?', [consumed, sc.semiId]);
+        // Update warehouse_stock for the branch's warehouse
+        if (warehouseId) {
+          await db.query(
+            'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
+            [consumed, warehouseId, sc.semiId]
+          );
+        }
+        // Movement log
+        const movId = 'MOV-SEMI-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+        await db.query(
+          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          [movId, now, sc.semiId, semiNameMap[sc.semiId] || sc.semiId, 'out', consumed,
+           'مبيعات (نصف مصنع)', username, orderId + ' / ' + item.name, warehouseId || null]
+        );
+        semiDeductions.push({
+          menuId: item.id, menuName: item.name,
+          semiId: sc.semiId, semiName: semiNameMap[sc.semiId] || sc.semiId,
+          qty: consumed
+        });
+        // Skip the raw recipe deduction — semi covers it
+        continue;
+      }
+
+      // ─── LEGACY PATH: raw recipe deduction (unchanged) ───
       if (!recipeMap[item.id]) {
-        // Production: removed debug log
         itemsWithoutRecipe.push({ id: item.id, name: item.name, reason: 'no recipe defined' });
         continue;
       }
@@ -281,6 +333,7 @@ router.post('/', async (req, res) => {
       orderId,
       recipesApplied: recipesApplied,
       itemsWithoutRecipe: itemsWithoutRecipe,
+      semiDeductions: semiDeductions,
       postingWarning: postingWarning,
       zatca: {
         uuid: zatcaStamp.uuid || null,

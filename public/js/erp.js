@@ -133,6 +133,11 @@ function erpNav(sectionId) {
       case 'erpSalesChannels':     if (typeof erpLoadSalesChannels === 'function') erpLoadSalesChannels(); break;
       case 'erpDiscountsV3':       if (typeof erpLoadDiscountsV3 === 'function') erpLoadDiscountsV3(); break;
       case 'erpShiftCloseAdmin':   if (typeof erpLoadShiftCloseAdmin === 'function') erpLoadShiftCloseAdmin(); break;
+      // ═══ Menu / Brands / Production (V3) ═══
+      case 'erpMenuHub':           if (typeof erpLoadMenuHub === 'function') erpLoadMenuHub(); break;
+      case 'erpBrandMenu':         if (typeof erpLoadBrandMenu === 'function') erpLoadBrandMenu(); break;
+      case 'erpSemiFinished':      if (typeof erpLoadSemiFinished === 'function') erpLoadSemiFinished(); break;
+      case 'erpProductionOrders':  if (typeof erpLoadProductionOrders === 'function') erpLoadProductionOrders(); break;
       case 'erpBOM':             erpLoadBOM(); break;
       case 'erpWasteEntries':    erpLoadWasteEntries(); break;
       case 'erpRoyaltyRuns':     erpLoadRoyaltyRuns(); break;
@@ -14000,5 +14005,905 @@ function erpViewShiftDetail(shiftId) {
 
 function erpExportShiftCloseAdmin() {
   _v3Toast('سيتم دعم التصدير قريباً');
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+ * MENU HUB / BRAND MENU / SEMI-FINISHED / PRODUCTION ORDERS
+ * Builds the spec's "قسم_المنيو_والبرندات_والمستودعات_والإنتاج" admin layer.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+window._mhBrandsCache = [];
+window._bmCurrentBrand = null;       // { id, name } when on per-brand menu page
+window._bmItemsCache = [];           // current brand's menu rows
+window._sfItemsCache = [];           // semi-finished list
+window._poCache = [];                // production orders list
+window._mhBranchCache = null;        // cached branches list
+window._mhWarehouseCache = null;     // cached warehouses list
+window._mhCategoriesCache = null;    // cached categories
+
+function _mhLoadBranches(cb) {
+  if (window._mhBranchCache) { cb(window._mhBranchCache); return; }
+  callAPI('GET', '/erp/branches', null, function(rows) {
+    window._mhBranchCache = Array.isArray(rows) ? rows : [];
+    cb(window._mhBranchCache);
+  });
+}
+function _mhLoadWarehouses(cb) {
+  if (window._mhWarehouseCache) { cb(window._mhWarehouseCache); return; }
+  callAPI('GET', '/erp/warehouses-list', null, function(rows) {
+    window._mhWarehouseCache = Array.isArray(rows) ? rows : [];
+    cb(window._mhWarehouseCache);
+  });
+}
+function _mhWarehouseOptions(selectedId, brandId) {
+  if (!window._mhWarehouseCache) return '<option value="">— لم تُحمَّل —</option>';
+  var opts = '<option value="">— الافتراضي حسب الفرع —</option>';
+  for (var i = 0; i < window._mhWarehouseCache.length; i++) {
+    var w = window._mhWarehouseCache[i];
+    if (brandId && w.brand_id && w.brand_id !== brandId) continue;
+    var sel = (w.id === selectedId) ? ' selected' : '';
+    opts += '<option value="' + w.id + '"' + sel + '>' + _v3EscapeHtml(w.name || w.id) + '</option>';
+  }
+  return opts;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * MENU HUB — brand grid with click → per-brand menu navigation
+ * ═══════════════════════════════════════════════════════════════════ */
+function erpLoadMenuHub() {
+  window._apiBridge.withSuccessHandler(function(list) {
+    window._mhBrandsCache = Array.isArray(list) ? list : [];
+    _mhRender();
+  }).getBrandsStats();
+}
+
+function _mhRender() {
+  var rows = window._mhBrandsCache || [];
+  var search = (document.getElementById('mhSearch')||{}).value || '';
+  var stFlt = (document.getElementById('mhStatus')||{}).value || '';
+  var s = search.trim().toLowerCase();
+  var filtered = rows.filter(function(b) {
+    if (s && (b.name||'').toLowerCase().indexOf(s) < 0 && (b.code||'').toLowerCase().indexOf(s) < 0) return false;
+    if (stFlt !== '' && (b.isActive ? '1':'0') !== stFlt) return false;
+    return true;
+  });
+
+  var metrics = document.getElementById('mhMetrics');
+  if (metrics) {
+    var totalProducts = rows.reduce(function(a,b){return a + Number(b.menuCount||0);}, 0);
+    var totalBranches = rows.reduce(function(a,b){return a + Number(b.branchCount||0);}, 0);
+    var active = rows.filter(function(b){return b.isActive;}).length;
+    metrics.innerHTML =
+      _v3MetricCard('fa-tags', 'إجمالي البراندات', rows.length, '#3b82f6') +
+      _v3MetricCard('fa-toggle-on', 'مفعّلة', active, '#22c55e') +
+      _v3MetricCard('fa-utensils', 'إجمالي المنتجات', totalProducts, '#8b5cf6') +
+      _v3MetricCard('fa-code-branch', 'إجمالي الفروع', totalBranches, '#f59e0b');
+  }
+
+  var grid = document.getElementById('mhBrandGrid');
+  if (!grid) return;
+  if (!filtered.length) {
+    grid.innerHTML = '<div class="wo-empty"><i class="fas fa-tags"></i><div class="wo-empty-title">لا توجد براندات</div><div class="wo-empty-sub">ابدأ بإنشاء أول براند.</div><button class="wo-btn wo-btn-primary" onclick="erpOpenBrandModal()" style="margin-top:12px;"><i class="fas fa-plus"></i> براند جديد</button></div>';
+    return;
+  }
+
+  grid.innerHTML = filtered.map(function(b) {
+    var initials = (b.name||'?').trim().slice(0, 2).toUpperCase();
+    var logoHtml = b.logo
+      ? '<img src="' + b.logo + '" alt="' + _v3EscapeHtml(b.name) + '">'
+      : '<span class="mh-brand-init">' + _v3EscapeHtml(initials) + '</span>';
+    return '<div class="mh-brand-card' + (b.isActive ? '' : ' inactive') + '" onclick="erpOpenBrandMenu(\'' + b.id + '\',\'' + (b.name||'').replace(/[\\\\\']/g,'') + '\')">' +
+      '<div class="mh-brand-logo">' + logoHtml + '</div>' +
+      '<div class="mh-brand-name">' + _v3EscapeHtml(b.name) + '</div>' +
+      '<div class="mh-brand-code">' + _v3EscapeHtml(b.code||'') + '</div>' +
+      '<div class="mh-brand-stats">' +
+        '<div class="mh-stat"><i class="fas fa-utensils"></i> ' + (b.menuCount||0) + ' منتج</div>' +
+        '<div class="mh-stat"><i class="fas fa-code-branch"></i> ' + (b.branchCount||0) + ' فرع</div>' +
+      '</div>' +
+      '<div class="mh-brand-cta">' +
+        '<span><i class="fas fa-arrow-left"></i> فتح المنيو</span>' +
+        (b.isActive ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;">مفعّل</span>'
+                    : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;">معطّل</span>') +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function erpFilterMenuHub() { _mhRender(); }
+
+/* ═══════════════════════════════════════════════════════════════════
+ * BRAND MENU — per-brand product list + add finished/semi flow
+ * ═══════════════════════════════════════════════════════════════════ */
+function erpOpenBrandMenu(brandId, brandName) {
+  window._bmCurrentBrand = { id: brandId, name: brandName || brandId };
+  erpNav('erpBrandMenu');
+}
+
+function erpLoadBrandMenu() {
+  if (!window._bmCurrentBrand) {
+    // No brand selected — bounce back to hub
+    erpNav('erpMenuHub');
+    return;
+  }
+  var br = window._bmCurrentBrand;
+  var nameEl = document.getElementById('bmBrandName');
+  if (nameEl) nameEl.textContent = br.name;
+
+  // Load brand's menu items (all, including inactive)
+  callAPI('GET', '/menu/all?brandId=' + encodeURIComponent(br.id), null, function(rows) {
+    window._bmItemsCache = Array.isArray(rows) ? rows : [];
+    _bmPopulateCategories();
+    _bmRender();
+  });
+}
+
+function _bmPopulateCategories() {
+  var sel = document.getElementById('bmCategory');
+  if (!sel) return;
+  var cats = [...new Set((window._bmItemsCache||[]).map(function(i){return i.category||'عام';}))].sort();
+  var current = sel.value;
+  sel.innerHTML = '<option value="">الكل</option>' + cats.map(function(c){
+    return '<option value="' + _v3EscapeHtml(c) + '"' + (current===c?' selected':'') + '>' + _v3EscapeHtml(c) + '</option>';
+  }).join('');
+}
+
+function _bmRender() {
+  var rows = window._bmItemsCache || [];
+  var search = (document.getElementById('bmSearch')||{}).value || '';
+  var typeFlt = (document.getElementById('bmType')||{}).value || '';
+  var catFlt = (document.getElementById('bmCategory')||{}).value || '';
+  var stFlt = (document.getElementById('bmStatus')||{}).value || '';
+  var s = search.trim().toLowerCase();
+
+  var filtered = rows.filter(function(m) {
+    if (s && (m.name||'').toLowerCase().indexOf(s) < 0) return false;
+    if (typeFlt === 'finished' && m.isSemiFinished) return false;
+    if (typeFlt === 'semi' && !m.isSemiFinished) return false;
+    if (catFlt && (m.category||'') !== catFlt) return false;
+    if (stFlt !== '' && ((m.active?'1':'0') !== stFlt)) return false;
+    return true;
+  });
+
+  var metrics = document.getElementById('bmMetrics');
+  if (metrics) {
+    var fin = rows.filter(function(m){return !m.isSemiFinished;}).length;
+    var semi = rows.filter(function(m){return m.isSemiFinished;}).length;
+    var act = rows.filter(function(m){return m.active;}).length;
+    metrics.innerHTML =
+      _v3MetricCard('fa-utensils', 'إجمالي المنتجات', rows.length, '#3b82f6') +
+      _v3MetricCard('fa-burger', 'تامة (للبيع)', fin, '#22c55e') +
+      _v3MetricCard('fa-blender', 'غير تامة', semi, '#f59e0b') +
+      _v3MetricCard('fa-toggle-on', 'مفعّلة', act, '#8b5cf6');
+  }
+
+  var tbody = document.getElementById('bmBody');
+  if (!tbody) return;
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="wo-empty"><i class="fas fa-folder-open"></i><div class="wo-empty-title">لا توجد منتجات</div><div class="wo-empty-sub">اضغط "منتج جديد" لإضافة الأول.</div></div></td></tr>';
+    return;
+  }
+
+  // Build a map for "consumes from" lookup
+  var nameById = {};
+  rows.forEach(function(m){ nameById[m.id] = m.name; });
+
+  tbody.innerHTML = filtered.map(function(m) {
+    var typeBadge = m.isSemiFinished
+      ? '<span class="wo-chip" style="background:#fef3c7;color:#92400e;font-weight:700;"><i class="fas fa-blender"></i> غير تام</span>'
+      : '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;"><i class="fas fa-burger"></i> تام</span>';
+    var consumes = m.consumesSemiId
+      ? '<span style="font-size:11px;color:#475569;"><i class="fas fa-link" style="color:#f59e0b;"></i> ' + _v3EscapeHtml(nameById[m.consumesSemiId]||m.consumesSemiId) + ' × ' + Number(m.consumesSemiQty||0) + '</span>'
+      : '<span style="color:#94a3b8;">—</span>';
+    return '<tr>' +
+      '<td><div style="font-weight:800;">'+ _v3EscapeHtml(m.name) +'</div></td>' +
+      '<td>'+ typeBadge +'</td>' +
+      '<td><span class="wo-chip">'+ _v3EscapeHtml(m.category||'عام') +'</span></td>' +
+      '<td class="num" style="font-weight:700;">'+ (m.isSemiFinished ? '—' : _v3Fmt(m.price) + ' ر.س') +'</td>' +
+      '<td class="num" style="font-weight:700;">'+ Number(m.stock||0) +'</td>' +
+      '<td>'+ consumes +'</td>' +
+      '<td>'+ (m.active ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مفعّل</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;">معطّل</span>') +'</td>' +
+      '<td>' +
+        '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpEditBrandMenuItem(\''+ m.id +'\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
+        '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpDeleteBrandMenuItem(\''+ m.id +'\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function erpFilterBrandMenu() { _bmRender(); }
+
+// Choose between finished and semi-finished BEFORE opening the form
+function erpOpenAddProductChooser() {
+  if (!window._bmCurrentBrand) { _v3Toast('اختر براند أولاً', true); return; }
+  var html =
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:12px 0;">' +
+      '<button class="mh-type-card" onclick="WoModal.close();erpOpenFinishedProductModal()">' +
+        '<div class="mh-type-ic" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-burger"></i></div>' +
+        '<div class="mh-type-title">منتج تام</div>' +
+        '<div class="mh-type-sub">يُباع للعميل النهائي مباشرة (مثل: كوب شاي مغربي).</div>' +
+      '</button>' +
+      '<button class="mh-type-card" onclick="WoModal.close();erpOpenSemiFinishedModal()">' +
+        '<div class="mh-type-ic" style="background:#fef3c7;color:#d97706;"><i class="fas fa-blender"></i></div>' +
+        '<div class="mh-type-title">منتج غير تام</div>' +
+        '<div class="mh-type-sub">منتج نصف مصنع له وصفة (BOM) ويُستهلك في إنتاج المنتجات التامة.</div>' +
+      '</button>' +
+    '</div>';
+  WoModal.open({
+    icon: 'fa-plus', iconColor: '#3b82f6',
+    title: 'اختر نوع المنتج',
+    subtitle: 'كل نوع له منطق محاسبي ومخزني مختلف.',
+    body: html,
+    size: 'sm',
+    footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>'
+  });
+}
+
+function erpEditBrandMenuItem(id) {
+  var m = (window._bmItemsCache||[]).find(function(x){return x.id===id;});
+  if (!m) { _v3Toast('غير موجود', true); return; }
+  if (m.isSemiFinished) erpOpenSemiFinishedModal(id);
+  else erpOpenFinishedProductModal(id);
+}
+
+function erpDeleteBrandMenuItem(id) {
+  WoModal.confirm({
+    title: 'حذف منتج',
+    message: 'سيتم حذف المنتج نهائياً من المنيو. هل أنت متأكد؟',
+    confirmText: 'حذف', danger: true
+  }).then(function(ok){
+    if (!ok) return;
+    callAPI('DELETE', '/menu/' + id, null, function(r){
+      if (r && r.success) { _v3Toast('تم الحذف'); erpLoadBrandMenu(); }
+      else _v3Toast((r && r.error) || 'فشل الحذف', true);
+    });
+  });
+}
+
+/* ─── Finished product modal ─── */
+function erpOpenFinishedProductModal(id) {
+  var brand = window._bmCurrentBrand || { id:'', name:'—' };
+  _mhLoadWarehouses(function() {
+    callAPI('GET', '/menu/semi-finished?brandId=' + encodeURIComponent(brand.id), null, function(semis) {
+      var semiList = Array.isArray(semis) ? semis : [];
+      _openFinishedModalInner(id, brand, semiList);
+    });
+  });
+}
+
+function _openFinishedModalInner(id, brand, semiList) {
+  var m = id ? (window._bmItemsCache||[]).find(function(x){return x.id===id;}) : null;
+  var mi = m || {
+    id:'', name:'', price:0, category:'عام', cost:0, stock:9999, minStock:0, active:true,
+    pricingMode:'fixed', markupPct:30, brandId: brand.id,
+    isSemiFinished:false, productionUnit:'pcs', consumesSemiId:'', consumesSemiQty:0,
+    salesWarehouseId:''
+  };
+
+  var semiOpts = '<option value="">— لا يستهلك من نصف مصنع —</option>' +
+    semiList.map(function(s){
+      var sel = (s.id === mi.consumesSemiId) ? ' selected' : '';
+      return '<option value="' + s.id + '"' + sel + '>' + _v3EscapeHtml(s.name) + ' (' + (s.productionUnit||'pcs') + ')</option>';
+    }).join('');
+
+  var html =
+    '<form id="bmFinForm" onsubmit="event.preventDefault();_bmSaveFinished();" class="v3-form">' +
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-circle-info"></i> البيانات الأساسية</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">اسم المنتج *</label><input id="bmF_name" class="wo-input" value="'+ _v3EscapeHtml(mi.name) +'" required></div>' +
+        '<div class="wo-field"><label class="wo-field-label">البراند</label><input class="wo-input" value="'+ _v3EscapeHtml(brand.name) +'" readonly></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الفئة</label><input id="bmF_category" class="wo-input" value="'+ _v3EscapeHtml(mi.category||'عام') +'" placeholder="مشروبات / حلويات / ساندويتش..."></div>' +
+        '<div class="wo-field"><label class="wo-field-label">السعر للعميل *</label><input id="bmF_price" type="number" step="0.01" class="wo-input" value="'+ Number(mi.price||0) +'" required></div>' +
+        '<div class="wo-field"><label class="wo-field-label">التكلفة</label><input id="bmF_cost" type="number" step="0.01" class="wo-input" value="'+ Number(mi.cost||0) +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">طريقة التكلفة</label>' +
+          '<select id="bmF_pricingMode" class="wo-select">' +
+            '<option value="fixed"'+(mi.pricingMode==='fixed'?' selected':'')+'>ثابتة</option>' +
+            '<option value="variable"'+(mi.pricingMode==='variable'?' selected':'')+'>متغيرة (من الوصفة)</option>' +
+          '</select>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-link"></i> الاستهلاك من نصف مصنع (اختياري)</h4>' +
+      '<p style="font-size:12px;color:#64748b;margin:0 0 10px;">إذا كان هذا المنتج التام يُحضَّر من منتج غير تام (مثل: كوب شاي مغربي يستهلك من براد شاي مغربي)، اربطه هنا. عند البيع سيتم خصم الكمية من المنتج غير التام بدلاً من المواد الخام.</p>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">يستهلك من</label><select id="bmF_consumesSemiId" class="wo-select">'+ semiOpts +'</select></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الكمية المستهلكة لكل وحدة</label><input id="bmF_consumesSemiQty" type="number" step="0.001" class="wo-input" value="'+ Number(mi.consumesSemiQty||0) +'" placeholder="مثلاً 200 (مل من البراد)"></div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-warehouse"></i> المستودع والمخزون</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">المستودع الافتراضي للبيع</label><select id="bmF_salesWarehouseId" class="wo-select">'+ _mhWarehouseOptions(mi.salesWarehouseId, brand.id) +'</select></div>' +
+        '<div class="wo-field"><label class="wo-field-label">المخزون الأولي</label><input id="bmF_stock" type="number" class="wo-input" value="'+ Number(mi.stock||0) +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الحد الأدنى للتنبيه</label><input id="bmF_minStock" type="number" class="wo-input" value="'+ Number(mi.minStock||0) +'"></div>' +
+        '<label class="v3-checkbox" style="align-self:flex-end;"><input type="checkbox" id="bmF_active" '+(mi.active!==false?'checked':'')+'><span>المنتج مفعّل</span></label>' +
+      '</div>' +
+    '</div>' +
+
+    '<input type="hidden" id="bmF_id" value="'+ _v3EscapeHtml(mi.id||'') +'">' +
+    '</form>';
+
+  WoModal.open({
+    icon: 'fa-burger', iconColor: '#22c55e',
+    title: id ? 'تعديل منتج تام' : 'منتج تام جديد',
+    subtitle: 'منتج يُباع للعميل النهائي مباشرة. اربطه بنصف مصنع إن وُجد.',
+    body: html, size: 'lg',
+    footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+            '<button class="wo-btn wo-btn-primary" onclick="_bmSaveFinished()"><i class="fas fa-save"></i> حفظ</button>'
+  });
+}
+
+function _bmSaveFinished() {
+  var brand = window._bmCurrentBrand || { id:'' };
+  var data = {
+    name: document.getElementById('bmF_name').value.trim(),
+    price: Number(document.getElementById('bmF_price').value) || 0,
+    category: document.getElementById('bmF_category').value.trim() || 'عام',
+    cost: Number(document.getElementById('bmF_cost').value) || 0,
+    stock: Number(document.getElementById('bmF_stock').value) || 0,
+    minStock: Number(document.getElementById('bmF_minStock').value) || 0,
+    active: document.getElementById('bmF_active').checked,
+    pricingMode: document.getElementById('bmF_pricingMode').value,
+    markupPct: 30,
+    brandId: brand.id,
+    isSemiFinished: false,
+    productionUnit: 'pcs',
+    consumesSemiId: document.getElementById('bmF_consumesSemiId').value || null,
+    consumesSemiQty: Number(document.getElementById('bmF_consumesSemiQty').value) || 0,
+    salesWarehouseId: document.getElementById('bmF_salesWarehouseId').value || null
+  };
+  if (!data.name) { _v3Toast('اسم المنتج مطلوب', true); return; }
+
+  var id = document.getElementById('bmF_id').value;
+  var method = id ? 'PUT' : 'POST';
+  var path = id ? ('/menu/' + id) : '/menu';
+  callAPI(method, path, data, function(r) {
+    if (r && r.success) { _v3Toast('تم الحفظ'); WoModal.close(); erpLoadBrandMenu(); }
+    else _v3Toast((r && r.error) || 'فشل الحفظ', true);
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * SEMI-FINISHED PRODUCTS — modal + page + BOM editor
+ * ═══════════════════════════════════════════════════════════════════ */
+function erpLoadSemiFinished() {
+  callAPI('GET', '/menu/semi-finished', null, function(rows) {
+    window._sfItemsCache = Array.isArray(rows) ? rows : [];
+    _sfPopulateBrands();
+    _sfRender();
+  });
+}
+
+function _sfPopulateBrands() {
+  var sel = document.getElementById('sfBrand');
+  if (!sel) return;
+  var brandIds = {};
+  (window._sfItemsCache||[]).forEach(function(s){ if (s.brandId) brandIds[s.brandId] = s.brandName || s.brandId; });
+  var current = sel.value;
+  sel.innerHTML = '<option value="">الكل</option>' + Object.keys(brandIds).map(function(id){
+    return '<option value="' + id + '"' + (current===id?' selected':'') + '>' + _v3EscapeHtml(brandIds[id]) + '</option>';
+  }).join('');
+}
+
+function _sfRender() {
+  var rows = window._sfItemsCache || [];
+  var search = (document.getElementById('sfSearch')||{}).value || '';
+  var brFlt = (document.getElementById('sfBrand')||{}).value || '';
+  var s = search.trim().toLowerCase();
+  var filtered = rows.filter(function(m) {
+    if (s && (m.name||'').toLowerCase().indexOf(s) < 0) return false;
+    if (brFlt && m.brandId !== brFlt) return false;
+    return true;
+  });
+
+  var metrics = document.getElementById('sfMetrics');
+  if (metrics) {
+    var act = rows.filter(function(m){return m.active;}).length;
+    var totalStock = rows.reduce(function(a,m){return a + Number(m.stock||0);}, 0);
+    metrics.innerHTML =
+      _v3MetricCard('fa-blender', 'إجمالي الأنواع', rows.length, '#f59e0b') +
+      _v3MetricCard('fa-toggle-on', 'مفعّلة', act, '#22c55e') +
+      _v3MetricCard('fa-boxes-stacked', 'إجمالي المخزون', _v3Fmt(totalStock), '#8b5cf6');
+  }
+
+  var tbody = document.getElementById('sfBody');
+  if (!tbody) return;
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="wo-empty"><i class="fas fa-folder-open"></i><div class="wo-empty-title">لا توجد منتجات غير تامة</div><div class="wo-empty-sub">اضغط "منتج غير تام جديد" لإضافة الأول.</div></div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(function(m) {
+    return '<tr>' +
+      '<td><div style="font-weight:800;">'+ _v3EscapeHtml(m.name) +'</div></td>' +
+      '<td>'+ _v3EscapeHtml(m.brandName||'—') +'</td>' +
+      '<td><span class="wo-chip">'+ _v3EscapeHtml(m.productionUnit||'pcs') +'</span></td>' +
+      '<td class="num" style="font-weight:700;">'+ Number(m.stock||0) +'</td>' +
+      '<td class="num">— </td>' +
+      '<td style="font-size:11px;">'+ (m.productionWarehouseId ? _v3EscapeHtml(m.productionWarehouseId) : '<span style="color:#94a3b8;">حسب الفرع</span>') +'</td>' +
+      '<td>'+ (m.active ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مفعّل</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;">معطّل</span>') +'</td>' +
+      '<td>' +
+        '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpOpenSemiFinishedModal(\''+ m.id +'\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
+        '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpEditSemiBom(\''+ m.id +'\')" title="الوصفة (BOM)"><i class="fas fa-list-check"></i></button> ' +
+        '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpDeleteBrandMenuItem(\''+ m.id +'\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function erpFilterSemiFinished() { _sfRender(); }
+
+function erpOpenSemiFinishedModal(id) {
+  // Make sure we have brands list for the dropdown
+  var brand = window._bmCurrentBrand;
+  callAPI('GET', '/erp/brands', null, function(brandsList) {
+    _mhLoadWarehouses(function() {
+      _openSemiFinishedInner(id, brandsList || [], brand);
+    });
+  });
+}
+
+function _openSemiFinishedInner(id, brandsList, currentBrand) {
+  var pool = window._sfItemsCache.length ? window._sfItemsCache : window._bmItemsCache || [];
+  var m = id ? pool.find(function(x){return x.id===id;}) : null;
+  var brandId = (m && m.brandId) || (currentBrand && currentBrand.id) || '';
+
+  var mi = m || {
+    id:'', name:'', category:'منتجات غير تامة', cost:0, stock:0, minStock:0, active:true,
+    pricingMode:'variable', markupPct:0, brandId: brandId,
+    isSemiFinished:true, productionUnit:'pcs',
+    productionWarehouseId:'', salesWarehouseId:''
+  };
+
+  var brandOpts = brandsList.map(function(b){
+    var sel = (b.id === mi.brandId) ? ' selected' : '';
+    return '<option value="' + b.id + '"' + sel + '>' + _v3EscapeHtml(b.name||b.id) + '</option>';
+  }).join('');
+
+  var unitOpts = ['pcs','براد','صحن','لتر','جرام','كوب','حبة'].map(function(u){
+    return '<option value="'+u+'"'+(mi.productionUnit===u?' selected':'')+'>'+u+'</option>';
+  }).join('');
+
+  var html =
+    '<form id="sfForm" onsubmit="event.preventDefault();_sfSave();" class="v3-form">' +
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-circle-info"></i> البيانات الأساسية</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">اسم المنتج غير التام *</label><input id="sfF_name" class="wo-input" value="'+ _v3EscapeHtml(mi.name) +'" required placeholder="مثل: براد شاي مغربي"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">البراند *</label><select id="sfF_brandId" class="wo-select" required>'+ brandOpts +'</select></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الفئة</label><input id="sfF_category" class="wo-input" value="'+ _v3EscapeHtml(mi.category||'منتجات غير تامة') +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">وحدة الإنتاج *</label><select id="sfF_productionUnit" class="wo-select">'+ unitOpts +'</select></div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-warehouse"></i> المستودع والمخزون</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">المستودع الافتراضي للإنتاج</label><select id="sfF_productionWarehouseId" class="wo-select">'+ _mhWarehouseOptions(mi.productionWarehouseId, mi.brandId) +'</select></div>' +
+        '<div class="wo-field"><label class="wo-field-label">المخزون الحالي</label><input id="sfF_stock" type="number" class="wo-input" value="'+ Number(mi.stock||0) +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">التكلفة</label><input id="sfF_cost" type="number" step="0.01" class="wo-input" value="'+ Number(mi.cost||0) +'"></div>' +
+        '<label class="v3-checkbox" style="align-self:flex-end;"><input type="checkbox" id="sfF_active" '+(mi.active!==false?'checked':'')+'><span>المنتج مفعّل</span></label>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="v3-form-section" style="background:#fffbeb;border-color:#fde68a;">' +
+      '<h4 class="v3-section-title" style="color:#92400e;"><i class="fas fa-info-circle" style="color:#f59e0b;"></i> ملاحظة</h4>' +
+      '<p style="font-size:12px;color:#78350f;margin:0;">بعد الحفظ يمكنك تحديد الوصفة (BOM) من زر "<i class="fas fa-list-check"></i>" في الجدول. عند الإنتاج سيتم خصم المكونات من المستودع وإضافة الكمية المنتجة.</p>' +
+    '</div>' +
+
+    '<input type="hidden" id="sfF_id" value="'+ _v3EscapeHtml(mi.id||'') +'">' +
+    '</form>';
+
+  WoModal.open({
+    icon: 'fa-blender', iconColor: '#f59e0b',
+    title: id ? 'تعديل منتج غير تام' : 'منتج غير تام جديد',
+    subtitle: 'منتج نصف مصنع له وصفة (BOM) ويتم استهلاكه عند بيع المنتجات التامة.',
+    body: html, size: 'lg',
+    footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+            '<button class="wo-btn wo-btn-primary" onclick="_sfSave()"><i class="fas fa-save"></i> حفظ</button>'
+  });
+}
+
+function _sfSave() {
+  var data = {
+    name: document.getElementById('sfF_name').value.trim(),
+    brandId: document.getElementById('sfF_brandId').value,
+    category: document.getElementById('sfF_category').value.trim() || 'منتجات غير تامة',
+    cost: Number(document.getElementById('sfF_cost').value) || 0,
+    stock: Number(document.getElementById('sfF_stock').value) || 0,
+    minStock: 0,
+    active: document.getElementById('sfF_active').checked,
+    pricingMode: 'variable',
+    markupPct: 0,
+    price: 0,
+    isSemiFinished: true,
+    productionUnit: document.getElementById('sfF_productionUnit').value,
+    productionWarehouseId: document.getElementById('sfF_productionWarehouseId').value || null,
+    consumesSemiId: null,
+    consumesSemiQty: 0
+  };
+  if (!data.name) { _v3Toast('الاسم مطلوب', true); return; }
+  if (!data.brandId) { _v3Toast('البراند مطلوب', true); return; }
+
+  var id = document.getElementById('sfF_id').value;
+  var method = id ? 'PUT' : 'POST';
+  var path = id ? ('/menu/' + id) : '/menu';
+  callAPI(method, path, data, function(r) {
+    if (r && r.success) {
+      _v3Toast('تم الحفظ');
+      WoModal.close();
+      // Refresh whichever page user is on
+      if (window._bmCurrentBrand) erpLoadBrandMenu();
+      erpLoadSemiFinished();
+    } else _v3Toast((r && r.error) || 'فشل الحفظ', true);
+  });
+}
+
+// BOM editor for a semi-finished — uses the existing recipe table (menu_id → ingredients)
+function erpEditSemiBom(menuId) {
+  var m = (window._sfItemsCache||window._bmItemsCache||[]).find(function(x){return x.id===menuId;});
+  if (!m) { _v3Toast('غير موجود', true); return; }
+
+  // Load existing recipe + inv items list in parallel
+  var recipe = [];
+  var invItems = [];
+  var pending = 2;
+  function done() {
+    pending--;
+    if (pending === 0) _renderBomModal(m, recipe, invItems);
+  }
+  callAPI('GET', '/menu/recipes/' + menuId, null, function(rows) {
+    recipe = Array.isArray(rows) ? rows : (rows && rows.ingredients ? rows.ingredients : []);
+    done();
+  });
+  callAPI('GET', '/inventory/items', null, function(rows) {
+    invItems = Array.isArray(rows) ? rows : [];
+    done();
+  });
+}
+
+function _renderBomModal(m, recipe, invItems) {
+  var rowsHtml = (recipe.length ? recipe : [{}]).map(function(ing, i){ return _bomLineHtml(ing, i, invItems); }).join('');
+  var html =
+    '<div class="v3-form">' +
+      '<div class="v3-form-section" style="background:#fef3c7;border-color:#fde68a;">' +
+        '<div style="font-size:13px;color:#78350f;line-height:1.6;"><b>المنتج:</b> ' + _v3EscapeHtml(m.name) + ' (' + _v3EscapeHtml(m.productionUnit||'pcs') + ')<br>' +
+        'حدد المكونات الخام وكمياتها المطلوبة لإنتاج وحدة واحدة من هذا المنتج غير التام.</div>' +
+      '</div>' +
+      '<div class="wo-table-surface"><table class="wo-table" id="bomTbl">' +
+        '<thead><tr><th>المكون</th><th class="num">الكمية</th><th>الوحدة</th><th>إجراء</th></tr></thead>' +
+        '<tbody>'+ rowsHtml +'</tbody>' +
+      '</table></div>' +
+      '<button class="wo-btn wo-btn-secondary" onclick="_bomAddLine()" style="margin-top:10px;"><i class="fas fa-plus"></i> إضافة مكون</button>' +
+    '</div>';
+
+  // Cache invItems for line additions
+  window._bomInvItemsCache = invItems;
+  window._bomMenuId = m.id;
+
+  WoModal.open({
+    icon: 'fa-list-check', iconColor: '#f59e0b',
+    title: 'وصفة الإنتاج (BOM) — ' + m.name,
+    subtitle: 'حدد كل مكون والكمية المطلوبة لإنتاج وحدة واحدة.',
+    body: html, size: 'lg',
+    footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+            '<button class="wo-btn wo-btn-primary" onclick="_bomSave()"><i class="fas fa-save"></i> حفظ الوصفة</button>'
+  });
+}
+
+function _bomLineHtml(ing, i, invItems) {
+  var opts = '<option value="">— اختر مكون —</option>' + invItems.map(function(it){
+    var sel = (it.id === (ing.invItemId || ing.inv_item_id)) ? ' selected' : '';
+    return '<option value="' + it.id + '" data-unit="' + (it.unit||'') + '" data-name="' + _v3EscapeHtml(it.name) + '"' + sel + '>' + _v3EscapeHtml(it.name) + '</option>';
+  }).join('');
+  return '<tr class="bom-line">' +
+    '<td><select class="wo-select bom-inv">'+ opts +'</select></td>' +
+    '<td><input type="number" step="0.001" class="wo-input bom-qty" value="'+ Number(ing.qtyUsed || ing.qty_used || 0) +'"></td>' +
+    '<td><input class="wo-input bom-unit" value="'+ _v3EscapeHtml(ing.unit || 'g') +'" style="width:80px;"></td>' +
+    '<td><button type="button" class="wo-btn wo-btn-sm wo-btn-danger" onclick="this.closest(\'tr\').remove();"><i class="fas fa-trash"></i></button></td>' +
+  '</tr>';
+}
+
+function _bomAddLine() {
+  var tbody = document.querySelector('#bomTbl tbody');
+  if (!tbody) return;
+  var div = document.createElement('div');
+  div.innerHTML = _bomLineHtml({}, tbody.children.length, window._bomInvItemsCache || []);
+  tbody.appendChild(div.firstChild);
+}
+
+function _bomSave() {
+  var lines = document.querySelectorAll('#bomTbl tbody tr.bom-line');
+  var ingredients = [];
+  lines.forEach(function(tr) {
+    var sel = tr.querySelector('.bom-inv');
+    var qty = tr.querySelector('.bom-qty');
+    var unit = tr.querySelector('.bom-unit');
+    if (!sel.value || Number(qty.value) <= 0) return;
+    var opt = sel.options[sel.selectedIndex];
+    ingredients.push({
+      invItemId: sel.value,
+      invItemName: opt.dataset.name || '',
+      qtyUsed: Number(qty.value) || 0,
+      unit: unit.value || 'g'
+    });
+  });
+  if (!ingredients.length) { _v3Toast('أضف مكون واحد على الأقل', true); return; }
+
+  // Existing menu/recipes endpoint expects (menuId, menuName, ingredients) signature
+  var menuName = (window._bmItemsCache||window._sfItemsCache||[]).find(function(m){return m.id===window._bomMenuId;});
+  menuName = menuName ? menuName.name : window._bomMenuId;
+  callAPI('POST', '/menu/recipes/' + window._bomMenuId, { menuName: menuName, ingredients: ingredients }, function(r) {
+    if (r && r.success) { _v3Toast('تم حفظ الوصفة'); WoModal.close(); }
+    else _v3Toast((r && r.error) || 'فشل الحفظ', true);
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * PRODUCTION ORDERS (multi-product)
+ * Calls existing /api/erp/production-orders endpoints (warehouse-ops.js)
+ * ═══════════════════════════════════════════════════════════════════ */
+function erpLoadProductionOrders() {
+  var qs = [];
+  var f = (document.getElementById('poFrom')||{}).value;
+  var t = (document.getElementById('poTo')||{}).value;
+  var b = (document.getElementById('poBrandFlt')||{}).value;
+  var st = (document.getElementById('poStatusFlt')||{}).value;
+  if (f) qs.push('startDate=' + encodeURIComponent(f));
+  if (t) qs.push('endDate=' + encodeURIComponent(t));
+  if (b) qs.push('brandId=' + encodeURIComponent(b));
+  if (st) qs.push('status=' + encodeURIComponent(st));
+  var path = '/erp/production-orders' + (qs.length ? '?'+qs.join('&') : '');
+
+  callAPI('GET', path, null, function(rows) {
+    window._poCache = Array.isArray(rows) ? rows : (rows && rows.orders ? rows.orders : []);
+    _poPopulateBrands();
+    _poRender();
+  });
+}
+
+function _poPopulateBrands() {
+  callAPI('GET', '/erp/brands', null, function(brs) {
+    var sel = document.getElementById('poBrandFlt');
+    if (!sel) return;
+    var current = sel.value;
+    sel.innerHTML = '<option value="">الكل</option>' + (brs||[]).map(function(b){
+      return '<option value="' + b.id + '"' + (current===b.id?' selected':'') + '>' + _v3EscapeHtml(b.name) + '</option>';
+    }).join('');
+  });
+}
+
+function _poRender() {
+  var rows = window._poCache || [];
+  var metrics = document.getElementById('poMetrics');
+  if (metrics) {
+    var byStatus = { planned:0, released:0, completed:0 };
+    rows.forEach(function(o){ if (byStatus[o.status]!=null) byStatus[o.status]++; });
+    var totalProduced = rows.reduce(function(a,o){return a + Number(o.qtyProduced||o.qty_produced||0);}, 0);
+    metrics.innerHTML =
+      _v3MetricCard('fa-list', 'إجمالي الأوامر', rows.length, '#3b82f6') +
+      _v3MetricCard('fa-clipboard-list', 'مخططة', byStatus.planned, '#94a3b8') +
+      _v3MetricCard('fa-play', 'مُطلقة', byStatus.released, '#f59e0b') +
+      _v3MetricCard('fa-check-circle', 'مكتملة', byStatus.completed, '#22c55e') +
+      _v3MetricCard('fa-boxes-stacked', 'إجمالي المنتج', _v3Fmt(totalProduced), '#8b5cf6');
+  }
+
+  var tbody = document.getElementById('poOrdersBody');
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="wo-empty"><i class="fas fa-folder-open"></i><div class="wo-empty-title">لا توجد أوامر إنتاج</div><div class="wo-empty-sub">اضغط "أمر إنتاج جديد" لإنشاء الأول.</div></div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(function(o) {
+    var statusMap = { planned:['#94a3b8','مخطط'], released:['#f59e0b','مُطلق'], completed:['#22c55e','مكتمل'], cancelled:['#ef4444','ملغي'] };
+    var st = statusMap[o.status] || ['#64748b', o.status];
+    return '<tr>' +
+      '<td><code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:11px;">'+ _v3EscapeHtml(o.id) +'</code></td>' +
+      '<td>'+ (o.orderDate || o.order_date ? new Date(o.orderDate||o.order_date).toLocaleDateString('ar-SA') : '—') +'</td>' +
+      '<td>'+ _v3EscapeHtml(o.brandName||o.brand_id||'—') +'</td>' +
+      '<td>'+ _v3EscapeHtml(o.productName||o.product_name||'—') +'</td>' +
+      '<td class="num" style="font-weight:700;">'+ _v3Fmt(o.qtyPlanned||o.qty_planned||0) +'</td>' +
+      '<td>'+ _v3EscapeHtml(o.warehouseName||o.warehouse_id||'—') +'</td>' +
+      '<td><span class="wo-chip" style="background:'+st[0]+'1a;color:'+st[0]+';font-weight:700;">'+ st[1] +'</span></td>' +
+      '<td>' +
+        (o.status === 'planned' ? '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpReleaseProduction(\''+ o.id +'\')" title="إطلاق"><i class="fas fa-play"></i></button> ' : '') +
+        (o.status === 'released' ? '<button class="wo-btn wo-btn-sm wo-btn-primary" onclick="erpCompleteProduction(\''+ o.id +'\')" title="إكمال"><i class="fas fa-check"></i></button> ' : '') +
+        '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpViewProductionDetail(\''+ o.id +'\')" title="تفاصيل"><i class="fas fa-eye"></i></button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function erpOpenProductionOrderModal() {
+  // Load semi-finished list + warehouses + brands
+  callAPI('GET', '/menu/semi-finished', null, function(semis) {
+    _mhLoadWarehouses(function() {
+      callAPI('GET', '/erp/brands', null, function(brands) {
+        _renderProductionOrderModal(semis||[], brands||[]);
+      });
+    });
+  });
+}
+
+function _renderProductionOrderModal(semis, brands) {
+  if (!semis.length) {
+    _v3Toast('لا توجد منتجات غير تامة — أنشئها أولاً', true);
+    return;
+  }
+  var brandOpts = '<option value="">— اختر براند —</option>' + brands.map(function(b){
+    return '<option value="' + b.id + '">' + _v3EscapeHtml(b.name) + '</option>';
+  }).join('');
+
+  // Cache for line additions
+  window._poSemisCache = semis;
+
+  var html =
+    '<form id="poForm" onsubmit="event.preventDefault();_poSave();" class="v3-form">' +
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-circle-info"></i> رأس الأمر</h4>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">البراند</label><select id="poF_brandId" class="wo-select" onchange="_poFilterSemis()">'+ brandOpts +'</select></div>' +
+        '<div class="wo-field"><label class="wo-field-label">المستودع المنتج إليه *</label><select id="poF_warehouseId" class="wo-select">'+ _mhWarehouseOptions(null, null) +'</select></div>' +
+        '<div class="wo-field"><label class="wo-field-label">تاريخ الأمر</label><input id="poF_date" type="date" class="wo-input" value="'+ new Date().toISOString().slice(0,10) +'"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">ملاحظات</label><input id="poF_notes" class="wo-input" placeholder="ملاحظات..."></div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="v3-form-section">' +
+      '<h4 class="v3-section-title"><i class="fas fa-list"></i> المنتجات في هذا الأمر</h4>' +
+      '<p style="font-size:12px;color:#64748b;margin:0 0 10px;">يمكن إضافة عدة منتجات غير تامة في نفس الأمر، كل واحد بكميته.</p>' +
+      '<div class="wo-table-surface"><table class="wo-table" id="poTbl">' +
+        '<thead><tr><th>المنتج</th><th class="num">الكمية</th><th>الوحدة</th><th>إجراء</th></tr></thead>' +
+        '<tbody>'+ _poLineHtml(semis) +'</tbody>' +
+      '</table></div>' +
+      '<button type="button" class="wo-btn wo-btn-secondary" onclick="_poAddLine()" style="margin-top:10px;"><i class="fas fa-plus"></i> إضافة منتج</button>' +
+    '</div>' +
+    '</form>';
+
+  WoModal.open({
+    icon: 'fa-industry', iconColor: '#22c55e',
+    title: 'أمر إنتاج جديد',
+    subtitle: 'سيتم خصم المكونات من المستودع وإضافة الكميات المنتجة عند الإكمال.',
+    body: html, size: 'lg',
+    footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+            '<button class="wo-btn wo-btn-primary" onclick="_poSave()"><i class="fas fa-save"></i> حفظ ومخطط</button>'
+  });
+}
+
+function _poLineHtml(semis) {
+  var opts = '<option value="">— اختر منتج غير تام —</option>' + semis.map(function(s){
+    return '<option value="' + s.id + '" data-unit="' + (s.productionUnit||'pcs') + '" data-brand="' + (s.brandId||'') + '">' + _v3EscapeHtml(s.name) + '</option>';
+  }).join('');
+  return '<tr class="po-line">' +
+    '<td><select class="wo-select po-product" onchange="_poUnitFromProduct(this)">'+ opts +'</select></td>' +
+    '<td><input type="number" step="1" class="wo-input po-qty" value="1" min="1"></td>' +
+    '<td><input class="wo-input po-unit" value="pcs" readonly style="width:90px;background:#f8fafc;"></td>' +
+    '<td><button type="button" class="wo-btn wo-btn-sm wo-btn-danger" onclick="this.closest(\'tr\').remove();"><i class="fas fa-trash"></i></button></td>' +
+  '</tr>';
+}
+
+function _poAddLine() {
+  var tbody = document.querySelector('#poTbl tbody');
+  if (!tbody) return;
+  var div = document.createElement('div');
+  div.innerHTML = _poLineHtml(window._poSemisCache || []);
+  tbody.appendChild(div.firstChild);
+}
+
+function _poUnitFromProduct(sel) {
+  var opt = sel.options[sel.selectedIndex];
+  var tr = sel.closest('tr');
+  if (!opt || !tr) return;
+  var unitEl = tr.querySelector('.po-unit');
+  if (unitEl) unitEl.value = opt.dataset.unit || 'pcs';
+}
+
+function _poFilterSemis() {
+  var brandId = document.getElementById('poF_brandId').value;
+  document.querySelectorAll('#poTbl .po-product').forEach(function(sel){
+    Array.from(sel.options).forEach(function(opt){
+      if (!opt.value) { opt.style.display = ''; return; }
+      var ob = opt.dataset.brand || '';
+      opt.style.display = (!brandId || ob === brandId) ? '' : 'none';
+    });
+    // Reset if currently-selected option is hidden
+    var current = sel.options[sel.selectedIndex];
+    if (current && current.style.display === 'none') sel.value = '';
+  });
+}
+
+function _poSave() {
+  var warehouseId = document.getElementById('poF_warehouseId').value;
+  var brandId = document.getElementById('poF_brandId').value;
+  var orderDate = document.getElementById('poF_date').value;
+  var notes = document.getElementById('poF_notes').value;
+  if (!warehouseId) { _v3Toast('المستودع مطلوب', true); return; }
+
+  var lines = document.querySelectorAll('#poTbl tbody tr.po-line');
+  var orders = [];
+  lines.forEach(function(tr) {
+    var sel = tr.querySelector('.po-product');
+    var qty = Number(tr.querySelector('.po-qty').value) || 0;
+    if (!sel.value || qty <= 0) return;
+    orders.push({
+      productId: sel.value,
+      qtyPlanned: qty,
+      brandId: brandId || (sel.options[sel.selectedIndex].dataset.brand || null),
+      warehouseId: warehouseId,
+      orderDate: orderDate,
+      notes: notes
+    });
+  });
+  if (!orders.length) { _v3Toast('أضف منتج واحد على الأقل', true); return; }
+
+  // The existing /api/erp/production-orders endpoint takes one product per call.
+  // Loop through and create them sequentially; report progress at the end.
+  var done = 0, failed = 0;
+  orders.forEach(function(o) {
+    callAPI('POST', '/erp/production-orders', o, function(r) {
+      if (r && r.success) done++;
+      else failed++;
+      if (done + failed === orders.length) {
+        if (failed === 0) {
+          _v3Toast('تم إنشاء ' + done + ' أمر إنتاج');
+          WoModal.close();
+          erpLoadProductionOrders();
+        } else {
+          _v3Toast('نجح ' + done + ' / فشل ' + failed, true);
+        }
+      }
+    });
+  });
+}
+
+function erpReleaseProduction(id) {
+  WoModal.confirm({
+    title: 'إطلاق أمر الإنتاج',
+    message: 'سيتم خصم المكونات من المستودع. هل تتابع؟',
+    confirmText: 'إطلاق'
+  }).then(function(ok){
+    if (!ok) return;
+    callAPI('POST', '/erp/production-orders/' + id + '/release', {}, function(r){
+      if (r && r.success) { _v3Toast('تم الإطلاق'); erpLoadProductionOrders(); }
+      else _v3Toast((r && r.error) || 'فشل', true);
+    });
+  });
+}
+
+function erpCompleteProduction(id) {
+  WoModal.confirm({
+    title: 'إكمال أمر الإنتاج',
+    message: 'سيتم إضافة الكمية المنتجة إلى المستودع. هل تتابع؟',
+    confirmText: 'إكمال'
+  }).then(function(ok){
+    if (!ok) return;
+    callAPI('POST', '/erp/production-orders/' + id + '/complete', {}, function(r){
+      if (r && r.success) { _v3Toast('تم الإكمال'); erpLoadProductionOrders(); }
+      else _v3Toast((r && r.error) || 'فشل', true);
+    });
+  });
+}
+
+function erpViewProductionDetail(id) {
+  callAPI('GET', '/erp/production-orders/' + id, null, function(o) {
+    if (!o || o.error) { _v3Toast('فشل التحميل', true); return; }
+    var html = '<div style="padding:6px 0;">' +
+      '<div style="margin-bottom:14px;padding:14px;background:linear-gradient(135deg,#dcfce7,#f0fdf4);border-radius:10px;border:1px solid #86efac;">' +
+        '<div style="font-size:13px;color:#166534;font-weight:700;">أمر إنتاج: '+ _v3EscapeHtml(o.id) +'</div>' +
+        '<div style="font-size:24px;font-weight:900;color:#14532d;margin-top:4px;">'+ _v3EscapeHtml(o.productName||o.product_name||'—') +'</div>' +
+        '<div style="font-size:13px;color:#166534;margin-top:4px;">المنتج المخطط: '+ _v3Fmt(o.qtyPlanned||o.qty_planned||0) +' / المنتج فعلياً: '+ _v3Fmt(o.qtyProduced||o.qty_produced||0) +'</div>' +
+      '</div>' +
+    '</div>';
+    WoModal.open({
+      icon: 'fa-industry', iconColor: '#22c55e',
+      title: 'تفاصيل أمر الإنتاج',
+      body: html, size: 'md',
+      footer: '<button class="wo-btn wo-btn-primary" onclick="WoModal.close()">إغلاق</button>'
+    });
+  });
 }
 

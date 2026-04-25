@@ -14717,13 +14717,17 @@ function _openFinishedModalInner(id, brand, semiList) {
     '</div>' +
 
     '<div class="v3-form-section">' +
-      '<h4 class="v3-section-title"><i class="fas fa-warehouse"></i> المستودع والمخزون</h4>' +
+      '<h4 class="v3-section-title"><i class="fas fa-warehouse"></i> المستودع والحالة</h4>' +
+      '<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12px;color:#78350f;line-height:1.6;">' +
+        '<i class="fas fa-info-circle" style="color:#f59e0b;"></i> <b>ملاحظة:</b> المنتج التام لا يحتاج مخزون منفصل — يخصم تلقائياً من المنتج غير التام المرتبط به (إن وُجد) أو من المواد الخام عبر الوصفة. المخزون الفعلي يُتابَع في النصف المصنع أو في المخزون الأولي.' +
+      '</div>' +
       '<div class="v3-grid-2">' +
         '<div class="wo-field"><label class="wo-field-label">المستودع الافتراضي للبيع</label><select id="bmF_salesWarehouseId" class="wo-select">'+ _mhWarehouseOptions(mi.salesWarehouseId, brand.id) +'</select></div>' +
-        '<div class="wo-field"><label class="wo-field-label">المخزون الأولي</label><input id="bmF_stock" type="number" class="wo-input" value="'+ Number(mi.stock||0) +'"></div>' +
-        '<div class="wo-field"><label class="wo-field-label">الحد الأدنى للتنبيه</label><input id="bmF_minStock" type="number" class="wo-input" value="'+ Number(mi.minStock||0) +'"></div>' +
         '<label class="v3-checkbox" style="align-self:flex-end;"><input type="checkbox" id="bmF_active" '+(mi.active!==false?'checked':'')+'><span>المنتج مفعّل</span></label>' +
       '</div>' +
+      // Hidden fields kept for API compatibility (always 0 for finished products)
+      '<input type="hidden" id="bmF_stock" value="0">' +
+      '<input type="hidden" id="bmF_minStock" value="0">' +
     '</div>' +
 
     '<input type="hidden" id="bmF_id" value="'+ _v3EscapeHtml(mi.id||'') +'">' +

@@ -8,224 +8,215 @@
         <i class="fas fa-mug-hot" style="color:var(--accent);"></i> <span id="sidebarBrandName">Moroccan Taste</span>
       </div>
       <div class="sidebar-nav">
-        <div class="nav-item active" onclick="nav('home')"><i class="fas fa-chart-line"></i><span>الرئيسية</span></div>
-        <div class="nav-item" onclick="nav('sales')"><i class="fas fa-receipt"></i><span>المبيعات</span></div>
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <!-- SIDEBAR — Reorganized v2: 14 logical groups, no duplicates           -->
+        <!-- All labels carry data-i18n for English/Arabic toggle                -->
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
 
-        <!-- ═══ مجموعة المنيو (المنتجات + الوصفات) ═══ -->
-        <!-- ═══ المنيو ═══ -->
-        <div class="nav-item" onclick="nav('menu')"><i class="fas fa-utensils"></i><span>قائمة المنيو</span></div>
+        <!-- 1. الرئيسية -->
+        <div class="nav-item active" onclick="nav('home')"><i class="fas fa-chart-line"></i><span data-i18n="nav.home">الرئيسية</span></div>
 
-        <!-- ═══ مجموعة المستودعات الموحّدة (كل ما يتعلق بالمخزون والإنتاج) ═══ -->
+        <!-- 2. العمليات اليومية -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-warehouse"></i><span>المستودعات والإنتاج</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-bolt"></i><span data-i18n="nav.daily">العمليات اليومية</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <!-- أساسيات -->
-          <div class="nav-item" onclick="nav('warehouse')"><i class="fas fa-boxes-stacked"></i><span>إدارة المخزون والجرد</span></div>
-          <div class="nav-item" data-erp-nav="erpMultiWarehouses" onclick="erpNav('erpMultiWarehouses')"><i class="fas fa-building"></i><span>المستودعات المتعددة</span></div>
-          <div class="nav-item" data-erp-nav="erpWhHierarchy" onclick="erpNav('erpWhHierarchy')"><i class="fas fa-sitemap"></i><span>هيكل المستودعات (رئيسي/فرعي)</span></div>
-          <div class="nav-item" data-erp-nav="erpInventoryMethod" onclick="erpNav('erpInventoryMethod')"><i class="fas fa-balance-scale"></i><span>نوع الجرد وقيمة المخزون</span></div>
-
-          <!-- الإنتاج والوصفات -->
-          <div class="nav-item" data-erp-nav="erpBOM" onclick="erpNav('erpBOM')"><i class="fas fa-blender"></i><span>الوصفات (BOM)</span></div>
-          <div class="nav-item" data-erp-nav="erpProductionOrders" onclick="erpNav('erpProductionOrders')"><i class="fas fa-industry"></i><span>أوامر الإنتاج</span></div>
-
-          <!-- المشتريات والحركة -->
-          <div class="nav-item" onclick="nav('purchases')"><i class="fas fa-truck-loading"></i><span>المشتريات</span></div>
-          <div class="nav-item" data-erp-nav="erpPurchaseOrders" onclick="erpNav('erpPurchaseOrders')"><i class="fas fa-shopping-cart"></i><span>أوامر الشراء</span></div>
-          <div class="nav-item" data-erp-nav="erpStockIssues" onclick="erpNav('erpStockIssues')"><i class="fas fa-truck-arrow-right"></i><span>إذونات الصرف</span></div>
-          <div class="nav-item" data-erp-nav="erpWasteEntries" onclick="erpNav('erpWasteEntries')"><i class="fas fa-dumpster"></i><span>قيود الهدر</span></div>
-
-          <!-- التقارير والتنبيهات -->
-          <div class="nav-item" data-erp-nav="erpExpiryAlerts" onclick="erpNav('erpExpiryAlerts')"><i class="fas fa-hourglass-half"></i><span>تنبيهات انتهاء الصلاحية</span></div>
-          <div class="nav-item" data-erp-nav="erpSlowMoving" onclick="erpNav('erpSlowMoving')"><i class="fas fa-snowflake"></i><span>أصناف بطيئة الحركة</span></div>
-          <div class="nav-item" data-erp-nav="erpTurnover" onclick="erpNav('erpTurnover')"><i class="fas fa-rotate"></i><span>دوران المخزون</span></div>
-
-          <!-- الإعدادات المحاسبية المرتبطة -->
-          <div class="nav-item" data-erp-nav="erpCostCenters" onclick="erpNav('erpCostCenters')"><i class="fas fa-bullseye"></i><span>مراكز التكلفة</span></div>
-          <div class="nav-item" data-erp-nav="erpItemCategories" onclick="erpNav('erpItemCategories')"><i class="fas fa-tags"></i><span>تصنيفات الأصناف</span></div>
+          <div class="nav-item" onclick="window.open('/pos/','_blank')" style="background:linear-gradient(90deg,rgba(34,197,94,.15),transparent);"><i class="fas fa-cash-register" style="color:#22c55e;"></i><span data-i18n="nav.openPOS">فتح شاشة الكاشير POS</span></div>
+          <div class="nav-item" onclick="nav('sales')"><i class="fas fa-receipt"></i><span data-i18n="nav.sales">المبيعات</span></div>
+          <div class="nav-item" onclick="nav('shifts')"><i class="fas fa-folder-open"></i><span data-i18n="nav.shiftsLog">سجل المناوبات</span></div>
         </div>
 
-        <div class="nav-item" onclick="nav('expenses')"><i class="fas fa-money-check-alt"></i><span>المصروفات</span></div>
-
-        <!-- ═══ العهد (Custody Management) ═══ -->
+        <!-- 3. المنيو والوصفات والإنتاج (موحد — يحل محل "قائمة المنيو" + "البراندات" المكررين) -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-hand-holding-usd"></i><span>العهد</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-utensils"></i><span data-i18n="nav.menuProduction">المنيو والإنتاج</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" onclick="nav('custodyUsers')"><i class="fas fa-user-tie"></i><span>مسؤولو العهدة</span></div>
-          <div class="nav-item" onclick="nav('custodies')"><i class="fas fa-wallet"></i><span>إدارة العهد</span></div>
-          <div class="nav-item" onclick="nav('custodyApproval')"><i class="fas fa-check-double"></i><span>تأكيد المصروفات</span></div>
-          <div class="nav-item" onclick="nav('custodyReports')"><i class="fas fa-file-invoice-dollar"></i><span>تقارير العهد</span></div>
+          <div class="nav-item" data-erp-nav="erpMenuHub" onclick="erpNav('erpMenuHub')" style="background:linear-gradient(90deg,rgba(139,92,246,.15),transparent);font-weight:800;"><i class="fas fa-layer-group" style="color:#a78bfa;"></i><span data-i18n="nav.menuHub">إدارة المنيو والبرندات</span></div>
+          <div class="nav-item" data-erp-nav="erpSemiFinished" onclick="erpNav('erpSemiFinished')"><i class="fas fa-blender"></i><span data-i18n="nav.semiFinished">المنتجات غير التامة</span></div>
+          <div class="nav-item" data-erp-nav="erpBOM" onclick="erpNav('erpBOM')"><i class="fas fa-list-check"></i><span data-i18n="nav.bom">الوصفات (BOM)</span></div>
+          <div class="nav-item" data-erp-nav="erpProductionOrders" onclick="erpNav('erpProductionOrders')"><i class="fas fa-industry"></i><span data-i18n="nav.productionOrders">أوامر الإنتاج</span></div>
+          <div class="nav-item" data-erp-nav="erpPriceLists" onclick="erpNav('erpPriceLists')"><i class="fas fa-tags"></i><span data-i18n="nav.priceLists">قوائم الأسعار</span></div>
+          <div class="nav-item" data-erp-nav="erpItemCategories" onclick="erpNav('erpItemCategories')"><i class="fas fa-folder-tree"></i><span data-i18n="nav.categories">تصنيفات الأصناف</span></div>
         </div>
-        <div class="nav-item" onclick="nav('shifts')"><i class="fas fa-folder-open"></i><span>سجل المناوبات</span></div>
-        <div class="nav-item" onclick="nav('reports')"><i class="fas fa-file-excel"></i><span>التقارير</span></div>
-        <div class="nav-item" onclick="nav('settings')"><i class="fas fa-sliders-h"></i><span>الإعدادات</span></div>
 
-        <!-- ═══ ERP System ═══ -->
-        <div style="border-top:1px solid rgba(255,255,255,0.1);margin:10px 0;padding-top:8px;">
-          <div style="padding:4px 16px;font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:1px;">نظام ERP</div>
-        </div>
-        <div class="nav-item" data-erp-nav="erpDashHome" onclick="erpNav('erpDashHome')"><i class="fas fa-building"></i><span>لوحة ERP</span></div>
-
+        <!-- 4. المخزون والمستودعات -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-calculator"></i><span>المحاسبة</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-warehouse"></i><span data-i18n="nav.inventory">المخزون والمستودعات</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpGLAccounts" onclick="erpNav('erpGLAccounts')"><i class="fas fa-sitemap"></i><span>دليل الحسابات</span></div>
-          <div class="nav-item" data-erp-nav="erpGLJournals" onclick="erpNav('erpGLJournals')"><i class="fas fa-book"></i><span>القيود المحاسبية</span></div>
-          <div class="nav-item" data-erp-nav="erpPeriods" onclick="erpNav('erpPeriods')"><i class="fas fa-calendar-alt"></i><span>الفترات المحاسبية</span></div>
+          <div class="nav-item" onclick="nav('warehouse')"><i class="fas fa-boxes-stacked"></i><span data-i18n="nav.stockManagement">إدارة المخزون والجرد</span></div>
+          <div class="nav-item" data-erp-nav="erpMultiWarehouses" onclick="erpNav('erpMultiWarehouses')"><i class="fas fa-building"></i><span data-i18n="nav.multiWarehouses">المستودعات المتعددة</span></div>
+          <div class="nav-item" data-erp-nav="erpWhHierarchy" onclick="erpNav('erpWhHierarchy')"><i class="fas fa-sitemap"></i><span data-i18n="nav.whHierarchy">هيكل المستودعات</span></div>
+          <div class="nav-item" data-erp-nav="erpInventoryMethod" onclick="erpNav('erpInventoryMethod')"><i class="fas fa-balance-scale"></i><span data-i18n="nav.inventoryMethod">نوع الجرد وقيمة المخزون</span></div>
+          <div class="nav-item" data-erp-nav="erpStockIssues" onclick="erpNav('erpStockIssues')"><i class="fas fa-truck-arrow-right"></i><span data-i18n="nav.stockIssues">إذونات الصرف</span></div>
+          <div class="nav-item" data-erp-nav="erpWasteEntries" onclick="erpNav('erpWasteEntries')"><i class="fas fa-dumpster"></i><span data-i18n="nav.wasteEntries">قيود الهدر</span></div>
+          <div class="nav-item" data-erp-nav="erpExpiryAlerts" onclick="erpNav('erpExpiryAlerts')"><i class="fas fa-hourglass-half"></i><span data-i18n="nav.expiryAlerts">تنبيهات انتهاء الصلاحية</span></div>
+          <div class="nav-item" data-erp-nav="erpSlowMoving" onclick="erpNav('erpSlowMoving')"><i class="fas fa-snowflake"></i><span data-i18n="nav.slowMoving">أصناف بطيئة الحركة</span></div>
+          <div class="nav-item" data-erp-nav="erpTurnover" onclick="erpNav('erpTurnover')"><i class="fas fa-rotate"></i><span data-i18n="nav.turnover">دوران المخزون</span></div>
         </div>
 
+        <!-- 5. المشتريات والموردين -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-users"></i><span>العملاء والموردين</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-truck-loading"></i><span data-i18n="nav.purchasingSuppliers">المشتريات والموردين</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpCustomers" onclick="erpNav('erpCustomers')"><i class="fas fa-user-tie"></i><span>العملاء</span></div>
-          <div class="nav-item" data-erp-nav="erpSuppliers" onclick="erpNav('erpSuppliers')"><i class="fas fa-truck"></i><span>الموردين</span></div>
-          <div class="nav-item" data-erp-nav="erpCustomerStatement" onclick="erpNav('erpCustomerStatement')"><i class="fas fa-file-invoice-dollar"></i><span>كشف حساب عميل</span></div>
-          <div class="nav-item" data-erp-nav="erpSupplierStatement" onclick="erpNav('erpSupplierStatement')"><i class="fas fa-file-invoice"></i><span>كشف حساب مورد</span></div>
+          <div class="nav-item" onclick="nav('purchases')"><i class="fas fa-shopping-basket"></i><span data-i18n="nav.purchases">المشتريات</span></div>
+          <div class="nav-item" data-erp-nav="erpPurchaseOrders" onclick="erpNav('erpPurchaseOrders')"><i class="fas fa-shopping-cart"></i><span data-i18n="nav.purchaseOrders">أوامر الشراء</span></div>
+          <div class="nav-item" data-erp-nav="erpSuppliers" onclick="erpNav('erpSuppliers')"><i class="fas fa-truck"></i><span data-i18n="nav.suppliers">الموردين</span></div>
+          <div class="nav-item" data-erp-nav="erpSupplierStatement" onclick="erpNav('erpSupplierStatement')"><i class="fas fa-file-invoice"></i><span data-i18n="nav.supplierStatement">كشف حساب مورد</span></div>
         </div>
 
-        <!-- ═══ إدارة النقد ═══ -->
+        <!-- 6. إدارة الدفع والقنوات والخصومات -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-cash-register"></i><span>إدارة النقد</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-credit-card"></i><span data-i18n="nav.paymentChannels">إدارة الدفع والقنوات</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpCashDash" onclick="erpNav('erpCashDash')"><i class="fas fa-chart-line"></i><span>نظرة عامة</span></div>
-          <div class="nav-item" data-erp-nav="erpCashBoxes" onclick="erpNav('erpCashBoxes')"><i class="fas fa-cash-register"></i><span>الصناديق</span></div>
-          <div class="nav-item" data-erp-nav="erpBankAccounts" onclick="erpNav('erpBankAccounts')"><i class="fas fa-university"></i><span>البنوك</span></div>
-          <div class="nav-item" data-erp-nav="erpCashReceipts" onclick="erpNav('erpCashReceipts')"><i class="fas fa-hand-holding-usd"></i><span>سندات القبض</span></div>
-          <div class="nav-item" data-erp-nav="erpCashPayments" onclick="erpNav('erpCashPayments')"><i class="fas fa-money-bill-wave"></i><span>سندات الصرف</span></div>
-          <div class="nav-item" data-erp-nav="erpCashTransfers" onclick="erpNav('erpCashTransfers')"><i class="fas fa-exchange-alt"></i><span>التحويلات</span></div>
+          <div class="nav-item" data-erp-nav="erpPaymentMethodsV3" onclick="erpNav('erpPaymentMethodsV3')"><i class="fas fa-wallet"></i><span data-i18n="nav.paymentMethods">طرق الدفع</span></div>
+          <div class="nav-item" data-erp-nav="erpSalesChannels" onclick="erpNav('erpSalesChannels')"><i class="fas fa-store"></i><span data-i18n="nav.salesChannels">قنوات البيع</span></div>
+          <div class="nav-item" data-erp-nav="erpDiscountsV3" onclick="erpNav('erpDiscountsV3')"><i class="fas fa-percent"></i><span data-i18n="nav.discounts">الخصومات</span></div>
+          <div class="nav-item" data-erp-nav="erpShiftCloseAdmin" onclick="erpNav('erpShiftCloseAdmin')"><i class="fas fa-cash-register"></i><span data-i18n="nav.shiftClose">إغلاق الشيفت</span></div>
         </div>
 
-        <!-- ═══ التقارير المالية (موحدة — IFRS / المعايير الدولية) ═══ -->
+        <!-- 7. النقد والبنوك -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-chart-pie"></i><span>التقارير المالية</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-money-bill-wave"></i><span data-i18n="nav.cashBanks">النقد والبنوك</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <!-- مركز التقارير -->
-          <div class="nav-item" data-erp-nav="erpRptHub" onclick="erpNav('erpRptHub')" style="background:linear-gradient(90deg,rgba(14,165,233,.15),transparent);font-weight:800;"><i class="fas fa-th-large" style="color:#0ea5e9;"></i><span>مركز التقارير المالية</span></div>
-
-          <!-- ─── القوائم المالية الأساسية (IFRS / IAS 1) ─── -->
-          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;">القوائم المالية الأساسية (IFRS)</div>
-          <div class="nav-item" data-erp-nav="erpRptTrialBalance"  onclick="erpNav('erpRptTrialBalance')"><i class="fas fa-balance-scale"></i><span>ميزان المراجعة</span></div>
-          <div class="nav-item" data-erp-nav="erpRptPnL"           onclick="erpNav('erpRptPnL')"><i class="fas fa-chart-line"></i><span>قائمة الدخل الشامل</span></div>
-          <div class="nav-item" data-erp-nav="erpRptBalanceSheet"  onclick="erpNav('erpRptBalanceSheet')"><i class="fas fa-landmark"></i><span>قائمة المركز المالي</span></div>
-          <div class="nav-item" data-erp-nav="erpRptCashFlow"      onclick="erpNav('erpRptCashFlow')"><i class="fas fa-water"></i><span>قائمة التدفقات النقدية</span></div>
-          <div class="nav-item" data-erp-nav="erpRptEquityChanges" onclick="erpNav('erpRptEquityChanges')"><i class="fas fa-coins"></i><span>التغيرات في حقوق الملكية</span></div>
-
-          <!-- ─── التحليلات المالية ─── -->
-          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;">التحليل المالي</div>
-          <div class="nav-item" data-erp-nav="erpRptFinRatios"     onclick="erpNav('erpRptFinRatios')"><i class="fas fa-calculator"></i><span>المؤشرات والنسب المالية</span></div>
-          <div class="nav-item" data-erp-nav="erpRptProfitability" onclick="erpNav('erpRptProfitability')"><i class="fas fa-dollar-sign"></i><span>الربحية حسب البُعد</span></div>
-          <div class="nav-item" data-erp-nav="erpRptSalesAnalytics" onclick="erpNav('erpRptSalesAnalytics')"><i class="fas fa-chart-bar"></i><span>تحليل المبيعات</span></div>
-
-          <!-- ─── التسويات والذمم ─── -->
-          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;">التسويات والذمم</div>
-          <div class="nav-item" data-erp-nav="erpRptBankRecon"     onclick="erpNav('erpRptBankRecon')"><i class="fas fa-university"></i><span>تسوية البنوك</span></div>
-          <div class="nav-item" data-erp-nav="erpARAging"          onclick="erpNav('erpARAging')"><i class="fas fa-user-clock"></i><span>أعمار ذمم العملاء</span></div>
-          <div class="nav-item" data-erp-nav="erpAPAging"          onclick="erpNav('erpAPAging')"><i class="fas fa-truck-loading"></i><span>أعمار ذمم الموردين</span></div>
-          <div class="nav-item" data-erp-nav="erpGLLedgerReport"   onclick="erpNav('erpGLLedgerReport')"><i class="fas fa-book"></i><span>دفتر الأستاذ العام</span></div>
-
-          <!-- ─── التشغيل والمخزون ─── -->
-          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;">التشغيل والمخزون</div>
-          <div class="nav-item" data-erp-nav="erpRptInventoryVal"  onclick="erpNav('erpRptInventoryVal')"><i class="fas fa-warehouse"></i><span>تقييم المخزون</span></div>
-          <div class="nav-item" data-erp-nav="erpRptWasteAnalytics" onclick="erpNav('erpRptWasteAnalytics')"><i class="fas fa-trash-alt"></i><span>تحليل الهدر</span></div>
-          <div class="nav-item" data-erp-nav="erpRptRoyaltyRecon"  onclick="erpNav('erpRptRoyaltyRecon')"><i class="fas fa-handshake"></i><span>تسوية الفرانشايز</span></div>
-
-          <!-- ─── الضرائب والمشتريات ─── -->
-          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;">الضرائب والمشتريات</div>
-          <div class="nav-item" data-erp-nav="erpVATReports"       onclick="erpNav('erpVATReports')"><i class="fas fa-percent"></i><span>تقارير الضريبة</span></div>
-          <div class="nav-item" data-erp-nav="erpPurchaseReports"  onclick="erpNav('erpPurchaseReports')"><i class="fas fa-truck"></i><span>تقارير المشتريات</span></div>
+          <div class="nav-item" data-erp-nav="erpCashDash" onclick="erpNav('erpCashDash')"><i class="fas fa-chart-line"></i><span data-i18n="nav.cashOverview">نظرة عامة</span></div>
+          <div class="nav-item" data-erp-nav="erpCashBoxes" onclick="erpNav('erpCashBoxes')"><i class="fas fa-cash-register"></i><span data-i18n="nav.cashBoxes">الصناديق</span></div>
+          <div class="nav-item" data-erp-nav="erpBankAccounts" onclick="erpNav('erpBankAccounts')"><i class="fas fa-university"></i><span data-i18n="nav.bankAccounts">البنوك</span></div>
+          <div class="nav-item" data-erp-nav="erpCashReceipts" onclick="erpNav('erpCashReceipts')"><i class="fas fa-hand-holding-usd"></i><span data-i18n="nav.receipts">سندات القبض</span></div>
+          <div class="nav-item" data-erp-nav="erpCashPayments" onclick="erpNav('erpCashPayments')"><i class="fas fa-money-bill-transfer"></i><span data-i18n="nav.payments">سندات الصرف</span></div>
+          <div class="nav-item" data-erp-nav="erpCashTransfers" onclick="erpNav('erpCashTransfers')"><i class="fas fa-exchange-alt"></i><span data-i18n="nav.transfers">التحويلات</span></div>
         </div>
 
-        <!-- ═══ الإدارة المتقدمة (ERP v3) ═══ -->
+        <!-- 8. المصروفات والعهد -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-building"></i><span>إدارة المنظومة</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-money-check-alt"></i><span data-i18n="nav.expensesCustody">المصروفات والعهد</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpCompanies" onclick="erpNav('erpCompanies')"><i class="fas fa-city"></i><span>الشركات</span></div>
-          <div class="nav-item" data-erp-nav="erpPriceLists" onclick="erpNav('erpPriceLists')"><i class="fas fa-tags"></i><span>قوائم الأسعار</span></div>
-          <div class="nav-item" data-erp-nav="erpRoyaltyRuns" onclick="erpNav('erpRoyaltyRuns')"><i class="fas fa-receipt"></i><span>احتساب الفرانشايز</span></div>
-          <div class="nav-item" data-erp-nav="erpPosTerminals" onclick="erpNav('erpPosTerminals')"><i class="fas fa-desktop"></i><span>أجهزة POS</span></div>
+          <div class="nav-item" onclick="nav('expenses')"><i class="fas fa-money-check-alt"></i><span data-i18n="nav.expenses">المصروفات</span></div>
+          <div class="nav-item" onclick="nav('custodyUsers')"><i class="fas fa-user-tie"></i><span data-i18n="nav.custodyUsers">مسؤولو العهدة</span></div>
+          <div class="nav-item" onclick="nav('custodies')"><i class="fas fa-wallet"></i><span data-i18n="nav.custodies">إدارة العهد</span></div>
+          <div class="nav-item" onclick="nav('custodyApproval')"><i class="fas fa-check-double"></i><span data-i18n="nav.custodyApproval">تأكيد المصروفات</span></div>
+          <div class="nav-item" onclick="nav('custodyReports')"><i class="fas fa-file-invoice-dollar"></i><span data-i18n="nav.custodyReports">تقارير العهد</span></div>
         </div>
 
-        <!-- ═══ إدارة الدفع والقنوات والخصومات ═══ -->
+        <!-- 9. العملاء والذمم -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-credit-card"></i><span>إدارة الدفع والقنوات</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-user-friends"></i><span data-i18n="nav.customersAR">العملاء والذمم</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpPaymentMethodsV3" onclick="erpNav('erpPaymentMethodsV3')"><i class="fas fa-wallet"></i><span>طرق الدفع</span></div>
-          <div class="nav-item" data-erp-nav="erpSalesChannels" onclick="erpNav('erpSalesChannels')"><i class="fas fa-store"></i><span>قنوات البيع</span></div>
-          <div class="nav-item" data-erp-nav="erpDiscountsV3" onclick="erpNav('erpDiscountsV3')"><i class="fas fa-tags"></i><span>الخصومات</span></div>
-          <div class="nav-item" data-erp-nav="erpShiftCloseAdmin" onclick="erpNav('erpShiftCloseAdmin')"><i class="fas fa-cash-register"></i><span>إغلاق الشيفت</span></div>
+          <div class="nav-item" data-erp-nav="erpCustomers" onclick="erpNav('erpCustomers')"><i class="fas fa-user-tie"></i><span data-i18n="nav.customers">العملاء</span></div>
+          <div class="nav-item" data-erp-nav="erpCustomerStatement" onclick="erpNav('erpCustomerStatement')"><i class="fas fa-file-invoice-dollar"></i><span data-i18n="nav.customerStatement">كشف حساب عميل</span></div>
+          <div class="nav-item" data-erp-nav="erpARAging" onclick="erpNav('erpARAging')"><i class="fas fa-user-clock"></i><span data-i18n="nav.arAging">أعمار ذمم العملاء</span></div>
+          <div class="nav-item" data-erp-nav="erpAPAging" onclick="erpNav('erpAPAging')"><i class="fas fa-truck-loading"></i><span data-i18n="nav.apAging">أعمار ذمم الموردين</span></div>
         </div>
 
-        <!-- ═══ المنيو والإنتاج ═══ -->
+        <!-- 10. المحاسبة -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-utensils"></i><span>المنيو والإنتاج</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-calculator"></i><span data-i18n="nav.accounting">المحاسبة</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpMenuHub" onclick="erpNav('erpMenuHub')"><i class="fas fa-layer-group"></i><span>إدارة المنيو والبرندات</span></div>
-          <div class="nav-item" data-erp-nav="erpSemiFinished" onclick="erpNav('erpSemiFinished')"><i class="fas fa-blender"></i><span>المنتجات غير التامة</span></div>
-          <div class="nav-item" data-erp-nav="erpProductionOrders" onclick="erpNav('erpProductionOrders')"><i class="fas fa-industry"></i><span>أوامر الإنتاج</span></div>
+          <div class="nav-item" data-erp-nav="erpDashHome" onclick="erpNav('erpDashHome')"><i class="fas fa-building"></i><span data-i18n="nav.erpDash">لوحة ERP</span></div>
+          <div class="nav-item" data-erp-nav="erpGLAccounts" onclick="erpNav('erpGLAccounts')"><i class="fas fa-sitemap"></i><span data-i18n="nav.coa">دليل الحسابات</span></div>
+          <div class="nav-item" data-erp-nav="erpGLJournals" onclick="erpNav('erpGLJournals')"><i class="fas fa-book"></i><span data-i18n="nav.journals">القيود المحاسبية</span></div>
+          <div class="nav-item" data-erp-nav="erpPeriods" onclick="erpNav('erpPeriods')"><i class="fas fa-calendar-alt"></i><span data-i18n="nav.periods">الفترات المحاسبية</span></div>
+          <div class="nav-item" data-erp-nav="erpCostCenters" onclick="erpNav('erpCostCenters')"><i class="fas fa-bullseye"></i><span data-i18n="nav.costCenters">مراكز التكلفة</span></div>
         </div>
 
-        <!-- ═══ الضرائب والفوترة الإلكترونية ═══ -->
+        <!-- 11. التقارير المالية (موحدة — IFRS / المعايير الدولية) — كل التقارير في مكان واحد -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-percent"></i><span>الضرائب والفوترة</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-chart-pie"></i><span data-i18n="nav.financialReports">التقارير المالية</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpVATReports" onclick="erpNav('erpVATReports')"><i class="fas fa-percent"></i><span>تقارير الضريبة</span></div>
-          <div class="nav-item" data-erp-nav="erpZATCA" onclick="erpNav('erpZATCA')"><i class="fas fa-stamp"></i><span>ZATCA</span></div>
-          <div class="nav-item" data-erp-nav="erpCreditNotes" onclick="erpNav('erpCreditNotes')"><i class="fas fa-file-alt"></i><span>الإشعارات</span></div>
+          <div class="nav-item" data-erp-nav="erpRptHub" onclick="erpNav('erpRptHub')" style="background:linear-gradient(90deg,rgba(14,165,233,.15),transparent);font-weight:800;"><i class="fas fa-th-large" style="color:#0ea5e9;"></i><span data-i18n="nav.reportsHub">مركز التقارير المالية</span></div>
+
+          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.coreIFRS">القوائم المالية الأساسية (IFRS)</div>
+          <div class="nav-item" data-erp-nav="erpRptTrialBalance" onclick="erpNav('erpRptTrialBalance')"><i class="fas fa-balance-scale"></i><span data-i18n="nav.trialBalance">ميزان المراجعة</span></div>
+          <div class="nav-item" data-erp-nav="erpRptPnL" onclick="erpNav('erpRptPnL')"><i class="fas fa-chart-line"></i><span data-i18n="nav.pnl">قائمة الدخل الشامل</span></div>
+          <div class="nav-item" data-erp-nav="erpRptBalanceSheet" onclick="erpNav('erpRptBalanceSheet')"><i class="fas fa-landmark"></i><span data-i18n="nav.balanceSheet">قائمة المركز المالي</span></div>
+          <div class="nav-item" data-erp-nav="erpRptCashFlow" onclick="erpNav('erpRptCashFlow')"><i class="fas fa-water"></i><span data-i18n="nav.cashFlow">قائمة التدفقات النقدية</span></div>
+          <div class="nav-item" data-erp-nav="erpRptEquityChanges" onclick="erpNav('erpRptEquityChanges')"><i class="fas fa-coins"></i><span data-i18n="nav.equityChanges">التغيرات في حقوق الملكية</span></div>
+
+          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.analysis">التحليل المالي والتشغيلي</div>
+          <div class="nav-item" data-erp-nav="erpRptFinRatios" onclick="erpNav('erpRptFinRatios')"><i class="fas fa-calculator"></i><span data-i18n="nav.finRatios">المؤشرات والنسب المالية</span></div>
+          <div class="nav-item" data-erp-nav="erpRptProfitability" onclick="erpNav('erpRptProfitability')"><i class="fas fa-dollar-sign"></i><span data-i18n="nav.profitability">الربحية حسب البُعد</span></div>
+          <div class="nav-item" data-erp-nav="erpRptSalesAnalytics" onclick="erpNav('erpRptSalesAnalytics')"><i class="fas fa-chart-bar"></i><span data-i18n="nav.salesAnalytics">تحليل المبيعات</span></div>
+          <div class="nav-item" data-erp-nav="erpRptSalesByChannel" onclick="erpNav('erpRptSalesByChannel')"><i class="fas fa-store"></i><span data-i18n="nav.salesByChannel">المبيعات حسب القناة</span></div>
+          <div class="nav-item" data-erp-nav="erpRptDiscountsGiven" onclick="erpNav('erpRptDiscountsGiven')"><i class="fas fa-percent"></i><span data-i18n="nav.discountsGiven">الخصومات الممنوحة</span></div>
+          <div class="nav-item" data-erp-nav="erpRptInventoryVal" onclick="erpNav('erpRptInventoryVal')"><i class="fas fa-warehouse"></i><span data-i18n="nav.invValuation">تقييم المخزون</span></div>
+          <div class="nav-item" data-erp-nav="erpRptWasteAnalytics" onclick="erpNav('erpRptWasteAnalytics')"><i class="fas fa-trash-alt"></i><span data-i18n="nav.wasteAnalytics">تحليل الهدر</span></div>
+
+          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.recoLedger">التسويات ودفتر الأستاذ</div>
+          <div class="nav-item" data-erp-nav="erpRptBankRecon" onclick="erpNav('erpRptBankRecon')"><i class="fas fa-university"></i><span data-i18n="nav.bankRecon">تسوية البنوك</span></div>
+          <div class="nav-item" data-erp-nav="erpGLLedgerReport" onclick="erpNav('erpGLLedgerReport')"><i class="fas fa-book"></i><span data-i18n="nav.glLedger">دفتر الأستاذ العام</span></div>
+          <div class="nav-item" data-erp-nav="erpRptRoyaltyRecon" onclick="erpNav('erpRptRoyaltyRecon')"><i class="fas fa-handshake"></i><span data-i18n="nav.royaltyRecon">تسوية الفرانشايز</span></div>
+
+          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.taxPurchase">الضرائب والمشتريات</div>
+          <div class="nav-item" data-erp-nav="erpVATReports" onclick="erpNav('erpVATReports')"><i class="fas fa-percent"></i><span data-i18n="nav.vatReports">تقارير الضريبة</span></div>
+          <div class="nav-item" data-erp-nav="erpPurchaseReports" onclick="erpNav('erpPurchaseReports')"><i class="fas fa-truck"></i><span data-i18n="nav.purchaseReports">تقارير المشتريات</span></div>
         </div>
 
-        <!-- ═══ الإدارة العامة (البراندات / الفروع) ═══ -->
+        <!-- 12. الضرائب والفوترة الإلكترونية (ZATCA + الإشعارات فقط — التقارير الضريبية في مركز التقارير) -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-layer-group"></i><span>الإدارة العامة</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-stamp"></i><span data-i18n="nav.zatcaInvoicing">ZATCA والفوترة الإلكترونية</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" onclick="wzOpen()" style="background:linear-gradient(90deg,rgba(139,92,246,.15),transparent);"><i class="fas fa-wand-magic-sparkles" style="color:#a78bfa;"></i><span>معالج براند جديد</span></div>
-          <div class="nav-item" data-erp-nav="erpBrands" onclick="erpNav('erpBrands')"><i class="fas fa-tags"></i><span>البراندات</span></div>
-          <div class="nav-item" data-erp-nav="erpBranches" onclick="erpNav('erpBranches')"><i class="fas fa-code-branch"></i><span>الفروع</span></div>
-          <div class="nav-item" data-erp-nav="erpAuditLog" onclick="erpNav('erpAuditLog')"><i class="fas fa-history"></i><span>سجل العمليات</span></div>
+          <div class="nav-item" data-erp-nav="erpZATCA" onclick="erpNav('erpZATCA')"><i class="fas fa-stamp"></i><span data-i18n="nav.zatca">ZATCA — الفواتير المختومة</span></div>
+          <div class="nav-item" data-erp-nav="erpCreditNotes" onclick="erpNav('erpCreditNotes')"><i class="fas fa-file-alt"></i><span data-i18n="nav.creditNotes">الإشعارات الدائنة/المدينة</span></div>
         </div>
 
-        <!-- ═══ المعاملات الداخلية (Workflow Engine) ═══ -->
+        <!-- 13. الإدارة العامة (الشركات / الفروع / أجهزة POS) -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-project-diagram"></i><span>المعاملات</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-building"></i><span data-i18n="nav.organization">الإدارة العامة</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpWfDashboard" onclick="erpNav('erpWfDashboard')"><i class="fas fa-th-large"></i><span>لوحة المعاملات</span></div>
-          <div class="nav-item" data-erp-nav="erpWfIncoming" onclick="erpNav('erpWfIncoming')"><i class="fas fa-inbox"></i><span>صندوق الوارد</span></div>
-          <div class="nav-item" data-erp-nav="erpWfOutgoing" onclick="erpNav('erpWfOutgoing')"><i class="fas fa-paper-plane"></i><span>صندوق الصادر</span></div>
-          <div class="nav-item" data-erp-nav="erpWfInbox" onclick="erpNav('erpWfInbox')"><i class="fas fa-list"></i><span>جميع المعاملات</span></div>
-          <div class="nav-item" data-erp-nav="erpWfOrgTree" onclick="erpNav('erpWfOrgTree')"><i class="fas fa-sitemap"></i><span>الشجرة الإدارية</span></div>
-          <div class="nav-item" data-erp-nav="erpWfPositions" onclick="erpNav('erpWfPositions')"><i class="fas fa-id-badge"></i><span>المناصب</span></div>
-          <div class="nav-item" data-erp-nav="erpWfTypes" onclick="erpNav('erpWfTypes')"><i class="fas fa-list-alt"></i><span>أنواع المعاملات</span></div>
-          <div class="nav-item" data-erp-nav="erpWfDefs" onclick="erpNav('erpWfDefs')"><i class="fas fa-tasks"></i><span>خطوات سير العمل</span></div>
+          <div class="nav-item" onclick="wzOpen()" style="background:linear-gradient(90deg,rgba(139,92,246,.15),transparent);"><i class="fas fa-wand-magic-sparkles" style="color:#a78bfa;"></i><span data-i18n="nav.brandWizard">معالج براند جديد</span></div>
+          <div class="nav-item" data-erp-nav="erpCompanies" onclick="erpNav('erpCompanies')"><i class="fas fa-city"></i><span data-i18n="nav.companies">الشركات</span></div>
+          <div class="nav-item" data-erp-nav="erpBranches" onclick="erpNav('erpBranches')"><i class="fas fa-code-branch"></i><span data-i18n="nav.branches">الفروع</span></div>
+          <div class="nav-item" data-erp-nav="erpPosTerminals" onclick="erpNav('erpPosTerminals')"><i class="fas fa-desktop"></i><span data-i18n="nav.posTerminals">أجهزة POS</span></div>
+          <div class="nav-item" data-erp-nav="erpRoyaltyRuns" onclick="erpNav('erpRoyaltyRuns')"><i class="fas fa-receipt"></i><span data-i18n="nav.royaltyRuns">احتساب الفرانشايز</span></div>
+          <div class="nav-item" data-erp-nav="erpAuditLog" onclick="erpNav('erpAuditLog')"><i class="fas fa-history"></i><span data-i18n="nav.auditLog">سجل العمليات</span></div>
         </div>
 
-        <!-- ═══ الموارد البشرية (HR) ═══ -->
+        <!-- 14. المعاملات الإدارية (Workflow Engine) -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-users-cog"></i><span>الموارد البشرية</span><i class="fas fa-chevron-down submenu-indicator"></i>
+          <i class="fas fa-project-diagram"></i><span data-i18n="nav.workflow">المعاملات الإدارية</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpHrDashboard" onclick="erpNav('erpHrDashboard')"><i class="fas fa-chart-pie"></i><span>لوحة HR</span></div>
-          <div class="nav-item" data-erp-nav="erpHrEmployees" onclick="erpNav('erpHrEmployees')"><i class="fas fa-users"></i><span>الموظفون</span></div>
-          <div class="nav-item" onclick="nav('users')"><i class="fas fa-user-shield"></i><span>المستخدمون والصلاحيات</span></div>
-          <div class="nav-item" data-erp-nav="erpHrDepartments" onclick="erpNav('erpHrDepartments')"><i class="fas fa-building"></i><span>الأقسام</span></div>
-          <div class="nav-item" data-erp-nav="erpHrAttendance" onclick="erpNav('erpHrAttendance')"><i class="fas fa-fingerprint"></i><span>الحضور والانصراف</span></div>
-          <div class="nav-item" data-erp-nav="erpHrShifts" onclick="erpNav('erpHrShifts')"><i class="fas fa-clock"></i><span>الشفتات</span></div>
-          <div class="nav-item" data-erp-nav="erpHrOvertime" onclick="erpNav('erpHrOvertime')"><i class="fas fa-business-time"></i><span>الإضافي</span></div>
-          <div class="nav-item" data-erp-nav="erpHrExceptions" onclick="erpNav('erpHrExceptions')"><i class="fas fa-exclamation-triangle"></i><span>الاستثناءات</span></div>
-          <div class="nav-item" data-erp-nav="erpHrLeave" onclick="erpNav('erpHrLeave')"><i class="fas fa-calendar-check"></i><span>الإجازات</span></div>
-          <div class="nav-item" data-erp-nav="erpHrPayroll" onclick="erpNav('erpHrPayroll')"><i class="fas fa-money-check-alt"></i><span>الرواتب</span></div>
-          <div class="nav-item" data-erp-nav="erpHrAdvances" onclick="erpNav('erpHrAdvances')"><i class="fas fa-hand-holding-usd"></i><span>السلف</span></div>
+          <div class="nav-item" data-erp-nav="erpWfDashboard" onclick="erpNav('erpWfDashboard')"><i class="fas fa-th-large"></i><span data-i18n="nav.wfDashboard">لوحة المعاملات</span></div>
+          <div class="nav-item" data-erp-nav="erpWfIncoming" onclick="erpNav('erpWfIncoming')"><i class="fas fa-inbox"></i><span data-i18n="nav.wfIncoming">صندوق الوارد</span></div>
+          <div class="nav-item" data-erp-nav="erpWfOutgoing" onclick="erpNav('erpWfOutgoing')"><i class="fas fa-paper-plane"></i><span data-i18n="nav.wfOutgoing">صندوق الصادر</span></div>
+          <div class="nav-item" data-erp-nav="erpWfInbox" onclick="erpNav('erpWfInbox')"><i class="fas fa-list"></i><span data-i18n="nav.wfAll">جميع المعاملات</span></div>
+          <div class="nav-item" data-erp-nav="erpWfOrgTree" onclick="erpNav('erpWfOrgTree')"><i class="fas fa-sitemap"></i><span data-i18n="nav.wfOrgTree">الشجرة الإدارية</span></div>
+          <div class="nav-item" data-erp-nav="erpWfPositions" onclick="erpNav('erpWfPositions')"><i class="fas fa-id-badge"></i><span data-i18n="nav.wfPositions">المناصب</span></div>
+          <div class="nav-item" data-erp-nav="erpWfTypes" onclick="erpNav('erpWfTypes')"><i class="fas fa-list-alt"></i><span data-i18n="nav.wfTypes">أنواع المعاملات</span></div>
+          <div class="nav-item" data-erp-nav="erpWfDefs" onclick="erpNav('erpWfDefs')"><i class="fas fa-tasks"></i><span data-i18n="nav.wfSteps">خطوات سير العمل</span></div>
         </div>
+
+        <!-- 15. الموارد البشرية (HR) -->
+        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
+          <i class="fas fa-users-cog"></i><span data-i18n="nav.hr">الموارد البشرية</span><i class="fas fa-chevron-down submenu-indicator"></i>
+        </div>
+        <div class="submenu">
+          <div class="nav-item" data-erp-nav="erpHrDashboard" onclick="erpNav('erpHrDashboard')"><i class="fas fa-chart-pie"></i><span data-i18n="nav.hrDash">لوحة HR</span></div>
+          <div class="nav-item" data-erp-nav="erpHrEmployees" onclick="erpNav('erpHrEmployees')"><i class="fas fa-users"></i><span data-i18n="nav.employees">الموظفون</span></div>
+          <div class="nav-item" onclick="nav('users')"><i class="fas fa-user-shield"></i><span data-i18n="nav.usersPerms">المستخدمون والصلاحيات</span></div>
+          <div class="nav-item" data-erp-nav="erpHrDepartments" onclick="erpNav('erpHrDepartments')"><i class="fas fa-building"></i><span data-i18n="nav.departments">الأقسام</span></div>
+          <div class="nav-item" data-erp-nav="erpHrAttendance" onclick="erpNav('erpHrAttendance')"><i class="fas fa-fingerprint"></i><span data-i18n="nav.attendance">الحضور والانصراف</span></div>
+          <div class="nav-item" data-erp-nav="erpHrShifts" onclick="erpNav('erpHrShifts')"><i class="fas fa-clock"></i><span data-i18n="nav.workShifts">الشفتات</span></div>
+          <div class="nav-item" data-erp-nav="erpHrOvertime" onclick="erpNav('erpHrOvertime')"><i class="fas fa-business-time"></i><span data-i18n="nav.overtime">الإضافي</span></div>
+          <div class="nav-item" data-erp-nav="erpHrExceptions" onclick="erpNav('erpHrExceptions')"><i class="fas fa-exclamation-triangle"></i><span data-i18n="nav.exceptions">الاستثناءات</span></div>
+          <div class="nav-item" data-erp-nav="erpHrLeave" onclick="erpNav('erpHrLeave')"><i class="fas fa-calendar-check"></i><span data-i18n="nav.leave">الإجازات</span></div>
+          <div class="nav-item" data-erp-nav="erpHrPayroll" onclick="erpNav('erpHrPayroll')"><i class="fas fa-money-check-alt"></i><span data-i18n="nav.payroll">الرواتب</span></div>
+          <div class="nav-item" data-erp-nav="erpHrAdvances" onclick="erpNav('erpHrAdvances')"><i class="fas fa-hand-holding-usd"></i><span data-i18n="nav.advances">السلف</span></div>
+        </div>
+
+        <!-- 16. الإعدادات (آخر شيء) -->
+        <div style="border-top:1px solid rgba(255,255,255,0.1);margin:14px 0 6px;"></div>
+        <div class="nav-item" onclick="nav('settings')"><i class="fas fa-sliders-h"></i><span data-i18n="nav.settings">الإعدادات</span></div>
+        <div class="nav-item" onclick="nav('reports')"><i class="fas fa-file-excel"></i><span data-i18n="nav.legacyReports">تقارير قديمة</span></div>
       </div>
     </div>
     
@@ -4219,6 +4210,22 @@
       <button class="wo-btn wo-btn-primary" onclick="erpOpenPmV3Modal()"><i class="fas fa-plus"></i><span>طريقة دفع جديدة</span></button>
     </div>
   </header>
+
+  <!-- ─── دليل إرشادي: شرح طرق الدفع وفرقها عن قنوات البيع ─── -->
+  <div class="how-to-card">
+    <button class="how-to-toggle" onclick="this.parentElement.classList.toggle('open')">
+      <span><i class="fas fa-circle-question" style="color:#3b82f6;"></i> <b>ما الفرق بين "طريقة الدفع" و"قناة البيع"؟ متى أستخدم أيهما؟</b></span>
+      <i class="fas fa-chevron-down how-to-chev"></i>
+    </button>
+    <div class="how-to-body">
+      <div class="how-to-step"><span class="how-to-num" style="background:#22c55e;">💳</span><div><b>طريقة الدفع — Payment Method</b><br><small>الأداة التي يستخدمها العميل لتسليم النقود: <b>كاش / مدى / فيزا / أبل باي / تحويل بنكي</b>. تتحكم بـ: (1) كيف يدخل المال للحساب المحاسبي (Cash → 1110، Bank → 1120). (2) رسوم الخدمة (مثلاً مدى = 1.5%). (3) هل تظهر في إغلاق الشيفت أم لا.</small></div></div>
+      <div class="how-to-step"><span class="how-to-num" style="background:#8b5cf6;">🏪</span><div><b>قناة البيع — Sales Channel</b><br><small>المكان الذي وصلت منه الطلبية: <b>المنيو الرئيسي / هنقرستيشن / كيتا / تطبيق خاص / طلب هاتفي</b>. تتحكم بـ: (1) السعر (كل قناة لها قائمة أسعار). (2) العمولة الخارجية (هنقرستيشن تأخذ 25% مثلاً). (3) التقارير (المبيعات حسب القناة).</small></div></div>
+      <div class="how-to-step" style="background:#dbeafe;border-color:#bfdbfe;"><span class="how-to-num" style="background:#3b82f6;">🎯</span><div><b>مثال عملي</b><br><small>كوب قهوة سعره 10 ر.س في المنيو الرئيسي و12 ر.س في هنقرستيشن. عميل طلب من <b>هنقرستيشن (قناة)</b> ودفع عبر <b>هنقر باي (طريقة دفع)</b>. النظام يستخدم سعر 12 ر.س ويسجّل الإيراد في حساب البنك المحدد لـ هنقر باي.</small></div></div>
+      <div class="how-to-step"><span class="how-to-num" style="background:#f59e0b;">⚙</span><div><b>كيف أضيف طريقة دفع جديدة؟</b><br><small>اضغط زر <b>"طريقة دفع جديدة"</b> أعلى يساراً. أدخل: الاسم بالعربية، المجموعة (كاش/إلكتروني)، الأيقونة، الرسوم، حساب GL المرتبط (مثلاً 1120 البنك)، ثم احفظ. ستظهر تلقائياً في شاشة الكاشير ضمن أزرار الدفع.</small></div></div>
+      <div class="how-to-step" style="background:#fce7f3;border-color:#fbcfe8;"><span class="how-to-num" style="background:#be185d;">📋</span><div><b>كيف أضيف منيو لقناة معينة (هنقرستيشن مثلاً)؟</b><br><small>اذهب إلى: <code>المنيو والإنتاج ← قنوات البيع</code> — هناك دليل كامل. ملخص: أنشئ قائمة أسعار بأسعار خاصة، ثم اربطها بالقناة من زر التعديل.</small></div></div>
+    </div>
+  </div>
+
   <div class="wo-metric-strip" id="pmV3Metrics"></div>
   <section class="wo-toolbar" role="search" aria-label="تصفية طرق الدفع">
     <div class="wo-field"><label class="wo-field-label" for="pmV3Search"><i class="fas fa-search"></i> بحث</label><input id="pmV3Search" class="wo-input" placeholder="اسم / كود..." oninput="erpFilterPmV3()"></div>
@@ -4276,6 +4283,22 @@
       <button class="wo-btn wo-btn-primary" onclick="erpOpenChannelModal()"><i class="fas fa-plus"></i><span>قناة جديدة</span></button>
     </div>
   </header>
+
+  <!-- ─── دليل إرشادي: كيف توصل منيو لهنقرستيشن (مثلاً) ─── -->
+  <div class="how-to-card">
+    <button class="how-to-toggle" onclick="this.parentElement.classList.toggle('open')">
+      <span><i class="fas fa-lightbulb" style="color:#f59e0b;"></i> <b>كيف أوصل منيو هنقرستيشن (أو أي قناة) إلى الكاشير؟</b></span>
+      <i class="fas fa-chevron-down how-to-chev"></i>
+    </button>
+    <div class="how-to-body">
+      <div class="how-to-step"><span class="how-to-num">1</span><div><b>أنشئ قائمة أسعار خاصة بالقناة</b><br><small>اذهب إلى: <code>المنيو والإنتاج ← قوائم الأسعار ← قائمة جديدة</code> — سمّها مثلاً "أسعار هنقرستيشن"</small></div></div>
+      <div class="how-to-step"><span class="how-to-num">2</span><div><b>أضف منتجات المنيو إلى القائمة بأسعارها الخاصة</b><br><small>افتح القائمة وأضف المنتجات بأسعار تختلف عن المنيو الرئيسي (عادة أعلى لتغطية عمولة هنقرستيشن، مثلاً ×1.20)</small></div></div>
+      <div class="how-to-step"><span class="how-to-num">3</span><div><b>اربط القناة بقائمة الأسعار</b><br><small>هنا في هذه الصفحة: اضغط <i class="fas fa-edit"></i> بجانب "هنقرستيشن" → اختر "أسعار هنقرستيشن" من حقل <b>قائمة الأسعار المرتبطة</b> → احفظ</small></div></div>
+      <div class="how-to-step"><span class="how-to-num">4</span><div><b>عند الكاشير</b><br><small>سيظهر في أعلى السلة شريط "قناة البيع" — يختار الكاشير "هنقرستيشن" → الأسعار تتحدّث تلقائياً، ولا يُسمح بخلط أسعار قنوات في نفس الفاتورة</small></div></div>
+      <div class="how-to-step" style="background:#fef3c7;border-color:#fde68a;"><span class="how-to-num" style="background:#f59e0b;">!</span><div><b>ملاحظة مهمة</b><br><small><b>طريقة الدفع</b> (هنقر باي/مدى/كاش) تختلف عن <b>قناة البيع</b> (هنقرستيشن/كيتا). القناة تتحكم بالسعر، أما طريقة الدفع تتحكم بكيف ندخل المال للحساب المحاسبي.</small></div></div>
+    </div>
+  </div>
+
   <div class="wo-metric-strip" id="chMetrics"></div>
   <div class="wo-table-surface">
     <table class="wo-table" role="table">

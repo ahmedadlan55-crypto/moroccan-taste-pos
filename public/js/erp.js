@@ -8702,6 +8702,140 @@ window._tbExpanded = new Set();    // accountIds currently expanded
 window._tbRowsById = {};           // accountId → row object (for quick lookup)
 window._tbChildrenOf = {};         // parentId → [row, ...] (for tree traversal)
 
+// ═══════════════════════════════════════════════════════════════════
+// Multi-select dropdown widget — generic, used by Trial Balance parent
+// filter (and reusable for any other multi-select needs)
+// ═══════════════════════════════════════════════════════════════════
+window._mselState = {};  // mselId → { items: [{id, code, name}], selected: Set, query: '' }
+
+window.tbMselInit = function(mselId, items) {
+  if (!_mselState[mselId]) _mselState[mselId] = { selected: new Set(), query: '' };
+  _mselState[mselId].items = items || [];
+  _mselRender(mselId);
+};
+
+window.tbMselToggle = function(mselId) {
+  var el = document.getElementById(mselId);
+  if (!el) return;
+  var wasOpen = el.classList.contains('open');
+  // Close all other multi-selects first
+  document.querySelectorAll('.tb-msel.open').forEach(function(x){ if (x.id !== mselId) x.classList.remove('open'); });
+  el.classList.toggle('open');
+  if (!wasOpen) {
+    // Refocus search
+    setTimeout(function(){ var s = el.querySelector('.tb-msel-search input'); if (s) s.focus(); }, 50);
+    // Close on outside click
+    setTimeout(function(){
+      document.addEventListener('mousedown', function close(e){
+        if (!el.contains(e.target)) {
+          el.classList.remove('open');
+          document.removeEventListener('mousedown', close);
+        }
+      });
+    }, 0);
+  }
+};
+
+window.tbMselSearch = function(mselId, query) {
+  if (!_mselState[mselId]) _mselState[mselId] = { items: [], selected: new Set() };
+  _mselState[mselId].query = query || '';
+  _mselRender(mselId);
+};
+
+window.tbMselToggleItem = function(mselId, itemId) {
+  if (!_mselState[mselId]) return;
+  var sel = _mselState[mselId].selected;
+  if (sel.has(itemId)) sel.delete(itemId); else sel.add(itemId);
+  _mselRender(mselId);
+};
+
+window.tbMselSelectAll = function(mselId) {
+  var st = _mselState[mselId]; if (!st) return;
+  _mselFiltered(mselId).forEach(function(it){ st.selected.add(it.id); });
+  _mselRender(mselId);
+};
+
+window.tbMselClearAll = function(mselId) {
+  var st = _mselState[mselId]; if (!st) return;
+  st.selected.clear();
+  _mselRender(mselId);
+};
+
+window.tbMselApply = function(mselId) {
+  var st = _mselState[mselId]; if (!st) return;
+  // Push selected IDs into the hidden input as CSV
+  var ids = Array.from(st.selected);
+  var hidden = document.getElementById(mselId === 'tbParentMsel' ? 'tbParent' : mselId.replace('Msel',''));
+  if (hidden) hidden.value = ids.join(',');
+  // Close the panel
+  var el = document.getElementById(mselId);
+  if (el) el.classList.remove('open');
+  // Trigger re-render of the trial balance if open
+  if (_tbCache) { _tbExpanded.clear(); _renderTrialBalanceTable(); }
+};
+
+function _mselFiltered(mselId) {
+  var st = _mselState[mselId]; if (!st) return [];
+  var q = (st.query || '').toLowerCase().trim();
+  if (!q) return st.items.slice(0, 200);
+  // Arabic normalization
+  var norm = function(s) {
+    return String(s||'').toLowerCase()
+      .replace(/[ً-ْٰ]/g, '')
+      .replace(/[إأآا]/g, 'ا').replace(/ى/g, 'ي').replace(/ؤ/g, 'و').replace(/ئ/g, 'ي').replace(/ة/g, 'ه');
+  };
+  var nq = norm(q);
+  return st.items.filter(function(it){
+    return norm(it.code).indexOf(nq) >= 0 || norm(it.name).indexOf(nq) >= 0;
+  }).slice(0, 200);
+}
+
+function _mselRender(mselId) {
+  var el = document.getElementById(mselId); if (!el) return;
+  var st = _mselState[mselId] || { items: [], selected: new Set(), query: '' };
+  var trigger = el.querySelector('.tb-msel-trigger');
+  var list    = el.querySelector('.tb-msel-list');
+  var countEl = el.querySelector('.tb-msel-count');
+
+  // ─── Trigger (chips or placeholder) ───
+  var selArr = Array.from(st.selected);
+  if (selArr.length === 0) {
+    trigger.innerHTML = '<span class="tb-msel-placeholder">— الكل —</span>';
+  } else {
+    var byId = {}; (st.items||[]).forEach(function(it){ byId[it.id] = it; });
+    var html = '';
+    var visible = selArr.slice(0, 3);
+    visible.forEach(function(id){
+      var it = byId[id]; if (!it) return;
+      html += '<span class="tb-msel-chip">' +
+        _woEscapeHtml(it.code || it.name) +
+        '<button type="button" onclick="event.stopPropagation();tbMselToggleItem(\''+mselId+'\',\''+id+'\');tbMselApply(\''+mselId+'\');" aria-label="إزالة"><i class="fas fa-times"></i></button>' +
+      '</span>';
+    });
+    if (selArr.length > 3) {
+      html += '<span class="tb-msel-more">+ ' + (selArr.length - 3) + ' آخرين</span>';
+    }
+    trigger.innerHTML = html;
+  }
+
+  // ─── List of options (filtered) ───
+  var filtered = _mselFiltered(mselId);
+  if (!filtered.length) {
+    list.innerHTML = '<div class="tb-msel-empty"><i class="fas fa-search-minus"></i> لا توجد نتائج</div>';
+  } else {
+    list.innerHTML = filtered.map(function(it){
+      var isSel = st.selected.has(it.id);
+      return '<label class="tb-msel-option' + (isSel ? ' selected' : '') + '" onclick="event.preventDefault();tbMselToggleItem(\''+mselId+'\',\''+it.id+'\')">' +
+        '<input type="checkbox"' + (isSel ? ' checked' : '') + '>' +
+        '<span class="tb-msel-option-code">'+_woEscapeHtml(it.code||'')+'</span>' +
+        '<span class="tb-msel-option-name">'+_woEscapeHtml(it.name||'')+'</span>' +
+      '</label>';
+    }).join('');
+  }
+
+  if (countEl) countEl.textContent = selArr.length;
+}
+
 function erpTrialReset() {
   ['tbFrom','tbTo','tbAccountType','tbParent','tbAddedBy','tbScope','tbLevelMode','tbBalanceMode','tbBranch','tbBrand'].forEach(function(id){
     var el = document.getElementById(id); if (!el) return;
@@ -8710,6 +8844,12 @@ function erpTrialReset() {
       el.selectedIndex = 0;
     } else el.value = '';
   });
+  // Clear the multi-select widget too
+  if (window._mselState && _mselState['tbParentMsel']) {
+    _mselState['tbParentMsel'].selected = new Set();
+    _mselState['tbParentMsel'].query = '';
+    if (typeof _mselRender === 'function') _mselRender('tbParentMsel');
+  }
   _tbCache = null; _tbActiveLevel = null;
   document.getElementById('tbBody').innerHTML = '<tr><td colspan="10" class="tb-empty">اضغط "عرض التقرير" لتوليد ميزان المراجعة</td></tr>';
   document.getElementById('tbBrandBanner').style.display = 'none';
@@ -8782,12 +8922,35 @@ window.erpTrialExport = function(format) {
 
 function _filterTbRows(rows) {
   var accType  = (document.getElementById('tbAccountType')||{}).value || 'both';
-  var parent   = (document.getElementById('tbParent')||{}).value || '';
+  var parentRaw = (document.getElementById('tbParent')||{}).value || '';
   var scope    = (document.getElementById('tbScope')||{}).value || 'all';
   var levelMode = (document.getElementById('tbLevelMode')||{}).value || 'default';
 
-  // Pre-compute the set of row accountIds (for hasChild detection)
-  var rowIds = new Set(rows.map(function(r){return r.accountId;}));
+  // Multi-select support: parent value may be a CSV of multiple account IDs.
+  // Empty → no filter. With values → INCLUDE rows that ARE one of the
+  // selected accounts OR descendants of any selected account.
+  var parentIds = parentRaw ? parentRaw.split(',').filter(Boolean) : [];
+  var parentSet = new Set(parentIds);
+  // Build descendant lookup once: for each selected parent, collect all its
+  // descendants so child accounts also pass the filter.
+  var includeIds = new Set(parentIds);
+  if (parentIds.length) {
+    var byParent = {};
+    rows.forEach(function(r){
+      var pid = r.parentId || null;
+      if (!byParent[pid]) byParent[pid] = [];
+      byParent[pid].push(r);
+    });
+    var collectDesc = function(id) {
+      (byParent[id] || []).forEach(function(child){
+        if (!includeIds.has(child.accountId)) {
+          includeIds.add(child.accountId);
+          collectDesc(child.accountId);
+        }
+      });
+    };
+    parentIds.forEach(collectDesc);
+  }
 
   return rows.filter(function(a){
     var lvl = a.level || (a.code ? Math.min(9, String(a.code).length) : 1);
@@ -8802,7 +8965,8 @@ function _filterTbRows(rows) {
     if (accType === 'no-parents' &&  isLevel1) return false;   // hides roots only
     // 'both' → no filter
 
-    if (parent && a.parentId !== parent && a.id !== parent && a.accountId !== parent) return false;
+    // Multi-select parent filter (include selected accounts + all descendants)
+    if (parentIds.length && !includeIds.has(a.accountId)) return false;
 
     // Scope filter
     if (scope === 'nonzero') {
@@ -8850,13 +9014,12 @@ function erpLoadTrialBalance() {
     }
     _tbCache = r;
     _tbActiveLevel = null;
-    // Populate parent dropdown (only top-level accounts)
-    var psel = document.getElementById('tbParent');
-    if (psel && psel.options.length <= 1) {
-      var topAccounts = (r.rows||[]).filter(function(a){ return !a.parentId || (a.code && a.code.length <= 1); });
-      psel.innerHTML = '<option value="">الكل</option>' +
-        topAccounts.map(function(a){return '<option value="'+a.id+'">'+(a.code||'')+' — '+(a.nameAr||'')+'</option>';}).join('');
-    }
+    // Populate the multi-select with ALL accounts (main + sub) so user
+    // can search and pick any account. The widget itself handles search.
+    var allAccounts = (r.rows||[]).map(function(a){
+      return { id: a.accountId, code: a.code || '', name: a.nameAr || '' };
+    }).sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
+    if (typeof tbMselInit === 'function') tbMselInit('tbParentMsel', allAccounts);
     // Populate added-by dropdown
     var asel = document.getElementById('tbAddedBy');
     if (asel && asel.options.length <= 1) {

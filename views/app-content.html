@@ -3619,8 +3619,29 @@
         </select>
       </div>
       <div class="tb-field">
-        <label>حساب رئيسي</label>
-        <select id="tbParent"><option value="">الكل</option></select>
+        <label>حساب رئيسي / فرعي (متعدد)</label>
+        <div class="tb-msel" id="tbParentMsel">
+          <button type="button" class="tb-msel-trigger" onclick="tbMselToggle('tbParentMsel')">
+            <span class="tb-msel-placeholder">— الكل —</span>
+          </button>
+          <div class="tb-msel-panel">
+            <div class="tb-msel-search">
+              <i class="fas fa-search"></i>
+              <input type="text" placeholder="ابحث برقم أو اسم الحساب..." oninput="tbMselSearch('tbParentMsel', this.value)">
+            </div>
+            <div class="tb-msel-toolbar">
+              <button type="button" onclick="tbMselSelectAll('tbParentMsel')">تحديد الكل المعروض</button>
+              <button type="button" onclick="tbMselClearAll('tbParentMsel')">مسح التحديد</button>
+            </div>
+            <div class="tb-msel-list"></div>
+            <div class="tb-msel-footer">
+              <span><span class="tb-msel-count">0</span> محدّد</span>
+              <button type="button" onclick="tbMselApply('tbParentMsel')">تطبيق</button>
+            </div>
+          </div>
+        </div>
+        <!-- Hidden field — kept so legacy code still finds it; populated as comma-separated IDs -->
+        <input type="hidden" id="tbParent" value="">
       </div>
       <div class="tb-field">
         <label>أضيفت بواسطة</label>

@@ -1676,7 +1676,7 @@ function refreshActiveAdminSection() {
   var id = (active.id || '').replace('sec_', '');
   switch (id) {
     case 'home':       if (typeof loadDashHome === 'function') loadDashHome(); break;
-    case 'sales':      if (typeof loadDashSales === 'function') loadDashSales(); break;
+    case 'sales':      if (typeof salesGo === 'function') salesGo('hub'); else if (typeof loadDashSales === 'function') loadDashSales(); break;
     case 'inventory':  if (typeof loadDashInv === 'function') loadDashInv(); break;
     case 'warehouse':  if (typeof loadDashInvItems === 'function') loadDashInvItems(); break;
     case 'expenses':   if (typeof loadDashExpenses === 'function') loadDashExpenses(); break;
@@ -1928,7 +1928,7 @@ function nav(sectionId) {
 
   // Data Loading Trigger
   if (sectionId === 'home') loadDashHome();
-  if (sectionId === 'sales') loadDashSales();
+  if (sectionId === 'sales') { if (typeof salesGo === 'function') salesGo('hub'); else loadDashSales(); }
   if (sectionId === 'menu') loadDashMenu();
   if (sectionId === 'recipes') loadDashRecipes();
   if (sectionId === 'inventory') loadDashMenu(); // legacy alias → menu
@@ -2535,19 +2535,27 @@ function _loadDashHomeBody() {
 // Sales Table
 function loadDashSales() {
   loader();
-  var start = q("#fsStart") ? q("#fsStart").value : "";
-  var end   = q("#fsEnd")   ? q("#fsEnd").value   : "";
-  // Default: today if no dates set — use LOCAL date so we match what the
-  // user considers "today", and widen the backend range by ±1 day to catch
-  // invoices that fall on the adjacent UTC day (server is UTC).
+  // V3: Prefer new filter bar values if mounted, fallback to legacy IDs
+  var f = (typeof getSalesFilters === 'function' && q('#sf_log_start')) ? getSalesFilters('log') : null;
+  var start = f ? f.start : (q("#fsStart") ? q("#fsStart").value : "");
+  var end   = f ? f.end   : (q("#fsEnd")   ? q("#fsEnd").value   : "");
+  // Default: today if no dates set
   if (!start && !end) {
     var today = localDateStr();
     start = today; end = today;
     if (q("#fsStart")) q("#fsStart").value = today;
     if (q("#fsEnd")) q("#fsEnd").value = today;
   }
-  var cashier = q("#fsCashier") ? q("#fsCashier").value : "";
-  var payMethod = q("#fsPay") ? q("#fsPay").value : "";
+  var cashier   = f ? f.cashier       : (q("#fsCashier") ? q("#fsCashier").value : "");
+  var payMethod = f ? f.paymentMethod : (q("#fsPay") ? q("#fsPay").value : "");
+  // V3 filters (only meaningful when new bar is mounted)
+  var brandId    = f ? f.brandId : '';
+  var branchId   = f ? f.branchId : '';
+  var channelId  = f ? f.channelId : '';
+  var minAmt     = f ? f.minAmount : 0;
+  var maxAmt     = f ? f.maxAmount : 0;
+  var invoiceNo  = f ? f.invoiceNo : '';
+  var productIds = f ? f.productIds : [];
   // Widen the server query by 1 day on each side to catch timezone drift
   // between the client (local) and server (UTC). We re-filter client-side
   // below so the final rendered list still matches the user's intent.
@@ -2566,15 +2574,26 @@ function loadDashSales() {
     var endMs   = new Date(end   + 'T23:59:59.999').getTime();
     arr = (arr || []).filter(function(r) {
       var t = new Date(r.date).getTime();
-      return !isNaN(t) && t >= startMs && t <= endMs;
+      if (isNaN(t) || t < startMs || t > endMs) return false;
+      // V3 client-side filters
+      if (brandId && r.brandId && r.brandId !== brandId) return false;
+      if (branchId && r.branchId && r.branchId !== branchId) return false;
+      if (channelId && r.channelId && r.channelId !== channelId) return false;
+      if (minAmt > 0 && Number(r.total) < minAmt) return false;
+      if (maxAmt > 0 && Number(r.total) > maxAmt) return false;
+      if (invoiceNo && (r.orderId || '').toLowerCase().indexOf(invoiceNo.toLowerCase()) < 0) return false;
+      if (productIds.length && (!r.items || !r.items.some(function(it){ return productIds.indexOf(String(it.id||it.itemId)) >= 0; }))) return false;
+      return true;
     });
     let totalSales = 0;
+    let maxInvoice = 0;
     let h = "";
-    if (!arr || !arr.length) h = "<tr><td colspan='8' style='text-align:center; padding:30px;'>لا توجد بيانات لهذه الفترة</td></tr>";
+    if (!arr || !arr.length) h = "<tr><td colspan='9' style='text-align:center; padding:30px;'>لا توجد بيانات لهذه الفترة</td></tr>";
     else {
       arr.forEach(s => {
         try {
           totalSales += s.total;
+          if (s.total > maxInvoice) maxInvoice = s.total;
           let payType = String(s.payment || "").toLowerCase();
           let isSplit = payType.indexOf(':') !== -1;
           let bClass = isSplit ? 'blue' : (payType === 'cash' ? 'green' : (payType === 'card' || payType === 'mada' ? 'blue' : 'yellow'));
@@ -2589,10 +2608,15 @@ function loadDashSales() {
 
           var dateStr = '';
           try { var dt = new Date(s.date); dateStr = dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+' '+dt.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}); } catch(e){ dateStr = s.date; }
+          // V3: channel badge
+          var chBadge = s.channelName
+            ? '<span style="background:#ede9fe;color:#6d28d9;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;">'+s.channelName+'</span>'
+            : '<span style="color:#94a3b8;font-size:11px;">—</span>';
           h += '<tr>'+
-            (state.isDeveloper ? '<td style="text-align:center;"><input type="checkbox" class="sale-chk" value="'+s.orderId+'" style="width:16px;height:16px;"></td>' : '')+
+            (state.isDeveloper ? '<td style="text-align:center;"><input type="checkbox" class="sale-chk" value="'+s.orderId+'" style="width:16px;height:16px;"></td>' : '<td></td>')+
             '<td style="font-family:monospace;font-weight:bold;color:var(--primary);font-size:12px;">'+(s.orderId||'')+'</td>'+
             '<td style="font-size:12px;color:#64748b;">'+dateStr+'</td>'+
+            '<td>'+chBadge+'</td>'+
             '<td style="font-weight:600;">'+userLabel(s.username)+'</td>'+
             '<td>'+itemsHtml+'</td>'+
             '<td><span class="badge '+bClass+'">'+payDisplay+'</span></td>'+
@@ -2609,7 +2633,8 @@ function loadDashSales() {
     state.salesCache = arr || [];
     if (q("#slTotalSales")) q("#slTotalSales").innerText = formatVal(totalSales);
     if (q("#slTotalCount")) q("#slTotalCount").innerText = arr ? arr.length : 0;
-    // Show bulk actions bar for developer
+    if (q("#slAvgInvoice")) q("#slAvgInvoice").innerText = formatVal(arr && arr.length ? totalSales / arr.length : 0);
+    if (q("#slMaxInvoice")) q("#slMaxInvoice").innerText = formatVal(maxInvoice);
     var bulkBar = q("#salesBulkBar");
     if (bulkBar) bulkBar.style.display = state.isDeveloper && arr && arr.length ? '' : 'none';
   }).getSalesListDetailed(params);
@@ -6464,19 +6489,577 @@ let breakdownChartInst = null;
 let activeBreakdownType = 'byProduct';
 
 function switchSalesTab(tabId) {
-  currentSalesTab = tabId;
-  // Update tab buttons
-  qs('.sales-tab').forEach(el => el.classList.remove('active'));
-  const tabBtn = q('#stab_' + tabId);
-  if (tabBtn) tabBtn.classList.add('active');
-  // Update tab contents
-  qs('.sales-tab-content').forEach(el => el.classList.remove('active'));
-  const tabContent = q('#stc_' + tabId);
-  if (tabContent) tabContent.classList.add('active');
+  // Legacy shim — redirects to new salesGo()
+  var map = { log:'log', payments:'payments', reports:'reports' };
+  salesGo(map[tabId] || 'hub');
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+ * SALES V3 — Hub navigation + advanced filters + advanced reports
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+window._salesPagesIds = ['salesHub','salesLog','salesPayments','salesReports','salesAdvanced'];
+window._salesFilters = {}; // per-page filter state: { log: {...}, payments: {...}, reports: {...}, advanced: {...} }
+window._salesProductsCache = null;
+window._salesBrandsCache = null;
+window._salesBranchesCache = null;
+window._salesChannelsCache = null;
+window._salesCashiersCache = null;
+window._salesMethodsCache = null;
+
+window.salesGo = function(page) {
+  // page: hub | log | payments | reports | advanced
+  var targetId = (page === 'hub') ? 'salesHub' : 'sales' + page.charAt(0).toUpperCase() + page.slice(1);
+  window._salesPagesIds.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', id !== targetId);
+  });
+  // Mount filter bar if not already mounted
+  if (page === 'log')      _mountSalesFilter('salesLogFilter', 'log', loadDashSales);
+  if (page === 'payments') _mountSalesFilter('salesPayFilter', 'payments', loadPayments);
+  if (page === 'reports')  _mountSalesFilter('salesReportsFilter', 'reports', function(){ loadSalesBreakdown(activeBreakdownType); });
+  if (page === 'advanced') _mountSalesFilter('salesAdvFilter', 'advanced', loadSalesAdvancedReports);
   // Load data
-  if (tabId === 'log') loadDashSales();
-  if (tabId === 'payments') loadPayments();
-  if (tabId === 'reports') loadSalesBreakdown(activeBreakdownType);
+  if (page === 'hub')      loadSalesHubKpis();
+  if (page === 'log')      loadDashSales();
+  if (page === 'payments') loadPayments();
+  if (page === 'reports')  loadSalesBreakdown(activeBreakdownType);
+  if (page === 'advanced') loadSalesAdvancedReports();
+};
+
+// ─── Date preset helpers ─────────────────────────────────────────────────
+window._datePreset = function(key) {
+  var now = new Date();
+  var y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+  var fmt = function(date) {
+    var yy = date.getFullYear();
+    var mm = String(date.getMonth()+1).padStart(2,'0');
+    var dd = String(date.getDate()).padStart(2,'0');
+    return yy + '-' + mm + '-' + dd;
+  };
+  var startOfWeek = function(date) {
+    // Saturday-first week (Saudi)
+    var day = date.getDay(); // 0=Sun, 6=Sat
+    var diff = (day + 1) % 7; // distance back to Saturday
+    var s = new Date(date); s.setDate(date.getDate() - diff); return s;
+  };
+  switch(key) {
+    case 'today':       return [fmt(now), fmt(now)];
+    case 'yesterday':   { var y2 = new Date(now); y2.setDate(d-1); return [fmt(y2), fmt(y2)]; }
+    case 'thisWeek':    { var s = startOfWeek(now); return [fmt(s), fmt(now)]; }
+    case 'lastWeek':    { var s = startOfWeek(now); var ls = new Date(s); ls.setDate(s.getDate()-7); var le = new Date(s); le.setDate(s.getDate()-1); return [fmt(ls), fmt(le)]; }
+    case 'last7':       { var s = new Date(now); s.setDate(d-6); return [fmt(s), fmt(now)]; }
+    case 'last30':      { var s = new Date(now); s.setDate(d-29); return [fmt(s), fmt(now)]; }
+    case 'thisMonth':   return [fmt(new Date(y, m, 1)), fmt(now)];
+    case 'lastMonth':   return [fmt(new Date(y, m-1, 1)), fmt(new Date(y, m, 0))];
+    case 'thisQuarter': { var qStart = Math.floor(m/3)*3; return [fmt(new Date(y, qStart, 1)), fmt(now)]; }
+    case 'lastQuarter': { var qStart = Math.floor(m/3)*3 - 3; return [fmt(new Date(y, qStart, 1)), fmt(new Date(y, qStart+3, 0))]; }
+    case 'ytd':         return [fmt(new Date(y, 0, 1)), fmt(now)];
+    case 'thisYear':    return [fmt(new Date(y, 0, 1)), fmt(new Date(y, 11, 31))];
+    case 'lastYear':    return [fmt(new Date(y-1, 0, 1)), fmt(new Date(y-1, 11, 31))];
+    case 'all':         return ['', ''];
+    default:            return ['', ''];
+  }
+};
+
+window._applyDatePreset = function(prefix, key) {
+  var range = _datePreset(key);
+  var sf = q('#sf_' + prefix + '_start');
+  var ef = q('#sf_' + prefix + '_end');
+  if (sf) sf.value = range[0];
+  if (ef) ef.value = range[1];
+  // Highlight active preset
+  qs('.sf-preset[data-prefix="' + prefix + '"]').forEach(function(el) {
+    el.classList.toggle('active', el.dataset.preset === key);
+  });
+};
+
+// ─── Mount filter bar for a page ─────────────────────────────────────────
+function _mountSalesFilter(hostId, prefix, applyFn) {
+  var host = document.getElementById(hostId);
+  if (!host) return;
+  if (host.dataset.mounted === '1') return; // already mounted
+  host.dataset.mounted = '1';
+
+  host.innerHTML = _buildSalesFilterHTML(prefix);
+
+  // Wire apply button
+  var applyBtn = host.querySelector('.sf-btn-apply');
+  if (applyBtn) applyBtn.addEventListener('click', function(){ applyFn && applyFn(); });
+  var resetBtn = host.querySelector('.sf-btn-reset');
+  if (resetBtn) resetBtn.addEventListener('click', function(){ _resetSalesFilter(prefix); applyFn && applyFn(); });
+
+  // Wire preset chips
+  host.querySelectorAll('.sf-preset').forEach(function(chip) {
+    chip.addEventListener('click', function(){ _applyDatePreset(prefix, chip.dataset.preset); });
+  });
+
+  // Auto-apply "this month" by default
+  _applyDatePreset(prefix, 'thisMonth');
+
+  // Populate dropdowns
+  _populateSalesFilterDropdowns(prefix);
+
+  // Wire product picker
+  _wireProductPicker(prefix);
+}
+
+function _buildSalesFilterHTML(prefix) {
+  var presets = [
+    ['today','اليوم'], ['yesterday','أمس'],
+    ['thisWeek','هذا الأسبوع'], ['lastWeek','الأسبوع الماضي'],
+    ['last7','آخر 7 أيام'], ['last30','آخر 30 يوم'],
+    ['thisMonth','هذا الشهر'], ['lastMonth','الشهر الماضي'],
+    ['thisQuarter','هذا الربع'], ['lastQuarter','الربع الماضي'],
+    ['ytd','من بداية السنة'], ['thisYear','هذه السنة'], ['lastYear','السنة الماضية'],
+    ['all','الكل']
+  ];
+  var presetsHtml = presets.map(function(p) {
+    return '<button class="sf-preset" data-prefix="' + prefix + '" data-preset="' + p[0] + '">' + p[1] + '</button>';
+  }).join('');
+
+  return '<div class="sf-bar">' +
+    '<div class="sf-date-presets">' + presetsHtml + '</div>' +
+
+    '<div class="sf-row">' +
+      '<div class="sf-field"><label><i class="fas fa-calendar"></i> من تاريخ</label><input type="date" id="sf_' + prefix + '_start"></div>' +
+      '<div class="sf-field"><label><i class="fas fa-calendar-check"></i> إلى تاريخ</label><input type="date" id="sf_' + prefix + '_end"></div>' +
+      '<div class="sf-field"><label><i class="fas fa-tags"></i> البراند</label><select id="sf_' + prefix + '_brand"><option value="">الكل</option></select></div>' +
+      '<div class="sf-field"><label><i class="fas fa-code-branch"></i> الفرع</label><select id="sf_' + prefix + '_branch"><option value="">الكل</option></select></div>' +
+      '<div class="sf-field"><label><i class="fas fa-store"></i> القناة</label><select id="sf_' + prefix + '_channel"><option value="">الكل</option></select></div>' +
+    '</div>' +
+
+    '<div class="sf-row">' +
+      '<div class="sf-field"><label><i class="fas fa-credit-card"></i> طريقة الدفع</label><select id="sf_' + prefix + '_pay"><option value="">الكل</option></select></div>' +
+      '<div class="sf-field"><label><i class="fas fa-user"></i> الكاشير</label><select id="sf_' + prefix + '_cashier"><option value="">الكل</option></select></div>' +
+      '<div class="sf-field"><label><i class="fas fa-money-bill-trend-up"></i> أدنى مبلغ</label><input type="number" step="0.01" id="sf_' + prefix + '_minAmt" placeholder="0.00"></div>' +
+      '<div class="sf-field"><label><i class="fas fa-money-bill-1-wave"></i> أقصى مبلغ</label><input type="number" step="0.01" id="sf_' + prefix + '_maxAmt" placeholder="∞"></div>' +
+      '<div class="sf-field"><label><i class="fas fa-receipt"></i> رقم الفاتورة</label><input type="text" id="sf_' + prefix + '_invoiceNo" placeholder="بحث برقم..."></div>' +
+    '</div>' +
+
+    '<div class="sf-row" style="grid-template-columns:1fr;">' +
+      '<div class="sf-field">' +
+        '<label><i class="fas fa-cube"></i> المنتجات (اختر منتج أو أكثر)</label>' +
+        '<div class="sf-products-host" id="sf_' + prefix + '_prodHost">' +
+          '<input type="text" class="sf-prod-input" id="sf_' + prefix + '_prodInput" placeholder="اكتب اسم منتج للبحث...">' +
+        '</div>' +
+        '<input type="hidden" id="sf_' + prefix + '_prodIds" value="">' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="sf-actions">' +
+      '<button class="sf-btn sf-btn-apply"><i class="fas fa-search"></i> تطبيق الفلاتر</button>' +
+      '<button class="sf-btn sf-btn-reset"><i class="fas fa-undo"></i> إعادة تعيين</button>' +
+      '<button class="sf-btn sf-btn-export" onclick="_exportSalesFiltered(\'' + prefix + '\')"><i class="fas fa-file-excel"></i> تصدير</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function _populateSalesFilterDropdowns(prefix) {
+  // Brands
+  if (!window._salesBrandsCache) {
+    api.withSuccessHandler(function(rows) {
+      window._salesBrandsCache = rows || [];
+      _fillSelect('sf_'+prefix+'_brand', window._salesBrandsCache, 'id', 'name');
+    }).getBrands();
+  } else _fillSelect('sf_'+prefix+'_brand', window._salesBrandsCache, 'id', 'name');
+
+  // Branches
+  if (!window._salesBranchesCache) {
+    fetch('/api/erp/branches-full', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+      .then(function(r){return r.json();})
+      .then(function(rows) {
+        window._salesBranchesCache = rows || [];
+        _fillSelect('sf_'+prefix+'_branch', window._salesBranchesCache, 'id', 'name');
+      }).catch(function(){});
+  } else _fillSelect('sf_'+prefix+'_branch', window._salesBranchesCache, 'id', 'name');
+
+  // Channels
+  if (!window._salesChannelsCache) {
+    fetch('/api/sales-channels/active', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+      .then(function(r){return r.json();})
+      .then(function(rows) {
+        window._salesChannelsCache = rows || [];
+        _fillSelect('sf_'+prefix+'_channel', window._salesChannelsCache, 'id', 'name');
+      }).catch(function(){});
+  } else _fillSelect('sf_'+prefix+'_channel', window._salesChannelsCache, 'id', 'name');
+
+  // Payment methods (V3)
+  if (!window._salesMethodsCache) {
+    fetch('/api/settings/payment-methods-full', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+      .then(function(r){return r.json();})
+      .then(function(rows) {
+        window._salesMethodsCache = (rows || []).map(function(p){ return { id: (p.name||'').toLowerCase(), name: p.nameAr || p.name }; });
+        _fillSelect('sf_'+prefix+'_pay', window._salesMethodsCache, 'id', 'name');
+      }).catch(function(){});
+  } else _fillSelect('sf_'+prefix+'_pay', window._salesMethodsCache, 'id', 'name');
+
+  // Cashiers
+  if (!window._salesCashiersCache) {
+    fetch('/api/auth/users', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+      .then(function(r){return r.json();})
+      .then(function(rows) {
+        window._salesCashiersCache = (rows || []).filter(function(u){ return u.role === 'cashier' || u.role === 'admin' || u.role === 'manager'; })
+          .map(function(u){ return { id: u.username, name: u.displayName || u.username }; });
+        _fillSelect('sf_'+prefix+'_cashier', window._salesCashiersCache, 'id', 'name');
+      }).catch(function(){});
+  } else _fillSelect('sf_'+prefix+'_cashier', window._salesCashiersCache, 'id', 'name');
+
+  // Cache products for picker
+  if (!window._salesProductsCache) {
+    fetch('/api/menu/all', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+      .then(function(r){return r.json();})
+      .then(function(rows) { window._salesProductsCache = rows || []; });
+  }
+}
+
+function _fillSelect(id, items, valueKey, labelKey) {
+  var sel = document.getElementById(id);
+  if (!sel) return;
+  var current = sel.value;
+  // Keep "الكل" as first option
+  sel.innerHTML = '<option value="">الكل</option>' + items.map(function(it) {
+    var v = it[valueKey] || '';
+    var l = it[labelKey] || v;
+    return '<option value="' + v + '"' + (current===v?' selected':'') + '>' + l + '</option>';
+  }).join('');
+}
+
+function _wireProductPicker(prefix) {
+  var host = document.getElementById('sf_' + prefix + '_prodHost');
+  var input = document.getElementById('sf_' + prefix + '_prodInput');
+  var hidden = document.getElementById('sf_' + prefix + '_prodIds');
+  if (!host || !input || !hidden) return;
+
+  var dropdown = null;
+  function openDropdown() {
+    if (dropdown) { dropdown.remove(); dropdown = null; }
+    var query = (input.value || '').toLowerCase().trim();
+    var items = (window._salesProductsCache || []).filter(function(p) {
+      if (!query) return false;
+      return (p.name || '').toLowerCase().indexOf(query) >= 0;
+    }).slice(0, 30);
+    if (!items.length) return;
+    dropdown = document.createElement('div');
+    dropdown.className = 'sf-prod-dropdown';
+    dropdown.innerHTML = items.map(function(p) {
+      return '<div class="sf-prod-option" data-id="' + p.id + '" data-name="' + (p.name||'') + '">' +
+        '<span>' + (p.name||'') + '</span>' +
+        '<span class="sf-prod-option-meta">' + (p.brandName||'') + (p.category?' · '+p.category:'') + '</span>' +
+      '</div>';
+    }).join('');
+    host.appendChild(dropdown);
+    dropdown.addEventListener('click', function(e) {
+      var opt = e.target.closest('.sf-prod-option');
+      if (!opt) return;
+      _addProductChip(prefix, opt.dataset.id, opt.dataset.name);
+      input.value = '';
+      dropdown.remove(); dropdown = null;
+    });
+  }
+  function closeDropdown() {
+    if (dropdown) { dropdown.remove(); dropdown = null; }
+  }
+
+  input.addEventListener('input', openDropdown);
+  document.addEventListener('click', function(e) { if (!host.contains(e.target)) closeDropdown(); });
+}
+
+function _addProductChip(prefix, id, name) {
+  var hidden = document.getElementById('sf_' + prefix + '_prodIds');
+  var host = document.getElementById('sf_' + prefix + '_prodHost');
+  if (!hidden || !host) return;
+  var ids = (hidden.value || '').split(',').filter(Boolean);
+  if (ids.indexOf(id) >= 0) return;
+  ids.push(id);
+  hidden.value = ids.join(',');
+
+  var chip = document.createElement('span');
+  chip.className = 'sf-prod-chip';
+  chip.dataset.id = id;
+  chip.innerHTML = '<span>' + name + '</span><i class="fas fa-times"></i>';
+  chip.querySelector('i').addEventListener('click', function() {
+    chip.remove();
+    var ids2 = (hidden.value || '').split(',').filter(function(x){return x && x!==id;});
+    hidden.value = ids2.join(',');
+  });
+  host.insertBefore(chip, host.querySelector('.sf-prod-input'));
+}
+
+function _resetSalesFilter(prefix) {
+  ['start','end','brand','branch','channel','pay','cashier','minAmt','maxAmt','invoiceNo','prodIds'].forEach(function(k) {
+    var el = document.getElementById('sf_' + prefix + '_' + k);
+    if (el) el.value = '';
+  });
+  var host = document.getElementById('sf_' + prefix + '_prodHost');
+  if (host) host.querySelectorAll('.sf-prod-chip').forEach(function(c){c.remove();});
+  qs('.sf-preset[data-prefix="' + prefix + '"]').forEach(function(el){el.classList.remove('active');});
+  _applyDatePreset(prefix, 'thisMonth');
+}
+
+window.getSalesFilters = function(prefix) {
+  // Reads filter values into a structured object — used by all loaders
+  var v = function(k) { var el = document.getElementById('sf_' + prefix + '_' + k); return el ? el.value : ''; };
+  return {
+    start: v('start'),
+    end: v('end'),
+    brandId: v('brand'),
+    branchId: v('branch'),
+    channelId: v('channel'),
+    paymentMethod: v('pay'),
+    cashier: v('cashier'),
+    minAmount: Number(v('minAmt')) || 0,
+    maxAmount: Number(v('maxAmt')) || 0,
+    invoiceNo: v('invoiceNo'),
+    productIds: v('prodIds') ? v('prodIds').split(',').filter(Boolean) : []
+  };
+};
+
+window._exportSalesFiltered = function(prefix) {
+  // Use existing export logic but with filtered cache
+  if (typeof exportSalesExcel === 'function') exportSalesExcel();
+  else showToast('سيتم دعم التصدير قريباً');
+};
+
+// ─── Sales Hub KPIs ──────────────────────────────────────────────────────
+window.loadSalesHubKpis = function() {
+  var today = _datePreset('today');
+  var week = _datePreset('thisWeek');
+  var month = _datePreset('thisMonth');
+  // Fetch via existing endpoint with date filters
+  Promise.all([
+    _fetchSalesSummary(today[0], today[1]),
+    _fetchSalesSummary(week[0], week[1]),
+    _fetchSalesSummary(month[0], month[1])
+  ]).then(function(res) {
+    var t = res[0] || {}, w = res[1] || {}, m = res[2] || {};
+    var fmt = function(n) { return Number(n||0).toLocaleString('ar-SA',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' ر.س'; };
+    if (q('#shKpiToday')) q('#shKpiToday').textContent = fmt(t.total);
+    if (q('#shKpiTodayCount')) q('#shKpiTodayCount').textContent = (t.count || 0).toLocaleString('ar-SA');
+    if (q('#shKpiWeek')) q('#shKpiWeek').textContent = fmt(w.total);
+    if (q('#shKpiMonth')) q('#shKpiMonth').textContent = fmt(m.total);
+    if (q('#shKpiAvg')) q('#shKpiAvg').textContent = fmt(t.count > 0 ? (t.total / t.count) : 0);
+  }).catch(function(err){ console.error('KPI load err:', err); });
+};
+
+function _fetchSalesSummary(from, to) {
+  return new Promise(function(resolve) {
+    var qs = [];
+    if (from) qs.push('startDate=' + encodeURIComponent(from));
+    if (to)   qs.push('endDate=' + encodeURIComponent(to));
+    fetch('/api/sales' + (qs.length ? '?' + qs.join('&') : ''),
+      { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+      .then(function(r){return r.json();})
+      .then(function(rows) {
+        var arr = Array.isArray(rows) ? rows : [];
+        var total = arr.reduce(function(s,x){return s + Number(x.totalFinal || x.total_final || 0);}, 0);
+        resolve({ total: total, count: arr.length });
+      })
+      .catch(function(){ resolve({ total:0, count:0 }); });
+  });
+}
+
+// ─── Advanced Reports loader ─────────────────────────────────────────────
+window.loadSalesAdvancedReports = function() {
+  var f = getSalesFilters('advanced');
+  // 1) Current period summary
+  _fetchSalesSummary(f.start, f.end).then(function(cur) {
+    // 2) Previous-period summary (same length, immediately before)
+    var prevRange = _getPreviousPeriod(f.start, f.end);
+    _fetchSalesSummary(prevRange[0], prevRange[1]).then(function(prev) {
+      _renderAdvancedCompare(cur, prev);
+    });
+  });
+
+  // 3) Detailed sales for charts + insights
+  var qs = [];
+  if (f.start) qs.push('startDate=' + encodeURIComponent(f.start));
+  if (f.end)   qs.push('endDate=' + encodeURIComponent(f.end));
+  fetch('/api/sales' + (qs.length ? '?' + qs.join('&') : ''),
+    { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+    .then(function(r){return r.json();})
+    .then(function(rows) {
+      _renderPeakHours(rows || []);
+      _renderTopProducts(rows || []);
+      _renderChannelDistribution(rows || []);
+      _renderPayDistribution(rows || []);
+      _renderInsights(rows || [], f);
+    });
+};
+
+function _getPreviousPeriod(start, end) {
+  if (!start || !end) return ['',''];
+  var s = new Date(start), e = new Date(end);
+  var lengthMs = e - s + 86400000; // inclusive
+  var prevEnd = new Date(s); prevEnd.setDate(prevEnd.getDate() - 1);
+  var prevStart = new Date(prevEnd); prevStart.setTime(prevStart.getTime() - lengthMs + 86400000);
+  var fmt = function(d) {
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  };
+  return [fmt(prevStart), fmt(prevEnd)];
+}
+
+function _renderAdvancedCompare(cur, prev) {
+  var fmt = function(n) { return Number(n||0).toLocaleString('ar-SA',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' ر.س'; };
+  if (q('#advCurValue')) q('#advCurValue').textContent = fmt(cur.total);
+  if (q('#advCurSub'))   q('#advCurSub').textContent   = (cur.count || 0).toLocaleString('ar-SA') + ' فاتورة';
+  if (q('#advPrevValue')) q('#advPrevValue').textContent = fmt(prev.total);
+  if (q('#advPrevSub'))   q('#advPrevSub').textContent   = (prev.count || 0).toLocaleString('ar-SA') + ' فاتورة';
+  var deltaPct = prev.total > 0 ? ((cur.total - prev.total) / prev.total * 100) : (cur.total > 0 ? 100 : 0);
+  var deltaEl = q('#advDelta');
+  if (deltaEl) {
+    deltaEl.textContent = (deltaPct >= 0 ? '+' : '') + deltaPct.toFixed(1) + '%';
+    deltaEl.style.color = deltaPct > 0 ? '#16a34a' : (deltaPct < 0 ? '#dc2626' : '#64748b');
+  }
+  var deltaSubEl = q('#advDeltaSub');
+  if (deltaSubEl) {
+    var diff = cur.total - prev.total;
+    deltaSubEl.textContent = (diff >= 0 ? '+' : '') + fmt(Math.abs(diff));
+    deltaSubEl.style.color = diff > 0 ? '#16a34a' : (diff < 0 ? '#dc2626' : '#64748b');
+  }
+}
+
+function _renderPeakHours(rows) {
+  var byHour = {};
+  for (var h = 0; h < 24; h++) byHour[h] = { count:0, total:0 };
+  rows.forEach(function(s) {
+    var d = new Date(s.orderDate || s.order_date);
+    if (isNaN(d)) return;
+    var h = d.getHours();
+    byHour[h].count++;
+    byHour[h].total += Number(s.totalFinal || s.total_final || 0);
+  });
+  var labels = Object.keys(byHour).map(function(h){ return h + ':00'; });
+  var data = Object.keys(byHour).map(function(h){ return byHour[h].total; });
+  var ctx = document.getElementById('advPeakChart');
+  if (!ctx || typeof Chart === 'undefined') return;
+  if (window._advPeakChart) window._advPeakChart.destroy();
+  window._advPeakChart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: labels, datasets: [{ label: 'الإيراد', data: data, backgroundColor: '#3b82f6', borderRadius: 6 }] },
+    options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+  });
+  // Find peak hour
+  var peakH = -1, peakV = 0;
+  Object.keys(byHour).forEach(function(h) { if (byHour[h].total > peakV) { peakV = byHour[h].total; peakH = h; } });
+  var sumEl = q('#advPeakSummary');
+  if (sumEl && peakH >= 0) sumEl.innerHTML = '<i class="fas fa-fire" style="color:#f59e0b;"></i> ساعة الذروة: <b>' + peakH + ':00</b> بإيراد <b>' + Number(peakV).toFixed(2) + ' ر.س</b>';
+}
+
+function _renderTopProducts(rows) {
+  var tally = {}; // name → { qty, revenue }
+  rows.forEach(function(s) {
+    var items = [];
+    try { items = JSON.parse(s.itemsJson || s.items_json || '[]'); } catch(e) {}
+    items.forEach(function(it) {
+      var key = it.name || 'غير معروف';
+      if (!tally[key]) tally[key] = { qty: 0, revenue: 0 };
+      tally[key].qty += Number(it.qty) || 0;
+      tally[key].revenue += (Number(it.qty) || 0) * (Number(it.price) || 0);
+    });
+  });
+  var arr = Object.keys(tally).map(function(k){ return { name:k, qty:tally[k].qty, revenue:tally[k].revenue }; });
+  arr.sort(function(a,b){ return b.revenue - a.revenue; });
+  var top = arr.slice(0, 10);
+  var totalRev = arr.reduce(function(s,x){return s+x.revenue;}, 0);
+  var tbody = q('#advTopProducts');
+  if (!tbody) return;
+  if (!top.length) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:14px;">لا بيانات</td></tr>'; return; }
+  tbody.innerHTML = top.map(function(p, i) {
+    var pct = totalRev > 0 ? (p.revenue / totalRev * 100) : 0;
+    return '<tr>' +
+      '<td><b>#' + (i+1) + '</b></td>' +
+      '<td>' + p.name + '</td>' +
+      '<td>' + p.qty + '</td>' +
+      '<td><b>' + p.revenue.toFixed(2) + '</b></td>' +
+      '<td style="color:#3b82f6;">' + pct.toFixed(1) + '%</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function _renderChannelDistribution(rows) {
+  var byCh = {};
+  rows.forEach(function(s) {
+    var ch = s.channelName || s.channel_name || 'بدون قناة';
+    byCh[ch] = (byCh[ch] || 0) + Number(s.totalFinal || s.total_final || 0);
+  });
+  var ctx = document.getElementById('advChannelChart');
+  if (!ctx || typeof Chart === 'undefined') return;
+  if (window._advChannelChart) window._advChannelChart.destroy();
+  var labels = Object.keys(byCh), data = labels.map(function(k){ return byCh[k]; });
+  if (!labels.length) labels = ['لا بيانات'], data = [0];
+  window._advChannelChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels: labels, datasets: [{ data: data, backgroundColor: ['#3b82f6','#22c55e','#f59e0b','#8b5cf6','#ef4444','#06b6d4','#94a3b8'] }] },
+    options: { responsive: true, plugins: { legend: { position: 'bottom', rtl: true } } }
+  });
+}
+
+function _renderPayDistribution(rows) {
+  var byPay = {};
+  rows.forEach(function(s) {
+    var pm = (s.paymentMethod || s.payment_method || 'cash').toLowerCase();
+    if (pm.indexOf('/') >= 0) {
+      pm.split('/').forEach(function(part) {
+        var p = part.split(':');
+        var k = p[0]; var amt = Number(p[1]) || 0;
+        byPay[k] = (byPay[k] || 0) + amt;
+      });
+    } else {
+      byPay[pm] = (byPay[pm] || 0) + Number(s.totalFinal || s.total_final || 0);
+    }
+  });
+  var ctx = document.getElementById('advPayChart');
+  if (!ctx || typeof Chart === 'undefined') return;
+  if (window._advPayChart) window._advPayChart.destroy();
+  var labels = Object.keys(byPay), data = labels.map(function(k){ return byPay[k]; });
+  if (!labels.length) labels = ['لا بيانات'], data = [0];
+  window._advPayChart = new Chart(ctx, {
+    type: 'pie',
+    data: { labels: labels, datasets: [{ data: data, backgroundColor: ['#22c55e','#3b82f6','#f59e0b','#8b5cf6','#ef4444','#06b6d4'] }] },
+    options: { responsive: true, plugins: { legend: { position: 'bottom', rtl: true } } }
+  });
+}
+
+function _renderInsights(rows, filters) {
+  var host = q('#advInsights');
+  if (!host) return;
+  if (!rows.length) { host.innerHTML = '<div class="adv-empty">لا توجد بيانات في الفترة المختارة.</div>'; return; }
+
+  var insights = [];
+  // Insight 1: avg ticket
+  var total = rows.reduce(function(s,x){return s + Number(x.totalFinal || x.total_final || 0);}, 0);
+  var avg = total / rows.length;
+  insights.push({ icon:'fa-calculator', title:'متوسط الفاتورة', text: avg.toFixed(2) + ' ر.س عبر ' + rows.length + ' فاتورة' });
+
+  // Insight 2: best day
+  var byDay = {};
+  rows.forEach(function(s) {
+    var d = new Date(s.orderDate || s.order_date);
+    if (isNaN(d)) return;
+    var key = d.toISOString().slice(0,10);
+    byDay[key] = (byDay[key] || 0) + Number(s.totalFinal || s.total_final || 0);
+  });
+  var bestDay = ''; var bestVal = 0;
+  Object.keys(byDay).forEach(function(k){ if (byDay[k] > bestVal) { bestVal = byDay[k]; bestDay = k; } });
+  if (bestDay) insights.push({ icon:'fa-trophy', title:'أفضل يوم في الفترة', text: bestDay + ' بإيراد ' + bestVal.toFixed(2) + ' ر.س' });
+
+  // Insight 3: discount usage
+  var withDisc = rows.filter(function(s){ return Number(s.discountAmount || s.discount_amount || 0) > 0; });
+  if (withDisc.length) {
+    var discSum = withDisc.reduce(function(s,x){return s + Number(x.discountAmount || x.discount_amount || 0);}, 0);
+    insights.push({ icon:'fa-percent', title:'الخصومات المُطبَّقة', text: withDisc.length + ' فاتورة بخصم إجمالي ' + discSum.toFixed(2) + ' ر.س' });
+  }
+
+  // Insight 4: channels active
+  var channels = {};
+  rows.forEach(function(s){ if (s.channelName || s.channel_name) channels[s.channelName || s.channel_name] = true; });
+  var chCount = Object.keys(channels).length;
+  if (chCount > 0) insights.push({ icon:'fa-store', title:'عدد القنوات النشطة', text: chCount + ' قناة بيع نشطة في هذه الفترة' });
+
+  host.innerHTML = insights.map(function(i) {
+    return '<div class="adv-insight-card"><i class="fas ' + i.icon + '"></i><div><b>' + i.title + '</b><span>' + i.text + '</span></div></div>';
+  }).join('');
 }
 
 function resetSalesFilter() {
@@ -6507,20 +7090,21 @@ function _exportSalesExcelBody() {
 
 function loadPayments() {
   loader();
-  // Default to today (LOCAL) if no date range was set
-  var start = q("#fpayStart") ? q("#fpayStart").value : "";
-  var end   = q("#fpayEnd")   ? q("#fpayEnd").value   : "";
+  // V3: Prefer new filter bar values
+  var f = (typeof getSalesFilters === 'function' && q('#sf_payments_start')) ? getSalesFilters('payments') : null;
+  var start = f ? f.start : (q("#fpayStart") ? q("#fpayStart").value : "");
+  var end   = f ? f.end   : (q("#fpayEnd")   ? q("#fpayEnd").value   : "");
   if (!start && !end) {
     var today = localDateStr();
     start = today; end = today;
     if (q("#fpayStart")) q("#fpayStart").value = today;
     if (q("#fpayEnd"))   q("#fpayEnd").value   = today;
-  } else if (!end) {
-    end = start;
-  } else if (!start) {
-    start = end;
-  }
-  var cashier = q("#fpayCashier") ? q("#fpayCashier").value : "";
+  } else if (!end) end = start;
+  else if (!start) start = end;
+  var cashier = f ? f.cashier : (q("#fpayCashier") ? q("#fpayCashier").value : "");
+  var brandId  = f ? f.brandId  : '';
+  var branchId = f ? f.branchId : '';
+  var channelId = f ? f.channelId : '';
   // Widen server range ±1 day for timezone drift
   var queryStart = localDateStr(new Date(start + 'T00:00:00').getTime() - 86400000);
   var queryEnd   = localDateStr(new Date(end + 'T00:00:00').getTime() + 86400000);
@@ -6538,7 +7122,12 @@ function loadPayments() {
       var endMs   = new Date(end + 'T23:59:59.999').getTime();
       sales = sales.filter(function(r) {
         var t = new Date(r.date).getTime();
-        return !isNaN(t) && t >= startMs && t <= endMs;
+        if (isNaN(t) || t < startMs || t > endMs) return false;
+        // V3 filters
+        if (brandId && r.brandId && r.brandId !== brandId) return false;
+        if (branchId && r.branchId && r.branchId !== branchId) return false;
+        if (channelId && r.channelId && r.channelId !== channelId) return false;
+        return true;
       });
 
       var totals = { cash: 0, card: 0, kita: 0, all: 0 };
@@ -6625,15 +7214,15 @@ function loadSalesBreakdown(type) {
 }
 function _loadSalesBreakdownBody(type) {
   activeBreakdownType = type;
-  // Update buttons
   qs('.breakdown-btn').forEach(el => el.classList.remove('active'));
   const btn = q('#brk_' + type);
   if (btn) btn.classList.add('active');
 
   loader();
-  // Default to last 30 days if no date range was set (LOCAL dates)
-  var start = q("#fbrkStart") ? q("#fbrkStart").value : "";
-  var end   = q("#fbrkEnd")   ? q("#fbrkEnd").value   : "";
+  // V3: Prefer new filter bar values
+  var f = (typeof getSalesFilters === 'function' && q('#sf_reports_start')) ? getSalesFilters('reports') : null;
+  var start = f ? f.start : (q("#fbrkStart") ? q("#fbrkStart").value : "");
+  var end   = f ? f.end   : (q("#fbrkEnd")   ? q("#fbrkEnd").value   : "");
   if (!start || !end) {
     var today = new Date();
     var thirty = new Date(today); thirty.setDate(thirty.getDate() - 29);
@@ -6691,12 +7280,23 @@ function _loadSalesBreakdownBody(type) {
         if (!aggregated[dateKey]) aggregated[dateKey] = { name: dateKey, orders: 0, revenue: 0 };
         aggregated[dateKey].orders += 1;
         aggregated[dateKey].revenue += amount;
+      } else if (type === 'byChannel') {
+        var ch = s.channelName || s.channel_name || 'بدون قناة';
+        if (!aggregated[ch]) aggregated[ch] = { name: ch, orders: 0, revenue: 0 };
+        aggregated[ch].orders += 1;
+        aggregated[ch].revenue += amount;
+      } else if (type === 'byHour') {
+        var dt = new Date(s.date);
+        var hourKey = isNaN(dt) ? '?' : (String(dt.getHours()).padStart(2,'0') + ':00');
+        if (!aggregated[hourKey]) aggregated[hourKey] = { name: hourKey, orders: 0, revenue: 0 };
+        aggregated[hourKey].orders += 1;
+        aggregated[hourKey].revenue += amount;
       }
     });
 
-    // Sort: revenue desc for product/cashier; chronological for month/day
+    // Sort: revenue desc for product/cashier/channel; chronological for time-based
     var data = Object.values(aggregated);
-    if (type === 'byMonth' || type === 'byDay') {
+    if (type === 'byMonth' || type === 'byDay' || type === 'byHour') {
       data.sort(function(a, b) { return a.name < b.name ? -1 : 1; });
     } else {
       data.sort(function(a, b) { return b.revenue - a.revenue; });
@@ -6705,8 +7305,10 @@ function _loadSalesBreakdownBody(type) {
     const headMap = {
       byProduct: '<tr><th>\u0627\u0644\u0645\u0646\u062a\u062c</th><th>\u0627\u0644\u0643\u0645\u064a\u0629</th><th>\u0639\u062f\u062f \u0627\u0644\u0637\u0644\u0628\u0627\u062a</th><th>\u0627\u0644\u0625\u064a\u0631\u0627\u062f (SAR)</th></tr>',
       byCashier: '<tr><th>\u0627\u0644\u0643\u0627\u0634\u064a\u0631</th><th>\u0627\u0644\u0637\u0644\u0628\u0627\u062a</th><th>\u0643\u0627\u0634</th><th>\u0645\u062f\u0649</th><th>\u0643\u064a\u062a\u0627</th><th>\u0627\u0644\u0625\u064a\u0631\u0627\u062f (SAR)</th></tr>',
-      byMonth: '<tr><th>\u0627\u0644\u0634\u0647\u0631</th><th>\u0639\u062f\u062f \u0627\u0644\u0637\u0644\u0628\u0627\u062a</th><th>\u0627\u0644\u0625\u064a\u0631\u0627\u062f (SAR)</th></tr>',
-      byDay: '<tr><th>\u0627\u0644\u064a\u0648\u0645</th><th>\u0639\u062f\u062f \u0627\u0644\u0637\u0644\u0628\u0627\u062a</th><th>\u0627\u0644\u0625\u064a\u0631\u0627\u062f (SAR)</th></tr>'
+      byMonth:   '<tr><th>\u0627\u0644\u0634\u0647\u0631</th><th>\u0639\u062f\u062f \u0627\u0644\u0637\u0644\u0628\u0627\u062a</th><th>\u0627\u0644\u0625\u064a\u0631\u0627\u062f (SAR)</th></tr>',
+      byDay:     '<tr><th>\u0627\u0644\u064a\u0648\u0645</th><th>\u0639\u062f\u062f \u0627\u0644\u0637\u0644\u0628\u0627\u062a</th><th>\u0627\u0644\u0625\u064a\u0631\u0627\u062f (SAR)</th></tr>',
+      byChannel: '<tr><th>\u0627\u0644\u0642\u0646\u0627\u0629</th><th>\u0639\u062f\u062f \u0627\u0644\u0637\u0644\u0628\u0627\u062a</th><th>\u0627\u0644\u0625\u064a\u0631\u0627\u062f (SAR)</th></tr>',
+      byHour:    '<tr><th>\u0627\u0644\u0633\u0627\u0639\u0629</th><th>\u0639\u062f\u062f \u0627\u0644\u0637\u0644\u0628\u0627\u062a</th><th>\u0627\u0644\u0625\u064a\u0631\u0627\u062f (SAR)</th></tr>'
     };
     q("#tbBrkHead").innerHTML = headMap[type] || '';
 

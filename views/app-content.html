@@ -468,34 +468,90 @@
           </div>
         </div>
         
-        <!-- Section: Sales History (with Tabs) -->
+        <!-- ════════════════════════════════════════════════════════════════════ -->
+        <!-- SALES SECTION V3 — Hub-style with 4 large icons + advanced filters     -->
+        <!-- ════════════════════════════════════════════════════════════════════ -->
         <div id="sec_sales" class="admin-section">
-          <!-- Sales Tabs -->
-          <div class="sales-tabs">
-            <div class="sales-tab active" onclick="switchSalesTab('log')" id="stab_log"><i class="fas fa-receipt"></i> <span>سجل المبيعات</span></div>
-            <div class="sales-tab" onclick="switchSalesTab('payments')" id="stab_payments"><i class="fas fa-money-bill-wave"></i> <span>الدفعات</span></div>
-            <div class="sales-tab" onclick="switchSalesTab('reports')" id="stab_reports"><i class="fas fa-chart-pie"></i> <span>تقارير المبيعات</span></div>
+
+          <!-- ─── PAGE 1: SALES HUB (default landing) ─── -->
+          <div id="salesHub" class="sh-page">
+            <div class="sh-header">
+              <div class="sh-header-left">
+                <div class="sh-icon-main"><i class="fas fa-receipt"></i></div>
+                <div>
+                  <h1 class="sh-title">مركز المبيعات</h1>
+                  <p class="sh-subtitle">كل ما يخص المبيعات — السجل، الدفعات، التقارير الأساسية والمتقدمة في مكان واحد.</p>
+                </div>
+              </div>
+              <div class="sh-header-right">
+                <button class="wo-btn wo-btn-secondary" onclick="loadSalesHubKpis()"><i class="fas fa-rotate"></i><span>تحديث الإحصائيات</span></button>
+                <button class="wo-btn wo-btn-primary" onclick="window.open('/pos/','_blank')" style="background:linear-gradient(135deg,#22c55e,#16a34a);"><i class="fas fa-cash-register"></i><span>فتح الكاشير</span></button>
+              </div>
+            </div>
+
+            <!-- Quick KPI strip -->
+            <div class="sh-kpi-strip" id="salesHubKpis">
+              <div class="sh-kpi"><div class="sh-kpi-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-money-bill-trend-up"></i></div><div><div class="sh-kpi-label">مبيعات اليوم</div><div class="sh-kpi-value" id="shKpiToday">— ر.س</div></div></div>
+              <div class="sh-kpi"><div class="sh-kpi-icon" style="background:#dbeafe;color:#2563eb;"><i class="fas fa-receipt"></i></div><div><div class="sh-kpi-label">فواتير اليوم</div><div class="sh-kpi-value" id="shKpiTodayCount">—</div></div></div>
+              <div class="sh-kpi"><div class="sh-kpi-icon" style="background:#fef3c7;color:#d97706;"><i class="fas fa-calendar-week"></i></div><div><div class="sh-kpi-label">مبيعات الأسبوع</div><div class="sh-kpi-value" id="shKpiWeek">— ر.س</div></div></div>
+              <div class="sh-kpi"><div class="sh-kpi-icon" style="background:#e0e7ff;color:#4f46e5;"><i class="fas fa-calendar-alt"></i></div><div><div class="sh-kpi-label">مبيعات الشهر</div><div class="sh-kpi-value" id="shKpiMonth">— ر.س</div></div></div>
+              <div class="sh-kpi"><div class="sh-kpi-icon" style="background:#fce7f3;color:#be185d;"><i class="fas fa-coins"></i></div><div><div class="sh-kpi-label">متوسط الفاتورة</div><div class="sh-kpi-value" id="shKpiAvg">— ر.س</div></div></div>
+            </div>
+
+            <!-- 4 Large action cards -->
+            <div class="sh-cards-grid">
+              <div class="sh-card sh-card-blue" onclick="salesGo('log')">
+                <div class="sh-card-icon"><i class="fas fa-receipt"></i></div>
+                <div class="sh-card-body">
+                  <h3>سجل المبيعات</h3>
+                  <p>كل الفواتير المسجلة مع تفاصيل المنتجات والدفع. فلاتر: تاريخ، براند، فرع، قناة، طريقة دفع، كاشير، منتج.</p>
+                </div>
+                <div class="sh-card-footer"><span>دخول</span> <i class="fas fa-arrow-left"></i></div>
+              </div>
+
+              <div class="sh-card sh-card-green" onclick="salesGo('payments')">
+                <div class="sh-card-icon"><i class="fas fa-money-bill-wave"></i></div>
+                <div class="sh-card-body">
+                  <h3>الدفعات</h3>
+                  <p>توزيع الإيرادات حسب طريقة الدفع (كاش/مدى/إلكتروني/تحويل). جدول يومي + توزيع حسب الكاشير.</p>
+                </div>
+                <div class="sh-card-footer"><span>دخول</span> <i class="fas fa-arrow-left"></i></div>
+              </div>
+
+              <div class="sh-card sh-card-purple" onclick="salesGo('reports')">
+                <div class="sh-card-icon"><i class="fas fa-chart-pie"></i></div>
+                <div class="sh-card-body">
+                  <h3>تقارير المبيعات</h3>
+                  <p>تحليلات Breakdown: حسب المنتج، الكاشير، اليوم، الشهر. مع رسوم بيانية تفاعلية.</p>
+                </div>
+                <div class="sh-card-footer"><span>دخول</span> <i class="fas fa-arrow-left"></i></div>
+              </div>
+
+              <div class="sh-card sh-card-orange" onclick="salesGo('advanced')">
+                <div class="sh-card-icon"><i class="fas fa-chart-line"></i></div>
+                <div class="sh-card-body">
+                  <h3>التقارير المتقدمة</h3>
+                  <p>مقارنة فترات، ساعات الذروة، أعلى المنتجات، تحليل القنوات والخصومات، تنبيهات ذكية.</p>
+                </div>
+                <div class="sh-card-footer"><span>دخول</span> <i class="fas fa-arrow-left"></i></div>
+              </div>
+            </div>
           </div>
 
-          <!-- Tab 1: Sales Log -->
-          <div class="sales-tab-content active" id="stc_log">
-            <div class="filter-bar" style="flex-wrap:wrap;">
-              <div class="form-group"><label class="form-label">من تاريخ</label><input type="date" id="fsStart" class="form-control"></div>
-              <div class="form-group"><label class="form-label">إلى تاريخ</label><input type="date" id="fsEnd" class="form-control"></div>
-              <div class="form-group"><label class="form-label">الكاشير</label><select id="fsCashier" class="form-control"><option value="">الكل</option></select></div>
-              <div class="form-group"><label class="form-label">طريقة الدفع</label>
-                <select id="fsPay" class="form-control"><option value="">الكل</option><option value="cash">كاش</option><option value="card">مدى/شبكة</option><option value="kita">كيتا</option></select>
-              </div>
-              <button class="btn btn-primary" style="height:48px;" onclick="loadDashSales()"><i class="fas fa-filter"></i> تصفية</button>
-              <button class="btn btn-success" style="height:48px;" onclick="exportSalesExcel()"><i class="fas fa-file-excel"></i> تصدير</button>
-              <button class="btn btn-light" style="height:48px;" onclick="resetSalesFilter()"><i class="fas fa-redo"></i></button>
+          <!-- ─── PAGE 2: SALES LOG (advanced) ─── -->
+          <div id="salesLog" class="sh-page hidden">
+            <div class="sh-page-header">
+              <button class="sh-back" onclick="salesGo('hub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+              <h2><i class="fas fa-receipt" style="color:#3b82f6;"></i> سجل المبيعات</h2>
             </div>
-            <div class="stat-grid" style="margin-bottom:15px;">
+            <div id="salesLogFilter"></div>
+            <div class="stat-grid" style="margin:14px 0;">
               <div class="stat-card"><div class="stat-info"><h4>إجمالي المبيعات</h4><p id="slTotalSales">0.00</p></div><div class="stat-icon" style="background:#e0e7ff;color:#4f46e5;"><i class="fas fa-money-bill-trend-up"></i></div></div>
               <div class="stat-card"><div class="stat-info"><h4>عدد الفواتير</h4><p id="slTotalCount">0</p></div><div class="stat-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-file-invoice"></i></div></div>
+              <div class="stat-card"><div class="stat-info"><h4>متوسط الفاتورة</h4><p id="slAvgInvoice">0.00</p></div><div class="stat-icon" style="background:#fef3c7;color:#d97706;"><i class="fas fa-calculator"></i></div></div>
+              <div class="stat-card"><div class="stat-info"><h4>أعلى فاتورة</h4><p id="slMaxInvoice">0.00</p></div><div class="stat-icon" style="background:#fce7f3;color:#be185d;"><i class="fas fa-trophy"></i></div></div>
             </div>
-            <!-- Bulk actions bar (developer only) -->
-            <div id="salesBulkBar" style="display:none;background:#fef2f2;border:1.5px solid #fecaca;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:none;">
+            <div id="salesBulkBar" style="display:none;background:#fef2f2;border:1.5px solid #fecaca;border-radius:10px;padding:10px 14px;margin-bottom:10px;">
               <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <label style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:13px;cursor:pointer;">
                   <input type="checkbox" id="salesSelectAll" onchange="toggleAllSales()" style="width:16px;height:16px;"> تحديد الكل
@@ -506,53 +562,51 @@
             </div>
             <div class="table-wrapper">
               <table class="table">
-                <thead><tr><th style="width:30px;"></th><th>رقم الفاتورة</th><th>التاريخ والوقت</th><th>الكاشير</th><th style="width:30%;">المنتجات المباعة</th><th>وسيلة الدفع</th><th>المبلغ المستحق</th><th>إجراء</th></tr></thead>
+                <thead><tr><th style="width:30px;"></th><th>رقم الفاتورة</th><th>التاريخ والوقت</th><th>القناة</th><th>الكاشير</th><th style="width:25%;">المنتجات</th><th>وسيلة الدفع</th><th>الإجمالي</th><th>إجراء</th></tr></thead>
                 <tbody id="tbSales"></tbody>
               </table>
             </div>
           </div>
 
-          <!-- Tab 2: Payments -->
-          <div class="sales-tab-content" id="stc_payments">
-            <div class="filter-bar" style="flex-wrap:wrap;">
-              <div class="form-group"><label class="form-label">من تاريخ</label><input type="date" id="fpayStart" class="form-control"></div>
-              <div class="form-group"><label class="form-label">إلى تاريخ</label><input type="date" id="fpayEnd" class="form-control"></div>
-              <div class="form-group"><label class="form-label">الكاشير</label><select id="fpayCashier" class="form-control"><option value="">الكل</option></select></div>
-              <button class="btn btn-primary" style="height:48px;" onclick="loadPayments()"><i class="fas fa-filter"></i> تصفية</button>
+          <!-- ─── PAGE 3: PAYMENTS (advanced, dynamic methods) ─── -->
+          <div id="salesPayments" class="sh-page hidden">
+            <div class="sh-page-header">
+              <button class="sh-back" onclick="salesGo('hub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+              <h2><i class="fas fa-money-bill-wave" style="color:#16a34a;"></i> الدفعات وتوزيع الإيرادات</h2>
             </div>
-            <div class="pay-summary-grid">
-              <div class="pay-summary-card"><div class="psc-icon">💵</div><div class="psc-val" id="payTotalCash" style="color:#16a34a;">0.00</div><div class="psc-label" style="color:#166534;">كاش</div><div class="psc-count" style="color:#64748b;"><span id="payCntCash">0</span> عملية</div></div>
-              <div class="pay-summary-card"><div class="psc-icon">💳</div><div class="psc-val" id="payTotalCard" style="color:#1e40af;">0.00</div><div class="psc-label" style="color:#1e40af;">مدى / شبكة</div><div class="psc-count" style="color:#64748b;"><span id="payCntCard">0</span> عملية</div></div>
-              <div class="pay-summary-card"><div class="psc-icon">🧾</div><div class="psc-val" id="payTotalKita" style="color:#854d0e;">0.00</div><div class="psc-label" style="color:#854d0e;">كيتا</div><div class="psc-count" style="color:#64748b;"><span id="payCntKita">0</span> عملية</div></div>
-              <div class="pay-summary-card" style="background:#f8fafc;"><div class="psc-icon">📈</div><div class="psc-val" id="payTotalAll" style="color:var(--primary);">0.00</div><div class="psc-label" style="color:var(--primary);">إجمالي</div><div class="psc-count" style="color:#64748b;"><span id="payCntAll">0</span> عملية</div></div>
+            <div id="salesPayFilter"></div>
+            <div class="pay-summary-grid" id="payDynamicGrid">
+              <!-- Generated by JS based on V3 payment methods -->
             </div>
             <div class="table-wrapper">
               <table class="table">
-                <thead><tr><th>التاريخ</th><th>كاش</th><th>مدى/شبكة</th><th>كيتا</th><th>الإجمالي</th><th>عدد العمليات</th></tr></thead>
+                <thead id="tbPaymentsHead"><tr><th>التاريخ</th></tr></thead>
                 <tbody id="tbPayments"></tbody>
               </table>
             </div>
             <h4 style="margin-top:20px;color:var(--primary);font-weight:800;">توزيع حسب الكاشير</h4>
             <div class="table-wrapper" style="margin-top:10px;">
               <table class="table">
-                <thead><tr><th>الكاشير</th><th>كاش</th><th>مدى</th><th>كيتا</th><th>الإجمالي</th><th>عدد العمليات</th></tr></thead>
+                <thead id="tbPayCashierHead"><tr><th>الكاشير</th></tr></thead>
                 <tbody id="tbPayCashier"></tbody>
               </table>
             </div>
           </div>
 
-          <!-- Tab 3: Sales Reports (Breakdown like Foodics) -->
-          <div class="sales-tab-content" id="stc_reports">
-            <div class="filter-bar" style="flex-wrap:wrap;">
-              <div class="form-group"><label class="form-label">من تاريخ</label><input type="date" id="fbrkStart" class="form-control"></div>
-              <div class="form-group"><label class="form-label">إلى تاريخ</label><input type="date" id="fbrkEnd" class="form-control"></div>
-              <button class="btn btn-primary" style="height:48px;" onclick="loadSalesBreakdownActive()"><i class="fas fa-filter"></i> تصفية</button>
+          <!-- ─── PAGE 4: SALES REPORTS (basic breakdowns) ─── -->
+          <div id="salesReports" class="sh-page hidden">
+            <div class="sh-page-header">
+              <button class="sh-back" onclick="salesGo('hub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+              <h2><i class="fas fa-chart-pie" style="color:#8b5cf6;"></i> تقارير المبيعات (Breakdown)</h2>
             </div>
-            <div class="breakdown-btns">
+            <div id="salesReportsFilter"></div>
+            <div class="breakdown-btns" style="margin-top:12px;">
               <button class="breakdown-btn active" onclick="loadSalesBreakdown('byProduct')" id="brk_byProduct"><i class="fas fa-box"></i> حسب المنتج</button>
               <button class="breakdown-btn" onclick="loadSalesBreakdown('byCashier')" id="brk_byCashier"><i class="fas fa-user"></i> حسب الكاشير</button>
-              <button class="breakdown-btn" onclick="loadSalesBreakdown('byMonth')" id="brk_byMonth"><i class="fas fa-calendar-alt"></i> حسب الشهر</button>
+              <button class="breakdown-btn" onclick="loadSalesBreakdown('byChannel')" id="brk_byChannel"><i class="fas fa-store"></i> حسب القناة</button>
               <button class="breakdown-btn" onclick="loadSalesBreakdown('byDay')" id="brk_byDay"><i class="fas fa-calendar-day"></i> حسب اليوم</button>
+              <button class="breakdown-btn" onclick="loadSalesBreakdown('byMonth')" id="brk_byMonth"><i class="fas fa-calendar-alt"></i> حسب الشهر</button>
+              <button class="breakdown-btn" onclick="loadSalesBreakdown('byHour')" id="brk_byHour"><i class="fas fa-clock"></i> حسب الساعة</button>
             </div>
             <div class="breakdown-result">
               <div class="breakdown-chart-area"><canvas id="breakdownChartCtx"></canvas></div>
@@ -561,6 +615,58 @@
                   <thead id="tbBrkHead"><tr><th>الاسم</th><th>الكمية</th><th>الإيراد</th></tr></thead>
                   <tbody id="tbBrkBody"></tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- ─── PAGE 5: ADVANCED REPORTS (NEW) ─── -->
+          <div id="salesAdvanced" class="sh-page hidden">
+            <div class="sh-page-header">
+              <button class="sh-back" onclick="salesGo('hub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+              <h2><i class="fas fa-chart-line" style="color:#f59e0b;"></i> التقارير المتقدمة</h2>
+            </div>
+            <div id="salesAdvFilter"></div>
+
+            <!-- Period comparison -->
+            <div class="adv-section">
+              <div class="adv-section-title"><i class="fas fa-arrow-right-arrow-left"></i> مقارنة الفترات</div>
+              <div class="adv-compare-grid" id="advCompareGrid">
+                <div class="adv-compare-card"><div class="ac-label">الفترة المختارة</div><div class="ac-value" id="advCurValue">— ر.س</div><div class="ac-sub" id="advCurSub">— فاتورة</div></div>
+                <div class="adv-compare-card"><div class="ac-label">الفترة السابقة (مماثلة)</div><div class="ac-value" id="advPrevValue">— ر.س</div><div class="ac-sub" id="advPrevSub">— فاتورة</div></div>
+                <div class="adv-compare-card adv-delta"><div class="ac-label">التغيّر</div><div class="ac-value" id="advDelta">— %</div><div class="ac-sub" id="advDeltaSub">—</div></div>
+              </div>
+            </div>
+
+            <!-- Peak hours + top products -->
+            <div class="adv-grid-2">
+              <div class="adv-section">
+                <div class="adv-section-title"><i class="fas fa-clock"></i> ساعات الذروة</div>
+                <canvas id="advPeakChart" style="max-height:240px;"></canvas>
+                <div id="advPeakSummary" style="margin-top:8px;font-size:12px;color:#475569;"></div>
+              </div>
+              <div class="adv-section">
+                <div class="adv-section-title"><i class="fas fa-trophy"></i> أعلى 10 منتجات</div>
+                <div class="adv-table-wrap"><table class="table"><thead><tr><th>#</th><th>المنتج</th><th>الكمية</th><th>الإيراد</th><th>%</th></tr></thead><tbody id="advTopProducts"></tbody></table></div>
+              </div>
+            </div>
+
+            <!-- Channels + payment methods distribution -->
+            <div class="adv-grid-2">
+              <div class="adv-section">
+                <div class="adv-section-title"><i class="fas fa-store"></i> توزيع المبيعات حسب القناة</div>
+                <canvas id="advChannelChart" style="max-height:240px;"></canvas>
+              </div>
+              <div class="adv-section">
+                <div class="adv-section-title"><i class="fas fa-credit-card"></i> توزيع طرق الدفع</div>
+                <canvas id="advPayChart" style="max-height:240px;"></canvas>
+              </div>
+            </div>
+
+            <!-- Smart insights -->
+            <div class="adv-section">
+              <div class="adv-section-title"><i class="fas fa-lightbulb" style="color:#f59e0b;"></i> رؤى ذكية</div>
+              <div id="advInsights" class="adv-insights">
+                <div class="adv-empty">حدّد الفترة واضغط "تحديث" لعرض التحليلات.</div>
               </div>
             </div>
           </div>

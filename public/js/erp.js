@@ -7598,45 +7598,285 @@ function erpSelectGLAccount(id, code, name, type) {
   erpLoadGLLedgerReport();
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// دفتر الأستاذ — Daftra-style multi-account renderer
+// ═══════════════════════════════════════════════════════════════════
+window._glLedgerCache = null;
+
 function erpResetGLLedger() {
-  document.getElementById('erpGLSearch').value = '';
-  document.getElementById('erpGLAccId').value = '';
-  document.getElementById('erpGLAccCode').value = '';
-  document.getElementById('erpGLAccName').value = '';
-  document.getElementById('erpGLAccType').value = '';
-  var now = new Date();
-  var fm = new Date(now.getFullYear(), now.getMonth(), 1);
-  document.getElementById('erpGLFrom').value = fm.toISOString().split('T')[0];
-  document.getElementById('erpGLTo').value = now.toISOString().split('T')[0];
-  document.getElementById('erpGLStatus').value = '';
-  document.getElementById('erpGLInfo').innerHTML = '';
-  document.getElementById('erpGLSummary').innerHTML = '';
-  document.getElementById('erpGLLedgerBody').innerHTML = '<tr><td colspan="8" class="empty-msg">اختر الحساب ثم اضغط عرض</td></tr>';
+  ['erpGLAccType2','erpGLParent','erpGLAddedBy','erpGLScope'].forEach(function(id){
+    var el = document.getElementById(id); if (el) el.selectedIndex = 0;
+  });
+  var dr = document.getElementById('erpGLDateRange'); if (dr) dr.value = '';
+  var hf = document.getElementById('erpGLFrom'); if (hf) hf.value = '';
+  var ht = document.getElementById('erpGLTo'); if (ht) ht.value = '';
+  var hs = document.getElementById('erpGLHideStaff'); if (hs) hs.checked = false;
+  document.getElementById('erpGLBrandBanner').style.display = 'none';
+  document.getElementById('erpGLLedgerContent').innerHTML =
+    '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:30px;text-align:center;color:#94a3b8;">' +
+      '<i class="fas fa-book" style="font-size:32px;margin-bottom:10px;display:block;color:#cbd5e1;"></i>' +
+      'اضغط <b style="color:#16a34a;">"عرض التقرير"</b> لعرض حسابات الأستاذ' +
+    '</div>';
+  _glLedgerCache = null;
 }
+
+window.erpGLToggleExport = function(btn) {
+  var menu = document.getElementById('glExportMenu');
+  if (menu) menu.classList.toggle('open');
+  setTimeout(function(){
+    document.addEventListener('mousedown', function close(e){
+      if (!menu.contains(e.target) && e.target !== btn) {
+        menu.classList.remove('open');
+        document.removeEventListener('mousedown', close);
+      }
+    });
+  }, 0);
+};
+
+window.erpGLToggleDatePresets = function(input) {
+  var menu = document.getElementById('erpGLDatePresets');
+  menu.classList.toggle('open');
+  setTimeout(function(){
+    document.addEventListener('mousedown', function close(e){
+      if (!menu.contains(e.target) && e.target !== input) {
+        menu.classList.remove('open');
+        document.removeEventListener('mousedown', close);
+      }
+    });
+  }, 0);
+};
+
+window.erpGLPickPreset = function(key, label) {
+  var now = new Date();
+  var ymd = function(d){ return d.toISOString().slice(0,10); };
+  var from = '', to = '';
+  if (key === 'lastWeek') {
+    var d = new Date(now); d.setDate(d.getDate() - 7);
+    from = ymd(d); to = ymd(now);
+  } else if (key === 'lastMonth') {
+    var s = new Date(now.getFullYear(), now.getMonth()-1, 1);
+    var e = new Date(now.getFullYear(), now.getMonth(), 0);
+    from = ymd(s); to = ymd(e);
+  } else if (key === 'mtd') {
+    from = ymd(new Date(now.getFullYear(), now.getMonth(), 1));
+    to = ymd(now);
+  } else if (key === 'lastYear') {
+    from = ymd(new Date(now.getFullYear()-1, 0, 1));
+    to = ymd(new Date(now.getFullYear()-1, 11, 31));
+  } else if (key === 'ytd') {
+    from = ymd(new Date(now.getFullYear(), 0, 1));
+    to = ymd(now);
+  }
+  document.getElementById('erpGLFrom').value = from;
+  document.getElementById('erpGLTo').value = to;
+  // Format display: "DD/MM/YYYY - DD/MM/YYYY"
+  var dispFmt = function(s){ var p = s.split('-'); return p[2]+'/'+p[1]+'/'+p[0]; };
+  document.getElementById('erpGLDateRange').value = dispFmt(from) + ' - ' + dispFmt(to);
+  document.getElementById('erpGLDatePresets').classList.remove('open');
+};
+
+window.erpGLPickCustom = function() {
+  var f = prompt('أدخل تاريخ البداية (YYYY-MM-DD):');
+  if (!f) return;
+  var t = prompt('أدخل تاريخ النهاية (YYYY-MM-DD):', f);
+  if (!t) return;
+  document.getElementById('erpGLFrom').value = f;
+  document.getElementById('erpGLTo').value = t;
+  var dispFmt = function(s){ var p = s.split('-'); return p[2]+'/'+p[1]+'/'+p[0]; };
+  document.getElementById('erpGLDateRange').value = dispFmt(f) + ' - ' + dispFmt(t);
+  document.getElementById('erpGLDatePresets').classList.remove('open');
+};
+window.erpGLPickSingle = function() {
+  var d = prompt('أدخل التاريخ (YYYY-MM-DD):');
+  if (!d) return;
+  document.getElementById('erpGLFrom').value = d;
+  document.getElementById('erpGLTo').value = d;
+  var dispFmt = function(s){ var p = s.split('-'); return p[2]+'/'+p[1]+'/'+p[0]; };
+  document.getElementById('erpGLDateRange').value = dispFmt(d);
+  document.getElementById('erpGLDatePresets').classList.remove('open');
+};
+window.erpGLPickBefore = function() {
+  var d = prompt('عرض كل المعاملات قبل التاريخ (YYYY-MM-DD):');
+  if (!d) return;
+  document.getElementById('erpGLFrom').value = '';
+  document.getElementById('erpGLTo').value = d;
+  var dispFmt = function(s){ var p = s.split('-'); return p[2]+'/'+p[1]+'/'+p[0]; };
+  document.getElementById('erpGLDateRange').value = 'قبل ' + dispFmt(d);
+  document.getElementById('erpGLDatePresets').classList.remove('open');
+};
+window.erpGLPickAfter = function() {
+  var d = prompt('عرض كل المعاملات بعد التاريخ (YYYY-MM-DD):');
+  if (!d) return;
+  document.getElementById('erpGLFrom').value = d;
+  document.getElementById('erpGLTo').value = '';
+  var dispFmt = function(s){ var p = s.split('-'); return p[2]+'/'+p[1]+'/'+p[0]; };
+  document.getElementById('erpGLDateRange').value = 'بعد ' + dispFmt(d);
+  document.getElementById('erpGLDatePresets').classList.remove('open');
+};
 
 function erpLoadGLLedgerReport() {
-  var accId = document.getElementById('erpGLAccId').value;
-  if (!accId) return showToast('اختر الحساب أولاً', 'error');
-  var from = document.getElementById('erpGLFrom').value;
-  var to = document.getElementById('erpGLTo').value;
-  var status = document.getElementById('erpGLStatus').value;
-  var tbody = document.getElementById('erpGLLedgerBody');
-  tbody.innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+  // Default to current month if no date set
+  if (!document.getElementById('erpGLFrom').value && !document.getElementById('erpGLTo').value) {
+    erpGLPickPreset('mtd', 'من أول الشهر حتى اليوم');
+  }
+  var from    = document.getElementById('erpGLFrom').value || '';
+  var to      = document.getElementById('erpGLTo').value || '';
+  var accType = (document.getElementById('erpGLAccType2')||{}).value || 'both';
+  var parent  = (document.getElementById('erpGLParent')||{}).value || '';
+  var addedBy = (document.getElementById('erpGLAddedBy')||{}).value || '';
+  var scope   = (document.getElementById('erpGLScope')||{}).value || 'all';
 
-  var filters = {};
-  if (from) filters.startDate = from;
-  if (to) filters.endDate = to;
-  if (status) filters.status = status;
+  document.getElementById('erpGLLedgerContent').innerHTML =
+    '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:30px;text-align:center;color:#94a3b8;">' +
+      '<i class="fas fa-spinner fa-spin" style="font-size:24px;margin-bottom:10px;display:block;color:#10b981;"></i>' +
+      'جاري تحميل دفتر الأستاذ...' +
+    '</div>';
 
-  window._apiBridge.withSuccessHandler(function(res) {
-    _glLedgerData = res;
+  var qs = new URLSearchParams({ from, to, parent, addedBy, scope, accType }).toString();
+  fetch('/api/erp/reports/gl-ledger-multi?' + qs, {
+    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
+  }).then(function(r){return r.json();}).then(function(res){
     if (!res || !res.success) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty-msg" style="color:#ef4444;">'+((res&&res.error)||'خطأ')+'</td></tr>';
+      document.getElementById('erpGLLedgerContent').innerHTML =
+        '<div class="empty-msg" style="color:#ef4444;text-align:center;padding:30px;background:#fef2f2;border-radius:12px;border:1px solid #fecaca;">' +
+        '<i class="fas fa-triangle-exclamation"></i> ' + ((res&&res.error)||'خطأ في تحميل التقرير') + '</div>';
       return;
     }
-    _erpRenderGLLedger(res);
-  }).getAccountLedger(accId, filters);
+    _glLedgerCache = res;
+
+    // Populate parent dropdown (top-level accounts) on first load
+    var psel = document.getElementById('erpGLParent');
+    if (psel && psel.options.length <= 1) {
+      var topAccts = (res.sections||[]).filter(function(s){ return !s.parentId; });
+      psel.innerHTML = '<option value="">الكل</option>' + topAccts.map(function(a){
+        return '<option value="'+a.accountId+'">'+(a.code||'')+' — '+(a.nameAr||'')+'</option>';
+      }).join('');
+    }
+
+    // Populate addedBy dropdown
+    var asel = document.getElementById('erpGLAddedBy');
+    if (asel && asel.options.length <= 1) {
+      fetch('/api/auth/users-list', { headers:{ 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') }})
+        .then(function(x){return x.json();}).then(function(users){
+          if (!Array.isArray(users)) return;
+          asel.innerHTML = '<option value="">الكل</option>' + users.map(function(u){
+            return '<option value="'+u.username+'">'+(u.fullName||u.username)+'</option>';
+          }).join('');
+        }).catch(function(){});
+    }
+
+    // Show branded banner
+    document.getElementById('erpGLBnFrom').textContent = from || 'البداية';
+    document.getElementById('erpGLBnTo').textContent = to || 'اليوم';
+    fetch('/api/erp/companies', { headers:{ 'Authorization':'Bearer '+(localStorage.getItem('pos_token')||'') }})
+      .then(function(x){return x.json();}).then(function(cos){
+        var c = Array.isArray(cos) && cos.length ? cos[0] : null;
+        document.getElementById('erpGLBnCompany').textContent = c ? (c.name || c.nameAr || 'الشركة') : 'الشركة';
+      }).catch(function(){});
+    document.getElementById('erpGLBrandBanner').style.display = 'flex';
+
+    _renderGLLedgerMulti(res);
+  }).catch(function(e){
+    document.getElementById('erpGLLedgerContent').innerHTML =
+      '<div class="empty-msg" style="color:#ef4444;text-align:center;padding:30px;">خطأ شبكة: '+e.message+'</div>';
+  });
 }
+
+function _renderGLLedgerMulti(res) {
+  var sections = res.sections || [];
+  var hideStaff = document.getElementById('erpGLHideStaff').checked;
+  var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var dt = function(d){ try { return new Date(d).toLocaleDateString('en-GB'); } catch(_){ return ''; } };
+  var refLabels = { manual:'يدوي', opening:'افتتاحي', sale:'مبيعات', purchase:'مشتريات', custody:'عهدة', inventory:'مخزون', cash:'نقد', payroll:'رواتب' };
+
+  if (!sections.length) {
+    document.getElementById('erpGLLedgerContent').innerHTML =
+      '<div class="empty-msg" style="text-align:center;padding:40px;background:#fff;border-radius:12px;color:#94a3b8;">' +
+      '<i class="fas fa-inbox" style="font-size:32px;display:block;margin-bottom:10px;color:#cbd5e1;"></i>' +
+      'لا توجد حسابات تطابق الفلتر</div>';
+    return;
+  }
+
+  var staffCol = hideStaff ? '' : '<th data-col="staff">موظف</th>';
+  var staffPad = hideStaff ? '' : '<td class="gl-staff">—</td>';
+  var colCount = hideStaff ? 9 : 10;
+
+  var html = sections.map(function(sec) {
+    var bal = Number(sec.opening || 0);
+    var balDir = bal >= 0 ? 'مدين' : 'دائن';
+    return '<div class="gl-account-section'+(hideStaff?' gl-hide-staff':'')+'">' +
+      '<div class="gl-account-header">' +
+        '<span class="gl-acc-code">'+_woEscapeHtml(sec.code||'')+'</span>' +
+        '<span class="gl-acc-name">'+_woEscapeHtml(sec.nameAr||'')+'</span>' +
+        '<span class="gl-acc-balance">الرصيد الختامي: <b>'+fmt(Math.abs(sec.closingBalance))+' ر.س</b></span>' +
+      '</div>' +
+      '<table class="gl-account-table">' +
+        '<thead><tr>' +
+          '<th>رقم</th><th>رقم القيد</th><th>رقم معرّف للتحويل</th><th>التاريخ</th>' +
+          staffCol +
+          '<th>الوصف</th>' +
+          '<th colspan="2" class="gl-grp-op">العملية</th>' +
+          '<th colspan="2" class="gl-grp-bal">الرصيد</th>' +
+        '</tr><tr>' +
+          '<th></th><th></th><th></th><th></th>' +
+          (hideStaff ? '' : '<th data-col="staff"></th>') +
+          '<th></th>' +
+          '<th class="gl-th-dc">مدين <small>(SAR)</small></th><th class="gl-th-dc">دائن <small>(SAR)</small></th>' +
+          '<th class="gl-th-dc">مدين <small>(SAR)</small></th><th class="gl-th-dc">دائن <small>(SAR)</small></th>' +
+        '</tr></thead>' +
+        '<tbody>' +
+          '<tr class="gl-opening-row"><td colspan="'+(hideStaff?5:6)+'" class="gl-desc">الرصيد قبل</td>' +
+          '<td class="gl-zero">—</td><td class="gl-zero">—</td>' +
+          '<td>'+(sec.opening>0?fmt(sec.opening):'<span class="gl-zero">—</span>')+'</td>' +
+          '<td>'+(sec.opening<0?fmt(-sec.opening):'<span class="gl-zero">—</span>')+'</td></tr>' +
+          (sec.lines.map(function(l, i) {
+            bal += (l.debit - l.credit);
+            var balD = bal > 0 ? bal : 0, balC = bal < 0 ? -bal : 0;
+            return '<tr>' +
+              '<td>'+(i+1)+'</td>' +
+              '<td class="gl-jno"><a href="javascript:erpViewJournal(\''+l.journalId+'\')">'+_woEscapeHtml(l.journalNumber||'')+'</a></td>' +
+              '<td>'+_woEscapeHtml(l.referenceId||'—')+'</td>' +
+              '<td>'+dt(l.date)+'</td>' +
+              (hideStaff ? '' : '<td class="gl-staff">'+_woEscapeHtml(l.addedBy||'—')+'</td>') +
+              '<td class="gl-desc">'+_woEscapeHtml(l.description||'')+'</td>' +
+              '<td>'+(l.debit?fmt(l.debit):'<span class="gl-zero">—</span>')+'</td>' +
+              '<td>'+(l.credit?fmt(l.credit):'<span class="gl-zero">—</span>')+'</td>' +
+              '<td>'+(balD?fmt(balD):'<span class="gl-zero">—</span>')+'</td>' +
+              '<td>'+(balC?fmt(balC):'<span class="gl-zero">—</span>')+'</td>' +
+            '</tr>';
+          }).join('')) +
+        '</tbody>' +
+        '<tfoot><tr class="gl-total-row">' +
+          '<td colspan="'+(hideStaff?5:6)+'" class="gl-desc">المجموع</td>' +
+          '<td>'+fmt(sec.totalDebit)+'</td><td>'+fmt(sec.totalCredit)+'</td>' +
+          '<td>'+(sec.closingBalance>0?fmt(sec.closingBalance):'<span class="gl-zero">—</span>')+'</td>' +
+          '<td>'+(sec.closingBalance<0?fmt(-sec.closingBalance):'<span class="gl-zero">—</span>')+'</td>' +
+        '</tr></tfoot>' +
+      '</table>' +
+    '</div>';
+  }).join('');
+
+  // Grand summary at the bottom
+  var g = res.grandTotals || {};
+  html += '<div style="background:linear-gradient(135deg,#1e293b,#334155);color:#fff;padding:18px 24px;border-radius:12px;margin-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">' +
+    '<div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;">' +
+      '<div><div style="font-size:11px;color:#94a3b8;font-weight:700;">عدد الحسابات</div><div style="font-size:18px;font-weight:900;color:#fbbf24;">'+(g.accountCount||0)+'</div></div>' +
+      '<div><div style="font-size:11px;color:#94a3b8;font-weight:700;">إجمالي القيود</div><div style="font-size:18px;font-weight:900;">'+(g.lineCount||0)+'</div></div>' +
+      '<div><div style="font-size:11px;color:#94a3b8;font-weight:700;">إجمالي المدين</div><div style="font-size:18px;font-weight:900;color:#86efac;">'+fmt(g.debit)+'</div></div>' +
+      '<div><div style="font-size:11px;color:#94a3b8;font-weight:700;">إجمالي الدائن</div><div style="font-size:18px;font-weight:900;color:#fca5a5;">'+fmt(g.credit)+'</div></div>' +
+    '</div>' +
+    '<div style="text-align:end;"><div style="font-size:11px;color:#94a3b8;font-weight:700;">الفرق</div><div style="font-size:22px;font-weight:900;color:'+(Math.abs(g.debit-g.credit)<0.01?'#86efac':'#fca5a5')+';">'+fmt(g.debit-g.credit)+'</div></div>' +
+  '</div>';
+
+  document.getElementById('erpGLLedgerContent').innerHTML = html;
+}
+
+// Re-render when Hide Staff changes
+document.addEventListener('change', function(e){
+  if (e.target && e.target.id === 'erpGLHideStaff' && _glLedgerCache) {
+    _renderGLLedgerMulti(_glLedgerCache);
+  }
+});
 
 function _erpRenderGLLedger(res) {
   var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
@@ -7744,8 +7984,74 @@ function _erpRenderGLLedger(res) {
   tbody.innerHTML = html;
 }
 
-function erpExportGLLedger() {
+// New multi-section export — supports CSV / XLSX / PDF (via print)
+window.erpExportGLLedger = function(format) {
+  // Close menu if open
+  var menu = document.getElementById('glExportMenu'); if (menu) menu.classList.remove('open');
+  // If new multi-section cache exists, export ALL sections; else fall back to legacy single-account export
+  if (_glLedgerCache && _glLedgerCache.sections) {
+    return _exportGLMulti(format || 'xlsx');
+  }
   if (!_glLedgerData || !_glLedgerData.success) return showToast('اعرض التقرير أولاً', 'error');
+  // Legacy single-account fallback (kept intact below)
+  return _exportGLLegacy();
+};
+
+function _exportGLMulti(format) {
+  var data = _glLedgerCache;
+  var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var dt = function(d){ try { return new Date(d).toLocaleDateString('en-GB'); } catch(_){ return ''; } };
+
+  if (format === 'csv') {
+    var lines = ['الحساب,رقم,رقم القيد,التاريخ,موظف,الوصف,مدين,دائن,الرصيد المدين,الرصيد الدائن'];
+    data.sections.forEach(function(s) {
+      var openD = s.opening>0?s.opening:0;
+      var openC = s.opening<0?-s.opening:0;
+      lines.push(['"'+s.code+' '+s.nameAr+'"','','','','','الرصيد قبل','','','',openD,openC].join(','));
+      var bal = s.opening;
+      s.lines.forEach(function(l, i) {
+        bal += (l.debit - l.credit);
+        var bD = bal>0?bal:0, bC = bal<0?-bal:0;
+        lines.push([s.code+' '+s.nameAr, i+1, l.journalNumber, dt(l.date), l.addedBy, l.description, l.debit, l.credit, bD, bC].map(function(v){
+          return '"'+String(v).replace(/"/g,'""')+'"';
+        }).join(','));
+      });
+      var clD = s.closingBalance>0?s.closingBalance:0;
+      var clC = s.closingBalance<0?-s.closingBalance:0;
+      lines.push(['','المجموع','','','','','',s.totalDebit,s.totalCredit,clD,clC].join(','));
+      lines.push('');
+    });
+    var blob = new Blob([new Uint8Array([0xEF,0xBB,0xBF]), lines.join('\n')], { type:'text/csv;charset=utf-8' });
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'gl-ledger-' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
+    return;
+  }
+  if (format === 'pdf') { window.print(); return; }
+  // XLSX
+  if (typeof ensureXlsx !== 'function') return showToast('XLSX غير محمّل', true);
+  ensureXlsx().then(function() {
+    var ws = [['حساب الأستاذ - تصدير شامل'],[]];
+    ws.push(['#','رقم القيد','التاريخ','موظف','الوصف','مدين','دائن','الرصيد']);
+    data.sections.forEach(function(s) {
+      ws.push([]);
+      ws.push([s.code + ' — ' + s.nameAr]);
+      ws.push(['','الرصيد قبل','','','', '', '', s.opening]);
+      var bal = s.opening;
+      s.lines.forEach(function(l, i) {
+        bal += (l.debit - l.credit);
+        ws.push([i+1, l.journalNumber, dt(l.date), l.addedBy, l.description, l.debit, l.credit, bal]);
+      });
+      ws.push(['','المجموع','','','', s.totalDebit, s.totalCredit, s.closingBalance]);
+    });
+    var sheet = XLSX.utils.aoa_to_sheet(ws);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, sheet, 'GL Ledger');
+    XLSX.writeFile(wb, 'gl-ledger-' + new Date().toISOString().slice(0,10) + '.xlsx');
+  });
+}
+
+function _exportGLLegacy() {
   var d = _glLedgerData;
   var acc = d.account || {};
   var period = (d.period && d.period.startDate || '—') + ' → ' + (d.period && d.period.endDate || '—');
@@ -7780,6 +8086,7 @@ function erpExportGLLedger() {
 }
 
 function erpPrintGLLedger() {
+  if (_glLedgerCache && _glLedgerCache.sections) { window.print(); return; }
   if (!_glLedgerData || !_glLedgerData.success) return showToast('اعرض التقرير أولاً', 'error');
   var d = _glLedgerData;
   var acc = d.account || {};

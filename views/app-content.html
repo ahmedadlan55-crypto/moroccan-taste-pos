@@ -3282,65 +3282,114 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- GL LEDGER REPORT (دفتر الأستاذ / تقرير حساب الأستاذ) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- دفتر الأستاذ — Daftra-style layout (account ledger) -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
 <div id="erpGLLedgerReport" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-book" style="color:#10b981;"></i> دفتر الأستاذ — تقرير حساب</h2>
-    <div style="display:flex;gap:8px;">
-      <button class="btn btn-success" onclick="erpExportGLLedger()"><i class="fas fa-file-excel"></i> تصدير Excel</button>
-      <button class="btn btn-secondary" onclick="erpPrintGLLedger()"><i class="fas fa-print"></i> طباعة</button>
+  <!-- Top toolbar (right-title, left-actions) -->
+  <div class="tb-top">
+    <h2 class="tb-title"><i class="fas fa-book"></i> حساب الأستاذ</h2>
+    <div class="tb-actions">
+      <button class="tb-btn" onclick="erpPrintGLLedger()"><i class="fas fa-print"></i> طباعة</button>
+      <div class="tb-export-wrap">
+        <button class="tb-btn tb-btn-primary" onclick="erpGLToggleExport(this)"><i class="fas fa-cloud-download-alt"></i> خيارات التصدير <i class="fas fa-caret-down"></i></button>
+        <div class="tb-export-menu" id="glExportMenu">
+          <div onclick="erpExportGLLedger('xlsx')"><i class="fas fa-file-excel" style="color:#16a34a;"></i> Excel (XLSX)</div>
+          <div onclick="erpExportGLLedger('csv')"><i class="fas fa-file-csv" style="color:#0ea5e9;"></i> CSV</div>
+          <div onclick="erpExportGLLedger('pdf')"><i class="fas fa-file-pdf" style="color:#dc2626;"></i> PDF</div>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div class="erp-filters" style="align-items:flex-end;">
-    <div class="filter-search" style="min-width:320px;position:relative;">
-      <i class="fas fa-sitemap"></i>
-      <input type="text" id="erpGLSearch" class="form-control-sm" placeholder="ابحث برقم الحساب أو اسمه..." oninput="erpFilterGLAccounts()" onfocus="erpFilterGLAccounts()" autocomplete="off">
-      <input type="hidden" id="erpGLAccId">
-      <input type="hidden" id="erpGLAccName">
-      <input type="hidden" id="erpGLAccCode">
-      <input type="hidden" id="erpGLAccType">
-      <div class="sd-results" id="erpGLAccResults" style="position:absolute;top:100%;right:0;left:0;z-index:50;max-height:280px;overflow-y:auto;"></div>
+  <!-- Filter card (Daftra: 2 rows of 4 fields max) -->
+  <div class="tb-filters-card">
+    <!-- Row 1 -->
+    <div class="tb-filter-grid">
+      <div class="tb-field tb-date-preset">
+        <label>الفترة من / إلى:</label>
+        <div class="tb-daterange-wrap">
+          <input type="text" id="erpGLDateRange" readonly placeholder="—" onclick="erpGLToggleDatePresets(this)">
+          <i class="fas fa-caret-down"></i>
+          <div class="tb-daterange-menu" id="erpGLDatePresets">
+            <div onclick="erpGLPickPreset('lastWeek','الأسبوع الماضي')">الأسبوع الماضي</div>
+            <div onclick="erpGLPickPreset('lastMonth','الشهر الأخير')">الشهر الأخير</div>
+            <div onclick="erpGLPickPreset('mtd','من أول الشهر حتى اليوم')">من أول الشهر حتى اليوم</div>
+            <div onclick="erpGLPickPreset('lastYear','السنة الماضية')">السنة الماضية</div>
+            <div onclick="erpGLPickPreset('ytd','من أول السنة حتى اليوم')">من أول السنة حتى اليوم</div>
+            <div class="tb-dp-sub" onclick="erpGLPickCustom()">► الفترة من / إلى</div>
+            <div class="tb-dp-sub" onclick="erpGLPickSingle()">► تاريخ محدد</div>
+            <div class="tb-dp-sub" onclick="erpGLPickBefore()">► كل التواريخ قبل</div>
+            <div class="tb-dp-sub" onclick="erpGLPickAfter()">► كل التواريخ بعد</div>
+          </div>
+        </div>
+        <input type="hidden" id="erpGLFrom"><input type="hidden" id="erpGLTo">
+      </div>
+      <div class="tb-field">
+        <label>نوع الحساب:</label>
+        <select id="erpGLAccType2">
+          <option value="main">حساب رئيسي</option>
+          <option value="sub">حساب فرعي</option>
+          <option value="both" selected>الكل</option>
+        </select>
+      </div>
+      <div class="tb-field" style="position:relative;">
+        <label>حساب رئيسي:</label>
+        <select id="erpGLParent"><option value="">الكل</option></select>
+      </div>
+      <div class="tb-field">
+        <label>أضيفت بواسطة:</label>
+        <select id="erpGLAddedBy"><option value="">الكل</option></select>
+      </div>
     </div>
-    <div>
-      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;">من تاريخ</label>
-      <input type="date" id="erpGLFrom" class="form-control-sm">
+    <!-- Row 2 -->
+    <div class="tb-filter-grid">
+      <div class="tb-field">
+        <label>عرض جميع الحسابات:</label>
+        <select id="erpGLScope">
+          <option value="all" selected>عرض جميع الحسابات</option>
+          <option value="active">الحسابات ذات الحركة فقط</option>
+          <option value="leaf">الحسابات النهائية فقط</option>
+        </select>
+      </div>
+      <div class="tb-field" style="display:flex;align-items:center;gap:10px;flex-direction:row;padding-top:18px;">
+        <input type="checkbox" id="erpGLHideStaff" style="width:18px;height:18px;cursor:pointer;">
+        <label for="erpGLHideStaff" style="margin:0;cursor:pointer;font-weight:700;">Hide Staff Column</label>
+      </div>
     </div>
-    <div>
-      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;">إلى تاريخ</label>
-      <input type="date" id="erpGLTo" class="form-control-sm">
+    <!-- Action buttons -->
+    <div class="tb-filter-actions">
+      <button class="tb-btn tb-btn-purple" onclick="erpResetGLLedger()"><i class="fas fa-times"></i> إلغاء الفلتر</button>
+      <button class="tb-btn tb-btn-success" onclick="erpLoadGLLedgerReport()"><i class="fas fa-cloud-upload-alt"></i> عرض التقرير</button>
     </div>
-    <div>
-      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;">الحالة</label>
-      <select id="erpGLStatus" class="form-control-sm">
-        <option value="">المرحّلة فقط</option>
-        <option value="posted">مرحّلة</option>
-        <option value="approved">معتمدة</option>
-        <option value="draft">مسودة</option>
-        <option value="all">الكل</option>
-      </select>
-    </div>
-    <button class="btn btn-primary btn-sm" onclick="erpLoadGLLedgerReport()"><i class="fas fa-search"></i> عرض</button>
-    <button class="btn btn-light btn-sm" onclick="erpResetGLLedger()"><i class="fas fa-redo"></i></button>
   </div>
 
-  <div id="erpGLInfo" style="margin-bottom:10px;"></div>
-  <div id="erpGLSummary" class="fin-grid" style="margin-bottom:12px;"></div>
-  <div class="erp-table-container">
-    <table class="erp-table">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>التاريخ</th>
-          <th>رقم القيد</th>
-          <th>النوع</th>
-          <th>البيان</th>
-          <th style="color:#16a34a;">مدين</th>
-          <th style="color:#ef4444;">دائن</th>
-          <th>الرصيد</th>
-        </tr>
-      </thead>
-      <tbody id="erpGLLedgerBody"><tr><td colspan="8" class="empty-msg">اختر الحساب ثم اضغط عرض</td></tr></tbody>
-    </table>
+  <!-- Branded report banner -->
+  <div id="erpGLBrandBanner" class="tb-brand-banner" style="display:none;">
+    <div class="tb-brand-left">
+      <div class="tb-brand-logo" style="background:linear-gradient(135deg,#a855f7,#7e22ce);"><i class="fas fa-book"></i></div>
+    </div>
+    <div class="tb-brand-center">
+      <h3>حساب الأستاذ</h3>
+      <div class="tb-brand-sub">من <span id="erpGLBnFrom">—</span> إلى <span id="erpGLBnTo">—</span></div>
+      <div class="tb-brand-sub" id="erpGLBnCompany">—</div>
+      <div class="tb-brand-sub">العملة: الجميع (إلى SAR)</div>
+    </div>
+  </div>
+
+  <!-- Hidden legacy account picker (kept for backward compat with old loader) -->
+  <input type="hidden" id="erpGLSearch"><input type="hidden" id="erpGLAccId">
+  <input type="hidden" id="erpGLAccName"><input type="hidden" id="erpGLAccCode">
+  <input type="hidden" id="erpGLAccType">
+  <div id="erpGLAccResults" style="display:none;"></div>
+  <select id="erpGLStatus" style="display:none;"><option value="">المرحّلة فقط</option></select>
+
+  <!-- Report content (multi-section: one block per account) -->
+  <div id="erpGLLedgerContent">
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:30px;text-align:center;color:#94a3b8;">
+      <i class="fas fa-book" style="font-size:32px;margin-bottom:10px;display:block;color:#cbd5e1;"></i>
+      اضغط <b style="color:#16a34a;">"عرض التقرير"</b> لعرض حسابات الأستاذ
+    </div>
   </div>
 </div>
 

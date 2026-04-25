@@ -3761,6 +3761,39 @@
 .bom-line .wo-input,
 .bom-line .wo-select { padding: 6px 10px; font-size: 13px; }
 
+/* V3 Multi-select brand/branch grid (used in warehouse + brand modals) */
+.wh-allowed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.wh-allowed-chk {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.12s;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+.wh-allowed-chk:hover { background: #eff6ff; border-color: #93c5fd; }
+.wh-allowed-chk input[type=checkbox] {
+  width: 16px; height: 16px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+  margin: 0;
+}
+.wh-allowed-chk input:checked + span { color: #1e40af; }
+
 /* ═══════════════════════════════════════════════════════════════════
  * SECTION 28 — V3 SEARCHABLE PICKER (with quick-add)
  * Used for GL accounts + cost centers + any single-item selection

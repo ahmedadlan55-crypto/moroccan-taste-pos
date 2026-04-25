@@ -5054,12 +5054,13 @@ function tglUserM() {
   q("#muRole").value = 'cashier';
   if (q("#muEmail")) q("#muEmail").value = '';
   if (q("#muIsDeveloper")) q("#muIsDeveloper").checked = false;
+  if (q("#muCanChangeBranch")) q("#muCanChangeBranch").checked = false;
   if (q("#muPassHint")) q("#muPassHint").innerHTML = '';
   _loadUserDropdowns();
   openModal('#modalUserForm');
 }
 
-function _loadUserDropdowns(brandVal, branchVal, positionVal) {
+function _loadUserDropdowns(brandVal, branchVal, positionVal, warehouseVal) {
   // Load brands
   api.withSuccessHandler(function(brands) {
     var sel = q('#muBrand');
@@ -5080,6 +5081,17 @@ function _loadUserDropdowns(brandVal, branchVal, positionVal) {
         sel.innerHTML += '<option value="' + b.id + '"' + (branchVal===b.id?' selected':'') + '>' + b.name + '</option>';
       });
     }).catch(function() {});
+  // Load warehouses for the default-warehouse dropdown
+  fetch('/api/erp/warehouses-list', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+    .then(function(r) { return r.json(); })
+    .then(function(rows) {
+      var sel = q('#muDefaultWarehouse');
+      if (!sel) return;
+      sel.innerHTML = '<option value="">— تلقائي حسب الفرع —</option>';
+      (rows||[]).forEach(function(w) {
+        sel.innerHTML += '<option value="' + w.id + '"' + (warehouseVal===w.id?' selected':'') + '>' + (w.name || w.id) + '</option>';
+      });
+    }).catch(function() {});
   // Load positions
   fetch('/api/workflow/positions', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
     .then(function(r) { return r.json(); })
@@ -5092,6 +5104,15 @@ function _loadUserDropdowns(brandVal, branchVal, positionVal) {
       });
     }).catch(function() {});
 }
+
+// When user picks a branch, auto-load that branch's main warehouse as the suggested default
+window._onUserBranchChange = function() {
+  var brId = q('#muBranch') && q('#muBranch').value;
+  if (!brId) return;
+  // The warehouse list endpoint returns all; we'll just leave it to the user
+  // to pick — but visually highlight the recommended one (matching branch)
+  // Currently no-op but kept as a hook for future enhancement.
+};
 
 function editUsr(username) {
   var u = _cachedUsers.find(function(x){ return x.username === username; });
@@ -5112,8 +5133,9 @@ function editUsr(username) {
   q("#muRole").value = u.role || 'cashier';
   if (q("#muEmail")) q("#muEmail").value = u.email || '';
   if (q("#muIsDeveloper")) q("#muIsDeveloper").checked = !!u.isDeveloper;
+  if (q("#muCanChangeBranch")) q("#muCanChangeBranch").checked = !!u.canChangeBranch;
   if (q("#muPassHint")) q("#muPassHint").innerHTML = '';
-  _loadUserDropdowns(u.brandId, u.branchId, u.positionId);
+  _loadUserDropdowns(u.brandId, u.branchId, u.positionId, u.defaultWarehouseId);
   openModal('#modalUserForm');
 }
 
@@ -5148,6 +5170,9 @@ function saveUserFn() {
   var brandId     = q("#muBrand") ? q("#muBrand").value : '';
   var branchId    = q("#muBranch") ? q("#muBranch").value : '';
   var positionId  = q("#muPosition") ? q("#muPosition").value : '';
+  // V3 spec fields
+  var defaultWarehouseId = q("#muDefaultWarehouse") ? q("#muDefaultWarehouse").value : '';
+  var canChangeBranch    = q("#muCanChangeBranch") ? q("#muCanChangeBranch").checked : false;
 
   if (!username) return showToast('الرقم الوظيفي مطلوب', true);
   if (!_editingUsername && !password) return showToast('كلمة المرور مطلوبة عند إنشاء مستخدم', true);
@@ -5158,7 +5183,9 @@ function saveUserFn() {
 
   loader();
   if (_editingUsername) {
-    var payload = { displayName: displayName, role: role, isDeveloper: isDeveloper, email: email, brandId: brandId, branchId: branchId, positionId: positionId };
+    var payload = { displayName: displayName, role: role, isDeveloper: isDeveloper, email: email,
+                    brandId: brandId, branchId: branchId, positionId: positionId,
+                    defaultWarehouseId: defaultWarehouseId, canChangeBranch: canChangeBranch };
     if (password) payload.password = password;
     // If the login username changed (and it's not 'admin'), request a cascade rename.
     if (username && username !== _editingUsername && _editingUsername !== 'admin') {
@@ -5171,7 +5198,9 @@ function saveUserFn() {
           else showToast((r && r.error) || 'فشل التحديث', true);
        }).updateUser(_editingUsername, payload);
   } else {
-    var data = { username: username, password: password, role: role, displayName: displayName, isDeveloper: isDeveloper, email: email, brandId: brandId, branchId: branchId, positionId: positionId };
+    var data = { username: username, password: password, role: role, displayName: displayName, isDeveloper: isDeveloper, email: email,
+                 brandId: brandId, branchId: branchId, positionId: positionId,
+                 defaultWarehouseId: defaultWarehouseId, canChangeBranch: canChangeBranch };
     api.withFailureHandler(function(err){loader(false); showToast(err.message, true);})
        .withSuccessHandler(function(r) {
           loader(false);

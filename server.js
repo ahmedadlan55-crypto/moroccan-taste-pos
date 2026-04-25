@@ -799,6 +799,16 @@ async function runMigrations() {
   try { await db.query('CREATE INDEX idx_sales_channel ON sales(channel_id)'); } catch(e) {}
   try { await db.query('CREATE INDEX idx_sales_discount ON sales(discount_id)'); } catch(e) {}
 
+  // ─── V3 spec gap fixes ───
+  // Warehouses: multi-brand allowed list (JSON array of brand IDs)
+  await addColumnIfMissing('warehouses', 'allowed_brands', "LONGTEXT");
+  // Brands: linked branches (JSON array of branch IDs)
+  await addColumnIfMissing('brands', 'linked_branches', "LONGTEXT");
+  // Users: explicit default_branch_id (in addition to existing branch_id)
+  await addColumnIfMissing('users', 'default_branch_id', "VARCHAR(50) DEFAULT NULL");
+  // Users: can change branch (default false for cashier — per spec)
+  await addColumnIfMissing('users', 'can_change_branch', "BOOLEAN DEFAULT FALSE");
+
   // Audit log table
   await createTableIfMissing('audit_logs', `
     CREATE TABLE audit_logs (

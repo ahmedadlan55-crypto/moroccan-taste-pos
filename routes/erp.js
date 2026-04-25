@@ -1786,20 +1786,40 @@ router.get('/purchase-reports', async (req, res) => {
 router.get('/brands', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM brands ORDER BY name');
-    res.json(rows.map(b => ({ id: b.id, name: b.name, code: b.code, logo: b.logo, isActive: !!b.is_active })));
+    res.json(rows.map(b => {
+      let linkedBranches = [];
+      try { if (b.linked_branches) linkedBranches = JSON.parse(b.linked_branches); } catch(e) {}
+      return {
+        id: b.id, name: b.name, code: b.code, logo: b.logo, isActive: !!b.is_active,
+        linkedBranches: linkedBranches
+      };
+    }));
   } catch(e) { res.json([]); }
 });
 
 router.post('/brands', async (req, res) => {
   try {
-    const { id, name, code, logo, isActive } = req.body;
+    const { id, name, code, logo, isActive, linkedBranches } = req.body;
     if (!name) return res.json({ success: false, error: 'الاسم مطلوب' });
+    const linkedBranchesJson = Array.isArray(linkedBranches) ? JSON.stringify(linkedBranches) : null;
     if (id) {
-      await db.query('UPDATE brands SET name=?, code=?, logo=?, is_active=? WHERE id=?', [name, code||'', logo||null, isActive!==false?1:0, id]);
+      try {
+        await db.query('UPDATE brands SET name=?, code=?, logo=?, is_active=?, linked_branches=? WHERE id=?',
+          [name, code||'', logo||null, isActive!==false?1:0, linkedBranchesJson, id]);
+      } catch(e) {
+        // Fallback for older deploys without linked_branches column
+        await db.query('UPDATE brands SET name=?, code=?, logo=?, is_active=? WHERE id=?',
+          [name, code||'', logo||null, isActive!==false?1:0, id]);
+      }
       return res.json({ success: true, id });
     }
     const newId = 'BR-' + Date.now();
-    await db.query('INSERT INTO brands (id, name, code, logo) VALUES (?,?,?,?)', [newId, name, code||'', logo||null]);
+    try {
+      await db.query('INSERT INTO brands (id, name, code, logo, linked_branches) VALUES (?,?,?,?,?)',
+        [newId, name, code||'', logo||null, linkedBranchesJson]);
+    } catch(e) {
+      await db.query('INSERT INTO brands (id, name, code, logo) VALUES (?,?,?,?)', [newId, name, code||'', logo||null]);
+    }
     res.json({ success: true, id: newId });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
@@ -1858,28 +1878,46 @@ router.get('/warehouses-list', async (req, res) => {
       LEFT JOIN brands bd ON w.brand_id = bd.id
       LEFT JOIN cost_centers cc ON w.cost_center_id = cc.id
       ORDER BY w.code`);
-    res.json(rows.map(w => ({
-      id: w.id, code: w.code, name: w.name, type: w.type,
-      branchId: w.branch_id || '', branchName: w.branch_name||'',
-      brandId: w.brand_id || '', brandName: w.brand_name||'',
-      costCenterId: w.cost_center_id || '', costCenterName: w.cost_center_name||'',
-      location: w.location||'', manager: w.manager||'', isActive: w.is_active
-    })));
+    res.json(rows.map(w => {
+      let allowedBrands = [];
+      try { if (w.allowed_brands) allowedBrands = JSON.parse(w.allowed_brands); } catch(e) {}
+      return {
+        id: w.id, code: w.code, name: w.name, type: w.type,
+        branchId: w.branch_id || '', branchName: w.branch_name||'',
+        brandId: w.brand_id || '', brandName: w.brand_name||'',
+        costCenterId: w.cost_center_id || '', costCenterName: w.cost_center_name||'',
+        location: w.location||'', manager: w.manager||'', isActive: w.is_active,
+        // V3: array of allowed brand IDs (multi-brand storage rule)
+        allowedBrands: allowedBrands
+      };
+    }));
   } catch(e) { res.json([]); }
 });
 
 router.post('/warehouses-list', async (req, res) => {
   try {
-    const { id, code, name, type, brandId, branchId, costCenterId, location, manager } = req.body;
+    const { id, code, name, type, brandId, branchId, costCenterId, location, manager, allowedBrands } = req.body;
     if (!code || !name) return res.json({ success: false, error: 'الرمز والاسم مطلوبان' });
+    const allowedBrandsJson = Array.isArray(allowedBrands) ? JSON.stringify(allowedBrands) : null;
     if (id) {
-      await db.query('UPDATE warehouses SET code=?, name=?, type=?, brand_id=?, branch_id=?, cost_center_id=?, location=?, manager=? WHERE id=?',
-        [code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'', id]);
+      try {
+        await db.query('UPDATE warehouses SET code=?, name=?, type=?, brand_id=?, branch_id=?, cost_center_id=?, location=?, manager=?, allowed_brands=? WHERE id=?',
+          [code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'', allowedBrandsJson, id]);
+      } catch(e) {
+        // Fallback for older deploys without allowed_brands column
+        await db.query('UPDATE warehouses SET code=?, name=?, type=?, brand_id=?, branch_id=?, cost_center_id=?, location=?, manager=? WHERE id=?',
+          [code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'', id]);
+      }
       return res.json({ success: true, id });
     }
     const newId = 'WH-' + Date.now();
-    await db.query('INSERT INTO warehouses (id, code, name, type, brand_id, branch_id, cost_center_id, location, manager) VALUES (?,?,?,?,?,?,?,?,?)',
-      [newId, code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'']);
+    try {
+      await db.query('INSERT INTO warehouses (id, code, name, type, brand_id, branch_id, cost_center_id, location, manager, allowed_brands) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [newId, code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'', allowedBrandsJson]);
+    } catch(e) {
+      await db.query('INSERT INTO warehouses (id, code, name, type, brand_id, branch_id, cost_center_id, location, manager) VALUES (?,?,?,?,?,?,?,?,?)',
+        [newId, code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'']);
+    }
     res.json({ success: true, id: newId });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });

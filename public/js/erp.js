@@ -3200,16 +3200,30 @@ function erpLoadBrands() {
 
 function erpOpenBrandModal(data) {
   var d = data || {};
-  document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل براند' : 'إضافة براند جديد';
-  document.getElementById('erpModalBody').innerHTML =
-    '<input type="hidden" id="brandID" value="' + (d.id||'') + '">' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-      '<div class="form-row"><label>اسم البراند *</label><input class="form-control" id="brandName" value="' + (d.name||'') + '"></div>' +
-      '<div class="form-row"><label>الرمز</label><input class="form-control" id="brandCode" value="' + (d.code||'') + '" placeholder="MT"></div>' +
-    '</div>' +
-    '<div class="form-row"><label>شعار البراند</label><div style="display:flex;gap:10px;align-items:center;"><label style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;cursor:pointer;background:rgba(59,130,246,0.06);color:#3b82f6;font-size:13px;font-weight:700;border:1.5px dashed rgba(59,130,246,0.2);" for="brandLogoFile"><i class="fas fa-image"></i> رفع شعار</label><input type="file" id="brandLogoFile" accept="image/*" onchange="handleBrandLogo(this)" style="display:none;"><div id="brandLogoPreview">' + (d.logo ? '<img src="' + d.logo + '" style="width:50px;height:50px;border-radius:8px;object-fit:cover;">' : '') + '</div></div></div>';
-  document.getElementById('erpModalSaveBtn').onclick = erpSaveBrand;
-  document.getElementById('erpModal').classList.remove('hidden');
+  // Load branches for the multi-select
+  window._apiBridge.withSuccessHandler(function(branches) {
+    branches = branches || [];
+    var linkedSet = new Set((d.linkedBranches || []).map(String));
+    var branchHtml = branches.length ? branches.map(function(b) {
+      var checked = linkedSet.has(b.id) ? ' checked' : '';
+      return '<label class="wh-allowed-chk"><input type="checkbox" class="brand-linked-cb" value="' + b.id + '"' + checked + '><span>' + b.name + '</span></label>';
+    }).join('') : '<div style="color:#94a3b8;font-size:12px;">لا توجد فروع مسجلة بعد</div>';
+
+    document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل براند' : 'إضافة براند جديد';
+    document.getElementById('erpModalBody').innerHTML =
+      '<input type="hidden" id="brandID" value="' + (d.id||'') + '">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+        '<div class="form-row"><label>اسم البراند *</label><input class="form-control" id="brandName" value="' + (d.name||'') + '"></div>' +
+        '<div class="form-row"><label>الرمز</label><input class="form-control" id="brandCode" value="' + (d.code||'') + '" placeholder="MT"></div>' +
+      '</div>' +
+      '<div class="form-row"><label>شعار البراند</label><div style="display:flex;gap:10px;align-items:center;"><label style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;cursor:pointer;background:rgba(59,130,246,0.06);color:#3b82f6;font-size:13px;font-weight:700;border:1.5px dashed rgba(59,130,246,0.2);" for="brandLogoFile"><i class="fas fa-image"></i> رفع شعار</label><input type="file" id="brandLogoFile" accept="image/*" onchange="handleBrandLogo(this)" style="display:none;"><div id="brandLogoPreview">' + (d.logo ? '<img src="' + d.logo + '" style="width:50px;height:50px;border-radius:8px;object-fit:cover;">' : '') + '</div></div></div>' +
+      '<div class="form-row">' +
+        '<label>ربط البراند بفروع معينة <small style="color:#64748b;">(اختياري — اتركه فارغاً للسماح بكل الفروع)</small></label>' +
+        '<div class="wh-allowed-grid">' + branchHtml + '</div>' +
+      '</div>';
+    document.getElementById('erpModalSaveBtn').onclick = erpSaveBrand;
+    document.getElementById('erpModal').classList.remove('hidden');
+  }).getBranchesFull();
 }
 
 window._brandLogoData = '';
@@ -3234,7 +3248,14 @@ window.handleBrandLogo = function(input) {
 function erpEditBrand(id) { var b = _brandsList.find(function(x){return x.id===id;}); if(b) { window._brandLogoData = b.logo||''; erpOpenBrandModal(b); } }
 
 function erpSaveBrand() {
-  var data = { id: document.getElementById('brandID').value, name: document.getElementById('brandName').value, code: document.getElementById('brandCode').value, logo: window._brandLogoData || '' };
+  var linkedBranches = Array.from(document.querySelectorAll('.brand-linked-cb:checked')).map(function(cb){ return cb.value; });
+  var data = {
+    id: document.getElementById('brandID').value,
+    name: document.getElementById('brandName').value,
+    code: document.getElementById('brandCode').value,
+    logo: window._brandLogoData || '',
+    linkedBranches: linkedBranches
+  };
   if (!data.name) return showToast('الاسم مطلوب', true);
   loader(true);
   window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحفظ'); erpCloseModal(); erpLoadBrands(); } else showToast(r.error, true); }).saveBrand(data);
@@ -3507,6 +3528,12 @@ function erpOpenWarehouseModal(data) {
     var brOpts = branches.map(function(b) { return '<option value="' + b.id + '"' + (d.branchId===b.id?' selected':'') + '>' + b.name + '</option>'; }).join('');
     var brandOpts = brands.map(function(b) { return '<option value="' + b.id + '"' + (d.brandId===b.id?' selected':'') + '>' + b.name + '</option>'; }).join('');
     var ccOpts = ccs.map(function(c) { return '<option value="' + c.id + '"' + (d.costCenterId===c.id?' selected':'') + '>' + c.code + ' — ' + c.name + '</option>'; }).join('');
+    // V3: allowed brands as checkbox grid (multi-select)
+    var allowedSet = new Set((d.allowedBrands || []).map(String));
+    var allowedHtml = brands.map(function(b) {
+      var checked = allowedSet.has(b.id) ? ' checked' : '';
+      return '<label class="wh-allowed-chk"><input type="checkbox" class="wh-allowed-cb" value="' + b.id + '"' + checked + '><span>' + b.name + '</span></label>';
+    }).join('');
     document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل مستودع' : 'مستودع جديد';
     document.getElementById('erpModalBody').innerHTML =
       '<input type="hidden" id="whID" value="' + (d.id||'') + '">' +
@@ -3516,8 +3543,12 @@ function erpOpenWarehouseModal(data) {
       '</div>' +
       '<div class="form-row"><label>الاسم *</label><input class="form-control" id="whName" value="' + (d.name||'') + '"></div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>البراند</label><select class="form-control" id="whBrand"><option value="">— بدون —</option>' + brandOpts + '</select></div>' +
+        '<div class="form-row"><label>البراند الأساسي</label><select class="form-control" id="whBrand"><option value="">— بدون —</option>' + brandOpts + '</select></div>' +
         '<div class="form-row"><label>الفرع</label><select class="form-control" id="whBranch"><option value="">— بدون —</option>' + brOpts + '</select></div>' +
+      '</div>' +
+      '<div class="form-row">' +
+        '<label>البراندات المسموح بتخزينها <small style="color:#64748b;">(يمكن اختيار أكثر من براند)</small></label>' +
+        '<div class="wh-allowed-grid">' + (allowedHtml || '<div style="color:#94a3b8;font-size:12px;">لا توجد براندات مسجلة</div>') + '</div>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>مركز التكلفة</label><select class="form-control" id="whCC"><option value="">— بدون —</option>' + ccOpts + '</select></div>' +
@@ -3531,7 +3562,20 @@ function erpOpenWarehouseModal(data) {
 }
 function erpEditWH(id) { var w = _whList.find(function(x){return x.id===id;}); if(w) erpOpenWarehouseModal(w); }
 function erpSaveWH() {
-  var data = { id: document.getElementById('whID').value, code: document.getElementById('whCode').value, name: document.getElementById('whName').value, type: document.getElementById('whType').value, brandId: (document.getElementById('whBrand')||{}).value||'', branchId: document.getElementById('whBranch').value, costCenterId: (document.getElementById('whCC')||{}).value||'', manager: document.getElementById('whManager').value, location: document.getElementById('whLocation').value };
+  // Collect allowed brands (multi-select)
+  var allowedBrands = Array.from(document.querySelectorAll('.wh-allowed-cb:checked')).map(function(cb){ return cb.value; });
+  var data = {
+    id: document.getElementById('whID').value,
+    code: document.getElementById('whCode').value,
+    name: document.getElementById('whName').value,
+    type: document.getElementById('whType').value,
+    brandId: (document.getElementById('whBrand')||{}).value||'',
+    branchId: document.getElementById('whBranch').value,
+    costCenterId: (document.getElementById('whCC')||{}).value||'',
+    manager: document.getElementById('whManager').value,
+    location: document.getElementById('whLocation').value,
+    allowedBrands: allowedBrands
+  };
   if (!data.code || !data.name) return showToast('الرمز والاسم مطلوبان', true);
   loader(true);
   window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحفظ'); erpCloseModal(); erpLoadMultiWarehouses(); } else showToast(r.error, true); }).saveWarehouse(data);

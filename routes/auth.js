@@ -220,24 +220,30 @@ async function setUserMeta(meta) {
 router.get('/users', async (req, res) => {
   try {
     // Detect optional columns (phone/full_name were added via migration)
-    let hasPhone = true, hasFullName = true;
+    let hasPhone = true, hasFullName = true, hasCanChange = true, hasDefBranch = true;
     try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'phone'"); hasPhone = !!c.length; } catch(e) { hasPhone = false; }
     try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'full_name'"); hasFullName = !!c.length; } catch(e) { hasFullName = false; }
+    try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'can_change_branch'"); hasCanChange = !!c.length; } catch(e) { hasCanChange = false; }
+    try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'default_branch_id'"); hasDefBranch = !!c.length; } catch(e) { hasDefBranch = false; }
 
     const extraCols = [
-      hasPhone    ? 'u.phone'     : "'' AS phone",
-      hasFullName ? 'u.full_name' : "'' AS full_name"
+      hasPhone     ? 'u.phone'             : "'' AS phone",
+      hasFullName  ? 'u.full_name'         : "'' AS full_name",
+      hasCanChange ? 'u.can_change_branch' : '0 AS can_change_branch',
+      hasDefBranch ? 'u.default_branch_id' : 'NULL AS default_branch_id'
     ];
     const [users] = await db.query(`
       SELECT u.id, u.username, u.role, u.active, u.created_at, u.email,
         u.brand_id, u.branch_id, u.default_warehouse_id, u.position_id,
         ${extraCols.join(', ')},
         COALESCE(br.name,'') AS branchName, COALESCE(bd.name,'') AS brandName,
-        COALESCE(p.name,'') AS positionName
+        COALESCE(p.name,'') AS positionName,
+        COALESCE(wh.name,'') AS warehouseName
       FROM users u
       LEFT JOIN branches br ON u.branch_id = br.id
       LEFT JOIN brands bd ON u.brand_id = bd.id
       LEFT JOIN positions p ON u.position_id = p.id
+      LEFT JOIN warehouses wh ON u.default_warehouse_id = wh.id
       ORDER BY u.created_at DESC
     `);
     const meta = await getUserMeta();
@@ -255,7 +261,11 @@ router.get('/users', async (req, res) => {
         phone: u.phone || '',
         brandId: u.brand_id || '', brandName: u.brandName || '',
         branchId: u.branch_id || '', branchName: u.branchName || '',
+        defaultBranchId: u.default_branch_id || u.branch_id || '',
         warehouseId: u.default_warehouse_id || '',
+        defaultWarehouseId: u.default_warehouse_id || '',
+        defaultWarehouseName: u.warehouseName || '',
+        canChangeBranch: !!u.can_change_branch,
         positionId: u.position_id || '', positionName: u.positionName || ''
       };
     }));
@@ -276,17 +286,18 @@ router.post('/users', async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     const dbRole = ['admin', 'cashier', 'manager', 'custody', 'employee'].indexOf(role) >= 0 ? role : 'cashier';
 
-    // Get default warehouse from branch
-    let defaultWarehouseId = null;
-    if (branchId) {
+    // V3: explicit defaultWarehouseId from request OR auto-derive from branch's warehouse
+    let defaultWarehouseId = req.body.defaultWarehouseId || null;
+    if (!defaultWarehouseId && branchId) {
       const [branchRow] = await db.query('SELECT warehouse_id FROM branches WHERE id = ?', [branchId]);
       if (branchRow.length && branchRow[0].warehouse_id) defaultWarehouseId = branchRow[0].warehouse_id;
     }
 
     const positionId = req.body.positionId || null;
+    const canChangeBranch = req.body.canChangeBranch ? 1 : 0;
     await db.query(
-      'INSERT INTO users (username, password, role, active, email, brand_id, branch_id, default_warehouse_id, position_id) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)',
-      [username, hash, dbRole, email||'', brandId||null, branchId||null, defaultWarehouseId, positionId]
+      'INSERT INTO users (username, password, role, active, email, brand_id, branch_id, default_branch_id, default_warehouse_id, position_id, can_change_branch) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)',
+      [username, hash, dbRole, email||'', brandId||null, branchId||null, branchId||null, defaultWarehouseId, positionId, canChangeBranch]
     );
     // Apply optional extras (phone + full_name) — tolerate old schemas without the columns
     if (phone) { try { await db.query('UPDATE users SET phone = ? WHERE username = ?', [phone, username]); } catch(e) {} }
@@ -382,17 +393,23 @@ router.put('/users/:username', async (req, res) => {
       try { await db.query('UPDATE users SET full_name = ? WHERE username = ?', [displayName || '', username]); } catch(e) {}
     }
 
-    // Update brand + branch + auto-resolve warehouse
-    if (brandId !== undefined || branchId !== undefined) {
-      if (brandId !== undefined) await db.query('UPDATE users SET brand_id = ? WHERE username = ?', [brandId || null, username]);
-      if (branchId !== undefined) {
-        let whId = null;
-        if (branchId) {
-          const [br] = await db.query('SELECT warehouse_id FROM branches WHERE id = ?', [branchId]);
-          if (br.length && br[0].warehouse_id) whId = br[0].warehouse_id;
-        }
-        await db.query('UPDATE users SET branch_id = ?, default_warehouse_id = ? WHERE username = ?', [branchId || null, whId, username]);
+    // Update brand + branch + warehouse (V3: explicit defaultWarehouseId from body, or auto-derive)
+    if (brandId !== undefined) await db.query('UPDATE users SET brand_id = ? WHERE username = ?', [brandId || null, username]);
+    if (branchId !== undefined) {
+      // Resolve default warehouse: explicit > branch's warehouse > null
+      let whId = req.body.defaultWarehouseId || null;
+      if (!whId && branchId) {
+        const [br] = await db.query('SELECT warehouse_id FROM branches WHERE id = ?', [branchId]);
+        if (br.length && br[0].warehouse_id) whId = br[0].warehouse_id;
       }
+      await db.query('UPDATE users SET branch_id = ?, default_branch_id = ?, default_warehouse_id = ? WHERE username = ?',
+        [branchId || null, branchId || null, whId, username]);
+    } else if (req.body.defaultWarehouseId !== undefined) {
+      // Allow setting just the warehouse without changing branch
+      await db.query('UPDATE users SET default_warehouse_id = ? WHERE username = ?', [req.body.defaultWarehouseId || null, username]);
+    }
+    if (req.body.canChangeBranch !== undefined) {
+      try { await db.query('UPDATE users SET can_change_branch = ? WHERE username = ?', [req.body.canChangeBranch ? 1 : 0, username]); } catch(e) {}
     }
 
     if (password) {

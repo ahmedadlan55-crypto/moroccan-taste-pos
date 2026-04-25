@@ -124,23 +124,60 @@ router.get('/movements', async (req, res) => {
 router.post('/stock-update', async (req, res) => {
   try {
     const { itemId, itemName, type, qty, reason, username, notes } = req.body;
+    let { warehouseId, branchId } = req.body;
+
+    // V3 spec rule: stock movements MUST have warehouse_id + branch_id
+    // (يمنع: إنشاء حركات مخزون بدون مستودع وفرع محددين)
+    // Try to auto-fill from the requesting user's defaults before rejecting.
+    if ((!warehouseId || !branchId) && req.user) {
+      try {
+        const [u] = await db.query('SELECT branch_id, default_warehouse_id FROM users WHERE username = ? LIMIT 1', [req.user.username || username]);
+        if (u.length) {
+          branchId = branchId || u[0].branch_id;
+          warehouseId = warehouseId || u[0].default_warehouse_id;
+        }
+      } catch(e) {}
+    }
+    if (!warehouseId) {
+      return res.json({ success: false, error: 'لا يمكن إنشاء حركة مخزون بدون تحديد المستودع. حدّد مستودعاً افتراضياً للمستخدم أو أرسل warehouseId صراحةً.' });
+    }
+
     const now = new Date();
     const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
 
-    // Insert movement record
-    await db.query(
-      'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
-      [movId, now, itemId, itemName || '', type, qty, reason || '', username || '', notes || '']
-    );
+    // Insert movement record (with warehouse_id — column already exists)
+    try {
+      await db.query(
+        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [movId, now, itemId, itemName || '', type, qty, reason || '', username || '', notes || '', warehouseId]
+      );
+    } catch(e) {
+      // Fallback for very old schema without warehouse_id column
+      await db.query(
+        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
+        [movId, now, itemId, itemName || '', type, qty, reason || '', username || '', notes || '']
+      );
+    }
 
-    // Update stock on inv_items
+    // Update stock on inv_items (central total)
     if (type === 'in') {
       await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?', [qty, itemId]);
     } else {
       await db.query('UPDATE inv_items SET stock = GREATEST(0, stock - ?) WHERE id = ?', [qty, itemId]);
     }
 
-    res.json({ success: true, movementId: movId });
+    // Also update warehouse_stock so per-warehouse totals stay accurate
+    try {
+      const wsId = 'WS-' + warehouseId + '-' + itemId;
+      const delta = (type === 'in') ? Number(qty) : -Number(qty);
+      await db.query(
+        `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?)
+         ON DUPLICATE KEY UPDATE qty = GREATEST(0, qty + VALUES(qty))`,
+        [wsId, warehouseId, itemId, delta]
+      );
+    } catch(e) { /* tolerate if warehouse_stock missing on old deploy */ }
+
+    res.json({ success: true, movementId: movId, warehouseId: warehouseId, branchId: branchId });
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
@@ -841,6 +878,19 @@ router.post('/shortage-requests/:id/convert-to-po', async (req, res) => {
 
     const [items] = await db.query('SELECT * FROM shortage_items WHERE request_id = ?', [req.params.id]);
 
+    // ─── V3 spec: auto-fill brand/branch/warehouse from the shortage request ───
+    // Allow override via req.body if admin wants to redirect to a different warehouse
+    const targetBrandId  = req.body.brandId  || r.brand_id  || null;
+    const targetBranchId = req.body.branchId || r.branch_id || null;
+    let targetWarehouseId = req.body.warehouseId || null;
+    // If no explicit warehouse given, derive from the requesting branch
+    if (!targetWarehouseId && targetBranchId) {
+      try {
+        const [br] = await db.query('SELECT warehouse_id FROM branches WHERE id = ?', [targetBranchId]);
+        if (br.length && br[0].warehouse_id) targetWarehouseId = br[0].warehouse_id;
+      } catch(e) {}
+    }
+
     // Create PO
     const poId = 'PO-' + Date.now();
     const [lastPO] = await db.query('SELECT po_number FROM purchase_orders ORDER BY created_at DESC LIMIT 1');
@@ -863,12 +913,24 @@ router.post('/shortage-requests/:id/convert-to-po', async (req, res) => {
     const vatAmount = totalBeforeVat * 0.15;
     const totalAfterVat = totalBeforeVat + vatAmount;
 
-    await db.query(
-      `INSERT INTO purchase_orders (id, po_number, supplier_id, supplier_name, po_date, expected_date, notes, status, total_before_vat, vat_amount, total_after_vat, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [poId, poNumber, supplierId || '', supplierName || '', new Date(), new Date(Date.now() + 7*86400000),
-       'من طلب نقص: ' + r.request_number, 'draft', totalBeforeVat, vatAmount, totalAfterVat, username || '']
-    );
+    // Try inserting with brand_id/branch_id (V3); fall back to legacy columns if those
+    // columns don't exist on a very old deploy.
+    try {
+      await db.query(
+        `INSERT INTO purchase_orders (id, po_number, supplier_id, supplier_name, po_date, expected_date, notes, status, total_before_vat, vat_amount, total_after_vat, created_by, brand_id, branch_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [poId, poNumber, supplierId || '', supplierName || '', new Date(), new Date(Date.now() + 7*86400000),
+         'من طلب نقص: ' + r.request_number, 'draft', totalBeforeVat, vatAmount, totalAfterVat, username || '',
+         targetBrandId, targetBranchId]
+      );
+    } catch (e) {
+      await db.query(
+        `INSERT INTO purchase_orders (id, po_number, supplier_id, supplier_name, po_date, expected_date, notes, status, total_before_vat, vat_amount, total_after_vat, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [poId, poNumber, supplierId || '', supplierName || '', new Date(), new Date(Date.now() + 7*86400000),
+         'من طلب نقص: ' + r.request_number, 'draft', totalBeforeVat, vatAmount, totalAfterVat, username || '']
+      );
+    }
 
     for (const line of poLines) {
       const lineId = 'POL-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
@@ -881,7 +943,10 @@ router.post('/shortage-requests/:id/convert-to-po', async (req, res) => {
     // Update shortage request
     await db.query('UPDATE shortage_requests SET status = "converted", po_id = ? WHERE id = ?', [poId, req.params.id]);
 
-    res.json({ success: true, poId, poNumber });
+    res.json({
+      success: true, poId, poNumber,
+      brandId: targetBrandId, branchId: targetBranchId, warehouseId: targetWarehouseId
+    });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 

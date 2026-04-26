@@ -631,13 +631,10 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
-  // ─── V3: Seed Memo transaction type if missing ───
-  try {
-    const [memoExists] = await db.query("SELECT id FROM transaction_types WHERE code = 'MEMO_CIRCULAR' LIMIT 1");
-    if (!memoExists.length) {
-      await db.query("INSERT INTO transaction_types (id, name, code) VALUES ('TT-MEMO','تعميم إداري','MEMO_CIRCULAR')");
-    }
-  } catch(e) {}
+  // ─── V3: Memo transaction type ───
+  // The system already seeds 'TT-MEMO' (code='MEMO', name='مذكرة داخلية') from
+  // routes/workflow.js. /memos-inbox accepts both 'MEMO' and 'MEMO_CIRCULAR'
+  // codes, so no seed needed here.
 
   // Seed default positions
   try {

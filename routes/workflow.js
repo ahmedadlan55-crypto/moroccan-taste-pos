@@ -1917,23 +1917,30 @@ router.get('/transactions/:id/memo-readers', async (req, res) => {
 });
 
 // GET /workflow/memos-inbox — list all memos (for the dedicated inbox tab)
+// Memos can be any transaction_type with code in ('MEMO','MEMO_CIRCULAR')
+// or category = 'administrative' (for compatibility with existing seed data).
 router.get('/memos-inbox', async (req, res) => {
   try {
     const username = req.query.username || (req.user && req.user.username);
-    // Get memo type id
-    const [tt] = await db.query("SELECT id FROM transaction_types WHERE code = 'MEMO_CIRCULAR' LIMIT 1");
+    // Get all memo type ids — tolerate either old or new code
+    const [tt] = await db.query(`
+      SELECT id FROM transaction_types
+       WHERE code IN ('MEMO', 'MEMO_CIRCULAR')
+          OR (category = 'administrative' AND code LIKE '%MEMO%')
+    `);
     if (!tt.length) return res.json([]);
-    const memoTypeId = tt[0].id;
+    const memoTypeIds = tt.map(r => r.id);
+    const placeholders = memoTypeIds.map(() => '?').join(',');
     // Get all memos + read flag for this user
     const [rows] = await db.query(`
       SELECT t.*, COALESCE(u.full_name, t.created_by) AS sender_full_name,
              (SELECT MAX(read_at) FROM memo_read_receipts r WHERE r.transaction_id = t.id AND r.username = ?) AS my_read_at
       FROM transactions t
       LEFT JOIN users u ON u.username = t.created_by
-      WHERE t.transaction_type_id = ?
+      WHERE t.transaction_type_id IN (${placeholders})
       ORDER BY t.created_at DESC
       LIMIT 200
-    `, [username || '', memoTypeId]);
+    `, [username || ''].concat(memoTypeIds));
     res.json(rows.map(t => ({
       id: t.id, txnNumber: t.txn_number, subject: t.subject,
       contentText: t.content_text, contentHtml: t.content_html,

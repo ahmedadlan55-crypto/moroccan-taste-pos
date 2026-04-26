@@ -596,6 +596,49 @@ async function runMigrations() {
   await addColumnIfMissing('transaction_steps_log', 'attachment', "LONGTEXT");
   await addColumnIfMissing('transaction_steps_log', 'position_name', "VARCHAR(200)");
 
+  // ─── V3: CEO approval tracking ───
+  // Set when a transaction passes through any position with level >= 9 (CEO/owner)
+  await addColumnIfMissing('transactions', 'passed_ceo_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('transactions', 'passed_ceo_by', "VARCHAR(100) DEFAULT NULL");
+
+  // ─── V3: Transaction Replies (proper threaded comments, separate from action log) ───
+  await createTableIfMissing('transaction_replies', `
+    CREATE TABLE transaction_replies (
+      id VARCHAR(60) PRIMARY KEY,
+      transaction_id VARCHAR(50) NOT NULL,
+      reply_text TEXT NOT NULL,
+      attachment LONGTEXT,
+      author_username VARCHAR(100) NOT NULL,
+      author_name VARCHAR(200),
+      author_role VARCHAR(50),
+      author_position VARCHAR(200),
+      is_internal BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_replies_txn (transaction_id),
+      INDEX idx_replies_author (author_username)
+    ) ENGINE=InnoDB
+  `);
+
+  // ─── V3: Memo (تعاميم) read-receipts ───
+  await createTableIfMissing('memo_read_receipts', `
+    CREATE TABLE memo_read_receipts (
+      id VARCHAR(60) PRIMARY KEY,
+      transaction_id VARCHAR(50) NOT NULL,
+      username VARCHAR(100) NOT NULL,
+      read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_memo_user (transaction_id, username),
+      INDEX idx_memo_user (username)
+    ) ENGINE=InnoDB
+  `);
+
+  // ─── V3: Seed Memo transaction type if missing ───
+  try {
+    const [memoExists] = await db.query("SELECT id FROM transaction_types WHERE code = 'MEMO_CIRCULAR' LIMIT 1");
+    if (!memoExists.length) {
+      await db.query("INSERT INTO transaction_types (id, name, code) VALUES ('TT-MEMO','تعميم إداري','MEMO_CIRCULAR')");
+    }
+  } catch(e) {}
+
   // Seed default positions
   try {
     const [posCount] = await db.query('SELECT COUNT(*) AS cnt FROM positions');

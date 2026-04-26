@@ -5617,6 +5617,35 @@ function wfViewTxn(id) {
     } else { html += '<p style="color:#94a3b8;text-align:center;font-size:13px;">لا توجد إجراءات بعد</p>'; }
     html += '</div>';
 
+    // V3: CEO badge — admin view (above replies)
+    if (txn.passedCeoAt) {
+      var ceoDt = '';
+      try { ceoDt = new Date(txn.passedCeoAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(_){}
+      html += '<div style="padding:10px 14px;border-radius:12px;background:linear-gradient(135deg,#ecfccb,#f0fdf4);border:1.5px solid #16a34a;margin-bottom:10px;display:flex;align-items:center;gap:10px;">' +
+        '<div style="width:36px;height:36px;border-radius:50%;background:#16a34a;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px;"><i class="fas fa-crown"></i></div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:10px;font-weight:800;color:#15803d;letter-spacing:.04em;">معتمدة من الإدارة العليا</div>' +
+          '<div style="font-size:13px;font-weight:900;color:#14532d;margin-top:2px;">مرّت على الرئيس التنفيذي' + (txn.passedCeoBy ? ' — ' + _woEscapeHtml(txn.passedCeoBy) : '') + (ceoDt ? ' • ' + ceoDt : '') + '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    // V3: Replies thread for admin (same component as employee, different DOM ids)
+    html += '<div style="border:2px solid #c4b5fd;border-radius:14px;background:linear-gradient(180deg,#faf5ff 0%,#fff 60%);padding:14px;margin-bottom:12px;">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">' +
+        '<i class="fas fa-comments" style="color:#8b5cf6;font-size:14px;"></i>' +
+        '<span style="font-size:13px;font-weight:900;color:#5b21b6;">الردود والمناقشة</span>' +
+        '<span id="adm_repliesCount" style="margin-inline-start:auto;font-size:11px;color:#7c3aed;font-weight:700;background:#ede9fe;padding:3px 10px;border-radius:999px;">جاري التحميل...</span>' +
+      '</div>' +
+      '<div id="adm_repliesList"><div style="text-align:center;color:#94a3b8;padding:20px;font-size:12px;"><i class="fas fa-spinner fa-spin"></i></div></div>' +
+      '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #c4b5fd;">' +
+        '<textarea id="adm_replyText" placeholder="اكتب رداً أو ملاحظة..." style="width:100%;min-height:60px;padding:10px;border:1.5px solid #c4b5fd;border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;"></textarea>' +
+        '<div style="display:flex;gap:8px;margin-top:8px;">' +
+          '<button onclick="admPostReply(\''+txn.id+'\')" class="wo-btn wo-btn-primary" style="flex:1;background:linear-gradient(135deg,#8b5cf6,#6d28d9);"><i class="fas fa-paper-plane"></i><span>إرسال الرد</span></button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
     // Phase B.1: Enhanced toolbar with inline action buttons
     // — so admins don't have to close+reopen modal to approve/reject
     var canEdit = (txn.status === 'pending' || txn.status === 'draft') && (txn.createdBy === currentUser);
@@ -5651,6 +5680,8 @@ function wfViewTxn(id) {
     document.getElementById('erpModalSaveBtn').style.display = 'none';
     document.getElementById('erpModal').classList.remove('hidden');
     setTimeout(function() { document.getElementById('erpModalSaveBtn').style.display = ''; }, 100);
+    // V3: lazy-load replies thread
+    setTimeout(function() { try { admLoadReplies(txn.id); } catch(e){ console.warn('admLoadReplies err:', e); } }, 50);
     // Cache the last-viewed transaction for the print window
     window._wfLastViewedTxn = txn;
   }).getWfTransaction(id);
@@ -15495,5 +15526,78 @@ function _renderDiscountsGiven(r) {
     '</tr>';
   }).join('');
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+ * V3 — Admin Replies Thread (mirrors empLoadReplies in employee/app.js)
+ * ═══════════════════════════════════════════════════════════════════ */
+window.admLoadReplies = function(txnId) {
+  var token = localStorage.getItem('pos_token');
+  fetch('/api/workflow/transactions/' + txnId + '/replies', {
+    headers: { 'Authorization': 'Bearer ' + token }
+  })
+    .then(function(r){return r.json();})
+    .then(function(rows) {
+      if (!Array.isArray(rows)) rows = [];
+      var listEl = document.getElementById('adm_repliesList');
+      var cntEl  = document.getElementById('adm_repliesCount');
+      if (cntEl) cntEl.textContent = rows.length + ' رد';
+      if (!listEl) return;
+      if (!rows.length) {
+        listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:18px;font-size:12px;"><i class="fas fa-comment-slash" style="font-size:22px;display:block;margin-bottom:6px;"></i>لا توجد ردود بعد.</div>';
+        return;
+      }
+      var roleColors = { admin:'#dc2626', cashier:'#16a34a', manager:'#1e40af', custody:'#d97706', employee:'#475569' };
+      var roleLabels = { admin:'أدمن', cashier:'كاشير', manager:'مدير', custody:'عهدة', employee:'موظف' };
+      listEl.innerHTML = rows.map(function(r) {
+        var dt = '';
+        try { dt = new Date(r.createdAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(e){}
+        var col = roleColors[r.authorRole] || '#6b7280';
+        var roleLbl = roleLabels[r.authorRole] || r.authorRole || 'مستخدم';
+        var posLbl = r.authorPosition ? ' · ' + _v3EscapeHtml(r.authorPosition) : '';
+        return '<div style="display:flex;gap:10px;padding:10px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px;">' +
+          '<div style="width:34px;height:34px;border-radius:50%;background:'+col+'1a;color:'+col+';display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:900;font-size:13px;">' + ((r.authorName||'؟')[0]||'؟') + '</div>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">' +
+              '<div style="font-weight:900;font-size:13px;color:#0f172a;">' + _v3EscapeHtml(r.authorName||'') + ' <span style="font-size:10px;font-weight:700;color:'+col+';background:'+col+'15;padding:2px 7px;border-radius:6px;margin-inline-start:4px;">' + roleLbl + posLbl + '</span></div>' +
+              '<div style="font-size:10px;color:#94a3b8;"><i class="far fa-clock"></i> ' + dt + '</div>' +
+            '</div>' +
+            '<div style="font-size:13px;color:#334155;line-height:1.7;margin-top:4px;white-space:pre-wrap;">' + _v3EscapeHtml(r.replyText||'') + '</div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    })
+    .catch(function(err) {
+      console.error('[admLoadReplies] err:', err);
+      var listEl = document.getElementById('adm_repliesList');
+      if (listEl) listEl.innerHTML = '<div style="text-align:center;color:#dc2626;padding:14px;font-size:12px;">فشل تحميل الردود</div>';
+    });
+};
+
+window.admPostReply = function(txnId) {
+  var ta = document.getElementById('adm_replyText');
+  if (!ta) return;
+  var text = (ta.value || '').trim();
+  if (!text) { showToast('اكتب نص الرد', true); return; }
+  var token = localStorage.getItem('pos_token');
+  fetch('/api/workflow/transactions/' + txnId + '/replies', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ replyText: text, username: currentUser })
+  })
+    .then(function(r){return r.json();})
+    .then(function(r) {
+      if (r && r.success) {
+        ta.value = '';
+        showToast('تم إرسال الرد');
+        admLoadReplies(txnId);
+      } else {
+        showToast((r && r.error) || 'فشل الإرسال', true);
+      }
+    })
+    .catch(function(err) {
+      console.error('[admPostReply] err:', err);
+      showToast('فشل الاتصال', true);
+    });
+};
 
 

@@ -1557,6 +1557,9 @@ router.get('/transactions/:id', async (req, res) => {
       issuingEntityId: t.issuing_entity_id || '',
       issuingEntityName: fixMojibake(t.issuing_entity_name || ''),
       hijriDate: t.hijri_date || '',
+      // V3: CEO approval indicator
+      passedCeoAt: t.passed_ceo_at || null,
+      passedCeoBy: t.passed_ceo_by || null,
       recipients: recipientRows.map(r => fixObj({
         id: r.id, type: r.recipient_type, username: r.recipient_username,
         code: r.recipient_code, name: r.recipient_name,
@@ -1774,6 +1777,19 @@ router.post('/transactions/:id/action', async (req, res) => {
       'INSERT INTO transaction_steps_log (id, transaction_id, workflow_definition_id, action_by, action_type, action_note, attachment, position_name) VALUES (?,?,?,?,?,?,?,?)',
       [logId, req.params.id, txn.current_step_id, username||'', action, note||'', attachment||null, perms.positionName || '']);
 
+    // ─── V3: CEO approval tracking ───
+    // If actor is at executive level (>=9) OR has admin role, AND this was an
+    // approve action, stamp the transaction so UI can show "passed CEO" badge.
+    try {
+      var senderLevel = Number(perms.positionLevel || 0);
+      if (action === 'approve' && (senderLevel >= 9 || perms.role === 'admin')) {
+        await db.query(
+          'UPDATE transactions SET passed_ceo_at = NOW(), passed_ceo_by = ? WHERE id = ? AND passed_ceo_at IS NULL',
+          [username || '', req.params.id]
+        );
+      }
+    } catch(e) { /* tolerate missing columns on very old deploys */ }
+
     res.json({ success: true, newStatus, newAssignee });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
@@ -1797,6 +1813,139 @@ router.get('/attachments/:id', async (req, res) => {
     if (!rows.length) return res.json({ error: 'غير موجود' });
     res.json({ id: rows[0].id, fileName: rows[0].file_name, mime: rows[0].mime_type, dataUrl: rows[0].data_url });
   } catch(e) { res.json({ error: e.message }); }
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+ * V3 — Transaction Replies (threaded comments, separate from action log)
+ * Anyone who is sender, recipient, or current assignee can reply.
+ * ═══════════════════════════════════════════════════════════════════ */
+
+// GET /workflow/transactions/:id/replies
+router.get('/transactions/:id/replies', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      'SELECT * FROM transaction_replies WHERE transaction_id = ? ORDER BY created_at ASC',
+      [req.params.id]
+    );
+    res.json(rows.map(r => ({
+      id: r.id,
+      transactionId: r.transaction_id,
+      replyText: r.reply_text,
+      attachment: r.attachment || null,
+      authorUsername: r.author_username,
+      authorName: r.author_name || r.author_username,
+      authorRole: r.author_role || '',
+      authorPosition: r.author_position || '',
+      isInternal: !!r.is_internal,
+      createdAt: r.created_at
+    })));
+  } catch(e) {
+    res.json({ error: e.message, replies: [] });
+  }
+});
+
+// POST /workflow/transactions/:id/replies
+router.post('/transactions/:id/replies', async (req, res) => {
+  try {
+    const { replyText, attachment, isInternal, username } = req.body;
+    if (!replyText || !replyText.trim()) {
+      return res.json({ success: false, error: 'نص الرد مطلوب' });
+    }
+    const author = username || (req.user && req.user.username) || 'admin';
+
+    // Resolve author meta (name + role + position) for display
+    let authorName = author, authorRole = '', authorPosition = '';
+    try {
+      const [u] = await db.query(
+        `SELECT u.role, u.position_id, COALESCE(u.full_name, u.username) AS full_name, p.name AS pos_name
+         FROM users u LEFT JOIN positions p ON p.id = u.position_id
+         WHERE u.username = ? LIMIT 1`,
+        [author]
+      );
+      if (u.length) {
+        authorName = u[0].full_name || author;
+        authorRole = u[0].role || '';
+        authorPosition = u[0].pos_name || '';
+      }
+    } catch(e) {}
+
+    const id = 'REP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
+    await db.query(
+      `INSERT INTO transaction_replies (id, transaction_id, reply_text, attachment, author_username, author_name, author_role, author_position, is_internal)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [id, req.params.id, replyText.trim(), attachment || null, author, authorName, authorRole, authorPosition, isInternal ? 1 : 0]
+    );
+    res.json({ success: true, id, authorName, authorRole, authorPosition });
+  } catch(e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+ * V3 — Memo Read Receipts
+ * For "تعاميم إدارية" — track who has read each memo
+ * ═══════════════════════════════════════════════════════════════════ */
+
+// POST /workflow/transactions/:id/memo-read — mark as read
+router.post('/transactions/:id/memo-read', async (req, res) => {
+  try {
+    const username = req.body.username || (req.user && req.user.username);
+    if (!username) return res.json({ success: false, error: 'username required' });
+    const id = 'MRR-' + req.params.id + '-' + username;
+    await db.query(
+      'INSERT INTO memo_read_receipts (id, transaction_id, username) VALUES (?,?,?) ON DUPLICATE KEY UPDATE read_at = CURRENT_TIMESTAMP',
+      [id, req.params.id, username]
+    );
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// GET /workflow/transactions/:id/memo-readers — admin: who read it
+router.get('/transactions/:id/memo-readers', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT r.username, r.read_at, COALESCE(u.full_name, u.username) AS full_name, u.role
+       FROM memo_read_receipts r LEFT JOIN users u ON u.username = r.username
+       WHERE r.transaction_id = ? ORDER BY r.read_at DESC`,
+      [req.params.id]
+    );
+    res.json(rows.map(r => ({
+      username: r.username, fullName: r.full_name || r.username,
+      role: r.role || '', readAt: r.read_at
+    })));
+  } catch(e) { res.json([]); }
+});
+
+// GET /workflow/memos-inbox — list all memos (for the dedicated inbox tab)
+router.get('/memos-inbox', async (req, res) => {
+  try {
+    const username = req.query.username || (req.user && req.user.username);
+    // Get memo type id
+    const [tt] = await db.query("SELECT id FROM transaction_types WHERE code = 'MEMO_CIRCULAR' LIMIT 1");
+    if (!tt.length) return res.json([]);
+    const memoTypeId = tt[0].id;
+    // Get all memos + read flag for this user
+    const [rows] = await db.query(`
+      SELECT t.*, COALESCE(u.full_name, t.created_by) AS sender_full_name,
+             (SELECT MAX(read_at) FROM memo_read_receipts r WHERE r.transaction_id = t.id AND r.username = ?) AS my_read_at
+      FROM transactions t
+      LEFT JOIN users u ON u.username = t.created_by
+      WHERE t.transaction_type_id = ?
+      ORDER BY t.created_at DESC
+      LIMIT 200
+    `, [username || '', memoTypeId]);
+    res.json(rows.map(t => ({
+      id: t.id, txnNumber: t.txn_number, subject: t.subject,
+      contentText: t.content_text, contentHtml: t.content_html,
+      importance: t.importance, status: t.status,
+      createdAt: t.created_at, createdBy: t.created_by,
+      senderName: t.sender_full_name || t.sender_name || t.created_by,
+      senderPosition: t.sender_position || '',
+      isRead: !!t.my_read_at, readAt: t.my_read_at
+    })));
+  } catch(e) {
+    res.json({ error: e.message, memos: [] });
+  }
 });
 
 module.exports = router;

@@ -1479,6 +1479,19 @@ function viewMyTxn(id) {
     '</div>';
     h += '</div>';
 
+    // V3: CEO approval badge — shows when transaction has passed through CEO/admin
+    if (txn.passedCeoAt) {
+      var ceoDt = '';
+      try { ceoDt = new Date(txn.passedCeoAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(_){}
+      h += '<div style="padding:10px 14px;border-radius:12px;background:linear-gradient(135deg,#ecfccb,#f0fdf4);border:1.5px solid #16a34a;margin-bottom:10px;display:flex;align-items:center;gap:10px;">' +
+        '<div style="width:36px;height:36px;border-radius:50%;background:#16a34a;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px;"><i class="fas fa-crown"></i></div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:10px;font-weight:800;color:#15803d;text-transform:uppercase;letter-spacing:.04em;">معتمدة من الإدارة العليا</div>' +
+          '<div style="font-size:13px;font-weight:900;color:#14532d;margin-top:2px;">مرّت على الرئيس التنفيذي' + (txn.passedCeoBy ? ' — ' + _esc(txn.passedCeoBy) : '') + (ceoDt ? ' • ' + ceoDt : '') + '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
     // 4. STOPPED-AT — visible to EVERYONE (the user's specific request)
     if (txn.status === 'pending' || txn.status === 'in_progress') {
       var stoppedName = txn.currentAssignee || txn.currentPositionName || txn.currentRoleName || '—';
@@ -1528,6 +1541,22 @@ function viewMyTxn(id) {
       h += '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:6px;color:#0ea5e9;font-size:12.5px;font-weight:800;margin-top:14px;padding:8px 14px;background:#fff;border:1.5px solid #0ea5e9;border-radius:10px;text-decoration:none;"><i class="fas fa-download"></i> تحميل المرفق الأصلي</a>';
     }
     h += '</div>';
+
+    // V3: REPLIES THREAD — separate from workflow log; anyone can comment
+    h += '<div style="border:2px solid #c4b5fd;border-radius:14px;background:linear-gradient(180deg,#faf5ff 0%,#fff 60%);padding:14px;margin-bottom:12px;">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">' +
+        '<i class="fas fa-comments" style="color:#8b5cf6;font-size:14px;"></i>' +
+        '<span style="font-size:13px;font-weight:900;color:#5b21b6;">الردود والمناقشة</span>' +
+        '<span id="emp_repliesCount" style="margin-inline-start:auto;font-size:11px;color:#7c3aed;font-weight:700;background:#ede9fe;padding:3px 10px;border-radius:999px;">جاري التحميل...</span>' +
+      '</div>' +
+      '<div id="emp_repliesList"><div style="text-align:center;color:#94a3b8;padding:20px;font-size:12px;"><i class="fas fa-spinner fa-spin"></i> جاري تحميل الردود...</div></div>' +
+      '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #c4b5fd;">' +
+        '<textarea id="emp_replyText" placeholder="اكتب رداً أو ملاحظة..." style="width:100%;min-height:60px;padding:10px;border:1.5px solid #c4b5fd;border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;"></textarea>' +
+        '<div style="display:flex;gap:8px;margin-top:8px;">' +
+          '<button onclick="empPostReply(\''+id+'\')" style="flex:1;padding:10px;border-radius:10px;background:#8b5cf6;color:#fff;border:none;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit;"><i class="fas fa-paper-plane"></i> إرسال الرد</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
 
     // 6. TOGGLE BUTTON — show full workflow timeline on demand
     var hasWorkflow = (txn.workflowPath && txn.workflowPath.length) || (txn.logs && txn.logs.length) || (txn.recipients && txn.recipients.length);
@@ -1614,6 +1643,8 @@ function viewMyTxn(id) {
     document.getElementById('txnDetailTitle').textContent = (txn.subject || txn.title || txn.txnNumber || '');
     document.getElementById('txnDetailBody').innerHTML = h;
     document.getElementById('txnDetailModal').classList.add('show');
+    // V3: Lazy-load replies thread after modal renders
+    setTimeout(function(){ try { empLoadReplies(id); } catch(e){ console.warn('replies load err:', e); } }, 50);
   });
 }
 
@@ -1630,6 +1661,85 @@ window.toggleWorkflowView = function() {
   if (btn) btn.style.background = isHidden ? '#ede9fe' : '#faf5ff';
 };
 function closeTxnDetail() { document.getElementById('txnDetailModal').classList.remove('show'); }
+
+// ═══════════════════════════════════════════════════════════════════
+// V3: Replies Thread (employee + admin shared logic)
+// ═══════════════════════════════════════════════════════════════════
+window.empLoadReplies = function(txnId, listElId, countElId) {
+  listElId  = listElId  || 'emp_repliesList';
+  countElId = countElId || 'emp_repliesCount';
+  var url = '/api/workflow/transactions/' + txnId + '/replies';
+  var token = localStorage.getItem('pos_token');
+  fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){return r.json();})
+    .then(function(rows) {
+      if (!Array.isArray(rows)) rows = [];
+      var listEl = document.getElementById(listElId);
+      var cntEl  = document.getElementById(countElId);
+      if (cntEl) cntEl.textContent = rows.length + ' رد';
+      if (!listEl) return;
+      if (!rows.length) {
+        listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:18px;font-size:12px;"><i class="fas fa-comment-slash" style="font-size:22px;display:block;margin-bottom:6px;"></i>لا توجد ردود بعد — كن أول من يضيف رداً.</div>';
+        return;
+      }
+      var roleColors = { admin:'#dc2626', cashier:'#16a34a', manager:'#1e40af', custody:'#d97706', employee:'#475569' };
+      var roleLabels = { admin:'أدمن', cashier:'كاشير', manager:'مدير', custody:'عهدة', employee:'موظف' };
+      listEl.innerHTML = rows.map(function(r) {
+        var dt = '';
+        try { dt = new Date(r.createdAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(e){}
+        var col = roleColors[r.authorRole] || '#6b7280';
+        var roleLbl = roleLabels[r.authorRole] || r.authorRole || 'مستخدم';
+        var posLbl = r.authorPosition ? ' · ' + _esc(r.authorPosition) : '';
+        var att = '';
+        if (r.attachment && String(r.attachment).indexOf('data:') === 0) {
+          att = '<a href="'+r.attachment+'" download style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#0ea5e9;font-weight:800;margin-top:6px;padding:4px 10px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;text-decoration:none;"><i class="fas fa-paperclip"></i> مرفق</a>';
+        }
+        return '<div style="display:flex;gap:10px;padding:10px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px;">' +
+          '<div style="width:34px;height:34px;border-radius:50%;background:'+col+'1a;color:'+col+';display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:900;font-size:13px;">' + ((r.authorName||'؟')[0]||'؟') + '</div>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">' +
+              '<div style="font-weight:900;font-size:13px;color:#0f172a;">' + _esc(r.authorName||'') + ' <span style="font-size:10px;font-weight:700;color:'+col+';background:'+col+'15;padding:2px 7px;border-radius:6px;margin-inline-start:4px;">' + roleLbl + posLbl + '</span></div>' +
+              '<div style="font-size:10px;color:#94a3b8;"><i class="far fa-clock"></i> ' + dt + '</div>' +
+            '</div>' +
+            '<div style="font-size:13px;color:#334155;line-height:1.7;margin-top:4px;white-space:pre-wrap;">' + _esc(r.replyText||'') + '</div>' +
+            att +
+          '</div>' +
+        '</div>';
+      }).join('');
+    })
+    .catch(function(err) {
+      console.error('[empLoadReplies] err:', err);
+      var listEl = document.getElementById(listElId);
+      if (listEl) listEl.innerHTML = '<div style="text-align:center;color:#dc2626;padding:14px;font-size:12px;">فشل تحميل الردود</div>';
+    });
+};
+
+window.empPostReply = function(txnId) {
+  var ta = document.getElementById('emp_replyText');
+  if (!ta) return;
+  var text = (ta.value || '').trim();
+  if (!text) { glassToast('اكتب نص الرد', true); return; }
+  var token = localStorage.getItem('pos_token');
+  fetch('/api/workflow/transactions/' + txnId + '/replies', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ replyText: text, username: currentUser })
+  })
+    .then(function(r){return r.json();})
+    .then(function(r) {
+      if (r && r.success) {
+        ta.value = '';
+        glassToast('تم إرسال الرد');
+        empLoadReplies(txnId);
+      } else {
+        glassToast((r && r.error) || 'فشل الإرسال', true);
+      }
+    })
+    .catch(function(err) {
+      console.error('[empPostReply] err:', err);
+      glassToast('فشل الاتصال', true);
+    });
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // MY HOURS & PAY — overtime + late tracking page

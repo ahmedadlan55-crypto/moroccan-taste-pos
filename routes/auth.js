@@ -184,7 +184,10 @@ router.get('/init/:username', async (req, res) => {
         username: req.params.username,
         displayName: me.name || '',
         role: myRole,
-        isDeveloper: !!me.isDeveloper || myRole === 'admin',
+        // V3 SECURITY FIX: Developer flag is ONLY for the primary 'admin' account
+        // OR users explicitly granted via meta. NOT auto-granted for any 'admin' role
+        // (مدير مؤسسة ≠ مطور).
+        isDeveloper: !!me.isDeveloper || req.params.username === 'admin',
         brandId: userBrandId || '',
         branchId: userBranchId || '',
         warehouseId: userWarehouseId || ''
@@ -256,7 +259,9 @@ router.get('/users', async (req, res) => {
         active: !!u.active,
         createdAt: u.created_at,
         displayName: u.full_name || m.name || fallbackName,
-        isDeveloper: !!m.isDeveloper || u.role === 'admin',
+        // V3 SECURITY FIX: Developer flag = ONLY for primary 'admin' account
+        // OR users explicitly granted via meta. NOT for any 'admin' role.
+        isDeveloper: !!m.isDeveloper || u.username === 'admin',
         email: u.email || '',
         phone: u.phone || '',
         brandId: u.brand_id || '', brandName: u.brandName || '',
@@ -307,7 +312,10 @@ router.post('/users', async (req, res) => {
       const meta = await getUserMeta();
       meta[username] = meta[username] || {};
       if (displayName) meta[username].name = displayName;
-      if (isDeveloper) meta[username].isDeveloper = true;
+      // V3 SECURITY: Developer flag can ONLY be granted by the primary 'admin'
+      // account. Block anyone else from granting it.
+      const grantedBy = (req.user && req.user.username) || '';
+      if (isDeveloper && grantedBy === 'admin') meta[username].isDeveloper = true;
       await setUserMeta(meta);
     }
 
@@ -440,7 +448,15 @@ router.put('/users/:username', async (req, res) => {
       const meta = await getUserMeta();
       meta[username] = meta[username] || {};
       if (displayName !== undefined) meta[username].name = displayName;
-      if (isDeveloper !== undefined) meta[username].isDeveloper = !!isDeveloper;
+      // V3 SECURITY: Developer flag changes require the primary 'admin' account.
+      // Anyone else trying to grant/revoke is silently ignored.
+      const grantedBy = (req.user && req.user.username) || '';
+      if (isDeveloper !== undefined && grantedBy === 'admin' && username !== 'admin') {
+        meta[username].isDeveloper = !!isDeveloper;
+      } else if (isDeveloper !== undefined && username === 'admin') {
+        // The primary admin account is ALWAYS a developer — cannot be revoked.
+        meta[username].isDeveloper = true;
+      }
       await setUserMeta(meta);
     }
     res.json({ success: true });
@@ -599,5 +615,134 @@ async function addColumnIfMissing(table, column, definition) {
     if (!cols.length) await db.query('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition);
   } catch(e) {}
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+ * V3 — RBAC (Role-Based Access Control) endpoints
+ * ═══════════════════════════════════════════════════════════════════ */
+
+// GET /auth/permissions/catalog — full list of available permissions (admin only)
+router.get('/permissions/catalog', async (req, res) => {
+  try {
+    const [rows] = await db.query("SELECT * FROM permissions_v3 ORDER BY sort_order, id");
+    res.json(rows.map(r => ({
+      id: r.id, category: r.category,
+      labelAr: r.label_ar, labelEn: r.label_en,
+      description: r.description || '',
+      isSensitive: !!r.is_sensitive,
+      sortOrder: r.sort_order
+    })));
+  } catch(e) { res.json([]); }
+});
+
+// GET /auth/permissions/role/:role — list permissions assigned to a role
+router.get('/permissions/role/:role', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      "SELECT permission_id FROM role_permissions WHERE role = ?",
+      [req.params.role]
+    );
+    res.json(rows.map(r => r.permission_id));
+  } catch(e) { res.json([]); }
+});
+
+// PUT /auth/permissions/role/:role — replace role's permissions (atomic)
+router.put('/permissions/role/:role', async (req, res) => {
+  try {
+    const grantedBy = (req.user && req.user.username) || '';
+    // Only the primary 'admin' account can edit role permissions
+    if (grantedBy !== 'admin') {
+      return res.json({ success: false, error: 'فقط حساب المطور الرئيسي يمكنه تعديل صلاحيات الأدوار' });
+    }
+    const { permissionIds } = req.body;
+    if (!Array.isArray(permissionIds)) {
+      return res.json({ success: false, error: 'permissionIds array required' });
+    }
+    // Replace atomically
+    await db.query("DELETE FROM role_permissions WHERE role = ?", [req.params.role]);
+    for (const pid of permissionIds) {
+      await db.query("INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)", [req.params.role, pid]);
+    }
+    res.json({ success: true, count: permissionIds.length });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// GET /auth/permissions/me — current user's effective permissions
+router.get('/permissions/me', async (req, res) => {
+  try {
+    const username = (req.user && req.user.username) || req.query.username;
+    if (!username) return res.json({ permissions: [], role: '' });
+    const [u] = await db.query("SELECT role FROM users WHERE username = ? LIMIT 1", [username]);
+    if (!u.length) return res.json({ permissions: [], role: '' });
+    const role = u[0].role || 'employee';
+    // Primary admin = wildcard
+    if (username === 'admin') {
+      const [allPerms] = await db.query("SELECT id FROM permissions_v3");
+      return res.json({
+        permissions: ['*'].concat(allPerms.map(p => p.id)),
+        role: role,
+        isPrimaryAdmin: true,
+        isDeveloper: true
+      });
+    }
+    // Build effective permissions: role permissions ∪ grants − revokes
+    const [rolePerms] = await db.query("SELECT permission_id FROM role_permissions WHERE role = ?", [role]);
+    const [overrides] = await db.query(
+      "SELECT permission_id, grant_type FROM user_permission_overrides WHERE username = ?",
+      [username]
+    );
+    const eff = new Set(rolePerms.map(r => r.permission_id));
+    overrides.forEach(o => {
+      if (o.grant_type === 'grant') eff.add(o.permission_id);
+      else eff.delete(o.permission_id);
+    });
+    res.json({
+      permissions: Array.from(eff),
+      role: role,
+      isPrimaryAdmin: false,
+      isDeveloper: false
+    });
+  } catch(e) { res.json({ permissions: [], role: '', error: e.message }); }
+});
+
+// GET /auth/permissions/user/:username — get a specific user's overrides (admin only)
+router.get('/permissions/user/:username', async (req, res) => {
+  try {
+    const grantedBy = (req.user && req.user.username) || '';
+    if (grantedBy !== 'admin') return res.json({ error: 'admin only' });
+    const [rows] = await db.query(
+      "SELECT permission_id, grant_type, granted_by, granted_at FROM user_permission_overrides WHERE username = ?",
+      [req.params.username]
+    );
+    res.json(rows.map(r => ({
+      permissionId: r.permission_id,
+      grantType: r.grant_type,
+      grantedBy: r.granted_by,
+      grantedAt: r.granted_at
+    })));
+  } catch(e) { res.json([]); }
+});
+
+// PUT /auth/permissions/user/:username — replace user's overrides (admin only)
+router.put('/permissions/user/:username', async (req, res) => {
+  try {
+    const grantedBy = (req.user && req.user.username) || '';
+    if (grantedBy !== 'admin') {
+      return res.json({ success: false, error: 'فقط حساب المطور الرئيسي يمكنه تعديل صلاحيات المستخدمين الفرديين' });
+    }
+    const { overrides } = req.body; // [{permissionId, grantType}]
+    if (!Array.isArray(overrides)) {
+      return res.json({ success: false, error: 'overrides array required' });
+    }
+    await db.query("DELETE FROM user_permission_overrides WHERE username = ?", [req.params.username]);
+    for (const o of overrides) {
+      if (!o.permissionId || !['grant','revoke'].includes(o.grantType)) continue;
+      await db.query(
+        "INSERT IGNORE INTO user_permission_overrides (username, permission_id, grant_type, granted_by) VALUES (?, ?, ?, ?)",
+        [req.params.username, o.permissionId, o.grantType, grantedBy]
+      );
+    }
+    res.json({ success: true, count: overrides.length });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
 
 module.exports = router;

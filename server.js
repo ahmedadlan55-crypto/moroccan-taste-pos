@@ -636,6 +636,181 @@ async function runMigrations() {
   // routes/workflow.js. /memos-inbox accepts both 'MEMO' and 'MEMO_CIRCULAR'
   // codes, so no seed needed here.
 
+  // ─── V3: RBAC (Role-Based Access Control) ───
+  // Granular per-permission access. Replaces old role==='admin' checks.
+  await createTableIfMissing('permissions_v3', `
+    CREATE TABLE permissions_v3 (
+      id VARCHAR(80) PRIMARY KEY,
+      category VARCHAR(50) NOT NULL,
+      label_ar VARCHAR(200) NOT NULL,
+      label_en VARCHAR(200),
+      description TEXT,
+      is_sensitive BOOLEAN DEFAULT FALSE,
+      sort_order INT DEFAULT 0,
+      INDEX idx_perm_cat (category)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('role_permissions', `
+    CREATE TABLE role_permissions (
+      role VARCHAR(50) NOT NULL,
+      permission_id VARCHAR(80) NOT NULL,
+      PRIMARY KEY (role, permission_id),
+      INDEX idx_rp_role (role)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('user_permission_overrides', `
+    CREATE TABLE user_permission_overrides (
+      username VARCHAR(100) NOT NULL,
+      permission_id VARCHAR(80) NOT NULL,
+      grant_type ENUM('grant','revoke') NOT NULL,
+      granted_by VARCHAR(100),
+      granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (username, permission_id),
+      INDEX idx_upo_user (username)
+    ) ENGINE=InnoDB
+  `);
+
+  // Extend users.role ENUM to support new specialized roles
+  try {
+    await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee','finance','hr','inventory','purchasing') DEFAULT 'cashier'");
+  } catch(e) {}
+
+  // Seed permissions catalog (idempotent)
+  try {
+    const [pcnt] = await db.query("SELECT COUNT(*) AS c FROM permissions_v3");
+    if (pcnt[0].c === 0) {
+      const perms = [
+        // POS / Cashier
+        ['pos.use', 'pos', 'استخدام شاشة الكاشير', 'Use POS', 0, 110],
+        ['pos.shift_close', 'pos', 'إغلاق الشيفت', 'Close shift', 0, 120],
+        ['pos.discount.apply', 'pos', 'تطبيق خصومات على الفواتير', 'Apply discounts', 0, 130],
+        ['pos.refund', 'pos', 'استرجاع فواتير', 'Refund sales', 1, 140],
+        // Sales
+        ['sales.view', 'sales', 'عرض سجل المبيعات', 'View sales log', 0, 210],
+        ['sales.delete', 'sales', 'حذف فواتير المبيعات', 'Delete sales', 1, 220],
+        ['sales.reports.view', 'sales', 'عرض تقارير المبيعات', 'View sales reports', 0, 230],
+        ['sales.reports.advanced', 'sales', 'عرض التقارير المتقدمة', 'View advanced reports', 0, 240],
+        // Inventory
+        ['inventory.view', 'inventory', 'عرض المخزون والجرد', 'View inventory', 0, 310],
+        ['inventory.edit', 'inventory', 'تعديل المخزون', 'Edit inventory', 0, 320],
+        ['warehouse.view', 'inventory', 'عرض المستودعات', 'View warehouses', 0, 330],
+        ['warehouse.transfer', 'inventory', 'تحويل بين المستودعات', 'Warehouse transfers', 0, 340],
+        ['waste.create', 'inventory', 'تسجيل قيود الهدر', 'Record waste', 0, 350],
+        ['production.view', 'inventory', 'عرض أوامر الإنتاج', 'View production', 0, 360],
+        ['production.create', 'inventory', 'إنشاء أمر إنتاج', 'Create production order', 0, 370],
+        ['production.complete', 'inventory', 'إكمال أمر إنتاج', 'Complete production', 0, 380],
+        // Purchasing
+        ['purchases.view', 'purchasing', 'عرض المشتريات', 'View purchases', 0, 410],
+        ['purchases.create', 'purchasing', 'إنشاء أمر شراء', 'Create PO', 0, 420],
+        ['purchases.approve', 'purchasing', 'اعتماد أوامر الشراء', 'Approve PO', 1, 430],
+        ['suppliers.view', 'purchasing', 'عرض الموردين', 'View suppliers', 0, 440],
+        ['suppliers.edit', 'purchasing', 'تعديل الموردين', 'Edit suppliers', 0, 450],
+        // Finance
+        ['finance.view', 'finance', 'عرض القسم المالي', 'View finance section', 0, 510],
+        ['finance.gl.view', 'finance', 'عرض القيود المحاسبية', 'View journals', 0, 520],
+        ['finance.gl.create', 'finance', 'إنشاء قيود يدوية', 'Create manual journals', 1, 530],
+        ['finance.gl.approve', 'finance', 'اعتماد القيود', 'Approve journals', 1, 540],
+        ['finance.reports.view', 'finance', 'عرض التقارير المالية (IFRS)', 'View financial reports', 0, 550],
+        ['finance.cash.view', 'finance', 'عرض النقدية والبنوك', 'View cash & banks', 0, 560],
+        ['finance.cash.transfer', 'finance', 'تحويلات نقدية', 'Cash transfers', 1, 570],
+        ['finance.payment.create', 'finance', 'إنشاء سداد', 'Create payment', 1, 580],
+        ['finance.expenses.view', 'finance', 'عرض المصروفات', 'View expenses', 0, 590],
+        ['finance.expenses.approve', 'finance', 'اعتماد المصروفات', 'Approve expenses', 1, 600],
+        // HR
+        ['hr.view', 'hr', 'عرض قسم الموارد البشرية', 'View HR section', 0, 610],
+        ['hr.employees.view', 'hr', 'عرض الموظفين', 'View employees', 0, 620],
+        ['hr.employees.edit', 'hr', 'تعديل بيانات الموظفين', 'Edit employees', 1, 630],
+        ['hr.attendance.view', 'hr', 'عرض الحضور والانصراف', 'View attendance', 0, 640],
+        ['hr.payroll.view', 'hr', 'عرض الرواتب', 'View payroll', 1, 650],
+        ['hr.payroll.run', 'hr', 'تشغيل الرواتب', 'Run payroll', 1, 660],
+        ['hr.advances.approve', 'hr', 'اعتماد السلف', 'Approve advances', 1, 670],
+        // Workflow / Transactions
+        ['txn.view', 'workflow', 'عرض المعاملات', 'View transactions', 0, 710],
+        ['txn.create', 'workflow', 'إنشاء معاملة', 'Create transaction', 0, 720],
+        ['txn.approve', 'workflow', 'الموافقة على المعاملات', 'Approve transactions', 0, 730],
+        ['txn.reject', 'workflow', 'الرفض', 'Reject transactions', 0, 740],
+        ['txn.return', 'workflow', 'الإرجاع', 'Return transactions', 0, 750],
+        // Organization / Admin
+        ['org.brands.view', 'admin', 'عرض البراندات', 'View brands', 0, 810],
+        ['org.brands.edit', 'admin', 'تعديل البراندات', 'Edit brands', 1, 820],
+        ['org.branches.edit', 'admin', 'تعديل الفروع', 'Edit branches', 1, 830],
+        ['org.companies.edit', 'admin', 'تعديل الشركات', 'Edit companies', 1, 840],
+        ['admin.users.manage', 'admin', 'إدارة المستخدمين والصلاحيات', 'Manage users & permissions', 1, 850],
+        ['admin.audit.view', 'admin', 'عرض سجل العمليات', 'View audit log', 1, 860],
+        // Tax / Channels
+        ['tax.view', 'tax', 'عرض تقارير الضريبة وZATCA', 'View tax & ZATCA', 0, 910],
+        ['payment_methods.manage', 'tax', 'إدارة طرق الدفع', 'Manage payment methods', 1, 920],
+        ['channels.manage', 'tax', 'إدارة قنوات البيع', 'Manage sales channels', 1, 930],
+        ['discounts.manage', 'tax', 'إدارة الخصومات', 'Manage discounts', 1, 940]
+      ];
+      for (const p of perms) {
+        await db.query(
+          'INSERT IGNORE INTO permissions_v3 (id, category, label_ar, label_en, is_sensitive, sort_order) VALUES (?,?,?,?,?,?)',
+          [p[0], p[1], p[2], p[3], p[4], p[5]]
+        );
+      }
+    }
+  } catch(e) { console.error('seed permissions_v3 failed:', e.message); }
+
+  // Seed default role → permissions mapping (idempotent — only if empty)
+  try {
+    const [rcnt] = await db.query("SELECT COUNT(*) AS c FROM role_permissions");
+    if (rcnt[0].c === 0) {
+      // admin = ALL permissions
+      const [allPerms] = await db.query("SELECT id FROM permissions_v3");
+      for (const p of allPerms) {
+        await db.query("INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)", ['admin', p.id]);
+      }
+      // manager = nearly everything view + most actions (no admin.users.manage, no sales.delete)
+      const managerPerms = allPerms
+        .map(r => r.id)
+        .filter(id => id !== 'admin.users.manage' && id !== 'sales.delete' && id !== 'admin.audit.view');
+      for (const id of managerPerms) {
+        await db.query("INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)", ['manager', id]);
+      }
+      // cashier = POS + view own sales
+      for (const id of ['pos.use','pos.shift_close','pos.discount.apply','sales.view','txn.view','txn.create']) {
+        await db.query("INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)", ['cashier', id]);
+      }
+      // custody = expenses + own custody
+      for (const id of ['finance.expenses.view','txn.view','txn.create']) {
+        await db.query("INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)", ['custody', id]);
+      }
+      // employee = workflow only
+      for (const id of ['txn.view','txn.create']) {
+        await db.query("INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)", ['employee', id]);
+      }
+      // finance = all finance + sales reports + tax — NO HR / inventory edit
+      const financePerms = ['finance.view','finance.gl.view','finance.gl.create','finance.gl.approve',
+        'finance.reports.view','finance.cash.view','finance.cash.transfer','finance.payment.create',
+        'finance.expenses.view','finance.expenses.approve','sales.view','sales.reports.view',
+        'sales.reports.advanced','tax.view','txn.view','txn.create','txn.approve','txn.reject',
+        'inventory.view','warehouse.view','purchases.view','suppliers.view'];
+      for (const id of financePerms) {
+        await db.query("INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)", ['finance', id]);
+      }
+      // hr = all HR — NO finance / inventory
+      const hrPerms = ['hr.view','hr.employees.view','hr.employees.edit','hr.attendance.view',
+        'hr.payroll.view','hr.payroll.run','hr.advances.approve','txn.view','txn.create','txn.approve','txn.reject'];
+      for (const id of hrPerms) {
+        await db.query("INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)", ['hr', id]);
+      }
+      // inventory = all inventory + purchases view — NO finance / HR
+      const invPerms = ['inventory.view','inventory.edit','warehouse.view','warehouse.transfer',
+        'waste.create','production.view','production.create','production.complete',
+        'purchases.view','suppliers.view','txn.view','txn.create'];
+      for (const id of invPerms) {
+        await db.query("INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)", ['inventory', id]);
+      }
+      // purchasing = all purchases + suppliers + view inventory
+      const pPerms = ['purchases.view','purchases.create','purchases.approve','suppliers.view',
+        'suppliers.edit','inventory.view','warehouse.view','txn.view','txn.create'];
+      for (const id of pPerms) {
+        await db.query("INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)", ['purchasing', id]);
+      }
+    }
+  } catch(e) { console.error('seed role_permissions failed:', e.message); }
+
   // Seed default positions
   try {
     const [posCount] = await db.query('SELECT COUNT(*) AS cnt FROM positions');

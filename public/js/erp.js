@@ -137,6 +137,7 @@ function erpNav(sectionId) {
       case 'erpShiftCloseAdmin':   if (typeof erpLoadShiftCloseAdmin === 'function') erpLoadShiftCloseAdmin(); break;
       // ═══ Menu / Brands / Production (V3) ═══
       case 'erpMenuHub':           if (typeof erpLoadMenuHub === 'function') erpLoadMenuHub(); break;
+      case 'erpPermsMatrix':       if (typeof loadPermsMatrix === 'function') loadPermsMatrix(); break;
       case 'erpBrandMenu':         if (typeof erpLoadBrandMenu === 'function') erpLoadBrandMenu(); break;
       case 'erpSemiFinished':      if (typeof erpLoadSemiFinished === 'function') erpLoadSemiFinished(); break;
       case 'erpProductionOrders':  if (typeof erpLoadProductionOrders === 'function') erpLoadProductionOrders(); break;
@@ -15732,4 +15733,169 @@ window.admPostReply = function(txnId) {
     });
 };
 
+/* ═══════════════════════════════════════════════════════════════════
+ * V3 — Permissions Matrix (RBAC management page)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+window._pmCatalog = [];   // [{id, category, labelAr, isSensitive, sortOrder}]
+window._pmRoles = ['admin','manager','finance','hr','inventory','purchasing','cashier','custody','employee'];
+window._pmRoleLabels = {
+  admin: 'مدير المؤسسة', manager: 'مدير عام', finance: 'مالية',
+  hr: 'موارد بشرية', inventory: 'مستودعات', purchasing: 'مشتريات',
+  cashier: 'كاشير', custody: 'عهدة', employee: 'موظف'
+};
+window._pmRoleColors = {
+  admin: '#dc2626', manager: '#9333ea', finance: '#16a34a',
+  hr: '#0ea5e9', inventory: '#d97706', purchasing: '#06b6d4',
+  cashier: '#3b82f6', custody: '#f59e0b', employee: '#64748b'
+};
+window._pmRoleMatrix = {};   // role → Set(permissionId)
+window._pmDirty = false;
+
+window.loadPermsMatrix = function() {
+  // Block non-primary admins
+  if (state && state.user !== 'admin') {
+    var b = document.getElementById('pmBody');
+    if (b) b.innerHTML = '<tr><td><div class="wo-empty"><i class="fas fa-lock" style="color:#dc2626;"></i><div class="wo-empty-title">صلاحية محدودة</div><div class="wo-empty-sub">فقط حساب المطور الرئيسي (admin) يمكنه عرض/تعديل مصفوفة الصلاحيات.</div></div></td></tr>';
+    return;
+  }
+  // Load catalog + each role's permissions in parallel
+  Promise.all([
+    fetch('/api/auth/permissions/catalog', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } }).then(function(r){return r.json();})
+  ].concat(window._pmRoles.map(function(role) {
+    return fetch('/api/auth/permissions/role/' + role, { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } }).then(function(r){return r.json();});
+  })))
+  .then(function(results) {
+    window._pmCatalog = Array.isArray(results[0]) ? results[0] : [];
+    window._pmRoleMatrix = {};
+    window._pmRoles.forEach(function(role, i) {
+      var perms = Array.isArray(results[i+1]) ? results[i+1] : [];
+      window._pmRoleMatrix[role] = new Set(perms);
+    });
+    window._pmDirty = false;
+    _renderPermsMatrix();
+  })
+  .catch(function(err) {
+    console.error('[loadPermsMatrix] err:', err);
+    showToast('فشل تحميل المصفوفة', true);
+  });
+};
+
+function _renderPermsMatrix() {
+  var head = document.getElementById('pmHead');
+  var body = document.getElementById('pmBody');
+  if (!head || !body) return;
+
+  // Header row: empty + 9 roles
+  var headHtml = '<tr><th style="text-align:right;min-width:280px;background:#f1f5f9;position:sticky;right:0;z-index:5;">الصلاحية / الفئة</th>';
+  window._pmRoles.forEach(function(role) {
+    var col = window._pmRoleColors[role] || '#64748b';
+    var lbl = window._pmRoleLabels[role] || role;
+    var locked = (role === 'admin');
+    headHtml += '<th style="min-width:90px;text-align:center;background:'+col+'15;border-bottom:3px solid '+col+';">' +
+      '<div style="font-size:11px;font-weight:900;color:'+col+';">'+lbl+'</div>' +
+      '<div style="font-size:9px;color:'+col+';opacity:0.8;">'+role+(locked?' 🔒':'')+'</div>' +
+    '</th>';
+  });
+  headHtml += '</tr>';
+  head.innerHTML = headHtml;
+
+  // Group permissions by category
+  var byCategory = {};
+  window._pmCatalog.forEach(function(p) {
+    if (!byCategory[p.category]) byCategory[p.category] = [];
+    byCategory[p.category].push(p);
+  });
+  var catLabels = {
+    pos:'الكاشير POS', sales:'المبيعات', inventory:'المخزون والمستودعات',
+    purchasing:'المشتريات', finance:'المالية والمحاسبة', hr:'الموارد البشرية',
+    workflow:'المعاملات الإدارية', admin:'الإدارة العامة', tax:'الضرائب والقنوات'
+  };
+  var catIcons = {
+    pos:'fa-cash-register', sales:'fa-receipt', inventory:'fa-warehouse',
+    purchasing:'fa-truck-loading', finance:'fa-calculator', hr:'fa-users-cog',
+    workflow:'fa-project-diagram', admin:'fa-building', tax:'fa-percent'
+  };
+  var catColors = {
+    pos:'#22c55e', sales:'#3b82f6', inventory:'#d97706',
+    purchasing:'#06b6d4', finance:'#16a34a', hr:'#0ea5e9',
+    workflow:'#8b5cf6', admin:'#dc2626', tax:'#be185d'
+  };
+
+  var bodyHtml = '';
+  Object.keys(byCategory).forEach(function(cat) {
+    var ic = catIcons[cat] || 'fa-folder';
+    var col = catColors[cat] || '#64748b';
+    var lbl = catLabels[cat] || cat;
+    // Category header row
+    bodyHtml += '<tr style="background:'+col+'10;"><td colspan="' + (1 + window._pmRoles.length) + '" style="padding:10px 14px;font-weight:900;color:'+col+';font-size:13px;border-top:2px solid '+col+';">' +
+      '<i class="fas '+ic+'" style="margin-left:6px;"></i> '+lbl+'</td></tr>';
+    // Permission rows
+    byCategory[cat].forEach(function(p) {
+      bodyHtml += '<tr>';
+      bodyHtml += '<td style="font-size:12px;color:#1e293b;background:#fff;position:sticky;right:0;border-right:1px solid #e2e8f0;">' +
+        '<div style="font-weight:700;">' + (p.isSensitive ? '<i class="fas fa-shield-halved" style="color:#dc2626;font-size:10px;margin-left:4px;" title="صلاحية حساسة"></i>' : '') + p.labelAr + '</div>' +
+        '<div style="font-size:9px;color:#94a3b8;font-family:monospace;">' + p.id + '</div>' +
+      '</td>';
+      window._pmRoles.forEach(function(role) {
+        var locked = (role === 'admin');
+        var checked = window._pmRoleMatrix[role] && window._pmRoleMatrix[role].has(p.id);
+        var bg = checked ? (window._pmRoleColors[role] || '#3b82f6') + '20' : '#fff';
+        bodyHtml += '<td style="text-align:center;background:'+bg+';">' +
+          '<input type="checkbox" data-role="'+role+'" data-perm="'+p.id+'" '+(checked?'checked':'')+(locked?' disabled':'')+
+          ' style="width:18px;height:18px;cursor:'+(locked?'not-allowed':'pointer')+';accent-color:'+(window._pmRoleColors[role]||'#3b82f6')+';"' +
+          ' onchange="_pmToggle(this)">' +
+        '</td>';
+      });
+      bodyHtml += '</tr>';
+    });
+  });
+  body.innerHTML = bodyHtml;
+}
+
+window._pmToggle = function(cb) {
+  var role = cb.dataset.role;
+  var perm = cb.dataset.perm;
+  if (!window._pmRoleMatrix[role]) window._pmRoleMatrix[role] = new Set();
+  if (cb.checked) window._pmRoleMatrix[role].add(perm);
+  else window._pmRoleMatrix[role].delete(perm);
+  // Visual update — change cell background
+  var td = cb.parentElement;
+  if (td) td.style.background = cb.checked ? (window._pmRoleColors[role] || '#3b82f6') + '20' : '#fff';
+  window._pmDirty = true;
+};
+
+window.savePermsMatrix = function() {
+  if (state.user !== 'admin') { showToast('فقط حساب المطور الرئيسي', true); return; }
+  if (!window._pmDirty) { showToast('لا توجد تغييرات', true); return; }
+  // Save each role (skip admin — locked)
+  var rolesToSave = window._pmRoles.filter(function(r){ return r !== 'admin'; });
+  var done = 0, failed = 0;
+  loader();
+  rolesToSave.forEach(function(role) {
+    var perms = Array.from(window._pmRoleMatrix[role] || []);
+    fetch('/api/auth/permissions/role/' + role, {
+      method: 'PUT',
+      headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token'), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissionIds: perms })
+    })
+      .then(function(r){return r.json();})
+      .then(function(r) {
+        if (r && r.success) done++; else failed++;
+        if (done + failed === rolesToSave.length) {
+          loader(false);
+          if (failed === 0) {
+            window._pmDirty = false;
+            showToast('تم حفظ ' + done + ' دور');
+          } else {
+            showToast('نجح ' + done + ' / فشل ' + failed, true);
+          }
+        }
+      })
+      .catch(function() {
+        failed++;
+        if (done + failed === rolesToSave.length) loader(false);
+      });
+  });
+};
 

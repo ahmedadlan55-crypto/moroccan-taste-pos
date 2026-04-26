@@ -380,7 +380,7 @@ const dict = {
     "nav.wfPositions":"المناصب", "nav.wfTypes":"أنواع المعاملات",
     "nav.wfSteps":"خطوات سير العمل",
     "nav.hr":"الموارد البشرية", "nav.hrDash":"لوحة HR",
-    "nav.employees":"الموظفون", "nav.usersPerms":"المستخدمون والصلاحيات",
+    "nav.employees":"الموظفون", "nav.usersPerms":"المستخدمون والصلاحيات", "nav.permsMatrix":"مصفوفة الصلاحيات",
     "nav.departments":"الأقسام", "nav.attendance":"الحضور والانصراف",
     "nav.workShifts":"الشفتات", "nav.overtime":"الإضافي",
     "nav.exceptions":"الاستثناءات", "nav.leave":"الإجازات",
@@ -493,7 +493,7 @@ const dict = {
     "nav.wfPositions":"Positions", "nav.wfTypes":"Transaction Types",
     "nav.wfSteps":"Workflow Steps",
     "nav.hr":"Human Resources", "nav.hrDash":"HR Dashboard",
-    "nav.employees":"Employees", "nav.usersPerms":"Users & Permissions",
+    "nav.employees":"Employees", "nav.usersPerms":"Users & Permissions", "nav.permsMatrix":"Permissions Matrix",
     "nav.departments":"Departments", "nav.attendance":"Attendance",
     "nav.workShifts":"Work Shifts", "nav.overtime":"Overtime",
     "nav.exceptions":"Exceptions", "nav.leave":"Leave Requests",
@@ -883,8 +883,11 @@ function loadCoreData() {
     state.users = (res.usernames || []).map(u => ({ username: u }));
 
     // Current user info (display name + developer flag)
-    state.currentUser = res.currentUser || { username: state.user, displayName: '', role: state.role, isDeveloper: state.role === 'admin' };
+    // V3 SECURITY: isDeveloper = ONLY primary 'admin' OR explicitly granted via meta
+    state.currentUser = res.currentUser || { username: state.user, displayName: '', role: state.role, isDeveloper: state.user === 'admin' };
     state.isDeveloper = !!state.currentUser.isDeveloper;
+    // V3 RBAC: load my permissions then filter sidebar
+    if (typeof _loadMyPermissions === 'function') _loadMyPermissions();
     // user → display name lookup map (used by report renderers)
     state.userMeta = res.userMeta || {};
     state.userDisplayMap = {};
@@ -900,6 +903,91 @@ function loadCoreData() {
     updateShiftUI();
     initViews();
   }).getInitialAppData(state.user);
+}
+
+/* ─── V3 RBAC — Load current user permissions + filter sidebar ─────────── */
+function _loadMyPermissions() {
+  fetch('/api/auth/permissions/me?username=' + encodeURIComponent(state.user || ''),
+    { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      var perms = (d && Array.isArray(d.permissions)) ? d.permissions : [];
+      state.myPermissions = new Set(perms);
+      state.isPrimaryAdmin = !!(d && d.isPrimaryAdmin);
+      // Wildcard grants everything
+      state._hasAll = state.myPermissions.has('*');
+      _applySidebarPermissions();
+    })
+    .catch(function(err) { console.warn('[RBAC] permissions load failed:', err); state.myPermissions = new Set(); });
+}
+
+// Public helper: any code can check a permission with `hasPermission('finance.view')`
+window.hasPermission = function(permId) {
+  if (!state.myPermissions) return true; // not loaded yet — be permissive (will reload)
+  if (state._hasAll) return true;
+  return state.myPermissions.has(permId);
+};
+
+// Submenu/group → required permission(s) map. If user lacks ALL of these,
+// the entire submenu is hidden.
+window._sidebarGroupPerms = {
+  'إدارة الدفع والقنوات': ['payment_methods.manage','channels.manage','discounts.manage'],
+  'النقد والبنوك':         ['finance.cash.view'],
+  'المصروفات والعهد':      ['finance.expenses.view'],
+  'العملاء والذمم':        ['finance.view','finance.cash.view'],
+  'المحاسبة':              ['finance.gl.view','finance.view'],
+  'التقارير المالية':      ['finance.reports.view','sales.reports.view'],
+  'ZATCA والفوترة الإلكترونية': ['tax.view'],
+  'الإدارة العامة':         ['org.brands.view','admin.audit.view','admin.users.manage'],
+  'المعاملات الإدارية':     ['txn.view'],
+  'الموارد البشرية':        ['hr.view'],
+  'المخزون والمستودعات':    ['inventory.view','warehouse.view'],
+  'المشتريات والموردين':    ['purchases.view','suppliers.view'],
+  'المنيو والإنتاج':        ['inventory.view','production.view']
+};
+
+// Per-item permission map (specific items inside submenus)
+window._sidebarItemPerms = {
+  'erpPermsMatrix': ['admin.users.manage'],   // also requires primary admin (extra check)
+  'erpAuditLog':    ['admin.audit.view'],
+  'erpRptSalesByChannel': ['sales.reports.advanced'],
+  'erpRptDiscountsGiven': ['sales.reports.advanced']
+};
+
+function _applySidebarPermissions() {
+  if (!state.myPermissions) return;
+  // Primary admin sees everything
+  if (state._hasAll || state.isPrimaryAdmin) return;
+
+  // Hide group-level submenus
+  document.querySelectorAll('.nav-item.has-submenu').forEach(function(el) {
+    var label = (el.querySelector('span') || {}).textContent || '';
+    var required = window._sidebarGroupPerms[label.trim()];
+    if (!required) return;
+    var hasAny = required.some(function(p){ return hasPermission(p); });
+    if (!hasAny) {
+      el.style.display = 'none';
+      // Also hide the immediately-following submenu div
+      var next = el.nextElementSibling;
+      if (next && next.classList.contains('submenu')) next.style.display = 'none';
+    }
+  });
+
+  // Hide specific items
+  Object.keys(window._sidebarItemPerms).forEach(function(navKey) {
+    var item = document.querySelector('[data-erp-nav="' + navKey + '"]');
+    if (!item) return;
+    var required = window._sidebarItemPerms[navKey];
+    var hasAny = required.some(function(p){ return hasPermission(p); });
+    // Special: erpPermsMatrix requires primary admin too
+    if (navKey === 'erpPermsMatrix' && !state.isPrimaryAdmin) hasAny = false;
+    if (!hasAny) item.style.display = 'none';
+  });
+
+  // Also hide items with explicit data-requires-primary-admin attribute
+  document.querySelectorAll('[data-requires-primary-admin="1"]').forEach(function(item) {
+    if (!state.isPrimaryAdmin) item.style.display = 'none';
+  });
 }
 
 function initViews() {
@@ -5209,8 +5297,31 @@ function tglUserM() {
   if (q("#muIsDeveloper")) q("#muIsDeveloper").checked = false;
   if (q("#muCanChangeBranch")) q("#muCanChangeBranch").checked = false;
   if (q("#muPassHint")) q("#muPassHint").innerHTML = '';
+  // V3 SECURITY: Developer checkbox visible ONLY when the current logged-in
+  // user is the primary 'admin' account.
+  _toggleDevCheckbox();
   _loadUserDropdowns();
   openModal('#modalUserForm');
+}
+
+function _toggleDevCheckbox(targetUsername) {
+  var wrap = q('#muIsDeveloperWrap');
+  if (!wrap) return;
+  var iAmPrimaryAdmin = (state.user === 'admin');
+  // Editing the primary admin account itself? Show as locked (cannot change).
+  if (targetUsername === 'admin') {
+    wrap.style.display = '';
+    var cb = q('#muIsDeveloper');
+    if (cb) { cb.checked = true; cb.disabled = true; }
+    return;
+  }
+  if (iAmPrimaryAdmin) {
+    wrap.style.display = '';
+    var cb2 = q('#muIsDeveloper');
+    if (cb2) cb2.disabled = false;
+  } else {
+    wrap.style.display = 'none';
+  }
 }
 
 function _loadUserDropdowns(brandVal, branchVal, positionVal, warehouseVal) {
@@ -5288,6 +5399,8 @@ function editUsr(username) {
   if (q("#muIsDeveloper")) q("#muIsDeveloper").checked = !!u.isDeveloper;
   if (q("#muCanChangeBranch")) q("#muCanChangeBranch").checked = !!u.canChangeBranch;
   if (q("#muPassHint")) q("#muPassHint").innerHTML = '';
+  // V3 SECURITY: Show developer checkbox only for primary admin OR locked when editing primary admin
+  _toggleDevCheckbox(username);
   _loadUserDropdowns(u.brandId, u.branchId, u.positionId, u.defaultWarehouseId);
   openModal('#modalUserForm');
 }

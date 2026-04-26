@@ -13627,7 +13627,11 @@ function erpOpenPmV3Modal(id) {
 }
 
 function _v3OpenPmV3ModalInner(id) {
-  var p = id ? (window._pmV3Cache||[]).find(function(x){return x.id===id;}) : null;
+  // payment_methods.id is INT auto-increment — must use loose string compare
+  // because the click handler passes id as a string template parameter.
+  var p = (id != null && id !== '')
+    ? (window._pmV3Cache||[]).find(function(x){return String(x.id) === String(id);})
+    : null;
   var pm = p || {
     id:'', name:'', nameAr:'', icon:'fa-money-bill', color:'#3b82f6',
     isActive:true, sortOrder:0, type:'standard', groupType:'cash',
@@ -13719,7 +13723,7 @@ function _v3OpenPmV3ModalInner(id) {
       '<div class="wo-field" style="margin-top:10px;"><label class="wo-field-label">وصف</label><textarea id="pmF_description" class="wo-input" rows="2">'+ _v3EscapeHtml(pm.description||'') +'</textarea></div>' +
     '</div>' +
 
-    '<input type="hidden" id="pmF_id" value="'+ _v3EscapeHtml(pm.id||'') +'">' +
+    '<input type="hidden" id="pmF_id" value="'+ _v3EscapeHtml(pm.id != null ? String(pm.id) : '') +'">' +
     '</form>';
 
   WoModal.open({
@@ -13773,8 +13777,12 @@ function _v3SavePm() {
       return;
     }
 
+    // V3 fix: id may be '0' (valid INT) — must check empty string explicitly,
+    // not falsy. Otherwise '0' would become null and trigger an INSERT instead
+    // of an UPDATE, creating duplicate payment methods.
+    var rawId = _v3FldVal('pmF_id');
     var data = {
-      id: _v3FldVal('pmF_id') || null,
+      id: (rawId === '' || rawId == null) ? null : rawId,
       name: (_v3FldVal('pmF_name') || '').trim(),
       nameAr: (_v3FldVal('pmF_nameAr') || '').trim(),
       icon: (_v3FldVal('pmF_icon') || '').trim() || 'fa-money-bill',
@@ -13900,7 +13908,9 @@ function erpOpenChannelModal(id) {
 }
 
 function _v3OpenChannelModalInner(id) {
-  var c = id ? (window._chCache||[]).find(function(x){return x.id===id;}) : null;
+  var c = (id != null && id !== '')
+    ? (window._chCache||[]).find(function(x){return String(x.id) === String(id);})
+    : null;
   var ch = c || {
     id:'', code:'', name:'', nameEn:'', channelType:'dine_in', priceListId:'',
     icon:'fa-store', color:'#3b82f6', commissionPct:0, serviceFeePct:0,
@@ -13968,7 +13978,7 @@ function _v3OpenChannelModalInner(id) {
       '<div class="wo-field" style="margin-top:10px;"><label class="wo-field-label">ملاحظات</label><textarea id="chF_notes" class="wo-input" rows="2">'+ _v3EscapeHtml(ch.notes||'') +'</textarea></div>' +
     '</div>' +
 
-    '<input type="hidden" id="chF_id" value="'+ _v3EscapeHtml(ch.id||'') +'">' +
+    '<input type="hidden" id="chF_id" value="'+ _v3EscapeHtml(ch.id != null ? String(ch.id) : '') +'">' +
     '</form>';
 
   WoModal.open({
@@ -14005,7 +14015,7 @@ function _v3SaveChannel() {
   try {
     if (typeof callAPI !== 'function') { _v3Toast('callAPI غير محمّل — أعد التحميل', true); return; }
     var data = {
-      id: _v3FldVal('chF_id') || null,
+      id: (function(){ var r = _v3FldVal('chF_id'); return (r === '' || r == null) ? null : r; })(),
       code: (_v3FldVal('chF_code') || '').trim().toUpperCase(),
       name: (_v3FldVal('chF_name') || '').trim(),
       nameEn: (_v3FldVal('chF_nameEn') || '').trim(),
@@ -14136,7 +14146,9 @@ function erpOpenDiscV3Modal(id) {
 }
 
 function _v3OpenDiscV3ModalInner(id) {
-  var d = id ? (window._discV3Cache||[]).find(function(x){return x.id===id;}) : null;
+  var d = (id != null && id !== '')
+    ? (window._discV3Cache||[]).find(function(x){return String(x.id) === String(id);})
+    : null;
   var dc = d || {
     id:'', name:'', type:'percentage', value:0, maxAmount:0, minOrder:0,
     requireApproval:false, requireCode:false, code:'',
@@ -14221,7 +14233,7 @@ function _v3OpenDiscV3ModalInner(id) {
       '<div class="wo-field" style="margin-top:10px;"><label class="wo-field-label">وصف</label><textarea id="discF_description" class="wo-input" rows="2">'+ _v3EscapeHtml(dc.description||'') +'</textarea></div>' +
     '</div>' +
 
-    '<input type="hidden" id="discF_id" value="'+ _v3EscapeHtml(dc.id||'') +'">' +
+    '<input type="hidden" id="discF_id" value="'+ _v3EscapeHtml(dc.id != null ? String(dc.id) : '') +'">' +
     '</form>';
 
   WoModal.open({
@@ -14250,7 +14262,7 @@ function _v3SaveDiscV3() {
   try {
     if (typeof callAPI !== 'function') { _v3Toast('callAPI غير محمّل — أعد التحميل', true); return; }
     var data = {
-      id: _v3FldVal('discF_id') || null,
+      id: (function(){ var r = _v3FldVal('discF_id'); return (r === '' || r == null) ? null : r; })(),
       name: (_v3FldVal('discF_name') || '').trim(),
       type: _v3FldVal('discF_type') || 'percentage',
       value: Number(_v3FldVal('discF_value', 0)) || 0,
@@ -14674,7 +14686,9 @@ function erpOpenFinishedProductModal(id) {
 }
 
 function _openFinishedModalInner(id, brand, semiList) {
-  var m = id ? (window._bmItemsCache||[]).find(function(x){return x.id===id;}) : null;
+  var m = (id != null && id !== '')
+    ? (window._bmItemsCache||[]).find(function(x){return String(x.id) === String(id);})
+    : null;
   var mi = m || {
     id:'', name:'', price:0, category:'عام', cost:0, stock:9999, minStock:0, active:true,
     pricingMode:'fixed', markupPct:30, brandId: brand.id,
@@ -14730,7 +14744,7 @@ function _openFinishedModalInner(id, brand, semiList) {
       '<input type="hidden" id="bmF_minStock" value="0">' +
     '</div>' +
 
-    '<input type="hidden" id="bmF_id" value="'+ _v3EscapeHtml(mi.id||'') +'">' +
+    '<input type="hidden" id="bmF_id" value="'+ _v3EscapeHtml(mi.id != null ? String(mi.id) : '') +'">' +
     '</form>';
 
   WoModal.open({
@@ -14766,7 +14780,8 @@ function _bmSaveFinished() {
     };
     if (!data.name) { _v3Toast('اسم المنتج مطلوب', true); return; }
 
-    var id = _v3FldVal('bmF_id');
+    var rawId = _v3FldVal('bmF_id');
+    var id = (rawId === '' || rawId == null) ? null : rawId;
     var method = id ? 'PUT' : 'POST';
     var path = id ? ('/menu/' + id) : '/menu';
     console.log('[V3] Saving finished product:', method, path, data);
@@ -14863,7 +14878,9 @@ function erpOpenSemiFinishedModal(id) {
 
 function _openSemiFinishedInner(id, brandsList, currentBrand) {
   var pool = window._sfItemsCache.length ? window._sfItemsCache : window._bmItemsCache || [];
-  var m = id ? pool.find(function(x){return x.id===id;}) : null;
+  var m = (id != null && id !== '')
+    ? pool.find(function(x){return String(x.id) === String(id);})
+    : null;
   var brandId = (m && m.brandId) || (currentBrand && currentBrand.id) || '';
 
   var mi = m || {
@@ -14909,7 +14926,7 @@ function _openSemiFinishedInner(id, brandsList, currentBrand) {
       '<p style="font-size:12px;color:#78350f;margin:0;">بعد الحفظ يمكنك تحديد الوصفة (BOM) من زر "<i class="fas fa-list-check"></i>" في الجدول. عند الإنتاج سيتم خصم المكونات من المستودع وإضافة الكمية المنتجة.</p>' +
     '</div>' +
 
-    '<input type="hidden" id="sfF_id" value="'+ _v3EscapeHtml(mi.id||'') +'">' +
+    '<input type="hidden" id="sfF_id" value="'+ _v3EscapeHtml(mi.id != null ? String(mi.id) : '') +'">' +
     '</form>';
 
   WoModal.open({
@@ -14945,7 +14962,8 @@ function _sfSave() {
     if (!data.name) { _v3Toast('الاسم مطلوب', true); return; }
     if (!data.brandId) { _v3Toast('البراند مطلوب', true); return; }
 
-    var id = _v3FldVal('sfF_id');
+    var rawId = _v3FldVal('sfF_id');
+    var id = (rawId === '' || rawId == null) ? null : rawId;
     var method = id ? 'PUT' : 'POST';
     var path = id ? ('/menu/' + id) : '/menu';
     console.log('[V3] Saving semi-finished:', method, path, data);

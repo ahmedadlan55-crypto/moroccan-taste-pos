@@ -2567,12 +2567,18 @@ function loadDashSales() {
 
   api.withFailureHandler(err => { loader(false); showToast(err.message || 'خطأ في جلب بيانات المبيعات', true); }).withSuccessHandler(arr => {
     loader(false);
+    // Defensive: backend can return {error:...} object on failure or null
+    if (!Array.isArray(arr)) {
+      console.warn('[loadDashSales] non-array response:', arr);
+      if (arr && arr.error) showToast(arr.error, true);
+      arr = [];
+    }
     // Client-side filter on LOCAL date to offset the ±1 day widening we did
     // on the server query. This ensures "today" really means the user's
     // local today, not server UTC today.
     var startMs = new Date(start + 'T00:00:00').getTime();
     var endMs   = new Date(end   + 'T23:59:59.999').getTime();
-    arr = (arr || []).filter(function(r) {
+    arr = arr.filter(function(r) {
       var t = new Date(r.date).getTime();
       if (isNaN(t) || t < startMs || t > endMs) return false;
       // V3 client-side filters
@@ -6879,11 +6885,18 @@ window.loadSalesAdvancedReports = function() {
     { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
     .then(function(r){return r.json();})
     .then(function(rows) {
-      _renderPeakHours(rows || []);
-      _renderTopProducts(rows || []);
-      _renderChannelDistribution(rows || []);
-      _renderPayDistribution(rows || []);
-      _renderInsights(rows || [], f);
+      // Defensive: API may return {error:...} on failure
+      if (!Array.isArray(rows)) rows = [];
+      _renderPeakHours(rows);
+      _renderTopProducts(rows);
+      _renderChannelDistribution(rows);
+      _renderPayDistribution(rows);
+      _renderInsights(rows, f);
+    })
+    .catch(function(err) {
+      console.error('[loadSalesAdvancedReports] fetch error:', err);
+      showToast('فشل تحميل التقارير المتقدمة', true);
+      _renderPeakHours([]); _renderTopProducts([]); _renderChannelDistribution([]); _renderPayDistribution([]); _renderInsights([], f);
     });
 };
 

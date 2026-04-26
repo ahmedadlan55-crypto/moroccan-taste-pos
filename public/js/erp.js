@@ -9843,17 +9843,149 @@ function erpOpenPriceListModal(id) {
     else render();
   });
 }
+// V3: Cache the last-opened price list context for re-rendering after add/delete
+window._currentPriceList = null;
+
 function erpViewPriceListItems(id, name) {
-  _erpGet('/erp/price-lists/'+id+'/items', function(items) {
-    document.getElementById('erpModalTitle').textContent = 'أصناف القائمة — '+name;
-    document.getElementById('erpModalBody').innerHTML =
-      '<div class="erp-table-container"><table class="erp-table"><thead><tr><th>الصنف</th><th>SKU</th><th>السعر</th><th>إجراء</th></tr></thead><tbody>'+
-      ((items||[]).length ? items.map(function(i){return '<tr><td>'+i.itemName+'</td><td>'+i.sku+'</td><td>'+_erpFmt(i.price)+'</td><td><button class="btn btn-sm btn-danger" onclick="erpDeletePLItem(\''+i.id+'\',\''+id+'\',\''+name.replace(/\'/g,"\\'")+'\')"><i class="fas fa-trash"></i></button></td></tr>';}).join('') : '<tr><td colspan="4" class="empty-msg">لا توجد أصناف</td></tr>')+
-      '</tbody></table></div>';
-    document.getElementById('erpModalSaveBtn').style.display = 'none';
-    document.getElementById('erpModal').classList.remove('hidden');
+  window._currentPriceList = { id: id, name: name };
+  // Load both: items currently in the list + the brand's menu items + inv items pool
+  _erpGet('/erp/price-lists', function(allLists) {
+    var pl = (allLists||[]).find(function(x){return x.id===id;}) || {};
+    var brandFilter = pl.brandId ? '?brandId=' + encodeURIComponent(pl.brandId) : '';
+    Promise.all([
+      new Promise(function(r){ _erpGet('/erp/price-lists/'+id+'/items', r); }),
+      new Promise(function(r){ _erpGet('/menu/all' + brandFilter, r); })
+    ]).then(function(res) {
+      var items = res[0] || [];
+      var menuPool = res[1] || [];
+      _renderPriceListItemsModal(id, name, pl, items, menuPool);
+    });
   });
 }
+
+function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
+  // Items already in the list (set of ids for filtering the picker)
+  var existingIds = new Set(items.map(function(i){ return String(i.itemId); }));
+  // Menu items NOT already in list (available to add)
+  var availableMenu = menuPool.filter(function(m){ return !existingIds.has(String(m.id)); });
+
+  var html =
+    // Header with stats + brand info
+    '<div style="background:linear-gradient(135deg,#dbeafe,#eff6ff);border:1.5px solid #93c5fd;border-radius:12px;padding:14px;margin-bottom:14px;">' +
+      '<div style="font-size:13px;font-weight:900;color:#1e3a8a;">' + _v3EscapeHtml(name) + '</div>' +
+      '<div style="font-size:11px;color:#1e40af;margin-top:4px;">' +
+        (pl.brandName ? '<i class="fas fa-tags"></i> البراند: <b>' + _v3EscapeHtml(pl.brandName) + '</b> · ' : '') +
+        '<i class="fas fa-cube"></i> عدد الأصناف الحالية: <b>' + items.length + '</b>' +
+        ' · <i class="fas fa-store"></i> منتجات متاحة للإضافة: <b>' + availableMenu.length + '</b>' +
+      '</div>' +
+    '</div>' +
+
+    // Add new product section
+    '<div style="background:#f0fdf4;border:1.5px dashed #86efac;border-radius:12px;padding:14px;margin-bottom:14px;">' +
+      '<div style="font-size:13px;font-weight:900;color:#15803d;margin-bottom:10px;"><i class="fas fa-plus-circle"></i> إضافة منتج للقائمة</div>' +
+      '<div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:8px;align-items:end;">' +
+        '<div class="form-row" style="margin:0;">' +
+          '<label style="font-size:11px;font-weight:700;">المنتج</label>' +
+          '<select id="pliPicker" class="form-control" onchange="_pliShowDefault()">' +
+            '<option value="">— اختر منتج من المنيو —</option>' +
+            availableMenu.map(function(m) {
+              return '<option value="' + m.id + '" data-default="' + Number(m.price||0) + '" data-name="' + _v3EscapeHtml(m.name) + '">' +
+                _v3EscapeHtml(m.name) + (m.category ? ' (' + _v3EscapeHtml(m.category) + ')' : '') +
+                ' — السعر الافتراضي: ' + Number(m.price||0).toFixed(2) +
+              '</option>';
+            }).join('') +
+          '</select>' +
+        '</div>' +
+        '<div class="form-row" style="margin:0;">' +
+          '<label style="font-size:11px;font-weight:700;">السعر للقناة *</label>' +
+          '<input type="number" step="0.01" id="pliPrice" class="form-control" placeholder="مثلاً 12.00">' +
+        '</div>' +
+        '<div class="form-row" style="margin:0;">' +
+          '<label style="font-size:11px;font-weight:700;">الحد الأدنى (اختياري)</label>' +
+          '<input type="number" step="0.01" id="pliMinPrice" class="form-control" placeholder="0.00">' +
+        '</div>' +
+        '<button class="btn btn-primary" style="height:40px;" onclick="erpAddPriceListItem(\''+id+'\')"><i class="fas fa-plus"></i> أضف</button>' +
+      '</div>' +
+      '<div style="font-size:11px;color:#15803d;margin-top:6px;"><i class="fas fa-info-circle"></i> اختر المنتج، أدخل السعر الخاص بهذه القناة، ثم اضغط "أضف". الحقول تُمسح تلقائياً للسطر التالي.</div>' +
+    '</div>' +
+
+    // Existing items table
+    '<div class="erp-table-container">' +
+      '<table class="erp-table">' +
+        '<thead><tr>' +
+          '<th>المنتج</th>' +
+          '<th>المصدر</th>' +
+          '<th>الفئة/الوحدة</th>' +
+          '<th>السعر الافتراضي</th>' +
+          '<th>سعر القناة</th>' +
+          '<th>الفرق</th>' +
+          '<th>إجراء</th>' +
+        '</tr></thead>' +
+        '<tbody>' +
+        (items.length ? items.map(function(i) {
+          var diff = Number(i.price) - Number(i.defaultPrice||0);
+          var diffClr = Math.abs(diff) < 0.01 ? '#94a3b8' : (diff > 0 ? '#16a34a' : '#dc2626');
+          var srcBadge = i.itemSource === 'menu'
+            ? '<span class="badge badge-blue">منيو</span>'
+            : (i.itemSource === 'inv' ? '<span class="badge badge-yellow">مخزون</span>' : '<span class="badge">—</span>');
+          return '<tr>' +
+            '<td style="font-weight:700;">' + _v3EscapeHtml(i.itemName) + '</td>' +
+            '<td>' + srcBadge + '</td>' +
+            '<td><small style="color:#64748b;">' + _v3EscapeHtml(i.categoryOrUnit||'—') + '</small></td>' +
+            '<td>' + Number(i.defaultPrice||0).toFixed(2) + '</td>' +
+            '<td style="font-weight:900;color:#1e40af;">' + Number(i.price).toFixed(2) + '</td>' +
+            '<td style="color:' + diffClr + ';font-weight:700;">' + (diff >= 0 ? '+' : '') + diff.toFixed(2) + '</td>' +
+            '<td><button class="btn btn-sm btn-danger" onclick="erpDeletePLItem(\''+i.id+'\',\''+id+'\',\''+name.replace(/\'/g,"\\'")+'\')"><i class="fas fa-trash"></i></button></td>' +
+          '</tr>';
+        }).join('') : '<tr><td colspan="7" class="empty-msg">لا توجد أصناف بعد — أضف منتجات من النموذج أعلاه</td></tr>') +
+        '</tbody>' +
+      '</table>' +
+    '</div>';
+
+  document.getElementById('erpModalTitle').textContent = 'أصناف القائمة — ' + name;
+  document.getElementById('erpModalBody').innerHTML = html;
+  document.getElementById('erpModalSaveBtn').style.display = 'none';
+  document.getElementById('erpModal').classList.remove('hidden');
+}
+
+// Auto-fill default price when user picks a product
+window._pliShowDefault = function() {
+  var sel = document.getElementById('pliPicker');
+  var priceInp = document.getElementById('pliPrice');
+  if (!sel || !priceInp) return;
+  var opt = sel.options[sel.selectedIndex];
+  if (opt && opt.value) {
+    priceInp.placeholder = 'الافتراضي: ' + (opt.dataset.default || '0.00') + ' — أدخل سعر القناة';
+    priceInp.focus();
+  }
+};
+
+window.erpAddPriceListItem = function(plId) {
+  var sel = document.getElementById('pliPicker');
+  var priceInp = document.getElementById('pliPrice');
+  var minInp = document.getElementById('pliMinPrice');
+  if (!sel || !sel.value) { showToast('اختر المنتج', true); return; }
+  var price = Number(priceInp.value);
+  if (!price || price <= 0) { showToast('أدخل السعر للقناة', true); return; }
+  var minPrice = Number(minInp.value) || 0;
+  var itemName = sel.options[sel.selectedIndex].dataset.name || '';
+
+  _erpPost('/erp/price-lists/' + plId + '/items', {
+    itemId: sel.value,
+    price: price,
+    minPrice: minPrice
+  }, function(r) {
+    if (r && r.success) {
+      showToast('تم إضافة: ' + itemName);
+      // Re-render the modal to show the new item + clear inputs
+      var pl = window._currentPriceList || { id: plId, name: 'القائمة' };
+      erpViewPriceListItems(pl.id, pl.name);
+    } else {
+      showToast((r && r.error) || 'فشل الإضافة', true);
+    }
+  });
+};
+
 function erpDeletePLItem(itemId, plId, plName) {
   if (!confirm('حذف هذا السطر؟')) return;
   _erpDelete('/erp/price-list-items/'+itemId, function(r){ if(r.success){showToast('حُذف');erpViewPriceListItems(plId, plName);}else showToast(r.error||'فشل',true); });

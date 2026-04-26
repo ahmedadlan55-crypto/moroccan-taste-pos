@@ -197,15 +197,29 @@ router.post('/price-lists', async (req, res) => {
 
 router.get('/price-lists/:id/items', async (req, res) => {
   try {
+    // V3: items can come from EITHER menu (finished products) OR inv_items (raw)
+    // Fallback chain: menu first, then inv_items
     const [rows] = await db.query(
-      `SELECT li.*, i.name AS item_name, i.id AS sku, i.unit
+      `SELECT li.*,
+              COALESCE(m.name, i.name) AS item_name,
+              COALESCE(m.id, i.id) AS sku,
+              COALESCE(m.category, i.unit) AS category_or_unit,
+              CASE WHEN m.id IS NOT NULL THEN 'menu' ELSE 'inv' END AS item_source,
+              m.price AS default_price
        FROM price_list_items li
+       LEFT JOIN menu m ON li.item_id = m.id
        LEFT JOIN inv_items i ON li.item_id = i.id
        WHERE li.price_list_id = ?
-       ORDER BY i.name`, [req.params.id]);
+       ORDER BY item_name`, [req.params.id]);
     res.json(rows.map(l => ({
-      id: l.id, itemId: l.item_id, itemName: l.item_name || '', sku: l.sku || '',
-      unit: l.unit || '', price: Number(l.price), minPrice: Number(l.min_price) || 0,
+      id: l.id, itemId: l.item_id,
+      itemName: l.item_name || l.item_id,
+      sku: l.sku || l.item_id,
+      itemSource: l.item_source || 'unknown',
+      categoryOrUnit: l.category_or_unit || '',
+      defaultPrice: Number(l.default_price || 0),
+      price: Number(l.price),
+      minPrice: Number(l.min_price) || 0,
       validFrom: l.valid_from, validTo: l.valid_to
     })));
   } catch(e) { res.json([]); }

@@ -4223,6 +4223,21 @@
 <!-- Price Lists -->
 <div id="erpPriceLists" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;"><h2 class="section-title"><i class="fas fa-tags"></i> قوائم الأسعار</h2><button class="btn btn-primary" onclick="erpOpenPriceListModal()"><i class="fas fa-plus"></i> قائمة جديدة</button></div>
+
+  <!-- ─── دليل سريع: كيف تربط منيو بقناة بيع ─── -->
+  <div class="how-to-card open" style="margin:14px 0;">
+    <button class="how-to-toggle" onclick="this.parentElement.classList.toggle('open')">
+      <span><i class="fas fa-route" style="color:#3b82f6;"></i> <b>كيف أربط منيو بقناة بيع (هنقرستيشن مثلاً)؟</b></span>
+      <i class="fas fa-chevron-down how-to-chev"></i>
+    </button>
+    <div class="how-to-body">
+      <div class="how-to-step"><span class="how-to-num">1</span><div><b>أنشئ قائمة أسعار جديدة هنا</b><br><small>اضغط الزر الأزرق "قائمة جديدة" أعلى يميناً → سمّها مثلاً <code>أسعار هنقرستيشن</code> → اختر البراند (مثل Moroccan Taste) → احفظ</small></div></div>
+      <div class="how-to-step"><span class="how-to-num">2</span><div><b>افتح القائمة وأضف منتجات إليها</b><br><small>في الجدول أسفل، اضغط زر <i class="fas fa-list"></i> الأزرق بجانب القائمة → ستفتح نافذة فيها قسمان: <b>(أ)</b> "إضافة منتج للقائمة" بالأعلى — اختر منتج من القائمة المنسدلة، أدخل سعر القناة (مثلاً ×1.20 من السعر الافتراضي)، اضغط "أضف". <b>(ب)</b> الجدول الأسفل يعرض الأصناف المُضافة مع فرق السعر بلون</small></div></div>
+      <div class="how-to-step"><span class="how-to-num">3</span><div><b>اربط القائمة بالقناة</b><br><small>اذهب إلى: <code>إدارة الدفع والقنوات ← قنوات البيع</code> → اضغط <i class="fas fa-edit"></i> بجانب "هنقرستيشن" → في حقل <b>"قائمة الأسعار المرتبطة"</b> اختر "أسعار هنقرستيشن" → احفظ</small></div></div>
+      <div class="how-to-step" style="background:#dcfce7;border-color:#86efac;"><span class="how-to-num" style="background:#16a34a;">✓</span><div><b>الكاشير سيستخدم الأسعار تلقائياً</b><br><small>عند فتح شاشة الكاشير → سيظهر شريط "قناة البيع" أعلى السلة → يختار "هنقرستيشن" → الأسعار تتحدّث فوراً وتُمنع إضافة أصناف من قنوات أخرى لنفس الفاتورة</small></div></div>
+    </div>
+  </div>
+
   <div class="erp-table-container"><table class="erp-table"><thead><tr><th>الاسم</th><th>البراند</th><th>الفرع</th><th>افتراضية</th><th>الأصناف</th><th>فعالة من</th><th>إلى</th><th>إجراءات</th></tr></thead><tbody id="priceListsBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody></table></div>
 </div>
 

@@ -13,11 +13,13 @@
  */
 const router = require('express').Router();
 const db = require('../db/connection');
-// V4 — State machine + permission engine + schema validation + guards
+// V4 — State machine + permission engine + schema validation + guards + storage
 const SM = require('../lib/transactionStateMachine');
 const PERMS = require('../lib/transactionPermissions');
 const SCHEMA = require('../lib/transactionSchema');
 const { guardTxnAccess, guardDeveloper } = require('../lib/transactionGuards');
+const S3 = require('../lib/s3Storage');     // optional — falls back to inline if not configured
+const CACHE = require('../lib/redisCache'); // optional — no-op if REDIS_URL not set
 
 // Mojibake fixer: repairs UTF-8 Arabic text that was decoded through a
 // single-byte codepage (Latin-1 or Windows-1252). Produces forms like
@@ -2309,12 +2311,21 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
     // V3.1: also store attachment_name + attachment_mime so the UI can show
     // proper file names + decide between image preview vs generic icon.
     // V4: also store stage_step_id so we can enforce one-reply-per-stage rule.
+    // V4.1: if S3 configured, upload attachment to S3 and store URL instead of base64
+    let finalAttachment = attachment || null;
+    if (finalAttachment && S3.ENABLED) {
+      try {
+        finalAttachment = await S3.maybeUpload(finalAttachment, attachmentName || 'reply-' + Date.now(), attachmentMime);
+      } catch (e) {
+        console.warn('[s3 reply attach] upload failed, keeping inline:', e.message);
+      }
+    }
     const id = 'REP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
     try {
       await db.query(
         `INSERT INTO transaction_replies (id, transaction_id, reply_text, attachment, attachment_name, attachment_mime, author_username, author_name, author_role, author_position, is_internal, stage_step_id)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [id, req.params.id, replyText.trim(), attachment || null, attachmentName || null, attachmentMime || null, author, authorName, authorRole, authorPosition, isInternal ? 1 : 0, txn.current_step_id || null]
+        [id, req.params.id, replyText.trim(), finalAttachment, attachmentName || null, attachmentMime || null, author, authorName, authorRole, authorPosition, isInternal ? 1 : 0, txn.current_step_id || null]
       );
     } catch(insertErr) {
       // Fallback for older deploys where new columns don't exist yet
@@ -2326,8 +2337,12 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
     }
 
     // V4: also stamp transaction's updated_at + bump version + create notification for creator
+    // V4.1: invalidate cached counters for both creator and current assignee
     try {
       await db.query('UPDATE transactions SET version = version + 1, updated_at = NOW() WHERE id = ?', [req.params.id]);
+      try {
+        await CACHE.del('counters:' + txn.created_by, 'counters:' + (txn.current_assignee || ''));
+      } catch(_) {}
       // Notify creator (unless they're the one replying)
       if (txn.created_by && txn.created_by !== author) {
         await db.query(

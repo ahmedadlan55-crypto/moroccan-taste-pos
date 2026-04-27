@@ -662,6 +662,18 @@ async function runMigrations() {
   await addColumnIfMissing('transactions', 'passed_ceo_at', "DATETIME DEFAULT NULL");
   await addColumnIfMissing('transactions', 'passed_ceo_by', "VARCHAR(100) DEFAULT NULL");
 
+  // ─── V3.1: Returned-for-edit tracking ───
+  // Distinct from "rejected": the reviewer wants the creator to fix something
+  // and resubmit. Creator should be able to edit + re-send. Status reads "مرجعة للتعديل".
+  await addColumnIfMissing('transactions', 'returned_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('transactions', 'returned_by', "VARCHAR(100) DEFAULT NULL");
+  await addColumnIfMissing('transactions', 'returned_reason', "VARCHAR(500) DEFAULT NULL");
+  await addColumnIfMissing('transactions', 'return_count', "INT DEFAULT 0");
+  // Extend status ENUM to include 'returned' as a first-class state
+  try {
+    await db.query("ALTER TABLE transactions MODIFY COLUMN status ENUM('draft','pending','in_progress','returned','rejected','approved','closed') DEFAULT 'draft'");
+  } catch(e) { /* tolerate if already extended */ }
+
   // ─── V3: Transaction Replies (proper threaded comments, separate from action log) ───
   await createTableIfMissing('transaction_replies', `
     CREATE TABLE transaction_replies (

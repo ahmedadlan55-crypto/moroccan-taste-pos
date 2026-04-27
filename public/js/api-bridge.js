@@ -322,6 +322,7 @@
     wfTransactionAction: { method: 'POST', url: (id,d) => '/workflow/transactions/' + id + '/action', body: (id,d) => d },
     updateWfTransaction: { method: 'PUT',  url: (id,d) => '/workflow/transactions/' + id, body: (id,d) => d },
     deleteWfTransaction: { method: 'DELETE', url: (id,u) => '/workflow/transactions/' + id + '?username=' + encodeURIComponent(u||'') },
+    resubmitWfTransaction: { method: 'POST', url: (id,d) => '/workflow/transactions/' + id + '/resubmit', body: (id,d) => d },
     getWfOutbox:         { method: 'GET',  url: '/workflow/outbox', query: (f) => f },
     getWfIncoming:       { method: 'GET',  url: '/workflow/incoming', query: (f) => f },
     getWfDashboard:      { method: 'GET',  url: '/workflow/dashboard-cards', query: (f) => f },

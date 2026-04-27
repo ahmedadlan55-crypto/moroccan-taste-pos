@@ -5510,113 +5510,195 @@ function wfViewTxn(id) {
   window._apiBridge.withSuccessHandler(function(txn) {
     loader(false);
     if (txn.error) return showToast(txn.error, true);
-    var sMap = { pending:'قيد الانتظار', in_progress:'قيد التنفيذ', approved:'معتمدة', rejected:'مرفوضة', closed:'مغلقة' };
-    var sClr = { pending:'#f59e0b', in_progress:'#0ea5e9', approved:'#10b981', rejected:'#ef4444', closed:'#6b7280' };
+    // V3.1: complete redesign — content-priority layout, per-step actor cards, sticky footer toolbar
+    var sMap = { pending:'قيد الانتظار', in_progress:'قيد التنفيذ', approved:'معتمدة', returned:'مرجعة للتعديل', rejected:'مرفوضة', closed:'مغلقة', draft:'مسودة' };
+    var sClr = { pending:'#f59e0b', in_progress:'#0ea5e9', approved:'#10b981', returned:'#dc2626', rejected:'#991b1b', closed:'#6b7280', draft:'#94a3b8' };
+    var sIcon = { pending:'fa-clock', in_progress:'fa-spinner', approved:'fa-circle-check', returned:'fa-rotate-left', rejected:'fa-circle-xmark', closed:'fa-lock', draft:'fa-file-pen' };
     var aMap = { create:'إنشاء', approve:'موافقة', reject:'رفض', return:'إرجاع', close:'إغلاق', forward:'تحويل' };
-    var aClr = { create:'#0ea5e9', approve:'#10b981', reject:'#ef4444', return:'#f59e0b', close:'#6b7280', forward:'#8b5cf6' };
+    var aClr = { create:'#0ea5e9', approve:'#16a34a', reject:'#dc2626', return:'#f59e0b', close:'#6b7280', forward:'#8b5cf6' };
+    var aBg  = { create:'#e0f2fe', approve:'#dcfce7', reject:'#fee2e2', return:'#fef3c7', close:'#f3f4f6', forward:'#ede9fe' };
     var aIcon = { create:'fa-plus-circle', approve:'fa-check-circle', reject:'fa-times-circle', return:'fa-undo', close:'fa-lock', forward:'fa-share' };
     var sc = sClr[txn.status]||'#6b7280';
     var impColors = window._wfImpColors || {}, impLabels = window._wfImpLabels || {};
     var ic = impColors[txn.importance]||'#6b7280';
+    var esc = _woEscapeHtml;
+    // Pre-compute initials for actor avatars (first letter of name)
+    var initials = function(s){ s = String(s||'').trim(); if (!s) return '؟'; var parts = s.split(/\s+/); return (parts[0][0] || '') + (parts[1] ? parts[1][0] : ''); };
 
-    // Status + importance banner
-    var html = '<div style="display:flex;gap:8px;margin-bottom:14px;">' +
-      '<div style="flex:1;padding:10px;border-radius:10px;background:'+sc+'15;border:1px solid '+sc+'30;text-align:center;"><span style="font-size:13px;font-weight:800;color:'+sc+';">الحالة: '+(sMap[txn.status]||txn.status)+'</span></div>' +
-      '<div style="flex:1;padding:10px;border-radius:10px;background:'+ic+'15;border:1px solid '+ic+'40;text-align:center;"><span style="font-size:13px;font-weight:800;color:'+ic+';"><i class="fas fa-circle" style="font-size:7px;margin-left:6px;"></i> أهمية: '+(impLabels[txn.importance]||txn.importance)+'</span></div>' +
+    // ─── HEADER STRIP: status + importance + secrecy + hijri (compact, full-width) ───
+    var secMap = { normal:{l:'عادي',c:'#16a34a'}, confidential:{l:'سري',c:'#ea580c'}, secret:{l:'سري للغاية',c:'#dc2626'}, top_secret:{l:'سري جداً للغاية',c:'#7c2d12'} };
+    var cS = secMap[txn.contentSecrecy||'normal'] || secMap.normal;
+    var headerStrip = '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;">' +
+      '<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;background:'+sc+'15;border:1.5px solid '+sc+';color:'+sc+';font-size:13px;font-weight:900;"><i class="fas '+(sIcon[txn.status]||'fa-circle')+'"></i> '+(sMap[txn.status]||txn.status)+'</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;background:'+ic+'15;border:1.5px solid '+ic+';color:'+ic+';font-size:12px;font-weight:800;"><i class="fas fa-bolt" style="font-size:10px;"></i> '+(impLabels[txn.importance]||txn.importance)+'</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:'+cS.c+'15;color:'+cS.c+';font-size:11px;font-weight:700;"><i class="fas fa-shield-alt"></i> '+cS.l+'</span>' +
+      (txn.hijriDate ? '<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:#ede9fe;color:#6d28d9;font-size:11px;font-weight:700;"><i class="fas fa-moon"></i> '+txn.hijriDate+'</span>' : '') +
     '</div>';
 
-    // Workflow path visualization
-    if (txn.workflowPath && txn.workflowPath.length) {
-      html += '<div style="padding:12px;border-radius:10px;background:#f8fafc;border:1px solid #e2e8f0;margin-bottom:14px;">' +
-        '<div style="font-size:12px;color:#64748b;font-weight:700;margin-bottom:8px;"><i class="fas fa-route" style="color:#8b5cf6;"></i> المسار الإداري (Workflow Path)</div>' +
-        '<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">';
-      txn.workflowPath.forEach(function(s, i) {
-        var clr = s.isCurrent ? '#0ea5e9' : (s.isPast ? '#10b981' : '#94a3b8');
-        var bg  = s.isCurrent ? '#e0f2fe' : (s.isPast ? '#dcfce7' : '#f1f5f9');
-        html += '<div style="padding:6px 12px;border-radius:10px;background:'+bg+';border:1px solid '+clr+';font-size:11px;color:'+clr+';font-weight:800;">' +
-          '<i class="fas '+(s.isCurrent?'fa-arrow-right':s.isPast?'fa-check':'fa-circle')+'" style="font-size:9px;margin-left:4px;"></i> ' +
-          s.stepName + (s.positionName ? ' <span style="opacity:.7;">('+s.positionName+')</span>' : '') +
+    // ─── RETURNED BANNER: prominent message when transaction was returned for edit ───
+    var returnedBanner = '';
+    if (txn.status === 'returned' || (txn.returnedAt && txn.createdBy === currentUser)) {
+      var retDt = '';
+      try { retDt = new Date(txn.returnedAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(_){}
+      returnedBanner =
+        '<div class="wo-txn-banner returned" style="margin-bottom:12px;">' +
+          '<div style="width:44px;height:44px;border-radius:50%;background:#dc2626;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:18px;"><i class="fas fa-rotate-left"></i></div>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:14px;font-weight:900;color:#991b1b;">تم إرجاع المعاملة للتعديل' + (txn.returnCount > 1 ? ' (المرة '+txn.returnCount+')' : '') + '</div>' +
+            '<div style="font-size:12px;color:#7f1d1d;margin-top:3px;">' +
+              '<b>المُرجِع:</b> ' + esc(txn.returnedBy || '—') + (retDt ? ' · <b>التاريخ:</b> ' + retDt : '') +
+            '</div>' +
+            (txn.returnReason ? '<div style="margin-top:6px;padding:8px 12px;background:#fff;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#991b1b;line-height:1.7;"><i class="fas fa-quote-right" style="font-size:10px;color:#dc2626;margin-inline-end:6px;"></i>' + esc(txn.returnReason) + '</div>' : '') +
+          '</div>' +
         '</div>';
-        if (i < txn.workflowPath.length - 1) html += '<i class="fas fa-chevron-left" style="color:#cbd5e1;font-size:10px;"></i>';
-      });
-      html += '</div></div>';
     }
 
-    // Info grid
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">';
-    var f = function(l,v,c) { return '<div style="padding:8px 12px;background:#f8fafc;border-radius:8px;"><span style="font-size:11px;color:#94a3b8;display:block;">'+l+'</span><span style="font-size:13px;font-weight:700;color:'+(c||'#1e293b')+';">'+v+'</span></div>'; };
-    html += f('رقم المعاملة', txn.txnNumber||'');
-    html += f('النوع', txn.typeName||'');
-    if (txn.branchName) html += f('الفرع', txn.branchName + (txn.branchCode?' ['+txn.branchCode+']':''));
-    if (txn.deptName) html += f('القسم', txn.deptName + (txn.deptCode?' ['+txn.deptCode+']':''));
-    html += f('المرسل', (txn.senderName||txn.createdBy||'')+(txn.senderPosition?' — <span style="color:#0ea5e9;">'+txn.senderPosition+'</span>':''));
-    if (txn.currentAssignee) html += f('المسؤول الحالي', txn.currentAssignee + (txn.currentRoleName ? ' — <span style="color:#8b5cf6;">'+txn.currentRoleName+'</span>' : ''), '#1e40af');
-    else if (txn.currentRoleName) html += f('المسمى الوظيفي الحالي', txn.currentRoleName, '#8b5cf6');
-    html += f('المبلغ', Number(txn.amount||0).toLocaleString('en',{minimumFractionDigits:2}), '#1e40af');
-    if (txn.accountName) html += f('الحساب المحاسبي', (txn.accountCode||'')+' — '+txn.accountName);
-    if (txn.costCenterName) html += f('مركز التكلفة', txn.costCenterName);
-    html += f('التاريخ', txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('ar-SA',{day:'numeric',month:'long',year:'numeric'}) : '');
-    html += '</div>';
-
-    // Secrecy badges
-    var secMap = { normal:{l:'عادي',c:'#16a34a'}, confidential:{l:'سري',c:'#ea580c'}, secret:{l:'سري للغاية',c:'#dc2626'}, top_secret:{l:'سري جداً للغاية',c:'#7c2d12'} };
-    if (txn.contentSecrecy || txn.attachmentsSecrecy) {
-      var cS = secMap[txn.contentSecrecy||'normal'] || secMap.normal;
-      var aS = secMap[txn.attachmentsSecrecy||'normal'] || secMap.normal;
-      html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">' +
-        '<span style="padding:4px 10px;border-radius:8px;background:'+cS.c+'15;color:'+cS.c+';font-size:11px;font-weight:800;"><i class="fas fa-shield-alt"></i> سرية المحتوى: '+cS.l+'</span>' +
-        '<span style="padding:4px 10px;border-radius:8px;background:'+aS.c+'15;color:'+aS.c+';font-size:11px;font-weight:800;"><i class="fas fa-paperclip"></i> سرية المرفقات: '+aS.l+'</span>' +
-        (txn.hijriDate ? '<span style="padding:4px 10px;border-radius:8px;background:#ede9fe;color:#6d28d9;font-size:11px;font-weight:800;"><i class="fas fa-moon"></i> ' + txn.hijriDate + '</span>' : '') +
-      '</div>';
-    }
-
-    // Content: prefer HTML when available
+    // ─── HERO CONTENT CARD: subject + content-html / description + first attachment ───
+    var contentBody = '';
     if (txn.contentHtml && txn.contentHtml.trim()) {
-      html += '<div style="padding:14px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;font-size:13px;color:#1e293b;line-height:1.8;margin-bottom:12px;">'+txn.contentHtml+'</div>';
+      // Trust contentHtml — it's authored by users via rich text editor (already sanitized server-side)
+      contentBody = txn.contentHtml;
     } else if (txn.description) {
-      html += '<div style="padding:10px 14px;border-radius:10px;background:#f1f5f9;font-size:13px;color:#475569;margin-bottom:12px;">'+txn.description+'</div>';
+      contentBody = '<p style="margin:0;white-space:pre-wrap;">' + esc(txn.description) + '</p>';
+    } else {
+      contentBody = '<p style="color:#94a3b8;text-align:center;margin:0;font-style:italic;">لا يوجد محتوى نصي</p>';
     }
+    var heroCard =
+      '<div class="wo-txn-content">' +
+        '<div style="font-size:18px;font-weight:900;color:#0f172a;line-height:1.4;margin-bottom:12px;padding-bottom:10px;border-bottom:2px solid #f1f5f9;">' + esc(txn.subject || txn.title || '—') + '</div>' +
+        '<div style="font-size:14px;line-height:1.85;color:#1e293b;">' + contentBody + '</div>' +
+      '</div>';
 
-    // Recipients (multi)
-    if (txn.recipients && txn.recipients.length) {
-      html += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-bottom:12px;">' +
-        '<div style="font-size:12px;font-weight:800;color:#1e40af;margin-bottom:8px;"><i class="fas fa-paper-plane"></i> الجهات الصادر إليها ('+txn.recipients.length+')</div>' +
-        '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
-      txn.recipients.forEach(function(r) {
-        html += '<div style="padding:4px 10px;border-radius:8px;background:#eff6ff;color:#1e40af;font-size:11px;display:inline-flex;align-items:center;gap:4px;">' +
-          (r.code ? '<code style="font-size:10px;color:#64748b;">'+r.code+'</code>' : '') +
-          '<b>'+(r.name||r.username||'')+'</b>' +
-          (r.needsResponse ? ' <span style="color:#ea580c;font-size:9px;">يحتاج رد</span>' : '') +
-          (r.responseReceived ? ' <i class="fas fa-check" style="color:#16a34a;"></i>' : '') +
+    // ─── INITIAL ATTACHMENT (the one uploaded by the creator at creation time) ───
+    var initialAttach = '';
+    if (txn.attachmentDataUrl && typeof txn.attachmentDataUrl === 'string' && txn.attachmentDataUrl.startsWith('data:')) {
+      var isImg = txn.attachmentDataUrl.startsWith('data:image/');
+      initialAttach =
+        '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;">' +
+          '<div style="font-size:12px;font-weight:800;color:#0f172a;margin-bottom:10px;display:flex;align-items:center;gap:6px;"><i class="fas fa-paperclip" style="color:#0ea5e9;"></i> المرفق المُرسَل مع المعاملة</div>' +
+          (isImg ? '<img src="'+txn.attachmentDataUrl+'" style="max-width:100%;border-radius:8px;border:1px solid #e5e7eb;display:block;margin-bottom:10px;cursor:zoom-in;" onclick="window.open(this.src,\'_blank\')">' : '') +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+            '<button class="wo-btn wo-btn-secondary" style="padding:6px 12px;font-size:12px;" onclick="window.open(\''+txn.attachmentDataUrl+'\',\'_blank\')"><i class="fas fa-eye"></i><span>عرض</span></button>' +
+            '<a href="'+txn.attachmentDataUrl+'" download class="wo-btn wo-btn-primary" style="padding:6px 12px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;"><i class="fas fa-download"></i><span>تنزيل</span></a>' +
+          '</div>' +
         '</div>';
-      });
-      html += '</div></div>';
-    }
-    if (txn.attachment && typeof txn.attachment === 'string' && txn.attachment.startsWith('data:')) {
-      html += '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;background:#eff6ff;color:#1e40af;font-size:12px;font-weight:700;margin-bottom:12px;text-decoration:none;"><i class="fas fa-download"></i> تحميل مرفق المعاملة</a>';
     }
 
-    // Timeline
-    html += '<div style="border-top:1px solid #e5e7eb;padding-top:12px;margin-top:8px;"><div style="font-size:14px;font-weight:800;color:#1e293b;margin-bottom:10px;"><i class="fas fa-route" style="color:#0ea5e9;margin-left:6px;"></i> سير المعاملة</div>';
+    // ─── TIMELINE: per-step actor cards (avatar + role + name + comment + attachment with view/download) ───
+    var timeline = '';
     if (txn.logs && txn.logs.length) {
-      txn.logs.forEach(function(l, i) {
-        var c = aClr[l.actionType]||'#6b7280';
-        var icon = aIcon[l.actionType]||'fa-circle';
-        var dt = l.createdAt ? new Date(l.createdAt).toLocaleString('ar-SA',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
-        var isLast = i === txn.logs.length - 1;
-        html += '<div style="display:flex;gap:12px;position:relative;">';
-        html += '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;"><div style="width:32px;height:32px;border-radius:50%;background:'+c+'15;display:flex;align-items:center;justify-content:center;"><i class="fas '+icon+'" style="font-size:14px;color:'+c+';"></i></div>';
-        if (!isLast) html += '<div style="width:2px;flex:1;background:'+c+'25;min-height:16px;"></div>';
-        html += '</div>';
-        html += '<div style="flex:1;padding-bottom:'+(isLast?'0':'14')+'px;">';
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-weight:800;color:'+c+';font-size:13px;">'+(aMap[l.actionType]||l.actionType)+'</span><span style="font-size:11px;color:#94a3b8;">'+dt+'</span></div>';
-        html += '<div style="font-size:12px;color:#64748b;margin-top:2px;">'+(l.actionBy||'')+(l.positionName?' — <span style="font-weight:700;color:#1e40af;">'+l.positionName+'</span>':'')+'</div>';
-        if (l.note) html += '<div style="margin-top:4px;padding:6px 10px;border-radius:8px;background:#f1f5f9;font-size:12px;color:#334155;">'+l.note+'</div>';
-        if (l.attachment && typeof l.attachment === 'string' && l.attachment.startsWith('data:')) html += '<a href="'+l.attachment+'" download style="display:inline-flex;align-items:center;gap:4px;margin-top:4px;font-size:11px;color:#0ea5e9;font-weight:700;"><i class="fas fa-paperclip"></i> مرفق</a>';
-        html += '</div></div>';
+      timeline = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px;">' +
+        '<div style="font-size:14px;font-weight:900;color:#0f172a;margin-bottom:14px;display:flex;align-items:center;gap:8px;"><i class="fas fa-route" style="color:#0ea5e9;"></i> سير المعاملة <span style="color:#94a3b8;font-weight:700;font-size:11px;">('+txn.logs.length+')</span></div>' +
+        '<div style="display:flex;flex-direction:column;gap:10px;">';
+      txn.logs.forEach(function(l) {
+        var actType = l.actionType || 'create';
+        var c = aClr[actType]||'#6b7280';
+        var bg = aBg[actType]||'#f3f4f6';
+        var dt = l.createdAt ? new Date(l.createdAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+        var hasAttach = l.attachment && typeof l.attachment === 'string' && l.attachment.startsWith('data:');
+        var attachIsImg = hasAttach && l.attachment.startsWith('data:image/');
+        var actorName = l.actionBy || '—';
+        timeline +=
+          '<div class="wo-txn-actor ' + actType + '">' +
+            '<div class="wo-avatar">' + esc(initials(actorName)) + '</div>' +
+            '<div class="wo-actor-body">' +
+              '<div class="wo-actor-head">' +
+                '<span class="wo-actor-name">' + esc(actorName) + '</span>' +
+                (l.positionName ? '<span class="wo-actor-role">' + esc(l.positionName) + '</span>' : '') +
+                '<span class="wo-actor-action" style="background:'+bg+';color:'+c+';"><i class="fas '+(aIcon[actType]||'fa-circle')+'"></i> ' + (aMap[actType]||actType) + '</span>' +
+                (dt ? '<span class="wo-actor-time">' + dt + '</span>' : '') +
+              '</div>' +
+              (l.note ? '<div class="wo-actor-note">' + esc(l.note) + '</div>' : '') +
+              (hasAttach ? (
+                '<div class="wo-actor-attach" style="margin-top:8px;flex-direction:column;align-items:flex-start;">' +
+                  (attachIsImg ? '<img src="'+l.attachment+'" style="max-width:240px;max-height:160px;border-radius:6px;border:1px solid #cbd5e1;display:block;margin-bottom:6px;cursor:zoom-in;" onclick="window.open(this.src,\'_blank\')">' : '') +
+                  '<div style="display:flex;gap:6px;align-items:center;">' +
+                    '<i class="fas fa-paperclip"></i><span>مرفق من ' + esc(actorName) + '</span>' +
+                    '<button class="wo-attach-btn" onclick="window.open(\''+l.attachment+'\',\'_blank\')"><i class="fas fa-eye"></i> عرض</button>' +
+                    '<a href="'+l.attachment+'" download class="wo-attach-btn" style="text-decoration:none;background:#16a34a;"><i class="fas fa-download"></i> تنزيل</a>' +
+                  '</div>' +
+                '</div>'
+              ) : '') +
+            '</div>' +
+          '</div>';
       });
-    } else { html += '<p style="color:#94a3b8;text-align:center;font-size:13px;">لا توجد إجراءات بعد</p>'; }
-    html += '</div>';
+      timeline += '</div></div>';
+    }
+
+    // ─── SIDE RAIL: meta (info grid) + workflow path (vertical stepper) + recipients ───
+    var sideMeta = '';
+    var metaRow = function(l, v, c) {
+      return '<div style="padding:8px 0;border-bottom:1px dashed #e5e7eb;"><div style="font-size:11px;color:#94a3b8;font-weight:700;margin-bottom:2px;">' + l + '</div><div style="font-size:13px;font-weight:700;color:'+(c||'#1e293b')+';">' + v + '</div></div>';
+    };
+    sideMeta += '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;">' +
+      '<div style="font-size:12px;font-weight:900;color:#0f172a;margin-bottom:8px;"><i class="fas fa-info-circle" style="color:#0ea5e9;"></i> البيانات</div>' +
+      metaRow('رقم المعاملة', '<code style="font-size:12px;color:#1e40af;">' + esc(txn.txnNumber||'—') + '</code>') +
+      metaRow('النوع', esc(txn.typeName||'—')) +
+      (txn.branchName ? metaRow('الفرع', esc(txn.branchName + (txn.branchCode?' ['+txn.branchCode+']':''))) : '') +
+      (txn.deptName ? metaRow('القسم', esc(txn.deptName + (txn.deptCode?' ['+txn.deptCode+']':''))) : '') +
+      metaRow('المرسل', '<b>'+esc(txn.senderName||txn.createdBy||'—')+'</b>' + (txn.senderPosition?'<div style="color:#0ea5e9;font-size:11px;font-weight:700;margin-top:2px;">'+esc(txn.senderPosition)+'</div>':'')) +
+      (txn.currentAssignee ? metaRow('المسؤول الحالي', '<b style="color:#1e40af;">'+esc(txn.currentAssignee)+'</b>'+(txn.currentRoleName?' <span style="color:#8b5cf6;font-size:11px;">— '+esc(txn.currentRoleName)+'</span>':'')) : (txn.currentRoleName ? metaRow('المسمى الوظيفي الحالي', esc(txn.currentRoleName), '#8b5cf6') : '')) +
+      (Number(txn.amount) ? metaRow('المبلغ', Number(txn.amount).toLocaleString('en',{minimumFractionDigits:2}) + ' ر.س', '#16a34a') : '') +
+      (txn.accountName ? metaRow('الحساب', esc((txn.accountCode||'')+' — '+txn.accountName)) : '') +
+      (txn.costCenterName ? metaRow('مركز التكلفة', esc(txn.costCenterName)) : '') +
+      metaRow('تاريخ الإنشاء', txn.createdAt ? new Date(txn.createdAt).toLocaleDateString('ar-SA-u-nu-latn',{day:'2-digit',month:'long',year:'numeric'}) : '—') +
+    '</div>';
+
+    // Workflow stepper — vertical for the side rail
+    var workflowVertical = '';
+    if (txn.workflowPath && txn.workflowPath.length) {
+      workflowVertical = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;">' +
+        '<div style="font-size:12px;font-weight:900;color:#0f172a;margin-bottom:10px;"><i class="fas fa-list-ol" style="color:#8b5cf6;"></i> خطوات الموافقة</div>' +
+        '<div style="display:flex;flex-direction:column;gap:6px;">';
+      txn.workflowPath.forEach(function(s, i) {
+        var stepClr = s.isCurrent ? '#0ea5e9' : (s.isPast ? '#16a34a' : '#94a3b8');
+        var stepBg = s.isCurrent ? '#e0f2fe' : (s.isPast ? '#dcfce7' : '#f1f5f9');
+        var stepIcon = s.isCurrent ? 'fa-arrow-left' : (s.isPast ? 'fa-check' : 'fa-circle');
+        workflowVertical +=
+          '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:'+stepBg+';border:1px solid '+stepClr+'40;border-radius:10px;border-right:3px solid '+stepClr+';">' +
+            '<div style="width:24px;height:24px;border-radius:50%;background:'+stepClr+';color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;flex-shrink:0;"><i class="fas '+stepIcon+'" style="font-size:10px;"></i></div>' +
+            '<div style="flex:1;min-width:0;">' +
+              '<div style="font-size:12px;font-weight:800;color:'+stepClr+';">' + esc(s.stepName||'') + '</div>' +
+              (s.positionName ? '<div style="font-size:10px;color:#64748b;font-weight:700;">' + esc(s.positionName) + '</div>' : '') +
+            '</div>' +
+          '</div>';
+      });
+      workflowVertical += '</div></div>';
+    }
+
+    // Recipients side panel
+    var recipientsPanel = '';
+    if (txn.recipients && txn.recipients.length) {
+      recipientsPanel = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;">' +
+        '<div style="font-size:12px;font-weight:900;color:#0f172a;margin-bottom:8px;"><i class="fas fa-paper-plane" style="color:#1e40af;"></i> الجهات الصادر إليها (' + txn.recipients.length + ')</div>' +
+        '<div style="display:flex;flex-direction:column;gap:6px;">';
+      txn.recipients.forEach(function(r) {
+        recipientsPanel +=
+          '<div style="padding:8px 10px;border-radius:8px;background:#eff6ff;border:1px solid #bfdbfe;display:flex;align-items:center;gap:8px;">' +
+            (r.code ? '<code style="font-size:9px;color:#64748b;background:#fff;padding:1px 5px;border-radius:4px;">'+esc(r.code)+'</code>' : '') +
+            '<span style="flex:1;font-size:12px;font-weight:700;color:#1e40af;">' + esc(r.name||r.username||'') + '</span>' +
+            (r.needsResponse ? '<span style="font-size:10px;color:#ea580c;font-weight:700;">يحتاج رد</span>' : '') +
+            (r.responseReceived ? '<i class="fas fa-check-circle" style="color:#16a34a;"></i>' : '') +
+          '</div>';
+      });
+      recipientsPanel += '</div></div>';
+    }
+
+    // ─── ASSEMBLE: two-column layout ───
+    var html = headerStrip +
+      returnedBanner +
+      '<div class="wo-txn-view">' +
+        '<div class="wo-txn-main">' +
+          heroCard +
+          (initialAttach ? initialAttach : '') +
+          (timeline ? timeline : '') +
+        '</div>' +
+        '<div class="wo-txn-side">' +
+          sideMeta +
+          (workflowVertical ? workflowVertical : '') +
+          (recipientsPanel ? recipientsPanel : '') +
+        '</div>' +
+      '</div>';
 
     // V3: CEO badge — admin view (above replies)
     if (txn.passedCeoAt) {
@@ -5647,39 +5729,72 @@ function wfViewTxn(id) {
       '</div>' +
     '</div>';
 
-    // Phase B.1: Enhanced toolbar with inline action buttons
-    // — so admins don't have to close+reopen modal to approve/reject
-    var canEdit = (txn.status === 'pending' || txn.status === 'draft') && (txn.createdBy === currentUser);
+    // ═══════════════════════════════════════════════════════════════════
+    // V3.1: Sticky-footer toolbar — always visible, content never hidden
+    //
+    // Permission rules (rebuilt for clarity):
+    //   • Edit/Cancel  ←  creator AND (status='draft' OR 'pending' AND no others acted) — DISAPPEARS once sent
+    //   • Edit-and-Resubmit  ←  creator AND status='returned' (the whole point of returning)
+    //   • Approve/Reject/Return  ←  user is current_assignee AND status in (pending|in_progress)
+    //   • Pay  ←  status='approved' AND requires payment AND no payment yet
+    //   • Print  ←  always available
+    // ═══════════════════════════════════════════════════════════════════
+    var isCreator = (txn.createdBy === currentUser);
     var isAssignedToMe = (txn.current_assignee === currentUser || txn.currentAssignee === currentUser);
     var canActOnIt = isAssignedToMe && (txn.status === 'pending' || txn.status === 'in_progress');
+    var canEditFresh = isCreator && (txn.status === 'draft' || txn.status === 'pending');
+    var canEditReturned = isCreator && txn.status === 'returned';
+    var canCancel = isCreator && (txn.status === 'draft' || txn.status === 'pending' || txn.status === 'returned');
     var requiresPayment = (txn.requires_payment === 1 || txn.requires_payment === true || txn.requiresPayment);
     var isApprovedPendingPayment = txn.status === 'approved' && requiresPayment && !txn.payment_record_id;
 
-    var toolbar = '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap;padding:10px 14px;background:#f8fafc;border-radius:10px;border:1px solid #e5e7eb;">' +
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
-
-    // Primary actions — if assigned to current user
+    var leftBtns = '';
+    // Primary action group (review/approve flow) — only when this transaction is currently sitting in MY inbox
     if (canActOnIt) {
-      toolbar +=
-        '<button class="wo-btn wo-btn-success" style="padding:8px 16px;font-size:13px;" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'approve\')"><i class="fas fa-check"></i><span>اعتماد</span></button>' +
-        '<button class="wo-btn wo-btn-danger" style="padding:8px 16px;font-size:13px;" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'reject\')"><i class="fas fa-xmark"></i><span>رفض</span></button>' +
-        '<button class="wo-btn wo-btn-warning" style="padding:8px 16px;font-size:13px;" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'return\')"><i class="fas fa-rotate-left"></i><span>إرجاع</span></button>';
+      leftBtns +=
+        '<button class="wo-btn wo-btn-success" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'approve\')"><i class="fas fa-check"></i><span>اعتماد</span></button>' +
+        '<button class="wo-btn wo-btn-danger" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'reject\')"><i class="fas fa-xmark"></i><span>رفض</span></button>' +
+        '<button class="wo-btn wo-btn-warning" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'return\')"><i class="fas fa-rotate-left"></i><span>إرجاع للتعديل</span></button>';
+    }
+    // Resubmit action — creator, status=returned. Big, prominent, on the left so it's the obvious next step.
+    if (canEditReturned) {
+      leftBtns +=
+        '<button class="wo-btn wo-btn-primary" style="background:linear-gradient(135deg,#dc2626,#b91c1c);" onclick="wfEditOutboxTxn(\''+txn.id+'\')"><i class="fas fa-pen-to-square"></i><span>تعديل وإعادة الإرسال</span></button>';
     }
     // Payment action — when approved + requires payment + no payment record yet
     if (isApprovedPendingPayment) {
-      toolbar += '<button class="wo-btn wo-btn-primary" style="padding:8px 16px;font-size:13px;background:linear-gradient(135deg,#0369a1,#0284c7);" onclick="erpCloseModal();openRecordPaymentModal({transactionId:\''+txn.id+'\',referenceType:\'transaction\',referenceId:\''+txn.id+'\',direction:\'out\',amount:'+(Number(txn.amount)||0)+',brandId:\''+(txn.brandId||txn.brand_id||'')+'\',branchId:\''+(txn.branchId||txn.branch_id||'')+'\',onSuccess:function(){loadDashboard&&loadDashboard();}})"><i class="fas fa-money-bill-transfer"></i><span>تسجيل دفعة</span></button>';
+      leftBtns += '<button class="wo-btn wo-btn-primary" style="background:linear-gradient(135deg,#0369a1,#0284c7);" onclick="erpCloseModal();openRecordPaymentModal({transactionId:\''+txn.id+'\',referenceType:\'transaction\',referenceId:\''+txn.id+'\',direction:\'out\',amount:'+(Number(txn.amount)||0)+',brandId:\''+(txn.brandId||txn.brand_id||'')+'\',branchId:\''+(txn.branchId||txn.branch_id||'')+'\',onSuccess:function(){loadDashboard&&loadDashboard();}})"><i class="fas fa-money-bill-transfer"></i><span>تسجيل دفعة</span></button>';
     }
 
-    toolbar += '</div><div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-      '<button class="wo-btn wo-btn-secondary" style="padding:8px 14px;font-size:12px;" onclick="wfPrintTxn(\''+txn.id+'\')"><i class="fas fa-print"></i><span>طباعة</span></button>' +
-      (canEdit ? '<button class="wo-btn wo-btn-secondary" style="padding:8px 14px;font-size:12px;" onclick="wfEditOutboxTxn(\''+txn.id+'\')"><i class="fas fa-pen"></i><span>تعديل</span></button>' : '') +
-      (canEdit ? '<button class="wo-btn wo-btn-danger" style="padding:8px 14px;font-size:12px;" onclick="wfCancelOutboxTxn(\''+txn.id+'\')"><i class="fas fa-trash"></i><span>إلغاء</span></button>' : '') +
-    '</div></div>';
+    var rightBtns = '<button class="wo-btn wo-btn-secondary" onclick="wfPrintTxn(\''+txn.id+'\')"><i class="fas fa-print"></i><span>طباعة</span></button>';
+    if (canEditFresh) {
+      rightBtns += '<button class="wo-btn wo-btn-secondary" onclick="wfEditOutboxTxn(\''+txn.id+'\')"><i class="fas fa-pen"></i><span>تعديل</span></button>';
+    }
+    if (canCancel) {
+      rightBtns += '<button class="wo-btn wo-btn-danger" onclick="wfCancelOutboxTxn(\''+txn.id+'\')"><i class="fas fa-trash"></i><span>إلغاء</span></button>';
+    }
+    rightBtns += '<button class="wo-btn wo-btn-secondary" onclick="erpCloseModal()"><i class="fas fa-xmark"></i><span>إغلاق</span></button>';
 
-    document.getElementById('erpModalTitle').textContent = txn.txnNumber || 'تفاصيل المعاملة';
-    document.getElementById('erpModalBody').innerHTML = toolbar + html;
+    var toolbar =
+      '<div class="wo-txn-toolbar-sticky">' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + leftBtns + '</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + rightBtns + '</div>' +
+      '</div>';
+
+    document.getElementById('erpModalTitle').innerHTML = '<i class="fas '+(sIcon[txn.status]||'fa-file-lines')+'" style="color:'+sc+';margin-inline-end:8px;"></i>' + esc(txn.subject || txn.title || 'تفاصيل المعاملة') + ' <small style="color:#94a3b8;font-weight:700;font-family:monospace;">' + esc(txn.txnNumber || '') + '</small>';
+    var modalBody = document.getElementById('erpModalBody');
+    modalBody.innerHTML = html + toolbar;
+    // Make the modal wider to honor the two-column layout
+    var modalEl = document.getElementById('erpModal');
+    if (modalEl) {
+      var dialog = modalEl.querySelector('.modal-content, .erp-modal-content, .wo-modal');
+      if (dialog) {
+        dialog.style.maxWidth = '1200px';
+        dialog.style.width = '95vw';
+      }
+    }
     document.getElementById('erpModalSaveBtn').style.display = 'none';
-    document.getElementById('erpModal').classList.remove('hidden');
+    modalEl.classList.remove('hidden');
     setTimeout(function() { document.getElementById('erpModalSaveBtn').style.display = ''; }, 100);
     // V3: lazy-load replies thread
     setTimeout(function() { try { admLoadReplies(txn.id); } catch(e){ console.warn('admLoadReplies err:', e); } }, 50);
@@ -7434,8 +7549,10 @@ function wfResetOutboxFilters() {
   wfLoadOutbox();
 }
 
-var _wfOutStatusAr = { pending:'قيد الانتظار', in_progress:'قيد التشغيل', approved:'معتمدة', rejected:'مطلوب التعديل', closed:'منتهية', draft:'مسودة' };
-var _wfOutStatusClr = { pending:'#f59e0b', in_progress:'#16a34a', approved:'#0ea5e9', rejected:'#ea580c', closed:'#64748b', draft:'#94a3b8' };
+// V3.1: status palette — 'returned' is a distinct first-class state ("مرجعة للتعديل")
+var _wfOutStatusAr = { pending:'قيد الانتظار', in_progress:'قيد التشغيل', approved:'معتمدة', returned:'مرجعة للتعديل', rejected:'مرفوضة', closed:'منتهية', draft:'مسودة' };
+var _wfOutStatusClr = { pending:'#f59e0b', in_progress:'#16a34a', approved:'#0ea5e9', returned:'#dc2626', rejected:'#991b1b', closed:'#64748b', draft:'#94a3b8' };
+var _wfOutStatusIcon = { pending:'fa-clock', in_progress:'fa-spinner', approved:'fa-circle-check', returned:'fa-rotate-left', rejected:'fa-circle-xmark', closed:'fa-lock', draft:'fa-file-pen' };
 var _wfOutImpAr = { critical:'عاجل', high:'عالي', medium:'عادي', low:'منخفض' };
 var _wfOutImpClr = { critical:'#dc2626', high:'#ea580c', medium:'#16a34a', low:'#10b981' };
 
@@ -7457,22 +7574,27 @@ function wfLoadOutbox() {
     if (el && el.value) filters[k] = el.value;
   });
 
-  // Summary cards
+  // Summary cards — V3.1: includes "مرجعة للتعديل" card so the user spots returned items at a glance
   window._apiBridge.withSuccessHandler(function(s) {
     var box = document.getElementById('wfOutboxSummary');
     if (!box) return;
-    var card = function(label, value, color) {
+    var card = function(label, value, color, icon) {
+      var iconHtml = icon ? '<i class="fas '+icon+'" style="color:'+color+';margin-inline-end:6px;"></i>' : '';
       return '<div style="background:#fff;border:1px solid '+color+'30;border-right:4px solid '+color+';border-radius:10px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">' +
-        '<span style="font-size:12px;color:#64748b;font-weight:700;">' + label + '</span>' +
+        '<span style="font-size:12px;color:#64748b;font-weight:700;">' + iconHtml + label + '</span>' +
         '<span style="font-size:22px;font-weight:900;color:'+color+';">' + (value||0) + '</span>' +
       '</div>';
     };
     var og = (s && s.outgoing) || {}, ig = (s && s.incoming) || {};
-    box.innerHTML =
-      card('مجموع المعاملات الصادرة', og.total||0, '#0ea5e9') +
-      card('المعاملات الصادرة المعلقة', og.open||0, '#f59e0b') +
-      card('مجموع المعاملات الواردة', ig.total||0, '#16a34a') +
-      card('الواردة المعلقة', ig.open||0, '#ef4444');
+    var html = card('مجموع المعاملات الصادرة', og.total||0, '#0ea5e9', 'fa-paper-plane') +
+      card('المعلقة', og.open||0, '#f59e0b', 'fa-clock');
+    // Show "مرجعة للتعديل" card only if there are any (so it stands out when relevant)
+    if ((og.returned||0) > 0) {
+      html += card('مرجعة للتعديل', og.returned, '#dc2626', 'fa-rotate-left');
+    }
+    html += card('مجموع المعاملات الواردة', ig.total||0, '#16a34a', 'fa-inbox') +
+      card('الواردة المعلقة', ig.open||0, '#ef4444', 'fa-bell');
+    box.innerHTML = html;
   }).getWfOutboxSummary({ username: currentUser });
 
   window._apiBridge.withSuccessHandler(function(list) {
@@ -7485,52 +7607,146 @@ function wfLoadOutbox() {
       var serialColor = t.isRead ? '#1e40af' : '#0ea5e9';
       var statusAr = _wfOutStatusAr[t.status] || t.status;
       var statusClr = _wfOutStatusClr[t.status] || '#64748b';
+      var statusIcon = _wfOutStatusIcon[t.status] || 'fa-circle';
       var impAr = _wfOutImpAr[t.importance || 'medium'];
       var impClr = _wfOutImpClr[t.importance || 'medium'];
       var scopeAr = t.scope === 'external' ? 'خارجية' : 'داخلية';
       var overdue = t.isOverdue ? ' <i class="fas fa-clock" title="تجاوزت المدة" style="color:#dc2626;margin-right:4px;"></i>' : '';
       var unread = t.isRead ? '' : ' <span style="background:#ef4444;color:#fff;border-radius:50%;width:7px;height:7px;display:inline-block;margin-right:3px;" title="غير مقروءة"></span>';
-      return '<tr style="cursor:pointer;" onclick="wfViewTxn(\''+t.id+'\')">' +
+      // V3.1: returned-for-edit visual treatment — pulsing left border + amber row tint + inline Resubmit
+      var isReturned = t.status === 'returned';
+      var rowStyle = isReturned
+        ? 'cursor:pointer;background:linear-gradient(90deg,#fef2f2 0%,#fff 30%);border-right:4px solid #dc2626;animation:wfReturnedPulse 2s ease-in-out infinite;'
+        : 'cursor:pointer;';
+      // Returned badge has its own pill style with a "rotate" icon to communicate "go back and fix"
+      var statusCell = isReturned
+        ? '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#fef2f2;color:#dc2626;border:1.5px solid #dc2626;font-weight:900;font-size:11px;"><i class="fas fa-rotate-left" style="font-size:10px;"></i> '+statusAr+(t.returnCount && t.returnCount > 1 ? ' <span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:999px;font-size:9px;">×'+t.returnCount+'</span>' : '')+'</span>'
+        : '<span style="display:inline-flex;align-items:center;gap:5px;color:'+statusClr+';font-weight:800;"><i class="fas '+statusIcon+'" style="font-size:10px;"></i> '+statusAr+'</span>';
+      // Action buttons differ per status
+      var actionBtn = '';
+      if (isReturned) {
+        // Returned: prominent "تعديل وإعادة إرسال" button
+        actionBtn = '<button class="btn btn-sm" style="background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;font-weight:800;padding:6px 12px;border-radius:8px;box-shadow:0 2px 4px rgba(220,38,38,.3);" onclick="event.stopPropagation();wfEditOutboxTxn(\''+t.id+'\')"><i class="fas fa-pen-to-square"></i> تعديل وإعادة إرسال</button>';
+      } else {
+        actionBtn = '<button class="btn btn-sm" style="background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;" onclick="wfViewTxn(\''+t.id+'\')"><i class="fas fa-route"></i> سير المعاملة</button>';
+      }
+      return '<tr style="'+rowStyle+'" onclick="wfViewTxn(\''+t.id+'\')">' +
         '<td style="font-family:monospace;font-weight:800;color:'+serialColor+';font-size:11px;">'+(t.txnNumber||'')+unread+'</td>' +
         '<td style="font-size:12px;">'+dt+overdue+'</td>' +
         '<td style="font-size:12px;">'+(t.issuingEntityName || t.deptName || t.branchName || '—')+'</td>' +
-        '<td style="font-weight:700;max-width:280px;overflow:hidden;text-overflow:ellipsis;">'+(t.subject||t.title||'')+(t.expenseCategoryName?'<div style="font-size:10px;color:#8b5cf6;font-weight:700;"><i class="fas fa-tag" style="font-size:8px;"></i> '+t.expenseCategoryName+'</div>':'')+'</td>' +
+        '<td style="font-weight:700;max-width:280px;overflow:hidden;text-overflow:ellipsis;">'+(t.subject||t.title||'')+(t.expenseCategoryName?'<div style="font-size:10px;color:#8b5cf6;font-weight:700;"><i class="fas fa-tag" style="font-size:8px;"></i> '+t.expenseCategoryName+'</div>':'')+(isReturned && t.returnReason?'<div style="font-size:10px;color:#dc2626;font-weight:700;margin-top:3px;background:#fef2f2;padding:3px 6px;border-radius:6px;border-right:2px solid #dc2626;"><i class="fas fa-quote-right" style="font-size:8px;"></i> '+_woEscapeHtml(t.returnReason.substring(0,80))+(t.returnReason.length>80?'…':'')+'</div>':'')+'</td>' +
         '<td style="font-weight:800;color:'+impClr+';">'+impAr+'</td>' +
         '<td style="color:#0ea5e9;font-weight:700;">'+scopeAr+'</td>' +
-        '<td style="font-weight:800;color:'+statusClr+';">'+statusAr+'</td>' +
-        '<td onclick="event.stopPropagation();"><button class="btn btn-sm" style="background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;" onclick="wfViewTxn(\''+t.id+'\')"><i class="fas fa-route"></i> سير المعاملة</button></td>' +
+        '<td>'+statusCell+'</td>' +
+        '<td onclick="event.stopPropagation();">'+actionBtn+'</td>' +
       '</tr>';
     }).join('');
   }).getWfOutbox(filters);
 }
 
+// V3.1: Enhanced edit modal — when txn is 'returned', shows the return reason
+// at the top, supports rich-text content + new attachment, and on save offers
+// "Save as draft" vs "Save and resubmit" so the user knows the workflow continues.
 function wfEditOutboxTxn(id) {
   window._apiBridge.withSuccessHandler(function(txn) {
     if (!txn || txn.error) return showToast('غير موجود', true);
-    document.getElementById('erpModalTitle').textContent = 'تعديل المعاملة — ' + (txn.txnNumber||'');
+    var esc = _woEscapeHtml;
+    var isReturned = txn.status === 'returned';
+    var modalTitle = isReturned
+      ? '<i class="fas fa-rotate-left" style="color:#dc2626;margin-inline-end:8px;"></i> تعديل وإعادة إرسال — ' + esc(txn.txnNumber||'')
+      : '<i class="fas fa-pen" style="color:#0ea5e9;margin-inline-end:8px;"></i> تعديل المعاملة — ' + esc(txn.txnNumber||'');
+    document.getElementById('erpModalTitle').innerHTML = modalTitle;
+
+    // Banner showing why it was returned (when applicable) — top of modal so user sees context first
+    var returnContext = '';
+    if (isReturned && (txn.returnReason || txn.returnedBy)) {
+      var retDt = '';
+      try { retDt = new Date(txn.returnedAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(_){}
+      returnContext =
+        '<div class="wo-txn-banner returned" style="margin-bottom:14px;">' +
+          '<div style="width:42px;height:42px;border-radius:50%;background:#dc2626;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:18px;"><i class="fas fa-circle-exclamation"></i></div>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:13px;font-weight:900;color:#991b1b;">سبب الإرجاع — يرجى التعديل ثم إعادة الإرسال</div>' +
+            '<div style="font-size:11px;color:#7f1d1d;margin-top:2px;"><b>المُرجِع:</b> ' + esc(txn.returnedBy||'—') + (retDt ? ' · ' + retDt : '') + '</div>' +
+            (txn.returnReason ? '<div style="margin-top:6px;padding:8px 12px;background:#fff;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#991b1b;line-height:1.7;">' + esc(txn.returnReason) + '</div>' : '') +
+          '</div>' +
+        '</div>';
+    }
+
+    // Form
     document.getElementById('erpModalBody').innerHTML =
-      '<div class="form-row"><label>العنوان *</label><input class="form-control" id="wfEdTitle" value="'+(txn.title||'').replace(/"/g,'&quot;')+'"></div>' +
-      '<div class="form-row"><label>التفاصيل</label><textarea class="form-control" id="wfEdDesc" rows="3">'+(txn.description||'')+'</textarea></div>' +
+      returnContext +
+      '<div class="form-row"><label>الموضوع *</label><input class="form-control wo-input" id="wfEdTitle" value="'+esc(txn.subject||txn.title||'')+'" style="font-size:14px;font-weight:700;"></div>' +
+      '<div class="form-row"><label>المحتوى التفصيلي</label>' +
+        '<textarea class="form-control wo-textarea" id="wfEdContentHtml" rows="8" style="font-family:inherit;font-size:13px;line-height:1.8;">'+esc(txn.contentHtml || txn.description || '')+'</textarea>' +
+        '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">يدعم النص العادي وHTML بسيط (<b>، <i>، <ul>، <li>، فواصل أسطر).</div>' +
+      '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>المبلغ</label><input type="number" class="form-control" id="wfEdAmount" step="0.01" min="0" value="'+Number(txn.amount||0)+'"></div>' +
-        '<div class="form-row"><label>الأهمية</label><select class="form-control" id="wfEdImp">' +
-          ['low','medium','high','critical'].map(function(i){return '<option value="'+i+'"'+(i===(txn.importance||'medium')?' selected':'')+'>'+(window._wfImpLabels[i]||i)+'</option>';}).join('') +
+        '<div class="form-row"><label>المبلغ</label><input type="number" class="form-control wo-input" id="wfEdAmount" step="0.01" min="0" value="'+Number(txn.amount||0)+'"></div>' +
+        '<div class="form-row"><label>الأهمية</label><select class="form-control wo-input" id="wfEdImp">' +
+          ['low','medium','high','critical'].map(function(i){return '<option value="'+i+'"'+(i===(txn.importance||'medium')?' selected':'')+'>'+(window._wfImpLabels && window._wfImpLabels[i]||i)+'</option>';}).join('') +
         '</select></div>' +
-      '</div>';
+      '</div>' +
+      '<div class="form-row" style="margin-top:8px;"><label>مرفق جديد <span style="color:#94a3b8;font-weight:600;">(اختياري — يستبدل المرفق السابق)</span></label>' +
+        '<input type="file" class="form-control wo-input" id="wfEdFile" accept=".pdf,.jpg,.jpeg,.png">' +
+      '</div>' +
+      (isReturned ? '<div style="margin-top:12px;padding:10px 14px;background:#eff6ff;border:1px dashed #bfdbfe;border-radius:8px;font-size:12px;color:#1e3a8a;"><i class="fas fa-info-circle"></i> عند الحفظ ستُعرض لك خياران: <b>حفظ كمسودة</b> (تبقى مرجعة) أو <b>حفظ وإعادة الإرسال</b> (تعود لمراجعة الجهة التي أرجعتها).</div>' : '');
+
+    document.getElementById('erpModalSaveBtn').textContent = isReturned ? 'حفظ المعاملة' : 'حفظ التعديلات';
     document.getElementById('erpModalSaveBtn').onclick = function() {
-      loader(true);
-      window._apiBridge.withSuccessHandler(function(r) {
-        loader(false);
-        if (r.success) { showToast('تم الحفظ'); erpCloseModal(); wfLoadOutbox(); }
-        else showToast(r.error, true);
-      }).updateWfTransaction(id, {
-        title: document.getElementById('wfEdTitle').value,
-        description: document.getElementById('wfEdDesc').value,
-        amount: Number(document.getElementById('wfEdAmount').value)||0,
-        importance: document.getElementById('wfEdImp').value,
-        username: currentUser
-      });
+      var fileInput = document.getElementById('wfEdFile');
+      var doSave = function(attachment) {
+        loader(true);
+        var payload = {
+          title: document.getElementById('wfEdTitle').value,
+          contentHtml: document.getElementById('wfEdContentHtml').value,
+          description: document.getElementById('wfEdContentHtml').value, // keep description in sync
+          amount: Number(document.getElementById('wfEdAmount').value)||0,
+          importance: document.getElementById('wfEdImp').value,
+          username: currentUser
+        };
+        if (attachment) payload.attachment = attachment;
+        window._apiBridge.withSuccessHandler(function(r) {
+          loader(false);
+          if (!r.success) { showToast(r.error || 'فشل الحفظ', true); return; }
+          showToast('تم حفظ التعديلات');
+          if (isReturned) {
+            // Ask the user whether to resubmit now or keep as draft
+            erpConfirm(
+              'إعادة إرسال المعاملة؟',
+              'هل ترغب في إعادة إرسال المعاملة الآن إلى الجهة التي أرجعتها؟ اضغط "تأكيد" للإرسال أو "إلغاء" لإبقائها مرجعة.',
+              function() {
+                loader(true);
+                window._apiBridge.withSuccessHandler(function(rr) {
+                  loader(false);
+                  if (rr.success) {
+                    showToast('تم إعادة الإرسال بنجاح');
+                    erpCloseModal();
+                    wfLoadOutbox();
+                  } else {
+                    showToast(rr.error || 'فشل إعادة الإرسال', true);
+                  }
+                }).resubmitWfTransaction(id, { username: currentUser, note: 'تم التعديل بناءً على ملاحظات الإرجاع' });
+              },
+              { icon:'fa-paper-plane', color:'#0ea5e9', okText:'تأكيد وإعادة الإرسال', cancelText:'حفظ كمسودة فقط' }
+            );
+          } else {
+            erpCloseModal();
+            wfLoadOutbox();
+          }
+        }).updateWfTransaction(id, payload);
+      };
+      // Read attachment if user picked one
+      if (fileInput && fileInput.files && fileInput.files[0]) {
+        var reader = new FileReader();
+        reader.onload = function() { doSave(reader.result); };
+        reader.onerror = function() { showToast('تعذّر قراءة الملف', true); };
+        reader.readAsDataURL(fileInput.files[0]);
+      } else {
+        doSave(null);
+      }
     };
+    document.getElementById('erpModalSaveBtn').style.display = '';
     document.getElementById('erpModal').classList.remove('hidden');
   }).getWfTransaction(id);
 }

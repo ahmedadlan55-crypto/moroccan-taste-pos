@@ -1334,6 +1334,12 @@ function _mapTxn(t) {
     costCenterName: t.cost_center_name || '',
     recipientUsername: t.recipient_username || '',
     senderName: t.sender_name || '', senderPosition: t.sender_position || '',
+    // V3.1: returned-for-edit metadata
+    returnedAt: t.returned_at || null,
+    returnedBy: t.returned_by || null,
+    returnReason: t.returned_reason || null,
+    returnCount: Number(t.return_count) || 0,
+    isReturnedForEdit: t.status === 'returned',
     createdAt: t.created_at, updatedAt: t.updated_at
   });
 }
@@ -1396,18 +1402,26 @@ router.get('/outbox-summary', async (req, res) => {
          SUM(CASE WHEN status IN ('pending','in_progress') THEN 1 ELSE 0 END) AS open_out,
          SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed_out,
          SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected_out,
+         SUM(CASE WHEN status = 'returned' THEN 1 ELSE 0 END) AS returned_out,
          COUNT(*) AS total_out
        FROM transactions WHERE created_by = ?`, [username]);
+    // V3.1: incoming summary excludes own items so the count matches the visible inbox
     const [inRows] = await db.query(
       `SELECT
          SUM(CASE WHEN status IN ('pending','in_progress') THEN 1 ELSE 0 END) AS open_in,
          SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed_in,
          COUNT(*) AS total_in
-       FROM transactions WHERE current_assignee = ? OR recipient_username = ?`,
-      [username, username]);
+       FROM transactions WHERE (current_assignee = ? OR recipient_username = ?) AND created_by != ?`,
+      [username, username, username]);
     const r = rows[0] || {}, ri = inRows[0] || {};
     res.json({
-      outgoing: { open: Number(r.open_out)||0, closed: Number(r.closed_out)||0, rejected: Number(r.rejected_out)||0, total: Number(r.total_out)||0 },
+      outgoing: {
+        open: Number(r.open_out)||0,
+        closed: Number(r.closed_out)||0,
+        rejected: Number(r.rejected_out)||0,
+        returned: Number(r.returned_out)||0,
+        total: Number(r.total_out)||0
+      },
       incoming: { open: Number(ri.open_in)||0, closed: Number(ri.closed_in)||0, total: Number(ri.total_in)||0 }
     });
   } catch(e) { res.json({ outgoing: {}, incoming: {} }); }
@@ -1425,6 +1439,8 @@ router.post('/transactions/:id/mark-read', async (req, res) => {
 });
 
 // INCOMING BOX — transactions awaiting my action (صندوق الوارد)
+// V3.1: Strictly "received from others". Items I created are NEVER shown here —
+// even if returned to me — they belong only in the outbox with a "مرجعة للتعديل" badge.
 router.get('/incoming', async (req, res) => {
   try {
     const username = req.query.username || (req.user && req.user.username) || '';
@@ -1434,8 +1450,9 @@ router.get('/incoming', async (req, res) => {
     //   (A) directly assigned: current_assignee = username OR recipient_username = username
     //   (B) matches current step's required position AND status pending/in_progress
     //   (C) admins see all pending/in_progress (if they also have canApprove)
-    const conditions = ["(t.status IN ('pending','in_progress'))"];
-    const params = [];
+    // EXCLUSION (V3.1): never include items the user created themselves
+    const conditions = ["(t.status IN ('pending','in_progress'))", "t.created_by != ?"];
+    const params = [username]; // first param for created_by exclusion
     const orParts = [];
     orParts.push('t.current_assignee = ?'); params.push(username);
     orParts.push('t.recipient_username = ?'); params.push(username);
@@ -1584,35 +1601,109 @@ router.get('/transactions/:id', async (req, res) => {
   } catch(e) { res.json({ error: e.message }); }
 });
 
-// Edit (only by creator, only if still in their control: no outside actions yet)
+// Edit (creator only).
+// V3.1: ALSO allowed when status='returned' (the whole point of returning is to let creator fix it).
+// Blocked once anyone else has approved/rejected/closed (status not in draft/pending/returned).
 router.put('/transactions/:id', async (req, res) => {
   try {
-    const { title, description, amount, importance, username } = req.body;
+    const { title, description, contentHtml, amount, importance, username, attachment } = req.body;
     const [txns] = await db.query('SELECT * FROM transactions WHERE id = ?', [req.params.id]);
     if (!txns.length) return res.json({ success: false, error: 'المعاملة غير موجودة' });
     const txn = txns[0];
     if (txn.created_by !== username) return res.json({ success: false, error: 'لا يمكن التعديل — لست المنشئ' });
-    // Allow only if no actions besides creation yet
-    const [logs] = await db.query("SELECT COUNT(*) AS cnt FROM transaction_steps_log WHERE transaction_id = ? AND action_type != 'create'", [req.params.id]);
-    if (logs[0].cnt > 0) return res.json({ success: false, error: 'لا يمكن التعديل — تم التصرف في المعاملة' });
+    // V3.1: editing allowed in three states: draft, pending (no one acted yet), or returned (sent back to fix)
+    const editableStatuses = ['draft', 'pending', 'returned'];
+    if (!editableStatuses.includes(txn.status)) {
+      return res.json({ success: false, error: 'لا يمكن التعديل — المعاملة قيد التنفيذ أو منتهية' });
+    }
+    // For 'pending' (not returned), still block if non-creator already acted
+    if (txn.status === 'pending') {
+      const [logs] = await db.query("SELECT COUNT(*) AS cnt FROM transaction_steps_log WHERE transaction_id = ? AND action_type != 'create' AND action_by != ?", [req.params.id, username]);
+      if (logs[0].cnt > 0) return res.json({ success: false, error: 'لا يمكن التعديل — تم التصرف في المعاملة من جهة أخرى' });
+    }
 
     const sets = []; const params = [];
-    if (title !== undefined) { sets.push('title=?'); params.push(title); }
+    if (title !== undefined) { sets.push('title=?'); params.push(title); sets.push('subject=?'); params.push(title); }
     if (description !== undefined) { sets.push('description=?'); params.push(description); }
+    if (contentHtml !== undefined) { sets.push('content_html=?'); params.push(contentHtml); }
     if (amount !== undefined) { sets.push('amount=?'); params.push(Number(amount)||0); }
     if (importance !== undefined && ['critical','high','medium','low'].includes(importance)) {
       sets.push('importance=?'); params.push(importance);
+    }
+    if (attachment !== undefined && typeof attachment === 'string' && attachment.startsWith('data:')) {
+      sets.push('attachment=?'); params.push(attachment);
     }
     if (!sets.length) return res.json({ success: false, error: 'لا تغييرات' });
     params.push(req.params.id);
     await db.query(`UPDATE transactions SET ${sets.join(', ')} WHERE id = ?`, params);
 
-    // Log edit
+    // Log edit (use distinct note so timeline shows it)
+    const editNote = txn.status === 'returned' ? 'تم تعديل المعاملة استجابة للإرجاع' : 'تم تعديل بيانات المعاملة';
     await db.query(
       'INSERT INTO transaction_steps_log (id, transaction_id, action_by, action_type, action_note) VALUES (?,?,?,?,?)',
-      ['LOG-' + Date.now() + '-' + Math.random().toString(36).substr(2,4), req.params.id, username||'', 'create', 'تم تعديل بيانات المعاملة']);
+      ['LOG-' + Date.now() + '-' + Math.random().toString(36).substr(2,4), req.params.id, username||'', 'create', editNote]);
 
-    res.json({ success: true });
+    res.json({ success: true, status: txn.status });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// V3.1: Resubmit a returned transaction back into the workflow.
+// Status moves from 'returned' → 'pending' (or 'in_progress' if the workflow has more steps).
+// The transaction goes back to the step it was returned FROM (the assignee who returned it),
+// or to the first non-creator step if we can't reconstruct it.
+router.post('/transactions/:id/resubmit', async (req, res) => {
+  try {
+    const { username, note } = req.body;
+    const [txns] = await db.query('SELECT * FROM transactions WHERE id = ?', [req.params.id]);
+    if (!txns.length) return res.json({ success: false, error: 'المعاملة غير موجودة' });
+    const txn = txns[0];
+    if (txn.created_by !== username) return res.json({ success: false, error: 'لا يمكن إعادة الإرسال — لست المنشئ' });
+    if (txn.status !== 'returned') return res.json({ success: false, error: 'يمكن إعادة الإرسال للمعاملات المرجعة فقط' });
+
+    // Strategy: advance to the NEXT step from the current_step_id (the step where it was when returned)
+    // For position-based workflows, look up next step matching amount
+    let newStepId = txn.current_step_id;
+    let newAssignee = txn.current_assignee;
+    let newStatus = 'in_progress';
+    let newRoleName = txn.current_role_name || '';
+    let newRoleId = txn.current_role_id || null;
+
+    // If current_step_id exists, get the actual step row so we can resolve assignee
+    if (txn.current_step_id) {
+      const [posRow] = await db.query('SELECT * FROM position_workflow_steps WHERE id = ?', [txn.current_step_id]);
+      if (posRow.length) {
+        const step = _normalizePositionStep(posRow[0]);
+        if (step.required_position_id) {
+          const resolved = await resolveAssigneeForStep(step, txn.branch_id, txn.dept_id);
+          newAssignee = resolved.username || newAssignee;
+          newRoleId = step.required_position_id;
+          newRoleName = resolved.roleName || newRoleName;
+        }
+      } else {
+        const [legacy] = await db.query('SELECT * FROM workflow_definitions WHERE id = ?', [txn.current_step_id]);
+        if (legacy.length && legacy[0].required_position_id) {
+          const resolved = await resolveAssigneeForStep(legacy[0], txn.branch_id, txn.dept_id);
+          newAssignee = resolved.username || newAssignee;
+          newRoleId = legacy[0].required_position_id;
+          newRoleName = resolved.roleName || newRoleName;
+        }
+      }
+    }
+
+    // Transition. If no assignee resolved, status stays pending so any matching role can pick it up.
+    if (!newAssignee) newStatus = 'pending';
+
+    await db.query(
+      `UPDATE transactions SET status = ?, current_step_id = ?, current_assignee = ?,
+              current_role_id = ?, current_role_name = ? WHERE id = ?`,
+      [newStatus, newStepId, newAssignee || '', newRoleId, newRoleName, req.params.id]);
+
+    // Log the resubmission as a special action so the timeline shows it
+    await db.query(
+      'INSERT INTO transaction_steps_log (id, transaction_id, workflow_definition_id, action_by, action_type, action_note) VALUES (?,?,?,?,?,?)',
+      ['LOG-' + Date.now() + '-' + Math.random().toString(36).substr(2,4), req.params.id, txn.current_step_id, username||'', 'forward', '[إعادة إرسال بعد التعديل] ' + (note || '')]);
+
+    res.json({ success: true, newStatus, newAssignee });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
@@ -1757,7 +1848,16 @@ router.post('/transactions/:id/action', async (req, res) => {
       } else {
         newAssignee = txn.created_by;
       }
-      newStatus = 'pending';
+      // V3.1: Use distinct 'returned' status (not 'pending') so the creator
+      // sees a clear "مرجعة للتعديل" badge and the edit button reappears.
+      newStatus = 'returned';
+      // Stamp returned metadata — creator sees who returned + why + how many times
+      try {
+        await db.query(
+          `UPDATE transactions SET returned_at = NOW(), returned_by = ?, returned_reason = ?,
+                  return_count = COALESCE(return_count, 0) + 1 WHERE id = ?`,
+          [username || '', String(note || '').substring(0, 500), req.params.id]);
+      } catch(e) { /* tolerate if columns missing on very old deploy */ }
     } else if (action === 'close') {
       newStatus = 'closed'; newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
     } else if (action === 'forward') {

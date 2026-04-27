@@ -116,6 +116,7 @@ var I18N = {
     'txn.status.in_progress': 'قيد التنفيذ',
     'txn.status.approved': 'معتمدة',
     'txn.status.rejected': 'مرفوضة',
+    'txn.status.returned': 'مرجعة للتعديل',
     'txn.status.closed': 'مغلقة',
     'txn.status.draft': 'مسودة',
     'txn.imp.critical': 'عاجل',
@@ -311,6 +312,7 @@ var I18N = {
     'txn.status.in_progress': 'In Progress',
     'txn.status.approved': 'Approved',
     'txn.status.rejected': 'Rejected',
+    'txn.status.returned': 'Returned for Edit',
     'txn.status.closed': 'Closed',
     'txn.status.draft': 'Draft',
     'txn.imp.critical': 'Critical',
@@ -1172,20 +1174,37 @@ function loadMyTransactions() {
     var localeCode = currentLang === 'en' ? 'en-US' : 'ar-SA';
     c.innerHTML = txns.map(function(tx) {
       var dt = tx.createdAt ? new Date(tx.createdAt).toLocaleDateString(localeCode,{day:'numeric',month:'short'}) : '';
-      var canEdit = (tx.status==='pending' || tx.status==='draft');
+      var isReturned = tx.status === 'returned';
+      // V3.1: editable while pending/draft (workflow not started) OR while returned (creator must fix and resubmit)
+      var canEdit = (tx.status==='pending' || tx.status==='draft' || isReturned);
       var actBtns = '';
-      if (canEdit) {
+      if (isReturned) {
+        // Prominent Resubmit button — the obvious next step for a returned txn
+        actBtns = '<div style="display:flex;gap:4px;margin-top:8px;">' +
+          '<button onclick="event.stopPropagation();empEditTxn(\''+tx.id+'\')" style="flex:2;padding:9px;border:none;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border-radius:8px;font-size:12px;font-weight:900;cursor:pointer;box-shadow:0 2px 4px rgba(220,38,38,.3);"><i class="fas fa-pen-to-square"></i> تعديل وإعادة الإرسال</button>' +
+          '<button onclick="event.stopPropagation();empCancelTxn(\''+tx.id+'\')" style="flex:1;padding:9px;border:none;background:#fef2f2;color:#991b1b;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-trash"></i></button>' +
+        '</div>';
+      } else if (canEdit) {
         actBtns = '<div style="display:flex;gap:4px;margin-top:6px;">' +
           '<button onclick="event.stopPropagation();empEditTxn(\''+tx.id+'\')" style="flex:1;padding:6px;border:none;background:#eff6ff;color:#1e40af;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-edit"></i> '+t('txn.edit')+'</button>' +
           '<button onclick="event.stopPropagation();empCancelTxn(\''+tx.id+'\')" style="flex:1;padding:6px;border:none;background:#fef2f2;color:#991b1b;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-trash"></i> '+t('txn.cancel')+'</button>' +
         '</div>';
       }
-      return '<div style="border-bottom:1px solid #f5f5f5;padding:10px 0;">' +
-        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' + _impBadge(tx.importance||'medium') + _statBadge(tx.status) + '</div>' +
+      // Returned-state row treatment: red left border + soft tint
+      var rowStyle = isReturned
+        ? 'border-bottom:1px solid #f5f5f5;padding:10px 12px 10px 14px;background:linear-gradient(90deg,#fef2f2,#fff 30%);border-right:4px solid #dc2626;border-radius:8px;margin-bottom:4px;'
+        : 'border-bottom:1px solid #f5f5f5;padding:10px 0;';
+      // Status badge — for returned, use a distinctive red pill
+      var statusPill = isReturned
+        ? '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;background:#fef2f2;color:#dc2626;border:1px solid #dc2626;font-size:10px;font-weight:900;"><i class="fas fa-rotate-left" style="font-size:9px;"></i> مرجعة للتعديل' + (tx.returnCount > 1 ? ' ×' + tx.returnCount : '') + '</span>'
+        : _statBadge(tx.status);
+      return '<div style="' + rowStyle + '">' +
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' + _impBadge(tx.importance||'medium') + statusPill + '</div>' +
         '<div onclick="viewMyTxn(\''+tx.id+'\')" style="cursor:pointer;">' +
           '<div style="font-weight:800;font-size:13px;color:#0f172a;">' + (tx.title||'') + '</div>' +
           '<div style="font-size:10px;font-family:monospace;color:#64748b;margin-top:2px;">'+(tx.txnNumber||'')+'</div>' +
           '<div class="meta">' + (tx.typeName||'') + ' • ' + dt + ' • '+t('txn.responsible')+': <b style="color:#1e40af;">' + (tx.currentAssignee||tx.currentPositionName||'—') + '</b></div>' +
+          (isReturned && tx.returnReason ? '<div style="margin-top:6px;padding:6px 10px;background:#fff;border:1px solid #fecaca;border-radius:6px;font-size:11px;color:#991b1b;line-height:1.5;"><i class="fas fa-quote-right" style="font-size:9px;margin-inline-end:4px;"></i>' + (tx.returnReason.length > 100 ? tx.returnReason.substring(0,100) + '…' : tx.returnReason) + '</div>' : '') +
         '</div>' +
         actBtns +
       '</div>';
@@ -1265,10 +1284,14 @@ window.submitTxnEdit = function() {
   if (!title || title.trim().length < 5) return toast('العنوان قصير جداً (5 أحرف على الأقل)', true);
   toast('جاري الحفظ...');
   callAPI('PUT', '/workflow/transactions/'+id, {
-    username: currentUser, title: title, description: desc, amount: amount, importance: importance
+    username: currentUser, title: title, description: desc, contentHtml: desc, amount: amount, importance: importance
   }, function(r) {
-    if (r && r.success) {
-      toast('✓ تم حفظ التعديلات');
+    if (!(r && r.success)) {
+      return toast(r ? r.error : 'فشل الحفظ', true);
+    }
+    toast('✓ تم حفظ التعديلات');
+    var wasReturned = (r.status === 'returned');
+    var doFinish = function() {
       window._editingTxnId = null;
       // Restore the modal back to "create" mode so it works next time
       var titleSpan = document.querySelector('#txnModal .modal-h span');
@@ -1283,8 +1306,21 @@ window.submitTxnEdit = function() {
       var recSel  = document.getElementById('txnRecipient'); if (recSel) { recSel.disabled = false; recSel.style.background = ''; }
       closeTxnModal();
       loadMyTransactions();
+    };
+    // V3.1: If this was a returned transaction, ask if they want to resubmit it now
+    if (wasReturned) {
+      // Use a simple confirm dialog (consistent with employee app's existing patterns)
+      if (window.confirm('تم الحفظ بنجاح.\n\nهل ترغب في إعادة إرسال المعاملة الآن إلى الجهة التي أرجعتها؟\n\n• اضغط "موافق" → لإعادة الإرسال\n• اضغط "إلغاء" → لإبقائها مرجعة كمسودة معدّلة')) {
+        callAPI('POST', '/workflow/transactions/' + id + '/resubmit', { username: currentUser, note: 'تم التعديل بناءً على ملاحظات الإرجاع' }, function(rr) {
+          if (rr && rr.success) toast('✓ تم إعادة الإرسال');
+          else toast(rr ? rr.error : 'فشل إعادة الإرسال', true);
+          doFinish();
+        });
+      } else {
+        doFinish();
+      }
     } else {
-      toast(r ? r.error : 'فشل الحفظ', true);
+      doFinish();
     }
   });
 };
@@ -1507,10 +1543,20 @@ function viewMyTxn(id) {
         '</div>' +
       '</div>';
     } else if (txn.status === 'returned') {
-      h += '<div style="padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,#ffedd5,#fff);border:1.5px solid #f97316;margin-bottom:10px;display:flex;align-items:center;gap:10px;">' +
-        '<div style="width:40px;height:40px;border-radius:50%;background:#f97316;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;"><i class="fas fa-undo"></i></div>' +
-        '<div style="flex:1;"><div style="font-size:10px;font-weight:800;color:#9a3412;text-transform:uppercase;">تم إرجاع المعاملة للمرسل</div>' +
-        '<div style="font-size:13px;font-weight:800;color:#7c2d12;margin-top:2px;">يحتاج المرسل لتصحيح وإعادة الإرسال</div></div>' +
+      // V3.1: Show full return context — who returned, when, and the reason text
+      var retDt = '';
+      try { if (txn.returnedAt) retDt = new Date(txn.returnedAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(_){}
+      var isMyOwn = (txn.createdBy === currentUser);
+      h += '<div style="padding:14px;border-radius:14px;background:linear-gradient(135deg,#fef2f2,#fff);border:2px solid #dc2626;margin-bottom:10px;display:flex;align-items:flex-start;gap:12px;box-shadow:0 4px 12px rgba(220,38,38,.15);">' +
+        '<div style="width:46px;height:46px;border-radius:50%;background:#dc2626;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:18px;"><i class="fas fa-rotate-left"></i></div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:14px;font-weight:900;color:#991b1b;">' + (isMyOwn ? '⚠️ تم إرجاع معاملتك للتعديل' : 'تم إرجاع المعاملة للمرسل') + (txn.returnCount > 1 ? ' (المرة ' + txn.returnCount + ')' : '') + '</div>' +
+          '<div style="font-size:11.5px;color:#7f1d1d;margin-top:3px;font-weight:700;">' +
+            '<b>المُرجِع:</b> ' + _esc(txn.returnedBy || '—') + (retDt ? ' · ' + retDt : '') +
+          '</div>' +
+          (txn.returnReason ? '<div style="margin-top:8px;padding:10px 12px;background:#fff;border:1px solid #fecaca;border-radius:10px;font-size:13px;color:#991b1b;line-height:1.7;font-weight:600;"><i class="fas fa-quote-right" style="font-size:11px;color:#dc2626;margin-inline-end:6px;"></i>' + _esc(txn.returnReason) + '</div>' : '') +
+          (isMyOwn ? '<div style="margin-top:8px;font-size:11px;color:#991b1b;"><i class="fas fa-info-circle"></i> اضغط زر <b>"تعديل وإعادة الإرسال"</b> أدناه لتصحيح المعاملة وإرسالها مرة أخرى.</div>' : '') +
+        '</div>' +
       '</div>';
     } else if (txn.status === 'approved' || txn.status === 'closed') {
       h += '<div style="padding:10px 14px;border-radius:10px;background:#dcfce7;border:1px solid #86efac;margin-bottom:10px;display:flex;align-items:center;gap:10px;">' +
@@ -1538,7 +1584,15 @@ function viewMyTxn(id) {
       h += '<div style="font-size:13px;color:#94a3b8;font-style:italic;text-align:center;padding:14px;margin-top:6px;"><i class="fas fa-file-circle-question" style="font-size:24px;display:block;margin-bottom:8px;"></i>لا يوجد محتوى</div>';
     }
     if (txn.attachment && txn.attachment.startsWith && txn.attachment.startsWith('data:')) {
-      h += '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:6px;color:#0ea5e9;font-size:12.5px;font-weight:800;margin-top:14px;padding:8px 14px;background:#fff;border:1.5px solid #0ea5e9;border-radius:10px;text-decoration:none;"><i class="fas fa-download"></i> تحميل المرفق الأصلي</a>';
+      var isImg = txn.attachment.startsWith('data:image/');
+      h += '<div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;">';
+      if (isImg) {
+        h += '<img src="'+txn.attachment+'" style="max-width:280px;max-height:180px;border-radius:8px;border:1px solid #bae6fd;display:block;cursor:zoom-in;" onclick="window.open(this.src,\'_blank\')">';
+      }
+      h += '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+        '<button onclick="window.open(\''+txn.attachment+'\',\'_blank\')" style="display:inline-flex;align-items:center;gap:6px;color:#0ea5e9;font-size:12px;font-weight:800;padding:7px 14px;background:#fff;border:1.5px solid #0ea5e9;border-radius:10px;cursor:pointer;font-family:inherit;"><i class="fas fa-eye"></i> عرض المرفق</button>' +
+        '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:6px;color:#fff;font-size:12px;font-weight:800;padding:7px 14px;background:#0ea5e9;border:1.5px solid #0ea5e9;border-radius:10px;text-decoration:none;"><i class="fas fa-download"></i> تنزيل</a>' +
+      '</div></div>';
     }
     h += '</div>';
 
@@ -1616,7 +1670,17 @@ function viewMyTxn(id) {
           '</div>';
         }
         if (l.attachment && l.attachment.startsWith && l.attachment.startsWith('data:')) {
-          h += '<a href="'+l.attachment+'" download style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#0ea5e9;font-weight:800;margin-top:6px;padding:4px 10px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;text-decoration:none;"><i class="fas fa-paperclip"></i> مرفق هذا القسم</a>';
+          // V3.1: Per-log attachment now has BOTH view + download buttons + image preview
+          var attIsImg = l.attachment.startsWith('data:image/');
+          h += '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;align-items:flex-start;">';
+          if (attIsImg) {
+            h += '<img src="'+l.attachment+'" style="max-width:200px;max-height:140px;border-radius:6px;border:1px solid #cbd5e1;cursor:zoom-in;" onclick="window.open(this.src,\'_blank\')">';
+          }
+          h += '<div style="display:flex;gap:6px;align-items:center;font-size:10.5px;">' +
+            '<span style="color:#64748b;font-weight:700;"><i class="fas fa-paperclip"></i> مرفق ' + _esc(l.actionBy||'القسم') + ':</span>' +
+            '<button onclick="window.open(\''+l.attachment+'\',\'_blank\')" style="background:#1e40af;color:#fff;border:none;padding:3px 9px;border-radius:5px;cursor:pointer;font-weight:700;font-size:10px;display:inline-flex;align-items:center;gap:3px;font-family:inherit;"><i class="fas fa-eye"></i> عرض</button>' +
+            '<a href="'+l.attachment+'" download style="background:#16a34a;color:#fff;text-decoration:none;padding:3px 9px;border-radius:5px;font-weight:700;font-size:10px;display:inline-flex;align-items:center;gap:3px;"><i class="fas fa-download"></i> تنزيل</a>' +
+          '</div></div>';
         }
         if (dt) h += '<div style="font-size:10px;color:#94a3b8;margin-top:4px;"><i class="far fa-clock"></i> '+dt+'</div>';
         h += '</div></div>';
@@ -1626,11 +1690,21 @@ function viewMyTxn(id) {
     h += '</div>'; // end #wfDetailWrap
 
     // ─── Action buttons (visible only to the creator + when editable) ───
+    // V3.1: Returned-for-edit gets a prominent Resubmit treatment.
+    // Edit/Cancel disappear once others have acted (workflow has moved past creator).
     var isCreator = (txn.createdBy === currentUser);
-    var canEdit = isCreator && (txn.status === 'pending' || txn.status === 'draft');
-    var hasActions = (txn.logs || []).some(function(l){ return l.actionType && l.actionType !== 'create'; });
-    if (hasActions) canEdit = false;
-    if (canEdit) {
+    var canEditFresh = isCreator && (txn.status === 'pending' || txn.status === 'draft');
+    var canEditReturned = isCreator && txn.status === 'returned';
+    var hasOthersActed = (txn.logs || []).some(function(l){ return l.actionType && l.actionType !== 'create' && l.actionBy !== currentUser; });
+    if (hasOthersActed && canEditFresh) canEditFresh = false;
+    if (canEditReturned) {
+      // Highlight the Resubmit button — it's the obvious next step
+      h += '<div class="td-action-btns" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">' +
+        '<button class="td-edit-btn" style="flex:2;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;font-weight:900;padding:14px;font-size:14px;border-radius:12px;box-shadow:0 4px 12px rgba(220,38,38,.3);cursor:pointer;font-family:inherit;" onclick="closeTxnDetail();empEditTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-pen-to-square"></i> تعديل وإعادة الإرسال</button>' +
+        '<button class="td-cancel-btn" style="flex:1;" onclick="empCancelTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-trash"></i> إلغاء</button>' +
+        '<button class="td-close-btn" onclick="closeTxnDetail()">إغلاق</button>' +
+      '</div>';
+    } else if (canEditFresh) {
       h += '<div class="td-action-btns">' +
         '<button class="td-edit-btn" onclick="closeTxnDetail();empEditTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-edit"></i> تعديل المعاملة</button>' +
         '<button class="td-cancel-btn" onclick="empCancelTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-trash"></i> إلغاء</button>' +

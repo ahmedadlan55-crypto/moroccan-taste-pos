@@ -742,6 +742,17 @@ async function runMigrations() {
   try { await db.query("CREATE INDEX idx_txn_due ON transactions (due_date, status)"); } catch(e) {}
 
   // V4.10 — Materialized counters table (real-time per-user inbox stats)
+  // V4.10.1 — DROP + CREATE: handles legacy schema drift (the data is just
+  // a materialization that gets rebuilt from transactions table by the
+  // backfill below — safe to drop).
+  try {
+    // Verify schema matches expected — if not, drop and recreate
+    const [cols] = await db.query("SHOW COLUMNS FROM user_inbox_counters LIKE 'username'");
+    if (!cols.length) {
+      console.log('[DB] user_inbox_counters has wrong schema — recreating');
+      await db.query("DROP TABLE IF EXISTS user_inbox_counters");
+    }
+  } catch(e) { /* table might not exist — that's fine */ }
   await createTableIfMissing('user_inbox_counters', `
     CREATE TABLE user_inbox_counters (
       username VARCHAR(100) PRIMARY KEY,
@@ -755,6 +766,16 @@ async function runMigrations() {
       last_computed_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+  // Belt-and-suspenders: also use addColumnIfMissing for each column in case
+  // the table exists with username PRIMARY KEY but missing other columns
+  await addColumnIfMissing('user_inbox_counters', 'pending_action',  "INT DEFAULT 0");
+  await addColumnIfMissing('user_inbox_counters', 'returned_to_me',  "INT DEFAULT 0");
+  await addColumnIfMissing('user_inbox_counters', 'awaiting_others', "INT DEFAULT 0");
+  await addColumnIfMissing('user_inbox_counters', 'overdue',         "INT DEFAULT 0");
+  await addColumnIfMissing('user_inbox_counters', 'unread_replies',  "INT DEFAULT 0");
+  await addColumnIfMissing('user_inbox_counters', 'total_outbox',    "INT DEFAULT 0");
+  await addColumnIfMissing('user_inbox_counters', 'total_inbox',     "INT DEFAULT 0");
+  await addColumnIfMissing('user_inbox_counters', 'last_computed_at',"DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
 
   // V4.11 — Audit log (if not already present)
   await createTableIfMissing('audit_logs', `

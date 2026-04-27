@@ -9,7 +9,8 @@ const CACHE = require('../lib/redisCache');   // optional Redis layer
 
 // GET /counters/me?username=X
 // Returns: { inbox: {...}, outbox: {...}, notifications: {...} }
-// V4.1: Redis cache layer (no-op if REDIS_URL not set)
+// V4.2: Always compute LIVE from transactions table (avoids materialization
+// drift bugs). Materialized table is now optional cache, not source of truth.
 router.get('/me', async (req, res) => {
   try {
     const username = req.query.username || (req.user && req.user.username);
@@ -22,30 +23,13 @@ router.get('/me', async (req, res) => {
       if (cached) return res.json(cached);
     }
 
-    // Try materialized table first (fast path)
-    const [matRows] = await db.query(
-      'SELECT * FROM user_inbox_counters WHERE username = ?', [username]);
-
+    // V4.2: Compute live — guaranteed correct even if materialized table is broken
     let counters;
-    if (matRows.length) {
-      counters = matRows[0];
-    } else {
-      // No row yet — compute on the fly + insert
+    try {
       counters = await _computeCountersFor(username);
-      try {
-        await db.query(
-          `INSERT INTO user_inbox_counters
-             (username, pending_action, returned_to_me, awaiting_others, total_inbox, total_outbox)
-           VALUES (?,?,?,?,?,?)
-           ON DUPLICATE KEY UPDATE
-             pending_action  = VALUES(pending_action),
-             returned_to_me  = VALUES(returned_to_me),
-             awaiting_others = VALUES(awaiting_others),
-             total_inbox     = VALUES(total_inbox),
-             total_outbox    = VALUES(total_outbox)`,
-          [username, counters.pending_action, counters.returned_to_me,
-           counters.awaiting_others, counters.total_inbox, counters.total_outbox]);
-      } catch(e) {}
+    } catch(computeErr) {
+      console.error('[counters] live compute failed:', computeErr.message);
+      counters = { pending_action: 0, returned_to_me: 0, awaiting_others: 0, total_inbox: 0, total_outbox: 0 };
     }
 
     // Overdue: compute live (cheap query, status uses index)

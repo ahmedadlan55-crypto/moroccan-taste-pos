@@ -1869,27 +1869,41 @@ function viewMyTxn(id) {
     }
     h += '</div>';
 
-    // V3.1: REPLIES THREAD — fully translated
+    // V4.2: REPLIES THREAD — when user IS current assignee, reply ADVANCES workflow
+    // (user spec: "بعد الرد يجب انتقال المعاملة للجهة التالية")
     var fileLabelDefault = t('txn.attachFile');
-    h += '<div style="border:2px solid #c4b5fd;border-radius:14px;background:linear-gradient(180deg,#faf5ff 0%,#fff 60%);padding:14px;margin-bottom:12px;">' +
+    var isMyTurn = (txn.currentAssignee === currentUser || txn.current_assignee === currentUser);
+    var canStillReply = !isMyTurn || !((txn.logs || []).some(function(l) {
+      return l.actionBy === currentUser && l.workflowDefinitionId === txn.currentStepId
+             && ['approve','reject','return','forward'].indexOf(l.actionType) >= 0;
+    }));
+    var btnLabel = isMyTurn ? '<i class="fas fa-paper-plane"></i> رد + موافقة وتحويل للتالي'
+                            : '<i class="fas fa-comment"></i> ' + t('txn.sendReply');
+    var btnBg = isMyTurn ? 'background:linear-gradient(135deg,#16a34a,#15803d);'
+                          : 'background:linear-gradient(135deg,#8b5cf6,#6d28d9);';
+    h += '<div style="border:2px solid ' + (isMyTurn ? '#16a34a' : '#c4b5fd') + ';border-radius:14px;background:linear-gradient(180deg,' + (isMyTurn ? '#f0fdf4' : '#faf5ff') + ' 0%,#fff 60%);padding:14px;margin-bottom:12px;" id="emp_replyBox">' +
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">' +
-        '<div style="width:30px;height:30px;border-radius:50%;background:#8b5cf6;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;"><i class="fas fa-comments"></i></div>' +
-        '<span style="font-size:14px;font-weight:900;color:#5b21b6;">' + t('txn.repliesTitle') + '</span>' +
+        '<div style="width:30px;height:30px;border-radius:50%;background:' + (isMyTurn ? '#16a34a' : '#8b5cf6') + ';color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;"><i class="fas fa-comments"></i></div>' +
+        '<span style="font-size:14px;font-weight:900;color:' + (isMyTurn ? '#15803d' : '#5b21b6') + ';">' + (isMyTurn ? '⚠️ معاملة بانتظار ردّك' : t('txn.repliesTitle')) + '</span>' +
         '<span id="emp_repliesCount" style="margin-inline-start:auto;font-size:11px;color:#7c3aed;font-weight:800;background:#ede9fe;padding:4px 10px;border-radius:999px;">…</span>' +
       '</div>' +
-      '<div id="emp_repliesList"><div style="text-align:center;color:#94a3b8;padding:20px;font-size:12px;"><i class="fas fa-spinner fa-spin"></i></div></div>' +
-      '<div style="margin-top:12px;padding-top:12px;border-top:1px dashed #c4b5fd;">' +
-        '<textarea id="emp_replyText" placeholder="' + fileLabelDefault.replace(/'/g,"\\'") + '..." style="width:100%;min-height:64px;padding:12px;border:1.5px solid #c4b5fd;border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;background:#fff;line-height:1.7;" data-placeholder-key="txn.replyPlaceholder"></textarea>' +
+      '<div id="emp_repliesList"><div style="text-align:center;color:#94a3b8;padding:20px;font-size:12px;"><i class="fas fa-spinner fa-spin"></i></div></div>';
+    if (canStillReply) {
+      h += '<div style="margin-top:12px;padding-top:12px;border-top:1px dashed ' + (isMyTurn ? '#86efac' : '#c4b5fd') + ';" id="emp_replyForm">' +
+        (isMyTurn ? '<div style="font-size:11.5px;color:#15803d;font-weight:700;margin-bottom:8px;background:#dcfce7;padding:8px 12px;border-radius:8px;border:1px solid #86efac;"><i class="fas fa-info-circle"></i> اكتب ردك. عند الإرسال ستنتقل المعاملة للشخص التالي تلقائياً.</div>' : '') +
+        '<textarea id="emp_replyText" placeholder="' + (isMyTurn ? 'اكتب ردك على المعاملة...' : t('txn.replyPlaceholder')).replace(/'/g,"\\'") + '" style="width:100%;min-height:80px;padding:12px;border:1.5px solid ' + (isMyTurn ? '#86efac' : '#c4b5fd') + ';border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;background:#fff;line-height:1.7;"></textarea>' +
         '<div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap;">' +
           '<input type="file" id="emp_replyFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="display:none;" onchange="(function(i){var l=document.getElementById(\'emp_replyFileLabel\');if(l)l.textContent=i.files[0]?(i.files[0].name.length>20?i.files[0].name.substring(0,20)+\'...\':i.files[0].name):(window.t?t(\'txn.attachFile\'):\'إرفاق ملف\');})(this)">' +
-          '<button type="button" onclick="document.getElementById(\'emp_replyFile\').click()" style="padding:9px 14px;border-radius:10px;background:#fff;color:#8b5cf6;border:1.5px solid #c4b5fd;font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;"><i class="fas fa-paperclip"></i><span id="emp_replyFileLabel">' + fileLabelDefault + '</span></button>' +
-          '<button onclick="empPostReply(\''+id+'\')" style="flex:1;padding:10px 14px;border-radius:10px;background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff;border:none;font-weight:900;font-size:13px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 6px rgba(139,92,246,.3);"><i class="fas fa-paper-plane"></i> ' + t('txn.sendReply') + '</button>' +
+          '<button type="button" onclick="document.getElementById(\'emp_replyFile\').click()" style="padding:9px 14px;border-radius:10px;background:#fff;color:' + (isMyTurn ? '#15803d' : '#8b5cf6') + ';border:1.5px solid ' + (isMyTurn ? '#86efac' : '#c4b5fd') + ';font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;"><i class="fas fa-paperclip"></i><span id="emp_replyFileLabel">' + fileLabelDefault + '</span></button>' +
+          '<button onclick="empPostReply(\''+id+'\',' + (isMyTurn?'true':'false') + ')" id="emp_replySendBtn" style="flex:1;padding:11px 16px;border-radius:10px;' + btnBg + 'color:#fff;border:none;font-weight:900;font-size:13px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 6px rgba(0,0,0,.12);">' + btnLabel + '</button>' +
         '</div>' +
-      '</div>' +
-    '</div>';
+      '</div>';
+    } else {
+      h += '<div style="margin-top:12px;padding:12px;background:#f0f9ff;border:1.5px dashed #bae6fd;border-radius:10px;color:#0369a1;font-size:12px;font-weight:700;text-align:center;"><i class="fas fa-circle-check"></i> لقد رددت على هذه المرحلة من قبل — رد واحد لكل مرحلة</div>';
+    }
+    h += '</div>';
 
-    // Apply real placeholder (textarea placeholder doesn't accept data-i18n natively here)
-    setTimeout(function(){ var ta = document.getElementById('emp_replyText'); if (ta) ta.placeholder = t('txn.replyPlaceholder'); }, 0);
+    setTimeout(function(){ var ta = document.getElementById('emp_replyText'); if (ta) ta.placeholder = isMyTurn ? 'اكتب ردك على المعاملة...' : t('txn.replyPlaceholder'); }, 0);
 
     // 6. TOGGLE BUTTON — translated label
     var hasWorkflow = (txn.workflowPath && txn.workflowPath.length) || (txn.logs && txn.logs.length) || (txn.recipients && txn.recipients.length);
@@ -1935,13 +1949,19 @@ function viewMyTxn(id) {
         var dt = '';
         if (l.createdAt) { try { dt = new Date(l.createdAt).toLocaleString(dtLocale,{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(_){} }
         var isLast = i === txn.logs.length - 1;
+        // V4.2: paperclip badge on timeline circle if step has attachment
+        var hasAttach = l.attachment && l.attachment.startsWith && l.attachment.startsWith('data:');
         h += '<div style="display:flex;gap:10px;position:relative;">';
-        h += '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">' +
-          '<div style="width:32px;height:32px;border-radius:50%;background:'+c+'18;display:flex;align-items:center;justify-content:center;border:2px solid '+c+';"><i class="fas '+icon+'" style="font-size:13px;color:'+c+';"></i></div>';
-        if (!isLast) h += '<div style="width:2px;flex:1;background:'+c+'30;min-height:20px;"></div>';
+        h += '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;position:relative;">' +
+          '<div style="width:36px;height:36px;border-radius:50%;background:'+c+'18;display:flex;align-items:center;justify-content:center;border:2px solid '+c+';position:relative;"><i class="fas '+icon+'" style="font-size:14px;color:'+c+';"></i>' +
+          (hasAttach ? '<span style="position:absolute;top:-4px;inset-inline-end:-6px;width:18px;height:18px;border-radius:50%;background:#0ea5e9;color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.2);" title="يحتوي على مرفق"><i class="fas fa-paperclip"></i></span>' : '') +
+          '</div>';
+        if (!isLast) h += '<div style="width:2px;flex:1;background:'+c+'30;min-height:24px;"></div>';
         h += '</div>';
         h += '<div style="flex:1;padding-bottom:'+(isLast?'0':'14')+'px;min-width:0;">';
-        h += '<div style="font-size:13px;font-weight:900;color:'+c+';">'+_esc(label)+'</div>';
+        h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;"><span style="font-size:13px;font-weight:900;color:'+c+';">'+_esc(label)+'</span>' +
+             (hasAttach ? '<span style="font-size:9.5px;color:#0369a1;background:#e0f2fe;padding:2px 7px;border-radius:999px;font-weight:800;border:1px solid #bae6fd;"><i class="fas fa-paperclip" style="font-size:8px;"></i> مرفق</span>' : '<span style="font-size:9.5px;color:#94a3b8;background:#f1f5f9;padding:2px 7px;border-radius:999px;font-weight:700;"><i class="fas fa-paperclip-vertical" style="font-size:8px;"></i> بدون مرفق</span>') +
+             '</div>';
         h += '<div style="font-size:11.5px;color:#1e293b;font-weight:700;margin-top:2px;">'+_esc(l.actionBy||'—')+(l.positionName?' <span style="color:#8b5cf6;font-weight:700;">— '+_esc(l.positionName)+'</span>':'')+'</div>';
         if (l.note) {
           h += '<div style="font-size:12px;color:#334155;margin-top:6px;padding:8px 10px;border-radius:8px;background:#f8fafc;border:1px solid #f1f5f9;line-height:1.6;word-break:break-word;overflow-wrap:anywhere;">' +
@@ -2095,14 +2115,24 @@ window.empLoadReplies = function(txnId, listElId, countElId) {
     });
 };
 
-// V3.1: empPostReply now supports file attachment from #emp_replyFile picker
-window.empPostReply = function(txnId) {
+// V4.2: empPostReply — accepts andAdvance flag (when user is current assignee,
+// reply also advances workflow). Disables form immediately on submit so user
+// can't double-click and create 20 replies.
+window.empPostReply = function(txnId, andAdvance) {
   var ta = document.getElementById('emp_replyText');
+  var btn = document.getElementById('emp_replySendBtn');
   if (!ta) return;
   var text = (ta.value || '').trim();
   if (!text) { glassToast('اكتب نص الرد', true); return; }
-  var token = localStorage.getItem('pos_token');
+  // Immediately disable form to prevent multi-click
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.style.cursor = 'not-allowed'; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الإرسال...'; }
+  if (ta) ta.disabled = true;
+  var token = localStorage.getItem('pos_token') || localStorage.getItem('emp_token');
   var fileInput = document.getElementById('emp_replyFile');
+  var reEnable = function() {
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer'; }
+    if (ta) ta.disabled = false;
+  };
   var doSend = function(attachment, attachmentName, attachmentMime) {
     fetch('/api/workflow/transactions/' + txnId + '/replies', {
       method: 'POST',
@@ -2111,7 +2141,8 @@ window.empPostReply = function(txnId) {
         replyText: text, username: currentUser,
         attachment: attachment || null,
         attachmentName: attachmentName || null,
-        attachmentMime: attachmentMime || null
+        attachmentMime: attachmentMime || null,
+        andAdvance: !!andAdvance   // V4.2: tells server to also advance workflow
       })
     })
       .then(function(r){return r.json();})
@@ -2119,25 +2150,38 @@ window.empPostReply = function(txnId) {
         if (r && r.success) {
           ta.value = '';
           if (fileInput) fileInput.value = '';
-          var fileLabel = document.getElementById('emp_replyFileLabel');
-          if (fileLabel) fileLabel.textContent = 'إرفاق ملف';
-          glassToast('تم إرسال الرد');
-          empLoadReplies(txnId);
+          // V4.2: hide the entire reply form to enforce one-reply-per-stage at UI level
+          var form = document.getElementById('emp_replyForm');
+          if (form) form.style.display = 'none';
+          if (r.advanceResult && r.advanceResult.newStatus) {
+            glassToast('✓ تم الرد + انتقلت المعاملة للتالي');
+            // Reload the txn detail to reflect new state
+            setTimeout(function(){
+              if (typeof closeTxnDetail === 'function') closeTxnDetail();
+              if (typeof loadIncomingTxns === 'function') loadIncomingTxns();
+              if (typeof empRefreshCounters === 'function') empRefreshCounters();
+            }, 800);
+          } else {
+            glassToast('تم إرسال الرد');
+            empLoadReplies(txnId);
+          }
         } else {
+          reEnable();
           glassToast((r && r.error) || 'فشل الإرسال', true);
         }
       })
       .catch(function(err) {
+        reEnable();
         console.error('[empPostReply] err:', err);
         glassToast('فشل الاتصال', true);
       });
   };
   if (fileInput && fileInput.files && fileInput.files[0]) {
     var f = fileInput.files[0];
-    if (f.size > 5 * 1024 * 1024) { glassToast('حجم الملف يجب أن يكون أقل من 5MB', true); return; }
+    if (f.size > 5 * 1024 * 1024) { reEnable(); glassToast('حجم الملف يجب أن يكون أقل من 5MB', true); return; }
     var reader = new FileReader();
     reader.onload = function() { doSend(reader.result, f.name, f.type); };
-    reader.onerror = function() { glassToast('تعذّر قراءة الملف', true); };
+    reader.onerror = function() { reEnable(); glassToast('تعذّر قراءة الملف', true); };
     reader.readAsDataURL(f);
   } else {
     doSend(null, null, null);

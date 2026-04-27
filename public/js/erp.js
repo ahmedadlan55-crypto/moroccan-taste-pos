@@ -5733,7 +5733,10 @@ function wfViewTxn(id) {
         '<div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap;">' +
           '<input type="file" id="adm_replyFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="display:none;" onchange="(function(i){var l=document.getElementById(\'adm_replyFileLabel\');if(l)l.textContent=i.files[0]?(i.files[0].name.length>20?i.files[0].name.substring(0,20)+\'...\':i.files[0].name):\'إرفاق ملف\';})(this)">' +
           '<button type="button" onclick="document.getElementById(\'adm_replyFile\').click()" class="wo-btn wo-btn-secondary" style="padding:9px 14px;font-size:12px;background:#fff;color:#8b5cf6;border:1.5px solid #c4b5fd;"><i class="fas fa-paperclip"></i><span id="adm_replyFileLabel">إرفاق ملف</span></button>' +
-          '<button onclick="admPostReply(\''+txn.id+'\')" class="wo-btn wo-btn-primary" style="flex:1;background:linear-gradient(135deg,#8b5cf6,#6d28d9);"><i class="fas fa-paper-plane"></i><span>إرسال الرد</span></button>' +
+          // V4.2: when user IS the current assignee, reply auto-advances workflow
+          (isAssignedToMe ?
+            '<button onclick="admPostReply(\''+txn.id+'\',true)" class="wo-btn wo-btn-primary" style="flex:1;background:linear-gradient(135deg,#16a34a,#15803d);"><i class="fas fa-paper-plane"></i><span>رد + موافقة وتحويل للتالي</span></button>'
+          : '<button onclick="admPostReply(\''+txn.id+'\',false)" class="wo-btn wo-btn-primary" style="flex:1;background:linear-gradient(135deg,#8b5cf6,#6d28d9);"><i class="fas fa-comment"></i><span>إرسال الرد</span></button>') +
         '</div>' +
       '</div>' +
     '</div>';
@@ -16361,11 +16364,19 @@ window.admLoadReplies = function(txnId) {
     });
 };
 
-window.admPostReply = function(txnId) {
+window.admPostReply = function(txnId, andAdvance) {
   var ta = document.getElementById('adm_replyText');
+  var btn = document.querySelector('button[onclick*="admPostReply"]');
   if (!ta) return;
   var text = (ta.value || '').trim();
   if (!text) { showToast('اكتب نص الرد', true); return; }
+  // Disable form immediately to prevent multi-click
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+  if (ta) ta.disabled = true;
+  var reEnable = function() {
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; }
+    if (ta) ta.disabled = false;
+  };
   var token = localStorage.getItem('pos_token');
   var fileInput = document.getElementById('adm_replyFile');
   var doSend = function(attachment, attachmentName, attachmentMime) {
@@ -16376,7 +16387,8 @@ window.admPostReply = function(txnId) {
         replyText: text, username: currentUser,
         attachment: attachment || null,
         attachmentName: attachmentName || null,
-        attachmentMime: attachmentMime || null
+        attachmentMime: attachmentMime || null,
+        andAdvance: !!andAdvance   // V4.2
       })
     })
       .then(function(r){return r.json();})
@@ -16386,23 +16398,31 @@ window.admPostReply = function(txnId) {
           if (fileInput) fileInput.value = '';
           var fileLabel = document.getElementById('adm_replyFileLabel');
           if (fileLabel) fileLabel.textContent = 'إرفاق ملف';
-          showToast('تم إرسال الرد');
-          admLoadReplies(txnId);
+          if (r.advanceResult && r.advanceResult.newStatus) {
+            showToast('✓ تم الرد + انتقلت المعاملة للتالي');
+            setTimeout(function(){ if (typeof erpCloseModal === 'function') erpCloseModal(); if (typeof wfLoadInbox === 'function') wfLoadInbox(); }, 800);
+          } else {
+            showToast('تم إرسال الرد');
+            admLoadReplies(txnId);
+            reEnable();
+          }
         } else {
+          reEnable();
           showToast((r && r.error) || 'فشل الإرسال', true);
         }
       })
       .catch(function(err) {
+        reEnable();
         console.error('[admPostReply] err:', err);
         showToast('فشل الاتصال', true);
       });
   };
   if (fileInput && fileInput.files && fileInput.files[0]) {
     var f = fileInput.files[0];
-    if (f.size > 5 * 1024 * 1024) { showToast('حجم الملف يجب أن يكون أقل من 5MB', true); return; }
+    if (f.size > 5 * 1024 * 1024) { reEnable(); showToast('حجم الملف يجب أن يكون أقل من 5MB', true); return; }
     var reader = new FileReader();
     reader.onload = function() { doSend(reader.result, f.name, f.type); };
-    reader.onerror = function() { showToast('تعذّر قراءة الملف', true); };
+    reader.onerror = function() { reEnable(); showToast('تعذّر قراءة الملف', true); };
     reader.readAsDataURL(f);
   } else {
     doSend(null, null, null);

@@ -2255,10 +2255,11 @@ router.get('/transactions/:id/replies', async (req, res) => {
 
 // POST /workflow/transactions/:id/replies
 // V4 — Enforces "one reply per stage per actor" rule.
-// Stamps stage_step_id so we can detect duplicates within a stage.
+// V4.2 — If `andAdvance:true` AND user is current assignee → AUTO-ADVANCES workflow
+//        (implements user spec: "بعد الرد يجب انتقال المعاملة للجهة التالية")
 router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.reply), async (req, res) => {
   try {
-    const { replyText, attachment, attachmentName, attachmentMime, isInternal, username } = req.body;
+    const { replyText, attachment, attachmentName, attachmentMime, isInternal, username, andAdvance } = req.body;
     if (!replyText || !replyText.trim()) {
       return res.json({ success: false, error: 'نص الرد مطلوب' });
     }
@@ -2357,7 +2358,112 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
       }
     } catch(e) {}
 
-    res.json({ success: true, id, authorName, authorRole, authorPosition });
+    // V4.2: If user IS the current assignee AND andAdvance is true → auto-advance the workflow
+    // Implements user spec: reply = action. After replying, transaction moves to next stage.
+    let advanceResult = null;
+    const isAssignee = (txn.current_assignee === author);
+    const wantsAdvance = (andAdvance === true || andAdvance === 'true' || andAdvance === 1);
+    if (wantsAdvance && isAssignee && ['pending','created','in_progress','replied'].includes(txn.status)) {
+      try {
+        // Trigger an internal "approve" action against the same transaction
+        // We do this by making an internal HTTP-style call to the action handler
+        // (via direct DB updates here, mirroring the action logic)
+        const conn = await db.getConnection();
+        try {
+          await conn.beginTransaction();
+          // Resolve next step
+          let step = null;
+          if (txn.current_step_id) {
+            const [posRow] = await conn.query('SELECT * FROM position_workflow_steps WHERE id = ?', [txn.current_step_id]);
+            if (posRow.length) step = _normalizePositionStep(posRow[0]);
+            else {
+              const [legacy] = await conn.query('SELECT * FROM workflow_definitions WHERE id = ?', [txn.current_step_id]);
+              if (legacy.length) step = legacy[0];
+            }
+          }
+          let newStatus = 'approved', newStepId = null, newAssignee = '', newRoleId = null, newRoleName = '';
+          if (step) {
+            const txnAmount = Number(txn.amount) || 0;
+            let nextStep = null;
+            if (step._source === 'position' && txn.initiator_position_id) {
+              let [r] = await conn.query(
+                `SELECT * FROM position_workflow_steps WHERE initiator_position_id = ? AND step_order = ?
+                 AND COALESCE(amount_from,0) <= ? AND (amount_to IS NULL OR amount_to >= ?)
+                 ORDER BY COALESCE(amount_from,0) DESC LIMIT 1`,
+                [txn.initiator_position_id, step.step_order + 1, txnAmount, txnAmount]);
+              if (!r.length) [r] = await conn.query(
+                'SELECT * FROM position_workflow_steps WHERE initiator_position_id = ? AND step_order = ? LIMIT 1',
+                [txn.initiator_position_id, step.step_order + 1]);
+              if (r.length) nextStep = _normalizePositionStep(r[0]);
+            } else {
+              const [r] = await conn.query(
+                'SELECT * FROM workflow_definitions WHERE transaction_type_id = ? AND step_order = ?',
+                [txn.transaction_type_id, step.step_order + 1]);
+              if (r.length) nextStep = r[0];
+            }
+            if (nextStep) {
+              newStatus = 'in_progress';
+              newStepId = nextStep.id;
+              newRoleId = nextStep.required_position_id || null;
+              if (nextStep.required_position_id) {
+                const resolved = await resolveAssigneeForStep(nextStep, txn.branch_id, txn.dept_id);
+                newAssignee = resolved.username || '';
+                newRoleName = resolved.roleName || '';
+              }
+            } else if (step.is_final_step) {
+              newStatus = 'closed';
+            }
+          }
+          await conn.query(
+            `UPDATE transactions SET status=?, current_step_id=?, current_assignee=?,
+                    current_role_id=?, current_role_name=?, version=version+1, updated_at=NOW()
+              WHERE id=?`,
+            [newStatus, newStepId, newAssignee, newRoleId, newRoleName, req.params.id]);
+          // Log the implicit approve action
+          await conn.query(
+            `INSERT INTO transaction_steps_log
+              (id, transaction_id, workflow_definition_id, action_by, action_type, action_note, reply_id, from_step_id, to_step_id, position_name)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            ['LOG-' + Date.now() + '-' + Math.random().toString(36).slice(2,4),
+             req.params.id, txn.current_step_id, author, 'approve',
+             '[رد + موافقة] ' + replyText.trim().substring(0, 200),
+             id, txn.current_step_id, newStepId, authorPosition || '']);
+          // Notify next assignee or creator
+          try {
+            if (newAssignee && newAssignee !== author) {
+              await conn.query(
+                `INSERT INTO notifications (id, username, type, title, body, link_type, link_id, severity)
+                 VALUES (?,?,?,?,?,?,?,?)`,
+                ['NOT-' + Date.now() + '-' + Math.random().toString(36).slice(2,4),
+                 newAssignee, 'workflow_advance',
+                 'معاملة جديدة بانتظار إجرائك',
+                 (txn.subject || txn.title || ''), 'transaction', req.params.id, 'info']);
+            } else if (newStatus === 'closed' || newStatus === 'approved') {
+              if (txn.created_by && txn.created_by !== author) {
+                await conn.query(
+                  `INSERT INTO notifications (id, username, type, title, body, link_type, link_id, severity)
+                   VALUES (?,?,?,?,?,?,?,?)`,
+                  ['NOT-' + Date.now() + '-' + Math.random().toString(36).slice(2,4),
+                   txn.created_by, 'workflow_approved',
+                   'تمت الموافقة على معاملتك',
+                   (txn.subject || txn.title || ''), 'transaction', req.params.id, 'success']);
+              }
+            }
+          } catch(_) {}
+          await conn.commit();
+          advanceResult = { newStatus, newAssignee, newStepId };
+        } catch(advErr) {
+          try { await conn.rollback(); } catch(_) {}
+          console.warn('[reply+advance] failed:', advErr.message);
+        } finally {
+          conn.release();
+        }
+      } catch(connErr) {
+        console.warn('[reply+advance conn] failed:', connErr.message);
+      }
+    }
+
+    res.json({ success: true, id, authorName, authorRole, authorPosition, advanceResult });
   } catch(e) {
     res.json({ success: false, error: e.message });
   }

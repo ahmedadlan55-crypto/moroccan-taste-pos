@@ -2,8 +2,30 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <title data-i18n="login.title">بوابة الموظف</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title data-i18n="login.title">بوابة الموظف — Moroccan Taste</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+
+  <!-- ═══ PWA Configuration (Progressive Web App) ═══ -->
+  <link rel="manifest" href="/employee/manifest.json">
+  <meta name="theme-color" content="#0ea5e9">
+  <meta name="description" content="بوابة الموظف لـ Moroccan Taste — الحضور، الإجازات، السلف، المعاملات والرواتب">
+
+  <!-- iOS / Apple PWA support -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="بوابة الموظف">
+  <link rel="apple-touch-icon" href="/employee/icons/icon-192.svg">
+  <link rel="apple-touch-icon" sizes="192x192" href="/employee/icons/icon-192.svg">
+  <link rel="apple-touch-icon" sizes="512x512" href="/employee/icons/icon-512.svg">
+
+  <!-- Standard icon + favicon -->
+  <link rel="icon" type="image/svg+xml" href="/employee/icons/icon.svg">
+  <link rel="shortcut icon" href="/employee/icons/icon.svg">
+
+  <!-- Microsoft tiles -->
+  <meta name="msapplication-TileColor" content="#0ea5e9">
+  <meta name="msapplication-TileImage" content="/employee/icons/icon-192.svg">
+
   <script>document.addEventListener('DOMContentLoaded',function(){document.body.style.visibility='visible';}); setTimeout(function(){document.body.style.visibility='visible';},500);</script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   <style>
@@ -200,7 +222,7 @@
     html[lang="en"] body{direction:ltr;}
     html[lang="en"] .hdr-n,html[lang="en"] .hdr-s{text-align:left;}
   </style>
-  <script defer src="/employee/app.js?v=22"></script>
+  <script defer src="/employee/app.js?v=23"></script>
 </head>
 <body>
 <div class="toast" id="toast"></div>
@@ -495,5 +517,161 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
   <div class="modal-h"><span id="txnDetailTitle" data-i18n="td.title">تفاصيل المعاملة</span><button onclick="closeTxnDetail()">&times;</button></div>
   <div id="txnDetailBody"></div>
 </div></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- PWA Install Banner (shown when app is installable, dismissable)     -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div id="pwaInstallBanner" style="display:none;position:fixed;bottom:80px;left:14px;right:14px;background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;border-radius:16px;padding:14px 16px;box-shadow:0 14px 40px rgba(14,165,233,0.4);z-index:9999;display:flex;align-items:center;gap:12px;animation:pwaSlideUp 0.3s ease-out;">
+  <div style="width:44px;height:44px;border-radius:12px;background:rgba(255,255,255,0.18);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+    <i class="fas fa-mobile-screen-button" style="font-size:22px;"></i>
+  </div>
+  <div style="flex:1;min-width:0;">
+    <div style="font-weight:900;font-size:14px;">تثبيت التطبيق على جهازك</div>
+    <div style="font-size:11px;opacity:0.9;margin-top:2px;">يعمل بدون متصفح ويفتح من الشاشة الرئيسية</div>
+  </div>
+  <button id="pwaInstallBtn" style="background:#fff;color:#0369a1;border:none;padding:8px 14px;border-radius:10px;font-weight:900;font-size:12px;cursor:pointer;flex-shrink:0;font-family:inherit;">تثبيت</button>
+  <button id="pwaInstallDismiss" style="background:transparent;border:none;color:#fff;font-size:18px;cursor:pointer;padding:4px 8px;flex-shrink:0;opacity:0.8;">&times;</button>
+</div>
+
+<!-- iOS Install Hint (separate — Safari doesn't support beforeinstallprompt) -->
+<div id="pwaIOSHint" style="display:none;position:fixed;bottom:80px;left:14px;right:14px;background:#fff;border:2px solid #0ea5e9;border-radius:16px;padding:14px 16px;box-shadow:0 14px 40px rgba(0,0,0,0.15);z-index:9999;">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+    <div style="flex:1;">
+      <div style="font-weight:900;font-size:14px;color:#0369a1;display:flex;align-items:center;gap:6px;"><i class="fab fa-apple"></i> ثبّت التطبيق على iPhone/iPad</div>
+      <div style="font-size:12px;color:#475569;margin-top:8px;line-height:1.6;">
+        ١. اضغط زر <b style="color:#0ea5e9;"><i class="fas fa-arrow-up-from-bracket"></i> Share</b> بأسفل Safari<br>
+        ٢. اختر <b style="color:#0ea5e9;">Add to Home Screen</b><br>
+        ٣. اضغط <b style="color:#0ea5e9;">Add</b> أعلى يمين
+      </div>
+    </div>
+    <button id="pwaIOSDismiss" style="background:#f1f5f9;border:none;color:#64748b;font-size:18px;cursor:pointer;padding:4px 10px;border-radius:8px;flex-shrink:0;">&times;</button>
+  </div>
+</div>
+
+<style>
+  @keyframes pwaSlideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+</style>
+
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // PWA: Service Worker registration + Install prompt handling
+  // ═══════════════════════════════════════════════════════════════════
+  (function() {
+    // 1. Register the service worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/employee/sw.js', { scope: '/employee/' })
+          .then(function(reg) {
+            console.log('[Employee PWA] SW registered:', reg.scope);
+            // Auto-update on new SW
+            reg.addEventListener('updatefound', function() {
+              var newSW = reg.installing;
+              if (newSW) {
+                newSW.addEventListener('statechange', function() {
+                  if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+                    // New version waiting — auto-skip
+                    newSW.postMessage({ type: 'SKIP_WAITING' });
+                  }
+                });
+              }
+            });
+          })
+          .catch(function(err) { console.warn('[Employee PWA] SW registration failed:', err); });
+        // Reload when controller changes (new SW activated)
+        var refreshed = false;
+        navigator.serviceWorker.addEventListener('controllerchange', function() {
+          if (refreshed) return;
+          refreshed = true;
+          setTimeout(function(){ window.location.reload(); }, 100);
+        });
+      });
+    }
+
+    // 2. Capture the install prompt (Chrome / Edge / Android)
+    var deferredPrompt = null;
+    var installBanner = document.getElementById('pwaInstallBanner');
+    var installBtn = document.getElementById('pwaInstallBtn');
+    var dismissBtn = document.getElementById('pwaInstallDismiss');
+    var iosHint = document.getElementById('pwaIOSHint');
+    var iosDismissBtn = document.getElementById('pwaIOSDismiss');
+
+    // Don't show banner if previously dismissed (within 7 days) or already installed
+    function isDismissed() {
+      try {
+        var dt = localStorage.getItem('pwa_dismissed_at');
+        if (!dt) return false;
+        return (Date.now() - Number(dt)) < 7 * 24 * 60 * 60 * 1000;
+      } catch(e) { return false; }
+    }
+    function markDismissed() {
+      try { localStorage.setItem('pwa_dismissed_at', String(Date.now())); } catch(e) {}
+    }
+
+    // Hide if already running as a standalone PWA
+    function isStandalone() {
+      return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+        || window.navigator.standalone === true;
+    }
+
+    window.addEventListener('beforeinstallprompt', function(e) {
+      // Block the default browser prompt — show our custom banner instead
+      e.preventDefault();
+      deferredPrompt = e;
+      console.log('[Employee PWA] Install prompt captured');
+      if (!isDismissed() && !isStandalone() && installBanner) {
+        // Show after user logs in (when #app is visible) — or after 8 seconds
+        setTimeout(function() {
+          if (!isStandalone() && !isDismissed()) installBanner.style.display = 'flex';
+        }, 8000);
+      }
+    });
+
+    if (installBtn) {
+      installBtn.addEventListener('click', function() {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then(function(choice) {
+          console.log('[Employee PWA] User choice:', choice.outcome);
+          if (choice.outcome === 'accepted') {
+            installBanner.style.display = 'none';
+          }
+          deferredPrompt = null;
+        });
+      });
+    }
+    if (dismissBtn) {
+      dismissBtn.addEventListener('click', function() {
+        installBanner.style.display = 'none';
+        markDismissed();
+      });
+    }
+
+    // 3. iOS detection — Safari doesn't fire beforeinstallprompt, show manual hint
+    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    if (isIOS && !isStandalone() && !isDismissed() && iosHint) {
+      // Show iOS hint after 10 seconds (gives user time to use the app first)
+      setTimeout(function() {
+        if (!isStandalone() && !isDismissed()) iosHint.style.display = '';
+      }, 10000);
+    }
+    if (iosDismissBtn) {
+      iosDismissBtn.addEventListener('click', function() {
+        iosHint.style.display = 'none';
+        markDismissed();
+      });
+    }
+
+    // 4. Track successful installation
+    window.addEventListener('appinstalled', function() {
+      console.log('[Employee PWA] App installed');
+      if (installBanner) installBanner.style.display = 'none';
+      if (iosHint) iosHint.style.display = 'none';
+      // One-time toast (if available)
+      if (typeof window.showToast === 'function') {
+        window.showToast('تم تثبيت التطبيق بنجاح ✓');
+      }
+    });
+  })();
+</script>
 </body>
 </html>

@@ -1,0 +1,60 @@
+{
+  "name": "Moroccan Taste — بوابة الموظف",
+  "short_name": "بوابة الموظف",
+  "description": "بوابة الموظف لـ Moroccan Taste — الحضور والانصراف، الإجازات، السلف، المعاملات، الرواتب",
+  "start_url": "/employee/",
+  "scope": "/",
+  "id": "/employee/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "portrait",
+  "background_color": "#fafbfc",
+  "theme_color": "#0ea5e9",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [
+    {
+      "src": "/employee/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/employee/icons/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/employee/icons/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "prefer_related_applications": false,
+  "shortcuts": [
+    {
+      "name": "تسجيل دخول/خروج",
+      "short_name": "حضور",
+      "description": "تسجيل الحضور أو الانصراف",
+      "url": "/employee/?shortcut=clock",
+      "icons": [{ "src": "/employee/icons/icon-192.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "طلب إجازة",
+      "short_name": "إجازة",
+      "description": "تقديم طلب إجازة جديد",
+      "url": "/employee/?shortcut=leave",
+      "icons": [{ "src": "/employee/icons/icon-192.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "معاملاتي",
+      "short_name": "معاملات",
+      "description": "عرض المعاملات الإدارية",
+      "url": "/employee/?shortcut=txn",
+      "icons": [{ "src": "/employee/icons/icon-192.svg", "sizes": "192x192" }]
+    }
+  ]
+}

@@ -694,8 +694,38 @@ async function runMigrations() {
   // V3.1: rich attachment metadata + ensure utf8mb4 on existing deploys
   await addColumnIfMissing('transaction_replies', 'attachment_name', "VARCHAR(255) DEFAULT NULL");
   await addColumnIfMissing('transaction_replies', 'attachment_mime', "VARCHAR(100) DEFAULT NULL");
-  // Force utf8mb4 in case the table was created with utf8 (3-byte) — fixes
-  // Arabic ❓❓❓ display issues for replies stored before this migration.
+  // V3.1 FORCE utf8mb4 on each Arabic-bearing text column individually.
+  // This is more reliable than CONVERT TO TABLE which can fail silently or
+  // partially. We MODIFY each column with explicit charset/collation.
+  // For BLOB-like LONGTEXT/MEDIUMTEXT we skip — the data goes in/out as bytes.
+  const _utf8mb4Cols = [
+    ['transaction_replies', 'reply_text', 'TEXT NOT NULL'],
+    ['transaction_replies', 'author_name', 'VARCHAR(200)'],
+    ['transaction_replies', 'author_position', 'VARCHAR(200)'],
+    ['transaction_replies', 'attachment_name', 'VARCHAR(255) DEFAULT NULL'],
+    ['transactions', 'title', 'VARCHAR(300) NOT NULL'],
+    ['transactions', 'subject', 'VARCHAR(300) DEFAULT NULL'],
+    ['transactions', 'description', 'TEXT'],
+    ['transactions', 'content_html', 'MEDIUMTEXT'],
+    ['transactions', 'returned_reason', 'VARCHAR(500) DEFAULT NULL'],
+    ['transactions', 'sender_name', 'VARCHAR(200) DEFAULT NULL'],
+    ['transactions', 'sender_position', 'VARCHAR(200) DEFAULT NULL'],
+    ['transactions', 'account_name', 'VARCHAR(200) DEFAULT NULL'],
+    ['transactions', 'cost_center_name', 'VARCHAR(200) DEFAULT NULL'],
+    ['transaction_steps_log', 'action_note', 'TEXT'],
+    ['transaction_steps_log', 'position_name', 'VARCHAR(200) DEFAULT NULL']
+  ];
+  for (const [table, col, type] of _utf8mb4Cols) {
+    try {
+      await db.query(`ALTER TABLE ${table} MODIFY COLUMN ${col} ${type} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    } catch(e) {
+      // Tolerate: column may not exist yet in legacy deploys, OR may be a
+      // type we don't recognize. Don't crash startup — just log.
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn(`[utf8mb4] ${table}.${col}:`, e.message);
+      }
+    }
+  }
   try { await db.query("ALTER TABLE transaction_replies CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"); } catch(e) {}
 
   // ─── V3: Memo (تعاميم) read-receipts ───

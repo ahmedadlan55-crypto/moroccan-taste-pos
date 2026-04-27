@@ -43,6 +43,19 @@ if (dbUrl) {
 
 const pool = mysql.createPool(poolConfig);
 
+// V3.1 FIX — force utf8mb4 on every connection acquired from the pool.
+// mysql2's `charset` option in poolConfig is sometimes not honored when
+// using a URI string (Railway DATABASE_URL). Without this, Arabic bytes
+// stored as utf8mb4 may be re-decoded as a different charset and turn
+// into U+FFFD replacement chars on the way out. SET NAMES forces the
+// 3 connection charset variables (client, connection, results) all to
+// utf8mb4 explicitly.
+pool.on('connection', function(conn) {
+  conn.query("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci", function(err) {
+    if (err) console.warn('[db] SET NAMES utf8mb4 failed:', err.message);
+  });
+});
+
 // Helper: execute a function inside a database transaction
 pool.withTransaction = async function(fn) {
   const conn = await pool.getConnection();

@@ -180,6 +180,53 @@ function sendProtectedApp(file) {
     res.sendFile(path.join(__dirname, 'public', file));
   };
 }
+
+// ─── PWA static assets — explicit handlers BEFORE catch-all routes ───
+// Without this, the catch-all `/employee/*` would serve index.html for
+// manifest.json / sw.js / icons (which would break PWA installation).
+// We set Content-Type explicitly to be browser-friendly.
+function sendStaticAsset(filePath, contentType, extraHeaders) {
+  return function(req, res) {
+    res.setHeader('Content-Type', contentType);
+    if (extraHeaders) Object.keys(extraHeaders).forEach(function(k){ res.setHeader(k, extraHeaders[k]); });
+    res.sendFile(path.join(__dirname, 'public', filePath));
+  };
+}
+function sendIconFile(folder) {
+  return function(req, res) {
+    var file = req.params.file || '';
+    // Only allow safe filenames + known extensions
+    if (!/^[\w.-]+\.(svg|png|ico|webp|jpg|jpeg)$/i.test(file)) return res.status(404).send('Not found');
+    var contentType = 'application/octet-stream';
+    if (/\.svg$/i.test(file))  contentType = 'image/svg+xml';
+    if (/\.png$/i.test(file))  contentType = 'image/png';
+    if (/\.ico$/i.test(file))  contentType = 'image/x-icon';
+    if (/\.webp$/i.test(file)) contentType = 'image/webp';
+    if (/\.(jpg|jpeg)$/i.test(file)) contentType = 'image/jpeg';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // 1 day
+    res.sendFile(path.join(__dirname, 'public', folder, 'icons', file));
+  };
+}
+
+// /employee/ PWA assets
+app.get('/employee/manifest.json', sendStaticAsset('employee/manifest.json', 'application/manifest+json'));
+app.get('/employee/sw.js',         sendStaticAsset('employee/sw.js',         'application/javascript', { 'Service-Worker-Allowed': '/employee/' }));
+app.get('/employee/style.css',     sendStaticAsset('employee/style.css',     'text/css'));
+app.get('/employee/app.js',        sendStaticAsset('employee/app.js',        'application/javascript'));
+app.get('/employee/icons/:file',   sendIconFile('employee'));
+
+// /pos/ PWA assets
+app.get('/pos/manifest.json', sendStaticAsset('pos/manifest.json', 'application/manifest+json'));
+app.get('/pos/sw.js',         sendStaticAsset('pos/sw.js',         'application/javascript', { 'Service-Worker-Allowed': '/pos/' }));
+app.get('/pos/style.css',     sendStaticAsset('pos/style.css',     'text/css'));
+app.get('/pos/app.js',        sendStaticAsset('pos/app.js',        'application/javascript'));
+app.get('/pos/icons/:file',   sendIconFile('pos'));
+
+// /custody/ static assets (no PWA yet but covered for consistency)
+app.get('/custody/style.css', sendStaticAsset('custody/style.css', 'text/css'));
+app.get('/custody/app.js',    sendStaticAsset('custody/app.js',    'application/javascript'));
+
 app.get('/employee',    sendProtectedApp('employee/index.html'));
 app.get('/employee/*',  sendProtectedApp('employee/index.html'));
 app.get('/pos',         sendProtectedApp('pos/index.html'));

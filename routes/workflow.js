@@ -13,9 +13,11 @@
  */
 const router = require('express').Router();
 const db = require('../db/connection');
-// V4 — State machine + permission engine
+// V4 — State machine + permission engine + schema validation + guards
 const SM = require('../lib/transactionStateMachine');
 const PERMS = require('../lib/transactionPermissions');
+const SCHEMA = require('../lib/transactionSchema');
+const { guardTxnAccess, guardDeveloper } = require('../lib/transactionGuards');
 
 // Mojibake fixer: repairs UTF-8 Arabic text that was decoded through a
 // single-byte codepage (Latin-1 or Windows-1252). Produces forms like
@@ -1364,7 +1366,8 @@ router.get('/outbox', async (req, res) => {
       scope                     // 'internal' | 'external'
     } = req.query;
 
-    let sql = _txnSelectSQL() + ' WHERE t.created_by = ?';
+    // V4: exclude soft-deleted rows from outbox
+    let sql = _txnSelectSQL() + ' WHERE t.created_by = ? AND t.deleted_at IS NULL';
     const params = [username];
     if (status)              { sql += ' AND t.status = ?'; params.push(status); }
     if (typeId)              { sql += ' AND t.transaction_type_id = ?'; params.push(typeId); }
@@ -1444,17 +1447,14 @@ router.post('/transactions/:id/mark-read', async (req, res) => {
 // INCOMING BOX — transactions awaiting my action (صندوق الوارد)
 // V3.1: Strictly "received from others". Items I created are NEVER shown here —
 // even if returned to me — they belong only in the outbox with a "مرجعة للتعديل" badge.
+// V4: Also excludes soft-deleted rows + includes new lifecycle states (created, replied)
 router.get('/incoming', async (req, res) => {
   try {
     const username = req.query.username || (req.user && req.user.username) || '';
     if (!username) return res.json([]);
     const perms = await getPermissions(username);
-    // Match rules:
-    //   (A) directly assigned: current_assignee = username OR recipient_username = username
-    //   (B) matches current step's required position AND status pending/in_progress
-    //   (C) admins see all pending/in_progress (if they also have canApprove)
-    // EXCLUSION (V3.1): never include items the user created themselves
-    const conditions = ["(t.status IN ('pending','in_progress'))", "t.created_by != ?"];
+    // V4: include all 8 lifecycle states that need attention (not just pending/in_progress)
+    const conditions = ["(t.status IN ('pending','created','in_progress','replied'))", "t.created_by != ?", "t.deleted_at IS NULL"];
     const params = [username]; // first param for created_by exclusion
     const orParts = [];
     orParts.push('t.current_assignee = ?'); params.push(username);
@@ -1654,7 +1654,7 @@ router.put('/transactions/:id', async (req, res) => {
 // Status moves from 'returned' → 'pending' (or 'in_progress' if the workflow has more steps).
 // The transaction goes back to the step it was returned FROM (the assignee who returned it),
 // or to the first non-creator step if we can't reconstruct it.
-router.post('/transactions/:id/resubmit', async (req, res) => {
+router.post('/transactions/:id/resubmit', SCHEMA.validateBody(SCHEMA.schemas.resubmit), async (req, res) => {
   try {
     const { username, note } = req.body;
     const [txns] = await db.query('SELECT * FROM transactions WHERE id = ?', [req.params.id]);
@@ -1710,16 +1710,49 @@ router.post('/transactions/:id/resubmit', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-// Cancel / delete (only by creator, only before any action)
+// Cancel / delete — V4: now soft-delete (deleted_at) instead of hard-delete
+// Only the creator can soft-delete, only before any non-create action.
+// Use /transactions/:id/force for true permanent delete (developer only).
 router.delete('/transactions/:id', async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username) || '';
-    const [txns] = await db.query('SELECT created_by, status FROM transactions WHERE id = ?', [req.params.id]);
+    const username = req.query.username || (req.user && req.user.username) || (req.body && req.body.username) || '';
+    const reason = (req.body && req.body.reason) || (req.query.reason) || 'cancelled by creator';
+    const [txns] = await db.query('SELECT created_by, status, deleted_at FROM transactions WHERE id = ?', [req.params.id]);
     if (!txns.length) return res.json({ success: false, error: 'المعاملة غير موجودة' });
+    if (txns[0].deleted_at) return res.json({ success: false, error: 'المعاملة محذوفة مسبقاً' });
     if (txns[0].created_by !== username) return res.json({ success: false, error: 'لا يمكن الإلغاء — لست المنشئ' });
     const [logs] = await db.query("SELECT COUNT(*) AS cnt FROM transaction_steps_log WHERE transaction_id = ? AND action_type != 'create'", [req.params.id]);
     if (logs[0].cnt > 0) return res.json({ success: false, error: 'لا يمكن الإلغاء — بدأ التصرف في المعاملة' });
-    await db.query('DELETE FROM transactions WHERE id = ?', [req.params.id]);
+    // Soft-delete: keep the row + audit trail, just hide from queries
+    await db.query(
+      `UPDATE transactions SET deleted_at = NOW(), deleted_by = ?, delete_reason = ?,
+                                version = version + 1 WHERE id = ?`,
+      [username, String(reason).substring(0, 500), req.params.id]);
+    // Audit log
+    try {
+      await db.query(
+        `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details)
+         VALUES (?, 'soft_delete', 'transaction', ?, ?)`,
+        [username, req.params.id, JSON.stringify({ reason: reason })]);
+    } catch(e) {}
+    res.json({ success: true, softDeleted: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// V4 — Restore a soft-deleted transaction (admin only)
+router.post('/transactions/:id/restore', async (req, res) => {
+  try {
+    const username = (req.body && req.body.username) || (req.user && req.user.username);
+    if (username !== 'admin') return res.status(403).json({ error: 'admin only' });
+    await db.query(
+      'UPDATE transactions SET deleted_at = NULL, deleted_by = NULL, delete_reason = NULL, version = version + 1 WHERE id = ?',
+      [req.params.id]);
+    try {
+      await db.query(
+        `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details)
+         VALUES (?, 'restore', 'transaction', ?, '{}')`,
+        [username, req.params.id]);
+    } catch(e) {}
     res.json({ success: true });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
@@ -1737,32 +1770,10 @@ router.delete('/transactions/:id', async (req, res) => {
 //   2. Any user whose user_meta.isDeveloper === true
 // Body MUST include { confirm: 'DELETE-FOREVER', reason: '<text>' } so a stray
 // click cannot trigger this. The deletion is logged to audit_logs if available.
-router.delete('/transactions/:id/force', async (req, res) => {
+router.delete('/transactions/:id/force', guardDeveloper, SCHEMA.validateBody(SCHEMA.schemas.forceDelete), async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username) || '';
-    if (!username) return res.json({ success: false, error: 'مستخدم غير معروف' });
-
-    // Developer-only gate — username 'admin' OR explicit isDeveloper flag in settings.user_meta
-    let isDev = (username === 'admin');
-    if (!isDev) {
-      try {
-        const [m] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
-        if (m.length && m[0].setting_value) {
-          const meta = JSON.parse(m[0].setting_value) || {};
-          isDev = !!(meta[username] && meta[username].isDeveloper);
-        }
-      } catch(e) { /* tolerate missing settings table */ }
-    }
-    if (!isDev) return res.status(403).json({ success: false, error: 'هذه العملية للمطور فقط' });
-
-    // Safety guard: explicit confirmation phrase + reason text
+    const username = req.query.username || (req.user && req.user.username) || (req.body && req.body.username) || '';
     const { confirm, reason } = req.body || {};
-    if (confirm !== 'DELETE-FOREVER') {
-      return res.json({ success: false, error: 'حماية: أرسل { confirm: "DELETE-FOREVER", reason: "..." } لتأكيد الحذف النهائي' });
-    }
-    if (!reason || String(reason).trim().length < 5) {
-      return res.json({ success: false, error: 'سبب الحذف مطلوب (5 أحرف على الأقل) للتوثيق' });
-    }
 
     const txnId = req.params.id;
     const [txns] = await db.query(
@@ -1836,7 +1847,7 @@ router.delete('/transactions/:id/force', async (req, res) => {
 //   6. Invariant assertion (refuses to persist inconsistent state)
 //   7. Atomic UPDATE inside DB transaction
 // ═══════════════════════════════════════════════════════════════════
-router.post('/transactions/:id/action', async (req, res) => {
+router.post('/transactions/:id/action', SCHEMA.validateBody(SCHEMA.schemas.action), async (req, res) => {
   const txnId = req.params.id;
   const { action, username, note, attachment, newAmount, forwardTo, expectedVersion } = req.body;
   if (!action) return res.status(400).json({ success: false, error: 'الإجراء مطلوب' });
@@ -2243,7 +2254,7 @@ router.get('/transactions/:id/replies', async (req, res) => {
 // POST /workflow/transactions/:id/replies
 // V4 — Enforces "one reply per stage per actor" rule.
 // Stamps stage_step_id so we can detect duplicates within a stage.
-router.post('/transactions/:id/replies', async (req, res) => {
+router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.reply), async (req, res) => {
   try {
     const { replyText, attachment, attachmentName, attachmentMime, isInternal, username } = req.body;
     if (!replyText || !replyText.trim()) {

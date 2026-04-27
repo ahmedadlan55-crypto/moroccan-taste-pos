@@ -216,11 +216,16 @@ app.use('/api/custody', require('./routes/custody'));
 app.use('/api/cash', require('./routes/cash'));
 app.use('/api/workflow', require('./routes/workflow'));
 app.use('/api/hr', require('./routes/hr'));
-// V4 — counters, SLA, SSE inbox stream
+// V4 — counters, SLA, SSE inbox stream, metrics, workflow-routes JSON-DSL
 app.use('/api/counters', require('./routes/counters'));
 const _slaRouter = require('./routes/sla');
 app.use('/api/sla', _slaRouter);
 app.use('/api/sse', require('./routes/sse'));
+const _metricsRouter = require('./routes/metrics');
+// Mount request tracker BEFORE other api routes so it counts everything
+app.use('/api/', _metricsRouter._trackRequest);
+app.use('/api/metrics', _metricsRouter);
+app.use('/api/workflow-routes', require('./routes/workflowRoutes'));
 // Start SLA background sweep on boot (every 30 minutes)
 try { _slaRouter._startBackgroundSweep(30 * 60 * 1000); } catch(e) { console.warn('[sla] sweep start failed:', e.message); }
 
@@ -891,6 +896,30 @@ async function runMigrations() {
       END
     `);
   } catch(e) { console.warn('[trigger] delete:', e.message); }
+
+  // V4.15 — Soft-delete pattern (transactions can be archived without losing data)
+  await addColumnIfMissing('transactions', 'deleted_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('transactions', 'deleted_by', "VARCHAR(100) DEFAULT NULL");
+  await addColumnIfMissing('transactions', 'delete_reason', "VARCHAR(500) DEFAULT NULL");
+  try { await db.query("CREATE INDEX idx_txn_deleted ON transactions (deleted_at)"); } catch(e) {}
+
+  // V4.16 — Workflow routes JSON-DSL table (allows branching/conditional steps as JSON)
+  await createTableIfMissing('workflow_routes', `
+    CREATE TABLE workflow_routes (
+      id VARCHAR(60) PRIMARY KEY,
+      transaction_type_id VARCHAR(60),
+      initiator_position_id VARCHAR(60),
+      route_name VARCHAR(200),
+      is_default TINYINT(1) DEFAULT 0,
+      is_active TINYINT(1) DEFAULT 1,
+      conditions JSON DEFAULT NULL,
+      steps JSON NOT NULL,
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_route_type_pos (transaction_type_id, initiator_position_id, is_active)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
 
   // V4.14 — Backfill counters from existing data (one-time)
   try {

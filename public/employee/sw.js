@@ -12,7 +12,7 @@
  * Bump CACHE_VERSION when shipping new assets.
  */
 
-const CACHE_VERSION = 'mt-emp-v3.1.2';
+const CACHE_VERSION = 'mt-emp-v3.1.3';
 const CACHE_NAME = CACHE_VERSION;
 
 // App shell — pre-cached on install so the first launch works offline

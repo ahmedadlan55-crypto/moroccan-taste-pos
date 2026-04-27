@@ -85,12 +85,18 @@
     @keyframes sd{from{opacity:0;transform:translateX(-50%) translateY(-8px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
     .page{display:none;} .page.active{display:block;}
     .login-w{display:flex;align-items:center;justify-content:center;min-height:100dvh;padding:20px;background:#fafbfc;}
-    .login-b{background:#fff;border-radius:20px;padding:36px 24px;width:100%;max-width:360px;text-align:center;box-shadow:0 2px 20px rgba(0,0,0,.04);}
+    /* V3.1.3 — position:relative so the lang-btn absolute positioning anchors here, not viewport */
+    .login-b{position:relative;background:#fff;border-radius:20px;padding:48px 24px 36px;width:100%;max-width:360px;text-align:center;box-shadow:0 2px 20px rgba(0,0,0,.04);}
     .login-b h1{font-size:22px;color:#111827;margin-bottom:4px;} .login-b p{color:#6b7280;font-size:12px;margin-bottom:24px;}
     .login-b input{width:100%;padding:14px 16px;border:1.5px solid #e5e7eb;border-radius:12px;font-size:16px;margin-bottom:12px;text-align:right;background:#fafbfc;}
+    html[lang="en"] .login-b input{text-align:left;}
     .login-b input:focus{border-color:#0ea5e9;outline:none;background:#fff;}
-    .login-b button{width:100%;padding:14px;background:#0ea5e9;color:#fff;border:none;border-radius:12px;font-size:16px;font-weight:800;cursor:pointer;}
-    .login-b button:active{background:#0284c7;}
+    /* Generic button: ONLY actual full-width buttons (NOT .lang-btn — handled below with higher specificity) */
+    .login-b button:not(.lang-btn){width:100%;padding:14px;background:#0ea5e9;color:#fff;border:none;border-radius:12px;font-size:16px;font-weight:800;cursor:pointer;}
+    .login-b button:not(.lang-btn):active{background:#0284c7;}
+    /* Language toggle pill — small, in the corner. !important on width because .login-b button[type] could otherwise stretch it */
+    .login-b .lang-btn{position:absolute;top:14px;inset-inline-end:14px;width:auto !important;min-width:48px;height:32px;padding:0 12px !important;border-radius:999px !important;background:#e0f2fe !important;color:#0369a1 !important;border:1.5px solid #bae6fd !important;font-size:11px !important;font-weight:900 !important;letter-spacing:.5px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:4px;}
+    .login-b .lang-btn:active{background:#bae6fd !important;}
     .modal{position:fixed;inset:0;z-index:5000;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;transition:.2s;}
     .modal.show{opacity:1;pointer-events:all;}
     /* V3.1: ALL modals now scroll by default. Was the bug — view modal didn't have overflow-y:auto so content overflowed off-screen. */
@@ -229,13 +235,13 @@
     html[lang="en"] body{direction:ltr;}
     html[lang="en"] .hdr-n,html[lang="en"] .hdr-s{text-align:left;}
   </style>
-  <script defer src="/employee/app.js?v=25"></script>
+  <script defer src="/employee/app.js?v=26"></script>
 </head>
 <body>
 <div class="toast" id="toast"></div>
 <div id="loginPage" class="login-w">
   <div class="login-b">
-    <button type="button" onclick="toggleLang()" class="lang-btn" style="position:absolute;top:16px;right:16px;" id="langToggleBtn" title="Language">EN</button>
+    <button type="button" onclick="toggleLang()" class="lang-btn" id="langToggleBtn" title="Language" aria-label="Toggle language"><i class="fas fa-globe" style="font-size:10px;opacity:.85;"></i> EN</button>
     <div style="width:56px;height:56px;border-radius:14px;background:#0ea5e9;color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;margin:0 auto 16px;"><i class="fas fa-user-tie"></i></div>
     <h1 data-i18n="login.title">بوابة الموظف</h1>
     <p style="color:#6b7280;font-size:12px;margin-bottom:24px;" data-i18n="login.sub">سجّل دخولك لتسجيل الحضور</p>

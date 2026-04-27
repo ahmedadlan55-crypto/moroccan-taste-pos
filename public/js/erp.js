@@ -14671,16 +14671,21 @@ function _mhRender() {
     var logoHtml = b.logo
       ? '<img src="' + b.logo + '" alt="' + _v3EscapeHtml(b.name) + '">'
       : '<span class="mh-brand-init">' + _v3EscapeHtml(initials) + '</span>';
+    var menuCount = b.menuCount || 0;
+    var emptyAlert = menuCount === 0
+      ? '<div style="background:#fef3c7;color:#92400e;padding:6px 10px;border-radius:8px;font-size:11px;font-weight:700;margin-top:6px;display:flex;align-items:center;gap:5px;"><i class="fas fa-exclamation-triangle"></i> لا توجد منتجات بعد</div>'
+      : '';
     return '<div class="mh-brand-card' + (b.isActive ? '' : ' inactive') + '" onclick="erpOpenBrandMenu(\'' + b.id + '\',\'' + (b.name||'').replace(/[\\\\\']/g,'') + '\')">' +
       '<div class="mh-brand-logo">' + logoHtml + '</div>' +
       '<div class="mh-brand-name">' + _v3EscapeHtml(b.name) + '</div>' +
       '<div class="mh-brand-code">' + _v3EscapeHtml(b.code||'') + '</div>' +
+      emptyAlert +
       '<div class="mh-brand-stats">' +
-        '<div class="mh-stat"><i class="fas fa-utensils"></i> ' + (b.menuCount||0) + ' منتج</div>' +
+        '<div class="mh-stat"><i class="fas fa-utensils"></i> ' + menuCount + ' منتج</div>' +
         '<div class="mh-stat"><i class="fas fa-code-branch"></i> ' + (b.branchCount||0) + ' فرع</div>' +
       '</div>' +
       '<div class="mh-brand-cta">' +
-        '<span><i class="fas fa-arrow-left"></i> فتح المنيو</span>' +
+        '<span><i class="fas fa-arrow-left"></i> ' + (menuCount === 0 ? 'ابدأ بإضافة منتجات' : 'فتح المنيو') + '</span>' +
         (b.isActive ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;">مفعّل</span>'
                     : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;">معطّل</span>') +
       '</div>' +
@@ -14997,10 +15002,16 @@ function _sfRender() {
   if (metrics) {
     var act = rows.filter(function(m){return m.active;}).length;
     var totalStock = rows.reduce(function(a,m){return a + Number(m.stock||0);}, 0);
+    var lowStock = rows.filter(function(m){ var s = Number(m.stock||0), min = Number(m.minStock||0); return min > 0 && s <= min; }).length;
+    var outOfStock = rows.filter(function(m){ return Number(m.stock||0) <= 0; }).length;
+    var withBom = rows.filter(function(m){ return m.recipeCount > 0 || m.hasBom; }).length;
     metrics.innerHTML =
       _v3MetricCard('fa-blender', 'إجمالي الأنواع', rows.length, '#f59e0b') +
       _v3MetricCard('fa-toggle-on', 'مفعّلة', act, '#22c55e') +
-      _v3MetricCard('fa-boxes-stacked', 'إجمالي المخزون', _v3Fmt(totalStock), '#8b5cf6');
+      _v3MetricCard('fa-boxes-stacked', 'إجمالي المخزون', _v3Fmt(totalStock), '#8b5cf6') +
+      _v3MetricCard('fa-triangle-exclamation', 'مخزون منخفض', lowStock, '#f59e0b') +
+      _v3MetricCard('fa-circle-xmark', 'نفذ المخزون', outOfStock, '#ef4444') +
+      _v3MetricCard('fa-list-check', 'له وصفة BOM', withBom, '#3b82f6');
   }
 
   var tbody = document.getElementById('sfBody');
@@ -15011,22 +15022,59 @@ function _sfRender() {
   }
 
   tbody.innerHTML = filtered.map(function(m) {
+    var stock = Number(m.stock || 0);
+    var min = Number(m.minStock || 0);
+    var stockClr = stock <= 0 ? '#ef4444' : (min > 0 && stock <= min ? '#f59e0b' : '#16a34a');
+    var stockIcon = stock <= 0 ? 'fa-circle-xmark' : (min > 0 && stock <= min ? 'fa-triangle-exclamation' : 'fa-check-circle');
+    var stockLabel = stock <= 0 ? 'نفذ' : (min > 0 && stock <= min ? 'منخفض' : 'متوفر');
     return '<tr>' +
-      '<td><div style="font-weight:800;">'+ _v3EscapeHtml(m.name) +'</div></td>' +
+      '<td><div style="font-weight:800;">'+ _v3EscapeHtml(m.name) +'</div>' +
+        (m.consumerCount > 0 ? '<div style="font-size:10px;color:#3b82f6;margin-top:2px;"><i class="fas fa-link"></i> يستهلكه ' + m.consumerCount + ' منتج تام</div>' : '') +
+      '</td>' +
       '<td>'+ _v3EscapeHtml(m.brandName||'—') +'</td>' +
       '<td><span class="wo-chip">'+ _v3EscapeHtml(m.productionUnit||'pcs') +'</span></td>' +
-      '<td class="num" style="font-weight:700;">'+ Number(m.stock||0) +'</td>' +
-      '<td class="num">— </td>' +
+      '<td>' +
+        '<div style="display:flex;align-items:center;gap:6px;">' +
+          '<i class="fas '+stockIcon+'" style="color:'+stockClr+';font-size:13px;"></i>' +
+          '<div>' +
+            '<div style="font-weight:900;color:'+stockClr+';font-size:14px;">' + _v3Fmt(stock) + '</div>' +
+            '<div style="font-size:10px;color:'+stockClr+';font-weight:700;">' + stockLabel + (min > 0 ? ' (حد أدنى: ' + min + ')' : '') + '</div>' +
+          '</div>' +
+        '</div>' +
+      '</td>' +
+      '<td class="num">' + (m.recipeCount != null ? '<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;">' + m.recipeCount + ' مكوّن</span>' : '<span style="color:#94a3b8;">— </span>') + '</td>' +
       '<td style="font-size:11px;">'+ (m.productionWarehouseId ? _v3EscapeHtml(m.productionWarehouseId) : '<span style="color:#94a3b8;">حسب الفرع</span>') +'</td>' +
       '<td>'+ (m.active ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مفعّل</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;">معطّل</span>') +'</td>' +
       '<td>' +
         '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpOpenSemiFinishedModal(\''+ m.id +'\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
         '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpEditSemiBom(\''+ m.id +'\')" title="الوصفة (BOM)"><i class="fas fa-list-check"></i></button> ' +
+        '<button class="wo-btn wo-btn-sm wo-btn-warning" onclick="erpQuickProduceModal(\''+ m.id +'\')" title="إنتاج سريع"><i class="fas fa-industry"></i></button> ' +
         '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpDeleteBrandMenuItem(\''+ m.id +'\')" title="حذف"><i class="fas fa-trash"></i></button>' +
       '</td>' +
     '</tr>';
   }).join('');
 }
+
+// V3: Quick produce — opens production order pre-filled from this semi-finished
+window.erpQuickProduceModal = function(semiId) {
+  var sf = (window._sfItemsCache || []).find(function(x){ return String(x.id) === String(semiId); });
+  if (!sf) { _v3Toast('غير موجود', true); return; }
+  // Cache for the production form to pre-select
+  window._poPrefillSemi = sf;
+  erpOpenProductionOrderModal();
+  setTimeout(function() {
+    // Auto-pick this semi in the first row
+    var sel = document.querySelector('#poTbl tbody .po-product');
+    if (sel) {
+      sel.value = sf.id;
+      var u = document.querySelector('#poTbl tbody .po-unit');
+      if (u) u.value = sf.productionUnit || 'pcs';
+    }
+    // Auto-pick brand
+    var brSel = document.getElementById('poF_brandId');
+    if (brSel && sf.brandId) brSel.value = sf.brandId;
+  }, 200);
+};
 
 function erpFilterSemiFinished() { _sfRender(); }
 
@@ -15293,15 +15341,24 @@ function _poRender() {
   var rows = window._poCache || [];
   var metrics = document.getElementById('poMetrics');
   if (metrics) {
-    var byStatus = { planned:0, released:0, completed:0 };
-    rows.forEach(function(o){ if (byStatus[o.status]!=null) byStatus[o.status]++; });
+    var byStatus = { planned:0, released:0, in_progress:0, completed:0, cancelled:0 };
+    var totalCost = 0;
+    rows.forEach(function(o){
+      var st = o.status || 'planned';
+      if (byStatus[st]!=null) byStatus[st]++;
+      totalCost += Number(o.materialsCost||o.materials_cost||0) + Number(o.laborCost||o.labor_cost||0) + Number(o.overheadCost||o.overhead_cost||0);
+    });
     var totalProduced = rows.reduce(function(a,o){return a + Number(o.qtyProduced||o.qty_produced||0);}, 0);
+    var totalPlanned = rows.reduce(function(a,o){return a + Number(o.qtyPlanned||o.qty_planned||0);}, 0);
+    var efficiency = totalPlanned > 0 ? ((totalProduced / totalPlanned) * 100).toFixed(0) : 0;
     metrics.innerHTML =
       _v3MetricCard('fa-list', 'إجمالي الأوامر', rows.length, '#3b82f6') +
       _v3MetricCard('fa-clipboard-list', 'مخططة', byStatus.planned, '#94a3b8') +
-      _v3MetricCard('fa-play', 'مُطلقة', byStatus.released, '#f59e0b') +
+      _v3MetricCard('fa-play', 'مُطلقة', byStatus.released + byStatus.in_progress, '#f59e0b') +
       _v3MetricCard('fa-check-circle', 'مكتملة', byStatus.completed, '#22c55e') +
-      _v3MetricCard('fa-boxes-stacked', 'إجمالي المنتج', _v3Fmt(totalProduced), '#8b5cf6');
+      _v3MetricCard('fa-boxes-stacked', 'الكمية المنتجة', _v3Fmt(totalProduced), '#8b5cf6') +
+      _v3MetricCard('fa-gauge-high', 'كفاءة الإنتاج', efficiency + '%', '#06b6d4') +
+      _v3MetricCard('fa-coins', 'إجمالي تكلفة', _v3Fmt(totalCost), '#be185d');
   }
 
   var tbody = document.getElementById('poOrdersBody');
@@ -15312,24 +15369,72 @@ function _poRender() {
   }
 
   tbody.innerHTML = rows.map(function(o) {
-    var statusMap = { planned:['#94a3b8','مخطط'], released:['#f59e0b','مُطلق'], completed:['#22c55e','مكتمل'], cancelled:['#ef4444','ملغي'] };
-    var st = statusMap[o.status] || ['#64748b', o.status];
+    var statusMap = {
+      planned:['#94a3b8','مخطط','fa-clipboard-list'],
+      released:['#f59e0b','مُطلق','fa-play'],
+      in_progress:['#06b6d4','قيد التنفيذ','fa-spinner'],
+      completed:['#22c55e','مكتمل','fa-check-circle'],
+      closed:['#16a34a','مُقفل','fa-lock'],
+      cancelled:['#ef4444','ملغي','fa-xmark']
+    };
+    var st = statusMap[o.status] || ['#64748b', o.status, 'fa-circle'];
+    var planned = Number(o.qtyPlanned || o.qty_planned || 0);
+    var produced = Number(o.qtyProduced || o.qty_produced || 0);
+    var pct = planned > 0 ? Math.min(100, Math.round((produced / planned) * 100)) : 0;
+    var pctClr = pct >= 100 ? '#16a34a' : (pct >= 50 ? '#f59e0b' : '#94a3b8');
+    var cost = Number(o.materialsCost||o.materials_cost||0) + Number(o.laborCost||o.labor_cost||0) + Number(o.overheadCost||o.overhead_cost||0);
+
     return '<tr>' +
-      '<td><code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:11px;">'+ _v3EscapeHtml(o.id) +'</code></td>' +
+      '<td><code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:11px;">'+ _v3EscapeHtml(o.id) +'</code>' +
+        (cost > 0 ? '<div style="font-size:10px;color:#be185d;margin-top:2px;"><i class="fas fa-coins"></i> ' + _v3Fmt(cost) + ' ر.س</div>' : '') +
+      '</td>' +
       '<td>'+ (o.orderDate || o.order_date ? new Date(o.orderDate||o.order_date).toLocaleDateString('ar-SA') : '—') +'</td>' +
       '<td>'+ _v3EscapeHtml(o.brandName||o.brand_id||'—') +'</td>' +
-      '<td>'+ _v3EscapeHtml(o.productName||o.product_name||'—') +'</td>' +
-      '<td class="num" style="font-weight:700;">'+ _v3Fmt(o.qtyPlanned||o.qty_planned||0) +'</td>' +
-      '<td>'+ _v3EscapeHtml(o.warehouseName||o.warehouse_id||'—') +'</td>' +
-      '<td><span class="wo-chip" style="background:'+st[0]+'1a;color:'+st[0]+';font-weight:700;">'+ st[1] +'</span></td>' +
+      '<td><div style="font-weight:800;">' + _v3EscapeHtml(o.productName||o.product_name||'—') + '</div>' +
+        (o.warehouseName||o.warehouse_id ? '<div style="font-size:10px;color:#64748b;"><i class="fas fa-warehouse"></i> ' + _v3EscapeHtml(o.warehouseName||o.warehouse_id) + '</div>' : '') +
+      '</td>' +
       '<td>' +
-        (o.status === 'planned' ? '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpReleaseProduction(\''+ o.id +'\')" title="إطلاق"><i class="fas fa-play"></i></button> ' : '') +
-        (o.status === 'released' ? '<button class="wo-btn wo-btn-sm wo-btn-primary" onclick="erpCompleteProduction(\''+ o.id +'\')" title="إكمال"><i class="fas fa-check"></i></button> ' : '') +
-        '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpViewProductionDetail(\''+ o.id +'\')" title="تفاصيل"><i class="fas fa-eye"></i></button>' +
+        '<div style="display:flex;align-items:center;gap:6px;font-size:12px;">' +
+          '<b style="color:'+pctClr+';">' + _v3Fmt(produced) + '</b><small style="color:#94a3b8;">/ ' + _v3Fmt(planned) + '</small>' +
+        '</div>' +
+        '<div style="background:#f1f5f9;border-radius:999px;height:6px;overflow:hidden;margin-top:4px;width:90px;">' +
+          '<div style="height:100%;background:' + pctClr + ';width:' + pct + '%;transition:width .3s;"></div>' +
+        '</div>' +
+        '<div style="font-size:10px;color:'+pctClr+';font-weight:700;margin-top:2px;">' + pct + '%</div>' +
+      '</td>' +
+      '<td><span class="wo-chip" style="background:'+st[0]+'1a;color:'+st[0]+';font-weight:700;"><i class="fas '+st[2]+'" style="margin-left:4px;"></i>'+ st[1] +'</span></td>' +
+      '<td>' +
+        (o.status === 'planned' ? '<button class="wo-btn wo-btn-sm wo-btn-warning" onclick="erpReleaseProduction(\''+ o.id +'\')" title="إطلاق + خصم المكونات"><i class="fas fa-play"></i></button> ' : '') +
+        ((o.status === 'released' || o.status === 'in_progress') ? '<button class="wo-btn wo-btn-sm wo-btn-success" onclick="erpCompleteProduction(\''+ o.id +'\')" title="إكمال + إضافة المنتج"><i class="fas fa-check"></i></button> ' : '') +
+        '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpViewProductionDetail(\''+ o.id +'\')" title="تفاصيل + مكونات"><i class="fas fa-eye"></i></button> ' +
+        '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpDuplicateProduction(\''+ o.id +'\')" title="نسخ كأمر جديد"><i class="fas fa-copy"></i></button>' +
       '</td>' +
     '</tr>';
   }).join('');
 }
+
+window.erpDuplicateProduction = function(id) {
+  if (!confirm('هل تريد إنشاء أمر إنتاج جديد بنفس بيانات هذا الأمر (المنتج + الكمية + المستودع)؟')) return;
+  callAPI('GET', '/erp/production-orders/' + id, null, function(o) {
+    if (!o || o.error) { _v3Toast('فشل التحميل', true); return; }
+    var payload = {
+      productId: o.productId || o.product_id,
+      qtyPlanned: o.qtyPlanned || o.qty_planned,
+      brandId: o.brandId || o.brand_id,
+      warehouseId: o.warehouseId || o.warehouse_id,
+      orderDate: new Date().toISOString().slice(0, 10),
+      notes: 'مكرر من ' + id
+    };
+    callAPI('POST', '/erp/production-orders', payload, function(r) {
+      if (r && r.success) {
+        _v3Toast('تم إنشاء أمر إنتاج جديد');
+        erpLoadProductionOrders();
+      } else {
+        _v3Toast((r && r.error) || 'فشل النسخ', true);
+      }
+    });
+  });
+};
 
 function erpOpenProductionOrderModal() {
   // Load semi-finished list + warehouses + brands
@@ -15510,22 +15615,145 @@ function erpCompleteProduction(id) {
 }
 
 function erpViewProductionDetail(id) {
-  callAPI('GET', '/erp/production-orders/' + id, null, function(o) {
+  // Load order + consumption + output in parallel
+  Promise.all([
+    new Promise(function(resolve) { callAPI('GET', '/erp/production-orders/' + id, null, resolve); }),
+    new Promise(function(resolve) { callAPI('GET', '/erp/production-orders/' + id + '/consumption', null, function(d){ resolve(Array.isArray(d) ? d : []); }); }),
+    new Promise(function(resolve) { callAPI('GET', '/erp/production-orders/' + id + '/output', null, function(d){ resolve(Array.isArray(d) ? d : []); }); })
+  ]).then(function(res) {
+    var o = res[0], consumption = res[1], output = res[2];
     if (!o || o.error) { _v3Toast('فشل التحميل', true); return; }
-    var html = '<div style="padding:6px 0;">' +
-      '<div style="margin-bottom:14px;padding:14px;background:linear-gradient(135deg,#dcfce7,#f0fdf4);border-radius:10px;border:1px solid #86efac;">' +
-        '<div style="font-size:13px;color:#166534;font-weight:700;">أمر إنتاج: '+ _v3EscapeHtml(o.id) +'</div>' +
-        '<div style="font-size:24px;font-weight:900;color:#14532d;margin-top:4px;">'+ _v3EscapeHtml(o.productName||o.product_name||'—') +'</div>' +
-        '<div style="font-size:13px;color:#166534;margin-top:4px;">المنتج المخطط: '+ _v3Fmt(o.qtyPlanned||o.qty_planned||0) +' / المنتج فعلياً: '+ _v3Fmt(o.qtyProduced||o.qty_produced||0) +'</div>' +
+    _renderProductionDetailModal(o, consumption, output);
+  });
+}
+
+function _renderProductionDetailModal(o, consumption, output) {
+  var planned = Number(o.qtyPlanned || o.qty_planned || 0);
+  var produced = Number(o.qtyProduced || o.qty_produced || 0);
+  var scrap = Number(o.qtyScrap || o.qty_scrap || 0);
+  var pct = planned > 0 ? Math.min(100, Math.round((produced / planned) * 100)) : 0;
+  var pctClr = pct >= 100 ? '#16a34a' : (pct >= 50 ? '#f59e0b' : '#94a3b8');
+  var matCost = Number(o.materialsCost || o.materials_cost || 0);
+  var labCost = Number(o.laborCost || o.labor_cost || 0);
+  var ohCost  = Number(o.overheadCost || o.overhead_cost || 0);
+  var totalCost = matCost + labCost + ohCost;
+  var unitCost = produced > 0 ? (totalCost / produced) : 0;
+
+  var statusMap = {
+    planned:['#94a3b8','مخطط'], released:['#f59e0b','مُطلق'],
+    in_progress:['#06b6d4','قيد التنفيذ'], completed:['#22c55e','مكتمل'],
+    closed:['#16a34a','مُقفل'], cancelled:['#ef4444','ملغي']
+  };
+  var st = statusMap[o.status] || ['#64748b', o.status];
+
+  // Hero header with progress
+  var html =
+    '<div style="background:linear-gradient(135deg,#1e293b,#334155);color:#fff;border-radius:14px;padding:18px;margin-bottom:14px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">' +
+        '<div style="flex:1;">' +
+          '<div style="font-size:11px;color:#94a3b8;letter-spacing:.05em;">أمر إنتاج · ' + _v3EscapeHtml(o.id) + '</div>' +
+          '<div style="font-size:20px;font-weight:900;color:#fff;margin-top:4px;">' + _v3EscapeHtml(o.productName || o.product_name || '—') + '</div>' +
+          '<div style="font-size:11px;color:#cbd5e1;margin-top:6px;">' +
+            '<i class="fas fa-tags"></i> ' + _v3EscapeHtml(o.brandName || o.brand_id || '—') + ' · ' +
+            '<i class="fas fa-warehouse"></i> ' + _v3EscapeHtml(o.warehouseName || o.warehouse_id || '—') + ' · ' +
+            '<i class="far fa-calendar"></i> ' + (o.orderDate || o.order_date ? new Date(o.orderDate || o.order_date).toLocaleDateString('ar-SA') : '—') +
+          '</div>' +
+        '</div>' +
+        '<span style="background:'+st[0]+';color:#fff;padding:5px 12px;border-radius:999px;font-size:11px;font-weight:800;">' + st[1] + '</span>' +
+      '</div>' +
+      // Progress bar
+      '<div style="margin-top:14px;">' +
+        '<div style="display:flex;justify-content:space-between;font-size:11px;color:#cbd5e1;margin-bottom:4px;">' +
+          '<span>الإنتاج</span><span><b style="color:'+pctClr+';font-size:14px;">' + _v3Fmt(produced) + '</b> / ' + _v3Fmt(planned) + ' (' + pct + '%)</span>' +
+        '</div>' +
+        '<div style="background:#0f172a;border-radius:999px;height:10px;overflow:hidden;">' +
+          '<div style="height:100%;background:linear-gradient(90deg,'+pctClr+',#22c55e);width:' + pct + '%;transition:width .4s;"></div>' +
+        '</div>' +
+        (scrap > 0 ? '<div style="font-size:11px;color:#fca5a5;margin-top:4px;"><i class="fas fa-triangle-exclamation"></i> هدر: ' + _v3Fmt(scrap) + '</div>' : '') +
       '</div>' +
     '</div>';
-    WoModal.open({
-      icon: 'fa-industry', iconColor: '#22c55e',
-      title: 'تفاصيل أمر الإنتاج',
-      body: html, size: 'md',
-      footer: '<button class="wo-btn wo-btn-primary" onclick="WoModal.close()">إغلاق</button>'
-    });
+
+  // Cost breakdown grid (4 cards)
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:14px;">' +
+    _v3CostCard('fa-cubes', 'تكلفة المواد', matCost, '#3b82f6') +
+    _v3CostCard('fa-hands', 'تكلفة العمالة', labCost, '#8b5cf6') +
+    _v3CostCard('fa-bolt', 'تكاليف غير مباشرة', ohCost, '#f59e0b') +
+    _v3CostCard('fa-calculator', 'إجمالي التكلفة', totalCost, '#be185d') +
+    (produced > 0 ? _v3CostCard('fa-tags', 'تكلفة الوحدة', unitCost, '#06b6d4') : '') +
+  '</div>';
+
+  // Consumption table (raw materials used)
+  html += '<div style="background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:14px;">' +
+    '<div style="font-size:13px;font-weight:900;color:#1e293b;margin-bottom:8px;display:flex;align-items:center;gap:6px;"><i class="fas fa-box-open" style="color:#3b82f6;"></i> المكونات المستهلكة (' + consumption.length + ')</div>';
+  if (consumption.length) {
+    html += '<table class="wo-table" style="font-size:12px;"><thead><tr><th>المكوّن</th><th class="num">الكمية</th><th>الوحدة</th><th class="num">التكلفة</th></tr></thead><tbody>' +
+      consumption.map(function(c) {
+        return '<tr>' +
+          '<td>' + _v3EscapeHtml(c.itemName || c.item_name || c.itemId || '') + '</td>' +
+          '<td class="num">' + _v3Fmt(c.quantity || c.qty || 0) + '</td>' +
+          '<td>' + _v3EscapeHtml(c.unit || '') + '</td>' +
+          '<td class="num" style="font-weight:700;color:#1e40af;">' + _v3Fmt(c.totalCost || c.total_cost || (Number(c.quantity||0) * Number(c.unitCost||c.unit_cost||0))) + ' ر.س</td>' +
+        '</tr>';
+      }).join('') + '</tbody></table>';
+  } else {
+    html += '<div style="text-align:center;color:#94a3b8;padding:18px;font-size:12px;"><i class="fas fa-box" style="font-size:24px;display:block;margin-bottom:6px;"></i>' +
+      (o.status === 'planned' ? 'سيتم خصم المكونات عند الإطلاق' : 'لا توجد مكوّنات مسجّلة') + '</div>';
+  }
+  html += '</div>';
+
+  // Output table (finished goods received)
+  if (output.length) {
+    html += '<div style="background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:14px;">' +
+      '<div style="font-size:13px;font-weight:900;color:#1e293b;margin-bottom:8px;display:flex;align-items:center;gap:6px;"><i class="fas fa-boxes-stacked" style="color:#16a34a;"></i> الإنتاج المستلَم (' + output.length + ')</div>' +
+      '<table class="wo-table" style="font-size:12px;"><thead><tr><th>المنتج</th><th class="num">الكمية</th><th class="num">التكلفة</th><th>التاريخ</th></tr></thead><tbody>' +
+      output.map(function(out) {
+        return '<tr>' +
+          '<td>' + _v3EscapeHtml(out.itemName || out.item_name || '') + '</td>' +
+          '<td class="num" style="font-weight:700;">' + _v3Fmt(out.quantity || out.qty || 0) + '</td>' +
+          '<td class="num">' + _v3Fmt(out.totalCost || out.total_cost || 0) + '</td>' +
+          '<td style="font-size:11px;color:#64748b;">' + (out.createdAt || out.created_at ? new Date(out.createdAt || out.created_at).toLocaleString('ar-SA',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '—') + '</td>' +
+        '</tr>';
+      }).join('') + '</tbody></table>' +
+    '</div>';
+  }
+
+  // GL journals if posted
+  if (o.glReleaseId || o.gl_release_id || o.glCompleteId || o.gl_complete_id) {
+    html += '<div style="background:#dbeafe;border:1.5px solid #93c5fd;border-radius:12px;padding:12px;margin-bottom:14px;">' +
+      '<div style="font-size:13px;font-weight:900;color:#1e40af;margin-bottom:6px;"><i class="fas fa-link" style="margin-left:4px;"></i> القيود المحاسبية المرتبطة</div>' +
+      (o.glReleaseId || o.gl_release_id ? '<div style="font-size:12px;color:#1e3a8a;">قيد الإطلاق (خصم المواد): <code>' + _v3EscapeHtml(o.glReleaseId || o.gl_release_id) + '</code></div>' : '') +
+      (o.glCompleteId || o.gl_complete_id ? '<div style="font-size:12px;color:#1e3a8a;">قيد الإكمال (إضافة المنتج): <code>' + _v3EscapeHtml(o.glCompleteId || o.gl_complete_id) + '</code></div>' : '') +
+    '</div>';
+  }
+
+  // Notes
+  if (o.notes) {
+    html += '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#78350f;line-height:1.6;"><b>ملاحظات:</b> ' + _v3EscapeHtml(o.notes) + '</div>';
+  }
+
+  // Footer actions
+  var footer = '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إغلاق</button>';
+  if (o.status === 'planned') {
+    footer = '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إغلاق</button>' +
+             '<button class="wo-btn wo-btn-warning" onclick="WoModal.close();erpReleaseProduction(\''+o.id+'\')"><i class="fas fa-play"></i> إطلاق الأمر</button>';
+  } else if (o.status === 'released' || o.status === 'in_progress') {
+    footer = '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إغلاق</button>' +
+             '<button class="wo-btn wo-btn-success" onclick="WoModal.close();erpCompleteProduction(\''+o.id+'\')"><i class="fas fa-check"></i> إكمال الإنتاج</button>';
+  }
+
+  WoModal.open({
+    icon: 'fa-industry', iconColor: st[0],
+    title: 'تفاصيل أمر الإنتاج',
+    body: html, size: 'lg',
+    footer: footer
   });
+}
+
+function _v3CostCard(icon, label, value, color) {
+  return '<div style="background:#fff;border:1.5px solid '+color+'30;border-radius:10px;padding:10px 12px;">' +
+    '<div style="font-size:10px;color:#64748b;font-weight:700;display:flex;align-items:center;gap:4px;"><i class="fas '+icon+'" style="color:'+color+';"></i> ' + label + '</div>' +
+    '<div style="font-size:15px;font-weight:900;color:'+color+';margin-top:4px;">' + _v3Fmt(value) + ' ر.س</div>' +
+  '</div>';
 }
 
 /* ═══════════════════════════════════════════════════════════════════

@@ -52,13 +52,37 @@ router.get('/all', async (req, res) => {
 router.get('/semi-finished', async (req, res) => {
   try {
     const { brandId } = req.query;
-    let sql = 'SELECT m.*, b.name AS brand_name FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE m.is_semi_finished = 1';
+    // V3: include recipe count + consumer count (how many finished items use this semi)
+    let sql = `
+      SELECT m.*, b.name AS brand_name,
+             (SELECT COUNT(*) FROM recipe r WHERE r.menu_id = m.id) AS recipe_count,
+             (SELECT COUNT(*) FROM menu c WHERE c.consumes_semi_id = m.id) AS consumer_count
+        FROM menu m
+        LEFT JOIN brands b ON b.id = m.brand_id
+       WHERE m.is_semi_finished = 1`;
     const params = [];
     if (brandId) { sql += ' AND m.brand_id = ?'; params.push(brandId); }
     sql += ' ORDER BY m.name';
     const [rows] = await db.query(sql, params);
-    res.json(rows.map(_mapMenu));
-  } catch (e) { res.json([]); }
+    res.json(rows.map(r => {
+      const base = _mapMenu(r);
+      base.recipeCount = Number(r.recipe_count || 0);
+      base.consumerCount = Number(r.consumer_count || 0);
+      base.hasBom = base.recipeCount > 0;
+      return base;
+    }));
+  } catch (e) {
+    // Fallback for old schemas without recipe/consumes_semi_id
+    try {
+      const { brandId } = req.query;
+      let sql = 'SELECT m.*, b.name AS brand_name FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE m.is_semi_finished = 1';
+      const params = [];
+      if (brandId) { sql += ' AND m.brand_id = ?'; params.push(brandId); }
+      sql += ' ORDER BY m.name';
+      const [rows] = await db.query(sql, params);
+      res.json(rows.map(_mapMenu));
+    } catch(e2) { res.json([]); }
+  }
 });
 
 // Add menu item

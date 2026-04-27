@@ -48,6 +48,88 @@ var I18N = {
     'att.lateHours': 'ساعة تأخير',
     'att.lateCount': 'مرات تأخير',
     'att.lateMinutes': 'تأخير {n} د',
+    // V3.1 — attendance section i18n
+    'att.history': 'سجل الحضور',
+    'att.month': 'الشهر',
+    'att.dailyDetails': 'التفاصيل اليومية',
+    'att.present': 'حاضر',
+    'att.late': 'متأخر',
+    'att.absent': 'غياب',
+    'att.leave': 'إجازة',
+    'att.weekend': 'عطلة',
+    'att.partial': 'دخول بدون انصراف',
+    'att.holiday': 'عطلة رسمية',
+    'att.future': 'لم يأت بعد',
+    'att.daysCount': '{n} يوم',
+    'att.noRecords': 'لا توجد سجلات',
+    'att.noData': 'لا توجد بيانات',
+    'period.thisWeek': 'هذا الأسبوع',
+    'period.thisMonth': 'هذا الشهر',
+    'period.lastMonth': 'الشهر الماضي',
+    'period.last30': 'آخر 30 يوم',
+    'period.last90': 'آخر 90 يوم',
+    'period.custom': 'فترة مخصصة',
+    // Day-of-week short labels (Sat=س, Sun=ح, Mon=ن, Tue=ث, Wed=ر, Thu=خ, Fri=ج)
+    'dow.sat': 'س', 'dow.sun': 'ح', 'dow.mon': 'ن', 'dow.tue': 'ث',
+    'dow.wed': 'ر', 'dow.thu': 'خ', 'dow.fri': 'ج',
+    // Transaction view dynamic labels
+    'txn.action.create': 'إنشاء',
+    'txn.action.approve': 'موافقة',
+    'txn.action.reject': 'رفض',
+    'txn.action.return': 'إرجاع',
+    'txn.action.close': 'إقفال',
+    'txn.action.forward': 'تحويل',
+    'txn.attached': 'مرفق',
+    'txn.viewAttach': 'عرض',
+    'txn.downloadAttach': 'تنزيل',
+    'txn.repliesTitle': 'الردود والمناقشة',
+    'txn.replyPlaceholder': 'اكتب رداً أو ملاحظة...',
+    'txn.attachFile': 'إرفاق ملف',
+    'txn.sendReply': 'إرسال الرد',
+    'txn.replyCount': '{n} رد',
+    'txn.noReplies': 'لا توجد ردود بعد — كن أول من يضيف رداً.',
+    'txn.replyDeptHeader': 'رد القسم',
+    'txn.fromDept': 'مرفق من',
+    'txn.workflowLog': 'سجل الإجراءات (ماذا قال كل قسم)',
+    'txn.recipients': 'المستلمون',
+    'txn.timeline': 'سير المعاملة',
+    'txn.showWorkflow': 'عرض سير المعاملة',
+    'txn.hideWorkflow': 'إخفاء سير المعاملة',
+    'txn.contentLabel': 'محتوى المعاملة',
+    'txn.noContent': 'لا يوجد محتوى',
+    'txn.downloadAttachOriginal': 'تحميل المرفق الأصلي',
+    'txn.viewAttachOriginal': 'عرض المرفق',
+    'txn.sender': 'المُرسِل',
+    'txn.status_label': 'الحالة',
+    'txn.importance_label': 'الأهمية',
+    'txn.stoppedAt': 'المعاملة متوقفة الآن عند',
+    'txn.stoppedStep': 'الخطوة:',
+    'txn.returnedToSender': 'تم إرجاع المعاملة للمرسل',
+    'txn.returnedNeedsFix': 'يحتاج المرسل لتصحيح وإعادة الإرسال',
+    'txn.returnedToYou': 'تم إرجاع معاملتك للتعديل',
+    'txn.returnedHeader': 'سبب الإرجاع — يرجى التعديل ثم إعادة الإرسال',
+    'txn.returnedBy': 'المُرجِع:',
+    'txn.returnedHint': 'اضغط زر "تعديل وإعادة الإرسال" أدناه لتصحيح المعاملة وإرسالها مرة أخرى.',
+    'txn.editAndResubmit': 'تعديل وإعادة الإرسال',
+    'txn.approvedTransaction': 'تمت الموافقة على المعاملة',
+    'txn.closedTransaction': 'تم إقفال المعاملة',
+    'txn.rejectedTransaction': 'تم رفض المعاملة',
+    'txn.amount': 'المبلغ',
+    'txn.failed': 'فشلت العملية',
+    'txn.notFound': 'المعاملة غير موجودة',
+    'txn.passedCEO': 'مرّت على الرئيس التنفيذي',
+    'txn.passedCEOLabel': 'معتمدة من الإدارة العليا',
+    'txn.me': 'أنا',
+    'role.admin': 'أدمن',
+    'role.manager': 'مدير',
+    'role.cashier': 'كاشير',
+    'role.custody': 'عهدة',
+    'role.finance': 'مالية',
+    'role.hr': 'موارد بشرية',
+    'role.inventory': 'مخزون',
+    'role.purchasing': 'مشتريات',
+    'role.employee': 'موظف',
+    'role.user': 'مستخدم',
     'common.empty.home': 'لا توجد سجلات بعد',
     'common.empty.att': 'لا توجد سجلات',
     'common.empty.requests': 'لا توجد طلبات',
@@ -246,6 +328,86 @@ var I18N = {
     'att.lateHours': 'Late hrs',
     'att.lateCount': 'Late count',
     'att.lateMinutes': 'Late {n} min',
+    // V3.1 — attendance section i18n
+    'att.history': 'Attendance History',
+    'att.month': 'Month',
+    'att.dailyDetails': 'Daily Details',
+    'att.present': 'Present',
+    'att.late': 'Late',
+    'att.absent': 'Absent',
+    'att.leave': 'On Leave',
+    'att.weekend': 'Weekend',
+    'att.partial': 'Clock-in only (no clock-out)',
+    'att.holiday': 'Public Holiday',
+    'att.future': 'Upcoming',
+    'att.daysCount': '{n} days',
+    'att.noRecords': 'No records',
+    'att.noData': 'No data',
+    'period.thisWeek': 'This Week',
+    'period.thisMonth': 'This Month',
+    'period.lastMonth': 'Last Month',
+    'period.last30': 'Last 30 days',
+    'period.last90': 'Last 90 days',
+    'period.custom': 'Custom range',
+    'dow.sat': 'Sa', 'dow.sun': 'Su', 'dow.mon': 'Mo', 'dow.tue': 'Tu',
+    'dow.wed': 'We', 'dow.thu': 'Th', 'dow.fri': 'Fr',
+    'txn.action.create': 'Created',
+    'txn.action.approve': 'Approved',
+    'txn.action.reject': 'Rejected',
+    'txn.action.return': 'Returned',
+    'txn.action.close': 'Closed',
+    'txn.action.forward': 'Forwarded',
+    'txn.attached': 'Attachment',
+    'txn.viewAttach': 'View',
+    'txn.downloadAttach': 'Download',
+    'txn.repliesTitle': 'Replies & Discussion',
+    'txn.replyPlaceholder': 'Write a reply or note...',
+    'txn.attachFile': 'Attach file',
+    'txn.sendReply': 'Send Reply',
+    'txn.replyCount': '{n} replies',
+    'txn.noReplies': 'No replies yet — be the first to add one.',
+    'txn.replyDeptHeader': 'Department reply',
+    'txn.fromDept': 'Attached by',
+    'txn.workflowLog': 'Action log (what each department said)',
+    'txn.recipients': 'Recipients',
+    'txn.timeline': 'Workflow timeline',
+    'txn.showWorkflow': 'Show workflow',
+    'txn.hideWorkflow': 'Hide workflow',
+    'txn.contentLabel': 'Transaction content',
+    'txn.noContent': 'No content',
+    'txn.downloadAttachOriginal': 'Download original attachment',
+    'txn.viewAttachOriginal': 'View attachment',
+    'txn.sender': 'Sender',
+    'txn.status_label': 'Status',
+    'txn.importance_label': 'Importance',
+    'txn.stoppedAt': 'Currently waiting at',
+    'txn.stoppedStep': 'Step:',
+    'txn.returnedToSender': 'Transaction returned to sender',
+    'txn.returnedNeedsFix': 'Sender needs to fix and resubmit',
+    'txn.returnedToYou': 'Your transaction was returned for editing',
+    'txn.returnedHeader': 'Return reason — please edit then resubmit',
+    'txn.returnedBy': 'Returned by:',
+    'txn.returnedHint': 'Tap "Edit and Resubmit" below to fix and send again.',
+    'txn.editAndResubmit': 'Edit and Resubmit',
+    'txn.approvedTransaction': 'Transaction approved',
+    'txn.closedTransaction': 'Transaction closed',
+    'txn.rejectedTransaction': 'Transaction rejected',
+    'txn.amount': 'Amount',
+    'txn.failed': 'Operation failed',
+    'txn.notFound': 'Transaction not found',
+    'txn.passedCEO': 'Passed through the CEO',
+    'txn.passedCEOLabel': 'Approved by Top Management',
+    'txn.me': 'Me',
+    'role.admin': 'Admin',
+    'role.manager': 'Manager',
+    'role.cashier': 'Cashier',
+    'role.custody': 'Custody',
+    'role.finance': 'Finance',
+    'role.hr': 'HR',
+    'role.inventory': 'Inventory',
+    'role.purchasing': 'Purchasing',
+    'role.employee': 'Employee',
+    'role.user': 'User',
     'common.empty.home': 'No records yet',
     'common.empty.att': 'No records',
     'common.empty.requests': 'No requests',
@@ -746,6 +908,12 @@ window.attSetPreset = function(p) {
 function loadAttPage() {
   var c = document.getElementById('attList');
   if (c) c.innerHTML = '<p class="empty"><i class="fas fa-spinner fa-spin"></i></p>';
+  // V3.1: render day-of-week headers in current language so EN switch works
+  var dowEl = document.getElementById('attCalDow');
+  if (dowEl) {
+    dowEl.innerHTML = ['dow.sat','dow.sun','dow.mon','dow.tue','dow.wed','dow.thu','dow.fri']
+      .map(function(k){ return '<span>' + t(k) + '</span>'; }).join('');
+  }
   var range = _attResolveRange(window._attState.preset || 'thismonth');
   window._attState.from = range.from;
   window._attState.to = range.to;
@@ -754,7 +922,7 @@ function loadAttPage() {
 
   callAPI('GET', '/hr/my-attendance-full?username=' + encodeURIComponent(currentUser) + '&from=' + range.from + '&to=' + range.to, null, function(d) {
     if (!d || d.success === false) {
-      var msg = (d && d.error) || 'فشل تحميل البيانات';
+      var msg = (d && d.error) || t('att.noData') || 'فشل تحميل البيانات';
       if (c) c.innerHTML = '<p class="empty" style="color:#ef4444;"><i class="fas fa-triangle-exclamation"></i> ' + msg + '</p>';
       // Clear stats
       var statsEl = document.getElementById('attStats');
@@ -769,19 +937,19 @@ function _attFmt(v, dig) { return Number(v||0).toLocaleString('en', { minimumFra
 
 function _attRender(d) {
   var tot = d.totals || {};
-  // KPI strip — 4 tiles
+  // KPI strip — 4 tiles, fully translated
   var statsEl = document.getElementById('attStats');
   if (statsEl) {
     statsEl.innerHTML =
-      '<div class="st"><i class="fas fa-check" style="color:#10b981;background:#ecfdf5;"></i><b>' + (tot.present||0) + '</b><span>أيام حضور</span></div>' +
-      '<div class="st"><i class="fas fa-times" style="color:#ef4444;background:#fef2f2;"></i><b>' + (tot.absent||0) + '</b><span>أيام غياب</span></div>' +
-      '<div class="st"><i class="fas fa-clock" style="color:#0ea5e9;background:#e0f2fe;"></i><b>' + _attFmt(tot.workingHours||0) + '</b><span>س. عمل</span></div>' +
-      '<div class="st"><i class="fas fa-exclamation" style="color:#f59e0b;background:#fffbeb;"></i><b>' + _attFmt(tot.lateHours||0) + '</b><span>س. تأخير</span></div>';
+      '<div class="st"><i class="fas fa-check" style="color:#10b981;background:#ecfdf5;"></i><b>' + (tot.present||0) + '</b><span>' + t('att.present') + '</span></div>' +
+      '<div class="st"><i class="fas fa-times" style="color:#ef4444;background:#fef2f2;"></i><b>' + (tot.absent||0) + '</b><span>' + t('att.absent') + '</span></div>' +
+      '<div class="st"><i class="fas fa-clock" style="color:#0ea5e9;background:#e0f2fe;"></i><b>' + _attFmt(tot.workingHours||0) + '</b><span>' + t('att.workHours') + '</span></div>' +
+      '<div class="st"><i class="fas fa-exclamation" style="color:#f59e0b;background:#fffbeb;"></i><b>' + _attFmt(tot.lateHours||0) + '</b><span>' + t('att.lateHours') + '</span></div>';
   }
 
-  // Days count
+  // Days count — translated
   var dc = document.getElementById('attDaysCount');
-  if (dc) dc.textContent = (d.days||[]).length + ' يوم';
+  if (dc) dc.textContent = t('att.daysCount').replace('{n}', (d.days||[]).length);
 
   // Calendar grid (only the FIRST month in the range to keep it readable)
   _attRenderCalendar(d);
@@ -789,40 +957,45 @@ function _attRender(d) {
   // Daily list
   var c = document.getElementById('attList');
   if (!c) return;
-  if (!d.days || !d.days.length) { c.innerHTML = '<p class="empty">لا توجد سجلات</p>'; return; }
+  if (!d.days || !d.days.length) { c.innerHTML = '<p class="empty">' + t('att.noRecords') + '</p>'; return; }
   // Render newest first
   var rows = d.days.slice().reverse().filter(function(r){ return r.status !== 'future'; });
   c.innerHTML = rows.map(_attRowHtml).join('');
 }
 
 function _attRowHtml(r) {
+  // V3.1: status labels are now i18n keys so they switch with language
   var statusInfo = {
-    present: { icon:'fa-check', label:'حاضر' },
-    late:    { icon:'fa-exclamation', label:'متأخر' },
-    absent:  { icon:'fa-user-xmark', label:'غياب كامل' },
-    leave:   { icon:'fa-umbrella-beach', label:'إجازة' },
-    weekend: { icon:'fa-mug-hot', label:'عطلة' },
-    holiday: { icon:'fa-gift', label:'إجازة رسمية' },
-    partial: { icon:'fa-hourglass-half', label:'دخول بدون انصراف' }
+    present: { icon:'fa-check', label: t('att.present') },
+    late:    { icon:'fa-exclamation', label: t('att.late') },
+    absent:  { icon:'fa-user-xmark', label: t('att.absent') },
+    leave:   { icon:'fa-umbrella-beach', label: t('att.leave') },
+    weekend: { icon:'fa-mug-hot', label: t('att.weekend') },
+    holiday: { icon:'fa-gift', label: t('att.holiday') },
+    partial: { icon:'fa-hourglass-half', label: t('att.partial') }
   };
   var stKey = r.status === 'present' && r.lateMinutes > 0 ? 'late' : r.status;
   var info = statusInfo[stKey] || statusInfo.present;
-  var dateLbl = r.date ? new Date(r.date).toLocaleDateString('ar-SA-u-nu-latn', { weekday:'short', day:'2-digit', month:'2-digit' }) : '—';
+  // Date locale follows current language
+  var localeCode = currentLang === 'en' ? 'en-US' : 'ar-SA-u-nu-latn';
+  var dateLbl = r.date ? new Date(r.date).toLocaleDateString(localeCode, { weekday:'short', day:'2-digit', month:'2-digit' }) : '—';
+  var hrShort = currentLang === 'en' ? 'h' : 'س';
+  var minShort = currentLang === 'en' ? 'min' : 'د';
   var timesHtml = '';
   if (r.clockIn) {
     var ci = new Date(r.clockIn).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
     var co = r.clockOut ? new Date(r.clockOut).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'}) : '—';
-    timesHtml = '<i class="fas fa-clock" style="color:#94a3b8;font-size:9px;margin-inline-end:3px;"></i>' + ci + ' ← ' + co + ' · ' + _attFmt(r.totalHours) + ' س';
+    timesHtml = '<i class="fas fa-clock" style="color:#94a3b8;font-size:9px;margin-inline-end:3px;"></i>' + ci + ' ← ' + co + ' · ' + _attFmt(r.totalHours) + ' ' + hrShort;
   } else if (r.status === 'absent') {
-    timesHtml = '<i class="fas fa-user-xmark" style="color:#ef4444;font-size:9px;margin-inline-end:3px;"></i>لم يُسجَّل دخول أو خروج';
+    timesHtml = '<i class="fas fa-user-xmark" style="color:#ef4444;font-size:9px;margin-inline-end:3px;"></i>' + t('att.absent');
   } else if (r.status === 'weekend') {
-    timesHtml = '<i class="fas fa-bed" style="color:#94a3b8;font-size:9px;margin-inline-end:3px;"></i>يوم عطلة أسبوعية';
+    timesHtml = '<i class="fas fa-bed" style="color:#94a3b8;font-size:9px;margin-inline-end:3px;"></i>' + t('att.weekend');
   } else if (r.status === 'leave') {
-    timesHtml = '<i class="fas fa-umbrella-beach" style="color:#1e40af;font-size:9px;margin-inline-end:3px;"></i>' + (r.notes || 'إجازة معتمدة');
+    timesHtml = '<i class="fas fa-umbrella-beach" style="color:#1e40af;font-size:9px;margin-inline-end:3px;"></i>' + (r.notes || t('att.leave'));
   }
   var pillsHtml = '';
-  if (r.lateMinutes > 0)     pillsHtml += '<span class="att-status-pill late"><i class="fas fa-arrow-down"></i> -' + r.lateMinutes + ' د</span>';
-  if (r.overtimeMinutes > 0) pillsHtml += '<span class="att-status-pill present"><i class="fas fa-arrow-up"></i> +' + r.overtimeMinutes + ' د</span>';
+  if (r.lateMinutes > 0)     pillsHtml += '<span class="att-status-pill late"><i class="fas fa-arrow-down"></i> -' + r.lateMinutes + ' ' + minShort + '</span>';
+  if (r.overtimeMinutes > 0) pillsHtml += '<span class="att-status-pill present"><i class="fas fa-arrow-up"></i> +' + r.overtimeMinutes + ' ' + minShort + '</span>';
   if (!pillsHtml) pillsHtml = '<span class="att-status-pill ' + stKey + '">' + info.label + '</span>';
   return '<div class="att-row">' +
     '<div class="att-row-icon ' + stKey + '"><i class="fas ' + info.icon + '"></i></div>' +
@@ -835,12 +1008,14 @@ function _attRenderCalendar(d) {
   var grid = document.getElementById('attCalendarGrid');
   var monthLbl = document.getElementById('attCalendarMonth');
   if (!grid) return;
-  if (!d.days || !d.days.length) { grid.innerHTML = '<div class="empty">لا توجد بيانات</div>'; return; }
+  if (!d.days || !d.days.length) { grid.innerHTML = '<div class="empty">' + t('att.noData') + '</div>'; return; }
   // Pick the month containing the LAST day of the range
   var anchor = new Date(d.days[d.days.length - 1].date);
   var year = anchor.getFullYear();
   var month = anchor.getMonth(); // 0-indexed
-  if (monthLbl) monthLbl.textContent = anchor.toLocaleDateString('ar-SA-u-nu-latn', { month:'long', year:'numeric' });
+  // V3.1: month label locale follows current language
+  var calLocale = currentLang === 'en' ? 'en-US' : 'ar-SA-u-nu-latn';
+  if (monthLbl) monthLbl.textContent = anchor.toLocaleDateString(calLocale, { month:'long', year:'numeric' });
   // Build day-of-month → day data lookup for days in the active month within the range
   var dayMap = {};
   d.days.forEach(function(r) {
@@ -1456,7 +1631,7 @@ function viewMyTxn(id) {
     // Cache for the toggle button
     window._currentViewedTxn = txn;
 
-    var sMap = { pending:'قيد الانتظار', in_progress:'قيد التنفيذ', approved:'معتمدة', rejected:'مرفوضة', returned:'مُعادة للمرسل', closed:'مغلقة' };
+    var sMap = { pending: t('txn.status.pending'), in_progress: t('txn.status.in_progress'), approved: t('txn.status.approved'), rejected: t('txn.status.rejected'), returned: t('txn.status.returned'), closed: t('txn.status.closed'), draft: t('txn.status.draft') };
     var sClr = { pending:'#f59e0b', in_progress:'#0ea5e9', approved:'#10b981', rejected:'#ef4444', returned:'#f97316', closed:'#6b7280' };
     var sBg  = { pending:'#fef3c7', in_progress:'#e0f2fe', approved:'#dcfce7', rejected:'#fee2e2', returned:'#ffedd5', closed:'#f1f5f9' };
     var ic = _impColors[txn.importance]||'#6b7280';
@@ -1539,49 +1714,52 @@ function viewMyTxn(id) {
           '<div style="font-size:14px;font-weight:900;color:#78350f;margin-top:2px;">' + _esc(stoppedName) +
             (stoppedRole ? ' <small style="color:#a16207;font-weight:700;">— '+_esc(stoppedRole)+'</small>' : '') +
           '</div>' +
-          (txn.currentStepName ? '<div style="font-size:11px;color:#a16207;margin-top:2px;">الخطوة: '+_esc(txn.currentStepName)+'</div>' : '') +
+          (txn.currentStepName ? '<div style="font-size:11px;color:#a16207;margin-top:2px;">' + t('txn.stoppedStep') + ' ' + _esc(txn.currentStepName) + '</div>' : '') +
         '</div>' +
       '</div>';
     } else if (txn.status === 'returned') {
-      // V3.1: Show full return context — who returned, when, and the reason text
+      // V3.1: Show full return context — who returned, when, and the reason text — fully translated
       var retDt = '';
-      try { if (txn.returnedAt) retDt = new Date(txn.returnedAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(_){}
+      var dtLocale = currentLang === 'en' ? 'en-US' : 'ar-SA-u-nu-latn';
+      try { if (txn.returnedAt) retDt = new Date(txn.returnedAt).toLocaleString(dtLocale,{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(_){}
       var isMyOwn = (txn.createdBy === currentUser);
+      var headLbl = isMyOwn ? ('⚠️ ' + t('txn.returnedToYou')) : t('txn.returnedToSender');
+      var timesLbl = currentLang === 'en' ? (' (×' + txn.returnCount + ')') : (' (المرة ' + txn.returnCount + ')');
       h += '<div style="padding:14px;border-radius:14px;background:linear-gradient(135deg,#fef2f2,#fff);border:2px solid #dc2626;margin-bottom:10px;display:flex;align-items:flex-start;gap:12px;box-shadow:0 4px 12px rgba(220,38,38,.15);">' +
         '<div style="width:46px;height:46px;border-radius:50%;background:#dc2626;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:18px;"><i class="fas fa-rotate-left"></i></div>' +
         '<div style="flex:1;min-width:0;">' +
-          '<div style="font-size:14px;font-weight:900;color:#991b1b;">' + (isMyOwn ? '⚠️ تم إرجاع معاملتك للتعديل' : 'تم إرجاع المعاملة للمرسل') + (txn.returnCount > 1 ? ' (المرة ' + txn.returnCount + ')' : '') + '</div>' +
+          '<div style="font-size:14px;font-weight:900;color:#991b1b;">' + headLbl + (txn.returnCount > 1 ? timesLbl : '') + '</div>' +
           '<div style="font-size:11.5px;color:#7f1d1d;margin-top:3px;font-weight:700;">' +
-            '<b>المُرجِع:</b> ' + _esc(txn.returnedBy || '—') + (retDt ? ' · ' + retDt : '') +
+            '<b>' + t('txn.returnedBy') + '</b> ' + _esc(txn.returnedBy || '—') + (retDt ? ' · ' + retDt : '') +
           '</div>' +
           (txn.returnReason ? '<div style="margin-top:8px;padding:10px 12px;background:#fff;border:1px solid #fecaca;border-radius:10px;font-size:13px;color:#991b1b;line-height:1.7;font-weight:600;"><i class="fas fa-quote-right" style="font-size:11px;color:#dc2626;margin-inline-end:6px;"></i>' + _esc(txn.returnReason) + '</div>' : '') +
-          (isMyOwn ? '<div style="margin-top:8px;font-size:11px;color:#991b1b;"><i class="fas fa-info-circle"></i> اضغط زر <b>"تعديل وإعادة الإرسال"</b> أدناه لتصحيح المعاملة وإرسالها مرة أخرى.</div>' : '') +
+          (isMyOwn ? '<div style="margin-top:8px;font-size:11px;color:#991b1b;"><i class="fas fa-info-circle"></i> ' + t('txn.returnedHint') + '</div>' : '') +
         '</div>' +
       '</div>';
     } else if (txn.status === 'approved' || txn.status === 'closed') {
+      var apprLbl = txn.status === 'closed' ? t('txn.closedTransaction') : t('txn.approvedTransaction');
       h += '<div style="padding:10px 14px;border-radius:10px;background:#dcfce7;border:1px solid #86efac;margin-bottom:10px;display:flex;align-items:center;gap:10px;">' +
         '<i class="fas fa-check-circle" style="color:#16a34a;font-size:20px;"></i>' +
-        '<div style="font-size:13px;font-weight:800;color:#15803d;">تمت ' + (txn.status==='closed'?'إقفال':'الموافقة على') + ' المعاملة</div>' +
+        '<div style="font-size:13px;font-weight:800;color:#15803d;">' + apprLbl + '</div>' +
       '</div>';
     } else if (txn.status === 'rejected') {
       h += '<div style="padding:10px 14px;border-radius:10px;background:#fee2e2;border:1px solid #fca5a5;margin-bottom:10px;display:flex;align-items:center;gap:10px;">' +
         '<i class="fas fa-times-circle" style="color:#dc2626;font-size:20px;"></i>' +
-        '<div style="font-size:13px;font-weight:800;color:#991b1b;">تم رفض المعاملة</div>' +
+        '<div style="font-size:13px;font-weight:800;color:#991b1b;">' + t('txn.rejectedTransaction') + '</div>' +
       '</div>';
     }
 
-    // 5. CONTENT — very prominent card with icon header
+    // 5. CONTENT — translated header + empty state
     h += '<div style="position:relative;border:2px solid #0ea5e9;border-radius:16px;background:linear-gradient(180deg,#f0f9ff 0%,#fff 60%);padding:18px 18px 16px;margin-bottom:12px;box-shadow:0 6px 16px rgba(14,165,233,.10);">';
-    // Floating header label
     h += '<div style="position:absolute;top:-10px;inset-inline-start:14px;background:#0ea5e9;color:#fff;padding:3px 12px;border-radius:7px;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;box-shadow:0 2px 4px rgba(14,165,233,.3);">' +
-      '<i class="fas fa-file-lines" style="font-size:10px;margin-inline-end:4px;"></i>محتوى المعاملة' +
+      '<i class="fas fa-file-lines" style="font-size:10px;margin-inline-end:4px;"></i>' + t('txn.contentLabel') +
     '</div>';
     if (txn.contentHtml && txn.contentHtml.trim()) {
-      h += '<div style="font-size:15px;color:#0f172a;line-height:1.95;font-weight:500;margin-top:6px;">' + txn.contentHtml + '</div>';
+      h += '<div style="font-size:15px;color:#0f172a;line-height:1.95;font-weight:500;margin-top:6px;word-break:break-word;overflow-wrap:anywhere;">' + txn.contentHtml + '</div>';
     } else if (txn.description) {
-      h += '<div style="font-size:15px;color:#0f172a;line-height:1.95;font-weight:500;white-space:pre-wrap;margin-top:6px;">' + _esc(txn.description) + '</div>';
+      h += '<div style="font-size:15px;color:#0f172a;line-height:1.95;font-weight:500;white-space:pre-wrap;margin-top:6px;word-break:break-word;overflow-wrap:anywhere;">' + _esc(txn.description) + '</div>';
     } else {
-      h += '<div style="font-size:13px;color:#94a3b8;font-style:italic;text-align:center;padding:14px;margin-top:6px;"><i class="fas fa-file-circle-question" style="font-size:24px;display:block;margin-bottom:8px;"></i>لا يوجد محتوى</div>';
+      h += '<div style="font-size:13px;color:#94a3b8;font-style:italic;text-align:center;padding:14px;margin-top:6px;"><i class="fas fa-file-circle-question" style="font-size:24px;display:block;margin-bottom:8px;"></i>' + t('txn.noContent') + '</div>';
     }
     if (txn.attachment && txn.attachment.startsWith && txn.attachment.startsWith('data:')) {
       var isImg = txn.attachment.startsWith('data:image/');
@@ -1590,36 +1768,39 @@ function viewMyTxn(id) {
         h += '<img src="'+txn.attachment+'" style="max-width:280px;max-height:180px;border-radius:8px;border:1px solid #bae6fd;display:block;cursor:zoom-in;" onclick="window.open(this.src,\'_blank\')">';
       }
       h += '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-        '<button onclick="window.open(\''+txn.attachment+'\',\'_blank\')" style="display:inline-flex;align-items:center;gap:6px;color:#0ea5e9;font-size:12px;font-weight:800;padding:7px 14px;background:#fff;border:1.5px solid #0ea5e9;border-radius:10px;cursor:pointer;font-family:inherit;"><i class="fas fa-eye"></i> عرض المرفق</button>' +
-        '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:6px;color:#fff;font-size:12px;font-weight:800;padding:7px 14px;background:#0ea5e9;border:1.5px solid #0ea5e9;border-radius:10px;text-decoration:none;"><i class="fas fa-download"></i> تنزيل</a>' +
+        '<button onclick="window.open(\''+txn.attachment+'\',\'_blank\')" style="display:inline-flex;align-items:center;gap:6px;color:#0ea5e9;font-size:12px;font-weight:800;padding:7px 14px;background:#fff;border:1.5px solid #0ea5e9;border-radius:10px;cursor:pointer;font-family:inherit;"><i class="fas fa-eye"></i> ' + t('txn.viewAttachOriginal') + '</button>' +
+        '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:6px;color:#fff;font-size:12px;font-weight:800;padding:7px 14px;background:#0ea5e9;border:1.5px solid #0ea5e9;border-radius:10px;text-decoration:none;"><i class="fas fa-download"></i> ' + t('txn.downloadAttach') + '</a>' +
       '</div></div>';
     }
     h += '</div>';
 
-    // V3.1: REPLIES THREAD — professional design with file upload
+    // V3.1: REPLIES THREAD — fully translated
+    var fileLabelDefault = t('txn.attachFile');
     h += '<div style="border:2px solid #c4b5fd;border-radius:14px;background:linear-gradient(180deg,#faf5ff 0%,#fff 60%);padding:14px;margin-bottom:12px;">' +
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">' +
         '<div style="width:30px;height:30px;border-radius:50%;background:#8b5cf6;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;"><i class="fas fa-comments"></i></div>' +
-        '<span style="font-size:14px;font-weight:900;color:#5b21b6;">الردود والمناقشة</span>' +
-        '<span id="emp_repliesCount" style="margin-inline-start:auto;font-size:11px;color:#7c3aed;font-weight:800;background:#ede9fe;padding:4px 10px;border-radius:999px;">جاري التحميل...</span>' +
+        '<span style="font-size:14px;font-weight:900;color:#5b21b6;">' + t('txn.repliesTitle') + '</span>' +
+        '<span id="emp_repliesCount" style="margin-inline-start:auto;font-size:11px;color:#7c3aed;font-weight:800;background:#ede9fe;padding:4px 10px;border-radius:999px;">…</span>' +
       '</div>' +
-      '<div id="emp_repliesList"><div style="text-align:center;color:#94a3b8;padding:20px;font-size:12px;"><i class="fas fa-spinner fa-spin"></i> جاري تحميل الردود...</div></div>' +
+      '<div id="emp_repliesList"><div style="text-align:center;color:#94a3b8;padding:20px;font-size:12px;"><i class="fas fa-spinner fa-spin"></i></div></div>' +
       '<div style="margin-top:12px;padding-top:12px;border-top:1px dashed #c4b5fd;">' +
-        '<textarea id="emp_replyText" placeholder="اكتب رداً أو ملاحظة..." style="width:100%;min-height:64px;padding:12px;border:1.5px solid #c4b5fd;border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;background:#fff;line-height:1.7;"></textarea>' +
+        '<textarea id="emp_replyText" placeholder="' + fileLabelDefault.replace(/'/g,"\\'") + '..." style="width:100%;min-height:64px;padding:12px;border:1.5px solid #c4b5fd;border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;background:#fff;line-height:1.7;" data-placeholder-key="txn.replyPlaceholder"></textarea>' +
         '<div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap;">' +
-          // Hidden file input + visible label (better mobile UX)
-          '<input type="file" id="emp_replyFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="display:none;" onchange="(function(i){var l=document.getElementById(\'emp_replyFileLabel\');if(l)l.textContent=i.files[0]?(i.files[0].name.length>20?i.files[0].name.substring(0,20)+\'...\':i.files[0].name):\'إرفاق ملف\';})(this)">' +
-          '<button type="button" onclick="document.getElementById(\'emp_replyFile\').click()" style="padding:9px 14px;border-radius:10px;background:#fff;color:#8b5cf6;border:1.5px solid #c4b5fd;font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;"><i class="fas fa-paperclip"></i><span id="emp_replyFileLabel">إرفاق ملف</span></button>' +
-          '<button onclick="empPostReply(\''+id+'\')" style="flex:1;padding:10px 14px;border-radius:10px;background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff;border:none;font-weight:900;font-size:13px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 6px rgba(139,92,246,.3);"><i class="fas fa-paper-plane"></i> إرسال الرد</button>' +
+          '<input type="file" id="emp_replyFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="display:none;" onchange="(function(i){var l=document.getElementById(\'emp_replyFileLabel\');if(l)l.textContent=i.files[0]?(i.files[0].name.length>20?i.files[0].name.substring(0,20)+\'...\':i.files[0].name):(window.t?t(\'txn.attachFile\'):\'إرفاق ملف\');})(this)">' +
+          '<button type="button" onclick="document.getElementById(\'emp_replyFile\').click()" style="padding:9px 14px;border-radius:10px;background:#fff;color:#8b5cf6;border:1.5px solid #c4b5fd;font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;"><i class="fas fa-paperclip"></i><span id="emp_replyFileLabel">' + fileLabelDefault + '</span></button>' +
+          '<button onclick="empPostReply(\''+id+'\')" style="flex:1;padding:10px 14px;border-radius:10px;background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff;border:none;font-weight:900;font-size:13px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 6px rgba(139,92,246,.3);"><i class="fas fa-paper-plane"></i> ' + t('txn.sendReply') + '</button>' +
         '</div>' +
       '</div>' +
     '</div>';
 
-    // 6. TOGGLE BUTTON — show full workflow timeline on demand
+    // Apply real placeholder (textarea placeholder doesn't accept data-i18n natively here)
+    setTimeout(function(){ var ta = document.getElementById('emp_replyText'); if (ta) ta.placeholder = t('txn.replyPlaceholder'); }, 0);
+
+    // 6. TOGGLE BUTTON — translated label
     var hasWorkflow = (txn.workflowPath && txn.workflowPath.length) || (txn.logs && txn.logs.length) || (txn.recipients && txn.recipients.length);
     if (hasWorkflow) {
       h += '<button onclick="toggleWorkflowView()" id="wfToggleBtn" style="width:100%;padding:13px;border-radius:12px;border:1.5px dashed #8b5cf6;background:#faf5ff;color:#6d28d9;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px;">' +
-        '<i class="fas fa-route"></i><span id="wfToggleLabel">عرض سير المعاملة</span><i class="fas fa-chevron-down" id="wfToggleChevron" style="font-size:11px;transition:transform .2s;"></i>' +
+        '<i class="fas fa-route"></i><span id="wfToggleLabel">' + t('txn.showWorkflow') + '</span><i class="fas fa-chevron-down" id="wfToggleChevron" style="font-size:11px;transition:transform .2s;"></i>' +
       '</button>';
     }
 
@@ -1629,10 +1810,10 @@ function viewMyTxn(id) {
     // shown to anyone. Only the action log + recipients + 'stopped at'
     // banner above are surfaced.)
 
-    // 7b. Recipients
+    // 7b. Recipients — translated header
     if (Array.isArray(txn.recipients) && txn.recipients.length) {
       h += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-bottom:10px;background:#fff;">' +
-        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:6px;"><i class="fas fa-paper-plane"></i> المستلمون</div>' +
+        '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:6px;"><i class="fas fa-paper-plane"></i> ' + t('txn.recipients') + '</div>' +
         '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
       txn.recipients.forEach(function(r) {
         h += '<span style="padding:4px 10px;border-radius:8px;background:#eff6ff;color:#1e40af;font-size:11px;">' +
@@ -1646,17 +1827,18 @@ function viewMyTxn(id) {
 
     // 7c. Detailed timeline — who replied with what + attachments
     if (txn.logs && txn.logs.length) {
-      var aMap = { create:'إنشاء', approve:'موافقة', reject:'رفض', return:'إرجاع', close:'إقفال', forward:'تحويل' };
+      var aMap = { create: t('txn.action.create'), approve: t('txn.action.approve'), reject: t('txn.action.reject'), return: t('txn.action.return'), close: t('txn.action.close'), forward: t('txn.action.forward') };
       var aClr = { create:'#0ea5e9', approve:'#10b981', reject:'#ef4444', return:'#f97316', close:'#6b7280', forward:'#8b5cf6' };
       var aIcon = { create:'fa-plus-circle', approve:'fa-check-circle', reject:'fa-times-circle', return:'fa-undo', close:'fa-lock', forward:'fa-share' };
+      var dtLocale = currentLang === 'en' ? 'en-US' : 'ar-SA-u-nu-latn';
       h += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:12px;margin-bottom:10px;background:#fff;">';
-      h += '<div style="font-size:11px;font-weight:900;color:#0f172a;margin-bottom:10px;"><i class="fas fa-clock-rotate-left" style="color:#8b5cf6;margin-left:4px;"></i> سجل الإجراءات (ماذا قال كل قسم)</div>';
+      h += '<div style="font-size:11px;font-weight:900;color:#0f172a;margin-bottom:10px;"><i class="fas fa-clock-rotate-left" style="color:#8b5cf6;margin-left:4px;"></i> ' + t('txn.workflowLog') + '</div>';
       txn.logs.forEach(function(l, i) {
         var c = aClr[l.actionType]||'#6b7280';
         var icon = aIcon[l.actionType]||'fa-circle';
         var label = aMap[l.actionType]||l.actionType;
         var dt = '';
-        if (l.createdAt) { try { dt = new Date(l.createdAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(_){} }
+        if (l.createdAt) { try { dt = new Date(l.createdAt).toLocaleString(dtLocale,{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(_){} }
         var isLast = i === txn.logs.length - 1;
         h += '<div style="display:flex;gap:10px;position:relative;">';
         h += '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">' +
@@ -1667,22 +1849,21 @@ function viewMyTxn(id) {
         h += '<div style="font-size:13px;font-weight:900;color:'+c+';">'+_esc(label)+'</div>';
         h += '<div style="font-size:11.5px;color:#1e293b;font-weight:700;margin-top:2px;">'+_esc(l.actionBy||'—')+(l.positionName?' <span style="color:#8b5cf6;font-weight:700;">— '+_esc(l.positionName)+'</span>':'')+'</div>';
         if (l.note) {
-          h += '<div style="font-size:12px;color:#334155;margin-top:6px;padding:8px 10px;border-radius:8px;background:#f8fafc;border:1px solid #f1f5f9;line-height:1.6;">' +
-            '<div style="font-size:9px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:3px;letter-spacing:.04em;"><i class="fas fa-quote-right"></i> رد القسم</div>' +
+          h += '<div style="font-size:12px;color:#334155;margin-top:6px;padding:8px 10px;border-radius:8px;background:#f8fafc;border:1px solid #f1f5f9;line-height:1.6;word-break:break-word;overflow-wrap:anywhere;">' +
+            '<div style="font-size:9px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:3px;letter-spacing:.04em;"><i class="fas fa-quote-right"></i> ' + t('txn.replyDeptHeader') + '</div>' +
             _esc(l.note) +
           '</div>';
         }
         if (l.attachment && l.attachment.startsWith && l.attachment.startsWith('data:')) {
-          // V3.1: Per-log attachment now has BOTH view + download buttons + image preview
           var attIsImg = l.attachment.startsWith('data:image/');
           h += '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;align-items:flex-start;">';
           if (attIsImg) {
             h += '<img src="'+l.attachment+'" style="max-width:200px;max-height:140px;border-radius:6px;border:1px solid #cbd5e1;cursor:zoom-in;" onclick="window.open(this.src,\'_blank\')">';
           }
-          h += '<div style="display:flex;gap:6px;align-items:center;font-size:10.5px;">' +
-            '<span style="color:#64748b;font-weight:700;"><i class="fas fa-paperclip"></i> مرفق ' + _esc(l.actionBy||'القسم') + ':</span>' +
-            '<button onclick="window.open(\''+l.attachment+'\',\'_blank\')" style="background:#1e40af;color:#fff;border:none;padding:3px 9px;border-radius:5px;cursor:pointer;font-weight:700;font-size:10px;display:inline-flex;align-items:center;gap:3px;font-family:inherit;"><i class="fas fa-eye"></i> عرض</button>' +
-            '<a href="'+l.attachment+'" download style="background:#16a34a;color:#fff;text-decoration:none;padding:3px 9px;border-radius:5px;font-weight:700;font-size:10px;display:inline-flex;align-items:center;gap:3px;"><i class="fas fa-download"></i> تنزيل</a>' +
+          h += '<div style="display:flex;gap:6px;align-items:center;font-size:10.5px;flex-wrap:wrap;">' +
+            '<span style="color:#64748b;font-weight:700;"><i class="fas fa-paperclip"></i> ' + t('txn.fromDept') + ' ' + _esc(l.actionBy || t('role.user')) + ':</span>' +
+            '<button onclick="window.open(\''+l.attachment+'\',\'_blank\')" style="background:#1e40af;color:#fff;border:none;padding:3px 9px;border-radius:5px;cursor:pointer;font-weight:700;font-size:10px;display:inline-flex;align-items:center;gap:3px;font-family:inherit;"><i class="fas fa-eye"></i> ' + t('txn.viewAttach') + '</button>' +
+            '<a href="'+l.attachment+'" download style="background:#16a34a;color:#fff;text-decoration:none;padding:3px 9px;border-radius:5px;font-weight:700;font-size:10px;display:inline-flex;align-items:center;gap:3px;"><i class="fas fa-download"></i> ' + t('txn.downloadAttach') + '</a>' +
           '</div></div>';
         }
         if (dt) h += '<div style="font-size:10px;color:#94a3b8;margin-top:4px;"><i class="far fa-clock"></i> '+dt+'</div>';
@@ -1701,11 +1882,11 @@ function viewMyTxn(id) {
     var hasOthersActed = (txn.logs || []).some(function(l){ return l.actionType && l.actionType !== 'create' && l.actionBy !== currentUser; });
     if (hasOthersActed && canEditFresh) canEditFresh = false;
     if (canEditReturned) {
-      // Highlight the Resubmit button — it's the obvious next step
+      // Highlight the Resubmit button — translated
       h += '<div class="td-action-btns" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">' +
-        '<button class="td-edit-btn" style="flex:2;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;font-weight:900;padding:14px;font-size:14px;border-radius:12px;box-shadow:0 4px 12px rgba(220,38,38,.3);cursor:pointer;font-family:inherit;" onclick="closeTxnDetail();empEditTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-pen-to-square"></i> تعديل وإعادة الإرسال</button>' +
-        '<button class="td-cancel-btn" style="flex:1;" onclick="empCancelTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-trash"></i> إلغاء</button>' +
-        '<button class="td-close-btn" onclick="closeTxnDetail()">إغلاق</button>' +
+        '<button class="td-edit-btn" style="flex:2;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;font-weight:900;padding:14px;font-size:14px;border-radius:12px;box-shadow:0 4px 12px rgba(220,38,38,.3);cursor:pointer;font-family:inherit;" onclick="closeTxnDetail();empEditTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-pen-to-square"></i> ' + t('txn.editAndResubmit') + '</button>' +
+        '<button class="td-cancel-btn" style="flex:1;" onclick="empCancelTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-trash"></i> ' + t('txn.cancel') + '</button>' +
+        '<button class="td-close-btn" onclick="closeTxnDetail()">' + t('common.cancelBtn') + '</button>' +
       '</div>';
     } else if (canEditFresh) {
       h += '<div class="td-action-btns">' +
@@ -1733,7 +1914,7 @@ window.toggleWorkflowView = function() {
   if (!wrap) return;
   var isHidden = wrap.style.display === 'none';
   wrap.style.display = isHidden ? '' : 'none';
-  if (lbl) lbl.textContent = isHidden ? 'إخفاء سير المعاملة' : 'عرض سير المعاملة';
+  if (lbl) lbl.textContent = isHidden ? t('txn.hideWorkflow') : t('txn.showWorkflow');
   if (chev) chev.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
   if (btn) btn.style.background = isHidden ? '#ede9fe' : '#faf5ff';
 };
@@ -1755,36 +1936,37 @@ window.empLoadReplies = function(txnId, listElId, countElId) {
       if (!Array.isArray(rows)) rows = [];
       var listEl = document.getElementById(listElId);
       var cntEl  = document.getElementById(countElId);
-      if (cntEl) cntEl.textContent = rows.length + ' رد';
+      if (cntEl) cntEl.textContent = t('txn.replyCount').replace('{n}', rows.length);
       if (!listEl) return;
       if (!rows.length) {
-        listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:12px;background:#fff;border:1px dashed #c4b5fd;border-radius:10px;"><i class="fas fa-comment-dots" style="font-size:28px;display:block;margin-bottom:8px;color:#c4b5fd;"></i>لا توجد ردود بعد — كن أول من يضيف رداً.</div>';
+        listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:12px;background:#fff;border:1px dashed #c4b5fd;border-radius:10px;"><i class="fas fa-comment-dots" style="font-size:28px;display:block;margin-bottom:8px;color:#c4b5fd;"></i>' + t('txn.noReplies') + '</div>';
         return;
       }
-      // Role-aware avatar gradient + label + side-color
+      // Role-aware avatar gradient + label + side-color — labels via i18n
       var roleStyles = {
-        admin:    { grad: 'linear-gradient(135deg,#dc2626,#991b1b)', label: 'أدمن', side: '#dc2626' },
-        manager:  { grad: 'linear-gradient(135deg,#1e40af,#1e3a8a)', label: 'مدير', side: '#1e40af' },
-        cashier:  { grad: 'linear-gradient(135deg,#16a34a,#15803d)', label: 'كاشير', side: '#16a34a' },
-        custody:  { grad: 'linear-gradient(135deg,#d97706,#b45309)', label: 'عهدة', side: '#d97706' },
-        finance:  { grad: 'linear-gradient(135deg,#0369a1,#075985)', label: 'مالية', side: '#0369a1' },
-        hr:       { grad: 'linear-gradient(135deg,#a855f7,#7e22ce)', label: 'موارد بشرية', side: '#a855f7' },
-        inventory:{ grad: 'linear-gradient(135deg,#0d9488,#0f766e)', label: 'مخزون', side: '#0d9488' },
-        purchasing:{ grad: 'linear-gradient(135deg,#ea580c,#c2410c)', label: 'مشتريات', side: '#ea580c' },
-        employee: { grad: 'linear-gradient(135deg,#475569,#334155)', label: 'موظف', side: '#475569' }
+        admin:    { grad: 'linear-gradient(135deg,#dc2626,#991b1b)', label: t('role.admin'), side: '#dc2626' },
+        manager:  { grad: 'linear-gradient(135deg,#1e40af,#1e3a8a)', label: t('role.manager'), side: '#1e40af' },
+        cashier:  { grad: 'linear-gradient(135deg,#16a34a,#15803d)', label: t('role.cashier'), side: '#16a34a' },
+        custody:  { grad: 'linear-gradient(135deg,#d97706,#b45309)', label: t('role.custody'), side: '#d97706' },
+        finance:  { grad: 'linear-gradient(135deg,#0369a1,#075985)', label: t('role.finance'), side: '#0369a1' },
+        hr:       { grad: 'linear-gradient(135deg,#a855f7,#7e22ce)', label: t('role.hr'), side: '#a855f7' },
+        inventory:{ grad: 'linear-gradient(135deg,#0d9488,#0f766e)', label: t('role.inventory'), side: '#0d9488' },
+        purchasing:{ grad: 'linear-gradient(135deg,#ea580c,#c2410c)', label: t('role.purchasing'), side: '#ea580c' },
+        employee: { grad: 'linear-gradient(135deg,#475569,#334155)', label: t('role.employee'), side: '#475569' }
       };
       var initials = function(s){ s = String(s||'').trim(); if (!s) return '؟'; var p = s.split(/\s+/); return ((p[0][0]||'') + (p[1]?p[1][0]:'')).toUpperCase(); };
+      var dtLocale = currentLang === 'en' ? 'en-US' : 'ar-SA-u-nu-latn';
       listEl.innerHTML = rows.map(function(r, idx) {
         var dt = '';
-        try { dt = new Date(r.createdAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(e){}
+        try { dt = new Date(r.createdAt).toLocaleString(dtLocale,{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(e){}
         var rs = roleStyles[r.authorRole] || roleStyles.employee;
-        var posLbl = r.authorPosition ? _esc(r.authorPosition) : (r.authorRole || 'مستخدم');
+        var posLbl = r.authorPosition ? _esc(r.authorPosition) : (rs.label || t('role.user'));
         var isMine = (r.authorUsername === currentUser);
-        // Attachment block — image preview if image, with view + download buttons + name
+        // Attachment block — image preview + view/download with i18n
         var att = '';
         if (r.attachment && String(r.attachment).indexOf('data:') === 0) {
           var isImg = String(r.attachment).indexOf('data:image/') === 0;
-          var fname = r.attachmentName ? _esc(r.attachmentName) : 'مرفق';
+          var fname = r.attachmentName ? _esc(r.attachmentName) : t('txn.attached');
           att = '<div style="margin-top:10px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">';
           if (isImg) {
             att += '<img src="'+r.attachment+'" style="max-width:100%;max-height:240px;border-radius:8px;border:1px solid #cbd5e1;display:block;margin-bottom:8px;cursor:zoom-in;" onclick="window.open(this.src,\'_blank\')" alt="'+fname+'">';
@@ -1792,8 +1974,8 @@ window.empLoadReplies = function(txnId, listElId, countElId) {
           att += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">' +
             '<i class="fas fa-paperclip" style="color:#64748b;font-size:11px;"></i>' +
             '<span style="font-size:11px;color:#475569;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + fname + '</span>' +
-            '<button onclick="window.open(\''+r.attachment+'\',\'_blank\')" style="background:#1e40af;color:#fff;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-weight:700;font-size:11px;display:inline-flex;align-items:center;gap:4px;font-family:inherit;"><i class="fas fa-eye"></i> عرض</button>' +
-            '<a href="'+r.attachment+'" download="'+fname+'" style="background:#16a34a;color:#fff;text-decoration:none;padding:5px 10px;border-radius:6px;font-weight:700;font-size:11px;display:inline-flex;align-items:center;gap:4px;"><i class="fas fa-download"></i> تنزيل</a>' +
+            '<button onclick="window.open(\''+r.attachment+'\',\'_blank\')" style="background:#1e40af;color:#fff;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-weight:700;font-size:11px;display:inline-flex;align-items:center;gap:4px;font-family:inherit;"><i class="fas fa-eye"></i> ' + t('txn.viewAttach') + '</button>' +
+            '<a href="'+r.attachment+'" download="'+fname+'" style="background:#16a34a;color:#fff;text-decoration:none;padding:5px 10px;border-radius:6px;font-weight:700;font-size:11px;display:inline-flex;align-items:center;gap:4px;"><i class="fas fa-download"></i> ' + t('txn.downloadAttach') + '</a>' +
           '</div></div>';
         }
         return '<div style="display:flex;gap:10px;padding:12px;background:#fff;border:1px solid #e5e7eb;border-right:3px solid '+rs.side+';border-radius:12px;margin-bottom:10px;'+(isMine ? 'background:linear-gradient(180deg,#fafbff 0%,#fff 100%);' : '')+'box-shadow:0 1px 3px rgba(15,23,42,.04);">' +
@@ -1801,7 +1983,7 @@ window.empLoadReplies = function(txnId, listElId, countElId) {
           '<div style="flex:1;min-width:0;">' +
             '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
               '<span style="font-weight:900;font-size:13px;color:#0f172a;">' + _esc(r.authorName||r.authorUsername||'') + '</span>' +
-              (isMine ? '<span style="font-size:9px;color:#0ea5e9;background:#e0f2fe;padding:1px 6px;border-radius:6px;font-weight:800;">أنا</span>' : '') +
+              (isMine ? '<span style="font-size:9px;color:#0ea5e9;background:#e0f2fe;padding:1px 6px;border-radius:6px;font-weight:800;">' + t('txn.me') + '</span>' : '') +
               '<span style="font-size:10px;font-weight:800;color:#fff;background:'+rs.side+';padding:2px 8px;border-radius:6px;"><i class="fas fa-user-tag" style="font-size:8px;margin-inline-end:3px;"></i>' + _esc(posLbl) + '</span>' +
               '<span style="margin-inline-start:auto;font-size:10px;color:#94a3b8;font-weight:600;"><i class="far fa-clock" style="margin-inline-end:3px;"></i>' + dt + '</span>' +
             '</div>' +

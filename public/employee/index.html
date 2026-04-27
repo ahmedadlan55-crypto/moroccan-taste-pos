@@ -93,10 +93,17 @@
     .login-b button:active{background:#0284c7;}
     .modal{position:fixed;inset:0;z-index:5000;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;transition:.2s;}
     .modal.show{opacity:1;pointer-events:all;}
-    .modal-c{background:#fff;border-radius:14px 14px 0 0;padding:16px;width:100%;max-width:380px;transform:translateY(100%);transition:transform .3s;}
+    /* V3.1: ALL modals now scroll by default. Was the bug — view modal didn't have overflow-y:auto so content overflowed off-screen. */
+    .modal-c{background:#fff;border-radius:14px 14px 0 0;padding:16px;width:100%;max-width:380px;transform:translateY(100%);transition:transform .3s;max-height:90dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
     .modal.show .modal-c{transform:translateY(0);}
-    .modal-h{display:flex;justify-content:space-between;font-size:14px;font-weight:800;margin-bottom:10px;}
-    .modal-h button{width:26px;height:26px;border-radius:6px;background:#f1f5f9;border:none;font-size:14px;cursor:pointer;}
+    .modal-h{display:flex;justify-content:space-between;font-size:14px;font-weight:800;margin-bottom:10px;position:sticky;top:-16px;background:#fff;margin:-16px -16px 10px;padding:14px 16px;border-bottom:1px solid #f1f5f9;z-index:5;}
+    .modal-h button{width:30px;height:30px;border-radius:8px;background:#f1f5f9;border:none;font-size:16px;cursor:pointer;}
+    /* Tablet+: center modal vertically with comfortable max-width */
+    @media (min-width: 600px) {
+      .modal{align-items:center;padding:24px;}
+      .modal-c{border-radius:18px;max-width:520px;max-height:88dvh;transform:scale(0.97);}
+      .modal.show .modal-c{transform:scale(1);}
+    }
 
     /* ─── Hours/overtime section ─── */
     .hours-chip{padding:7px 12px;border-radius:9px;border:1.5px solid #e5e7eb;background:#fff;font-size:11.5px;font-weight:800;cursor:pointer;color:#64748b;white-space:nowrap;font-family:inherit;flex-shrink:0;}
@@ -222,7 +229,7 @@
     html[lang="en"] body{direction:ltr;}
     html[lang="en"] .hdr-n,html[lang="en"] .hdr-s{text-align:left;}
   </style>
-  <script defer src="/employee/app.js?v=24"></script>
+  <script defer src="/employee/app.js?v=25"></script>
 </head>
 <body>
 <div class="toast" id="toast"></div>
@@ -272,14 +279,14 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
       <!-- Period chips -->
       <div class="card" style="padding:10px 12px;">
         <div style="font-size:12px;font-weight:800;color:#475569;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-          <i class="fas fa-calendar-check" style="color:#0ea5e9;"></i><span>سجل الحضور</span>
+          <i class="fas fa-calendar-check" style="color:#0ea5e9;"></i><span data-i18n="att.history">سجل الحضور</span>
           <span id="attRangeLabel" style="margin-inline-start:auto;font-weight:700;color:#0ea5e9;font-size:11px;">—</span>
         </div>
         <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">
-          <button class="hours-chip" data-attp="thisweek" onclick="attSetPreset('thisweek')">هذا الأسبوع</button>
-          <button class="hours-chip active" data-attp="thismonth" onclick="attSetPreset('thismonth')">هذا الشهر</button>
-          <button class="hours-chip" data-attp="lastmonth" onclick="attSetPreset('lastmonth')">الشهر الماضي</button>
-          <button class="hours-chip" data-attp="last30" onclick="attSetPreset('last30')">آخر 30 يوم</button>
+          <button class="hours-chip" data-attp="thisweek" onclick="attSetPreset('thisweek')" data-i18n="period.thisWeek">هذا الأسبوع</button>
+          <button class="hours-chip active" data-attp="thismonth" onclick="attSetPreset('thismonth')" data-i18n="period.thisMonth">هذا الشهر</button>
+          <button class="hours-chip" data-attp="lastmonth" onclick="attSetPreset('lastmonth')" data-i18n="period.lastMonth">الشهر الماضي</button>
+          <button class="hours-chip" data-attp="last30" onclick="attSetPreset('last30')" data-i18n="period.last30">آخر 30 يوم</button>
         </div>
       </div>
 
@@ -289,28 +296,27 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
       <!-- Calendar grid (1 month at a time) -->
       <div class="card" id="attCalendarCard" style="padding:14px;">
         <div class="card-t" style="display:flex;justify-content:space-between;align-items:center;">
-          <span><i class="fas fa-calendar-days"></i> الشهر</span>
+          <span><i class="fas fa-calendar-days"></i> <span data-i18n="att.month">الشهر</span></span>
           <span id="attCalendarMonth" style="font-size:12px;font-weight:700;color:#0ea5e9;">—</span>
         </div>
-        <div class="att-cal-head">
-          <span>س</span><span>ح</span><span>ن</span><span>ث</span><span>ر</span><span>خ</span><span>ج</span>
-        </div>
+        <!-- Day-of-week headers populated by JS so they switch language -->
+        <div class="att-cal-head" id="attCalDow"></div>
         <div id="attCalendarGrid" class="att-cal-grid"></div>
         <!-- Color legend -->
         <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;font-size:10px;font-weight:700;justify-content:center;">
-          <span><span class="att-leg present"></span> حاضر</span>
-          <span><span class="att-leg late"></span> متأخر</span>
-          <span><span class="att-leg absent"></span> غياب</span>
-          <span><span class="att-leg leave"></span> إجازة</span>
-          <span><span class="att-leg weekend"></span> عطلة</span>
-          <span><span class="att-leg partial"></span> دخول بدون انصراف</span>
+          <span><span class="att-leg present"></span> <span data-i18n="att.present">حاضر</span></span>
+          <span><span class="att-leg late"></span> <span data-i18n="att.late">متأخر</span></span>
+          <span><span class="att-leg absent"></span> <span data-i18n="att.absent">غياب</span></span>
+          <span><span class="att-leg leave"></span> <span data-i18n="att.leave">إجازة</span></span>
+          <span><span class="att-leg weekend"></span> <span data-i18n="att.weekend">عطلة</span></span>
+          <span><span class="att-leg partial"></span> <span data-i18n="att.partial">دخول بدون انصراف</span></span>
         </div>
       </div>
 
       <!-- Daily detail list -->
       <div class="card">
         <div class="card-t" style="display:flex;justify-content:space-between;align-items:center;">
-          <span><i class="fas fa-list"></i> التفاصيل اليومية</span>
+          <span><i class="fas fa-list"></i> <span data-i18n="att.dailyDetails">التفاصيل اليومية</span></span>
           <span id="attDaysCount" style="font-size:11px;color:#64748b;font-weight:700;">—</span>
         </div>
         <div id="attList"></div>

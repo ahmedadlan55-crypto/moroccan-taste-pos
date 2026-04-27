@@ -958,59 +958,121 @@ function showShiftReport(shiftId, d) {
 // Build a plain-text version of the report and open WhatsApp
 window.shareShiftReportWhatsApp = function() {
   var r = state._lastShiftReport;
-  if (!r) return;
+  if (!r) {
+    if (typeof glassToast === 'function') glassToast('بيانات التقرير غير متوفرة', true);
+    return;
+  }
+  var fmt = function(v) { return Number(v||0).toFixed(2); };
+  var variance = Number(r.variance || 0);
+  var diffLine = Math.abs(variance) < 0.01
+    ? '✓ متطابق'
+    : (variance < 0 ? '⚠ نقص: ' + fmt(Math.abs(variance)) + ' SAR' : '⚠ زيادة: ' + fmt(variance) + ' SAR');
+
   var lines = [
-    t('wappTitle'),
+    '📋 تقرير إغلاق الوردية',
     '',
-    '🏪 ' + r.company,
-    '📅 ' + r.date,
-    '🆔 ' + r.shiftId,
-    '👤 ' + r.cashierName + ' (' + r.cashier + ')',
+    '🏪 ' + (r.company || ''),
+    '📅 ' + (r.date || ''),
+    '🆔 ' + (r.shiftId || ''),
+    '👤 ' + (r.cashierName || r.cashier || '') + (r.cashier && r.cashierName !== r.cashier ? ' (' + r.cashier + ')' : ''),
     '',
-    t('wappOrders') + r.orders,
-    t('wappTotalSales') + r.totalActual.toFixed(2) + ' SAR',
-    '',
-    t('wappPaymentBreakdown'),
-    t('wappCash') + r.cash.toFixed(2) + ' SAR',
-    t('wappCard') + r.card.toFixed(2) + ' SAR',
-    t('wappKita') + r.kita.toFixed(2) + ' SAR',
-    '',
-    t('wappDiffExact')
+    '🧾 عدد الفواتير: ' + (r.orders || 0),
+    '💰 إجمالي متوقع: ' + fmt(r.totalExpected) + ' SAR',
+    '💵 إجمالي فعلي: ' + fmt(r.totalActual) + ' SAR',
+    '📊 الفرق: ' + diffLine,
+    ''
   ];
+  // Dynamic payment methods (V3) — preferred over legacy cash/card/kita
+  if (r.paymentTotals && Object.keys(r.paymentTotals).length) {
+    lines.push('💳 توزيع طرق الدفع:');
+    Object.keys(r.paymentTotals).forEach(function(k) {
+      lines.push('  • ' + k + ': ' + fmt(r.paymentTotals[k]) + ' SAR');
+    });
+  } else {
+    // Legacy fallback
+    if (r.cash) lines.push('💵 كاش: ' + fmt(r.cash) + ' SAR');
+    if (r.card) lines.push('💳 مدى/شبكة: ' + fmt(r.card) + ' SAR');
+    if (r.kita) lines.push('🧾 كيتا: ' + fmt(r.kita) + ' SAR');
+  }
   var text = encodeURIComponent(lines.join('\n'));
   // Opens WhatsApp letting the user pick any contact
-  window.open('https://wa.me/?text=' + text, '_blank');
+  var w = window.open('https://wa.me/?text=' + text, '_blank');
+  if (!w) {
+    // Fallback if popup is blocked: copy to clipboard
+    try {
+      navigator.clipboard.writeText(decodeURIComponent(text));
+      if (typeof glassToast === 'function') glassToast('تم نسخ التقرير — افتح واتساب يدوياً', false);
+    } catch(e) {
+      if (typeof glassToast === 'function') glassToast('السماح للنوافذ المنبثقة مطلوب لفتح واتساب', true);
+    }
+  }
 };
 
 // Print the shift report in a new window
 window.printShiftReport = function() {
   var r = state._lastShiftReport;
-  if (!r) return;
+  if (!r) {
+    if (typeof glassToast === 'function') glassToast('بيانات التقرير غير متوفرة', true);
+    return;
+  }
   var w = window.open('', '_blank', 'width=420,height=720');
-  if (!w) return;
-  var fmt = function(v) { return Number(v).toFixed(2); };
+  if (!w) {
+    if (typeof glassToast === 'function') glassToast('السماح للنوافذ المنبثقة مطلوب للطباعة', true);
+    return;
+  }
+  var fmt = function(v) { return Number(v||0).toFixed(2); };
   var isEn = state.lang === 'en';
   var dir = isEn ? 'ltr' : 'rtl';
-  w.document.write('<!DOCTYPE html><html lang="' + (isEn ? 'en' : 'ar') + '" dir="' + dir + '"><head><meta charset="UTF-8"><title>' + t('shiftCloseReport') + '</title>' +
+  var variance = Number(r.variance || 0);
+  var varianceClr = Math.abs(variance) < 0.01 ? '#16a34a' : (variance < 0 ? '#dc2626' : '#d97706');
+  var varianceLabel = Math.abs(variance) < 0.01 ? '✓ متطابق' : (variance < 0 ? 'نقص' : 'زيادة');
+
+  // V3: dynamic payment methods table (preferred over legacy cash/card/kita)
+  var methodsRows = '';
+  if (r.paymentTotals && Object.keys(r.paymentTotals).length) {
+    Object.keys(r.paymentTotals).forEach(function(k) {
+      methodsRows += '<tr><td>' + k + '</td><td style="text-align:end;">' + fmt(r.paymentTotals[k]) + '</td></tr>';
+    });
+  } else {
+    if (r.cash) methodsRows += '<tr><td>' + t('cash') + '</td><td style="text-align:end;">' + fmt(r.cash) + '</td></tr>';
+    if (r.card) methodsRows += '<tr><td>' + t('card') + '</td><td style="text-align:end;">' + fmt(r.card) + '</td></tr>';
+    if (r.kita) methodsRows += '<tr><td>' + t('kita') + '</td><td style="text-align:end;">' + fmt(r.kita) + '</td></tr>';
+  }
+
+  // V3: cash denominations breakdown if available
+  var denomsTable = '';
+  if (r.denominations && r.denominations.length) {
+    var rowsD = r.denominations
+      .filter(function(d){ return Number(d.count) > 0; })
+      .map(function(d){
+        var v = Number(d.value || 0), c = Number(d.count || 0);
+        return '<tr><td style="text-align:center;">' + v + ' SAR</td><td style="text-align:center;">' + c + '</td><td style="text-align:end;">' + fmt(v * c) + '</td></tr>';
+      }).join('');
+    if (rowsD) {
+      denomsTable = '<table style="margin-top:10px;"><tr><th>الفئة</th><th style="text-align:center;">العدد</th><th style="text-align:end;">المجموع</th></tr>' + rowsD + '</table>';
+    }
+  }
+
+  w.document.write('<!DOCTYPE html><html lang="' + (isEn ? 'en' : 'ar') + '" dir="' + dir + '"><head><meta charset="UTF-8"><title>تقرير إغلاق الوردية</title>' +
     '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;padding:18px;color:#1e293b;max-width:380px;margin:0 auto;font-size:13px;direction:' + dir + ';}' +
     '.h{text-align:center;border-bottom:2px solid #1e293b;padding-bottom:12px;margin-bottom:14px;}h1{font-size:18px;}h2{font-size:13px;color:#64748b;font-weight:400;}' +
     '.row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #cbd5e1;}.row:last-child{border:none;}' +
     'table{width:100%;border-collapse:collapse;margin:10px 0;}th,td{padding:8px;text-align:start;border-bottom:1px solid #e2e8f0;font-size:12px;}th{background:#f1f5f9;font-weight:700;}' +
     '.t{background:#ecfeff;font-weight:900;}@media print{body{padding:10px;}}</style></head><body>' +
     ((state.settings && state.settings.logo) ? '<div style="text-align:center;margin-bottom:8px;"><img src="' + state.settings.logo + '" style="max-width:90px;"></div>' : '') +
-    '<div class="h"><h1>' + r.company + '</h1><h2>' + t('shiftCloseReport') + '</h2></div>' +
-    '<div class="row"><span>' + t('cashierLabel') + '</span><span><b>' + r.cashierName + '</b></span></div>' +
-    '<div class="row"><span>' + t('identifier') + '</span><span>' + r.cashier + '</span></div>' +
-    '<div class="row"><span>' + t('shiftNumber') + '</span><span><b>' + r.shiftId + '</b></span></div>' +
-    '<div class="row"><span>' + t('closeDate') + '</span><span>' + r.date + '</span></div>' +
-    '<div class="row"><span>' + t('ordersCount') + '</span><span><b>' + r.orders + '</b></span></div>' +
-    '<table><tr><th>' + t('method') + '</th><th style="text-align:end;">' + t('amountSar') + '</th></tr>' +
-      '<tr><td>' + t('cash') + '</td><td style="text-align:end;">' + fmt(r.cash) + '</td></tr>' +
-      '<tr><td>' + t('card') + '</td><td style="text-align:end;">' + fmt(r.card) + '</td></tr>' +
-      '<tr><td>' + t('kita') + '</td><td style="text-align:end;">' + fmt(r.kita) + '</td></tr>' +
-      '<tr class="t"><td>' + t('total') + '</td><td style="text-align:end;">' + fmt(r.totalActual) + '</td></tr>' +
+    '<div class="h"><h1>' + (r.company || 'Moroccan Taste') + '</h1><h2>تقرير إغلاق الوردية</h2></div>' +
+    '<div class="row"><span>الكاشير</span><span><b>' + (r.cashierName || r.cashier || '') + '</b></span></div>' +
+    '<div class="row"><span>الرقم</span><span>' + (r.cashier || '') + '</span></div>' +
+    '<div class="row"><span>رقم الوردية</span><span><b>' + (r.shiftId || '') + '</b></span></div>' +
+    '<div class="row"><span>تاريخ الإغلاق</span><span>' + (r.date || '') + '</span></div>' +
+    '<div class="row"><span>عدد الفواتير</span><span><b>' + (r.orders || 0) + '</b></span></div>' +
+    (methodsRows ? '<table><tr><th>الطريقة</th><th style="text-align:end;">المبلغ (SAR)</th></tr>' + methodsRows + '<tr class="t"><td>الإجمالي</td><td style="text-align:end;">' + fmt(r.totalActual) + '</td></tr></table>' : '') +
+    denomsTable +
+    '<table style="margin-top:14px;"><tr><th colspan="2" style="text-align:center;">📊 الفروقات</th></tr>' +
+      '<tr><td>المتوقع</td><td style="text-align:end;">' + fmt(r.totalExpected) + ' SAR</td></tr>' +
+      '<tr><td>الفعلي</td><td style="text-align:end;">' + fmt(r.totalActual) + ' SAR</td></tr>' +
+      '<tr style="background:#fef3c7;"><td><b>الفرق (' + varianceLabel + ')</b></td><td style="text-align:end;color:' + varianceClr + ';"><b>' + (variance >= 0 ? '+' : '') + fmt(variance) + ' SAR</b></td></tr>' +
     '</table>' +
-    '<div style="text-align:center;padding:14px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;color:#166534;font-weight:900;">' + t('diffZeroValid') + '</div>' +
     '</body></html>');
   w.document.close();
   setTimeout(function() { w.print(); }, 400);
@@ -2595,16 +2657,74 @@ window.scV3Print = function() {
 };
 
 function scV3ShowReport(shiftId, r) {
+  // V3 FIX: populate state._lastShiftReport so Print + WhatsApp buttons work.
+  // The legacy printShiftReport/shareShiftReportWhatsApp handlers read from this
+  // field and silently return null if it's empty (which broke the V3 close flow).
+  var company = (state.settings && state.settings.name) || 'Moroccan Taste';
+  var now = new Date();
+  var actuals = (r && r.actuals) || {};
+  var cashAmt = Number(actuals.cash || 0);
+  var cardAmt = Number(actuals.card || actuals['mada'] || actuals['شبكة/مدى'] || 0);
+  var kitaAmt = Number(actuals.kita || 0);
+  // Sum any other electronic methods (excluding cash/card/kita already counted)
+  var otherAmt = 0;
+  Object.keys(actuals).forEach(function(k) {
+    var lk = k.toLowerCase();
+    if (lk === 'cash' || lk === 'card' || lk === 'mada' || lk === 'kita') return;
+    if (lk.indexOf('شبكة') >= 0 || lk.indexOf('مدى') >= 0) return;
+    otherAmt += Number(actuals[k] || 0);
+  });
+  var totalActual = Number(r.actualTotal || (cashAmt + cardAmt + kitaAmt + otherAmt));
+  var totalExpected = Number(r.expectedTotal || 0);
+  var variance = Number(r.variance != null ? r.variance : (totalActual - totalExpected));
+  var orders = Number(r.orderCount || 0);
+
+  state._lastShiftReport = {
+    company: company,
+    date: now.toLocaleString('en-GB'),
+    shiftId: shiftId,
+    cashier: state.user || '',
+    cashierName: (state.userMeta && state.userMeta[state.user] && state.userMeta[state.user].name) || state.user || '',
+    cash: cashAmt,
+    card: cardAmt,
+    kita: kitaAmt,
+    other: otherAmt,
+    totalActual: totalActual,
+    totalExpected: totalExpected,
+    variance: variance,
+    orders: orders,
+    paymentTotals: actuals,
+    denominations: r.denominations || []
+  };
+
+  // Build a richer report HTML — uses ALL the data we just stored
+  var varianceClr = Math.abs(variance) < 0.01 ? '#16a34a' : (variance < 0 ? '#dc2626' : '#d97706');
+  var varianceLabel = Math.abs(variance) < 0.01 ? 'متطابق ✓' : (variance < 0 ? 'نقص' : 'زيادة');
   var html = '<div style="padding:14px;">' +
-    '<h3 style="color:#16a34a;"><i class="fas fa-check-circle"></i> تم إغلاق الوردية</h3>' +
-    '<p style="color:#475569;">رقم الوردية: <code>' + shiftId + '</code></p>' +
-    '<table style="width:100%;border-collapse:collapse;margin-top:10px;">' +
-      '<tr><td style="padding:6px;border-bottom:1px solid #e2e8f0;">إجمالي متوقع</td><td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + _posFmt(r.expectedTotal||0) + ' SAR</td></tr>' +
-      '<tr><td style="padding:6px;border-bottom:1px solid #e2e8f0;">إجمالي فعلي</td><td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + _posFmt(r.actualTotal||0) + ' SAR</td></tr>' +
-      '<tr><td style="padding:6px;">الفرق</td><td style="padding:6px;text-align:left;font-weight:700;color:' + (Math.abs(r.variance||0) < 0.01 ? '#16a34a' : '#dc2626') + ';">' + _posFmt(r.variance||0) + ' SAR</td></tr>' +
+    '<div style="text-align:center;padding:14px;background:linear-gradient(135deg,#dcfce7,#f0fdf4);border:1.5px solid #86efac;border-radius:12px;margin-bottom:14px;">' +
+      '<i class="fas fa-check-circle" style="font-size:28px;color:#16a34a;"></i>' +
+      '<h3 style="color:#15803d;margin-top:6px;font-size:16px;">تم إغلاق الوردية بنجاح</h3>' +
+      '<div style="font-size:11px;color:#166534;margin-top:4px;">' + state._lastShiftReport.cashierName + ' · ' + state._lastShiftReport.date + '</div>' +
+    '</div>' +
+    '<div style="font-size:11px;color:#64748b;margin-bottom:6px;">رقم الوردية: <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;">' + shiftId + '</code></div>' +
+    '<table style="width:100%;border-collapse:collapse;margin-top:8px;">' +
+      '<tr style="background:#f8fafc;"><td colspan="2" style="padding:8px;font-weight:800;font-size:12px;">📊 الملخص</td></tr>' +
+      '<tr><td style="padding:7px;border-bottom:1px solid #e2e8f0;">عدد الفواتير</td><td style="padding:7px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + orders + '</td></tr>' +
+      '<tr><td style="padding:7px;border-bottom:1px solid #e2e8f0;">إجمالي متوقع</td><td style="padding:7px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + _posFmt(totalExpected) + ' SAR</td></tr>' +
+      '<tr><td style="padding:7px;border-bottom:1px solid #e2e8f0;">إجمالي فعلي</td><td style="padding:7px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + _posFmt(totalActual) + ' SAR</td></tr>' +
+      '<tr style="background:#fef3c7;"><td style="padding:9px;font-weight:900;">الفرق (' + varianceLabel + ')</td><td style="padding:9px;text-align:left;font-weight:900;color:' + varianceClr + ';">' + (variance >= 0 ? '+' : '') + _posFmt(variance) + ' SAR</td></tr>' +
     '</table>' +
-    '<p style="margin-top:10px;color:#475569;font-size:13px;">عدد الفواتير: ' + (r.orderCount||0) + '</p>' +
+    (Object.keys(actuals).length ? (
+      '<table style="width:100%;border-collapse:collapse;margin-top:14px;">' +
+        '<tr style="background:#f8fafc;"><td colspan="2" style="padding:8px;font-weight:800;font-size:12px;">💳 توزيع طرق الدفع</td></tr>' +
+        Object.keys(actuals).map(function(k) {
+          var v = Number(actuals[k] || 0);
+          return '<tr><td style="padding:6px;border-bottom:1px solid #e2e8f0;">' + k + '</td><td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + _posFmt(v) + ' SAR</td></tr>';
+        }).join('') +
+      '</table>'
+    ) : '') +
   '</div>';
+
   q('#shiftReportBody').innerHTML = html;
   openGlassModal('#modalShiftReport');
 }

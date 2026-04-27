@@ -184,12 +184,22 @@ function sendProtectedApp(file) {
 // ─── PWA static assets — explicit handlers BEFORE catch-all routes ───
 // Without this, the catch-all `/employee/*` would serve index.html for
 // manifest.json / sw.js / icons (which would break PWA installation).
-// We set Content-Type explicitly to be browser-friendly.
+//
+// IMPORTANT: We use fs.readFile + res.send instead of res.sendFile because
+// res.sendFile internally sets Content-Type from the file extension and
+// strips any custom headers like Service-Worker-Allowed. By reading the
+// file ourselves and sending raw, we control 100% of the response headers.
+var _pwaFs = require('fs');
 function sendStaticAsset(filePath, contentType, extraHeaders) {
+  var absPath = path.join(__dirname, 'public', filePath);
   return function(req, res) {
-    res.setHeader('Content-Type', contentType);
-    if (extraHeaders) Object.keys(extraHeaders).forEach(function(k){ res.setHeader(k, extraHeaders[k]); });
-    res.sendFile(path.join(__dirname, 'public', filePath));
+    _pwaFs.readFile(absPath, function(err, data) {
+      if (err) return res.status(404).send('Not found');
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      if (extraHeaders) Object.keys(extraHeaders).forEach(function(k){ res.setHeader(k, extraHeaders[k]); });
+      res.send(data);
+    });
   };
 }
 function sendIconFile(folder) {
@@ -203,9 +213,14 @@ function sendIconFile(folder) {
     if (/\.ico$/i.test(file))  contentType = 'image/x-icon';
     if (/\.webp$/i.test(file)) contentType = 'image/webp';
     if (/\.(jpg|jpeg)$/i.test(file)) contentType = 'image/jpeg';
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'public, max-age=86400'); // 1 day
-    res.sendFile(path.join(__dirname, 'public', folder, 'icons', file));
+    var absPath = path.join(__dirname, 'public', folder, 'icons', file);
+    _pwaFs.readFile(absPath, function(err, data) {
+      if (err) return res.status(404).send('Not found');
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.send(data);
+    });
   };
 }
 

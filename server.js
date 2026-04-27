@@ -741,41 +741,31 @@ async function runMigrations() {
   // SLA enforcement
   try { await db.query("CREATE INDEX idx_txn_due ON transactions (due_date, status)"); } catch(e) {}
 
-  // V4.10 — Materialized counters table (real-time per-user inbox stats)
-  // V4.10.1 — DROP + CREATE: handles legacy schema drift (the data is just
-  // a materialization that gets rebuilt from transactions table by the
-  // backfill below — safe to drop).
+  // V4.10.2 — FORCE recreate user_inbox_counters every boot until schema is correct.
+  // Some legacy schema (probably from an older Railway deploy) has the table
+  // without a `username` column, causing "Unknown column 'username'" errors.
+  // Since this is just a materialization rebuilt from transactions, dropping is safe.
+  // Drop dependent triggers first to avoid orphan-trigger issues.
+  try { await db.query("DROP TRIGGER IF EXISTS trg_txn_counter_after_insert"); } catch(_) {}
+  try { await db.query("DROP TRIGGER IF EXISTS trg_txn_counter_after_update"); } catch(_) {}
+  try { await db.query("DROP TRIGGER IF EXISTS trg_txn_counter_after_delete"); } catch(_) {}
+  try { await db.query("DROP TABLE IF EXISTS user_inbox_counters"); console.log('[DB] dropped legacy user_inbox_counters table'); } catch(e) { console.warn('[DB] drop user_inbox_counters:', e.message); }
   try {
-    // Verify schema matches expected — if not, drop and recreate
-    const [cols] = await db.query("SHOW COLUMNS FROM user_inbox_counters LIKE 'username'");
-    if (!cols.length) {
-      console.log('[DB] user_inbox_counters has wrong schema — recreating');
-      await db.query("DROP TABLE IF EXISTS user_inbox_counters");
-    }
-  } catch(e) { /* table might not exist — that's fine */ }
-  await createTableIfMissing('user_inbox_counters', `
-    CREATE TABLE user_inbox_counters (
-      username VARCHAR(100) PRIMARY KEY,
-      pending_action      INT DEFAULT 0,
-      returned_to_me      INT DEFAULT 0,
-      awaiting_others     INT DEFAULT 0,
-      overdue             INT DEFAULT 0,
-      unread_replies      INT DEFAULT 0,
-      total_outbox        INT DEFAULT 0,
-      total_inbox         INT DEFAULT 0,
-      last_computed_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  `);
-  // Belt-and-suspenders: also use addColumnIfMissing for each column in case
-  // the table exists with username PRIMARY KEY but missing other columns
-  await addColumnIfMissing('user_inbox_counters', 'pending_action',  "INT DEFAULT 0");
-  await addColumnIfMissing('user_inbox_counters', 'returned_to_me',  "INT DEFAULT 0");
-  await addColumnIfMissing('user_inbox_counters', 'awaiting_others', "INT DEFAULT 0");
-  await addColumnIfMissing('user_inbox_counters', 'overdue',         "INT DEFAULT 0");
-  await addColumnIfMissing('user_inbox_counters', 'unread_replies',  "INT DEFAULT 0");
-  await addColumnIfMissing('user_inbox_counters', 'total_outbox',    "INT DEFAULT 0");
-  await addColumnIfMissing('user_inbox_counters', 'total_inbox',     "INT DEFAULT 0");
-  await addColumnIfMissing('user_inbox_counters', 'last_computed_at',"DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+    await db.query(`
+      CREATE TABLE user_inbox_counters (
+        username VARCHAR(100) PRIMARY KEY,
+        pending_action      INT DEFAULT 0,
+        returned_to_me      INT DEFAULT 0,
+        awaiting_others     INT DEFAULT 0,
+        overdue             INT DEFAULT 0,
+        unread_replies      INT DEFAULT 0,
+        total_outbox        INT DEFAULT 0,
+        total_inbox         INT DEFAULT 0,
+        last_computed_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    console.log('[DB] created user_inbox_counters with correct schema');
+  } catch(e) { console.warn('[DB] create user_inbox_counters:', e.message); }
 
   // V4.11 — Audit log (if not already present)
   await createTableIfMissing('audit_logs', `

@@ -7,16 +7,48 @@ let poolConfig;
 
 const POOL_SIZE = parseInt(process.env.DB_POOL_SIZE) || 30; // Increased from 10
 
+// V3.1 — Always parse DATABASE_URL into individual fields. mysql2 ignores the
+// `charset` option when using `uri:` mode, which is why Arabic was returning
+// as U+FFFD on Railway (where DATABASE_URL is provided without ?charset=).
+function _parseDbUrl(u) {
+  try {
+    const url = new URL(u);
+    return {
+      host: url.hostname,
+      port: Number(url.port || 3306),
+      user: decodeURIComponent(url.username || ''),
+      password: decodeURIComponent(url.password || ''),
+      database: (url.pathname || '/').slice(1)
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
 if (dbUrl) {
-  poolConfig = {
-    uri: dbUrl,
-    waitForConnections: true,
-    connectionLimit: POOL_SIZE,
-    queueLimit: 50,
-    charset: 'utf8mb4',
-    enableKeepAlive: true,
-    keepAliveInitialDelay: 30000
-  };
+  const parts = _parseDbUrl(dbUrl);
+  if (parts) {
+    poolConfig = Object.assign({}, parts, {
+      waitForConnections: true,
+      connectionLimit: POOL_SIZE,
+      queueLimit: 50,
+      charset: 'utf8mb4',                    // Honored when using individual fields
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 30000,
+      connectTimeout: 10000
+    });
+  } else {
+    // Last-resort fallback if URL parsing fails
+    poolConfig = {
+      uri: dbUrl,
+      waitForConnections: true,
+      connectionLimit: POOL_SIZE,
+      queueLimit: 50,
+      charset: 'utf8mb4',
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 30000
+    };
+  }
 } else {
   const host     = process.env.MYSQLHOST     || process.env.DB_HOST     || 'localhost';
   const port     = process.env.MYSQLPORT     || process.env.DB_PORT     || 3306;
@@ -43,13 +75,10 @@ if (dbUrl) {
 
 const pool = mysql.createPool(poolConfig);
 
-// V3.1 FIX — force utf8mb4 on every connection acquired from the pool.
-// mysql2's `charset` option in poolConfig is sometimes not honored when
-// using a URI string (Railway DATABASE_URL). Without this, Arabic bytes
-// stored as utf8mb4 may be re-decoded as a different charset and turn
-// into U+FFFD replacement chars on the way out. SET NAMES forces the
-// 3 connection charset variables (client, connection, results) all to
-// utf8mb4 explicitly.
+// V3.1 BELT-AND-SUSPENDERS — also run SET NAMES on every newly created
+// connection. `pool.on('connection')` fires once per new physical connection.
+// Even if mysql2 honored our charset config above, this guarantees the
+// 3 result-set charset variables (client/connection/results) are all utf8mb4.
 pool.on('connection', function(conn) {
   conn.query("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci", function(err) {
     if (err) console.warn('[db] SET NAMES utf8mb4 failed:', err.message);

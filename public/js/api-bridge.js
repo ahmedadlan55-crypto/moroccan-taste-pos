@@ -323,6 +323,8 @@
     updateWfTransaction: { method: 'PUT',  url: (id,d) => '/workflow/transactions/' + id, body: (id,d) => d },
     deleteWfTransaction: { method: 'DELETE', url: (id,u) => '/workflow/transactions/' + id + '?username=' + encodeURIComponent(u||'') },
     resubmitWfTransaction: { method: 'POST', url: (id,d) => '/workflow/transactions/' + id + '/resubmit', body: (id,d) => d },
+    // V3.1.4 — Developer-only permanent delete (sends body with confirm phrase + reason)
+    forceDeleteWfTransaction: { method: 'DELETE', url: (id,d) => '/workflow/transactions/' + id + '/force?username=' + encodeURIComponent((d && d.username) || ''), body: (id,d) => d },
     getWfOutbox:         { method: 'GET',  url: '/workflow/outbox', query: (f) => f },
     getWfIncoming:       { method: 'GET',  url: '/workflow/incoming', query: (f) => f },
     getWfDashboard:      { method: 'GET',  url: '/workflow/dashboard-cards', query: (f) => f },

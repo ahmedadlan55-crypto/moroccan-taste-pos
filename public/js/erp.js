@@ -5780,6 +5780,11 @@ function wfViewTxn(id) {
     if (canCancel) {
       rightBtns += '<button class="wo-btn wo-btn-danger" onclick="wfCancelOutboxTxn(\''+txn.id+'\')"><i class="fas fa-trash"></i><span>إلغاء</span></button>';
     }
+    // V3.1.4 — Developer-only PERMANENT DELETE button (visible ONLY to dev account)
+    var _isDev = !!(window.state && window.state.isDeveloper);
+    if (_isDev) {
+      rightBtns += '<button class="wo-btn wo-btn-danger" style="background:linear-gradient(135deg,#7f1d1d,#450a0a);border:1.5px solid #7f1d1d;" onclick="wfForceDeleteTxn(\''+txn.id+'\',\''+esc(txn.txnNumber||txn.id)+'\')" title="حذف نهائي (مطور)"><i class="fas fa-skull-crossbones"></i><span>حذف نهائي</span></button>';
+    }
     rightBtns += '<button class="wo-btn wo-btn-secondary" onclick="erpCloseModal()"><i class="fas fa-xmark"></i><span>إغلاق</span></button>';
 
     var toolbar =
@@ -7782,6 +7787,101 @@ function wfCancelOutboxTxn(id) {
     }).deleteWfTransaction(id, currentUser);
   }, { icon:'fa-trash', color:'#ef4444', okText:'إلغاء' });
 }
+
+// V3.1.4 — DEVELOPER FORCE-DELETE
+// Permanently deletes a transaction + ALL related data (logs, replies, attachments,
+// recipients, memo receipts). Bypasses workflow-state guards. Type-to-confirm
+// dialog with required reason for audit trail. Visible only to dev account.
+window.wfForceDeleteTxn = function(id, txnNumber) {
+  if (!window.state || !window.state.isDeveloper) {
+    showToast('هذه العملية للمطور فقط', true);
+    return;
+  }
+  var esc = _woEscapeHtml;
+  var safeNum = esc(txnNumber || id);
+  var body =
+    '<div class="wo-banner" style="background:#fef2f2;border:1px solid #dc262640;margin:0 0 12px;">' +
+      '<div class="wo-banner-icon" style="background:#7f1d1d;color:#fff;"><i class="fas fa-skull-crossbones"></i></div>' +
+      '<div class="wo-banner-body" style="flex:1;">' +
+        '<div class="wo-banner-title" style="color:#7f1d1d;">حذف نهائي للمعاملة (لا يمكن التراجع)</div>' +
+        '<div style="font-size:12px;color:#991b1b;margin-top:3px;line-height:1.7;">' +
+          'سيتم حذف <b><code style="background:#fff;padding:1px 6px;border-radius:4px;">' + safeNum + '</code></b> + كل المرتبط بها:' +
+          '<ul style="margin:6px 0 0;padding-inline-start:18px;">' +
+            '<li>سجل الإجراءات (transaction_steps_log)</li>' +
+            '<li>الردود والمناقشات (transaction_replies)</li>' +
+            '<li>المرفقات (txn_attachments)</li>' +
+            '<li>المستلمون (txn_recipients)</li>' +
+            '<li>إيصالات قراءة المذكرات (memo_read_receipts)</li>' +
+          '</ul>' +
+          '<div style="margin-top:6px;font-weight:700;">سجلات الدفع لن تُحذف — ستُفصل فقط عن المعاملة لحفظ سلامة الـ GL.</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="wo-label-stack" style="margin-bottom:10px;">' +
+      '<label class="wo-field-label"><i class="fas fa-keyboard"></i> اكتب <code style="background:#7f1d1d;color:#fff;padding:2px 8px;border-radius:5px;">DELETE-FOREVER</code> للتأكيد <span style="color:var(--wo-danger);">*</span></label>' +
+      '<input id="wfFdConfirm" class="wo-input" type="text" placeholder="DELETE-FOREVER" autocomplete="off" autocapitalize="characters" spellcheck="false" style="font-family:monospace;text-transform:uppercase;letter-spacing:1px;">' +
+    '</div>' +
+    '<div class="wo-label-stack">' +
+      '<label class="wo-field-label"><i class="fas fa-comment"></i> سبب الحذف <span style="color:var(--wo-danger);">*</span> <small style="color:#94a3b8;font-weight:600;">(للتوثيق في audit_logs)</small></label>' +
+      '<textarea id="wfFdReason" class="wo-textarea" rows="3" placeholder="مثال: معاملة تجريبية / مكررة / تم إنشاؤها بالخطأ..." minlength="5"></textarea>' +
+    '</div>';
+  var footer =
+    '<button class="wo-btn wo-btn-secondary" id="wfFdCancel">إلغاء</button>' +
+    '<button class="wo-btn wo-btn-danger" id="wfFdOk" style="background:linear-gradient(135deg,#7f1d1d,#450a0a);"><i class="fas fa-skull-crossbones"></i><span>حذف نهائي</span></button>';
+
+  var modal = WoModal.open({
+    icon: 'fa-skull-crossbones', iconColor: 'danger',
+    title: 'حذف نهائي — صلاحية المطور',
+    subtitle: 'هذه العملية لا يمكن التراجع عنها — تأكد قبل المتابعة',
+    body: body, footer: footer, size: 'md'
+  });
+
+  modal.el.querySelector('#wfFdCancel').onclick = function() { modal.close(null); };
+  setTimeout(function(){ var c = document.getElementById('wfFdConfirm'); if (c) c.focus(); }, 220);
+
+  modal.el.querySelector('#wfFdOk').onclick = function() {
+    var confirmEl = document.getElementById('wfFdConfirm');
+    var reasonEl  = document.getElementById('wfFdReason');
+    var confirmText = (confirmEl.value || '').trim().toUpperCase();
+    var reason = (reasonEl.value || '').trim();
+    if (confirmText !== 'DELETE-FOREVER') {
+      showToast('يجب كتابة DELETE-FOREVER بالضبط', true);
+      confirmEl.focus();
+      return;
+    }
+    if (reason.length < 5) {
+      showToast('سبب الحذف مطلوب (5 أحرف على الأقل)', true);
+      reasonEl.focus();
+      return;
+    }
+    try { modal.lock && modal.lock(); } catch(_){}
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) {
+      loader(false);
+      try { modal.unlock && modal.unlock(); } catch(_){}
+      if (r && r.success) {
+        modal.close(null);
+        showToast('تم الحذف النهائي ✓');
+        // Close the underlying transaction view if open
+        if (typeof erpCloseModal === 'function') erpCloseModal();
+        // Refresh whichever list is currently visible
+        if (typeof wfLoadOutbox === 'function') { try { wfLoadOutbox(); } catch(e){} }
+        if (typeof wfLoadInbox === 'function')  { try { wfLoadInbox(); }  catch(e){} }
+        if (typeof loadDashboard === 'function'){ try { loadDashboard(); }catch(e){} }
+      } else {
+        showToast((r && r.error) || 'فشل الحذف', true);
+      }
+    }).withFailureHandler(function(err) {
+      loader(false);
+      try { modal.unlock && modal.unlock(); } catch(_){}
+      showToast('خطأ في الاتصال: ' + (err && err.message || err), true);
+    }).forceDeleteWfTransaction(id, {
+      username: currentUser,
+      confirm: 'DELETE-FOREVER',
+      reason: reason
+    });
+  };
+};
 
 // ─── Org Tree (Admin-only) ───
 function wfLoadOrgTree() {

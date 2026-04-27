@@ -1721,6 +1721,105 @@ router.delete('/transactions/:id', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
+// V3.1.4 — DEVELOPER FORCE-DELETE
+// Bypasses ALL guards (creator check, action history, status). Cascades to:
+//   - transaction_steps_log
+//   - transaction_replies
+//   - txn_attachments (if table exists)
+//   - txn_recipients (if table exists)
+//   - memo_read_receipts (if table exists)
+//   - payment_records (only the link via transaction_id; we don't delete payment rows blindly)
+// Restricted to:
+//   1. The literal `admin` username, OR
+//   2. Any user whose user_meta.isDeveloper === true
+// Body MUST include { confirm: 'DELETE-FOREVER', reason: '<text>' } so a stray
+// click cannot trigger this. The deletion is logged to audit_logs if available.
+router.delete('/transactions/:id/force', async (req, res) => {
+  try {
+    const username = req.query.username || (req.user && req.user.username) || '';
+    if (!username) return res.json({ success: false, error: 'مستخدم غير معروف' });
+
+    // Developer-only gate — username 'admin' OR explicit isDeveloper flag in settings.user_meta
+    let isDev = (username === 'admin');
+    if (!isDev) {
+      try {
+        const [m] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
+        if (m.length && m[0].setting_value) {
+          const meta = JSON.parse(m[0].setting_value) || {};
+          isDev = !!(meta[username] && meta[username].isDeveloper);
+        }
+      } catch(e) { /* tolerate missing settings table */ }
+    }
+    if (!isDev) return res.status(403).json({ success: false, error: 'هذه العملية للمطور فقط' });
+
+    // Safety guard: explicit confirmation phrase + reason text
+    const { confirm, reason } = req.body || {};
+    if (confirm !== 'DELETE-FOREVER') {
+      return res.json({ success: false, error: 'حماية: أرسل { confirm: "DELETE-FOREVER", reason: "..." } لتأكيد الحذف النهائي' });
+    }
+    if (!reason || String(reason).trim().length < 5) {
+      return res.json({ success: false, error: 'سبب الحذف مطلوب (5 أحرف على الأقل) للتوثيق' });
+    }
+
+    const txnId = req.params.id;
+    const [txns] = await db.query(
+      'SELECT id, transaction_number, title, subject, created_by, amount FROM transactions WHERE id = ?',
+      [txnId]
+    );
+    if (!txns.length) return res.json({ success: false, error: 'المعاملة غير موجودة' });
+    const snap = txns[0];
+
+    // Cascade delete inside a transaction so we either delete everything or nothing
+    await db.withTransaction(async (conn) => {
+      // 1. Delete child rows from tables we know exist
+      const childTables = [
+        'transaction_steps_log',
+        'transaction_replies',
+        'txn_attachments',
+        'txn_recipients',
+        'memo_read_receipts'
+      ];
+      for (const tbl of childTables) {
+        try {
+          await conn.query(`DELETE FROM ${tbl} WHERE transaction_id = ?`, [txnId]);
+        } catch(e) {
+          // Tolerate: table may not exist on this deploy
+        }
+      }
+      // 2. Detach payment_records (don't delete payments; just unlink to preserve GL)
+      try {
+        await conn.query(
+          'UPDATE payment_records SET transaction_id = NULL WHERE transaction_id = ?',
+          [txnId]
+        );
+      } catch(e) { /* table may not exist */ }
+      // 3. Delete the transaction itself
+      await conn.query('DELETE FROM transactions WHERE id = ?', [txnId]);
+      // 4. Log to audit_logs if present
+      try {
+        await conn.query(
+          `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details, created_at)
+           VALUES (?, 'force_delete', 'transaction', ?, ?, NOW())`,
+          [username, txnId, JSON.stringify({
+            txnNumber: snap.transaction_number,
+            title: snap.subject || snap.title,
+            createdBy: snap.created_by,
+            amount: Number(snap.amount) || 0,
+            reason: String(reason).trim()
+          })]
+        );
+      } catch(e) { /* audit_logs may not exist or have a different schema */ }
+    });
+
+    res.json({
+      success: true,
+      deletedId: txnId,
+      txnNumber: snap.transaction_number || '',
+      message: 'تم الحذف النهائي للمعاملة + كل ما يرتبط بها'
+    });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
 // Take action on a transaction (approve / reject / return / forward / close)
 router.post('/transactions/:id/action', async (req, res) => {
   try {

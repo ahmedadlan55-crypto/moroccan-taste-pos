@@ -4594,8 +4594,13 @@ function erpExportReport(reportType) {
 // MODAL UTILS
 // ═══════════════════════════════════════
 function erpCloseModal() {
-  document.getElementById('erpModal').classList.add('hidden');
-  // Reset modal width (PO form widens it)
+  var modalEl = document.getElementById('erpModal');
+  modalEl.classList.add('hidden');
+  // V3.1 — clean up the wide txn-view-mode layout so the next modal opens normally
+  modalEl.classList.remove('txn-view-mode');
+  var injectedTb = modalEl.querySelector('#wfTxnToolbar');
+  if (injectedTb) injectedTb.remove();
+  // Reset modal width (PO form widens it via inline style)
   const box = document.querySelector('#erpModal .modal-box');
   if (box) box.style.maxWidth = '';
 }
@@ -5783,19 +5788,33 @@ function wfViewTxn(id) {
 
     document.getElementById('erpModalTitle').innerHTML = '<i class="fas '+(sIcon[txn.status]||'fa-file-lines')+'" style="color:'+sc+';margin-inline-end:8px;"></i>' + esc(txn.subject || txn.title || 'تفاصيل المعاملة') + ' <small style="color:#94a3b8;font-weight:700;font-family:monospace;">' + esc(txn.txnNumber || '') + '</small>';
     var modalBody = document.getElementById('erpModalBody');
-    modalBody.innerHTML = html + toolbar;
-    // Make the modal wider to honor the two-column layout
+    // Body gets ONLY the content (no toolbar inside) — toolbar is injected as a sibling below.
+    modalBody.innerHTML = html;
     var modalEl = document.getElementById('erpModal');
-    if (modalEl) {
-      var dialog = modalEl.querySelector('.modal-content, .erp-modal-content, .wo-modal');
-      if (dialog) {
-        dialog.style.maxWidth = '1200px';
-        dialog.style.width = '95vw';
+    // V3.1 — switch the modal into the wide "txn-view-mode" layout. CSS in
+    // warehouse-ops.css does the heavy lifting: 1300px wide, full height,
+    // body scrolls, toolbar pinned, native footer hidden.
+    modalEl.classList.add('txn-view-mode');
+    // Inject the custom toolbar as a sibling of #erpModalBody (so it's a
+    // proper flex footer, NOT a sticky child of the scroll container — which
+    // would float above content and be obscured by the native footer).
+    var box = modalEl.querySelector('.erp-modal-box') || modalEl.querySelector('.modal-box');
+    // Remove any leftover toolbar from a previous open
+    var existingTb = modalEl.querySelector('#wfTxnToolbar');
+    if (existingTb) existingTb.remove();
+    var tmpWrap = document.createElement('div');
+    tmpWrap.innerHTML = toolbar;
+    var tbEl = tmpWrap.firstElementChild;
+    if (tbEl) {
+      tbEl.id = 'wfTxnToolbar';   // tag it so erpCloseModal() can find + remove it
+      if (box && modalBody && modalBody.parentNode === box) {
+        modalBody.insertAdjacentElement('afterend', tbEl);
+      } else {
+        // Fallback: put it back inside the body if the structure is unexpected
+        modalBody.appendChild(tbEl);
       }
     }
-    document.getElementById('erpModalSaveBtn').style.display = 'none';
     modalEl.classList.remove('hidden');
-    setTimeout(function() { document.getElementById('erpModalSaveBtn').style.display = ''; }, 100);
     // V3: lazy-load replies thread
     setTimeout(function() { try { admLoadReplies(txn.id); } catch(e){ console.warn('admLoadReplies err:', e); } }, 50);
     // Cache the last-viewed transaction for the print window

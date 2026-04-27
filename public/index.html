@@ -45,8 +45,8 @@
   </style>
 
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=32">
-  <link rel="stylesheet" href="/css/warehouse-ops.css?v=17">
+  <link rel="stylesheet" href="/css/style.css?v=33">
+  <link rel="stylesheet" href="/css/warehouse-ops.css?v=18">
 
   <!-- Heavy libs (Chart.js, XLSX, QRCode, erp.js) are NOT loaded eagerly anymore.
        app.js loads them on-demand via loadScript() before any function that
@@ -60,31 +60,84 @@
     <h3 style="margin-top:20px; color:var(--secondary); font-weight:800;" data-i18n="loading">جاري التحميل...</h3>
   </div>
 
-  <!-- 1. LOGIN SCREEN -->
+  <!-- 1. LOGIN SCREEN — V3.1 polished, fully responsive -->
   <div id="loginView">
+    <!-- Top-right corner: language toggle (visible on all sizes) -->
+    <button class="login-lang-toggle" id="loginLangToggle" type="button" onclick="toggleLoginLang()" aria-label="Toggle language">
+      <i class="fas fa-globe"></i>
+      <span id="loginLangLabel">EN</span>
+    </button>
+
     <div class="login-box">
       <div class="login-logo" id="loginLogoBox">
         <span class="login-logo-fallback">&#9749;</span>
       </div>
       <div class="login-title" id="loginCompanyName">Moroccan Taste</div>
-      <p class="login-subtitle" data-i18n="login">Login</p>
+      <p class="login-subtitle" data-i18n="login">تسجيل الدخول</p>
 
       <div class="login-field">
-        <input type="text" id="lUser" class="form-control" placeholder="Username" autocomplete="off" onkeypress="if(event.key==='Enter') doLogin()">
+        <input type="text" id="lUser" class="form-control" placeholder="اسم المستخدم" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="text" onkeypress="if(event.key==='Enter') doLogin()">
         <i class="fas fa-user login-field-icon"></i>
       </div>
       <div class="login-field">
-        <input type="password" id="lPass" class="form-control" placeholder="Password" onkeypress="if(event.key==='Enter') doLogin()">
+        <input type="password" id="lPass" class="form-control" placeholder="كلمة المرور" autocomplete="current-password" onkeypress="if(event.key==='Enter') doLogin()">
         <i class="fas fa-lock login-field-icon"></i>
+        <button type="button" class="login-pass-toggle" id="loginPassToggle" onclick="toggleLoginPass()" aria-label="Show/hide password" tabindex="-1">
+          <i class="fas fa-eye" id="loginPassIcon"></i>
+        </button>
       </div>
 
       <div class="login-row">
-        <label><input type="checkbox" id="lRemember"> <span>Remember me</span></label>
+        <label class="login-remember">
+          <input type="checkbox" id="lRemember">
+          <span class="login-remember-mark"></span>
+          <span data-i18n="rememberMe">تذكرني</span>
+        </label>
       </div>
 
-      <button class="btn btn-primary" onclick="doLogin()"><span data-i18n="login">Login</span></button>
+      <button class="btn btn-primary login-submit" onclick="doLogin()" type="button">
+        <span data-i18n="login">تسجيل الدخول</span>
+        <i class="fas fa-arrow-left login-submit-arrow"></i>
+      </button>
     </div>
+
+    <!-- Bottom credit (very subtle) -->
+    <div class="login-version">v3.1 · Moroccan Taste POS</div>
   </div>
+  <script>
+  (function() {
+    // Restore language preference + give the toggle button immediate effect
+    var saved = localStorage.getItem('pos_lang') || 'ar';
+    var lbl = document.getElementById('loginLangLabel');
+    if (lbl) lbl.textContent = saved === 'ar' ? 'EN' : 'AR';
+    document.documentElement.dir = saved === 'ar' ? 'rtl' : 'ltr';
+    document.documentElement.lang = saved;
+    document.body.className = (document.body.className || '').replace(/\b(ar|en)\b/g, '').trim() + ' ' + saved;
+    window.toggleLoginLang = function() {
+      var cur = document.documentElement.lang === 'ar' ? 'ar' : 'en';
+      var nxt = cur === 'ar' ? 'en' : 'ar';
+      localStorage.setItem('pos_lang', nxt);
+      document.documentElement.dir = nxt === 'ar' ? 'rtl' : 'ltr';
+      document.documentElement.lang = nxt;
+      document.body.className = (document.body.className || '').replace(/\b(ar|en)\b/g, '').trim() + ' ' + nxt;
+      var lbl2 = document.getElementById('loginLangLabel');
+      if (lbl2) lbl2.textContent = nxt === 'ar' ? 'EN' : 'AR';
+      // Update placeholders + buttons live (so user sees change immediately)
+      var u = document.getElementById('lUser'); if (u) u.placeholder = nxt === 'ar' ? 'اسم المستخدم' : 'Username';
+      var p = document.getElementById('lPass'); if (p) p.placeholder = nxt === 'ar' ? 'كلمة المرور' : 'Password';
+      var sub = document.querySelector('.login-subtitle'); if (sub) sub.textContent = nxt === 'ar' ? 'تسجيل الدخول' : 'Login';
+      var rem = document.querySelector('.login-remember span:last-of-type'); if (rem) rem.textContent = nxt === 'ar' ? 'تذكرني' : 'Remember me';
+      var btn = document.querySelector('.login-submit span'); if (btn) btn.textContent = nxt === 'ar' ? 'تسجيل الدخول' : 'Login';
+    };
+    window.toggleLoginPass = function() {
+      var f = document.getElementById('lPass');
+      var i = document.getElementById('loginPassIcon');
+      if (!f || !i) return;
+      if (f.type === 'password') { f.type = 'text'; i.className = 'fas fa-eye-slash'; }
+      else { f.type = 'password'; i.className = 'fas fa-eye'; }
+    };
+  })();
+  </script>
 
   <!-- TEMPLATE_INJECTION_POINT -->
   <!-- ========================================== -->

@@ -73,13 +73,18 @@ input, select, textarea { outline: none; font-family: inherit; }
    4. Login Screen — Cosmic Forest Theme
    ========================================= */
 #loginView {
-  height: 100dvh;
   min-height: 100vh;
+  min-height: 100dvh;
   position: relative;
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 20px;
+  padding: 24px;
+  /* Honor the safe areas on notched devices */
+  padding-top: max(24px, env(safe-area-inset-top));
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
   overflow: hidden;
   background:
     radial-gradient(ellipse at 20% 0%, rgba(167, 139, 250, 0.55) 0%, transparent 50%),
@@ -304,18 +309,199 @@ body.en .login-field .login-field-icon { right: 0; left: auto; }
   margin-inline-end: 6px;
 }
 
-/* Mobile login */
+/* V3.1 — Language toggle (top corner) */
+.login-lang-toggle {
+  position: absolute;
+  top: max(20px, env(safe-area-inset-top));
+  inset-inline-end: max(20px, env(safe-area-inset-right));
+  z-index: 20;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  font-weight: 800;
+  font-size: 13px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 180ms ease, transform 100ms ease;
+  font-family: inherit;
+  letter-spacing: 0.5px;
+}
+.login-lang-toggle:hover { background: rgba(255, 255, 255, 0.22); }
+.login-lang-toggle:active { transform: scale(0.95); }
+.login-lang-toggle i { font-size: 14px; opacity: 0.85; }
+
+/* V3.1 — Password show/hide toggle inside the field */
+.login-pass-toggle {
+  position: absolute;
+  top: 0;
+  height: 52px;
+  width: 44px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.65);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 180ms ease;
+  font-size: 14px;
+  z-index: 2;
+}
+.login-pass-toggle:hover { color: rgba(255, 255, 255, 0.95); }
+/* In RTL the icon sits at left, so password toggle sits at right; in LTR vice versa */
+body.ar .login-pass-toggle { right: 0; left: auto; }
+body.en .login-pass-toggle { left: 0; right: auto; }
+/* Reserve room for the password toggle so the value doesn't sit under it */
+body.ar #lPass { padding-right: 50px !important; padding-left: 50px !important; }
+body.en #lPass { padding-left: 50px !important; padding-right: 50px !important; }
+
+/* V3.1 — Custom checkbox for "Remember me" */
+.login-remember {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 600;
+  font-size: 13px;
+  position: relative;
+}
+.login-remember input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.login-remember-mark {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1.5px solid rgba(255, 255, 255, 0.4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 150ms, border-color 150ms;
+  flex-shrink: 0;
+}
+.login-remember input[type="checkbox"]:checked + .login-remember-mark {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(255, 255, 255, 0.95);
+}
+.login-remember input[type="checkbox"]:checked + .login-remember-mark::after {
+  content: '';
+  width: 6px;
+  height: 11px;
+  border: solid #4c1d95;
+  border-width: 0 2.5px 2.5px 0;
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+.login-remember input[type="checkbox"]:focus-visible + .login-remember-mark {
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25);
+}
+
+/* V3.1 — Submit button arrow */
+.login-submit { display: inline-flex !important; align-items: center; justify-content: center; gap: 10px; }
+.login-submit-arrow { font-size: 12px; opacity: 0.65; transition: transform 180ms ease, opacity 180ms ease; }
+.login-submit:hover .login-submit-arrow { transform: translateX(-3px); opacity: 1; }
+body.en .login-submit-arrow { transform: rotate(180deg); }
+body.en .login-submit:hover .login-submit-arrow { transform: rotate(180deg) translateX(-3px); }
+
+/* V3.1 — Version label at the bottom */
+.login-version {
+  position: absolute;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  left: 0; right: 0;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* V3.1 — Defeat browser autofill yellow */
+.login-field input:-webkit-autofill,
+.login-field input:-webkit-autofill:hover,
+.login-field input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #fff !important;
+  -webkit-box-shadow: 0 0 0px 1000px rgba(255, 255, 255, 0.10) inset !important;
+  caret-color: #fff;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* ─── Mobile login (≤ 768px) — tighter spacing, full-width feel ─── */
 @media (max-width: 768px) {
-  .login-box { padding: 30px 24px 24px; border-radius: 20px; max-width: 360px; }
-  .login-logo { width: 76px; height: 76px; }
+  .login-box { padding: 28px 22px 22px; border-radius: 20px; max-width: 380px; }
+  .login-logo { width: 76px; height: 76px; margin-bottom: 12px; }
   .login-logo .login-logo-fallback { font-size: 36px; }
-  .login-title { font-size: 26px; }
-  .login-subtitle { margin-bottom: 22px; font-size: 13px; }
+  .login-title { font-size: 24px; }
+  .login-subtitle { margin-bottom: 20px; font-size: 13px; }
+  .login-field { margin-bottom: 12px; }
   .login-field input.form-control { height: 48px; line-height: 48px; font-size: 16px; }
   body.ar .login-field input.form-control { padding-right: 16px; padding-left: 46px; }
   body.en .login-field input.form-control { padding-left: 16px; padding-right: 46px; }
+  body.ar #lPass { padding-right: 16px !important; padding-left: 46px !important; }
+  body.en #lPass { padding-left: 16px !important; padding-right: 46px !important; }
   .login-field .login-field-icon { height: 48px; width: 46px; }
+  .login-pass-toggle { height: 48px; width: 42px; }
   .login-box .btn-primary { padding: 14px; font-size: 15px; }
+  .login-lang-toggle { padding: 8px 12px; font-size: 12px; }
+  .login-version { font-size: 10px; }
+}
+
+/* ─── Small phones (≤ 380px) — even tighter, e.g. iPhone SE ─── */
+@media (max-width: 380px) {
+  #loginView { padding: 12px; padding-top: max(60px, env(safe-area-inset-top)); }
+  .login-box { padding: 22px 18px 20px; border-radius: 18px; }
+  .login-logo { width: 64px; height: 64px; margin-bottom: 10px; }
+  .login-logo .login-logo-fallback { font-size: 30px; }
+  .login-title { font-size: 22px; }
+  .login-subtitle { margin-bottom: 18px; font-size: 12px; }
+  .login-field input.form-control { height: 46px; line-height: 46px; font-size: 15px; }
+  .login-row { font-size: 12px; }
+}
+
+/* ─── Phone landscape — short height (≤ 480px tall) ─── */
+@media (max-height: 480px) and (orientation: landscape) {
+  #loginView { padding-top: 12px; padding-bottom: 12px; align-items: flex-start; overflow-y: auto; }
+  .login-box { padding: 18px 24px 18px; max-width: 440px; }
+  .login-logo { width: 56px; height: 56px; margin-bottom: 8px; }
+  .login-logo .login-logo-fallback { font-size: 26px; }
+  .login-title { font-size: 20px; margin-bottom: 4px; }
+  .login-subtitle { margin-bottom: 14px; font-size: 12px; }
+  .login-field { margin-bottom: 10px; }
+  .login-field input.form-control { height: 42px; line-height: 42px; }
+  .login-field .login-field-icon { height: 42px; }
+  .login-pass-toggle { height: 42px; }
+  .login-row { margin: 4px 0 12px; }
+  .login-box .btn-primary { padding: 12px; }
+  .login-version { display: none; }
+  /* Hide stars/mountains so the box has room */
+  #loginView::after { height: 30%; }
+}
+
+/* ─── Wide screens (≥ 1280px) — slightly bigger card for desktop ─── */
+@media (min-width: 1280px) {
+  .login-box { max-width: 460px; padding: 44px 40px 34px; }
+  .login-title { font-size: 36px; }
+  .login-subtitle { font-size: 15px; }
+}
+
+/* ─── Reduced motion preference ─── */
+@media (prefers-reduced-motion: reduce) {
+  #loginView::before { animation: none; }
+  .login-lang-toggle, .login-submit-arrow, .login-pass-toggle { transition: none; }
 }
 
 /* =========================================

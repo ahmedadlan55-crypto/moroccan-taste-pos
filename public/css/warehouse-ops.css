@@ -438,13 +438,9 @@
   gap: var(--wo-space-3);
 }
 .wo-txn-view .wo-txn-side {
-  position: sticky;
-  top: var(--wo-space-2);
   display: flex;
   flex-direction: column;
   gap: var(--wo-space-3);
-  max-height: calc(100vh - 200px);
-  overflow-y: auto;
   padding: 2px;
 }
 .wo-txn-content {
@@ -573,26 +569,97 @@
 }
 .wo-txn-actor .wo-actor-attach .wo-attach-btn:hover { background: #1e3a8a; }
 
+/* V3.1 — Transaction view modal LAYOUT MODE
+ * When `.modal-overlay` has class `txn-view-mode`, it switches the modal
+ * into a full-bleed wide layout where the body scrolls and the toolbar
+ * stays pinned to the bottom as a real flex footer (no overlap).
+ */
+.modal-overlay.txn-view-mode {
+  align-items: stretch;
+  padding: 24px;
+}
+.modal-overlay.txn-view-mode .modal-box,
+.modal-overlay.txn-view-mode .erp-modal-box {
+  max-width: 1300px !important;
+  width: 100% !important;
+  max-height: none !important;
+  height: calc(100vh - 48px) !important;
+  height: calc(100dvh - 48px) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  margin: auto !important;
+}
+.modal-overlay.txn-view-mode .modal-header {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+  background: rgba(255,255,255,0.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.modal-overlay.txn-view-mode .modal-body {
+  flex: 1 1 auto !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  min-height: 0 !important;
+  padding: 16px 20px !important;
+  background: #f8fafc;
+}
+.modal-overlay.txn-view-mode .modal-footer {
+  /* Native Save/Cancel footer is irrelevant for view mode; the custom
+     toolbar that wfViewTxn injects replaces it. */
+  display: none !important;
+}
 .wo-txn-toolbar-sticky {
-  position: sticky;
-  bottom: 0;
-  background: linear-gradient(180deg, rgba(255,255,255,0.85) 0%, #fff 60%);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-top: 1px solid var(--wo-border);
-  padding: var(--wo-space-3) var(--wo-space-4);
-  margin: calc(-1 * var(--wo-space-4)) calc(-1 * var(--wo-space-4)) calc(-1 * var(--wo-space-4));
+  padding: 12px 20px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--wo-space-2);
-  z-index: 5;
+  gap: 8px;
+  box-shadow: 0 -4px 12px rgba(15,23,42,0.04);
+  position: relative;
+  z-index: 2;
 }
-@media (max-width: 640px) {
-  .wo-txn-toolbar-sticky { flex-direction: column; align-items: stretch; }
-  .wo-txn-toolbar-sticky > div { width: 100%; justify-content: stretch; flex-wrap: wrap; }
-  .wo-txn-toolbar-sticky .wo-btn { flex: 1 1 auto; }
+.wo-txn-toolbar-sticky > div {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+@media (max-width: 768px) {
+  .modal-overlay.txn-view-mode { padding: 8px; }
+  .modal-overlay.txn-view-mode .modal-box,
+  .modal-overlay.txn-view-mode .erp-modal-box {
+    height: calc(100vh - 16px) !important;
+    height: calc(100dvh - 16px) !important;
+    border-radius: 16px !important;
+  }
+  .modal-overlay.txn-view-mode .modal-body { padding: 12px !important; }
+  .wo-txn-toolbar-sticky { padding: 10px 12px; flex-direction: column; align-items: stretch; }
+  .wo-txn-toolbar-sticky > div { width: 100%; }
+  .wo-txn-toolbar-sticky .wo-btn { flex: 1 1 calc(50% - 4px); justify-content: center; }
+}
+@media (max-width: 480px) {
+  .wo-txn-toolbar-sticky .wo-btn { font-size: 12px; padding: 8px 10px; }
+  .wo-txn-toolbar-sticky .wo-btn span { font-size: 11px; }
+}
+/* Two-column inner layout — already declared above; here adjust for view-mode containment */
+.modal-overlay.txn-view-mode .wo-txn-view {
+  height: 100%;
+  align-items: stretch;
+}
+.modal-overlay.txn-view-mode .wo-txn-side {
+  position: static;
+  max-height: none;
+  overflow: visible;
 }
 
 /* ──────────────────────────────────────────────────────────────

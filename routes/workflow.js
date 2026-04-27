@@ -1921,17 +1921,22 @@ router.get('/attachments/:id', async (req, res) => {
  * ═══════════════════════════════════════════════════════════════════ */
 
 // GET /workflow/transactions/:id/replies
+// V3.1 FIX: apply fixMojibake to every string field — replies stored before
+// the utf8mb4 migration showed up as ❓❓❓ to clients. fixMojibake re-decodes
+// the wrongly-stored Latin-1 bytes back into proper Arabic.
 router.get('/transactions/:id/replies', async (req, res) => {
   try {
     const [rows] = await db.query(
       'SELECT * FROM transaction_replies WHERE transaction_id = ? ORDER BY created_at ASC',
       [req.params.id]
     );
-    res.json(rows.map(r => ({
+    res.json(rows.map(r => fixObj({
       id: r.id,
       transactionId: r.transaction_id,
       replyText: r.reply_text,
       attachment: r.attachment || null,
+      attachmentName: r.attachment_name || '',
+      attachmentMime: r.attachment_mime || '',
       authorUsername: r.author_username,
       authorName: r.author_name || r.author_username,
       authorRole: r.author_role || '',
@@ -1947,7 +1952,7 @@ router.get('/transactions/:id/replies', async (req, res) => {
 // POST /workflow/transactions/:id/replies
 router.post('/transactions/:id/replies', async (req, res) => {
   try {
-    const { replyText, attachment, isInternal, username } = req.body;
+    const { replyText, attachment, attachmentName, attachmentMime, isInternal, username } = req.body;
     if (!replyText || !replyText.trim()) {
       return res.json({ success: false, error: 'نص الرد مطلوب' });
     }
@@ -1969,12 +1974,24 @@ router.post('/transactions/:id/replies', async (req, res) => {
       }
     } catch(e) {}
 
+    // V3.1: also store attachment_name + attachment_mime so the UI can show
+    // proper file names + decide between image preview vs generic icon.
+    // The columns are added by addColumnIfMissing in server.js (see below).
     const id = 'REP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
-    await db.query(
-      `INSERT INTO transaction_replies (id, transaction_id, reply_text, attachment, author_username, author_name, author_role, author_position, is_internal)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
-      [id, req.params.id, replyText.trim(), attachment || null, author, authorName, authorRole, authorPosition, isInternal ? 1 : 0]
-    );
+    try {
+      await db.query(
+        `INSERT INTO transaction_replies (id, transaction_id, reply_text, attachment, attachment_name, attachment_mime, author_username, author_name, author_role, author_position, is_internal)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        [id, req.params.id, replyText.trim(), attachment || null, attachmentName || null, attachmentMime || null, author, authorName, authorRole, authorPosition, isInternal ? 1 : 0]
+      );
+    } catch(insertErr) {
+      // Fallback for older deploys where attachment_name/mime columns don't exist yet
+      await db.query(
+        `INSERT INTO transaction_replies (id, transaction_id, reply_text, attachment, author_username, author_name, author_role, author_position, is_internal)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        [id, req.params.id, replyText.trim(), attachment || null, author, authorName, authorRole, authorPosition, isInternal ? 1 : 0]
+      );
+    }
     res.json({ success: true, id, authorName, authorRole, authorPosition });
   } catch(e) {
     res.json({ success: false, error: e.message });

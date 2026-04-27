@@ -689,8 +689,14 @@ async function runMigrations() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_replies_txn (transaction_id),
       INDEX idx_replies_author (author_username)
-    ) ENGINE=InnoDB
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+  // V3.1: rich attachment metadata + ensure utf8mb4 on existing deploys
+  await addColumnIfMissing('transaction_replies', 'attachment_name', "VARCHAR(255) DEFAULT NULL");
+  await addColumnIfMissing('transaction_replies', 'attachment_mime', "VARCHAR(100) DEFAULT NULL");
+  // Force utf8mb4 in case the table was created with utf8 (3-byte) — fixes
+  // Arabic ❓❓❓ display issues for replies stored before this migration.
+  try { await db.query("ALTER TABLE transaction_replies CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"); } catch(e) {}
 
   // ─── V3: Memo (تعاميم) read-receipts ───
   await createTableIfMissing('memo_read_receipts', `

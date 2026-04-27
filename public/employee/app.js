@@ -1596,18 +1596,21 @@ function viewMyTxn(id) {
     }
     h += '</div>';
 
-    // V3: REPLIES THREAD — separate from workflow log; anyone can comment
+    // V3.1: REPLIES THREAD — professional design with file upload
     h += '<div style="border:2px solid #c4b5fd;border-radius:14px;background:linear-gradient(180deg,#faf5ff 0%,#fff 60%);padding:14px;margin-bottom:12px;">' +
-      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">' +
-        '<i class="fas fa-comments" style="color:#8b5cf6;font-size:14px;"></i>' +
-        '<span style="font-size:13px;font-weight:900;color:#5b21b6;">الردود والمناقشة</span>' +
-        '<span id="emp_repliesCount" style="margin-inline-start:auto;font-size:11px;color:#7c3aed;font-weight:700;background:#ede9fe;padding:3px 10px;border-radius:999px;">جاري التحميل...</span>' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">' +
+        '<div style="width:30px;height:30px;border-radius:50%;background:#8b5cf6;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;"><i class="fas fa-comments"></i></div>' +
+        '<span style="font-size:14px;font-weight:900;color:#5b21b6;">الردود والمناقشة</span>' +
+        '<span id="emp_repliesCount" style="margin-inline-start:auto;font-size:11px;color:#7c3aed;font-weight:800;background:#ede9fe;padding:4px 10px;border-radius:999px;">جاري التحميل...</span>' +
       '</div>' +
       '<div id="emp_repliesList"><div style="text-align:center;color:#94a3b8;padding:20px;font-size:12px;"><i class="fas fa-spinner fa-spin"></i> جاري تحميل الردود...</div></div>' +
-      '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #c4b5fd;">' +
-        '<textarea id="emp_replyText" placeholder="اكتب رداً أو ملاحظة..." style="width:100%;min-height:60px;padding:10px;border:1.5px solid #c4b5fd;border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;"></textarea>' +
-        '<div style="display:flex;gap:8px;margin-top:8px;">' +
-          '<button onclick="empPostReply(\''+id+'\')" style="flex:1;padding:10px;border-radius:10px;background:#8b5cf6;color:#fff;border:none;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit;"><i class="fas fa-paper-plane"></i> إرسال الرد</button>' +
+      '<div style="margin-top:12px;padding-top:12px;border-top:1px dashed #c4b5fd;">' +
+        '<textarea id="emp_replyText" placeholder="اكتب رداً أو ملاحظة..." style="width:100%;min-height:64px;padding:12px;border:1.5px solid #c4b5fd;border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;background:#fff;line-height:1.7;"></textarea>' +
+        '<div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap;">' +
+          // Hidden file input + visible label (better mobile UX)
+          '<input type="file" id="emp_replyFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="display:none;" onchange="(function(i){var l=document.getElementById(\'emp_replyFileLabel\');if(l)l.textContent=i.files[0]?(i.files[0].name.length>20?i.files[0].name.substring(0,20)+\'...\':i.files[0].name):\'إرفاق ملف\';})(this)">' +
+          '<button type="button" onclick="document.getElementById(\'emp_replyFile\').click()" style="padding:9px 14px;border-radius:10px;background:#fff;color:#8b5cf6;border:1.5px solid #c4b5fd;font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;"><i class="fas fa-paperclip"></i><span id="emp_replyFileLabel">إرفاق ملف</span></button>' +
+          '<button onclick="empPostReply(\''+id+'\')" style="flex:1;padding:10px 14px;border-radius:10px;background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff;border:none;font-weight:900;font-size:13px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 6px rgba(139,92,246,.3);"><i class="fas fa-paper-plane"></i> إرسال الرد</button>' +
         '</div>' +
       '</div>' +
     '</div>';
@@ -1739,6 +1742,8 @@ function closeTxnDetail() { document.getElementById('txnDetailModal').classList.
 // ═══════════════════════════════════════════════════════════════════
 // V3: Replies Thread (employee + admin shared logic)
 // ═══════════════════════════════════════════════════════════════════
+// V3.1: Professional reply card — gradient avatar, role badge, action color,
+// timestamp, content bubble, image preview + view/download for attachments.
 window.empLoadReplies = function(txnId, listElId, countElId) {
   listElId  = listElId  || 'emp_repliesList';
   countElId = countElId || 'emp_repliesCount';
@@ -1753,29 +1758,54 @@ window.empLoadReplies = function(txnId, listElId, countElId) {
       if (cntEl) cntEl.textContent = rows.length + ' رد';
       if (!listEl) return;
       if (!rows.length) {
-        listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:18px;font-size:12px;"><i class="fas fa-comment-slash" style="font-size:22px;display:block;margin-bottom:6px;"></i>لا توجد ردود بعد — كن أول من يضيف رداً.</div>';
+        listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:12px;background:#fff;border:1px dashed #c4b5fd;border-radius:10px;"><i class="fas fa-comment-dots" style="font-size:28px;display:block;margin-bottom:8px;color:#c4b5fd;"></i>لا توجد ردود بعد — كن أول من يضيف رداً.</div>';
         return;
       }
-      var roleColors = { admin:'#dc2626', cashier:'#16a34a', manager:'#1e40af', custody:'#d97706', employee:'#475569' };
-      var roleLabels = { admin:'أدمن', cashier:'كاشير', manager:'مدير', custody:'عهدة', employee:'موظف' };
-      listEl.innerHTML = rows.map(function(r) {
+      // Role-aware avatar gradient + label + side-color
+      var roleStyles = {
+        admin:    { grad: 'linear-gradient(135deg,#dc2626,#991b1b)', label: 'أدمن', side: '#dc2626' },
+        manager:  { grad: 'linear-gradient(135deg,#1e40af,#1e3a8a)', label: 'مدير', side: '#1e40af' },
+        cashier:  { grad: 'linear-gradient(135deg,#16a34a,#15803d)', label: 'كاشير', side: '#16a34a' },
+        custody:  { grad: 'linear-gradient(135deg,#d97706,#b45309)', label: 'عهدة', side: '#d97706' },
+        finance:  { grad: 'linear-gradient(135deg,#0369a1,#075985)', label: 'مالية', side: '#0369a1' },
+        hr:       { grad: 'linear-gradient(135deg,#a855f7,#7e22ce)', label: 'موارد بشرية', side: '#a855f7' },
+        inventory:{ grad: 'linear-gradient(135deg,#0d9488,#0f766e)', label: 'مخزون', side: '#0d9488' },
+        purchasing:{ grad: 'linear-gradient(135deg,#ea580c,#c2410c)', label: 'مشتريات', side: '#ea580c' },
+        employee: { grad: 'linear-gradient(135deg,#475569,#334155)', label: 'موظف', side: '#475569' }
+      };
+      var initials = function(s){ s = String(s||'').trim(); if (!s) return '؟'; var p = s.split(/\s+/); return ((p[0][0]||'') + (p[1]?p[1][0]:'')).toUpperCase(); };
+      listEl.innerHTML = rows.map(function(r, idx) {
         var dt = '';
         try { dt = new Date(r.createdAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(e){}
-        var col = roleColors[r.authorRole] || '#6b7280';
-        var roleLbl = roleLabels[r.authorRole] || r.authorRole || 'مستخدم';
-        var posLbl = r.authorPosition ? ' · ' + _esc(r.authorPosition) : '';
+        var rs = roleStyles[r.authorRole] || roleStyles.employee;
+        var posLbl = r.authorPosition ? _esc(r.authorPosition) : (r.authorRole || 'مستخدم');
+        var isMine = (r.authorUsername === currentUser);
+        // Attachment block — image preview if image, with view + download buttons + name
         var att = '';
         if (r.attachment && String(r.attachment).indexOf('data:') === 0) {
-          att = '<a href="'+r.attachment+'" download style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#0ea5e9;font-weight:800;margin-top:6px;padding:4px 10px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;text-decoration:none;"><i class="fas fa-paperclip"></i> مرفق</a>';
+          var isImg = String(r.attachment).indexOf('data:image/') === 0;
+          var fname = r.attachmentName ? _esc(r.attachmentName) : 'مرفق';
+          att = '<div style="margin-top:10px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">';
+          if (isImg) {
+            att += '<img src="'+r.attachment+'" style="max-width:100%;max-height:240px;border-radius:8px;border:1px solid #cbd5e1;display:block;margin-bottom:8px;cursor:zoom-in;" onclick="window.open(this.src,\'_blank\')" alt="'+fname+'">';
+          }
+          att += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">' +
+            '<i class="fas fa-paperclip" style="color:#64748b;font-size:11px;"></i>' +
+            '<span style="font-size:11px;color:#475569;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + fname + '</span>' +
+            '<button onclick="window.open(\''+r.attachment+'\',\'_blank\')" style="background:#1e40af;color:#fff;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-weight:700;font-size:11px;display:inline-flex;align-items:center;gap:4px;font-family:inherit;"><i class="fas fa-eye"></i> عرض</button>' +
+            '<a href="'+r.attachment+'" download="'+fname+'" style="background:#16a34a;color:#fff;text-decoration:none;padding:5px 10px;border-radius:6px;font-weight:700;font-size:11px;display:inline-flex;align-items:center;gap:4px;"><i class="fas fa-download"></i> تنزيل</a>' +
+          '</div></div>';
         }
-        return '<div style="display:flex;gap:10px;padding:10px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:8px;">' +
-          '<div style="width:34px;height:34px;border-radius:50%;background:'+col+'1a;color:'+col+';display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:900;font-size:13px;">' + ((r.authorName||'؟')[0]||'؟') + '</div>' +
+        return '<div style="display:flex;gap:10px;padding:12px;background:#fff;border:1px solid #e5e7eb;border-right:3px solid '+rs.side+';border-radius:12px;margin-bottom:10px;'+(isMine ? 'background:linear-gradient(180deg,#fafbff 0%,#fff 100%);' : '')+'box-shadow:0 1px 3px rgba(15,23,42,.04);">' +
+          '<div style="width:40px;height:40px;border-radius:50%;background:'+rs.grad+';color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:900;font-size:13px;letter-spacing:-0.5px;box-shadow:0 2px 6px rgba(0,0,0,.1);">' + _esc(initials(r.authorName||r.authorUsername)) + '</div>' +
           '<div style="flex:1;min-width:0;">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">' +
-              '<div style="font-weight:900;font-size:13px;color:#0f172a;">' + _esc(r.authorName||'') + ' <span style="font-size:10px;font-weight:700;color:'+col+';background:'+col+'15;padding:2px 7px;border-radius:6px;margin-inline-start:4px;">' + roleLbl + posLbl + '</span></div>' +
-              '<div style="font-size:10px;color:#94a3b8;"><i class="far fa-clock"></i> ' + dt + '</div>' +
+            '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+              '<span style="font-weight:900;font-size:13px;color:#0f172a;">' + _esc(r.authorName||r.authorUsername||'') + '</span>' +
+              (isMine ? '<span style="font-size:9px;color:#0ea5e9;background:#e0f2fe;padding:1px 6px;border-radius:6px;font-weight:800;">أنا</span>' : '') +
+              '<span style="font-size:10px;font-weight:800;color:#fff;background:'+rs.side+';padding:2px 8px;border-radius:6px;"><i class="fas fa-user-tag" style="font-size:8px;margin-inline-end:3px;"></i>' + _esc(posLbl) + '</span>' +
+              '<span style="margin-inline-start:auto;font-size:10px;color:#94a3b8;font-weight:600;"><i class="far fa-clock" style="margin-inline-end:3px;"></i>' + dt + '</span>' +
             '</div>' +
-            '<div style="font-size:13px;color:#334155;line-height:1.7;margin-top:4px;white-space:pre-wrap;">' + _esc(r.replyText||'') + '</div>' +
+            '<div style="font-size:13.5px;color:#334155;line-height:1.75;margin-top:6px;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;background:#f8fafc;padding:10px 12px;border-radius:8px;border:1px solid #f1f5f9;">' + _esc(r.replyText||'') + '</div>' +
             att +
           '</div>' +
         '</div>';
@@ -1788,31 +1818,53 @@ window.empLoadReplies = function(txnId, listElId, countElId) {
     });
 };
 
+// V3.1: empPostReply now supports file attachment from #emp_replyFile picker
 window.empPostReply = function(txnId) {
   var ta = document.getElementById('emp_replyText');
   if (!ta) return;
   var text = (ta.value || '').trim();
   if (!text) { glassToast('اكتب نص الرد', true); return; }
   var token = localStorage.getItem('pos_token');
-  fetch('/api/workflow/transactions/' + txnId + '/replies', {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ replyText: text, username: currentUser })
-  })
-    .then(function(r){return r.json();})
-    .then(function(r) {
-      if (r && r.success) {
-        ta.value = '';
-        glassToast('تم إرسال الرد');
-        empLoadReplies(txnId);
-      } else {
-        glassToast((r && r.error) || 'فشل الإرسال', true);
-      }
+  var fileInput = document.getElementById('emp_replyFile');
+  var doSend = function(attachment, attachmentName, attachmentMime) {
+    fetch('/api/workflow/transactions/' + txnId + '/replies', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        replyText: text, username: currentUser,
+        attachment: attachment || null,
+        attachmentName: attachmentName || null,
+        attachmentMime: attachmentMime || null
+      })
     })
-    .catch(function(err) {
-      console.error('[empPostReply] err:', err);
-      glassToast('فشل الاتصال', true);
-    });
+      .then(function(r){return r.json();})
+      .then(function(r) {
+        if (r && r.success) {
+          ta.value = '';
+          if (fileInput) fileInput.value = '';
+          var fileLabel = document.getElementById('emp_replyFileLabel');
+          if (fileLabel) fileLabel.textContent = 'إرفاق ملف';
+          glassToast('تم إرسال الرد');
+          empLoadReplies(txnId);
+        } else {
+          glassToast((r && r.error) || 'فشل الإرسال', true);
+        }
+      })
+      .catch(function(err) {
+        console.error('[empPostReply] err:', err);
+        glassToast('فشل الاتصال', true);
+      });
+  };
+  if (fileInput && fileInput.files && fileInput.files[0]) {
+    var f = fileInput.files[0];
+    if (f.size > 5 * 1024 * 1024) { glassToast('حجم الملف يجب أن يكون أقل من 5MB', true); return; }
+    var reader = new FileReader();
+    reader.onload = function() { doSend(reader.result, f.name, f.type); };
+    reader.onerror = function() { glassToast('تعذّر قراءة الملف', true); };
+    reader.readAsDataURL(f);
+  } else {
+    doSend(null, null, null);
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════════

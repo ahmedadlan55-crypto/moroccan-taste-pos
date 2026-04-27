@@ -1,10 +1,13 @@
 /**
- * Moroccan Taste — Employee Portal Service Worker
+ * Moroccan Taste — Employee Portal Service Worker (V4.1 — NETWORK-FIRST)
  * ------------------------------------------------------------
- * Strategy:
- *   • App shell (HTML/CSS/JS/icons)  → stale-while-revalidate
- *   • /shared/* assets               → stale-while-revalidate
- *   • Font Awesome CDN               → stale-while-revalidate
+ * STRATEGY CHANGE (was the cause of "old code on phone" complaints):
+ *   • OLD: stale-while-revalidate → users saw old code on every visit
+ *   • NEW: NETWORK-FIRST           → always tries fresh first, cache is fallback only
+ *
+ *   • App shell (HTML/CSS/JS/icons)  → NETWORK-FIRST (5s timeout, then cache)
+ *   • /shared/* assets               → NETWORK-FIRST (5s timeout, then cache)
+ *   • Font Awesome CDN               → cache-first (it never changes)
  *   • /api/*                         → NEVER cached, always network
  *   • Anything outside /employee/, /shared/, or the CDN → passed through
  *
@@ -12,7 +15,7 @@
  * Bump CACHE_VERSION when shipping new assets.
  */
 
-const CACHE_VERSION = 'mt-emp-v4.0.0';
+const CACHE_VERSION = 'mt-emp-v4.1.0-netfirst';
 const CACHE_NAME = CACHE_VERSION;
 
 // App shell — pre-cached on install so the first launch works offline
@@ -29,55 +32,46 @@ const APP_SHELL = [
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css'
 ];
 
-// ─── Install: pre-cache the shell ───
+// ─── Install: pre-cache the shell + skip waiting (activate immediately) ───
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => {
-        // Use individual adds so one failing resource doesn't prevent the rest
-        return Promise.all(
-          APP_SHELL.map((url) =>
-            cache.add(url).catch((err) => {
-              console.warn('[Employee SW] Pre-cache skipped:', url, err.message);
-            })
-          )
-        );
-      })
+      .then((cache) => Promise.all(
+        APP_SHELL.map((url) => cache.add(url).catch(() => {}))
+      ))
       .then(() => self.skipWaiting())
   );
 });
 
-// ─── Activate: delete old caches ───
+// ─── Activate: delete ALL old caches + claim clients ───
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) =>
-        Promise.all(
-          keys
-            .filter((k) => k.startsWith('mt-emp-') && k !== CACHE_NAME)
-            .map((k) => caches.delete(k))
-        )
-      )
+      .then((keys) => Promise.all(
+        keys
+          .filter((k) => k.startsWith('mt-emp-') && k !== CACHE_NAME)
+          .map((k) => caches.delete(k))
+      ))
       .then(() => self.clients.claim())
+      .then(() => {
+        // Tell all clients the SW updated — they can reload to get fresh code
+        return self.clients.matchAll().then((clients) => {
+          clients.forEach((c) => c.postMessage({ type: 'SW_UPDATED', version: CACHE_VERSION }));
+        });
+      })
   );
 });
 
-// ─── Fetch: smart routing ───
+// ─── Fetch: NETWORK-FIRST (with timeout fallback to cache) ───
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-
-  // Only handle GET requests — POST/PUT/DELETE always go straight to network
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
 
-  // 1. Never touch API requests — always fresh from the server
   if (url.pathname.startsWith('/api/')) return;
-
-  // 2. Never cache the service worker itself
   if (url.pathname === '/employee/sw.js') return;
 
-  // 3. Only handle requests in our scope + shared assets + Font Awesome CDN
   const isEmployee = url.pathname === '/employee/' || url.pathname.startsWith('/employee/');
   const isShared = url.pathname.startsWith('/shared/');
   const isFontAwesome =
@@ -86,29 +80,37 @@ self.addEventListener('fetch', (event) => {
 
   if (!isEmployee && !isShared && !isFontAwesome) return;
 
-  // 4. Stale-while-revalidate: return cache immediately, refresh in background
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      const fetchPromise = fetch(request)
-        .then((response) => {
-          // Only cache successful responses we're allowed to read
-          if (
-            response &&
-            response.status === 200 &&
-            (response.type === 'basic' || response.type === 'cors')
-          ) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, clone).catch(() => {});
-            });
-          }
-          return response;
-        })
-        .catch(() => cached); // if network fails, fall back to cache
+  // Font Awesome → cache-first (it never changes; saves bandwidth)
+  if (isFontAwesome) {
+    event.respondWith(
+      caches.match(request).then((cached) => cached || fetch(request).then((res) => {
+        if (res && res.status === 200) {
+          const clone = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone).catch(() => {}));
+        }
+        return res;
+      }))
+    );
+    return;
+  }
 
-      // Return cached version immediately if we have one, else wait for network
-      return cached || fetchPromise;
-    })
+  // App shell + shared → NETWORK-FIRST with 5s timeout, then cache fallback
+  event.respondWith(
+    Promise.race([
+      fetch(request).then((response) => {
+        if (
+          response &&
+          response.status === 200 &&
+          (response.type === 'basic' || response.type === 'cors')
+        ) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone).catch(() => {}));
+        }
+        return response;
+      }),
+      // 5-second timeout — if network is slow, fall back to cache
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+    ]).catch(() => caches.match(request).then((cached) => cached || Response.error()))
   );
 });
 
@@ -116,5 +118,8 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
+  }
+  if (event.data && event.data.type === 'CLEAR_CACHE') {
+    caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k))));
   }
 });

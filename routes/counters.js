@@ -41,11 +41,16 @@ router.get('/me', async (req, res) => {
       [username]);
     const overdue = Number((overdueRow[0] || {}).c) || 0;
 
-    // Unread notifications
-    const [unreadRow] = await db.query(
-      `SELECT COUNT(*) AS c FROM notifications WHERE username = ? AND is_read = 0`,
-      [username]);
-    const unread = Number((unreadRow[0] || {}).c) || 0;
+    // Unread notifications — tolerant to missing/legacy schema
+    let unread = 0;
+    try {
+      const [unreadRow] = await db.query(
+        `SELECT COUNT(*) AS c FROM notifications WHERE username = ? AND is_read = 0`,
+        [username]);
+      unread = Number((unreadRow[0] || {}).c) || 0;
+    } catch(e) {
+      console.warn('[counters] notifications query failed (legacy schema?):', e.message);
+    }
 
     const result = {
       inbox: {

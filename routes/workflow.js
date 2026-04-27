@@ -2072,4 +2072,67 @@ router.get('/memos-inbox', async (req, res) => {
   }
 });
 
+// V3.1.3 — DIAGNOSTIC: inspect actual MySQL charset state on the live connection.
+// This helps pinpoint why Arabic round-trip is failing: which of the 5 charset
+// variables (client/connection/results/database/server) is set to what value,
+// AND tests a single-query INSERT/SELECT round-trip with raw bytes.
+router.get('/__diag/charset', async (req, res) => {
+  try {
+    const out = {};
+    // 1. Show all character_set_* variables on this connection
+    const [vars] = await db.query("SHOW VARIABLES LIKE 'character_set_%'");
+    out.charsetVars = vars;
+    // 2. Show all collation_* variables
+    const [coll] = await db.query("SHOW VARIABLES LIKE 'collation_%'");
+    out.collationVars = coll;
+    // 3. Inspect the transaction_replies columns (their declared charsets)
+    const [cols] = await db.query(
+      `SELECT COLUMN_NAME, CHARACTER_SET_NAME, COLLATION_NAME, DATA_TYPE
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'transaction_replies'`);
+    out.transactionRepliesColumns = cols;
+    // 4. Test round-trip: write Arabic, read back, compare bytes
+    const testText = 'فحص الترميز ' + Date.now();
+    const testId = 'DIAG-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
+    const expectedHex = Buffer.from(testText, 'utf8').toString('hex');
+    try {
+      // Insert into a temp throwaway row (we use transaction_replies since it has the right structure)
+      // First find any existing transaction_id to satisfy FK if any (though there's no FK)
+      const [t] = await db.query("SELECT id FROM transactions LIMIT 1");
+      if (t.length) {
+        await db.query(
+          "INSERT INTO transaction_replies (id, transaction_id, reply_text, author_username) VALUES (?,?,?,?)",
+          [testId, t[0].id, testText, '__diag__']);
+        const [rows] = await db.query("SELECT reply_text FROM transaction_replies WHERE id = ?", [testId]);
+        const got = rows.length ? rows[0].reply_text : null;
+        const gotHex = got ? Buffer.from(got, 'utf8').toString('hex') : null;
+        out.roundTrip = {
+          sent: testText,
+          sentHex: expectedHex,
+          received: got,
+          receivedHex: gotHex,
+          match: got === testText,
+          hexMatch: gotHex === expectedHex
+        };
+        // Clean up
+        await db.query("DELETE FROM transaction_replies WHERE id = ?", [testId]);
+      } else {
+        out.roundTrip = { error: 'No transactions exist for FK reference test' };
+      }
+    } catch(e) {
+      out.roundTrip = { error: e.message, stack: e.stack };
+    }
+    // 5. Try HEX() to get the raw bytes as MySQL stored them
+    try {
+      const [hexRows] = await db.query("SELECT id, HEX(reply_text) AS hex_text FROM transaction_replies LIMIT 3");
+      out.sampleStoredHex = hexRows;
+    } catch(e) {
+      out.sampleStoredHex = { error: e.message };
+    }
+    res.json(out);
+  } catch(e) {
+    res.json({ error: e.message, stack: e.stack });
+  }
+});
+
 module.exports = router;

@@ -38,8 +38,8 @@ window.ensureQRCode = function() {
 };
 window.ensureErpJs = function() {
   if (window._erpJsLoaded) return Promise.resolve();
-  // V3.1: add cache-buster so users get fresh code after each deploy
-  return loadScript('/js/erp.js?v=52')
+  // V4: add cache-buster so users get fresh code after each deploy
+  return loadScript('/js/erp.js?v=53')
     .then(function() { return loadScript('/js/cash-mgmt.js?v=51'); })
     .then(function() { window._erpJsLoaded = true; });
 };

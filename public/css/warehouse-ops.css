@@ -421,6 +421,146 @@
   50%      { box-shadow: inset 4px 0 0 #dc2626, 0 0 0 4px rgba(220, 38, 38, 0.10); }
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * V4 — UNIFIED STATUS PILL SYSTEM (8 lifecycle states)
+ * Used by both admin (erp.js) and employee (employee/app.js) — single source
+ * of truth for status colors. Consistent across all surfaces.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --status-draft:        #94a3b8;  --status-draft-bg:        #f1f5f9;
+  --status-created:      #0ea5e9;  --status-created-bg:      #e0f2fe;
+  --status-in-progress:  #f59e0b;  --status-in-progress-bg:  #fef3c7;
+  --status-replied:      #8b5cf6;  --status-replied-bg:      #ede9fe;
+  --status-returned:     #dc2626;  --status-returned-bg:     #fef2f2;
+  --status-approved:     #16a34a;  --status-approved-bg:     #dcfce7;
+  --status-rejected:     #991b1b;  --status-rejected-bg:     #fee2e2;
+  --status-closed:       #6b7280;  --status-closed-bg:       #f3f4f6;
+  /* legacy aliases */
+  --status-pending:      var(--status-in-progress);
+  --status-pending-bg:   var(--status-in-progress-bg);
+}
+
+.wo-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 11.5px;
+  letter-spacing: 0.2px;
+  border: 1.5px solid transparent;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.wo-status-pill i { font-size: 10px; }
+
+.wo-status-pill.s-draft        { color: var(--status-draft);        background: var(--status-draft-bg);        border-color: var(--status-draft); }
+.wo-status-pill.s-created      { color: var(--status-created);      background: var(--status-created-bg);      border-color: var(--status-created); }
+.wo-status-pill.s-pending,
+.wo-status-pill.s-in_progress  { color: var(--status-in-progress);  background: var(--status-in-progress-bg);  border-color: var(--status-in-progress); }
+.wo-status-pill.s-replied      { color: var(--status-replied);      background: var(--status-replied-bg);      border-color: var(--status-replied); }
+.wo-status-pill.s-returned     { color: var(--status-returned);     background: var(--status-returned-bg);     border-color: var(--status-returned); animation: wo-pulse 2.5s ease-in-out infinite; }
+.wo-status-pill.s-approved     { color: var(--status-approved);     background: var(--status-approved-bg);     border-color: var(--status-approved); }
+.wo-status-pill.s-rejected     { color: var(--status-rejected);     background: var(--status-rejected-bg);     border-color: var(--status-rejected); }
+.wo-status-pill.s-closed       { color: var(--status-closed);       background: var(--status-closed-bg);       border-color: var(--status-closed); }
+
+/* Larger variant for headers */
+.wo-status-pill.lg {
+  font-size: 13px;
+  padding: 6px 14px;
+}
+.wo-status-pill.lg i { font-size: 12px; }
+
+/* Solid (filled) variant — for primary status indicators */
+.wo-status-pill.solid {
+  color: #fff !important;
+}
+.wo-status-pill.solid.s-draft        { background: var(--status-draft); }
+.wo-status-pill.solid.s-created      { background: var(--status-created); }
+.wo-status-pill.solid.s-in_progress,
+.wo-status-pill.solid.s-pending      { background: var(--status-in-progress); }
+.wo-status-pill.solid.s-replied      { background: var(--status-replied); }
+.wo-status-pill.solid.s-returned     { background: var(--status-returned); }
+.wo-status-pill.solid.s-approved     { background: var(--status-approved); }
+.wo-status-pill.solid.s-rejected     { background: var(--status-rejected); }
+.wo-status-pill.solid.s-closed       { background: var(--status-closed); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * V4 — Counter badges (used in nav/header for inbox counts)
+ * ────────────────────────────────────────────────────────────────────────── */
+
+.wo-counter-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--status-rejected);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  border: 1.5px solid #fff;
+}
+.wo-counter-badge.warn { background: var(--status-in-progress); }
+.wo-counter-badge.info { background: var(--status-created); }
+.wo-counter-badge.success { background: var(--status-approved); }
+.wo-counter-badge.muted { background: var(--status-closed); }
+.wo-counter-badge.empty { display: none; }
+/* Floating badge (top-right of icon) */
+.wo-icon-with-badge { position: relative; display: inline-flex; }
+.wo-icon-with-badge .wo-counter-badge {
+  position: absolute;
+  top: -6px;
+  inset-inline-end: -6px;
+  z-index: 2;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * V4 — Empty state for attachments / replies
+ * ────────────────────────────────────────────────────────────────────────── */
+
+.wo-empty-attach,
+.wo-empty-replies {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  border: 1.5px dashed var(--wo-border);
+  border-radius: 12px;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 700;
+  background: #fafbfc;
+}
+.wo-empty-attach i { font-size: 24px; opacity: 0.5; }
+.wo-empty-replies i { font-size: 26px; opacity: 0.45; color: #c4b5fd; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * V4 — One-reply-per-stage indicator (informs user they've already replied)
+ * ────────────────────────────────────────────────────────────────────────── */
+
+.wo-already-acted-banner {
+  display: flex;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #f0f9ff;
+  border: 1.5px solid #bae6fd;
+  color: #0369a1;
+  font-size: 12.5px;
+  font-weight: 700;
+  align-items: center;
+  margin-top: 10px;
+}
+.wo-already-acted-banner i { font-size: 16px; }
+
 /* V3.1: Transaction view modal — sticky footer toolbar, full-bleed content, large readable area */
 .wo-txn-view {
   display: grid;

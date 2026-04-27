@@ -4600,6 +4600,8 @@ function erpCloseModal() {
   modalEl.classList.remove('txn-view-mode');
   var injectedTb = modalEl.querySelector('#wfTxnToolbar');
   if (injectedTb) injectedTb.remove();
+  // V4 — clear cached server permissions so next view fetches fresh
+  window._lastViewedTxnPerms = null;
   // Reset modal width (PO form widens it via inline style)
   const box = document.querySelector('#erpModal .modal-box');
   if (box) box.style.maxWidth = '';
@@ -5737,31 +5739,43 @@ function wfViewTxn(id) {
     '</div>';
 
     // ═══════════════════════════════════════════════════════════════════
-    // V3.1: Sticky-footer toolbar — always visible, content never hidden
-    //
-    // Permission rules (rebuilt for clarity):
-    //   • Edit/Cancel  ←  creator AND (status='draft' OR 'pending' AND no others acted) — DISAPPEARS once sent
-    //   • Edit-and-Resubmit  ←  creator AND status='returned' (the whole point of returning)
-    //   • Approve/Reject/Return  ←  user is current_assignee AND status in (pending|in_progress)
-    //   • Pay  ←  status='approved' AND requires payment AND no payment yet
-    //   • Print  ←  always available
+    // V4 — Permission-driven toolbar (server computes what user can do)
+    // The frontend is now DUMB about permissions — it just asks the server
+    // via GET /transactions/:id/permissions and renders accordingly.
+    // This eliminates the previous bug where admin/employee/cashier had
+    // different permission logic.
     // ═══════════════════════════════════════════════════════════════════
+    // Server-computed permission object (loaded async — see lazy fetch below).
+    // For initial render use legacy local checks as fallback.
+    var srvPerms = (window._lastViewedTxnPerms && window._lastViewedTxnPerms.txnId === txn.id)
+                   ? window._lastViewedTxnPerms.perms : null;
     var isCreator = (txn.createdBy === currentUser);
     var isAssignedToMe = (txn.current_assignee === currentUser || txn.currentAssignee === currentUser);
-    var canActOnIt = isAssignedToMe && (txn.status === 'pending' || txn.status === 'in_progress');
-    var canEditFresh = isCreator && (txn.status === 'draft' || txn.status === 'pending');
-    var canEditReturned = isCreator && txn.status === 'returned';
-    var canCancel = isCreator && (txn.status === 'draft' || txn.status === 'pending' || txn.status === 'returned');
+    var canActOnIt = srvPerms ? (srvPerms.canApprove || srvPerms.canReject || srvPerms.canReturn)
+                              : (isAssignedToMe && ['pending','created','in_progress','replied'].includes(txn.status));
+    var canEditFresh = srvPerms ? srvPerms.canEdit : (isCreator && (txn.status === 'draft' || txn.status === 'pending'));
+    var canEditReturned = srvPerms ? (srvPerms.canEdit && txn.status === 'returned') : (isCreator && txn.status === 'returned');
+    var canCancel = srvPerms ? srvPerms.canDelete : (isCreator && ['draft','created','pending','returned'].includes(txn.status));
+    var canForward = srvPerms ? srvPerms.canForward : false;
+    var canCloseAdmin = srvPerms ? srvPerms.canClose : false;
     var requiresPayment = (txn.requires_payment === 1 || txn.requires_payment === true || txn.requiresPayment);
     var isApprovedPendingPayment = txn.status === 'approved' && requiresPayment && !txn.payment_record_id;
+    // V4: detect "I already acted" so we show an informational banner instead of just hiding buttons silently
+    var iAlreadyActed = !!(window._lastViewedTxnPerms && window._lastViewedTxnPerms.iAlreadyActed);
 
     var leftBtns = '';
-    // Primary action group (review/approve flow) — only when this transaction is currently sitting in MY inbox
-    if (canActOnIt) {
-      leftBtns +=
-        '<button class="wo-btn wo-btn-success" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'approve\')"><i class="fas fa-check"></i><span>اعتماد</span></button>' +
-        '<button class="wo-btn wo-btn-danger" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'reject\')"><i class="fas fa-xmark"></i><span>رفض</span></button>' +
-        '<button class="wo-btn wo-btn-warning" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'return\')"><i class="fas fa-rotate-left"></i><span>إرجاع للتعديل</span></button>';
+    // Primary action group (review/approve flow) — server-validated permissions
+    var canApprove = srvPerms ? srvPerms.canApprove : canActOnIt;
+    var canReject  = srvPerms ? srvPerms.canReject  : canActOnIt;
+    var canReturn  = srvPerms ? srvPerms.canReturn  : canActOnIt;
+    if (canApprove) leftBtns += '<button class="wo-btn wo-btn-success" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'approve\')"><i class="fas fa-check"></i><span>اعتماد</span></button>';
+    if (canReject)  leftBtns += '<button class="wo-btn wo-btn-danger" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'reject\')"><i class="fas fa-xmark"></i><span>رفض</span></button>';
+    if (canReturn)  leftBtns += '<button class="wo-btn wo-btn-warning" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'return\')"><i class="fas fa-rotate-left"></i><span>إرجاع للتعديل</span></button>';
+    // V4: Forward (admin/manager only — server permission decides)
+    if (canForward) leftBtns += '<button class="wo-btn wo-btn-secondary" style="background:#ede9fe;color:#5b21b6;border:1.5px solid #c4b5fd;" onclick="wfTxnForwardModal(\''+txn.id+'\')"><i class="fas fa-share"></i><span>تحويل</span></button>';
+    // V4: Admin emergency close (force-close any non-terminal txn)
+    if (canCloseAdmin && !['approved','rejected','closed'].includes(txn.status)) {
+      leftBtns += '<button class="wo-btn wo-btn-secondary" style="background:#f3f4f6;color:#374151;border:1.5px solid #9ca3af;" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'close\')"><i class="fas fa-lock"></i><span>إنهاء طارئ</span></button>';
     }
     // Resubmit action — creator, status=returned. Big, prominent, on the left so it's the obvious next step.
     if (canEditReturned) {
@@ -5771,6 +5785,10 @@ function wfViewTxn(id) {
     // Payment action — when approved + requires payment + no payment record yet
     if (isApprovedPendingPayment) {
       leftBtns += '<button class="wo-btn wo-btn-primary" style="background:linear-gradient(135deg,#0369a1,#0284c7);" onclick="erpCloseModal();openRecordPaymentModal({transactionId:\''+txn.id+'\',referenceType:\'transaction\',referenceId:\''+txn.id+'\',direction:\'out\',amount:'+(Number(txn.amount)||0)+',brandId:\''+(txn.brandId||txn.brand_id||'')+'\',branchId:\''+(txn.branchId||txn.branch_id||'')+'\',onSuccess:function(){loadDashboard&&loadDashboard();}})"><i class="fas fa-money-bill-transfer"></i><span>تسجيل دفعة</span></button>';
+    }
+    // V4: "Already acted" informational banner (when assignee but already acted)
+    if (iAlreadyActed && !leftBtns) {
+      leftBtns += '<div class="wo-already-acted-banner"><i class="fas fa-circle-info"></i><span>لقد قمت بالرد على هذه المرحلة من قبل — رد واحد لكل مرحلة</span></div>';
     }
 
     var rightBtns = '<button class="wo-btn wo-btn-secondary" onclick="wfPrintTxn(\''+txn.id+'\')"><i class="fas fa-print"></i><span>طباعة</span></button>';
@@ -5824,6 +5842,26 @@ function wfViewTxn(id) {
     modalEl.classList.remove('hidden');
     // V3: lazy-load replies thread
     setTimeout(function() { try { admLoadReplies(txn.id); } catch(e){ console.warn('admLoadReplies err:', e); } }, 50);
+    // V4: lazy-fetch server-computed permissions on FIRST view; if cached, skip
+    var _alreadyHasPerms = window._lastViewedTxnPerms && window._lastViewedTxnPerms.txnId === txn.id;
+    if (!_alreadyHasPerms) {
+      setTimeout(function() {
+        try {
+          window._apiBridge.withSuccessHandler(function(p) {
+            if (!p || !p.permissions) return;
+            window._lastViewedTxnPerms = {
+              txnId: txn.id,
+              perms: p.permissions,
+              currentVersion: p.currentVersion,
+              iAlreadyActed: !!p.iAlreadyActed,
+              iAlreadyReplied: !!p.iAlreadyReplied
+            };
+            // Re-render the modal once with server perms (this call sees cached perms and won't loop)
+            if (typeof wfViewTxn === 'function') wfViewTxn(txn.id);
+          }).getWfTransactionPermissions(txn.id, currentUser);
+        } catch(e) { console.warn('perms fetch err:', e); }
+      }, 60);
+    }
     // Cache the last-viewed transaction for the print window
     window._wfLastViewedTxn = txn;
   }).getWfTransaction(id);
@@ -7575,10 +7613,32 @@ function wfResetOutboxFilters() {
   wfLoadOutbox();
 }
 
-// V3.1: status palette — 'returned' is a distinct first-class state ("مرجعة للتعديل")
-var _wfOutStatusAr = { pending:'قيد الانتظار', in_progress:'قيد التشغيل', approved:'معتمدة', returned:'مرجعة للتعديل', rejected:'مرفوضة', closed:'منتهية', draft:'مسودة' };
-var _wfOutStatusClr = { pending:'#f59e0b', in_progress:'#16a34a', approved:'#0ea5e9', returned:'#dc2626', rejected:'#991b1b', closed:'#64748b', draft:'#94a3b8' };
-var _wfOutStatusIcon = { pending:'fa-clock', in_progress:'fa-spinner', approved:'fa-circle-check', returned:'fa-rotate-left', rejected:'fa-circle-xmark', closed:'fa-lock', draft:'fa-file-pen' };
+// V4: status palette — 8 lifecycle states (single source of truth for status display)
+var _wfOutStatusAr = {
+  draft:'مسودة', created:'جديدة', pending:'قيد الانتظار',
+  in_progress:'قيد الإجراء', replied:'تم الرد', returned:'مرجعة للتعديل',
+  approved:'معتمدة', rejected:'مرفوضة', closed:'مغلقة'
+};
+var _wfOutStatusClr = {
+  draft:'#94a3b8', created:'#0ea5e9', pending:'#f59e0b',
+  in_progress:'#f59e0b', replied:'#8b5cf6', returned:'#dc2626',
+  approved:'#16a34a', rejected:'#991b1b', closed:'#6b7280'
+};
+var _wfOutStatusIcon = {
+  draft:'fa-file-pen', created:'fa-paper-plane', pending:'fa-clock',
+  in_progress:'fa-spinner', replied:'fa-comment-dots', returned:'fa-rotate-left',
+  approved:'fa-circle-check', rejected:'fa-circle-xmark', closed:'fa-lock'
+};
+// Helper: render unified status pill (all UIs should use this)
+window.wfStatusPill = function(status, opts) {
+  opts = opts || {};
+  var label = _wfOutStatusAr[status] || status;
+  var icon  = _wfOutStatusIcon[status] || 'fa-circle';
+  var cls   = 's-' + status;
+  if (opts.solid)  cls += ' solid';
+  if (opts.large)  cls += ' lg';
+  return '<span class="wo-status-pill ' + cls + '"><i class="fas ' + icon + '"></i>' + label + '</span>';
+};
 var _wfOutImpAr = { critical:'عاجل', high:'عالي', medium:'عادي', low:'منخفض' };
 var _wfOutImpClr = { critical:'#dc2626', high:'#ea580c', medium:'#16a34a', low:'#10b981' };
 
@@ -16514,4 +16574,137 @@ window.savePermsMatrix = function() {
       });
   });
 };
+
+/* ═══════════════════════════════════════════════════════════════════
+ * V4 — Transaction Forward Modal (admin/manager only)
+ * ═══════════════════════════════════════════════════════════════════ */
+window.wfTxnForwardModal = function(txnId) {
+  var users = window._wfOrgEmps || [];
+  var optsHtml = '<option value="">— اختر —</option>' + users.map(function(u) {
+    return '<option value="' + u.username + '">' + (u.fullName || u.username) +
+           (u.positionName ? ' — ' + u.positionName : '') + '</option>';
+  }).join('');
+
+  var body =
+    '<div class="wo-label-stack" style="margin-bottom:10px;">' +
+      '<label class="wo-field-label"><i class="fas fa-user"></i> المُرسَل إليه *</label>' +
+      '<select class="wo-input" id="wfFwdTo">' + optsHtml + '</select>' +
+    '</div>' +
+    '<div class="wo-label-stack">' +
+      '<label class="wo-field-label"><i class="fas fa-comment"></i> ملاحظة (اختياري)</label>' +
+      '<textarea class="wo-textarea" id="wfFwdNote" rows="3" placeholder="سبب التحويل..."></textarea>' +
+    '</div>';
+
+  var footer =
+    '<button class="wo-btn wo-btn-secondary" id="wfFwdCancel">إلغاء</button>' +
+    '<button class="wo-btn wo-btn-primary" id="wfFwdOk" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);"><i class="fas fa-share"></i><span>تحويل</span></button>';
+
+  var modal = WoModal.open({
+    icon: 'fa-share', iconColor: 'info',
+    title: 'تحويل المعاملة',
+    subtitle: 'سيتم إعادة توجيه المعاملة للمستخدم المُختار',
+    body: body, footer: footer, size: 'sm'
+  });
+
+  modal.el.querySelector('#wfFwdCancel').onclick = function() { modal.close(null); };
+  modal.el.querySelector('#wfFwdOk').onclick = function() {
+    var to = document.getElementById('wfFwdTo').value;
+    var note = (document.getElementById('wfFwdNote').value || '').trim();
+    if (!to) { showToast('اختر المستلم', true); return; }
+    loader(true);
+    window._apiBridge.withSuccessHandler(function(r) {
+      loader(false);
+      if (r && r.success) {
+        modal.close(null);
+        showToast('تم التحويل');
+        if (typeof erpCloseModal === 'function') erpCloseModal();
+        if (typeof wfLoadInbox === 'function') wfLoadInbox();
+        if (typeof wfLoadOutbox === 'function') wfLoadOutbox();
+      } else showToast((r && r.error) || 'فشل التحويل', true);
+    }).wfTransactionAction(txnId, { action: 'forward', forwardTo: to, note: note, username: currentUser });
+  };
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+ * V4 — Counter Badges + Notifications Bell
+ * Refreshes top-of-app counters every 30s + on demand
+ * ═══════════════════════════════════════════════════════════════════ */
+window._wfCounters = { inbox: {}, outbox: {}, notifications: {} };
+
+window.wfRefreshCounters = function() {
+  if (!window._apiBridge || !currentUser) return;
+  try {
+    window._apiBridge.withSuccessHandler(function(c) {
+      if (!c || c.error) return;
+      window._wfCounters = c;
+      // Update header badges if they exist
+      var pendingEl = document.getElementById('hdrPendingBadge');
+      if (pendingEl) {
+        var n = (c.inbox && c.inbox.pendingAction) || 0;
+        pendingEl.textContent = n;
+        pendingEl.className = 'wo-counter-badge ' + (n === 0 ? 'empty' : '');
+      }
+      var returnedEl = document.getElementById('hdrReturnedBadge');
+      if (returnedEl) {
+        var r = (c.inbox && c.inbox.returnedToMe) || 0;
+        returnedEl.textContent = r;
+        returnedEl.className = 'wo-counter-badge ' + (r === 0 ? 'empty' : '');
+      }
+      var notifEl = document.getElementById('hdrNotifBadge');
+      if (notifEl) {
+        var nn = (c.notifications && c.notifications.unread) || 0;
+        notifEl.textContent = nn;
+        notifEl.className = 'wo-counter-badge ' + (nn === 0 ? 'empty' : '');
+      }
+    }).withFailureHandler(function(){}).getMyCounters(currentUser);
+  } catch(e) { console.warn('counters refresh:', e.message); }
+};
+
+// Auto-refresh counters every 30s + once on script load
+(function() {
+  if (typeof window === 'undefined') return;
+  setTimeout(function(){ try { wfRefreshCounters(); } catch(_){} }, 1500);
+  setInterval(function(){ try { wfRefreshCounters(); } catch(_){} }, 30000);
+})();
+
+/* ═══════════════════════════════════════════════════════════════════
+ * V4 — SSE Live Inbox (real-time notification toast on new events)
+ * ═══════════════════════════════════════════════════════════════════ */
+window._wfSSE = null;
+window.wfStartLiveInbox = function() {
+  if (window._wfSSE || !currentUser) return;
+  if (typeof EventSource === 'undefined') return;   // SSE unsupported
+  try {
+    var sse = new EventSource('/api/sse/inbox?username=' + encodeURIComponent(currentUser));
+    sse.addEventListener('notification', function(ev) {
+      try {
+        var data = JSON.parse(ev.data);
+        // Show a non-intrusive toast (top-right) with click-to-open
+        var sevColor = { info:'#0ea5e9', success:'#16a34a', warning:'#f59e0b', danger:'#dc2626' };
+        var color = sevColor[data.severity] || '#0ea5e9';
+        var t = document.createElement('div');
+        t.style.cssText = 'position:fixed;top:80px;inset-inline-end:20px;z-index:99999;background:#fff;border-inline-start:4px solid '+color+';box-shadow:0 8px 24px rgba(0,0,0,.15);border-radius:10px;padding:12px 16px;max-width:340px;font-family:inherit;cursor:pointer;animation:slideInRight 0.3s ease;';
+        t.innerHTML = '<div style="font-weight:900;font-size:13px;color:#0f172a;margin-bottom:4px;">' + (data.title || '') + '</div>' +
+                      '<div style="font-size:11.5px;color:#64748b;line-height:1.5;">' + (data.body || '') + '</div>';
+        if (data.linkType === 'transaction' && data.linkId) {
+          t.onclick = function() { t.remove(); if (typeof wfViewTxn === 'function') wfViewTxn(data.linkId); };
+        }
+        document.body.appendChild(t);
+        setTimeout(function(){ t.style.transition = 'opacity 0.4s'; t.style.opacity = '0'; setTimeout(function(){ t.remove(); }, 400); }, 6000);
+        // Refresh counters
+        wfRefreshCounters();
+      } catch(e) { console.warn('SSE notif parse:', e); }
+    });
+    sse.addEventListener('hello', function() { console.log('[SSE] connected'); });
+    sse.onerror = function() {
+      sse.close();
+      window._wfSSE = null;
+      // Reconnect after 10s
+      setTimeout(function(){ wfStartLiveInbox(); }, 10000);
+    };
+    window._wfSSE = sse;
+  } catch(e) { console.warn('SSE init failed:', e); }
+};
+// Start SSE once on script load
+setTimeout(function(){ try { wfStartLiveInbox(); } catch(_){} }, 2000);
 

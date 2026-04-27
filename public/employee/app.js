@@ -195,12 +195,20 @@ var I18N = {
     'txn.failed': 'فشل',
     'txn.notFound': 'غير موجود',
     'txn.status.pending': 'معلّق',
-    'txn.status.in_progress': 'قيد التنفيذ',
+    'txn.status.created': 'جديدة',
+    'txn.status.in_progress': 'قيد الإجراء',
+    'txn.status.replied': 'تم الرد',
     'txn.status.approved': 'معتمدة',
     'txn.status.rejected': 'مرفوضة',
     'txn.status.returned': 'مرجعة للتعديل',
     'txn.status.closed': 'مغلقة',
     'txn.status.draft': 'مسودة',
+    // V4 — counter + nav badges
+    'counter.pending': 'بانتظار ردّك',
+    'counter.returned': 'مرجعة لك',
+    'counter.overdue': 'متأخرة',
+    'counter.unread': 'إشعارات',
+    'counter.total': 'الإجمالي',
     'txn.imp.critical': 'عاجل',
     'txn.imp.high': 'عالي',
     'txn.imp.medium': 'متوسط',
@@ -471,12 +479,20 @@ var I18N = {
     'txn.failed': 'Failed',
     'txn.notFound': 'Not found',
     'txn.status.pending': 'Pending',
+    'txn.status.created': 'New',
     'txn.status.in_progress': 'In Progress',
+    'txn.status.replied': 'Replied',
     'txn.status.approved': 'Approved',
     'txn.status.rejected': 'Rejected',
     'txn.status.returned': 'Returned for Edit',
     'txn.status.closed': 'Closed',
     'txn.status.draft': 'Draft',
+    // V4 — counter + nav badges
+    'counter.pending': 'Awaiting Reply',
+    'counter.returned': 'Returned to You',
+    'counter.overdue': 'Overdue',
+    'counter.unread': 'Notifications',
+    'counter.total': 'Total',
     'txn.imp.critical': 'Critical',
     'txn.imp.high': 'High',
     'txn.imp.medium': 'Medium',
@@ -628,6 +644,67 @@ window.toggleLang = toggleLang;
 window.setLang = setLang;
 window.t = t;
 
+// ═══════════════════════════════════════════════════════════════════
+// V4 — Counters refresh + SSE live notifications
+// ═══════════════════════════════════════════════════════════════════
+window._empCounters = {};
+window.empRefreshCounters = function() {
+  if (!currentUser) return;
+  callAPI('GET', '/counters/me?username=' + encodeURIComponent(currentUser), null, function(c) {
+    if (!c || c.error) return;
+    window._empCounters = c;
+    var pending = (c.inbox && c.inbox.pendingAction) || 0;
+    var returned = (c.inbox && c.inbox.returnedToMe) || 0;
+    var total = pending + returned;
+    var badge = document.getElementById('navTxnBadge');
+    if (badge) {
+      if (total > 0) {
+        badge.textContent = total > 99 ? '99+' : total;
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+  });
+};
+
+// Auto-refresh every 30s + immediately after login
+setInterval(function() { try { empRefreshCounters(); } catch(_) {} }, 30000);
+
+// SSE live inbox
+window._empSSE = null;
+window.empStartLiveInbox = function() {
+  if (window._empSSE || !currentUser) return;
+  if (typeof EventSource === 'undefined') return;
+  try {
+    var token = localStorage.getItem('emp_token') || localStorage.getItem('pos_token') || '';
+    var sse = new EventSource('/api/sse/inbox?username=' + encodeURIComponent(currentUser));
+    sse.addEventListener('notification', function(ev) {
+      try {
+        var data = JSON.parse(ev.data);
+        var sevColor = { info:'#0ea5e9', success:'#16a34a', warning:'#f59e0b', danger:'#dc2626' };
+        var color = sevColor[data.severity] || '#0ea5e9';
+        var t = document.createElement('div');
+        t.style.cssText = 'position:fixed;top:70px;inset-inline-end:14px;z-index:99999;background:#fff;border-inline-start:4px solid '+color+';box-shadow:0 8px 24px rgba(0,0,0,.15);border-radius:12px;padding:12px 14px;max-width:300px;font-family:inherit;cursor:pointer;animation:slideInRight 0.3s ease;';
+        t.innerHTML = '<div style="font-weight:900;font-size:13px;color:#0f172a;margin-bottom:3px;">' + (data.title || '') + '</div>' +
+                      '<div style="font-size:11px;color:#64748b;line-height:1.5;">' + (data.body || '') + '</div>';
+        if (data.linkType === 'transaction' && data.linkId) {
+          t.onclick = function() { t.remove(); navTo('txn', null); setTimeout(function(){ if (typeof viewMyTxn === 'function') viewMyTxn(data.linkId); }, 300); };
+        }
+        document.body.appendChild(t);
+        setTimeout(function(){ t.style.transition = 'opacity 0.4s'; t.style.opacity = '0'; setTimeout(function(){ t.remove(); }, 400); }, 6000);
+        empRefreshCounters();
+      } catch(e) {}
+    });
+    sse.onerror = function() {
+      sse.close();
+      window._empSSE = null;
+      setTimeout(function(){ empStartLiveInbox(); }, 10000);
+    };
+    window._empSSE = sse;
+  } catch(e) { console.warn('SSE init:', e); }
+};
+
 
 document.addEventListener('DOMContentLoaded', function() {
   document.body.style.visibility = 'visible';
@@ -755,6 +832,9 @@ function navTo(pg, el) {
 // HOME
 // ═══════════════════════════════════════
 function loadHomeData() {
+  // V4: refresh counters + start SSE on home load (idempotent)
+  try { empRefreshCounters(); } catch(_) {}
+  try { empStartLiveInbox(); } catch(_) {}
   callAPI('GET', '/hr/my-attendance?username=' + currentUser, null, function(rows) {
     var att = rows || [];
     if (!Array.isArray(att)) att = [];
@@ -1178,7 +1258,22 @@ function loadProfilePage() {
 // TRANSACTIONS — Common helpers
 var _impColors = { critical:'#dc2626', high:'#ea580c', medium:'#ca8a04', low:'#16a34a' };
 var _impBgs    = { critical:'#fee2e2', high:'#ffedd5', medium:'#fef9c3', low:'#dcfce7' };
-var _statClr   = { pending:'#f59e0b', in_progress:'#0ea5e9', approved:'#10b981', rejected:'#ef4444', closed:'#6b7280', draft:'#94a3b8' };
+// V4: 8-state palette unified with admin
+var _statClr = {
+  draft:'#94a3b8', created:'#0ea5e9', pending:'#f59e0b',
+  in_progress:'#f59e0b', replied:'#8b5cf6', returned:'#dc2626',
+  approved:'#16a34a', rejected:'#991b1b', closed:'#6b7280'
+};
+var _statBg  = {
+  draft:'#f1f5f9', created:'#e0f2fe', pending:'#fef3c7',
+  in_progress:'#fef3c7', replied:'#ede9fe', returned:'#fef2f2',
+  approved:'#dcfce7', rejected:'#fee2e2', closed:'#f3f4f6'
+};
+var _statIcon = {
+  draft:'fa-file-pen', created:'fa-paper-plane', pending:'fa-clock',
+  in_progress:'fa-spinner', replied:'fa-comment-dots', returned:'fa-rotate-left',
+  approved:'fa-circle-check', rejected:'fa-circle-xmark', closed:'fa-lock'
+};
 function _impLabel(i) { return t('txn.imp.' + i) || i; }
 function _statLabel(s) { return t('txn.status.' + s) || s; }
 
@@ -1188,8 +1283,8 @@ function _impBadge(i) {
 }
 
 function _statBadge(s) {
-  var c = _statClr[s]||'#94a3b8';
-  return '<span style="padding:2px 8px;border-radius:6px;background:'+c+'20;color:'+c+';font-size:10px;font-weight:800;">'+_statLabel(s)+'</span>';
+  var c = _statClr[s]||'#94a3b8', bg = _statBg[s]||'#f3f4f6', icon = _statIcon[s]||'fa-circle';
+  return '<span style="padding:3px 10px;border-radius:999px;background:'+bg+';color:'+c+';font-size:10.5px;font-weight:800;border:1.5px solid '+c+';display:inline-flex;align-items:center;gap:4px;"><i class="fas '+icon+'" style="font-size:9px;"></i>'+_statLabel(s)+'</span>';
 }
 
 function txnSwitchTab(which) {

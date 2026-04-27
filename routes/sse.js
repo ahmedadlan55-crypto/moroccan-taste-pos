@@ -1,0 +1,132 @@
+/**
+ * V4 — Server-Sent Events for live inbox updates
+ * Browser opens an EventSource('/api/sse/inbox?username=X') and receives
+ * live notification events as they arrive in the notifications table.
+ *
+ * Polling-based polling (every 5s the route checks for new rows since last
+ * client cursor). For high-volume installs, replace with a real pub/sub
+ * (Redis Streams, Postgres LISTEN/NOTIFY, etc.).
+ */
+const router = require('express').Router();
+const db = require('../db/connection');
+
+// Active connections: { username: [ {res, lastId, lastTs} ] }
+const _connections = new Map();
+
+router.get('/inbox', async (req, res) => {
+  const username = req.query.username || (req.user && req.user.username);
+  if (!username) return res.status(401).end('username required');
+
+  // SSE headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'   // disable proxy buffering
+  });
+
+  // Initial hello
+  res.write(`event: hello\ndata: ${JSON.stringify({ username, ts: Date.now() })}\n\n`);
+
+  let lastId = null;
+  let alive = true;
+
+  // Track this connection
+  if (!_connections.has(username)) _connections.set(username, []);
+  const entry = { res, lastId };
+  _connections.get(username).push(entry);
+
+  // Heartbeat every 25s to keep proxies happy
+  const hb = setInterval(() => {
+    if (!alive) return;
+    try { res.write(': heartbeat\n\n'); } catch(_) {}
+  }, 25000);
+
+  // Polling loop — every 5s check for new notifications since lastId
+  const poll = setInterval(async () => {
+    if (!alive) return;
+    try {
+      const sql = lastId
+        ? `SELECT * FROM notifications WHERE username = ? AND id > ? ORDER BY id ASC LIMIT 50`
+        : `SELECT * FROM notifications WHERE username = ? ORDER BY id DESC LIMIT 1`;
+      const params = lastId ? [username, lastId] : [username];
+      const [rows] = await db.query(sql, params);
+      if (!lastId && rows.length) {
+        lastId = rows[0].id;
+        entry.lastId = lastId;
+        // Don't emit historical; just bookmark
+        return;
+      }
+      for (const r of rows) {
+        const evt = {
+          id: r.id,
+          type: r.type,
+          title: r.title,
+          body: r.body,
+          linkType: r.link_type,
+          linkId: r.link_id,
+          severity: r.severity,
+          createdAt: r.created_at
+        };
+        res.write(`event: notification\ndata: ${JSON.stringify(evt)}\n\n`);
+        lastId = r.id;
+        entry.lastId = lastId;
+      }
+    } catch(e) {
+      console.warn('[sse poll]', e.message);
+    }
+  }, 5000);
+
+  req.on('close', () => {
+    alive = false;
+    clearInterval(hb);
+    clearInterval(poll);
+    const list = _connections.get(username) || [];
+    const idx = list.indexOf(entry);
+    if (idx !== -1) list.splice(idx, 1);
+    if (!list.length) _connections.delete(username);
+  });
+});
+
+// Manual broadcast endpoint (admin-only) — useful for system announcements
+router.post('/broadcast', async (req, res) => {
+  try {
+    const username = req.body.from || (req.user && req.user.username);
+    if (username !== 'admin') return res.status(403).json({ error: 'admin only' });
+    const { title, body, severity, targetUsername } = req.body;
+    const target = targetUsername || null;   // null = all users with active SSE
+
+    if (target) {
+      await db.query(
+        `INSERT INTO notifications (id, username, type, title, body, severity)
+         VALUES (?, ?, 'broadcast', ?, ?, ?)`,
+        ['NOT-BC-' + Date.now() + '-' + Math.random().toString(36).slice(2,4),
+         target, title, body, severity || 'info']);
+    } else {
+      // Broadcast to all currently-connected users
+      for (const [u, _] of _connections.entries()) {
+        await db.query(
+          `INSERT INTO notifications (id, username, type, title, body, severity)
+           VALUES (?, ?, 'broadcast', ?, ?, ?)`,
+          ['NOT-BC-' + Date.now() + '-' + Math.random().toString(36).slice(2,4) + '-' + u,
+           u, title, body, severity || 'info']);
+      }
+    }
+    res.json({ success: true, deliveredTo: target ? 1 : _connections.size });
+  } catch(e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// Health check — how many active connections
+router.get('/health', (req, res) => {
+  const counts = {};
+  let total = 0;
+  for (const [u, list] of _connections.entries()) {
+    counts[u] = list.length;
+    total += list.length;
+  }
+  res.json({ activeConnections: total, byUser: counts });
+});
+
+module.exports = router;

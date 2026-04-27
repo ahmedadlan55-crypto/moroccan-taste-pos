@@ -216,6 +216,13 @@ app.use('/api/custody', require('./routes/custody'));
 app.use('/api/cash', require('./routes/cash'));
 app.use('/api/workflow', require('./routes/workflow'));
 app.use('/api/hr', require('./routes/hr'));
+// V4 — counters, SLA, SSE inbox stream
+app.use('/api/counters', require('./routes/counters'));
+const _slaRouter = require('./routes/sla');
+app.use('/api/sla', _slaRouter);
+app.use('/api/sse', require('./routes/sse'));
+// Start SLA background sweep on boot (every 30 minutes)
+try { _slaRouter._startBackgroundSweep(30 * 60 * 1000); } catch(e) { console.warn('[sla] sweep start failed:', e.message); }
 
 // Catch-all for unimplemented API routes
 const { notFoundHandler, errorHandler } = require('./lib/errorHandler');
@@ -673,6 +680,248 @@ async function runMigrations() {
   try {
     await db.query("ALTER TABLE transactions MODIFY COLUMN status ENUM('draft','pending','in_progress','returned','rejected','approved','closed') DEFAULT 'draft'");
   } catch(e) { /* tolerate if already extended */ }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // V4 — Workflow Engine (Full Plan Execution)
+  // 8-state machine + optimistic locking + counters + SLA + per-recipient sub-status
+  // ═══════════════════════════════════════════════════════════════════
+
+  // V4.1 — extend status ENUM to 8 states (added: 'created', 'replied')
+  try {
+    await db.query("ALTER TABLE transactions MODIFY COLUMN status ENUM('draft','pending','created','in_progress','replied','returned','rejected','approved','closed') DEFAULT 'draft'");
+  } catch(e) { /* tolerate */ }
+
+  // V4.2 — Optimistic concurrency control (prevents race conditions)
+  await addColumnIfMissing('transactions', 'version', "INT DEFAULT 0 NOT NULL");
+
+  // V4.3 — Track returned-to step (resume at correct point on resubmit)
+  await addColumnIfMissing('transactions', 'returned_to_step_id', "VARCHAR(50) DEFAULT NULL");
+
+  // V4.4 — First view tracking (created → in_progress trigger)
+  await addColumnIfMissing('transactions', 'first_viewed_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('transactions', 'first_viewed_by', "VARCHAR(100) DEFAULT NULL");
+
+  // V4.5 — SLA tracking
+  await addColumnIfMissing('transactions', 'sla_hours', "INT DEFAULT 72");
+  await addColumnIfMissing('transactions', 'due_date', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('transactions', 'escalated_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('transactions', 'escalation_count', "INT DEFAULT 0");
+
+  // V4.6 — Per-recipient sub-status (multi-recipient awareness)
+  await addColumnIfMissing('txn_recipients', 'sub_status', "ENUM('pending','viewed','replied','approved','rejected') DEFAULT 'pending'");
+  await addColumnIfMissing('txn_recipients', 'viewed_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('txn_recipients', 'acted_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('txn_recipients', 'acted_action', "VARCHAR(40) DEFAULT NULL");
+
+  // V4.7 — Reply-stage linking (so we can enforce "one reply per stage per actor")
+  await addColumnIfMissing('transaction_replies', 'stage_step_id', "VARCHAR(50) DEFAULT NULL");
+
+  // V4.8 — Action log enhancements (link reply + step + previous step for return)
+  await addColumnIfMissing('transaction_steps_log', 'reply_id', "VARCHAR(60) DEFAULT NULL");
+  await addColumnIfMissing('transaction_steps_log', 'from_step_id', "VARCHAR(50) DEFAULT NULL");
+  await addColumnIfMissing('transaction_steps_log', 'to_step_id', "VARCHAR(50) DEFAULT NULL");
+
+  // V4.9 — Performance indexes
+  // Inbox query (most common): WHERE current_assignee = ? AND status IN ...
+  try { await db.query("CREATE INDEX idx_txn_assignee_status ON transactions (current_assignee, status, created_at DESC)"); } catch(e) {}
+  // Outbox query
+  try { await db.query("CREATE INDEX idx_txn_creator_status ON transactions (created_by, status, created_at DESC)"); } catch(e) {}
+  // Returned items
+  try { await db.query("CREATE INDEX idx_txn_returned ON transactions (status, returned_at)"); } catch(e) {}
+  // Action log
+  try { await db.query("CREATE INDEX idx_log_txn_actor ON transaction_steps_log (transaction_id, action_by, action_type)"); } catch(e) {}
+  try { await db.query("CREATE INDEX idx_log_actor_step ON transaction_steps_log (action_by, workflow_definition_id, action_type)"); } catch(e) {}
+  // Replies pagination
+  try { await db.query("CREATE INDEX idx_replies_txn_created ON transaction_replies (transaction_id, created_at DESC)"); } catch(e) {}
+  // SLA enforcement
+  try { await db.query("CREATE INDEX idx_txn_due ON transactions (due_date, status)"); } catch(e) {}
+
+  // V4.10 — Materialized counters table (real-time per-user inbox stats)
+  await createTableIfMissing('user_inbox_counters', `
+    CREATE TABLE user_inbox_counters (
+      username VARCHAR(100) PRIMARY KEY,
+      pending_action      INT DEFAULT 0,
+      returned_to_me      INT DEFAULT 0,
+      awaiting_others     INT DEFAULT 0,
+      overdue             INT DEFAULT 0,
+      unread_replies      INT DEFAULT 0,
+      total_outbox        INT DEFAULT 0,
+      total_inbox         INT DEFAULT 0,
+      last_computed_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // V4.11 — Audit log (if not already present)
+  await createTableIfMissing('audit_logs', `
+    CREATE TABLE audit_logs (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      user_username VARCHAR(100),
+      action VARCHAR(80) NOT NULL,
+      entity_type VARCHAR(40) NOT NULL,
+      entity_id VARCHAR(80),
+      details TEXT,
+      ip_address VARCHAR(45),
+      user_agent VARCHAR(500),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_audit_user (user_username, created_at DESC),
+      INDEX idx_audit_entity (entity_type, entity_id),
+      INDEX idx_audit_action (action, created_at DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // V4.12 — Notifications table (for SSE inbox + escalations)
+  await createTableIfMissing('notifications', `
+    CREATE TABLE notifications (
+      id VARCHAR(60) PRIMARY KEY,
+      username VARCHAR(100) NOT NULL,
+      type VARCHAR(40) NOT NULL,
+      title VARCHAR(300),
+      body TEXT,
+      link_type VARCHAR(40),
+      link_id VARCHAR(80),
+      severity ENUM('info','success','warning','danger') DEFAULT 'info',
+      is_read TINYINT(1) DEFAULT 0,
+      read_at DATETIME DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_notif_user (username, is_read, created_at DESC),
+      INDEX idx_notif_link (link_type, link_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // V4.13 — Triggers for counter auto-sync
+  // Drop old triggers if present (idempotent)
+  try { await db.query("DROP TRIGGER IF EXISTS trg_txn_counter_after_insert"); } catch(e) {}
+  try { await db.query("DROP TRIGGER IF EXISTS trg_txn_counter_after_update"); } catch(e) {}
+  try { await db.query("DROP TRIGGER IF EXISTS trg_txn_counter_after_delete"); } catch(e) {}
+
+  try {
+    await db.query(`
+      CREATE TRIGGER trg_txn_counter_after_insert
+      AFTER INSERT ON transactions
+      FOR EACH ROW BEGIN
+        IF NEW.current_assignee IS NOT NULL AND NEW.current_assignee != '' THEN
+          INSERT INTO user_inbox_counters (username, pending_action, total_inbox)
+            VALUES (NEW.current_assignee, 1, 1)
+          ON DUPLICATE KEY UPDATE
+            pending_action = pending_action + 1,
+            total_inbox = total_inbox + 1;
+        END IF;
+        IF NEW.created_by IS NOT NULL AND NEW.created_by != '' THEN
+          INSERT INTO user_inbox_counters (username, awaiting_others, total_outbox)
+            VALUES (NEW.created_by,
+                    CASE WHEN NEW.status IN ('pending','created','in_progress','replied') THEN 1 ELSE 0 END,
+                    1)
+          ON DUPLICATE KEY UPDATE
+            awaiting_others = awaiting_others + (CASE WHEN NEW.status IN ('pending','created','in_progress','replied') THEN 1 ELSE 0 END),
+            total_outbox = total_outbox + 1;
+        END IF;
+      END
+    `);
+  } catch(e) { console.warn('[trigger] insert:', e.message); }
+
+  try {
+    await db.query(`
+      CREATE TRIGGER trg_txn_counter_after_update
+      AFTER UPDATE ON transactions
+      FOR EACH ROW BEGIN
+        -- Old assignee loses pending_action
+        IF OLD.current_assignee IS NOT NULL AND OLD.current_assignee != ''
+           AND (OLD.current_assignee != NEW.current_assignee OR OLD.status != NEW.status) THEN
+          UPDATE user_inbox_counters
+            SET pending_action = GREATEST(0, pending_action - 1)
+            WHERE username = OLD.current_assignee
+              AND OLD.status IN ('pending','created','in_progress','replied');
+        END IF;
+        -- New assignee gains pending_action
+        IF NEW.current_assignee IS NOT NULL AND NEW.current_assignee != ''
+           AND (OLD.current_assignee != NEW.current_assignee OR OLD.status != NEW.status)
+           AND NEW.status IN ('pending','created','in_progress','replied') THEN
+          INSERT INTO user_inbox_counters (username, pending_action)
+            VALUES (NEW.current_assignee, 1)
+          ON DUPLICATE KEY UPDATE pending_action = pending_action + 1;
+        END IF;
+        -- Returned-to-me counter
+        IF OLD.status != 'returned' AND NEW.status = 'returned' AND NEW.created_by IS NOT NULL THEN
+          INSERT INTO user_inbox_counters (username, returned_to_me)
+            VALUES (NEW.created_by, 1)
+          ON DUPLICATE KEY UPDATE returned_to_me = returned_to_me + 1;
+        END IF;
+        -- Returned cleared (resubmitted)
+        IF OLD.status = 'returned' AND NEW.status != 'returned' AND OLD.created_by IS NOT NULL THEN
+          UPDATE user_inbox_counters
+            SET returned_to_me = GREATEST(0, returned_to_me - 1)
+            WHERE username = OLD.created_by;
+        END IF;
+        -- Awaiting_others adjustments for creator
+        IF OLD.created_by = NEW.created_by AND OLD.created_by IS NOT NULL THEN
+          IF OLD.status IN ('pending','created','in_progress','replied')
+             AND NEW.status NOT IN ('pending','created','in_progress','replied') THEN
+            UPDATE user_inbox_counters
+              SET awaiting_others = GREATEST(0, awaiting_others - 1)
+              WHERE username = OLD.created_by;
+          ELSEIF OLD.status NOT IN ('pending','created','in_progress','replied')
+                 AND NEW.status IN ('pending','created','in_progress','replied') THEN
+            UPDATE user_inbox_counters
+              SET awaiting_others = awaiting_others + 1
+              WHERE username = NEW.created_by;
+          END IF;
+        END IF;
+      END
+    `);
+  } catch(e) { console.warn('[trigger] update:', e.message); }
+
+  try {
+    await db.query(`
+      CREATE TRIGGER trg_txn_counter_after_delete
+      AFTER DELETE ON transactions
+      FOR EACH ROW BEGIN
+        IF OLD.current_assignee IS NOT NULL AND OLD.current_assignee != '' THEN
+          UPDATE user_inbox_counters
+            SET pending_action = GREATEST(0, pending_action - (CASE WHEN OLD.status IN ('pending','created','in_progress','replied') THEN 1 ELSE 0 END)),
+                total_inbox = GREATEST(0, total_inbox - 1)
+            WHERE username = OLD.current_assignee;
+        END IF;
+        IF OLD.created_by IS NOT NULL AND OLD.created_by != '' THEN
+          UPDATE user_inbox_counters
+            SET awaiting_others = GREATEST(0, awaiting_others - (CASE WHEN OLD.status IN ('pending','created','in_progress','replied') THEN 1 ELSE 0 END)),
+                total_outbox = GREATEST(0, total_outbox - 1),
+                returned_to_me = GREATEST(0, returned_to_me - (CASE WHEN OLD.status = 'returned' THEN 1 ELSE 0 END))
+            WHERE username = OLD.created_by;
+        END IF;
+      END
+    `);
+  } catch(e) { console.warn('[trigger] delete:', e.message); }
+
+  // V4.14 — Backfill counters from existing data (one-time)
+  try {
+    await db.query("DELETE FROM user_inbox_counters");
+    await db.query(`
+      INSERT INTO user_inbox_counters (username, pending_action, total_inbox)
+      SELECT current_assignee,
+             SUM(CASE WHEN status IN ('pending','created','in_progress','replied') THEN 1 ELSE 0 END),
+             COUNT(*)
+        FROM transactions
+        WHERE current_assignee IS NOT NULL AND current_assignee != ''
+        GROUP BY current_assignee
+      ON DUPLICATE KEY UPDATE
+        pending_action = VALUES(pending_action),
+        total_inbox = VALUES(total_inbox)
+    `);
+    await db.query(`
+      INSERT INTO user_inbox_counters (username, awaiting_others, total_outbox, returned_to_me)
+      SELECT created_by,
+             SUM(CASE WHEN status IN ('pending','created','in_progress','replied') THEN 1 ELSE 0 END),
+             COUNT(*),
+             SUM(CASE WHEN status = 'returned' THEN 1 ELSE 0 END)
+        FROM transactions
+        WHERE created_by IS NOT NULL AND created_by != ''
+        GROUP BY created_by
+      ON DUPLICATE KEY UPDATE
+        awaiting_others = VALUES(awaiting_others),
+        total_outbox = VALUES(total_outbox),
+        returned_to_me = VALUES(returned_to_me)
+    `);
+  } catch(e) { console.warn('[counters backfill]:', e.message); }
 
   // ─── V3: Transaction Replies (proper threaded comments, separate from action log) ───
   await createTableIfMissing('transaction_replies', `

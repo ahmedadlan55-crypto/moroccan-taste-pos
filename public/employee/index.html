@@ -235,7 +235,7 @@
     html[lang="en"] body{direction:ltr;}
     html[lang="en"] .hdr-n,html[lang="en"] .hdr-s{text-align:left;}
   </style>
-  <script defer src="/employee/app.js?v=26"></script>
+  <script defer src="/employee/app.js?v=27"></script>
 </head>
 <body>
 <div class="toast" id="toast"></div>
@@ -434,10 +434,44 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
     <div class="nt active" onclick="navTo('home',this)"><i class="fas fa-home"></i><span data-i18n="nav.home">الرئيسية</span></div>
     <div class="nt" onclick="navTo('att',this)"><i class="fas fa-fingerprint"></i><span data-i18n="nav.att">البصمة</span></div>
     <div class="nt" onclick="navTo('hours',this)"><i class="fas fa-clock-rotate-left"></i><span>ساعاتي</span></div>
-    <div class="nt" onclick="navTo('txn',this)"><i class="fas fa-file-alt"></i><span data-i18n="nav.txn">معاملات</span></div>
+    <!-- V4: Counter badge on transactions tab -->
+    <div class="nt" onclick="navTo('txn',this)" style="position:relative;">
+      <i class="fas fa-file-alt"></i><span data-i18n="nav.txn">معاملات</span>
+      <span id="navTxnBadge" class="nav-badge" style="display:none;">0</span>
+    </div>
     <div class="nt" onclick="navTo('leave',this)"><i class="fas fa-calendar"></i><span data-i18n="nav.leave">إجازات</span></div>
     <div class="nt" onclick="navTo('me',this)"><i class="fas fa-user"></i><span data-i18n="nav.me">ملفي</span></div>
   </nav>
+  <style>
+    .nav-badge {
+      position: absolute;
+      top: 4px;
+      inset-inline-end: 18px;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 999px;
+      background: #dc2626;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 900;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1.5px solid #fff;
+      animation: empPulse 2.5s ease-in-out infinite;
+      z-index: 2;
+    }
+    @keyframes empPulse {
+      0%,100% { transform: scale(1); }
+      50%     { transform: scale(1.1); }
+    }
+    /* SSE toast */
+    @keyframes slideInRight {
+      from { transform: translateX(110%); opacity: 0; }
+      to   { transform: translateX(0); opacity: 1; }
+    }
+  </style>
 </div>
 <!-- Leave Modal -->
 <div class="modal" id="leaveModal"><div class="modal-c"><div class="modal-h"><span><i class="fas fa-calendar-plus"></i> <span data-i18n="leave.modalTitle">طلب إجازة</span></span><button onclick="closeLeaveForm()">&times;</button></div><div class="fg"><label data-i18n="leave.type">النوع</label><select class="fi" id="lfType"></select></div><div class="fg"><label data-i18n="leave.from">من</label><input type="date" class="fi" id="lfStart"></div><div class="fg"><label data-i18n="leave.to">إلى</label><input type="date" class="fi" id="lfEnd"></div><div class="fg"><label data-i18n="leave.reason">السبب</label><textarea class="fi" id="lfReason" rows="2"></textarea></div><button class="btn-m" onclick="submitLeave()"><i class="fas fa-paper-plane"></i> <span data-i18n="leave.submit">تقديم</span></button></div></div>

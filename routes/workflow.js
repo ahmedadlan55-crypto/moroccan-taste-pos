@@ -13,6 +13,9 @@
  */
 const router = require('express').Router();
 const db = require('../db/connection');
+// V4 — State machine + permission engine
+const SM = require('../lib/transactionStateMachine');
+const PERMS = require('../lib/transactionPermissions');
 
 // Mojibake fixer: repairs UTF-8 Arabic text that was decoded through a
 // single-byte codepage (Latin-1 or Windows-1252). Produces forms like
@@ -1821,77 +1824,115 @@ router.delete('/transactions/:id/force', async (req, res) => {
 });
 
 // Take action on a transaction (approve / reject / return / forward / close)
+// ═══════════════════════════════════════════════════════════════════
+// V4 — Workflow action handler (state machine + locking + permissions)
+// ═══════════════════════════════════════════════════════════════════
+// All previous if/else state mutation has been replaced with:
+//   1. SELECT ... FOR UPDATE (row-level lock to prevent race conditions)
+//   2. Optimistic version check (rejects with 409 if version changed)
+//   3. State machine transition (validates legality)
+//   4. One-reply-per-stage enforcement (rejects with 409 if already acted)
+//   5. Permission engine check (centralized in lib/transactionPermissions.js)
+//   6. Invariant assertion (refuses to persist inconsistent state)
+//   7. Atomic UPDATE inside DB transaction
+// ═══════════════════════════════════════════════════════════════════
 router.post('/transactions/:id/action', async (req, res) => {
-  try {
-    const { action, username, note, attachment, newAmount, forwardTo } = req.body;
-    if (!action) return res.json({ success: false, error: 'الإجراء مطلوب' });
+  const txnId = req.params.id;
+  const { action, username, note, attachment, newAmount, forwardTo, expectedVersion } = req.body;
+  if (!action) return res.status(400).json({ success: false, error: 'الإجراء مطلوب' });
+  if (!username) return res.status(401).json({ success: false, error: 'مستخدم غير معروف' });
 
-    const [txns] = await db.query('SELECT * FROM transactions WHERE id = ?', [req.params.id]);
-    if (!txns.length) return res.json({ success: false, error: 'المعاملة غير موجودة' });
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // 1. Lock the row — blocks any concurrent UPDATE on this transaction
+    const [txns] = await conn.query('SELECT * FROM transactions WHERE id = ? FOR UPDATE', [txnId]);
+    if (!txns.length) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, error: 'المعاملة غير موجودة' });
+    }
     const txn = txns[0];
 
-    // Permission check (two layers: employee-wide + step-specific)
-    const perms = await getPermissions(username);
-    const permMap = { approve: 'canApprove', reject: 'canReject', return: 'canReturn', forward: 'canForward', close: 'canClose' };
-    if (permMap[action] && perms.isEmployee && perms[permMap[action]] === false) {
-      return res.json({ success: false, error: 'ليس لديك صلاحية ' + action });
+    // 2. Optimistic version check (if client supplied expectedVersion)
+    if (expectedVersion !== undefined && Number(expectedVersion) !== Number(txn.version || 0)) {
+      await conn.rollback();
+      return res.status(409).json({
+        success: false,
+        error: 'تم تعديل المعاملة من قِبَل شخص آخر — أعد تحميل الصفحة',
+        code: 'VERSION_CONFLICT',
+        currentVersion: txn.version || 0
+      });
     }
 
-    // Get current workflow step — check position chain first, fall back to legacy type chain
+    // 3. Build user object for permission engine
+    const senderPerms = await getPermissions(username);
+    const isPrimaryAdmin = (username === 'admin');
+    const user = {
+      username: username,
+      role: senderPerms.role || 'employee',
+      isDeveloper: !!senderPerms.isDeveloper || isPrimaryAdmin,
+      isAdmin: senderPerms.role === 'admin' || isPrimaryAdmin
+    };
+
+    // 4. Resolve current step (for amount-based routing + step-level limits)
     let step = null;
     if (txn.current_step_id) {
-      // Check position_workflow_steps first
-      const [posRow] = await db.query('SELECT * FROM position_workflow_steps WHERE id = ?', [txn.current_step_id]);
-      if (posRow.length) {
-        step = _normalizePositionStep(posRow[0]);
-      } else {
-        const [legacy] = await db.query('SELECT * FROM workflow_definitions WHERE id = ?', [txn.current_step_id]);
+      const [posRow] = await conn.query('SELECT * FROM position_workflow_steps WHERE id = ?', [txn.current_step_id]);
+      if (posRow.length) step = _normalizePositionStep(posRow[0]);
+      else {
+        const [legacy] = await conn.query('SELECT * FROM workflow_definitions WHERE id = ?', [txn.current_step_id]);
         if (legacy.length) step = legacy[0];
       }
     }
 
-    // Step-level permission: the step definition may restrict specific actions
-    if (step) {
-      if (action === 'approve' && step.can_approve === 0) return res.json({ success: false, error: 'هذه الخطوة لا تسمح بالموافقة' });
-      if (action === 'reject'  && step.can_reject  === 0) return res.json({ success: false, error: 'هذه الخطوة لا تسمح بالرفض' });
-      if (action === 'return'  && step.can_return_to_previous === 0) return res.json({ success: false, error: 'هذه الخطوة لا تسمح بالإرجاع' });
-    }
+    // 5. Fetch action log + replies for permission engine context (one-reply-per-stage)
+    const [actionLog] = await conn.query(
+      'SELECT id, action_type, action_by, workflow_definition_id, created_at FROM transaction_steps_log WHERE transaction_id = ?',
+      [txnId]);
+    const [replies] = await conn.query(
+      'SELECT id, author_username, stage_step_id, created_at FROM transaction_replies WHERE transaction_id = ?',
+      [txnId]);
+    const [recipients] = await conn.query(
+      'SELECT recipient_username FROM txn_recipients WHERE transaction_id = ?',
+      [txnId]);
+    const recipientUsernames = recipients.map(r => r.recipient_username);
 
-    if (newAmount !== undefined && (!step || step.can_edit_amount)) {
-      await db.query('UPDATE transactions SET amount = ? WHERE id = ?', [Number(newAmount)||0, req.params.id]);
-    }
-
-    let newStatus = txn.status;
-    let newStepId = txn.current_step_id;
-    let newAssignee = txn.current_assignee;
-    let newRoleId = txn.current_role_id || null;
-    let newRoleName = txn.current_role_name || '';
-
-    const applyStep = async (stepRow) => {
-      newStepId = stepRow.id;
-      newRoleId = stepRow.required_position_id || null;
-      if (stepRow.required_position_id) {
-        const resolved = await resolveAssigneeForStep(stepRow, txn.branch_id, txn.dept_id);
-        newAssignee = resolved.username;
-        newRoleName = resolved.roleName || '';
-      } else {
-        newAssignee = '';
-        newRoleName = '';
-      }
+    // 6. Map HTTP action → permission key + state machine action
+    const actionToPermMap = {
+      approve: 'txn.action.approve',
+      reject:  'txn.action.reject',
+      return:  'txn.action.return',
+      forward: 'txn.action.forward',
+      close:   'txn.action.close',
+      open:    'txn.action.open'
     };
+    const permKey = actionToPermMap[action];
+    if (!permKey) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, error: 'إجراء غير معروف: ' + action });
+    }
+    const permCtx = { txn, currentStep: step, actionLog, replies, recipientUsernames };
+    if (!PERMS.can(user, permKey, permCtx)) {
+      await conn.rollback();
+      return res.status(403).json({
+        success: false,
+        error: _explainPermissionDenied(action, user, txn, step, actionLog),
+        code: 'PERMISSION_DENIED'
+      });
+    }
 
-    // Helper: look up the next/prev step respecting the chain source
-    //   - if current step came from position_workflow_steps → use that table
-    //   - else fall back to workflow_definitions (legacy per-type)
-    // Phase C: when multiple rows exist at the SAME step_order, amount-based
-    // routing picks the row where amount_from <= txn.amount <= amount_to
-    // (amount_to = NULL means unlimited). This enables: accountant < 50k,
-    // finance manager < 500k, CEO otherwise — all at the same logical "step".
+    // 7. Apply newAmount if step allows it (must happen before transition computation)
+    if (newAmount !== undefined && (!step || step.can_edit_amount)) {
+      await conn.query('UPDATE transactions SET amount = ? WHERE id = ?', [Number(newAmount)||0, txnId]);
+      txn.amount = Number(newAmount) || 0;
+    }
+
+    // 8. Compute next-step routing
     const txnAmount = Number(txn.amount) || 0;
     const getSiblingStep = async (order) => {
       if (step && step._source === 'position' && txn.initiator_position_id) {
-        // Try amount-matched row first
-        let [r] = await db.query(
+        let [r] = await conn.query(
           `SELECT * FROM position_workflow_steps
            WHERE initiator_position_id = ? AND step_order = ?
              AND COALESCE(amount_from, 0) <= ?
@@ -1899,99 +1940,250 @@ router.post('/transactions/:id/action', async (req, res) => {
            ORDER BY COALESCE(amount_from, 0) DESC
            LIMIT 1`,
           [txn.initiator_position_id, order, txnAmount, txnAmount]);
-        // Fallback: any row at that order (no amount filter defined)
         if (!r.length) {
-          [r] = await db.query(
+          [r] = await conn.query(
             'SELECT * FROM position_workflow_steps WHERE initiator_position_id = ? AND step_order = ?',
             [txn.initiator_position_id, order]);
         }
         return r.length ? _normalizePositionStep(r[0]) : null;
       }
-      const [r] = await db.query(
+      const [r] = await conn.query(
         `SELECT id, required_position_id, is_final_step, require_same_branch,
                 require_same_department, assignment_strategy, step_order
-         FROM workflow_definitions
-         WHERE transaction_type_id = ? AND step_order = ?`,
+         FROM workflow_definitions WHERE transaction_type_id = ? AND step_order = ?`,
         [txn.transaction_type_id, order]);
       return r.length ? r[0] : null;
     };
+
+    let newStepId = txn.current_step_id;
+    let newAssignee = txn.current_assignee;
+    let newRoleId = txn.current_role_id || null;
+    let newRoleName = txn.current_role_name || '';
+    let nextStepHasNext = false;
+    let extraUpdates = {};   // additional columns to set in the final UPDATE
 
     if (action === 'approve') {
       if (step) {
         const nextStep = await getSiblingStep(step.step_order + 1);
         if (nextStep) {
-          newStatus = 'in_progress';
-          await applyStep(nextStep);
+          newStepId = nextStep.id;
+          newRoleId = nextStep.required_position_id || null;
+          if (nextStep.required_position_id) {
+            const resolved = await resolveAssigneeForStep(nextStep, txn.branch_id, txn.dept_id);
+            newAssignee = resolved.username || '';
+            newRoleName = resolved.roleName || '';
+          } else { newAssignee = ''; newRoleName = ''; }
+          nextStepHasNext = true;
         } else if (step.is_final_step) {
-          newStatus = 'closed'; newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
+          newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
         } else {
-          newStatus = 'approved'; newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
+          // Approved but no next step + not marked final → "approved" terminal state
+          newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
         }
       } else {
-        newStatus = 'approved'; newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
+        newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
       }
     } else if (action === 'reject') {
-      newStatus = 'rejected';
-      newAssignee = txn.created_by;
-      newRoleId = null; newRoleName = '';
+      newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
     } else if (action === 'return') {
-      if (step) {
-        const prevStep = await getSiblingStep(step.step_order - 1);
-        if (prevStep) {
-          await applyStep(prevStep);
-          if (!newAssignee) newAssignee = txn.created_by;
-        } else {
-          newAssignee = txn.created_by;
-          newRoleId = null; newRoleName = '';
-        }
-      } else {
-        newAssignee = txn.created_by;
-      }
-      // V3.1: Use distinct 'returned' status (not 'pending') so the creator
-      // sees a clear "مرجعة للتعديل" badge and the edit button reappears.
-      newStatus = 'returned';
-      // Stamp returned metadata — creator sees who returned + why + how many times
-      try {
-        await db.query(
-          `UPDATE transactions SET returned_at = NOW(), returned_by = ?, returned_reason = ?,
-                  return_count = COALESCE(return_count, 0) + 1 WHERE id = ?`,
-          [username || '', String(note || '').substring(0, 500), req.params.id]);
-      } catch(e) { /* tolerate if columns missing on very old deploy */ }
+      // V4: returned-state lock — current_step_id stays so resubmit knows where to go
+      newAssignee = txn.created_by;
+      // Save returned-to step info
+      extraUpdates.returned_at = new Date();
+      extraUpdates.returned_by = username;
+      extraUpdates.returned_reason = String(note || '').substring(0, 500);
+      extraUpdates.returned_to_step_id = txn.current_step_id;
     } else if (action === 'close') {
-      newStatus = 'closed'; newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
+      newStepId = null; newAssignee = ''; newRoleId = null; newRoleName = '';
     } else if (action === 'forward') {
-      if (!forwardTo) return res.json({ success: false, error: 'حدد المستلم الجديد' });
+      if (!forwardTo) {
+        await conn.rollback();
+        return res.status(400).json({ success: false, error: 'حدد المستلم الجديد' });
+      }
       newAssignee = forwardTo;
-      newStatus = 'in_progress';
-      // Role doesn't change on forward — keep current_role_id/name
+    } else if (action === 'open') {
+      // Just transitions created → in_progress; no other changes
+      extraUpdates.first_viewed_at = new Date();
+      extraUpdates.first_viewed_by = username;
     }
 
-    await db.query(
-      `UPDATE transactions SET status = ?, current_step_id = ?, current_assignee = ?,
-              current_role_id = ?, current_role_name = ? WHERE id = ?`,
-      [newStatus, newStepId, newAssignee || '', newRoleId, newRoleName, req.params.id]);
-
-    const logId = 'LOG-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
-    await db.query(
-      'INSERT INTO transaction_steps_log (id, transaction_id, workflow_definition_id, action_by, action_type, action_note, attachment, position_name) VALUES (?,?,?,?,?,?,?,?)',
-      [logId, req.params.id, txn.current_step_id, username||'', action, note||'', attachment||null, perms.positionName || '']);
-
-    // ─── V3: CEO approval tracking ───
-    // If actor is at executive level (>=9) OR has admin role, AND this was an
-    // approve action, stamp the transaction so UI can show "passed CEO" badge.
+    // 9. Compute next state via state machine
+    const ctxForSM = { txn: { ...txn, hasNextStep: nextStepHasNext } };
+    let newStatus;
     try {
-      var senderLevel = Number(perms.positionLevel || 0);
-      if (action === 'approve' && (senderLevel >= 9 || perms.role === 'admin')) {
-        await db.query(
-          'UPDATE transactions SET passed_ceo_at = NOW(), passed_ceo_by = ? WHERE id = ? AND passed_ceo_at IS NULL',
-          [username || '', req.params.id]
+      newStatus = SM.transition(txn.status, action, ctxForSM);
+    } catch (e) {
+      // Handle legacy 'pending' status by treating it as 'in_progress'
+      if (e.code === 'INVALID_TRANSITION' && txn.status === 'pending') {
+        try {
+          newStatus = SM.transition(SM.STATES.IN_PROGRESS, action, ctxForSM);
+        } catch (e2) {
+          await conn.rollback();
+          return res.status(409).json({ success: false, error: e2.message, code: e2.code });
+        }
+      } else {
+        await conn.rollback();
+        return res.status(409).json({ success: false, error: e.message, code: e.code });
+      }
+    }
+
+    // 10. Build the UPDATE — including bumping version for optimistic concurrency
+    const finalUpdates = Object.assign({
+      status: newStatus,
+      current_step_id: newStepId,
+      current_assignee: newAssignee || '',
+      current_role_id: newRoleId,
+      current_role_name: newRoleName
+    }, extraUpdates);
+    // Increment return_count if returning
+    if (action === 'return') {
+      finalUpdates.return_count = Number(txn.return_count || 0) + 1;
+    }
+
+    // Validate invariants on the new state
+    const newTxnState = Object.assign({}, txn, finalUpdates);
+    try { SM.assertInvariants(newTxnState); }
+    catch (e) {
+      await conn.rollback();
+      return res.status(500).json({ success: false, error: 'INVARIANT_VIOLATION: ' + e.message });
+    }
+
+    // 11. Apply UPDATE atomically with version bump
+    const setKeys = Object.keys(finalUpdates);
+    const setClause = setKeys.map(k => `${k} = ?`).join(', ');
+    const setValues = setKeys.map(k => finalUpdates[k]);
+    await conn.query(
+      `UPDATE transactions SET ${setClause}, version = version + 1, updated_at = NOW() WHERE id = ? AND version = ?`,
+      [...setValues, txnId, txn.version || 0]
+    );
+
+    // 12. Insert action log entry
+    const logId = 'LOG-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
+    await conn.query(
+      `INSERT INTO transaction_steps_log
+        (id, transaction_id, workflow_definition_id, action_by, action_type, action_note, attachment, position_name, from_step_id, to_step_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [logId, txnId, txn.current_step_id, username, action, note || '', attachment || null,
+       senderPerms.positionName || '', txn.current_step_id, newStepId]
+    );
+
+    // 13. Per-recipient sub-status sync (best-effort)
+    try {
+      const subStatus = action === 'approve' ? 'approved' :
+                        action === 'reject'  ? 'rejected' :
+                        action === 'return'  ? 'pending' : null;
+      if (subStatus) {
+        await conn.query(
+          `UPDATE txn_recipients SET sub_status = ?, acted_at = NOW(), acted_action = ?
+            WHERE transaction_id = ? AND recipient_username = ?`,
+          [subStatus, action, txnId, username]
         );
       }
-    } catch(e) { /* tolerate missing columns on very old deploys */ }
+    } catch(e) { /* tolerate if column missing */ }
 
-    res.json({ success: true, newStatus, newAssignee });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+    // 14. CEO approval stamp (legacy — preserved)
+    try {
+      const senderLevel = Number(senderPerms.positionLevel || 0);
+      if (action === 'approve' && (senderLevel >= 9 || senderPerms.role === 'admin')) {
+        await conn.query(
+          'UPDATE transactions SET passed_ceo_at = NOW(), passed_ceo_by = ? WHERE id = ? AND passed_ceo_at IS NULL',
+          [username, txnId]);
+      }
+    } catch(e) {}
+
+    // 15. Insert notification for the new assignee (or creator on return/reject/approve)
+    try {
+      let notifyUser = null;
+      let notifTitle = '', notifBody = '', severity = 'info';
+      if (action === 'return') {
+        notifyUser = txn.created_by;
+        notifTitle = 'معاملة مرجعة للتعديل';
+        notifBody  = (txn.subject || txn.title || '') + ' — السبب: ' + String(note || '').substring(0, 100);
+        severity = 'warning';
+      } else if (action === 'reject') {
+        notifyUser = txn.created_by;
+        notifTitle = 'تم رفض معاملتك';
+        notifBody  = (txn.subject || txn.title || '');
+        severity = 'danger';
+      } else if (action === 'approve' && newStatus === SM.STATES.APPROVED) {
+        notifyUser = txn.created_by;
+        notifTitle = 'تمت الموافقة على معاملتك';
+        notifBody  = (txn.subject || txn.title || '');
+        severity = 'success';
+      } else if ((action === 'approve' || action === 'forward') && newAssignee) {
+        notifyUser = newAssignee;
+        notifTitle = 'معاملة جديدة بانتظار الإجراء';
+        notifBody  = (txn.subject || txn.title || '');
+        severity = 'info';
+      } else if (action === 'close') {
+        notifyUser = txn.created_by;
+        notifTitle = 'تم إغلاق معاملتك';
+        notifBody  = (txn.subject || txn.title || '');
+        severity = 'success';
+      }
+      if (notifyUser) {
+        await conn.query(
+          `INSERT INTO notifications (id, username, type, title, body, link_type, link_id, severity)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          ['NOT-' + Date.now() + '-' + Math.random().toString(36).slice(2,6),
+           notifyUser, 'workflow_' + action, notifTitle, notifBody, 'transaction', txnId, severity]
+        );
+      }
+    } catch(e) { /* notifications table may not exist on old deploy */ }
+
+    // 16. Audit log entry
+    try {
+      await conn.query(
+        `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details)
+         VALUES (?, ?, 'transaction', ?, ?)`,
+        [username, 'workflow_' + action, txnId, JSON.stringify({
+          oldStatus: txn.status, newStatus, fromStep: txn.current_step_id, toStep: newStepId,
+          note: note || ''
+        })]);
+    } catch(e) {}
+
+    await conn.commit();
+    return res.json({
+      success: true,
+      newStatus,
+      newAssignee,
+      newVersion: Number(txn.version || 0) + 1
+    });
+  } catch (e) {
+    try { await conn.rollback(); } catch(_) {}
+    console.error('[workflow action] error:', e);
+    return res.status(500).json({ success: false, error: e.message, code: e.code });
+  } finally {
+    conn.release();
+  }
 });
+
+// V4 helper: human-readable explanation for permission denials
+function _explainPermissionDenied(action, user, txn, step, actionLog) {
+  const isAssignee = txn.current_assignee === user.username;
+  if (!isAssignee && !user.isAdmin && !user.isDeveloper) {
+    return 'هذه المعاملة ليست بانتظار إجرائك';
+  }
+  // Check if already acted on this stage
+  const alreadyActed = (actionLog || []).some(l =>
+    l.action_by === user.username &&
+    (l.workflow_definition_id === txn.current_step_id) &&
+    ['approve','reject','return','forward'].includes(l.action_type));
+  if (alreadyActed) {
+    return 'لقد قمت بالرد على هذه المرحلة من قبل — رد واحد لكل مرحلة';
+  }
+  // Step-level
+  if (step) {
+    if (action === 'approve' && step.can_approve === 0) return 'هذه الخطوة لا تسمح بالموافقة';
+    if (action === 'reject'  && step.can_reject  === 0) return 'هذه الخطوة لا تسمح بالرفض';
+    if (action === 'return'  && step.can_return_to_previous === 0) return 'هذه الخطوة لا تسمح بالإرجاع';
+  }
+  // Status mismatch
+  if (SM.isTerminal(txn.status)) {
+    return 'المعاملة في حالة نهائية — لا يمكن تعديلها';
+  }
+  return 'ليس لديك صلاحية ' + action;
+}
 
 // Upload additional attachment for a transaction
 router.post('/transactions/:id/attachments', async (req, res) => {
@@ -2049,6 +2241,8 @@ router.get('/transactions/:id/replies', async (req, res) => {
 });
 
 // POST /workflow/transactions/:id/replies
+// V4 — Enforces "one reply per stage per actor" rule.
+// Stamps stage_step_id so we can detect duplicates within a stage.
 router.post('/transactions/:id/replies', async (req, res) => {
   try {
     const { replyText, attachment, attachmentName, attachmentMime, isInternal, username } = req.body;
@@ -2056,6 +2250,34 @@ router.post('/transactions/:id/replies', async (req, res) => {
       return res.json({ success: false, error: 'نص الرد مطلوب' });
     }
     const author = username || (req.user && req.user.username) || 'admin';
+
+    // V4: load txn + check one-reply-per-stage rule via the permission engine
+    const [txnRows] = await db.query('SELECT * FROM transactions WHERE id = ?', [req.params.id]);
+    if (!txnRows.length) return res.json({ success: false, error: 'المعاملة غير موجودة' });
+    const txn = txnRows[0];
+    const [existingReplies] = await db.query(
+      'SELECT id, author_username, stage_step_id FROM transaction_replies WHERE transaction_id = ?',
+      [req.params.id]);
+    const [recipientsRows] = await db.query(
+      'SELECT recipient_username FROM txn_recipients WHERE transaction_id = ?', [req.params.id]);
+    const recipientUsernames = recipientsRows.map(r => r.recipient_username);
+    const userPerms = await getPermissions(author);
+    const user = {
+      username: author,
+      role: userPerms.role || 'employee',
+      isDeveloper: !!userPerms.isDeveloper || author === 'admin',
+      isAdmin: userPerms.role === 'admin' || author === 'admin'
+    };
+    const canReply = PERMS.can(user, 'txn.reply', {
+      txn, replies: existingReplies, recipientUsernames
+    });
+    if (!canReply) {
+      return res.status(403).json({
+        success: false,
+        error: 'لا يمكنك الرد — إما ليس لديك صلاحية، أو رددت مسبقاً على هذه المرحلة',
+        code: 'REPLY_DENIED'
+      });
+    }
 
     // Resolve author meta (name + role + position) for display
     let authorName = author, authorRole = '', authorPosition = '';
@@ -2075,25 +2297,147 @@ router.post('/transactions/:id/replies', async (req, res) => {
 
     // V3.1: also store attachment_name + attachment_mime so the UI can show
     // proper file names + decide between image preview vs generic icon.
-    // The columns are added by addColumnIfMissing in server.js (see below).
+    // V4: also store stage_step_id so we can enforce one-reply-per-stage rule.
     const id = 'REP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
     try {
       await db.query(
-        `INSERT INTO transaction_replies (id, transaction_id, reply_text, attachment, attachment_name, attachment_mime, author_username, author_name, author_role, author_position, is_internal)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-        [id, req.params.id, replyText.trim(), attachment || null, attachmentName || null, attachmentMime || null, author, authorName, authorRole, authorPosition, isInternal ? 1 : 0]
+        `INSERT INTO transaction_replies (id, transaction_id, reply_text, attachment, attachment_name, attachment_mime, author_username, author_name, author_role, author_position, is_internal, stage_step_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [id, req.params.id, replyText.trim(), attachment || null, attachmentName || null, attachmentMime || null, author, authorName, authorRole, authorPosition, isInternal ? 1 : 0, txn.current_step_id || null]
       );
     } catch(insertErr) {
-      // Fallback for older deploys where attachment_name/mime columns don't exist yet
+      // Fallback for older deploys where new columns don't exist yet
       await db.query(
         `INSERT INTO transaction_replies (id, transaction_id, reply_text, attachment, author_username, author_name, author_role, author_position, is_internal)
          VALUES (?,?,?,?,?,?,?,?,?)`,
         [id, req.params.id, replyText.trim(), attachment || null, author, authorName, authorRole, authorPosition, isInternal ? 1 : 0]
       );
     }
+
+    // V4: also stamp transaction's updated_at + bump version + create notification for creator
+    try {
+      await db.query('UPDATE transactions SET version = version + 1, updated_at = NOW() WHERE id = ?', [req.params.id]);
+      // Notify creator (unless they're the one replying)
+      if (txn.created_by && txn.created_by !== author) {
+        await db.query(
+          `INSERT INTO notifications (id, username, type, title, body, link_type, link_id, severity)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          ['NOT-' + Date.now() + '-' + Math.random().toString(36).slice(2,4),
+           txn.created_by, 'workflow_reply',
+           'رد جديد على معاملتك من ' + (authorName || author),
+           replyText.trim().substring(0, 200),
+           'transaction', req.params.id, 'info']
+        );
+      }
+    } catch(e) {}
+
     res.json({ success: true, id, authorName, authorRole, authorPosition });
   } catch(e) {
     res.json({ success: false, error: e.message });
+  }
+});
+
+// V4 — GET /transactions/:id/permissions — what can the current user do?
+// Returns a precomputed permission object the UI uses to decide which buttons to render.
+// This replaces scattered if/else logic in the frontend with a single source of truth.
+router.get('/transactions/:id/permissions', async (req, res) => {
+  try {
+    const username = req.query.username || (req.user && req.user.username) || '';
+    if (!username) return res.json({ permissions: {}, error: 'لا يوجد مستخدم' });
+    const [rows] = await db.query('SELECT * FROM transactions WHERE id = ?', [req.params.id]);
+    if (!rows.length) return res.json({ permissions: {}, error: 'المعاملة غير موجودة' });
+    const txn = rows[0];
+
+    // Load context
+    const [actionLog] = await db.query(
+      'SELECT id, action_type, action_by, workflow_definition_id FROM transaction_steps_log WHERE transaction_id = ?',
+      [req.params.id]);
+    const [replies] = await db.query(
+      'SELECT id, author_username, stage_step_id FROM transaction_replies WHERE transaction_id = ?',
+      [req.params.id]);
+    const [recipients] = await db.query(
+      'SELECT recipient_username FROM txn_recipients WHERE transaction_id = ?', [req.params.id]);
+
+    const senderPerms = await getPermissions(username);
+    const user = {
+      username,
+      role: senderPerms.role || 'employee',
+      isDeveloper: !!senderPerms.isDeveloper || username === 'admin',
+      isAdmin: senderPerms.role === 'admin' || username === 'admin'
+    };
+
+    let currentStep = null;
+    if (txn.current_step_id) {
+      const [posRow] = await db.query('SELECT * FROM position_workflow_steps WHERE id = ?', [txn.current_step_id]);
+      if (posRow.length) currentStep = _normalizePositionStep(posRow[0]);
+      else {
+        const [legacy] = await db.query('SELECT * FROM workflow_definitions WHERE id = ?', [txn.current_step_id]);
+        if (legacy.length) currentStep = legacy[0];
+      }
+    }
+
+    const perms = PERMS.computePermissions(user, txn, {
+      currentStep,
+      actionLog,
+      replies,
+      recipientUsernames: recipients.map(r => r.recipient_username)
+    });
+
+    res.json({
+      permissions: perms,
+      currentVersion: txn.version || 0,
+      txnStatus: txn.status,
+      isMyTurn: txn.current_assignee === username,
+      isCreator: txn.created_by === username,
+      iAlreadyActed: actionLog.some(l =>
+        l.action_by === username &&
+        l.workflow_definition_id === txn.current_step_id &&
+        ['approve','reject','return','forward'].includes(l.action_type)),
+      iAlreadyReplied: replies.some(r =>
+        r.author_username === username && r.stage_step_id === txn.current_step_id)
+    });
+  } catch(e) {
+    res.json({ permissions: {}, error: e.message });
+  }
+});
+
+// V4 — POST /transactions/:id/open — explicit "first view" trigger
+// Transitions created → in_progress when assignee opens the txn for the first time.
+router.post('/transactions/:id/open', async (req, res) => {
+  const txnId = req.params.id;
+  const username = req.body.username || (req.user && req.user.username);
+  if (!username) return res.status(401).json({ success: false, error: 'لا يوجد مستخدم' });
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [rows] = await conn.query('SELECT * FROM transactions WHERE id = ? FOR UPDATE', [txnId]);
+    if (!rows.length) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, error: 'المعاملة غير موجودة' });
+    }
+    const txn = rows[0];
+    if (txn.current_assignee !== username) {
+      await conn.rollback();
+      return res.json({ success: false, error: 'ليست معاملتك' });
+    }
+    if (txn.status !== 'created' && txn.status !== 'pending') {
+      await conn.commit();   // not an error, just nothing to do
+      return res.json({ success: true, alreadyOpened: true, status: txn.status });
+    }
+    await conn.query(
+      `UPDATE transactions SET status = ?, first_viewed_at = NOW(), first_viewed_by = ?,
+                                version = version + 1, updated_at = NOW()
+        WHERE id = ?`,
+      [SM.STATES.IN_PROGRESS, username, txnId]
+    );
+    await conn.commit();
+    res.json({ success: true, status: SM.STATES.IN_PROGRESS });
+  } catch(e) {
+    try { await conn.rollback(); } catch(_) {}
+    res.status(500).json({ success: false, error: e.message });
+  } finally {
+    conn.release();
   }
 });
 

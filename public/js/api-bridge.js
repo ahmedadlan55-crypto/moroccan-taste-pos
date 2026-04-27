@@ -325,6 +325,17 @@
     resubmitWfTransaction: { method: 'POST', url: (id,d) => '/workflow/transactions/' + id + '/resubmit', body: (id,d) => d },
     // V3.1.4 — Developer-only permanent delete (sends body with confirm phrase + reason)
     forceDeleteWfTransaction: { method: 'DELETE', url: (id,d) => '/workflow/transactions/' + id + '/force?username=' + encodeURIComponent((d && d.username) || ''), body: (id,d) => d },
+    // V4 — Permission engine + counters + SLA + SSE
+    getWfTransactionPermissions: { method: 'GET', url: (id,u) => '/workflow/transactions/' + id + '/permissions?username=' + encodeURIComponent(u||'') },
+    openWfTransaction: { method: 'POST', url: (id,d) => '/workflow/transactions/' + id + '/open', body: (id,d) => d },
+    getMyCounters:    { method: 'GET',  url: (u) => '/counters/me?username=' + encodeURIComponent(u||'') },
+    recomputeCounters:{ method: 'POST', url: '/counters/recompute', body: (d) => d },
+    getNotifications: { method: 'GET',  url: (u, limit, unreadOnly) => '/counters/notifications?username=' + encodeURIComponent(u||'') + '&limit=' + (limit||20) + (unreadOnly?'&unreadOnly=1':'') },
+    markNotificationRead:    { method: 'POST', url: (id,d) => '/counters/notifications/' + id + '/read', body: (id,d) => d },
+    markAllNotificationsRead:{ method: 'POST', url: '/counters/notifications/mark-all-read', body: (d) => d },
+    getOverdueTxns:   { method: 'GET',  url: (u) => '/sla/overdue?username=' + encodeURIComponent(u||'') },
+    getSlaStats:      { method: 'GET',  url: '/sla/stats' },
+    triggerEscalation:{ method: 'POST', url: '/sla/escalate-now', body: (d) => d },
     getWfOutbox:         { method: 'GET',  url: '/workflow/outbox', query: (f) => f },
     getWfIncoming:       { method: 'GET',  url: '/workflow/incoming', query: (f) => f },
     getWfDashboard:      { method: 'GET',  url: '/workflow/dashboard-cards', query: (f) => f },

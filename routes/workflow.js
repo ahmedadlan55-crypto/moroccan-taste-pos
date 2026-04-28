@@ -1439,11 +1439,33 @@ router.get('/outbox-summary', async (req, res) => {
 router.post('/transactions/:id/mark-read', async (req, res) => {
   try {
     const { username } = req.body;
+    if (!username) return res.status(400).json({ success: false, error: 'username required' });
+    // V5-SEC: only allow marking read if caller can view the txn — prevents enumeration.
+    const callerName = (req.user && req.user.username) || username;
+    const isDev = !!(req.user && req.user.isDeveloper);
+    const isAdmin = req.user && req.user.role === 'admin';
+    if (!isDev && !isAdmin) {
+      const [tRows] = await db.query(
+        `SELECT created_by, current_assignee, recipient_username FROM transactions WHERE id = ?`,
+        [req.params.id]);
+      if (!tRows.length) return res.status(404).json({ success: false, error: 'not found' });
+      const t = tRows[0];
+      const [recRows] = await db.query(
+        `SELECT username FROM txn_recipients WHERE transaction_id = ?`, [req.params.id]);
+      const recUsernames = recRows.map(r => r.username);
+      const allowed = (
+        t.created_by === callerName ||
+        t.current_assignee === callerName ||
+        t.recipient_username === callerName ||
+        recUsernames.includes(callerName)
+      );
+      if (!allowed) return res.status(403).json({ success: false, error: 'forbidden' });
+    }
     await db.query(
       `UPDATE transactions SET is_read = 1, read_by = ?, read_at = NOW() WHERE id = ? AND (is_read = 0 OR is_read IS NULL)`,
-      [username || '', req.params.id]);
+      [username, req.params.id]);
     res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 // INCOMING BOX — transactions awaiting my action (صندوق الوارد)
@@ -1854,6 +1876,7 @@ router.delete('/transactions/:id/force', guardDeveloper, SCHEMA.validateBody(SCH
     // Cascade delete inside a transaction so we either delete everything or nothing
     await db.withTransaction(async (conn) => {
       // 1. Delete child rows from tables we know exist
+      // V5-SEC: include `notifications` to avoid orphaned notifications + info leaks
       const childTables = [
         'transaction_steps_log',
         'transaction_replies',
@@ -1867,6 +1890,15 @@ router.delete('/transactions/:id/force', guardDeveloper, SCHEMA.validateBody(SCH
         } catch(e) {
           // Tolerate: table may not exist on this deploy
         }
+      }
+      // V5-SEC: cascade-clear notifications referencing this transaction (they leak the title)
+      try {
+        await conn.query(
+          `DELETE FROM notifications WHERE link_id = ? AND link_type = 'transaction'`, [txnId]);
+      } catch(e) {
+        try {
+          await conn.query(`DELETE FROM notifications WHERE related_id = ?`, [txnId]);
+        } catch(e2) { /* schema variant */ }
       }
       // 2. Detach payment_records (don't delete payments; just unlink to preserve GL)
       try {
@@ -2279,10 +2311,36 @@ router.post('/transactions/:id/attachments', async (req, res) => {
 
 router.get('/attachments/:id', async (req, res) => {
   try {
+    // V5-SEC: enforce permission — caller must be able to view the parent transaction.
+    // Previously: anyone authenticated could enumerate attachment IDs and download.
     const [rows] = await db.query('SELECT * FROM txn_attachments WHERE id = ?', [req.params.id]);
-    if (!rows.length) return res.json({ error: 'غير موجود' });
-    res.json({ id: rows[0].id, fileName: rows[0].file_name, mime: rows[0].mime_type, dataUrl: rows[0].data_url });
-  } catch(e) { res.json({ error: e.message }); }
+    if (!rows.length) return res.status(404).json({ error: 'غير موجود' });
+    const att = rows[0];
+    const username = (req.user && req.user.username) || req.query.username || req.headers['x-user'];
+    const isDev = !!(req.user && req.user.isDeveloper);
+    const isAdmin = req.user && req.user.role === 'admin';
+    if (!isDev && !isAdmin) {
+      // Load the parent txn + recipient list and check view permission.
+      const [tRows] = await db.query(
+        `SELECT t.id, t.created_by, t.current_assignee, t.recipient_username
+         FROM transactions t WHERE t.id = ?`, [att.transaction_id]);
+      if (!tRows.length) return res.status(404).json({ error: 'المعاملة غير موجودة' });
+      const t = tRows[0];
+      const [recRows] = await db.query(
+        `SELECT username FROM txn_recipients WHERE transaction_id = ?`, [att.transaction_id]);
+      const recUsernames = recRows.map(r => r.username);
+      const allowed = (
+        username && (
+          t.created_by === username ||
+          t.current_assignee === username ||
+          t.recipient_username === username ||
+          recUsernames.includes(username)
+        )
+      );
+      if (!allowed) return res.status(403).json({ error: 'غير مصرح بتنزيل هذا المرفق' });
+    }
+    res.json({ id: att.id, fileName: att.file_name, mime: att.mime_type, dataUrl: att.data_url });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2440,12 +2498,37 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
           let newStatus = 'approved', newStepId = null, newAssignee = '', newRoleId = null, newRoleName = '';
           // V4.5: if forwardTo is explicitly provided, route to that specific user
           // (bypasses the chain-defined next step — useful for "send to specific person")
+          // V5-SEC: validate (a) target exists, (b) target is ACTIVE, (c) caller has approve perm
+          //         on this stage. Previously, ANY reply with andAdvance+forwardTo bypassed
+          //         the can_approve guard.
           if (forwardTo) {
-            // Verify the target user exists
-            const [u] = await conn.query('SELECT username, COALESCE(full_name,username) AS name, position_id FROM users WHERE username = ? LIMIT 1', [forwardTo]);
+            // Verify the target user exists AND is active
+            const [u] = await conn.query(
+              `SELECT username, COALESCE(full_name,username) AS name, position_id, COALESCE(active,1) AS is_active
+               FROM users WHERE username = ? LIMIT 1`, [forwardTo]);
             if (!u.length) {
               await conn.rollback();
               return res.status(400).json({ success: false, error: 'المستلم المحدد غير موجود: ' + forwardTo });
+            }
+            if (!u[0].is_active) {
+              await conn.rollback();
+              return res.status(400).json({ success: false, error: 'المستلم المحدد غير نشط' });
+            }
+            // V5-SEC: enforce permission engine — caller must have approve OR forward right.
+            try {
+              const PERMS = require('../lib/transactionPermissions');
+              const callerUser = (req.user && req.user.username) ? req.user : { username: author, role: req.body.role || 'employee' };
+              const ctx = { txn, currentStep: step, actionLog: [] };
+              const canApprove = PERMS.can(callerUser, 'txn.action.approve', ctx);
+              const canForward = PERMS.can(callerUser, 'txn.action.forward', ctx);
+              if (!canApprove && !canForward) {
+                await conn.rollback();
+                return res.status(403).json({ success: false, error: 'لا تملك صلاحية تحويل المعاملة في هذه المرحلة' });
+              }
+            } catch(_e) {
+              // If perm engine missing, fail closed for safety
+              await conn.rollback();
+              return res.status(500).json({ success: false, error: 'تعذر التحقق من الصلاحية' });
             }
             newStatus = 'in_progress';
             newAssignee = u[0].username;

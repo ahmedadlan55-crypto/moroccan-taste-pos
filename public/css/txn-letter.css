@@ -273,12 +273,14 @@
   font-weight: 800;
   margin-inline-start: 8px;
 }
-.txn-letter-status-pill.s-draft        { background: #f1f5f9; color: #64748b; }
+/* V5-UX: each lifecycle state gets its OWN color so users can scan at a glance.
+   Previously pending + in_progress used the same yellow/amber. */
+.txn-letter-status-pill.s-draft        { background: #f1f5f9; color: #475569; border: 1px dashed #cbd5e1; }
 .txn-letter-status-pill.s-created      { background: #e0f2fe; color: #0369a1; }
-.txn-letter-status-pill.s-pending,
-.txn-letter-status-pill.s-in_progress  { background: #fef3c7; color: #b45309; }
+.txn-letter-status-pill.s-pending      { background: #fef3c7; color: #92400e; }
+.txn-letter-status-pill.s-in_progress  { background: #dbeafe; color: #1d4ed8; }
 .txn-letter-status-pill.s-replied      { background: #ede9fe; color: #6d28d9; }
-.txn-letter-status-pill.s-returned     { background: #fef2f2; color: #b91c1c; }
+.txn-letter-status-pill.s-returned     { background: #ffedd5; color: #9a3412; border: 1px solid #fdba74; }
 .txn-letter-status-pill.s-approved     { background: #dcfce7; color: #15803d; }
 .txn-letter-status-pill.s-rejected     { background: #fee2e2; color: #991b1b; }
-.txn-letter-status-pill.s-closed       { background: #f3f4f6; color: #4b5563; }
+.txn-letter-status-pill.s-closed       { background: #cbd5e1; color: #1e293b; }

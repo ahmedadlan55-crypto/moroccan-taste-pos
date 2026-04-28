@@ -5305,7 +5305,7 @@ function wfOpenNewTxnModal() {
         // ── Column B: الجهات الصادر إليها ──
         '<div class="wfnt-sec">' +
           '<div class="wfnt-sec-h"><i class="fas fa-paper-plane"></i> الجهات الصادر إليها</div>' +
-          '<input class="wfnt-input" id="wfnRcpFilter" placeholder="ابحث عن مستلم (اسم/كود)..." style="margin-bottom:8px;" oninput="_wfRenderRecipientTable()">' +
+          '<input class="wfnt-input" id="wfnRcpFilter" placeholder="ابحث عن مستلم (اسم/كود)..." style="margin-bottom:8px;" oninput="_wfDebRecipFilter(this.value)">' +
           '<div style="max-height:360px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;">' +
             '<table class="wfnt-tbl"><thead><tr>' +
               '<th style="width:36px;"><input type="checkbox" id="wfnRcpAll" onchange="_wfToggleAllRecipients(this.checked)"></th>' +
@@ -5401,6 +5401,12 @@ function _wfRtb(cmd) {
 }
 
 // ─── Recipients table ───
+// V5-PERF: 200ms debounce on recipient table filter — prevents repaint on each keystroke (was lagging 500+ users).
+window._wfDebRecipFilterTimer = null;
+window._wfDebRecipFilter = function(_val){
+  if (window._wfDebRecipFilterTimer) clearTimeout(window._wfDebRecipFilterTimer);
+  window._wfDebRecipFilterTimer = setTimeout(function(){ _wfRenderRecipientTable(); }, 200);
+};
 function _wfRenderRecipientTable() {
   var tbody = document.getElementById('wfnRcpBody');
   var countEl = document.getElementById('wfnRcpCount');
@@ -6036,9 +6042,18 @@ function wfTxnAction(id, action) {
 
   modal.el.querySelector('#wfActOk').onclick = function() {
     var note = (document.getElementById('wfActNote').value || '').trim();
-    if (requiredNote && !note) {
-      showToast('سبب الرفض مطلوب', true);
-      return;
+    // V5-UX: enforce minimum-length on rejection so single-character "a" is blocked.
+    if (requiredNote) {
+      if (!note) {
+        showToast('سبب الرفض مطلوب', true);
+        return;
+      }
+      if (note.length < 10) {
+        showToast('يجب أن يكون سبب الرفض على الأقل 10 أحرف لتوضيح القرار', true);
+        var ta = document.getElementById('wfActNote');
+        if (ta) { ta.style.borderColor = '#ef4444'; ta.focus(); }
+        return;
+      }
     }
     var fileInput = document.getElementById('wfActFile');
     _wfSubmitAction(modal, id, action, note, fileInput);
@@ -16484,24 +16499,51 @@ window.admPostReply = function(txnId, andAdvance) {
     if (optEl) optEl.remove();
   };
   var token = localStorage.getItem('pos_token');
+  if (!token) {
+    var optTokenMissing = document.getElementById(optimisticId);
+    if (optTokenMissing) optTokenMissing.remove();
+    reEnable();
+    showToast('انتهت الجلسة — أعد تسجيل الدخول', true);
+    return;
+  }
   // V4.5: read explicit recipient from picker
+  // V5-UX: validate against cached valid set populated when picker loaded.
   var fwdSel = document.getElementById('adm_replyForwardTo');
   var explicitForwardTo = (fwdSel && fwdSel.value) ? fwdSel.value : null;
+  if (explicitForwardTo && fwdSel && fwdSel._validUsernames && !fwdSel._validUsernames[explicitForwardTo]) {
+    var optInvalidR = document.getElementById(optimisticId);
+    if (optInvalidR) optInvalidR.remove();
+    reEnable();
+    showToast('المستلم المحدد غير صالح', true);
+    return;
+  }
+  // V5-UX: idempotency key prevents double-post on flaky networks
+  var idemKey = 'adm-reply-' + txnId + '-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
+  // V5-UX: AbortController so reply doesn't hang forever
+  var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  var timeoutHandle = ctrl ? setTimeout(function(){ ctrl.abort(); }, 90000) : null;
   var doSend = function(attachment, attachmentName, attachmentMime) {
     fetch('/api/workflow/transactions/' + txnId + '/replies', {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': idemKey
+      },
+      signal: ctrl ? ctrl.signal : undefined,
       body: JSON.stringify({
         replyText: text, username: currentUser,
         attachment: attachment || null,
         attachmentName: attachmentName || null,
         attachmentMime: attachmentMime || null,
         andAdvance: !!andAdvance,   // V4.2
-        forwardTo: explicitForwardTo // V4.5: user-picked recipient (overrides next-step)
+        forwardTo: explicitForwardTo, // V4.5: user-picked recipient (overrides next-step)
+        idempotencyKey: idemKey
       })
     })
       .then(function(r){return r.json();})
       .then(function(r) {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         if (r && r.success) {
           // Confirm optimistic reply: remove sending badge, add success
           var optEl = document.getElementById(optimisticId);
@@ -16513,6 +16555,10 @@ window.admPostReply = function(txnId, andAdvance) {
           if (fileInput) fileInput.value = '';
           var fileLabel = document.getElementById('adm_replyFileLabel');
           if (fileLabel) fileLabel.textContent = 'إرفاق ملف';
+          // V5-UX: ALWAYS reload replies after success — fixes stale-thread bug.
+          if (typeof admLoadReplies === 'function') {
+            try { admLoadReplies(txnId); } catch(_e){}
+          }
           if (r.advanceResult && r.advanceResult.newStatus) {
             showToast('✓ تم الرد + انتقلت المعاملة لـ ' + (r.advanceResult.newAssignee || r.advanceResult.newStatus));
             setTimeout(function(){ if (typeof wfLoadInbox === 'function') wfLoadInbox(); }, 200);
@@ -16530,11 +16576,16 @@ window.admPostReply = function(txnId, andAdvance) {
         }
       })
       .catch(function(err) {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         var optE = document.getElementById(optimisticId);
         if (optE) optE.remove();
         reEnable();
         console.error('[admPostReply] err:', err);
-        showToast('فشل الاتصال', true);
+        if (err && err.name === 'AbortError') {
+          showToast('⏱️ انتهت المهلة (90 ثانية) — جرب مرة أخرى', true);
+        } else {
+          showToast('فشل الاتصال: ' + (err && err.message || 'unknown'), true);
+        }
       });
   };
   if (fileInput && fileInput.files && fileInput.files[0]) {

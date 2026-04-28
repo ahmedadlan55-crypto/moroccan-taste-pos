@@ -784,10 +784,20 @@ function startLiveClock() {
 }
 
 function toast(msg, err) {
-  var t = document.getElementById('toast');
-  t.textContent = msg; t.className = 'toast show ' + (err ? 'err' : 'ok');
-  setTimeout(function() { t.className = 'toast'; }, 3500);
+  var tEl = document.getElementById('toast');
+  if (!tEl) return;
+  tEl.textContent = msg;
+  tEl.className = 'toast show ' + (err ? 'err' : 'ok');
+  // V5-A11y: announce errors loudly to screen readers (assertive),
+  // success messages politely (polite). role=status established in HTML.
+  tEl.setAttribute('role', err ? 'alert' : 'status');
+  tEl.setAttribute('aria-live', err ? 'assertive' : 'polite');
+  tEl.setAttribute('aria-atomic', 'true');
+  setTimeout(function() { tEl.className = 'toast'; }, 3500);
 }
+// V5-FIX: glassToast was referenced ~20 places but never defined → silent UI failure.
+// Alias to toast() so all error/success messages actually appear.
+window.glassToast = function(msg, err){ return toast(msg, err); };
 
 // ─── Login ───
 document.addEventListener('keydown', function(e) { if (e.key==='Enter' && document.getElementById('loginPage') && document.getElementById('loginPage').style.display !== 'none') doLogin(); });
@@ -1341,50 +1351,136 @@ function loadIncomingTxns() {
 }
 
 function empAct(id, action) {
-  // Open a proper modal (not browser prompt) with textarea + optional attachment
+  // V5-UX: rewritten for mobile-first — uses WoModal if available; falls back to inline.
   var required = (action === 'reject' || action === 'return');
+  var minLen = required ? 10 : 0;   // V5-UX: min length on rejection/return reasons
+  var maxLen = 1000;                 // V5-UX: cap to prevent runaway textareas
   var aClrs = { approve: '#10b981', reject: '#ef4444', return: '#f59e0b', close: '#6b7280' };
+  var aIconKind = { approve: 'success', reject: 'danger', return: 'warning', close: 'neutral' };
   var aIcons = { approve: 'fa-check-circle', reject: 'fa-times-circle', return: 'fa-undo', close: 'fa-lock' };
   var aTitles = { approve: t('txn.act.approve'), reject: t('txn.act.reject'), return: t('txn.act.return'), close: t('txn.act.close') };
   var labelKey = action === 'return' ? 'txn.returnReason' : (action === 'reject' ? 'txn.rejectReason' : 'txn.noteOptional');
 
+  // Build the textarea + counter HTML
+  var bodyHTML =
+    '<div style="margin-bottom:8px;">' +
+      '<label for="empActNote" style="font-size:13px;font-weight:700;color:#334155;display:block;margin-bottom:6px;">' +
+        t(labelKey) + (required?' <span style="color:#ef4444;" aria-hidden="true">*</span>':'') +
+      '</label>' +
+      '<textarea id="empActNote" rows="4" maxlength="'+maxLen+'" ' +
+        'aria-required="'+(required?'true':'false')+'" ' +
+        'style="width:100%;padding:12px;border:1.5px solid #e5e7eb;border-radius:12px;font-size:15px;font-family:inherit;direction:rtl;min-height:96px;max-height:30vh;resize:none;box-sizing:border-box;" ' +
+        'placeholder="'+t(required?'txn.notePlaceholderRequired':'txn.notePlaceholder')+'"></textarea>' +
+      '<div style="display:flex;justify-content:space-between;font-size:11px;color:#94a3b8;margin-top:4px;">' +
+        '<span id="empActErr" style="color:#ef4444;font-weight:700;display:none;"></span>' +
+        '<span id="empActCount">0 / '+maxLen+'</span>' +
+      '</div>' +
+    '</div>';
+
+  // Use WoModal if loaded (newer pattern)
+  if (typeof WoModal !== 'undefined' && WoModal.open) {
+    var m = WoModal.open({
+      icon: aIcons[action], iconKind: aIconKind[action],
+      title: aTitles[action], size: 'sm',
+      body: bodyHTML,
+      footer: '<button class="wom-btn" data-act="cancel">'+t('common.cancelBtn')+'</button>' +
+              '<button class="wom-btn" id="empActOkBtn" style="background:'+aClrs[action]+';color:#fff;border-color:'+aClrs[action]+';min-height:44px;min-width:100px;">'+aTitles[action]+'</button>'
+    });
+    _wireEmpAct(m.overlay, m.close, id, action, required, minLen, maxLen);
+    return;
+  }
+
+  // Fallback inline modal — still mobile-friendly
   var old = document.getElementById('empActionDlg'); if (old) old.remove();
   var div = document.createElement('div');
   div.id = 'empActionDlg';
-  div.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:14px;';
+  div.setAttribute('role','dialog');
+  div.setAttribute('aria-modal','true');
+  div.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.55);display:flex;align-items:flex-end;justify-content:center;padding:0;backdrop-filter:blur(4px);';
   div.innerHTML =
-    '<div style="background:#fff;border-radius:14px;padding:18px;width:100%;max-width:420px;box-shadow:0 20px 50px rgba(0,0,0,.2);">' +
-      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">' +
-        '<div style="width:38px;height:38px;border-radius:50%;background:'+aClrs[action]+'15;display:flex;align-items:center;justify-content:center;"><i class="fas '+aIcons[action]+'" style="color:'+aClrs[action]+';"></i></div>' +
-        '<h3 style="margin:0;font-size:15px;font-weight:800;">'+aTitles[action]+'</h3>' +
+    '<div role="document" style="background:#fff;border-radius:18px 18px 0 0;padding:20px;width:100%;max-width:520px;max-height:85dvh;overflow-y:auto;box-shadow:0 -8px 32px rgba(0,0,0,.25);direction:rtl;">' +
+      '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">' +
+        '<div style="width:44px;height:44px;border-radius:12px;background:'+aClrs[action]+'15;display:grid;place-items:center;flex-shrink:0;"><i class="fas '+aIcons[action]+'" style="color:'+aClrs[action]+';font-size:18px;"></i></div>' +
+        '<h3 style="margin:0;font-size:17px;font-weight:800;color:#0f172a;">'+aTitles[action]+'</h3>' +
+        '<button aria-label="'+t('common.cancelBtn')+'" id="empActCloseX" style="margin-inline-start:auto;width:36px;height:36px;border:0;background:transparent;font-size:22px;color:#64748b;cursor:pointer;border-radius:8px;">&times;</button>' +
       '</div>' +
-      '<div style="margin-bottom:10px;">' +
-        '<label style="font-size:12px;font-weight:700;color:#475569;display:block;margin-bottom:4px;">'+t(labelKey)+(required?' <span style="color:#ef4444;">*</span>':'')+'</label>' +
-        '<textarea id="empActNote" rows="4" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;resize:vertical;font-family:inherit;" placeholder="'+t(required?'txn.notePlaceholderRequired':'txn.notePlaceholder')+'"></textarea>' +
-      '</div>' +
-      '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
-        '<button id="empActCancelBtn" style="padding:10px 18px;border:2px solid #e5e7eb;background:#fff;color:#64748b;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;">'+t('common.cancelBtn')+'</button>' +
-        '<button id="empActOkBtn" style="padding:10px 22px;border:none;background:'+aClrs[action]+';color:#fff;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;">'+aTitles[action]+'</button>' +
+      bodyHTML +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px;">' +
+        '<button id="empActCancelBtn" style="padding:12px 22px;min-height:44px;min-width:88px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;border-radius:12px;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;">'+t('common.cancelBtn')+'</button>' +
+        '<button id="empActOkBtn" style="padding:12px 26px;min-height:44px;min-width:120px;border:none;background:'+aClrs[action]+';color:#fff;border-radius:12px;font-weight:800;font-size:14px;cursor:pointer;font-family:inherit;box-shadow:0 4px 12px '+aClrs[action]+'40;">'+aTitles[action]+'</button>' +
       '</div>' +
     '</div>';
+  // V5-UX: align-items:flex-end on mobile = bottom sheet; switch to center on >=600px
+  if (window.matchMedia && window.matchMedia('(min-width:600px)').matches) {
+    div.style.alignItems = 'center';
+    div.querySelector('div[role="document"]').style.borderRadius = '18px';
+    div.querySelector('div[role="document"]').style.maxWidth = '480px';
+  }
   document.body.appendChild(div);
-  div.addEventListener('click', function(e) { if (e.target === div) div.remove(); });
-  div.querySelector('#empActCancelBtn').onclick = function() { div.remove(); };
-  setTimeout(function(){ var ta=document.getElementById('empActNote'); if(ta) ta.focus(); }, 50);
+  _wireEmpAct(div, function(){ div.remove(); }, id, action, required, minLen, maxLen);
+}
 
-  div.querySelector('#empActOkBtn').onclick = function() {
-    var note = (document.getElementById('empActNote').value||'').trim();
-    if (required && !note) { toast(t('txn.reasonRequired'), true); return; }
-    div.remove();
-    var actionLabels = { approve: t('txn.act.approve'), reject: t('txn.act.reject'), return: t('txn.act.return') };
-    toast(actionLabels[action] || action);
-    callAPI('POST', '/workflow/transactions/' + id + '/action', {
-      action: action, username: currentUser, note: note
-    }, function(r) {
-      if (r && r.success) { toast(t('common.done')); loadIncomingTxns(); loadMyTransactions(); }
-      else toast(r ? r.error : t('txn.failed'), true);
+// Shared wiring used by both the WoModal path and the inline fallback
+function _wireEmpAct(host, closeFn, id, action, required, minLen, maxLen){
+  // Backdrop / X / Cancel
+  if (host.id === 'empActionDlg') {
+    host.addEventListener('click', function(e) { if (e.target === host) closeFn(); });
+    var x = host.querySelector('#empActCloseX'); if (x) x.onclick = closeFn;
+  }
+  var cancel = host.querySelector('#empActCancelBtn') || host.querySelector('[data-act="cancel"]');
+  if (cancel) cancel.onclick = closeFn;
+  var ta = host.querySelector('#empActNote');
+  var counter = host.querySelector('#empActCount');
+  var err = host.querySelector('#empActErr');
+  var ok = host.querySelector('#empActOkBtn');
+  if (ta && counter) {
+    ta.addEventListener('input', function(){
+      counter.textContent = ta.value.length + ' / ' + maxLen;
+      if (err && err.style.display === 'block') {
+        // clear error as user types
+        err.style.display = 'none';
+        ta.style.borderColor = '#e5e7eb';
+      }
     });
-  };
+  }
+  setTimeout(function(){ if (ta) ta.focus(); }, 80);
+  if (!ok) return;
+  ok.addEventListener('click', function(){
+    if (ok.disabled) return;
+    var note = ((ta && ta.value) || '').trim();
+    if (required && note.length < minLen) {
+      if (err) {
+        err.style.display = 'block';
+        err.textContent = (minLen > 0)
+          ? 'يجب أن يكون السبب على الأقل ' + minLen + ' أحرف'
+          : (typeof t === 'function' ? t('txn.reasonRequired') : 'السبب مطلوب');
+      }
+      if (ta) { ta.style.borderColor = '#ef4444'; ta.focus(); }
+      return;
+    }
+    // V5-UX: lock to prevent double-submit
+    ok.disabled = true;
+    if (ta) ta.disabled = true;
+    var original = ok.textContent;
+    ok.textContent = '... ' + original;
+    var idemKey = 'act-' + id + '-' + action + '-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
+    callAPI('POST', '/workflow/transactions/' + id + '/action', {
+      action: action, username: currentUser, note: note, idempotencyKey: idemKey
+    }, function(r) {
+      ok.disabled = false;
+      if (ta) ta.disabled = false;
+      ok.textContent = original;
+      if (r && r.success) {
+        closeFn();
+        toast((typeof t==='function'?t('common.done'):'تم'));
+        if (typeof loadIncomingTxns === 'function') loadIncomingTxns();
+        if (typeof loadMyTransactions === 'function') loadMyTransactions();
+      } else {
+        if (err) { err.style.display = 'block'; err.textContent = (r && r.error) || (typeof t==='function'?t('txn.failed'):'فشل'); }
+        else toast((r && r.error) || (typeof t==='function'?t('txn.failed'):'فشل'), true);
+      }
+    });
+  });
 }
 
 function empFwd(id) {
@@ -1781,6 +1877,46 @@ function _doTxn(data) {
   });
 }
 function _esc(s){ if (s==null) return ''; return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+// V5-SEC: minimal HTML sanitizer for contentHtml. Strips <script>, event handlers,
+// javascript: URLs, and any tag not in a safe whitelist. Use BEFORE injecting via innerHTML.
+function _sanitizeHtml(html){
+  if (!html) return '';
+  var d = document.createElement('div');
+  d.innerHTML = String(html);
+  var SAFE_TAGS = ['B','I','U','EM','STRONG','BR','P','DIV','SPAN','UL','OL','LI','A','H1','H2','H3','H4','H5','H6','TABLE','THEAD','TBODY','TR','TD','TH','BLOCKQUOTE','CODE','PRE','HR','SMALL','SUB','SUP'];
+  var walk = function(node){
+    var children = Array.prototype.slice.call(node.childNodes);
+    children.forEach(function(child){
+      if (child.nodeType === 1) {
+        if (SAFE_TAGS.indexOf(child.tagName) === -1) {
+          // Replace bad tag with its text content
+          var txt = document.createTextNode(child.textContent || '');
+          child.parentNode.replaceChild(txt, child);
+        } else {
+          // Strip ALL attributes except href on <a>
+          for (var i = child.attributes.length - 1; i >= 0; i--) {
+            var attr = child.attributes[i];
+            var keep = false;
+            if (child.tagName === 'A' && attr.name === 'href') {
+              var val = (attr.value || '').trim().toLowerCase();
+              if (val.startsWith('http://') || val.startsWith('https://') || val.startsWith('mailto:') || val.startsWith('/')) {
+                keep = true;
+              }
+            }
+            if (!keep) child.removeAttribute(attr.name);
+          }
+          if (child.tagName === 'A') {
+            child.setAttribute('rel', 'noopener noreferrer');
+            child.setAttribute('target', '_blank');
+          }
+          walk(child);
+        }
+      }
+    });
+  };
+  walk(d);
+  return d.innerHTML;
+}
 
 function viewMyTxn(id) {
   callAPI('GET', '/workflow/transactions/' + id, null, function(txn) {
@@ -1916,7 +2052,10 @@ function viewMyTxn(id) {
       '<i class="fas fa-file-lines" style="font-size:10px;margin-inline-end:4px;"></i>' + t('txn.contentLabel') +
     '</div>';
     if (txn.contentHtml && txn.contentHtml.trim()) {
-      h += '<div style="font-size:15px;color:#0f172a;line-height:1.95;font-weight:500;margin-top:6px;word-break:break-word;overflow-wrap:anywhere;">' + txn.contentHtml + '</div>';
+      // V5-SEC: sanitize contentHtml — only allow safe tags. Previously raw HTML
+      // from server was injected, opening XSS via SVG/script in user-submitted content.
+      var safeContent = _sanitizeHtml(txn.contentHtml);
+      h += '<div style="font-size:15px;color:#0f172a;line-height:1.95;font-weight:500;margin-top:6px;word-break:break-word;overflow-wrap:anywhere;">' + safeContent + '</div>';
     } else if (txn.description) {
       h += '<div style="font-size:15px;color:#0f172a;line-height:1.95;font-weight:500;white-space:pre-wrap;margin-top:6px;word-break:break-word;overflow-wrap:anywhere;">' + _esc(txn.description) + '</div>';
     } else {
@@ -1958,15 +2097,16 @@ function viewMyTxn(id) {
       h += '<div style="margin-top:12px;padding-top:12px;border-top:1px dashed ' + (isMyTurn ? '#86efac' : '#c4b5fd') + ';" id="emp_replyForm">' +
         (isMyTurn ? '<div style="font-size:11.5px;color:#15803d;font-weight:700;margin-bottom:8px;background:#dcfce7;padding:8px 12px;border-radius:8px;border:1px solid #86efac;"><i class="fas fa-info-circle"></i> اكتب ردك واختر المستلم (افتراضياً: الشخص التالي في السلسلة).</div>' : '') +
         '<textarea id="emp_replyText" placeholder="' + (isMyTurn ? 'اكتب ردك على المعاملة...' : t('txn.replyPlaceholder')).replace(/'/g,"\\'") + '" style="width:100%;min-height:80px;padding:12px;border:1.5px solid ' + (isMyTurn ? '#86efac' : '#c4b5fd') + ';border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;background:#fff;line-height:1.7;"></textarea>' +
-        // V4.5: recipient picker (only when user is current assignee — otherwise reply is just a comment)
+        // V4.5/V5-UX: recipient picker (only when user is current assignee — otherwise reply is just a comment)
+        // V5-UX: shows clear loading state, then populates with grouped optgroups.
         (isMyTurn ?
-          '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#f0fdf4;padding:8px 12px;border-radius:10px;border:1px solid #86efac;">' +
+          '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#f0fdf4;padding:10px 12px;border-radius:10px;border:1px solid #86efac;">' +
             '<i class="fas fa-paper-plane" style="color:#15803d;font-size:13px;"></i>' +
-            '<label style="font-size:11.5px;font-weight:800;color:#15803d;">إرسال إلى:</label>' +
-            '<select id="emp_replyForwardTo" style="flex:1;min-width:180px;padding:7px 10px;border:1.5px solid #86efac;border-radius:8px;font-family:inherit;font-size:12.5px;background:#fff;color:#0f172a;font-weight:600;">' +
-              '<option value="">▶ التالي في السلسلة (افتراضي)</option>' +
-              '<option value="" disabled>──── اختر مستخدم محدد ────</option>' +
+            '<label for="emp_replyForwardTo" style="font-size:11.5px;font-weight:800;color:#15803d;">إرسال إلى:</label>' +
+            '<select id="emp_replyForwardTo" aria-label="اختر المستلم" style="flex:1;min-width:180px;min-height:40px;padding:8px 10px;border:1.5px solid #86efac;border-radius:8px;font-family:inherit;font-size:13px;background:#fff;color:#0f172a;font-weight:600;">' +
+              '<option value="" data-loading="1">⏳ جاري تحميل المستلمين...</option>' +
             '</select>' +
+            '<span id="emp_replyRecipHint" style="width:100%;font-size:10.5px;color:#15803d;display:none;"><i class="fas fa-info-circle"></i> اتركه فارغاً ليُرسل تلقائياً للشخص التالي حسب سياسة الموافقة.</span>' +
           '</div>' : '') +
         '<div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap;">' +
           '<input type="file" id="emp_replyFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="display:none;" onchange="(function(i){var l=document.getElementById(\'emp_replyFileLabel\');if(l)l.textContent=i.files[0]?(i.files[0].name.length>20?i.files[0].name.substring(0,20)+\'...\':i.files[0].name):(window.t?t(\'txn.attachFile\'):\'إرفاق ملف\');})(this)">' +
@@ -1974,26 +2114,44 @@ function viewMyTxn(id) {
           '<button onclick="empPostReply(\''+id+'\',' + (isMyTurn?'true':'false') + ')" id="emp_replySendBtn" style="flex:1;padding:11px 16px;border-radius:10px;' + btnBg + 'color:#fff;border:none;font-weight:900;font-size:13px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 6px rgba(0,0,0,.12);">' + btnLabel + '</button>' +
         '</div>' +
       '</div>';
-      // V4.5: populate recipient picker with GROUPED relevant users (manager + subordinates + peers + higher-ups)
+      // V4.5/V5-UX: populate recipient picker with GROUPED relevant users.
+      // Loaded via callAPI immediately (no setTimeout race), with retry on failure
+      // and a valid set of usernames cached on the element for client-side validation.
       if (isMyTurn) {
-        setTimeout(function(){
+        var _doFetchRecipients = function(retry){
           callAPI('GET', '/workflow/routable-users?username=' + encodeURIComponent(currentUser), null, function(resp) {
             var sel = document.getElementById('emp_replyForwardTo');
-            if (!sel || !resp || !Array.isArray(resp.groups)) return;
-            // Build optgroups for clear hierarchy
+            var hint = document.getElementById('emp_replyRecipHint');
+            if (!sel) return;
+            if (!resp || !Array.isArray(resp.groups)) {
+              if (!retry) { setTimeout(function(){ _doFetchRecipients(true); }, 1500); return; }
+              sel.innerHTML = '<option value="">▶ التالي في السلسلة (افتراضي)</option>' +
+                '<option value="" disabled>⚠ تعذّر تحميل قائمة المستلمين</option>';
+              return;
+            }
+            var validUsernames = {};
             var html = '<option value="">▶ التالي في السلسلة (افتراضي)</option>';
+            var totalUsers = 0;
             resp.groups.forEach(function(g) {
               if (!g.users || !g.users.length) return;
               html += '<optgroup label="' + _esc(g.label) + ' (' + g.users.length + ')">';
               g.users.forEach(function(u) {
+                validUsernames[u.username] = true; totalUsers++;
                 var label = u.fullName + (u.position ? ' — ' + u.position : '') + (u.branch ? ' · ' + u.branch : '');
                 html += '<option value="' + _esc(u.username) + '">' + _esc(label) + '</option>';
               });
               html += '</optgroup>';
             });
             sel.innerHTML = html;
+            // Cache valid set for empPostReply validation
+            sel._validUsernames = validUsernames;
+            if (hint) hint.style.display = totalUsers > 0 ? 'block' : 'none';
+            if (totalUsers === 0) {
+              sel.innerHTML += '<option value="" disabled>لا يوجد مستلمون مؤهلون — سيُرسل للتالي افتراضياً</option>';
+            }
           });
-        }, 100);
+        };
+        _doFetchRecipients(false);
       }
     } else {
       h += '<div style="margin-top:12px;padding:12px;background:#f0f9ff;border:1.5px dashed #bae6fd;border-radius:10px;color:#0369a1;font-size:12px;font-weight:700;text-align:center;"><i class="fas fa-circle-check"></i> لقد رددت على هذه المرحلة من قبل — رد واحد لكل مرحلة</div>';
@@ -2289,9 +2447,17 @@ window.empPostReply = function(txnId, andAdvance) {
     if (optEl) optEl.remove();
   };
 
-  // V4.5: read explicit recipient (only present when user is current assignee)
+  // V4.5/V5-UX: read explicit recipient (only present when user is current assignee)
+  // V5-UX: validate against the cached valid usernames set populated when the picker loaded.
   var fwdSel = document.getElementById('emp_replyForwardTo');
   var explicitForwardTo = (fwdSel && fwdSel.value) ? fwdSel.value : null;
+  if (explicitForwardTo && fwdSel && fwdSel._validUsernames && !fwdSel._validUsernames[explicitForwardTo]) {
+    var optEl4 = document.getElementById(optimisticId);
+    if (optEl4) optEl4.remove();
+    reEnable();
+    glassToast('المستلم المحدد غير صالح — حدّد الصفحة وأعد المحاولة', true);
+    return;
+  }
   var doSend = function(attachment, attachmentName, attachmentMime) {
     // V4.5.2: AbortController with 90s timeout — never hang forever
     var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
@@ -2301,17 +2467,28 @@ window.empPostReply = function(txnId, andAdvance) {
     }, 90000) : null;
 
     // Update spinner text periodically so user knows it's still working
+    // V5-UX: include file-size hint when uploading large attachments
     var spinnerStart = Date.now();
+    var fileSizeHint = (hasFile && fileInput.files[0])
+      ? ' (' + Math.round(fileInput.files[0].size / 1024) + ' KB)' : '';
     var spinnerInterval = setInterval(function() {
       if (!btn) return;
       var secs = Math.floor((Date.now() - spinnerStart) / 1000);
-      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الإرسال... ' + secs + 'ث';
+      var hint = secs > 30 ? ' — قد يستغرق وقتاً بسبب المرفق' + fileSizeHint : '';
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الإرسال... ' + secs + 'ث' + hint;
     }, 1000);
     var clearSpinner = function() { clearInterval(spinnerInterval); if (timeoutHandle) clearTimeout(timeoutHandle); };
 
+    // V5-UX: idempotency key — guards against double-send on flaky networks.
+    // Server can dedupe by this key; even if not, the optimistic UI prevents UI dup.
+    var idemKey = 'reply-' + txnId + '-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
     fetch('/api/workflow/transactions/' + txnId + '/replies', {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': idemKey
+      },
       signal: controller ? controller.signal : undefined,
       body: JSON.stringify({
         replyText: text, username: currentUser,
@@ -2319,7 +2496,8 @@ window.empPostReply = function(txnId, andAdvance) {
         attachmentName: attachmentName || null,
         attachmentMime: attachmentMime || null,
         andAdvance: !!andAdvance,
-        forwardTo: explicitForwardTo
+        forwardTo: explicitForwardTo,
+        idempotencyKey: idemKey
       })
     })
       .then(function(r){return r.json();})

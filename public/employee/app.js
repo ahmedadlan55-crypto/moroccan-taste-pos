@@ -2110,10 +2110,30 @@ function viewMyTxn(id) {
       h += '<div class="td-action-btns"><button class="td-close-btn" style="flex:1;" onclick="closeTxnDetail()">إغلاق</button></div>';
     }
 
+    // V4.6 — Replace the body with the new formal letter-style view
+    // The 'h' variable above contains buttons + replies form which we keep,
+    // but the main content rendering switches to TxnLetterView.
+    var letterHtml = (window.TxnLetterView && typeof window.TxnLetterView.render === 'function')
+      ? window.TxnLetterView.render(txn)
+      : h;   // fallback to old design if shared script not loaded
+
+    // Extract just the action buttons + reply form from old `h` (everything after marker)
+    // Strategy: render letter view on top, then keep the original action buttons block at the bottom
+    var actionButtonsHtml = '';
+    var actionMatch = h.match(/<div class="td-action-btns"[\s\S]*$/);
+    if (actionMatch) actionButtonsHtml = actionMatch[0];
+
+    // Reply form must also be preserved (it has interactive elements + IDs)
+    var replyFormHtml = '';
+    var replyMatch = h.match(/<div[^>]*id="emp_replyBox"[\s\S]*?(?=<div class="td-action-btns"|$)/);
+    if (replyMatch) replyFormHtml = replyMatch[0];
+
     document.getElementById('txnDetailTitle').textContent = (txn.subject || txn.title || txn.txnNumber || '');
-    document.getElementById('txnDetailBody').innerHTML = h;
+    document.getElementById('txnDetailBody').innerHTML =
+      letterHtml +
+      replyFormHtml +
+      actionButtonsHtml;
     document.getElementById('txnDetailModal').classList.add('show');
-    // V3: Lazy-load replies thread after modal renders
     setTimeout(function(){ try { empLoadReplies(id); } catch(e){ console.warn('replies load err:', e); } }, 50);
   });
 }

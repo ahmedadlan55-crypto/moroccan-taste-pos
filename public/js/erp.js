@@ -5691,21 +5691,20 @@ function wfViewTxn(id) {
       recipientsPanel += '</div></div>';
     }
 
-    // ─── ASSEMBLE: two-column layout ───
-    var html = headerStrip +
-      returnedBanner +
-      '<div class="wo-txn-view">' +
-        '<div class="wo-txn-main">' +
-          heroCard +
-          (initialAttach ? initialAttach : '') +
-          (timeline ? timeline : '') +
-        '</div>' +
-        '<div class="wo-txn-side">' +
-          sideMeta +
-          (workflowVertical ? workflowVertical : '') +
-          (recipientsPanel ? recipientsPanel : '') +
-        '</div>' +
-      '</div>';
+    // V4.6 — NEW: Letter-style formal Arabic correspondence layout (per user request)
+    // Falls back to old two-column view if TxnLetterView not loaded.
+    var html;
+    if (window.TxnLetterView && typeof window.TxnLetterView.render === 'function') {
+      html = returnedBanner + window.TxnLetterView.render(txn);
+    } else {
+      // legacy fallback (kept for safety)
+      html = headerStrip +
+        returnedBanner +
+        '<div class="wo-txn-view">' +
+          '<div class="wo-txn-main">' + heroCard + (initialAttach||'') + (timeline||'') + '</div>' +
+          '<div class="wo-txn-side">' + sideMeta + (workflowVertical||'') + (recipientsPanel||'') + '</div>' +
+        '</div>';
+    }
 
     // V3: CEO badge — admin view (above replies)
     if (txn.passedCeoAt) {

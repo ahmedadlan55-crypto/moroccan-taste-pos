@@ -2645,11 +2645,12 @@ router.get('/routable-users', async (req, res) => {
     if (!username) return res.json({ groups: [] });
 
     // 1. Get ALL active users (admin + employees) — single source of truth
+    // V4.6.1: column is `active` not `is_active` — use COALESCE to be tolerant
     const [allUsers] = await db.query(
       `SELECT u.username, u.role, u.full_name AS user_full_name
          FROM users u
         WHERE u.username IS NOT NULL AND u.username != ?
-          AND (u.is_active IS NULL OR u.is_active = 1)`,
+          AND COALESCE(u.active, 1) = 1`,
       [username]);
 
     if (!allUsers.length) return res.json({ groups: [], totalUsers: 0 });

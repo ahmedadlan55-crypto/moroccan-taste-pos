@@ -804,109 +804,15 @@ async function runMigrations() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
-  // V4.13 — Triggers for counter auto-sync
-  // Drop old triggers if present (idempotent)
+  // V4.13/V4.6.2 — Counter triggers REMOVED to fix collation conflict.
+  // The old triggers compared user_inbox_counters.username (utf8mb4_unicode_ci)
+  // with transactions.current_assignee (utf8mb4_0900_ai_ci on Railway), throwing
+  // "Illegal mix of collations" on every UPDATE — silently failing
+  // reply+andAdvance, return, forward, and any workflow transition.
+  // Counters now compute live in routes/counters.js (no triggers needed).
   try { await db.query("DROP TRIGGER IF EXISTS trg_txn_counter_after_insert"); } catch(e) {}
   try { await db.query("DROP TRIGGER IF EXISTS trg_txn_counter_after_update"); } catch(e) {}
   try { await db.query("DROP TRIGGER IF EXISTS trg_txn_counter_after_delete"); } catch(e) {}
-
-  try {
-    await db.query(`
-      CREATE TRIGGER trg_txn_counter_after_insert
-      AFTER INSERT ON transactions
-      FOR EACH ROW BEGIN
-        IF NEW.current_assignee IS NOT NULL AND NEW.current_assignee != '' THEN
-          INSERT INTO user_inbox_counters (username, pending_action, total_inbox)
-            VALUES (NEW.current_assignee, 1, 1)
-          ON DUPLICATE KEY UPDATE
-            pending_action = pending_action + 1,
-            total_inbox = total_inbox + 1;
-        END IF;
-        IF NEW.created_by IS NOT NULL AND NEW.created_by != '' THEN
-          INSERT INTO user_inbox_counters (username, awaiting_others, total_outbox)
-            VALUES (NEW.created_by,
-                    CASE WHEN NEW.status IN ('pending','created','in_progress','replied') THEN 1 ELSE 0 END,
-                    1)
-          ON DUPLICATE KEY UPDATE
-            awaiting_others = awaiting_others + (CASE WHEN NEW.status IN ('pending','created','in_progress','replied') THEN 1 ELSE 0 END),
-            total_outbox = total_outbox + 1;
-        END IF;
-      END
-    `);
-  } catch(e) { console.warn('[trigger] insert:', e.message); }
-
-  try {
-    await db.query(`
-      CREATE TRIGGER trg_txn_counter_after_update
-      AFTER UPDATE ON transactions
-      FOR EACH ROW BEGIN
-        -- Old assignee loses pending_action
-        IF OLD.current_assignee IS NOT NULL AND OLD.current_assignee != ''
-           AND (OLD.current_assignee != NEW.current_assignee OR OLD.status != NEW.status) THEN
-          UPDATE user_inbox_counters
-            SET pending_action = GREATEST(0, pending_action - 1)
-            WHERE username = OLD.current_assignee
-              AND OLD.status IN ('pending','created','in_progress','replied');
-        END IF;
-        -- New assignee gains pending_action
-        IF NEW.current_assignee IS NOT NULL AND NEW.current_assignee != ''
-           AND (OLD.current_assignee != NEW.current_assignee OR OLD.status != NEW.status)
-           AND NEW.status IN ('pending','created','in_progress','replied') THEN
-          INSERT INTO user_inbox_counters (username, pending_action)
-            VALUES (NEW.current_assignee, 1)
-          ON DUPLICATE KEY UPDATE pending_action = pending_action + 1;
-        END IF;
-        -- Returned-to-me counter
-        IF OLD.status != 'returned' AND NEW.status = 'returned' AND NEW.created_by IS NOT NULL THEN
-          INSERT INTO user_inbox_counters (username, returned_to_me)
-            VALUES (NEW.created_by, 1)
-          ON DUPLICATE KEY UPDATE returned_to_me = returned_to_me + 1;
-        END IF;
-        -- Returned cleared (resubmitted)
-        IF OLD.status = 'returned' AND NEW.status != 'returned' AND OLD.created_by IS NOT NULL THEN
-          UPDATE user_inbox_counters
-            SET returned_to_me = GREATEST(0, returned_to_me - 1)
-            WHERE username = OLD.created_by;
-        END IF;
-        -- Awaiting_others adjustments for creator
-        IF OLD.created_by = NEW.created_by AND OLD.created_by IS NOT NULL THEN
-          IF OLD.status IN ('pending','created','in_progress','replied')
-             AND NEW.status NOT IN ('pending','created','in_progress','replied') THEN
-            UPDATE user_inbox_counters
-              SET awaiting_others = GREATEST(0, awaiting_others - 1)
-              WHERE username = OLD.created_by;
-          ELSEIF OLD.status NOT IN ('pending','created','in_progress','replied')
-                 AND NEW.status IN ('pending','created','in_progress','replied') THEN
-            UPDATE user_inbox_counters
-              SET awaiting_others = awaiting_others + 1
-              WHERE username = NEW.created_by;
-          END IF;
-        END IF;
-      END
-    `);
-  } catch(e) { console.warn('[trigger] update:', e.message); }
-
-  try {
-    await db.query(`
-      CREATE TRIGGER trg_txn_counter_after_delete
-      AFTER DELETE ON transactions
-      FOR EACH ROW BEGIN
-        IF OLD.current_assignee IS NOT NULL AND OLD.current_assignee != '' THEN
-          UPDATE user_inbox_counters
-            SET pending_action = GREATEST(0, pending_action - (CASE WHEN OLD.status IN ('pending','created','in_progress','replied') THEN 1 ELSE 0 END)),
-                total_inbox = GREATEST(0, total_inbox - 1)
-            WHERE username = OLD.current_assignee;
-        END IF;
-        IF OLD.created_by IS NOT NULL AND OLD.created_by != '' THEN
-          UPDATE user_inbox_counters
-            SET awaiting_others = GREATEST(0, awaiting_others - (CASE WHEN OLD.status IN ('pending','created','in_progress','replied') THEN 1 ELSE 0 END)),
-                total_outbox = GREATEST(0, total_outbox - 1),
-                returned_to_me = GREATEST(0, returned_to_me - (CASE WHEN OLD.status = 'returned' THEN 1 ELSE 0 END))
-            WHERE username = OLD.created_by;
-        END IF;
-      END
-    `);
-  } catch(e) { console.warn('[trigger] delete:', e.message); }
 
   // V4.15 — Soft-delete pattern (transactions can be archived without losing data)
   await addColumnIfMissing('transactions', 'deleted_at', "DATETIME DEFAULT NULL");

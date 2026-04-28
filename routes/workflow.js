@@ -2375,31 +2375,11 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
       }
     } catch(e) {}
 
-    // V4.5.2: Attachment storage strategy:
-    // - If S3 configured AND attachment is a data URL → try S3 (with 30s timeout)
-    // - On any failure → fall back to inline base64 storage
-    // - Errors are logged + returned in `s3Warning` field so frontend knows
-    let finalAttachment = attachment || null;
+    // V4.5.3: ALWAYS store inline. S3 upload (if enabled) runs ASYNC in
+    // background AFTER response sent. User never waits for S3.
+    // This was the root cause of "reply hangs forever" complaints.
+    const finalAttachment = attachment || null;
     let s3Warning = null;
-    if (finalAttachment && S3.ENABLED && typeof finalAttachment === 'string' && finalAttachment.startsWith('data:')) {
-      try {
-        const uploadStart = Date.now();
-        const uploaded = await S3.maybeUpload(finalAttachment, attachmentName || ('reply-' + Date.now()), attachmentMime);
-        const uploadMs = Date.now() - uploadStart;
-        if (uploaded !== finalAttachment) {
-          finalAttachment = uploaded;
-          console.log('[s3 reply attach] uploaded in ' + uploadMs + 'ms → ' + uploaded);
-        } else {
-          // maybeUpload returned the original = upload failed silently
-          s3Warning = 'S3 upload returned original (failed silently); using inline storage';
-          console.warn('[s3 reply attach]', s3Warning);
-        }
-      } catch (e) {
-        s3Warning = 'S3 upload failed: ' + e.message + ' — fell back to inline storage';
-        console.warn('[s3 reply attach]', s3Warning);
-        // finalAttachment already has the data URL → falls back to inline
-      }
-    }
     const id = 'REP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
     try {
       await db.query(
@@ -2569,6 +2549,23 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
     }
 
     res.json({ success: true, id, authorName, authorRole, authorPosition, advanceResult, advanceError, s3Warning });
+
+    // V4.5.3: BACKGROUND S3 upload (fire-and-forget, after response sent)
+    // Reply is already in DB with inline data URL. This optimizes storage later.
+    if (finalAttachment && S3.ENABLED && typeof finalAttachment === 'string' && finalAttachment.startsWith('data:')) {
+      setImmediate(async () => {
+        try {
+          const uploaded = await S3.maybeUpload(finalAttachment, attachmentName || ('reply-' + id), attachmentMime);
+          if (uploaded && uploaded !== finalAttachment && uploaded.startsWith('http')) {
+            // Replace inline base64 with the S3 URL
+            await db.query('UPDATE transaction_replies SET attachment = ? WHERE id = ?', [uploaded, id]);
+            console.log('[s3 bg] reply ' + id + ' attachment uploaded + DB updated');
+          }
+        } catch (e) {
+          console.warn('[s3 bg] reply ' + id + ' upload failed (inline kept):', e.message);
+        }
+      });
+    }
   } catch(e) {
     res.json({ success: false, error: e.message });
   }

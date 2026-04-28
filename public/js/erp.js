@@ -7762,24 +7762,50 @@ function wfEditOutboxTxn(id) {
         '</div>';
     }
 
+    // V4.4: For returned txns, expose ALL editable fields (type, recipient, branch, dept, account, cost-center)
+    var fullEditNote = isReturned
+      ? '<div style="background:linear-gradient(135deg,#fef2f2,#fff);border:2px solid #dc2626;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#991b1b;font-weight:700;"><i class="fas fa-unlock"></i> وضع التعديل الكامل: يمكنك تعديل كل الحقول بما فيها النوع والمستلم.</div>'
+      : '';
+
+    // Build select options for type + recipient (use cached lists if available)
+    var typeOptions = '';
+    if (Array.isArray(window._wfTxnTypes) && window._wfTxnTypes.length) {
+      typeOptions = window._wfTxnTypes.map(function(tt){
+        return '<option value="'+esc(tt.id)+'"'+(tt.id===txn.typeId?' selected':'')+'>'+esc(tt.name||tt.id)+'</option>';
+      }).join('');
+    } else if (txn.typeId) {
+      typeOptions = '<option value="'+esc(txn.typeId)+'" selected>'+esc(txn.typeName||txn.typeId)+'</option>';
+    }
+
     // Form
     document.getElementById('erpModalBody').innerHTML =
-      returnContext +
+      returnContext + fullEditNote +
       '<div class="form-row"><label>الموضوع *</label><input class="form-control wo-input" id="wfEdTitle" value="'+esc(txn.subject||txn.title||'')+'" style="font-size:14px;font-weight:700;"></div>' +
       '<div class="form-row"><label>المحتوى التفصيلي</label>' +
         '<textarea class="form-control wo-textarea" id="wfEdContentHtml" rows="8" style="font-family:inherit;font-size:13px;line-height:1.8;">'+esc(txn.contentHtml || txn.description || '')+'</textarea>' +
-        '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">يدعم النص العادي وHTML بسيط (<b>، <i>، <ul>، <li>، فواصل أسطر).</div>' +
       '</div>' +
+      // V4.4: Type + Recipient row (unlocked only when returned)
+      (isReturned ?
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+          '<div class="form-row"><label>نوع المعاملة</label><select class="form-control wo-input" id="wfEdType" style="border-color:#dc2626;background:#fff;">'+typeOptions+'</select></div>' +
+          '<div class="form-row"><label>المستلم (username)</label><input class="form-control wo-input" id="wfEdRecipient" value="'+esc(txn.recipientUsername||txn.currentAssignee||'')+'" style="border-color:#dc2626;" placeholder="اسم المستخدم"></div>' +
+        '</div>' : '') +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>المبلغ</label><input type="number" class="form-control wo-input" id="wfEdAmount" step="0.01" min="0" value="'+Number(txn.amount||0)+'"></div>' +
         '<div class="form-row"><label>الأهمية</label><select class="form-control wo-input" id="wfEdImp">' +
           ['low','medium','high','critical'].map(function(i){return '<option value="'+i+'"'+(i===(txn.importance||'medium')?' selected':'')+'>'+(window._wfImpLabels && window._wfImpLabels[i]||i)+'</option>';}).join('') +
         '</select></div>' +
       '</div>' +
+      // V4.4: Account + Cost Center row (unlocked only when returned)
+      (isReturned ?
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+          '<div class="form-row"><label>الحساب المحاسبي</label><input class="form-control wo-input" id="wfEdAccountName" value="'+esc(txn.accountName||'')+'" placeholder="اسم الحساب" style="border-color:#dc2626;"></div>' +
+          '<div class="form-row"><label>مركز التكلفة</label><input class="form-control wo-input" id="wfEdCostCenter" value="'+esc(txn.costCenterName||'')+'" placeholder="اسم مركز التكلفة" style="border-color:#dc2626;"></div>' +
+        '</div>' : '') +
       '<div class="form-row" style="margin-top:8px;"><label>مرفق جديد <span style="color:#94a3b8;font-weight:600;">(اختياري — يستبدل المرفق السابق)</span></label>' +
         '<input type="file" class="form-control wo-input" id="wfEdFile" accept=".pdf,.jpg,.jpeg,.png">' +
       '</div>' +
-      (isReturned ? '<div style="margin-top:12px;padding:10px 14px;background:#eff6ff;border:1px dashed #bfdbfe;border-radius:8px;font-size:12px;color:#1e3a8a;"><i class="fas fa-info-circle"></i> عند الحفظ ستُعرض لك خياران: <b>حفظ كمسودة</b> (تبقى مرجعة) أو <b>حفظ وإعادة الإرسال</b> (تعود لمراجعة الجهة التي أرجعتها).</div>' : '');
+      (isReturned ? '<div style="margin-top:12px;padding:10px 14px;background:#eff6ff;border:1px dashed #bfdbfe;border-radius:8px;font-size:12px;color:#1e3a8a;"><i class="fas fa-info-circle"></i> عند الحفظ ستُعرض لك خياران: <b>حفظ كمسودة</b> أو <b>حفظ وإعادة الإرسال</b>.</div>' : '');
 
     document.getElementById('erpModalSaveBtn').textContent = isReturned ? 'حفظ المعاملة' : 'حفظ التعديلات';
     document.getElementById('erpModalSaveBtn').onclick = function() {
@@ -7789,12 +7815,23 @@ function wfEditOutboxTxn(id) {
         var payload = {
           title: document.getElementById('wfEdTitle').value,
           contentHtml: document.getElementById('wfEdContentHtml').value,
-          description: document.getElementById('wfEdContentHtml').value, // keep description in sync
+          description: document.getElementById('wfEdContentHtml').value,
           amount: Number(document.getElementById('wfEdAmount').value)||0,
           importance: document.getElementById('wfEdImp').value,
           username: currentUser
         };
         if (attachment) payload.attachment = attachment;
+        // V4.4: full-edit fields (only present in DOM when isReturned is true)
+        if (isReturned) {
+          var typeEl = document.getElementById('wfEdType');
+          var recEl = document.getElementById('wfEdRecipient');
+          var accEl = document.getElementById('wfEdAccountName');
+          var ccEl = document.getElementById('wfEdCostCenter');
+          if (typeEl && typeEl.value) payload.transactionTypeId = typeEl.value;
+          if (recEl) payload.recipientUsername = (recEl.value || '').trim();
+          if (accEl) payload.accountName = (accEl.value || '').trim();
+          if (ccEl) payload.costCenterName = (ccEl.value || '').trim();
+        }
         window._apiBridge.withSuccessHandler(function(r) {
           loader(false);
           if (!r.success) { showToast(r.error || 'فشل الحفظ', true); return; }

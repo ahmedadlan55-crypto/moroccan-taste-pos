@@ -1607,27 +1607,40 @@ router.get('/transactions/:id', async (req, res) => {
 });
 
 // Edit (creator only).
-// V3.1: ALSO allowed when status='returned' (the whole point of returning is to let creator fix it).
-// Blocked once anyone else has approved/rejected/closed (status not in draft/pending/returned).
+// V4.4: when status='returned', creator can edit EVERY field (type, recipient,
+// branch, dept, account, cost center, brand) — the whole point of returning is
+// to let creator FIX the issue, including wrong type/recipient mistakes.
+// For draft + pending(no others acted): only basic fields editable.
 router.put('/transactions/:id', async (req, res) => {
   try {
-    const { title, description, contentHtml, amount, importance, username, attachment } = req.body;
+    const {
+      title, description, contentHtml, amount, importance, username, attachment,
+      // V4.4: full-edit fields (only applied when status='returned' or 'draft')
+      transactionTypeId, recipientUsername, branchId, deptId, brandId,
+      accountId, accountCode, accountName, costCenterId, costCenterName,
+      contentSecrecy, attachmentsSecrecy, hijriDate, slaHours, dueDate,
+      recipients   // optional: full replacement of multi-recipients list
+    } = req.body;
+
     const [txns] = await db.query('SELECT * FROM transactions WHERE id = ?', [req.params.id]);
     if (!txns.length) return res.json({ success: false, error: 'المعاملة غير موجودة' });
     const txn = txns[0];
     if (txn.created_by !== username) return res.json({ success: false, error: 'لا يمكن التعديل — لست المنشئ' });
-    // V3.1: editing allowed in three states: draft, pending (no one acted yet), or returned (sent back to fix)
+    // V4.4: editing allowed in: draft (always), returned (whole point), pending (only if no others acted)
     const editableStatuses = ['draft', 'pending', 'returned'];
     if (!editableStatuses.includes(txn.status)) {
       return res.json({ success: false, error: 'لا يمكن التعديل — المعاملة قيد التنفيذ أو منتهية' });
     }
-    // For 'pending' (not returned), still block if non-creator already acted
     if (txn.status === 'pending') {
       const [logs] = await db.query("SELECT COUNT(*) AS cnt FROM transaction_steps_log WHERE transaction_id = ? AND action_type != 'create' AND action_by != ?", [req.params.id, username]);
       if (logs[0].cnt > 0) return res.json({ success: false, error: 'لا يمكن التعديل — تم التصرف في المعاملة من جهة أخرى' });
     }
 
+    // V4.4: "full edit" mode is allowed for draft + returned (NOT pending — too risky)
+    const fullEditAllowed = (txn.status === 'draft' || txn.status === 'returned');
+
     const sets = []; const params = [];
+    // ─── Always-editable fields (basic) ───
     if (title !== undefined) { sets.push('title=?'); params.push(title); sets.push('subject=?'); params.push(title); }
     if (description !== undefined) { sets.push('description=?'); params.push(description); }
     if (contentHtml !== undefined) { sets.push('content_html=?'); params.push(contentHtml); }
@@ -1638,17 +1651,70 @@ router.put('/transactions/:id', async (req, res) => {
     if (attachment !== undefined && typeof attachment === 'string' && attachment.startsWith('data:')) {
       sets.push('attachment=?'); params.push(attachment);
     }
-    if (!sets.length) return res.json({ success: false, error: 'لا تغييرات' });
-    params.push(req.params.id);
-    await db.query(`UPDATE transactions SET ${sets.join(', ')} WHERE id = ?`, params);
 
-    // Log edit (use distinct note so timeline shows it)
-    const editNote = txn.status === 'returned' ? 'تم تعديل المعاملة استجابة للإرجاع' : 'تم تعديل بيانات المعاملة';
+    // ─── V4.4: Full-edit fields (only when draft/returned) ───
+    if (fullEditAllowed) {
+      if (transactionTypeId !== undefined) { sets.push('transaction_type_id=?'); params.push(transactionTypeId); }
+      if (recipientUsername !== undefined) { sets.push('recipient_username=?'); params.push(recipientUsername || ''); }
+      if (branchId !== undefined) { sets.push('branch_id=?'); params.push(branchId || null); }
+      if (deptId !== undefined) { sets.push('dept_id=?'); params.push(deptId || null); }
+      if (brandId !== undefined) { sets.push('brand_id=?'); params.push(brandId || null); }
+      if (accountId !== undefined) { sets.push('account_id=?'); params.push(accountId || null); }
+      if (accountCode !== undefined) { sets.push('account_code=?'); params.push(accountCode || ''); }
+      if (accountName !== undefined) { sets.push('account_name=?'); params.push(accountName || ''); }
+      if (costCenterId !== undefined) { sets.push('cost_center_id=?'); params.push(costCenterId || null); }
+      if (costCenterName !== undefined) { sets.push('cost_center_name=?'); params.push(costCenterName || ''); }
+      if (contentSecrecy !== undefined && ['normal','confidential','secret','top_secret'].includes(contentSecrecy)) {
+        sets.push('content_secrecy=?'); params.push(contentSecrecy);
+      }
+      if (attachmentsSecrecy !== undefined && ['normal','confidential','secret','top_secret'].includes(attachmentsSecrecy)) {
+        sets.push('attachments_secrecy=?'); params.push(attachmentsSecrecy);
+      }
+      if (hijriDate !== undefined) { sets.push('hijri_date=?'); params.push(hijriDate || ''); }
+      if (slaHours !== undefined) { sets.push('sla_hours=?'); params.push(Number(slaHours) || 72); }
+      if (dueDate !== undefined) { sets.push('due_date=?'); params.push(dueDate || null); }
+    }
+
+    if (!sets.length && !Array.isArray(recipients)) {
+      return res.json({ success: false, error: 'لا تغييرات' });
+    }
+
+    // V4.4: bump version even on edit (for optimistic concurrency)
+    if (sets.length) {
+      sets.push('version=version+1');
+      sets.push('updated_at=NOW()');
+      params.push(req.params.id);
+      await db.query(`UPDATE transactions SET ${sets.join(', ')} WHERE id = ?`, params);
+    }
+
+    // V4.4: Replace recipients list (full-edit only)
+    if (fullEditAllowed && Array.isArray(recipients)) {
+      try {
+        await db.query('DELETE FROM txn_recipients WHERE transaction_id = ?', [req.params.id]);
+        for (const r of recipients) {
+          if (!r || (!r.username && !r.recipientUsername)) continue;
+          await db.query(
+            `INSERT INTO txn_recipients
+              (id, transaction_id, recipient_type, recipient_username, recipient_code, recipient_name, needs_response)
+             VALUES (?,?,?,?,?,?,?)`,
+            ['REC-' + Date.now() + '-' + Math.random().toString(36).slice(2,4),
+             req.params.id, r.type || 'user',
+             r.username || r.recipientUsername || '',
+             r.code || '', r.name || '',
+             r.needsResponse ? 1 : 0]);
+        }
+      } catch(e) { console.warn('[edit] recipients replace failed:', e.message); }
+    }
+
+    // Log edit
+    const editNote = txn.status === 'returned'
+      ? 'تم تعديل المعاملة استجابة للإرجاع' + (fullEditAllowed ? ' (تعديل كامل)' : '')
+      : 'تم تعديل بيانات المعاملة';
     await db.query(
       'INSERT INTO transaction_steps_log (id, transaction_id, action_by, action_type, action_note) VALUES (?,?,?,?,?)',
       ['LOG-' + Date.now() + '-' + Math.random().toString(36).substr(2,4), req.params.id, username||'', 'create', editNote]);
 
-    res.json({ success: true, status: txn.status });
+    res.json({ success: true, status: txn.status, fullEditAllowed });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 

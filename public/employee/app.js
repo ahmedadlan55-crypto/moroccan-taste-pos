@@ -1485,58 +1485,102 @@ function loadMyTransactions() {
 // ─── Edit a sent transaction using the redesigned modal in edit mode ───
 window._editingTxnId = null;
 function empEditTxn(id) {
-  // First fetch the existing transaction to know what to prefill
   callAPI('GET', '/workflow/transactions/'+id, null, function(txn) {
     if (!txn || txn.error) return toast(t('txn.notFound') || 'المعاملة غير موجودة', true);
-    // Open the standard modal first (loads all dropdown data)
     openTxnModal();
-    // Then prefill it after a short tick so the dropdowns have populated
     window._editingTxnId = id;
+    // V4.4: full-edit mode for returned transactions — unlock type + recipient + all fields
+    var isReturned = (txn.status === 'returned');
+    window._editingFullMode = isReturned;
     setTimeout(function(){
-      // Switch the modal title + button label
       var titleSpan = document.querySelector('#txnModal .modal-h span');
-      if (titleSpan) titleSpan.innerHTML = '<i class="fas fa-edit" style="color:#1e40af;"></i> تعديل المعاملة';
+      if (titleSpan) {
+        titleSpan.innerHTML = isReturned
+          ? '<i class="fas fa-rotate-left" style="color:#dc2626;"></i> تعديل المعاملة المرجعة (تعديل كامل)'
+          : '<i class="fas fa-edit" style="color:#1e40af;"></i> تعديل المعاملة';
+      }
       var sendBtn = document.querySelector('#txnModal button.btn-m[onclick="submitTxn()"]');
       if (sendBtn) {
-        sendBtn.innerHTML = '<i class="fas fa-save"></i> حفظ التعديلات';
+        sendBtn.innerHTML = isReturned
+          ? '<i class="fas fa-paper-plane"></i> حفظ وإعادة الإرسال'
+          : '<i class="fas fa-save"></i> حفظ التعديلات';
         sendBtn.setAttribute('onclick', 'submitTxnEdit()');
-        sendBtn.style.background = '#1e40af';
+        sendBtn.style.background = isReturned
+          ? 'linear-gradient(135deg,#dc2626,#b91c1c)'
+          : '#1e40af';
       }
-      // Hide draft banner — we are editing a real txn, not restoring a draft
       var banner = document.getElementById('txnDraftBanner');
       if (banner) banner.style.display = 'none';
-      // Populate the form fields
+
+      // V4.4: prepend a banner explaining FULL EDIT mode + the return reason
+      if (isReturned) {
+        var modalC = document.querySelector('#txnModal .modal-c');
+        var existingNotice = document.getElementById('returnedFullEditNotice');
+        if (existingNotice) existingNotice.remove();
+        if (modalC) {
+          var notice = document.createElement('div');
+          notice.id = 'returnedFullEditNotice';
+          notice.style.cssText = 'background:linear-gradient(135deg,#fef2f2,#fff);border:2px solid #dc2626;border-radius:10px;padding:12px;margin:0 0 14px;';
+          var retDt = '';
+          try { if (txn.returnedAt) retDt = new Date(txn.returnedAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(_){}
+          notice.innerHTML =
+            '<div style="display:flex;gap:10px;align-items:flex-start;">' +
+              '<i class="fas fa-rotate-left" style="color:#dc2626;font-size:18px;margin-top:2px;"></i>' +
+              '<div style="flex:1;">' +
+                '<div style="font-weight:900;font-size:13px;color:#991b1b;margin-bottom:4px;">معاملة مرجعة للتعديل — يمكنك تعديل كل الحقول</div>' +
+                (txn.returnedBy ? '<div style="font-size:11px;color:#7f1d1d;"><b>المُرجِع:</b> '+_esc(txn.returnedBy)+(retDt?' · '+retDt:'')+'</div>' : '') +
+                (txn.returnReason ? '<div style="margin-top:6px;padding:8px 10px;background:#fff;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#991b1b;line-height:1.6;"><i class="fas fa-quote-right" style="font-size:10px;"></i> '+_esc(txn.returnReason)+'</div>' : '') +
+              '</div>' +
+            '</div>';
+          var firstChild = modalC.querySelector('.fg, .form-row, input, textarea, select');
+          if (firstChild) modalC.insertBefore(notice, firstChild);
+          else modalC.insertBefore(notice, modalC.firstChild);
+        }
+      }
+
       var setVal = function(id,v){ var e=document.getElementById(id); if (e) e.value = (v==null?'':v); };
-      setVal('txnTitle', txn.title || '');
-      setVal('txnDesc',  txn.description || '');
+      setVal('txnTitle', txn.subject || txn.title || '');
+      setVal('txnDesc',  txn.contentHtml || txn.description || '');
       setVal('txnAmount', Number(txn.amount||0));
-      // Importance: switch the visual card
       txnSetImportance(txn.importance || 'medium');
-      // Type: select (may be locked since changing type changes the workflow chain)
-      // Backend returns typeId (not transactionTypeId)
+
+      // V4.4: type select — UNLOCKED for returned, locked for pending
       var typeSel = document.getElementById('txnType');
       var tid = txn.typeId || txn.transactionTypeId;
       if (typeSel && tid) {
         typeSel.value = tid;
-        typeSel.disabled = true; typeSel.style.background = '#f3f4f6';
+        if (isReturned) {
+          typeSel.disabled = false;
+          typeSel.style.background = '#fff';
+          typeSel.style.borderColor = '#dc2626';
+        } else {
+          typeSel.disabled = true;
+          typeSel.style.background = '#f3f4f6';
+        }
       }
-      // Recipient: also locked — changing recipient mid-flow is not allowed
+
+      // V4.4: recipient — UNLOCKED for returned
       var recSel = document.getElementById('txnRecipient');
       if (recSel) {
-        // Set placeholder option to show recipient was set at create time
         if (txn.currentAssignee) {
           var alreadyOpt = Array.from(recSel.options).find(function(o){ return o.value === txn.currentAssignee; });
           if (alreadyOpt) recSel.value = txn.currentAssignee;
         }
-        recSel.disabled = true; recSel.style.background = '#f3f4f6';
+        if (isReturned) {
+          recSel.disabled = false;
+          recSel.style.background = '#fff';
+          recSel.style.borderColor = '#dc2626';
+        } else {
+          recSel.disabled = true;
+          recSel.style.background = '#f3f4f6';
+        }
       }
-      // GL account
+
       if (txn.accountCode || txn.accountName) {
         setVal('txnAccSearch', (txn.accountCode||'') + ' — ' + (txn.accountName||''));
         setVal('txnAccId', txn.accountId || '');
         setVal('txnAccName', txn.accountName || '');
       }
-      // Cost center
       var ccSel = document.getElementById('txnCC');
       if (ccSel && txn.costCenterId) ccSel.value = txn.costCenterId;
       txnValidateTitle();
@@ -1552,10 +1596,28 @@ window.submitTxnEdit = function() {
   var amount = Number(document.getElementById('txnAmount').value) || 0;
   var importance = (document.getElementById('txnImportance')||{}).value || 'medium';
   if (!title || title.trim().length < 5) return toast('العنوان قصير جداً (5 أحرف على الأقل)', true);
+
+  var payload = {
+    username: currentUser, title: title, description: desc, contentHtml: desc,
+    amount: amount, importance: importance
+  };
+
+  // V4.4: full-edit mode (returned) — also send type, recipient, account, cost center
+  if (window._editingFullMode) {
+    var typeSel = document.getElementById('txnType');
+    var recSel = document.getElementById('txnRecipient');
+    var ccSel = document.getElementById('txnCC');
+    if (typeSel && typeSel.value) payload.transactionTypeId = typeSel.value;
+    if (recSel && recSel.value) payload.recipientUsername = recSel.value;
+    var accId = (document.getElementById('txnAccId') || {}).value;
+    var accName = (document.getElementById('txnAccName') || {}).value;
+    if (accId) payload.accountId = accId;
+    if (accName) payload.accountName = accName;
+    if (ccSel && ccSel.value) payload.costCenterId = ccSel.value;
+  }
+
   toast('جاري الحفظ...');
-  callAPI('PUT', '/workflow/transactions/'+id, {
-    username: currentUser, title: title, description: desc, contentHtml: desc, amount: amount, importance: importance
-  }, function(r) {
+  callAPI('PUT', '/workflow/transactions/'+id, payload, function(r) {
     if (!(r && r.success)) {
       return toast(r ? r.error : 'فشل الحفظ', true);
     }
@@ -1563,7 +1625,8 @@ window.submitTxnEdit = function() {
     var wasReturned = (r.status === 'returned');
     var doFinish = function() {
       window._editingTxnId = null;
-      // Restore the modal back to "create" mode so it works next time
+      window._editingFullMode = false;
+      // Restore modal back to create mode
       var titleSpan = document.querySelector('#txnModal .modal-h span');
       if (titleSpan) titleSpan.innerHTML = '<i class="fas fa-file-alt" style="color:#0ea5e9;"></i> معاملة جديدة';
       var sendBtn = document.querySelector('#txnModal button.btn-m[onclick="submitTxnEdit()"]');
@@ -1572,8 +1635,11 @@ window.submitTxnEdit = function() {
         sendBtn.setAttribute('onclick', 'submitTxn()');
         sendBtn.style.background = '#0ea5e9';
       }
-      var typeSel = document.getElementById('txnType'); if (typeSel) { typeSel.disabled = false; typeSel.style.background = ''; }
-      var recSel  = document.getElementById('txnRecipient'); if (recSel) { recSel.disabled = false; recSel.style.background = ''; }
+      var typeSel = document.getElementById('txnType'); if (typeSel) { typeSel.disabled = false; typeSel.style.background = ''; typeSel.style.borderColor = ''; }
+      var recSel  = document.getElementById('txnRecipient'); if (recSel) { recSel.disabled = false; recSel.style.background = ''; recSel.style.borderColor = ''; }
+      // V4.4: remove the returned-edit notice banner
+      var notice = document.getElementById('returnedFullEditNotice');
+      if (notice) notice.remove();
       closeTxnModal();
       loadMyTransactions();
     };

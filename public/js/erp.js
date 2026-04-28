@@ -16370,15 +16370,44 @@ window.admPostReply = function(txnId, andAdvance) {
   if (!ta) return;
   var text = (ta.value || '').trim();
   if (!text) { showToast('اكتب نص الرد', true); return; }
-  // Disable form immediately to prevent multi-click
+  var fileInput = document.getElementById('adm_replyFile');
+  var hasFile = fileInput && fileInput.files && fileInput.files[0];
+  var fileName = hasFile ? fileInput.files[0].name : null;
+
+  // ─── OPTIMISTIC UI ───
+  var optimisticId = 'opt-adm-' + Date.now();
+  var listEl = document.getElementById('adm_repliesList');
+  if (listEl) {
+    if (listEl.innerHTML.indexOf('comment-dots') >= 0 || listEl.innerHTML.indexOf('comment-slash') >= 0) listEl.innerHTML = '';
+    var initials = (currentUser || '?').substring(0,2).toUpperCase();
+    var nowDt = new Date().toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+    listEl.insertAdjacentHTML('beforeend',
+      '<div id="' + optimisticId + '" style="display:flex;gap:10px;padding:12px;background:linear-gradient(180deg,#f0fdf4 0%,#fff 100%);border:1px solid #e5e7eb;border-right:3px solid #16a34a;border-radius:12px;margin-bottom:10px;opacity:0.85;">' +
+        '<div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:900;font-size:13px;">' + _woEscapeHtml(initials) + '</div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+            '<span style="font-weight:900;font-size:13px;color:#0f172a;">' + _woEscapeHtml(currentUser) + '</span>' +
+            '<span style="font-size:9px;color:#0ea5e9;background:#e0f2fe;padding:1px 6px;border-radius:6px;font-weight:800;">أنا</span>' +
+            '<span style="font-size:10px;color:#64748b;background:#f1f5f9;padding:2px 8px;border-radius:6px;"><i class="fas fa-spinner fa-spin"></i> جاري الإرسال...</span>' +
+            '<span style="margin-inline-start:auto;font-size:10px;color:#94a3b8;">' + nowDt + '</span>' +
+          '</div>' +
+          '<div style="font-size:13.5px;color:#334155;line-height:1.75;margin-top:6px;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:10px 12px;border-radius:8px;">' + _woEscapeHtml(text) + '</div>' +
+          (hasFile ? '<div style="margin-top:6px;font-size:11px;color:#64748b;"><i class="fas fa-paperclip"></i> ' + _woEscapeHtml(fileName) + '</div>' : '') +
+        '</div>' +
+      '</div>');
+    var newEl = document.getElementById(optimisticId);
+    if (newEl && newEl.scrollIntoView) newEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  // Disable form immediately
   if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
-  if (ta) ta.disabled = true;
+  if (ta) { ta.disabled = true; ta.value = ''; }
   var reEnable = function() {
     if (btn) { btn.disabled = false; btn.style.opacity = ''; }
-    if (ta) ta.disabled = false;
+    if (ta) { ta.disabled = false; ta.value = text; }
+    var optEl = document.getElementById(optimisticId);
+    if (optEl) optEl.remove();
   };
   var token = localStorage.getItem('pos_token');
-  var fileInput = document.getElementById('adm_replyFile');
   var doSend = function(attachment, attachmentName, attachmentMime) {
     fetch('/api/workflow/transactions/' + txnId + '/replies', {
       method: 'POST',
@@ -16394,24 +16423,33 @@ window.admPostReply = function(txnId, andAdvance) {
       .then(function(r){return r.json();})
       .then(function(r) {
         if (r && r.success) {
-          ta.value = '';
+          // Confirm optimistic reply: remove sending badge, add success
+          var optEl = document.getElementById(optimisticId);
+          if (optEl) {
+            optEl.style.opacity = '1';
+            var sendingBadge = optEl.querySelector('span[style*="جاري الإرسال"]');
+            if (sendingBadge) sendingBadge.outerHTML = '<span style="font-size:10px;color:#16a34a;background:#dcfce7;padding:2px 8px;border-radius:6px;font-weight:800;"><i class="fas fa-check-circle"></i> تم</span>';
+          }
           if (fileInput) fileInput.value = '';
           var fileLabel = document.getElementById('adm_replyFileLabel');
           if (fileLabel) fileLabel.textContent = 'إرفاق ملف';
           if (r.advanceResult && r.advanceResult.newStatus) {
             showToast('✓ تم الرد + انتقلت المعاملة للتالي');
-            setTimeout(function(){ if (typeof erpCloseModal === 'function') erpCloseModal(); if (typeof wfLoadInbox === 'function') wfLoadInbox(); }, 800);
+            // Don't close immediately — let user see their reply confirmed
+            setTimeout(function(){ if (typeof wfLoadInbox === 'function') wfLoadInbox(); }, 200);
           } else {
-            showToast('تم إرسال الرد');
-            admLoadReplies(txnId);
-            reEnable();
+            showToast('✓ تم إرسال الرد');
           }
         } else {
+          var optErr = document.getElementById(optimisticId);
+          if (optErr) optErr.remove();
           reEnable();
           showToast((r && r.error) || 'فشل الإرسال', true);
         }
       })
       .catch(function(err) {
+        var optE = document.getElementById(optimisticId);
+        if (optE) optE.remove();
         reEnable();
         console.error('[admPostReply] err:', err);
         showToast('فشل الاتصال', true);

@@ -2115,24 +2115,63 @@ window.empLoadReplies = function(txnId, listElId, countElId) {
     });
 };
 
-// V4.2: empPostReply — accepts andAdvance flag (when user is current assignee,
-// reply also advances workflow). Disables form immediately on submit so user
-// can't double-click and create 20 replies.
+// V4.3: empPostReply — Optimistic UI (reply appears IMMEDIATELY) + auto-advance
+// 1. Renders user's reply in the list FIRST (with "sending..." indicator)
+// 2. Sends to server in background
+// 3. On success: confirms the reply (removes pending state)
+// 4. On failure: removes optimistic reply + shows error + re-enables form
 window.empPostReply = function(txnId, andAdvance) {
   var ta = document.getElementById('emp_replyText');
   var btn = document.getElementById('emp_replySendBtn');
   if (!ta) return;
   var text = (ta.value || '').trim();
   if (!text) { glassToast('اكتب نص الرد', true); return; }
-  // Immediately disable form to prevent multi-click
-  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.style.cursor = 'not-allowed'; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الإرسال...'; }
-  if (ta) ta.disabled = true;
-  var token = localStorage.getItem('pos_token') || localStorage.getItem('emp_token');
   var fileInput = document.getElementById('emp_replyFile');
+  var hasFile = fileInput && fileInput.files && fileInput.files[0];
+  var fileName = hasFile ? fileInput.files[0].name : null;
+
+  // ─── OPTIMISTIC UI: render user's reply IMMEDIATELY ───
+  var optimisticId = 'optimistic-' + Date.now();
+  var listEl = document.getElementById('emp_repliesList');
+  if (listEl) {
+    // Remove "no replies yet" empty state if present
+    if (listEl.innerHTML.indexOf('comment-dots') >= 0 || listEl.innerHTML.indexOf('comment-slash') >= 0) {
+      listEl.innerHTML = '';
+    }
+    var initials = (currentUser || '?').substring(0,2).toUpperCase();
+    var nowDt = new Date().toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+    var optimisticHtml =
+      '<div id="' + optimisticId + '" style="display:flex;gap:10px;padding:12px;background:#fff;border:1px solid #e5e7eb;border-right:3px solid #16a34a;border-radius:12px;margin-bottom:10px;background:linear-gradient(180deg,#f0fdf4 0%,#fff 100%);box-shadow:0 1px 3px rgba(15,23,42,.04);opacity:0.85;position:relative;">' +
+        '<div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:900;font-size:13px;letter-spacing:-0.5px;">' + _esc(initials) + '</div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+            '<span style="font-weight:900;font-size:13px;color:#0f172a;">' + _esc(currentUser) + '</span>' +
+            '<span style="font-size:9px;color:#0ea5e9;background:#e0f2fe;padding:1px 6px;border-radius:6px;font-weight:800;">أنا</span>' +
+            '<span style="font-size:10px;color:#64748b;background:#f1f5f9;padding:2px 8px;border-radius:6px;"><i class="fas fa-spinner fa-spin"></i> جاري الإرسال...</span>' +
+            '<span style="margin-inline-start:auto;font-size:10px;color:#94a3b8;">' + nowDt + '</span>' +
+          '</div>' +
+          '<div style="font-size:13.5px;color:#334155;line-height:1.75;margin-top:6px;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:10px 12px;border-radius:8px;border:1px solid #f1f5f9;">' + _esc(text) + '</div>' +
+          (hasFile ? '<div style="margin-top:6px;font-size:11px;color:#64748b;"><i class="fas fa-paperclip"></i> ' + _esc(fileName) + ' (' + Math.round(fileInput.files[0].size/1024) + ' KB)</div>' : '') +
+        '</div>' +
+      '</div>';
+    listEl.insertAdjacentHTML('beforeend', optimisticHtml);
+    // Auto-scroll to the new reply
+    var newEl = document.getElementById(optimisticId);
+    if (newEl && newEl.scrollIntoView) newEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // Disable form immediately
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.style.cursor = 'not-allowed'; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
+  if (ta) { ta.disabled = true; ta.value = ''; }
+
+  var token = localStorage.getItem('pos_token') || localStorage.getItem('emp_token');
   var reEnable = function() {
-    if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer'; }
-    if (ta) ta.disabled = false;
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer'; btn.innerHTML = (andAdvance ? '<i class="fas fa-paper-plane"></i> رد + موافقة وتحويل للتالي' : '<i class="fas fa-comment"></i> إرسال الرد'); }
+    if (ta) { ta.disabled = false; ta.value = text; }
+    var optEl = document.getElementById(optimisticId);
+    if (optEl) optEl.remove();
   };
+
   var doSend = function(attachment, attachmentName, attachmentMime) {
     fetch('/api/workflow/transactions/' + txnId + '/replies', {
       method: 'POST',
@@ -2142,46 +2181,60 @@ window.empPostReply = function(txnId, andAdvance) {
         attachment: attachment || null,
         attachmentName: attachmentName || null,
         attachmentMime: attachmentMime || null,
-        andAdvance: !!andAdvance   // V4.2: tells server to also advance workflow
+        andAdvance: !!andAdvance
       })
     })
       .then(function(r){return r.json();})
       .then(function(r) {
         if (r && r.success) {
-          ta.value = '';
+          // ─── CONFIRM optimistic reply: remove "sending" badge, mark as sent ───
+          var optEl = document.getElementById(optimisticId);
+          if (optEl) {
+            optEl.style.opacity = '1';
+            // Replace the "sending..." badge with green checkmark
+            var sendingBadge = optEl.querySelector('span[style*="جاري الإرسال"]');
+            if (sendingBadge) {
+              sendingBadge.outerHTML = '<span style="font-size:10px;color:#16a34a;background:#dcfce7;padding:2px 8px;border-radius:6px;font-weight:800;"><i class="fas fa-check-circle"></i> تم الإرسال</span>';
+            }
+          }
           if (fileInput) fileInput.value = '';
-          // V4.2: hide the entire reply form to enforce one-reply-per-stage at UI level
+          var fileLabel = document.getElementById('emp_replyFileLabel');
+          if (fileLabel) fileLabel.textContent = 'إرفاق ملف';
+          // Hide the form (one-reply-per-stage)
           var form = document.getElementById('emp_replyForm');
           if (form) form.style.display = 'none';
           if (r.advanceResult && r.advanceResult.newStatus) {
             glassToast('✓ تم الرد + انتقلت المعاملة للتالي');
-            // Reload the txn detail to reflect new state
+            // Refresh in background — modal stays open so user sees their reply confirmed
             setTimeout(function(){
-              if (typeof closeTxnDetail === 'function') closeTxnDetail();
               if (typeof loadIncomingTxns === 'function') loadIncomingTxns();
               if (typeof empRefreshCounters === 'function') empRefreshCounters();
-            }, 800);
+            }, 200);
           } else {
-            glassToast('تم إرسال الرد');
-            empLoadReplies(txnId);
+            glassToast('✓ تم إرسال الرد');
           }
         } else {
+          // Rollback optimistic UI
+          var optEl2 = document.getElementById(optimisticId);
+          if (optEl2) optEl2.remove();
           reEnable();
           glassToast((r && r.error) || 'فشل الإرسال', true);
         }
       })
       .catch(function(err) {
+        var optEl3 = document.getElementById(optimisticId);
+        if (optEl3) optEl3.remove();
         reEnable();
         console.error('[empPostReply] err:', err);
         glassToast('فشل الاتصال', true);
       });
   };
-  if (fileInput && fileInput.files && fileInput.files[0]) {
+  if (hasFile) {
     var f = fileInput.files[0];
-    if (f.size > 5 * 1024 * 1024) { reEnable(); glassToast('حجم الملف يجب أن يكون أقل من 5MB', true); return; }
+    if (f.size > 5 * 1024 * 1024) { var oe = document.getElementById(optimisticId); if (oe) oe.remove(); reEnable(); glassToast('حجم الملف يجب أن يكون أقل من 5MB', true); return; }
     var reader = new FileReader();
     reader.onload = function() { doSend(reader.result, f.name, f.type); };
-    reader.onerror = function() { reEnable(); glassToast('تعذّر قراءة الملف', true); };
+    reader.onerror = function() { var oe2 = document.getElementById(optimisticId); if (oe2) oe2.remove(); reEnable(); glassToast('تعذّر قراءة الملف', true); };
     reader.readAsDataURL(f);
   } else {
     doSend(null, null, null);

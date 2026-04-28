@@ -210,11 +210,11 @@ router.post('/:id/complete', async (req,res)=>{
     // roll-up costs from lines
     const [agg] = await db.query(
       `SELECT
-         SUM(CASE WHEN line_type='labor' THEN total_cost ELSE 0 END) AS labor,
-         SUM(CASE WHEN line_type='part'  THEN total_cost ELSE 0 END) AS parts,
-         SUM(CASE WHEN line_type IN ('service','external') THEN total_cost ELSE 0 END) AS external,
-         SUM(total_cost) AS total,
-         SUM(CASE WHEN line_type='labor' THEN hours ELSE 0 END) AS hours
+         SUM(CASE WHEN line_type='labor' THEN total_cost ELSE 0 END) AS labor_total,
+         SUM(CASE WHEN line_type='part'  THEN total_cost ELSE 0 END) AS parts_total,
+         SUM(CASE WHEN line_type IN ('service','external') THEN total_cost ELSE 0 END) AS ext_total,
+         SUM(total_cost) AS grand_total,
+         SUM(CASE WHEN line_type='labor' THEN hours ELSE 0 END) AS hours_total
        FROM work_order_lines WHERE work_order_id=?`, [req.params.id]);
     const a = agg[0]||{};
     await db.query(
@@ -223,7 +223,7 @@ router.post('/:id/complete', async (req,res)=>{
            labor_cost=?, parts_cost=?, external_cost=?, total_cost=?,
            actual_hours=?, completion_notes=?
        WHERE id=?`,
-      [a.labor||0, a.parts||0, a.external||0, a.total||0, a.hours||0,
+      [a.labor_total||0, a.parts_total||0, a.ext_total||0, a.grand_total||0, a.hours_total||0,
        b.completion_notes||null, req.params.id]);
     // Update asset's last_maintenance_date if maintenance type
     const [w] = await db.query('SELECT type, asset_id FROM work_orders WHERE id=?',[req.params.id]);

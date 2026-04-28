@@ -80,11 +80,21 @@ router.get('/me', async (req, res) => {
 
 // POST /counters/recompute — rebuilds the materialized table from scratch
 // Used by admin to fix any drift.
+// V5-SEC: check user.role === 'admin' instead of username === 'admin'.
+// Previously, a user literally named 'admin' (without admin role) could trigger this.
 router.post('/recompute', async (req, res) => {
   try {
-    const username = req.body.username || (req.user && req.user.username);
-    const isAdmin = (username === 'admin');
+    const role = (req.user && req.user.role) || '';
+    const isDev = !!(req.user && req.user.isDeveloper);
+    const isAdmin = (role === 'admin' || isDev);
     if (!isAdmin) return res.status(403).json({ error: 'admin only' });
+    // Also accept if database lookup says role=admin (for paths bypassing JWT)
+    if (!req.user) {
+      const username = req.body.username || '';
+      if (!username) return res.status(401).json({ error: 'unauthenticated' });
+      const [rows] = await db.query('SELECT role FROM users WHERE username = ?', [username]);
+      if (!rows.length || rows[0].role !== 'admin') return res.status(403).json({ error: 'admin only' });
+    }
 
     await db.query("DELETE FROM user_inbox_counters");
     await db.query(`
@@ -199,4 +209,15 @@ async function _computeCountersFor(username) {
   };
 }
 
+// V5-FIX: exported helper for other routes to invalidate cached counters
+// (call after txn create/update/delete/transition that touches a user).
+async function invalidateCountersFor(...usernames) {
+  if (!CACHE.isEnabled()) return;
+  const unique = [...new Set(usernames.filter(Boolean))];
+  for (const u of unique) {
+    try { await CACHE.del('counters:' + u); } catch(_e) { /* swallow */ }
+  }
+}
+router.invalidateCountersFor = invalidateCountersFor;
 module.exports = router;
+module.exports.invalidateCountersFor = invalidateCountersFor;

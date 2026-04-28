@@ -3677,7 +3677,34 @@ async function runMigrations() {
     }
   } catch(e) { /* ignore */ }
 
-  console.log('[v5-migrations] Real-Estate / Contracts / Work-Orders / AP-AR ready.');
+  // V5.1 — additional indexes + idempotency_keys table
+  try {
+    await db.query(`CREATE INDEX idx_repl_txn_author ON transaction_replies(transaction_id, author_username)`);
+  } catch(e) { /* index already exists */ }
+  try {
+    await db.query(`CREATE INDEX idx_log_txn_step_action ON transaction_steps_log(transaction_id, workflow_definition_id, action_type)`);
+  } catch(e) {}
+  try {
+    await db.query(`CREATE INDEX idx_txn_due_status ON transactions(due_date, status, deleted_at)`);
+  } catch(e) {}
+
+  await createTableIfMissing('idempotency_keys', `
+    CREATE TABLE idempotency_keys (
+      id VARCHAR(80) PRIMARY KEY,
+      username VARCHAR(80),
+      endpoint VARCHAR(160),
+      response_json LONGTEXT,
+      status_code SMALLINT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_user_age (username, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // House-keeping: drop idempotency rows older than 24h (cheap, runs on boot)
+  try {
+    await db.query(`DELETE FROM idempotency_keys WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)`);
+  } catch(e) {}
+
+  console.log('[v5-migrations] Real-Estate / Contracts / Work-Orders / AP-AR + V5.1 indexes ready.');
 }
 
 app.listen(PORT, async () => {

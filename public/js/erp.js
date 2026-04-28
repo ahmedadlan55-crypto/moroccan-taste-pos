@@ -5085,13 +5085,28 @@ function _wfStatBadge(s) {
   return '<span style="padding:3px 10px;border-radius:8px;background:'+c+'20;color:'+c+';font-size:11px;font-weight:800;">'+(window._wfStatLbl[s]||s)+'</span>';
 }
 
+// V5-PERF: pagination — render in chunks of 100 rows.
+// Previous behavior: 10,000 rows → 10s+ to render synchronously, browser frozen.
+window._wfInboxPageSize = 100;
+window._wfInboxPagedList = null;   // last full list — used for "load more"
+window._wfInboxPagedShown = 0;
+window._wfInboxRenderRow = null;   // hoisted row renderer (set below)
+
 function wfLoadInbox() {
   var tb = document.getElementById('wfInboxBody');
   tb.innerHTML = '<tr><td colspan="11" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+  // V5-UX: 12s timeout — show retry button if backend hangs
+  var fetchTimeout = setTimeout(function(){
+    tb.innerHTML = '<tr><td colspan="11" class="empty-msg" style="color:#b91c1c;">' +
+      '<i class="fas fa-triangle-exclamation"></i> فشل تحميل القائمة (انتهت المهلة).' +
+      '<button class="btn btn-sm btn-primary" style="margin-inline-start:10px;" onclick="wfLoadInbox()">إعادة المحاولة</button>' +
+      '</td></tr>';
+  }, 12000);
   var status = (document.getElementById('wfInboxStatusFilter') || {}).value || '';
   var params = {};
   if (status) params.status = status;
   window._apiBridge.withSuccessHandler(function(list) {
+    clearTimeout(fetchTimeout);
     if (!list || !list.length) {
       tb.innerHTML = '<tr><td colspan="11" class="empty-msg">لا توجد معاملات</td></tr>';
       document.getElementById('wfInboxStats').innerHTML = '';
@@ -5105,36 +5120,69 @@ function wfLoadInbox() {
         '<span style="width:10px;height:10px;border-radius:50%;background:' + (window._wfStatClrs[k]||'#94a3b8') + ';flex-shrink:0;"></span>' +
         '<span>' + window._wfStatLbl[k] + '</span><span style="font-weight:900;color:#0f172a;">' + counts[k] + '</span></div>';
     });
+    statsHtml += '<div style="margin-inline-start:auto;font-size:12px;color:#64748b;">الإجمالي: <strong>' + list.length.toLocaleString() + '</strong></div>';
     document.getElementById('wfInboxStats').innerHTML = statsHtml;
-    tb.innerHTML = list.map(function(t) {
-      var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '';
-      var canAct = t.status === 'pending' || t.status === 'in_progress';
-      var actions = '<div class="wf-inbox-actions">' +
-        '<button class="btn btn-sm btn-light" onclick="wfViewTxn(\'' + t.id + '\')"><i class="fas fa-eye"></i></button>';
-      if (canAct) {
-        actions += '<button class="btn btn-sm btn-success" onclick="wfTxnAction(\'' + t.id + '\',\'approve\')" title="موافقة"><i class="fas fa-check"></i></button>';
-        actions += '<button class="btn btn-sm btn-danger" onclick="wfTxnAction(\'' + t.id + '\',\'reject\')" title="رفض"><i class="fas fa-times"></i></button>';
-        actions += '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;" onclick="wfTxnAction(\'' + t.id + '\',\'return\')" title="إرجاع"><i class="fas fa-undo"></i></button>';
-        actions += '<button class="btn btn-sm" style="background:#f3e8ff;color:#7c3aed;" onclick="wfForwardTxn(\'' + t.id + '\')" title="تحويل"><i class="fas fa-share"></i></button>';
-      }
-      actions += '</div>';
-      return '<tr class="wf-inbox-row">' +
-        '<td>' + _wfImpBadge(t.importance||'medium') + '</td>' +
-        '<td>' + _wfStatBadge(t.status) + '</td>' +
-        '<td><span class="wf-txn-number" style="font-size:11px;font-family:monospace;">' + (t.txnNumber||'') + '</span></td>' +
-        '<td><span class="badge badge-blue">' + (t.typeName||'') + '</span></td>' +
-        '<td style="font-size:12px;">' + (t.branchName||t.branchCode||'—') + '</td>' +
-        '<td style="font-size:12px;">' + (t.deptName||t.deptCode||'—') + '</td>' +
-        '<td style="font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis;">' + t.title + '</td>' +
-        '<td><span class="wf-txn-amount">' + (Number(t.amount)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</span></td>' +
-        '<td style="font-size:12px;"><div style="font-weight:700;color:#1e40af;">' + (t.currentAssignee||'—') + '</div>' +
-        (t.currentRoleName ? '<div style="font-size:10px;color:#8b5cf6;font-weight:700;"><i class="fas fa-id-badge" style="font-size:8px;"></i> ' + t.currentRoleName + '</div>' : '') + '</td>' +
-        '<td style="font-size:12px;color:#64748b;">' + dt + '</td>' +
-        '<td>' + actions + '</td>' +
-      '</tr>';
-    }).join('');
+    // V5-PERF: cache full list for load-more, render only first PAGE
+    window._wfInboxPagedList = list;
+    window._wfInboxPagedShown = 0;
+    tb.innerHTML = '';
+    _wfInboxRenderNextPage();
   }).getWfTransactions(params);
 }
+function _wfInboxRenderNextPage(){
+  if (!window._wfInboxPagedList) return;
+  var tb = document.getElementById('wfInboxBody');
+  var list = window._wfInboxPagedList;
+  var from = window._wfInboxPagedShown;
+  var to = Math.min(list.length, from + window._wfInboxPageSize);
+  var slice = list.slice(from, to);
+  // Remove any previous "load more" row
+  var prevMore = document.getElementById('wfInboxLoadMore');
+  if (prevMore) prevMore.remove();
+  // Render the slice
+  slice.forEach(function(t){
+    var html = window._wfInboxRenderRow ? window._wfInboxRenderRow(t) : '';
+    if (html) tb.insertAdjacentHTML('beforeend', html);
+  });
+  window._wfInboxPagedShown = to;
+  // Add "load more" footer if there's more data
+  if (to < list.length) {
+    var remaining = list.length - to;
+    tb.insertAdjacentHTML('beforeend',
+      '<tr id="wfInboxLoadMore"><td colspan="11" style="text-align:center;padding:14px;background:#f8fafc;">' +
+      '<button class="btn btn-secondary" onclick="_wfInboxRenderNextPage()">' +
+      '<i class="fas fa-chevron-down"></i> تحميل المزيد (' + remaining.toLocaleString() + ' معاملة متبقية)</button>' +
+      '</td></tr>');
+  }
+}
+// Single-row renderer used by both initial render + load-more.
+window._wfInboxRenderRow = function(t){
+  var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '';
+  var canAct = t.status === 'pending' || t.status === 'in_progress';
+  var actions = '<div class="wf-inbox-actions">' +
+    '<button class="btn btn-sm btn-light" onclick="wfViewTxn(\'' + t.id + '\')"><i class="fas fa-eye"></i></button>';
+  if (canAct) {
+    actions += '<button class="btn btn-sm btn-success" onclick="wfTxnAction(\'' + t.id + '\',\'approve\')" title="موافقة"><i class="fas fa-check"></i></button>';
+    actions += '<button class="btn btn-sm btn-danger" onclick="wfTxnAction(\'' + t.id + '\',\'reject\')" title="رفض"><i class="fas fa-times"></i></button>';
+    actions += '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;" onclick="wfTxnAction(\'' + t.id + '\',\'return\')" title="إرجاع"><i class="fas fa-undo"></i></button>';
+    actions += '<button class="btn btn-sm" style="background:#f3e8ff;color:#7c3aed;" onclick="wfForwardTxn(\'' + t.id + '\')" title="تحويل"><i class="fas fa-share"></i></button>';
+  }
+  actions += '</div>';
+  return '<tr class="wf-inbox-row">' +
+    '<td>' + _wfImpBadge(t.importance||'medium') + '</td>' +
+    '<td>' + _wfStatBadge(t.status) + '</td>' +
+    '<td><span class="wf-txn-number" style="font-size:11px;font-family:monospace;">' + (t.txnNumber||'') + '</span></td>' +
+    '<td><span class="badge badge-blue">' + (t.typeName||'') + '</span></td>' +
+    '<td style="font-size:12px;">' + (t.branchName||t.branchCode||'—') + '</td>' +
+    '<td style="font-size:12px;">' + (t.deptName||t.deptCode||'—') + '</td>' +
+    '<td style="font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis;">' + t.title + '</td>' +
+    '<td><span class="wf-txn-amount">' + (Number(t.amount)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</span></td>' +
+    '<td style="font-size:12px;"><div style="font-weight:700;color:#1e40af;">' + (t.currentAssignee||'—') + '</div>' +
+    (t.currentRoleName ? '<div style="font-size:10px;color:#8b5cf6;font-weight:700;"><i class="fas fa-id-badge" style="font-size:8px;"></i> ' + t.currentRoleName + '</div>' : '') + '</td>' +
+    '<td style="font-size:12px;color:#64748b;">' + dt + '</td>' +
+    '<td>' + actions + '</td>' +
+  '</tr>';
+};
 
 // ───────────────────────── Helpers ─────────────────────────
 
@@ -5869,27 +5917,42 @@ function wfViewTxn(id) {
     modalEl.classList.remove('hidden');
     // V3: lazy-load replies thread
     setTimeout(function() { try { admLoadReplies(txn.id); } catch(e){ console.warn('admLoadReplies err:', e); } }, 50);
-    // V4.5: populate recipient picker with GROUPED routable users
-    setTimeout(function() {
+    // V4.5/V5-UX: populate recipient picker with GROUPED routable users.
+    // Loaded immediately (no setTimeout race), valid usernames cached on the
+    // <select> element for client-side validation in admPostReply.
+    (function loadAdmRecipPicker(retry){
       var sel = document.getElementById('adm_replyForwardTo');
       if (!sel) return;
+      // Initial loading state
+      sel.innerHTML = '<option value="" data-loading="1">⏳ جاري تحميل المستلمين...</option>';
       try {
         window._apiBridge.withSuccessHandler(function(resp) {
-          if (!resp || !Array.isArray(resp.groups)) return;
+          if (!resp || !Array.isArray(resp.groups)) {
+            if (!retry) { setTimeout(function(){ loadAdmRecipPicker(true); }, 1500); return; }
+            sel.innerHTML = '<option value="">▶ التالي في السلسلة (افتراضي)</option>' +
+              '<option value="" disabled>⚠ تعذّر تحميل قائمة المستلمين</option>';
+            return;
+          }
+          var validUsernames = {};
           var html = '<option value="">▶ التالي في السلسلة (افتراضي)</option>';
           resp.groups.forEach(function(g) {
             if (!g.users || !g.users.length) return;
             html += '<optgroup label="' + _woEscapeHtml(g.label) + ' (' + g.users.length + ')">';
             g.users.forEach(function(u) {
+              validUsernames[u.username] = true;
               var label = u.fullName + (u.position ? ' — ' + u.position : '') + (u.branch ? ' · ' + u.branch : '');
               html += '<option value="' + _woEscapeHtml(u.username) + '">' + _woEscapeHtml(label) + '</option>';
             });
             html += '</optgroup>';
           });
           sel.innerHTML = html;
+          // Cache valid set for client-side validation in admPostReply.
+          sel._validUsernames = validUsernames;
         }).getRoutableUsers(currentUser);
-      } catch(e) {}
-    }, 80);
+      } catch(e) {
+        if (!retry) setTimeout(function(){ loadAdmRecipPicker(true); }, 1500);
+      }
+    })(false);
     // V4: lazy-fetch server-computed permissions on FIRST view; if cached, skip
     var _alreadyHasPerms = window._lastViewedTxnPerms && window._lastViewedTxnPerms.txnId === txn.id;
     if (!_alreadyHasPerms) {
@@ -16385,11 +16448,20 @@ function _renderDiscountsGiven(r) {
 // V3.1: Professional reply card — shared with employee app for consistency
 window.admLoadReplies = function(txnId) {
   var token = localStorage.getItem('pos_token');
+  var listEl = document.getElementById('adm_repliesList');
+  if (listEl) {
+    listEl.innerHTML = '<div style="text-align:center;color:#64748b;padding:20px;font-size:12px;"><i class="fas fa-spinner fa-spin"></i> جاري تحميل الردود...</div>';
+  }
+  // V5-UX: 10s timeout + retry button on failure
+  var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  var to = ctrl ? setTimeout(function(){ ctrl.abort(); }, 10000) : null;
   fetch('/api/workflow/transactions/' + txnId + '/replies', {
-    headers: { 'Authorization': 'Bearer ' + token }
+    headers: { 'Authorization': 'Bearer ' + token },
+    signal: ctrl ? ctrl.signal : undefined
   })
     .then(function(r){return r.json();})
     .then(function(rows) {
+      if (to) clearTimeout(to);
       if (!Array.isArray(rows)) rows = [];
       var listEl = document.getElementById('adm_repliesList');
       var cntEl  = document.getElementById('adm_repliesCount');
@@ -16449,9 +16521,19 @@ window.admLoadReplies = function(txnId) {
       }).join('');
     })
     .catch(function(err) {
+      if (to) clearTimeout(to);
       console.error('[admLoadReplies] err:', err);
       var listEl = document.getElementById('adm_repliesList');
-      if (listEl) listEl.innerHTML = '<div style="text-align:center;color:#dc2626;padding:14px;font-size:12px;">فشل تحميل الردود</div>';
+      if (listEl) {
+        var msg = (err && err.name === 'AbortError') ? 'انتهت المهلة (10 ثوان)' : 'فشل تحميل الردود';
+        listEl.innerHTML =
+          '<div style="text-align:center;color:#dc2626;padding:14px;font-size:13px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">' +
+            '<i class="fas fa-triangle-exclamation" style="font-size:20px;display:block;margin-bottom:6px;"></i>' +
+            msg +
+            '<button class="btn btn-sm btn-primary" style="margin-top:10px;" onclick="admLoadReplies(\'' + txnId + '\')">' +
+              '<i class="fas fa-rotate"></i> إعادة المحاولة</button>' +
+          '</div>';
+      }
     });
 };
 

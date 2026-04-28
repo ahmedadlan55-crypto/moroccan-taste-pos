@@ -94,36 +94,52 @@ async function runEscalationSweep() {
   try {
     const [overdue] = await db.query(`
       SELECT id, transaction_number, subject, title, current_assignee, created_by, importance,
-             escalation_count, escalated_at, TIMESTAMPDIFF(HOUR, due_date, NOW()) AS hours_overdue
+             escalation_count, escalated_at, content_secrecy,
+             TIMESTAMPDIFF(HOUR, due_date, NOW()) AS hours_overdue
         FROM transactions
        WHERE due_date IS NOT NULL AND due_date < NOW()
          AND status IN ('pending','created','in_progress','replied')
          AND (escalated_at IS NULL OR escalated_at < DATE_SUB(NOW(), INTERVAL 12 HOUR))
+         AND deleted_at IS NULL
        LIMIT 100
     `);
     stats.checked = overdue.length;
+    // V5-FIX: respect content_secrecy on escalation messages — top_secret titles
+    // should not leak through notification bodies even to assignee's manager.
+    const _safeBody = (t, body) => {
+      const sec = (t.content_secrecy || '').toLowerCase();
+      if (sec === 'top_secret' || sec === 'سري_للغاية' || sec === 'سري للغاية') {
+        return `معاملة سرية متأخرة بـ ${Math.round(t.hours_overdue)} ساعة (انقر للاطلاع)`;
+      }
+      return body;
+    };
     for (const t of overdue) {
       try {
+        const escNum = Number(t.escalation_count || 0);
+        // V5-FIX: idempotency — check if a notification for this (txn, escalation_count)
+        // pair already exists. Previously, two sweeps in <12h could produce duplicates.
+        const escKey = 'NOT-SLA-' + t.id + '-N' + escNum;
         // Notify the assignee
         if (t.current_assignee) {
           await db.query(
-            `INSERT INTO notifications (id, username, type, title, body, link_type, link_id, severity)
+            `INSERT IGNORE INTO notifications (id, username, type, title, body, link_type, link_id, severity)
              VALUES (?, ?, 'sla_escalation', ?, ?, 'transaction', ?, 'warning')`,
-            ['NOT-SLA-' + Date.now() + '-' + Math.random().toString(36).slice(2,4),
+            [escKey,
              t.current_assignee,
              `معاملة متأخرة: ${t.transaction_number || t.id}`,
-             `${t.subject || t.title || ''} — متأخرة بـ ${Math.round(t.hours_overdue)} ساعة`,
+             _safeBody(t, `${t.subject || t.title || ''} — متأخرة بـ ${Math.round(t.hours_overdue)} ساعة`),
              t.id]);
         }
         // After 3 escalations, also notify the creator
-        if (Number(t.escalation_count || 0) >= 2 && t.created_by) {
+        if (escNum >= 2 && t.created_by) {
+          const crKey = 'NOT-SLA-CR-' + t.id + '-N' + escNum;
           await db.query(
-            `INSERT INTO notifications (id, username, type, title, body, link_type, link_id, severity)
+            `INSERT IGNORE INTO notifications (id, username, type, title, body, link_type, link_id, severity)
              VALUES (?, ?, 'sla_creator_alert', ?, ?, 'transaction', ?, 'danger')`,
-            ['NOT-SLA-CR-' + Date.now() + '-' + Math.random().toString(36).slice(2,4),
+            [crKey,
              t.created_by,
              `معاملتك متأخرة: ${t.transaction_number || t.id}`,
-             `لم يتم التصرف فيها منذ ${Math.round(t.hours_overdue)} ساعة`,
+             _safeBody(t, `لم يتم التصرف فيها منذ ${Math.round(t.hours_overdue)} ساعة`),
              t.id]);
         }
         // Bump escalation_count

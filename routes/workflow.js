@@ -930,6 +930,8 @@ router.delete('/expense-categories/:id', async (req, res) => {
 // or a synthesized one) and a displayable name.
 router.get('/recipients-directory', async (req, res) => {
   try {
+    // V5-FIX: also exclude inactive HR employees (e.status). Previously, deleted
+    // admins with stale HR records still appeared in the picker.
     const [rows] = await db.query(
       `SELECT u.id AS user_id, u.username, u.full_name, u.role,
               p.id AS position_id, p.name AS position_name, p.level AS position_level,
@@ -939,9 +941,10 @@ router.get('/recipients-directory', async (req, res) => {
        FROM users u
        LEFT JOIN positions p ON u.position_id = p.id
        LEFT JOIN branches b ON u.branch_id = b.id
-       LEFT JOIN hr_employees e ON e.linked_username = u.username
+       LEFT JOIN hr_employees e ON e.linked_username = u.username AND COALESCE(e.status,'active') = 'active'
        LEFT JOIN hr_departments d ON e.department_id = d.id
-       WHERE u.active = 1 AND (u.position_id IS NOT NULL OR u.role = 'admin' OR e.id IS NOT NULL)
+       WHERE COALESCE(u.active, 1) = 1
+         AND (u.position_id IS NOT NULL OR u.role = 'admin' OR e.id IS NOT NULL)
        ORDER BY p.level DESC, u.username`);
     res.json(rows.map(r => {
       const fullName = (((r.first_name||'') + ' ' + (r.last_name||'')).trim()) || r.full_name || r.username;
@@ -981,6 +984,15 @@ router.get('/eligible-users', async (req, res) => {
   try {
     const senderUsername = req.query.sender || '';
     const branchOnly = req.query.branchOnly === '1';
+
+    // V5-SEC: caller must be the sender OR admin/developer.
+    // Otherwise the endpoint leaks the org chart (who reports to whom).
+    const callerName = (req.user && req.user.username) || req.headers['x-user'] || '';
+    const isDev = !!(req.user && req.user.isDeveloper);
+    const isAdmin = req.user && (req.user.role === 'admin');
+    if (senderUsername && callerName && callerName !== senderUsername && !isDev && !isAdmin) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
 
     // Resolve sender's identity + workflow context
     let senderRole = '';
@@ -1761,10 +1773,14 @@ router.post('/transactions/:id/resubmit', SCHEMA.validateBody(SCHEMA.schemas.res
     let newRoleName = txn.current_role_name || '';
     let newRoleId = txn.current_role_id || null;
 
-    // If current_step_id exists, get the actual step row so we can resolve assignee
+    // V5-FIX: validate the step still exists. Previously, if step was deleted
+    // (e.g., admin removed a position), resubmit silently kept the old assignee
+    // → workflow appeared "stuck" with no error to the user.
+    let stepExists = false;
     if (txn.current_step_id) {
       const [posRow] = await db.query('SELECT * FROM position_workflow_steps WHERE id = ?', [txn.current_step_id]);
       if (posRow.length) {
+        stepExists = true;
         const step = _normalizePositionStep(posRow[0]);
         if (step.required_position_id) {
           const resolved = await resolveAssigneeForStep(step, txn.branch_id, txn.dept_id);
@@ -1774,12 +1790,22 @@ router.post('/transactions/:id/resubmit', SCHEMA.validateBody(SCHEMA.schemas.res
         }
       } else {
         const [legacy] = await db.query('SELECT * FROM workflow_definitions WHERE id = ?', [txn.current_step_id]);
-        if (legacy.length && legacy[0].required_position_id) {
-          const resolved = await resolveAssigneeForStep(legacy[0], txn.branch_id, txn.dept_id);
-          newAssignee = resolved.username || newAssignee;
-          newRoleId = legacy[0].required_position_id;
-          newRoleName = resolved.roleName || newRoleName;
+        if (legacy.length) {
+          stepExists = true;
+          if (legacy[0].required_position_id) {
+            const resolved = await resolveAssigneeForStep(legacy[0], txn.branch_id, txn.dept_id);
+            newAssignee = resolved.username || newAssignee;
+            newRoleId = legacy[0].required_position_id;
+            newRoleName = resolved.roleName || newRoleName;
+          }
         }
+      }
+      if (!stepExists) {
+        return res.status(409).json({
+          success: false,
+          error: 'الخطوة المرجعية لم تعد موجودة في سير العمل. تواصل مع المدير لإعادة تعريف المسار.',
+          stepId: txn.current_step_id
+        });
       }
     }
 
@@ -1949,9 +1975,22 @@ router.delete('/transactions/:id/force', guardDeveloper, SCHEMA.validateBody(SCH
 // ═══════════════════════════════════════════════════════════════════
 router.post('/transactions/:id/action', SCHEMA.validateBody(SCHEMA.schemas.action), async (req, res) => {
   const txnId = req.params.id;
-  const { action, username, note, attachment, newAmount, forwardTo, expectedVersion } = req.body;
+  const { action, username, note, attachment, newAmount, forwardTo, expectedVersion, idempotencyKey } = req.body;
   if (!action) return res.status(400).json({ success: false, error: 'الإجراء مطلوب' });
   if (!username) return res.status(401).json({ success: false, error: 'مستخدم غير معروف' });
+
+  // V5-IDEM: action idempotency — replay protection
+  const idemKey = idempotencyKey || req.headers['x-idempotency-key'];
+  if (idemKey) {
+    try {
+      const [prev] = await db.query(
+        'SELECT response_json, status_code FROM idempotency_keys WHERE id = ? LIMIT 1',
+        ['ACT-' + idemKey]);
+      if (prev.length) {
+        return res.status(prev[0].status_code || 200).json(JSON.parse(prev[0].response_json));
+      }
+    } catch(_e) { /* idempotency table missing — ignore */ }
+  }
 
   const conn = await db.getConnection();
   try {
@@ -2254,12 +2293,23 @@ router.post('/transactions/:id/action', SCHEMA.validateBody(SCHEMA.schemas.actio
     } catch(e) {}
 
     await conn.commit();
-    return res.json({
+    const _actResp = {
       success: true,
       newStatus,
       newAssignee,
       newVersion: Number(txn.version || 0) + 1
-    });
+    };
+    // V5-IDEM: persist response for 24h replay protection
+    if (idemKey) {
+      try {
+        await db.query(
+          `INSERT IGNORE INTO idempotency_keys (id, username, endpoint, response_json, status_code)
+           VALUES (?, ?, ?, ?, ?)`,
+          ['ACT-' + idemKey, username, 'POST /workflow/transactions/:id/action',
+           JSON.stringify(_actResp), 200]);
+      } catch(_e) {}
+    }
+    return res.json(_actResp);
   } catch (e) {
     try { await conn.rollback(); } catch(_) {}
     console.error('[workflow action] error:', e);
@@ -2297,16 +2347,74 @@ function _explainPermissionDenied(action, user, txn, step, actionLog) {
 }
 
 // Upload additional attachment for a transaction
+// V5-SEC: whitelist of allowed MIME types for attachments. Rejects:
+//   text/html, application/javascript, application/x-shellscript, etc.
+//   which could be served back inline and trigger XSS.
+const ATTACHMENT_MIME_WHITELIST = new Set([
+  // Images
+  'image/png','image/jpeg','image/jpg','image/gif','image/webp','image/heic','image/heif','image/svg+xml',
+  // Documents
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain','text/csv',
+  // Archives
+  'application/zip','application/x-zip-compressed','application/x-rar-compressed','application/x-7z-compressed',
+  // Misc safe
+  'application/json','application/xml','text/xml'
+]);
+
+const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB hard cap
+
 router.post('/transactions/:id/attachments', async (req, res) => {
   try {
     const { username, fileName, mime, dataUrl, logId } = req.body;
-    if (!dataUrl) return res.json({ success: false, error: 'المرفق مطلوب' });
+    if (!dataUrl) return res.status(400).json({ success: false, error: 'المرفق مطلوب' });
+
+    // V5-SEC: validate MIME type against whitelist
+    const cleanMime = String(mime || '').toLowerCase().split(';')[0].trim();
+    if (cleanMime && !ATTACHMENT_MIME_WHITELIST.has(cleanMime)) {
+      return res.status(415).json({
+        success: false,
+        error: 'نوع الملف غير مسموح: ' + cleanMime
+      });
+    }
+    // V5-SEC: validate the dataURL prefix matches the claimed MIME (prevents spoofing)
+    if (typeof dataUrl === 'string' && dataUrl.startsWith('data:')) {
+      const declaredMatch = dataUrl.match(/^data:([^;,]+)[;,]/);
+      const declared = declaredMatch ? declaredMatch[1].toLowerCase() : '';
+      if (declared && cleanMime && declared !== cleanMime) {
+        return res.status(400).json({
+          success: false,
+          error: 'تعارض بين نوع الملف المعلن ومحتواه'
+        });
+      }
+      if (declared && !ATTACHMENT_MIME_WHITELIST.has(declared)) {
+        return res.status(415).json({ success: false, error: 'نوع الملف غير مسموح: ' + declared });
+      }
+    }
+    // V5-SEC: enforce size limit at API level (do not rely on client)
+    // dataUrl is base64 — size = (length * 3/4) approximately
+    if (typeof dataUrl === 'string') {
+      const approxBytes = Math.floor((dataUrl.length - dataUrl.indexOf(',')) * 0.75);
+      if (approxBytes > ATTACHMENT_MAX_BYTES) {
+        return res.status(413).json({
+          success: false,
+          error: 'حجم الملف يتجاوز الحد المسموح (10 ميجابايت)'
+        });
+      }
+    }
+
     const id = 'ATT-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
     await db.query(
       'INSERT INTO txn_attachments (id, transaction_id, log_id, file_name, mime_type, data_url, uploaded_by) VALUES (?,?,?,?,?,?,?)',
-      [id, req.params.id, logId || null, fileName || 'file', mime || '', dataUrl, username || '']);
+      [id, req.params.id, logId || null, fileName || 'file', cleanMime || '', dataUrl, username || '']);
     res.json({ success: true, id });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 router.get('/attachments/:id', async (req, res) => {
@@ -2383,11 +2491,25 @@ router.get('/transactions/:id/replies', async (req, res) => {
 //        (implements user spec: "بعد الرد يجب انتقال المعاملة للجهة التالية")
 router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.reply), async (req, res) => {
   try {
-    const { replyText, attachment, attachmentName, attachmentMime, isInternal, username, andAdvance, forwardTo } = req.body;
+    const { replyText, attachment, attachmentName, attachmentMime, isInternal, username, andAdvance, forwardTo, idempotencyKey } = req.body;
     if (!replyText || !replyText.trim()) {
       return res.json({ success: false, error: 'نص الرد مطلوب' });
     }
     const author = username || (req.user && req.user.username) || 'admin';
+
+    // V5-IDEM: idempotency check — if same key seen in last 24h, return cached response.
+    // Prevents duplicate replies on flaky networks where the client retries.
+    const idemKey = idempotencyKey || req.headers['x-idempotency-key'];
+    if (idemKey) {
+      try {
+        const [prev] = await db.query(
+          'SELECT response_json, status_code FROM idempotency_keys WHERE id = ? LIMIT 1',
+          ['REP-' + idemKey]);
+        if (prev.length) {
+          return res.status(prev[0].status_code || 200).json(JSON.parse(prev[0].response_json));
+        }
+      } catch(_e) { /* idempotency table missing — ignore */ }
+    }
 
     // V4: load txn + check one-reply-per-stage rule via the permission engine
     const [txnRows] = await db.query('SELECT * FROM transactions WHERE id = ?', [req.params.id]);
@@ -2631,7 +2753,18 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
       advanceError = 'لا يمكن تحريك المعاملة في الحالة الحالية: ' + txn.status;
     }
 
-    res.json({ success: true, id, authorName, authorRole, authorPosition, advanceResult, advanceError, s3Warning });
+    const _replyResp = { success: true, id, authorName, authorRole, authorPosition, advanceResult, advanceError, s3Warning };
+    res.json(_replyResp);
+    // V5-IDEM: persist response under idempotency key (24h TTL via cleanup on boot)
+    if (idemKey) {
+      try {
+        await db.query(
+          `INSERT IGNORE INTO idempotency_keys (id, username, endpoint, response_json, status_code)
+           VALUES (?, ?, ?, ?, ?)`,
+          ['REP-' + idemKey, author, 'POST /workflow/transactions/:id/replies',
+           JSON.stringify(_replyResp), 200]);
+      } catch(_e) { /* table may not exist yet */ }
+    }
 
     // V4.5.3: BACKGROUND S3 upload (fire-and-forget, after response sent)
     // Reply is already in DB with inline data URL. This optimizes storage later.

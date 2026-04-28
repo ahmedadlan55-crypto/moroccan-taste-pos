@@ -799,6 +799,57 @@ function toast(msg, err) {
 // Alias to toast() so all error/success messages actually appear.
 window.glassToast = function(msg, err){ return toast(msg, err); };
 
+// V5-OFFLINE: lightweight outbound queue for replies/actions when network drops.
+// On 'online' event, drains queued items and POSTs them with the original idempotency key.
+// Server's idempotency table dedupes if the original already landed.
+window._empOutboxKey = 'emp_outbox_v1';
+function _empOutboxRead(){
+  try { return JSON.parse(localStorage.getItem(window._empOutboxKey) || '[]'); }
+  catch(_) { return []; }
+}
+function _empOutboxWrite(arr){
+  try { localStorage.setItem(window._empOutboxKey, JSON.stringify(arr.slice(-50))); } catch(_) {}
+}
+window._empOutboxQueue = function(item){
+  // item: { url, body, headers, savedAt, label }
+  var arr = _empOutboxRead();
+  arr.push(Object.assign({ savedAt: Date.now() }, item));
+  _empOutboxWrite(arr);
+  toast('💾 محفوظ — سيُرسل تلقائياً عند رجوع الإنترنت', false);
+};
+window._empOutboxDrain = function(){
+  var arr = _empOutboxRead();
+  if (!arr.length) return;
+  var token = localStorage.getItem('pos_token') || localStorage.getItem('emp_token');
+  if (!token) return;
+  var remaining = [];
+  var doneCount = 0;
+  var pending = arr.length;
+  arr.forEach(function(it){
+    var headers = Object.assign({
+      'Authorization': 'Bearer ' + token,
+      'Content-Type': 'application/json'
+    }, it.headers || {});
+    fetch(it.url, { method: 'POST', headers: headers, body: it.body })
+      .then(function(r){ return r.json().catch(function(){ return {}; }); })
+      .then(function(r){ if (r && r.success) doneCount++; else remaining.push(it); })
+      .catch(function(){ remaining.push(it); })
+      .finally(function(){
+        pending--;
+        if (pending === 0) {
+          _empOutboxWrite(remaining);
+          if (doneCount > 0) toast('✓ أُرسلت ' + doneCount + ' عملية مؤجلة', false);
+          if (remaining.length > 0) toast('⚠ تبقّى ' + remaining.length + ' عملية بحاجة لإعادة', true);
+        }
+      });
+  });
+};
+window.addEventListener('online', function(){
+  setTimeout(function(){ try { window._empOutboxDrain(); } catch(_) {} }, 1500);
+});
+// Drain on app start in case there's pending from a previous session
+setTimeout(function(){ if (navigator.onLine) try { window._empOutboxDrain(); } catch(_) {} }, 4000);
+
 // ─── Login ───
 document.addEventListener('keydown', function(e) { if (e.key==='Enter' && document.getElementById('loginPage') && document.getElementById('loginPage').style.display !== 'none') doLogin(); });
 
@@ -1427,6 +1478,15 @@ function _wireEmpAct(host, closeFn, id, action, required, minLen, maxLen){
     host.addEventListener('click', function(e) { if (e.target === host) closeFn(); });
     var x = host.querySelector('#empActCloseX'); if (x) x.onclick = closeFn;
   }
+  // V5-A11y: focus trap — Tab/Shift+Tab cycle within modal; Esc closes
+  var focusables = host.querySelectorAll('textarea,button,input,select');
+  host.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') { closeFn(); return; }
+    if (e.key !== 'Tab' || !focusables.length) return;
+    var first = focusables[0], last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) { last.focus(); e.preventDefault(); }
+    else if (!e.shiftKey && document.activeElement === last) { first.focus(); e.preventDefault(); }
+  });
   var cancel = host.querySelector('#empActCancelBtn') || host.querySelector('[data-act="cancel"]');
   if (cancel) cancel.onclick = closeFn;
   var ta = host.querySelector('#empActNote');
@@ -1486,45 +1546,95 @@ function _wireEmpAct(host, closeFn, id, action, required, minLen, maxLen){
 function empFwd(id) {
   callAPI('GET', '/workflow/eligible-users?sender=' + encodeURIComponent(currentUser), null, function(users) {
     if (!users || !users.length) return toast(t('txn.noRecipient'), true);
+    // V5-UX: group users by department/role for clearer hierarchy
+    var groups = { manager: [], peer: [], subordinate: [], other: [] };
+    users.forEach(function(u){
+      var k = u.relation || (u.role === 'admin' ? 'manager' : 'other');
+      if (groups[k]) groups[k].push(u); else groups.other.push(u);
+    });
+    var groupLabels = {
+      manager: '👔 المديرون والإدارة العليا',
+      peer: '👥 الزملاء (نفس المستوى)',
+      subordinate: '👤 المرؤوسون',
+      other: '🌐 مستخدمون آخرون'
+    };
+    var optsHtml = '';
+    Object.keys(groups).forEach(function(k){
+      if (!groups[k].length) return;
+      optsHtml += '<optgroup label="' + groupLabels[k] + ' (' + groups[k].length + ')">';
+      groups[k].forEach(function(u){
+        optsHtml += '<option value="'+_esc(u.username)+'">'+_esc(u.fullName||u.username)+(u.positionName?' — '+_esc(u.positionName):'')+(u.branchName?' · '+_esc(u.branchName):'')+'</option>';
+      });
+      optsHtml += '</optgroup>';
+    });
 
     var old = document.getElementById('empFwdDlg'); if (old) old.remove();
     var div = document.createElement('div');
     div.id = 'empFwdDlg';
-    div.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:14px;';
-    var opts = users.map(function(u) { return '<option value="'+u.username+'">'+(u.fullName||u.username)+(u.positionName?' — '+u.positionName:'')+'</option>'; }).join('');
+    div.setAttribute('role','dialog');
+    div.setAttribute('aria-modal','true');
+    div.setAttribute('aria-labelledby','empFwdTitle');
+    // V5-UX: bottom-sheet on mobile, centered on tablet+
+    var isMobile = !(window.matchMedia && window.matchMedia('(min-width:600px)').matches);
+    div.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.55);display:flex;align-items:'+(isMobile?'flex-end':'center')+';justify-content:center;padding:'+(isMobile?'0':'14px')+';backdrop-filter:blur(4px);';
     div.innerHTML =
-      '<div style="background:#fff;border-radius:14px;padding:18px;width:100%;max-width:420px;box-shadow:0 20px 50px rgba(0,0,0,.2);">' +
-        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">' +
-          '<div style="width:38px;height:38px;border-radius:50%;background:#8b5cf615;display:flex;align-items:center;justify-content:center;"><i class="fas fa-share" style="color:#8b5cf6;"></i></div>' +
-          '<h3 style="margin:0;font-size:15px;font-weight:800;">'+t('txn.forward')+'</h3>' +
+      '<div role="document" style="background:#fff;border-radius:'+(isMobile?'18px 18px 0 0':'18px')+';padding:20px;width:100%;max-width:'+(isMobile?'100%':'480px')+';max-height:'+(isMobile?'85dvh':'90vh')+';overflow-y:auto;box-shadow:0 -8px 32px rgba(0,0,0,.25);direction:rtl;">' +
+        '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">' +
+          '<div style="width:44px;height:44px;border-radius:12px;background:#ede9fe;display:grid;place-items:center;flex-shrink:0;"><i class="fas fa-share" style="color:#7c3aed;font-size:18px;"></i></div>' +
+          '<h3 id="empFwdTitle" style="margin:0;font-size:17px;font-weight:800;color:#0f172a;">'+t('txn.forward')+'</h3>' +
+          '<button aria-label="إغلاق" id="empFwdCloseX" style="margin-inline-start:auto;width:36px;height:36px;border:0;background:transparent;font-size:22px;color:#64748b;cursor:pointer;border-radius:8px;">&times;</button>' +
         '</div>' +
         '<div style="margin-bottom:10px;">' +
-          '<label style="font-size:12px;font-weight:700;color:#475569;display:block;margin-bottom:4px;">'+t('tm.recipient')+'</label>' +
-          '<select id="empFwdTo" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;font-family:inherit;">'+opts+'</select>' +
+          '<label for="empFwdTo" style="font-size:13px;font-weight:700;color:#334155;display:block;margin-bottom:6px;">'+t('tm.recipient')+' <span style="color:#ef4444;" aria-hidden="true">*</span></label>' +
+          '<select id="empFwdTo" aria-required="true" style="width:100%;min-height:44px;padding:10px 12px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;font-family:inherit;background:#fff;">'+optsHtml+'</select>' +
         '</div>' +
         '<div style="margin-bottom:10px;">' +
-          '<label style="font-size:12px;font-weight:700;color:#475569;display:block;margin-bottom:4px;">'+t('txn.noteOptional')+'</label>' +
-          '<textarea id="empFwdNote" rows="3" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;resize:vertical;font-family:inherit;" placeholder="'+t('txn.notePlaceholder')+'"></textarea>' +
+          '<label for="empFwdNote" style="font-size:13px;font-weight:700;color:#334155;display:block;margin-bottom:6px;">'+t('txn.noteOptional')+'</label>' +
+          '<textarea id="empFwdNote" rows="3" maxlength="1000" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;resize:none;font-family:inherit;min-height:80px;max-height:30vh;" placeholder="'+t('txn.notePlaceholder')+'"></textarea>' +
         '</div>' +
-        '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
-          '<button id="empFwdCancelBtn" style="padding:10px 18px;border:2px solid #e5e7eb;background:#fff;color:#64748b;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;">'+t('common.cancelBtn')+'</button>' +
-          '<button id="empFwdOkBtn" style="padding:10px 22px;border:none;background:#8b5cf6;color:#fff;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;">'+t('txn.forward')+'</button>' +
+        '<div style="display:flex;gap:10px;justify-content:flex-end;">' +
+          '<button id="empFwdCancelBtn" style="padding:12px 22px;min-height:44px;min-width:88px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;border-radius:12px;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;">'+t('common.cancelBtn')+'</button>' +
+          '<button id="empFwdOkBtn" style="padding:12px 26px;min-height:44px;min-width:120px;border:none;background:#8b5cf6;color:#fff;border-radius:12px;font-weight:800;font-size:14px;cursor:pointer;font-family:inherit;box-shadow:0 4px 12px rgba(139,92,246,.4);">'+t('txn.forward')+'</button>' +
         '</div>' +
       '</div>';
     document.body.appendChild(div);
     div.addEventListener('click', function(e) { if (e.target === div) div.remove(); });
     div.querySelector('#empFwdCancelBtn').onclick = function() { div.remove(); };
-    div.querySelector('#empFwdOkBtn').onclick = function() {
+    div.querySelector('#empFwdCloseX').onclick = function(){ div.remove(); };
+    // V5-A11y: auto-focus the recipient picker so keyboard users don't have to tab
+    setTimeout(function(){ var f = document.getElementById('empFwdTo'); if (f) f.focus(); }, 60);
+    // V5-A11y: focus trap within modal — Tab/Shift+Tab cycles within
+    var focusables = div.querySelectorAll('select,textarea,button,input');
+    div.addEventListener('keydown', function(e){
+      if (e.key === 'Escape') { div.remove(); return; }
+      if (e.key !== 'Tab' || !focusables.length) return;
+      var first = focusables[0], last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) { last.focus(); e.preventDefault(); }
+      else if (!e.shiftKey && document.activeElement === last) { first.focus(); e.preventDefault(); }
+    });
+    var okBtn = div.querySelector('#empFwdOkBtn');
+    okBtn.onclick = function() {
+      if (okBtn.disabled) return;
       var toUser = document.getElementById('empFwdTo').value;
       var note = (document.getElementById('empFwdNote').value||'').trim();
       if (!toUser) return toast(t('txn.invalidChoice'), true);
-      div.remove();
+      // V5-UX: lock to prevent double-submit + idempotency
+      okBtn.disabled = true;
+      var originalText = okBtn.textContent;
+      okBtn.textContent = '... ' + originalText;
+      var idemKey = 'fwd-' + id + '-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
       callAPI('POST', '/workflow/transactions/' + id + '/action', {
         action: 'forward', username: currentUser, forwardTo: toUser,
-        note: t('txn.act.forward') + ': ' + toUser + (note ? ' — ' + note : '')
+        note: t('txn.act.forward') + ': ' + toUser + (note ? ' — ' + note : ''),
+        idempotencyKey: idemKey
       }, function(r) {
-        if (r && r.success) { toast(t('txn.forwarded')); loadIncomingTxns(); }
-        else toast(r ? r.error : t('txn.failed'), true);
+        okBtn.disabled = false;
+        okBtn.textContent = originalText;
+        if (r && r.success) {
+          div.remove();
+          toast(t('txn.forwarded'));
+          if (typeof loadIncomingTxns === 'function') loadIncomingTxns();
+        } else toast(r ? r.error : t('txn.failed'), true);
       });
     };
   });
@@ -2547,6 +2657,28 @@ window.empPostReply = function(txnId, andAdvance) {
         if (optEl3) optEl3.remove();
         reEnable();
         console.error('[empPostReply] err:', err);
+        // V5-OFFLINE: if the device is offline, queue the reply for auto-retry.
+        // If online but server fails, surface the error normally.
+        var isOffline = (typeof navigator !== 'undefined' && navigator.onLine === false);
+        if (isOffline || (err && err.name !== 'AbortError' && (!err.message || err.message.includes('NetworkError') || err.message.includes('Failed to fetch')))) {
+          try {
+            window._empOutboxQueue({
+              url: '/api/workflow/transactions/' + txnId + '/replies',
+              headers: { 'X-Idempotency-Key': idemKey },
+              body: JSON.stringify({
+                replyText: text, username: currentUser,
+                attachment: attachment || null,
+                attachmentName: attachmentName || null,
+                attachmentMime: attachmentMime || null,
+                andAdvance: !!andAdvance,
+                forwardTo: explicitForwardTo,
+                idempotencyKey: idemKey
+              }),
+              label: 'reply'
+            });
+            return;
+          } catch(_qe) { /* fall through to normal error */ }
+        }
         // V4.5.2: distinguish between abort (timeout) and other errors
         if (err && err.name === 'AbortError') {
           glassToast('⏱️ انتهت المهلة (90 ثانية) — جرب مرة أخرى أو قلل حجم المرفق', true);

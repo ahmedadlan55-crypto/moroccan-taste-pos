@@ -5733,9 +5733,13 @@ function wfViewTxn(id) {
         '<div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap;">' +
           '<input type="file" id="adm_replyFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="display:none;" onchange="(function(i){var l=document.getElementById(\'adm_replyFileLabel\');if(l)l.textContent=i.files[0]?(i.files[0].name.length>20?i.files[0].name.substring(0,20)+\'...\':i.files[0].name):\'إرفاق ملف\';})(this)">' +
           '<button type="button" onclick="document.getElementById(\'adm_replyFile\').click()" class="wo-btn wo-btn-secondary" style="padding:9px 14px;font-size:12px;background:#fff;color:#8b5cf6;border:1.5px solid #c4b5fd;"><i class="fas fa-paperclip"></i><span id="adm_replyFileLabel">إرفاق ملف</span></button>' +
-          // V4.2: when user IS the current assignee, reply auto-advances workflow
+          // V4.5: when user IS current assignee, show recipient picker + reply auto-advances
           (isAssignedToMe ?
-            '<button onclick="admPostReply(\''+txn.id+'\',true)" class="wo-btn wo-btn-primary" style="flex:1;background:linear-gradient(135deg,#16a34a,#15803d);"><i class="fas fa-paper-plane"></i><span>رد + موافقة وتحويل للتالي</span></button>'
+            '<select id="adm_replyForwardTo" style="flex:1;min-width:160px;padding:8px 10px;border:1.5px solid #86efac;border-radius:8px;background:#f0fdf4;font-family:inherit;font-size:12px;font-weight:600;">' +
+              '<option value="">▶ التالي في السلسلة (افتراضي)</option>' +
+              '<option value="" disabled>──────────</option>' +
+            '</select>' +
+            '<button onclick="admPostReply(\''+txn.id+'\',true)" class="wo-btn wo-btn-primary" style="flex:1;background:linear-gradient(135deg,#16a34a,#15803d);"><i class="fas fa-paper-plane"></i><span>رد + إرسال</span></button>'
           : '<button onclick="admPostReply(\''+txn.id+'\',false)" class="wo-btn wo-btn-primary" style="flex:1;background:linear-gradient(135deg,#8b5cf6,#6d28d9);"><i class="fas fa-comment"></i><span>إرسال الرد</span></button>') +
         '</div>' +
       '</div>' +
@@ -5845,6 +5849,22 @@ function wfViewTxn(id) {
     modalEl.classList.remove('hidden');
     // V3: lazy-load replies thread
     setTimeout(function() { try { admLoadReplies(txn.id); } catch(e){ console.warn('admLoadReplies err:', e); } }, 50);
+    // V4.5: populate recipient picker for explicit forwardTo (admin reply form)
+    setTimeout(function() {
+      var sel = document.getElementById('adm_replyForwardTo');
+      if (!sel) return;
+      try {
+        window._apiBridge.withSuccessHandler(function(emps) {
+          if (!Array.isArray(emps)) return;
+          var opts = emps.filter(function(e){ return e.username && e.username !== currentUser; })
+            .map(function(e){
+              var label = e.fullName + (e.positionName ? ' — ' + e.positionName : '') + (e.branchName ? ' (' + e.branchName + ')' : '');
+              return '<option value="' + _woEscapeHtml(e.username) + '">' + _woEscapeHtml(label) + '</option>';
+            }).join('');
+          if (opts) sel.innerHTML = sel.innerHTML + opts;
+        }).getWfOrgTree();
+      } catch(e) {}
+    }, 80);
     // V4: lazy-fetch server-computed permissions on FIRST view; if cached, skip
     var _alreadyHasPerms = window._lastViewedTxnPerms && window._lastViewedTxnPerms.txnId === txn.id;
     if (!_alreadyHasPerms) {
@@ -16445,6 +16465,9 @@ window.admPostReply = function(txnId, andAdvance) {
     if (optEl) optEl.remove();
   };
   var token = localStorage.getItem('pos_token');
+  // V4.5: read explicit recipient from picker
+  var fwdSel = document.getElementById('adm_replyForwardTo');
+  var explicitForwardTo = (fwdSel && fwdSel.value) ? fwdSel.value : null;
   var doSend = function(attachment, attachmentName, attachmentMime) {
     fetch('/api/workflow/transactions/' + txnId + '/replies', {
       method: 'POST',
@@ -16454,7 +16477,8 @@ window.admPostReply = function(txnId, andAdvance) {
         attachment: attachment || null,
         attachmentName: attachmentName || null,
         attachmentMime: attachmentMime || null,
-        andAdvance: !!andAdvance   // V4.2
+        andAdvance: !!andAdvance,   // V4.2
+        forwardTo: explicitForwardTo // V4.5: user-picked recipient (overrides next-step)
       })
     })
       .then(function(r){return r.json();})

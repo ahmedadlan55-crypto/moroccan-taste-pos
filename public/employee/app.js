@@ -1956,14 +1956,40 @@ function viewMyTxn(id) {
       '<div id="emp_repliesList"><div style="text-align:center;color:#94a3b8;padding:20px;font-size:12px;"><i class="fas fa-spinner fa-spin"></i></div></div>';
     if (canStillReply) {
       h += '<div style="margin-top:12px;padding-top:12px;border-top:1px dashed ' + (isMyTurn ? '#86efac' : '#c4b5fd') + ';" id="emp_replyForm">' +
-        (isMyTurn ? '<div style="font-size:11.5px;color:#15803d;font-weight:700;margin-bottom:8px;background:#dcfce7;padding:8px 12px;border-radius:8px;border:1px solid #86efac;"><i class="fas fa-info-circle"></i> اكتب ردك. عند الإرسال ستنتقل المعاملة للشخص التالي تلقائياً.</div>' : '') +
+        (isMyTurn ? '<div style="font-size:11.5px;color:#15803d;font-weight:700;margin-bottom:8px;background:#dcfce7;padding:8px 12px;border-radius:8px;border:1px solid #86efac;"><i class="fas fa-info-circle"></i> اكتب ردك واختر المستلم (افتراضياً: الشخص التالي في السلسلة).</div>' : '') +
         '<textarea id="emp_replyText" placeholder="' + (isMyTurn ? 'اكتب ردك على المعاملة...' : t('txn.replyPlaceholder')).replace(/'/g,"\\'") + '" style="width:100%;min-height:80px;padding:12px;border:1.5px solid ' + (isMyTurn ? '#86efac' : '#c4b5fd') + ';border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;background:#fff;line-height:1.7;"></textarea>' +
+        // V4.5: recipient picker (only when user is current assignee — otherwise reply is just a comment)
+        (isMyTurn ?
+          '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#f0fdf4;padding:8px 12px;border-radius:10px;border:1px solid #86efac;">' +
+            '<i class="fas fa-paper-plane" style="color:#15803d;font-size:13px;"></i>' +
+            '<label style="font-size:11.5px;font-weight:800;color:#15803d;">إرسال إلى:</label>' +
+            '<select id="emp_replyForwardTo" style="flex:1;min-width:180px;padding:7px 10px;border:1.5px solid #86efac;border-radius:8px;font-family:inherit;font-size:12.5px;background:#fff;color:#0f172a;font-weight:600;">' +
+              '<option value="">▶ التالي في السلسلة (افتراضي)</option>' +
+              '<option value="" disabled>──── اختر مستخدم محدد ────</option>' +
+            '</select>' +
+          '</div>' : '') +
         '<div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap;">' +
           '<input type="file" id="emp_replyFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="display:none;" onchange="(function(i){var l=document.getElementById(\'emp_replyFileLabel\');if(l)l.textContent=i.files[0]?(i.files[0].name.length>20?i.files[0].name.substring(0,20)+\'...\':i.files[0].name):(window.t?t(\'txn.attachFile\'):\'إرفاق ملف\');})(this)">' +
           '<button type="button" onclick="document.getElementById(\'emp_replyFile\').click()" style="padding:9px 14px;border-radius:10px;background:#fff;color:' + (isMyTurn ? '#15803d' : '#8b5cf6') + ';border:1.5px solid ' + (isMyTurn ? '#86efac' : '#c4b5fd') + ';font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;"><i class="fas fa-paperclip"></i><span id="emp_replyFileLabel">' + fileLabelDefault + '</span></button>' +
           '<button onclick="empPostReply(\''+id+'\',' + (isMyTurn?'true':'false') + ')" id="emp_replySendBtn" style="flex:1;padding:11px 16px;border-radius:10px;' + btnBg + 'color:#fff;border:none;font-weight:900;font-size:13px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 6px rgba(0,0,0,.12);">' + btnLabel + '</button>' +
         '</div>' +
       '</div>';
+      // V4.5: lazily populate the recipient picker with org-tree users
+      if (isMyTurn) {
+        setTimeout(function(){
+          callAPI('GET', '/workflow/org-tree', null, function(emps) {
+            var sel = document.getElementById('emp_replyForwardTo');
+            if (!sel || !Array.isArray(emps)) return;
+            var opts = emps
+              .filter(function(e){ return e.username && e.username !== currentUser; })
+              .map(function(e){
+                var label = e.fullName + (e.positionName ? ' — ' + e.positionName : '') + (e.branchName ? ' (' + e.branchName + ')' : '');
+                return '<option value="' + _esc(e.username) + '">' + _esc(label) + '</option>';
+              }).join('');
+            if (opts) sel.innerHTML = sel.innerHTML + opts;
+          });
+        }, 100);
+      }
     } else {
       h += '<div style="margin-top:12px;padding:12px;background:#f0f9ff;border:1.5px dashed #bae6fd;border-radius:10px;color:#0369a1;font-size:12px;font-weight:700;text-align:center;"><i class="fas fa-circle-check"></i> لقد رددت على هذه المرحلة من قبل — رد واحد لكل مرحلة</div>';
     }
@@ -2238,6 +2264,9 @@ window.empPostReply = function(txnId, andAdvance) {
     if (optEl) optEl.remove();
   };
 
+  // V4.5: read explicit recipient (only present when user is current assignee)
+  var fwdSel = document.getElementById('emp_replyForwardTo');
+  var explicitForwardTo = (fwdSel && fwdSel.value) ? fwdSel.value : null;
   var doSend = function(attachment, attachmentName, attachmentMime) {
     fetch('/api/workflow/transactions/' + txnId + '/replies', {
       method: 'POST',
@@ -2247,7 +2276,8 @@ window.empPostReply = function(txnId, andAdvance) {
         attachment: attachment || null,
         attachmentName: attachmentName || null,
         attachmentMime: attachmentMime || null,
-        andAdvance: !!andAdvance
+        andAdvance: !!andAdvance,
+        forwardTo: explicitForwardTo   // V4.5: when set, server routes to this specific user
       })
     })
       .then(function(r){return r.json();})

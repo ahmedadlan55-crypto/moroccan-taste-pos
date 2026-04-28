@@ -2325,7 +2325,7 @@ router.get('/transactions/:id/replies', async (req, res) => {
 //        (implements user spec: "بعد الرد يجب انتقال المعاملة للجهة التالية")
 router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.reply), async (req, res) => {
   try {
-    const { replyText, attachment, attachmentName, attachmentMime, isInternal, username, andAdvance } = req.body;
+    const { replyText, attachment, attachmentName, attachmentMime, isInternal, username, andAdvance, forwardTo } = req.body;
     if (!replyText || !replyText.trim()) {
       return res.json({ success: false, error: 'نص الرد مطلوب' });
     }
@@ -2448,7 +2448,27 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
             }
           }
           let newStatus = 'approved', newStepId = null, newAssignee = '', newRoleId = null, newRoleName = '';
-          if (step) {
+          // V4.5: if forwardTo is explicitly provided, route to that specific user
+          // (bypasses the chain-defined next step — useful for "send to specific person")
+          if (forwardTo) {
+            // Verify the target user exists
+            const [u] = await conn.query('SELECT username, COALESCE(full_name,username) AS name, position_id FROM users WHERE username = ? LIMIT 1', [forwardTo]);
+            if (!u.length) {
+              await conn.rollback();
+              return res.status(400).json({ success: false, error: 'المستلم المحدد غير موجود: ' + forwardTo });
+            }
+            newStatus = 'in_progress';
+            newAssignee = u[0].username;
+            newStepId = txn.current_step_id;  // keep step but with new assignee
+            newRoleId = u[0].position_id || txn.current_role_id || null;
+            // Look up role name if we have a position_id
+            if (u[0].position_id) {
+              try {
+                const [p] = await conn.query('SELECT name FROM positions WHERE id = ? LIMIT 1', [u[0].position_id]);
+                if (p.length) newRoleName = p[0].name;
+              } catch(_) {}
+            }
+          } else if (step) {
             const txnAmount = Number(txn.amount) || 0;
             let nextStep = null;
             if (step._source === 'position' && txn.initiator_position_id) {
@@ -2485,15 +2505,18 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
                     current_role_id=?, current_role_name=?, version=version+1, updated_at=NOW()
               WHERE id=?`,
             [newStatus, newStepId, newAssignee, newRoleId, newRoleName, req.params.id]);
-          // Log the implicit approve action
+          // Log the action — distinguishes between auto-route and explicit forward
+          const advLogType = forwardTo ? 'forward' : 'approve';
+          const advLogNote = forwardTo
+            ? '[رد + تحويل صريح إلى ' + forwardTo + '] ' + replyText.trim().substring(0, 180)
+            : '[رد + موافقة] ' + replyText.trim().substring(0, 200);
           await conn.query(
             `INSERT INTO transaction_steps_log
               (id, transaction_id, workflow_definition_id, action_by, action_type, action_note, reply_id, from_step_id, to_step_id, position_name)
              VALUES (?,?,?,?,?,?,?,?,?,?)`,
             ['LOG-' + Date.now() + '-' + Math.random().toString(36).slice(2,4),
-             req.params.id, txn.current_step_id, author, 'approve',
-             '[رد + موافقة] ' + replyText.trim().substring(0, 200),
-             id, txn.current_step_id, newStepId, authorPosition || '']);
+             req.params.id, txn.current_step_id, author, advLogType,
+             advLogNote, id, txn.current_step_id, newStepId, authorPosition || '']);
           // Notify next assignee or creator
           try {
             if (newAssignee && newAssignee !== author) {

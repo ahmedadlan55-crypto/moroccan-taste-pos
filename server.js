@@ -51,9 +51,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// 5. Body parsing with size limits
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+// 5. Body parsing with size limits — 25MB allows ~18MB raw files (base64 expansion 1.37x)
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ limit: '25mb', extended: true }));
 
 // 6. Global rate limiter for ALL API requests
 const _rateLimitStore = {}; // { ip: { count, windowStart } }

@@ -2375,16 +2375,29 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
       }
     } catch(e) {}
 
-    // V3.1: also store attachment_name + attachment_mime so the UI can show
-    // proper file names + decide between image preview vs generic icon.
-    // V4: also store stage_step_id so we can enforce one-reply-per-stage rule.
-    // V4.1: if S3 configured, upload attachment to S3 and store URL instead of base64
+    // V4.5.2: Attachment storage strategy:
+    // - If S3 configured AND attachment is a data URL → try S3 (with 30s timeout)
+    // - On any failure → fall back to inline base64 storage
+    // - Errors are logged + returned in `s3Warning` field so frontend knows
     let finalAttachment = attachment || null;
-    if (finalAttachment && S3.ENABLED) {
+    let s3Warning = null;
+    if (finalAttachment && S3.ENABLED && typeof finalAttachment === 'string' && finalAttachment.startsWith('data:')) {
       try {
-        finalAttachment = await S3.maybeUpload(finalAttachment, attachmentName || 'reply-' + Date.now(), attachmentMime);
+        const uploadStart = Date.now();
+        const uploaded = await S3.maybeUpload(finalAttachment, attachmentName || ('reply-' + Date.now()), attachmentMime);
+        const uploadMs = Date.now() - uploadStart;
+        if (uploaded !== finalAttachment) {
+          finalAttachment = uploaded;
+          console.log('[s3 reply attach] uploaded in ' + uploadMs + 'ms → ' + uploaded);
+        } else {
+          // maybeUpload returned the original = upload failed silently
+          s3Warning = 'S3 upload returned original (failed silently); using inline storage';
+          console.warn('[s3 reply attach]', s3Warning);
+        }
       } catch (e) {
-        console.warn('[s3 reply attach] upload failed, keeping inline:', e.message);
+        s3Warning = 'S3 upload failed: ' + e.message + ' — fell back to inline storage';
+        console.warn('[s3 reply attach]', s3Warning);
+        // finalAttachment already has the data URL → falls back to inline
       }
     }
     const id = 'REP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
@@ -2555,7 +2568,7 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
       advanceError = 'لا يمكن تحريك المعاملة في الحالة الحالية: ' + txn.status;
     }
 
-    res.json({ success: true, id, authorName, authorRole, authorPosition, advanceResult, advanceError });
+    res.json({ success: true, id, authorName, authorRole, authorPosition, advanceResult, advanceError, s3Warning });
   } catch(e) {
     res.json({ success: false, error: e.message });
   }
@@ -2625,110 +2638,132 @@ router.get('/transactions/:id/permissions', async (req, res) => {
   }
 });
 
-// V4.5 — GET /routable-users?username=X
-// Returns the users the caller can legitimately forward/reply-to,
-// grouped by relationship (manager, peers, subordinates, others).
-// Filters the noise out of the org tree — show only relevant people.
+// V4.5.2 — GET /routable-users?username=X
+// Returns ALL users the caller can route/reply to, properly grouped.
+// Reads from BOTH `users` (system users) AND `hr_employees` (HR data),
+// merges by username, so admin/finance/manager users without HR rows still appear.
 router.get('/routable-users', async (req, res) => {
   try {
     const username = req.query.username || (req.user && req.user.username);
     if (!username) return res.json({ groups: [] });
 
-    // Find the caller's hr_employees row
-    const [me] = await db.query(
-      `SELECT e.id, e.manager_id, e.workflow_level, e.branch_id, e.department_id, e.position_id, e.linked_username
-         FROM hr_employees e
-        WHERE e.linked_username = ? AND e.status = 'active' LIMIT 1`,
+    // 1. Get ALL active users (admin + employees) — single source of truth
+    const [allUsers] = await db.query(
+      `SELECT u.username, u.role, u.full_name AS user_full_name
+         FROM users u
+        WHERE u.username IS NOT NULL AND u.username != ?
+          AND (u.is_active IS NULL OR u.is_active = 1)`,
       [username]);
 
-    // Even if caller has no hr row (e.g., raw user), still return everyone (admin needs full picker)
-    if (!me.length) {
-      const [all] = await db.query(
-        `SELECT e.linked_username, COALESCE(CONCAT_WS(' ', e.first_name, e.last_name), e.linked_username) AS full_name,
-                e.job_title, p.name AS position_name, b.name AS branch_name
+    if (!allUsers.length) return res.json({ groups: [], totalUsers: 0 });
+
+    // 2. Get HR data for any of them (left join — HR is optional)
+    const usernames = allUsers.map(u => u.username);
+    const placeholders = usernames.map(() => '?').join(',');
+    let hrMap = {};
+    try {
+      const [hrRows] = await db.query(
+        `SELECT e.linked_username, e.id, e.manager_id, e.workflow_level, e.department_id, e.position_id,
+                COALESCE(CONCAT_WS(' ', e.first_name, e.last_name), e.linked_username) AS full_name,
+                e.job_title, p.name AS position_name, b.name AS branch_name, p.level AS position_level
            FROM hr_employees e
            LEFT JOIN positions p ON e.position_id = p.id
            LEFT JOIN branches b ON e.branch_id = b.id
-          WHERE e.status = 'active' AND e.linked_username IS NOT NULL AND e.linked_username != ?
-          ORDER BY e.first_name LIMIT 200`, [username]);
-      return res.json({
-        groups: [
-          { key: 'all', label: 'كل المستخدمين', icon: 'fa-users',
-            users: all.map(u => ({ username: u.linked_username, fullName: u.full_name, position: u.position_name || u.job_title, branch: u.branch_name })) }
-        ]
-      });
-    }
+          WHERE e.status = 'active' AND e.linked_username IN (${placeholders})`,
+        usernames);
+      hrRows.forEach(r => { hrMap[r.linked_username] = r; });
+    } catch(_) {}
 
-    const myEmpId = me[0].id;
-    const myMgrId = me[0].manager_id;
-    const myLevel = Number(me[0].workflow_level) || 1;
-    const myBranchId = me[0].branch_id;
-    const myDeptId = me[0].department_id;
-
-    // Manager (1 person)
-    let manager = [];
-    if (myMgrId) {
-      const [mgr] = await db.query(
-        `SELECT e.linked_username, COALESCE(CONCAT_WS(' ', e.first_name, e.last_name), e.linked_username) AS full_name,
-                e.job_title, p.name AS position_name, b.name AS branch_name
+    // 3. Find caller's HR data (for relationship calculations)
+    let myHr = null;
+    try {
+      const [me] = await db.query(
+        `SELECT e.id, e.manager_id, e.workflow_level, e.department_id, e.position_id,
+                p.level AS position_level
            FROM hr_employees e
            LEFT JOIN positions p ON e.position_id = p.id
-           LEFT JOIN branches b ON e.branch_id = b.id
-          WHERE e.id = ? AND e.linked_username IS NOT NULL`, [myMgrId]);
-      manager = mgr.map(u => ({ username: u.linked_username, fullName: u.full_name, position: u.position_name || u.job_title, branch: u.branch_name }));
+          WHERE e.linked_username = ? AND e.status = 'active' LIMIT 1`,
+        [username]);
+      if (me.length) myHr = me[0];
+    } catch(_) {}
+
+    const myEmpId    = myHr ? myHr.id : null;
+    const myMgrId    = myHr ? myHr.manager_id : null;
+    const myLevel    = myHr ? (Number(myHr.workflow_level) || Number(myHr.position_level) || 1) : 1;
+    const myDeptId   = myHr ? myHr.department_id : null;
+
+    // 4. Categorize each user
+    const manager = [];
+    const subordinates = [];
+    const peers = [];
+    const higherUps = [];
+    const systemAdmins = [];   // admin/manager/finance roles WITHOUT specific HR relationship
+    const others = [];
+
+    for (const u of allUsers) {
+      const hr = hrMap[u.username];
+      const userObj = {
+        username: u.username,
+        fullName: hr ? hr.full_name : (u.user_full_name || u.username),
+        position: hr ? (hr.position_name || hr.job_title) : _roleLabel(u.role),
+        branch:   hr ? (hr.branch_name || '') : '',
+        role:     u.role || ''
+      };
+
+      // Always include system admin in its own bucket
+      if (u.username === 'admin' || u.role === 'admin') {
+        systemAdmins.push(Object.assign({}, userObj, { position: userObj.position || 'مدير النظام' }));
+        continue;
+      }
+
+      // If user has HR data, categorize by relationship
+      if (hr) {
+        if (myEmpId && hr.id === myMgrId) { manager.push(userObj); continue; }
+        if (myEmpId && hr.manager_id === myEmpId) { subordinates.push(userObj); continue; }
+        if (myDeptId && hr.department_id === myDeptId && Number(hr.workflow_level || hr.position_level || 1) === myLevel) {
+          peers.push(userObj); continue;
+        }
+        const theirLevel = Number(hr.workflow_level || hr.position_level || 1);
+        if (theirLevel > myLevel) { higherUps.push(Object.assign({}, userObj, { level: theirLevel })); continue; }
+      }
+
+      // Special roles WITHOUT HR row → group as "system staff" (manager/finance roles)
+      if (u.role && ['manager', 'finance', 'hr', 'purchasing', 'inventory'].includes(u.role)) {
+        higherUps.push(Object.assign({}, userObj, { level: 99 }));
+        continue;
+      }
+
+      // Otherwise: bucket as "other users"
+      others.push(userObj);
     }
 
-    // Subordinates (people whose manager is me)
-    const [subs] = await db.query(
-      `SELECT e.linked_username, COALESCE(CONCAT_WS(' ', e.first_name, e.last_name), e.linked_username) AS full_name,
-              e.job_title, p.name AS position_name, b.name AS branch_name
-         FROM hr_employees e
-         LEFT JOIN positions p ON e.position_id = p.id
-         LEFT JOIN branches b ON e.branch_id = b.id
-        WHERE e.manager_id = ? AND e.status = 'active' AND e.linked_username IS NOT NULL AND e.linked_username != ?
-        ORDER BY e.first_name`, [myEmpId, username]);
-    const subordinates = subs.map(u => ({ username: u.linked_username, fullName: u.full_name, position: u.position_name || u.job_title, branch: u.branch_name }));
+    // Sort higher-ups by level desc
+    higherUps.sort((a, b) => (b.level || 0) - (a.level || 0));
 
-    // Peers (same dept, same level)
-    const [peers] = await db.query(
-      `SELECT e.linked_username, COALESCE(CONCAT_WS(' ', e.first_name, e.last_name), e.linked_username) AS full_name,
-              e.job_title, p.name AS position_name, b.name AS branch_name
-         FROM hr_employees e
-         LEFT JOIN positions p ON e.position_id = p.id
-         LEFT JOIN branches b ON e.branch_id = b.id
-        WHERE e.department_id = ? AND e.workflow_level = ? AND e.status = 'active'
-          AND e.linked_username IS NOT NULL AND e.linked_username != ?
-          AND e.id != ?
-        ORDER BY e.first_name LIMIT 50`, [myDeptId, myLevel, username, myEmpId]);
-    const peerList = peers.map(u => ({ username: u.linked_username, fullName: u.full_name, position: u.position_name || u.job_title, branch: u.branch_name }));
-
-    // Higher-ups (workflow_level > mine, regardless of dept)
-    const [higher] = await db.query(
-      `SELECT e.linked_username, COALESCE(CONCAT_WS(' ', e.first_name, e.last_name), e.linked_username) AS full_name,
-              e.job_title, p.name AS position_name, b.name AS branch_name, e.workflow_level
-         FROM hr_employees e
-         LEFT JOIN positions p ON e.position_id = p.id
-         LEFT JOIN branches b ON e.branch_id = b.id
-        WHERE e.workflow_level > ? AND e.status = 'active'
-          AND e.linked_username IS NOT NULL AND e.linked_username != ?
-          AND e.id != ? AND (e.id != ? OR ? IS NULL)
-        ORDER BY e.workflow_level DESC, e.first_name LIMIT 30`,
-      [myLevel, username, myEmpId, myMgrId || 0, myMgrId]);
-    const higherUps = higher.map(u => ({ username: u.linked_username, fullName: u.full_name, position: u.position_name || u.job_title, branch: u.branch_name, level: Number(u.workflow_level) }));
-
-    // Build response groups (ordered: most relevant first)
     const groups = [];
-    if (manager.length)     groups.push({ key: 'manager',     label: 'مديري المباشر',  icon: 'fa-user-tie',     users: manager });
-    if (subordinates.length) groups.push({ key: 'subordinates', label: 'موظفو قسمي',     icon: 'fa-users-line',    users: subordinates });
-    if (peerList.length)    groups.push({ key: 'peers',       label: 'زملاء بنفس المستوى', icon: 'fa-user-group', users: peerList });
-    if (higherUps.length)   groups.push({ key: 'higher',      label: 'الإدارة العليا',  icon: 'fa-crown',         users: higherUps });
+    if (manager.length)      groups.push({ key: 'manager',     label: '👔 مديري المباشر',     icon: 'fa-user-tie',  users: manager });
+    if (subordinates.length) groups.push({ key: 'subordinates',label: '👥 موظفو قسمي',        icon: 'fa-users-line', users: subordinates });
+    if (peers.length)        groups.push({ key: 'peers',       label: '👬 زملاء بنفس المستوى',icon: 'fa-user-group', users: peers });
+    if (higherUps.length)    groups.push({ key: 'higher',      label: '👑 الإدارة العليا',     icon: 'fa-crown',     users: higherUps });
+    if (systemAdmins.length) groups.push({ key: 'admin',       label: '🛡️ الإدارة العامة',    icon: 'fa-shield',    users: systemAdmins });
+    if (others.length)       groups.push({ key: 'others',      label: '🌐 مستخدمون آخرون',    icon: 'fa-users',     users: others });
 
-    res.json({ groups, totalUsers: manager.length + subordinates.length + peerList.length + higherUps.length });
+    const total = groups.reduce((s, g) => s + g.users.length, 0);
+    res.json({ groups, totalUsers: total });
   } catch(e) {
     console.warn('[routable-users]', e.message);
     res.json({ groups: [], error: e.message });
   }
 });
+
+function _roleLabel(role) {
+  const map = {
+    admin:'مدير النظام', manager:'مدير', cashier:'كاشير', custody:'عهدة',
+    finance:'المالية', hr:'الموارد البشرية', purchasing:'مشتريات',
+    inventory:'مخزون', employee:'موظف'
+  };
+  return map[role] || (role || 'مستخدم');
+}
 
 // V4 — POST /transactions/:id/open — explicit "first view" trigger
 // Transitions created → in_progress when assignee opens the txn for the first time.

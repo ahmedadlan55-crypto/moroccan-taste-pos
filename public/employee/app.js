@@ -2273,26 +2273,42 @@ window.empPostReply = function(txnId, andAdvance) {
   var fwdSel = document.getElementById('emp_replyForwardTo');
   var explicitForwardTo = (fwdSel && fwdSel.value) ? fwdSel.value : null;
   var doSend = function(attachment, attachmentName, attachmentMime) {
+    // V4.5.2: AbortController with 90s timeout — never hang forever
+    var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timeoutHandle = controller ? setTimeout(function(){
+      controller.abort();
+      console.warn('[reply] timed out after 90s');
+    }, 90000) : null;
+
+    // Update spinner text periodically so user knows it's still working
+    var spinnerStart = Date.now();
+    var spinnerInterval = setInterval(function() {
+      if (!btn) return;
+      var secs = Math.floor((Date.now() - spinnerStart) / 1000);
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الإرسال... ' + secs + 'ث';
+    }, 1000);
+    var clearSpinner = function() { clearInterval(spinnerInterval); if (timeoutHandle) clearTimeout(timeoutHandle); };
+
     fetch('/api/workflow/transactions/' + txnId + '/replies', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      signal: controller ? controller.signal : undefined,
       body: JSON.stringify({
         replyText: text, username: currentUser,
         attachment: attachment || null,
         attachmentName: attachmentName || null,
         attachmentMime: attachmentMime || null,
         andAdvance: !!andAdvance,
-        forwardTo: explicitForwardTo   // V4.5: when set, server routes to this specific user
+        forwardTo: explicitForwardTo
       })
     })
       .then(function(r){return r.json();})
       .then(function(r) {
+        clearSpinner();
         if (r && r.success) {
-          // ─── CONFIRM optimistic reply: remove "sending" badge, mark as sent ───
           var optEl = document.getElementById(optimisticId);
           if (optEl) {
             optEl.style.opacity = '1';
-            // Replace the "sending..." badge with green checkmark
             var sendingBadge = optEl.querySelector('span[style*="جاري الإرسال"]');
             if (sendingBadge) {
               sendingBadge.outerHTML = '<span style="font-size:10px;color:#16a34a;background:#dcfce7;padding:2px 8px;border-radius:6px;font-weight:800;"><i class="fas fa-check-circle"></i> تم الإرسال</span>';
@@ -2301,9 +2317,13 @@ window.empPostReply = function(txnId, andAdvance) {
           if (fileInput) fileInput.value = '';
           var fileLabel = document.getElementById('emp_replyFileLabel');
           if (fileLabel) fileLabel.textContent = 'إرفاق ملف';
-          // Hide the form (one-reply-per-stage)
           var form = document.getElementById('emp_replyForm');
           if (form) form.style.display = 'none';
+          // V4.5.2: warn user if S3 had an issue (not blocking, but informative)
+          if (r.s3Warning) {
+            console.warn('[reply s3 warning]', r.s3Warning);
+            // Don't toast — the attachment is still saved inline, no impact on user
+          }
           if (r.advanceResult && r.advanceResult.newStatus) {
             glassToast('✓ تم الرد + انتقلت المعاملة لـ ' + (r.advanceResult.newAssignee || r.advanceResult.newStatus));
             setTimeout(function(){
@@ -2311,14 +2331,12 @@ window.empPostReply = function(txnId, andAdvance) {
               if (typeof empRefreshCounters === 'function') empRefreshCounters();
             }, 200);
           } else if (r.advanceError) {
-            // V4.5: surface the actual reason the advance failed
             glassToast('⚠️ الرد أُرسل لكن فشل التحريك: ' + r.advanceError, true);
             console.warn('[reply advance error]', r.advanceError);
           } else {
             glassToast('✓ تم إرسال الرد');
           }
         } else {
-          // Rollback optimistic UI
           var optEl2 = document.getElementById(optimisticId);
           if (optEl2) optEl2.remove();
           reEnable();
@@ -2326,11 +2344,17 @@ window.empPostReply = function(txnId, andAdvance) {
         }
       })
       .catch(function(err) {
+        clearSpinner();
         var optEl3 = document.getElementById(optimisticId);
         if (optEl3) optEl3.remove();
         reEnable();
         console.error('[empPostReply] err:', err);
-        glassToast('فشل الاتصال', true);
+        // V4.5.2: distinguish between abort (timeout) and other errors
+        if (err && err.name === 'AbortError') {
+          glassToast('⏱️ انتهت المهلة (90 ثانية) — جرب مرة أخرى أو قلل حجم المرفق', true);
+        } else {
+          glassToast('فشل الاتصال: ' + (err && err.message || 'unknown'), true);
+        }
       });
   };
   if (hasFile) {

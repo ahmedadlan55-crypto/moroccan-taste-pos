@@ -5849,20 +5849,25 @@ function wfViewTxn(id) {
     modalEl.classList.remove('hidden');
     // V3: lazy-load replies thread
     setTimeout(function() { try { admLoadReplies(txn.id); } catch(e){ console.warn('admLoadReplies err:', e); } }, 50);
-    // V4.5: populate recipient picker for explicit forwardTo (admin reply form)
+    // V4.5: populate recipient picker with GROUPED routable users
     setTimeout(function() {
       var sel = document.getElementById('adm_replyForwardTo');
       if (!sel) return;
       try {
-        window._apiBridge.withSuccessHandler(function(emps) {
-          if (!Array.isArray(emps)) return;
-          var opts = emps.filter(function(e){ return e.username && e.username !== currentUser; })
-            .map(function(e){
-              var label = e.fullName + (e.positionName ? ' — ' + e.positionName : '') + (e.branchName ? ' (' + e.branchName + ')' : '');
-              return '<option value="' + _woEscapeHtml(e.username) + '">' + _woEscapeHtml(label) + '</option>';
-            }).join('');
-          if (opts) sel.innerHTML = sel.innerHTML + opts;
-        }).getWfOrgTree();
+        window._apiBridge.withSuccessHandler(function(resp) {
+          if (!resp || !Array.isArray(resp.groups)) return;
+          var html = '<option value="">▶ التالي في السلسلة (افتراضي)</option>';
+          resp.groups.forEach(function(g) {
+            if (!g.users || !g.users.length) return;
+            html += '<optgroup label="' + _woEscapeHtml(g.label) + ' (' + g.users.length + ')">';
+            g.users.forEach(function(u) {
+              var label = u.fullName + (u.position ? ' — ' + u.position : '') + (u.branch ? ' · ' + u.branch : '');
+              html += '<option value="' + _woEscapeHtml(u.username) + '">' + _woEscapeHtml(label) + '</option>';
+            });
+            html += '</optgroup>';
+          });
+          sel.innerHTML = html;
+        }).getRoutableUsers(currentUser);
       } catch(e) {}
     }, 80);
     // V4: lazy-fetch server-computed permissions on FIRST view; if cached, skip
@@ -16495,9 +16500,11 @@ window.admPostReply = function(txnId, andAdvance) {
           var fileLabel = document.getElementById('adm_replyFileLabel');
           if (fileLabel) fileLabel.textContent = 'إرفاق ملف';
           if (r.advanceResult && r.advanceResult.newStatus) {
-            showToast('✓ تم الرد + انتقلت المعاملة للتالي');
-            // Don't close immediately — let user see their reply confirmed
+            showToast('✓ تم الرد + انتقلت المعاملة لـ ' + (r.advanceResult.newAssignee || r.advanceResult.newStatus));
             setTimeout(function(){ if (typeof wfLoadInbox === 'function') wfLoadInbox(); }, 200);
+          } else if (r.advanceError) {
+            showToast('⚠️ الرد أُرسل لكن فشل التحريك: ' + r.advanceError, true);
+            console.warn('[advance error]', r.advanceError);
           } else {
             showToast('✓ تم إرسال الرد');
           }

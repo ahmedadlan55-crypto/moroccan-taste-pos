@@ -1974,19 +1974,24 @@ function viewMyTxn(id) {
           '<button onclick="empPostReply(\''+id+'\',' + (isMyTurn?'true':'false') + ')" id="emp_replySendBtn" style="flex:1;padding:11px 16px;border-radius:10px;' + btnBg + 'color:#fff;border:none;font-weight:900;font-size:13px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 6px rgba(0,0,0,.12);">' + btnLabel + '</button>' +
         '</div>' +
       '</div>';
-      // V4.5: lazily populate the recipient picker with org-tree users
+      // V4.5: populate recipient picker with GROUPED relevant users (manager + subordinates + peers + higher-ups)
       if (isMyTurn) {
         setTimeout(function(){
-          callAPI('GET', '/workflow/org-tree', null, function(emps) {
+          callAPI('GET', '/workflow/routable-users?username=' + encodeURIComponent(currentUser), null, function(resp) {
             var sel = document.getElementById('emp_replyForwardTo');
-            if (!sel || !Array.isArray(emps)) return;
-            var opts = emps
-              .filter(function(e){ return e.username && e.username !== currentUser; })
-              .map(function(e){
-                var label = e.fullName + (e.positionName ? ' — ' + e.positionName : '') + (e.branchName ? ' (' + e.branchName + ')' : '');
-                return '<option value="' + _esc(e.username) + '">' + _esc(label) + '</option>';
-              }).join('');
-            if (opts) sel.innerHTML = sel.innerHTML + opts;
+            if (!sel || !resp || !Array.isArray(resp.groups)) return;
+            // Build optgroups for clear hierarchy
+            var html = '<option value="">▶ التالي في السلسلة (افتراضي)</option>';
+            resp.groups.forEach(function(g) {
+              if (!g.users || !g.users.length) return;
+              html += '<optgroup label="' + _esc(g.label) + ' (' + g.users.length + ')">';
+              g.users.forEach(function(u) {
+                var label = u.fullName + (u.position ? ' — ' + u.position : '') + (u.branch ? ' · ' + u.branch : '');
+                html += '<option value="' + _esc(u.username) + '">' + _esc(label) + '</option>';
+              });
+              html += '</optgroup>';
+            });
+            sel.innerHTML = html;
           });
         }, 100);
       }
@@ -2300,12 +2305,15 @@ window.empPostReply = function(txnId, andAdvance) {
           var form = document.getElementById('emp_replyForm');
           if (form) form.style.display = 'none';
           if (r.advanceResult && r.advanceResult.newStatus) {
-            glassToast('✓ تم الرد + انتقلت المعاملة للتالي');
-            // Refresh in background — modal stays open so user sees their reply confirmed
+            glassToast('✓ تم الرد + انتقلت المعاملة لـ ' + (r.advanceResult.newAssignee || r.advanceResult.newStatus));
             setTimeout(function(){
               if (typeof loadIncomingTxns === 'function') loadIncomingTxns();
               if (typeof empRefreshCounters === 'function') empRefreshCounters();
             }, 200);
+          } else if (r.advanceError) {
+            // V4.5: surface the actual reason the advance failed
+            glassToast('⚠️ الرد أُرسل لكن فشل التحريك: ' + r.advanceError, true);
+            console.warn('[reply advance error]', r.advanceError);
           } else {
             glassToast('✓ تم إرسال الرد');
           }

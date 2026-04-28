@@ -336,6 +336,7 @@
     getOverdueTxns:   { method: 'GET',  url: (u) => '/sla/overdue?username=' + encodeURIComponent(u||'') },
     getSlaStats:      { method: 'GET',  url: '/sla/stats' },
     triggerEscalation:{ method: 'POST', url: '/sla/escalate-now', body: (d) => d },
+    getRoutableUsers: { method: 'GET',  url: (u) => '/workflow/routable-users?username=' + encodeURIComponent(u||'') },
     getWfOutbox:         { method: 'GET',  url: '/workflow/outbox', query: (f) => f },
     getWfIncoming:       { method: 'GET',  url: '/workflow/incoming', query: (f) => f },
     getWfDashboard:      { method: 'GET',  url: '/workflow/dashboard-cards', query: (f) => f },

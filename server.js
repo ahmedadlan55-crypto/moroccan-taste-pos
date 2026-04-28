@@ -211,6 +211,15 @@ app.use('/api/erp', require('./routes/warehouse-ops'));
 app.use('/api/erp', require('./routes/payments'));
 app.use('/api/erp', require('./routes/notifications'));
 app.use('/api/erp', require('./routes/erp'));
+// V5 Enterprise modules (Real-Estate / Contracts / WorkOrders / AP-AR / Approval Matrix)
+try { app.use('/api/properties', require('./routes/properties')); } catch(e){ console.warn('[mod:properties]', e.message); }
+try { app.use('/api/contracts', require('./routes/contracts')); } catch(e){ console.warn('[mod:contracts]', e.message); }
+try { app.use('/api/work-orders', require('./routes/work-orders')); } catch(e){ console.warn('[mod:work-orders]', e.message); }
+try { app.use('/api/ap-invoices', require('./routes/ap-invoices')); } catch(e){ console.warn('[mod:ap-inv]', e.message); }
+try { app.use('/api/ar-invoices', require('./routes/ar-invoices')); } catch(e){ console.warn('[mod:ar-inv]', e.message); }
+try { app.use('/api/approval-matrix', require('./routes/approval-matrix')); } catch(e){ console.warn('[mod:matrix]', e.message); }
+try { app.use('/api/budgets', require('./routes/budgets')); } catch(e){ console.warn('[mod:budgets]', e.message); }
+try { app.use('/api/anomalies', require('./routes/anomalies')); } catch(e){ console.warn('[mod:anomalies]', e.message); }
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/custody', require('./routes/custody'));
 app.use('/api/cash', require('./routes/cash'));
@@ -3192,6 +3201,483 @@ async function runMigrations() {
       } catch(e) {}
     }
   } catch(e) { console.warn('[chain seed]', e.message); }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ═══ ENTERPRISE V5 — Real-Estate / Contracts / Work-Orders / AP-AR ═══
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // 1) Properties (العقارات)
+  await createTableIfMissing('properties', `
+    CREATE TABLE properties (
+      id VARCHAR(40) PRIMARY KEY,
+      code VARCHAR(40) UNIQUE,
+      name VARCHAR(200) NOT NULL,
+      type ENUM('residential','commercial','mixed','land','warehouse','office') DEFAULT 'commercial',
+      city VARCHAR(80),
+      district VARCHAR(120),
+      address VARCHAR(400),
+      total_area DECIMAL(12,2),
+      area_unit VARCHAR(10) DEFAULT 'm2',
+      cost_center_id VARCHAR(40),
+      brand_id VARCHAR(40),
+      owner_party_id VARCHAR(40),
+      status ENUM('active','under_maintenance','sold','inactive') DEFAULT 'active',
+      acquired_at DATE,
+      acquisition_cost DECIMAL(14,4) DEFAULT 0,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(80),
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_brand (brand_id),
+      INDEX idx_status (status),
+      INDEX idx_city (city)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 2) Property Units (شقق/محلات/مكاتب داخل العقار)
+  await createTableIfMissing('property_units', `
+    CREATE TABLE property_units (
+      id VARCHAR(40) PRIMARY KEY,
+      property_id VARCHAR(40) NOT NULL,
+      code VARCHAR(40),
+      unit_number VARCHAR(40),
+      floor INT,
+      type ENUM('apartment','shop','office','warehouse','parking','other') DEFAULT 'apartment',
+      area DECIMAL(10,2),
+      bedrooms INT DEFAULT 0,
+      bathrooms INT DEFAULT 0,
+      monthly_rent DECIMAL(12,4),
+      currency VARCHAR(8) DEFAULT 'SAR',
+      status ENUM('vacant','occupied','reserved','maintenance','unavailable') DEFAULT 'vacant',
+      current_contract_id VARCHAR(40),
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_property (property_id),
+      INDEX idx_status (status),
+      INDEX idx_contract (current_contract_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 3) Contracts (عقود إيجار / خدمة / توريد / عمل)
+  await createTableIfMissing('contracts', `
+    CREATE TABLE contracts (
+      id VARCHAR(40) PRIMARY KEY,
+      code VARCHAR(40) UNIQUE,
+      type ENUM('lease','service','supply','employment','franchise','partnership','other') DEFAULT 'lease',
+      direction ENUM('outgoing','incoming') DEFAULT 'outgoing',
+      party_type ENUM('customer','vendor','employee','partner') DEFAULT 'customer',
+      party_id VARCHAR(40),
+      party_name VARCHAR(200),
+      property_id VARCHAR(40),
+      property_unit_id VARCHAR(40),
+      brand_id VARCHAR(40),
+      cost_center_id VARCHAR(40),
+      title VARCHAR(300) NOT NULL,
+      description TEXT,
+      start_date DATE NOT NULL,
+      end_date DATE,
+      auto_renew BOOLEAN DEFAULT FALSE,
+      renewal_period_months INT DEFAULT 12,
+      total_value DECIMAL(14,4) DEFAULT 0,
+      currency VARCHAR(8) DEFAULT 'SAR',
+      payment_frequency ENUM('one_time','monthly','quarterly','semi_annual','annual') DEFAULT 'monthly',
+      payment_amount DECIMAL(14,4),
+      next_invoice_date DATE,
+      vat_included BOOLEAN DEFAULT TRUE,
+      status ENUM('draft','pending_approval','active','suspended','expired','terminated','renewed') DEFAULT 'draft',
+      attachments LONGTEXT,
+      terms TEXT,
+      transaction_id VARCHAR(50),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(80),
+      activated_at DATETIME,
+      activated_by VARCHAR(80),
+      terminated_at DATETIME,
+      terminated_by VARCHAR(80),
+      termination_reason TEXT,
+      INDEX idx_party (party_type, party_id),
+      INDEX idx_property (property_id, property_unit_id),
+      INDEX idx_status (status),
+      INDEX idx_next_inv (next_invoice_date),
+      INDEX idx_brand (brand_id),
+      INDEX idx_dates (start_date, end_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 4) Contract Invoice Schedules (جدولة الفواتير الدورية)
+  await createTableIfMissing('contract_invoice_schedules', `
+    CREATE TABLE contract_invoice_schedules (
+      id VARCHAR(40) PRIMARY KEY,
+      contract_id VARCHAR(40) NOT NULL,
+      due_date DATE NOT NULL,
+      amount DECIMAL(14,4) NOT NULL,
+      vat_amount DECIMAL(14,4) DEFAULT 0,
+      total_amount DECIMAL(14,4) NOT NULL,
+      currency VARCHAR(8) DEFAULT 'SAR',
+      period_from DATE,
+      period_to DATE,
+      status ENUM('scheduled','generated','invoiced','paid','overdue','cancelled') DEFAULT 'scheduled',
+      invoice_id VARCHAR(40),
+      generated_at DATETIME,
+      paid_at DATETIME,
+      notes TEXT,
+      INDEX idx_contract (contract_id),
+      INDEX idx_due (due_date, status),
+      INDEX idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 5) Assets (الأصول الثابتة — معدات/مركبات/أجهزة للصيانة)
+  await createTableIfMissing('assets', `
+    CREATE TABLE assets (
+      id VARCHAR(40) PRIMARY KEY,
+      code VARCHAR(40) UNIQUE,
+      name VARCHAR(200) NOT NULL,
+      category ENUM('equipment','vehicle','furniture','it','machinery','building','other') DEFAULT 'equipment',
+      brand_id VARCHAR(40),
+      branch_id VARCHAR(40),
+      property_id VARCHAR(40),
+      cost_center_id VARCHAR(40),
+      serial_number VARCHAR(120),
+      manufacturer VARCHAR(120),
+      model VARCHAR(120),
+      purchase_date DATE,
+      purchase_cost DECIMAL(14,4),
+      depreciation_method ENUM('straight_line','declining','none') DEFAULT 'straight_line',
+      useful_life_years INT DEFAULT 5,
+      salvage_value DECIMAL(14,4) DEFAULT 0,
+      current_value DECIMAL(14,4),
+      warranty_expiry DATE,
+      last_maintenance_date DATE,
+      next_maintenance_date DATE,
+      assigned_to VARCHAR(80),
+      status ENUM('active','under_maintenance','retired','disposed','lost') DEFAULT 'active',
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_brand (brand_id),
+      INDEX idx_branch (branch_id),
+      INDEX idx_status (status),
+      INDEX idx_next_mnt (next_maintenance_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 6) Work Orders (أوامر العمل والصيانة)
+  await createTableIfMissing('work_orders', `
+    CREATE TABLE work_orders (
+      id VARCHAR(40) PRIMARY KEY,
+      code VARCHAR(40) UNIQUE,
+      type ENUM('maintenance','operational','installation','inspection','repair','cleaning') DEFAULT 'maintenance',
+      priority ENUM('low','normal','high','critical') DEFAULT 'normal',
+      title VARCHAR(300) NOT NULL,
+      description TEXT,
+      asset_id VARCHAR(40),
+      property_id VARCHAR(40),
+      property_unit_id VARCHAR(40),
+      branch_id VARCHAR(40),
+      brand_id VARCHAR(40),
+      cost_center_id VARCHAR(40),
+      requested_by VARCHAR(80),
+      requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      assigned_to VARCHAR(80),
+      assigned_at DATETIME,
+      started_at DATETIME,
+      completed_at DATETIME,
+      closed_at DATETIME,
+      due_date DATE,
+      status ENUM('open','assigned','in_progress','on_hold','completed','closed','cancelled') DEFAULT 'open',
+      estimated_hours DECIMAL(8,2) DEFAULT 0,
+      actual_hours DECIMAL(8,2) DEFAULT 0,
+      labor_cost DECIMAL(12,4) DEFAULT 0,
+      parts_cost DECIMAL(12,4) DEFAULT 0,
+      external_cost DECIMAL(12,4) DEFAULT 0,
+      total_cost DECIMAL(12,4) DEFAULT 0,
+      currency VARCHAR(8) DEFAULT 'SAR',
+      transaction_id VARCHAR(50),
+      attachments LONGTEXT,
+      completion_notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_asset (asset_id),
+      INDEX idx_branch (branch_id),
+      INDEX idx_brand (brand_id),
+      INDEX idx_assigned (assigned_to),
+      INDEX idx_status_pri (status, priority),
+      INDEX idx_due (due_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 7) Work Order Lines (بنود الأمر — مواد مستهلكة + ساعات عمل)
+  await createTableIfMissing('work_order_lines', `
+    CREATE TABLE work_order_lines (
+      id VARCHAR(40) PRIMARY KEY,
+      work_order_id VARCHAR(40) NOT NULL,
+      line_type ENUM('labor','part','service','external') DEFAULT 'part',
+      item_id VARCHAR(40),
+      description VARCHAR(400),
+      quantity DECIMAL(10,4) DEFAULT 1,
+      uom VARCHAR(20),
+      unit_cost DECIMAL(12,4) DEFAULT 0,
+      total_cost DECIMAL(12,4) DEFAULT 0,
+      stock_movement_id VARCHAR(40),
+      employee_id VARCHAR(40),
+      hours DECIMAL(8,2),
+      hourly_rate DECIMAL(10,2),
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_wo (work_order_id),
+      INDEX idx_type (line_type)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 8) Supplier Invoices (فواتير الموردين)
+  await createTableIfMissing('supplier_invoices', `
+    CREATE TABLE supplier_invoices (
+      id VARCHAR(40) PRIMARY KEY,
+      code VARCHAR(40) UNIQUE,
+      supplier_id VARCHAR(40),
+      supplier_name VARCHAR(200),
+      vat_number VARCHAR(40),
+      invoice_no VARCHAR(80),
+      issue_date DATE NOT NULL,
+      due_date DATE,
+      brand_id VARCHAR(40),
+      branch_id VARCHAR(40),
+      cost_center_id VARCHAR(40),
+      purchase_order_id VARCHAR(40),
+      grn_id VARCHAR(40),
+      currency VARCHAR(8) DEFAULT 'SAR',
+      subtotal DECIMAL(14,4) DEFAULT 0,
+      discount_amount DECIMAL(14,4) DEFAULT 0,
+      vat_amount DECIMAL(14,4) DEFAULT 0,
+      total_amount DECIMAL(14,4) DEFAULT 0,
+      paid_amount DECIMAL(14,4) DEFAULT 0,
+      balance_amount DECIMAL(14,4) DEFAULT 0,
+      payment_terms VARCHAR(80),
+      matching_status ENUM('unmatched','partial','matched','overmatched') DEFAULT 'unmatched',
+      status ENUM('draft','pending_approval','approved','partially_paid','paid','overdue','cancelled') DEFAULT 'draft',
+      transaction_id VARCHAR(50),
+      gl_journal_id VARCHAR(60),
+      attachments LONGTEXT,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(80),
+      INDEX idx_supplier (supplier_id),
+      INDEX idx_brand (brand_id),
+      INDEX idx_due (due_date, status),
+      INDEX idx_status (status),
+      INDEX idx_po (purchase_order_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 9) Supplier Invoice Lines
+  await createTableIfMissing('supplier_invoice_lines', `
+    CREATE TABLE supplier_invoice_lines (
+      id VARCHAR(40) PRIMARY KEY,
+      invoice_id VARCHAR(40) NOT NULL,
+      item_id VARCHAR(40),
+      description VARCHAR(400),
+      quantity DECIMAL(10,4) DEFAULT 1,
+      uom VARCHAR(20),
+      unit_price DECIMAL(12,4),
+      discount_pct DECIMAL(5,2) DEFAULT 0,
+      vat_pct DECIMAL(5,2) DEFAULT 15,
+      line_total DECIMAL(14,4),
+      account_id VARCHAR(40),
+      cost_center_id VARCHAR(40),
+      INDEX idx_invoice (invoice_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 10) Customer Invoices (فواتير العملاء — للإيجار / خدمات / مبيعات)
+  await createTableIfMissing('customer_invoices', `
+    CREATE TABLE customer_invoices (
+      id VARCHAR(40) PRIMARY KEY,
+      code VARCHAR(40) UNIQUE,
+      customer_id VARCHAR(40),
+      customer_name VARCHAR(200),
+      vat_number VARCHAR(40),
+      invoice_type ENUM('rental','service','goods','recurring') DEFAULT 'rental',
+      contract_id VARCHAR(40),
+      schedule_id VARCHAR(40),
+      issue_date DATE NOT NULL,
+      due_date DATE,
+      brand_id VARCHAR(40),
+      branch_id VARCHAR(40),
+      cost_center_id VARCHAR(40),
+      property_id VARCHAR(40),
+      property_unit_id VARCHAR(40),
+      currency VARCHAR(8) DEFAULT 'SAR',
+      subtotal DECIMAL(14,4) DEFAULT 0,
+      vat_amount DECIMAL(14,4) DEFAULT 0,
+      total_amount DECIMAL(14,4) DEFAULT 0,
+      paid_amount DECIMAL(14,4) DEFAULT 0,
+      balance_amount DECIMAL(14,4) DEFAULT 0,
+      status ENUM('draft','issued','sent','partially_paid','paid','overdue','cancelled') DEFAULT 'draft',
+      zatca_status ENUM('pending','submitted','accepted','rejected') DEFAULT 'pending',
+      zatca_uuid VARCHAR(80),
+      gl_journal_id VARCHAR(60),
+      attachments LONGTEXT,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(80),
+      INDEX idx_customer (customer_id),
+      INDEX idx_contract (contract_id),
+      INDEX idx_brand (brand_id),
+      INDEX idx_due (due_date, status),
+      INDEX idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await createTableIfMissing('customer_invoice_lines', `
+    CREATE TABLE customer_invoice_lines (
+      id VARCHAR(40) PRIMARY KEY,
+      invoice_id VARCHAR(40) NOT NULL,
+      description VARCHAR(400),
+      quantity DECIMAL(10,4) DEFAULT 1,
+      uom VARCHAR(20),
+      unit_price DECIMAL(12,4),
+      vat_pct DECIMAL(5,2) DEFAULT 15,
+      line_total DECIMAL(14,4),
+      account_id VARCHAR(40),
+      INDEX idx_invoice (invoice_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 11) Approval Policies (مصفوفة سياسات الموافقة المتقدمة)
+  await createTableIfMissing('approval_policies', `
+    CREATE TABLE approval_policies (
+      id VARCHAR(40) PRIMARY KEY,
+      transaction_type_code VARCHAR(40) NOT NULL,
+      brand_id VARCHAR(40),
+      branch_id VARCHAR(40),
+      cost_center_id VARCHAR(40),
+      amount_from DECIMAL(14,4) DEFAULT 0,
+      amount_to DECIMAL(14,4),
+      currency VARCHAR(8) DEFAULT 'SAR',
+      step_order INT NOT NULL,
+      approver_type ENUM('role','user','position','manager_of_creator','department_head') DEFAULT 'role',
+      approver_value VARCHAR(120),
+      sla_hours INT DEFAULT 24,
+      can_approve BOOLEAN DEFAULT TRUE,
+      can_reject BOOLEAN DEFAULT TRUE,
+      can_return BOOLEAN DEFAULT TRUE,
+      can_delegate BOOLEAN DEFAULT TRUE,
+      escalate_after_hours INT,
+      escalate_to_role VARCHAR(80),
+      is_active BOOLEAN DEFAULT TRUE,
+      notes VARCHAR(400),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(80),
+      INDEX idx_type_amount (transaction_type_code, amount_from, amount_to),
+      INDEX idx_scope (brand_id, branch_id),
+      INDEX idx_active (is_active)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 12) Document Reference Chain (السلسلة المرجعية بين المستندات)
+  await createTableIfMissing('document_chains', `
+    CREATE TABLE document_chains (
+      id VARCHAR(40) PRIMARY KEY,
+      chain_code VARCHAR(40),
+      from_doc_type VARCHAR(40),
+      from_doc_id VARCHAR(50),
+      to_doc_type VARCHAR(40),
+      to_doc_id VARCHAR(50),
+      relationship ENUM('source','derived','related','reversal','partial') DEFAULT 'derived',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(80),
+      INDEX idx_from (from_doc_type, from_doc_id),
+      INDEX idx_to (to_doc_type, to_doc_id),
+      INDEX idx_chain (chain_code)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 13) Budget Lines (الميزانيات الشهرية / السنوية لمراكز التكلفة)
+  await createTableIfMissing('budget_lines', `
+    CREATE TABLE budget_lines (
+      id VARCHAR(40) PRIMARY KEY,
+      fiscal_year INT NOT NULL,
+      period_month INT,
+      cost_center_id VARCHAR(40) NOT NULL,
+      account_id VARCHAR(40),
+      brand_id VARCHAR(40),
+      budget_amount DECIMAL(14,4) DEFAULT 0,
+      actual_amount DECIMAL(14,4) DEFAULT 0,
+      committed_amount DECIMAL(14,4) DEFAULT 0,
+      variance_amount DECIMAL(14,4) DEFAULT 0,
+      variance_pct DECIMAL(6,2) DEFAULT 0,
+      currency VARCHAR(8) DEFAULT 'SAR',
+      threshold_warn_pct DECIMAL(5,2) DEFAULT 80,
+      threshold_block_pct DECIMAL(5,2) DEFAULT 100,
+      notes VARCHAR(400),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_period (fiscal_year, period_month),
+      INDEX idx_cc (cost_center_id),
+      INDEX idx_brand (brand_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 14) Anomaly Alerts (تنبيهات شذوذ — أساس الـ AI Layer)
+  await createTableIfMissing('anomaly_alerts', `
+    CREATE TABLE anomaly_alerts (
+      id VARCHAR(40) PRIMARY KEY,
+      detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      severity ENUM('info','low','medium','high','critical') DEFAULT 'medium',
+      category ENUM('financial','operational','behavioral','compliance','duplicate') DEFAULT 'financial',
+      title VARCHAR(300),
+      description TEXT,
+      related_doc_type VARCHAR(40),
+      related_doc_id VARCHAR(60),
+      score DECIMAL(5,2),
+      status ENUM('open','acknowledged','dismissed','resolved') DEFAULT 'open',
+      acknowledged_by VARCHAR(80),
+      acknowledged_at DATETIME,
+      resolution_notes TEXT,
+      INDEX idx_severity (severity, status),
+      INDEX idx_doc (related_doc_type, related_doc_id),
+      INDEX idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 15) Saved Views (لتخصيص الفلاتر والشاشات لكل مستخدم)
+  await createTableIfMissing('saved_views', `
+    CREATE TABLE saved_views (
+      id VARCHAR(40) PRIMARY KEY,
+      username VARCHAR(80) NOT NULL,
+      module VARCHAR(60) NOT NULL,
+      name VARCHAR(120) NOT NULL,
+      is_default BOOLEAN DEFAULT FALSE,
+      is_shared BOOLEAN DEFAULT FALSE,
+      filters_json LONGTEXT,
+      columns_json LONGTEXT,
+      sort_json VARCHAR(200),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_user_mod (username, module)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // Enrich position_workflow_steps with policy linkage if not present
+  await addColumnIfMissing('position_workflow_steps', 'policy_id', 'VARCHAR(40)');
+  await addColumnIfMissing('position_workflow_steps', 'sla_hours', 'INT DEFAULT 24');
+
+  // Seed: a sample property + unit + contract — only if tables are empty
+  try {
+    const [pcount] = await db.query('SELECT COUNT(*) AS c FROM properties');
+    if (pcount[0].c === 0) {
+      const propId = 'PROP-DEMO-001';
+      await db.query(
+        `INSERT IGNORE INTO properties (id,code,name,type,city,district,total_area,status,created_by)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        [propId, 'P-001', 'برج المذاق المغربي - الرياض', 'commercial', 'الرياض', 'العليا', 1200, 'active', 'system']);
+      await db.query(
+        `INSERT IGNORE INTO property_units (id,property_id,code,unit_number,floor,type,area,monthly_rent,status)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        ['UNIT-DEMO-001', propId, 'P-001-U1', 'U-101', 1, 'shop', 80, 4500, 'vacant']);
+    }
+  } catch(e) { /* ignore */ }
+
+  console.log('[v5-migrations] Real-Estate / Contracts / Work-Orders / AP-AR ready.');
 }
 
 app.listen(PORT, async () => {

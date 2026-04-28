@@ -54,6 +54,21 @@ const erpSections = [
   'erpGLLedgerReport'
 ];
 
+// V5 Enterprise nav — single host that ERPv5 renders into.
+window.erpV5Nav = function(section){
+  try { localStorage.setItem('pos_last_section', 'v5:'+section); } catch(e){}
+  document.querySelectorAll('.admin-section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.dash-section').forEach(s => s.classList.add('hidden'));
+  const host = document.getElementById('erpV5Host');
+  if (host) host.classList.remove('hidden');
+  if (window.ERPv5 && typeof window.ERPv5.render === 'function') {
+    window.ERPv5.render(section, host);
+  } else {
+    host.innerHTML = '<div style="padding:40px;text-align:center;color:#64748b;">جاري تحميل وحدة V5...</div>';
+    setTimeout(()=>window.erpV5Nav(section), 600);
+  }
+};
+
 function erpNav(sectionId) {
   // Save last section for persistence across refreshes
   try { localStorage.setItem('pos_last_section', 'erp:' + sectionId); } catch(e) {}

@@ -878,13 +878,16 @@ function doLogin() {
     if (err) return toast(t('common.connError') + err, true);
     if (r && r.success && r.token) {
       localStorage.setItem('emp_token', r.token);
-      localStorage.setItem('emp_session', JSON.stringify({username:r.username,role:r.role,brandId:r.brandId||'',branchId:r.branchId||''}));
+      localStorage.setItem('emp_session', JSON.stringify({username:r.username,role:r.role,brandId:r.brandId||'',branchId:r.branchId||'',isDeveloper:!!r.isDeveloper}));
       // V5.4.1: persist for TxnView assignee-lock logic
       try {
         localStorage.setItem('emp_role', r.role || '');
         localStorage.setItem('emp_username', r.username || '');
+        // V5.4.3: developer flag for delete-button gating
+        localStorage.setItem('emp_is_developer', r.isDeveloper ? '1' : '0');
       } catch(_){}
       currentUser = r.username;
+      window.currentUserIsDeveloper = !!r.isDeveloper;
       document.getElementById('loginPage').style.display = 'none';
       startApp();
     } else toast(r ? r.error : t('login.failed'), true);
@@ -1690,16 +1693,21 @@ function loadMyTransactions() {
       // V3.1: editable while pending/draft (workflow not started) OR while returned (creator must fix and resubmit)
       var canEdit = (tx.status==='pending' || tx.status==='draft' || isReturned);
       var actBtns = '';
+      // V5.4.3: hide delete button for non-developers
+      var isDevForRow = (typeof window._isDeveloperUser === 'function') && window._isDeveloperUser();
+      var devDelBtn = isDevForRow
+        ? '<button onclick="event.stopPropagation();empCancelTxn(\''+tx.id+'\')" style="flex:1;padding:9px;border:none;background:linear-gradient(135deg,#7f1d1d,#450a0a);color:#fff;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;" title="حذف نهائي (مطور)"><i class="fas fa-skull-crossbones"></i></button>'
+        : '';
       if (isReturned) {
         // Prominent Resubmit button — the obvious next step for a returned txn
         actBtns = '<div style="display:flex;gap:4px;margin-top:8px;">' +
           '<button onclick="event.stopPropagation();empEditTxn(\''+tx.id+'\')" style="flex:2;padding:9px;border:none;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border-radius:8px;font-size:12px;font-weight:900;cursor:pointer;box-shadow:0 2px 4px rgba(220,38,38,.3);"><i class="fas fa-pen-to-square"></i> تعديل وإعادة الإرسال</button>' +
-          '<button onclick="event.stopPropagation();empCancelTxn(\''+tx.id+'\')" style="flex:1;padding:9px;border:none;background:#fef2f2;color:#991b1b;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-trash"></i></button>' +
+          devDelBtn +
         '</div>';
       } else if (canEdit) {
         actBtns = '<div style="display:flex;gap:4px;margin-top:6px;">' +
           '<button onclick="event.stopPropagation();empEditTxn(\''+tx.id+'\')" style="flex:1;padding:6px;border:none;background:#eff6ff;color:#1e40af;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-edit"></i> '+t('txn.edit')+'</button>' +
-          '<button onclick="event.stopPropagation();empCancelTxn(\''+tx.id+'\')" style="flex:1;padding:6px;border:none;background:#fef2f2;color:#991b1b;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-trash"></i> '+t('txn.cancel')+'</button>' +
+          devDelBtn +
         '</div>';
       }
       // Returned-state row treatment: red left border + soft tint
@@ -1903,11 +1911,34 @@ window.submitTxnEdit = function() {
   });
 };
 
+// V5.4.3: helper — only developer can delete transactions (everywhere)
+window._isDeveloperUser = function(){
+  try {
+    if (window.currentUserIsDeveloper) return true;
+    var session = JSON.parse(localStorage.getItem('emp_session')||'{}');
+    if (session.isDeveloper) return true;
+    if (localStorage.getItem('emp_is_developer') === '1') return true;
+    if (localStorage.getItem('pos_is_developer') === '1') return true;
+    var role = (localStorage.getItem('emp_role')||localStorage.getItem('pos_role')||'').toLowerCase();
+    return role === 'developer';
+  } catch(_) { return false; }
+};
+
 function empCancelTxn(id) {
-  if (!confirm(t('txn.confirmCancel'))) return;
+  // V5.4.3: hard-deletion is DEVELOPER-ONLY. Refuse politely if not.
+  if (!window._isDeveloperUser()) {
+    var msg = 'الحذف متاح فقط للمطور. للمعاملات التي بدأ التصرف فيها استخدم "إعادة" أو "رفض".';
+    if (typeof glassToast === 'function') glassToast(msg, true);
+    else if (typeof toast === 'function') toast(msg, true);
+    else alert(msg);
+    return;
+  }
+  if (!confirm('⚠ هذا حذف نهائي شامل (Developer Hard-Delete).\nسيتم محو المعاملة وكل بياناتها (الردود، المرفقات، السجل، الإشعارات) من عند جميع المستخدمين بشكل نهائي.\n\nهل تريد المتابعة؟')) return;
   callAPI('DELETE', '/workflow/transactions/'+id+'?username='+encodeURIComponent(currentUser), null, function(r) {
-    if (r && r.success) { toast(t('txn.cancelled')); loadMyTransactions(); }
-    else toast(r ? r.error : t('txn.failed'), true);
+    if (r && r.success) {
+      toast(r.message || 'تم الحذف النهائي للمعاملة وكل بياناتها');
+      loadMyTransactions();
+    } else toast(r ? r.error : 'فشل الحذف', true);
   });
 }
 var _txnAccounts = [];
@@ -2397,17 +2428,21 @@ function viewMyTxn(id) {
     var canEditReturned = isCreator && txn.status === 'returned';
     var hasOthersActed = (txn.logs || []).some(function(l){ return l.actionType && l.actionType !== 'create' && l.actionBy !== currentUser; });
     if (hasOthersActed && canEditFresh) canEditFresh = false;
+    // V5.4.3: developer-only delete button (hidden otherwise)
+    var _isDevView = (typeof window._isDeveloperUser === 'function') && window._isDeveloperUser();
+    var devDelInDetail = _isDevView
+      ? '<button class="td-cancel-btn" onclick="empCancelTxn(\''+_esc(txn.id)+'\')" style="background:linear-gradient(135deg,#7f1d1d,#450a0a);color:#fff;" title="حذف نهائي (مطور)"><i class="fas fa-skull-crossbones"></i> حذف نهائي</button>'
+      : '';
     if (canEditReturned) {
-      // Highlight the Resubmit button — translated
       h += '<div class="td-action-btns" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">' +
         '<button class="td-edit-btn" style="flex:2;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;font-weight:900;padding:14px;font-size:14px;border-radius:12px;box-shadow:0 4px 12px rgba(220,38,38,.3);cursor:pointer;font-family:inherit;" onclick="closeTxnDetail();empEditTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-pen-to-square"></i> ' + t('txn.editAndResubmit') + '</button>' +
-        '<button class="td-cancel-btn" style="flex:1;" onclick="empCancelTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-trash"></i> ' + t('txn.cancel') + '</button>' +
+        devDelInDetail +
         '<button class="td-close-btn" onclick="closeTxnDetail()">' + t('common.cancelBtn') + '</button>' +
       '</div>';
     } else if (canEditFresh) {
       h += '<div class="td-action-btns">' +
         '<button class="td-edit-btn" onclick="closeTxnDetail();empEditTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-edit"></i> تعديل المعاملة</button>' +
-        '<button class="td-cancel-btn" onclick="empCancelTxn(\''+_esc(txn.id)+'\')"><i class="fas fa-trash"></i> إلغاء</button>' +
+        devDelInDetail +
         '<button class="td-close-btn" onclick="closeTxnDetail()">إغلاق</button>' +
       '</div>';
     } else {

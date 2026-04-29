@@ -601,6 +601,9 @@ window.onload = function() {
             var s = JSON.parse(saved);
             state.user = s.user || s.username || '';
             state.role = (s.role || '').toLowerCase();
+            // V5.4.3: restore isDeveloper from localStorage on page reload
+            state.isDeveloper = (localStorage.getItem('pos_is_developer') === '1');
+            window.currentUserIsDeveloper = state.isDeveloper;
             if (q("#lUser")) q("#lUser").value = state.user;
           } catch(e) {}
           loadCoreData();
@@ -804,14 +807,18 @@ function doLogin() {
     if (!res.success) { loader(false); showToast(res.error, true); return; }
     state.user = res.username;
     state.role = res.role.toLowerCase();
+    state.isDeveloper = !!res.isDeveloper;
 
     // Save token for secured API calls and templates
     localStorage.setItem("pos_token", res.token);
     // V5.4.1: persist role + username separately — TxnView reads these to gate buttons.
+    // V5.4.3: also persist isDeveloper flag — required for hard-delete button visibility
     try {
       localStorage.setItem('pos_role', state.role || '');
       localStorage.setItem('pos_username', u || '');
+      localStorage.setItem('pos_is_developer', res.isDeveloper ? '1' : '0');
     } catch(_){}
+    window.currentUserIsDeveloper = !!res.isDeveloper;
 
     // Save session (NO password — only user + role for session restore)
     localStorage.setItem("pos_session", JSON.stringify({ user: u, username: u, role: state.role }));

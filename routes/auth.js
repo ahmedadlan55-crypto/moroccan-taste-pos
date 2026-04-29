@@ -92,13 +92,17 @@ router.post('/login', async (req, res) => {
     clearAttempts(ip);
     await db.query('UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?', [user.id]);
 
+    // V5.4.3: include isDeveloper in JWT + login response so frontend can gate UI buttons
+    const isDev = !!user.is_developer || user.username === 'admin' || user.role === 'developer';
     const token = jwt.sign({
       id: user.id, username: user.username, role: user.role,
+      isDeveloper: isDev,
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       default_warehouse_id: user.default_warehouse_id || ''
     }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.json({
       success: true, username: user.username, role: user.role, token,
+      isDeveloper: isDev,
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       warehouseId: user.default_warehouse_id || ''
     });

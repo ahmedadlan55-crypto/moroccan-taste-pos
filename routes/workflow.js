@@ -2103,47 +2103,80 @@ router.post('/transactions/:id/resubmit', SCHEMA.validateBody(SCHEMA.schemas.res
 // Cancel / delete — V4: now soft-delete (deleted_at) instead of hard-delete
 // Only the creator can soft-delete, only before any non-create action.
 // Use /transactions/:id/force for true permanent delete (developer only).
-router.delete('/transactions/:id', async (req, res) => {
+// V5.4.3 — DELETE is now DEVELOPER-ONLY and performs FULL CASCADE.
+// Removes the transaction + ALL related data from every table:
+//   transaction_steps_log, transaction_replies, txn_attachments, txn_recipients,
+//   memo_read_receipts, notifications, document_chains, payment_records (unlink).
+// Then drops the transaction row itself. No soft-delete — this is final.
+// The /force endpoint below remains for backward compatibility (does the same).
+router.delete('/transactions/:id', guardDeveloper, async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username) || (req.body && req.body.username) || '';
-    const reason = (req.body && req.body.reason) || (req.query.reason) || 'cancelled by creator';
-    const [txns] = await db.query('SELECT created_by, status, deleted_at FROM transactions WHERE id = ?', [req.params.id]);
-    if (!txns.length) return res.json({ success: false, error: 'المعاملة غير موجودة' });
-    if (txns[0].deleted_at) return res.json({ success: false, error: 'المعاملة محذوفة مسبقاً' });
-    if (txns[0].created_by !== username) return res.json({ success: false, error: 'لا يمكن الإلغاء — لست المنشئ' });
-    const [logs] = await db.query("SELECT COUNT(*) AS cnt FROM transaction_steps_log WHERE transaction_id = ? AND action_type != 'create'", [req.params.id]);
-    if (logs[0].cnt > 0) return res.json({ success: false, error: 'لا يمكن الإلغاء — بدأ التصرف في المعاملة' });
-    // Snapshot the txn for restore-after-N-days + audit (now captures full content)
-    const [snap] = await db.query('SELECT * FROM transactions WHERE id = ?', [req.params.id]);
-    // Soft-delete: keep the row + audit trail, just hide from queries
-    await db.query(
-      `UPDATE transactions SET deleted_at = NOW(), deleted_by = ?, delete_reason = ?,
-                                version = version + 1 WHERE id = ?`,
-      [username, String(reason).substring(0, 500), req.params.id]);
-    // V5-FIX: invalidate counter cache for both the creator and assignee
+    const username = req.query.username || (req.user && req.user.username) || (req.body && req.body.username) || 'developer';
+    const reason = (req.body && req.body.reason) || (req.query.reason) || 'developer hard delete';
+    const txnId = req.params.id;
+
+    const [txns] = await db.query(
+      'SELECT id, transaction_number, title, subject, created_by, current_assignee, amount FROM transactions WHERE id = ?',
+      [txnId]);
+    if (!txns.length) return res.status(404).json({ success: false, error: 'المعاملة غير موجودة' });
+    const snap = txns[0];
+
+    await db.withTransaction(async (conn) => {
+      // 1. Cascade-delete ALL child rows from every table that references the txn
+      const childTables = [
+        'transaction_steps_log',
+        'transaction_replies',
+        'txn_attachments',
+        'txn_recipients',
+        'memo_read_receipts'
+      ];
+      for (const tbl of childTables) {
+        try { await conn.query(`DELETE FROM ${tbl} WHERE transaction_id = ?`, [txnId]); } catch(_) {}
+      }
+      // 2. Notifications referencing the txn (two possible schema variants)
+      try { await conn.query(`DELETE FROM notifications WHERE link_id = ? AND link_type = 'transaction'`, [txnId]); } catch(_) {
+        try { await conn.query(`DELETE FROM notifications WHERE related_id = ?`, [txnId]); } catch(__) {}
+      }
+      // 3. Document chains
+      try { await conn.query(`DELETE FROM document_chains WHERE from_doc_id = ? OR to_doc_id = ?`, [txnId, txnId]); } catch(_) {}
+      // 4. Detach payment records (don't delete — preserve GL trail) but break the link
+      try { await conn.query(`UPDATE payment_records SET transaction_id = NULL WHERE transaction_id = ?`, [txnId]); } catch(_) {}
+      // 5. The transaction row itself
+      await conn.query('DELETE FROM transactions WHERE id = ?', [txnId]);
+      // 6. Audit log — preserve a snapshot so compliance can prove the action happened
+      try {
+        await conn.query(
+          `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details, created_at)
+           VALUES (?, 'developer_hard_delete', 'transaction', ?, ?, NOW())`,
+          [username, txnId, JSON.stringify({
+            reason: String(reason).substring(0, 500),
+            txnNumber: snap.transaction_number,
+            title: snap.subject || snap.title,
+            createdBy: snap.created_by,
+            currentAssignee: snap.current_assignee,
+            amount: Number(snap.amount) || 0,
+            deletedAt: new Date().toISOString()
+          })]);
+      } catch(_) {}
+    });
+
+    // Invalidate counter cache for everyone affected
     try {
       const counters = require('./counters');
       if (counters && counters.invalidateCountersFor) {
-        await counters.invalidateCountersFor(snap[0].created_by, snap[0].current_assignee);
+        await counters.invalidateCountersFor(snap.created_by, snap.current_assignee);
       }
-    } catch(_e) {}
-    // Audit log — V5-FIX: capture richer snapshot for compliance/restoration
-    try {
-      const s = snap[0] || {};
-      await db.query(
-        `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details)
-         VALUES (?, 'soft_delete', 'transaction', ?, ?)`,
-        [username, req.params.id, JSON.stringify({
-          reason,
-          txnNumber: s.transaction_number,
-          title: s.subject || s.title,
-          createdBy: s.created_by,
-          status: s.status,
-          amount: Number(s.amount) || 0
-        })]);
-    } catch(e) {}
-    res.json({ success: true, softDeleted: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+    } catch(_) {}
+
+    return res.json({
+      success: true,
+      hardDeleted: true,
+      message: 'تم حذف المعاملة وكل بياناتها نهائياً عند جميع المستخدمين'
+    });
+  } catch(e) {
+    console.error('[delete txn]', e);
+    return res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // V4 — Restore a soft-deleted transaction (admin only)

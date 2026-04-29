@@ -2997,3 +2997,30 @@ window._doTxn = function(data) {
   });
 };
 
+// V5.4 — OVERRIDE viewMyTxn to use the unified TxnView modal.
+// Employee gets fewer action buttons than admin (only reply/approve/reject/return for now).
+(function(){
+  var _legacy = window.viewMyTxn;
+  window.viewMyTxn = function(id) {
+    if (window.TxnView && typeof window.TxnView.open === 'function') {
+      return window.TxnView.open(id, {
+        actions: ['reply','return','reject','approve','forward'],
+        onAction: function(act, ctx) {
+          if (act === 'approve' || act === 'reject' || act === 'return') {
+            ctx.close();
+            setTimeout(function(){ if (typeof window.empAct === 'function') window.empAct(id, act); }, 80);
+          } else if (act === 'forward') {
+            ctx.close();
+            setTimeout(function(){ if (typeof window.empFwd === 'function') window.empFwd(id); }, 80);
+          } else if (act === 'reply') {
+            ctx.close();
+            // Open the legacy view which has the inline reply form
+            setTimeout(function(){ if (typeof _legacy === 'function') _legacy(id); }, 80);
+          }
+        }
+      });
+    }
+    return _legacy && _legacy(id);
+  };
+})();
+

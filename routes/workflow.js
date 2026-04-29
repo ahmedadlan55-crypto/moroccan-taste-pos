@@ -1696,6 +1696,146 @@ router.get('/transactions/:id', async (req, res) => {
   } catch(e) { res.json({ error: e.message }); }
 });
 
+// V5.4 — One-shot full bundle endpoint for the unified TxnView modal.
+// Returns: txn + recipients + workflow path + logs + replies + ALL attachments
+// (with data_urls inline). Permission-checked: caller must be creator,
+// assignee, or recipient — admin/dev see everything.
+router.get('/transactions/:id/full-bundle', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const callerName = (req.user && req.user.username) || req.query.username || req.headers['x-user'] || '';
+    const isDev = !!(req.user && req.user.isDeveloper);
+    const isAdmin = req.user && req.user.role === 'admin';
+
+    const [txns] = await db.query(_txnSelectSQL() + ' WHERE t.id = ?', [id]);
+    if (!txns.length) return res.status(404).json({ error: 'المعاملة غير موجودة' });
+    const t = txns[0];
+
+    // Recipients first — needed for permission check
+    const [recipientRows] = await db.query(
+      'SELECT * FROM txn_recipients WHERE transaction_id = ? ORDER BY created_at', [id]);
+    const recipientUsernames = recipientRows.map(r => r.recipient_username);
+
+    if (!isDev && !isAdmin) {
+      const allowed = (
+        t.created_by === callerName ||
+        t.current_assignee === callerName ||
+        t.recipient_username === callerName ||
+        recipientUsernames.includes(callerName)
+      );
+      if (!allowed) return res.status(403).json({ error: 'غير مصرح' });
+    }
+
+    // Workflow path
+    const [steps] = await db.query(
+      `SELECT wd.id, wd.step_order, wd.step_name, wd.is_final_step, p.name AS position_name
+       FROM workflow_definitions wd LEFT JOIN positions p ON wd.required_position_id = p.id
+       WHERE wd.transaction_type_id = ? ORDER BY wd.step_order`, [t.transaction_type_id]);
+
+    // Logs
+    const [logs] = await db.query(
+      `SELECT l.*, wd.step_name, p.name AS position_name_from_def FROM transaction_steps_log l
+       LEFT JOIN workflow_definitions wd ON l.workflow_definition_id = wd.id
+       LEFT JOIN positions p ON wd.required_position_id = p.id
+       WHERE l.transaction_id = ? ORDER BY l.created_at`, [id]);
+
+    // Multi attachments — INCLUDING data_url for inline preview
+    const [atts] = await db.query(
+      `SELECT id, file_name, mime_type, data_url, uploaded_by, uploaded_at, log_id
+       FROM txn_attachments WHERE transaction_id = ? ORDER BY uploaded_at`, [id]);
+
+    // Replies
+    const [replies] = await db.query(
+      `SELECT * FROM transaction_replies WHERE transaction_id = ? ORDER BY created_at`, [id]);
+
+    // Author identity for each log entry — bulk lookup so we can show position/name
+    const actors = [...new Set(logs.map(l => l.action_by).filter(Boolean))];
+    let actorMap = {};
+    if (actors.length) {
+      try {
+        const placeholders = actors.map(() => '?').join(',');
+        const [u] = await db.query(
+          `SELECT u.username, COALESCE(u.full_name, u.username) AS full_name, u.role,
+                  p.name AS position_name, b.name AS branch_name
+           FROM users u
+           LEFT JOIN positions p ON u.position_id = p.id
+           LEFT JOIN branches b ON u.branch_id = b.id
+           WHERE u.username IN (${placeholders})`, actors);
+        u.forEach(r => { actorMap[r.username] = r; });
+      } catch(_) {}
+    }
+
+    // Map main txn (already has _mapTxn output from existing endpoint)
+    const main = _mapTxn(t);
+    res.json({
+      ...main,
+      description:        fixMojibake(t.description),
+      attachmentDataUrl:  t.attachment || '',
+      subject:            fixMojibake(t.subject || t.title || ''),
+      contentHtml:        fixMojibake(t.content_html || ''),
+      contentSecrecy:     t.content_secrecy || 'normal',
+      attachmentsSecrecy: t.attachments_secrecy || 'normal',
+      issuingEntityName:  fixMojibake(t.issuing_entity_name || ''),
+      hijriDate:          t.hijri_date || '',
+      passedCeoAt:        t.passed_ceo_at || null,
+      passedCeoBy:        t.passed_ceo_by || null,
+      recipients: recipientRows.map(r => fixObj({
+        id: r.id, type: r.recipient_type, username: r.recipient_username,
+        code: r.recipient_code, name: r.recipient_name,
+        needsResponse: !!r.needs_response, responseReceived: !!r.response_received,
+        actor: actorMap[r.recipient_username] || null
+      })),
+      workflowPath: steps.map((s, idx) => {
+        const isCurrent = s.id === t.current_step_id;
+        const currentIdx = steps.findIndex(x => x.id === t.current_step_id);
+        const isPast = (currentIdx >= 0) ? (idx < currentIdx) : false;
+        return fixObj({
+          id: s.id, stepOrder: s.step_order, stepName: s.step_name,
+          positionName: s.position_name || '', isFinal: !!s.is_final_step,
+          isCurrent: isCurrent,
+          isPast: isPast || ['approved','rejected','closed'].includes(t.status),
+          state: isCurrent ? 'current' : (isPast ? 'done' : 'pending')
+        });
+      }),
+      logs: logs.map(l => {
+        const actor = actorMap[l.action_by] || {};
+        return fixObj({
+          id: l.id,
+          stepName: l.step_name || '',
+          positionName: l.position_name || l.position_name_from_def || actor.position_name || '',
+          actionBy: l.action_by,
+          actorFullName: actor.full_name || l.action_by || '',
+          actorBranchName: actor.branch_name || '',
+          actorRole: actor.role || '',
+          actionType: l.action_type,
+          note: l.action_note,
+          attachment: l.attachment,
+          createdAt: l.created_at
+        });
+      }),
+      attachments: atts.map(a => ({
+        id: a.id, fileName: a.file_name, mime: a.mime_type,
+        dataUrl: a.data_url || '',
+        uploadedBy: a.uploaded_by, uploadedAt: a.uploaded_at, logId: a.log_id
+      })),
+      replies: replies.map(r => fixObj({
+        id: r.id,
+        replyText: r.reply_text,
+        attachment: r.attachment,
+        attachmentName: r.attachment_name || '',
+        attachmentMime: r.attachment_mime || '',
+        authorUsername: r.author_username,
+        authorName: r.author_name || actorMap[r.author_username]?.full_name || r.author_username,
+        authorRole: r.author_role || actorMap[r.author_username]?.role || '',
+        authorPosition: r.author_position || actorMap[r.author_username]?.position_name || '',
+        createdAt: r.created_at
+      }))
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Edit (creator only).
 // V4.4: when status='returned', creator can edit EVERY field (type, recipient,
 // branch, dept, account, cost center, brand) — the whole point of returning is

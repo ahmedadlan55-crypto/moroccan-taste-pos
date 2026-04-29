@@ -221,6 +221,8 @@ try { app.use('/api/approval-matrix', require('./routes/approval-matrix')); } ca
 try { app.use('/api/budgets', require('./routes/budgets')); } catch(e){ console.warn('[mod:budgets]', e.message); }
 try { app.use('/api/anomalies', require('./routes/anomalies')); } catch(e){ console.warn('[mod:anomalies]', e.message); }
 try { app.use('/api/activity-log', require('./routes/activity-log')); } catch(e){ console.warn('[mod:activity-log]', e.message); }
+try { app.use('/api/channel-menus', require('./routes/channel-menu')); } catch(e){ console.warn('[mod:channel-menu]', e.message); }
+try { app.use('/api/stocktake-pro', require('./routes/stocktake-pro')); } catch(e){ console.warn('[mod:stocktake-pro]', e.message); }
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/custody', require('./routes/custody'));
 app.use('/api/cash', require('./routes/cash'));
@@ -3706,6 +3708,61 @@ async function runMigrations() {
   } catch(e) {}
 
   console.log('[v5-migrations] Real-Estate / Contracts / Work-Orders / AP-AR + V5.1 indexes ready.');
+
+  // ═══ V5.4 — Channel-specific menus + Stocktake workflow ═══
+
+  // 16) Channel Menu Items — controls which menu items appear in which sales channel,
+  //     with optional override price + branch warehouse assignment + linked BOM.
+  await createTableIfMissing('channel_menu_items', `
+    CREATE TABLE channel_menu_items (
+      id VARCHAR(60) PRIMARY KEY,
+      channel_id VARCHAR(50) NOT NULL,
+      branch_id VARCHAR(50),
+      menu_item_id VARCHAR(50) NOT NULL,
+      is_available BOOLEAN DEFAULT TRUE,
+      override_price DECIMAL(10,4),
+      daily_limit INT,
+      sold_today INT DEFAULT 0,
+      sort_order INT DEFAULT 100,
+      sales_warehouse_id VARCHAR(50),
+      bom_id VARCHAR(50),
+      notes VARCHAR(400),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_channel_branch_item (channel_id, branch_id, menu_item_id),
+      INDEX idx_channel (channel_id),
+      INDEX idx_branch (branch_id),
+      INDEX idx_item (menu_item_id),
+      INDEX idx_avail (is_available)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 17) Stocktake — extend with status workflow + variance threshold + photo evidence
+  try {
+    await addColumnIfMissing('stocktakes', 'workflow_status',
+      "ENUM('draft','in_progress','pending_approval','approved','rejected','posted','cancelled') DEFAULT 'posted'");
+    await addColumnIfMissing('stocktakes', 'variance_threshold_pct', 'DECIMAL(5,2) DEFAULT 10');
+    await addColumnIfMissing('stocktakes', 'submitted_by', 'VARCHAR(80)');
+    await addColumnIfMissing('stocktakes', 'submitted_at', 'DATETIME');
+    await addColumnIfMissing('stocktakes', 'approved_by', 'VARCHAR(80)');
+    await addColumnIfMissing('stocktakes', 'approved_at', 'DATETIME');
+    await addColumnIfMissing('stocktakes', 'rejected_by', 'VARCHAR(80)');
+    await addColumnIfMissing('stocktakes', 'rejected_at', 'DATETIME');
+    await addColumnIfMissing('stocktakes', 'rejection_reason', 'TEXT');
+    await addColumnIfMissing('stocktakes', 'count_method', "ENUM('full','cycle','spot','blind') DEFAULT 'full'");
+    await addColumnIfMissing('stocktakes', 'attachments', 'LONGTEXT');
+    await addColumnIfMissing('stocktake_items', 'unit_cost', 'DECIMAL(12,4)');
+    await addColumnIfMissing('stocktake_items', 'variance_value', 'DECIMAL(14,4)');
+    await addColumnIfMissing('stocktake_items', 'variance_pct', 'DECIMAL(8,2)');
+    await addColumnIfMissing('stocktake_items', 'is_flagged', 'BOOLEAN DEFAULT FALSE');
+    await addColumnIfMissing('stocktake_items', 'verified_by', 'VARCHAR(80)');
+    await addColumnIfMissing('stocktake_items', 'verified_at', 'DATETIME');
+    await addColumnIfMissing('stocktake_items', 'photo_data', 'LONGTEXT');
+    await addColumnIfMissing('stocktake_items', 'reason_code', "VARCHAR(40)");
+    await addColumnIfMissing('stocktake_items', 'notes', 'VARCHAR(400)');
+  } catch(e) { /* table may not exist yet */ }
+
+  console.log('[v5.4-migrations] channel_menu_items + stocktake workflow ready.');
 }
 
 app.listen(PORT, async () => {

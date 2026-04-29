@@ -54,13 +54,24 @@ const erpSections = [
   'erpGLLedgerReport'
 ];
 
-// V5 Enterprise nav — single host that ERPv5 renders into.
+// V5 Enterprise nav — single host that ERPv5/ERPv54 render into.
 window.erpV5Nav = function(section){
   try { localStorage.setItem('pos_last_section', 'v5:'+section); } catch(e){}
   document.querySelectorAll('.admin-section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.dash-section').forEach(s => s.classList.add('hidden'));
   const host = document.getElementById('erpV5Host');
   if (host) host.classList.remove('hidden');
+  // V5.4: route channel-menus / stocktake-pro to ERPv54
+  if (section === 'channel-menus' || section === 'stocktake-pro') {
+    if (window.ERPv54) {
+      if (section === 'channel-menus') window.ERPv54.renderChannelMenus(host);
+      else if (section === 'stocktake-pro') window.ERPv54.renderStocktakePro(host);
+    } else {
+      host.innerHTML = '<div style="padding:40px;text-align:center;color:#64748b;">جاري تحميل وحدة V5.4...</div>';
+      setTimeout(()=>window.erpV5Nav(section), 600);
+    }
+    return;
+  }
   if (window.ERPv5 && typeof window.ERPv5.render === 'function') {
     window.ERPv5.render(section, host);
   } else {
@@ -17148,4 +17159,37 @@ window.wfStartLiveInbox = function() {
 };
 // Start SSE once on script load
 setTimeout(function(){ try { wfStartLiveInbox(); } catch(_){} }, 2000);
+
+// V5.4 — OVERRIDE wfViewTxn to use the unified, world-class TxnView modal.
+// Legacy implementation is preserved at function declaration but replaced here.
+// Falls back to legacy if TxnView module isn't loaded yet.
+(function(){
+  var _legacy = window.wfViewTxn;
+  window.wfViewTxn = function(id) {
+    // Mark as read in background (best-effort)
+    try { window._apiBridge && window._apiBridge.withSuccessHandler(function(){}).markTxnRead(id, { username: currentUser }); } catch(_) {}
+    if (window.TxnView && typeof window.TxnView.open === 'function') {
+      return window.TxnView.open(id, {
+        actions: ['reply','return','forward','reject','approve','close'],
+        onAction: function(act, ctx){
+          if (act === 'approve' || act === 'reject' || act === 'return') {
+            ctx.close();
+            setTimeout(function(){ if (typeof window.wfTxnAction === 'function') window.wfTxnAction(id, act); }, 80);
+          } else if (act === 'forward') {
+            ctx.close();
+            setTimeout(function(){ if (typeof window.wfForwardTxn === 'function') window.wfForwardTxn(id); }, 80);
+          } else if (act === 'reply') {
+            ctx.close();
+            setTimeout(function(){ if (typeof window.wfTxnReplyOpen === 'function') window.wfTxnReplyOpen(id); else if (typeof window.wfViewTxnLegacy === 'function') window.wfViewTxnLegacy(id); }, 80);
+          } else if (act === 'close-txn') {
+            ctx.close();
+            setTimeout(function(){ if (typeof window.wfTxnAction === 'function') window.wfTxnAction(id, 'close'); }, 80);
+          }
+        }
+      });
+    }
+    return _legacy && _legacy(id);
+  };
+  window.wfViewTxnLegacy = _legacy;
+})();
 

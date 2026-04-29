@@ -341,8 +341,48 @@
 
   function _renderReplies(replies){
     if (!replies || !replies.length) return '<div class="tv-empty"><i class="fas fa-comments"></i>لا توجد ردود.</div>';
-    return replies.map(r => {
+    return replies.map((r, idx) => {
       var color = _actorColor(r.authorUsername);
+      // V5.4.1: render reply attachment INLINE — image preview or open button.
+      // Click triggers lightbox (attached to data-reply-att-idx for wiring).
+      var attHtml = '';
+      if (r.attachment && typeof r.attachment === 'string') {
+        var mime = r.attachmentMime || '';
+        if (!mime && r.attachment.startsWith('data:')) {
+          var m = r.attachment.match(/^data:([^;,]+)/);
+          mime = m ? m[1] : '';
+        }
+        var info = _attIcon(mime);
+        if (info.kind === 'image' && r.attachment.startsWith('data:')) {
+          // Inline thumbnail — clickable for full-size lightbox
+          attHtml =
+            '<div class="tv-reply-att" data-reply-att-idx="'+idx+'" style="margin-top:8px;display:inline-block;cursor:zoom-in;border-radius:10px;overflow:hidden;border:1.5px solid #e2e8f0;max-width:240px;">' +
+              '<img src="'+_esc(r.attachment)+'" alt="'+_esc(r.attachmentName||'مرفق')+'" style="display:block;max-width:240px;max-height:180px;object-fit:cover;width:100%;">' +
+              '<div style="padding:6px 10px;background:#f8fafc;font-size:11px;color:#475569;display:flex;align-items:center;gap:6px;">' +
+                '<i class="fas fa-image" style="color:#0ea5e9;"></i>' +
+                '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+_esc(r.attachmentName||'صورة')+'</span>' +
+                '<i class="fas fa-search-plus" style="margin-inline-start:auto;color:#94a3b8;font-size:10px;"></i>' +
+              '</div>' +
+            '</div>';
+        } else if (r.attachment.startsWith('data:') || r.attachment.startsWith('http')) {
+          // PDF / doc / external link — open + download buttons
+          attHtml =
+            '<div class="tv-reply-att" data-reply-att-idx="'+idx+'" style="margin-top:8px;display:flex;align-items:center;gap:8px;padding:10px 12px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;max-width:380px;cursor:pointer;transition:all .15s;" onmouseover="this.style.borderColor=\'#0ea5e9\';this.style.background=\'#f0f9ff\';" onmouseout="this.style.borderColor=\'#e2e8f0\';this.style.background=\'#f8fafc\';">' +
+              '<div style="width:38px;height:38px;border-radius:10px;background:'+(info.kind==='pdf'?'#dc2626':info.kind==='doc'?'#1d4ed8':info.kind==='xls'?'#15803d':'#475569')+';color:#fff;display:grid;place-items:center;flex-shrink:0;"><i class="fas '+info.icon+'"></i></div>' +
+              '<div style="flex:1;min-width:0;">' +
+                '<div style="font-weight:700;font-size:12.5px;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+_esc(r.attachmentName||'مرفق')+'</div>' +
+                '<div style="font-size:10.5px;color:#64748b;margin-top:2px;">'+_esc((mime||'').toUpperCase()||'ملف')+' • انقر للفتح</div>' +
+              '</div>' +
+              '<i class="fas fa-external-link-alt" style="color:#0ea5e9;font-size:13px;"></i>' +
+            '</div>';
+        } else {
+          // External URL only — show as link
+          attHtml =
+            '<a class="tv-reply-att-link" href="'+_esc(r.attachment)+'" target="_blank" rel="noopener" style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;padding:8px 12px;background:#f0f9ff;border:1.5px solid #bae6fd;border-radius:10px;color:#0369a1;font-weight:700;font-size:12px;text-decoration:none;">' +
+              '<i class="fas fa-link"></i> '+_esc(r.attachmentName||'فتح المرفق')+
+            '</a>';
+        }
+      }
       return '<div class="tv-reply">' +
                '<div class="tv-log-avatar" style="background:'+color+';width:36px;height:36px;font-size:12px;flex-shrink:0;">'+_esc(_initials(r.authorName||r.authorUsername))+'</div>' +
                '<div class="tv-reply-body">' +
@@ -352,7 +392,7 @@
                    '<span class="tv-log-time" style="margin-inline-start:auto;">'+_esc(_fmtDateTime(r.createdAt))+'</span>' +
                  '</div>' +
                  '<div class="tv-reply-text">'+_esc(r.replyText||'')+'</div>' +
-                 (r.attachment ? '<div style="margin-top:6px;font-size:11px;color:#0ea5e9;font-weight:700;"><i class="fas fa-paperclip"></i> '+_esc(r.attachmentName||'مرفق')+'</div>' : '') +
+                 attHtml +
                '</div>' +
              '</div>';
     }).join('');
@@ -383,23 +423,123 @@
     ).join('') + '</div>';
   }
 
-  function _renderActions(opts, txnPerms){
+  // V5.4.1: render action buttons with STRICT assignee-gating.
+  //   - Reply: any viewer can reply (it's a comment)
+  //   - approve/reject/return/forward: ONLY the current_assignee
+  //   - When status is terminal (approved/rejected/closed/cancelled): NO actions
+  //   - admin/developer always sees the buttons (override)
+  function _renderActions(opts, txnPerms, t){
     if (!opts || !Array.isArray(opts.actions)) return '<button class="tv-btn" data-tv-act="close">إغلاق</button>';
     var perms = txnPerms || {};
     var btns = ['<button class="tv-btn ghost" data-tv-act="close">إغلاق</button>'];
-    if (opts.actions.includes('reply') && perms.canReply !== false)
+    var meName = _currentUser();
+    var meIsAdmin = !!(window.currentUser && (window.currentUserRole === 'admin' || window.currentRole === 'admin'));
+    // Admin role from localStorage as a fallback
+    if (!meIsAdmin) {
+      try { meIsAdmin = (localStorage.getItem('pos_role') === 'admin' || localStorage.getItem('emp_role') === 'admin'); } catch(_){}
+    }
+    var assignee = (t && (t.currentAssignee || t.current_assignee)) || '';
+    var status = (t && t.status) || '';
+    var isTerminal = ['approved','rejected','closed','cancelled'].indexOf(status) >= 0;
+    var isReturned = status === 'returned';
+    var isAssignee = !!(meName && assignee && (assignee === meName));
+    var canActWorkflow = !isTerminal && (isAssignee || meIsAdmin);
+
+    // Reply — anyone who can view the modal can reply (server permission engine still gates)
+    if (opts.actions.includes('reply') && perms.canReply !== false && !isReturned) {
       btns.push('<button class="tv-btn" data-tv-act="reply"><i class="fas fa-comment"></i> رد</button>');
-    if (opts.actions.includes('return') && (perms.canReturn !== false))
-      btns.push('<button class="tv-btn warning" data-tv-act="return"><i class="fas fa-undo"></i> إعادة للتعديل</button>');
-    if (opts.actions.includes('forward') && (perms.canForward !== false))
-      btns.push('<button class="tv-btn purple" data-tv-act="forward"><i class="fas fa-share"></i> تحويل</button>');
-    if (opts.actions.includes('reject') && (perms.canReject !== false))
-      btns.push('<button class="tv-btn danger" data-tv-act="reject"><i class="fas fa-times"></i> رفض</button>');
-    if (opts.actions.includes('approve') && (perms.canApprove !== false))
-      btns.push('<button class="tv-btn success" data-tv-act="approve"><i class="fas fa-check"></i> اعتماد</button>');
-    if (opts.actions.includes('close') && perms.canClose)
-      btns.push('<button class="tv-btn primary" data-tv-act="close-txn"><i class="fas fa-lock"></i> إغلاق نهائي</button>');
+    }
+    // Workflow actions — ONLY assignee/admin
+    if (canActWorkflow) {
+      if (opts.actions.includes('return') && (perms.canReturn !== false))
+        btns.push('<button class="tv-btn warning" data-tv-act="return"><i class="fas fa-undo"></i> إعادة للتعديل</button>');
+      if (opts.actions.includes('forward') && (perms.canForward !== false))
+        btns.push('<button class="tv-btn purple" data-tv-act="forward"><i class="fas fa-share"></i> تحويل</button>');
+      if (opts.actions.includes('reject') && (perms.canReject !== false))
+        btns.push('<button class="tv-btn danger" data-tv-act="reject"><i class="fas fa-times"></i> رفض</button>');
+      if (opts.actions.includes('approve') && (perms.canApprove !== false))
+        btns.push('<button class="tv-btn success" data-tv-act="approve"><i class="fas fa-check"></i> اعتماد</button>');
+      if (opts.actions.includes('close') && perms.canClose)
+        btns.push('<button class="tv-btn primary" data-tv-act="close-txn"><i class="fas fa-lock"></i> إغلاق نهائي</button>');
+    } else if (!isTerminal && assignee && assignee !== meName) {
+      // Show explainer message: "the txn is at X — only X can act"
+      btns.push(
+        '<div style="margin-inline-end:auto;display:flex;align-items:center;gap:8px;padding:8px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;color:#92400e;font-size:12.5px;font-weight:700;">' +
+          '<i class="fas fa-lock"></i> ' +
+          'المعاملة بانتظار <strong style="color:#7c2d12;">'+_esc(assignee)+'</strong> — فقط هو يستطيع اتخاذ الإجراء' +
+        '</div>'
+      );
+    } else if (isTerminal) {
+      btns.push(
+        '<div style="margin-inline-end:auto;display:flex;align-items:center;gap:8px;padding:8px 14px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;color:#475569;font-size:12.5px;font-weight:700;">' +
+          '<i class="fas fa-check-double"></i> المعاملة مغلقة — لا توجد إجراءات متاحة' +
+        '</div>'
+      );
+    }
     return btns.join('');
+  }
+
+  // V5.4.1: prominent banner showing where the transaction has stopped.
+  // Shows the assignee + position + branch + how long it's been stuck there.
+  function _renderStoppedAt(t){
+    var status = (t && t.status) || '';
+    var isTerminal = ['approved','rejected','closed','cancelled'].indexOf(status) >= 0;
+    if (isTerminal) {
+      var color = status==='approved' ? '#16a34a' : (status==='rejected' ? '#dc2626' : '#475569');
+      var bg    = status==='approved' ? '#dcfce7' : (status==='rejected' ? '#fee2e2' : '#f1f5f9');
+      var icon  = status==='approved' ? 'fa-check-circle' : (status==='rejected' ? 'fa-times-circle' : 'fa-flag-checkered');
+      var label = _statusLabel(status);
+      return '<div style="margin-bottom:14px;padding:14px 18px;background:'+bg+';border:2px solid '+color+';border-radius:14px;display:flex;align-items:center;gap:12px;">' +
+        '<div style="width:44px;height:44px;border-radius:50%;background:'+color+';color:#fff;display:grid;place-items:center;font-size:18px;flex-shrink:0;"><i class="fas '+icon+'"></i></div>' +
+        '<div style="flex:1;">' +
+          '<div style="font-size:11px;font-weight:800;color:'+color+';text-transform:uppercase;letter-spacing:.5px;">الحالة النهائية</div>' +
+          '<div style="font-size:16px;font-weight:800;color:#0f172a;margin-top:2px;">المعاملة '+_esc(label)+'</div>' +
+        '</div>' +
+      '</div>';
+    }
+    var assignee = (t && (t.currentAssignee || t.current_assignee)) || '';
+    if (!assignee) return '';
+    // Find the most recent log entry for this assignee to estimate "stopped since"
+    var stoppedSince = null;
+    var logs = (t && t.logs) || [];
+    for (var i = logs.length - 1; i >= 0; i--) {
+      if (logs[i].actionType !== 'reply') {
+        stoppedSince = logs[i].createdAt;
+        break;
+      }
+    }
+    var hoursStuck = stoppedSince ? Math.round((Date.now() - new Date(stoppedSince).getTime()) / (3600*1000)) : null;
+    var stuckText = '';
+    if (hoursStuck !== null) {
+      if (hoursStuck < 1)        stuckText = 'منذ أقل من ساعة';
+      else if (hoursStuck < 24)  stuckText = 'منذ ' + hoursStuck + ' ساعة';
+      else                       stuckText = 'منذ ' + Math.round(hoursStuck/24) + ' يوم';
+    }
+    var dueOverdue = false;
+    if (t && t.dueDate) {
+      var due = new Date(t.dueDate);
+      if (!isNaN(due.getTime()) && due.getTime() < Date.now()) dueOverdue = true;
+    }
+    var initials = _initials(t.currentAssigneeName || assignee);
+    var color2 = _actorColor(assignee);
+    var rolePos = (t && (t.currentRoleName || t.stepName)) || '';
+    return '<div style="margin-bottom:14px;padding:14px 18px;background:linear-gradient(180deg,#fffbeb,#fff);border:2px solid #f59e0b;border-radius:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">' +
+      '<div style="width:54px;height:54px;border-radius:50%;background:'+color2+';color:#fff;display:grid;place-items:center;font-size:18px;font-weight:900;flex-shrink:0;border:3px solid #fff;box-shadow:0 4px 12px rgba(245,158,11,.30);">'+_esc(initials)+'</div>' +
+      '<div style="flex:1;min-width:200px;">' +
+        '<div style="font-size:11px;font-weight:800;color:#92400e;text-transform:uppercase;letter-spacing:.5px;">' +
+          '<i class="fas fa-pause-circle"></i> توقفت المعاملة عند' +
+        '</div>' +
+        '<div style="font-size:17px;font-weight:800;color:#0f172a;margin-top:4px;">'+_esc(assignee)+'</div>' +
+        (rolePos ? '<div style="font-size:12px;color:#7c3aed;font-weight:700;margin-top:2px;"><i class="fas fa-id-badge" style="font-size:10px;"></i> '+_esc(rolePos)+'</div>' : '') +
+        (stuckText ? '<div style="font-size:11px;color:#64748b;margin-top:4px;"><i class="fas fa-clock"></i> '+stuckText+'</div>' : '') +
+      '</div>' +
+      (dueOverdue ?
+        '<div style="background:#dc2626;color:#fff;padding:6px 12px;border-radius:8px;font-size:11px;font-weight:800;"><i class="fas fa-triangle-exclamation"></i> متجاوزة الاستحقاق</div>'
+        : '') +
+      '<div style="background:#fef3c7;color:#92400e;padding:8px 14px;border-radius:10px;font-size:12px;font-weight:800;border:1px solid #fcd34d;">' +
+        '<i class="fas fa-key"></i> الإجراء متاح فقط لـ <strong>'+_esc(assignee)+'</strong>' +
+      '</div>' +
+    '</div>';
   }
 
   function _getToken(){
@@ -488,6 +628,8 @@
 
       // Body
       var html = '';
+      // V5.4.1: Stopped-At banner — shown FIRST so user immediately sees who can act
+      html += _renderStoppedAt(t);
       // Workflow timeline
       html += '<div class="tv-section">' +
                 '<div class="tv-section-head"><div class="ic" style="background:#dbeafe;color:#1d4ed8;"><i class="fas fa-route"></i></div>' +
@@ -569,8 +711,33 @@
         });
       });
 
-      // Footer actions
-      document.getElementById('tvFoot').innerHTML = _renderActions(opts, t.permissions || {});
+      // V5.4.1: Wire reply attachment cards → lightbox.
+      // Each reply with an attachment becomes its own lightbox-able item.
+      var replies = t.replies || [];
+      ov.querySelectorAll('[data-reply-att-idx]').forEach(function(card){
+        card.addEventListener('click', function(e){
+          // Don't intercept if user clicked an external link inside
+          if (e.target.tagName === 'A') return;
+          var idx = parseInt(card.getAttribute('data-reply-att-idx')||'0', 10);
+          var r = replies[idx];
+          if (!r || !r.attachment) return;
+          if (typeof r.attachment === 'string' && (r.attachment.startsWith('data:') || r.attachment.startsWith('http'))) {
+            var mime = r.attachmentMime || '';
+            if (!mime && r.attachment.startsWith('data:')) {
+              var m = r.attachment.match(/^data:([^;,]+)/);
+              mime = m ? m[1] : '';
+            }
+            _openLightbox({
+              fileName: r.attachmentName || ('مرفق رد - ' + (r.authorName||r.authorUsername||'')),
+              mime: mime,
+              dataUrl: r.attachment
+            });
+          }
+        });
+      });
+
+      // V5.4.1: Footer actions — pass txn so we can lock to assignee.
+      document.getElementById('tvFoot').innerHTML = _renderActions(opts, t.permissions || {}, t);
     }).catch(function(e){
       document.getElementById('tvBody').innerHTML = _renderError(e && e.message || 'خطأ غير متوقع', txnId);
     });

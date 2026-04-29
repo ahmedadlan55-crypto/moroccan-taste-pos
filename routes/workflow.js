@@ -2557,7 +2557,11 @@ router.post('/transactions/:id/action', SCHEMA.validateBody(SCHEMA.schemas.actio
 function _explainPermissionDenied(action, user, txn, step, actionLog) {
   const isAssignee = txn.current_assignee === user.username;
   if (!isAssignee && !user.isAdmin && !user.isDeveloper) {
-    return 'هذه المعاملة ليست بانتظار إجرائك';
+    // V5.4.1: more informative — name the actual assignee so the user knows whom to contact
+    const who = txn.current_assignee
+      ? 'المعاملة بانتظار: ' + txn.current_assignee + ' (هو فقط من يستطيع اتخاذ الإجراء)'
+      : 'هذه المعاملة ليست بانتظار إجرائك';
+    return who;
   }
   // Check if already acted on this stage
   const alreadyActed = (actionLog || []).some(l =>

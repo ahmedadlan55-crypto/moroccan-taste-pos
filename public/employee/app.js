@@ -879,6 +879,11 @@ function doLogin() {
     if (r && r.success && r.token) {
       localStorage.setItem('emp_token', r.token);
       localStorage.setItem('emp_session', JSON.stringify({username:r.username,role:r.role,brandId:r.brandId||'',branchId:r.branchId||''}));
+      // V5.4.1: persist for TxnView assignee-lock logic
+      try {
+        localStorage.setItem('emp_role', r.role || '');
+        localStorage.setItem('emp_username', r.username || '');
+      } catch(_){}
       currentUser = r.username;
       document.getElementById('loginPage').style.display = 'none';
       startApp();

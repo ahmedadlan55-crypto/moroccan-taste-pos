@@ -807,6 +807,11 @@ function doLogin() {
 
     // Save token for secured API calls and templates
     localStorage.setItem("pos_token", res.token);
+    // V5.4.1: persist role + username separately — TxnView reads these to gate buttons.
+    try {
+      localStorage.setItem('pos_role', state.role || '');
+      localStorage.setItem('pos_username', u || '');
+    } catch(_){}
 
     // Save session (NO password — only user + role for session restore)
     localStorage.setItem("pos_session", JSON.stringify({ user: u, username: u, role: state.role }));

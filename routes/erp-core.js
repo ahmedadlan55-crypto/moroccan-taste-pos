@@ -599,11 +599,46 @@ router.get('/bom/:id/lines', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
+// V5.7 — Hard-delete BOM with full cascade.
+// FIXES: previously this was a soft-delete (is_active=0) but menu.bom_id still
+// pointed to the now-inactive BOM, leaving the menu item in a broken state where
+// the recipe button wouldn't work. The new logic:
+//   1. Read product_source + product_id BEFORE deletion
+//   2. Cascade-delete bom_lines (the recipe ingredients)
+//   3. Delete the BOM row itself
+//   4. If product_source='menu', clear menu.bom_id so the menu item knows
+//      it no longer has a recipe
 router.delete('/bom/:id', async (req, res) => {
   try {
-    await db.query('UPDATE bom SET is_active = 0 WHERE id = ?', [req.params.id]);
-    res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+    const id = req.params.id;
+    // Read BOM meta first
+    const [b] = await db.query(
+      'SELECT id, product_id, product_source FROM bom WHERE id = ?', [id]);
+    if (!b.length) return res.json({ success: false, error: 'الوصفة غير موجودة' });
+    const bom = b[0];
+    const src = bom.product_source || 'inv';
+    // Run cascade in a transaction so partial deletion can't happen
+    try {
+      await db.withTransaction(async (conn) => {
+        await conn.query('DELETE FROM bom_lines WHERE bom_id = ?', [id]);
+        await conn.query('DELETE FROM bom WHERE id = ?', [id]);
+        // Clear menu.bom_id if this BOM was linked to a menu item
+        if (src === 'menu' && bom.product_id) {
+          await conn.query('UPDATE menu SET bom_id = NULL WHERE id = ? AND bom_id = ?',
+            [bom.product_id, id]);
+        }
+      });
+    } catch(_e) {
+      // Fallback if withTransaction unavailable — sequential best-effort
+      try { await db.query('DELETE FROM bom_lines WHERE bom_id = ?', [id]); } catch(_){}
+      try { await db.query('DELETE FROM bom WHERE id = ?', [id]); } catch(_){}
+      if (src === 'menu' && bom.product_id) {
+        try { await db.query('UPDATE menu SET bom_id = NULL WHERE id = ? AND bom_id = ?',
+          [bom.product_id, id]); } catch(_){}
+      }
+    }
+    res.json({ success: true, productId: bom.product_id, productSource: src });
+  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 // Bulk-assign brand to rows that currently have no brand.

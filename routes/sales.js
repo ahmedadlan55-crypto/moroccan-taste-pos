@@ -193,6 +193,27 @@ router.post('/', async (req, res) => {
       });
     });
 
+    // V5.7 — Build production-method map so we know how to handle each item:
+    //   - made_at_branch  → made-to-order: do NOT touch menu.stock; only deduct ingredients
+    //   - made_at_kitchen → same as branch but flagged for kitchen production logging
+    //   - prepared        → batch-made (uses semi-finished or BOM); deduct ingredients
+    //   - imported        → physical stocked goods; deduct from menu.stock + warehouse_stock
+    const [productionMetaRows] = await db.query(
+      `SELECT id, COALESCE(production_method, 'made_at_branch') AS production_method,
+              COALESCE(deduct_strategy, 'on_sale') AS deduct_strategy,
+              COALESCE(allow_negative_stock, 1) AS allow_negative_stock,
+              stock
+       FROM menu`);
+    const productionMetaMap = {};
+    productionMetaRows.forEach(r => {
+      productionMetaMap[r.id] = {
+        method: r.production_method,
+        strategy: r.deduct_strategy,
+        allowNegative: !!r.allow_negative_stock,
+        currentStock: Number(r.stock) || 0
+      };
+    });
+
     // ─── NEW: Build semi-finished consumption map ───
     // For finished products that consume from a semi-finished (e.g. كوب شاي مغربي → براد شاي مغربي)
     const [menuRows] = await db.query(
@@ -260,6 +281,24 @@ router.post('/', async (req, res) => {
         });
         // Skip the raw recipe deduction — semi covers it
         continue;
+      }
+
+      // V5.7 — For "imported" items (physically stocked goods like canned drinks),
+      // ALSO deduct from menu.stock + warehouse_stock so the cashier sees the right
+      // remaining count. For made-to-order (made_at_branch/kitchen/prepared) items,
+      // skip menu.stock entirely — the only truth is the ingredients.
+      const meta = productionMetaMap[item.id];
+      if (meta && meta.method === 'imported') {
+        try {
+          await db.query(
+            `UPDATE menu SET stock = ${meta.allowNegative ? 'stock - ?' : 'GREATEST(0, stock - ?)'} WHERE id = ?`,
+            [item.qty, item.id]);
+          if (warehouseId) {
+            await db.query(
+              `UPDATE warehouse_stock SET qty = ${meta.allowNegative ? 'qty - ?' : 'GREATEST(0, qty - ?)'} WHERE warehouse_id = ? AND item_id = ?`,
+              [item.qty, warehouseId, item.id]);
+          }
+        } catch(_) {}
       }
 
       // ─── LEGACY PATH: raw recipe deduction (unchanged) ───

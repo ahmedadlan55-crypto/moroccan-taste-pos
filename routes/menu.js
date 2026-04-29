@@ -303,6 +303,175 @@ router.get('/:id/recipe-bom', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// V5.7 — Computed availability for made-to-order items
+// "How many of this menu item can we make RIGHT NOW given current ingredient stock?"
+// Returns: min(ingredient_stock / ingredient_qty_per_unit) across all BOM lines.
+// If item has no recipe AND production_method='made_at_branch' → returns 0 (cannot determine).
+// If item is "imported" or "prepared" → returns menu.stock as-is (these ARE stocked).
+//
+//   GET /api/menu/:id/availability?warehouseId=X
+async function _computeMenuAvailability(menuId, warehouseId) {
+  // Load menu meta
+  const [mRows] = await db.query(
+    `SELECT id, name, bom_id, production_method, deduct_strategy, stock,
+            allow_negative_stock, min_stock_alert
+     FROM menu WHERE id = ?`, [menuId]);
+  if (!mRows.length) return null;
+  const m = mRows[0];
+
+  // For "imported" / "prepared" / "stocked" items → stock IS the truth
+  if (['imported', 'prepared'].includes(m.production_method) || m.deduct_strategy === 'none') {
+    return {
+      menuId: m.id, name: m.name,
+      productionMethod: m.production_method,
+      mode: 'stocked',
+      stockedQty: Number(m.stock) || 0,
+      makeable: Number(m.stock) || 0,
+      ingredientsNeeded: [],
+      blockerIngredients: [],
+      hasRecipe: !!m.bom_id
+    };
+  }
+
+  // For made-to-order items → compute from BOM
+  if (!m.bom_id) {
+    // Check legacy recipe table fallback
+    let legacyLines = [];
+    try {
+      const [r] = await db.query(`SELECT * FROM recipe WHERE menu_id = ?`, [menuId]);
+      legacyLines = r;
+    } catch(_){}
+    if (!legacyLines.length) {
+      return {
+        menuId: m.id, name: m.name,
+        productionMethod: m.production_method || 'made_at_branch',
+        mode: 'mto_no_recipe',
+        makeable: 0,
+        warning: 'لا توجد وصفة — حدد المكوّنات لمعرفة الكمية المتاحة',
+        ingredientsNeeded: [],
+        blockerIngredients: [],
+        hasRecipe: false
+      };
+    }
+    // Use legacy recipe to compute
+    return await _computeFromIngredients(m, legacyLines.map(l => ({
+      itemId: l.inv_item_id, name: l.inv_item_name, qtyPer: Number(l.qty_used)||0, wastePct: 0
+    })), warehouseId);
+  }
+
+  // Modern BOM path
+  const [bomRows] = await db.query('SELECT yield_quantity FROM bom WHERE id = ?', [m.bom_id]);
+  const yieldQ = bomRows.length ? (Number(bomRows[0].yield_quantity)||1) : 1;
+  const [lines] = await db.query(`
+    SELECT bl.component_item_id AS item_id, bl.quantity, bl.waste_pct,
+           COALESCE(i.name, '') AS name
+    FROM bom_lines bl LEFT JOIN inv_items i ON i.id = bl.component_item_id
+    WHERE bl.bom_id = ?`, [m.bom_id]);
+  const ingredients = lines.map(l => ({
+    itemId: l.item_id, name: l.name,
+    qtyPer: ((Number(l.quantity)||0) * (1 + (Number(l.waste_pct)||0)/100)) / Math.max(1, yieldQ),
+    wastePct: Number(l.waste_pct)||0
+  }));
+  return await _computeFromIngredients(m, ingredients, warehouseId);
+}
+
+async function _computeFromIngredients(menu, ingredients, warehouseId) {
+  if (!ingredients.length) {
+    return {
+      menuId: menu.id, name: menu.name, mode: 'mto', makeable: 0,
+      warning: 'الوصفة فارغة', ingredientsNeeded: [], blockerIngredients: [],
+      hasRecipe: !!menu.bom_id
+    };
+  }
+  // Bulk-load stock for all ingredients (per warehouse if provided, else global inv_items.stock)
+  const itemIds = ingredients.map(i => i.itemId).filter(Boolean);
+  const placeholders = itemIds.map(()=>'?').join(',');
+  let stockMap = {};
+  if (warehouseId) {
+    try {
+      const [ws] = await db.query(
+        `SELECT item_id, qty FROM warehouse_stock WHERE warehouse_id = ? AND item_id IN (${placeholders})`,
+        [warehouseId, ...itemIds]);
+      ws.forEach(r => { stockMap[r.item_id] = Number(r.qty)||0; });
+    } catch(_){}
+  }
+  // Fallback to global stock for items not in warehouse_stock
+  try {
+    const [rows] = await db.query(
+      `SELECT id, COALESCE(stock,0) AS stock FROM inv_items WHERE id IN (${placeholders})`, itemIds);
+    rows.forEach(r => {
+      if (stockMap[r.id] === undefined) stockMap[r.id] = Number(r.stock)||0;
+    });
+  } catch(_){}
+
+  // For each ingredient: how many units of finished can we make?
+  let makeable = Infinity;
+  const blockers = [];
+  const breakdown = [];
+  for (const ing of ingredients) {
+    const stock = stockMap[ing.itemId] || 0;
+    const canMake = ing.qtyPer > 0 ? Math.floor(stock / ing.qtyPer) : Infinity;
+    breakdown.push({
+      itemId: ing.itemId, name: ing.name,
+      stockOnHand: stock, qtyPer: ing.qtyPer,
+      canMake: canMake === Infinity ? null : canMake
+    });
+    if (canMake < makeable) makeable = canMake;
+    if (canMake === 0) blockers.push({ itemId: ing.itemId, name: ing.name, stock });
+  }
+  if (makeable === Infinity) makeable = 0;
+  return {
+    menuId: menu.id, name: menu.name,
+    productionMethod: menu.production_method || 'made_at_branch',
+    mode: 'mto',
+    makeable: makeable,
+    minAlert: Number(menu.min_stock_alert)||0,
+    isLowStock: makeable <= (Number(menu.min_stock_alert)||0) && makeable > 0,
+    isOutOfStock: makeable === 0,
+    ingredientsNeeded: breakdown,
+    blockerIngredients: blockers,
+    hasRecipe: !!menu.bom_id
+  };
+}
+
+router.get('/:id/availability', async (req, res) => {
+  try {
+    const result = await _computeMenuAvailability(req.params.id, req.query.warehouseId || null);
+    if (!result) return res.status(404).json({ error: 'منتج غير موجود' });
+    res.json(result);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// V5.7 — Bulk: availability for an entire brand (or all menu) in one call.
+// Used by the menu hub list to show "متوفر للصنع" per row.
+router.get('/availability/bulk', async (req, res) => {
+  try {
+    const { brandId, warehouseId } = req.query;
+    let sql = 'SELECT id FROM menu WHERE active = 1';
+    const params = [];
+    if (brandId) { sql += ' AND brand_id = ?'; params.push(brandId); }
+    sql += ' ORDER BY name LIMIT 500';
+    const [rows] = await db.query(sql, params);
+    const out = {};
+    for (const r of rows) {
+      try {
+        const a = await _computeMenuAvailability(r.id, warehouseId || null);
+        if (a) {
+          out[r.id] = {
+            mode: a.mode,
+            makeable: a.makeable,
+            isOutOfStock: !!a.isOutOfStock,
+            isLowStock: !!a.isLowStock,
+            blockerCount: (a.blockerIngredients||[]).length,
+            hasRecipe: a.hasRecipe
+          };
+        }
+      } catch(_) {}
+    }
+    res.json(out);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // POST /api/menu/:id/recipe-bom — upsert the recipe BOM for this menu item.
 // Body: { lines: [{ componentItemId, quantity, unit, wastePct }],
 //         yieldQuantity?, yieldUnit?, productionMethod?, deductStrategy?,

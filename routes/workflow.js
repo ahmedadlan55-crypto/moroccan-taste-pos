@@ -1748,27 +1748,73 @@ router.get('/transactions/:id/full-bundle', async (req, res) => {
     const [replies] = await db.query(
       `SELECT * FROM transaction_replies WHERE transaction_id = ? ORDER BY created_at`, [id]);
 
-    // Author identity for each log entry — bulk lookup so we can show position/name
-    const actors = [...new Set(logs.map(l => l.action_by).filter(Boolean))];
+    // V5.4.2: Author identity for EVERY username we'll display anywhere (logs, replies,
+    // recipients, currentAssignee, createdBy, attachment uploaders, recipient actors).
+    // Falls back gracefully to hr_employees if not in users table (HR staff with no login).
+    const allUsernames = new Set();
+    logs.forEach(l => l.action_by && allUsernames.add(l.action_by));
+    replies.forEach(r => r.author_username && allUsernames.add(r.author_username));
+    recipientRows.forEach(r => r.recipient_username && allUsernames.add(r.recipient_username));
+    atts.forEach(a => a.uploaded_by && allUsernames.add(a.uploaded_by));
+    if (t.created_by) allUsernames.add(t.created_by);
+    if (t.current_assignee) allUsernames.add(t.current_assignee);
+
     let actorMap = {};
-    if (actors.length) {
+    if (allUsernames.size) {
       try {
-        const placeholders = actors.map(() => '?').join(',');
+        const list = [...allUsernames];
+        const placeholders = list.map(() => '?').join(',');
         const [u] = await db.query(
           `SELECT u.username, COALESCE(u.full_name, u.username) AS full_name, u.role,
-                  p.name AS position_name, b.name AS branch_name
+                  p.name AS position_name, p.level AS position_level,
+                  b.name AS branch_name
            FROM users u
            LEFT JOIN positions p ON u.position_id = p.id
            LEFT JOIN branches b ON u.branch_id = b.id
-           WHERE u.username IN (${placeholders})`, actors);
+           WHERE u.username IN (${placeholders})`, list);
         u.forEach(r => { actorMap[r.username] = r; });
+        // Also try hr_employees for users not in `users` table (HR-only profiles)
+        const missing = list.filter(x => !actorMap[x]);
+        if (missing.length) {
+          try {
+            const ph = missing.map(()=>'?').join(',');
+            const [hr] = await db.query(
+              `SELECT linked_username AS username,
+                      TRIM(CONCAT(COALESCE(first_name,''),' ',COALESCE(last_name,''))) AS full_name,
+                      job_title AS position_name
+               FROM hr_employees
+               WHERE linked_username IN (${ph})
+                 AND COALESCE(status,'active') = 'active'`, missing);
+            hr.forEach(r => {
+              if (!actorMap[r.username]) {
+                actorMap[r.username] = {
+                  username: r.username,
+                  full_name: r.full_name || r.username,
+                  position_name: r.position_name || '',
+                  branch_name: '', role: ''
+                };
+              }
+            });
+          } catch(_) {}
+        }
       } catch(_) {}
     }
+    // Helper: prefer full name, fallback to username
+    const _name = (u) => (actorMap[u] && actorMap[u].full_name) || u || '';
+    const _pos  = (u) => (actorMap[u] && actorMap[u].position_name) || '';
+    const _branch = (u) => (actorMap[u] && actorMap[u].branch_name) || '';
 
     // Map main txn (already has _mapTxn output from existing endpoint)
     const main = _mapTxn(t);
     res.json({
       ...main,
+      // V5.4.2: enriched display names for the UI banner + everywhere
+      currentAssigneeName:     _name(t.current_assignee),
+      currentAssigneePosition: _pos(t.current_assignee),
+      currentAssigneeBranch:   _branch(t.current_assignee),
+      createdByName:           _name(t.created_by),
+      createdByPosition:       _pos(t.created_by),
+      createdByBranch:         _branch(t.created_by),
       description:        fixMojibake(t.description),
       attachmentDataUrl:  t.attachment || '',
       subject:            fixMojibake(t.subject || t.title || ''),
@@ -1781,7 +1827,9 @@ router.get('/transactions/:id/full-bundle', async (req, res) => {
       passedCeoBy:        t.passed_ceo_by || null,
       recipients: recipientRows.map(r => fixObj({
         id: r.id, type: r.recipient_type, username: r.recipient_username,
-        code: r.recipient_code, name: r.recipient_name,
+        code: r.recipient_code,
+        name: r.recipient_name || _name(r.recipient_username),
+        position: _pos(r.recipient_username),
         needsResponse: !!r.needs_response, responseReceived: !!r.response_received,
         actor: actorMap[r.recipient_username] || null
       })),
@@ -1818,18 +1866,38 @@ router.get('/transactions/:id/full-bundle', async (req, res) => {
         dataUrl: a.data_url || '',
         uploadedBy: a.uploaded_by, uploadedAt: a.uploaded_at, logId: a.log_id
       })),
-      replies: replies.map(r => fixObj({
-        id: r.id,
-        replyText: r.reply_text,
-        attachment: r.attachment,
-        attachmentName: r.attachment_name || '',
-        attachmentMime: r.attachment_mime || '',
-        authorUsername: r.author_username,
-        authorName: r.author_name || actorMap[r.author_username]?.full_name || r.author_username,
-        authorRole: r.author_role || actorMap[r.author_username]?.role || '',
-        authorPosition: r.author_position || actorMap[r.author_username]?.position_name || '',
-        createdAt: r.created_at
-      }))
+      replies: replies.map(r => {
+        // V5.4.2: compute receivedAt — when the txn arrived to THIS reply's author.
+        // Look back through logs for the most-recent action that set this user as
+        // the new assignee BEFORE the reply was posted. Fallback: txn creation.
+        let receivedAt = t.created_at;
+        const replyTime = new Date(r.created_at).getTime();
+        for (let i = logs.length - 1; i >= 0; i--) {
+          const lt = new Date(logs[i].created_at).getTime();
+          if (lt > replyTime) continue;  // future log, skip
+          // The action that caused the txn to land on the author = an approve/forward
+          // by someone else where the new assignee = author. Best heuristic: the
+          // first log entry posted before this reply WHERE the actor isn't the author.
+          if (logs[i].action_by !== r.author_username) {
+            receivedAt = logs[i].created_at;
+            break;
+          }
+        }
+        return fixObj({
+          id: r.id,
+          replyText: r.reply_text,
+          attachment: r.attachment,
+          attachmentName: r.attachment_name || '',
+          attachmentMime: r.attachment_mime || '',
+          authorUsername: r.author_username,
+          authorName: r.author_name || _name(r.author_username),
+          authorRole: r.author_role || (actorMap[r.author_username] && actorMap[r.author_username].role) || '',
+          authorPosition: r.author_position || _pos(r.author_username),
+          authorBranch: _branch(r.author_username),
+          receivedAt: receivedAt,
+          createdAt: r.created_at
+        });
+      })
     });
   } catch(e) {
     res.status(500).json({ error: e.message });

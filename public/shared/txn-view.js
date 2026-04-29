@@ -162,13 +162,45 @@
       .tv-att-name{font-size:11px;font-weight:700;color:#0f172a;line-height:1.3;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
       .tv-att-info{font-size:10px;color:#94a3b8;margin-top:3px;}
 
-      /* Lightbox */
-      .tv-lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px;animation:tv-fade .15s;}
-      .tv-lightbox img{max-width:96vw;max-height:92vh;object-fit:contain;border-radius:8px;}
-      .tv-lightbox iframe{width:96vw;height:92vh;background:#fff;border:0;border-radius:8px;}
-      .tv-lightbox-close{position:absolute;top:14px;inset-inline-end:14px;background:rgba(255,255,255,.18);border:0;color:#fff;width:42px;height:42px;border-radius:50%;cursor:pointer;font-size:22px;}
-      .tv-lightbox-close:hover{background:#dc2626;}
-      .tv-lightbox-dl{position:absolute;top:14px;inset-inline-start:14px;background:rgba(255,255,255,.18);color:#fff;border:0;padding:8px 16px;border-radius:10px;cursor:pointer;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:6px;}
+      /* Lightbox — V5.4.2 redesigned with consistent toolbar */
+      .tv-lightbox{position:fixed;inset:0;background:rgba(15,23,42,.94);backdrop-filter:blur(8px);z-index:10000;display:flex;flex-direction:column;animation:tv-fade .18s ease-out;direction:rtl;}
+      .tv-lb-toolbar{flex-shrink:0;background:#0f172a;color:#fff;padding:10px 18px;display:flex;align-items:center;gap:14px;border-bottom:1px solid rgba(255,255,255,.08);box-shadow:0 4px 14px rgba(0,0,0,.4);}
+      .tv-lb-info{flex:1;min-width:0;display:flex;align-items:center;gap:12px;}
+      .tv-lb-info-icon{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;font-size:18px;flex-shrink:0;color:#fff;}
+      .tv-lb-info-icon.image{background:#0ea5e9;}
+      .tv-lb-info-icon.pdf{background:#dc2626;}
+      .tv-lb-info-icon.doc{background:#1d4ed8;}
+      .tv-lb-info-icon.xls{background:#15803d;}
+      .tv-lb-info-icon.ppt{background:#ea580c;}
+      .tv-lb-info-icon.other{background:#475569;}
+      .tv-lb-info-text{flex:1;min-width:0;}
+      .tv-lb-info-name{font-size:14px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+      .tv-lb-info-meta{font-size:11px;color:rgba(255,255,255,.6);margin-top:2px;}
+      .tv-lb-actions{display:flex;gap:8px;align-items:center;flex-shrink:0;}
+      .tv-lb-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;min-height:38px;border-radius:10px;background:rgba(255,255,255,.10);color:#fff;border:1px solid rgba(255,255,255,.12);cursor:pointer;font-weight:700;font-size:13px;font-family:inherit;text-decoration:none;transition:all .15s;}
+      .tv-lb-btn:hover{background:rgba(255,255,255,.20);transform:translateY(-1px);}
+      .tv-lb-btn.primary{background:#2563eb;border-color:#2563eb;}
+      .tv-lb-btn.primary:hover{background:#1d4ed8;}
+      .tv-lb-btn.close{background:transparent;}
+      .tv-lb-btn.close:hover{background:#dc2626;border-color:#dc2626;}
+      .tv-lb-btn i{font-size:13px;}
+      .tv-lb-stage{flex:1;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto;}
+      .tv-lb-stage img{max-width:96vw;max-height:80vh;object-fit:contain;border-radius:10px;box-shadow:0 14px 50px rgba(0,0,0,.55);}
+      .tv-lb-stage iframe{width:96vw;height:82vh;max-width:1200px;background:#fff;border:0;border-radius:10px;box-shadow:0 14px 50px rgba(0,0,0,.55);}
+      .tv-lb-card{background:#fff;border-radius:16px;padding:48px 56px;text-align:center;max-width:480px;box-shadow:0 14px 50px rgba(0,0,0,.55);}
+      .tv-lb-card-icon{width:84px;height:84px;border-radius:20px;margin:0 auto 18px;display:grid;place-items:center;font-size:36px;color:#fff;}
+      .tv-lb-card-icon.pdf{background:#dc2626;} .tv-lb-card-icon.doc{background:#1d4ed8;}
+      .tv-lb-card-icon.xls{background:#15803d;} .tv-lb-card-icon.ppt{background:#ea580c;}
+      .tv-lb-card-icon.other{background:#475569;} .tv-lb-card-icon.image{background:#0ea5e9;}
+      .tv-lb-card-name{font-size:18px;font-weight:800;color:#0f172a;margin-bottom:6px;word-break:break-word;}
+      .tv-lb-card-meta{font-size:12px;color:#64748b;font-weight:600;}
+      @media (max-width:600px) {
+        .tv-lb-toolbar{padding:8px 10px;gap:8px;}
+        .tv-lb-info-icon{width:36px;height:36px;font-size:14px;}
+        .tv-lb-info-name{font-size:12px;}
+        .tv-lb-btn span{display:none;}
+        .tv-lb-btn{padding:8px 10px;}
+      }
 
       /* Action log timeline */
       .tv-log{position:relative;padding-inline-start:30px;}
@@ -204,11 +236,56 @@
       .tv-log-action.reply{background:#cffafe;color:#155e75;}
       .tv-log-action.close{background:#f1f5f9;color:#1e293b;}
 
-      /* Replies */
-      .tv-reply{display:flex;gap:10px;padding:10px 12px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:10px;}
-      .tv-reply-body{flex:1;min-width:0;}
-      .tv-reply-actor{display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap;}
-      .tv-reply-text{margin-top:6px;font-size:13px;color:#334155;line-height:1.7;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:8px 12px;border-radius:8px;}
+      /* Replies — V5.4.2 formal Arabic correspondence layout */
+      .tv-letter{background:#fff;border:1px solid #e2e8f0;border-radius:14px;margin-bottom:18px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.04);transition:all .15s;}
+      .tv-letter:hover{box-shadow:0 6px 18px rgba(15,23,42,.08);}
+      .tv-letter-head{background:linear-gradient(180deg,#f8fafc,#fff);padding:12px 16px;display:flex;gap:14px;align-items:center;border-bottom:2px solid #e2e8f0;flex-wrap:wrap;}
+      .tv-letter-avatar{width:44px;height:44px;border-radius:50%;color:#fff;display:grid;place-items:center;font-weight:900;font-size:14px;flex-shrink:0;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.08);}
+      .tv-letter-head-text{flex:1;min-width:160px;}
+      .tv-letter-name{font-size:15px;font-weight:800;color:#0f172a;line-height:1.3;}
+      .tv-letter-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:3px;font-size:11px;}
+      .tv-letter-pos{color:#7c3aed;font-weight:700;background:#ede9fe;padding:2px 8px;border-radius:6px;}
+      .tv-letter-branch{color:#0369a1;font-weight:700;background:#e0f2fe;padding:2px 8px;border-radius:6px;}
+      .tv-letter-dates{font-size:11px;color:#64748b;text-align:end;line-height:1.7;background:#fafbfc;border:1px dashed #e2e8f0;border-radius:10px;padding:8px 12px;min-width:200px;}
+      .tv-letter-date-row{display:flex;align-items:center;gap:6px;justify-content:flex-end;}
+      .tv-letter-date-row i{color:#94a3b8;width:14px;}
+      .tv-letter-date-row strong{color:#0f172a;font-weight:700;}
+      .tv-letter-ttr{color:#16a34a;font-weight:800;}
+      .tv-letter-body{padding:18px 22px 14px;font-family:'Tajawal','Amiri',serif;color:#1e293b;line-height:1.85;font-size:14.5px;}
+      .tv-letter-greet{font-weight:800;color:#0f172a;font-size:15.5px;}
+      .tv-letter-prelude{margin-top:6px;color:#475569;font-weight:600;}
+      .tv-letter-text{margin-top:14px;padding:14px 18px;background:#f8fafc;border-inline-start:3px solid #2563eb;border-radius:10px;white-space:pre-wrap;word-break:break-word;font-size:14.5px;line-height:1.95;color:#0f172a;}
+      .tv-letter-atts{margin-top:14px;padding:12px 16px;background:#fffbeb;border:1px dashed #fcd34d;border-radius:10px;}
+      .tv-letter-atts-label{font-size:12px;font-weight:800;color:#92400e;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+      .tv-letter-att-img{display:inline-block;cursor:zoom-in;border-radius:10px;overflow:hidden;border:1.5px solid #e2e8f0;max-width:280px;background:#fff;transition:all .15s;}
+      .tv-letter-att-img:hover{border-color:#0ea5e9;box-shadow:0 6px 16px rgba(14,165,233,.18);transform:translateY(-2px);}
+      .tv-letter-att-img img{display:block;width:100%;max-width:280px;max-height:200px;object-fit:cover;}
+      .tv-letter-att-img-meta{padding:7px 11px;background:#f8fafc;font-size:11.5px;color:#475569;display:flex;align-items:center;gap:6px;font-weight:700;}
+      .tv-letter-att-img-meta i:first-child{color:#0ea5e9;}
+      .tv-letter-att-file{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;cursor:pointer;transition:all .15s;max-width:420px;margin-top:6px;}
+      .tv-letter-att-file:hover{border-color:#0ea5e9;background:#f0f9ff;transform:translateY(-1px);}
+      .tv-letter-att-icon{width:40px;height:40px;border-radius:10px;color:#fff;display:grid;place-items:center;font-size:16px;flex-shrink:0;}
+      .tv-letter-att-file.pdf .tv-letter-att-icon{background:#dc2626;}
+      .tv-letter-att-file.doc .tv-letter-att-icon{background:#1d4ed8;}
+      .tv-letter-att-file.xls .tv-letter-att-icon{background:#15803d;}
+      .tv-letter-att-file.ppt .tv-letter-att-icon{background:#ea580c;}
+      .tv-letter-att-file.image .tv-letter-att-icon{background:#0ea5e9;}
+      .tv-letter-att-file.other .tv-letter-att-icon{background:#475569;}
+      .tv-letter-att-info{flex:1;min-width:0;}
+      .tv-letter-att-name{font-weight:800;font-size:13px;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+      .tv-letter-att-type{font-size:10.5px;color:#64748b;margin-top:2px;font-weight:600;}
+      .tv-letter-att-arrow{color:#0ea5e9;font-size:13px;}
+      .tv-letter-closing{margin-top:18px;color:#475569;font-weight:600;}
+      .tv-letter-signature{margin-top:8px;text-align:end;padding-top:10px;border-top:1px dashed #e2e8f0;}
+      .tv-letter-sig-name{font-weight:800;color:#0f172a;font-size:14.5px;}
+      .tv-letter-sig-pos{font-size:12px;color:#7c3aed;font-weight:700;margin-top:2px;}
+      @media (max-width:600px){
+        .tv-letter-head{flex-direction:column;align-items:flex-start;}
+        .tv-letter-dates{text-align:start;width:100%;}
+        .tv-letter-date-row{justify-content:flex-start;}
+        .tv-letter-body{padding:14px 16px 12px;font-size:13.5px;}
+        .tv-letter-text{padding:11px 14px;font-size:13.5px;}
+      }
 
       /* Action buttons */
       .tv-btn{padding:10px 18px;min-height:42px;border-radius:10px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-weight:700;cursor:pointer;font-size:13px;font-family:inherit;display:inline-flex;align-items:center;gap:6px;transition:all .15s;}
@@ -268,28 +345,79 @@
     }).join('') + '</div>';
   }
 
+  // V5.4.2: redesigned lightbox with proper toolbar — close + open-in-tab + download
+  // arranged consistently in a top bar regardless of file type.
   function _openLightbox(att){
     _ensureStyles();
     var box = document.createElement('div');
     box.className = 'tv-lightbox';
     var info = _attIcon(att.mime);
+    var fileLabel = att.fileName || 'مرفق';
+    var ext = (fileLabel.split('.').pop() || '').toUpperCase();
+    var hasUrl = !!att.dataUrl;
+    // The toolbar — shown for ALL file types in a consistent position
+    var toolbar =
+      '<div class="tv-lb-toolbar" role="toolbar" aria-label="أدوات المرفق">' +
+        '<div class="tv-lb-info">' +
+          '<div class="tv-lb-info-icon ' + info.kind + '"><i class="fas ' + info.icon + '"></i></div>' +
+          '<div class="tv-lb-info-text">' +
+            '<div class="tv-lb-info-name" title="' + _esc(fileLabel) + '">' + _esc(fileLabel) + '</div>' +
+            '<div class="tv-lb-info-meta">' + _esc(ext || (att.mime || '').split('/')[1] || 'ملف') + (att.uploadedBy ? ' • ' + _esc(att.uploadedBy) : '') + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="tv-lb-actions">' +
+          (hasUrl ? '<button class="tv-lb-btn" data-act="open" type="button"><i class="fas fa-external-link-alt"></i> <span>فتح في تبويب</span></button>' : '') +
+          (hasUrl ? '<a class="tv-lb-btn primary" href="' + _esc(att.dataUrl) + '" download="' + _esc(fileLabel) + '"><i class="fas fa-download"></i> <span>تنزيل</span></a>' : '') +
+          '<button class="tv-lb-btn close" data-act="close" type="button" aria-label="إغلاق"><i class="fas fa-times"></i></button>' +
+        '</div>' +
+      '</div>';
+
     var content = '';
-    if (info.kind === 'image') {
-      content = '<img src="'+_esc(att.dataUrl||'')+'" alt="'+_esc(att.fileName||'')+'">';
-    } else if (info.kind === 'pdf') {
-      content = '<iframe src="'+_esc(att.dataUrl||'')+'#toolbar=1" title="'+_esc(att.fileName||'')+'"></iframe>';
+    if (info.kind === 'image' && hasUrl) {
+      content = '<div class="tv-lb-stage"><img src="' + _esc(att.dataUrl) + '" alt="' + _esc(fileLabel) + '"></div>';
+    } else if (info.kind === 'pdf' && hasUrl) {
+      content = '<div class="tv-lb-stage"><iframe src="' + _esc(att.dataUrl) + '#toolbar=1" title="' + _esc(fileLabel) + '"></iframe></div>';
     } else {
-      content = '<div style="background:#fff;padding:40px 60px;border-radius:12px;text-align:center;"><i class="fas '+info.icon+'" style="font-size:64px;color:#475569;"></i><div style="margin-top:16px;font-weight:800;color:#0f172a;">'+_esc(att.fileName||'')+'</div><a class="tv-btn primary" style="margin-top:20px;display:inline-flex;text-decoration:none;" href="'+_esc(att.dataUrl||'')+'" download="'+_esc(att.fileName||'')+'"><i class="fas fa-download"></i> تنزيل</a></div>';
+      // Generic preview card for office docs etc.
+      content =
+        '<div class="tv-lb-stage">' +
+          '<div class="tv-lb-card">' +
+            '<div class="tv-lb-card-icon ' + info.kind + '"><i class="fas ' + info.icon + '"></i></div>' +
+            '<div class="tv-lb-card-name">' + _esc(fileLabel) + '</div>' +
+            '<div class="tv-lb-card-meta">' + _esc(ext || 'ملف') + (att.mime ? ' • ' + _esc(att.mime) : '') + '</div>' +
+            '<div style="font-size:13px;color:#94a3b8;margin-top:14px;">المعاينة المباشرة غير متاحة لهذا النوع. استخدم زر "فتح" أو "تنزيل" أعلاه.</div>' +
+          '</div>' +
+        '</div>';
     }
-    box.innerHTML = content +
-      '<button class="tv-lightbox-close" aria-label="إغلاق">&times;</button>' +
-      (att.dataUrl ? '<a class="tv-lightbox-dl" href="'+_esc(att.dataUrl)+'" download="'+_esc(att.fileName||'')+'"><i class="fas fa-download"></i> تنزيل</a>' : '');
+    box.innerHTML = toolbar + content;
     document.body.appendChild(box);
     function close(){ box.remove(); document.removeEventListener('keydown', onKey); }
     function onKey(e){ if (e.key === 'Escape') close(); }
     document.addEventListener('keydown', onKey);
-    box.addEventListener('click', function(e){ if (e.target === box) close(); });
-    box.querySelector('.tv-lightbox-close').onclick = close;
+    // Close on backdrop click (NOT on toolbar/stage clicks)
+    box.addEventListener('click', function(e){
+      if (e.target === box) close();
+    });
+    box.querySelectorAll('[data-act]').forEach(function(btn){
+      btn.addEventListener('click', function(e){
+        var a = btn.getAttribute('data-act');
+        if (a === 'close') { close(); return; }
+        if (a === 'open' && hasUrl) {
+          // For data: URLs Chrome/Safari blocks navigation — convert to blob: first.
+          try {
+            if (att.dataUrl.startsWith('data:')) {
+              fetch(att.dataUrl).then(function(r){ return r.blob(); }).then(function(b){
+                var url = URL.createObjectURL(b);
+                window.open(url, '_blank', 'noopener,noreferrer');
+                setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+              });
+            } else {
+              window.open(att.dataUrl, '_blank', 'noopener,noreferrer');
+            }
+          } catch(_e) { window.open(att.dataUrl, '_blank'); }
+        }
+      });
+    });
   }
 
   function _renderSteps(workflowPath){
@@ -339,12 +467,43 @@
     }).join('') + '</div>';
   }
 
+  // V5.4.2: Reply rendering as FORMAL ARABIC CORRESPONDENCE
+  // Each reply is its own letter card:
+  //   ┌─ HEADER STRIP ─────────────────────────────────┐
+  //   │ [👤] الاسم الكامل • المنصب • الفرع              │
+  //   │      وصلت المعاملة: {date}  •  الرد: {date}    │
+  //   └────────────────────────────────────────────────┘
+  //   سعادة {المنصب} الموقر،
+  //   تحية طيبة وبعد،
+  //
+  //     {نص الرد}
+  //
+  //   ولكم خالص الشكر والتقدير،
+  //                              [signature: name + position]
+  //   [مرفقات → grid]
   function _renderReplies(replies){
-    if (!replies || !replies.length) return '<div class="tv-empty"><i class="fas fa-comments"></i>لا توجد ردود.</div>';
+    if (!replies || !replies.length) {
+      return '<div class="tv-empty"><i class="fas fa-comments"></i>لا توجد ردود بعد.</div>';
+    }
     return replies.map((r, idx) => {
       var color = _actorColor(r.authorUsername);
-      // V5.4.1: render reply attachment INLINE — image preview or open button.
-      // Click triggers lightbox (attached to data-reply-att-idx for wiring).
+      var displayName = r.authorName || r.authorUsername || 'مستخدم';
+      var pos = r.authorPosition || '';
+      var branch = r.authorBranch || '';
+      var receivedFmt = r.receivedAt ? _fmtDateTime(r.receivedAt) : '—';
+      var repliedFmt = r.createdAt ? _fmtDateTime(r.createdAt) : '—';
+      // Compute time-to-reply
+      var ttr = '';
+      try {
+        if (r.receivedAt && r.createdAt) {
+          var diff = (new Date(r.createdAt).getTime() - new Date(r.receivedAt).getTime()) / 60000;
+          if (diff < 60) ttr = 'خلال ' + Math.max(1, Math.round(diff)) + ' دقيقة';
+          else if (diff < 1440) ttr = 'خلال ' + Math.round(diff/60) + ' ساعة';
+          else ttr = 'خلال ' + Math.round(diff/1440) + ' يوم';
+        }
+      } catch(_) {}
+
+      // ── Attachment rendering (inline, click → lightbox) ────────────
       var attHtml = '';
       if (r.attachment && typeof r.attachment === 'string') {
         var mime = r.attachmentMime || '';
@@ -354,47 +513,65 @@
         }
         var info = _attIcon(mime);
         if (info.kind === 'image' && r.attachment.startsWith('data:')) {
-          // Inline thumbnail — clickable for full-size lightbox
           attHtml =
-            '<div class="tv-reply-att" data-reply-att-idx="'+idx+'" style="margin-top:8px;display:inline-block;cursor:zoom-in;border-radius:10px;overflow:hidden;border:1.5px solid #e2e8f0;max-width:240px;">' +
-              '<img src="'+_esc(r.attachment)+'" alt="'+_esc(r.attachmentName||'مرفق')+'" style="display:block;max-width:240px;max-height:180px;object-fit:cover;width:100%;">' +
-              '<div style="padding:6px 10px;background:#f8fafc;font-size:11px;color:#475569;display:flex;align-items:center;gap:6px;">' +
-                '<i class="fas fa-image" style="color:#0ea5e9;"></i>' +
-                '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+_esc(r.attachmentName||'صورة')+'</span>' +
-                '<i class="fas fa-search-plus" style="margin-inline-start:auto;color:#94a3b8;font-size:10px;"></i>' +
+            '<div class="tv-letter-att-img" data-reply-att-idx="'+idx+'">' +
+              '<img src="'+_esc(r.attachment)+'" alt="'+_esc(r.attachmentName||'مرفق')+'">' +
+              '<div class="tv-letter-att-img-meta">' +
+                '<i class="fas fa-image"></i>' +
+                '<span>'+_esc(r.attachmentName||'صورة')+'</span>' +
+                '<i class="fas fa-search-plus" style="margin-inline-start:auto;opacity:.6;font-size:10px;"></i>' +
               '</div>' +
             '</div>';
         } else if (r.attachment.startsWith('data:') || r.attachment.startsWith('http')) {
-          // PDF / doc / external link — open + download buttons
           attHtml =
-            '<div class="tv-reply-att" data-reply-att-idx="'+idx+'" style="margin-top:8px;display:flex;align-items:center;gap:8px;padding:10px 12px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;max-width:380px;cursor:pointer;transition:all .15s;" onmouseover="this.style.borderColor=\'#0ea5e9\';this.style.background=\'#f0f9ff\';" onmouseout="this.style.borderColor=\'#e2e8f0\';this.style.background=\'#f8fafc\';">' +
-              '<div style="width:38px;height:38px;border-radius:10px;background:'+(info.kind==='pdf'?'#dc2626':info.kind==='doc'?'#1d4ed8':info.kind==='xls'?'#15803d':'#475569')+';color:#fff;display:grid;place-items:center;flex-shrink:0;"><i class="fas '+info.icon+'"></i></div>' +
-              '<div style="flex:1;min-width:0;">' +
-                '<div style="font-weight:700;font-size:12.5px;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+_esc(r.attachmentName||'مرفق')+'</div>' +
-                '<div style="font-size:10.5px;color:#64748b;margin-top:2px;">'+_esc((mime||'').toUpperCase()||'ملف')+' • انقر للفتح</div>' +
+            '<div class="tv-letter-att-file ' + info.kind + '" data-reply-att-idx="'+idx+'">' +
+              '<div class="tv-letter-att-icon"><i class="fas '+info.icon+'"></i></div>' +
+              '<div class="tv-letter-att-info">' +
+                '<div class="tv-letter-att-name">'+_esc(r.attachmentName||'مرفق')+'</div>' +
+                '<div class="tv-letter-att-type">'+_esc((mime||'').toUpperCase()||'ملف')+' • انقر للفتح</div>' +
               '</div>' +
-              '<i class="fas fa-external-link-alt" style="color:#0ea5e9;font-size:13px;"></i>' +
+              '<i class="fas fa-external-link-alt tv-letter-att-arrow"></i>' +
             '</div>';
-        } else {
-          // External URL only — show as link
-          attHtml =
-            '<a class="tv-reply-att-link" href="'+_esc(r.attachment)+'" target="_blank" rel="noopener" style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;padding:8px 12px;background:#f0f9ff;border:1.5px solid #bae6fd;border-radius:10px;color:#0369a1;font-weight:700;font-size:12px;text-decoration:none;">' +
-              '<i class="fas fa-link"></i> '+_esc(r.attachmentName||'فتح المرفق')+
-            '</a>';
         }
       }
-      return '<div class="tv-reply">' +
-               '<div class="tv-log-avatar" style="background:'+color+';width:36px;height:36px;font-size:12px;flex-shrink:0;">'+_esc(_initials(r.authorName||r.authorUsername))+'</div>' +
-               '<div class="tv-reply-body">' +
-                 '<div class="tv-reply-actor">' +
-                   '<span class="tv-log-name">'+_esc(r.authorName||r.authorUsername)+'</span>' +
-                   (r.authorPosition ? '<span class="tv-log-pos">'+_esc(r.authorPosition)+'</span>' : '') +
-                   '<span class="tv-log-time" style="margin-inline-start:auto;">'+_esc(_fmtDateTime(r.createdAt))+'</span>' +
-                 '</div>' +
-                 '<div class="tv-reply-text">'+_esc(r.replyText||'')+'</div>' +
-                 attHtml +
-               '</div>' +
-             '</div>';
+
+      // ── Greeting line: "سعادة {position} الموقر،" — adapt for unknown position
+      var greeting = pos
+        ? 'سعادة ' + _esc(pos) + ' الموقر،'
+        : 'تحية طيبة،';
+
+      // ── Build the formal letter card
+      return '<article class="tv-letter">' +
+        // Header strip (RTL)
+        '<header class="tv-letter-head">' +
+          '<div class="tv-letter-avatar" style="background:'+color+';">'+_esc(_initials(displayName))+'</div>' +
+          '<div class="tv-letter-head-text">' +
+            '<div class="tv-letter-name">'+_esc(displayName)+'</div>' +
+            '<div class="tv-letter-meta">' +
+              (pos ? '<span class="tv-letter-pos"><i class="fas fa-id-badge"></i> '+_esc(pos)+'</span>' : '') +
+              (branch ? '<span class="tv-letter-branch"><i class="fas fa-location-dot"></i> '+_esc(branch)+'</span>' : '') +
+            '</div>' +
+          '</div>' +
+          '<div class="tv-letter-dates">' +
+            '<div class="tv-letter-date-row"><i class="fas fa-inbox"></i> <span>وصلت المعاملة:</span> <strong>'+_esc(receivedFmt)+'</strong></div>' +
+            '<div class="tv-letter-date-row"><i class="fas fa-paper-plane"></i> <span>الرد:</span> <strong>'+_esc(repliedFmt)+'</strong>' +
+              (ttr ? ' <span class="tv-letter-ttr">('+_esc(ttr)+')</span>' : '') +
+            '</div>' +
+          '</div>' +
+        '</header>' +
+        // Letter body — formal Arabic format
+        '<div class="tv-letter-body">' +
+          '<div class="tv-letter-greet">'+greeting+'</div>' +
+          '<div class="tv-letter-prelude">تحية طيبة وبعد،</div>' +
+          '<div class="tv-letter-text">'+_esc(r.replyText||'')+'</div>' +
+          (attHtml ? '<div class="tv-letter-atts"><div class="tv-letter-atts-label"><i class="fas fa-paperclip"></i> المرفقات:</div>'+attHtml+'</div>' : '') +
+          '<div class="tv-letter-closing">ولكم خالص الشكر والتقدير،</div>' +
+          '<div class="tv-letter-signature">' +
+            '<div class="tv-letter-sig-name">'+_esc(displayName)+'</div>' +
+            (pos ? '<div class="tv-letter-sig-pos">'+_esc(pos)+'</div>' : '') +
+          '</div>' +
+        '</div>' +
+      '</article>';
     }).join('');
   }
 
@@ -463,10 +640,16 @@
         btns.push('<button class="tv-btn primary" data-tv-act="close-txn"><i class="fas fa-lock"></i> إغلاق نهائي</button>');
     } else if (!isTerminal && assignee && assignee !== meName) {
       // Show explainer message: "the txn is at X — only X can act"
+      // V5.4.2: prefer full name + position over username
+      var lockName = (t && t.currentAssigneeName && t.currentAssigneeName !== assignee)
+        ? t.currentAssigneeName : assignee;
+      var lockPos = (t && t.currentAssigneePosition) || '';
       btns.push(
         '<div style="margin-inline-end:auto;display:flex;align-items:center;gap:8px;padding:8px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;color:#92400e;font-size:12.5px;font-weight:700;">' +
           '<i class="fas fa-lock"></i> ' +
-          'المعاملة بانتظار <strong style="color:#7c2d12;">'+_esc(assignee)+'</strong> — فقط هو يستطيع اتخاذ الإجراء' +
+          'المعاملة بانتظار <strong style="color:#7c2d12;">' + _esc(lockName) + '</strong>' +
+          (lockPos ? ' <span style="color:#a16207;font-weight:600;">(' + _esc(lockPos) + ')</span>' : '') +
+          ' — فقط هو يستطيع اتخاذ الإجراء' +
         '</div>'
       );
     } else if (isTerminal) {
@@ -499,6 +682,12 @@
     }
     var assignee = (t && (t.currentAssignee || t.current_assignee)) || '';
     if (!assignee) return '';
+    // V5.4.2: prefer full name over username everywhere in the banner
+    var displayName = (t && t.currentAssigneeName && t.currentAssigneeName !== assignee)
+      ? t.currentAssigneeName : assignee;
+    var displayPosition = (t && (t.currentAssigneePosition || t.currentRoleName || t.stepName)) || '';
+    var displayBranch = (t && t.currentAssigneeBranch) || '';
+
     // Find the most recent log entry for this assignee to estimate "stopped since"
     var stoppedSince = null;
     var logs = (t && t.logs) || [];
@@ -520,24 +709,24 @@
       var due = new Date(t.dueDate);
       if (!isNaN(due.getTime()) && due.getTime() < Date.now()) dueOverdue = true;
     }
-    var initials = _initials(t.currentAssigneeName || assignee);
+    var initials = _initials(displayName);
     var color2 = _actorColor(assignee);
-    var rolePos = (t && (t.currentRoleName || t.stepName)) || '';
     return '<div style="margin-bottom:14px;padding:14px 18px;background:linear-gradient(180deg,#fffbeb,#fff);border:2px solid #f59e0b;border-radius:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">' +
       '<div style="width:54px;height:54px;border-radius:50%;background:'+color2+';color:#fff;display:grid;place-items:center;font-size:18px;font-weight:900;flex-shrink:0;border:3px solid #fff;box-shadow:0 4px 12px rgba(245,158,11,.30);">'+_esc(initials)+'</div>' +
       '<div style="flex:1;min-width:200px;">' +
         '<div style="font-size:11px;font-weight:800;color:#92400e;text-transform:uppercase;letter-spacing:.5px;">' +
           '<i class="fas fa-pause-circle"></i> توقفت المعاملة عند' +
         '</div>' +
-        '<div style="font-size:17px;font-weight:800;color:#0f172a;margin-top:4px;">'+_esc(assignee)+'</div>' +
-        (rolePos ? '<div style="font-size:12px;color:#7c3aed;font-weight:700;margin-top:2px;"><i class="fas fa-id-badge" style="font-size:10px;"></i> '+_esc(rolePos)+'</div>' : '') +
+        '<div style="font-size:17px;font-weight:800;color:#0f172a;margin-top:4px;">'+_esc(displayName)+'</div>' +
+        (displayPosition ? '<div style="font-size:12px;color:#7c3aed;font-weight:700;margin-top:2px;"><i class="fas fa-id-badge" style="font-size:10px;"></i> '+_esc(displayPosition)+'</div>' : '') +
+        (displayBranch ? '<div style="font-size:11px;color:#0369a1;font-weight:700;margin-top:2px;"><i class="fas fa-location-dot" style="font-size:10px;"></i> '+_esc(displayBranch)+'</div>' : '') +
         (stuckText ? '<div style="font-size:11px;color:#64748b;margin-top:4px;"><i class="fas fa-clock"></i> '+stuckText+'</div>' : '') +
       '</div>' +
       (dueOverdue ?
         '<div style="background:#dc2626;color:#fff;padding:6px 12px;border-radius:8px;font-size:11px;font-weight:800;"><i class="fas fa-triangle-exclamation"></i> متجاوزة الاستحقاق</div>'
         : '') +
       '<div style="background:#fef3c7;color:#92400e;padding:8px 14px;border-radius:10px;font-size:12px;font-weight:800;border:1px solid #fcd34d;">' +
-        '<i class="fas fa-key"></i> الإجراء متاح فقط لـ <strong>'+_esc(assignee)+'</strong>' +
+        '<i class="fas fa-key"></i> الإجراء متاح فقط لـ <strong>'+_esc(displayName)+'</strong>' +
       '</div>' +
     '</div>';
   }

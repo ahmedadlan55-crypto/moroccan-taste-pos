@@ -66,9 +66,11 @@ router.get('/:id', async (req, res) => {
       LEFT JOIN branches br ON br.id = s.branch_id
       WHERE s.id = ?`, [req.params.id]);
     if (!hRows.length) return res.status(404).json({ error: 'Not found' });
+    // V5-FIX: actual inv_items has columns: id, name, category, cost, stock, unit
     const [items] = await db.query(`
-      SELECT si.*, COALESCE(it.name_ar, it.name, it.code) AS item_name, it.code AS item_code,
-             it.unit_label AS item_unit
+      SELECT si.*, COALESCE(it.name, si.item_id) AS item_name,
+             '' AS item_code,
+             COALESCE(it.unit, '') AS item_unit
       FROM stocktake_items si
       LEFT JOIN inv_items it ON it.id = si.item_id
       WHERE si.stocktake_id = ? ORDER BY si.is_flagged DESC, si.variance_pct DESC`, [req.params.id]);
@@ -127,18 +129,24 @@ router.post('/:id/load-snapshot', async (req, res) => {
       return res.status(409).json({ error: 'لا يمكن إعادة التحميل بعد المراجعة' });
     }
     const wh = hRows[0].warehouse_id;
-    // Get current stock from inv_items joined with warehouse_stock if exists
+    // V5-FIX: actual inv_items columns are id/name/cost/stock/active.
+    // Try warehouse_stock first, fall back to inv_items.stock.
     let stockRows;
     try {
       [stockRows] = await db.query(`
-        SELECT it.id AS item_id, COALESCE(ws.qty, 0) AS system_qty, it.unit_cost
+        SELECT it.id AS item_id, COALESCE(ws.qty, 0) AS system_qty, COALESCE(it.cost,0) AS unit_cost
         FROM inv_items it
         LEFT JOIN warehouse_stock ws ON ws.item_id = it.id AND ws.warehouse_id = ?
-        WHERE it.is_active = 1 OR it.is_active IS NULL
-        ORDER BY it.code, it.name`, [wh]);
+        WHERE COALESCE(it.active, 1) = 1 AND it.deleted_at IS NULL
+        ORDER BY it.name LIMIT 5000`, [wh]);
     } catch(_e) {
-      // Fallback if warehouse_stock missing
-      [stockRows] = await db.query(`SELECT id AS item_id, COALESCE(stock,0) AS system_qty, COALESCE(cost,0) AS unit_cost FROM inv_items LIMIT 5000`);
+      try {
+        [stockRows] = await db.query(`
+          SELECT id AS item_id, COALESCE(stock,0) AS system_qty, COALESCE(cost,0) AS unit_cost
+          FROM inv_items WHERE COALESCE(active,1) = 1 LIMIT 5000`);
+      } catch(_e2) {
+        [stockRows] = [];
+      }
     }
     // Clear old lines
     await db.query('DELETE FROM stocktake_items WHERE stocktake_id = ?', [req.params.id]);
@@ -202,7 +210,10 @@ router.post('/:id/items/scan', async (req, res) => {
       if (r.length) item = r[0];
     }
     if (!item && b.itemCode) {
-      const [r] = await db.query(`SELECT * FROM inv_items WHERE code = ? LIMIT 1`, [b.itemCode]);
+      // V5-FIX: inv_items has no `code` column — match by id (which is the code)
+      // OR by name if user enters a free-text query.
+      const [r] = await db.query(`SELECT * FROM inv_items WHERE id = ? OR name LIKE ? LIMIT 1`,
+        [b.itemCode, '%'+b.itemCode+'%']);
       if (r.length) item = r[0];
     }
     if (!item) return res.status(404).json({ error: 'الصنف غير موجود' });
@@ -235,7 +246,7 @@ router.post('/:id/items/scan', async (req, res) => {
       req.params.lineId = lineId;
       return router.handle({ ...req, method: 'PUT', url: '/'+req.params.id+'/items/'+lineId }, res, () => {});
     }
-    res.json({ success: true, lineId, item: { id: item.id, code: item.code, name: item.name_ar || item.name } });
+    res.json({ success: true, lineId, item: { id: item.id, code: item.id, name: item.name } });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -325,15 +336,15 @@ router.post('/:id/cancel', async (req, res) => {
 router.get('/:id/export', async (req, res) => {
   try {
     const [items] = await db.query(`
-      SELECT si.*, COALESCE(it.name_ar, it.name) AS item_name, it.code
+      SELECT si.*, COALESCE(it.name, si.item_id) AS item_name
       FROM stocktake_items si
       LEFT JOIN inv_items it ON it.id = si.item_id
       WHERE si.stocktake_id = ? ORDER BY si.is_flagged DESC, si.variance_pct DESC`, [req.params.id]);
-    const headers = ['الكود','الصنف','المخزون النظامي','الكمية الفعلية','الفرق','نسبة الفرق %','قيمة الفرق','الحالة','السبب','ملاحظة'];
+    const headers = ['ID','الصنف','المخزون النظامي','الكمية الفعلية','الفرق','نسبة الفرق %','قيمة الفرق','الحالة','السبب','ملاحظة'];
     let csv = '﻿' + headers.join(',') + '\n';
     items.forEach(i => {
       const row = [
-        i.code || '',
+        i.item_id || '',
         (i.item_name || '').replace(/"/g,'""'),
         i.system_qty,
         i.actual_qty,

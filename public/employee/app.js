@@ -728,7 +728,22 @@ function callAPI(method, path, body, cb) {
   if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) return;
-    if (xhr.status === 401) { doLogout(); return; }
+    // V5-UX: graceful token-expiry — show banner + delay reload by 1.5s
+    if (xhr.status === 401) {
+      try {
+        if (!window._sessionExpiredHandled) {
+          window._sessionExpiredHandled = true;
+          var banner = document.createElement('div');
+          banner.setAttribute('role', 'alert');
+          banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#dc2626;color:#fff;padding:14px 16px;text-align:center;font-weight:800;font-size:14px;box-shadow:0 4px 16px rgba(0,0,0,.25);';
+          banner.innerHTML = '⚠ انتهت الجلسة — جاري إعادة التوجيه لتسجيل الدخول...';
+          document.body.appendChild(banner);
+          try { sessionStorage.setItem('emp_relogin_required', '1'); } catch(_){}
+          setTimeout(function(){ doLogout(); }, 1500);
+        }
+      } catch(_e) { doLogout(); }
+      return;
+    }
     // Step 1: parse the response (may throw on invalid JSON)
     var parsed = null, parseErr = null;
     try { parsed = JSON.parse(xhr.responseText); }
@@ -1370,9 +1385,13 @@ function txnSwitchTab(which) {
 }
 
 // Incoming — transactions awaiting my action
+// V5-UX: preserves scroll position on refresh; escapes IDs in inline onclick
+//        (XSS-hardened); 44px touch targets on mobile.
 function loadIncomingTxns() {
   var c = document.getElementById('incomingTxnList');
   if (!c) return;
+  // V5-UX: remember scroll position so re-render doesn't jump to top
+  var prevScroll = c.scrollTop;
   c.innerHTML = '<p class="empty"><i class="fas fa-spinner fa-spin"></i></p>';
   callAPI('GET', '/workflow/incoming?username=' + encodeURIComponent(currentUser), null, function(rows) {
     var list = rows || []; if (!Array.isArray(list)) list = [];
@@ -1380,24 +1399,36 @@ function loadIncomingTxns() {
     if (bd) { if (list.length) { bd.style.display = 'inline-block'; bd.textContent = list.length; } else { bd.style.display = 'none'; } }
     if (!list.length) { c.innerHTML = '<p class="empty">'+t('common.empty.incoming')+'</p>'; return; }
     var localeCode = currentLang === 'en' ? 'en-US' : 'ar-SA';
+    var isNarrow = window.innerWidth < 500;
     c.innerHTML = list.map(function(tx) {
       var dt = tx.createdAt ? new Date(tx.createdAt).toLocaleDateString(localeCode,{day:'numeric',month:'short'}) : '';
-      return '<div style="border-bottom:1px solid #f5f5f5;padding:10px 0;">' +
+      // V5-SEC: escape IDs in inline onclick to prevent XSS via malicious id strings
+      var idEsc = String(tx.id || '').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+      // V5-UX: on narrow phones (<500px) show only Approve/Reject in row 1, Return/Forward in row 2.
+      // 44px min-height per Apple HIG; 12px font instead of 11px for legibility.
+      var primaryRow =
+        '<button aria-label="'+t('txn.accept')+'" onclick="empAct(\''+idEsc+'\',\'approve\')" style="flex:1;min-height:44px;padding:10px 8px;border:none;background:#10b981;color:#fff;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer;"><i class="fas fa-check"></i> '+t('txn.accept')+'</button>' +
+        '<button aria-label="'+t('txn.reject')+'" onclick="empAct(\''+idEsc+'\',\'reject\')" style="flex:1;min-height:44px;padding:10px 8px;border:none;background:#ef4444;color:#fff;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer;"><i class="fas fa-times"></i> '+t('txn.reject')+'</button>';
+      var secondaryRow =
+        '<button aria-label="'+t('txn.return')+'" onclick="empAct(\''+idEsc+'\',\'return\')" style="flex:1;min-height:44px;padding:10px 8px;border:none;background:#f59e0b;color:#fff;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer;"><i class="fas fa-undo"></i> '+t('txn.return')+'</button>' +
+        '<button aria-label="'+t('txn.forward')+'" onclick="empFwd(\''+idEsc+'\')" style="flex:1;min-height:44px;padding:10px 8px;border:none;background:#8b5cf6;color:#fff;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer;"><i class="fas fa-share"></i> '+t('txn.forward')+'</button>';
+      var actionsHtml = isNarrow
+        ? '<div style="display:flex;gap:6px;margin-top:8px;">'+primaryRow+'</div>' +
+          '<div style="display:flex;gap:6px;margin-top:6px;">'+secondaryRow+'</div>'
+        : '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">'+primaryRow+secondaryRow+'</div>';
+      return '<div class="emp-incoming-row" data-txn-id="'+idEsc+'" style="border-bottom:1px solid #f5f5f5;padding:10px 0;">' +
         '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' + _impBadge(tx.importance||'medium') + _statBadge(tx.status) + '</div>' +
-        '<div onclick="viewMyTxn(\''+tx.id+'\')" style="cursor:pointer;">' +
+        '<div onclick="viewMyTxn(\''+idEsc+'\')" style="cursor:pointer;">' +
           '<div style="font-weight:800;font-size:13px;color:#0f172a;">' + (tx.title||'') + '</div>' +
           '<div style="font-size:10px;font-family:monospace;color:#64748b;margin-top:2px;">'+(tx.txnNumber||'')+'</div>' +
           '<div class="meta">' + (tx.typeName||'') + ' • ' + (tx.senderName||tx.createdBy||'') + ' • ' + dt + '</div>' +
           (Number(tx.amount) ? '<div style="margin-top:2px;color:#0ea5e9;font-weight:800;font-size:12px;">'+Number(tx.amount).toLocaleString('en',{minimumFractionDigits:2})+' '+t('units.sarCurrency')+'</div>' : '') +
         '</div>' +
-        '<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">' +
-          '<button onclick="empAct(\''+tx.id+'\',\'approve\')" style="flex:1;padding:8px;border:none;background:#10b981;color:#fff;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-check"></i> '+t('txn.accept')+'</button>' +
-          '<button onclick="empAct(\''+tx.id+'\',\'reject\')" style="flex:1;padding:8px;border:none;background:#ef4444;color:#fff;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-times"></i> '+t('txn.reject')+'</button>' +
-          '<button onclick="empAct(\''+tx.id+'\',\'return\')" style="flex:1;padding:8px;border:none;background:#f59e0b;color:#fff;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-undo"></i> '+t('txn.return')+'</button>' +
-          '<button onclick="empFwd(\''+tx.id+'\')" style="flex:1;padding:8px;border:none;background:#8b5cf6;color:#fff;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-share"></i> '+t('txn.forward')+'</button>' +
-        '</div>' +
+        actionsHtml +
       '</div>';
     }).join('');
+    // V5-UX: restore scroll position after render
+    if (prevScroll > 0) { try { c.scrollTop = prevScroll; } catch(_){} }
   });
 }
 

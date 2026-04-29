@@ -246,10 +246,10 @@
         </div>
         <div class="admin-header-actions">
           <button id="adminLangToggle" class="btn btn-light" onclick="toggleLang()" title="Toggle language / تغيير اللغة" style="min-width:60px;font-weight:800;"><i class="fas fa-language"></i> <span data-i18n="admin.toggleLang">English</span></button>
-          <div id="adminNotifBell" onclick="toggleNotificationCenter()" style="position:relative;width:40px;height:40px;border-radius:10px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background 180ms;" title="الإشعارات">
+          <button id="adminNotifBell" onclick="toggleNotificationCenter()" aria-label="الإشعارات" aria-haspopup="true" aria-expanded="false" style="position:relative;width:40px;height:40px;border-radius:10px;background:#f1f5f9;border:0;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background 180ms;" title="الإشعارات">
             <i class="fas fa-bell" style="color:#64748b;"></i>
-            <span id="adminNotifBadge" style="display:none;position:absolute;top:4px;right:4px;min-width:18px;height:18px;border-radius:9px;background:#ef4444;color:#fff;font-size:10px;font-weight:800;display:none;align-items:center;justify-content:center;padding:0 5px;">0</span>
-          </div>
+            <span id="adminNotifBadge" aria-live="polite" aria-atomic="true" style="display:none;position:absolute;top:4px;right:4px;min-width:18px;height:18px;border-radius:9px;background:#ef4444;color:#fff;font-size:10px;font-weight:800;align-items:center;justify-content:center;padding:0 5px;">0</span>
+          </button>
           <div class="admin-user-badge"><div class="admin-avatar"><i class="fas fa-user"></i></div><span id="adminUserLabel">Admin</span></div>
           <button class="btn btn-light" style="color:var(--danger);" onclick="logout()"><i class="fas fa-sign-out-alt"></i> <span data-i18n="admin.logout">تسجيل خروج</span></button>
         </div>
@@ -3022,8 +3022,9 @@
 <div id="erpWfInbox" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-list" style="color:#3b82f6;"></i> جميع المعاملات</h2>
-    <div style="display:flex;gap:8px;">
-      <select id="wfInboxStatusFilter" class="form-control" style="width:160px;" onchange="wfLoadInbox()">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <input type="text" id="wfInboxSearch" placeholder="بحث: عنوان/رقم/منشئ..." class="form-control" style="width:220px;" aria-label="بحث في المعاملات">
+      <select id="wfInboxStatusFilter" class="form-control" style="width:160px;" onchange="wfPersistFiltersAndLoad()" aria-label="تصفية بالحالة">
         <option value="">كل الحالات</option>
         <option value="pending">قيد الانتظار</option>
         <option value="in_progress">قيد التنفيذ</option>
@@ -3031,14 +3032,25 @@
         <option value="rejected">مرفوضة</option>
         <option value="closed">مغلقة</option>
       </select>
+      <button class="btn btn-secondary" onclick="wfExportInboxCsv()" title="تصدير القائمة الحالية لـ CSV" aria-label="تصدير CSV"><i class="fas fa-file-csv"></i> CSV</button>
       <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
     </div>
   </div>
-  <div id="wfInboxStats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;"></div>
+  <!-- V5: bulk actions bar (hidden until rows selected) -->
+  <div id="wfBulkBar" style="display:none;background:#1e40af;color:#fff;padding:10px 16px;border-radius:12px;margin-bottom:12px;align-items:center;gap:10px;flex-wrap:wrap;" role="region" aria-label="إجراءات جماعية">
+    <span><strong id="wfBulkCount">0</strong> معاملة محددة</span>
+    <button class="btn btn-success btn-sm" onclick="wfBulkAction('approve')" aria-label="اعتماد المحدد"><i class="fas fa-check"></i> اعتماد الكل</button>
+    <button class="btn btn-danger  btn-sm" onclick="wfBulkAction('reject')"  aria-label="رفض المحدد"><i class="fas fa-times"></i> رفض الكل</button>
+    <button class="btn btn-light   btn-sm" onclick="wfBulkClear()" aria-label="إلغاء التحديد">إلغاء</button>
+  </div>
+  <div id="wfInboxStats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;align-items:center;"></div>
   <div class="erp-table-container" style="border-radius:14px;">
     <table class="erp-table">
-      <thead><tr><th>الأهمية</th><th>الحالة</th><th>الرقم</th><th>النوع</th><th>الفرع</th><th>القسم</th><th>العنوان</th><th>المبلغ</th><th>المسؤول الحالي</th><th>التاريخ</th><th>إجراءات</th></tr></thead>
-      <tbody id="wfInboxBody"><tr><td colspan="11" class="empty-msg">لا توجد معاملات</td></tr></tbody>
+      <thead><tr>
+        <th style="width:36px;"><input type="checkbox" id="wfInboxSelectAll" onclick="wfBulkToggleAll(this)" aria-label="تحديد الكل"></th>
+        <th>الأهمية</th><th>الحالة</th><th>الرقم</th><th>النوع</th><th>الفرع</th><th>القسم</th><th>العنوان</th><th>المبلغ</th><th>المسؤول الحالي</th><th>التاريخ</th><th>إجراءات</th>
+      </tr></thead>
+      <tbody id="wfInboxBody"><tr><td colspan="12" class="empty-msg">لا توجد معاملات</td></tr></tbody>
     </table>
   </div>
 </div>

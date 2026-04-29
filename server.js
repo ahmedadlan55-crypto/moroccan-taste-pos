@@ -220,6 +220,7 @@ try { app.use('/api/ar-invoices', require('./routes/ar-invoices')); } catch(e){ 
 try { app.use('/api/approval-matrix', require('./routes/approval-matrix')); } catch(e){ console.warn('[mod:matrix]', e.message); }
 try { app.use('/api/budgets', require('./routes/budgets')); } catch(e){ console.warn('[mod:budgets]', e.message); }
 try { app.use('/api/anomalies', require('./routes/anomalies')); } catch(e){ console.warn('[mod:anomalies]', e.message); }
+try { app.use('/api/activity-log', require('./routes/activity-log')); } catch(e){ console.warn('[mod:activity-log]', e.message); }
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/custody', require('./routes/custody'));
 app.use('/api/cash', require('./routes/cash'));

@@ -89,14 +89,22 @@ router.get('/inbox', async (req, res) => {
 });
 
 // Manual broadcast endpoint (admin-only) — useful for system announcements
+// V5-SEC: check role, not username string. Validate targetUsername exists.
 router.post('/broadcast', async (req, res) => {
   try {
-    const username = req.body.from || (req.user && req.user.username);
-    if (username !== 'admin') return res.status(403).json({ error: 'admin only' });
+    const role = (req.user && req.user.role) || '';
+    const isDev = !!(req.user && req.user.isDeveloper);
+    if (role !== 'admin' && !isDev) return res.status(403).json({ error: 'admin only' });
     const { title, body, severity, targetUsername } = req.body;
+    if (!title) return res.status(400).json({ error: 'title required' });
     const target = targetUsername || null;   // null = all users with active SSE
 
     if (target) {
+      // V5-SEC: validate target exists, prevents orphan notifications
+      const [u] = await db.query('SELECT username FROM users WHERE username = ? LIMIT 1', [target]);
+      if (!u.length) {
+        return res.status(404).json({ error: 'target user not found: ' + target });
+      }
       await db.query(
         `INSERT INTO notifications (id, username, type, title, body, severity)
          VALUES (?, ?, 'broadcast', ?, ?, ?)`,

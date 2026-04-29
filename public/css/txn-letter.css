@@ -284,3 +284,53 @@
 .txn-letter-status-pill.s-approved     { background: #dcfce7; color: #15803d; }
 .txn-letter-status-pill.s-rejected     { background: #fee2e2; color: #991b1b; }
 .txn-letter-status-pill.s-closed       { background: #cbd5e1; color: #1e293b; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   V5: PRINT STYLESHEET
+   Use Ctrl+P / Cmd+P to get a clean, signed-letter style PDF.
+   ═══════════════════════════════════════════════════════════════════ */
+@media print {
+  /* Hide app chrome (sidebar, navbar, modals shell, toasts, action buttons) */
+  body * { visibility: hidden; }
+  .txn-letter, .txn-letter * { visibility: visible; }
+  .txn-letter {
+    position: absolute !important;
+    left: 0 !important; top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 18mm 14mm !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    color: #000 !important;
+    font-family: 'Tajawal', 'Arial', serif !important;
+    direction: rtl;
+  }
+  .txn-letter-actions, .txn-letter-buttons, .wf-inbox-actions,
+  .modal-header-actions, .wo-modal-actions, [data-print-hide] {
+    display: none !important;
+  }
+  /* Black-on-white badges for ink savings */
+  .txn-letter-status-pill {
+    background: #fff !important;
+    color: #000 !important;
+    border: 1px solid #000 !important;
+    box-shadow: none !important;
+  }
+  /* Force page break after each major section if present */
+  .txn-letter-page-break { page-break-after: always; }
+  /* Smaller font for printed body */
+  .txn-letter-body { font-size: 12pt !important; line-height: 1.7 !important; }
+  /* Hide attachments preview thumbnails (just print filenames) */
+  .txn-letter-att-thumb img { display: none !important; }
+  .txn-letter-att-thumb .att-filename { display: inline !important; font-weight: 600; }
+  /* Print signature line for the active assignee */
+  .txn-letter-signature {
+    margin-top: 30mm !important;
+    border-top: 1.5px solid #000;
+    width: 60mm;
+    padding-top: 4mm;
+    text-align: center;
+  }
+  /* Standard A4 page size */
+  @page { size: A4; margin: 0; }
+}

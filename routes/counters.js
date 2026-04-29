@@ -131,6 +131,8 @@ router.post('/recompute', async (req, res) => {
 });
 
 // GET /counters/notifications?username=X&limit=20&unreadOnly=1
+// V5-SEC: redact body for top_secret/secret transactions when caller is not the
+// creator/assignee/recipient (e.g., escalation managers shouldn't see the subject).
 router.get('/notifications', async (req, res) => {
   try {
     const username = req.query.username || (req.user && req.user.username);
@@ -141,18 +143,56 @@ router.get('/notifications', async (req, res) => {
       ? `SELECT * FROM notifications WHERE username = ? AND is_read = 0 ORDER BY created_at DESC LIMIT ?`
       : `SELECT * FROM notifications WHERE username = ? ORDER BY created_at DESC LIMIT ?`;
     const [rows] = await db.query(sql, [username, limit]);
-    res.json(rows.map(r => ({
+
+    // V5-SEC: bulk-load secrecy info for any linked transactions and redact bodies.
+    const txnIds = [...new Set(rows.filter(r => r.link_type === 'transaction').map(r => r.link_id).filter(Boolean))];
+    let secrecyMap = {};
+    if (txnIds.length) {
+      try {
+        const placeholders = txnIds.map(() => '?').join(',');
+        const [tx] = await db.query(
+          `SELECT id, content_secrecy, created_by, current_assignee, recipient_username FROM transactions WHERE id IN (${placeholders})`,
+          txnIds);
+        tx.forEach(t => { secrecyMap[t.id] = t; });
+        // Recipients per txn
+        const [recRows] = await db.query(
+          `SELECT transaction_id, username FROM txn_recipients WHERE transaction_id IN (${placeholders})`,
+          txnIds);
+        recRows.forEach(rec => {
+          if (!secrecyMap[rec.transaction_id]._recipients) secrecyMap[rec.transaction_id]._recipients = [];
+          secrecyMap[rec.transaction_id]._recipients.push(rec.username);
+        });
+      } catch(_e){}
+    }
+
+    res.json(rows.map(r => {
+      let body = r.body;
+      if (r.link_type === 'transaction' && secrecyMap[r.link_id]) {
+        const t = secrecyMap[r.link_id];
+        const sec = (t.content_secrecy || '').toLowerCase();
+        const recs = t._recipients || [];
+        const hasAccess = (
+          t.created_by === username ||
+          t.current_assignee === username ||
+          t.recipient_username === username ||
+          recs.includes(username)
+        );
+        if ((sec === 'top_secret' || sec === 'secret') && !hasAccess) {
+          body = '[محتوى سري — انقر للاطلاع إن كانت لك صلاحية]';
+        }
+      }
+      return {
       id: r.id,
       type: r.type,
       title: r.title,
-      body: r.body,
+      body: body,
       linkType: r.link_type,
       linkId: r.link_id,
       severity: r.severity,
       isRead: !!r.is_read,
       readAt: r.read_at,
       createdAt: r.created_at
-    })));
+    };}));
   } catch(e) {
     res.json([]);
   }

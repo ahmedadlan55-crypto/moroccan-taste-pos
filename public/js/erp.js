@@ -5094,23 +5094,34 @@ window._wfInboxRenderRow = null;   // hoisted row renderer (set below)
 
 function wfLoadInbox() {
   var tb = document.getElementById('wfInboxBody');
-  tb.innerHTML = '<tr><td colspan="11" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+  tb.innerHTML = '<tr><td colspan="12" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
   // V5-UX: 12s timeout — show retry button if backend hangs
+  var TXN_TIMEOUT = (window.TxnConst && window.TxnConst.TXN_FETCH_TIMEOUT_MS) || 12000;
   var fetchTimeout = setTimeout(function(){
-    tb.innerHTML = '<tr><td colspan="11" class="empty-msg" style="color:#b91c1c;">' +
+    tb.innerHTML = '<tr><td colspan="12" class="empty-msg" style="color:#b91c1c;">' +
       '<i class="fas fa-triangle-exclamation"></i> فشل تحميل القائمة (انتهت المهلة).' +
       '<button class="btn btn-sm btn-primary" style="margin-inline-start:10px;" onclick="wfLoadInbox()">إعادة المحاولة</button>' +
       '</td></tr>';
-  }, 12000);
+  }, TXN_TIMEOUT);
   var status = (document.getElementById('wfInboxStatusFilter') || {}).value || '';
   var params = {};
   if (status) params.status = status;
   window._apiBridge.withSuccessHandler(function(list) {
     clearTimeout(fetchTimeout);
     if (!list || !list.length) {
-      tb.innerHTML = '<tr><td colspan="11" class="empty-msg">لا توجد معاملات</td></tr>';
+      tb.innerHTML = '<tr><td colspan="12" class="empty-msg">لا توجد معاملات</td></tr>';
       document.getElementById('wfInboxStats').innerHTML = '';
       return;
+    }
+    // V5: client-side search filter (in addition to server filter)
+    var q = ((document.getElementById('wfInboxSearch')||{}).value || '').trim().toLowerCase();
+    if (q) {
+      list = list.filter(function(t){
+        return (t.title||'').toLowerCase().indexOf(q) >= 0
+            || (t.txnNumber||'').toLowerCase().indexOf(q) >= 0
+            || (t.createdBy||'').toLowerCase().indexOf(q) >= 0
+            || (t.currentAssignee||'').toLowerCase().indexOf(q) >= 0;
+      });
     }
     var counts = { pending:0, in_progress:0, approved:0, rejected:0, closed:0 };
     list.forEach(function(t) { if (counts.hasOwnProperty(t.status)) counts[t.status]++; });
@@ -5149,39 +5160,190 @@ function _wfInboxRenderNextPage(){
   if (to < list.length) {
     var remaining = list.length - to;
     tb.insertAdjacentHTML('beforeend',
-      '<tr id="wfInboxLoadMore"><td colspan="11" style="text-align:center;padding:14px;background:#f8fafc;">' +
+      '<tr id="wfInboxLoadMore"><td colspan="12" style="text-align:center;padding:14px;background:#f8fafc;">' +
       '<button class="btn btn-secondary" onclick="_wfInboxRenderNextPage()">' +
       '<i class="fas fa-chevron-down"></i> تحميل المزيد (' + remaining.toLocaleString() + ' معاملة متبقية)</button>' +
       '</td></tr>');
   }
 }
+// V5: debounced search input listener (wires once)
+window._wfSearchInputWired = window._wfSearchInputWired || false;
+if (!window._wfSearchInputWired) {
+  document.addEventListener('DOMContentLoaded', function(){
+    var inp = document.getElementById('wfInboxSearch');
+    if (!inp) return;
+    var t;
+    inp.addEventListener('input', function(){
+      clearTimeout(t);
+      t = setTimeout(function(){ window.wfPersistFiltersAndLoad(); }, 350);
+    });
+  });
+  window._wfSearchInputWired = true;
+}
+// V5: bulk-action selection state
+window._wfBulkSelected = window._wfBulkSelected || {};
+
 // Single-row renderer used by both initial render + load-more.
 window._wfInboxRenderRow = function(t){
   var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '';
   var canAct = t.status === 'pending' || t.status === 'in_progress';
+  var idEsc = String(t.id || '').replace(/'/g, '&#39;');
   var actions = '<div class="wf-inbox-actions">' +
-    '<button class="btn btn-sm btn-light" onclick="wfViewTxn(\'' + t.id + '\')"><i class="fas fa-eye"></i></button>';
+    '<button class="btn btn-sm btn-light" onclick="wfViewTxn(\'' + idEsc + '\')" aria-label="عرض"><i class="fas fa-eye"></i></button>';
   if (canAct) {
-    actions += '<button class="btn btn-sm btn-success" onclick="wfTxnAction(\'' + t.id + '\',\'approve\')" title="موافقة"><i class="fas fa-check"></i></button>';
-    actions += '<button class="btn btn-sm btn-danger" onclick="wfTxnAction(\'' + t.id + '\',\'reject\')" title="رفض"><i class="fas fa-times"></i></button>';
-    actions += '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;" onclick="wfTxnAction(\'' + t.id + '\',\'return\')" title="إرجاع"><i class="fas fa-undo"></i></button>';
-    actions += '<button class="btn btn-sm" style="background:#f3e8ff;color:#7c3aed;" onclick="wfForwardTxn(\'' + t.id + '\')" title="تحويل"><i class="fas fa-share"></i></button>';
+    actions += '<button class="btn btn-sm btn-success" onclick="wfTxnAction(\'' + idEsc + '\',\'approve\')" title="موافقة" aria-label="اعتماد"><i class="fas fa-check"></i></button>';
+    actions += '<button class="btn btn-sm btn-danger" onclick="wfTxnAction(\'' + idEsc + '\',\'reject\')" title="رفض" aria-label="رفض"><i class="fas fa-times"></i></button>';
+    actions += '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;" onclick="wfTxnAction(\'' + idEsc + '\',\'return\')" title="إرجاع" aria-label="إعادة"><i class="fas fa-undo"></i></button>';
+    actions += '<button class="btn btn-sm" style="background:#f3e8ff;color:#7c3aed;" onclick="wfForwardTxn(\'' + idEsc + '\')" title="تحويل" aria-label="تحويل"><i class="fas fa-share"></i></button>';
   }
   actions += '</div>';
-  return '<tr class="wf-inbox-row">' +
+  // V5: status badge from shared TxnConst (with color contrast)
+  var statusHtml = (window.TxnConst && window.TxnConst.statusBadge)
+    ? window.TxnConst.statusBadge(t.status)
+    : _wfStatBadge(t.status);
+  // V5: bulk-action checkbox (only for actionable rows)
+  var checkbox = canAct
+    ? '<input type="checkbox" data-bulk-id="' + idEsc + '" onchange="wfBulkToggle(\'' + idEsc + '\', this)" '+(window._wfBulkSelected[t.id]?'checked':'')+' aria-label="تحديد المعاملة">'
+    : '';
+  return '<tr class="wf-inbox-row" data-txn-id="' + idEsc + '">' +
+    '<td>' + checkbox + '</td>' +
     '<td>' + _wfImpBadge(t.importance||'medium') + '</td>' +
-    '<td>' + _wfStatBadge(t.status) + '</td>' +
+    '<td>' + statusHtml + '</td>' +
     '<td><span class="wf-txn-number" style="font-size:11px;font-family:monospace;">' + (t.txnNumber||'') + '</span></td>' +
     '<td><span class="badge badge-blue">' + (t.typeName||'') + '</span></td>' +
     '<td style="font-size:12px;">' + (t.branchName||t.branchCode||'—') + '</td>' +
     '<td style="font-size:12px;">' + (t.deptName||t.deptCode||'—') + '</td>' +
-    '<td style="font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis;">' + t.title + '</td>' +
+    '<td style="font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis;">' + (t.title || '') + '</td>' +
     '<td><span class="wf-txn-amount">' + (Number(t.amount)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</span></td>' +
     '<td style="font-size:12px;"><div style="font-weight:700;color:#1e40af;">' + (t.currentAssignee||'—') + '</div>' +
     (t.currentRoleName ? '<div style="font-size:10px;color:#8b5cf6;font-weight:700;"><i class="fas fa-id-badge" style="font-size:8px;"></i> ' + t.currentRoleName + '</div>' : '') + '</td>' +
     '<td style="font-size:12px;color:#64748b;">' + dt + '</td>' +
     '<td>' + actions + '</td>' +
   '</tr>';
+};
+
+// V5: bulk actions wiring
+window.wfBulkToggle = function(id, el){
+  if (el && el.checked) window._wfBulkSelected[id] = true;
+  else delete window._wfBulkSelected[id];
+  _wfBulkUpdateBar();
+};
+window.wfBulkToggleAll = function(el){
+  var rows = document.querySelectorAll('#wfInboxBody input[data-bulk-id]');
+  rows.forEach(function(cb){
+    cb.checked = !!el.checked;
+    var id = cb.getAttribute('data-bulk-id');
+    if (el.checked) window._wfBulkSelected[id] = true;
+    else delete window._wfBulkSelected[id];
+  });
+  _wfBulkUpdateBar();
+};
+window.wfBulkClear = function(){
+  window._wfBulkSelected = {};
+  document.querySelectorAll('#wfInboxBody input[data-bulk-id]').forEach(function(cb){ cb.checked = false; });
+  var sa = document.getElementById('wfInboxSelectAll'); if (sa) sa.checked = false;
+  _wfBulkUpdateBar();
+};
+function _wfBulkUpdateBar(){
+  var ids = Object.keys(window._wfBulkSelected);
+  var bar = document.getElementById('wfBulkBar');
+  var cnt = document.getElementById('wfBulkCount');
+  if (cnt) cnt.textContent = ids.length;
+  if (bar) bar.style.display = ids.length ? 'flex' : 'none';
+}
+window.wfBulkAction = async function(action){
+  var ids = Object.keys(window._wfBulkSelected);
+  if (!ids.length) return;
+  var actionLabel = (window.TxnConst && window.TxnConst.actionLabel(action)) || action;
+  var note = '';
+  if (action === 'reject') {
+    note = window.WoModal
+      ? (await window.WoModal.prompt({ title: 'سبب الرفض الجماعي', label: 'سيُطبَّق على ' + ids.length + ' معاملة', validate: function(v){ if (!v || v.trim().length < 10) return 'الحد الأدنى 10 أحرف'; } }))
+      : (window.prompt('سبب الرفض الجماعي (10 أحرف على الأقل):') || '').trim();
+    if (!note) return;
+  } else {
+    var ok = window.WoModal
+      ? await window.WoModal.confirm({ title: actionLabel + ' جماعي', message: 'سيتم تطبيق "' + actionLabel + '" على ' + ids.length + ' معاملة. متابعة؟', danger: action !== 'approve' })
+      : window.confirm('تطبيق "' + actionLabel + '" على ' + ids.length + ' معاملة؟');
+    if (!ok) return;
+  }
+  var token = localStorage.getItem('pos_token');
+  var done = 0, failed = 0;
+  for (var i = 0; i < ids.length; i++) {
+    try {
+      var idemKey = 'bulk-' + action + '-' + ids[i] + '-' + Date.now();
+      var resp = await fetch('/api/workflow/transactions/' + ids[i] + '/action', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer '+token, 'Content-Type':'application/json', 'X-Idempotency-Key': idemKey },
+        body: JSON.stringify({ action: action, username: currentUser, note: note || actionLabel + ' جماعي', idempotencyKey: idemKey })
+      }).then(function(r){return r.json();});
+      if (resp && resp.success) done++; else failed++;
+    } catch(_) { failed++; }
+  }
+  var msg = '✓ ' + done + ' نجحت' + (failed ? ' • ✗ ' + failed + ' فشلت' : '');
+  if (window.WoModal && window.WoModal.toast) window.WoModal.toast({ message: msg, kind: failed?'warning':'success' });
+  else if (typeof showToast === 'function') showToast(msg, !!failed);
+  window.wfBulkClear();
+  setTimeout(function(){ if (typeof wfLoadInbox === 'function') wfLoadInbox(); }, 400);
+};
+
+// V5: filter persistence (sessionStorage) + search
+window.wfPersistFiltersAndLoad = function(){
+  try {
+    sessionStorage.setItem('wf_inbox_filters', JSON.stringify({
+      status: (document.getElementById('wfInboxStatusFilter')||{}).value || '',
+      search: (document.getElementById('wfInboxSearch')||{}).value || ''
+    }));
+  } catch(_){}
+  if (typeof wfLoadInbox === 'function') wfLoadInbox();
+};
+// On load, restore filter state
+(function _wfRestoreFilters(){
+  try {
+    var raw = sessionStorage.getItem('wf_inbox_filters');
+    if (!raw) return;
+    var f = JSON.parse(raw);
+    setTimeout(function(){
+      var s = document.getElementById('wfInboxStatusFilter');
+      var q = document.getElementById('wfInboxSearch');
+      if (s && f.status) s.value = f.status;
+      if (q && f.search) q.value = f.search;
+    }, 800);
+  } catch(_){}
+})();
+
+// V5: CSV export of currently visible (filtered) inbox
+window.wfExportInboxCsv = function(){
+  var list = window._wfInboxPagedList || [];
+  if (!list.length) {
+    if (typeof showToast === 'function') showToast('لا توجد معاملات للتصدير', true);
+    return;
+  }
+  var headers = ['الرقم','الحالة','النوع','الفرع','القسم','العنوان','المبلغ','المسؤول','التاريخ'];
+  var csv = '﻿' + headers.join(',') + '\n';   // BOM for Excel UTF-8
+  list.forEach(function(t){
+    var statusLbl = (window.TxnConst && window.TxnConst.statusLabel(t.status)) || t.status || '';
+    var fields = [
+      t.txnNumber || t.id || '',
+      statusLbl,
+      t.typeName || '',
+      t.branchName || t.branchCode || '',
+      t.deptName || t.deptCode || '',
+      (t.title || '').replace(/"/g, '""'),
+      Number(t.amount) || 0,
+      t.currentAssignee || '',
+      t.createdAt ? new Date(t.createdAt).toISOString().slice(0,10) : ''
+    ].map(function(v){ return '"' + String(v).replace(/"/g, '""') + '"'; });
+    csv += fields.join(',') + '\n';
+  });
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'transactions_inbox_' + new Date().toISOString().slice(0,10) + '.csv';
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  if (typeof showToast === 'function') showToast('✓ تم تصدير ' + list.length + ' معاملة');
 };
 
 // ───────────────────────── Helpers ─────────────────────────
@@ -13229,7 +13391,13 @@ window.loadNotificationCount = function() {
 };
 
 window.toggleNotificationCenter = function() {
-  if (window._notifPanelOpen) return closeNotificationCenter();
+  // V5-A11y: keep aria-expanded in sync with panel state
+  var bell = document.getElementById('adminNotifBell');
+  if (window._notifPanelOpen) {
+    if (bell) bell.setAttribute('aria-expanded', 'false');
+    return closeNotificationCenter();
+  }
+  if (bell) bell.setAttribute('aria-expanded', 'true');
   openNotificationCenter();
 };
 

@@ -236,6 +236,7 @@
     html[lang="en"] body{direction:ltr;}
     html[lang="en"] .hdr-n,html[lang="en"] .hdr-s{text-align:left;}
   </style>
+  <script src="/shared/txn-constants.js?v=1"></script>
   <script src="/shared/txn-letter.js?v=1"></script>
   <script defer src="/employee/app.js?v=33"></script>
 </head>
@@ -343,7 +344,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
       </div>
       <!-- Incoming subpage -->
       <div id="txnSubInc">
-        <div class="card"><div class="card-t"><i class="fas fa-inbox"></i> <span data-i18n="txn.awaitingMe">في انتظار إجرائي</span></div><div id="incomingTxnList"></div></div>
+        <div class="card"><div class="card-t"><i class="fas fa-inbox"></i> <span data-i18n="txn.awaitingMe">في انتظار إجرائي</span></div><div id="incomingTxnList" role="list" aria-label="المعاملات في انتظار إجرائي" aria-live="polite"></div></div>
       </div>
       <!-- Outgoing subpage -->
       <div id="txnSubOut" style="display:none;">
@@ -461,12 +462,17 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
       align-items: center;
       justify-content: center;
       border: 1.5px solid #fff;
-      animation: empPulse 2.5s ease-in-out infinite;
+      /* V5-PERF: capped at 12 iterations (~30s) to prevent battery drain on Android. */
+      animation: empPulse 2.5s ease-in-out 12;
       z-index: 2;
     }
     @keyframes empPulse {
       0%,100% { transform: scale(1); }
       50%     { transform: scale(1.1); }
+    }
+    /* V5-A11y: respect user prefers-reduced-motion */
+    @media (prefers-reduced-motion: reduce) {
+      .badge-pulse, [class*="pulse"] { animation: none !important; }
     }
     /* SSE toast */
     @keyframes slideInRight {

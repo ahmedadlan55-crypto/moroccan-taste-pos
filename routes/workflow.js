@@ -79,11 +79,22 @@ function fixMojibake(s) {
   return best.score > origArabic ? best.text : s;
 }
 
-// Apply fixMojibake to every string field in an object (shallow)
-function fixObj(o) {
+// Apply fixMojibake to every string field in an object (recursive)
+// V5-FIX: was shallow → nested arrays/objects (e.g., reply.attachments[]) skipped.
+function fixObj(o, depth) {
+  depth = depth || 0;
+  if (depth > 6) return o;   // safety cap against cycles
   if (!o || typeof o !== 'object') return o;
+  if (Array.isArray(o)) {
+    for (let i = 0; i < o.length; i++) {
+      if (typeof o[i] === 'string') o[i] = fixMojibake(o[i]);
+      else if (typeof o[i] === 'object' && o[i] !== null) fixObj(o[i], depth + 1);
+    }
+    return o;
+  }
   for (const k of Object.keys(o)) {
     if (typeof o[k] === 'string') o[k] = fixMojibake(o[k]);
+    else if (typeof o[k] === 'object' && o[k] !== null) fixObj(o[k], depth + 1);
   }
   return o;
 }
@@ -107,12 +118,20 @@ function sanitizeCode(s, fallback) {
 async function nextDailySerial(branchCode, deptCode, typeCode) {
   const ymd = todayYmd();
   const key = [branchCode, deptCode, typeCode, ymd].join('|');
-  // Upsert: increment existing counter or insert new — safe under concurrency via ON DUPLICATE KEY
+  // V5-FIX: was UPSERT then SELECT — race window between the two could give
+  // two requests the same serial. Use LAST_INSERT_ID(expr) to atomically
+  // increment AND read in one statement.
   await db.query(
     `INSERT INTO txn_daily_counter (counter_key, last_serial) VALUES (?, 1)
-     ON DUPLICATE KEY UPDATE last_serial = last_serial + 1`, [key]);
-  const [rows] = await db.query('SELECT last_serial FROM txn_daily_counter WHERE counter_key = ?', [key]);
-  return rows.length ? rows[0].last_serial : 1;
+     ON DUPLICATE KEY UPDATE last_serial = LAST_INSERT_ID(last_serial + 1)`, [key]);
+  const [rows] = await db.query('SELECT LAST_INSERT_ID() AS id');
+  const serial = rows && rows[0] && rows[0].id;
+  // First insert returns 0 from LAST_INSERT_ID — re-read in that case.
+  if (!serial) {
+    const [r2] = await db.query('SELECT last_serial FROM txn_daily_counter WHERE counter_key = ?', [key]);
+    return r2.length ? r2[0].last_serial : 1;
+  }
+  return serial;
 }
 
 // ═══════════════════════════════════════
@@ -239,7 +258,16 @@ async function resolveEmployee(username) {
 }
 
 // Check the user's permissions set (falls back to position-level defaults if not an HR employee)
+// V5-PERF: in-memory permission cache (60s TTL) — eligible-users + org-tree
+// previously hit hr_employees N+1 times per request (10+ DB queries).
+const _permsCache = new Map();
+const _permsCacheTTL = 60 * 1000;
 async function getPermissions(username) {
+  if (!username) username = '';
+  const cached = _permsCache.get(username);
+  const now = Date.now();
+  if (cached && (now - cached.ts < _permsCacheTTL)) return cached.value;
+
   const emp = await resolveEmployee(username);
   // Resolve role from users table (always — employees may not have it set)
   let userRole = '';
@@ -249,7 +277,7 @@ async function getPermissions(username) {
   } catch(_) {}
 
   if (emp) {
-    return {
+    const out = {
       isEmployee: true,
       role: userRole,
       employeeId: emp.id,
@@ -270,6 +298,8 @@ async function getPermissions(username) {
       canForward: !!emp.can_forward_txn,
       canClose: !!emp.can_close_txn
     };
+    _permsCache.set(username, { ts: now, value: out });
+    return out;
   }
   // Fallback: users table (admins / non-HR users)
   const [u] = await db.query(
@@ -278,9 +308,13 @@ async function getPermissions(username) {
             b.name AS branch_name, b.code AS branch_code
      FROM users u LEFT JOIN positions p ON u.position_id = p.id
      LEFT JOIN branches b ON u.branch_id = b.id WHERE u.username = ? LIMIT 1`, [username]);
-  if (!u.length) return { isEmployee: false, role: '', level: 0, canCreate: true };
+  if (!u.length) {
+    const out = { isEmployee: false, role: '', level: 0, canCreate: true };
+    _permsCache.set(username, { ts: now, value: out });
+    return out;
+  }
   const isAdmin = u[0].role === 'admin';
-  return {
+  const out = {
     isEmployee: false,
     role: (u[0].role || '').toLowerCase(),
     userId: u[0].id,
@@ -293,7 +327,14 @@ async function getPermissions(username) {
     canCreate: true, canApprove: isAdmin, canReject: isAdmin,
     canReturn: isAdmin, canForward: isAdmin, canClose: isAdmin
   };
+  _permsCache.set(username, { ts: now, value: out });
+  return out;
 }
+// Expose cache invalidator (called from user-management routes when role changes)
+module.exports._invalidatePermsCache = function(username){
+  if (username) _permsCache.delete(username);
+  else _permsCache.clear();
+};
 
 // ═══════════════════════════════════════
 // POSITIONS (المناصب الإدارية)
@@ -709,20 +750,35 @@ router.get('/position-workflows-summary', async (req, res) => {
 router.post('/position-workflow/bulk', async (req, res) => {
   try {
     const { initiatorPositionId, steps } = req.body;
-    const pathKey = (req.body.pathKey || 'default').toString().trim().slice(0, 50) || 'default';
+    // V5-SEC: sanitize pathKey to safe chars only — was just sliced to 50.
+    let pathKey = (req.body.pathKey || 'default').toString().trim();
+    pathKey = pathKey.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 50) || 'default';
     const pathName = (req.body.pathName || 'المسار الأساسي').toString().slice(0, 200);
     const description = (req.body.description || '').toString().slice(0, 1000);
 
     if (!initiatorPositionId) return res.json({ success: false, error: 'المنصب البادئ مطلوب' });
     if (!Array.isArray(steps) || !steps.length) return res.json({ success: false, error: 'يجب إضافة خطوة واحدة على الأقل' });
 
-    // Preload role names for auto-generated step names
+    // V5-FIX: validate initiatorPositionId exists FIRST
+    const [initRow] = await db.query('SELECT id FROM positions WHERE id = ? LIMIT 1', [initiatorPositionId]);
+    if (!initRow.length) return res.status(400).json({ success: false, error: 'المنصب البادئ غير موجود: ' + initiatorPositionId });
+
+    // V5-FIX: validate every step's positionId exists. Previously, a typo
+    // silently created broken steps that would fail at routing time.
     const roleIds = [...new Set(steps.map(s => s.positionId).filter(Boolean))];
     const roleMap = {};
     if (roleIds.length) {
       const placeholders = roleIds.map(() => '?').join(',');
       const [rn] = await db.query(`SELECT id, name FROM positions WHERE id IN (${placeholders})`, roleIds);
       rn.forEach(r => { roleMap[r.id] = r.name; });
+      const missing = roleIds.filter(id => !roleMap[id]);
+      if (missing.length) {
+        return res.status(400).json({
+          success: false,
+          error: 'مناصب غير موجودة: ' + missing.join(', '),
+          missing
+        });
+      }
     }
 
     // Auto-mark last step final if none set
@@ -1424,14 +1480,14 @@ router.get('/outbox-summary', async (req, res) => {
          SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected_out,
          SUM(CASE WHEN status = 'returned' THEN 1 ELSE 0 END) AS returned_out,
          COUNT(*) AS total_out
-       FROM transactions WHERE created_by = ?`, [username]);
+       FROM transactions WHERE created_by = ? AND deleted_at IS NULL`, [username]);
     // V3.1: incoming summary excludes own items so the count matches the visible inbox
     const [inRows] = await db.query(
       `SELECT
          SUM(CASE WHEN status IN ('pending','in_progress') THEN 1 ELSE 0 END) AS open_in,
          SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed_in,
          COUNT(*) AS total_in
-       FROM transactions WHERE (current_assignee = ? OR recipient_username = ?) AND created_by != ?`,
+       FROM transactions WHERE (current_assignee = ? OR recipient_username = ?) AND created_by != ? AND deleted_at IS NULL`,
       [username, username, username]);
     const r = rows[0] || {}, ri = inRows[0] || {};
     res.json({
@@ -1549,7 +1605,7 @@ router.get('/dashboard-filters', async (req, res) => {
     const [types] = await db.query('SELECT id, name, code FROM transaction_types ORDER BY name');
     const [summary] = await db.query(
       `SELECT importance, COUNT(*) AS cnt FROM transactions
-       WHERE status IN ('pending','in_progress') GROUP BY importance`);
+       WHERE status IN ('pending','in_progress') AND deleted_at IS NULL GROUP BY importance`);
     const counts = { critical: 0, high: 0, medium: 0, low: 0 };
     summary.forEach(r => { counts[r.importance] = r.cnt; });
     res.json({
@@ -1688,7 +1744,17 @@ router.put('/transactions/:id', async (req, res) => {
 
     // ─── V4.4: Full-edit fields (only when draft/returned) ───
     if (fullEditAllowed) {
-      if (transactionTypeId !== undefined) { sets.push('transaction_type_id=?'); params.push(transactionTypeId); }
+      if (transactionTypeId !== undefined) {
+        sets.push('transaction_type_id=?'); params.push(transactionTypeId);
+        // V5-FIX: when type changes, also re-stamp initiator_position_id from creator's
+        // current position. Otherwise resubmit uses stale initiator → wrong routing.
+        try {
+          const creatorPerms = await getPermissions(txn.created_by);
+          if (creatorPerms && creatorPerms.positionId) {
+            sets.push('initiator_position_id=?'); params.push(creatorPerms.positionId);
+          }
+        } catch(_e) { /* swallow */ }
+      }
       if (recipientUsername !== undefined) { sets.push('recipient_username=?'); params.push(recipientUsername || ''); }
       if (branchId !== undefined) { sets.push('branch_id=?'); params.push(branchId || null); }
       if (deptId !== undefined) { sets.push('dept_id=?'); params.push(deptId || null); }
@@ -1839,30 +1905,58 @@ router.delete('/transactions/:id', async (req, res) => {
     if (txns[0].created_by !== username) return res.json({ success: false, error: 'لا يمكن الإلغاء — لست المنشئ' });
     const [logs] = await db.query("SELECT COUNT(*) AS cnt FROM transaction_steps_log WHERE transaction_id = ? AND action_type != 'create'", [req.params.id]);
     if (logs[0].cnt > 0) return res.json({ success: false, error: 'لا يمكن الإلغاء — بدأ التصرف في المعاملة' });
+    // Snapshot the txn for restore-after-N-days + audit (now captures full content)
+    const [snap] = await db.query('SELECT * FROM transactions WHERE id = ?', [req.params.id]);
     // Soft-delete: keep the row + audit trail, just hide from queries
     await db.query(
       `UPDATE transactions SET deleted_at = NOW(), deleted_by = ?, delete_reason = ?,
                                 version = version + 1 WHERE id = ?`,
       [username, String(reason).substring(0, 500), req.params.id]);
-    // Audit log
+    // V5-FIX: invalidate counter cache for both the creator and assignee
     try {
+      const counters = require('./counters');
+      if (counters && counters.invalidateCountersFor) {
+        await counters.invalidateCountersFor(snap[0].created_by, snap[0].current_assignee);
+      }
+    } catch(_e) {}
+    // Audit log — V5-FIX: capture richer snapshot for compliance/restoration
+    try {
+      const s = snap[0] || {};
       await db.query(
         `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details)
          VALUES (?, 'soft_delete', 'transaction', ?, ?)`,
-        [username, req.params.id, JSON.stringify({ reason: reason })]);
+        [username, req.params.id, JSON.stringify({
+          reason,
+          txnNumber: s.transaction_number,
+          title: s.subject || s.title,
+          createdBy: s.created_by,
+          status: s.status,
+          amount: Number(s.amount) || 0
+        })]);
     } catch(e) {}
     res.json({ success: true, softDeleted: true });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
 // V4 — Restore a soft-deleted transaction (admin only)
+// V5-SEC: check role, not username string
 router.post('/transactions/:id/restore', async (req, res) => {
   try {
-    const username = (req.body && req.body.username) || (req.user && req.user.username);
-    if (username !== 'admin') return res.status(403).json({ error: 'admin only' });
+    const role = (req.user && req.user.role) || '';
+    const isDev = !!(req.user && req.user.isDeveloper);
+    if (role !== 'admin' && !isDev) return res.status(403).json({ error: 'admin only' });
+    const username = (req.user && req.user.username) || (req.body && req.body.username) || '';
+    const [snap] = await db.query('SELECT created_by, current_assignee FROM transactions WHERE id = ?', [req.params.id]);
     await db.query(
       'UPDATE transactions SET deleted_at = NULL, deleted_by = NULL, delete_reason = NULL, version = version + 1 WHERE id = ?',
       [req.params.id]);
+    // V5-FIX: invalidate counter cache for affected users
+    try {
+      const counters = require('./counters');
+      if (counters && counters.invalidateCountersFor && snap.length) {
+        await counters.invalidateCountersFor(snap[0].created_by, snap[0].current_assignee);
+      }
+    } catch(_e) {}
     try {
       await db.query(
         `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details)

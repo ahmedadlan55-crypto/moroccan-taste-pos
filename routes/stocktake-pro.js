@@ -103,11 +103,13 @@ router.post('/', async (req, res) => {
     const b = req.body || {};
     if (!b.warehouseId) return res.status(400).json({ error: 'warehouseId required' });
     const id = b.id || _id('STK');
+    // V5-FIX: existing stocktakes.status ENUM may not include 'draft' — use 'completed'
+    // for the legacy column and rely on workflow_status for the new state.
     await db.query(`
       INSERT INTO stocktakes
         (id, stocktake_date, username, notes, status, items_count, total_variance,
          warehouse_id, branch_id, workflow_status, variance_threshold_pct, count_method)
-      VALUES (?, ?, ?, ?, 'draft', 0, 0, ?, ?, 'draft', ?, ?)`,
+      VALUES (?, ?, ?, ?, 'completed', 0, 0, ?, ?, 'draft', ?, ?)`,
       [id, b.stocktakeDate || new Date().toISOString().slice(0,10),
        b.username || (req.user && req.user.username) || 'system',
        b.notes || null, b.warehouseId, b.branchId || null,

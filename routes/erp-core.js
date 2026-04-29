@@ -404,24 +404,34 @@ router.post('/price-lists/:id/import', async (req, res) => {
 
 // ═══════════════════════════════════════
 // BOM / RECIPES
+// V5.6 — supports BOTH menu items AND inv_items as the "final product"
+// product_source ENUM('menu','inv') is stored on bom row; resolves name accordingly.
 // ═══════════════════════════════════════
 router.get('/bom', async (req, res) => {
   try {
-    const { product_id, brandId } = req.query;
-    let sql = `SELECT b.*, i.name AS product_name, i.brand_id AS brand_id,
-               br.name AS brand_name,
-               (SELECT COUNT(*) FROM bom_lines bl WHERE bl.bom_id = b.id) AS line_count
+    const { product_id, brandId, source } = req.query;
+    // Pull product name from EITHER menu OR inv_items based on product_source
+    let sql = `SELECT b.*,
+                      COALESCE(m.name, i.name) AS product_name,
+                      COALESCE(m.brand_id, i.brand_id) AS brand_id,
+                      COALESCE(mb.name, ib.name) AS brand_name,
+                      COALESCE(b.product_source, 'inv') AS resolved_source,
+                      (SELECT COUNT(*) FROM bom_lines bl WHERE bl.bom_id = b.id) AS line_count
                FROM bom b
-               LEFT JOIN inv_items i ON b.product_id = i.id
-               LEFT JOIN brands br ON br.id = i.brand_id
+               LEFT JOIN menu m       ON b.product_id = m.id AND b.product_source = 'menu'
+               LEFT JOIN inv_items i  ON b.product_id = i.id AND COALESCE(b.product_source,'inv') = 'inv'
+               LEFT JOIN brands mb    ON mb.id = m.brand_id
+               LEFT JOIN brands ib    ON ib.id = i.brand_id
                WHERE 1=1`;
     const params = [];
     if (product_id) { sql += ' AND b.product_id = ?'; params.push(product_id); }
-    if (brandId)    { sql += ' AND i.brand_id = ?';   params.push(brandId); }
-    sql += ' ORDER BY i.name, b.version DESC';
+    if (source)     { sql += ' AND COALESCE(b.product_source, "inv") = ?'; params.push(source); }
+    if (brandId)    { sql += ' AND COALESCE(m.brand_id, i.brand_id) = ?'; params.push(brandId); }
+    sql += ' ORDER BY product_name, b.version DESC';
     const [rows] = await db.query(sql, params);
     res.json(rows.map(b => ({
       id: b.id, productId: b.product_id, productName: b.product_name || '',
+      productSource: b.resolved_source || 'inv',
       brandId: b.brand_id || null, brandName: b.brand_name || '',
       version: b.version, yieldQuantity: Number(b.yield_quantity) || 1,
       yieldUnit: b.yield_unit || 'PCS', isActive: b.is_active !== false,
@@ -431,22 +441,131 @@ router.get('/bom', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
+// V5.6 — Unified product pool for BOM editor (combines menu + inv_items).
+// Frontend uses this in WoItemPicker so user can pick EITHER as the final product.
+router.get('/bom/product-pool', async (req, res) => {
+  try {
+    const { brandId, q } = req.query;
+    const params = []; const whereM = []; const whereI = [];
+    if (brandId) { whereM.push('m.brand_id = ?'); whereI.push('i.brand_id = ?'); params.push(brandId); }
+    if (q) {
+      whereM.push('m.name LIKE ?'); whereI.push('i.name LIKE ?');
+      params.push('%'+q+'%');
+    }
+    // Two queries unioned at app level (different binds)
+    const wM = whereM.length ? 'WHERE '+whereM.join(' AND ') : '';
+    const [menuRows] = await db.query(
+      `SELECT m.id, m.name, m.category, COALESCE(m.cost,0) AS cost,
+              m.brand_id, b.name AS brand_name,
+              COALESCE(m.is_semi_finished,0) AS is_semi_finished,
+              m.bom_id,
+              'menu' AS source
+       FROM menu m LEFT JOIN brands b ON b.id = m.brand_id ${wM}
+       ORDER BY m.name LIMIT 1500`,
+      brandId ? [brandId] : []);
+    const wI = whereI.length ? 'WHERE '+whereI.join(' AND ')+' AND COALESCE(i.active,1)=1' : 'WHERE COALESCE(i.active,1)=1';
+    const [invRows] = await db.query(
+      `SELECT i.id, i.name, i.category, COALESCE(i.cost,0) AS cost,
+              i.brand_id, b.name AS brand_name,
+              0 AS is_semi_finished,
+              NULL AS bom_id,
+              'inv' AS source
+       FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id ${wI}
+       ORDER BY i.name LIMIT 1500`,
+      brandId ? [brandId] : []);
+    res.json([
+      ...menuRows.map(r => ({
+        id: r.id, name: r.name, category: r.category,
+        cost: Number(r.cost)||0, brandId: r.brand_id, brandName: r.brand_name,
+        isSemiFinished: !!r.is_semi_finished,
+        hasRecipe: !!r.bom_id, source: 'menu',
+        sourceLabel: r.is_semi_finished ? 'منيو (نصف مصنع)' : 'منيو (منتج نهائي)'
+      })),
+      ...invRows.map(r => ({
+        id: r.id, name: r.name, category: r.category,
+        cost: Number(r.cost)||0, brandId: r.brand_id, brandName: r.brand_name,
+        isSemiFinished: false,
+        hasRecipe: false, source: 'inv',
+        sourceLabel: 'مادة مخزنية'
+      }))
+    ]);
+  } catch(e) {
+    console.error('[bom/product-pool]', e.message);
+    res.json([]);
+  }
+});
+
+// V5.6 — Reverse-lookup: which products use this ingredient?
+router.get('/inventory/usage/:itemId', async (req, res) => {
+  try {
+    const itemId = req.params.itemId;
+    // 1. Products via BOM
+    const [viaBom] = await db.query(`
+      SELECT b.id AS bom_id, b.product_id, b.product_source,
+             COALESCE(m.name, i.name) AS product_name,
+             bl.quantity, bl.unit, bl.waste_pct
+      FROM bom_lines bl
+      INNER JOIN bom b ON b.id = bl.bom_id
+      LEFT JOIN menu m       ON m.id = b.product_id AND b.product_source = 'menu'
+      LEFT JOIN inv_items i  ON i.id = b.product_id AND COALESCE(b.product_source,'inv') = 'inv'
+      WHERE bl.component_item_id = ? AND b.is_active = 1`, [itemId]);
+    // 2. Products via legacy `recipe` table
+    let viaRecipe = [];
+    try {
+      const [r] = await db.query(`
+        SELECT m.id AS product_id, m.name AS product_name,
+               r.qty_used AS quantity, r.unit AS unit
+        FROM recipe r INNER JOIN menu m ON m.id = r.menu_id
+        WHERE r.inv_item_id = ?`, [itemId]);
+      viaRecipe = r;
+    } catch(_) {}
+    res.json({
+      itemId: itemId,
+      viaBomCount: viaBom.length,
+      viaRecipeCount: viaRecipe.length,
+      via: [
+        ...viaBom.map(r => ({
+          bomId: r.bom_id, productId: r.product_id, productName: r.product_name,
+          source: r.product_source, quantity: Number(r.quantity)||0,
+          unit: r.unit, wastePct: Number(r.waste_pct)||0, type: 'bom'
+        })),
+        ...viaRecipe.map(r => ({
+          productId: r.product_id, productName: r.product_name,
+          source: 'menu', quantity: Number(r.quantity)||0,
+          unit: r.unit, wastePct: 0, type: 'legacy_recipe'
+        }))
+      ]
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 router.post('/bom', async (req, res) => {
   try {
-    const { id, productId, version, yieldQuantity, yieldUnit, effectiveFrom, effectiveTo, notes, lines } = req.body;
+    const { id, productId, productSource, version, yieldQuantity, yieldUnit, effectiveFrom, effectiveTo, notes, lines, consumptionWarehouseId } = req.body;
     if (!productId) return res.json({ success: false, error: 'المنتج مطلوب' });
+    // V5.6: validate productSource is either 'menu' or 'inv'; default to 'inv' for backward compat.
+    const src = (productSource === 'menu') ? 'menu' : 'inv';
     let bomId = id;
     if (id) {
       await db.query(
-        `UPDATE bom SET version=?, yield_quantity=?, yield_unit=?, effective_from=?, effective_to=?, notes=? WHERE id=?`,
-        [Number(version)||1, Number(yieldQuantity)||1, yieldUnit||'PCS', effectiveFrom||null, effectiveTo||null, notes||'', id]);
+        `UPDATE bom SET product_id=?, product_source=?, version=?, yield_quantity=?, yield_unit=?,
+                       effective_from=?, effective_to=?, notes=?, consumption_warehouse_id=?
+         WHERE id=?`,
+        [productId, src, Number(version)||1, Number(yieldQuantity)||1, yieldUnit||'PCS',
+         effectiveFrom||null, effectiveTo||null, notes||'',
+         consumptionWarehouseId||null, id]);
     } else {
       bomId = genId('BOM');
       await db.query(
-        `INSERT INTO bom (id, product_id, version, yield_quantity, yield_unit, effective_from, effective_to, notes)
-         VALUES (?,?,?,?,?,?,?,?)`,
-        [bomId, productId, Number(version)||1, Number(yieldQuantity)||1, yieldUnit||'PCS',
-         effectiveFrom||null, effectiveTo||null, notes||'']);
+        `INSERT INTO bom (id, product_id, product_source, version, yield_quantity, yield_unit,
+                          effective_from, effective_to, notes, consumption_warehouse_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [bomId, productId, src, Number(version)||1, Number(yieldQuantity)||1, yieldUnit||'PCS',
+         effectiveFrom||null, effectiveTo||null, notes||'', consumptionWarehouseId||null]);
+    }
+    // V5.6: if BOM is for a menu item, link bom_id back to menu row
+    if (src === 'menu') {
+      try { await db.query('UPDATE menu SET bom_id = ? WHERE id = ?', [bomId, productId]); } catch(_){}
     }
     // Replace lines if provided — accept both `itemId` and `componentItemId` (frontend flexibility)
     if (Array.isArray(lines)) {
@@ -460,7 +579,7 @@ router.post('/bom', async (req, res) => {
           [genId('BL'), bomId, compId, Number(l.quantity)||0, l.unit||'PCS', Number(l.wastePct)||0]);
       }
     }
-    res.json({ success: true, id: bomId });
+    res.json({ success: true, id: bomId, productSource: src });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 

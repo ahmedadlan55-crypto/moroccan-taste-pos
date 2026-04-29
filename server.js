@@ -3763,6 +3763,29 @@ async function runMigrations() {
   } catch(e) { /* table may not exist yet */ }
 
   console.log('[v5.4-migrations] channel_menu_items + stocktake workflow ready.');
+
+  // ═══ V5.6 — Menu ↔ BOM integration (each finished menu item gets its own recipe) ═══
+  // Adds:
+  //  - menu.bom_id            FK to its dedicated recipe
+  //  - menu.production_method ENUM('made_at_branch','made_at_kitchen','prepared','imported')
+  //  - menu.deduct_strategy   ENUM('on_sale','on_production','none')
+  //  - menu.allow_negative_stock BOOLEAN — block oversell unless explicitly allowed
+  //  - bom.product_source     ENUM('menu','inv') so BOM works for both menu items AND raw items
+  //  - bom.consumption_warehouse_id — where ingredients are consumed FROM
+  await addColumnIfMissing('menu', 'bom_id', 'VARCHAR(50) DEFAULT NULL');
+  await addColumnIfMissing('menu', 'production_method',
+    "ENUM('made_at_branch','made_at_kitchen','prepared','imported') DEFAULT 'made_at_branch'");
+  await addColumnIfMissing('menu', 'deduct_strategy',
+    "ENUM('on_sale','on_production','none') DEFAULT 'on_sale'");
+  await addColumnIfMissing('menu', 'allow_negative_stock', 'BOOLEAN DEFAULT TRUE');
+  await addColumnIfMissing('menu', 'min_stock_alert', 'DECIMAL(10,3) DEFAULT 0');
+  await addColumnIfMissing('bom', 'product_source',
+    "ENUM('menu','inv') DEFAULT 'inv'");
+  await addColumnIfMissing('bom', 'consumption_warehouse_id', 'VARCHAR(50)');
+  try { await db.query('CREATE INDEX idx_menu_bom ON menu(bom_id)'); } catch(_) {}
+  try { await db.query('CREATE INDEX idx_bom_source ON bom(product_source, product_id)'); } catch(_) {}
+
+  console.log('[v5.6-migrations] menu↔BOM integration ready.');
 }
 
 app.listen(PORT, async () => {

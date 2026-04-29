@@ -151,16 +151,45 @@ router.post('/', async (req, res) => {
       } catch(e) { /* older schema — ignore */ }
     }
 
-    // Build recipe map: menu_id → [{ invId, invName, qtyUsed }]
-    // Fetch ingredient name too so the inventory_movements row carries it.
-    const [recipes] = await db.query('SELECT * FROM recipe');
+    // Build recipe map: menu_id → [{ invId, invName, qtyUsed, wastePct }]
+    // V5.6: now includes BOTH legacy `recipe` table AND modern `bom`/`bom_lines`.
+    // Per menu item, BOM takes priority (it's the new system); recipe is the fallback.
     const recipeMap = {};
+
+    // 1. Modern BOMs linked to menu items via menu.bom_id
+    try {
+      const [bomRows] = await db.query(`
+        SELECT m.id AS menu_id, b.id AS bom_id, b.yield_quantity,
+               bl.component_item_id, bl.quantity, bl.waste_pct,
+               COALESCE(i.name, '') AS inv_name
+        FROM menu m
+        INNER JOIN bom b ON b.id = m.bom_id AND b.is_active = 1
+        INNER JOIN bom_lines bl ON bl.bom_id = b.id
+        LEFT JOIN inv_items i ON i.id = bl.component_item_id
+        WHERE m.bom_id IS NOT NULL`);
+      bomRows.forEach(r => {
+        if (!recipeMap[r.menu_id]) recipeMap[r.menu_id] = [];
+        const yieldQ = Math.max(1, Number(r.yield_quantity)||1);
+        const wasteFactor = 1 + (Number(r.waste_pct)||0)/100;
+        recipeMap[r.menu_id].push({
+          invId: r.component_item_id,
+          invName: r.inv_name || '',
+          qtyUsed: (Number(r.quantity)||0) * wasteFactor / yieldQ,
+          source: 'bom'
+        });
+      });
+    } catch(_) {}
+
+    // 2. Legacy recipe table — only used for menu items that DON'T have a BOM yet
+    const [recipes] = await db.query('SELECT * FROM recipe');
     recipes.forEach(r => {
+      if (recipeMap[r.menu_id]) return;  // BOM already covers this — skip legacy
       if (!recipeMap[r.menu_id]) recipeMap[r.menu_id] = [];
       recipeMap[r.menu_id].push({
         invId: r.inv_item_id,
         invName: r.inv_item_name || '',
-        qtyUsed: Number(r.qty_used)
+        qtyUsed: Number(r.qty_used),
+        source: 'legacy_recipe'
       });
     });
 

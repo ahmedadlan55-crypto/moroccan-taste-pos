@@ -11096,10 +11096,25 @@ function erpLoadBOM() {
   });
 }
 
-function erpOpenBomModal(id) {
-  _erpGet('/inventory/items', function(items) {
-    var itemList = items || [];
-    var bomData = {};
+// V5.6: erpOpenBomModal can be called with optional preselect to pre-fill
+// the final product. Used by the "وصفة" button on menu item rows.
+//   erpOpenBomModal('bomId')                          → edit existing BOM
+//   erpOpenBomModal(null, { productId, productSource, productName }) → new BOM with preset
+function erpOpenBomModal(id, preselect) {
+  preselect = preselect || null;
+  // Load BOTH inv_items (for ingredients picker) AND the unified product-pool
+  Promise.all([
+    new Promise(function(r){ _erpGet('/inventory/items', r); }),
+    new Promise(function(r){ _erpGet('/erp/bom/product-pool', r); })
+  ]).then(function(out){
+    var items = out[0] || [];
+    var productPool = out[1] || [];
+    var itemList = items;
+    var bomData = preselect && preselect.productId ? {
+      productId: preselect.productId,
+      productSource: preselect.productSource || 'menu',
+      productName: preselect.productName || ''
+    } : {};
     var lines = [];  // ingredient rows
     var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
 
@@ -11156,8 +11171,14 @@ function erpOpenBomModal(id) {
     };
 
     var render = function(){
-      var prodOpts = '<option value="">— اختر المنتج —</option>' +
-        itemList.map(function(i){return '<option value="'+esc(i.id)+'"'+(bomData.productId===i.id?' selected':'')+'>'+esc(i.name||'')+'</option>';}).join('');
+      // V5.6: replace plain <select> with searchable picker host + readonly display
+      // Selected product info shown in a card; user can change via the search picker.
+      var sel = bomData.productId
+        ? productPool.find(function(p){ return String(p.id) === String(bomData.productId); }) || {
+            id: bomData.productId, name: bomData.productName || bomData.productId,
+            source: bomData.productSource || 'inv', sourceLabel: '—', cost: 0
+          }
+        : null;
 
       var modalHtml =
         '<div class="wo-modal-overlay open" id="bomModal" onclick="if(event.target.id===\'bomModal\')_bomClose()">' +
@@ -11172,10 +11193,27 @@ function erpOpenBomModal(id) {
             '</div>' +
             '<div class="wo-modal-body">' +
               '<input type="hidden" id="bomIdF" value="'+esc(bomData.id||'')+'">' +
+              '<input type="hidden" id="bomProductId" value="'+esc(sel?sel.id:'')+'">' +
+              '<input type="hidden" id="bomProductSource" value="'+esc(sel?sel.source:'menu')+'">' +
               '<div class="wo-form-row single">' +
                 '<div class="wo-label-stack">' +
-                  '<label class="wo-field-label" for="bomProduct"><i class="fas fa-box"></i> المنتج النهائي *</label>' +
-                  '<select class="wo-select" id="bomProduct">'+prodOpts+'</select>' +
+                  '<label class="wo-field-label" for="bomProductSearch"><i class="fas fa-box"></i> المنتج النهائي *</label>' +
+                  // Selected product card (shown when one is picked)
+                  (sel ?
+                    '<div id="bomSelectedProductCard" style="background:linear-gradient(135deg,#dbeafe,#eff6ff);border:1.5px solid #93c5fd;border-radius:12px;padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:10px;">' +
+                      '<div style="width:38px;height:38px;border-radius:10px;background:'+(sel.source==='menu'?'#0ea5e9':'#475569')+';color:#fff;display:grid;place-items:center;flex-shrink:0;"><i class="fas '+(sel.source==='menu'?'fa-utensils':'fa-cube')+'"></i></div>' +
+                      '<div style="flex:1;min-width:0;">' +
+                        '<div style="font-weight:900;font-size:14px;color:#0f172a;">'+esc(sel.name)+'</div>' +
+                        '<div style="font-size:11px;color:#475569;margin-top:2px;">'+
+                          '<span style="background:'+(sel.source==='menu'?'#bae6fd':'#e2e8f0')+';color:'+(sel.source==='menu'?'#0369a1':'#475569')+';padding:1px 8px;border-radius:6px;font-weight:700;">'+esc(sel.sourceLabel||sel.source)+'</span>' +
+                          (sel.brandName ? ' · <i class="fas fa-tags" style="font-size:9px;"></i> '+esc(sel.brandName) : '') +
+                          (sel.cost ? ' · التكلفة الحالية: <b>'+Number(sel.cost).toFixed(2)+'</b>' : '') +
+                        '</div>' +
+                      '</div>' +
+                      '<button class="btn btn-sm btn-light" onclick="_bomChangeProduct()"><i class="fas fa-exchange-alt"></i> تغيير</button>' +
+                    '</div>' :
+                    '<div id="bomProductPickerHost" data-pl-picker style="position:relative;"></div>'
+                  ) +
                 '</div>' +
               '</div>' +
               '<div class="wo-form-row">' +
@@ -11234,6 +11272,49 @@ function erpOpenBomModal(id) {
           }
         });
       }
+
+      // V5.6: mount the FINAL-PRODUCT searchable picker (replaces the dropdown)
+      // Pool combines menu items (preferred for finished goods) + inv_items.
+      var prodPickerHost = document.getElementById('bomProductPickerHost');
+      if (prodPickerHost && window.WoItemPicker) {
+        // Adapt productPool entries so WoItemPicker shows source label as the "category"
+        var pickerItems = productPool.map(function(p){
+          return {
+            id: p.id,
+            name: p.name,
+            category: p.sourceLabel || p.source,
+            unit: '',
+            cost: p.cost,
+            stock: p.hasRecipe ? '✓ وصفة' : '',
+            // Hidden marker — used in onSelect to grab the source
+            _source: p.source,
+            _brandName: p.brandName,
+            _hasRecipe: p.hasRecipe
+          };
+        });
+        WoItemPicker.mount(prodPickerHost, {
+          items: pickerItems,
+          placeholder: 'ابحث عن المنتج النهائي (منيو أو مادة)...',
+          onSelect: function(item) {
+            // Persist selection + redraw the "selected card" UI
+            bomData.productId = item.id;
+            bomData.productSource = item._source || 'menu';
+            bomData.productName = item.name;
+            render();
+            // Re-mount lines table in next tick because render() rebuilt the DOM
+            setTimeout(function(){ renderLinesTable(); _bomRecalcTotal(); }, 50);
+          }
+        });
+      }
+    };
+
+    // V5.6: change-product button — clears selection so picker re-appears
+    window._bomChangeProduct = function() {
+      bomData.productId = null;
+      bomData.productSource = null;
+      bomData.productName = null;
+      render();
+      setTimeout(function(){ renderLinesTable(); _bomRecalcTotal(); }, 50);
     };
 
     window._bomClose = function() {
@@ -11241,18 +11322,30 @@ function erpOpenBomModal(id) {
       if (m) m.remove();
     };
     window._bomSave = function() {
+      // V5.6: read productId from the hidden field set by the searchable picker
+      var pidEl = document.getElementById('bomProductId');
+      var psrcEl = document.getElementById('bomProductSource');
       var payload = {
         id: document.getElementById('bomIdF').value || undefined,
-        productId: document.getElementById('bomProduct').value,
+        productId: pidEl ? pidEl.value : '',
+        productSource: (psrcEl && psrcEl.value) ? psrcEl.value : 'menu',
         version: Number(document.getElementById('bomVersion').value) || 1,
         yieldQuantity: Number(document.getElementById('bomYield').value) || 1,
-        notes: document.getElementById('bomNotes').value,
+        notes: (document.getElementById('bomNotes')||{}).value || '',
         lines: lines.filter(function(l){return l.itemId && Number(l.quantity)>0;})
                     .map(function(l){return { componentItemId: l.itemId, itemId: l.itemId, quantity: l.quantity, wastePct: l.wastePct };})
       };
       if (!payload.productId) return showToast('اختر المنتج', true);
       _erpPost('/erp/bom', payload, function(r){
-        if (r.success) { showToast('تم حفظ الوصفة'); _bomClose(); erpLoadBOM(); }
+        if (r.success) {
+          showToast('تم حفظ الوصفة' + (payload.productSource==='menu' ? ' وربطها بالمنتج النهائي' : ''));
+          _bomClose();
+          erpLoadBOM();
+          // V5.6: also refresh the menu hub if it's the active screen so the recipe chip updates
+          if (typeof erpLoadMenuHub === 'function' && document.getElementById('erpMenuHub') && !document.getElementById('erpMenuHub').classList.contains('hidden')) {
+            try { erpLoadMenuHub(); } catch(_){}
+          }
+        }
         else showToast(r.error||'فشل الحفظ', true);
       });
     };
@@ -11261,7 +11354,10 @@ function erpOpenBomModal(id) {
       _erpGet('/erp/bom', function(list){
         bomData = (list||[]).find(function(x){return x.id===id;}) || {};
         _erpGet('/erp/bom/'+id+'/lines', function(dbLines) {
-          lines = (dbLines||[]).map(function(l){return { itemId: l.itemId, quantity: Number(l.quantity), wastePct: Number(l.wastePct||0) };});
+          // BOM lines API returns { componentItemId, ... } — map to internal { itemId, ... }
+          lines = (dbLines||[]).map(function(l){
+            return { itemId: l.componentItemId || l.itemId, quantity: Number(l.quantity), wastePct: Number(l.wastePct||0) };
+          });
           render();
         });
       });
@@ -15832,8 +15928,13 @@ function _bmRender() {
     var consumes = m.consumesSemiId
       ? '<span style="font-size:11px;color:#475569;"><i class="fas fa-link" style="color:#f59e0b;"></i> ' + _v3EscapeHtml(nameById[m.consumesSemiId]||m.consumesSemiId) + ' × ' + Number(m.consumesSemiQty||0) + '</span>'
       : '<span style="color:#94a3b8;">—</span>';
+    // V5.6: recipe chip — visible if menu item has BOM linked
+    var hasRecipe = !!m.bomId;
+    var recipeChip = hasRecipe
+      ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;cursor:pointer;" onclick="erpOpenMenuRecipe(\''+m.id+'\',\''+_v3EscapeHtml(m.name).replace(/\'/g,"\\'")+'\')" title="عرض الوصفة"><i class="fas fa-mortar-pestle"></i> له وصفة</span>'
+      : '<span class="wo-chip" style="background:#fef3c7;color:#92400e;font-weight:700;"><i class="fas fa-circle-question"></i> بدون وصفة</span>';
     return '<tr>' +
-      '<td><div style="font-weight:800;">'+ _v3EscapeHtml(m.name) +'</div></td>' +
+      '<td><div style="font-weight:800;">'+ _v3EscapeHtml(m.name) +'</div>' + recipeChip + '</td>' +
       '<td>'+ typeBadge +'</td>' +
       '<td><span class="wo-chip">'+ _v3EscapeHtml(m.category||'عام') +'</span></td>' +
       '<td class="num" style="font-weight:700;">'+ (m.isSemiFinished ? '—' : _v3Fmt(m.price) + ' ر.س') +'</td>' +
@@ -15841,12 +15942,31 @@ function _bmRender() {
       '<td>'+ consumes +'</td>' +
       '<td>'+ (m.active ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مفعّل</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;">معطّل</span>') +'</td>' +
       '<td>' +
+        '<button class="wo-btn wo-btn-sm" style="background:#ede9fe;color:#6d28d9;font-weight:700;" onclick="erpOpenMenuRecipe(\''+ m.id +'\',\''+_v3EscapeHtml(m.name).replace(/\'/g,"\\'")+'\')" title="إدارة الوصفة"><i class="fas fa-mortar-pestle"></i> الوصفة</button> ' +
         '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpEditBrandMenuItem(\''+ m.id +'\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
         '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpDeleteBrandMenuItem(\''+ m.id +'\')" title="حذف"><i class="fas fa-trash"></i></button>' +
       '</td>' +
     '</tr>';
   }).join('');
 }
+
+// V5.6 — open BOM editor pre-filled with this menu item as the final product
+window.erpOpenMenuRecipe = function(menuId, menuName){
+  // Try to find an existing BOM for this menu item first
+  _erpGet('/menu/'+encodeURIComponent(menuId)+'/recipe-bom', function(data){
+    if (data && data.bomId) {
+      // Existing BOM — open in edit mode
+      erpOpenBomModal(data.bomId);
+    } else {
+      // No BOM yet — open NEW with this menu item preselected
+      erpOpenBomModal(null, {
+        productId: menuId,
+        productSource: 'menu',
+        productName: menuName
+      });
+    }
+  });
+};
 
 function erpFilterBrandMenu() { _bmRender(); }
 

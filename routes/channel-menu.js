@@ -72,17 +72,19 @@ router.get('/:channelId/available-items', async (req, res) => {
   try {
     const branchId = req.query.branchId || null;
     const brandId = req.query.brandId || null;
-    const conds = ['m.is_active = 1'];
+    // V5-FIX: menu table doesn't have is_active column in all schema variants —
+    // skip that filter; instead just exclude items already in the channel.
+    const conds = ['1=1'];
     const params = [];
     if (brandId) { conds.push('m.brand_id = ?'); params.push(brandId); }
-    // Items NOT yet in this channel
     let exclude = `AND m.id NOT IN (
       SELECT menu_item_id FROM channel_menu_items
       WHERE channel_id = ? ${branchId ? 'AND (branch_id = ? OR branch_id IS NULL)' : ''}
     )`;
     const exParams = branchId ? [req.params.channelId, branchId] : [req.params.channelId];
     const [rows] = await db.query(`
-      SELECT m.id, m.name, m.price, m.category, m.cost, m.is_semi_finished,
+      SELECT m.id, m.name, m.price, m.category, m.cost,
+             COALESCE(m.is_semi_finished, 0) AS is_semi_finished,
              m.production_warehouse_id, m.sales_warehouse_id,
              br.name AS brand_name
       FROM menu m

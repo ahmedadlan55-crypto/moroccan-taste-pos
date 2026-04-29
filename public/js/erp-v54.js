@@ -334,7 +334,7 @@
   }
 
   async function stkNew(){
-    const warehouses = await _api('/erp/warehouses').catch(()=>[]);
+    const warehouses = await _api('/erp/warehouses-list').catch(()=>[]);
     if (!warehouses.length) { alert('لا توجد مستودعات معرّفة'); return; }
     const lines = warehouses.map((w,i) => (i+1)+'. '+(w.name||w.id)).join('\n');
     const choice = prompt('اختر رقم المستودع:\n\n'+lines);

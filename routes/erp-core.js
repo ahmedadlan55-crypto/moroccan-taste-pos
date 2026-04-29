@@ -246,6 +246,162 @@ router.delete('/price-list-items/:id', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
+// V5.5 — Bulk-add multiple items at once (used by the multi-select picker)
+//   Body: { items: [{ itemId, price, minPrice? }, ...] }
+//   Returns: { success, added, updated, skipped, errors }
+router.post('/price-lists/:id/items/bulk', async (req, res) => {
+  try {
+    const items = (req.body && req.body.items) || [];
+    if (!Array.isArray(items) || !items.length) {
+      return res.status(400).json({ success: false, error: 'items array required' });
+    }
+    let added = 0, updated = 0, skipped = 0;
+    const errors = [];
+    for (const it of items) {
+      try {
+        if (!it.itemId || it.price == null) { skipped++; continue; }
+        const id = genId('PLI');
+        const [r] = await db.query(
+          `INSERT INTO price_list_items (id, price_list_id, item_id, price, min_price, valid_from, valid_to)
+           VALUES (?,?,?,?,?,?,?)
+           ON DUPLICATE KEY UPDATE price=VALUES(price), min_price=VALUES(min_price)`,
+          [id, req.params.id, it.itemId, Number(it.price), Number(it.minPrice)||0,
+           it.validFrom||null, it.validTo||null]);
+        // affectedRows: 1 = INSERT, 2 = UPDATE on duplicate key
+        if (r.affectedRows === 2) updated++; else added++;
+      } catch(e) {
+        errors.push({ itemId: it.itemId, error: e.message });
+      }
+    }
+    res.json({ success: true, added, updated, skipped, errors });
+  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// V5.5 — Excel import: smart-match rows against menu (priority) then inv_items.
+//   Body: { rows: [{ name, brand?, category?, price, minPrice? }, ...], dryRun?: bool }
+//   Matching strategy:
+//     1. Exact match on item name (case-insensitive, Arabic-normalized)
+//     2. If brand provided, prefer items in that brand
+//     3. If category provided, prefer items in that category
+//   Returns detailed results so the UI can show user what matched vs not.
+function _normAr(s){
+  return String(s||'').trim().toLowerCase()
+    .replace(/[ً-ْ]/g, '')        // strip diacritics
+    .replace(/[إأآا]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/ة/g, 'ه')
+    .replace(/\s+/g, ' ');
+}
+router.post('/price-lists/:id/import', async (req, res) => {
+  try {
+    const rows = (req.body && req.body.rows) || [];
+    const dryRun = !!(req.body && req.body.dryRun);
+    if (!Array.isArray(rows) || !rows.length) {
+      return res.status(400).json({ success: false, error: 'rows array required' });
+    }
+    // Pre-load menu + inv_items pool for matching (single query each)
+    const [menuPool] = await db.query(
+      `SELECT m.id, m.name, m.category, m.price AS default_price, m.brand_id, b.name AS brand_name
+       FROM menu m LEFT JOIN brands b ON b.id = m.brand_id`);
+    let invPool = [];
+    try {
+      [invPool] = await db.query(
+        `SELECT i.id, i.name, i.category, i.cost AS default_price, i.brand_id, b.name AS brand_name
+         FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id
+         WHERE COALESCE(i.active, 1) = 1`);
+    } catch(_) { /* table may not have all cols */ }
+
+    // Build lookup: normalized name → array of matches
+    const buildIdx = (pool, source) => {
+      const idx = new Map();
+      pool.forEach(r => {
+        const k = _normAr(r.name);
+        if (!k) return;
+        if (!idx.has(k)) idx.set(k, []);
+        idx.get(k).push({
+          id: r.id, name: r.name, category: r.category, brandId: r.brand_id,
+          brandName: r.brand_name, defaultPrice: Number(r.default_price)||0,
+          source: source
+        });
+      });
+      return idx;
+    };
+    const menuIdx = buildIdx(menuPool, 'menu');
+    const invIdx  = buildIdx(invPool, 'inv');
+
+    const results = {
+      total: rows.length,
+      matched: 0, ambiguous: 0, unmatched: 0, invalid: 0, added: 0, updated: 0,
+      details: []
+    };
+
+    const toAdd = [];   // [{ itemId, price, minPrice, srcRow }]
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i] || {};
+      const detail = { rowIndex: i+1, input: row };
+      if (!row.name || row.price == null || isNaN(Number(row.price))) {
+        detail.status = 'invalid'; detail.reason = 'الاسم والسعر مطلوبان';
+        results.invalid++; results.details.push(detail); continue;
+      }
+      const key = _normAr(row.name);
+      let matches = (menuIdx.get(key) || []).slice();
+      if (!matches.length) matches = (invIdx.get(key) || []).slice();
+
+      // Filter by brand if provided
+      if (matches.length > 1 && row.brand) {
+        const bn = _normAr(row.brand);
+        const brandFiltered = matches.filter(m => _normAr(m.brandName) === bn);
+        if (brandFiltered.length) matches = brandFiltered;
+      }
+      // Filter by category if provided
+      if (matches.length > 1 && row.category) {
+        const cn = _normAr(row.category);
+        const catFiltered = matches.filter(m => _normAr(m.category) === cn);
+        if (catFiltered.length) matches = catFiltered;
+      }
+
+      if (matches.length === 0) {
+        detail.status = 'unmatched'; detail.reason = 'لم يتم إيجاد منتج بهذا الاسم';
+        results.unmatched++; results.details.push(detail); continue;
+      }
+      if (matches.length > 1) {
+        detail.status = 'ambiguous';
+        detail.reason = 'تطابق متعدد ('+matches.length+') — حدد البراند أو الفئة';
+        detail.candidates = matches.slice(0,5).map(m => ({ id:m.id, name:m.name, brand:m.brandName, source:m.source }));
+        results.ambiguous++; results.details.push(detail); continue;
+      }
+      // Single match → ready to import
+      const m = matches[0];
+      detail.status = 'matched'; detail.matchId = m.id; detail.matchName = m.name;
+      detail.matchSource = m.source; detail.matchBrand = m.brandName;
+      results.matched++;
+      toAdd.push({ itemId: m.id, price: Number(row.price), minPrice: Number(row.minPrice)||0, srcRow: i+1 });
+      results.details.push(detail);
+    }
+
+    if (dryRun) {
+      return res.json({ success: true, dryRun: true, ...results });
+    }
+
+    // Real import — bulk-insert all matched
+    for (const it of toAdd) {
+      try {
+        const id = genId('PLI');
+        const [r] = await db.query(
+          `INSERT INTO price_list_items (id, price_list_id, item_id, price, min_price)
+           VALUES (?,?,?,?,?)
+           ON DUPLICATE KEY UPDATE price=VALUES(price), min_price=VALUES(min_price)`,
+          [id, req.params.id, it.itemId, it.price, it.minPrice]);
+        if (r.affectedRows === 2) results.updated++; else results.added++;
+      } catch(e) {
+        const d = results.details.find(x => x.matchId === it.itemId && x.rowIndex === it.srcRow);
+        if (d) { d.status = 'error'; d.reason = e.message; }
+      }
+    }
+    res.json({ success: true, dryRun: false, ...results });
+  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
 // ═══════════════════════════════════════
 // BOM / RECIPES
 // ═══════════════════════════════════════

@@ -10592,52 +10592,74 @@ function erpViewPriceListItems(id, name) {
 }
 
 function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
-  // Items already in the list (set of ids for filtering the picker)
+  // V5.5: cache pool + list state on window so multi-select panel + import dialog can read them
+  window._plState = { id: id, name: name, pl: pl, items: items, menuPool: menuPool };
+
   var existingIds = new Set(items.map(function(i){ return String(i.itemId); }));
-  // Menu items NOT already in list (available to add)
   var availableMenu = menuPool.filter(function(m){ return !existingIds.has(String(m.id)); });
+  window._plState.available = availableMenu;
+  window._plState.selectedIds = window._plState.selectedIds || new Set();
+  // Reset selection set if list changed
+  if (window._plState.lastListId !== id) {
+    window._plState.selectedIds = new Set();
+    window._plState.lastListId = id;
+  }
 
   var html =
-    // Header with stats + brand info
-    '<div style="background:linear-gradient(135deg,#dbeafe,#eff6ff);border:1.5px solid #93c5fd;border-radius:12px;padding:14px;margin-bottom:14px;">' +
-      '<div style="font-size:13px;font-weight:900;color:#1e3a8a;">' + _v3EscapeHtml(name) + '</div>' +
-      '<div style="font-size:11px;color:#1e40af;margin-top:4px;">' +
-        (pl.brandName ? '<i class="fas fa-tags"></i> البراند: <b>' + _v3EscapeHtml(pl.brandName) + '</b> · ' : '') +
-        '<i class="fas fa-cube"></i> عدد الأصناف الحالية: <b>' + items.length + '</b>' +
-        ' · <i class="fas fa-store"></i> منتجات متاحة للإضافة: <b>' + availableMenu.length + '</b>' +
+    // Header
+    '<div style="background:linear-gradient(135deg,#dbeafe,#eff6ff);border:1.5px solid #93c5fd;border-radius:12px;padding:14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">' +
+      '<div>' +
+        '<div style="font-size:14px;font-weight:900;color:#1e3a8a;">' + _v3EscapeHtml(name) + '</div>' +
+        '<div style="font-size:11px;color:#1e40af;margin-top:4px;">' +
+          (pl.brandName ? '<i class="fas fa-tags"></i> البراند: <b>' + _v3EscapeHtml(pl.brandName) + '</b> · ' : '') +
+          '<i class="fas fa-cube"></i> الأصناف: <b>' + items.length + '</b>' +
+          ' · <i class="fas fa-store"></i> متاح: <b>' + availableMenu.length + '</b>' +
+        '</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+        '<button class="btn btn-success" onclick="plOpenImportDialog(\''+id+'\')"><i class="fas fa-file-excel"></i> استيراد من Excel</button>' +
+        '<button class="btn btn-light" onclick="plDownloadTemplate()"><i class="fas fa-download"></i> قالب Excel</button>' +
       '</div>' +
     '</div>' +
 
-    // Add new product section
+    // V5.5 — multi-select panel (replaces the single dropdown)
     '<div style="background:#f0fdf4;border:1.5px dashed #86efac;border-radius:12px;padding:14px;margin-bottom:14px;">' +
-      '<div style="font-size:13px;font-weight:900;color:#15803d;margin-bottom:10px;"><i class="fas fa-plus-circle"></i> إضافة منتج للقائمة</div>' +
-      '<div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:8px;align-items:end;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">' +
+        '<div style="font-size:13px;font-weight:900;color:#15803d;"><i class="fas fa-plus-circle"></i> إضافة منتجات للقائمة (تحديد متعدد)</div>' +
+        '<div style="font-size:11px;color:#15803d;"><i class="fas fa-info-circle"></i> ابحث، حدد المنتجات، حدد سعراً افتراضياً، ثم اضغط "إضافة المحدد"</div>' +
+      '</div>' +
+      // Search + bulk price + add button row
+      '<div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:8px;align-items:end;margin-bottom:10px;">' +
         '<div class="form-row" style="margin:0;">' +
-          '<label style="font-size:11px;font-weight:700;">المنتج</label>' +
-          '<select id="pliPicker" class="form-control" onchange="_pliShowDefault()">' +
-            '<option value="">— اختر منتج من المنيو —</option>' +
-            availableMenu.map(function(m) {
-              return '<option value="' + m.id + '" data-default="' + Number(m.price||0) + '" data-name="' + _v3EscapeHtml(m.name) + '">' +
-                _v3EscapeHtml(m.name) + (m.category ? ' (' + _v3EscapeHtml(m.category) + ')' : '') +
-                ' — السعر الافتراضي: ' + Number(m.price||0).toFixed(2) +
-              '</option>';
-            }).join('') +
-          '</select>' +
+          '<label style="font-size:11px;font-weight:700;">البحث (اسم/فئة/براند)</label>' +
+          '<input type="text" id="plSearch" class="form-control" placeholder="ابحث عن منتج..." oninput="_plRenderAvailable()">' +
         '</div>' +
         '<div class="form-row" style="margin:0;">' +
-          '<label style="font-size:11px;font-weight:700;">السعر للقناة *</label>' +
-          '<input type="number" step="0.01" id="pliPrice" class="form-control" placeholder="مثلاً 12.00">' +
+          '<label style="font-size:11px;font-weight:700;">سعر افتراضي للجميع</label>' +
+          '<input type="number" step="0.01" id="plBulkPrice" class="form-control" placeholder="فارغ = استخدم الافتراضي لكل منتج">' +
         '</div>' +
         '<div class="form-row" style="margin:0;">' +
           '<label style="font-size:11px;font-weight:700;">الحد الأدنى (اختياري)</label>' +
-          '<input type="number" step="0.01" id="pliMinPrice" class="form-control" placeholder="0.00">' +
+          '<input type="number" step="0.01" id="plBulkMinPrice" class="form-control" placeholder="0.00">' +
         '</div>' +
-        '<button class="btn btn-primary" style="height:40px;" onclick="erpAddPriceListItem(\''+id+'\')"><i class="fas fa-plus"></i> أضف</button>' +
+        '<button class="btn btn-primary" style="height:40px;" onclick="plAddSelected(\''+id+'\')">' +
+          '<i class="fas fa-check-double"></i> إضافة <span id="plSelCount" style="background:#fff;color:#2563eb;padding:1px 8px;border-radius:6px;margin-inline-start:4px;font-weight:900;">0</span>' +
+        '</button>' +
       '</div>' +
-      '<div style="font-size:11px;color:#15803d;margin-top:6px;"><i class="fas fa-info-circle"></i> اختر المنتج، أدخل السعر الخاص بهذه القناة، ثم اضغط "أضف". الحقول تُمسح تلقائياً للسطر التالي.</div>' +
+      // Toolbar inside panel
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:11px;">' +
+        '<span style="color:#15803d;font-weight:700;">المتاح للإضافة (<span id="plAvailCount">'+availableMenu.length+'</span>)</span>' +
+        '<div style="display:flex;gap:6px;">' +
+          '<button class="btn btn-sm btn-light" onclick="plSelectAllVisible()"><i class="fas fa-check-square"></i> تحديد المرئي</button>' +
+          '<button class="btn btn-sm btn-light" onclick="plClearSelection()"><i class="fas fa-times"></i> إلغاء التحديد</button>' +
+        '</div>' +
+      '</div>' +
+      // Available items list — checkbox + name + category + brand + default price + per-row override
+      '<div id="plAvailList" style="max-height:340px;overflow-y:auto;border:1px solid #d1fae5;border-radius:10px;background:#fff;"></div>' +
     '</div>' +
 
     // Existing items table
+    '<div style="font-size:13px;font-weight:900;color:#0f172a;margin-bottom:8px;"><i class="fas fa-list"></i> الأصناف الحالية في القائمة</div>' +
     '<div class="erp-table-container">' +
       '<table class="erp-table">' +
         '<thead><tr>' +
@@ -10665,7 +10687,7 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
             '<td style="color:' + diffClr + ';font-weight:700;">' + (diff >= 0 ? '+' : '') + diff.toFixed(2) + '</td>' +
             '<td><button class="btn btn-sm btn-danger" onclick="erpDeletePLItem(\''+i.id+'\',\''+id+'\',\''+name.replace(/\'/g,"\\'")+'\')"><i class="fas fa-trash"></i></button></td>' +
           '</tr>';
-        }).join('') : '<tr><td colspan="7" class="empty-msg">لا توجد أصناف بعد — أضف منتجات من النموذج أعلاه</td></tr>') +
+        }).join('') : '<tr><td colspan="7" class="empty-msg">لا توجد أصناف بعد — استخدم لوحة الإضافة بالأعلى</td></tr>') +
         '</tbody>' +
       '</table>' +
     '</div>';
@@ -10674,7 +10696,306 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
   document.getElementById('erpModalBody').innerHTML = html;
   document.getElementById('erpModalSaveBtn').style.display = 'none';
   document.getElementById('erpModal').classList.remove('hidden');
+  // Render initial available list
+  _plRenderAvailable();
 }
+
+// V5.5 — render the multi-select available items list (filtered by search)
+window._plRenderAvailable = function(){
+  var st = window._plState; if (!st) return;
+  var q = ((document.getElementById('plSearch')||{}).value || '').trim().toLowerCase();
+  // Arabic normalize for fair search
+  var norm = function(s){
+    return String(s||'').toLowerCase()
+      .replace(/[ً-ْ]/g,'').replace(/[إأآا]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه');
+  };
+  var qN = norm(q);
+  var filtered = st.available.filter(function(m){
+    if (!qN) return true;
+    var hay = norm((m.name||'') + ' ' + (m.category||'') + ' ' + (m.brandName||''));
+    return hay.indexOf(qN) >= 0;
+  });
+  st.lastFiltered = filtered;
+  var listEl = document.getElementById('plAvailList');
+  document.getElementById('plAvailCount').textContent = filtered.length + (q ? ' من '+st.available.length : '');
+  if (!filtered.length) {
+    listEl.innerHTML = '<div style="padding:30px;text-align:center;color:#94a3b8;font-size:12px;"><i class="fas fa-search" style="font-size:28px;display:block;margin-bottom:8px;color:#cbd5e1;"></i>لا نتائج لـ "'+_v3EscapeHtml(q)+'"</div>';
+    return;
+  }
+  listEl.innerHTML = filtered.map(function(m, idx){
+    var checked = st.selectedIds.has(String(m.id));
+    return '<label class="plr-row" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid #f1f5f9;cursor:pointer;transition:background .12s;'+(checked?'background:#eff6ff;':'')+'">' +
+      '<input type="checkbox" data-pl-item="'+_v3EscapeHtml(m.id)+'" '+(checked?'checked':'')+' onchange="_plToggleItem(this)" style="width:16px;height:16px;flex-shrink:0;cursor:pointer;">' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-weight:800;font-size:13px;color:#0f172a;">'+_v3EscapeHtml(m.name)+'</div>' +
+        '<div style="font-size:10.5px;color:#64748b;margin-top:2px;display:flex;gap:8px;flex-wrap:wrap;">' +
+          (m.category ? '<span><i class="fas fa-folder" style="font-size:9px;"></i> '+_v3EscapeHtml(m.category)+'</span>' : '') +
+          (m.brandName ? '<span><i class="fas fa-tags" style="font-size:9px;"></i> '+_v3EscapeHtml(m.brandName)+'</span>' : '') +
+          (m.is_semi_finished ? '<span style="color:#92400e;font-weight:700;">نصف مصنع</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div style="font-weight:900;color:#16a34a;font-size:13px;flex-shrink:0;">'+ Number(m.price||0).toFixed(2) +' ر.س</div>' +
+      '<input type="number" step="0.01" data-pl-price="'+_v3EscapeHtml(m.id)+'" placeholder="مخصص" style="width:90px;padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px;" title="سعر مخصص لهذا المنتج (اختياري)">' +
+    '</label>';
+  }).join('');
+  _plUpdateCount();
+};
+
+window._plToggleItem = function(cb){
+  var st = window._plState; if (!st) return;
+  var id = cb.getAttribute('data-pl-item');
+  if (cb.checked) st.selectedIds.add(id);
+  else st.selectedIds.delete(id);
+  _plUpdateCount();
+  // Visual feedback on the row
+  var row = cb.closest('.plr-row');
+  if (row) row.style.background = cb.checked ? '#eff6ff' : '';
+};
+function _plUpdateCount(){
+  var c = window._plState ? window._plState.selectedIds.size : 0;
+  var el = document.getElementById('plSelCount');
+  if (el) el.textContent = c;
+}
+window.plSelectAllVisible = function(){
+  var st = window._plState; if (!st || !st.lastFiltered) return;
+  st.lastFiltered.forEach(function(m){ st.selectedIds.add(String(m.id)); });
+  _plRenderAvailable();
+};
+window.plClearSelection = function(){
+  if (window._plState) window._plState.selectedIds = new Set();
+  _plRenderAvailable();
+};
+window.plAddSelected = function(plId){
+  var st = window._plState; if (!st) return;
+  var ids = [...st.selectedIds];
+  if (!ids.length) { showToast('حدد منتجات أولاً', true); return; }
+  var bulkPrice = Number((document.getElementById('plBulkPrice')||{}).value);
+  var bulkMin = Number((document.getElementById('plBulkMinPrice')||{}).value) || 0;
+  // Build items array — per-row override > bulk price > item's default price
+  var items = ids.map(function(id){
+    var custInp = document.querySelector('input[data-pl-price="'+id+'"]');
+    var custPrice = custInp ? Number(custInp.value) : 0;
+    var src = st.available.find(function(m){ return String(m.id) === String(id); }) || {};
+    var price = custPrice > 0 ? custPrice : (bulkPrice > 0 ? bulkPrice : Number(src.price||0));
+    return { itemId: id, price: price, minPrice: bulkMin };
+  }).filter(function(i){ return i.price > 0; });
+  if (!items.length) {
+    showToast('لا يوجد سعر صالح — أدخل سعراً افتراضياً أو سعراً مخصصاً لكل منتج', true);
+    return;
+  }
+  _erpPost('/erp/price-lists/'+plId+'/items/bulk', { items: items }, function(r){
+    if (r && r.success) {
+      showToast('تم إضافة '+(r.added||0)+' منتج' + (r.updated ? ' + تحديث '+r.updated : '') + (r.skipped ? ' (تخطي '+r.skipped+')' : ''));
+      window._plState.selectedIds = new Set();
+      // Refresh
+      erpViewPriceListItems(plId, st.name);
+    } else {
+      showToast((r && r.error) || 'فشل الإضافة الجماعية', true);
+    }
+  });
+};
+
+// V5.5 — Excel template downloader (one-line CSV)
+window.plDownloadTemplate = function(){
+  var csv = '﻿' + 'name,brand,category,price,minPrice\n' +
+    'Cappuccino 8oz,Moroccan Taste,HOT COFFEE,11.00,8.50\n' +
+    'مكسرات مشكلة,موروكان تيست,حلويات,25.00,\n';
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'price-list-template.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+};
+
+// V5.5 — Excel/CSV import dialog
+window.plOpenImportDialog = function(plId){
+  var dlg = document.createElement('div');
+  dlg.id = 'plImportDlg';
+  dlg.style.cssText = 'position:fixed;inset:0;z-index:9998;background:rgba(15,23,42,.55);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:14px;direction:rtl;';
+  dlg.innerHTML =
+    '<div style="background:#fff;border-radius:16px;width:100%;max-width:760px;max-height:90vh;overflow:auto;padding:20px;box-shadow:0 24px 60px rgba(0,0,0,.30);">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
+        '<h3 style="margin:0;font-size:17px;font-weight:800;"><i class="fas fa-file-excel" style="color:#16a34a;"></i> استيراد أسعار من Excel/CSV</h3>' +
+        '<button onclick="document.getElementById(\'plImportDlg\').remove()" style="border:0;background:#f1f5f9;width:34px;height:34px;border-radius:8px;font-size:20px;cursor:pointer;color:#64748b;">&times;</button>' +
+      '</div>' +
+      '<div style="background:#fffbeb;border:1px dashed #fcd34d;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px;color:#92400e;">' +
+        '<strong><i class="fas fa-info-circle"></i> الأعمدة المطلوبة:</strong><br>' +
+        '<code style="background:#fff;padding:2px 6px;border-radius:4px;">name</code> (الاسم — مطلوب) • ' +
+        '<code style="background:#fff;padding:2px 6px;border-radius:4px;">brand</code> (البراند) • ' +
+        '<code style="background:#fff;padding:2px 6px;border-radius:4px;">category</code> (الفئة) • ' +
+        '<code style="background:#fff;padding:2px 6px;border-radius:4px;">price</code> (السعر — مطلوب) • ' +
+        '<code style="background:#fff;padding:2px 6px;border-radius:4px;">minPrice</code> (الحد الأدنى — اختياري)' +
+        '<br><br>المطابقة تتم بالاسم (مع توحيد الحركات والهمزات). إذا تكرر الاسم → استخدم البراند والفئة للتمييز.' +
+      '</div>' +
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">' +
+        '<input type="file" id="plImportFile" accept=".xlsx,.xls,.csv" style="flex:1;padding:8px;border:1.5px dashed #cbd5e1;border-radius:10px;background:#f8fafc;">' +
+        '<button class="btn btn-light" onclick="plDownloadTemplate()"><i class="fas fa-download"></i> تنزيل قالب CSV</button>' +
+      '</div>' +
+      '<div id="plImportPreview" style="margin-bottom:14px;"></div>' +
+      '<div id="plImportResults"></div>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px;">' +
+        '<button class="btn btn-light" onclick="document.getElementById(\'plImportDlg\').remove()">إلغاء</button>' +
+        '<button class="btn btn-secondary" id="plImportPreviewBtn" disabled onclick="_plDoImport(\''+plId+'\', true)"><i class="fas fa-eye"></i> معاينة المطابقة</button>' +
+        '<button class="btn btn-success" id="plImportRunBtn" disabled onclick="_plDoImport(\''+plId+'\', false)"><i class="fas fa-cloud-upload-alt"></i> استيراد فعلي</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(dlg);
+  // Wire file input → parse
+  document.getElementById('plImportFile').addEventListener('change', function(e){
+    var f = e.target.files[0]; if (!f) return;
+    _plParseFile(f).then(function(rows){
+      window._plImportRows = rows;
+      var prev = document.getElementById('plImportPreview');
+      if (!rows || !rows.length) {
+        prev.innerHTML = '<div style="padding:14px;background:#fee2e2;border-radius:10px;color:#991b1b;font-weight:700;">لم يتم قراءة أي صفوف. تحقق من تنسيق الملف.</div>';
+        document.getElementById('plImportPreviewBtn').disabled = true;
+        document.getElementById('plImportRunBtn').disabled = true;
+        return;
+      }
+      prev.innerHTML = '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px;font-size:12px;color:#15803d;font-weight:700;">' +
+        '<i class="fas fa-check-circle"></i> تم قراءة <b>'+rows.length+'</b> صف. ' +
+        '<small>اضغط "معاينة المطابقة" لرؤية أيها سيُربط بمنتج موجود.</small>' +
+      '</div>';
+      document.getElementById('plImportPreviewBtn').disabled = false;
+      document.getElementById('plImportRunBtn').disabled = false;
+    }).catch(function(err){
+      document.getElementById('plImportPreview').innerHTML =
+        '<div style="padding:14px;background:#fee2e2;border-radius:10px;color:#991b1b;font-weight:700;">فشل تحليل الملف: '+_v3EscapeHtml(err.message||String(err))+'</div>';
+    });
+  });
+};
+
+// V5.5 — parse uploaded file (CSV always works; XLSX needs SheetJS — falls back to error if missing)
+function _plParseFile(file){
+  return new Promise(function(resolve, reject){
+    var reader = new FileReader();
+    var name = (file.name||'').toLowerCase();
+    if (name.endsWith('.csv')) {
+      reader.onload = function(){
+        try {
+          var text = String(reader.result||'').replace(/^﻿/, '');
+          var lines = text.split(/\r?\n/).filter(function(l){ return l.trim(); });
+          if (!lines.length) return resolve([]);
+          // Detect delimiter
+          var delim = (lines[0].indexOf(',') > -1) ? ',' : (lines[0].indexOf('\t') > -1 ? '\t' : ',');
+          var parseLine = function(line){
+            // Support quoted values
+            var out = [], cur = '', inQ = false;
+            for (var i = 0; i < line.length; i++){
+              var c = line[i];
+              if (c === '"') { if (inQ && line[i+1]==='"') { cur+='"'; i++; } else inQ = !inQ; }
+              else if (c === delim && !inQ) { out.push(cur); cur = ''; }
+              else cur += c;
+            }
+            out.push(cur);
+            return out.map(function(x){ return x.trim(); });
+          };
+          var headers = parseLine(lines[0]).map(function(h){ return h.toLowerCase().replace(/^﻿/,''); });
+          var rows = [];
+          for (var i = 1; i < lines.length; i++){
+            var cells = parseLine(lines[i]);
+            var obj = {};
+            headers.forEach(function(h, idx){ obj[h] = cells[idx] || ''; });
+            rows.push({
+              name: obj.name || obj['الاسم'] || obj.itemname || obj.product || '',
+              brand: obj.brand || obj['البراند'] || obj['العلامة'] || '',
+              category: obj.category || obj['الفئة'] || obj['التصنيف'] || '',
+              price: obj.price || obj['السعر'] || '',
+              minPrice: obj.minprice || obj['min_price'] || obj['الحد الادنى'] || ''
+            });
+          }
+          resolve(rows.filter(function(r){ return r.name; }));
+        } catch(e){ reject(e); }
+      };
+      reader.onerror = function(){ reject(new Error('قراءة الملف فشلت')); };
+      reader.readAsText(file, 'UTF-8');
+    } else {
+      // XLSX path — requires SheetJS (xlsx library)
+      if (typeof XLSX === 'undefined') {
+        return reject(new Error('استخدم CSV أو حمّل مكتبة xlsx. يمكنك حفظ Excel كـ CSV من ملف → حفظ باسم.'));
+      }
+      reader.onload = function(){
+        try {
+          var data = new Uint8Array(reader.result);
+          var wb = XLSX.read(data, { type: 'array' });
+          var ws = wb.Sheets[wb.SheetNames[0]];
+          var arr = XLSX.utils.sheet_to_json(ws, { defval: '' });
+          var rows = arr.map(function(o){
+            var lc = {}; Object.keys(o).forEach(function(k){ lc[String(k).toLowerCase().trim()] = o[k]; });
+            return {
+              name: lc.name || lc['الاسم'] || lc.product || lc.itemname || '',
+              brand: lc.brand || lc['البراند'] || '',
+              category: lc.category || lc['الفئة'] || lc['التصنيف'] || '',
+              price: lc.price || lc['السعر'] || '',
+              minPrice: lc.minprice || lc['min_price'] || ''
+            };
+          }).filter(function(r){ return r.name; });
+          resolve(rows);
+        } catch(e){ reject(e); }
+      };
+      reader.onerror = function(){ reject(new Error('قراءة الملف فشلت')); };
+      reader.readAsArrayBuffer(file);
+    }
+  });
+}
+
+// V5.5 — perform the import (dryRun=true → preview only)
+window._plDoImport = function(plId, dryRun){
+  var rows = window._plImportRows || [];
+  if (!rows.length) { showToast('لم يتم اختيار ملف أو لا توجد صفوف', true); return; }
+  var resEl = document.getElementById('plImportResults');
+  resEl.innerHTML = '<div style="padding:20px;text-align:center;color:#64748b;"><i class="fas fa-spinner fa-spin"></i> جاري ' + (dryRun ? 'المعاينة' : 'الاستيراد') + '...</div>';
+  _erpPost('/erp/price-lists/'+plId+'/import', { rows: rows, dryRun: dryRun }, function(r){
+    if (!r || !r.success) {
+      resEl.innerHTML = '<div style="padding:14px;background:#fee2e2;border-radius:10px;color:#991b1b;font-weight:700;">'+(r && r.error || 'فشل الاستيراد')+'</div>';
+      return;
+    }
+    var summaryHtml = '<div style="background:linear-gradient(135deg,#dbeafe,#eff6ff);border:1.5px solid #93c5fd;border-radius:10px;padding:12px;margin-bottom:10px;font-size:12px;">' +
+      '<div style="font-weight:900;color:#1e3a8a;margin-bottom:6px;"><i class="fas fa-chart-bar"></i> '+(dryRun?'نتائج المعاينة':'نتائج الاستيراد')+':</div>' +
+      '<div style="display:flex;gap:14px;flex-wrap:wrap;">' +
+        '<span><strong>'+r.total+'</strong> صف إجمالي</span>' +
+        '<span style="color:#16a34a;"><i class="fas fa-check"></i> <strong>'+r.matched+'</strong> مُطابق</span>' +
+        (!dryRun ? '<span style="color:#15803d;">+<strong>'+r.added+'</strong> إضافة</span>' : '') +
+        (!dryRun ? '<span style="color:#0369a1;">↻ <strong>'+r.updated+'</strong> تحديث</span>' : '') +
+        '<span style="color:#f59e0b;"><i class="fas fa-question-circle"></i> <strong>'+r.ambiguous+'</strong> متعدد</span>' +
+        '<span style="color:#dc2626;"><i class="fas fa-times"></i> <strong>'+r.unmatched+'</strong> غير موجود</span>' +
+        '<span style="color:#7c2d12;"><i class="fas fa-ban"></i> <strong>'+r.invalid+'</strong> غير صالح</span>' +
+      '</div>' +
+    '</div>';
+    var tableHtml = '<div style="max-height:280px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:10px;">' +
+      '<table style="width:100%;font-size:11px;border-collapse:collapse;">' +
+        '<thead style="position:sticky;top:0;background:#f8fafc;"><tr>' +
+          '<th style="padding:7px;text-align:right;">#</th><th style="padding:7px;text-align:right;">الاسم المُدخل</th><th style="padding:7px;text-align:right;">السعر</th><th style="padding:7px;text-align:right;">الحالة</th><th style="padding:7px;text-align:right;">التفاصيل</th>' +
+        '</tr></thead><tbody>' +
+        r.details.map(function(d){
+          var color = d.status==='matched' ? '#16a34a' :
+                      d.status==='ambiguous' ? '#f59e0b' :
+                      d.status==='unmatched' ? '#dc2626' : '#7c2d12';
+          var icon = d.status==='matched' ? 'fa-check' :
+                     d.status==='ambiguous' ? 'fa-question' :
+                     d.status==='unmatched' ? 'fa-times' : 'fa-ban';
+          var detailText = d.matchName
+            ? 'مُطابق: <b>'+_v3EscapeHtml(d.matchName)+'</b>' + (d.matchBrand ? ' ('+_v3EscapeHtml(d.matchBrand)+')' : '')
+            : (d.reason || '—');
+          return '<tr style="border-bottom:1px solid #f1f5f9;">' +
+            '<td style="padding:6px;color:#64748b;">'+d.rowIndex+'</td>' +
+            '<td style="padding:6px;font-weight:700;">'+_v3EscapeHtml(d.input.name||'')+'</td>' +
+            '<td style="padding:6px;">'+_v3EscapeHtml(String(d.input.price||''))+'</td>' +
+            '<td style="padding:6px;color:'+color+';font-weight:800;"><i class="fas '+icon+'"></i> '+d.status+'</td>' +
+            '<td style="padding:6px;">'+detailText+'</td>' +
+          '</tr>';
+        }).join('') +
+      '</tbody></table>' +
+    '</div>';
+    resEl.innerHTML = summaryHtml + tableHtml;
+    if (!dryRun) {
+      // Refresh the underlying modal
+      setTimeout(function(){
+        if (window._plState) erpViewPriceListItems(plId, window._plState.name);
+      }, 1500);
+    }
+  });
+};
 
 // Auto-fill default price when user picks a product
 window._pliShowDefault = function() {

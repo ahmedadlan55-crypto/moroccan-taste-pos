@@ -66,13 +66,17 @@ router.get('/:id', async (req, res) => {
       LEFT JOIN branches br ON br.id = s.branch_id
       WHERE s.id = ?`, [req.params.id]);
     if (!hRows.length) return res.status(404).json({ error: 'Not found' });
-    // V5-FIX: actual inv_items has columns: id, name, category, cost, stock, unit
+    // V5-FIX: legacy schema uses inv_item_id (not item_id). Map to item_id in output for UI consistency.
     const [items] = await db.query(`
-      SELECT si.*, COALESCE(it.name, si.item_id) AS item_name,
+      SELECT si.id, si.stocktake_id, si.inv_item_id AS item_id,
+             si.system_qty, si.actual_qty, si.variance,
+             si.unit_cost, si.variance_value, si.variance_pct, si.is_flagged,
+             si.verified_by, si.verified_at, si.reason_code, si.notes,
+             COALESCE(it.name, si.inv_item_name, si.inv_item_id) AS item_name,
              '' AS item_code,
-             COALESCE(it.unit, '') AS item_unit
+             COALESCE(it.unit, si.unit, '') AS item_unit
       FROM stocktake_items si
-      LEFT JOIN inv_items it ON it.id = si.item_id
+      LEFT JOIN inv_items it ON it.id = si.inv_item_id
       WHERE si.stocktake_id = ? ORDER BY si.is_flagged DESC, si.variance_pct DESC`, [req.params.id]);
     // Compute summary
     const summary = {
@@ -150,14 +154,14 @@ router.post('/:id/load-snapshot', async (req, res) => {
     }
     // Clear old lines
     await db.query('DELETE FROM stocktake_items WHERE stocktake_id = ?', [req.params.id]);
-    // Insert one row per item (actual_qty initially = system_qty so no variance)
+    // V5-FIX: legacy schema uses inv_item_id (not item_id) and INT auto-increment id.
     let inserted = 0;
     for (const r of stockRows) {
       await db.query(`
         INSERT INTO stocktake_items
-          (id, stocktake_id, item_id, system_qty, actual_qty, variance, unit_cost, variance_value, variance_pct)
-        VALUES (?, ?, ?, ?, ?, 0, ?, 0, 0)`,
-        [_id('SLN'), req.params.id, r.item_id, r.system_qty, r.system_qty, r.unit_cost || 0]);
+          (stocktake_id, inv_item_id, system_qty, actual_qty, variance, unit_cost, variance_value, variance_pct)
+        VALUES (?, ?, ?, ?, 0, ?, 0, 0)`,
+        [req.params.id, r.item_id, r.system_qty, r.system_qty, r.unit_cost || 0]);
       inserted++;
     }
     await db.query(`UPDATE stocktakes SET workflow_status = 'in_progress', items_count = ? WHERE id = ?`,
@@ -210,21 +214,18 @@ router.post('/:id/items/scan', async (req, res) => {
       if (r.length) item = r[0];
     }
     if (!item && b.itemCode) {
-      // V5-FIX: inv_items has no `code` column — match by id (which is the code)
-      // OR by name if user enters a free-text query.
       const [r] = await db.query(`SELECT * FROM inv_items WHERE id = ? OR name LIKE ? LIMIT 1`,
         [b.itemCode, '%'+b.itemCode+'%']);
       if (r.length) item = r[0];
     }
     if (!item) return res.status(404).json({ error: 'الصنف غير موجود' });
-    // Find existing line in this stocktake
+    // Find existing line in this stocktake (legacy column inv_item_id)
     const [exRows] = await db.query(`
-      SELECT id FROM stocktake_items WHERE stocktake_id = ? AND item_id = ?`,
+      SELECT id FROM stocktake_items WHERE stocktake_id = ? AND inv_item_id = ?`,
       [req.params.id, item.id]);
     if (exRows.length) {
       lineId = exRows[0].id;
     } else {
-      // Insert new line — pull current stock as system_qty
       const [hRows] = await db.query('SELECT warehouse_id FROM stocktakes WHERE id = ?', [req.params.id]);
       let systemQty = 0; let unitCost = Number(item.cost) || 0;
       try {
@@ -232,16 +233,14 @@ router.post('/:id/items/scan', async (req, res) => {
           [hRows[0].warehouse_id, item.id]);
         if (ws.length) systemQty = Number(ws[0].qty);
       } catch(_) { systemQty = Number(item.stock) || 0; }
-      lineId = _id('SLN');
-      await db.query(`
+      const [insR] = await db.query(`
         INSERT INTO stocktake_items
-          (id, stocktake_id, item_id, system_qty, actual_qty, variance, unit_cost, variance_value, variance_pct)
+          (stocktake_id, inv_item_id, inv_item_name, system_qty, actual_qty, variance, unit_cost, variance_value, variance_pct)
         VALUES (?, ?, ?, ?, ?, 0, ?, 0, 0)`,
-        [lineId, req.params.id, item.id, systemQty, systemQty, unitCost]);
+        [req.params.id, item.id, item.name, systemQty, systemQty, unitCost]);
+      lineId = insR.insertId;
     }
-    // If actualQty supplied, update it
     if (b.actualQty != null) {
-      // Recursive call to PUT logic
       req.body = { actualQty: b.actualQty };
       req.params.lineId = lineId;
       return router.handle({ ...req, method: 'PUT', url: '/'+req.params.id+'/items/'+lineId }, res, () => {});
@@ -285,16 +284,18 @@ router.post('/:id/approve', async (req, res) => {
     let movements = 0;
     for (const ln of items) {
       try {
+        // V5-FIX: legacy column inv_item_id — try insert-or-update warehouse_stock
         await db.query(`
-          UPDATE warehouse_stock SET qty = ? WHERE warehouse_id = ? AND item_id = ?`,
-          [ln.actual_qty, h.warehouse_id, ln.item_id]);
-        // Insert adjustment movement (best-effort if table exists)
+          INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty)
+          VALUES (?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE qty = VALUES(qty)`,
+          [_id('WS'), h.warehouse_id, ln.inv_item_id, ln.actual_qty]);
         try {
           await db.query(`
             INSERT INTO inventory_movements
               (id, item_id, warehouse_id, type, qty, unit_cost, ref_type, ref_id, notes, username, created_at)
             VALUES (?, ?, ?, 'adjust', ?, ?, 'stocktake', ?, ?, ?, NOW())`,
-            [_id('MOV'), ln.item_id, h.warehouse_id, ln.variance, ln.unit_cost,
+            [_id('MOV'), ln.inv_item_id, h.warehouse_id, ln.variance, ln.unit_cost,
              req.params.id, 'Stocktake adjustment ' + (ln.reason_code || ''), username]);
         } catch(_e) {}
         movements++;
@@ -336,9 +337,10 @@ router.post('/:id/cancel', async (req, res) => {
 router.get('/:id/export', async (req, res) => {
   try {
     const [items] = await db.query(`
-      SELECT si.*, COALESCE(it.name, si.item_id) AS item_name
+      SELECT si.*, COALESCE(it.name, si.inv_item_name, si.inv_item_id) AS item_name,
+             si.inv_item_id AS item_id
       FROM stocktake_items si
-      LEFT JOIN inv_items it ON it.id = si.item_id
+      LEFT JOIN inv_items it ON it.id = si.inv_item_id
       WHERE si.stocktake_id = ? ORDER BY si.is_flagged DESC, si.variance_pct DESC`, [req.params.id]);
     const headers = ['ID','الصنف','المخزون النظامي','الكمية الفعلية','الفرق','نسبة الفرق %','قيمة الفرق','الحالة','السبب','ملاحظة'];
     let csv = '﻿' + headers.join(',') + '\n';

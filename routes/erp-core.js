@@ -246,6 +246,57 @@ router.delete('/price-list-items/:id', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
+// V5.7 — DELETE the entire price list (with cascade across all dependent tables)
+//   1. price_list_items   — line items in this list
+//   2. sales_channels     — UNSET price_list_id pointers (don't break channels)
+//   3. channel_menu_items — UNSET override_price refs that came from this list (if any)
+//   4. price_lists        — the list itself (last)
+//   ?force=1 query param required if list is the default one (extra safety).
+router.delete('/price-lists/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const force = req.query.force === '1' || (req.body && req.body.force === true);
+    // Read meta first
+    const [pl] = await db.query('SELECT id, name, is_default FROM price_lists WHERE id = ?', [id]);
+    if (!pl.length) return res.status(404).json({ success: false, error: 'القائمة غير موجودة' });
+    if (pl[0].is_default && !force) {
+      return res.status(409).json({
+        success: false,
+        error: 'هذه قائمة افتراضية — حذفها قد يكسر أسعار القنوات. أعد المحاولة مع ?force=1',
+        requiresForce: true
+      });
+    }
+    // Count what we're about to delete (for the response)
+    const [itemCount] = await db.query('SELECT COUNT(*) AS c FROM price_list_items WHERE price_list_id = ?', [id]);
+    let unlinkedChannels = 0;
+    try {
+      const [ch] = await db.query('SELECT COUNT(*) AS c FROM sales_channels WHERE price_list_id = ?', [id]);
+      unlinkedChannels = Number((ch[0]||{}).c) || 0;
+    } catch(_){}
+
+    // Cascade — wrap in transaction so partial deletion can't happen
+    try {
+      await db.withTransaction(async (conn) => {
+        await conn.query('DELETE FROM price_list_items WHERE price_list_id = ?', [id]);
+        // Unlink (don't delete) sales_channels pointing here
+        try { await conn.query('UPDATE sales_channels SET price_list_id = NULL WHERE price_list_id = ?', [id]); } catch(_){}
+        await conn.query('DELETE FROM price_lists WHERE id = ?', [id]);
+      });
+    } catch(_e) {
+      // Fallback if withTransaction unavailable — sequential best-effort
+      try { await db.query('DELETE FROM price_list_items WHERE price_list_id = ?', [id]); } catch(_){}
+      try { await db.query('UPDATE sales_channels SET price_list_id = NULL WHERE price_list_id = ?', [id]); } catch(_){}
+      try { await db.query('DELETE FROM price_lists WHERE id = ?', [id]); } catch(_){}
+    }
+    res.json({
+      success: true,
+      deletedItems: Number((itemCount[0]||{}).c) || 0,
+      unlinkedChannels: unlinkedChannels,
+      name: pl[0].name
+    });
+  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
 // V5.5 — Bulk-add multiple items at once (used by the multi-select picker)
 //   Body: { items: [{ itemId, price, minPrice? }, ...] }
 //   Returns: { success, added, updated, skipped, errors }

@@ -10531,15 +10531,57 @@ function erpLoadPriceLists() {
   _erpGet('/erp/price-lists', function(list) {
     if (!Array.isArray(list) || !list.length) { document.getElementById('priceListsBody').innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد قوائم أسعار</td></tr>'; return; }
     document.getElementById('priceListsBody').innerHTML = list.map(function(p){
+      var safeName = (p.name||'').replace(/'/g,"\\'");
       return '<tr><td style="font-weight:700;">'+(p.name||'')+'</td><td>'+(p.brandName||'—')+'</td><td>'+(p.branchName||'—')+'</td>'+
         '<td>'+(p.isDefault?'<i class="fas fa-check" style="color:#16a34a;"></i>':'')+'</td>'+
         '<td><span class="badge badge-blue">'+(p.itemCount||0)+'</span></td>'+
         '<td>'+((p.validFrom||'').slice(0,10)||'—')+'</td><td>'+((p.validTo||'').slice(0,10)||'—')+'</td>'+
-        '<td><button class="btn btn-sm btn-primary" onclick="erpOpenPriceListModal(\''+p.id+'\')"><i class="fas fa-edit"></i></button> '+
-        '<button class="btn btn-sm" style="background:#dbeafe;color:#1e40af;" onclick="erpViewPriceListItems(\''+p.id+'\',\''+(p.name||'').replace(/'/g,"\\'")+'\')"><i class="fas fa-list"></i></button></td></tr>';
+        '<td>' +
+          '<button class="btn btn-sm btn-primary" onclick="erpOpenPriceListModal(\''+p.id+'\')" title="تعديل بيانات القائمة"><i class="fas fa-edit"></i></button> ' +
+          '<button class="btn btn-sm" style="background:#dbeafe;color:#1e40af;" onclick="erpViewPriceListItems(\''+p.id+'\',\''+safeName+'\')" title="عرض/تعديل الأصناف والأسعار"><i class="fas fa-list"></i></button> ' +
+          // V5.7: delete the entire price list (with cascade — backend handles unlinking channels)
+          '<button class="btn btn-sm btn-danger" onclick="erpDeletePriceList(\''+p.id+'\',\''+safeName+'\','+(p.itemCount||0)+','+(p.isDefault?'true':'false')+')" title="حذف القائمة وكل أسعارها"><i class="fas fa-trash"></i></button>' +
+        '</td>' +
+      '</tr>';
     }).join('');
   });
 }
+
+// V5.7 — delete a complete price list (with cascade across items + channel unlink).
+window.erpDeletePriceList = function(id, name, itemCount, isDefault) {
+  var msg = 'حذف قائمة الأسعار "'+name+'" نهائياً؟\n\n' +
+            'سيتم:\n' +
+            '• حذف ' + (itemCount||0) + ' صنف من هذه القائمة\n' +
+            '• فك ربط أي قناة بيع كانت تستخدمها (القنوات لن تُحذف)\n\n' +
+            'لا يمكن التراجع عن هذا الإجراء.';
+  if (isDefault) {
+    msg = '⚠ هذه قائمة افتراضية!\n\n' + msg + '\n\nقد يؤثر هذا على أسعار البيع.';
+  }
+  if (!confirm(msg)) return;
+  var url = '/erp/price-lists/' + encodeURIComponent(id) + (isDefault ? '?force=1' : '');
+  _erpDelete(url, function(r){
+    if (r && r.success) {
+      var summary = 'تم حذف "' + (r.name||name) + '"';
+      if (r.deletedItems) summary += ' (' + r.deletedItems + ' صنف';
+      if (r.unlinkedChannels) summary += ' + فك ربط ' + r.unlinkedChannels + ' قناة';
+      if (r.deletedItems || r.unlinkedChannels) summary += ')';
+      showToast(summary);
+      erpLoadPriceLists();
+    } else {
+      // If backend asks for force, give the user a chance to retry
+      if (r && r.requiresForce) {
+        if (confirm((r.error||'يحتاج تأكيداً إضافياً') + '\n\nمتابعة على أي حال؟')) {
+          _erpDelete('/erp/price-lists/'+encodeURIComponent(id)+'?force=1', function(r2){
+            if (r2 && r2.success) { showToast('تم الحذف القسري'); erpLoadPriceLists(); }
+            else showToast((r2 && r2.error)||'فشل الحذف', true);
+          });
+        }
+      } else {
+        showToast((r && r.error)||'فشل الحذف', true);
+      }
+    }
+  });
+};
 function erpOpenPriceListModal(id) {
   Promise.all([new Promise(function(r){_erpGet('/erp/brands',r);}), new Promise(function(r){_erpGet('/erp/branches-full',r);})]).then(function(res){
     var brands = res[0]||[], branches = res[1]||[];

@@ -10947,15 +10947,55 @@ window.plAddSelected = function(plId){
 };
 
 // V5.5 — Excel template downloader (one-line CSV)
-window.plDownloadTemplate = function(){
-  var csv = '﻿' + 'name,brand,category,price,minPrice\n' +
-    'Cappuccino 8oz,Moroccan Taste,HOT COFFEE,11.00,8.50\n' +
-    'مكسرات مشكلة,موروكان تيست,حلويات,25.00,\n';
-  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'price-list-template.csv';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+// V5.7.6 — SMART TEMPLATE: fetches a CSV pre-populated with ALL menu items
+// for the price list's brand. Each row has: itemId, name, brand, category,
+// defaultPrice (from menu), currentChannelPrice (current value in this list),
+// channelPrice (★ EMPTY — user fills this), minPrice (optional).
+//
+// User downloads → opens in Excel → fills "channelPrice" column → saves CSV →
+// re-uploads via the import button. Match is by itemId (zero ambiguity).
+window.plDownloadTemplate = function(plId){
+  // If called from the global "info" button (legacy), fall back to a generic example
+  if (!plId && window._plState) plId = window._plState.id;
+  if (!plId) {
+    // Generic example (legacy fallback)
+    var csv = '﻿' + 'itemId,name,brand,category,defaultPrice,currentChannelPrice,channelPrice,minPrice\n' +
+      ',Cappuccino 8oz,Moroccan Taste,HOT COFFEE,11.00,,15.00,12.00\n' +
+      ',Espresso 6oz,Moroccan Taste,HOT COFFEE,8.00,,10.00,\n';
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'price-list-template.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    return;
+  }
+  // Use the smart template endpoint — fetches the actual menu pre-populated
+  showToast('جاري إعداد القالب من المنيو...');
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/price-lists/' + encodeURIComponent(plId) + '/template', {
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(r){
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var stats = r.headers.get('X-Template-Stats') || '';
+    return r.blob().then(function(b){ return { blob: b, stats: stats }; });
+  }).then(function(o){
+    var url = URL.createObjectURL(o.blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'price-list-template.csv';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+    var msg = '✓ تم تنزيل القالب';
+    if (o.stats) {
+      var m1 = o.stats.match(/total=(\d+)/), m2 = o.stats.match(/prefilled=(\d+)/);
+      if (m1) msg += ' (' + m1[1] + ' صنف';
+      if (m2 && m2[1] !== '0') msg += ', ' + m2[1] + ' بسعر مسبق';
+      msg += ')';
+    }
+    showToast(msg);
+  }).catch(function(e){
+    showToast('فشل تنزيل القالب: ' + (e && e.message), true);
+  });
 };
 
 // V5.5 — Excel/CSV import dialog
@@ -10969,18 +11009,31 @@ window.plOpenImportDialog = function(plId){
         '<h3 style="margin:0;font-size:17px;font-weight:800;"><i class="fas fa-file-excel" style="color:#16a34a;"></i> استيراد أسعار من Excel/CSV</h3>' +
         '<button onclick="document.getElementById(\'plImportDlg\').remove()" style="border:0;background:#f1f5f9;width:34px;height:34px;border-radius:8px;font-size:20px;cursor:pointer;color:#64748b;">&times;</button>' +
       '</div>' +
-      '<div style="background:#fffbeb;border:1px dashed #fcd34d;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px;color:#92400e;">' +
-        '<strong><i class="fas fa-info-circle"></i> الأعمدة المطلوبة:</strong><br>' +
-        '<code style="background:#fff;padding:2px 6px;border-radius:4px;">name</code> (الاسم — مطلوب) • ' +
-        '<code style="background:#fff;padding:2px 6px;border-radius:4px;">brand</code> (البراند) • ' +
-        '<code style="background:#fff;padding:2px 6px;border-radius:4px;">category</code> (الفئة) • ' +
-        '<code style="background:#fff;padding:2px 6px;border-radius:4px;">price</code> (السعر — مطلوب) • ' +
-        '<code style="background:#fff;padding:2px 6px;border-radius:4px;">minPrice</code> (الحد الأدنى — اختياري)' +
-        '<br><br>المطابقة تتم بالاسم (مع توحيد الحركات والهمزات). إذا تكرر الاسم → استخدم البراند والفئة للتمييز.' +
+      '<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:10px;padding:14px;margin-bottom:14px;font-size:13px;color:#1e3a8a;">' +
+        '<strong style="display:block;margin-bottom:6px;font-size:14px;"><i class="fas fa-lightbulb"></i> الطريقة الذكية الموصى بها:</strong>' +
+        '<ol style="margin:0;padding-inline-start:24px;line-height:1.9;">' +
+          '<li>اضغط <b>"تنزيل قالب القائمة"</b> — سينزل ملف Excel فيه <b>كل أصناف المنيو</b> مسبقاً مع البراند والفئة والسعر الافتراضي.</li>' +
+          '<li>افتح الملف في Excel، املأ عمود <code style="background:#fff;padding:1px 6px;border-radius:4px;font-weight:800;color:#15803d;">channelPrice</code> فقط للأصناف التي تريد إضافتها/تحديثها (اترك الباقي فارغاً).</li>' +
+          '<li>احفظ كـ CSV واسحب الملف هنا للاستيراد.</li>' +
+        '</ol>' +
       '</div>' +
+      '<div style="background:#fffbeb;border:1px dashed #fcd34d;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:11.5px;color:#78350f;">' +
+        '<strong>القناة = أسعار فقط.</strong> الوصفة (BOM) والإنتاج وسحب المخزون موحّدة من المنيو الرئيسي — لا تتغيّر بحسب القناة. كل ما يحدث هنا هو تخصيص <b>السعر</b> فقط لكل صنف في هذه القناة.' +
+      '</div>' +
+      '<details style="margin-bottom:14px;font-size:11px;color:#64748b;">' +
+        '<summary style="cursor:pointer;font-weight:700;">الأعمدة في القالب (للمطلعين)</summary>' +
+        '<div style="margin-top:8px;line-height:1.8;">' +
+          '<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">itemId</code> — معرّف المنتج (للمطابقة الدقيقة، لا تعدّل)<br>' +
+          '<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">name / brand / category</code> — مرجعية فقط (تأتي من المنيو)<br>' +
+          '<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">defaultPrice</code> — السعر الأصلي للمنيو<br>' +
+          '<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">currentChannelPrice</code> — السعر الحالي في هذه القناة (إن وُجد)<br>' +
+          '<code style="background:#fff7ed;border:1px solid #f59e0b;padding:1px 5px;border-radius:3px;font-weight:800;">channelPrice ★</code> — <b>هنا تكتب السعر الجديد</b> — اتركه فارغاً للتخطّي<br>' +
+          '<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">minPrice</code> — الحد الأدنى المسموح (اختياري)' +
+        '</div>' +
+      '</details>' +
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">' +
         '<input type="file" id="plImportFile" accept=".xlsx,.xls,.csv" style="flex:1;padding:8px;border:1.5px dashed #cbd5e1;border-radius:10px;background:#f8fafc;">' +
-        '<button class="btn btn-light" onclick="plDownloadTemplate()"><i class="fas fa-download"></i> تنزيل قالب CSV</button>' +
+        '<button class="btn btn-success" onclick="plDownloadTemplate(\''+plId+'\')"><i class="fas fa-file-excel"></i> تنزيل قالب القائمة (مُسبَّق بالمنيو)</button>' +
       '</div>' +
       '<div id="plImportPreview" style="margin-bottom:14px;"></div>' +
       '<div id="plImportResults"></div>' +
@@ -11047,15 +11100,21 @@ function _plParseFile(file){
             var cells = parseLine(lines[i]);
             var obj = {};
             headers.forEach(function(h, idx){ obj[h] = cells[idx] || ''; });
+            // V5.7.6 — accept BOTH the new smart-template columns AND legacy column names
             rows.push({
+              itemId: obj.itemid || obj['معرف_المنتج'] || obj['معرّف_المنتج'] || '',
               name: obj.name || obj['الاسم'] || obj.itemname || obj.product || '',
               brand: obj.brand || obj['البراند'] || obj['العلامة'] || '',
               category: obj.category || obj['الفئة'] || obj['التصنيف'] || '',
+              defaultPrice: obj.defaultprice || obj['السعر_الافتراضي'] || '',
+              currentChannelPrice: obj.currentchannelprice || obj['السعر_الحالي'] || '',
+              channelPrice: obj.channelprice || obj['سعر_القناة'] || '',
               price: obj.price || obj['السعر'] || '',
-              minPrice: obj.minprice || obj['min_price'] || obj['الحد الادنى'] || ''
+              minPrice: obj.minprice || obj['min_price'] || obj['الحد_الادنى'] || obj['الحد الادنى'] || ''
             });
           }
-          resolve(rows.filter(function(r){ return r.name; }));
+          // Keep rows that have either an itemId OR a name (others are bogus)
+          resolve(rows.filter(function(r){ return r.itemId || r.name; }));
         } catch(e){ reject(e); }
       };
       reader.onerror = function(){ reject(new Error('قراءة الملف فشلت')); };
@@ -11074,13 +11133,17 @@ function _plParseFile(file){
           var rows = arr.map(function(o){
             var lc = {}; Object.keys(o).forEach(function(k){ lc[String(k).toLowerCase().trim()] = o[k]; });
             return {
+              itemId: lc.itemid || lc['معرف_المنتج'] || lc['معرّف_المنتج'] || '',
               name: lc.name || lc['الاسم'] || lc.product || lc.itemname || '',
               brand: lc.brand || lc['البراند'] || '',
               category: lc.category || lc['الفئة'] || lc['التصنيف'] || '',
+              defaultPrice: lc.defaultprice || lc['السعر_الافتراضي'] || '',
+              currentChannelPrice: lc.currentchannelprice || lc['السعر_الحالي'] || '',
+              channelPrice: lc.channelprice || lc['سعر_القناة'] || '',
               price: lc.price || lc['السعر'] || '',
               minPrice: lc.minprice || lc['min_price'] || ''
             };
-          }).filter(function(r){ return r.name; });
+          }).filter(function(r){ return r.itemId || r.name; });
           resolve(rows);
         } catch(e){ reject(e); }
       };

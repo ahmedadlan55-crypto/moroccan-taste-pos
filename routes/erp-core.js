@@ -328,6 +328,86 @@ router.post('/price-lists/:id/items/bulk', async (req, res) => {
   } catch(e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+// V5.7.6 — SMART TEMPLATE: pre-fills ALL menu items with their data so the user
+// only needs to fill in the channel price column.
+//
+//   GET /api/erp/price-lists/:id/template?brandId=X
+//
+// CSV columns (in order):
+//   itemId           — the menu item ID (used for exact matching, do NOT change)
+//   name             — menu item name (read-only reference)
+//   brand            — brand name from menu (read-only)
+//   category         — category from menu (read-only)
+//   defaultPrice     — the menu's base price (read-only reference)
+//   currentChannelPrice — current price in this channel (empty if not set)
+//   channelPrice     — ★ EDIT THIS ★ leave empty to skip
+//   minPrice         — optional minimum allowed price (empty = no min)
+//
+// User downloads → fills channelPrice column in Excel → uploads via the
+// existing import endpoint, which now matches by itemId (exact) before name.
+router.get('/price-lists/:id/template', async (req, res) => {
+  try {
+    const plId = req.params.id;
+    const brandFilter = req.query.brandId || null;
+
+    // Load price list metadata
+    const [pl] = await db.query(
+      'SELECT id, name, brand_id FROM price_lists WHERE id = ?', [plId]);
+    if (!pl.length) return res.status(404).json({ error: 'القائمة غير موجودة' });
+    const list = pl[0];
+    // Effective brand for the template = explicit query param OR list's own brand_id
+    const effectiveBrand = brandFilter || list.brand_id;
+
+    // Pull menu items (the source of truth for products, brand, category)
+    const conds = ["(m.is_semi_finished IS NULL OR m.is_semi_finished = 0)"];
+    const params = [];
+    if (effectiveBrand) { conds.push('m.brand_id = ?'); params.push(effectiveBrand); }
+    const [menuRows] = await db.query(`
+      SELECT m.id, m.name, m.category, m.price AS default_price, m.brand_id,
+             COALESCE(b.name, '') AS brand_name
+      FROM menu m
+      LEFT JOIN brands b ON b.id = m.brand_id
+      WHERE ${conds.join(' AND ')}
+      ORDER BY m.category, m.name`, params);
+
+    // Pull existing prices in this channel (so user sees what's already set)
+    const [existingItems] = await db.query(`
+      SELECT item_id, price, min_price FROM price_list_items WHERE price_list_id = ?`, [plId]);
+    const existingMap = {};
+    existingItems.forEach(r => {
+      existingMap[r.item_id] = { price: Number(r.price), minPrice: Number(r.min_price) || 0 };
+    });
+
+    // Build CSV (BOM for Excel UTF-8)
+    const headers = ['itemId','name','brand','category','defaultPrice','currentChannelPrice','channelPrice','minPrice'];
+    let csv = '﻿' + headers.join(',') + '\n';
+    let prefilled = 0;
+    menuRows.forEach(m => {
+      const ex = existingMap[m.id];
+      if (ex) prefilled++;
+      const row = [
+        m.id,
+        '"' + (m.name || '').replace(/"/g, '""') + '"',
+        '"' + (m.brand_name || '').replace(/"/g, '""') + '"',
+        '"' + (m.category || '').replace(/"/g, '""') + '"',
+        Number(m.default_price || 0).toFixed(2),
+        ex ? ex.price.toFixed(2) : '',
+        '',  // ★ user fills this
+        ex && ex.minPrice ? ex.minPrice.toFixed(2) : ''
+      ];
+      csv += row.join(',') + '\n';
+    });
+
+    const fname = 'price-list-' + (list.name || plId).replace(/[^\w؀-ۿ.-]/g, '_') + '.csv';
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + encodeURIComponent(fname) + '"');
+    res.setHeader('X-Template-Stats', 'total=' + menuRows.length + ',prefilled=' + prefilled);
+    res.send(csv);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // V5.5 — Excel import: smart-match rows against menu (priority) then inv_items.
 //   Body: { rows: [{ name, brand?, category?, price, minPrice? }, ...], dryRun?: bool }
 //   Matching strategy:
@@ -386,33 +466,59 @@ router.post('/price-lists/:id/import', async (req, res) => {
       details: []
     };
 
+    // V5.7.6: also build itemId index for exact matching when smart template is used
+    const idIdx = new Map();
+    [...menuIdx.values(), ...invIdx.values()].forEach(arr => {
+      arr.forEach(m => idIdx.set(m.id, m));
+    });
+
     const toAdd = [];   // [{ itemId, price, minPrice, srcRow }]
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i] || {};
       const detail = { rowIndex: i+1, input: row };
-      if (!row.name || row.price == null || isNaN(Number(row.price))) {
-        detail.status = 'invalid'; detail.reason = 'الاسم والسعر مطلوبان';
+      // V5.7.6 — read EITHER `channelPrice` (smart template) OR `price` (legacy)
+      const inPrice = row.channelPrice != null && row.channelPrice !== ''
+        ? row.channelPrice : row.price;
+      // V5.7.6 — Skip empty rows silently (smart template has all menu items, user only fills some)
+      if ((inPrice == null || inPrice === '') && (row.itemId || row.name)) {
+        detail.status = 'skipped'; detail.reason = 'سعر فارغ — لم يُحدَّد';
         results.invalid++; results.details.push(detail); continue;
       }
-      const key = _normAr(row.name);
-      let matches = (menuIdx.get(key) || []).slice();
-      if (!matches.length) matches = (invIdx.get(key) || []).slice();
-
-      // Filter by brand if provided
-      if (matches.length > 1 && row.brand) {
-        const bn = _normAr(row.brand);
-        const brandFiltered = matches.filter(m => _normAr(m.brandName) === bn);
-        if (brandFiltered.length) matches = brandFiltered;
+      if (!row.name && !row.itemId) {
+        detail.status = 'invalid'; detail.reason = 'الاسم أو معرّف المنتج مطلوب';
+        results.invalid++; results.details.push(detail); continue;
       }
-      // Filter by category if provided
-      if (matches.length > 1 && row.category) {
-        const cn = _normAr(row.category);
-        const catFiltered = matches.filter(m => _normAr(m.category) === cn);
-        if (catFiltered.length) matches = catFiltered;
+      if (inPrice == null || isNaN(Number(inPrice))) {
+        detail.status = 'invalid'; detail.reason = 'السعر مطلوب';
+        results.invalid++; results.details.push(detail); continue;
+      }
+
+      let matches = [];
+      // V5.7.6 — Match by itemId FIRST (smart-template path = zero ambiguity)
+      if (row.itemId && idIdx.has(row.itemId)) {
+        matches = [idIdx.get(row.itemId)];
+      } else {
+        // Fallback: name-based matching (legacy CSV imports)
+        const key = _normAr(row.name);
+        matches = (menuIdx.get(key) || []).slice();
+        if (!matches.length) matches = (invIdx.get(key) || []).slice();
+
+        // Filter by brand if provided
+        if (matches.length > 1 && row.brand) {
+          const bn = _normAr(row.brand);
+          const brandFiltered = matches.filter(m => _normAr(m.brandName) === bn);
+          if (brandFiltered.length) matches = brandFiltered;
+        }
+        // Filter by category if provided
+        if (matches.length > 1 && row.category) {
+          const cn = _normAr(row.category);
+          const catFiltered = matches.filter(m => _normAr(m.category) === cn);
+          if (catFiltered.length) matches = catFiltered;
+        }
       }
 
       if (matches.length === 0) {
-        detail.status = 'unmatched'; detail.reason = 'لم يتم إيجاد منتج بهذا الاسم';
+        detail.status = 'unmatched'; detail.reason = 'لم يتم إيجاد منتج بهذا الاسم/المعرّف';
         results.unmatched++; results.details.push(detail); continue;
       }
       if (matches.length > 1) {
@@ -426,7 +532,7 @@ router.post('/price-lists/:id/import', async (req, res) => {
       detail.status = 'matched'; detail.matchId = m.id; detail.matchName = m.name;
       detail.matchSource = m.source; detail.matchBrand = m.brandName;
       results.matched++;
-      toAdd.push({ itemId: m.id, price: Number(row.price), minPrice: Number(row.minPrice)||0, srcRow: i+1 });
+      toAdd.push({ itemId: m.id, price: Number(inPrice), minPrice: Number(row.minPrice)||0, srcRow: i+1 });
       results.details.push(detail);
     }
 

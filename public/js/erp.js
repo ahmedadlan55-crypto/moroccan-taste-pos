@@ -16943,7 +16943,7 @@ function _reRenderEditor() {
 
   // ── HERO CARD (sticky, premium gradient w/ KPI grid + metadata chips) ──
   var heroHtml =
-    '<section class="re-hero" style="background:linear-gradient(135deg,#7c3aed 0%,#6d28d9 50%,#5b21b6 100%);color:#fff;padding:20px 24px;border-radius:18px;margin-bottom:16px;box-shadow:0 8px 32px -8px rgba(124,58,237,0.35);position:relative;overflow:hidden;">' +
+    '<section class="re-hero" style="background:linear-gradient(135deg,#7c3aed 0%,#6d28d9 50%,#5b21b6 100%);color:#fff;padding:14px 20px;border-radius:14px;margin-bottom:12px;box-shadow:0 8px 32px -8px rgba(124,58,237,0.35);position:relative;overflow:hidden;">' +
       '<div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;background:radial-gradient(circle,rgba(255,255,255,0.12) 0%,transparent 70%);"></div>' +
       '<div style="display:grid;grid-template-columns:1.8fr 1fr 1fr 1.1fr;gap:18px;align-items:center;position:relative;">' +
         // Product identity
@@ -17005,21 +17005,44 @@ function _reRenderEditor() {
 
   box.innerHTML = heroHtml + bodyHtml + saveBarHtml;
 
-  // V5.7.30 — Modal sizing override: edge-to-edge for the recipe editor.
-  //   Was 99vw with overlay padding eating ~32px; now we also collapse
-  //   the overlay padding + tighten the body padding so the picker
-  //   column has enough room for long ingredient names.
+  // V5.7.31 — TRUE fullscreen modal with !important overrides so nothing
+  //   (no class, no media query, no JS) can shrink it. Inject a one-time
+  //   <style> tag instead of inline JS so the rules win the CSS specificity
+  //   war against .wom-card's own definition.
+  if (!document.getElementById('reFullscreenStyles')) {
+    var st = document.createElement('style');
+    st.id = 'reFullscreenStyles';
+    st.textContent =
+      '.wom-overlay:has(#reEditorBody){padding:0 !important;}' +
+      '.wom-card.size-full:has(#reEditorBody){' +
+        'max-width:100vw !important;width:100vw !important;' +
+        'max-height:100vh !important;height:100vh !important;' +
+        'border-radius:0 !important;' +
+      '}' +
+      '.wom-card.size-full:has(#reEditorBody) .wom-body{' +
+        'padding:12px 16px !important;' +
+      '}' +
+      '.wom-card.size-full:has(#reEditorBody) .wom-head{' +
+        'padding:10px 16px !important;' +
+      '}' +
+      '.wom-card.size-full:has(#reEditorBody) .wom-foot{' +
+        'padding:10px 16px !important;' +
+      '}';
+    document.head.appendChild(st);
+  }
+  // Belt-and-suspenders: also set inline styles for browsers without :has()
   var overlay = document.querySelector('.wom-overlay');
-  if (overlay) overlay.style.padding = '6px';
+  if (overlay) overlay.style.padding = '0';
   var card = document.querySelector('.wom-card.size-full');
   if (card) {
-    card.style.maxWidth = 'calc(100vw - 12px)';
-    card.style.width    = 'calc(100vw - 12px)';
-    card.style.height   = 'calc(100vh - 12px)';
+    card.style.maxWidth = '100vw';
+    card.style.width    = '100vw';
+    card.style.maxHeight= '100vh';
+    card.style.height   = '100vh';
+    card.style.borderRadius = '0';
   }
-  // Tighten the editor body's own padding so the 2-col grid breathes wider
   var body = document.querySelector('.wom-card.size-full .wom-body');
-  if (body) body.style.padding = '14px 16px';
+  if (body) body.style.padding = '12px 16px';
 
   // Cache total elements (perf — avoid 4× getElementById per keystroke)
   _reTotalEls = {
@@ -17070,7 +17093,7 @@ function _reRenderLinesPanel() {
     ? _reRenderCostChart(lines, t.totalCost) + _reRenderBulkToolbar() + _reRenderLineCards()
     : _reEmptyLeft();
 
-  return '<section class="re-lines-panel" style="background:#fff;border:1px solid ' + _RE_COLORS.border + ';border-radius:16px;display:flex;flex-direction:column;height:62vh;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);">' +
+  return '<section class="re-lines-panel" style="background:#fff;border:1px solid ' + _RE_COLORS.border + ';border-radius:16px;display:flex;flex-direction:column;height:calc(100vh - 320px);min-height:480px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);">' +
            // Header
            '<header style="padding:14px 18px;border-bottom:1px solid ' + _RE_COLORS.border + ';display:flex;justify-content:space-between;align-items:center;background:linear-gradient(180deg,#fff 0%,' + _RE_COLORS.surfaceAlt + ' 100%);">' +
              '<div style="display:flex;align-items:center;gap:10px;">' +
@@ -17250,7 +17273,7 @@ function _reRenderPickerPanel() {
       }).join('') +
     '</div>';
 
-  return '<section class="re-picker-panel" style="background:#fff;border:1px solid ' + _RE_COLORS.border + ';border-radius:16px;display:flex;flex-direction:column;height:62vh;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);">' +
+  return '<section class="re-picker-panel" style="background:#fff;border:1px solid ' + _RE_COLORS.border + ';border-radius:16px;display:flex;flex-direction:column;height:calc(100vh - 320px);min-height:480px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);">' +
            // Header
            '<header style="padding:14px 18px;border-bottom:1px solid ' + _RE_COLORS.border + ';background:linear-gradient(180deg,#fff 0%,' + _RE_COLORS.surfaceAlt + ' 100%);">' +
              '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +

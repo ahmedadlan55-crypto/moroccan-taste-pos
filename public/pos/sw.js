@@ -15,7 +15,7 @@
  * clients pick up the fresh shell on next load.
  */
 
-const CACHE_VERSION = 'mt-pos-v43-recipe-wider';
+const CACHE_VERSION = 'mt-pos-v44-recipe-fullscreen';
 const CACHE_NAME = CACHE_VERSION;
 
 // App shell — pre-cached on install so the first launch works offline

@@ -10775,13 +10775,28 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
     // Existing items table
     '<div style="font-size:13px;font-weight:900;color:#0f172a;margin-bottom:8px;"><i class="fas fa-list"></i> الأصناف الحالية في القائمة</div>' +
     '<div class="erp-table-container">' +
+      // V5.7.5 — Bulk channel-price update bar (sticky above the table)
+      '<div style="background:linear-gradient(135deg,#1e40af,#1e3a8a);color:#fff;padding:12px 16px;border-radius:12px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+        '<i class="fas fa-bolt"></i><strong>تعديل جماعي للقائمة الحالية:</strong>' +
+        '<select id="plBulkChMode" style="padding:7px 10px;border-radius:8px;border:0;color:#0f172a;font-weight:700;">' +
+          '<option value="percent">+/− نسبة %</option>' +
+          '<option value="fixed_set">تعيين سعر ثابت</option>' +
+          '<option value="fixed_add">+/− مبلغ ثابت</option>' +
+          '<option value="copy_from_default">نسخ من السعر الافتراضي</option>' +
+        '</select>' +
+        '<input type="number" step="0.01" id="plBulkChValue" placeholder="القيمة" style="padding:7px 10px;border-radius:8px;border:0;width:110px;font-weight:700;color:#0f172a;">' +
+        '<button class="btn btn-sm" style="background:#fbbf24;color:#0f172a;font-weight:800;" onclick="plBulkUpdateChannelPrices(\''+id+'\')"><i class="fas fa-bolt"></i> تطبيق على الكل</button>' +
+        '<button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;font-weight:700;" onclick="plBulkUpdateChannelPrices(\''+id+'\',true)"><i class="fas fa-eye"></i> معاينة</button>' +
+        '<span style="margin-inline-start:auto;font-size:11px;opacity:.85;">يطبّق على ' + items.length + ' صنف في القائمة</span>' +
+      '</div>' +
       '<table class="erp-table">' +
         '<thead><tr>' +
           '<th>المنتج</th>' +
           '<th>المصدر</th>' +
           '<th>الفئة/الوحدة</th>' +
           '<th>السعر الافتراضي</th>' +
-          '<th>سعر القناة</th>' +
+          '<th>سعر القناة <small style="color:#64748b;font-weight:500;">(انقر للتعديل)</small></th>' +
+          '<th>الحد الأدنى</th>' +
           '<th>الفرق</th>' +
           '<th>إجراء</th>' +
         '</tr></thead>' +
@@ -10792,16 +10807,38 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
           var srcBadge = i.itemSource === 'menu'
             ? '<span class="badge badge-blue">منيو</span>'
             : (i.itemSource === 'inv' ? '<span class="badge badge-yellow">مخزون</span>' : '<span class="badge">—</span>');
+          var safeName = (name||'').replace(/\'/g,"\\'");
+          // V5.7.5: inline-editable channel price + min price
+          var priceCell =
+            '<div class="pl-price-edit" data-pli-id="'+_v3EscapeHtml(i.id)+'" data-item-id="'+_v3EscapeHtml(i.itemId)+'" data-pl-id="'+id+'" data-cur-price="'+Number(i.price)+'">' +
+              '<div class="pl-price-display" onclick="plStartChannelPriceEdit(this)" title="انقر للتعديل" ' +
+                'style="cursor:pointer;font-weight:900;color:#1e40af;font-size:14px;display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:8px;background:#eff6ff;border:1.5px dashed transparent;transition:all .15s;" ' +
+                'onmouseover="this.style.background=\'#dbeafe\';this.style.borderColor=\'#3b82f6\';" ' +
+                'onmouseout="this.style.background=\'#eff6ff\';this.style.borderColor=\'transparent\';">' +
+                '<i class="fas fa-pen-to-square" style="font-size:10px;color:#3b82f6;"></i>' +
+                '<span class="pl-price-value">'+Number(i.price).toFixed(2)+'</span>' +
+              '</div>' +
+            '</div>';
+          var minCell =
+            '<div class="pl-min-edit" data-pli-id="'+_v3EscapeHtml(i.id)+'" data-item-id="'+_v3EscapeHtml(i.itemId)+'" data-pl-id="'+id+'" data-cur-min="'+(Number(i.minPrice)||0)+'">' +
+              '<div class="pl-min-display" onclick="plStartChannelMinEdit(this)" title="انقر لتعديل الحد الأدنى" ' +
+                'style="cursor:pointer;color:#92400e;font-size:12px;padding:3px 8px;border-radius:6px;background:#fffbeb;border:1px dashed transparent;transition:all .15s;display:inline-block;" ' +
+                'onmouseover="this.style.background=\'#fef3c7\';this.style.borderColor=\'#f59e0b\';" ' +
+                'onmouseout="this.style.background=\'#fffbeb\';this.style.borderColor=\'transparent\';">' +
+                '<span class="pl-min-value">'+(Number(i.minPrice)||0 ? Number(i.minPrice).toFixed(2) : '—')+'</span>' +
+              '</div>' +
+            '</div>';
           return '<tr>' +
             '<td style="font-weight:700;">' + _v3EscapeHtml(i.itemName) + '</td>' +
             '<td>' + srcBadge + '</td>' +
             '<td><small style="color:#64748b;">' + _v3EscapeHtml(i.categoryOrUnit||'—') + '</small></td>' +
             '<td>' + Number(i.defaultPrice||0).toFixed(2) + '</td>' +
-            '<td style="font-weight:900;color:#1e40af;">' + Number(i.price).toFixed(2) + '</td>' +
+            '<td>' + priceCell + '</td>' +
+            '<td>' + minCell + '</td>' +
             '<td style="color:' + diffClr + ';font-weight:700;">' + (diff >= 0 ? '+' : '') + diff.toFixed(2) + '</td>' +
-            '<td><button class="btn btn-sm btn-danger" onclick="erpDeletePLItem(\''+i.id+'\',\''+id+'\',\''+name.replace(/\'/g,"\\'")+'\')"><i class="fas fa-trash"></i></button></td>' +
+            '<td><button class="btn btn-sm btn-danger" onclick="erpDeletePLItem(\''+i.id+'\',\''+id+'\',\''+safeName+'\')"><i class="fas fa-trash"></i></button></td>' +
           '</tr>';
-        }).join('') : '<tr><td colspan="7" class="empty-msg">لا توجد أصناف بعد — استخدم لوحة الإضافة بالأعلى</td></tr>') +
+        }).join('') : '<tr><td colspan="8" class="empty-msg">لا توجد أصناف بعد — استخدم لوحة الإضافة بالأعلى</td></tr>') +
         '</tbody>' +
       '</table>' +
     '</div>';
@@ -11153,6 +11190,187 @@ function erpDeletePLItem(itemId, plId, plName) {
   if (!confirm('حذف هذا السطر؟')) return;
   _erpDelete('/erp/price-list-items/'+itemId, function(r){ if(r.success){showToast('حُذف');erpViewPriceListItems(plId, plName);}else showToast(r.error||'فشل',true); });
 }
+
+// V5.7.5 — Inline edit channel price (click → input → Enter saves)
+window.plStartChannelPriceEdit = function(displayEl){
+  var wrap = displayEl.closest('.pl-price-edit');
+  if (!wrap) return;
+  var pliId = wrap.getAttribute('data-pli-id');
+  var itemId = wrap.getAttribute('data-item-id');
+  var plId = wrap.getAttribute('data-pl-id');
+  var current = parseFloat(wrap.getAttribute('data-cur-price')) || 0;
+  var input = document.createElement('input');
+  input.type = 'number';
+  input.step = '0.01';
+  input.min = '0';
+  input.value = current;
+  input.setAttribute('data-orig', current);
+  input.style.cssText = 'width:90px;padding:6px 10px;border:2px solid #2563eb;border-radius:8px;font-weight:900;font-size:14px;text-align:center;font-family:inherit;color:#1e40af;';
+  displayEl.replaceWith(input);
+  input.focus();
+  input.select();
+  var commit = function(){
+    var newVal = parseFloat(input.value);
+    var orig = parseFloat(input.getAttribute('data-orig'));
+    if (isNaN(newVal) || newVal < 0) { input.style.borderColor = '#dc2626'; input.focus(); return; }
+    if (Math.abs(newVal - orig) < 0.001) { _plRevertPriceEdit(wrap, orig); return; }
+    input.disabled = true;
+    input.style.borderColor = '#94a3b8';
+    // Use existing UPSERT endpoint: POST /erp/price-lists/:plId/items
+    _erpPost('/erp/price-lists/'+plId+'/items', { itemId: itemId, price: newVal }, function(r){
+      if (r && r.success) {
+        showToast('سعر القناة: ' + orig.toFixed(2) + ' → ' + newVal.toFixed(2) + ' ر.س');
+        wrap.setAttribute('data-cur-price', newVal);
+        _plRevertPriceEdit(wrap, newVal);
+        // Update the diff column live
+        var tr = wrap.closest('tr');
+        if (tr) {
+          var defCell = tr.children[3];
+          var diffCell = tr.children[6];
+          if (defCell && diffCell) {
+            var defPrice = parseFloat(defCell.textContent) || 0;
+            var diff = newVal - defPrice;
+            var diffClr = Math.abs(diff) < 0.01 ? '#94a3b8' : (diff > 0 ? '#16a34a' : '#dc2626');
+            diffCell.style.color = diffClr;
+            diffCell.textContent = (diff >= 0 ? '+' : '') + diff.toFixed(2);
+          }
+        }
+      } else {
+        showToast((r && r.error) || 'فشل تحديث السعر', true);
+        _plRevertPriceEdit(wrap, orig);
+      }
+    });
+  };
+  var cancel = function(){
+    var orig = parseFloat(input.getAttribute('data-orig'));
+    _plRevertPriceEdit(wrap, orig);
+  };
+  input.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener('blur', function(){ commit(); });
+};
+window._plRevertPriceEdit = function(wrap, value){
+  var input = wrap.querySelector('input');
+  if (!input) return;
+  var div = document.createElement('div');
+  div.className = 'pl-price-display';
+  div.setAttribute('onclick', 'plStartChannelPriceEdit(this)');
+  div.setAttribute('title', 'انقر للتعديل');
+  div.style.cssText = 'cursor:pointer;font-weight:900;color:#1e40af;font-size:14px;display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:8px;background:#eff6ff;border:1.5px dashed transparent;transition:all .15s;';
+  div.setAttribute('onmouseover', "this.style.background='#dbeafe';this.style.borderColor='#3b82f6';");
+  div.setAttribute('onmouseout', "this.style.background='#eff6ff';this.style.borderColor='transparent';");
+  div.innerHTML = '<i class="fas fa-pen-to-square" style="font-size:10px;color:#3b82f6;"></i><span class="pl-price-value">'+Number(value).toFixed(2)+'</span>';
+  input.replaceWith(div);
+};
+
+// V5.7.5 — Inline edit min price (same pattern, different field)
+window.plStartChannelMinEdit = function(displayEl){
+  var wrap = displayEl.closest('.pl-min-edit');
+  if (!wrap) return;
+  var itemId = wrap.getAttribute('data-item-id');
+  var plId = wrap.getAttribute('data-pl-id');
+  var current = parseFloat(wrap.getAttribute('data-cur-min')) || 0;
+  // Find the row's current price (we need to send it again since UPSERT requires both)
+  var tr = wrap.closest('tr');
+  var priceWrap = tr ? tr.querySelector('.pl-price-edit') : null;
+  var curPrice = priceWrap ? parseFloat(priceWrap.getAttribute('data-cur-price')) || 0 : 0;
+  var input = document.createElement('input');
+  input.type = 'number';
+  input.step = '0.01';
+  input.min = '0';
+  input.value = current;
+  input.placeholder = '0';
+  input.setAttribute('data-orig', current);
+  input.style.cssText = 'width:80px;padding:5px 8px;border:2px solid #f59e0b;border-radius:6px;font-size:12px;text-align:center;font-family:inherit;color:#92400e;';
+  displayEl.replaceWith(input);
+  input.focus();
+  input.select();
+  var commit = function(){
+    var newVal = parseFloat(input.value) || 0;
+    var orig = parseFloat(input.getAttribute('data-orig'));
+    if (newVal < 0) { input.style.borderColor = '#dc2626'; input.focus(); return; }
+    if (Math.abs(newVal - orig) < 0.001) { _plRevertMinEdit(wrap, orig); return; }
+    input.disabled = true;
+    _erpPost('/erp/price-lists/'+plId+'/items', { itemId: itemId, price: curPrice, minPrice: newVal }, function(r){
+      if (r && r.success) {
+        showToast('الحد الأدنى: ' + (orig||0).toFixed(2) + ' → ' + newVal.toFixed(2));
+        wrap.setAttribute('data-cur-min', newVal);
+        _plRevertMinEdit(wrap, newVal);
+      } else {
+        showToast((r && r.error) || 'فشل', true);
+        _plRevertMinEdit(wrap, orig);
+      }
+    });
+  };
+  input.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { e.preventDefault(); _plRevertMinEdit(wrap, parseFloat(input.getAttribute('data-orig'))); }
+  });
+  input.addEventListener('blur', commit);
+};
+window._plRevertMinEdit = function(wrap, value){
+  var input = wrap.querySelector('input');
+  if (!input) return;
+  var div = document.createElement('div');
+  div.className = 'pl-min-display';
+  div.setAttribute('onclick', 'plStartChannelMinEdit(this)');
+  div.setAttribute('title', 'انقر لتعديل الحد الأدنى');
+  div.style.cssText = 'cursor:pointer;color:#92400e;font-size:12px;padding:3px 8px;border-radius:6px;background:#fffbeb;border:1px dashed transparent;transition:all .15s;display:inline-block;';
+  div.setAttribute('onmouseover', "this.style.background='#fef3c7';this.style.borderColor='#f59e0b';");
+  div.setAttribute('onmouseout', "this.style.background='#fffbeb';this.style.borderColor='transparent';");
+  div.innerHTML = '<span class="pl-min-value">'+(value > 0 ? Number(value).toFixed(2) : '—')+'</span>';
+  input.replaceWith(div);
+};
+
+// V5.7.5 — Bulk update channel prices for the entire list
+window.plBulkUpdateChannelPrices = function(plId, isPreview){
+  var mode = (document.getElementById('plBulkChMode')||{}).value || 'percent';
+  var value = parseFloat((document.getElementById('plBulkChValue')||{}).value);
+  if (mode !== 'copy_from_default' && (isNaN(value))) {
+    showToast('أدخل قيمة', true);
+    return;
+  }
+  // Collect all items in the current view + their current prices
+  var rows = document.querySelectorAll('.pl-price-edit');
+  if (!rows.length) { showToast('لا توجد أصناف', true); return; }
+  var items = [];
+  rows.forEach(function(wrap){
+    var itemId = wrap.getAttribute('data-item-id');
+    var curPrice = parseFloat(wrap.getAttribute('data-cur-price')) || 0;
+    var tr = wrap.closest('tr');
+    var defPrice = tr ? (parseFloat(tr.children[3].textContent) || 0) : 0;
+    var newPrice;
+    if (mode === 'percent')              newPrice = Math.round(curPrice * (1 + value/100) * 100) / 100;
+    else if (mode === 'fixed_set')       newPrice = Math.round(value * 100) / 100;
+    else if (mode === 'fixed_add')       newPrice = Math.round((curPrice + value) * 100) / 100;
+    else if (mode === 'copy_from_default') newPrice = Math.round(defPrice * 100) / 100;
+    if (newPrice < 0) newPrice = 0;
+    items.push({ itemId: itemId, oldPrice: curPrice, price: newPrice });
+  });
+  var changed = items.filter(function(it){ return Math.abs(it.price - it.oldPrice) > 0.001; });
+  if (!changed.length) { showToast('لا تغييرات (الأسعار الجديدة مساوية للحالية)', false); return; }
+
+  var modeLabel = ({percent:'نسبة %', fixed_set:'تعيين', fixed_add:'+/− مبلغ', copy_from_default:'نسخ من الافتراضي'})[mode];
+  var preview = changed.slice(0, 5).map(function(it){ return '  • '+it.oldPrice.toFixed(2)+' → '+it.price.toFixed(2); }).join('\n');
+  if (isPreview) {
+    alert('معاينة (' + changed.length + ' من ' + items.length + ' صنف سيتغير سعره):\n\n' + preview + (changed.length > 5 ? '\n  • ... + ' + (changed.length - 5) + ' أخرى' : ''));
+    return;
+  }
+  if (!confirm('تطبيق "' + modeLabel + '" بقيمة ' + (mode==='copy_from_default'?'(الافتراضي)':value) + ' على ' + changed.length + ' صنف؟\n\nأمثلة:\n' + preview + '\n\nسيُحدَّث فوراً.')) return;
+
+  // Use existing /erp/price-lists/:id/items/bulk endpoint (V5.5)
+  _erpPost('/erp/price-lists/'+plId+'/items/bulk', { items: changed.map(function(it){ return { itemId: it.itemId, price: it.price }; }) }, function(r){
+    if (r && r.success) {
+      showToast('تم تحديث ' + (r.added + r.updated || changed.length) + ' سعر');
+      // Reload to get fresh data
+      if (window._plState) erpViewPriceListItems(plId, window._plState.name);
+    } else {
+      showToast((r && r.error) || 'فشل التحديث الجماعي', true);
+    }
+  });
+};
 
 // ─── BOM ───
 function erpLoadBOM() {

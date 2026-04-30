@@ -15397,7 +15397,10 @@ function _v3OpenChannelModalInner(id) {
       '<div class="v3-grid-2">' +
         '<div class="wo-field"><label class="wo-field-label">الاسم *</label><input id="chF_name" class="wo-input" value="'+ _v3EscapeHtml(ch.name) +'" required></div>' +
         '<div class="wo-field"><label class="wo-field-label">الاسم بالإنجليزية</label><input id="chF_nameEn" class="wo-input" value="'+ _v3EscapeHtml(ch.nameEn||'') +'"></div>' +
-        '<div class="wo-field"><label class="wo-field-label">الرمز *</label><input id="chF_code" class="wo-input" value="'+ _v3EscapeHtml(ch.code) +'" required '+(id?'readonly':'')+'></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الرمز * <small style="color:#94a3b8;font-weight:500;">(للنظام — حروف لاتينية)</small></label>' +
+          '<input id="chF_code" class="wo-input" value="'+ _v3EscapeHtml(ch.code) +'" required style="text-transform:uppercase;letter-spacing:1px;font-family:monospace;font-weight:700;">' +
+          (id ? '<small style="color:#92400e;font-size:11px;margin-top:4px;display:block;"><i class="fas fa-info-circle"></i> تغيير الرمز قد يؤثر على المراجع الخارجية وروابط الـ API.</small>' : '') +
+        '</div>' +
         '<div class="wo-field"><label class="wo-field-label">النوع *</label>' +
           '<select id="chF_channelType" class="wo-select">' +
             Object.keys(_chTypeLabels).map(function(k){
@@ -15505,13 +15508,38 @@ function _v3SaveChannel() {
     };
     if (!data.name) { _v3Toast('الاسم مطلوب', true); return; }
     if (!data.code) { _v3Toast('الرمز مطلوب', true); return; }
+    // V5.7.3: validate code format — alphanumeric + underscore/dash only
+    if (!/^[A-Z0-9_-]{2,30}$/.test(data.code)) {
+      _v3Toast('الرمز يجب أن يكون 2-30 حرف لاتيني/رقم/_/-', true);
+      return;
+    }
 
-    console.log('[V3] Saving channel:', data);
-    callAPI('POST', '/sales-channels/', data, function(r) {
-      console.log('[V3] Channel save response:', r);
-      if (r && r.success) { _v3Toast('تم الحفظ'); WoModal.close(); erpLoadSalesChannels(); }
-      else { _v3Toast((r && r.error) || 'فشل الحفظ', true); console.error('[V3] Channel save failed:', r); }
-    });
+    // V5.7.3: use PUT for edits (cleaner, returns 409 on duplicate code conflict);
+    //         POST stays for create. PUT also accepts partial updates.
+    if (data.id) {
+      var idForUrl = data.id;
+      callAPI('PUT', '/sales-channels/' + encodeURIComponent(idForUrl), data, function(r) {
+        if (r && r.success) {
+          _v3Toast('تم تحديث القناة' + (r.updated ? ' ('+r.updated+' حقل)' : ''));
+          WoModal.close();
+          erpLoadSalesChannels();
+        } else {
+          _v3Toast((r && r.error) || 'فشل التحديث', true);
+          console.error('[V3] Channel update failed:', r);
+        }
+      });
+    } else {
+      callAPI('POST', '/sales-channels/', data, function(r) {
+        if (r && r.success) {
+          _v3Toast('تمت إضافة القناة');
+          WoModal.close();
+          erpLoadSalesChannels();
+        } else {
+          _v3Toast((r && r.error) || 'فشل الإضافة', true);
+          console.error('[V3] Channel create failed:', r);
+        }
+      });
+    }
   } catch (err) {
     console.error('[V3] _v3SaveChannel threw:', err);
     _v3Toast('خطأ: ' + (err && err.message || err), true);

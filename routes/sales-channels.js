@@ -121,6 +121,59 @@ router.post('/', async (req, res) => {
   }
 });
 
+// V5.7.3 — Explicit PUT endpoint for editing (cleaner REST + accepts partial updates)
+//   Body: any subset of channel fields; only provided fields are updated.
+//   Backend validates the new code is unique IF the user changed it.
+router.put('/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const b = req.body || {};
+    // Verify the channel exists
+    const [existing] = await db.query('SELECT id, code FROM sales_channels WHERE id = ?', [id]);
+    if (!existing.length) return res.status(404).json({ success: false, error: 'القناة غير موجودة' });
+
+    // If code changed, check for duplicate
+    if (b.code && b.code !== existing[0].code) {
+      const [dup] = await db.query('SELECT id FROM sales_channels WHERE code = ? AND id != ?', [b.code, id]);
+      if (dup.length) return res.status(409).json({ success: false, error: 'هذا الرمز مستخدم في قناة أخرى' });
+    }
+
+    // Build dynamic UPDATE based on provided fields
+    const fieldMap = {
+      code: 'code', name: 'name', nameEn: 'name_en', channelType: 'channel_type',
+      priceListId: 'price_list_id', icon: 'icon', color: 'color',
+      commissionPct: 'commission_pct', serviceFeePct: 'service_fee_pct',
+      glRevenueAccount: 'gl_revenue_account', glCommissionAccount: 'gl_commission_account',
+      displayOrder: 'display_order', notes: 'notes'
+    };
+    const boolMap = {
+      requiresExternalRef: 'requires_external_ref',
+      allowDiscount: 'allow_discount',
+      isActive: 'is_active'
+    };
+    const sets = []; const params = [];
+    for (const [k, col] of Object.entries(fieldMap)) {
+      if (k in b) { sets.push(`${col}=?`); params.push(b[k] === '' ? null : b[k]); }
+    }
+    for (const [k, col] of Object.entries(boolMap)) {
+      if (k in b) { sets.push(`${col}=?`); params.push(b[k] ? 1 : 0); }
+    }
+    if (!sets.length) return res.json({ success: true, noop: true, message: 'لا تغييرات' });
+    params.push(id);
+    await db.query(`UPDATE sales_channels SET ${sets.join(',')} WHERE id = ?`, params);
+
+    // Audit
+    try {
+      const username = (req.user && req.user.username) || 'system';
+      await db.query(
+        `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details, created_at)
+         VALUES (?, 'channel_update', 'sales_channel', ?, ?, NOW())`,
+        [username, id, JSON.stringify({ changed: Object.keys(b) })]);
+    } catch(_) {}
+    res.json({ success: true, id, updated: sets.length });
+  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
 // Delete (only if no sales linked — soft check)
 router.delete('/:id', async (req, res) => {
   try {

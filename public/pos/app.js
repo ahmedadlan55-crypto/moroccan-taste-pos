@@ -607,15 +607,20 @@ window.printReceipt = function(orderId) {
     var cashierEmpNo      = inv.cashierEmpNo      || inv.username || '';
     var logoUrl           = inv.companyLogo       || (state.settings && state.settings.logo) || '';
 
+    // V5.7.25 — items rows explicitly LTR with 4 columns:
+    //   Item name | Qty | Unit price | Line total
     var totalItems = 0;
     var itemsHtml = '';
     (inv.items || []).forEach(function(i) {
-      totalItems += Number(i.qty) || 0;
+      var qty = Number(i.qty) || 0;
+      totalItems += qty;
+      var unitPrice = qty > 0 ? (Number(i.total) / qty) : Number(i.price || 0);
       itemsHtml +=
-        '<tr>' +
-          '<td style="text-align:left;font-size:12px;padding:3px 0;">' + i.name + '</td>' +
-          '<td style="text-align:center;font-size:12px;padding:3px 0;">' + i.qty + '@</td>' +
-          '<td style="text-align:right;font-size:12px;padding:3px 0;">' + formatVal(i.total) + '</td>' +
+        '<tr style="direction:ltr;">' +
+          '<td style="text-align:left;font-size:12px;padding:4px 2px;font-weight:600;">' + i.name + '</td>' +
+          '<td style="text-align:center;font-size:12px;padding:4px 2px;font-family:monospace;">' + qty + '</td>' +
+          '<td style="text-align:center;font-size:11px;padding:4px 2px;font-family:monospace;color:#444;">' + formatVal(unitPrice) + '</td>' +
+          '<td style="text-align:right;font-size:12px;padding:4px 2px;font-family:monospace;font-weight:700;">' + formatVal(i.total) + '</td>' +
         '</tr>';
     });
     var netAmount = Number(inv.totalFinal) / 1.15;
@@ -693,9 +698,16 @@ window.printReceipt = function(orderId) {
 
       '<div style="border-top:1px dashed #000;margin:8px 0;"></div>' +
 
-      // ── Items table ──
-      '<table style="width:100%;border-collapse:collapse;">' +
-        '<thead><tr><th colspan="3" style="text-align:right;font-size:11px;color:#666;padding-bottom:4px;">' + currency + '</th></tr></thead>' +
+      // ── V5.7.25 — Items table with explicit LTR layout + 4 columns ──
+      //   Item | Qty | Price | Total — universal e-receipt format readable
+      //   in either Arabic or English UI.
+      '<table style="width:100%;border-collapse:collapse;direction:ltr;">' +
+        '<thead><tr style="border-bottom:1px solid #000;">' +
+          '<th style="text-align:left;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">Item</th>' +
+          '<th style="text-align:center;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">Qty</th>' +
+          '<th style="text-align:center;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">Price</th>' +
+          '<th style="text-align:right;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">' + currency + '</th>' +
+        '</tr></thead>' +
         '<tbody>' + itemsHtml + '</tbody>' +
       '</table>' +
 
@@ -815,13 +827,17 @@ window.printReceiptWindow = function() {
     '</div>';
   }
 
+  // V5.7.25 — explicit LTR rows with 4 columns (Item / Qty / Price / Total)
   var itemsHtml = '';
   (r.inv.items || []).forEach(function(i) {
+    var qty = Number(i.qty) || 0;
+    var unitPrice = qty > 0 ? (Number(i.total) / qty) : Number(i.price || 0);
     itemsHtml +=
-      '<tr>' +
-        '<td style="text-align:left;font-size:12px;padding:3px 0;">' + i.name + '</td>' +
-        '<td style="text-align:center;font-size:12px;padding:3px 0;">' + i.qty + '@</td>' +
-        '<td style="text-align:right;font-size:12px;padding:3px 0;">' + formatVal(i.total) + '</td>' +
+      '<tr style="direction:ltr;">' +
+        '<td style="text-align:left;font-size:12px;padding:4px 2px;font-weight:600;">' + i.name + '</td>' +
+        '<td style="text-align:center;font-size:12px;padding:4px 2px;font-family:monospace;">' + qty + '</td>' +
+        '<td style="text-align:center;font-size:11px;padding:4px 2px;font-family:monospace;color:#444;">' + formatVal(unitPrice) + '</td>' +
+        '<td style="text-align:right;font-size:12px;padding:4px 2px;font-family:monospace;font-weight:700;">' + formatVal(i.total) + '</td>' +
       '</tr>';
   });
 
@@ -865,8 +881,13 @@ window.printReceiptWindow = function() {
 
     '<div style="border-top:1px dashed #000;margin:8px 0;"></div>' +
 
-    '<table style="width:100%;border-collapse:collapse;">' +
-      '<thead><tr><th colspan="3" style="text-align:right;font-size:11px;color:#444;padding-bottom:4px;">' + r.currency + '</th></tr></thead>' +
+    '<table style="width:100%;border-collapse:collapse;direction:ltr;">' +
+      '<thead><tr style="border-bottom:1px solid #000;">' +
+        '<th style="text-align:left;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">Item</th>' +
+        '<th style="text-align:center;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">Qty</th>' +
+        '<th style="text-align:center;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">Price</th>' +
+        '<th style="text-align:right;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">' + r.currency + '</th>' +
+      '</tr></thead>' +
       '<tbody>' + itemsHtml + '</tbody>' +
     '</table>' +
 

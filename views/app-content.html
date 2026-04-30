@@ -1305,25 +1305,25 @@
               <input type="email" id="setEmail" class="form-control" placeholder="info@moroccantaste.com.sa" dir="ltr">
             </div>
             <small style="color:#64748b;font-size:11px;display:block;margin-top:-6px;margin-bottom:12px;"><i class="fas fa-info-circle"></i> رقم الهاتف والبريد الإلكتروني يظهران أسفل كل فاتورة مطبوعة.</small>
-            <hr style="border:0; border-top:1px dashed var(--border); margin:25px 0;">
-            <h3 class="dash-box-title" style="margin-top:10px;"><i class="fas fa-credit-card"></i> إدارة طرق الدفع</h3>
-            <p style="font-size:12px;color:#64748b;margin-bottom:12px;">تفعيل/تعطيل طرق الدفع وتحديد نسبة رسوم الخدمة لكل طريقة</p>
-            <div id="payMethodsSettings"></div>
-            <button class="btn btn-secondary" style="width:100%;margin-top:10px;padding:10px;" onclick="loadPayMethodsSettings()"><i class="fas fa-sync"></i> تحديث طرق الدفع</button>
-            <button class="btn btn-primary" style="width:100%;margin-top:8px;padding:10px;" onclick="openAdvancedPMModal()"><i class="fas fa-plus"></i> إضافة طريقة دفع جديدة</button>
+
+            <!-- V5.7.25 — payment-methods + discounts sections REMOVED here (duplicates).
+                 Both live in the dedicated admin section "إدارة الدفع والقنوات".
+                 Hidden inputs kept so saveDashSettings doesn't break when reading them. -->
             <input type="hidden" id="setKitaFee" value="0">
 
             <hr style="border:0; border-top:1px dashed var(--border); margin:25px 0;">
+            <button class="btn btn-primary" style="width:100%; padding:15px; font-size:16px;" onclick="saveDashSettings()"><i class="fas fa-save"></i> حفظ الإعدادات</button>
 
-            <!-- Advanced Discounts -->
-            <h3 class="dash-box-title"><i class="fas fa-tags"></i> إدارة الخصومات</h3>
-            <p style="font-size:12px;color:#64748b;margin-bottom:12px;">إنشاء وإدارة أنواع الخصومات (نسبة/مبلغ/كود/تلقائي)</p>
-            <div id="discountsV2List"></div>
-            <button class="btn btn-primary" style="width:100%;margin-top:10px;padding:10px;" onclick="openDiscountV2Modal()"><i class="fas fa-plus"></i> إضافة خصم جديد</button>
-            <button class="btn btn-secondary" style="width:100%;margin-top:8px;padding:10px;" onclick="loadDiscountsV2()"><i class="fas fa-sync"></i> تحديث الخصومات</button>
-
-            <hr style="border:0; border-top:1px dashed var(--border); margin:25px 0;">
-            <button class="btn btn-primary" style="width:100%; padding:15px; font-size:16px;" onclick="saveDashSettings()"><i class="fas fa-save"></i> حفظ جميع المتغيرات</button>
+            <!-- V5.7.25 — Redirect card to the dedicated payment/channels admin section -->
+            <div style="margin-top:18px;padding:14px;background:linear-gradient(135deg,#eff6ff,#f0fdf4);border:1px solid #bfdbfe;border-radius:14px;">
+              <h4 style="font-size:13px;font-weight:800;color:#1e40af;margin:0 0 6px;"><i class="fas fa-credit-card"></i> طرق الدفع، القنوات، والخصومات</h4>
+              <p style="font-size:11.5px;color:#475569;margin:0 0 10px;line-height:1.6;">تمت ترقية هذه الإعدادات إلى قسم متخصص أعمق. كل ما يخص: طرق الدفع، قنوات البيع، الخصومات.</p>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-primary" style="flex:1;min-width:170px;padding:8px 12px;" onclick="erpNav('erpPaymentMethodsV3')"><i class="fas fa-wallet"></i> إدارة طرق الدفع</button>
+                <button class="btn btn-light" style="flex:1;min-width:170px;padding:8px 12px;" onclick="erpNav('erpSalesChannels')"><i class="fas fa-store"></i> قنوات البيع</button>
+                <button class="btn btn-light" style="flex:1;min-width:170px;padding:8px 12px;" onclick="erpNav('erpDiscountsV3')"><i class="fas fa-percent"></i> الخصومات</button>
+              </div>
+            </div>
 
             <!-- Developer Zone — visible only to users marked as developer -->
             <div id="devZone" class="hidden" style="margin-top:30px; padding:20px; background:#fef2f2; border:2px solid #fecaca; border-radius:14px;">
@@ -4301,6 +4301,12 @@
     </div>
     <div class="wo-header-actions">
       <button class="wo-btn wo-btn-secondary" onclick="erpLoadBOM()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <!-- V5.7.25 — Excel export/import for recipes -->
+      <button class="wo-btn wo-btn-secondary" onclick="erpExportBomExcel()" title="تصدير كل الوصفات لإكسل"><i class="fas fa-file-excel" style="color:#16a34a;"></i><span>تصدير Excel</span></button>
+      <label class="wo-btn wo-btn-secondary" style="cursor:pointer;margin:0;" title="استيراد وصفات من إكسل">
+        <i class="fas fa-file-upload" style="color:#3b82f6;"></i><span>استيراد Excel</span>
+        <input type="file" id="bomImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="erpImportBomExcel(this)">
+      </label>
       <button class="wo-btn wo-btn-primary" onclick="erpOpenBomModal()"><i class="fas fa-plus"></i><span>وصفة جديدة</span></button>
     </div>
   </header>
@@ -4642,6 +4648,12 @@
     <div class="wo-header-actions">
       <button class="wo-btn wo-btn-secondary" onclick="erpNav('erpMenuHub')"><i class="fas fa-arrow-right"></i><span>رجوع للبرندات</span></button>
       <button class="wo-btn wo-btn-secondary" onclick="erpLoadBrandMenu()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <!-- V5.7.25 — Excel export/import per brand -->
+      <button class="wo-btn wo-btn-secondary" onclick="erpExportBrandMenuExcel()" title="تصدير منتجات هذا البراند لإكسل"><i class="fas fa-file-excel" style="color:#16a34a;"></i><span>تصدير Excel</span></button>
+      <label class="wo-btn wo-btn-secondary" style="cursor:pointer;margin:0;" title="استيراد منتجات من ملف إكسل">
+        <i class="fas fa-file-upload" style="color:#3b82f6;"></i><span>استيراد Excel</span>
+        <input type="file" id="bmImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="erpImportBrandMenuExcel(this)">
+      </label>
       <button class="wo-btn wo-btn-primary" onclick="erpOpenAddProductChooser()"><i class="fas fa-plus"></i><span>منتج جديد</span></button>
     </div>
   </header>

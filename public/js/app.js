@@ -1817,13 +1817,17 @@ function _printReceiptBody(orderId) {
     var logoUrl           = inv.companyLogo       || (state.settings && state.settings.logo) || '';
 
     var totalItems = 0;
+    // V5.7.25 — explicit LTR rows: Item | Qty | Price | Total
     var itemsHtml = '';
     (inv.items||[]).forEach(function(i){
-      totalItems += Number(i.qty)||0;
-      itemsHtml += '<tr>'+
-                     '<td style="text-align:left;font-size:12px;padding:3px 0;">'+i.name+'</td>'+
-                     '<td style="text-align:center;font-size:12px;padding:3px 0;">'+i.qty+'@</td>'+
-                     '<td style="text-align:right;font-size:12px;padding:3px 0;">'+formatVal(i.total)+'</td>'+
+      var qty = Number(i.qty) || 0;
+      totalItems += qty;
+      var unitPrice = qty > 0 ? (Number(i.total) / qty) : Number(i.price || 0);
+      itemsHtml += '<tr style="direction:ltr;">'+
+                     '<td style="text-align:left;font-size:12px;padding:4px 2px;font-weight:600;">'+i.name+'</td>'+
+                     '<td style="text-align:center;font-size:12px;padding:4px 2px;font-family:monospace;">'+qty+'</td>'+
+                     '<td style="text-align:center;font-size:11px;padding:4px 2px;font-family:monospace;color:#444;">'+formatVal(unitPrice)+'</td>'+
+                     '<td style="text-align:right;font-size:12px;padding:4px 2px;font-family:monospace;font-weight:700;">'+formatVal(i.total)+'</td>'+
                    '</tr>';
     });
     var netAmount = Number(inv.totalFinal) / 1.15;
@@ -1884,9 +1888,14 @@ function _printReceiptBody(orderId) {
 
       '<div style="border-top:1px dashed #000;margin:8px 0;"></div>' +
 
-      // ── Items table ──
-      '<table style="width:100%;border-collapse:collapse;">' +
-        '<thead><tr><th colspan="3" style="text-align:right;font-size:11px;color:#666;padding-bottom:4px;">'+currency+'</th></tr></thead>' +
+      // ── V5.7.25 Items table — direction:ltr so Item/Qty/Price/Total align uniformly ──
+      '<table style="width:100%;border-collapse:collapse;direction:ltr;">' +
+        '<thead><tr style="border-bottom:1px solid #000;">'+
+          '<th style="text-align:left;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">Item</th>'+
+          '<th style="text-align:center;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">Qty</th>'+
+          '<th style="text-align:center;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">Price</th>'+
+          '<th style="text-align:right;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">'+currency+'</th>'+
+        '</tr></thead>' +
         '<tbody>'+itemsHtml+'</tbody>' +
       '</table>' +
 
@@ -6075,62 +6084,98 @@ function populateReportFilters() {
   }
 }
 
-// Settings Update
+// V5.7.25 — Settings save rewritten. Earlier 3-level nested chain had NO
+//   failure handlers; if ANY step failed (most commonly: empty payment-methods
+//   array → backend rejects with "No methods provided" → silent dead-end),
+//   the user saw the loader spin forever and no values persisted.
+//
+// New flow:
+//   1. ALWAYS save the company settings (name + tax + logo + phone + email)
+//      — this is the user's primary intent.
+//   2. ONLY save payment methods IF the legacy section is still in the DOM
+//      AND state.paymentMethods has rows.
+//   3. Both calls have explicit failure handlers that surface the error
+//      AND release the loader so the user knows what happened.
 function saveDashSettings() {
   loader();
-  // V5.7.20 — also save phone + email under canonical CompanyPhone / CompanyEmail keys
   var phone = (q("#setPhone") && q("#setPhone").value) || '';
   var email = (q("#setEmail") && q("#setEmail").value) || '';
   var up = {
     name: q("#setCompany").value,
     taxNumber: q("#setTax").value,
     logo: state.settings.logo || '',
-    // canonical keys read by /api/auth/initial bootstrap
-    CompanyName: q("#setCompany").value,
-    TaxNumber:   q("#setTax").value,
+    // Canonical keys read by /api/auth/initial bootstrap
+    CompanyName:  q("#setCompany").value,
+    TaxNumber:    q("#setTax").value,
     CompanyPhone: phone,
     CompanyEmail: email
   };
-  // Mirror into local state immediately so the receipt picks them up before the next bootstrap
+  // Mirror into local state immediately so the next receipt print picks them up
   if (state.settings) {
+    state.settings.name        = up.name;
+    state.settings.taxNumber   = up.taxNumber;
     state.settings.companyPhone = phone;
     state.settings.companyEmail = email;
   }
-  // Collect payment methods from settings UI
-  var methods = (state.paymentMethods||[]).map(function(m, i) {
-    var activeEl = document.querySelector('.pm-active[data-idx="'+i+'"]');
-    var nameArEl = document.querySelector('.pm-name-ar[data-idx="'+i+'"]');
-    var nameEnEl = document.querySelector('.pm-name-en[data-idx="'+i+'"]');
-    var feeEl = document.querySelector('.pm-fee[data-idx="'+i+'"]');
-    return {
-      ID: m.ID, Icon: m.Icon, SortOrder: m.SortOrder,
-      Name: nameEnEl ? nameEnEl.value : m.Name,
-      NameAR: nameArEl ? nameArEl.value : m.NameAR,
-      IsActive: activeEl ? activeEl.checked : m.IsActive,
-      ServiceFeeRate: feeEl ? Number(feeEl.value)||0 : Number(m.ServiceFeeRate)||0
-    };
-  });
-  api.withSuccessHandler(function(r) {
-    // Save payment methods
-    api.withSuccessHandler(function(r2) {
-      // Re-fetch fresh payment methods so any newly inserted rows get their real auto-increment IDs
+
+  function _onCompanySaved() {
+    // Re-apply branding + cache for fast paint next time
+    try { localStorage.setItem('pos_branding', JSON.stringify({ name: up.name, logo: up.logo })); } catch(e) {}
+    applyBrandingToUI(up.name, up.logo);
+
+    // Optional second step: save payment methods ONLY if the legacy DOM panel
+    // is still present (V5.7.25 removed it from the admin settings).
+    var hasPmUI = !!q('#payMethodsSettings');
+    var methods = hasPmUI ? (state.paymentMethods || []).map(function(m, i) {
+      var activeEl = document.querySelector('.pm-active[data-idx="'+i+'"]');
+      var nameArEl = document.querySelector('.pm-name-ar[data-idx="'+i+'"]');
+      var nameEnEl = document.querySelector('.pm-name-en[data-idx="'+i+'"]');
+      var feeEl = document.querySelector('.pm-fee[data-idx="'+i+'"]');
+      return {
+        ID: m.ID, Icon: m.Icon, SortOrder: m.SortOrder,
+        Name:   nameEnEl ? nameEnEl.value : m.Name,
+        NameAR: nameArEl ? nameArEl.value : m.NameAR,
+        IsActive: activeEl ? activeEl.checked : m.IsActive,
+        ServiceFeeRate: feeEl ? Number(feeEl.value) || 0 : Number(m.ServiceFeeRate) || 0
+      };
+    }) : null;
+    if (!hasPmUI || !methods || !methods.length) {
+      // No payment methods to save — finish here
+      loader(false);
+      showToast("تم حفظ الإعدادات بنجاح");
+      return;
+    }
+    api.withFailureHandler(function(err) {
+      loader(false);
+      // Company settings already saved; just warn about the methods part
+      showToast("تم حفظ الشركة، لكن فشل حفظ طرق الدفع: " + ((err && err.message) || ''), true);
+    }).withSuccessHandler(function(r2) {
       api.withSuccessHandler(function(fresh) {
         loader(false);
-        state.paymentMethods = fresh || [];
-        renderPayButtons();
-        loadPayMethodsSettings();
-        showToast("تم تحديث جميع الإعدادات بنجاح");
-        state.settings.name = up.name;
-        state.settings.taxNumber = up.taxNumber;
-        // Re-apply branding immediately + cache for fast paint next time
-        try { localStorage.setItem('pos_branding', JSON.stringify({ name: up.name, logo: up.logo })); } catch(e) {}
-        applyBrandingToUI(up.name, up.logo);
+        state.paymentMethods = fresh || methods;
+        if (typeof renderPayButtons === 'function') renderPayButtons();
+        if (typeof loadPayMethodsSettings === 'function') loadPayMethodsSettings();
+        showToast("تم حفظ جميع الإعدادات بنجاح");
       }).withFailureHandler(function() {
         loader(false);
         state.paymentMethods = methods;
-        renderPayButtons();
+        if (typeof renderPayButtons === 'function') renderPayButtons();
+        showToast("تم الحفظ — لكن تعذّر إعادة تحميل القائمة");
       }).getPaymentMethods();
     }).savePaymentMethods(methods);
+  }
+
+  api.withFailureHandler(function(err) {
+    loader(false);
+    showToast("فشل حفظ إعدادات الشركة: " + ((err && err.message) || 'خطأ غير معروف'), true);
+    console.error('[saveDashSettings] updateCompanySettings failed:', err);
+  }).withSuccessHandler(function(r) {
+    if (r && r.success === false) {
+      loader(false);
+      showToast("فشل الحفظ: " + ((r && r.error) || 'خطأ غير معروف'), true);
+      return;
+    }
+    _onCompanySaved();
   }).updateCompanySettings(up);
 }
 

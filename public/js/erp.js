@@ -19327,3 +19327,455 @@ window._dimExportCsv = function(key, label){
     showToast('✓ تم تصدير ' + d.items.length + ' عنصر');
   });
 };
+
+// ═══════════════════════════════════════════════════════════════════
+// V5.7.25 — World-class Excel export / import for Brand Menu
+//   • Export: ALL columns admins care about (id, name AR/EN, category,
+//     price, cost, margin %, recipe status, production_method, active,
+//     consumed semi, etc.) + a "INSTRUCTIONS" sheet with examples.
+//   • Import: smart upsert by id (if blank → new MENU- id; if existing →
+//     PUT update). Validates header row, skips empty rows, shows
+//     per-row results in a modal with green/red counts.
+// ═══════════════════════════════════════════════════════════════════
+
+// Lazy-load SheetJS (CDN) once and cache the promise.
+function _erpEnsureXLSX() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (window._xlsxLoadPromise) return window._xlsxLoadPromise;
+  window._xlsxLoadPromise = new Promise(function(resolve, reject) {
+    var s = document.createElement('script');
+    s.src = 'https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js';
+    s.onload = function() { resolve(window.XLSX); };
+    s.onerror = function() { reject(new Error('فشل تحميل مكتبة Excel')); };
+    document.head.appendChild(s);
+  });
+  return window._xlsxLoadPromise;
+}
+
+// V5.7.25 — Brand menu Excel export
+window.erpExportBrandMenuExcel = function() {
+  var brand = window._bmCurrentBrand || {};
+  if (!brand.id) return _v3Toast('اختر براند أولاً', true);
+
+  _v3Toast('جاري تحضير الملف...');
+  Promise.all([
+    _erpEnsureXLSX(),
+    new Promise(function(r) { _erpGet('/menu/all?brandId=' + encodeURIComponent(brand.id), r); })
+  ]).then(function(results) {
+    var XLSX = results[0];
+    var rows = results[1] || [];
+
+    // Header row — clearly labeled bilingual
+    var header = [
+      'ID',                       // معرف (اتركه فارغ للجديد)
+      'Name AR',                  // الاسم بالعربي
+      'Name EN',                  // الاسم بالإنجليزي
+      'Category',                 // الفئة
+      'Price',                    // السعر
+      'Cost',                     // التكلفة
+      'Margin %',                 // هامش الربح %
+      'Has Recipe?',              // له وصفة (yes/no)
+      'Production Method',        // طريقة الإنتاج
+      'Pricing Mode',             // طريقة التسعير
+      'Active'                    // مفعّل (1/0)
+    ];
+
+    var data = [header].concat(rows.map(function(m) {
+      var price = Number(m.price) || 0;
+      var cost = Number(m.cost) || 0;
+      var margin = price > 0 ? ((price - cost) / price * 100).toFixed(2) : '';
+      return [
+        m.id,
+        m.name || '',
+        m.nameEn || '',
+        m.category || '',
+        price,
+        cost,
+        margin,
+        m.bomId ? 'yes' : 'no',
+        m.productionMethod || 'made_at_branch',
+        m.pricingMode || 'fixed',
+        m.active ? 1 : 0
+      ];
+    }));
+
+    var ws = XLSX.utils.aoa_to_sheet(data);
+    // Column widths for readability
+    ws['!cols'] = [
+      { wch: 22 }, // ID
+      { wch: 28 }, // Name AR
+      { wch: 28 }, // Name EN
+      { wch: 16 }, // Category
+      { wch: 10 }, // Price
+      { wch: 10 }, // Cost
+      { wch: 10 }, // Margin
+      { wch: 11 }, // Has Recipe
+      { wch: 18 }, // Production Method
+      { wch: 14 }, // Pricing Mode
+      { wch: 8 }   // Active
+    ];
+
+    // Styling: bold header, frozen first row
+    ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+    var headerRange = XLSX.utils.decode_range(ws['!ref']);
+    for (var c = headerRange.s.c; c <= headerRange.e.c; c++) {
+      var cell = XLSX.utils.encode_cell({ r: 0, c: c });
+      if (ws[cell]) {
+        ws[cell].s = {
+          font: { bold: true, color: { rgb: 'FFFFFF' } },
+          fill: { fgColor: { rgb: '0F172A' } },
+          alignment: { horizontal: 'center', vertical: 'center' }
+        };
+      }
+    }
+
+    // Instructions sheet
+    var ins = XLSX.utils.aoa_to_sheet([
+      ['Moroccan Taste — تعليمات استيراد المنيو'],
+      [''],
+      ['الحقل', 'وصف', 'مثال'],
+      ['ID', 'اتركه فارغاً لإنشاء منتج جديد. اكتب نفس ID لتحديث منتج موجود.', 'MENU-1234567890'],
+      ['Name AR', 'اسم المنتج بالعربي — مطلوب', 'كابتشينو 8 أونصة'],
+      ['Name EN', 'اسم المنتج بالإنجليزي — يظهر على الفاتورة في وضع EN', 'Cappuccino 8oz'],
+      ['Category', 'الفئة (سيُنشأ التصنيف تلقائياً)', 'مشروبات ساخنة'],
+      ['Price', 'سعر البيع للعميل (ريال)', '11.00'],
+      ['Cost', 'تكلفة المنتج (تُحدث تلقائياً عند ربط وصفة)', '5.50'],
+      ['Margin %', 'هامش الربح — للقراءة فقط، يُحسب من Price و Cost', '50.00'],
+      ['Has Recipe?', 'للقراءة فقط — تُدار الوصفات من شاشة المحرر المتخصصة', 'yes / no'],
+      ['Production Method', 'made_at_branch / made_at_kitchen / prepared / imported', 'made_at_branch'],
+      ['Pricing Mode', 'fixed (تكلفة يدوية) أو variable (من الوصفة)', 'fixed'],
+      ['Active', '1 = مفعّل، 0 = معطّل', '1'],
+      [''],
+      ['ملاحظة:', 'يمكنك حذف الصف بالكامل لتركه دون تغيير. الصفوف الفارغة يتم تجاهلها.']
+    ]);
+    ins['!cols'] = [{ wch: 18 }, { wch: 60 }, { wch: 25 }];
+
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'منتجات ' + (brand.name || 'البراند').slice(0, 26));
+    XLSX.utils.book_append_sheet(wb, ins, 'التعليمات');
+
+    var fname = 'menu-' + (brand.name || 'brand').replace(/[\/\\:*?"<>|]/g, '_') +
+                '-' + new Date().toISOString().slice(0, 10) + '.xlsx';
+    XLSX.writeFile(wb, fname);
+    showToast('✓ تم تصدير ' + rows.length + ' منتج');
+  }).catch(function(e) {
+    console.error('[erpExportBrandMenuExcel]', e);
+    _v3Toast('فشل التصدير: ' + (e && e.message || 'خطأ غير معروف'), true);
+  });
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// V5.7.25 — Recipes (BOM) Excel export / import
+//   • Export: ONE row per ingredient line (long-format). Each row carries
+//     the product info (id, name, source) so importers can group by it.
+//     Plus a "INSTRUCTIONS" sheet explaining the format.
+//   • Import: groups rows by ProductId, builds a BOM payload per product,
+//     posts to /erp/bom (which also updates menu.cost automatically).
+// ═══════════════════════════════════════════════════════════════════
+window.erpExportBomExcel = function() {
+  _v3Toast('جاري تحضير الملف...');
+  Promise.all([
+    _erpEnsureXLSX(),
+    new Promise(function(r) { _erpGet('/erp/bom', r); }),
+    new Promise(function(r) { _erpGet('/inventory/items', r); })
+  ]).then(function(results) {
+    var XLSX = results[0];
+    var boms = results[1] || [];
+    var items = results[2] || [];
+    var itemMap = {};
+    items.forEach(function(it) { itemMap[it.id] = it; });
+
+    if (!boms.length) {
+      _v3Toast('لا توجد وصفات للتصدير', true);
+      return;
+    }
+
+    // Fetch all lines in parallel
+    var linesPromises = boms.map(function(b) {
+      return new Promise(function(r) { _erpGet('/erp/bom/' + encodeURIComponent(b.id) + '/lines', r); });
+    });
+
+    Promise.all(linesPromises).then(function(linesArr) {
+      // Build wide rows: one per ingredient line
+      var header = [
+        'BOM ID',                  // معرف الوصفة (لا تعدّل عند الاستيراد)
+        'Product ID',              // معرف المنتج
+        'Product Name',            // اسم المنتج
+        'Product Source',          // menu / inv
+        'Yield Qty',               // الإنتاجية
+        'Yield Unit',              // وحدة الإنتاجية
+        'Ingredient ID',           // معرف المكوّن
+        'Ingredient Name',         // اسم المكوّن
+        'Quantity',                // الكمية (بالوحدة الصغرى)
+        'Unit',                    // الوحدة
+        'Waste %',                 // نسبة الهدر
+        'Unit Cost',               // تكلفة وحدة المكوّن (للقراءة)
+        'Line Cost'                // تكلفة السطر = Qty × UnitCost × (1 + Waste%/100)
+      ];
+      var rows = [header];
+      var totalLines = 0;
+      boms.forEach(function(b, bi) {
+        var lines = linesArr[bi] || [];
+        if (!lines.length) {
+          rows.push([b.id, b.productId, b.productName || '', b.productSource || 'inv',
+                     Number(b.yieldQuantity) || 1, b.yieldUnit || 'PCS',
+                     '', '— لا توجد مكوّنات —', 0, '', 0, 0, 0]);
+          return;
+        }
+        lines.forEach(function(l) {
+          var item = itemMap[l.componentItemId] || {};
+          var unitCost = Number(item.cost) || Number(l.avgCost) || 0;
+          var qty = Number(l.quantity) || 0;
+          var waste = Number(l.wastePct) || 0;
+          var lineCost = qty * unitCost * (1 + waste / 100);
+          rows.push([
+            b.id,
+            b.productId,
+            b.productName || '',
+            b.productSource || 'inv',
+            Number(b.yieldQuantity) || 1,
+            b.yieldUnit || 'PCS',
+            l.componentItemId,
+            item.name || l.itemName || '',
+            qty,
+            l.unit || item.unit || 'PCS',
+            waste,
+            unitCost,
+            Math.round(lineCost * 10000) / 10000
+          ]);
+          totalLines++;
+        });
+      });
+
+      var ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = [
+        { wch: 18 }, { wch: 18 }, { wch: 26 }, { wch: 12 },
+        { wch: 10 }, { wch: 10 }, { wch: 16 }, { wch: 26 },
+        { wch: 10 }, { wch: 10 }, { wch: 9 }, { wch: 11 }, { wch: 11 }
+      ];
+      ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+      // Bold header
+      var headerRange = XLSX.utils.decode_range(ws['!ref']);
+      for (var c = headerRange.s.c; c <= headerRange.e.c; c++) {
+        var cell = XLSX.utils.encode_cell({ r: 0, c: c });
+        if (ws[cell]) {
+          ws[cell].s = {
+            font: { bold: true, color: { rgb: 'FFFFFF' } },
+            fill: { fgColor: { rgb: '7C3AED' } },
+            alignment: { horizontal: 'center' }
+          };
+        }
+      }
+
+      var ins = XLSX.utils.aoa_to_sheet([
+        ['Moroccan Taste — تعليمات استيراد الوصفات (BOM)'],
+        [''],
+        ['الحقل', 'وصف', 'مثال'],
+        ['BOM ID', 'اتركه فارغاً لإنشاء وصفة جديدة، أو احتفظ به لتحديث وصفة موجودة', 'BOM-1234567890'],
+        ['Product ID', 'معرف المنتج (من المنيو أو من inv_items) — مطلوب', 'MENU-1234567890'],
+        ['Product Name', 'للقراءة فقط — يُعرض لتسهيل التعرّف', 'كابتشينو 8 أونصة'],
+        ['Product Source', 'menu (منتج من المنيو) أو inv (مادة خام نصف مصنعة)', 'menu'],
+        ['Yield Qty', 'كم وحدة من المنتج تنتجها هذه الوصفة', '1'],
+        ['Yield Unit', 'وحدة الإنتاجية', 'PCS / كوب / لتر'],
+        ['Ingredient ID', 'معرف المكوّن من المخزون — مطلوب', 'INV-1234567890'],
+        ['Ingredient Name', 'للقراءة فقط', 'حبوب قهوة'],
+        ['Quantity', 'الكمية المستهلكة (بنفس الوحدة الصغرى لـ inv_items)', '12'],
+        ['Unit', 'وحدة الكمية (تُكتب كنص، يُفضَّل تطابقها مع inv_items.unit)', 'GR'],
+        ['Waste %', 'نسبة الهدر — مثال: 5 = 5% فاقد', '5'],
+        ['Unit Cost', 'للقراءة فقط — يأتي من inv_items.cost', '0.06'],
+        ['Line Cost', 'للقراءة فقط = Qty × UnitCost × (1 + Waste%/100)', '0.756'],
+        [''],
+        ['ملاحظة هامة:', 'ضع كل صف لكل مكوّن. الصفوف ذات Product ID المتشابه تُجمع تلقائياً وتُعتبر وصفة واحدة.'],
+        ['التكلفة:', 'بعد الاستيراد، menu.cost يُحدَّث تلقائياً من إجمالي الـ Line Cost للوصفة.']
+      ]);
+      ins['!cols'] = [{ wch: 22 }, { wch: 65 }, { wch: 25 }];
+
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'الوصفات');
+      XLSX.utils.book_append_sheet(wb, ins, 'التعليمات');
+
+      var fname = 'recipes-' + new Date().toISOString().slice(0, 10) + '.xlsx';
+      XLSX.writeFile(wb, fname);
+      showToast('✓ تم تصدير ' + boms.length + ' وصفة (' + totalLines + ' سطر)');
+    });
+  }).catch(function(e) {
+    console.error('[erpExportBomExcel]', e);
+    _v3Toast('فشل التصدير: ' + (e && e.message || ''), true);
+  });
+};
+
+window.erpImportBomExcel = function(input) {
+  var file = input && input.files && input.files[0];
+  if (!file) return;
+  input.value = '';
+
+  _erpEnsureXLSX().then(function(XLSX) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        var wb = XLSX.read(e.target.result, { type: 'array' });
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        var rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+        if (!rows.length) return _v3Toast('الملف فارغ', true);
+
+        function getField(row, names) {
+          for (var i = 0; i < names.length; i++) {
+            if (row[names[i]] != null && row[names[i]] !== '') return row[names[i]];
+          }
+          return '';
+        }
+
+        // Group rows by Product ID
+        var grouped = {};
+        rows.forEach(function(row) {
+          var productId = String(getField(row, ['Product ID', 'productId', 'معرف المنتج']) || '').trim();
+          var ingredId  = String(getField(row, ['Ingredient ID', 'ingredientId', 'معرف المكوّن']) || '').trim();
+          var qty       = Number(getField(row, ['Quantity', 'quantity', 'الكمية'])) || 0;
+          if (!productId || !ingredId || qty <= 0) return; // skip incomplete rows
+
+          if (!grouped[productId]) {
+            grouped[productId] = {
+              id: String(getField(row, ['BOM ID', 'bomId', 'معرف الوصفة']) || '').trim() || null,
+              productId: productId,
+              productSource: String(getField(row, ['Product Source', 'productSource', 'النوع']) || '').trim() || 'menu',
+              yieldQuantity: Number(getField(row, ['Yield Qty', 'yieldQuantity', 'الإنتاجية'])) || 1,
+              yieldUnit: String(getField(row, ['Yield Unit', 'yieldUnit', 'وحدة الإنتاجية']) || '').trim() || 'PCS',
+              lines: []
+            };
+          }
+          grouped[productId].lines.push({
+            componentItemId: ingredId,
+            quantity: qty,
+            unit:    String(getField(row, ['Unit', 'unit', 'الوحدة']) || 'PCS').trim(),
+            wastePct: Number(getField(row, ['Waste %', 'wastePct', 'نسبة الهدر'])) || 0
+          });
+        });
+        var bomsToSave = Object.values(grouped);
+
+        if (!bomsToSave.length) return _v3Toast('لا توجد وصفات صالحة للاستيراد', true);
+
+        WoModal.confirm({
+          title: 'تأكيد استيراد ' + bomsToSave.length + ' وصفة',
+          message: 'إجمالي ' + bomsToSave.reduce(function(s, b) { return s + b.lines.length; }, 0) +
+                   ' مكوّن. الوصفات الموجودة ستُحدَّث، الجديدة ستُنشأ. هل تتابع؟',
+          confirmText: 'استيراد ' + bomsToSave.length,
+          danger: false
+        }).then(function(ok) {
+          if (!ok) return;
+          var ok_count = 0, fail_count = 0;
+          var errors = [];
+          var idx = 0;
+          loader(true);
+          function processNext() {
+            if (idx >= bomsToSave.length) {
+              loader(false);
+              _v3Toast('✓ ' + ok_count + ' وصفة' + (fail_count ? ' (فشل ' + fail_count + ')' : ''));
+              if (typeof erpLoadBOM === 'function') erpLoadBOM();
+              if (errors.length) console.warn('[bom import] errors:', errors);
+              return;
+            }
+            var b = bomsToSave[idx++];
+            callAPI('POST', '/erp/bom', b, function(resp) {
+              if (resp && (resp.success || resp.id)) ok_count++;
+              else { fail_count++; errors.push({ productId: b.productId, error: (resp && resp.error) || 'unknown' }); }
+              processNext();
+            });
+          }
+          processNext();
+        });
+      } catch (err) {
+        console.error('[importBomExcel]', err);
+        _v3Toast('فشل قراءة الملف: ' + err.message, true);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }).catch(function(e) {
+    _v3Toast('فشل تحميل مكتبة Excel: ' + e.message, true);
+  });
+};
+
+// V5.7.25 — Brand menu Excel import (smart upsert by id)
+window.erpImportBrandMenuExcel = function(input) {
+  var file = input && input.files && input.files[0];
+  if (!file) return;
+  input.value = ''; // clear so re-uploading the same file fires onchange
+  var brand = window._bmCurrentBrand || {};
+  if (!brand.id) return _v3Toast('اختر براند أولاً', true);
+
+  _erpEnsureXLSX().then(function(XLSX) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        var wb = XLSX.read(e.target.result, { type: 'array' });
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        var rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+        if (!rows.length) return _v3Toast('الملف فارغ', true);
+
+        // Map flexible header names to canonical fields
+        function getField(row, names) {
+          for (var i = 0; i < names.length; i++) {
+            if (row[names[i]] != null && row[names[i]] !== '') return row[names[i]];
+          }
+          return '';
+        }
+        var preview = rows.map(function(row) {
+          return {
+            id:        String(getField(row, ['ID', 'id', 'المعرف']) || '').trim(),
+            name:      String(getField(row, ['Name AR', 'name', 'الاسم', 'اسم المنتج']) || '').trim(),
+            nameEn:    String(getField(row, ['Name EN', 'nameEn', 'name_en', 'الاسم بالإنجليزية']) || '').trim(),
+            category:  String(getField(row, ['Category', 'category', 'الفئة']) || '').trim() || 'عام',
+            price:     Number(getField(row, ['Price', 'price', 'السعر'])) || 0,
+            cost:      Number(getField(row, ['Cost', 'cost', 'التكلفة'])) || 0,
+            productionMethod: String(getField(row, ['Production Method', 'productionMethod', 'طريقة الإنتاج']) || '').trim() || 'made_at_branch',
+            pricingMode: String(getField(row, ['Pricing Mode', 'pricingMode', 'طريقة التسعير']) || '').trim() || 'fixed',
+            active:    String(getField(row, ['Active', 'active', 'مفعّل'])).trim() !== '0',
+            brandId:   brand.id
+          };
+        }).filter(function(r) { return r.name; }); // skip rows with no name
+
+        if (!preview.length) return _v3Toast('لا توجد صفوف صالحة (الاسم مطلوب)', true);
+
+        // Show preview + confirm
+        WoModal.confirm({
+          title: 'تأكيد استيراد ' + preview.length + ' منتج',
+          message: 'سيتم إضافة المنتجات الجديدة وتحديث الموجودة. هل تتابع؟',
+          confirmText: 'استيراد ' + preview.length,
+          danger: false
+        }).then(function(ok) {
+          if (!ok) return;
+          var ok_count = 0, fail_count = 0;
+          var errors = [];
+          var idx = 0;
+          function processNext() {
+            if (idx >= preview.length) {
+              _v3Toast('✓ ' + ok_count + ' منتج' + (fail_count ? ' (فشل ' + fail_count + ')' : ''));
+              if (typeof erpLoadBrandMenu === 'function') erpLoadBrandMenu();
+              if (errors.length) console.warn('[import] errors:', errors);
+              return;
+            }
+            var r = preview[idx++];
+            var method = r.id ? 'PUT' : 'POST';
+            var path   = r.id ? ('/menu/' + r.id) : '/menu';
+            callAPI(method, path, r, function(resp) {
+              if (resp && (resp.success || resp.id)) ok_count++;
+              else { fail_count++; errors.push({ row: r.name, error: (resp && resp.error) || 'unknown' }); }
+              processNext();
+            });
+          }
+          loader(true);
+          processNext();
+          // Release loader after the async chain completes
+          var releaseTimer = setInterval(function() {
+            if (idx >= preview.length) { loader(false); clearInterval(releaseTimer); }
+          }, 300);
+        });
+      } catch (err) {
+        console.error('[importBrandMenuExcel]', err);
+        _v3Toast('فشل قراءة الملف: ' + err.message, true);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }).catch(function(e) {
+    _v3Toast('فشل تحميل مكتبة Excel: ' + e.message, true);
+  });
+};

@@ -620,6 +620,27 @@ router.get('/invoice/:orderId', async (req, res) => {
       companyLogo  = map.logo         || '';
     } catch (_) { /* settings table missing — ignore, defaults already set */ }
 
+    // V5.7.26 — per-brand logo: if the sale has a brand_id, prefer THAT
+    //   brand's logo over the company-wide one. So Burger Wagef sales
+    //   print with the Burger Wagef logo, Hangerstation with theirs, etc.
+    let brandLogo = '';
+    let brandName = '';
+    try {
+      let brandId = sale.brand_id;
+      if (!brandId && sale.username) {
+        // Fallback: derive from the user's primary brand
+        const [ub] = await db.query('SELECT brand_id FROM user_brands WHERE username = ? LIMIT 1', [sale.username]);
+        if (ub.length) brandId = ub[0].brand_id;
+      }
+      if (brandId) {
+        const [br] = await db.query('SELECT name, logo FROM brands WHERE id = ?', [brandId]);
+        if (br.length) {
+          brandName = br[0].name || '';
+          brandLogo = br[0].logo || '';
+        }
+      }
+    } catch (_) { /* brands table or brand_id column may not exist on legacy schemas */ }
+
     res.json({
       orderId: sale.id, date: sale.order_date, payment: sale.payment_method,
       totalFinal: Number(sale.total_final), username: sale.username,
@@ -639,7 +660,11 @@ router.get('/invoice/:orderId', async (req, res) => {
       currency: currency,
       companyPhone: companyPhone,
       companyEmail: companyEmail,
-      companyLogo: companyLogo
+      // V5.7.26 — receiptLogo prefers brand logo > company logo
+      companyLogo: companyLogo,
+      brandName: brandName,
+      brandLogo: brandLogo,
+      receiptLogo: brandLogo || companyLogo
     });
   } catch (e) { res.json(null); }
 });

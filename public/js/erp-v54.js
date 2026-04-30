@@ -400,6 +400,37 @@
         (data.rejection_reason ? '<div style="margin-top:14px;padding:14px;background:#fee2e2;border:1px solid #fca5a5;border-radius:12px;color:#991b1b;"><strong>سبب الرفض:</strong> '+_esc(data.rejection_reason)+'</div>' : '') +
       '</div>';
     document.getElementById('erpV5Host').innerHTML = html;
+
+    // V5.7.26 — mount the unified WoQtyInput widget on every row that has
+    //   a multi-unit ingredient (conv_rate > 1). DEBOUNCE the API call by
+    //   700ms so we don't re-render the whole table on every keystroke
+    //   (which would destroy the input the user is typing in).
+    if (typeof window.WoQtyInput !== 'undefined') {
+      document.querySelectorAll('#v54StBody .wqty-host').forEach(function(host) {
+        var stkId   = host.dataset.stkId;
+        var lineId  = host.dataset.lineId;
+        var saveTimer = null;
+        try {
+          window.WoQtyInput.mount(host, {
+            unit:     host.dataset.unit || 'PCS',
+            bigUnit:  host.dataset.bigUnit || '',
+            convRate: Number(host.dataset.convRate) || 1,
+            stock:    Number(host.dataset.stock) || 0,
+            initialMinorQty: Number(host.dataset.initQty) || 0,
+            compact:  true,
+            onChange: function(minorQty) {
+              clearTimeout(saveTimer);
+              saveTimer = setTimeout(function() {
+                if (typeof ERPv54.stkUpdateLine === 'function') {
+                  ERPv54.stkUpdateLine(stkId, lineId, minorQty);
+                }
+              }, 700);
+            }
+          });
+        } catch (e) { console.warn('[stocktake] WoQtyInput mount:', e); }
+      });
+    }
+
     document.getElementById('v54StFilter').addEventListener('change', e => {
       const f = e.target.value;
       document.querySelectorAll('#v54StBody tr').forEach(tr => {
@@ -419,13 +450,30 @@
   function _v54StRow(it, stkId, canEdit){
     var flagClass = it.is_flagged ? 'v54-flagged' : '';
     var varColor = Number(it.variance) < 0 ? '#dc2626' : (Number(it.variance) > 0 ? '#16a34a' : '#64748b');
+    // V5.7.26 — when the inv_item has a big-unit + conv_rate > 1, render
+    //   the unified WoQtyInput widget (major + minor + auto-sync). Otherwise
+    //   fall back to the legacy single number input. The host div carries
+    //   data attrs that we read in a post-render mounting pass.
+    var qtyCell;
+    var convRate = Number(it.conv_rate) || 1;
+    var bigUnit  = it.big_unit || '';
+    var unit     = it.item_unit || 'PCS';
+    if (canEdit && convRate > 1 && bigUnit) {
+      qtyCell = '<div class="wqty-host" data-stk-id="'+_esc(stkId)+'" data-line-id="'+_esc(it.id)+'"' +
+                  ' data-unit="'+_esc(unit)+'" data-big-unit="'+_esc(bigUnit)+'"' +
+                  ' data-conv-rate="'+convRate+'"' +
+                  ' data-init-qty="'+(Number(it.actual_qty)||0)+'"' +
+                  ' data-stock="'+(Number(it.current_stock)||0)+'"></div>';
+    } else {
+      qtyCell = '<input type="number" step="0.001" value="'+it.actual_qty+'" '+(canEdit?'':'disabled')+
+        ' onchange="ERPv54.stkUpdateLine(\''+_esc(stkId)+'\',\''+_esc(it.id)+'\',this.value)" style="width:100px;padding:6px 8px;border:1.5px solid #e2e8f0;border-radius:8px;">';
+    }
     return '<tr class="'+flagClass+'" data-line-id="'+_esc(it.id)+'" data-variance="'+it.variance+'" data-verified="'+(it.verified_at?'1':'0')+'">' +
       '<td>'+(it.is_flagged?'<i class="fas fa-flag" style="color:#dc2626;" title="فرق مشبوه"></i>':'')+'</td>' +
       '<td style="font-family:monospace;font-size:11px;">'+_esc(it.item_code||'')+'</td>' +
       '<td><strong>'+_esc(it.item_name||it.item_id)+'</strong></td>' +
       '<td>'+_money(it.system_qty)+'</td>' +
-      '<td><input type="number" step="0.001" value="'+it.actual_qty+'" '+(canEdit?'':'disabled')+
-        ' onchange="ERPv54.stkUpdateLine(\''+_esc(stkId)+'\',\''+_esc(it.id)+'\',this.value)" style="width:100px;padding:6px 8px;border:1.5px solid #e2e8f0;border-radius:8px;"></td>' +
+      '<td>'+qtyCell+'</td>' +
       '<td style="color:'+varColor+';font-weight:800;">'+_money(it.variance)+'</td>' +
       '<td style="font-weight:700;">'+(it.variance_pct||0)+'%</td>' +
       '<td>'+_money(it.variance_value)+' ر.س</td>' +

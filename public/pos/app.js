@@ -605,7 +605,9 @@ window.printReceipt = function(orderId) {
     var branchCompanyName = inv.branchCompanyName || '';
     var cashierName       = inv.cashierName       || inv.username || state.user;
     var cashierEmpNo      = inv.cashierEmpNo      || inv.username || '';
-    var logoUrl           = inv.companyLogo       || (state.settings && state.settings.logo) || '';
+    // V5.7.26 — prefer brand-specific logo (returned by /sales/invoice as
+    //   receiptLogo) over the company-wide one
+    var logoUrl           = inv.receiptLogo       || inv.brandLogo || inv.companyLogo || (state.settings && state.settings.logo) || '';
 
     // V5.7.25 — items rows explicitly LTR with 4 columns:
     //   Item name | Qty | Unit price | Line total

@@ -67,6 +67,8 @@ router.get('/:id', async (req, res) => {
       WHERE s.id = ?`, [req.params.id]);
     if (!hRows.length) return res.status(404).json({ error: 'Not found' });
     // V5-FIX: legacy schema uses inv_item_id (not item_id). Map to item_id in output for UI consistency.
+    // V5.7.26 — also surface big_unit + conv_rate so the frontend can
+    //   render the unified WoQtyInput widget (major + minor + auto-sync).
     const [items] = await db.query(`
       SELECT si.id, si.stocktake_id, si.inv_item_id AS item_id,
              si.system_qty, si.actual_qty, si.variance,
@@ -74,7 +76,10 @@ router.get('/:id', async (req, res) => {
              si.verified_by, si.verified_at, si.reason_code, si.notes,
              COALESCE(it.name, si.inv_item_name, si.inv_item_id) AS item_name,
              '' AS item_code,
-             COALESCE(it.unit, si.unit, '') AS item_unit
+             COALESCE(it.unit, si.unit, '') AS item_unit,
+             COALESCE(it.big_unit, '') AS big_unit,
+             COALESCE(it.conv_rate, 1) AS conv_rate,
+             COALESCE(it.stock, 0) AS current_stock
       FROM stocktake_items si
       LEFT JOIN inv_items it ON it.id = si.inv_item_id
       WHERE si.stocktake_id = ? ORDER BY si.is_flagged DESC, si.variance_pct DESC`, [req.params.id]);

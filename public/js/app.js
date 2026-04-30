@@ -1814,7 +1814,8 @@ function _printReceiptBody(orderId) {
     var branchCompanyName = inv.branchCompanyName || '';
     var cashierName       = inv.cashierName       || inv.username || state.user;
     var cashierEmpNo      = inv.cashierEmpNo      || '';
-    var logoUrl           = inv.companyLogo       || (state.settings && state.settings.logo) || '';
+    // V5.7.26 — prefer brand-specific logo over the company-wide one
+    var logoUrl           = inv.receiptLogo       || inv.brandLogo || inv.companyLogo || (state.settings && state.settings.logo) || '';
 
     var totalItems = 0;
     // V5.7.25 — explicit LTR rows: Item | Qty | Price | Total

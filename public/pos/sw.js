@@ -15,7 +15,7 @@
  * clients pick up the fresh shell on next load.
  */
 
-const CACHE_VERSION = 'mt-pos-v44-recipe-fullscreen';
+const CACHE_VERSION = 'mt-pos-v45-network-first-js';
 const CACHE_NAME = CACHE_VERSION;
 
 // App shell — pre-cached on install so the first launch works offline
@@ -93,12 +93,18 @@ self.addEventListener('fetch', (event) => {
 
   if (!isPos && !isShared && !isFontAwesome) return;
 
-  // 4. Stale-while-revalidate: return cache immediately, refresh in background
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      const fetchPromise = fetch(request)
+  // V5.7.32 — JS files use NETWORK-FIRST so users always pick up the latest
+  //   app code. Stale-while-revalidate was trapping users on old code for
+  //   2+ refreshes after each deploy. Now: try network, fall back to cache
+  //   only when offline. Other assets (CSS, images, fonts) stay on the fast
+  //   stale-while-revalidate path.
+  const isJs = url.pathname.endsWith('.js');
+
+  if (isJs) {
+    // Network-first for JS
+    event.respondWith(
+      fetch(request)
         .then((response) => {
-          // Only cache successful responses we're allowed to read
           if (
             response &&
             response.status === 200 &&
@@ -111,9 +117,30 @@ self.addEventListener('fetch', (event) => {
           }
           return response;
         })
-        .catch(() => cached); // if network fails, fall back to cache
+        .catch(() => caches.match(request)) // fall back to cache only when offline
+    );
+    return;
+  }
 
-      // Return cached version immediately if we have one, else wait for network
+  // Stale-while-revalidate for everything else (CSS / images / fonts / HTML)
+  event.respondWith(
+    caches.match(request).then((cached) => {
+      const fetchPromise = fetch(request)
+        .then((response) => {
+          if (
+            response &&
+            response.status === 200 &&
+            (response.type === 'basic' || response.type === 'cors')
+          ) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(request, clone).catch(() => {});
+            });
+          }
+          return response;
+        })
+        .catch(() => cached);
+
       return cached || fetchPromise;
     })
   );

@@ -1243,3 +1243,251 @@ body.ar .pwa-install-btn {
 .sc-v3-stat-total { background: #fef3c7; border-color: #fde68a; }
 .sc-v3-stat-total strong { color: #92400e; font-size: 18px; }
 
+
+/* ────────────────────────────────────────────────────────────
+   V5.7.15 — Shift-close modal redesign
+   • Mobile-first: cards stack vertically on small screens
+   • Collapsible sections via <details>/<summary>
+   • Cash denominations as a card grid (touch-friendly)
+   • Hidden expected-totals reveal pattern (cashier counts first)
+   • Variance alert + mandatory explanation gating the close button
+──────────────────────────────────────────────────────────── */
+.sc-section {
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff;
+}
+.sc-section-head {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 16px;
+  font-weight: 800;
+  font-size: 13px;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+  background: linear-gradient(180deg, #f8fafc, #fff);
+}
+.sc-section-head::-webkit-details-marker { display: none; }
+.sc-section-head .sc-chevron {
+  margin-inline-start: auto;
+  font-size: 11px;
+  color: #94a3b8;
+  transition: transform 0.2s;
+}
+.sc-section[open] .sc-section-head .sc-chevron { transform: rotate(180deg); }
+.sc-section-body { padding: 0 16px 14px; }
+
+.sc-mini-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.sc-mini-table th, .sc-mini-table td { padding: 6px 8px; text-align: start; border-bottom: 1px solid #f1f5f9; }
+.sc-mini-table th { background: #f8fafc; font-weight: 700; color: #64748b; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.4px; }
+.sc-mini-table td:nth-child(2), .sc-mini-table th:nth-child(2),
+.sc-mini-table td:nth-child(3), .sc-mini-table th:nth-child(3),
+.sc-mini-table td:nth-child(4), .sc-mini-table th:nth-child(4) { text-align: center; }
+.sc-mini-table tbody tr:hover td { background: #f8fafc; }
+.sc-empty { text-align: center; color: #94a3b8; padding: 16px; font-style: italic; }
+
+/* Denomination grid — touch-friendly cards */
+.sc-denom-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.sc-denom-card {
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: all 0.15s;
+}
+.sc-denom-card:focus-within { border-color: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,0.12); }
+.sc-denom-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 800;
+  color: #0f172a;
+}
+.sc-denom-card-top .sc-denom-face { font-size: 14px; }
+.sc-denom-card-top .sc-denom-unit { font-size: 10px; color: #94a3b8; font-weight: 600; }
+.sc-denom-card input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+  font-family: inherit;
+  -webkit-appearance: none;
+}
+.sc-denom-card input:focus { outline: none; border-color: #16a34a; }
+.sc-denom-card-total {
+  font-size: 12px;
+  color: #16a34a;
+  font-weight: 800;
+  text-align: center;
+  font-family: monospace;
+}
+
+.sc-cash-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #f0fdf4;
+  border: 1.5px solid #86efac;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 800;
+  color: #166534;
+  margin-top: 8px;
+}
+.sc-cash-total strong { font-size: 16px; font-family: monospace; }
+
+/* Electronic methods grid */
+.sc-elec-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.sc-elec-card {
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sc-elec-card:focus-within { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
+.sc-elec-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 800;
+  color: #0f172a;
+  font-size: 13px;
+}
+.sc-elec-card input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+  font-family: monospace;
+  -webkit-appearance: none;
+}
+.sc-elec-card input:focus { outline: none; border-color: #3b82f6; }
+
+/* Reveal bar (the big checkbox prompt) */
+.sc-reveal-bar {
+  background: linear-gradient(135deg, #fef9c3, #fde68a);
+  border-top: 1px solid #fbbf24;
+  border-bottom: 1px solid #fbbf24;
+  padding: 14px 16px;
+  margin: 8px 0 0;
+}
+.sc-reveal-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-weight: 800;
+  color: #78350f;
+  font-size: 13px;
+  user-select: none;
+}
+.sc-reveal-label input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  accent-color: #d97706;
+}
+
+/* Comparison panel (revealed after counting) */
+.sc-compare-panel { padding: 14px 16px; background: #f8fafc; }
+.sc-compare-panel.hidden { display: none; }
+.sc-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.sc-cmp-card {
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+  text-align: center;
+}
+.sc-cmp-blue  { border-color: #bfdbfe; background: linear-gradient(135deg, #eff6ff, #dbeafe); }
+.sc-cmp-green { border-color: #86efac; background: linear-gradient(135deg, #f0fdf4, #dcfce7); }
+.sc-cmp-lbl   { font-size: 10.5px; font-weight: 800; color: #64748b; margin-bottom: 4px; }
+.sc-cmp-val   { font-size: 20px; font-weight: 900; font-family: monospace; color: #0f172a; }
+.sc-cmp-unit  { font-size: 9.5px; color: #94a3b8; margin-top: 2px; }
+.sc-cmp-diff-zero  { border-color: #86efac !important; background: linear-gradient(135deg,#f0fdf4,#dcfce7) !important; }
+.sc-cmp-diff-zero  .sc-cmp-val { color: #16a34a; }
+.sc-cmp-diff-pos   { border-color: #fde68a !important; background: linear-gradient(135deg,#fef9c3,#fef3c7) !important; }
+.sc-cmp-diff-pos   .sc-cmp-val { color: #b45309; }
+.sc-cmp-diff-neg   { border-color: #fca5a5 !important; background: linear-gradient(135deg,#fef2f2,#fee2e2) !important; }
+.sc-cmp-diff-neg   .sc-cmp-val { color: #dc2626; }
+
+/* Per-method diff rows */
+.sc-pmd-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.sc-pmd-row .sc-pmd-name { font-weight: 700; color: #0f172a; }
+.sc-pmd-row .sc-pmd-vals { display: flex; gap: 14px; align-items: center; font-family: monospace; }
+.sc-pmd-row .sc-pmd-exp  { color: #64748b; font-size: 11px; }
+.sc-pmd-row .sc-pmd-act  { color: #0f172a; font-weight: 800; }
+.sc-pmd-row .sc-pmd-diff { font-weight: 800; min-width: 60px; text-align: end; }
+
+/* Variance alert + mandatory explanation */
+.sc-variance-alert {
+  background: linear-gradient(135deg, #fef2f2, #fee2e2);
+  border: 1.5px solid #fca5a5;
+  border-radius: 10px;
+  padding: 14px;
+  margin-top: 12px;
+}
+.sc-variance-alert.hidden { display: none; }
+.sc-variance-alert .sc-va-head {
+  font-weight: 900;
+  color: #991b1b;
+  font-size: 14px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sc-variance-alert .sc-va-body {
+  font-size: 12px;
+  color: #7f1d1d;
+  margin-bottom: 8px;
+  line-height: 1.6;
+}
+
+/* Mobile (≤520px): denominations and electronic stack 2-up; comparison stacks vertical */
+@media (max-width: 520px) {
+  .sc-denom-grid { grid-template-columns: repeat(2, 1fr); }
+  .sc-elec-grid  { grid-template-columns: 1fr; }
+  .sc-compare-grid { grid-template-columns: 1fr; }
+  .sc-cmp-card { padding: 10px; }
+  .sc-cmp-val { font-size: 18px; }
+  .sc-section-body { padding: 0 12px 12px; }
+}

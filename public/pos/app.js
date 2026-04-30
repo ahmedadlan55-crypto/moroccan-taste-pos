@@ -315,43 +315,11 @@ window.updateCart = function() {
   if (state.currentDiscount.amount > subtotal) state.currentDiscount.amount = subtotal;
   var afterDiscount = subtotal - state.currentDiscount.amount;
 
-  // Service fee
+  // V5.7.15 — service-fee functionality REMOVED from the cashier UI per user
+  //   request ("don't want this box at all"). Fees are now uniformly zero
+  //   regardless of payment method. Order totals = subtotal − discount.
   var serviceFee = 0;
   var finalTotal = afterDiscount;
-  var feeRow = q('#serviceFeeRow');
-  var feeInput = q('#serviceFeeInput');
-  // V5.7.11 — service fee is now PURELY data-driven. We no longer hardcode
-  //   "Cash and Card never have fees" — that broke when admins added a new
-  //   method (e.g. مدي) which then incorrectly showed a 0% fee row, making
-  //   users think fees were being charged.
-  // Rule:
-  //   • Look up the selected method in state.paymentMethods
-  //   • feeRate = method.ServiceFeeRate  (Kita falls back to legacy state.kitaFeeRate)
-  //   • Show the fee row ONLY IF: (rate > 0) OR (method is Split, which has manual fee input)
-  var selectedPM = (state.paymentMethods || []).find(function(m) { return m.Name === payMethod; });
-  var feeRate = selectedPM ? Number(selectedPM.ServiceFeeRate) || 0 : (payMethod === 'Kita' ? state.kitaFeeRate : 0);
-  var manualFee = feeInput ? Number(feeInput.value) : 0;
-  var showFee = (feeRate > 0) || (manualFee > 0) || payMethod === 'Split';
-
-  if (showFee) {
-    if (manualFee > 0) {
-      serviceFee = manualFee;
-    } else if (feeRate > 0) {
-      serviceFee = afterDiscount * (feeRate / 100);
-    }
-    finalTotal = afterDiscount + serviceFee;
-    if (feeRow) feeRow.classList.remove('hidden');
-    var isEn = state.lang === 'en';
-    var feeLabel = q('#serviceFeeLabel');
-    // Service Fee label: translated base + translated method name in parentheses
-    var methodLabel = selectedPM ? (isEn ? (selectedPM.Name || selectedPM.NameAR) : (selectedPM.NameAR || selectedPM.Name)) : t(String(payMethod).toLowerCase());
-    if (feeLabel) feeLabel.textContent = t('serviceFee').replace(':', '') + ' (' + methodLabel + '):';
-    q('#serviceFeeText').innerText = formatVal(serviceFee) + (feeRate > 0 && !manualFee ? ' (' + feeRate + '%)' : '');
-    if (feeInput && !manualFee && feeRate > 0) feeInput.placeholder = formatVal(serviceFee) + ' (' + t('serviceFeeAuto') + ' ' + feeRate + '%)';
-  } else {
-    if (feeRow) feeRow.classList.add('hidden');
-    if (feeInput) { feeInput.value = ''; feeInput.placeholder = '0'; }
-  }
 
   // Split
   var splitPanel = q('#splitPayPanel');
@@ -384,10 +352,9 @@ window.toggleMobileCart = function() {
 
 window.setPayMethod = function(m) {
   q('#posPayMethod').value = m;
-  var feeInput = q('#serviceFeeInput');
-  if (feeInput) feeInput.value = '';
   updateCart();
 };
+// V5.7.15 — kept as no-op for back-compat; the input no longer exists in the UI
 window.applyManualServiceFee = function() { updateCart(); };
 
 // =========================================
@@ -512,14 +479,10 @@ window.doCheckout = function() {
   var afterDiscount = sub - state.currentDiscount.amount;
   var payMethod = q('#posPayMethod').value;
 
+  // V5.7.15 — service fee removed from cashier UI (user request).
+  //   Order total is just subtotal − discount. Split payments still validated.
   var serviceFee = 0;
   var totalFinal = afterDiscount;
-  // V5.7.11 — same dynamic logic as updateCart (no hardcoded Cash/Card exclusion)
-  var selectedPM = (state.paymentMethods || []).find(function(m) { return m.Name === payMethod; });
-  var feeRate = selectedPM ? Number(selectedPM.ServiceFeeRate) || 0 : (payMethod === 'Kita' ? state.kitaFeeRate : 0);
-  var feeInput = q('#serviceFeeInput');
-  var manualFee = feeInput ? Number(feeInput.value) : 0;
-
   var splitDetails = null;
   if (payMethod === 'Split') {
     splitDetails = {};
@@ -536,15 +499,6 @@ window.doCheckout = function() {
       );
     }
     totalFinal = afterDiscount;
-  } else if (manualFee > 0) {
-    serviceFee = manualFee;
-    totalFinal = afterDiscount + serviceFee;
-  } else if (feeRate > 0) {
-    // V5.7.11 — fee charged whenever method has a configured rate; no
-    //           hardcoded Cash/Card exception (admins control rates from
-    //           the dedicated payment-methods admin section).
-    serviceFee = afterDiscount * (feeRate / 100);
-    totalFinal = afterDiscount + serviceFee;
   }
 
   var order = {
@@ -612,17 +566,8 @@ window.doCheckout = function() {
     }).saveOrder(order, state.user, state.activeShiftId);
   };
 
-  if (serviceFee > 0) {
-    glassConfirm(
-      t('confirmServiceFeeTitle'),
-      t('serviceFeeLine') + formatVal(serviceFee) + ' ' + state.settings.currency + '\n' + t('totalLine') + formatVal(totalFinal) + ' ' + state.settings.currency,
-      { okText: t('continue') }
-    ).then(function(ok) {
-      if (ok) send();
-    });
-  } else {
-    send();
-  }
+  // V5.7.15 — service fee removed; always send directly
+  send();
 };
 
 // =========================================
@@ -2507,9 +2452,13 @@ function _posApplyChannelPrices() {
       m.price = m._origPrice;
     }
   });
-  // V5.7.11 — also re-stamp every existing cart-line's unit price from the
-  // new channel's price list. Match by id first (canonical), fall back to
-  // name when the cart line was added before menu sync.
+  // V5.7.11/.15 — re-stamp every existing cart-line's unit price from the new
+  //   channel's price list. Match by id first (canonical), fall back to name.
+  //
+  //   IMPORTANT: ALSO update line.basePrice. The legacy updateCart() does
+  //   `c.price = c.basePrice` whenever payment method != 'Kita' to revert any
+  //   per-line edits — without this, the channel switch silently reverted the
+  //   cart back to the pre-switch price on the very next render.
   (state.cart || []).forEach(function(line) {
     var newPrice = null;
     if (state.channelPriceMap && line.id != null && state.channelPriceMap[line.id] != null) {
@@ -2521,7 +2470,10 @@ function _posApplyChannelPrices() {
       });
       if (menuItem) newPrice = Number(menuItem.price || 0);
     }
-    if (newPrice != null && !isNaN(newPrice)) line.price = newPrice;
+    if (newPrice != null && !isNaN(newPrice)) {
+      line.price     = newPrice;
+      line.basePrice = newPrice;   // ← V5.7.15 fix: keep basePrice in sync
+    }
   });
   if (typeof renderMenuGrid === 'function') renderMenuGrid();
   if (typeof updateCart === 'function') updateCart();
@@ -2704,141 +2656,298 @@ window.posClearInvoiceDiscount = function() {
   updateCart();
 };
 
-// ─── 4. V3 Shift Close — denominations + electronic reconciliation ─────
+// ─── V5.7.15 Shift-Close — counter-first flow with reveal+variance gate ─────
+//   The cashier:
+//     1. sees items SOLD (read-only) for inventory verification
+//     2. counts cash by denomination  (denom-card grid)
+//     3. enters per-method electronic actuals (no 'expected' shown yet)
+//     4. ticks "I'm done counting" → expected reveals, variance computes
+//     5. if variance != 0, MUST type a reason ≥10 chars to unlock the close button
+//   The close button is locked until the reveal happens AND (variance==0 OR
+//   reason is filled).
+// V5.7.15 — extended denomination set including ½ SAR coin
+state._v3CashDenoms = [500, 200, 100, 50, 20, 10, 5, 1, 0.5];
+
+// In-memory state for the modal session
+var _scExpectedTotal = 0;       // total expected from system (loaded but hidden)
+var _scExpectedCash  = 0;       // cash portion of expected
+var _scExpectedElec  = {};      // { methodId: amount }
+var _scElecMethods   = [];      // methods array from backend
+var _scRevealed      = false;   // has the cashier ticked the reveal box?
+
 window.shiftCloseStart = function() {
   if (!state.activeShiftId) return glassToast(t ? t('noActiveShift') : 'لا توجد وردية مفتوحة', true);
 
-  // Reset state
-  state._scExpected = { cash: 0, total: 0, byMethod: {} };
-  state._scDenomCounts = {};
+  // ── Reset session state ──
+  _scExpectedTotal = 0;
+  _scExpectedCash  = 0;
+  _scExpectedElec  = {};
+  _scElecMethods   = [];
+  _scRevealed      = false;
+  q('#scNotes').value = '';
+  if (q('#scRevealCheck')) q('#scRevealCheck').checked = false;
+  if (q('#scComparePanel')) q('#scComparePanel').classList.add('hidden');
+  if (q('#scVarianceAlert')) q('#scVarianceAlert').classList.add('hidden');
+  if (q('#scVarianceNote')) q('#scVarianceNote').value = '';
+  _scLockClose('أنهِ العدّ أولاً', 'fa-lock');
 
-  // Render denominations table
-  var denomBody = q('#scDenomBody');
-  if (denomBody) {
-    denomBody.innerHTML = state._v3CashDenoms.map(function(d){
-      return '<tr>' +
-        '<td><strong>' + d + ' SAR</strong></td>' +
-        '<td><input type="number" min="0" step="1" class="form-control glass-input sc-denom-input" data-denom="' + d + '" value="0" oninput="scV3Recalc()"></td>' +
-        '<td><span class="sc-denom-total" data-denom="' + d + '">0.00</span></td>' +
-      '</tr>';
+  // ── Cashier label ──
+  var cashierName = (state.currentUser && state.currentUser.displayName) || state.user || '—';
+  if (q('#scCashierLbl')) q('#scCashierLbl').textContent = cashierName;
+
+  // ── Denomination cards ──
+  var grid = q('#scDenomGrid');
+  if (grid) {
+    grid.innerHTML = state._v3CashDenoms.map(function(d) {
+      var label = d < 1 ? (d * 100) + ' هـ' : d + ' SAR';
+      var unit  = d < 1 ? 'هللة' : (d <= 1 ? 'ريال' : 'فئة');
+      return '<div class="sc-denom-card">' +
+               '<div class="sc-denom-card-top"><span class="sc-denom-face">' + label + '</span><span class="sc-denom-unit">' + unit + '</span></div>' +
+               '<input type="number" inputmode="numeric" min="0" step="1" class="sc-denom-input" data-denom="' + d + '" value="0" oninput="scV3Recalc()" onfocus="this.select()">' +
+               '<div class="sc-denom-card-total" data-denom="' + d + '">0.00</div>' +
+             '</div>';
     }).join('');
   }
-  q('#scNotes').value = '';
 
-  // Load expected per method
-  _posCallAPI('GET', '/shifts/closing-data-v3/' + state.activeShiftId, null, function(d) {
+  // ── Open the modal early so the user sees the loading state for items + methods ──
+  openGlassModal('#modalShiftClose');
+
+  // ── Fetch shift data (items + methods + expected) ──
+  _posCallAPI('GET', '/shifts/closing-data/' + state.activeShiftId, null, function(d) {
     if (!d || d.error) {
-      glassToast((d && d.error) || 'فشل تحميل بيانات الجلسة', true);
+      glassToast((d && d.error) || 'فشل تحميل بيانات الوردية', true);
       return;
     }
-    state._scExpected.total = Number(d.expectedTotal || 0);
-    state._scExpected.byMethod = d.expected || {};
+
+    // ── Stash expected (will only be SHOWN after reveal) ──
+    _scExpectedTotal = Number(d.totalTheoretical || 0);
     var methods = d.methods || [];
-
-    // Identify cash methods (groupType=cash)
-    var cashExp = 0;
-    var elecMethods = [];
-    methods.forEach(function(m){
-      if ((m.groupType||'cash').toLowerCase() === 'cash') cashExp += Number(m.expectedAmount || 0);
-      else elecMethods.push(m);
+    _scElecMethods = methods.filter(function(m) {
+      var gt = (m.groupType || '').toLowerCase();
+      return gt !== 'cash' && gt !== 'unmatched';
     });
-    // Also fold any 'cash' key from expected into cashExp if no method matched
-    if (cashExp === 0 && d.expected && d.expected.cash) cashExp = Number(d.expected.cash);
-    state._scExpected.cash = cashExp;
+    var cashSum = 0;
+    methods.forEach(function(m) {
+      var gt = (m.groupType || '').toLowerCase();
+      if (gt === 'cash') cashSum += Number(m.expectedAmount || 0);
+      else _scExpectedElec[m.id] = Number(m.expectedAmount || 0);
+    });
+    if (cashSum === 0) cashSum = Number(d.theoreticalCash || 0);
+    _scExpectedCash = cashSum;
 
-    q('#scExpectedCash').textContent = _posFmt(cashExp) + ' SAR';
+    // ── Header counters ──
+    if (q('#scOrdersLbl')) q('#scOrdersLbl').textContent = Number(d.orderCount || 0);
+    var totalItems = (d.soldItems || []).reduce(function(s, i){ return s + Number(i.qty || 0); }, 0);
+    if (q('#scItemsCountLbl')) q('#scItemsCountLbl').textContent = totalItems;
 
-    // Render electronic methods table
-    var elecBody = q('#scElecBody');
-    if (elecBody) {
-      if (!elecMethods.length) {
-        elecBody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:14px;">لا توجد طرق دفع إلكترونية مفعّلة</td></tr>';
+    // ── Items-sold table ──
+    var itemsBody = q('#scItemsBody');
+    if (itemsBody) {
+      var items = d.soldItems || [];
+      if (!items.length) {
+        itemsBody.innerHTML = '<tr><td colspan="4" class="sc-empty">لا توجد أصناف مباعة في هذه الوردية</td></tr>';
       } else {
-        elecBody.innerHTML = elecMethods.map(function(m){
-          var exp = Number(m.expectedAmount || 0);
-          return '<tr data-pmid="' + m.id + '" data-pmname="' + (m.name||'').toLowerCase() + '">' +
-            '<td><i class="fas ' + (m.icon||'fa-credit-card') + '" style="color:' + (m.color||'#3b82f6') + ';"></i> <strong>' + (m.nameAr || m.name) + '</strong></td>' +
-            '<td>' + _posFmt(exp) + '</td>' +
-            '<td><input type="number" min="0" step="0.01" class="form-control glass-input sc-elec-input" data-pmid="' + m.id + '" data-pmname="' + (m.name||'').toLowerCase() + '" data-expected="' + exp + '" value="' + _posFmt(exp) + '" oninput="scV3Recalc()"></td>' +
-            '<td class="sc-elec-diff" data-pmid="' + m.id + '">0.00</td>' +
-          '</tr>';
+        itemsBody.innerHTML = items.map(function(it) {
+          return '<tr>' +
+                   '<td>' + (it.name || '—') + '</td>' +
+                   '<td><strong>' + Number(it.qty || 0) + '</strong></td>' +
+                   '<td>' + _posFmt(Number(it.price || 0)) + '</td>' +
+                   '<td><strong style="color:#16a34a;">' + _posFmt(Number(it.total || 0)) + '</strong></td>' +
+                 '</tr>';
         }).join('');
       }
     }
+
+    // ── Electronic methods cards (NO expected shown) ──
+    var elecGrid = q('#scElecGrid');
+    if (elecGrid) {
+      if (!_scElecMethods.length) {
+        elecGrid.innerHTML = '<div class="sc-empty">لا توجد طرق دفع إلكترونية</div>';
+      } else {
+        elecGrid.innerHTML = _scElecMethods.map(function(m) {
+          return '<div class="sc-elec-card">' +
+                   '<div class="sc-elec-card-head"><i class="fas ' + (m.icon || 'fa-credit-card') + '" style="color:' + (m.color || '#3b82f6') + ';"></i> <span>' + (m.nameAr || m.name) + '</span></div>' +
+                   '<input type="number" inputmode="decimal" min="0" step="0.01" class="sc-elec-input" data-pmid="' + m.id + '" data-pmname="' + (m.name || '').toLowerCase() + '" placeholder="0.00" oninput="scV3Recalc()" onfocus="this.select()">' +
+                 '</div>';
+        }).join('');
+      }
+    }
+
     scV3Recalc();
-    openGlassModal('#modalShiftClose');
   });
 };
 
+// V5.7.15 — Recalc all totals. Called on every input change.
+//   • Always updates the "actual" totals (cashier sees what they entered)
+//   • Only updates the "expected" + "diff" cards when revealed
 window.scV3Recalc = function() {
+  // Cash from denominations
   var actualCash = 0;
-  var denoms = document.querySelectorAll('.sc-denom-input');
-  denoms.forEach(function(inp){
+  document.querySelectorAll('.sc-denom-input').forEach(function(inp) {
     var denom = Number(inp.dataset.denom);
-    var cnt = Number(inp.value) || 0;
-    var sum = denom * cnt;
-    var totEl = document.querySelector('.sc-denom-total[data-denom="' + denom + '"]');
+    var cnt   = Number(inp.value) || 0;
+    var sum   = denom * cnt;
+    var totEl = document.querySelector('.sc-denom-card-total[data-denom="' + denom + '"]');
     if (totEl) totEl.textContent = _posFmt(sum);
     actualCash += sum;
   });
-  q('#scActualCash').textContent = _posFmt(actualCash) + ' SAR';
-  var diffCash = actualCash - (state._scExpected.cash || 0);
-  var diffEl = q('#scDiffCash');
-  if (diffEl) {
-    diffEl.textContent = (diffCash >= 0 ? '+' : '') + _posFmt(diffCash) + ' SAR';
-    diffEl.style.color = Math.abs(diffCash) < 0.01 ? '#16a34a' : (diffCash < 0 ? '#dc2626' : '#d97706');
-  }
+  if (q('#scActualCash')) q('#scActualCash').textContent = _posFmt(actualCash) + ' SAR';
 
-  // Electronic
+  // Electronic actual sum
   var elecActual = 0;
-  document.querySelectorAll('.sc-elec-input').forEach(function(inp){
-    var act = Number(inp.value) || 0;
-    var exp = Number(inp.dataset.expected) || 0;
-    var df = act - exp;
-    elecActual += act;
-    var diffCell = document.querySelector('.sc-elec-diff[data-pmid="' + inp.dataset.pmid + '"]');
-    if (diffCell) {
-      diffCell.textContent = (df >= 0 ? '+' : '') + _posFmt(df);
-      diffCell.style.color = Math.abs(df) < 0.01 ? '#16a34a' : (df < 0 ? '#dc2626' : '#d97706');
-    }
+  var elecActualByMethod = {};
+  document.querySelectorAll('.sc-elec-input').forEach(function(inp) {
+    var v = Number(inp.value) || 0;
+    elecActual += v;
+    elecActualByMethod[inp.dataset.pmid] = v;
   });
+  if (q('#scTotalElecActual')) q('#scTotalElecActual').textContent = _posFmt(elecActual) + ' SAR';
 
-  // Summary
-  q('#scTotalExpected').textContent = _posFmt(state._scExpected.total) + ' SAR';
-  q('#scTotalCashActual').textContent = _posFmt(actualCash) + ' SAR';
-  q('#scTotalElecActual').textContent = _posFmt(elecActual) + ' SAR';
-  var totDiff = (actualCash + elecActual) - (state._scExpected.total || 0);
-  var totDiffEl = q('#scTotalDiff');
-  if (totDiffEl) {
-    totDiffEl.textContent = (totDiff >= 0 ? '+' : '') + _posFmt(totDiff) + ' SAR';
-    totDiffEl.style.color = Math.abs(totDiff) < 0.01 ? '#16a34a' : (totDiff < 0 ? '#dc2626' : '#d97706');
+  // Comparison panel — only render when revealed
+  if (!_scRevealed) {
+    _scLockClose('أنهِ العدّ أولاً', 'fa-lock');
+    return;
   }
+
+  var totalActual = actualCash + elecActual;
+  var totalDiff   = totalActual - _scExpectedTotal;
+  var absDiff     = Math.abs(totalDiff);
+
+  if (q('#scCmpExpected')) q('#scCmpExpected').textContent = _posFmt(_scExpectedTotal);
+  if (q('#scCmpActual'))   q('#scCmpActual').textContent   = _posFmt(totalActual);
+  if (q('#scCmpDiff'))     q('#scCmpDiff').textContent     = (totalDiff >= 0 ? '+' : '') + _posFmt(totalDiff);
+
+  // Color the diff card
+  var diffCard = q('#scCmpDiffCard');
+  var diffLbl  = q('#scCmpDiffLbl');
+  if (diffCard) {
+    diffCard.classList.remove('sc-cmp-diff-zero','sc-cmp-diff-pos','sc-cmp-diff-neg');
+    if (absDiff < 0.01) {
+      diffCard.classList.add('sc-cmp-diff-zero');
+      if (diffLbl) diffLbl.textContent = 'متطابق ✓';
+    } else if (totalDiff < 0) {
+      diffCard.classList.add('sc-cmp-diff-neg');
+      if (diffLbl) diffLbl.textContent = 'عجز في الصندوق';
+    } else {
+      diffCard.classList.add('sc-cmp-diff-pos');
+      if (diffLbl) diffLbl.textContent = 'زيادة في الصندوق';
+    }
+  }
+
+  // Per-method breakdown (cash row + each electronic method)
+  var pmd = q('#scPerMethodDiff');
+  if (pmd) {
+    var rows = [];
+    rows.push(_scPmdRow('💵 نقدي / كاش', _scExpectedCash, actualCash));
+    _scElecMethods.forEach(function(m) {
+      var label = '<i class="fas ' + (m.icon || 'fa-credit-card') + '" style="color:' + (m.color || '#3b82f6') + ';margin-inline-end:4px;"></i>' + (m.nameAr || m.name);
+      rows.push(_scPmdRow(label, _scExpectedElec[m.id] || 0, elecActualByMethod[m.id] || 0));
+    });
+    pmd.innerHTML = rows.join('');
+  }
+
+  // Variance alert + close-button gate
+  if (absDiff < 0.01) {
+    if (q('#scVarianceAlert')) q('#scVarianceAlert').classList.add('hidden');
+    _scUnlockClose();
+  } else {
+    if (q('#scVarianceAlert')) q('#scVarianceAlert').classList.remove('hidden');
+    var note = (q('#scVarianceNote') && q('#scVarianceNote').value || '').trim();
+    if (note.length >= 10) _scUnlockClose();
+    else _scLockClose('اشرح الفرق أولاً (' + note.length + '/10)', 'fa-pen');
+  }
+};
+
+function _scPmdRow(label, exp, act) {
+  var diff = act - exp;
+  var clr  = Math.abs(diff) < 0.01 ? '#16a34a' : (diff < 0 ? '#dc2626' : '#d97706');
+  var sign = diff >= 0 ? '+' : '';
+  return '<div class="sc-pmd-row">' +
+           '<div class="sc-pmd-name">' + label + '</div>' +
+           '<div class="sc-pmd-vals">' +
+             '<span class="sc-pmd-exp">المسجَّل: ' + _posFmt(exp) + '</span>' +
+             '<span class="sc-pmd-act">الفعلي: ' + _posFmt(act) + '</span>' +
+             '<span class="sc-pmd-diff" style="color:' + clr + ';">' + sign + _posFmt(diff) + '</span>' +
+           '</div>' +
+         '</div>';
+}
+
+function _scLockClose(label, icon) {
+  var btn = q('#scCloseBtn');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.style.opacity = '0.55';
+  btn.style.cursor = 'not-allowed';
+  btn.style.background = '#94a3b8';
+  btn.style.borderColor = '#94a3b8';
+  btn.innerHTML = '<i class="fas ' + (icon || 'fa-lock') + '"></i> ' + label;
+}
+function _scUnlockClose() {
+  var btn = q('#scCloseBtn');
+  if (!btn) return;
+  btn.disabled = false;
+  btn.style.opacity = '1';
+  btn.style.cursor = 'pointer';
+  btn.style.background = '#16a34a';
+  btn.style.borderColor = '#16a34a';
+  btn.innerHTML = '<i class="fas fa-check-double"></i> تأكيد إغلاق الوردية';
+}
+
+// V5.7.15 — User ticked / unticked the "I'm done counting" checkbox
+window.scToggleReveal = function(checked) {
+  _scRevealed = !!checked;
+  if (q('#scComparePanel')) {
+    q('#scComparePanel').classList.toggle('hidden', !_scRevealed);
+  }
+  scV3Recalc();
+  // Smooth-scroll the comparison panel into view when revealed
+  if (_scRevealed && q('#scComparePanel')) {
+    setTimeout(function() {
+      try { q('#scComparePanel').scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+    }, 80);
+  }
+};
+
+window.scOnNoteInput = function() {
+  var note = (q('#scVarianceNote') && q('#scVarianceNote').value || '').trim();
+  var counter = q('#scNoteCounter');
+  if (counter) {
+    counter.textContent = note.length + ' / 10';
+    counter.style.color = note.length >= 10 ? '#16a34a' : '#dc2626';
+  }
+  scV3Recalc();
 };
 
 window.scV3ConfirmClose = function() {
   if (!state.activeShiftId) return;
+  if (!_scRevealed) return glassToast('فعِّل "أنهيت العدّ" أولاً', true);
+
   // Build payload
   var denoms = [];
-  document.querySelectorAll('.sc-denom-input').forEach(function(inp){
+  document.querySelectorAll('.sc-denom-input').forEach(function(inp) {
     denoms.push({ value: Number(inp.dataset.denom), count: Number(inp.value) || 0, kind: Number(inp.dataset.denom) <= 1 ? 'coin' : 'note' });
   });
   var paymentTotals = {};
-  document.querySelectorAll('.sc-elec-input').forEach(function(inp){
+  document.querySelectorAll('.sc-elec-input').forEach(function(inp) {
     var key = inp.dataset.pmname || inp.dataset.pmid;
     paymentTotals[key] = Number(inp.value) || 0;
   });
+  var generalNotes  = (q('#scNotes') && q('#scNotes').value || '').trim();
+  var varianceNote  = (q('#scVarianceNote') && q('#scVarianceNote').value || '').trim();
+  var combinedNotes = generalNotes + (varianceNote ? (generalNotes ? '\n\n[سبب الفرق]: ' : '[سبب الفرق]: ') + varianceNote : '');
+
   var payload = {
     shiftId: state.activeShiftId,
     openingFloat: 0,
     denominations: denoms,
     paymentTotals: paymentTotals,
-    notes: q('#scNotes').value || ''
+    notes: combinedNotes
   };
 
-  glassConfirm('تأكيد إغلاق الوردية', 'سيتم تسجيل بيانات الإغلاق وإقفال الجلسة. هل تتابع؟', { okText: 'إغلاق الوردية', danger: true }).then(function(ok){
+  glassConfirm('تأكيد إغلاق الوردية', 'سيتم تسجيل بيانات الإغلاق وإقفال الجلسة. هل تتابع؟', { okText: 'إغلاق الوردية', danger: true }).then(function(ok) {
     if (!ok) return;
     loader(true);
-    _posCallAPI('POST', '/shifts/close-v3', payload, function(r){
+    _posCallAPI('POST', '/shifts/close-v3', payload, function(r) {
       loader(false);
       if (r && r.success) {
         var closedShiftId = state.activeShiftId;
@@ -2849,7 +2958,6 @@ window.scV3ConfirmClose = function() {
         renderHeader('pos', { showShift: true });
         closeGlassModal('#modalShiftClose');
         glassToast('تم إغلاق الوردية بنجاح');
-        // Show summary report
         scV3ShowReport(closedShiftId, r);
       } else {
         glassToast((r && r.error) || 'فشل إغلاق الوردية', true);

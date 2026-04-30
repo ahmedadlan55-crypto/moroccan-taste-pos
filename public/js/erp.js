@@ -3867,36 +3867,105 @@ function brfGetMyLocation() {
   }, function() { showToast('فشل تحديد الموقع', true); }, {enableHighAccuracy:true, timeout:10000});
 }
 
+// V5.7.9 — Leaflet map picker (OpenStreetMap, no API key, click-to-place).
+// Loaded on-demand on first open to avoid bloating page weight for users
+// who never edit a branch.
+var _brfLeafletLoaded = false;
+function _brfEnsureLeaflet(cb) {
+  if (window.L && _brfLeafletLoaded) return cb();
+  // CSS
+  if (!document.getElementById('brfLeafletCSS')) {
+    var link = document.createElement('link');
+    link.id = 'brfLeafletCSS';
+    link.rel = 'stylesheet';
+    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(link);
+  }
+  // JS
+  if (window.L) { _brfLeafletLoaded = true; return cb(); }
+  var s = document.createElement('script');
+  s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+  s.onload = function() { _brfLeafletLoaded = true; cb(); };
+  s.onerror = function() { showToast('تعذّر تحميل مكتبة الخريطة', true); };
+  document.head.appendChild(s);
+}
+
 window.brfOpenMap = function() {
   var container = document.getElementById('brfMapContainer');
+  if (!container) return;
+  // Toggle off if already open
+  if (container.style.display !== 'none' && container.dataset.mapInited === '1') {
+    container.style.display = 'none';
+    return;
+  }
   var lat = Number(document.getElementById('brfGeoLat').value) || 24.7136;
   var lng = Number(document.getElementById('brfGeoLng').value) || 46.6753;
-  if (container.style.display === 'none') {
-    container.style.display = 'block';
-    container.innerHTML = '<iframe id="brfMapFrame" style="width:100%;height:100%;border:0;" src="https://maps.google.com/maps?q='+lat+','+lng+'&z=17&output=embed"></iframe>' +
-      '<div style="padding:8px;background:#fff;display:flex;gap:6px;align-items:center;">' +
-        '<input type="number" step="0.0000001" class="form-control" id="brfMapLat" value="'+lat+'" placeholder="Lat" style="flex:1;font-size:12px;">' +
-        '<input type="number" step="0.0000001" class="form-control" id="brfMapLng" value="'+lng+'" placeholder="Lng" style="flex:1;font-size:12px;">' +
-        '<button class="btn btn-sm btn-primary" onclick="brfApplyMapCoords()" style="white-space:nowrap;">تطبيق</button>' +
-        '<button class="btn btn-sm btn-light" onclick="brfRefreshMap()" style="white-space:nowrap;"><i class="fas fa-sync"></i></button>' +
-      '</div>';
-  } else {
-    container.style.display = 'none';
-  }
+  container.style.display = 'block';
+  container.style.height = '320px';
+  container.innerHTML =
+    '<div id="brfLeafletMap" style="width:100%;height:260px;"></div>' +
+    '<div style="padding:8px;background:#f8fafc;display:flex;gap:6px;align-items:center;font-size:12px;">' +
+      '<i class="fas fa-info-circle" style="color:#3b82f6;"></i>' +
+      '<span style="color:#475569;flex:1;">انقر على الخريطة لتحديد موقع الفرع — أو اسحب الدبوس.</span>' +
+      '<input type="text" id="brfMapSearch" class="form-control" placeholder="ابحث عن مكان..." style="flex:1;font-size:12px;height:30px;">' +
+      '<button class="btn btn-sm btn-primary" onclick="brfMapSearchGo()" style="white-space:nowrap;height:30px;"><i class="fas fa-search"></i></button>' +
+    '</div>';
+
+  _brfEnsureLeaflet(function() {
+    var L = window.L;
+    var map = L.map('brfLeafletMap', { zoomControl: true }).setView([lat, lng], 16);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '© OpenStreetMap'
+    }).addTo(map);
+    var marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+    function syncFromMarker() {
+      var p = marker.getLatLng();
+      document.getElementById('brfGeoLat').value = p.lat.toFixed(7);
+      document.getElementById('brfGeoLng').value = p.lng.toFixed(7);
+    }
+    marker.on('dragend', syncFromMarker);
+    map.on('click', function(e) {
+      marker.setLatLng(e.latlng);
+      syncFromMarker();
+    });
+    // Also enable Enter-to-search inside the search box
+    var searchEl = document.getElementById('brfMapSearch');
+    if (searchEl) {
+      searchEl.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); window.brfMapSearchGo(); }
+      });
+    }
+    // Stash refs for the search function
+    container._leaflet = { map: map, marker: marker };
+    container.dataset.mapInited = '1';
+    // Reflow so the tiles render after layout settles
+    setTimeout(function() { map.invalidateSize(); }, 100);
+  });
 };
-window.brfApplyMapCoords = function() {
-  var lat = document.getElementById('brfMapLat').value;
-  var lng = document.getElementById('brfMapLng').value;
-  document.getElementById('brfGeoLat').value = lat;
-  document.getElementById('brfGeoLng').value = lng;
-  showToast('تم تحديث الإحداثيات');
-  brfRefreshMap();
-};
-window.brfRefreshMap = function() {
-  var lat = document.getElementById('brfMapLat').value || document.getElementById('brfGeoLat').value;
-  var lng = document.getElementById('brfMapLng').value || document.getElementById('brfGeoLng').value;
-  var f = document.getElementById('brfMapFrame');
-  if (f) f.src = 'https://maps.google.com/maps?q='+lat+','+lng+'&z=17&output=embed';
+
+// V5.7.9 — Free OpenStreetMap Nominatim geocoder (no API key, generous fair-use limits).
+window.brfMapSearchGo = function() {
+  var searchEl = document.getElementById('brfMapSearch');
+  var container = document.getElementById('brfMapContainer');
+  if (!searchEl || !container || !container._leaflet) return;
+  var q = (searchEl.value || '').trim();
+  if (!q) return;
+  var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q);
+  fetch(url, { headers: { 'Accept-Language': 'ar,en' } })
+    .then(function(r) { return r.json(); })
+    .then(function(arr) {
+      if (!arr || !arr.length) { showToast('لم يتم العثور على المكان', true); return; }
+      var hit = arr[0];
+      var lat = Number(hit.lat), lng = Number(hit.lon);
+      var L = window.L;
+      var ref = container._leaflet;
+      ref.map.setView([lat, lng], 17);
+      ref.marker.setLatLng([lat, lng]);
+      document.getElementById('brfGeoLat').value = lat.toFixed(7);
+      document.getElementById('brfGeoLng').value = lng.toFixed(7);
+      showToast('تم تحديد الموقع: ' + (hit.display_name || '').slice(0, 60));
+    })
+    .catch(function() { showToast('تعذر البحث — تحقق من الاتصال', true); });
 };
 
 function erpSaveBranchFull() {

@@ -165,13 +165,28 @@ router.get('/init/:username', async (req, res) => {
     const [meRows] = await db.query('SELECT role FROM users WHERE username = ?', [req.params.username]);
     const myRole = meRows.length ? meRows[0].role : 'cashier';
 
+    // V5.7.9 — also fetch branch address (location) for the current user so the
+    //          POS receipt can show "Welcome to {branch} — {address}" without an extra round-trip.
+    let currentBranchAddress = '';
+    try {
+      if (userBranchId) {
+        const [br] = await db.query('SELECT location FROM branches WHERE id = ?', [userBranchId]);
+        if (br.length) currentBranchAddress = br[0].location || '';
+      }
+    } catch (_) { /* branches table may be empty on fresh installs — ignore */ }
+
     res.json({
       settings: {
         name: settingsObj.CompanyName || 'Moroccan Taste',
         taxNumber: settingsObj.TaxNumber || '',
         currency: settingsObj.Currency || 'SAR',
         logo: settingsObj.logo || '',
-        branchName: settingsObj.BranchName || ''
+        branchName: settingsObj.BranchName || '',
+        // V5.7.9 — global contact (printed on every receipt footer)
+        companyPhone: settingsObj.CompanyPhone || '',
+        companyEmail: settingsObj.CompanyEmail || '',
+        // V5.7.9 — current user's branch address (for receipt header)
+        branchAddress: currentBranchAddress
       },
       kitaFeeRate: Number(settingsObj.KitaServiceFee) || 0,
       menu: menu.map(m => ({

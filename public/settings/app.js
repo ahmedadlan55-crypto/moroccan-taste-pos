@@ -32,6 +32,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Populate fields
     q('#setCompany').value = state.settings.name || '';
     q('#setTax').value = state.settings.taxNumber || '';
+    // V5.7.9 — phone + email (optional, used on printed receipt footer)
+    if (q('#setPhone')) q('#setPhone').value = state.settings.companyPhone || '';
+    if (q('#setEmail')) q('#setEmail').value = state.settings.companyEmail || '';
     if (state.settings.logo) {
       q('#setLogoPreview').innerHTML = '<img src="' + state.settings.logo + '" alt="logo">';
     }
@@ -171,6 +174,9 @@ window.saveAllSettings = function() {
   var name    = q('#setCompany').value || '';
   var taxNum  = q('#setTax').value || '';
   var logo    = state.settings.logo || '';
+  // V5.7.9 — capture phone + email (optional)
+  var phone   = (q('#setPhone') && q('#setPhone').value) || '';
+  var email   = (q('#setEmail') && q('#setEmail').value) || '';
 
   // Collect updated payment methods from the DOM
   var methods = (state.paymentMethods || []).map(function(m, i) {
@@ -202,6 +208,10 @@ window.saveAllSettings = function() {
             state.paymentMethods = fresh || methods;
             state.settings.name = name;
             state.settings.taxNumber = taxNum;
+            // V5.7.9 — also cache the new contact fields locally so a page reload
+            //          before re-bootstrap still shows the fresh values.
+            state.settings.companyPhone = phone;
+            state.settings.companyEmail = email;
             renderPaymentMethods();
             showToast('تم حفظ جميع الإعدادات بنجاح');
             // Cache branding for fast paint next time
@@ -213,7 +223,13 @@ window.saveAllSettings = function() {
             renderPaymentMethods();
           }).getPaymentMethods();
         }).savePaymentMethods(methods);
-    }).updateCompanySettings({ name: name, taxNumber: taxNum, logo: logo });
+    }).updateCompanySettings({
+      // Legacy keys (kept so older callsites still see them on /api/settings GET)
+      name: name, taxNumber: taxNum, logo: logo,
+      // V5.7.9 — canonical keys matching what /api/auth/initial reads
+      CompanyName: name, TaxNumber: taxNum,
+      CompanyPhone: phone, CompanyEmail: email
+    });
 };
 
 // =========================================

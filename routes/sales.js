@@ -522,17 +522,87 @@ router.get('/', async (req, res) => {
 });
 
 // Get invoice
+// V5.7.9 — also returns cashier full-name, branch name+address, and company
+//          contact info (phone/email) so the printed receipt can render the
+//          full bilingual layout the user expects (matches printed sample).
 router.get('/invoice/:orderId', async (req, res) => {
   try {
     const [sales] = await db.query('SELECT * FROM sales WHERE id = ?', [req.params.orderId]);
     if (!sales.length) return res.json(null);
     const sale = sales[0];
     const [items] = await db.query('SELECT * FROM sales_items WHERE order_id = ?', [req.params.orderId]);
+
+    // ── Lookup cashier display name from settings.user_meta ──
+    let cashierName = sale.username || '';
+    let cashierEmpNo = sale.username || '';
+    try {
+      const [metaRows] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
+      if (metaRows.length && metaRows[0].setting_value) {
+        const meta = JSON.parse(metaRows[0].setting_value) || {};
+        const me = meta[sale.username] || {};
+        if (me.name) cashierName = me.name;
+        if (me.empNo) cashierEmpNo = me.empNo;
+      }
+    } catch (_) { /* fall back to username */ }
+
+    // ── Lookup the branch: prefer the shift's branch, else the user's primary branch ──
+    let branchName = '', branchAddress = '', branchLat = null, branchLng = null;
+    try {
+      let branchId = null;
+      if (sale.shift_id) {
+        const [shiftRows] = await db.query('SELECT branch_id FROM shifts WHERE id = ?', [sale.shift_id]);
+        if (shiftRows.length && shiftRows[0].branch_id) branchId = shiftRows[0].branch_id;
+      }
+      if (!branchId && sale.username) {
+        const [ub] = await db.query('SELECT branch_id FROM user_branches WHERE username = ? LIMIT 1', [sale.username]);
+        if (ub.length) branchId = ub[0].branch_id;
+      }
+      if (branchId) {
+        const [br] = await db.query('SELECT name, location, geo_lat, geo_lng FROM branches WHERE id = ?', [branchId]);
+        if (br.length) {
+          branchName = br[0].name || '';
+          branchAddress = br[0].location || '';
+          branchLat = br[0].geo_lat;
+          branchLng = br[0].geo_lng;
+        }
+      }
+    } catch (_) { /* shifts.branch_id or user_branches may not exist on legacy schemas — ignore */ }
+
+    // ── Pull company contact + branding from settings ──
+    let companyName = 'Moroccan Taste', taxNumber = '', currency = 'SAR';
+    let companyPhone = '', companyEmail = '', companyLogo = '';
+    try {
+      const [setRows] = await db.query(
+        "SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('CompanyName','TaxNumber','Currency','CompanyPhone','CompanyEmail','logo')"
+      );
+      const map = {};
+      setRows.forEach(r => { map[r.setting_key] = r.setting_value; });
+      companyName  = map.CompanyName  || companyName;
+      taxNumber    = map.TaxNumber    || '';
+      currency     = map.Currency     || 'SAR';
+      companyPhone = map.CompanyPhone || '';
+      companyEmail = map.CompanyEmail || '';
+      companyLogo  = map.logo         || '';
+    } catch (_) { /* settings table missing — ignore, defaults already set */ }
+
     res.json({
       orderId: sale.id, date: sale.order_date, payment: sale.payment_method,
       totalFinal: Number(sale.total_final), username: sale.username,
       discountName: sale.discount_name, discountAmount: Number(sale.discount_amount),
-      items: items.map(i => ({ name: i.item_name, qty: i.qty, price: Number(i.price), total: Number(i.total) }))
+      items: items.map(i => ({ name: i.item_name, qty: i.qty, price: Number(i.price), total: Number(i.total) })),
+      // V5.7.9 — receipt enrichment
+      cashierName: cashierName,
+      cashierEmpNo: cashierEmpNo,
+      branchName: branchName,
+      branchAddress: branchAddress,
+      branchLat: branchLat,
+      branchLng: branchLng,
+      companyName: companyName,
+      taxNumber: taxNumber,
+      currency: currency,
+      companyPhone: companyPhone,
+      companyEmail: companyEmail,
+      companyLogo: companyLogo
     });
   } catch (e) { res.json(null); }
 });

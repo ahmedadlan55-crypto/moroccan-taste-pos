@@ -4669,15 +4669,17 @@
           <th>اسم المنتج</th>
           <th>النوع</th>
           <th>الفئة</th>
-          <th class="num">السعر</th>
-          <th class="num">المخزون</th>
+          <th class="num">السعر / التكلفة</th>
+          <!-- V5.7.23 — "المخزون" column removed: menu items don't have stock,
+               they're MTO products made from ingredients. The recipe-availability
+               hint now lives on the "+ أضف وصفة" / "✓ له وصفة" button itself. -->
           <th>يستهلك من</th>
           <th>الحالة</th>
           <th>إجراءات</th>
         </tr>
       </thead>
       <tbody id="bmBody">
-        <tr><td colspan="8"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+        <tr><td colspan="7"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
       </tbody>
     </table>
   </div>

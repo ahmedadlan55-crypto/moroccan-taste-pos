@@ -16563,7 +16563,7 @@ function _bmRender() {
   var tbody = document.getElementById('bmBody');
   if (!tbody) return;
   if (!filtered.length) {
-    tbody.innerHTML = '<tr><td colspan="8"><div class="wo-empty"><i class="fas fa-folder-open"></i><div class="wo-empty-title">لا توجد منتجات</div><div class="wo-empty-sub">اضغط "منتج جديد" لإضافة الأول.</div></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7"><div class="wo-empty"><i class="fas fa-folder-open"></i><div class="wo-empty-title">لا توجد منتجات</div><div class="wo-empty-sub">اضغط "منتج جديد" لإضافة الأول.</div></div></td></tr>';
     return;
   }
 
@@ -16584,41 +16584,18 @@ function _bmRender() {
       ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;cursor:pointer;" onclick="erpOpenMenuRecipe(\''+m.id+'\',\''+_v3EscapeHtml(m.name).replace(/\'/g,"\\'")+'\')" title="عرض الوصفة"><i class="fas fa-mortar-pestle"></i> له وصفة</span>'
       : '<span class="wo-chip" style="background:#fef3c7;color:#92400e;font-weight:700;"><i class="fas fa-circle-question"></i> بدون وصفة</span>';
 
-    // V5.7 — Stock cell adapts to production_method:
-    //   - imported  → physical stock (red if 0)
-    //   - made_at_* → COMPUTED availability from BOM ingredients
-    //   - prepared  → physical stock (semi-finished batches)
+    // V5.7.23 — "المخزون" column REMOVED from menu admin: menu items are
+    //   MTO products and do NOT carry stock. (They're made fresh from
+    //   inventoried ingredients; ingredient stock lives in inv_items.)
+    //   The "available-to-make" info is now a SMALL chip on the recipe
+    //   button itself, since the column-wide display was redundant.
     var avail = (window._bmAvailabilityMap || {})[m.id];
-    var stockCellHtml = '';
-    if (m.productionMethod === 'imported') {
-      // Stocked good — show actual stock count
-      var qty = Number(m.stock||0);
-      var clr = qty <= 0 ? '#dc2626' : (qty < (m.minStockAlert||5) ? '#f59e0b' : '#0f172a');
-      stockCellHtml =
-        '<div style="font-weight:800;color:'+clr+';">'+qty+'</div>' +
-        '<div style="font-size:10px;color:#64748b;font-weight:700;margin-top:2px;"><i class="fas fa-box"></i> مستورد</div>';
-    } else if (m.isSemiFinished) {
-      // Semi-finished — show batch stock (this IS valid)
-      stockCellHtml = '<div style="font-weight:800;">'+(Number(m.stock||0))+'</div>' +
-        '<div style="font-size:10px;color:#92400e;font-weight:700;margin-top:2px;">دفعات</div>';
-    } else {
-      // Made-to-order — show COMPUTED availability
-      if (avail && avail.mode === 'mto') {
-        var n = Number(avail.makeable||0);
-        var stClr = n === 0 ? '#dc2626' : (n <= (avail.minAlert||5) ? '#f59e0b' : '#15803d');
-        var stIcon = n === 0 ? 'fa-times-circle' : (n <= 5 ? 'fa-exclamation-triangle' : 'fa-check-circle');
-        stockCellHtml =
-          '<div style="font-weight:900;color:'+stClr+';font-size:14px;"><i class="fas '+stIcon+'"></i> '+n+'</div>' +
-          '<div style="font-size:10px;color:#64748b;font-weight:700;margin-top:2px;">متوفر للصنع</div>' +
-          (avail.blockerCount ? '<div style="font-size:9px;color:#dc2626;margin-top:2px;">'+avail.blockerCount+' مكوّن ناقص</div>' : '');
-      } else if (avail && avail.mode === 'mto_no_recipe') {
-        stockCellHtml =
-          '<div style="color:#94a3b8;font-style:italic;font-size:11px;">—</div>' +
-          '<div style="font-size:10px;color:#92400e;font-weight:700;margin-top:2px;"><i class="fas fa-exclamation"></i> أضف وصفة</div>';
-      } else {
-        // Default loading or unknown
-        stockCellHtml = '<div style="color:#94a3b8;font-size:11px;"><i class="fas fa-spinner fa-spin"></i></div>';
-      }
+    var availChip = '';
+    if (!m.isSemiFinished && m.productionMethod !== 'imported' && avail && avail.mode === 'mto') {
+      var n = Number(avail.makeable || 0);
+      var stClr = n === 0 ? '#dc2626' : (n <= (avail.minAlert || 5) ? '#f59e0b' : '#15803d');
+      var stIcon = n === 0 ? 'fa-times-circle' : (n <= 5 ? 'fa-exclamation-triangle' : 'fa-check-circle');
+      availChip = ' <span class="wo-chip" style="background:#f1f5f9;color:'+stClr+';font-weight:700;font-size:10px;padding:2px 6px;" title="الكمية القابلة للصنع من المكوّنات المتوفرة"><i class="fas '+stIcon+'"></i> '+n+'</span>';
     }
     // Production method badge
     var methodLabels = {
@@ -16649,20 +16626,23 @@ function _bmRender() {
     return '<tr>' +
       '<td><input type="checkbox" class="menu-bulk-cb" data-menu-id="'+m.id+'" onchange="erpToggleBulkPrice(this)" style="margin-inline-end:8px;width:14px;height:14px;cursor:pointer;">' +
         '<span style="font-weight:800;">'+ _v3EscapeHtml(m.name) +'</span>' +
+        (m.nameEn ? '<div style="font-size:11px;color:#64748b;direction:ltr;font-weight:500;margin-top:2px;">'+ _v3EscapeHtml(m.nameEn) +'</div>' : '') +
         '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">'+recipeChip+' '+methodBadge+'</div>' +
       '</td>' +
       '<td>'+ typeBadge +'</td>' +
       '<td><span class="wo-chip">'+ _v3EscapeHtml(m.category||'عام') +'</span></td>' +
       '<td class="num">'+ priceCell +'</td>' +
-      '<td class="num" style="text-align:center;">'+ stockCellHtml +'</td>' +
+      // V5.7.23 — stock <td> removed (menu items have no stock; we're MTO).
       '<td>'+ consumes +'</td>' +
       '<td>'+ (m.active ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مفعّل</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;">معطّل</span>') +'</td>' +
       '<td>' +
         // V5.7.22 — clearer "has recipe" toggle:
         //   YES → green pill "✓ له وصفة" (click to EDIT in the new full-page editor)
-        //   NO  → outlined gray "+ أضف وصفة" (click opens the editor with ZERO ingredients)
+        //   NO  → outlined dashed purple "+ أضف وصفة" (opens the editor empty)
+        // V5.7.23 — appends a small chip showing how many can be MADE NOW
+        //   from current ingredient stock (replaces the old wide column).
         (hasRecipe
-          ? '<button class="wo-btn wo-btn-sm" style="background:#dcfce7;color:#15803d;font-weight:800;border:1.5px solid #86efac;" onclick="erpOpenRecipeEditor(\''+ m.id +'\')" title="تعديل الوصفة (شاشة كاملة)"><i class="fas fa-check-circle"></i> له وصفة</button> '
+          ? '<button class="wo-btn wo-btn-sm" style="background:#dcfce7;color:#15803d;font-weight:800;border:1.5px solid #86efac;" onclick="erpOpenRecipeEditor(\''+ m.id +'\')" title="تعديل الوصفة (شاشة كاملة)"><i class="fas fa-check-circle"></i> له وصفة</button>' + availChip + ' '
           : '<button class="wo-btn wo-btn-sm" style="background:#fff;color:#7c3aed;font-weight:800;border:1.5px dashed #c4b5fd;" onclick="erpOpenRecipeEditor(\''+ m.id +'\')" title="إنشاء وصفة جديدة (شاشة كاملة)"><i class="fas fa-mortar-pestle"></i> + أضف وصفة</button> '
         ) +
         (hasRecipe ? '<button class="wo-btn wo-btn-sm" style="background:#fee2e2;color:#991b1b;" onclick="erpDeleteMenuRecipe(\''+ m.id +'\',\''+_v3EscapeHtml(m.name).replace(/\'/g,"\\'")+'\')" title="حذف الوصفة"><i class="fas fa-trash-can"></i></button> ' : '') +

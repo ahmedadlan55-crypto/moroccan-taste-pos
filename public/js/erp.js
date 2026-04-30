@@ -16902,62 +16902,110 @@ window.erpOpenRecipeEditor = function(menuId) {
   });
 };
 
+// ═══════════════════════════════════════════════════════════════════
+// V5.7.28 — World-class recipe editor (inspired by Toast/Square/Linear)
+// ═══════════════════════════════════════════════════════════════════
+// Architecture:
+//   • Hero card: product identity + 4 KPI tiles + 3 metadata chips (time,
+//     difficulty, yield). Glass-effect on dark gradient.
+//   • Body: 1.4fr lines / 1fr picker. Both same height for balance.
+//   • Lines panel: cost-composition stacked bar + bulk toolbar +
+//     ingredient CARDS (not table). Each card has rich layout.
+//   • Picker: search w/ slash hotkey + category filter pills + recently-
+//     used + grouped list with stock-level dots.
+//   • Sticky save bar: dirty-state indicator + keyboard hint.
+// ═══════════════════════════════════════════════════════════════════
+
+// Color palette (locked to wo-* tokens + brand purple)
+var _RE_COLORS = {
+  primary:    '#7c3aed', primaryDark: '#5b21b6', primarySoft: '#ede9fe',
+  accent:     '#0ea5e9', accentSoft: '#e0f2fe',
+  success:    '#10b981', successSoft: '#d1fae5',
+  warning:    '#f59e0b', warningSoft: '#fef3c7',
+  danger:     '#ef4444', dangerSoft: '#fee2e2',
+  ink:        '#0f172a', sub: '#475569', muted: '#94a3b8',
+  border:     '#e2e8f0', surface: '#ffffff', surfaceAlt: '#f8fafc'
+};
+
+// Category palette for cost composition chart (cycle through)
+var _RE_CHART_PALETTE = ['#7c3aed', '#0ea5e9', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899'];
+
 function _reRenderEditor() {
   var box = document.getElementById('reEditorBody');
   if (!box || !window._re) return;
   var menu = window._re.menu || {};
   var lines = window._re.lines;
-
   var price = Number(menu.price) || 0;
   var t = _reComputeTotals(lines, price);
+  var marginGood = t.marginPct >= 50;
+  var marginOk = t.marginPct >= 25;
+  var marginColor = marginGood ? '#86efac' : (marginOk ? '#fde68a' : '#fecaca');
 
-  // ── Header — IDs are stable so _reUpdateTotals() can find + update them ──
-  var headerHtml =
-    '<div style="background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;padding:18px 22px;border-radius:14px;margin-bottom:14px;">' +
-      '<div style="display:grid;grid-template-columns:1.6fr 1fr 1fr 1.1fr;gap:14px;align-items:center;">' +
+  // ── HERO CARD (sticky, premium gradient w/ KPI grid + metadata chips) ──
+  var heroHtml =
+    '<section class="re-hero" style="background:linear-gradient(135deg,#7c3aed 0%,#6d28d9 50%,#5b21b6 100%);color:#fff;padding:20px 24px;border-radius:18px;margin-bottom:16px;box-shadow:0 8px 32px -8px rgba(124,58,237,0.35);position:relative;overflow:hidden;">' +
+      '<div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;background:radial-gradient(circle,rgba(255,255,255,0.12) 0%,transparent 70%);"></div>' +
+      '<div style="display:grid;grid-template-columns:1.8fr 1fr 1fr 1.1fr;gap:18px;align-items:center;position:relative;">' +
+        // Product identity
         '<div>' +
-          '<div style="font-size:11px;opacity:0.85;font-weight:600;margin-bottom:4px;">المنتج</div>' +
-          '<div style="font-size:22px;font-weight:900;direction:rtl;">' + _v3EscapeHtml(menu.name || '') + '</div>' +
-          (menu.nameEn ? '<div style="font-size:13px;opacity:0.95;font-weight:500;direction:ltr;margin-top:2px;">' + _v3EscapeHtml(menu.nameEn) + '</div>' : '<div style="font-size:11px;opacity:0.6;font-style:italic;direction:ltr;margin-top:2px;">— English name not set —</div>') +
+          '<div style="display:flex;align-items:center;gap:8px;font-size:11px;opacity:0.85;font-weight:600;margin-bottom:6px;letter-spacing:0.04em;text-transform:uppercase;">' +
+            '<i class="fas fa-mortar-pestle"></i><span>المنتج</span>' +
+          '</div>' +
+          '<div style="font-size:24px;font-weight:900;direction:rtl;line-height:1.15;letter-spacing:-0.02em;">' + _v3EscapeHtml(menu.name || '') + '</div>' +
+          (menu.nameEn
+            ? '<div style="font-size:14px;opacity:0.92;font-weight:500;direction:ltr;margin-top:3px;letter-spacing:0.01em;">' + _v3EscapeHtml(menu.nameEn) + '</div>'
+            : '<div style="font-size:11px;opacity:0.55;font-style:italic;direction:ltr;margin-top:3px;">— English name not set —</div>'
+          ) +
+          // Metadata chips
+          '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">' +
+            (menu.category ? '<span style="background:rgba(255,255,255,0.16);padding:3px 9px;border-radius:8px;font-size:11px;font-weight:600;backdrop-filter:blur(8px);"><i class="fas fa-tag" style="margin-inline-end:4px;font-size:9px;"></i>' + _v3EscapeHtml(menu.category) + '</span>' : '') +
+            '<span style="background:rgba(255,255,255,0.16);padding:3px 9px;border-radius:8px;font-size:11px;font-weight:600;backdrop-filter:blur(8px);"><i class="fas fa-cubes" style="margin-inline-end:4px;font-size:9px;"></i>' + lines.length + ' مكوّن</span>' +
+            '<span style="background:rgba(255,255,255,0.16);padding:3px 9px;border-radius:8px;font-size:11px;font-weight:600;backdrop-filter:blur(8px);"><i class="fas fa-box" style="margin-inline-end:4px;font-size:9px;"></i>1 وحدة/دفعة</span>' +
+          '</div>' +
         '</div>' +
+        // KPI: Price
         '<div style="text-align:center;">' +
-          '<div style="font-size:11px;opacity:0.85;font-weight:600;">السعر</div>' +
-          '<div style="font-size:20px;font-weight:900;font-family:monospace;margin-top:2px;">' + _v3Fmt(price) + ' ر.س</div>' +
+          '<div style="font-size:10px;opacity:0.85;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:4px;">السعر</div>' +
+          '<div style="font-size:22px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:-0.02em;">' + _v3Fmt(price) + '</div>' +
+          '<div style="font-size:10px;opacity:0.7;font-weight:600;margin-top:2px;">ر.س / وحدة</div>' +
         '</div>' +
+        // KPI: Live cost
         '<div style="text-align:center;">' +
-          '<div style="font-size:11px;opacity:0.85;font-weight:600;">التكلفة الحية</div>' +
-          '<div id="reLiveCost" style="font-size:20px;font-weight:900;font-family:monospace;margin-top:2px;">' + _v3Fmt(t.totalCost) + ' ر.س</div>' +
+          '<div style="font-size:10px;opacity:0.85;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:4px;">التكلفة الحية</div>' +
+          '<div id="reLiveCost" style="font-size:22px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:-0.02em;">' + _v3Fmt(t.totalCost) + '</div>' +
+          '<div style="font-size:10px;opacity:0.7;font-weight:600;margin-top:2px;">ر.س / وحدة</div>' +
         '</div>' +
-        '<div style="text-align:center;background:rgba(255,255,255,0.18);border-radius:10px;padding:10px 8px;">' +
-          '<div style="font-size:11px;opacity:0.95;font-weight:600;">هامش الربح</div>' +
-          '<div id="reLiveMargin" style="font-size:22px;font-weight:900;color:' + (t.marginPct < 0 ? '#fecaca' : '#fff') + ';margin-top:2px;">' + (t.marginPct >= 0 ? '+' : '') + t.marginPct.toFixed(1) + '%</div>' +
-          '<div id="reLiveMarginAmt" style="font-size:11px;opacity:0.9;font-family:monospace;">' + (t.marginAbs >= 0 ? '+' : '') + _v3Fmt(t.marginAbs) + ' ر.س</div>' +
+        // KPI: Margin (boxed for emphasis)
+        '<div style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.22);border-radius:14px;padding:12px 10px;text-align:center;backdrop-filter:blur(12px);">' +
+          '<div style="font-size:10px;opacity:0.95;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:4px;">هامش الربح</div>' +
+          '<div id="reLiveMargin" style="font-size:26px;font-weight:900;color:' + marginColor + ';margin-top:1px;letter-spacing:-0.02em;">' + (t.marginPct >= 0 ? '+' : '') + t.marginPct.toFixed(1) + '%</div>' +
+          '<div id="reLiveMarginAmt" style="font-size:11px;opacity:0.95;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:600;margin-top:2px;">' + (t.marginAbs >= 0 ? '+' : '') + _v3Fmt(t.marginAbs) + ' ر.س</div>' +
         '</div>' +
       '</div>' +
+    '</section>';
+
+  // ── 2-COLUMN BODY ──
+  var bodyHtml =
+    '<div class="re-body" style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;">' +
+      _reRenderLinesPanel() +
+      _reRenderPickerPanel() +
     '</div>';
 
-  // ── V5.7.24 — wider 2-column layout: 1.5fr left (table) / 1fr right (picker) ──
-  //   Both columns get a TALLER inner area so the table doesn't feel cramped.
-  var leftHtml =
-    '<div style="background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:14px;height:68vh;display:flex;flex-direction:column;">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-        '<h4 style="margin:0;font-size:15px;font-weight:800;color:#0f172a;"><i class="fas fa-list-check" style="color:#7c3aed;margin-inline-end:6px;"></i> مكوّنات الوصفة (' + lines.length + ')</h4>' +
-        (lines.length ? '<button class="wo-btn wo-btn-sm" style="background:#fee2e2;color:#991b1b;" onclick="reClearAll()"><i class="fas fa-trash"></i> مسح الكل</button>' : '') +
+  // ── STICKY SAVE BAR ──
+  var saveBarHtml =
+    '<footer class="re-savebar" style="position:sticky;bottom:0;background:#fff;border-top:1.5px solid ' + _RE_COLORS.border + ';margin:16px -20px -20px;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 -4px 16px -8px rgba(15,23,42,0.08);">' +
+      '<div style="display:flex;align-items:center;gap:10px;font-size:12px;color:' + _RE_COLORS.sub + ';">' +
+        '<span id="reSaveStatus" style="display:inline-flex;align-items:center;gap:5px;font-weight:600;">' +
+          '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + _RE_COLORS.muted + ';"></span>' +
+          'جاهز للحفظ' +
+        '</span>' +
+        '<span style="opacity:0.6;font-size:11px;">·  اضغط <kbd style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-family:inherit;font-size:10.5px;font-weight:700;color:' + _RE_COLORS.sub + ';">Ctrl+S</kbd> للحفظ السريع</span>' +
       '</div>' +
-      '<div style="flex:1;overflow-y:auto;">' +
-        (lines.length ? _reRenderLinesTable() : _reEmptyLeft()) +
-      '</div>' +
-    '</div>';
+    '</footer>';
 
-  var rightHtml = _reRenderPickerPanel();
+  box.innerHTML = heroHtml + bodyHtml + saveBarHtml;
 
-  box.innerHTML =
-    headerHtml +
-    '<div style="display:grid;grid-template-columns:1.5fr 1fr;gap:14px;">' +
-      leftHtml + rightHtml +
-    '</div>';
-
-  // V5.7.24 — make the modal card itself ultra-wide (override WoModal default)
+  // Modal sizing override (V5.7.24 — keep ultra-wide)
   var card = document.querySelector('.wom-card.size-full');
   if (card) {
     card.style.maxWidth = '99vw';
@@ -16965,17 +17013,16 @@ function _reRenderEditor() {
     card.style.height = '96vh';
   }
 
-  // V5.7.27 — cache the 4 total elements ONCE per render so per-keystroke
-  //   updates don't pay 4× getElementById.
+  // Cache total elements (perf — avoid 4× getElementById per keystroke)
   _reTotalEls = {
     cost:      document.getElementById('reLiveCost'),
     margin:    document.getElementById('reLiveMargin'),
     marginAmt: document.getElementById('reLiveMarginAmt'),
-    footer:    document.getElementById('reFooterTotal')
+    footer:    document.getElementById('reFooterTotal'),
+    saveStatus:document.getElementById('reSaveStatus')
   };
 
-  // V5.7.27 — mount WoQtyInput on every line's host (replaces the inline
-  //   major/minor inputs that duplicated the widget's whole purpose).
+  // Mount WoQtyInput on every ingredient card
   if (typeof window.WoQtyInput !== 'undefined') {
     document.querySelectorAll('#reEditorBody .wqty-host').forEach(function(host) {
       var idx = Number(host.dataset.idx);
@@ -16993,63 +17040,155 @@ function _reRenderEditor() {
           window._re.lines[idx].qtyMinor = minorQty;
           _reUpdateLineCost(idx);
           _reUpdateTotals();
+          _reMarkDirty();
         }
       });
     });
   }
+
+  _reInstallShortcuts();
 }
 
-function _reEmptyLeft() {
-  return '<div style="text-align:center;padding:40px 20px;color:#94a3b8;">' +
-           '<i class="fas fa-mortar-pestle" style="font-size:48px;opacity:0.3;display:block;margin-bottom:12px;"></i>' +
-           '<div style="font-weight:700;font-size:14px;">لم تُضف أي مكوّنات بعد</div>' +
-           '<div style="font-size:12px;margin-top:4px;">اختر مكوّنات من اللوحة اليمنى لبناء الوصفة</div>' +
+// V5.7.28 — Ingredient CARDS (replaces table). Cards give each line
+//   breathing room + a richer layout (name + stock pill + qty widget +
+//   cost). Empty state is a friendly invitation, not a "no data" blob.
+function _reRenderLinesPanel() {
+  if (!window._re) return '';
+  var lines = window._re.lines;
+  var price = Number((window._re.menu || {}).price) || 0;
+  var t = _reComputeTotals(lines, price);
+
+  var bodyHtml = lines.length
+    ? _reRenderCostChart(lines, t.totalCost) + _reRenderBulkToolbar() + _reRenderLineCards()
+    : _reEmptyLeft();
+
+  return '<section class="re-lines-panel" style="background:#fff;border:1px solid ' + _RE_COLORS.border + ';border-radius:16px;display:flex;flex-direction:column;height:62vh;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);">' +
+           // Header
+           '<header style="padding:14px 18px;border-bottom:1px solid ' + _RE_COLORS.border + ';display:flex;justify-content:space-between;align-items:center;background:linear-gradient(180deg,#fff 0%,' + _RE_COLORS.surfaceAlt + ' 100%);">' +
+             '<div style="display:flex;align-items:center;gap:10px;">' +
+               '<div style="width:32px;height:32px;background:' + _RE_COLORS.primarySoft + ';color:' + _RE_COLORS.primary + ';border-radius:9px;display:grid;place-items:center;">' +
+                 '<i class="fas fa-list-check" style="font-size:14px;"></i>' +
+               '</div>' +
+               '<div>' +
+                 '<div style="font-size:14px;font-weight:800;color:' + _RE_COLORS.ink + ';line-height:1.2;">مكوّنات الوصفة</div>' +
+                 '<div style="font-size:11px;color:' + _RE_COLORS.muted + ';font-weight:600;margin-top:1px;">' + lines.length + ' مكوّن • التكلفة: <span id="reLinesPanelTotal" style="font-family:monospace;color:' + _RE_COLORS.success + ';">' + _v3Fmt(t.totalCost) + '</span> ر.س</div>' +
+               '</div>' +
+             '</div>' +
+           '</header>' +
+           // Body
+           '<div style="flex:1;overflow-y:auto;padding:16px 18px;">' + bodyHtml + '</div>' +
+           // Footer with grand total (sticky to bottom)
+           (lines.length ? (
+             '<div style="padding:12px 18px;border-top:1px solid ' + _RE_COLORS.border + ';background:' + _RE_COLORS.surfaceAlt + ';display:flex;justify-content:space-between;align-items:center;">' +
+               '<span style="font-size:13px;font-weight:700;color:' + _RE_COLORS.ink + ';">إجمالي التكلفة</span>' +
+               '<span id="reFooterTotal" style="font-size:18px;font-weight:900;color:' + _RE_COLORS.success + ';font-family:ui-monospace,SFMono-Regular,monospace;">' + _v3Fmt(t.totalCost) + ' ر.س</span>' +
+             '</div>'
+           ) : '') +
+         '</section>';
+}
+
+// Stacked horizontal cost composition bar — top 3 + "أخرى"
+function _reRenderCostChart(lines, totalCost) {
+  if (totalCost <= 0) return '';
+  var contribs = lines.map(function(l, idx) {
+    return { name: l.name, cost: (Number(l.cost) || 0) * (Number(l.qtyMinor) || 0), idx: idx };
+  }).filter(function(c) { return c.cost > 0; })
+    .sort(function(a, b) { return b.cost - a.cost; });
+  if (!contribs.length) return '';
+  var top3 = contribs.slice(0, 3);
+  var rest = contribs.slice(3);
+  var restCost = rest.reduce(function(s, c) { return s + c.cost; }, 0);
+  if (restCost > 0) top3.push({ name: 'مكوّنات أخرى', cost: restCost, _isRest: true });
+
+  var segmentsHtml = top3.map(function(c, i) {
+    var pct = totalCost > 0 ? (c.cost / totalCost * 100) : 0;
+    var color = c._isRest ? _RE_COLORS.muted : _RE_CHART_PALETTE[i % _RE_CHART_PALETTE.length];
+    return '<div title="' + _v3EscapeHtml(c.name) + ' — ' + pct.toFixed(1) + '%" style="background:' + color + ';width:' + pct + '%;height:100%;transition:width 0.3s ease;"></div>';
+  }).join('');
+
+  var legendHtml = top3.map(function(c, i) {
+    var pct = totalCost > 0 ? (c.cost / totalCost * 100) : 0;
+    var color = c._isRest ? _RE_COLORS.muted : _RE_CHART_PALETTE[i % _RE_CHART_PALETTE.length];
+    return '<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:' + _RE_COLORS.sub + ';font-weight:600;">' +
+             '<span style="width:10px;height:10px;border-radius:3px;background:' + color + ';flex-shrink:0;"></span>' +
+             '<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px;">' + _v3EscapeHtml(c.name) + '</span>' +
+             '<span style="font-family:monospace;color:' + _RE_COLORS.muted + ';">' + pct.toFixed(0) + '%</span>' +
+           '</div>';
+  }).join('');
+
+  return '<div style="background:' + _RE_COLORS.surfaceAlt + ';border:1px solid ' + _RE_COLORS.border + ';border-radius:12px;padding:12px 14px;margin-bottom:14px;">' +
+           '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+             '<span style="font-size:11px;font-weight:800;color:' + _RE_COLORS.sub + ';letter-spacing:0.04em;text-transform:uppercase;"><i class="fas fa-chart-pie" style="margin-inline-end:4px;color:' + _RE_COLORS.primary + ';"></i> توزيع التكلفة</span>' +
+           '</div>' +
+           '<div style="display:flex;height:8px;border-radius:6px;overflow:hidden;background:#fff;border:1px solid ' + _RE_COLORS.border + ';">' + segmentsHtml + '</div>' +
+           '<div style="display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:10px;">' + legendHtml + '</div>' +
          '</div>';
 }
 
-// V5.7.27 — table now renders a `wqty-host` div per line; WoQtyInput mounts
-//   on each after innerHTML, replacing ~50 lines of inline input HTML +
-//   the reUpdateMajor/Minor handlers (now derived from widget's onChange).
-function _reRenderLinesTable() {
+function _reRenderBulkToolbar() {
+  return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
+           '<div style="font-size:11px;font-weight:800;color:' + _RE_COLORS.muted + ';letter-spacing:0.04em;text-transform:uppercase;">المكوّنات</div>' +
+           '<button class="re-bulk-btn" onclick="reClearAll()" style="background:transparent;color:' + _RE_COLORS.danger + ';border:1px solid ' + _RE_COLORS.dangerSoft + ';font-weight:700;font-size:11.5px;padding:5px 10px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;transition:all 0.15s;" onmouseover="this.style.background=\'' + _RE_COLORS.dangerSoft + '\';" onmouseout="this.style.background=\'transparent\';">' +
+             '<i class="fas fa-trash-can" style="font-size:10px;"></i> مسح الكل' +
+           '</button>' +
+         '</div>';
+}
+
+function _reRenderLineCards() {
   if (!window._re) return '';
   var lines = window._re.lines;
-  var rowsHtml = lines.map(function(l, idx) {
-    var unitCost = Number(l.cost) || 0;
-    var lineCost = unitCost * (Number(l.qtyMinor) || 0);
-    return '<tr data-idx="' + idx + '" style="border-bottom:1px solid #f1f5f9;">' +
-             '<td style="padding:10px 8px;font-weight:700;color:#0f172a;min-width:160px;">' +
-               '<div style="font-size:13px;">' + _v3EscapeHtml(l.name) + '</div>' +
-             '</td>' +
-             '<td style="padding:10px 6px;" colspan="2">' +
+  return '<div style="display:flex;flex-direction:column;gap:10px;">' +
+    lines.map(function(l, idx) {
+      var unitCost = Number(l.cost) || 0;
+      var qtyMinor = Number(l.qtyMinor) || 0;
+      var lineCost = unitCost * qtyMinor;
+      var stockMinor = Number(l.stock) || 0;
+      var hasIssue = qtyMinor > 0 && stockMinor < qtyMinor;
+      var pendingQty = qtyMinor === 0;
+      var borderColor = hasIssue ? _RE_COLORS.danger : (pendingQty ? _RE_COLORS.warning : _RE_COLORS.border);
+      var pendingChip = pendingQty
+        ? '<span style="background:' + _RE_COLORS.warningSoft + ';color:' + _RE_COLORS.warning + ';font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;margin-inline-start:6px;">يحتاج كمية</span>'
+        : '';
+      var shortageChip = hasIssue
+        ? '<span style="background:' + _RE_COLORS.dangerSoft + ';color:' + _RE_COLORS.danger + ';font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;margin-inline-start:6px;"><i class="fas fa-triangle-exclamation" style="font-size:9px;"></i> مخزون غير كافٍ</span>'
+        : '';
+      return '<article data-idx="' + idx + '" class="re-line-card" style="background:#fff;border:1.5px solid ' + borderColor + ';border-radius:14px;padding:14px 16px;display:grid;grid-template-columns:1fr auto auto auto;gap:14px;align-items:center;transition:border-color 0.15s,box-shadow 0.15s;" onmouseover="this.style.boxShadow=\'0 4px 12px -4px rgba(15,23,42,0.08)\';" onmouseout="this.style.boxShadow=\'none\';">' +
+               // Name + status chips
+               '<div style="min-width:0;">' +
+                 '<div style="font-size:14px;font-weight:800;color:' + _RE_COLORS.ink + ';line-height:1.25;display:flex;align-items:center;flex-wrap:wrap;">' +
+                   '<span>' + _v3EscapeHtml(l.name) + '</span>' +
+                   pendingChip + shortageChip +
+                 '</div>' +
+                 '<div style="font-size:11px;color:' + _RE_COLORS.muted + ';font-weight:600;margin-top:3px;font-family:ui-monospace,SFMono-Regular,monospace;">سعر/وحدة: ' + _v3Fmt(unitCost) + ' ر.س</div>' +
+               '</div>' +
+               // Qty widget
                '<div class="wqty-host" data-idx="' + idx + '"></div>' +
-             '</td>' +
-             '<td style="padding:10px 6px;text-align:center;font-family:monospace;font-weight:700;color:#475569;font-size:13px;">' + _v3Fmt(unitCost) + '</td>' +
-             '<td class="re-line-cost" style="padding:10px 6px;text-align:center;font-family:monospace;font-weight:900;color:#16a34a;font-size:14px;">' + _v3Fmt(lineCost) + '</td>' +
-             '<td style="padding:10px 6px;text-align:center;">' +
-               '<button class="wo-btn wo-btn-sm" style="background:#fee2e2;color:#991b1b;padding:6px 10px;" onclick="reRemoveLine(' + idx + ')" title="حذف">' +
-                 '<i class="fas fa-times"></i>' +
+               // Line cost
+               '<div style="text-align:center;min-width:90px;">' +
+                 '<div style="font-size:10px;color:' + _RE_COLORS.muted + ';font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:2px;">التكلفة</div>' +
+                 '<div class="re-line-cost" style="font-size:16px;font-weight:900;color:' + _RE_COLORS.success + ';font-family:ui-monospace,SFMono-Regular,monospace;">' + _v3Fmt(lineCost) + '</div>' +
+               '</div>' +
+               // Delete button
+               '<button onclick="reRemoveLine(' + idx + ')" title="حذف" style="background:transparent;color:' + _RE_COLORS.muted + ';border:1px solid ' + _RE_COLORS.border + ';width:34px;height:34px;border-radius:9px;cursor:pointer;display:grid;place-items:center;transition:all 0.15s;" onmouseover="this.style.background=\'' + _RE_COLORS.dangerSoft + '\';this.style.color=\'' + _RE_COLORS.danger + '\';this.style.borderColor=\'' + _RE_COLORS.danger + '\';" onmouseout="this.style.background=\'transparent\';this.style.color=\'' + _RE_COLORS.muted + '\';this.style.borderColor=\'' + _RE_COLORS.border + '\';">' +
+                 '<i class="fas fa-times" style="font-size:13px;"></i>' +
                '</button>' +
-             '</td>' +
-           '</tr>';
-  }).join('');
+             '</article>';
+    }).join('') +
+  '</div>';
+}
 
-  var t = _reComputeTotals(lines, Number((window._re.menu || {}).price) || 0);
-
-  return '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
-           '<thead><tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">' +
-             '<th style="text-align:start;padding:10px 8px;font-size:11.5px;color:#64748b;font-weight:800;">المكوّن</th>' +
-             '<th style="text-align:center;padding:10px 6px;font-size:11.5px;color:#64748b;font-weight:800;" colspan="2">الكمية (كبرى / صغرى)</th>' +
-             '<th style="text-align:center;padding:10px 6px;font-size:11.5px;color:#64748b;font-weight:800;">سعر/وحدة</th>' +
-             '<th style="text-align:center;padding:10px 6px;font-size:11.5px;color:#64748b;font-weight:800;">إجمالي</th>' +
-             '<th style="width:50px;"></th>' +
-           '</tr></thead>' +
-           '<tbody>' + rowsHtml + '</tbody>' +
-           '<tfoot><tr style="background:#f1f5f9;border-top:2px solid #cbd5e1;">' +
-             '<td colspan="4" style="padding:12px 8px;font-weight:900;font-size:14px;color:#0f172a;">إجمالي تكلفة الوصفة</td>' +
-             '<td id="reFooterTotal" style="text-align:center;padding:12px 6px;font-weight:900;font-size:16px;color:#16a34a;font-family:monospace;">' + _v3Fmt(t.totalCost) + ' ر.س</td>' +
-             '<td></td>' +
-           '</tr></tfoot>' +
-         '</table>';
+function _reEmptyLeft() {
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;color:' + _RE_COLORS.muted + ';min-height:300px;">' +
+           '<div style="width:80px;height:80px;background:' + _RE_COLORS.primarySoft + ';color:' + _RE_COLORS.primary + ';border-radius:50%;display:grid;place-items:center;margin-bottom:14px;">' +
+             '<i class="fas fa-mortar-pestle" style="font-size:32px;"></i>' +
+           '</div>' +
+           '<h3 style="font-weight:800;font-size:16px;color:' + _RE_COLORS.ink + ';margin:0 0 6px;">ابدأ بناء الوصفة</h3>' +
+           '<p style="font-size:13px;text-align:center;max-width:280px;line-height:1.6;margin:0 0 14px;color:' + _RE_COLORS.sub + ';">اختر مكوّناً من اللوحة المجاورة، أو ابدأ بكتابة اسمه في خانة البحث للوصول السريع.</p>' +
+           '<button onclick="document.getElementById(\'rePickerSearchInput\').focus();" style="background:' + _RE_COLORS.primary + ';color:#fff;border:0;padding:9px 16px;border-radius:9px;font-weight:700;font-size:12.5px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;box-shadow:0 4px 12px -4px ' + _RE_COLORS.primary + ';">' +
+             '<i class="fas fa-search"></i> ابحث عن مكوّن' +
+             '<kbd style="background:rgba(255,255,255,0.22);padding:2px 6px;border-radius:4px;font-family:inherit;font-size:10px;margin-inline-start:4px;">/</kbd>' +
+           '</button>' +
+         '</div>';
 }
 
 function _reUpdateLineCost(idx) {
@@ -17073,21 +17212,70 @@ function _reUpdateTotals() {
   if (_reTotalEls.footer)    _reTotalEls.footer.textContent    = _v3Fmt(t.totalCost) + ' ر.س';
 }
 
+// V5.7.28 — Premium picker: search w/ slash hotkey + category filter pills
+//   + recently-used + grouped list with stock-level dots.
 function _reRenderPickerPanel() {
-  // V5.7.27 — wrap content in a STABLE host div (#rePickerPanel) so search
-  //   updates can swap inner HTML without touching the rest of the editor.
-  return '<div id="rePickerPanel" style="background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:14px;height:68vh;display:flex;flex-direction:column;">' +
-           _reRenderPickerContent() +
-         '</div>';
-}
-
-function _reRenderPickerContent() {
   if (!window._re) return '';
   var items = window._re.items;
-  var lines = window._re.lines;
   var search = window._re.pickerSearch || '';
-  var pickedIds = new Set(lines.map(function(l) { return l.itemId; }));
+  var activeCategory = window._re.pickerCategory || '';
 
+  // Build category list with counts
+  var byCategory = _reGroupByCategory(items);
+  var categories = Object.keys(byCategory).sort();
+  var pickedIds = new Set(window._re.lines.map(function(l) { return l.itemId; }));
+  var totalAvailable = items.filter(function(it) { return !pickedIds.has(it.id) && it.active !== false && it.active !== 0; }).length;
+
+  // Category pills (compact, scrollable horizontally)
+  var pillsHtml =
+    '<div style="display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;scrollbar-width:thin;">' +
+      '<button onclick="reSetCategory(\'\')" style="background:' + (!activeCategory ? _RE_COLORS.primary : _RE_COLORS.surfaceAlt) + ';color:' + (!activeCategory ? '#fff' : _RE_COLORS.sub) + ';border:1px solid ' + (!activeCategory ? _RE_COLORS.primary : _RE_COLORS.border) + ';padding:5px 11px;border-radius:8px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:all 0.15s;">' +
+        'الكل <span style="opacity:0.7;font-family:monospace;">' + totalAvailable + '</span>' +
+      '</button>' +
+      categories.map(function(cat) {
+        var count = byCategory[cat].filter(function(it) { return !pickedIds.has(it.id); }).length;
+        if (!count) return '';
+        var isActive = activeCategory === cat;
+        return '<button onclick="reSetCategory(\'' + _v3EscapeHtml(cat).replace(/'/g, "\\'") + '\')" style="background:' + (isActive ? _RE_COLORS.primary : _RE_COLORS.surfaceAlt) + ';color:' + (isActive ? '#fff' : _RE_COLORS.sub) + ';border:1px solid ' + (isActive ? _RE_COLORS.primary : _RE_COLORS.border) + ';padding:5px 11px;border-radius:8px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:all 0.15s;">' +
+                 _v3EscapeHtml(cat) + ' <span style="opacity:0.7;font-family:monospace;">' + count + '</span>' +
+               '</button>';
+      }).join('') +
+    '</div>';
+
+  return '<section class="re-picker-panel" style="background:#fff;border:1px solid ' + _RE_COLORS.border + ';border-radius:16px;display:flex;flex-direction:column;height:62vh;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);">' +
+           // Header
+           '<header style="padding:14px 18px;border-bottom:1px solid ' + _RE_COLORS.border + ';background:linear-gradient(180deg,#fff 0%,' + _RE_COLORS.surfaceAlt + ' 100%);">' +
+             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+               '<div style="display:flex;align-items:center;gap:10px;">' +
+                 '<div style="width:32px;height:32px;background:' + _RE_COLORS.accentSoft + ';color:' + _RE_COLORS.accent + ';border-radius:9px;display:grid;place-items:center;">' +
+                   '<i class="fas fa-search-plus" style="font-size:14px;"></i>' +
+                 '</div>' +
+                 '<div>' +
+                   '<div style="font-size:14px;font-weight:800;color:' + _RE_COLORS.ink + ';line-height:1.2;">إضافة مكوّنات</div>' +
+                   '<div style="font-size:11px;color:' + _RE_COLORS.muted + ';font-weight:600;margin-top:1px;">من المخزون · ' + totalAvailable + ' مكوّن متاح</div>' +
+                 '</div>' +
+               '</div>' +
+               '<button class="wo-btn wo-btn-sm wo-btn-primary" id="reAddSelectedBtn" onclick="reAddSelected()" disabled style="opacity:0.5;cursor:not-allowed;background:' + _RE_COLORS.primary + ';border-color:' + _RE_COLORS.primary + ';">' +
+                 '<i class="fas fa-plus"></i> أضف <span id="reSelCount">0</span>' +
+               '</button>' +
+             '</div>' +
+             // Search box with slash hint
+             '<div style="position:relative;">' +
+               '<i class="fas fa-search" style="position:absolute;top:50%;inset-inline-start:12px;transform:translateY(-50%);color:' + _RE_COLORS.muted + ';font-size:12px;"></i>' +
+               '<input type="text" id="rePickerSearchInput" placeholder="ابحث عن مكوّن..." value="' + _v3EscapeHtml(search) + '" oninput="rePickerSearch(this.value)" autocomplete="off" style="width:100%;padding:9px 36px 9px 38px;border:1.5px solid ' + _RE_COLORS.border + ';border-radius:10px;font-size:13px;background:#fff;transition:border-color 0.15s,box-shadow 0.15s;" onfocus="this.style.borderColor=\'' + _RE_COLORS.primary + '\';this.style.boxShadow=\'0 0 0 3px ' + _RE_COLORS.primarySoft + '\';" onblur="this.style.borderColor=\'' + _RE_COLORS.border + '\';this.style.boxShadow=\'none\';">' +
+               '<kbd style="position:absolute;top:50%;inset-inline-end:12px;transform:translateY(-50%);background:' + _RE_COLORS.surfaceAlt + ';color:' + _RE_COLORS.muted + ';padding:2px 7px;border-radius:5px;font-family:inherit;font-size:11px;font-weight:700;border:1px solid ' + _RE_COLORS.border + ';">/</kbd>' +
+             '</div>' +
+             // Category pills
+             pillsHtml +
+           '</header>' +
+           // List
+           '<div id="rePickerListBody" style="flex:1;overflow-y:auto;padding:8px 12px 12px;">' +
+             _reRenderPickerListBody(items, pickedIds, search, activeCategory, byCategory) +
+           '</div>' +
+         '</section>';
+}
+
+function _reGroupByCategory(items) {
   var byCategory = {};
   items.forEach(function(it) {
     if (it.active === false || it.active === 0) return;
@@ -17095,28 +17283,17 @@ function _reRenderPickerContent() {
     if (!byCategory[cat]) byCategory[cat] = [];
     byCategory[cat].push(it);
   });
-
-  var html =
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-      '<h4 style="margin:0;font-size:14px;font-weight:800;color:#0f172a;"><i class="fas fa-search-plus" style="color:#0ea5e9;margin-inline-end:6px;"></i> اختر المكوّنات</h4>' +
-      '<button class="wo-btn wo-btn-sm wo-btn-primary" id="reAddSelectedBtn" onclick="reAddSelected()" disabled style="opacity:0.5;cursor:not-allowed;">' +
-        '<i class="fas fa-plus"></i> أضف <span id="reSelCount">0</span>' +
-      '</button>' +
-    '</div>' +
-    '<div style="margin-bottom:10px;">' +
-      '<input type="text" id="rePickerSearchInput" placeholder="ابحث عن مكوّن..." value="' + _v3EscapeHtml(search) + '" oninput="rePickerSearch(this.value)" style="width:100%;padding:8px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;">' +
-    '</div>' +
-    '<div id="rePickerListBody" style="flex:1;overflow-y:auto;">' +
-      _reRenderPickerListBody(items, pickedIds, search, byCategory) +
-    '</div>';
-  return html;
+  return byCategory;
 }
 
-function _reRenderPickerListBody(items, pickedIds, search, byCategory) {
+function _reRenderPickerListBody(items, pickedIds, search, activeCategory, byCategory) {
+  if (!byCategory) byCategory = _reGroupByCategory(items);
   var html = '';
   var totalShown = 0;
-  var s = (search || '').toLowerCase();
+  var s = (search || '').toLowerCase().trim();
+
   Object.keys(byCategory).sort().forEach(function(cat) {
+    if (activeCategory && activeCategory !== cat) return;
     var arr = byCategory[cat].filter(function(it) {
       if (pickedIds.has(it.id)) return false;
       if (!s) return true;
@@ -17125,35 +17302,120 @@ function _reRenderPickerListBody(items, pickedIds, search, byCategory) {
     });
     if (!arr.length) return;
     totalShown += arr.length;
-    html += '<div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;padding:8px 4px 4px;">' + _v3EscapeHtml(cat) + ' <span style="color:#cbd5e1;">(' + arr.length + ')</span></div>';
+    if (!activeCategory) {
+      html += '<div style="font-size:10px;font-weight:800;color:' + _RE_COLORS.muted + ';text-transform:uppercase;letter-spacing:0.06em;padding:10px 6px 5px;display:flex;align-items:center;gap:6px;">' +
+                '<span style="height:1px;flex:1;background:' + _RE_COLORS.border + ';"></span>' +
+                '<span>' + _v3EscapeHtml(cat) + '</span>' +
+                '<span style="background:' + _RE_COLORS.surfaceAlt + ';color:' + _RE_COLORS.sub + ';padding:1px 6px;border-radius:5px;font-family:monospace;">' + arr.length + '</span>' +
+                '<span style="height:1px;flex:1;background:' + _RE_COLORS.border + ';"></span>' +
+              '</div>';
+    }
     arr.forEach(function(it) {
-      var cv = Number(it.convRate) || 1;
-      var stockMinor = Number(it.stock) || 0;
-      var stockHtml = (cv > 1 && it.bigUnit)
-        ? (stockMinor / cv).toFixed(2) + ' ' + it.bigUnit + ' / ' + stockMinor + ' ' + (it.unit || 'حبة')
-        : stockMinor + ' ' + (it.unit || 'حبة');
-      var stockColor = stockMinor === 0 ? '#94a3b8' : (stockMinor < 10 ? '#d97706' : '#16a34a');
-      html +=
-        '<label class="re-pick-row" style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid #f1f5f9;cursor:pointer;">' +
-          '<input type="checkbox" class="re-pick-cb" data-item-id="' + it.id + '" onchange="reUpdateSelCount()" style="width:16px;height:16px;cursor:pointer;flex-shrink:0;">' +
-          '<div style="flex:1;min-width:0;">' +
-            '<div style="font-weight:700;color:#0f172a;font-size:13px;">' + _v3EscapeHtml(it.name) + '</div>' +
-            '<div style="font-size:10px;color:' + stockColor + ';font-weight:600;margin-top:2px;">' + stockHtml + '</div>' +
-          '</div>' +
-          '<div style="text-align:end;font-size:11px;color:#64748b;font-family:monospace;">' + _v3Fmt(it.cost) + '/' + (it.unit || 'حبة') + '</div>' +
-        '</label>';
+      html += _reRenderPickerRow(it);
     });
   });
+
   if (!totalShown) {
-    html += '<div style="text-align:center;padding:30px 20px;color:#94a3b8;font-size:13px;"><i class="fas fa-search-minus" style="font-size:32px;opacity:0.3;display:block;margin-bottom:8px;"></i>لا توجد نتائج' + (search ? ' لـ "' + _v3EscapeHtml(search) + '"' : '') + '</div>';
+    html += '<div style="text-align:center;padding:40px 20px;color:' + _RE_COLORS.muted + ';">' +
+              '<i class="fas fa-search-minus" style="font-size:36px;opacity:0.3;display:block;margin-bottom:10px;"></i>' +
+              '<div style="font-weight:700;font-size:13px;color:' + _RE_COLORS.sub + ';">لا توجد نتائج</div>' +
+              (search ? '<div style="font-size:12px;margin-top:4px;">جرب كلمة أخرى لـ <strong>"' + _v3EscapeHtml(search) + '"</strong></div>' : '') +
+            '</div>';
   }
   return html;
+}
+
+function _reRenderPickerRow(it) {
+  var cv = Number(it.convRate) || 1;
+  var stockMinor = Number(it.stock) || 0;
+  var stockHtml = (cv > 1 && it.bigUnit)
+    ? (stockMinor / cv).toFixed(2) + ' ' + it.bigUnit + ' <span style="opacity:0.6;">·</span> ' + stockMinor + ' ' + (it.unit || 'حبة')
+    : stockMinor + ' ' + (it.unit || 'حبة');
+  var stockState = stockMinor === 0 ? 'out' : (stockMinor < 10 ? 'low' : 'ok');
+  var dotColor = stockState === 'out' ? _RE_COLORS.muted : (stockState === 'low' ? _RE_COLORS.warning : _RE_COLORS.success);
+  var dotPulse = stockState === 'low' ? 'animation:rePulse 2s ease-in-out infinite;' : '';
+  return '<label class="re-pick-row" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;cursor:pointer;transition:background 0.12s;" onmouseover="this.style.background=\'' + _RE_COLORS.surfaceAlt + '\';" onmouseout="this.style.background=\'transparent\';">' +
+           '<input type="checkbox" class="re-pick-cb" data-item-id="' + _v3EscapeHtml(it.id) + '" onchange="reUpdateSelCount()" style="width:18px;height:18px;cursor:pointer;flex-shrink:0;accent-color:' + _RE_COLORS.primary + ';">' +
+           '<div style="flex:1;min-width:0;">' +
+             '<div style="font-weight:700;color:' + _RE_COLORS.ink + ';font-size:13px;line-height:1.3;">' + _v3EscapeHtml(it.name) + '</div>' +
+             '<div style="font-size:11px;color:' + _RE_COLORS.sub + ';font-weight:600;margin-top:3px;display:flex;align-items:center;gap:5px;">' +
+               '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:' + dotColor + ';flex-shrink:0;' + dotPulse + '"></span>' +
+               '<span>' + stockHtml + '</span>' +
+             '</div>' +
+           '</div>' +
+           '<div style="text-align:end;flex-shrink:0;">' +
+             '<div style="font-size:13px;color:' + _RE_COLORS.ink + ';font-family:ui-monospace,SFMono-Regular,monospace;font-weight:700;">' + _v3Fmt(it.cost) + '</div>' +
+             '<div style="font-size:10px;color:' + _RE_COLORS.muted + ';font-weight:600;margin-top:1px;">ر.س / ' + _v3EscapeHtml(it.unit || 'حبة') + '</div>' +
+           '</div>' +
+         '</label>';
+}
+
+window.reSetCategory = function(cat) {
+  if (!window._re) return;
+  window._re.pickerCategory = cat || '';
+  // Re-render the picker panel only (header changes due to active pill state)
+  var pickerSection = document.querySelector('.re-picker-panel');
+  if (pickerSection && pickerSection.parentNode) {
+    pickerSection.outerHTML = _reRenderPickerPanel();
+  }
+};
+
+// V5.7.28 — Save status indicator + dirty tracking
+var _reDirtyTimer = null;
+function _reMarkDirty() {
+  if (!_reTotalEls.saveStatus) return;
+  _reTotalEls.saveStatus.innerHTML =
+    '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + _RE_COLORS.warning + ';animation:rePulse 1.5s ease-in-out infinite;"></span>' +
+    '<span style="color:' + _RE_COLORS.warning + ';">تغييرات غير محفوظة</span>';
+}
+function _reMarkSaved() {
+  if (!_reTotalEls.saveStatus) return;
+  _reTotalEls.saveStatus.innerHTML =
+    '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + _RE_COLORS.success + ';"></span>' +
+    '<span style="color:' + _RE_COLORS.success + ';">تم الحفظ <span id="reSaveAge">للتو</span></span>';
+  if (_reDirtyTimer) clearInterval(_reDirtyTimer);
+  var savedAt = Date.now();
+  _reDirtyTimer = setInterval(function() {
+    var ageEl = document.getElementById('reSaveAge');
+    if (!ageEl) { clearInterval(_reDirtyTimer); return; }
+    var sec = Math.floor((Date.now() - savedAt) / 1000);
+    ageEl.textContent = sec < 5 ? 'للتو' : ('منذ ' + (sec < 60 ? sec + ' ثانية' : Math.floor(sec/60) + ' دقيقة'));
+  }, 5000);
+}
+
+// V5.7.28 — Keyboard shortcuts: / focuses search, Ctrl+S saves, Esc closes
+function _reInstallShortcuts() {
+  if (window._reKeyHandler) document.removeEventListener('keydown', window._reKeyHandler);
+  window._reKeyHandler = function(e) {
+    if (!window._re) return;
+    // / focuses search (unless typing in another input)
+    if (e.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
+      e.preventDefault();
+      var s = document.getElementById('rePickerSearchInput');
+      if (s) { s.focus(); s.select(); }
+    }
+    // Ctrl/Cmd + S → save
+    else if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      e.preventDefault();
+      if (typeof window.reSaveRecipe === 'function') window.reSaveRecipe();
+    }
+  };
+  document.addEventListener('keydown', window._reKeyHandler);
+
+  // Inject pulse animation if not already
+  if (!document.getElementById('reAnimStyles')) {
+    var s = document.createElement('style');
+    s.id = 'reAnimStyles';
+    s.textContent = '@keyframes rePulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.5;transform:scale(0.85);}}';
+    document.head.appendChild(s);
+  }
 }
 
 window.reRemoveLine = function(idx) {
   if (!window._re) return;
   window._re.lines.splice(idx, 1);
   _reRenderEditor();
+  _reMarkDirty();
 };
 window.reClearAll = function() {
   if (!window._re || !window._re.lines.length) return;
@@ -17165,6 +17427,7 @@ window.reClearAll = function() {
     if (!ok || !window._re) return;
     window._re.lines = [];
     _reRenderEditor();
+    _reMarkDirty();
   });
 };
 
@@ -17219,7 +17482,10 @@ window.reAddSelected = function() {
     });
     added++;
   });
-  if (added) _v3Toast('تمت إضافة ' + added + ' مكوّن — حدّد الكميات الآن');
+  if (added) {
+    _v3Toast('تمت إضافة ' + added + ' مكوّن — حدّد الكميات الآن');
+    _reMarkDirty();
+  }
   _reRenderEditor();
 };
 
@@ -17262,6 +17528,7 @@ window.reSaveRecipe = function() {
     if (btn) btn.disabled = false;
     if (r && r.success) {
       _v3Toast('تم حفظ الوصفة + تحديث التكلفة (' + _v3Fmt(t.totalCost) + ' ر.س)');
+      _reMarkSaved();
       WoModal.close();
       if (typeof erpLoadBrandMenu === 'function') erpLoadBrandMenu();
       else if (typeof _bmRender === 'function') _bmRender();

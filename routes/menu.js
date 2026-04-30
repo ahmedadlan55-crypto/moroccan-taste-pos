@@ -183,9 +183,20 @@ router.post('/bulk-price-update', async (req, res) => {
     if (!['percent', 'fixed_set', 'fixed_add'].includes(mode)) return res.status(400).json({ success: false, error: 'mode invalid' });
     if (isNaN(value)) return res.status(400).json({ success: false, error: 'value invalid' });
     const username = (req.user && req.user.username) || b.username || 'system';
-    // Build target query
+    // V5.7.4-FIX: REQUIRE explicit targets — never allow accidental "update all".
+    // The bug: previously the semi-finished filter was added unconditionally, so
+    // when no itemIds and no brandId/categoryFilter were supplied, the query
+    // matched ALL non-semi items. Now we explicitly require itemIds OR a filter.
+    const hasIds = Array.isArray(b.itemIds) && b.itemIds.length > 0;
+    const hasFilter = !!(b.brandId || b.categoryFilter);
+    if (!hasIds && !hasFilter) {
+      return res.status(400).json({
+        success: false,
+        error: 'حدد أصنافاً صراحةً (itemIds) أو فلتراً (brandId / categoryFilter). لا يُسمح بتطبيق التغيير على كل المنيو دون فلترة.'
+      });
+    }
     const conds = []; const params = [];
-    if (Array.isArray(b.itemIds) && b.itemIds.length) {
+    if (hasIds) {
       conds.push(`id IN (${b.itemIds.map(()=>'?').join(',')})`);
       params.push(...b.itemIds);
     } else {
@@ -194,7 +205,6 @@ router.post('/bulk-price-update', async (req, res) => {
       // Skip semi-finished (they're cost-driven, not priced for sale)
       conds.push('(is_semi_finished IS NULL OR is_semi_finished = 0)');
     }
-    if (!conds.length) return res.status(400).json({ success: false, error: 'حدد أصنافاً أو فلتراً للتطبيق عليها' });
 
     const where = conds.join(' AND ');
     const [items] = await db.query(`SELECT id, name, price, cost FROM menu WHERE ${where}`, params);

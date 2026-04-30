@@ -16806,17 +16806,29 @@ window.erpOpenMenuRecipe = function(menuId, menuName){
 //   • Save: PUT /erp/bom + auto-update menu.cost
 // ═══════════════════════════════════════════════════════════════════
 
-// Selected lines for the open editor session
-window._reLines = [];      // [{itemId, name, unit, bigUnit, convRate, cost, stock, qtyMinor}]
-window._reMenu = null;     // current menu item
-window._reBom = null;      // existing BOM (if any)
-window._reItems = [];      // full inv_items pool
+// V5.7.27 — Encapsulated state. Was 5 globals (_reLines, _reMenu, _reBom,
+//   _reItems, _rePickerSearch). Single object reduces window pollution +
+//   makes cleanup atomic on modal close.
+window._re = null;
+
+// V5.7.27 — Module-scoped DOM ref cache + reusable margin computation.
+//   Cached refs avoid 4× getElementById per keystroke.
+var _reTotalEls = {};
+var _reSearchTimer = null;
+function _reComputeTotals(lines, price) {
+  var totalCost = 0;
+  for (var i = 0; i < lines.length; i++) {
+    totalCost += (Number(lines[i].cost) || 0) * (Number(lines[i].qtyMinor) || 0);
+  }
+  var marginAbs = price - totalCost;
+  var marginPct = price > 0 ? (marginAbs / price) * 100 : 0;
+  return { totalCost: totalCost, marginAbs: marginAbs, marginPct: marginPct };
+}
 
 window.erpOpenRecipeEditor = function(menuId) {
   if (!menuId) return _v3Toast('لا يوجد منتج', true);
   _v3Toast('جاري تحميل بيانات الوصفة...');
 
-  // Parallel fetch: menu item + items pool + existing BOM
   Promise.all([
     new Promise(function(r){ _erpGet('/menu/all', r); }),
     new Promise(function(r){ _erpGet('/inventory/items', r); }),
@@ -16828,15 +16840,20 @@ window.erpOpenRecipeEditor = function(menuId) {
     var menu = menuList.find(function(x) { return x.id === menuId; });
     if (!menu) return _v3Toast('المنتج غير موجود', true);
 
-    window._reMenu = menu;
-    window._reItems = items;
-    window._reBom = (bomMeta && bomMeta.bomId) ? bomMeta : null;
-    window._reLines = [];
+    window._re = {
+      menu: menu,
+      items: items,
+      bom: (bomMeta && bomMeta.bomId) ? bomMeta : null,
+      lines: [],
+      pickerSearch: '',
+      saving: false,
+      // V5.7.27 — concurrency token: increments per editor open. Stale
+      //   API callbacks compare their token to skip applying after close.
+      sessionToken: (window._re && window._re.sessionToken || 0) + 1
+    };
+    var session = window._re.sessionToken;
 
-    // If BOM exists, fetch its lines
-    var afterBomLoad = function() {
-      _reRenderEditor();
-      // Mount the modal AFTER body is ready
+    function afterBomLoad() {
       WoModal.open({
         icon: 'fa-mortar-pestle', iconColor: '#7c3aed',
         title: 'محرر الوصفة',
@@ -16847,22 +16864,30 @@ window.erpOpenRecipeEditor = function(menuId) {
           '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
           '<button class="wo-btn wo-btn-primary" onclick="reSaveRecipe()" id="reSaveBtn">' +
             '<i class="fas fa-save"></i> حفظ الوصفة + تحديث التكلفة' +
-          '</button>'
+          '</button>',
+        // V5.7.27 — clean up state when modal closes (prevents leak + stale callbacks)
+        onClose: function() {
+          if (window._re && window._re.sessionToken === session) {
+            window._re = null;
+            _reTotalEls = {};
+            if (_reSearchTimer) { clearTimeout(_reSearchTimer); _reSearchTimer = null; }
+          }
+        }
       });
-      // Render after the modal is in the DOM
       setTimeout(_reRenderEditor, 60);
-    };
+    }
 
-    if (window._reBom && window._reBom.bomId) {
-      _erpGet('/erp/bom/' + encodeURIComponent(window._reBom.bomId) + '/lines', function(lines) {
+    if (window._re.bom && window._re.bom.bomId) {
+      _erpGet('/erp/bom/' + encodeURIComponent(window._re.bom.bomId) + '/lines', function(lines) {
+        // V5.7.27 — guard against late callback after modal closed
+        if (!window._re || window._re.sessionToken !== session) return;
         (lines || []).forEach(function(l) {
           var item = items.find(function(x) { return x.id === (l.componentItemId || l.component_item_id); });
           if (!item) return;
-          window._reLines.push({
+          window._re.lines.push({
             itemId: item.id, name: item.name,
             unit: item.unit || 'حبة', bigUnit: item.bigUnit || '', convRate: Number(item.convRate) || 1,
             cost: Number(item.cost) || 0, stock: Number(item.stock) || 0,
-            // l.quantity is stored in MINOR units always (V5.6 convention)
             qtyMinor: Number(l.quantity) || 0
           });
         });
@@ -16872,27 +16897,19 @@ window.erpOpenRecipeEditor = function(menuId) {
       afterBomLoad();
     }
   }).catch(function(e) {
-    console.error('[V5.7.22] recipe load:', e);
+    console.error('[recipe-editor] load:', e);
     _v3Toast('فشل تحميل بيانات الوصفة', true);
   });
 };
 
-// V5.7.24 — full re-render is reserved for STRUCTURAL changes (add/remove
-//   line, add/remove ingredient, search filter). Quantity edits use
-//   surgical updates so typing is smooth (no input losing focus).
 function _reRenderEditor() {
   var box = document.getElementById('reEditorBody');
-  if (!box) return;
-  var menu = window._reMenu || {};
-  var lines = window._reLines || [];
+  if (!box || !window._re) return;
+  var menu = window._re.menu || {};
+  var lines = window._re.lines;
 
-  // ── Compute live totals ──
-  var totalCost = lines.reduce(function(s, l) {
-    return s + (Number(l.cost) || 0) * (Number(l.qtyMinor) || 0);
-  }, 0);
   var price = Number(menu.price) || 0;
-  var marginAbs = price - totalCost;
-  var marginPct = price > 0 ? (marginAbs / price) * 100 : 0;
+  var t = _reComputeTotals(lines, price);
 
   // ── Header — IDs are stable so _reUpdateTotals() can find + update them ──
   var headerHtml =
@@ -16909,12 +16926,12 @@ function _reRenderEditor() {
         '</div>' +
         '<div style="text-align:center;">' +
           '<div style="font-size:11px;opacity:0.85;font-weight:600;">التكلفة الحية</div>' +
-          '<div id="reLiveCost" style="font-size:20px;font-weight:900;font-family:monospace;margin-top:2px;">' + _v3Fmt(totalCost) + ' ر.س</div>' +
+          '<div id="reLiveCost" style="font-size:20px;font-weight:900;font-family:monospace;margin-top:2px;">' + _v3Fmt(t.totalCost) + ' ر.س</div>' +
         '</div>' +
         '<div style="text-align:center;background:rgba(255,255,255,0.18);border-radius:10px;padding:10px 8px;">' +
           '<div style="font-size:11px;opacity:0.95;font-weight:600;">هامش الربح</div>' +
-          '<div id="reLiveMargin" style="font-size:22px;font-weight:900;color:' + (marginPct < 0 ? '#fecaca' : '#fff') + ';margin-top:2px;">' + (marginPct >= 0 ? '+' : '') + marginPct.toFixed(1) + '%</div>' +
-          '<div id="reLiveMarginAmt" style="font-size:11px;opacity:0.9;font-family:monospace;">' + (marginAbs >= 0 ? '+' : '') + _v3Fmt(marginAbs) + ' ر.س</div>' +
+          '<div id="reLiveMargin" style="font-size:22px;font-weight:900;color:' + (t.marginPct < 0 ? '#fecaca' : '#fff') + ';margin-top:2px;">' + (t.marginPct >= 0 ? '+' : '') + t.marginPct.toFixed(1) + '%</div>' +
+          '<div id="reLiveMarginAmt" style="font-size:11px;opacity:0.9;font-family:monospace;">' + (t.marginAbs >= 0 ? '+' : '') + _v3Fmt(t.marginAbs) + ' ر.س</div>' +
         '</div>' +
       '</div>' +
     '</div>';
@@ -16941,14 +16958,45 @@ function _reRenderEditor() {
     '</div>';
 
   // V5.7.24 — make the modal card itself ultra-wide (override WoModal default)
-  setTimeout(function() {
-    var card = document.querySelector('.wom-card.size-full');
-    if (card) {
-      card.style.maxWidth = '99vw';
-      card.style.width = '99vw';
-      card.style.height = '96vh';
-    }
-  }, 30);
+  var card = document.querySelector('.wom-card.size-full');
+  if (card) {
+    card.style.maxWidth = '99vw';
+    card.style.width = '99vw';
+    card.style.height = '96vh';
+  }
+
+  // V5.7.27 — cache the 4 total elements ONCE per render so per-keystroke
+  //   updates don't pay 4× getElementById.
+  _reTotalEls = {
+    cost:      document.getElementById('reLiveCost'),
+    margin:    document.getElementById('reLiveMargin'),
+    marginAmt: document.getElementById('reLiveMarginAmt'),
+    footer:    document.getElementById('reFooterTotal')
+  };
+
+  // V5.7.27 — mount WoQtyInput on every line's host (replaces the inline
+  //   major/minor inputs that duplicated the widget's whole purpose).
+  if (typeof window.WoQtyInput !== 'undefined') {
+    document.querySelectorAll('#reEditorBody .wqty-host').forEach(function(host) {
+      var idx = Number(host.dataset.idx);
+      var l = window._re && window._re.lines[idx];
+      if (!l) return;
+      window.WoQtyInput.mount(host, {
+        unit:     l.unit || 'حبة',
+        bigUnit:  l.bigUnit || '',
+        convRate: Number(l.convRate) || 1,
+        stock:    Number(l.stock) || 0,
+        initialMinorQty: Number(l.qtyMinor) || 0,
+        onChange: function(minorQty) {
+          if (!window._re || !window._re.lines[idx]) return;
+          if (window._re.lines[idx].qtyMinor === minorQty) return;
+          window._re.lines[idx].qtyMinor = minorQty;
+          _reUpdateLineCost(idx);
+          _reUpdateTotals();
+        }
+      });
+    });
+  }
 }
 
 function _reEmptyLeft() {
@@ -16959,36 +17007,21 @@ function _reEmptyLeft() {
          '</div>';
 }
 
+// V5.7.27 — table now renders a `wqty-host` div per line; WoQtyInput mounts
+//   on each after innerHTML, replacing ~50 lines of inline input HTML +
+//   the reUpdateMajor/Minor handlers (now derived from widget's onChange).
 function _reRenderLinesTable() {
-  var lines = window._reLines || [];
+  if (!window._re) return '';
+  var lines = window._re.lines;
   var rowsHtml = lines.map(function(l, idx) {
     var unitCost = Number(l.cost) || 0;
-    var qtyMinor = Number(l.qtyMinor) || 0;
-    var cv = Number(l.convRate) || 1;
-    var lineCost = unitCost * qtyMinor;
-    var stockMinor = Number(l.stock) || 0;
-    var stockMajor = cv > 1 ? (stockMinor / cv) : null;
-    var stockHtml = (cv > 1 && l.bigUnit)
-      ? stockMajor.toFixed(2) + ' ' + l.bigUnit + ' <span style="color:#94a3b8;">(' + stockMinor + ' ' + l.unit + ')</span>'
-      : stockMinor + ' ' + l.unit;
-    var stockColor = stockMinor < qtyMinor ? '#dc2626' : (stockMinor === 0 ? '#94a3b8' : '#16a34a');
-    var qtyMajor = cv > 1 ? (qtyMinor / cv) : 0;
-    // V5.7.24 — bigger inputs, stable classes for surgical updates
+    var lineCost = unitCost * (Number(l.qtyMinor) || 0);
     return '<tr data-idx="' + idx + '" style="border-bottom:1px solid #f1f5f9;">' +
              '<td style="padding:10px 8px;font-weight:700;color:#0f172a;min-width:160px;">' +
                '<div style="font-size:13px;">' + _v3EscapeHtml(l.name) + '</div>' +
-               '<div style="font-size:10.5px;color:' + stockColor + ';font-weight:600;margin-top:3px;">المخزون: ' + stockHtml + '</div>' +
              '</td>' +
-             (cv > 1 && l.bigUnit
-               ? '<td style="padding:10px 6px;text-align:center;">' +
-                   '<input type="number" step="any" min="0" class="re-major-input" value="' + (qtyMajor ? Number(qtyMajor.toFixed(4)) : '') + '" placeholder="0" oninput="reUpdateMajor(' + idx + ',this.value)" style="width:96px;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:8px;text-align:center;font-weight:700;font-family:monospace;font-size:14px;">' +
-                   '<div style="font-size:10.5px;color:#64748b;margin-top:3px;font-weight:600;">' + l.bigUnit + '</div>' +
-                 '</td>'
-               : '<td style="padding:10px 6px;text-align:center;color:#cbd5e1;font-size:11px;">—</td>'
-             ) +
-             '<td style="padding:10px 6px;text-align:center;">' +
-               '<input type="number" step="any" min="0" class="re-minor-input" value="' + (qtyMinor || '') + '" placeholder="0" oninput="reUpdateMinor(' + idx + ',this.value)" style="width:96px;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:8px;text-align:center;font-weight:700;font-family:monospace;font-size:14px;">' +
-               '<div style="font-size:10.5px;color:#64748b;margin-top:3px;font-weight:600;">' + l.unit + '</div>' +
+             '<td style="padding:10px 6px;" colspan="2">' +
+               '<div class="wqty-host" data-idx="' + idx + '"></div>' +
              '</td>' +
              '<td style="padding:10px 6px;text-align:center;font-family:monospace;font-weight:700;color:#475569;font-size:13px;">' + _v3Fmt(unitCost) + '</td>' +
              '<td class="re-line-cost" style="padding:10px 6px;text-align:center;font-family:monospace;font-weight:900;color:#16a34a;font-size:14px;">' + _v3Fmt(lineCost) + '</td>' +
@@ -17000,13 +17033,12 @@ function _reRenderLinesTable() {
            '</tr>';
   }).join('');
 
-  var totalCost = lines.reduce(function(s, l) { return s + (Number(l.cost) || 0) * (Number(l.qtyMinor) || 0); }, 0);
+  var t = _reComputeTotals(lines, Number((window._re.menu || {}).price) || 0);
 
   return '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
            '<thead><tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">' +
              '<th style="text-align:start;padding:10px 8px;font-size:11.5px;color:#64748b;font-weight:800;">المكوّن</th>' +
-             '<th style="text-align:center;padding:10px 6px;font-size:11.5px;color:#64748b;font-weight:800;">كبرى</th>' +
-             '<th style="text-align:center;padding:10px 6px;font-size:11.5px;color:#64748b;font-weight:800;">صغرى</th>' +
+             '<th style="text-align:center;padding:10px 6px;font-size:11.5px;color:#64748b;font-weight:800;" colspan="2">الكمية (كبرى / صغرى)</th>' +
              '<th style="text-align:center;padding:10px 6px;font-size:11.5px;color:#64748b;font-weight:800;">سعر/وحدة</th>' +
              '<th style="text-align:center;padding:10px 6px;font-size:11.5px;color:#64748b;font-weight:800;">إجمالي</th>' +
              '<th style="width:50px;"></th>' +
@@ -17014,50 +17046,48 @@ function _reRenderLinesTable() {
            '<tbody>' + rowsHtml + '</tbody>' +
            '<tfoot><tr style="background:#f1f5f9;border-top:2px solid #cbd5e1;">' +
              '<td colspan="4" style="padding:12px 8px;font-weight:900;font-size:14px;color:#0f172a;">إجمالي تكلفة الوصفة</td>' +
-             '<td id="reFooterTotal" style="text-align:center;padding:12px 6px;font-weight:900;font-size:16px;color:#16a34a;font-family:monospace;">' + _v3Fmt(totalCost) + ' ر.س</td>' +
+             '<td id="reFooterTotal" style="text-align:center;padding:12px 6px;font-weight:900;font-size:16px;color:#16a34a;font-family:monospace;">' + _v3Fmt(t.totalCost) + ' ر.س</td>' +
              '<td></td>' +
            '</tr></tfoot>' +
          '</table>';
 }
 
-// V5.7.24 — Surgical updates: never re-render the whole editor on quantity
-//   change (would destroy the input the user is typing in). Instead, update
-//   only the cells that need to change.
 function _reUpdateLineCost(idx) {
-  var l = window._reLines[idx];
+  if (!window._re) return;
+  var l = window._re.lines[idx];
   var row = document.querySelector('tr[data-idx="' + idx + '"]');
   if (!l || !row) return;
-  var lineCost = (Number(l.cost) || 0) * (Number(l.qtyMinor) || 0);
   var costCell = row.querySelector('.re-line-cost');
-  if (costCell) costCell.textContent = _v3Fmt(lineCost);
+  if (costCell) costCell.textContent = _v3Fmt((Number(l.cost) || 0) * (Number(l.qtyMinor) || 0));
 }
 
 function _reUpdateTotals() {
-  var lines = window._reLines || [];
-  var menu = window._reMenu || {};
-  var total = lines.reduce(function(s, l) { return s + (Number(l.cost) || 0) * (Number(l.qtyMinor) || 0); }, 0);
-  var price = Number(menu.price) || 0;
-  var marginAbs = price - total;
-  var marginPct = price > 0 ? (marginAbs / price) * 100 : 0;
-  var costEl    = document.getElementById('reLiveCost');
-  var marginEl  = document.getElementById('reLiveMargin');
-  var marginAmt = document.getElementById('reLiveMarginAmt');
-  var footerEl  = document.getElementById('reFooterTotal');
-  if (costEl)    costEl.textContent    = _v3Fmt(total) + ' ر.س';
-  if (marginEl) {
-    marginEl.textContent = (marginPct >= 0 ? '+' : '') + marginPct.toFixed(1) + '%';
-    marginEl.style.color = marginPct < 0 ? '#fecaca' : '#fff';
+  if (!window._re) return;
+  var t = _reComputeTotals(window._re.lines, Number((window._re.menu || {}).price) || 0);
+  if (_reTotalEls.cost)   _reTotalEls.cost.textContent   = _v3Fmt(t.totalCost) + ' ر.س';
+  if (_reTotalEls.margin) {
+    _reTotalEls.margin.textContent = (t.marginPct >= 0 ? '+' : '') + t.marginPct.toFixed(1) + '%';
+    _reTotalEls.margin.style.color = t.marginPct < 0 ? '#fecaca' : '#fff';
   }
-  if (marginAmt) marginAmt.textContent = (marginAbs >= 0 ? '+' : '') + _v3Fmt(marginAbs) + ' ر.س';
-  if (footerEl)  footerEl.textContent  = _v3Fmt(total) + ' ر.س';
+  if (_reTotalEls.marginAmt) _reTotalEls.marginAmt.textContent = (t.marginAbs >= 0 ? '+' : '') + _v3Fmt(t.marginAbs) + ' ر.س';
+  if (_reTotalEls.footer)    _reTotalEls.footer.textContent    = _v3Fmt(t.totalCost) + ' ر.س';
 }
 
 function _reRenderPickerPanel() {
-  var items = window._reItems || [];
-  var lines = window._reLines || [];
+  // V5.7.27 — wrap content in a STABLE host div (#rePickerPanel) so search
+  //   updates can swap inner HTML without touching the rest of the editor.
+  return '<div id="rePickerPanel" style="background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:14px;height:68vh;display:flex;flex-direction:column;">' +
+           _reRenderPickerContent() +
+         '</div>';
+}
+
+function _reRenderPickerContent() {
+  if (!window._re) return '';
+  var items = window._re.items;
+  var lines = window._re.lines;
+  var search = window._re.pickerSearch || '';
   var pickedIds = new Set(lines.map(function(l) { return l.itemId; }));
 
-  // Group items by category
   var byCategory = {};
   items.forEach(function(it) {
     if (it.active === false || it.active === 0) return;
@@ -17066,30 +17096,32 @@ function _reRenderPickerPanel() {
     byCategory[cat].push(it);
   });
 
-  var search = window._rePickerSearch || '';
   var html =
-    '<div style="background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:14px;height:62vh;display:flex;flex-direction:column;">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-        '<h4 style="margin:0;font-size:14px;font-weight:800;color:#0f172a;"><i class="fas fa-search-plus" style="color:#0ea5e9;margin-inline-end:6px;"></i> اختر المكوّنات</h4>' +
-        '<button class="wo-btn wo-btn-sm wo-btn-primary" id="reAddSelectedBtn" onclick="reAddSelected()" disabled style="opacity:0.5;cursor:not-allowed;">' +
-          '<i class="fas fa-plus"></i> أضف <span id="reSelCount">0</span>' +
-        '</button>' +
-      '</div>' +
-      '<div style="margin-bottom:10px;">' +
-        '<input type="text" placeholder="ابحث عن مكوّن..." value="' + _v3EscapeHtml(search) + '" oninput="rePickerSearch(this.value)" style="width:100%;padding:8px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;">' +
-      '</div>' +
-      '<div style="flex:1;overflow-y:auto;">';
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+      '<h4 style="margin:0;font-size:14px;font-weight:800;color:#0f172a;"><i class="fas fa-search-plus" style="color:#0ea5e9;margin-inline-end:6px;"></i> اختر المكوّنات</h4>' +
+      '<button class="wo-btn wo-btn-sm wo-btn-primary" id="reAddSelectedBtn" onclick="reAddSelected()" disabled style="opacity:0.5;cursor:not-allowed;">' +
+        '<i class="fas fa-plus"></i> أضف <span id="reSelCount">0</span>' +
+      '</button>' +
+    '</div>' +
+    '<div style="margin-bottom:10px;">' +
+      '<input type="text" id="rePickerSearchInput" placeholder="ابحث عن مكوّن..." value="' + _v3EscapeHtml(search) + '" oninput="rePickerSearch(this.value)" style="width:100%;padding:8px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;">' +
+    '</div>' +
+    '<div id="rePickerListBody" style="flex:1;overflow-y:auto;">' +
+      _reRenderPickerListBody(items, pickedIds, search, byCategory) +
+    '</div>';
+  return html;
+}
 
+function _reRenderPickerListBody(items, pickedIds, search, byCategory) {
+  var html = '';
   var totalShown = 0;
+  var s = (search || '').toLowerCase();
   Object.keys(byCategory).sort().forEach(function(cat) {
     var arr = byCategory[cat].filter(function(it) {
-      if (pickedIds.has(it.id)) return false; // hide already-added
-      if (search) {
-        var s = search.toLowerCase();
-        return (it.name || '').toLowerCase().indexOf(s) >= 0 ||
-               String(it.id || '').toLowerCase().indexOf(s) >= 0;
-      }
-      return true;
+      if (pickedIds.has(it.id)) return false;
+      if (!s) return true;
+      return (it.name || '').toLowerCase().indexOf(s) >= 0 ||
+             String(it.id || '').toLowerCase().indexOf(s) >= 0;
     });
     if (!arr.length) return;
     totalShown += arr.length;
@@ -17112,71 +17144,52 @@ function _reRenderPickerPanel() {
         '</label>';
     });
   });
-
-  if (totalShown === 0) {
+  if (!totalShown) {
     html += '<div style="text-align:center;padding:30px 20px;color:#94a3b8;font-size:13px;"><i class="fas fa-search-minus" style="font-size:32px;opacity:0.3;display:block;margin-bottom:8px;"></i>لا توجد نتائج' + (search ? ' لـ "' + _v3EscapeHtml(search) + '"' : '') + '</div>';
   }
-
-  html += '</div></div>';
   return html;
 }
 
-// ── V5.7.24 — Surgical input handlers — NO full re-render on every keystroke.
-//   Just sync the OTHER input (only when it's not focused) + update the
-//   line's cost cell + the header/footer totals.
-window.reUpdateMajor = function(idx, val) {
-  var l = window._reLines[idx];
-  if (!l) return;
-  var v = Number(val);
-  if (isNaN(v) || v < 0) v = 0;
-  l.qtyMinor = v * (Number(l.convRate) || 1);
-  // Sync minor input — only if it's NOT currently focused (don't fight the user)
-  var row = document.querySelector('tr[data-idx="' + idx + '"]');
-  if (row) {
-    var minor = row.querySelector('.re-minor-input');
-    if (minor && document.activeElement !== minor) {
-      minor.value = l.qtyMinor || '';
-    }
-  }
-  _reUpdateLineCost(idx);
-  _reUpdateTotals();
-};
-window.reUpdateMinor = function(idx, val) {
-  var l = window._reLines[idx];
-  if (!l) return;
-  var v = Number(val);
-  if (isNaN(v) || v < 0) v = 0;
-  l.qtyMinor = v;
-  // Sync major input — only when not focused
-  var row = document.querySelector('tr[data-idx="' + idx + '"]');
-  if (row && Number(l.convRate) > 1) {
-    var major = row.querySelector('.re-major-input');
-    if (major && document.activeElement !== major) {
-      major.value = (l.qtyMinor / l.convRate) ? Number((l.qtyMinor / l.convRate).toFixed(4)) : '';
-    }
-  }
-  _reUpdateLineCost(idx);
-  _reUpdateTotals();
-};
 window.reRemoveLine = function(idx) {
-  window._reLines.splice(idx, 1);
+  if (!window._re) return;
+  window._re.lines.splice(idx, 1);
   _reRenderEditor();
 };
 window.reClearAll = function() {
+  if (!window._re || !window._re.lines.length) return;
   WoModal.confirm({
     title: 'مسح كل المكوّنات',
     message: 'سيتم إزالة جميع المكوّنات الحالية. هل تتابع؟',
     danger: true, confirmText: 'مسح'
   }).then(function(ok) {
-    if (!ok) return;
-    window._reLines = [];
+    if (!ok || !window._re) return;
+    window._re.lines = [];
     _reRenderEditor();
   });
 };
+
+// V5.7.27 — search now SURGICAL: only the picker list re-renders (not the
+//   whole editor). Debounced 200ms so each keystroke doesn't thrash the DOM.
 window.rePickerSearch = function(v) {
-  window._rePickerSearch = v;
-  _reRenderEditor();
+  if (!window._re) return;
+  window._re.pickerSearch = v;
+  clearTimeout(_reSearchTimer);
+  _reSearchTimer = setTimeout(function() {
+    if (!window._re) return;
+    var listBody = document.getElementById('rePickerListBody');
+    if (!listBody) return;
+    var byCategory = {};
+    window._re.items.forEach(function(it) {
+      if (it.active === false || it.active === 0) return;
+      var cat = it.category || 'عام';
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push(it);
+    });
+    var pickedIds = new Set(window._re.lines.map(function(l) { return l.itemId; }));
+    listBody.innerHTML = _reRenderPickerListBody(window._re.items, pickedIds, window._re.pickerSearch, byCategory);
+  }, 200);
 };
+
 window.reUpdateSelCount = function() {
   var n = document.querySelectorAll('.re-pick-cb:checked').length;
   var btn = document.getElementById('reAddSelectedBtn');
@@ -17189,15 +17202,15 @@ window.reUpdateSelCount = function() {
   }
 };
 window.reAddSelected = function() {
+  if (!window._re) return;
   var checked = document.querySelectorAll('.re-pick-cb:checked');
   var added = 0;
   checked.forEach(function(cb) {
     var id = cb.dataset.itemId;
-    var item = (window._reItems || []).find(function(x) { return x.id === id; });
+    var item = window._re.items.find(function(x) { return x.id === id; });
     if (!item) return;
-    // Skip if already added (defensive)
-    if (window._reLines.find(function(l) { return l.itemId === id; })) return;
-    window._reLines.push({
+    if (window._re.lines.find(function(l) { return l.itemId === id; })) return;
+    window._re.lines.push({
       itemId: item.id, name: item.name,
       unit: item.unit || 'حبة', bigUnit: item.bigUnit || '',
       convRate: Number(item.convRate) || 1,
@@ -17211,15 +17224,21 @@ window.reAddSelected = function() {
 };
 
 window.reSaveRecipe = function() {
-  var menu = window._reMenu;
+  if (!window._re || window._re.saving) return;
+  var menu = window._re.menu;
   if (!menu) return _v3Toast('لا توجد بيانات منتج', true);
-  var lines = (window._reLines || []).filter(function(l) { return Number(l.qtyMinor) > 0; });
+  if (Number(menu.price) <= 0) {
+    return _v3Toast('سعر المنتج صفر — حدد السعر أولاً قبل ربط الوصفة', true);
+  }
+  var lines = window._re.lines.filter(function(l) { return Number(l.qtyMinor) > 0; });
   if (!lines.length) return _v3Toast('أضف مكوّناً واحداً على الأقل بكمية أكبر من صفر', true);
 
-  var totalCost = lines.reduce(function(s, l) { return s + (Number(l.cost) || 0) * (Number(l.qtyMinor) || 0); }, 0);
+  var t = _reComputeTotals(lines, Number(menu.price));
+  var session = window._re.sessionToken;
+  window._re.saving = true;
 
   var payload = {
-    id: window._reBom && window._reBom.bomId ? window._reBom.bomId : null,
+    id: window._re.bom && window._re.bom.bomId ? window._re.bom.bomId : null,
     productId: menu.id,
     productSource: 'menu',
     yieldQuantity: 1,
@@ -17233,18 +17252,17 @@ window.reSaveRecipe = function() {
         wastePct: 0
       };
     }),
-    // Push the recomputed cost so menu.cost updates immediately
-    recomputedCost: Math.round(totalCost * 10000) / 10000
+    recomputedCost: Math.round(t.totalCost * 10000) / 10000
   };
 
   var btn = document.getElementById('reSaveBtn');
   if (btn) btn.disabled = true;
   callAPI('POST', '/erp/bom', payload, function(r) {
+    if (window._re && window._re.sessionToken === session) window._re.saving = false;
     if (btn) btn.disabled = false;
     if (r && r.success) {
-      _v3Toast('تم حفظ الوصفة + تحديث التكلفة (' + _v3Fmt(totalCost) + ' ر.س)');
+      _v3Toast('تم حفظ الوصفة + تحديث التكلفة (' + _v3Fmt(t.totalCost) + ' ر.س)');
       WoModal.close();
-      // Refresh the menu admin so the new recipe chip + cost show
       if (typeof erpLoadBrandMenu === 'function') erpLoadBrandMenu();
       else if (typeof _bmRender === 'function') _bmRender();
     } else {

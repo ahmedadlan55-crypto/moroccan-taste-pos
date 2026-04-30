@@ -724,16 +724,60 @@ router.post('/bom', async (req, res) => {
     if (src === 'menu') {
       try { await db.query('UPDATE menu SET bom_id = ? WHERE id = ?', [bomId, productId]); } catch(_){}
     }
-    // Replace lines if provided — accept both `itemId` and `componentItemId` (frontend flexibility)
+    // V5.7.27 — validate components exist + skip qty<=0 lines + bulk INSERT.
+    //   Was: 1 DELETE + N INSERT loop (N+1 round trips). Now: 1 DELETE + 1 multi-row INSERT.
+    //   Also rejects unknown componentItemId so we get a clear error rather
+    //   than a silent FK violation later.
     if (Array.isArray(lines)) {
+      const validLines = [];
+      const skipped = [];
+      const unknownIds = [];
+      // Deduplicate by componentItemId — last write wins (matches frontend's
+      // "skip if already added" guard but defensive against malformed payloads)
+      const seenIds = new Set();
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const l = lines[i];
+        const compId = l && (l.componentItemId || l.itemId);
+        if (!compId) { skipped.push({ reason: 'no-id', index: i }); continue; }
+        const qty = Number(l.quantity) || 0;
+        if (qty <= 0) { skipped.push({ reason: 'qty<=0', index: i, compId }); continue; }
+        if (seenIds.has(compId)) { skipped.push({ reason: 'duplicate', index: i, compId }); continue; }
+        seenIds.add(compId);
+        validLines.unshift(l);  // preserve original order
+      }
+      // Validate every componentItemId exists in inv_items
+      if (validLines.length) {
+        const ids = Array.from(new Set(validLines.map(l => l.componentItemId || l.itemId)));
+        const placeholders = ids.map(() => '?').join(',');
+        const [foundRows] = await db.query(
+          `SELECT id FROM inv_items WHERE id IN (${placeholders})`, ids);
+        const foundIds = new Set(foundRows.map(r => r.id));
+        ids.forEach(id => { if (!foundIds.has(id)) unknownIds.push(id); });
+        if (unknownIds.length) {
+          return res.json({
+            success: false,
+            error: 'مكوّنات غير موجودة في المخزون: ' + unknownIds.join(', '),
+            unknownComponents: unknownIds
+          });
+        }
+      }
       await db.query('DELETE FROM bom_lines WHERE bom_id = ?', [bomId]);
-      for (const l of lines) {
-        const compId = l.componentItemId || l.itemId;
-        if (!compId) continue;
+      if (validLines.length) {
+        // Bulk multi-row INSERT (one round trip instead of N)
+        const valuesSql = validLines.map(() => '(?,?,?,?,?,?)').join(',');
+        const params = [];
+        validLines.forEach(l => {
+          params.push(
+            genId('BL'), bomId,
+            l.componentItemId || l.itemId,
+            Number(l.quantity) || 0,
+            l.unit || 'PCS',
+            Number(l.wastePct) || 0
+          );
+        });
         await db.query(
           `INSERT INTO bom_lines (id, bom_id, component_item_id, quantity, unit, waste_pct)
-           VALUES (?,?,?,?,?,?)`,
-          [genId('BL'), bomId, compId, Number(l.quantity)||0, l.unit||'PCS', Number(l.wastePct)||0]);
+           VALUES ${valuesSql}`, params);
       }
     }
 

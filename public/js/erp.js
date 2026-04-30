@@ -16984,16 +16984,16 @@ function _reRenderEditor() {
       '</div>' +
     '</section>';
 
-  // ── 2-COLUMN BODY ──
+  // ── 2-COLUMN BODY (V5.7.30 — tighter gap + balanced ratio for wider modal) ──
   var bodyHtml =
-    '<div class="re-body" style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;">' +
+    '<div class="re-body" style="display:grid;grid-template-columns:1.25fr 1fr;gap:12px;">' +
       _reRenderLinesPanel() +
       _reRenderPickerPanel() +
     '</div>';
 
-  // ── STICKY SAVE BAR ──
+  // ── STICKY SAVE BAR (V5.7.30 — margin matches new tighter body padding 14px/16px) ──
   var saveBarHtml =
-    '<footer class="re-savebar" style="position:sticky;bottom:0;background:#fff;border-top:1.5px solid ' + _RE_COLORS.border + ';margin:16px -20px -20px;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 -4px 16px -8px rgba(15,23,42,0.08);">' +
+    '<footer class="re-savebar" style="position:sticky;bottom:0;background:#fff;border-top:1.5px solid ' + _RE_COLORS.border + ';margin:14px -16px -14px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 -4px 16px -8px rgba(15,23,42,0.08);">' +
       '<div style="display:flex;align-items:center;gap:10px;font-size:12px;color:' + _RE_COLORS.sub + ';">' +
         '<span id="reSaveStatus" style="display:inline-flex;align-items:center;gap:5px;font-weight:600;">' +
           '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + _RE_COLORS.muted + ';"></span>' +
@@ -17005,13 +17005,21 @@ function _reRenderEditor() {
 
   box.innerHTML = heroHtml + bodyHtml + saveBarHtml;
 
-  // Modal sizing override (V5.7.24 — keep ultra-wide)
+  // V5.7.30 — Modal sizing override: edge-to-edge for the recipe editor.
+  //   Was 99vw with overlay padding eating ~32px; now we also collapse
+  //   the overlay padding + tighten the body padding so the picker
+  //   column has enough room for long ingredient names.
+  var overlay = document.querySelector('.wom-overlay');
+  if (overlay) overlay.style.padding = '6px';
   var card = document.querySelector('.wom-card.size-full');
   if (card) {
-    card.style.maxWidth = '99vw';
-    card.style.width = '99vw';
-    card.style.height = '96vh';
+    card.style.maxWidth = 'calc(100vw - 12px)';
+    card.style.width    = 'calc(100vw - 12px)';
+    card.style.height   = 'calc(100vh - 12px)';
   }
+  // Tighten the editor body's own padding so the 2-col grid breathes wider
+  var body = document.querySelector('.wom-card.size-full .wom-body');
+  if (body) body.style.padding = '14px 16px';
 
   // Cache total elements (perf — avoid 4× getElementById per keystroke)
   _reTotalEls = {

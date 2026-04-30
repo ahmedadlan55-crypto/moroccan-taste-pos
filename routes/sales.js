@@ -533,17 +533,21 @@ router.get('/invoice/:orderId', async (req, res) => {
     const [items] = await db.query('SELECT * FROM sales_items WHERE order_id = ?', [req.params.orderId]);
 
     // ── Lookup cashier display name from settings.user_meta ──
+    // The receipt shows "You were served by : <FullName>, <empNo>".
+    // empNo is OPTIONAL — only printed when explicitly set in user_meta;
+    // falling back to username here would render "John Smith, j.smith" which
+    // looks redundant. So default empNo to '' and let the frontend hide it.
     let cashierName = sale.username || '';
-    let cashierEmpNo = sale.username || '';
+    let cashierEmpNo = '';
     try {
       const [metaRows] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
       if (metaRows.length && metaRows[0].setting_value) {
         const meta = JSON.parse(metaRows[0].setting_value) || {};
         const me = meta[sale.username] || {};
-        if (me.name) cashierName = me.name;
+        if (me.name)  cashierName  = me.name;
         if (me.empNo) cashierEmpNo = me.empNo;
       }
-    } catch (_) { /* fall back to username */ }
+    } catch (_) { /* fall back to username for the name; empNo stays empty */ }
 
     // ── Lookup the branch: prefer the shift's branch, else the user's primary branch ──
     let branchName = '', branchAddress = '', branchLat = null, branchLng = null;

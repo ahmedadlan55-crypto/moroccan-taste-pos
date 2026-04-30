@@ -439,7 +439,38 @@ window.toggleLang = function() {
   translateUI();
   if (typeof window.onLangChange === 'function') window.onLangChange();
   showToast(state.lang === 'ar' ? t('switchedAr') : t('switchedEn'));
+  // V5.7.12 — dynamic on-the-fly translation for content that's NOT in the
+  //           static dictionary (DB-sourced product names, customer names,
+  //           transaction subjects, descriptions…). Calls Google Translate
+  //           public endpoint with caching. See /shared/dynamic-i18n.js.
+  if (typeof window.applyDynamicTranslation === 'function') {
+    window.applyDynamicTranslation(state.lang);
+  }
 };
+
+// V5.7.12 — central entry point that keeps dynamic-i18n in sync with state.lang.
+//           Called from toggleLang AND on page load (when the saved lang is 'en').
+window.applyDynamicTranslation = function(lang) {
+  if (typeof window.DynamicI18N === 'undefined') return;
+  if (lang === 'en') {
+    // Show a soft toast on first run only (cached translations are instant)
+    DynamicI18N.translatePage('en').catch(function(){});
+    DynamicI18N.startObserver('en');
+  } else {
+    DynamicI18N.stopObserver();
+    DynamicI18N.restoreOriginal();
+  }
+};
+
+// On page-load, if the saved language is English, kick off dynamic translation
+// once the DOM is fully painted (give the static dictionary first crack).
+document.addEventListener('DOMContentLoaded', function() {
+  setTimeout(function() {
+    if (state && state.lang === 'en' && typeof window.applyDynamicTranslation === 'function') {
+      window.applyDynamicTranslation('en');
+    }
+  }, 250);
+});
 
 // ─── Loader ───
 window.loader = function(showLoader) {

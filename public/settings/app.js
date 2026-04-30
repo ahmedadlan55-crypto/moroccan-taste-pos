@@ -251,10 +251,87 @@ window.applyDeveloperVisibility = function() {
   else devZone.classList.add('hidden');
 };
 
+// V5.7.12 — section-icons (Font Awesome) per category for the reset-db modal
+var RDB_SECTION_ICONS = {
+  sales: 'fa-cash-register',
+  shifts: 'fa-clock',
+  inventory: 'fa-boxes-stacked',
+  inv_items: 'fa-cubes',
+  menu: 'fa-utensils',
+  recipes: 'fa-mortar-pestle',
+  purchases: 'fa-truck-loading',
+  expenses: 'fa-receipt',
+  custody: 'fa-wallet',
+  accounting: 'fa-calculator',
+  tax: 'fa-percent',
+  transactions: 'fa-paper-plane',
+  customers: 'fa-user-friends',
+  suppliers: 'fa-truck',
+  audit: 'fa-clipboard-list',
+  channels: 'fa-store',
+  payment_methods: 'fa-credit-card',
+  discounts: 'fa-tags',
+  price_lists: 'fa-tag'
+};
+
 window.openResetDb = function() {
   q('#rdbPass').value = '';
   q('#rdbConfirm').value = '';
+  // Render placeholder while sections load
+  q('#rdbSectionChecks').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#94a3b8;padding:12px;">جاري تحميل قائمة الأقسام...</div>';
   openGlassModal('#modalResetDb');
+
+  // Fetch the section list from the server (so it auto-syncs when new sections are added backend-side)
+  fetch('/api/auth/reset-db/sections', {
+    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token') || '') }
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      var sections = (data && data.sections) || [];
+      if (!sections.length) {
+        q('#rdbSectionChecks').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#dc2626;padding:12px;">تعذّر تحميل الأقسام</div>';
+        return;
+      }
+      q('#rdbSectionChecks').innerHTML = sections.map(function(sec) {
+        var icon = RDB_SECTION_ICONS[sec.key] || 'fa-folder';
+        var tableHint = (sec.tables || []).slice(0, 3).join(', ') + (sec.tables && sec.tables.length > 3 ? '…' : '');
+        return '<label class="rdb-section-check" style="display:flex;align-items:flex-start;gap:8px;background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 12px;cursor:pointer;transition:all 0.15s;">' +
+                 '<input type="checkbox" class="rdb-sec-cb" data-key="' + sec.key + '" style="margin-top:3px;flex-shrink:0;width:16px;height:16px;cursor:pointer;">' +
+                 '<div style="flex:1;min-width:0;">' +
+                   '<div style="font-weight:700;color:#0f172a;font-size:12.5px;display:flex;align-items:center;gap:6px;">' +
+                     '<i class="fas ' + icon + '" style="color:#dc2626;width:14px;"></i>' +
+                     '<span>' + sec.label + '</span>' +
+                   '</div>' +
+                   '<div style="font-size:10px;color:#94a3b8;font-family:monospace;margin-top:3px;direction:ltr;text-align:left;">' + tableHint + '</div>' +
+                 '</div>' +
+               '</label>';
+      }).join('');
+      // Hover/checked styles
+      qs('.rdb-section-check').forEach(function(label) {
+        var cb = label.querySelector('.rdb-sec-cb');
+        cb.addEventListener('change', function() {
+          if (cb.checked) {
+            label.style.borderColor = '#dc2626';
+            label.style.background = '#fef2f2';
+          } else {
+            label.style.borderColor = '#e2e8f0';
+            label.style.background = '#fff';
+          }
+        });
+      });
+    })
+    .catch(function() {
+      q('#rdbSectionChecks').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#dc2626;padding:12px;">فشل تحميل الأقسام — تحقق من الاتصال</div>';
+    });
+};
+
+// V5.7.12 — Bulk select/deselect helper
+window.rdbSelectAll = function(checked) {
+  qs('.rdb-sec-cb').forEach(function(cb) {
+    cb.checked = !!checked;
+    // Trigger the change handler so the visual highlight updates
+    cb.dispatchEvent(new Event('change'));
+  });
 };
 
 window.confirmResetDb = function() {
@@ -263,7 +340,18 @@ window.confirmResetDb = function() {
   if (!pass) return showToast('كلمة المرور مطلوبة', true);
   if (conf !== 'YES_RESET_ALL_DATA') return showToast('نص التأكيد غير صحيح', true);
 
-  glassConfirm('تأكيد نهائي', '⚠️ هل أنت متأكد تماماً من تصفير قاعدة البيانات؟ لا يمكن التراجع!', { danger: true, okText: 'نعم، صفّر الآن' }).then(function(ok) {
+  // V5.7.12 — collect the selected sections
+  var selected = [];
+  qs('.rdb-sec-cb').forEach(function(cb) {
+    if (cb.checked) selected.push(cb.dataset.key);
+  });
+  if (!selected.length) return showToast('اختر قسماً واحداً على الأقل', true);
+
+  glassConfirm(
+    'تأكيد نهائي',
+    '⚠️ سيتم مسح ' + selected.length + ' قسم/أقسام. لا يمكن التراجع! هل أنت متأكد؟',
+    { danger: true, okText: 'نعم، نفّذ المسح' }
+  ).then(function(ok) {
     if (!ok) return;
     loader(true);
     api.withFailureHandler(function(err) { loader(false); showToast(err.message, true); })
@@ -271,16 +359,24 @@ window.confirmResetDb = function() {
           loader(false);
           if (r && r.success) {
             closeGlassModal('#modalResetDb');
-            showToast('تم تصفير قاعدة البيانات بنجاح. سيتم إعادة تحميل الصفحة...');
+            var msg = 'تم مسح ' + (r.wiped || []).length + ' جدول من ' + selected.length + ' قسم. ';
+            if (r.failed && r.failed.length) msg += '(' + r.failed.length + ' جدول لم يكن موجوداً)';
+            showToast(msg + ' — جاري إعادة التحميل...');
             try {
               localStorage.removeItem('pos_menu_cache');
               localStorage.removeItem('pos_branding');
               localStorage.removeItem('pos_active_shift_id');
             } catch (e) {}
-            setTimeout(function() { window.location.reload(); }, 1500);
+            setTimeout(function() { window.location.reload(); }, 1800);
           } else {
-            showToast((r && r.error) || 'فشلت عملية التصفير', true);
+            showToast((r && r.error) || 'فشلت عملية المسح', true);
           }
-       }).resetDatabase({ confirm: conf, username: state.user, password: pass });
+       }).resetDatabase({
+          confirm: conf,
+          doubleConfirm: 'I_UNDERSTAND_DATA_WILL_BE_LOST',
+          username: state.user,
+          password: pass,
+          sections: selected
+        });
   });
 };

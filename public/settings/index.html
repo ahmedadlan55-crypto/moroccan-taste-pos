@@ -33,6 +33,8 @@
 
   <script defer src="/shared/api-bridge.js"></script>
   <script defer src="/shared/common.js"></script>
+  <!-- V5.7.12 — on-the-fly Google Translate for DB-sourced content -->
+  <script defer src="/shared/dynamic-i18n.js?v=1"></script>
   <script defer src="/shared/auth.js"></script>
   <script defer src="/shared/header.js"></script>
   <script defer src="/settings/app.js"></script>
@@ -141,24 +143,39 @@
     </div>
   </main>
 
-  <!-- Reset DB confirmation modal -->
+  <!-- V5.7.12 — Granular reset-DB modal: per-section checkboxes -->
   <div id="modalResetDb" class="glass-modal hidden">
-    <div class="glass-modal-content danger">
+    <div class="glass-modal-content danger" style="max-width:680px;">
       <div class="glass-modal-title">
-        <span><i class="fas fa-exclamation-triangle"></i> تأكيد تصفير قاعدة البيانات</span>
+        <span><i class="fas fa-exclamation-triangle"></i> مسح أقسام من قاعدة البيانات</span>
         <button class="glass-modal-close" onclick="closeGlassModal('#modalResetDb')">&times;</button>
       </div>
       <div class="glass-modal-body">
-        <div class="reset-warning">
-          <strong>سيتم حذف جميع البيانات التالية نهائياً:</strong><br>
-          • المبيعات والفواتير<br>
-          • الورديات وحركات المخزون<br>
-          • المنتجات والوصفات والمواد الخام<br>
-          • المشتريات وأوامر الشراء<br>
-          • المصروفات والقيود المحاسبية<br>
-          • تقارير الضريبة<br><br>
-          <strong>لن يتم حذف:</strong> المستخدمين، الإعدادات، طرق الدفع.
+        <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:12px 14px;margin-bottom:14px;color:#78350f;font-size:13px;line-height:1.7;">
+          <strong><i class="fas fa-shield-alt"></i> سياسة الأمان:</strong>
+          اختر بدقة الأقسام التي تريد مسحها فقط. الأقسام غير المحددة <b>لن تُمَس</b>.
+          الأقسام التالية محمية ولا يمكن مسحها أبداً:
+          <span style="display:inline-block;margin-top:4px;color:#1e40af;font-weight:700;">
+            المستخدمون، الإعدادات، البراندات، الفروع، المستودعات، صلاحيات الموظفين.
+          </span>
         </div>
+
+        <div class="form-group">
+          <label class="form-label" style="display:flex;justify-content:space-between;align-items:center;">
+            <span><i class="fas fa-list-check"></i> اختر الأقسام التي تريد مسحها:</span>
+            <span style="display:flex;gap:6px;">
+              <button type="button" class="btn btn-light" style="padding:4px 10px;font-size:11px;" onclick="rdbSelectAll(true)">تحديد الكل</button>
+              <button type="button" class="btn btn-light" style="padding:4px 10px;font-size:11px;" onclick="rdbSelectAll(false)">إلغاء التحديد</button>
+            </span>
+          </label>
+          <div id="rdbSectionChecks" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:300px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:10px;padding:12px;background:#f8fafc;">
+            <div style="grid-column:1/-1;text-align:center;color:#94a3b8;padding:12px;">جاري تحميل قائمة الأقسام...</div>
+          </div>
+          <small style="color:#64748b;font-size:11px;display:block;margin-top:6px;">
+            <i class="fas fa-info-circle"></i> مسح "المنيو" بدون "الوصفات" قد يترك مراجع غير سليمة — يُنصح بمسحهما معاً.
+          </small>
+        </div>
+
         <div class="form-group">
           <label class="form-label">أعد إدخال كلمة المرور للتأكيد</label>
           <input type="password" id="rdbPass" class="form-control glass-input" placeholder="كلمة المرور">
@@ -170,7 +187,7 @@
       </div>
       <div class="glass-modal-actions">
         <button class="btn btn-light" onclick="closeGlassModal('#modalResetDb')">إلغاء</button>
-        <button class="btn btn-danger" onclick="confirmResetDb()"><i class="fas fa-trash-alt"></i> تصفير الآن</button>
+        <button class="btn btn-danger" onclick="confirmResetDb()"><i class="fas fa-trash-alt"></i> مسح الأقسام المحددة</button>
       </div>
     </div>
   </div>

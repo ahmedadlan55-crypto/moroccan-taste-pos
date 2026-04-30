@@ -519,10 +519,49 @@ router.delete('/users/:username', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// POST /api/auth/reset-db — DEVELOPER ONLY: wipe all transactional data
+// V5.7.12 — Granular wipe sections
+// ────────────────────────────────────────────────────────────
+// Each section is an independently-checkable group. Tables are listed
+// children-first so the loop succeeds even with FOREIGN_KEY_CHECKS=1.
+// NEVER WIPED: users, settings, brands, branches, warehouses, user_branches,
+//              user_brands, user_warehouses, user_meta, position_workflow_steps
+//              (these are foundational + would brick the system).
+const RESET_SECTIONS = {
+  sales:           { label: 'المبيعات والفواتير',          tables: ['sales_items', 'sales'] },
+  shifts:          { label: 'الورديات والإقفالات',          tables: ['shift_close_denominations', 'shifts'] },
+  inventory:       { label: 'حركات المخزون والجرد',         tables: ['inventory_movements', 'stocktake_items', 'stocktakes'] },
+  inv_items:       { label: 'المواد الخام',                tables: ['inv_items'] },
+  menu:            { label: 'أصناف المنيو',                tables: ['menu'] },
+  recipes:         { label: 'الوصفات (Recipes + BOM)',     tables: ['recipe', 'bom_items', 'bom'] },
+  purchases:       { label: 'المشتريات وأوامر الشراء',      tables: ['po_lines', 'purchase_orders', 'purchases'] },
+  expenses:        { label: 'المصروفات',                   tables: ['expenses'] },
+  custody:         { label: 'العهد والمسؤولين',             tables: ['custody_movements', 'custody_holders'] },
+  accounting:      { label: 'القيود المحاسبية والـ GL',     tables: ['gl_entries', 'gl_journals'] },
+  tax:             { label: 'تقارير الضريبة و ZATCA',       tables: ['vat_reports', 'zatca_archive'] },
+  transactions:    { label: 'معاملات النظام (Workflow)',    tables: ['transaction_attachments', 'transaction_replies', 'transaction_approvals', 'transaction_recipients', 'transactions'] },
+  customers:       { label: 'العملاء وذممهم',              tables: ['customer_payments', 'customers'] },
+  suppliers:       { label: 'الموردين وذممهم',             tables: ['supplier_payments', 'suppliers'] },
+  audit:           { label: 'سجل التدقيق (Audit Log)',     tables: ['audit_logs', 'audit_log'] },
+  channels:        { label: 'قنوات البيع',                 tables: ['sales_channels'] },
+  payment_methods: { label: 'طرق الدفع',                  tables: ['branch_payment_methods', 'payment_methods'] },
+  discounts:       { label: 'الخصومات',                   tables: ['branch_discounts', 'discounts_v2'] },
+  price_lists:     { label: 'قوائم الأسعار',               tables: ['price_list_items', 'price_lists'] }
+};
+
+// GET /api/auth/reset-db/sections — list available sections (used by frontend to render checkboxes)
+router.get('/reset-db/sections', (req, res) => {
+  const out = Object.keys(RESET_SECTIONS).map(key => ({
+    key: key,
+    label: RESET_SECTIONS[key].label,
+    tables: RESET_SECTIONS[key].tables
+  }));
+  res.json({ sections: out });
+});
+
+// POST /api/auth/reset-db — DEVELOPER ONLY: wipe selected sections (or legacy full-wipe)
 router.post('/reset-db', async (req, res) => {
   try {
-    const { confirm, username, password, doubleConfirm } = req.body;
+    const { confirm, username, password, doubleConfirm, sections } = req.body;
 
     // Triple verification: confirm text + password + double confirm
     if (confirm !== 'YES_RESET_ALL_DATA') {
@@ -554,31 +593,73 @@ router.post('/reset-db', async (req, res) => {
       return res.json({ success: false, error: 'هذه العملية متاحة للمطور فقط' });
     }
 
-    // Wipe transactional data — keep users, settings, payment_methods
-    const tables = [
-      'sales_items', 'sales',
-      'inventory_movements',
-      'recipe', 'menu',
-      'inv_items',
-      'shifts',
-      'expenses',
-      'purchases',
-      'po_lines', 'purchase_orders',
-      'gl_entries', 'gl_journals',
-      'vat_reports',
-      'audit_log'
-    ];
+    // V5.7.12 — Build the table list from selected sections.
+    // If `sections` is omitted/empty, fall back to the legacy "wipe everything
+    // transactional" behavior (back-compat for older clients).
+    let tablesToWipe = [];
+    let chosenSections = [];
+    if (Array.isArray(sections) && sections.length) {
+      sections.forEach(key => {
+        const sec = RESET_SECTIONS[key];
+        if (sec) {
+          chosenSections.push(key);
+          sec.tables.forEach(t => { if (tablesToWipe.indexOf(t) === -1) tablesToWipe.push(t); });
+        }
+      });
+      if (!tablesToWipe.length) {
+        return res.json({ success: false, error: 'لم يتم اختيار أي قسم صالح للمسح' });
+      }
+    } else {
+      // Legacy full wipe — same list as before
+      chosenSections = ['(legacy full wipe)'];
+      tablesToWipe = [
+        'sales_items', 'sales',
+        'inventory_movements',
+        'recipe', 'menu',
+        'inv_items',
+        'shifts',
+        'expenses',
+        'purchases',
+        'po_lines', 'purchase_orders',
+        'gl_entries', 'gl_journals',
+        'vat_reports',
+        'audit_log'
+      ];
+    }
+
+    // V5.7.12 — disable FK checks for the duration so children/parents can be
+    // wiped in any order without violating constraints. Re-enable after.
     const wiped = [];
-    for (const t of tables) {
-      try {
-        await db.query(`DELETE FROM ${t}`);
-        wiped.push(t);
-      } catch (e) {
-        // Table may not exist — ignore
+    const failed = [];
+    let fkSwitched = false;
+    try {
+      await db.query('SET FOREIGN_KEY_CHECKS = 0');
+      fkSwitched = true;
+      for (const t of tablesToWipe) {
+        try {
+          await db.query(`DELETE FROM \`${t}\``);
+          wiped.push(t);
+        } catch (e) {
+          // Table may not exist on this schema — record but don't abort
+          failed.push({ table: t, error: e.message });
+        }
+      }
+    } finally {
+      if (fkSwitched) {
+        try { await db.query('SET FOREIGN_KEY_CHECKS = 1'); } catch (_) {}
       }
     }
 
-    res.json({ success: true, wiped });
+    // Audit the wipe (best-effort — audit_log itself might be in the wipe list)
+    try {
+      await db.query(
+        `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details, created_at)
+         VALUES (?, 'developer_reset_db', 'system', 'reset', ?, NOW())`,
+        [username, JSON.stringify({ sections: chosenSections, wiped, failed })]
+      );
+    } catch (_) {}
+
+    res.json({ success: true, sections: chosenSections, wiped, failed });
   } catch (e) {
     res.json({ success: false, error: e.message });
   }

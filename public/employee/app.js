@@ -612,6 +612,22 @@ function setLang(lang) {
   try { loadLeavePage(); } catch(e) {}
   try { loadProfilePage(); } catch(e) {}
   try { loadAttPage(); } catch(e) {}
+  // V5.7.12 — dynamic on-the-fly translation for content that's NOT in the
+  //           static dictionary (DB-sourced transaction subjects, replies,
+  //           attachment names, employee notes…). Calls Google Translate
+  //           public endpoint with caching. See /shared/dynamic-i18n.js.
+  if (typeof window.DynamicI18N !== 'undefined') {
+    if (currentLang === 'en') {
+      // Wait a tick so the re-rendered dynamic content is in the DOM first
+      setTimeout(function() {
+        DynamicI18N.translatePage('en').catch(function(){});
+        DynamicI18N.startObserver('en');
+      }, 200);
+    } else {
+      DynamicI18N.stopObserver();
+      DynamicI18N.restoreOriginal();
+    }
+  }
 }
 
 function applyLangToStaticDOM() {
@@ -643,6 +659,16 @@ function toggleLang() { setLang(currentLang === 'ar' ? 'en' : 'ar'); }
 window.toggleLang = toggleLang;
 window.setLang = setLang;
 window.t = t;
+
+// V5.7.12 — kick off dynamic translation on page load when saved lang is English
+document.addEventListener('DOMContentLoaded', function() {
+  setTimeout(function() {
+    if (currentLang === 'en' && typeof window.DynamicI18N !== 'undefined') {
+      DynamicI18N.translatePage('en').catch(function(){});
+      DynamicI18N.startObserver('en');
+    }
+  }, 500);
+});
 
 // ═══════════════════════════════════════════════════════════════════
 // V4 — Counters refresh + SSE live notifications

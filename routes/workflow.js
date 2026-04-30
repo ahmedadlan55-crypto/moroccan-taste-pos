@@ -2103,6 +2103,194 @@ router.post('/transactions/:id/resubmit', SCHEMA.validateBody(SCHEMA.schemas.res
 // Cancel / delete — V4: now soft-delete (deleted_at) instead of hard-delete
 // Only the creator can soft-delete, only before any non-create action.
 // Use /transactions/:id/force for true permanent delete (developer only).
+// V5.7.2 — NUCLEAR DELETE: wipe ALL transactions + every trace.
+// Developer-only. Requires explicit confirmation token "DELETE-ALL-FOREVER".
+// Optional ?dryRun=1 returns the counts without deleting (preview).
+// Optional filters narrow the scope: ?status=draft&before=2026-01-01&createdBy=X
+//
+// Cascades through every dependent table inside a single DB transaction:
+//   transaction_steps_log, transaction_replies, txn_attachments, txn_recipients,
+//   memo_read_receipts, notifications (link_type='transaction'), document_chains,
+//   payment_records.transaction_id ← NULL, txn_daily_counter (reset per-day serials),
+//   transactions row (last).
+// Audit log gets a 'developer_wipe_all' entry with the final counts.
+router.delete('/transactions/__wipe-all', guardDeveloper, async (req, res) => {
+  try {
+    const username = (req.user && req.user.username) || (req.body && req.body.username) || 'developer';
+    const confirm = req.query.confirm || (req.body && req.body.confirm) || '';
+    const dryRun = req.query.dryRun === '1' || (req.body && req.body.dryRun === true);
+    const status = req.query.status || (req.body && req.body.status) || null;
+    const beforeDate = req.query.before || (req.body && req.body.before) || null;
+    const createdBy = req.query.createdBy || (req.body && req.body.createdBy) || null;
+
+    if (!dryRun && confirm !== 'DELETE-ALL-FOREVER') {
+      return res.status(400).json({
+        success: false,
+        error: 'يجب إرسال confirm="DELETE-ALL-FOREVER" مع الطلب',
+        hint: 'استخدم dryRun=1 للمعاينة قبل الحذف الفعلي'
+      });
+    }
+
+    // Build WHERE clause for the transactions query (same WHERE applies to all child tables via IN subquery)
+    const whereParts = ['1=1'];
+    const whereParams = [];
+    if (status)     { whereParts.push('status = ?'); whereParams.push(status); }
+    if (beforeDate) { whereParts.push('created_at < ?'); whereParams.push(beforeDate); }
+    if (createdBy)  { whereParts.push('created_by = ?'); whereParams.push(createdBy); }
+    const whereSql = whereParts.join(' AND ');
+
+    // 1. Count what we're about to delete (always, even if dryRun=false — useful for the response)
+    const counts = {};
+    const [totalRows] = await db.query(
+      `SELECT COUNT(*) AS c FROM transactions WHERE ${whereSql}`, whereParams);
+    counts.transactions = Number((totalRows[0]||{}).c) || 0;
+
+    if (counts.transactions === 0) {
+      return res.json({
+        success: true, dryRun: dryRun, deleted: false,
+        message: 'لا توجد معاملات تطابق الشروط',
+        counts: counts
+      });
+    }
+
+    // Build per-table count queries (LEFT scope to matching transaction IDs only)
+    const childTables = [
+      'transaction_steps_log',
+      'transaction_replies',
+      'txn_attachments',
+      'txn_recipients',
+      'memo_read_receipts'
+    ];
+    for (const tbl of childTables) {
+      try {
+        const [r] = await db.query(
+          `SELECT COUNT(*) AS c FROM ${tbl}
+           WHERE transaction_id IN (SELECT id FROM transactions WHERE ${whereSql})`, whereParams);
+        counts[tbl] = Number((r[0]||{}).c) || 0;
+      } catch(_) { counts[tbl] = 0; }
+    }
+    // Notifications (two schema variants)
+    try {
+      const [r] = await db.query(
+        `SELECT COUNT(*) AS c FROM notifications
+         WHERE link_type = 'transaction'
+           AND link_id IN (SELECT id FROM transactions WHERE ${whereSql})`, whereParams);
+      counts.notifications = Number((r[0]||{}).c) || 0;
+    } catch(_) {
+      try {
+        const [r2] = await db.query(
+          `SELECT COUNT(*) AS c FROM notifications
+           WHERE related_id IN (SELECT id FROM transactions WHERE ${whereSql})`, whereParams);
+        counts.notifications = Number((r2[0]||{}).c) || 0;
+      } catch(__) { counts.notifications = 0; }
+    }
+    // Payment records (we UNLINK, not delete — count for transparency)
+    try {
+      const [r] = await db.query(
+        `SELECT COUNT(*) AS c FROM payment_records
+         WHERE transaction_id IN (SELECT id FROM transactions WHERE ${whereSql})`, whereParams);
+      counts.payment_records_unlinked = Number((r[0]||{}).c) || 0;
+    } catch(_) { counts.payment_records_unlinked = 0; }
+
+    // ─── DRY RUN exits here ───
+    if (dryRun) {
+      return res.json({
+        success: true, dryRun: true, deleted: false,
+        message: 'معاينة فقط — لم يتم تعديل أي بيانات. أعد الإرسال بدون dryRun لتنفيذ الحذف.',
+        scope: { status, beforeDate, createdBy },
+        counts: counts
+      });
+    }
+
+    // ─── ACTUAL DELETE — wrap in DB transaction so partial wipe is impossible ───
+    try {
+      await db.withTransaction(async (conn) => {
+        for (const tbl of childTables) {
+          try {
+            await conn.query(
+              `DELETE FROM ${tbl}
+               WHERE transaction_id IN (SELECT id FROM (SELECT id FROM transactions WHERE ${whereSql}) AS t)`,
+              whereParams);
+          } catch(_) {}
+        }
+        // Notifications
+        try {
+          await conn.query(
+            `DELETE FROM notifications
+             WHERE link_type = 'transaction'
+               AND link_id IN (SELECT id FROM (SELECT id FROM transactions WHERE ${whereSql}) AS t)`,
+            whereParams);
+        } catch(_) {
+          try {
+            await conn.query(
+              `DELETE FROM notifications
+               WHERE related_id IN (SELECT id FROM (SELECT id FROM transactions WHERE ${whereSql}) AS t)`,
+              whereParams);
+          } catch(__) {}
+        }
+        // Document chains (either direction)
+        try {
+          await conn.query(
+            `DELETE FROM document_chains
+             WHERE from_doc_id IN (SELECT id FROM (SELECT id FROM transactions WHERE ${whereSql}) AS t)
+                OR to_doc_id   IN (SELECT id FROM (SELECT id FROM transactions WHERE ${whereSql}) AS t2)`,
+            [...whereParams, ...whereParams]);
+        } catch(_) {}
+        // Detach payment records (preserve GL trail; just unlink)
+        try {
+          await conn.query(
+            `UPDATE payment_records SET transaction_id = NULL
+             WHERE transaction_id IN (SELECT id FROM (SELECT id FROM transactions WHERE ${whereSql}) AS t)`,
+            whereParams);
+        } catch(_) {}
+        // The transaction rows themselves
+        await conn.query(`DELETE FROM transactions WHERE ${whereSql}`, whereParams);
+        // Reset daily counters ONLY if no filter (i.e., we wiped everything — fresh start)
+        if (!status && !beforeDate && !createdBy) {
+          try { await conn.query('TRUNCATE TABLE txn_daily_counter'); } catch(_) {
+            try { await conn.query('DELETE FROM txn_daily_counter'); } catch(__) {}
+          }
+        }
+      });
+    } catch(_e) {
+      console.error('[wipe-all]', _e);
+      return res.status(500).json({ success: false, error: 'فشل التنفيذ: ' + _e.message });
+    }
+
+    // Invalidate counter cache for all known users (best-effort)
+    try {
+      const counters = require('./counters');
+      if (counters && counters.invalidateCountersFor) {
+        // Bulk-invalidate by clearing the entire cache
+        if (counters._invalidateAllCounters) await counters._invalidateAllCounters();
+      }
+    } catch(_) {}
+
+    // Audit log entry — the only remaining trace
+    try {
+      await db.query(
+        `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details, created_at)
+         VALUES (?, 'developer_wipe_all', 'transactions', '*', ?, NOW())`,
+        [username, JSON.stringify({
+          scope: { status, beforeDate, createdBy },
+          counts: counts,
+          executedAt: new Date().toISOString()
+        })]);
+    } catch(_) {}
+
+    res.json({
+      success: true,
+      dryRun: false, deleted: true,
+      message: 'تم حذف ' + counts.transactions + ' معاملة وكل بياناتها نهائياً عند جميع المستخدمين',
+      scope: { status, beforeDate, createdBy },
+      counts: counts
+    });
+  } catch(e) {
+    console.error('[wipe-all]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // V5.4.3 — DELETE is now DEVELOPER-ONLY and performs FULL CASCADE.
 // Removes the transaction + ALL related data from every table:
 //   transaction_steps_log, transaction_replies, txn_attachments, txn_recipients,

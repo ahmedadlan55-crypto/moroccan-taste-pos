@@ -3035,6 +3035,8 @@
         <option value="closed">مغلقة</option>
       </select>
       <button class="btn btn-secondary" onclick="wfExportInboxCsv()" title="تصدير القائمة الحالية لـ CSV" aria-label="تصدير CSV"><i class="fas fa-file-csv"></i> CSV</button>
+      <!-- V5.7.2: Developer-only wipe-all button (hidden for non-developers via JS) -->
+      <button id="wfWipeAllBtn" class="btn" style="display:none;background:linear-gradient(135deg,#7f1d1d,#450a0a);color:#fff;border:1.5px solid #7f1d1d;font-weight:800;" onclick="wfWipeAllTransactions()" title="حذف كل المعاملات (مطور فقط)"><i class="fas fa-skull-crossbones"></i> مسح شامل</button>
       <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
     </div>
   </div>

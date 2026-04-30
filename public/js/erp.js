@@ -5104,6 +5104,12 @@ window._wfInboxPagedShown = 0;
 window._wfInboxRenderRow = null;   // hoisted row renderer (set below)
 
 function wfLoadInbox() {
+  // V5.7.2: show "wipe all" button only for developers
+  var wipeBtn = document.getElementById('wfWipeAllBtn');
+  if (wipeBtn) {
+    var isDev = (window.state && window.state.isDeveloper) || (typeof window._isDeveloperUser === 'function' && window._isDeveloperUser());
+    wipeBtn.style.display = isDev ? '' : 'none';
+  }
   var tb = document.getElementById('wfInboxBody');
   tb.innerHTML = '<tr><td colspan="12" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
   // V5-UX: 12s timeout — show retry button if backend hangs
@@ -5262,6 +5268,72 @@ function _wfBulkUpdateBar(){
   if (cnt) cnt.textContent = ids.length;
   if (bar) bar.style.display = ids.length ? 'flex' : 'none';
 }
+// V5.7.2 — Developer-only: wipe ALL transactions in 4 stages with extreme safeguards.
+//   Stage 1: confirm intent
+//   Stage 2: dryRun preview shows exact counts (no destructive call yet)
+//   Stage 3: type "DELETE-ALL-FOREVER" to confirm
+//   Stage 4: execute + show summary
+window.wfWipeAllTransactions = async function(){
+  if (!((window.state && window.state.isDeveloper) || (typeof window._isDeveloperUser === 'function' && window._isDeveloperUser()))) {
+    showToast('هذه العملية للمطور فقط', true);
+    return;
+  }
+  // Stage 1
+  if (!confirm('⚠ تحذير: هذه عملية حذف شاملة لكل المعاملات!\n\nسيتم محو كل المعاملات + كل الردود + كل المرفقات + كل السجلات + كل الإشعارات من النظام بشكل نهائي وعند جميع المستخدمين.\n\nهل تريد المتابعة لمعاينة العدد قبل التنفيذ؟')) return;
+  // Stage 2: dry-run to get counts
+  var token = localStorage.getItem('pos_token');
+  var dryUrl = '/api/workflow/transactions/__wipe-all?dryRun=1';
+  showToast('جاري حساب البيانات المتأثرة...');
+  fetch(dryUrl, { method: 'DELETE', headers: { 'Authorization': 'Bearer '+token } })
+    .then(function(r){return r.json();})
+    .then(function(r){
+      if (!r || !r.success) { showToast((r && r.error) || 'فشل التحقق', true); return; }
+      var c = r.counts || {};
+      if (!c.transactions) {
+        alert('لا توجد معاملات في النظام للحذف.');
+        return;
+      }
+      // Stage 3: show preview + ask for typed confirmation
+      var preview =
+        '📊 سيتم حذف ما يلي نهائياً:\n\n' +
+        '• ' + (c.transactions||0) + ' معاملة\n' +
+        '• ' + (c.transaction_steps_log||0) + ' سجل إجراء\n' +
+        '• ' + (c.transaction_replies||0) + ' رد\n' +
+        '• ' + (c.txn_attachments||0) + ' مرفق\n' +
+        '• ' + (c.txn_recipients||0) + ' مستلم\n' +
+        '• ' + (c.notifications||0) + ' إشعار\n' +
+        '• ' + (c.payment_records_unlinked||0) + ' سند دفع (سيُفصل لا يُحذف)\n\n' +
+        '⚠ هذا الإجراء نهائي ولا يمكن التراجع عنه.\n\n' +
+        'اكتب: DELETE-ALL-FOREVER';
+      var typed = prompt(preview);
+      if (typed !== 'DELETE-ALL-FOREVER') {
+        showToast('تم الإلغاء — لم تتطابق كلمة التأكيد', true);
+        return;
+      }
+      // Stage 4: execute
+      showToast('جاري التنفيذ... قد يستغرق ثوانٍ');
+      fetch('/api/workflow/transactions/__wipe-all?confirm=DELETE-ALL-FOREVER', {
+        method: 'DELETE',
+        headers: { 'Authorization': 'Bearer '+token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: 'DELETE-ALL-FOREVER' })
+      })
+        .then(function(rr){return rr.json();})
+        .then(function(rr){
+          if (rr && rr.success) {
+            var summary = 'تم حذف ' + (rr.counts && rr.counts.transactions || 0) + ' معاملة + كل البيانات المرتبطة.';
+            alert('✓ ' + summary + '\n\n' + (rr.message || ''));
+            wfLoadInbox();
+            // Refresh counters
+            if (typeof wfLoadIncoming === 'function') try { wfLoadIncoming(); } catch(_){}
+          } else {
+            showToast((rr && rr.error) || 'فشل التنفيذ', true);
+          }
+        })
+        .catch(function(err){ showToast('فشل الاتصال: ' + (err && err.message), true); });
+    })
+    .catch(function(err){ showToast('فشل التحقق: ' + (err && err.message), true); });
+};
+
 window.wfBulkAction = async function(action){
   var ids = Object.keys(window._wfBulkSelected);
   if (!ids.length) return;

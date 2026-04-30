@@ -38,9 +38,16 @@ window.ensureQRCode = function() {
 };
 window.ensureErpJs = function() {
   if (window._erpJsLoaded) return Promise.resolve();
-  // V4.5.1: add cache-buster so users get fresh code after each deploy
-  return loadScript('/js/erp.js?v=58')
-    .then(function() { return loadScript('/js/cash-mgmt.js?v=51'); })
+  // V5.7.33 — use page-load timestamp as cache-buster so users ALWAYS get
+  //   the freshest erp.js after every deploy. The previous "?v=58" hardcoded
+  //   approach trapped users on stale code because the version number
+  //   needed manual bumping on every edit (and routinely wasn't). The
+  //   server already sends Cache-Control:no-store for /js/*.js, so this
+  //   doesn't add network traffic — it just forces the browser to honour
+  //   the no-store header that some configurations were ignoring.
+  var v = window._APP_BOOT_TS || (window._APP_BOOT_TS = Date.now());
+  return loadScript('/js/erp.js?v=' + v)
+    .then(function() { return loadScript('/js/cash-mgmt.js?v=' + v); })
     .then(function() { window._erpJsLoaded = true; });
 };
 

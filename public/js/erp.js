@@ -15220,13 +15220,25 @@ function _v3MountSearchPicker(hostId, opts) {
     }, { once: false });
   }
 
-  // Setup hidden input that tracks the selection
+  // V5.7.10 BUGFIX — hidden input MUST live OUTSIDE the host element.
+  //   render() does `host.innerHTML = '...'`, which destroys any child node.
+  //   If the hidden input was a child of host (the previous behavior), it
+  //   would be wiped on the very first render() call, leaving _v3FldVal()
+  //   to read from a missing DOM node and silently return ''.
+  //   Result: user's GL-account / cost-center selection wasn't persisting.
+  //   Fix: insert the hidden as a SIBLING of host (right after it).
   var hidden = document.getElementById(hostId + '_value');
   if (!hidden) {
     hidden = document.createElement('input');
     hidden.type = 'hidden';
     hidden.id = hostId + '_value';
-    host.appendChild(hidden);
+    // Insert AFTER the host so render()'s innerHTML wipe never touches it
+    if (host.parentNode) {
+      host.parentNode.insertBefore(hidden, host.nextSibling);
+    } else {
+      // Fallback: stash on document body so getElementById still finds it
+      document.body.appendChild(hidden);
+    }
   }
   hidden.value = selected || '';
 

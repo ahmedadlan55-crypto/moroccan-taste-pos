@@ -8207,10 +8207,23 @@ function _exportShiftsExcelBody() {
 function reprintShift(s) {
   const actTotal = (Number(s.actualCash)||0) + (Number(s.actualCard)||0) + (Number(s.actualKita)||0);
   const theoTotal = (Number(s.theoreticalCash)||0) + (Number(s.theoreticalCard)||0) + (Number(s.theoreticalKita)||0);
+  // V5.7.10 — also pull saved actuals per method from payment_totals_json (if present)
+  let savedActuals = null;
+  try {
+    if (s.paymentTotalsJson || s.payment_totals_json) {
+      const raw = s.paymentTotalsJson || s.payment_totals_json;
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      savedActuals = (parsed && parsed.actuals) || null;
+    }
+  } catch (_) {}
+
   loader(true);
   api.withSuccessHandler(res => {
     loader(false);
     const soldItems = (res && res.soldItems) ? res.soldItems : [];
+    // V5.7.10 — pass the dynamic methods array so the report renders ALL active
+    //           payment methods (Mada, Visa, Apple Pay, …) instead of just 3.
+    const methods = (res && res.methods) ? res.methods : null;
     printShiftPDF({
       shiftId: s.id,
       actuals: { cash: s.actualCash, card: s.actualCard, kita: s.actualKita },
@@ -8219,7 +8232,10 @@ function reprintShift(s) {
       startTime: s.startTime,
       endTime: s.endTime,
       user: s.username,
-      soldItems: soldItems
+      soldItems: soldItems,
+      methods: methods,
+      savedActuals: savedActuals,
+      orderCount: (res && res.orderCount) || 0
     });
   }).withFailureHandler(err => {
     loader(false);
@@ -8231,7 +8247,10 @@ function reprintShift(s) {
       startTime: s.startTime,
       endTime: s.endTime,
       user: s.username,
-      soldItems: []
+      soldItems: [],
+      methods: null,
+      savedActuals: savedActuals,
+      orderCount: 0
     });
   }).getShiftDataForClosing(s.id);
 }
@@ -8244,14 +8263,49 @@ function printShiftPDF(data) {
   const eTime = data.endTime ? new Date(data.endTime).toLocaleString('ar-SA') : '—';
   const printDate = new Date().toLocaleString('ar-SA');
 
+  // V5.7.10 — Build the dynamic payment-method rows from the backend's
+  //           `methods` array (every active method, with proper per-method
+  //           expected amount). Falls back to the legacy 3-row shape if the
+  //           backend didn't return methods (older deploy).
+  const dynMethods = Array.isArray(data.methods) && data.methods.length
+    ? data.methods.map(m => ({
+        id: m.id,
+        label: (m.icon ? '<i class="fas ' + m.icon + '" style="margin-left:4px;"></i> ' : '') + (m.nameAr || m.name || ''),
+        nameAr: m.nameAr || m.name || '',
+        name: m.name || '',
+        groupType: m.groupType,
+        expected: Number(m.expectedAmount) || 0,
+        // Per-method actuals: prefer savedActuals[id] (from payment_totals_json),
+        // else fall back to legacy fields (cash/card/kita) by group.
+        actual: (function(){
+          const sa = data.savedActuals || {};
+          if (sa[m.id] != null) return Number(sa[m.id]) || 0;
+          if (sa[String(m.id)] != null) return Number(sa[String(m.id)]) || 0;
+          if (sa[(m.name||'').toLowerCase()] != null) return Number(sa[(m.name||'').toLowerCase()]) || 0;
+          if (sa[(m.nameAr||'').toLowerCase()] != null) return Number(sa[(m.nameAr||'').toLowerCase()]) || 0;
+          // Legacy fallback by group
+          if (m.groupType === 'cash')                                     return Number(data.actuals.cash) || 0;
+          if (m.groupType === 'electronic' || m.groupType === 'card')     return Number(data.actuals.card) || 0;
+          if (m.groupType === 'voucher' || (m.name||'').toLowerCase() === 'kita') return Number(data.actuals.kita) || 0;
+          return 0;
+        })()
+      }))
+    : [
+        { label: '💵 نقدي / كاش',  nameAr: 'نقدي / كاش',  groupType: 'cash',       expected: Number(data.expected.cash)||0, actual: Number(data.actuals.cash)||0 },
+        { label: '💳 شبكة / مدى',  nameAr: 'شبكة / مدى',  groupType: 'electronic', expected: Number(data.expected.card)||0, actual: Number(data.actuals.card)||0 },
+        { label: '🧾 كيتا / آجل',  nameAr: 'كيتا / آجل',  groupType: 'voucher',    expected: Number(data.expected.kita)||0, actual: Number(data.actuals.kita)||0 }
+      ];
+
+  // Legacy variables kept for the KPI strip computations below
   const expCash = Number(data.expected.cash)||0;
   const expCard = Number(data.expected.card)||0;
   const expKita = Number(data.expected.kita)||0;
   const actCash = Number(data.actuals.cash)||0;
   const actCard = Number(data.actuals.card)||0;
   const actKita = Number(data.actuals.kita)||0;
-  const totalExp = expCash + expCard + expKita;
-  const totalAct = actCash + actCard + actKita;
+  // Totals derived from the DYNAMIC methods array (not the legacy 3-row sum).
+  const totalExp = dynMethods.reduce((s, m) => s + m.expected, 0) || (expCash + expCard + expKita);
+  const totalAct = dynMethods.reduce((s, m) => s + m.actual,   0) || (actCash + actCard + actKita);
   const difT = data.diff.totalDiff;
   const expT = formatVal(totalExp);
   const actT = formatVal(totalAct);
@@ -8378,6 +8432,31 @@ function printShiftPDF(data) {
   .kpi-blue  { background: #dbeafe; color: #1e40af; }
   .kpi-green { background: #dcfce7; color: #166534; }
   .kpi-diff  { background: ${difBg}; color: ${difColorHex}; }
+
+  /* ── V5.7.10 STATS STRIP (4 small pills under KPI) ───────── */
+  .stats-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 3mm;
+    margin-bottom: 5mm;
+  }
+  .stat-pill {
+    display: flex;
+    align-items: center;
+    gap: 3mm;
+    padding: 3mm 4mm;
+    border-radius: 2.5mm;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+  }
+  .stat-pill i { font-size: 14pt; opacity: 0.85; }
+  .stat-text { flex: 1; }
+  .stat-lbl { font-size: 8pt; color: #64748b; font-weight: 600; }
+  .stat-val { font-size: 13pt; font-weight: 900; direction: ltr; line-height: 1.1; margin-top: 1mm; }
+  .stat-blue   { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+  .stat-purple { background: #faf5ff; border-color: #e9d5ff; color: #7c3aed; }
+  .stat-amber  { background: #fffbeb; border-color: #fde68a; color: #b45309; }
+  .stat-teal   { background: #f0fdfa; border-color: #99f6e4; color: #0f766e; }
 
   /* ── SECTION TITLE ───────────────────────────── */
   .sec-title {
@@ -8526,8 +8605,28 @@ function printShiftPDF(data) {
     </div>
   </div>
 
-  <!-- PAYMENT RECONCILIATION -->
-  <div class="sec-title">مطابقة وسائل الدفع والجرد</div>
+  <!-- V5.7.10 — SHIFT STATS STRIP (orders + items + avg ticket) -->
+  <div class="stats-strip">
+    <div class="stat-pill stat-blue">
+      <i class="fas fa-receipt"></i>
+      <div class="stat-text"><div class="stat-lbl">عدد الفواتير</div><div class="stat-val">${data.orderCount || (aggArr.length ? '—' : 0)}</div></div>
+    </div>
+    <div class="stat-pill stat-purple">
+      <i class="fas fa-cubes"></i>
+      <div class="stat-text"><div class="stat-lbl">إجمالي الأصناف المباعة</div><div class="stat-val">${itemsGrandQty}</div></div>
+    </div>
+    <div class="stat-pill stat-amber">
+      <i class="fas fa-chart-line"></i>
+      <div class="stat-text"><div class="stat-lbl">متوسط الفاتورة (SAR)</div><div class="stat-val">${(data.orderCount && data.orderCount > 0) ? formatVal(totalExp / data.orderCount) : '—'}</div></div>
+    </div>
+    <div class="stat-pill stat-teal">
+      <i class="fas fa-clock"></i>
+      <div class="stat-text"><div class="stat-lbl">مدة الوردية</div><div class="stat-val">${(function(){ try { if (!data.startTime || !data.endTime) return '—'; var ms = new Date(data.endTime) - new Date(data.startTime); if (ms <= 0) return '—'; var h = Math.floor(ms/3600000), m = Math.floor((ms%3600000)/60000); return (h>0 ? h+'س ' : '') + m+'د'; } catch(e) { return '—'; } })()}</div></div>
+    </div>
+  </div>
+
+  <!-- PAYMENT RECONCILIATION — V5.7.10 fully dynamic (every active method) -->
+  <div class="sec-title">مطابقة وسائل الدفع والجرد <small style="color:#64748b;font-weight:500;font-size:9pt;">— ${dynMethods.length} طرق دفع</small></div>
   <table>
     <thead>
       <tr>
@@ -8538,9 +8637,7 @@ function printShiftPDF(data) {
       </tr>
     </thead>
     <tbody>
-      ${diffRow('💵 نقدي / كاش', expCash, actCash)}
-      ${diffRow('💳 شبكة / مدى', expCard, actCard)}
-      ${diffRow('🧾 كيتا / آجل', expKita, actKita)}
+      ${dynMethods.map(m => diffRow(m.label, m.expected, m.actual)).join('')}
     </tbody>
     <tfoot>
       <tr>

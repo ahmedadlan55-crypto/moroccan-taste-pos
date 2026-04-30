@@ -462,6 +462,25 @@ window.applyDynamicTranslation = function(lang) {
   }
 };
 
+// V5.7.16 — Explicit translation trigger for dynamic renders.
+//   The MutationObserver eventually catches new content, but JS-rendered
+//   widgets (like a freshly-populated <select>, modal contents loaded
+//   via API, etc.) sometimes need an immediate force-translate so the
+//   user doesn't see Arabic flash before observer-driven translation
+//   kicks in. POS code calls this after major renders.
+//
+//   Usage:
+//     translateNow();                      // re-translate the whole page
+//     translateNow(document.querySelector('#myModal'));  // just a subtree
+window.translateNow = function(root) {
+  if (!state || state.lang !== 'en') return;
+  if (typeof window.DynamicI18N === 'undefined') return;
+  // Small delay so the freshly-rendered DOM is fully attached before walk
+  setTimeout(function() {
+    DynamicI18N.translatePage('en', { root: root || document.body }).catch(function(){});
+  }, 30);
+};
+
 // On page-load, if the saved language is English, kick off dynamic translation
 // once the DOM is fully painted (give the static dictionary first crack).
 document.addEventListener('DOMContentLoaded', function() {

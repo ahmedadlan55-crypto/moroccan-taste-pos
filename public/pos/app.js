@@ -223,6 +223,8 @@ window.renderMenuGrid = function() {
     });
   }
   q('#posItemsGrid').innerHTML = h;
+  // V5.7.16 — translate freshly-rendered menu cards (product names from DB)
+  if (typeof window.translateNow === 'function') window.translateNow(q('#posItemsGrid'));
 };
 
 // =========================================
@@ -311,6 +313,8 @@ window.updateCart = function() {
     h = '<div class="cart-empty"><i class="fas fa-shopping-basket"></i><h3>' + t('emptyCart') + '</h3><p>' + t('emptyCartDesc') + '</p></div>';
   }
   q('#cartItemsArea').innerHTML = h;
+  // V5.7.16 — translate cart items (product names from DB) on every render
+  if (typeof window.translateNow === 'function') window.translateNow(q('#cartItemsArea'));
 
   if (state.currentDiscount.amount > subtotal) state.currentDiscount.amount = subtotal;
   var afterDiscount = subtotal - state.currentDiscount.amount;
@@ -2388,11 +2392,14 @@ function _posRenderChannelSelector() {
   if (!sel) return;
   if (!state.channels.length) {
     sel.innerHTML = '<option value="">— لا توجد قنوات —</option>';
-    return;
+  } else {
+    sel.innerHTML = state.channels.map(function(c){
+      return '<option value="' + c.id + '"><i class="fas ' + (c.icon||'fa-store') + '"></i> ' + (c.name||c.id) + '</option>';
+    }).join('');
   }
-  sel.innerHTML = state.channels.map(function(c){
-    return '<option value="' + c.id + '"><i class="fas ' + (c.icon||'fa-store') + '"></i> ' + (c.name||c.id) + '</option>';
-  }).join('');
+  // V5.7.16 — force re-translate so channel names like "هنقرستيشن" → "Hungerstation"
+  //           appear in English immediately when the user is in English mode.
+  if (typeof window.translateNow === 'function') window.translateNow(sel);
 }
 
 // V5.7.11 — Switching channels NEVER clears the cart.
@@ -2711,6 +2718,8 @@ window.shiftCloseStart = function() {
 
   // ── Open the modal early so the user sees the loading state for items + methods ──
   openGlassModal('#modalShiftClose');
+  // V5.7.16 — translate the modal's static labels immediately
+  if (typeof window.translateNow === 'function') window.translateNow(q('#modalShiftClose'));
 
   // ── Fetch shift data (items + methods + expected) ──
   _posCallAPI('GET', '/shifts/closing-data/' + state.activeShiftId, null, function(d) {
@@ -2774,6 +2783,9 @@ window.shiftCloseStart = function() {
     }
 
     scV3Recalc();
+    // V5.7.16 — re-translate the freshly-populated tables (item names,
+    //           electronic-method labels, etc.) so they appear in English.
+    if (typeof window.translateNow === 'function') window.translateNow(q('#modalShiftClose'));
   });
 };
 

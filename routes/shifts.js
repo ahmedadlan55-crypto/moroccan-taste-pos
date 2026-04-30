@@ -1,6 +1,163 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 
+// ═══════════════════════════════════════════════════════════════════
+// V5.7.17 — Shared payment-aggregation helper used by ALL shift
+//   endpoints (close-v3, closing-data, closing-data-v3, the new
+//   thermal report). Centralizing this guarantees the SAME
+//   computation everywhere — the variance you see in the UI is the
+//   variance saved to DB and shown on the printed receipt.
+//
+//   Returns: {
+//     methods: [{ id, name, nameAr, icon, color, groupType, expectedAmount, count }],
+//     expectedById: { [methodId]: amount },
+//     expectedTotal: number,
+//     unmatchedTotal: number,
+//     unmatchedDetails: [{ raw, normalized, amount }],
+//     soldItems: [{ name, qty, price, total }],
+//     orderCount: number
+//   }
+// ═══════════════════════════════════════════════════════════════════
+function _normPM(s) {
+  return String(s || '').toLowerCase()
+    .replace(/[ً-ْ]/g, '')
+    .replace(/[أإآا]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').trim();
+}
+const _ELECTRONIC_ALIASES = ['mada','visa','master','mastercard','amex','network','شبكة','مدى','مدي','بطاقة'];
+const _CASH_ALIASES = ['cash','نقد','كاش','نقدي'];
+const _KITA_ALIASES = ['kita','كيتا','آجل','ajl','اجل'];
+
+async function aggregateShiftPayments(shiftId) {
+  // 1. Pull all active payment methods (with backward-compat fallback)
+  let methods = [];
+  try {
+    const [rows] = await db.query(
+      "SELECT id, name, name_ar, icon, color, group_type, sort_order FROM payment_methods " +
+      "WHERE is_active = 1 AND show_in_shift_close != 0 ORDER BY sort_order, name"
+    );
+    methods = rows;
+  } catch (_) {
+    try {
+      const [rows] = await db.query(
+        "SELECT id, name, name_ar FROM payment_methods WHERE is_active = 1 ORDER BY sort_order, name"
+      );
+      methods = rows;
+    } catch (__) { methods = []; }
+  }
+
+  // 2. Build exact + alias lookup tables
+  const exactLookup = {};
+  const aliasLookup = {};
+  function indexExact(m) {
+    [_normPM(m.name), _normPM(m.name_ar), String(m.id)].forEach(k => {
+      if (k && !exactLookup[k]) exactLookup[k] = m;
+    });
+    String(m.name_ar || '').split(/[\/،\-,]/).forEach(p => {
+      const k = _normPM(p);
+      if (k && !exactLookup[k]) exactLookup[k] = m;
+    });
+  }
+  function indexAlias(m) {
+    let aliases = [];
+    const gt = m.group_type;
+    if (gt === 'electronic' || gt === 'card') aliases = _ELECTRONIC_ALIASES;
+    else if (gt === 'cash' || _normPM(m.name) === 'cash') aliases = _CASH_ALIASES;
+    else if (gt === 'voucher' || _normPM(m.name) === 'kita') aliases = _KITA_ALIASES;
+    aliases.map(_normPM).forEach(k => {
+      if (k && !exactLookup[k] && !aliasLookup[k]) aliasLookup[k] = m;
+    });
+  }
+  methods.forEach(indexExact);
+  methods.forEach(indexAlias);
+  // Synthetic fallbacks for fresh DBs where methods table is empty
+  function ensureSynth(syntheticId, name, name_ar, group_type) {
+    const aliasKey = _normPM(name);
+    if (exactLookup[aliasKey] || aliasLookup[aliasKey]) return;
+    const synth = { id: syntheticId, name, name_ar, group_type, _synthetic: true };
+    methods.push(synth);
+    indexExact(synth);
+    indexAlias(synth);
+  }
+  ensureSynth('_cash',       'Cash',       'نقدي / كاش', 'cash');
+  ensureSynth('_electronic', 'Card / Mada','شبكة / مدى', 'electronic');
+  ensureSynth('_kita',       'Kita',       'كيتا / آجل', 'voucher');
+
+  // 3. Pull sales for this shift + aggregate per method.id
+  const [sales] = await db.query(
+    'SELECT id, payment_method, total_final, kita_service_fee FROM sales WHERE shift_id = ?',
+    [shiftId]
+  );
+  const expectedById = {};
+  const countById    = {};
+  let expectedTotal  = 0;
+  let unmatchedTotal = 0;
+  const unmatchedDetails = [];
+  function credit(rawMethod, amount) {
+    const key = _normPM(rawMethod);
+    const m = exactLookup[key] || aliasLookup[key];
+    if (m) {
+      expectedById[m.id] = (expectedById[m.id] || 0) + amount;
+      countById[m.id]    = (countById[m.id]    || 0) + 1;
+    } else {
+      unmatchedTotal += amount;
+      unmatchedDetails.push({ raw: rawMethod, normalized: key, amount });
+    }
+    expectedTotal += amount;
+  }
+  for (const sale of sales) {
+    const total = Number(sale.total_final) || 0;
+    const pmRaw = sale.payment_method || 'cash';
+    if (String(pmRaw).includes('/') && String(pmRaw).includes(':')) {
+      // Split-payment syntax requires BOTH '/' AND ':' (else "مدى/شبكة"
+      // would be misparsed as split — see V5.7.14 fix)
+      for (const part of String(pmRaw).split('/')) {
+        const [m, a] = part.split(':');
+        credit(m, Number(a) || 0);
+      }
+    } else {
+      credit(pmRaw, total);
+    }
+  }
+
+  // 4. Aggregate sold items
+  let soldItems = [];
+  try {
+    const [items] = await db.query(
+      'SELECT si.item_name AS name, si.qty, si.price, si.total ' +
+      'FROM sales_items si JOIN sales s ON s.id = si.order_id ' +
+      'WHERE s.shift_id = ? ORDER BY si.item_name',
+      [shiftId]
+    );
+    const agg = {};
+    for (const it of items) {
+      const n = String(it.name || 'غير معروف');
+      if (!agg[n]) agg[n] = { name: n, qty: 0, price: Number(it.price) || 0, total: 0 };
+      agg[n].qty   += Number(it.qty)   || 0;
+      agg[n].total += Number(it.total) || 0;
+    }
+    soldItems = Object.values(agg).sort((a, b) => b.qty - a.qty);
+  } catch (_) {}
+
+  return {
+    methods: methods
+      .filter(m => !m._synthetic || (expectedById[m.id] || 0) > 0)
+      .map(m => ({
+        id: m.id, name: m.name, nameAr: m.name_ar,
+        icon: m.icon || 'fa-money-bill', color: m.color || '#3b82f6',
+        groupType: m.group_type,
+        expectedAmount: expectedById[m.id] || 0,
+        count: countById[m.id] || 0
+      })),
+    expectedById,
+    expectedTotal,
+    unmatchedTotal,
+    unmatchedDetails,
+    soldItems,
+    orderCount: sales.length,
+    rawSales: sales
+  };
+}
+
 // Open shift
 router.post('/open', async (req, res) => {
   try {
@@ -105,42 +262,80 @@ router.post('/close-v3', async (req, res) => {
     if (!shiftId) return res.json({ success: false, error: 'shiftId مطلوب' });
     const now = new Date();
 
-    // 1. Build expected totals from sales (per payment method)
-    const [sales] = await db.query('SELECT payment_method, total_final FROM sales WHERE shift_id = ?', [shiftId]);
-    const expected = {}; // { method: amount }
-    let expectedTotal = 0;
-    for (const s of sales) {
-      const total = Number(s.total_final) || 0;
-      const pm = (s.payment_method || 'cash').toLowerCase();
-      if (pm.includes('/')) {
-        for (const part of pm.split('/')) {
-          const [m, a] = part.split(':');
-          const val = Number(a) || 0;
-          expected[m] = (expected[m] || 0) + val;
-          expectedTotal += val;
-        }
-      } else {
-        expected[pm] = (expected[pm] || 0) + total;
-        expectedTotal += total;
-      }
-    }
+    // V5.7.17 — use the SHARED matcher so the variance saved here is
+    //   identical to what the UI shows during the close flow. The
+    //   previous implementation rolled its own (broken) matcher that
+    //   missed Mada and any non-cash/card/kita method.
+    const agg = await aggregateShiftPayments(shiftId);
+    const expectedById = agg.expectedById;
+    const expectedTotal = agg.expectedTotal;
+    const methods = agg.methods;
 
-    // 2. Sum cash from denominations (if provided)
+    // ── 1. Sum cash from denominations ──
     let cashCounted = 0;
     const denomList = Array.isArray(denominations) ? denominations : [];
     for (const d of denomList) {
       cashCounted += (Number(d.value) || 0) * (Number(d.count) || 0);
     }
-    cashCounted += Number(openingFloat || 0); // Returns the opening float on top of counted
+    cashCounted += Number(openingFloat || 0);
 
-    // 3. Variance per method
-    const actuals = paymentTotals || {};
-    if (cashCounted > 0 && actuals.cash == null) actuals.cash = cashCounted;
+    // ── 2. Map incoming paymentTotals → actualsById (canonical key) ──
+    //   Frontend sends BOTH `String(method.id)` AND name-based keys for the
+    //   same method (defensive redundancy). To avoid double-counting, we
+    //   process id keys FIRST (so they win) and skip name keys whose id
+    //   was already credited. last-write-wins per method.id.
+    const incoming = paymentTotals || {};
+    const actualsById = {}; // { methodId: amount }
+    const incomingKeys = Object.keys(incoming);
+    // Pass 1: id-keyed (highest priority)
+    incomingKeys.forEach(rawKey => {
+      const amount = Number(incoming[rawKey]) || 0;
+      const directIdHit = methods.find(m => String(m.id) === String(rawKey));
+      if (directIdHit) actualsById[directIdHit.id] = amount;  // replace, not add
+    });
+    // Pass 2: name-keyed (only fills gaps not already filled by id)
+    incomingKeys.forEach(rawKey => {
+      const amount = Number(incoming[rawKey]) || 0;
+      const k = _normPM(rawKey);
+      // If the key is itself a numeric id we already handled, skip
+      const directIdHit = methods.find(m => String(m.id) === String(rawKey));
+      if (directIdHit) return;
+      const nameHit = methods.find(m => _normPM(m.name) === k || _normPM(m.nameAr) === k);
+      if (nameHit && actualsById[nameHit.id] == null) {
+        actualsById[nameHit.id] = amount;
+        return;
+      }
+      // Special: explicit 'cash' alias → first cash-group method
+      if ((k === 'cash' || _CASH_ALIASES.indexOf(k) >= 0)) {
+        const cashMethod = methods.find(m => m.groupType === 'cash');
+        if (cashMethod && actualsById[cashMethod.id] == null) actualsById[cashMethod.id] = amount;
+      }
+    });
+
+    // ── 3. Cash from denominations overrides any explicit 'cash' actual ──
+    //   (the cashier counted real notes; that's authoritative)
+    if (cashCounted > 0) {
+      const cashMethod = methods.find(m => m.groupType === 'cash');
+      if (cashMethod) actualsById[cashMethod.id] = cashCounted;
+    }
+
+    // ── 4. Compute totals + variance ──
     let actualTotal = 0;
-    for (const k in actuals) actualTotal += Number(actuals[k] || 0);
+    Object.keys(actualsById).forEach(k => { actualTotal += actualsById[k]; });
     const variance = actualTotal - expectedTotal;
 
-    // 4. Persist denominations
+    // ── 5. Build per-method breakdown (saved + returned) ──
+    const breakdown = methods.map(m => ({
+      id: m.id,
+      name: m.name,
+      nameAr: m.nameAr,
+      groupType: m.groupType,
+      expected: expectedById[m.id] || 0,
+      actual: actualsById[m.id] || 0,
+      variance: (actualsById[m.id] || 0) - (expectedById[m.id] || 0)
+    }));
+
+    // ── 6. Persist denominations ──
     await db.query('DELETE FROM shift_close_denominations WHERE shift_id = ?', [shiftId]);
     for (let i = 0; i < denomList.length; i++) {
       const d = denomList[i];
@@ -154,7 +349,29 @@ router.post('/close-v3', async (req, res) => {
       }
     }
 
-    // 5. Update the shift row with full close data
+    // ── 7. Compose payment_totals_json ──
+    //   Stored shape (V5.7.17 — canonical, expected by the report):
+    //     { expectedById, actualsById, breakdown, version: 'v5.7.17' }
+    //   Plus legacy keys (expected, actuals) so older client builds still work.
+    const legacyExpected = {};
+    const legacyActuals  = {};
+    methods.forEach(m => {
+      const nameKey = _normPM(m.name) || _normPM(m.nameAr) || String(m.id);
+      legacyExpected[nameKey] = expectedById[m.id] || 0;
+      legacyActuals[nameKey]  = actualsById[m.id] || 0;
+    });
+    const cashMethodForLegacy = methods.find(m => m.groupType === 'cash');
+    const cashExpected = cashMethodForLegacy ? (expectedById[cashMethodForLegacy.id] || 0) : 0;
+    const cashActual   = cashCounted || (cashMethodForLegacy ? (actualsById[cashMethodForLegacy.id] || 0) : 0);
+
+    const paymentTotalsJson = JSON.stringify({
+      version: 'v5.7.17',
+      expectedById, actualsById, breakdown,
+      // legacy aliases — older clients read these
+      expected: legacyExpected, actuals: legacyActuals
+    });
+
+    // ── 8. Update the shift row ──
     await db.query(
       `UPDATE shifts SET
          end_time = ?, status = 'closed',
@@ -165,8 +382,8 @@ router.post('/close-v3', async (req, res) => {
       [
         now,
         Number(openingFloat || 0), expectedTotal, actualTotal, variance,
-        JSON.stringify({ expected, actuals }), JSON.stringify(denomList), notes || '',
-        expectedTotal, expected.cash || 0, actuals.cash || 0, (Number(actuals.cash || 0) - (expected.cash || 0)),
+        paymentTotalsJson, JSON.stringify(denomList), notes || '',
+        expectedTotal, cashExpected, cashActual, (cashActual - cashExpected),
         shiftId
       ]
     );
@@ -174,9 +391,13 @@ router.post('/close-v3', async (req, res) => {
     res.json({
       success: true,
       shiftId,
-      expected, actuals, expectedTotal, actualTotal, variance,
+      expected: legacyExpected, actuals: legacyActuals,
+      expectedById, actualsById, breakdown,
+      expectedTotal, actualTotal, variance,
       cashCounted, denominations: denomList,
-      orderCount: sales.length
+      orderCount: agg.orderCount,
+      soldItems: agg.soldItems,
+      methods: agg.methods
     });
   } catch (e) {
     res.json({ success: false, error: e.message });
@@ -267,6 +488,173 @@ router.get('/closing-data-v3/:shiftId', async (req, res) => {
   }
 });
 
+// V5.7.17 — Full shift report endpoint. ONE round-trip returns:
+//   shift meta + cashier name + branch + saved actuals (parsed) +
+//   live aggregation (items, methods, expected) + denominations.
+//   Used by the new thermal-printer report on close + reprint.
+router.get('/:shiftId/full-report', async (req, res) => {
+  try {
+    const { shiftId } = req.params;
+    // 1. Shift row
+    const [shifts] = await db.query('SELECT * FROM shifts WHERE id = ?', [shiftId]);
+    if (!shifts.length) return res.status(404).json({ error: 'Shift not found' });
+    const s = shifts[0];
+
+    // 2. Cashier display name from user_meta
+    let cashierName = s.username || '';
+    let cashierEmpNo = '';
+    try {
+      const [meta] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
+      if (meta.length && meta[0].setting_value) {
+        const map = JSON.parse(meta[0].setting_value || '{}');
+        const me = map[s.username] || {};
+        if (me.name)  cashierName  = me.name;
+        if (me.empNo) cashierEmpNo = me.empNo;
+      }
+    } catch (_) {}
+
+    // 3. Branch info (per V5.7.9 receipt extension)
+    let branchName = '', branchAddress = '', branchCompanyName = '';
+    try {
+      let branchId = s.branch_id;
+      if (!branchId) {
+        const [ub] = await db.query('SELECT branch_id FROM user_branches WHERE username = ? LIMIT 1', [s.username]);
+        if (ub.length) branchId = ub[0].branch_id;
+      }
+      if (branchId) {
+        const [br] = await db.query('SELECT name, location, company_name FROM branches WHERE id = ?', [branchId]);
+        if (br.length) {
+          branchName        = br[0].name || '';
+          branchAddress     = br[0].location || '';
+          branchCompanyName = br[0].company_name || '';
+        }
+      }
+    } catch (_) {}
+
+    // 4. Company info from settings
+    let companyName = 'Moroccan Taste', taxNumber = '', currency = 'SAR';
+    let companyPhone = '', companyEmail = '', companyLogo = '';
+    try {
+      const [setRows] = await db.query(
+        "SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('CompanyName','TaxNumber','Currency','CompanyPhone','CompanyEmail','logo')"
+      );
+      const map = {};
+      setRows.forEach(r => { map[r.setting_key] = r.setting_value; });
+      companyName  = map.CompanyName  || companyName;
+      taxNumber    = map.TaxNumber    || '';
+      currency     = map.Currency     || 'SAR';
+      companyPhone = map.CompanyPhone || '';
+      companyEmail = map.CompanyEmail || '';
+      companyLogo  = map.logo         || '';
+    } catch (_) {}
+
+    // 5. Live aggregation (items + methods + expected)
+    const agg = await aggregateShiftPayments(shiftId);
+
+    // 6. Saved actuals (parsed)
+    let savedActuals = {};
+    let savedExpected = {};
+    let savedBreakdown = null;
+    try {
+      if (s.payment_totals_json) {
+        const parsed = typeof s.payment_totals_json === 'string'
+          ? JSON.parse(s.payment_totals_json) : s.payment_totals_json;
+        if (parsed) {
+          savedActuals   = parsed.actualsById || parsed.actuals || {};
+          savedExpected  = parsed.expectedById || parsed.expected || {};
+          savedBreakdown = parsed.breakdown || null;
+        }
+      }
+    } catch (_) {}
+
+    // 7. Build a per-method actual-vs-expected table that PREFERS the saved
+    //    breakdown (what the cashier confirmed at close) and falls back to
+    //    re-aggregation if the saved data is missing/old.
+    const methodsTable = agg.methods.map(m => {
+      let actual = null;
+      // 1. Try saved by id
+      if (savedBreakdown) {
+        const b = savedBreakdown.find(x => String(x.id) === String(m.id));
+        if (b) actual = Number(b.actual) || 0;
+      }
+      // 2. Try savedActuals by id
+      if (actual == null && savedActuals[m.id] != null)            actual = Number(savedActuals[m.id]) || 0;
+      if (actual == null && savedActuals[String(m.id)] != null)    actual = Number(savedActuals[String(m.id)]) || 0;
+      // 3. Try savedActuals by name
+      if (actual == null) {
+        const k = _normPM(m.name);
+        if (savedActuals[k] != null) actual = Number(savedActuals[k]) || 0;
+      }
+      // 4. Legacy fields
+      if (actual == null) {
+        if (m.groupType === 'cash')                                          actual = Number(s.actual_cash) || 0;
+        else if (m.groupType === 'electronic' || m.groupType === 'card')    actual = Number(s.actual_card) || 0;
+        else if (m.groupType === 'voucher' || _normPM(m.name) === 'kita')   actual = Number(s.actual_kita) || 0;
+        else                                                                 actual = 0;
+      }
+      const expected = m.expectedAmount;
+      return {
+        id: m.id, name: m.name, nameAr: m.nameAr,
+        icon: m.icon, color: m.color, groupType: m.groupType,
+        expected, actual, variance: actual - expected, count: m.count
+      };
+    });
+
+    // 8. Denominations
+    let denominations = [];
+    try {
+      const [dr] = await db.query(
+        'SELECT denomination, kind, count FROM shift_close_denominations WHERE shift_id = ? ORDER BY denomination DESC',
+        [shiftId]
+      );
+      denominations = dr.map(d => ({
+        value: Number(d.denomination), kind: d.kind, count: Number(d.count)
+      }));
+    } catch (_) {
+      // Fallback to denominations_json
+      try {
+        if (s.denominations_json) denominations = JSON.parse(s.denominations_json);
+      } catch (_) {}
+    }
+
+    const totalActual   = methodsTable.reduce((sum, m) => sum + m.actual,   0);
+    const totalExpected = methodsTable.reduce((sum, m) => sum + m.expected, 0);
+    const totalVariance = totalActual - totalExpected;
+
+    res.json({
+      shiftId: s.id,
+      status: s.status,
+      cashier: { username: s.username, name: cashierName, empNo: cashierEmpNo },
+      branch: { name: branchName, address: branchAddress, companyName: branchCompanyName },
+      company: {
+        name: companyName, nameAr: 'المذاق المغربي',
+        taxNumber, currency, phone: companyPhone, email: companyEmail, logo: companyLogo
+      },
+      times: {
+        start: s.start_time, end: s.end_time,
+        durationMs: (s.end_time && s.start_time) ? (new Date(s.end_time) - new Date(s.start_time)) : null
+      },
+      financials: {
+        openingFloat: Number(s.opening_float || 0),
+        expectedTotal: totalExpected,
+        actualTotal:   totalActual,
+        variance:      totalVariance,
+        unmatched:     agg.unmatchedTotal
+      },
+      methods: methodsTable,
+      soldItems: agg.soldItems,
+      denominations,
+      orderCount: agg.orderCount,
+      itemsCount: agg.soldItems.reduce((s, i) => s + (Number(i.qty) || 0), 0),
+      notes: s.cashier_notes || '',
+      // Diagnostics for the rare cases when aggregation skips a sale
+      unmatchedDetails: agg.unmatchedDetails
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Get all shifts
 router.get('/', async (req, res) => {
   try {
@@ -301,6 +689,14 @@ router.get('/', async (req, res) => {
       diffCash: Number(s.diff_cash),
       diffCard: Number(s.diff_card),
       diffKita: Number(s.diff_kita),
+      // V5.7.17 — surface the rich JSONs so the printed report has full data
+      paymentTotalsJson: s.payment_totals_json || null,
+      denominationsJson: s.denominations_json || null,
+      cashierNotes:      s.cashier_notes || '',
+      openingFloat:      Number(s.opening_float || 0),
+      expectedTotal:     Number(s.expected_total || 0),
+      actualTotal:       Number(s.actual_total || 0),
+      varianceTotal:     Number(s.variance_total || 0),
       geoLat: s.geo_lat ? Number(s.geo_lat) : null,
       geoLng: s.geo_lng ? Number(s.geo_lng) : null,
       geoAddress: s.geo_address || '',

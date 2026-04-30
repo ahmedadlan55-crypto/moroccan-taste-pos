@@ -2930,6 +2930,226 @@ window.scOnNoteInput = function() {
   scV3Recalc();
 };
 
+// V5.7.17 — World-class thermal-printer end-of-day report.
+//   Single GET to /api/shifts/:id/full-report returns everything the report
+//   needs in one round-trip (cashier, branch, items, methods with expected
+//   vs actual, denominations, variance, opening float). The HTML below is
+//   sized for 80mm thermal paper but degrades cleanly to A4 too.
+window.printShiftThermalReport = function(shiftId) {
+  if (!shiftId) shiftId = state.activeShiftId;
+  if (!shiftId) return glassToast('لا يوجد رقم وردية', true);
+  loader(true);
+  _posCallAPI('GET', '/shifts/' + encodeURIComponent(shiftId) + '/full-report', null, function(d) {
+    loader(false);
+    if (!d || d.error) return glassToast((d && d.error) || 'فشل تحميل بيانات التقرير', true);
+    _renderShiftThermalReport(d);
+  });
+};
+
+function _renderShiftThermalReport(d) {
+  function fmt(v)    { return Number(v || 0).toFixed(2); }
+  function fmtArDate(s) { try { return new Date(s).toLocaleString('ar-SA'); } catch(e) { return s || '—'; } }
+  function fmtDuration(ms) {
+    if (!ms || ms < 0) return '—';
+    var h = Math.floor(ms / 3600000);
+    var m = Math.floor((ms % 3600000) / 60000);
+    return (h > 0 ? h + 'س ' : '') + m + 'د';
+  }
+
+  var c = d.company || {};
+  var br = d.branch || {};
+  var ca = d.cashier || {};
+  var f = d.financials || {};
+  var t = d.times || {};
+  var methods = d.methods || [];
+  var items   = d.soldItems || [];
+  var denoms  = (d.denominations || []).filter(function(x) { return Number(x.count) > 0; })
+                                       .sort(function(a, b) { return Number(b.value) - Number(a.value); });
+
+  var sumDenoms = denoms.reduce(function(s, x) { return s + (Number(x.value) * Number(x.count)); }, 0);
+
+  // Sections
+  var logoTag = c.logo
+    ? '<div style="text-align:center;margin-bottom:6px;"><img src="' + c.logo + '" style="max-width:90px;max-height:90px;object-fit:contain;"></div>'
+    : '';
+
+  var headerHtml =
+    logoTag +
+    '<div style="text-align:center;font-size:13px;font-weight:700;direction:rtl;margin-bottom:1px;">' + (c.nameAr || 'المذاق المغربي') + '</div>' +
+    '<div style="text-align:center;font-size:18px;font-weight:900;direction:ltr;margin-bottom:' + (br.companyName ? '2' : '6') + 'px;">' + (c.name || 'Moroccan Taste') + '</div>' +
+    (br.companyName
+      ? '<div style="text-align:center;font-size:12px;font-weight:700;color:#000;direction:rtl;margin-bottom:6px;border-bottom:1px solid #d4d4d4;padding-bottom:6px;">' + br.companyName + '</div>'
+      : '') +
+    '<div style="text-align:center;font-size:11px;direction:rtl;margin-bottom:2px;">تقرير إقفال الوردية</div>' +
+    '<div style="text-align:center;font-size:10px;color:#444;margin-bottom:6px;">SHIFT CLOSING REPORT</div>' +
+    (c.taxNumber ? '<div style="text-align:center;font-size:10px;font-family:monospace;color:#444;margin-bottom:4px;">' + c.taxNumber + '</div>' : '') +
+    (br.name ? '<div style="text-align:center;font-size:11px;font-weight:700;direction:ltr;">' + br.name.toUpperCase() + '</div>' : '') +
+    (br.address ? '<div style="text-align:center;font-size:9px;color:#666;direction:rtl;margin-bottom:4px;">' + br.address + '</div>' : '');
+
+  function row(label, value, opts) {
+    opts = opts || {};
+    return '<div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;' + (opts.border ? 'border-bottom:1px dashed #999;' : '') + '">' +
+             '<span style="color:#000;' + (opts.bold ? 'font-weight:700;' : '') + '">' + label + '</span>' +
+             '<span style="color:#000;font-family:monospace;' + (opts.bold ? 'font-weight:800;' : '') + (opts.color ? 'color:' + opts.color + ';' : '') + '">' + value + '</span>' +
+           '</div>';
+  }
+
+  // Section: Shift meta
+  var metaHtml =
+    '<div style="border-top:1px dashed #000;border-bottom:1px dashed #000;padding:6px 0;margin:8px 0;">' +
+      row('رقم الوردية', d.shiftId, { bold: true }) +
+      row('الكاشير', (ca.name || ca.username) + (ca.empNo && ca.empNo !== ca.name ? ' (' + ca.empNo + ')' : ''), { bold: true }) +
+      row('وقت الفتح', fmtArDate(t.start)) +
+      row('وقت الإغلاق', fmtArDate(t.end)) +
+      row('مدة الوردية', fmtDuration(t.durationMs)) +
+      row('عدد الفواتير', String(d.orderCount || 0), { bold: true }) +
+      row('عدد الأصناف', String(d.itemsCount || 0), { bold: true }) +
+    '</div>';
+
+  // Section: Items sold
+  var itemsHtml = '<div style="text-align:center;font-weight:800;font-size:11px;background:#000;color:#fff;padding:3px 6px;margin:8px 0 4px;">الأصناف المباعة | ITEMS SOLD</div>';
+  if (!items.length) {
+    itemsHtml += '<div style="text-align:center;font-size:10px;color:#999;padding:6px;">— لا توجد أصناف —</div>';
+  } else {
+    itemsHtml += '<table style="width:100%;border-collapse:collapse;font-size:10.5px;">' +
+                   '<thead><tr style="border-bottom:1px solid #000;">' +
+                     '<th style="text-align:right;padding:3px 0;font-size:10px;">الصنف</th>' +
+                     '<th style="text-align:center;padding:3px 0;font-size:10px;">الكمية</th>' +
+                     '<th style="text-align:center;padding:3px 0;font-size:10px;">السعر</th>' +
+                     '<th style="text-align:left;padding:3px 0;font-size:10px;">الإجمالي</th>' +
+                   '</tr></thead><tbody>';
+    items.forEach(function(it) {
+      itemsHtml += '<tr>' +
+                     '<td style="padding:2px 0;">' + (it.name || '—') + '</td>' +
+                     '<td style="text-align:center;padding:2px 0;">' + (Number(it.qty) || 0) + '</td>' +
+                     '<td style="text-align:center;padding:2px 0;font-family:monospace;">' + fmt(it.price) + '</td>' +
+                     '<td style="text-align:left;padding:2px 0;font-family:monospace;font-weight:700;">' + fmt(it.total) + '</td>' +
+                   '</tr>';
+    });
+    itemsHtml += '</tbody></table>';
+  }
+
+  // Section: Cash denominations
+  var denomsHtml = '<div style="text-align:center;font-weight:800;font-size:11px;background:#000;color:#fff;padding:3px 6px;margin:8px 0 4px;">فئات النقد في الصندوق | CASH BREAKDOWN</div>';
+  if (!denoms.length) {
+    denomsHtml += '<div style="text-align:center;font-size:10px;color:#999;padding:6px;">— لم يُسجَّل نقد —</div>';
+  } else {
+    denomsHtml += '<table style="width:100%;border-collapse:collapse;font-size:10.5px;">';
+    denoms.forEach(function(x) {
+      var subtotal = Number(x.value) * Number(x.count);
+      var faceLabel = Number(x.value) < 1
+        ? (Number(x.value) * 100) + ' هـ'
+        : Number(x.value) + ' SAR';
+      denomsHtml += '<tr>' +
+                      '<td style="padding:2px 0;font-weight:700;">' + faceLabel + '</td>' +
+                      '<td style="text-align:center;padding:2px 0;">×</td>' +
+                      '<td style="text-align:center;padding:2px 0;font-weight:700;">' + Number(x.count) + '</td>' +
+                      '<td style="text-align:center;padding:2px 0;">=</td>' +
+                      '<td style="text-align:left;padding:2px 0;font-family:monospace;font-weight:800;">' + fmt(subtotal) + '</td>' +
+                    '</tr>';
+    });
+    denomsHtml += '</table>';
+    denomsHtml += '<div style="border-top:1px dashed #000;margin-top:4px;padding-top:4px;font-size:11px;font-weight:800;display:flex;justify-content:space-between;">' +
+                    '<span>إجمالي النقد المعدود:</span>' +
+                    '<span style="font-family:monospace;">' + fmt(sumDenoms) + ' ' + (c.currency || 'SAR') + '</span>' +
+                  '</div>';
+  }
+
+  // Section: Payment methods reconciliation
+  var methodsHtml = '<div style="text-align:center;font-weight:800;font-size:11px;background:#000;color:#fff;padding:3px 6px;margin:8px 0 4px;">تسوية طرق الدفع | PAYMENT RECONCILIATION</div>';
+  methodsHtml += '<table style="width:100%;border-collapse:collapse;font-size:10.5px;">' +
+                   '<thead><tr style="border-bottom:1px solid #000;">' +
+                     '<th style="text-align:right;padding:3px 0;font-size:9.5px;">الطريقة</th>' +
+                     '<th style="text-align:center;padding:3px 0;font-size:9.5px;">المتوقع</th>' +
+                     '<th style="text-align:center;padding:3px 0;font-size:9.5px;">الفعلي</th>' +
+                     '<th style="text-align:left;padding:3px 0;font-size:9.5px;">الفرق</th>' +
+                   '</tr></thead><tbody>';
+  methods.forEach(function(m) {
+    var diff = m.variance;
+    var diffColor = Math.abs(diff) < 0.01 ? '#000' : (diff < 0 ? '#000' : '#000');
+    var diffPrefix = diff > 0 ? '+' : '';
+    methodsHtml += '<tr>' +
+                     '<td style="padding:2px 0;font-weight:700;">' + (m.nameAr || m.name) + '</td>' +
+                     '<td style="text-align:center;padding:2px 0;font-family:monospace;">' + fmt(m.expected) + '</td>' +
+                     '<td style="text-align:center;padding:2px 0;font-family:monospace;font-weight:700;">' + fmt(m.actual) + '</td>' +
+                     '<td style="text-align:left;padding:2px 0;font-family:monospace;font-weight:800;color:' + diffColor + ';">' + diffPrefix + fmt(diff) + '</td>' +
+                   '</tr>';
+  });
+  methodsHtml += '<tr style="border-top:1px solid #000;font-weight:900;">' +
+                   '<td style="padding:3px 0;">الإجمالي</td>' +
+                   '<td style="text-align:center;padding:3px 0;font-family:monospace;">' + fmt(f.expectedTotal) + '</td>' +
+                   '<td style="text-align:center;padding:3px 0;font-family:monospace;">' + fmt(f.actualTotal) + '</td>' +
+                   '<td style="text-align:left;padding:3px 0;font-family:monospace;">' + (f.variance > 0 ? '+' : '') + fmt(f.variance) + '</td>' +
+                 '</tr>';
+  methodsHtml += '</tbody></table>';
+  if (f.unmatched > 0) {
+    methodsHtml += '<div style="margin-top:4px;padding:4px;border:1px dashed #000;font-size:9.5px;text-align:center;">' +
+                     '⚠ مبلغ غير مصنّف: ' + fmt(f.unmatched) +
+                   '</div>';
+  }
+
+  // Section: Variance summary box
+  var varianceLabel = Math.abs(f.variance) < 0.01 ? 'متطابق' : (f.variance < 0 ? 'عجز' : 'زيادة');
+  var varianceHtml =
+    '<div style="text-align:center;font-weight:800;font-size:11px;background:#000;color:#fff;padding:3px 6px;margin:8px 0 4px;">ملخص الإغلاق | SUMMARY</div>' +
+    '<div style="border:1.5px solid #000;padding:6px 8px;margin:4px 0;">' +
+      row('الرصيد الافتتاحي', fmt(f.openingFloat) + ' ' + (c.currency || 'SAR')) +
+      row('إجمالي المبيعات (متوقع)', fmt(f.expectedTotal) + ' ' + (c.currency || 'SAR'), { bold: true }) +
+      row('إجمالي الجرد الفعلي', fmt(f.actualTotal) + ' ' + (c.currency || 'SAR'), { bold: true }) +
+      row('الفرق (' + varianceLabel + ')', (f.variance > 0 ? '+' : '') + fmt(f.variance) + ' ' + (c.currency || 'SAR'), { bold: true }) +
+    '</div>';
+
+  // Notes
+  var notesHtml = '';
+  if (d.notes) {
+    notesHtml = '<div style="margin-top:8px;padding:6px;border:1px dashed #999;font-size:10px;direction:rtl;">' +
+                  '<div style="font-weight:700;margin-bottom:3px;">📝 ملاحظات:</div>' +
+                  '<div style="white-space:pre-wrap;">' + d.notes + '</div>' +
+                '</div>';
+  }
+
+  // Signatures
+  var sigHtml =
+    '<div style="margin-top:12px;display:flex;gap:6px;justify-content:space-between;">' +
+      '<div style="flex:1;text-align:center;">' +
+        '<div style="border-top:1px solid #000;margin-top:24px;padding-top:3px;font-size:9.5px;font-weight:700;">المستلم</div>' +
+      '</div>' +
+      '<div style="flex:1;text-align:center;">' +
+        '<div style="border-top:1px solid #000;margin-top:24px;padding-top:3px;font-size:9.5px;font-weight:700;">' + (ca.name || ca.username) + '</div>' +
+      '</div>' +
+      '<div style="flex:1;text-align:center;">' +
+        '<div style="border-top:1px solid #000;margin-top:24px;padding-top:3px;font-size:9.5px;font-weight:700;">الإدارة</div>' +
+      '</div>' +
+    '</div>';
+
+  // Footer
+  var footerHtml =
+    '<div style="text-align:center;margin-top:8px;font-size:9px;color:#444;border-top:1px dashed #000;padding-top:4px;">' +
+      'وثيقة موثّقة آلياً — Moroccan Taste POS<br>' +
+      'طُبع: ' + fmtArDate(new Date()) +
+      (c.phone ? '<br>Tel: ' + c.phone : '') +
+      (c.email ? '<br>Email: ' + c.email : '') +
+    '</div>';
+
+  // Combine + open print window
+  var w = window.open('', '_blank', 'width=380,height=900');
+  if (!w) return glassToast('السماح للنوافذ المنبثقة مطلوب', true);
+  w.document.write(
+    '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">' +
+    '<title>تقرير إقفال الوردية — ' + d.shiftId + '</title>' +
+    '<style>' +
+      '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}' +
+      'body{font-family:"Helvetica Neue",Arial,"Segoe UI",sans-serif;padding:10px;width:300px;margin:0 auto;font-size:12px;color:#000;background:#fff;}' +
+      'table{border-collapse:collapse;}' +
+      '@media print{@page{margin:0;size:80mm auto;}body{padding:4px;width:100%;}}' +
+    '</style></head><body>' +
+    headerHtml + metaHtml + itemsHtml + denomsHtml + methodsHtml + varianceHtml + notesHtml + sigHtml + footerHtml +
+    '</body></html>'
+  );
+  w.document.close();
+  setTimeout(function() { w.print(); }, 600);
+}
+
 window.scV3ConfirmClose = function() {
   if (!state.activeShiftId) return;
   if (!_scRevealed) return glassToast('فعِّل "أنهيت العدّ" أولاً', true);
@@ -2939,10 +3159,18 @@ window.scV3ConfirmClose = function() {
   document.querySelectorAll('.sc-denom-input').forEach(function(inp) {
     denoms.push({ value: Number(inp.dataset.denom), count: Number(inp.value) || 0, kind: Number(inp.dataset.denom) <= 1 ? 'coin' : 'note' });
   });
+  // V5.7.17 — send paymentTotals keyed by method.id (CANONICAL).
+  //   Backend tries id-match first, then name fallback. Canonical IDs are
+  //   stable across name changes — fixes the bug where "هانجر ستيشن"
+  //   amounts didn't show in the report (the old by-name key didn't
+  //   roundtrip through the broken matcher).
   var paymentTotals = {};
   document.querySelectorAll('.sc-elec-input').forEach(function(inp) {
-    var key = inp.dataset.pmname || inp.dataset.pmid;
-    paymentTotals[key] = Number(inp.value) || 0;
+    var v = Number(inp.value) || 0;
+    if (inp.dataset.pmid) paymentTotals[String(inp.dataset.pmid)] = v;
+    // Also include by-name as a redundant key (defensive — if backend
+    // somehow can't find the id, name still resolves)
+    if (inp.dataset.pmname) paymentTotals[inp.dataset.pmname] = v;
   });
   var generalNotes  = (q('#scNotes') && q('#scNotes').value || '').trim();
   var varianceNote  = (q('#scVarianceNote') && q('#scVarianceNote').value || '').trim();
@@ -2969,8 +3197,14 @@ window.scV3ConfirmClose = function() {
         updateShiftUI();
         renderHeader('pos', { showShift: true });
         closeGlassModal('#modalShiftClose');
-        glassToast('تم إغلاق الوردية بنجاح');
-        scV3ShowReport(closedShiftId, r);
+        glassToast('تم إغلاق الوردية بنجاح — جاري إنشاء التقرير الحراري');
+        // V5.7.17 — auto-print the world-class thermal report on close
+        setTimeout(function() {
+          try { window.printShiftThermalReport(closedShiftId); } catch (e) {
+            console.warn('thermal report failed:', e);
+            scV3ShowReport(closedShiftId, r);
+          }
+        }, 350);
       } else {
         glassToast((r && r.error) || 'فشل إغلاق الوردية', true);
       }

@@ -4,7 +4,10 @@ const db = require('../db/connection');
 // ─── Helper: map a menu row to API response (includes semi-finished fields) ───
 function _mapMenu(m) {
   return {
-    id: m.id, name: m.name, price: Number(m.price), category: m.category,
+    id: m.id, name: m.name,
+    // V5.7.22 — bilingual name (English column added via migration)
+    nameEn: m.name_en || '',
+    price: Number(m.price), category: m.category,
     cost: Number(m.cost), stock: m.stock, minStock: m.min_stock, active: m.active, rowIndex: m.id,
     brandId: m.brand_id || '', brand_id: m.brand_id || '', brandName: m.brand_name || '',
     computedCost: Number(m.computed_cost) || 0, pricingMode: m.pricing_mode || 'fixed', markupPct: Number(m.markup_pct) || 30,
@@ -95,17 +98,17 @@ router.get('/semi-finished', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const {
-      name, price, category, cost, stock, minStock, active, pricingMode, markupPct, brandId,
+      name, nameEn, price, category, cost, stock, minStock, active, pricingMode, markupPct, brandId,
       isSemiFinished, productionUnit, consumesSemiId, consumesSemiQty,
       productionWarehouseId, salesWarehouseId
     } = req.body;
     const id = 'MENU-' + Date.now();
     await db.query(
-      `INSERT INTO menu (id, name, price, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
+      `INSERT INTO menu (id, name, name_en, price, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
                          is_semi_finished, production_unit, consumes_semi_id, consumes_semi_qty,
                          production_warehouse_id, sales_warehouse_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [id, name, price || 0, category || 'عام', cost || 0, stock || 0, minStock || 0, active !== false,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [id, name, nameEn || null, price || 0, category || 'عام', cost || 0, stock || 0, minStock || 0, active !== false,
        pricingMode || 'fixed', markupPct || 30, brandId || null,
        isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
        productionWarehouseId || null, salesWarehouseId || null]
@@ -118,19 +121,19 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const {
-      name, price, category, cost, stock, minStock, active, pricingMode, markupPct, brandId,
+      name, nameEn, price, category, cost, stock, minStock, active, pricingMode, markupPct, brandId,
       isSemiFinished, productionUnit, consumesSemiId, consumesSemiQty,
       productionWarehouseId, salesWarehouseId
     } = req.body;
     // Price is ALWAYS manual (user sets it). pricing_mode only controls
     // whether the COST comes from recipes (variable) or manual input (fixed).
     await db.query(
-      `UPDATE menu SET name=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?,
+      `UPDATE menu SET name=?, name_en=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?,
                        pricing_mode=?, markup_pct=?, brand_id=?,
                        is_semi_finished=?, production_unit=?, consumes_semi_id=?, consumes_semi_qty=?,
                        production_warehouse_id=?, sales_warehouse_id=?
        WHERE id=?`,
-      [name, price || 0, category, cost || 0, stock, minStock, active, pricingMode || 'variable', markupPct || 0,
+      [name, nameEn || null, price || 0, category, cost || 0, stock, minStock, active, pricingMode || 'variable', markupPct || 0,
        brandId || null,
        isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
        productionWarehouseId || null, salesWarehouseId || null,

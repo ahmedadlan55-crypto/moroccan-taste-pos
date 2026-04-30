@@ -16658,7 +16658,13 @@ function _bmRender() {
       '<td>'+ consumes +'</td>' +
       '<td>'+ (m.active ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مفعّل</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;">معطّل</span>') +'</td>' +
       '<td>' +
-        '<button class="wo-btn wo-btn-sm" style="background:#ede9fe;color:#6d28d9;font-weight:700;" onclick="erpOpenMenuRecipe(\''+ m.id +'\',\''+_v3EscapeHtml(m.name).replace(/\'/g,"\\'")+'\')" title="' + (hasRecipe?'تعديل الوصفة':'إضافة وصفة') + '"><i class="fas fa-mortar-pestle"></i> ' + (hasRecipe?'الوصفة':'وصفة جديدة') + '</button> ' +
+        // V5.7.22 — clearer "has recipe" toggle:
+        //   YES → green pill "✓ له وصفة" (click to EDIT in the new full-page editor)
+        //   NO  → outlined gray "+ أضف وصفة" (click opens the editor with ZERO ingredients)
+        (hasRecipe
+          ? '<button class="wo-btn wo-btn-sm" style="background:#dcfce7;color:#15803d;font-weight:800;border:1.5px solid #86efac;" onclick="erpOpenRecipeEditor(\''+ m.id +'\')" title="تعديل الوصفة (شاشة كاملة)"><i class="fas fa-check-circle"></i> له وصفة</button> '
+          : '<button class="wo-btn wo-btn-sm" style="background:#fff;color:#7c3aed;font-weight:800;border:1.5px dashed #c4b5fd;" onclick="erpOpenRecipeEditor(\''+ m.id +'\')" title="إنشاء وصفة جديدة (شاشة كاملة)"><i class="fas fa-mortar-pestle"></i> + أضف وصفة</button> '
+        ) +
         (hasRecipe ? '<button class="wo-btn wo-btn-sm" style="background:#fee2e2;color:#991b1b;" onclick="erpDeleteMenuRecipe(\''+ m.id +'\',\''+_v3EscapeHtml(m.name).replace(/\'/g,"\\'")+'\')" title="حذف الوصفة"><i class="fas fa-trash-can"></i></button> ' : '') +
         '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpEditBrandMenuItem(\''+ m.id +'\')" title="تعديل المنتج"><i class="fas fa-edit"></i></button> ' +
         '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpDeleteBrandMenuItem(\''+ m.id +'\')" title="حذف المنتج"><i class="fas fa-trash"></i></button>' +
@@ -16797,20 +16803,411 @@ window.erpApplyBulkPrice = function(){
   });
 };
 
-// V5.6 — open BOM editor pre-filled with this menu item as the final product
+// V5.6/.22 — open the recipe editor for a menu item
+//   V5.7.22 redirects to the new full-screen professional editor below.
 window.erpOpenMenuRecipe = function(menuId, menuName){
-  // Try to find an existing BOM for this menu item first
+  if (typeof window.erpOpenRecipeEditor === 'function') {
+    return window.erpOpenRecipeEditor(menuId);
+  }
+  // Legacy fallback (shouldn't trigger on a fresh deploy)
   _erpGet('/menu/'+encodeURIComponent(menuId)+'/recipe-bom', function(data){
-    if (data && data.bomId) {
-      // Existing BOM — open in edit mode
-      erpOpenBomModal(data.bomId);
-    } else {
-      // No BOM yet — open NEW with this menu item preselected
-      erpOpenBomModal(null, {
-        productId: menuId,
-        productSource: 'menu',
-        productName: menuName
+    if (data && data.bomId) erpOpenBomModal(data.bomId);
+    else erpOpenBomModal(null, { productId: menuId, productSource: 'menu', productName: menuName });
+  });
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// V5.7.22 — World-class full-page Recipe Editor
+//   • Fetches: menu item + existing BOM + inv_items pool
+//   • Shows: name AR/EN, price, LIVE cost, profit margin
+//   • Multi-select ingredient picker with checkboxes (right side)
+//   • Per-line: stock in major+minor units, qty in major OR minor OR both,
+//     cost auto-recomputed on every change
+//   • Save: PUT /erp/bom + auto-update menu.cost
+// ═══════════════════════════════════════════════════════════════════
+
+// Selected lines for the open editor session
+window._reLines = [];      // [{itemId, name, unit, bigUnit, convRate, cost, stock, qtyMinor}]
+window._reMenu = null;     // current menu item
+window._reBom = null;      // existing BOM (if any)
+window._reItems = [];      // full inv_items pool
+
+window.erpOpenRecipeEditor = function(menuId) {
+  if (!menuId) return _v3Toast('لا يوجد منتج', true);
+  _v3Toast('جاري تحميل بيانات الوصفة...');
+
+  // Parallel fetch: menu item + items pool + existing BOM
+  Promise.all([
+    new Promise(function(r){ _erpGet('/menu/all', r); }),
+    new Promise(function(r){ _erpGet('/inventory/items', r); }),
+    new Promise(function(r){ _erpGet('/menu/' + encodeURIComponent(menuId) + '/recipe-bom', r); })
+  ]).then(function(results) {
+    var menuList = results[0] || [];
+    var items = results[1] || [];
+    var bomMeta = results[2] || {};
+    var menu = menuList.find(function(x) { return x.id === menuId; });
+    if (!menu) return _v3Toast('المنتج غير موجود', true);
+
+    window._reMenu = menu;
+    window._reItems = items;
+    window._reBom = (bomMeta && bomMeta.bomId) ? bomMeta : null;
+    window._reLines = [];
+
+    // If BOM exists, fetch its lines
+    var afterBomLoad = function() {
+      _reRenderEditor();
+      // Mount the modal AFTER body is ready
+      WoModal.open({
+        icon: 'fa-mortar-pestle', iconColor: '#7c3aed',
+        title: 'محرر الوصفة',
+        subtitle: 'وصفة احترافية بحساب فوري للتكلفة وهامش الربح',
+        body: '<div id="reEditorBody"></div>',
+        size: 'full',
+        footer:
+          '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+          '<button class="wo-btn wo-btn-primary" onclick="reSaveRecipe()" id="reSaveBtn">' +
+            '<i class="fas fa-save"></i> حفظ الوصفة + تحديث التكلفة' +
+          '</button>'
       });
+      // Render after the modal is in the DOM
+      setTimeout(_reRenderEditor, 60);
+    };
+
+    if (window._reBom && window._reBom.bomId) {
+      _erpGet('/erp/bom/' + encodeURIComponent(window._reBom.bomId) + '/lines', function(lines) {
+        (lines || []).forEach(function(l) {
+          var item = items.find(function(x) { return x.id === (l.componentItemId || l.component_item_id); });
+          if (!item) return;
+          window._reLines.push({
+            itemId: item.id, name: item.name,
+            unit: item.unit || 'حبة', bigUnit: item.bigUnit || '', convRate: Number(item.convRate) || 1,
+            cost: Number(item.cost) || 0, stock: Number(item.stock) || 0,
+            // l.quantity is stored in MINOR units always (V5.6 convention)
+            qtyMinor: Number(l.quantity) || 0
+          });
+        });
+        afterBomLoad();
+      });
+    } else {
+      afterBomLoad();
+    }
+  }).catch(function(e) {
+    console.error('[V5.7.22] recipe load:', e);
+    _v3Toast('فشل تحميل بيانات الوصفة', true);
+  });
+};
+
+function _reRenderEditor() {
+  var box = document.getElementById('reEditorBody');
+  if (!box) return;
+  var menu = window._reMenu || {};
+  var lines = window._reLines || [];
+  var items = window._reItems || [];
+
+  // ── Compute live totals ──
+  var totalCost = 0;
+  lines.forEach(function(l) {
+    var unitCost = Number(l.cost) || 0;
+    var qtyMinor = Number(l.qtyMinor) || 0;
+    // cost stored on inv_items is per minor unit
+    totalCost += unitCost * qtyMinor;
+  });
+  var price = Number(menu.price) || 0;
+  var marginAbs = price - totalCost;
+  var marginPct = price > 0 ? (marginAbs / price) * 100 : 0;
+  var marginColor = marginPct >= 50 ? '#16a34a' : (marginPct >= 25 ? '#d97706' : '#dc2626');
+
+  // ── Header ──
+  var headerHtml =
+    '<div style="background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;padding:18px 22px;border-radius:14px;margin-bottom:14px;">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:14px;align-items:center;">' +
+        '<div style="grid-column:span 2;">' +
+          '<div style="font-size:11px;opacity:0.85;font-weight:600;margin-bottom:4px;">المنتج</div>' +
+          '<div style="font-size:20px;font-weight:900;direction:rtl;">' + _v3EscapeHtml(menu.name || '') + '</div>' +
+          (menu.nameEn ? '<div style="font-size:13px;opacity:0.95;font-weight:500;direction:ltr;margin-top:2px;">' + _v3EscapeHtml(menu.nameEn) + '</div>' : '<div style="font-size:11px;opacity:0.6;font-style:italic;direction:ltr;margin-top:2px;">— English name not set —</div>') +
+        '</div>' +
+        '<div style="text-align:center;">' +
+          '<div style="font-size:11px;opacity:0.85;font-weight:600;">السعر</div>' +
+          '<div style="font-size:18px;font-weight:900;font-family:monospace;margin-top:2px;">' + _v3Fmt(price) + ' ر.س</div>' +
+        '</div>' +
+        '<div style="text-align:center;">' +
+          '<div style="font-size:11px;opacity:0.85;font-weight:600;">التكلفة الحية</div>' +
+          '<div style="font-size:18px;font-weight:900;font-family:monospace;margin-top:2px;">' + _v3Fmt(totalCost) + ' ر.س</div>' +
+        '</div>' +
+        '<div style="text-align:center;background:rgba(255,255,255,0.18);border-radius:10px;padding:8px;">' +
+          '<div style="font-size:11px;opacity:0.95;font-weight:600;">هامش الربح</div>' +
+          '<div style="font-size:20px;font-weight:900;color:' + (marginPct < 0 ? '#fecaca' : '#fff') + ';margin-top:2px;">' + (marginPct >= 0 ? '+' : '') + marginPct.toFixed(1) + '%</div>' +
+          '<div style="font-size:10px;opacity:0.85;font-family:monospace;">' + (marginAbs >= 0 ? '+' : '') + _v3Fmt(marginAbs) + ' ر.س</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+  // ── 2-column layout: left = picked ingredients, right = picker ──
+  var leftHtml =
+    '<div style="background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:14px;height:62vh;display:flex;flex-direction:column;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+        '<h4 style="margin:0;font-size:14px;font-weight:800;color:#0f172a;"><i class="fas fa-list-check" style="color:#7c3aed;margin-inline-end:6px;"></i> مكوّنات الوصفة (' + lines.length + ')</h4>' +
+        (lines.length ? '<button class="wo-btn wo-btn-sm" style="background:#fee2e2;color:#991b1b;" onclick="reClearAll()"><i class="fas fa-trash"></i> مسح الكل</button>' : '') +
+      '</div>' +
+      '<div style="flex:1;overflow-y:auto;">' +
+        (lines.length ? _reRenderLinesTable() : _reEmptyLeft()) +
+      '</div>' +
+    '</div>';
+
+  var rightHtml = _reRenderPickerPanel();
+
+  box.innerHTML =
+    headerHtml +
+    '<div style="display:grid;grid-template-columns:1.4fr 1fr;gap:14px;">' +
+      leftHtml + rightHtml +
+    '</div>';
+}
+
+function _reEmptyLeft() {
+  return '<div style="text-align:center;padding:40px 20px;color:#94a3b8;">' +
+           '<i class="fas fa-mortar-pestle" style="font-size:48px;opacity:0.3;display:block;margin-bottom:12px;"></i>' +
+           '<div style="font-weight:700;font-size:14px;">لم تُضف أي مكوّنات بعد</div>' +
+           '<div style="font-size:12px;margin-top:4px;">اختر مكوّنات من اللوحة اليمنى لبناء الوصفة</div>' +
+         '</div>';
+}
+
+function _reRenderLinesTable() {
+  var lines = window._reLines || [];
+  var rowsHtml = lines.map(function(l, idx) {
+    var unitCost = Number(l.cost) || 0;
+    var qtyMinor = Number(l.qtyMinor) || 0;
+    var cv = Number(l.convRate) || 1;
+    var lineCost = unitCost * qtyMinor;
+    // Stock display: if conv_rate > 1, show "X.X bigUnit (Y unit)"; else just minor
+    var stockMinor = Number(l.stock) || 0;
+    var stockMajor = cv > 1 ? (stockMinor / cv) : null;
+    var stockHtml = (cv > 1 && l.bigUnit)
+      ? stockMajor.toFixed(2) + ' ' + l.bigUnit + ' <span style="color:#94a3b8;">(' + stockMinor + ' ' + l.unit + ')</span>'
+      : stockMinor + ' ' + l.unit;
+    var stockColor = stockMinor < qtyMinor ? '#dc2626' : (stockMinor === 0 ? '#94a3b8' : '#16a34a');
+    // Quantity input — major + minor + total (auto-sync)
+    var qtyMajor = cv > 1 ? (qtyMinor / cv) : 0;
+    return '<tr data-idx="' + idx + '" style="border-bottom:1px solid #f1f5f9;">' +
+             '<td style="padding:8px 6px;font-weight:700;color:#0f172a;">' +
+               _v3EscapeHtml(l.name) +
+               '<div style="font-size:10px;color:' + stockColor + ';font-weight:600;margin-top:2px;">المخزون: ' + stockHtml + '</div>' +
+             '</td>' +
+             (cv > 1 && l.bigUnit
+               ? '<td style="padding:8px 6px;text-align:center;">' +
+                   '<input type="number" step="0.01" min="0" value="' + (qtyMajor ? qtyMajor.toFixed(3) : '') + '" placeholder="0" oninput="reUpdateMajor(' + idx + ',this.value)" style="width:80px;padding:5px 7px;border:1.5px solid #e2e8f0;border-radius:6px;text-align:center;font-weight:700;font-family:monospace;">' +
+                   '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + l.bigUnit + '</div>' +
+                 '</td>'
+               : '<td></td>'
+             ) +
+             '<td style="padding:8px 6px;text-align:center;">' +
+               '<input type="number" step="0.01" min="0" value="' + (qtyMinor || '') + '" placeholder="0" oninput="reUpdateMinor(' + idx + ',this.value)" style="width:80px;padding:5px 7px;border:1.5px solid #e2e8f0;border-radius:6px;text-align:center;font-weight:700;font-family:monospace;">' +
+               '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + l.unit + '</div>' +
+             '</td>' +
+             '<td style="padding:8px 6px;text-align:center;font-family:monospace;font-weight:700;color:#475569;">' + _v3Fmt(unitCost) + '</td>' +
+             '<td style="padding:8px 6px;text-align:center;font-family:monospace;font-weight:900;color:#16a34a;">' + _v3Fmt(lineCost) + '</td>' +
+             '<td style="padding:8px 6px;text-align:center;">' +
+               '<button class="wo-btn wo-btn-sm" style="background:#fee2e2;color:#991b1b;padding:4px 8px;" onclick="reRemoveLine(' + idx + ')" title="حذف">' +
+                 '<i class="fas fa-times"></i>' +
+               '</button>' +
+             '</td>' +
+           '</tr>';
+  }).join('');
+
+  // Footer: total cost
+  var totalCost = lines.reduce(function(s, l) { return s + (Number(l.cost) || 0) * (Number(l.qtyMinor) || 0); }, 0);
+
+  return '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
+           '<thead><tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">' +
+             '<th style="text-align:start;padding:8px 6px;font-size:11px;color:#64748b;font-weight:700;">المكوّن</th>' +
+             '<th style="text-align:center;padding:8px 6px;font-size:11px;color:#64748b;font-weight:700;">كبرى</th>' +
+             '<th style="text-align:center;padding:8px 6px;font-size:11px;color:#64748b;font-weight:700;">صغرى</th>' +
+             '<th style="text-align:center;padding:8px 6px;font-size:11px;color:#64748b;font-weight:700;">سعر/وحدة</th>' +
+             '<th style="text-align:center;padding:8px 6px;font-size:11px;color:#64748b;font-weight:700;">إجمالي</th>' +
+             '<th style="width:40px;"></th>' +
+           '</tr></thead>' +
+           '<tbody>' + rowsHtml + '</tbody>' +
+           '<tfoot><tr style="background:#f1f5f9;border-top:2px solid #cbd5e1;">' +
+             '<td colspan="4" style="padding:10px 6px;font-weight:900;font-size:13px;color:#0f172a;">إجمالي تكلفة الوصفة</td>' +
+             '<td style="text-align:center;padding:10px 6px;font-weight:900;font-size:14px;color:#16a34a;font-family:monospace;">' + _v3Fmt(totalCost) + ' ر.س</td>' +
+             '<td></td>' +
+           '</tr></tfoot>' +
+         '</table>';
+}
+
+function _reRenderPickerPanel() {
+  var items = window._reItems || [];
+  var lines = window._reLines || [];
+  var pickedIds = new Set(lines.map(function(l) { return l.itemId; }));
+
+  // Group items by category
+  var byCategory = {};
+  items.forEach(function(it) {
+    if (it.active === false || it.active === 0) return;
+    var cat = it.category || 'عام';
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(it);
+  });
+
+  var search = window._rePickerSearch || '';
+  var html =
+    '<div style="background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:14px;height:62vh;display:flex;flex-direction:column;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+        '<h4 style="margin:0;font-size:14px;font-weight:800;color:#0f172a;"><i class="fas fa-search-plus" style="color:#0ea5e9;margin-inline-end:6px;"></i> اختر المكوّنات</h4>' +
+        '<button class="wo-btn wo-btn-sm wo-btn-primary" id="reAddSelectedBtn" onclick="reAddSelected()" disabled style="opacity:0.5;cursor:not-allowed;">' +
+          '<i class="fas fa-plus"></i> أضف <span id="reSelCount">0</span>' +
+        '</button>' +
+      '</div>' +
+      '<div style="margin-bottom:10px;">' +
+        '<input type="text" placeholder="ابحث عن مكوّن..." value="' + _v3EscapeHtml(search) + '" oninput="rePickerSearch(this.value)" style="width:100%;padding:8px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;">' +
+      '</div>' +
+      '<div style="flex:1;overflow-y:auto;">';
+
+  var totalShown = 0;
+  Object.keys(byCategory).sort().forEach(function(cat) {
+    var arr = byCategory[cat].filter(function(it) {
+      if (pickedIds.has(it.id)) return false; // hide already-added
+      if (search) {
+        var s = search.toLowerCase();
+        return (it.name || '').toLowerCase().indexOf(s) >= 0 ||
+               String(it.id || '').toLowerCase().indexOf(s) >= 0;
+      }
+      return true;
+    });
+    if (!arr.length) return;
+    totalShown += arr.length;
+    html += '<div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;padding:8px 4px 4px;">' + _v3EscapeHtml(cat) + ' <span style="color:#cbd5e1;">(' + arr.length + ')</span></div>';
+    arr.forEach(function(it) {
+      var cv = Number(it.convRate) || 1;
+      var stockMinor = Number(it.stock) || 0;
+      var stockHtml = (cv > 1 && it.bigUnit)
+        ? (stockMinor / cv).toFixed(2) + ' ' + it.bigUnit + ' / ' + stockMinor + ' ' + (it.unit || 'حبة')
+        : stockMinor + ' ' + (it.unit || 'حبة');
+      var stockColor = stockMinor === 0 ? '#94a3b8' : (stockMinor < 10 ? '#d97706' : '#16a34a');
+      html +=
+        '<label class="re-pick-row" style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid #f1f5f9;cursor:pointer;">' +
+          '<input type="checkbox" class="re-pick-cb" data-item-id="' + it.id + '" onchange="reUpdateSelCount()" style="width:16px;height:16px;cursor:pointer;flex-shrink:0;">' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-weight:700;color:#0f172a;font-size:13px;">' + _v3EscapeHtml(it.name) + '</div>' +
+            '<div style="font-size:10px;color:' + stockColor + ';font-weight:600;margin-top:2px;">' + stockHtml + '</div>' +
+          '</div>' +
+          '<div style="text-align:end;font-size:11px;color:#64748b;font-family:monospace;">' + _v3Fmt(it.cost) + '/' + (it.unit || 'حبة') + '</div>' +
+        '</label>';
+    });
+  });
+
+  if (totalShown === 0) {
+    html += '<div style="text-align:center;padding:30px 20px;color:#94a3b8;font-size:13px;"><i class="fas fa-search-minus" style="font-size:32px;opacity:0.3;display:block;margin-bottom:8px;"></i>لا توجد نتائج' + (search ? ' لـ "' + _v3EscapeHtml(search) + '"' : '') + '</div>';
+  }
+
+  html += '</div></div>';
+  return html;
+}
+
+// ── Editor handlers (live) ──
+window.reUpdateMajor = function(idx, val) {
+  var l = window._reLines[idx];
+  if (!l) return;
+  var v = Number(val) || 0;
+  l.qtyMinor = v * (Number(l.convRate) || 1);
+  _reRenderEditor();
+};
+window.reUpdateMinor = function(idx, val) {
+  var l = window._reLines[idx];
+  if (!l) return;
+  l.qtyMinor = Number(val) || 0;
+  _reRenderEditor();
+};
+window.reRemoveLine = function(idx) {
+  window._reLines.splice(idx, 1);
+  _reRenderEditor();
+};
+window.reClearAll = function() {
+  WoModal.confirm({
+    title: 'مسح كل المكوّنات',
+    message: 'سيتم إزالة جميع المكوّنات الحالية. هل تتابع؟',
+    danger: true, confirmText: 'مسح'
+  }).then(function(ok) {
+    if (!ok) return;
+    window._reLines = [];
+    _reRenderEditor();
+  });
+};
+window.rePickerSearch = function(v) {
+  window._rePickerSearch = v;
+  _reRenderEditor();
+};
+window.reUpdateSelCount = function() {
+  var n = document.querySelectorAll('.re-pick-cb:checked').length;
+  var btn = document.getElementById('reAddSelectedBtn');
+  var c = document.getElementById('reSelCount');
+  if (c) c.textContent = n;
+  if (btn) {
+    btn.disabled = !n;
+    btn.style.opacity = n ? '1' : '0.5';
+    btn.style.cursor = n ? 'pointer' : 'not-allowed';
+  }
+};
+window.reAddSelected = function() {
+  var checked = document.querySelectorAll('.re-pick-cb:checked');
+  var added = 0;
+  checked.forEach(function(cb) {
+    var id = cb.dataset.itemId;
+    var item = (window._reItems || []).find(function(x) { return x.id === id; });
+    if (!item) return;
+    // Skip if already added (defensive)
+    if (window._reLines.find(function(l) { return l.itemId === id; })) return;
+    window._reLines.push({
+      itemId: item.id, name: item.name,
+      unit: item.unit || 'حبة', bigUnit: item.bigUnit || '',
+      convRate: Number(item.convRate) || 1,
+      cost: Number(item.cost) || 0, stock: Number(item.stock) || 0,
+      qtyMinor: 0
+    });
+    added++;
+  });
+  if (added) _v3Toast('تمت إضافة ' + added + ' مكوّن — حدّد الكميات الآن');
+  _reRenderEditor();
+};
+
+window.reSaveRecipe = function() {
+  var menu = window._reMenu;
+  if (!menu) return _v3Toast('لا توجد بيانات منتج', true);
+  var lines = (window._reLines || []).filter(function(l) { return Number(l.qtyMinor) > 0; });
+  if (!lines.length) return _v3Toast('أضف مكوّناً واحداً على الأقل بكمية أكبر من صفر', true);
+
+  var totalCost = lines.reduce(function(s, l) { return s + (Number(l.cost) || 0) * (Number(l.qtyMinor) || 0); }, 0);
+
+  var payload = {
+    id: window._reBom && window._reBom.bomId ? window._reBom.bomId : null,
+    productId: menu.id,
+    productSource: 'menu',
+    yieldQuantity: 1,
+    yieldUnit: menu.productionUnit || 'pcs',
+    notes: 'وصفة ' + menu.name,
+    lines: lines.map(function(l) {
+      return {
+        componentItemId: l.itemId,
+        quantity: Number(l.qtyMinor),
+        unit: l.unit || 'حبة',
+        wastePct: 0
+      };
+    }),
+    // Push the recomputed cost so menu.cost updates immediately
+    recomputedCost: Math.round(totalCost * 10000) / 10000
+  };
+
+  var btn = document.getElementById('reSaveBtn');
+  if (btn) btn.disabled = true;
+  callAPI('POST', '/erp/bom', payload, function(r) {
+    if (btn) btn.disabled = false;
+    if (r && r.success) {
+      _v3Toast('تم حفظ الوصفة + تحديث التكلفة (' + _v3Fmt(totalCost) + ' ر.س)');
+      WoModal.close();
+      // Refresh the menu admin so the new recipe chip + cost show
+      if (typeof erpLoadBrandMenu === 'function') erpLoadBrandMenu();
+      else if (typeof _bmRender === 'function') _bmRender();
+    } else {
+      _v3Toast((r && r.error) || 'فشل حفظ الوصفة', true);
     }
   });
 };
@@ -16897,7 +17294,9 @@ function _openFinishedModalInner(id, brand, semiList) {
     '<div class="v3-form-section">' +
       '<h4 class="v3-section-title"><i class="fas fa-circle-info"></i> البيانات الأساسية</h4>' +
       '<div class="v3-grid-2">' +
-        '<div class="wo-field"><label class="wo-field-label">اسم المنتج *</label><input id="bmF_name" class="wo-input" value="'+ _v3EscapeHtml(mi.name) +'" required></div>' +
+        '<div class="wo-field"><label class="wo-field-label">اسم المنتج (عربي) *</label><input id="bmF_name" class="wo-input" value="'+ _v3EscapeHtml(mi.name) +'" required></div>' +
+        // V5.7.22 — bilingual name
+        '<div class="wo-field"><label class="wo-field-label">اسم المنتج (English)</label><input id="bmF_nameEn" class="wo-input" value="'+ _v3EscapeHtml(mi.nameEn||'') +'" placeholder="Cappuccino 8oz" dir="ltr"></div>' +
         '<div class="wo-field"><label class="wo-field-label">البراند</label><input class="wo-input" value="'+ _v3EscapeHtml(brand.name) +'" readonly></div>' +
         '<div class="wo-field"><label class="wo-field-label">الفئة</label><input id="bmF_category" class="wo-input" value="'+ _v3EscapeHtml(mi.category||'عام') +'" placeholder="مشروبات / حلويات / ساندويتش..."></div>' +
         '<div class="wo-field"><label class="wo-field-label">السعر للعميل *</label><input id="bmF_price" type="number" step="0.01" class="wo-input" value="'+ Number(mi.price||0) +'" required></div>' +
@@ -16953,6 +17352,8 @@ function _bmSaveFinished() {
     var brand = window._bmCurrentBrand || { id:'' };
     var data = {
       name: (_v3FldVal('bmF_name') || '').trim(),
+      // V5.7.22 — bilingual name (English) for receipts + multilingual UI
+      nameEn: (_v3FldVal('bmF_nameEn') || '').trim(),
       price: Number(_v3FldVal('bmF_price', 0)) || 0,
       category: (_v3FldVal('bmF_category') || '').trim() || 'عام',
       cost: Number(_v3FldVal('bmF_cost', 0)) || 0,

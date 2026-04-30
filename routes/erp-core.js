@@ -736,6 +736,35 @@ router.post('/bom', async (req, res) => {
           [genId('BL'), bomId, compId, Number(l.quantity)||0, l.unit||'PCS', Number(l.wastePct)||0]);
       }
     }
+
+    // V5.7.22 — Auto-update menu.cost from the new BOM lines whenever the
+    //   target is a menu item. Frontend may send `recomputedCost` (exact
+    //   value it just displayed); we trust it. As a fallback we recompute
+    //   server-side from sum(quantity × inv_items.cost) so the cost is
+    //   always in sync with the recipe (no manual recompute step needed).
+    if (src === 'menu') {
+      let newCost = Number(req.body.recomputedCost);
+      if (!newCost && Array.isArray(lines) && lines.length) {
+        try {
+          const [costRows] = await db.query(
+            `SELECT bl.quantity, bl.waste_pct, COALESCE(i.cost,0) AS unit_cost
+             FROM bom_lines bl LEFT JOIN inv_items i ON i.id = bl.component_item_id
+             WHERE bl.bom_id = ?`, [bomId]);
+          newCost = costRows.reduce((s, r) => {
+            const q = Number(r.quantity) || 0;
+            const c = Number(r.unit_cost) || 0;
+            const w = Number(r.waste_pct) || 0;
+            return s + q * c * (1 + w / 100);
+          }, 0);
+          newCost = Math.round(newCost * 10000) / 10000;
+        } catch (_) { newCost = null; }
+      }
+      if (newCost != null && !isNaN(newCost)) {
+        try {
+          await db.query('UPDATE menu SET cost = ?, computed_cost = ? WHERE id = ?', [newCost, newCost, productId]);
+        } catch (_) {}
+      }
+    }
     res.json({ success: true, id: bomId, productSource: src });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });

@@ -677,9 +677,13 @@ window.printReceipt = function(orderId) {
 
       '<div style="border-top:1px solid #000;margin:8px 0;"></div>' +
 
-      // ── Merchant copy badge ──
-      '<div style="background:#000;color:#fff;text-align:center;padding:4px 8px;font-weight:700;font-size:12px;margin-bottom:8px;display:inline-block;">' +
-        'Merchant copy <span style="font-size:10px;opacity:0.85;direction:rtl;">| نسخة بطاقات التاجر</span>' +
+      // V5.7.20 — Merchant copy badge wrapped in a centered div so the
+      //           inline-block sits dead-center (was drifting to the
+      //           start side of the receipt before).
+      '<div style="text-align:center;margin-bottom:8px;">' +
+        '<div style="background:#000;color:#fff;text-align:center;padding:4px 12px;font-weight:700;font-size:12px;display:inline-block;border-radius:2px;">' +
+          'Merchant copy <span style="font-size:10px;opacity:0.85;direction:rtl;">| نسخة بطاقات التاجر</span>' +
+        '</div>' +
       '</div>' +
       '<div style="text-align:center;font-size:13px;font-weight:700;margin-bottom:8px;">Tax Invoice <span style="font-size:11px;color:#666;direction:rtl;">| فاتورة ضريبية</span></div>' +
 
@@ -848,7 +852,12 @@ window.printReceiptWindow = function() {
 
     '<div style="border-top:1px solid #000;margin:8px 0;"></div>' +
 
-    '<div style="background:#000;color:#fff;text-align:center;padding:4px 8px;font-weight:700;font-size:12px;margin-bottom:8px;">Merchant copy <span style="font-size:10px;direction:rtl;">| نسخة بطاقات التاجر</span></div>' +
+    // V5.7.20 — Merchant copy badge centered (wrapped + inline-block)
+    '<div style="text-align:center;margin-bottom:8px;">' +
+      '<div style="background:#000;color:#fff;text-align:center;padding:4px 12px;font-weight:700;font-size:12px;display:inline-block;border-radius:2px;">' +
+        'Merchant copy <span style="font-size:10px;direction:rtl;">| نسخة بطاقات التاجر</span>' +
+      '</div>' +
+    '</div>' +
     '<div style="text-align:center;font-size:13px;font-weight:700;margin-bottom:8px;">Tax Invoice <span style="font-size:11px;color:#444;direction:rtl;">| فاتورة ضريبية</span></div>' +
 
     rowSplit('ID <small style="color:#666;">المعرف</small>', r.inv.orderId, { bold:true }) +

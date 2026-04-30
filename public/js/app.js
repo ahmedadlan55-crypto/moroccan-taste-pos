@@ -879,6 +879,9 @@ function loadCoreData() {
     state.settings = res.settings;
     if (q("#setCompany")) q("#setCompany").value = res.settings.name || "";
     if (q("#setTax")) q("#setTax").value = res.settings.taxNumber || "";
+    // V5.7.20 — phone + email fields in admin settings (matches /settings page)
+    if (q("#setPhone")) q("#setPhone").value = res.settings.companyPhone || "";
+    if (q("#setEmail")) q("#setEmail").value = res.settings.companyEmail || "";
     // Apply branding (logo + name) to UI + cache
     try { localStorage.setItem('pos_branding', JSON.stringify({ name: res.settings.name || '', logo: res.settings.logo || '' })); } catch(e) {}
     applyBrandingToUI(res.settings.name, res.settings.logo);
@@ -1793,46 +1796,150 @@ function printReceipt(orderId) {
 function _printReceiptBody(orderId) {
   api.withSuccessHandler(function(inv) {
     if (!inv) return;
+    // V5.7.20 — admin printReceipt now uses the same V5.7.9 design as POS:
+    //   full hierarchy (parent brand → operating company → branch → address),
+    //   centered Merchant copy badge, Tel/Email footer, served-by full name.
     var dt = new Date(inv.date);
     var dateStr = dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+' '+dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',second:'2-digit'});
-    var companyName = (state.settings&&state.settings.name)||'Moroccan Taste';
-    var taxNumber = (state.settings&&state.settings.taxNumber)||'';
-    var currency = (state.settings&&state.settings.currency)||'SAR';
+
+    // Prefer per-invoice fields (V5.7.9+) and fall back to state.settings
+    var companyName       = inv.companyName       || (state.settings && state.settings.name) || 'Moroccan Taste';
+    var companyNameAr     = 'المذاق المغربي';
+    var taxNumber         = inv.taxNumber         || (state.settings && state.settings.taxNumber) || '';
+    var currency          = inv.currency          || (state.settings && state.settings.currency) || 'SAR';
+    var companyPhone      = inv.companyPhone      || (state.settings && state.settings.companyPhone) || '';
+    var companyEmail      = inv.companyEmail      || (state.settings && state.settings.companyEmail) || '';
+    var branchName        = inv.branchName        || (state.settings && state.settings.branchName) || '';
+    var branchAddr        = inv.branchAddress     || (state.settings && state.settings.branchAddress) || '';
+    var branchCompanyName = inv.branchCompanyName || '';
+    var cashierName       = inv.cashierName       || inv.username || state.user;
+    var cashierEmpNo      = inv.cashierEmpNo      || '';
+    var logoUrl           = inv.companyLogo       || (state.settings && state.settings.logo) || '';
+
     var totalItems = 0;
     var itemsHtml = '';
     (inv.items||[]).forEach(function(i){
       totalItems += Number(i.qty)||0;
-      itemsHtml += '<tr><td style="text-align:left;font-size:12px;">'+i.name+'</td><td style="text-align:center;">'+i.qty+'@</td><td style="text-align:right;">'+formatVal(i.total)+'</td></tr>';
+      itemsHtml += '<tr>'+
+                     '<td style="text-align:left;font-size:12px;padding:3px 0;">'+i.name+'</td>'+
+                     '<td style="text-align:center;font-size:12px;padding:3px 0;">'+i.qty+'@</td>'+
+                     '<td style="text-align:right;font-size:12px;padding:3px 0;">'+formatVal(i.total)+'</td>'+
+                   '</tr>';
     });
     var netAmount = Number(inv.totalFinal) / 1.15;
     var vatAmount = Number(inv.totalFinal) - netAmount;
-    var payLabel = {'Cash':'Cash | كاش','Card':'Mada | مدى','Kita':'Kita | كيتا'};
 
-    var logoUrl = (state.settings && state.settings.logo) || '';
-    var logoTag = logoUrl ? '<div style="text-align:center;margin-bottom:6px;"><img src="'+logoUrl+'" style="max-width:80px;max-height:80px;object-fit:contain;"></div>' : '';
+    var logoTag = logoUrl ? '<div style="text-align:center;margin-bottom:4px;"><img src="'+logoUrl+'" style="max-width:90px;max-height:90px;object-fit:contain;"></div>' : '';
+
+    function rowSplit(left, right, opts) {
+      opts = opts || {};
+      return '<div style="display:flex;justify-content:space-between;align-items:center;font-size:'+(opts.fs||'12px')+';margin:'+(opts.my||3)+'px 0;">' +
+               '<span style="color:#222;">'+left+'</span>' +
+               '<span style="color:#222;font-weight:'+(opts.bold?'700':'400')+';font-family:monospace;">'+right+'</span>' +
+             '</div>';
+    }
+
     var h = logoTag +
-      '<div style="text-align:center;font-size:18px;font-weight:900;margin-bottom:2px;">'+companyName+'</div>'+
-      '<div style="text-align:center;font-size:11px;color:#666;margin-bottom:2px;">Simplified TAX Invoice</div>'+
-      '<div style="text-align:center;font-size:11px;color:#666;">فاتورة ضريبية مبسطة</div>'+
-      '<div style="text-align:center;font-size:11px;color:#666;margin-bottom:8px;">Tax No: '+taxNumber+'</div>'+
-      '<div style="border-top:1px dashed #999;border-bottom:1px dashed #999;padding:8px 0;margin:8px 0;">'+
-        '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>Tax Invoice | فاتورة ضريبية</span></div>'+
-        '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px;"><span>ID</span><span style="font-weight:700;">'+inv.orderId+'</span></div>'+
-        '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>Date</span><span>'+dateStr+'</span></div>'+
-      '</div>'+
-      '<table style="width:100%;border-collapse:collapse;margin:8px 0;"><thead><tr style="border-bottom:1px dashed #999;"><th style="text-align:left;font-size:11px;padding:4px 0;">Item</th><th style="text-align:center;font-size:11px;">Qty</th><th style="text-align:right;font-size:11px;">'+currency+'</th></tr></thead><tbody>'+itemsHtml+'</tbody></table>'+
-      '<div style="text-align:center;font-size:12px;font-weight:700;border-top:1px dashed #999;padding-top:6px;">Total Items / عدد الأصناف<br><span style="font-size:16px;">'+totalItems+'</span></div>'+
-      '<table style="width:100%;margin:10px 0;border-collapse:collapse;border-top:1px solid #333;border-bottom:1px solid #333;"><tr>'+
-        '<td style="text-align:center;padding:8px;border-left:1px solid #333;"><div style="font-size:10px;font-weight:700;">Total Value<br>إجمالي القيمة</div><div style="font-size:15px;font-weight:900;">'+formatVal(inv.totalFinal)+'</div></td>'+
-        '<td style="text-align:center;padding:8px;border-left:1px solid #333;"><div style="font-size:10px;font-weight:700;">Net Amount<br>المبلغ قبل الضريبة</div><div style="font-size:15px;font-weight:900;">'+netAmount.toFixed(2)+'</div></td>'+
-        '<td style="text-align:center;padding:8px;"><div style="font-size:10px;font-weight:700;">VAT Amount<br>ضريبة القيمة المضافة 15%</div><div style="font-size:15px;font-weight:900;">'+vatAmount.toFixed(2)+'</div></td>'+
-      '</tr></table>'+
-      '<div style="text-align:center;font-size:13px;margin:8px 0;"><span style="font-weight:700;">'+(payLabel[inv.payment]||inv.payment)+'</span> <span style="font-weight:900;font-size:15px;">'+formatVal(inv.totalFinal)+'</span></div>'+
-      '<div style="text-align:center;font-size:11px;color:#666;margin-bottom:4px;">Served by: '+( inv.username||state.user)+'</div>'+
-      (inv.discountAmount>0?'<div style="text-align:center;font-size:12px;color:#ef4444;">Discount: -'+formatVal(inv.discountAmount)+'</div>':'')+
-      '<div id="receiptQR" style="text-align:center;margin:12px auto;width:150px;height:150px;"></div>'+
-      '<div style="text-align:center;font-size:10px;color:#999;margin-bottom:4px;">'+inv.orderId+'</div>'+
-      '<div style="text-align:center;font-size:11px;color:#666;">Thank you! / شكراً لزيارتكم</div>';
+      // ── 1. Parent brand ──
+      '<div style="text-align:center;font-size:13px;font-weight:700;direction:rtl;margin-bottom:1px;">'+companyNameAr+'</div>' +
+      '<div style="text-align:center;font-size:18px;font-weight:900;direction:ltr;margin-bottom:'+(branchCompanyName?'2':'6')+'px;">'+companyName+'</div>' +
+
+      // ── 2. Operating company (the per-branch entity) ──
+      (branchCompanyName
+        ? '<div style="text-align:center;font-size:12px;font-weight:700;color:#0f172a;direction:rtl;margin-bottom:6px;border-bottom:1px solid #e5e7eb;padding-bottom:6px;">'+branchCompanyName+'</div>'
+        : ''
+      ) +
+
+      // ── 3. Tax invoice subtitle (bilingual) ──
+      '<div style="text-align:center;line-height:1.25;margin-bottom:6px;">' +
+        '<div style="font-size:12px;color:#444;font-weight:400;">Simplified TAX Invoice</div>' +
+        '<div style="font-size:10px;color:#777;direction:rtl;">فاتورة ضريبية مبسطة</div>' +
+      '</div>' +
+
+      // ── 4. Tax registration ──
+      (taxNumber ? '<div style="text-align:center;font-size:11px;color:#444;margin-bottom:6px;font-family:monospace;direction:ltr;">'+taxNumber+'</div>' : '') +
+
+      // ── 5. Branch name (welcome banner) ──
+      (branchName ? '<div style="text-align:center;font-size:12px;font-weight:700;direction:ltr;margin-top:4px;">Welcome To '+branchName.toUpperCase()+'</div>' : '') +
+
+      // ── 6. Branch address (RTL, dim) ──
+      (branchAddr ? '<div style="text-align:center;font-size:10px;color:#555;direction:rtl;margin-bottom:6px;">'+branchAddr+'</div>' : '') +
+
+      '<div style="border-top:1px solid #000;margin:8px 0;"></div>' +
+
+      // ── V5.7.20 — Merchant copy badge — wrapped in a text-align:center
+      //              parent so the inline-block badge sits truly in the middle
+      //              (was drifting to the start side before).
+      '<div style="text-align:center;margin-bottom:8px;">' +
+        '<div style="background:#000;color:#fff;text-align:center;padding:4px 12px;font-weight:700;font-size:12px;display:inline-block;border-radius:2px;">' +
+          'Merchant copy <span style="font-size:10px;opacity:0.85;direction:rtl;">| نسخة بطاقات التاجر</span>' +
+        '</div>' +
+      '</div>' +
+
+      '<div style="text-align:center;font-size:13px;font-weight:700;margin-bottom:8px;">Tax Invoice <span style="font-size:11px;color:#666;direction:rtl;">| فاتورة ضريبية</span></div>' +
+
+      // ── ID + Date rows ──
+      rowSplit('ID <small style="color:#888;">المعرف</small>', inv.orderId, { bold:true }) +
+      rowSplit('Date <small style="color:#888;">التاريخ</small>', dateStr) +
+
+      '<div style="border-top:1px dashed #000;margin:8px 0;"></div>' +
+
+      // ── Items table ──
+      '<table style="width:100%;border-collapse:collapse;">' +
+        '<thead><tr><th colspan="3" style="text-align:right;font-size:11px;color:#666;padding-bottom:4px;">'+currency+'</th></tr></thead>' +
+        '<tbody>'+itemsHtml+'</tbody>' +
+      '</table>' +
+
+      '<div style="border-top:1px dashed #000;margin:8px 0;"></div>' +
+
+      // ── Total Items count, centered ──
+      '<div style="text-align:center;margin:8px 0;">' +
+        '<div style="font-size:10px;color:#777;direction:rtl;">عدد الأصناف</div>' +
+        '<div style="font-size:13px;font-weight:700;">Total Items</div>' +
+        '<div style="font-size:18px;font-weight:900;">'+totalItems+'</div>' +
+      '</div>' +
+
+      // ── 3-column Total / Net / VAT grid ──
+      '<table style="width:100%;border-collapse:collapse;border:1px solid #000;margin:10px 0;">' +
+        '<tr style="border-bottom:1px solid #000;">' +
+          '<td style="text-align:center;padding:6px;border-right:1px solid #000;font-size:11px;font-weight:700;">' +
+            'Total<br>Value<div style="font-size:9px;color:#666;direction:rtl;">إجمالي القيمة</div></td>' +
+          '<td style="text-align:center;padding:6px;border-right:1px solid #000;font-size:11px;font-weight:700;">' +
+            'Net Amount<div style="font-size:9px;color:#666;direction:rtl;">المبلغ قبل الضريبة</div></td>' +
+          '<td style="text-align:center;padding:6px;font-size:11px;font-weight:700;">' +
+            'VAT Amount<div style="font-size:9px;color:#666;direction:rtl;">ضريبة القيمة المضافة 15%</div></td>' +
+        '</tr>' +
+        '<tr>' +
+          '<td style="text-align:center;padding:8px;border-right:1px solid #000;font-size:15px;font-weight:900;">'+formatVal(inv.totalFinal)+'</td>' +
+          '<td style="text-align:center;padding:8px;border-right:1px solid #000;font-size:15px;font-weight:900;">'+netAmount.toFixed(2)+'</td>' +
+          '<td style="text-align:center;padding:8px;font-size:15px;font-weight:900;">'+vatAmount.toFixed(2)+'</td>' +
+        '</tr>' +
+      '</table>' +
+
+      // ── Payment method + amount ──
+      rowSplit((inv.payment || 'Visa') + ' <span style="font-size:10px;color:#888;direction:rtl;">| ' + (inv.payment || 'Visa') + '</span>', formatVal(inv.totalFinal), { bold:true }) +
+
+      '<div style="border-top:1px dashed #000;margin:6px 0;"></div>' +
+
+      // ── Cashier line: full name + (optional) employee number ──
+      '<div style="text-align:center;font-size:11px;color:#222;margin:6px 0;">' +
+        'You were served by : <strong>' + cashierName + (cashierEmpNo && cashierEmpNo !== cashierName ? ', ' + cashierEmpNo : '') + '</strong>' +
+        '<div style="font-size:10px;color:#777;direction:rtl;">قدّم لكم الخدمة: ' + cashierName + '</div>' +
+      '</div>' +
+
+      // ── Optional discount line ──
+      (inv.discountAmount > 0 ? '<div style="text-align:center;font-size:12px;color:#ef4444;">Discount: -'+formatVal(inv.discountAmount)+'</div>' : '') +
+
+      // ── ZATCA QR ──
+      '<div id="receiptQR" style="text-align:center;margin:12px auto;width:150px;height:150px;"></div>' +
+
+      // ── Footer: VAT note + Tel + Email ──
+      '<div style="text-align:center;font-size:10px;color:#222;margin-top:8px;">All Prices include VAT (15%)</div>' +
+      '<div style="text-align:center;font-size:10px;color:#666;direction:rtl;margin-bottom:4px;">جميع الأسعار شاملة الضريبة المضافة (15%)</div>' +
+      (companyPhone ? '<div style="text-align:center;font-size:11px;color:#222;margin-top:4px;font-family:monospace;">Tel: '+companyPhone+'</div>' : '') +
+      (companyEmail ? '<div style="text-align:center;font-size:11px;color:#222;font-family:monospace;">Email: '+companyEmail+'</div>' : '') +
+      '<div style="text-align:center;font-size:10px;color:#999;margin-top:6px;">'+inv.orderId+'</div>' +
+      '<div style="text-align:center;font-size:11px;color:#666;margin-top:4px;">Thank you! / شكراً لزيارتكم</div>';
 
     q("#receiptBox").innerHTML = h;
     state._lastReceipt = { inv: inv, html: h, companyName: companyName, taxNumber: taxNumber };
@@ -5971,7 +6078,24 @@ function populateReportFilters() {
 // Settings Update
 function saveDashSettings() {
   loader();
-  var up = { name: q("#setCompany").value, taxNumber: q("#setTax").value, logo: state.settings.logo || '' };
+  // V5.7.20 — also save phone + email under canonical CompanyPhone / CompanyEmail keys
+  var phone = (q("#setPhone") && q("#setPhone").value) || '';
+  var email = (q("#setEmail") && q("#setEmail").value) || '';
+  var up = {
+    name: q("#setCompany").value,
+    taxNumber: q("#setTax").value,
+    logo: state.settings.logo || '',
+    // canonical keys read by /api/auth/initial bootstrap
+    CompanyName: q("#setCompany").value,
+    TaxNumber:   q("#setTax").value,
+    CompanyPhone: phone,
+    CompanyEmail: email
+  };
+  // Mirror into local state immediately so the receipt picks them up before the next bootstrap
+  if (state.settings) {
+    state.settings.companyPhone = phone;
+    state.settings.companyEmail = email;
+  }
   // Collect payment methods from settings UI
   var methods = (state.paymentMethods||[]).map(function(m, i) {
     var activeEl = document.querySelector('.pm-active[data-idx="'+i+'"]');

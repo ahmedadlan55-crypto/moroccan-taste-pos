@@ -141,11 +141,123 @@ router.put('/:id', async (req, res) => {
 });
 
 // Update price only
+// V5.7.4: now records price history for traceability + returns the new price + cost margin.
 router.patch('/:id/price', async (req, res) => {
   try {
-    await db.query('UPDATE menu SET price = ? WHERE id = ?', [req.body.price, req.params.id]);
-    res.json({ success: true });
-  } catch (e) { res.json({ success: false, error: e.message }); }
+    const newPrice = Number(req.body.price);
+    const reason = (req.body.reason || '').toString().slice(0, 200);
+    const username = (req.user && req.user.username) || req.body.username || 'system';
+    if (newPrice < 0 || isNaN(newPrice)) return res.status(400).json({ success: false, error: 'سعر غير صالح' });
+    // Read OLD price + cost for the audit trail and return payload
+    const [old] = await db.query('SELECT price AS old_price, cost FROM menu WHERE id = ?', [req.params.id]);
+    if (!old.length) return res.status(404).json({ success: false, error: 'منتج غير موجود' });
+    const oldPrice = Number(old[0].old_price) || 0;
+    const cost = Number(old[0].cost) || 0;
+    if (Math.abs(newPrice - oldPrice) < 0.001) {
+      return res.json({ success: true, noop: true, oldPrice, newPrice, cost });
+    }
+    await db.query('UPDATE menu SET price = ? WHERE id = ?', [newPrice, req.params.id]);
+    // Audit log (best-effort — table might be missing on old deploys)
+    try {
+      await db.query(
+        `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details, created_at)
+         VALUES (?, 'menu_price_change', 'menu', ?, ?, NOW())`,
+        [username, req.params.id, JSON.stringify({ oldPrice, newPrice, cost, reason })]);
+    } catch(_){}
+    const margin = newPrice > 0 ? ((newPrice - cost) / newPrice * 100) : 0;
+    res.json({ success: true, oldPrice, newPrice, cost, marginPct: Math.round(margin * 100) / 100 });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// V5.7.4 — Bulk price update for a brand/category.
+// Body: { itemIds?: [...], categoryFilter?, brandId?, mode: 'percent'|'fixed_set'|'fixed_add', value: number, reason? }
+//   - percent       → newPrice = oldPrice * (1 + value/100)
+//   - fixed_set     → newPrice = value (set to exact)
+//   - fixed_add     → newPrice = oldPrice + value
+// Returns: { affected, before, after, items: [...] }
+router.post('/bulk-price-update', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const mode = b.mode || 'percent';
+    const value = Number(b.value);
+    if (!['percent', 'fixed_set', 'fixed_add'].includes(mode)) return res.status(400).json({ success: false, error: 'mode invalid' });
+    if (isNaN(value)) return res.status(400).json({ success: false, error: 'value invalid' });
+    const username = (req.user && req.user.username) || b.username || 'system';
+    // Build target query
+    const conds = []; const params = [];
+    if (Array.isArray(b.itemIds) && b.itemIds.length) {
+      conds.push(`id IN (${b.itemIds.map(()=>'?').join(',')})`);
+      params.push(...b.itemIds);
+    } else {
+      if (b.brandId) { conds.push('brand_id = ?'); params.push(b.brandId); }
+      if (b.categoryFilter) { conds.push('category = ?'); params.push(b.categoryFilter); }
+      // Skip semi-finished (they're cost-driven, not priced for sale)
+      conds.push('(is_semi_finished IS NULL OR is_semi_finished = 0)');
+    }
+    if (!conds.length) return res.status(400).json({ success: false, error: 'حدد أصنافاً أو فلتراً للتطبيق عليها' });
+
+    const where = conds.join(' AND ');
+    const [items] = await db.query(`SELECT id, name, price, cost FROM menu WHERE ${where}`, params);
+    if (!items.length) return res.json({ success: true, affected: 0, items: [] });
+
+    let affected = 0;
+    const beforeAfter = [];
+    for (const it of items) {
+      const oldPrice = Number(it.price) || 0;
+      let newPrice;
+      if (mode === 'percent') newPrice = Math.round(oldPrice * (1 + value/100) * 100) / 100;
+      else if (mode === 'fixed_set') newPrice = Math.round(value * 100) / 100;
+      else newPrice = Math.round((oldPrice + value) * 100) / 100;
+      if (newPrice < 0) newPrice = 0;
+      if (Math.abs(newPrice - oldPrice) < 0.001) continue;
+      try {
+        await db.query('UPDATE menu SET price = ? WHERE id = ?', [newPrice, it.id]);
+        affected++;
+        beforeAfter.push({
+          id: it.id, name: it.name,
+          oldPrice, newPrice,
+          cost: Number(it.cost)||0,
+          marginPct: newPrice > 0 ? Math.round(((newPrice - (Number(it.cost)||0)) / newPrice * 100) * 100)/100 : 0
+        });
+      } catch(_) {}
+    }
+    // Audit log
+    try {
+      await db.query(
+        `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details, created_at)
+         VALUES (?, 'menu_bulk_price', 'menu', '*', ?, NOW())`,
+        [username, JSON.stringify({ mode, value, affected, brandId: b.brandId, categoryFilter: b.categoryFilter, reason: b.reason })]);
+    } catch(_) {}
+    res.json({ success: true, affected, mode, value, items: beforeAfter });
+  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// V5.7.4 — Price history for a single menu item (last N changes).
+router.get('/:id/price-history', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 30, 200);
+    const userCol = await (async () => {
+      try {
+        const [cols] = await db.query(`SHOW COLUMNS FROM audit_logs`);
+        const names = cols.map(c => c.Field || c.field);
+        return names.includes('user_username') ? 'user_username' : 'username';
+      } catch(_) { return 'username'; }
+    })();
+    const [rows] = await db.query(
+      `SELECT id, ${userCol} AS user_col, details, created_at
+       FROM audit_logs
+       WHERE action = 'menu_price_change' AND entity_id = ?
+       ORDER BY created_at DESC LIMIT ?`,
+      [req.params.id, limit]);
+    res.json(rows.map(r => {
+      let d = {};
+      try { d = JSON.parse(r.details||'{}'); } catch(_){}
+      return {
+        id: r.id, user: r.user_col, at: r.created_at,
+        oldPrice: d.oldPrice, newPrice: d.newPrice, cost: d.cost, reason: d.reason
+      };
+    }));
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // Delete menu item

@@ -16169,13 +16169,30 @@ function _bmRender() {
     var pm = methodLabels[m.productionMethod] || methodLabels['made_at_branch'];
     var methodBadge = '<span class="wo-chip" style="background:'+pm.c+'15;color:'+pm.c+';font-weight:700;font-size:10px;"><i class="fas '+pm.i+'"></i> '+pm.l+'</span>';
 
+    // V5.7.4 — Inline-editable price cell. Double-click → input. Enter → save via PATCH.
+    var safePrice = Number(m.price)||0;
+    var safeCost = Number(m.cost)||0;
+    var marginPct = safePrice > 0 ? ((safePrice - safeCost) / safePrice * 100) : 0;
+    var marginColor = marginPct >= 40 ? '#15803d' : (marginPct >= 20 ? '#0369a1' : (marginPct >= 0 ? '#b45309' : '#dc2626'));
+    var priceCell = m.isSemiFinished
+      ? '<span style="color:#94a3b8;">—</span>'
+      : '<div class="price-edit-wrap" data-menu-id="'+m.id+'" data-cur-price="'+safePrice+'">' +
+          '<div class="price-display" onclick="erpStartPriceEdit(this)" title="انقر للتعديل" style="cursor:pointer;font-weight:900;color:#0f172a;font-size:14px;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;background:#f8fafc;border:1px dashed transparent;transition:all .15s;" onmouseover="this.style.background=\'#eff6ff\';this.style.borderColor=\'#3b82f6\';" onmouseout="this.style.background=\'#f8fafc\';this.style.borderColor=\'transparent\';">' +
+            '<i class="fas fa-pen-to-square" style="font-size:10px;color:#94a3b8;"></i>' +
+            '<span class="price-value">'+ _v3Fmt(safePrice) +'</span> ر.س' +
+          '</div>' +
+          '<div style="font-size:10px;color:'+marginColor+';font-weight:700;margin-top:3px;">' +
+            'هامش: ' + Math.round(marginPct*10)/10 + '% (تكلفة: '+ _v3Fmt(safeCost) +')' +
+          '</div>' +
+        '</div>';
     return '<tr>' +
-      '<td><div style="font-weight:800;">'+ _v3EscapeHtml(m.name) +'</div>' +
+      '<td><input type="checkbox" class="menu-bulk-cb" data-menu-id="'+m.id+'" onchange="erpToggleBulkPrice(this)" style="margin-inline-end:8px;width:14px;height:14px;cursor:pointer;">' +
+        '<span style="font-weight:800;">'+ _v3EscapeHtml(m.name) +'</span>' +
         '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">'+recipeChip+' '+methodBadge+'</div>' +
       '</td>' +
       '<td>'+ typeBadge +'</td>' +
       '<td><span class="wo-chip">'+ _v3EscapeHtml(m.category||'عام') +'</span></td>' +
-      '<td class="num" style="font-weight:700;">'+ (m.isSemiFinished ? '—' : _v3Fmt(m.price) + ' ر.س') +'</td>' +
+      '<td class="num">'+ priceCell +'</td>' +
       '<td class="num" style="text-align:center;">'+ stockCellHtml +'</td>' +
       '<td>'+ consumes +'</td>' +
       '<td>'+ (m.active ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مفعّل</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;">معطّل</span>') +'</td>' +
@@ -16188,6 +16205,136 @@ function _bmRender() {
     '</tr>';
   }).join('');
 }
+
+// V5.7.4 — Inline price editing on the menu hub.
+// Click the price → becomes an input. Enter → saves via PATCH. Esc → cancels.
+window.erpStartPriceEdit = function(displayEl){
+  var wrap = displayEl.closest('.price-edit-wrap');
+  if (!wrap) return;
+  var menuId = wrap.getAttribute('data-menu-id');
+  var current = parseFloat(wrap.getAttribute('data-cur-price')) || 0;
+  // Replace display with input
+  var input = document.createElement('input');
+  input.type = 'number';
+  input.step = '0.01';
+  input.min = '0';
+  input.value = current;
+  input.setAttribute('data-orig', current);
+  input.style.cssText = 'width:100px;padding:6px 10px;border:2px solid #2563eb;border-radius:8px;font-weight:900;font-size:14px;text-align:center;font-family:inherit;';
+  displayEl.replaceWith(input);
+  input.focus();
+  input.select();
+  var commit = function(){
+    var newVal = parseFloat(input.value);
+    var orig = parseFloat(input.getAttribute('data-orig'));
+    if (isNaN(newVal) || newVal < 0) { input.style.borderColor = '#dc2626'; input.focus(); return; }
+    if (Math.abs(newVal - orig) < 0.001) { _erpRevertPriceEdit(wrap, orig); return; }
+    // Optimistic UI: show spinner
+    input.disabled = true;
+    input.style.borderColor = '#94a3b8';
+    callAPI('PATCH', '/menu/'+encodeURIComponent(menuId)+'/price', { price: newVal }, function(r){
+      if (r && r.success) {
+        showToast('سعر مُحدَّث: ' + orig.toFixed(2) + ' → ' + newVal.toFixed(2) + ' ر.س' + (r.marginPct != null ? ' (هامش ' + r.marginPct + '%)' : ''));
+        // Update cache + re-render
+        if (window._bmItemsCache) {
+          var item = window._bmItemsCache.find(function(x){ return String(x.id) === String(menuId); });
+          if (item) item.price = newVal;
+        }
+        _bmRender();
+      } else {
+        showToast((r && r.error) || 'فشل تحديث السعر', true);
+        _erpRevertPriceEdit(wrap, orig);
+      }
+    });
+  };
+  var cancel = function(){
+    var orig = parseFloat(input.getAttribute('data-orig'));
+    _erpRevertPriceEdit(wrap, orig);
+  };
+  input.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener('blur', function(){ commit(); });
+};
+window._erpRevertPriceEdit = function(wrap, value){
+  var input = wrap.querySelector('input');
+  if (!input) return;
+  var div = document.createElement('div');
+  div.className = 'price-display';
+  div.setAttribute('onclick', 'erpStartPriceEdit(this)');
+  div.setAttribute('title', 'انقر للتعديل');
+  div.style.cssText = 'cursor:pointer;font-weight:900;color:#0f172a;font-size:14px;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;background:#f8fafc;border:1px dashed transparent;transition:all .15s;';
+  div.innerHTML = '<i class="fas fa-pen-to-square" style="font-size:10px;color:#94a3b8;"></i><span class="price-value">'+_v3Fmt(value)+'</span> ر.س';
+  input.replaceWith(div);
+};
+
+// V5.7.4 — Bulk price update: select multiple via checkboxes → apply percent/fixed.
+window._bmBulkSelectedIds = window._bmBulkSelectedIds || new Set();
+window.erpToggleBulkPrice = function(cb){
+  var id = cb.getAttribute('data-menu-id');
+  if (cb.checked) window._bmBulkSelectedIds.add(id);
+  else window._bmBulkSelectedIds.delete(id);
+  _erpUpdateBulkPriceBar();
+};
+window.erpClearBulkSelection = function(){
+  window._bmBulkSelectedIds.clear();
+  document.querySelectorAll('.menu-bulk-cb:checked').forEach(function(cb){ cb.checked = false; });
+  _erpUpdateBulkPriceBar();
+};
+function _erpUpdateBulkPriceBar(){
+  var bar = document.getElementById('bmBulkPriceBar');
+  if (!bar) {
+    // Inject once into the brand-menu screen
+    var section = document.getElementById('erpMenuHubBrand') || document.querySelector('[data-erp-section="erpMenuHubBrand"]');
+    if (!section) return;
+    var div = document.createElement('div');
+    div.id = 'bmBulkPriceBar';
+    div.style.cssText = 'position:sticky;top:0;z-index:10;display:none;background:#1e40af;color:#fff;padding:10px 16px;border-radius:12px;margin:0 0 12px;box-shadow:0 4px 14px rgba(30,64,175,.30);align-items:center;gap:12px;flex-wrap:wrap;';
+    div.innerHTML =
+      '<span><strong id="bmBulkCount">0</strong> منتج محدّد</span>' +
+      '<select id="bmBulkMode" style="padding:6px 10px;border-radius:8px;border:0;background:#fff;color:#0f172a;font-weight:700;">' +
+        '<option value="percent">+/− نسبة %</option>' +
+        '<option value="fixed_set">تعيين سعر ثابت</option>' +
+        '<option value="fixed_add">+/− مبلغ ثابت</option>' +
+      '</select>' +
+      '<input type="number" step="0.01" id="bmBulkValue" placeholder="القيمة" style="padding:6px 10px;border-radius:8px;border:0;width:120px;font-weight:700;">' +
+      '<button class="wo-btn wo-btn-sm" style="background:#fff;color:#1e40af;font-weight:800;" onclick="erpApplyBulkPrice()"><i class="fas fa-bolt"></i> تطبيق</button>' +
+      '<button class="wo-btn wo-btn-sm wo-btn-light" onclick="erpClearBulkSelection()">إلغاء التحديد</button>';
+    section.insertBefore(div, section.firstChild);
+    bar = div;
+  }
+  var cnt = window._bmBulkSelectedIds.size;
+  document.getElementById('bmBulkCount').textContent = cnt;
+  bar.style.display = cnt > 0 ? 'flex' : 'none';
+}
+window.erpApplyBulkPrice = function(){
+  var ids = [...window._bmBulkSelectedIds];
+  if (!ids.length) return;
+  var mode = document.getElementById('bmBulkMode').value;
+  var value = Number(document.getElementById('bmBulkValue').value);
+  if (isNaN(value)) { showToast('أدخل قيمة', true); return; }
+  var modeLabels = { percent: 'نسبة', fixed_set: 'تعيين ثابت', fixed_add: 'إضافة ثابت' };
+  var preview = mode === 'percent' ? (value > 0 ? '+' : '') + value + '% على' :
+                mode === 'fixed_set' ? 'تعيين سعر ' + value + ' ر.س لـ' :
+                (value > 0 ? '+' : '') + value + ' ر.س على';
+  if (!confirm('تطبيق ' + preview + ' ' + ids.length + ' منتج؟\n\nهذا الإجراء يحدّث السعر فوراً ويُسجَّل في التدقيق.')) return;
+  callAPI('POST', '/menu/bulk-price-update', { itemIds: ids, mode: mode, value: value }, function(r){
+    if (r && r.success) {
+      showToast('تم تحديث ' + r.affected + ' منتج');
+      window._bmBulkSelectedIds.clear();
+      // Refresh from server
+      if (window._bmCurrentBrand) {
+        callAPI('GET', '/menu/all?brandId=' + encodeURIComponent(window._bmCurrentBrand.id), null, function(rows){
+          window._bmItemsCache = Array.isArray(rows) ? rows : [];
+          _bmRender();
+        });
+      }
+    } else {
+      showToast((r && r.error) || 'فشل التطبيق الجماعي', true);
+    }
+  });
+};
 
 // V5.6 — open BOM editor pre-filled with this menu item as the final product
 window.erpOpenMenuRecipe = function(menuId, menuName){

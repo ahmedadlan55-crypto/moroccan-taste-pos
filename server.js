@@ -2593,6 +2593,19 @@ async function runMigrations() {
   await addColumnIfMissing('gl_entries', 'warehouse_id', "VARCHAR(50)");
   try { await db.query('CREATE INDEX idx_gle_dims ON gl_entries(brand_id, branch_id)'); } catch(e) {}
 
+  // V5.7.18 — One-time backfill: gl_entries.account_name was being saved
+  //   as empty string by glPosting.js (now fixed). For all existing rows
+  //   with an empty account_name, copy the gl_accounts.name_ar via JOIN.
+  //   Idempotent — only updates rows that ARE empty, so reruns are no-ops.
+  try {
+    const [r] = await db.query(
+      `UPDATE gl_entries e
+         JOIN gl_accounts ga ON ga.id = e.account_id
+          SET e.account_name = COALESCE(NULLIF(ga.name_ar,''), NULLIF(ga.name_en,''), e.account_code)
+        WHERE e.account_name IS NULL OR e.account_name = ''`);
+    if (r && r.affectedRows) console.log('[V5.7.18] Backfilled', r.affectedRows, 'gl_entries.account_name rows');
+  } catch (e) { /* table may not exist yet on fresh installs — ignore */ }
+
   // Workflow step routing flags — role-based employee resolution rules
   await addColumnIfMissing('workflow_definitions', 'require_same_branch', "BOOLEAN DEFAULT TRUE");
   await addColumnIfMissing('workflow_definitions', 'require_same_department', "BOOLEAN DEFAULT FALSE");

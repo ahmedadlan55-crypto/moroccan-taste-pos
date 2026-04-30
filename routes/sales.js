@@ -17,35 +17,63 @@ function _payToAccountCode(method) {
   return '1120';
 }
 
+// V5.7.18 — same Arabic normalization the shift-close matcher uses.
+//   So "مدى" / "مدي" / "Mada" / "MADA" all match the same payment-method
+//   regardless of which variant the cashier typed at sale time.
+function _normPmName(s) {
+  return String(s || '').toLowerCase()
+    .replace(/[ً-ْ]/g, '')
+    .replace(/[أإآا]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').trim();
+}
+
 // Build a payment-method → GL account code map by joining payment_methods.gl_account_id → gl_accounts.code
-// Returns: { 'cash': '1110', 'card': '1120', 'hunger station': '4150', ... }
+// Returns: { 'cash': '1110', 'card': '1120', 'hangerstation': '4150', ... }
+// V5.7.18 — keys normalized; both name and name_ar registered so the
+//   sale's payment_method string resolves to the configured GL even
+//   when the cashier typed an Arabic variant (مدى vs مدي).
 async function _buildPmGlMap(db) {
   const map = {};
   try {
     const [rows] = await db.query(`
-      SELECT pm.name, pm.name_ar, ga.code AS gl_code
+      SELECT pm.id, pm.name, pm.name_ar, ga.code AS gl_code
         FROM payment_methods pm
         LEFT JOIN gl_accounts ga ON ga.id = pm.gl_account_id
        WHERE pm.is_active = 1 AND pm.gl_account_id IS NOT NULL AND pm.gl_account_id <> ''
     `);
     rows.forEach(r => {
-      if (r.gl_code) {
-        if (r.name) map[String(r.name).toLowerCase()] = r.gl_code;
-        if (r.name_ar) map[String(r.name_ar).toLowerCase()] = r.gl_code;
-      }
+      if (!r.gl_code) return;
+      // Index by id, normalized name, and normalized name_ar (each token of name_ar split on '/')
+      if (r.id != null)  map[String(r.id)] = r.gl_code;
+      const k1 = _normPmName(r.name);
+      const k2 = _normPmName(r.name_ar);
+      if (k1) map[k1] = r.gl_code;
+      if (k2) map[k2] = r.gl_code;
+      // Tokenize Arabic name on common separators ("مدى/شبكة" → "مدى" and "شبكة")
+      String(r.name_ar || '').split(/[\/،\-,]/).forEach(p => {
+        const k = _normPmName(p);
+        if (k && !map[k]) map[k] = r.gl_code;
+      });
     });
   } catch(e) { /* gl_account_id column may be missing on very old schemas — ignore */ }
   return map;
 }
 
 // V3: parse split payment using the dynamic GL map (falls back to legacy mapping)
+// V5.7.18 — lookup uses the SAME normalization as the map build so مدى and
+//   مدي resolve to the same GL account.
 function _parseSplitPaymentsV3(payStr, total, pmGlMap) {
   const out = [];
   const lookup = (name) => {
-    const k = String(name || '').toLowerCase();
+    const k = _normPmName(name);
     return (pmGlMap && pmGlMap[k]) || _payToAccountCode(name);
   };
   if (!payStr || payStr.indexOf(':') < 0) {
+    out.push({ code: lookup(payStr), amount: Number(total) || 0 });
+    return out;
+  }
+  // Split-payment requires BOTH '/' AND ':' (else a name like "مدى/شبكة"
+  //   gets misparsed — same fix pattern as the shift matcher).
+  if (payStr.indexOf('/') < 0) {
     out.push({ code: lookup(payStr), amount: Number(total) || 0 });
     return out;
   }

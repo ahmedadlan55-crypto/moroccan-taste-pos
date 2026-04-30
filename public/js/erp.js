@@ -1049,15 +1049,46 @@ function _renderJournalDetail(j) {
 
   if (j.description) html += '<div style="margin-bottom:12px;padding:8px 14px;background:#eff6ff;border-radius:10px;font-weight:700;color:#1e40af;font-size:13px;"><i class="fas fa-file-alt" style="margin-left:6px;"></i>' + j.description + '</div>';
 
-  html += '<table class="erp-table" style="font-size:13px;"><thead><tr><th style="width:90px;">رقم الحساب</th><th>اسم الحساب</th><th>البيان</th><th style="width:100px;">مدين</th><th style="width:100px;">دائن</th></tr></thead><tbody>';
+  // V5.7.18 — clearer two-line cell: bold account name on top, code below in monospace.
+  //           Backend now ALWAYS returns accountName (via JOIN to gl_accounts),
+  //           so old entries written with empty name still display correctly.
+  html += '<table class="erp-table" style="font-size:13px;"><thead><tr>' +
+            '<th style="text-align:start;">الحساب المحاسبي</th>' +
+            '<th>البيان</th>' +
+            '<th style="width:110px;">مدين</th>' +
+            '<th style="width:110px;">دائن</th>' +
+          '</tr></thead><tbody>';
   var totalD = 0, totalC = 0;
   entries.forEach(function(e) {
-    totalD += Number(e.debit)||0; totalC += Number(e.credit)||0;
-    html += '<tr><td><code style="font-weight:700;">' + (e.accountCode||'') + '</code></td><td style="font-weight:700;">' + (e.accountName||'') + '</td><td style="color:#64748b;font-size:12px;">' + (e.description||'') + '</td>' +
-      '<td style="font-weight:800;color:#16a34a;">' + ((e.debit||0) > 0 ? Number(e.debit).toFixed(2) : '') + '</td>' +
-      '<td style="font-weight:800;color:#ef4444;">' + ((e.credit||0) > 0 ? Number(e.credit).toFixed(2) : '') + '</td></tr>';
+    totalD += Number(e.debit) || 0;
+    totalC += Number(e.credit) || 0;
+    var accName = e.accountName || e.accountCode || '—';
+    var accCode = e.accountCode || '';
+    var accType = e.accountType || '';
+    var typeColor = accType === 'asset' ? '#1e40af'
+                  : accType === 'liability' ? '#b45309'
+                  : accType === 'equity' ? '#7c3aed'
+                  : accType === 'revenue' ? '#16a34a'
+                  : accType === 'expense' ? '#dc2626'
+                  : '#475569';
+    html += '<tr>' +
+              '<td>' +
+                '<div style="font-weight:700;color:#0f172a;">' + accName + '</div>' +
+                '<div style="font-size:11px;color:#64748b;font-family:monospace;margin-top:2px;">' +
+                  '<code style="background:#f1f5f9;padding:1px 5px;border-radius:4px;">' + accCode + '</code>' +
+                  (accType ? ' <span style="color:' + typeColor + ';font-weight:600;font-family:inherit;">· ' + accType + '</span>' : '') +
+                '</div>' +
+              '</td>' +
+              '<td style="color:#64748b;font-size:12px;">' + (e.description || '') + '</td>' +
+              '<td style="font-weight:800;color:#16a34a;text-align:end;font-family:monospace;">' + ((e.debit || 0) > 0 ? Number(e.debit).toFixed(2) : '') + '</td>' +
+              '<td style="font-weight:800;color:#ef4444;text-align:end;font-family:monospace;">' + ((e.credit || 0) > 0 ? Number(e.credit).toFixed(2) : '') + '</td>' +
+            '</tr>';
   });
-  html += '<tr style="background:#f1f5f9;"><td colspan="3" style="font-weight:900;">الإجمالي</td><td style="font-weight:900;color:#16a34a;">' + totalD.toFixed(2) + '</td><td style="font-weight:900;color:#ef4444;">' + totalC.toFixed(2) + '</td></tr>';
+  html += '<tr style="background:#f1f5f9;">' +
+            '<td colspan="2" style="font-weight:900;">الإجمالي</td>' +
+            '<td style="font-weight:900;color:#16a34a;text-align:end;font-family:monospace;">' + totalD.toFixed(2) + '</td>' +
+            '<td style="font-weight:900;color:#ef4444;text-align:end;font-family:monospace;">' + totalC.toFixed(2) + '</td>' +
+          '</tr>';
   html += '</tbody></table>';
 
   // Action buttons

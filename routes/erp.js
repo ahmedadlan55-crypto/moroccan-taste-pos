@@ -372,8 +372,23 @@ router.get('/gl/journals', async (req, res) => {
     const [journals] = await db.query(query, params);
     const result = [];
 
+    // V5.7.18 — JOIN gl_accounts to ALWAYS surface the human-readable name,
+    //           even for OLD entries written before glPosting started
+    //           persisting account_name. Falls back gracefully:
+    //             COALESCE(persisted_name, joined_name_ar, joined_name_en, code)
     for (const j of journals) {
-      const [entries] = await db.query('SELECT * FROM gl_entries WHERE journal_id = ?', [j.id]);
+      const [entries] = await db.query(
+        `SELECT
+            e.id, e.account_id, e.account_code, e.account_name AS persisted_name,
+            e.debit, e.credit, e.description,
+            e.branch_id, e.brand_id, e.cost_center_id, e.warehouse_id,
+            ga.name_ar AS gl_name_ar, ga.name_en AS gl_name_en, ga.type AS gl_type
+         FROM gl_entries e
+         LEFT JOIN gl_accounts ga ON ga.id = e.account_id
+         WHERE e.journal_id = ?
+         ORDER BY e.id`,
+        [j.id]
+      );
       result.push({
         id: j.id, journalNumber: j.journal_number, journalDate: j.journal_date,
         referenceType: j.reference_type, referenceId: j.reference_id,
@@ -383,11 +398,27 @@ router.get('/gl/journals', async (req, res) => {
         createdBy: j.created_by || '', approvedBy: j.approved_by || '', postedBy: j.posted_by || '',
         approvedAt: j.approved_at, postedAt: j.posted_at,
         attachment: j.attachment || '',
-        entries: entries.map(e => ({
-          id: e.id, accountId: e.account_id, accountCode: e.account_code,
-          accountName: e.account_name, debit: Number(e.debit), credit: Number(e.credit),
-          description: e.description
-        }))
+        entries: entries.map(e => {
+          // Resolve display name: persisted (V5.7.18+) → joined Arabic →
+          //                       joined English → fallback to code
+          const resolvedName = e.persisted_name && e.persisted_name.trim()
+            ? e.persisted_name
+            : (e.gl_name_ar || e.gl_name_en || e.account_code || '');
+          return {
+            id: e.id,
+            accountId: e.account_id,
+            accountCode: e.account_code,
+            accountName: resolvedName,
+            accountType: e.gl_type || '',
+            debit: Number(e.debit),
+            credit: Number(e.credit),
+            description: e.description,
+            branchId: e.branch_id,
+            brandId: e.brand_id,
+            costCenterId: e.cost_center_id,
+            warehouseId: e.warehouse_id
+          };
+        })
       });
     }
 

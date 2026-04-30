@@ -2474,6 +2474,9 @@ async function runMigrations() {
 
   // Branch / Department short codes (for BR-DEP-TYP-YYYYMMDD-0001 numbering)
   await addColumnIfMissing('branches', 'code', "VARCHAR(10) DEFAULT ''");
+  // V5.7.14 — operating-company name per branch (printed on the receipt
+  // between the parent brand "Moroccan Taste" and the branch line).
+  await addColumnIfMissing('branches', 'company_name', "VARCHAR(200) DEFAULT NULL");
   await addColumnIfMissing('hr_departments', 'code', "VARCHAR(10) DEFAULT ''");
   await addColumnIfMissing('hr_departments', 'branch_id', "VARCHAR(50)");
 

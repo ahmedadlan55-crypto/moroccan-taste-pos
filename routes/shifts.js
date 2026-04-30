@@ -184,6 +184,8 @@ router.post('/close-v3', async (req, res) => {
 });
 
 // Closing data v3 — returns expected totals per dynamic payment method
+// V5.7.14 — uses the same robust matcher as /closing-data (Arabic
+// normalization + alias fallback + unmatched bucket).
 router.get('/closing-data-v3/:shiftId', async (req, res) => {
   try {
     const { shiftId } = req.params;
@@ -193,31 +195,72 @@ router.get('/closing-data-v3/:shiftId', async (req, res) => {
     );
     const [sales] = await db.query('SELECT payment_method, total_final FROM sales WHERE shift_id = ?', [shiftId]);
 
-    const expected = {}; // keyed by method code (lowercased name)
+    function norm(s) {
+      return String(s || '').toLowerCase()
+        .replace(/[ً-ْ]/g, '')
+        .replace(/[أإآا]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').trim();
+    }
+    const exactLookup = {};
+    const aliasLookup = {};
+    const ELECTRONIC_ALIASES = ['mada','visa','master','mastercard','amex','network','شبكة','مدى','مدي','بطاقة'];
+    const CASH_ALIASES = ['cash','نقد','كاش','نقدي'];
+    const KITA_ALIASES = ['kita','كيتا','آجل','ajl','اجل'];
+
+    methods.forEach(m => {
+      [norm(m.name), norm(m.name_ar), String(m.id)].forEach(k => {
+        if (k && !exactLookup[k]) exactLookup[k] = m;
+      });
+      String(m.name_ar || '').split(/[\/،\-,]/).forEach(p => {
+        const k = norm(p);
+        if (k && !exactLookup[k]) exactLookup[k] = m;
+      });
+    });
+    methods.forEach(m => {
+      let aliases = [];
+      const gt = m.group_type;
+      if (gt === 'electronic' || gt === 'card') aliases = ELECTRONIC_ALIASES;
+      else if (gt === 'cash' || norm(m.name) === 'cash') aliases = CASH_ALIASES;
+      else if (gt === 'voucher' || norm(m.name) === 'kita') aliases = KITA_ALIASES;
+      aliases.map(norm).forEach(k => {
+        if (k && !exactLookup[k] && !aliasLookup[k]) aliasLookup[k] = m;
+      });
+    });
+
+    const expectedById = {};
     let expectedTotal = 0;
     let orderCount = sales.length;
+    let unmatchedTotal = 0;
+    function credit(rawMethod, amount) {
+      const key = norm(rawMethod);
+      const m = exactLookup[key] || aliasLookup[key];
+      if (m) expectedById[m.id] = (expectedById[m.id] || 0) + amount;
+      else   unmatchedTotal += amount;
+      expectedTotal += amount;
+    }
     for (const s of sales) {
       const total = Number(s.total_final) || 0;
-      const pm = (s.payment_method || 'cash').toLowerCase();
-      if (pm.includes('/')) {
-        for (const part of pm.split('/')) {
+      const pmRaw = s.payment_method || 'cash';
+      if (String(pmRaw).includes('/') && String(pmRaw).includes(':')) {
+        for (const part of String(pmRaw).split('/')) {
           const [m, a] = part.split(':');
-          const val = Number(a) || 0;
-          expected[m] = (expected[m] || 0) + val;
-          expectedTotal += val;
+          credit(m, Number(a) || 0);
         }
       } else {
-        expected[pm] = (expected[pm] || 0) + total;
-        expectedTotal += total;
+        credit(pmRaw, total);
       }
     }
+
+    // Back-compat 'expected' shape — keyed by lowercased name
+    const expected = {};
+    methods.forEach(m => { expected[(m.name || '').toLowerCase()] = expectedById[m.id] || 0; });
+
     res.json({
       methods: methods.map(m => ({
         id: m.id, name: m.name, nameAr: m.name_ar, icon: m.icon, color: m.color,
         groupType: m.group_type,
-        expectedAmount: expected[(m.name||'').toLowerCase()] || expected[m.id] || 0
+        expectedAmount: expectedById[m.id] || 0
       })),
-      expected, expectedTotal, orderCount
+      expected, expectedTotal, orderCount, unmatchedTotal
     });
   } catch (e) {
     res.json({ error: e.message });
@@ -299,82 +342,107 @@ router.get('/closing-data/:shiftId', async (req, res) => {
     );
     const orderCount = sales.length;
 
-    // ── 3. Build a SMART MATCHER from sales.payment_method strings to method.id ──
-    //    Sales rows store payment_method as a free-form string ("mada", "Visa",
-    //    "Card", "كاش", "kita", or split syntax "cash:50/card:30").
-    //    Many systems use 'mada' on the wire but the registry has name='Card'
-    //    + name_ar='مدى/شبكة' → previously this fell through and Mada totals
-    //    showed as 0. We now build a lookup keyed by:
-    //      • name (lowercased) → e.g. 'card'
-    //      • name_ar (raw)     → e.g. 'مدى/شبكة'
-    //      • each token of name_ar split on /  → 'مدى', 'شبكة'
-    //      • group_type        → 'cash' / 'electronic' / etc.
-    //      • known aliases     → mada/visa/master/network → 'electronic' group
-    //      • method.id (string)
-    function norm(s) { return String(s || '').toLowerCase().trim(); }
-    const lookup = {}; // string-key → method object (the canonical row to credit)
-    const ELECTRONIC_ALIASES = ['mada','visa','master','mastercard','amex','network','شبكة','مدى'];
-    const CASH_ALIASES = ['cash','نقد','كاش','نقدي'];
-    const KITA_ALIASES = ['kita','كيتا','آجل','ajl'];
-    function indexMethod(m) {
-      const keys = new Set();
-      keys.add(norm(m.name));
-      keys.add(norm(m.name_ar));
-      keys.add(String(m.id));
-      // Split name_ar on common separators (/، -)
-      String(m.name_ar || '').split(/[\/،\-,]/).forEach(p => keys.add(norm(p)));
-      // group_type-based aliases (so a sale with payment_method='mada'
-      // resolves to whichever method has group_type='electronic')
-      if (m.group_type === 'electronic' || m.group_type === 'card') {
-        ELECTRONIC_ALIASES.forEach(a => keys.add(a));
-      } else if (m.group_type === 'cash' || norm(m.name) === 'cash') {
-        CASH_ALIASES.forEach(a => keys.add(a));
-      } else if (m.group_type === 'voucher' || norm(m.name) === 'kita') {
-        KITA_ALIASES.forEach(a => keys.add(a));
-      }
-      keys.forEach(k => { if (k && !lookup[k]) lookup[k] = m; });
+    // ── 3. SMART MATCHER (V5.7.14 — robust Arabic normalization) ──
+    //   Two-tier lookup:
+    //     (a) EXACT match on normalized name / name_ar / id  ← strict, wins first
+    //     (b) ALIAS match (mada/visa/...) only if no exact match found
+    //   Arabic normalization unifies common variant characters that the
+    //   user types interchangeably:
+    //     ى (U+0649 alif maksura) → ي (U+064A yaa)   (مدى ↔ مدي)
+    //     ة (U+0629 taa marbuta)  → ه                 (شبكة ↔ شبكه)
+    //     أ إ آ ا → ا                                 (any alif form)
+    //     diacritics  ً ٌ ٍ َ ُ ِ ّ ْ → stripped
+    //     trailing whitespace + lowercase
+    //   This made "مدي 37 sales" + "مدى/شبكة 5 sales" both resolve cleanly
+    //   to whichever method the cashier intended (the bug where 32 of 37
+    //   Mada sales fell through to "unmatched").
+    function norm(s) {
+      return String(s || '')
+        .toLowerCase()
+        .replace(/[ً-ْ]/g, '')      // strip diacritics
+        .replace(/[أإآا]/g, 'ا')               // unify alif forms
+        .replace(/ى/g, 'ي')                   // alif maksura → yaa
+        .replace(/ة/g, 'ه')                   // taa marbuta → haa
+        .trim();
     }
-    methods.forEach(indexMethod);
-    // Fallback synthetic methods so reports never lose data when a known
-    // payment string has NO matching row in payment_methods (e.g. fresh DB).
-    function ensure(syntheticId, name, name_ar, group_type) {
-      // Only add if no method already claims any of its aliases
+    const exactLookup = {};   // exact name / name_ar / id keys
+    const aliasLookup = {};   // group-based aliases (mada, visa, …)
+    const ELECTRONIC_ALIASES = ['mada','visa','master','mastercard','amex','network','شبكة','مدى','مدي','بطاقة'];
+    const CASH_ALIASES = ['cash','نقد','كاش','نقدي'];
+    const KITA_ALIASES = ['kita','كيتا','آجل','ajl','اجل'];
+
+    function indexMethodExact(m) {
+      [norm(m.name), norm(m.name_ar), String(m.id)].forEach(k => {
+        if (k && !exactLookup[k]) exactLookup[k] = m;
+      });
+      // Tokens of name_ar split on common separators
+      String(m.name_ar || '').split(/[\/،\-,]/).forEach(p => {
+        const k = norm(p);
+        if (k && !exactLookup[k]) exactLookup[k] = m;
+      });
+    }
+    function indexMethodAlias(m) {
+      let aliases = [];
+      const gt = m.group_type;
+      if (gt === 'electronic' || gt === 'card')   aliases = ELECTRONIC_ALIASES;
+      else if (gt === 'cash' || norm(m.name) === 'cash') aliases = CASH_ALIASES;
+      else if (gt === 'voucher' || norm(m.name) === 'kita') aliases = KITA_ALIASES;
+      aliases.map(norm).forEach(k => {
+        // Don't overwrite an exact match with an alias
+        if (k && !exactLookup[k] && !aliasLookup[k]) aliasLookup[k] = m;
+      });
+    }
+    // Pass 1: exact keys for every method (first-seen wins on ties)
+    methods.forEach(indexMethodExact);
+    // Pass 2: aliases (only fill keys not claimed by exact)
+    methods.forEach(indexMethodAlias);
+    // Fallback synthetic methods so reports never lose data when no method exists at all
+    function ensureSynthetic(syntheticId, name, name_ar, group_type) {
       const aliasKey = norm(name);
-      if (lookup[aliasKey]) return;
+      if (exactLookup[aliasKey] || aliasLookup[aliasKey]) return;
       const synth = { id: syntheticId, name, name_ar, group_type, _synthetic: true };
       methods.push(synth);
-      indexMethod(synth);
+      indexMethodExact(synth);
+      indexMethodAlias(synth);
     }
-    ensure('_cash',       'Cash',       'نقدي / كاش',  'cash');
-    ensure('_electronic', 'Card / Mada','شبكة / مدى',  'electronic');
-    ensure('_kita',       'Kita',       'كيتا / آجل',  'voucher');
+    ensureSynthetic('_cash',       'Cash',       'نقدي / كاش',  'cash');
+    ensureSynthetic('_electronic', 'Card / Mada','شبكة / مدى',  'electronic');
+    ensureSynthetic('_kita',       'Kita',       'كيتا / آجل',  'voucher');
+
+    function findMethod(rawKey) {
+      // Try exact first, then alias
+      return exactLookup[rawKey] || aliasLookup[rawKey] || null;
+    }
 
     // ── 4. Aggregate sale totals per matched method ──
     const expectedById = {}; // method.id → amount
+    const countById = {};    // method.id → number of sales attributed
     let expectedTotal = 0;
     let unmatchedTotal = 0;
     const unmatchedDetails = []; // for debugging — methods that didn't resolve
     function credit(rawMethod, amount) {
       const key = norm(rawMethod);
-      const m = lookup[key];
+      const m = findMethod(key);
       if (m) {
         expectedById[m.id] = (expectedById[m.id] || 0) + amount;
+        countById[m.id]    = (countById[m.id]    || 0) + 1;
       } else {
         unmatchedTotal += amount;
-        unmatchedDetails.push({ raw: rawMethod, amount });
+        unmatchedDetails.push({ raw: rawMethod, normalized: key, amount });
       }
       expectedTotal += amount;
     }
     for (const sale of sales) {
       const total = Number(sale.total_final) || 0;
       const pmRaw = sale.payment_method || 'cash';
-      if (String(pmRaw).includes('/')) {
-        // Split-payment syntax: "cash:50/card:30"
+      if (String(pmRaw).includes('/') && String(pmRaw).includes(':')) {
+        // Split-payment syntax: "cash:50/card:30"  (must contain BOTH / and :)
         for (const part of String(pmRaw).split('/')) {
           const [m, a] = part.split(':');
           credit(m, Number(a) || 0);
         }
       } else {
+        // Single payment — handles names like "مدى/شبكة" that contain '/'
         credit(pmRaw, total);
       }
     }
@@ -411,6 +479,22 @@ router.get('/closing-data/:shiftId', async (req, res) => {
       else                                                  theoreticalCash += amt; // safe default
     });
 
+    // V5.7.14 — surface unmatched as its OWN method row so the cashier
+    //          immediately sees there's a gap between sales and the report.
+    const unmatchedRow = unmatchedTotal > 0 ? [{
+      id: '__unmatched',
+      name: 'Unmatched',
+      nameAr: 'غير مصنّف',
+      icon: 'fa-question-circle',
+      color: '#f59e0b',
+      groupType: 'unmatched',
+      expectedAmount: unmatchedTotal,
+      count: unmatchedDetails.length,
+      _isUnmatched: true,
+      // Sample of the raw payment_method strings that fell through (top 5)
+      sample: Array.from(new Set(unmatchedDetails.map(d => d.raw))).slice(0, 5)
+    }] : [];
+
     res.json({
       // ── New rich shape ──
       methods: methods
@@ -419,8 +503,10 @@ router.get('/closing-data/:shiftId', async (req, res) => {
           id: m.id, name: m.name, nameAr: m.name_ar,
           icon: m.icon || 'fa-money-bill', color: m.color || '#3b82f6',
           groupType: m.group_type,
-          expectedAmount: expectedById[m.id] || 0
-        })),
+          expectedAmount: expectedById[m.id] || 0,
+          count: countById[m.id] || 0
+        }))
+        .concat(unmatchedRow),
       soldItems: soldItems,
       unmatchedTotal: unmatchedTotal,
       unmatchedDetails: unmatchedDetails,

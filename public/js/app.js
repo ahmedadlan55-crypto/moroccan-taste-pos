@@ -8267,10 +8267,18 @@ function printShiftPDF(data) {
   //           `methods` array (every active method, with proper per-method
   //           expected amount). Falls back to the legacy 3-row shape if the
   //           backend didn't return methods (older deploy).
+  // V5.7.14 — show transaction count beside method label + dedicated row
+  //           for unmatched (group_type='unmatched') so a discrepancy is
+  //           immediately visible (e.g. 37 sold Mada but only 5 attributed).
   const dynMethods = Array.isArray(data.methods) && data.methods.length
     ? data.methods.map(m => ({
         id: m.id,
-        label: (m.icon ? '<i class="fas ' + m.icon + '" style="margin-left:4px;"></i> ' : '') + (m.nameAr || m.name || ''),
+        label: (m.icon ? '<i class="fas ' + m.icon + '" style="margin-left:4px;' + (m.groupType === 'unmatched' ? 'color:#f59e0b;' : '') + '"></i> ' : '') +
+               (m.nameAr || m.name || '') +
+               (m.count ? ' <small style="color:#64748b;font-weight:500;">(' + m.count + ' فاتورة)</small>' : '') +
+               (m.groupType === 'unmatched' && m.sample && m.sample.length
+                  ? '<div style="font-size:9px;color:#92400e;margin-top:2px;">قيم لم تتطابق: ' + m.sample.join(', ') + '</div>'
+                  : ''),
         nameAr: m.nameAr || m.name || '',
         name: m.name || '',
         groupType: m.groupType,

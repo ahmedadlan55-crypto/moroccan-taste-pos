@@ -3825,7 +3825,9 @@ function erpOpenBranchFullModal(data) {
         '<div class="form-row"><label>الرمز</label><input class="form-control" id="brfCode" value="' + (d.code||'') + '"></div>' +
         '<div class="form-row"><label>الاسم *</label><input class="form-control" id="brfName" value="' + (d.name||'') + '"></div>' +
       '</div>' +
-      '<div class="form-row"><label>الموقع</label><input class="form-control" id="brfLocation" value="' + (d.location||'') + '"></div>' +
+      // V5.7.14 — operating-company name printed on receipts under the parent brand
+      '<div class="form-row"><label>اسم الشركة المُشغِّلة <small style="color:#94a3b8;font-weight:500;">(يظهر على الفاتورة تحت "المذاق المغربي")</small></label><input class="form-control" id="brfCompanyName" value="' + ((d.companyName||'').replace(/"/g,'&quot;')) + '" placeholder="مثال: شركة برجر واقف للتجارة"></div>' +
+      '<div class="form-row"><label>عنوان الفرع</label><input class="form-control" id="brfLocation" value="' + (d.location||'') + '"></div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>المستودع المرتبط</label><select class="form-control" id="brfWH"><option value="">— بدون —</option>' + whOpts + '</select></div>' +
         '<div class="form-row"><label>مركز التكلفة</label><select class="form-control" id="brfCC"><option value="">— بدون —</option>' + ccOpts + '</select></div>' +
@@ -3974,6 +3976,8 @@ function erpSaveBranchFull() {
     brandId: (document.getElementById('brfBrand')||{}).value||'',
     code: document.getElementById('brfCode').value,
     name: document.getElementById('brfName').value,
+    // V5.7.14 — operating company per branch (printed on receipt)
+    companyName: (document.getElementById('brfCompanyName')||{}).value||'',
     location: document.getElementById('brfLocation').value,
     warehouseId: document.getElementById('brfWH').value,
     costCenterId: document.getElementById('brfCC').value,

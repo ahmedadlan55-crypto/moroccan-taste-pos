@@ -2062,6 +2062,8 @@ router.get('/branches-full', async (req, res) => {
       id: b.id, code: b.code, name: b.name, location: b.location, type: b.type, isActive: b.is_active !== false,
       warehouseId: b.warehouse_id, warehouseName: b.warehouse_name||'', costCenterId: b.cost_center_id, costCenterName: b.cost_center_name||'',
       manager: b.manager||'', supplyMode: b.supply_mode||'parent_company',
+      // V5.7.14 — operating company name (printed on receipt under the parent brand)
+      companyName: b.company_name || '',
       geoLat: b.geo_lat ? Number(b.geo_lat) : null, geoLng: b.geo_lng ? Number(b.geo_lng) : null,
       geoRadius: b.geo_radius || 100
     })));
@@ -2070,18 +2072,18 @@ router.get('/branches-full', async (req, res) => {
 
 router.post('/branches-full', async (req, res) => {
   try {
-    const { id, brandId, code, name, location, type, warehouseId, costCenterId, manager, supplyMode, geoLat, geoLng, geoRadius } = req.body;
+    const { id, brandId, code, name, companyName, location, type, warehouseId, costCenterId, manager, supplyMode, geoLat, geoLng, geoRadius } = req.body;
     if (!name) return res.json({ success: false, error: 'الاسم مطلوب' });
     if (id) {
       await db.query(
-        'UPDATE branches SET brand_id=?, code=?, name=?, location=?, type=?, warehouse_id=?, cost_center_id=?, manager=?, supply_mode=?, geo_lat=?, geo_lng=?, geo_radius=? WHERE id=?',
-        [brandId||null, code||'', name, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company', geoLat||null, geoLng||null, geoRadius||100, id]);
+        'UPDATE branches SET brand_id=?, code=?, name=?, company_name=?, location=?, type=?, warehouse_id=?, cost_center_id=?, manager=?, supply_mode=?, geo_lat=?, geo_lng=?, geo_radius=? WHERE id=?',
+        [brandId||null, code||'', name, companyName||null, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company', geoLat||null, geoLng||null, geoRadius||100, id]);
       return res.json({ success: true, id });
     }
     const newId = 'BR-' + Date.now();
     await db.query(
-      'INSERT INTO branches (id, brand_id, code, name, location, type, warehouse_id, cost_center_id, manager, supply_mode, geo_lat, geo_lng, geo_radius) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-      [newId, brandId||null, code||'', name, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company', geoLat||null, geoLng||null, geoRadius||100]);
+      'INSERT INTO branches (id, brand_id, code, name, company_name, location, type, warehouse_id, cost_center_id, manager, supply_mode, geo_lat, geo_lng, geo_radius) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      [newId, brandId||null, code||'', name, companyName||null, location||'', type||'main', warehouseId||null, costCenterId||null, manager||'', supplyMode||'parent_company', geoLat||null, geoLng||null, geoRadius||100]);
     res.json({ success: true, id: newId });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });

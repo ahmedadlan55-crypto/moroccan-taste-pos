@@ -643,18 +643,20 @@ window.printReceipt = function(orderId) {
     var dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' +
                   dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 
-    // Prefer per-invoice fields (returned by V5.7.9 backend) and fall back to state
-    var companyName  = inv.companyName  || (state.settings && state.settings.name) || 'Moroccan Taste';
-    var companyNameAr= 'المذاق المغربي';
-    var taxNumber    = inv.taxNumber    || (state.settings && state.settings.taxNumber) || '';
-    var currency     = inv.currency     || (state.settings && state.settings.currency) || 'SAR';
-    var companyPhone = inv.companyPhone || (state.settings && state.settings.companyPhone) || '';
-    var companyEmail = inv.companyEmail || (state.settings && state.settings.companyEmail) || '';
-    var branchName   = inv.branchName   || (state.settings && state.settings.branchName) || '';
-    var branchAddr   = inv.branchAddress|| (state.settings && state.settings.branchAddress) || '';
-    var cashierName  = inv.cashierName  || inv.username || state.user;
-    var cashierEmpNo = inv.cashierEmpNo || inv.username || '';
-    var logoUrl      = inv.companyLogo  || (state.settings && state.settings.logo) || '';
+    // Prefer per-invoice fields (returned by V5.7.9+ backend) and fall back to state
+    var companyName       = inv.companyName       || (state.settings && state.settings.name) || 'Moroccan Taste';
+    var companyNameAr     = 'المذاق المغربي';
+    var taxNumber         = inv.taxNumber         || (state.settings && state.settings.taxNumber) || '';
+    var currency          = inv.currency          || (state.settings && state.settings.currency) || 'SAR';
+    var companyPhone      = inv.companyPhone      || (state.settings && state.settings.companyPhone) || '';
+    var companyEmail      = inv.companyEmail      || (state.settings && state.settings.companyEmail) || '';
+    var branchName        = inv.branchName        || (state.settings && state.settings.branchName) || '';
+    var branchAddr        = inv.branchAddress     || (state.settings && state.settings.branchAddress) || '';
+    // V5.7.14 — operating company name per branch (printed under parent brand)
+    var branchCompanyName = inv.branchCompanyName || '';
+    var cashierName       = inv.cashierName       || inv.username || state.user;
+    var cashierEmpNo      = inv.cashierEmpNo      || inv.username || '';
+    var logoUrl           = inv.companyLogo       || (state.settings && state.settings.logo) || '';
 
     var totalItems = 0;
     var itemsHtml = '';
@@ -692,17 +694,36 @@ window.printReceipt = function(orderId) {
       '</div>';
     }
 
+    // V5.7.14 — receipt header: clean 3-line ownership hierarchy.
+    //   Line 1 (largest):  المذاق المغربي / Moroccan Taste   ← parent brand
+    //   Line 2 (medium):   <branch.company_name>             ← operating company
+    //   Line 3 (subtitle): Simplified TAX Invoice / فاتورة ضريبية مبسطة
+    //   Line 4:            Tax: <taxNumber>
+    //   Line 5 (bold):     <branch.name>                     ← branch
+    //   Line 6 (small):    <branch.location>                 ← branch address
+    // All lines centered. Arabic-text divs explicitly carry direction:rtl
+    // so mixed AR/EN content never drifts to the wrong side.
     var h = logoTag +
-      // ── Brand block ──
+      // ── 1. Parent brand ──
       '<div style="text-align:center;font-size:13px;font-weight:700;direction:rtl;margin-bottom:1px;">' + companyNameAr + '</div>' +
-      '<div style="text-align:center;font-size:18px;font-weight:900;margin-bottom:6px;">' + companyName + '</div>' +
+      '<div style="text-align:center;font-size:18px;font-weight:900;direction:ltr;margin-bottom:' + (branchCompanyName ? '2' : '6') + 'px;">' + companyName + '</div>' +
 
-      // ── Tax invoice subtitle (bilingual) ──
+      // ── 2. Operating company (the per-branch entity) ──
+      (branchCompanyName
+        ? '<div style="text-align:center;font-size:12px;font-weight:700;color:#0f172a;direction:rtl;margin-bottom:6px;border-bottom:1px solid #e5e7eb;padding-bottom:6px;">' + branchCompanyName + '</div>'
+        : ''
+      ) +
+
+      // ── 3. Tax invoice subtitle (bilingual) ──
       biLine('Simplified TAX Invoice', 'فاتورة ضريبية مبسطة', { fs:'12px', color:'#444', mb:6 }) +
 
-      // ── Tax registration line + branch address (matches printed sample) ──
-      (taxNumber ? '<div style="text-align:center;font-size:11px;color:#444;margin-bottom:2px;font-family:monospace;">' + taxNumber + '</div>' : '') +
-      (branchName ? '<div style="text-align:center;font-size:12px;font-weight:700;margin-top:6px;">Welcome To ' + branchName.toUpperCase() + '</div>' : '') +
+      // ── 4. Tax registration ──
+      (taxNumber ? '<div style="text-align:center;font-size:11px;color:#444;margin-bottom:6px;font-family:monospace;direction:ltr;">' + taxNumber + '</div>' : '') +
+
+      // ── 5. Branch name (welcome banner) ──
+      (branchName ? '<div style="text-align:center;font-size:12px;font-weight:700;direction:ltr;margin-top:4px;">Welcome To ' + branchName.toUpperCase() + '</div>' : '') +
+
+      // ── 6. Branch address (RTL, dim) ──
       (branchAddr ? '<div style="text-align:center;font-size:10px;color:#555;direction:rtl;margin-bottom:6px;">' + branchAddr + '</div>' : '') +
 
       '<div style="border-top:1px solid #000;margin:8px 0;"></div>' +
@@ -775,6 +796,7 @@ window.printReceipt = function(orderId) {
     state._lastReceipt = {
       inv: inv, html: h,
       companyName: companyName, companyNameAr: companyNameAr,
+      branchCompanyName: branchCompanyName,  // V5.7.14
       taxNumber: taxNumber, currency: currency,
       companyPhone: companyPhone, companyEmail: companyEmail,
       branchName: branchName, branchAddr: branchAddr,
@@ -860,14 +882,19 @@ window.printReceiptWindow = function() {
 
     (r.logoUrl ? '<div style="text-align:center;margin-bottom:4px;"><img src="' + r.logoUrl + '" style="max-width:90px;max-height:90px;object-fit:contain;"></div>' : '') +
 
+    // V5.7.14 — same 3-line ownership hierarchy as the on-screen receipt
     '<div style="text-align:center;font-size:13px;font-weight:700;direction:rtl;margin-bottom:1px;">' + (r.companyNameAr || 'المذاق المغربي') + '</div>' +
-    '<div style="text-align:center;font-size:18px;font-weight:900;margin-bottom:6px;">' + r.companyName + '</div>' +
+    '<div style="text-align:center;font-size:18px;font-weight:900;direction:ltr;margin-bottom:' + (r.branchCompanyName ? '2' : '6') + 'px;">' + r.companyName + '</div>' +
+    (r.branchCompanyName
+      ? '<div style="text-align:center;font-size:12px;font-weight:700;color:#000;direction:rtl;margin-bottom:6px;border-bottom:1px solid #d4d4d4;padding-bottom:6px;">' + r.branchCompanyName + '</div>'
+      : ''
+    ) +
 
     '<div style="text-align:center;font-size:12px;color:#000;margin-bottom:2px;">Simplified TAX Invoice</div>' +
     '<div style="text-align:center;font-size:10px;color:#444;direction:rtl;margin-bottom:6px;">فاتورة ضريبية مبسطة</div>' +
 
-    (r.taxNumber ? '<div style="text-align:center;font-size:11px;color:#000;margin-bottom:2px;font-family:monospace;">' + r.taxNumber + '</div>' : '') +
-    (r.branchName ? '<div style="text-align:center;font-size:12px;font-weight:700;margin-top:6px;">Welcome To ' + r.branchName.toUpperCase() + '</div>' : '') +
+    (r.taxNumber ? '<div style="text-align:center;font-size:11px;color:#000;margin-bottom:6px;font-family:monospace;direction:ltr;">' + r.taxNumber + '</div>' : '') +
+    (r.branchName ? '<div style="text-align:center;font-size:12px;font-weight:700;direction:ltr;margin-top:4px;">Welcome To ' + r.branchName.toUpperCase() + '</div>' : '') +
     (r.branchAddr ? '<div style="text-align:center;font-size:10px;color:#444;direction:rtl;margin-bottom:6px;">' + r.branchAddr + '</div>' : '') +
 
     '<div style="border-top:1px solid #000;margin:8px 0;"></div>' +

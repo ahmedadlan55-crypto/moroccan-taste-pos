@@ -551,6 +551,7 @@ router.get('/invoice/:orderId', async (req, res) => {
 
     // ── Lookup the branch: prefer the shift's branch, else the user's primary branch ──
     let branchName = '', branchAddress = '', branchLat = null, branchLng = null;
+    let branchCompanyName = '';  // V5.7.14 — operating company per branch
     try {
       let branchId = null;
       if (sale.shift_id) {
@@ -562,12 +563,14 @@ router.get('/invoice/:orderId', async (req, res) => {
         if (ub.length) branchId = ub[0].branch_id;
       }
       if (branchId) {
-        const [br] = await db.query('SELECT name, location, geo_lat, geo_lng FROM branches WHERE id = ?', [branchId]);
+        const [br] = await db.query('SELECT name, location, company_name, geo_lat, geo_lng FROM branches WHERE id = ?', [branchId]);
         if (br.length) {
           branchName = br[0].name || '';
           branchAddress = br[0].location || '';
           branchLat = br[0].geo_lat;
           branchLng = br[0].geo_lng;
+          // V5.7.14 — operating-company name shown on receipt below the parent brand
+          branchCompanyName = br[0].company_name || '';
         }
       }
     } catch (_) { /* shifts.branch_id or user_branches may not exist on legacy schemas — ignore */ }
@@ -601,6 +604,8 @@ router.get('/invoice/:orderId', async (req, res) => {
       branchAddress: branchAddress,
       branchLat: branchLat,
       branchLng: branchLng,
+      // V5.7.14 — operating company per branch (printed under parent brand)
+      branchCompanyName: branchCompanyName,
       companyName: companyName,
       taxNumber: taxNumber,
       currency: currency,

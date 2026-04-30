@@ -141,11 +141,38 @@
   }
 
   // ────────────────────────────────────────────────────────────
-  // Translation API (Google free public endpoint)
+  // Translation API
   // ────────────────────────────────────────────────────────────
-  function _googleTranslate(texts, sourceLang, targetLang) {
-    // Returns Promise<string[]> — one translation per input string.
-    // Joins with SENTINEL, sends single GET, splits result.
+  // V5.7.13 — primary path is our own backend proxy at /api/i18n/translate.
+  //   Direct browser → Google fails for many users (CORS, region blocks,
+  //   carrier proxies). Server-to-server bypasses all of that.
+  //   We fall back to direct Google in case the backend is down.
+  function _backendTranslate(texts, sourceLang, targetLang) {
+    var token = '';
+    try {
+      token = localStorage.getItem('pos_token') ||
+              localStorage.getItem('emp_token') || '';
+    } catch (e) {}
+    var headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    return fetch('/api/i18n/translate', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({ q: texts, source: sourceLang, target: targetLang })
+    }).then(function (r) {
+      if (!r.ok) throw new Error('proxy ' + r.status);
+      return r.json();
+    }).then(function (data) {
+      if (!data || !Array.isArray(data.translations)) throw new Error('bad shape');
+      // Ensure length matches; pad with originals if not
+      var out = data.translations.slice();
+      while (out.length < texts.length) out.push(texts[out.length]);
+      return out;
+    });
+  }
+
+  function _googleTranslateDirect(texts, sourceLang, targetLang) {
+    // Last-resort fallback: direct browser fetch to Google.
     var joined = texts.join(SENTINEL);
     var url = GOOGLE_URL +
       '?client=gtx' +
@@ -158,7 +185,6 @@
         return r.json();
       })
       .then(function (data) {
-        // data[0] is array of [translatedSegment, originalSegment, ...]; concat all segments
         var out = '';
         if (Array.isArray(data) && Array.isArray(data[0])) {
           for (var i = 0; i < data[0].length; i++) {
@@ -166,28 +192,23 @@
           }
         }
         var parts = out.split(SENTINEL);
-        // Defensive: if Google merged/dropped segments, fall back to one-shot per text
-        if (parts.length !== texts.length) {
-          return _translateOneByOne(texts, sourceLang, targetLang);
-        }
+        // Pad/truncate so caller always gets array of correct length
+        while (parts.length < texts.length) parts.push(texts[parts.length]);
+        if (parts.length > texts.length) parts.length = texts.length;
         return parts;
       });
   }
 
-  function _translateOneByOne(texts, sourceLang, targetLang) {
-    // Fallback when batched response can't be split cleanly.
-    var promises = texts.map(function (t) {
-      var url = GOOGLE_URL + '?client=gtx&sl=' + sourceLang + '&tl=' + targetLang +
-                '&dt=t&q=' + encodeURIComponent(t);
-      return fetch(url).then(function (r) { return r.json(); }).then(function (d) {
-        var out = '';
-        if (Array.isArray(d) && Array.isArray(d[0])) {
-          for (var i = 0; i < d[0].length; i++) if (d[0][i] && d[0][i][0]) out += d[0][i][0];
-        }
-        return out || t;
-      }).catch(function () { return t; });
+  function _googleTranslate(texts, sourceLang, targetLang) {
+    // Primary: backend proxy. Fallback: direct Google.
+    return _backendTranslate(texts, sourceLang, targetLang).catch(function (e) {
+      try { console.warn('[i18n] backend proxy failed, trying direct Google:', e.message); } catch (_) {}
+      return _googleTranslateDirect(texts, sourceLang, targetLang).catch(function (e2) {
+        try { console.warn('[i18n] direct Google also failed:', e2.message); } catch (_) {}
+        // Both failed — return originals so the page doesn't break
+        return texts.slice();
+      });
     });
-    return Promise.all(promises);
   }
 
   // ────────────────────────────────────────────────────────────

@@ -97,6 +97,7 @@ app.use('/api/', function(req, res, next) {
   if (p.startsWith('/workflow/')) return next();        // workflow (all public — auth checked inside)
   if (p.startsWith('/hr/leave-types')) return next();  // leave types list
   if (p.startsWith('/hr/departments')) return next();  // departments list
+  if (p.startsWith('/i18n/')) return next();           // V5.7.13 — translation proxy (login pages too)
 
   // Try to extract and verify JWT token
   var authHeader = req.headers['authorization'];
@@ -204,6 +205,8 @@ app.use('/api/purchases', require('./routes/purchases'));
 app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/sales-channels', require('./routes/sales-channels'));
+// V5.7.13 — translation proxy (server-side Google Translate fetch, no CORS)
+try { app.use('/api/i18n', require('./routes/i18n')); } catch(e){ console.warn('[mod:i18n]', e.message); }
 // ERP v3 (erp-core) is mounted first so its newer, schema-aware reports
 // take precedence over any same-path legacy handler in routes/erp.js
 app.use('/api/erp', require('./routes/erp-core'));

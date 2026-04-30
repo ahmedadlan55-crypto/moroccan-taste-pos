@@ -15677,14 +15677,20 @@ function _v3OpenChannelModalInner(id) {
     '<div class="v3-form-section">' +
       '<h4 class="v3-section-title"><i class="fas fa-circle-info"></i> البيانات الأساسية</h4>' +
       '<div class="v3-grid-2">' +
-        '<div class="wo-field"><label class="wo-field-label">الاسم *</label><input id="chF_name" class="wo-input" value="'+ _v3EscapeHtml(ch.name) +'" required></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الاسم *</label><input id="chF_name" class="wo-input" value="'+ _v3EscapeHtml(ch.name) +'" required oninput="_v3ChannelCodeSuggest()"></div>' +
         '<div class="wo-field"><label class="wo-field-label">الاسم بالإنجليزية</label><input id="chF_nameEn" class="wo-input" value="'+ _v3EscapeHtml(ch.nameEn||'') +'"></div>' +
-        '<div class="wo-field"><label class="wo-field-label">الرمز * <small style="color:#94a3b8;font-weight:500;">(للنظام — حروف لاتينية)</small></label>' +
-          '<input id="chF_code" class="wo-input" value="'+ _v3EscapeHtml(ch.code) +'" required style="text-transform:uppercase;letter-spacing:1px;font-family:monospace;font-weight:700;">' +
-          (id ? '<small style="color:#92400e;font-size:11px;margin-top:4px;display:block;"><i class="fas fa-info-circle"></i> تغيير الرمز قد يؤثر على المراجع الخارجية وروابط الـ API.</small>' : '') +
+        '<div class="wo-field"><label class="wo-field-label">الرمز <small style="color:#94a3b8;font-weight:500;">(' + (id ? 'للنظام — حروف لاتينية' : 'اتركه فارغاً ليُولَّد تلقائياً') + ')</small></label>' +
+          '<div style="display:flex;gap:6px;align-items:stretch;">' +
+            '<input id="chF_code" class="wo-input" value="'+ _v3EscapeHtml(ch.code) +'" placeholder="' + (id ? '' : 'سيُولَّد تلقائياً...') + '" oninput="this.dataset.autofilled=\'0\'" style="flex:1;text-transform:uppercase;letter-spacing:1px;font-family:monospace;font-weight:700;">' +
+            (id ? '' : '<button type="button" class="wo-btn wo-btn-secondary" onclick="_v3ChannelCodeRegen()" title="إعادة توليد"><i class="fas fa-sync-alt"></i></button>') +
+          '</div>' +
+          (id
+            ? '<small style="color:#92400e;font-size:11px;margin-top:4px;display:block;"><i class="fas fa-info-circle"></i> تغيير الرمز قد يؤثر على المراجع الخارجية وروابط الـ API.</small>'
+            : '<small id="chF_code_hint" style="color:#64748b;font-size:11px;margin-top:4px;display:block;"><i class="fas fa-magic"></i> سيتم توليد الرمز تلقائياً من الاسم والنوع عند الحفظ.</small>'
+          ) +
         '</div>' +
         '<div class="wo-field"><label class="wo-field-label">النوع *</label>' +
-          '<select id="chF_channelType" class="wo-select">' +
+          '<select id="chF_channelType" class="wo-select" onchange="_v3ChannelCodeSuggest()">' +
             Object.keys(_chTypeLabels).map(function(k){
               return '<option value="'+k+'"'+(ch.channelType===k?' selected':'')+'>'+_chTypeLabels[k]+'</option>';
             }).join('') +
@@ -15766,6 +15772,56 @@ function _v3OpenChannelModalInner(id) {
   }, 80);
 }
 
+// V5.7.8 — Live code suggestion as user types name / changes type.
+// Debounced to ~400ms so we don't flood the backend on every keystroke.
+// Only updates if the code field is empty OR was previously auto-filled by us
+// (we mark it via a data-attribute so the user's manual input is never overwritten).
+var _v3ChannelCodeSuggestTimer = null;
+function _v3ChannelCodeSuggest() {
+  try {
+    var nameEl = document.getElementById('chF_name');
+    var typeEl = document.getElementById('chF_channelType');
+    var codeEl = document.getElementById('chF_code');
+    var hintEl = document.getElementById('chF_code_hint');
+    var idEl = document.getElementById('chF_id');
+    if (!nameEl || !typeEl || !codeEl) return;
+    // Don't auto-suggest when editing an existing channel (the code is locked-in).
+    if (idEl && idEl.value) return;
+    // Don't overwrite a code the user typed manually.
+    if (codeEl.value && codeEl.dataset.autofilled !== '1') return;
+
+    if (_v3ChannelCodeSuggestTimer) clearTimeout(_v3ChannelCodeSuggestTimer);
+    _v3ChannelCodeSuggestTimer = setTimeout(function() {
+      var name = (nameEl.value || '').trim();
+      var ct = typeEl.value || 'dine_in';
+      if (!name) {
+        codeEl.value = '';
+        codeEl.placeholder = 'سيُولَّد تلقائياً...';
+        if (hintEl) hintEl.innerHTML = '<i class="fas fa-magic"></i> سيتم توليد الرمز تلقائياً من الاسم والنوع عند الحفظ.';
+        return;
+      }
+      var url = '/sales-channels/__suggest-code?name=' + encodeURIComponent(name) +
+                '&channelType=' + encodeURIComponent(ct);
+      callAPI('GET', url, null, function(r) {
+        if (r && r.code && (!codeEl.value || codeEl.dataset.autofilled === '1')) {
+          codeEl.value = r.code;
+          codeEl.dataset.autofilled = '1';
+          if (hintEl) hintEl.innerHTML = '<i class="fas fa-magic"></i> اقتراح تلقائي — يمكنك تعديله أو تركه كما هو.';
+        }
+      });
+    }, 400);
+  } catch(e) { console.warn('[V5.7.8] code-suggest:', e); }
+}
+
+// V5.7.8 — Manual regenerate button. Forces a fresh suggestion even if the
+// user already typed something — this is an explicit override, so we wipe
+// the autofilled flag first to bypass the "don't overwrite manual input" guard.
+function _v3ChannelCodeRegen() {
+  var codeEl = document.getElementById('chF_code');
+  if (codeEl) { codeEl.value = ''; codeEl.dataset.autofilled = '1'; }
+  _v3ChannelCodeSuggest();
+}
+
 function _v3SaveChannel() {
   try {
     if (typeof callAPI !== 'function') { _v3Toast('callAPI غير محمّل — أعد التحميل', true); return; }
@@ -15789,9 +15845,11 @@ function _v3SaveChannel() {
       notes: _v3FldVal('chF_notes')
     };
     if (!data.name) { _v3Toast('الاسم مطلوب', true); return; }
-    if (!data.code) { _v3Toast('الرمز مطلوب', true); return; }
-    // V5.7.3: validate code format — alphanumeric + underscore/dash only
-    if (!/^[A-Z0-9_-]{2,30}$/.test(data.code)) {
+    // V5.7.8: code is now optional on CREATE — backend auto-generates if empty.
+    //         On EDIT, code must remain present (preserve existing).
+    if (data.id && !data.code) { _v3Toast('الرمز مطلوب عند التعديل', true); return; }
+    // V5.7.3: validate code format — alphanumeric + underscore/dash only (only when provided)
+    if (data.code && !/^[A-Z0-9_-]{2,30}$/.test(data.code)) {
       _v3Toast('الرمز يجب أن يكون 2-30 حرف لاتيني/رقم/_/-', true);
       return;
     }
@@ -15813,7 +15871,12 @@ function _v3SaveChannel() {
     } else {
       callAPI('POST', '/sales-channels/', data, function(r) {
         if (r && r.success) {
-          _v3Toast('تمت إضافة القناة');
+          // V5.7.8: surface the auto-generated code to the user so they know what was used.
+          if (r.codeWasAutoGenerated && r.code) {
+            _v3Toast('تمت إضافة القناة — تم توليد الرمز تلقائياً: ' + r.code);
+          } else {
+            _v3Toast('تمت إضافة القناة');
+          }
           WoModal.close();
           erpLoadSalesChannels();
         } else {

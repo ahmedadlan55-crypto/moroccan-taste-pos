@@ -2405,4 +2405,181 @@ router.get('/reports/royalty-reconciliation', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// V5.7.7 — ACCOUNTING DIMENSIONS DIRECTORY (دليل الأبعاد المحاسبية)
+// Single endpoint that returns counts + sample items for ALL 8 dimensions
+// used in the system. Useful for:
+//   - Finance team: "what are all the analytical axes available?"
+//   - Auditors: full picture of how many items in each dimension
+//   - Admins: quick navigation to manage any dimension
+// ═══════════════════════════════════════════════════════════════════
+
+// Definition of all dimensions: table, label (Arabic), icon, key fields,
+// optional usage-count query (how many txns/journals reference each item).
+const _DIMENSIONS = [
+  {
+    key: 'branches', label: 'الفروع', icon: 'fa-building',
+    color: '#3b82f6', desc: 'مواقع البيع والعمليات الفعلية',
+    table: 'branches',
+    selectFields: 'id, code, name, city, address, phone, manager_name, COALESCE(is_active, 1) AS is_active',
+    nameField: 'name', codeField: 'code', activeField: 'is_active'
+  },
+  {
+    key: 'cost_centers', label: 'مراكز التكلفة', icon: 'fa-sitemap',
+    color: '#8b5cf6', desc: 'بنود تجميع المصروفات والإيرادات للتحليل',
+    table: 'cost_centers',
+    selectFields: 'id, code, name, type, parent_id, COALESCE(is_active, 1) AS is_active',
+    nameField: 'name', codeField: 'code', activeField: 'is_active'
+  },
+  {
+    key: 'brands', label: 'العلامات التجارية', icon: 'fa-tags',
+    color: '#f59e0b', desc: 'البراندات/العلامات للمنتجات والقوائم',
+    table: 'brands',
+    selectFields: 'id, code, name, name_en, color, COALESCE(is_active, 1) AS is_active',
+    nameField: 'name', codeField: 'code', activeField: 'is_active'
+  },
+  {
+    key: 'departments', label: 'الأقسام', icon: 'fa-users',
+    color: '#06b6d4', desc: 'الأقسام التنظيمية للموارد البشرية',
+    table: 'hr_departments',
+    selectFields: 'id, code, name, branch_id, COALESCE(is_active, 1) AS is_active',
+    nameField: 'name', codeField: 'code', activeField: 'is_active'
+  },
+  {
+    key: 'warehouses', label: 'المستودعات', icon: 'fa-warehouse',
+    color: '#0ea5e9', desc: 'مواقع تخزين الأصناف والمخزون',
+    table: 'warehouses',
+    selectFields: 'id, code, name, type, branch_id, brand_id, COALESCE(is_main, 0) AS is_main, parent_warehouse_id',
+    nameField: 'name', codeField: 'code', activeField: null
+  },
+  {
+    key: 'sales_channels', label: 'قنوات البيع', icon: 'fa-store',
+    color: '#10b981', desc: 'قنوات البيع (صالة، توصيل، تطبيقات...)',
+    table: 'sales_channels',
+    selectFields: 'id, code, name, channel_type, price_list_id, COALESCE(is_active, 1) AS is_active',
+    nameField: 'name', codeField: 'code', activeField: 'is_active'
+  },
+  {
+    key: 'properties', label: 'العقارات والمشاريع', icon: 'fa-building-flag',
+    color: '#a855f7', desc: 'العقارات والمشاريع للتحليل المالي',
+    table: 'properties',
+    selectFields: 'id, code, name, type, city, district, status',
+    nameField: 'name', codeField: 'code', activeField: null,
+    activeFilter: "status = 'active'"
+  },
+  {
+    key: 'employees', label: 'الموظفون', icon: 'fa-user-tie',
+    color: '#ef4444', desc: 'الموظفون كبُعد للعمولات والرواتب وأوامر العمل',
+    table: 'hr_employees',
+    selectFields: "id, employee_number AS code, CONCAT(COALESCE(first_name,''),' ',COALESCE(last_name,'')) AS name, branch_id, department_id, position_id, status",
+    nameField: "CONCAT(COALESCE(first_name,''),' ',COALESCE(last_name,''))",
+    codeField: 'employee_number', activeField: null,
+    activeFilter: "COALESCE(status,'active') = 'active'"
+  }
+];
+
+// GET /api/erp/accounting-dimensions/summary — counts + small sample per dimension.
+router.get('/accounting-dimensions/summary', async (req, res) => {
+  try {
+    const out = {
+      title: 'دليل الأبعاد المحاسبية',
+      generatedAt: new Date().toISOString(),
+      dimensions: []
+    };
+    for (const d of _DIMENSIONS) {
+      try {
+        // Total count
+        const [tc] = await db.query(`SELECT COUNT(*) AS c FROM ${d.table}`);
+        const total = Number((tc[0]||{}).c) || 0;
+        // Active count
+        let active = total;
+        if (d.activeField) {
+          try {
+            const [ac] = await db.query(`SELECT COUNT(*) AS c FROM ${d.table} WHERE COALESCE(${d.activeField}, 1) = 1`);
+            active = Number((ac[0]||{}).c) || 0;
+          } catch(_) {}
+        } else if (d.activeFilter) {
+          try {
+            const [ac] = await db.query(`SELECT COUNT(*) AS c FROM ${d.table} WHERE ${d.activeFilter}`);
+            active = Number((ac[0]||{}).c) || 0;
+          } catch(_) {}
+        }
+        // Sample 5 most recent items
+        let samples = [];
+        try {
+          const [s] = await db.query(`SELECT ${d.selectFields} FROM ${d.table} ORDER BY ${d.codeField||'id'} LIMIT 5`);
+          samples = s;
+        } catch(_) {}
+        out.dimensions.push({
+          key: d.key,
+          label: d.label,
+          icon: d.icon,
+          color: d.color,
+          description: d.desc,
+          tableName: d.table,
+          total: total,
+          active: active,
+          inactive: total - active,
+          samples: samples
+        });
+      } catch(_e) {
+        out.dimensions.push({
+          key: d.key,
+          label: d.label,
+          icon: d.icon,
+          color: d.color,
+          description: d.desc,
+          tableName: d.table,
+          total: 0, active: 0, inactive: 0,
+          samples: [],
+          error: 'الجدول غير موجود في هذه النسخة من قاعدة البيانات'
+        });
+      }
+    }
+    // Aggregate totals
+    out.totals = {
+      tableCount: out.dimensions.length,
+      itemCount: out.dimensions.reduce((s,d)=>s+d.total, 0),
+      activeItems: out.dimensions.reduce((s,d)=>s+d.active, 0),
+      tablesAvailable: out.dimensions.filter(d => !d.error).length,
+      tablesMissing: out.dimensions.filter(d => d.error).length
+    };
+    res.json(out);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/erp/accounting-dimensions/:key — full list of items for one dimension
+//   ?q=search   — name/code filter
+//   ?status=    — active|inactive|all (default all)
+router.get('/accounting-dimensions/:key', async (req, res) => {
+  try {
+    const def = _DIMENSIONS.find(d => d.key === req.params.key);
+    if (!def) return res.status(404).json({ error: 'بُعد غير معروف' });
+    const q = (req.query.q || '').trim();
+    const status = req.query.status || 'all';
+    const conds = []; const params = [];
+    if (q) {
+      conds.push(`(${def.codeField||'id'} LIKE ? OR ${def.nameField||'name'} LIKE ?)`);
+      params.push('%'+q+'%', '%'+q+'%');
+    }
+    if (status === 'active') {
+      if (def.activeField) conds.push(`COALESCE(${def.activeField}, 1) = 1`);
+      else if (def.activeFilter) conds.push(def.activeFilter);
+    } else if (status === 'inactive') {
+      if (def.activeField) conds.push(`COALESCE(${def.activeField}, 1) = 0`);
+      else if (def.activeFilter) conds.push(`NOT (${def.activeFilter})`);
+    }
+    const where = conds.length ? 'WHERE '+conds.join(' AND ') : '';
+    const [rows] = await db.query(
+      `SELECT ${def.selectFields} FROM ${def.table} ${where} ORDER BY ${def.codeField||'id'} LIMIT 1000`,
+      params);
+    res.json({
+      key: def.key, label: def.label, total: rows.length,
+      items: rows
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

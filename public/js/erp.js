@@ -127,6 +127,7 @@ function erpNav(sectionId) {
       case 'erpBrands': erpLoadBrands(); break;
       case 'erpPurchaseReports': erpInitPurchaseReports(); break;
       case 'erpCostCenters': erpLoadCostCenters(); break;
+      case 'erpDimensionsHub': erpLoadDimensionsHub(); break;
       case 'erpMultiWarehouses': erpLoadMultiWarehouses(); break;
       case 'erpBranches': erpLoadBranchesFull(); break;
       case 'erpPeriods': erpLoadPeriods(); break;
@@ -18503,3 +18504,205 @@ setTimeout(function(){ try { wfStartLiveInbox(); } catch(_){} }, 2000);
   window.wfViewTxnLegacy = _legacy;
 })();
 
+
+// ═══════════════════════════════════════════════════════════════════
+// V5.7.7 — ACCOUNTING DIMENSIONS DIRECTORY (دليل الأبعاد المحاسبية)
+// Unified hub showing all 8 analytical dimensions in one place.
+// Click any card → drill into that dimension's full list.
+// ═══════════════════════════════════════════════════════════════════
+window.erpLoadDimensionsHub = function(){
+  var host = document.getElementById('erpDimensionsHub');
+  if (!host) return;
+  host.innerHTML =
+    '<header class="wo-header">' +
+      '<div class="wo-header-titles">' +
+        '<h1><span class="wo-icon-slot"><i class="fas fa-cubes" style="color:#7c3aed;"></i></span> دليل الأبعاد المحاسبية</h1>' +
+        '<p class="wo-header-sub">كل البيوت التحليلية للنظام في مكان واحد — استخدمها لتقطيع التقارير والتحليل المالي والتشغيلي.</p>' +
+      '</div>' +
+    '</header>' +
+    '<div id="dimSummaryStrip" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px;"></div>' +
+    '<div id="dimGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;">' +
+      '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-spinner fa-spin" style="font-size:32px;"></i><div style="margin-top:8px;">جاري تحميل الأبعاد...</div></div>' +
+    '</div>';
+  callAPI('GET', '/erp/accounting-dimensions/summary', null, function(d){
+    if (!d || !d.dimensions) {
+      document.getElementById('dimGrid').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#dc2626;padding:30px;">فشل التحميل: ' + ((d && d.error) || 'خطأ غير معروف') + '</div>';
+      return;
+    }
+    // Top summary strip
+    var t = d.totals || {};
+    document.getElementById('dimSummaryStrip').innerHTML =
+      _v3MetricCard('fa-cubes',         'أنواع الأبعاد',      t.tableCount || 0, '#7c3aed') +
+      _v3MetricCard('fa-database',      'إجمالي العناصر',     (t.itemCount||0).toLocaleString('ar-SA-u-nu-latn'), '#3b82f6') +
+      _v3MetricCard('fa-toggle-on',     'العناصر النشطة',     (t.activeItems||0).toLocaleString('ar-SA-u-nu-latn'), '#22c55e') +
+      _v3MetricCard('fa-circle-check',  'جداول متاحة',         t.tablesAvailable || 0, '#16a34a') +
+      (t.tablesMissing > 0 ? _v3MetricCard('fa-triangle-exclamation', 'جداول غير موجودة', t.tablesMissing, '#dc2626') : '');
+
+    // Cards grid
+    document.getElementById('dimGrid').innerHTML = d.dimensions.map(function(dim){
+      var sampleHtml = '';
+      if (dim.samples && dim.samples.length) {
+        sampleHtml = '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #e2e8f0;">' +
+          '<div style="font-size:10px;color:#64748b;font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px;">عينة:</div>' +
+          dim.samples.slice(0, 3).map(function(s){
+            var name = s.name || s.code || s.id;
+            return '<div style="font-size:11.5px;color:#334155;padding:3px 0;display:flex;align-items:center;gap:6px;"><i class="fas fa-circle" style="font-size:5px;color:'+dim.color+';"></i> ' + _v3EscapeHtml(name) +
+              (s.code && s.code !== name ? ' <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:10px;color:#475569;">'+_v3EscapeHtml(s.code)+'</code>' : '') +
+            '</div>';
+          }).join('') +
+          (dim.total > 3 ? '<div style="font-size:10px;color:#94a3b8;margin-top:4px;">... + ' + (dim.total - 3) + ' أخرى</div>' : '') +
+        '</div>';
+      }
+      var errorHtml = dim.error
+        ? '<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:11px;color:#991b1b;font-weight:700;"><i class="fas fa-triangle-exclamation"></i> ' + _v3EscapeHtml(dim.error) + '</div>'
+        : '';
+      var clickable = dim.error ? 'opacity:.7;cursor:not-allowed;' : 'cursor:pointer;';
+      var clickHandler = dim.error ? '' : 'onclick="erpDrillDimension(\'' + dim.key + '\',\'' + dim.label.replace(/\'/g,"\'") + '\')"';
+      return '<div style="background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:16px;transition:all .18s;'+clickable+'" '+clickHandler+
+        ' onmouseover="this.style.borderColor=\''+dim.color+'\';this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 8px 20px rgba(0,0,0,.08)\';" ' +
+        ' onmouseout="this.style.borderColor=\'#e2e8f0\';this.style.transform=\'translateY(0)\';this.style.boxShadow=\'none\';">' +
+        '<div style="display:flex;align-items:center;gap:12px;">' +
+          '<div style="width:48px;height:48px;border-radius:14px;background:'+dim.color+'1a;color:'+dim.color+';display:grid;place-items:center;font-size:22px;flex-shrink:0;"><i class="fas '+dim.icon+'"></i></div>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:15px;font-weight:900;color:#0f172a;">'+ _v3EscapeHtml(dim.label) +'</div>' +
+            '<div style="font-size:11px;color:#64748b;margin-top:3px;line-height:1.5;">'+ _v3EscapeHtml(dim.description) +'</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:14px;text-align:center;">' +
+          '<div style="background:#f8fafc;border-radius:8px;padding:8px;">' +
+            '<div style="font-size:18px;font-weight:900;color:#0f172a;">'+(dim.total||0).toLocaleString('ar-SA-u-nu-latn')+'</div>' +
+            '<div style="font-size:9.5px;color:#64748b;font-weight:700;">إجمالي</div>' +
+          '</div>' +
+          '<div style="background:#f0fdf4;border-radius:8px;padding:8px;">' +
+            '<div style="font-size:18px;font-weight:900;color:#15803d;">'+(dim.active||0).toLocaleString('ar-SA-u-nu-latn')+'</div>' +
+            '<div style="font-size:9.5px;color:#15803d;font-weight:700;">نشط</div>' +
+          '</div>' +
+          '<div style="background:'+(dim.inactive>0?'#fffbeb':'#f8fafc')+';border-radius:8px;padding:8px;">' +
+            '<div style="font-size:18px;font-weight:900;color:'+(dim.inactive>0?'#92400e':'#94a3b8')+';">'+(dim.inactive||0).toLocaleString('ar-SA-u-nu-latn')+'</div>' +
+            '<div style="font-size:9.5px;color:'+(dim.inactive>0?'#92400e':'#94a3b8')+';font-weight:700;">غير نشط</div>' +
+          '</div>' +
+        '</div>' +
+        sampleHtml +
+        errorHtml +
+        (dim.error ? '' :
+          '<div style="margin-top:12px;padding-top:10px;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:center;">' +
+            '<span style="font-size:10px;color:#94a3b8;font-family:monospace;">'+ _v3EscapeHtml(dim.tableName) +'</span>' +
+            '<span style="font-size:11px;color:'+dim.color+';font-weight:800;">عرض الكل <i class="fas fa-arrow-left" style="font-size:10px;"></i></span>' +
+          '</div>'
+        ) +
+      '</div>';
+    }).join('');
+  });
+};
+
+// V5.7.7 — Drill into a single dimension's full list
+window.erpDrillDimension = function(key, label){
+  var host = document.getElementById('erpDimensionsHub');
+  if (!host) return;
+  host.innerHTML =
+    '<header class="wo-header">' +
+      '<div class="wo-header-titles">' +
+        '<h1><i class="fas fa-arrow-right" style="cursor:pointer;color:#3b82f6;font-size:18px;margin-inline-end:8px;" onclick="erpLoadDimensionsHub()"></i> ' + _v3EscapeHtml(label) + '</h1>' +
+        '<p class="wo-header-sub">كل عناصر هذا البُعد المحاسبي. استخدم البحث والفلتر للوصول السريع.</p>' +
+      '</div>' +
+      '<div class="wo-header-actions">' +
+        '<button class="wo-btn wo-btn-secondary" onclick="erpLoadDimensionsHub()"><i class="fas fa-arrow-right"></i> رجوع للدليل</button>' +
+      '</div>' +
+    '</header>' +
+    '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:14px;">' +
+      '<input type="text" id="dimSearch" placeholder="ابحث بالاسم أو الرمز..." style="flex:1;min-width:200px;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:10px;font-family:inherit;" oninput="_dimReload(\'' + key + '\')">' +
+      '<select id="dimStatus" style="padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:10px;" onchange="_dimReload(\'' + key + '\')">' +
+        '<option value="all">كل الحالات</option>' +
+        '<option value="active">نشط فقط</option>' +
+        '<option value="inactive">غير نشط فقط</option>' +
+      '</select>' +
+      '<button class="wo-btn wo-btn-secondary" onclick="_dimExportCsv(\'' + key + '\',\'' + label.replace(/\'/g,"\\'") + '\')"><i class="fas fa-file-csv"></i> CSV</button>' +
+    '</div>' +
+    '<div id="dimDrillBody"><div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i></div></div>';
+  _dimReload(key);
+};
+window._dimReload = function(key){
+  var q = (document.getElementById('dimSearch')||{}).value || '';
+  var status = (document.getElementById('dimStatus')||{}).value || 'all';
+  var qs = '?q=' + encodeURIComponent(q) + '&status=' + status;
+  callAPI('GET', '/erp/accounting-dimensions/' + encodeURIComponent(key) + qs, null, function(d){
+    var body = document.getElementById('dimDrillBody');
+    if (!body) return;
+    if (!d || !d.items) {
+      body.innerHTML = '<div style="padding:30px;text-align:center;color:#dc2626;">فشل: ' + ((d && d.error)||'خطأ') + '</div>';
+      return;
+    }
+    if (!d.items.length) {
+      body.innerHTML = '<div style="padding:50px;text-align:center;color:#94a3b8;background:#fff;border:1px dashed #cbd5e1;border-radius:14px;">' +
+        '<i class="fas fa-folder-open" style="font-size:40px;display:block;margin-bottom:10px;color:#cbd5e1;"></i>لا نتائج مطابقة</div>';
+      return;
+    }
+    var sample = d.items[0];
+    var cols = Object.keys(sample);
+    var labelMap = {
+      id:'المعرّف', code:'الرمز', name:'الاسم', name_en:'الاسم بالإنجليزية',
+      city:'المدينة', address:'العنوان', phone:'الهاتف', manager_name:'المدير',
+      type:'النوع', parent_id:'الأب', is_active:'مفعّل', is_main:'رئيسي',
+      branch_id:'الفرع', brand_id:'البراند', color:'اللون', status:'الحالة',
+      district:'الحي', channel_type:'نوع القناة', price_list_id:'قائمة الأسعار',
+      department_id:'القسم', position_id:'المنصب', parent_warehouse_id:'مستودع الأب',
+      employee_number:'رقم الموظف'
+    };
+    var html = '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;">' +
+      '<div style="padding:10px 16px;background:#f8fafc;font-size:13px;font-weight:800;color:#0f172a;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;">' +
+        '<span><i class="fas fa-list"></i> ' + d.total + ' عنصر</span>' +
+        '<span style="font-size:11px;color:#64748b;font-weight:700;">' + (d.label||'') + '</span>' +
+      '</div>' +
+      '<div style="overflow-x:auto;">' +
+        '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">' +
+          '<thead><tr style="background:#f8fafc;">' +
+            cols.map(function(c){return '<th style="padding:9px 12px;text-align:right;font-weight:700;color:#475569;font-size:11px;border-bottom:1px solid #e2e8f0;">' + _v3EscapeHtml(labelMap[c]||c) + '</th>';}).join('') +
+          '</tr></thead><tbody>' +
+          d.items.map(function(it){
+            return '<tr style="border-bottom:1px solid #f1f5f9;">' +
+              cols.map(function(c){
+                var v = it[c];
+                var cell = '';
+                if (v === null || v === undefined || v === '') cell = '<span style="color:#cbd5e1;">—</span>';
+                else if (c === 'is_active') cell = v ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;">مفعّل</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;">معطّل</span>';
+                else if (c === 'is_main') cell = v ? '<i class="fas fa-check" style="color:#16a34a;"></i>' : '';
+                else if (c === 'status') {
+                  var sMap = { active:['نشط','#16a34a','#dcfce7'], inactive:['غير نشط','#64748b','#f1f5f9'], sold:['مباع','#92400e','#fef3c7'], under_maintenance:['صيانة','#0369a1','#dbeafe'] };
+                  var s = sMap[v] || [v,'#64748b','#f1f5f9'];
+                  cell = '<span class="wo-chip" style="background:'+s[2]+';color:'+s[1]+';">'+s[0]+'</span>';
+                }
+                else if (c === 'color' && /^#/.test(String(v))) cell = '<span style="display:inline-block;width:20px;height:20px;border-radius:5px;background:'+v+';border:1px solid #e2e8f0;vertical-align:middle;"></span>';
+                else if (c === 'code') cell = '<code style="background:#f1f5f9;padding:2px 7px;border-radius:5px;font-size:11px;color:#1e40af;font-weight:700;">' + _v3EscapeHtml(v) + '</code>';
+                else if (c === 'id') cell = '<code style="background:transparent;font-size:10px;color:#94a3b8;">' + _v3EscapeHtml(String(v).slice(0,30)) + '</code>';
+                else if (c === 'name') cell = '<span style="font-weight:800;">' + _v3EscapeHtml(v) + '</span>';
+                else cell = _v3EscapeHtml(String(v));
+                return '<td style="padding:9px 12px;color:#334155;">' + cell + '</td>';
+              }).join('') + '</tr>';
+          }).join('') +
+          '</tbody></table>' +
+      '</div></div>';
+    body.innerHTML = html;
+  });
+};
+window._dimExportCsv = function(key, label){
+  var q = (document.getElementById('dimSearch')||{}).value || '';
+  var status = (document.getElementById('dimStatus')||{}).value || 'all';
+  callAPI('GET', '/erp/accounting-dimensions/' + encodeURIComponent(key) + '?q=' + encodeURIComponent(q) + '&status=' + status, null, function(d){
+    if (!d || !d.items || !d.items.length) { showToast('لا بيانات للتصدير', true); return; }
+    var cols = Object.keys(d.items[0]);
+    var csv = '﻿' + cols.join(',') + '\n';
+    d.items.forEach(function(it){
+      csv += cols.map(function(c){
+        var v = it[c]; if (v === null || v === undefined) v = '';
+        return '"' + String(v).replace(/"/g,'""') + '"';
+      }).join(',') + '\n';
+    });
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'dim-' + key + '-' + (new Date().toISOString().slice(0,10)) + '.csv';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 200);
+    showToast('✓ تم تصدير ' + d.items.length + ' عنصر');
+  });
+};

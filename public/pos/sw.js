@@ -15,7 +15,7 @@
  * clients pick up the fresh shell on next load.
  */
 
-const CACHE_VERSION = 'mt-pos-v41-recipe-v2-design';
+const CACHE_VERSION = 'mt-pos-v42-receipt-3col';
 const CACHE_NAME = CACHE_VERSION;
 
 // App shell — pre-cached on install so the first launch works offline

@@ -1818,17 +1818,20 @@ function _printReceiptBody(orderId) {
     var logoUrl           = inv.receiptLogo       || inv.brandLogo || inv.companyLogo || (state.settings && state.settings.logo) || '';
 
     var totalItems = 0;
-    // V5.7.25 — explicit LTR rows: Item | Qty | Price | Total
+    // V5.7.29 — 3-col items rows (Qty | Item+@price | Total). Mirrors the
+    //   cashier-side update so admin and POS receipts look identical.
     var itemsHtml = '';
     (inv.items||[]).forEach(function(i){
       var qty = Number(i.qty) || 0;
       totalItems += qty;
       var unitPrice = qty > 0 ? (Number(i.total) / qty) : Number(i.price || 0);
-      itemsHtml += '<tr style="direction:ltr;">'+
-                     '<td style="text-align:left;font-size:12px;padding:4px 2px;font-weight:600;">'+i.name+'</td>'+
-                     '<td style="text-align:center;font-size:12px;padding:4px 2px;font-family:monospace;">'+qty+'</td>'+
-                     '<td style="text-align:center;font-size:11px;padding:4px 2px;font-family:monospace;color:#444;">'+formatVal(unitPrice)+'</td>'+
-                     '<td style="text-align:right;font-size:12px;padding:4px 2px;font-family:monospace;font-weight:700;">'+formatVal(i.total)+'</td>'+
+      itemsHtml += '<tr style="direction:ltr;border-bottom:1px dotted #cbd5e1;">'+
+                     '<td style="text-align:center;font-size:13px;padding:7px 2px;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:700;vertical-align:top;width:38px;">'+qty+'×</td>'+
+                     '<td style="text-align:left;font-size:12.5px;padding:7px 6px;font-weight:600;line-height:1.3;">'+
+                       i.name+
+                       '<div style="font-size:10px;color:#888;font-weight:400;font-family:ui-monospace,SFMono-Regular,monospace;margin-top:2px;">@ '+formatVal(unitPrice)+'</div>'+
+                     '</td>'+
+                     '<td style="text-align:right;font-size:13px;padding:7px 2px;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:700;vertical-align:top;width:62px;">'+formatVal(i.total)+'</td>'+
                    '</tr>';
     });
     var netAmount = Number(inv.totalFinal) / 1.15;
@@ -1889,13 +1892,12 @@ function _printReceiptBody(orderId) {
 
       '<div style="border-top:1px dashed #000;margin:8px 0;"></div>' +
 
-      // ── V5.7.25 Items table — direction:ltr so Item/Qty/Price/Total align uniformly ──
-      '<table style="width:100%;border-collapse:collapse;direction:ltr;">' +
-        '<thead><tr style="border-bottom:1px solid #000;">'+
-          '<th style="text-align:left;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">Item</th>'+
-          '<th style="text-align:center;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">Qty</th>'+
-          '<th style="text-align:center;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">Price</th>'+
-          '<th style="text-align:right;font-size:10px;padding:3px 2px;color:#444;font-weight:700;">'+currency+'</th>'+
+      // ── V5.7.29 — 3-col items table (Qty | Item | Total) for thermal alignment ──
+      '<table style="width:100%;border-collapse:collapse;direction:ltr;table-layout:fixed;">' +
+        '<thead><tr style="border-bottom:1.5px solid #000;">'+
+          '<th style="text-align:center;font-size:10px;padding:5px 2px;color:#444;font-weight:700;letter-spacing:0.05em;width:38px;">QTY</th>'+
+          '<th style="text-align:left;font-size:10px;padding:5px 6px;color:#444;font-weight:700;letter-spacing:0.05em;">ITEM</th>'+
+          '<th style="text-align:right;font-size:10px;padding:5px 2px;color:#444;font-weight:700;letter-spacing:0.05em;width:62px;">TOTAL '+currency+'</th>'+
         '</tr></thead>' +
         '<tbody>'+itemsHtml+'</tbody>' +
       '</table>' +

@@ -350,9 +350,8 @@ router.post('/close-v3', async (req, res) => {
     }
 
     // ── 7. Compose payment_totals_json ──
-    //   Stored shape (V5.7.17 — canonical, expected by the report):
-    //     { expectedById, actualsById, breakdown, version: 'v5.7.17' }
-    //   Plus legacy keys (expected, actuals) so older client builds still work.
+    //   Stored shape (V5.7.17+ canonical):  { expectedById, actualsById, breakdown }
+    //   Plus legacy aliases (expected, actuals) so older client builds still work.
     const legacyExpected = {};
     const legacyActuals  = {};
     methods.forEach(m => {
@@ -360,30 +359,60 @@ router.post('/close-v3', async (req, res) => {
       legacyExpected[nameKey] = expectedById[m.id] || 0;
       legacyActuals[nameKey]  = actualsById[m.id] || 0;
     });
-    const cashMethodForLegacy = methods.find(m => m.groupType === 'cash');
-    const cashExpected = cashMethodForLegacy ? (expectedById[cashMethodForLegacy.id] || 0) : 0;
-    const cashActual   = cashCounted || (cashMethodForLegacy ? (actualsById[cashMethodForLegacy.id] || 0) : 0);
+
+    // ── V5.7.19 — properly compute per-group totals so the admin shifts
+    //   list (which still reads diff_cash/diff_card/diff_kita columns)
+    //   shows accurate per-group variance, not all-zeros. Without this,
+    //   the user could only see the NET diff and couldn't tell that a
+    //   "+31 net" was actually "+31 cash surplus AND -31 mada deficit".
+    const cashMethods = methods.filter(m => (m.groupType || '').toLowerCase() === 'cash');
+    const cardMethods = methods.filter(m => {
+      const gt = (m.groupType || '').toLowerCase();
+      return gt === 'electronic' || gt === 'card';
+    });
+    const kitaMethods = methods.filter(m => {
+      const gt = (m.groupType || '').toLowerCase();
+      return gt === 'voucher' || _normPM(m.name) === 'kita';
+    });
+    const sumExp = arr => arr.reduce((s, m) => s + (expectedById[m.id] || 0), 0);
+    const sumAct = arr => arr.reduce((s, m) => s + (actualsById[m.id]   || 0), 0);
+    const cashExpected = sumExp(cashMethods);
+    const cardExpected = sumExp(cardMethods);
+    const kitaExpected = sumExp(kitaMethods);
+    // Cash actual: prefer counted denominations (authoritative); fall back to method actuals
+    const cashActual   = cashCounted > 0 ? cashCounted : sumAct(cashMethods);
+    const cardActual   = sumAct(cardMethods);
+    const kitaActual   = sumAct(kitaMethods);
+    const diffCash = cashActual - cashExpected;
+    const diffCard = cardActual - cardExpected;
+    const diffKita = kitaActual - kitaExpected;
 
     const paymentTotalsJson = JSON.stringify({
-      version: 'v5.7.17',
+      version: 'v5.7.19',
       expectedById, actualsById, breakdown,
       // legacy aliases — older clients read these
       expected: legacyExpected, actuals: legacyActuals
     });
 
-    // ── 8. Update the shift row ──
+    // ── 8. Update the shift row (now writes ALL legacy per-group columns) ──
     await db.query(
       `UPDATE shifts SET
          end_time = ?, status = 'closed',
          opening_float = ?, expected_total = ?, actual_total = ?, variance_total = ?,
          payment_totals_json = ?, denominations_json = ?, cashier_notes = ?,
-         total_theoretical = ?, theoretical_cash = ?, actual_cash = ?, diff_cash = ?
+         total_theoretical = ?,
+         theoretical_cash = ?, theoretical_card = ?, theoretical_kita = ?,
+         actual_cash = ?,      actual_card = ?,      actual_kita = ?,
+         diff_cash = ?,        diff_card = ?,        diff_kita = ?
        WHERE id = ?`,
       [
         now,
         Number(openingFloat || 0), expectedTotal, actualTotal, variance,
         paymentTotalsJson, JSON.stringify(denomList), notes || '',
-        expectedTotal, cashExpected, cashActual, (cashActual - cashExpected),
+        expectedTotal,
+        cashExpected, cardExpected, kitaExpected,
+        cashActual,   cardActual,   kitaActual,
+        diffCash,     diffCard,     diffKita,
         shiftId
       ]
     );
@@ -652,6 +681,278 @@ router.get('/:shiftId/full-report', async (req, res) => {
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// V5.7.19 — Thermal-printer-friendly HTML page for a shift report.
+//   Wired to the admin shifts list "🖨 طباعة" button: opens in a new tab,
+//   auto-prints, sized for 80mm thermal paper but degrades cleanly on A4.
+//   Uses the SAME data source as /full-report (single round-trip).
+router.get('/:shiftId/full-report-print', async (req, res) => {
+  try {
+    const { shiftId } = req.params;
+    // Re-use the JSON endpoint logic by hitting it internally
+    const reqStub = { params: { shiftId } };
+    let payload = null;
+    const resStub = {
+      json: function(data) { payload = data; return this; },
+      status: function() { return this; }
+    };
+    // Call the handler we registered earlier — find it by hand-walking the stack
+    // (we can't do internal redirect, so re-execute the data-build inline)
+    const [shifts] = await db.query('SELECT * FROM shifts WHERE id = ?', [shiftId]);
+    if (!shifts.length) return res.status(404).send('Shift not found');
+    const s = shifts[0];
+    let cashierName = s.username || '', cashierEmpNo = '';
+    try {
+      const [meta] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
+      if (meta.length && meta[0].setting_value) {
+        const map = JSON.parse(meta[0].setting_value || '{}');
+        const me = map[s.username] || {};
+        if (me.name)  cashierName  = me.name;
+        if (me.empNo) cashierEmpNo = me.empNo;
+      }
+    } catch (_) {}
+    let branchName = '', branchAddress = '', branchCompanyName = '';
+    try {
+      let branchId = s.branch_id;
+      if (!branchId) {
+        const [ub] = await db.query('SELECT branch_id FROM user_branches WHERE username = ? LIMIT 1', [s.username]);
+        if (ub.length) branchId = ub[0].branch_id;
+      }
+      if (branchId) {
+        const [br] = await db.query('SELECT name, location, company_name FROM branches WHERE id = ?', [branchId]);
+        if (br.length) {
+          branchName = br[0].name || '';
+          branchAddress = br[0].location || '';
+          branchCompanyName = br[0].company_name || '';
+        }
+      }
+    } catch (_) {}
+    let companyName = 'Moroccan Taste', taxNumber = '', currency = 'SAR';
+    let companyPhone = '', companyEmail = '', companyLogo = '';
+    try {
+      const [setRows] = await db.query(
+        "SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('CompanyName','TaxNumber','Currency','CompanyPhone','CompanyEmail','logo')"
+      );
+      const map = {};
+      setRows.forEach(r => { map[r.setting_key] = r.setting_value; });
+      companyName  = map.CompanyName  || companyName;
+      taxNumber    = map.TaxNumber    || '';
+      currency     = map.Currency     || 'SAR';
+      companyPhone = map.CompanyPhone || '';
+      companyEmail = map.CompanyEmail || '';
+      companyLogo  = map.logo         || '';
+    } catch (_) {}
+
+    const agg = await aggregateShiftPayments(shiftId);
+    let savedActuals = {}, savedBreakdown = null;
+    try {
+      if (s.payment_totals_json) {
+        const parsed = typeof s.payment_totals_json === 'string'
+          ? JSON.parse(s.payment_totals_json) : s.payment_totals_json;
+        if (parsed) {
+          savedActuals   = parsed.actualsById || parsed.actuals || {};
+          savedBreakdown = parsed.breakdown || null;
+        }
+      }
+    } catch (_) {}
+    const norm = _normPM;
+    const methodsTable = agg.methods.map(m => {
+      let actual = null;
+      if (savedBreakdown) {
+        const b = savedBreakdown.find(x => String(x.id) === String(m.id));
+        if (b) actual = Number(b.actual) || 0;
+      }
+      if (actual == null && savedActuals[m.id] != null)         actual = Number(savedActuals[m.id]) || 0;
+      if (actual == null && savedActuals[String(m.id)] != null) actual = Number(savedActuals[String(m.id)]) || 0;
+      if (actual == null) {
+        const k = norm(m.name);
+        if (savedActuals[k] != null) actual = Number(savedActuals[k]) || 0;
+      }
+      if (actual == null) {
+        if (m.groupType === 'cash')                                          actual = Number(s.actual_cash) || 0;
+        else if (m.groupType === 'electronic' || m.groupType === 'card')    actual = Number(s.actual_card) || 0;
+        else if (m.groupType === 'voucher' || norm(m.name) === 'kita')      actual = Number(s.actual_kita) || 0;
+        else                                                                 actual = 0;
+      }
+      return { id: m.id, name: m.name, nameAr: m.nameAr, icon: m.icon, color: m.color,
+               groupType: m.groupType, expected: m.expectedAmount,
+               actual, variance: actual - m.expectedAmount, count: m.count };
+    });
+    let denominations = [];
+    try {
+      const [dr] = await db.query(
+        'SELECT denomination, kind, count FROM shift_close_denominations WHERE shift_id = ? ORDER BY denomination DESC',
+        [shiftId]
+      );
+      denominations = dr.map(d => ({ value: Number(d.denomination), kind: d.kind, count: Number(d.count) }));
+    } catch (_) {
+      try { if (s.denominations_json) denominations = JSON.parse(s.denominations_json); } catch (_) {}
+    }
+    const totalActual   = methodsTable.reduce((sum, m) => sum + m.actual,   0);
+    const totalExpected = methodsTable.reduce((sum, m) => sum + m.expected, 0);
+    const totalVariance = totalActual - totalExpected;
+
+    // Render the thermal HTML inline (mirror of POS-side printShiftThermalReport)
+    const fmt = v => Number(v || 0).toFixed(2);
+    const fmtDt = v => { try { return new Date(v).toLocaleString('ar-SA'); } catch(e) { return v || '—'; } };
+    const fmtDur = ms => {
+      if (!ms || ms < 0) return '—';
+      const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+      return (h > 0 ? h + 'س ' : '') + m + 'د';
+    };
+    const durationMs = (s.end_time && s.start_time) ? (new Date(s.end_time) - new Date(s.start_time)) : null;
+    const itemsCount = agg.soldItems.reduce((sum, i) => sum + (Number(i.qty) || 0), 0);
+    const denomsFiltered = denominations.filter(x => Number(x.count) > 0).sort((a, b) => Number(b.value) - Number(a.value));
+    const sumDenoms = denomsFiltered.reduce((sum, x) => sum + Number(x.value) * Number(x.count), 0);
+
+    function row(label, value, opts = {}) {
+      return `<div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;${opts.border?'border-bottom:1px dashed #999;':''}">
+                <span style="color:#000;${opts.bold?'font-weight:700;':''}">${label}</span>
+                <span style="color:#000;font-family:monospace;${opts.bold?'font-weight:800;':''}">${value}</span>
+              </div>`;
+    }
+
+    const headerHtml =
+      (companyLogo ? `<div style="text-align:center;margin-bottom:6px;"><img src="${companyLogo}" style="max-width:90px;max-height:90px;object-fit:contain;"></div>` : '') +
+      `<div style="text-align:center;font-size:13px;font-weight:700;direction:rtl;margin-bottom:1px;">المذاق المغربي</div>` +
+      `<div style="text-align:center;font-size:18px;font-weight:900;direction:ltr;margin-bottom:${branchCompanyName?'2':'6'}px;">${companyName}</div>` +
+      (branchCompanyName ? `<div style="text-align:center;font-size:12px;font-weight:700;color:#000;direction:rtl;margin-bottom:6px;border-bottom:1px solid #d4d4d4;padding-bottom:6px;">${branchCompanyName}</div>` : '') +
+      `<div style="text-align:center;font-size:11px;direction:rtl;margin-bottom:2px;">تقرير إقفال الوردية</div>` +
+      `<div style="text-align:center;font-size:10px;color:#444;margin-bottom:6px;">SHIFT CLOSING REPORT</div>` +
+      (taxNumber ? `<div style="text-align:center;font-size:10px;font-family:monospace;color:#444;margin-bottom:4px;">${taxNumber}</div>` : '') +
+      (branchName ? `<div style="text-align:center;font-size:11px;font-weight:700;direction:ltr;">${branchName.toUpperCase()}</div>` : '') +
+      (branchAddress ? `<div style="text-align:center;font-size:9px;color:#666;direction:rtl;margin-bottom:4px;">${branchAddress}</div>` : '');
+
+    const metaHtml = `<div style="border-top:1px dashed #000;border-bottom:1px dashed #000;padding:6px 0;margin:8px 0;">
+      ${row('رقم الوردية', s.id, { bold: true })}
+      ${row('الكاشير', `${cashierName}${cashierEmpNo && cashierEmpNo !== cashierName ? ' (' + cashierEmpNo + ')' : ''}`, { bold: true })}
+      ${row('وقت الفتح', fmtDt(s.start_time))}
+      ${row('وقت الإغلاق', fmtDt(s.end_time))}
+      ${row('مدة الوردية', fmtDur(durationMs))}
+      ${row('عدد الفواتير', String(agg.orderCount || 0), { bold: true })}
+      ${row('عدد الأصناف', String(itemsCount), { bold: true })}
+    </div>`;
+
+    let itemsHtml = `<div style="text-align:center;font-weight:800;font-size:11px;background:#000;color:#fff;padding:3px 6px;margin:8px 0 4px;">الأصناف المباعة | ITEMS SOLD</div>`;
+    if (!agg.soldItems.length) itemsHtml += `<div style="text-align:center;font-size:10px;color:#999;padding:6px;">— لا توجد أصناف —</div>`;
+    else {
+      itemsHtml += `<table style="width:100%;border-collapse:collapse;font-size:10.5px;">
+        <thead><tr style="border-bottom:1px solid #000;">
+          <th style="text-align:right;padding:3px 0;font-size:10px;">الصنف</th>
+          <th style="text-align:center;padding:3px 0;font-size:10px;">الكمية</th>
+          <th style="text-align:center;padding:3px 0;font-size:10px;">السعر</th>
+          <th style="text-align:left;padding:3px 0;font-size:10px;">الإجمالي</th>
+        </tr></thead><tbody>`;
+      agg.soldItems.forEach(it => {
+        itemsHtml += `<tr>
+          <td style="padding:2px 0;">${it.name || '—'}</td>
+          <td style="text-align:center;padding:2px 0;">${Number(it.qty) || 0}</td>
+          <td style="text-align:center;padding:2px 0;font-family:monospace;">${fmt(it.price)}</td>
+          <td style="text-align:left;padding:2px 0;font-family:monospace;font-weight:700;">${fmt(it.total)}</td>
+        </tr>`;
+      });
+      itemsHtml += `</tbody></table>`;
+    }
+
+    let denomsHtml = `<div style="text-align:center;font-weight:800;font-size:11px;background:#000;color:#fff;padding:3px 6px;margin:8px 0 4px;">فئات النقد | CASH BREAKDOWN</div>`;
+    if (!denomsFiltered.length) denomsHtml += `<div style="text-align:center;font-size:10px;color:#999;padding:6px;">— لم يُسجَّل نقد —</div>`;
+    else {
+      denomsHtml += `<table style="width:100%;border-collapse:collapse;font-size:10.5px;">`;
+      denomsFiltered.forEach(x => {
+        const subtotal = Number(x.value) * Number(x.count);
+        const faceLabel = Number(x.value) < 1 ? `${Number(x.value) * 100} هـ` : `${Number(x.value)} SAR`;
+        denomsHtml += `<tr>
+          <td style="padding:2px 0;font-weight:700;">${faceLabel}</td>
+          <td style="text-align:center;padding:2px 0;">×</td>
+          <td style="text-align:center;padding:2px 0;font-weight:700;">${Number(x.count)}</td>
+          <td style="text-align:center;padding:2px 0;">=</td>
+          <td style="text-align:left;padding:2px 0;font-family:monospace;font-weight:800;">${fmt(subtotal)}</td>
+        </tr>`;
+      });
+      denomsHtml += `</table>
+        <div style="border-top:1px dashed #000;margin-top:4px;padding-top:4px;font-size:11px;font-weight:800;display:flex;justify-content:space-between;">
+          <span>إجمالي النقد المعدود:</span>
+          <span style="font-family:monospace;">${fmt(sumDenoms)} ${currency}</span>
+        </div>`;
+    }
+
+    let methodsHtml = `<div style="text-align:center;font-weight:800;font-size:11px;background:#000;color:#fff;padding:3px 6px;margin:8px 0 4px;">تسوية طرق الدفع | PAYMENT RECONCILIATION</div>
+      <table style="width:100%;border-collapse:collapse;font-size:10.5px;">
+        <thead><tr style="border-bottom:1px solid #000;">
+          <th style="text-align:right;padding:3px 0;font-size:9.5px;">الطريقة</th>
+          <th style="text-align:center;padding:3px 0;font-size:9.5px;">المتوقع</th>
+          <th style="text-align:center;padding:3px 0;font-size:9.5px;">الفعلي</th>
+          <th style="text-align:left;padding:3px 0;font-size:9.5px;">الفرق</th>
+        </tr></thead><tbody>`;
+    methodsTable.forEach(m => {
+      const diffPrefix = m.variance > 0 ? '+' : '';
+      methodsHtml += `<tr>
+        <td style="padding:2px 0;font-weight:700;">${m.nameAr || m.name}</td>
+        <td style="text-align:center;padding:2px 0;font-family:monospace;">${fmt(m.expected)}</td>
+        <td style="text-align:center;padding:2px 0;font-family:monospace;font-weight:700;">${fmt(m.actual)}</td>
+        <td style="text-align:left;padding:2px 0;font-family:monospace;font-weight:800;">${diffPrefix}${fmt(m.variance)}</td>
+      </tr>`;
+    });
+    methodsHtml += `<tr style="border-top:1px solid #000;font-weight:900;">
+        <td style="padding:3px 0;">الإجمالي</td>
+        <td style="text-align:center;padding:3px 0;font-family:monospace;">${fmt(totalExpected)}</td>
+        <td style="text-align:center;padding:3px 0;font-family:monospace;">${fmt(totalActual)}</td>
+        <td style="text-align:left;padding:3px 0;font-family:monospace;">${totalVariance > 0 ? '+' : ''}${fmt(totalVariance)}</td>
+      </tr></tbody></table>`;
+
+    // V5.7.19 — offsetting-variances warning
+    const hasOffset = methodsTable.some(m => Math.abs(m.variance) > 0.01) && Math.abs(totalVariance) < 0.01;
+    if (hasOffset) {
+      methodsHtml += `<div style="margin-top:6px;padding:6px;border:2px dashed #d97706;background:#fef3c7;font-size:10px;text-align:center;color:#78350f;font-weight:700;">
+        ⚠ تنبيه: الإجمالي صفر لكن هناك فروقات متعارضة بين طرق الدفع — راجع التصنيف
+      </div>`;
+    }
+
+    const varianceLabel = Math.abs(totalVariance) < 0.01 ? 'متطابق ✓' : (totalVariance < 0 ? 'عجز' : 'زيادة');
+    const summaryHtml = `<div style="text-align:center;font-weight:800;font-size:11px;background:#000;color:#fff;padding:3px 6px;margin:8px 0 4px;">ملخص الإغلاق | SUMMARY</div>
+      <div style="border:1.5px solid #000;padding:6px 8px;margin:4px 0;">
+        ${row('الرصيد الافتتاحي', `${fmt(s.opening_float)} ${currency}`)}
+        ${row('إجمالي المبيعات (متوقع)', `${fmt(totalExpected)} ${currency}`, { bold: true })}
+        ${row('إجمالي الجرد الفعلي', `${fmt(totalActual)} ${currency}`, { bold: true })}
+        ${row(`الفرق (${varianceLabel})`, `${totalVariance > 0 ? '+' : ''}${fmt(totalVariance)} ${currency}`, { bold: true })}
+      </div>`;
+
+    const notesHtml = s.cashier_notes
+      ? `<div style="margin-top:8px;padding:6px;border:1px dashed #999;font-size:10px;direction:rtl;">
+           <div style="font-weight:700;margin-bottom:3px;">📝 ملاحظات:</div>
+           <div style="white-space:pre-wrap;">${s.cashier_notes}</div>
+         </div>`
+      : '';
+
+    const sigHtml = `<div style="margin-top:12px;display:flex;gap:6px;justify-content:space-between;">
+      <div style="flex:1;text-align:center;"><div style="border-top:1px solid #000;margin-top:24px;padding-top:3px;font-size:9.5px;font-weight:700;">المستلم</div></div>
+      <div style="flex:1;text-align:center;"><div style="border-top:1px solid #000;margin-top:24px;padding-top:3px;font-size:9.5px;font-weight:700;">${cashierName || s.username}</div></div>
+      <div style="flex:1;text-align:center;"><div style="border-top:1px solid #000;margin-top:24px;padding-top:3px;font-size:9.5px;font-weight:700;">الإدارة</div></div>
+    </div>`;
+
+    const footerHtml = `<div style="text-align:center;margin-top:8px;font-size:9px;color:#444;border-top:1px dashed #000;padding-top:4px;">
+      وثيقة موثّقة آلياً — Moroccan Taste POS<br>
+      طُبع: ${fmtDt(new Date())}
+      ${companyPhone ? `<br>Tel: ${companyPhone}` : ''}
+      ${companyEmail ? `<br>Email: ${companyEmail}` : ''}
+    </div>`;
+
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
+      <title>تقرير إقفال الوردية — ${s.id}</title>
+      <style>
+        *{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+        body{font-family:"Helvetica Neue",Arial,"Segoe UI",sans-serif;padding:10px;width:300px;margin:0 auto;font-size:12px;color:#000;background:#fff;}
+        table{border-collapse:collapse;}
+        @media print{@page{margin:0;size:80mm auto;}body{padding:4px;width:100%;}}
+      </style>
+      </head><body onload="setTimeout(()=>window.print(),400)">
+      ${headerHtml}${metaHtml}${itemsHtml}${denomsHtml}${methodsHtml}${summaryHtml}${notesHtml}${sigHtml}${footerHtml}
+      </body></html>`);
+  } catch (e) {
+    res.status(500).send('Error: ' + e.message);
   }
 });
 

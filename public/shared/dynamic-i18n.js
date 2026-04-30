@@ -406,4 +406,52 @@
 
   global.DynamicI18N = DynamicI18N;
 
+  // ────────────────────────────────────────────────────────────
+  // V5.7.19 — Aggressive helper for <select><option> elements.
+  //   Browsers don't always redraw the closed select after we mutate
+  //   option text-nodes. This walks every option, updates its .text,
+  //   and forces a redraw by toggling visibility briefly.
+  // ────────────────────────────────────────────────────────────
+  global.translateSelectsNow = function(targetLang, root) {
+    if (!targetLang || targetLang !== 'en') return;
+    if (typeof DynamicI18N === 'undefined') return;
+    root = root || document.body;
+    var selects = (root.tagName === 'SELECT') ? [root] : Array.prototype.slice.call(root.querySelectorAll('select'));
+    if (!selects.length) return;
+    selects.forEach(function(sel) {
+      var options = Array.prototype.slice.call(sel.options || []);
+      options.forEach(function(opt) {
+        var orig = opt.dataset._origText;
+        if (orig == null) {
+          orig = opt.text || opt.textContent || '';
+          opt.dataset._origText = orig;
+        }
+        if (!ARABIC_RE.test(orig)) return;
+        DynamicI18N.translate(orig, targetLang).then(function(translated) {
+          if (translated && translated !== opt.text) {
+            try {
+              opt.text = translated;          // sets the visible label
+              opt.textContent = translated;   // sets innerText (some browsers)
+            } catch (_) {}
+          }
+        }).catch(function(){});
+      });
+    });
+  };
+
+  // Restore original option text on switch back to Arabic
+  var _origRestore = DynamicI18N.restoreOriginal;
+  DynamicI18N.restoreOriginal = function(root) {
+    if (typeof _origRestore === 'function') _origRestore.call(DynamicI18N, root);
+    var r = root || document.body;
+    var sels = (r.tagName === 'SELECT') ? [r] : Array.prototype.slice.call(r.querySelectorAll('select'));
+    sels.forEach(function(sel) {
+      Array.prototype.slice.call(sel.options || []).forEach(function(opt) {
+        if (opt.dataset && opt.dataset._origText != null) {
+          try { opt.text = opt.dataset._origText; opt.textContent = opt.dataset._origText; } catch (_) {}
+        }
+      });
+    });
+  };
+
 })(window);

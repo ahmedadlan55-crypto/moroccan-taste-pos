@@ -8103,9 +8103,30 @@ function renderShiftsTable(list) {
     var aCash=Number(s.actualCash)||0, aCard=Number(s.actualCard)||0, aKita=Number(s.actualKita)||0;
     var tTheo=thCash+thCard+thKita, tAct=aCash+aCard+aKita, tDiff=tAct-tTheo;
     var dCash=aCash-thCash, dCard=aCard-thCard, dKita=aKita-thKita;
-    var dc=function(v){return v===0?'#64748b':(v>0?'#16a34a':'#ef4444');};
+    var dc=function(v){return Math.abs(v)<0.01?'#64748b':(v>0?'#16a34a':'#ef4444');};
     var fs=function(v){return (v>0?'+':'')+formatVal(v);};
-    var diffBadge = tDiff===0?'<span class="badge green">متطابق</span>':(tDiff>0?'<span class="badge" style="background:#dcfce7;color:#166534;">+'+formatVal(tDiff)+'</span>':'<span class="badge red">'+formatVal(tDiff)+'</span>');
+
+    // V5.7.19 — Smarter "Diff" badge that surfaces OFFSETTING variances:
+    //   when net diff ≈ 0 BUT one or more methods have non-zero diffs,
+    //   show a yellow "متعارض" (offsetting) badge instead of the green
+    //   "متطابق" — because internally the cashier mis-classified payments.
+    //   Click the badge to see the per-method breakdown in a tooltip.
+    var hasOffsetting = (Math.abs(dCash) > 0.01 || Math.abs(dCard) > 0.01 || Math.abs(dKita) > 0.01)
+                        && Math.abs(tDiff) < 0.01;
+    var diffBadge;
+    var pmTooltip = 'كاش: ' + fs(dCash) + ' | شبكة: ' + fs(dCard) + ' | كيتا: ' + fs(dKita);
+    if (Math.abs(tDiff) < 0.01) {
+      if (hasOffsetting) {
+        diffBadge = '<span class="badge" style="background:#fef3c7;color:#92400e;cursor:help;border:1px solid #fcd34d;" title="' + pmTooltip + '">⚠ متعارض</span>';
+      } else {
+        diffBadge = '<span class="badge green" title="' + pmTooltip + '">متطابق ✓</span>';
+      }
+    } else if (tDiff > 0) {
+      diffBadge = '<span class="badge" style="background:#dcfce7;color:#166534;cursor:help;" title="' + pmTooltip + '">+' + formatVal(tDiff) + ' زيادة</span>';
+    } else {
+      diffBadge = '<span class="badge red" style="cursor:help;" title="' + pmTooltip + '">' + formatVal(tDiff) + ' عجز</span>';
+    }
+
     var empName = s.displayName || (state.userDisplayMap && state.userDisplayMap[s.username]) || s.username;
     var geoHtml = s.geoAddress ? '<div style="font-size:10px;color:#64748b;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+s.geoAddress+'"><i class="fas fa-map-marker-alt" style="color:#ef4444;margin-left:3px;"></i>'+s.geoAddress+'</div>' : '<span style="font-size:10px;color:#cbd5e1;">—</span>';
     var devHtml = s.deviceInfo ? '<span style="font-size:10px;color:#64748b;" title="'+s.deviceInfo+'"><i class="fas fa-mobile-alt" style="color:#3b82f6;margin-left:3px;"></i>'+s.deviceInfo+'</span>' : '';
@@ -8122,7 +8143,9 @@ function renderShiftsTable(list) {
       '<td style="color:'+dc(dCard)+';font-weight:600;font-size:12px;">'+fs(dCard)+'</td>'+
       '<td style="color:'+dc(dKita)+';font-weight:600;font-size:12px;">'+fs(dKita)+'</td>'+
       '<td style="white-space:nowrap;">' +
-        '<button class="btn btn-sm btn-primary" onclick=\'reprintShift('+JSON.stringify(s).replace(/'/g,"&#39;")+')\' title="طباعة"><i class="fas fa-print"></i></button> ' +
+        // V5.7.19 — print button now opens the new world-class thermal report
+        '<button class="btn btn-sm btn-primary" onclick="window.open(\'/api/shifts/' + s.id + '/full-report-print\', \'_blank\')" title="طباعة التقرير الحراري"><i class="fas fa-print"></i></button> ' +
+        '<button class="btn btn-sm btn-light" onclick=\'reprintShift('+JSON.stringify(s).replace(/'/g,"&#39;")+')\' title="تقرير A4"><i class="fas fa-file-pdf"></i></button> ' +
         '<button class="btn btn-sm btn-danger" onclick="delShiftFn(\''+s.id+'\',\''+(s.username||'').replace(/[\'"]/g,'')+'\')" title="حذف المناوبة"><i class="fas fa-trash"></i></button>' +
       '</td>'+
     '</tr>';

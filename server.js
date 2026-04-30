@@ -98,6 +98,8 @@ app.use('/api/', function(req, res, next) {
   if (p.startsWith('/hr/leave-types')) return next();  // leave types list
   if (p.startsWith('/hr/departments')) return next();  // departments list
   if (p.startsWith('/i18n/')) return next();           // V5.7.13 — translation proxy (login pages too)
+  // V5.7.19 — printable shift report (opened in a new tab without JS auth headers)
+  if (/^\/shifts\/[^\/]+\/full-report-print$/.test(p)) return next();
 
   // Try to extract and verify JWT token
   var authHeader = req.headers['authorization'];

@@ -478,6 +478,12 @@ window.translateNow = function(root) {
   // Small delay so the freshly-rendered DOM is fully attached before walk
   setTimeout(function() {
     DynamicI18N.translatePage('en', { root: root || document.body }).catch(function(){});
+    // V5.7.19 — also run the aggressive <select><option> updater because
+    //   browsers cache the closed-select display text and DOM mutations
+    //   alone don't always cause a redraw.
+    if (typeof window.translateSelectsNow === 'function') {
+      window.translateSelectsNow('en', root || document.body);
+    }
   }, 30);
 };
 

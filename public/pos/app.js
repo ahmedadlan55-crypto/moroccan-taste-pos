@@ -3087,6 +3087,14 @@ function _renderShiftThermalReport(d) {
                      '⚠ مبلغ غير مصنّف: ' + fmt(f.unmatched) +
                    '</div>';
   }
+  // V5.7.19 — offsetting-variances warning (same logic as admin shifts list)
+  var hasOffset = methods.some(function(m) { return Math.abs(m.variance) > 0.01; })
+                  && Math.abs(f.variance) < 0.01;
+  if (hasOffset) {
+    methodsHtml += '<div style="margin-top:6px;padding:6px;border:2px dashed #d97706;background:#fef3c7;font-size:10px;text-align:center;color:#78350f;font-weight:700;">' +
+                     '⚠ تنبيه: الإجمالي صفر لكن هناك فروقات متعارضة بين طرق الدفع — راجع التصنيف' +
+                   '</div>';
+  }
 
   // Section: Variance summary box
   var varianceLabel = Math.abs(f.variance) < 0.01 ? 'متطابق' : (f.variance < 0 ? 'عجز' : 'زيادة');

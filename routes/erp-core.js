@@ -2504,12 +2504,25 @@ router.get('/accounting-dimensions/summary', async (req, res) => {
             active = Number((ac[0]||{}).c) || 0;
           } catch(_) {}
         }
-        // Sample 5 most recent items
+        // Sample 5 most recent items — tolerant to missing columns
         let samples = [];
         try {
           const [s] = await db.query(`SELECT ${d.selectFields} FROM ${d.table} ORDER BY ${d.codeField||'id'} LIMIT 5`);
           samples = s;
-        } catch(_) {}
+        } catch(_) {
+          // Fallback: discover available columns then re-query with safe subset
+          try {
+            const [cols] = await db.query(`SHOW COLUMNS FROM ${d.table}`);
+            const colNames = cols.map(c => c.Field || c.field);
+            const safe = ['id','code','name','title','type','status','is_active','active']
+              .filter(c => colNames.includes(c));
+            if (safe.length) {
+              const ord = colNames.includes(d.codeField) ? d.codeField : 'id';
+              const [s2] = await db.query(`SELECT ${safe.join(',')} FROM ${d.table} ORDER BY ${ord} LIMIT 5`);
+              samples = s2;
+            }
+          } catch(_e2) {}
+        }
         out.dimensions.push({
           key: d.key,
           label: d.label,
@@ -2553,6 +2566,8 @@ router.get('/accounting-dimensions/summary', async (req, res) => {
 // GET /api/erp/accounting-dimensions/:key — full list of items for one dimension
 //   ?q=search   — name/code filter
 //   ?status=    — active|inactive|all (default all)
+// V5.7.7-fix: tolerant to missing columns — falls back to only safe fields
+//             (id, code, name) if the rich SELECT fails.
 router.get('/accounting-dimensions/:key', async (req, res) => {
   try {
     const def = _DIMENSIONS.find(d => d.key === req.params.key);
@@ -2572,9 +2587,30 @@ router.get('/accounting-dimensions/:key', async (req, res) => {
       else if (def.activeFilter) conds.push(`NOT (${def.activeFilter})`);
     }
     const where = conds.length ? 'WHERE '+conds.join(' AND ') : '';
-    const [rows] = await db.query(
-      `SELECT ${def.selectFields} FROM ${def.table} ${where} ORDER BY ${def.codeField||'id'} LIMIT 1000`,
-      params);
+    const orderBy = def.codeField || 'id';
+    let rows;
+    try {
+      [rows] = await db.query(
+        `SELECT ${def.selectFields} FROM ${def.table} ${where} ORDER BY ${orderBy} LIMIT 1000`,
+        params);
+    } catch(_e) {
+      // Some columns missing on this deploy — fall back to discovering actual columns.
+      try {
+        const [cols] = await db.query(`SHOW COLUMNS FROM ${def.table}`);
+        const colNames = cols.map(c => c.Field || c.field);
+        // Pick a safe subset based on what exists
+        const safe = ['id','code','name','name_en','title','type','status','is_active','active','branch_id','brand_id','department_id','position_id','color','city','phone','manager_name']
+          .filter(c => colNames.includes(c));
+        if (!safe.length) throw new Error('no usable columns');
+        const orderCol = colNames.includes(def.codeField) ? def.codeField : 'id';
+        [rows] = await db.query(
+          `SELECT ${safe.join(',')} FROM ${def.table} ${where} ORDER BY ${orderCol} LIMIT 1000`,
+          params);
+      } catch(_e2) {
+        return res.json({ key: def.key, label: def.label, total: 0, items: [],
+          warning: 'تعذّر قراءة بعض الأعمدة — قد يكون الجدول بصيغة قديمة' });
+      }
+    }
     res.json({
       key: def.key, label: def.label, total: rows.length,
       items: rows

@@ -902,13 +902,10 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
         <td style="text-align:left;padding:3px 0;font-family:monospace;">${totalVariance > 0 ? '+' : ''}${fmt(totalVariance)}</td>
       </tr></tbody></table>`;
 
-    // V5.7.19 — offsetting-variances warning
-    const hasOffset = methodsTable.some(m => Math.abs(m.variance) > 0.01) && Math.abs(totalVariance) < 0.01;
-    if (hasOffset) {
-      methodsHtml += `<div style="margin-top:6px;padding:6px;border:2px dashed #d97706;background:#fef3c7;font-size:10px;text-align:center;color:#78350f;font-weight:700;">
-        ⚠ تنبيه: الإجمالي صفر لكن هناك فروقات متعارضة بين طرق الدفع — راجع التصنيف
-      </div>`;
-    }
+    // V5.7.21 — offsetting-variances warning REMOVED per user direction:
+    //   when net = 0, the report reads "balanced" regardless of
+    //   per-method offsetting diffs. Per-method numbers are still in
+    //   the table above for transparency.
 
     const varianceLabel = Math.abs(totalVariance) < 0.01 ? 'متطابق ✓' : (totalVariance < 0 ? 'عجز' : 'زيادة');
     const summaryHtml = `<div style="text-align:center;font-weight:800;font-size:11px;background:#000;color:#fff;padding:3px 6px;margin:8px 0 4px;">ملخص الإغلاق | SUMMARY</div>
@@ -939,17 +936,38 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
       ${companyEmail ? `<br>Email: ${companyEmail}` : ''}
     </div>`;
 
+    // V5.7.21 — read user's language from query param OR cookie OR
+    //   fallback to ar. Embed the translator so English mode flips
+    //   labels before window.print() runs.
+    const userLang = (req.query.lang === 'en' || req.query.lang === 'ar') ? req.query.lang : 'ar';
+    const dirAttr = userLang === 'en' ? 'ltr' : 'rtl';
     res.set('Content-Type', 'text/html; charset=utf-8');
-    res.send(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
-      <title>تقرير إقفال الوردية — ${s.id}</title>
+    res.send(`<!DOCTYPE html><html lang="${userLang}" dir="${dirAttr}"><head><meta charset="UTF-8">
+      <title>Shift Report — ${s.id}</title>
       <style>
         *{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
         body{font-family:"Helvetica Neue",Arial,"Segoe UI",sans-serif;padding:10px;width:300px;margin:0 auto;font-size:12px;color:#000;background:#fff;}
         table{border-collapse:collapse;}
         @media print{@page{margin:0;size:80mm auto;}body{padding:4px;width:100%;}}
       </style>
-      </head><body onload="setTimeout(()=>window.print(),400)">
+      <script src="/shared/dynamic-i18n.js?v=2"></script>
+      </head><body>
       ${headerHtml}${metaHtml}${itemsHtml}${denomsHtml}${methodsHtml}${summaryHtml}${notesHtml}${sigHtml}${footerHtml}
+      <script>(function(){
+        try {
+          // V5.7.21 — same lang-aware print-trigger as the POS-side window
+          var saved = '';
+          try { saved = localStorage.getItem('pos_lang') || localStorage.getItem('emp_lang') || ''; } catch(e){}
+          var lang = ${JSON.stringify(userLang)} || saved || 'ar';
+          if (lang === 'en' && window.DynamicI18N) {
+            window.DynamicI18N.translatePage('en').then(function(){
+              setTimeout(function(){ window.print(); }, 300);
+            }).catch(function(){ setTimeout(function(){ window.print(); }, 500); });
+          } else {
+            setTimeout(function(){ window.print(); }, 400);
+          }
+        } catch(e) { setTimeout(function(){ window.print(); }, 400); }
+      })();<\/script>
       </body></html>`);
   } catch (e) {
     res.status(500).send('Error: ' + e.message);

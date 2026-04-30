@@ -3096,14 +3096,9 @@ function _renderShiftThermalReport(d) {
                      '⚠ مبلغ غير مصنّف: ' + fmt(f.unmatched) +
                    '</div>';
   }
-  // V5.7.19 — offsetting-variances warning (same logic as admin shifts list)
-  var hasOffset = methods.some(function(m) { return Math.abs(m.variance) > 0.01; })
-                  && Math.abs(f.variance) < 0.01;
-  if (hasOffset) {
-    methodsHtml += '<div style="margin-top:6px;padding:6px;border:2px dashed #d97706;background:#fef3c7;font-size:10px;text-align:center;color:#78350f;font-weight:700;">' +
-                     '⚠ تنبيه: الإجمالي صفر لكن هناك فروقات متعارضة بين طرق الدفع — راجع التصنيف' +
-                   '</div>';
-  }
+  // V5.7.21 — per user direction: when net = 0, the report says "balanced"
+  //   regardless of per-method offsetting diffs. The offsetting warning
+  //   was removed; per-method numbers remain visible in the table above.
 
   // Section: Variance summary box
   var varianceLabel = Math.abs(f.variance) < 0.01 ? 'متطابق' : (f.variance < 0 ? 'عجز' : 'زيادة');
@@ -3148,23 +3143,48 @@ function _renderShiftThermalReport(d) {
       (c.email ? '<br>Email: ' + c.email : '') +
     '</div>';
 
+  // V5.7.21 — read user language from localStorage so the print window
+  //   matches the cashier's selection. Embed the translator script so
+  //   English mode can flip every Arabic label before window.print().
+  var userLang = 'ar';
+  try {
+    userLang = localStorage.getItem('pos_lang') || localStorage.getItem('emp_lang') || 'ar';
+  } catch (e) {}
+  var dirAttr = userLang === 'en' ? 'ltr' : 'rtl';
+
   // Combine + open print window
   var w = window.open('', '_blank', 'width=380,height=900');
   if (!w) return glassToast('السماح للنوافذ المنبثقة مطلوب', true);
   w.document.write(
-    '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">' +
-    '<title>تقرير إقفال الوردية — ' + d.shiftId + '</title>' +
+    '<!DOCTYPE html><html lang="' + userLang + '" dir="' + dirAttr + '"><head><meta charset="UTF-8">' +
+    '<title>Shift Report — ' + d.shiftId + '</title>' +
     '<style>' +
       '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}' +
       'body{font-family:"Helvetica Neue",Arial,"Segoe UI",sans-serif;padding:10px;width:300px;margin:0 auto;font-size:12px;color:#000;background:#fff;}' +
       'table{border-collapse:collapse;}' +
       '@media print{@page{margin:0;size:80mm auto;}body{padding:4px;width:100%;}}' +
-    '</style></head><body>' +
+    '</style>' +
+    // V5.7.21 — embed the translator so the new window can flip Arabic
+    //   labels to English before printing (same /api/i18n/translate
+    //   proxy backed by Google Translate, with localStorage cache).
+    '<script src="/shared/dynamic-i18n.js?v=2"></script>' +
+    '</head><body>' +
     headerHtml + metaHtml + itemsHtml + denomsHtml + methodsHtml + varianceHtml + notesHtml + sigHtml + footerHtml +
+    '<script>(function(){' +
+      'try {' +
+        'var lang = ' + JSON.stringify(userLang) + ';' +
+        'if (lang === "en" && window.DynamicI18N) {' +
+          'window.DynamicI18N.translatePage("en").then(function(){' +
+            'setTimeout(function(){ window.print(); }, 300);' +
+          '}).catch(function(){ setTimeout(function(){ window.print(); }, 500); });' +
+        '} else {' +
+          'setTimeout(function(){ window.print(); }, 400);' +
+        '}' +
+      '} catch(e) { setTimeout(function(){ window.print(); }, 400); }' +
+    '})();<\/script>' +
     '</body></html>'
   );
   w.document.close();
-  setTimeout(function() { w.print(); }, 600);
 }
 
 window.scV3ConfirmClose = function() {

@@ -8230,21 +8230,14 @@ function renderShiftsTable(list) {
     var dc=function(v){return Math.abs(v)<0.01?'#64748b':(v>0?'#16a34a':'#ef4444');};
     var fs=function(v){return (v>0?'+':'')+formatVal(v);};
 
-    // V5.7.19 — Smarter "Diff" badge that surfaces OFFSETTING variances:
-    //   when net diff ≈ 0 BUT one or more methods have non-zero diffs,
-    //   show a yellow "متعارض" (offsetting) badge instead of the green
-    //   "متطابق" — because internally the cashier mis-classified payments.
-    //   Click the badge to see the per-method breakdown in a tooltip.
-    var hasOffsetting = (Math.abs(dCash) > 0.01 || Math.abs(dCard) > 0.01 || Math.abs(dKita) > 0.01)
-                        && Math.abs(tDiff) < 0.01;
+    // V5.7.21 — Per user direction: when NET diff is balanced (≈0), ALWAYS
+    //   show "متطابق" green even if individual methods have offsetting
+    //   diffs (Cash +31 / Mada -31). The per-method columns are still
+    //   shown next to the badge so the breakdown remains visible.
     var diffBadge;
     var pmTooltip = 'كاش: ' + fs(dCash) + ' | شبكة: ' + fs(dCard) + ' | كيتا: ' + fs(dKita);
     if (Math.abs(tDiff) < 0.01) {
-      if (hasOffsetting) {
-        diffBadge = '<span class="badge" style="background:#fef3c7;color:#92400e;cursor:help;border:1px solid #fcd34d;" title="' + pmTooltip + '">⚠ متعارض</span>';
-      } else {
-        diffBadge = '<span class="badge green" title="' + pmTooltip + '">متطابق ✓</span>';
-      }
+      diffBadge = '<span class="badge green" title="' + pmTooltip + '">متطابق ✓</span>';
     } else if (tDiff > 0) {
       diffBadge = '<span class="badge" style="background:#dcfce7;color:#166534;cursor:help;" title="' + pmTooltip + '">+' + formatVal(tDiff) + ' زيادة</span>';
     } else {
@@ -8267,8 +8260,10 @@ function renderShiftsTable(list) {
       '<td style="color:'+dc(dCard)+';font-weight:600;font-size:12px;">'+fs(dCard)+'</td>'+
       '<td style="color:'+dc(dKita)+';font-weight:600;font-size:12px;">'+fs(dKita)+'</td>'+
       '<td style="white-space:nowrap;">' +
-        // V5.7.19 — print button now opens the new world-class thermal report
-        '<button class="btn btn-sm btn-primary" onclick="window.open(\'/api/shifts/' + s.id + '/full-report-print\', \'_blank\')" title="طباعة التقرير الحراري"><i class="fas fa-print"></i></button> ' +
+        // V5.7.19/.21 — print button opens the world-class thermal report.
+        //   V5.7.21: pass the user's selected language as ?lang=en|ar so the
+        //   new tab translates labels before printing.
+        '<button class="btn btn-sm btn-primary" onclick="window.open(\'/api/shifts/' + s.id + '/full-report-print?lang=\' + (state.lang||\'ar\'), \'_blank\')" title="طباعة التقرير الحراري"><i class="fas fa-print"></i></button> ' +
         '<button class="btn btn-sm btn-light" onclick=\'reprintShift('+JSON.stringify(s).replace(/'/g,"&#39;")+')\' title="تقرير A4"><i class="fas fa-file-pdf"></i></button> ' +
         '<button class="btn btn-sm btn-danger" onclick="delShiftFn(\''+s.id+'\',\''+(s.username||'').replace(/[\'"]/g,'')+'\')" title="حذف المناوبة"><i class="fas fa-trash"></i></button>' +
       '</td>'+

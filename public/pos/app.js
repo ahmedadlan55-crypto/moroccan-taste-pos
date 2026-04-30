@@ -320,12 +320,20 @@ window.updateCart = function() {
   var finalTotal = afterDiscount;
   var feeRow = q('#serviceFeeRow');
   var feeInput = q('#serviceFeeInput');
+  // V5.7.11 — service fee is now PURELY data-driven. We no longer hardcode
+  //   "Cash and Card never have fees" — that broke when admins added a new
+  //   method (e.g. مدي) which then incorrectly showed a 0% fee row, making
+  //   users think fees were being charged.
+  // Rule:
+  //   • Look up the selected method in state.paymentMethods
+  //   • feeRate = method.ServiceFeeRate  (Kita falls back to legacy state.kitaFeeRate)
+  //   • Show the fee row ONLY IF: (rate > 0) OR (method is Split, which has manual fee input)
   var selectedPM = (state.paymentMethods || []).find(function(m) { return m.Name === payMethod; });
   var feeRate = selectedPM ? Number(selectedPM.ServiceFeeRate) || 0 : (payMethod === 'Kita' ? state.kitaFeeRate : 0);
-  var showFee = payMethod !== 'Split' && payMethod !== 'Cash' && payMethod !== 'Card';
+  var manualFee = feeInput ? Number(feeInput.value) : 0;
+  var showFee = (feeRate > 0) || (manualFee > 0) || payMethod === 'Split';
 
   if (showFee) {
-    var manualFee = feeInput ? Number(feeInput.value) : 0;
     if (manualFee > 0) {
       serviceFee = manualFee;
     } else if (feeRate > 0) {
@@ -506,6 +514,7 @@ window.doCheckout = function() {
 
   var serviceFee = 0;
   var totalFinal = afterDiscount;
+  // V5.7.11 — same dynamic logic as updateCart (no hardcoded Cash/Card exclusion)
   var selectedPM = (state.paymentMethods || []).find(function(m) { return m.Name === payMethod; });
   var feeRate = selectedPM ? Number(selectedPM.ServiceFeeRate) || 0 : (payMethod === 'Kita' ? state.kitaFeeRate : 0);
   var feeInput = q('#serviceFeeInput');
@@ -530,7 +539,10 @@ window.doCheckout = function() {
   } else if (manualFee > 0) {
     serviceFee = manualFee;
     totalFinal = afterDiscount + serviceFee;
-  } else if (feeRate > 0 && payMethod !== 'Cash' && payMethod !== 'Card') {
+  } else if (feeRate > 0) {
+    // V5.7.11 — fee charged whenever method has a configured rate; no
+    //           hardcoded Cash/Card exception (admins control rates from
+    //           the dedicated payment-methods admin section).
     serviceFee = afterDiscount * (feeRate / 100);
     totalFinal = afterDiscount + serviceFee;
   }
@@ -2411,27 +2423,20 @@ function _posRenderChannelSelector() {
   }).join('');
 }
 
+// V5.7.11 — Switching channels NEVER clears the cart.
+//   Old behavior: confirm + wipe cart (to "prevent price mixing").
+//   New behavior: silently load the new price list and re-stamp each
+//   cart line's unit price from the new channel. This matches how the
+//   user thinks: "I changed the channel; the same items should now show
+//   the new channel's prices, not vanish."
 window.posSetChannel = function(channelId) {
   var ch = state.channels.find(function(c){ return c.id === channelId; });
   if (!ch) return;
-  if (state.cart.length && state.activeChannel && state.activeChannel.id !== channelId) {
-    glassConfirm('تغيير القناة', 'تغيير القناة سيُفرغ السلة الحالية (لمنع خلط الأسعار). هل تتابع؟', { okText: 'نعم، أفرغ السلة', danger: true }).then(function(ok){
-      if (!ok) {
-        var sel = q('#posChannelSel');
-        if (sel && state.activeChannel) sel.value = state.activeChannel.id;
-        return;
-      }
-      state.cart = [];
-      state.lineDiscounts = {};
-      state.currentDiscount = { name:'', amount:0 };
-      _doSetChannel(ch);
-    });
-  } else {
-    _doSetChannel(ch);
-  }
+  _doSetChannel(ch);
 };
 
 function _doSetChannel(ch) {
+  var isSwitch = state.activeChannel && state.activeChannel.id !== ch.id;
   state.activeChannel = ch;
   localStorage.setItem('pos_active_channel_id', ch.id);
   var label = q('#posChannelPriceLabel');
@@ -2443,7 +2448,7 @@ function _doSetChannel(ch) {
   var sel = q('#posChannelSel');
   if (sel) sel.value = ch.id;
 
-  // Load price list items for this channel (override menu prices)
+  // Load price list items for this channel (override menu prices + cart prices)
   if (ch.priceListId) {
     _posCallAPI('GET', '/erp/price-lists/' + ch.priceListId + '/items', null, function(rows) {
       state.channelPriceMap = {};
@@ -2451,10 +2456,16 @@ function _doSetChannel(ch) {
         state.channelPriceMap[r.itemId || r.item_id] = Number(r.price || 0);
       });
       _posApplyChannelPrices();
+      if (isSwitch && state.cart && state.cart.length && typeof glassToast === 'function') {
+        glassToast('تم تحديث أسعار السلة لقناة: ' + (ch.name || ''), false);
+      }
     });
   } else {
     state.channelPriceMap = {};
     _posApplyChannelPrices();
+    if (isSwitch && state.cart && state.cart.length && typeof glassToast === 'function') {
+      glassToast('تم تحديث أسعار السلة لقناة: ' + (ch.name || ''), false);
+    }
   }
 }
 
@@ -2468,6 +2479,22 @@ function _posApplyChannelPrices() {
     } else {
       m.price = m._origPrice;
     }
+  });
+  // V5.7.11 — also re-stamp every existing cart-line's unit price from the
+  // new channel's price list. Match by id first (canonical), fall back to
+  // name when the cart line was added before menu sync.
+  (state.cart || []).forEach(function(line) {
+    var newPrice = null;
+    if (state.channelPriceMap && line.id != null && state.channelPriceMap[line.id] != null) {
+      newPrice = Number(state.channelPriceMap[line.id]);
+    }
+    if (newPrice == null) {
+      var menuItem = (state.menu || []).find(function(m) {
+        return (line.id != null && m.id === line.id) || (line.name && m.name === line.name);
+      });
+      if (menuItem) newPrice = Number(menuItem.price || 0);
+    }
+    if (newPrice != null && !isNaN(newPrice)) line.price = newPrice;
   });
   if (typeof renderMenuGrid === 'function') renderMenuGrid();
   if (typeof updateCart === 'function') updateCart();

@@ -38,7 +38,9 @@ document.addEventListener('DOMContentLoaded', function() {
     if (state.settings.logo) {
       q('#setLogoPreview').innerHTML = '<img src="' + state.settings.logo + '" alt="logo">';
     }
-    renderPaymentMethods();
+    // V5.7.11 — payment-methods UI moved to dedicated admin section.
+    //           Skip its render call when its host element no longer exists.
+    if (q('#payMethodsSettings')) renderPaymentMethods();
     renderHeader('settings');
     applyDeveloperVisibility();
   }).withFailureHandler(function(err) {
@@ -195,32 +197,39 @@ window.saveAllSettings = function() {
     };
   });
 
+  // V5.7.11 — payment-methods UI moved to dedicated admin section.
+  //           If the legacy DOM block is gone, just save branding + contact
+  //           and skip the methods round-trip entirely.
+  var hasMethodsUI = !!q('#payMethodsSettings');
+
   loader(true);
-  // 1) Save company branding
+  // 1) Save company branding (always)
   api.withFailureHandler(function(err) { loader(false); showToast(err.message, true); })
     .withSuccessHandler(function() {
-      // 2) Save payment methods
+      function finishBranding() {
+        loader(false);
+        state.settings.name = name;
+        state.settings.taxNumber = taxNum;
+        state.settings.companyPhone = phone;
+        state.settings.companyEmail = email;
+        showToast('تم حفظ الإعدادات بنجاح');
+        try { localStorage.setItem('pos_branding', JSON.stringify({ name: name, logo: logo })); } catch (e) {}
+        renderHeader('settings');
+      }
+      if (!hasMethodsUI) { finishBranding(); return; }
+
+      // 2) Legacy path: also save payment methods (only if the DOM section still exists)
       api.withFailureHandler(function(err) { loader(false); showToast(err.message, true); })
         .withSuccessHandler(function() {
           // 3) Re-fetch fresh methods so newly inserted rows pick up their auto-increment IDs
           api.withSuccessHandler(function(fresh) {
-            loader(false);
             state.paymentMethods = fresh || methods;
-            state.settings.name = name;
-            state.settings.taxNumber = taxNum;
-            // V5.7.9 — also cache the new contact fields locally so a page reload
-            //          before re-bootstrap still shows the fresh values.
-            state.settings.companyPhone = phone;
-            state.settings.companyEmail = email;
             renderPaymentMethods();
-            showToast('تم حفظ جميع الإعدادات بنجاح');
-            // Cache branding for fast paint next time
-            try { localStorage.setItem('pos_branding', JSON.stringify({ name: name, logo: logo })); } catch (e) {}
-            renderHeader('settings');
+            finishBranding();
           }).withFailureHandler(function() {
-            loader(false);
             state.paymentMethods = methods;
             renderPaymentMethods();
+            finishBranding();
           }).getPaymentMethods();
         }).savePaymentMethods(methods);
     }).updateCompanySettings({

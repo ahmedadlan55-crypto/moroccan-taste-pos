@@ -99,14 +99,28 @@
       <small style="color:#94a3b8;font-size:11px;display:block;margin-top:-4px;"><i class="fas fa-info-circle"></i> يظهران أسفل كل فاتورة مطبوعة.</small>
     </div>
 
-    <!-- ─── Payment methods card ─── -->
-    <div class="page-card">
-      <h3 class="card-title"><i class="fas fa-credit-card"></i> طرق الدفع</h3>
-      <p class="card-hint">تفعيل/تعطيل طرق الدفع وتحديد رسوم الخدمة لكل طريقة. الحذف يُحدِّث السلة فوراً.</p>
-      <div id="payMethodsSettings"></div>
-      <button class="btn btn-primary" style="width:100%;margin-top:10px;" onclick="addNewPaymentMethod()">
-        <i class="fas fa-plus"></i> إضافة طريقة دفع جديدة
-      </button>
+    <!-- V5.7.11 — Payment-methods management moved to the dedicated admin
+         section "إدارة الدفع والقنوات" (Admin sidebar → طرق الدفع).
+         That screen has the full editor (V3): name, name_ar, icon, color,
+         GL account, cost center, group type, fee type/value, advanced
+         flags, and dynamic add/remove. Keeping the simple list here would
+         duplicate state and sometimes desync with the V3 admin. Replaced
+         with a clean redirect card. -->
+    <div class="page-card" style="background:linear-gradient(135deg,#eff6ff,#f0fdf4);border:1px solid #bfdbfe;">
+      <h3 class="card-title"><i class="fas fa-credit-card" style="color:#2563eb;"></i> طرق الدفع والقنوات</h3>
+      <p class="card-hint">تمت ترقية إدارة طرق الدفع إلى قسم متخصص يحتوي على إعدادات أعمق (الحساب المحاسبي، مركز التكلفة، رسوم ثابتة/نسبية، نوع المجموعة، إلخ).</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
+        <a class="btn btn-primary" href="/#admin?nav=erpPaymentMethodsV3" style="flex:1;min-width:200px;text-decoration:none;text-align:center;">
+          <i class="fas fa-wallet"></i> إدارة طرق الدفع المتقدمة
+        </a>
+        <a class="btn btn-light" href="/#admin?nav=erpSalesChannels" style="flex:1;min-width:200px;text-decoration:none;text-align:center;">
+          <i class="fas fa-store"></i> قنوات البيع
+        </a>
+        <a class="btn btn-light" href="/#admin?nav=erpDiscountsV3" style="flex:1;min-width:200px;text-decoration:none;text-align:center;">
+          <i class="fas fa-percent"></i> الخصومات
+        </a>
+      </div>
+      <small style="display:block;margin-top:10px;color:#64748b;font-size:11px;"><i class="fas fa-info-circle"></i> الإعدادات هنا مخصصة للهوية والاتصال فقط. كل ما يخص الدفع/القنوات/الخصومات في القسم المخصص.</small>
     </div>
 
     <!-- ─── Save settings ─── -->

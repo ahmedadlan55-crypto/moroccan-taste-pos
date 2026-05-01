@@ -16930,6 +16930,240 @@ var _RE_COLORS = {
 // Category palette for cost composition chart (cycle through)
 var _RE_CHART_PALETTE = ['#7c3aed', '#0ea5e9', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899'];
 
+// V5.7.36 — Scoped stylesheet for the recipe editor. Single source of truth
+//   for visual rules. Every selector is prefixed with .re-* (or scoped via
+//   #reEditorBody) so the rules can never bleed into the rest of the app.
+function _reBuildStylesheet() {
+  var C = _RE_COLORS;
+  return [
+    /* ─── 1. Modal fullscreen overrides — V5.7.36 fix: target the ACTUAL
+       wo-modal-* classes used by erp.js's inline WoModal (not the defunct
+       wom-* classes from wo-modal.js, which never matched). ─── */
+    '.wo-modal-overlay:has(#reEditorBody){padding:0 !important;}',
+    '.wo-modal-overlay:has(#reEditorBody) .wo-modal{',
+      'max-width:100vw !important;width:100vw !important;',
+      'max-height:100vh !important;height:100vh !important;',
+      'border-radius:0 !important;margin:0 !important;',
+    '}',
+    '.wo-modal-overlay:has(#reEditorBody) .wo-modal-body{padding:14px 18px !important;background:#f6f7fb;gap:0 !important;}',
+    '.wo-modal-overlay:has(#reEditorBody) .wo-modal-header{padding:12px 18px !important;}',
+    '.wo-modal-overlay:has(#reEditorBody) .wo-modal-footer{padding:10px 18px !important;}',
+
+    /* ─── 2. Root + reset ─── */
+    '#reEditorBody{font-feature-settings:"tnum","kern";font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}',
+    '#reEditorBody *{box-sizing:border-box;}',
+    '.re-num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum";font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:-0.01em;}',
+    '.re-num-good{color:' + C.success + ';font-weight:800;}',
+
+    /* ─── 3. HERO CARD ─── */
+    '.re-hero{position:relative;overflow:hidden;color:#fff;padding:18px 22px;border-radius:18px;margin-bottom:14px;',
+      'background:radial-gradient(120% 140% at 100% 0%,#8b5cf6 0%,#6d28d9 45%,#4c1d95 100%);',
+      'box-shadow:0 12px 36px -12px rgba(76,29,149,0.45),0 2px 6px rgba(15,23,42,0.06);}',
+    '.re-hero-orb{position:absolute;border-radius:50%;pointer-events:none;}',
+    '.re-hero-orb-1{top:-60px;inset-inline-end:-50px;width:220px;height:220px;background:radial-gradient(circle,rgba(255,255,255,0.18) 0%,transparent 70%);}',
+    '.re-hero-orb-2{bottom:-80px;inset-inline-start:30%;width:180px;height:180px;background:radial-gradient(circle,rgba(14,165,233,0.22) 0%,transparent 70%);}',
+    '.re-hero-grid{position:relative;display:grid;grid-template-columns:minmax(280px,1.7fr) minmax(120px,1fr) minmax(120px,1fr) minmax(180px,1.15fr);gap:18px;align-items:stretch;}',
+    '@media (max-width:1100px){.re-hero-grid{grid-template-columns:1fr 1fr;gap:14px;}.re-hero-identity{grid-column:1 / -1;}}',
+    '@media (max-width:680px){.re-hero-grid{grid-template-columns:1fr;}}',
+
+    '.re-hero-identity{display:flex;align-items:center;gap:14px;min-width:0;}',
+    '.re-hero-avatar{flex-shrink:0;width:64px;height:64px;border-radius:18px;display:grid;place-items:center;',
+      'background:linear-gradient(135deg,rgba(255,255,255,0.28),rgba(255,255,255,0.08));',
+      'border:1px solid rgba(255,255,255,0.30);backdrop-filter:blur(10px);',
+      'font-size:30px;font-weight:900;color:#fff;letter-spacing:-0.04em;',
+      'box-shadow:inset 0 1px 0 rgba(255,255,255,0.2),0 6px 18px -6px rgba(0,0,0,0.35);}',
+    '.re-hero-id-text{flex:1;min-width:0;}',
+    '.re-hero-eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:10.5px;font-weight:700;opacity:0.92;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:5px;}',
+    '.re-hero-eyebrow i{font-size:11px;}',
+    '.re-hero-title{margin:0;font-size:24px;font-weight:900;line-height:1.18;letter-spacing:-0.02em;',
+      'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;}',
+    '.re-hero-subtitle{font-size:13.5px;font-weight:500;opacity:0.92;margin-top:4px;letter-spacing:0.01em;line-height:1.3;',
+      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    '.re-hero-subtitle-muted{opacity:0.55;font-style:italic;}',
+    '.re-hero-chips{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;}',
+    '.re-hero-chip{display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.18);',
+      'padding:4px 10px;border-radius:999px;font-size:11px;font-weight:700;backdrop-filter:blur(8px);',
+      'border:1px solid rgba(255,255,255,0.12);line-height:1;}',
+    '.re-hero-chip i{font-size:9.5px;opacity:0.9;}',
+
+    '.re-hero-kpi{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:6px 4px;border-inline-start:1px solid rgba(255,255,255,0.16);}',
+    '.re-hero-kpi:first-of-type{border:0;}',
+    '@media (max-width:1100px){.re-hero-kpi{border:0;}}',
+    '.re-hero-kpi-label{font-size:10px;opacity:0.85;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:5px;line-height:1;}',
+    '.re-hero-kpi-value{font-size:24px;font-weight:900;letter-spacing:-0.02em;line-height:1.05;font-variant-numeric:tabular-nums;font-feature-settings:"tnum";}',
+    '.re-hero-kpi-unit{font-size:10.5px;opacity:0.78;font-weight:600;margin-top:4px;letter-spacing:0.02em;line-height:1;}',
+    '.re-hero-kpi-boxed{background:rgba(255,255,255,0.16);border:1px solid rgba(255,255,255,0.22);border-radius:14px;padding:12px 8px;backdrop-filter:blur(12px);',
+      'box-shadow:inset 0 1px 0 rgba(255,255,255,0.18),0 4px 16px -8px rgba(0,0,0,0.25);}',
+    '.re-hero-kpi-margin{font-size:26px;}',
+    '.re-hero-kpi-margin-amt{font-variant-numeric:tabular-nums;font-feature-settings:"tnum";font-family:ui-monospace,SFMono-Regular,monospace;}',
+
+    /* ─── 4. BODY 2-column layout ─── */
+    '.re-body{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px;}',
+    '@media (max-width:1100px){.re-body{grid-template-columns:1fr;}}',
+
+    /* ─── 5. PANEL (shared between lines + picker) ─── */
+    '.re-panel{background:#fff;border:1px solid ' + C.border + ';border-radius:18px;display:flex;flex-direction:column;',
+      'height:calc(100vh - 290px);min-height:480px;overflow:hidden;',
+      'box-shadow:0 1px 3px rgba(15,23,42,0.04),0 4px 12px -8px rgba(15,23,42,0.06);}',
+    '.re-panel-head{padding:14px 18px;border-bottom:1px solid ' + C.border + ';',
+      'background:linear-gradient(180deg,#fff 0%,' + C.surfaceAlt + ' 100%);flex-shrink:0;}',
+    '.re-panel-head-left{display:flex;align-items:center;gap:11px;min-width:0;flex:1;}',
+    '.re-panel-icon{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;flex-shrink:0;',
+      'box-shadow:inset 0 0 0 1px rgba(15,23,42,0.04);}',
+    '.re-panel-icon i{font-size:15px;}',
+    '.re-panel-icon-primary{background:' + C.primarySoft + ';color:' + C.primary + ';}',
+    '.re-panel-icon-accent{background:' + C.accentSoft + ';color:' + C.accent + ';}',
+    '.re-panel-titles{min-width:0;flex:1;}',
+    '.re-panel-title{font-size:15px;font-weight:800;color:' + C.ink + ';line-height:1.2;letter-spacing:-0.01em;}',
+    '.re-panel-sub{font-size:11.5px;color:' + C.muted + ';font-weight:600;margin-top:2px;line-height:1.3;}',
+    '.re-panel-body{flex:1;overflow-y:auto;padding:16px 18px;}',
+    '.re-panel-foot{padding:12px 18px;border-top:1px solid ' + C.border + ';background:' + C.surfaceAlt + ';',
+      'display:flex;justify-content:space-between;align-items:center;flex-shrink:0;}',
+    '.re-foot-label{font-size:13px;font-weight:700;color:' + C.ink + ';}',
+    '.re-foot-total{font-size:18px;font-weight:900;color:' + C.success + ';font-variant-numeric:tabular-nums;font-feature-settings:"tnum";font-family:ui-monospace,SFMono-Regular,monospace;}',
+
+    /* ─── 6. SECTION EYEBROW + CHART ─── */
+    '.re-section-eyebrow{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;color:' + C.sub + ';letter-spacing:0.06em;text-transform:uppercase;}',
+    '.re-section-eyebrow i{color:' + C.primary + ';font-size:11px;}',
+    '.re-section-eyebrow-muted{color:' + C.muted + ';}',
+    '.re-chart{background:' + C.surfaceAlt + ';border:1px solid ' + C.border + ';border-radius:12px;padding:12px 14px;margin-bottom:14px;}',
+    '.re-chart-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}',
+    '.re-chart-bar{display:flex;height:9px;border-radius:6px;overflow:hidden;background:#fff;border:1px solid ' + C.border + ';}',
+    '.re-chart-bar > div{height:100%;transition:width 0.3s ease;}',
+    '.re-chart-legend{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:10px;}',
+    '.re-chart-legend > div{display:flex;align-items:center;gap:6px;font-size:11.5px;color:' + C.sub + ';font-weight:600;}',
+    '.re-chart-legend > div span:first-child{width:10px;height:10px;border-radius:3px;flex-shrink:0;}',
+    '.re-chart-legend > div span:last-child{font-variant-numeric:tabular-nums;color:' + C.muted + ';}',
+
+    /* ─── 7. BULK BAR + CLEAR-ALL ─── */
+    '.re-bulk-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}',
+    '.re-bulk-btn{background:transparent;color:' + C.danger + ';border:1px solid ' + C.dangerSoft + ';',
+      'font-weight:700;font-size:11.5px;padding:6px 12px;border-radius:8px;cursor:pointer;',
+      'display:inline-flex;align-items:center;gap:6px;transition:all 0.15s;font-family:inherit;}',
+    '.re-bulk-btn i{font-size:10px;}',
+    '.re-bulk-btn:hover{background:' + C.dangerSoft + ';border-color:' + C.danger + ';}',
+
+    /* ─── 8. LINE CARDS ─── */
+    '.re-line-list{display:flex;flex-direction:column;gap:10px;}',
+    '.re-line-card{background:#fff;border:1.5px solid ' + C.border + ';border-radius:14px;padding:14px 16px;',
+      'display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:14px;align-items:center;',
+      'transition:border-color 0.15s,box-shadow 0.15s,transform 0.15s;}',
+    '.re-line-card:hover{box-shadow:0 6px 18px -6px rgba(15,23,42,0.10);transform:translateY(-1px);border-color:' + C.primary + ';}',
+    '.re-line-card-pending{border-color:' + C.warning + ';}',
+    '.re-line-card-danger{border-color:' + C.danger + ';background:linear-gradient(180deg,#fff 0%,' + C.dangerSoft + ' 280%);}',
+    '.re-line-info{min-width:0;}',
+    '.re-line-name{font-size:14.5px;font-weight:800;color:' + C.ink + ';line-height:1.3;display:flex;align-items:center;flex-wrap:wrap;gap:6px;}',
+    '.re-line-meta{font-size:11.5px;color:' + C.muted + ';font-weight:600;margin-top:4px;}',
+    '.re-line-cost-box{text-align:center;min-width:96px;}',
+    '.re-line-cost-label{font-size:9.5px;color:' + C.muted + ';font-weight:800;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:3px;line-height:1;}',
+    '.re-line-cost{font-size:17px;font-weight:900;color:' + C.success + ';line-height:1;}',
+    '.re-line-del{background:transparent;color:' + C.muted + ';border:1px solid ' + C.border + ';',
+      'width:36px;height:36px;border-radius:10px;cursor:pointer;display:grid;place-items:center;',
+      'transition:all 0.15s;flex-shrink:0;font-size:13px;}',
+    '.re-line-del:hover{background:' + C.dangerSoft + ';color:' + C.danger + ';border-color:' + C.danger + ';transform:scale(1.05);}',
+
+    /* ─── 9. STATUS CHIPS ─── */
+    '.re-chip{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:800;padding:3px 8px;border-radius:7px;line-height:1;white-space:nowrap;}',
+    '.re-chip i{font-size:9px;}',
+    '.re-chip-warning{background:' + C.warningSoft + ';color:' + C.warning + ';}',
+    '.re-chip-danger{background:' + C.dangerSoft + ';color:' + C.danger + ';}',
+
+    /* ─── 10. EMPTY STATE ─── */
+    '.re-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 24px;text-align:center;min-height:320px;}',
+    '.re-empty-icon{width:88px;height:88px;background:linear-gradient(135deg,' + C.primarySoft + ',#f3e8ff);color:' + C.primary + ';',
+      'border-radius:50%;display:grid;place-items:center;margin-bottom:18px;',
+      'box-shadow:inset 0 0 0 1px rgba(124,58,237,0.12),0 8px 24px -8px rgba(124,58,237,0.20);}',
+    '.re-empty-icon i{font-size:34px;}',
+    '.re-empty-title{font-weight:900;font-size:17px;color:' + C.ink + ';margin:0 0 7px;letter-spacing:-0.01em;}',
+    '.re-empty-text{font-size:13px;max-width:300px;line-height:1.65;margin:0 0 18px;color:' + C.sub + ';font-weight:500;}',
+    '.re-empty-cta{background:' + C.primary + ';color:#fff;border:0;padding:10px 18px;border-radius:10px;',
+      'font-weight:800;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;',
+      'box-shadow:0 6px 18px -6px ' + C.primary + ';transition:all 0.15s;font-family:inherit;}',
+    '.re-empty-cta:hover{transform:translateY(-1px);box-shadow:0 10px 24px -8px ' + C.primary + ';}',
+    '.re-empty-cta kbd{background:rgba(255,255,255,0.25);padding:2px 7px;border-radius:5px;font-family:inherit;font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,0.18);}',
+
+    /* ─── 11. PICKER HEAD: search, pills, add-btn ─── */
+    '.re-picker-head{padding-bottom:10px;}',
+    '.re-picker-head-row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;}',
+    '.re-add-btn{background:' + C.primary + ';color:#fff;border:1px solid ' + C.primary + ';',
+      'padding:8px 14px;border-radius:10px;font-weight:800;font-size:12.5px;cursor:pointer;',
+      'display:inline-flex;align-items:center;gap:6px;transition:all 0.15s;font-family:inherit;flex-shrink:0;',
+      'box-shadow:0 4px 12px -4px rgba(124,58,237,0.4);}',
+    '.re-add-btn:not(:disabled):hover{background:' + C.primaryDark + ';transform:translateY(-1px);box-shadow:0 8px 20px -6px rgba(124,58,237,0.5);}',
+    '.re-add-btn:disabled{background:#cbd5e1;border-color:#cbd5e1;cursor:not-allowed;box-shadow:none;opacity:0.7;}',
+    '.re-add-btn i{font-size:11px;}',
+    '.re-add-count{background:rgba(255,255,255,0.25);padding:1px 7px;border-radius:6px;font-variant-numeric:tabular-nums;min-width:22px;text-align:center;}',
+
+    '.re-search{position:relative;margin-bottom:10px;}',
+    '.re-search-icon{position:absolute;top:50%;inset-inline-start:13px;transform:translateY(-50%);color:' + C.muted + ';font-size:13px;pointer-events:none;}',
+    '.re-search-input{width:100%;padding:10px 40px;border:1.5px solid ' + C.border + ';border-radius:11px;font-size:13.5px;',
+      'background:#fff;font-family:inherit;direction:rtl;color:' + C.ink + ';transition:border-color 0.15s,box-shadow 0.15s;}',
+    '.re-search-input:focus{outline:none;border-color:' + C.primary + ';box-shadow:0 0 0 3px ' + C.primarySoft + ';}',
+    '.re-search-input::placeholder{color:' + C.muted + ';}',
+    '.re-search-kbd{position:absolute;top:50%;inset-inline-end:12px;transform:translateY(-50%);background:' + C.surfaceAlt + ';',
+      'color:' + C.muted + ';padding:3px 8px;border-radius:5px;font-family:inherit;font-size:11px;font-weight:700;border:1px solid ' + C.border + ';line-height:1;}',
+
+    '.re-pills{display:flex;gap:6px;flex-wrap:wrap;padding:2px 0;}',
+    '.re-pill{background:' + C.surfaceAlt + ';color:' + C.sub + ';border:1px solid ' + C.border + ';',
+      'padding:5px 11px;border-radius:999px;font-size:11.5px;font-weight:700;cursor:pointer;',
+      'display:inline-flex;align-items:center;gap:6px;line-height:1.3;transition:all 0.15s;font-family:inherit;}',
+    '.re-pill:hover{background:#fff;border-color:' + C.primary + ';color:' + C.primary + ';}',
+    '.re-pill-active{background:' + C.primary + ';color:#fff;border-color:' + C.primary + ';box-shadow:0 2px 6px -2px ' + C.primary + ';}',
+    '.re-pill-active:hover{background:' + C.primaryDark + ';color:#fff;border-color:' + C.primaryDark + ';}',
+    '.re-pill-count{background:rgba(0,0,0,0.06);padding:1px 6px;border-radius:8px;font-variant-numeric:tabular-nums;font-size:10.5px;}',
+    '.re-pill-active .re-pill-count{background:rgba(255,255,255,0.22);}',
+
+    /* ─── 12. PICKER LIST + ROWS ─── */
+    '.re-picker-list{flex:1;overflow-y:auto;padding:8px 12px 12px;}',
+    '.re-cat-divider{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:800;color:' + C.muted + ';',
+      'text-transform:uppercase;letter-spacing:0.08em;padding:12px 6px 6px;}',
+    '.re-cat-line{height:1px;flex:1;background:' + C.border + ';}',
+    '.re-cat-name{white-space:nowrap;}',
+    '.re-cat-count{background:' + C.surfaceAlt + ';color:' + C.sub + ';padding:2px 7px;border-radius:6px;font-variant-numeric:tabular-nums;font-size:10px;}',
+
+    '.re-pick-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:11px;',
+      'padding:10px 12px;border-radius:10px;cursor:pointer;transition:background 0.12s,transform 0.12s;}',
+    '.re-pick-row:hover{background:' + C.surfaceAlt + ';}',
+    '.re-pick-row:has(.re-pick-cb:checked){background:' + C.primarySoft + ';}',
+    '.re-pick-cb{width:18px;height:18px;cursor:pointer;flex-shrink:0;accent-color:' + C.primary + ';margin:0;}',
+    '.re-pick-info{min-width:0;}',
+    '.re-pick-name{font-weight:700;color:' + C.ink + ';font-size:13.5px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    '.re-pick-stock{font-size:11.5px;color:' + C.sub + ';font-weight:600;margin-top:3px;display:flex;align-items:center;gap:6px;line-height:1.2;}',
+    '.re-pick-stock-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums;}',
+    '.re-stock-sep{opacity:0.5;margin:0 2px;}',
+    '.re-pick-dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0;}',
+    '.re-pick-dot-out{background:' + C.muted + ';}',
+    '.re-pick-dot-low{background:' + C.warning + ';animation:rePulse 2s ease-in-out infinite;}',
+    '.re-pick-dot-ok{background:' + C.success + ';}',
+    '.re-pick-price{text-align:end;flex-shrink:0;white-space:nowrap;min-width:80px;}',
+    '.re-pick-cost{font-size:13.5px;color:' + C.ink + ';font-weight:800;line-height:1.1;}',
+    '.re-pick-unit{font-size:10.5px;color:' + C.muted + ';font-weight:600;margin-top:2px;line-height:1;white-space:nowrap;}',
+
+    '.re-no-results{text-align:center;padding:48px 20px;color:' + C.muted + ';}',
+    '.re-no-results i{font-size:38px;opacity:0.3;display:block;margin-bottom:12px;}',
+    '.re-no-results-title{font-weight:700;font-size:13.5px;color:' + C.sub + ';}',
+    '.re-no-results-hint{font-size:12px;margin-top:5px;}',
+
+    /* ─── 13. SAVE BAR ─── */
+    '.re-savebar{position:sticky;bottom:0;background:#fff;border-top:1px solid ' + C.border + ';',
+      'margin:14px -18px -14px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;',
+      'box-shadow:0 -4px 16px -8px rgba(15,23,42,0.08);font-size:12.5px;color:' + C.sub + ';gap:12px;flex-wrap:wrap;}',
+    '.re-save-status{display:inline-flex;align-items:center;gap:7px;font-weight:700;}',
+    '.re-save-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:' + C.muted + ';}',
+    '.re-save-hint{opacity:0.75;font-size:11.5px;}',
+    '.re-save-hint kbd{background:' + C.surfaceAlt + ';padding:2px 7px;border-radius:5px;font-family:inherit;font-size:11px;font-weight:700;color:' + C.sub + ';border:1px solid ' + C.border + ';margin:0 2px;}',
+
+    /* ─── 14. ANIMATIONS ─── */
+    '@keyframes rePulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.55;transform:scale(0.85);}}',
+
+    /* ─── 15. Fallback for browsers without :has(): the editor sets a
+       data-attribute on overlay+modal+body so we can scope without :has(). ─── */
+    '.wo-modal-overlay[data-re-fullscreen]{padding:0 !important;}',
+    '.wo-modal[data-re-fullscreen]{max-width:100vw !important;width:100vw !important;max-height:100vh !important;height:100vh !important;border-radius:0 !important;margin:0 !important;}',
+    '.wo-modal-body[data-re-fullscreen]{padding:14px 18px !important;background:#f6f7fb;gap:0 !important;}'
+  ].join('');
+}
+
 function _reRenderEditor() {
   var box = document.getElementById('reEditorBody');
   if (!box || !window._re) return;
@@ -16941,108 +17175,98 @@ function _reRenderEditor() {
   var marginOk = t.marginPct >= 25;
   var marginColor = marginGood ? '#86efac' : (marginOk ? '#fde68a' : '#fecaca');
 
-  // ── HERO CARD (sticky, premium gradient w/ KPI grid + metadata chips) ──
+  // V5.7.36 ── HERO CARD: balanced 4-column hero with monogram avatar.
+  //   • avatar circle anchors the product identity visually
+  //   • RTL-aware separator rules (border-inline-start) for KPI dividers
+  //   • all numbers use tabular-nums so digits align perfectly across rows
+  //   • title clamped to 2 lines max with ellipsis (no awkward 3-line wraps)
+  var initials = (menu.nameEn || menu.name || '?').trim().charAt(0).toUpperCase();
   var heroHtml =
-    '<section class="re-hero" style="background:linear-gradient(135deg,#7c3aed 0%,#6d28d9 50%,#5b21b6 100%);color:#fff;padding:14px 20px;border-radius:14px;margin-bottom:12px;box-shadow:0 8px 32px -8px rgba(124,58,237,0.35);position:relative;overflow:hidden;">' +
-      '<div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;background:radial-gradient(circle,rgba(255,255,255,0.12) 0%,transparent 70%);"></div>' +
-      '<div style="display:grid;grid-template-columns:1.8fr 1fr 1fr 1.1fr;gap:18px;align-items:center;position:relative;">' +
-        // Product identity
-        '<div>' +
-          '<div style="display:flex;align-items:center;gap:8px;font-size:11px;opacity:0.85;font-weight:600;margin-bottom:6px;letter-spacing:0.04em;text-transform:uppercase;">' +
-            '<i class="fas fa-mortar-pestle"></i><span>المنتج</span>' +
-          '</div>' +
-          '<div style="font-size:24px;font-weight:900;direction:rtl;line-height:1.15;letter-spacing:-0.02em;">' + _v3EscapeHtml(menu.name || '') + '</div>' +
-          (menu.nameEn
-            ? '<div style="font-size:14px;opacity:0.92;font-weight:500;direction:ltr;margin-top:3px;letter-spacing:0.01em;">' + _v3EscapeHtml(menu.nameEn) + '</div>'
-            : '<div style="font-size:11px;opacity:0.55;font-style:italic;direction:ltr;margin-top:3px;">— English name not set —</div>'
-          ) +
-          // Metadata chips
-          '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">' +
-            (menu.category ? '<span style="background:rgba(255,255,255,0.16);padding:3px 9px;border-radius:8px;font-size:11px;font-weight:600;backdrop-filter:blur(8px);"><i class="fas fa-tag" style="margin-inline-end:4px;font-size:9px;"></i>' + _v3EscapeHtml(menu.category) + '</span>' : '') +
-            '<span style="background:rgba(255,255,255,0.16);padding:3px 9px;border-radius:8px;font-size:11px;font-weight:600;backdrop-filter:blur(8px);"><i class="fas fa-cubes" style="margin-inline-end:4px;font-size:9px;"></i>' + lines.length + ' مكوّن</span>' +
-            '<span style="background:rgba(255,255,255,0.16);padding:3px 9px;border-radius:8px;font-size:11px;font-weight:600;backdrop-filter:blur(8px);"><i class="fas fa-box" style="margin-inline-end:4px;font-size:9px;"></i>1 وحدة/دفعة</span>' +
+    '<section class="re-hero">' +
+      '<div class="re-hero-orb re-hero-orb-1"></div>' +
+      '<div class="re-hero-orb re-hero-orb-2"></div>' +
+      '<div class="re-hero-grid">' +
+        // Product identity (avatar + name + chips)
+        '<div class="re-hero-identity">' +
+          '<div class="re-hero-avatar">' + _v3EscapeHtml(initials) + '</div>' +
+          '<div class="re-hero-id-text">' +
+            '<div class="re-hero-eyebrow"><i class="fas fa-mortar-pestle"></i><span>محرر الوصفة</span></div>' +
+            '<h2 class="re-hero-title" dir="rtl">' + _v3EscapeHtml(menu.name || '') + '</h2>' +
+            (menu.nameEn
+              ? '<div class="re-hero-subtitle" dir="ltr">' + _v3EscapeHtml(menu.nameEn) + '</div>'
+              : '<div class="re-hero-subtitle re-hero-subtitle-muted" dir="ltr">— English name not set —</div>'
+            ) +
+            '<div class="re-hero-chips">' +
+              (menu.category ? '<span class="re-hero-chip"><i class="fas fa-tag"></i>' + _v3EscapeHtml(menu.category) + '</span>' : '') +
+              '<span class="re-hero-chip"><i class="fas fa-cubes"></i>' + lines.length + ' مكوّن</span>' +
+              '<span class="re-hero-chip"><i class="fas fa-box"></i>1 وحدة/دفعة</span>' +
+            '</div>' +
           '</div>' +
         '</div>' +
         // KPI: Price
-        '<div style="text-align:center;">' +
-          '<div style="font-size:10px;opacity:0.85;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:4px;">السعر</div>' +
-          '<div style="font-size:22px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:-0.02em;">' + _v3Fmt(price) + '</div>' +
-          '<div style="font-size:10px;opacity:0.7;font-weight:600;margin-top:2px;">ر.س / وحدة</div>' +
+        '<div class="re-hero-kpi">' +
+          '<div class="re-hero-kpi-label">السعر</div>' +
+          '<div class="re-hero-kpi-value">' + _v3Fmt(price) + '</div>' +
+          '<div class="re-hero-kpi-unit">ر.س / وحدة</div>' +
         '</div>' +
         // KPI: Live cost
-        '<div style="text-align:center;">' +
-          '<div style="font-size:10px;opacity:0.85;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:4px;">التكلفة الحية</div>' +
-          '<div id="reLiveCost" style="font-size:22px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:-0.02em;">' + _v3Fmt(t.totalCost) + '</div>' +
-          '<div style="font-size:10px;opacity:0.7;font-weight:600;margin-top:2px;">ر.س / وحدة</div>' +
+        '<div class="re-hero-kpi">' +
+          '<div class="re-hero-kpi-label">التكلفة الحية</div>' +
+          '<div id="reLiveCost" class="re-hero-kpi-value">' + _v3Fmt(t.totalCost) + '</div>' +
+          '<div class="re-hero-kpi-unit">ر.س / وحدة</div>' +
         '</div>' +
         // KPI: Margin (boxed for emphasis)
-        '<div style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.22);border-radius:14px;padding:12px 10px;text-align:center;backdrop-filter:blur(12px);">' +
-          '<div style="font-size:10px;opacity:0.95;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:4px;">هامش الربح</div>' +
-          '<div id="reLiveMargin" style="font-size:26px;font-weight:900;color:' + marginColor + ';margin-top:1px;letter-spacing:-0.02em;">' + (t.marginPct >= 0 ? '+' : '') + t.marginPct.toFixed(1) + '%</div>' +
-          '<div id="reLiveMarginAmt" style="font-size:11px;opacity:0.95;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:600;margin-top:2px;">' + (t.marginAbs >= 0 ? '+' : '') + _v3Fmt(t.marginAbs) + ' ر.س</div>' +
+        '<div class="re-hero-kpi re-hero-kpi-boxed">' +
+          '<div class="re-hero-kpi-label">هامش الربح</div>' +
+          '<div id="reLiveMargin" class="re-hero-kpi-value re-hero-kpi-margin" style="color:' + marginColor + ';">' + (t.marginPct >= 0 ? '+' : '') + t.marginPct.toFixed(1) + '%</div>' +
+          '<div id="reLiveMarginAmt" class="re-hero-kpi-unit re-hero-kpi-margin-amt">' + (t.marginAbs >= 0 ? '+' : '') + _v3Fmt(t.marginAbs) + ' ر.س</div>' +
         '</div>' +
       '</div>' +
     '</section>';
 
-  // ── 2-COLUMN BODY (V5.7.30 — tighter gap + balanced ratio for wider modal) ──
+  // V5.7.36 ── 2-COLUMN BODY: lines panel (right in RTL) + picker panel (left in RTL).
+  //   Slightly more space for the lines panel where the work happens.
   var bodyHtml =
-    '<div class="re-body" style="display:grid;grid-template-columns:1.25fr 1fr;gap:12px;">' +
+    '<div class="re-body">' +
       _reRenderLinesPanel() +
       _reRenderPickerPanel() +
     '</div>';
 
-  // ── STICKY SAVE BAR (V5.7.30 — margin matches new tighter body padding 14px/16px) ──
+  // V5.7.36 ── STICKY SAVE BAR: aligned with WoModal foot padding (10px 16px).
+  //   margin uses negative inset to span full modal width inside body padding.
   var saveBarHtml =
-    '<footer class="re-savebar" style="position:sticky;bottom:0;background:#fff;border-top:1.5px solid ' + _RE_COLORS.border + ';margin:14px -16px -14px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 -4px 16px -8px rgba(15,23,42,0.08);">' +
-      '<div style="display:flex;align-items:center;gap:10px;font-size:12px;color:' + _RE_COLORS.sub + ';">' +
-        '<span id="reSaveStatus" style="display:inline-flex;align-items:center;gap:5px;font-weight:600;">' +
-          '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + _RE_COLORS.muted + ';"></span>' +
-          'جاهز للحفظ' +
-        '</span>' +
-        '<span style="opacity:0.6;font-size:11px;">·  اضغط <kbd style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-family:inherit;font-size:10.5px;font-weight:700;color:' + _RE_COLORS.sub + ';">Ctrl+S</kbd> للحفظ السريع</span>' +
-      '</div>' +
+    '<footer class="re-savebar">' +
+      '<span id="reSaveStatus" class="re-save-status">' +
+        '<span class="re-save-dot"></span>' +
+        '<span>جاهز للحفظ</span>' +
+      '</span>' +
+      '<span class="re-save-hint">اضغط <kbd>Ctrl</kbd> + <kbd>S</kbd> للحفظ السريع</span>' +
     '</footer>';
 
   box.innerHTML = heroHtml + bodyHtml + saveBarHtml;
 
-  // V5.7.31 — TRUE fullscreen modal with !important overrides so nothing
-  //   (no class, no media query, no JS) can shrink it. Inject a one-time
-  //   <style> tag instead of inline JS so the rules win the CSS specificity
-  //   war against .wom-card's own definition.
+  // V5.7.36 — TRUE fullscreen modal + complete scoped stylesheet for the
+  //   recipe editor. Single <style> injection, idempotent (id-guarded).
+  //   Replacing per-element inline styles with classes wins three things:
+  //     1) drastically smaller HTML strings (faster string concat + paint)
+  //     2) hover/focus/responsive states that inline can't express
+  //     3) tabular numerals so RTL/LTR digits align across rows + KPIs
   if (!document.getElementById('reFullscreenStyles')) {
     var st = document.createElement('style');
     st.id = 'reFullscreenStyles';
-    st.textContent =
-      '.wom-overlay:has(#reEditorBody){padding:0 !important;}' +
-      '.wom-card.size-full:has(#reEditorBody){' +
-        'max-width:100vw !important;width:100vw !important;' +
-        'max-height:100vh !important;height:100vh !important;' +
-        'border-radius:0 !important;' +
-      '}' +
-      '.wom-card.size-full:has(#reEditorBody) .wom-body{' +
-        'padding:12px 16px !important;' +
-      '}' +
-      '.wom-card.size-full:has(#reEditorBody) .wom-head{' +
-        'padding:10px 16px !important;' +
-      '}' +
-      '.wom-card.size-full:has(#reEditorBody) .wom-foot{' +
-        'padding:10px 16px !important;' +
-      '}';
+    st.textContent = _reBuildStylesheet();
     document.head.appendChild(st);
   }
-  // Belt-and-suspenders: also set inline styles for browsers without :has()
-  var overlay = document.querySelector('.wom-overlay');
-  if (overlay) overlay.style.padding = '0';
-  var card = document.querySelector('.wom-card.size-full');
-  if (card) {
-    card.style.maxWidth = '100vw';
-    card.style.width    = '100vw';
-    card.style.maxHeight= '100vh';
-    card.style.height   = '100vh';
-    card.style.borderRadius = '0';
-  }
-  var body = document.querySelector('.wom-card.size-full .wom-body');
-  if (body) body.style.padding = '12px 16px';
+  // V5.7.36 — Belt-and-suspenders: stamp data-re-fullscreen on the actual
+  //   wo-modal-* nodes containing #reEditorBody so the fallback CSS catches
+  //   browsers without :has() support.
+  var rb = document.getElementById('reEditorBody');
+  var ovEl = rb && rb.closest('.wo-modal-overlay');
+  var modEl = rb && rb.closest('.wo-modal');
+  var bodyEl = rb && rb.closest('.wo-modal-body');
+  if (ovEl)   ovEl.setAttribute('data-re-fullscreen', '1');
+  if (modEl)  modEl.setAttribute('data-re-fullscreen', '1');
+  if (bodyEl) bodyEl.setAttribute('data-re-fullscreen', '1');
 
   // Cache total elements (perf — avoid 4× getElementById per keystroke)
   _reTotalEls = {
@@ -17093,26 +17317,24 @@ function _reRenderLinesPanel() {
     ? _reRenderCostChart(lines, t.totalCost) + _reRenderBulkToolbar() + _reRenderLineCards()
     : _reEmptyLeft();
 
-  return '<section class="re-lines-panel" style="background:#fff;border:1px solid ' + _RE_COLORS.border + ';border-radius:16px;display:flex;flex-direction:column;height:calc(100vh - 320px);min-height:480px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);">' +
+  return '<section class="re-panel re-lines-panel">' +
            // Header
-           '<header style="padding:14px 18px;border-bottom:1px solid ' + _RE_COLORS.border + ';display:flex;justify-content:space-between;align-items:center;background:linear-gradient(180deg,#fff 0%,' + _RE_COLORS.surfaceAlt + ' 100%);">' +
-             '<div style="display:flex;align-items:center;gap:10px;">' +
-               '<div style="width:32px;height:32px;background:' + _RE_COLORS.primarySoft + ';color:' + _RE_COLORS.primary + ';border-radius:9px;display:grid;place-items:center;">' +
-                 '<i class="fas fa-list-check" style="font-size:14px;"></i>' +
-               '</div>' +
-               '<div>' +
-                 '<div style="font-size:14px;font-weight:800;color:' + _RE_COLORS.ink + ';line-height:1.2;">مكوّنات الوصفة</div>' +
-                 '<div style="font-size:11px;color:' + _RE_COLORS.muted + ';font-weight:600;margin-top:1px;">' + lines.length + ' مكوّن • التكلفة: <span id="reLinesPanelTotal" style="font-family:monospace;color:' + _RE_COLORS.success + ';">' + _v3Fmt(t.totalCost) + '</span> ر.س</div>' +
+           '<header class="re-panel-head">' +
+             '<div class="re-panel-head-left">' +
+               '<div class="re-panel-icon re-panel-icon-primary"><i class="fas fa-list-check"></i></div>' +
+               '<div class="re-panel-titles">' +
+                 '<div class="re-panel-title">مكوّنات الوصفة</div>' +
+                 '<div class="re-panel-sub">' + lines.length + ' مكوّن · التكلفة: <span id="reLinesPanelTotal" class="re-num re-num-good">' + _v3Fmt(t.totalCost) + '</span> ر.س</div>' +
                '</div>' +
              '</div>' +
            '</header>' +
            // Body
-           '<div style="flex:1;overflow-y:auto;padding:16px 18px;">' + bodyHtml + '</div>' +
+           '<div class="re-panel-body">' + bodyHtml + '</div>' +
            // Footer with grand total (sticky to bottom)
            (lines.length ? (
-             '<div style="padding:12px 18px;border-top:1px solid ' + _RE_COLORS.border + ';background:' + _RE_COLORS.surfaceAlt + ';display:flex;justify-content:space-between;align-items:center;">' +
-               '<span style="font-size:13px;font-weight:700;color:' + _RE_COLORS.ink + ';">إجمالي التكلفة</span>' +
-               '<span id="reFooterTotal" style="font-size:18px;font-weight:900;color:' + _RE_COLORS.success + ';font-family:ui-monospace,SFMono-Regular,monospace;">' + _v3Fmt(t.totalCost) + ' ر.س</span>' +
+             '<div class="re-panel-foot">' +
+               '<span class="re-foot-label">إجمالي التكلفة</span>' +
+               '<span id="reFooterTotal" class="re-foot-total">' + _v3Fmt(t.totalCost) + ' ر.س</span>' +
              '</div>'
            ) : '') +
          '</section>';
@@ -17147,20 +17369,20 @@ function _reRenderCostChart(lines, totalCost) {
            '</div>';
   }).join('');
 
-  return '<div style="background:' + _RE_COLORS.surfaceAlt + ';border:1px solid ' + _RE_COLORS.border + ';border-radius:12px;padding:12px 14px;margin-bottom:14px;">' +
-           '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-             '<span style="font-size:11px;font-weight:800;color:' + _RE_COLORS.sub + ';letter-spacing:0.04em;text-transform:uppercase;"><i class="fas fa-chart-pie" style="margin-inline-end:4px;color:' + _RE_COLORS.primary + ';"></i> توزيع التكلفة</span>' +
+  return '<div class="re-chart">' +
+           '<div class="re-chart-head">' +
+             '<span class="re-section-eyebrow"><i class="fas fa-chart-pie"></i> توزيع التكلفة</span>' +
            '</div>' +
-           '<div style="display:flex;height:8px;border-radius:6px;overflow:hidden;background:#fff;border:1px solid ' + _RE_COLORS.border + ';">' + segmentsHtml + '</div>' +
-           '<div style="display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:10px;">' + legendHtml + '</div>' +
+           '<div class="re-chart-bar">' + segmentsHtml + '</div>' +
+           '<div class="re-chart-legend">' + legendHtml + '</div>' +
          '</div>';
 }
 
 function _reRenderBulkToolbar() {
-  return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
-           '<div style="font-size:11px;font-weight:800;color:' + _RE_COLORS.muted + ';letter-spacing:0.04em;text-transform:uppercase;">المكوّنات</div>' +
-           '<button class="re-bulk-btn" onclick="reClearAll()" style="background:transparent;color:' + _RE_COLORS.danger + ';border:1px solid ' + _RE_COLORS.dangerSoft + ';font-weight:700;font-size:11.5px;padding:5px 10px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;transition:all 0.15s;" onmouseover="this.style.background=\'' + _RE_COLORS.dangerSoft + '\';" onmouseout="this.style.background=\'transparent\';">' +
-             '<i class="fas fa-trash-can" style="font-size:10px;"></i> مسح الكل' +
+  return '<div class="re-bulk-bar">' +
+           '<div class="re-section-eyebrow re-section-eyebrow-muted">المكوّنات</div>' +
+           '<button class="re-bulk-btn" onclick="reClearAll()">' +
+             '<i class="fas fa-trash-can"></i><span>مسح الكل</span>' +
            '</button>' +
          '</div>';
 }
@@ -17168,7 +17390,7 @@ function _reRenderBulkToolbar() {
 function _reRenderLineCards() {
   if (!window._re) return '';
   var lines = window._re.lines;
-  return '<div style="display:flex;flex-direction:column;gap:10px;">' +
+  return '<div class="re-line-list">' +
     lines.map(function(l, idx) {
       var unitCost = Number(l.cost) || 0;
       var qtyMinor = Number(l.qtyMinor) || 0;
@@ -17176,32 +17398,32 @@ function _reRenderLineCards() {
       var stockMinor = Number(l.stock) || 0;
       var hasIssue = qtyMinor > 0 && stockMinor < qtyMinor;
       var pendingQty = qtyMinor === 0;
-      var borderColor = hasIssue ? _RE_COLORS.danger : (pendingQty ? _RE_COLORS.warning : _RE_COLORS.border);
+      var stateClass = hasIssue ? 're-line-card-danger' : (pendingQty ? 're-line-card-pending' : '');
       var pendingChip = pendingQty
-        ? '<span style="background:' + _RE_COLORS.warningSoft + ';color:' + _RE_COLORS.warning + ';font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;margin-inline-start:6px;">يحتاج كمية</span>'
+        ? '<span class="re-chip re-chip-warning">يحتاج كمية</span>'
         : '';
       var shortageChip = hasIssue
-        ? '<span style="background:' + _RE_COLORS.dangerSoft + ';color:' + _RE_COLORS.danger + ';font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;margin-inline-start:6px;"><i class="fas fa-triangle-exclamation" style="font-size:9px;"></i> مخزون غير كافٍ</span>'
+        ? '<span class="re-chip re-chip-danger"><i class="fas fa-triangle-exclamation"></i> مخزون غير كافٍ</span>'
         : '';
-      return '<article data-idx="' + idx + '" class="re-line-card" style="background:#fff;border:1.5px solid ' + borderColor + ';border-radius:14px;padding:14px 16px;display:grid;grid-template-columns:1fr auto auto auto;gap:14px;align-items:center;transition:border-color 0.15s,box-shadow 0.15s;" onmouseover="this.style.boxShadow=\'0 4px 12px -4px rgba(15,23,42,0.08)\';" onmouseout="this.style.boxShadow=\'none\';">' +
+      return '<article data-idx="' + idx + '" class="re-line-card ' + stateClass + '">' +
                // Name + status chips
-               '<div style="min-width:0;">' +
-                 '<div style="font-size:14px;font-weight:800;color:' + _RE_COLORS.ink + ';line-height:1.25;display:flex;align-items:center;flex-wrap:wrap;">' +
+               '<div class="re-line-info">' +
+                 '<div class="re-line-name">' +
                    '<span>' + _v3EscapeHtml(l.name) + '</span>' +
                    pendingChip + shortageChip +
                  '</div>' +
-                 '<div style="font-size:11px;color:' + _RE_COLORS.muted + ';font-weight:600;margin-top:3px;font-family:ui-monospace,SFMono-Regular,monospace;">سعر/وحدة: ' + _v3Fmt(unitCost) + ' ر.س</div>' +
+                 '<div class="re-line-meta">سعر/وحدة: <span class="re-num">' + _v3Fmt(unitCost) + '</span> ر.س</div>' +
                '</div>' +
                // Qty widget
                '<div class="wqty-host" data-idx="' + idx + '"></div>' +
                // Line cost
-               '<div style="text-align:center;min-width:90px;">' +
-                 '<div style="font-size:10px;color:' + _RE_COLORS.muted + ';font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:2px;">التكلفة</div>' +
-                 '<div class="re-line-cost" style="font-size:16px;font-weight:900;color:' + _RE_COLORS.success + ';font-family:ui-monospace,SFMono-Regular,monospace;">' + _v3Fmt(lineCost) + '</div>' +
+               '<div class="re-line-cost-box">' +
+                 '<div class="re-line-cost-label">التكلفة</div>' +
+                 '<div class="re-line-cost re-num">' + _v3Fmt(lineCost) + '</div>' +
                '</div>' +
                // Delete button
-               '<button onclick="reRemoveLine(' + idx + ')" title="حذف" style="background:transparent;color:' + _RE_COLORS.muted + ';border:1px solid ' + _RE_COLORS.border + ';width:34px;height:34px;border-radius:9px;cursor:pointer;display:grid;place-items:center;transition:all 0.15s;" onmouseover="this.style.background=\'' + _RE_COLORS.dangerSoft + '\';this.style.color=\'' + _RE_COLORS.danger + '\';this.style.borderColor=\'' + _RE_COLORS.danger + '\';" onmouseout="this.style.background=\'transparent\';this.style.color=\'' + _RE_COLORS.muted + '\';this.style.borderColor=\'' + _RE_COLORS.border + '\';">' +
-                 '<i class="fas fa-times" style="font-size:13px;"></i>' +
+               '<button class="re-line-del" onclick="reRemoveLine(' + idx + ')" title="حذف">' +
+                 '<i class="fas fa-times"></i>' +
                '</button>' +
              '</article>';
     }).join('') +
@@ -17209,15 +17431,15 @@ function _reRenderLineCards() {
 }
 
 function _reEmptyLeft() {
-  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;color:' + _RE_COLORS.muted + ';min-height:300px;">' +
-           '<div style="width:80px;height:80px;background:' + _RE_COLORS.primarySoft + ';color:' + _RE_COLORS.primary + ';border-radius:50%;display:grid;place-items:center;margin-bottom:14px;">' +
-             '<i class="fas fa-mortar-pestle" style="font-size:32px;"></i>' +
+  return '<div class="re-empty">' +
+           '<div class="re-empty-icon">' +
+             '<i class="fas fa-mortar-pestle"></i>' +
            '</div>' +
-           '<h3 style="font-weight:800;font-size:16px;color:' + _RE_COLORS.ink + ';margin:0 0 6px;">ابدأ بناء الوصفة</h3>' +
-           '<p style="font-size:13px;text-align:center;max-width:280px;line-height:1.6;margin:0 0 14px;color:' + _RE_COLORS.sub + ';">اختر مكوّناً من اللوحة المجاورة، أو ابدأ بكتابة اسمه في خانة البحث للوصول السريع.</p>' +
-           '<button onclick="document.getElementById(\'rePickerSearchInput\').focus();" style="background:' + _RE_COLORS.primary + ';color:#fff;border:0;padding:9px 16px;border-radius:9px;font-weight:700;font-size:12.5px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;box-shadow:0 4px 12px -4px ' + _RE_COLORS.primary + ';">' +
-             '<i class="fas fa-search"></i> ابحث عن مكوّن' +
-             '<kbd style="background:rgba(255,255,255,0.22);padding:2px 6px;border-radius:4px;font-family:inherit;font-size:10px;margin-inline-start:4px;">/</kbd>' +
+           '<h3 class="re-empty-title">ابدأ بناء الوصفة</h3>' +
+           '<p class="re-empty-text">اختر مكوّناً من اللوحة المجاورة، أو ابدأ بكتابة اسمه في خانة البحث للوصول السريع.</p>' +
+           '<button class="re-empty-cta" onclick="document.getElementById(\'rePickerSearchInput\').focus();">' +
+             '<i class="fas fa-search"></i><span>ابحث عن مكوّن</span>' +
+             '<kbd>/</kbd>' +
            '</button>' +
          '</div>';
 }
@@ -17225,7 +17447,9 @@ function _reEmptyLeft() {
 function _reUpdateLineCost(idx) {
   if (!window._re) return;
   var l = window._re.lines[idx];
-  var row = document.querySelector('tr[data-idx="' + idx + '"]');
+  // V5.7.36 — match the <article class="re-line-card"> selector (cards
+  //   replaced the old <tr> rows in V5.7.28; this query was never updated).
+  var row = document.querySelector('.re-line-card[data-idx="' + idx + '"]');
   if (!l || !row) return;
   var costCell = row.querySelector('.re-line-cost');
   if (costCell) costCell.textContent = _v3Fmt((Number(l.cost) || 0) * (Number(l.qtyMinor) || 0));
@@ -17234,13 +17458,20 @@ function _reUpdateLineCost(idx) {
 function _reUpdateTotals() {
   if (!window._re) return;
   var t = _reComputeTotals(window._re.lines, Number((window._re.menu || {}).price) || 0);
-  if (_reTotalEls.cost)   _reTotalEls.cost.textContent   = _v3Fmt(t.totalCost) + ' ر.س';
+  // V5.7.36 — hero KPI shows ONLY the number (unit "ر.س / وحدة" lives in
+  //   .re-hero-kpi-unit beneath). Don't append " ر.س" here or it duplicates.
+  if (_reTotalEls.cost)   _reTotalEls.cost.textContent   = _v3Fmt(t.totalCost);
   if (_reTotalEls.margin) {
+    var marginGood = t.marginPct >= 50;
+    var marginOk = t.marginPct >= 25;
     _reTotalEls.margin.textContent = (t.marginPct >= 0 ? '+' : '') + t.marginPct.toFixed(1) + '%';
-    _reTotalEls.margin.style.color = t.marginPct < 0 ? '#fecaca' : '#fff';
+    _reTotalEls.margin.style.color = marginGood ? '#86efac' : (marginOk ? '#fde68a' : '#fecaca');
   }
   if (_reTotalEls.marginAmt) _reTotalEls.marginAmt.textContent = (t.marginAbs >= 0 ? '+' : '') + _v3Fmt(t.marginAbs) + ' ر.س';
   if (_reTotalEls.footer)    _reTotalEls.footer.textContent    = _v3Fmt(t.totalCost) + ' ر.س';
+  // Update lines-panel sub total too
+  var lpt = document.getElementById('reLinesPanelTotal');
+  if (lpt) lpt.textContent = _v3Fmt(t.totalCost);
 }
 
 // V5.7.28 — Premium picker: search w/ slash hotkey + category filter pills
@@ -17257,50 +17488,50 @@ function _reRenderPickerPanel() {
   var pickedIds = new Set(window._re.lines.map(function(l) { return l.itemId; }));
   var totalAvailable = items.filter(function(it) { return !pickedIds.has(it.id) && it.active !== false && it.active !== 0; }).length;
 
-  // Category pills (compact, scrollable horizontally)
+  // V5.7.36 — Category pills WRAP onto multiple lines (was: horizontal scroll
+  //   that cropped pill labels at the edge). Wrapping keeps every category
+  //   visible and tappable without scroll-skating.
   var pillsHtml =
-    '<div style="display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;scrollbar-width:thin;">' +
-      '<button onclick="reSetCategory(\'\')" style="background:' + (!activeCategory ? _RE_COLORS.primary : _RE_COLORS.surfaceAlt) + ';color:' + (!activeCategory ? '#fff' : _RE_COLORS.sub) + ';border:1px solid ' + (!activeCategory ? _RE_COLORS.primary : _RE_COLORS.border) + ';padding:5px 11px;border-radius:8px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:all 0.15s;">' +
-        'الكل <span style="opacity:0.7;font-family:monospace;">' + totalAvailable + '</span>' +
+    '<div class="re-pills">' +
+      '<button class="re-pill ' + (!activeCategory ? 're-pill-active' : '') + '" onclick="reSetCategory(\'\')">' +
+        '<span>الكل</span><span class="re-pill-count">' + totalAvailable + '</span>' +
       '</button>' +
       categories.map(function(cat) {
         var count = byCategory[cat].filter(function(it) { return !pickedIds.has(it.id); }).length;
         if (!count) return '';
         var isActive = activeCategory === cat;
-        return '<button onclick="reSetCategory(\'' + _v3EscapeHtml(cat).replace(/'/g, "\\'") + '\')" style="background:' + (isActive ? _RE_COLORS.primary : _RE_COLORS.surfaceAlt) + ';color:' + (isActive ? '#fff' : _RE_COLORS.sub) + ';border:1px solid ' + (isActive ? _RE_COLORS.primary : _RE_COLORS.border) + ';padding:5px 11px;border-radius:8px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:all 0.15s;">' +
-                 _v3EscapeHtml(cat) + ' <span style="opacity:0.7;font-family:monospace;">' + count + '</span>' +
+        return '<button class="re-pill ' + (isActive ? 're-pill-active' : '') + '" onclick="reSetCategory(\'' + _v3EscapeHtml(cat).replace(/'/g, "\\'") + '\')">' +
+                 '<span>' + _v3EscapeHtml(cat) + '</span><span class="re-pill-count">' + count + '</span>' +
                '</button>';
       }).join('') +
     '</div>';
 
-  return '<section class="re-picker-panel" style="background:#fff;border:1px solid ' + _RE_COLORS.border + ';border-radius:16px;display:flex;flex-direction:column;height:calc(100vh - 320px);min-height:480px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);">' +
+  return '<section class="re-panel re-picker-panel">' +
            // Header
-           '<header style="padding:14px 18px;border-bottom:1px solid ' + _RE_COLORS.border + ';background:linear-gradient(180deg,#fff 0%,' + _RE_COLORS.surfaceAlt + ' 100%);">' +
-             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-               '<div style="display:flex;align-items:center;gap:10px;">' +
-                 '<div style="width:32px;height:32px;background:' + _RE_COLORS.accentSoft + ';color:' + _RE_COLORS.accent + ';border-radius:9px;display:grid;place-items:center;">' +
-                   '<i class="fas fa-search-plus" style="font-size:14px;"></i>' +
-                 '</div>' +
-                 '<div>' +
-                   '<div style="font-size:14px;font-weight:800;color:' + _RE_COLORS.ink + ';line-height:1.2;">إضافة مكوّنات</div>' +
-                   '<div style="font-size:11px;color:' + _RE_COLORS.muted + ';font-weight:600;margin-top:1px;">من المخزون · ' + totalAvailable + ' مكوّن متاح</div>' +
+           '<header class="re-panel-head re-picker-head">' +
+             '<div class="re-picker-head-row">' +
+               '<div class="re-panel-head-left">' +
+                 '<div class="re-panel-icon re-panel-icon-accent"><i class="fas fa-search-plus"></i></div>' +
+                 '<div class="re-panel-titles">' +
+                   '<div class="re-panel-title">إضافة مكوّنات</div>' +
+                   '<div class="re-panel-sub">من المخزون · ' + totalAvailable + ' مكوّن متاح</div>' +
                  '</div>' +
                '</div>' +
-               '<button class="wo-btn wo-btn-sm wo-btn-primary" id="reAddSelectedBtn" onclick="reAddSelected()" disabled style="opacity:0.5;cursor:not-allowed;background:' + _RE_COLORS.primary + ';border-color:' + _RE_COLORS.primary + ';">' +
-                 '<i class="fas fa-plus"></i> أضف <span id="reSelCount">0</span>' +
+               '<button class="re-add-btn" id="reAddSelectedBtn" onclick="reAddSelected()" disabled>' +
+                 '<i class="fas fa-plus"></i><span>أضف</span><span class="re-add-count" id="reSelCount">0</span>' +
                '</button>' +
              '</div>' +
              // Search box with slash hint
-             '<div style="position:relative;">' +
-               '<i class="fas fa-search" style="position:absolute;top:50%;inset-inline-start:12px;transform:translateY(-50%);color:' + _RE_COLORS.muted + ';font-size:12px;"></i>' +
-               '<input type="text" id="rePickerSearchInput" placeholder="ابحث عن مكوّن..." value="' + _v3EscapeHtml(search) + '" oninput="rePickerSearch(this.value)" autocomplete="off" style="width:100%;padding:9px 36px 9px 38px;border:1.5px solid ' + _RE_COLORS.border + ';border-radius:10px;font-size:13px;background:#fff;transition:border-color 0.15s,box-shadow 0.15s;" onfocus="this.style.borderColor=\'' + _RE_COLORS.primary + '\';this.style.boxShadow=\'0 0 0 3px ' + _RE_COLORS.primarySoft + '\';" onblur="this.style.borderColor=\'' + _RE_COLORS.border + '\';this.style.boxShadow=\'none\';">' +
-               '<kbd style="position:absolute;top:50%;inset-inline-end:12px;transform:translateY(-50%);background:' + _RE_COLORS.surfaceAlt + ';color:' + _RE_COLORS.muted + ';padding:2px 7px;border-radius:5px;font-family:inherit;font-size:11px;font-weight:700;border:1px solid ' + _RE_COLORS.border + ';">/</kbd>' +
+             '<div class="re-search">' +
+               '<i class="fas fa-search re-search-icon"></i>' +
+               '<input type="text" id="rePickerSearchInput" class="re-search-input" placeholder="ابحث عن مكوّن..." value="' + _v3EscapeHtml(search) + '" oninput="rePickerSearch(this.value)" autocomplete="off">' +
+               '<kbd class="re-search-kbd">/</kbd>' +
              '</div>' +
              // Category pills
              pillsHtml +
            '</header>' +
            // List
-           '<div id="rePickerListBody" style="flex:1;overflow-y:auto;padding:8px 12px 12px;">' +
+           '<div id="rePickerListBody" class="re-picker-list">' +
              _reRenderPickerListBody(items, pickedIds, search, activeCategory, byCategory) +
            '</div>' +
          '</section>';
@@ -17334,11 +17565,11 @@ function _reRenderPickerListBody(items, pickedIds, search, activeCategory, byCat
     if (!arr.length) return;
     totalShown += arr.length;
     if (!activeCategory) {
-      html += '<div style="font-size:10px;font-weight:800;color:' + _RE_COLORS.muted + ';text-transform:uppercase;letter-spacing:0.06em;padding:10px 6px 5px;display:flex;align-items:center;gap:6px;">' +
-                '<span style="height:1px;flex:1;background:' + _RE_COLORS.border + ';"></span>' +
-                '<span>' + _v3EscapeHtml(cat) + '</span>' +
-                '<span style="background:' + _RE_COLORS.surfaceAlt + ';color:' + _RE_COLORS.sub + ';padding:1px 6px;border-radius:5px;font-family:monospace;">' + arr.length + '</span>' +
-                '<span style="height:1px;flex:1;background:' + _RE_COLORS.border + ';"></span>' +
+      html += '<div class="re-cat-divider">' +
+                '<span class="re-cat-line"></span>' +
+                '<span class="re-cat-name">' + _v3EscapeHtml(cat) + '</span>' +
+                '<span class="re-cat-count">' + arr.length + '</span>' +
+                '<span class="re-cat-line"></span>' +
               '</div>';
     }
     arr.forEach(function(it) {
@@ -17347,10 +17578,10 @@ function _reRenderPickerListBody(items, pickedIds, search, activeCategory, byCat
   });
 
   if (!totalShown) {
-    html += '<div style="text-align:center;padding:40px 20px;color:' + _RE_COLORS.muted + ';">' +
-              '<i class="fas fa-search-minus" style="font-size:36px;opacity:0.3;display:block;margin-bottom:10px;"></i>' +
-              '<div style="font-weight:700;font-size:13px;color:' + _RE_COLORS.sub + ';">لا توجد نتائج</div>' +
-              (search ? '<div style="font-size:12px;margin-top:4px;">جرب كلمة أخرى لـ <strong>"' + _v3EscapeHtml(search) + '"</strong></div>' : '') +
+    html += '<div class="re-no-results">' +
+              '<i class="fas fa-search-minus"></i>' +
+              '<div class="re-no-results-title">لا توجد نتائج</div>' +
+              (search ? '<div class="re-no-results-hint">جرب كلمة أخرى لـ <strong>"' + _v3EscapeHtml(search) + '"</strong></div>' : '') +
             '</div>';
   }
   return html;
@@ -17360,23 +17591,22 @@ function _reRenderPickerRow(it) {
   var cv = Number(it.convRate) || 1;
   var stockMinor = Number(it.stock) || 0;
   var stockHtml = (cv > 1 && it.bigUnit)
-    ? (stockMinor / cv).toFixed(2) + ' ' + it.bigUnit + ' <span style="opacity:0.6;">·</span> ' + stockMinor + ' ' + (it.unit || 'حبة')
-    : stockMinor + ' ' + (it.unit || 'حبة');
+    ? (stockMinor / cv).toFixed(2) + ' ' + _v3EscapeHtml(it.bigUnit) + ' <span class="re-stock-sep">·</span> ' + stockMinor + ' ' + _v3EscapeHtml(it.unit || 'حبة')
+    : stockMinor + ' ' + _v3EscapeHtml(it.unit || 'حبة');
   var stockState = stockMinor === 0 ? 'out' : (stockMinor < 10 ? 'low' : 'ok');
-  var dotColor = stockState === 'out' ? _RE_COLORS.muted : (stockState === 'low' ? _RE_COLORS.warning : _RE_COLORS.success);
-  var dotPulse = stockState === 'low' ? 'animation:rePulse 2s ease-in-out infinite;' : '';
-  return '<label class="re-pick-row" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;cursor:pointer;transition:background 0.12s;" onmouseover="this.style.background=\'' + _RE_COLORS.surfaceAlt + '\';" onmouseout="this.style.background=\'transparent\';">' +
-           '<input type="checkbox" class="re-pick-cb" data-item-id="' + _v3EscapeHtml(it.id) + '" onchange="reUpdateSelCount()" style="width:18px;height:18px;cursor:pointer;flex-shrink:0;accent-color:' + _RE_COLORS.primary + ';">' +
-           '<div style="flex:1;min-width:0;">' +
-             '<div style="font-weight:700;color:' + _RE_COLORS.ink + ';font-size:13px;line-height:1.3;">' + _v3EscapeHtml(it.name) + '</div>' +
-             '<div style="font-size:11px;color:' + _RE_COLORS.sub + ';font-weight:600;margin-top:3px;display:flex;align-items:center;gap:5px;">' +
-               '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:' + dotColor + ';flex-shrink:0;' + dotPulse + '"></span>' +
-               '<span>' + stockHtml + '</span>' +
+  var dotClass = 're-pick-dot re-pick-dot-' + stockState;
+  return '<label class="re-pick-row">' +
+           '<input type="checkbox" class="re-pick-cb" data-item-id="' + _v3EscapeHtml(it.id) + '" onchange="reUpdateSelCount()">' +
+           '<div class="re-pick-info">' +
+             '<div class="re-pick-name">' + _v3EscapeHtml(it.name) + '</div>' +
+             '<div class="re-pick-stock">' +
+               '<span class="' + dotClass + '"></span>' +
+               '<span class="re-pick-stock-text">' + stockHtml + '</span>' +
              '</div>' +
            '</div>' +
-           '<div style="text-align:end;flex-shrink:0;">' +
-             '<div style="font-size:13px;color:' + _RE_COLORS.ink + ';font-family:ui-monospace,SFMono-Regular,monospace;font-weight:700;">' + _v3Fmt(it.cost) + '</div>' +
-             '<div style="font-size:10px;color:' + _RE_COLORS.muted + ';font-weight:600;margin-top:1px;">ر.س / ' + _v3EscapeHtml(it.unit || 'حبة') + '</div>' +
+           '<div class="re-pick-price">' +
+             '<div class="re-pick-cost re-num">' + _v3Fmt(it.cost) + '</div>' +
+             '<div class="re-pick-unit">ر.س / ' + _v3EscapeHtml(it.unit || 'حبة') + '</div>' +
            '</div>' +
          '</label>';
 }
@@ -17480,7 +17710,8 @@ window.rePickerSearch = function(v) {
       byCategory[cat].push(it);
     });
     var pickedIds = new Set(window._re.lines.map(function(l) { return l.itemId; }));
-    listBody.innerHTML = _reRenderPickerListBody(window._re.items, pickedIds, window._re.pickerSearch, byCategory);
+    // V5.7.36 — pass activeCategory through so search respects category filter
+    listBody.innerHTML = _reRenderPickerListBody(window._re.items, pickedIds, window._re.pickerSearch, window._re.pickerCategory || '', byCategory);
   }, 200);
 };
 
@@ -17489,11 +17720,8 @@ window.reUpdateSelCount = function() {
   var btn = document.getElementById('reAddSelectedBtn');
   var c = document.getElementById('reSelCount');
   if (c) c.textContent = n;
-  if (btn) {
-    btn.disabled = !n;
-    btn.style.opacity = n ? '1' : '0.5';
-    btn.style.cursor = n ? 'pointer' : 'not-allowed';
-  }
+  // V5.7.36 — disabled state is fully driven by CSS (:disabled). Don't fight it.
+  if (btn) btn.disabled = !n;
 };
 window.reAddSelected = function() {
   if (!window._re) return;

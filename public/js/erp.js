@@ -11600,7 +11600,46 @@ function erpLoadBOM() {
 // the final product. Used by the "وصفة" button on menu item rows.
 //   erpOpenBomModal('bomId')                          → edit existing BOM
 //   erpOpenBomModal(null, { productId, productSource, productName }) → new BOM with preset
+//
+// V5.7.37 — UNIFIED: when the BOM's product is a menu item, route to the
+//   V5.7.36 full-screen editor so all three entry points (brand-menu,
+//   recipes section, semi-finished) render the same UI. The original
+//   chips-style modal stays as a fallback for inventory-item BOMs (sub-
+//   assemblies, raw-material composites) that the recipe editor can't
+//   currently handle.
 function erpOpenBomModal(id, preselect) {
+  preselect = preselect || null;
+
+  // Fast path 1: caller already gave us a menu product → unified editor
+  if (typeof window.erpOpenRecipeEditor === 'function'
+      && preselect && preselect.productSource === 'menu' && preselect.productId) {
+    return window.erpOpenRecipeEditor(preselect.productId);
+  }
+
+  // Fast path 2: editing an existing BOM. Resolve productId+source via /erp/bom
+  //   and route to V5.7.36 if it's a menu product. Falls through to the legacy
+  //   chips modal if the lookup fails or the BOM belongs to an inv item.
+  if (id && typeof window.erpOpenRecipeEditor === 'function') {
+    var route = function() {
+      _erpGet('/erp/bom', function(boms) {
+        var b = (Array.isArray(boms) ? boms : []).find(function(x){ return String(x.id) === String(id); });
+        if (b && b.productSource === 'menu' && b.productId) {
+          window.erpOpenRecipeEditor(b.productId);
+        } else {
+          _erpOpenBomModalLegacy(id, preselect);
+        }
+      });
+    };
+    return route();
+  }
+  // Otherwise: no preselect + no id (e.g. "وصفة جديدة" button) → legacy modal
+  //   so the user can pick the product type (menu vs inv).
+  return _erpOpenBomModalLegacy(id, preselect);
+}
+
+// Legacy chips-style BOM editor body. Renamed from erpOpenBomModal so the
+//   public name now points at the unified router above.
+function _erpOpenBomModalLegacy(id, preselect) {
   preselect = preselect || null;
   // Load BOTH inv_items (for ingredients picker) AND the unified product-pool
   Promise.all([
@@ -18201,8 +18240,17 @@ function _sfSave() {
   }
 }
 
-// BOM editor for a semi-finished — uses the existing recipe table (menu_id → ingredients)
+// BOM editor for a semi-finished — V5.7.37 UNIFIED: routes to the V5.7.36
+//   full-screen recipe editor so semi-finished products use the same UI as
+//   finished menu items. Both live in the menu table (semi-finished items
+//   are flagged isSemiFinished=true), so /menu/:id/recipe-bom already
+//   handles them. The legacy _renderBomModal is kept only as a fallback
+//   for environments where erpOpenRecipeEditor failed to load.
 function erpEditSemiBom(menuId) {
+  if (typeof window.erpOpenRecipeEditor === 'function') {
+    return window.erpOpenRecipeEditor(menuId);
+  }
+  // ── Legacy fallback (kept for safety; not the normal path) ──
   var m = (window._sfItemsCache||window._bmItemsCache||[]).find(function(x){return x.id===menuId;});
   if (!m) { _v3Toast('غير موجود', true); return; }
 

@@ -14040,6 +14040,11 @@ window.siCloseDetail = function() {
 
 // Reverse confirmation modal — requires a reason ≥ 4 chars.
 window.siOpenReverseConfirm = function(id) {
+  // V5.9.8 — inject styles even when the user opens this modal directly from
+  // the LIST row (not from the detail view). Previously the CSS lived only in
+  // `_siInjectDetailStyles` which `siView` called — opening the reverse modal
+  // straight from the list rendered raw unstyled HTML.
+  _siInjectDetailStyles();
   var el = document.getElementById('siRevConfirm');
   if (!el) {
     el = document.createElement('div');

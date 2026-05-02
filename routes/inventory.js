@@ -238,6 +238,195 @@ router.get('/live', async (req, res) => {
   }
 });
 
+// V5.8.1 — Period-aware live inventory report.
+// Returns each item with full breakdown for a date range:
+//   • openingStock  — stock as of startDate
+//   • purchasedQty  — sum of 'in' movements where reason ~ purchase/receive in period
+//   • consumedQty   — sum of 'out' movements where reason ~ sales/production
+//   • adjustedQty   — net adjustments in period (negative if shortages)
+//   • transferIn    — sum of 'in' transfer movements
+//   • transferOut   — sum of 'out' transfer movements
+//   • closingStock  — stock as of endDate (= opening + net movements)
+//   • value         — closingStock × unit cost
+// Query params: brandId?, warehouseId?, category?, startDate, endDate, q?(search)
+router.get('/live-report', async (req, res) => {
+  try {
+    const { brandId, warehouseId, category, startDate, endDate, q } = req.query;
+    // Default period: last 30 days
+    const endD   = endDate   ? new Date(endDate)   : new Date();
+    const startD = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    // Normalize endD to end-of-day so movements on endDate are included
+    endD.setHours(23, 59, 59, 999);
+
+    let sql = 'SELECT i.*, b.name AS brand_name FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id WHERE i.active = 1';
+    const params = [];
+    if (brandId)   { sql += ' AND i.brand_id = ?'; params.push(brandId); }
+    if (category)  { sql += ' AND i.category = ?'; params.push(category); }
+    if (q)         { sql += ' AND (i.name LIKE ? OR i.id LIKE ?)'; params.push('%'+q+'%', '%'+q+'%'); }
+    sql += ' ORDER BY i.category, i.name';
+    const [items] = await db.query(sql, params);
+
+    if (!items.length) return res.json({ items: [], totals: _zeroTotals(), period: { startDate: startD, endDate: endD } });
+
+    const itemIds = items.map(r => r.id);
+    const placeholders = itemIds.map(() => '?').join(',');
+    const whClause = warehouseId ? ' AND warehouse_id = ?' : '';
+    const whParam  = warehouseId ? [warehouseId] : [];
+
+    // 1) All movements for these items AFTER startD (regardless of endD).
+    //    Purpose: opening = current_stock − sum(net) of all movements after startD.
+    //    closing = current_stock − sum(net) of all movements after endD.
+    const [allRows] = await db.query(
+      'SELECT item_id, type, SUM(qty) AS q FROM inventory_movements ' +
+      'WHERE item_id IN (' + placeholders + ') AND movement_date > ? ' + whClause +
+      ' GROUP BY item_id, type',
+      [...itemIds, startD, ...whParam]
+    );
+    const [postEndRows] = await db.query(
+      'SELECT item_id, type, SUM(qty) AS q FROM inventory_movements ' +
+      'WHERE item_id IN (' + placeholders + ') AND movement_date > ? ' + whClause +
+      ' GROUP BY item_id, type',
+      [...itemIds, endD, ...whParam]
+    );
+    const [periodRows] = await db.query(
+      'SELECT item_id, type, reason, SUM(qty) AS q FROM inventory_movements ' +
+      'WHERE item_id IN (' + placeholders + ') AND movement_date >= ? AND movement_date <= ? ' + whClause +
+      ' GROUP BY item_id, type, reason',
+      [...itemIds, startD, endD, ...whParam]
+    );
+
+    // Index helpers
+    const netSinceStart = {}; // item_id → net (in - out) since startD
+    allRows.forEach(r => {
+      const sign = r.type === 'in' ? 1 : -1;
+      netSinceStart[r.item_id] = (netSinceStart[r.item_id] || 0) + sign * Number(r.q || 0);
+    });
+    const netSinceEnd = {};   // item_id → net (in - out) after endD (used to compute closing)
+    postEndRows.forEach(r => {
+      const sign = r.type === 'in' ? 1 : -1;
+      netSinceEnd[r.item_id] = (netSinceEnd[r.item_id] || 0) + sign * Number(r.q || 0);
+    });
+
+    // Bucket the period rows by reason category
+    //   purchases   = reason matches purchase/receive keywords (in)
+    //   consumed    = reason matches sales/production keywords (out)
+    //   adjustments = reason matches damage/admin/settlement (out)
+    //   transferIn / transferOut = reason matches transfer keywords
+    //   stockTake   = reason matches جرد/stocktake (variance)
+    const byItem = {};
+    function bucket(reason, type) {
+      const r = String(reason || '').toLowerCase();
+      if (/مشتريات|استلام|purchase|receive/i.test(reason)) return 'purchases';
+      if (/مبيعات|إنتاج|انتاج|production|sale/i.test(reason)) return 'consumed';
+      if (/تالف|إداري|اداري|تسويات|damage|admin|settlement|adjust/i.test(reason)) return 'adjustments';
+      if (/تحويل|transfer/i.test(reason)) return type === 'in' ? 'transferIn' : 'transferOut';
+      if (/جرد|stocktake|variance/i.test(reason)) return 'stocktake';
+      // Unknown reason: treat by type
+      return type === 'in' ? 'purchases' : 'consumed';
+    }
+    periodRows.forEach(r => {
+      if (!byItem[r.item_id]) byItem[r.item_id] = {
+        purchases: 0, consumed: 0, adjustments: 0, transferIn: 0, transferOut: 0, stocktake: 0
+      };
+      const b = bucket(r.reason, r.type);
+      byItem[r.item_id][b] = (byItem[r.item_id][b] || 0) + Number(r.q || 0);
+    });
+
+    // Compute the per-item summary
+    const totals = _zeroTotals();
+    const result = items.map(i => {
+      const cur = Number(i.stock) || 0;
+      const opening = cur - (netSinceStart[i.id] || 0);
+      const closing = cur - (netSinceEnd[i.id]   || 0);
+      const b = byItem[i.id] || { purchases: 0, consumed: 0, adjustments: 0, transferIn: 0, transferOut: 0, stocktake: 0 };
+      const cost = Number(i.cost) || 0;
+      const value = closing * cost;
+      let status = 'جيد';
+      if (closing <= 0) status = 'نفد';
+      else if (closing <= (Number(i.min_stock) || 0)) status = 'منخفض';
+
+      totals.openingValue   += opening * cost;
+      totals.purchasesValue += b.purchases * cost;
+      totals.consumedValue  += b.consumed  * cost;
+      totals.adjustValue    += b.adjustments * cost;
+      totals.closingValue   += value;
+      totals.itemCount++;
+      if (status === 'منخفض') totals.lowCount++;
+      if (status === 'نفد')  totals.outCount++;
+      return {
+        id: i.id,
+        name: i.name,
+        category: i.category || '',
+        unit: i.unit || 'حبة',
+        bigUnit: i.big_unit || '',
+        convRate: Number(i.conv_rate) || 1,
+        cost: cost,
+        minStock: Number(i.min_stock) || 0,
+        brandId: i.brand_id || '',
+        brandName: i.brand_name || '',
+        openingStock: opening,
+        purchasedQty: b.purchases,
+        consumedQty:  b.consumed,
+        adjustedQty:  b.adjustments,
+        transferIn:   b.transferIn,
+        transferOut:  b.transferOut,
+        stocktakeQty: b.stocktake,
+        closingStock: closing,
+        value: value,
+        status: status
+      };
+    });
+
+    res.json({
+      items: result,
+      totals: totals,
+      period: { startDate: startD, endDate: endD }
+    });
+  } catch (e) {
+    res.json({ error: e.message, items: [], totals: _zeroTotals() });
+  }
+});
+
+function _zeroTotals() {
+  return {
+    itemCount: 0,
+    lowCount: 0,
+    outCount: 0,
+    openingValue:   0,
+    purchasesValue: 0,
+    consumedValue:  0,
+    adjustValue:    0,
+    closingValue:   0
+  };
+}
+
+// V5.8.1 — Per-item movement detail for the drill-down popup.
+//   GET /api/inventory/live-report/:itemId/movements?startDate&endDate
+router.get('/live-report/:itemId/movements', async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    const { startDate, endDate } = req.query;
+    const endD   = endDate   ? new Date(endDate)   : new Date();
+    const startD = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    endD.setHours(23, 59, 59, 999);
+    const [rows] = await db.query(
+      'SELECT id, movement_date, type, qty, reason, username, notes, warehouse_id FROM inventory_movements ' +
+      'WHERE item_id = ? AND movement_date BETWEEN ? AND ? ORDER BY movement_date DESC LIMIT 200',
+      [itemId, startD, endD]
+    );
+    res.json(rows.map(r => ({
+      id: r.id,
+      date: r.movement_date,
+      type: r.type,
+      qty:  Number(r.qty) || 0,
+      reason: r.reason || '',
+      username: r.username || '',
+      notes: r.notes || '',
+      warehouseId: r.warehouse_id || ''
+    })));
+  } catch (e) { res.json([]); }
+});
+
 // ─── Stocktakes ───
 
 // Submit a new stocktake: adjusts stock + records movements + persists the report

@@ -5366,61 +5366,583 @@ function openTransferModal() {
 }
 
 // =========================================
-// 6.e. Live Inventory 
+// V5.8.1 — Live Inventory (period-aware advanced report)
+// ─────────────────────────────────────────────────────
+// Replaces the legacy "as-of-now" table with a date-ranged report:
+//   • opening balance at startDate
+//   • purchases / consumed / adjustments / transfers in the period
+//   • closing balance at endDate
+//   • value × cost
+//   • drill-down: click a row → modal with every movement in the period
+//   • PDF + Excel export (PR3)
 // =========================================
+window._invLive = window._invLive || {
+  startDate: null,    // Date object
+  endDate:   null,
+  preset:    'month', // today/yesterday/week/month/quarter/year/custom
+  warehouseId: '',
+  category:  '',
+  search:    '',
+  status:    '',      // '' | 'low' | 'out' | 'ok'
+  data:      null     // last loaded { items, totals, period }
+};
+
 function loadLiveInventory() {
+  // Mount the new UI shell once. Subsequent calls just re-fetch.
+  _invLiveMountShell();
+  _invLiveSyncFromHubBrand();
+  _invLiveDefaultPeriodIfMissing();
+  _invLiveFetch();
+}
+
+// Set default period = current month if state has none yet.
+function _invLiveDefaultPeriodIfMissing() {
+  if (window._invLive.startDate && window._invLive.endDate) return;
+  _invLiveSetPreset('month');
+}
+
+// Sync brand filter from hub state — when user came in via the brand hub,
+//   _invHub.brandId is set; '__all__' means no brand restriction.
+function _invLiveSyncFromHubBrand() {
+  if (!window._invHub || !window._invHub.brandId) return;
+  // Just store on state — the URL param is read at fetch time
+  window._invLive.brandId = window._invHub.brandId === '__all__' ? '' : window._invHub.brandId;
+}
+
+// ─── Date helpers ───
+function _invLiveSetPreset(name) {
+  var now = new Date();
+  var s = new Date(now), e = new Date(now);
+  switch (name) {
+    case 'today':     s = _dayStart(now); e = _dayEnd(now); break;
+    case 'yesterday': s = _dayStart(_addDays(now, -1)); e = _dayEnd(_addDays(now, -1)); break;
+    case 'week':      s = _dayStart(_addDays(now, -((now.getDay() + 6) % 7))); e = _dayEnd(now); break;
+    case 'month':     s = new Date(now.getFullYear(), now.getMonth(), 1); e = _dayEnd(now); break;
+    case 'quarter':   var qm = Math.floor(now.getMonth()/3)*3; s = new Date(now.getFullYear(), qm, 1); e = _dayEnd(now); break;
+    case 'year':      s = new Date(now.getFullYear(), 0, 1); e = _dayEnd(now); break;
+    default: return;
+  }
+  window._invLive.preset    = name;
+  window._invLive.startDate = s;
+  window._invLive.endDate   = e;
+}
+function _dayStart(d) { var x = new Date(d); x.setHours(0,0,0,0); return x; }
+function _dayEnd(d)   { var x = new Date(d); x.setHours(23,59,59,999); return x; }
+function _addDays(d, n) { var x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function _ymd(d) {
+  if (!d) return '';
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+// ─── Build the shell once ───
+function _invLiveMountShell() {
+  var box = q('#wh_live');
+  if (!box) return;
+  if (q('#invLiveShell')) return;  // already mounted
+  _invLiveInjectStyles();
+  box.innerHTML =
+    '<section id="invLiveShell" class="iv-live-shell">' +
+      '<div class="iv-live-filterbar" id="invLiveFilterBar"></div>' +
+      '<div class="iv-live-kpis" id="invLiveKpis"></div>' +
+      '<div class="iv-live-toolbar">' +
+        '<div class="iv-live-counts" id="invLiveCounts"></div>' +
+        '<div class="iv-live-export">' +
+          '<button class="iv-live-btn iv-live-btn-ghost" onclick="invLiveExport(\'print\')"><i class="fas fa-print"></i> طباعة</button>' +
+          '<button class="iv-live-btn iv-live-btn-success" onclick="invLiveExport(\'excel\')"><i class="fas fa-file-excel"></i> تصدير Excel</button>' +
+          '<button class="iv-live-btn iv-live-btn-danger" onclick="invLiveExport(\'pdf\')"><i class="fas fa-file-pdf"></i> تصدير PDF</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="iv-live-table-wrap"><table class="iv-live-table" id="invLiveTable"><thead></thead><tbody></tbody></table></div>' +
+    '</section>';
+  _invLiveRenderFilterBar();
+}
+
+function _invLiveRenderFilterBar() {
+  var bar = q('#invLiveFilterBar');
+  if (!bar) return;
+  var s = window._invLive;
+  var preset = s.preset;
+  var presets = [
+    ['today',     'اليوم'],
+    ['yesterday', 'أمس'],
+    ['week',      'هذا الأسبوع'],
+    ['month',     'هذا الشهر'],
+    ['quarter',   'هذا الربع'],
+    ['year',      'هذا العام'],
+    ['custom',    'مخصص']
+  ];
+  bar.innerHTML =
+    '<div class="iv-live-filter-row">' +
+      '<div class="iv-live-field">' +
+        '<label>من تاريخ</label>' +
+        '<input type="date" id="invLiveStartDate" value="' + _ymd(s.startDate) + '" onchange="_invLiveOnDateChange()">' +
+      '</div>' +
+      '<div class="iv-live-field">' +
+        '<label>إلى تاريخ</label>' +
+        '<input type="date" id="invLiveEndDate" value="' + _ymd(s.endDate) + '" onchange="_invLiveOnDateChange()">' +
+      '</div>' +
+      '<div class="iv-live-presets">' +
+        presets.map(function(p) {
+          return '<button class="iv-live-preset' + (preset === p[0] ? ' iv-live-preset-active' : '') + '" onclick="_invLivePresetClick(\'' + p[0] + '\')">' + p[1] + '</button>';
+        }).join('') +
+      '</div>' +
+    '</div>' +
+    '<div class="iv-live-filter-row">' +
+      '<div class="iv-live-field iv-live-field-grow">' +
+        '<label>بحث</label>' +
+        '<input type="text" id="invLiveSearch" placeholder="بحث بالاسم أو الكود..." value="' + _invHubEsc(s.search || '') + '" oninput="_invLiveOnSearch(this.value)">' +
+      '</div>' +
+      '<div class="iv-live-field">' +
+        '<label>الحالة</label>' +
+        '<select id="invLiveStatus" onchange="window._invLive.status=this.value;_invLiveRender();">' +
+          '<option value="">الكل</option>' +
+          '<option value="ok"' + (s.status==='ok'?' selected':'') + '>متوفر</option>' +
+          '<option value="low"' + (s.status==='low'?' selected':'') + '>منخفض</option>' +
+          '<option value="out"' + (s.status==='out'?' selected':'') + '>نفد</option>' +
+        '</select>' +
+      '</div>' +
+      '<button class="iv-live-btn iv-live-btn-primary" onclick="_invLiveFetch()"><i class="fas fa-rotate"></i> تحديث</button>' +
+    '</div>';
+}
+
+window._invLivePresetClick = function(name) {
+  if (name === 'custom') {
+    window._invLive.preset = 'custom';
+    var s = q('#invLiveStartDate'); if (s) s.focus();
+  } else {
+    _invLiveSetPreset(name);
+  }
+  _invLiveRenderFilterBar();
+  _invLiveFetch();
+};
+window._invLiveOnDateChange = function() {
+  var s = q('#invLiveStartDate'); var e = q('#invLiveEndDate');
+  if (s && s.value) window._invLive.startDate = _dayStart(new Date(s.value));
+  if (e && e.value) window._invLive.endDate   = _dayEnd(new Date(e.value));
+  window._invLive.preset = 'custom';
+  _invLiveRenderFilterBar();
+  _invLiveFetch();
+};
+var _invLiveSearchTimer = null;
+window._invLiveOnSearch = function(v) {
+  window._invLive.search = v;
+  clearTimeout(_invLiveSearchTimer);
+  _invLiveSearchTimer = setTimeout(function() { _invLiveRender(); }, 250);
+};
+
+// ─── Fetch + render ───
+function _invLiveFetch() {
+  var s = window._invLive;
+  var brandId = (window._invHub && window._invHub.brandId && window._invHub.brandId !== '__all__')
+    ? window._invHub.brandId : '';
+  var qs = [];
+  if (s.startDate) qs.push('startDate=' + encodeURIComponent(_ymd(s.startDate)));
+  if (s.endDate)   qs.push('endDate='   + encodeURIComponent(_ymd(s.endDate)));
+  if (brandId)     qs.push('brandId='   + encodeURIComponent(brandId));
+  if (s.warehouseId) qs.push('warehouseId=' + encodeURIComponent(s.warehouseId));
+  if (s.category)    qs.push('category='    + encodeURIComponent(s.category));
   loader(true);
-  _populateWhBrandFilters();
-  var brandF = q("#liveBrandFilter") ? q("#liveBrandFilter").value : '';
-  api.withFailureHandler(err => {
-    loader(false);
-    showToast(err.message || "فشل تحميل المخزون الفعلي", true);
-  }).withSuccessHandler(res => {
-    loader(false);
-    let h = "";
-    if (res.error) {
-      showToast(res.error, true);
-      h = `<tr><td colspan="8" style="text-align:center;color:red;">${res.error}</td></tr>`;
-    } else if (!res || res.length === 0) {
-      h = "<tr><td colspan='8' style='text-align:center;'>لا توجد مواد مخزون. الرجاء إضافة مواد خام وتحديث الأرصدة.</td></tr>";
-    } else {
-      // Apply client-side brand filter (getLiveInventory doesn't currently support brandId param)
-      let filtered = res;
-      if (brandF) {
-        filtered = res.filter(function(i){
-          return brandF === '__none__' ? !i.brandId : i.brandId === brandF;
-        });
-      }
-      if (!filtered.length) {
-        h = "<tr><td colspan='8' style='text-align:center;color:#94a3b8;padding:30px;'>لا توجد مواد ضمن البراند المحدد</td></tr>";
-      } else {
-        filtered.forEach(item => {
-          let statusBadge = '';
-          if (item.status === 'نفد') statusBadge = '<span class="badge red">نفد</span>';
-          else if (item.status === 'منخفض') statusBadge = '<span class="badge" style="background:#fef3c7; color:#92400e;">منخفض</span>';
-          else statusBadge = '<span class="badge green">جيد</span>';
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/inventory/live-report?' + qs.join('&'), { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => r.json())
+    .then(function(data) {
+      loader(false);
+      if (data && data.error) { showToast(data.error, true); return; }
+      window._invLive.data = data;
+      _invLiveRender();
+    })
+    .catch(function(err) {
+      loader(false);
+      showToast(err.message || 'فشل التحميل', true);
+    });
+}
 
-          let brandHtml = item.brandName
-            ? `<span class="badge" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-store"></i> ${item.brandName}</span>`
-            : `<span class="badge" style="background:#f1f5f9;color:#94a3b8;">بدون</span>`;
+function _invLiveRender() {
+  var data = window._invLive.data;
+  if (!data) return;
+  _invLiveRenderKpis(data.totals);
+  _invLiveRenderTable(data.items, data.totals);
+}
 
-          let unitDisplay = (item.bigUnit && Number(item.convRate) > 1) ? `${item.unit} (${item.convRate} حبة بالـ ${item.bigUnit})` : (item.unit || '');
-          h += `<tr>
-            <td style="font-weight:700;">${item.name}</td>
-            <td>${brandHtml}</td>
-            <td>${item.category}</td>
-            <td style="color:#64748b;">${item.initialStock} ${item.unit}</td>
-            <td style="color:#16a34a; font-weight:700;">+${item.purchasedQty} ${item.unit} <br><small style="color:#94a3b8">${unitDisplay}</small></td>
-            <td style="color:#e11d48; font-weight:700;">-${item.consumedQty} ${item.unit}</td>
-            <td style="font-size:16px; font-weight:900; color:var(--primary);">${item.currentStock} ${item.unit}</td>
-            <td>${statusBadge}</td>
-          </tr>`;
-        });
-      }
+function _invLiveRenderKpis(t) {
+  var el = q('#invLiveKpis');
+  if (!el || !t) return;
+  var net = (t.purchasesValue || 0) - (t.consumedValue || 0) + (t.adjustValue || 0);
+  el.innerHTML =
+    _kpiCard('مخزون أول الفترة', _invHubFmtMoney(t.openingValue), 'ر.س', 'fa-flag-checkered', '#3b82f6', t.itemCount + ' صنف') +
+    _kpiCard('مشتريات', _invHubFmtMoney(t.purchasesValue), 'ر.س', 'fa-cart-arrow-down', '#10b981', '+ ' + _invHubFmtMoney(t.purchasesValue)) +
+    _kpiCard('استهلاك إنتاج/مبيعات', _invHubFmtMoney(t.consumedValue), 'ر.س', 'fa-fire', '#ef4444', '− ' + _invHubFmtMoney(t.consumedValue)) +
+    _kpiCard('مخزون آخر الفترة', _invHubFmtMoney(t.closingValue), 'ر.س', 'fa-warehouse', '#7c3aed',
+      (t.lowCount > 0 ? '⚠ ' + t.lowCount + ' منخفضة · ' : '') + (t.outCount > 0 ? t.outCount + ' نفدت' : 'سليم'));
+}
+function _kpiCard(label, num, unit, icon, color, sub) {
+  return '<div class="iv-live-kpi" style="--kc:' + color + ';">' +
+           '<div class="iv-live-kpi-icon" style="background:' + color + '1a;color:' + color + ';"><i class="fas ' + icon + '"></i></div>' +
+           '<div class="iv-live-kpi-body">' +
+             '<div class="iv-live-kpi-label">' + label + '</div>' +
+             '<div class="iv-live-kpi-num">' + num + ' <span class="iv-live-kpi-unit">' + unit + '</span></div>' +
+             '<div class="iv-live-kpi-sub">' + sub + '</div>' +
+           '</div>' +
+         '</div>';
+}
+
+function _invLiveRenderTable(items, totals) {
+  var s = window._invLive;
+  var search = (s.search || '').trim().toLowerCase();
+  var status = s.status;
+  var filtered = (items || []).filter(function(it) {
+    if (status && it.status !== ({ ok: 'جيد', low: 'منخفض', out: 'نفد' }[status])) return false;
+    if (search) {
+      var hay = (it.name + ' ' + it.id + ' ' + (it.category||'')).toLowerCase();
+      if (hay.indexOf(search) < 0) return false;
     }
-    const tb = q("#tbLiveInventory");
-    if (tb) tb.innerHTML = h;
-  }).getLiveInventory();
+    return true;
+  });
+  var head = q('#invLiveTable thead');
+  var body = q('#invLiveTable tbody');
+  if (!head || !body) return;
+  head.innerHTML =
+    '<tr>' +
+      '<th>الكود</th>' +
+      '<th class="iv-th-name">الصنف</th>' +
+      '<th>التصنيف</th>' +
+      '<th class="iv-th-num">مخزون أول الفترة</th>' +
+      '<th class="iv-th-num">مشتريات</th>' +
+      '<th class="iv-th-num">استهلاك</th>' +
+      '<th class="iv-th-num">تعديلات</th>' +
+      '<th class="iv-th-num">تحويل وارد</th>' +
+      '<th class="iv-th-num">تحويل صادر</th>' +
+      '<th class="iv-th-num iv-th-closing">مخزون آخر الفترة</th>' +
+      '<th class="iv-th-num">القيمة (ر.س)</th>' +
+      '<th>الحالة</th>' +
+    '</tr>';
+  body.innerHTML = filtered.length === 0
+    ? '<tr><td colspan="12" class="iv-live-empty">لا توجد بيانات في النطاق المحدد. جرّب توسيع الفترة أو رفع الفلاتر.</td></tr>'
+    : filtered.map(function(it) {
+        var statusBadge = it.status === 'نفد' ? '<span class="iv-live-pill iv-live-pill-out">نفد</span>'
+                       : it.status === 'منخفض' ? '<span class="iv-live-pill iv-live-pill-low">منخفض</span>'
+                       : '<span class="iv-live-pill iv-live-pill-ok">جيد</span>';
+        return '<tr onclick="_invLiveDrillDown(\'' + _invHubEsc(it.id) + '\',\'' + _invHubEsc(it.name).replace(/\'/g,"\\'") + '\')" title="اضغط لعرض الحركة التفصيلية">' +
+                 '<td class="iv-live-code">' + _invHubEsc(it.id) + '</td>' +
+                 '<td class="iv-live-name">' + _invHubEsc(it.name) + '</td>' +
+                 '<td class="iv-live-cat">' + _invHubEsc(it.category) + '</td>' +
+                 _numCell(it.openingStock, it.unit) +
+                 _numCell(it.purchasedQty, it.unit, it.purchasedQty > 0 ? '#10b981' : '') +
+                 _numCell(it.consumedQty,  it.unit, it.consumedQty  > 0 ? '#ef4444' : '') +
+                 _numCell(it.adjustedQty,  it.unit, it.adjustedQty  > 0 ? '#f59e0b' : '') +
+                 _numCell(it.transferIn,   it.unit) +
+                 _numCell(it.transferOut,  it.unit) +
+                 _numCell(it.closingStock, it.unit, '#7c3aed', /*bold*/true) +
+                 '<td class="iv-live-num iv-live-num-bold">' + _invHubFmtMoney(it.value) + '</td>' +
+                 '<td>' + statusBadge + '</td>' +
+               '</tr>';
+      }).join('') +
+      // Totals row
+      '<tr class="iv-live-totals-row">' +
+        '<td colspan="3" class="iv-live-totals-label">الإجمالي</td>' +
+        '<td class="iv-live-num">' + _invHubFmtMoney((totals||{}).openingValue || 0) + ' ر.س</td>' +
+        '<td class="iv-live-num" style="color:#10b981;">+ ' + _invHubFmtMoney((totals||{}).purchasesValue || 0) + '</td>' +
+        '<td class="iv-live-num" style="color:#ef4444;">− ' + _invHubFmtMoney((totals||{}).consumedValue || 0) + '</td>' +
+        '<td class="iv-live-num" style="color:#f59e0b;">' + _invHubFmtMoney((totals||{}).adjustValue || 0) + '</td>' +
+        '<td class="iv-live-num">—</td>' +
+        '<td class="iv-live-num">—</td>' +
+        '<td class="iv-live-num iv-live-num-bold">' + _invHubFmtMoney((totals||{}).closingValue || 0) + '</td>' +
+        '<td class="iv-live-num iv-live-num-bold" style="color:#7c3aed;">' + _invHubFmtMoney((totals||{}).closingValue || 0) + '</td>' +
+        '<td>—</td>' +
+      '</tr>';
+  // Counts under filter bar
+  var counts = q('#invLiveCounts');
+  if (counts) {
+    counts.innerHTML = '<i class="fas fa-list-ul"></i> ' + filtered.length + ' من ' + (items||[]).length + ' صنف ضمن الفترة المحددة' +
+      (search ? ' · بحث: <strong>' + _invHubEsc(search) + '</strong>' : '');
+  }
+}
+
+function _numCell(qty, unit, color, bold) {
+  qty = Number(qty) || 0;
+  var n = (qty % 1 === 0) ? qty.toFixed(0) : qty.toFixed(2);
+  var style = (color ? 'color:' + color + ';' : '') + (bold ? 'font-weight:900;' : '');
+  return '<td class="iv-live-num"' + (style ? ' style="' + style + '"' : '') + '>' +
+           n + ' <span class="iv-live-num-unit">' + (unit||'') + '</span>' +
+         '</td>';
+}
+
+// ─── Drill-down: per-item movement detail ───
+window._invLiveDrillDown = function(itemId, itemName) {
+  var s = window._invLive;
+  loader(true);
+  var token = localStorage.getItem('pos_token') || '';
+  var qsParams = [
+    'startDate=' + encodeURIComponent(_ymd(s.startDate)),
+    'endDate=' + encodeURIComponent(_ymd(s.endDate))
+  ].join('&');
+  fetch('/api/inventory/live-report/' + encodeURIComponent(itemId) + '/movements?' + qsParams,
+        { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => r.json())
+    .then(function(rows) {
+      loader(false);
+      _invLiveShowDrillModal(itemId, itemName, rows || []);
+    })
+    .catch(function() { loader(false); showToast('فشل تحميل الحركات', true); });
+};
+
+function _invLiveShowDrillModal(itemId, itemName, rows) {
+  var html =
+    '<div class="iv-live-drill">' +
+      '<div class="iv-live-drill-head">' +
+        '<div class="iv-live-drill-title"><i class="fas fa-rectangle-list"></i> حركة الصنف خلال الفترة</div>' +
+        '<div class="iv-live-drill-sub">' + _invHubEsc(itemName) + ' · ' + rows.length + ' حركة</div>' +
+      '</div>' +
+      (rows.length === 0
+        ? '<div class="iv-live-empty">لا توجد حركة على هذا الصنف ضمن الفترة المحددة.</div>'
+        : '<div class="iv-live-drill-table-wrap"><table class="iv-live-drill-table">' +
+            '<thead><tr><th>التاريخ</th><th>النوع</th><th>السبب</th><th>الكمية</th><th>المستخدم</th><th>ملاحظات</th></tr></thead>' +
+            '<tbody>' +
+            rows.map(function(r) {
+              var dateStr = _invHubFmtDate(r.date) + ' ' + new Date(r.date).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+              var typeBadge = r.type === 'in'
+                ? '<span class="iv-live-pill iv-live-pill-ok">+ وارد</span>'
+                : '<span class="iv-live-pill iv-live-pill-out">− صادر</span>';
+              return '<tr>' +
+                       '<td class="iv-live-num">' + dateStr + '</td>' +
+                       '<td>' + typeBadge + '</td>' +
+                       '<td>' + _invHubEsc(r.reason) + '</td>' +
+                       '<td class="iv-live-num">' + (r.qty || 0) + '</td>' +
+                       '<td>' + _invHubEsc(r.username) + '</td>' +
+                       '<td class="iv-live-cell-notes">' + _invHubEsc(r.notes) + '</td>' +
+                     '</tr>';
+            }).join('') +
+            '</tbody></table></div>'
+      ) +
+    '</div>';
+  if (typeof WoModal !== 'undefined' && WoModal.open) {
+    WoModal.open({
+      icon: 'fa-list', iconColor: 'purple',
+      title: 'حركة الصنف',
+      subtitle: itemName + ' · ' + _ymd(window._invLive.startDate) + ' → ' + _ymd(window._invLive.endDate),
+      body: html, size: 'lg',
+      footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إغلاق</button>'
+    });
+  } else {
+    alert(itemName + ': ' + rows.length + ' حركة');
+  }
+}
+
+// ─── PDF / Excel / Print export (PR3 — full implementation) ───
+window.invLiveExport = function(kind) {
+  if (kind === 'print') return _invLiveExportPrint();
+  if (kind === 'excel') return _invLiveExportExcel();
+  if (kind === 'pdf')   return _invLiveExportPdf();
+};
+function _invLiveExportPrint() {
+  // Open print stylesheet — keeps the existing on-page table but
+  //   strips the chrome (filter bar, kpis, buttons) via @media print.
+  window.print();
+}
+function _invLiveExportExcel() {
+  var d = window._invLive.data; if (!d) return showToast('لا توجد بيانات للتصدير', true);
+  if (typeof XLSX === 'undefined' && typeof loadScript === 'function') {
+    loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js')
+      .then(_invLiveExportExcel).catch(function(){ showToast('فشل تحميل مكتبة Excel', true); });
+    return;
+  }
+  if (typeof XLSX === 'undefined') return showToast('XLSX غير محمّلة', true);
+  var s = window._invLive;
+  var period = _ymd(s.startDate) + ' - ' + _ymd(s.endDate);
+  // Sheet 1 — summary
+  var summary = [
+    ['تقرير المخزون الفعلي'],
+    ['الفترة', period],
+    ['تاريخ التقرير', _ymd(new Date())],
+    [],
+    ['', 'القيمة (ر.س)', 'العدد'],
+    ['مخزون أول الفترة', d.totals.openingValue.toFixed(2), d.totals.itemCount],
+    ['إجمالي المشتريات', d.totals.purchasesValue.toFixed(2), ''],
+    ['إجمالي الاستهلاك', d.totals.consumedValue.toFixed(2),  ''],
+    ['إجمالي التعديلات', d.totals.adjustValue.toFixed(2),    ''],
+    ['مخزون آخر الفترة', d.totals.closingValue.toFixed(2),   d.totals.itemCount - d.totals.outCount],
+    ['أصناف منخفضة', '', d.totals.lowCount],
+    ['أصناف نفدت', '', d.totals.outCount]
+  ];
+  // Sheet 2 — detail
+  var detailHeader = ['الكود','الصنف','التصنيف','الوحدة','مخزون أول','مشتريات','استهلاك','تعديلات','تحويل وارد','تحويل صادر','مخزون آخر','تكلفة الوحدة','القيمة','الحالة'];
+  var detailRows = (d.items || []).map(function(it) {
+    return [it.id, it.name, it.category, it.unit, it.openingStock, it.purchasedQty, it.consumedQty,
+            it.adjustedQty, it.transferIn, it.transferOut, it.closingStock, it.cost, it.value, it.status];
+  });
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary),     'الملخّص');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([detailHeader].concat(detailRows)), 'تفاصيل الأصناف');
+  var fileName = 'inventory-' + _ymd(s.startDate) + '_' + _ymd(s.endDate) + '.xlsx';
+  XLSX.writeFile(wb, fileName);
+  showToast('تم تصدير ' + fileName);
+}
+function _invLiveExportPdf() {
+  var d = window._invLive.data; if (!d) return showToast('لا توجد بيانات للتصدير', true);
+  // Use the browser's built-in print-to-PDF via a popup window with embedded styles.
+  //   Lighter than jsPDF + autotable, full Arabic support, and the user
+  //   can choose "Save as PDF" from the print dialog.
+  var s = window._invLive;
+  var period = _ymd(s.startDate) + ' → ' + _ymd(s.endDate);
+  var brandName = '';
+  if (window._invHub && window._invHub.brandId && window._invHubCache && window._invHubCache.data) {
+    var b = (window._invHubCache.data.brands || []).find(function(x){ return x.id === window._invHub.brandId; });
+    if (b) brandName = b.name;
+    else if (window._invHub.brandId === '__all__') brandName = 'كل البراندات';
+    else if (window._invHub.brandId === '__none__') brandName = 'بدون براند';
+  }
+  var rows = (d.items || []).map(function(it, i) {
+    return '<tr>' +
+      '<td class="num">' + (i+1) + '</td>' +
+      '<td class="code">' + _invHubEsc(it.id) + '</td>' +
+      '<td>' + _invHubEsc(it.name) + '</td>' +
+      '<td>' + _invHubEsc(it.category) + '</td>' +
+      '<td class="num">' + (Number(it.openingStock)||0).toFixed(2) + '</td>' +
+      '<td class="num pos">' + (Number(it.purchasedQty)||0).toFixed(2) + '</td>' +
+      '<td class="num neg">' + (Number(it.consumedQty)||0).toFixed(2) + '</td>' +
+      '<td class="num">' + (Number(it.adjustedQty)||0).toFixed(2) + '</td>' +
+      '<td class="num close">' + (Number(it.closingStock)||0).toFixed(2) + '</td>' +
+      '<td class="num">' + (Number(it.value)||0).toFixed(2) + '</td>' +
+    '</tr>';
+  }).join('');
+  var html =
+    '<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>تقرير المخزون الفعلي · ' + period + '</title>' +
+    '<style>' +
+      '*{box-sizing:border-box;-webkit-print-color-adjust:exact;}' +
+      'body{font-family:"Tajawal","Segoe UI",Tahoma,sans-serif;color:#0f172a;margin:0;padding:20px;direction:rtl;font-size:11px;}' +
+      'h1{font-size:18px;margin:0 0 4px;}' +
+      '.head{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0f172a;padding-bottom:12px;margin-bottom:14px;}' +
+      '.head .meta{font-size:11px;color:#475569;line-height:1.5;}' +
+      '.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;}' +
+      '.kpi{border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;}' +
+      '.kpi-label{font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;}' +
+      '.kpi-num{font-size:15px;font-weight:900;margin-top:2px;}' +
+      'table{width:100%;border-collapse:collapse;font-size:10.5px;}' +
+      'th,td{border:1px solid #e2e8f0;padding:5px 7px;text-align:start;}' +
+      'th{background:#0f172a;color:#fff;font-weight:800;text-align:center;}' +
+      '.num{text-align:end;font-family:ui-monospace,monospace;}' +
+      '.code{font-family:ui-monospace,monospace;color:#64748b;font-size:10px;}' +
+      '.pos{color:#15803d;font-weight:700;}' +
+      '.neg{color:#b91c1c;font-weight:700;}' +
+      '.close{color:#5b21b6;font-weight:800;}' +
+      'tfoot td{background:#1e293b;color:#fff;font-weight:900;}' +
+      '.foot{margin-top:14px;font-size:10px;color:#64748b;display:flex;justify-content:space-between;}' +
+      '@media print{ body{padding:12mm;} .no-print{display:none;} }' +
+    '</style></head><body>' +
+    '<div class="head">' +
+      '<div><h1>تقرير المخزون الفعلي</h1>' +
+        '<div class="meta">الفترة: <b>' + period + '</b>' + (brandName ? ' · البراند: <b>' + _invHubEsc(brandName) + '</b>' : '') + '</div>' +
+        '<div class="meta">تاريخ التقرير: ' + _ymd(new Date()) + '</div></div>' +
+      '<div class="meta"><i>Moroccan Taste POS</i></div>' +
+    '</div>' +
+    '<div class="kpis">' +
+      '<div class="kpi"><div class="kpi-label">مخزون أول الفترة</div><div class="kpi-num">' + d.totals.openingValue.toFixed(2) + ' ر.س</div></div>' +
+      '<div class="kpi"><div class="kpi-label">مشتريات</div><div class="kpi-num pos">+ ' + d.totals.purchasesValue.toFixed(2) + ' ر.س</div></div>' +
+      '<div class="kpi"><div class="kpi-label">استهلاك</div><div class="kpi-num neg">− ' + d.totals.consumedValue.toFixed(2) + ' ر.س</div></div>' +
+      '<div class="kpi"><div class="kpi-label">مخزون آخر الفترة</div><div class="kpi-num close">' + d.totals.closingValue.toFixed(2) + ' ر.س</div></div>' +
+    '</div>' +
+    '<table>' +
+      '<thead><tr><th>#</th><th>الكود</th><th>الصنف</th><th>التصنيف</th><th>أول الفترة</th><th>مشتريات</th><th>استهلاك</th><th>تعديلات</th><th>آخر الفترة</th><th>القيمة (ر.س)</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+      '<tfoot><tr><td colspan="4">الإجمالي (' + d.totals.itemCount + ' صنف)</td>' +
+        '<td class="num">' + d.totals.openingValue.toFixed(2) + '</td>' +
+        '<td class="num">+ ' + d.totals.purchasesValue.toFixed(2) + '</td>' +
+        '<td class="num">− ' + d.totals.consumedValue.toFixed(2) + '</td>' +
+        '<td class="num">' + d.totals.adjustValue.toFixed(2) + '</td>' +
+        '<td class="num">' + d.totals.closingValue.toFixed(2) + '</td>' +
+        '<td class="num">' + d.totals.closingValue.toFixed(2) + '</td>' +
+      '</tr></tfoot>' +
+    '</table>' +
+    '<div class="foot"><span>صفحة 1 من 1</span><span>تم الإنتاج بواسطة Moroccan Taste POS</span></div>' +
+    '<script>window.onload=function(){setTimeout(function(){window.print();},250)};</' + 'script>' +
+    '</body></html>';
+  var w = window.open('', 'invLivePdf', 'width=900,height=700');
+  if (!w) return showToast('السماح بالنوافذ المنبثقة لتصدير PDF', true);
+  w.document.open(); w.document.write(html); w.document.close();
+}
+
+// ─── Styles ───
+function _invLiveInjectStyles() {
+  if (document.getElementById('invLiveStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'invLiveStyles';
+  st.textContent =
+    '#wh_live{padding:0;}' +
+    '.iv-live-shell{background:#f8fafc;padding:14px 4px;direction:rtl;font-feature-settings:"tnum";font-variant-numeric:tabular-nums;}' +
+    '.iv-live-filterbar{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px 16px;margin-bottom:14px;display:flex;flex-direction:column;gap:10px;}' +
+    '.iv-live-filter-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;}' +
+    '.iv-live-field{display:flex;flex-direction:column;gap:4px;min-width:150px;}' +
+    '.iv-live-field-grow{flex:1;min-width:200px;}' +
+    '.iv-live-field label{font-size:11px;font-weight:700;color:#475569;letter-spacing:0.02em;}' +
+    '.iv-live-field input,.iv-live-field select{padding:8px 12px;border:1.5px solid #e2e8f0;border-radius:9px;font-size:13px;font-family:inherit;background:#fff;}' +
+    '.iv-live-field input:focus,.iv-live-field select:focus{outline:none;border-color:#7c3aed;box-shadow:0 0 0 3px #ede9fe;}' +
+    '.iv-live-presets{display:flex;flex-wrap:wrap;gap:5px;margin-inline-start:auto;}' +
+    '.iv-live-preset{background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;padding:7px 12px;border-radius:8px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;transition:all 0.15s;}' +
+    '.iv-live-preset:hover{background:#e2e8f0;color:#0f172a;}' +
+    '.iv-live-preset-active{background:#7c3aed;color:#fff;border-color:#7c3aed;}' +
+    '.iv-live-btn{padding:8px 14px;border-radius:9px;font-size:12.5px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;border:1.5px solid;transition:all 0.15s;}' +
+    '.iv-live-btn-primary{background:#7c3aed;color:#fff;border-color:#7c3aed;}' +
+    '.iv-live-btn-primary:hover{background:#6d28d9;border-color:#6d28d9;}' +
+    '.iv-live-btn-success{background:#15803d;color:#fff;border-color:#15803d;}' +
+    '.iv-live-btn-success:hover{background:#166534;border-color:#166534;}' +
+    '.iv-live-btn-danger{background:#b91c1c;color:#fff;border-color:#b91c1c;}' +
+    '.iv-live-btn-danger:hover{background:#991b1b;border-color:#991b1b;}' +
+    '.iv-live-btn-ghost{background:#fff;color:#475569;border-color:#e2e8f0;}' +
+    '.iv-live-btn-ghost:hover{background:#f8fafc;border-color:#cbd5e1;}' +
+    /* KPI cards */
+    '.iv-live-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:14px;}' +
+    '.iv-live-kpi{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px 16px;display:flex;align-items:center;gap:12px;border-inline-start:4px solid var(--kc,#7c3aed);}' +
+    '.iv-live-kpi-icon{width:46px;height:46px;border-radius:11px;display:grid;place-items:center;font-size:18px;flex-shrink:0;}' +
+    '.iv-live-kpi-body{min-width:0;flex:1;}' +
+    '.iv-live-kpi-label{font-size:11px;font-weight:700;color:#64748b;letter-spacing:0.02em;text-transform:uppercase;}' +
+    '.iv-live-kpi-num{font-size:20px;font-weight:900;color:#0f172a;letter-spacing:-0.02em;line-height:1.1;margin-top:2px;}' +
+    '.iv-live-kpi-unit{font-size:11px;font-weight:600;color:#94a3b8;}' +
+    '.iv-live-kpi-sub{font-size:11px;color:#64748b;font-weight:600;margin-top:3px;}' +
+    /* Toolbar */
+    '.iv-live-toolbar{display:flex;justify-content:space-between;align-items:center;padding:0 4px 10px;flex-wrap:wrap;gap:10px;}' +
+    '.iv-live-counts{font-size:12.5px;color:#475569;font-weight:600;}' +
+    '.iv-live-export{display:flex;gap:6px;flex-wrap:wrap;}' +
+    /* Table */
+    '.iv-live-table-wrap{background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;overflow-x:auto;}' +
+    '.iv-live-table{width:100%;border-collapse:collapse;font-size:12.5px;}' +
+    '.iv-live-table th{background:#0f172a;color:#fff;font-weight:800;padding:10px 8px;text-align:start;font-size:11.5px;letter-spacing:0.01em;white-space:nowrap;}' +
+    '.iv-live-table td{padding:9px 8px;border-bottom:1px solid #f1f5f9;}' +
+    '.iv-live-table tbody tr{cursor:pointer;transition:background 0.12s;}' +
+    '.iv-live-table tbody tr:hover{background:#fafbff;}' +
+    '.iv-live-code{color:#94a3b8;font-family:ui-monospace,monospace;font-size:11px;}' +
+    '.iv-live-name{font-weight:800;color:#0f172a;}' +
+    '.iv-live-cat{color:#64748b;font-size:11.5px;}' +
+    '.iv-live-num{text-align:end;font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums;white-space:nowrap;}' +
+    '.iv-live-num-bold{font-weight:900;color:#0f172a;}' +
+    '.iv-live-num-unit{font-size:10px;color:#94a3b8;font-weight:600;}' +
+    '.iv-th-name{min-width:180px;}' +
+    '.iv-th-num{text-align:end;}' +
+    '.iv-th-closing{background:#5b21b6 !important;}' +
+    '.iv-live-pill{display:inline-block;padding:3px 9px;border-radius:7px;font-size:10.5px;font-weight:800;white-space:nowrap;}' +
+    '.iv-live-pill-ok{background:#dcfce7;color:#15803d;}' +
+    '.iv-live-pill-low{background:#fef3c7;color:#92400e;}' +
+    '.iv-live-pill-out{background:#fee2e2;color:#b91c1c;}' +
+    '.iv-live-totals-row{background:#1e293b;color:#fff;}' +
+    '.iv-live-totals-row td{color:#fff !important;font-weight:800;border-color:#334155 !important;}' +
+    '.iv-live-totals-label{font-size:13px;letter-spacing:0.02em;}' +
+    '.iv-live-empty{text-align:center;padding:40px;color:#94a3b8;font-size:13px;font-weight:600;}' +
+    /* Drill-down */
+    '.iv-live-drill-head{margin-bottom:12px;}' +
+    '.iv-live-drill-title{font-size:14px;font-weight:800;color:#0f172a;display:flex;align-items:center;gap:8px;}' +
+    '.iv-live-drill-sub{font-size:12px;color:#64748b;font-weight:600;margin-top:3px;}' +
+    '.iv-live-drill-table-wrap{overflow:auto;max-height:60vh;}' +
+    '.iv-live-drill-table{width:100%;border-collapse:collapse;font-size:12px;}' +
+    '.iv-live-drill-table th{background:#f1f5f9;color:#475569;font-weight:800;padding:8px 10px;text-align:start;border-bottom:2px solid #e2e8f0;}' +
+    '.iv-live-drill-table td{padding:7px 10px;border-bottom:1px solid #f1f5f9;}' +
+    '.iv-live-cell-notes{color:#64748b;font-size:11px;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '@media print{' +
+      '.iv-live-filterbar,.iv-live-toolbar,.iv-live-kpis,.iv-hub-strip,#whTabs,.sidebar,.app-header{display:none !important;}' +
+      '.iv-live-shell{padding:0;background:#fff;}' +
+      '.iv-live-table-wrap{border:0;border-radius:0;}' +
+      '.iv-live-table tbody tr{cursor:default;}' +
+      'body{background:#fff;}' +
+    '}';
+  document.head.appendChild(st);
 }
 
 let cachedStItems = [];

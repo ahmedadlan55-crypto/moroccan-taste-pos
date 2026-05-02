@@ -68,6 +68,22 @@ window.erpNav = function(section) {
 };
 window._erpNavStub = window.erpNav;
 
+// V5.9.3 — same shim for erpV5Nav (إدارة المؤسسة V5 submenu).  Defined
+//   inside erp.js, so the sidebar click was a no-op before erp.js loaded.
+window.erpV5Nav = function(section) {
+  ensureErpJs().then(function() {
+    if (window.erpV5Nav && window.erpV5Nav !== window._erpV5NavStub) {
+      window.erpV5Nav(section);
+    } else {
+      // erp.js loaded but didn't override our stub — bug; surface it
+      if (typeof showToast === 'function') showToast('تعذر فتح القسم — أعد تحميل الصفحة', true);
+    }
+  }).catch(function(e) {
+    if (typeof showToast === 'function') showToast(e.message || 'فشل تحميل وحدة ERP', true);
+  });
+};
+window._erpV5NavStub = window.erpV5Nav;
+
 // =========================================
 // 1. App State & Utilities
 // =========================================

@@ -12408,6 +12408,12 @@ function _whhCardHTML(wh, children, allRows) {
       '</div>' +
       '<button class="wo-btn wo-btn-warning" onclick="whhSetMain(\''+_woEscapeHtml(wh.id)+'\')"><i class="fas fa-star"></i><span>تعيين كرئيسي</span></button>' +
     '</div>';
+  } else {
+    // V5.9.3 — Main warehouses can now be demoted to sub.  Without this,
+    //   once a warehouse was marked main there was no way to change it.
+    html += '<div class="wh-node-actions">' +
+      '<button class="wo-btn wo-btn-secondary" onclick="whhUnsetMain(\''+_woEscapeHtml(wh.id)+'\')"><i class="fas fa-arrow-down"></i><span>تحويل إلى فرعي</span></button>' +
+    '</div>';
   }
 
   if (children.length) {
@@ -12434,6 +12440,14 @@ function whhSetMain(id) {
     else showToast(r.error||'فشل', true);
   });
 }
+// V5.9.3 — Demote a main warehouse back to sub.
+window.whhUnsetMain = function(id) {
+  if (!confirm('تحويل هذا المستودع من رئيسي إلى فرعي؟\n\nستفقد العلامة "★ رئيسي". إذا أردت ربطه بمستودع أب آخر، استخدم القائمة المنسدلة بعد ذلك.')) return;
+  _erpPost('/erp/warehouses/'+id+'/unset-main', {}, function(r){
+    if (r && r.success) { showToast('تم التحويل إلى فرعي'); whhLoad(); }
+    else showToast((r && r.error) || 'فشل', true);
+  });
+};
 function whhSetParent(id, parentId) {
   _erpPost('/erp/warehouses/'+id+'/set-parent', { parentId: parentId }, function(r){
     if (r.success) { showToast('تم'); whhLoad(); }

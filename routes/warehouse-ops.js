@@ -127,6 +127,26 @@ router.post('/warehouses/:id/set-main', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// V5.9.3 — Demote a warehouse from main → sub.  Optional ?parentId to
+//   link it to a different main.  If no other main exists for the brand,
+//   the warehouse becomes a free-standing sub (no parent).
+router.post('/warehouses/:id/unset-main', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { parentId } = req.body || {};
+    const [rows] = await db.query('SELECT brand_id, is_main FROM warehouses WHERE id=?', [id]);
+    if (!rows.length) return res.status(404).json({ error: 'warehouse not found' });
+    if (parentId) {
+      const [p] = await db.query('SELECT id FROM warehouses WHERE id=?', [parentId]);
+      if (!p.length) return res.status(404).json({ error: 'parent not found' });
+      await db.query('UPDATE warehouses SET is_main=0, parent_warehouse_id=? WHERE id=?', [parentId, id]);
+    } else {
+      await db.query('UPDATE warehouses SET is_main=0, parent_warehouse_id=NULL WHERE id=?', [id]);
+    }
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Link a sub-warehouse to a parent (main)
 router.post('/warehouses/:id/set-parent', async (req, res) => {
   try {

@@ -12265,37 +12265,452 @@ function siLoad() {
     }).join('');
   });
 }
+// V5.8.8 — Pro fullscreen Stock-Issue (Transfer) editor.
+//   Same UX language as the recipe editor / stocktake editor:
+//     • hero card with from/to warehouse + brand badges + KPIs
+//     • two-column body (transfer cards left / item picker right)
+//     • brand-grouped warehouse pickers — supports cross-brand transfers
+//     • sticky save bar
+//   The legacy bottom-sheet modal (#erpModal) is kept as a fallback for
+//   environments where ivShowModal isn't loaded yet, but the new flow is
+//   the default entry point from siLoad's "+ إذن جديد" button.
 function siOpenNewModal() {
-  _erpGet('/erp/warehouses-list', function(whs) {
-    _erpGet('/erp/items', function(items) {
-      var whOpts = (whs||[]).map(function(w){return '<option value="'+w.id+'" data-brand="'+(w.brand_id||'')+'" data-main="'+(w.is_main?1:0)+'">'+(w.name||'')+(w.is_main?' ★ رئيسي':'')+'</option>';}).join('');
-      var itemOpts = (items||[]).map(function(i){return '<option value="'+i.id+'">'+(i.name||'')+' ('+(i.unit||'')+')</option>';}).join('');
-      document.getElementById('erpModalTitle').textContent = 'إذن صرف جديد';
-      document.getElementById('erpModalBody').innerHTML =
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-          '<div class="form-row"><label>من مستودع *</label><select class="form-control" id="siFrom"><option value="">—</option>'+whOpts+'</select></div>' +
-          '<div class="form-row"><label>إلى مستودع *</label><select class="form-control" id="siTo"><option value="">—</option>'+whOpts+'</select></div>' +
-        '</div>' +
-        '<div class="form-row"><label>التاريخ</label><input type="date" class="form-control" id="siDate" value="'+new Date().toISOString().slice(0,10)+'"></div>' +
-        '<div class="form-row"><label>الأصناف *</label>' +
-          '<div style="display:flex;gap:6px;margin-bottom:6px;">' +
-            '<select class="form-control" id="siItemPick">'+itemOpts+'</select>' +
-            '<input type="number" class="form-control" id="siItemQty" placeholder="الكمية" style="width:120px;" min="0" step="0.001">' +
-            '<button class="btn btn-primary" onclick="siAddItem()"><i class="fas fa-plus"></i></button>' +
-          '</div>' +
-          '<table class="erp-table" style="font-size:12px;"><thead><tr><th>الصنف</th><th>الكمية</th><th></th></tr></thead><tbody id="siItemsRows"><tr><td colspan="3" style="color:#94a3b8;text-align:center;">لم تُضف أصناف</td></tr></tbody></table>' +
-        '</div>' +
-        '<div class="form-row"><label>ملاحظات</label><textarea class="form-control" id="siNotes" rows="2"></textarea></div>';
-      document.getElementById('erpModalSaveBtn').onclick = siSubmitNew;
-      document.getElementById('erpModal').classList.remove('hidden');
-      window._siItems = [];
+  // Load warehouses + items + brands in parallel
+  Promise.all([
+    new Promise(function(r){ _erpGet('/erp/warehouses-list', r); }),
+    new Promise(function(r){ _erpGet('/erp/items', r); }),
+    new Promise(function(r){ _erpGet('/brands', r); })
+  ]).then(function(out) {
+    var whs    = Array.isArray(out[0]) ? out[0] : [];
+    var items  = Array.isArray(out[1]) ? out[1] : [];
+    var brands = Array.isArray(out[2]) ? out[2] : [];
+
+    if (typeof window.ivShowModal !== 'function') {
+      // Fallback to legacy modal if the inventory hub helpers haven't
+      //   loaded — should never happen on a normal admin page load.
+      return _siOpenLegacyModal(whs, items);
+    }
+
+    // Reset session state
+    window._siSession = {
+      sessionId: 'ISS-' + Date.now(),
+      startDate: new Date(),
+      fromWarehouseId: '',
+      toWarehouseId: '',
+      issueDate: new Date().toISOString().slice(0, 10),
+      notes: '',
+      items: [],          // [{ itemId, itemName, unit, cost, stock, qty }]
+      pickerSearch: '',
+      pickerCategory: '',
+      whs: whs,
+      brands: brands,
+      itemPool: items
+    };
+
+    _siInjectStyles();
+    ivShowModal({
+      icon: 'fa-truck-arrow-right',
+      iconColor: '#0ea5e9',
+      title: 'إذن صرف جديد',
+      subtitle: 'صرف بضاعة بين أي مستودعين أو براندين — مع ترحيل محاسبي تلقائي.',
+      body: '<div id="siEditorBody"></div>',
+      size: 'full'
     });
+    setTimeout(function() {
+      var ovs = document.querySelectorAll('.iv-modal-overlay');
+      if (ovs.length) ovs[ovs.length - 1].setAttribute('data-si-fullscreen', '1');
+      _siRenderEditor();
+    }, 60);
   });
 }
+
+// ─── Legacy fallback (rarely used) ───
+function _siOpenLegacyModal(whs, items) {
+  var whOpts = (whs||[]).map(function(w){return '<option value="'+w.id+'">'+(w.name||'')+'</option>';}).join('');
+  var itemOpts = (items||[]).map(function(i){return '<option value="'+i.id+'">'+(i.name||'')+' ('+(i.unit||'')+')</option>';}).join('');
+  document.getElementById('erpModalTitle').textContent = 'إذن صرف جديد';
+  document.getElementById('erpModalBody').innerHTML =
+    '<div class="form-row"><label>من مستودع</label><select class="form-control" id="siFrom"><option value="">—</option>'+whOpts+'</select></div>' +
+    '<div class="form-row"><label>إلى مستودع</label><select class="form-control" id="siTo"><option value="">—</option>'+whOpts+'</select></div>' +
+    '<div class="form-row"><label>الصنف</label><select class="form-control" id="siItemPick">'+itemOpts+'</select></div>' +
+    '<div class="form-row"><label>الكمية</label><input type="number" class="form-control" id="siItemQty"></div>';
+  document.getElementById('erpModalSaveBtn').onclick = siSubmitNew;
+  document.getElementById('erpModal').classList.remove('hidden');
+  window._siItems = [];
+}
+
+// ─── Render the fullscreen editor ───
+function _siRenderEditor() {
+  var box = document.getElementById('siEditorBody');
+  if (!box || !window._siSession) return;
+  var s = window._siSession;
+  var totals = _siComputeTotals(s.items);
+  var fromW = (s.whs.find(function(w){return w.id===s.fromWarehouseId;})) || null;
+  var toW   = (s.whs.find(function(w){return w.id===s.toWarehouseId;}))   || null;
+
+  var heroHtml =
+    '<section class="si-hero">' +
+      '<div class="si-hero-orb"></div>' +
+      '<div class="si-hero-grid">' +
+        '<div class="si-hero-identity">' +
+          '<div class="si-hero-avatar"><i class="fas fa-truck-arrow-right"></i></div>' +
+          '<div class="si-hero-text">' +
+            '<div class="si-hero-eyebrow"><i class="fas fa-calendar-day"></i><span>إذن صرف · ' + _siFmtDateTime(s.startDate) + '</span></div>' +
+            '<h2 class="si-hero-title">' + _woEscapeHtml(s.sessionId) + '</h2>' +
+            '<div class="si-hero-flow">' +
+              '<div class="si-flow-pill si-flow-from"' + (fromW ? '' : ' style="opacity:0.55;font-style:italic;"') + '>' +
+                '<i class="fas fa-warehouse"></i>' +
+                '<span>' + (fromW ? _woEscapeHtml(fromW.name) + (fromW.brandName ? ' · ' + _woEscapeHtml(fromW.brandName) : '') : 'اختر المستودع المصدر') + '</span>' +
+              '</div>' +
+              '<i class="fas fa-arrow-left si-flow-arrow"></i>' +
+              '<div class="si-flow-pill si-flow-to"' + (toW ? '' : ' style="opacity:0.55;font-style:italic;"') + '>' +
+                '<i class="fas fa-store"></i>' +
+                '<span>' + (toW ? _woEscapeHtml(toW.name) + (toW.brandName ? ' · ' + _woEscapeHtml(toW.brandName) : '') : 'اختر المستودع الوجهة') + '</span>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="si-hero-kpi">' +
+          '<div class="si-hero-kpi-label">عدد الأصناف</div>' +
+          '<div class="si-hero-kpi-value" id="siKpiCount">' + totals.count + '</div>' +
+          '<div class="si-hero-kpi-unit">صنف مُضاف للإذن</div>' +
+        '</div>' +
+        '<div class="si-hero-kpi">' +
+          '<div class="si-hero-kpi-label">إجمالي الكمية</div>' +
+          '<div class="si-hero-kpi-value" id="siKpiQty">' + totals.qty.toFixed(2) + '</div>' +
+          '<div class="si-hero-kpi-unit">وحدة بمختلف الأصناف</div>' +
+        '</div>' +
+        '<div class="si-hero-kpi si-kpi-boxed">' +
+          '<div class="si-hero-kpi-label">القيمة الإجمالية</div>' +
+          '<div class="si-hero-kpi-value" id="siKpiCost">' + totals.cost.toFixed(2) + '</div>' +
+          '<div class="si-hero-kpi-unit">ر.س · بسعر التكلفة المتوسطة</div>' +
+        '</div>' +
+      '</div>' +
+    '</section>';
+
+  var bodyHtml =
+    '<div class="si-body">' +
+      _siRenderItemsPanel() +
+      _siRenderPickerPanel() +
+    '</div>';
+
+  var saveBarHtml =
+    '<footer class="si-savebar">' +
+      '<div class="si-save-meta">' +
+        '<span><i class="fas fa-stopwatch"></i> بدأ: ' + _siFmtDateTime(s.startDate) + '</span>' +
+        '<span class="si-save-meta-sep">·</span>' +
+        '<span><i class="fas fa-circle-info"></i> ' + (s.fromWarehouseId && s.toWarehouseId ? 'جاهز للإرسال' : 'حدد المستودعات أولاً') + '</span>' +
+      '</div>' +
+      '<div class="si-save-actions">' +
+        '<button class="si-btn si-btn-secondary" onclick="ivCloseModal()"><i class="fas fa-times"></i> إلغاء</button>' +
+        '<button class="si-btn si-btn-primary" onclick="siSubmitNew()"><i class="fas fa-paper-plane"></i> إنشاء وإرسال الإذن</button>' +
+      '</div>' +
+    '</footer>';
+  box.innerHTML = heroHtml + bodyHtml + saveBarHtml;
+}
+
+function _siRenderItemsPanel() {
+  var s = window._siSession;
+  var items = s.items || [];
+  var totals = _siComputeTotals(items);
+  // Group warehouses by brand for the pickers
+  var byBrand = {};
+  s.whs.forEach(function(w) {
+    var key = w.brandId || '__none__';
+    if (!byBrand[key]) byBrand[key] = { brandName: w.brandName || 'بدون براند', whs: [] };
+    byBrand[key].whs.push(w);
+  });
+  function whSelect(id, currentVal, exclude) {
+    var html = '<select class="si-wh-select" id="' + id + '" onchange="_siUpdateWh(\'' + id + '\', this.value)">';
+    html += '<option value="">— اختر المستودع —</option>';
+    Object.keys(byBrand).forEach(function(brandKey) {
+      var grp = byBrand[brandKey];
+      html += '<optgroup label="' + _woEscapeHtml(grp.brandName) + '">';
+      grp.whs.forEach(function(w) {
+        if (exclude && w.id === exclude) return;
+        var sel = w.id === currentVal ? ' selected' : '';
+        html += '<option value="' + _woEscapeHtml(w.id) + '"' + sel + '>' + _woEscapeHtml(w.name) + (w.code ? ' (' + _woEscapeHtml(w.code) + ')' : '') + '</option>';
+      });
+      html += '</optgroup>';
+    });
+    html += '</select>';
+    return html;
+  }
+  var bodyHtml = items.length === 0
+    ? _siEmptyItems()
+    : _siRenderItemCards(items);
+  return '<section class="si-panel si-items-panel">' +
+           '<header class="si-panel-head">' +
+             '<div class="si-panel-head-left">' +
+               '<div class="si-panel-icon si-panel-icon-primary"><i class="fas fa-list-check"></i></div>' +
+               '<div class="si-panel-titles">' +
+                 '<div class="si-panel-title">أصناف الإذن</div>' +
+                 '<div class="si-panel-sub">' + items.length + ' صنف · ' + totals.qty.toFixed(2) + ' وحدة · ' + totals.cost.toFixed(2) + ' ر.س</div>' +
+               '</div>' +
+             '</div>' +
+             (items.length > 0
+               ? '<button class="si-clear-all" onclick="_siClearAll()"><i class="fas fa-trash-can"></i> مسح الكل</button>'
+               : '') +
+           '</header>' +
+           '<div class="si-panel-meta">' +
+             '<div class="si-meta-field">' +
+               '<label><i class="fas fa-warehouse" style="color:#dc2626;"></i> من مستودع</label>' +
+               whSelect('siFrom', s.fromWarehouseId, s.toWarehouseId) +
+             '</div>' +
+             '<div class="si-meta-field">' +
+               '<label><i class="fas fa-store" style="color:#15803d;"></i> إلى مستودع</label>' +
+               whSelect('siTo', s.toWarehouseId, s.fromWarehouseId) +
+             '</div>' +
+             '<div class="si-meta-field">' +
+               '<label><i class="fas fa-calendar"></i> التاريخ</label>' +
+               '<input type="date" id="siDate" value="' + s.issueDate + '" oninput="window._siSession.issueDate=this.value;">' +
+             '</div>' +
+             '<div class="si-meta-field" style="flex:1.5;">' +
+               '<label><i class="fas fa-note-sticky"></i> ملاحظات</label>' +
+               '<input type="text" id="siNotes" value="' + _woEscapeHtml(s.notes||'') + '" placeholder="اختياري..." oninput="window._siSession.notes=this.value;">' +
+             '</div>' +
+           '</div>' +
+           '<div class="si-panel-body">' + bodyHtml + '</div>' +
+           (items.length > 0 ? (
+             '<div class="si-panel-foot">' +
+               '<span class="si-foot-label">إجمالي قيمة الإذن</span>' +
+               '<span class="si-foot-total">' + totals.cost.toFixed(2) + ' ر.س</span>' +
+             '</div>'
+           ) : '') +
+         '</section>';
+}
+
+function _siRenderItemCards(items) {
+  return '<div class="si-card-list">' + items.map(function(it, idx) {
+    var lineCost = (Number(it.qty) || 0) * (Number(it.cost) || 0);
+    var stock = Number(it.stock) || 0;
+    var qty   = Number(it.qty) || 0;
+    var hasIssue = qty > 0 && stock < qty;
+    var isPending = qty <= 0;
+    var stateClass = hasIssue ? 'si-card-danger' : (isPending ? 'si-card-pending' : '');
+    var pendingPill = isPending
+      ? '<span class="si-pill si-pill-warning">يحتاج كمية</span>' : '';
+    var shortagePill = hasIssue
+      ? '<span class="si-pill si-pill-danger"><i class="fas fa-triangle-exclamation"></i> الرصيد غير كافٍ</span>' : '';
+    return '<article class="si-card ' + stateClass + '" data-si-idx="' + idx + '">' +
+             '<div class="si-card-num">' + (idx + 1) + '</div>' +
+             '<div class="si-card-info">' +
+               '<div class="si-card-name">' + _woEscapeHtml(it.itemName) + ' ' + pendingPill + ' ' + shortagePill + '</div>' +
+               '<div class="si-card-meta">' +
+                 '<code>' + _woEscapeHtml(it.itemId) + '</code>' +
+                 (it.category ? ' · ' + _woEscapeHtml(it.category) : '') +
+                 ' · سعر الوحدة: <b>' + Number(it.cost||0).toFixed(4) + '</b> ر.س' +
+                 ' · رصيد المصدر: <b>' + stock.toFixed(2) + '</b> ' + _woEscapeHtml(it.unit||'') +
+               '</div>' +
+             '</div>' +
+             '<div class="si-card-stats">' +
+               '<div class="si-card-stat">' +
+                 '<div class="si-card-stat-label">الكمية المطلوبة</div>' +
+                 '<input type="number" step="0.001" min="0" value="' + qty + '" class="si-card-input" oninput="_siUpdateQty(' + idx + ',this.value)" onfocus="this.select()">' +
+                 '<div class="si-card-stat-unit">' + _woEscapeHtml(it.unit||'') + '</div>' +
+               '</div>' +
+               '<div class="si-card-stat">' +
+                 '<div class="si-card-stat-label">قيمة السطر</div>' +
+                 '<div class="si-card-stat-value" style="color:#15803d;">' + lineCost.toFixed(2) + '</div>' +
+                 '<div class="si-card-stat-unit">ر.س</div>' +
+               '</div>' +
+             '</div>' +
+             '<button class="si-card-del" onclick="_siRemoveItem(' + idx + ')" title="حذف"><i class="fas fa-times"></i></button>' +
+           '</article>';
+  }).join('') + '</div>';
+}
+
+function _siEmptyItems() {
+  return '<div class="si-empty">' +
+           '<div class="si-empty-icon"><i class="fas fa-truck-loading"></i></div>' +
+           '<h3 class="si-empty-title">ابدأ ببناء إذن الصرف</h3>' +
+           '<p class="si-empty-text">اختر المستودع المصدر والوجهة فوق، ثم أضف الأصناف من اللوحة المجاورة. القيمة تُحسب تلقائياً بسعر التكلفة المتوسطة.</p>' +
+           '<button class="si-empty-cta" onclick="document.getElementById(\'siPickerSearchInput\').focus();">' +
+             '<i class="fas fa-search"></i> ابحث عن صنف' +
+           '</button>' +
+         '</div>';
+}
+
+function _siRenderPickerPanel() {
+  var s = window._siSession;
+  var search = (s.pickerSearch || '').toLowerCase().trim();
+  var category = s.pickerCategory || '';
+  var pickedIds = new Set((s.items || []).map(function(i){return String(i.itemId);}));
+  var byCategory = {};
+  (s.itemPool || []).forEach(function(it) {
+    if (it.active === false) return;
+    var cat = it.category || 'عام';
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(it);
+  });
+  var categories = Object.keys(byCategory).sort();
+  var totalAvailable = (s.itemPool || []).filter(function(it){ return !pickedIds.has(String(it.id)); }).length;
+  var pillsHtml = '<div class="si-pills">' +
+    '<button class="si-pill ' + (!category ? 'si-pill-active' : '') + '" onclick="siSetPickerCategory(\'\')">الكل <span class="si-pill-count">' + totalAvailable + '</span></button>' +
+    categories.map(function(cat) {
+      var count = byCategory[cat].filter(function(it){return !pickedIds.has(String(it.id));}).length;
+      if (!count) return '';
+      var active = category === cat;
+      return '<button class="si-pill ' + (active ? 'si-pill-active' : '') + '" onclick="siSetPickerCategory(\'' + _woEscapeHtml(cat).replace(/\'/g,"\\'") + '\')">' + _woEscapeHtml(cat) + ' <span class="si-pill-count">' + count + '</span></button>';
+    }).join('') +
+    '</div>';
+  var html = '';
+  var totalShown = 0;
+  categories.forEach(function(cat) {
+    if (category && category !== cat) return;
+    var arr = byCategory[cat].filter(function(it) {
+      if (pickedIds.has(String(it.id))) return false;
+      if (!search) return true;
+      return (it.name||'').toLowerCase().indexOf(search) >= 0 || String(it.id||'').toLowerCase().indexOf(search) >= 0;
+    });
+    if (!arr.length) return;
+    totalShown += arr.length;
+    if (!category) {
+      html += '<div class="si-cat-divider">' +
+                '<span class="si-cat-line"></span>' +
+                '<span class="si-cat-name">' + _woEscapeHtml(cat) + '</span>' +
+                '<span class="si-cat-count">' + arr.length + '</span>' +
+                '<span class="si-cat-line"></span>' +
+              '</div>';
+    }
+    arr.forEach(function(it) {
+      var stock = Number(it.stock || 0);
+      var dotClass = stock === 0 ? 'si-dot-out' : stock < 10 ? 'si-dot-low' : 'si-dot-ok';
+      html += '<button class="si-pick-row" onclick="_siAddItemById(\'' + _woEscapeHtml(it.id).replace(/\'/g,"\\'") + '\')">' +
+                '<i class="fas fa-plus si-pick-plus"></i>' +
+                '<div class="si-pick-info">' +
+                  '<div class="si-pick-name">' + _woEscapeHtml(it.name) + '</div>' +
+                  '<div class="si-pick-stock"><span class="si-pick-dot ' + dotClass + '"></span><span>' + stock.toFixed(2) + ' ' + _woEscapeHtml(it.unit||'حبة') + '</span></div>' +
+                '</div>' +
+                '<div class="si-pick-cost">' + Number(it.cost||0).toFixed(2) + '<div class="si-pick-cost-unit">ر.س / ' + _woEscapeHtml(it.unit||'حبة') + '</div></div>' +
+              '</button>';
+    });
+  });
+  if (!totalShown) {
+    html = '<div class="si-no-results"><i class="fas fa-search-minus"></i><div>لا توجد نتائج' + (search ? ' لـ "' + _woEscapeHtml(search) + '"' : '') + '</div></div>';
+  }
+  return '<section class="si-panel si-picker-panel">' +
+           '<header class="si-panel-head">' +
+             '<div class="si-panel-head-left">' +
+               '<div class="si-panel-icon si-panel-icon-accent"><i class="fas fa-search-plus"></i></div>' +
+               '<div class="si-panel-titles">' +
+                 '<div class="si-panel-title">إضافة أصناف للإذن</div>' +
+                 '<div class="si-panel-sub">' + totalAvailable + ' صنف متاح · اضغط أي صنف لإضافته</div>' +
+               '</div>' +
+             '</div>' +
+           '</header>' +
+           '<div class="si-picker-search">' +
+             '<i class="fas fa-search"></i>' +
+             '<input type="text" id="siPickerSearchInput" placeholder="ابحث بالاسم أو الكود..." value="' + _woEscapeHtml(s.pickerSearch||'') + '" oninput="siPickerSearch(this.value)">' +
+           '</div>' +
+           pillsHtml +
+           '<div class="si-picker-list">' + html + '</div>' +
+         '</section>';
+}
+
+window._siUpdateWh = function(id, val) {
+  if (id === 'siFrom') window._siSession.fromWarehouseId = val;
+  if (id === 'siTo')   window._siSession.toWarehouseId   = val;
+  // Update stock for picked items based on the new source warehouse
+  // (lazy — we just keep the cached cost; full per-warehouse stock requires a separate API)
+  _siRenderEditor();
+};
+window._siUpdateQty = function(idx, val) {
+  if (!window._siSession.items[idx]) return;
+  window._siSession.items[idx].qty = Number(val) || 0;
+  _siUpdateHeroKpis();
+  // Surgical card refresh (preserve focus)
+  var card = document.querySelector('.si-card[data-si-idx="' + idx + '"]');
+  if (card) {
+    var it = window._siSession.items[idx];
+    var lineCost = it.qty * it.cost;
+    var stats = card.querySelectorAll('.si-card-stat-value');
+    if (stats.length) stats[0].textContent = lineCost.toFixed(2);
+    var stock = Number(it.stock) || 0;
+    var hasIssue = it.qty > 0 && stock < it.qty;
+    var isPending = it.qty <= 0;
+    card.classList.remove('si-card-danger', 'si-card-pending');
+    if (hasIssue) card.classList.add('si-card-danger');
+    else if (isPending) card.classList.add('si-card-pending');
+  }
+};
+window._siRemoveItem = function(idx) {
+  window._siSession.items.splice(idx, 1);
+  _siRenderEditor();
+};
+window._siClearAll = function() {
+  if (!confirm('حذف كل الأصناف من الإذن؟')) return;
+  window._siSession.items = [];
+  _siRenderEditor();
+};
+window._siAddItemById = function(id) {
+  var it = (window._siSession.itemPool || []).find(function(x){ return String(x.id) === String(id); });
+  if (!it) return;
+  if (window._siSession.items.some(function(x){return x.itemId===it.id;})) return;
+  window._siSession.items.push({
+    itemId: it.id,
+    itemName: it.name,
+    category: it.category || '',
+    unit: it.unit || '',
+    cost: Number(it.cost) || 0,
+    stock: Number(it.stock) || 0,
+    qty: 0
+  });
+  _siRenderEditor();
+};
+window.siSetPickerCategory = function(cat) {
+  if (!window._siSession) return;
+  window._siSession.pickerCategory = cat;
+  var picker = document.querySelector('.si-picker-panel');
+  if (picker) picker.outerHTML = _siRenderPickerPanel();
+};
+var _siPickerTimer = null;
+window.siPickerSearch = function(v) {
+  if (!window._siSession) return;
+  window._siSession.pickerSearch = v;
+  clearTimeout(_siPickerTimer);
+  _siPickerTimer = setTimeout(function() {
+    var picker = document.querySelector('.si-picker-panel');
+    if (picker) picker.outerHTML = _siRenderPickerPanel();
+    var inp = document.getElementById('siPickerSearchInput');
+    if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  }, 200);
+};
+function _siUpdateHeroKpis() {
+  if (!window._siSession) return;
+  var totals = _siComputeTotals(window._siSession.items || []);
+  var setText = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
+  setText('siKpiCount', totals.count);
+  setText('siKpiQty', totals.qty.toFixed(2));
+  setText('siKpiCost', totals.cost.toFixed(2));
+  // Footer
+  var foot = document.querySelector('.si-foot-total');
+  if (foot) foot.textContent = totals.cost.toFixed(2) + ' ر.س';
+  // Sub-text
+  var sub = document.querySelector('.si-items-panel .si-panel-sub');
+  if (sub) sub.textContent = totals.count + ' صنف · ' + totals.qty.toFixed(2) + ' وحدة · ' + totals.cost.toFixed(2) + ' ر.س';
+}
+function _siComputeTotals(items) {
+  var count = items.length;
+  var qty = 0, cost = 0;
+  items.forEach(function(i) {
+    qty  += (Number(i.qty)  || 0);
+    cost += (Number(i.qty)  || 0) * (Number(i.cost) || 0);
+  });
+  return { count: count, qty: qty, cost: cost };
+}
+function _siFmtDateTime(d) {
+  if (!d) return '—';
+  d = new Date(d);
+  return d.getFullYear() + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0') +
+         ' · ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+
+// Legacy callers that may still post via the old form fields
 function siAddItem() {
   var sel = document.getElementById('siItemPick');
   var qty = Number(document.getElementById('siItemQty').value) || 0;
-  if (!sel.value || qty <= 0) return showToast('اختر صنفاً وأدخل كمية', true);
+  if (!sel || !sel.value || qty <= 0) return showToast('اختر صنفاً وأدخل كمية', true);
   if (!window._siItems) window._siItems = [];
   var name = sel.options[sel.selectedIndex].text;
   window._siItems.push({ itemId: sel.value, itemName: name, qtyRequested: qty });
@@ -12310,22 +12725,183 @@ function _siRenderItems() {
     return '<tr><td>'+it.itemName+'</td><td>'+it.qtyRequested+'</td><td><button class="btn-icon" style="color:#ef4444;" onclick="window._siItems.splice('+i+',1);_siRenderItems();"><i class="fas fa-times"></i></button></td></tr>';
   }).join('');
 }
-function siSubmitNew() {
-  var fromWh = document.getElementById('siFrom').value;
-  var toWh = document.getElementById('siTo').value;
+
+window.siSubmitNew = function() {
+  // Path A: new fullscreen editor session
+  var s = window._siSession;
+  if (s && s.items && Array.isArray(s.items)) {
+    if (!s.fromWarehouseId || !s.toWarehouseId) return showToast('اختر المستودع المصدر والوجهة', true);
+    if (s.fromWarehouseId === s.toWarehouseId) return showToast('المستودع المصدر يجب أن يختلف عن الوجهة', true);
+    var itemsToSend = s.items.filter(function(i){ return Number(i.qty) > 0; });
+    if (!itemsToSend.length) return showToast('أضف صنفاً واحداً على الأقل بكمية أكبر من صفر', true);
+    _erpPost('/erp/stock-issues', {
+      fromWarehouseId: s.fromWarehouseId,
+      toWarehouseId: s.toWarehouseId,
+      issueDate: s.issueDate,
+      notes: s.notes,
+      items: itemsToSend.map(function(i){ return { itemId: i.itemId, itemName: i.itemName, qtyRequested: Number(i.qty) }; }),
+      createdBy: currentUser
+    }, function(r) {
+      if (r && r.success) {
+        showToast('تم إنشاء إذن صرف رقم ' + r.issueNumber);
+        if (typeof ivCloseModal === 'function') ivCloseModal();
+        window._siSession = null;
+        if (typeof siLoad === 'function') siLoad();
+      } else {
+        showToast((r && r.error) || 'فشل', true);
+      }
+    });
+    return;
+  }
+  // Path B: legacy modal
+  var fromEl = document.getElementById('siFrom');
+  var toEl   = document.getElementById('siTo');
+  if (!fromEl || !toEl) return;
+  var fromWh = fromEl.value, toWh = toEl.value;
   var items = window._siItems || [];
   if (!fromWh || !toWh) return showToast('اختر المستودعات', true);
   if (!items.length) return showToast('أضف أصنافاً', true);
   _erpPost('/erp/stock-issues', {
     fromWarehouseId: fromWh, toWarehouseId: toWh,
-    issueDate: document.getElementById('siDate').value,
-    notes: document.getElementById('siNotes').value,
-    items: items,
-    createdBy: currentUser
-  }, function(r){
-    if (r.success) { showToast('تم إنشاء إذن صرف رقم '+r.issueNumber); erpCloseModal(); siLoad(); }
-    else showToast(r.error||'فشل', true);
+    issueDate: (document.getElementById('siDate')||{}).value,
+    notes: (document.getElementById('siNotes')||{}).value,
+    items: items, createdBy: currentUser
+  }, function(r) {
+    if (r && r.success) { showToast('تم إنشاء إذن صرف رقم ' + r.issueNumber); erpCloseModal(); siLoad(); }
+    else showToast((r && r.error) || 'فشل', true);
   });
+};
+
+// V5.8.8 — Stock-Issue editor styles. Scoped under .si-* (no leakage).
+function _siInjectStyles() {
+  if (document.getElementById('siEditorStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'siEditorStyles';
+  st.textContent =
+    '.iv-modal-overlay[data-si-fullscreen]{padding:0 !important;}' +
+    '.iv-modal-overlay[data-si-fullscreen] .iv-modal{max-width:100vw !important;width:100vw !important;height:100vh !important;max-height:100vh !important;border-radius:0 !important;margin:0 !important;}' +
+    '.iv-modal-overlay[data-si-fullscreen] .iv-modal-body{padding:14px 18px !important;background:#f6f7fb;}' +
+    '#siEditorBody{font-feature-settings:"tnum";font-variant-numeric:tabular-nums;direction:rtl;}' +
+    '#siEditorBody *{box-sizing:border-box;}' +
+    /* Hero */
+    '.si-hero{position:relative;overflow:hidden;color:#fff;padding:18px 22px;border-radius:18px;margin-bottom:14px;background:radial-gradient(120% 140% at 100% 0%,#06b6d4 0%,#0369a1 50%,#1e3a8a 100%);box-shadow:0 12px 36px -12px rgba(2,132,199,0.45);}' +
+    '.si-hero-orb{position:absolute;top:-60px;inset-inline-end:-50px;width:220px;height:220px;background:radial-gradient(circle,rgba(255,255,255,0.18) 0%,transparent 70%);border-radius:50%;}' +
+    '.si-hero-grid{position:relative;display:grid;grid-template-columns:minmax(380px,2fr) minmax(110px,1fr) minmax(110px,1fr) minmax(180px,1.2fr);gap:18px;align-items:stretch;}' +
+    '@media (max-width:1100px){.si-hero-grid{grid-template-columns:1fr 1fr;}.si-hero-identity{grid-column:1/-1;}}' +
+    '.si-hero-identity{display:flex;align-items:center;gap:14px;min-width:0;}' +
+    '.si-hero-avatar{flex-shrink:0;width:64px;height:64px;border-radius:18px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(255,255,255,0.30),rgba(255,255,255,0.10));border:1px solid rgba(255,255,255,0.30);font-size:30px;}' +
+    '.si-hero-text{min-width:0;flex:1;}' +
+    '.si-hero-eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:10.5px;font-weight:700;opacity:0.92;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:5px;}' +
+    '.si-hero-title{margin:0;font-size:20px;font-weight:900;letter-spacing:-0.02em;}' +
+    '.si-hero-flow{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap;}' +
+    '.si-flow-pill{display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:999px;font-size:12.5px;font-weight:700;backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.20);}' +
+    '.si-flow-pill i{font-size:11px;}' +
+    '.si-flow-from{background:rgba(220,38,38,0.30);border-color:rgba(252,165,165,0.40);}' +
+    '.si-flow-to{background:rgba(21,128,61,0.30);border-color:rgba(134,239,172,0.40);}' +
+    '.si-flow-arrow{color:rgba(255,255,255,0.85);font-size:14px;}' +
+    '.si-hero-kpi{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border-inline-start:1px solid rgba(255,255,255,0.16);padding:6px 4px;}' +
+    '.si-hero-kpi:first-of-type{border-inline-start:0;}' +
+    '@media (max-width:1100px){.si-hero-kpi{border-inline-start:0 !important;}}' +
+    '.si-hero-kpi-label{font-size:10px;opacity:0.85;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:5px;}' +
+    '.si-hero-kpi-value{font-size:22px;font-weight:900;letter-spacing:-0.02em;line-height:1.05;}' +
+    '.si-hero-kpi-unit{font-size:10.5px;opacity:0.8;font-weight:600;margin-top:4px;}' +
+    '.si-kpi-boxed{background:rgba(255,255,255,0.16);border:1px solid rgba(255,255,255,0.22);border-radius:14px;padding:12px 8px;}' +
+    /* Body */
+    '.si-body{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px;}' +
+    '@media (max-width:1100px){.si-body{grid-template-columns:1fr;}}' +
+    '.si-panel{background:#fff;border:1px solid #e2e8f0;border-radius:18px;display:flex;flex-direction:column;height:calc(100vh - 360px);min-height:480px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
+    '.si-panel-head{padding:14px 18px;border-bottom:1px solid #e2e8f0;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-shrink:0;}' +
+    '.si-panel-head-left{display:flex;align-items:center;gap:11px;min-width:0;flex:1;}' +
+    '.si-panel-icon{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;flex-shrink:0;font-size:15px;}' +
+    '.si-panel-icon-primary{background:#dbeafe;color:#0369a1;}' +
+    '.si-panel-icon-accent{background:#cffafe;color:#0891b2;}' +
+    '.si-panel-titles{min-width:0;flex:1;}' +
+    '.si-panel-title{font-size:15px;font-weight:800;color:#0f172a;line-height:1.2;}' +
+    '.si-panel-sub{font-size:11.5px;color:#94a3b8;font-weight:600;margin-top:2px;}' +
+    '.si-clear-all{background:transparent;color:#dc2626;border:1px solid #fecaca;font-weight:700;font-size:11.5px;padding:6px 12px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:inherit;transition:all 0.15s;}' +
+    '.si-clear-all:hover{background:#fee2e2;border-color:#dc2626;}' +
+    '.si-panel-meta{padding:12px 18px;border-bottom:1px solid #f1f5f9;display:flex;gap:10px;flex-shrink:0;background:#fafbff;flex-wrap:wrap;}' +
+    '.si-meta-field{flex:1;min-width:140px;display:flex;flex-direction:column;gap:4px;}' +
+    '.si-meta-field label{font-size:10.5px;font-weight:800;color:#475569;display:flex;align-items:center;gap:5px;letter-spacing:0.02em;text-transform:uppercase;}' +
+    '.si-meta-field input,.si-meta-field select,.si-wh-select{padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:9px;font-size:12.5px;font-family:inherit;background:#fff;color:#0f172a;font-weight:600;}' +
+    '.si-meta-field input:focus,.si-wh-select:focus{outline:none;border-color:#0ea5e9;box-shadow:0 0 0 3px #e0f2fe;}' +
+    '.si-panel-body{flex:1;overflow-y:auto;padding:14px 18px;}' +
+    '.si-panel-foot{padding:12px 18px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;}' +
+    '.si-foot-label{font-size:13px;font-weight:700;color:#0f172a;}' +
+    '.si-foot-total{font-size:18px;font-weight:900;color:#15803d;font-family:ui-monospace,monospace;}' +
+    /* Cards */
+    '.si-card-list{display:flex;flex-direction:column;gap:10px;}' +
+    '.si-card{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:14px 16px;display:grid;grid-template-columns:32px minmax(0,1fr) auto auto;gap:14px;align-items:center;transition:all 0.15s;}' +
+    '.si-card:hover{box-shadow:0 6px 18px -6px rgba(15,23,42,0.10);transform:translateY(-1px);}' +
+    '.si-card-pending{border-color:#fcd34d;background:linear-gradient(180deg,#fff 0%,#fffbeb 200%);}' +
+    '.si-card-danger{border-color:#fca5a5;background:linear-gradient(180deg,#fff 0%,#fef2f2 200%);}' +
+    '.si-card-num{width:32px;height:32px;border-radius:50%;background:#0ea5e9;color:#fff;display:grid;place-items:center;font-weight:900;font-size:12.5px;}' +
+    '.si-card-info{min-width:0;}' +
+    '.si-card-name{font-size:14.5px;font-weight:800;color:#0f172a;display:flex;align-items:center;flex-wrap:wrap;gap:8px;}' +
+    '.si-card-meta{font-size:11.5px;color:#64748b;font-weight:600;margin-top:4px;}' +
+    '.si-card-meta code{background:#f1f5f9;padding:1px 6px;border-radius:4px;font-family:ui-monospace,monospace;}' +
+    '.si-card-meta b{color:#0f172a;}' +
+    '.si-card-stats{display:grid;grid-template-columns:repeat(2,minmax(110px,1fr));gap:14px;}' +
+    '.si-card-stat{text-align:center;}' +
+    '.si-card-stat-label{font-size:9.5px;color:#94a3b8;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:3px;}' +
+    '.si-card-stat-value{font-size:18px;font-weight:900;font-family:ui-monospace,monospace;}' +
+    '.si-card-stat-unit{font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;}' +
+    '.si-card-input{width:100%;max-width:120px;padding:6px 10px;border:1.5px solid #0ea5e9;border-radius:8px;text-align:center;font-weight:900;color:#0369a1;font-size:16px;background:#f0f9ff;font-family:inherit;}' +
+    '.si-card-input:focus{outline:none;background:#e0f2fe;}' +
+    '.si-card-del{background:transparent;color:#94a3b8;border:1px solid #e2e8f0;width:36px;height:36px;border-radius:10px;cursor:pointer;display:grid;place-items:center;font-size:13px;flex-shrink:0;transition:all 0.15s;}' +
+    '.si-card-del:hover{background:#fee2e2;color:#dc2626;border-color:#dc2626;}' +
+    /* Pills */
+    '.si-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;padding:3px 9px;border-radius:7px;line-height:1;white-space:nowrap;}' +
+    '.si-pill i{font-size:9px;}' +
+    '.si-pill-warning{background:#fef3c7;color:#92400e;}' +
+    '.si-pill-danger{background:#fee2e2;color:#b91c1c;}' +
+    /* Empty state */
+    '.si-empty{padding:48px 24px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:360px;}' +
+    '.si-empty-icon{width:88px;height:88px;background:linear-gradient(135deg,#dbeafe,#cffafe);color:#0369a1;border-radius:50%;display:grid;place-items:center;font-size:34px;margin-bottom:18px;}' +
+    '.si-empty-title{font-weight:900;font-size:17px;color:#0f172a;margin:0 0 7px;}' +
+    '.si-empty-text{font-size:13px;max-width:330px;line-height:1.6;color:#64748b;font-weight:500;margin:0 0 18px;}' +
+    '.si-empty-cta{background:#0ea5e9;color:#fff;border:0;padding:10px 18px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;font-family:inherit;box-shadow:0 6px 18px -6px #0ea5e9;}' +
+    /* Picker */
+    '.si-picker-search{position:relative;padding:12px 18px;border-bottom:1px solid #f1f5f9;background:#fff;flex-shrink:0;}' +
+    '.si-picker-search i{position:absolute;top:50%;inset-inline-start:30px;transform:translateY(-50%);color:#94a3b8;font-size:13px;pointer-events:none;}' +
+    '.si-picker-search input{width:100%;padding:9px 36px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:13px;font-family:inherit;direction:rtl;background:#fff;}' +
+    '.si-picker-search input:focus{outline:none;border-color:#0ea5e9;box-shadow:0 0 0 3px #e0f2fe;}' +
+    '.si-pills{display:flex;flex-wrap:wrap;gap:6px;padding:10px 18px;border-bottom:1px solid #f1f5f9;flex-shrink:0;}' +
+    '.si-pill{background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;padding:5px 11px;border-radius:999px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px;line-height:1.3;transition:all 0.15s;}' +
+    '.si-pill:hover{background:#fff;border-color:#0ea5e9;color:#0369a1;}' +
+    '.si-pill-active{background:#0ea5e9 !important;color:#fff !important;border-color:#0ea5e9 !important;}' +
+    '.si-pill-count{background:rgba(0,0,0,0.06);padding:1px 6px;border-radius:8px;font-size:10px;}' +
+    '.si-pill-active .si-pill-count{background:rgba(255,255,255,0.22);}' +
+    '.si-picker-list{flex:1;overflow-y:auto;padding:8px 12px 12px;}' +
+    '.si-cat-divider{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;padding:12px 6px 6px;}' +
+    '.si-cat-line{height:1px;flex:1;background:#e2e8f0;}' +
+    '.si-cat-name{white-space:nowrap;}' +
+    '.si-cat-count{background:#f8fafc;color:#475569;padding:2px 7px;border-radius:6px;font-size:10px;}' +
+    '.si-pick-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;cursor:pointer;background:#fff;border:1.5px solid transparent;font-family:inherit;text-align:start;width:100%;transition:all 0.12s;}' +
+    '.si-pick-row:hover{background:#f0f9ff;border-color:#7dd3fc;transform:translateX(-2px);}' +
+    '.si-pick-plus{color:#0ea5e9;font-size:14px;width:30px;height:30px;background:#f0f9ff;border-radius:8px;display:grid;place-items:center;}' +
+    '.si-pick-info{min-width:0;}' +
+    '.si-pick-name{font-weight:700;color:#0f172a;font-size:13.5px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '.si-pick-stock{font-size:11.5px;color:#64748b;font-weight:600;margin-top:3px;display:flex;align-items:center;gap:6px;}' +
+    '.si-pick-dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0;}' +
+    '.si-dot-out{background:#94a3b8;}' +
+    '.si-dot-low{background:#f59e0b;}' +
+    '.si-dot-ok{background:#10b981;}' +
+    '.si-pick-cost{text-align:end;font-family:ui-monospace,monospace;font-weight:800;color:#0f172a;font-size:13.5px;}' +
+    '.si-pick-cost-unit{font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;}' +
+    '.si-no-results{text-align:center;padding:48px 20px;color:#94a3b8;}' +
+    '.si-no-results i{font-size:38px;opacity:0.3;display:block;margin-bottom:12px;}' +
+    /* Save bar */
+    '.si-savebar{position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;margin:14px -18px -14px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 -4px 16px -8px rgba(15,23,42,0.08);gap:12px;flex-wrap:wrap;}' +
+    '.si-save-meta{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#475569;font-weight:700;}' +
+    '.si-save-meta-sep{color:#cbd5e1;}' +
+    '.si-save-actions{display:flex;gap:6px;flex-wrap:wrap;}' +
+    '.si-btn{padding:9px 14px;border-radius:9px;font-size:12.5px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;border:1.5px solid;transition:all 0.15s;}' +
+    '.si-btn-primary{background:#0ea5e9;color:#fff;border-color:#0ea5e9;box-shadow:0 4px 12px -4px rgba(14,165,233,0.4);}' +
+    '.si-btn-primary:hover{background:#0284c7;border-color:#0284c7;transform:translateY(-1px);}' +
+    '.si-btn-secondary{background:#fff;color:#475569;border-color:#e2e8f0;}' +
+    '.si-btn-secondary:hover{background:#f8fafc;border-color:#cbd5e1;}';
+  document.head.appendChild(st);
 }
 function siView(id) {
   _erpGet('/erp/stock-issues/'+id, function(d){

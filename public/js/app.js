@@ -4278,53 +4278,588 @@ function loadDashAdjustments() {
   }).getAllAdjustments();
 }
 
+// V5.8.9 — Pro fullscreen adjustment editor.
+//   Same UX language as the recipe / stocktake / transfer editors.
+//   Cost-accounting principles built in:
+//     • 4 reason cards prominent (not a tiny dropdown):
+//       تالف → 5310 Abnormal Loss
+//       إداري → 5310 Admin write-off
+//       تسويات → 5320 Inventory Variance
+//       هدر طبيعي → 5310 Normal Waste (separate from تالف)
+//     • Each item shows: stock-before, qty-to-deduct, stock-after, cost
+//     • Total loss + per-reason GL hint visible at all times
+//   Falls back to the legacy modal only if ivShowModal isn't loaded.
 function openAdjustmentModal() {
+  if (typeof window.ivShowModal !== 'function') {
+    return _openAdjustmentLegacyModal();
+  }
   _adjCart = [];
-  // Create modal dynamically if not exists
+  // Reset session
+  window._adjSession = {
+    sessionId: 'ADJ-' + Date.now(),
+    startDate: new Date(),
+    reason: 'damaged',         // default = تالف (most common)
+    notes: '',
+    items: [],                  // [{ id, name, category, unit, cost, stock, qty }]
+    pickerSearch: '',
+    pickerCategory: '',
+    itemPool: []                // populated from getInvItems
+  };
+  // Load items in background — defensive: normalize to array even if the
+  //   bridge returns an object/null/error.
+  api.withSuccessHandler(function(items) {
+    var arr = Array.isArray(items) ? items : (items && Array.isArray(items.items) ? items.items : []);
+    window._adjSession.itemPool = arr;
+    state._adjAllItems = arr;
+    _adjRenderEditor();
+  }).withFailureHandler(function() {
+    window._adjSession.itemPool = [];
+    _adjRenderEditor();
+  }).getInvItems();
+
+  _adjInjectStyles();
+  ivShowModal({
+    icon: 'fa-pen-to-square',
+    iconColor: '#dc2626',
+    title: 'محضر تعديل كمية',
+    subtitle: 'صرف كميات من المخزون لأسباب محاسبية (تالف/إداري/تسويات/هدر) — مع توليد قيد محاسبي تلقائي.',
+    body: '<div id="adjEditorBody"></div>',
+    size: 'full'
+  });
+  setTimeout(function() {
+    var ovs = document.querySelectorAll('.iv-modal-overlay');
+    if (ovs.length) ovs[ovs.length - 1].setAttribute('data-adj-fullscreen', '1');
+    _adjRenderEditor();
+  }, 60);
+}
+
+// Legacy fallback
+function _openAdjustmentLegacyModal() {
+  _adjCart = [];
   if (!q('#modalAdjustment')) {
     var m = document.createElement('div');
     m.id = 'modalAdjustment';
     m.className = 'modal';
     m.innerHTML =
       '<div class="modal-content modal-large">' +
-        '<div class="modal-title"><i class="fas fa-minus-circle" style="color:var(--danger);"></i> محضر تعديل كمية جديد<button class="modal-close" onclick="closeModal(\'#modalAdjustment\')">&times;</button></div>' +
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">' +
-          '<div class="form-group"><label class="form-label">سبب التعديل *</label>' +
-            '<select id="adjReason" class="form-control"><option value="damaged">تالف</option><option value="admin">إداري</option><option value="settlement">تسويات</option></select></div>' +
-          '<div class="form-group"><label class="form-label">ملاحظات</label><input type="text" id="adjNotes" class="form-control" placeholder="تفاصيل إضافية..."></div>' +
-        '</div>' +
-        '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:flex-end;">' +
-          '<div style="flex:1;min-width:200px;position:relative;">' +
-            '<label style="font-size:11px;color:#64748b;font-weight:600;">المادة</label>' +
-            '<input type="text" id="adjItemSearch" class="form-control" placeholder="ابحث عن مادة..." oninput="filterAdjItems()" onfocus="filterAdjItems()">' +
-            '<div id="adjSearchResults" style="position:absolute;top:100%;left:0;right:0;z-index:100;background:#fff;border:1px solid #e2e8f0;border-radius:8px;max-height:200px;overflow-y:auto;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.1);"></div>' +
-          '</div>' +
-          '<div id="adjBigQtyGroup" style="display:none;">' +
-            '<label style="font-size:11px;color:#64748b;font-weight:600;" id="adjBigLabel">كبرى</label>' +
-            '<input type="number" id="adjQtyBig" class="form-control" style="width:70px;" placeholder="0" min="0" step="1">' +
-          '</div>' +
-          '<div>' +
-            '<label style="font-size:11px;color:#64748b;font-weight:600;" id="adjSmallLabel">الكمية</label>' +
-            '<input type="number" id="adjQty" class="form-control" style="width:80px;" placeholder="0" min="0" step="0.01">' +
-          '</div>' +
-          '<button class="btn btn-danger" style="height:40px;" onclick="addAdjItem()"><i class="fas fa-plus"></i></button>' +
-        '</div>' +
-        '<div class="table-wrapper" style="max-height:300px;overflow-y:auto;">' +
-          '<table class="table" style="font-size:13px;"><thead><tr><th>المادة</th><th>الوحدة</th><th>الكمية المخصومة</th><th>تكلفة الوحدة</th><th>إجمالي التكلفة</th><th>المخزون قبل</th><th>المخزون بعد</th><th></th></tr></thead>' +
-          '<tbody id="adjCartBody"></tbody></table>' +
-        '</div>' +
-        '<div id="adjTotalRow" style="text-align:left;font-weight:900;font-size:16px;color:#ef4444;margin-top:8px;"></div>' +
-        '<div style="display:flex;gap:10px;margin-top:15px;">' +
-          '<button class="btn btn-danger" style="flex:1;" onclick="submitAdjustment()"><i class="fas fa-check-double"></i> حفظ المحضر (بانتظار الاعتماد)</button>' +
-          '<button class="btn btn-light" onclick="closeModal(\'#modalAdjustment\')">إلغاء</button>' +
-        '</div>' +
+        '<div class="modal-title">محضر تعديل كمية جديد<button class="modal-close" onclick="closeModal(\'#modalAdjustment\')">&times;</button></div>' +
+        '<select id="adjReason"><option value="damaged">تالف</option><option value="admin">إداري</option><option value="settlement">تسويات</option></select>' +
+        '<input type="text" id="adjNotes" placeholder="ملاحظات...">' +
+        '<input type="text" id="adjItemSearch" placeholder="ابحث..." oninput="filterAdjItems()" onfocus="filterAdjItems()">' +
+        '<div id="adjSearchResults"></div>' +
+        '<div id="adjBigQtyGroup" style="display:none;"><input type="number" id="adjQtyBig"></div>' +
+        '<input type="number" id="adjQty">' +
+        '<button onclick="addAdjItem()">+</button>' +
+        '<table><tbody id="adjCartBody"></tbody></table>' +
+        '<div id="adjTotalRow"></div>' +
+        '<button onclick="submitAdjustment()">حفظ</button>' +
       '</div>';
     document.body.appendChild(m);
   }
   renderAdjCart();
-  // Load items for search
   api.withSuccessHandler(function(items) { state._adjAllItems = items || []; }).getInvItems();
   openModal('#modalAdjustment');
+}
+
+// ─── Reason metadata (cost-accounting) ───
+var _ADJ_REASONS = [
+  { id: 'damaged',    label: 'تالف / كسر',     icon: 'fa-fire',                 color: '#dc2626', glAccount: '5310', glDesc: 'خسائر غير عادية' },
+  { id: 'waste',      label: 'هدر طبيعي',       icon: 'fa-droplet',              color: '#7c3aed', glAccount: '5310', glDesc: 'هدر تشغيلي ضمن المعيار' },
+  { id: 'admin',      label: 'إداري',          icon: 'fa-clipboard-user',       color: '#f59e0b', glAccount: '5310', glDesc: 'صرف إداري / استخدام داخلي' },
+  { id: 'settlement', label: 'تسويات محاسبية', icon: 'fa-scale-balanced',       color: '#0ea5e9', glAccount: '5320', glDesc: 'تسوية فروقات محاسبية' }
+];
+
+// ─── Render the fullscreen editor ───
+function _adjRenderEditor() {
+  var box = document.getElementById('adjEditorBody');
+  if (!box || !window._adjSession) return;
+  var s = window._adjSession;
+  var items = s.items || [];
+  var totals = _adjComputeTotals(items);
+  var reasonMeta = _ADJ_REASONS.find(function(r){return r.id===s.reason;}) || _ADJ_REASONS[0];
+
+  var heroHtml =
+    '<section class="adj-hero" style="background:radial-gradient(120% 140% at 100% 0%,' + reasonMeta.color + ' 0%,' + _adjDarken(reasonMeta.color) + ' 50%,#1e293b 100%);">' +
+      '<div class="adj-hero-orb"></div>' +
+      '<div class="adj-hero-grid">' +
+        '<div class="adj-hero-identity">' +
+          '<div class="adj-hero-avatar"><i class="fas ' + reasonMeta.icon + '"></i></div>' +
+          '<div class="adj-hero-text">' +
+            '<div class="adj-hero-eyebrow"><i class="fas fa-calendar-day"></i><span>محضر تعديل · ' + _adjFmtDateTime(s.startDate) + '</span></div>' +
+            '<h2 class="adj-hero-title">' + _invHubEsc(s.sessionId) + '</h2>' +
+            '<div class="adj-hero-sub">السبب الحالي: <b>' + _invHubEsc(reasonMeta.label) + '</b> · القيد المحاسبي: <code class="adj-hero-gl">' + reasonMeta.glAccount + '</code> ' + _invHubEsc(reasonMeta.glDesc) + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="adj-hero-kpi">' +
+          '<div class="adj-hero-kpi-label">عدد الأصناف</div>' +
+          '<div class="adj-hero-kpi-value" id="adjKpiCount">' + totals.count + '</div>' +
+          '<div class="adj-hero-kpi-unit">صنف للخصم</div>' +
+        '</div>' +
+        '<div class="adj-hero-kpi">' +
+          '<div class="adj-hero-kpi-label">إجمالي الكمية</div>' +
+          '<div class="adj-hero-kpi-value" id="adjKpiQty">' + totals.qty.toFixed(2) + '</div>' +
+          '<div class="adj-hero-kpi-unit">وحدة</div>' +
+        '</div>' +
+        '<div class="adj-hero-kpi adj-kpi-boxed">' +
+          '<div class="adj-hero-kpi-label">إجمالي الخسارة</div>' +
+          '<div class="adj-hero-kpi-value" id="adjKpiCost" style="color:#fecaca;">−' + totals.cost.toFixed(2) + '</div>' +
+          '<div class="adj-hero-kpi-unit">ر.س · على حساب ' + reasonMeta.glAccount + '</div>' +
+        '</div>' +
+      '</div>' +
+    '</section>';
+
+  // Reason cards row
+  var reasonCardsHtml = '<div class="adj-reasons">' +
+    _ADJ_REASONS.map(function(r) {
+      var active = r.id === s.reason;
+      return '<button class="adj-reason-card' + (active ? ' adj-reason-active' : '') + '" onclick="_adjSetReason(\'' + r.id + '\')" style="--rc:' + r.color + ';">' +
+               '<div class="adj-reason-icon"><i class="fas ' + r.icon + '"></i></div>' +
+               '<div class="adj-reason-body">' +
+                 '<div class="adj-reason-label">' + r.label + '</div>' +
+                 '<div class="adj-reason-gl">' + r.glDesc + ' · ' + r.glAccount + '</div>' +
+               '</div>' +
+             '</button>';
+    }).join('') +
+    '</div>';
+
+  var bodyHtml =
+    '<div class="adj-body">' +
+      _adjRenderItemsPanel() +
+      _adjRenderPickerPanel() +
+    '</div>';
+
+  var saveBarHtml =
+    '<footer class="adj-savebar">' +
+      '<div class="adj-save-meta">' +
+        '<span><i class="fas fa-stopwatch"></i> بدأ: ' + _adjFmtDateTime(s.startDate) + '</span>' +
+        '<span class="adj-save-meta-sep">·</span>' +
+        '<span><i class="fas fa-circle-info"></i> ' + (totals.count > 0 ? totals.count + ' صنف · بقيمة ' + totals.cost.toFixed(2) + ' ر.س' : 'حدد الأصناف') + '</span>' +
+      '</div>' +
+      '<div class="adj-save-actions">' +
+        '<button class="adj-btn adj-btn-secondary" onclick="ivCloseModal()"><i class="fas fa-times"></i> إلغاء</button>' +
+        '<button class="adj-btn adj-btn-primary" onclick="submitAdjustment()" style="background:' + reasonMeta.color + ';border-color:' + reasonMeta.color + ';"><i class="fas fa-check-double"></i> حفظ المحضر للاعتماد</button>' +
+      '</div>' +
+    '</footer>';
+  box.innerHTML = heroHtml + reasonCardsHtml + bodyHtml + saveBarHtml;
+}
+
+function _adjRenderItemsPanel() {
+  var s = window._adjSession;
+  var items = s.items || [];
+  var totals = _adjComputeTotals(items);
+  var bodyHtml = items.length === 0
+    ? _adjEmptyItems()
+    : _adjRenderItemCards(items);
+  return '<section class="adj-panel adj-items-panel">' +
+           '<header class="adj-panel-head">' +
+             '<div class="adj-panel-head-left">' +
+               '<div class="adj-panel-icon adj-panel-icon-primary"><i class="fas fa-list-check"></i></div>' +
+               '<div class="adj-panel-titles">' +
+                 '<div class="adj-panel-title">أصناف المحضر</div>' +
+                 '<div class="adj-panel-sub">' + items.length + ' صنف · سيُخصم من المخزون عند الاعتماد</div>' +
+               '</div>' +
+             '</div>' +
+             (items.length > 0
+               ? '<button class="adj-clear-all" onclick="_adjClearAll()"><i class="fas fa-trash-can"></i> مسح الكل</button>'
+               : '') +
+           '</header>' +
+           '<div class="adj-panel-meta">' +
+             '<div class="adj-meta-field" style="flex:2;">' +
+               '<label><i class="fas fa-note-sticky"></i> ملاحظات / تفاصيل المحضر</label>' +
+               '<input type="text" id="adjNotesInput" value="' + _invHubEsc(s.notes||'') + '" placeholder="مثال: كسر زجاج خلال النقل، أو تالف بسبب انتهاء الصلاحية..." oninput="window._adjSession.notes=this.value;">' +
+             '</div>' +
+           '</div>' +
+           '<div class="adj-panel-body">' + bodyHtml + '</div>' +
+           (items.length > 0 ? (
+             '<div class="adj-panel-foot">' +
+               '<span class="adj-foot-label">إجمالي قيمة الخصم</span>' +
+               '<span class="adj-foot-total">−' + totals.cost.toFixed(2) + ' ر.س</span>' +
+             '</div>'
+           ) : '') +
+         '</section>';
+}
+
+function _adjRenderItemCards(items) {
+  return '<div class="adj-card-list">' + items.map(function(it, idx) {
+    var qty = Number(it.qty) || 0;
+    var stock = Number(it.stock) || 0;
+    var lineCost = qty * (Number(it.cost)||0);
+    var stockAfter = stock - qty;
+    var hasIssue = qty > 0 && stockAfter < 0;
+    var isPending = qty <= 0;
+    var stateClass = hasIssue ? 'adj-card-danger' : (isPending ? 'adj-card-pending' : 'adj-card-ready');
+    var pendingPill = isPending
+      ? '<span class="adj-pill adj-pill-warning">يحتاج كمية</span>' : '';
+    var shortagePill = hasIssue
+      ? '<span class="adj-pill adj-pill-danger"><i class="fas fa-triangle-exclamation"></i> الرصيد سيكون سالباً</span>' : '';
+    return '<article class="adj-card ' + stateClass + '" data-adj-idx="' + idx + '">' +
+             '<div class="adj-card-num">' + (idx + 1) + '</div>' +
+             '<div class="adj-card-info">' +
+               '<div class="adj-card-name">' + _invHubEsc(it.name) + ' ' + pendingPill + ' ' + shortagePill + '</div>' +
+               '<div class="adj-card-meta">' +
+                 '<code>' + _invHubEsc(it.id) + '</code>' +
+                 (it.category ? ' · ' + _invHubEsc(it.category) : '') +
+                 ' · سعر الوحدة: <b>' + Number(it.cost||0).toFixed(4) + '</b> ر.س' +
+               '</div>' +
+             '</div>' +
+             '<div class="adj-card-stats">' +
+               '<div class="adj-card-stat">' +
+                 '<div class="adj-card-stat-label">رصيد قبل</div>' +
+                 '<div class="adj-card-stat-value adj-stat-before">' + stock.toFixed(2) + '</div>' +
+                 '<div class="adj-card-stat-unit">' + _invHubEsc(it.unit||'') + '</div>' +
+               '</div>' +
+               '<div class="adj-card-stat">' +
+                 '<div class="adj-card-stat-label">الكمية المخصومة</div>' +
+                 '<input type="number" step="0.001" min="0" value="' + qty + '" class="adj-card-input" oninput="_adjUpdateQty(' + idx + ',this.value)" onfocus="this.select()">' +
+                 '<div class="adj-card-stat-unit">' + _invHubEsc(it.unit||'') + '</div>' +
+               '</div>' +
+               '<div class="adj-card-stat">' +
+                 '<div class="adj-card-stat-label">رصيد بعد</div>' +
+                 '<div class="adj-card-stat-value" style="color:' + (stockAfter < 0 ? '#dc2626' : '#15803d') + ';">' + stockAfter.toFixed(2) + '</div>' +
+                 '<div class="adj-card-stat-unit">' + _invHubEsc(it.unit||'') + '</div>' +
+               '</div>' +
+               '<div class="adj-card-stat">' +
+                 '<div class="adj-card-stat-label">قيمة الخصم</div>' +
+                 '<div class="adj-card-stat-value" style="color:#dc2626;">−' + lineCost.toFixed(2) + '</div>' +
+                 '<div class="adj-card-stat-unit">ر.س</div>' +
+               '</div>' +
+             '</div>' +
+             '<button class="adj-card-del" onclick="_adjRemoveItem(' + idx + ')"><i class="fas fa-times"></i></button>' +
+           '</article>';
+  }).join('') + '</div>';
+}
+
+function _adjEmptyItems() {
+  return '<div class="adj-empty">' +
+           '<div class="adj-empty-icon"><i class="fas fa-clipboard-list"></i></div>' +
+           '<h3 class="adj-empty-title">ابدأ بإضافة أصناف للمحضر</h3>' +
+           '<p class="adj-empty-text">اختر سبب التعديل من الأعلى، ثم أضف الأصناف من اللوحة المجاورة. القيم تُحسب تلقائياً حسب التكلفة المتوسطة.</p>' +
+           '<button class="adj-empty-cta" onclick="document.getElementById(\'adjPickerSearchInput\').focus();">' +
+             '<i class="fas fa-search"></i> ابحث عن صنف' +
+           '</button>' +
+         '</div>';
+}
+
+function _adjRenderPickerPanel() {
+  var s = window._adjSession;
+  var search = (s.pickerSearch || '').toLowerCase().trim();
+  var category = s.pickerCategory || '';
+  var pickedIds = new Set((s.items || []).map(function(i){return String(i.id);}));
+  var byCategory = {};
+  (s.itemPool || []).forEach(function(it) {
+    if (it.active === false) return;
+    var cat = it.category || 'عام';
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(it);
+  });
+  var categories = Object.keys(byCategory).sort();
+  var totalAvailable = (s.itemPool || []).filter(function(it){ return !pickedIds.has(String(it.id)); }).length;
+  var pillsHtml = '<div class="adj-pills">' +
+    '<button class="adj-pill ' + (!category ? 'adj-pill-active' : '') + '" onclick="adjSetPickerCategory(\'\')">الكل <span class="adj-pill-count">' + totalAvailable + '</span></button>' +
+    categories.map(function(cat) {
+      var count = byCategory[cat].filter(function(it){return !pickedIds.has(String(it.id));}).length;
+      if (!count) return '';
+      var active = category === cat;
+      return '<button class="adj-pill ' + (active ? 'adj-pill-active' : '') + '" onclick="adjSetPickerCategory(\'' + _invHubEsc(cat).replace(/\'/g,"\\'") + '\')">' + _invHubEsc(cat) + ' <span class="adj-pill-count">' + count + '</span></button>';
+    }).join('') +
+    '</div>';
+  var html = '';
+  var totalShown = 0;
+  categories.forEach(function(cat) {
+    if (category && category !== cat) return;
+    var arr = byCategory[cat].filter(function(it) {
+      if (pickedIds.has(String(it.id))) return false;
+      if (!search) return true;
+      return (it.name||'').toLowerCase().indexOf(search) >= 0 || String(it.id||'').toLowerCase().indexOf(search) >= 0;
+    });
+    if (!arr.length) return;
+    totalShown += arr.length;
+    if (!category) {
+      html += '<div class="adj-cat-divider"><span class="adj-cat-line"></span><span class="adj-cat-name">' + _invHubEsc(cat) + '</span><span class="adj-cat-count">' + arr.length + '</span><span class="adj-cat-line"></span></div>';
+    }
+    arr.forEach(function(it) {
+      var stock = Number(it.stock || 0);
+      var dotClass = stock === 0 ? 'adj-dot-out' : stock < 10 ? 'adj-dot-low' : 'adj-dot-ok';
+      html += '<button class="adj-pick-row" onclick="_adjAddItemById(\'' + _invHubEsc(it.id).replace(/\'/g,"\\'") + '\')">' +
+                '<i class="fas fa-plus adj-pick-plus"></i>' +
+                '<div class="adj-pick-info">' +
+                  '<div class="adj-pick-name">' + _invHubEsc(it.name) + '</div>' +
+                  '<div class="adj-pick-stock"><span class="adj-pick-dot ' + dotClass + '"></span><span>' + stock.toFixed(2) + ' ' + _invHubEsc(it.unit||'حبة') + '</span></div>' +
+                '</div>' +
+                '<div class="adj-pick-cost">' + Number(it.cost||0).toFixed(2) + '<div class="adj-pick-cost-unit">ر.س / ' + _invHubEsc(it.unit||'حبة') + '</div></div>' +
+              '</button>';
+    });
+  });
+  if (!totalShown) {
+    html = '<div class="adj-no-results"><i class="fas fa-search-minus"></i><div>لا توجد نتائج' + (search ? ' لـ "' + _invHubEsc(search) + '"' : '') + '</div></div>';
+  }
+  return '<section class="adj-panel adj-picker-panel">' +
+           '<header class="adj-panel-head">' +
+             '<div class="adj-panel-head-left">' +
+               '<div class="adj-panel-icon adj-panel-icon-accent"><i class="fas fa-search-plus"></i></div>' +
+               '<div class="adj-panel-titles">' +
+                 '<div class="adj-panel-title">إضافة أصناف للخصم</div>' +
+                 '<div class="adj-panel-sub">' + totalAvailable + ' صنف متاح · اضغط أي صنف لإضافته</div>' +
+               '</div>' +
+             '</div>' +
+           '</header>' +
+           '<div class="adj-picker-search">' +
+             '<i class="fas fa-search"></i>' +
+             '<input type="text" id="adjPickerSearchInput" placeholder="ابحث بالاسم أو الكود..." value="' + _invHubEsc(s.pickerSearch||'') + '" oninput="adjPickerSearch(this.value)">' +
+           '</div>' +
+           pillsHtml +
+           '<div class="adj-picker-list">' + html + '</div>' +
+         '</section>';
+}
+
+window._adjSetReason = function(rid) {
+  if (!window._adjSession) return;
+  window._adjSession.reason = rid;
+  _adjRenderEditor();
+};
+window._adjUpdateQty = function(idx, val) {
+  if (!window._adjSession.items[idx]) return;
+  window._adjSession.items[idx].qty = Number(val) || 0;
+  _adjUpdateHeroKpis();
+  // Surgical card update
+  var card = document.querySelector('.adj-card[data-adj-idx="' + idx + '"]');
+  if (card) {
+    var it = window._adjSession.items[idx];
+    var stock = Number(it.stock) || 0;
+    var stockAfter = stock - it.qty;
+    var lineCost = it.qty * it.cost;
+    var stats = card.querySelectorAll('.adj-card-stat-value');
+    if (stats[1]) {
+      stats[1].textContent = stockAfter.toFixed(2);
+      stats[1].style.color = stockAfter < 0 ? '#dc2626' : '#15803d';
+    }
+    if (stats[2]) stats[2].textContent = '−' + lineCost.toFixed(2);
+    var hasIssue = it.qty > 0 && stockAfter < 0;
+    var isPending = it.qty <= 0;
+    card.classList.remove('adj-card-danger', 'adj-card-pending', 'adj-card-ready');
+    if (hasIssue) card.classList.add('adj-card-danger');
+    else if (isPending) card.classList.add('adj-card-pending');
+    else card.classList.add('adj-card-ready');
+  }
+};
+window._adjRemoveItem = function(idx) {
+  window._adjSession.items.splice(idx, 1);
+  _adjRenderEditor();
+};
+window._adjClearAll = function() {
+  if (!confirm('حذف كل الأصناف من المحضر؟')) return;
+  window._adjSession.items = [];
+  _adjRenderEditor();
+};
+window._adjAddItemById = function(id) {
+  var it = (window._adjSession.itemPool || []).find(function(x){return String(x.id)===String(id);});
+  if (!it) return;
+  if (window._adjSession.items.some(function(x){return x.id===it.id;})) return;
+  window._adjSession.items.push({
+    id: it.id,
+    name: it.name,
+    category: it.category || '',
+    unit: it.unit || '',
+    bigUnit: it.bigUnit || '',
+    convRate: Number(it.convRate) || 1,
+    cost: Number(it.cost) || 0,
+    stock: Number(it.stock) || 0,
+    qty: 0
+  });
+  _adjRenderEditor();
+};
+window.adjSetPickerCategory = function(cat) {
+  if (!window._adjSession) return;
+  window._adjSession.pickerCategory = cat;
+  var picker = document.querySelector('.adj-picker-panel');
+  if (picker) picker.outerHTML = _adjRenderPickerPanel();
+};
+var _adjPickerTimer = null;
+window.adjPickerSearch = function(v) {
+  if (!window._adjSession) return;
+  window._adjSession.pickerSearch = v;
+  clearTimeout(_adjPickerTimer);
+  _adjPickerTimer = setTimeout(function() {
+    var picker = document.querySelector('.adj-picker-panel');
+    if (picker) picker.outerHTML = _adjRenderPickerPanel();
+    var inp = document.getElementById('adjPickerSearchInput');
+    if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  }, 200);
+};
+function _adjUpdateHeroKpis() {
+  if (!window._adjSession) return;
+  var totals = _adjComputeTotals(window._adjSession.items || []);
+  var setText = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
+  setText('adjKpiCount', totals.count);
+  setText('adjKpiQty', totals.qty.toFixed(2));
+  setText('adjKpiCost', '−' + totals.cost.toFixed(2));
+  var foot = document.querySelector('.adj-foot-total');
+  if (foot) foot.textContent = '−' + totals.cost.toFixed(2) + ' ر.س';
+  var sub = document.querySelector('.adj-items-panel .adj-panel-sub');
+  if (sub) sub.textContent = totals.count + ' صنف · سيُخصم من المخزون عند الاعتماد';
+}
+function _adjComputeTotals(items) {
+  var qty = 0, cost = 0;
+  items.forEach(function(i) {
+    qty  += (Number(i.qty)  || 0);
+    cost += (Number(i.qty)  || 0) * (Number(i.cost) || 0);
+  });
+  return { count: items.length, qty: qty, cost: cost };
+}
+function _adjFmtDateTime(d) {
+  if (!d) return '—';
+  d = new Date(d);
+  return d.getFullYear() + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0') +
+         ' · ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+function _adjDarken(hex) {
+  if (!hex || hex.charAt(0) !== '#' || hex.length !== 7) return '#0f172a';
+  var r = Math.max(0, parseInt(hex.slice(1,3),16) - 60);
+  var g = Math.max(0, parseInt(hex.slice(3,5),16) - 60);
+  var b = Math.max(0, parseInt(hex.slice(5,7),16) - 60);
+  return '#' + r.toString(16).padStart(2,'0') + g.toString(16).padStart(2,'0') + b.toString(16).padStart(2,'0');
+}
+
+// V5.8.9 — Adjustment editor styles. Scoped under .adj-* (no leakage).
+function _adjInjectStyles() {
+  if (document.getElementById('adjEditorStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'adjEditorStyles';
+  st.textContent =
+    '.iv-modal-overlay[data-adj-fullscreen]{padding:0 !important;}' +
+    '.iv-modal-overlay[data-adj-fullscreen] .iv-modal{max-width:100vw !important;width:100vw !important;height:100vh !important;max-height:100vh !important;border-radius:0 !important;margin:0 !important;}' +
+    '.iv-modal-overlay[data-adj-fullscreen] .iv-modal-body{padding:14px 18px !important;background:#f6f7fb;}' +
+    '#adjEditorBody{font-feature-settings:"tnum";font-variant-numeric:tabular-nums;direction:rtl;}' +
+    '#adjEditorBody *{box-sizing:border-box;}' +
+    /* Hero */
+    '.adj-hero{position:relative;overflow:hidden;color:#fff;padding:18px 22px;border-radius:18px;margin-bottom:14px;box-shadow:0 12px 36px -12px rgba(15,23,42,0.45);transition:background 0.4s;}' +
+    '.adj-hero-orb{position:absolute;top:-60px;inset-inline-end:-50px;width:220px;height:220px;background:radial-gradient(circle,rgba(255,255,255,0.18) 0%,transparent 70%);border-radius:50%;}' +
+    '.adj-hero-grid{position:relative;display:grid;grid-template-columns:minmax(380px,2fr) minmax(110px,1fr) minmax(110px,1fr) minmax(180px,1.2fr);gap:18px;align-items:stretch;}' +
+    '@media (max-width:1100px){.adj-hero-grid{grid-template-columns:1fr 1fr;}.adj-hero-identity{grid-column:1/-1;}}' +
+    '.adj-hero-identity{display:flex;align-items:center;gap:14px;min-width:0;}' +
+    '.adj-hero-avatar{flex-shrink:0;width:64px;height:64px;border-radius:18px;display:grid;place-items:center;background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.30);font-size:30px;}' +
+    '.adj-hero-text{min-width:0;flex:1;}' +
+    '.adj-hero-eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:10.5px;font-weight:700;opacity:0.92;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:5px;}' +
+    '.adj-hero-title{margin:0;font-size:20px;font-weight:900;letter-spacing:-0.02em;}' +
+    '.adj-hero-sub{font-size:12px;opacity:0.92;margin-top:5px;line-height:1.5;}' +
+    '.adj-hero-gl{background:rgba(255,255,255,0.22);padding:2px 8px;border-radius:6px;font-family:ui-monospace,monospace;font-weight:800;}' +
+    '.adj-hero-kpi{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border-inline-start:1px solid rgba(255,255,255,0.16);padding:6px 4px;}' +
+    '.adj-hero-kpi:first-of-type{border-inline-start:0;}' +
+    '@media (max-width:1100px){.adj-hero-kpi{border-inline-start:0 !important;}}' +
+    '.adj-hero-kpi-label{font-size:10px;opacity:0.85;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:5px;}' +
+    '.adj-hero-kpi-value{font-size:24px;font-weight:900;letter-spacing:-0.02em;line-height:1.05;}' +
+    '.adj-hero-kpi-unit{font-size:10.5px;opacity:0.8;font-weight:600;margin-top:4px;}' +
+    '.adj-kpi-boxed{background:rgba(255,255,255,0.16);border:1px solid rgba(255,255,255,0.22);border-radius:14px;padding:12px 8px;}' +
+    /* Reason cards */
+    '.adj-reasons{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:14px;}' +
+    '.adj-reason-card{display:flex;align-items:center;gap:12px;background:#fff;border:2px solid #e2e8f0;border-radius:14px;padding:12px 14px;cursor:pointer;font-family:inherit;text-align:start;transition:all 0.18s;}' +
+    '.adj-reason-card:hover{transform:translateY(-2px);border-color:var(--rc);box-shadow:0 8px 20px -8px var(--rc);}' +
+    '.adj-reason-active{background:linear-gradient(135deg,var(--rc) 0%,#1e293b 200%);color:#fff;border-color:var(--rc);box-shadow:0 8px 20px -8px var(--rc);}' +
+    '.adj-reason-icon{width:44px;height:44px;border-radius:11px;display:grid;place-items:center;background:rgba(0,0,0,0.05);color:var(--rc);font-size:18px;flex-shrink:0;}' +
+    '.adj-reason-active .adj-reason-icon{background:rgba(255,255,255,0.2);color:#fff;}' +
+    '.adj-reason-body{min-width:0;flex:1;}' +
+    '.adj-reason-label{font-size:14px;font-weight:900;color:#0f172a;line-height:1.2;}' +
+    '.adj-reason-active .adj-reason-label{color:#fff;}' +
+    '.adj-reason-gl{font-size:11px;color:#64748b;font-weight:600;margin-top:3px;}' +
+    '.adj-reason-active .adj-reason-gl{color:rgba(255,255,255,0.85);}' +
+    /* Body 2-column */
+    '.adj-body{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px;}' +
+    '@media (max-width:1100px){.adj-body{grid-template-columns:1fr;}}' +
+    '.adj-panel{background:#fff;border:1px solid #e2e8f0;border-radius:18px;display:flex;flex-direction:column;height:calc(100vh - 460px);min-height:420px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
+    '.adj-panel-head{padding:14px 18px;border-bottom:1px solid #e2e8f0;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-shrink:0;}' +
+    '.adj-panel-head-left{display:flex;align-items:center;gap:11px;min-width:0;flex:1;}' +
+    '.adj-panel-icon{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;flex-shrink:0;font-size:15px;}' +
+    '.adj-panel-icon-primary{background:#fee2e2;color:#dc2626;}' +
+    '.adj-panel-icon-accent{background:#cffafe;color:#0891b2;}' +
+    '.adj-panel-titles{min-width:0;flex:1;}' +
+    '.adj-panel-title{font-size:15px;font-weight:800;color:#0f172a;line-height:1.2;}' +
+    '.adj-panel-sub{font-size:11.5px;color:#94a3b8;font-weight:600;margin-top:2px;}' +
+    '.adj-clear-all{background:transparent;color:#dc2626;border:1px solid #fecaca;font-weight:700;font-size:11.5px;padding:6px 12px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:inherit;transition:all 0.15s;}' +
+    '.adj-clear-all:hover{background:#fee2e2;border-color:#dc2626;}' +
+    '.adj-panel-meta{padding:12px 18px;border-bottom:1px solid #f1f5f9;display:flex;gap:10px;flex-shrink:0;background:#fafbff;}' +
+    '.adj-meta-field{flex:1;display:flex;flex-direction:column;gap:4px;}' +
+    '.adj-meta-field label{font-size:10.5px;font-weight:800;color:#475569;display:flex;align-items:center;gap:5px;letter-spacing:0.02em;text-transform:uppercase;}' +
+    '.adj-meta-field input{padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:9px;font-size:12.5px;font-family:inherit;background:#fff;color:#0f172a;font-weight:600;}' +
+    '.adj-meta-field input:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px #fee2e2;}' +
+    '.adj-panel-body{flex:1;overflow-y:auto;padding:14px 18px;}' +
+    '.adj-panel-foot{padding:12px 18px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;}' +
+    '.adj-foot-label{font-size:13px;font-weight:700;color:#0f172a;}' +
+    '.adj-foot-total{font-size:18px;font-weight:900;color:#dc2626;font-family:ui-monospace,monospace;}' +
+    /* Cards */
+    '.adj-card-list{display:flex;flex-direction:column;gap:10px;}' +
+    '.adj-card{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:14px 16px;display:grid;grid-template-columns:32px minmax(0,1fr) auto auto;gap:14px;align-items:center;transition:all 0.15s;}' +
+    '.adj-card:hover{box-shadow:0 6px 18px -6px rgba(15,23,42,0.10);transform:translateY(-1px);}' +
+    '.adj-card-pending{border-color:#fcd34d;background:linear-gradient(180deg,#fff 0%,#fffbeb 200%);}' +
+    '.adj-card-danger{border-color:#fca5a5;background:linear-gradient(180deg,#fff 0%,#fef2f2 200%);}' +
+    '.adj-card-ready{border-color:#fca5a5;}' +
+    '.adj-card-num{width:32px;height:32px;border-radius:50%;background:#dc2626;color:#fff;display:grid;place-items:center;font-weight:900;font-size:12.5px;}' +
+    '.adj-card-info{min-width:0;}' +
+    '.adj-card-name{font-size:14.5px;font-weight:800;color:#0f172a;display:flex;align-items:center;flex-wrap:wrap;gap:8px;}' +
+    '.adj-card-meta{font-size:11.5px;color:#64748b;font-weight:600;margin-top:4px;}' +
+    '.adj-card-meta code{background:#f1f5f9;padding:1px 6px;border-radius:4px;font-family:ui-monospace,monospace;}' +
+    '.adj-card-meta b{color:#0f172a;}' +
+    '.adj-card-stats{display:grid;grid-template-columns:repeat(4,minmax(95px,1fr));gap:14px;}' +
+    '.adj-card-stat{text-align:center;}' +
+    '.adj-card-stat-label{font-size:9.5px;color:#94a3b8;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:3px;}' +
+    '.adj-card-stat-value{font-size:17px;font-weight:900;font-family:ui-monospace,monospace;}' +
+    '.adj-card-stat-unit{font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;}' +
+    '.adj-stat-before{color:#0369a1;}' +
+    '.adj-card-input{width:100%;max-width:100px;padding:6px 10px;border:1.5px solid #dc2626;border-radius:8px;text-align:center;font-weight:900;color:#dc2626;font-size:16px;background:#fee2e2;font-family:inherit;}' +
+    '.adj-card-input:focus{outline:none;background:#fecaca;}' +
+    '.adj-card-del{background:transparent;color:#94a3b8;border:1px solid #e2e8f0;width:36px;height:36px;border-radius:10px;cursor:pointer;display:grid;place-items:center;font-size:13px;flex-shrink:0;transition:all 0.15s;}' +
+    '.adj-card-del:hover{background:#fee2e2;color:#dc2626;border-color:#dc2626;}' +
+    /* Pills */
+    '.adj-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;padding:3px 9px;border-radius:7px;line-height:1;white-space:nowrap;}' +
+    '.adj-pill i{font-size:9px;}' +
+    '.adj-pill-warning{background:#fef3c7;color:#92400e;}' +
+    '.adj-pill-danger{background:#fee2e2;color:#b91c1c;}' +
+    /* Empty state */
+    '.adj-empty{padding:48px 24px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:300px;}' +
+    '.adj-empty-icon{width:88px;height:88px;background:linear-gradient(135deg,#fee2e2,#fef2f2);color:#dc2626;border-radius:50%;display:grid;place-items:center;font-size:34px;margin-bottom:18px;}' +
+    '.adj-empty-title{font-weight:900;font-size:17px;color:#0f172a;margin:0 0 7px;}' +
+    '.adj-empty-text{font-size:13px;max-width:330px;line-height:1.6;color:#64748b;font-weight:500;margin:0 0 18px;}' +
+    '.adj-empty-cta{background:#dc2626;color:#fff;border:0;padding:10px 18px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;font-family:inherit;box-shadow:0 6px 18px -6px #dc2626;}' +
+    /* Picker */
+    '.adj-picker-search{position:relative;padding:12px 18px;border-bottom:1px solid #f1f5f9;background:#fff;flex-shrink:0;}' +
+    '.adj-picker-search i{position:absolute;top:50%;inset-inline-start:30px;transform:translateY(-50%);color:#94a3b8;font-size:13px;pointer-events:none;}' +
+    '.adj-picker-search input{width:100%;padding:9px 36px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:13px;font-family:inherit;direction:rtl;background:#fff;}' +
+    '.adj-picker-search input:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px #fee2e2;}' +
+    '.adj-pills{display:flex;flex-wrap:wrap;gap:6px;padding:10px 18px;border-bottom:1px solid #f1f5f9;flex-shrink:0;}' +
+    '.adj-pill{background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;padding:5px 11px;border-radius:999px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px;line-height:1.3;transition:all 0.15s;}' +
+    '.adj-pill:hover{background:#fff;border-color:#dc2626;color:#b91c1c;}' +
+    '.adj-pill-active{background:#dc2626 !important;color:#fff !important;border-color:#dc2626 !important;}' +
+    '.adj-pill-count{background:rgba(0,0,0,0.06);padding:1px 6px;border-radius:8px;font-size:10px;}' +
+    '.adj-pill-active .adj-pill-count{background:rgba(255,255,255,0.22);}' +
+    '.adj-picker-list{flex:1;overflow-y:auto;padding:8px 12px 12px;}' +
+    '.adj-cat-divider{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;padding:12px 6px 6px;}' +
+    '.adj-cat-line{height:1px;flex:1;background:#e2e8f0;}' +
+    '.adj-cat-name{white-space:nowrap;}' +
+    '.adj-cat-count{background:#f8fafc;color:#475569;padding:2px 7px;border-radius:6px;font-size:10px;}' +
+    '.adj-pick-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;cursor:pointer;background:#fff;border:1.5px solid transparent;font-family:inherit;text-align:start;width:100%;transition:all 0.12s;}' +
+    '.adj-pick-row:hover{background:#fef2f2;border-color:#fca5a5;transform:translateX(-2px);}' +
+    '.adj-pick-plus{color:#dc2626;font-size:14px;width:30px;height:30px;background:#fef2f2;border-radius:8px;display:grid;place-items:center;}' +
+    '.adj-pick-info{min-width:0;}' +
+    '.adj-pick-name{font-weight:700;color:#0f172a;font-size:13.5px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '.adj-pick-stock{font-size:11.5px;color:#64748b;font-weight:600;margin-top:3px;display:flex;align-items:center;gap:6px;}' +
+    '.adj-pick-dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0;}' +
+    '.adj-dot-out{background:#94a3b8;}' +
+    '.adj-dot-low{background:#f59e0b;}' +
+    '.adj-dot-ok{background:#10b981;}' +
+    '.adj-pick-cost{text-align:end;font-family:ui-monospace,monospace;font-weight:800;color:#0f172a;font-size:13.5px;}' +
+    '.adj-pick-cost-unit{font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;}' +
+    '.adj-no-results{text-align:center;padding:48px 20px;color:#94a3b8;}' +
+    '.adj-no-results i{font-size:38px;opacity:0.3;display:block;margin-bottom:12px;}' +
+    /* Save bar */
+    '.adj-savebar{position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;margin:14px -18px -14px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 -4px 16px -8px rgba(15,23,42,0.08);gap:12px;flex-wrap:wrap;}' +
+    '.adj-save-meta{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#475569;font-weight:700;}' +
+    '.adj-save-meta-sep{color:#cbd5e1;}' +
+    '.adj-save-actions{display:flex;gap:6px;flex-wrap:wrap;}' +
+    '.adj-btn{padding:9px 14px;border-radius:9px;font-size:12.5px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;border:1.5px solid;transition:all 0.15s;color:#fff;}' +
+    '.adj-btn-primary{box-shadow:0 4px 12px -4px rgba(15,23,42,0.4);}' +
+    '.adj-btn-primary:hover{transform:translateY(-1px);}' +
+    '.adj-btn-secondary{background:#fff;color:#475569;border-color:#e2e8f0;}' +
+    '.adj-btn-secondary:hover{background:#f8fafc;border-color:#cbd5e1;}';
+  document.head.appendChild(st);
 }
 
 var _adjSelectedItem = null;
@@ -4427,20 +4962,43 @@ function renderAdjCart() {
 }
 
 function submitAdjustment() {
-  if (!_adjCart.length) return showToast('أضف مواد للمحضر', true);
-  var reason = q('#adjReason') ? q('#adjReason').value : 'damaged';
-  var notes = q('#adjNotes') ? q('#adjNotes').value : '';
-  if (!confirm('سيتم إنشاء محضر تعديل كمية بعدد ' + _adjCart.length + ' صنف. المحضر سيكون بانتظار الاعتماد. متابعة؟')) return;
+  // V5.8.9 — prefer the new fullscreen session if present
+  var s = window._adjSession;
+  var items, reason, notes;
+  if (s && Array.isArray(s.items) && s.items.length) {
+    items = s.items.filter(function(i){ return Number(i.qty) > 0; }).map(function(i){
+      return {
+        id: i.id, name: i.name,
+        unit: i.unit || '', bigUnit: i.bigUnit || '', convRate: Number(i.convRate)||1,
+        qty: Number(i.qty), bigQtyEntered: 0, smallQtyEntered: Number(i.qty),
+        unitCost: Number(i.cost)||0, stockBefore: Number(i.stock)||0
+      };
+    });
+    if (!items.length) return showToast('حدد كمية لكل صنف (أكبر من صفر)', true);
+    reason = s.reason || 'damaged';
+    notes  = s.notes || '';
+  } else {
+    if (!_adjCart.length) return showToast('أضف مواد للمحضر', true);
+    items = _adjCart;
+    reason = q('#adjReason') ? q('#adjReason').value : 'damaged';
+    notes  = q('#adjNotes')  ? q('#adjNotes').value  : '';
+  }
+  var reasonMeta = (typeof _ADJ_REASONS !== 'undefined') ? _ADJ_REASONS.find(function(r){return r.id===reason;}) : null;
+  var reasonLabel = reasonMeta ? reasonMeta.label : reason;
+  if (!confirm('سيتم إنشاء محضر "' + reasonLabel + '" بعدد ' + items.length + ' صنف. المحضر سيكون بانتظار الاعتماد. متابعة؟')) return;
   loader(true);
   api.withSuccessHandler(function(r) {
     loader(false);
     if (r && r.success) {
-      closeModal('#modalAdjustment');
+      if (typeof ivCloseModal === 'function') ivCloseModal();
+      if (typeof closeModal === 'function') closeModal('#modalAdjustment');
+      window._adjSession = null;
+      _adjCart = [];
       showToast('تم إنشاء المحضر ' + (r.adjustmentId || '') + ' — بانتظار الاعتماد');
       loadDashAdjustments();
     } else showToast((r && r.error) || 'خطأ', true);
   }).withFailureHandler(function(e) { loader(false); showToast(e.message, true); })
-  .submitAdjustment({ items: _adjCart, reason: reason, reasonNotes: notes, username: state.user });
+  .submitAdjustment({ items: items, reason: reason, reasonNotes: notes, username: state.user });
 }
 
 function approveAdjustment(adjId) {
@@ -6088,20 +6646,21 @@ function _invLiveTrendChart(trend) {
 }
 
 function _invLiveAlertsList(t) {
-  function row(label, count, color, icon, filterKind) {
-    var hot = count > 0;
+  function row(label, count, color, icon, filterKind, sub) {
+    var hot = count > 0 && typeof count === 'number';
     return '<button class="iv-live-alert-row' + (hot ? ' iv-live-alert-hot' : '') + '" ' +
            (filterKind ? 'onclick="_invLiveQuickFilter(\'' + filterKind + '\')"' : '') + '>' +
              '<span class="iv-live-alert-icon" style="background:' + color + '1a;color:' + color + ';"><i class="fas ' + icon + '"></i></span>' +
-             '<span class="iv-live-alert-label">' + label + '</span>' +
+             '<span class="iv-live-alert-label">' + label + (sub ? '<span class="iv-live-alert-sub">' + sub + '</span>' : '') + '</span>' +
              '<span class="iv-live-alert-count" style="color:' + (hot ? color : '#94a3b8') + ';">' + count + '</span>' +
            '</button>';
   }
   return '<div class="iv-live-alerts-list">' +
            row('بطيئة الحركة (+٦٠ يوم)', t.slowMovingCount || 0, '#f59e0b', 'fa-hourglass-half', 'slow') +
+           row('توالف خلال الفترة',       t.damagedCount    || 0, '#b91c1c', 'fa-fire',          null,
+               'بقيمة ' + _invHubFmtMoney(t.damagedValue || 0) + ' ر.س') +
            row('رصيد سالب (شذوذ)',         t.negativeCount   || 0, '#dc2626', 'fa-circle-exclamation', 'neg') +
            row('تحتاج إعادة طلب',          t.reorderCount    || 0, '#7c3aed', 'fa-cart-plus', 'reorder') +
-           row('معدل الدوران',              (t.turnover || 0) + 'x', '#0ea5e9', 'fa-arrows-rotate', null) +
          '</div>';
 }
 
@@ -6164,15 +6723,17 @@ function _invLiveRenderTable(items, totals) {
       '<th title="ABC = تصنيف باريتو حسب القيمة">ABC</th>' +
       '<th class="iv-th-num">مخزون أول الفترة</th>' +
       '<th class="iv-th-num">مشتريات</th>' +
-      '<th class="iv-th-num">استهلاك</th>' +
-      '<th class="iv-th-num">تعديلات</th>' +
+      '<th class="iv-th-num" title="استهلاك في الإنتاج (يُحمَّل على WIP / تكلفة الوصفة)">إنتاج</th>' +
+      '<th class="iv-th-num" title="مبيعات مباشرة (يُحمَّل على COGS)">مبيعات</th>' +
+      '<th class="iv-th-num" title="توالف وكسر (يُحمَّل على حساب الخسائر غير العادية)">توالف</th>' +
+      '<th class="iv-th-num" title="تسويات إدارية ومحاسبية">تسويات</th>' +
       '<th class="iv-th-num iv-th-closing">مخزون آخر الفترة</th>' +
       '<th class="iv-th-num">القيمة (ر.س)</th>' +
       '<th title="عدد الأيام منذ آخر حركة">آخر حركة</th>' +
       '<th>الحالة</th>' +
     '</tr>';
   body.innerHTML = filtered.length === 0
-    ? '<tr><td colspan="12" class="iv-live-empty">' +
+    ? '<tr><td colspan="14" class="iv-live-empty">' +
         (quick ? 'لا توجد أصناف تطابق هذا الفلتر. <a href="#" onclick="event.preventDefault();_invLiveClearQuickFilter();">مسح الفلتر</a>' : 'لا توجد بيانات في النطاق المحدد. جرّب توسيع الفترة أو رفع الفلاتر.') +
       '</td></tr>'
     : filtered.map(function(it) {
@@ -6196,8 +6757,10 @@ function _invLiveRenderTable(items, totals) {
                  '<td>' + abcBadge + '</td>' +
                  _numCell(it.openingStock, it.unit) +
                  _numCell(it.purchasedQty, it.unit, it.purchasedQty > 0 ? '#10b981' : '') +
-                 _numCell(it.consumedQty,  it.unit, it.consumedQty  > 0 ? '#ef4444' : '') +
-                 _numCell(it.adjustedQty,  it.unit, it.adjustedQty  > 0 ? '#f59e0b' : '') +
+                 _numCell(it.productionQty || 0, it.unit, (it.productionQty||0) > 0 ? '#0369a1' : '') +
+                 _numCell(it.salesQty || 0,      it.unit, (it.salesQty||0)      > 0 ? '#dc2626' : '') +
+                 _numCell(it.damagedQty || 0,    it.unit, (it.damagedQty||0)    > 0 ? '#b91c1c' : '') +
+                 _numCell(it.adjustedQty,        it.unit, it.adjustedQty        > 0 ? '#f59e0b' : '') +
                  _numCell(it.closingStock, it.unit, '#7c3aed', /*bold*/true) +
                  '<td class="iv-live-num iv-live-num-bold">' + _invHubFmtMoney(it.value) + '</td>' +
                  '<td>' + lastMovBadge + '</td>' +
@@ -6209,7 +6772,9 @@ function _invLiveRenderTable(items, totals) {
         '<td colspan="4" class="iv-live-totals-label">الإجمالي · ' + filtered.length + ' صنف</td>' +
         '<td class="iv-live-num">' + _invHubFmtMoney((totals||{}).openingValue || 0) + '</td>' +
         '<td class="iv-live-num" style="color:#86efac;">+ ' + _invHubFmtMoney((totals||{}).purchasesValue || 0) + '</td>' +
-        '<td class="iv-live-num" style="color:#fca5a5;">− ' + _invHubFmtMoney((totals||{}).consumedValue || 0) + '</td>' +
+        '<td class="iv-live-num" style="color:#7dd3fc;">− ' + _invHubFmtMoney((totals||{}).productionValue || 0) + '</td>' +
+        '<td class="iv-live-num" style="color:#fca5a5;">− ' + _invHubFmtMoney((totals||{}).salesValue || 0) + '</td>' +
+        '<td class="iv-live-num" style="color:#fda4af;">− ' + _invHubFmtMoney((totals||{}).damagedValue || 0) + '</td>' +
         '<td class="iv-live-num" style="color:#fde68a;">' + _invHubFmtMoney((totals||{}).adjustValue || 0) + '</td>' +
         '<td class="iv-live-num iv-live-num-bold">' + _invHubFmtMoney((totals||{}).closingValue || 0) + '</td>' +
         '<td class="iv-live-num iv-live-num-bold" style="color:#c4b5fd;">' + _invHubFmtMoney((totals||{}).closingValue || 0) + '</td>' +
@@ -6819,6 +7384,7 @@ function _invLiveInjectStyles() {
     '.iv-live-alert-icon{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:13px;}' +
     '.iv-live-alert-label{font-size:12.5px;font-weight:700;color:#475569;}' +
     '.iv-live-alert-count{font-size:18px;font-weight:900;font-variant-numeric:tabular-nums;letter-spacing:-0.02em;}' +
+    '.iv-live-alert-sub{display:block;font-size:10.5px;font-weight:600;color:#94a3b8;margin-top:2px;}' +
     /* ABC badge column */
     '.iv-live-abc-badge{display:inline-block;width:24px;height:22px;border-radius:6px;color:#fff;font-size:11px;font-weight:900;text-align:center;line-height:22px;}' +
     '.iv-live-abc-badge.iv-live-abc-a{background:#dc2626;}' +

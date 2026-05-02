@@ -322,26 +322,37 @@ router.get('/live-report', async (req, res) => {
       netSinceEnd[r.item_id] = (netSinceEnd[r.item_id] || 0) + sign * Number(r.q || 0);
     });
 
-    // Bucket the period rows by reason category
-    //   purchases   = reason matches purchase/receive keywords (in)
-    //   consumed    = reason matches sales/production keywords (out)
-    //   adjustments = reason matches damage/admin/settlement (out)
-    //   transferIn / transferOut = reason matches transfer keywords
-    //   stockTake   = reason matches جرد/stocktake (variance)
+    // V5.8.9 — Cost-accountant bucketing.  Each movement reason maps to a
+    //   distinct GL/management category so the report mirrors how a real
+    //   cost accountant would analyze stock movement:
+    //     purchases    → 1200 Inventory (debit)
+    //     production   → 1300 WIP / charge to recipe cost (consumption)
+    //     sales        → 5300 Cost of Goods Sold (direct sale)
+    //     damaged      → 5310 Abnormal Loss / Spoilage
+    //     adjustments  → 5320 Inventory Variance (admin/settlement)
+    //     stocktake    → variance from physical count (also 5320)
+    //     transferIn   → in from another warehouse (no GL impact at company level)
+    //     transferOut  → out to another warehouse
+    //   `consumed` (legacy) is kept as a SUM of production+sales+damage so
+    //   existing UI that reads `consumedQty` keeps working.
     const byItem = {};
     function bucket(reason, type) {
-      const r = String(reason || '').toLowerCase();
-      if (/مشتريات|استلام|purchase|receive/i.test(reason)) return 'purchases';
-      if (/مبيعات|إنتاج|انتاج|production|sale/i.test(reason)) return 'consumed';
-      if (/تالف|إداري|اداري|تسويات|damage|admin|settlement|adjust/i.test(reason)) return 'adjustments';
-      if (/تحويل|transfer/i.test(reason)) return type === 'in' ? 'transferIn' : 'transferOut';
-      if (/جرد|stocktake|variance/i.test(reason)) return 'stocktake';
+      // CHECK MOST-SPECIFIC FIRST so e.g. "تالف" doesn't fall into "تسويات"
+      if (/تالف|spoil|damage|broken/i.test(reason))                return 'damaged';
+      if (/مشتريات|استلام|purchase|receive/i.test(reason))         return 'purchases';
+      if (/إنتاج|انتاج|production|نصف مصنع|semi/i.test(reason))    return 'production';
+      if (/مبيعات|sale/i.test(reason))                             return 'sales';
+      if (/إداري|اداري|admin/i.test(reason))                       return 'adjustments';
+      if (/تسويات|settlement|adjust/i.test(reason))                return 'adjustments';
+      if (/تحويل|transfer/i.test(reason))                          return type === 'in' ? 'transferIn' : 'transferOut';
+      if (/جرد|stocktake|variance/i.test(reason))                  return 'stocktake';
       // Unknown reason: treat by type
-      return type === 'in' ? 'purchases' : 'consumed';
+      return type === 'in' ? 'purchases' : 'sales';
     }
     periodRows.forEach(r => {
       if (!byItem[r.item_id]) byItem[r.item_id] = {
-        purchases: 0, consumed: 0, adjustments: 0, transferIn: 0, transferOut: 0, stocktake: 0
+        purchases: 0, production: 0, sales: 0, damaged: 0,
+        adjustments: 0, transferIn: 0, transferOut: 0, stocktake: 0
       };
       const b = bucket(r.reason, r.type);
       byItem[r.item_id][b] = (byItem[r.item_id][b] || 0) + Number(r.q || 0);
@@ -359,7 +370,12 @@ router.get('/live-report', async (req, res) => {
       const cur = Number(i.stock) || 0;
       const opening = cur - (netSinceStart[i.id] || 0);
       const closing = cur - (netSinceEnd[i.id]   || 0);
-      const b = byItem[i.id] || { purchases: 0, consumed: 0, adjustments: 0, transferIn: 0, transferOut: 0, stocktake: 0 };
+      const b = byItem[i.id] || {
+        purchases: 0, production: 0, sales: 0, damaged: 0,
+        adjustments: 0, transferIn: 0, transferOut: 0, stocktake: 0
+      };
+      // V5.8.9 — legacy `consumed` = production + sales (everything that hits COGS/WIP)
+      const consumed = b.production + b.sales;
       const cost = Number(i.cost) || 0;
       const value = closing * cost;
       let status = 'جيد';
@@ -371,19 +387,20 @@ router.get('/live-report', async (req, res) => {
       const daysSinceLastMov = lastMov ? Math.floor((Date.now() - lastMov.getTime()) / (24 * 3600 * 1000)) : null;
       const isSlowMoving = (daysSinceLastMov === null) || (daysSinceLastMov >= SLOW_DAYS);
       const isNegative   = closing < 0;
-      // Reorder qty suggestion: avg daily consumption × default 14-day cover, capped at min_stock × 2.
-      //   This is a simple heuristic; refine per item later if lead time is stored.
-      const dailyConsumption = b.consumed / periodDays;
+      // Reorder suggestion based on sales+production rate (true demand)
+      const dailyConsumption = consumed / periodDays;
       const suggestedReorder = Math.max(0,
         Math.ceil(dailyConsumption * 14) - Math.max(0, closing)
       );
-      // Stock turnover for this item (in period): consumption / avg inventory.
       const avgInventory = (opening + closing) / 2;
-      const turnover = avgInventory > 0 ? (b.consumed / avgInventory) : 0;
+      const turnover = avgInventory > 0 ? (consumed / avgInventory) : 0;
 
       totals.openingValue     += opening * cost;
       totals.purchasesValue   += b.purchases * cost;
-      totals.consumedValue    += b.consumed  * cost;
+      totals.consumedValue    += consumed * cost;          // legacy total
+      totals.productionValue  += b.production * cost;       // V5.8.9
+      totals.salesValue       += b.sales * cost;            // V5.8.9
+      totals.damagedValue     += b.damaged * cost;          // V5.8.9
       totals.adjustValue      += b.adjustments * cost;
       totals.closingValue     += value;
       totals.itemCount++;
@@ -392,6 +409,7 @@ router.get('/live-report', async (req, res) => {
       if (isNegative)         totals.negativeCount++;
       if (isSlowMoving && closing > 0) totals.slowMovingCount++;
       if (suggestedReorder > 0)        totals.reorderCount++;
+      if (b.damaged > 0)               totals.damagedCount++;
 
       return {
         id: i.id,
@@ -406,7 +424,10 @@ router.get('/live-report', async (req, res) => {
         brandName: i.brand_name || '',
         openingStock: opening,
         purchasedQty: b.purchases,
-        consumedQty:  b.consumed,
+        consumedQty:  consumed,         // legacy field (= production + sales)
+        productionQty: b.production,    // V5.8.9 — separate
+        salesQty:     b.sales,          // V5.8.9 — separate
+        damagedQty:   b.damaged,        // V5.8.9 — separate
         adjustedQty:  b.adjustments,
         transferIn:   b.transferIn,
         transferOut:  b.transferOut,
@@ -414,14 +435,13 @@ router.get('/live-report', async (req, res) => {
         closingStock: closing,
         value: value,
         status: status,
-        // V5.8.2 — pro fields
         lastMovementDate: lastMov,
         daysSinceLastMov: daysSinceLastMov,
         isSlowMoving: isSlowMoving && closing > 0,
         isNegative: isNegative,
         suggestedReorder: suggestedReorder,
         turnover: Math.round(turnover * 100) / 100,
-        abcClass: ''  // populated below after we sort by value
+        abcClass: ''
       };
     });
 
@@ -493,10 +513,14 @@ function _zeroTotals() {
     negativeCount:    0,
     slowMovingCount:  0,
     reorderCount:     0,
+    damagedCount:     0,        // V5.8.9 — items with any damage in period
     openingValue:   0,
     purchasesValue: 0,
-    consumedValue:  0,
-    adjustValue:    0,
+    consumedValue:  0,           // legacy: production + sales
+    productionValue: 0,          // V5.8.9
+    salesValue:     0,           // V5.8.9
+    damagedValue:   0,           // V5.8.9 — abnormal loss expense
+    adjustValue:    0,           // admin + settlement only
     closingValue:   0,
     abcA: 0, abcB: 0, abcC: 0,
     abcAValue: 0, abcBValue: 0, abcCValue: 0,

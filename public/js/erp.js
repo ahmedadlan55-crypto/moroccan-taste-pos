@@ -148,7 +148,7 @@ function erpNav(sectionId) {
       case 'erpRptBalanceSheet':   erpLoadBalanceSheet(); break;
       case 'erpRptCashFlow':       erpLoadCashFlow(); break;
       case 'erpRptProfitability':  erpLoadProfitability(); break;
-      case 'erpRptInventoryVal':   erpLoadInventoryValuation(); break;
+      case 'erpRptInventoryVal':   erpLoadRptInventoryVal(); break;
       case 'erpRptSalesAnalytics': erpLoadSalesAnalytics(); break;
       case 'erpRptSalesByChannel': if (typeof erpLoadSalesByChannel === 'function') erpLoadSalesByChannel(); break;
       case 'erpRptDiscountsGiven': if (typeof erpLoadDiscountsGiven === 'function') erpLoadDiscountsGiven(); break;
@@ -637,11 +637,19 @@ document.addEventListener('click', function(e) {
 // ─── Tree: Select node ───
 window.coaSelectNode = function(id) {
   _coaSelectedId = id;
-  // Highlight in tree
+  // V5.9.6 — `coaMainContent` only lives on the GL Accounts page. When this
+  // function fires from a side-effect path (e.g. Sync-Inventory-GL fired
+  // from the inventory-method page), `main` is null and the legacy code
+  // crashed with "Cannot set properties of null (setting 'innerHTML')",
+  // surfacing a red toast and freezing the inventory-method page on its
+  // loading spinner. Guard up front and bail silently — the next visit to
+  // the GL Accounts page will pick up `_coaSelectedId` and render then.
+  var main = document.getElementById('coaMainContent');
+  if (!main) return;
+
   document.querySelectorAll('.coa-node-row').forEach(r => r.classList.remove('active'));
   var row = document.querySelector('.coa-node[data-id="' + id + '"] > .coa-node-row');
   if (row) row.classList.add('active');
-  // Expand parent chain
   var acc = _erpAccounts.find(a => a.id === id);
   if (acc) {
     var parent = acc;
@@ -651,18 +659,14 @@ window.coaSelectNode = function(id) {
       parent = _erpAccounts.find(a => a.id === parent.parentId);
     }
   }
-
   var isGroup = _coaIsGroup(id);
-  var main = document.getElementById('coaMainContent');
-  if (isGroup) {
-    _coaShowGroup(id, main);
-  } else {
-    _coaShowAccount(id, main);
-  }
+  if (isGroup) _coaShowGroup(id, main);
+  else         _coaShowAccount(id, main);
 };
 
 // ─── Show Group (children as cards) ───
 function _coaShowGroup(id, container) {
+  if (!container) return; // V5.9.6 — belt-and-suspenders: caller already checks
   var acc = _erpAccounts.find(a => a.id === id);
   if (!acc) return;
   var children = _coaChildrenOf(id);
@@ -704,6 +708,7 @@ function _coaShowGroup(id, container) {
 
 // ─── Show Account Detail (transactions) ───
 function _coaShowAccount(id, container) {
+  if (!container) return; // V5.9.6
   var acc = _erpAccounts.find(a => a.id === id);
   if (!acc) return;
   var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
@@ -3060,9 +3065,13 @@ function erpLoadInventoryValuation(filters) {
     '<div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><div class="wo-empty-title">جاري تحميل التقييم...</div></div>';
 
   _erpGet('/erp/inventory-valuation?' + q, function(data) {
+    // V5.9.6 — re-resolve the container in case the page was re-rendered
+    // between the spinner-set and the response. Bail silently if it's gone.
+    var liveContainer = document.getElementById('invValuationContent') || container;
+    if (!liveContainer) return;
     try {
       if (!data || data.error) {
-        container.innerHTML =
+        liveContainer.innerHTML =
           '<div class="wo-empty">' +
             '<i class="fas fa-triangle-exclamation" style="color:var(--wo-danger);"></i>' +
             '<div class="wo-empty-title">تعذّر تحميل التقييم</div>' +
@@ -3071,6 +3080,8 @@ function erpLoadInventoryValuation(filters) {
           '</div>';
         return;
       }
+      // Re-bind for the rest of the render below
+      container = liveContainer;
 
       var byBrand = data.byBrand || {};
       var byWh = data.byWarehouse || {};
@@ -3183,32 +3194,45 @@ function erpLoadInventoryValuation(filters) {
       _erpPopulateValuationFilters(filters);
     } catch(ex) {
       console.error('[inventory-valuation] render error:', ex);
-      container.innerHTML =
-        '<div class="wo-empty">' +
-          '<i class="fas fa-triangle-exclamation" style="color:var(--wo-danger);"></i>' +
-          '<div class="wo-empty-title">خطأ في عرض التقييم</div>' +
-          '<div class="wo-empty-sub">'+esc(ex.message||'خطأ غير متوقع')+'</div>' +
-          '<button class="wo-btn wo-btn-primary" onclick="erpLoadInventoryValuation()"><i class="fas fa-rotate"></i><span>إعادة المحاولة</span></button>' +
-        '</div>';
+      // V5.9.6 — always recover the spinner. If the original `container` is
+      // gone, fall back to the live one we re-resolved above.
+      var errTarget = (container && container.isConnected ? container : null) ||
+                      document.getElementById('invValuationContent');
+      if (errTarget) {
+        errTarget.innerHTML =
+          '<div class="wo-empty">' +
+            '<i class="fas fa-triangle-exclamation" style="color:var(--wo-danger);"></i>' +
+            '<div class="wo-empty-title">خطأ في عرض التقييم</div>' +
+            '<div class="wo-empty-sub">'+esc(ex.message||'خطأ غير متوقع')+'</div>' +
+            '<button class="wo-btn wo-btn-primary" onclick="erpLoadInventoryValuation()"><i class="fas fa-rotate"></i><span>إعادة المحاولة</span></button>' +
+          '</div>';
+      }
     }
   });
 }
 
 function _erpPopulateValuationFilters(filters) {
   filters = filters || {};
-  var bSel = document.getElementById('invValBrandFilter');
-  var wSel = document.getElementById('invValWhFilter');
-  if (bSel) {
+  // V5.9.6 — re-resolve the select elements *inside* each async callback. The
+  // user can re-render the valuation panel between the request and the
+  // response (changing filters, navigating away and back, hitting refresh),
+  // which detaches the originally-captured nodes. Looking up by id at apply
+  // time guarantees we write to the live DOM, never to a stale reference.
+  if (document.getElementById('invValBrandFilter')) {
     _erpGet('/erp/brands', function(brands) {
       if (!Array.isArray(brands)) brands = [];
-      bSel.innerHTML = '<option value="">كل البراندات</option>' +
+      var live = document.getElementById('invValBrandFilter');
+      if (!live) return;
+      live.innerHTML = '<option value="">كل البراندات</option>' +
         brands.map(function(b){return '<option value="'+b.id+'"'+(filters.brand_id===b.id?' selected':'')+'>'+(b.name||'')+'</option>';}).join('');
     });
   }
-  if (wSel) {
+  if (document.getElementById('invValWhFilter')) {
     _erpGet('/erp/warehouses-list', function(whs) {
       if (!Array.isArray(whs)) whs = [];
-      wSel.innerHTML = '<option value="">كل المستودعات</option>' +
+      var live = document.getElementById('invValWhFilter');
+      if (!live) return;
+      live.innerHTML = '<option value="">كل المستودعات</option>' +
         whs.map(function(w){return '<option value="'+w.id+'"'+(filters.warehouse_id===w.id?' selected':'')+'>'+(w.name||'')+'</option>';}).join('');
     });
   }
@@ -3225,8 +3249,19 @@ window.erpSyncInventoryGL = function() {
   loader(true);
   window._apiBridge.withSuccessHandler(function(r) {
     loader(false);
-    if (r.success) { showToast('تم المزامنة: ' + r.categoriesCreated + ' تصنيف جديد'); erpLoadAccountsList_(); erpLoadInventoryValuation(); }
-    else showToast(r.error, true);
+    if (!r || !r.success) { showToast((r && r.error) || 'فشل المزامنة', true); return; }
+    showToast('تم المزامنة: ' + (r.categoriesCreated || 0) + ' تصنيف جديد');
+    // V5.9.6 — only rebuild the chart-of-accounts tree when its DOM host is
+    // actually mounted; otherwise erpLoadAccountsList_ → coaSelectNode would
+    // try to write to the missing #coaMainContent and freeze this page on
+    // its loading spinner with a "Cannot set properties of null" toast.
+    if (document.getElementById('coaTreeBody') && typeof erpLoadAccountsList_ === 'function') {
+      try { erpLoadAccountsList_(); } catch(e) { console.warn('[sync GL] COA refresh skipped:', e); }
+    }
+    erpLoadInventoryValuation();
+  }).withFailureHandler(function(e) {
+    loader(false);
+    showToast('فشل الاتصال: ' + (e && e.message || 'خطأ غير معروف'), true);
   }).syncInventoryGL();
 };
 
@@ -11221,8 +11256,15 @@ function erpLoadProfitability() {
   });
 }
 
-// ─── Inventory Valuation ───
-function erpLoadInventoryValuation() {
+// ─── Inventory Valuation REPORT (separate from the Inventory-Method page) ───
+// V5.9.6 — this function previously shared the name `erpLoadInventoryValuation`
+// with the inventory-method page renderer at line ~3054. Function-declaration
+// hoisting made THIS one win, so navigating to "نوع الجرد" called this report
+// renderer by mistake — it then crashed setting `document.getElementById('ivSummary').innerHTML`
+// because `ivSummary` only lives on the reports page. The error surfaced as a
+// red toast and the inventory-method spinner stayed forever. Renaming this one
+// (and its two call sites) lets the inventory-method renderer fire correctly.
+function erpLoadRptInventoryVal() {
   _erpPopulateBrandOptions(['ivBrand']);
   _erpGet('/erp/warehouses-list', function(whs) {
     var opts = '<option value="">الكل</option>' + (whs||[]).map(function(w){return '<option value="'+w.id+'">'+(w.name||'')+'</option>';}).join('');
@@ -11232,22 +11274,26 @@ function erpLoadInventoryValuation() {
   var brand = (document.getElementById('ivBrand')||{}).value || '';
   var qs = new URLSearchParams({ warehouse: wh, brand }).toString();
   _erpGet('/erp/reports/inventory-valuation?' + qs, function(r) {
-    if (!r.success) { showToast(r.error||'خطأ', true); return; }
+    if (!r || !r.success) { showToast((r && r.error)||'خطأ', true); return; }
     var g = r.grand || {};
-    document.getElementById('ivSummary').innerHTML =
+    var sumEl = document.getElementById('ivSummary');
+    if (sumEl) sumEl.innerHTML =
       _erpKpi('عدد الأصناف', (g.itemCount||0), '#0ea5e9') +
       _erpKpi('إجمالي الكمية', _erpFmt(g.totalQty), '#64748b') +
       _erpKpi('إجمالي القيمة', _erpFmt(g.totalValue), '#16a34a');
     var bw = r.byWarehouse || [];
-    document.getElementById('ivByWarehouse').innerHTML = bw.length ? ('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;">' + bw.map(function(w){
+    var bwEl = document.getElementById('ivByWarehouse');
+    if (bwEl) bwEl.innerHTML = bw.length ? ('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;">' + bw.map(function(w){
       return '<div class="erp-rpt-card"><div><div class="lbl">'+(w.warehouseName||'')+' ('+w.itemCount+' صنف)</div><div class="val">'+_erpFmt(w.totalValue)+'</div></div></div>';
     }).join('') + '</div>') : '';
     var items = r.items || [];
-    document.getElementById('ivBody').innerHTML = items.length ? items.map(function(x){
+    var bodyEl = document.getElementById('ivBody');
+    if (bodyEl) bodyEl.innerHTML = items.length ? items.map(function(x){
       return '<tr><td>'+(x.itemName||'')+'<div style="font-size:10px;color:#94a3b8;">'+(x.sku||'')+'</div></td><td>'+(x.warehouseName||'')+'</td><td>'+_erpFmt(x.qty)+' '+(x.unit||'')+'</td><td>'+_erpFmt(x.avgCost)+'</td><td style="font-weight:700;">'+_erpFmt(x.value)+'</td></tr>';
     }).join('') : '<tr><td colspan="5" class="empty-msg">لا توجد أصناف</td></tr>';
   });
 }
+window.erpLoadRptInventoryVal = erpLoadRptInventoryVal;
 
 // ─── Sales Analytics ───
 function erpLoadSalesAnalytics() {

@@ -237,7 +237,7 @@
     html[lang="en"] .hdr-n,html[lang="en"] .hdr-s{text-align:left;}
   </style>
   <script src="/shared/txn-constants.js?v=1"></script>
-  <script src="/shared/txn-letter.js?v=1"></script>
+  <script src="/shared/txn-letter.js?v=2"></script>
   <script src="/shared/txn-view.js?v=1"></script>
   <script src="/js/wo-modal.js?v=1"></script>
   <!-- V5.7.12 — on-the-fly Google Translate for DB-sourced content -->
@@ -362,15 +362,15 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
       <div class="card" style="padding:10px 12px;">
         <div style="font-size:12px;font-weight:800;color:#475569;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
           <i class="fas fa-calendar-check" style="color:#0ea5e9;"></i>
-          <span>الفترة المعروضة</span>
+          <span data-i18n="hours.periodShown">الفترة المعروضة</span>
           <span id="hoursRangeLabel" style="margin-inline-start:auto;font-weight:700;color:#0ea5e9;font-size:11px;">—</span>
         </div>
         <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">
-          <button class="hours-chip" data-hp="thisweek" onclick="hoursSetPreset('thisweek')">هذا الأسبوع</button>
-          <button class="hours-chip active" data-hp="thismonth" onclick="hoursSetPreset('thismonth')">هذا الشهر</button>
-          <button class="hours-chip" data-hp="lastmonth" onclick="hoursSetPreset('lastmonth')">الشهر الماضي</button>
-          <button class="hours-chip" data-hp="last30" onclick="hoursSetPreset('last30')">آخر 30 يوم</button>
-          <button class="hours-chip" data-hp="last90" onclick="hoursSetPreset('last90')">آخر 90 يوم</button>
+          <button class="hours-chip" data-hp="thisweek" onclick="hoursSetPreset('thisweek')" data-i18n="hours.thisWeek">هذا الأسبوع</button>
+          <button class="hours-chip active" data-hp="thismonth" onclick="hoursSetPreset('thismonth')" data-i18n="hours.thisMonth">هذا الشهر</button>
+          <button class="hours-chip" data-hp="lastmonth" onclick="hoursSetPreset('lastmonth')" data-i18n="hours.lastMonth">الشهر الماضي</button>
+          <button class="hours-chip" data-hp="last30" onclick="hoursSetPreset('last30')" data-i18n="hours.last30">آخر 30 يوم</button>
+          <button class="hours-chip" data-hp="last90" onclick="hoursSetPreset('last90')" data-i18n="hours.last90">آخر 90 يوم</button>
         </div>
       </div>
 
@@ -379,7 +379,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
         <div class="hours-kpi success">
           <div class="hours-kpi-icon"><i class="fas fa-clock-rotate-left"></i></div>
           <div class="hours-kpi-body">
-            <div class="hours-kpi-lbl">ساعات إضافية</div>
+            <div class="hours-kpi-lbl" data-i18n="hours.otHours">ساعات إضافية</div>
             <div class="hours-kpi-val" id="hkpiOTHours">—</div>
             <div class="hours-kpi-sub" id="hkpiOTHoursDelta">—</div>
           </div>
@@ -387,7 +387,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
         <div class="hours-kpi success bold">
           <div class="hours-kpi-icon"><i class="fas fa-sack-dollar"></i></div>
           <div class="hours-kpi-body">
-            <div class="hours-kpi-lbl">قيمة الإضافي</div>
+            <div class="hours-kpi-lbl" data-i18n="hours.otValue">قيمة الإضافي</div>
             <div class="hours-kpi-val" id="hkpiOTValue">—</div>
             <div class="hours-kpi-sub" id="hkpiOTValueDelta">—</div>
           </div>
@@ -395,7 +395,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
         <div class="hours-kpi danger">
           <div class="hours-kpi-icon"><i class="fas fa-hourglass-half"></i></div>
           <div class="hours-kpi-body">
-            <div class="hours-kpi-lbl">ساعات تأخير</div>
+            <div class="hours-kpi-lbl" data-i18n="hours.lateHours">ساعات تأخير</div>
             <div class="hours-kpi-val" id="hkpiLateHours">—</div>
             <div class="hours-kpi-sub" id="hkpiLateHoursDelta">—</div>
           </div>
@@ -403,7 +403,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
         <div class="hours-kpi danger bold">
           <div class="hours-kpi-icon"><i class="fas fa-money-bill-trend-up" style="transform:rotate(180deg);"></i></div>
           <div class="hours-kpi-body">
-            <div class="hours-kpi-lbl">خصم التأخير</div>
+            <div class="hours-kpi-lbl" data-i18n="hours.lateDed">خصم التأخير</div>
             <div class="hours-kpi-val" id="hkpiLateValue">—</div>
             <div class="hours-kpi-sub" id="hkpiLateValueDelta">—</div>
           </div>
@@ -414,13 +414,13 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
       <div class="card" id="hoursNetCard">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
           <div>
-            <div style="font-size:12px;color:#64748b;font-weight:700;">صافي الأثر على الراتب</div>
+            <div style="font-size:12px;color:#64748b;font-weight:700;" data-i18n="hours.netImpact">صافي الأثر على الراتب</div>
             <div id="hoursNetVal" style="font-size:24px;font-weight:900;letter-spacing:-0.02em;">—</div>
-            <div id="hoursNetSub" style="font-size:11px;color:#94a3b8;font-weight:600;margin-top:2px;">يستند إلى أجر الساعة</div>
+            <div id="hoursNetSub" style="font-size:11px;color:#94a3b8;font-weight:600;margin-top:2px;" data-i18n="hours.basedOnHourly">يستند إلى أجر الساعة</div>
           </div>
           <div id="hoursRateBadge" style="text-align:left;font-size:11px;color:#64748b;">
-            <div>أجر الساعة: <b id="hoursRateVal" style="color:#0ea5e9;">—</b></div>
-            <div style="margin-top:2px;">معامل الإضافي: <b style="color:#16a34a;">×1.5</b></div>
+            <div><span data-i18n="hours.hourlyRate">أجر الساعة:</span> <b id="hoursRateVal" style="color:#0ea5e9;">—</b></div>
+            <div style="margin-top:2px;"><span data-i18n="hours.otFactor">معامل الإضافي:</span> <b style="color:#16a34a;">×1.5</b></div>
           </div>
         </div>
       </div>
@@ -428,7 +428,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
       <!-- Per-day breakdown table -->
       <div class="card">
         <div class="card-t" style="display:flex;justify-content:space-between;align-items:center;">
-          <span><i class="fas fa-list-ul"></i> التفاصيل اليومية</span>
+          <span><i class="fas fa-list-ul"></i> <span data-i18n="hours.dailyDetails">التفاصيل اليومية</span></span>
           <span id="hoursDaysCount" style="font-size:11px;color:#64748b;font-weight:700;">—</span>
         </div>
         <div id="hoursTable"></div>
@@ -440,7 +440,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
   <nav class="bnav">
     <div class="nt active" onclick="navTo('home',this)"><i class="fas fa-home"></i><span data-i18n="nav.home">الرئيسية</span></div>
     <div class="nt" onclick="navTo('att',this)"><i class="fas fa-fingerprint"></i><span data-i18n="nav.att">البصمة</span></div>
-    <div class="nt" onclick="navTo('hours',this)"><i class="fas fa-clock-rotate-left"></i><span>ساعاتي</span></div>
+    <div class="nt" onclick="navTo('hours',this)"><i class="fas fa-clock-rotate-left"></i><span data-i18n="nav.hours">ساعاتي</span></div>
     <!-- V4: Counter badge on transactions tab -->
     <div class="nt" onclick="navTo('txn',this)" style="position:relative;">
       <i class="fas fa-file-alt"></i><span data-i18n="nav.txn">معاملات</span>

@@ -294,6 +294,86 @@ var I18N = {
     'profile.netExpected': 'الصافي المتوقع',
     'profile.lateIgnored': 'تم تجاهل التأخير هذا الشهر — الراتب كامل',
     'profile.noSalaries': 'لا توجد رواتب',
+    // V5.9.5 — My Hours page (ساعاتي) — full i18n
+    'nav.hours': 'ساعاتي',
+    'hours.periodShown': 'الفترة المعروضة',
+    'hours.thisWeek': 'هذا الأسبوع',
+    'hours.thisMonth': 'هذا الشهر',
+    'hours.lastMonth': 'الشهر الماضي',
+    'hours.last30': 'آخر 30 يوم',
+    'hours.last90': 'آخر 90 يوم',
+    'hours.otHours': 'ساعات إضافية',
+    'hours.otValue': 'قيمة الإضافي',
+    'hours.lateHours': 'ساعات تأخير',
+    'hours.lateDed': 'خصم التأخير',
+    'hours.netImpact': 'صافي الأثر على الراتب',
+    'hours.basedOnHourly': 'يستند إلى أجر الساعة',
+    'hours.hourlyRate': 'أجر الساعة:',
+    'hours.otFactor': 'معامل الإضافي:',
+    'hours.dailyDetails': 'التفاصيل اليومية',
+    'hours.daysCount': '{n} يوم',
+    'hours.hourShort': 'س',
+    'hours.loading': 'جاري التحميل...',
+    'hours.loadFailed': 'فشل تحميل البيانات',
+    'hours.noChange': '— بدون تغيير',
+    'hours.vsPrevPeriod': 'vs الفترة السابقة',
+    'hours.netGain': 'مكاسب صافية من الإضافي بعد خصم التأخير',
+    'hours.netLoss': 'خصم صافي من الراتب',
+    'hours.netZero': 'متعادل — لا تأثير على الراتب',
+    'hours.noRecords': 'لا توجد سجلات حضور في هذه الفترة',
+    // V5.9.5 — Transaction letter view (formal Arabic letter rendering)
+    'letter.recipientLabel': 'الموقر',
+    'letter.recipientPrefix': 'سعادة',
+    'letter.greeting': 'تحية طيبة و بعد',
+    'letter.closing': 'ولكم الشكر و التقدير',
+    'letter.attachMarker': '- المرفقات -',
+    'letter.attachReplyBand': 'مرفقات الرد',
+    'letter.attachMainBand': 'المرفقات',
+    'letter.distributionBand': 'صور المعاملة',
+    'letter.distHeadTo': 'الجهة المستقبلة',
+    'letter.distHeadDate': 'تاريخ الارسال',
+    'letter.distHeadFrom': 'المستخدم المرسل',
+    'letter.distEmpty': '— لا يوجد توزيع إضافي —',
+    'letter.attachEmpty': '- لا توجد مرفقات -',
+    'letter.metaSerial': 'مسلسل المعاملة',
+    'letter.metaDate': 'تاريخ المعاملة',
+    'letter.metaImportance': 'درجة الأهمية',
+    'letter.metaIssuer': 'جهة التحرير',
+    'letter.metaStatus': 'حالة المعاملة',
+    'letter.metaScope': 'نوع المعاملة',
+    'letter.subject': 'الموضوع:',
+    'letter.contentSection': 'محتوى المعاملة',
+    'letter.scopeInternal': 'داخلية',
+    'letter.scopeExternal': 'خارجية',
+    'letter.replyDate': 'تاريخ الرد',
+    'letter.replyFrom': 'من',
+    'letter.replyTo': 'الى',
+    'letter.replyAction': 'نوع الإجراء',
+    'letter.attachReplyName': 'مرفق رد',
+    'letter.attachMainName': 'مرفق المعاملة',
+    'letter.fileFallback': 'ملف',
+    'letter.notFound': 'المعاملة غير موجودة',
+    'letter.statusDraft': 'مسودة',
+    'letter.statusCreated': 'جديدة',
+    'letter.statusPending': 'معلق',
+    'letter.statusInProgress': 'قيد التشغيل',
+    'letter.statusReplied': 'تم الرد',
+    'letter.statusReturned': 'مرجعة للتعديل',
+    'letter.statusApproved': 'معتمدة',
+    'letter.statusRejected': 'مرفوضة',
+    'letter.statusClosed': 'مغلقة',
+    'letter.impCritical': 'عاجل',
+    'letter.impHigh': 'عالي',
+    'letter.impMedium': 'عادي',
+    'letter.impLow': 'منخفض',
+    'letter.actCreate': 'إنشاء',
+    'letter.actApprove': 'يعتمد حسب النظام',
+    'letter.actReject': 'مرفوض',
+    'letter.actReturn': 'إرجاع للتعديل',
+    'letter.actForward': 'تحويل',
+    'letter.actClose': 'إغلاق',
+    'letter.actOpen': 'فتح',
+    'letter.actResubmit': 'إعادة إرسال',
     // Months
     'months.long': 'يناير فبراير مارس أبريل مايو يونيو يوليو أغسطس سبتمبر أكتوبر نوفمبر ديسمبر',
     'units.hour': 'ساعة',
@@ -575,6 +655,86 @@ var I18N = {
     'profile.netExpected': 'Expected Net',
     'profile.lateIgnored': 'Late ignored this month — full salary',
     'profile.noSalaries': 'No salaries',
+    // V5.9.5 — My Hours page (ساعاتي) — full i18n
+    'nav.hours': 'My Hours',
+    'hours.periodShown': 'Period shown',
+    'hours.thisWeek': 'This Week',
+    'hours.thisMonth': 'This Month',
+    'hours.lastMonth': 'Last Month',
+    'hours.last30': 'Last 30 days',
+    'hours.last90': 'Last 90 days',
+    'hours.otHours': 'Overtime hours',
+    'hours.otValue': 'Overtime value',
+    'hours.lateHours': 'Late hours',
+    'hours.lateDed': 'Late deduction',
+    'hours.netImpact': 'Net impact on salary',
+    'hours.basedOnHourly': 'Based on hourly rate',
+    'hours.hourlyRate': 'Hourly rate:',
+    'hours.otFactor': 'Overtime factor:',
+    'hours.dailyDetails': 'Daily details',
+    'hours.daysCount': '{n} days',
+    'hours.hourShort': 'h',
+    'hours.loading': 'Loading...',
+    'hours.loadFailed': 'Failed to load data',
+    'hours.noChange': '— no change',
+    'hours.vsPrevPeriod': 'vs previous period',
+    'hours.netGain': 'Net gain from overtime after late deduction',
+    'hours.netLoss': 'Net deduction from salary',
+    'hours.netZero': 'Balanced — no impact on salary',
+    'hours.noRecords': 'No attendance records in this period',
+    // V5.9.5 — Transaction letter view labels
+    'letter.recipientLabel': 'To',
+    'letter.recipientPrefix': 'Mr./Ms.',
+    'letter.greeting': 'Dear Sir/Madam,',
+    'letter.closing': 'With our thanks and appreciation',
+    'letter.attachMarker': '- Attachments -',
+    'letter.attachReplyBand': 'Reply attachments',
+    'letter.attachMainBand': 'Attachments',
+    'letter.distributionBand': 'Distribution copies',
+    'letter.distHeadTo': 'Recipient',
+    'letter.distHeadDate': 'Sent on',
+    'letter.distHeadFrom': 'Sent by',
+    'letter.distEmpty': '— No additional distribution —',
+    'letter.attachEmpty': '- No attachments -',
+    'letter.metaSerial': 'Transaction No.',
+    'letter.metaDate': 'Date',
+    'letter.metaImportance': 'Importance',
+    'letter.metaIssuer': 'Issuing department',
+    'letter.metaStatus': 'Status',
+    'letter.metaScope': 'Scope',
+    'letter.subject': 'Subject:',
+    'letter.contentSection': 'Transaction content',
+    'letter.scopeInternal': 'Internal',
+    'letter.scopeExternal': 'External',
+    'letter.replyDate': 'Reply date',
+    'letter.replyFrom': 'From',
+    'letter.replyTo': 'To',
+    'letter.replyAction': 'Action',
+    'letter.attachReplyName': 'Reply attachment',
+    'letter.attachMainName': 'Transaction attachment',
+    'letter.fileFallback': 'file',
+    'letter.notFound': 'Transaction not found',
+    'letter.statusDraft': 'Draft',
+    'letter.statusCreated': 'New',
+    'letter.statusPending': 'Pending',
+    'letter.statusInProgress': 'In Progress',
+    'letter.statusReplied': 'Replied',
+    'letter.statusReturned': 'Returned for Edit',
+    'letter.statusApproved': 'Approved',
+    'letter.statusRejected': 'Rejected',
+    'letter.statusClosed': 'Closed',
+    'letter.impCritical': 'Critical',
+    'letter.impHigh': 'High',
+    'letter.impMedium': 'Normal',
+    'letter.impLow': 'Low',
+    'letter.actCreate': 'Created',
+    'letter.actApprove': 'Approved per policy',
+    'letter.actReject': 'Rejected',
+    'letter.actReturn': 'Returned for edit',
+    'letter.actForward': 'Forwarded',
+    'letter.actClose': 'Closed',
+    'letter.actOpen': 'Opened',
+    'letter.actResubmit': 'Resubmitted',
     'months.long': 'January February March April May June July August September October November December',
     'units.hour': 'hr',
     'units.minute': 'min',
@@ -2837,15 +2997,13 @@ function loadHoursPage() {
   window._hoursState.to   = range.to;
   var lbl = document.getElementById('hoursRangeLabel');
   if (lbl) lbl.textContent = range.from + ' → ' + range.to;
-  // Show loading state
   var tbl = document.getElementById('hoursTable');
-  if (tbl) tbl.innerHTML = '<div class="empty"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+  if (tbl) tbl.innerHTML = '<div class="empty"><i class="fas fa-spinner fa-spin"></i> ' + t('hours.loading') + '</div>';
 
   callAPI('GET', '/hr/my-hours-summary?username=' + encodeURIComponent(currentUser) + '&from=' + range.from + '&to=' + range.to, null, function(d) {
     if (!d || d.success === false) {
-      var msg = (d && d.error) || 'فشل تحميل البيانات';
+      var msg = (d && d.error) || t('hours.loadFailed');
       if (tbl) tbl.innerHTML = '<div class="empty" style="color:#ef4444;"><i class="fas fa-triangle-exclamation"></i> ' + msg + '</div>';
-      // Clear KPIs
       ['hkpiOTHours','hkpiOTValue','hkpiLateHours','hkpiLateValue'].forEach(function(id){ var e=document.getElementById(id); if (e) e.textContent='—'; });
       return;
     }
@@ -2856,9 +3014,8 @@ function loadHoursPage() {
 function _hoursFmt(v, d) { return Number(v||0).toLocaleString('en', { minimumFractionDigits: d!=null?d:2, maximumFractionDigits: d!=null?d:2 }); }
 function _hoursDeltaHtml(delta, invertColor) {
   var n = Number(delta || 0);
-  if (Math.abs(n) < 0.5) return '<span style="color:#94a3b8;">— بدون تغيير</span>';
+  if (Math.abs(n) < 0.5) return '<span style="color:#94a3b8;">' + t('hours.noChange') + '</span>';
   var goingUp = n > 0;
-  // For "late hours" / "late deduction", going UP is BAD; for "overtime", UP is GOOD
   var good = invertColor ? !goingUp : goingUp;
   var cls = good ? 'up' : 'down';
   var arrow = goingUp ? '<i class="fas fa-arrow-up"></i>' : '<i class="fas fa-arrow-down"></i>';
@@ -2867,71 +3024,74 @@ function _hoursDeltaHtml(delta, invertColor) {
 
 function _hoursRender(d) {
   var tot = d.totals, prev = d.previousTotals, delt = d.deltas;
-  // KPI values
+  var hShort = t('hours.hourShort');     // س / h
+  var sar    = t('units.sarCurrency');   // ر.س / SAR
+  var smTail = function(unit){ return '<small style="font-size:11px;color:#94a3b8;font-weight:600;margin-inline-start:4px;">' + unit + '</small>'; };
   var setT = function(id, txt){ var e=document.getElementById(id); if (e) e.innerHTML = txt; };
-  setT('hkpiOTHours',   _hoursFmt(tot.overtimeHours, 1) + '<small style="font-size:11px;color:#94a3b8;font-weight:600;margin-inline-start:4px;">س</small>');
-  setT('hkpiOTValue',   _hoursFmt(tot.overtimeValue) + '<small style="font-size:11px;color:#94a3b8;font-weight:600;margin-inline-start:4px;">ر.س</small>');
-  setT('hkpiLateHours', _hoursFmt(tot.lateHours, 1) + '<small style="font-size:11px;color:#94a3b8;font-weight:600;margin-inline-start:4px;">س</small>');
-  setT('hkpiLateValue', _hoursFmt(tot.lateValue) + '<small style="font-size:11px;color:#94a3b8;font-weight:600;margin-inline-start:4px;">ر.س</small>');
+  setT('hkpiOTHours',   _hoursFmt(tot.overtimeHours, 1) + smTail(hShort));
+  setT('hkpiOTValue',   _hoursFmt(tot.overtimeValue)    + smTail(sar));
+  setT('hkpiLateHours', _hoursFmt(tot.lateHours, 1)     + smTail(hShort));
+  setT('hkpiLateValue', _hoursFmt(tot.lateValue)        + smTail(sar));
 
-  // Delta sub-labels (relative to previous identical-length window)
   var sub = function(id, html, cls){
     var e = document.getElementById(id);
     if (e) { e.className = 'hours-kpi-sub ' + (cls||''); e.innerHTML = html; }
   };
-  // Compute per-tile direction class for the parent .hours-kpi-sub
   function dCls(n, invertColor){
     if (Math.abs(n) < 0.5) return '';
     var good = invertColor ? n < 0 : n > 0;
     return good ? 'up' : 'down';
   }
-  sub('hkpiOTHoursDelta', _hoursDeltaHtml(delt.overtimeHours, false) + ' <span style="color:#94a3b8;">vs الفترة السابقة</span>', dCls(delt.overtimeHours, false));
-  sub('hkpiOTValueDelta', _hoursDeltaHtml(delt.overtimeValue, false) + ' <span style="color:#94a3b8;">vs الفترة السابقة</span>', dCls(delt.overtimeValue, false));
-  sub('hkpiLateHoursDelta', _hoursDeltaHtml(delt.lateHours, true) + ' <span style="color:#94a3b8;">vs الفترة السابقة</span>', dCls(delt.lateHours, true));
-  sub('hkpiLateValueDelta', _hoursDeltaHtml(delt.lateValue, true) + ' <span style="color:#94a3b8;">vs الفترة السابقة</span>', dCls(delt.lateValue, true));
+  var vsTail = ' <span style="color:#94a3b8;">' + t('hours.vsPrevPeriod') + '</span>';
+  sub('hkpiOTHoursDelta',   _hoursDeltaHtml(delt.overtimeHours, false) + vsTail, dCls(delt.overtimeHours, false));
+  sub('hkpiOTValueDelta',   _hoursDeltaHtml(delt.overtimeValue, false) + vsTail, dCls(delt.overtimeValue, false));
+  sub('hkpiLateHoursDelta', _hoursDeltaHtml(delt.lateHours,    true)  + vsTail, dCls(delt.lateHours,    true));
+  sub('hkpiLateValueDelta', _hoursDeltaHtml(delt.lateValue,    true)  + vsTail, dCls(delt.lateValue,    true));
 
-  // Net impact card
   var netVal = document.getElementById('hoursNetVal');
   var netSub = document.getElementById('hoursNetSub');
   var netCard = document.getElementById('hoursNetCard');
   var net = Number(tot.netImpact || 0);
   if (netVal) {
-    netVal.textContent = (net >= 0 ? '+' : '') + _hoursFmt(net) + ' ر.س';
+    netVal.textContent = (net >= 0 ? '+' : '') + _hoursFmt(net) + ' ' + sar;
     netVal.style.color = net > 0 ? '#16a34a' : (net < 0 ? '#ef4444' : '#475569');
   }
-  if (netSub) netSub.textContent = (net > 0 ? 'مكاسب صافية من الإضافي بعد خصم التأخير' : (net < 0 ? 'خصم صافي من الراتب' : 'متعادل — لا تأثير على الراتب'));
+  if (netSub) {
+    netSub.textContent = (net > 0 ? t('hours.netGain') : (net < 0 ? t('hours.netLoss') : t('hours.netZero')));
+  }
   if (netCard) {
     netCard.style.background = net > 0 ? 'linear-gradient(135deg,#dcfce7,#fff)' :
                               (net < 0 ? 'linear-gradient(135deg,#fee2e2,#fff)' :
                                          '#fff');
   }
   var rateVal = document.getElementById('hoursRateVal');
-  if (rateVal) rateVal.textContent = _hoursFmt(d.employee.hourlyRate) + ' ر.س';
+  if (rateVal) rateVal.textContent = _hoursFmt(d.employee.hourlyRate) + ' ' + sar;
 
-  // Days count
   var dc = document.getElementById('hoursDaysCount');
-  if (dc) dc.textContent = (d.rows||[]).length + ' يوم';
+  if (dc) dc.textContent = t('hours.daysCount', { n: (d.rows||[]).length });
 
-  // Per-day table
   var tbl = document.getElementById('hoursTable');
   if (!tbl) return;
   if (!d.rows || !d.rows.length) {
-    tbl.innerHTML = '<div class="empty"><i class="fas fa-inbox"></i> لا توجد سجلات حضور في هذه الفترة</div>';
+    tbl.innerHTML = '<div class="empty"><i class="fas fa-inbox"></i> ' + t('hours.noRecords') + '</div>';
     return;
   }
+  // Date/time formatter: en-GB for English locale, en-GB-style ascii for Arabic too
+  // (we keep numbers in Latin digits so the layout doesn't break when RTL).
+  var dateLocale = (currentLang === 'en') ? 'en-GB' : 'en-GB';
   tbl.innerHTML = d.rows.map(function(r){
-    var dateLbl = r.date ? new Date(r.date).toLocaleDateString('en-GB', { weekday:'short', day:'2-digit', month:'2-digit' }) : '—';
+    var dateLbl = r.date ? new Date(r.date).toLocaleDateString(dateLocale, { weekday:'short', day:'2-digit', month:'2-digit' }) : '—';
     var times = '';
     if (r.clockIn) {
       var ci = new Date(r.clockIn).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'});
       var co = r.clockOut ? new Date(r.clockOut).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'}) : '—';
-      times = ci + ' ← ' + co + ' (' + _hoursFmt(r.totalHours, 1) + ' س)';
+      times = ci + ' ← ' + co + ' (' + _hoursFmt(r.totalHours, 1) + ' ' + hShort + ')';
     }
     var otPill = r.overtimeMinutes > 0 ?
-      '<span class="hours-pill ot"><i class="fas fa-arrow-up"></i> +' + _hoursFmt(r.overtimeHours, 1) + ' س = ' + _hoursFmt(r.overtimeValue) + ' ر.س</span>' :
+      '<span class="hours-pill ot"><i class="fas fa-arrow-up"></i> +' + _hoursFmt(r.overtimeHours, 1) + ' ' + hShort + ' = ' + _hoursFmt(r.overtimeValue) + ' ' + sar + '</span>' :
       '<span class="hours-pill zero">—</span>';
     var latePill = r.lateMinutes > 0 ?
-      '<span class="hours-pill late"><i class="fas fa-arrow-down"></i> -' + _hoursFmt(r.lateHours, 1) + ' س = -' + _hoursFmt(r.lateValue) + ' ر.س</span>' :
+      '<span class="hours-pill late"><i class="fas fa-arrow-down"></i> -' + _hoursFmt(r.lateHours, 1) + ' ' + hShort + ' = -' + _hoursFmt(r.lateValue) + ' ' + sar + '</span>' :
       '<span class="hours-pill zero">—</span>';
     return '<div class="hours-row">' +
       '<div><div class="hours-row-date">'+dateLbl+'</div><div class="hours-row-meta">'+times+'</div></div>' +

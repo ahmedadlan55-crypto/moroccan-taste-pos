@@ -4676,7 +4676,7 @@ function _invItemsRenderKpis(items) {
   items = items || [];
   var totalCount = items.length;
   var totalValue = 0, lowCount = 0, outCount = 0, noBrandCount = 0, withBrandCount = 0;
-  var byBrand = {};
+  var byBrand = {}, byCategory = {};
   items.forEach(function(i) {
     var stock = Number(i.stock) || 0;
     var cost  = Number(i.cost)  || 0;
@@ -4691,22 +4691,76 @@ function _invItemsRenderKpis(items) {
     } else {
       noBrandCount++;
     }
+    var c = i.category || 'عام';
+    if (!byCategory[c]) byCategory[c] = 0;
+    byCategory[c]++;
   });
   var brandCount = Object.keys(byBrand).length;
+  var categoryCount = Object.keys(byCategory).length;
+  var avgValue = totalCount > 0 ? totalValue / totalCount : 0;
+  // Pareto: top category by count
+  var topCat = Object.keys(byCategory).sort(function(a,b){ return byCategory[b]-byCategory[a]; })[0];
+  var topCatPct = topCat ? Math.round(byCategory[topCat] / totalCount * 100) : 0;
+
+  // V5.8.7 — Pro KPI cards: large icons, gradient backgrounds, bottom
+  //   info strip with an extra metric. Each card has its own accent
+  //   gradient tinted by its semantic color.
   box.innerHTML =
-    _invItemsKpi('إجمالي الأصناف',  totalCount + '',          'عدد', 'fa-boxes-stacked', '#3b82f6', brandCount + ' براند · ' + (withBrandCount) + ' مرتبط') +
-    _invItemsKpi('قيمة المخزون',    _invHubFmtMoney(totalValue), 'ر.س', 'fa-coins',         '#10b981', 'بسعر التكلفة الحالي') +
-    _invItemsKpi('أصناف منخفضة',    lowCount + '',            'صنف', 'fa-triangle-exclamation', '#f59e0b', lowCount > 0 ? 'تحت حد النواقص' : 'لا يوجد') +
-    _invItemsKpi('نفد المخزون',     outCount + '',            'صنف', 'fa-circle-xmark',   '#ef4444', outCount > 0 ? 'يحتاج إعادة طلب' : 'كل الأصناف متوفرة');
+    _invItemsKpi({
+      label: 'إجمالي الأصناف',
+      num: totalCount.toLocaleString('ar-SA'),
+      unit: 'صنف',
+      icon: 'fa-boxes-stacked',
+      color: '#3b82f6',
+      gradFrom: '#dbeafe',
+      gradTo: '#eff6ff',
+      footer: '<i class="fas fa-store"></i> ' + brandCount + ' براند · <i class="fas fa-tags"></i> ' + categoryCount + ' تصنيف'
+    }) +
+    _invItemsKpi({
+      label: 'قيمة المخزون',
+      num: _invHubFmtMoney(totalValue),
+      unit: 'ر.س',
+      icon: 'fa-sack-dollar',
+      color: '#10b981',
+      gradFrom: '#d1fae5',
+      gradTo: '#ecfdf5',
+      footer: '<i class="fas fa-chart-simple"></i> متوسط قيمة الصنف: <b>' + avgValue.toFixed(2) + '</b> ر.س'
+    }) +
+    _invItemsKpi({
+      label: 'أصناف منخفضة',
+      num: lowCount.toLocaleString('ar-SA'),
+      unit: 'صنف',
+      icon: 'fa-triangle-exclamation',
+      color: '#f59e0b',
+      gradFrom: '#fef3c7',
+      gradTo: '#fffbeb',
+      footer: lowCount > 0
+        ? '<i class="fas fa-bell"></i> تحت حد النواقص — راجع طلبات الشراء'
+        : '<i class="fas fa-circle-check"></i> كل الأصناف فوق الحد الأدنى',
+      pulse: lowCount > 0
+    }) +
+    _invItemsKpi({
+      label: 'نفد المخزون',
+      num: outCount.toLocaleString('ar-SA'),
+      unit: 'صنف',
+      icon: 'fa-circle-xmark',
+      color: '#ef4444',
+      gradFrom: '#fee2e2',
+      gradTo: '#fef2f2',
+      footer: outCount > 0
+        ? '<i class="fas fa-cart-shopping"></i> ' + Math.round(outCount / Math.max(1, totalCount) * 100) + '% من الأصناف بحاجة لإعادة طلب'
+        : '<i class="fas fa-thumbs-up"></i> كل الأصناف متوفرة',
+      pulse: outCount > 0
+    });
 }
-function _invItemsKpi(label, num, unit, icon, color, sub) {
-  return '<div class="iv-live-kpi" style="--kc:' + color + ';">' +
-           '<div class="iv-live-kpi-icon" style="background:' + color + '1a;color:' + color + ';"><i class="fas ' + icon + '"></i></div>' +
-           '<div class="iv-live-kpi-body">' +
-             '<div class="iv-live-kpi-label">' + label + '</div>' +
-             '<div class="iv-live-kpi-num">' + num + ' <span class="iv-live-kpi-unit">' + unit + '</span></div>' +
-             '<div class="iv-live-kpi-sub">' + sub + '</div>' +
+function _invItemsKpi(o) {
+  return '<div class="iv-items-kpi" style="--kc:' + o.color + ';--kg-from:' + o.gradFrom + ';--kg-to:' + o.gradTo + ';">' +
+           '<div class="iv-items-kpi-icon' + (o.pulse ? ' iv-items-kpi-pulse' : '') + '"><i class="fas ' + o.icon + '"></i></div>' +
+           '<div class="iv-items-kpi-body">' +
+             '<div class="iv-items-kpi-label">' + o.label + '</div>' +
+             '<div class="iv-items-kpi-num"><span class="iv-items-kpi-num-val">' + o.num + '</span> <span class="iv-items-kpi-num-unit">' + o.unit + '</span></div>' +
            '</div>' +
+           '<div class="iv-items-kpi-foot">' + o.footer + '</div>' +
          '</div>';
 }
 
@@ -4911,33 +4965,52 @@ function _invItemsInjectStyles() {
   var st = document.createElement('style');
   st.id = 'invItemsStyles';
   st.textContent =
-    /* KPI strip — compact, professional cards */
-    '#wh_items .iv-items-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:8px 0 12px;}' +
-    '#wh_items .iv-items-kpis .iv-live-kpi{padding:11px 14px;}' +
-    '#wh_items .iv-items-kpis .iv-live-kpi-icon{width:38px;height:38px;font-size:15px;}' +
-    '#wh_items .iv-items-kpis .iv-live-kpi-num{font-size:17px;}' +
-    '#wh_items .iv-items-kpis .iv-live-kpi-sub{font-size:10.5px;}' +
-    /* Counts/clear-filter line above the table — single inline row */
-    '#wh_items .iv-items-counts{display:flex;align-items:center;gap:10px;padding:6px 4px 10px;font-size:12.5px;color:#475569;font-weight:600;flex-wrap:wrap;}' +
+    /* V5.8.7 — PRO KPI cards. Bigger, gradient-tinted, footer strip with
+       extra metric, hover lift + colored shadow, pulse animation for
+       alerts. Same quality bar as the recipe-editor hero. */
+    '#wh_items .iv-items-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin:6px 0 16px;}' +
+    '#wh_items .iv-items-kpi{background:linear-gradient(160deg,var(--kg-from) 0%,var(--kg-to) 60%,#fff 100%);border:1px solid #e2e8f0;border-radius:16px;padding:16px 18px;display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;gap:8px 14px;position:relative;overflow:hidden;transition:transform 0.2s,box-shadow 0.2s;border-inline-start:4px solid var(--kc);}' +
+    '#wh_items .iv-items-kpi::after{content:"";position:absolute;top:-30px;inset-inline-end:-30px;width:120px;height:120px;border-radius:50%;background:radial-gradient(circle,var(--kc) 0%,transparent 70%);opacity:0.08;pointer-events:none;}' +
+    '#wh_items .iv-items-kpi:hover{transform:translateY(-3px);box-shadow:0 12px 28px -10px var(--kc);}' +
+    '#wh_items .iv-items-kpi-icon{width:54px;height:54px;border-radius:14px;background:#fff;color:var(--kc);display:grid;place-items:center;font-size:22px;flex-shrink:0;box-shadow:0 4px 12px -4px var(--kc);grid-row:span 2;align-self:start;}' +
+    '#wh_items .iv-items-kpi-pulse{animation:invItemsPulse 2.2s ease-in-out infinite;}' +
+    '@keyframes invItemsPulse{0%,100%{box-shadow:0 4px 12px -4px var(--kc),0 0 0 0 rgba(0,0,0,0);}50%{box-shadow:0 4px 12px -4px var(--kc),0 0 0 10px rgba(255,255,255,0);transform:scale(1.04);}}' +
+    '#wh_items .iv-items-kpi-body{min-width:0;align-self:center;}' +
+    '#wh_items .iv-items-kpi-label{font-size:11.5px;color:#475569;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;line-height:1;}' +
+    '#wh_items .iv-items-kpi-num{display:flex;align-items:baseline;gap:5px;}' +
+    '#wh_items .iv-items-kpi-num-val{font-size:30px;font-weight:900;color:#0f172a;letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums;font-feature-settings:"tnum";}' +
+    '#wh_items .iv-items-kpi-num-unit{font-size:13px;color:var(--kc);font-weight:700;}' +
+    '#wh_items .iv-items-kpi-foot{grid-column:1 / -1;font-size:11.5px;color:#475569;font-weight:600;border-top:1px solid rgba(15,23,42,0.06);padding-top:8px;margin-top:2px;display:flex;align-items:center;gap:5px;}' +
+    '#wh_items .iv-items-kpi-foot i{color:var(--kc);font-size:11px;}' +
+    '#wh_items .iv-items-kpi-foot b{color:#0f172a;font-variant-numeric:tabular-nums;}' +
+    /* Counts/clear-filter line above the table */
+    '#wh_items .iv-items-counts{display:flex;align-items:center;gap:10px;padding:8px 4px 10px;font-size:13px;color:#475569;font-weight:600;flex-wrap:wrap;}' +
     '#wh_items .iv-items-counts:empty{display:none;}' +
-    '#wh_items .iv-items-counts strong{color:#0f172a;}' +
-    /* Action buttons inside the filter bar (matching tabs row vibe) */
-    '#wh_items .iv-items-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid;transition:all 0.15s;line-height:1;white-space:nowrap;}' +
+    '#wh_items .iv-items-counts strong{color:#0f172a;font-size:14px;}' +
+    /* Action buttons in the filter bar */
+    '#wh_items .iv-items-btn{display:inline-flex;align-items:center;gap:6px;padding:9px 15px;border-radius:10px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid;transition:all 0.15s;line-height:1;white-space:nowrap;}' +
     '#wh_items .iv-items-btn i{font-size:12px;}' +
-    '#wh_items .iv-items-btn-primary{background:#0d47a1;color:#fff;border-color:#0d47a1;}' +
-    '#wh_items .iv-items-btn-primary:hover{background:#093170;border-color:#093170;transform:translateY(-1px);box-shadow:0 4px 12px -4px rgba(13,71,161,0.3);}' +
+    '#wh_items .iv-items-btn-primary{background:#0d47a1;color:#fff;border-color:#0d47a1;box-shadow:0 4px 12px -4px rgba(13,71,161,0.3);}' +
+    '#wh_items .iv-items-btn-primary:hover{background:#093170;border-color:#093170;transform:translateY(-1px);box-shadow:0 6px 16px -4px rgba(13,71,161,0.4);}' +
     '#wh_items .iv-items-btn-secondary{background:#fff;color:#475569;border-color:#cbd5e1;}' +
     '#wh_items .iv-items-btn-secondary:hover{background:#f1f5f9;border-color:#94a3b8;}' +
-    '#wh_items .iv-items-btn-success{background:#15803d;color:#fff;border-color:#15803d;}' +
+    '#wh_items .iv-items-btn-success{background:#15803d;color:#fff;border-color:#15803d;box-shadow:0 4px 12px -4px rgba(21,128,61,0.3);}' +
     '#wh_items .iv-items-btn-success:hover{background:#166534;border-color:#166534;transform:translateY(-1px);}' +
-    '#wh_items .iv-items-btn-danger{background:#b91c1c;color:#fff;border-color:#b91c1c;}' +
+    '#wh_items .iv-items-btn-danger{background:#b91c1c;color:#fff;border-color:#b91c1c;box-shadow:0 4px 12px -4px rgba(185,28,28,0.3);}' +
     '#wh_items .iv-items-btn-danger:hover{background:#991b1b;border-color:#991b1b;transform:translateY(-1px);}' +
     '#wh_items .iv-items-btn-ghost{background:#fff;color:#475569;border-color:#e2e8f0;}' +
-    '#wh_items .iv-items-btn-ghost:hover{background:#f8fafc;border-color:#cbd5e1;}' +
+    '#wh_items .iv-items-btn-ghost:hover{background:#f8fafc;border-color:#cbd5e1;color:#0f172a;}' +
     /* Tighten the filter bar itself */
     '#wh_items .filter-bar{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:12px 14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
-    '#wh_items .filter-bar .form-control{border-radius:10px;border:1.5px solid #e2e8f0;padding:9px 12px;font-size:13px;font-family:inherit;}' +
-    '#wh_items .filter-bar .form-control:focus{outline:none;border-color:#0d47a1;box-shadow:0 0 0 3px rgba(13,71,161,0.12);}';
+    '#wh_items .filter-bar .form-control{border-radius:10px;border:1.5px solid #e2e8f0;padding:9px 12px;font-size:13px;font-family:inherit;background:#fff;color:#0f172a;}' +
+    '#wh_items .filter-bar .form-control:focus{outline:none;border-color:#0d47a1;box-shadow:0 0 0 3px rgba(13,71,161,0.12);}' +
+    /* Pro table styling */
+    '#wh_items .table-wrapper{background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
+    '#wh_items .table{margin:0;}' +
+    '#wh_items .table thead th{background:#0f172a;color:#fff;font-weight:800;padding:12px 10px;font-size:12px;letter-spacing:0.01em;border:0;text-align:start;}' +
+    '#wh_items .table tbody td{padding:11px 10px;border-bottom:1px solid #f1f5f9;}' +
+    '#wh_items .table tbody tr{transition:background 0.12s;}' +
+    '#wh_items .table tbody tr:hover{background:#fafbff;}';
   document.head.appendChild(st);
 }
 function renderInvTable(list) {

@@ -842,6 +842,12 @@
         <!-- Section: Raw Materials (INV_Items) -->
         <!-- Section: Unified Warehouse -->
         <div id="sec_warehouse" class="admin-section">
+          <!-- V5.8.0 — Inventory Hub: brand-first navigation. JS injects content
+               based on _invHub state: 'brands' (picker) | 'hub' (per-brand 6
+               icons) | 'tab' (the existing tabbed view, scoped to that brand). -->
+          <div id="invHub" style="display:none;"></div>
+          <!-- Header strip shown above the tabs once the user is inside a brand -->
+          <div id="invHubBrandStrip" style="display:none;"></div>
           <div class="sales-tabs" id="whTabs">
             <div class="sales-tab active" onclick="switchWhTab('items')" id="whtab_items"><i class="fas fa-boxes"></i> <span>مواد المخزون</span></div>
             <div class="sales-tab" onclick="switchWhTab('live')" id="whtab_live"><i class="fas fa-cubes"></i> <span>المخزون الفعلي</span></div>

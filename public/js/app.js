@@ -2159,7 +2159,7 @@ function nav(sectionId) {
   if (sectionId === 'menu') loadDashMenu();
   if (sectionId === 'recipes') loadDashRecipes();
   if (sectionId === 'inventory') loadDashMenu(); // legacy alias → menu
-  if (sectionId === 'warehouse') loadDashInvItems();
+  if (sectionId === 'warehouse') invHubOpen();
   if (sectionId === 'expenses') loadDashExpenses();
   if (sectionId === 'purchases') loadDashPurchases();
   if (sectionId === 'users') loadDashUsers();
@@ -3733,7 +3733,454 @@ function saveStockMove() {
 let cachedRawItems = [];
 
 // =========================================
-// Warehouse Tabs
+// V5.8.0 — Inventory Hub (brand-first navigation)
+// ─────────────────────────────────────────────
+// Three view modes:
+//   'brands' → grid of brand cards (default landing)
+//   'hub'    → 6 large icons for the chosen brand
+//   'tab'    → the existing tabbed view, brand pre-selected
+//
+// State persists in window._invHub so the user's last view is restored
+// when they navigate away and come back. Brand stats are cached for
+// 60s (per recommendation) with a refresh button on the picker.
+// =========================================
+window._invHub = window._invHub || { mode: 'brands', brandId: null, tab: 'items' };
+window._invHubCache = window._invHub.cache || { ts: 0, data: null };
+
+// Tabs metadata: title, icon, color, badge-resolver
+var _INV_HUB_TABS = [
+  { id: 'items',       title: 'مواد المخزون',  icon: 'fa-boxes-stacked', color: '#3b82f6', sub: 'الأصناف، الأكواد، الأرصدة' },
+  { id: 'live',        title: 'المخزون الفعلي', icon: 'fa-chart-line',    color: '#7c3aed', sub: 'تقرير حركة الفترة + التصدير' },
+  { id: 'stocktake',   title: 'الجرد',          icon: 'fa-clipboard-check', color: '#0ea5e9', sub: 'مراجعة وتسوية الأرصدة' },
+  { id: 'adjustments', title: 'تعديل كمية',     icon: 'fa-pen-to-square', color: '#f59e0b', sub: 'تالف/إداري/تسويات' },
+  { id: 'transfers',   title: 'التحويلات',      icon: 'fa-arrow-right-arrow-left', color: '#10b981', sub: 'بين المستودعات' },
+  { id: 'shortage',    title: 'طلبات النواقص',  icon: 'fa-triangle-exclamation', color: '#ef4444', sub: 'تجديد المخزون والـPO' }
+];
+
+// Entry point — replaces direct loadDashInvItems() on warehouse section open.
+function invHubOpen() {
+  _invHubInjectStyles();
+  var st = window._invHub;
+  if (st.mode === 'tab' && st.brandId && st.tab) {
+    // restore last tab view
+    return invHubGoToTab(st.brandId, st.tab, /*fromHub=*/false);
+  }
+  if (st.mode === 'hub' && st.brandId) {
+    return invHubGoToBrand(st.brandId);
+  }
+  return invHubGoToBrandsList();
+}
+
+// View 1: brands grid
+function invHubGoToBrandsList() {
+  window._invHub.mode = 'brands';
+  window._invHub.brandId = null;
+  _invHubShowOnly('hub');
+  _invHubRenderBrandsList();
+}
+
+// View 2: per-brand hub (6 big icons)
+function invHubGoToBrand(brandId) {
+  if (!brandId) return invHubGoToBrandsList();
+  window._invHub.mode = 'hub';
+  window._invHub.brandId = brandId;
+  _invHubShowOnly('hub');
+  _invHubRenderBrandHub(brandId);
+}
+
+// View 3: tab content (filtered by brand)
+function invHubGoToTab(brandId, tab, fromHub) {
+  window._invHub.mode = 'tab';
+  window._invHub.brandId = brandId;
+  window._invHub.tab = tab;
+  _invHubShowOnly('tabs');
+  _invHubRenderBrandStrip(brandId);
+  switchWhTab(tab);  // existing tab loader — brand filter is auto-applied below
+}
+
+// Toggle which view is visible
+function _invHubShowOnly(view) {
+  var hub  = q('#invHub');
+  var strip = q('#invHubBrandStrip');
+  var tabs = q('#whTabs');
+  var bodies = qs('#sec_warehouse .sales-tab-content');
+  if (view === 'hub') {
+    if (hub)  hub.style.display  = 'block';
+    if (strip) strip.style.display = 'none';
+    if (tabs) tabs.style.display = 'none';
+    bodies.forEach(b => b.style.display = 'none');
+  } else { // 'tabs'
+    if (hub)  hub.style.display  = 'none';
+    if (strip) strip.style.display = 'block';
+    if (tabs) tabs.style.display = '';
+    bodies.forEach(b => b.style.display = '');
+  }
+}
+
+// ─── View 1 renderer: brands grid ───
+function _invHubRenderBrandsList() {
+  var box = q('#invHub');
+  if (!box) return;
+  box.innerHTML =
+    '<div class="iv-hub-shell">' +
+      '<header class="iv-hub-head">' +
+        '<div class="iv-hub-head-titles">' +
+          '<h2 class="iv-hub-title"><i class="fas fa-warehouse"></i> إدارة المخزون</h2>' +
+          '<p class="iv-hub-sub">اختر البراند لعرض مخزونه وتقاريره.</p>' +
+        '</div>' +
+        '<div class="iv-hub-head-actions">' +
+          '<button class="iv-hub-btn iv-hub-btn-ghost" onclick="_invHubRefresh()" title="تحديث الإحصائيات"><i class="fas fa-rotate"></i> تحديث</button>' +
+        '</div>' +
+      '</header>' +
+      '<div id="invHubBrandsGrid" class="iv-hub-brands">' +
+        '<div class="iv-hub-skeleton"><i class="fas fa-spinner fa-spin"></i> جاري تحميل البراندات...</div>' +
+      '</div>' +
+    '</div>';
+  _invHubLoadBrandsData(function(data) {
+    var grid = q('#invHubBrandsGrid');
+    if (!grid) return;
+    grid.innerHTML = _invHubBrandsCardsHtml(data);
+  });
+}
+
+function _invHubBrandsCardsHtml(data) {
+  var brands  = data.brands  || [];
+  var totals  = data.totals  || { items: 0, value: 0, low: 0, brands: brands.length };
+  // "All brands" card always first
+  var html = '<button class="iv-hub-bcard iv-hub-bcard-all" onclick="invHubGoToBrand(\'__all__\')">' +
+               '<div class="iv-hub-bcard-logo iv-hub-bcard-logo-all"><i class="fas fa-shop"></i></div>' +
+               '<div class="iv-hub-bcard-name">كل البراندات</div>' +
+               '<div class="iv-hub-bcard-sub">نظرة شاملة على المخزون</div>' +
+               '<div class="iv-hub-bcard-stats">' +
+                 '<div class="iv-hub-stat"><span class="iv-hub-stat-num">' + (totals.items||0) + '</span><span class="iv-hub-stat-lbl">صنف</span></div>' +
+                 '<div class="iv-hub-stat"><span class="iv-hub-stat-num">' + _invHubFmtMoney(totals.value||0) + '</span><span class="iv-hub-stat-lbl">ر.س قيمة</span></div>' +
+                 (totals.low > 0
+                   ? '<div class="iv-hub-stat iv-hub-stat-warn"><i class="fas fa-triangle-exclamation"></i> ' + totals.low + ' نواقص</div>'
+                   : '<div class="iv-hub-stat iv-hub-stat-ok"><i class="fas fa-circle-check"></i> سليم</div>') +
+               '</div>' +
+             '</button>';
+  brands.forEach(function(b) {
+    var initial = (b.name || '?').trim().charAt(0).toUpperCase();
+    var logoHtml = b.logo
+      ? '<img src="' + _invHubEsc(b.logo) + '" alt="' + _invHubEsc(b.name) + '" class="iv-hub-bcard-logo-img">'
+      : '<div class="iv-hub-bcard-logo-text">' + _invHubEsc(initial) + '</div>';
+    html += '<button class="iv-hub-bcard" onclick="invHubGoToBrand(\'' + _invHubEsc(b.id) + '\')">' +
+              '<div class="iv-hub-bcard-logo">' + logoHtml + '</div>' +
+              '<div class="iv-hub-bcard-name">' + _invHubEsc(b.name) + '</div>' +
+              '<div class="iv-hub-bcard-sub">' + (b.code ? _invHubEsc(b.code) : '—') + '</div>' +
+              '<div class="iv-hub-bcard-stats">' +
+                '<div class="iv-hub-stat"><span class="iv-hub-stat-num">' + (b.itemCount||0) + '</span><span class="iv-hub-stat-lbl">صنف</span></div>' +
+                '<div class="iv-hub-stat"><span class="iv-hub-stat-num">' + _invHubFmtMoney(b.totalValue||0) + '</span><span class="iv-hub-stat-lbl">ر.س قيمة</span></div>' +
+                (b.lowCount > 0
+                  ? '<div class="iv-hub-stat iv-hub-stat-warn"><i class="fas fa-triangle-exclamation"></i> ' + b.lowCount + ' نواقص</div>'
+                  : '<div class="iv-hub-stat iv-hub-stat-ok"><i class="fas fa-circle-check"></i> سليم</div>') +
+              '</div>' +
+            '</button>';
+  });
+  // "No brand" card if there are items without a brand
+  if (data.unbranded && data.unbranded.itemCount > 0) {
+    html += '<button class="iv-hub-bcard iv-hub-bcard-none" onclick="invHubGoToBrand(\'__none__\')">' +
+              '<div class="iv-hub-bcard-logo iv-hub-bcard-logo-none"><i class="fas fa-circle-question"></i></div>' +
+              '<div class="iv-hub-bcard-name">بدون براند</div>' +
+              '<div class="iv-hub-bcard-sub">أصناف غير مرتبطة ببراند</div>' +
+              '<div class="iv-hub-bcard-stats">' +
+                '<div class="iv-hub-stat"><span class="iv-hub-stat-num">' + (data.unbranded.itemCount||0) + '</span><span class="iv-hub-stat-lbl">صنف</span></div>' +
+                '<div class="iv-hub-stat"><span class="iv-hub-stat-num">' + _invHubFmtMoney(data.unbranded.totalValue||0) + '</span><span class="iv-hub-stat-lbl">ر.س قيمة</span></div>' +
+                (data.unbranded.lowCount > 0
+                  ? '<div class="iv-hub-stat iv-hub-stat-warn"><i class="fas fa-triangle-exclamation"></i> ' + data.unbranded.lowCount + '</div>'
+                  : '<div class="iv-hub-stat iv-hub-stat-ok"><i class="fas fa-circle-check"></i> سليم</div>') +
+              '</div>' +
+            '</button>';
+  }
+  return html;
+}
+
+// 60-second cache for brand stats (recommendation #2)
+function _invHubLoadBrandsData(cb) {
+  var now = Date.now();
+  if (window._invHubCache.data && (now - window._invHubCache.ts) < 60 * 1000) {
+    return cb(window._invHubCache.data);
+  }
+  var token = localStorage.getItem('pos_token') || '';
+  Promise.all([
+    fetch('/api/erp/brands', { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json()).catch(() => []),
+    fetch('/api/inventory/items', { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json()).catch(() => [])
+  ]).then(function(out) {
+    var brands = Array.isArray(out[0]) ? out[0] : [];
+    var items  = Array.isArray(out[1]) ? out[1] : [];
+    // Aggregate per-brand stats client-side (fast — < 2k items typical)
+    var byBrand = {};
+    items.forEach(function(it) {
+      var bid = it.brandId || '__none__';
+      if (!byBrand[bid]) byBrand[bid] = { itemCount: 0, totalValue: 0, lowCount: 0 };
+      var stock = Number(it.stock) || 0;
+      var cost  = Number(it.cost)  || 0;
+      var minStock = Number(it.minStock) || 0;
+      byBrand[bid].itemCount++;
+      byBrand[bid].totalValue += stock * cost;
+      if (stock <= minStock && minStock > 0) byBrand[bid].lowCount++;
+    });
+    var enriched = brands.map(function(b) {
+      var s = byBrand[b.id] || { itemCount: 0, totalValue: 0, lowCount: 0 };
+      return Object.assign({}, b, s);
+    });
+    var unbranded = byBrand['__none__'] || null;
+    var totals = { items: items.length, value: 0, low: 0 };
+    items.forEach(function(it) {
+      var stock = Number(it.stock) || 0;
+      var cost  = Number(it.cost)  || 0;
+      var minStock = Number(it.minStock) || 0;
+      totals.value += stock * cost;
+      if (stock <= minStock && minStock > 0) totals.low++;
+    });
+    var data = { brands: enriched, unbranded: unbranded, totals: totals };
+    window._invHubCache = { ts: Date.now(), data: data };
+    cb(data);
+  });
+}
+
+window._invHubRefresh = function() {
+  window._invHubCache = { ts: 0, data: null };
+  if (window._invHub.mode === 'brands') invHubGoToBrandsList();
+  else if (window._invHub.mode === 'hub') invHubGoToBrand(window._invHub.brandId);
+};
+
+// ─── View 2 renderer: per-brand hub (6 big icons) ───
+function _invHubRenderBrandHub(brandId) {
+  var box = q('#invHub');
+  if (!box) return;
+  // Compute brand display info
+  var brandName = '—', brandLogo = '', brandCode = '';
+  var data = window._invHubCache.data;
+  if (brandId === '__all__') { brandName = 'كل البراندات'; }
+  else if (brandId === '__none__') { brandName = 'بدون براند'; }
+  else if (data && data.brands) {
+    var b = data.brands.find(function(x) { return x.id === brandId; });
+    if (b) { brandName = b.name; brandLogo = b.logo; brandCode = b.code; }
+  }
+  // Render shell with skeleton, then load badges
+  box.innerHTML =
+    '<div class="iv-hub-shell">' +
+      '<header class="iv-hub-head iv-hub-head-brand">' +
+        '<button class="iv-hub-back" onclick="invHubGoToBrandsList()" title="رجوع"><i class="fas fa-chevron-right"></i></button>' +
+        (brandLogo
+          ? '<img src="' + _invHubEsc(brandLogo) + '" alt="" class="iv-hub-brand-logo">'
+          : '<div class="iv-hub-brand-logo iv-hub-brand-logo-text">' + _invHubEsc((brandName||'?').charAt(0).toUpperCase()) + '</div>') +
+        '<div class="iv-hub-head-titles">' +
+          '<h2 class="iv-hub-title">' + _invHubEsc(brandName) + '</h2>' +
+          '<p class="iv-hub-sub">' + (brandCode ? _invHubEsc(brandCode) + ' · ' : '') + 'اختر القسم للتنقل داخل هذا البراند.</p>' +
+        '</div>' +
+        '<button class="iv-hub-btn iv-hub-btn-ghost" onclick="_invHubRefresh()" title="تحديث"><i class="fas fa-rotate"></i></button>' +
+      '</header>' +
+      '<div class="iv-hub-grid">' +
+        _INV_HUB_TABS.map(function(t) {
+          return '<button class="iv-hub-tile" data-tab="' + t.id + '" onclick="invHubGoToTab(\'' + _invHubEsc(brandId) + '\',\'' + t.id + '\',true)">' +
+                   '<div class="iv-hub-tile-icon" style="background:' + _invHubAlphaBg(t.color) + ';color:' + t.color + ';"><i class="fas ' + t.icon + '"></i></div>' +
+                   '<div class="iv-hub-tile-title">' + t.title + '</div>' +
+                   '<div class="iv-hub-tile-sub">' + t.sub + '</div>' +
+                   '<div class="iv-hub-tile-badge" id="invHubBadge_' + t.id + '">—</div>' +
+                 '</button>';
+        }).join('') +
+      '</div>' +
+    '</div>';
+  // Load badge counts asynchronously
+  _invHubLoadBadges(brandId);
+}
+
+function _invHubLoadBadges(brandId) {
+  var token = localStorage.getItem('pos_token') || '';
+  var brandQ = (brandId && brandId !== '__all__') ? ('?brandId=' + encodeURIComponent(brandId)) : '';
+  // Items: we already have the data in cache
+  if (window._invHubCache.data && window._invHubCache.data.brands) {
+    var b = window._invHubCache.data.brands.find(function(x){ return x.id === brandId; });
+    var totals = window._invHubCache.data.totals;
+    var unb = window._invHubCache.data.unbranded;
+    var pick = brandId === '__all__' ? totals
+             : brandId === '__none__' ? (unb || { items: 0, value: 0, low: 0 })
+             : (b ? { items: b.itemCount, value: b.totalValue, low: b.lowCount } : null);
+    if (pick) {
+      _invHubSetBadge('items', (pick.items || pick.itemCount || 0) + ' صنف');
+      _invHubSetBadge('live',  (pick.low > 0 ? '⚠ ' + pick.low + ' منخفضة' : 'سليم'));
+    }
+  }
+  // Stocktakes
+  fetch('/api/getAllStocktakes', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => r.json()).then(function(rows) {
+      if (!Array.isArray(rows)) return _invHubSetBadge('stocktake', '—');
+      // Filter by brand if not __all__: stocktake doesn't natively store brand, so we just show count + last date
+      var sorted = rows.slice().sort(function(a,b){ return new Date(b.stocktake_date||b.date) - new Date(a.stocktake_date||a.date); });
+      var last = sorted[0];
+      _invHubSetBadge('stocktake', last ? ('آخر جرد: ' + _invHubFmtDate(last.stocktake_date||last.date)) : 'لا يوجد جرد');
+    }).catch(function(){ _invHubSetBadge('stocktake', '—'); });
+  // Adjustments (count pending)
+  fetch('/api/getAllAdjustments', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => r.json()).then(function(rows) {
+      if (!Array.isArray(rows)) return _invHubSetBadge('adjustments', '—');
+      var pending = rows.filter(function(r){ return (r.status||'') === 'pending'; }).length;
+      _invHubSetBadge('adjustments', pending > 0 ? (pending + ' معلّقة') : (rows.length + ' كلي'));
+    }).catch(function(){ _invHubSetBadge('adjustments', '—'); });
+  // Transfers + Shortage are the placeholders; richer counts come in PR2.
+  _invHubSetBadge('transfers', '—');
+  fetch('/api/getShortageRequests', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => r.json()).then(function(rows) {
+      if (!Array.isArray(rows)) return _invHubSetBadge('shortage', '—');
+      var pending = rows.filter(function(r){ return (r.status||'pending') === 'pending'; }).length;
+      _invHubSetBadge('shortage', pending > 0 ? (pending + ' معلّقة') : (rows.length + ' كلي'));
+    }).catch(function(){ _invHubSetBadge('shortage', '—'); });
+}
+
+function _invHubSetBadge(tab, text) {
+  var el = q('#invHubBadge_' + tab);
+  if (el) el.textContent = text;
+}
+
+// ─── Brand strip shown above the existing tabs once user is in tab view ───
+function _invHubRenderBrandStrip(brandId) {
+  var strip = q('#invHubBrandStrip');
+  if (!strip) return;
+  var brandName = '—', brandLogo = '';
+  var data = window._invHubCache.data;
+  if (brandId === '__all__') { brandName = 'كل البراندات'; }
+  else if (brandId === '__none__') { brandName = 'بدون براند'; }
+  else if (data && data.brands) {
+    var b = data.brands.find(function(x){ return x.id === brandId; });
+    if (b) { brandName = b.name; brandLogo = b.logo; }
+  }
+  strip.innerHTML =
+    '<div class="iv-hub-strip">' +
+      '<button class="iv-hub-back-sm" onclick="invHubGoToBrandsList()" title="كل البراندات"><i class="fas fa-chevron-right"></i> البراندات</button>' +
+      '<span class="iv-hub-strip-sep">/</span>' +
+      '<button class="iv-hub-back-sm iv-hub-back-sm-brand" onclick="invHubGoToBrand(\'' + _invHubEsc(brandId) + '\')">' +
+        (brandLogo
+          ? '<img src="' + _invHubEsc(brandLogo) + '" alt="" class="iv-hub-strip-logo">'
+          : '<i class="fas fa-shop"></i>') +
+        ' <span>' + _invHubEsc(brandName) + '</span>' +
+      '</button>' +
+      '<span class="iv-hub-strip-spacer"></span>' +
+    '</div>';
+}
+
+// ─── Helpers ───
+function _invHubEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function _invHubFmtMoney(n) {
+  n = Number(n) || 0;
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return n.toFixed(2);
+}
+function _invHubFmtDate(d) {
+  if (!d) return '—';
+  try {
+    var dt = new Date(d);
+    return dt.getFullYear() + '/' + String(dt.getMonth() + 1).padStart(2, '0') + '/' + String(dt.getDate()).padStart(2, '0');
+  } catch (e) { return '—'; }
+}
+function _invHubAlphaBg(hex) {
+  // Light translucent version of the icon color for the soft background
+  if (!hex || hex.charAt(0) !== '#' || hex.length !== 7) return '#f1f5f9';
+  return hex + '1a';  // 10% alpha
+}
+
+// Apply brand pre-filter to a tab once it's shown. Called after switchWhTab
+//   syncs state. The existing tab loaders read these dropdowns.
+function _invHubApplyBrandFilter(tab, brandId) {
+  // brandId === '__all__' → empty (means all brands)
+  var filterValue = (brandId === '__all__' || !brandId) ? '' : brandId;
+  var sel = ({
+    items:       '#rawBrandFilter',
+    live:        '#liveBrandFilter',
+    stocktake:   '#stocktakeBrandFilter',
+    adjustments: '#adjBrandFilter',
+    transfers:   '#transferBrandFilter',
+    shortage:    '#shortageBrandFilter'
+  })[tab];
+  if (!sel) return;
+  // Wait until _populateWhBrandFilters has run (it's called inside loaders)
+  setTimeout(function() {
+    var el = q(sel);
+    if (!el) return;
+    if (el.value !== filterValue) {
+      el.value = filterValue;
+      // Trigger change so the loader filters
+      try { el.dispatchEvent(new Event('change')); } catch(e) {}
+    }
+  }, 350);
+}
+
+// Inject the hub stylesheet once. Scoped via .iv-hub-* prefix so it can
+//   never leak into the rest of the admin shell.
+function _invHubInjectStyles() {
+  if (document.getElementById('invHubStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'invHubStyles';
+  st.textContent =
+    '.iv-hub-shell{padding:18px 4px 24px;direction:rtl;}' +
+    '.iv-hub-head{display:flex;align-items:center;gap:14px;margin-bottom:18px;flex-wrap:wrap;}' +
+    '.iv-hub-head-titles{flex:1;min-width:0;}' +
+    '.iv-hub-title{margin:0;font-size:22px;font-weight:900;color:#0f172a;letter-spacing:-0.02em;display:flex;align-items:center;gap:9px;}' +
+    '.iv-hub-title i{color:#3b82f6;}' +
+    '.iv-hub-sub{margin:4px 0 0;font-size:13px;color:#64748b;font-weight:500;}' +
+    '.iv-hub-head-actions{display:flex;gap:8px;}' +
+    '.iv-hub-btn{background:#fff;color:#475569;border:1.5px solid #e2e8f0;padding:8px 14px;border-radius:10px;font-size:12.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:all 0.15s;}' +
+    '.iv-hub-btn:hover{background:#f8fafc;border-color:#cbd5e1;}' +
+    '.iv-hub-btn-ghost{background:transparent;}' +
+    '.iv-hub-back{background:#f1f5f9;color:#475569;border:0;width:38px;height:38px;border-radius:11px;cursor:pointer;display:grid;place-items:center;font-size:14px;transition:all 0.15s;flex-shrink:0;}' +
+    '.iv-hub-back:hover{background:#e2e8f0;color:#0f172a;transform:translateX(2px);}' +
+    '.iv-hub-brand-logo{width:48px;height:48px;border-radius:12px;object-fit:cover;flex-shrink:0;background:#ede9fe;}' +
+    '.iv-hub-brand-logo-text{display:grid;place-items:center;font-weight:900;color:#6d28d9;font-size:22px;letter-spacing:-0.02em;}' +
+    /* ─── Brands grid ─── */
+    '.iv-hub-brands{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}' +
+    '.iv-hub-bcard{background:#fff;border:1.5px solid #e2e8f0;border-radius:18px;padding:18px 16px;cursor:pointer;font-family:inherit;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px;transition:all 0.18s;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
+    '.iv-hub-bcard:hover{transform:translateY(-3px);border-color:#7c3aed;box-shadow:0 12px 28px -10px rgba(124,58,237,0.25);}' +
+    '.iv-hub-bcard-all{background:linear-gradient(135deg,#1e293b,#0f172a);color:#fff;border-color:#1e293b;}' +
+    '.iv-hub-bcard-all .iv-hub-bcard-name{color:#fff;}' +
+    '.iv-hub-bcard-all .iv-hub-bcard-sub{color:#cbd5e1;}' +
+    '.iv-hub-bcard-all .iv-hub-stat-num{color:#fff;}' +
+    '.iv-hub-bcard-all .iv-hub-stat-lbl{color:#94a3b8;}' +
+    '.iv-hub-bcard-all:hover{border-color:#7c3aed;}' +
+    '.iv-hub-bcard-none{background:linear-gradient(135deg,#fff,#f8fafc);border-style:dashed;}' +
+    '.iv-hub-bcard-logo{width:72px;height:72px;border-radius:18px;background:#ede9fe;color:#6d28d9;display:grid;place-items:center;font-size:28px;font-weight:900;flex-shrink:0;overflow:hidden;}' +
+    '.iv-hub-bcard-logo-img{width:100%;height:100%;object-fit:cover;}' +
+    '.iv-hub-bcard-logo-text{font-size:32px;letter-spacing:-0.04em;}' +
+    '.iv-hub-bcard-logo-all{background:rgba(255,255,255,0.15);color:#fff;backdrop-filter:blur(8px);}' +
+    '.iv-hub-bcard-logo-none{background:#f1f5f9;color:#94a3b8;}' +
+    '.iv-hub-bcard-name{font-size:16px;font-weight:900;color:#0f172a;letter-spacing:-0.01em;line-height:1.2;}' +
+    '.iv-hub-bcard-sub{font-size:11.5px;font-weight:600;color:#64748b;font-family:ui-monospace,monospace;}' +
+    '.iv-hub-bcard-stats{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 12px;margin-top:6px;width:100%;}' +
+    '.iv-hub-stat{display:flex;flex-direction:column;align-items:center;gap:1px;}' +
+    '.iv-hub-stat-num{font-size:14px;font-weight:900;color:#0f172a;font-variant-numeric:tabular-nums;line-height:1;}' +
+    '.iv-hub-stat-lbl{font-size:10px;color:#94a3b8;font-weight:600;letter-spacing:0.02em;}' +
+    '.iv-hub-stat-warn{background:#fef3c7;color:#92400e;padding:4px 10px;border-radius:7px;font-size:11px;font-weight:800;display:inline-flex;align-items:center;gap:4px;}' +
+    '.iv-hub-stat-ok{background:#dcfce7;color:#15803d;padding:4px 10px;border-radius:7px;font-size:11px;font-weight:800;display:inline-flex;align-items:center;gap:4px;}' +
+    /* ─── Brand hub grid (6 big icons) ─── */
+    '.iv-hub-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}' +
+    '@media (max-width:900px){.iv-hub-grid{grid-template-columns:repeat(2,1fr);}}' +
+    '@media (max-width:520px){.iv-hub-grid{grid-template-columns:1fr;}}' +
+    '.iv-hub-tile{background:#fff;border:1.5px solid #e2e8f0;border-radius:20px;padding:24px 20px;cursor:pointer;font-family:inherit;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px;transition:all 0.18s;box-shadow:0 2px 6px rgba(15,23,42,0.04);}' +
+    '.iv-hub-tile:hover{transform:translateY(-4px);border-color:#7c3aed;box-shadow:0 18px 36px -12px rgba(15,23,42,0.18);}' +
+    '.iv-hub-tile-icon{width:88px;height:88px;border-radius:22px;display:grid;place-items:center;font-size:38px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(15,23,42,0.04);}' +
+    '.iv-hub-tile-title{font-size:17px;font-weight:900;color:#0f172a;letter-spacing:-0.01em;}' +
+    '.iv-hub-tile-sub{font-size:11.5px;color:#64748b;font-weight:500;line-height:1.4;}' +
+    '.iv-hub-tile-badge{font-size:11.5px;font-weight:800;color:#475569;background:#f1f5f9;padding:5px 12px;border-radius:7px;margin-top:4px;}' +
+    /* ─── Brand strip above tabs ─── */
+    '.iv-hub-strip{display:flex;align-items:center;gap:8px;padding:8px 4px 12px;font-size:13px;color:#475569;flex-wrap:wrap;}' +
+    '.iv-hub-back-sm{background:transparent;border:1.5px solid transparent;padding:6px 10px;border-radius:8px;font-size:12.5px;font-weight:700;color:#64748b;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:all 0.15s;}' +
+    '.iv-hub-back-sm:hover{background:#f1f5f9;color:#0f172a;}' +
+    '.iv-hub-back-sm-brand{background:#ede9fe;color:#5b21b6;}' +
+    '.iv-hub-back-sm-brand:hover{background:#ddd6fe;color:#4c1d95;}' +
+    '.iv-hub-strip-logo{width:18px;height:18px;border-radius:5px;object-fit:cover;}' +
+    '.iv-hub-strip-sep{color:#cbd5e1;font-weight:700;}' +
+    '.iv-hub-strip-spacer{flex:1;}' +
+    '.iv-hub-skeleton{padding:48px;text-align:center;color:#94a3b8;font-size:14px;font-weight:600;}';
+  document.head.appendChild(st);
+}
+
+// =========================================
+// Warehouse Tabs (kept; now brand-aware)
 // =========================================
 function switchWhTab(tab) {
   qs('#whTabs .sales-tab').forEach(t => t.classList.remove('active'));
@@ -3742,12 +4189,17 @@ function switchWhTab(tab) {
   const contentEl = q('#wh_' + tab);
   if (tabEl) tabEl.classList.add('active');
   if (contentEl) contentEl.classList.add('active');
+  // V5.8.0 — remember the tab and pre-fill the brand filter from hub state
+  if (window._invHub) { window._invHub.tab = tab; }
   if (tab === 'items') loadDashInvItems();
   if (tab === 'live') loadLiveInventory();
   if (tab === 'stocktake') loadDashStocktake();
   if (tab === 'adjustments') loadDashAdjustments();
   if (tab === 'transfers') loadDashTransfers();
   if (tab === 'shortage') loadDashShortageRequests();
+  if (window._invHub && window._invHub.brandId) {
+    _invHubApplyBrandFilter(tab, window._invHub.brandId);
+  }
 }
 
 // =========================================

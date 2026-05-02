@@ -3757,6 +3757,19 @@ var _INV_HUB_TABS = [
   { id: 'shortage',    title: 'طلبات النواقص',  icon: 'fa-triangle-exclamation', color: '#ef4444', sub: 'تجديد المخزون والـPO' }
 ];
 
+// View 3: tab content (filtered by brand)
+//   V5.8.6 — re-defined here so the order is right: switchWhTab adds the
+//   .active class FIRST, then _invHubShowOnly clears its own inline
+//   display:none so the CSS rule for .active takes over.
+function invHubGoToTab(brandId, tab, fromHub) {
+  window._invHub.mode = 'tab';
+  window._invHub.brandId = brandId;
+  window._invHub.tab = tab;
+  switchWhTab(tab);                      // first: switch the active class
+  _invHubShowOnly('tabs');               // then: hide hub + tabs row, clear stale display
+  _invHubRenderBrandStrip(brandId);
+}
+
 // Entry point — replaces direct loadDashInvItems() on warehouse section open.
 function invHubOpen() {
   _invHubInjectStyles();
@@ -3780,31 +3793,24 @@ function invHubGoToBrandsList() {
 }
 
 // View 2: per-brand hub (6 big icons)
-//   V5.8.5 — DISABLED.  After feedback that the 6-icon panel duplicated
-//   the polished tabs row, picking a brand now goes DIRECTLY to the
-//   tabs view (last-used tab, defaulting to 'items'). The brand strip
-//   above the tabs handles the "back to brands" navigation. The old
-//   _invHubRenderBrandHub() function is kept for reference but no
-//   longer called.
+//   V5.8.6 — RESTORED. The previous V5.8.5 skip was the wrong fix; the
+//   user's complaint was about the inner sales-tabs row showing up
+//   alongside the hub, not the hub itself. Now: hub = sole navigation,
+//   tabs row = HIDDEN inside any tab, breadcrumb strip = back-button +
+//   current tab name.
 function invHubGoToBrand(brandId) {
   if (!brandId) return invHubGoToBrandsList();
+  window._invHub.mode = 'hub';
   window._invHub.brandId = brandId;
-  // Pick the last tab the user was on (defaults to 'items')
-  var tab = (window._invHub.tab) || 'items';
-  invHubGoToTab(brandId, tab, /*fromHub=*/false);
+  _invHubShowOnly('hub');
+  _invHubRenderBrandHub(brandId);
 }
 
-// View 3: tab content (filtered by brand)
-function invHubGoToTab(brandId, tab, fromHub) {
-  window._invHub.mode = 'tab';
-  window._invHub.brandId = brandId;
-  window._invHub.tab = tab;
-  _invHubShowOnly('tabs');
-  _invHubRenderBrandStrip(brandId);
-  switchWhTab(tab);  // existing tab loader — brand filter is auto-applied below
-}
-
-// Toggle which view is visible
+// V5.8.6 — Toggle which view is visible.
+//   The inner #whTabs row is HIDDEN in BOTH views — the brand hub
+//   replaces it entirely.  When we're in a tab, the breadcrumb strip
+//   (#invHubBrandStrip) is the only nav, with a back button to the
+//   brand hub.
 function _invHubShowOnly(view) {
   var hub  = q('#invHub');
   var strip = q('#invHubBrandStrip');
@@ -3818,8 +3824,10 @@ function _invHubShowOnly(view) {
   } else { // 'tabs'
     if (hub)  hub.style.display  = 'none';
     if (strip) strip.style.display = 'block';
-    if (tabs) tabs.style.display = '';
-    bodies.forEach(b => b.style.display = '');
+    if (tabs) tabs.style.display = 'none';   // V5.8.6 — hide the duplicated tabs row
+    // Clear ALL inline display styles so the CSS .sales-tab-content.active
+    //   rule takes over (display:block on active, none on the rest).
+    bodies.forEach(function(b) { b.style.display = ''; });
   }
 }
 
@@ -4040,7 +4048,9 @@ function _invHubSetBadge(tab, text) {
   if (el) el.textContent = text;
 }
 
-// ─── Brand strip shown above the existing tabs once user is in tab view ───
+// ─── Brand strip shown above the active tab body (V5.8.6) ───
+//   Now the SOLE navigation when inside a tab — no duplicate sales-tabs row.
+//   Layout: [← البراندات]  /  [Brand]  /  [Current Tab + Switch button]
 function _invHubRenderBrandStrip(brandId) {
   var strip = q('#invHubBrandStrip');
   if (!strip) return;
@@ -4052,17 +4062,33 @@ function _invHubRenderBrandStrip(brandId) {
     var b = data.brands.find(function(x){ return x.id === brandId; });
     if (b) { brandName = b.name; brandLogo = b.logo; }
   }
+  // Find current tab metadata
+  var curTab = window._invHub.tab || 'items';
+  var tabMeta = (_INV_HUB_TABS.find(function(t){ return t.id === curTab; })) || _INV_HUB_TABS[0];
   strip.innerHTML =
     '<div class="iv-hub-strip">' +
-      '<button class="iv-hub-back-sm" onclick="invHubGoToBrandsList()" title="كل البراندات"><i class="fas fa-chevron-right"></i> البراندات</button>' +
+      // Back to brands
+      '<button class="iv-hub-back-sm" onclick="invHubGoToBrandsList()" title="كل البراندات">' +
+        '<i class="fas fa-chevron-right"></i> البراندات' +
+      '</button>' +
       '<span class="iv-hub-strip-sep">/</span>' +
-      '<button class="iv-hub-back-sm iv-hub-back-sm-brand" onclick="invHubGoToBrand(\'' + _invHubEsc(brandId) + '\')">' +
+      // Back to brand hub (the 6-icon menu for this brand)
+      '<button class="iv-hub-back-sm iv-hub-back-sm-brand" onclick="invHubGoToBrand(\'' + _invHubEsc(brandId) + '\')" title="رجوع لقائمة الأقسام">' +
         (brandLogo
           ? '<img src="' + _invHubEsc(brandLogo) + '" alt="" class="iv-hub-strip-logo">'
           : '<i class="fas fa-shop"></i>') +
         ' <span>' + _invHubEsc(brandName) + '</span>' +
       '</button>' +
+      '<span class="iv-hub-strip-sep">/</span>' +
+      // Current tab pill
+      '<span class="iv-hub-back-sm iv-hub-back-sm-current" style="background:' + _invHubAlphaBg(tabMeta.color) + ';color:' + tabMeta.color + ';border-color:' + tabMeta.color + '40;">' +
+        '<i class="fas ' + tabMeta.icon + '"></i> <span>' + _invHubEsc(tabMeta.title) + '</span>' +
+      '</span>' +
       '<span class="iv-hub-strip-spacer"></span>' +
+      // Quick switch back to the hub for inter-tab navigation
+      '<button class="iv-hub-strip-switch" onclick="invHubGoToBrand(\'' + _invHubEsc(brandId) + '\')">' +
+        '<i class="fas fa-grip"></i> <span>تغيير القسم</span>' +
+      '</button>' +
     '</div>';
 }
 
@@ -4172,15 +4198,19 @@ function _invHubInjectStyles() {
     '.iv-hub-tile-title{font-size:17px;font-weight:900;color:#0f172a;letter-spacing:-0.01em;}' +
     '.iv-hub-tile-sub{font-size:11.5px;color:#64748b;font-weight:500;line-height:1.4;}' +
     '.iv-hub-tile-badge{font-size:11.5px;font-weight:800;color:#475569;background:#f1f5f9;padding:5px 12px;border-radius:7px;margin-top:4px;}' +
-    /* ─── Brand strip above tabs (V5.8.5 — match boxed tabs style) ─── */
-    '.iv-hub-strip{display:flex;align-items:center;gap:8px;padding:0 4px 12px;font-size:13px;color:#475569;flex-wrap:wrap;}' +
+    /* ─── Brand strip above tab body (V5.8.6 — the SOLE navigation when inside a tab) ─── */
+    '.iv-hub-strip{display:flex;align-items:center;gap:8px;padding:4px 4px 14px;font-size:13px;color:#475569;flex-wrap:wrap;}' +
     '.iv-hub-back-sm{background:#fff;border:1px solid #e2e8f0;padding:8px 14px;border-radius:10px;font-size:12.5px;font-weight:700;color:#64748b;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:all 0.15s;}' +
     '.iv-hub-back-sm:hover{background:#f1f5f9;color:#0f172a;border-color:#cbd5e1;transform:translateX(2px);}' +
     '.iv-hub-back-sm-brand{background:linear-gradient(135deg,#ede9fe,#fff);color:#5b21b6;border-color:#c4b5fd;font-weight:800;}' +
     '.iv-hub-back-sm-brand:hover{background:linear-gradient(135deg,#ddd6fe,#fff);color:#4c1d95;border-color:#a78bfa;}' +
+    '.iv-hub-back-sm-current{padding:8px 14px;border-radius:10px;font-size:12.5px;font-weight:800;display:inline-flex;align-items:center;gap:6px;border:1px solid;cursor:default;}' +
     '.iv-hub-strip-logo{width:20px;height:20px;border-radius:5px;object-fit:cover;}' +
     '.iv-hub-strip-sep{color:#cbd5e1;font-weight:700;font-size:14px;}' +
     '.iv-hub-strip-spacer{flex:1;}' +
+    /* Switch-section button — visible call-to-action so users know how to change the tab without the inner tabs row */
+    '.iv-hub-strip-switch{background:#0d47a1;color:#fff;border:1px solid #0d47a1;padding:8px 14px;border-radius:10px;font-size:12.5px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:all 0.15s;box-shadow:0 4px 12px -4px rgba(13,71,161,0.3);}' +
+    '.iv-hub-strip-switch:hover{background:#093170;border-color:#093170;transform:translateY(-1px);box-shadow:0 6px 16px -4px rgba(13,71,161,0.4);}' +
     '.iv-hub-skeleton{padding:48px;text-align:center;color:#94a3b8;font-size:14px;font-weight:600;}';
   document.head.appendChild(st);
 }

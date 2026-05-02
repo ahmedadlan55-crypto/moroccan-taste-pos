@@ -4529,7 +4529,10 @@ function calcBigUnitCost() {
 
 function filterInvItems() {
   if (!cachedRawItems || !cachedRawItems.length) return loadDashInvItems();
-  renderInvTable(applyInvFilters(cachedRawItems));
+  var filtered = applyInvFilters(cachedRawItems);
+  renderInvTable(filtered);
+  // V5.8.3 — refresh counts + clear-filter chip
+  if (typeof _invItemsAfterFilter === 'function') _invItemsAfterFilter(filtered);
 }
 function applyInvFilters(items) {
   var search = (q("#rawSearchQ")?.value||'').toLowerCase();
@@ -4579,9 +4582,290 @@ function loadDashInvItems() {
   api.withFailureHandler(function(err) { loader(false); showToast(err.message, true); }).withSuccessHandler(function(items) {
     loader(false);
     cachedRawItems = items || [];
+    // V5.8.3 — pre-filter by hub-selected brand if user came in via brand picker
+    if (window._invHub && window._invHub.brandId && window._invHub.brandId !== '__all__') {
+      var bf = q('#rawBrandFilter');
+      if (bf && bf.value !== window._invHub.brandId) bf.value = window._invHub.brandId;
+    }
     populateInvCatFilter();
+    _invItemsMountShell();
     renderInvTable(applyInvFilters(cachedRawItems));
+    _invItemsRenderKpis(cachedRawItems);
   }).getInvItems();
+}
+
+// V5.8.3 — Pro Inventory Items: KPIs + actions toolbar above the existing
+//   table.  Mounts once; subsequent loads just refresh data.
+function _invItemsMountShell() {
+  if (q('#invItemsKpis')) return;  // already mounted
+  _invItemsInjectStyles();
+  var content = q('#wh_items');
+  if (!content) return;
+  var filterBar = content.querySelector('.filter-bar');
+  if (!filterBar) return;
+  // Insert KPI strip + actions toolbar AFTER the existing filter bar
+  var kpis = document.createElement('div');
+  kpis.id = 'invItemsKpis';
+  kpis.className = 'iv-items-kpis';
+  filterBar.parentNode.insertBefore(kpis, filterBar.nextSibling);
+  // Insert actions toolbar (print/pdf right next to the existing Excel/Add buttons)
+  var actionsRow = document.createElement('div');
+  actionsRow.id = 'invItemsActions';
+  actionsRow.className = 'iv-items-actions';
+  actionsRow.innerHTML =
+    '<div class="iv-items-counts" id="invItemsCounts"></div>' +
+    '<div class="iv-items-export">' +
+      '<button class="iv-live-btn iv-live-btn-ghost" onclick="invItemsExport(\'print\')"><i class="fas fa-print"></i> طباعة</button>' +
+      '<button class="iv-live-btn iv-live-btn-success" onclick="invItemsExport(\'excel\')"><i class="fas fa-file-excel"></i> Excel</button>' +
+      '<button class="iv-live-btn iv-live-btn-danger" onclick="invItemsExport(\'pdf\')"><i class="fas fa-file-pdf"></i> PDF</button>' +
+    '</div>';
+  kpis.parentNode.insertBefore(actionsRow, kpis.nextSibling);
+  // Add a clear-filter chip slot (only renders when filters are active)
+  var clearSlot = document.createElement('div');
+  clearSlot.id = 'invItemsClearSlot';
+  actionsRow.parentNode.insertBefore(clearSlot, actionsRow.nextSibling);
+}
+
+function _invItemsRenderKpis(items) {
+  var box = q('#invItemsKpis');
+  if (!box) return;
+  items = items || [];
+  var totalCount = items.length;
+  var totalValue = 0, lowCount = 0, outCount = 0, noBrandCount = 0, withBrandCount = 0;
+  var byBrand = {};
+  items.forEach(function(i) {
+    var stock = Number(i.stock) || 0;
+    var cost  = Number(i.cost)  || 0;
+    var minS  = Number(i.minStock) || 0;
+    totalValue += stock * cost;
+    if (stock <= 0) outCount++;
+    else if (stock <= minS && minS > 0) lowCount++;
+    if (i.brandId) {
+      withBrandCount++;
+      if (!byBrand[i.brandId]) byBrand[i.brandId] = 0;
+      byBrand[i.brandId]++;
+    } else {
+      noBrandCount++;
+    }
+  });
+  var brandCount = Object.keys(byBrand).length;
+  box.innerHTML =
+    _invItemsKpi('إجمالي الأصناف',  totalCount + '',          'عدد', 'fa-boxes-stacked', '#3b82f6', brandCount + ' براند · ' + (withBrandCount) + ' مرتبط') +
+    _invItemsKpi('قيمة المخزون',    _invHubFmtMoney(totalValue), 'ر.س', 'fa-coins',         '#10b981', 'بسعر التكلفة الحالي') +
+    _invItemsKpi('أصناف منخفضة',    lowCount + '',            'صنف', 'fa-triangle-exclamation', '#f59e0b', lowCount > 0 ? 'تحت حد النواقص' : 'لا يوجد') +
+    _invItemsKpi('نفد المخزون',     outCount + '',            'صنف', 'fa-circle-xmark',   '#ef4444', outCount > 0 ? 'يحتاج إعادة طلب' : 'كل الأصناف متوفرة');
+}
+function _invItemsKpi(label, num, unit, icon, color, sub) {
+  return '<div class="iv-live-kpi" style="--kc:' + color + ';">' +
+           '<div class="iv-live-kpi-icon" style="background:' + color + '1a;color:' + color + ';"><i class="fas ' + icon + '"></i></div>' +
+           '<div class="iv-live-kpi-body">' +
+             '<div class="iv-live-kpi-label">' + label + '</div>' +
+             '<div class="iv-live-kpi-num">' + num + ' <span class="iv-live-kpi-unit">' + unit + '</span></div>' +
+             '<div class="iv-live-kpi-sub">' + sub + '</div>' +
+           '</div>' +
+         '</div>';
+}
+
+// V5.8.3 — Wraps filterInvItems to also update the counts + clear-filter chip
+function _invItemsAfterFilter(filtered) {
+  var counts = q('#invItemsCounts');
+  if (counts) {
+    var search = (q("#rawSearchQ") && q("#rawSearchQ").value) || '';
+    var cat = (q("#rawCatFilter") && q("#rawCatFilter").value) || '';
+    var brandF = (q("#rawBrandFilter") && q("#rawBrandFilter").value) || '';
+    var stockF = (q("#rawStockFilter") && q("#rawStockFilter").value) || '';
+    var hasFilter = !!(search || cat || brandF || stockF);
+    counts.innerHTML = '<i class="fas fa-list-ul"></i> ' + filtered.length + ' من ' + (cachedRawItems||[]).length + ' صنف' +
+      (search ? ' · بحث: <strong>' + _invHubEsc(search) + '</strong>' : '') +
+      (hasFilter ? ' <button class="iv-live-clear-chip" onclick="invItemsClearFilters()">' +
+                     '<i class="fas fa-filter"></i> فلتر نشط' +
+                     ' <span class="iv-live-clear-x">✕ إلغاء</span>' +
+                   '</button>' : '');
+  }
+}
+
+window.invItemsClearFilters = function() {
+  ['#rawSearchQ', '#rawCatFilter', '#rawBrandFilter', '#rawStockFilter'].forEach(function(sel) {
+    var el = q(sel);
+    if (el) el.value = '';
+  });
+  filterInvItems();
+};
+
+// V5.8.3 — Pro export for inventory items (print/PDF/Excel)
+window.invItemsExport = function(kind) {
+  if (!cachedRawItems || !cachedRawItems.length) return showToast('لا توجد أصناف للتصدير', true);
+  var filtered = applyInvFilters(cachedRawItems);
+  if (!filtered.length) return showToast('لا توجد نتائج بعد التصفية', true);
+  if (kind === 'excel') return _invItemsExportExcel(filtered);
+  if (kind === 'pdf')   return _invItemsOpenPrintWindow(filtered, false);
+  if (kind === 'print') return _invItemsOpenPrintWindow(filtered, true);
+};
+
+function _invItemsExportExcel(items) {
+  if (typeof XLSX === 'undefined' && typeof loadScript === 'function') {
+    loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js')
+      .then(function(){ _invItemsExportExcel(items); }).catch(function(){ showToast('فشل تحميل Excel', true); });
+    return;
+  }
+  if (typeof XLSX === 'undefined') return showToast('XLSX غير محمّلة', true);
+  var data = [['الكود','الصنف','البراند','التصنيف','الوحدة الكبرى','معدل التحويل','الوحدة الصغرى','الكمية','تكلفة الوحدة','القيمة الإجمالية','حد النواقص','الحالة']];
+  items.forEach(function(i) {
+    var stock = Number(i.stock) || 0;
+    var cost  = Number(i.cost)  || 0;
+    var status = stock <= 0 ? 'نفد' : (stock <= (Number(i.minStock)||0) ? 'منخفض' : 'متوفر');
+    data.push([i.id, i.name, i.brandName||'', i.category||'', i.bigUnit||'', i.convRate||1, i.unit||'حبة', stock, cost, stock * cost, i.minStock||0, status]);
+  });
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(data), 'مواد المخزون');
+  XLSX.writeFile(wb, 'inventory-items-' + _ymd(new Date()) + '.xlsx');
+  showToast('تم تصدير ' + items.length + ' صنف');
+}
+
+function _invItemsOpenPrintWindow(items, forPrint) {
+  var brandName = '';
+  if (window._invHub && window._invHub.brandId && window._invHubCache && window._invHubCache.data) {
+    var b = (window._invHubCache.data.brands || []).find(function(x){ return x.id === window._invHub.brandId; });
+    if (b) brandName = b.name;
+    else if (window._invHub.brandId === '__all__') brandName = 'كل البراندات';
+    else if (window._invHub.brandId === '__none__') brandName = 'بدون براند';
+  }
+  // Compute totals on the filtered set
+  var totalValue = 0, lowCount = 0, outCount = 0;
+  items.forEach(function(i) {
+    var stock = Number(i.stock) || 0;
+    var cost  = Number(i.cost)  || 0;
+    totalValue += stock * cost;
+    if (stock <= 0) outCount++;
+    else if (stock <= (Number(i.minStock)||0) && Number(i.minStock) > 0) lowCount++;
+  });
+  var rows = items.map(function(i, idx) {
+    var stock = Number(i.stock) || 0;
+    var cost  = Number(i.cost)  || 0;
+    var minS  = Number(i.minStock) || 0;
+    var totalV = stock * cost;
+    var status = stock <= 0 ? 'نفد' : (stock <= minS && minS > 0 ? 'منخفض' : 'متوفر');
+    var statusCls = stock <= 0 ? 'st-out' : (stock <= minS && minS > 0 ? 'st-low' : 'st-ok');
+    var rowClass = stock <= 0 ? 'row-out' : (stock <= minS && minS > 0 ? 'row-low' : '');
+    return '<tr class="' + rowClass + '">' +
+      '<td class="num">' + (idx+1) + '</td>' +
+      '<td class="code">' + _invHubEsc(i.id) + '</td>' +
+      '<td><b>' + _invHubEsc(i.name) + '</b></td>' +
+      '<td>' + _invHubEsc(i.brandName || '—') + '</td>' +
+      '<td>' + _invHubEsc(i.category || '') + '</td>' +
+      '<td class="num">' + stock + ' ' + _invHubEsc(i.unit || '') + '</td>' +
+      '<td class="num">' + cost.toFixed(4) + '</td>' +
+      '<td class="num"><b>' + totalV.toFixed(2) + '</b></td>' +
+      '<td class="num">' + minS + '</td>' +
+      '<td><span class="status ' + statusCls + '">' + status + '</span></td>' +
+    '</tr>';
+  }).join('');
+  var html =
+    '<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8">' +
+    '<title>كشف مواد المخزون · ' + _ymd(new Date()) + '</title>' +
+    '<style>' +
+      '*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}' +
+      'html,body{margin:0;padding:0;}' +
+      'body{font-family:"Tajawal","Cairo","Segoe UI",Tahoma,sans-serif;color:#0f172a;direction:rtl;font-size:11px;background:#fff;}' +
+      '.page{padding:14mm 12mm;}' +
+      '.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #3b82f6;padding-bottom:10px;margin-bottom:12px;}' +
+      '.head h1{font-size:20px;margin:0;color:#0f172a;letter-spacing:-0.02em;}' +
+      '.head .h-sub{font-size:11px;color:#64748b;margin-top:3px;}' +
+      '.h-meta{font-size:10.5px;color:#475569;line-height:1.6;text-align:end;}' +
+      '.h-meta b{color:#0f172a;}' +
+      '.h-logo{font-size:14px;font-weight:900;color:#3b82f6;letter-spacing:-0.02em;}' +
+      '.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;}' +
+      '.kpi{border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;border-inline-start:3px solid var(--kc,#3b82f6);}' +
+      '.kpi-label{font-size:9.5px;color:#64748b;font-weight:700;text-transform:uppercase;}' +
+      '.kpi-num{font-size:15px;font-weight:900;margin-top:2px;font-family:ui-monospace,monospace;}' +
+      '.kpi.k-cnt{--kc:#3b82f6;}' +
+      '.kpi.k-val{--kc:#10b981;}' +
+      '.kpi.k-low{--kc:#f59e0b;}' +
+      '.kpi.k-out{--kc:#ef4444;}' +
+      'table{width:100%;border-collapse:collapse;font-size:10px;}' +
+      'th,td{border:1px solid #e2e8f0;padding:4px 6px;text-align:start;}' +
+      'thead th{background:#0f172a;color:#fff;font-weight:800;text-align:center;}' +
+      'tbody tr:nth-child(even){background:#fafbff;}' +
+      'tbody tr.row-out{background:#fef2f2;}' +
+      'tbody tr.row-low{background:#fffbeb;}' +
+      '.num{text-align:end;font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums;}' +
+      '.code{font-family:ui-monospace,monospace;color:#64748b;font-size:9.5px;}' +
+      '.status{display:inline-block;padding:1px 7px;border-radius:5px;font-size:9px;font-weight:800;}' +
+      '.status.st-ok{background:#dcfce7;color:#15803d;}' +
+      '.status.st-low{background:#fef3c7;color:#92400e;}' +
+      '.status.st-out{background:#fee2e2;color:#b91c1c;}' +
+      'tfoot td{background:#1e293b;color:#fff;font-weight:900;border-color:#334155;}' +
+      '.foot{margin-top:14px;padding-top:10px;border-top:1px solid #cbd5e1;display:flex;justify-content:space-between;font-size:9.5px;color:#64748b;}' +
+      '.sigs{margin-top:22px;display:grid;grid-template-columns:repeat(3,1fr);gap:30px;font-size:10px;}' +
+      '.sig{text-align:center;}' +
+      '.sig-line{border-top:1px solid #475569;margin-bottom:6px;height:36px;}' +
+      '.sig-name{font-weight:700;color:#0f172a;}' +
+      '.sig-role{color:#94a3b8;font-size:9.5px;margin-top:2px;}' +
+      '.toolbar{position:sticky;top:0;background:#fff;padding:8px 12mm;border-bottom:1px solid #e2e8f0;display:flex;gap:8px;justify-content:end;z-index:10;}' +
+      '.toolbar button{background:#3b82f6;color:#fff;border:0;padding:8px 14px;border-radius:8px;font-weight:800;cursor:pointer;font-family:inherit;font-size:12px;}' +
+      '.toolbar button.ghost{background:#fff;color:#475569;border:1px solid #cbd5e1;}' +
+      '@media print{.toolbar{display:none !important;}.page{padding:8mm 6mm;}@page{size:A4 landscape;margin:8mm;}}' +
+    '</style></head><body>' +
+    '<div class="toolbar">' +
+      '<button onclick="window.print()">طباعة الآن</button>' +
+      '<button class="ghost" onclick="window.close()">إغلاق</button>' +
+    '</div>' +
+    '<div class="page">' +
+    '<div class="head">' +
+      '<div>' +
+        '<h1>كشف مواد المخزون</h1>' +
+        '<div class="h-sub">قائمة الأصناف · الأرصدة الحالية · القيم بالتكلفة</div>' +
+      '</div>' +
+      '<div class="h-meta">' +
+        (brandName ? '<div>البراند: <b>' + _invHubEsc(brandName) + '</b></div>' : '') +
+        '<div>تاريخ التقرير: <b>' + _ymd(new Date()) + '</b></div>' +
+        '<div>عدد الأصناف: <b>' + items.length + '</b></div>' +
+        '<div class="h-logo">Moroccan Taste POS</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="kpis">' +
+      '<div class="kpi k-cnt"><div class="kpi-label">إجمالي الأصناف</div><div class="kpi-num">' + items.length + '</div></div>' +
+      '<div class="kpi k-val"><div class="kpi-label">قيمة المخزون</div><div class="kpi-num">' + totalValue.toFixed(2) + ' ر.س</div></div>' +
+      '<div class="kpi k-low"><div class="kpi-label">منخفض</div><div class="kpi-num">' + lowCount + ' صنف</div></div>' +
+      '<div class="kpi k-out"><div class="kpi-label">نفد</div><div class="kpi-num">' + outCount + ' صنف</div></div>' +
+    '</div>' +
+    '<table><thead><tr>' +
+      '<th>#</th><th>الكود</th><th>الصنف</th><th>البراند</th><th>التصنيف</th>' +
+      '<th>الكمية</th><th>تكلفة الوحدة</th><th>القيمة (ر.س)</th><th>حد النواقص</th><th>الحالة</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody>' +
+    '<tfoot><tr><td colspan="7">الإجمالي · ' + items.length + ' صنف</td>' +
+      '<td class="num">' + totalValue.toFixed(2) + '</td>' +
+      '<td colspan="2" class="num">' + (lowCount + outCount) + ' حالة تحتاج متابعة</td>' +
+    '</tr></tfoot></table>' +
+    '<div class="sigs">' +
+      '<div class="sig"><div class="sig-line"></div><div class="sig-name">أمين المخزن</div><div class="sig-role">التوقيع والتاريخ</div></div>' +
+      '<div class="sig"><div class="sig-line"></div><div class="sig-name">المراجع المحاسبي</div><div class="sig-role">التوقيع والتاريخ</div></div>' +
+      '<div class="sig"><div class="sig-line"></div><div class="sig-name">المدير</div><div class="sig-role">التوقيع والتاريخ</div></div>' +
+    '</div>' +
+    '<div class="foot">' +
+      '<span>تم الإنتاج بواسطة Moroccan Taste POS · ' + new Date().toLocaleString('ar-SA') + '</span>' +
+      '<span>صفحة 1</span>' +
+    '</div>' +
+    '</div>' +
+    '<script>window.onload=function(){' + (forPrint ? 'setTimeout(function(){window.print();},400);' : '') + '};</' + 'script>' +
+    '</body></html>';
+  var w = window.open('', 'invItemsReport', 'width=1100,height=820,scrollbars=yes');
+  if (!w) return showToast('فعّل النوافذ المنبثقة للتصدير', true);
+  w.document.open(); w.document.write(html); w.document.close();
+  w.focus();
+}
+
+function _invItemsInjectStyles() {
+  if (document.getElementById('invItemsStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'invItemsStyles';
+  st.textContent =
+    '#wh_items .iv-items-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:12px 0;}' +
+    '#wh_items .iv-items-actions{display:flex;justify-content:space-between;align-items:center;padding:0 4px 10px;flex-wrap:wrap;gap:10px;}' +
+    '#wh_items .iv-items-counts{font-size:12.5px;color:#475569;font-weight:600;display:flex;align-items:center;flex-wrap:wrap;gap:8px;}' +
+    '#wh_items .iv-items-counts strong{color:#0f172a;}' +
+    '#wh_items .iv-items-export{display:flex;gap:6px;flex-wrap:wrap;}';
+  document.head.appendChild(st);
 }
 function renderInvTable(list) {
     
@@ -5786,17 +6070,19 @@ function _invLiveRenderTable(items, totals) {
         '<td>—</td>' +
         '<td>—</td>' +
       '</tr>';
-  // Counts under filter bar
+  // Counts under filter bar — V5.8.3: prominent clear-filter chip when active
   var counts = q('#invLiveCounts');
   if (counts) {
-    var quickLabel = quick === 'slow' ? ' · فلتر: بطيئة الحركة'
-                   : quick === 'neg'  ? ' · فلتر: رصيد سالب'
-                   : quick === 'reorder' ? ' · فلتر: تحتاج طلب'
+    var quickLabel = quick === 'slow' ? 'بطيئة الحركة'
+                   : quick === 'neg'  ? 'رصيد سالب'
+                   : quick === 'reorder' ? 'تحتاج طلب'
                    : '';
     counts.innerHTML = '<i class="fas fa-list-ul"></i> ' + filtered.length + ' من ' + (items||[]).length + ' صنف' +
       (search ? ' · بحث: <strong>' + _invHubEsc(search) + '</strong>' : '') +
-      quickLabel +
-      (quick ? ' <a href="#" onclick="event.preventDefault();_invLiveClearQuickFilter();">إزالة</a>' : '');
+      (quick ? ' <button class="iv-live-clear-chip" onclick="_invLiveClearQuickFilter()">' +
+                 '<i class="fas fa-filter"></i> فلتر نشط: ' + quickLabel +
+                 ' <span class="iv-live-clear-x">✕ إلغاء</span>' +
+               '</button>' : '');
   }
 }
 
@@ -5835,17 +6121,16 @@ window.invLiveOpenReorder = function() {
         }).join('') +
         '</tbody></table></div>' +
     '</div>';
-  if (typeof WoModal !== 'undefined' && WoModal.open) {
-    WoModal.open({
-      icon: 'fa-cart-plus', iconColor: 'purple',
-      title: 'اقتراح إعادة الطلب',
-      subtitle: 'بناء على معدل الاستهلاك خلال الفترة المختارة + تغطية ١٤ يوم.',
-      body: html, size: 'lg',
-      footer:
-        '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إغلاق</button>' +
-        '<button class="wo-btn wo-btn-primary" onclick="invLiveExportReorder()"><i class="fas fa-file-excel"></i> تصدير Excel</button>'
-    });
-  }
+  // V5.8.3 — use self-contained modal (works whether or not erp.js loaded WoModal)
+  ivShowModal({
+    icon: 'fa-cart-plus', iconColor: '#7c3aed',
+    title: 'اقتراح إعادة الطلب',
+    subtitle: 'محسوب من معدل الاستهلاك خلال الفترة × تغطية ١٤ يوم',
+    body: html, size: 'lg',
+    footer:
+      '<button onclick="ivCloseModal()">إغلاق</button>' +
+      '<button class="success" onclick="invLiveExportReorder()"><i class="fas fa-file-excel"></i> تصدير Excel</button>'
+  });
 };
 
 window.invLiveExportReorder = function() {
@@ -5900,10 +6185,6 @@ window._invLiveDrillDown = function(itemId, itemName) {
 function _invLiveShowDrillModal(itemId, itemName, rows) {
   var html =
     '<div class="iv-live-drill">' +
-      '<div class="iv-live-drill-head">' +
-        '<div class="iv-live-drill-title"><i class="fas fa-rectangle-list"></i> حركة الصنف خلال الفترة</div>' +
-        '<div class="iv-live-drill-sub">' + _invHubEsc(itemName) + ' · ' + rows.length + ' حركة</div>' +
-      '</div>' +
       (rows.length === 0
         ? '<div class="iv-live-empty">لا توجد حركة على هذا الصنف ضمن الفترة المحددة.</div>'
         : '<div class="iv-live-drill-table-wrap"><table class="iv-live-drill-table">' +
@@ -5926,30 +6207,113 @@ function _invLiveShowDrillModal(itemId, itemName, rows) {
             '</tbody></table></div>'
       ) +
     '</div>';
-  if (typeof WoModal !== 'undefined' && WoModal.open) {
-    WoModal.open({
-      icon: 'fa-list', iconColor: 'purple',
-      title: 'حركة الصنف',
-      subtitle: itemName + ' · ' + _ymd(window._invLive.startDate) + ' → ' + _ymd(window._invLive.endDate),
-      body: html, size: 'lg',
-      footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إغلاق</button>'
-    });
-  } else {
-    alert(itemName + ': ' + rows.length + ' حركة');
-  }
+  // V5.8.3 — self-contained modal (no WoModal dependency).  Works whether
+  //   erp.js is loaded or not, which used to leave the modal silently broken.
+  ivShowModal({
+    icon: 'fa-rectangle-list',
+    iconColor: '#7c3aed',
+    title: 'حركة الصنف · ' + itemName,
+    subtitle: rows.length + ' حركة · ' + _ymd(window._invLive.startDate) + ' → ' + _ymd(window._invLive.endDate),
+    body: html,
+    size: 'lg'
+  });
 }
 
-// ─── PDF / Excel / Print export (PR3 — full implementation) ───
-window.invLiveExport = function(kind) {
-  if (kind === 'print') return _invLiveExportPrint();
-  if (kind === 'excel') return _invLiveExportExcel();
-  if (kind === 'pdf')   return _invLiveExportPdf();
+// V5.8.3 — Self-contained inline modal. Replaces fragile WoModal dependency
+//   for inventory features. Single source of truth for inventory popups.
+//   Public API:
+//     ivShowModal({title, subtitle?, icon?, iconColor?, body, footer?, size?})
+//     ivCloseModal(id?)  — close top or by id
+window.ivShowModal = function(opts) {
+  opts = opts || {};
+  _invModalEnsureStyles();
+  var id = 'ivModal_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+  var size = opts.size || 'md';  // sm/md/lg/xl/full
+  var ov = document.createElement('div');
+  ov.className = 'iv-modal-overlay';
+  ov.id = id;
+  var iconHtml = opts.icon
+    ? '<div class="iv-modal-icon" style="background:' + (opts.iconColor || '#7c3aed') + '1a;color:' + (opts.iconColor || '#7c3aed') + ';"><i class="fas ' + _invHubEsc(opts.icon) + '"></i></div>'
+    : '';
+  var subHtml = opts.subtitle ? '<div class="iv-modal-sub">' + _invHubEsc(opts.subtitle) + '</div>' : '';
+  var titleHtml = opts.title ? '<div class="iv-modal-title">' + _invHubEsc(opts.title) + '</div>' : '';
+  ov.innerHTML =
+    '<div class="iv-modal iv-modal-' + size + '" role="dialog" aria-modal="true">' +
+      '<div class="iv-modal-head">' +
+        iconHtml +
+        '<div class="iv-modal-titles">' + titleHtml + subHtml + '</div>' +
+        '<button class="iv-modal-x" onclick="ivCloseModal(\'' + id + '\')" aria-label="إغلاق">✕</button>' +
+      '</div>' +
+      '<div class="iv-modal-body">' + (typeof opts.body === 'string' ? opts.body : '') + '</div>' +
+      (opts.footer ? '<div class="iv-modal-foot">' + opts.footer + '</div>' : '') +
+    '</div>';
+  document.body.appendChild(ov);
+  if (opts.body && typeof opts.body !== 'string') {
+    ov.querySelector('.iv-modal-body').appendChild(opts.body);
+  }
+  // Click overlay to close (not the modal itself)
+  ov.addEventListener('click', function(e) {
+    if (e.target === ov) ivCloseModal(id);
+  });
+  // ESC closes
+  if (!window._ivModalEscHandler) {
+    window._ivModalEscHandler = function(e) {
+      if (e.key !== 'Escape') return;
+      var top = document.querySelectorAll('.iv-modal-overlay');
+      if (top.length) ivCloseModal(top[top.length - 1].id);
+    };
+    document.addEventListener('keydown', window._ivModalEscHandler);
+  }
+  // Animate in
+  requestAnimationFrame(function() { ov.classList.add('iv-modal-open'); });
+  return id;
 };
-function _invLiveExportPrint() {
-  // Open print stylesheet — keeps the existing on-page table but
-  //   strips the chrome (filter bar, kpis, buttons) via @media print.
-  window.print();
+
+window.ivCloseModal = function(id) {
+  var ov = id ? document.getElementById(id) : document.querySelector('.iv-modal-overlay:last-of-type');
+  if (!ov) return;
+  ov.classList.remove('iv-modal-open');
+  setTimeout(function() { if (ov.parentNode) ov.parentNode.removeChild(ov); }, 200);
+};
+
+function _invModalEnsureStyles() {
+  if (document.getElementById('ivModalStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'ivModalStyles';
+  st.textContent =
+    '.iv-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,0.55);backdrop-filter:blur(4px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;opacity:0;transition:opacity 0.18s;direction:rtl;}' +
+    '.iv-modal-open{opacity:1;}' +
+    '.iv-modal{background:#fff;border-radius:18px;box-shadow:0 24px 64px rgba(0,0,0,0.30);width:100%;max-width:560px;max-height:92vh;display:flex;flex-direction:column;overflow:hidden;direction:rtl;font-family:inherit;transform:translateY(8px) scale(0.98);transition:transform 0.2s cubic-bezier(.4,0,.2,1);}' +
+    '.iv-modal-open .iv-modal{transform:translateY(0) scale(1);}' +
+    '.iv-modal-sm{max-width:420px;}' +
+    '.iv-modal-md{max-width:560px;}' +
+    '.iv-modal-lg{max-width:820px;}' +
+    '.iv-modal-xl{max-width:1100px;}' +
+    '.iv-modal-full{max-width:96vw;height:90vh;}' +
+    '.iv-modal-head{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid #e2e8f0;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);}' +
+    '.iv-modal-icon{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;font-size:18px;flex-shrink:0;}' +
+    '.iv-modal-titles{flex:1;min-width:0;}' +
+    '.iv-modal-title{font-size:15.5px;font-weight:800;color:#0f172a;line-height:1.3;letter-spacing:-0.01em;}' +
+    '.iv-modal-sub{font-size:12px;color:#64748b;font-weight:500;margin-top:2px;line-height:1.4;}' +
+    '.iv-modal-x{background:transparent;border:0;font-size:18px;color:#64748b;width:34px;height:34px;border-radius:8px;cursor:pointer;display:grid;place-items:center;font-family:inherit;transition:all 0.15s;}' +
+    '.iv-modal-x:hover{background:#f1f5f9;color:#0f172a;}' +
+    '.iv-modal-body{padding:18px 20px;overflow-y:auto;flex:1;color:#334155;font-size:13.5px;line-height:1.6;}' +
+    '.iv-modal-foot{padding:12px 18px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:8px;background:#f8fafc;flex-shrink:0;}' +
+    '.iv-modal-foot button{padding:9px 18px;border-radius:9px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-weight:700;cursor:pointer;font-size:12.5px;font-family:inherit;transition:all 0.15s;}' +
+    '.iv-modal-foot button:hover{background:#f1f5f9;border-color:#cbd5e1;}' +
+    '.iv-modal-foot button.primary{background:#7c3aed;color:#fff;border-color:#7c3aed;}' +
+    '.iv-modal-foot button.primary:hover{background:#6d28d9;border-color:#6d28d9;}' +
+    '.iv-modal-foot button.success{background:#15803d;color:#fff;border-color:#15803d;}' +
+    '.iv-modal-foot button.success:hover{background:#166534;}';
+  document.head.appendChild(st);
 }
+
+// ─── PDF / Excel / Print export ───
+window.invLiveExport = function(kind) {
+  if (kind === 'print') return _invLiveOpenPrintWindow(true);   // V5.8.3 — true print-window
+  if (kind === 'excel') return _invLiveExportExcel();
+  if (kind === 'pdf')   return _invLiveOpenPrintWindow(false);  // PDF = same window, user picks "Save as PDF"
+};
 function _invLiveExportExcel() {
   var d = window._invLive.data; if (!d) return showToast('لا توجد بيانات للتصدير', true);
   if (typeof XLSX === 'undefined' && typeof loadScript === 'function') {
@@ -5988,11 +6352,16 @@ function _invLiveExportExcel() {
   XLSX.writeFile(wb, fileName);
   showToast('تم تصدير ' + fileName);
 }
-function _invLiveExportPdf() {
-  var d = window._invLive.data; if (!d) return showToast('لا توجد بيانات للتصدير', true);
-  // Use the browser's built-in print-to-PDF via a popup window with embedded styles.
-  //   Lighter than jsPDF + autotable, full Arabic support, and the user
-  //   can choose "Save as PDF" from the print dialog.
+// V5.8.3 — Unified pro print/PDF window. Builds a fully self-contained
+//   HTML document in a popup with header, KPIs, ABC ribbon, full table,
+//   footer with page numbers + signature lines.  The browser's print
+//   dialog handles both physical print and "Save as PDF" — same template,
+//   same quality.  Replaces the old `window.print()` (which was broken
+//   because the page chrome wasn't fully strippable) and the previous
+//   PDF builder (which lacked KPIs/ABC).
+function _invLiveOpenPrintWindow(forPrint) {
+  var d = window._invLive.data;
+  if (!d) return showToast('لا توجد بيانات للتصدير', true);
   var s = window._invLive;
   var period = _ymd(s.startDate) + ' → ' + _ymd(s.endDate);
   var brandName = '';
@@ -6002,74 +6371,194 @@ function _invLiveExportPdf() {
     else if (window._invHub.brandId === '__all__') brandName = 'كل البراندات';
     else if (window._invHub.brandId === '__none__') brandName = 'بدون براند';
   }
+  var t = d.totals || {};
+  var totalAbcValue = (t.abcAValue || 0) + (t.abcBValue || 0) + (t.abcCValue || 0);
+  var aPct = totalAbcValue > 0 ? (t.abcAValue / totalAbcValue * 100) : 0;
+  var bPct = totalAbcValue > 0 ? (t.abcBValue / totalAbcValue * 100) : 0;
+  var cPct = totalAbcValue > 0 ? (t.abcCValue / totalAbcValue * 100) : 0;
+
   var rows = (d.items || []).map(function(it, i) {
-    return '<tr>' +
+    var statusCls = it.status === 'نفد' ? 'st-out' : it.status === 'منخفض' ? 'st-low' : 'st-ok';
+    var abcCls = 'abc-' + (it.abcClass || '').toLowerCase();
+    return '<tr class="' + (it.isNegative ? 'row-neg' : it.isSlowMoving ? 'row-slow' : '') + '">' +
       '<td class="num">' + (i+1) + '</td>' +
       '<td class="code">' + _invHubEsc(it.id) + '</td>' +
-      '<td>' + _invHubEsc(it.name) + '</td>' +
+      '<td><b>' + _invHubEsc(it.name) + '</b></td>' +
       '<td>' + _invHubEsc(it.category) + '</td>' +
+      '<td class="abc"><span class="abc-pill ' + abcCls + '">' + _invHubEsc(it.abcClass || '—') + '</span></td>' +
       '<td class="num">' + (Number(it.openingStock)||0).toFixed(2) + '</td>' +
-      '<td class="num pos">' + (Number(it.purchasedQty)||0).toFixed(2) + '</td>' +
-      '<td class="num neg">' + (Number(it.consumedQty)||0).toFixed(2) + '</td>' +
+      '<td class="num pos">' + ((Number(it.purchasedQty)||0) > 0 ? '+' : '') + (Number(it.purchasedQty)||0).toFixed(2) + '</td>' +
+      '<td class="num neg">' + ((Number(it.consumedQty)||0) > 0 ? '−' : '') + (Number(it.consumedQty)||0).toFixed(2) + '</td>' +
       '<td class="num">' + (Number(it.adjustedQty)||0).toFixed(2) + '</td>' +
-      '<td class="num close">' + (Number(it.closingStock)||0).toFixed(2) + '</td>' +
-      '<td class="num">' + (Number(it.value)||0).toFixed(2) + '</td>' +
+      '<td class="num close">' + (Number(it.closingStock)||0).toFixed(2) + ' ' + _invHubEsc(it.unit||'') + '</td>' +
+      '<td class="num"><b>' + (Number(it.value)||0).toFixed(2) + '</b></td>' +
+      '<td class="num"><span class="status ' + statusCls + '">' + _invHubEsc(it.status) + '</span></td>' +
     '</tr>';
   }).join('');
+
   var html =
-    '<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>تقرير المخزون الفعلي · ' + period + '</title>' +
+    '<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8">' +
+    '<title>تقرير المخزون الفعلي · ' + period + '</title>' +
     '<style>' +
-      '*{box-sizing:border-box;-webkit-print-color-adjust:exact;}' +
-      'body{font-family:"Tajawal","Segoe UI",Tahoma,sans-serif;color:#0f172a;margin:0;padding:20px;direction:rtl;font-size:11px;}' +
-      'h1{font-size:18px;margin:0 0 4px;}' +
-      '.head{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0f172a;padding-bottom:12px;margin-bottom:14px;}' +
-      '.head .meta{font-size:11px;color:#475569;line-height:1.5;}' +
-      '.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;}' +
-      '.kpi{border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;}' +
-      '.kpi-label{font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;}' +
-      '.kpi-num{font-size:15px;font-weight:900;margin-top:2px;}' +
-      'table{width:100%;border-collapse:collapse;font-size:10.5px;}' +
-      'th,td{border:1px solid #e2e8f0;padding:5px 7px;text-align:start;}' +
-      'th{background:#0f172a;color:#fff;font-weight:800;text-align:center;}' +
-      '.num{text-align:end;font-family:ui-monospace,monospace;}' +
-      '.code{font-family:ui-monospace,monospace;color:#64748b;font-size:10px;}' +
+      // Reset + print color preservation
+      '*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}' +
+      'html,body{margin:0;padding:0;}' +
+      'body{font-family:"Tajawal","Cairo","Segoe UI",Tahoma,sans-serif;color:#0f172a;direction:rtl;font-size:11px;background:#fff;}' +
+      '.page{padding:14mm 12mm;}' +
+      // Header
+      '.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #7c3aed;padding-bottom:10px;margin-bottom:12px;}' +
+      '.head h1{font-size:20px;margin:0;color:#0f172a;letter-spacing:-0.02em;}' +
+      '.head .h-sub{font-size:11px;color:#64748b;margin-top:3px;}' +
+      '.h-meta{font-size:10.5px;color:#475569;line-height:1.6;text-align:end;}' +
+      '.h-meta b{color:#0f172a;}' +
+      '.h-logo{font-size:14px;font-weight:900;color:#7c3aed;letter-spacing:-0.02em;}' +
+      // KPIs
+      '.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;}' +
+      '.kpi{border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;border-inline-start:3px solid var(--kc,#7c3aed);}' +
+      '.kpi-label{font-size:9.5px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;}' +
+      '.kpi-num{font-size:15px;font-weight:900;margin-top:2px;font-family:ui-monospace,Menlo,monospace;}' +
+      '.kpi.k-open{--kc:#3b82f6;}' +
+      '.kpi.k-pur{--kc:#10b981;}' +
+      '.kpi.k-con{--kc:#ef4444;}' +
+      '.kpi.k-cls{--kc:#7c3aed;}' +
+      // ABC ribbon
+      '.abc-row{display:flex;align-items:center;gap:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:10.5px;}' +
+      '.abc-row .abc-bar{flex:1;display:flex;height:12px;border-radius:6px;overflow:hidden;background:#fff;border:1px solid #cbd5e1;}' +
+      '.abc-row .abc-seg{display:grid;place-items:center;color:#fff;font-size:9px;font-weight:900;}' +
+      '.abc-row .abc-A{background:#dc2626;}' +
+      '.abc-row .abc-B{background:#f59e0b;}' +
+      '.abc-row .abc-C{background:#10b981;}' +
+      '.abc-row .abc-meta{display:flex;gap:14px;font-weight:700;}' +
+      // Table
+      '.tbl-wrap{margin-top:4px;}' +
+      'table{width:100%;border-collapse:collapse;font-size:10px;}' +
+      'th,td{border:1px solid #e2e8f0;padding:4px 6px;text-align:start;}' +
+      'thead th{background:#0f172a;color:#fff;font-weight:800;text-align:center;font-size:10px;letter-spacing:0.01em;}' +
+      'tbody tr:nth-child(even){background:#fafbff;}' +
+      'tbody tr.row-neg{background:#fef2f2;}' +
+      'tbody tr.row-slow{background:#fffbeb;}' +
+      '.num{text-align:end;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;}' +
+      '.code{font-family:ui-monospace,monospace;color:#64748b;font-size:9.5px;}' +
       '.pos{color:#15803d;font-weight:700;}' +
       '.neg{color:#b91c1c;font-weight:700;}' +
       '.close{color:#5b21b6;font-weight:800;}' +
-      'tfoot td{background:#1e293b;color:#fff;font-weight:900;}' +
-      '.foot{margin-top:14px;font-size:10px;color:#64748b;display:flex;justify-content:space-between;}' +
-      '@media print{ body{padding:12mm;} .no-print{display:none;} }' +
+      '.abc{text-align:center;}' +
+      '.abc-pill{display:inline-block;width:18px;height:16px;line-height:16px;text-align:center;border-radius:4px;color:#fff;font-size:9px;font-weight:900;}' +
+      '.abc-pill.abc-a{background:#dc2626;}' +
+      '.abc-pill.abc-b{background:#f59e0b;}' +
+      '.abc-pill.abc-c{background:#10b981;}' +
+      '.status{display:inline-block;padding:1px 7px;border-radius:5px;font-size:9px;font-weight:800;}' +
+      '.status.st-ok{background:#dcfce7;color:#15803d;}' +
+      '.status.st-low{background:#fef3c7;color:#92400e;}' +
+      '.status.st-out{background:#fee2e2;color:#b91c1c;}' +
+      'tfoot td{background:#1e293b;color:#fff;font-weight:900;border-color:#334155;}' +
+      // Footer
+      '.foot{margin-top:14px;padding-top:10px;border-top:1px solid #cbd5e1;display:flex;justify-content:space-between;font-size:9.5px;color:#64748b;}' +
+      // Signature lines
+      '.sigs{margin-top:22px;display:grid;grid-template-columns:repeat(3,1fr);gap:30px;font-size:10px;}' +
+      '.sig{text-align:center;}' +
+      '.sig-line{border-top:1px solid #475569;margin-bottom:6px;height:36px;}' +
+      '.sig-name{font-weight:700;color:#0f172a;}' +
+      '.sig-role{color:#94a3b8;font-size:9.5px;margin-top:2px;}' +
+      // Toolbar (hidden on print)
+      '.toolbar{position:sticky;top:0;background:#fff;padding:8px 12mm;border-bottom:1px solid #e2e8f0;display:flex;gap:8px;justify-content:end;z-index:10;}' +
+      '.toolbar button{background:#7c3aed;color:#fff;border:0;padding:8px 14px;border-radius:8px;font-weight:800;cursor:pointer;font-family:inherit;font-size:12px;}' +
+      '.toolbar button.ghost{background:#fff;color:#475569;border:1px solid #cbd5e1;}' +
+      // Print rules
+      '@media print{.toolbar{display:none !important;}.page{padding:8mm 6mm;}@page{size:A4 landscape;margin:8mm;}}' +
     '</style></head><body>' +
+    // Toolbar (only visible on screen)
+    '<div class="toolbar">' +
+      '<button onclick="window.print()"><i></i>طباعة الآن</button>' +
+      '<button class="ghost" onclick="window.close()">إغلاق</button>' +
+    '</div>' +
+    '<div class="page">' +
+    // Header
     '<div class="head">' +
-      '<div><h1>تقرير المخزون الفعلي</h1>' +
-        '<div class="meta">الفترة: <b>' + period + '</b>' + (brandName ? ' · البراند: <b>' + _invHubEsc(brandName) + '</b>' : '') + '</div>' +
-        '<div class="meta">تاريخ التقرير: ' + _ymd(new Date()) + '</div></div>' +
-      '<div class="meta"><i>Moroccan Taste POS</i></div>' +
+      '<div>' +
+        '<h1>تقرير المخزون الفعلي</h1>' +
+        '<div class="h-sub">حركة المخزون · أرصدة فعلية · تحليل ABC</div>' +
+      '</div>' +
+      '<div class="h-meta">' +
+        '<div>الفترة: <b>' + period + '</b></div>' +
+        (brandName ? '<div>البراند: <b>' + _invHubEsc(brandName) + '</b></div>' : '') +
+        '<div>تاريخ التقرير: <b>' + _ymd(new Date()) + '</b></div>' +
+        '<div class="h-logo">Moroccan Taste POS</div>' +
+      '</div>' +
     '</div>' +
+    // KPIs
     '<div class="kpis">' +
-      '<div class="kpi"><div class="kpi-label">مخزون أول الفترة</div><div class="kpi-num">' + d.totals.openingValue.toFixed(2) + ' ر.س</div></div>' +
-      '<div class="kpi"><div class="kpi-label">مشتريات</div><div class="kpi-num pos">+ ' + d.totals.purchasesValue.toFixed(2) + ' ر.س</div></div>' +
-      '<div class="kpi"><div class="kpi-label">استهلاك</div><div class="kpi-num neg">− ' + d.totals.consumedValue.toFixed(2) + ' ر.س</div></div>' +
-      '<div class="kpi"><div class="kpi-label">مخزون آخر الفترة</div><div class="kpi-num close">' + d.totals.closingValue.toFixed(2) + ' ر.س</div></div>' +
+      '<div class="kpi k-open"><div class="kpi-label">مخزون أول الفترة</div><div class="kpi-num">' + (t.openingValue||0).toFixed(2) + ' ر.س</div></div>' +
+      '<div class="kpi k-pur"><div class="kpi-label">مشتريات</div><div class="kpi-num pos">+ ' + (t.purchasesValue||0).toFixed(2) + ' ر.س</div></div>' +
+      '<div class="kpi k-con"><div class="kpi-label">استهلاك</div><div class="kpi-num neg">− ' + (t.consumedValue||0).toFixed(2) + ' ر.س</div></div>' +
+      '<div class="kpi k-cls"><div class="kpi-label">مخزون آخر الفترة</div><div class="kpi-num close">' + (t.closingValue||0).toFixed(2) + ' ر.س</div></div>' +
     '</div>' +
-    '<table>' +
-      '<thead><tr><th>#</th><th>الكود</th><th>الصنف</th><th>التصنيف</th><th>أول الفترة</th><th>مشتريات</th><th>استهلاك</th><th>تعديلات</th><th>آخر الفترة</th><th>القيمة (ر.س)</th></tr></thead>' +
+    // ABC ribbon
+    (totalAbcValue > 0
+      ? '<div class="abc-row">' +
+          '<span><b>تحليل ABC:</b></span>' +
+          '<div class="abc-bar">' +
+            '<div class="abc-seg abc-A" style="width:' + aPct.toFixed(1) + '%;">A</div>' +
+            '<div class="abc-seg abc-B" style="width:' + bPct.toFixed(1) + '%;">B</div>' +
+            '<div class="abc-seg abc-C" style="width:' + cPct.toFixed(1) + '%;">C</div>' +
+          '</div>' +
+          '<div class="abc-meta">' +
+            '<span>A: <b>' + (t.abcA||0) + '</b> صنف · ' + aPct.toFixed(0) + '%</span>' +
+            '<span>B: <b>' + (t.abcB||0) + '</b> صنف · ' + bPct.toFixed(0) + '%</span>' +
+            '<span>C: <b>' + (t.abcC||0) + '</b> صنف · ' + cPct.toFixed(0) + '%</span>' +
+          '</div>' +
+        '</div>'
+      : '') +
+    // Table
+    '<div class="tbl-wrap"><table>' +
+      '<thead><tr>' +
+        '<th>#</th><th>الكود</th><th>الصنف</th><th>التصنيف</th><th>ABC</th>' +
+        '<th>أول الفترة</th><th>مشتريات</th><th>استهلاك</th><th>تعديلات</th>' +
+        '<th>آخر الفترة</th><th>القيمة (ر.س)</th><th>الحالة</th>' +
+      '</tr></thead>' +
       '<tbody>' + rows + '</tbody>' +
-      '<tfoot><tr><td colspan="4">الإجمالي (' + d.totals.itemCount + ' صنف)</td>' +
-        '<td class="num">' + d.totals.openingValue.toFixed(2) + '</td>' +
-        '<td class="num">+ ' + d.totals.purchasesValue.toFixed(2) + '</td>' +
-        '<td class="num">− ' + d.totals.consumedValue.toFixed(2) + '</td>' +
-        '<td class="num">' + d.totals.adjustValue.toFixed(2) + '</td>' +
-        '<td class="num">' + d.totals.closingValue.toFixed(2) + '</td>' +
-        '<td class="num">' + d.totals.closingValue.toFixed(2) + '</td>' +
+      '<tfoot><tr>' +
+        '<td colspan="5">الإجمالي · ' + (t.itemCount||0) + ' صنف</td>' +
+        '<td class="num">' + (t.openingValue||0).toFixed(2) + '</td>' +
+        '<td class="num">+ ' + (t.purchasesValue||0).toFixed(2) + '</td>' +
+        '<td class="num">− ' + (t.consumedValue||0).toFixed(2) + '</td>' +
+        '<td class="num">' + (t.adjustValue||0).toFixed(2) + '</td>' +
+        '<td class="num">—</td>' +
+        '<td class="num">' + (t.closingValue||0).toFixed(2) + '</td>' +
+        '<td class="num">' +
+          (t.lowCount > 0 ? t.lowCount + ' منخفض' : '') +
+          (t.lowCount > 0 && t.outCount > 0 ? ' · ' : '') +
+          (t.outCount > 0 ? t.outCount + ' نفد' : '') +
+          (t.lowCount === 0 && t.outCount === 0 ? 'سليم' : '') +
+        '</td>' +
       '</tr></tfoot>' +
-    '</table>' +
-    '<div class="foot"><span>صفحة 1 من 1</span><span>تم الإنتاج بواسطة Moroccan Taste POS</span></div>' +
-    '<script>window.onload=function(){setTimeout(function(){window.print();},250)};</' + 'script>' +
+    '</table></div>' +
+    // Signature lines
+    '<div class="sigs">' +
+      '<div class="sig"><div class="sig-line"></div><div class="sig-name">أمين المخزن</div><div class="sig-role">التوقيع والتاريخ</div></div>' +
+      '<div class="sig"><div class="sig-line"></div><div class="sig-name">المراجع المحاسبي</div><div class="sig-role">التوقيع والتاريخ</div></div>' +
+      '<div class="sig"><div class="sig-line"></div><div class="sig-name">المدير</div><div class="sig-role">التوقيع والتاريخ</div></div>' +
+    '</div>' +
+    // Footer
+    '<div class="foot">' +
+      '<span>تم الإنتاج بواسطة Moroccan Taste POS · ' + new Date().toLocaleString('ar-SA') + '</span>' +
+      '<span>صفحة <span id="pgN"></span></span>' +
+    '</div>' +
+    '</div>' +  // .page
+    '<script>' +
+      // After load: optionally auto-trigger print
+      'window.onload=function(){' +
+        (forPrint ? 'setTimeout(function(){window.print();},400);' : '') +
+      '};' +
+    '</' + 'script>' +
     '</body></html>';
-  var w = window.open('', 'invLivePdf', 'width=900,height=700');
-  if (!w) return showToast('السماح بالنوافذ المنبثقة لتصدير PDF', true);
+  var w = window.open('', 'invLiveReport', 'width=1100,height=820,scrollbars=yes');
+  if (!w) {
+    showToast('فعّل النوافذ المنبثقة لتصدير ' + (forPrint ? 'الطباعة' : 'PDF'), true);
+    return;
+  }
   w.document.open(); w.document.write(html); w.document.close();
+  w.focus();
 }
 
 // ─── Styles ───
@@ -6202,6 +6691,12 @@ function _invLiveInjectStyles() {
     /* Warning button */
     '.iv-live-btn-warning{background:#f59e0b;color:#fff;border-color:#f59e0b;}' +
     '.iv-live-btn-warning:hover{background:#d97706;border-color:#d97706;}' +
+    /* V5.8.3 — Clear filter chip (prominent) */
+    '.iv-live-clear-chip{display:inline-flex;align-items:center;gap:8px;background:#fee2e2;color:#991b1b;border:1.5px solid #fca5a5;padding:6px 12px;border-radius:8px;margin-inline-start:10px;cursor:pointer;font-size:12px;font-weight:800;font-family:inherit;transition:all 0.15s;}' +
+    '.iv-live-clear-chip:hover{background:#fecaca;border-color:#ef4444;transform:translateY(-1px);}' +
+    '.iv-live-clear-x{background:#dc2626;color:#fff;padding:2px 9px;border-radius:6px;font-size:10.5px;font-weight:900;}' +
+    '.iv-live-empty a{color:#7c3aed;font-weight:800;text-decoration:underline;}' +
+    '.iv-live-empty a:hover{color:#6d28d9;}' +
     '@media print{' +
       '.iv-live-filterbar,.iv-live-toolbar,.iv-live-kpis,.iv-live-insights,.iv-hub-strip,#whTabs,.sidebar,.app-header{display:none !important;}' +
       '.iv-live-shell{padding:0;background:#fff;}' +

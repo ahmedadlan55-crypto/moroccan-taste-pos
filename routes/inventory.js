@@ -295,6 +295,21 @@ router.get('/live-report', async (req, res) => {
       [...itemIds, startD, endD, ...whParam]
     );
 
+    // V5.8.2 — PRO ANALYTICS: last movement date per item (any type) and
+    //   daily in/out totals for the period (for the trend chart).
+    const [lastMovRows] = await db.query(
+      'SELECT item_id, MAX(movement_date) AS last_dt FROM inventory_movements ' +
+      'WHERE item_id IN (' + placeholders + ') ' + whClause +
+      ' GROUP BY item_id',
+      [...itemIds, ...whParam]
+    );
+    const [dailyTrend] = await db.query(
+      'SELECT DATE(movement_date) AS day, type, SUM(qty) AS q FROM inventory_movements ' +
+      'WHERE item_id IN (' + placeholders + ') AND movement_date >= ? AND movement_date <= ? ' + whClause +
+      ' GROUP BY DATE(movement_date), type ORDER BY day',
+      [...itemIds, startD, endD, ...whParam]
+    );
+
     // Index helpers
     const netSinceStart = {}; // item_id → net (in - out) since startD
     allRows.forEach(r => {
@@ -332,6 +347,12 @@ router.get('/live-report', async (req, res) => {
       byItem[r.item_id][b] = (byItem[r.item_id][b] || 0) + Number(r.q || 0);
     });
 
+    // V5.8.2 — Pro analytics: index last-movement + period length for aging.
+    const lastMovMap = {};
+    lastMovRows.forEach(r => { lastMovMap[r.item_id] = r.last_dt ? new Date(r.last_dt) : null; });
+    const periodDays = Math.max(1, Math.ceil((endD - startD) / (24 * 3600 * 1000)));
+    const SLOW_DAYS = 60;  // Items with no movement in 60+ days are "slow-moving"
+
     // Compute the per-item summary
     const totals = _zeroTotals();
     const result = items.map(i => {
@@ -345,14 +366,33 @@ router.get('/live-report', async (req, res) => {
       if (closing <= 0) status = 'نفد';
       else if (closing <= (Number(i.min_stock) || 0)) status = 'منخفض';
 
-      totals.openingValue   += opening * cost;
-      totals.purchasesValue += b.purchases * cost;
-      totals.consumedValue  += b.consumed  * cost;
-      totals.adjustValue    += b.adjustments * cost;
-      totals.closingValue   += value;
+      // V5.8.2 — pro fields
+      const lastMov = lastMovMap[i.id] || null;
+      const daysSinceLastMov = lastMov ? Math.floor((Date.now() - lastMov.getTime()) / (24 * 3600 * 1000)) : null;
+      const isSlowMoving = (daysSinceLastMov === null) || (daysSinceLastMov >= SLOW_DAYS);
+      const isNegative   = closing < 0;
+      // Reorder qty suggestion: avg daily consumption × default 14-day cover, capped at min_stock × 2.
+      //   This is a simple heuristic; refine per item later if lead time is stored.
+      const dailyConsumption = b.consumed / periodDays;
+      const suggestedReorder = Math.max(0,
+        Math.ceil(dailyConsumption * 14) - Math.max(0, closing)
+      );
+      // Stock turnover for this item (in period): consumption / avg inventory.
+      const avgInventory = (opening + closing) / 2;
+      const turnover = avgInventory > 0 ? (b.consumed / avgInventory) : 0;
+
+      totals.openingValue     += opening * cost;
+      totals.purchasesValue   += b.purchases * cost;
+      totals.consumedValue    += b.consumed  * cost;
+      totals.adjustValue      += b.adjustments * cost;
+      totals.closingValue     += value;
       totals.itemCount++;
       if (status === 'منخفض') totals.lowCount++;
-      if (status === 'نفد')  totals.outCount++;
+      if (status === 'نفد')   totals.outCount++;
+      if (isNegative)         totals.negativeCount++;
+      if (isSlowMoving && closing > 0) totals.slowMovingCount++;
+      if (suggestedReorder > 0)        totals.reorderCount++;
+
       return {
         id: i.id,
         name: i.name,
@@ -373,17 +413,75 @@ router.get('/live-report', async (req, res) => {
         stocktakeQty: b.stocktake,
         closingStock: closing,
         value: value,
-        status: status
+        status: status,
+        // V5.8.2 — pro fields
+        lastMovementDate: lastMov,
+        daysSinceLastMov: daysSinceLastMov,
+        isSlowMoving: isSlowMoving && closing > 0,
+        isNegative: isNegative,
+        suggestedReorder: suggestedReorder,
+        turnover: Math.round(turnover * 100) / 100,
+        abcClass: ''  // populated below after we sort by value
       };
     });
+
+    // V5.8.2 — ABC classification (Pareto). Sort by value desc, mark first
+    //   80% of cumulative value as A, next 15% as B, last 5% as C.
+    const sortedByValue = result.slice().sort((a, b) => b.value - a.value);
+    const totalValue = sortedByValue.reduce((s, x) => s + (x.value || 0), 0);
+    let cumulative = 0;
+    sortedByValue.forEach(x => {
+      cumulative += x.value || 0;
+      const pct = totalValue > 0 ? (cumulative / totalValue) : 0;
+      x.abcClass = pct <= 0.80 ? 'A' : pct <= 0.95 ? 'B' : 'C';
+    });
+    // Aggregate ABC totals
+    totals.abcA = sortedByValue.filter(x => x.abcClass === 'A').length;
+    totals.abcB = sortedByValue.filter(x => x.abcClass === 'B').length;
+    totals.abcC = sortedByValue.filter(x => x.abcClass === 'C').length;
+    totals.abcAValue = sortedByValue.filter(x => x.abcClass === 'A').reduce((s, x) => s + (x.value || 0), 0);
+    totals.abcBValue = sortedByValue.filter(x => x.abcClass === 'B').reduce((s, x) => s + (x.value || 0), 0);
+    totals.abcCValue = sortedByValue.filter(x => x.abcClass === 'C').reduce((s, x) => s + (x.value || 0), 0);
+
+    // V5.8.2 — Stock turnover (overall): consumption value / avg inventory value.
+    totals.turnover = totals.openingValue > 0
+      ? Math.round((totals.consumedValue / ((totals.openingValue + totals.closingValue) / 2 || 1)) * 100) / 100
+      : 0;
+
+    // V5.8.2 — Build a daily trend series for the period (in vs out).
+    //   Returns an array of { day: 'YYYY-MM-DD', inQty, outQty, inValue, outValue }
+    //   Quantities are summed; values use a weighted-average cost across all items.
+    const avgCost = items.reduce((s, x) => s + (Number(x.cost) || 0), 0) / Math.max(1, items.length);
+    const trendByDay = {};
+    dailyTrend.forEach(r => {
+      const day = r.day instanceof Date
+        ? r.day.toISOString().slice(0, 10)
+        : String(r.day).slice(0, 10);
+      if (!trendByDay[day]) trendByDay[day] = { day, inQty: 0, outQty: 0, inValue: 0, outValue: 0 };
+      const q = Number(r.q) || 0;
+      if (r.type === 'in') {
+        trendByDay[day].inQty += q;
+        trendByDay[day].inValue += q * avgCost;
+      } else {
+        trendByDay[day].outQty += q;
+        trendByDay[day].outValue += q * avgCost;
+      }
+    });
+    // Fill missing days with zero (so the chart x-axis is continuous)
+    const trend = [];
+    for (let d = new Date(startD); d <= endD; d.setDate(d.getDate() + 1)) {
+      const key = d.toISOString().slice(0, 10);
+      trend.push(trendByDay[key] || { day: key, inQty: 0, outQty: 0, inValue: 0, outValue: 0 });
+    }
 
     res.json({
       items: result,
       totals: totals,
-      period: { startDate: startD, endDate: endD }
+      trend: trend,
+      period: { startDate: startD, endDate: endD, days: periodDays }
     });
   } catch (e) {
-    res.json({ error: e.message, items: [], totals: _zeroTotals() });
+    res.json({ error: e.message, items: [], totals: _zeroTotals(), trend: [] });
   }
 });
 
@@ -392,11 +490,17 @@ function _zeroTotals() {
     itemCount: 0,
     lowCount: 0,
     outCount: 0,
+    negativeCount:    0,
+    slowMovingCount:  0,
+    reorderCount:     0,
     openingValue:   0,
     purchasesValue: 0,
     consumedValue:  0,
     adjustValue:    0,
-    closingValue:   0
+    closingValue:   0,
+    abcA: 0, abcB: 0, abcC: 0,
+    abcAValue: 0, abcBValue: 0, abcCValue: 0,
+    turnover: 0
   };
 }
 

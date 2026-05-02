@@ -5444,9 +5444,12 @@ function _invLiveMountShell() {
     '<section id="invLiveShell" class="iv-live-shell">' +
       '<div class="iv-live-filterbar" id="invLiveFilterBar"></div>' +
       '<div class="iv-live-kpis" id="invLiveKpis"></div>' +
+      // V5.8.2 — Insights row: ABC pie + trend chart + alerts ribbon
+      '<div class="iv-live-insights" id="invLiveInsights"></div>' +
       '<div class="iv-live-toolbar">' +
         '<div class="iv-live-counts" id="invLiveCounts"></div>' +
         '<div class="iv-live-export">' +
+          '<button class="iv-live-btn iv-live-btn-warning" onclick="invLiveOpenReorder()"><i class="fas fa-cart-plus"></i> اقتراح الشراء</button>' +
           '<button class="iv-live-btn iv-live-btn-ghost" onclick="invLiveExport(\'print\')"><i class="fas fa-print"></i> طباعة</button>' +
           '<button class="iv-live-btn iv-live-btn-success" onclick="invLiveExport(\'excel\')"><i class="fas fa-file-excel"></i> تصدير Excel</button>' +
           '<button class="iv-live-btn iv-live-btn-danger" onclick="invLiveExport(\'pdf\')"><i class="fas fa-file-pdf"></i> تصدير PDF</button>' +
@@ -5561,8 +5564,125 @@ function _invLiveRender() {
   var data = window._invLive.data;
   if (!data) return;
   _invLiveRenderKpis(data.totals);
+  _invLiveRenderInsights(data);  // V5.8.2 — ABC + trend + alerts ribbon
   _invLiveRenderTable(data.items, data.totals);
 }
+
+// V5.8.2 — Insights row: 3-card layout
+//   1) ABC card (Pareto bar + counts)
+//   2) Trend card (SVG sparkline of in vs out per day)
+//   3) Alerts card (slow-moving + negative + reorder counts + turnover)
+function _invLiveRenderInsights(data) {
+  var box = q('#invLiveInsights');
+  if (!box) return;
+  var t = data.totals || {};
+  var trend = data.trend || [];
+  box.innerHTML =
+    '<div class="iv-live-insight iv-live-insight-abc">' +
+      '<div class="iv-live-insight-head">' +
+        '<i class="fas fa-chart-pie"></i><span>تحليل ABC (مبدأ باريتو)</span>' +
+        '<span class="iv-live-insight-hint" title="A = أعلى ٨٠٪ قيمة · B = ١٥٪ التالية · C = آخر ٥٪">?</span>' +
+      '</div>' +
+      _invLiveAbcBar(t) +
+    '</div>' +
+    '<div class="iv-live-insight iv-live-insight-trend">' +
+      '<div class="iv-live-insight-head">' +
+        '<i class="fas fa-chart-line"></i><span>اتجاه الحركة خلال الفترة</span>' +
+        '<span class="iv-live-insight-hint" title="مشتريات (أخضر) × استهلاك (أحمر)">?</span>' +
+      '</div>' +
+      _invLiveTrendChart(trend) +
+    '</div>' +
+    '<div class="iv-live-insight iv-live-insight-alerts">' +
+      '<div class="iv-live-insight-head">' +
+        '<i class="fas fa-bell"></i><span>تنبيهات وملاحظات</span>' +
+      '</div>' +
+      _invLiveAlertsList(t) +
+    '</div>';
+}
+
+function _invLiveAbcBar(t) {
+  var totalValue = (t.abcAValue || 0) + (t.abcBValue || 0) + (t.abcCValue || 0);
+  if (totalValue <= 0) {
+    return '<div class="iv-live-insight-empty">لا توجد قيمة كافية للتحليل.</div>';
+  }
+  var aPct = (t.abcAValue / totalValue * 100) || 0;
+  var bPct = (t.abcBValue / totalValue * 100) || 0;
+  var cPct = (t.abcCValue / totalValue * 100) || 0;
+  return '<div class="iv-live-abc-bar">' +
+           '<div class="iv-live-abc-seg iv-live-abc-a" style="width:' + aPct.toFixed(2) + '%;" title="A: ' + t.abcA + ' صنف · ' + aPct.toFixed(1) + '%">A</div>' +
+           '<div class="iv-live-abc-seg iv-live-abc-b" style="width:' + bPct.toFixed(2) + '%;" title="B: ' + t.abcB + ' صنف · ' + bPct.toFixed(1) + '%">B</div>' +
+           '<div class="iv-live-abc-seg iv-live-abc-c" style="width:' + cPct.toFixed(2) + '%;" title="C: ' + t.abcC + ' صنف · ' + cPct.toFixed(1) + '%">C</div>' +
+         '</div>' +
+         '<div class="iv-live-abc-legend">' +
+           '<div class="iv-live-abc-row"><span class="iv-live-abc-dot iv-live-abc-a"></span><span class="iv-live-abc-name">A · حرج</span><span class="iv-live-abc-cnt">' + t.abcA + ' صنف</span><span class="iv-live-abc-pct">' + aPct.toFixed(0) + '%</span></div>' +
+           '<div class="iv-live-abc-row"><span class="iv-live-abc-dot iv-live-abc-b"></span><span class="iv-live-abc-name">B · مهم</span><span class="iv-live-abc-cnt">' + t.abcB + ' صنف</span><span class="iv-live-abc-pct">' + bPct.toFixed(0) + '%</span></div>' +
+           '<div class="iv-live-abc-row"><span class="iv-live-abc-dot iv-live-abc-c"></span><span class="iv-live-abc-name">C · عادي</span><span class="iv-live-abc-cnt">' + t.abcC + ' صنف</span><span class="iv-live-abc-pct">' + cPct.toFixed(0) + '%</span></div>' +
+         '</div>';
+}
+
+// SVG sparkline chart — no library, < 1 KB rendered. Two paths: in (green)
+//   and out (red), shared y-axis based on max of either series.
+function _invLiveTrendChart(trend) {
+  if (!trend || !trend.length) {
+    return '<div class="iv-live-insight-empty">لا توجد حركة لرسم الاتجاه.</div>';
+  }
+  var w = 320, h = 100, pad = 8;
+  var max = 1;
+  trend.forEach(function(d) {
+    if (d.inQty  > max) max = d.inQty;
+    if (d.outQty > max) max = d.outQty;
+  });
+  var n = trend.length;
+  var stepX = (w - pad * 2) / Math.max(1, n - 1);
+  function px(i) { return (pad + i * stepX).toFixed(1); }
+  function py(v) { return (h - pad - (v / max) * (h - pad * 2)).toFixed(1); }
+  var inPath = trend.map(function(d, i) { return (i === 0 ? 'M' : 'L') + px(i) + ',' + py(d.inQty); }).join(' ');
+  var outPath = trend.map(function(d, i) { return (i === 0 ? 'M' : 'L') + px(i) + ',' + py(d.outQty); }).join(' ');
+  // Area gradients are skipped to keep it light; just stroked paths
+  var firstDay = trend[0].day, lastDay = trend[trend.length - 1].day;
+  return '<div class="iv-live-trend">' +
+           '<svg viewBox="0 0 ' + w + ' ' + h + '" class="iv-live-trend-svg" preserveAspectRatio="none">' +
+             '<path d="' + inPath  + '" fill="none" stroke="#10b981" stroke-width="2"/>' +
+             '<path d="' + outPath + '" fill="none" stroke="#ef4444" stroke-width="2"/>' +
+           '</svg>' +
+           '<div class="iv-live-trend-meta">' +
+             '<span><span class="iv-live-trend-dot" style="background:#10b981;"></span> مشتريات</span>' +
+             '<span><span class="iv-live-trend-dot" style="background:#ef4444;"></span> استهلاك</span>' +
+           '</div>' +
+           '<div class="iv-live-trend-axis">' +
+             '<span>' + firstDay + '</span>' +
+             '<span>' + n + ' يوم</span>' +
+             '<span>' + lastDay + '</span>' +
+           '</div>' +
+         '</div>';
+}
+
+function _invLiveAlertsList(t) {
+  function row(label, count, color, icon, filterKind) {
+    var hot = count > 0;
+    return '<button class="iv-live-alert-row' + (hot ? ' iv-live-alert-hot' : '') + '" ' +
+           (filterKind ? 'onclick="_invLiveQuickFilter(\'' + filterKind + '\')"' : '') + '>' +
+             '<span class="iv-live-alert-icon" style="background:' + color + '1a;color:' + color + ';"><i class="fas ' + icon + '"></i></span>' +
+             '<span class="iv-live-alert-label">' + label + '</span>' +
+             '<span class="iv-live-alert-count" style="color:' + (hot ? color : '#94a3b8') + ';">' + count + '</span>' +
+           '</button>';
+  }
+  return '<div class="iv-live-alerts-list">' +
+           row('بطيئة الحركة (+٦٠ يوم)', t.slowMovingCount || 0, '#f59e0b', 'fa-hourglass-half', 'slow') +
+           row('رصيد سالب (شذوذ)',         t.negativeCount   || 0, '#dc2626', 'fa-circle-exclamation', 'neg') +
+           row('تحتاج إعادة طلب',          t.reorderCount    || 0, '#7c3aed', 'fa-cart-plus', 'reorder') +
+           row('معدل الدوران',              (t.turnover || 0) + 'x', '#0ea5e9', 'fa-arrows-rotate', null) +
+         '</div>';
+}
+
+window._invLiveQuickFilter = function(kind) {
+  // Quick-filter the table by an analytics flag. Set internal filter,
+  //   then re-render the table.
+  window._invLive._quickFilter = kind;
+  _invLiveRenderTable(window._invLive.data.items, window._invLive.data.totals);
+  // Scroll to table
+  var t = q('.iv-live-table-wrap'); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
 
 function _invLiveRenderKpis(t) {
   var el = q('#invLiveKpis');
@@ -5590,12 +5710,17 @@ function _invLiveRenderTable(items, totals) {
   var s = window._invLive;
   var search = (s.search || '').trim().toLowerCase();
   var status = s.status;
+  var quick  = s._quickFilter || '';
   var filtered = (items || []).filter(function(it) {
     if (status && it.status !== ({ ok: 'جيد', low: 'منخفض', out: 'نفد' }[status])) return false;
     if (search) {
       var hay = (it.name + ' ' + it.id + ' ' + (it.category||'')).toLowerCase();
       if (hay.indexOf(search) < 0) return false;
     }
+    // V5.8.2 — analytics quick filters from the alerts ribbon
+    if (quick === 'slow'    && !it.isSlowMoving) return false;
+    if (quick === 'neg'     && !it.isNegative)   return false;
+    if (quick === 'reorder' && !(it.suggestedReorder > 0)) return false;
     return true;
   });
   var head = q('#invLiveTable thead');
@@ -5606,57 +5731,143 @@ function _invLiveRenderTable(items, totals) {
       '<th>الكود</th>' +
       '<th class="iv-th-name">الصنف</th>' +
       '<th>التصنيف</th>' +
+      '<th title="ABC = تصنيف باريتو حسب القيمة">ABC</th>' +
       '<th class="iv-th-num">مخزون أول الفترة</th>' +
       '<th class="iv-th-num">مشتريات</th>' +
       '<th class="iv-th-num">استهلاك</th>' +
       '<th class="iv-th-num">تعديلات</th>' +
-      '<th class="iv-th-num">تحويل وارد</th>' +
-      '<th class="iv-th-num">تحويل صادر</th>' +
       '<th class="iv-th-num iv-th-closing">مخزون آخر الفترة</th>' +
       '<th class="iv-th-num">القيمة (ر.س)</th>' +
+      '<th title="عدد الأيام منذ آخر حركة">آخر حركة</th>' +
       '<th>الحالة</th>' +
     '</tr>';
   body.innerHTML = filtered.length === 0
-    ? '<tr><td colspan="12" class="iv-live-empty">لا توجد بيانات في النطاق المحدد. جرّب توسيع الفترة أو رفع الفلاتر.</td></tr>'
+    ? '<tr><td colspan="12" class="iv-live-empty">' +
+        (quick ? 'لا توجد أصناف تطابق هذا الفلتر. <a href="#" onclick="event.preventDefault();_invLiveClearQuickFilter();">مسح الفلتر</a>' : 'لا توجد بيانات في النطاق المحدد. جرّب توسيع الفترة أو رفع الفلاتر.') +
+      '</td></tr>'
     : filtered.map(function(it) {
         var statusBadge = it.status === 'نفد' ? '<span class="iv-live-pill iv-live-pill-out">نفد</span>'
                        : it.status === 'منخفض' ? '<span class="iv-live-pill iv-live-pill-low">منخفض</span>'
                        : '<span class="iv-live-pill iv-live-pill-ok">جيد</span>';
-        return '<tr onclick="_invLiveDrillDown(\'' + _invHubEsc(it.id) + '\',\'' + _invHubEsc(it.name).replace(/\'/g,"\\'") + '\')" title="اضغط لعرض الحركة التفصيلية">' +
+        var rowClass = it.isNegative ? 'iv-live-row-neg' : (it.isSlowMoving ? 'iv-live-row-slow' : '');
+        var abcBadge = it.abcClass
+          ? '<span class="iv-live-abc-badge iv-live-abc-' + it.abcClass.toLowerCase() + '">' + it.abcClass + '</span>'
+          : '<span class="iv-live-abc-badge iv-live-abc-none">—</span>';
+        var lastMovBadge = (function() {
+          if (it.daysSinceLastMov == null) return '<span class="iv-live-pill iv-live-pill-out">لا حركة</span>';
+          if (it.daysSinceLastMov >= 60)  return '<span class="iv-live-pill iv-live-pill-low" title="بطيء الحركة">' + it.daysSinceLastMov + ' يوم</span>';
+          if (it.daysSinceLastMov >= 30)  return '<span class="iv-live-pill" style="background:#dbeafe;color:#1e40af;">' + it.daysSinceLastMov + ' يوم</span>';
+          return '<span class="iv-live-pill iv-live-pill-ok">' + it.daysSinceLastMov + ' يوم</span>';
+        })();
+        return '<tr class="' + rowClass + '" onclick="_invLiveDrillDown(\'' + _invHubEsc(it.id) + '\',\'' + _invHubEsc(it.name).replace(/\'/g,"\\'") + '\')" title="اضغط لعرض الحركة التفصيلية">' +
                  '<td class="iv-live-code">' + _invHubEsc(it.id) + '</td>' +
                  '<td class="iv-live-name">' + _invHubEsc(it.name) + '</td>' +
                  '<td class="iv-live-cat">' + _invHubEsc(it.category) + '</td>' +
+                 '<td>' + abcBadge + '</td>' +
                  _numCell(it.openingStock, it.unit) +
                  _numCell(it.purchasedQty, it.unit, it.purchasedQty > 0 ? '#10b981' : '') +
                  _numCell(it.consumedQty,  it.unit, it.consumedQty  > 0 ? '#ef4444' : '') +
                  _numCell(it.adjustedQty,  it.unit, it.adjustedQty  > 0 ? '#f59e0b' : '') +
-                 _numCell(it.transferIn,   it.unit) +
-                 _numCell(it.transferOut,  it.unit) +
                  _numCell(it.closingStock, it.unit, '#7c3aed', /*bold*/true) +
                  '<td class="iv-live-num iv-live-num-bold">' + _invHubFmtMoney(it.value) + '</td>' +
+                 '<td>' + lastMovBadge + '</td>' +
                  '<td>' + statusBadge + '</td>' +
                '</tr>';
       }).join('') +
       // Totals row
       '<tr class="iv-live-totals-row">' +
-        '<td colspan="3" class="iv-live-totals-label">الإجمالي</td>' +
-        '<td class="iv-live-num">' + _invHubFmtMoney((totals||{}).openingValue || 0) + ' ر.س</td>' +
-        '<td class="iv-live-num" style="color:#10b981;">+ ' + _invHubFmtMoney((totals||{}).purchasesValue || 0) + '</td>' +
-        '<td class="iv-live-num" style="color:#ef4444;">− ' + _invHubFmtMoney((totals||{}).consumedValue || 0) + '</td>' +
-        '<td class="iv-live-num" style="color:#f59e0b;">' + _invHubFmtMoney((totals||{}).adjustValue || 0) + '</td>' +
-        '<td class="iv-live-num">—</td>' +
-        '<td class="iv-live-num">—</td>' +
+        '<td colspan="4" class="iv-live-totals-label">الإجمالي · ' + filtered.length + ' صنف</td>' +
+        '<td class="iv-live-num">' + _invHubFmtMoney((totals||{}).openingValue || 0) + '</td>' +
+        '<td class="iv-live-num" style="color:#86efac;">+ ' + _invHubFmtMoney((totals||{}).purchasesValue || 0) + '</td>' +
+        '<td class="iv-live-num" style="color:#fca5a5;">− ' + _invHubFmtMoney((totals||{}).consumedValue || 0) + '</td>' +
+        '<td class="iv-live-num" style="color:#fde68a;">' + _invHubFmtMoney((totals||{}).adjustValue || 0) + '</td>' +
         '<td class="iv-live-num iv-live-num-bold">' + _invHubFmtMoney((totals||{}).closingValue || 0) + '</td>' +
-        '<td class="iv-live-num iv-live-num-bold" style="color:#7c3aed;">' + _invHubFmtMoney((totals||{}).closingValue || 0) + '</td>' +
+        '<td class="iv-live-num iv-live-num-bold" style="color:#c4b5fd;">' + _invHubFmtMoney((totals||{}).closingValue || 0) + '</td>' +
+        '<td>—</td>' +
         '<td>—</td>' +
       '</tr>';
   // Counts under filter bar
   var counts = q('#invLiveCounts');
   if (counts) {
-    counts.innerHTML = '<i class="fas fa-list-ul"></i> ' + filtered.length + ' من ' + (items||[]).length + ' صنف ضمن الفترة المحددة' +
-      (search ? ' · بحث: <strong>' + _invHubEsc(search) + '</strong>' : '');
+    var quickLabel = quick === 'slow' ? ' · فلتر: بطيئة الحركة'
+                   : quick === 'neg'  ? ' · فلتر: رصيد سالب'
+                   : quick === 'reorder' ? ' · فلتر: تحتاج طلب'
+                   : '';
+    counts.innerHTML = '<i class="fas fa-list-ul"></i> ' + filtered.length + ' من ' + (items||[]).length + ' صنف' +
+      (search ? ' · بحث: <strong>' + _invHubEsc(search) + '</strong>' : '') +
+      quickLabel +
+      (quick ? ' <a href="#" onclick="event.preventDefault();_invLiveClearQuickFilter();">إزالة</a>' : '');
   }
 }
+
+window._invLiveClearQuickFilter = function() {
+  window._invLive._quickFilter = '';
+  _invLiveRenderTable(window._invLive.data.items, window._invLive.data.totals);
+};
+
+// V5.8.2 — Reorder suggestion modal (PR4 ribbon button + analytics ribbon)
+window.invLiveOpenReorder = function() {
+  var d = window._invLive.data;
+  if (!d) return showToast('حمّل البيانات أولاً', true);
+  var rows = (d.items || []).filter(function(it) { return it.suggestedReorder > 0; });
+  if (!rows.length) return showToast('لا توجد أصناف تحتاج إعادة طلب حالياً 👍');
+  rows.sort(function(a, b) { return (b.suggestedReorder * b.cost) - (a.suggestedReorder * a.cost); });
+  var totalCost = rows.reduce(function(s, x) { return s + (x.suggestedReorder * x.cost); }, 0);
+  var html =
+    '<div class="iv-live-reorder">' +
+      '<div class="iv-live-reorder-summary">' +
+        '<span><b>' + rows.length + '</b> صنف</span>' +
+        '<span>الكمية الموصى بها = (متوسط الاستهلاك اليومي × 14) − الرصيد الحالي</span>' +
+        '<span class="iv-live-reorder-total">إجمالي تكلفة الطلب: <b>' + _invHubFmtMoney(totalCost) + ' ر.س</b></span>' +
+      '</div>' +
+      '<div class="iv-live-reorder-table-wrap"><table class="iv-live-drill-table">' +
+        '<thead><tr><th>الكود</th><th>الصنف</th><th>الرصيد</th><th>متوسط/يوم</th><th>الكمية المقترحة</th><th>تكلفة الطلب</th></tr></thead>' +
+        '<tbody>' + rows.map(function(it) {
+          var perDay = ((it.consumedQty || 0) / Math.max(1, ((d.period || {}).days || 30))).toFixed(2);
+          return '<tr>' +
+                   '<td class="iv-live-code">' + _invHubEsc(it.id) + '</td>' +
+                   '<td class="iv-live-name">' + _invHubEsc(it.name) + '</td>' +
+                   '<td class="iv-live-num">' + (Number(it.closingStock) || 0).toFixed(2) + ' ' + (it.unit||'') + '</td>' +
+                   '<td class="iv-live-num">' + perDay + '</td>' +
+                   '<td class="iv-live-num iv-live-num-bold" style="color:#7c3aed;">' + (it.suggestedReorder).toFixed(0) + ' ' + (it.unit||'') + '</td>' +
+                   '<td class="iv-live-num iv-live-num-bold">' + _invHubFmtMoney(it.suggestedReorder * it.cost) + ' ر.س</td>' +
+                 '</tr>';
+        }).join('') +
+        '</tbody></table></div>' +
+    '</div>';
+  if (typeof WoModal !== 'undefined' && WoModal.open) {
+    WoModal.open({
+      icon: 'fa-cart-plus', iconColor: 'purple',
+      title: 'اقتراح إعادة الطلب',
+      subtitle: 'بناء على معدل الاستهلاك خلال الفترة المختارة + تغطية ١٤ يوم.',
+      body: html, size: 'lg',
+      footer:
+        '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إغلاق</button>' +
+        '<button class="wo-btn wo-btn-primary" onclick="invLiveExportReorder()"><i class="fas fa-file-excel"></i> تصدير Excel</button>'
+    });
+  }
+};
+
+window.invLiveExportReorder = function() {
+  var d = window._invLive.data;
+  if (!d) return showToast('لا توجد بيانات', true);
+  if (typeof XLSX === 'undefined' && typeof loadScript === 'function') {
+    loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js')
+      .then(invLiveExportReorder).catch(function(){ showToast('فشل تحميل Excel', true); });
+    return;
+  }
+  if (typeof XLSX === 'undefined') return showToast('XLSX غير محمّلة', true);
+  var rows = (d.items || []).filter(function(it){ return it.suggestedReorder > 0; });
+  rows.sort(function(a,b){ return (b.suggestedReorder*b.cost) - (a.suggestedReorder*a.cost); });
+  var data = [['الكود','الصنف','التصنيف','الرصيد','الوحدة','الكمية المقترحة','تكلفة الوحدة','تكلفة الطلب']];
+  rows.forEach(function(it){
+    data.push([it.id, it.name, it.category, it.closingStock, it.unit, it.suggestedReorder, it.cost, it.suggestedReorder * it.cost]);
+  });
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(data), 'إعادة الطلب');
+  XLSX.writeFile(wb, 'reorder-' + _ymd(new Date()) + '.xlsx');
+  showToast('تم تصدير اقتراح الطلب');
+};
 
 function _numCell(qty, unit, color, bold) {
   qty = Number(qty) || 0;
@@ -5935,8 +6146,64 @@ function _invLiveInjectStyles() {
     '.iv-live-drill-table th{background:#f1f5f9;color:#475569;font-weight:800;padding:8px 10px;text-align:start;border-bottom:2px solid #e2e8f0;}' +
     '.iv-live-drill-table td{padding:7px 10px;border-bottom:1px solid #f1f5f9;}' +
     '.iv-live-cell-notes{color:#64748b;font-size:11px;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    /* V5.8.2 — Insights row (3 cards: ABC + Trend + Alerts) */
+    '.iv-live-insights{display:grid;grid-template-columns:1.1fr 1.4fr 1fr;gap:12px;margin-bottom:14px;}' +
+    '@media (max-width:1100px){.iv-live-insights{grid-template-columns:1fr;}}' +
+    '.iv-live-insight{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;}' +
+    '.iv-live-insight-head{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:800;color:#0f172a;letter-spacing:0.01em;}' +
+    '.iv-live-insight-head i{color:#7c3aed;font-size:14px;}' +
+    '.iv-live-insight-hint{margin-inline-start:auto;width:18px;height:18px;background:#f1f5f9;color:#64748b;border-radius:50%;display:grid;place-items:center;font-size:11px;cursor:help;font-weight:800;}' +
+    '.iv-live-insight-empty{padding:24px;text-align:center;color:#94a3b8;font-size:12px;font-weight:600;}' +
+    /* ABC bar */
+    '.iv-live-abc-bar{display:flex;height:14px;border-radius:8px;overflow:hidden;background:#f1f5f9;border:1px solid #e2e8f0;}' +
+    '.iv-live-abc-seg{display:grid;place-items:center;color:#fff;font-size:10px;font-weight:900;letter-spacing:0.05em;transition:width 0.4s ease;}' +
+    '.iv-live-abc-bar .iv-live-abc-a{background:#dc2626;}' +
+    '.iv-live-abc-bar .iv-live-abc-b{background:#f59e0b;}' +
+    '.iv-live-abc-bar .iv-live-abc-c{background:#10b981;}' +
+    '.iv-live-abc-legend{display:flex;flex-direction:column;gap:5px;margin-top:4px;}' +
+    '.iv-live-abc-row{display:grid;grid-template-columns:14px 1fr auto auto;align-items:center;gap:8px;font-size:11.5px;}' +
+    '.iv-live-abc-dot{width:12px;height:12px;border-radius:3px;}' +
+    '.iv-live-abc-dot.iv-live-abc-a{background:#dc2626;}' +
+    '.iv-live-abc-dot.iv-live-abc-b{background:#f59e0b;}' +
+    '.iv-live-abc-dot.iv-live-abc-c{background:#10b981;}' +
+    '.iv-live-abc-name{color:#475569;font-weight:700;}' +
+    '.iv-live-abc-cnt{color:#64748b;font-size:10.5px;}' +
+    '.iv-live-abc-pct{font-family:ui-monospace,monospace;font-weight:800;color:#0f172a;}' +
+    /* Trend chart */
+    '.iv-live-trend{display:flex;flex-direction:column;gap:6px;}' +
+    '.iv-live-trend-svg{width:100%;height:90px;background:#fafbff;border:1px solid #e2e8f0;border-radius:8px;padding:4px;}' +
+    '.iv-live-trend-meta{display:flex;gap:14px;font-size:11px;color:#64748b;font-weight:600;}' +
+    '.iv-live-trend-meta span{display:inline-flex;align-items:center;gap:5px;}' +
+    '.iv-live-trend-dot{width:9px;height:9px;border-radius:50%;display:inline-block;}' +
+    '.iv-live-trend-axis{display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;font-family:ui-monospace,monospace;}' +
+    /* Alerts list */
+    '.iv-live-alerts-list{display:flex;flex-direction:column;gap:6px;}' +
+    '.iv-live-alert-row{display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:9px 12px;font-family:inherit;cursor:pointer;transition:all 0.15s;text-align:start;}' +
+    '.iv-live-alert-row:hover{background:#fff;border-color:#cbd5e1;transform:translateX(-2px);}' +
+    '.iv-live-alert-hot{background:#fff;border-color:#fca5a5;}' +
+    '.iv-live-alert-icon{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:13px;}' +
+    '.iv-live-alert-label{font-size:12.5px;font-weight:700;color:#475569;}' +
+    '.iv-live-alert-count{font-size:18px;font-weight:900;font-variant-numeric:tabular-nums;letter-spacing:-0.02em;}' +
+    /* ABC badge column */
+    '.iv-live-abc-badge{display:inline-block;width:24px;height:22px;border-radius:6px;color:#fff;font-size:11px;font-weight:900;text-align:center;line-height:22px;}' +
+    '.iv-live-abc-badge.iv-live-abc-a{background:#dc2626;}' +
+    '.iv-live-abc-badge.iv-live-abc-b{background:#f59e0b;}' +
+    '.iv-live-abc-badge.iv-live-abc-c{background:#10b981;}' +
+    '.iv-live-abc-badge.iv-live-abc-none{background:#e2e8f0;color:#94a3b8;}' +
+    /* Row state highlights */
+    '.iv-live-row-neg{background:#fef2f2 !important;}' +
+    '.iv-live-row-neg:hover{background:#fee2e2 !important;}' +
+    '.iv-live-row-slow{background:#fffbeb !important;}' +
+    '.iv-live-row-slow:hover{background:#fef3c7 !important;}' +
+    /* Reorder modal */
+    '.iv-live-reorder-summary{display:flex;align-items:center;gap:14px;padding:10px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:12px;font-size:12.5px;color:#475569;flex-wrap:wrap;}' +
+    '.iv-live-reorder-total{margin-inline-start:auto;font-weight:800;color:#7c3aed;}' +
+    '.iv-live-reorder-table-wrap{overflow:auto;max-height:55vh;border:1px solid #e2e8f0;border-radius:10px;}' +
+    /* Warning button */
+    '.iv-live-btn-warning{background:#f59e0b;color:#fff;border-color:#f59e0b;}' +
+    '.iv-live-btn-warning:hover{background:#d97706;border-color:#d97706;}' +
     '@media print{' +
-      '.iv-live-filterbar,.iv-live-toolbar,.iv-live-kpis,.iv-hub-strip,#whTabs,.sidebar,.app-header{display:none !important;}' +
+      '.iv-live-filterbar,.iv-live-toolbar,.iv-live-kpis,.iv-live-insights,.iv-hub-strip,#whTabs,.sidebar,.app-header{display:none !important;}' +
       '.iv-live-shell{padding:0;background:#fff;}' +
       '.iv-live-table-wrap{border:0;border-radius:0;}' +
       '.iv-live-table tbody tr{cursor:default;}' +

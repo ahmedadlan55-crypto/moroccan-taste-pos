@@ -552,27 +552,35 @@ router.post('/stocktakes', async (req, res) => {
       [stId, now, username || '', notes || '', 'completed', 0, 0, warehouseId || null, branchId || null]
     );
 
+    // V5.8.5 — counted-but-matched items are RECORDED in stocktake_items
+    //   for the audit trail (so a "no-variance" stocktake still writes a
+    //   complete report) but skip the stock/movement/GL side-effects.
+    let countedCount = 0;
     for (const item of items) {
       const itemId = item.id;
       const sysQty = Number(item.sys || item.systemQty) || 0;
       const actQty = Number(item.actual || item.actualQty) || 0;
       const diff = Number(item.diff) || (actQty - sysQty);
-      if (Math.abs(diff) < 0.001) continue;
 
-      // Get item info for the record
+      // Get item info (needed for the audit row regardless of variance)
       const [inv] = await db.query('SELECT name, unit, COALESCE(cost,0) AS avg_cost FROM inv_items WHERE id = ?', [itemId]);
       const invName = inv.length ? inv[0].name : '';
       const invUnit = inv.length ? (inv[0].unit || '') : '';
       const invCost = inv.length ? (Number(inv[0].avg_cost) || 0) : 0;
-      const varianceCost = Math.abs(diff) * invCost;
-      if (diff > 0) totalGainCost += varianceCost;
-      else          totalLossCost += varianceCost;
 
-      // Save stocktake line
+      // Always record the line — proof that this item was reviewed.
       await db.query(
         'INSERT INTO stocktake_items (stocktake_id, inv_item_id, inv_item_name, unit, system_qty, actual_qty, variance) VALUES (?,?,?,?,?,?,?)',
         [stId, itemId, invName, invUnit, sysQty, actQty, diff]
       );
+      countedCount++;
+
+      // Skip the side-effects for items with no variance
+      if (Math.abs(diff) < 0.001) continue;
+
+      const varianceCost = Math.abs(diff) * invCost;
+      if (diff > 0) totalGainCost += varianceCost;
+      else          totalLossCost += varianceCost;
 
       // Update central stock
       await db.query('UPDATE inv_items SET stock = ? WHERE id = ?', [actQty, itemId]);
@@ -599,10 +607,11 @@ router.post('/stocktakes', async (req, res) => {
       adjustedCount++;
     }
 
-    // Update header with final counts
+    // V5.8.5 — items_count = total counted (incl. matched), total_variance = sum of diffs.
+    //   That way the audit list shows "12 صنف، 0 تباين" for a clean monthly check.
     await db.query(
       'UPDATE stocktakes SET items_count = ?, total_variance = ? WHERE id = ?',
-      [adjustedCount, totalVariance, stId]
+      [countedCount, totalVariance, stId]
     );
 
     // Recompute menu costs since inventory changed

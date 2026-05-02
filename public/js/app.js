@@ -3780,12 +3780,18 @@ function invHubGoToBrandsList() {
 }
 
 // View 2: per-brand hub (6 big icons)
+//   V5.8.5 — DISABLED.  After feedback that the 6-icon panel duplicated
+//   the polished tabs row, picking a brand now goes DIRECTLY to the
+//   tabs view (last-used tab, defaulting to 'items'). The brand strip
+//   above the tabs handles the "back to brands" navigation. The old
+//   _invHubRenderBrandHub() function is kept for reference but no
+//   longer called.
 function invHubGoToBrand(brandId) {
   if (!brandId) return invHubGoToBrandsList();
-  window._invHub.mode = 'hub';
   window._invHub.brandId = brandId;
-  _invHubShowOnly('hub');
-  _invHubRenderBrandHub(brandId);
+  // Pick the last tab the user was on (defaults to 'items')
+  var tab = (window._invHub.tab) || 'items';
+  invHubGoToTab(brandId, tab, /*fromHub=*/false);
 }
 
 // View 3: tab content (filtered by brand)
@@ -4166,14 +4172,14 @@ function _invHubInjectStyles() {
     '.iv-hub-tile-title{font-size:17px;font-weight:900;color:#0f172a;letter-spacing:-0.01em;}' +
     '.iv-hub-tile-sub{font-size:11.5px;color:#64748b;font-weight:500;line-height:1.4;}' +
     '.iv-hub-tile-badge{font-size:11.5px;font-weight:800;color:#475569;background:#f1f5f9;padding:5px 12px;border-radius:7px;margin-top:4px;}' +
-    /* ─── Brand strip above tabs ─── */
-    '.iv-hub-strip{display:flex;align-items:center;gap:8px;padding:8px 4px 12px;font-size:13px;color:#475569;flex-wrap:wrap;}' +
-    '.iv-hub-back-sm{background:transparent;border:1.5px solid transparent;padding:6px 10px;border-radius:8px;font-size:12.5px;font-weight:700;color:#64748b;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:all 0.15s;}' +
-    '.iv-hub-back-sm:hover{background:#f1f5f9;color:#0f172a;}' +
-    '.iv-hub-back-sm-brand{background:#ede9fe;color:#5b21b6;}' +
-    '.iv-hub-back-sm-brand:hover{background:#ddd6fe;color:#4c1d95;}' +
-    '.iv-hub-strip-logo{width:18px;height:18px;border-radius:5px;object-fit:cover;}' +
-    '.iv-hub-strip-sep{color:#cbd5e1;font-weight:700;}' +
+    /* ─── Brand strip above tabs (V5.8.5 — match boxed tabs style) ─── */
+    '.iv-hub-strip{display:flex;align-items:center;gap:8px;padding:0 4px 12px;font-size:13px;color:#475569;flex-wrap:wrap;}' +
+    '.iv-hub-back-sm{background:#fff;border:1px solid #e2e8f0;padding:8px 14px;border-radius:10px;font-size:12.5px;font-weight:700;color:#64748b;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:all 0.15s;}' +
+    '.iv-hub-back-sm:hover{background:#f1f5f9;color:#0f172a;border-color:#cbd5e1;transform:translateX(2px);}' +
+    '.iv-hub-back-sm-brand{background:linear-gradient(135deg,#ede9fe,#fff);color:#5b21b6;border-color:#c4b5fd;font-weight:800;}' +
+    '.iv-hub-back-sm-brand:hover{background:linear-gradient(135deg,#ddd6fe,#fff);color:#4c1d95;border-color:#a78bfa;}' +
+    '.iv-hub-strip-logo{width:20px;height:20px;border-radius:5px;object-fit:cover;}' +
+    '.iv-hub-strip-sep{color:#cbd5e1;font-weight:700;font-size:14px;}' +
     '.iv-hub-strip-spacer{flex:1;}' +
     '.iv-hub-skeleton{padding:48px;text-align:center;color:#94a3b8;font-size:14px;font-weight:600;}';
   document.head.appendChild(st);
@@ -4594,8 +4600,12 @@ function loadDashInvItems() {
   }).getInvItems();
 }
 
-// V5.8.3 — Pro Inventory Items: KPIs + actions toolbar above the existing
-//   table.  Mounts once; subsequent loads just refresh data.
+// V5.8.5 — Pro Inventory Items shell. Cleaner than V5.8.3:
+//   • ONE filter+actions row (no separate toolbar block)
+//   • KPI strip BELOW the filter bar, above the table
+//   • Clear-filter chip + counts inline above the table (no separate slot)
+//   • Old standalone "Excel" button replaced with the unified
+//     Print/PDF/Excel set (no duplication)
 function _invItemsMountShell() {
   if (q('#invItemsKpis')) return;  // already mounted
   _invItemsInjectStyles();
@@ -4603,27 +4613,31 @@ function _invItemsMountShell() {
   if (!content) return;
   var filterBar = content.querySelector('.filter-bar');
   if (!filterBar) return;
-  // Insert KPI strip + actions toolbar AFTER the existing filter bar
+  // 1) Replace the right-side action group inside the filter bar with
+  //    our unified set (Print/Excel/PDF + Import + Add). Removes the
+  //    duplicate "Excel" button that called the old exportInvExcel().
+  var rightGroup = filterBar.querySelectorAll('div')[1];
+  if (rightGroup) {
+    rightGroup.innerHTML =
+      '<button class="iv-items-btn iv-items-btn-ghost" onclick="invItemsExport(\'print\')" title="طباعة"><i class="fas fa-print"></i><span>طباعة</span></button>' +
+      '<button class="iv-items-btn iv-items-btn-success" onclick="invItemsExport(\'excel\')" title="تصدير Excel"><i class="fas fa-file-excel"></i><span>Excel</span></button>' +
+      '<button class="iv-items-btn iv-items-btn-danger" onclick="invItemsExport(\'pdf\')" title="تصدير PDF"><i class="fas fa-file-pdf"></i><span>PDF</span></button>' +
+      '<label class="iv-items-btn iv-items-btn-secondary" style="cursor:pointer;margin:0;"><i class="fas fa-file-upload"></i><span>استيراد</span>' +
+        '<input type="file" id="importExcelFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importInvExcel(this)">' +
+      '</label>' +
+      '<button class="iv-items-btn iv-items-btn-primary" onclick="openRawModal()"><i class="fas fa-plus"></i><span>إضافة مادة</span></button>';
+  }
+  // 2) Insert the KPI strip AFTER the filter bar
   var kpis = document.createElement('div');
   kpis.id = 'invItemsKpis';
   kpis.className = 'iv-items-kpis';
   filterBar.parentNode.insertBefore(kpis, filterBar.nextSibling);
-  // Insert actions toolbar (print/pdf right next to the existing Excel/Add buttons)
-  var actionsRow = document.createElement('div');
-  actionsRow.id = 'invItemsActions';
-  actionsRow.className = 'iv-items-actions';
-  actionsRow.innerHTML =
-    '<div class="iv-items-counts" id="invItemsCounts"></div>' +
-    '<div class="iv-items-export">' +
-      '<button class="iv-live-btn iv-live-btn-ghost" onclick="invItemsExport(\'print\')"><i class="fas fa-print"></i> طباعة</button>' +
-      '<button class="iv-live-btn iv-live-btn-success" onclick="invItemsExport(\'excel\')"><i class="fas fa-file-excel"></i> Excel</button>' +
-      '<button class="iv-live-btn iv-live-btn-danger" onclick="invItemsExport(\'pdf\')"><i class="fas fa-file-pdf"></i> PDF</button>' +
-    '</div>';
-  kpis.parentNode.insertBefore(actionsRow, kpis.nextSibling);
-  // Add a clear-filter chip slot (only renders when filters are active)
-  var clearSlot = document.createElement('div');
-  clearSlot.id = 'invItemsClearSlot';
-  actionsRow.parentNode.insertBefore(clearSlot, actionsRow.nextSibling);
+  // 3) Insert the counts + clear-filter chip row BELOW the KPI strip
+  //    (above the table). Single line, minimal — no extra block.
+  var counts = document.createElement('div');
+  counts.id = 'invItemsCounts';
+  counts.className = 'iv-items-counts';
+  kpis.parentNode.insertBefore(counts, kpis.nextSibling);
 }
 
 function _invItemsRenderKpis(items) {
@@ -4666,22 +4680,29 @@ function _invItemsKpi(label, num, unit, icon, color, sub) {
          '</div>';
 }
 
-// V5.8.3 — Wraps filterInvItems to also update the counts + clear-filter chip
+// V5.8.5 — Wraps filterInvItems to also update the counts + clear-filter chip.
+//   Single line above the table; collapses if no filter is active and no
+//   meaningful text is needed.
 function _invItemsAfterFilter(filtered) {
   var counts = q('#invItemsCounts');
-  if (counts) {
-    var search = (q("#rawSearchQ") && q("#rawSearchQ").value) || '';
-    var cat = (q("#rawCatFilter") && q("#rawCatFilter").value) || '';
-    var brandF = (q("#rawBrandFilter") && q("#rawBrandFilter").value) || '';
-    var stockF = (q("#rawStockFilter") && q("#rawStockFilter").value) || '';
-    var hasFilter = !!(search || cat || brandF || stockF);
-    counts.innerHTML = '<i class="fas fa-list-ul"></i> ' + filtered.length + ' من ' + (cachedRawItems||[]).length + ' صنف' +
-      (search ? ' · بحث: <strong>' + _invHubEsc(search) + '</strong>' : '') +
-      (hasFilter ? ' <button class="iv-live-clear-chip" onclick="invItemsClearFilters()">' +
-                     '<i class="fas fa-filter"></i> فلتر نشط' +
-                     ' <span class="iv-live-clear-x">✕ إلغاء</span>' +
-                   '</button>' : '');
+  if (!counts) return;
+  var search = (q("#rawSearchQ") && q("#rawSearchQ").value) || '';
+  var cat = (q("#rawCatFilter") && q("#rawCatFilter").value) || '';
+  var brandF = (q("#rawBrandFilter") && q("#rawBrandFilter").value) || '';
+  var stockF = (q("#rawStockFilter") && q("#rawStockFilter").value) || '';
+  var hasFilter = !!(search || cat || brandF || stockF);
+  if (!hasFilter && filtered.length === (cachedRawItems||[]).length) {
+    // No filter — keep the row empty so the CSS hides it
+    counts.innerHTML = '';
+    return;
   }
+  counts.innerHTML =
+    '<i class="fas fa-list-ul"></i> <strong>' + filtered.length + '</strong> من ' + (cachedRawItems||[]).length + ' صنف' +
+    (search ? ' · بحث: <strong>' + _invHubEsc(search) + '</strong>' : '') +
+    (hasFilter ? ' <button class="iv-live-clear-chip" onclick="invItemsClearFilters()">' +
+                   '<i class="fas fa-filter"></i> فلتر نشط' +
+                   ' <span class="iv-live-clear-x">✕ إلغاء</span>' +
+                 '</button>' : '');
 }
 
 window.invItemsClearFilters = function() {
@@ -4860,11 +4881,33 @@ function _invItemsInjectStyles() {
   var st = document.createElement('style');
   st.id = 'invItemsStyles';
   st.textContent =
-    '#wh_items .iv-items-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:12px 0;}' +
-    '#wh_items .iv-items-actions{display:flex;justify-content:space-between;align-items:center;padding:0 4px 10px;flex-wrap:wrap;gap:10px;}' +
-    '#wh_items .iv-items-counts{font-size:12.5px;color:#475569;font-weight:600;display:flex;align-items:center;flex-wrap:wrap;gap:8px;}' +
+    /* KPI strip — compact, professional cards */
+    '#wh_items .iv-items-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:8px 0 12px;}' +
+    '#wh_items .iv-items-kpis .iv-live-kpi{padding:11px 14px;}' +
+    '#wh_items .iv-items-kpis .iv-live-kpi-icon{width:38px;height:38px;font-size:15px;}' +
+    '#wh_items .iv-items-kpis .iv-live-kpi-num{font-size:17px;}' +
+    '#wh_items .iv-items-kpis .iv-live-kpi-sub{font-size:10.5px;}' +
+    /* Counts/clear-filter line above the table — single inline row */
+    '#wh_items .iv-items-counts{display:flex;align-items:center;gap:10px;padding:6px 4px 10px;font-size:12.5px;color:#475569;font-weight:600;flex-wrap:wrap;}' +
+    '#wh_items .iv-items-counts:empty{display:none;}' +
     '#wh_items .iv-items-counts strong{color:#0f172a;}' +
-    '#wh_items .iv-items-export{display:flex;gap:6px;flex-wrap:wrap;}';
+    /* Action buttons inside the filter bar (matching tabs row vibe) */
+    '#wh_items .iv-items-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid;transition:all 0.15s;line-height:1;white-space:nowrap;}' +
+    '#wh_items .iv-items-btn i{font-size:12px;}' +
+    '#wh_items .iv-items-btn-primary{background:#0d47a1;color:#fff;border-color:#0d47a1;}' +
+    '#wh_items .iv-items-btn-primary:hover{background:#093170;border-color:#093170;transform:translateY(-1px);box-shadow:0 4px 12px -4px rgba(13,71,161,0.3);}' +
+    '#wh_items .iv-items-btn-secondary{background:#fff;color:#475569;border-color:#cbd5e1;}' +
+    '#wh_items .iv-items-btn-secondary:hover{background:#f1f5f9;border-color:#94a3b8;}' +
+    '#wh_items .iv-items-btn-success{background:#15803d;color:#fff;border-color:#15803d;}' +
+    '#wh_items .iv-items-btn-success:hover{background:#166534;border-color:#166534;transform:translateY(-1px);}' +
+    '#wh_items .iv-items-btn-danger{background:#b91c1c;color:#fff;border-color:#b91c1c;}' +
+    '#wh_items .iv-items-btn-danger:hover{background:#991b1b;border-color:#991b1b;transform:translateY(-1px);}' +
+    '#wh_items .iv-items-btn-ghost{background:#fff;color:#475569;border-color:#e2e8f0;}' +
+    '#wh_items .iv-items-btn-ghost:hover{background:#f8fafc;border-color:#cbd5e1;}' +
+    /* Tighten the filter bar itself */
+    '#wh_items .filter-bar{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:12px 14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
+    '#wh_items .filter-bar .form-control{border-radius:10px;border:1.5px solid #e2e8f0;padding:9px 12px;font-size:13px;font-family:inherit;}' +
+    '#wh_items .filter-bar .form-control:focus{outline:none;border-color:#0d47a1;box-shadow:0 0 0 3px rgba(13,71,161,0.12);}';
   document.head.appendChild(st);
 }
 function renderInvTable(list) {
@@ -7429,18 +7472,42 @@ window.stSubmitStocktake = function() {
   var s = window._stSession;
   if (!s) return;
   var items = s.items || [];
-  var itemsToAdjust = items
-    .filter(function(i){ return Math.abs((Number(i.actual)||0) - (Number(i.sysStock)||0)) > 0.001; })
-    .map(function(i){
-      return { id: i.id, diff: i.actual - i.sysStock, sys: i.sysStock, actual: i.actual };
-    });
   if (!items.length) return showToast('لم تُضف أي مواد للجرد', true);
-  if (itemsToAdjust.length === 0) return showToast('لا توجد فوارق لتسويتها', true);
-  if (!confirm('سيتم اعتماد تسوية جردية لـ (' + itemsToAdjust.length + ') صنف من أصل (' + items.length + ') تم جردها. هل أنت متأكد؟')) return;
+  // V5.8.5 — also send items WITHOUT variance so we have a full audit
+  //   record of the count event ("we counted these and they matched").
+  //   The server records each as a stocktake row with diff=0 — useful
+  //   for compliance / monthly-count workflows where you want proof
+  //   that everything was reviewed even if nothing changed.
+  var itemsAll = items.map(function(i){
+    return {
+      id: i.id,
+      diff: (Number(i.actual)||0) - (Number(i.sysStock)||0),
+      sys: i.sysStock,
+      actual: i.actual
+    };
+  });
+  var withVariance    = itemsAll.filter(function(x){ return Math.abs(x.diff) > 0.001; });
+  var withoutVariance = itemsAll.length - withVariance.length;
+  // Confirm dialog adapts to the case
+  var msg;
+  if (withVariance.length === 0) {
+    msg = 'تم جرد ' + items.length + ' صنف، كل الأرصدة مطابقة للنظام (لا فوارق).\n' +
+          'هل تريد تسجيل محضر الجرد كمراجعة دورية؟';
+  } else {
+    msg = 'سيتم اعتماد تسوية جردية لـ ' + withVariance.length + ' صنف من أصل ' + items.length + ' تم جردها' +
+          (withoutVariance > 0 ? ' (' + withoutVariance + ' مطابق بدون فوارق).' : '.') +
+          '\nهل أنت متأكد؟';
+  }
+  if (!confirm(msg)) return;
   loader(true);
   s.endDate = new Date();   // V5.8.4 — capture submit time for the audit report
   var notes = s.notes || '';
   var warehouseId = s.warehouseId || '';
+  // V5.8.5 — auto-suffix the notes when the count was zero-variance so
+  //   the audit trail clearly shows it was a verification pass.
+  if (withVariance.length === 0) {
+    notes = (notes ? notes + ' · ' : '') + 'مراجعة دورية بدون فوارق';
+  }
   api.withFailureHandler(function(err){
     loader(false); showToast(err.message, true);
   }).withSuccessHandler(function(res){
@@ -7448,7 +7515,7 @@ window.stSubmitStocktake = function() {
     if (res && res.success) {
       try { localStorage.removeItem(ST_DRAFT_KEY); } catch(e) {}
       ivCloseModal();
-      showToast('تم اعتماد التسوية ✓');
+      showToast(withVariance.length === 0 ? 'تم تسجيل محضر الجرد (بدون فوارق) ✓' : 'تم اعتماد التسوية ✓');
       window._stSession = { items: [], notes: '', warehouseId: '' };
       if (typeof loadDashStocktake === 'function') loadDashStocktake();
       if (typeof loadDashInvItems === 'function') loadDashInvItems();
@@ -7456,7 +7523,7 @@ window.stSubmitStocktake = function() {
     } else {
       showToast((res && res.error) || 'فشل الاعتماد', true);
     }
-  }).submitStocktake(itemsToAdjust, state.user, notes, warehouseId);
+  }).submitStocktake(itemsAll, state.user, notes, warehouseId);  // send ALL items (incl. matched)
 };
 
 // V5.8.4 — Stocktake export (Print / PDF / Excel) — pro template

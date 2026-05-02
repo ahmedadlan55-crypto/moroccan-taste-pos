@@ -1,19 +1,21 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 
-// V5.9.0 — One-time backfill helper. If warehouse_stock is empty (or empty
-//   for items that have inv_items.stock>0), seed it from inv_items.stock by
-//   placing all stock in the brand's main warehouse, or a fallback
-//   "default" warehouse if the brand doesn't have one.  Idempotent — only
-//   runs if there's no row yet for an item.
+// V5.9.1 — Backfill helper.  Ensures EVERY active inv_item has at least one
+//   warehouse_stock row so the warehouse-aware UI never hides items.
+//   The previous V5.9.0 version skipped items with stock=0, which made
+//   146 of the user's 159 items disappear from the warehouse view.
+//   Now: items with stock=0 still get a row (qty=0) — they're visible
+//   in their default warehouse so the user can transfer/adjust into them.
+//   Idempotent: only inserts where no row exists yet.
 async function _ensureWarehouseStockBackfilled() {
   try {
-    // Find items with stock > 0 that have NO row in warehouse_stock
+    // Find ALL active items with NO row in warehouse_stock — regardless of stock value
     const [orphans] = await db.query(`
       SELECT i.id, i.name, i.brand_id, i.stock
       FROM inv_items i
       LEFT JOIN warehouse_stock ws ON ws.item_id = i.id
-      WHERE i.stock > 0 AND i.active = 1 AND ws.id IS NULL
+      WHERE i.active = 1 AND ws.id IS NULL
     `);
     if (!orphans.length) return { backfilled: 0 };
     // Pick a default warehouse PER brand: prefer is_main=1, else first by code.
@@ -34,7 +36,7 @@ async function _ensureWarehouseStockBackfilled() {
       );
       n++;
     }
-    console.log('[inventory] backfilled warehouse_stock for', n, 'items');
+    console.log('[inventory] V5.9.1 backfilled warehouse_stock for', n, 'items (incl. zero-stock)');
     return { backfilled: n };
   } catch (e) {
     console.warn('[inventory] backfill skipped:', e.message);
@@ -92,19 +94,53 @@ router.get('/warehouses-by-brand', async (req, res) => {
   } catch (e) { res.json({ error: e.message, warehouses: [] }); }
 });
 
-// V5.9.0 — Items, optionally expanded per-warehouse.
-//   Default behavior unchanged: ?brandId only → returns one row per item with
-//     the global stock (back-compat for legacy callers).
-//   New behavior: ?warehouseId → returns one row PER ITEM in that warehouse
-//     with the warehouse's stock.
-//   New behavior: ?expandWarehouses=1 → returns one row per (item × warehouse)
-//     so the items table can show "صف لكل (صنف × مستودع)".
+// V5.9.1 — Items, optionally expanded per-warehouse.
+//   Default: ?brandId → one row per item, global stock (legacy back-compat).
+//   ?warehouseId       → one row per item visible in this brand, with the
+//                        warehouse's stock (qty=0 if not stocked there yet).
+//                        Items WITHOUT a warehouse_stock entry are returned
+//                        with qty=0 so the user can see what's available to
+//                        transfer/stock — they don't disappear.
+//   ?expandWarehouses=1 → one row per (item × warehouse_stock entry).
 router.get('/items', async (req, res) => {
   try {
     await _ensureWarehouseStockBackfilled();
     const { brandId, warehouseId, expandWarehouses } = req.query;
-    if (warehouseId || expandWarehouses === '1') {
-      // Per-warehouse rows
+
+    if (warehouseId) {
+      // V5.9.1: LEFT JOIN warehouse_stock filtered to THIS warehouse so
+      //   items without a stock entry still come back with qty=0.
+      let sql = `
+        SELECT i.*, b.name AS brand_name,
+               w.id AS wh_id, w.name AS wh_name, w.code AS wh_code,
+               COALESCE(ws.qty, 0) AS wh_stock
+        FROM inv_items i
+        LEFT JOIN brands b ON b.id = i.brand_id
+        LEFT JOIN warehouse_stock ws ON ws.item_id = i.id AND ws.warehouse_id = ?
+        LEFT JOIN warehouses w ON w.id = ?
+        WHERE i.active = 1`;
+      const params = [warehouseId, warehouseId];
+      if (brandId) { sql += ' AND i.brand_id = ?'; params.push(brandId); }
+      sql += ' ORDER BY i.category, i.name';
+      const [rows] = await db.query(sql, params);
+      return res.json(rows.map(i => ({
+        id: i.id, name: i.name, category: i.category,
+        cost: Number(i.cost),
+        stock: Number(i.wh_stock) || 0,
+        globalStock: Number(i.stock) || 0,
+        minStock: Number(i.min_stock),
+        unit: i.unit, bigUnit: i.big_unit, convRate: Number(i.conv_rate), active: i.active,
+        brandId: i.brand_id || '', brand_id: i.brand_id || '',
+        brandName: i.brand_name || '',
+        warehouseId: i.wh_id || warehouseId,
+        warehouseName: i.wh_name || '',
+        warehouseCode: i.wh_code || ''
+      })));
+    }
+
+    if (expandWarehouses === '1') {
+      // One row per (item × warehouse_stock entry).  Items with NO entry
+      //   get one fallback row (warehouse=null, qty=0) so they're visible.
       let sql = `
         SELECT i.*, b.name AS brand_name,
                w.id AS wh_id, w.name AS wh_name, w.code AS wh_code,
@@ -115,18 +151,14 @@ router.get('/items', async (req, res) => {
         LEFT JOIN warehouses w ON w.id = ws.warehouse_id
         WHERE i.active = 1`;
       const params = [];
-      if (brandId)      { sql += ' AND i.brand_id = ?'; params.push(brandId); }
-      if (warehouseId)  { sql += ' AND ws.warehouse_id = ?'; params.push(warehouseId); }
+      if (brandId) { sql += ' AND i.brand_id = ?'; params.push(brandId); }
       sql += ' ORDER BY i.category, i.name, w.code';
       const [rows] = await db.query(sql, params);
-      // Filter rows where the item has no warehouse_stock entry but warehouseId was specified
-      //   (those rows have w.id NULL — drop them when warehouseId filter is on)
-      const filtered = warehouseId ? rows.filter(r => r.wh_id) : rows;
-      return res.json(filtered.map(i => ({
+      return res.json(rows.map(i => ({
         id: i.id, name: i.name, category: i.category,
         cost: Number(i.cost),
-        stock: Number(i.wh_stock) || 0,         // per-warehouse stock
-        globalStock: Number(i.stock) || 0,       // total across all warehouses
+        stock: Number(i.wh_stock) || 0,
+        globalStock: Number(i.stock) || 0,
         minStock: Number(i.min_stock),
         unit: i.unit, bigUnit: i.big_unit, convRate: Number(i.conv_rate), active: i.active,
         brandId: i.brand_id || '', brand_id: i.brand_id || '',
@@ -136,6 +168,7 @@ router.get('/items', async (req, res) => {
         warehouseCode: i.wh_code || ''
       })));
     }
+
     // Legacy: one row per item, global stock
     let sql = 'SELECT i.*, b.name AS brand_name FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id';
     const params = [];

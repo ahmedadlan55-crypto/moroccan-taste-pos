@@ -2704,6 +2704,15 @@ async function runMigrations() {
       INDEX idx_status (status)
     ) ENGINE=InnoDB
   `);
+  // V5.9.7 — reversal support: extend the status enum + record who/when/why
+  // and the reversing GL journal so the audit trail is complete.
+  try {
+    await db.query(`ALTER TABLE stock_issues MODIFY COLUMN status ENUM('draft','approved','issued','received','cancelled','reversed') DEFAULT 'draft'`);
+  } catch(e) { /* enum may already include reversed */ }
+  await addColumnIfMissing('stock_issues', 'reversed_by', "VARCHAR(100)");
+  await addColumnIfMissing('stock_issues', 'reversed_at', "DATETIME");
+  await addColumnIfMissing('stock_issues', 'reverse_reason', "VARCHAR(500)");
+  await addColumnIfMissing('stock_issues', 'reverse_gl_journal_id', "VARCHAR(60)");
   await createTableIfMissing('stock_issue_items', `
     CREATE TABLE stock_issue_items (
       id VARCHAR(60) PRIMARY KEY,

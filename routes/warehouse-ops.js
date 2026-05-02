@@ -392,10 +392,94 @@ router.post('/stock-issues/:id/cancel', async (req, res) => {
     const [hdrRows] = await db.query('SELECT status FROM stock_issues WHERE id=?', [id]);
     if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
     if (['issued','received'].includes(hdrRows[0].status))
-      return res.status(400).json({ error: 'cannot cancel after issue — reverse via reverse journal' });
+      return res.status(400).json({ error: 'cannot cancel after issue — use reverse instead' });
     await db.query(`UPDATE stock_issues SET status='cancelled' WHERE id=?`, [id]);
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// V5.9.7 — Reverse an already-issued/received stock issue. This is the
+// "إرجاع إذن الصرف" the user asked for: it puts the qty back into the source
+// warehouse, takes it out of the destination warehouse (if it was received),
+// and posts a reversing GL journal mirroring the original posting. The
+// underlying stock_issue row keeps its line totals (audit trail) but moves
+// to status='reversed' with reversed_by / reversed_at / reverse_reason set.
+router.post('/stock-issues/:id/reverse', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { reversedBy, reason } = req.body || {};
+    const [hdrRows] = await db.query('SELECT * FROM stock_issues WHERE id=?', [id]);
+    if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
+    const hdr = hdrRows[0];
+    if (!['issued','received'].includes(hdr.status))
+      return res.status(400).json({ error: 'يمكن إرجاع الإذن فقط بعد الصرف أو الاستلام' });
+
+    const [items] = await db.query('SELECT * FROM stock_issue_items WHERE issue_id=?', [id]);
+    if (!items.length) return res.status(400).json({ error: 'no items' });
+
+    // Reverse the stock movements:
+    //   1. PUT BACK what we took from the source (positive delta on the from-warehouse).
+    //   2. TAKE BACK what was received at the destination (only if status='received').
+    //
+    // We use the original unit_cost stored on each line so the reversal lands
+    // at the same valuation the issue posted at — keeps weighted-average sane.
+    let totalCost = 0;
+    for (const it of items) {
+      const qtyIssued   = Number(it.qty_issued)   || 0;
+      const qtyReceived = Number(it.qty_received) || 0;
+      const unitCost    = Number(it.unit_cost)    || 0;
+      if (qtyIssued > 0) {
+        await _applyStockMovement(hdr.from_warehouse_id, it.item_id, qtyIssued, unitCost,
+                                  'stock_issue_reverse', id, reversedBy || '');
+        totalCost += qtyIssued * unitCost;
+      }
+      if (qtyReceived > 0 && hdr.status === 'received') {
+        await _applyStockMovement(hdr.to_warehouse_id, it.item_id, -qtyReceived, unitCost,
+                                  'stock_issue_reverse', id, reversedBy || '');
+      }
+    }
+
+    // Post a reversing GL journal — debit Main Inventory, credit Branch
+    // Inventory (mirror of the original /issue endpoint above).
+    let reverseGlId = null;
+    try {
+      const result = await gl.postJournal(db, {
+        referenceType: 'stock_issue_reverse',
+        referenceId: id,
+        description: `إرجاع إذن صرف ${hdr.issue_number}: ` + (reason || 'بدون سبب محدد'),
+        postedBy: reversedBy || '',
+        entries: [
+          {
+            accountCode: gl.CORE_ACCOUNTS.INVENTORY.code,
+            debit: totalCost, credit: 0,
+            brandId: hdr.brand_id,
+            warehouseId: hdr.from_warehouse_id
+          },
+          {
+            accountCode: gl.CORE_ACCOUNTS.BRANCH_INVENTORY.code,
+            debit: 0, credit: totalCost,
+            brandId: hdr.brand_id, branchId: hdr.branch_id,
+            warehouseId: hdr.to_warehouse_id
+          }
+        ]
+      });
+      reverseGlId = result && result.journalId;
+    } catch(glErr) {
+      console.warn('[stock-issue reverse] GL posting failed:', glErr.message);
+    }
+
+    await db.query(
+      `UPDATE stock_issues
+       SET status='reversed', reversed_by=?, reversed_at=NOW(),
+           reverse_reason=?, reverse_gl_journal_id=?
+       WHERE id=?`,
+      [reversedBy || '', (reason || '').slice(0, 500), reverseGlId, id]);
+
+    res.json({ success: true, reverseGlJournalId: reverseGlId, totalCost });
+  } catch(e) {
+    console.error('[stock-issue reverse] error:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -12964,7 +12964,8 @@ function siLoad() {
         '<button class="wo-btn wo-btn-primary" onclick="siOpenNewModal()"><i class="fas fa-plus"></i><span>إنشاء إذن جديد</span></button>') + '</td></tr>';
       return;
     }
-    var statusMap = {draft:{t:'مسودة',c:'neutral'}, approved:{t:'معتمد',c:'info'}, issued:{t:'تم الصرف',c:'warning'}, received:{t:'تم الاستلام',c:'success'}, cancelled:{t:'ملغى',c:'danger'}};
+    // V5.9.7 — added 'reversed' state + a reverse button on issued/received rows.
+    var statusMap = {draft:{t:'مسودة',c:'neutral'}, approved:{t:'معتمد',c:'info'}, issued:{t:'تم الصرف',c:'warning'}, received:{t:'تم الاستلام',c:'success'}, cancelled:{t:'ملغى',c:'danger'}, reversed:{t:'مرجع',c:'pink'}};
     body.innerHTML = rows.map(function(r){
       var s = statusMap[r.status] || {t:r.status,c:'neutral'};
       var actions = '<button class="wo-icon-btn info" onclick="siView(\''+_woEscapeHtml(r.id)+'\')" title="عرض التفاصيل" aria-label="عرض"><i class="fas fa-eye"></i></button>';
@@ -12977,6 +12978,9 @@ function siLoad() {
       }
       if (r.status === 'issued') {
         actions += '<button class="wo-icon-btn success" onclick="siReceive(\''+_woEscapeHtml(r.id)+'\')" title="استلام" aria-label="استلام"><i class="fas fa-inbox"></i></button>';
+      }
+      if (['issued','received'].indexOf(r.status) >= 0) {
+        actions += '<button class="wo-icon-btn danger" onclick="siOpenReverseConfirm(\''+_woEscapeHtml(r.id)+'\')" title="إرجاع الإذن" aria-label="إرجاع"><i class="fas fa-rotate-left"></i></button>';
       }
       return '<tr>' +
         '<td data-label="رقم الإذن"><code>'+_woEscapeHtml(r.issue_number||'')+'</code></td>' +
@@ -13664,27 +13668,438 @@ function _siInjectStyles() {
     '.si-btn-secondary:hover{background:#f8fafc;border-color:#cbd5e1;}';
   document.head.appendChild(st);
 }
-function siView(id) {
-  _erpGet('/erp/stock-issues/'+id, function(d){
-    if (!d || d.error) return showToast(d?d.error:'فشل', true);
-    var itemsHtml = (d.items||[]).map(function(it){
-      return '<tr><td>'+(it.item_name||'')+'</td><td>'+(it.qty_requested||0)+'</td><td>'+(it.qty_issued||0)+'</td><td>'+(it.qty_received||0)+'</td><td>'+Number(it.unit_cost||0).toFixed(4)+'</td><td>'+Number(it.line_total||0).toFixed(2)+'</td></tr>';
-    }).join('');
-    document.getElementById('erpModalTitle').textContent = 'إذن صرف — '+d.issue_number;
-    document.getElementById('erpModalBody').innerHTML =
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px;">' +
-        '<div><small>من</small><div><b>'+(d.from_warehouse_name||'—')+'</b></div></div>' +
-        '<div><small>إلى</small><div><b>'+(d.to_warehouse_name||'—')+'</b></div></div>' +
-        '<div><small>الحالة</small><div>'+(d.status||'')+'</div></div>' +
-        '<div><small>التكلفة الإجمالية</small><div><b>'+Number(d.total_cost||0).toFixed(2)+'</b></div></div>' +
-      '</div>' +
-      '<table class="erp-table" style="font-size:12px;"><thead><tr><th>الصنف</th><th>مطلوب</th><th>مصروف</th><th>مستلم</th><th>تكلفة الوحدة</th><th>إجمالي السطر</th></tr></thead><tbody>'+itemsHtml+'</tbody></table>' +
-      (d.notes ? '<div style="margin-top:10px;padding:8px 12px;background:#f8fafc;border-radius:8px;font-size:12px;"><b>ملاحظات:</b> '+d.notes+'</div>' : '');
-    document.getElementById('erpModalSaveBtn').style.display = 'none';
-    document.getElementById('erpModal').classList.remove('hidden');
-    setTimeout(function(){ var b=document.getElementById('erpModalSaveBtn'); if(b) b.style.display=''; }, 200);
+// ─────────────────────────────────────────────────────────────────────────
+// V5.9.7 — Pro fullscreen Stock-Issue detail view + Reverse action.
+//
+// Replaces the old 6-row table modal with a transaction-detail page that
+// borrows from the patterns we've used for the branch editor, the recipe
+// editor, and the formal letter view of workflow transactions.
+//
+//   Layout (RTL, mobile-first):
+//     ┌── HERO ───────────────────────────────────────────────┐
+//     │  ISS-2026-XXXX        ● حالة         ▸ زر إجراء       │
+//     │  من Warehouse → إلى Warehouse · التاريخ · الإجمالي     │
+//     ├── TIMELINE (workflow stepper) ────────────────────────┤
+//     │  ✅ مسودة → ✅ معتمد → ⏳ مصروف → ⚪ مستلم → ⚪ مرجع     │
+//     ├── LINE ITEMS (table) ─────────────────────────────────┤
+//     │  Item | Requested | Issued | Received | Cost | Total  │
+//     ├── GL JOURNAL (link card if posted) ───────────────────┤
+//     ├── REVERSAL DETAILS (only when status='reversed') ─────┤
+//     └── ACTION BAR (sticky) ────────────────────────────────┘
+//
+// Reverse: a confirmation modal (سبب الإرجاع required) hits POST
+// /erp/stock-issues/:id/reverse, then re-renders the page in 'reversed'
+// state with the new banner.
+// ─────────────────────────────────────────────────────────────────────────
+
+window.siView = function(id) {
+  _siInjectDetailStyles();
+  _erpGet('/erp/stock-issues/' + id, function(d) {
+    if (!d || d.error) {
+      return showToast((d && d.error) || 'فشل تحميل الإذن', true);
+    }
+    _siRenderDetailView(d);
   });
+};
+
+function _siInjectDetailStyles() {
+  if (document.getElementById('siDetailStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'siDetailStyles';
+  st.textContent =
+    '#siDetailOverlay{position:fixed;inset:0;z-index:6500;display:none;background:rgba(15,23,42,0.55);backdrop-filter:blur(6px);overflow-y:auto;padding:24px 14px;}' +
+    '#siDetailOverlay.open{display:block;}' +
+    '#siDetailShell{margin:0 auto;max-width:1080px;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 30px 80px -20px rgba(15,23,42,0.5);direction:rtl;animation:siDetailIn 0.25s ease;}' +
+    '@keyframes siDetailIn{from{opacity:0;transform:translateY(20px);}to{opacity:1;transform:translateY(0);}}' +
+
+    '.sid-hero{padding:24px 28px 22px;background:linear-gradient(135deg,#fef2f2 0%,#fff 60%);border-bottom:1px solid #f1f5f9;position:relative;}' +
+    '.sid-hero-close{position:absolute;top:14px;left:14px;width:36px;height:36px;border-radius:10px;border:none;background:#fff;color:#64748b;font-size:18px;cursor:pointer;box-shadow:0 2px 6px rgba(15,23,42,0.06);}' +
+    '.sid-hero-close:hover{background:#fee2e2;color:#ef4444;}' +
+    '.sid-hero-eyebrow{font-size:11px;font-weight:800;color:#7f1d1d;letter-spacing:0.5px;display:flex;align-items:center;gap:6px;margin-bottom:6px;}' +
+    '.sid-hero-title{font-size:28px;font-weight:900;color:#0f172a;letter-spacing:-0.02em;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}' +
+    '.sid-hero-title code{font-family:ui-monospace,Menlo,monospace;font-size:24px;background:#fff;padding:4px 12px;border-radius:10px;border:1.5px solid #fecaca;color:#7f1d1d;}' +
+    '.sid-hero-flow{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;font-size:13px;color:#334155;}' +
+    '.sid-flow-pill{padding:7px 14px;background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;font-weight:700;display:inline-flex;align-items:center;gap:6px;}' +
+    '.sid-flow-pill.from{border-color:#fecaca;color:#7f1d1d;}' +
+    '.sid-flow-pill.to{border-color:#bbf7d0;color:#166534;}' +
+    '.sid-flow-arrow{color:#94a3b8;font-size:18px;}' +
+    '.sid-hero-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:18px;}' +
+    '.sid-stat{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:10px 14px;}' +
+    '.sid-stat-lbl{font-size:11px;color:#64748b;font-weight:700;}' +
+    '.sid-stat-val{font-size:18px;color:#0f172a;font-weight:900;margin-top:2px;}' +
+    '.sid-stat.cost .sid-stat-val{color:#7f1d1d;}' +
+    '@media(max-width:640px){.sid-hero-stats{grid-template-columns:repeat(2,1fr);}}' +
+
+    '.sid-pill{padding:5px 12px;border-radius:999px;font-size:12px;font-weight:800;display:inline-flex;align-items:center;gap:6px;}' +
+    '.sid-pill.draft{background:#f1f5f9;color:#475569;}' +
+    '.sid-pill.approved{background:#dbeafe;color:#1e40af;}' +
+    '.sid-pill.issued{background:#fef3c7;color:#92400e;}' +
+    '.sid-pill.received{background:#dcfce7;color:#166534;}' +
+    '.sid-pill.cancelled{background:#fee2e2;color:#991b1b;}' +
+    '.sid-pill.reversed{background:#fce7f3;color:#9d174d;}' +
+    '.sid-pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;}' +
+
+    '.sid-section{padding:22px 28px;border-bottom:1px solid #f1f5f9;}' +
+    '.sid-section:last-of-type{border-bottom:none;}' +
+    '.sid-section-head{font-size:12px;font-weight:800;color:#64748b;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:14px;display:flex;align-items:center;gap:6px;}' +
+    '.sid-section-head i{color:#7f1d1d;}' +
+
+    '.sid-timeline{display:flex;align-items:flex-start;gap:0;margin:6px 0 4px;flex-wrap:wrap;}' +
+    '.sid-step{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;text-align:center;position:relative;padding:0 4px;}' +
+    '.sid-step + .sid-step::before{content:"";position:absolute;top:14px;right:50%;left:-50%;height:2px;background:#e2e8f0;z-index:0;}' +
+    '.sid-step.done + .sid-step::before,.sid-step.current + .sid-step::before{background:linear-gradient(to left,#16a34a,#bbf7d0);}' +
+    '.sid-step-dot{width:30px;height:30px;border-radius:50%;background:#f1f5f9;border:2.5px solid #e2e8f0;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:11px;position:relative;z-index:1;}' +
+    '.sid-step.done .sid-step-dot{background:#16a34a;border-color:#16a34a;color:#fff;}' +
+    '.sid-step.current .sid-step-dot{background:#fff;border-color:#7f1d1d;color:#7f1d1d;animation:sidPulse 1.4s infinite;}' +
+    '.sid-step.reversed .sid-step-dot{background:#fce7f3;border-color:#9d174d;color:#9d174d;}' +
+    '@keyframes sidPulse{0%,100%{box-shadow:0 0 0 0 rgba(127,29,29,0.4);}50%{box-shadow:0 0 0 8px rgba(127,29,29,0);}}' +
+    '.sid-step-lbl{font-size:11px;color:#64748b;font-weight:700;margin-top:6px;}' +
+    '.sid-step.done .sid-step-lbl,.sid-step.current .sid-step-lbl{color:#0f172a;}' +
+    '.sid-step-meta{font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;font-family:ui-monospace,Menlo,monospace;}' +
+
+    '.sid-table-wrap{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;}' +
+    '.sid-table{width:100%;border-collapse:collapse;font-size:13px;}' +
+    '.sid-table th{background:#f8fafc;padding:11px 12px;text-align:start;font-size:11px;font-weight:800;color:#475569;letter-spacing:0.4px;text-transform:uppercase;border-bottom:1px solid #e2e8f0;}' +
+    '.sid-table td{padding:12px;border-bottom:1px solid #f1f5f9;color:#0f172a;}' +
+    '.sid-table tr:last-child td{border-bottom:none;}' +
+    '.sid-table .num{text-align:end;font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace;}' +
+    '.sid-table .strong{font-weight:800;}' +
+    '.sid-qty-diff{display:inline-flex;align-items:center;gap:4px;}' +
+    '.sid-qty-diff .arrow{color:#16a34a;font-size:10px;}' +
+    '.sid-table tfoot td{background:#fafafa;font-weight:800;border-top:1.5px solid #e2e8f0;}' +
+
+    '.sid-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px;display:flex;align-items:center;gap:12px;}' +
+    '.sid-card-icon{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}' +
+    '.sid-card-icon.gl{background:#fef3c7;color:#92400e;}' +
+    '.sid-card-icon.notes{background:#e0f2fe;color:#075985;}' +
+    '.sid-card-icon.reverse{background:#fce7f3;color:#9d174d;}' +
+    '.sid-card-body{flex:1;min-width:0;}' +
+    '.sid-card-lbl{font-size:11px;color:#64748b;font-weight:700;}' +
+    '.sid-card-val{font-size:14px;color:#0f172a;font-weight:700;margin-top:2px;}' +
+    '.sid-card-val code{font-family:ui-monospace,Menlo,monospace;background:#fff;padding:2px 8px;border-radius:6px;border:1px solid #e2e8f0;font-size:12px;}' +
+
+    '.sid-banner{padding:14px 18px;border-radius:12px;display:flex;align-items:flex-start;gap:12px;}' +
+    '.sid-banner.reverse{background:linear-gradient(135deg,#fce7f3,#fdf2f8);border:1px solid #f9a8d4;}' +
+    '.sid-banner-icon{width:40px;height:40px;border-radius:10px;background:#fff;color:#9d174d;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:18px;}' +
+    '.sid-banner-title{font-size:14px;font-weight:800;color:#9d174d;}' +
+    '.sid-banner-text{font-size:12px;color:#831843;line-height:1.6;margin-top:3px;}' +
+    '.sid-banner-meta{font-size:11px;color:#831843;font-weight:700;margin-top:6px;font-family:ui-monospace,Menlo,monospace;}' +
+
+    '.sid-actions{padding:18px 28px;background:#fafafa;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;position:sticky;bottom:0;}' +
+    '.sid-actions-left{display:flex;gap:8px;flex-wrap:wrap;}' +
+    '.sid-actions-right{display:flex;gap:8px;flex-wrap:wrap;}' +
+    '.sid-btn{height:40px;padding:0 18px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;border:1.5px solid;transition:all 0.15s;}' +
+    '.sid-btn:hover{transform:translateY(-1px);}' +
+    '.sid-btn-primary{background:#7f1d1d;color:#fff;border-color:#7f1d1d;}' +
+    '.sid-btn-success{background:#16a34a;color:#fff;border-color:#16a34a;}' +
+    '.sid-btn-warning{background:#f59e0b;color:#fff;border-color:#f59e0b;}' +
+    '.sid-btn-danger{background:#fff;color:#dc2626;border-color:#fecaca;}' +
+    '.sid-btn-danger:hover{background:#fee2e2;}' +
+    '.sid-btn-ghost{background:#fff;color:#475569;border-color:#e2e8f0;}' +
+    '.sid-btn-ghost:hover{background:#f8fafc;}' +
+
+    // Reverse confirmation modal
+    '#siRevConfirm{position:fixed;inset:0;z-index:7000;display:none;background:rgba(15,23,42,0.6);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:20px;}' +
+    '#siRevConfirm.open{display:flex;}' +
+    '#siRevConfirmBox{background:#fff;border-radius:16px;width:100%;max-width:480px;direction:rtl;overflow:hidden;animation:siDetailIn 0.2s ease;}' +
+    '#siRevConfirmBox .head{padding:20px 24px 14px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:12px;}' +
+    '#siRevConfirmBox .head-icon{width:44px;height:44px;border-radius:12px;background:#fce7f3;color:#9d174d;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}' +
+    '#siRevConfirmBox .head-title{font-size:17px;font-weight:900;color:#0f172a;}' +
+    '#siRevConfirmBox .head-sub{font-size:12px;color:#64748b;margin-top:2px;}' +
+    '#siRevConfirmBox .body{padding:18px 24px;}' +
+    '#siRevConfirmBox label{font-size:12px;font-weight:800;color:#0f172a;display:block;margin-bottom:6px;}' +
+    '#siRevConfirmBox label .req{color:#dc2626;}' +
+    '#siRevConfirmBox textarea{width:100%;min-height:90px;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:13px;font-family:inherit;resize:vertical;}' +
+    '#siRevConfirmBox textarea:focus{outline:none;border-color:#9d174d;box-shadow:0 0 0 3px rgba(157,23,77,0.1);}' +
+    '#siRevConfirmBox .warn{margin-top:14px;padding:10px 12px;border-radius:10px;background:#fef3c7;border:1px solid #fde68a;font-size:12px;color:#92400e;line-height:1.6;}' +
+    '#siRevConfirmBox .foot{padding:14px 24px 20px;display:flex;justify-content:flex-end;gap:8px;}';
+  document.head.appendChild(st);
 }
+
+function _siFmtMoney(v) {
+  return Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function _siFmtQty(v) {
+  return Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+}
+function _siFmtDt(v) {
+  if (!v) return '—';
+  try {
+    var d = new Date(v);
+    return d.toLocaleDateString('en-GB', { day:'2-digit', month:'2-digit', year:'numeric' }) +
+           ' · ' + d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+  } catch(e) { return String(v); }
+}
+function _siEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function _siRenderDetailView(d) {
+  var statusLabels = {
+    draft:'مسودة', approved:'معتمد', issued:'تم الصرف',
+    received:'تم الاستلام', cancelled:'ملغى', reversed:'مرجع'
+  };
+  var status = d.status || 'draft';
+  var statusLbl = statusLabels[status] || status;
+
+  // Build the workflow timeline. Status moves L→R: draft → approved → issued → received.
+  // 'reversed' is shown as a side-track at the end. 'cancelled' is its own terminal.
+  var steps = [
+    { key:'draft',    lbl:'مسودة',     icon:'fa-pen-to-square', when: d.created_at },
+    { key:'approved', lbl:'اعتماد',    icon:'fa-circle-check',  when: d.approved_at },
+    { key:'issued',   lbl:'صرف',       icon:'fa-paper-plane',   when: d.issued_at },
+    { key:'received', lbl:'استلام',    icon:'fa-inbox',         when: d.received_at }
+  ];
+  var statusOrder = ['draft','approved','issued','received'];
+  var currentIdx = Math.max(0, statusOrder.indexOf(status));
+  var timelineHtml = steps.map(function(step, i) {
+    var cls = '';
+    if (status === 'cancelled') {
+      cls = (step.key === 'draft') ? 'done' : '';
+    } else if (status === 'reversed') {
+      cls = 'done';
+    } else if (i < currentIdx) cls = 'done';
+    else if (i === currentIdx) cls = 'current';
+    return '<div class="sid-step ' + cls + '">' +
+             '<div class="sid-step-dot"><i class="fas ' + step.icon + '"></i></div>' +
+             '<div class="sid-step-lbl">' + step.lbl + '</div>' +
+             (step.when ? '<div class="sid-step-meta">' + _siEsc(_siFmtDt(step.when)) + '</div>' : '') +
+           '</div>';
+  }).join('');
+  if (status === 'reversed') {
+    timelineHtml += '<div class="sid-step reversed">' +
+      '<div class="sid-step-dot"><i class="fas fa-rotate-left"></i></div>' +
+      '<div class="sid-step-lbl">إرجاع</div>' +
+      (d.reversed_at ? '<div class="sid-step-meta">' + _siEsc(_siFmtDt(d.reversed_at)) + '</div>' : '') +
+    '</div>';
+  }
+
+  // Line items table
+  var itemRows = (d.items || []).map(function(it) {
+    var req = Number(it.qty_requested || 0);
+    var iss = Number(it.qty_issued    || 0);
+    var rcv = Number(it.qty_received  || 0);
+    var unit = it.item_unit || '';
+    return '<tr>' +
+      '<td><b>' + _siEsc(it.item_name || '') + '</b>' +
+        (unit ? ' <span style="color:#94a3b8;font-size:11px;font-weight:600;">/' + _siEsc(unit) + '</span>' : '') +
+      '</td>' +
+      '<td class="num">' + _siFmtQty(req) + '</td>' +
+      '<td class="num">' + _siFmtQty(iss) + '</td>' +
+      '<td class="num">' + _siFmtQty(rcv) + '</td>' +
+      '<td class="num">' + _siFmtMoney(it.unit_cost) + '</td>' +
+      '<td class="num strong">' + _siFmtMoney(it.line_total) + '</td>' +
+    '</tr>';
+  }).join('');
+
+  // GL link card (only if posted)
+  var glCard = '';
+  if (d.gl_journal_id) {
+    glCard = '<div class="sid-section">' +
+      '<div class="sid-section-head"><i class="fas fa-building-columns"></i> القيد المحاسبي</div>' +
+      '<div class="sid-card">' +
+        '<div class="sid-card-icon gl"><i class="fas fa-book"></i></div>' +
+        '<div class="sid-card-body">' +
+          '<div class="sid-card-lbl">رقم القيد المحاسبي (GL Journal)</div>' +
+          '<div class="sid-card-val"><code>' + _siEsc(d.gl_journal_id) + '</code> ' +
+          '<span style="color:#16a34a;font-size:12px;font-weight:700;">· مُرحّل ✓</span></div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // Notes card
+  var notesCard = '';
+  if (d.notes) {
+    notesCard = '<div class="sid-section">' +
+      '<div class="sid-section-head"><i class="fas fa-note-sticky"></i> ملاحظات</div>' +
+      '<div class="sid-card">' +
+        '<div class="sid-card-icon notes"><i class="fas fa-quote-right"></i></div>' +
+        '<div class="sid-card-body">' +
+          '<div class="sid-card-val" style="font-weight:500;line-height:1.6;">' + _siEsc(d.notes) + '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // Reversal banner
+  var reverseBanner = '';
+  if (status === 'reversed') {
+    reverseBanner = '<div class="sid-section">' +
+      '<div class="sid-banner reverse">' +
+        '<div class="sid-banner-icon"><i class="fas fa-rotate-left"></i></div>' +
+        '<div style="flex:1;">' +
+          '<div class="sid-banner-title">تم إرجاع هذا الإذن</div>' +
+          '<div class="sid-banner-text">أُعيدت الكميات للمستودع المصدر وتم ترحيل قيد عكسي بنفس القيمة.</div>' +
+          (d.reverse_reason ? '<div class="sid-banner-text" style="margin-top:6px;"><b>السبب:</b> ' + _siEsc(d.reverse_reason) + '</div>' : '') +
+          '<div class="sid-banner-meta">' +
+            'بواسطة: ' + _siEsc(d.reversed_by || '—') +
+            ' · ' + _siEsc(_siFmtDt(d.reversed_at)) +
+            (d.reverse_gl_journal_id ? ' · قيد عكسي: ' + _siEsc(d.reverse_gl_journal_id) : '') +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // Action buttons (status-aware)
+  var actionsRight = '';
+  if (status === 'draft') {
+    actionsRight += '<button class="sid-btn sid-btn-success" onclick="siApprove(\'' + _siEsc(d.id) + '\');siCloseDetail();"><i class="fas fa-circle-check"></i> اعتماد</button>';
+    actionsRight += '<button class="sid-btn sid-btn-warning" onclick="siIssue(\'' + _siEsc(d.id) + '\');siCloseDetail();"><i class="fas fa-paper-plane"></i> صرف</button>';
+    actionsRight += '<button class="sid-btn sid-btn-danger" onclick="siCancel(\'' + _siEsc(d.id) + '\');siCloseDetail();"><i class="fas fa-xmark"></i> إلغاء</button>';
+  } else if (status === 'approved') {
+    actionsRight += '<button class="sid-btn sid-btn-warning" onclick="siIssue(\'' + _siEsc(d.id) + '\');siCloseDetail();"><i class="fas fa-paper-plane"></i> صرف</button>';
+  } else if (status === 'issued') {
+    actionsRight += '<button class="sid-btn sid-btn-success" onclick="siReceive(\'' + _siEsc(d.id) + '\');siCloseDetail();"><i class="fas fa-inbox"></i> استلام</button>';
+    actionsRight += '<button class="sid-btn sid-btn-danger" onclick="siOpenReverseConfirm(\'' + _siEsc(d.id) + '\')"><i class="fas fa-rotate-left"></i> إرجاع الإذن</button>';
+  } else if (status === 'received') {
+    actionsRight += '<button class="sid-btn sid-btn-danger" onclick="siOpenReverseConfirm(\'' + _siEsc(d.id) + '\')"><i class="fas fa-rotate-left"></i> إرجاع الإذن</button>';
+  }
+  // Print + close on the left
+  var actionsLeft =
+    '<button class="sid-btn sid-btn-ghost" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>' +
+    '<button class="sid-btn sid-btn-ghost" onclick="siCloseDetail()">إغلاق</button>';
+
+  // Compose
+  var html =
+    '<div id="siDetailShell">' +
+      '<section class="sid-hero">' +
+        '<button class="sid-hero-close" type="button" onclick="siCloseDetail()" aria-label="إغلاق">&times;</button>' +
+        '<div class="sid-hero-eyebrow"><i class="fas fa-truck-arrow-right"></i> إذن صرف · ' + _siEsc(_siFmtDt(d.issue_date || d.created_at)) + '</div>' +
+        '<div class="sid-hero-title"><code>' + _siEsc(d.issue_number || d.id) + '</code> <span class="sid-pill ' + status + '">' + _siEsc(statusLbl) + '</span></div>' +
+        '<div class="sid-hero-flow">' +
+          '<span class="sid-flow-pill from"><i class="fas fa-warehouse"></i> ' + _siEsc(d.from_warehouse_name || '—') + '</span>' +
+          '<i class="fas fa-arrow-left sid-flow-arrow"></i>' +
+          '<span class="sid-flow-pill to"><i class="fas fa-store"></i> ' + _siEsc(d.to_warehouse_name || '—') + '</span>' +
+        '</div>' +
+        '<div class="sid-hero-stats">' +
+          '<div class="sid-stat"><div class="sid-stat-lbl">عدد الأصناف</div><div class="sid-stat-val">' + (d.items ? d.items.length : 0) + '</div></div>' +
+          '<div class="sid-stat"><div class="sid-stat-lbl">إجمالي المطلوب</div><div class="sid-stat-val">' + _siFmtQty((d.items||[]).reduce(function(s,i){return s+Number(i.qty_requested||0);},0)) + '</div></div>' +
+          '<div class="sid-stat"><div class="sid-stat-lbl">إجمالي المصروف</div><div class="sid-stat-val">' + _siFmtQty((d.items||[]).reduce(function(s,i){return s+Number(i.qty_issued||0);},0)) + '</div></div>' +
+          '<div class="sid-stat cost"><div class="sid-stat-lbl">القيمة الإجمالية</div><div class="sid-stat-val">' + _siFmtMoney(d.total_cost) + ' <small style="font-size:11px;color:#64748b;font-weight:600;">ر.س</small></div></div>' +
+        '</div>' +
+      '</section>' +
+
+      reverseBanner +
+
+      '<section class="sid-section">' +
+        '<div class="sid-section-head"><i class="fas fa-flag-checkered"></i> سير المعاملة</div>' +
+        '<div class="sid-timeline">' + timelineHtml + '</div>' +
+      '</section>' +
+
+      '<section class="sid-section">' +
+        '<div class="sid-section-head"><i class="fas fa-list-ul"></i> أصناف الإذن</div>' +
+        '<div class="sid-table-wrap"><table class="sid-table">' +
+          '<thead><tr>' +
+            '<th>الصنف</th>' +
+            '<th class="num">مطلوب</th>' +
+            '<th class="num">مصروف</th>' +
+            '<th class="num">مستلم</th>' +
+            '<th class="num">سعر الوحدة</th>' +
+            '<th class="num">القيمة</th>' +
+          '</tr></thead>' +
+          '<tbody>' + (itemRows || '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:28px;">لا توجد أصناف</td></tr>') + '</tbody>' +
+          (d.items && d.items.length ? '<tfoot><tr><td colspan="5" style="text-align:start;">الإجمالي</td><td class="num">' + _siFmtMoney(d.total_cost) + ' ر.س</td></tr></tfoot>' : '') +
+        '</table></div>' +
+      '</section>' +
+
+      glCard +
+      notesCard +
+
+      '<footer class="sid-actions">' +
+        '<div class="sid-actions-left">' + actionsLeft + '</div>' +
+        '<div class="sid-actions-right">' + actionsRight + '</div>' +
+      '</footer>' +
+    '</div>';
+
+  // Mount
+  var ov = document.getElementById('siDetailOverlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'siDetailOverlay';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function(ev) { if (ev.target === ov) window.siCloseDetail(); });
+    document.addEventListener('keydown', function(ev) {
+      if (ev.key === 'Escape' && ov.classList.contains('open')) window.siCloseDetail();
+    });
+  }
+  ov.innerHTML = html;
+  ov.classList.add('open');
+  window._siCurrentDetailId = d.id;
+}
+
+window.siCloseDetail = function() {
+  var ov = document.getElementById('siDetailOverlay');
+  if (ov) ov.classList.remove('open');
+  var rc = document.getElementById('siRevConfirm');
+  if (rc) rc.classList.remove('open');
+};
+
+// Reverse confirmation modal — requires a reason ≥ 4 chars.
+window.siOpenReverseConfirm = function(id) {
+  var el = document.getElementById('siRevConfirm');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'siRevConfirm';
+    el.innerHTML =
+      '<div id="siRevConfirmBox">' +
+        '<div class="head">' +
+          '<div class="head-icon"><i class="fas fa-rotate-left"></i></div>' +
+          '<div><div class="head-title">إرجاع إذن الصرف</div>' +
+            '<div class="head-sub">سيُعاد المخزون للمستودع المصدر وسيُرحَّل قيد عكسي.</div></div>' +
+        '</div>' +
+        '<div class="body">' +
+          '<label>سبب الإرجاع <span class="req">*</span></label>' +
+          '<textarea id="siRevReason" placeholder="مثال: خطأ في الكمية، تلف بالنقل، إلغاء الطلب من الفرع..." maxlength="500"></textarea>' +
+          '<div class="warn"><i class="fas fa-triangle-exclamation"></i> هذا الإجراء غير قابل للتراجع — تأكد من السبب قبل الاعتماد.</div>' +
+        '</div>' +
+        '<div class="foot">' +
+          '<button class="sid-btn sid-btn-ghost" type="button" onclick="document.getElementById(\'siRevConfirm\').classList.remove(\'open\');">إلغاء</button>' +
+          '<button class="sid-btn sid-btn-primary" id="siRevConfirmBtn" type="button" style="background:#9d174d;border-color:#9d174d;"><i class="fas fa-rotate-left"></i> اعتماد الإرجاع</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(el);
+    el.addEventListener('click', function(ev) {
+      if (ev.target === el) el.classList.remove('open');
+    });
+  }
+  el.classList.add('open');
+  setTimeout(function() {
+    var ta = document.getElementById('siRevReason'); if (ta) { ta.value = ''; ta.focus(); }
+  }, 60);
+  document.getElementById('siRevConfirmBtn').onclick = function() { siConfirmReverse(id); };
+};
+
+window.siConfirmReverse = function(id) {
+  var ta = document.getElementById('siRevReason');
+  var reason = ta ? ta.value.trim() : '';
+  if (reason.length < 4) {
+    showToast('يجب كتابة سبب الإرجاع (4 أحرف على الأقل)', true);
+    if (ta) ta.focus();
+    return;
+  }
+  var btn = document.getElementById('siRevConfirmBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الإرجاع...'; }
+  _erpPost('/erp/stock-issues/' + id + '/reverse',
+    { reversedBy: currentUser, reason: reason },
+    function(r) {
+      if (r && r.success) {
+        showToast('تم إرجاع الإذن وترحيل القيد العكسي ✓');
+        var rc = document.getElementById('siRevConfirm'); if (rc) rc.classList.remove('open');
+        // Re-fetch + re-render the detail so the user sees the new 'reversed' state.
+        _erpGet('/erp/stock-issues/' + id, function(d) {
+          if (d && !d.error) _siRenderDetailView(d);
+          if (typeof siLoad === 'function') siLoad();
+        });
+      } else {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-rotate-left"></i> اعتماد الإرجاع'; }
+        showToast((r && r.error) || 'فشل الإرجاع', true);
+      }
+    });
+};
 function siApprove(id) {
   _erpPost('/erp/stock-issues/'+id+'/approve', { approvedBy: currentUser }, function(r){
     if (r.success) { showToast('تم الاعتماد'); siLoad(); } else showToast(r.error||'فشل', true);

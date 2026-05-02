@@ -1,10 +1,142 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 
-// Get all inventory items. Optional ?brandId= filter.
-router.get('/items', async (req, res) => {
+// V5.9.0 — One-time backfill helper. If warehouse_stock is empty (or empty
+//   for items that have inv_items.stock>0), seed it from inv_items.stock by
+//   placing all stock in the brand's main warehouse, or a fallback
+//   "default" warehouse if the brand doesn't have one.  Idempotent — only
+//   runs if there's no row yet for an item.
+async function _ensureWarehouseStockBackfilled() {
+  try {
+    // Find items with stock > 0 that have NO row in warehouse_stock
+    const [orphans] = await db.query(`
+      SELECT i.id, i.name, i.brand_id, i.stock
+      FROM inv_items i
+      LEFT JOIN warehouse_stock ws ON ws.item_id = i.id
+      WHERE i.stock > 0 AND i.active = 1 AND ws.id IS NULL
+    `);
+    if (!orphans.length) return { backfilled: 0 };
+    // Pick a default warehouse PER brand: prefer is_main=1, else first by code.
+    //   If still nothing, pick the global oldest warehouse (e.g., "أوكتين").
+    const [allWh] = await db.query(`SELECT id, name, brand_id, is_main FROM warehouses WHERE is_active=1 ORDER BY (is_main=1) DESC, code ASC`);
+    if (!allWh.length) return { backfilled: 0, error: 'no warehouses' };
+    const byBrand = {};
+    allWh.forEach(w => { if (!byBrand[w.brand_id || ''] || w.is_main) byBrand[w.brand_id || ''] = w; });
+    const fallback = allWh[0];  // global oldest if brand has no warehouse
+    let n = 0;
+    for (const it of orphans) {
+      const wh = byBrand[it.brand_id || ''] || fallback;
+      const id = 'WS-BF-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+      await db.query(
+        'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?) ' +
+        'ON DUPLICATE KEY UPDATE qty = VALUES(qty)',
+        [id, wh.id, it.id, Number(it.stock) || 0]
+      );
+      n++;
+    }
+    console.log('[inventory] backfilled warehouse_stock for', n, 'items');
+    return { backfilled: n };
+  } catch (e) {
+    console.warn('[inventory] backfill skipped:', e.message);
+    return { error: e.message };
+  }
+}
+
+// Manual backfill trigger (admin only — one-time)
+router.post('/warehouse-stock/backfill', async (req, res) => {
+  res.json(await _ensureWarehouseStockBackfilled());
+});
+
+// V5.9.0 — Warehouses for a brand, with per-warehouse inventory stats.
+//   Used by the new "Warehouse Picker" view that sits between the Brand
+//   Picker and the 6-icon Hub.  Each card needs: itemCount, totalValue,
+//   lowCount, lastActivity.
+router.get('/warehouses-by-brand', async (req, res) => {
   try {
     const { brandId } = req.query;
+    await _ensureWarehouseStockBackfilled();  // idempotent
+    let sql = `
+      SELECT w.id, w.name, w.code, w.brand_id, b.name AS brand_name, w.is_main, w.is_active,
+             COUNT(DISTINCT ws.item_id) AS item_count,
+             COALESCE(SUM(ws.qty * i.cost), 0) AS total_value,
+             SUM(CASE WHEN ws.qty <= i.min_stock AND i.min_stock > 0 THEN 1 ELSE 0 END) AS low_count,
+             SUM(CASE WHEN ws.qty <= 0 THEN 1 ELSE 0 END) AS out_count
+      FROM warehouses w
+      LEFT JOIN warehouse_stock ws ON ws.warehouse_id = w.id
+      LEFT JOIN inv_items i ON i.id = ws.item_id AND i.active = 1
+      LEFT JOIN brands b ON b.id = w.brand_id
+      WHERE w.is_active = 1`;
+    const params = [];
+    if (brandId && brandId !== '__all__') {
+      sql += ' AND w.brand_id = ?';
+      params.push(brandId);
+    }
+    sql += ' GROUP BY w.id ORDER BY (w.is_main=1) DESC, w.code ASC';
+    const [rows] = await db.query(sql, params);
+    // Last-activity per warehouse (single extra query)
+    const [lastMov] = await db.query(`
+      SELECT warehouse_id, MAX(movement_date) AS last_activity
+      FROM inventory_movements WHERE warehouse_id IS NOT NULL GROUP BY warehouse_id`);
+    const activityMap = {};
+    lastMov.forEach(m => { activityMap[m.warehouse_id] = m.last_activity; });
+    res.json(rows.map(w => ({
+      id: w.id, name: w.name, code: w.code,
+      brandId: w.brand_id, brandName: w.brand_name || '',
+      isMain: !!w.is_main,
+      itemCount: Number(w.item_count) || 0,
+      totalValue: Number(w.total_value) || 0,
+      lowCount: Number(w.low_count) || 0,
+      outCount: Number(w.out_count) || 0,
+      lastActivity: activityMap[w.id] || null
+    })));
+  } catch (e) { res.json({ error: e.message, warehouses: [] }); }
+});
+
+// V5.9.0 — Items, optionally expanded per-warehouse.
+//   Default behavior unchanged: ?brandId only → returns one row per item with
+//     the global stock (back-compat for legacy callers).
+//   New behavior: ?warehouseId → returns one row PER ITEM in that warehouse
+//     with the warehouse's stock.
+//   New behavior: ?expandWarehouses=1 → returns one row per (item × warehouse)
+//     so the items table can show "صف لكل (صنف × مستودع)".
+router.get('/items', async (req, res) => {
+  try {
+    await _ensureWarehouseStockBackfilled();
+    const { brandId, warehouseId, expandWarehouses } = req.query;
+    if (warehouseId || expandWarehouses === '1') {
+      // Per-warehouse rows
+      let sql = `
+        SELECT i.*, b.name AS brand_name,
+               w.id AS wh_id, w.name AS wh_name, w.code AS wh_code,
+               COALESCE(ws.qty, 0) AS wh_stock
+        FROM inv_items i
+        LEFT JOIN brands b ON b.id = i.brand_id
+        LEFT JOIN warehouse_stock ws ON ws.item_id = i.id
+        LEFT JOIN warehouses w ON w.id = ws.warehouse_id
+        WHERE i.active = 1`;
+      const params = [];
+      if (brandId)      { sql += ' AND i.brand_id = ?'; params.push(brandId); }
+      if (warehouseId)  { sql += ' AND ws.warehouse_id = ?'; params.push(warehouseId); }
+      sql += ' ORDER BY i.category, i.name, w.code';
+      const [rows] = await db.query(sql, params);
+      // Filter rows where the item has no warehouse_stock entry but warehouseId was specified
+      //   (those rows have w.id NULL — drop them when warehouseId filter is on)
+      const filtered = warehouseId ? rows.filter(r => r.wh_id) : rows;
+      return res.json(filtered.map(i => ({
+        id: i.id, name: i.name, category: i.category,
+        cost: Number(i.cost),
+        stock: Number(i.wh_stock) || 0,         // per-warehouse stock
+        globalStock: Number(i.stock) || 0,       // total across all warehouses
+        minStock: Number(i.min_stock),
+        unit: i.unit, bigUnit: i.big_unit, convRate: Number(i.conv_rate), active: i.active,
+        brandId: i.brand_id || '', brand_id: i.brand_id || '',
+        brandName: i.brand_name || '',
+        warehouseId: i.wh_id || '',
+        warehouseName: i.wh_name || '',
+        warehouseCode: i.wh_code || ''
+      })));
+    }
+    // Legacy: one row per item, global stock
     let sql = 'SELECT i.*, b.name AS brand_name FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id';
     const params = [];
     if (brandId) { sql += ' WHERE i.brand_id = ?'; params.push(brandId); }
@@ -19,6 +151,32 @@ router.get('/items', async (req, res) => {
   } catch (e) {
     res.json([]);
   }
+});
+
+// V5.9.0 — Per-item warehouse distribution (drill-down popup data).
+//   GET /inventory/items/:itemId/warehouses → which warehouses have this
+//   item, with the qty in each.
+router.get('/items/:itemId/warehouses', async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT w.id, w.name, w.code, w.is_main,
+             b.name AS brand_name,
+             COALESCE(ws.qty, 0) AS qty,
+             i.cost
+      FROM warehouse_stock ws
+      JOIN warehouses w ON w.id = ws.warehouse_id
+      JOIN inv_items i ON i.id = ws.item_id
+      LEFT JOIN brands b ON b.id = w.brand_id
+      WHERE ws.item_id = ? AND w.is_active = 1
+      ORDER BY (w.is_main=1) DESC, w.code ASC`, [req.params.itemId]);
+    res.json(rows.map(r => ({
+      warehouseId: r.id, warehouseName: r.name, warehouseCode: r.code,
+      isMain: !!r.is_main,
+      brandName: r.brand_name || '',
+      qty: Number(r.qty) || 0,
+      value: (Number(r.qty) || 0) * (Number(r.cost) || 0)
+    })));
+  } catch (e) { res.json([]); }
 });
 
 // Save inventory item (insert or update)

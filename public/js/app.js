@@ -3744,8 +3744,10 @@ let cachedRawItems = [];
 // when they navigate away and come back. Brand stats are cached for
 // 60s (per recommendation) with a refresh button on the picker.
 // =========================================
-window._invHub = window._invHub || { mode: 'brands', brandId: null, tab: 'items' };
+// V5.9.0 — modes now include 'warehouses' (the new picker between brand → hub)
+window._invHub = window._invHub || { mode: 'brands', brandId: null, warehouseId: null, tab: 'items' };
 window._invHubCache = window._invHub.cache || { ts: 0, data: null };
+window._invHubWhCache = window._invHubWhCache || {};   // brandId → { ts, list }
 
 // Tabs metadata: title, icon, color, badge-resolver
 var _INV_HUB_TABS = [
@@ -3757,16 +3759,13 @@ var _INV_HUB_TABS = [
   { id: 'shortage',    title: 'طلبات النواقص',  icon: 'fa-triangle-exclamation', color: '#ef4444', sub: 'تجديد المخزون والـPO' }
 ];
 
-// View 3: tab content (filtered by brand)
-//   V5.8.6 — re-defined here so the order is right: switchWhTab adds the
-//   .active class FIRST, then _invHubShowOnly clears its own inline
-//   display:none so the CSS rule for .active takes over.
+// V5.9.0 — Tab view (filtered by both brand AND warehouse)
 function invHubGoToTab(brandId, tab, fromHub) {
   window._invHub.mode = 'tab';
   window._invHub.brandId = brandId;
   window._invHub.tab = tab;
-  switchWhTab(tab);                      // first: switch the active class
-  _invHubShowOnly('tabs');               // then: hide hub + tabs row, clear stale display
+  switchWhTab(tab);
+  _invHubShowOnly('tabs');
   _invHubRenderBrandStrip(brandId);
 }
 
@@ -3775,10 +3774,12 @@ function invHubOpen() {
   _invHubInjectStyles();
   var st = window._invHub;
   if (st.mode === 'tab' && st.brandId && st.tab) {
-    // restore last tab view
-    return invHubGoToTab(st.brandId, st.tab, /*fromHub=*/false);
+    return invHubGoToTab(st.brandId, st.tab, false);
   }
-  if (st.mode === 'hub' && st.brandId) {
+  if (st.mode === 'hub' && st.brandId && st.warehouseId) {
+    return invHubGoToWarehouse(st.brandId, st.warehouseId);
+  }
+  if (st.mode === 'warehouses' && st.brandId) {
     return invHubGoToBrand(st.brandId);
   }
   return invHubGoToBrandsList();
@@ -3792,19 +3793,140 @@ function invHubGoToBrandsList() {
   _invHubRenderBrandsList();
 }
 
-// View 2: per-brand hub (6 big icons)
-//   V5.8.6 — RESTORED. The previous V5.8.5 skip was the wrong fix; the
-//   user's complaint was about the inner sales-tabs row showing up
-//   alongside the hub, not the hub itself. Now: hub = sole navigation,
-//   tabs row = HIDDEN inside any tab, breadcrumb strip = back-button +
-//   current tab name.
+// V5.9.0 — View 2: warehouse picker (cards). Came from feedback that
+//   inventory needs to be tracked per-warehouse (which warehouse has what
+//   stock).  Sits between the Brand Picker and the 6-icon Hub.
 function invHubGoToBrand(brandId) {
   if (!brandId) return invHubGoToBrandsList();
+  window._invHub.mode = 'warehouses';
+  window._invHub.brandId = brandId;
+  window._invHub.warehouseId = null;
+  _invHubShowOnly('hub');
+  _invHubRenderWarehousesList(brandId);
+}
+
+// V5.9.0 — View 3: 6-icon hub for the chosen (brand, warehouse) combo.
+//   warehouseId = '__all__' means a brand-wide rollup view.
+function invHubGoToWarehouse(brandId, warehouseId) {
+  if (!brandId) return invHubGoToBrandsList();
+  if (!warehouseId) return invHubGoToBrand(brandId);
   window._invHub.mode = 'hub';
   window._invHub.brandId = brandId;
+  window._invHub.warehouseId = warehouseId;
   _invHubShowOnly('hub');
   _invHubRenderBrandHub(brandId);
 }
+
+// V5.9.0 — render the warehouse picker for a brand
+function _invHubRenderWarehousesList(brandId) {
+  var box = q('#invHub');
+  if (!box) return;
+  // Resolve brand name from cache
+  var brandName = '—', brandLogo = '';
+  if (brandId === '__all__') brandName = 'كل البراندات';
+  else if (brandId === '__none__') brandName = 'بدون براند';
+  else if (window._invHubCache.data && window._invHubCache.data.brands) {
+    var b = window._invHubCache.data.brands.find(function(x){ return x.id === brandId; });
+    if (b) { brandName = b.name; brandLogo = b.logo; }
+  }
+  box.innerHTML =
+    '<div class="iv-hub-shell">' +
+      '<header class="iv-hub-head iv-hub-head-brand">' +
+        '<button class="iv-hub-back" onclick="invHubGoToBrandsList()" title="رجوع للبراندات"><i class="fas fa-chevron-right"></i></button>' +
+        (brandLogo
+          ? '<img src="' + _invHubEsc(brandLogo) + '" alt="" class="iv-hub-brand-logo">'
+          : '<div class="iv-hub-brand-logo iv-hub-brand-logo-text">' + _invHubEsc((brandName||'?').charAt(0).toUpperCase()) + '</div>') +
+        '<div class="iv-hub-head-titles">' +
+          '<h2 class="iv-hub-title">' + _invHubEsc(brandName) + '</h2>' +
+          '<p class="iv-hub-sub">اختر المستودع للدخول إلى مخزونه وعملياته.</p>' +
+        '</div>' +
+        '<button class="iv-hub-btn iv-hub-btn-ghost" onclick="_invHubRefreshWarehouses(\'' + _invHubEsc(brandId) + '\')" title="تحديث"><i class="fas fa-rotate"></i></button>' +
+      '</header>' +
+      '<div id="invHubWarehousesGrid" class="iv-hub-brands">' +
+        '<div class="iv-hub-skeleton"><i class="fas fa-spinner fa-spin"></i> جاري تحميل المستودعات...</div>' +
+      '</div>' +
+    '</div>';
+  _invHubLoadWarehousesData(brandId, function(list, totals) {
+    var grid = q('#invHubWarehousesGrid');
+    if (!grid) return;
+    grid.innerHTML = _invHubWarehouseCardsHtml(brandId, list, totals);
+  });
+}
+
+function _invHubWarehouseCardsHtml(brandId, warehouses, totals) {
+  // "All warehouses" card first — brand-wide rollup
+  var html = '<button class="iv-hub-bcard iv-hub-bcard-all" onclick="invHubGoToWarehouse(\'' + _invHubEsc(brandId) + '\',\'__all__\')">' +
+               '<div class="iv-hub-bcard-logo iv-hub-bcard-logo-all"><i class="fas fa-layer-group"></i></div>' +
+               '<div class="iv-hub-bcard-name">جميع المستودعات</div>' +
+               '<div class="iv-hub-bcard-sub">نظرة شاملة على كل البراند</div>' +
+               '<div class="iv-hub-bcard-stats">' +
+                 '<div class="iv-hub-stat"><span class="iv-hub-stat-num">' + (totals.itemCount||0) + '</span><span class="iv-hub-stat-lbl">صنف · مستودع</span></div>' +
+                 '<div class="iv-hub-stat"><span class="iv-hub-stat-num">' + _invHubFmtMoney(totals.totalValue||0) + '</span><span class="iv-hub-stat-lbl">ر.س قيمة</span></div>' +
+                 (totals.lowCount > 0
+                   ? '<div class="iv-hub-stat iv-hub-stat-warn"><i class="fas fa-triangle-exclamation"></i> ' + totals.lowCount + ' نواقص</div>'
+                   : '<div class="iv-hub-stat iv-hub-stat-ok"><i class="fas fa-circle-check"></i> سليم</div>') +
+               '</div>' +
+             '</button>';
+  if (!warehouses.length) {
+    html += '<div class="iv-hub-empty-wh">' +
+              '<i class="fas fa-warehouse"></i>' +
+              '<div class="iv-hub-empty-wh-title">لا توجد مستودعات لهذا البراند</div>' +
+              '<div class="iv-hub-empty-wh-sub">أضف مستودع من قسم إعدادات الـ ERP أولاً</div>' +
+            '</div>';
+    return html;
+  }
+  warehouses.forEach(function(w) {
+    var lastAct = w.lastActivity ? _invHubFmtDate(w.lastActivity) : 'لا يوجد';
+    html += '<button class="iv-hub-bcard iv-hub-bcard-wh" onclick="invHubGoToWarehouse(\'' + _invHubEsc(brandId) + '\',\'' + _invHubEsc(w.id) + '\')">' +
+              '<div class="iv-hub-bcard-logo iv-hub-bcard-logo-wh">' +
+                '<i class="fas fa-warehouse"></i>' +
+                (w.isMain ? '<span class="iv-hub-wh-star" title="المستودع الرئيسي"><i class="fas fa-star"></i></span>' : '') +
+              '</div>' +
+              '<div class="iv-hub-bcard-name">' + _invHubEsc(w.name) + '</div>' +
+              '<div class="iv-hub-bcard-sub">' + (w.code ? _invHubEsc(w.code) + ' · ' : '') + 'آخر حركة: ' + _invHubEsc(lastAct) + '</div>' +
+              '<div class="iv-hub-bcard-stats">' +
+                '<div class="iv-hub-stat"><span class="iv-hub-stat-num">' + (w.itemCount||0) + '</span><span class="iv-hub-stat-lbl">صنف</span></div>' +
+                '<div class="iv-hub-stat"><span class="iv-hub-stat-num">' + _invHubFmtMoney(w.totalValue||0) + '</span><span class="iv-hub-stat-lbl">ر.س قيمة</span></div>' +
+                (w.lowCount > 0
+                  ? '<div class="iv-hub-stat iv-hub-stat-warn"><i class="fas fa-triangle-exclamation"></i> ' + w.lowCount + ' نواقص</div>'
+                  : (w.outCount > 0
+                      ? '<div class="iv-hub-stat iv-hub-stat-warn" style="background:#fee2e2;color:#b91c1c;"><i class="fas fa-circle-xmark"></i> ' + w.outCount + ' نفد</div>'
+                      : '<div class="iv-hub-stat iv-hub-stat-ok"><i class="fas fa-circle-check"></i> سليم</div>')
+                ) +
+              '</div>' +
+            '</button>';
+  });
+  return html;
+}
+
+function _invHubLoadWarehousesData(brandId, cb) {
+  var now = Date.now();
+  var cache = window._invHubWhCache[brandId];
+  if (cache && cache.list && (now - cache.ts) < 60 * 1000) {
+    return cb(cache.list, cache.totals);
+  }
+  var token = localStorage.getItem('pos_token') || '';
+  var url = '/api/inventory/warehouses-by-brand' + (brandId && brandId !== '__all__' ? '?brandId=' + encodeURIComponent(brandId) : '');
+  fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => r.json())
+    .then(function(list) {
+      list = Array.isArray(list) ? list : [];
+      var totals = list.reduce(function(t, w) {
+        t.itemCount += w.itemCount || 0;
+        t.totalValue += w.totalValue || 0;
+        t.lowCount  += w.lowCount  || 0;
+        t.outCount  += w.outCount  || 0;
+        return t;
+      }, { itemCount: 0, totalValue: 0, lowCount: 0, outCount: 0 });
+      window._invHubWhCache[brandId] = { ts: Date.now(), list: list, totals: totals };
+      cb(list, totals);
+    }).catch(function() { cb([], { itemCount:0, totalValue:0, lowCount:0, outCount:0 }); });
+}
+
+window._invHubRefreshWarehouses = function(brandId) {
+  delete window._invHubWhCache[brandId];
+  _invHubRenderWarehousesList(brandId);
+};
 
 // V5.8.6 — Toggle which view is visible.
 //   The inner #whTabs row is HIDDEN in BOTH views — the brand hub
@@ -4048,9 +4170,8 @@ function _invHubSetBadge(tab, text) {
   if (el) el.textContent = text;
 }
 
-// ─── Brand strip shown above the active tab body (V5.8.6) ───
-//   Now the SOLE navigation when inside a tab — no duplicate sales-tabs row.
-//   Layout: [← البراندات]  /  [Brand]  /  [Current Tab + Switch button]
+// V5.9.0 — Brand strip = 4-level breadcrumb when inside a tab.
+//   [← البراندات] / [Brand] / [Warehouse] / [Current Tab pill]   [تغيير القسم ⊞]
 function _invHubRenderBrandStrip(brandId) {
   var strip = q('#invHubBrandStrip');
   if (!strip) return;
@@ -4062,31 +4183,45 @@ function _invHubRenderBrandStrip(brandId) {
     var b = data.brands.find(function(x){ return x.id === brandId; });
     if (b) { brandName = b.name; brandLogo = b.logo; }
   }
-  // Find current tab metadata
+  // Resolve warehouse name from cache
+  var whId = window._invHub.warehouseId || '__all__';
+  var whName = whId === '__all__' ? 'جميع المستودعات' : '—';
+  var whIsMain = false;
+  if (whId !== '__all__' && window._invHubWhCache[brandId]) {
+    var w = (window._invHubWhCache[brandId].list || []).find(function(x){return x.id===whId;});
+    if (w) { whName = w.name; whIsMain = w.isMain; }
+  }
   var curTab = window._invHub.tab || 'items';
   var tabMeta = (_INV_HUB_TABS.find(function(t){ return t.id === curTab; })) || _INV_HUB_TABS[0];
   strip.innerHTML =
     '<div class="iv-hub-strip">' +
-      // Back to brands
+      // 1. Back to brands
       '<button class="iv-hub-back-sm" onclick="invHubGoToBrandsList()" title="كل البراندات">' +
         '<i class="fas fa-chevron-right"></i> البراندات' +
       '</button>' +
       '<span class="iv-hub-strip-sep">/</span>' +
-      // Back to brand hub (the 6-icon menu for this brand)
-      '<button class="iv-hub-back-sm iv-hub-back-sm-brand" onclick="invHubGoToBrand(\'' + _invHubEsc(brandId) + '\')" title="رجوع لقائمة الأقسام">' +
+      // 2. Brand
+      '<button class="iv-hub-back-sm iv-hub-back-sm-brand" onclick="invHubGoToBrand(\'' + _invHubEsc(brandId) + '\')" title="رجوع لقائمة المستودعات">' +
         (brandLogo
           ? '<img src="' + _invHubEsc(brandLogo) + '" alt="" class="iv-hub-strip-logo">'
           : '<i class="fas fa-shop"></i>') +
         ' <span>' + _invHubEsc(brandName) + '</span>' +
       '</button>' +
       '<span class="iv-hub-strip-sep">/</span>' +
-      // Current tab pill
+      // 3. Warehouse — V5.9.0 NEW LEVEL
+      '<button class="iv-hub-back-sm iv-hub-back-sm-wh" onclick="invHubGoToWarehouse(\'' + _invHubEsc(brandId) + '\',\'' + _invHubEsc(whId) + '\')" title="رجوع لقائمة الأقسام">' +
+        '<i class="fas fa-warehouse"></i>' +
+        (whIsMain ? '<i class="fas fa-star" style="color:#f59e0b;font-size:9px;margin-inline-start:3px;"></i>' : '') +
+        ' <span>' + _invHubEsc(whName) + '</span>' +
+      '</button>' +
+      '<span class="iv-hub-strip-sep">/</span>' +
+      // 4. Current tab pill
       '<span class="iv-hub-back-sm iv-hub-back-sm-current" style="background:' + _invHubAlphaBg(tabMeta.color) + ';color:' + tabMeta.color + ';border-color:' + tabMeta.color + '40;">' +
         '<i class="fas ' + tabMeta.icon + '"></i> <span>' + _invHubEsc(tabMeta.title) + '</span>' +
       '</span>' +
       '<span class="iv-hub-strip-spacer"></span>' +
       // Quick switch back to the hub for inter-tab navigation
-      '<button class="iv-hub-strip-switch" onclick="invHubGoToBrand(\'' + _invHubEsc(brandId) + '\')">' +
+      '<button class="iv-hub-strip-switch" onclick="invHubGoToWarehouse(\'' + _invHubEsc(brandId) + '\',\'' + _invHubEsc(whId) + '\')">' +
         '<i class="fas fa-grip"></i> <span>تغيير القسم</span>' +
       '</button>' +
     '</div>';
@@ -4211,7 +4346,19 @@ function _invHubInjectStyles() {
     /* Switch-section button — visible call-to-action so users know how to change the tab without the inner tabs row */
     '.iv-hub-strip-switch{background:#0d47a1;color:#fff;border:1px solid #0d47a1;padding:8px 14px;border-radius:10px;font-size:12.5px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:all 0.15s;box-shadow:0 4px 12px -4px rgba(13,71,161,0.3);}' +
     '.iv-hub-strip-switch:hover{background:#093170;border-color:#093170;transform:translateY(-1px);box-shadow:0 6px 16px -4px rgba(13,71,161,0.4);}' +
-    '.iv-hub-skeleton{padding:48px;text-align:center;color:#94a3b8;font-size:14px;font-weight:600;}';
+    '.iv-hub-skeleton{padding:48px;text-align:center;color:#94a3b8;font-size:14px;font-weight:600;}' +
+    /* V5.9.0 — warehouse cards (re-using brand-card shell with warehouse-blue accent) */
+    '.iv-hub-bcard-wh{border-color:#bfdbfe;background:linear-gradient(160deg,#dbeafe 0%,#eff6ff 60%,#fff 100%);}' +
+    '.iv-hub-bcard-wh:hover{border-color:#0d47a1;box-shadow:0 12px 28px -10px rgba(13,71,161,0.25);}' +
+    '.iv-hub-bcard-logo-wh{background:#dbeafe;color:#0d47a1;position:relative;}' +
+    '.iv-hub-wh-star{position:absolute;top:-6px;inset-inline-end:-6px;width:22px;height:22px;background:#f59e0b;color:#fff;border-radius:50%;display:grid;place-items:center;font-size:10px;border:2px solid #fff;}' +
+    '.iv-hub-empty-wh{grid-column:1/-1;padding:48px 24px;text-align:center;background:#fafbff;border:1.5px dashed #cbd5e1;border-radius:14px;color:#94a3b8;}' +
+    '.iv-hub-empty-wh i{font-size:42px;color:#cbd5e1;margin-bottom:12px;display:block;}' +
+    '.iv-hub-empty-wh-title{font-size:14px;font-weight:800;color:#475569;margin-bottom:5px;}' +
+    '.iv-hub-empty-wh-sub{font-size:12px;color:#94a3b8;}' +
+    /* Brand strip warehouse step */
+    '.iv-hub-back-sm-wh{background:linear-gradient(135deg,#dbeafe,#fff);color:#0d47a1;border-color:#93c5fd;font-weight:800;}' +
+    '.iv-hub-back-sm-wh:hover{background:linear-gradient(135deg,#bfdbfe,#fff);color:#1e3a8a;border-color:#60a5fa;}';
   document.head.appendChild(st);
 }
 
@@ -5173,19 +5320,36 @@ function _populateWhBrandFilters() {
 }
 function loadDashInvItems() {
   loader();
-  api.withFailureHandler(function(err) { loader(false); showToast(err.message, true); }).withSuccessHandler(function(items) {
-    loader(false);
-    cachedRawItems = items || [];
-    // V5.8.3 — pre-filter by hub-selected brand if user came in via brand picker
-    if (window._invHub && window._invHub.brandId && window._invHub.brandId !== '__all__') {
-      var bf = q('#rawBrandFilter');
-      if (bf && bf.value !== window._invHub.brandId) bf.value = window._invHub.brandId;
-    }
-    populateInvCatFilter();
-    _invItemsMountShell();
-    renderInvTable(applyInvFilters(cachedRawItems));
-    _invItemsRenderKpis(cachedRawItems);
-  }).getInvItems();
+  // V5.9.0 — fetch warehouse-aware item rows.  When the user is inside a
+  //   specific warehouse, each row is the qty in THAT warehouse.  When
+  //   "جميع المستودعات", we ask for expandWarehouses=1 so each (item,
+  //   warehouse) combo gets its own row.
+  var brandId = (window._invHub && window._invHub.brandId && window._invHub.brandId !== '__all__') ? window._invHub.brandId : '';
+  var whId    = (window._invHub && window._invHub.warehouseId && window._invHub.warehouseId !== '__all__') ? window._invHub.warehouseId : '';
+  var qs = [];
+  if (brandId) qs.push('brandId=' + encodeURIComponent(brandId));
+  if (whId)    qs.push('warehouseId=' + encodeURIComponent(whId));
+  else if (window._invHub && window._invHub.warehouseId === '__all__') qs.push('expandWarehouses=1');
+  var url = '/api/inventory/items' + (qs.length ? '?' + qs.join('&') : '');
+  var token = localStorage.getItem('pos_token') || '';
+  fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => r.json())
+    .then(function(items) {
+      loader(false);
+      cachedRawItems = Array.isArray(items) ? items : [];
+      if (brandId) {
+        var bf = q('#rawBrandFilter');
+        if (bf && bf.value !== brandId) bf.value = brandId;
+      }
+      populateInvCatFilter();
+      _invItemsMountShell();
+      renderInvTable(applyInvFilters(cachedRawItems));
+      _invItemsRenderKpis(cachedRawItems);
+    })
+    .catch(function(err) {
+      loader(false);
+      showToast((err && err.message) || 'فشل تحميل المخزون', true);
+    });
 }
 
 // V5.8.5 — Pro Inventory Items shell. Cleaner than V5.8.3:
@@ -5571,61 +5735,115 @@ function _invItemsInjectStyles() {
     '#wh_items .table tbody tr:hover{background:#fafbff;}';
   document.head.appendChild(st);
 }
+// V5.9.0 — Warehouse-aware items table
 function renderInvTable(list) {
-    
-    let h = "";
-    if(!list.length) h = "<tr><td colspan='10' style='text-align:center;'>\u0644\u0627 \u062a\u0648\u062c\u062f \u0645\u0648\u0627\u062f \u062e\u0627\u0645 \u0645\u0633\u062c\u0644\u0629</td></tr>";
-    else {
-      let grandTotal = 0;
-      list.forEach(i => {
-        try {
-          let stClass = i.stock <= i.minStock ? 'red' : 'green';
-          let cRate = Number(i.convRate) || 1;
-          let hasBigUnit = !!i.bigUnit;
-
-          let bigQty = hasBigUnit ? (i.stock / cRate).toFixed(2) : i.stock;
-          let smallQty = i.stock;
-          // inv_items.cost = per SMALL unit (after WAC). Derive big from small.
-          let smallCost = i.cost;
-          let bigCost = hasBigUnit ? (i.cost * cRate) : i.cost;
-          let totalValue = smallQty * smallCost;
-          grandTotal += totalValue;
-
-          let bigUnitDisplay = hasBigUnit ? `
-            <div style="font-weight:900; color:var(--primary); margin-bottom:4px;">${bigQty} <span style="font-size:11px; color:#64748b;">${i.bigUnit}</span></div>
-            <div style="font-size:12px; color:#0369a1;"><i class="fas fa-tag"></i> ${formatVal(bigCost)} SAR/${i.bigUnit}</div>
-          ` : `<span style="color:#94a3b8; font-size:12px;">\u0646\u0641\u0633 \u0627\u0644\u0648\u062d\u062f\u0629</span>`;
-
-          let smallUnitDisplay = `
-            <div style="font-weight:900; color:var(--primary); margin-bottom:4px;">${smallQty} <span style="font-size:11px; color:#64748b;">${i.unit || '\u062d\u0628\u0629'}</span></div>
-            <div style="font-size:12px; color:#16a34a;"><i class="fas fa-tag"></i> ${formatVal(smallCost)} SAR/${i.unit || '\u062d\u0628\u0629'}</div>
-          `;
-
-          let brandHtml = i.brandName
-            ? `<span class="badge" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-store"></i> ${i.brandName}</span>`
-            : `<span class="badge" style="background:#f1f5f9;color:#94a3b8;"><i class="fas fa-minus"></i> بدون</span>`;
-          h += `<tr>
-            <td style="font-family:monospace; color:var(--text-light); font-size:12px;">${i.id || ''}</td>
-            <td style="font-weight:800; color:var(--text-dark);">${i.name || ''}</td>
-            <td>${brandHtml}</td>
-            <td><span class="badge" style="background:#e2e8f0; color:#475569;">${i.category || ''}</span></td>
-            <td style="background:#f8fafc; border-right:2px solid #e2e8f0;">${bigUnitDisplay}</td>
-            <td style="background:#f0fdf4;">${smallUnitDisplay}</td>
-            <td style="font-weight:800; color:#7c3aed;">${formatVal(totalValue)} SAR</td>
-            <td><span class="badge ${stClass}">${i.minStock}</span></td>
-            <td>${i.active ? '<i class="fas fa-check-circle" style="color:var(--success);"></i>' : '<i class="fas fa-times-circle" style="color:var(--danger);"></i>'}</td>
-            <td style="display:flex; gap:8px; justify-content:flex-end;">
-              <button class="btn btn-light" style="padding:6px 10px;" onclick="openRawModal('${i.id}')" title="\u062a\u0639\u062f\u064a\u0644"><i class="fas fa-edit"></i></button>
-              <button class="btn btn-primary" style="padding:6px 10px;" onclick="openMovM('${i.id}', '${String(i.name||'').replace(/'/g, "\\'")}')" title="\u062d\u0631\u0643\u0629 \u0645\u062e\u0632\u0648\u0646"><i class="fas fa-exchange-alt"></i></button>
-              <button class="btn btn-danger" style="padding:6px 10px;" onclick="delRawItem('${i.id}')" title="\u062d\u0630\u0641"><i class="fas fa-trash"></i></button>
-            </td>
-          </tr>`;
-        } catch (ex) { console.error(ex); }
-      });
-      h += `<tr style="background:#f8fafc; border-top:2px solid var(--border);"><td colspan="6" style="font-weight:900; text-align:center;">\u0625\u062c\u0645\u0627\u0644\u064a \u0642\u064a\u0645\u0629 \u0627\u0644\u0645\u062e\u0632\u0648\u0646</td><td style="font-weight:900; color:#7c3aed; font-size:16px;">${formatVal(grandTotal)} SAR</td><td colspan="3"></td></tr>`;
-    }
-    if(q("#tbRawItems")) q("#tbRawItems").innerHTML = h;
+  var thead = q("#wh_items table.table thead tr");
+  if (thead && !thead.dataset.v59) {
+    thead.dataset.v59 = '1';
+    thead.innerHTML =
+      '<th>كود المادة</th>' +
+      '<th>وصف الصنف</th>' +
+      '<th>البراند</th>' +
+      '<th>المستودع</th>' +
+      '<th>التصنيف</th>' +
+      '<th>الكمية الحالية</th>' +
+      '<th>تكلفة الوحدة</th>' +
+      '<th>القيمة الإجمالية</th>' +
+      '<th>الحد الأدنى</th>' +
+      '<th>الحالة</th>' +
+      '<th>إجراءات</th>';
+  }
+  var h = '';
+  if (!list.length) {
+    h = '<tr><td colspan="11" style="text-align:center;padding:30px;color:#94a3b8;">لا توجد مواد خام في هذا النطاق</td></tr>';
+  } else {
+    var grandTotal = 0;
+    list.forEach(function(i) {
+      try {
+        var stock = Number(i.stock) || 0;
+        var minS  = Number(i.minStock) || 0;
+        var cost  = Number(i.cost) || 0;
+        var lineValue = stock * cost;
+        grandTotal += lineValue;
+        var stClass = stock <= 0 ? 'red' : (stock <= minS && minS > 0 ? 'red' : 'green');
+        var statusLabel = stock <= 0 ? 'نفد' : (stock <= minS && minS > 0 ? 'منخفض' : 'متوفر');
+        var statusBg = stock <= 0 ? '#fee2e2' : (stock <= minS && minS > 0 ? '#fef3c7' : '#dcfce7');
+        var statusFg = stock <= 0 ? '#b91c1c' : (stock <= minS && minS > 0 ? '#92400e' : '#15803d');
+        var brandHtml = i.brandName
+          ? '<span class="badge" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-store"></i> ' + (i.brandName || '') + '</span>'
+          : '<span class="badge" style="background:#f1f5f9;color:#94a3b8;"><i class="fas fa-minus"></i> بدون</span>';
+        var whHtml = i.warehouseName
+          ? '<span class="badge" style="background:#dbeafe;color:#1e40af;font-weight:700;"><i class="fas fa-warehouse"></i> ' + (i.warehouseName || '') + '</span>'
+          : '<span class="badge" style="background:#f1f5f9;color:#94a3b8;"><i class="fas fa-question"></i> غير محدد</span>';
+        var globalHint = (i.globalStock != null && Number(i.globalStock) > stock)
+          ? '<div style="font-size:10.5px;color:#94a3b8;font-weight:600;margin-top:2px;">إجمالي عبر كل المستودعات: <b>' + Number(i.globalStock).toFixed(2) + ' ' + (i.unit||'') + '</b></div>'
+          : '';
+        h += '<tr>' +
+          '<td style="font-family:ui-monospace,monospace;color:#64748b;font-size:12px;">' + (i.id || '') + '</td>' +
+          '<td style="font-weight:800;color:#0f172a;">' + (i.name || '') + globalHint + '</td>' +
+          '<td>' + brandHtml + '</td>' +
+          '<td>' + whHtml + '</td>' +
+          '<td><span class="badge" style="background:#e2e8f0;color:#475569;">' + (i.category || '') + '</span></td>' +
+          '<td style="font-weight:900;color:#0d47a1;font-family:ui-monospace,monospace;">' + stock.toFixed(2) + ' <span style="font-size:11px;color:#94a3b8;">' + (i.unit || '') + '</span></td>' +
+          '<td style="font-family:ui-monospace,monospace;color:#475569;">' + cost.toFixed(4) + '</td>' +
+          '<td style="font-weight:900;color:#7c3aed;font-family:ui-monospace,monospace;">' + lineValue.toFixed(2) + '</td>' +
+          '<td><span class="badge ' + stClass + '">' + minS + '</span></td>' +
+          '<td><span class="badge" style="background:' + statusBg + ';color:' + statusFg + ';font-weight:800;">' + statusLabel + '</span></td>' +
+          '<td style="display:flex;gap:6px;justify-content:flex-end;">' +
+            '<button class="btn btn-info" style="padding:5px 9px;" onclick="invItemShowWarehouses(\'' + (i.id||'') + '\',\'' + String(i.name||'').replace(/\'/g,"\\'") + '\')" title="توزيع على المستودعات"><i class="fas fa-warehouse"></i></button>' +
+            '<button class="btn btn-light" style="padding:5px 9px;" onclick="openRawModal(\'' + (i.id||'') + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
+            '<button class="btn btn-danger" style="padding:5px 9px;" onclick="delRawItem(\'' + (i.id||'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+          '</td>' +
+        '</tr>';
+      } catch (ex) { console.error(ex); }
+    });
+    h += '<tr style="background:#1e293b;color:#fff;font-weight:900;">' +
+           '<td colspan="7" style="text-align:center;font-size:13px;color:#fff;">إجمالي قيمة المخزون · ' + list.length + ' سطر</td>' +
+           '<td style="color:#fff;font-size:16px;font-family:ui-monospace,monospace;">' + grandTotal.toFixed(2) + ' ر.س</td>' +
+           '<td colspan="3"></td>' +
+         '</tr>';
+  }
+  if (q('#tbRawItems')) q('#tbRawItems').innerHTML = h;
 }
+
+// V5.9.0 — Drill-down popup: per-warehouse distribution for one item
+window.invItemShowWarehouses = function(itemId, itemName) {
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/inventory/items/' + encodeURIComponent(itemId) + '/warehouses', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(rows) {
+      rows = Array.isArray(rows) ? rows : [];
+      var totalQty = rows.reduce(function(s,r){return s + (Number(r.qty)||0);}, 0);
+      var totalValue = rows.reduce(function(s,r){return s + (Number(r.value)||0);}, 0);
+      var html = rows.length === 0
+        ? '<div style="text-align:center;padding:32px;color:#94a3b8;">هذا الصنف ليس له رصيد في أي مستودع</div>'
+        : '<div style="margin-bottom:12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 14px;font-size:12.5px;color:#1e40af;font-weight:700;">' +
+            '<i class="fas fa-info-circle"></i> الإجمالي عبر كل المستودعات: <b>' + totalQty.toFixed(2) + '</b> · بقيمة <b>' + totalValue.toFixed(2) + ' ر.س</b>' +
+          '</div>' +
+          '<table style="width:100%;border-collapse:collapse;font-size:12.5px;"><thead><tr>' +
+            '<th style="background:#0f172a;color:#fff;padding:8px;text-align:start;">المستودع</th>' +
+            '<th style="background:#0f172a;color:#fff;padding:8px;text-align:start;">البراند</th>' +
+            '<th style="background:#0f172a;color:#fff;padding:8px;text-align:end;">الكمية</th>' +
+            '<th style="background:#0f172a;color:#fff;padding:8px;text-align:end;">القيمة</th>' +
+          '</tr></thead><tbody>' +
+          rows.map(function(r) {
+            return '<tr><td style="padding:8px;border-bottom:1px solid #f1f5f9;"><b>' + _invHubEsc(r.warehouseName) + '</b>' + (r.isMain ? ' <i class="fas fa-star" style="color:#f59e0b;font-size:10px;" title="رئيسي"></i>' : '') + '<div style="font-size:10.5px;color:#94a3b8;">' + _invHubEsc(r.warehouseCode||'') + '</div></td>' +
+              '<td style="padding:8px;border-bottom:1px solid #f1f5f9;">' + _invHubEsc(r.brandName || '—') + '</td>' +
+              '<td style="padding:8px;border-bottom:1px solid #f1f5f9;text-align:end;font-family:ui-monospace,monospace;font-weight:700;">' + Number(r.qty).toFixed(2) + '</td>' +
+              '<td style="padding:8px;border-bottom:1px solid #f1f5f9;text-align:end;font-family:ui-monospace,monospace;font-weight:800;color:#7c3aed;">' + Number(r.value).toFixed(2) + ' ر.س</td>' +
+            '</tr>';
+          }).join('') +
+          '</tbody></table>';
+      ivShowModal({
+        icon: 'fa-warehouse', iconColor: '#0d47a1',
+        title: 'توزيع الصنف على المستودعات',
+        subtitle: itemName + ' · ' + rows.length + ' مستودع',
+        body: html, size: 'lg',
+        footer: '<button onclick="ivCloseModal()">إغلاق</button>'
+      });
+    })
+    .catch(function() { showToast('فشل تحميل التوزيع', true); });
+};
 
 function openRawModal(id = null) {
   _loadBrandOptions('#mrBrand', function() {
@@ -6526,11 +6744,15 @@ function _invLiveFetch() {
   var s = window._invLive;
   var brandId = (window._invHub && window._invHub.brandId && window._invHub.brandId !== '__all__')
     ? window._invHub.brandId : '';
+  // V5.9.0 — pass warehouseId from hub state when user is in a specific warehouse
+  var hubWh  = (window._invHub && window._invHub.warehouseId && window._invHub.warehouseId !== '__all__')
+    ? window._invHub.warehouseId : '';
   var qs = [];
   if (s.startDate) qs.push('startDate=' + encodeURIComponent(_ymd(s.startDate)));
   if (s.endDate)   qs.push('endDate='   + encodeURIComponent(_ymd(s.endDate)));
   if (brandId)     qs.push('brandId='   + encodeURIComponent(brandId));
-  if (s.warehouseId) qs.push('warehouseId=' + encodeURIComponent(s.warehouseId));
+  var effWh = s.warehouseId || hubWh;
+  if (effWh)         qs.push('warehouseId=' + encodeURIComponent(effWh));
   if (s.category)    qs.push('category='    + encodeURIComponent(s.category));
   loader(true);
   var token = localStorage.getItem('pos_token') || '';

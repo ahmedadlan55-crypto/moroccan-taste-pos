@@ -6872,55 +6872,365 @@ function startStocktake() {
   loader();
   _stLoadAvailableItems().then(function() {
     loader(false);
-
-    // Load warehouses
+    // V5.8.4 — pro fullscreen Stocktake editor.  Same UX language as the
+    //   recipe editor V5.7.36: hero card with KPIs, 2-column body
+    //   (lines panel left in RTL, picker panel right), sticky save bar
+    //   with Print/PDF/Excel exports.  Tracks startDate (now) and
+    //   endDate (on submit) for the audit report.
+    var draft = _stGetSavedDraft();
+    var hasDraft = draft && draft.items && draft.items.length;
+    window._stSession = {
+      items: [],
+      notes: '',
+      warehouseId: '',
+      startDate: new Date(),       // when the session began
+      endDate: null,                // set on submit
+      sessionId: 'ST-' + Date.now() // visible in header
+    };
+    // Load warehouses (best effort; doesn't block UI)
     var token = localStorage.getItem('pos_token') || '';
     fetch('/api/erp/warehouses-list', { headers: { 'Authorization': 'Bearer ' + token } })
-      .then(function(r){return r.json();})
+      .then(function(r){ return r.json(); })
       .then(function(whs){
-        var sel = q('#stWarehouse');
-        if (sel) {
-          sel.innerHTML = '<option value="">— المستودع الرئيسي —</option>' +
-            (whs||[]).map(function(w){return '<option value="'+w.id+'">'+(w.name||'')+'</option>';}).join('');
-        }
+        window._stSession.warehouses = Array.isArray(whs) ? whs : [];
+        _stRenderEditor();  // re-render to populate the warehouse <select>
       }).catch(function(){});
 
-    // Check for existing draft
-    var draft = _stGetSavedDraft();
-    if (draft && draft.items && draft.items.length) {
-      var banner = q('#stRestoreBanner');
-      var cnt = q('#stRestoreCount');
-      if (banner) banner.style.display = '';
-      if (cnt) cnt.textContent = draft.items.length;
-      // Don't auto-restore — wait for user confirmation
-      window._stSession = { items: [], notes: '', warehouseId: '' };
-    } else {
-      // Fresh session
-      window._stSession = { items: [], notes: '', warehouseId: '' };
-      var banner = q('#stRestoreBanner');
-      if (banner) banner.style.display = 'none';
-    }
-    q("#stNotes").value = '';
-    renderStItems();
-
-    // Mount Odoo-style picker
-    var host = q('#stPickerHost');
-    if (host && window.WoItemPicker) {
-      WoItemPicker.mount(host, {
-        items: cachedStItems,
-        placeholder: 'ابحث عن مادة بالاسم أو الكود أو التصنيف... (Enter للإضافة)',
-        getExcludeIds: function() { return window._stSession.items.map(function(i){return String(i.id);}); },
-        onSelect: function(item) {
-          _stAddItem(item);
+    _stOpenFullscreenEditor();
+    if (hasDraft) {
+      // Show restore prompt right after the editor mounts
+      setTimeout(function() {
+        if (confirm('يوجد جرد محفوظ محلياً من جلسة سابقة (' + draft.items.length + ' صنف). استعادة الآن؟')) {
+          _stRestoreDraft();
         }
-      });
+      }, 300);
     }
-
-    openModal("#modalStocktakeForm");
   });
 }
 
+// ─── Fullscreen Stocktake Editor (V5.8.4) ───────────────────────────
+function _stOpenFullscreenEditor() {
+  _stInjectStyles();
+  ivShowModal({
+    icon: 'fa-clipboard-check',
+    iconColor: '#0ea5e9',
+    title: 'جلسة جرد وتسوية المخزون',
+    subtitle: 'ابحث عن المواد، أضفها، أدخل الرصيد الفعلي. تكلفة الفرق تُحسب فوراً.',
+    body: '<div id="stEditorBody"></div>',
+    size: 'full'
+  });
+  setTimeout(function() {
+    var ovs = document.querySelectorAll('.iv-modal-overlay');
+    if (ovs.length) ovs[ovs.length - 1].setAttribute('data-st-fullscreen', '1');
+    _stRenderEditor();
+  }, 60);
+}
+
+function _stRenderEditor() {
+  var box = document.getElementById('stEditorBody');
+  if (!box || !window._stSession) return;
+  var s = window._stSession;
+  var items = s.items || [];
+  var totals = _stComputeTotals(items);
+  // Hero
+  var heroHtml =
+    '<section class="st-hero">' +
+      '<div class="st-hero-orb"></div>' +
+      '<div class="st-hero-grid">' +
+        '<div class="st-hero-identity">' +
+          '<div class="st-hero-avatar"><i class="fas fa-clipboard-check"></i></div>' +
+          '<div class="st-hero-text">' +
+            '<div class="st-hero-eyebrow"><i class="fas fa-calendar-day"></i><span>جلسة جرد · ' + _stFmtDateTime(s.startDate) + '</span></div>' +
+            '<h2 class="st-hero-title">' + _invHubEsc(s.sessionId) + '</h2>' +
+            '<div class="st-hero-sub">المستخدم: <b>' + _invHubEsc(state.user || '—') + '</b> · مستودع: <b id="stHeroWh">—</b></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="st-hero-kpi">' +
+          '<div class="st-hero-kpi-label">إجمالي المواد</div>' +
+          '<div class="st-hero-kpi-value" id="stKpiTotal">' + totals.total + '</div>' +
+          '<div class="st-hero-kpi-unit">صنف مُضاف</div>' +
+        '</div>' +
+        '<div class="st-hero-kpi st-kpi-pos">' +
+          '<div class="st-hero-kpi-label">فائض</div>' +
+          '<div class="st-hero-kpi-value" id="stKpiSurplus">' + totals.surplus + '</div>' +
+          '<div class="st-hero-kpi-unit"><i class="fas fa-arrow-up"></i> أكثر من النظام</div>' +
+        '</div>' +
+        '<div class="st-hero-kpi st-kpi-neg">' +
+          '<div class="st-hero-kpi-label">نقص</div>' +
+          '<div class="st-hero-kpi-value" id="stKpiShortage">' + totals.shortage + '</div>' +
+          '<div class="st-hero-kpi-unit"><i class="fas fa-arrow-down"></i> أقل من النظام</div>' +
+        '</div>' +
+        '<div class="st-hero-kpi st-kpi-boxed">' +
+          '<div class="st-hero-kpi-label">صافي تكلفة الفرق</div>' +
+          '<div class="st-hero-kpi-value" id="stKpiVariance" style="color:' + (totals.varianceCost >= 0 ? '#86efac' : '#fecaca') + ';">' + (totals.varianceCost >= 0 ? '+' : '') + totals.varianceCost.toFixed(2) + '</div>' +
+          '<div class="st-hero-kpi-unit">ر.س</div>' +
+        '</div>' +
+      '</div>' +
+    '</section>';
+  // 2-column body
+  var bodyHtml =
+    '<div class="st-body">' +
+      _stRenderItemsPanel() +
+      _stRenderPickerPanel() +
+    '</div>';
+  // Save bar
+  var saveBarHtml =
+    '<footer class="st-savebar">' +
+      '<div class="st-save-meta">' +
+        '<span><i class="fas fa-stopwatch"></i> بدأت: ' + _stFmtDateTime(s.startDate) + '</span>' +
+        '<span class="st-save-meta-sep">·</span>' +
+        '<span id="stSaveStatus"><span class="st-save-dot"></span> جاهز</span>' +
+      '</div>' +
+      '<div class="st-save-actions">' +
+        '<button class="st-btn st-btn-ghost" onclick="stExport(\'print\')"><i class="fas fa-print"></i> طباعة</button>' +
+        '<button class="st-btn st-btn-success" onclick="stExport(\'excel\')"><i class="fas fa-file-excel"></i> Excel</button>' +
+        '<button class="st-btn st-btn-danger" onclick="stExport(\'pdf\')"><i class="fas fa-file-pdf"></i> PDF</button>' +
+        '<button class="st-btn st-btn-secondary" onclick="_stSaveDraft(true)"><i class="fas fa-save"></i> حفظ مسودة</button>' +
+        '<button class="st-btn st-btn-primary" onclick="stSubmitStocktake()"><i class="fas fa-check-double"></i> اعتماد الجرد</button>' +
+      '</div>' +
+    '</footer>';
+  box.innerHTML = heroHtml + bodyHtml + saveBarHtml;
+  // Update warehouse name in hero (if loaded)
+  var whName = '— المستودع الرئيسي —';
+  if (s.warehouseId && s.warehouses) {
+    var w = s.warehouses.find(function(x){ return x.id === s.warehouseId; });
+    if (w) whName = w.name;
+  }
+  var heroWh = q('#stHeroWh');
+  if (heroWh) heroWh.textContent = whName;
+}
+
+function _stRenderItemsPanel() {
+  var s = window._stSession;
+  var items = s.items || [];
+  var totals = _stComputeTotals(items);
+  var bodyHtml = items.length === 0
+    ? _stEmpty()
+    : _stRenderItemCards(items);
+  return '<section class="st-panel st-items-panel">' +
+           '<header class="st-panel-head">' +
+             '<div class="st-panel-head-left">' +
+               '<div class="st-panel-icon st-panel-icon-primary"><i class="fas fa-list-check"></i></div>' +
+               '<div class="st-panel-titles">' +
+                 '<div class="st-panel-title">المواد المُضافة للجرد</div>' +
+                 '<div class="st-panel-sub">' + items.length + ' صنف · ' + totals.surplus + ' فائض · ' + totals.shortage + ' نقص</div>' +
+               '</div>' +
+             '</div>' +
+             (items.length > 0
+               ? '<button class="st-clear-all" onclick="_stClearAll()" title="مسح الكل"><i class="fas fa-trash-can"></i> مسح الكل</button>'
+               : '') +
+           '</header>' +
+           '<div class="st-panel-meta">' +
+             '<div class="st-meta-field">' +
+               '<label><i class="fas fa-warehouse"></i> المستودع</label>' +
+               '<select id="stWarehouseSel" onchange="window._stSession.warehouseId=this.value;_stRenderEditor();_stSaveDraft(false);">' +
+                 '<option value="">— المستودع الرئيسي —</option>' +
+                 ((s.warehouses || []).map(function(w){
+                   var sel = w.id === s.warehouseId ? ' selected' : '';
+                   return '<option value="' + _invHubEsc(w.id) + '"' + sel + '>' + _invHubEsc(w.name||'') + '</option>';
+                 }).join('')) +
+               '</select>' +
+             '</div>' +
+             '<div class="st-meta-field" style="flex:2;">' +
+               '<label><i class="fas fa-note-sticky"></i> ملاحظة الجرد (السبب)</label>' +
+               '<input type="text" id="stNotesInput" value="' + _invHubEsc(s.notes || '') + '" placeholder="كسر، تالف، جرد دوري..." oninput="window._stSession.notes=this.value;_stSaveDraft(false);">' +
+             '</div>' +
+           '</div>' +
+           '<div class="st-panel-body">' + bodyHtml + '</div>' +
+           (items.length > 0 ? (
+             '<div class="st-panel-foot">' +
+               '<span class="st-foot-label">صافي تكلفة الفرق</span>' +
+               '<span class="st-foot-total" style="color:' + (totals.varianceCost >= 0 ? '#15803d' : '#dc2626') + ';">' +
+                 (totals.varianceCost >= 0 ? '+' : '') + totals.varianceCost.toFixed(2) + ' ر.س' +
+               '</span>' +
+             '</div>'
+           ) : '') +
+         '</section>';
+}
+
+function _stRenderItemCards(items) {
+  return '<div class="st-card-list">' + items.map(function(i, idx) {
+    var diff = (Number(i.actual) || 0) - (Number(i.sysStock) || 0);
+    var diffCost = diff * (Number(i.cost) || 0);
+    var stateClass = Math.abs(diff) < 0.001 ? '' : (diff > 0 ? 'st-card-surplus' : 'st-card-shortage');
+    var diffPill = Math.abs(diff) < 0.001
+      ? '<span class="st-pill st-pill-match"><i class="fas fa-equals"></i> مطابق</span>'
+      : (diff > 0
+          ? '<span class="st-pill st-pill-surplus"><i class="fas fa-arrow-up"></i> +' + diff.toFixed(2) + ' ' + _invHubEsc(i.unit||'') + '</span>'
+          : '<span class="st-pill st-pill-shortage"><i class="fas fa-arrow-down"></i> ' + diff.toFixed(2) + ' ' + _invHubEsc(i.unit||'') + '</span>');
+    return '<article class="st-card ' + stateClass + '" data-st-idx="' + idx + '">' +
+             '<div class="st-card-num">' + (idx + 1) + '</div>' +
+             '<div class="st-card-info">' +
+               '<div class="st-card-name">' + _invHubEsc(i.name) + ' ' + diffPill + '</div>' +
+               '<div class="st-card-meta">' +
+                 '<code>' + _invHubEsc(i.id) + '</code>' +
+                 (i.category ? ' · ' + _invHubEsc(i.category) : '') +
+                 ' · سعر الوحدة: <b>' + Number(i.cost||0).toFixed(4) + '</b> ر.س' +
+               '</div>' +
+             '</div>' +
+             '<div class="st-card-stats">' +
+               '<div class="st-card-stat">' +
+                 '<div class="st-card-stat-label">رصيد النظام</div>' +
+                 '<div class="st-card-stat-value st-stat-sys">' + Number(i.sysStock).toFixed(2) + '</div>' +
+                 '<div class="st-card-stat-unit">' + _invHubEsc(i.unit||'') + '</div>' +
+               '</div>' +
+               '<div class="st-card-stat">' +
+                 '<div class="st-card-stat-label">الرصيد الفعلي</div>' +
+                 '<input type="number" step="0.001" value="' + (Number(i.actual)||0) + '" class="st-card-input" oninput="_stUpdateActual(' + idx + ',this.value)" onfocus="this.select()">' +
+                 '<div class="st-card-stat-unit">' + _invHubEsc(i.unit||'') + '</div>' +
+               '</div>' +
+               '<div class="st-card-stat">' +
+                 '<div class="st-card-stat-label">تكلفة الفرق</div>' +
+                 '<div class="st-card-stat-value" style="color:' + (diffCost >= 0 ? '#15803d' : '#dc2626') + ';">' + (diffCost >= 0 ? '+' : '') + diffCost.toFixed(2) + '</div>' +
+                 '<div class="st-card-stat-unit">ر.س</div>' +
+               '</div>' +
+             '</div>' +
+             '<button class="st-card-del" onclick="_stRemoveItem(' + idx + ')" title="حذف"><i class="fas fa-times"></i></button>' +
+           '</article>';
+  }).join('') + '</div>';
+}
+
+function _stEmpty() {
+  return '<div class="st-empty">' +
+           '<div class="st-empty-icon"><i class="fas fa-clipboard-list"></i></div>' +
+           '<h3 class="st-empty-title">ابدأ الجرد</h3>' +
+           '<p class="st-empty-text">اختر المواد من اللوحة المجاورة، أو ابحث عن صنف بالاسم أو الكود. سيتم تعبئة رصيد النظام تلقائياً، وأنت تُدخل الرصيد الفعلي.</p>' +
+           '<button class="st-empty-cta" onclick="document.getElementById(\'stPickerSearchInput\').focus();">' +
+             '<i class="fas fa-search"></i> ابحث عن مادة' +
+           '</button>' +
+         '</div>';
+}
+
+function _stRenderPickerPanel() {
+  var search = (window._stSession.pickerSearch || '').toLowerCase().trim();
+  var category = window._stSession.pickerCategory || '';
+  var pickedIds = new Set((window._stSession.items || []).map(function(i){return String(i.id);}));
+  // Group by category
+  var byCategory = {};
+  (cachedStItems || []).forEach(function(it) {
+    if (it.active === false) return;
+    var cat = it.category || 'عام';
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(it);
+  });
+  var categories = Object.keys(byCategory).sort();
+  var totalAvailable = (cachedStItems || []).filter(function(it){ return !pickedIds.has(String(it.id)); }).length;
+  // Pills
+  var pillsHtml = '<div class="st-pills">' +
+    '<button class="st-pill ' + (!category ? 'st-pill-active' : '') + '" onclick="stSetPickerCategory(\'\')">الكل <span class="st-pill-count">' + totalAvailable + '</span></button>' +
+    categories.map(function(cat) {
+      var count = byCategory[cat].filter(function(it){return !pickedIds.has(String(it.id));}).length;
+      if (!count) return '';
+      var active = category === cat;
+      return '<button class="st-pill ' + (active ? 'st-pill-active' : '') + '" onclick="stSetPickerCategory(\'' + _invHubEsc(cat).replace(/\'/g,"\\'") + '\')">' + _invHubEsc(cat) + ' <span class="st-pill-count">' + count + '</span></button>';
+    }).join('') +
+    '</div>';
+  // Item list
+  var html = '';
+  var totalShown = 0;
+  categories.forEach(function(cat) {
+    if (category && category !== cat) return;
+    var arr = byCategory[cat].filter(function(it) {
+      if (pickedIds.has(String(it.id))) return false;
+      if (!search) return true;
+      return (it.name||'').toLowerCase().indexOf(search) >= 0 || String(it.id||'').toLowerCase().indexOf(search) >= 0;
+    });
+    if (!arr.length) return;
+    totalShown += arr.length;
+    if (!category) {
+      html += '<div class="st-cat-divider">' +
+                '<span class="st-cat-line"></span>' +
+                '<span class="st-cat-name">' + _invHubEsc(cat) + '</span>' +
+                '<span class="st-cat-count">' + arr.length + '</span>' +
+                '<span class="st-cat-line"></span>' +
+              '</div>';
+    }
+    arr.forEach(function(it) {
+      var stockMinor = Number(it.currentStock || it.stock || 0);
+      var stockText  = stockMinor.toFixed(2) + ' ' + _invHubEsc(it.unit || 'حبة');
+      var dotClass = stockMinor === 0 ? 'st-pick-dot-out' : stockMinor < 10 ? 'st-pick-dot-low' : 'st-pick-dot-ok';
+      html += '<button class="st-pick-row" onclick="_stAddItemById(\'' + _invHubEsc(it.id).replace(/\'/g,"\\'") + '\')">' +
+                '<i class="fas fa-plus st-pick-plus"></i>' +
+                '<div class="st-pick-info">' +
+                  '<div class="st-pick-name">' + _invHubEsc(it.name) + '</div>' +
+                  '<div class="st-pick-stock"><span class="st-pick-dot ' + dotClass + '"></span><span>' + stockText + '</span></div>' +
+                '</div>' +
+                '<div class="st-pick-cost">' + Number(it.cost||0).toFixed(2) + '<div class="st-pick-cost-unit">ر.س / ' + _invHubEsc(it.unit||'حبة') + '</div></div>' +
+              '</button>';
+    });
+  });
+  if (!totalShown) {
+    html = '<div class="st-no-results"><i class="fas fa-search-minus"></i><div>لا توجد نتائج' + (search ? ' لـ "' + _invHubEsc(search) + '"' : '') + '</div></div>';
+  }
+  return '<section class="st-panel st-picker-panel">' +
+           '<header class="st-panel-head">' +
+             '<div class="st-panel-head-left">' +
+               '<div class="st-panel-icon st-panel-icon-accent"><i class="fas fa-search-plus"></i></div>' +
+               '<div class="st-panel-titles">' +
+                 '<div class="st-panel-title">إضافة مواد للجرد</div>' +
+                 '<div class="st-panel-sub">' + totalAvailable + ' مادة متاحة · اضغط أي مادة لإضافتها</div>' +
+               '</div>' +
+             '</div>' +
+           '</header>' +
+           '<div class="st-picker-search">' +
+             '<i class="fas fa-search"></i>' +
+             '<input type="text" id="stPickerSearchInput" placeholder="ابحث بالاسم أو الكود..." value="' + _invHubEsc(window._stSession.pickerSearch || '') + '" oninput="stPickerSearch(this.value)">' +
+           '</div>' +
+           pillsHtml +
+           '<div class="st-picker-list">' + html + '</div>' +
+         '</section>';
+}
+
+window.stSetPickerCategory = function(cat) {
+  if (!window._stSession) return;
+  window._stSession.pickerCategory = cat;
+  // Just re-render the picker
+  var picker = document.querySelector('.st-picker-panel');
+  if (picker) picker.outerHTML = _stRenderPickerPanel();
+};
+var _stPickerTimer = null;
+window.stPickerSearch = function(v) {
+  if (!window._stSession) return;
+  window._stSession.pickerSearch = v;
+  clearTimeout(_stPickerTimer);
+  _stPickerTimer = setTimeout(function() {
+    var picker = document.querySelector('.st-picker-panel');
+    if (picker) picker.outerHTML = _stRenderPickerPanel();
+    var inp = document.getElementById('stPickerSearchInput');
+    if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  }, 200);
+};
+window._stAddItemById = function(id) {
+  var item = (cachedStItems || []).find(function(x){ return String(x.id) === String(id); });
+  if (item) _stAddItem(item);
+};
+window._stClearAll = function() {
+  if (!confirm('حذف كل المواد من الجرد؟')) return;
+  window._stSession.items = [];
+  _stRenderEditor();
+  _stSaveDraft(false);
+};
+function _stComputeTotals(items) {
+  var t = { total: items.length, surplus: 0, shortage: 0, matched: 0, varianceCost: 0, varianceQty: 0 };
+  items.forEach(function(i) {
+    var diff = (Number(i.actual) || 0) - (Number(i.sysStock) || 0);
+    if (diff > 0.001)      t.surplus++;
+    else if (diff < -0.001) t.shortage++;
+    else                    t.matched++;
+    t.varianceQty  += diff;
+    t.varianceCost += diff * (Number(i.cost) || 0);
+  });
+  return t;
+}
+function _stFmtDateTime(d) {
+  if (!d) return '—';
+  d = new Date(d);
+  return d.getFullYear() + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0') +
+         ' · ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+
 function _stAddItem(item) {
+  if (!window._stSession) window._stSession = { items: [], notes: '', warehouseId: '' };
   // Prevent duplicates
   if (window._stSession.items.some(function(i){return String(i.id)===String(item.id);})) return;
   var sysStock = Number(item.currentStock || item.stock || 0);
@@ -6933,33 +7243,87 @@ function _stAddItem(item) {
     convRate: Number(item.convRate) || 1,
     cost: Number(item.cost) || 0,
     sysStock: sysStock,
-    actual: sysStock,  // default to sys; user will change
+    actual: sysStock,
     diff: 0
   });
-  renderStItems();
-  _stSaveDraft(false);  // auto-save draft
+  // V5.8.4 — re-render the new fullscreen editor (or fall back to legacy)
+  if (typeof _stRenderEditor === 'function' && document.getElementById('stEditorBody')) {
+    _stRenderEditor();
+  } else if (typeof renderStItems === 'function') {
+    renderStItems();
+  }
+  _stSaveDraft(false);
 }
 
 function _stRemoveItem(idx) {
+  if (!window._stSession || !window._stSession.items) return;
   window._stSession.items.splice(idx, 1);
-  renderStItems();
+  if (typeof _stRenderEditor === 'function' && document.getElementById('stEditorBody')) {
+    _stRenderEditor();
+  } else if (typeof renderStItems === 'function') {
+    renderStItems();
+  }
   _stSaveDraft(false);
 }
 
 function _stUpdateActual(idx, value) {
-  if (window._stSession.items[idx]) {
-    var actual = Number(value) || 0;
-    window._stSession.items[idx].actual = actual;
-    window._stSession.items[idx].diff = actual - window._stSession.items[idx].sysStock;
-    _stSaveDraft(false);
-    // Update only the diff cell and summary (avoid full re-render to preserve focus)
-    var row = document.querySelector('#tbStBody tr[data-st-idx="'+idx+'"]');
-    if (row) {
-      var diffCell = row.querySelector('.st-diff-cell');
-      if (diffCell) diffCell.innerHTML = _stDiffHtml(window._stSession.items[idx].diff, window._stSession.items[idx].unit);
+  if (!window._stSession.items[idx]) return;
+  var actual = Number(value) || 0;
+  window._stSession.items[idx].actual = actual;
+  window._stSession.items[idx].diff = actual - window._stSession.items[idx].sysStock;
+  _stSaveDraft(false);
+  // V5.8.4 — surgical updates: just the affected card + the hero KPIs
+  //   Avoid a full re-render so the input keeps focus while typing.
+  var card = document.querySelector('.st-card[data-st-idx="' + idx + '"]');
+  if (card) {
+    var item = window._stSession.items[idx];
+    var diff = item.diff;
+    var diffCost = diff * (Number(item.cost) || 0);
+    // Update card state class
+    card.classList.remove('st-card-surplus', 'st-card-shortage');
+    if (Math.abs(diff) > 0.001) card.classList.add(diff > 0 ? 'st-card-surplus' : 'st-card-shortage');
+    // Update diff pill
+    var nameEl = card.querySelector('.st-card-name');
+    if (nameEl) {
+      var pill = Math.abs(diff) < 0.001
+        ? '<span class="st-pill st-pill-match"><i class="fas fa-equals"></i> مطابق</span>'
+        : (diff > 0
+            ? '<span class="st-pill st-pill-surplus"><i class="fas fa-arrow-up"></i> +' + diff.toFixed(2) + ' ' + _invHubEsc(item.unit||'') + '</span>'
+            : '<span class="st-pill st-pill-shortage"><i class="fas fa-arrow-down"></i> ' + diff.toFixed(2) + ' ' + _invHubEsc(item.unit||'') + '</span>');
+      nameEl.innerHTML = _invHubEsc(item.name) + ' ' + pill;
     }
-    _stRenderSummary();
+    // Update diff cost cell (last stat)
+    var stats = card.querySelectorAll('.st-card-stat-value');
+    if (stats.length >= 3) {
+      stats[2].textContent = (diffCost >= 0 ? '+' : '') + diffCost.toFixed(2);
+      stats[2].style.color = diffCost >= 0 ? '#15803d' : '#dc2626';
+    }
   }
+  _stUpdateHeroKpis();
+}
+
+function _stUpdateHeroKpis() {
+  if (!window._stSession) return;
+  var items = window._stSession.items || [];
+  var totals = _stComputeTotals(items);
+  var setText = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
+  setText('stKpiTotal', totals.total);
+  setText('stKpiSurplus', totals.surplus);
+  setText('stKpiShortage', totals.shortage);
+  var v = document.getElementById('stKpiVariance');
+  if (v) {
+    v.textContent = (totals.varianceCost >= 0 ? '+' : '') + totals.varianceCost.toFixed(2);
+    v.style.color = totals.varianceCost >= 0 ? '#86efac' : '#fecaca';
+  }
+  // Footer total
+  var foot = document.querySelector('.st-foot-total');
+  if (foot) {
+    foot.textContent = (totals.varianceCost >= 0 ? '+' : '') + totals.varianceCost.toFixed(2) + ' ر.س';
+    foot.style.color = totals.varianceCost >= 0 ? '#15803d' : '#dc2626';
+  }
+  // Sub-text in panel head
+  var sub = document.querySelector('.st-items-panel .st-panel-sub');
+  if (sub) sub.textContent = totals.total + ' صنف · ' + totals.surplus + ' فائض · ' + totals.shortage + ' نقص';
 }
 
 function _stDiffHtml(diff, unit) {
@@ -7058,40 +7422,385 @@ function _escHtml(s) {
 }
 
 function saveStocktakeFn() {
-  var items = window._stSession.items || [];
-  // Only send items with actual differences
+  return stSubmitStocktake();  // V5.8.4 — back-compat alias
+}
+
+window.stSubmitStocktake = function() {
+  var s = window._stSession;
+  if (!s) return;
+  var items = s.items || [];
   var itemsToAdjust = items
-    .filter(function(i){ return Math.abs(i.diff) > 0.001; })
-    .map(function(i){ return { id: i.id, diff: i.diff, sys: i.sysStock, actual: i.actual }; });
-
-  if (!items.length) {
-    return showToast('لم تُضف أي مواد للجرد — أضف المواد من صندوق البحث أولاً', true);
-  }
-  if (itemsToAdjust.length === 0) {
-    return showToast('لا توجد فوارق لتسويتها — كل الأرصدة الفعلية تطابق النظام', true);
-  }
-
-  if (!confirm('سيتم اعتماد تسوية جردية لعدد (' + itemsToAdjust.length + ') صنف من أصل (' + items.length + ') تم جردها. هل أنت متأكد؟')) return;
-
+    .filter(function(i){ return Math.abs((Number(i.actual)||0) - (Number(i.sysStock)||0)) > 0.001; })
+    .map(function(i){
+      return { id: i.id, diff: i.actual - i.sysStock, sys: i.sysStock, actual: i.actual };
+    });
+  if (!items.length) return showToast('لم تُضف أي مواد للجرد', true);
+  if (itemsToAdjust.length === 0) return showToast('لا توجد فوارق لتسويتها', true);
+  if (!confirm('سيتم اعتماد تسوية جردية لـ (' + itemsToAdjust.length + ') صنف من أصل (' + items.length + ') تم جردها. هل أنت متأكد؟')) return;
   loader(true);
-  var notes = q('#stNotes').value || '';
-  var warehouseId = (q('#stWarehouse')||{}).value || '';
-  api.withFailureHandler(function(err) {
+  s.endDate = new Date();   // V5.8.4 — capture submit time for the audit report
+  var notes = s.notes || '';
+  var warehouseId = s.warehouseId || '';
+  api.withFailureHandler(function(err){
     loader(false); showToast(err.message, true);
-  }).withSuccessHandler(function(res) {
+  }).withSuccessHandler(function(res){
     loader(false);
-    if (res.success) {
-      closeModal('#modalStocktakeForm');
+    if (res && res.success) {
       try { localStorage.removeItem(ST_DRAFT_KEY); } catch(e) {}
+      ivCloseModal();
+      showToast('تم اعتماد التسوية ✓');
       window._stSession = { items: [], notes: '', warehouseId: '' };
-      showToast('تم اعتماد التسوية بنجاح — انعكس الرصيد فوراً ✓');
-      loadDashStocktake();
-      loadDashInvItems();
-      loadLiveInventory();
+      if (typeof loadDashStocktake === 'function') loadDashStocktake();
+      if (typeof loadDashInvItems === 'function') loadDashInvItems();
+      if (typeof loadLiveInventory === 'function') loadLiveInventory();
     } else {
-      showToast(res.error, true);
+      showToast((res && res.error) || 'فشل الاعتماد', true);
     }
   }).submitStocktake(itemsToAdjust, state.user, notes, warehouseId);
+};
+
+// V5.8.4 — Stocktake export (Print / PDF / Excel) — pro template
+window.stExport = function(kind) {
+  var s = window._stSession;
+  if (!s || !s.items || !s.items.length) return showToast('لا توجد مواد للتصدير', true);
+  if (kind === 'excel') return _stExportExcel();
+  if (kind === 'pdf')   return _stOpenPrintWindow(false);
+  if (kind === 'print') return _stOpenPrintWindow(true);
+};
+
+function _stExportExcel() {
+  if (typeof XLSX === 'undefined' && typeof loadScript === 'function') {
+    loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js')
+      .then(_stExportExcel).catch(function(){ showToast('فشل تحميل Excel', true); });
+    return;
+  }
+  if (typeof XLSX === 'undefined') return showToast('XLSX غير محمّلة', true);
+  var s = window._stSession;
+  // Sheet 1 — summary
+  var totals = _stComputeTotals(s.items || []);
+  var summary = [
+    ['محضر جرد وتسوية مخزون'],
+    ['رقم الجلسة', s.sessionId || ''],
+    ['تاريخ بداية الجرد', _stFmtDateTime(s.startDate)],
+    ['تاريخ نهاية الجرد', _stFmtDateTime(s.endDate || new Date())],
+    ['المستخدم', state.user || ''],
+    ['ملاحظة الجرد', s.notes || ''],
+    [],
+    ['', 'العدد', 'القيمة (ر.س)'],
+    ['إجمالي المواد المُجَرَدة', totals.total, ''],
+    ['أصناف بفائض (+)',         totals.surplus, ''],
+    ['أصناف بنقص (−)',          totals.shortage, ''],
+    ['أصناف مطابقة',            totals.matched, ''],
+    ['صافي تكلفة الفرق',        '', totals.varianceCost.toFixed(2)]
+  ];
+  // Sheet 2 — detail
+  var header = ['#', 'الكود', 'الصنف', 'التصنيف', 'الوحدة', 'رصيد النظام', 'الرصيد الفعلي', 'التباين', 'تكلفة الوحدة', 'تكلفة التباين'];
+  var rows = (s.items || []).map(function(i, idx) {
+    var diff = (Number(i.actual)||0) - (Number(i.sysStock)||0);
+    var diffCost = diff * (Number(i.cost)||0);
+    return [idx+1, i.id, i.name, i.category||'', i.unit||'', i.sysStock, i.actual, diff, i.cost, diffCost];
+  });
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'الملخّص');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([header].concat(rows)), 'تفاصيل الجرد');
+  XLSX.writeFile(wb, 'stocktake-' + (s.sessionId || _ymd(new Date())) + '.xlsx');
+  showToast('تم تصدير محضر الجرد');
+}
+
+function _stOpenPrintWindow(forPrint) {
+  var s = window._stSession;
+  var totals = _stComputeTotals(s.items || []);
+  var startDate = _stFmtDateTime(s.startDate);
+  var endDate = s.endDate ? _stFmtDateTime(s.endDate) : 'لم يُعتمد بعد';
+  var whName = '— المستودع الرئيسي —';
+  if (s.warehouseId && s.warehouses) {
+    var w = s.warehouses.find(function(x){return x.id === s.warehouseId;});
+    if (w) whName = w.name;
+  }
+  var rows = (s.items || []).map(function(i, idx) {
+    var diff = (Number(i.actual)||0) - (Number(i.sysStock)||0);
+    var diffCost = diff * (Number(i.cost)||0);
+    var rowClass = Math.abs(diff) < 0.001 ? '' : (diff > 0 ? 'row-pos' : 'row-neg');
+    return '<tr class="' + rowClass + '">' +
+      '<td class="num">' + (idx+1) + '</td>' +
+      '<td class="code">' + _invHubEsc(i.id) + '</td>' +
+      '<td><b>' + _invHubEsc(i.name) + '</b></td>' +
+      '<td>' + _invHubEsc(i.category||'') + '</td>' +
+      '<td>' + _invHubEsc(i.unit||'') + '</td>' +
+      '<td class="num">' + Number(i.sysStock||0).toFixed(2) + '</td>' +
+      '<td class="num"><b>' + Number(i.actual||0).toFixed(2) + '</b></td>' +
+      '<td class="num ' + (diff > 0 ? 'pos' : diff < 0 ? 'neg' : '') + '">' + (diff >= 0 ? '+' : '') + diff.toFixed(2) + '</td>' +
+      '<td class="num">' + Number(i.cost||0).toFixed(4) + '</td>' +
+      '<td class="num ' + (diffCost > 0 ? 'pos' : diffCost < 0 ? 'neg' : '') + '"><b>' + (diffCost >= 0 ? '+' : '') + diffCost.toFixed(2) + '</b></td>' +
+    '</tr>';
+  }).join('');
+  var html =
+    '<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8">' +
+    '<title>محضر جرد · ' + (s.sessionId || '') + '</title>' +
+    '<style>' +
+      '*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}' +
+      'html,body{margin:0;padding:0;}' +
+      'body{font-family:"Tajawal","Cairo","Segoe UI",Tahoma,sans-serif;color:#0f172a;direction:rtl;font-size:11px;background:#fff;}' +
+      '.page{padding:14mm 12mm;}' +
+      '.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0ea5e9;padding-bottom:10px;margin-bottom:12px;}' +
+      '.head h1{font-size:20px;margin:0;color:#0f172a;letter-spacing:-0.02em;}' +
+      '.head .h-sub{font-size:11px;color:#64748b;margin-top:3px;}' +
+      '.h-meta{font-size:10.5px;color:#475569;line-height:1.6;text-align:end;}' +
+      '.h-meta b{color:#0f172a;}' +
+      '.h-logo{font-size:14px;font-weight:900;color:#0ea5e9;letter-spacing:-0.02em;}' +
+      // Date strip (start + end)
+      '.dates{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:10px;}' +
+      '.date-box{border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;border-inline-start:3px solid #0ea5e9;}' +
+      '.date-label{font-size:9.5px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;}' +
+      '.date-val{font-size:12px;font-weight:800;margin-top:2px;color:#0f172a;font-family:ui-monospace,monospace;}' +
+      // KPIs
+      '.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;}' +
+      '.kpi{border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;border-inline-start:3px solid var(--kc,#0ea5e9);}' +
+      '.kpi-label{font-size:9.5px;color:#64748b;font-weight:700;text-transform:uppercase;}' +
+      '.kpi-num{font-size:15px;font-weight:900;margin-top:2px;font-family:ui-monospace,monospace;}' +
+      '.kpi.k-tot{--kc:#0ea5e9;}.kpi.k-pos{--kc:#15803d;}.kpi.k-neg{--kc:#b91c1c;}.kpi.k-var{--kc:#7c3aed;}' +
+      // Notes box
+      '.notes{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:10.5px;color:#78350f;}' +
+      // Table
+      'table{width:100%;border-collapse:collapse;font-size:10px;}' +
+      'th,td{border:1px solid #e2e8f0;padding:5px 7px;text-align:start;}' +
+      'thead th{background:#0f172a;color:#fff;font-weight:800;text-align:center;font-size:10px;letter-spacing:0.01em;}' +
+      'tbody tr:nth-child(even){background:#fafbff;}' +
+      'tbody tr.row-pos{background:#f0fdf4;}' +
+      'tbody tr.row-neg{background:#fef2f2;}' +
+      '.num{text-align:end;font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums;}' +
+      '.code{font-family:ui-monospace,monospace;color:#64748b;font-size:9.5px;}' +
+      '.pos{color:#15803d;font-weight:700;}' +
+      '.neg{color:#b91c1c;font-weight:700;}' +
+      'tfoot td{background:#1e293b;color:#fff;font-weight:900;border-color:#334155;}' +
+      // Footer
+      '.foot{margin-top:14px;padding-top:10px;border-top:1px solid #cbd5e1;display:flex;justify-content:space-between;font-size:9.5px;color:#64748b;}' +
+      '.sigs{margin-top:22px;display:grid;grid-template-columns:repeat(3,1fr);gap:30px;font-size:10px;}' +
+      '.sig{text-align:center;}' +
+      '.sig-line{border-top:1px solid #475569;margin-bottom:6px;height:36px;}' +
+      '.sig-name{font-weight:700;color:#0f172a;}' +
+      '.sig-role{color:#94a3b8;font-size:9.5px;margin-top:2px;}' +
+      '.toolbar{position:sticky;top:0;background:#fff;padding:8px 12mm;border-bottom:1px solid #e2e8f0;display:flex;gap:8px;justify-content:end;z-index:10;}' +
+      '.toolbar button{background:#0ea5e9;color:#fff;border:0;padding:8px 14px;border-radius:8px;font-weight:800;cursor:pointer;font-family:inherit;font-size:12px;}' +
+      '.toolbar button.ghost{background:#fff;color:#475569;border:1px solid #cbd5e1;}' +
+      '@media print{.toolbar{display:none !important;}.page{padding:8mm 6mm;}@page{size:A4 landscape;margin:8mm;}}' +
+    '</style></head><body>' +
+    '<div class="toolbar">' +
+      '<button onclick="window.print()">طباعة الآن</button>' +
+      '<button class="ghost" onclick="window.close()">إغلاق</button>' +
+    '</div>' +
+    '<div class="page">' +
+    // Header
+    '<div class="head">' +
+      '<div>' +
+        '<h1>محضر جرد وتسوية مخزون</h1>' +
+        '<div class="h-sub">رقم الجلسة: <b>' + _invHubEsc(s.sessionId || '') + '</b> · المستودع: <b>' + _invHubEsc(whName) + '</b></div>' +
+      '</div>' +
+      '<div class="h-meta">' +
+        '<div>المستخدم: <b>' + _invHubEsc(state.user || '—') + '</b></div>' +
+        '<div>تاريخ التقرير: <b>' + _ymd(new Date()) + '</b></div>' +
+        '<div class="h-logo">Moroccan Taste POS</div>' +
+      '</div>' +
+    '</div>' +
+    // Dates strip
+    '<div class="dates">' +
+      '<div class="date-box"><div class="date-label">بداية الجرد</div><div class="date-val">' + _invHubEsc(startDate) + '</div></div>' +
+      '<div class="date-box"><div class="date-label">نهاية الجرد</div><div class="date-val">' + _invHubEsc(endDate) + '</div></div>' +
+      '<div class="date-box"><div class="date-label">عدد المواد</div><div class="date-val">' + totals.total + '</div></div>' +
+      '<div class="date-box"><div class="date-label">المدة</div><div class="date-val">' + _stDuration(s.startDate, s.endDate || new Date()) + '</div></div>' +
+    '</div>' +
+    // KPIs
+    '<div class="kpis">' +
+      '<div class="kpi k-tot"><div class="kpi-label">إجمالي المواد</div><div class="kpi-num">' + totals.total + '</div></div>' +
+      '<div class="kpi k-pos"><div class="kpi-label">فائض (+)</div><div class="kpi-num pos">' + totals.surplus + '</div></div>' +
+      '<div class="kpi k-neg"><div class="kpi-label">نقص (−)</div><div class="kpi-num neg">' + totals.shortage + '</div></div>' +
+      '<div class="kpi k-var"><div class="kpi-label">صافي تكلفة الفرق</div><div class="kpi-num">' + (totals.varianceCost >= 0 ? '+' : '') + totals.varianceCost.toFixed(2) + ' ر.س</div></div>' +
+    '</div>' +
+    // Notes (if any)
+    (s.notes ? '<div class="notes"><b>ملاحظة الجرد:</b> ' + _invHubEsc(s.notes) + '</div>' : '') +
+    // Table
+    '<table><thead><tr>' +
+      '<th>#</th><th>الكود</th><th>الصنف</th><th>التصنيف</th><th>الوحدة</th>' +
+      '<th>رصيد النظام</th><th>الرصيد الفعلي</th><th>التباين</th>' +
+      '<th>تكلفة الوحدة</th><th>تكلفة التباين</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody>' +
+    '<tfoot><tr>' +
+      '<td colspan="5">الإجمالي · ' + totals.total + ' صنف</td>' +
+      '<td class="num">' + (s.items||[]).reduce(function(a,b){return a + Number(b.sysStock||0);}, 0).toFixed(2) + '</td>' +
+      '<td class="num">' + (s.items||[]).reduce(function(a,b){return a + Number(b.actual||0);}, 0).toFixed(2) + '</td>' +
+      '<td class="num">' + (totals.varianceQty >= 0 ? '+' : '') + totals.varianceQty.toFixed(2) + '</td>' +
+      '<td class="num">—</td>' +
+      '<td class="num">' + (totals.varianceCost >= 0 ? '+' : '') + totals.varianceCost.toFixed(2) + ' ر.س</td>' +
+    '</tr></tfoot></table>' +
+    // Signatures
+    '<div class="sigs">' +
+      '<div class="sig"><div class="sig-line"></div><div class="sig-name">القائم بالجرد</div><div class="sig-role">' + _invHubEsc(state.user || '—') + ' · التوقيع والتاريخ</div></div>' +
+      '<div class="sig"><div class="sig-line"></div><div class="sig-name">مدير المستودع</div><div class="sig-role">التوقيع والتاريخ</div></div>' +
+      '<div class="sig"><div class="sig-line"></div><div class="sig-name">المدير المالي</div><div class="sig-role">التوقيع والتاريخ</div></div>' +
+    '</div>' +
+    '<div class="foot">' +
+      '<span>تم الإنتاج بواسطة Moroccan Taste POS · ' + new Date().toLocaleString('ar-SA') + '</span>' +
+      '<span>صفحة 1</span>' +
+    '</div>' +
+    '</div>' +
+    '<script>window.onload=function(){' + (forPrint ? 'setTimeout(function(){window.print();},400);' : '') + '};</' + 'script>' +
+    '</body></html>';
+  var w = window.open('', 'stReport', 'width=1100,height=820,scrollbars=yes');
+  if (!w) return showToast('فعّل النوافذ المنبثقة للتصدير', true);
+  w.document.open(); w.document.write(html); w.document.close();
+  w.focus();
+}
+
+function _stDuration(start, end) {
+  if (!start || !end) return '—';
+  var ms = new Date(end).getTime() - new Date(start).getTime();
+  if (ms < 0) return '—';
+  var mins = Math.floor(ms / 60000);
+  if (mins < 60) return mins + ' دقيقة';
+  var h = Math.floor(mins / 60);
+  var m = mins % 60;
+  return h + ' ساعة' + (m > 0 ? ' و' + m + ' دقيقة' : '');
+}
+
+// V5.8.4 — Stocktake editor styles
+function _stInjectStyles() {
+  if (document.getElementById('stEditorStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'stEditorStyles';
+  st.textContent =
+    // Force the modal to be true full-screen for the stocktake editor
+    '.iv-modal-overlay[data-st-fullscreen]{padding:0 !important;}' +
+    '.iv-modal-overlay[data-st-fullscreen] .iv-modal{max-width:100vw !important;width:100vw !important;height:100vh !important;max-height:100vh !important;border-radius:0 !important;margin:0 !important;}' +
+    '.iv-modal-overlay[data-st-fullscreen] .iv-modal-body{padding:14px 18px !important;background:#f6f7fb;}' +
+    // Root scope
+    '#stEditorBody{font-feature-settings:"tnum";font-variant-numeric:tabular-nums;direction:rtl;}' +
+    '#stEditorBody *{box-sizing:border-box;}' +
+    // Hero
+    '.st-hero{position:relative;overflow:hidden;color:#fff;padding:18px 22px;border-radius:18px;margin-bottom:14px;background:radial-gradient(120% 140% at 100% 0%,#0ea5e9 0%,#0369a1 50%,#075985 100%);box-shadow:0 12px 36px -12px rgba(2,132,199,0.45);}' +
+    '.st-hero-orb{position:absolute;top:-60px;inset-inline-end:-50px;width:220px;height:220px;background:radial-gradient(circle,rgba(255,255,255,0.18) 0%,transparent 70%);border-radius:50%;}' +
+    '.st-hero-grid{position:relative;display:grid;grid-template-columns:minmax(320px,1.7fr) minmax(110px,1fr) minmax(110px,1fr) minmax(110px,1fr) minmax(160px,1.15fr);gap:18px;align-items:stretch;}' +
+    '@media (max-width:1100px){.st-hero-grid{grid-template-columns:1fr 1fr;}.st-hero-identity{grid-column:1/-1;}}' +
+    '.st-hero-identity{display:flex;align-items:center;gap:14px;min-width:0;}' +
+    '.st-hero-avatar{flex-shrink:0;width:64px;height:64px;border-radius:18px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(255,255,255,0.30),rgba(255,255,255,0.10));border:1px solid rgba(255,255,255,0.30);font-size:30px;}' +
+    '.st-hero-text{min-width:0;flex:1;}' +
+    '.st-hero-eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:10.5px;font-weight:700;opacity:0.92;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:5px;}' +
+    '.st-hero-title{margin:0;font-size:22px;font-weight:900;letter-spacing:-0.02em;}' +
+    '.st-hero-sub{font-size:12px;opacity:0.92;margin-top:4px;}' +
+    '.st-hero-kpi{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border-inline-start:1px solid rgba(255,255,255,0.16);padding:6px 4px;}' +
+    '.st-hero-kpi:first-of-type{border-inline-start:0;}' +
+    '@media (max-width:1100px){.st-hero-kpi{border-inline-start:0 !important;}}' +
+    '.st-hero-kpi-label{font-size:10px;opacity:0.85;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:5px;}' +
+    '.st-hero-kpi-value{font-size:24px;font-weight:900;letter-spacing:-0.02em;line-height:1.05;}' +
+    '.st-hero-kpi-unit{font-size:10.5px;opacity:0.8;font-weight:600;margin-top:4px;}' +
+    '.st-kpi-pos .st-hero-kpi-value{color:#86efac;}' +
+    '.st-kpi-neg .st-hero-kpi-value{color:#fecaca;}' +
+    '.st-kpi-boxed{background:rgba(255,255,255,0.16);border:1px solid rgba(255,255,255,0.22);border-radius:14px;padding:12px 8px;}' +
+    // Body
+    '.st-body{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px;}' +
+    '@media (max-width:1100px){.st-body{grid-template-columns:1fr;}}' +
+    '.st-panel{background:#fff;border:1px solid #e2e8f0;border-radius:18px;display:flex;flex-direction:column;height:calc(100vh - 320px);min-height:480px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
+    '.st-panel-head{padding:14px 18px;border-bottom:1px solid #e2e8f0;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-shrink:0;}' +
+    '.st-panel-head-left{display:flex;align-items:center;gap:11px;min-width:0;flex:1;}' +
+    '.st-panel-icon{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;flex-shrink:0;font-size:15px;}' +
+    '.st-panel-icon-primary{background:#dbeafe;color:#0369a1;}' +
+    '.st-panel-icon-accent{background:#cffafe;color:#0891b2;}' +
+    '.st-panel-titles{min-width:0;flex:1;}' +
+    '.st-panel-title{font-size:15px;font-weight:800;color:#0f172a;line-height:1.2;}' +
+    '.st-panel-sub{font-size:11.5px;color:#94a3b8;font-weight:600;margin-top:2px;}' +
+    '.st-clear-all{background:transparent;color:#dc2626;border:1px solid #fecaca;font-weight:700;font-size:11.5px;padding:6px 12px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:inherit;transition:all 0.15s;}' +
+    '.st-clear-all:hover{background:#fee2e2;border-color:#dc2626;}' +
+    '.st-panel-meta{padding:12px 18px;border-bottom:1px solid #f1f5f9;display:flex;gap:10px;flex-shrink:0;background:#fafbff;}' +
+    '.st-meta-field{flex:1;display:flex;flex-direction:column;gap:4px;}' +
+    '.st-meta-field label{font-size:10.5px;font-weight:700;color:#475569;display:flex;align-items:center;gap:4px;}' +
+    '.st-meta-field label i{color:#0369a1;font-size:10px;}' +
+    '.st-meta-field input,.st-meta-field select{padding:7px 10px;border:1.5px solid #e2e8f0;border-radius:9px;font-size:12.5px;font-family:inherit;background:#fff;}' +
+    '.st-meta-field input:focus,.st-meta-field select:focus{outline:none;border-color:#0ea5e9;box-shadow:0 0 0 3px #e0f2fe;}' +
+    '.st-panel-body{flex:1;overflow-y:auto;padding:14px 18px;}' +
+    '.st-panel-foot{padding:12px 18px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;}' +
+    '.st-foot-label{font-size:13px;font-weight:700;color:#0f172a;}' +
+    '.st-foot-total{font-size:18px;font-weight:900;font-family:ui-monospace,monospace;}' +
+    // Cards
+    '.st-card-list{display:flex;flex-direction:column;gap:10px;}' +
+    '.st-card{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:14px 16px;display:grid;grid-template-columns:32px minmax(0,1fr) auto auto;gap:14px;align-items:center;transition:all 0.15s;}' +
+    '.st-card:hover{box-shadow:0 6px 18px -6px rgba(15,23,42,0.10);transform:translateY(-1px);}' +
+    '.st-card-surplus{border-color:#86efac;background:linear-gradient(180deg,#fff 0%,#f0fdf4 200%);}' +
+    '.st-card-shortage{border-color:#fca5a5;background:linear-gradient(180deg,#fff 0%,#fef2f2 200%);}' +
+    '.st-card-num{width:32px;height:32px;border-radius:50%;background:#0ea5e9;color:#fff;display:grid;place-items:center;font-weight:900;font-size:12.5px;}' +
+    '.st-card-info{min-width:0;}' +
+    '.st-card-name{font-size:14.5px;font-weight:800;color:#0f172a;display:flex;align-items:center;flex-wrap:wrap;gap:8px;}' +
+    '.st-card-meta{font-size:11.5px;color:#64748b;font-weight:600;margin-top:4px;}' +
+    '.st-card-meta code{background:#f1f5f9;padding:1px 6px;border-radius:4px;font-family:ui-monospace,monospace;}' +
+    '.st-card-stats{display:grid;grid-template-columns:repeat(3,minmax(110px,1fr));gap:14px;}' +
+    '.st-card-stat{text-align:center;}' +
+    '.st-card-stat-label{font-size:9.5px;color:#94a3b8;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:3px;}' +
+    '.st-card-stat-value{font-size:18px;font-weight:900;font-family:ui-monospace,monospace;}' +
+    '.st-card-stat-unit{font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;}' +
+    '.st-stat-sys{color:#0369a1;}' +
+    '.st-card-input{width:100%;max-width:100px;padding:6px 10px;border:1.5px solid #15803d;border-radius:8px;text-align:center;font-weight:900;color:#15803d;font-size:16px;background:#f0fdf4;font-family:inherit;}' +
+    '.st-card-input:focus{outline:none;background:#dcfce7;}' +
+    '.st-card-del{background:transparent;color:#94a3b8;border:1px solid #e2e8f0;width:36px;height:36px;border-radius:10px;cursor:pointer;display:grid;place-items:center;font-size:13px;flex-shrink:0;transition:all 0.15s;}' +
+    '.st-card-del:hover{background:#fee2e2;color:#dc2626;border-color:#dc2626;}' +
+    // Pills
+    '.st-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;padding:3px 9px;border-radius:7px;line-height:1;white-space:nowrap;}' +
+    '.st-pill i{font-size:9px;}' +
+    '.st-pill-match{background:#f1f5f9;color:#475569;}' +
+    '.st-pill-surplus{background:#dcfce7;color:#15803d;}' +
+    '.st-pill-shortage{background:#fee2e2;color:#b91c1c;}' +
+    // Empty state
+    '.st-empty{padding:48px 24px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:360px;}' +
+    '.st-empty-icon{width:88px;height:88px;background:linear-gradient(135deg,#dbeafe,#cffafe);color:#0369a1;border-radius:50%;display:grid;place-items:center;font-size:34px;margin-bottom:18px;}' +
+    '.st-empty-title{font-weight:900;font-size:17px;color:#0f172a;margin:0 0 7px;}' +
+    '.st-empty-text{font-size:13px;max-width:330px;line-height:1.6;color:#64748b;font-weight:500;margin:0 0 18px;}' +
+    '.st-empty-cta{background:#0ea5e9;color:#fff;border:0;padding:10px 18px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;font-family:inherit;box-shadow:0 6px 18px -6px #0ea5e9;}' +
+    '.st-empty-cta:hover{transform:translateY(-1px);}' +
+    // Picker
+    '.st-picker-search{position:relative;padding:12px 18px;border-bottom:1px solid #f1f5f9;background:#fff;flex-shrink:0;}' +
+    '.st-picker-search i{position:absolute;top:50%;inset-inline-start:30px;transform:translateY(-50%);color:#94a3b8;font-size:13px;pointer-events:none;}' +
+    '.st-picker-search input{width:100%;padding:9px 36px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:13px;font-family:inherit;direction:rtl;background:#fff;}' +
+    '.st-picker-search input:focus{outline:none;border-color:#0ea5e9;box-shadow:0 0 0 3px #e0f2fe;}' +
+    '.st-pills{display:flex;flex-wrap:wrap;gap:6px;padding:10px 18px;border-bottom:1px solid #f1f5f9;flex-shrink:0;}' +
+    '.st-pill{background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;padding:5px 11px;border-radius:999px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px;line-height:1.3;transition:all 0.15s;}' +
+    '.st-pill:hover{background:#fff;border-color:#0ea5e9;color:#0369a1;}' +
+    '.st-pill-active{background:#0ea5e9 !important;color:#fff !important;border-color:#0ea5e9 !important;}' +
+    '.st-pill-count{background:rgba(0,0,0,0.06);padding:1px 6px;border-radius:8px;font-size:10px;}' +
+    '.st-pill-active .st-pill-count{background:rgba(255,255,255,0.22);}' +
+    '.st-picker-list{flex:1;overflow-y:auto;padding:8px 12px 12px;}' +
+    '.st-cat-divider{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;padding:12px 6px 6px;}' +
+    '.st-cat-line{height:1px;flex:1;background:#e2e8f0;}' +
+    '.st-cat-name{white-space:nowrap;}' +
+    '.st-cat-count{background:#f8fafc;color:#475569;padding:2px 7px;border-radius:6px;font-size:10px;}' +
+    '.st-pick-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;cursor:pointer;background:#fff;border:1.5px solid transparent;font-family:inherit;text-align:start;width:100%;transition:all 0.12s;}' +
+    '.st-pick-row:hover{background:#f0f9ff;border-color:#7dd3fc;transform:translateX(-2px);}' +
+    '.st-pick-plus{color:#0ea5e9;font-size:14px;width:30px;height:30px;background:#f0f9ff;border-radius:8px;display:grid;place-items:center;}' +
+    '.st-pick-info{min-width:0;}' +
+    '.st-pick-name{font-weight:700;color:#0f172a;font-size:13.5px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '.st-pick-stock{font-size:11.5px;color:#64748b;font-weight:600;margin-top:3px;display:flex;align-items:center;gap:6px;}' +
+    '.st-pick-dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0;}' +
+    '.st-pick-dot-out{background:#94a3b8;}' +
+    '.st-pick-dot-low{background:#f59e0b;}' +
+    '.st-pick-dot-ok{background:#10b981;}' +
+    '.st-pick-cost{text-align:end;font-family:ui-monospace,monospace;font-weight:800;color:#0f172a;font-size:13.5px;}' +
+    '.st-pick-cost-unit{font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;}' +
+    '.st-no-results{text-align:center;padding:48px 20px;color:#94a3b8;}' +
+    '.st-no-results i{font-size:38px;opacity:0.3;display:block;margin-bottom:12px;}' +
+    // Save bar
+    '.st-savebar{position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;margin:14px -18px -14px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 -4px 16px -8px rgba(15,23,42,0.08);gap:12px;flex-wrap:wrap;}' +
+    '.st-save-meta{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#475569;font-weight:700;}' +
+    '.st-save-meta-sep{color:#cbd5e1;}' +
+    '.st-save-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#10b981;margin-inline-end:6px;}' +
+    '.st-save-actions{display:flex;gap:6px;flex-wrap:wrap;}' +
+    '.st-btn{padding:9px 14px;border-radius:9px;font-size:12.5px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;border:1.5px solid;transition:all 0.15s;}' +
+    '.st-btn-primary{background:#0ea5e9;color:#fff;border-color:#0ea5e9;}' +
+    '.st-btn-primary:hover{background:#0284c7;border-color:#0284c7;}' +
+    '.st-btn-secondary{background:#fff;color:#475569;border-color:#e2e8f0;}' +
+    '.st-btn-secondary:hover{background:#f8fafc;border-color:#cbd5e1;}' +
+    '.st-btn-success{background:#15803d;color:#fff;border-color:#15803d;}' +
+    '.st-btn-success:hover{background:#166534;}' +
+    '.st-btn-danger{background:#b91c1c;color:#fff;border-color:#b91c1c;}' +
+    '.st-btn-danger:hover{background:#991b1b;}' +
+    '.st-btn-ghost{background:transparent;color:#475569;border-color:#cbd5e1;}' +
+    '.st-btn-ghost:hover{background:#f1f5f9;}';
+  document.head.appendChild(st);
 }
 
 

@@ -2551,36 +2551,47 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- MULTI-WAREHOUSES (المستودعات المتعددة) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
+<!-- V5.9.2 — Streamlined warehouse management page.  Tabs removed (the
+     Live Inventory tab in the inventory hub already shows balances; the
+     fullscreen Stock-Issue editor handles transfers).  This page is now
+     focused exclusively on warehouse master data + a strong overview. -->
 <div id="erpMultiWarehouses" class="dash-section hidden">
-  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
-    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-warehouse" style="color:#3b82f6;"></i> إدارة المستودعات</h2>
-    <div style="display:flex;gap:6px;">
-      <button class="btn btn-primary" onclick="erpOpenWarehouseModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> مستودع جديد</button>
-      <button class="btn btn-success" onclick="erpOpenTransferModal()" style="border-radius:12px;"><i class="fas fa-exchange-alt"></i> تحويل جديد</button>
+  <header class="whp-head">
+    <div class="whp-head-left">
+      <div class="whp-icon"><i class="fas fa-warehouse"></i></div>
+      <div>
+        <h2 class="whp-title">إدارة المستودعات</h2>
+        <p class="whp-sub">المستودعات هي الـ GL sub-ledger للمخزون. كل فرع لازم يكون مرتبط بمستودع عشان الكاشير يخصم منه عند البيع.</p>
+      </div>
     </div>
-  </div>
-  <div id="whStatsRow" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;"></div>
-  <div id="whTabsBar" style="display:flex;gap:0;background:#fff;border-radius:14px;padding:4px;border:1px solid #e2e8f0;margin-bottom:20px;">
-    <div class="whTabBtn whTabActive" onclick="whSwitchTab('warehouses')" style="flex:1;padding:12px 16px;text-align:center;font-weight:700;font-size:14px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;background:#0d47a1;color:#fff;transition:0.2s;"><i class="fas fa-boxes-stacked"></i> المستودعات</div>
-    <div class="whTabBtn" onclick="whSwitchTab('transfers')" style="flex:1;padding:12px 16px;text-align:center;font-weight:700;font-size:14px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;color:#64748b;transition:0.2s;"><i class="fas fa-exchange-alt"></i> التحويلات</div>
-    <div class="whTabBtn" onclick="whSwitchTab('stock')" style="flex:1;padding:12px 16px;text-align:center;font-weight:700;font-size:14px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;color:#64748b;transition:0.2s;"><i class="fas fa-cubes"></i> الأرصدة</div>
-  </div>
-  <div id="whTabWarehouses" style="display:block;">
-    <div id="whCardsGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;"><div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد مستودعات</div></div>
-  </div>
-  <div id="whTabTransfers" style="display:none;">
-    <div id="whTransferList"><div style="text-align:center;padding:40px;color:#94a3b8;font-style:italic;">لا توجد تحويلات</div></div>
-  </div>
-  <div id="whTabStock" style="display:none;">
-    <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
-      <select id="whStockWhFilter" class="form-control" style="width:220px;" onchange="whLoadStockTab()"><option value="">كل المستودعات</option></select>
-      <input type="text" id="whStockSearch" class="form-control" style="width:220px;" placeholder="بحث عن صنف..." oninput="whFilterStockTable()">
+    <div class="whp-head-actions">
+      <button class="whp-btn whp-btn-ghost" onclick="erpLoadMultiWarehouses()" title="تحديث"><i class="fas fa-rotate"></i> تحديث</button>
+      <button class="whp-btn whp-btn-primary" onclick="erpOpenWarehouseModal()"><i class="fas fa-plus"></i> مستودع جديد</button>
     </div>
-    <div class="erp-table-container" style="border-radius:14px;">
-      <table class="erp-table"><thead><tr><th>المستودع</th><th>الصنف</th><th>الكمية</th><th>الوحدة</th></tr></thead>
-      <tbody id="whStockBody"><tr><td colspan="4" class="empty-msg">اختر مستودعاً أو اعرض الكل</td></tr></tbody></table>
-    </div>
+  </header>
+  <div id="whStatsRow" class="whp-stats"></div>
+  <div class="whp-toolbar">
+    <input type="text" id="whpSearch" class="whp-input" placeholder="🔎 ابحث بالاسم أو الكود أو المدير..." oninput="whpApplyFilter()">
+    <select id="whpBrandFilter" class="whp-input" onchange="whpApplyFilter()">
+      <option value="">🏷 كل البراندات</option>
+    </select>
+    <select id="whpTypeFilter" class="whp-input" onchange="whpApplyFilter()">
+      <option value="">📦 كل الأنواع</option>
+      <option value="main">رئيسي</option>
+      <option value="branch">فرعي</option>
+      <option value="production">إنتاج</option>
+      <option value="raw">مواد خام</option>
+      <option value="finished">مواد تامة</option>
+      <option value="waste">هدر</option>
+    </select>
+    <select id="whpStatusFilter" class="whp-input" onchange="whpApplyFilter()">
+      <option value="">⚪ الكل</option>
+      <option value="active">نشط</option>
+      <option value="inactive">معطّل</option>
+    </select>
+    <span class="whp-count" id="whpCount"></span>
   </div>
+  <div id="whCardsGrid" class="whp-grid"></div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->

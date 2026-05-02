@@ -109,7 +109,27 @@ router.post('/', async (req, res) => {
     const { username, shiftId, warehouseId: reqWhId } = req.body;
     // ─── V3: optional channel + discount metadata from POS ───
     const { channelId, channelName, discountId, discountGlAccountId, lineDiscounts: lineDiscPayload } = req.body;
-    const warehouseId = reqWhId || (req.user && req.user.default_warehouse_id) || null;
+    // V5.9.2 — 4-step fallback chain to resolve which warehouse the
+    //   cashier's sale should deduct from:
+    //     1. Explicit warehouseId in the request body (POS override)
+    //     2. Cashier's user.default_warehouse_id
+    //     3. Cashier's branch's warehouse_id (the natural one)
+    //     4. null (will skip warehouse-specific deduction; global stock
+    //        on inv_items is the only thing that updates).
+    let warehouseId = reqWhId || (req.user && req.user.default_warehouse_id) || null;
+    if (!warehouseId && username) {
+      try {
+        const [u] = await db.query(
+          'SELECT u.branch_id, b.warehouse_id ' +
+          'FROM users u LEFT JOIN branches b ON b.id = u.branch_id ' +
+          'WHERE u.username = ? LIMIT 1',
+          [username]
+        );
+        if (u.length && u[0].warehouse_id) {
+          warehouseId = u[0].warehouse_id;
+        }
+      } catch(e) { /* legacy schema — ignore */ }
+    }
     const orderId = shiftId + '-' + Date.now();
     const now = new Date();
 

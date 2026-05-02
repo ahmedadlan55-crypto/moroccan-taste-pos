@@ -3444,100 +3444,204 @@ function erpDeleteCC(id) {
 var _whList = [];
 var _whTypeLabels = {branch:'فرعي',main:'رئيسي',production:'إنتاج',waste:'هدر',raw:'مواد خام',finished:'مواد تامة'};
 
-function whSwitchTab(tab) {
-  var tabMap = { warehouses: 'whTabWarehouses', transfers: 'whTabTransfers', stock: 'whTabStock' };
-  // Hide all tab contents
-  Object.values(tabMap).forEach(function(id) { document.getElementById(id).style.display = 'none'; });
-  // Show selected
-  document.getElementById(tabMap[tab]).style.display = 'block';
-  // Update tab button styles
-  var btns = document.querySelectorAll('.whTabBtn');
-  btns.forEach(function(b) { b.style.background = ''; b.style.color = '#64748b'; b.classList.remove('whTabActive'); });
-  var idx = { warehouses: 0, transfers: 1, stock: 2 };
-  btns[idx[tab]].style.background = '#0d47a1';
-  btns[idx[tab]].style.color = '#fff';
-  btns[idx[tab]].classList.add('whTabActive');
-  if (tab === 'stock') whLoadStockTab();
-}
+// V5.9.2 — kept as a no-op so any old callers don't break
+function whSwitchTab() { /* tabs removed in V5.9.2 */ }
 
-function _whStatCard(bg, iconBg, iconColor, icon, label, value) {
-  return '<div style="background:' + bg + ';border:1px solid ' + iconBg + ';border-radius:16px;padding:20px;display:flex;align-items:center;gap:14px;">' +
-    '<div style="width:48px;height:48px;border-radius:14px;background:' + iconBg + ';color:' + iconColor + ';display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;"><i class="fas ' + icon + '"></i></div>' +
-    '<div><div style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:4px;">' + label + '</div><div style="font-size:26px;font-weight:900;color:#0f172a;">' + value + '</div></div></div>';
-}
-
+// V5.9.2 — Pro warehouse management page (single view, no tabs)
 function erpLoadMultiWarehouses() {
-  // Load warehouses → render cards
+  _whInjectStyles();
   window._apiBridge.withSuccessHandler(function(list) {
-    _whList = list || [];
-    var grid = document.getElementById('whCardsGrid');
-    var activeCount = list.filter(function(w) { return w.isActive; }).length;
-    var types = {};
-    list.forEach(function(w) { types[w.type] = true; });
-    // Update stats with inline-styled cards
-    document.getElementById('whStatsRow').innerHTML =
-      _whStatCard('linear-gradient(135deg,#eff6ff,#dbeafe)', '#dbeafe', '#1e40af', 'fa-warehouse', 'إجمالي المستودعات', list.length) +
-      _whStatCard('linear-gradient(135deg,#f0fdf4,#dcfce7)', '#dcfce7', '#166534', 'fa-check-circle', 'المستودعات النشطة', activeCount) +
-      _whStatCard('linear-gradient(135deg,#fefce8,#fef9c3)', '#fef9c3', '#854d0e', 'fa-layer-group', 'أنواع المستودعات', Object.keys(types).length) +
-      _whStatCard('linear-gradient(135deg,#faf5ff,#f3e8ff)', '#f3e8ff', '#7c3aed', 'fa-exchange-alt', 'تحويلات معلقة', '<span id="whStatPending">0</span>');
-    if (!list.length) { grid.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد مستودعات — اضغط "مستودع جديد"</div>'; return; }
-    grid.innerHTML = list.map(function(w) {
-      var btnS = 'width:34px;height:34px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;';
-      return '<div style="background:#fff;border:1.5px solid #e2e8f0;border-radius:18px;padding:20px;transition:all 0.2s;">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">' +
-          '<div style="font-size:16px;font-weight:800;color:#1e293b;">' + w.name + '</div>' +
-          '<span class="badge badge-blue">' + (_whTypeLabels[w.type]||w.type) + '</span>' +
-        '</div>' +
-        '<div style="display:flex;flex-direction:column;gap:8px;">' +
-          '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#64748b;"><i class="fas fa-code-branch" style="width:16px;text-align:center;color:#94a3b8;"></i> ' + (w.branchName||'بدون فرع') + '</div>' +
-          '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#64748b;"><i class="fas fa-user" style="width:16px;text-align:center;color:#94a3b8;"></i> ' + (w.manager||'بدون مدير') + '</div>' +
-          '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#64748b;"><i class="fas fa-hashtag" style="width:16px;text-align:center;color:#94a3b8;"></i> <code>' + w.code + '</code></div>' +
-        '</div>' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid #f1f5f9;">' +
-          (w.isActive ? '<span class="badge badge-green">نشط</span>' : '<span class="badge badge-red">معطّل</span>') +
-          '<div style="display:flex;gap:6px;">' +
-            '<button style="' + btnS + '" onclick="erpEditWH(\'' + w.id + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
-            '<button style="' + btnS + 'color:#3b82f6;" onclick="erpViewWHStock(\'' + w.id + '\',\'' + (w.name||'').replace(/'/g,'') + '\')" title="أرصدة"><i class="fas fa-boxes"></i></button>' +
-            '<button style="' + btnS + 'color:#ef4444;" onclick="erpDeleteWH(\'' + w.id + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
-          '</div>' +
-        '</div>' +
-      '</div>';
-    }).join('');
-    // Populate stock tab filter
-    var sel = document.getElementById('whStockWhFilter');
-    if (sel && sel.options.length <= 1) {
-      list.forEach(function(w) { var o = document.createElement('option'); o.value = w.id; o.textContent = w.name; sel.appendChild(o); });
-    }
+    _whList = Array.isArray(list) ? list : [];
+    _whRender(_whList);
   }).getWarehousesList();
-  // Load transfers → render timeline
-  window._apiBridge.withSuccessHandler(function(list) {
-    var container = document.getElementById('whTransferList');
-    var pendingCount = 0;
-    if (!list || !list.length) {
-      container.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-style:italic;">لا توجد تحويلات — اضغط "تحويل جديد"</div>';
-      document.getElementById('whStatPending').textContent = '0';
-      return;
+}
+
+function _whRender(list) {
+  // KPIs
+  var active   = list.filter(function(w){return w.isActive;}).length;
+  var inactive = list.length - active;
+  var byType = {};
+  var byBrand = {};
+  list.forEach(function(w) {
+    byType[w.type] = (byType[w.type]||0) + 1;
+    var bk = w.brandId || '__none__';
+    byBrand[bk] = (byBrand[bk]||0) + 1;
+  });
+  var brandedCount = list.filter(function(w){return w.brandId;}).length;
+  var statsBox = document.getElementById('whStatsRow');
+  if (statsBox) {
+    statsBox.innerHTML =
+      _whStatCard('إجمالي المستودعات', list.length, 'مستودع',     'fa-warehouse',       '#3b82f6', '#dbeafe', 'eff6ff') +
+      _whStatCard('المستودعات النشطة', active,      'نشط',         'fa-circle-check',    '#15803d', '#dcfce7', 'f0fdf4') +
+      _whStatCard('أنواع المستودعات',  Object.keys(byType).length, 'نوع', 'fa-layer-group', '#854d0e', '#fef9c3', 'fefce8') +
+      _whStatCard('مرتبط ببراند',      brandedCount, 'مستودع',     'fa-shop',           '#7c3aed', '#f3e8ff', 'faf5ff');
+  }
+  // Populate brand filter (once)
+  var bf = document.getElementById('whpBrandFilter');
+  if (bf && bf.options.length <= 1) {
+    var brandSet = {};
+    list.forEach(function(w) { if (w.brandId && w.brandName) brandSet[w.brandId] = w.brandName; });
+    Object.keys(brandSet).forEach(function(bid) {
+      var o = document.createElement('option');
+      o.value = bid; o.textContent = brandSet[bid];
+      bf.appendChild(o);
+    });
+  }
+  whpApplyFilter();
+}
+
+function _whStatCard(label, value, unit, icon, color, gradFrom, gradTo) {
+  return '<div class="whp-stat" style="--c:' + color + ';--gf:#' + gradFrom + ';--gt:#' + gradTo + ';">' +
+           '<div class="whp-stat-icon"><i class="fas ' + icon + '"></i></div>' +
+           '<div class="whp-stat-body">' +
+             '<div class="whp-stat-label">' + label + '</div>' +
+             '<div class="whp-stat-num"><span>' + value + '</span> <em>' + unit + '</em></div>' +
+           '</div>' +
+         '</div>';
+}
+
+window.whpApplyFilter = function() {
+  var list = _whList || [];
+  var search = (document.getElementById('whpSearch')||{value:''}).value.toLowerCase().trim();
+  var brandF = (document.getElementById('whpBrandFilter')||{value:''}).value;
+  var typeF  = (document.getElementById('whpTypeFilter')||{value:''}).value;
+  var statF  = (document.getElementById('whpStatusFilter')||{value:''}).value;
+  var filtered = list.filter(function(w) {
+    if (search) {
+      var hay = ((w.name||'') + ' ' + (w.code||'') + ' ' + (w.manager||'') + ' ' + (w.brandName||'')).toLowerCase();
+      if (hay.indexOf(search) < 0) return false;
     }
-    var sBadge = function(s) { return s==='completed'?'<span class="badge badge-green">مكتمل</span>':s==='draft'?'<span class="badge badge-yellow">مسودة</span>':s==='cancelled'?'<span class="badge badge-red">ملغي</span>':'<span class="badge">'+s+'</span>'; };
-    var iconBgs = { draft: '#fef9c3', completed: '#dcfce7', cancelled: '#fee2e2' };
-    var iconClrs = { draft: '#ca8a04', completed: '#16a34a', cancelled: '#dc2626' };
-    container.innerHTML = list.map(function(t) {
-      if (t.status === 'draft') pendingCount++;
-      var dt = t.transferDate ? new Date(t.transferDate).toLocaleDateString('en-GB') : '';
-      var actions = '';
-      if (t.status === 'draft') actions = '<button class="btn btn-success btn-sm" onclick="erpApproveTransfer(\'' + t.id + '\')"><i class="fas fa-check"></i> اعتماد</button> <button class="btn btn-danger btn-sm" onclick="erpCancelTransfer(\'' + t.id + '\')"><i class="fas fa-times"></i> إلغاء</button>';
-      return '<div style="display:flex;align-items:center;gap:14px;padding:14px 18px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;margin-bottom:8px;">' +
-        '<div style="width:42px;height:42px;border-radius:12px;background:' + (iconBgs[t.status]||'#eff6ff') + ';color:' + (iconClrs[t.status]||'#3b82f6') + ';display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;"><i class="fas fa-exchange-alt"></i></div>' +
-        '<div style="flex:1;min-width:0;">' +
-          '<div style="font-weight:700;color:#1e293b;font-size:14px;display:flex;align-items:center;gap:6px;">' + t.fromWarehouse + ' <span style="color:#3b82f6;font-size:12px;"><i class="fas fa-arrow-left"></i></span> ' + t.toWarehouse + '</div>' +
-          '<div style="font-size:12px;color:#94a3b8;margin-top:2px;"><code>' + (t.transferNumber||'') + '</code> &bull; ' + dt + '</div>' +
-        '</div>' +
-        sBadge(t.status) +
-        '<div style="display:flex;gap:6px;flex-shrink:0;">' + actions + '</div>' +
-      '</div>';
-    }).join('');
-    document.getElementById('whStatPending').textContent = pendingCount;
-  }).getWarehouseTransfers();
+    if (brandF && w.brandId !== brandF) return false;
+    if (typeF && w.type !== typeF) return false;
+    if (statF === 'active' && !w.isActive) return false;
+    if (statF === 'inactive' && w.isActive) return false;
+    return true;
+  });
+  var grid = document.getElementById('whCardsGrid');
+  var counter = document.getElementById('whpCount');
+  if (counter) counter.textContent = filtered.length === list.length ? (list.length + ' مستودع') : (filtered.length + ' من ' + list.length);
+  if (!grid) return;
+  if (!filtered.length) {
+    grid.innerHTML = '<div class="whp-empty">' +
+      '<i class="fas fa-warehouse"></i>' +
+      '<div class="whp-empty-title">' + (list.length === 0 ? 'لا توجد مستودعات' : 'لا توجد نتائج') + '</div>' +
+      '<div class="whp-empty-sub">' + (list.length === 0 ? 'أنشئ أول مستودع لربطه بالفروع والكاشيرات.' : 'جرّب إزالة الفلاتر أو كلمات بحث أخرى.') + '</div>' +
+      (list.length === 0 ? '<button class="whp-btn whp-btn-primary" onclick="erpOpenWarehouseModal()" style="margin-top:14px;"><i class="fas fa-plus"></i> مستودع جديد</button>' : '') +
+    '</div>';
+    return;
+  }
+  grid.innerHTML = filtered.map(_whCardHtml).join('');
+};
+
+function _whCardHtml(w) {
+  var typeLabel = (window._whTypeLabels && _whTypeLabels[w.type]) || w.type || '—';
+  var brandPill = w.brandName
+    ? '<span class="whp-card-pill whp-pill-brand"><i class="fas fa-shop"></i> ' + _woEscapeHtml(w.brandName) + '</span>'
+    : '<span class="whp-card-pill whp-pill-muted"><i class="fas fa-minus"></i> بدون براند</span>';
+  var branchPill = w.branchName
+    ? '<span class="whp-card-pill whp-pill-branch"><i class="fas fa-code-branch"></i> ' + _woEscapeHtml(w.branchName) + '</span>'
+    : '<span class="whp-card-pill whp-pill-muted"><i class="fas fa-minus"></i> بدون فرع</span>';
+  var typePill = '<span class="whp-card-pill whp-pill-type"><i class="fas fa-layer-group"></i> ' + _woEscapeHtml(typeLabel) + '</span>';
+  var allowedCount = Array.isArray(w.allowedBrands) ? w.allowedBrands.length : 0;
+  return '<article class="whp-card' + (w.isActive ? '' : ' whp-card-inactive') + '">' +
+    '<header class="whp-card-head">' +
+      '<div class="whp-card-icon"><i class="fas fa-warehouse"></i></div>' +
+      '<div class="whp-card-titles">' +
+        '<div class="whp-card-name">' + _woEscapeHtml(w.name||'') + '</div>' +
+        '<div class="whp-card-code">' + _woEscapeHtml(w.code||'—') + '</div>' +
+      '</div>' +
+      (w.isActive
+        ? '<span class="whp-status whp-status-active"><i class="fas fa-circle"></i> نشط</span>'
+        : '<span class="whp-status whp-status-inactive"><i class="fas fa-circle"></i> معطّل</span>') +
+    '</header>' +
+    '<div class="whp-card-pills">' + typePill + brandPill + branchPill + '</div>' +
+    '<div class="whp-card-meta">' +
+      (w.manager ? '<div class="whp-meta-row"><i class="fas fa-user"></i> <span>' + _woEscapeHtml(w.manager) + '</span></div>' : '') +
+      (w.location ? '<div class="whp-meta-row"><i class="fas fa-location-dot"></i> <span>' + _woEscapeHtml(w.location) + '</span></div>' : '') +
+      (allowedCount > 0 ? '<div class="whp-meta-row"><i class="fas fa-tags"></i> <span>' + allowedCount + ' براند مسموح بتخزينه</span></div>' : '') +
+      (w.costCenterName ? '<div class="whp-meta-row"><i class="fas fa-bullseye"></i> <span>مركز تكلفة: ' + _woEscapeHtml(w.costCenterName) + '</span></div>' : '') +
+    '</div>' +
+    '<footer class="whp-card-foot">' +
+      '<button class="whp-card-btn whp-card-btn-ghost" onclick="erpViewWHStock(\'' + _woEscapeHtml(w.id) + '\',\'' + _woEscapeHtml(w.name||'').replace(/\'/g,"\\'") + '\')" title="عرض الأرصدة"><i class="fas fa-boxes"></i> الأرصدة</button>' +
+      '<button class="whp-card-btn whp-card-btn-edit" onclick="erpEditWH(\'' + _woEscapeHtml(w.id) + '\')" title="تعديل"><i class="fas fa-pen"></i> تعديل</button>' +
+      '<button class="whp-card-btn whp-card-btn-del" onclick="erpDeleteWH(\'' + _woEscapeHtml(w.id) + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+    '</footer>' +
+  '</article>';
+}
+
+// V5.9.2 — Inject pro stylesheet for the warehouse management page
+function _whInjectStyles() {
+  if (document.getElementById('whpStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'whpStyles';
+  st.textContent =
+    '#erpMultiWarehouses{font-feature-settings:"tnum";font-variant-numeric:tabular-nums;}' +
+    '.whp-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:18px;background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:18px 22px;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
+    '.whp-head-left{display:flex;align-items:center;gap:14px;}' +
+    '.whp-icon{width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,#dbeafe,#bfdbfe);color:#0d47a1;display:grid;place-items:center;font-size:22px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(13,71,161,0.08);}' +
+    '.whp-title{margin:0;font-size:20px;font-weight:900;color:#0f172a;letter-spacing:-0.02em;}' +
+    '.whp-sub{margin:5px 0 0;font-size:12.5px;color:#64748b;font-weight:500;line-height:1.5;max-width:680px;}' +
+    '.whp-head-actions{display:flex;gap:8px;flex-wrap:wrap;}' +
+    '.whp-btn{padding:9px 16px;border-radius:10px;font-size:13px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;border:1.5px solid;transition:all 0.15s;}' +
+    '.whp-btn-primary{background:#0d47a1;color:#fff;border-color:#0d47a1;box-shadow:0 4px 12px -4px rgba(13,71,161,0.3);}' +
+    '.whp-btn-primary:hover{background:#093170;border-color:#093170;transform:translateY(-1px);}' +
+    '.whp-btn-ghost{background:#fff;color:#475569;border-color:#e2e8f0;}' +
+    '.whp-btn-ghost:hover{background:#f8fafc;border-color:#cbd5e1;color:#0f172a;}' +
+    /* Stats */
+    '.whp-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px;}' +
+    '.whp-stat{background:linear-gradient(160deg,var(--gf) 0%,var(--gt) 60%,#fff 100%);border:1px solid #e2e8f0;border-radius:14px;padding:14px 18px;display:flex;align-items:center;gap:14px;border-inline-start:4px solid var(--c);position:relative;overflow:hidden;}' +
+    '.whp-stat::after{content:"";position:absolute;top:-30px;inset-inline-end:-30px;width:120px;height:120px;border-radius:50%;background:radial-gradient(circle,var(--c) 0%,transparent 70%);opacity:0.08;pointer-events:none;}' +
+    '.whp-stat-icon{width:48px;height:48px;border-radius:13px;background:#fff;color:var(--c);display:grid;place-items:center;font-size:20px;flex-shrink:0;box-shadow:0 4px 12px -4px var(--c);}' +
+    '.whp-stat-body{flex:1;min-width:0;}' +
+    '.whp-stat-label{font-size:11px;font-weight:800;color:#475569;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:4px;}' +
+    '.whp-stat-num{display:flex;align-items:baseline;gap:5px;}' +
+    '.whp-stat-num span{font-size:26px;font-weight:900;color:#0f172a;letter-spacing:-0.02em;line-height:1;}' +
+    '.whp-stat-num em{font-style:normal;font-size:12px;color:var(--c);font-weight:700;}' +
+    /* Toolbar */
+    '.whp-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:10px 12px;margin-bottom:14px;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
+    '.whp-input{padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:13px;font-family:inherit;background:#fff;color:#0f172a;}' +
+    '.whp-input:focus{outline:none;border-color:#0d47a1;box-shadow:0 0 0 3px rgba(13,71,161,0.12);}' +
+    '#whpSearch{flex:1;min-width:220px;}' +
+    '#whpBrandFilter,#whpTypeFilter,#whpStatusFilter{min-width:140px;}' +
+    '.whp-count{margin-inline-start:auto;font-size:12px;color:#64748b;font-weight:700;background:#f1f5f9;padding:6px 12px;border-radius:8px;}' +
+    /* Cards grid */
+    '.whp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px;}' +
+    '.whp-card{background:#fff;border:1.5px solid #e2e8f0;border-radius:18px;padding:16px 18px;display:flex;flex-direction:column;gap:12px;transition:all 0.18s;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
+    '.whp-card:hover{border-color:#0d47a1;box-shadow:0 12px 28px -10px rgba(13,71,161,0.15);transform:translateY(-2px);}' +
+    '.whp-card-inactive{background:#f8fafc;opacity:0.78;}' +
+    '.whp-card-head{display:flex;align-items:center;gap:11px;}' +
+    '.whp-card-icon{width:42px;height:42px;border-radius:11px;background:linear-gradient(135deg,#dbeafe,#bfdbfe);color:#0d47a1;display:grid;place-items:center;font-size:17px;flex-shrink:0;}' +
+    '.whp-card-titles{flex:1;min-width:0;}' +
+    '.whp-card-name{font-size:15.5px;font-weight:900;color:#0f172a;letter-spacing:-0.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '.whp-card-code{font-size:11px;color:#94a3b8;font-weight:700;font-family:ui-monospace,monospace;margin-top:2px;}' +
+    '.whp-status{font-size:10.5px;font-weight:800;padding:4px 9px;border-radius:7px;display:inline-flex;align-items:center;gap:4px;flex-shrink:0;}' +
+    '.whp-status i{font-size:7px;}' +
+    '.whp-status-active{background:#dcfce7;color:#15803d;}' +
+    '.whp-status-inactive{background:#f1f5f9;color:#64748b;}' +
+    '.whp-card-pills{display:flex;flex-wrap:wrap;gap:5px;}' +
+    '.whp-card-pill{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;padding:4px 9px;border-radius:8px;}' +
+    '.whp-card-pill i{font-size:9px;}' +
+    '.whp-pill-type{background:#fef9c3;color:#854d0e;}' +
+    '.whp-pill-brand{background:#ede9fe;color:#6d28d9;}' +
+    '.whp-pill-branch{background:#dbeafe;color:#1e40af;}' +
+    '.whp-pill-muted{background:#f1f5f9;color:#94a3b8;}' +
+    '.whp-card-meta{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-top:1px solid #f1f5f9;border-bottom:1px solid #f1f5f9;}' +
+    '.whp-meta-row{display:flex;align-items:center;gap:8px;font-size:12px;color:#64748b;font-weight:600;}' +
+    '.whp-meta-row i{width:14px;text-align:center;color:#94a3b8;font-size:11px;}' +
+    '.whp-card-foot{display:flex;gap:6px;}' +
+    '.whp-card-btn{flex:1;padding:8px 10px;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px;font-family:inherit;border:1.5px solid;transition:all 0.15s;}' +
+    '.whp-card-btn-ghost{background:#fff;color:#0d47a1;border-color:#bfdbfe;}' +
+    '.whp-card-btn-ghost:hover{background:#eff6ff;}' +
+    '.whp-card-btn-edit{background:#fff;color:#475569;border-color:#e2e8f0;}' +
+    '.whp-card-btn-edit:hover{background:#f1f5f9;border-color:#cbd5e1;color:#0f172a;}' +
+    '.whp-card-btn-del{background:#fff;color:#b91c1c;border-color:#fecaca;flex:0 0 auto;width:38px;}' +
+    '.whp-card-btn-del:hover{background:#fee2e2;border-color:#dc2626;}' +
+    /* Empty state */
+    '.whp-empty{grid-column:1/-1;background:#fff;border:1.5px dashed #cbd5e1;border-radius:18px;padding:60px 24px;text-align:center;}' +
+    '.whp-empty i{font-size:48px;color:#cbd5e1;margin-bottom:14px;display:block;}' +
+    '.whp-empty-title{font-size:16px;font-weight:800;color:#475569;margin-bottom:5px;}' +
+    '.whp-empty-sub{font-size:13px;color:#94a3b8;}';
+  document.head.appendChild(st);
 }
 
 var _whStockData = [];
@@ -3575,70 +3679,205 @@ function whFilterStockTable() {
     return '<tr><td>' + (s.WarehouseName||'') + '</td><td style="font-weight:700;">' + (s.ItemName||'') + '</td><td style="font-weight:800;color:#1e40af;">' + s.Qty + '</td><td>' + (s.Unit||'') + '</td></tr>';
   }).join('');
 }
+// V5.9.2 — Pro Warehouse modal.  Uses ivShowModal (the inventory-hub
+//   self-contained modal helper) so we get a polished 3-section form
+//   instead of the cramped legacy form.
 function erpOpenWarehouseModal(data) {
   var d = data || {};
-  // Load branches + brands + cost centers for dropdowns
   Promise.all([
-    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getBranchesFull(); }),
-    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getBrands(); }),
-    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getCostCenters(); })
-  ]).then(function(results) {
-    var branches = results[0]||[], brands = results[1]||[], ccs = results[2]||[];
-    var brOpts = branches.map(function(b) { return '<option value="' + b.id + '"' + (d.branchId===b.id?' selected':'') + '>' + b.name + '</option>'; }).join('');
-    var brandOpts = brands.map(function(b) { return '<option value="' + b.id + '"' + (d.brandId===b.id?' selected':'') + '>' + b.name + '</option>'; }).join('');
-    var ccOpts = ccs.map(function(c) { return '<option value="' + c.id + '"' + (d.costCenterId===c.id?' selected':'') + '>' + c.code + ' — ' + c.name + '</option>'; }).join('');
-    // V3: allowed brands as checkbox grid (multi-select)
+    new Promise(function(res){ window._apiBridge.withSuccessHandler(res).getBranchesFull(); }),
+    new Promise(function(res){ window._apiBridge.withSuccessHandler(res).getBrands(); }),
+    new Promise(function(res){ window._apiBridge.withSuccessHandler(res).getCostCenters(); })
+  ]).then(function(out) {
+    var branches = out[0]||[], brands = out[1]||[], ccs = out[2]||[];
+    if (typeof window.ivShowModal !== 'function') {
+      // Fallback to legacy if helper missing
+      return erpOpenWarehouseModalLegacy ? erpOpenWarehouseModalLegacy(d) : null;
+    }
+    _whModalInjectStyles();
     var allowedSet = new Set((d.allowedBrands || []).map(String));
-    var allowedHtml = brands.map(function(b) {
-      var checked = allowedSet.has(b.id) ? ' checked' : '';
-      return '<label class="wh-allowed-chk"><input type="checkbox" class="wh-allowed-cb" value="' + b.id + '"' + checked + '><span>' + b.name + '</span></label>';
+
+    var typeBtns = [
+      { id:'main',       label:'رئيسي',     icon:'fa-warehouse',          color:'#0369a1' },
+      { id:'branch',     label:'فرعي',      icon:'fa-store',              color:'#0d47a1' },
+      { id:'production', label:'إنتاج',     icon:'fa-industry',           color:'#15803d' },
+      { id:'raw',        label:'مواد خام',  icon:'fa-cubes',              color:'#854d0e' },
+      { id:'finished',   label:'تامة',      icon:'fa-box-open',           color:'#7c3aed' },
+      { id:'waste',      label:'هدر',       icon:'fa-recycle',            color:'#b91c1c' }
+    ];
+    var typeCardsHtml = typeBtns.map(function(t) {
+      var active = (d.type || 'branch') === t.id;
+      return '<button type="button" class="whm-type-card' + (active ? ' whm-type-active' : '') + '" data-type="' + t.id + '" onclick="_whmSetType(\'' + t.id + '\')" style="--c:' + t.color + ';">' +
+               '<i class="fas ' + t.icon + '"></i>' +
+               '<span>' + t.label + '</span>' +
+             '</button>';
     }).join('');
-    document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل مستودع' : 'مستودع جديد';
-    document.getElementById('erpModalBody').innerHTML =
-      '<input type="hidden" id="whID" value="' + (d.id||'') + '">' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>الرمز *</label><input class="form-control" id="whCode" value="' + (d.code||'') + '"></div>' +
-        '<div class="form-row"><label>النوع</label><select class="form-control" id="whType"><option value="branch">فرعي</option><option value="main">رئيسي</option><option value="production">إنتاج</option><option value="waste">هدر</option><option value="raw">مواد خام</option><option value="finished">مواد تامة</option></select></div>' +
-      '</div>' +
-      '<div class="form-row"><label>الاسم *</label><input class="form-control" id="whName" value="' + (d.name||'') + '"></div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>البراند الأساسي</label><select class="form-control" id="whBrand"><option value="">— بدون —</option>' + brandOpts + '</select></div>' +
-        '<div class="form-row"><label>الفرع</label><select class="form-control" id="whBranch"><option value="">— بدون —</option>' + brOpts + '</select></div>' +
-      '</div>' +
-      '<div class="form-row">' +
-        '<label>البراندات المسموح بتخزينها <small style="color:#64748b;">(يمكن اختيار أكثر من براند)</small></label>' +
-        '<div class="wh-allowed-grid">' + (allowedHtml || '<div style="color:#94a3b8;font-size:12px;">لا توجد براندات مسجلة</div>') + '</div>' +
-      '</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>مركز التكلفة</label><select class="form-control" id="whCC"><option value="">— بدون —</option>' + ccOpts + '</select></div>' +
-        '<div class="form-row"><label>المدير</label><input class="form-control" id="whManager" value="' + (d.manager||'') + '"></div>' +
-      '</div>' +
-      '<div class="form-row"><label>الموقع</label><input class="form-control" id="whLocation" value="' + (d.location||'') + '"></div>';
-    if (d.type) document.getElementById('whType').value = d.type;
-    document.getElementById('erpModalSaveBtn').onclick = erpSaveWH;
-    document.getElementById('erpModal').classList.remove('hidden');
+
+    var brandOpts = '<option value="">— بدون براند أساسي —</option>' +
+      brands.map(function(b){ return '<option value="' + _woEscapeHtml(b.id) + '"' + (d.brandId===b.id?' selected':'') + '>' + _woEscapeHtml(b.name) + '</option>'; }).join('');
+    var branchOpts = '<option value="">— غير مرتبط بفرع —</option>' +
+      branches.map(function(b){ return '<option value="' + _woEscapeHtml(b.id) + '"' + (d.branchId===b.id?' selected':'') + '>' + _woEscapeHtml(b.name) + (b.code ? ' (' + _woEscapeHtml(b.code) + ')' : '') + '</option>'; }).join('');
+    var ccOpts = '<option value="">— بدون مركز تكلفة —</option>' +
+      ccs.map(function(c){ return '<option value="' + _woEscapeHtml(c.id) + '"' + (d.costCenterId===c.id?' selected':'') + '>' + _woEscapeHtml(c.code) + ' — ' + _woEscapeHtml(c.name) + '</option>'; }).join('');
+
+    var allowedHtml = brands.length === 0
+      ? '<div class="whm-empty-brand">لا توجد براندات مسجلة. أنشئ البراند أولاً من قسم البراندات.</div>'
+      : brands.map(function(b) {
+          var checked = allowedSet.has(b.id) ? ' checked' : '';
+          return '<label class="whm-allowed-chip"><input type="checkbox" class="wh-allowed-cb" value="' + _woEscapeHtml(b.id) + '"' + checked + '><span>' + _woEscapeHtml(b.name) + '</span></label>';
+        }).join('');
+
+    var html =
+      '<input type="hidden" id="whID" value="' + _woEscapeHtml(d.id||'') + '">' +
+      '<input type="hidden" id="whType" value="' + _woEscapeHtml(d.type||'branch') + '">' +
+      // SECTION 1 — Basic info
+      '<section class="whm-section">' +
+        '<header class="whm-section-head">' +
+          '<div class="whm-section-num">1</div>' +
+          '<div><div class="whm-section-title">البيانات الأساسية</div><div class="whm-section-sub">الكود والاسم ونوع المستودع</div></div>' +
+        '</header>' +
+        '<div class="whm-grid-2">' +
+          '<div class="whm-field"><label class="whm-label">الكود <span class="whm-required">*</span></label><input class="whm-input" id="whCode" value="' + _woEscapeHtml(d.code||'') + '" placeholder="WH-001"></div>' +
+          '<div class="whm-field"><label class="whm-label">الاسم <span class="whm-required">*</span></label><input class="whm-input" id="whName" value="' + _woEscapeHtml(d.name||'') + '" placeholder="مستودع فرع أوكتين"></div>' +
+        '</div>' +
+        '<div class="whm-field" style="margin-top:14px;">' +
+          '<label class="whm-label">نوع المستودع</label>' +
+          '<div class="whm-type-grid">' + typeCardsHtml + '</div>' +
+        '</div>' +
+      '</section>' +
+      // SECTION 2 — Linkage (the most important — drives the cashier deduction)
+      '<section class="whm-section whm-section-highlighted">' +
+        '<header class="whm-section-head">' +
+          '<div class="whm-section-num">2</div>' +
+          '<div>' +
+            '<div class="whm-section-title">الربط بالبراند والفرع</div>' +
+            '<div class="whm-section-sub">عند ربط الفرع بالمستودع، يبيع الكاشير ويخصم تلقائياً من هذا المستودع.</div>' +
+          '</div>' +
+        '</header>' +
+        '<div class="whm-grid-2">' +
+          '<div class="whm-field">' +
+            '<label class="whm-label"><i class="fas fa-shop"></i> البراند الأساسي</label>' +
+            '<select class="whm-input" id="whBrand">' + brandOpts + '</select>' +
+            '<div class="whm-hint">البراند المالك للمستودع. يحدد القيد المحاسبي افتراضياً.</div>' +
+          '</div>' +
+          '<div class="whm-field">' +
+            '<label class="whm-label"><i class="fas fa-code-branch"></i> الفرع المرتبط</label>' +
+            '<select class="whm-input" id="whBranch">' + branchOpts + '</select>' +
+            '<div class="whm-hint whm-hint-warn"><i class="fas fa-circle-info"></i> الكاشير في هذا الفرع سيخصم من هذا المستودع تلقائياً.</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="whm-field" style="margin-top:14px;">' +
+          '<label class="whm-label"><i class="fas fa-tags"></i> البراندات المسموح بتخزينها <span class="whm-optional">(اختياري — افتراضياً البراند الأساسي فقط)</span></label>' +
+          '<div class="whm-allowed-grid">' + allowedHtml + '</div>' +
+        '</div>' +
+      '</section>' +
+      // SECTION 3 — Operational
+      '<section class="whm-section">' +
+        '<header class="whm-section-head">' +
+          '<div class="whm-section-num">3</div>' +
+          '<div><div class="whm-section-title">التشغيل والمحاسبة</div><div class="whm-section-sub">المدير المسؤول، مركز التكلفة، الموقع.</div></div>' +
+        '</header>' +
+        '<div class="whm-grid-2">' +
+          '<div class="whm-field"><label class="whm-label"><i class="fas fa-bullseye"></i> مركز التكلفة</label><select class="whm-input" id="whCC">' + ccOpts + '</select></div>' +
+          '<div class="whm-field"><label class="whm-label"><i class="fas fa-user-tie"></i> المدير المسؤول</label><input class="whm-input" id="whManager" value="' + _woEscapeHtml(d.manager||'') + '" placeholder="اسم المدير"></div>' +
+        '</div>' +
+        '<div class="whm-field" style="margin-top:14px;">' +
+          '<label class="whm-label"><i class="fas fa-location-dot"></i> الموقع / العنوان</label>' +
+          '<input class="whm-input" id="whLocation" value="' + _woEscapeHtml(d.location||'') + '" placeholder="مثال: الرياض، حي العليا، شارع الأمير سلطان">' +
+        '</div>' +
+      '</section>';
+
+    ivShowModal({
+      icon: d.id ? 'fa-pen-to-square' : 'fa-warehouse',
+      iconColor: '#0d47a1',
+      title: d.id ? 'تعديل مستودع' : 'مستودع جديد',
+      subtitle: d.id ? 'عدّل بيانات المستودع — التغييرات تُسجّل في الـ audit log' : 'أنشئ مستودعاً واربطه بفرع لتفعيل الخصم التلقائي على المبيعات',
+      body: html,
+      size: 'lg',
+      footer:
+        '<button onclick="ivCloseModal()">إلغاء</button>' +
+        '<button class="primary" onclick="erpSaveWH()"><i class="fas fa-save"></i> حفظ المستودع</button>'
+    });
   });
 }
+
+window._whmSetType = function(typeId) {
+  var hidden = document.getElementById('whType');
+  if (hidden) hidden.value = typeId;
+  document.querySelectorAll('.whm-type-card').forEach(function(c) {
+    if (c.dataset.type === typeId) c.classList.add('whm-type-active');
+    else c.classList.remove('whm-type-active');
+  });
+};
+
+function _whModalInjectStyles() {
+  if (document.getElementById('whmStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'whmStyles';
+  st.textContent =
+    '#adjEditorBody, .iv-modal-body{font-feature-settings:"tnum";}' +
+    '.whm-section{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px 18px;margin-bottom:14px;}' +
+    '.whm-section-highlighted{background:linear-gradient(180deg,#eff6ff 0%,#fff 50%);border-color:#bfdbfe;}' +
+    '.whm-section-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px;}' +
+    '.whm-section-num{width:32px;height:32px;border-radius:50%;background:#0d47a1;color:#fff;display:grid;place-items:center;font-weight:900;font-size:14px;flex-shrink:0;}' +
+    '.whm-section-title{font-size:15px;font-weight:900;color:#0f172a;letter-spacing:-0.01em;}' +
+    '.whm-section-sub{font-size:12px;color:#64748b;font-weight:500;margin-top:2px;line-height:1.5;}' +
+    '.whm-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}' +
+    '@media (max-width:640px){.whm-grid-2{grid-template-columns:1fr;}}' +
+    '.whm-field{display:flex;flex-direction:column;gap:5px;}' +
+    '.whm-label{font-size:12px;font-weight:800;color:#475569;display:flex;align-items:center;gap:5px;}' +
+    '.whm-label i{color:#0d47a1;font-size:11px;}' +
+    '.whm-required{color:#dc2626;font-size:13px;}' +
+    '.whm-optional{color:#94a3b8;font-size:11px;font-weight:600;}' +
+    '.whm-input{padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:13.5px;font-family:inherit;background:#fff;color:#0f172a;font-weight:600;}' +
+    '.whm-input:focus{outline:none;border-color:#0d47a1;box-shadow:0 0 0 3px rgba(13,71,161,0.15);}' +
+    '.whm-hint{font-size:11px;color:#64748b;font-weight:500;margin-top:2px;}' +
+    '.whm-hint-warn{color:#0369a1;background:#dbeafe;border:1px solid #93c5fd;border-radius:7px;padding:6px 10px;font-weight:700;display:flex;align-items:center;gap:5px;}' +
+    '.whm-hint-warn i{color:#0369a1;}' +
+    /* Type picker grid */
+    '.whm-type-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;}' +
+    '.whm-type-card{display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 10px;border:2px solid #e2e8f0;border-radius:12px;background:#fff;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:700;color:#475569;transition:all 0.15s;}' +
+    '.whm-type-card i{font-size:22px;color:var(--c);}' +
+    '.whm-type-card:hover{border-color:var(--c);transform:translateY(-2px);box-shadow:0 6px 14px -4px rgba(15,23,42,0.10);}' +
+    '.whm-type-active{background:linear-gradient(135deg,var(--c) 0%,#0f172a 200%);border-color:var(--c);color:#fff;box-shadow:0 6px 14px -4px var(--c);}' +
+    '.whm-type-active i{color:#fff;}' +
+    /* Allowed brands chips */
+    '.whm-allowed-grid{display:flex;flex-wrap:wrap;gap:6px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;}' +
+    '.whm-allowed-chip{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1.5px solid #e2e8f0;padding:5px 11px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700;color:#475569;transition:all 0.15s;user-select:none;}' +
+    '.whm-allowed-chip input{margin:0;cursor:pointer;accent-color:#0d47a1;}' +
+    '.whm-allowed-chip:has(input:checked){background:#0d47a1;color:#fff;border-color:#0d47a1;}' +
+    '.whm-empty-brand{color:#94a3b8;font-size:12.5px;padding:14px;text-align:center;}';
+  document.head.appendChild(st);
+}
 function erpEditWH(id) { var w = _whList.find(function(x){return x.id===id;}); if(w) erpOpenWarehouseModal(w); }
-function erpSaveWH() {
-  // Collect allowed brands (multi-select)
+window.erpSaveWH = function() {
   var allowedBrands = Array.from(document.querySelectorAll('.wh-allowed-cb:checked')).map(function(cb){ return cb.value; });
   var data = {
-    id: document.getElementById('whID').value,
-    code: document.getElementById('whCode').value,
-    name: document.getElementById('whName').value,
-    type: document.getElementById('whType').value,
-    brandId: (document.getElementById('whBrand')||{}).value||'',
-    branchId: document.getElementById('whBranch').value,
-    costCenterId: (document.getElementById('whCC')||{}).value||'',
-    manager: document.getElementById('whManager').value,
-    location: document.getElementById('whLocation').value,
+    id: (document.getElementById('whID')||{}).value || '',
+    code: (document.getElementById('whCode')||{}).value || '',
+    name: (document.getElementById('whName')||{}).value || '',
+    type: (document.getElementById('whType')||{}).value || 'branch',
+    brandId: (document.getElementById('whBrand')||{}).value || '',
+    branchId: (document.getElementById('whBranch')||{}).value || '',
+    costCenterId: (document.getElementById('whCC')||{}).value || '',
+    manager: (document.getElementById('whManager')||{}).value || '',
+    location: (document.getElementById('whLocation')||{}).value || '',
     allowedBrands: allowedBrands
   };
-  if (!data.code || !data.name) return showToast('الرمز والاسم مطلوبان', true);
+  if (!data.code || !data.name) return showToast('الكود والاسم مطلوبان', true);
   loader(true);
-  window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحفظ'); erpCloseModal(); erpLoadMultiWarehouses(); } else showToast(r.error, true); }).saveWarehouse(data);
-}
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r && r.success) {
+      showToast('تم الحفظ');
+      if (typeof ivCloseModal === 'function') ivCloseModal();
+      if (typeof erpCloseModal === 'function') erpCloseModal();
+      erpLoadMultiWarehouses();
+    } else {
+      showToast((r && r.error) || 'فشل الحفظ', true);
+    }
+  }).saveWarehouse(data);
+};
 function erpDeleteWH(id) {
   if (!confirm('حذف المستودع وجميع أرصدته؟')) return;
   loader(true);

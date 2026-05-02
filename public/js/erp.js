@@ -4074,192 +4074,619 @@ function erpLoadBranchesFull() {
     }).join('');
   }).getBranchesFull();
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// V5.9.4 — Branch editor + map picker — full rewrite
+//
+// Why this changed: prior versions wrote raw user values into HTML attributes
+// (so a name with `"` broke the input), the GET endpoint omitted brandId so
+// re-opening to edit reset the brand dropdown, and the inline 250px map made
+// picking a precise location painful. The new flow:
+//   • Sectioned modal with a hidden `type` input so we don't downgrade the
+//     branch type on save.
+//   • All values flow through `_brfAttr` to escape HTML attributes safely.
+//   • Map picker is a true fullscreen overlay with a debounced Nominatim
+//     autocomplete, click-to-place + drag, a live radius circle, reverse
+//     geocoding to show the address of the picked spot, and an Overpass
+//     overlay that surfaces nearby shop/POI names so the manager can verify
+//     they're really pointing at the right storefront.
+// ─────────────────────────────────────────────────────────────────────────────
+
 var _brFullList = [];
+
+// Escape arbitrary text for safe insertion inside an HTML attribute.
+function _brfAttr(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function erpOpenBranchFullModal(data) {
   var d = data || {};
-  // Load warehouses + cost centers + brands for dropdowns
   Promise.all([
     new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getWarehousesList(); }),
     new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getCostCenters(); }),
     new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getBrands(); })
   ]).then(function(results) {
     var whs = results[0]||[], ccs = results[1]||[], brands = results[2]||[];
-    var whOpts = whs.map(function(w) { return '<option value="' + w.id + '"' + (d.warehouseId===w.id?' selected':'') + '>' + w.name + '</option>'; }).join('');
-    var ccOpts = ccs.map(function(c) { return '<option value="' + c.id + '"' + (d.costCenterId===c.id?' selected':'') + '>' + c.code + ' — ' + c.name + '</option>'; }).join('');
-    var brandOpts = brands.map(function(b) { return '<option value="' + b.id + '"' + (d.brandId===b.id?' selected':'') + '>' + b.name + '</option>'; }).join('');
-    document.getElementById('erpModalTitle').textContent = d.id ? 'تعديل فرع' : 'إضافة فرع';
+    var whOpts    = whs.map(function(w) { return '<option value="' + _brfAttr(w.id) + '"' + (d.warehouseId === w.id ? ' selected' : '') + '>' + _brfAttr(w.name) + '</option>'; }).join('');
+    var ccOpts    = ccs.map(function(c) { return '<option value="' + _brfAttr(c.id) + '"' + (d.costCenterId === c.id ? ' selected' : '') + '>' + _brfAttr((c.code||'') + ' — ' + (c.name||'')) + '</option>'; }).join('');
+    var brandOpts = brands.map(function(b) { return '<option value="' + _brfAttr(b.id) + '"' + (d.brandId === b.id ? ' selected' : '') + '>' + _brfAttr(b.name) + '</option>'; }).join('');
+    var supplyMode = d.supplyMode || 'parent_company';
+    var typeVal    = d.type || 'main';
+
+    // V5.9.4 marker in the title so a stale cached erp.js can be spotted at a
+    // glance — old code shows just "تعديل فرع" without the badge.
+    document.getElementById('erpModalTitle').innerHTML =
+      _brfAttr(d.id ? 'تعديل فرع' : 'إضافة فرع جديد') +
+      ' <span style="font-size:10px;font-weight:700;color:#7f1d1d;background:#fef2f2;padding:2px 8px;border-radius:6px;border:1px solid #fecaca;margin-inline-start:8px;vertical-align:middle;">v5.9.4</span>';
     document.getElementById('erpModalBody').innerHTML =
-      '<input type="hidden" id="brfID" value="' + (d.id||'') + '">' +
-      '<div class="form-row"><label>البراند *</label><select class="form-control" id="brfBrand"><option value="">— اختر البراند —</option>' + brandOpts + '</select></div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>الرمز</label><input class="form-control" id="brfCode" value="' + (d.code||'') + '"></div>' +
-        '<div class="form-row"><label>الاسم *</label><input class="form-control" id="brfName" value="' + (d.name||'') + '"></div>' +
-      '</div>' +
-      // V5.7.14 — operating-company name printed on receipts under the parent brand
-      '<div class="form-row"><label>اسم الشركة المُشغِّلة <small style="color:#94a3b8;font-weight:500;">(يظهر على الفاتورة تحت "المذاق المغربي")</small></label><input class="form-control" id="brfCompanyName" value="' + ((d.companyName||'').replace(/"/g,'&quot;')) + '" placeholder="مثال: شركة برجر واقف للتجارة"></div>' +
-      '<div class="form-row"><label>عنوان الفرع</label><input class="form-control" id="brfLocation" value="' + (d.location||'') + '"></div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>المستودع المرتبط</label><select class="form-control" id="brfWH"><option value="">— بدون —</option>' + whOpts + '</select></div>' +
-        '<div class="form-row"><label>مركز التكلفة</label><select class="form-control" id="brfCC"><option value="">— بدون —</option>' + ccOpts + '</select></div>' +
-      '</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>المدير</label><input class="form-control" id="brfManager" value="' + (d.manager||'') + '"></div>' +
-        '<div class="form-row"><label>إعدادات التوريد</label><select class="form-control" id="brfSupply"><option value="parent_company"' + (d.supplyMode==='parent_company'?' selected':'') + '>الشركة الأم</option><option value="warehouse"' + (d.supplyMode==='warehouse'?' selected':'') + '>المستودع الرئيسي</option><option value="auto"' + (d.supplyMode==='auto'?' selected':'') + '>تلقائي</option></select></div>' +
-      '</div>' +
-      '<div style="border-top:1px solid #e2e8f0;margin-top:14px;padding-top:14px;">' +
-        '<h4 style="font-size:14px;font-weight:800;color:#1e293b;margin-bottom:10px;"><i class="fas fa-map-marker-alt" style="color:#ef4444;"></i> موقع الفرع (للبصمة)</h4>' +
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">' +
-          '<div class="form-row"><label>خط العرض (Lat)</label><input type="number" step="0.0000001" class="form-control" id="brfGeoLat" value="' + (d.geoLat||'') + '" placeholder="24.7136"></div>' +
-          '<div class="form-row"><label>خط الطول (Lng)</label><input type="number" step="0.0000001" class="form-control" id="brfGeoLng" value="' + (d.geoLng||'') + '" placeholder="46.6753"></div>' +
-          '<div class="form-row"><label>نطاق (متر)</label><input type="number" class="form-control" id="brfGeoRadius" value="' + (d.geoRadius||100) + '" placeholder="100"></div>' +
+      '<style>' +
+        '.brf-section{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px;margin-bottom:12px;}' +
+        '.brf-section h4{font-size:13px;font-weight:800;color:#0f172a;margin:0 0 10px;display:flex;align-items:center;gap:8px;}' +
+        '.brf-section h4 i{color:#7f1d1d;}' +
+        '.brf-grid{display:grid;gap:10px;}' +
+        '.brf-grid-2{grid-template-columns:1fr 1fr;}' +
+        '.brf-grid-3{grid-template-columns:1fr 1fr 1fr;}' +
+        '.brf-row{display:flex;flex-direction:column;gap:4px;}' +
+        '.brf-row label{font-size:12px;font-weight:700;color:#334155;display:flex;align-items:center;gap:4px;}' +
+        '.brf-row .req{color:#ef4444;}' +
+        '.brf-row .form-control{height:38px;border-radius:10px;border:1.5px solid #e2e8f0;padding:0 10px;font-size:13px;background:#fff;transition:border-color .15s,box-shadow .15s;}' +
+        '.brf-row textarea.form-control{height:auto;padding:8px 10px;}' +
+        '.brf-row .form-control:focus{outline:none;border-color:#7f1d1d;box-shadow:0 0 0 3px rgba(127,29,29,.1);}' +
+        '.brf-help{font-size:11px;color:#94a3b8;font-weight:500;}' +
+        '.brf-geo-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}' +
+        '.brf-geo-actions .btn{height:34px;border-radius:10px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:6px;padding:0 12px;}' +
+        '.brf-status{display:none;margin-top:10px;padding:8px 10px;border-radius:8px;font-size:12px;color:#0f172a;background:#f0fdf4;border:1px solid #bbf7d0;}' +
+        '.brf-status.has-loc{display:flex;align-items:center;gap:6px;}' +
+        '@media(max-width:680px){.brf-grid-2,.brf-grid-3{grid-template-columns:1fr;}}' +
+      '</style>' +
+      '<input type="hidden" id="brfID" value="' + _brfAttr(d.id) + '">' +
+      '<input type="hidden" id="brfType" value="' + _brfAttr(typeVal) + '">' +
+      // ── Identity ──────────────────────────────────────────────────────
+      '<div class="brf-section">' +
+        '<h4><i class="fas fa-id-badge"></i> هوية الفرع</h4>' +
+        '<div class="brf-grid brf-grid-2">' +
+          '<div class="brf-row"><label>البراند <span class="req">*</span></label>' +
+            '<select class="form-control" id="brfBrand"><option value="">— اختر البراند —</option>' + brandOpts + '</select></div>' +
+          '<div class="brf-row"><label>الاسم <span class="req">*</span></label>' +
+            '<input class="form-control" id="brfName" maxlength="200" value="' + _brfAttr(d.name) + '" placeholder="مثال: فرع اوكتين"></div>' +
         '</div>' +
-        '<div style="display:flex;gap:6px;margin-top:6px;">' +
-          '<button type="button" class="btn btn-sm btn-light" onclick="brfGetMyLocation()"><i class="fas fa-crosshairs"></i> تحديد موقعي (GPS)</button>' +
-          '<button type="button" class="btn btn-sm" style="background:#4285f4;color:#fff;" onclick="brfOpenMap()"><i class="fas fa-map-marked-alt"></i> اختر من الخريطة</button>' +
+        '<div class="brf-grid brf-grid-2" style="margin-top:10px;">' +
+          '<div class="brf-row"><label>الرمز</label>' +
+            '<input class="form-control" id="brfCode" maxlength="20" value="' + _brfAttr(d.code) + '" placeholder="1"></div>' +
+          '<div class="brf-row"><label>المدير</label>' +
+            '<input class="form-control" id="brfManager" maxlength="100" value="' + _brfAttr(d.manager) + '" placeholder="اسم مدير الفرع"></div>' +
         '</div>' +
-        '<div id="brfMapContainer" style="display:none;margin-top:8px;border-radius:10px;overflow:hidden;border:1px solid #e5e7eb;height:250px;"></div>' +
+        '<div class="brf-row" style="margin-top:10px;">' +
+          '<label>اسم الشركة المُشغِّلة <span class="brf-help">(يظهر على الفاتورة تحت "المذاق المغربي")</span></label>' +
+          '<input class="form-control" id="brfCompanyName" maxlength="200" value="' + _brfAttr(d.companyName) + '" placeholder="مثال: شركة برجر واقف للتجارة">' +
+        '</div>' +
+        '<div class="brf-row" style="margin-top:10px;">' +
+          '<label>عنوان الفرع</label>' +
+          '<input class="form-control" id="brfLocation" maxlength="500" value="' + _brfAttr(d.location) + '" placeholder="مثال: محطة اوكتين الشيخ جابر الرمال">' +
+        '</div>' +
+      '</div>' +
+      // ── Operations ────────────────────────────────────────────────────
+      '<div class="brf-section">' +
+        '<h4><i class="fas fa-warehouse"></i> العمليات والربط المحاسبي</h4>' +
+        '<div class="brf-grid brf-grid-2">' +
+          '<div class="brf-row"><label>المستودع المرتبط</label>' +
+            '<select class="form-control" id="brfWH"><option value="">— بدون —</option>' + whOpts + '</select></div>' +
+          '<div class="brf-row"><label>مركز التكلفة</label>' +
+            '<select class="form-control" id="brfCC"><option value="">— بدون —</option>' + ccOpts + '</select></div>' +
+        '</div>' +
+        '<div class="brf-row" style="margin-top:10px;">' +
+          '<label>إعدادات التوريد</label>' +
+          '<select class="form-control" id="brfSupply">' +
+            '<option value="parent_company"' + (supplyMode === 'parent_company' ? ' selected' : '') + '>الشركة الأم</option>' +
+            '<option value="warehouse"'      + (supplyMode === 'warehouse'      ? ' selected' : '') + '>المستودع الرئيسي</option>' +
+            '<option value="auto"'           + (supplyMode === 'auto'           ? ' selected' : '') + '>تلقائي</option>' +
+          '</select>' +
+          '<span class="brf-help" style="margin-top:4px;">يحدد كيف يتم توريد المخزون لهذا الفرع تلقائياً.</span>' +
+        '</div>' +
+      '</div>' +
+      // ── Geo / fingerprint ─────────────────────────────────────────────
+      '<div class="brf-section">' +
+        '<h4><i class="fas fa-map-marker-alt"></i> موقع الفرع <span class="brf-help" style="font-weight:500;">(للبصمة الجغرافية)</span></h4>' +
+        '<div class="brf-grid brf-grid-3">' +
+          '<div class="brf-row"><label>خط العرض (Lat)</label>' +
+            '<input type="number" step="0.0000001" min="-90" max="90" class="form-control" id="brfGeoLat" value="' + _brfAttr(d.geoLat) + '" placeholder="24.7136"></div>' +
+          '<div class="brf-row"><label>خط الطول (Lng)</label>' +
+            '<input type="number" step="0.0000001" min="-180" max="180" class="form-control" id="brfGeoLng" value="' + _brfAttr(d.geoLng) + '" placeholder="46.6753"></div>' +
+          '<div class="brf-row"><label>نطاق البصمة (متر)</label>' +
+            '<input type="number" min="10" max="10000" class="form-control" id="brfGeoRadius" value="' + _brfAttr(d.geoRadius || 100) + '" placeholder="100"></div>' +
+        '</div>' +
+        '<div class="brf-geo-actions">' +
+          '<button type="button" class="btn btn-light" onclick="brfGetMyLocation()"><i class="fas fa-crosshairs"></i> تحديد موقعي (GPS)</button>' +
+          '<button type="button" class="btn" style="background:#7f1d1d;color:#fff;" onclick="brfOpenMap()"><i class="fas fa-map-marked-alt"></i> اختر من الخريطة</button>' +
+          '<button type="button" class="btn btn-light" onclick="brfClearGeo()"><i class="fas fa-eraser"></i> مسح الموقع</button>' +
+        '</div>' +
+        '<div id="brfGeoStatus" class="brf-status' + (d.geoLat && d.geoLng ? ' has-loc' : '') + '">' +
+          (d.geoLat && d.geoLng
+            ? '<i class="fas fa-check-circle" style="color:#16a34a;"></i><span>الموقع محدد — انقر "اختر من الخريطة" للتعديل</span>'
+            : '') +
+        '</div>' +
       '</div>';
+
     document.getElementById('erpModalSaveBtn').onclick = erpSaveBranchFull;
     document.getElementById('erpModal').classList.remove('hidden');
   });
 }
+
 function erpEditBranchFull(id) {
   window._apiBridge.withSuccessHandler(function(list) {
-    var b = (list||[]).find(function(x){return x.id===id;});
+    var b = (list||[]).find(function(x){ return String(x.id) === String(id); });
     if (b) erpOpenBranchFullModal(b);
+    else showToast('لم يتم العثور على الفرع', true);
   }).getBranchesFull();
 }
+
 function brfGetMyLocation() {
   if (!navigator.geolocation) return showToast('المتصفح لا يدعم تحديد الموقع', true);
   showToast('جاري تحديد الموقع...');
   navigator.geolocation.getCurrentPosition(function(pos) {
     document.getElementById('brfGeoLat').value = pos.coords.latitude.toFixed(7);
     document.getElementById('brfGeoLng').value = pos.coords.longitude.toFixed(7);
+    _brfMarkGeoStatus(true);
     showToast('تم تحديد الموقع ✓');
-  }, function() { showToast('فشل تحديد الموقع', true); }, {enableHighAccuracy:true, timeout:10000});
+  }, function(err) {
+    var msg = err && err.code === 1 ? 'تم رفض الإذن — فعّل تحديد الموقع في المتصفح' : 'فشل تحديد الموقع';
+    showToast(msg, true);
+  }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
 }
 
-// V5.7.9 — Leaflet map picker (OpenStreetMap, no API key, click-to-place).
-// Loaded on-demand on first open to avoid bloating page weight for users
-// who never edit a branch.
+function brfClearGeo() {
+  document.getElementById('brfGeoLat').value = '';
+  document.getElementById('brfGeoLng').value = '';
+  _brfMarkGeoStatus(false);
+}
+
+function _brfMarkGeoStatus(hasLoc, addressText) {
+  var el = document.getElementById('brfGeoStatus');
+  if (!el) return;
+  if (hasLoc) {
+    el.classList.add('has-loc');
+    el.innerHTML = '<i class="fas fa-check-circle" style="color:#16a34a;"></i><span>' +
+      _brfAttr(addressText || 'الموقع محدد — انقر "اختر من الخريطة" للتعديل') + '</span>';
+  } else {
+    el.classList.remove('has-loc');
+    el.innerHTML = '';
+  }
+}
+
+// ── Leaflet loader ─────────────────────────────────────────────────────────
 var _brfLeafletLoaded = false;
 function _brfEnsureLeaflet(cb) {
   if (window.L && _brfLeafletLoaded) return cb();
-  // CSS
   if (!document.getElementById('brfLeafletCSS')) {
     var link = document.createElement('link');
     link.id = 'brfLeafletCSS';
     link.rel = 'stylesheet';
     link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    link.integrity = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=';
+    link.crossOrigin = '';
     document.head.appendChild(link);
   }
-  // JS
   if (window.L) { _brfLeafletLoaded = true; return cb(); }
   var s = document.createElement('script');
   s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+  s.integrity = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=';
+  s.crossOrigin = '';
   s.onload = function() { _brfLeafletLoaded = true; cb(); };
   s.onerror = function() { showToast('تعذّر تحميل مكتبة الخريطة', true); };
   document.head.appendChild(s);
 }
 
+// ── Fullscreen map picker ──────────────────────────────────────────────────
 window.brfOpenMap = function() {
-  var container = document.getElementById('brfMapContainer');
-  if (!container) return;
-  // Toggle off if already open
-  if (container.style.display !== 'none' && container.dataset.mapInited === '1') {
-    container.style.display = 'none';
-    return;
+  var lat = Number(document.getElementById('brfGeoLat').value);
+  var lng = Number(document.getElementById('brfGeoLng').value);
+  var radius = Number(document.getElementById('brfGeoRadius').value) || 100;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) {
+    lat = 24.7136; lng = 46.6753;
   }
-  var lat = Number(document.getElementById('brfGeoLat').value) || 24.7136;
-  var lng = Number(document.getElementById('brfGeoLng').value) || 46.6753;
-  container.style.display = 'block';
-  container.style.height = '320px';
-  container.innerHTML =
-    '<div id="brfLeafletMap" style="width:100%;height:260px;"></div>' +
-    '<div style="padding:8px;background:#f8fafc;display:flex;gap:6px;align-items:center;font-size:12px;">' +
-      '<i class="fas fa-info-circle" style="color:#3b82f6;"></i>' +
-      '<span style="color:#475569;flex:1;">انقر على الخريطة لتحديد موقع الفرع — أو اسحب الدبوس.</span>' +
-      '<input type="text" id="brfMapSearch" class="form-control" placeholder="ابحث عن مكان..." style="flex:1;font-size:12px;height:30px;">' +
-      '<button class="btn btn-sm btn-primary" onclick="brfMapSearchGo()" style="white-space:nowrap;height:30px;"><i class="fas fa-search"></i></button>' +
-    '</div>';
+
+  // Build the overlay once and reuse it across opens.
+  var overlay = document.getElementById('brfMapOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'brfMapOverlay';
+    overlay.innerHTML =
+      '<style>' +
+        '#brfMapOverlay{position:fixed;inset:0;z-index:6000;display:none;background:rgba(15,23,42,.6);backdrop-filter:blur(4px);}' +
+        '#brfMapOverlay.open{display:flex;}' +
+        '#brfMapShell{margin:auto;background:#fff;width:96%;max-width:1180px;height:90vh;border-radius:18px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 30px 80px rgba(0,0,0,.4);direction:rtl;}' +
+        '#brfMapHead{padding:12px 16px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;gap:10px;background:linear-gradient(180deg,#fafafa,#fff);}' +
+        '#brfMapHead h3{margin:0;font-size:15px;font-weight:800;color:#0f172a;display:flex;align-items:center;gap:8px;}' +
+        '#brfMapHead h3 i{color:#7f1d1d;}' +
+        '#brfMapClose{margin-inline-start:auto;width:34px;height:34px;border-radius:10px;border:none;background:#f1f5f9;color:#475569;font-size:18px;cursor:pointer;}' +
+        '#brfMapClose:hover{background:#fee2e2;color:#ef4444;}' +
+        '#brfMapBody{flex:1;display:flex;min-height:0;}' +
+        '#brfLeafletMap{flex:1;min-height:0;}' +
+        '#brfMapSide{width:320px;border-inline-start:1px solid #e5e7eb;display:flex;flex-direction:column;background:#fafafa;}' +
+        '#brfMapSearchWrap{padding:10px;border-bottom:1px solid #e5e7eb;background:#fff;position:relative;}' +
+        '#brfMapSearch{width:100%;height:40px;border:1.5px solid #e2e8f0;border-radius:10px;padding:0 38px 0 12px;font-size:13px;background:#fff;}' +
+        '#brfMapSearch:focus{outline:none;border-color:#7f1d1d;box-shadow:0 0 0 3px rgba(127,29,29,.1);}' +
+        '#brfMapSearchIcon{position:absolute;top:50%;inset-inline-end:18px;transform:translateY(-50%);color:#94a3b8;pointer-events:none;}' +
+        '#brfMapSuggest{position:absolute;top:54px;inset-inline-start:10px;inset-inline-end:10px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.08);max-height:280px;overflow-y:auto;z-index:10;display:none;}' +
+        '#brfMapSuggest.open{display:block;}' +
+        '.brf-sug-item{padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:12px;color:#334155;}' +
+        '.brf-sug-item:hover{background:#fef2f2;}' +
+        '.brf-sug-item:last-child{border-bottom:none;}' +
+        '.brf-sug-item b{color:#0f172a;font-weight:700;display:block;font-size:13px;}' +
+        '#brfMapInfo{padding:12px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#475569;line-height:1.6;}' +
+        '#brfMapInfo b{color:#0f172a;font-size:13px;display:block;margin-bottom:4px;}' +
+        '#brfMapPois{flex:1;overflow-y:auto;padding:8px 10px;}' +
+        '#brfMapPoisHead{font-size:11px;font-weight:800;color:#64748b;letter-spacing:.5px;text-transform:uppercase;padding:6px 4px 8px;display:flex;align-items:center;gap:6px;}' +
+        '.brf-poi{padding:8px 10px;border-radius:10px;margin-bottom:6px;background:#fff;border:1px solid #e5e7eb;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:8px;transition:all .15s;}' +
+        '.brf-poi:hover{border-color:#7f1d1d;background:#fef2f2;transform:translateX(-2px);}' +
+        '.brf-poi i{color:#7f1d1d;width:18px;}' +
+        '.brf-poi b{color:#0f172a;font-weight:700;}' +
+        '.brf-poi small{color:#94a3b8;font-size:10px;display:block;margin-top:2px;}' +
+        '#brfMapFoot{padding:10px 14px;border-top:1px solid #e5e7eb;display:flex;align-items:center;gap:10px;background:#fff;}' +
+        '#brfMapFoot .coord{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#64748b;}' +
+        '#brfMapFoot .coord b{color:#0f172a;}' +
+        '#brfMapFoot .spacer{flex:1;}' +
+        '#brfMapFoot .btn{height:36px;border-radius:10px;font-size:12px;font-weight:700;padding:0 14px;}' +
+        '.brf-radius-ctl{display:flex;align-items:center;gap:8px;font-size:11px;color:#475569;}' +
+        '.brf-radius-ctl input{width:80px;height:32px;border:1.5px solid #e2e8f0;border-radius:8px;padding:0 8px;font-size:12px;text-align:center;}' +
+        '.brf-busy{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.8);z-index:9;font-size:12px;color:#475569;}' +
+        '@media(max-width:900px){#brfMapShell{height:96vh;}#brfMapBody{flex-direction:column-reverse;}#brfMapSide{width:auto;height:42%;flex-direction:column;}}' +
+      '</style>' +
+      '<div id="brfMapShell">' +
+        '<div id="brfMapHead">' +
+          '<h3><i class="fas fa-map-marked-alt"></i> اختر موقع الفرع من الخريطة</h3>' +
+          '<button id="brfMapClose" type="button" title="إغلاق">&times;</button>' +
+        '</div>' +
+        '<div id="brfMapBody">' +
+          '<div id="brfLeafletMap"></div>' +
+          '<div id="brfMapSide">' +
+            '<div id="brfMapSearchWrap">' +
+              '<input id="brfMapSearch" type="text" placeholder="ابحث عن متجر، شارع، أو عنوان..." autocomplete="off">' +
+              '<i id="brfMapSearchIcon" class="fas fa-search"></i>' +
+              '<div id="brfMapSuggest"></div>' +
+            '</div>' +
+            '<div id="brfMapInfo"><b>الموقع المختار</b><span id="brfMapAddr">— لم يتم تحديد بعد —</span></div>' +
+            '<div id="brfMapPois">' +
+              '<div id="brfMapPoisHead"><i class="fas fa-store"></i> المتاجر القريبة</div>' +
+              '<div id="brfMapPoisList"><div style="font-size:11px;color:#94a3b8;text-align:center;padding:20px;">حرّك الدبوس لعرض المتاجر القريبة</div></div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div id="brfMapFoot">' +
+          '<div class="brf-radius-ctl">' +
+            '<i class="fas fa-bullseye" style="color:#7f1d1d;"></i>' +
+            '<span>نطاق البصمة:</span>' +
+            '<input id="brfMapRadius" type="number" min="10" max="10000" value="' + radius + '">' +
+            '<span>متر</span>' +
+          '</div>' +
+          '<div class="spacer"></div>' +
+          '<div class="coord">Lat <b id="brfMapCoordLat">—</b> · Lng <b id="brfMapCoordLng">—</b></div>' +
+          '<button class="btn btn-light" type="button" onclick="brfMapClose()">إلغاء</button>' +
+          '<button class="btn" style="background:#7f1d1d;color:#fff;" type="button" onclick="brfMapApply()"><i class="fas fa-check"></i> اعتماد الموقع</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    overlay.querySelector('#brfMapClose').onclick = window.brfMapClose;
+    overlay.addEventListener('click', function(ev) { if (ev.target === overlay) window.brfMapClose(); });
+    document.addEventListener('keydown', function(ev) {
+      if (ev.key === 'Escape' && overlay.classList.contains('open')) window.brfMapClose();
+    });
+  }
+  overlay.classList.add('open');
 
   _brfEnsureLeaflet(function() {
     var L = window.L;
-    var map = L.map('brfLeafletMap', { zoomControl: true }).setView([lat, lng], 16);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19, attribution: '© OpenStreetMap'
-    }).addTo(map);
-    var marker = L.marker([lat, lng], { draggable: true }).addTo(map);
-    function syncFromMarker() {
-      var p = marker.getLatLng();
-      document.getElementById('brfGeoLat').value = p.lat.toFixed(7);
-      document.getElementById('brfGeoLng').value = p.lng.toFixed(7);
-    }
-    marker.on('dragend', syncFromMarker);
-    map.on('click', function(e) {
-      marker.setLatLng(e.latlng);
-      syncFromMarker();
-    });
-    // Also enable Enter-to-search inside the search box
-    var searchEl = document.getElementById('brfMapSearch');
-    if (searchEl) {
-      searchEl.addEventListener('keydown', function(ev) {
-        if (ev.key === 'Enter') { ev.preventDefault(); window.brfMapSearchGo(); }
+    var state = window._brfMap || {};
+    if (!state.map) {
+      var map = L.map('brfLeafletMap', { zoomControl: true, attributionControl: true }).setView([lat, lng], 16);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19, attribution: '© OpenStreetMap contributors'
+      }).addTo(map);
+      var marker = L.marker([lat, lng], { draggable: true, autoPan: true }).addTo(map);
+      var circle = L.circle([lat, lng], { radius: radius, color: '#7f1d1d', weight: 2, fillColor: '#dc2626', fillOpacity: 0.1 }).addTo(map);
+      var poiLayer = L.layerGroup().addTo(map);
+      state = window._brfMap = { map: map, marker: marker, circle: circle, poiLayer: poiLayer };
+
+      map.on('click', function(e) { _brfMoveTo(e.latlng.lat, e.latlng.lng, true); });
+      marker.on('dragend', function() { var p = marker.getLatLng(); _brfMoveTo(p.lat, p.lng, true); });
+      marker.on('drag',    function() { var p = marker.getLatLng(); circle.setLatLng(p); _brfUpdateCoordReadout(p.lat, p.lng); });
+
+      var radiusEl = document.getElementById('brfMapRadius');
+      radiusEl.addEventListener('input', function() {
+        var r = Math.max(10, Math.min(10000, Number(radiusEl.value) || 100));
+        circle.setRadius(r);
       });
+
+      var searchEl = document.getElementById('brfMapSearch');
+      var sugEl    = document.getElementById('brfMapSuggest');
+      var sugTimer = null;
+      searchEl.addEventListener('input', function() {
+        clearTimeout(sugTimer);
+        var q = searchEl.value.trim();
+        if (q.length < 2) { sugEl.classList.remove('open'); sugEl.innerHTML=''; return; }
+        sugTimer = setTimeout(function() { _brfFetchSuggestions(q); }, 280);
+      });
+      searchEl.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          var first = sugEl.querySelector('.brf-sug-item');
+          if (first) first.click();
+        } else if (ev.key === 'Escape') {
+          sugEl.classList.remove('open');
+        }
+      });
+      document.addEventListener('click', function(ev) {
+        if (!sugEl.contains(ev.target) && ev.target !== searchEl) sugEl.classList.remove('open');
+      });
+    } else {
+      state.map.setView([lat, lng], 16);
+      state.marker.setLatLng([lat, lng]);
+      state.circle.setLatLng([lat, lng]).setRadius(radius);
+      document.getElementById('brfMapRadius').value = radius;
     }
-    // Stash refs for the search function
-    container._leaflet = { map: map, marker: marker };
-    container.dataset.mapInited = '1';
-    // Reflow so the tiles render after layout settles
-    setTimeout(function() { map.invalidateSize(); }, 100);
+    _brfUpdateCoordReadout(lat, lng);
+    _brfReverseGeocode(lat, lng);
+    _brfFetchNearbyPOIs(lat, lng);
+    setTimeout(function() { state.map.invalidateSize(); }, 80);
   });
 };
 
-// V5.7.9 — Free OpenStreetMap Nominatim geocoder (no API key, generous fair-use limits).
-window.brfMapSearchGo = function() {
-  var searchEl = document.getElementById('brfMapSearch');
-  var container = document.getElementById('brfMapContainer');
-  if (!searchEl || !container || !container._leaflet) return;
-  var q = (searchEl.value || '').trim();
-  if (!q) return;
-  var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q);
-  fetch(url, { headers: { 'Accept-Language': 'ar,en' } })
+window.brfMapClose = function() {
+  var overlay = document.getElementById('brfMapOverlay');
+  if (overlay) overlay.classList.remove('open');
+};
+
+window.brfMapApply = function() {
+  var s = window._brfMap;
+  if (!s || !s.marker) return;
+  var p = s.marker.getLatLng();
+  var radius = Math.max(10, Math.min(10000, Number(document.getElementById('brfMapRadius').value) || 100));
+  document.getElementById('brfGeoLat').value = p.lat.toFixed(7);
+  document.getElementById('brfGeoLng').value = p.lng.toFixed(7);
+  document.getElementById('brfGeoRadius').value = radius;
+  var addr = (document.getElementById('brfMapAddr')||{}).textContent || '';
+  _brfMarkGeoStatus(true, addr && addr !== '— لم يتم تحديد بعد —' ? '✓ ' + addr : null);
+  window.brfMapClose();
+  showToast('تم اعتماد الموقع ✓');
+};
+
+function _brfMoveTo(lat, lng, refresh) {
+  var s = window._brfMap; if (!s) return;
+  s.marker.setLatLng([lat, lng]);
+  s.circle.setLatLng([lat, lng]);
+  _brfUpdateCoordReadout(lat, lng);
+  if (refresh) {
+    _brfReverseGeocode(lat, lng);
+    _brfFetchNearbyPOIs(lat, lng);
+  }
+}
+
+function _brfUpdateCoordReadout(lat, lng) {
+  var la = document.getElementById('brfMapCoordLat');
+  var ln = document.getElementById('brfMapCoordLng');
+  if (la) la.textContent = lat.toFixed(6);
+  if (ln) ln.textContent = lng.toFixed(6);
+}
+
+// Debounced Nominatim autocomplete. Free, but fair-use limited — single
+// in-flight request per keystroke burst.
+var _brfSugAbort = null;
+function _brfFetchSuggestions(q) {
+  if (_brfSugAbort) try { _brfSugAbort.abort(); } catch(e) {}
+  _brfSugAbort = ('AbortController' in window) ? new AbortController() : null;
+  var url = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=8&q=' + encodeURIComponent(q);
+  fetch(url, { headers: { 'Accept-Language': 'ar,en' }, signal: _brfSugAbort ? _brfSugAbort.signal : undefined })
     .then(function(r) { return r.json(); })
     .then(function(arr) {
-      if (!arr || !arr.length) { showToast('لم يتم العثور على المكان', true); return; }
-      var hit = arr[0];
-      var lat = Number(hit.lat), lng = Number(hit.lon);
-      var L = window.L;
-      var ref = container._leaflet;
-      ref.map.setView([lat, lng], 17);
-      ref.marker.setLatLng([lat, lng]);
-      document.getElementById('brfGeoLat').value = lat.toFixed(7);
-      document.getElementById('brfGeoLng').value = lng.toFixed(7);
-      showToast('تم تحديد الموقع: ' + (hit.display_name || '').slice(0, 60));
+      var sug = document.getElementById('brfMapSuggest');
+      if (!sug) return;
+      if (!arr || !arr.length) { sug.innerHTML = '<div class="brf-sug-item" style="color:#94a3b8;">لا نتائج</div>'; sug.classList.add('open'); return; }
+      sug.innerHTML = arr.map(function(hit) {
+        var primary = (hit.namedetails && (hit.namedetails['name:ar'] || hit.namedetails.name)) || hit.display_name.split(',')[0];
+        var secondary = hit.display_name;
+        return '<div class="brf-sug-item" data-lat="' + hit.lat + '" data-lng="' + hit.lon + '">' +
+          '<b>' + _brfAttr(primary) + '</b>' + _brfAttr(secondary) + '</div>';
+      }).join('');
+      sug.classList.add('open');
+      Array.prototype.forEach.call(sug.querySelectorAll('.brf-sug-item'), function(el) {
+        el.onclick = function() {
+          var la = Number(el.dataset.lat), ln = Number(el.dataset.lng);
+          if (!Number.isFinite(la) || !Number.isFinite(ln)) return;
+          var s = window._brfMap;
+          s.map.setView([la, ln], 18);
+          _brfMoveTo(la, ln, true);
+          sug.classList.remove('open');
+          document.getElementById('brfMapSearch').value = el.querySelector('b').textContent;
+        };
+      });
     })
-    .catch(function() { showToast('تعذر البحث — تحقق من الاتصال', true); });
+    .catch(function(err) { if (err && err.name === 'AbortError') return; });
+}
+
+// Reverse-geocode the picked spot so the right-hand panel shows a readable
+// address — this is the user-visible "shop name" they wanted.
+var _brfRevAbort = null;
+function _brfReverseGeocode(lat, lng) {
+  var addrEl = document.getElementById('brfMapAddr');
+  if (!addrEl) return;
+  addrEl.textContent = 'جاري الجلب...';
+  if (_brfRevAbort) try { _brfRevAbort.abort(); } catch(e) {}
+  _brfRevAbort = ('AbortController' in window) ? new AbortController() : null;
+  var url = 'https://nominatim.openstreetmap.org/reverse?format=json&zoom=18&addressdetails=1&lat=' + lat + '&lon=' + lng;
+  fetch(url, { headers: { 'Accept-Language': 'ar,en' }, signal: _brfRevAbort ? _brfRevAbort.signal : undefined })
+    .then(function(r) { return r.json(); })
+    .then(function(j) {
+      if (!j || j.error) { addrEl.textContent = '—'; return; }
+      var name = (j.namedetails && (j.namedetails['name:ar'] || j.namedetails.name)) || '';
+      var disp = j.display_name || '';
+      addrEl.textContent = name ? (name + ' — ' + disp) : disp;
+    })
+    .catch(function(err) { if (err && err.name === 'AbortError') return; addrEl.textContent = '—'; });
+}
+
+// Pull nearby shop/POI labels from Overpass (OpenStreetMap data) so the
+// manager can confirm they're pointing at the right storefront.
+var _brfPoiAbort = null;
+var _brfPoiTimer = null;
+function _brfFetchNearbyPOIs(lat, lng) {
+  clearTimeout(_brfPoiTimer);
+  _brfPoiTimer = setTimeout(function() { _brfFetchNearbyPOIsNow(lat, lng); }, 350);
+}
+function _brfFetchNearbyPOIsNow(lat, lng) {
+  var listEl = document.getElementById('brfMapPoisList');
+  if (!listEl) return;
+  listEl.innerHTML = '<div style="font-size:11px;color:#94a3b8;text-align:center;padding:14px;"><i class="fas fa-spinner fa-spin"></i> جاري البحث...</div>';
+
+  if (_brfPoiAbort) try { _brfPoiAbort.abort(); } catch(e) {}
+  _brfPoiAbort = ('AbortController' in window) ? new AbortController() : null;
+
+  // 200m radius around the marker — wide enough for a strip-mall, tight
+  // enough that the list stays readable.
+  var radius = 200;
+  var query =
+    '[out:json][timeout:8];(' +
+      'node(around:' + radius + ',' + lat + ',' + lng + ')[shop];' +
+      'node(around:' + radius + ',' + lat + ',' + lng + ')[amenity~"^(cafe|restaurant|fast_food|bank|pharmacy|fuel|marketplace)$"];' +
+      'node(around:' + radius + ',' + lat + ',' + lng + ')[name][office];' +
+    ');out tags 30;';
+
+  fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'data=' + encodeURIComponent(query),
+    signal: _brfPoiAbort ? _brfPoiAbort.signal : undefined
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(j) {
+      var els = (j && j.elements) || [];
+      // Sort by distance from the marker so the closest shop is on top.
+      els.forEach(function(e) {
+        var dx = (e.lon - lng) * Math.cos(lat * Math.PI / 180);
+        var dy = (e.lat - lat);
+        e._d = Math.sqrt(dx*dx + dy*dy);
+      });
+      els.sort(function(a,b) { return a._d - b._d; });
+
+      var s = window._brfMap;
+      if (s && s.poiLayer) s.poiLayer.clearLayers();
+
+      var named = els.filter(function(e) {
+        var t = e.tags || {};
+        return t['name:ar'] || t.name;
+      }).slice(0, 25);
+
+      if (!named.length) {
+        listEl.innerHTML = '<div style="font-size:11px;color:#94a3b8;text-align:center;padding:14px;">لا توجد متاجر مسجلة في هذا النطاق</div>';
+        return;
+      }
+
+      var L = window.L;
+      var html = named.map(function(e, i) {
+        var t = e.tags || {};
+        var nm = t['name:ar'] || t.name || '';
+        var sub = t.shop ? ('متجر: ' + t.shop) :
+                  t.amenity ? ('مرفق: ' + t.amenity) :
+                  t.office ? ('مكتب: ' + t.office) : '';
+        var icon = t.amenity === 'cafe' || t.amenity === 'restaurant' || t.amenity === 'fast_food' ? 'fa-utensils' :
+                   t.amenity === 'fuel' ? 'fa-gas-pump' :
+                   t.amenity === 'bank' ? 'fa-university' :
+                   t.amenity === 'pharmacy' ? 'fa-prescription-bottle-medical' :
+                   t.shop ? 'fa-store' : 'fa-map-pin';
+        // Dim labels on the map for visual context.
+        if (s && s.poiLayer && L) {
+          var markerIcon = L.divIcon({
+            className: 'brf-poi-label',
+            html: '<div style="background:rgba(255,255,255,.92);padding:2px 6px;border-radius:6px;font-size:10px;font-weight:700;color:#7f1d1d;border:1px solid #fecaca;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.08);">' + _brfAttr(nm) + '</div>',
+            iconSize: null
+          });
+          L.marker([e.lat, e.lon], { icon: markerIcon, interactive: false, keyboard: false }).addTo(s.poiLayer);
+        }
+        return '<div class="brf-poi" data-lat="' + e.lat + '" data-lng="' + e.lon + '" data-name="' + _brfAttr(nm) + '">' +
+          '<i class="fas ' + icon + '"></i>' +
+          '<div style="flex:1;min-width:0;"><b>' + _brfAttr(nm) + '</b>' +
+            (sub ? '<small>' + _brfAttr(sub) + '</small>' : '') +
+          '</div>' +
+        '</div>';
+      }).join('');
+      listEl.innerHTML = html;
+      Array.prototype.forEach.call(listEl.querySelectorAll('.brf-poi'), function(el) {
+        el.onclick = function() {
+          var la = Number(el.dataset.lat), ln = Number(el.dataset.lng);
+          if (!Number.isFinite(la) || !Number.isFinite(ln)) return;
+          var sx = window._brfMap;
+          sx.map.setView([la, ln], 19);
+          _brfMoveTo(la, ln, true);
+          var srch = document.getElementById('brfMapSearch');
+          if (srch) srch.value = el.dataset.name || '';
+        };
+      });
+    })
+    .catch(function(err) {
+      if (err && err.name === 'AbortError') return;
+      listEl.innerHTML = '<div style="font-size:11px;color:#94a3b8;text-align:center;padding:14px;">تعذر جلب المتاجر القريبة</div>';
+    });
+}
+
+// Compatibility shim — old inline UI used the search button onclick.
+window.brfMapSearchGo = function() {
+  var srch = document.getElementById('brfMapSearch');
+  if (!srch) return;
+  var sug = document.getElementById('brfMapSuggest');
+  if (sug) {
+    var first = sug.querySelector('.brf-sug-item');
+    if (first) { first.click(); return; }
+  }
+  _brfFetchSuggestions(srch.value.trim());
 };
 
 function erpSaveBranchFull() {
+  var get = function(id) { var el = document.getElementById(id); return el ? el.value : ''; };
+  var brandId = get('brfBrand');
+  var name    = get('brfName').trim();
+  if (!name) return showToast('الاسم مطلوب', true);
+  if (!brandId) return showToast('يجب اختيار البراند', true);
+
+  var latRaw = get('brfGeoLat');
+  var lngRaw = get('brfGeoLng');
+  var radRaw = get('brfGeoRadius');
+  var lat = latRaw === '' ? null : Number(latRaw);
+  var lng = lngRaw === '' ? null : Number(lngRaw);
+  if (lat !== null && (!Number.isFinite(lat) || lat < -90  || lat > 90))  return showToast('خط العرض غير صالح',  true);
+  if (lng !== null && (!Number.isFinite(lng) || lng < -180 || lng > 180)) return showToast('خط الطول غير صالح',  true);
+  var radius = Number(radRaw); if (!Number.isFinite(radius) || radius < 10) radius = 100; if (radius > 10000) radius = 10000;
+
   var data = {
-    id: document.getElementById('brfID').value,
-    brandId: (document.getElementById('brfBrand')||{}).value||'',
-    code: document.getElementById('brfCode').value,
-    name: document.getElementById('brfName').value,
-    // V5.7.14 — operating company per branch (printed on receipt)
-    companyName: (document.getElementById('brfCompanyName')||{}).value||'',
-    location: document.getElementById('brfLocation').value,
-    warehouseId: document.getElementById('brfWH').value,
-    costCenterId: document.getElementById('brfCC').value,
-    manager: document.getElementById('brfManager').value,
-    supplyMode: document.getElementById('brfSupply').value,
-    geoLat: document.getElementById('brfGeoLat').value || null,
-    geoLng: document.getElementById('brfGeoLng').value || null,
-    geoRadius: Number(document.getElementById('brfGeoRadius').value) || 100
+    id:          get('brfID'),
+    brandId:     brandId,
+    code:        get('brfCode').trim(),
+    name:        name,
+    type:        get('brfType') || 'main',
+    companyName: get('brfCompanyName').trim(),
+    location:    get('brfLocation').trim(),
+    warehouseId: get('brfWH'),
+    costCenterId: get('brfCC'),
+    manager:     get('brfManager').trim(),
+    supplyMode:  get('brfSupply') || 'parent_company',
+    geoLat:      lat,
+    geoLng:      lng,
+    geoRadius:   radius
   };
-  if (!data.name) return showToast('الاسم مطلوب', true);
+
   loader(true);
-  window._apiBridge.withSuccessHandler(function(r) { loader(false); if (r.success) { showToast('تم الحفظ'); erpCloseModal(); erpLoadBranchesFull(); } else showToast(r.error, true); }).saveBranchFull(data);
+  window._apiBridge.withSuccessHandler(function(r) {
+    loader(false);
+    if (r && r.success) {
+      showToast('تم الحفظ ✓');
+      erpCloseModal();
+      erpLoadBranchesFull();
+    } else {
+      showToast((r && r.error) || 'تعذّر الحفظ', true);
+    }
+  }).withFailureHandler(function() { loader(false); showToast('تعذّر الاتصال بالخادم', true); }).saveBranchFull(data);
 }
 
 // ═══════════════════════════════════════
@@ -12528,11 +12955,16 @@ function siLoad() {
 //   environments where ivShowModal isn't loaded yet, but the new flow is
 //   the default entry point from siLoad's "+ إذن جديد" button.
 function siOpenNewModal() {
-  // Load warehouses + items + brands in parallel
+  // Load warehouses + items + brands in parallel.
+  // V5.9.4 — `/erp/items` is not a registered route (the items API lives at
+  //   `/api/inventory/items`). The bad URL silently returned a 404 JSON, so
+  //   `itemPool` was always empty and the picker showed "0 صنف متاح" with
+  //   no rows. We now hit the real endpoint, and reload it again per-source
+  //   warehouse below so each row reflects the correct local stock.
   Promise.all([
     new Promise(function(r){ _erpGet('/erp/warehouses-list', r); }),
-    new Promise(function(r){ _erpGet('/erp/items', r); }),
-    new Promise(function(r){ _erpGet('/brands', r); })
+    new Promise(function(r){ _erpGet('/inventory/items', r); }),
+    new Promise(function(r){ _erpGet('/erp/brands', r); })
   ]).then(function(out) {
     var whs    = Array.isArray(out[0]) ? out[0] : [];
     var items  = Array.isArray(out[1]) ? out[1] : [];
@@ -12557,7 +12989,8 @@ function siOpenNewModal() {
       pickerCategory: '',
       whs: whs,
       brands: brands,
-      itemPool: items
+      itemPool: items,
+      _poolReqToken: 0    // V5.9.4 — guards against stale per-warehouse fetches
     };
 
     _siInjectStyles();
@@ -12864,10 +13297,39 @@ function _siRenderPickerPanel() {
 window._siUpdateWh = function(id, val) {
   if (id === 'siFrom') window._siSession.fromWarehouseId = val;
   if (id === 'siTo')   window._siSession.toWarehouseId   = val;
-  // Update stock for picked items based on the new source warehouse
-  // (lazy — we just keep the cached cost; full per-warehouse stock requires a separate API)
-  _siRenderEditor();
+  // V5.9.4 — when the source warehouse changes, refetch items scoped to that
+  // warehouse so the picker shows the local stock (and hides items from other
+  // brands when the warehouse is brand-locked). We also patch any already-
+  // picked rows so the shortage indicator stays accurate.
+  if (id === 'siFrom' && val) {
+    _siReloadPoolForWarehouse(val);
+  } else {
+    _siRenderEditor();
+  }
 };
+
+function _siReloadPoolForWarehouse(whId) {
+  if (!window._siSession) return;
+  var s = window._siSession;
+  // Optional: filter the catalog to the warehouse's brand. Falls back to
+  // unfiltered if the warehouse object doesn't carry brand info.
+  var fromW = (s.whs || []).find(function(w){ return w.id === whId; }) || {};
+  var qs = '/inventory/items?warehouseId=' + encodeURIComponent(whId);
+  if (fromW.brandId) qs += '&brandId=' + encodeURIComponent(fromW.brandId);
+  // Mark loading so a second WH-change while in flight doesn't paint stale data.
+  var token = ++s._poolReqToken;
+  _erpGet(qs, function(items) {
+    if (s._poolReqToken !== token) return; // a newer request fired
+    s.itemPool = Array.isArray(items) ? items : [];
+    // Re-sync stock on already-picked rows from the new pool.
+    var byId = {}; s.itemPool.forEach(function(it){ byId[String(it.id)] = it; });
+    (s.items || []).forEach(function(row) {
+      var fresh = byId[String(row.itemId)];
+      if (fresh) row.stock = Number(fresh.stock) || 0;
+    });
+    _siRenderEditor();
+  });
+}
 window._siUpdateQty = function(idx, val) {
   if (!window._siSession.items[idx]) return;
   window._siSession.items[idx].qty = Number(val) || 0;

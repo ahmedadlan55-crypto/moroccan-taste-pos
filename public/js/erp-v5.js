@@ -986,56 +986,167 @@
   // ───────── BUDGETS ─────────────────────────────────────────────────────
   async function renderBudgets(container){
     _styles();
+    _budgetsTreeStyles();
     const year = new Date().getFullYear();
+    // V5.9.15 — completely rebuilt as a hierarchical COA tree (per the
+    // user's "اريد ان نظهر لي الحسابات الصفرية وجميع الحسابات الخاصة بالشجرة"
+    // request). The flat year-table is gone. Now every active account
+    // appears as a tree node with budget/actual/variance, even if it has
+    // never been budgeted or moved.
     container.innerHTML = `<div class="v5-section">
-      <h2 style="margin:0 0 16px;">الميزانيات والتباين</h2>
+      <h2 style="margin:0 0 4px;">الميزانيات والتباين — شجرة الحسابات</h2>
+      <p style="color:#64748b;font-size:13px;margin-bottom:16px;">جميع حسابات شجرة الحسابات حسب المعيار الدولي IFRS / IAS — اضبط الميزانية لكل حساب بشكل مستقل.</p>
       <div class="v5-toolbar">
-        <input type="number" id="budYear" value="${year}" style="width:120px;"/>
+        <label style="font-weight:700;font-size:13px;">السنة المالية:</label>
+        <input type="number" id="budYear" value="${year}" style="width:110px;"/>
+        <select id="budRootFilter" style="padding:8px 12px;">
+          <option value="">جميع الجذور (1-5)</option>
+          <option value="1">1 — الأصول</option>
+          <option value="2">2 — الالتزامات</option>
+          <option value="3">3 — حقوق الملكية</option>
+          <option value="4">4 — الإيرادات</option>
+          <option value="5" selected>5 — المصروفات</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;cursor:pointer;">
+          <input type="checkbox" id="budShowZero" checked> إظهار الحسابات الصفرية
+        </label>
+        <span class="grow"></span>
         <button class="v5-btn primary" onclick="ERPv5.openBudgetForm()"><i class="fas fa-plus"></i> ميزانية جديدة</button>
         <button class="v5-btn" onclick="ERPv5.recomputeBudgets()"><i class="fas fa-rotate"></i> إعادة احتساب الفعلي</button>
       </div>
-      <div id="budList"><div class="v5-skel"></div></div>
+      <div id="budTreeWrap"><div class="v5-skel"></div></div>
     </div>`;
     document.getElementById('budYear').addEventListener('change', loadBudgets);
+    document.getElementById('budRootFilter').addEventListener('change', loadBudgets);
+    document.getElementById('budShowZero').addEventListener('change', loadBudgets);
     await loadBudgets();
   }
-  async function loadBudgets(){
-    const y = (document.getElementById('budYear')||{}).value||new Date().getFullYear();
-    const rows = await API('/budgets?year='+y);
-    const el = document.getElementById('budList');
-    if (!rows.length) { el.innerHTML = `<div class="v5-empty"><i class="fas fa-chart-pie"></i><div>لا توجد ميزانيات لسنة ${y}.</div></div>`; return; }
-    el.innerHTML = `<table class="v5-table"><thead><tr><th>الشهر</th><th>مركز التكلفة</th><th>الميزانية</th><th>الفعلي</th><th>التباين</th><th>الاستخدام</th></tr></thead><tbody>
-      ${rows.map(r=>`<tr>
-        <td>${r.period_month||'سنوي'}</td>
-        <td>${_esc(r.cc_name||r.cost_center_id)}</td>
-        <td class="v5-amount">${_money(r.budget_amount)}</td>
-        <td class="v5-amount">${_money(r.actual_amount)}</td>
-        <td class="v5-amount" style="color:${r.variance_amount>=0?'#15803d':'#dc2626'};">${_money(r.variance_amount)}</td>
-        <td>
-          <div style="background:#e2e8f0;border-radius:8px;overflow:hidden;height:16px;position:relative;">
-            <div style="background:${r.variance_pct>100?'#dc2626':r.variance_pct>80?'#f59e0b':'#15803d'};width:${Math.min(100,r.variance_pct||0)}%;height:100%;"></div>
-            <span style="position:absolute;inset:0;display:grid;place-items:center;font-size:11px;font-weight:700;color:#0f172a;">${r.variance_pct||0}%</span>
-          </div>
-        </td>
-      </tr>`).join('')}</tbody></table>`;
+
+  function _budgetsTreeStyles(){
+    if (document.getElementById('budgets-tree-styles')) return;
+    const s = document.createElement('style');
+    s.id = 'budgets-tree-styles';
+    s.textContent = `
+      .bud-tree{background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;}
+      .bud-th{display:grid;grid-template-columns:minmax(280px,2fr) 130px 130px 130px 100px 80px;background:#7f1d1d;color:#fff;padding:11px 14px;font-size:11px;font-weight:800;letter-spacing:0.4px;text-transform:uppercase;}
+      .bud-th>div{text-align:end;}
+      .bud-th>div:first-child{text-align:start;}
+      .bud-row{display:grid;grid-template-columns:minmax(280px,2fr) 130px 130px 130px 100px 80px;align-items:center;padding:9px 14px;border-bottom:1px solid #f1f5f9;font-size:13px;transition:background .15s;}
+      .bud-row:hover{background:#fafafa;}
+      .bud-row:last-child{border-bottom:none;}
+      .bud-row.lvl-1{background:#fef2f2;font-weight:800;}
+      .bud-row.lvl-1:hover{background:#fee2e2;}
+      .bud-row.lvl-2{background:#fafafa;font-weight:700;}
+      .bud-row.zero{opacity:0.55;}
+      .bud-row.warn{background:#fffbeb;}
+      .bud-row.over{background:#fef2f2;}
+      .bud-row .name{display:flex;align-items:center;gap:8px;}
+      .bud-row .name code{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#7f1d1d;background:#fff;padding:2px 6px;border-radius:4px;border:1px solid #fecaca;flex-shrink:0;}
+      .bud-row .name .indent{display:inline-block;}
+      .bud-row .num{text-align:end;font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace;font-size:13px;}
+      .bud-row .pos{color:#16a34a;}
+      .bud-row .neg{color:#dc2626;}
+      .bud-row .util-bar{height:14px;border-radius:7px;background:#e2e8f0;position:relative;overflow:hidden;}
+      .bud-row .util-fill{height:100%;background:linear-gradient(90deg,#16a34a,#22c55e);}
+      .bud-row .util-fill.warn{background:linear-gradient(90deg,#f59e0b,#fbbf24);}
+      .bud-row .util-fill.over{background:linear-gradient(90deg,#dc2626,#ef4444);}
+      .bud-row .util-pct{position:absolute;inset:0;display:grid;place-items:center;font-size:10px;font-weight:800;color:#0f172a;}
+      .bud-row .actions{display:flex;gap:4px;justify-content:flex-end;}
+      .bud-row .actions button{width:26px;height:26px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;cursor:pointer;color:#475569;font-size:11px;}
+      .bud-row .actions button:hover{background:#f8fafc;border-color:#7f1d1d;color:#7f1d1d;}
+    `;
+    document.head.appendChild(s);
   }
-  async function openBudgetForm(){
+
+  async function loadBudgets(){
+    const y = (document.getElementById('budYear')||{}).value || new Date().getFullYear();
+    const root = (document.getElementById('budRootFilter')||{}).value || '';
+    const showZero = (document.getElementById('budShowZero')||{}).checked !== false;
+    const wrap = document.getElementById('budTreeWrap');
+    wrap.innerHTML = `<div class="v5-skel"></div>`;
+    let data;
+    try { data = await API('/budgets/coa-tree?fiscalYear=' + encodeURIComponent(y)); }
+    catch(e) { wrap.innerHTML = `<div class="v5-empty"><i class="fas fa-triangle-exclamation"></i><div>تعذّر تحميل شجرة الحسابات.</div></div>`; return; }
+    let accounts = (data && data.accounts) || [];
+    if (root)        accounts = accounts.filter(a => String(a.code).startsWith(root));
+    if (!showZero)   accounts = accounts.filter(a => !a.isZeroBudget || !a.isZeroActual);
+    if (!accounts.length) {
+      wrap.innerHTML = `<div class="v5-empty"><i class="fas fa-chart-pie"></i><div>لا توجد حسابات تطابق الفلتر.</div></div>`;
+      return;
+    }
+    let html = '<div class="bud-tree">' +
+      '<div class="bud-th">' +
+        '<div>الحساب</div>' +
+        '<div>الميزانية</div>' +
+        '<div>الفعلي</div>' +
+        '<div>التباين</div>' +
+        '<div>الاستخدام</div>' +
+        '<div>إجراءات</div>' +
+      '</div>';
+    accounts.forEach(a => {
+      const cls = ['bud-row', 'lvl-' + (a.level||1)];
+      if (a.isZeroBudget && a.isZeroActual) cls.push('zero');
+      else if (a.variancePct > a.blockPct) cls.push('over');
+      else if (a.variancePct > a.warnPct)  cls.push('warn');
+      const util = Math.min(100, Math.max(0, a.variancePct || 0));
+      const utilCls = a.variancePct > a.blockPct ? 'over' : (a.variancePct > a.warnPct ? 'warn' : '');
+      const indentPx = Math.max(0, (Number(a.level)||1) - 1) * 16;
+      html += `<div class="${cls.join(' ')}">
+        <div class="name"><span class="indent" style="width:${indentPx}px;"></span><code>${_esc(a.code||'')}</code><span>${_esc(a.nameAr||'')}</span></div>
+        <div class="num">${_money(a.budgetAmount)}</div>
+        <div class="num">${_money(a.actualAmount)}</div>
+        <div class="num ${a.varianceAmount>=0?'pos':'neg'}">${_money(a.varianceAmount)}</div>
+        <div>${a.budgetAmount>0?`<div class="util-bar"><div class="util-fill ${utilCls}" style="width:${util}%;"></div><span class="util-pct">${(a.variancePct||0).toFixed(1)}%</span></div>`:'<span style="color:#94a3b8;font-size:11px;">—</span>'}</div>
+        <div class="actions"><button onclick="ERPv5.openBudgetForm('${_esc(a.id)}','${_esc(a.code||'')}','${_esc((a.nameAr||'').replace(/'/g, '&#39;'))}',${y})" title="ضبط الميزانية"><i class="fas fa-edit"></i></button></div>
+      </div>`;
+    });
+    html += '</div>';
+    wrap.innerHTML = html;
+  }
+  // V5.9.15 — open budget form. When called with accountId pre-fills the
+  // form for that account (the row's edit button passes it). Otherwise the
+  // user gets a free-form entry that lets them pick any cost-center OR account.
+  async function openBudgetForm(accountId, accountCode, accountName, fiscalYear){
+    accountId = accountId || '';
+    accountCode = accountCode || '';
+    accountName = accountName || '';
+    fiscalYear = fiscalYear || new Date().getFullYear();
     const ccs = await fetch('/api/erp/cost-centers').then(r=>r.json()).catch(()=>[]);
+    const accountFieldHtml = accountId
+      ? `<div><label>الحساب</label><div style="padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:10px;background:#fef2f2;font-family:ui-monospace,Menlo,monospace;"><b style="color:#7f1d1d;">${_esc(accountCode)}</b> — ${_esc(accountName)}</div></div>`
+      : '';
+    const ccFieldHtml = accountId
+      ? '' // when targeting an account, cost-center is optional and hidden by default
+      : `<div><label>مركز التكلفة</label><select name="cost_center_id"><option value="">— بدون —</option>${(ccs||[]).map(c=>`<option value="${c.id}">${_esc(c.name||c.id)}</option>`).join('')}</select></div>`;
     const m = WoModal.open({
-      icon:'fa-chart-pie',iconKind:'info',size:'md',title:'ميزانية شهرية لمركز تكلفة',
+      icon:'fa-chart-pie',iconKind:'info',size:'md',
+      title: accountId ? `ضبط ميزانية الحساب ${accountCode}` : 'ميزانية شهرية',
       body:`<form class="v5-form" id="budForm">
+        <input type="hidden" name="account_id" value="${_esc(accountId)}"/>
+        ${accountFieldHtml}
         <div class="row">
-          <div><label>السنة *</label><input type="number" name="fiscal_year" value="${new Date().getFullYear()}" required/></div>
+          <div><label>السنة *</label><input type="number" name="fiscal_year" value="${fiscalYear}" required/></div>
           <div><label>الشهر</label><select name="period_month"><option value="">السنة كاملة</option>${Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('')}</select></div>
         </div>
-        <div><label>مركز التكلفة *</label><select name="cost_center_id" required>${(ccs||[]).map(c=>`<option value="${c.id}">${_esc(c.name||c.id)}</option>`).join('')}</select></div>
-        <div><label>قيمة الميزانية *</label><input type="number" step="0.01" name="budget_amount" required/></div>
+        ${ccFieldHtml}
+        <div><label>قيمة الميزانية *</label><input type="number" step="0.01" name="budget_amount" required placeholder="0.00"/></div>
+        <div class="row">
+          <div><label>تنبيه عند % (افتراضي 80)</label><input type="number" name="threshold_warn_pct" value="80"/></div>
+          <div><label>إيقاف عند % (افتراضي 100)</label><input type="number" name="threshold_block_pct" value="100"/></div>
+        </div>
       </form>`,
       footer:`<button class="wom-btn" data-act="cancel">إلغاء</button><button class="wom-btn primary" id="budSave">حفظ</button>`
     });
     m.overlay.querySelector('[data-act="cancel"]').addEventListener('click', m.close);
     m.overlay.querySelector('#budSave').addEventListener('click', async ()=>{
       const body={};[...m.overlay.querySelector('#budForm').elements].forEach(el=>{ if(el.name) body[el.name]=el.value; });
+      // Either account_id OR cost_center_id is required by the backend.
+      if (!body.account_id && !body.cost_center_id) {
+        WoModal.toast({message:'اختر إما حساباً أو مركز تكلفة',kind:'danger'});
+        return;
+      }
+      // V5.9.15 — backend now accepts either account_id OR cost_center_id;
+      // no synthetic placeholder needed.
       const r = await POST('/budgets', body);
       if (r.success){ WoModal.toast({message:'تم الحفظ',kind:'success'}); m.close(); loadBudgets(); }
       else WoModal.toast({message:r.error||'فشل',kind:'danger'});

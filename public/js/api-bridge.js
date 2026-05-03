@@ -106,6 +106,8 @@
     getTrialBalance:     { method: 'GET',  url: '/erp/reports/trial-balance', query: (f) => f },
     getIncomeStatement:  { method: 'GET',  url: '/erp/reports/income', query: (f) => f },
     getBalanceSheet:     { method: 'GET',  url: '/erp/reports/balance-sheet', query: (f) => f },
+    // V5.10.1 — Cash Flow Statement (IAS 7, indirect method)
+    getCashFlow:         { method: 'GET',  url: '/erp/reports/cash-flow',     query: (f) => f },
 
     // Users
     getAllUsernames:     { method: 'GET',  url: '/auth/users' },

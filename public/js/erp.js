@@ -11233,6 +11233,10 @@ window.erpCFReset = function() {
   document.getElementById('cfSummary').style.display = 'none';
   document.getElementById('cfDetails').innerHTML = '';
 };
+// V5.10.1 — Cash Flow Statement (IAS 7 indirect method).
+// Renders three sections (operating / investing / financing) starting from
+// net income, walks through working-capital adjustments, and reconciles
+// against the actual cash-account movement (1101 + 1102) for the period.
 function erpLoadCashFlow() {
   _erpPopulateBranchOptions(['cfBranch']);
   _erpPopulateBrandOptions(['cfBrand']);
@@ -11240,49 +11244,220 @@ function erpLoadCashFlow() {
   if (!document.getElementById('cfTo').value)   document.getElementById('cfTo').value   = new Date().toISOString().slice(0,10);
   var from = document.getElementById('cfFrom').value;
   var to   = document.getElementById('cfTo').value;
-  var branch = (document.getElementById('cfBranch')||{}).value || '';
-  var brand  = (document.getElementById('cfBrand')||{}).value || '';
-  var qs = new URLSearchParams({ from, to, branch, brand }).toString();
+  var brandId  = (document.getElementById('cfBrand')||{}).value || '';
+  var branchId = (document.getElementById('cfBranch')||{}).value || '';
+  var qs = 'from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
+  if (brandId)  qs += '&brandId='  + encodeURIComponent(brandId);
+  if (branchId) qs += '&branchId=' + encodeURIComponent(branchId);
   document.getElementById('cfDetails').innerHTML = '<div class="empty-msg" style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
 
   _erpGet('/erp/reports/cash-flow?' + qs, function(r) {
-    if (!r.success) { showToast(r.error||'خطأ', true); return; }
-    var f = r.flows || {};
-    var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    if (!r || r.error) { showToast((r && r.error) || 'تعذّر تحميل التقرير', true); return; }
+    var fmt = function(v){
+      var n = Number(v||0);
+      var s = n.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
+      return n < 0 ? '(' + s.replace('-','') + ')' : s;
+    };
+    var color = function(v){ return Number(v||0) < 0 ? '#dc2626' : '#16a34a'; };
+    var op = r.operating || { lines:[], total:0 };
+    var iv = r.investing || { lines:[], total:0 };
+    var fi = r.financing || { lines:[], total:0 };
+
+    // Hero banner
     document.getElementById('cfBnFrom').textContent = from;
     document.getElementById('cfBnTo').textContent = to;
     document.getElementById('cfBranded').style.display = 'flex';
 
-    var mk = function(lbl, val, color, icon) {
-      return '<div class="wo-metric"><div class="wo-metric-icon" style="background:'+color+'22;color:'+color+';"><i class="fas '+icon+'"></i></div><div class="wo-metric-body"><div class="wo-metric-label">'+lbl+'</div><div class="wo-metric-value" style="color:'+color+';">'+fmt(val)+'</div></div></div>';
+    // Top KPI strip
+    var mk = function(lbl, val, accent, icon, sub) {
+      return '<div class="wo-metric"><div class="wo-metric-icon" style="background:'+accent+'22;color:'+accent+';"><i class="fas '+icon+'"></i></div><div class="wo-metric-body"><div class="wo-metric-label">'+lbl+'</div><div class="wo-metric-value" style="color:'+accent+';">'+fmt(val)+'</div>'+(sub?'<div class="wo-text-subtle wo-text-caption">'+sub+'</div>':'')+'</div></div>';
     };
     var cfS = document.getElementById('cfSummary');
     cfS.style.display = 'grid';
     cfS.innerHTML =
-      mk('الرصيد الافتتاحي', r.openingCash, '#64748b', 'fa-play') +
-      mk('نشاط تشغيلي',     f.operating,   f.operating>=0?'#16a34a':'#ef4444', 'fa-gears') +
-      mk('نشاط استثماري',   f.investing,   '#8b5cf6', 'fa-chart-line') +
-      mk('نشاط تمويلي',     f.financing,   '#0ea5e9', 'fa-building-columns') +
-      mk('صافي التغيير',    r.netChange,   r.netChange>=0?'#16a34a':'#ef4444', 'fa-arrow-trend-up') +
-      mk('الرصيد الختامي',   r.closingCash, '#16a34a', 'fa-flag-checkered');
+      mk('صافي ربح الفترة',   r.netIncome,    color(r.netIncome),   'fa-coins') +
+      mk('تشغيلي',             op.total,       color(op.total),      'fa-gears') +
+      mk('استثماري',           iv.total,       color(iv.total),      'fa-chart-line') +
+      mk('تمويلي',             fi.total,       color(fi.total),      'fa-building-columns') +
+      mk('صافي التغيّر النقدي', r.netChange,    color(r.netChange),   'fa-arrow-trend-up') +
+      mk('حركة النقدية الفعلية', r.actualMovement, color(r.actualMovement), 'fa-piggy-bank',
+         r.isReconciled ? '✓ متطابق' : ('فرق: ' + fmt(r.reconciliationDiff)));
 
-    var d = r.details || {};
-    var makeSection = function(title, color, icon, items) {
-      if (!items || !items.length) return '';
-      var rows = items.map(function(x){
-        return '<tr><td>'+(x.date||'').slice(0,10)+'</td><td>'+(x.description||'')+'</td><td style="color:#94a3b8;">'+(x.contra||'')+'</td><td style="color:'+(x.amount>=0?'#16a34a':'#ef4444')+';font-weight:700;text-align:start;">'+fmt(x.amount)+'</td></tr>';
+    // Section renderer — pre-formatted lines + bold subtotals
+    function renderSection(title, color, icon, sec) {
+      var lines = (sec.lines || []).map(function(l) {
+        var amount = Number(l.amount || 0);
+        var amtClass = amount >= 0 ? 'pos' : 'neg';
+        var amtColor = amount >= 0 ? '#16a34a' : '#dc2626';
+        var lblStyle = l.kind === 'subtotal' ? 'font-weight:800;color:#0f172a;font-size:13px;' : 'color:#475569;';
+        var paren = amount < 0 ? '(' + Math.abs(amount).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}) + ')' : amount.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
+        return '<tr><td style="'+lblStyle+'">' + (l.code ? '<code style="background:#f8fafc;padding:1px 6px;border-radius:4px;font-size:10px;color:'+color+';margin-inline-end:6px;">'+l.code+'</code>' : '') + (l.label||'') + '</td>' +
+               '<td class="num strong" style="color:'+amtColor+';font-family:ui-monospace,Menlo,monospace;">'+paren+'</td></tr>';
       }).join('');
-      return '<div style="background:#fff;border:1px solid #e5e7eb;border-top:3px solid '+color+';border-radius:12px;padding:14px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);">' +
-        '<h4 style="margin:0 0 10px;color:'+color+';font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas '+icon+'"></i> '+title+'</h4>' +
-        '<table class="erp-table" style="font-size:12.5px;"><thead><tr><th>التاريخ</th><th>الوصف</th><th>الحساب المقابل</th><th class="num" style="text-align:start;">المبلغ</th></tr></thead><tbody>'+rows+'</tbody></table>' +
+      var totalAmt = Number(sec.total || 0);
+      var totalParen = totalAmt < 0 ? '(' + Math.abs(totalAmt).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}) + ')' : totalAmt.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
+      return '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);overflow:hidden;">' +
+        '<div style="padding:12px 16px;background:linear-gradient(135deg,'+color+'10, #fff);border-bottom:1px solid '+color+'30;display:flex;align-items:center;gap:10px;">' +
+          '<div style="width:34px;height:34px;border-radius:8px;background:'+color+'22;color:'+color+';display:flex;align-items:center;justify-content:center;"><i class="fas '+icon+'"></i></div>' +
+          '<div style="flex:1;"><div style="font-size:14px;font-weight:800;color:#0f172a;">' + title + '</div></div>' +
+          '<div style="font-size:16px;font-weight:900;color:'+(totalAmt>=0?'#16a34a':'#dc2626')+';font-family:ui-monospace,Menlo,monospace;">' + totalParen + '</div>' +
+        '</div>' +
+        '<table class="erp-table" style="font-size:12.5px;border-radius:0;border:none;">' +
+          '<tbody>' + (lines || '<tr><td colspan="2" class="empty-msg" style="text-align:center;color:#94a3b8;padding:14px;">لا توجد حركات</td></tr>') + '</tbody>' +
+          '<tfoot><tr><td style="font-weight:800;background:#f8fafc;">صافي ' + title + '</td><td class="num strong" style="background:#f8fafc;color:'+(totalAmt>=0?'#16a34a':'#dc2626')+';font-family:ui-monospace,Menlo,monospace;">' + totalParen + '</td></tr></tfoot>' +
+        '</table>' +
       '</div>';
-    };
+    }
+
+    // Reconciliation footer
+    var reconHtml = '<div style="background:'+(r.isReconciled?'#f0fdf4':'#fef2f2')+';border:1.5px solid '+(r.isReconciled?'#bbf7d0':'#fecaca')+';border-radius:12px;padding:14px 18px;margin-top:14px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:13px;margin-bottom:6px;">' +
+        '<span><i class="fas fa-flag-checkered" style="color:#7f1d1d;margin-inline-end:6px;"></i> مطابقة الرصيد النقدي</span>' +
+        '<span style="color:'+(r.isReconciled?'#166534':'#991b1b')+';">' + (r.isReconciled ? '✓ متطابق' : '⚠ فرق غير مطابق') + '</span>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;font-size:12px;margin-top:8px;">' +
+        '<div><div style="color:#64748b;font-size:10px;font-weight:700;">الرصيد الافتتاحي</div><div style="font-size:14px;font-weight:800;font-family:ui-monospace,Menlo,monospace;">'+fmt(r.cashOpening)+'</div></div>' +
+        '<div><div style="color:#64748b;font-size:10px;font-weight:700;">صافي التدفقات (محسوب)</div><div style="font-size:14px;font-weight:800;color:'+color(r.netChange)+';font-family:ui-monospace,Menlo,monospace;">'+fmt(r.netChange)+'</div></div>' +
+        '<div><div style="color:#64748b;font-size:10px;font-weight:700;">الحركة الفعلية</div><div style="font-size:14px;font-weight:800;color:'+color(r.actualMovement)+';font-family:ui-monospace,Menlo,monospace;">'+fmt(r.actualMovement)+'</div></div>' +
+        '<div><div style="color:#64748b;font-size:10px;font-weight:700;">الرصيد الختامي</div><div style="font-size:14px;font-weight:800;font-family:ui-monospace,Menlo,monospace;">'+fmt(r.cashClosing)+'</div></div>' +
+      '</div>' +
+      (r.isReconciled ? '' :
+        '<div style="margin-top:10px;padding:8px 10px;background:#fee2e2;border-radius:8px;font-size:11px;color:#991b1b;line-height:1.6;"><i class="fas fa-circle-info"></i> الفرق <b>'+fmt(r.reconciliationDiff)+'</b> ر.س — قد يشير إلى قيود غير مرحّلة، أصول/التزامات لم تُصنّف، أو أصناف غير نقدية لم يتم رصدها. راجع شجرة الحسابات والقيود في الفترة.</div>') +
+    '</div>';
+
     document.getElementById('cfDetails').innerHTML =
-      makeSection('الأنشطة التشغيلية', '#16a34a', 'fa-gears', d.operating) +
-      makeSection('الأنشطة الاستثمارية', '#8b5cf6', 'fa-chart-line', d.investing) +
-      makeSection('الأنشطة التمويلية', '#0ea5e9', 'fa-building-columns', d.financing) +
-      makeSection('أخرى', '#64748b', 'fa-ellipsis', d.other);
+      renderSection('الأنشطة التشغيلية',  '#16a34a', 'fa-gears',          op) +
+      renderSection('الأنشطة الاستثمارية', '#8b5cf6', 'fa-chart-line',     iv) +
+      renderSection('الأنشطة التمويلية',   '#0ea5e9', 'fa-building-columns', fi) +
+      reconHtml +
+      '<div style="text-align:center;margin-top:14px;"><button class="tb-btn tb-btn-success" onclick="erpCashFlowPrint()" style="font-size:13px;padding:8px 24px;"><i class="fas fa-print"></i> طباعة قائمة التدفقات النقدية</button></div>';
+
+    // Cache for the print template
+    window._cashFlowSnapshot = { from: from, to: to, brandId: brandId, branchId: branchId, data: r };
   });
+}
+
+// V5.10.1 — Cash Flow print template (A4, follows the siPrint pattern).
+window.erpCashFlowPrint = function() {
+  var snap = window._cashFlowSnapshot;
+  if (!snap) return showToast('اعرض التقرير أولاً ثم اضغط طباعة', true);
+  _erpGet('/settings', function(cfg) {
+    cfg = cfg || {};
+    _erpRenderCashFlowPrintWindow(snap.from, snap.to, snap.data, cfg);
+  });
+};
+
+function _erpRenderCashFlowPrintWindow(from, to, r, cfg) {
+  var win = window.open('', '_blank', 'width=900,height=1100');
+  if (!win) return showToast('السماح بالنوافذ المنبثقة مطلوب للطباعة', true);
+  var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var fmt = function(v){
+    var n = Number(v||0);
+    var s = Math.abs(n).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
+    return n < 0 ? '(' + s + ')' : s;
+  };
+  var company = esc(cfg.CompanyName || 'Moroccan Taste');
+  var taxNum  = esc(cfg.TaxNumber   || '');
+  var currency = esc(cfg.Currency || 'ر.س');
+
+  function sectionHtml(title, sec) {
+    var rows = (sec.lines || []).map(function(l) {
+      return '<tr><td>' + (l.code ? '<code>' + esc(l.code) + '</code> ' : '') + esc(l.label || '') + '</td>' +
+             '<td class="num">' + fmt(l.amount) + '</td></tr>';
+    }).join('');
+    return '<tr class="sec-head"><td colspan="2">' + esc(title) + '</td></tr>' +
+           (rows || '<tr><td colspan="2" class="dim">— لا حركات —</td></tr>') +
+           '<tr class="sec-total"><td>صافي ' + esc(title) + '</td><td class="num">' + fmt(sec.total) + '</td></tr>';
+  }
+
+  var html =
+    '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">' +
+    '<title>قائمة التدفقات النقدية ' + esc(from) + ' → ' + esc(to) + '</title>' +
+    '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">' +
+    '<style>' +
+      '*{box-sizing:border-box;margin:0;padding:0;}' +
+      'body{font-family:"Tajawal","Segoe UI",sans-serif;direction:rtl;color:#0f172a;background:#fff;font-size:13px;line-height:1.5;}' +
+      '@page{size:A4;margin:14mm 12mm;}' +
+      '.sheet{max-width:780px;margin:0 auto;padding:18px 22px;}' +
+      '.lh{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #06b6d4;padding-bottom:14px;margin-bottom:18px;}' +
+      '.lh-left .lh-co{font-size:22px;font-weight:900;color:#0f172a;}' +
+      '.lh-left .lh-tax{font-size:11px;color:#64748b;margin-top:3px;}' +
+      '.lh-right{text-align:left;}' +
+      '.lh-doc-title{font-size:11px;color:#06b6d4;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;}' +
+      '.lh-doc-name{font-size:18px;font-weight:900;color:#0e7490;background:#ecfeff;border:1.5px solid #a5f3fc;padding:5px 14px;border-radius:8px;margin-top:4px;display:inline-block;}' +
+      '.lh-doc-period{font-size:11px;color:#475569;margin-top:6px;font-family:ui-monospace,Menlo,monospace;}' +
+      '.tbl{width:100%;border-collapse:collapse;font-size:12.5px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;margin-bottom:14px;}' +
+      '.tbl td{padding:8px 12px;border-bottom:1px solid #f1f5f9;}' +
+      '.tbl tr:last-child td{border-bottom:none;}' +
+      '.tbl .num{text-align:end;font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace;font-weight:600;}' +
+      '.tbl .sec-head td{background:#06b6d4;color:#fff;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:0.4px;padding:9px 12px;}' +
+      '.tbl .sec-total td{background:#ecfeff;font-weight:800;border-top:1.5px solid #06b6d4;}' +
+      '.tbl .dim{color:#94a3b8;text-align:center;font-style:italic;}' +
+      '.tbl code{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#06b6d4;}' +
+      '.recon{background:' + (r.isReconciled?'#f0fdf4':'#fef2f2') + ';border:1.5px solid ' + (r.isReconciled?'#bbf7d0':'#fecaca') + ';border-radius:10px;padding:14px 18px;margin-top:14px;page-break-inside:avoid;}' +
+      '.recon-h{font-size:13px;font-weight:800;color:' + (r.isReconciled?'#166534':'#991b1b') + ';display:flex;justify-content:space-between;}' +
+      '.recon-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:10px;font-size:12px;}' +
+      '.recon-grid div{background:#fff;padding:8px 10px;border-radius:8px;border:1px solid #e5e7eb;}' +
+      '.recon-l{font-size:9px;color:#64748b;font-weight:800;letter-spacing:0.4px;text-transform:uppercase;}' +
+      '.recon-v{font-size:14px;font-weight:800;font-family:ui-monospace,Menlo,monospace;color:#0f172a;margin-top:2px;}' +
+      '.foot{margin-top:24px;padding-top:14px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;}' +
+      '.toolbar{position:fixed;top:14px;inset-inline-end:14px;display:flex;gap:8px;background:#fff;padding:8px 12px;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,0.1);z-index:1000;}' +
+      '.toolbar button{height:36px;padding:0 16px;border-radius:8px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;}' +
+      '.toolbar button.primary{background:#06b6d4;color:#fff;border-color:#06b6d4;}' +
+      '@media print{.toolbar{display:none;}body{background:#fff;}}' +
+    '</style></head><body>' +
+      '<div class="toolbar">' +
+        '<button class="primary" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>' +
+        '<button onclick="window.close()">إغلاق</button>' +
+      '</div>' +
+      '<div class="sheet">' +
+        '<header class="lh">' +
+          '<div class="lh-left">' +
+            '<div class="lh-co">' + company + '</div>' +
+            (taxNum ? '<div class="lh-tax">الرقم الضريبي: ' + taxNum + '</div>' : '') +
+          '</div>' +
+          '<div class="lh-right">' +
+            '<div class="lh-doc-title">قائمة التدفقات النقدية · IAS 7</div>' +
+            '<div class="lh-doc-name">Cash Flow Statement</div>' +
+            '<div class="lh-doc-period">من ' + esc(from) + ' إلى ' + esc(to) + '</div>' +
+          '</div>' +
+        '</header>' +
+
+        '<table class="tbl">' +
+          '<tr><td><b>صافي ربح/خسارة الفترة</b></td><td class="num"><b>' + fmt(r.netIncome) + '</b></td></tr>' +
+        '</table>' +
+
+        '<table class="tbl">' +
+          sectionHtml('الأنشطة التشغيلية', r.operating || {lines:[],total:0}) +
+        '</table>' +
+        '<table class="tbl">' +
+          sectionHtml('الأنشطة الاستثمارية', r.investing || {lines:[],total:0}) +
+        '</table>' +
+        '<table class="tbl">' +
+          sectionHtml('الأنشطة التمويلية', r.financing || {lines:[],total:0}) +
+        '</table>' +
+
+        '<div class="recon">' +
+          '<div class="recon-h"><span><i class="fas fa-flag-checkered"></i> مطابقة الرصيد النقدي</span><span>' + (r.isReconciled ? '✓ متطابق' : '⚠ فرق ' + fmt(r.reconciliationDiff)) + '</span></div>' +
+          '<div class="recon-grid">' +
+            '<div><div class="recon-l">الافتتاحي</div><div class="recon-v">' + fmt(r.cashOpening) + ' ' + currency + '</div></div>' +
+            '<div><div class="recon-l">صافي التدفقات</div><div class="recon-v">' + fmt(r.netChange) + ' ' + currency + '</div></div>' +
+            '<div><div class="recon-l">الحركة الفعلية</div><div class="recon-v">' + fmt(r.actualMovement) + ' ' + currency + '</div></div>' +
+            '<div><div class="recon-l">الختامي</div><div class="recon-v">' + fmt(r.cashClosing) + ' ' + currency + '</div></div>' +
+          '</div>' +
+        '</div>' +
+
+        '<footer class="foot">' +
+          '<span>طُبع: ' + esc(new Date().toLocaleString('en-GB')) + '</span>' +
+          '<span>إعداد: ' + esc((window.currentUser && window.currentUser.username) || (window.state && window.state.user) || '—') + '</span>' +
+        '</footer>' +
+      '</div>' +
+      '<script>window.onload = function(){ setTimeout(function(){ window.focus(); window.print(); }, 250); };</' + 'script>' +
+    '</body></html>';
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
 }
 
 // ═══ Profitability by dimension — enhanced ═══

@@ -85,13 +85,26 @@ function cashOpenBoxModal() { cashEditBox(null); }
 function cashEditBox(id) {
   var b = id ? _cashBoxes.find(function(x){return x.id===id;}) : null;
   var d = b || { type:'branch', currency:'SAR' };
+  // V5.9.13 — also load the GL accounts under root 1101 (النقدية) so the
+  // user picks the box's GL account explicitly instead of relying on the
+  // implicit auto-create that ran on first transaction.
   Promise.all([
     new Promise(function(res){ window._apiBridge.withSuccessHandler(res).getBranchesFull(); }),
-    new Promise(function(res){ window._apiBridge.withSuccessHandler(res).getBrands(); })
+    new Promise(function(res){ window._apiBridge.withSuccessHandler(res).getBrands(); }),
+    _cashAPI('GET', '/gl-accounts-tree?root=1101')
   ]).then(function(r) {
-    var brs = r[0]||[], brands = r[1]||[];
+    var brs = r[0]||[], brands = r[1]||[], glAccs = Array.isArray(r[2]) ? r[2] : [];
     var brOpts = brs.map(function(x){return '<option value="'+x.id+'"'+(d.branchId===x.id?' selected':'')+'>'+x.name+'</option>';}).join('');
     var brandOpts = brands.map(function(x){return '<option value="'+x.id+'"'+(d.brandId===x.id?' selected':'')+'>'+x.name+'</option>';}).join('');
+    // Build a labelled GL options list. Indent by level so the tree is visible
+    // even inside a flat <select>.
+    var glOpts = '<option value="">— تلقائي (سيُنشأ عند الحفظ) —</option>' +
+      glAccs.filter(function(a){ return a.code !== '1101'; }) // hide the root itself
+            .map(function(a) {
+              var pad = a.level && a.level > 3 ? '— '.repeat(Math.max(0, a.level - 3)) : '';
+              var sel = (d.glAccountId && d.glAccountId === a.id) ? ' selected' : '';
+              return '<option value="'+a.id+'"'+sel+'>'+pad+a.code+' — '+(a.nameAr||'')+'</option>';
+            }).join('');
     document.getElementById('erpModalTitle').textContent = id ? 'تعديل صندوق' : 'صندوق جديد';
     document.getElementById('erpModalBody').innerHTML =
       '<input type="hidden" id="cbId" value="'+(d.id||'')+'">' +
@@ -107,6 +120,11 @@ function cashEditBox(id) {
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>أمين الصندوق (username)</label><input class="form-control" id="cbKeeper" value="'+(d.keeperUsername||'')+'"></div>' +
         '<div class="form-row"><label>العملة</label><input class="form-control" id="cbCurrency" value="'+(d.currency||'SAR')+'"></div>' +
+      '</div>' +
+      '<div class="form-row" style="margin-top:6px;">' +
+        '<label><i class="fas fa-book" style="color:#7f1d1d;margin-inline-end:4px;"></i> حساب الأستاذ (1101 — النقدية)</label>' +
+        '<select class="form-control" id="cbGlAccount" style="font-family:ui-monospace,Menlo,monospace;">'+glOpts+'</select>' +
+        '<small style="color:#94a3b8;font-size:11px;display:block;margin-top:3px;">اختر الحساب من شجرة الحسابات. اتركه افتراضياً ليُنشأ تلقائياً تحت 1101.</small>' +
       '</div>';
     document.getElementById('erpModalSaveBtn').onclick = cashSaveBox;
     document.getElementById('erpModal').classList.remove('hidden');
@@ -122,6 +140,7 @@ function cashSaveBox() {
     branchId: document.getElementById('cbBranch').value,
     keeperUsername: document.getElementById('cbKeeper').value,
     currency: document.getElementById('cbCurrency').value || 'SAR',
+    glAccountId: (document.getElementById('cbGlAccount')||{}).value || '',
     username: currentUser
   };
   if (!data.name) return showToast('الاسم مطلوب', true);
@@ -171,8 +190,20 @@ function cashOpenBankModal() { cashEditBank(null); }
 function cashEditBank(id) {
   var b = id ? _bankAccounts.find(function(x){return x.id===id;}) : null;
   var d = b || { currency:'SAR' };
-  window._apiBridge.withSuccessHandler(function(brands) {
-    var brandOpts = (brands||[]).map(function(x){return '<option value="'+x.id+'"'+(d.brandId===x.id?' selected':'')+'>'+x.name+'</option>';}).join('');
+  // V5.9.13 — also fetch GL accounts under root 1102 (البنوك) for the picker.
+  Promise.all([
+    new Promise(function(res){ window._apiBridge.withSuccessHandler(res).getBrands(); }),
+    _cashAPI('GET', '/gl-accounts-tree?root=1102')
+  ]).then(function(r) {
+    var brands = r[0]||[], glAccs = Array.isArray(r[1]) ? r[1] : [];
+    var brandOpts = brands.map(function(x){return '<option value="'+x.id+'"'+(d.brandId===x.id?' selected':'')+'>'+x.name+'</option>';}).join('');
+    var glOpts = '<option value="">— تلقائي (سيُنشأ عند الحفظ) —</option>' +
+      glAccs.filter(function(a){ return a.code !== '1102'; })
+            .map(function(a) {
+              var pad = a.level && a.level > 3 ? '— '.repeat(Math.max(0, a.level - 3)) : '';
+              var sel = (d.glAccountId && d.glAccountId === a.id) ? ' selected' : '';
+              return '<option value="'+a.id+'"'+sel+'>'+pad+a.code+' — '+(a.nameAr||'')+'</option>';
+            }).join('');
     document.getElementById('erpModalTitle').textContent = id ? 'تعديل حساب بنكي' : 'حساب بنكي جديد';
     document.getElementById('erpModalBody').innerHTML =
       '<input type="hidden" id="baId" value="'+(d.id||'')+'">' +
@@ -187,10 +218,15 @@ function cashEditBank(id) {
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>البراند</label><select class="form-control" id="baBrand"><option value="">—</option>'+brandOpts+'</select></div>' +
         '<div class="form-row"><label>العملة</label><input class="form-control" id="baCurrency" value="'+(d.currency||'SAR')+'"></div>' +
+      '</div>' +
+      '<div class="form-row" style="margin-top:6px;">' +
+        '<label><i class="fas fa-book" style="color:#1e40af;margin-inline-end:4px;"></i> حساب الأستاذ (1102 — البنوك)</label>' +
+        '<select class="form-control" id="baGlAccount" style="font-family:ui-monospace,Menlo,monospace;">'+glOpts+'</select>' +
+        '<small style="color:#94a3b8;font-size:11px;display:block;margin-top:3px;">اختر حساب البنك من شجرة الحسابات. اتركه افتراضياً ليُنشأ تلقائياً تحت 1102.</small>' +
       '</div>';
     document.getElementById('erpModalSaveBtn').onclick = cashSaveBank;
     document.getElementById('erpModal').classList.remove('hidden');
-  }).getBrands();
+  });
 }
 function cashSaveBank() {
   var data = {
@@ -200,7 +236,8 @@ function cashSaveBank() {
     accountNumber: document.getElementById('baAccNum').value,
     iban: document.getElementById('baIban').value,
     brandId: document.getElementById('baBrand').value,
-    currency: document.getElementById('baCurrency').value || 'SAR'
+    currency: document.getElementById('baCurrency').value || 'SAR',
+    glAccountId: (document.getElementById('baGlAccount')||{}).value || ''
   };
   if (!data.bankName) return showToast('اسم البنك مطلوب', true);
   loader(true);

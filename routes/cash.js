@@ -96,38 +96,82 @@ async function nextNumber(table, column, prefix) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// V5.9.13 — GL ACCOUNT TREE PICKER (for cash boxes / bank accounts)
+//
+// Returns active GL accounts under a given root (typically '1101' for
+// cash, '1102' for banks) so the cash-box / bank-account create form
+// can present an explicit dropdown instead of relying on auto-create.
+// ═══════════════════════════════════════════════════════════════
+router.get('/gl-accounts-tree', async (req, res) => {
+  try {
+    const root = String(req.query.root || '1101');
+    if (!/^\d{1,4}(?:-\w+)?$/.test(root)) return res.json([]);
+    // Return both the root row and any descendant whose code starts with the root.
+    // The COA uses a hierarchical text code like 1101-01, 1101-02, …
+    const [rows] = await db.query(
+      `SELECT id, code, name_ar, type, parent_id, level, is_active
+       FROM gl_accounts
+       WHERE is_active = 1 AND (code = ? OR code LIKE CONCAT(?, '-%') OR code LIKE CONCAT(?, '%'))
+       ORDER BY code ASC`,
+      [root, root, root]);
+    res.json(rows.map(r => ({
+      id: r.id, code: r.code, nameAr: r.name_ar,
+      level: Number(r.level)||0, parentId: r.parent_id, type: r.type,
+      isLeaf: r.code !== root  // anything below the requested root is selectable
+    })));
+  } catch(e) { res.json([]); }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // CASH BOXES
 // ═══════════════════════════════════════════════════════════════
 router.get('/cash-boxes', async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT cb.*, br.name AS branch_name, bd.name AS brand_name
+      SELECT cb.*, br.name AS branch_name, bd.name AS brand_name,
+             ga.code AS gl_code, ga.name_ar AS gl_name
       FROM cash_boxes cb
       LEFT JOIN branches br ON cb.branch_id = br.id
       LEFT JOIN brands bd ON cb.brand_id = bd.id
+      LEFT JOIN gl_accounts ga ON cb.gl_account_id = ga.id
       WHERE cb.is_active = 1 ORDER BY cb.name`);
     res.json(rows.map(r => ({
       id: r.id, name: r.name, code: r.code, type: r.type,
       branchId: r.branch_id, branchName: r.branch_name||'',
       brandId: r.brand_id, brandName: r.brand_name||'',
       keeperUsername: r.keeper_username, currency: r.currency,
-      balance: Number(r.balance)||0, isActive: !!r.is_active
+      balance: Number(r.balance)||0, isActive: !!r.is_active,
+      // V5.9.13 — surface the linked GL account so the edit form can preselect it
+      glAccountId: r.gl_account_id || '',
+      glAccountCode: r.gl_code || '',
+      glAccountName: r.gl_name || ''
     })));
   } catch(e) { res.json([]); }
 });
 
 router.post('/cash-boxes', async (req, res) => {
   try {
-    const { id, name, code, type, branchId, brandId, keeperUsername, currency, username } = req.body;
+    const { id, name, code, type, branchId, brandId, keeperUsername, currency, glAccountId, username } = req.body;
     if (!name) return res.json({ success:false, error: 'الاسم مطلوب' });
+    // V5.9.13 — validate the chosen GL account exists and lives under root 1101 (النقدية).
+    let glId = null;
+    if (glAccountId) {
+      const [g] = await db.query('SELECT code FROM gl_accounts WHERE id=? AND is_active=1', [glAccountId]);
+      if (!g.length) return res.json({ success:false, error: 'حساب الأستاذ غير موجود' });
+      if (g[0].code && !String(g[0].code).startsWith('1101'))
+        return res.json({ success:false, error: 'حساب الصندوق يجب أن يكون تحت 1101 (النقدية)' });
+      glId = glAccountId;
+    }
     if (id) {
-      await db.query('UPDATE cash_boxes SET name=?, code=?, type=?, branch_id=?, brand_id=?, keeper_username=?, currency=? WHERE id=?',
-        [name, code||'', type||'branch', branchId||null, brandId||null, keeperUsername||'', currency||'SAR', id]);
+      await db.query(
+        'UPDATE cash_boxes SET name=?, code=?, type=?, branch_id=?, brand_id=?, keeper_username=?, currency=?, gl_account_id = COALESCE(?, gl_account_id) WHERE id=?',
+        [name, code||'', type||'branch', branchId||null, brandId||null, keeperUsername||'', currency||'SAR', glId, id]);
       return res.json({ success:true, id });
     }
     const newId = 'CB-' + Date.now();
-    await db.query('INSERT INTO cash_boxes (id, name, code, type, branch_id, brand_id, keeper_username, currency) VALUES (?,?,?,?,?,?,?,?)',
-      [newId, name, code||'', type||'branch', branchId||null, brandId||null, keeperUsername||'', currency||'SAR']);
+    await db.query(
+      'INSERT INTO cash_boxes (id, name, code, type, branch_id, brand_id, keeper_username, currency, gl_account_id) VALUES (?,?,?,?,?,?,?,?,?)',
+      [newId, name, code||'', type||'branch', branchId||null, brandId||null, keeperUsername||'', currency||'SAR', glId]);
     res.json({ success:true, id: newId });
   } catch(e) { res.json({ success:false, error: e.message }); }
 });
@@ -143,30 +187,48 @@ router.delete('/cash-boxes/:id', async (req, res) => {
 router.get('/bank-accounts', async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT ba.*, bd.name AS brand_name FROM bank_accounts ba
+      SELECT ba.*, bd.name AS brand_name,
+             ga.code AS gl_code, ga.name_ar AS gl_name
+      FROM bank_accounts ba
       LEFT JOIN brands bd ON ba.brand_id = bd.id
+      LEFT JOIN gl_accounts ga ON ba.gl_account_id = ga.id
       WHERE ba.is_active = 1 ORDER BY ba.bank_name`);
     res.json(rows.map(r => ({
       id: r.id, bankName: r.bank_name, accountName: r.account_name,
       accountNumber: r.account_number, iban: r.iban, currency: r.currency,
       brandId: r.brand_id, brandName: r.brand_name||'',
-      balance: Number(r.balance)||0
+      balance: Number(r.balance)||0,
+      // V5.9.13 — explicit GL link for the picker
+      glAccountId: r.gl_account_id || '',
+      glAccountCode: r.gl_code || '',
+      glAccountName: r.gl_name || ''
     })));
   } catch(e) { res.json([]); }
 });
 
 router.post('/bank-accounts', async (req, res) => {
   try {
-    const { id, bankName, accountName, accountNumber, iban, currency, brandId } = req.body;
+    const { id, bankName, accountName, accountNumber, iban, currency, brandId, glAccountId } = req.body;
     if (!bankName) return res.json({ success:false, error: 'اسم البنك مطلوب' });
+    // V5.9.13 — validate GL account is under root 1102 (البنوك)
+    let glId = null;
+    if (glAccountId) {
+      const [g] = await db.query('SELECT code FROM gl_accounts WHERE id=? AND is_active=1', [glAccountId]);
+      if (!g.length) return res.json({ success:false, error: 'حساب الأستاذ غير موجود' });
+      if (g[0].code && !String(g[0].code).startsWith('1102'))
+        return res.json({ success:false, error: 'حساب البنك يجب أن يكون تحت 1102 (البنوك)' });
+      glId = glAccountId;
+    }
     if (id) {
-      await db.query('UPDATE bank_accounts SET bank_name=?, account_name=?, account_number=?, iban=?, currency=?, brand_id=? WHERE id=?',
-        [bankName, accountName||'', accountNumber||'', iban||'', currency||'SAR', brandId||null, id]);
+      await db.query(
+        'UPDATE bank_accounts SET bank_name=?, account_name=?, account_number=?, iban=?, currency=?, brand_id=?, gl_account_id = COALESCE(?, gl_account_id) WHERE id=?',
+        [bankName, accountName||'', accountNumber||'', iban||'', currency||'SAR', brandId||null, glId, id]);
       return res.json({ success:true, id });
     }
     const newId = 'BA-' + Date.now();
-    await db.query('INSERT INTO bank_accounts (id, bank_name, account_name, account_number, iban, currency, brand_id) VALUES (?,?,?,?,?,?,?)',
-      [newId, bankName, accountName||'', accountNumber||'', iban||'', currency||'SAR', brandId||null]);
+    await db.query(
+      'INSERT INTO bank_accounts (id, bank_name, account_name, account_number, iban, currency, brand_id, gl_account_id) VALUES (?,?,?,?,?,?,?,?)',
+      [newId, bankName, accountName||'', accountNumber||'', iban||'', currency||'SAR', brandId||null, glId]);
     res.json({ success:true, id: newId });
   } catch(e) { res.json({ success:false, error: e.message }); }
 });

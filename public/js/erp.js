@@ -55,12 +55,29 @@ const erpSections = [
 ];
 
 // V5 Enterprise nav — single host that ERPv5/ERPv54 render into.
+// V5.9.10 — `erpV5Host` lives inside views/app-content.html as a `.dash-section`
+// element. The lazy-mount system in app.js extracts every `.dash-section`
+// from the post-login template into `_sectionHTMLCache` and removes it from
+// the DOM until the user navigates to it. Standard `erpNav` already calls
+// `mountSection(sectionId)` for that reason; `erpV5Nav` did NOT, so every
+// click on an "إدارة المؤسسة V5" submenu item resolved `host = null`,
+// then ERPv5.render(section, null) crashed silently on `null.innerHTML = …`.
+// User-visible symptom: clicking any of العقارات/العقود/أوامر العمل/AP/AR/
+// مصفوفة/الميزانيات/الشذوذ/منيو القنوات/الجرد الاحترافي opened a blank page.
 window.erpV5Nav = function(section){
   try { localStorage.setItem('pos_last_section', 'v5:'+section); } catch(e){}
+  // Mount the host on first visit (extracts the cached HTML into .admin-main).
+  if (typeof mountSection === 'function') mountSection('erpV5Host');
   document.querySelectorAll('.admin-section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.dash-section').forEach(s => s.classList.add('hidden'));
   const host = document.getElementById('erpV5Host');
-  if (host) host.classList.remove('hidden');
+  if (!host) {
+    // Last-resort: template hasn't been injected yet (race during first
+    // post-login boot). Retry once after a short tick.
+    setTimeout(function(){ window.erpV5Nav(section); }, 300);
+    return;
+  }
+  host.classList.remove('hidden');
   // V5.4: route channel-menus / stocktake-pro to ERPv54
   if (section === 'channel-menus' || section === 'stocktake-pro') {
     if (window.ERPv54) {

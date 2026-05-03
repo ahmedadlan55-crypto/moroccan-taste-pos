@@ -4016,6 +4016,17 @@
         </select>
       </div>
     </div>
+    <!-- v5.10.4 — show-zero toggle row -->
+    <div class="tb-filter-grid">
+      <div class="tb-field tb-toggle-field">
+        <label class="tb-switch">
+          <input type="checkbox" id="plShowZero">
+          <span class="tb-switch-slider"></span>
+          <span class="tb-switch-label"><i class="fas fa-eye"></i> إظهار حسابات الإيرادات/المصروفات الصفرية</span>
+        </label>
+        <div class="tb-field-hint">يساعد على التحقق من شمولية شجرة الحسابات للإيرادات والمصروفات حتى لو لم تظهر حركة بالفترة.</div>
+      </div>
+    </div>
     <div class="tb-filter-actions">
       <button class="tb-btn tb-btn-ghost" onclick="erpPnLReset()"><i class="fas fa-xmark"></i> إلغاء الفلتر</button>
       <button class="tb-btn tb-btn-success" onclick="erpLoadPnL()"><i class="fas fa-chart-line"></i> عرض التقرير</button>
@@ -4061,6 +4072,17 @@
         </select>
       </div>
     </div>
+    <!-- v5.10.4 — show-zero toggle row -->
+    <div class="tb-filter-grid">
+      <div class="tb-field tb-toggle-field">
+        <label class="tb-switch">
+          <input type="checkbox" id="bsShowZero">
+          <span class="tb-switch-slider"></span>
+          <span class="tb-switch-label"><i class="fas fa-eye"></i> إظهار الحسابات الصفرية</span>
+        </label>
+        <div class="tb-field-hint">يعرض جميع الحسابات في شجرة الحسابات حتى لو لم يكن لها حركة بالفترة (للمراجعة الكاملة وفق IFRS).</div>
+      </div>
+    </div>
     <div class="tb-filter-actions">
       <button class="tb-btn tb-btn-ghost" onclick="erpBSReset()"><i class="fas fa-xmark"></i> إلغاء</button>
       <button class="tb-btn tb-btn-success" onclick="erpLoadBalanceSheet()"><i class="fas fa-landmark"></i> عرض التقرير</button>
@@ -4103,6 +4125,17 @@
           <option value="indirect">طريقة غير مباشرة (افتراضي)</option>
           <option value="direct">طريقة مباشرة</option>
         </select>
+      </div>
+    </div>
+    <!-- v5.10.4 — show-zero toggle row -->
+    <div class="tb-filter-grid">
+      <div class="tb-field tb-toggle-field">
+        <label class="tb-switch">
+          <input type="checkbox" id="cfShowZero">
+          <span class="tb-switch-slider"></span>
+          <span class="tb-switch-label"><i class="fas fa-eye"></i> إظهار البنود الصفرية</span>
+        </label>
+        <div class="tb-field-hint">يضمن ظهور جميع بنود رأس المال العامل (مدينون / مخزون / موردون...) حتى لو لم يكن هناك تغير خلال الفترة.</div>
       </div>
     </div>
     <div class="tb-filter-actions">

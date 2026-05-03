@@ -11068,6 +11068,10 @@ function erpLoadPnL() {
   var costCenter = (document.getElementById('plCC')||{}).value || '';
   var groupBy = (document.getElementById('plGroupBy')||{}).value || 'account';
   var compare = (document.getElementById('plCompare')||{}).value || 'none';
+  // v5.10.4 — show-zero toggle: when on, the backend returns every
+  // revenue/expense account (including ones with no posted entries)
+  // so the user can verify chart-of-accounts coverage.
+  var showZero = !!(document.getElementById('plShowZero')||{}).checked;
 
   document.getElementById('plDetails').innerHTML = '<div class="empty-msg" style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
 
@@ -11088,7 +11092,9 @@ function erpLoadPnL() {
     }
   }
 
-  var currQs = new URLSearchParams({ from, to, branch, brand, costCenter, groupBy }).toString();
+  var pnlParams = { from: from, to: to, branch: branch, brand: brand, costCenter: costCenter, groupBy: groupBy };
+  if (showZero) pnlParams.showZero = '1';
+  var currQs = new URLSearchParams(pnlParams).toString();
   var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
 
   Promise.all([
@@ -11119,23 +11125,29 @@ function erpLoadPnL() {
     }
 
     var rev = r.revenue || [], exp = r.expenses || [];
+    // v5.10.4 — render zero-amount rows muted so the user can spot them at a glance
+    var renderPlRow = function(a, sign) {
+      var amt = Number(a.amount || 0);
+      var isZero = Math.abs(amt) < 0.005;
+      var rowStyle = isZero ? 'background:#fafafa;color:#94a3b8;' : '';
+      var amtColor = sign === '+' ? '#16a34a' : '#ef4444';
+      var amtStyle = isZero ? 'color:#cbd5e1;font-weight:600;' : 'color:'+amtColor+';font-weight:700;';
+      var zeroBadge = isZero ? ' <span style="font-size:10px;background:#e2e8f0;color:#64748b;padding:1px 6px;border-radius:6px;margin-inline-start:4px;">صفر</span>' : '';
+      return '<tr style="'+rowStyle+'"><td><code style="color:#94a3b8;">'+(a.code||'')+'</code> '+(a.nameAr||a.dimensionName||'')+zeroBadge+'</td><td style="'+amtStyle+';text-align:start;">'+fmt(amt)+'</td></tr>';
+    };
     var detailsHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">' +
       // Revenue panel
       '<div class="erp-rpt-panel" style="background:#fff;border:1px solid #e5e7eb;border-top:3px solid #16a34a;border-radius:12px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);">' +
         '<h4 style="margin:0 0 10px;color:#16a34a;display:flex;align-items:center;gap:8px;font-size:14px;font-weight:800;"><i class="fas fa-arrow-up"></i> الإيرادات <span style="margin-inline-start:auto;font-size:13px;color:#15803d;">'+fmt(s.totalRevenue)+'</span></h4>' +
         '<table class="erp-table" style="font-size:12.5px;"><thead><tr><th>الحساب</th><th class="num" style="text-align:start;">المبلغ</th></tr></thead><tbody>' +
-        (rev.length ? rev.map(function(a){
-          return '<tr><td><code style="color:#94a3b8;">'+(a.code||'')+'</code> '+(a.nameAr||a.dimensionName||'')+'</td><td style="color:#16a34a;font-weight:700;text-align:start;">'+fmt(a.amount)+'</td></tr>';
-        }).join('') : '<tr><td colspan="2" class="empty-msg">لا توجد إيرادات</td></tr>') +
+        (rev.length ? rev.map(function(a){ return renderPlRow(a, '+'); }).join('') : '<tr><td colspan="2" class="empty-msg">لا توجد إيرادات</td></tr>') +
         '</tbody></table>' +
       '</div>' +
       // Expenses panel
       '<div class="erp-rpt-panel" style="background:#fff;border:1px solid #e5e7eb;border-top:3px solid #ef4444;border-radius:12px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);">' +
         '<h4 style="margin:0 0 10px;color:#ef4444;display:flex;align-items:center;gap:8px;font-size:14px;font-weight:800;"><i class="fas fa-arrow-down"></i> المصروفات <span style="margin-inline-start:auto;font-size:13px;color:#b91c1c;">'+fmt(s.totalExpense)+'</span></h4>' +
         '<table class="erp-table" style="font-size:12.5px;"><thead><tr><th>الحساب</th><th class="num" style="text-align:start;">المبلغ</th></tr></thead><tbody>' +
-        (exp.length ? exp.map(function(a){
-          return '<tr><td><code style="color:#94a3b8;">'+(a.code||'')+'</code> '+(a.nameAr||a.dimensionName||'')+'</td><td style="color:#ef4444;font-weight:700;text-align:start;">'+fmt(a.amount)+'</td></tr>';
-        }).join('') : '<tr><td colspan="2" class="empty-msg">لا توجد مصروفات</td></tr>') +
+        (exp.length ? exp.map(function(a){ return renderPlRow(a, '-'); }).join('') : '<tr><td colspan="2" class="empty-msg">لا توجد مصروفات</td></tr>') +
         '</tbody></table>' +
       '</div>' +
     '</div>' +
@@ -11176,11 +11188,20 @@ function erpLoadBalanceSheet() {
   document.getElementById('bsDetails').innerHTML = '<div class="empty-msg" style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
   _bsInjectStyles();
 
+  // v5.10.4 — read the show-zero toggle (added to the BS filter card).
+  // Default OFF, so users only see accounts with movement.
+  var showZero = !!(document.getElementById('bsShowZero')||{}).checked;
+  window._bsShowZero = showZero;  // _bsBigSection reads this to keep zero rows
   var qs = 'asOfDate=' + encodeURIComponent(asOf);
-  if (brand)  qs += '&brandId='  + encodeURIComponent(brand);
-  if (branch) qs += '&branchId=' + encodeURIComponent(branch);
+  if (brand)    qs += '&brandId='  + encodeURIComponent(brand);
+  if (branch)   qs += '&branchId=' + encodeURIComponent(branch);
+  if (showZero) qs += '&showZero=1';
 
-  _erpGet('/erp/reports/balance-sheet?' + qs, function(r) {
+  // v5.10.4 — call /reports/balance-sheet-ifrs (the IAS 1 endpoint). The
+  // legacy /reports/balance-sheet path lives in routes/erp-core.js and is
+  // still used by the reports hub + ratios + equity-changes, but it returns
+  // the older flat shape that this UI can't read.
+  _erpGet('/erp/reports/balance-sheet-ifrs?' + qs, function(r) {
     if (!r || r.error) { showToast((r && r.error) || 'تعذّر تحميل التقرير', true); return; }
     var fmt = _bsFmt;
     var totalAssets = Number(r.totalAssets || 0);
@@ -11275,20 +11296,29 @@ function _bsMetric(label, val, accent, icon) {
 
 // V5.10.2 — Render one of the three big BS sections (Assets / Liabilities / Equity)
 // composed of one or more sub-classifications (current vs non-current).
+// v5.10.4 — when window._bsShowZero is true, zero-balance accounts are kept
+// in the listing (rendered muted) so the IFRS chart-of-accounts is visible
+// in full to auditors.
 function _bsBigSection(title, color, icon, classifications, grandTotal, asOf) {
   var fmt = _bsFmt;
+  var showZero = !!window._bsShowZero;
   var classHtml = (classifications || []).map(function(cls) {
     var subs = cls.subs || {};
     var classTotal = 0;
     var subHtml = Object.keys(subs).map(function(k) {
       var sub = subs[k];
       classTotal += Number(sub.total || 0);
-      var rows = (sub.accounts || []).filter(function(a){ return Math.abs(a.balance)>0.001; });
+      var rows = showZero
+        ? (sub.accounts || [])
+        : (sub.accounts || []).filter(function(a){ return Math.abs(a.balance)>0.001; });
       var rowsHtml = rows.length
         ? rows.map(function(a) {
-            var balCls = a.balance < 0 ? 'neg' : '';
+            var bal = Number(a.balance || 0);
+            var isZero = Math.abs(bal) < 0.001;
+            var balCls = bal < 0 ? 'neg' : (isZero ? 'zero' : '');
+            var rowCls = 'bs-acc-row' + (a.id && !a.isComputed ? ' clickable' : '') + (isZero ? ' is-zero' : '');
             var clickAttr = a.id && !a.isComputed ? ' onclick="bsOpenAccountDrill(\'' + _bsEsc(a.id) + '\',\'' + _bsEsc((a.nameAr||'').replace(/'/g, "\\'")) + '\',\'' + _bsEsc(asOf) + '\')"' : '';
-            return '<div class="bs-acc-row' + (a.id && !a.isComputed ? ' clickable' : '') + '"' + clickAttr + '>' +
+            return '<div class="' + rowCls + '"' + clickAttr + '>' +
               '<span class="bs-acc-name">' + (a.code ? '<code>' + _bsEsc(a.code) + '</code> ' : '') + _bsEsc(a.nameAr || '') + '</span>' +
               '<span class="bs-acc-bal ' + balCls + '">' + fmt(a.balance) + '</span>' +
             '</div>';
@@ -11358,6 +11388,10 @@ function _bsInjectStyles() {
     '.bs-acc-name code{background:#f1f5f9;padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#475569;margin-inline-end:4px;}' +
     '.bs-acc-bal{font-family:ui-monospace,Menlo,monospace;font-weight:700;color:#0f172a;}' +
     '.bs-acc-bal.neg{color:#dc2626;}' +
+    '.bs-acc-bal.zero{color:#cbd5e1;font-weight:600;}' +
+    '.bs-acc-row.is-zero{background:#fafafa;}' +
+    '.bs-acc-row.is-zero .bs-acc-name{color:#94a3b8;}' +
+    '.bs-acc-row.is-zero code{background:#e2e8f0;color:#94a3b8;}' +
     '.bs-equation{margin-top:18px;padding:16px 20px;border-radius:14px;border:2px solid;}' +
     '.bs-equation.ok{background:#f0fdf4;border-color:#bbf7d0;}' +
     '.bs-equation.bad{background:#fef2f2;border-color:#fecaca;}' +
@@ -11631,12 +11665,17 @@ function erpLoadCashFlow() {
   var to   = document.getElementById('cfTo').value;
   var brandId  = (document.getElementById('cfBrand')||{}).value || '';
   var branchId = (document.getElementById('cfBranch')||{}).value || '';
+  // v5.10.4 — read the show-zero toggle (added to the CF filter card).
+  var showZero = !!(document.getElementById('cfShowZero')||{}).checked;
   var qs = 'from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
   if (brandId)  qs += '&brandId='  + encodeURIComponent(brandId);
   if (branchId) qs += '&branchId=' + encodeURIComponent(branchId);
+  if (showZero) qs += '&showZero=1';
   document.getElementById('cfDetails').innerHTML = '<div class="empty-msg" style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
 
-  _erpGet('/erp/reports/cash-flow?' + qs, function(r) {
+  // v5.10.4 — call /reports/cash-flow-ias7. The legacy /reports/cash-flow
+  // path in routes/erp-core.js is the older direct-method shape.
+  _erpGet('/erp/reports/cash-flow-ias7?' + qs, function(r) {
     if (!r || r.error) { showToast((r && r.error) || 'تعذّر تحميل التقرير', true); return; }
     var fmt = function(v){
       var n = Number(v||0);
@@ -11669,15 +11708,19 @@ function erpLoadCashFlow() {
          r.isReconciled ? '✓ متطابق' : ('فرق: ' + fmt(r.reconciliationDiff)));
 
     // Section renderer — pre-formatted lines + bold subtotals
+    // v5.10.4 — zero-amount lines are rendered muted (never hidden) so the user
+    // sees that the IFRS line item exists but had no movement in the period.
     function renderSection(title, color, icon, sec) {
       var lines = (sec.lines || []).map(function(l) {
         var amount = Number(l.amount || 0);
-        var amtClass = amount >= 0 ? 'pos' : 'neg';
-        var amtColor = amount >= 0 ? '#16a34a' : '#dc2626';
-        var lblStyle = l.kind === 'subtotal' ? 'font-weight:800;color:#0f172a;font-size:13px;' : 'color:#475569;';
+        var isZero = Math.abs(amount) < 0.005;
+        var amtColor = isZero ? '#cbd5e1' : (amount >= 0 ? '#16a34a' : '#dc2626');
+        var lblStyle = l.kind === 'subtotal' ? 'font-weight:800;color:#0f172a;font-size:13px;' : (isZero ? 'color:#94a3b8;' : 'color:#475569;');
+        var rowStyle = isZero ? 'background:#fafafa;' : '';
         var paren = amount < 0 ? '(' + Math.abs(amount).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}) + ')' : amount.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
-        return '<tr><td style="'+lblStyle+'">' + (l.code ? '<code style="background:#f8fafc;padding:1px 6px;border-radius:4px;font-size:10px;color:'+color+';margin-inline-end:6px;">'+l.code+'</code>' : '') + (l.label||'') + '</td>' +
-               '<td class="num strong" style="color:'+amtColor+';font-family:ui-monospace,Menlo,monospace;">'+paren+'</td></tr>';
+        var zeroBadge = isZero ? ' <span style="font-size:10px;background:#e2e8f0;color:#64748b;padding:1px 6px;border-radius:6px;margin-inline-start:4px;">صفر</span>' : '';
+        return '<tr style="'+rowStyle+'"><td style="'+lblStyle+'">' + (l.code ? '<code style="background:#f8fafc;padding:1px 6px;border-radius:4px;font-size:10px;color:'+color+';margin-inline-end:6px;">'+l.code+'</code>' : '') + (l.label||'') + zeroBadge + '</td>' +
+               '<td class="num strong" style="color:'+amtColor+';font-family:ui-monospace,Menlo,monospace;'+(isZero?'font-weight:600;':'')+'">'+paren+'</td></tr>';
       }).join('');
       var totalAmt = Number(sec.total || 0);
       var totalParen = totalAmt < 0 ? '(' + Math.abs(totalAmt).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}) + ')' : totalAmt.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});

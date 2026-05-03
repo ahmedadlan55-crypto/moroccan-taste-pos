@@ -1594,7 +1594,9 @@ router.get('/reports/trial-balance', async (req, res) => {
  */
 router.get('/reports/pnl', async (req, res) => {
   try {
-    const { from, to, branch, brand, costCenter, groupBy } = req.query;
+    // v5.10.4 — added showZero ('1' to include accounts with no movement)
+    const { from, to, branch, brand, costCenter, groupBy, showZero } = req.query;
+    const includeZero = showZero === '1' || showZero === 'true';
     const dim = await _dimCols();
 
     const where = [`(a.type = 'revenue' OR a.type = 'expense')`];
@@ -1653,15 +1655,35 @@ router.get('/reports/pnl', async (req, res) => {
       };
     });
 
-    const totalRevenue = mapped.filter(r => r.type === 'revenue').reduce((s, r) => s + r.amount, 0);
-    const totalExpense = mapped.filter(r => r.type === 'expense').reduce((s, r) => s + r.amount, 0);
+    // v5.10.4 — when showZero is on (and grouping by account), pull in
+    // every revenue/expense account in the COA — even ones with no entries
+    // — so the auditor can verify the chart of accounts is comprehensive.
+    let finalRows = mapped;
+    if (includeZero && (!groupBy || groupBy === 'account')) {
+      const seen = new Set(mapped.map(r => r.accountId));
+      const [allAcc] = await db.query(
+        `SELECT id, code, name_ar, type FROM gl_accounts
+         WHERE is_active = 1 AND type IN ('revenue','expense') ORDER BY code`
+      );
+      const stubs = allAcc
+        .filter(a => !seen.has(a.id))
+        .map(a => ({
+          accountId: a.id, code: a.code || '', nameAr: a.name_ar || '',
+          dimensionValue: null, dimensionName: '',
+          type: a.type, amount: 0, totalDebit: 0, totalCredit: 0
+        }));
+      finalRows = mapped.concat(stubs);
+    }
+
+    const totalRevenue = finalRows.filter(r => r.type === 'revenue').reduce((s, r) => s + r.amount, 0);
+    const totalExpense = finalRows.filter(r => r.type === 'expense').reduce((s, r) => s + r.amount, 0);
     const netProfit = totalRevenue - totalExpense;
 
     res.json({
       success: true,
-      filters: { from: from || null, to: to || null, branch: branch || null, brand: brand || null, costCenter: costCenter || null, groupBy: groupBy || 'account' },
-      revenue: mapped.filter(r => r.type === 'revenue'),
-      expenses: mapped.filter(r => r.type === 'expense'),
+      filters: { from: from || null, to: to || null, branch: branch || null, brand: brand || null, costCenter: costCenter || null, groupBy: groupBy || 'account', showZero: includeZero },
+      revenue: finalRows.filter(r => r.type === 'revenue'),
+      expenses: finalRows.filter(r => r.type === 'expense'),
       summary: {
         totalRevenue: Math.round(totalRevenue * 100) / 100,
         totalExpense: Math.round(totalExpense * 100) / 100,

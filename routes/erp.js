@@ -1487,15 +1487,36 @@ router.get('/reports/income', async (req, res) => {
 });
 
 // Balance Sheet — IFRS / IAS 1 (الميزانية العمومية)
-router.get('/reports/balance-sheet', async (req, res) => {
+//
+// V5.10.4 — moved to /reports/balance-sheet-ifrs to escape the legacy
+// /reports/balance-sheet handler in routes/erp-core.js (which mounts FIRST
+// and was shadowing this endpoint, returning the old V3 shape that the
+// v5.10.2 IFRS UI couldn't read).
+//
+// Filters:
+//   asOfDate    — cutoff date (default: today)
+//   brandId     — restrict to entries tagged with brand (when column exists)
+//   branchId    — restrict to entries tagged with branch (when column exists)
+//   showZero    — '1' to include zero-balance accounts (default: only non-zero)
+router.get('/reports/balance-sheet-ifrs', async (req, res) => {
   try {
-    const { asOfDate } = req.query;
+    const { asOfDate, brandId, branchId, showZero } = req.query;
+    const includeZero = showZero === '1' || showZero === 'true';
     const [accounts] = await db.query("SELECT * FROM gl_accounts WHERE is_active = 1 ORDER BY code");
+
+    // Detect dimension columns once so the brand/branch filters degrade
+    // gracefully when the columns haven't been added to gl_entries yet.
+    const [dimCols] = await db.query("SHOW COLUMNS FROM gl_entries LIKE 'brand_id'");
+    const hasBrandId = dimCols.length > 0;
+    const [dimCols2] = await db.query("SHOW COLUMNS FROM gl_entries LIKE 'branch_id'");
+    const hasBranchId = dimCols2.length > 0;
 
     // Get balances from gl_entries up to asOfDate
     let where = "j.status = 'posted'";
     const params = [];
     if (asOfDate) { where += ' AND DATE(j.journal_date) <= ?'; params.push(asOfDate); }
+    if (brandId  && hasBrandId)  { where += ' AND (e.brand_id IS NULL OR e.brand_id = ?)';   params.push(brandId); }
+    if (branchId && hasBranchId) { where += ' AND (e.branch_id IS NULL OR e.branch_id = ?)'; params.push(branchId); }
     const [entries] = await db.query(
       `SELECT e.account_id, SUM(e.debit) AS d, SUM(e.credit) AS c
        FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
@@ -1575,7 +1596,9 @@ router.get('/reports/balance-sheet', async (req, res) => {
     accounts.forEach(a => {
       const entry = balMap[a.id] || { debit: 0, credit: 0 };
       const net = entry.debit - entry.credit; // debit-normal
-      if (net === 0) return;
+      // v5.10.4 — when showZero is on, include accounts with no balance so
+      // the user can see the entire chart of accounts under each IFRS bucket.
+      if (net === 0 && !includeZero) return;
 
       const flatItem = { id: a.id, code: a.code, name: a.name_ar, balance: 0, level: a.level };
 
@@ -1654,10 +1677,16 @@ router.get('/reports/balance-sheet', async (req, res) => {
 // books are clean.
 //
 // All numbers are pulled from gl_entries joined to posted gl_journals.
-// Filters: from/to dates, brandId (entries.brand_id if set), branchId.
-router.get('/reports/cash-flow', async (req, res) => {
+// Filters: from/to dates, brandId (entries.brand_id if set), branchId,
+// showZero (when '1', keeps zero-amount line items in each section).
+//
+// V5.10.4 — moved to /reports/cash-flow-ias7 because routes/erp-core.js
+// also has a /reports/cash-flow handler (direct method, V3 shape) and the
+// frontend v5.10.1 IAS 7 indirect-method UI was being shadowed.
+router.get('/reports/cash-flow-ias7', async (req, res) => {
   try {
-    const { from, to, brandId, branchId } = req.query;
+    const { from, to, brandId, branchId, showZero } = req.query;
+    const includeZero = showZero === '1' || showZero === 'true';
     if (!from || !to) return res.json({ error: 'from + to required' });
 
     // Build a parameterised entry query that we'll reuse twice — once for
@@ -1764,7 +1793,7 @@ router.get('/reports/cash-flow', async (req, res) => {
         // Flip sign so positive = "liability went up".
         deltaByCat[cat] += -delta;
       }
-      if (Math.abs(delta) > 0.01) {
+      if (includeZero || Math.abs(delta) > 0.01) {
         lineItemsByCat[cat].push({
           code: b.code, name: b.nameAr, opening: b.opening, closing: b.closing, delta: delta
         });
@@ -1788,15 +1817,18 @@ router.get('/reports/cash-flow', async (req, res) => {
     if (depreciationDelta > 0.01) {
       operating.push({ label: 'إضافة: استهلاك الأصول الثابتة (Non-cash)', amount: depreciationDelta });
     }
-    if (Math.abs(deltaByCat.receivables||0) > 0.01)
+    // v5.10.4 — when showZero is on, push every standard working-capital
+    // line so the user sees the full set even if no movement happened.
+    const _zoThr = includeZero ? -1 : 0.01;
+    if (includeZero || Math.abs(deltaByCat.receivables||0) > _zoThr)
       operating.push({ label: 'الزيادة/(النقص) في الذمم المدينة', amount: -(deltaByCat.receivables||0) });
-    if (Math.abs(deltaByCat.inventory||0) > 0.01)
+    if (includeZero || Math.abs(deltaByCat.inventory||0) > _zoThr)
       operating.push({ label: 'الزيادة/(النقص) في المخزون', amount: -(deltaByCat.inventory||0) });
-    if (Math.abs(deltaByCat.otherCurrentAssets||0) > 0.01)
+    if (includeZero || Math.abs(deltaByCat.otherCurrentAssets||0) > _zoThr)
       operating.push({ label: 'الزيادة/(النقص) في الأصول المتداولة الأخرى', amount: -(deltaByCat.otherCurrentAssets||0) });
-    if (Math.abs(deltaByCat.payables||0) > 0.01)
+    if (includeZero || Math.abs(deltaByCat.payables||0) > _zoThr)
       operating.push({ label: 'الزيادة/(النقص) في الذمم الدائنة', amount: (deltaByCat.payables||0) });
-    if (Math.abs(deltaByCat.otherCurrentLiabilities||0) > 0.01)
+    if (includeZero || Math.abs(deltaByCat.otherCurrentLiabilities||0) > _zoThr)
       operating.push({ label: 'الزيادة/(النقص) في الالتزامات المتداولة الأخرى', amount: (deltaByCat.otherCurrentLiabilities||0) });
     const operatingTotal = operating.reduce((s, l) => s + (l.amount||0), 0);
 

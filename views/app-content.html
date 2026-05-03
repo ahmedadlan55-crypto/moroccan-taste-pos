@@ -149,6 +149,8 @@
           <div class="nav-item" data-erp-nav="erpRptSalesByChannel" onclick="erpNav('erpRptSalesByChannel')"><i class="fas fa-store"></i><span data-i18n="nav.salesByChannel">المبيعات حسب القناة</span></div>
           <div class="nav-item" data-erp-nav="erpRptDiscountsGiven" onclick="erpNav('erpRptDiscountsGiven')"><i class="fas fa-percent"></i><span data-i18n="nav.discountsGiven">الخصومات الممنوحة</span></div>
           <div class="nav-item" data-erp-nav="erpRptInventoryVal" onclick="erpNav('erpRptInventoryVal')"><i class="fas fa-warehouse"></i><span data-i18n="nav.invValuation">تقييم المخزون</span></div>
+          <!-- v5.10.6 — Warehouse ledger by date -->
+          <div class="nav-item" data-erp-nav="erpRptWarehouseLedger" onclick="erpNav('erpRptWarehouseLedger')"><i class="fas fa-book-bookmark"></i><span data-i18n="nav.warehouseLedger">دفتر أستاذ المستودع</span></div>
           <div class="nav-item" data-erp-nav="erpRptWasteAnalytics" onclick="erpNav('erpRptWasteAnalytics')"><i class="fas fa-trash-alt"></i><span data-i18n="nav.wasteAnalytics">تحليل الهدر</span></div>
 
           <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.recoLedger">التسويات ودفتر الأستاذ</div>
@@ -4299,6 +4301,44 @@
   <div class="erp-table-container"><table class="erp-table"><thead><tr><th>الصنف</th><th>المستودع</th><th>الكمية</th><th>متوسط التكلفة</th><th>القيمة</th></tr></thead><tbody id="ivBody"><tr><td colspan="5" class="empty-msg">اضغط عرض</td></tr></tbody></table></div>
 </div>
 
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- v5.10.6 — Warehouse Ledger by Date (دفتر أستاذ المستودع)            -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<div id="erpRptWarehouseLedger" class="dash-section hidden">
+  <div class="tb-top">
+    <h2 class="tb-title"><i class="fas fa-book-bookmark"></i> دفتر أستاذ المستودع <span class="fa-badge-ifrs">حركة بالتاريخ</span></h2>
+    <div class="tb-actions">
+      <button class="tb-btn" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>
+      <button class="tb-btn" onclick="erpExportWarehouseLedger()"><i class="fas fa-file-excel"></i> Excel</button>
+    </div>
+  </div>
+  <div class="tb-filters-card">
+    <div class="tb-filter-grid">
+      <div class="tb-field"><label>المستودع *</label><select id="wlWarehouse" class="form-control"><option value="">— اختر —</option></select></div>
+      <div class="tb-field"><label>الفترة من / إلى</label>
+        <div class="tb-date-range">
+          <input type="date" id="wlFrom"><span class="tb-sep">→</span><input type="date" id="wlTo">
+        </div>
+      </div>
+      <div class="tb-field"><label>صنف معين (اختياري)</label><input type="text" id="wlItem" placeholder="اختياري — كود الصنف" class="form-control"></div>
+    </div>
+    <div class="tb-filter-actions">
+      <button class="tb-btn tb-btn-success" onclick="erpLoadWarehouseLedger()"><i class="fas fa-search"></i> عرض الحركة</button>
+    </div>
+  </div>
+
+  <div id="wlBranded" class="tb-brand-banner" style="display:none;">
+    <div class="tb-brand-left"><div class="tb-brand-logo" style="background:linear-gradient(135deg,#f59e0b,#d97706);"><i class="fas fa-book-bookmark"></i></div></div>
+    <div class="tb-brand-center">
+      <h3>دفتر أستاذ المستودع</h3>
+      <div class="tb-brand-sub">المستودع: <span id="wlBnWh">—</span> · من <span id="wlBnFrom">—</span> إلى <span id="wlBnTo">—</span></div>
+    </div>
+  </div>
+
+  <div id="wlKpis" class="fa-kpis" style="display:none;"></div>
+  <div id="wlBody"></div>
+</div>
+
 <!-- Sales Analytics -->
 <div id="erpRptSalesAnalytics" class="dash-section hidden">
   <div class="section-header"><h2 class="section-title"><i class="fas fa-chart-bar"></i> تحليل المبيعات</h2></div>
@@ -5106,11 +5146,24 @@
     </div>
   </div>
 
-  <!-- Raw Material Modal (INV_Items) -->
+  <!-- Raw Material Modal (INV_Items) — v5.10.6: warehouse-aware + dual-unit qty -->
   <div class="modal" id="modalRawForm">
     <div class="modal-content modal-large">
       <div class="modal-title"><span id="rMdlTitle">إضافة مادة خام جديدة للمستودع</span><button class="modal-close" onclick="closeModal('#modalRawForm')">&times;</button></div>
       <input type="hidden" id="mrId">
+      <input type="hidden" id="mrWarehouseId">
+
+      <!-- v5.10.6 — Warehouse banner (shows which warehouse we're adding to) -->
+      <div id="mrWarehouseBanner" class="form-group" style="background:linear-gradient(135deg,#ecfeff,#cffafe);padding:12px 14px;border-radius:10px;border:1.5px solid #67e8f9;margin-bottom:12px;display:none;">
+        <label class="form-label" style="color:#0e7490;font-weight:800;"><i class="fas fa-warehouse"></i> المستودع المستلم</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span id="mrWarehouseName" style="font-size:15px;font-weight:900;color:#155e75;"></span>
+          <span id="mrWarehouseCode" style="background:#fff;padding:2px 10px;border-radius:8px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#0e7490;border:1px solid #cffafe;"></span>
+        </div>
+        <small style="color:#155e75;font-size:11px;margin-top:4px;display:block;">
+          <i class="fas fa-info-circle"></i> ستُسجّل المادة في هذا المستودع فقط، ولن تظهر في باقي المستودعات إلا بعد تحويلها صراحة.
+        </small>
+      </div>
 
       <!-- Brand selector (full-width row) -->
       <div class="form-group" style="background:linear-gradient(135deg,#faf5ff,#f3e8ff);padding:12px 14px;border-radius:10px;border:1.5px solid #d8b4fe;margin-bottom:12px;">
@@ -5140,9 +5193,39 @@
           <label class="form-label" style="color:#16a34a; font-weight:800;">سعر الوحدة الصغرى (SAR)</label>
           <input type="number" step="0.0001" id="mrSmallCost" class="form-control" style="font-weight:900; color:#166534; font-size:16px;" value="0" oninput="calcBigUnitCost()">
         </div>
-        <div class="form-group"><label class="form-label">المخزون الفعلي (بالوحدة الصغرى)</label><input type="number" id="mrStock" class="form-control" value="0"></div>
         <div class="form-group"><label class="form-label">حد التنبيه (بالوحدة الصغرى)</label><input type="number" id="mrMin" class="form-control" value="0"></div>
       </div>
+
+      <!-- v5.10.6 — Quantity-to-add panel (large/small unit toggle + date) -->
+      <div id="mrQtyPanel" style="background:linear-gradient(135deg,#fefce8,#fef3c7);padding:14px;border-radius:12px;border:1.5px solid #fde68a;margin-top:14px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <i class="fas fa-box-archive" style="color:#a16207;"></i>
+          <span style="font-weight:900;color:#a16207;">الكمية المضافة الآن</span>
+          <small style="color:#92400e;margin-inline-start:auto;font-size:11px;">اختر الوحدة (كبرى أو صغرى) وحدّد تاريخ الإضافة</small>
+        </div>
+        <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr;gap:10px;align-items:end;">
+          <div class="form-group" style="margin:0;">
+            <label class="form-label">الكمية</label>
+            <input type="number" id="mrQty" class="form-control" value="0" step="0.01" oninput="_mrUpdatePreview()">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label class="form-label">الوحدة</label>
+            <select id="mrQtyUnit" class="form-control" onchange="_mrUpdatePreview()">
+              <option value="big">الوحدة الكبرى</option>
+              <option value="small" selected>الوحدة الصغرى</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label class="form-label"><i class="fas fa-calendar"></i> تاريخ الإضافة</label>
+            <input type="date" id="mrAddedAt" class="form-control">
+          </div>
+          <div style="background:#fff;border:1.5px dashed #fbbf24;border-radius:10px;padding:10px;text-align:center;">
+            <div style="font-size:10.5px;color:#a16207;font-weight:700;">المخزون الفعلي (بالوحدة الصغرى)</div>
+            <div id="mrQtyPreview" style="font-size:18px;font-weight:900;color:#92400e;font-family:ui-monospace,Menlo,monospace;">0.00</div>
+          </div>
+        </div>
+      </div>
+
       <div style="display:flex; gap:10px; margin-top:25px;">
         <button class="btn btn-primary" style="flex:1;" onclick="saveRawItem()"><i class="fas fa-save"></i> حفظ مادة المستودع</button>
         <button class="btn btn-light" onclick="closeModal('#modalRawForm')">إلغاء الأمر</button>
@@ -5532,11 +5615,16 @@
           <div id="stPickerHost"></div>
         </div>
 
-        <!-- Notes + warehouse selector -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <!-- Notes + warehouse + date (v5.10.6 — backdated counts for opening balance) -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
           <div class="wo-label-stack">
             <label class="wo-field-label"><i class="fas fa-warehouse"></i> المستودع</label>
             <select id="stWarehouse" class="wo-select"><option value="">— المستودع الرئيسي —</option></select>
+          </div>
+          <div class="wo-label-stack">
+            <label class="wo-field-label" style="color:#0e7490;font-weight:800;"><i class="fas fa-calendar-day"></i> تاريخ الجرد</label>
+            <input type="date" id="stCountDate" class="wo-input" style="border:1.5px solid #67e8f9;background:#ecfeff;">
+            <small style="color:#155e75;font-size:10.5px;">يمكن تعديله لتسجيل جرد افتتاحي بتاريخ تاريخي.</small>
           </div>
           <div class="wo-label-stack">
             <label class="wo-field-label"><i class="fas fa-note-sticky"></i> ملاحظة الجرد</label>

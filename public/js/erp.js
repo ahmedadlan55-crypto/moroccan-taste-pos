@@ -49,7 +49,7 @@ const erpSections = [
   // Reports
   'erpRptHub',
   'erpRptTrialBalance','erpRptPnL','erpRptBalanceSheet','erpRptCashFlow','erpRptProfitability',
-  'erpRptInventoryVal','erpRptSalesAnalytics','erpRptWasteAnalytics','erpRptRoyaltyRecon',
+  'erpRptInventoryVal','erpRptWarehouseLedger','erpRptSalesAnalytics','erpRptWasteAnalytics','erpRptRoyaltyRecon',
   'erpRptEquityChanges','erpRptFinRatios','erpRptBankRecon',
   'erpGLLedgerReport',
   // v5.10.5 — Fixed Assets registry
@@ -168,6 +168,7 @@ function erpNav(sectionId) {
       case 'erpRptCashFlow':       erpLoadCashFlow(); break;
       case 'erpRptProfitability':  erpLoadProfitability(); break;
       case 'erpRptInventoryVal':   erpLoadRptInventoryVal(); break;
+      case 'erpRptWarehouseLedger': if (typeof erpLoadWarehouseLedger === 'function') erpLoadWarehouseLedger(); break;
       case 'erpRptSalesAnalytics': erpLoadSalesAnalytics(); break;
       case 'erpRptSalesByChannel': if (typeof erpLoadSalesByChannel === 'function') erpLoadSalesByChannel(); break;
       case 'erpRptDiscountsGiven': if (typeof erpLoadDiscountsGiven === 'function') erpLoadDiscountsGiven(); break;
@@ -12714,6 +12715,161 @@ function erpLoadRptInventoryVal() {
   });
 }
 window.erpLoadRptInventoryVal = erpLoadRptInventoryVal;
+
+// ═══════════════════════════════════════════════════════════════════════
+// v5.10.6 — Warehouse Ledger by Date (دفتر أستاذ المستودع)
+//
+// Lets the user pick a warehouse + date range and see, per item:
+//   opening balance · in · out · closing · full movement timeline.
+// Backed by GET /api/inventory/warehouse-ledger.
+// ═══════════════════════════════════════════════════════════════════════
+
+window._wlSnapshot = null;
+
+window.erpLoadWarehouseLedger = function() {
+  var sel = document.getElementById('wlWarehouse');
+  if (sel && sel.options.length <= 1) {
+    // Hydrate the warehouse dropdown once
+    var token = localStorage.getItem('pos_token') || '';
+    fetch('/api/inventory/warehouses-by-brand', { headers: { 'Authorization': 'Bearer ' + token } })
+      .then(function(r){return r.json();}).then(function(list) {
+        if (!Array.isArray(list)) return;
+        sel.innerHTML = '<option value="">— اختر —</option>' +
+          list.map(function(w){
+            return '<option value="' + (w.id||'') + '">' + (w.name||'') + (w.code?' ('+w.code+')':'') + '</option>';
+          }).join('');
+      }).catch(function(){});
+  }
+  // Default dates: this year
+  if (!document.getElementById('wlFrom').value)
+    document.getElementById('wlFrom').value = new Date(new Date().getFullYear(),0,1).toISOString().slice(0,10);
+  if (!document.getElementById('wlTo').value)
+    document.getElementById('wlTo').value   = new Date().toISOString().slice(0,10);
+
+  var whId = sel.value;
+  if (!whId) {
+    document.getElementById('wlBody').innerHTML =
+      '<div class="empty-msg" style="padding:40px;text-align:center;color:#94a3b8;"><i class="fas fa-arrow-up"></i><br>اختر مستودعاً لعرض حركته</div>';
+    return;
+  }
+  var from = document.getElementById('wlFrom').value;
+  var to   = document.getElementById('wlTo').value;
+  var item = (document.getElementById('wlItem')||{}).value || '';
+
+  document.getElementById('wlBody').innerHTML =
+    '<div class="empty-msg" style="padding:30px;text-align:center;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+
+  var qs = 'warehouseId=' + encodeURIComponent(whId) + '&from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
+  if (item) qs += '&itemId=' + encodeURIComponent(item);
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/inventory/warehouse-ledger?' + qs, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){return r.json();}).then(function(j) {
+      if (!j.success) {
+        document.getElementById('wlBody').innerHTML =
+          '<div class="empty-msg" style="color:#ef4444;padding:20px;text-align:center;">' + (j.error||'خطأ') + '</div>';
+        return;
+      }
+      window._wlSnapshot = j;
+      _wlRender(j);
+    }).catch(function(e) {
+      document.getElementById('wlBody').innerHTML = '<div class="empty-msg" style="color:#ef4444;">' + (e.message||e) + '</div>';
+    });
+};
+
+function _wlRender(j) {
+  var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+
+  // Banner
+  document.getElementById('wlBranded').style.display = 'flex';
+  document.getElementById('wlBnWh').textContent = (j.warehouse && j.warehouse.name) || '—';
+  document.getElementById('wlBnFrom').textContent = j.from || '—';
+  document.getElementById('wlBnTo').textContent   = j.to   || '—';
+
+  // KPIs
+  var totalIn = 0, totalOut = 0, totalOpen = 0, totalClose = 0, distinctItems = (j.items||[]).length;
+  (j.items||[]).forEach(function(it) {
+    totalIn += it.in || 0; totalOut += it.out || 0;
+    totalOpen += it.opening || 0; totalClose += it.closing || 0;
+  });
+  var kpis = document.getElementById('wlKpis');
+  kpis.style.display = 'grid';
+  kpis.innerHTML =
+    '<div class="fa-kpi"><div class="fa-kpi-label">عدد الأصناف</div><div class="fa-kpi-value" style="color:#7c3aed;">' + distinctItems + '</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">رصيد افتتاحي إجمالي</div><div class="fa-kpi-value">' + fmt(totalOpen) + '</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الوارد</div><div class="fa-kpi-value" style="color:#16a34a;">+' + fmt(totalIn) + '</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الصادر</div><div class="fa-kpi-value" style="color:#ef4444;">−' + fmt(totalOut) + '</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">رصيد ختامي إجمالي</div><div class="fa-kpi-value" style="color:#0ea5e9;">' + fmt(totalClose) + '</div></div>';
+
+  // Table — one master row per item, expandable to show movement lines
+  var rows = (j.items||[]).map(function(it, idx) {
+    var linesHtml = (it.lines||[]).map(function(l) {
+      var d = l.date ? new Date(l.date).toLocaleDateString('en-GB') : '—';
+      var sign = l.type === 'in' ? '+' : '−';
+      var clr  = l.type === 'in' ? '#16a34a' : '#ef4444';
+      return '<tr style="background:#fafafa;font-size:11.5px;color:#475569;">' +
+        '<td colspan="3" style="padding-inline-start:30px;">' + d + ' · ' + esc(l.reason||'') + (l.notes?' · <small>'+esc(l.notes)+'</small>':'') + '</td>' +
+        '<td class="num" style="color:'+clr+';font-weight:700;">' + sign + fmt(l.qty) + '</td>' +
+        '<td colspan="2" class="num" style="color:#64748b;">' + esc(l.user||'') + '</td>' +
+      '</tr>';
+    }).join('');
+    var firstAdded = it.firstAddedDate ? new Date(it.firstAddedDate).toLocaleDateString('en-GB') : '—';
+    return '<tr class="wl-master" data-idx="'+idx+'" onclick="_wlToggleLines('+idx+')" style="cursor:pointer;">' +
+      '<td><i class="fas fa-chevron-left wl-chev" id="wlChev'+idx+'" style="margin-inline-end:6px;color:#94a3b8;font-size:10px;"></i><b>' + esc(it.name) + '</b><br><small style="color:#64748b;">أول إضافة: ' + firstAdded + '</small></td>' +
+      '<td class="num">' + fmt(it.opening) + ' <small>' + esc(it.unit||'') + '</small></td>' +
+      '<td class="num" style="color:#16a34a;">+' + fmt(it.in) + '</td>' +
+      '<td class="num" style="color:#ef4444;">−' + fmt(it.out) + '</td>' +
+      '<td class="num"><b>' + fmt(it.closing) + '</b></td>' +
+      '<td class="num">' + fmt((it.closing||0) * (it.cost||0)) + ' ر.س</td>' +
+    '</tr>' +
+    '<tr class="wl-lines wl-lines-' + idx + '" style="display:none;"><td colspan="6" style="padding:0;background:#fafafa;"><table class="erp-table" style="margin:0;font-size:11.5px;"><tbody>' + linesHtml + '</tbody></table></td></tr>';
+  }).join('');
+  document.getElementById('wlBody').innerHTML =
+    '<div class="erp-table-container" style="margin-top:12px;">' +
+      '<table class="erp-table"><thead><tr>' +
+        '<th>الصنف</th>' +
+        '<th class="num">رصيد افتتاحي</th>' +
+        '<th class="num">وارد</th>' +
+        '<th class="num">صادر</th>' +
+        '<th class="num">رصيد ختامي</th>' +
+        '<th class="num">القيمة</th>' +
+      '</tr></thead><tbody>' +
+      (rows.length ? rows : '<tr><td colspan="6" class="empty-msg">لا حركة في هذه الفترة</td></tr>') +
+      '</tbody></table>' +
+    '</div>';
+}
+
+window._wlToggleLines = function(idx) {
+  var el = document.querySelector('.wl-lines-' + idx);
+  var chev = document.getElementById('wlChev'+idx);
+  if (!el) return;
+  var isHidden = el.style.display === 'none';
+  el.style.display = isHidden ? '' : 'none';
+  if (chev) chev.style.transform = isHidden ? 'rotate(-90deg)' : '';
+};
+
+window.erpExportWarehouseLedger = function() {
+  var snap = window._wlSnapshot;
+  if (!snap || !snap.items) return showToast('اعرض التقرير أولاً', true);
+  var headers = ['الصنف','الوحدة','أول إضافة','رصيد افتتاحي','وارد','صادر','رصيد ختامي','تكلفة الوحدة','القيمة'];
+  var csv = '﻿' + headers.join(',') + '\n';
+  snap.items.forEach(function(it) {
+    var fa = it.firstAddedDate ? new Date(it.firstAddedDate).toISOString().slice(0,10) : '';
+    csv += [
+      '"' + (it.name||'').replace(/"/g,'""') + '"',
+      it.unit||'', fa,
+      it.opening||0, it.in||0, it.out||0, it.closing||0,
+      it.cost||0,
+      ((it.closing||0)*(it.cost||0)).toFixed(2)
+    ].join(',') + '\n';
+  });
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'warehouse-ledger-' + (snap.warehouse&&snap.warehouse.code||'wh') + '-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+};
 
 // ─── Sales Analytics ───
 function erpLoadSalesAnalytics() {

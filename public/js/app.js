@@ -5861,13 +5861,63 @@ window.invItemShowWarehouses = function(itemId, itemName) {
     .catch(function() { showToast('فشل تحميل التوزيع', true); });
 };
 
-function openRawModal(id = null) {
+// v5.10.6 — `openRawModal(id, opts)` is now warehouse-aware. The caller
+// can pass `{ warehouseId, warehouseName, warehouseCode }` so the form
+// shows which warehouse is being targeted, and the save action writes
+// to that warehouse's `warehouse_stock` row instead of the global
+// inv_items.stock counter (the old behavior put stock everywhere).
+function openRawModal(id = null, opts = {}) {
   _loadBrandOptions('#mrBrand', function() {
+    // Set today as the default added_at date (user can backdate)
+    var today = new Date().toISOString().slice(0,10);
+    if (q("#mrAddedAt")) q("#mrAddedAt").value = today;
+    if (q("#mrQty")) q("#mrQty").value = "0";
+    if (q("#mrQtyUnit")) q("#mrQtyUnit").value = "small";
+
+    // Warehouse banner — visible only when a warehouse is selected upstream
+    var banner = q("#mrWarehouseBanner");
+    var whId   = opts.warehouseId || (window._wmCurrentWarehouseId || '');
+    var whName = opts.warehouseName || (window._wmCurrentWarehouseName || '');
+    var whCode = opts.warehouseCode || (window._wmCurrentWarehouseCode || '');
+    // v5.10.6 fallback — pick the current warehouse from the inventory hub
+    // state when not explicitly passed (covers the "+ إضافة مادة" button
+    // inside the per-warehouse view at /erpInventoryMethod hub).
+    if (!whId && window._invHub && window._invHub.warehouseId
+        && window._invHub.warehouseId !== '__all__') {
+      whId = window._invHub.warehouseId;
+      // Resolve name + code from the per-brand cache populated by
+      // _invHubLoadWarehousesData (lookup by id across all cached brands)
+      try {
+        var whCache = window._invHubWhCache || {};
+        Object.keys(whCache).forEach(function(bid) {
+          var entry = whCache[bid];
+          if (!entry || !entry.list) return;
+          var match = entry.list.find(function(w){ return w.id === whId; });
+          if (match) {
+            whName = whName || match.name || '';
+            whCode = whCode || match.code || '';
+          }
+        });
+      } catch(_) {}
+    }
+    q("#mrWarehouseId").value = whId || '';
+    if (banner) {
+      if (whId) {
+        banner.style.display = '';
+        if (q("#mrWarehouseName")) q("#mrWarehouseName").innerText = whName || '—';
+        if (q("#mrWarehouseCode")) q("#mrWarehouseCode").innerText = whCode || whId;
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
     if (!id) {
-      q("#rMdlTitle").innerText = "إضافة مادة خام جديدة للمستودع";
+      q("#rMdlTitle").innerText = whName
+        ? "إضافة مادة خام جديدة لمستودع: " + whName
+        : "إضافة مادة خام جديدة";
       q("#mrId").value = ""; q("#mrName").value = ""; q("#mrCat").value = "";
       q("#mrCost").value = "0"; q("#mrBigUnit").value = ""; q("#mrUnit").value = "حبة"; q("#mrConvRate").value = "1";
-      q("#mrStock").value = "0"; q("#mrMin").value = "0";
+      q("#mrMin").value = "0";
       if(q("#mrSmallCost")) q("#mrSmallCost").value = "0";
       if (q("#mrBrand")) q("#mrBrand").value = '';
     } else {
@@ -5875,16 +5925,25 @@ function openRawModal(id = null) {
       let d = cachedRawItems.find(x => x.id === id);
       if (!d) return;
       q("#mrId").value = d.id; q("#mrName").value = d.name; q("#mrCat").value = d.category;
-      // inv_items.cost is per small unit. The form #mrCost shows per BIG unit.
       var cRate = Number(d.convRate) || 1;
       q("#mrCost").value = (cRate > 1 ? d.cost * cRate : d.cost).toFixed(2);
       q("#mrBigUnit").value = d.bigUnit || ""; q("#mrUnit").value = d.unit || "حبة"; q("#mrConvRate").value = d.convRate || 1;
-      q("#mrStock").value = d.stock; q("#mrMin").value = d.minStock;
+      q("#mrMin").value = d.minStock;
       if (q("#mrBrand")) q("#mrBrand").value = d.brandId || d.brand_id || '';
     }
     calcSmallUnitCost();
+    _mrUpdatePreview();
     openModal("#modalRawForm");
   });
+}
+
+// v5.10.6 — preview the small-unit qty given the big/small toggle
+function _mrUpdatePreview() {
+  var qty   = Number((q("#mrQty")||{}).value) || 0;
+  var unit  = ((q("#mrQtyUnit")||{}).value) || 'small';
+  var cRate = Number((q("#mrConvRate")||{}).value) || 1;
+  var smallQty = (unit === 'big') ? qty * cRate : qty;
+  if (q("#mrQtyPreview")) q("#mrQtyPreview").innerText = smallQty.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
 }
 
 function saveRawItem() {
@@ -5892,15 +5951,54 @@ function saveRawItem() {
   var bigCostInput = Number(q("#mrCost").value) || 0;
   var cRateInput = Number(q("#mrConvRate").value) || 1;
   var costPerSmall = cRateInput > 1 ? bigCostInput / cRateInput : bigCostInput;
+  var name = q("#mrName").value;
+  if (!name) return showToast("يرجى تعبئة اسم المادة الخام", true);
+
+  var whId = q("#mrWarehouseId").value;
+  var qtyRaw = Number(q("#mrQty").value) || 0;
+  var qtyUnit = q("#mrQtyUnit").value || 'small';
+  var addedAt = q("#mrAddedAt").value || new Date().toISOString().slice(0,10);
+
+  loader();
+  // v5.10.6 — when a warehouse is targeted, route through the new
+  // warehouse-aware endpoint so the row lands in the right
+  // warehouse_stock cell + an inventory_movements row is logged.
+  if (whId) {
+    var body = {
+      itemId: q("#mrId").value || null,
+      name: name, category: q("#mrCat").value, brandId: q("#mrBrand").value || '',
+      cost: bigCostInput, unit: q("#mrUnit").value, bigUnit: q("#mrBigUnit").value,
+      convRate: cRateInput, minStock: Number(q("#mrMin").value) || 0,
+      qty: qtyRaw, qtyUnit: qtyUnit, addedAt: addedAt,
+      username: (window.currentUser && window.currentUser.username) || ''
+    };
+    fetch('/api/inventory/warehouses/' + encodeURIComponent(whId) + '/items', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json',
+                 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') },
+      body: JSON.stringify(body)
+    }).then(function(r){return r.json();}).then(function(j) {
+      loader(false);
+      if (!j.success) return showToast(j.error || 'فشل', true);
+      closeModal('#modalRawForm');
+      showToast("تم حفظ المادة في المستودع بنجاح");
+      // refresh the warehouse view if available, else fall back to dash
+      if (typeof loadWarehouseItems === 'function' && window._wmCurrentWarehouseId) {
+        loadWarehouseItems(window._wmCurrentWarehouseId);
+      } else {
+        loadDashInvItems();
+      }
+    }).catch(function(e) { loader(false); showToast(e.message || 'فشل الحفظ', true); });
+    return;
+  }
+
+  // Fallback: old global-master save (no warehouse context)
   const d = {
-    id: q("#mrId").value, name: q("#mrName").value, category: q("#mrCat").value,
+    id: q("#mrId").value, name: name, category: q("#mrCat").value,
     brandId: (q("#mrBrand") ? q("#mrBrand").value : '') || '',
     cost: costPerSmall, bigUnit: q("#mrBigUnit").value, unit: q("#mrUnit").value, convRate: q("#mrConvRate").value,
-    stock: q("#mrStock").value, minStock: q("#mrMin").value, active: true
+    stock: 0, minStock: q("#mrMin").value, active: true
   };
-  if (!d.name) return showToast("يرجى تعبئة اسم المادة الخام", true);
-  
-  loader();
   api.withSuccessHandler(r => {
     loader(false);
     if(r.success) {
@@ -8266,6 +8364,11 @@ function _stRenderItemsPanel() {
                  }).join('')) +
                '</select>' +
              '</div>' +
+             // v5.10.6 — count date picker (defaults to today, supports backdating)
+             '<div class="st-meta-field">' +
+               '<label style="color:#0e7490;font-weight:800;"><i class="fas fa-calendar-day"></i> تاريخ الجرد</label>' +
+               '<input type="date" id="stCountDate" value="' + _invHubEsc(s.countDate || new Date().toISOString().slice(0,10)) + '" oninput="window._stSession.countDate=this.value;_stSaveDraft(false);" style="border:1.5px solid #67e8f9;background:#ecfeff;">' +
+             '</div>' +
              '<div class="st-meta-field" style="flex:2;">' +
                '<label><i class="fas fa-note-sticky"></i> ملاحظة الجرد (السبب)</label>' +
                '<input type="text" id="stNotesInput" value="' + _invHubEsc(s.notes || '') + '" placeholder="كسر، تالف، جرد دوري..." oninput="window._stSession.notes=this.value;_stSaveDraft(false);">' +
@@ -8622,6 +8725,7 @@ window._stSaveDraft = function(showFeedback) {
     items: window._stSession.items,
     notes: (q('#stNotes')||{}).value || '',
     warehouseId: (q('#stWarehouse')||{}).value || '',
+    countDate: (q('#stCountDate')||{}).value || '',  // v5.10.6
     savedAt: new Date().toISOString()
   };
   try {
@@ -8637,6 +8741,10 @@ window._stRestoreDraft = function() {
   window._stSession.items = d.items || [];
   q('#stNotes').value = d.notes || '';
   if (d.warehouseId && q('#stWarehouse')) q('#stWarehouse').value = d.warehouseId;
+  // v5.10.6 — restore custom count date if saved
+  if (q('#stCountDate')) {
+    q('#stCountDate').value = d.countDate || new Date().toISOString().slice(0,10);
+  }
   renderStItems();
   var banner = q('#stRestoreBanner');
   if (banner) banner.style.display = 'none';
@@ -8695,10 +8803,20 @@ window.stSubmitStocktake = function() {
   s.endDate = new Date();   // V5.8.4 — capture submit time for the audit report
   var notes = s.notes || '';
   var warehouseId = s.warehouseId || '';
+  // v5.10.6 — read the user-supplied count date (defaults to today via UI)
+  var countDateInput = q('#stCountDate');
+  var countDate = (countDateInput && countDateInput.value) ? countDateInput.value : null;
   // V5.8.5 — auto-suffix the notes when the count was zero-variance so
   //   the audit trail clearly shows it was a verification pass.
   if (withVariance.length === 0) {
     notes = (notes ? notes + ' · ' : '') + 'مراجعة دورية بدون فوارق';
+  }
+  // Tag backdated counts in notes so the audit trail flags them clearly.
+  if (countDate) {
+    var todayIso = new Date().toISOString().slice(0,10);
+    if (countDate !== todayIso) {
+      notes = (notes ? notes + ' · ' : '') + 'جرد بتاريخ ' + countDate;
+    }
   }
   api.withFailureHandler(function(err){
     loader(false); showToast(err.message, true);
@@ -8715,7 +8833,7 @@ window.stSubmitStocktake = function() {
     } else {
       showToast((res && res.error) || 'فشل الاعتماد', true);
     }
-  }).submitStocktake(itemsAll, state.user, notes, warehouseId);  // send ALL items (incl. matched)
+  }).submitStocktake(itemsAll, state.user, notes, warehouseId, '', countDate);
 };
 
 // V5.8.4 — Stocktake export (Print / PDF / Excel) — pro template

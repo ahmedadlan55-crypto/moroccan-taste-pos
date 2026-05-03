@@ -120,7 +120,7 @@
     saveBranch:          { method: 'POST', url: '/erp/branches' },
     getAuditLogs:        { method: 'GET',  url: '/erp/audit', query: (f) => f },
     getLiveInventory:    { method: 'GET',  url: '/inventory/live' },
-    submitStocktake:     { method: 'POST', url: '/inventory/stocktakes', body: (items,u,n,whId,brId) => ({items:items,username:u,notes:n,warehouseId:whId||'',branchId:brId||''}) },
+    submitStocktake:     { method: 'POST', url: '/inventory/stocktakes', body: (items,u,n,whId,brId,countDate) => ({items:items,username:u,notes:n,warehouseId:whId||'',branchId:brId||'',countDate:countDate||null}) },
     getAllStocktakes:     { method: 'GET',  url: '/inventory/stocktakes' },
     getStocktakeDetail:  { method: 'GET',  url: (id) => '/inventory/stocktakes/' + id },
     deleteStocktake:     { method: 'DELETE', url: (id) => '/inventory/stocktakes/' + id },

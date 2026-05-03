@@ -2894,6 +2894,15 @@ async function runMigrations() {
   await addColumnIfMissing('warehouse_stock', 'last_cost', "DECIMAL(14,4) DEFAULT 0");
   await addColumnIfMissing('warehouse_stock', 'last_updated', "TIMESTAMP NULL");
 
+  // v5.10.6 — per-warehouse history. `added_at` is when the item was
+  // first registered in this warehouse (auto). `first_added_date` is
+  // the user-settable historical date — for opening-balance entries
+  // backdated to the actual stock-take date so reports show the right
+  // running balance.
+  await addColumnIfMissing('warehouse_stock', 'added_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+  await addColumnIfMissing('warehouse_stock', 'first_added_date', "DATE NULL");
+  await addColumnIfMissing('warehouse_stock', 'added_by', "VARCHAR(80)");
+
   // ═══════════════════════════════════════════════════════════
   // PHASE C — PAYMENT FLOW
   // Unified payment records + amount-based approval routing

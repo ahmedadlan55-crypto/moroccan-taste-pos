@@ -104,22 +104,41 @@ router.get('/warehouses-by-brand', async (req, res) => {
 //   ?expandWarehouses=1 → one row per (item × warehouse_stock entry).
 router.get('/items', async (req, res) => {
   try {
-    await _ensureWarehouseStockBackfilled();
+    // v5.10.6 — DISABLED auto-backfill on read. The previous behavior
+    // auto-inserted every brand item into the brand's main warehouse on
+    // every GET, which made the main warehouse appear to hold the entire
+    // brand catalog even when only 2 items had actually been transferred
+    // there (root cause of the bug the user reported).
+    //
+    // Items now only appear in a warehouse when explicitly added via
+    // POST /inventory/warehouses/:id/items, transferred via stock-issues,
+    // or counted via stocktakes. Use POST /inventory/admin/backfill-stock
+    // for a one-shot manual rebuild if needed.
     const { brandId, warehouseId, expandWarehouses } = req.query;
 
     if (warehouseId) {
-      // V5.9.1: LEFT JOIN warehouse_stock filtered to THIS warehouse so
-      //   items without a stock entry still come back with qty=0.
+      // V5.10.6 — Per-warehouse view now ONLY returns items that are
+      // explicitly registered in this warehouse via `warehouse_stock`
+      // (qty can still be 0). Previously we LEFT-JOINed every item in
+      // the brand, which made every warehouse look like it held the
+      // entire brand catalog — exactly the bug the user reported.
+      //
+      // The historical fields are also surfaced now: added_at (when the
+      // item was first registered here) + last_updated (last txn) so
+      // the UI can show the timeline.
       let sql = `
         SELECT i.*, b.name AS brand_name,
                w.id AS wh_id, w.name AS wh_name, w.code AS wh_code,
-               COALESCE(ws.qty, 0) AS wh_stock
-        FROM inv_items i
+               ws.qty AS wh_stock,
+               ws.avg_cost AS wh_avg_cost, ws.last_cost AS wh_last_cost,
+               ws.added_at AS wh_added_at, ws.first_added_date AS wh_first_added,
+               ws.last_updated AS wh_last_updated
+        FROM warehouse_stock ws
+        JOIN inv_items  i ON i.id = ws.item_id
+        JOIN warehouses w ON w.id = ws.warehouse_id
         LEFT JOIN brands b ON b.id = i.brand_id
-        LEFT JOIN warehouse_stock ws ON ws.item_id = i.id AND ws.warehouse_id = ?
-        LEFT JOIN warehouses w ON w.id = ?
-        WHERE i.active = 1`;
-      const params = [warehouseId, warehouseId];
+        WHERE ws.warehouse_id = ? AND i.active = 1`;
+      const params = [warehouseId];
       if (brandId) { sql += ' AND i.brand_id = ?'; params.push(brandId); }
       sql += ' ORDER BY i.category, i.name';
       const [rows] = await db.query(sql, params);
@@ -134,7 +153,13 @@ router.get('/items', async (req, res) => {
         brandName: i.brand_name || '',
         warehouseId: i.wh_id || warehouseId,
         warehouseName: i.wh_name || '',
-        warehouseCode: i.wh_code || ''
+        warehouseCode: i.wh_code || '',
+        // v5.10.6 historical context
+        whAvgCost: Number(i.wh_avg_cost) || 0,
+        whLastCost: Number(i.wh_last_cost) || 0,
+        addedAt: i.wh_added_at || null,
+        firstAddedDate: i.wh_first_added || null,
+        lastUpdated: i.wh_last_updated || null
       })));
     }
 
@@ -240,6 +265,152 @@ router.post('/items', async (req, res) => {
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
+});
+
+// v5.10.6 — Warehouse-aware "add raw material to warehouse" endpoint.
+// Body: { itemId? | name, category, brandId, unit, bigUnit, convRate, cost,
+//         qty, qtyUnit ('big'|'small'), addedAt (YYYY-MM-DD), minStock,
+//         username }
+//
+// Behavior:
+//   1. If itemId is provided and exists → reuse that inv_item.
+//      Else create a new inv_items row from the supplied master fields.
+//   2. Convert qty from supplied unit to small units (× convRate when 'big').
+//   3. UPSERT warehouse_stock for (warehouseId, itemId): if already there,
+//      INCREMENT qty (treats this as a purchase/inflow, not a reset).
+//      Stamp first_added_date the first time the row is created so the
+//      historical opening date is preserved even if the user backdates.
+//   4. Log an inventory_movements row with movement_date = addedAt so
+//      the new "warehouse ledger by date" report respects the timeline.
+//   5. Recompute global inv_items.stock as Σ warehouse_stock.qty across
+//      all warehouses (keeps the legacy global counter consistent).
+router.post('/warehouses/:warehouseId/items', async (req, res) => {
+  try {
+    const warehouseId = req.params.warehouseId;
+    const b = req.body || {};
+    const username = b.username || 'system';
+
+    // Validate warehouse exists
+    const [whs] = await db.query('SELECT id, name, brand_id FROM warehouses WHERE id = ?', [warehouseId]);
+    if (!whs.length) return res.status(404).json({ success:false, error:'warehouse-not-found' });
+    const wh = whs[0];
+
+    // Either itemId for an existing item OR a fresh master record
+    let itemId = b.itemId || null;
+    if (itemId) {
+      const [exists] = await db.query('SELECT id FROM inv_items WHERE id = ?', [itemId]);
+      if (!exists.length) itemId = null;
+    }
+    if (!itemId) {
+      if (!b.name) return res.status(400).json({ success:false, error:'name-required-for-new-item' });
+      itemId = b.id || 'INV-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
+      // cost stored per SMALL unit
+      const cRate = Number(b.convRate) || 1;
+      const bigCost = Number(b.cost) || 0;
+      const smallCost = (b.qtyUnit === 'big' || cRate > 1) ? (bigCost / cRate) : bigCost;
+      // Inherit brand from warehouse if not supplied
+      const brandIdVal = b.brandId || wh.brand_id || null;
+      await db.query(
+        `INSERT INTO inv_items
+          (id, name, category, cost, stock, min_stock, unit, big_unit, conv_rate, active, brand_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        [itemId, b.name, b.category || '', smallCost, 0, Number(b.minStock)||0,
+         b.unit || 'حبة', b.bigUnit || null, cRate, true, brandIdVal]);
+    }
+
+    // Convert qty to small units
+    const cRate = Number(b.convRate) || 1;
+    const qtyRaw = Number(b.qty) || 0;
+    const qtySmall = (b.qtyUnit === 'big') ? qtyRaw * cRate : qtyRaw;
+
+    // UPSERT warehouse_stock — increment if existing, set first_added_date
+    // only the first time so backdating is preserved across re-saves.
+    const addedAt = b.addedAt ? new Date(b.addedAt) : new Date();
+    const addedAtIso = addedAt.toISOString().slice(0,19).replace('T',' ');
+    const firstAddedDate = b.addedAt ? b.addedAt : addedAt.toISOString().slice(0,10);
+    const [existing] = await db.query(
+      'SELECT id, qty, first_added_date FROM warehouse_stock WHERE warehouse_id = ? AND item_id = ?',
+      [warehouseId, itemId]);
+    if (existing.length) {
+      const newQty = Number(existing[0].qty) + qtySmall;
+      await db.query(
+        `UPDATE warehouse_stock SET qty = ?, last_updated = ?,
+                                    first_added_date = COALESCE(first_added_date, ?)
+         WHERE id = ?`,
+        [newQty, addedAtIso, firstAddedDate, existing[0].id]);
+    } else {
+      const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
+      await db.query(
+        `INSERT INTO warehouse_stock
+          (id, warehouse_id, item_id, qty, added_at, first_added_date, added_by, last_updated)
+         VALUES (?,?,?,?,?,?,?,?)`,
+        [wsId, warehouseId, itemId, qtySmall, addedAtIso, firstAddedDate, username, addedAtIso]);
+    }
+
+    // Log movement (uses provided date so backdated entries are dated correctly)
+    if (qtySmall > 0) {
+      const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
+      const [iname] = await db.query('SELECT name FROM inv_items WHERE id = ?', [itemId]);
+      try {
+        await db.query(
+          `INSERT INTO inventory_movements
+            (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          [movId, addedAtIso, itemId, iname.length?iname[0].name:'', 'in', qtySmall,
+           'إضافة للمستودع', username, 'WH: ' + wh.name, warehouseId]);
+      } catch(e) { /* table schema may differ on older deploys */ }
+    }
+
+    // Recompute global stock
+    try {
+      await db.query(
+        `UPDATE inv_items i SET i.stock =
+           (SELECT COALESCE(SUM(ws.qty),0) FROM warehouse_stock ws WHERE ws.item_id = i.id)
+         WHERE i.id = ?`, [itemId]);
+    } catch(e) { /* permission or older mysql; non-fatal */ }
+
+    res.json({ success:true, itemId, warehouseId, qtySmall, firstAddedDate });
+  } catch (e) {
+    console.error('[POST /warehouses/:id/items]', e);
+    res.json({ success:false, error: e.message });
+  }
+});
+
+// v5.10.6 — Remove an item from a single warehouse (without deleting the
+// inv_item master record). Used by the warehouse view's "remove" action.
+router.delete('/warehouses/:warehouseId/items/:itemId', async (req, res) => {
+  try {
+    await db.query('DELETE FROM warehouse_stock WHERE warehouse_id = ? AND item_id = ?',
+                   [req.params.warehouseId, req.params.itemId]);
+    res.json({ success:true });
+  } catch (e) { res.json({ success:false, error: e.message }); }
+});
+
+// v5.10.6 — Admin cleanup: removes warehouse_stock rows that look like
+// auto-backfill artifacts (qty=0, no first_added_date, and no movement
+// log referencing the (warehouse, item) pair). Idempotent + safe — only
+// targets ghost entries the system created on its own.
+router.post('/admin/cleanup-ghost-warehouse-stock', async (req, res) => {
+  try {
+    // First pass: find candidates (qty=0 AND first_added_date IS NULL)
+    const [ghosts] = await db.query(`
+      SELECT ws.id, ws.warehouse_id, ws.item_id
+      FROM warehouse_stock ws
+      WHERE COALESCE(ws.qty, 0) = 0
+        AND ws.first_added_date IS NULL
+    `);
+    let removed = 0;
+    for (const g of ghosts) {
+      // Skip if any movement references this pair (= legitimate empty)
+      const [movs] = await db.query(
+        `SELECT id FROM inventory_movements WHERE item_id = ? AND warehouse_id = ? LIMIT 1`,
+        [g.item_id, g.warehouse_id]);
+      if (movs.length) continue;
+      await db.query('DELETE FROM warehouse_stock WHERE id = ?', [g.id]);
+      removed++;
+    }
+    res.json({ success:true, scanned: ghosts.length, removed });
+  } catch(e) { res.json({ success:false, error: e.message }); }
 });
 
 // Delete inventory item
@@ -440,6 +611,107 @@ router.get('/live', async (req, res) => {
 //   • closingStock  — stock as of endDate (= opening + net movements)
 //   • value         — closingStock × unit cost
 // Query params: brandId?, warehouseId?, category?, startDate, endDate, q?(search)
+// v5.10.6 — Warehouse Ledger by Date (دفتر أستاذ المستودع)
+//
+// Body: ?warehouseId=&from=&to=&itemId= (all optional)
+// Returns: { warehouse, items: [ { itemId, name, unit, opening, in, out,
+//                                   closing, lines: [...], firstAddedDate } ] }
+//
+// `opening` is computed as: warehouse_stock.qty as of `from` (today's qty
+// minus all movements between `from` and now). `in` and `out` aggregate
+// inventory_movements between [from, to] inclusive. `closing` = opening
+// + in − out. The lines array carries each movement so the frontend can
+// render a per-item drill-down. If from is omitted, opening is 0 (full
+// history from start of time).
+router.get('/warehouse-ledger', async (req, res) => {
+  try {
+    const { warehouseId, from, to, itemId } = req.query;
+    if (!warehouseId) return res.json({ success:false, error:'warehouseId required' });
+
+    const [wh] = await db.query('SELECT id, name, code FROM warehouses WHERE id = ?', [warehouseId]);
+    if (!wh.length) return res.json({ success:false, error:'warehouse-not-found' });
+
+    // Items that have ever been in this warehouse (warehouse_stock OR movements)
+    let itemFilterSql = '';
+    const itemFilterParams = [];
+    if (itemId) { itemFilterSql = ' AND i.id = ?'; itemFilterParams.push(itemId); }
+
+    const [items] = await db.query(`
+      SELECT DISTINCT i.id, i.name, i.unit, i.cost,
+             ws.qty       AS current_qty,
+             ws.first_added_date AS first_added
+      FROM inv_items i
+      LEFT JOIN warehouse_stock ws
+             ON ws.item_id = i.id AND ws.warehouse_id = ?
+      LEFT JOIN inventory_movements m
+             ON m.item_id = i.id AND m.warehouse_id = ?
+      WHERE (ws.id IS NOT NULL OR m.id IS NOT NULL)
+            ${itemFilterSql}
+      ORDER BY i.name`, [warehouseId, warehouseId, ...itemFilterParams]);
+
+    const dateFilter = [];
+    const dateParams = [];
+    if (from) { dateFilter.push('DATE(movement_date) >= ?'); dateParams.push(from); }
+    if (to)   { dateFilter.push('DATE(movement_date) <= ?'); dateParams.push(to); }
+    const dateClause = dateFilter.length ? (' AND ' + dateFilter.join(' AND ')) : '';
+
+    const result = [];
+    for (const it of items) {
+      // Movements WITHIN [from..to] for this (item, warehouse)
+      const [lines] = await db.query(
+        `SELECT id, movement_date, type, qty, reason, username, notes
+           FROM inventory_movements
+          WHERE item_id = ? AND warehouse_id = ? ${dateClause}
+          ORDER BY movement_date ASC`,
+        [it.id, warehouseId, ...dateParams]);
+
+      // Movements BEFORE `from` to back-compute opening from current_qty
+      let opening = Number(it.current_qty) || 0;
+      if (from) {
+        const [pre] = await db.query(
+          `SELECT type, COALESCE(SUM(qty),0) AS s
+             FROM inventory_movements
+            WHERE item_id = ? AND warehouse_id = ? AND DATE(movement_date) >= ?
+            GROUP BY type`, [it.id, warehouseId, from]);
+        // current_qty - (in - out) since `from` = opening
+        let inSince = 0, outSince = 0;
+        pre.forEach(r => { if (r.type==='in') inSince = Number(r.s); else outSince = Number(r.s); });
+        opening = Number(it.current_qty) - (inSince - outSince);
+      } else {
+        opening = 0;  // full history view → start from zero
+      }
+
+      let inQty = 0, outQty = 0;
+      lines.forEach(l => {
+        if (l.type === 'in')  inQty  += Number(l.qty);
+        else                  outQty += Number(l.qty);
+      });
+
+      result.push({
+        itemId: it.id, name: it.name, unit: it.unit || '',
+        cost: Number(it.cost) || 0,
+        firstAddedDate: it.first_added || null,
+        opening, in: inQty, out: outQty,
+        closing: opening + inQty - outQty,
+        lines: lines.map(l => ({
+          date: l.movement_date, type: l.type, qty: Number(l.qty)||0,
+          reason: l.reason || '', user: l.username || '', notes: l.notes || ''
+        }))
+      });
+    }
+
+    res.json({
+      success: true,
+      warehouse: { id: wh[0].id, name: wh[0].name, code: wh[0].code },
+      from: from || null, to: to || null,
+      items: result
+    });
+  } catch(e) {
+    console.error('[warehouse-ledger]', e);
+    res.json({ success:false, error: e.message });
+  }
+});
+
 router.get('/live-report', async (req, res) => {
   try {
     const { brandId, warehouseId, category, startDate, endDate, q } = req.query;
@@ -751,10 +1023,13 @@ router.get('/live-report/:itemId/movements', async (req, res) => {
 // Submit a new stocktake: adjusts stock + records movements + persists the report
 router.post('/stocktakes', async (req, res) => {
   try {
-    const { items, username, notes, warehouseId, branchId, brandId } = req.body;
+    // v5.10.6 — accept user-supplied countDate so opening-balance
+    // counts can be backdated to the actual physical-count date.
+    // Falls back to "now" for live counts.
+    const { items, username, notes, warehouseId, branchId, brandId, countDate } = req.body;
     if (!items || !items.length) return res.json({ success: false, error: 'No items' });
 
-    const now = new Date();
+    const now = countDate ? new Date(countDate) : new Date();
     const stId = 'ST-' + Date.now();
     let adjustedCount = 0;
     let totalVariance = 0;

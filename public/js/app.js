@@ -5296,12 +5296,22 @@ function applyInvFilters(items) {
   var cat = q("#rawCatFilter")?.value||'';
   var brandF = q("#rawBrandFilter")?.value||'';
   var stockF = q("#rawStockFilter")?.value||'';
+  // v5.10.9 — "hide depleted" toggle. Defaults to ON so a fresh open of
+  // a warehouse shows only items currently in stock (matches the user's
+  // mental model: "I transferred 2 items, I expect to see 2 rows").
+  // Uncheck to surface historical empties (transferred-then-consumed
+  // rows kept for the audit trail).
+  var hideDepleted = (q("#rawHideDepleted") || {}).checked;
+  if (hideDepleted == null) hideDepleted = true;  // default ON
+  var EPS = 0.005;
   return items.filter(function(i){
+    var stock = Number(i.stock) || 0;
     var matchSearch = !search || (i.name||'').toLowerCase().includes(search) || (i.id||'').toLowerCase().includes(search) || (i.category||'').toLowerCase().includes(search) || (i.brandName||'').toLowerCase().includes(search);
     var matchCat = !cat || (i.category||'') === cat;
     var matchBrand = !brandF || (brandF === '__none__' ? !i.brandId : i.brandId === brandF);
-    var matchStock = !stockF || (stockF==='low' && i.stock<=i.minStock && i.stock>0) || (stockF==='out' && i.stock<=0) || (stockF==='ok' && i.stock>i.minStock);
-    return matchSearch && matchCat && matchBrand && matchStock;
+    var matchStock = !stockF || (stockF==='low' && stock<=i.minStock && stock>=EPS) || (stockF==='out' && stock<EPS) || (stockF==='ok' && stock>i.minStock);
+    var matchDepleted = !hideDepleted || stock >= EPS || (stockF === 'out');
+    return matchSearch && matchCat && matchBrand && matchStock && matchDepleted;
   });
 }
 function populateInvCatFilter() {
@@ -5420,7 +5430,8 @@ function _invItemsRenderKpis(items) {
     var cost  = Number(i.cost)  || 0;
     var minS  = Number(i.minStock) || 0;
     totalValue += stock * cost;
-    if (stock <= 0) outCount++;
+    // v5.10.9 — epsilon: tiny rounding remnants (qty < 0.005) are "نفد" not "متوفر"
+    if (stock < 0.005) outCount++;
     else if (stock <= minS && minS > 0) lowCount++;
     if (i.brandId) {
       withBrandCount++;
@@ -5556,7 +5567,8 @@ function _invItemsExportExcel(items) {
   items.forEach(function(i) {
     var stock = Number(i.stock) || 0;
     var cost  = Number(i.cost)  || 0;
-    var status = stock <= 0 ? 'نفد' : (stock <= (Number(i.minStock)||0) ? 'منخفض' : 'متوفر');
+    // v5.10.9 — same epsilon used in renderInvTable
+    var status = stock < 0.005 ? 'نفد' : (stock <= (Number(i.minStock)||0) && (Number(i.minStock)||0) > 0 ? 'منخفض' : 'متوفر');
     data.push([i.id, i.name, i.brandName||'', i.category||'', i.bigUnit||'', i.convRate||1, i.unit||'حبة', stock, cost, stock * cost, i.minStock||0, status]);
   });
   var wb = XLSX.utils.book_new();
@@ -5579,7 +5591,8 @@ function _invItemsOpenPrintWindow(items, forPrint) {
     var stock = Number(i.stock) || 0;
     var cost  = Number(i.cost)  || 0;
     totalValue += stock * cost;
-    if (stock <= 0) outCount++;
+    // v5.10.9 — epsilon
+    if (stock < 0.005) outCount++;
     else if (stock <= (Number(i.minStock)||0) && Number(i.minStock) > 0) lowCount++;
   });
   var rows = items.map(function(i, idx) {
@@ -5587,9 +5600,11 @@ function _invItemsOpenPrintWindow(items, forPrint) {
     var cost  = Number(i.cost)  || 0;
     var minS  = Number(i.minStock) || 0;
     var totalV = stock * cost;
-    var status = stock <= 0 ? 'نفد' : (stock <= minS && minS > 0 ? 'منخفض' : 'متوفر');
-    var statusCls = stock <= 0 ? 'st-out' : (stock <= minS && minS > 0 ? 'st-low' : 'st-ok');
-    var rowClass = stock <= 0 ? 'row-out' : (stock <= minS && minS > 0 ? 'row-low' : '');
+    // v5.10.9 — epsilon to catch tiny rounding artifacts
+    var isOutPr   = stock < 0.005;
+    var status    = isOutPr ? 'نفد' : (stock <= minS && minS > 0 ? 'منخفض' : 'متوفر');
+    var statusCls = isOutPr ? 'st-out' : (stock <= minS && minS > 0 ? 'st-low' : 'st-ok');
+    var rowClass  = isOutPr ? 'row-out' : (stock <= minS && minS > 0 ? 'row-low' : '');
     return '<tr class="' + rowClass + '">' +
       '<td class="num">' + (idx+1) + '</td>' +
       '<td class="code">' + _invHubEsc(i.id) + '</td>' +
@@ -5774,6 +5789,11 @@ function renderInvTable(list) {
     h = '<tr><td colspan="11" style="text-align:center;padding:30px;color:#94a3b8;">لا توجد مواد خام في هذا النطاق</td></tr>';
   } else {
     var grandTotal = 0;
+    // v5.10.9 — epsilon for "depleted". Stock values like 0.0001 left
+    // over from production/issue rounding were displaying as "0.00 متوفر"
+    // (passing the > 0 status check but rounding to zero in the column).
+    // Anything below 0.005 of the small unit is treated as "نفد".
+    var EPS = 0.005;
     list.forEach(function(i) {
       try {
         var stock = Number(i.stock) || 0;
@@ -5781,10 +5801,11 @@ function renderInvTable(list) {
         var cost  = Number(i.cost) || 0;
         var lineValue = stock * cost;
         grandTotal += lineValue;
-        var stClass = stock <= 0 ? 'red' : (stock <= minS && minS > 0 ? 'red' : 'green');
-        var statusLabel = stock <= 0 ? 'نفد' : (stock <= minS && minS > 0 ? 'منخفض' : 'متوفر');
-        var statusBg = stock <= 0 ? '#fee2e2' : (stock <= minS && minS > 0 ? '#fef3c7' : '#dcfce7');
-        var statusFg = stock <= 0 ? '#b91c1c' : (stock <= minS && minS > 0 ? '#92400e' : '#15803d');
+        var isOut = stock < EPS;
+        var stClass    = isOut ? 'red' : (stock <= minS && minS > 0 ? 'red' : 'green');
+        var statusLabel= isOut ? 'نفد' : (stock <= minS && minS > 0 ? 'منخفض' : 'متوفر');
+        var statusBg   = isOut ? '#fee2e2' : (stock <= minS && minS > 0 ? '#fef3c7' : '#dcfce7');
+        var statusFg   = isOut ? '#b91c1c' : (stock <= minS && minS > 0 ? '#92400e' : '#15803d');
         var brandHtml = i.brandName
           ? '<span class="badge" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-store"></i> ' + (i.brandName || '') + '</span>'
           : '<span class="badge" style="background:#f1f5f9;color:#94a3b8;"><i class="fas fa-minus"></i> بدون</span>';
@@ -5800,7 +5821,7 @@ function renderInvTable(list) {
           '<td>' + brandHtml + '</td>' +
           '<td>' + whHtml + '</td>' +
           '<td><span class="badge" style="background:#e2e8f0;color:#475569;">' + (i.category || '') + '</span></td>' +
-          '<td style="font-weight:900;color:#0d47a1;font-family:ui-monospace,monospace;">' + stock.toFixed(2) + ' <span style="font-size:11px;color:#94a3b8;">' + (i.unit || '') + '</span></td>' +
+          '<td style="font-weight:900;color:' + (isOut ? '#94a3b8' : '#0d47a1') + ';font-family:ui-monospace,monospace;">' + (isOut ? '0' : stock.toFixed(2)) + ' <span style="font-size:11px;color:#94a3b8;">' + (i.unit || '') + '</span></td>' +
           '<td style="font-family:ui-monospace,monospace;color:#475569;">' + cost.toFixed(4) + '</td>' +
           '<td style="font-weight:900;color:#7c3aed;font-family:ui-monospace,monospace;">' + lineValue.toFixed(2) + '</td>' +
           '<td><span class="badge ' + stClass + '">' + minS + '</span></td>' +

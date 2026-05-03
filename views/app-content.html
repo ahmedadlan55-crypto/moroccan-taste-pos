@@ -882,6 +882,12 @@
                   <option value="out">نفذ تماماً</option>
                   <option value="ok">متوفر</option>
                 </select>
+                <!-- v5.10.9 — hide depleted toggle (default ON). Switching off
+                     surfaces historical empties (qty < 0.005) for audit. -->
+                <label style="display:inline-flex;align-items:center;gap:6px;background:#ecfdf5;border:1.5px solid #a7f3d0;border-radius:8px;padding:6px 10px;cursor:pointer;user-select:none;font-size:12px;font-weight:700;color:#065f46;" title="إخفاء الأصناف ذات الرصيد الصفري أو القريب من الصفر">
+                  <input type="checkbox" id="rawHideDepleted" checked onchange="filterInvItems()" style="margin:0;">
+                  <i class="fas fa-eye-slash"></i> إخفاء المنتهية
+                </label>
               </div>
               <div style="display:flex; gap:8px; flex-wrap:wrap;">
                 <button class="btn btn-success" onclick="exportInvExcel()"><i class="fas fa-file-excel"></i> تصدير</button>

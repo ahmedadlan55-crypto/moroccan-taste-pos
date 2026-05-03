@@ -1504,46 +1504,123 @@ router.get('/reports/balance-sheet', async (req, res) => {
     const balMap = {};
     entries.forEach(e => { balMap[e.account_id] = { debit: Number(e.d)||0, credit: Number(e.c)||0 }; });
 
-    // IFRS classification
-    // Current assets: 11x (cash, inventory, receivables)
-    // Non-current assets: 12x (fixed assets)
-    // Current liabilities: 21x
-    // Non-current liabilities: 22x (if any)
-    // Equity: 3x
+    // V5.10.2 — IFRS / IAS 1 hierarchical classification.
+    // Each leaf account carries `id` so the frontend can drill down via
+    // the existing /erp/gl/account-ledger/:id endpoint.
+    function makeGroup(label, isContra) {
+      return { label: label, total: 0, accounts: [], isContra: !!isContra };
+    }
+    const groups = {
+      currentAssets: {
+        cash:        makeGroup('النقد وما في حكمه'),
+        inventory:   makeGroup('المخزون'),
+        receivables: makeGroup('الذمم المدينة'),
+        otherCA:     makeGroup('أصول متداولة أخرى')
+      },
+      nonCurrentAssets: {
+        ppe:         makeGroup('الممتلكات والمعدات (PP&E)'),
+        accDep:      makeGroup('مجمَّع الإهلاك', true)
+      },
+      currentLiab: {
+        payables:  makeGroup('الذمم الدائنة (موردون)'),
+        accrued:   makeGroup('المصروفات المستحقة'),
+        taxes:     makeGroup('ضرائب مستحقة'),
+        otherCL:   makeGroup('التزامات متداولة أخرى')
+      },
+      nonCurrentLiab: {
+        longTermDebt: makeGroup('قروض ومطلوبات طويلة الأجل')
+      },
+      equity: {
+        capital:      makeGroup('رأس المال'),
+        retained:     makeGroup('الأرباح المحتجزة'),
+        drawings:     makeGroup('المسحوبات', true),
+        periodIncome: makeGroup('صافي ربح/خسارة الفترة')
+      }
+    };
+
+    function classifyAsset(code) {
+      const c = String(code || '');
+      if (c.startsWith('1101') || c.startsWith('1102')) return ['currentAssets', 'cash'];
+      if (c.startsWith('1125') || c.startsWith('113'))  return ['currentAssets', 'receivables'];
+      if (c.startsWith('112'))                          return ['currentAssets', 'inventory'];
+      if (c.startsWith('114') || c.startsWith('115'))   return ['currentAssets', 'otherCA'];
+      if (c.startsWith('124'))                          return ['nonCurrentAssets', 'accDep'];
+      if (c.startsWith('12'))                           return ['nonCurrentAssets', 'ppe'];
+      // Anything else under root 1 → other current assets fallback
+      if (c.startsWith('11'))                           return ['currentAssets', 'otherCA'];
+      return null;
+    }
+    function classifyLiability(code) {
+      const c = String(code || '');
+      if (c.startsWith('211')) return ['currentLiab', 'payables'];
+      if (c.startsWith('212')) return ['currentLiab', 'accrued'];
+      if (c.startsWith('213')) return ['currentLiab', 'taxes'];
+      if (c.startsWith('22'))  return ['nonCurrentLiab', 'longTermDebt'];
+      if (c.startsWith('21'))  return ['currentLiab', 'otherCL'];
+      return null;
+    }
+    function classifyEquity(code) {
+      const c = String(code || '');
+      if (c.startsWith('31')) return ['equity', 'capital'];
+      if (c.startsWith('32')) return ['equity', 'retained'];
+      if (c.startsWith('33')) return ['equity', 'drawings'];
+      return ['equity', 'capital'];
+    }
+
+    // Backward-compat flat arrays
     const currentAssets = [], nonCurrentAssets = [], currentLiab = [], nonCurrentLiab = [], equityItems = [];
     let totCA = 0, totNCA = 0, totCL = 0, totNCL = 0, totEq = 0;
-
-    // Calculate net income from revenue/expense accounts for equity section
     let netIncome = 0;
 
     accounts.forEach(a => {
       const entry = balMap[a.id] || { debit: 0, credit: 0 };
-      const net = entry.debit - entry.credit; // positive = debit balance
+      const net = entry.debit - entry.credit; // debit-normal
       if (net === 0) return;
 
-      const item = { code: a.code, name: a.name_ar, balance: 0, level: a.level };
+      const flatItem = { id: a.id, code: a.code, name: a.name_ar, balance: 0, level: a.level };
 
       if (a.type === 'asset') {
-        item.balance = net; // assets are debit-normal
-        if (a.code.startsWith('12')) { nonCurrentAssets.push(item); totNCA += item.balance; }
-        else { currentAssets.push(item); totCA += item.balance; }
+        flatItem.balance = net;
+        const cls = classifyAsset(a.code);
+        if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
+          groups[cls[0]][cls[1]].accounts.push({ id: a.id, code: a.code, nameAr: a.name_ar, balance: net });
+          groups[cls[0]][cls[1]].total += net;
+        }
+        if (a.code && a.code.startsWith('12')) { nonCurrentAssets.push(flatItem); totNCA += net; }
+        else                                    { currentAssets.push(flatItem);   totCA  += net; }
       } else if (a.type === 'liability') {
-        item.balance = Math.abs(net); // liabilities are credit-normal
-        if (a.code.startsWith('22')) { nonCurrentLiab.push(item); totNCL += item.balance; }
-        else { currentLiab.push(item); totCL += item.balance; }
+        flatItem.balance = Math.abs(net);
+        const cls = classifyLiability(a.code);
+        if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
+          groups[cls[0]][cls[1]].accounts.push({ id: a.id, code: a.code, nameAr: a.name_ar, balance: Math.abs(net) });
+          groups[cls[0]][cls[1]].total += Math.abs(net);
+        }
+        if (a.code && a.code.startsWith('22')) { nonCurrentLiab.push(flatItem); totNCL += Math.abs(net); }
+        else                                    { currentLiab.push(flatItem);    totCL  += Math.abs(net); }
       } else if (a.type === 'equity') {
-        item.balance = Math.abs(net);
-        equityItems.push(item); totEq += item.balance;
+        flatItem.balance = Math.abs(net);
+        const cls = classifyEquity(a.code);
+        if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
+          groups[cls[0]][cls[1]].accounts.push({ id: a.id, code: a.code, nameAr: a.name_ar, balance: Math.abs(net) });
+          groups[cls[0]][cls[1]].total += Math.abs(net);
+        }
+        equityItems.push(flatItem);
+        totEq += Math.abs(net);
       } else if (a.type === 'revenue') {
-        netIncome += (entry.credit - entry.debit); // revenue credit-normal
+        netIncome += (entry.credit - entry.debit);
       } else if (a.type === 'expense') {
-        netIncome -= (entry.debit - entry.credit); // expenses reduce income
+        netIncome -= (entry.debit - entry.credit);
       }
     });
 
-    // Add net income to equity
+    // Net income → period income sub-group + flat equity item
     if (Math.abs(netIncome) > 0.01) {
-      equityItems.push({ code: '', name: 'صافي ربح/خسارة الفترة', balance: netIncome, level: 3, isComputed: true });
+      equityItems.push({ id: '__period_income__', code: '', name: 'صافي ربح/خسارة الفترة', balance: netIncome, level: 3, isComputed: true });
+      groups.equity.periodIncome.accounts.push({
+        id: '__period_income__', code: '', nameAr: 'صافي ربح/خسارة الفترة',
+        balance: netIncome, isComputed: true
+      });
+      groups.equity.periodIncome.total += netIncome;
       totEq += netIncome;
     }
 
@@ -1551,14 +1628,17 @@ router.get('/reports/balance-sheet', async (req, res) => {
     const totalLiabilities = totCL + totNCL;
 
     res.json({
+      // Backward-compat shape
       currentAssets, totCA, nonCurrentAssets, totNCA, totalAssets,
       currentLiab, totCL, nonCurrentLiab, totNCL, totalLiabilities,
       equityItems, totEq,
       netIncome,
       isBalanced: Math.abs(totalAssets - (totalLiabilities + totEq)) < 0.01,
-      asOfDate: asOfDate || new Date().toISOString().split('T')[0]
+      asOfDate: asOfDate || new Date().toISOString().split('T')[0],
+      // V5.10.2 — IFRS hierarchy for the new statement view
+      groups: groups
     });
-  } catch (e) { res.json({ currentAssets:[], nonCurrentAssets:[], currentLiab:[], nonCurrentLiab:[], equityItems:[], totCA:0, totNCA:0, totCL:0, totNCL:0, totEq:0, totalAssets:0, totalLiabilities:0, netIncome:0, isBalanced:false }); }
+  } catch (e) { res.json({ currentAssets:[], nonCurrentAssets:[], currentLiab:[], nonCurrentLiab:[], equityItems:[], totCA:0, totNCA:0, totCL:0, totNCL:0, totEq:0, totalAssets:0, totalLiabilities:0, netIncome:0, isBalanced:false, groups:{} }); }
 });
 
 // V5.10.1 — Cash Flow Statement (IAS 7 — Indirect Method)

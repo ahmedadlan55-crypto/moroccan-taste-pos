@@ -11161,6 +11161,10 @@ window.erpBSReset = function() {
   document.getElementById('bsDetails').innerHTML = '';
 };
 
+// V5.10.2 — IFRS / IAS 1 Balance Sheet renderer.
+// Two-column layout: Assets on the right (RTL primary), Liabilities + Equity on the left.
+// Each leaf account row is clickable → opens bsOpenAccountDrill (modal showing
+// the account's full ledger via the existing /gl/account-ledger/:id endpoint).
 function erpLoadBalanceSheet() {
   _erpPopulateBranchOptions(['bsBranch']);
   _erpPopulateBrandOptions(['bsBrand']);
@@ -11168,59 +11172,440 @@ function erpLoadBalanceSheet() {
   var asOf = document.getElementById('bsAsOf').value;
   var branch = (document.getElementById('bsBranch')||{}).value || '';
   var brand  = (document.getElementById('bsBrand')||{}).value || '';
-  var view   = (document.getElementById('bsView')||{}).value || 'grouped';
 
   document.getElementById('bsDetails').innerHTML = '<div class="empty-msg" style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+  _bsInjectStyles();
 
-  var qs = new URLSearchParams({ asOf, branch, brand }).toString();
+  var qs = 'asOfDate=' + encodeURIComponent(asOf);
+  if (brand)  qs += '&brandId='  + encodeURIComponent(brand);
+  if (branch) qs += '&branchId=' + encodeURIComponent(branch);
+
   _erpGet('/erp/reports/balance-sheet?' + qs, function(r) {
-    if (!r.success) { showToast(r.error||'خطأ', true); return; }
-    var t = r.totals || {};
-    var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    if (!r || r.error) { showToast((r && r.error) || 'تعذّر تحميل التقرير', true); return; }
+    var fmt = _bsFmt;
+    var totalAssets = Number(r.totalAssets || 0);
+    var totalLiab   = Number(r.totalLiabilities || 0);
+    var totalEq     = Number(r.totEq || 0);
+    var rhs         = totalLiab + totalEq;
+    var diff        = totalAssets - rhs;
+    var isBalanced  = Math.abs(diff) < 0.01;
+
     document.getElementById('bsBnDate').textContent = asOf;
     document.getElementById('bsBranded').style.display = 'flex';
-    document.getElementById('bsKpis').style.display = 'grid';
-    document.getElementById('bsKpiAssets').textContent = fmt(t.assets);
-    document.getElementById('bsKpiLiab').textContent   = fmt(t.liabilities);
-    document.getElementById('bsKpiEquity').textContent = fmt(t.equity);
-    if (t.isBalanced) {
-      document.getElementById('bsKpiBalance').innerHTML = '<i class="fas fa-check-circle" style="color:#16a34a;"></i> متوازنة';
-    } else {
-      document.getElementById('bsKpiBalance').innerHTML = '<i class="fas fa-times-circle" style="color:#ef4444;"></i> فرق ' + fmt(t.difference);
-    }
 
-    var rowHtml = function(arr, color){
-      var nz = (arr||[]).filter(function(x){return x.balance !== 0;});
-      return nz.length ? nz.map(function(a){
-        return '<tr><td><code style="color:#94a3b8;">'+(a.code||'')+'</code> '+(a.nameAr||'')+'</td><td style="color:'+color+';font-weight:700;text-align:start;">'+fmt(a.balance)+'</td></tr>';
-      }).join('') : '<tr><td colspan="2" class="empty-msg">—</td></tr>';
-    };
-
-    if (view === 'vertical') {
-      // Vertical IFRS-style layout
-      var html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:18px 24px;box-shadow:0 1px 3px rgba(0,0,0,.04);">';
-      html += '<div style="margin-bottom:16px;"><h4 style="margin:0 0 8px;color:#0ea5e9;border-bottom:2px solid #0ea5e9;padding-bottom:6px;font-size:15px;font-weight:800;"><i class="fas fa-coins"></i> الأصول</h4>';
-      html += '<table class="erp-table" style="font-size:12.5px;"><tbody>'+rowHtml(r.assets, '#0ea5e9')+'</tbody><tfoot><tr style="background:#dbeafe;font-weight:900;"><td>إجمالي الأصول</td><td style="color:#0ea5e9;text-align:start;">'+fmt(t.assets)+'</td></tr></tfoot></table></div>';
-      html += '<div style="margin-bottom:16px;"><h4 style="margin:0 0 8px;color:#ef4444;border-bottom:2px solid #ef4444;padding-bottom:6px;font-size:15px;font-weight:800;"><i class="fas fa-file-invoice"></i> الخصوم</h4>';
-      html += '<table class="erp-table" style="font-size:12.5px;"><tbody>'+rowHtml(r.liabilities, '#ef4444')+'</tbody><tfoot><tr style="background:#fee2e2;font-weight:900;"><td>إجمالي الخصوم</td><td style="color:#ef4444;text-align:start;">'+fmt(t.liabilities)+'</td></tr></tfoot></table></div>';
-      html += '<div><h4 style="margin:0 0 8px;color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:6px;font-size:15px;font-weight:800;"><i class="fas fa-user-tie"></i> حقوق الملكية</h4>';
-      html += '<table class="erp-table" style="font-size:12.5px;"><tbody>'+rowHtml(r.equity, '#8b5cf6')+'</tbody><tfoot><tr style="background:#f3e8ff;font-weight:900;"><td>إجمالي حقوق الملكية</td><td style="color:#8b5cf6;text-align:start;">'+fmt(t.equity)+'</td></tr><tr style="background:#1e293b;color:#fff;font-weight:900;"><td>إجمالي الخصوم + حقوق الملكية</td><td style="color:#fbbf24;text-align:start;">'+fmt(t.liabilitiesPlusEquity)+'</td></tr></tfoot></table></div></div>';
-      document.getElementById('bsDetails').innerHTML = html;
-    } else {
-      // 3-column grouped layout
-      var panel = function(title, color, icon, body, total) {
-        return '<div style="background:#fff;border:1px solid #e5e7eb;border-top:3px solid '+color+';border-radius:12px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);">' +
-          '<h4 style="margin:0 0 10px;color:'+color+';display:flex;align-items:center;gap:8px;font-size:14px;font-weight:800;"><i class="fas '+icon+'"></i> '+title+' <span style="margin-inline-start:auto;font-size:13px;">'+fmt(total)+'</span></h4>' +
-          '<table class="erp-table" style="font-size:12.5px;"><thead><tr><th>الحساب</th><th class="num" style="text-align:start;">الرصيد</th></tr></thead><tbody>'+body+'</tbody></table>' +
+    // KPI strip — keep working with the existing #bsKpis* IDs if they exist
+    var kpis = document.getElementById('bsKpis');
+    if (kpis) {
+      kpis.style.display = 'grid';
+      kpis.innerHTML =
+        _bsMetric('إجمالي الأصول',           totalAssets, '#0ea5e9', 'fa-coins') +
+        _bsMetric('إجمالي الالتزامات',         totalLiab,   '#ef4444', 'fa-file-invoice') +
+        _bsMetric('حقوق الملكية',              totalEq,     '#8b5cf6', 'fa-user-tie') +
+        _bsMetric('صافي ربح/خسارة الفترة',   r.netIncome, Number(r.netIncome||0)>=0?'#16a34a':'#dc2626', 'fa-chart-line') +
+        '<div class="wo-metric" style="border-color:'+(isBalanced?'#bbf7d0':'#fecaca')+';background:'+(isBalanced?'#f0fdf4':'#fef2f2')+';">' +
+          '<div class="wo-metric-icon" style="background:'+(isBalanced?'#16a34a22':'#ef444422')+';color:'+(isBalanced?'#166534':'#991b1b')+';"><i class="fas '+(isBalanced?'fa-check-circle':'fa-triangle-exclamation')+'"></i></div>' +
+          '<div class="wo-metric-body"><div class="wo-metric-label">المعادلة المحاسبية</div>' +
+            '<div class="wo-metric-value" style="color:'+(isBalanced?'#166534':'#991b1b')+';font-size:14px;">' +
+              (isBalanced ? '✓ متوازنة' : ('⚠ فرق ' + fmt(diff))) +
+            '</div></div>' +
         '</div>';
-      };
-      document.getElementById('bsDetails').innerHTML = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">' +
-        panel('الأصول',     '#0ea5e9', 'fa-coins',         rowHtml(r.assets,'#0ea5e9'),       t.assets) +
-        panel('الخصوم',      '#ef4444', 'fa-file-invoice',  rowHtml(r.liabilities,'#ef4444'),  t.liabilities) +
-        panel('حقوق الملكية', '#8b5cf6', 'fa-user-tie',      rowHtml(r.equity,'#8b5cf6'),       t.equity) +
-      '</div>';
     }
+
+    // Cache the response so the print button can re-use it
+    window._bsSnapshot = { asOf: asOf, brand: brand, branch: branch, data: r };
+
+    // Build the IFRS hierarchy
+    var groups = r.groups || {};
+    var leftColHtml  = ''; // الالتزامات + حقوق الملكية
+    var rightColHtml = ''; // الأصول
+
+    rightColHtml +=
+      _bsBigSection('الأصول', '#0ea5e9', 'fa-coins', [
+        { label: 'الأصول المتداولة',     subs: groups.currentAssets,    color: '#0ea5e9' },
+        { label: 'الأصول غير المتداولة', subs: groups.nonCurrentAssets, color: '#0891b2' }
+      ], totalAssets, asOf);
+
+    leftColHtml +=
+      _bsBigSection('الالتزامات', '#ef4444', 'fa-file-invoice', [
+        { label: 'الالتزامات المتداولة',     subs: groups.currentLiab,    color: '#ef4444' },
+        { label: 'الالتزامات غير المتداولة', subs: groups.nonCurrentLiab, color: '#dc2626' }
+      ], totalLiab, asOf);
+
+    leftColHtml +=
+      _bsBigSection('حقوق الملكية', '#8b5cf6', 'fa-user-tie', [
+        { label: 'حقوق الملكية',             subs: groups.equity,         color: '#8b5cf6' }
+      ], totalEq, asOf);
+
+    var html = '<div class="bs-grid">' +
+        '<div class="bs-col">' + rightColHtml + '</div>' +
+        '<div class="bs-col">' + leftColHtml + '</div>' +
+      '</div>' +
+      '<div class="bs-equation ' + (isBalanced ? 'ok' : 'bad') + '">' +
+        '<div class="bs-eq-row">' +
+          '<span class="bs-eq-name">إجمالي الأصول</span>' +
+          '<span class="bs-eq-val">' + fmt(totalAssets) + '</span>' +
+          '<span class="bs-eq-op">=</span>' +
+          '<span class="bs-eq-name">إجمالي الالتزامات + حقوق الملكية</span>' +
+          '<span class="bs-eq-val">' + fmt(rhs) + '</span>' +
+        '</div>' +
+        '<div class="bs-eq-status">' + (isBalanced
+          ? '<i class="fas fa-check-circle"></i> المعادلة المحاسبية متوازنة'
+          : '<i class="fas fa-triangle-exclamation"></i> فرق غير متوازن: ' + fmt(diff)) +
+        '</div>' +
+      '</div>' +
+      '<div style="text-align:center;margin-top:14px;">' +
+        '<button class="tb-btn tb-btn-success" onclick="erpBalanceSheetPrint()" style="font-size:13px;padding:8px 24px;"><i class="fas fa-print"></i> طباعة قائمة المركز المالي</button>' +
+      '</div>';
+    document.getElementById('bsDetails').innerHTML = html;
   });
+}
+
+function _bsFmt(v) {
+  var n = Number(v||0);
+  var s = Math.abs(n).toLocaleString('en', { minimumFractionDigits:2, maximumFractionDigits:2 });
+  return n < 0 ? '(' + s + ')' : s;
+}
+
+function _bsMetric(label, val, accent, icon) {
+  return '<div class="wo-metric"><div class="wo-metric-icon" style="background:'+accent+'22;color:'+accent+';"><i class="fas '+icon+'"></i></div>' +
+    '<div class="wo-metric-body"><div class="wo-metric-label">'+label+'</div>' +
+      '<div class="wo-metric-value" style="color:'+accent+';">'+_bsFmt(val)+'</div>' +
+    '</div></div>';
+}
+
+// V5.10.2 — Render one of the three big BS sections (Assets / Liabilities / Equity)
+// composed of one or more sub-classifications (current vs non-current).
+function _bsBigSection(title, color, icon, classifications, grandTotal, asOf) {
+  var fmt = _bsFmt;
+  var classHtml = (classifications || []).map(function(cls) {
+    var subs = cls.subs || {};
+    var classTotal = 0;
+    var subHtml = Object.keys(subs).map(function(k) {
+      var sub = subs[k];
+      classTotal += Number(sub.total || 0);
+      var rows = (sub.accounts || []).filter(function(a){ return Math.abs(a.balance)>0.001; });
+      var rowsHtml = rows.length
+        ? rows.map(function(a) {
+            var balCls = a.balance < 0 ? 'neg' : '';
+            var clickAttr = a.id && !a.isComputed ? ' onclick="bsOpenAccountDrill(\'' + _bsEsc(a.id) + '\',\'' + _bsEsc((a.nameAr||'').replace(/'/g, "\\'")) + '\',\'' + _bsEsc(asOf) + '\')"' : '';
+            return '<div class="bs-acc-row' + (a.id && !a.isComputed ? ' clickable' : '') + '"' + clickAttr + '>' +
+              '<span class="bs-acc-name">' + (a.code ? '<code>' + _bsEsc(a.code) + '</code> ' : '') + _bsEsc(a.nameAr || '') + '</span>' +
+              '<span class="bs-acc-bal ' + balCls + '">' + fmt(a.balance) + '</span>' +
+            '</div>';
+          }).join('')
+        : '<div class="bs-acc-row dim"><span>— لا حركات —</span><span></span></div>';
+      var contraNote = sub.isContra ? ' <small style="color:#94a3b8;font-weight:600;">(يُطرح)</small>' : '';
+      return '<div class="bs-subgroup">' +
+        '<div class="bs-subgroup-head">' +
+          '<span class="bs-subgroup-label">' + _bsEsc(sub.label || k) + contraNote + '</span>' +
+          '<span class="bs-subgroup-total">' + fmt(sub.total) + '</span>' +
+        '</div>' +
+        '<div class="bs-subgroup-body">' + rowsHtml + '</div>' +
+      '</div>';
+    }).join('');
+    return '<div class="bs-class">' +
+        '<div class="bs-class-head" style="border-color:' + cls.color + ';color:' + cls.color + ';">' +
+          '<span>' + _bsEsc(cls.label) + '</span>' +
+          '<span class="bs-class-total">' + fmt(classTotal) + '</span>' +
+        '</div>' +
+        subHtml +
+      '</div>';
+  }).join('');
+
+  return '<section class="bs-section" style="border-top-color:' + color + ';">' +
+    '<header class="bs-section-head">' +
+      '<div class="bs-section-icon" style="background:' + color + '22;color:' + color + ';"><i class="fas ' + icon + '"></i></div>' +
+      '<h3 class="bs-section-title">' + _bsEsc(title) + '</h3>' +
+      '<div class="bs-section-total" style="color:' + color + ';">' + fmt(grandTotal) + '</div>' +
+    '</header>' +
+    classHtml +
+  '</section>';
+}
+
+function _bsEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+
+function _bsInjectStyles() {
+  if (document.getElementById('bsIfrsStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'bsIfrsStyles';
+  st.textContent =
+    '.bs-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;}' +
+    '@media(max-width:900px){.bs-grid{grid-template-columns:1fr;}}' +
+    '.bs-col{display:flex;flex-direction:column;gap:14px;}' +
+    '.bs-section{background:#fff;border:1px solid #e2e8f0;border-top:4px solid;border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
+    '.bs-section-head{display:flex;align-items:center;gap:10px;padding:12px 16px;background:linear-gradient(135deg,#fafafa,#fff);border-bottom:1px solid #f1f5f9;}' +
+    '.bs-section-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}' +
+    '.bs-section-title{flex:1;font-size:16px;font-weight:900;color:#0f172a;margin:0;}' +
+    '.bs-section-total{font-size:18px;font-weight:900;font-family:ui-monospace,Menlo,monospace;}' +
+    '.bs-class{padding:8px 14px 4px;border-bottom:1px solid #f1f5f9;}' +
+    '.bs-class:last-child{border-bottom:none;}' +
+    '.bs-class-head{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;font-weight:800;border-bottom:1.5px solid;margin-bottom:4px;letter-spacing:0.2px;}' +
+    '.bs-class-total{font-family:ui-monospace,Menlo,monospace;font-weight:800;}' +
+    '.bs-subgroup{margin:6px 0 8px;}' +
+    '.bs-subgroup-head{display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:#f8fafc;border-radius:6px;font-size:12.5px;font-weight:800;color:#0f172a;}' +
+    '.bs-subgroup-label{display:flex;align-items:center;gap:6px;}' +
+    '.bs-subgroup-total{font-family:ui-monospace,Menlo,monospace;font-weight:800;color:#7f1d1d;}' +
+    '.bs-subgroup-body{padding:2px 8px 4px;}' +
+    '.bs-acc-row{display:flex;justify-content:space-between;align-items:center;padding:5px 6px;border-bottom:1px dashed #f1f5f9;font-size:12px;border-radius:4px;transition:all .12s;}' +
+    '.bs-acc-row:last-child{border-bottom:none;}' +
+    '.bs-acc-row.clickable{cursor:pointer;}' +
+    '.bs-acc-row.clickable:hover{background:#fff7ed;color:#7f1d1d;transform:translateX(-2px);}' +
+    '.bs-acc-row.dim{color:#94a3b8;font-style:italic;font-size:11px;text-align:center;}' +
+    '.bs-acc-name code{background:#f1f5f9;padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#475569;margin-inline-end:4px;}' +
+    '.bs-acc-bal{font-family:ui-monospace,Menlo,monospace;font-weight:700;color:#0f172a;}' +
+    '.bs-acc-bal.neg{color:#dc2626;}' +
+    '.bs-equation{margin-top:18px;padding:16px 20px;border-radius:14px;border:2px solid;}' +
+    '.bs-equation.ok{background:#f0fdf4;border-color:#bbf7d0;}' +
+    '.bs-equation.bad{background:#fef2f2;border-color:#fecaca;}' +
+    '.bs-eq-row{display:flex;justify-content:center;align-items:center;gap:14px;flex-wrap:wrap;font-size:14px;font-weight:800;}' +
+    '.bs-eq-name{color:#0f172a;}' +
+    '.bs-eq-val{font-family:ui-monospace,Menlo,monospace;font-size:18px;color:#7f1d1d;}' +
+    '.bs-eq-op{font-size:22px;font-weight:900;color:#94a3b8;}' +
+    '.bs-eq-status{margin-top:8px;text-align:center;font-size:13px;font-weight:700;}' +
+    '.bs-equation.ok .bs-eq-status{color:#166534;}' +
+    '.bs-equation.bad .bs-eq-status{color:#991b1b;}' +
+
+    // Drill-down modal
+    '#bsDrillOverlay{position:fixed;inset:0;z-index:6700;display:none;background:rgba(15,23,42,0.55);backdrop-filter:blur(6px);overflow-y:auto;padding:24px 14px;}' +
+    '#bsDrillOverlay.open{display:block;}' +
+    '#bsDrillShell{margin:0 auto;max-width:1080px;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 30px 80px -20px rgba(15,23,42,0.5);direction:rtl;animation:bsDrillIn .25s ease;}' +
+    '@keyframes bsDrillIn{from{opacity:0;transform:translateY(20px);}to{opacity:1;transform:translateY(0);}}' +
+    '.bsd-hero{padding:22px 26px;background:linear-gradient(135deg,#fef2f2,#fff 60%);border-bottom:1px solid #f1f5f9;position:relative;}' +
+    '.bsd-hero-close{position:absolute;top:14px;left:14px;width:36px;height:36px;border-radius:10px;border:none;background:#fff;color:#64748b;font-size:18px;cursor:pointer;box-shadow:0 2px 6px rgba(15,23,42,0.06);}' +
+    '.bsd-hero-close:hover{background:#fee2e2;color:#ef4444;}' +
+    '.bsd-eyebrow{font-size:11px;font-weight:800;color:#7f1d1d;letter-spacing:0.5px;text-transform:uppercase;}' +
+    '.bsd-title{font-size:24px;font-weight:900;color:#0f172a;margin-top:4px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}' +
+    '.bsd-title code{font-family:ui-monospace,Menlo,monospace;font-size:18px;background:#fff;padding:4px 12px;border-radius:8px;border:1.5px solid #fecaca;color:#7f1d1d;}' +
+    '.bsd-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px;}' +
+    '.bsd-stat{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:9px 12px;}' +
+    '.bsd-stat-l{font-size:11px;color:#64748b;font-weight:700;}' +
+    '.bsd-stat-v{font-size:18px;color:#0f172a;font-weight:800;font-family:ui-monospace,Menlo,monospace;margin-top:2px;}' +
+    '.bsd-body{padding:18px 26px;}' +
+    '.bsd-table{width:100%;border-collapse:collapse;font-size:12.5px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;}' +
+    '.bsd-table th{background:#7f1d1d;color:#fff;padding:9px 10px;text-align:start;font-size:11px;font-weight:800;letter-spacing:0.3px;text-transform:uppercase;}' +
+    '.bsd-table td{padding:8px 10px;border-bottom:1px solid #f1f5f9;}' +
+    '.bsd-table tr:last-child td{border-bottom:none;}' +
+    '.bsd-table tr:hover{background:#fafafa;}' +
+    '.bsd-table .num{text-align:end;font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace;}' +
+    '.bsd-table .strong{font-weight:800;}' +
+    '.bsd-foot{padding:14px 26px;border-top:1px solid #f1f5f9;display:flex;justify-content:flex-end;gap:8px;background:#fafafa;}' +
+    '.bsd-foot button{height:38px;padding:0 18px;border-radius:10px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-weight:700;font-family:inherit;font-size:13px;cursor:pointer;}';
+  document.head.appendChild(st);
+}
+
+// V5.10.2 — Drill-down modal: shows the journal-entry ledger for the
+// clicked account, reusing the existing /erp/gl/account-ledger/:id route.
+window.bsOpenAccountDrill = function(accountId, accountName, asOfDate) {
+  if (!accountId) return;
+  _bsInjectStyles();
+  var ov = document.getElementById('bsDrillOverlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'bsDrillOverlay';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function(ev) { if (ev.target === ov) ov.classList.remove('open'); });
+    document.addEventListener('keydown', function(ev) {
+      if (ev.key === 'Escape' && ov.classList.contains('open')) ov.classList.remove('open');
+    });
+  }
+  ov.innerHTML = '<div id="bsDrillShell"><div class="bsd-hero"><div class="bsd-eyebrow"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div></div></div>';
+  ov.classList.add('open');
+
+  var qs = '';
+  if (asOfDate) qs = '?endDate=' + encodeURIComponent(asOfDate);
+  _erpGet('/erp/gl/account-ledger/' + encodeURIComponent(accountId) + qs, function(r) {
+    if (!r) return;
+    var ledger = (r.ledger || r.entries || []).slice();
+    var opening = Number(r.opening || 0);
+    var totalDr = Number(r.totalDebit || ledger.reduce(function(s,e){return s + Number(e.debit||0);}, 0));
+    var totalCr = Number(r.totalCredit || ledger.reduce(function(s,e){return s + Number(e.credit||0);}, 0));
+    var closing = opening + totalDr - totalCr;
+
+    var fmt = _bsFmt;
+    var rowsHtml = ledger.length ? ledger.map(function(e) {
+      var date = e.journalDate || e.journal_date || '';
+      try { date = new Date(date).toLocaleDateString('en-GB'); } catch(_) {}
+      var jrn = e.journalNumber || e.journal_number || '—';
+      var desc = e.entryDesc || e.description || e.journalDesc || e.journal_description || '';
+      return '<tr style="cursor:'+(e.journalId?'pointer':'default')+';"'+
+        (e.journalId ? ' onclick="if(typeof erpViewJournal===\'function\')erpViewJournal(\''+_bsEsc(e.journalId)+'\')"' : '') + '>' +
+        '<td>' + _bsEsc(date) + '</td>' +
+        '<td><code style="font-family:ui-monospace,Menlo,monospace;color:#7f1d1d;font-size:11px;">' + _bsEsc(jrn) + '</code></td>' +
+        '<td>' + _bsEsc(desc) + '</td>' +
+        '<td class="num">' + (Number(e.debit||0) > 0 ? fmt(e.debit) : '<span style="color:#cbd5e1;">—</span>') + '</td>' +
+        '<td class="num">' + (Number(e.credit||0) > 0 ? fmt(e.credit) : '<span style="color:#cbd5e1;">—</span>') + '</td>' +
+        '<td class="num strong">' + fmt(e.balance != null ? e.balance : '') + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:30px;">— لا توجد حركات على هذا الحساب —</td></tr>';
+
+    document.getElementById('bsDrillShell').innerHTML =
+      '<div class="bsd-hero">' +
+        '<button class="bsd-hero-close" type="button" onclick="document.getElementById(\'bsDrillOverlay\').classList.remove(\'open\')">&times;</button>' +
+        '<div class="bsd-eyebrow"><i class="fas fa-book"></i> حركات الحساب · كما في ' + _bsEsc(asOfDate || '') + '</div>' +
+        '<div class="bsd-title"><code>' + _bsEsc(accountName ? '' : accountId) + '</code><span>' + _bsEsc(accountName || '') + '</span></div>' +
+        '<div class="bsd-stats">' +
+          '<div class="bsd-stat"><div class="bsd-stat-l">عدد الحركات</div><div class="bsd-stat-v">' + ledger.length + '</div></div>' +
+          '<div class="bsd-stat"><div class="bsd-stat-l">الرصيد الافتتاحي</div><div class="bsd-stat-v">' + fmt(opening) + '</div></div>' +
+          '<div class="bsd-stat"><div class="bsd-stat-l">إجمالي الحركة</div><div class="bsd-stat-v">' + fmt(totalDr - totalCr) + '</div></div>' +
+          '<div class="bsd-stat" style="border-color:#fecaca;"><div class="bsd-stat-l">الرصيد الختامي</div><div class="bsd-stat-v" style="color:#7f1d1d;">' + fmt(closing) + '</div></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="bsd-body">' +
+        '<table class="bsd-table"><thead><tr><th>التاريخ</th><th>القيد</th><th>الوصف</th><th class="num">مدين</th><th class="num">دائن</th><th class="num">الرصيد</th></tr></thead>' +
+        '<tbody>' + rowsHtml + '</tbody></table>' +
+      '</div>' +
+      '<div class="bsd-foot"><button onclick="document.getElementById(\'bsDrillOverlay\').classList.remove(\'open\')">إغلاق</button></div>';
+  });
+};
+
+// V5.10.2 — Print template (A4 portrait, IAS 1 styled).
+window.erpBalanceSheetPrint = function() {
+  var snap = window._bsSnapshot;
+  if (!snap) return showToast('اعرض التقرير أولاً ثم اضغط طباعة', true);
+  _erpGet('/settings', function(cfg) {
+    cfg = cfg || {};
+    _erpRenderBalanceSheetPrint(snap.asOf, snap.data, cfg);
+  });
+};
+
+function _erpRenderBalanceSheetPrint(asOf, r, cfg) {
+  var win = window.open('', '_blank', 'width=900,height=1100');
+  if (!win) return showToast('السماح بالنوافذ المنبثقة مطلوب للطباعة', true);
+  var esc = _bsEsc;
+  var fmt = _bsFmt;
+  var company  = esc(cfg.CompanyName || 'Moroccan Taste');
+  var taxNum   = esc(cfg.TaxNumber   || '');
+  var currency = esc(cfg.Currency || 'ر.س');
+  var totalAssets = Number(r.totalAssets || 0);
+  var totalLiab   = Number(r.totalLiabilities || 0);
+  var totalEq     = Number(r.totEq || 0);
+  var rhs         = totalLiab + totalEq;
+  var diff        = totalAssets - rhs;
+  var isBalanced  = Math.abs(diff) < 0.01;
+
+  function subgroupRows(g) {
+    if (!g) return '';
+    return Object.keys(g).map(function(k) {
+      var sub = g[k];
+      var rows = (sub.accounts || []).filter(function(a){return Math.abs(a.balance)>0.001;});
+      var rowsHtml = rows.length
+        ? rows.map(function(a) {
+            return '<tr><td><code>' + esc(a.code||'') + '</code> ' + esc(a.nameAr||'') + '</td><td class="num">' + fmt(a.balance) + '</td></tr>';
+          }).join('')
+        : '<tr><td colspan="2" class="dim">— لا حركات —</td></tr>';
+      return '<tr class="sub-head"><td colspan="2">' + esc(sub.label || k) + (sub.isContra ? ' (يُطرح)' : '') + '</td></tr>' +
+        rowsHtml +
+        '<tr class="sub-total"><td>إجمالي ' + esc(sub.label || k) + '</td><td class="num">' + fmt(sub.total) + '</td></tr>';
+    }).join('');
+  }
+  var groups = r.groups || {};
+
+  var html =
+    '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">' +
+    '<title>قائمة المركز المالي · ' + esc(asOf) + '</title>' +
+    '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">' +
+    '<style>' +
+      '*{box-sizing:border-box;margin:0;padding:0;}' +
+      'body{font-family:"Tajawal","Segoe UI",sans-serif;direction:rtl;color:#0f172a;background:#fff;font-size:12.5px;line-height:1.5;}' +
+      '@page{size:A4;margin:14mm 12mm;}' +
+      '.sheet{max-width:780px;margin:0 auto;padding:18px 22px;}' +
+      '.lh{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0ea5e9;padding-bottom:14px;margin-bottom:18px;}' +
+      '.lh-co{font-size:22px;font-weight:900;color:#0f172a;}' +
+      '.lh-tax{font-size:11px;color:#64748b;margin-top:3px;}' +
+      '.lh-right{text-align:left;}' +
+      '.lh-doc-title{font-size:11px;color:#0ea5e9;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;}' +
+      '.lh-doc-name{font-size:18px;font-weight:900;color:#0e7490;background:#ecfeff;border:1.5px solid #a5f3fc;padding:5px 14px;border-radius:8px;margin-top:4px;display:inline-block;}' +
+      '.lh-doc-period{font-size:11px;color:#475569;margin-top:6px;font-family:ui-monospace,Menlo,monospace;}' +
+      '.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px;}' +
+      '.tbl{width:100%;border-collapse:collapse;font-size:12px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;margin-bottom:12px;}' +
+      '.tbl td{padding:6px 9px;border-bottom:1px solid #f1f5f9;}' +
+      '.tbl tr:last-child td{border-bottom:none;}' +
+      '.tbl .num{text-align:end;font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace;font-weight:600;}' +
+      '.tbl .head td{background:#0ea5e9;color:#fff;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:0.4px;padding:8px 10px;}' +
+      '.tbl.lia .head td{background:#ef4444;}' +
+      '.tbl.eq .head td{background:#8b5cf6;}' +
+      '.tbl .sub-head td{background:#f1f5f9;font-weight:800;color:#0f172a;font-size:11px;}' +
+      '.tbl .sub-total td{background:#fef2f2;font-weight:800;color:#7f1d1d;border-top:1px solid #fecaca;}' +
+      '.tbl .grand td{background:#0f172a;color:#fff;font-weight:900;font-size:13px;padding:10px;}' +
+      '.tbl .dim{color:#94a3b8;text-align:center;font-style:italic;}' +
+      '.tbl code{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#7f1d1d;}' +
+      '.equation{margin-top:14px;padding:14px 18px;border-radius:10px;border:2px solid;text-align:center;page-break-inside:avoid;}' +
+      '.equation.ok{background:#f0fdf4;border-color:#bbf7d0;color:#166534;}' +
+      '.equation.bad{background:#fef2f2;border-color:#fecaca;color:#991b1b;}' +
+      '.equation b{font-size:14px;}' +
+      '.foot{margin-top:24px;padding-top:14px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;}' +
+      '.toolbar{position:fixed;top:14px;inset-inline-end:14px;display:flex;gap:8px;background:#fff;padding:8px 12px;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,0.1);z-index:1000;}' +
+      '.toolbar button{height:36px;padding:0 16px;border-radius:8px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;}' +
+      '.toolbar button.primary{background:#0ea5e9;color:#fff;border-color:#0ea5e9;}' +
+      '@media print{.toolbar{display:none;}body{background:#fff;}}' +
+    '</style></head><body>' +
+      '<div class="toolbar">' +
+        '<button class="primary" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>' +
+        '<button onclick="window.close()">إغلاق</button>' +
+      '</div>' +
+      '<div class="sheet">' +
+        '<header class="lh">' +
+          '<div class="lh-left">' +
+            '<div class="lh-co">' + company + '</div>' +
+            (taxNum ? '<div class="lh-tax">الرقم الضريبي: ' + taxNum + '</div>' : '') +
+          '</div>' +
+          '<div class="lh-right">' +
+            '<div class="lh-doc-title">قائمة المركز المالي · IAS 1</div>' +
+            '<div class="lh-doc-name">Statement of Financial Position</div>' +
+            '<div class="lh-doc-period">كما في ' + esc(asOf) + '</div>' +
+          '</div>' +
+        '</header>' +
+
+        '<div class="cols">' +
+          // Right column = Assets (RTL primary)
+          '<div>' +
+            '<table class="tbl">' +
+              '<tr class="head"><td>الأصول · Assets</td><td class="num">' + currency + '</td></tr>' +
+              '<tr class="sub-head" style="background:#dbeafe!important;color:#0e7490;"><td colspan="2">الأصول المتداولة</td></tr>' +
+              subgroupRows(groups.currentAssets) +
+              '<tr class="sub-head" style="background:#dbeafe!important;color:#0e7490;"><td colspan="2">الأصول غير المتداولة</td></tr>' +
+              subgroupRows(groups.nonCurrentAssets) +
+              '<tr class="grand"><td>إجمالي الأصول</td><td class="num">' + fmt(totalAssets) + '</td></tr>' +
+            '</table>' +
+          '</div>' +
+          // Left column = Liabilities + Equity
+          '<div>' +
+            '<table class="tbl lia">' +
+              '<tr class="head"><td>الالتزامات · Liabilities</td><td class="num">' + currency + '</td></tr>' +
+              '<tr class="sub-head" style="background:#fee2e2!important;color:#991b1b;"><td colspan="2">الالتزامات المتداولة</td></tr>' +
+              subgroupRows(groups.currentLiab) +
+              '<tr class="sub-head" style="background:#fee2e2!important;color:#991b1b;"><td colspan="2">الالتزامات غير المتداولة</td></tr>' +
+              subgroupRows(groups.nonCurrentLiab) +
+              '<tr class="grand" style="background:#991b1b;"><td>إجمالي الالتزامات</td><td class="num">' + fmt(totalLiab) + '</td></tr>' +
+            '</table>' +
+            '<table class="tbl eq">' +
+              '<tr class="head"><td>حقوق الملكية · Equity</td><td class="num">' + currency + '</td></tr>' +
+              subgroupRows(groups.equity) +
+              '<tr class="grand" style="background:#5b21b6;"><td>إجمالي حقوق الملكية</td><td class="num">' + fmt(totalEq) + '</td></tr>' +
+            '</table>' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="equation ' + (isBalanced ? 'ok' : 'bad') + '">' +
+          '<b>إجمالي الأصول</b> ' + fmt(totalAssets) + ' = <b>إجمالي الالتزامات + حقوق الملكية</b> ' + fmt(rhs) +
+          '<br>' + (isBalanced ? '<i class="fas fa-check-circle"></i> ✓ المعادلة المحاسبية متوازنة' : '<i class="fas fa-triangle-exclamation"></i> ⚠ فرق ' + fmt(diff)) +
+        '</div>' +
+
+        '<footer class="foot">' +
+          '<span>طُبع: ' + esc(new Date().toLocaleString('en-GB')) + '</span>' +
+          '<span>إعداد: ' + esc((window.currentUser && window.currentUser.username) || (window.state && window.state.user) || '—') + '</span>' +
+        '</footer>' +
+      '</div>' +
+      '<script>window.onload = function(){ setTimeout(function(){ window.focus(); window.print(); }, 250); };</' + 'script>' +
+    '</body></html>';
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
 }
 
 // ═══ Cash Flow — enhanced ═══

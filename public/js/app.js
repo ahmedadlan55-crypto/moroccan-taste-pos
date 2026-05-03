@@ -6392,6 +6392,291 @@ function loadDashShortageRequests() {
 window.loadShortageRequests = function() {
   _populateWhBrandFilters();
   if (typeof loadDashShortageRequests === 'function') loadDashShortageRequests();
+  // V5.9.9 — also pull the branch's incoming transfers inbox so the user sees
+  // pending stock-issue receipts above the shortages table.
+  if (typeof loadIncomingTransfersInbox === 'function') loadIncomingTransfersInbox();
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// V5.9.9 — Incoming-transfers inbox + receive modal.
+//
+// Shown above the شاشة النواقص table. For an admin / branch user:
+//   • Lists `stock_issues` rows with status='issued' or recently 'received'
+//     where the destination warehouse belongs to their branch.
+//   • Each card surfaces: issue number, source warehouse, line count,
+//     issuer name, age, total cost.
+//   • Click "استلام" → modal with one row per item, pre-filled with
+//     qty_issued, editable (e.g. user reduces it if a shortage on arrival).
+//   • Click "عرض التفاصيل" → reuse siView from erp.js (lazy-load erp.js
+//     if it isn't loaded yet, since this section pre-dates the ERP module).
+// ─────────────────────────────────────────────────────────────────────────
+
+function _xferEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function _xferFmtMoney(v) { return Number(v || 0).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
+function _xferFmtQty(v)   { return Number(v || 0).toLocaleString('en-US', { minimumFractionDigits:0, maximumFractionDigits:4 }); }
+function _xferFmtAge(iso) {
+  if (!iso) return '';
+  var diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60)         return 'الآن';
+  if (diff < 3600)       return Math.floor(diff/60)   + ' دقيقة';
+  if (diff < 86400)      return Math.floor(diff/3600) + ' ساعة';
+  return Math.floor(diff/86400) + ' يوم';
+}
+
+window.loadIncomingTransfersInbox = function() {
+  var wrap = document.getElementById('xferInboxWrap');
+  var grid = document.getElementById('xferInboxGrid');
+  var cnt  = document.getElementById('xferInboxCount');
+  if (!wrap || !grid) return;
+
+  // The branch the current user belongs to. Admins (no branch) see ALL by
+  // omitting the branchId — the backend returns [] in that case to avoid
+  // leaking, so we explicitly send an empty value to opt out gracefully.
+  var branchId = (window.state && state.branchId) || '';
+
+  api.withSuccessHandler(function(rows) {
+    rows = Array.isArray(rows) ? rows : [];
+    if (!rows.length) {
+      wrap.style.display = 'none';
+      grid.innerHTML = '';
+      if (cnt) cnt.textContent = '0';
+      return;
+    }
+    wrap.style.display = '';
+    if (cnt) cnt.textContent = rows.length;
+
+    grid.innerHTML = rows.map(function(r) {
+      var isIssued = r.status === 'issued';
+      var pillBg   = isIssued ? '#fef3c7' : '#dcfce7';
+      var pillCol  = isIssued ? '#92400e' : '#166534';
+      var pillTxt  = isIssued ? 'بانتظار الاستلام' : 'تم الاستلام';
+      var ctaHtml  = isIssued
+        ? '<button class="btn btn-primary" style="flex:1;border-radius:10px;font-weight:800;" onclick="xferOpenReceive(\''+_xferEsc(r.id)+'\')"><i class="fas fa-inbox"></i> استلام</button>'
+        : '<span style="flex:1;text-align:center;color:#16a34a;font-size:12px;font-weight:700;padding:10px 0;"><i class="fas fa-check-circle"></i> مكتمل</span>';
+      return '<div style="background:#fff;border:1.5px solid #fecaca;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:8px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-family:ui-monospace,Menlo,monospace;font-size:13px;font-weight:800;color:#7f1d1d;">'+_xferEsc(r.issue_number||'')+'</div>' +
+            '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">منذ '+_xferFmtAge(r.issued_at||r.created_at)+'</div>' +
+          '</div>' +
+          '<span style="background:'+pillBg+';color:'+pillCol+';font-size:10px;font-weight:800;padding:3px 10px;border-radius:999px;white-space:nowrap;">'+pillTxt+'</span>' +
+        '</div>' +
+        '<div style="font-size:13px;color:#0f172a;display:flex;align-items:center;gap:6px;">' +
+          '<i class="fas fa-warehouse" style="color:#7f1d1d;font-size:12px;"></i>' +
+          '<span>من <b>'+_xferEsc(r.from_warehouse_name||'—')+'</b></span>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:11px;">' +
+          '<div style="background:#f8fafc;border-radius:8px;padding:6px 8px;text-align:center;"><div style="color:#64748b;">الأصناف</div><b style="font-size:14px;color:#0f172a;">'+(r.line_count||(r.items?r.items.length:0))+'</b></div>' +
+          '<div style="background:#f8fafc;border-radius:8px;padding:6px 8px;text-align:center;"><div style="color:#64748b;">القيمة</div><b style="font-size:13px;color:#7f1d1d;">'+_xferFmtMoney(r.total_cost)+'</b></div>' +
+          '<div style="background:#f8fafc;border-radius:8px;padding:6px 8px;text-align:center;"><div style="color:#64748b;">المُرسل</div><b style="font-size:11px;color:#0f172a;">'+_xferEsc((r.issued_by_name||r.created_by_name||'—')).slice(0,15)+'</b></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;margin-top:4px;">' +
+          ctaHtml +
+          '<button class="btn btn-light" style="border-radius:10px;" onclick="xferOpenDetail(\''+_xferEsc(r.id)+'\')" title="عرض التفاصيل"><i class="fas fa-eye"></i></button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+
+    // Cache by id so the receive modal can pull line items without another fetch.
+    window._xferInboxCache = {};
+    rows.forEach(function(r) { window._xferInboxCache[r.id] = r; });
+  }).withFailureHandler(function(e) {
+    console.warn('[incoming-transfers]', e);
+    wrap.style.display = 'none';
+  }).getIncomingTransfers({ branchId: branchId });
+};
+
+window.xferOpenDetail = function(id) {
+  // Reuse the v5.9.7 detail view from erp.js. ensureErpJs lazy-loads it if
+  // the user is on the warehouse-hub tab without having visited the ERP yet.
+  function go() { if (typeof window.siView === 'function') window.siView(id); }
+  if (typeof window.siView === 'function') return go();
+  if (typeof window.ensureErpJs === 'function') {
+    window.ensureErpJs().then(go).catch(function(){ showToast('تعذّر تحميل عرض التفاصيل', true); });
+  } else {
+    showToast('عرض التفاصيل غير متاح حالياً', true);
+  }
+};
+
+window.xferOpenReceive = function(id) {
+  var data = (window._xferInboxCache || {})[id];
+  if (!data) return showToast('لم يتم العثور على بيانات الإذن', true);
+  if (data.status !== 'issued') return showToast('هذا الإذن مُستلم مسبقاً', true);
+  _xferEnsureReceiveModal();
+  _xferRenderReceiveModal(data);
+};
+
+function _xferEnsureReceiveModal() {
+  if (document.getElementById('xferRecModal')) return;
+  var st = document.createElement('style');
+  st.id = 'xferRecModalStyles';
+  st.textContent =
+    '#xferRecModal{position:fixed;inset:0;z-index:6800;display:none;background:rgba(15,23,42,0.55);backdrop-filter:blur(6px);align-items:flex-start;justify-content:center;padding:24px 14px;overflow-y:auto;}' +
+    '#xferRecModal.open{display:flex;}' +
+    '#xferRecBox{background:#fff;width:100%;max-width:760px;border-radius:18px;overflow:hidden;direction:rtl;box-shadow:0 30px 80px -20px rgba(15,23,42,0.5);animation:xferIn 0.22s ease;}' +
+    '@keyframes xferIn{from{opacity:0;transform:translateY(20px);}to{opacity:1;transform:translateY(0);}}' +
+    '#xferRecBox .head{padding:20px 24px;background:linear-gradient(135deg,#fef2f2,#fff);border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:14px;}' +
+    '#xferRecBox .head-ic{width:48px;height:48px;border-radius:12px;background:#fff;color:#7f1d1d;display:flex;align-items:center;justify-content:center;font-size:20px;border:1.5px solid #fecaca;}' +
+    '#xferRecBox .head h3{margin:0;font-size:18px;font-weight:900;color:#0f172a;}' +
+    '#xferRecBox .head p{margin:3px 0 0;font-size:12px;color:#64748b;}' +
+    '#xferRecBox .meta{padding:12px 24px;border-bottom:1px solid #f1f5f9;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;font-size:12px;}' +
+    '#xferRecBox .meta div{background:#f8fafc;border-radius:10px;padding:8px 12px;}' +
+    '#xferRecBox .meta b{display:block;color:#0f172a;font-size:13px;margin-top:2px;}' +
+    '#xferRecBox .body{padding:16px 24px;}' +
+    '#xferRecBox table{width:100%;border-collapse:collapse;font-size:13px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;}' +
+    '#xferRecBox th{background:#f8fafc;padding:10px 12px;text-align:start;font-size:11px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid #e2e8f0;}' +
+    '#xferRecBox td{padding:10px 12px;border-bottom:1px solid #f1f5f9;}' +
+    '#xferRecBox tr:last-child td{border-bottom:none;}' +
+    '#xferRecBox td.num{text-align:end;font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace;}' +
+    '#xferRecBox input.qty-in{width:110px;padding:7px 10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;text-align:end;font-family:ui-monospace,Menlo,monospace;}' +
+    '#xferRecBox input.qty-in:focus{outline:none;border-color:#7f1d1d;box-shadow:0 0 0 3px rgba(127,29,29,0.1);}' +
+    '#xferRecBox input.qty-in.short{border-color:#f59e0b;background:#fffbeb;}' +
+    '#xferRecBox .hint{margin-top:10px;font-size:11px;color:#94a3b8;}' +
+    '#xferRecBox .foot{padding:14px 24px;background:#fafafa;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;}' +
+    '#xferRecBox .total{font-size:13px;color:#475569;}' +
+    '#xferRecBox .total b{color:#7f1d1d;font-size:16px;}' +
+    '#xferRecBox .actions{display:flex;gap:8px;}' +
+    '#xferRecBox .btn-pri{height:38px;padding:0 18px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;border:1.5px solid #7f1d1d;background:#7f1d1d;color:#fff;}' +
+    '#xferRecBox .btn-pri:hover{background:#991b1b;}' +
+    '#xferRecBox .btn-pri:disabled{opacity:0.55;cursor:wait;}' +
+    '#xferRecBox .btn-light{height:38px;padding:0 18px;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;border:1.5px solid #e2e8f0;background:#fff;color:#475569;}';
+  document.head.appendChild(st);
+  var ov = document.createElement('div');
+  ov.id = 'xferRecModal';
+  document.body.appendChild(ov);
+  ov.addEventListener('click', function(ev) { if (ev.target === ov) ov.classList.remove('open'); });
+  document.addEventListener('keydown', function(ev) {
+    if (ev.key === 'Escape' && ov.classList.contains('open')) ov.classList.remove('open');
+  });
+}
+
+function _xferRenderReceiveModal(d) {
+  var ov = document.getElementById('xferRecModal');
+  var items = d.items || [];
+  var itemRows = items.map(function(it, idx) {
+    var qIssued = Number(it.qty_issued || 0);
+    return '<tr>' +
+      '<td><b>' + _xferEsc(it.item_name||'') + '</b>' +
+        (it.item_unit ? ' <span style="color:#94a3b8;font-size:11px;">/' + _xferEsc(it.item_unit) + '</span>' : '') +
+      '</td>' +
+      '<td class="num">' + _xferFmtQty(qIssued) + '</td>' +
+      '<td class="num">' +
+        '<input type="number" min="0" step="0.001" max="' + qIssued + '" ' +
+          'value="' + qIssued + '" data-line-id="' + _xferEsc(it.id) + '" data-issued="' + qIssued + '" ' +
+          'class="qty-in" oninput="_xferUpdateRow(this)">' +
+      '</td>' +
+      '<td class="num">' + _xferFmtMoney(it.unit_cost) + '</td>' +
+      '<td class="num strong" data-line-total="' + idx + '">' + _xferFmtMoney(qIssued * Number(it.unit_cost||0)) + '</td>' +
+    '</tr>';
+  }).join('');
+  ov.innerHTML =
+    '<div id="xferRecBox">' +
+      '<div class="head">' +
+        '<div class="head-ic"><i class="fas fa-inbox"></i></div>' +
+        '<div style="flex:1;"><h3>استلام إذن صرف</h3><p>راجع الكميات الواصلة فعلياً، عدّل أيها يقل عن المُرسل، ثم اعتمد الاستلام.</p></div>' +
+        '<button class="btn-light" type="button" onclick="document.getElementById(\'xferRecModal\').classList.remove(\'open\')"><i class="fas fa-times"></i></button>' +
+      '</div>' +
+      '<div class="meta">' +
+        '<div><span style="color:#64748b;">رقم الإذن</span><b>' + _xferEsc(d.issue_number||'—') + '</b></div>' +
+        '<div><span style="color:#64748b;">المستودع المصدر</span><b>' + _xferEsc(d.from_warehouse_name||'—') + '</b></div>' +
+        '<div><span style="color:#64748b;">المُرسل</span><b>' + _xferEsc(d.issued_by_name || d.created_by_name || '—') + '</b></div>' +
+      '</div>' +
+      '<div class="body">' +
+        '<table><thead><tr>' +
+          '<th>الصنف</th>' +
+          '<th class="num">المُصروف</th>' +
+          '<th class="num">المُستلم فعلياً *</th>' +
+          '<th class="num">سعر الوحدة</th>' +
+          '<th class="num">القيمة</th>' +
+        '</tr></thead><tbody>' + (itemRows || '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px;">لا توجد أصناف</td></tr>') + '</tbody></table>' +
+        '<div class="hint"><i class="fas fa-info-circle"></i> الكمية المُستلمة افتراضياً تساوي المُصروف. خفّضها فقط إذا اكتشفت نقصاً عند الاستلام (تلف، نقص بالنقل، إلخ).</div>' +
+      '</div>' +
+      '<div class="foot">' +
+        '<div class="total">إجمالي قيمة المُستلم: <b id="xferRecTotal">' + _xferFmtMoney(d.total_cost) + '</b> ر.س</div>' +
+        '<div class="actions">' +
+          '<button class="btn-light" type="button" onclick="document.getElementById(\'xferRecModal\').classList.remove(\'open\')">إلغاء</button>' +
+          '<button class="btn-pri" id="xferRecSubmit" type="button" onclick="xferConfirmReceive(\'' + _xferEsc(d.id) + '\')"><i class="fas fa-check"></i> اعتماد الاستلام</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  ov.classList.add('open');
+  // Cache items for the submit handler
+  window._xferRecItems = items.slice();
+  _xferRecalcTotal();
+}
+
+window._xferUpdateRow = function(input) {
+  var issued = Number(input.dataset.issued || 0);
+  var v      = Number(input.value || 0);
+  if (v < 0) { input.value = 0; v = 0; }
+  if (v > issued) { input.value = issued; v = issued; }
+  input.classList.toggle('short', v < issued);
+  // Recompute the line total
+  var row = input.closest('tr');
+  var costCell = row && row.cells[3];
+  var totalCell = row && row.cells[4];
+  if (costCell && totalCell) {
+    var unit = Number((costCell.textContent || '0').replace(/,/g,'')) || 0;
+    totalCell.textContent = _xferFmtMoney(v * unit);
+  }
+  _xferRecalcTotal();
+};
+
+function _xferRecalcTotal() {
+  var inputs = document.querySelectorAll('#xferRecBox input.qty-in');
+  var sum = 0;
+  inputs.forEach(function(inp) {
+    var row = inp.closest('tr');
+    var costCell = row && row.cells[3];
+    var unit = costCell ? (Number((costCell.textContent || '0').replace(/,/g,'')) || 0) : 0;
+    sum += Number(inp.value || 0) * unit;
+  });
+  var t = document.getElementById('xferRecTotal');
+  if (t) t.textContent = _xferFmtMoney(sum);
+}
+
+window.xferConfirmReceive = function(id) {
+  var inputs = document.querySelectorAll('#xferRecBox input.qty-in');
+  var items = [];
+  var anyShort = false;
+  inputs.forEach(function(inp) {
+    var qty = Number(inp.value || 0);
+    var issued = Number(inp.dataset.issued || 0);
+    if (qty > 0) items.push({ id: inp.dataset.lineId, qtyReceived: qty });
+    if (qty < issued) anyShort = true;
+  });
+  if (!items.length) return showToast('أدخل الكميات المُستلمة', true);
+  if (anyShort && !confirm('بعض الكميات أقل مما تم صرفه — هل أنت متأكد من اعتماد الاستلام بهذه الأرقام؟')) return;
+
+  var btn = document.getElementById('xferRecSubmit');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الاعتماد...'; }
+
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/stock-issues/' + id + '/receive', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify({ receivedBy: (window.state && state.user) || '', items: items })
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(r) {
+      if (r && r.success) {
+        showToast('تم الاستلام ✓');
+        document.getElementById('xferRecModal').classList.remove('open');
+        loadIncomingTransfersInbox();
+        if (typeof loadDashShortageRequests === 'function') loadDashShortageRequests();
+      } else {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> اعتماد الاستلام'; }
+        showToast((r && r.error) || 'فشل الاستلام', true);
+      }
+    })
+    .catch(function(e) {
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> اعتماد الاستلام'; }
+      showToast('فشل الاتصال: ' + (e && e.message || ''), true);
+    });
 };
 window.loadStocktakeList = function() {
   _populateWhBrandFilters();

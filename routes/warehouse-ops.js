@@ -170,6 +170,11 @@ router.post('/warehouses/:id/set-parent', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════
 
 // List stock issues
+// V5.9.9 — added LEFT JOINs against `users` so the report shows the actual
+// human names of the creator / approver / issuer / receiver / reverser. The
+// row stores plain usernames (e.g. "ahmed"), but the UI wants display names
+// (e.g. "أحمد عدلان") — COALESCE(full_name, username) gives us a graceful
+// fallback for accounts that haven't filled out full_name yet.
 router.get('/stock-issues', async (req, res) => {
   try {
     const { status, fromWh, toWh, brandId, dateFrom, dateTo } = req.query;
@@ -178,12 +183,22 @@ router.get('/stock-issues', async (req, res) => {
              wf.name AS from_warehouse_name, wf.code AS from_warehouse_code,
              wt.name AS to_warehouse_name, wt.code AS to_warehouse_code,
              b.name AS brand_name, br.name AS branch_name,
+             COALESCE(uc.full_name, uc.username, si.created_by)  AS created_by_name,
+             COALESCE(ua.full_name, ua.username, si.approved_by) AS approved_by_name,
+             COALESCE(ui.full_name, ui.username, si.issued_by)   AS issued_by_name,
+             COALESCE(ur.full_name, ur.username, si.received_by) AS received_by_name,
+             COALESCE(uv.full_name, uv.username, si.reversed_by) AS reversed_by_name,
              (SELECT COUNT(*) FROM stock_issue_items WHERE issue_id=si.id) AS line_count
       FROM stock_issues si
       LEFT JOIN warehouses wf ON wf.id = si.from_warehouse_id
       LEFT JOIN warehouses wt ON wt.id = si.to_warehouse_id
       LEFT JOIN brands b ON b.id = si.brand_id
       LEFT JOIN branches br ON br.id = si.branch_id
+      LEFT JOIN users uc ON uc.username = si.created_by
+      LEFT JOIN users ua ON ua.username = si.approved_by
+      LEFT JOIN users ui ON ui.username = si.issued_by
+      LEFT JOIN users ur ON ur.username = si.received_by
+      LEFT JOIN users uv ON uv.username = si.reversed_by
       WHERE 1=1`;
     const params = [];
     if (status)   { sql += ' AND si.status = ?'; params.push(status); }
@@ -199,15 +214,27 @@ router.get('/stock-issues', async (req, res) => {
 });
 
 // Get single stock issue with items
+// V5.9.9 — same actor-name enrichment as the list endpoint so the detail-view
+// timeline can show "بواسطة: أحمد عدلان" under each step instead of "ahmed".
 router.get('/stock-issues/:id', async (req, res) => {
   try {
     const [rows] = await db.query(`
       SELECT si.*,
              wf.name AS from_warehouse_name, wf.code AS from_warehouse_code,
-             wt.name AS to_warehouse_name, wt.code AS to_warehouse_code
+             wt.name AS to_warehouse_name, wt.code AS to_warehouse_code,
+             COALESCE(uc.full_name, uc.username, si.created_by)  AS created_by_name,
+             COALESCE(ua.full_name, ua.username, si.approved_by) AS approved_by_name,
+             COALESCE(ui.full_name, ui.username, si.issued_by)   AS issued_by_name,
+             COALESCE(ur.full_name, ur.username, si.received_by) AS received_by_name,
+             COALESCE(uv.full_name, uv.username, si.reversed_by) AS reversed_by_name
       FROM stock_issues si
       LEFT JOIN warehouses wf ON wf.id = si.from_warehouse_id
       LEFT JOIN warehouses wt ON wt.id = si.to_warehouse_id
+      LEFT JOIN users uc ON uc.username = si.created_by
+      LEFT JOIN users ua ON ua.username = si.approved_by
+      LEFT JOIN users ui ON ui.username = si.issued_by
+      LEFT JOIN users ur ON ur.username = si.received_by
+      LEFT JOIN users uv ON uv.username = si.reversed_by
       WHERE si.id=?`, [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'not found' });
     const [items] = await db.query(`
@@ -478,6 +505,112 @@ router.post('/stock-issues/:id/reverse', async (req, res) => {
     res.json({ success: true, reverseGlJournalId: reverseGlId, totalCost });
   } catch(e) {
     console.error('[stock-issue reverse] error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// V5.9.9 — Hard-delete a stock issue. Only allowed on drafts so the audit
+// trail of any approved/issued/received/cancelled/reversed row stays intact.
+// Cascade-delete the line items first (no FK CASCADE configured).
+router.delete('/stock-issues/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const [hdrRows] = await db.query('SELECT status FROM stock_issues WHERE id=?', [id]);
+    if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
+    if (hdrRows[0].status !== 'draft') {
+      return res.status(400).json({ error: 'يمكن حذف الإذن فقط عندما يكون مسودة — استخدم الإلغاء أو الإرجاع' });
+    }
+    await db.query('DELETE FROM stock_issue_items WHERE issue_id=?', [id]);
+    await db.query('DELETE FROM stock_issues WHERE id=?', [id]);
+    res.json({ success: true });
+  } catch(e) {
+    console.error('[stock-issue delete] error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// V5.9.9 — Branch-scoped inbox of incoming transfers.
+//   The destination branch sees `issued` (pending receive) and recently-
+//   completed `received` rows in their شاشة النواقص. Resolves the
+//   destination branch via warehouses.branch_id when the row's
+//   stock_issues.branch_id is null.
+//
+//   Audience: branch users — admin can pass ?branchId or ?warehouseId to
+//   inspect any branch's inbox. Without those params we expect the caller
+//   to be authenticated and we fall back to the JWT branch_id.
+router.get('/incoming-transfers', async (req, res) => {
+  try {
+    const { branchId, warehouseId, status } = req.query;
+    const userBranch = (req.user && (req.user.branch_id || req.user.branchId)) || '';
+    const filterBranch = branchId || userBranch;
+    const filterWh     = warehouseId || '';
+
+    if (!filterBranch && !filterWh) {
+      // Empty inbox is the right answer for a user with no branch context —
+      // never silently leak every branch's transfers.
+      return res.json([]);
+    }
+
+    let sql = `
+      SELECT si.*,
+             wf.name AS from_warehouse_name, wf.code AS from_warehouse_code,
+             wt.name AS to_warehouse_name,   wt.code AS to_warehouse_code,
+             wt.branch_id AS to_branch_id,
+             b.name AS brand_name,
+             COALESCE(brn.name, brwh.name) AS branch_name,
+             COALESCE(uc.full_name, uc.username, si.created_by)  AS created_by_name,
+             COALESCE(ua.full_name, ua.username, si.approved_by) AS approved_by_name,
+             COALESCE(ui.full_name, ui.username, si.issued_by)   AS issued_by_name,
+             (SELECT COUNT(*) FROM stock_issue_items WHERE issue_id=si.id) AS line_count
+      FROM stock_issues si
+      LEFT JOIN warehouses wf ON wf.id = si.from_warehouse_id
+      LEFT JOIN warehouses wt ON wt.id = si.to_warehouse_id
+      LEFT JOIN brands b      ON b.id  = si.brand_id
+      LEFT JOIN branches brn  ON brn.id = si.branch_id
+      LEFT JOIN branches brwh ON brwh.id = wt.branch_id
+      LEFT JOIN users uc ON uc.username = si.created_by
+      LEFT JOIN users ua ON ua.username = si.approved_by
+      LEFT JOIN users ui ON ui.username = si.issued_by
+      WHERE si.status IN ('issued','received')`;
+    const params = [];
+    if (filterWh) {
+      sql += ' AND si.to_warehouse_id = ?';
+      params.push(filterWh);
+    } else {
+      // Match either the row's explicit branch_id OR the destination
+      // warehouse's branch_id — both should resolve to the same branch.
+      sql += ' AND (si.branch_id = ? OR wt.branch_id = ?)';
+      params.push(filterBranch, filterBranch);
+    }
+    if (status) { sql += ' AND si.status = ?'; params.push(status); }
+    // Hide `received` rows older than 7 days so the inbox doesn't grow forever.
+    sql += " AND (si.status = 'issued' OR si.received_at >= DATE_SUB(NOW(), INTERVAL 7 DAY))";
+    sql += ' ORDER BY si.issued_at DESC, si.created_at DESC LIMIT 100';
+
+    const [rows] = await db.query(sql, params);
+
+    // Eagerly attach line items so the receive modal opens with no extra
+    // round-trip. Small data — 100 rows × ~10 items max.
+    const ids = rows.map(r => r.id);
+    let itemsByIssue = {};
+    if (ids.length) {
+      const placeholders = ids.map(() => '?').join(',');
+      const [allItems] = await db.query(
+        `SELECT sii.*, i.name AS item_name, i.unit AS item_unit
+         FROM stock_issue_items sii
+         LEFT JOIN inv_items i ON i.id = sii.item_id
+         WHERE sii.issue_id IN (${placeholders})
+         ORDER BY sii.issue_id, sii.id`, ids);
+      allItems.forEach(it => {
+        if (!itemsByIssue[it.issue_id]) itemsByIssue[it.issue_id] = [];
+        itemsByIssue[it.issue_id].push(it);
+      });
+    }
+    rows.forEach(r => { r.items = itemsByIssue[r.id] || []; });
+
+    res.json(rows);
+  } catch(e) {
+    console.error('[incoming-transfers] error:', e);
     res.status(500).json({ error: e.message });
   }
 });

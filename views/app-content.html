@@ -971,6 +971,21 @@
 
           <!-- Tab 5: طلبات النواقص -->
           <div class="sales-tab-content" id="wh_shortage">
+            <!-- V5.9.9 — Incoming transfers inbox: stock issues where THIS branch
+                 is the destination and they're awaiting receipt. Hidden by JS
+                 when the inbox is empty so we don't waste vertical space. -->
+            <div id="xferInboxWrap" style="display:none;margin-bottom:16px;">
+              <div class="filter-bar" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+                <h3 style="margin:0;color:#7f1d1d;display:flex;align-items:center;gap:8px;">
+                  <i class="fas fa-truck-arrow-right"></i>
+                  <span>طلبات تحويل واردة من المستودع الرئيسي</span>
+                  <span id="xferInboxCount" style="font-size:12px;font-weight:700;background:#fef2f2;color:#7f1d1d;border:1px solid #fecaca;padding:2px 10px;border-radius:999px;">0</span>
+                </h3>
+                <button class="btn btn-secondary" onclick="loadIncomingTransfersInbox()"><i class="fas fa-sync"></i> تحديث الوارد</button>
+              </div>
+              <div id="xferInboxGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;"></div>
+            </div>
+
             <div class="filter-bar" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
               <h3 style="margin:0;color:var(--primary);"><i class="fas fa-exclamation-triangle"></i> طلبات النواقص من الفروع</h3>
               <div style="display:flex;gap:8px;align-items:center;">
@@ -2739,6 +2754,7 @@
         <option value="issued">تم الصرف</option>
         <option value="received">تم الاستلام</option>
         <option value="cancelled">ملغى</option>
+        <option value="reversed">مرجع</option>
       </select>
     </div>
     <div class="wo-field">
@@ -2757,8 +2773,10 @@
         <tr>
           <th scope="col">رقم الإذن</th>
           <th scope="col">التاريخ</th>
-          <th scope="col">من مستودع</th>
+          <th scope="col">المستودع المصدر</th>
           <th scope="col">إلى مستودع</th>
+          <th scope="col">المنشئ</th>
+          <th scope="col">المعتمد</th>
           <th scope="col" class="num">الأصناف</th>
           <th scope="col" class="num">التكلفة</th>
           <th scope="col">الحالة</th>
@@ -2766,7 +2784,7 @@
         </tr>
       </thead>
       <tbody id="siBody">
-        <tr><td colspan="8"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+        <tr><td colspan="10"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
       </tbody>
     </table>
   </div>

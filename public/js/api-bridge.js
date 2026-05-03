@@ -196,6 +196,9 @@
     getBrandsStats:          { method: 'GET',  url: '/erp/brands-stats' },
     getBranchesFull:     { method: 'GET',  url: '/erp/branches-full' },
     saveBranchFull:      { method: 'POST', url: '/erp/branches-full' },
+    // V5.9.9 — stock-issues delete + branch incoming-transfers inbox
+    deleteStockIssue:    { method: 'DELETE', url: (id) => '/erp/stock-issues/' + id },
+    getIncomingTransfers:{ method: 'GET',  url: '/erp/incoming-transfers', query: (f) => f || {} },
     getBrands:           { method: 'GET',  url: '/erp/brands' },
     saveBrand:           { method: 'POST', url: '/erp/brands' },
     deleteBrand:         { method: 'DELETE', url: (id) => '/erp/brands/' + id },

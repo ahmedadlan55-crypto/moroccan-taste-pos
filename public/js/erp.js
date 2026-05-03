@@ -12960,11 +12960,12 @@ function siLoad() {
         _woMetric('fa-sack-dollar', 'success', 'القيمة المنقولة', totalValue.toLocaleString('en',{minimumFractionDigits:2}), 'success');
     }
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="8">' + _woEmpty('fa-truck-arrow-right', 'لا توجد إذونات صرف', 'ابدأ بإنشاء أول إذن صرف من المستودع الرئيسي لأحد الفروع.',
+      body.innerHTML = '<tr><td colspan="10">' + _woEmpty('fa-truck-arrow-right', 'لا توجد إذونات صرف', 'ابدأ بإنشاء أول إذن صرف من المستودع الرئيسي لأحد الفروع.',
         '<button class="wo-btn wo-btn-primary" onclick="siOpenNewModal()"><i class="fas fa-plus"></i><span>إنشاء إذن جديد</span></button>') + '</td></tr>';
       return;
     }
     // V5.9.7 — added 'reversed' state + a reverse button on issued/received rows.
+    // V5.9.9 — added 'المنشئ' / 'المعتمد' columns + a Delete icon for drafts.
     var statusMap = {draft:{t:'مسودة',c:'neutral'}, approved:{t:'معتمد',c:'info'}, issued:{t:'تم الصرف',c:'warning'}, received:{t:'تم الاستلام',c:'success'}, cancelled:{t:'ملغى',c:'danger'}, reversed:{t:'مرجع',c:'pink'}};
     body.innerHTML = rows.map(function(r){
       var s = statusMap[r.status] || {t:r.status,c:'neutral'};
@@ -12972,6 +12973,8 @@ function siLoad() {
       if (r.status === 'draft') {
         actions += '<button class="wo-icon-btn success" onclick="siApprove(\''+_woEscapeHtml(r.id)+'\')" title="اعتماد" aria-label="اعتماد"><i class="fas fa-check"></i></button>';
         actions += '<button class="wo-icon-btn danger" onclick="siCancel(\''+_woEscapeHtml(r.id)+'\')" title="إلغاء" aria-label="إلغاء"><i class="fas fa-xmark"></i></button>';
+        // V5.9.9 — hard delete only for drafts (audit trail safe).
+        actions += '<button class="wo-icon-btn danger" onclick="siDelete(\''+_woEscapeHtml(r.id)+'\',\''+_woEscapeHtml(r.issue_number||r.id)+'\')" title="حذف نهائي" aria-label="حذف"><i class="fas fa-trash"></i></button>';
       }
       if (['draft','approved'].indexOf(r.status)>=0) {
         actions += '<button class="wo-icon-btn warning" onclick="siIssue(\''+_woEscapeHtml(r.id)+'\')" title="صرف" aria-label="صرف"><i class="fas fa-paper-plane"></i></button>';
@@ -12982,11 +12985,15 @@ function siLoad() {
       if (['issued','received'].indexOf(r.status) >= 0) {
         actions += '<button class="wo-icon-btn danger" onclick="siOpenReverseConfirm(\''+_woEscapeHtml(r.id)+'\')" title="إرجاع الإذن" aria-label="إرجاع"><i class="fas fa-rotate-left"></i></button>';
       }
+      var creator  = _woEscapeHtml(r.created_by_name  || r.created_by  || '—');
+      var approver = _woEscapeHtml(r.approved_by_name || r.approved_by || '—');
       return '<tr>' +
         '<td data-label="رقم الإذن"><code>'+_woEscapeHtml(r.issue_number||'')+'</code></td>' +
         '<td data-label="التاريخ">'+_woEscapeHtml(r.issue_date||'')+'</td>' +
-        '<td data-label="من"><b>'+_woEscapeHtml(r.from_warehouse_name||'—')+'</b></td>' +
+        '<td data-label="المستودع المصدر"><b>'+_woEscapeHtml(r.from_warehouse_name||'—')+'</b></td>' +
         '<td data-label="إلى"><b>'+_woEscapeHtml(r.to_warehouse_name||'—')+'</b></td>' +
+        '<td data-label="المنشئ"><span style="color:#475569;">'+creator+'</span></td>' +
+        '<td data-label="المعتمد"><span style="color:#475569;">'+approver+'</span></td>' +
         '<td data-label="الأصناف" class="num">'+(r.line_count||0)+'</td>' +
         '<td data-label="التكلفة" class="num strong">'+Number(r.total_cost||0).toLocaleString('en',{minimumFractionDigits:2})+'</td>' +
         '<td data-label="الحالة"><span class="wo-chip '+s.c+'">'+s.t+'</span></td>' +
@@ -12995,6 +13002,18 @@ function siLoad() {
     }).join('');
   });
 }
+
+// V5.9.9 — Hard-delete a draft issue. Confirms first; shows a tailored
+// error from the backend if status changed since the row was rendered.
+window.siDelete = function(id, label) {
+  if (!confirm('حذف الإذن «' + label + '» نهائياً؟\nلا يمكن التراجع — الحذف مسموح فقط للمسودات.')) return;
+  window._apiBridge.withSuccessHandler(function(r) {
+    if (r && r.success) { showToast('تم حذف الإذن'); siLoad(); }
+    else showToast((r && r.error) || 'فشل الحذف', true);
+  }).withFailureHandler(function(e) {
+    showToast('فشل الحذف: ' + (e && e.message || ''), true);
+  }).deleteStockIssue(id);
+};
 // V5.8.8 — Pro fullscreen Stock-Issue (Transfer) editor.
 //   Same UX language as the recipe editor / stocktake editor:
 //     • hero card with from/to warehouse + brand badges + KPIs
@@ -13846,11 +13865,14 @@ function _siRenderDetailView(d) {
 
   // Build the workflow timeline. Status moves L→R: draft → approved → issued → received.
   // 'reversed' is shown as a side-track at the end. 'cancelled' is its own terminal.
+  // V5.9.9 — each step now also shows the actor name pulled from the v5.9.9
+  // backend enrichment (created_by_name / approved_by_name / ...). Falls back
+  // gracefully to the raw username column when full_name isn't populated.
   var steps = [
-    { key:'draft',    lbl:'مسودة',     icon:'fa-pen-to-square', when: d.created_at },
-    { key:'approved', lbl:'اعتماد',    icon:'fa-circle-check',  when: d.approved_at },
-    { key:'issued',   lbl:'صرف',       icon:'fa-paper-plane',   when: d.issued_at },
-    { key:'received', lbl:'استلام',    icon:'fa-inbox',         when: d.received_at }
+    { key:'draft',    lbl:'مسودة',  icon:'fa-pen-to-square', when:d.created_at,  who:d.created_by_name  || d.created_by },
+    { key:'approved', lbl:'اعتماد', icon:'fa-circle-check',  when:d.approved_at, who:d.approved_by_name || d.approved_by },
+    { key:'issued',   lbl:'صرف',    icon:'fa-paper-plane',   when:d.issued_at,   who:d.issued_by_name   || d.issued_by },
+    { key:'received', lbl:'استلام', icon:'fa-inbox',         when:d.received_at, who:d.received_by_name || d.received_by }
   ];
   var statusOrder = ['draft','approved','issued','received'];
   var currentIdx = Math.max(0, statusOrder.indexOf(status));
@@ -13862,17 +13884,22 @@ function _siRenderDetailView(d) {
       cls = 'done';
     } else if (i < currentIdx) cls = 'done';
     else if (i === currentIdx) cls = 'current';
+    var meta = '';
+    if (step.when) meta += '<div class="sid-step-meta">' + _siEsc(_siFmtDt(step.when)) + '</div>';
+    if (step.who)  meta += '<div class="sid-step-meta" style="color:#7f1d1d;font-family:inherit;font-weight:700;"><i class="fas fa-user-circle" style="margin-inline-end:3px;font-size:10px;"></i>' + _siEsc(step.who) + '</div>';
     return '<div class="sid-step ' + cls + '">' +
              '<div class="sid-step-dot"><i class="fas ' + step.icon + '"></i></div>' +
              '<div class="sid-step-lbl">' + step.lbl + '</div>' +
-             (step.when ? '<div class="sid-step-meta">' + _siEsc(_siFmtDt(step.when)) + '</div>' : '') +
+             meta +
            '</div>';
   }).join('');
   if (status === 'reversed') {
+    var revWho = d.reversed_by_name || d.reversed_by;
     timelineHtml += '<div class="sid-step reversed">' +
       '<div class="sid-step-dot"><i class="fas fa-rotate-left"></i></div>' +
       '<div class="sid-step-lbl">إرجاع</div>' +
       (d.reversed_at ? '<div class="sid-step-meta">' + _siEsc(_siFmtDt(d.reversed_at)) + '</div>' : '') +
+      (revWho ? '<div class="sid-step-meta" style="color:#9d174d;font-family:inherit;font-weight:700;"><i class="fas fa-user-circle" style="margin-inline-end:3px;font-size:10px;"></i>' + _siEsc(revWho) + '</div>' : '') +
     '</div>';
   }
 

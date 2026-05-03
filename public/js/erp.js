@@ -14003,8 +14003,11 @@ function _siRenderDetailView(d) {
     actionsRight += '<button class="sid-btn sid-btn-danger" onclick="siOpenReverseConfirm(\'' + _siEsc(d.id) + '\')"><i class="fas fa-rotate-left"></i> إرجاع الإذن</button>';
   }
   // Print + close on the left
+  // V5.9.11 — Print now opens a dedicated A4 report window (siPrint) with
+  // letterhead, 4-actor signature grid, and clean items table — instead of
+  // raw window.print() which captured the whole modal chrome.
   var actionsLeft =
-    '<button class="sid-btn sid-btn-ghost" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>' +
+    '<button class="sid-btn sid-btn-ghost" onclick="siPrint(\'' + _siEsc(d.id) + '\')"><i class="fas fa-print"></i> طباعة</button>' +
     '<button class="sid-btn sid-btn-ghost" onclick="siCloseDetail()">إغلاق</button>';
 
   // Compose
@@ -14082,7 +14085,274 @@ window.siCloseDetail = function() {
   if (rc) rc.classList.remove('open');
 };
 
-// Reverse confirmation modal — requires a reason ≥ 4 chars.
+// V5.9.11 — Pro print template. Opens a new tab with a self-contained A4
+// report and auto-prints. Replaces the legacy `window.print()` call which
+// printed the entire detail overlay including modal chrome and action bar.
+//
+// The report shows:
+//   • Company letterhead from /api/settings (CompanyName + TaxNumber)
+//   • Issue number, date, status pill
+//   • From/To warehouse pills with the same flow arrow as the detail view
+//   • A 2×2 audit grid: المنشئ / المعتمد / القائم بالصرف / القائم بالاستلام
+//     each with the actor's display name, timestamp, and a signature line
+//   • Line items table (item / qty requested / issued / received / unit cost / total)
+//   • GL journal reference if posted
+//   • Reversal banner with reason/by/when/reverse-GL when status='reversed'
+//   • Footer with the print timestamp + the user who printed it
+window.siPrint = function(id) {
+  if (!id && window._siCurrentDetailId) id = window._siCurrentDetailId;
+  if (!id) return showToast('لا يوجد إذن للطباعة', true);
+
+  // Pull both the issue and the company settings in parallel so we can paint
+  // a proper letterhead.
+  Promise.all([
+    new Promise(function(resolve) {
+      _erpGet('/erp/stock-issues/' + id, function(d) { resolve(d || {}); });
+    }),
+    new Promise(function(resolve) {
+      _erpGet('/settings', function(s) { resolve(s || {}); });
+    })
+  ]).then(function(out) {
+    var d   = out[0];
+    var cfg = out[1] || {};
+    if (!d || d.error) return showToast((d && d.error) || 'تعذر تحميل الإذن', true);
+    _siRenderPrintWindow(d, cfg);
+  });
+};
+
+function _siRenderPrintWindow(d, cfg) {
+  var win = window.open('', '_blank', 'width=900,height=1100');
+  if (!win) return showToast('السماح بالنوافذ المنبثقة مطلوب لطباعة الإذن', true);
+
+  var statusLabels = {
+    draft:'مسودة', approved:'معتمد', issued:'تم الصرف',
+    received:'تم الاستلام', cancelled:'ملغى', reversed:'مرجع'
+  };
+  var statusKey = d.status || 'draft';
+  var statusLbl = statusLabels[statusKey] || statusKey;
+
+  var fmtMoney = function(v) { return Number(v||0).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }); };
+  var fmtQty   = function(v) { return Number(v||0).toLocaleString('en-US', { minimumFractionDigits:0, maximumFractionDigits:4 }); };
+  var fmtDt    = function(v) {
+    if (!v) return '—';
+    try {
+      var dt = new Date(v);
+      return dt.toLocaleDateString('en-GB', { day:'2-digit', month:'2-digit', year:'numeric' }) +
+             ' · ' + dt.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+    } catch(e) { return String(v); }
+  };
+  var esc = _siEsc;
+
+  var company  = esc(cfg.CompanyName || 'Moroccan Taste');
+  var taxNum   = esc(cfg.TaxNumber   || '');
+  var currency = esc(cfg.Currency    || 'ر.س');
+
+  // Audit cards — one per actor, hidden when the row hasn't reached that step.
+  function actorCard(role, name, when, color) {
+    var hasName = !!name;
+    return '<div class="actor-card" style="border-color:' + color + '20;">' +
+      '<div class="actor-role" style="color:' + color + ';">' + esc(role) + '</div>' +
+      '<div class="actor-name">' + (hasName ? esc(name) : '<span class="dim">—</span>') + '</div>' +
+      '<div class="actor-when">' + (when ? esc(fmtDt(when)) : '<span class="dim">لم يُسجَّل بعد</span>') + '</div>' +
+      '<div class="actor-sig"><span class="sig-label">التوقيع</span></div>' +
+    '</div>';
+  }
+
+  var actorsHtml =
+    actorCard('القائم بالإنشاء (المنشئ)',  d.created_by_name  || d.created_by,  d.created_at,  '#7f1d1d') +
+    actorCard('القائم بالاعتماد (المعتمد)', d.approved_by_name || d.approved_by, d.approved_at, '#1e40af') +
+    actorCard('القائم بالصرف',            d.issued_by_name   || d.issued_by,   d.issued_at,   '#92400e') +
+    actorCard('القائم بالاستلام',         d.received_by_name || d.received_by, d.received_at, '#166534');
+
+  // Line items
+  var items = d.items || [];
+  var itemRows = items.map(function(it) {
+    return '<tr>' +
+      '<td><b>' + esc(it.item_name||'') + '</b>' +
+        (it.item_unit ? ' <span class="dim">/' + esc(it.item_unit) + '</span>' : '') + '</td>' +
+      '<td class="num">' + fmtQty(it.qty_requested) + '</td>' +
+      '<td class="num">' + fmtQty(it.qty_issued)    + '</td>' +
+      '<td class="num">' + fmtQty(it.qty_received)  + '</td>' +
+      '<td class="num">' + fmtMoney(it.unit_cost)   + '</td>' +
+      '<td class="num strong">' + fmtMoney(it.line_total) + '</td>' +
+    '</tr>';
+  }).join('');
+
+  // GL card
+  var glHtml = '';
+  if (d.gl_journal_id) {
+    glHtml = '<section class="block">' +
+      '<h3 class="block-h">القيد المحاسبي</h3>' +
+      '<div class="gl-row">' +
+        '<span class="gl-label">رقم القيد:</span> ' +
+        '<code>' + esc(d.gl_journal_id) + '</code> ' +
+        '<span class="gl-posted">✓ مُرحَّل</span>' +
+      '</div>' +
+    '</section>';
+  }
+
+  // Reversal banner
+  var reverseHtml = '';
+  if (statusKey === 'reversed') {
+    reverseHtml = '<section class="block reverse-banner">' +
+      '<h3 class="block-h" style="color:#9d174d;">إرجاع الإذن</h3>' +
+      '<div class="reverse-grid">' +
+        '<div><span class="gl-label">القائم بالإرجاع:</span> <b>' + esc(d.reversed_by_name || d.reversed_by || '—') + '</b></div>' +
+        '<div><span class="gl-label">تاريخ الإرجاع:</span> <b>' + esc(fmtDt(d.reversed_at)) + '</b></div>' +
+        '<div style="grid-column:1 / -1;"><span class="gl-label">السبب:</span> ' + esc(d.reverse_reason || '—') + '</div>' +
+        (d.reverse_gl_journal_id ? '<div style="grid-column:1 / -1;"><span class="gl-label">القيد العكسي:</span> <code>' + esc(d.reverse_gl_journal_id) + '</code></div>' : '') +
+      '</div>' +
+    '</section>';
+  }
+
+  var printedBy = esc((window.currentUser && window.currentUser.username) || (window.state && window.state.user) || '—');
+  var printedAt = fmtDt(new Date());
+
+  var html =
+    '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">' +
+    '<title>إذن صرف ' + esc(d.issue_number || d.id) + '</title>' +
+    '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">' +
+    '<style>' +
+      '*{box-sizing:border-box;margin:0;padding:0;}' +
+      'body{font-family:"Tajawal","Segoe UI",sans-serif;direction:rtl;color:#0f172a;background:#fff;font-size:13px;line-height:1.5;}' +
+      '@page{size:A4;margin:14mm 12mm;}' +
+      '.sheet{max-width:780px;margin:0 auto;padding:18px 22px;}' +
+      // Letterhead
+      '.lh{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #7f1d1d;padding-bottom:14px;margin-bottom:18px;}' +
+      '.lh-left{flex:1;}' +
+      '.lh-co{font-size:22px;font-weight:900;color:#0f172a;letter-spacing:-0.02em;}' +
+      '.lh-tax{font-size:11px;color:#64748b;margin-top:3px;}' +
+      '.lh-right{text-align:left;}' +
+      '.lh-doc-title{font-size:11px;color:#7f1d1d;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;}' +
+      '.lh-doc-no{font-family:ui-monospace,Menlo,monospace;font-size:18px;font-weight:900;color:#7f1d1d;background:#fef2f2;border:1.5px solid #fecaca;padding:5px 14px;border-radius:8px;margin-top:4px;display:inline-block;}' +
+      // Status pill
+      '.pill{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:999px;font-size:11px;font-weight:800;margin-top:8px;}' +
+      '.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;}' +
+      '.pill.draft{background:#f1f5f9;color:#475569;}' +
+      '.pill.approved{background:#dbeafe;color:#1e40af;}' +
+      '.pill.issued{background:#fef3c7;color:#92400e;}' +
+      '.pill.received{background:#dcfce7;color:#166534;}' +
+      '.pill.cancelled{background:#fee2e2;color:#991b1b;}' +
+      '.pill.reversed{background:#fce7f3;color:#9d174d;}' +
+      // Flow row
+      '.flow{display:flex;align-items:center;gap:10px;margin:14px 0;flex-wrap:wrap;}' +
+      '.flow-pill{padding:7px 14px;border-radius:8px;font-weight:700;display:inline-flex;align-items:center;gap:6px;font-size:13px;border:1.5px solid;}' +
+      '.flow-from{border-color:#fecaca;color:#7f1d1d;background:#fff7f7;}' +
+      '.flow-to{border-color:#bbf7d0;color:#166534;background:#f7fff9;}' +
+      '.flow-arrow{color:#94a3b8;font-size:18px;}' +
+      // Stats
+      '.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0 18px;}' +
+      '.stat{border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;background:#fafafa;}' +
+      '.stat-l{font-size:10px;color:#64748b;font-weight:700;}' +
+      '.stat-v{font-size:15px;font-weight:900;color:#0f172a;margin-top:2px;}' +
+      '.stat.cost .stat-v{color:#7f1d1d;}' +
+      // Audit grid (THE feature requested)
+      '.actors{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:18px 0;}' +
+      '.actor-card{border:1.5px solid #e2e8f0;border-radius:10px;padding:12px 14px;background:#fff;page-break-inside:avoid;}' +
+      '.actor-role{font-size:10px;font-weight:800;letter-spacing:0.4px;text-transform:uppercase;}' +
+      '.actor-name{font-size:15px;font-weight:800;color:#0f172a;margin-top:6px;min-height:20px;}' +
+      '.actor-when{font-size:11px;color:#64748b;margin-top:3px;font-family:ui-monospace,Menlo,monospace;}' +
+      '.actor-sig{margin-top:24px;border-top:1.5px dashed #cbd5e1;padding-top:6px;}' +
+      '.sig-label{font-size:10px;color:#94a3b8;font-weight:700;}' +
+      '.dim{color:#94a3b8;font-weight:500;}' +
+      // Block
+      '.block{margin:16px 0;page-break-inside:avoid;}' +
+      '.block-h{font-size:13px;font-weight:800;color:#7f1d1d;margin-bottom:10px;padding-bottom:6px;border-bottom:1.5px solid #fecaca;display:flex;align-items:center;gap:6px;}' +
+      // Items table
+      '.tbl{width:100%;border-collapse:collapse;font-size:12px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;}' +
+      '.tbl th{background:#7f1d1d;color:#fff;padding:9px 10px;text-align:start;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.3px;}' +
+      '.tbl td{padding:9px 10px;border-bottom:1px solid #f1f5f9;}' +
+      '.tbl tr:last-child td{border-bottom:none;}' +
+      '.tbl .num{text-align:end;font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace;}' +
+      '.tbl .strong{font-weight:800;color:#7f1d1d;}' +
+      '.tbl tfoot td{background:#fef2f2;font-weight:800;border-top:2px solid #7f1d1d;}' +
+      // GL
+      '.gl-row{padding:10px 14px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:13px;}' +
+      '.gl-label{color:#64748b;font-weight:700;font-size:11px;}' +
+      '.gl-row code{background:#fff;padding:2px 8px;border-radius:6px;border:1px solid #fde68a;font-family:ui-monospace,Menlo,monospace;}' +
+      '.gl-posted{color:#166534;font-weight:700;font-size:11px;margin-inline-start:6px;}' +
+      // Reversal
+      '.reverse-banner{background:#fdf2f8;border:1.5px solid #f9a8d4;border-radius:10px;padding:14px 16px;}' +
+      '.reverse-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;}' +
+      '.reverse-grid b{color:#9d174d;}' +
+      // Footer
+      '.foot{margin-top:24px;padding-top:14px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;}' +
+      // Toolbar (screen only)
+      '.toolbar{position:fixed;top:14px;inset-inline-end:14px;display:flex;gap:8px;background:#fff;padding:8px 12px;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,0.1);z-index:1000;}' +
+      '.toolbar button{height:36px;padding:0 16px;border-radius:8px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;}' +
+      '.toolbar button.primary{background:#7f1d1d;color:#fff;border-color:#7f1d1d;}' +
+      '@media print{.toolbar{display:none;}body{background:#fff;}}' +
+    '</style></head><body>' +
+      '<div class="toolbar">' +
+        '<button class="primary" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>' +
+        '<button onclick="window.close()">إغلاق</button>' +
+      '</div>' +
+      '<div class="sheet">' +
+        '<header class="lh">' +
+          '<div class="lh-left">' +
+            '<div class="lh-co">' + company + '</div>' +
+            (taxNum ? '<div class="lh-tax">الرقم الضريبي: ' + taxNum + '</div>' : '') +
+            '<span class="pill ' + statusKey + '">' + esc(statusLbl) + '</span>' +
+          '</div>' +
+          '<div class="lh-right">' +
+            '<div class="lh-doc-title">إذن صرف</div>' +
+            '<div class="lh-doc-no">' + esc(d.issue_number || d.id) + '</div>' +
+            '<div class="lh-tax" style="margin-top:6px;">تاريخ الإذن: ' + esc(fmtDt(d.issue_date || d.created_at)) + '</div>' +
+          '</div>' +
+        '</header>' +
+
+        '<div class="flow">' +
+          '<span class="flow-pill flow-from"><i class="fas fa-warehouse"></i> ' + esc(d.from_warehouse_name || '—') + '</span>' +
+          '<i class="fas fa-arrow-left flow-arrow"></i>' +
+          '<span class="flow-pill flow-to"><i class="fas fa-store"></i> ' + esc(d.to_warehouse_name || '—') + '</span>' +
+        '</div>' +
+
+        '<div class="stats">' +
+          '<div class="stat"><div class="stat-l">عدد الأصناف</div><div class="stat-v">' + items.length + '</div></div>' +
+          '<div class="stat"><div class="stat-l">إجمالي المطلوب</div><div class="stat-v">' + fmtQty(items.reduce(function(s,i){return s+Number(i.qty_requested||0);},0)) + '</div></div>' +
+          '<div class="stat"><div class="stat-l">إجمالي المُصروف</div><div class="stat-v">' + fmtQty(items.reduce(function(s,i){return s+Number(i.qty_issued||0);},0)) + '</div></div>' +
+          '<div class="stat cost"><div class="stat-l">القيمة الإجمالية</div><div class="stat-v">' + fmtMoney(d.total_cost) + ' ' + currency + '</div></div>' +
+        '</div>' +
+
+        reverseHtml +
+
+        '<section class="block">' +
+          '<h3 class="block-h"><i class="fas fa-user-shield"></i> سجل التوقيعات والمسؤوليات</h3>' +
+          '<div class="actors">' + actorsHtml + '</div>' +
+        '</section>' +
+
+        '<section class="block">' +
+          '<h3 class="block-h"><i class="fas fa-list-ul"></i> أصناف الإذن</h3>' +
+          '<table class="tbl">' +
+            '<thead><tr>' +
+              '<th>الصنف</th>' +
+              '<th class="num">مطلوب</th>' +
+              '<th class="num">مُصروف</th>' +
+              '<th class="num">مُستلم</th>' +
+              '<th class="num">سعر الوحدة</th>' +
+              '<th class="num">القيمة</th>' +
+            '</tr></thead>' +
+            '<tbody>' + (itemRows || '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:18px;">لا توجد أصناف</td></tr>') + '</tbody>' +
+            (items.length ? '<tfoot><tr><td colspan="5" style="text-align:start;">الإجمالي</td><td class="num strong">' + fmtMoney(d.total_cost) + ' ' + currency + '</td></tr></tfoot>' : '') +
+          '</table>' +
+        '</section>' +
+
+        glHtml +
+
+        (d.notes ? '<section class="block"><h3 class="block-h"><i class="fas fa-note-sticky"></i> ملاحظات</h3><div style="padding:10px 14px;background:#f8fafc;border-radius:8px;font-size:12px;line-height:1.7;">' + esc(d.notes) + '</div></section>' : '') +
+
+        '<footer class="foot">' +
+          '<div>طُبع بواسطة: <b>' + printedBy + '</b> · ' + esc(printedAt) + '</div>' +
+          '<div>صفحة 1 من 1</div>' +
+        '</footer>' +
+      '</div>' +
+      '<script>window.onload = function(){ setTimeout(function(){ window.focus(); window.print(); }, 250); };</' + 'script>' +
+    '</body></html>';
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+}
 window.siOpenReverseConfirm = function(id) {
   // V5.9.8 — inject styles even when the user opens this modal directly from
   // the LIST row (not from the detail view). Previously the CSS lived only in

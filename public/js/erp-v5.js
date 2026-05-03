@@ -804,19 +804,39 @@
   // ───────── APPROVAL MATRIX ─────────────────────────────────────────────
   async function renderMatrix(container){
     _styles();
+    // V5.9.16 — added KPI tiles + empty-state hero so the matrix page
+    // doesn't open as a bare table. Stats are computed client-side from
+    // the full list (the backend doesn't yet expose a dedicated /stats).
     container.innerHTML = `<div class="v5-section">
-      <h2 style="margin:0 0 16px;">مصفوفة سياسات الموافقة</h2>
+      <h2 style="margin:0 0 4px;">مصفوفة سياسات الموافقة</h2>
+      <p style="color:#64748b;font-size:13px;margin-bottom:16px;">يحدد النظام تلقائياً مسار اعتماد كل معاملة بناء على نوعها ومبلغها — السياسات هنا تتحكم بالخطوات والمعتمدين والـ SLA.</p>
+      <div class="v5-stats" id="mxStats"><div class="v5-skel"></div></div>
       <div class="v5-toolbar">
         <select id="mxType"><option value="">كل أنواع المعاملات</option></select>
         <button class="v5-btn primary" onclick="ERPv5.openMatrixForm()"><i class="fas fa-plus"></i> سياسة جديدة</button>
-        <button class="v5-btn" onclick="ERPv5.testMatrix()"><i class="fas fa-flask"></i> اختبار</button>
+        <button class="v5-btn" onclick="ERPv5.testMatrix()"><i class="fas fa-flask"></i> اختبار المسار</button>
       </div>
       <div id="mxList"><div class="v5-skel"></div></div>
     </div>`;
     const types = await API('/approval-matrix/transaction-types');
     const sel = document.getElementById('mxType');
-    sel.innerHTML += types.map(t=>`<option value="${t.code}">${_esc(t.name)} (${t.code})</option>`).join('');
+    sel.innerHTML += (types||[]).map(t=>`<option value="${t.code}">${_esc(t.name)} (${t.code})</option>`).join('');
     sel.addEventListener('change', loadMatrix);
+    // V5.9.16 — load all rows once for the stats panel; loadMatrix() then
+    // applies the filter on top.
+    try {
+      const all = await API('/approval-matrix?');
+      const rows = Array.isArray(all) ? all : [];
+      const active = rows.filter(r => r.is_active !== 0).length;
+      const inactive = rows.length - active;
+      const distinctTypes = new Set(rows.map(r => r.transaction_type_code)).size;
+      const avgSla = rows.length ? Math.round(rows.reduce((s,r)=>s+(Number(r.sla_hours)||0),0) / rows.length) : 0;
+      document.getElementById('mxStats').innerHTML =
+        `<div class="v5-stat"><div class="v5-stat-label">سياسات نشطة</div><div class="v5-stat-value success">${active}</div><div class="v5-stat-trend">${rows.length} إجمالي</div></div>` +
+        `<div class="v5-stat"><div class="v5-stat-label">أنواع المعاملات المغطاة</div><div class="v5-stat-value info">${distinctTypes}</div><div class="v5-stat-trend">من أصل ${(types||[]).length} نوع</div></div>` +
+        `<div class="v5-stat"><div class="v5-stat-label">متوسط SLA</div><div class="v5-stat-value warning">${avgSla} س</div><div class="v5-stat-trend">للموافقة على كل خطوة</div></div>` +
+        `<div class="v5-stat"><div class="v5-stat-label">سياسات معطّلة</div><div class="v5-stat-value danger">${inactive}</div><div class="v5-stat-trend">${inactive ? 'تحتاج مراجعة' : 'لا توجد'}</div></div>`;
+    } catch(e) { document.getElementById('mxStats').innerHTML = ''; }
     await loadMatrix();
   }
   async function loadMatrix(){
@@ -938,8 +958,13 @@
   // ───────── ANOMALIES ─────────────────────────────────────────────────
   async function renderAnomalies(container){
     _styles();
+    // V5.9.16 — added a 4-tile KPI strip and a header subtitle so the page
+    // tells the user what it's for and surfaces the most-actionable counts
+    // (critical-open + total-open) before they scroll into the table.
     container.innerHTML = `<div class="v5-section">
-      <h2 style="margin:0 0 16px;">تنبيهات الشذوذ (الذكاء الاصطناعي)</h2>
+      <h2 style="margin:0 0 4px;">تنبيهات الشذوذ — Anomaly Detection</h2>
+      <p style="color:#64748b;font-size:13px;margin-bottom:16px;">يفحص النظام تلقائياً المعاملات والمصروفات والمخزون لرصد الأنماط غير الطبيعية. اضغط «تشغيل المسح» لإعادة الفحص الآن.</p>
+      <div class="v5-stats" id="anStats"><div class="v5-skel"></div></div>
       <div class="v5-toolbar">
         <select id="anSev"><option value="">كل الدرجات</option><option value="critical">حرج</option><option value="high">عالي</option><option value="medium">متوسط</option><option value="low">منخفض</option></select>
         <select id="anSt"><option value="">كل الحالات</option><option value="open">مفتوح</option><option value="acknowledged">معترف به</option><option value="resolved">محلول</option></select>
@@ -949,6 +974,21 @@
     </div>`;
     document.getElementById('anSev').addEventListener('change', loadAnomalies);
     document.getElementById('anSt').addEventListener('change', loadAnomalies);
+    // V5.9.16 — pull all rows once for the stats panel; loadAnomalies()
+    // applies filters on the table below.
+    try {
+      const all = await API('/anomalies?');
+      const rows = Array.isArray(all) ? all : [];
+      const open       = rows.filter(r => r.status === 'open').length;
+      const critical   = rows.filter(r => r.severity === 'critical' && r.status === 'open').length;
+      const acknowledged = rows.filter(r => r.status === 'acknowledged').length;
+      const resolved   = rows.filter(r => r.status === 'resolved').length;
+      document.getElementById('anStats').innerHTML =
+        `<div class="v5-stat" style="${critical>0?'border-color:#fecaca;background:linear-gradient(135deg,#fef2f2,#fff);':''}"><div class="v5-stat-label">حرجة مفتوحة</div><div class="v5-stat-value danger">${critical}</div><div class="v5-stat-trend">${critical>0?'تحتاج تدخل فوري':'لا توجد تنبيهات حرجة'}</div></div>` +
+        `<div class="v5-stat"><div class="v5-stat-label">مفتوحة (الكل)</div><div class="v5-stat-value warning">${open}</div><div class="v5-stat-trend">${open ? 'بانتظار المراجعة' : 'محدّث بالكامل'}</div></div>` +
+        `<div class="v5-stat"><div class="v5-stat-label">معترف بها</div><div class="v5-stat-value info">${acknowledged}</div><div class="v5-stat-trend">قيد المعالجة</div></div>` +
+        `<div class="v5-stat"><div class="v5-stat-label">تمّ حلّها</div><div class="v5-stat-value success">${resolved}</div><div class="v5-stat-trend">من إجمالي ${rows.length} تنبيه</div></div>`;
+    } catch(e) { document.getElementById('anStats').innerHTML = ''; }
     await loadAnomalies();
   }
   async function loadAnomalies(){

@@ -261,53 +261,119 @@ router.get('/receipts', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
+// V5.9.14 — Helper: resolve which source GL account a receipt should credit
+// based on its source_type. Reused by POST /receipts (draft persist) and
+// POST /receipts/:id/approve (GL posting).
+async function _receiptSourceGl(sourceType) {
+  let code = '4203', name = 'إيرادات أخرى';
+  if (sourceType === 'customer') { code = '1125'; name = 'حسابات العملاء'; }
+  else if (sourceType === 'employee') { code = '1130'; name = 'سلف الموظفين'; }
+  else if (sourceType === 'rent')     { code = '4202'; name = 'إيرادات إيجارات'; }
+  else if (sourceType === 'sales')    { code = '4101'; name = 'المبيعات'; }
+  let [r] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
+  let id;
+  if (r.length) id = r[0].id;
+  else {
+    id = 'GL-' + code;
+    const parentCode = code[0] === '1' ? '11' : '4';
+    const type = code[0] === '1' ? 'asset' : 'revenue';
+    const [p] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [parentCode]);
+    await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
+      [id, code, name, type, p.length ? p[0].id : null, 3]);
+  }
+  return { id, code, name };
+}
+
+// V5.9.14 — Receipt creation now persists as DRAFT only — no GL journal,
+// no balance update. The user must explicitly approve the receipt to post
+// the journal and credit the destination account. Old behavior posted
+// instantly which let unreviewed receipts hit the books.
 router.post('/receipts', async (req, res) => {
   try {
     const { receiptDate, destinationType, destinationId, sourceType, sourceId, sourceName, amount, reference, description, username } = req.body;
     if (!amount || !destinationId || !destinationType) return res.json({ success:false, error: 'البيانات ناقصة' });
-    const destAcc = await getSourceAccount(destinationType, destinationId);
+    // Validate destination exists (don't auto-create the GL account here — that
+    // happens at approve time, so the audit trail is clean).
+    const destTable = destinationType === 'cash' ? 'cash_boxes' : 'bank_accounts';
+    const [chk] = await db.query('SELECT id FROM ' + destTable + ' WHERE id=? AND is_active=1', [destinationId]);
+    if (!chk.length) return res.json({ success:false, error: 'الجهة المُستلِمة غير موجودة' });
     const number = await nextNumber('cash_receipts', 'receipt_number', 'REC-');
     const id = 'REC-' + Date.now();
-
-    // Determine source GL account based on source type
-    let sourceAccountCode = '1125'; // default: accounts receivable (customers)
-    let sourceAccName = 'حسابات العملاء';
-    if (sourceType === 'customer') { sourceAccountCode = '1125'; sourceAccName = 'حسابات العملاء'; }
-    else if (sourceType === 'employee') { sourceAccountCode = '1130'; sourceAccName = 'سلف الموظفين'; }
-    else if (sourceType === 'rent') { sourceAccountCode = '4202'; sourceAccName = 'إيرادات إيجارات'; }
-    else if (sourceType === 'sales') { sourceAccountCode = '4101'; sourceAccName = 'المبيعات'; }
-    else { sourceAccountCode = '4203'; sourceAccName = 'إيرادات أخرى'; }
-
-    // Ensure source account exists
-    let [srcAccRow] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [sourceAccountCode]);
-    let srcAccId;
-    if (srcAccRow.length) srcAccId = srcAccRow[0].id;
-    else {
-      srcAccId = 'GL-' + sourceAccountCode;
-      const parentCode = sourceAccountCode[0] === '1' ? '11' : '4';
-      const type = sourceAccountCode[0] === '1' ? 'asset' : 'revenue';
-      const [p] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [parentCode]);
-      await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
-        [srcAccId, sourceAccountCode, sourceAccName, type, p.length ? p[0].id : null, 3]);
-    }
-
-    // Journal: DR destination (cash/bank), CR source
-    const journal = await createJournal(receiptDate, 'سند قبض ' + number + ' — ' + (sourceName||sourceAccName), [
-      { accountId: destAcc.glId, accountCode: destAcc.code, accountName: destAcc.name, debit: amount, credit: 0 },
-      { accountId: srcAccId, accountCode: sourceAccountCode, accountName: sourceAccName, debit: 0, credit: amount }
-    ], username);
-
     await db.query(
-      `INSERT INTO cash_receipts (id, receipt_number, receipt_date, destination_type, destination_id, source_type, source_id, source_name, amount, reference, description, journal_id, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [id, number, receiptDate, destinationType, destinationId, sourceType||'other', sourceId||null, sourceName||'', amount, reference||'', description||'', journal.id, username||'']);
-
-    // Update destination balance
-    if (destinationType === 'cash') await db.query('UPDATE cash_boxes SET balance = balance + ? WHERE id = ?', [amount, destinationId]);
-    else await db.query('UPDATE bank_accounts SET balance = balance + ? WHERE id = ?', [amount, destinationId]);
-
-    res.json({ success:true, id, number, journalNumber: journal.journalNumber });
+      `INSERT INTO cash_receipts (id, receipt_number, receipt_date, destination_type, destination_id, source_type, source_id, source_name, amount, reference, description, status, created_by)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?, 'draft', ?)`,
+      [id, number, receiptDate, destinationType, destinationId, sourceType||'other', sourceId||null, sourceName||'', amount, reference||'', description||'', username||'']);
+    res.json({ success:true, id, number, status:'draft' });
   } catch(e) { res.json({ success:false, error: e.message }); }
+});
+
+// V5.9.14 — Approve a draft receipt: posts the GL journal and updates the
+// destination balance. Idempotent (refuses to re-post a posted receipt).
+router.post('/receipts/:id/approve', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const username = (req.body && req.body.username) || (req.user && req.user.username) || '';
+    const [rows] = await db.query('SELECT * FROM cash_receipts WHERE id=?', [id]);
+    if (!rows.length) return res.json({ success:false, error: 'السند غير موجود' });
+    const r = rows[0];
+    if (r.status !== 'draft') return res.json({ success:false, error: 'السند غير قابل للاعتماد (الحالة: ' + r.status + ')' });
+    const destAcc = await getSourceAccount(r.destination_type, r.destination_id);
+    const src = await _receiptSourceGl(r.source_type);
+    const journal = await createJournal(r.receipt_date,
+      'سند قبض ' + r.receipt_number + ' — ' + (r.source_name || src.name),
+      [
+        { accountId: destAcc.glId, accountCode: destAcc.code, accountName: destAcc.name, debit: r.amount, credit: 0 },
+        { accountId: src.id,       accountCode: src.code,    accountName: src.name,    debit: 0, credit: r.amount }
+      ], username);
+    await db.query('UPDATE cash_receipts SET status=?, journal_id=?, approved_by=?, approved_at=NOW() WHERE id=?',
+      ['posted', journal.id, username, id]);
+    if (r.destination_type === 'cash') await db.query('UPDATE cash_boxes SET balance = balance + ? WHERE id = ?', [r.amount, r.destination_id]);
+    else                               await db.query('UPDATE bank_accounts SET balance = balance + ? WHERE id = ?', [r.amount, r.destination_id]);
+    res.json({ success:true, journalId: journal.id, journalNumber: journal.journalNumber });
+  } catch(e) { res.json({ success:false, error: e.message }); }
+});
+
+// V5.9.14 — Cancel a draft receipt (refuses if posted — needs a reversal journal)
+router.post('/receipts/:id/cancel', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const [rows] = await db.query('SELECT status FROM cash_receipts WHERE id=?', [id]);
+    if (!rows.length) return res.json({ success:false, error:'السند غير موجود' });
+    if (rows[0].status === 'posted') return res.json({ success:false, error:'لا يمكن إلغاء سند مُرحَّل — أعكسه بقيد مضاد' });
+    if (rows[0].status === 'cancelled') return res.json({ success:false, error:'السند ملغى مسبقاً' });
+    await db.query('UPDATE cash_receipts SET status=? WHERE id=?', ['cancelled', id]);
+    res.json({ success:true });
+  } catch(e) { res.json({ success:false, error:e.message }); }
+});
+
+// V5.9.14 — Print data: the row + linked accounts + company settings, in one
+// round-trip so the e-voucher template doesn't need parallel fetches.
+router.get('/receipts/:id/print-data', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const [rows] = await db.query(`
+      SELECT r.*,
+             COALESCE(cb.name, ba.bank_name) AS dest_name,
+             COALESCE(cb.code, ba.account_number) AS dest_code,
+             ga.code AS dest_gl_code, ga.name_ar AS dest_gl_name,
+             jr.journal_number,
+             COALESCE(uc.full_name, uc.username, r.created_by) AS created_by_name,
+             COALESCE(ua.full_name, ua.username, r.approved_by) AS approved_by_name
+      FROM cash_receipts r
+      LEFT JOIN cash_boxes cb ON r.destination_type='cash' AND r.destination_id=cb.id
+      LEFT JOIN bank_accounts ba ON r.destination_type='bank' AND r.destination_id=ba.id
+      LEFT JOIN gl_accounts ga ON ga.id = COALESCE(cb.gl_account_id, ba.gl_account_id)
+      LEFT JOIN gl_journals jr ON jr.id = r.journal_id
+      LEFT JOIN users uc ON uc.username = r.created_by
+      LEFT JOIN users ua ON ua.username = r.approved_by
+      WHERE r.id=?`, [id]);
+    if (!rows.length) return res.json({ success:false, error:'السند غير موجود' });
+    const r = rows[0];
+    const [stg] = await db.query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('CompanyName','TaxNumber','Currency','CompanyLogo')");
+    const cfg = {};
+    stg.forEach(s => { cfg[s.setting_key] = s.setting_value; });
+    res.json({ success:true, voucher: r, company: cfg });
+  } catch(e) { res.json({ success:false, error:e.message }); }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -333,57 +399,110 @@ router.get('/payments', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
+// V5.9.14 — Helper for payment recipient GL account resolution.
+async function _paymentRecipientGl(recipientType, expenseAccountId) {
+  if (expenseAccountId) {
+    const [r] = await db.query('SELECT id, code, name_ar FROM gl_accounts WHERE id = ?', [expenseAccountId]);
+    if (r.length) return { id: r[0].id, code: r[0].code, name: r[0].name_ar };
+  }
+  let code = '5205', name = 'مصروفات أخرى';
+  if (recipientType === 'supplier')      { code = '2101'; name = 'حسابات الموردين'; }
+  else if (recipientType === 'employee') { code = '1130'; name = 'سلف الموظفين'; }
+  const [r] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
+  let id;
+  if (r.length) id = r[0].id;
+  else {
+    id = 'GL-' + code;
+    const type = recipientType === 'supplier' ? 'liability' : (recipientType === 'employee' ? 'asset' : 'expense');
+    const [p] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [code[0]]);
+    await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
+      [id, code, name, type, p.length ? p[0].id : null, 3]);
+  }
+  return { id, code, name };
+}
+
+// V5.9.14 — Payment creation persists as DRAFT only — same approval gate
+// as receipts. Eliminates instant-post-on-create.
 router.post('/payments', async (req, res) => {
   try {
     const { paymentDate, sourceType, sourceId, recipientType, recipientId, recipientName, expenseAccountId, amount, reference, description, username } = req.body;
     if (!amount || !sourceId || !sourceType) return res.json({ success:false, error: 'البيانات ناقصة' });
-    const srcAcc = await getSourceAccount(sourceType, sourceId);
+    const srcTable = sourceType === 'cash' ? 'cash_boxes' : 'bank_accounts';
+    const [chk] = await db.query('SELECT id FROM ' + srcTable + ' WHERE id=? AND is_active=1', [sourceId]);
+    if (!chk.length) return res.json({ success:false, error:'الجهة الدافعة غير موجودة' });
     const number = await nextNumber('cash_payments', 'payment_number', 'PAY-');
     const id = 'PAY-' + Date.now();
-
-    // Determine recipient GL account
-    let recipAccId = expenseAccountId;
-    let recipAccCode = '';
-    let recipAccName = recipientName || '';
-    if (!recipAccId) {
-      let code = '5205'; // other expense
-      let name = 'مصروفات أخرى';
-      if (recipientType === 'supplier') { code = '2101'; name = 'حسابات الموردين'; }
-      else if (recipientType === 'employee') { code = '1130'; name = 'سلف الموظفين'; }
-      const [r] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
-      if (r.length) { recipAccId = r[0].id; recipAccCode = code; recipAccName = name; }
-      else {
-        recipAccId = 'GL-' + code;
-        const type = recipientType === 'supplier' ? 'liability' : (recipientType === 'employee' ? 'asset' : 'expense');
-        const parentCode = code[0];
-        const [p] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [parentCode]);
-        await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
-          [recipAccId, code, name, type, p.length ? p[0].id : null, 3]);
-        recipAccCode = code;
-        recipAccName = name;
-      }
-    } else {
-      const [r] = await db.query('SELECT code, name_ar FROM gl_accounts WHERE id = ?', [recipAccId]);
-      if (r.length) { recipAccCode = r[0].code; recipAccName = r[0].name_ar; }
-    }
-
-    // Journal: DR recipient, CR source (cash/bank)
-    const journal = await createJournal(paymentDate, 'سند صرف ' + number + ' — ' + (recipientName||recipAccName), [
-      { accountId: recipAccId, accountCode: recipAccCode, accountName: recipAccName, debit: amount, credit: 0 },
-      { accountId: srcAcc.glId, accountCode: srcAcc.code, accountName: srcAcc.name, debit: 0, credit: amount }
-    ], username);
-
     await db.query(
-      `INSERT INTO cash_payments (id, payment_number, payment_date, source_type, source_id, recipient_type, recipient_id, recipient_name, expense_account_id, amount, reference, description, journal_id, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [id, number, paymentDate, sourceType, sourceId, recipientType||'other', recipientId||null, recipientName||'', expenseAccountId||null, amount, reference||'', description||'', journal.id, username||'']);
-
-    // Deduct source balance
-    if (sourceType === 'cash') await db.query('UPDATE cash_boxes SET balance = balance - ? WHERE id = ?', [amount, sourceId]);
-    else await db.query('UPDATE bank_accounts SET balance = balance - ? WHERE id = ?', [amount, sourceId]);
-
-    res.json({ success:true, id, number, journalNumber: journal.journalNumber });
+      `INSERT INTO cash_payments (id, payment_number, payment_date, source_type, source_id, recipient_type, recipient_id, recipient_name, expense_account_id, amount, reference, description, status, created_by)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?)`,
+      [id, number, paymentDate, sourceType, sourceId, recipientType||'other', recipientId||null, recipientName||'', expenseAccountId||null, amount, reference||'', description||'', username||'']);
+    res.json({ success:true, id, number, status:'draft' });
   } catch(e) { res.json({ success:false, error: e.message }); }
+});
+
+// V5.9.14 — Approve a draft payment: posts the GL journal and decrements
+// the source balance.
+router.post('/payments/:id/approve', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const username = (req.body && req.body.username) || (req.user && req.user.username) || '';
+    const [rows] = await db.query('SELECT * FROM cash_payments WHERE id=?', [id]);
+    if (!rows.length) return res.json({ success:false, error:'السند غير موجود' });
+    const p = rows[0];
+    if (p.status !== 'draft') return res.json({ success:false, error: 'السند غير قابل للاعتماد (الحالة: ' + p.status + ')' });
+    const srcAcc = await getSourceAccount(p.source_type, p.source_id);
+    const recip = await _paymentRecipientGl(p.recipient_type, p.expense_account_id);
+    const journal = await createJournal(p.payment_date,
+      'سند صرف ' + p.payment_number + ' — ' + (p.recipient_name || recip.name),
+      [
+        { accountId: recip.id,    accountCode: recip.code,    accountName: recip.name,    debit: p.amount, credit: 0 },
+        { accountId: srcAcc.glId, accountCode: srcAcc.code,   accountName: srcAcc.name,   debit: 0, credit: p.amount }
+      ], username);
+    await db.query('UPDATE cash_payments SET status=?, journal_id=?, approved_by=?, approved_at=NOW() WHERE id=?',
+      ['posted', journal.id, username, id]);
+    if (p.source_type === 'cash') await db.query('UPDATE cash_boxes SET balance = balance - ? WHERE id = ?', [p.amount, p.source_id]);
+    else                          await db.query('UPDATE bank_accounts SET balance = balance - ? WHERE id = ?', [p.amount, p.source_id]);
+    res.json({ success:true, journalId: journal.id, journalNumber: journal.journalNumber });
+  } catch(e) { res.json({ success:false, error: e.message }); }
+});
+
+router.post('/payments/:id/cancel', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const [rows] = await db.query('SELECT status FROM cash_payments WHERE id=?', [id]);
+    if (!rows.length) return res.json({ success:false, error:'السند غير موجود' });
+    if (rows[0].status === 'posted') return res.json({ success:false, error:'لا يمكن إلغاء سند مُرحَّل — أعكسه بقيد مضاد' });
+    if (rows[0].status === 'cancelled') return res.json({ success:false, error:'السند ملغى مسبقاً' });
+    await db.query('UPDATE cash_payments SET status=? WHERE id=?', ['cancelled', id]);
+    res.json({ success:true });
+  } catch(e) { res.json({ success:false, error:e.message }); }
+});
+
+router.get('/payments/:id/print-data', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const [rows] = await db.query(`
+      SELECT p.*,
+             COALESCE(cb.name, ba.bank_name) AS src_name,
+             COALESCE(cb.code, ba.account_number) AS src_code,
+             ga.code AS src_gl_code, ga.name_ar AS src_gl_name,
+             jr.journal_number,
+             COALESCE(uc.full_name, uc.username, p.created_by) AS created_by_name,
+             COALESCE(ua.full_name, ua.username, p.approved_by) AS approved_by_name
+      FROM cash_payments p
+      LEFT JOIN cash_boxes cb ON p.source_type='cash' AND p.source_id=cb.id
+      LEFT JOIN bank_accounts ba ON p.source_type='bank' AND p.source_id=ba.id
+      LEFT JOIN gl_accounts ga ON ga.id = COALESCE(cb.gl_account_id, ba.gl_account_id)
+      LEFT JOIN gl_journals jr ON jr.id = p.journal_id
+      LEFT JOIN users uc ON uc.username = p.created_by
+      LEFT JOIN users ua ON ua.username = p.approved_by
+      WHERE p.id=?`, [id]);
+    if (!rows.length) return res.json({ success:false, error:'السند غير موجود' });
+    const [stg] = await db.query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('CompanyName','TaxNumber','Currency','CompanyLogo')");
+    const cfg = {};
+    stg.forEach(s => { cfg[s.setting_key] = s.setting_value; });
+    res.json({ success:true, voucher: rows[0], company: cfg });
+  } catch(e) { res.json({ success:false, error:e.message }); }
 });
 
 // ═══════════════════════════════════════════════════════════════

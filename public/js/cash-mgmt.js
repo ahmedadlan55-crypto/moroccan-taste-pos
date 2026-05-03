@@ -280,24 +280,57 @@ function _ensureCashBoxesLoaded(cb) {
 // ─────────────────────────────────────────────────────────────
 // Receipts
 // ─────────────────────────────────────────────────────────────
+// V5.9.14 — receipts list now shows the draft/posted/cancelled status
+// pill and exposes per-row Approve / Print / Cancel buttons.
 function cashLoadReceipts() {
   var tb = document.getElementById('cashReceiptsBody');
   tb.innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
   _cashAPI('GET', '/receipts').then(function(list) {
     if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد سندات قبض</td></tr>'; return; }
     var sMap = {customer:'عميل',employee:'موظف',rent:'إيجار',sales:'مبيعات',other:'أخرى'};
+    var statusPill = function(s) {
+      if (s === 'draft')     return '<span class="badge" style="background:#f1f5f9;color:#475569;">مسودة</span>';
+      if (s === 'posted')    return '<span class="badge" style="background:#dcfce7;color:#166534;">مُرحَّل ✓</span>';
+      if (s === 'cancelled') return '<span class="badge" style="background:#fee2e2;color:#991b1b;">ملغى</span>';
+      return '<span class="badge">'+(s||'')+'</span>';
+    };
     tb.innerHTML = list.map(function(r) {
       var dt = r.receiptDate ? new Date(r.receiptDate).toLocaleDateString('en-GB') : '';
+      var actions = '<button class="btn btn-sm" style="background:#f0f9ff;color:#075985;border-radius:6px;font-size:11px;padding:3px 8px;" onclick="cashPrintVoucher(\''+r.id+'\',\'receipt\')" title="طباعة"><i class="fas fa-print"></i></button>';
+      if (r.status === 'draft') {
+        actions = '<button class="btn btn-sm" style="background:#dcfce7;color:#166534;border-radius:6px;font-size:11px;padding:3px 8px;font-weight:700;" onclick="cashApproveReceipt(\''+r.id+'\',\''+(r.receiptNumber||'')+'\')" title="اعتماد"><i class="fas fa-check"></i> اعتماد</button> ' + actions +
+          ' <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b;border-radius:6px;font-size:11px;padding:3px 8px;" onclick="cashCancelReceipt(\''+r.id+'\')" title="إلغاء"><i class="fas fa-times"></i></button>';
+      }
       return '<tr><td><code style="font-weight:700;color:#10b981;">'+r.receiptNumber+'</code></td>' +
         '<td>'+dt+'</td>' +
         '<td>'+(r.sourceName||'')+' <span style="font-size:10px;color:#94a3b8;">('+(sMap[r.sourceType]||r.sourceType)+')</span></td>' +
         '<td><span style="font-size:11px;color:#64748b;">'+(r.destinationType==='cash'?'صندوق':'بنك')+'</span></td>' +
         '<td style="text-align:start;font-weight:800;color:#10b981;">'+_fmt(r.amount)+'</td>' +
-        '<td style="font-size:12px;">'+(r.description||'')+'</td>' +
-        '<td><span class="badge" style="background:#dcfce7;color:#166534;">مرحّل</span></td></tr>';
+        '<td>'+statusPill(r.status)+'</td>' +
+        '<td style="white-space:nowrap;">'+actions+'</td></tr>';
     }).join('');
   });
 }
+
+window.cashApproveReceipt = function(id, number) {
+  if (!confirm('اعتماد سند القبض «' + (number||id) + '»؟ سيتم ترحيل القيد المحاسبي تلقائياً.')) return;
+  loader(true);
+  _cashAPI('POST', '/receipts/' + id + '/approve', { username: currentUser }).then(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم الاعتماد + ترحيل القيد ' + (r.journalNumber||'')); cashLoadReceipts(); }
+    else showToast((r && r.error) || 'فشل الاعتماد', true);
+  });
+};
+
+window.cashCancelReceipt = function(id) {
+  if (!confirm('إلغاء سند القبض؟')) return;
+  loader(true);
+  _cashAPI('POST', '/receipts/' + id + '/cancel', {}).then(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم الإلغاء'); cashLoadReceipts(); }
+    else showToast((r && r.error) || 'فشل الإلغاء', true);
+  });
+};
 
 function cashOpenReceiptModal() {
   _ensureCashBoxesLoaded(function() {
@@ -342,7 +375,8 @@ function cashSaveReceipt() {
   loader(true);
   _cashAPI('POST', '/receipts', data).then(function(r) {
     loader(false);
-    if (r.success) { showToast('تم القبض — سند: '+r.number+' | قيد: '+r.journalNumber); erpCloseModal(); cashLoadReceipts(); }
+    // V5.9.14 — receipt now creates as DRAFT; user must click Approve to post.
+    if (r.success) { showToast('تم إنشاء سند مسودة: '+r.number+' — اضغط «اعتماد» لترحيله محاسبياً.'); erpCloseModal(); cashLoadReceipts(); }
     else showToast(r.error, true);
   });
 }
@@ -356,18 +390,49 @@ function cashLoadPayments() {
   _cashAPI('GET', '/payments').then(function(list) {
     if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد سندات صرف</td></tr>'; return; }
     var rMap = {supplier:'مورد',employee:'موظف',expense:'مصروف',other:'أخرى'};
+    var statusPill = function(s) {
+      if (s === 'draft')     return '<span class="badge" style="background:#f1f5f9;color:#475569;">مسودة</span>';
+      if (s === 'posted')    return '<span class="badge" style="background:#dcfce7;color:#166534;">مُرحَّل ✓</span>';
+      if (s === 'cancelled') return '<span class="badge" style="background:#fee2e2;color:#991b1b;">ملغى</span>';
+      return '<span class="badge">'+(s||'')+'</span>';
+    };
     tb.innerHTML = list.map(function(r) {
       var dt = r.paymentDate ? new Date(r.paymentDate).toLocaleDateString('en-GB') : '';
+      var actions = '<button class="btn btn-sm" style="background:#f0f9ff;color:#075985;border-radius:6px;font-size:11px;padding:3px 8px;" onclick="cashPrintVoucher(\''+r.id+'\',\'payment\')" title="طباعة"><i class="fas fa-print"></i></button>';
+      if (r.status === 'draft') {
+        actions = '<button class="btn btn-sm" style="background:#dcfce7;color:#166534;border-radius:6px;font-size:11px;padding:3px 8px;font-weight:700;" onclick="cashApprovePayment(\''+r.id+'\',\''+(r.paymentNumber||'')+'\')" title="اعتماد"><i class="fas fa-check"></i> اعتماد</button> ' + actions +
+          ' <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b;border-radius:6px;font-size:11px;padding:3px 8px;" onclick="cashCancelPayment(\''+r.id+'\')" title="إلغاء"><i class="fas fa-times"></i></button>';
+      }
       return '<tr><td><code style="font-weight:700;color:#ef4444;">'+r.paymentNumber+'</code></td>' +
         '<td>'+dt+'</td>' +
         '<td>'+(r.recipientName||'')+' <span style="font-size:10px;color:#94a3b8;">('+(rMap[r.recipientType]||r.recipientType)+')</span></td>' +
         '<td><span style="font-size:11px;color:#64748b;">'+(r.sourceType==='cash'?'صندوق':'بنك')+'</span></td>' +
         '<td style="text-align:start;font-weight:800;color:#ef4444;">-'+_fmt(r.amount)+'</td>' +
-        '<td style="font-size:12px;">'+(r.description||'')+'</td>' +
-        '<td><span class="badge" style="background:#dcfce7;color:#166534;">مرحّل</span></td></tr>';
+        '<td>'+statusPill(r.status)+'</td>' +
+        '<td style="white-space:nowrap;">'+actions+'</td></tr>';
     }).join('');
   });
 }
+
+window.cashApprovePayment = function(id, number) {
+  if (!confirm('اعتماد سند الصرف «' + (number||id) + '»؟ سيتم ترحيل القيد المحاسبي تلقائياً.')) return;
+  loader(true);
+  _cashAPI('POST', '/payments/' + id + '/approve', { username: currentUser }).then(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم الاعتماد + ترحيل القيد ' + (r.journalNumber||'')); cashLoadPayments(); }
+    else showToast((r && r.error) || 'فشل الاعتماد', true);
+  });
+};
+
+window.cashCancelPayment = function(id) {
+  if (!confirm('إلغاء سند الصرف؟')) return;
+  loader(true);
+  _cashAPI('POST', '/payments/' + id + '/cancel', {}).then(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم الإلغاء'); cashLoadPayments(); }
+    else showToast((r && r.error) || 'فشل الإلغاء', true);
+  });
+};
 
 function cashOpenPaymentModal() {
   _ensureCashBoxesLoaded(function() {
@@ -411,7 +476,8 @@ function cashSavePayment() {
   loader(true);
   _cashAPI('POST', '/payments', data).then(function(r) {
     loader(false);
-    if (r.success) { showToast('تم الصرف — سند: '+r.number+' | قيد: '+r.journalNumber); erpCloseModal(); cashLoadPayments(); }
+    // V5.9.14 — payment now creates as DRAFT; user must click Approve to post.
+    if (r.success) { showToast('تم إنشاء سند مسودة: '+r.number+' — اضغط «اعتماد» لترحيله محاسبياً.'); erpCloseModal(); cashLoadPayments(); }
     else showToast(r.error, true);
   });
 }
@@ -471,3 +537,223 @@ function cashSaveTransfer() {
     else showToast(r.error, true);
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// V5.9.14 — Electronic voucher print (سند قبض / سند صرف).
+//
+// Same structural pattern as the v5.9.11 stock-issue print template:
+// fetch entity + company settings in one server round-trip via the new
+// /receipts/:id/print-data and /payments/:id/print-data endpoints, render
+// an A5 sheet in a new window, auto-print on load.
+//
+// The voucher includes:
+//   - Letterhead: company logo (if CompanyLogo setting is set), company
+//     name (large), tax number, voucher type pill (قبض / صرف).
+//   - Voucher number + date in a colored monospace badge.
+//   - Status pill (مسودة / مُرحَّل ✓ / ملغى) so a printed cancelled
+//     voucher can't be reused.
+//   - Counter-party block (received from / paid to) + amount in numerals
+//     and the Arabic "amount in words" rendition (handles SAR up to billions).
+//   - Source / destination cash-box or bank account name + GL code.
+//   - Description / reference / payment method.
+//   - 3 signature blocks: المحاسب — المعتمد — المستلم/المُسلِّم.
+//   - GL journal reference at the bottom (when posted).
+//   - Footer: print timestamp + print user.
+//
+// The voucher prints on A5 portrait — vouchers in MENA traditionally fit
+// on a half-A4 page, two per A4 sheet.
+// ─────────────────────────────────────────────────────────────────────────
+
+window.cashPrintVoucher = function(id, kind) {
+  // kind: 'receipt' | 'payment'
+  var path = (kind === 'payment') ? '/payments/' : '/receipts/';
+  _cashAPI('GET', path + id + '/print-data').then(function(r) {
+    if (!r || !r.success) return showToast((r && r.error) || 'تعذّر تحميل السند', true);
+    _cashRenderVoucher(r.voucher, r.company || {}, kind);
+  });
+};
+
+function _cashEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
+// Arabic amount-in-words helper. Covers SAR amounts up to billions with
+// halalas. Used to print the voucher's "بالحرف" line.
+function _cashAmountInWords(num) {
+  num = Math.round(Number(num || 0) * 100) / 100;
+  if (!isFinite(num) || num <= 0) return 'صفر ريال';
+  var sign = num < 0 ? 'سالب ' : '';
+  num = Math.abs(num);
+  var halalas = Math.round((num - Math.floor(num)) * 100);
+  var whole = Math.floor(num);
+  var ones = ['','واحد','اثنان','ثلاثة','أربعة','خمسة','ستة','سبعة','ثمانية','تسعة','عشرة','أحد عشر','اثنا عشر','ثلاثة عشر','أربعة عشر','خمسة عشر','ستة عشر','سبعة عشر','ثمانية عشر','تسعة عشر'];
+  var tens = ['','','عشرون','ثلاثون','أربعون','خمسون','ستون','سبعون','ثمانون','تسعون'];
+  var hundreds = ['','مئة','مئتان','ثلاثمئة','أربعمئة','خمسمئة','ستمئة','سبعمئة','ثمانمئة','تسعمئة'];
+  function under1000(n) {
+    if (n < 20) return ones[n];
+    if (n < 100) {
+      var t = Math.floor(n/10), o = n%10;
+      return o === 0 ? tens[t] : ones[o] + ' و' + tens[t];
+    }
+    var h = Math.floor(n/100), rem = n%100;
+    return rem === 0 ? hundreds[h] : hundreds[h] + ' و' + under1000(rem);
+  }
+  function withScale(n, scaleNames) {
+    if (n === 0) return '';
+    if (n === 1) return scaleNames[0];
+    if (n === 2) return scaleNames[1];
+    if (n >= 3 && n <= 10) return ones[n] + ' ' + scaleNames[2];
+    return under1000(n) + ' ' + scaleNames[3];
+  }
+  var parts = [];
+  var billions = Math.floor(whole / 1000000000);
+  var millions = Math.floor((whole % 1000000000) / 1000000);
+  var thousands = Math.floor((whole % 1000000) / 1000);
+  var rest = whole % 1000;
+  if (billions)  parts.push(withScale(billions,  ['مليار','ملياران','مليارات','مليار']));
+  if (millions)  parts.push(withScale(millions,  ['مليون','مليونان','ملايين','مليون']));
+  if (thousands) parts.push(withScale(thousands, ['ألف','ألفان','آلاف','ألف']));
+  if (rest)      parts.push(under1000(rest));
+  var res = sign + parts.join(' و') + ' ريال';
+  if (halalas > 0) res += ' و' + under1000(halalas) + ' هللة';
+  return res + ' فقط لا غير';
+}
+
+function _cashRenderVoucher(v, cfg, kind) {
+  var win = window.open('', '_blank', 'width=720,height=900');
+  if (!win) return showToast('السماح بالنوافذ المنبثقة مطلوب للطباعة', true);
+
+  var isReceipt = (kind === 'receipt');
+  var docTitle = isReceipt ? 'سند قبض' : 'سند صرف';
+  var docColor = isReceipt ? '#16a34a' : '#dc2626';
+  var docColorBg = isReceipt ? '#dcfce7' : '#fee2e2';
+  var num     = isReceipt ? v.receipt_number : v.payment_number;
+  var dt      = isReceipt ? v.receipt_date    : v.payment_date;
+  var amount  = Number(v.amount || 0);
+  var status  = v.status || 'draft';
+  var statusLabels = { draft:'مسودة', posted:'مُرحَّل ✓', cancelled:'ملغى' };
+  var statusBgs    = { draft:'#f1f5f9', posted:'#dcfce7', cancelled:'#fee2e2' };
+  var statusFgs    = { draft:'#475569', posted:'#166534', cancelled:'#991b1b' };
+
+  // Parties
+  var counterParty = isReceipt ? (v.source_name || '—') : (v.recipient_name || '—');
+  var typeLabel    = isReceipt
+    ? ({customer:'عميل', employee:'موظف', rent:'إيجار', sales:'مبيعات', other:'أخرى'}[v.source_type] || v.source_type)
+    : ({supplier:'مورد', employee:'موظف', expense:'مصروف', other:'أخرى'}[v.recipient_type] || v.recipient_type);
+  var srcDestLabel = isReceipt ? 'المُودَع في' : 'المصروف من';
+  var srcDestName  = v.dest_name || v.src_name || '—';
+  var srcDestGl    = (v.dest_gl_code || v.src_gl_code) ? ((v.dest_gl_code || v.src_gl_code) + ' — ' + (v.dest_gl_name || v.src_gl_name || '')) : '';
+
+  var company = _cashEsc(cfg.CompanyName || 'Moroccan Taste');
+  var taxNum  = _cashEsc(cfg.TaxNumber   || '');
+  var logo    = cfg.CompanyLogo || '';
+
+  var fmtDate = function(d) {
+    if (!d) return '—';
+    try {
+      var dt = new Date(d);
+      return dt.toLocaleDateString('en-GB', { day:'2-digit', month:'2-digit', year:'numeric' });
+    } catch(e) { return String(d); }
+  };
+  var fmtNum = function(n) {
+    return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 });
+  };
+
+  var html =
+    '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">' +
+    '<title>' + docTitle + ' ' + _cashEsc(num || '') + '</title>' +
+    '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">' +
+    '<style>' +
+      '*{box-sizing:border-box;margin:0;padding:0;}' +
+      'body{font-family:"Tajawal","Segoe UI",sans-serif;direction:rtl;color:#0f172a;background:#fff;font-size:13px;line-height:1.5;}' +
+      '@page{size:A5 portrait;margin:8mm;}' +
+      '.sheet{max-width:560px;margin:0 auto;padding:14px 18px;}' +
+      '.lh{display:flex;align-items:center;gap:12px;border-bottom:3px solid '+docColor+';padding-bottom:12px;margin-bottom:14px;}' +
+      '.lh-logo{width:54px;height:54px;border-radius:10px;background:'+docColorBg+';display:flex;align-items:center;justify-content:center;color:'+docColor+';font-size:24px;flex-shrink:0;overflow:hidden;}' +
+      '.lh-logo img{max-width:100%;max-height:100%;object-fit:contain;}' +
+      '.lh-text{flex:1;}' +
+      '.lh-co{font-size:18px;font-weight:900;color:#0f172a;letter-spacing:-0.02em;}' +
+      '.lh-tax{font-size:10px;color:#64748b;margin-top:2px;}' +
+      '.lh-doc-pill{padding:5px 12px;border-radius:8px;background:'+docColorBg+';color:'+docColor+';font-weight:800;font-size:14px;}' +
+      '.head-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;padding:10px 14px;background:linear-gradient(135deg,'+docColorBg+', #fff);border-radius:10px;}' +
+      '.h-num{font-family:ui-monospace,Menlo,monospace;font-size:18px;font-weight:900;color:'+docColor+';}' +
+      '.h-num small{display:block;font-size:9px;color:#64748b;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;}' +
+      '.h-date{text-align:start;}' +
+      '.h-status{padding:4px 12px;border-radius:999px;font-size:11px;font-weight:800;}' +
+      '.amount-block{padding:14px 16px;border:2px dashed '+docColor+';border-radius:12px;margin:14px 0;text-align:center;background:#fff;}' +
+      '.amount-num{font-size:30px;font-weight:900;color:'+docColor+';font-family:ui-monospace,Menlo,monospace;letter-spacing:-0.5px;}' +
+      '.amount-words{font-size:12px;color:#475569;margin-top:6px;font-weight:700;line-height:1.6;}' +
+      '.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0;}' +
+      '.field{padding:8px 10px;background:#f8fafc;border-radius:8px;font-size:12px;}' +
+      '.field-l{font-size:9px;color:#94a3b8;font-weight:800;letter-spacing:0.4px;text-transform:uppercase;display:block;}' +
+      '.field-v{color:#0f172a;font-weight:700;font-size:13px;margin-top:2px;}' +
+      '.field-v code{font-family:ui-monospace,Menlo,monospace;background:#fff;padding:1px 6px;border-radius:4px;border:1px solid #e2e8f0;font-size:11px;color:'+docColor+';}' +
+      '.field-full{grid-column:1 / -1;}' +
+      '.signatures{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:24px;}' +
+      '.sig{border-top:1.5px dashed #94a3b8;padding-top:6px;text-align:center;}' +
+      '.sig-label{font-size:10px;color:#64748b;font-weight:800;}' +
+      '.sig-name{font-size:11px;color:#0f172a;font-weight:700;margin-top:24px;min-height:14px;}' +
+      '.foot{margin-top:18px;padding-top:10px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:9px;color:#94a3b8;}' +
+      '.foot code{font-family:ui-monospace,Menlo,monospace;}' +
+      '.toolbar{position:fixed;top:10px;inset-inline-end:10px;display:flex;gap:6px;background:#fff;padding:6px;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,0.1);z-index:1000;}' +
+      '.toolbar button{height:32px;padding:0 14px;border-radius:8px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;}' +
+      '.toolbar button.primary{background:'+docColor+';color:#fff;border-color:'+docColor+';}' +
+      '@media print{.toolbar{display:none;}}' +
+    '</style></head><body>' +
+      '<div class="toolbar">' +
+        '<button class="primary" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>' +
+        '<button onclick="window.close()">إغلاق</button>' +
+      '</div>' +
+      '<div class="sheet">' +
+        '<header class="lh">' +
+          '<div class="lh-logo">' + (logo ? '<img src="'+_cashEsc(logo)+'" alt="logo">' : '<i class="fas fa-' + (isReceipt ? 'arrow-down' : 'arrow-up') + '"></i>') + '</div>' +
+          '<div class="lh-text">' +
+            '<div class="lh-co">' + company + '</div>' +
+            (taxNum ? '<div class="lh-tax">الرقم الضريبي: ' + taxNum + '</div>' : '') +
+          '</div>' +
+          '<div class="lh-doc-pill">' + docTitle + '</div>' +
+        '</header>' +
+
+        '<div class="head-row">' +
+          '<div class="h-num"><small>رقم السند</small>' + _cashEsc(num || '—') + '</div>' +
+          '<div class="h-date"><small style="font-size:9px;color:#64748b;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;">التاريخ</small><div style="font-size:14px;font-weight:800;">' + _cashEsc(fmtDate(dt)) + '</div></div>' +
+          '<span class="h-status" style="background:' + (statusBgs[status]||'#f1f5f9') + ';color:' + (statusFgs[status]||'#475569') + ';">' + (statusLabels[status]||status) + '</span>' +
+        '</div>' +
+
+        '<div class="amount-block">' +
+          '<div class="amount-num">' + fmtNum(amount) + ' ' + _cashEsc(cfg.Currency || 'ر.س') + '</div>' +
+          '<div class="amount-words">' + _cashEsc(_cashAmountInWords(amount)) + '</div>' +
+        '</div>' +
+
+        '<div class="field-grid">' +
+          '<div class="field"><span class="field-l">' + (isReceipt ? 'استلمنا من' : 'دفعنا إلى') + '</span><div class="field-v">' + _cashEsc(counterParty) + ' <small style="color:#94a3b8;font-weight:600;">(' + _cashEsc(typeLabel) + ')</small></div></div>' +
+          '<div class="field"><span class="field-l">' + srcDestLabel + '</span><div class="field-v">' + _cashEsc(srcDestName) + (srcDestGl ? '<br><code>'+_cashEsc(srcDestGl)+'</code>' : '') + '</div></div>' +
+          (v.reference ? '<div class="field field-full"><span class="field-l">المرجع</span><div class="field-v">' + _cashEsc(v.reference) + '</div></div>' : '') +
+          (v.description ? '<div class="field field-full"><span class="field-l">البيان</span><div class="field-v" style="font-weight:500;line-height:1.7;">' + _cashEsc(v.description) + '</div></div>' : '') +
+        '</div>' +
+
+        '<div class="signatures">' +
+          '<div class="sig"><span class="sig-label">المحاسب</span><div class="sig-name">' + _cashEsc(v.created_by_name || v.created_by || '') + '</div></div>' +
+          '<div class="sig"><span class="sig-label">المعتمد</span><div class="sig-name">' + _cashEsc(v.approved_by_name || v.approved_by || (status==='posted' ? '' : '—')) + '</div></div>' +
+          '<div class="sig"><span class="sig-label">' + (isReceipt ? 'المُسلِّم' : 'المستلم') + '</span><div class="sig-name">' + _cashEsc(counterParty) + '</div></div>' +
+        '</div>' +
+
+        (v.journal_id || v.journal_number
+          ? '<div style="margin-top:18px;padding:8px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:11px;color:#92400e;display:flex;justify-content:space-between;align-items:center;"><span><i class="fas fa-book"></i> القيد المحاسبي: <code>' + _cashEsc(v.journal_number || v.journal_id) + '</code></span><span style="color:#16a34a;font-weight:700;">✓ مُرحَّل في الدفاتر</span></div>'
+          : '') +
+
+        '<footer class="foot">' +
+          '<span>طُبع: ' + _cashEsc(new Date().toLocaleString('en-GB')) + '</span>' +
+          '<span>المعرف: <code>' + _cashEsc(v.id || '') + '</code></span>' +
+        '</footer>' +
+      '</div>' +
+      '<script>window.onload = function(){ setTimeout(function(){ window.focus(); window.print(); }, 250); };</' + 'script>' +
+    '</body></html>';
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+}
+

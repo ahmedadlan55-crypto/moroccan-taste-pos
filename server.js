@@ -1964,6 +1964,20 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
+  // V5.9.14 — track who approved each voucher and when, so the e-voucher
+  // print template can show real signature names and the audit trail is
+  // complete for posted vouchers.
+  await addColumnIfMissing('cash_receipts',  'approved_by', "VARCHAR(100)");
+  await addColumnIfMissing('cash_receipts',  'approved_at', "DATETIME");
+  await addColumnIfMissing('cash_payments',  'approved_by', "VARCHAR(100)");
+  await addColumnIfMissing('cash_payments',  'approved_at', "DATETIME");
+  // Existing rows shipped with status='posted' as the table default;
+  // change the default to 'draft' going forward but leave existing rows alone.
+  try {
+    await db.query("ALTER TABLE cash_receipts MODIFY COLUMN status ENUM('draft','posted','cancelled') DEFAULT 'draft'");
+    await db.query("ALTER TABLE cash_payments MODIFY COLUMN status ENUM('draft','posted','cancelled') DEFAULT 'draft'");
+  } catch(e) { /* default-only change; safe to ignore on older MySQL */ }
+
   await createTableIfMissing('cash_transfers', `
     CREATE TABLE cash_transfers (
       id VARCHAR(50) PRIMARY KEY,

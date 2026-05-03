@@ -56,13 +56,21 @@ router.post('/warehouse-stock/backfill', async (req, res) => {
 router.get('/warehouses-by-brand', async (req, res) => {
   try {
     const { brandId } = req.query;
-    await _ensureWarehouseStockBackfilled();  // idempotent
+    // v5.10.7 — DO NOT call _ensureWarehouseStockBackfilled here either.
+    // It was re-creating the same ghost rows (qty=0, no first_added_date)
+    // on every render of the warehouse picker, causing the card count
+    // (e.g. "159 صنف") to disagree with the items view inside the
+    // warehouse (which now correctly shows only the 2 items that were
+    // actually transferred). The count is now scoped to "real" entries:
+    // qty > 0 OR explicitly added (first_added_date IS NOT NULL).
     let sql = `
       SELECT w.id, w.name, w.code, w.brand_id, b.name AS brand_name, w.is_main, w.is_active,
-             COUNT(DISTINCT ws.item_id) AS item_count,
-             COALESCE(SUM(ws.qty * i.cost), 0) AS total_value,
-             SUM(CASE WHEN ws.qty <= i.min_stock AND i.min_stock > 0 THEN 1 ELSE 0 END) AS low_count,
-             SUM(CASE WHEN ws.qty <= 0 THEN 1 ELSE 0 END) AS out_count
+             COUNT(DISTINCT CASE
+               WHEN ws.qty > 0 OR ws.first_added_date IS NOT NULL
+               THEN ws.item_id END) AS item_count,
+             COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty * i.cost ELSE 0 END), 0) AS total_value,
+             SUM(CASE WHEN ws.qty > 0 AND ws.qty <= i.min_stock AND i.min_stock > 0 THEN 1 ELSE 0 END) AS low_count,
+             SUM(CASE WHEN ws.first_added_date IS NOT NULL AND ws.qty <= 0 THEN 1 ELSE 0 END) AS out_count
       FROM warehouses w
       LEFT JOIN warehouse_stock ws ON ws.warehouse_id = w.id
       LEFT JOIN inv_items i ON i.id = ws.item_id AND i.active = 1
@@ -126,6 +134,9 @@ router.get('/items', async (req, res) => {
       // The historical fields are also surfaced now: added_at (when the
       // item was first registered here) + last_updated (last txn) so
       // the UI can show the timeline.
+      // v5.10.7 — match the warehouses-by-brand count rule exactly:
+      // only return rows that are "real" (qty > 0 OR explicitly added
+      // with first_added_date). Ghost backfill rows are excluded.
       let sql = `
         SELECT i.*, b.name AS brand_name,
                w.id AS wh_id, w.name AS wh_name, w.code AS wh_code,
@@ -137,7 +148,8 @@ router.get('/items', async (req, res) => {
         JOIN inv_items  i ON i.id = ws.item_id
         JOIN warehouses w ON w.id = ws.warehouse_id
         LEFT JOIN brands b ON b.id = i.brand_id
-        WHERE ws.warehouse_id = ? AND i.active = 1`;
+        WHERE ws.warehouse_id = ? AND i.active = 1
+          AND (ws.qty > 0 OR ws.first_added_date IS NOT NULL)`;
       const params = [warehouseId];
       if (brandId) { sql += ' AND i.brand_id = ?'; params.push(brandId); }
       sql += ' ORDER BY i.category, i.name';
@@ -390,26 +402,39 @@ router.delete('/warehouses/:warehouseId/items/:itemId', async (req, res) => {
 // auto-backfill artifacts (qty=0, no first_added_date, and no movement
 // log referencing the (warehouse, item) pair). Idempotent + safe — only
 // targets ghost entries the system created on its own.
+async function _cleanupGhostWarehouseStock(dbConn) {
+  const conn = dbConn || db;
+  // Schema guard — bail out if first_added_date column doesn't exist yet
+  // (e.g. boot order on a brand-new deploy where migrations haven't run).
+  try {
+    const [cols] = await conn.query("SHOW COLUMNS FROM warehouse_stock LIKE 'first_added_date'");
+    if (!cols.length) return { ok:false, reason:'column-not-ready', scanned:0, removed:0 };
+  } catch(_) { return { ok:false, reason:'table-missing', scanned:0, removed:0 }; }
+
+  const [ghosts] = await conn.query(`
+    SELECT ws.id, ws.warehouse_id, ws.item_id
+    FROM warehouse_stock ws
+    WHERE COALESCE(ws.qty, 0) = 0
+      AND ws.first_added_date IS NULL
+  `);
+  let removed = 0;
+  for (const g of ghosts) {
+    const [movs] = await conn.query(
+      `SELECT id FROM inventory_movements WHERE item_id = ? AND warehouse_id = ? LIMIT 1`,
+      [g.item_id, g.warehouse_id]);
+    if (movs.length) continue;  // legitimate empty — leave it
+    await conn.query('DELETE FROM warehouse_stock WHERE id = ?', [g.id]);
+    removed++;
+  }
+  return { ok:true, scanned: ghosts.length, removed };
+}
+// Expose helper for server.js boot migration
+router._cleanupGhostWarehouseStock = _cleanupGhostWarehouseStock;
+
 router.post('/admin/cleanup-ghost-warehouse-stock', async (req, res) => {
   try {
-    // First pass: find candidates (qty=0 AND first_added_date IS NULL)
-    const [ghosts] = await db.query(`
-      SELECT ws.id, ws.warehouse_id, ws.item_id
-      FROM warehouse_stock ws
-      WHERE COALESCE(ws.qty, 0) = 0
-        AND ws.first_added_date IS NULL
-    `);
-    let removed = 0;
-    for (const g of ghosts) {
-      // Skip if any movement references this pair (= legitimate empty)
-      const [movs] = await db.query(
-        `SELECT id FROM inventory_movements WHERE item_id = ? AND warehouse_id = ? LIMIT 1`,
-        [g.item_id, g.warehouse_id]);
-      if (movs.length) continue;
-      await db.query('DELETE FROM warehouse_stock WHERE id = ?', [g.id]);
-      removed++;
-    }
-    res.json({ success:true, scanned: ghosts.length, removed });
+    const r = await _cleanupGhostWarehouseStock(db);
+    res.json({ success:!!r.ok, scanned:r.scanned||0, removed:r.removed||0, reason:r.reason||null });
   } catch(e) { res.json({ success:false, error: e.message }); }
 });
 

@@ -2903,6 +2903,23 @@ async function runMigrations() {
   await addColumnIfMissing('warehouse_stock', 'first_added_date', "DATE NULL");
   await addColumnIfMissing('warehouse_stock', 'added_by', "VARCHAR(80)");
 
+  // v5.10.7 — Self-heal ghost warehouse_stock rows that the old auto-
+  // backfill polluted (qty=0, no first_added_date, no movement log).
+  // The user reported "159 outside / 2 inside" — this was 157 ghost
+  // rows from the legacy backfill. Idempotent + safe: only targets
+  // rows we can prove the system created on its own.
+  try {
+    const invRouter = require('./routes/inventory');
+    if (invRouter && typeof invRouter._cleanupGhostWarehouseStock === 'function') {
+      const r = await invRouter._cleanupGhostWarehouseStock(db);
+      if (r && r.ok) {
+        console.log(`[migrate] cleanup-ghost-warehouse-stock: ok (scanned ${r.scanned}, removed ${r.removed})`);
+      } else if (r && r.reason) {
+        console.log(`[migrate] cleanup-ghost-warehouse-stock: skipped (${r.reason})`);
+      }
+    }
+  } catch(e) { console.warn('[migrate] cleanup-ghost-warehouse-stock: error', e.message); }
+
   // ═══════════════════════════════════════════════════════════
   // PHASE C — PAYMENT FLOW
   // Unified payment records + amount-based approval routing

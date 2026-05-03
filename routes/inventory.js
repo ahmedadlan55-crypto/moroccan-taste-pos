@@ -125,31 +125,28 @@ router.get('/items', async (req, res) => {
     const { brandId, warehouseId, expandWarehouses } = req.query;
 
     if (warehouseId) {
-      // V5.10.6 — Per-warehouse view now ONLY returns items that are
-      // explicitly registered in this warehouse via `warehouse_stock`
-      // (qty can still be 0). Previously we LEFT-JOINed every item in
-      // the brand, which made every warehouse look like it held the
-      // entire brand catalog — exactly the bug the user reported.
-      //
-      // The historical fields are also surfaced now: added_at (when the
-      // item was first registered here) + last_updated (last txn) so
-      // the UI can show the timeline.
-      // v5.10.7 — match the warehouses-by-brand count rule exactly:
-      // only return rows that are "real" (qty > 0 OR explicitly added
-      // with first_added_date). Ghost backfill rows are excluded.
+      // v5.10.10 — Brand-wide LEFT JOIN.
+      // Show every active inv_item belonging to the warehouse's brand,
+      // even if it has no warehouse_stock row yet. Items without a row
+      // appear with qty=0 and isRegistered=false — the user explicitly
+      // asked to see the full brand catalog inside the warehouse (159
+      // expected, not 13).
       let sql = `
         SELECT i.*, b.name AS brand_name,
                w.id AS wh_id, w.name AS wh_name, w.code AS wh_code,
-               ws.qty AS wh_stock,
-               ws.avg_cost AS wh_avg_cost, ws.last_cost AS wh_last_cost,
-               ws.added_at AS wh_added_at, ws.first_added_date AS wh_first_added,
-               ws.last_updated AS wh_last_updated
-        FROM warehouse_stock ws
-        JOIN inv_items  i ON i.id = ws.item_id
-        JOIN warehouses w ON w.id = ws.warehouse_id
+               COALESCE(ws.qty, 0)         AS wh_stock,
+               COALESCE(ws.avg_cost, 0)    AS wh_avg_cost,
+               COALESCE(ws.last_cost, 0)   AS wh_last_cost,
+               ws.added_at                 AS wh_added_at,
+               ws.first_added_date         AS wh_first_added,
+               ws.last_updated             AS wh_last_updated,
+               (ws.id IS NOT NULL)         AS is_registered
+        FROM warehouses w
+        JOIN inv_items   i ON i.brand_id = w.brand_id AND i.active = 1
+        LEFT JOIN warehouse_stock ws
+               ON ws.item_id = i.id AND ws.warehouse_id = w.id
         LEFT JOIN brands b ON b.id = i.brand_id
-        WHERE ws.warehouse_id = ? AND i.active = 1
-          AND (ws.qty > 0 OR ws.first_added_date IS NOT NULL)`;
+        WHERE w.id = ?`;
       const params = [warehouseId];
       if (brandId) { sql += ' AND i.brand_id = ?'; params.push(brandId); }
       sql += ' ORDER BY i.category, i.name';
@@ -171,7 +168,10 @@ router.get('/items', async (req, res) => {
         whLastCost: Number(i.wh_last_cost) || 0,
         addedAt: i.wh_added_at || null,
         firstAddedDate: i.wh_first_added || null,
-        lastUpdated: i.wh_last_updated || null
+        lastUpdated: i.wh_last_updated || null,
+        // v5.10.10 — true if a warehouse_stock row exists; false means
+        // it's a candidate brand item not yet registered in this warehouse
+        isRegistered: !!Number(i.is_registered)
       })));
     }
 

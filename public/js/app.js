@@ -5296,13 +5296,11 @@ function applyInvFilters(items) {
   var cat = q("#rawCatFilter")?.value||'';
   var brandF = q("#rawBrandFilter")?.value||'';
   var stockF = q("#rawStockFilter")?.value||'';
-  // v5.10.9 — "hide depleted" toggle. Defaults to ON so a fresh open of
-  // a warehouse shows only items currently in stock (matches the user's
-  // mental model: "I transferred 2 items, I expect to see 2 rows").
-  // Uncheck to surface historical empties (transferred-then-consumed
-  // rows kept for the audit trail).
-  var hideDepleted = (q("#rawHideDepleted") || {}).checked;
-  if (hideDepleted == null) hideDepleted = true;  // default ON
+  // v5.10.10 — "hide depleted" toggle is now OFF by default. The user
+  // wants the warehouse view to show the entire brand catalog (registered
+  // + candidate items) so they can manage stock. They flip the toggle
+  // on when they want only stocked rows.
+  var hideDepleted = !!((q("#rawHideDepleted") || {}).checked);
   var EPS = 0.005;
   return items.filter(function(i){
     var stock = Number(i.stock) || 0;
@@ -5815,9 +5813,16 @@ function renderInvTable(list) {
         var globalHint = (i.globalStock != null && Number(i.globalStock) > stock)
           ? '<div style="font-size:10.5px;color:#94a3b8;font-weight:600;margin-top:2px;">إجمالي عبر كل المستودعات: <b>' + Number(i.globalStock).toFixed(2) + ' ' + (i.unit||'') + '</b></div>'
           : '';
-        h += '<tr>' +
+        // v5.10.10 — small gray pill for items not yet registered in
+        // this warehouse (no warehouse_stock row). Saving any qty (or
+        // adjusting via the modal) creates the row automatically.
+        var regBadge = (i.isRegistered === false)
+          ? ' <span class="badge" style="background:#f1f5f9;color:#94a3b8;font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;" title="غير مسجّل في هذا المستودع — حفظ أي كمية يسجّله تلقائياً"><i class="fas fa-circle-question"></i> غير مسجّل</span>'
+          : '';
+        var rowOpacity = (i.isRegistered === false) ? 'opacity:0.78;' : '';
+        h += '<tr style="' + rowOpacity + '">' +
           '<td style="font-family:ui-monospace,monospace;color:#64748b;font-size:12px;">' + (i.id || '') + '</td>' +
-          '<td style="font-weight:800;color:#0f172a;">' + (i.name || '') + globalHint + '</td>' +
+          '<td style="font-weight:800;color:#0f172a;">' + (i.name || '') + regBadge + globalHint + '</td>' +
           '<td>' + brandHtml + '</td>' +
           '<td>' + whHtml + '</td>' +
           '<td><span class="badge" style="background:#e2e8f0;color:#475569;">' + (i.category || '') + '</span></td>' +

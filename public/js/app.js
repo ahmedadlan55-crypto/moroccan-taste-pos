@@ -7174,7 +7174,43 @@ function _invLiveRender() {
   if (!data) return;
   _invLiveRenderKpis(data.totals);
   _invLiveRenderInsights(data);  // V5.8.2 — ABC + trend + alerts ribbon
+  _invLiveRenderWarehouseBanner(data.scopedWarehouse); // v5.10.8
   _invLiveRenderTable(data.items, data.totals);
+}
+
+// v5.10.8 — Warehouse banner: shows the scoped warehouse name above
+// the table. Mounted just before #invLiveTable. Hidden when the report
+// is brand-wide (no warehouseId filter).
+function _invLiveRenderWarehouseBanner(wh) {
+  var table = document.getElementById('invLiveTable');
+  if (!table) return;
+  var holder = document.getElementById('invLiveWhBanner');
+  if (!holder) {
+    holder = document.createElement('div');
+    holder.id = 'invLiveWhBanner';
+    holder.style.cssText = 'margin:8px 0 12px;display:none;';
+    table.parentNode.insertBefore(holder, table);
+  }
+  if (!wh || !wh.id) { holder.style.display = 'none'; holder.innerHTML = ''; return; }
+  holder.style.display = '';
+  holder.innerHTML =
+    '<div style="background:linear-gradient(135deg,#ecfeff,#cffafe);border:1.5px solid #67e8f9;' +
+                'border-radius:12px;padding:12px 18px;display:flex;align-items:center;gap:14px;' +
+                'box-shadow:0 1px 3px rgba(15,23,42,0.04);">' +
+      '<div style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,#06b6d4,#0891b2);' +
+                  'color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">' +
+        '<i class="fas fa-warehouse"></i>' +
+      '</div>' +
+      '<div style="flex:1;">' +
+        '<div style="font-size:11px;color:#0e7490;font-weight:800;letter-spacing:0.4px;">المستودع المعروض</div>' +
+        '<div style="font-size:16px;font-weight:900;color:#155e75;">' + _invHubEsc(wh.name||'') +
+          (wh.code ? ' <code style="font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#0e7490;background:#fff;padding:2px 8px;border-radius:6px;margin-inline-start:6px;border:1px solid #cffafe;">' + _invHubEsc(wh.code) + '</code>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div style="font-size:11px;color:#155e75;text-align:end;">' +
+        '<i class="fas fa-circle-info"></i> اضغط أي رقم في الجدول لرؤية الحركات التفصيلية بالتاريخ' +
+      '</div>' +
+    '</div>';
 }
 
 // V5.8.2 — Insights row: 3-card layout
@@ -7348,13 +7384,15 @@ function _invLiveRenderTable(items, totals) {
       '<th class="iv-th-num" title="مبيعات مباشرة (يُحمَّل على COGS)">مبيعات</th>' +
       '<th class="iv-th-num" title="توالف وكسر (يُحمَّل على حساب الخسائر غير العادية)">توالف</th>' +
       '<th class="iv-th-num" title="تسويات إدارية ومحاسبية">تسويات</th>' +
+      // v5.10.8 — Transfers column (in / out shown as dual chip)
+      '<th class="iv-th-num" title="حركات التحويل بين المستودعات: + الوارد و − الصادر">التحويلات</th>' +
       '<th class="iv-th-num iv-th-closing">مخزون آخر الفترة</th>' +
       '<th class="iv-th-num">القيمة (ر.س)</th>' +
       '<th title="عدد الأيام منذ آخر حركة">آخر حركة</th>' +
       '<th>الحالة</th>' +
     '</tr>';
   body.innerHTML = filtered.length === 0
-    ? '<tr><td colspan="14" class="iv-live-empty">' +
+    ? '<tr><td colspan="15" class="iv-live-empty">' +
         (quick ? 'لا توجد أصناف تطابق هذا الفلتر. <a href="#" onclick="event.preventDefault();_invLiveClearQuickFilter();">مسح الفلتر</a>' : 'لا توجد بيانات في النطاق المحدد. جرّب توسيع الفترة أو رفع الفلاتر.') +
       '</td></tr>'
     : filtered.map(function(it) {
@@ -7371,24 +7409,29 @@ function _invLiveRenderTable(items, totals) {
           if (it.daysSinceLastMov >= 30)  return '<span class="iv-live-pill" style="background:#dbeafe;color:#1e40af;">' + it.daysSinceLastMov + ' يوم</span>';
           return '<span class="iv-live-pill iv-live-pill-ok">' + it.daysSinceLastMov + ' يوم</span>';
         })();
-        return '<tr class="' + rowClass + '" onclick="_invLiveDrillDown(\'' + _invHubEsc(it.id) + '\',\'' + _invHubEsc(it.name).replace(/\'/g,"\\'") + '\')" title="اضغط لعرض الحركة التفصيلية">' +
-                 '<td class="iv-live-code">' + _invHubEsc(it.id) + '</td>' +
-                 '<td class="iv-live-name">' + _invHubEsc(it.name) + '</td>' +
+        // v5.10.8 — per-cell click → typed drill (op="purchases" / "production" / etc.)
+        var nameEsc = _invHubEsc(it.name).replace(/'/g, "\\'");
+        var idEsc = _invHubEsc(it.id);
+        var closingCellAll = _drillCell(idEsc, nameEsc, 'all', it.closingStock, it.unit, '#7c3aed', true);
+        return '<tr class="' + rowClass + '">' +
+                 '<td class="iv-live-code">' + idEsc + '</td>' +
+                 '<td class="iv-live-name iv-cell-clickable" onclick="_invLiveDrillDown(\'' + idEsc + '\',\'' + nameEsc + '\',\'all\')" title="كل الحركات">' + _invHubEsc(it.name) + '</td>' +
                  '<td class="iv-live-cat">' + _invHubEsc(it.category) + '</td>' +
                  '<td>' + abcBadge + '</td>' +
-                 _numCell(it.openingStock, it.unit) +
-                 _numCell(it.purchasedQty, it.unit, it.purchasedQty > 0 ? '#10b981' : '') +
-                 _numCell(it.productionQty || 0, it.unit, (it.productionQty||0) > 0 ? '#0369a1' : '') +
-                 _numCell(it.salesQty || 0,      it.unit, (it.salesQty||0)      > 0 ? '#dc2626' : '') +
-                 _numCell(it.damagedQty || 0,    it.unit, (it.damagedQty||0)    > 0 ? '#b91c1c' : '') +
-                 _numCell(it.adjustedQty,        it.unit, it.adjustedQty        > 0 ? '#f59e0b' : '') +
-                 _numCell(it.closingStock, it.unit, '#7c3aed', /*bold*/true) +
+                 _drillCell(idEsc, nameEsc, 'all',          it.openingStock,  it.unit) +
+                 _drillCell(idEsc, nameEsc, 'purchases',    it.purchasedQty,  it.unit, it.purchasedQty > 0 ? '#10b981' : '') +
+                 _drillCell(idEsc, nameEsc, 'production',   it.productionQty, it.unit, (it.productionQty||0) > 0 ? '#0369a1' : '') +
+                 _drillCell(idEsc, nameEsc, 'sales',        it.salesQty,      it.unit, (it.salesQty||0)      > 0 ? '#dc2626' : '') +
+                 _drillCell(idEsc, nameEsc, 'damaged',      it.damagedQty,    it.unit, (it.damagedQty||0)    > 0 ? '#b91c1c' : '') +
+                 _drillCell(idEsc, nameEsc, 'adjustments',  it.adjustedQty,   it.unit, it.adjustedQty        > 0 ? '#f59e0b' : '') +
+                 _transferCell(idEsc, nameEsc, it.transferIn||0, it.transferOut||0, it.unit) +
+                 closingCellAll +
                  '<td class="iv-live-num iv-live-num-bold">' + _invHubFmtMoney(it.value) + '</td>' +
                  '<td>' + lastMovBadge + '</td>' +
                  '<td>' + statusBadge + '</td>' +
                '</tr>';
       }).join('') +
-      // Totals row
+      // Totals row (15 cols now: 4 leading + 11 numeric/badge)
       '<tr class="iv-live-totals-row">' +
         '<td colspan="4" class="iv-live-totals-label">الإجمالي · ' + filtered.length + ' صنف</td>' +
         '<td class="iv-live-num">' + _invHubFmtMoney((totals||{}).openingValue || 0) + '</td>' +
@@ -7397,6 +7440,7 @@ function _invLiveRenderTable(items, totals) {
         '<td class="iv-live-num" style="color:#fca5a5;">− ' + _invHubFmtMoney((totals||{}).salesValue || 0) + '</td>' +
         '<td class="iv-live-num" style="color:#fda4af;">− ' + _invHubFmtMoney((totals||{}).damagedValue || 0) + '</td>' +
         '<td class="iv-live-num" style="color:#fde68a;">' + _invHubFmtMoney((totals||{}).adjustValue || 0) + '</td>' +
+        '<td class="iv-live-num" style="color:#a5f3fc;">—</td>' + // transfers — net out at company level
         '<td class="iv-live-num iv-live-num-bold">' + _invHubFmtMoney((totals||{}).closingValue || 0) + '</td>' +
         '<td class="iv-live-num iv-live-num-bold" style="color:#c4b5fd;">' + _invHubFmtMoney((totals||{}).closingValue || 0) + '</td>' +
         '<td>—</td>' +
@@ -7495,61 +7539,320 @@ function _numCell(qty, unit, color, bold) {
          '</td>';
 }
 
+// v5.10.8 — per-cell drill helper. Renders a number that, when clicked,
+// opens the typed drill-down for `op` ('all' | 'purchases' | 'production'
+// | 'sales' | 'damaged' | 'adjustments' | 'transferIn' | 'transferOut').
+// Zero values are still clickable (the modal will say "no movements")
+// but rendered visually muted to keep the table tidy.
+function _drillCell(itemId, itemName, op, qty, unit, color, bold) {
+  qty = Number(qty) || 0;
+  var n = (qty % 1 === 0) ? qty.toFixed(0) : qty.toFixed(2);
+  var isZero = qty === 0;
+  var style = (color ? 'color:' + color + ';' : '') + (bold ? 'font-weight:900;' : '') +
+              (isZero ? 'color:#cbd5e1;' : '');
+  var titleText = op === 'all'        ? 'كل الحركات'
+                : op === 'purchases'  ? 'حركات المشتريات'
+                : op === 'production' ? 'حركات الإنتاج'
+                : op === 'sales'      ? 'حركات المبيعات'
+                : op === 'damaged'    ? 'حركات التوالف'
+                : op === 'adjustments'? 'حركات التسويات'
+                : 'تفاصيل';
+  return '<td class="iv-live-num iv-cell-clickable" ' +
+         'onclick="event.stopPropagation();_invLiveDrillDown(\'' + itemId + '\',\'' + itemName + '\',\'' + op + '\')" ' +
+         'title="' + titleText + ' — اضغط للتفاصيل" ' +
+         (style ? ' style="' + style + 'cursor:pointer;"' : ' style="cursor:pointer;"') + '>' +
+           n + ' <span class="iv-live-num-unit">' + (unit||'') + '</span>' +
+         '</td>';
+}
+
+// v5.10.8 — combined transfers cell (in / out) with two clickable sub-chips
+// so the user can drill into either direction independently.
+function _transferCell(itemId, itemName, transferIn, transferOut, unit) {
+  transferIn  = Number(transferIn)  || 0;
+  transferOut = Number(transferOut) || 0;
+  var u = unit || '';
+  var inDim   = transferIn  === 0 ? 'color:#cbd5e1;' : 'color:#0891b2;font-weight:700;';
+  var outDim  = transferOut === 0 ? 'color:#cbd5e1;' : 'color:#dc2626;font-weight:700;';
+  var inFmt   = (transferIn  % 1 === 0) ? transferIn.toFixed(0)  : transferIn.toFixed(2);
+  var outFmt  = (transferOut % 1 === 0) ? transferOut.toFixed(0) : transferOut.toFixed(2);
+  return '<td class="iv-live-num">' +
+    '<div style="display:inline-flex;flex-direction:column;align-items:flex-start;gap:2px;line-height:1.3;">' +
+      '<span class="iv-cell-clickable" onclick="event.stopPropagation();_invLiveDrillDown(\'' + itemId + '\',\'' + itemName + '\',\'transferIn\')" ' +
+            'title="التحويلات الواردة لهذا المستودع — اضغط للتفاصيل" style="cursor:pointer;' + inDim + 'font-size:11.5px;">' +
+        '<i class="fas fa-arrow-down" style="font-size:9px;margin-inline-end:3px;"></i>+ ' + inFmt +
+      '</span>' +
+      '<span class="iv-cell-clickable" onclick="event.stopPropagation();_invLiveDrillDown(\'' + itemId + '\',\'' + itemName + '\',\'transferOut\')" ' +
+            'title="التحويلات الصادرة من هذا المستودع — اضغط للتفاصيل" style="cursor:pointer;' + outDim + 'font-size:11.5px;">' +
+        '<i class="fas fa-arrow-up" style="font-size:9px;margin-inline-end:3px;"></i>− ' + outFmt +
+      '</span>' +
+    '</div>' +
+    '<div style="font-size:10px;color:#94a3b8;margin-top:2px;">' + u + '</div>' +
+  '</td>';
+}
+
 // ─── Drill-down: per-item movement detail ───
-window._invLiveDrillDown = function(itemId, itemName) {
+// v5.10.8 — typed drill: when called with `op`, the drill modal title
+// reflects the operation, the rows are server-filtered to that bucket,
+// transfer rows show "from → to" warehouse names, and production rows
+// surface the production-order date. Reverse chronological. Modal carries
+// Excel + PDF export buttons in its footer.
+window._invLiveDrillDown = function(itemId, itemName, op) {
   var s = window._invLive;
   loader(true);
   var token = localStorage.getItem('pos_token') || '';
+  var hubWh  = (window._invHub && window._invHub.warehouseId && window._invHub.warehouseId !== '__all__')
+    ? window._invHub.warehouseId : '';
+  var effWh = s.warehouseId || hubWh;
   var qsParams = [
     'startDate=' + encodeURIComponent(_ymd(s.startDate)),
     'endDate=' + encodeURIComponent(_ymd(s.endDate))
-  ].join('&');
-  fetch('/api/inventory/live-report/' + encodeURIComponent(itemId) + '/movements?' + qsParams,
+  ];
+  if (op && op !== 'all') qsParams.push('op=' + encodeURIComponent(op));
+  if (effWh)              qsParams.push('warehouseId=' + encodeURIComponent(effWh));
+  fetch('/api/inventory/live-report/' + encodeURIComponent(itemId) + '/movements?' + qsParams.join('&'),
         { headers: { 'Authorization': 'Bearer ' + token } })
     .then(r => r.json())
     .then(function(rows) {
       loader(false);
-      _invLiveShowDrillModal(itemId, itemName, rows || []);
+      _invLiveShowDrillModal(itemId, itemName, rows || [], op || 'all');
     })
     .catch(function() { loader(false); showToast('فشل تحميل الحركات', true); });
 };
 
-function _invLiveShowDrillModal(itemId, itemName, rows) {
-  var html =
-    '<div class="iv-live-drill">' +
-      (rows.length === 0
-        ? '<div class="iv-live-empty">لا توجد حركة على هذا الصنف ضمن الفترة المحددة.</div>'
-        : '<div class="iv-live-drill-table-wrap"><table class="iv-live-drill-table">' +
-            '<thead><tr><th>التاريخ</th><th>النوع</th><th>السبب</th><th>الكمية</th><th>المستخدم</th><th>ملاحظات</th></tr></thead>' +
-            '<tbody>' +
-            rows.map(function(r) {
-              var dateStr = _invHubFmtDate(r.date) + ' ' + new Date(r.date).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
-              var typeBadge = r.type === 'in'
-                ? '<span class="iv-live-pill iv-live-pill-ok">+ وارد</span>'
-                : '<span class="iv-live-pill iv-live-pill-out">− صادر</span>';
-              return '<tr>' +
-                       '<td class="iv-live-num">' + dateStr + '</td>' +
-                       '<td>' + typeBadge + '</td>' +
-                       '<td>' + _invHubEsc(r.reason) + '</td>' +
-                       '<td class="iv-live-num">' + (r.qty || 0) + '</td>' +
-                       '<td>' + _invHubEsc(r.username) + '</td>' +
-                       '<td class="iv-live-cell-notes">' + _invHubEsc(r.notes) + '</td>' +
-                     '</tr>';
-            }).join('') +
-            '</tbody></table></div>'
-      ) +
-    '</div>';
-  // V5.8.3 — self-contained modal (no WoModal dependency).  Works whether
-  //   erp.js is loaded or not, which used to leave the modal silently broken.
+// v5.10.8 — Cache the last drill payload so the export buttons can reuse it.
+window._invLiveLastDrill = null;
+
+function _opLabel(op) {
+  return op === 'purchases'   ? 'حركات المشتريات'
+       : op === 'production'  ? 'حركات الإنتاج'
+       : op === 'sales'       ? 'حركات المبيعات'
+       : op === 'damaged'     ? 'حركات التوالف'
+       : op === 'adjustments' ? 'حركات التسويات'
+       : op === 'transferIn'  ? 'التحويلات الواردة'
+       : op === 'transferOut' ? 'التحويلات الصادرة'
+       : op === 'stocktake'   ? 'حركات الجرد'
+       : 'كل الحركات';
+}
+
+function _invLiveShowDrillModal(itemId, itemName, rows, op) {
+  // Sort reverse chronological (server already DESC, but resilience first)
+  rows.sort(function(a,b){ return new Date(b.date) - new Date(a.date); });
+  window._invLiveLastDrill = { itemId: itemId, itemName: itemName, op: op || 'all', rows: rows };
+
+  // Header tabs — quick switch between operation buckets
+  var tabs = ['all','purchases','production','sales','damaged','adjustments','transferIn','transferOut','stocktake'];
+  var tabsHtml = tabs.map(function(t) {
+    var active = (op || 'all') === t;
+    return '<button class="iv-drill-tab' + (active ? ' active' : '') + '" ' +
+      'onclick="_invLiveDrillDown(\'' + _invHubEsc(itemId) + '\',\'' + _invHubEsc(itemName).replace(/\'/g,"\\'") + '\',\'' + t + '\')">' +
+      _invHubEsc(_opLabel(t)) + '</button>';
+  }).join('');
+
+  // Body — runs reverse chronological with per-row metadata for transfers
+  // and production. Each cell shows the date + type + qty + warehouse +
+  // (for transfers) from→to + (for production) production order code.
+  var bodyHtml = rows.length === 0
+    ? '<div class="iv-live-empty">لا توجد حركات تطابق هذا الفلتر ضمن الفترة المحددة.</div>'
+    : '<div class="iv-live-drill-table-wrap"><table class="iv-live-drill-table">' +
+        '<thead><tr>' +
+          '<th>#</th>' +
+          '<th>التاريخ والوقت</th>' +
+          '<th>النوع</th>' +
+          '<th>المستودع</th>' +
+          '<th>تفاصيل</th>' +
+          '<th class="iv-live-num">الكمية</th>' +
+          '<th>المستخدم</th>' +
+        '</tr></thead><tbody>' +
+        rows.map(function(r, idx) {
+          var d = new Date(r.date);
+          var dateStr = _invHubFmtDate(r.date) + ' <small style="color:#64748b;">' +
+                        d.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }) + '</small>';
+          var typeBadge = r.type === 'in'
+            ? '<span class="iv-live-pill iv-live-pill-ok">+ وارد</span>'
+            : '<span class="iv-live-pill iv-live-pill-out">− صادر</span>';
+          // Operation badge based on the server-computed bucket
+          var opPill = '';
+          if (r.op === 'purchases')   opPill = '<span class="iv-live-pill" style="background:#dcfce7;color:#15803d;">مشتريات</span>';
+          else if (r.op === 'production')  opPill = '<span class="iv-live-pill" style="background:#dbeafe;color:#1d4ed8;">إنتاج</span>';
+          else if (r.op === 'sales')       opPill = '<span class="iv-live-pill" style="background:#fee2e2;color:#b91c1c;">مبيعات</span>';
+          else if (r.op === 'damaged')     opPill = '<span class="iv-live-pill" style="background:#fef3c7;color:#92400e;">توالف</span>';
+          else if (r.op === 'adjustments') opPill = '<span class="iv-live-pill" style="background:#fef3c7;color:#a16207;">تسوية</span>';
+          else if (r.op === 'transferIn')  opPill = '<span class="iv-live-pill" style="background:#cffafe;color:#0e7490;">تحويل وارد</span>';
+          else if (r.op === 'transferOut') opPill = '<span class="iv-live-pill" style="background:#fce7f3;color:#a21caf;">تحويل صادر</span>';
+          else if (r.op === 'stocktake')   opPill = '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;">جرد</span>';
+
+          // Warehouse cell + transfer pair
+          var whCell = _invHubEsc(r.warehouseName || r.warehouseId || '—');
+          if (r.referenceType === 'transfer') {
+            whCell = '<div style="font-size:11.5px;line-height:1.5;">' +
+              '<div><i class="fas fa-arrow-left" style="color:#06b6d4;font-size:10px;"></i> <b>من:</b> ' + _invHubEsc(r.fromWarehouseName || '—') + '</div>' +
+              '<div><i class="fas fa-arrow-right" style="color:#16a34a;font-size:10px;"></i> <b>إلى:</b> ' + _invHubEsc(r.toWarehouseName || '—') + '</div>' +
+              (r.transferNumber ? '<div style="color:#64748b;font-size:10px;">رقم: <code>' + _invHubEsc(r.transferNumber) + '</code></div>' : '') +
+              '</div>';
+          }
+
+          // Details: reason + reference + production date
+          var detailsCell = (r.reason || '') ? '<div style="font-weight:600;">' + _invHubEsc(r.reason) + '</div>' : '';
+          if (r.referenceType === 'production' && r.productionCode) {
+            var pd = r.productionDate ? new Date(r.productionDate).toLocaleDateString('en-GB') : '';
+            detailsCell += '<div style="font-size:10.5px;color:#1d4ed8;"><i class="fas fa-industry"></i> أمر إنتاج: <code>' + _invHubEsc(r.productionCode) + '</code>' + (pd ? ' · ' + pd : '') + '</div>';
+          }
+          if (r.notes) detailsCell += '<div style="font-size:10.5px;color:#64748b;margin-top:2px;">' + _invHubEsc(r.notes) + '</div>';
+          if (opPill) detailsCell = opPill + (detailsCell ? '<div style="margin-top:4px;">' + detailsCell + '</div>' : '');
+
+          return '<tr>' +
+            '<td style="color:#94a3b8;font-size:11px;">' + (idx + 1) + '</td>' +
+            '<td class="iv-live-num">' + dateStr + '</td>' +
+            '<td>' + typeBadge + '</td>' +
+            '<td>' + whCell + '</td>' +
+            '<td>' + detailsCell + '</td>' +
+            '<td class="iv-live-num" style="font-weight:800;">' + (Number(r.qty)||0) + '</td>' +
+            '<td>' + _invHubEsc(r.username) + '</td>' +
+          '</tr>';
+        }).join('') +
+        '</tbody></table></div>';
+
+  var summary = '<div class="iv-drill-summary">' + tabsHtml + '</div>';
+  var html = summary + bodyHtml;
+
   ivShowModal({
     icon: 'fa-rectangle-list',
     iconColor: '#7c3aed',
-    title: 'حركة الصنف · ' + itemName,
+    title: _opLabel(op||'all') + ' · ' + itemName,
     subtitle: rows.length + ' حركة · ' + _ymd(window._invLive.startDate) + ' → ' + _ymd(window._invLive.endDate),
     body: html,
-    size: 'lg'
+    size: 'xl',
+    footer:
+      '<button class="iv-drill-btn" onclick="_invLiveDrillExportCsv()"><i class="fas fa-file-csv"></i> CSV</button>' +
+      '<button class="iv-drill-btn" onclick="_invLiveDrillExportXlsx()"><i class="fas fa-file-excel"></i> Excel</button>' +
+      '<button class="iv-drill-btn" onclick="_invLiveDrillPrint()"><i class="fas fa-print"></i> طباعة / PDF</button>'
   });
+  _invDrillInjectStyles();
 }
+
+// v5.10.8 — drill-down style helpers (tabs + export buttons + clickable cell)
+function _invDrillInjectStyles() {
+  if (document.getElementById('invDrillStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'invDrillStyles';
+  st.textContent =
+    '.iv-cell-clickable{transition:background 0.12s ease;}' +
+    '.iv-cell-clickable:hover{background:#fff7ed!important;color:#7c2d12!important;}' +
+    '.iv-drill-summary{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #e2e8f0;}' +
+    '.iv-drill-tab{padding:6px 14px;border-radius:999px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:all 0.15s;}' +
+    '.iv-drill-tab:hover{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
+    '.iv-drill-tab.active{background:linear-gradient(135deg,#7c3aed,#5b21b6);border-color:#5b21b6;color:#fff;}' +
+    '.iv-drill-btn{padding:8px 14px;border-radius:8px;border:1.5px solid #e2e8f0;background:#fff;color:#0f172a;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;transition:all 0.15s;}' +
+    '.iv-drill-btn:hover{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
+    '.iv-drill-btn i{font-size:11px;}';
+  document.head.appendChild(st);
+}
+
+// v5.10.8 — exports for the active drill payload
+function _invDrillBuildExportRows() {
+  var d = window._invLiveLastDrill || { rows: [] };
+  var rows = d.rows || [];
+  var headers = ['#','التاريخ والوقت','النوع','العملية','المستودع','من مستودع','إلى مستودع','رقم التحويل','أمر إنتاج','تاريخ الإنتاج','الكمية','المستخدم','السبب','ملاحظات'];
+  var data = [headers];
+  rows.forEach(function(r, i) {
+    var d2 = r.date ? new Date(r.date) : null;
+    data.push([
+      i + 1,
+      d2 ? d2.toLocaleString('en-GB') : '',
+      r.type === 'in' ? 'وارد' : 'صادر',
+      _opLabel(r.op || ''),
+      r.warehouseName || r.warehouseId || '',
+      r.fromWarehouseName || '',
+      r.toWarehouseName   || '',
+      r.transferNumber    || '',
+      r.productionCode    || '',
+      r.productionDate ? new Date(r.productionDate).toLocaleDateString('en-GB') : '',
+      Number(r.qty) || 0,
+      r.username || '',
+      r.reason   || '',
+      r.notes    || ''
+    ]);
+  });
+  return { rows: rows, data: data, headers: headers, drill: d };
+}
+
+window._invLiveDrillExportCsv = function() {
+  var b = _invDrillBuildExportRows();
+  if (!b.rows.length) return showToast('لا توجد حركات لتصديرها', true);
+  var csv = '﻿' + b.data.map(function(r) {
+    return r.map(function(v) {
+      v = v == null ? '' : String(v);
+      if (v.indexOf(',') !== -1 || v.indexOf('"') !== -1 || v.indexOf('\n') !== -1) v = '"' + v.replace(/"/g,'""') + '"';
+      return v;
+    }).join(',');
+  }).join('\n');
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'movements-' + (b.drill.itemId||'item') + '-' + (b.drill.op||'all') + '-' + _ymd(new Date()) + '.csv';
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+};
+
+window._invLiveDrillExportXlsx = function() {
+  var b = _invDrillBuildExportRows();
+  if (!b.rows.length) return showToast('لا توجد حركات لتصديرها', true);
+  if (typeof XLSX === 'undefined' && typeof ensureXlsx === 'function') {
+    ensureXlsx().then(function(){ _invLiveDrillExportXlsx(); });
+    return;
+  }
+  if (typeof XLSX === 'undefined') return showToast('XLSX غير متاح', true);
+  var ws = XLSX.utils.aoa_to_sheet(b.data);
+  ws['!cols'] = [{wch:5},{wch:20},{wch:8},{wch:14},{wch:20},{wch:18},{wch:18},{wch:14},{wch:14},{wch:14},{wch:10},{wch:14},{wch:18},{wch:24}];
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'حركة الصنف');
+  XLSX.writeFile(wb, 'movements-' + (b.drill.itemId||'item') + '-' + (b.drill.op||'all') + '-' + _ymd(new Date()) + '.xlsx');
+};
+
+window._invLiveDrillPrint = function() {
+  var b = _invDrillBuildExportRows();
+  if (!b.rows.length) return showToast('لا توجد حركات لطباعتها', true);
+  var d = b.drill;
+  var win = window.open('', '_blank', 'width=900,height=1100');
+  if (!win) return showToast('السماح بالنوافذ المنبثقة مطلوب للطباعة', true);
+  var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var headerCells = b.headers.map(function(h){ return '<th>' + esc(h) + '</th>'; }).join('');
+  var bodyRows = b.data.slice(1).map(function(row) {
+    return '<tr>' + row.map(function(v){ return '<td>' + esc(v) + '</td>'; }).join('') + '</tr>';
+  }).join('');
+  var s = window._invLive || {};
+  var html =
+    '<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8">' +
+      '<title>حركة الصنف ' + esc(d.itemName) + '</title>' +
+      '<style>' +
+        '@page{size:A4 landscape;margin:14mm 12mm;}' +
+        'body{font-family:"Tahoma","Segoe UI",Arial,sans-serif;direction:rtl;color:#0f172a;font-size:11px;margin:0;}' +
+        'h1{font-size:16px;margin:0 0 6px;color:#0f172a;}' +
+        '.head{border-bottom:2px solid #0f172a;padding-bottom:10px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:flex-end;}' +
+        '.meta{font-size:11px;color:#64748b;}' +
+        'table{width:100%;border-collapse:collapse;font-size:10.5px;}' +
+        'th,td{border:1px solid #cbd5e1;padding:5px 7px;text-align:right;}' +
+        'th{background:#f1f5f9;font-weight:800;}' +
+        'tr:nth-child(even) td{background:#fafafa;}' +
+        '.foot{margin-top:14px;font-size:10px;color:#64748b;display:flex;justify-content:space-between;}' +
+      '</style>' +
+    '</head><body>' +
+      '<div class="head">' +
+        '<div>' +
+          '<h1>' + esc(_opLabel(d.op||'all')) + ' — ' + esc(d.itemName) + '</h1>' +
+          '<div class="meta">من ' + esc(_ymd(s.startDate)) + ' إلى ' + esc(_ymd(s.endDate)) + ' · ' + b.rows.length + ' حركة</div>' +
+        '</div>' +
+        '<div class="meta">طُبع: ' + new Date().toLocaleString('en-GB') + '</div>' +
+      '</div>' +
+      '<table><thead><tr>' + headerCells + '</tr></thead><tbody>' + bodyRows + '</tbody></table>' +
+      '<div class="foot"><span>Moroccan Taste POS</span><span>v5.10.8</span></div>' +
+      '<script>setTimeout(function(){window.print();},250);<\/script>' +
+    '</body></html>';
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+};
 
 // V5.8.3 — Self-contained inline modal. Replaces fragile WoModal dependency
 //   for inventory features. Single source of truth for inventory popups.

@@ -746,6 +746,16 @@ router.get('/live-report', async (req, res) => {
     // Normalize endD to end-of-day so movements on endDate are included
     endD.setHours(23, 59, 59, 999);
 
+    // v5.10.8 — when scoped to a warehouse, surface its name + code in
+    // the response so the frontend can show a banner above the table.
+    let scopedWarehouse = null;
+    if (warehouseId) {
+      try {
+        const [whs] = await db.query('SELECT id, name, code FROM warehouses WHERE id = ?', [warehouseId]);
+        if (whs.length) scopedWarehouse = { id: whs[0].id, name: whs[0].name, code: whs[0].code };
+      } catch(_) {}
+    }
+
     let sql = 'SELECT i.*, b.name AS brand_name FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id WHERE i.active = 1';
     const params = [];
     if (brandId)   { sql += ' AND i.brand_id = ?'; params.push(brandId); }
@@ -986,7 +996,8 @@ router.get('/live-report', async (req, res) => {
       items: result,
       totals: totals,
       trend: trend,
-      period: { startDate: startD, endDate: endD, days: periodDays }
+      period: { startDate: startD, endDate: endD, days: periodDays },
+      scopedWarehouse: scopedWarehouse  // v5.10.8 — name+code when filter applied
     });
   } catch (e) {
     res.json({ error: e.message, items: [], totals: _zeroTotals(), trend: [] });
@@ -1016,31 +1027,130 @@ function _zeroTotals() {
   };
 }
 
-// V5.8.1 — Per-item movement detail for the drill-down popup.
-//   GET /api/inventory/live-report/:itemId/movements?startDate&endDate
+// v5.10.8 — Per-item movement detail for the drill-down popup.
+//
+// Backwards compatible with V5.8.1 — adds:
+//   • ?op=purchases|production|sales|damaged|adjustments|transferIn|
+//        transferOut|stocktake|all (default: all). Server-side bucket
+//        match identical to /live-report so the user sees only the
+//        movements that contributed to the column they clicked.
+//   • ?warehouseId — restricts to a single warehouse (matches the
+//        scoped report).
+//   • Each row carries warehouseName + (for transfers) fromWarehouseName
+//        and toWarehouseName resolved from the warehouse_transfers blob
+//        when reference_type='transfer' & reference_id is set.
+//   • Reverse chronological order (DESC) — already enforced.
 router.get('/live-report/:itemId/movements', async (req, res) => {
   try {
     const { itemId } = req.params;
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, op, warehouseId } = req.query;
+    const opFilter = (op || 'all').toLowerCase();
     const endD   = endDate   ? new Date(endDate)   : new Date();
     const startD = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 3600 * 1000);
     endD.setHours(23, 59, 59, 999);
-    const [rows] = await db.query(
-      'SELECT id, movement_date, type, qty, reason, username, notes, warehouse_id FROM inventory_movements ' +
-      'WHERE item_id = ? AND movement_date BETWEEN ? AND ? ORDER BY movement_date DESC LIMIT 200',
-      [itemId, startD, endD]
-    );
-    res.json(rows.map(r => ({
-      id: r.id,
-      date: r.movement_date,
-      type: r.type,
-      qty:  Number(r.qty) || 0,
-      reason: r.reason || '',
-      username: r.username || '',
-      notes: r.notes || '',
-      warehouseId: r.warehouse_id || ''
-    })));
-  } catch (e) { res.json([]); }
+
+    // Match the /live-report bucketing rules (same regex set, same
+    // priority order) so when the user clicks a cell, the rows match.
+    function bucket(reason, type) {
+      if (/تالف|spoil|damage|broken/i.test(reason))                return 'damaged';
+      if (/مشتريات|استلام|purchase|receive/i.test(reason))         return 'purchases';
+      if (/إنتاج|انتاج|production|نصف مصنع|semi/i.test(reason))    return 'production';
+      if (/مبيعات|sale/i.test(reason))                             return 'sales';
+      if (/إداري|اداري|admin/i.test(reason))                       return 'adjustments';
+      if (/تسويات|settlement|adjust/i.test(reason))                return 'adjustments';
+      if (/تحويل|transfer/i.test(reason))                          return type === 'in' ? 'transferIn' : 'transferOut';
+      if (/جرد|stocktake|variance/i.test(reason))                  return 'stocktake';
+      return type === 'in' ? 'purchases' : 'sales';
+    }
+
+    const params = [itemId, startD, endD];
+    let sql =
+      'SELECT m.id, m.movement_date, m.type, m.qty, m.reason, m.username, m.notes, ' +
+      '       m.warehouse_id, m.reference_type, m.reference_id, ' +
+      '       w.name AS warehouse_name, w.code AS warehouse_code ' +
+      'FROM inventory_movements m ' +
+      'LEFT JOIN warehouses w ON w.id = m.warehouse_id ' +
+      'WHERE m.item_id = ? AND m.movement_date BETWEEN ? AND ?';
+    if (warehouseId) { sql += ' AND m.warehouse_id = ?'; params.push(warehouseId); }
+    sql += ' ORDER BY m.movement_date DESC LIMIT 500';
+    const [rows] = await db.query(sql, params);
+
+    // Resolve transfer-pair details (from/to warehouse) for any movement
+    // that references a warehouse_transfers row.
+    const transferIds = rows
+      .filter(r => r.reference_type === 'transfer' && r.reference_id)
+      .map(r => r.reference_id);
+    let transferMap = {};
+    if (transferIds.length) {
+      const placeholders = transferIds.map(() => '?').join(',');
+      try {
+        const [trs] = await db.query(
+          'SELECT t.id, t.transfer_number, t.transfer_date, t.from_warehouse_id, t.to_warehouse_id, ' +
+          '       wf.name AS from_name, wf.code AS from_code, ' +
+          '       wt.name AS to_name,   wt.code AS to_code ' +
+          'FROM warehouse_transfers t ' +
+          'LEFT JOIN warehouses wf ON wf.id = t.from_warehouse_id ' +
+          'LEFT JOIN warehouses wt ON wt.id = t.to_warehouse_id ' +
+          'WHERE t.id IN (' + placeholders + ')',
+          transferIds);
+        trs.forEach(t => { transferMap[t.id] = t; });
+      } catch(_) { /* table may not exist on older deploys */ }
+    }
+
+    // Resolve production-order date for production-related movements.
+    const productionIds = rows
+      .filter(r => r.reference_type === 'production' && r.reference_id)
+      .map(r => r.reference_id);
+    let productionMap = {};
+    if (productionIds.length) {
+      const placeholders = productionIds.map(() => '?').join(',');
+      try {
+        const [pos] = await db.query(
+          'SELECT id, code, status, created_at FROM production_orders WHERE id IN (' + placeholders + ')',
+          productionIds);
+        pos.forEach(p => { productionMap[p.id] = p; });
+      } catch(_) { /* table may not exist */ }
+    }
+
+    let mapped = rows.map(r => {
+      const opBucket = bucket(r.reason || '', r.type);
+      const out = {
+        id: r.id,
+        date: r.movement_date,
+        type: r.type,
+        qty:  Number(r.qty) || 0,
+        reason: r.reason || '',
+        username: r.username || '',
+        notes: r.notes || '',
+        op: opBucket,
+        warehouseId: r.warehouse_id || '',
+        warehouseName: r.warehouse_name || '',
+        warehouseCode: r.warehouse_code || '',
+        referenceType: r.reference_type || '',
+        referenceId:   r.reference_id   || ''
+      };
+      if (out.referenceType === 'transfer' && transferMap[out.referenceId]) {
+        const t = transferMap[out.referenceId];
+        out.transferNumber  = t.transfer_number || '';
+        out.transferDate    = t.transfer_date   || null;
+        out.fromWarehouseId = t.from_warehouse_id || '';
+        out.toWarehouseId   = t.to_warehouse_id   || '';
+        out.fromWarehouseName = t.from_name || '';
+        out.toWarehouseName   = t.to_name   || '';
+      }
+      if (out.referenceType === 'production' && productionMap[out.referenceId]) {
+        const p = productionMap[out.referenceId];
+        out.productionCode = p.code || '';
+        out.productionDate = p.created_at || null;
+      }
+      return out;
+    });
+
+    if (opFilter !== 'all') {
+      mapped = mapped.filter(r => r.op === opFilter);
+    }
+    res.json(mapped);
+  } catch (e) { console.error('[live-report movements]', e); res.json([]); }
 });
 
 // ─── Stocktakes ───

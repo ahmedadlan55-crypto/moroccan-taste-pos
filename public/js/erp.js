@@ -51,7 +51,9 @@ const erpSections = [
   'erpRptTrialBalance','erpRptPnL','erpRptBalanceSheet','erpRptCashFlow','erpRptProfitability',
   'erpRptInventoryVal','erpRptSalesAnalytics','erpRptWasteAnalytics','erpRptRoyaltyRecon',
   'erpRptEquityChanges','erpRptFinRatios','erpRptBankRecon',
-  'erpGLLedgerReport'
+  'erpGLLedgerReport',
+  // v5.10.5 — Fixed Assets registry
+  'erpFixedAssets'
 ];
 
 // V5 Enterprise nav — single host that ERPv5/ERPv54 render into.
@@ -171,6 +173,8 @@ function erpNav(sectionId) {
       case 'erpRptDiscountsGiven': if (typeof erpLoadDiscountsGiven === 'function') erpLoadDiscountsGiven(); break;
       case 'erpRptWasteAnalytics': erpLoadWasteAnalytics(); break;
       case 'erpRptRoyaltyRecon':   erpLoadRoyaltyRecon(); break;
+      // v5.10.5 — Fixed Assets registry
+      case 'erpFixedAssets':       if (typeof erpLoadFixedAssets === 'function') erpLoadFixedAssets(); break;
       // ═══ Entity management ═══
       case 'erpCompanies':       erpLoadCompanies(); break;
       case 'erpPriceLists':      erpLoadPriceLists(); break;
@@ -11886,6 +11890,737 @@ function _erpRenderCashFlowPrintWindow(from, to, r, cfg) {
   win.document.open();
   win.document.write(html);
   win.document.close();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// v5.10.5 — Fixed Assets Registry (الأصول الثابتة)
+//
+// Reference: views/app-content.html#erpFixedAssets — 21-column grid that
+// hydrates from /api/erp/work-orders/assets and supports inline cell
+// editing, full-modal editing, search/filter/sort, CSV import + export,
+// and a "احتساب الإهلاك للفترة" batch-journal poster.
+//
+// Data flow:
+//   1. erpLoadFixedAssets() hydrates `_faCache.rows` once and caches the
+//      3 COA dropdowns (`_faCoaCache.{asset,expense,accum}`) so per-row
+//      account pickers are instant.
+//   2. _faApplyClientFilters() filters the cached rows (search + status +
+//      time range + sort) and re-emits the body — server is only hit
+//      again when the user explicitly clicks "تحديث" (or after save).
+//   3. Inline cell edits go through PATCH /assets/:id/cell with optimistic
+//      UI rollback on failure. Computed cells (current_value) refresh
+//      from the server response.
+// ═══════════════════════════════════════════════════════════════════════
+
+window._faCache = { rows: [], filtered: [], sortBy: 'created_at', sortDir: 'desc',
+                   activeFilters: {} };
+window._faCoaCache = { asset: null, expense: null, accum: null };
+
+window.erpLoadFixedAssets = function() {
+  var body = document.getElementById('faBody');
+  if (!body) return;
+  body.innerHTML = '<tr><td colspan="21" class="fa-empty"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+
+  var hdr = { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') };
+  // Hydrate assets + the 3 COA dropdowns in parallel.
+  Promise.all([
+    fetch('/api/erp/work-orders/assets', { headers: hdr }).then(function(r){return r.json();}),
+    fetch('/api/erp/work-orders/assets/coa-options?kind=asset',   { headers: hdr }).then(function(r){return r.json();}),
+    fetch('/api/erp/work-orders/assets/coa-options?kind=expense', { headers: hdr }).then(function(r){return r.json();}),
+    fetch('/api/erp/work-orders/assets/coa-options?kind=accum',   { headers: hdr }).then(function(r){return r.json();})
+  ]).then(function(results) {
+    var rows = Array.isArray(results[0]) ? results[0] : [];
+    _faCache.rows = rows;
+    _faCoaCache.asset   = (results[1] && results[1].accounts) || [];
+    _faCoaCache.expense = (results[2] && results[2].accounts) || [];
+    _faCoaCache.accum   = (results[3] && results[3].accounts) || [];
+    _faApplyClientFilters();
+    _faRenderKpis();
+  }).catch(function(e) {
+    body.innerHTML = '<tr><td colspan="21" class="fa-empty" style="color:#ef4444;">خطأ: ' + (e.message||e) + '</td></tr>';
+  });
+};
+
+window._faApplyClientFilters = function() {
+  var body = document.getElementById('faBody');
+  if (!body) return;
+  var search = (document.getElementById('faSearch')||{}).value || '';
+  var time   = (document.getElementById('faTimeRange')||{}).value || 'all';
+  var rows = (_faCache.rows || []).slice();
+
+  // Search across name, code, serial_number, branch, cost-center
+  if (search.trim()) {
+    var q = search.trim().toLowerCase();
+    rows = rows.filter(function(r) {
+      return [r.name, r.code, r.serial_number, r.branch_name, r.cost_center_name]
+        .filter(Boolean)
+        .some(function(s){ return String(s).toLowerCase().indexOf(q) !== -1; });
+    });
+  }
+
+  // Time range — applied to purchase_date
+  if (time !== 'all') {
+    var now = new Date();
+    var from = null, to = null;
+    if (time === 'this-month') {
+      from = new Date(now.getFullYear(), now.getMonth(), 1);
+      to   = new Date(now.getFullYear(), now.getMonth()+1, 0);
+    } else if (time === 'last-month') {
+      from = new Date(now.getFullYear(), now.getMonth()-1, 1);
+      to   = new Date(now.getFullYear(), now.getMonth(), 0);
+    } else if (time === 'this-quarter') {
+      var q = Math.floor(now.getMonth()/3);
+      from = new Date(now.getFullYear(), q*3, 1);
+      to   = new Date(now.getFullYear(), q*3+3, 0);
+    } else if (time === 'this-year') {
+      from = new Date(now.getFullYear(), 0, 1);
+      to   = new Date(now.getFullYear(), 11, 31);
+    } else if (time === 'last-year') {
+      from = new Date(now.getFullYear()-1, 0, 1);
+      to   = new Date(now.getFullYear()-1, 11, 31);
+    }
+    if (from && to) {
+      rows = rows.filter(function(r) {
+        if (!r.purchase_date) return false;
+        var d = new Date(r.purchase_date);
+        return d >= from && d <= to;
+      });
+    }
+  }
+
+  // Active filter chips (status, etc.)
+  Object.keys(_faCache.activeFilters || {}).forEach(function(k) {
+    var v = _faCache.activeFilters[k];
+    if (!v) return;
+    rows = rows.filter(function(r) { return String(r[k] == null ? '' : r[k]) === String(v); });
+  });
+
+  // Sort
+  var sortBy = _faCache.sortBy || 'created_at';
+  var sortDir = _faCache.sortDir || 'desc';
+  var dir = sortDir === 'asc' ? 1 : -1;
+  rows.sort(function(a, b) {
+    var av = a[sortBy], bv = b[sortBy];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1; if (bv == null) return -1;
+    // numeric sort for cost/value/year columns
+    if (['purchase_cost','salvage_value','useful_life_years','current_value'].indexOf(sortBy) !== -1) {
+      return (Number(av)-Number(bv)) * dir;
+    }
+    return String(av).localeCompare(String(bv), 'ar') * dir;
+  });
+
+  _faCache.filtered = rows;
+  body.innerHTML = rows.length
+    ? rows.map(_faRenderRow).join('')
+    : '<tr><td colspan="21" class="fa-empty">لا توجد أصول مسجلة. اضغط "+ أصل جديد" لإضافة أول أصل.</td></tr>';
+  _faUpdateSortIndicators();
+};
+
+function _faRenderKpis() {
+  var rows = _faCache.rows || [];
+  if (!rows.length) { document.getElementById('faKpis').style.display = 'none'; return; }
+  var totalCost = 0, totalBook = 0, activeCount = 0, depTotal = 0;
+  rows.forEach(function(r) {
+    totalCost += Number(r.purchase_cost) || 0;
+    totalBook += Number(r.current_value) || 0;
+    if (r.status === 'active') activeCount++;
+    depTotal += (Number(r.purchase_cost)||0) - (Number(r.current_value)||0);
+  });
+  var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var k = document.getElementById('faKpis');
+  k.style.display = 'grid';
+  k.innerHTML =
+    '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الأصول</div><div class="fa-kpi-value" style="color:#7c3aed;">' + rows.length + ' أصل</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">الأصول النشطة</div><div class="fa-kpi-value" style="color:#16a34a;">' + activeCount + '</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الكلفة</div><div class="fa-kpi-value">' + fmt(totalCost) + '</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">القيمة الدفترية</div><div class="fa-kpi-value" style="color:#0ea5e9;">' + fmt(totalBook) + '</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الإهلاك المتراكم</div><div class="fa-kpi-value" style="color:#ef4444;">' + fmt(depTotal) + '</div></div>';
+}
+
+function _faEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+function _faMoney(v) {
+  return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+function _faDate(s) {
+  if (!s) return '<span style="color:#cbd5e1;">—</span>';
+  try { return new Date(s).toLocaleDateString('en-GB'); } catch(_) { return _faEsc(s); }
+}
+function _faMonth(s) {
+  if (!s) return '<span style="color:#cbd5e1;">—</span>';
+  try { var d = new Date(s); return d.toLocaleDateString('en-GB',{year:'numeric',month:'short'}); } catch(_) { return _faEsc(s); }
+}
+
+function _faStatusChip(s) {
+  var labels = {
+    active: 'نشط', under_maintenance: 'تحت الصيانة',
+    retired: 'مستبعد', disposed: 'مُتلَف', lost: 'مفقود'
+  };
+  var label = labels[s] || s || '—';
+  return '<span class="fa-status s-' + _faEsc(s||'') + '">' + _faEsc(label) + '</span>';
+}
+
+function _faAccChip(code, name, kind, assetId) {
+  if (!code && !name) {
+    return '<span class="fa-acc-empty" onclick="_faPickAccount(\'' + assetId + '\',\'' + kind + '\')"><i class="fas fa-link"></i> ربط حساب…</span>';
+  }
+  // bsOpenAccountDrill from v5.10.2 takes (accountId, name, asOfDate)
+  // so the click can drill into the account ledger.
+  return '<span class="fa-acc-chip" onclick="_faPickAccount(\'' + assetId + '\',\'' + kind + '\')" title="انقر للتعديل">' +
+    (code ? '<code>' + _faEsc(code) + '</code>' : '') +
+    _faEsc(name||'') + '</span>';
+}
+
+function _faRenderRow(r) {
+  var fmt = _faMoney;
+  return '<tr data-asset-id="' + _faEsc(r.id) + '">' +
+    '<td>' + _faStatusChip(r.status) + '</td>' +
+    '<td class="fa-cell-edit" data-field="code"   contenteditable="true">' + _faEsc(r.code||'') + '</td>' +
+    '<td class="fa-cell-edit" data-field="name"   contenteditable="true">' + _faEsc(r.name||'') + '</td>' +
+    '<td class="fa-cell-edit" data-field="purchase_date"     contenteditable="true">' + _faDate(r.purchase_date) + '</td>' +
+    '<td class="fa-cell-edit fa-num" data-field="purchase_cost"   contenteditable="true">' + fmt(r.purchase_cost) + '</td>' +
+    '<td class="fa-cell-edit fa-num" data-field="salvage_value"   contenteditable="true">' + fmt(r.salvage_value) + '</td>' +
+    '<td class="fa-cell-edit fa-num" data-field="useful_life_years" contenteditable="true">' + (r.useful_life_years||'—') + '</td>' +
+    '<td class="fa-cell-edit" data-field="dep_start_month"    contenteditable="true">' + _faMonth(r.dep_start_month) + '</td>' +
+    '<td class="fa-num" data-field="current_value">' + fmt(r.current_value) + '</td>' +
+    '<td>' + _faDate(r.dep_until_date) + '</td>' +
+    '<td>' + _faAccChip(r.gl_asset_account_code, r.gl_asset_account_name, 'asset', r.id) + '</td>' +
+    '<td>' + _faAccChip(r.gl_dep_expense_account_code, r.gl_dep_expense_account_name, 'expense', r.id) + '</td>' +
+    '<td>' + _faAccChip(r.gl_accum_dep_account_code, r.gl_accum_dep_account_name, 'accum', r.id) + '</td>' +
+    '<td class="fa-cell-edit" data-field="notes" contenteditable="true">' + _faEsc(r.notes||'') + '</td>' +
+    '<td>' + _faEsc(r.cost_center_name||'—') + '</td>' +
+    '<td>' + _faEsc(r.project_id||'—') + '</td>' +
+    '<td>' + _faEsc(r.branch_name||'—') + '</td>' +
+    '<td class="fa-cell-edit" data-field="serial_number" contenteditable="true">' + _faEsc(r.serial_number||'') + '</td>' +
+    '<td>' + _faDate(r.updated_at) + '</td>' +
+    '<td>' + _faDate(r.created_at) + '</td>' +
+    '<td><div class="fa-row-actions">' +
+      '<button class="fa-row-act" onclick="_faOpenEditor(\'' + _faEsc(r.id) + '\')" title="تعديل"><i class="fas fa-pen"></i></button>' +
+      '<button class="fa-row-act fa-row-del" onclick="_faDeleteAsset(\'' + _faEsc(r.id) + '\')" title="حذف (إيقاف)"><i class="fas fa-trash"></i></button>' +
+    '</div></td>' +
+  '</tr>';
+}
+
+// ─── Inline cell editing ─────────────────────────────────────────────────
+document.addEventListener('focusin', function(e) {
+  var td = e.target.closest && e.target.closest('.fa-cell-edit');
+  if (!td) return;
+  td._faOldText = td.textContent;
+});
+document.addEventListener('focusout', function(e) {
+  var td = e.target.closest && e.target.closest('.fa-cell-edit');
+  if (!td) return;
+  if (td.textContent === td._faOldText) return;
+  _faCellCommit(td);
+});
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Enter') return;
+  var td = e.target.closest && e.target.closest('.fa-cell-edit');
+  if (!td) return;
+  e.preventDefault();
+  td.blur();
+});
+
+function _faCellCommit(td) {
+  var tr = td.closest('tr');
+  var id = tr && tr.dataset.assetId;
+  var field = td.dataset.field;
+  if (!id || !field) return;
+  var raw = td.textContent.trim();
+  // Light normalization for numeric / date fields
+  var value = raw;
+  if (['purchase_cost','salvage_value','current_value'].indexOf(field) !== -1) {
+    value = String(raw).replace(/,/g,'');
+    if (value && isNaN(Number(value))) { _faCellMark(td, 'error'); return; }
+  }
+  if (field === 'useful_life_years') {
+    if (value && isNaN(parseInt(value))) { _faCellMark(td, 'error'); return; }
+  }
+  _faCellMark(td, 'saving');
+  fetch('/api/erp/work-orders/assets/' + encodeURIComponent(id) + '/cell', {
+    method: 'PATCH',
+    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + (localStorage.getItem('pos_token')||'') },
+    body: JSON.stringify({ field: field, value: value })
+  }).then(function(r){return r.json();}).then(function(j) {
+    if (!j.success) throw new Error(j.error||'failed');
+    _faCellMark(td, null);
+    // Mirror in cache so subsequent filter/sort sees fresh data
+    var cached = (_faCache.rows||[]).find(function(x){return x.id===id;});
+    if (cached) {
+      cached[field] = value;
+      if (j.bookValue != null) cached.current_value = j.bookValue;
+    }
+    // Refresh computed sibling cell (book value) if present
+    if (j.bookValue != null) {
+      var bvCell = tr.querySelector('td[data-field="current_value"]');
+      if (bvCell) bvCell.textContent = _faMoney(j.bookValue);
+    }
+    _faRenderKpis();
+    if (typeof showToast === 'function') showToast('تم حفظ ' + field, false);
+  }).catch(function(e) {
+    _faCellMark(td, 'error');
+    td.textContent = td._faOldText || '';
+    if (typeof showToast === 'function') showToast('فشل الحفظ: ' + (e.message||e), true);
+  });
+}
+
+function _faCellMark(td, kind) {
+  td.classList.remove('fa-cell-saving','fa-cell-error');
+  if (kind === 'saving') td.classList.add('fa-cell-saving');
+  if (kind === 'error')  td.classList.add('fa-cell-error');
+  if (kind === 'saving') {
+    setTimeout(function(){ td.classList.remove('fa-cell-saving'); }, 600);
+  }
+}
+
+// ─── COA picker (popover) ─────────────────────────────────────────────────
+window._faPickAccount = function(assetId, kind) {
+  var accounts = _faCoaCache[kind] || [];
+  if (!accounts.length) {
+    if (typeof showToast === 'function') showToast('لا توجد حسابات متاحة في شجرة الحسابات لهذا النوع — راجع شجرة الحسابات أولاً', true);
+    return;
+  }
+  // Close any open menu
+  var existing = document.getElementById('faAccPicker');
+  if (existing) existing.remove();
+
+  var labels = { asset: 'حساب الأصل الثابت', expense: 'حساب الإهلاك', accum: 'حساب الإهلاك المتراكم' };
+  var fieldMap = {
+    asset: 'gl_asset_account_id',
+    expense: 'gl_dep_expense_account_id',
+    accum: 'gl_accum_dep_account_id'
+  };
+  var menu = document.createElement('div');
+  menu.id = 'faAccPicker';
+  menu.className = 'fa-modal-overlay open';
+  menu.innerHTML =
+    '<div class="fa-modal" style="max-width:560px;">' +
+      '<div class="fa-modal-head"><h3><i class="fas fa-link"></i> ' + _faEsc(labels[kind]||kind) + '</h3>' +
+        '<button class="fa-modal-close" onclick="document.getElementById(\'faAccPicker\').remove()"><i class="fas fa-xmark"></i></button>' +
+      '</div>' +
+      '<div class="fa-modal-body">' +
+        '<input type="text" id="faAccSearch" placeholder="ابحث برقم أو اسم الحساب..." style="width:100%;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;margin-bottom:12px;font-family:inherit;" oninput="_faAccFilter(this.value)">' +
+        '<div id="faAccList" style="max-height:50vh;overflow-y:auto;">' +
+          accounts.map(function(a){
+            return '<div class="fa-menu-item" onclick="_faAssignAccount(\'' + _faEsc(assetId) + '\',\'' + _faEsc(fieldMap[kind]) + '\',\'' + _faEsc(a.id) + '\')">' +
+              '<code style="background:#f1f5f9;padding:1px 6px;border-radius:4px;color:#475569;">' + _faEsc(a.code) + '</code> ' + _faEsc(a.nameAr) +
+            '</div>';
+          }).join('') +
+        '</div>' +
+      '</div>' +
+      '<div class="fa-modal-foot">' +
+        '<button class="fa-btn" onclick="_faAssignAccount(\'' + _faEsc(assetId) + '\',\'' + _faEsc(fieldMap[kind]) + '\',null)"><i class="fas fa-unlink"></i> إلغاء الربط</button>' +
+        '<button class="fa-btn" onclick="document.getElementById(\'faAccPicker\').remove()">إغلاق</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(menu);
+  setTimeout(function(){ var i = document.getElementById('faAccSearch'); if (i) i.focus(); }, 50);
+};
+window._faAccFilter = function(q) {
+  q = (q||'').toLowerCase();
+  var list = document.getElementById('faAccList'); if (!list) return;
+  Array.prototype.forEach.call(list.children, function(item) {
+    item.style.display = (item.textContent.toLowerCase().indexOf(q) !== -1) ? '' : 'none';
+  });
+};
+window._faAssignAccount = function(assetId, field, accountId) {
+  fetch('/api/erp/work-orders/assets/' + encodeURIComponent(assetId) + '/cell', {
+    method: 'PATCH',
+    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + (localStorage.getItem('pos_token')||'') },
+    body: JSON.stringify({ field: field, value: accountId || null })
+  }).then(function(r){return r.json();}).then(function(j) {
+    if (!j.success) throw new Error(j.error||'failed');
+    var picker = document.getElementById('faAccPicker'); if (picker) picker.remove();
+    erpLoadFixedAssets();    // refresh the row to show new chip
+    if (typeof showToast === 'function') showToast('تم ربط الحساب بنجاح', false);
+  }).catch(function(e) {
+    if (typeof showToast === 'function') showToast('فشل الربط: ' + (e.message||e), true);
+  });
+};
+
+// ─── Sort menu ─────────────────────────────────────────────────────────
+document.addEventListener('click', function(e) {
+  var th = e.target.closest && e.target.closest('.fa-grid thead th[data-sort]');
+  if (!th) return;
+  var col = th.dataset.sort;
+  if (_faCache.sortBy === col) _faCache.sortDir = (_faCache.sortDir === 'asc') ? 'desc' : 'asc';
+  else { _faCache.sortBy = col; _faCache.sortDir = 'asc'; }
+  _faApplyClientFilters();
+});
+function _faUpdateSortIndicators() {
+  var ths = document.querySelectorAll('.fa-grid thead th[data-sort]');
+  ths.forEach(function(th){
+    th.classList.remove('fa-sorted-asc','fa-sorted-desc');
+    if (th.dataset.sort === _faCache.sortBy) {
+      th.classList.add(_faCache.sortDir === 'asc' ? 'fa-sorted-asc' : 'fa-sorted-desc');
+    }
+  });
+}
+
+// ─── Filter dropdown (status) ─────────────────────────────────────────────
+window._faToggleFilterMenu = function() {
+  var existing = document.getElementById('faFilterMenu');
+  if (existing) { existing.remove(); return; }
+  var btn = document.getElementById('faAddFilterBtn');
+  var rect = btn.getBoundingClientRect();
+  var menu = document.createElement('div');
+  menu.id = 'faFilterMenu';
+  menu.className = 'fa-menu';
+  menu.style.position = 'fixed';
+  menu.style.top  = (rect.bottom + 6) + 'px';
+  menu.style.insetInlineEnd = (window.innerWidth - rect.right) + 'px';
+  var statuses = [
+    {v:'',label:'كل الحالات'},
+    {v:'active',label:'نشط'},
+    {v:'under_maintenance',label:'تحت الصيانة'},
+    {v:'retired',label:'مستبعد'},
+    {v:'disposed',label:'مُتلَف'},
+    {v:'lost',label:'مفقود'}
+  ];
+  menu.innerHTML = '<div style="padding:8px 12px;font-size:11px;font-weight:800;color:#64748b;">فلترة بالحالة</div>' +
+    statuses.map(function(s) {
+      var active = (_faCache.activeFilters.status||'') === s.v ? 'active' : '';
+      return '<div class="fa-menu-item ' + active + '" onclick="_faSetFilter(\'status\',\'' + s.v + '\')">' + _faEsc(s.label) + '</div>';
+    }).join('');
+  document.body.appendChild(menu);
+  setTimeout(function(){
+    document.addEventListener('click', _faCloseFilterMenu, { once: true });
+  }, 100);
+};
+function _faCloseFilterMenu(e) {
+  var m = document.getElementById('faFilterMenu');
+  if (m && !m.contains(e.target)) m.remove();
+}
+window._faSetFilter = function(key, value) {
+  _faCache.activeFilters[key] = value;
+  if (!value) delete _faCache.activeFilters[key];
+  var menu = document.getElementById('faFilterMenu'); if (menu) menu.remove();
+  _faApplyClientFilters();
+  _faRenderChips();
+};
+function _faRenderChips() {
+  var chips = document.getElementById('faFilterChips');
+  if (!chips) return;
+  var keys = Object.keys(_faCache.activeFilters || {}).filter(function(k){ return _faCache.activeFilters[k]; });
+  if (!keys.length) { chips.style.display = 'none'; chips.innerHTML = ''; return; }
+  chips.style.display = 'flex';
+  var labels = { status: 'الحالة' };
+  chips.innerHTML = keys.map(function(k) {
+    return '<span class="fa-chip">' + _faEsc(labels[k]||k) + ': ' + _faEsc(_faCache.activeFilters[k]) +
+      ' <i class="fas fa-xmark fa-chip-x" onclick="_faSetFilter(\'' + k + '\',\'\')"></i></span>';
+  }).join('');
+}
+
+// Sort menu (alternative trigger via button — column-click already works)
+window._faToggleSortMenu = function() {
+  var existing = document.getElementById('faSortMenu');
+  if (existing) { existing.remove(); return; }
+  var btn = document.getElementById('faSortBtn');
+  var rect = btn.getBoundingClientRect();
+  var menu = document.createElement('div');
+  menu.id = 'faSortMenu';
+  menu.className = 'fa-menu';
+  menu.style.position = 'fixed';
+  menu.style.top  = (rect.bottom + 6) + 'px';
+  menu.style.insetInlineEnd = (window.innerWidth - rect.right) + 'px';
+  var cols = [
+    {v:'created_at',label:'تاريخ الإنشاء'},
+    {v:'name',label:'الاسم'},
+    {v:'code',label:'رقم الأصل'},
+    {v:'purchase_cost',label:'كلفة الشراء'},
+    {v:'current_value',label:'القيمة الدفترية'},
+    {v:'purchase_date',label:'تاريخ الشراء'}
+  ];
+  menu.innerHTML = '<div style="padding:8px 12px;font-size:11px;font-weight:800;color:#64748b;">ترتيب حسب</div>' +
+    cols.map(function(c){
+      var active = (_faCache.sortBy === c.v) ? 'active' : '';
+      var arrow = active ? (_faCache.sortDir==='asc'?' ▲':' ▼') : '';
+      return '<div class="fa-menu-item ' + active + '" onclick="_faSetSort(\'' + c.v + '\')">' + _faEsc(c.label) + arrow + '</div>';
+    }).join('');
+  document.body.appendChild(menu);
+  setTimeout(function(){ document.addEventListener('click', _faCloseSortMenu, { once: true }); }, 100);
+};
+function _faCloseSortMenu(e) {
+  var m = document.getElementById('faSortMenu');
+  if (m && !m.contains(e.target)) m.remove();
+}
+window._faSetSort = function(col) {
+  if (_faCache.sortBy === col) _faCache.sortDir = (_faCache.sortDir === 'asc') ? 'desc' : 'asc';
+  else { _faCache.sortBy = col; _faCache.sortDir = 'asc'; }
+  var menu = document.getElementById('faSortMenu'); if (menu) menu.remove();
+  _faApplyClientFilters();
+};
+
+// ─── New / edit modal ─────────────────────────────────────────────────────
+window._faOpenEditor = function(id) {
+  var asset = id ? (_faCache.rows||[]).find(function(x){return x.id===id;}) : {};
+  asset = asset || {};
+  var ov = document.getElementById('faEditorOverlay');
+  if (!ov) return;
+  ov.style.display = 'block';
+  ov.classList.add('open');
+  var optsAsset   = (_faCoaCache.asset||[]).map(function(a){ return '<option value="'+a.id+'" '+(a.id===asset.gl_asset_account_id?'selected':'')+'>['+_faEsc(a.code)+'] '+_faEsc(a.nameAr)+'</option>'; }).join('');
+  var optsExpense = (_faCoaCache.expense||[]).map(function(a){ return '<option value="'+a.id+'" '+(a.id===asset.gl_dep_expense_account_id?'selected':'')+'>['+_faEsc(a.code)+'] '+_faEsc(a.nameAr)+'</option>'; }).join('');
+  var optsAccum   = (_faCoaCache.accum||[]).map(function(a){ return '<option value="'+a.id+'" '+(a.id===asset.gl_accum_dep_account_id?'selected':'')+'>['+_faEsc(a.code)+'] '+_faEsc(a.nameAr)+'</option>'; }).join('');
+  var statusOpts = [
+    ['active','نشط'], ['under_maintenance','تحت الصيانة'],
+    ['retired','مستبعد'], ['disposed','مُتلَف'], ['lost','مفقود']
+  ].map(function(o){ return '<option value="'+o[0]+'" '+(asset.status===o[0]?'selected':'')+'>'+o[1]+'</option>'; }).join('');
+  var catOpts = [
+    ['equipment','معدات'], ['vehicle','مركبات'], ['furniture','أثاث'],
+    ['it','تقنية'], ['machinery','آلات'], ['building','مبنى'], ['other','أخرى']
+  ].map(function(o){ return '<option value="'+o[0]+'" '+(asset.category===o[0]?'selected':'')+'>'+o[1]+'</option>'; }).join('');
+  var depOpts = [
+    ['straight_line','قسط ثابت (Straight-line)'],
+    ['declining','قسط متناقص (Declining)'],
+    ['none','بدون إهلاك']
+  ].map(function(o){ return '<option value="'+o[0]+'" '+((asset.depreciation_method||'straight_line')===o[0]?'selected':'')+'>'+o[1]+'</option>'; }).join('');
+
+  ov.innerHTML = '<div class="fa-modal">' +
+    '<div class="fa-modal-head">' +
+      '<h3><i class="fas fa-cubes-stacked"></i> ' + (id ? 'تعديل الأصل' : 'أصل جديد') + '</h3>' +
+      '<button class="fa-modal-close" onclick="_faCloseEditor()"><i class="fas fa-xmark"></i></button>' +
+    '</div>' +
+    '<form id="faForm" class="fa-modal-body" onsubmit="event.preventDefault();_faSaveAsset(' + (id?"'"+_faEsc(id)+"'":'null') + ');">' +
+
+      // Section 1: بيانات الأصل
+      '<div class="fa-section">' +
+        '<div class="fa-section-head"><i class="fas fa-id-badge"></i> بيانات الأصل</div>' +
+        '<div class="fa-form-grid">' +
+          '<div class="fa-field"><label>الاسم *</label><input name="name" required value="'+_faEsc(asset.name||'')+'"></div>' +
+          '<div class="fa-field"><label>رقم الأصل (code)</label><input name="code" value="'+_faEsc(asset.code||'')+'" placeholder="يُولَّد تلقائياً"></div>' +
+          '<div class="fa-field"><label>الفئة</label><select name="category">'+catOpts+'</select></div>' +
+          '<div class="fa-field"><label>الحالة</label><select name="status">'+statusOpts+'</select></div>' +
+          '<div class="fa-field"><label>الرقم التعريفي / التسلسلي</label><input name="serial_number" value="'+_faEsc(asset.serial_number||'')+'"></div>' +
+          '<div class="fa-field"><label>الموديل</label><input name="model" value="'+_faEsc(asset.model||'')+'"></div>' +
+          '<div class="fa-field"><label>المُصنِّع</label><input name="manufacturer" value="'+_faEsc(asset.manufacturer||'')+'"></div>' +
+          '<div class="fa-field"><label>المعيّن إليه</label><input name="assigned_to" value="'+_faEsc(asset.assigned_to||'')+'"></div>' +
+        '</div>' +
+      '</div>' +
+
+      // Section 2: بيانات الشراء
+      '<div class="fa-section">' +
+        '<div class="fa-section-head"><i class="fas fa-receipt"></i> بيانات الشراء</div>' +
+        '<div class="fa-form-grid">' +
+          '<div class="fa-field"><label>تاريخ الشراء</label><input type="date" name="purchase_date" value="'+_faEsc((asset.purchase_date||'').slice(0,10))+'"></div>' +
+          '<div class="fa-field"><label>كلفة الشراء (ر.س)</label><input type="number" step="0.01" name="purchase_cost" value="'+(asset.purchase_cost||'')+'"></div>' +
+          '<div class="fa-field"><label>قيمة الخردة (ر.س)</label><input type="number" step="0.01" name="salvage_value" value="'+(asset.salvage_value||0)+'"></div>' +
+          '<div class="fa-field"><label>تاريخ انتهاء الضمان</label><input type="date" name="warranty_expiry" value="'+_faEsc((asset.warranty_expiry||'').slice(0,10))+'"></div>' +
+        '</div>' +
+      '</div>' +
+
+      // Section 3: الإهلاك
+      '<div class="fa-section">' +
+        '<div class="fa-section-head"><i class="fas fa-chart-line-down"></i> الإهلاك</div>' +
+        '<div class="fa-form-grid">' +
+          '<div class="fa-field"><label>طريقة الإهلاك</label><select name="depreciation_method">'+depOpts+'</select></div>' +
+          '<div class="fa-field"><label>العمر الإنتاجي (سنوات)</label><input type="number" name="useful_life_years" value="'+(asset.useful_life_years||5)+'"></div>' +
+          '<div class="fa-field"><label>شهر بدء الإهلاك</label><input type="date" name="dep_start_month" value="'+_faEsc((asset.dep_start_month||'').slice(0,10))+'"></div>' +
+          '<div class="fa-field"><label>القيمة الدفترية الحالية</label><input type="number" step="0.01" name="current_value" value="'+(asset.current_value||'')+'" disabled placeholder="تُحسب تلقائياً"></div>' +
+        '</div>' +
+      '</div>' +
+
+      // Section 4: الربط المحاسبي + التصنيف
+      '<div class="fa-section">' +
+        '<div class="fa-section-head"><i class="fas fa-link"></i> الربط المحاسبي + التصنيف</div>' +
+        '<div class="fa-form-grid">' +
+          '<div class="fa-field fa-field-full"><label>حساب الأصل الثابت (PP&E)</label><select name="gl_asset_account_id"><option value="">— اختر حساب —</option>'+optsAsset+'</select></div>' +
+          '<div class="fa-field"><label>حساب مصروف الإهلاك</label><select name="gl_dep_expense_account_id"><option value="">— اختر حساب —</option>'+optsExpense+'</select></div>' +
+          '<div class="fa-field"><label>حساب مجمع الإهلاك</label><select name="gl_accum_dep_account_id"><option value="">— اختر حساب —</option>'+optsAccum+'</select></div>' +
+          '<div class="fa-field"><label>الفرع</label><input name="branch_id" value="'+_faEsc(asset.branch_id||'')+'" placeholder="معرّف الفرع"></div>' +
+          '<div class="fa-field"><label>مركز التكلفة</label><input name="cost_center_id" value="'+_faEsc(asset.cost_center_id||'')+'" placeholder="معرّف مركز التكلفة"></div>' +
+          '<div class="fa-field"><label>المشروع</label><input name="project_id" value="'+_faEsc(asset.project_id||'')+'"></div>' +
+          '<div class="fa-field fa-field-full"><label>ملاحظات</label><textarea name="notes" rows="2">'+_faEsc(asset.notes||'')+'</textarea></div>' +
+        '</div>' +
+      '</div>' +
+
+    '</form>' +
+    '<div class="fa-modal-foot">' +
+      '<button class="fa-btn" onclick="_faCloseEditor()">إلغاء</button>' +
+      '<button class="fa-btn fa-btn-primary" onclick="_faSaveAsset(' + (id?"'"+_faEsc(id)+"'":'null') + ')"><i class="fas fa-save"></i> حفظ</button>' +
+    '</div>' +
+  '</div>';
+};
+window._faCloseEditor = function() {
+  var ov = document.getElementById('faEditorOverlay');
+  if (!ov) return;
+  ov.classList.remove('open');
+  ov.style.display = 'none';
+  ov.innerHTML = '';
+};
+window._faSaveAsset = function(id) {
+  var form = document.getElementById('faForm');
+  if (!form) return;
+  var body = {};
+  Array.prototype.forEach.call(form.elements, function(el) {
+    if (!el.name || el.disabled) return;
+    body[el.name] = el.value || null;
+  });
+  if (!body.name) {
+    if (typeof showToast === 'function') showToast('الاسم مطلوب', true);
+    return;
+  }
+  var url = '/api/erp/work-orders/assets' + (id ? '/' + encodeURIComponent(id) : '');
+  var method = id ? 'PUT' : 'POST';
+  fetch(url, {
+    method: method,
+    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + (localStorage.getItem('pos_token')||'') },
+    body: JSON.stringify(body)
+  }).then(function(r){return r.json();}).then(function(j) {
+    if (!j.success) throw new Error(j.error||'فشل');
+    _faCloseEditor();
+    erpLoadFixedAssets();
+    if (typeof showToast === 'function') showToast(id ? 'تم تحديث الأصل' : 'تم إضافة الأصل', false);
+  }).catch(function(e) {
+    if (typeof showToast === 'function') showToast('فشل: ' + (e.message||e), true);
+  });
+};
+
+window._faDeleteAsset = function(id) {
+  if (!confirm('هل تريد حذف هذا الأصل؟ سيتم تغيير حالته إلى "مُتلَف" (يحتفظ بالسجلات المحاسبية).')) return;
+  fetch('/api/erp/work-orders/assets/' + encodeURIComponent(id), {
+    method: 'DELETE',
+    headers: { 'Authorization':'Bearer ' + (localStorage.getItem('pos_token')||'') }
+  }).then(function(r){return r.json();}).then(function(j) {
+    if (!j.success) throw new Error(j.error||'فشل');
+    erpLoadFixedAssets();
+    if (typeof showToast === 'function') showToast('تم الحذف', false);
+  }).catch(function(e) {
+    if (typeof showToast === 'function') showToast('فشل: '+(e.message||e), true);
+  });
+};
+
+// ─── Depreciation post (manual button) ─────────────────────────────────
+window._faPostDepreciation = function() {
+  var ov = document.getElementById('faEditorOverlay');
+  if (!ov) return;
+  ov.style.display = 'block';
+  ov.classList.add('open');
+  var today = new Date().toISOString().slice(0,10);
+  var firstOfMonth = new Date(); firstOfMonth.setDate(1);
+  var fromDefault = firstOfMonth.toISOString().slice(0,10);
+  ov.innerHTML = '<div class="fa-modal" style="max-width:520px;">' +
+    '<div class="fa-modal-head"><h3><i class="fas fa-calendar-check"></i> احتساب الإهلاك للفترة</h3>' +
+      '<button class="fa-modal-close" onclick="_faCloseEditor()"><i class="fas fa-xmark"></i></button>' +
+    '</div>' +
+    '<div class="fa-modal-body">' +
+      '<div class="fa-section">' +
+        '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px;color:#0369a1;line-height:1.6;">' +
+          '<i class="fas fa-info-circle"></i> سيتم احتساب الإهلاك بطريقة <b>القسط الثابت</b> لكل أصل نشط له حسابات إهلاك مرتبطة، وإنشاء قيد محاسبي واحد متوازن:<br>' +
+          'مدين: <b>حساب مصروف الإهلاك</b> · دائن: <b>مجمع الإهلاك</b>' +
+        '</div>' +
+        '<div class="fa-form-grid">' +
+          '<div class="fa-field"><label>من تاريخ</label><input type="date" id="faDepFrom" value="'+fromDefault+'"></div>' +
+          '<div class="fa-field"><label>إلى تاريخ</label><input type="date" id="faDepTo" value="'+today+'"></div>' +
+          '<div class="fa-field fa-field-full"><label>إعداد بواسطة</label><input id="faDepBy" value="'+_faEsc((window.currentUser&&window.currentUser.username)||'')+'"></div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="fa-modal-foot">' +
+      '<button class="fa-btn" onclick="_faCloseEditor()">إلغاء</button>' +
+      '<button class="fa-btn fa-btn-primary" onclick="_faSubmitDepreciation()"><i class="fas fa-check"></i> ترحيل القيد</button>' +
+    '</div>' +
+  '</div>';
+};
+window._faSubmitDepreciation = function() {
+  var from = (document.getElementById('faDepFrom')||{}).value;
+  var to   = (document.getElementById('faDepTo')||{}).value;
+  var by   = (document.getElementById('faDepBy')||{}).value || 'system';
+  if (!from || !to) {
+    if (typeof showToast === 'function') showToast('حدد الفترة', true); return;
+  }
+  fetch('/api/erp/work-orders/assets/post-depreciation', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + (localStorage.getItem('pos_token')||'') },
+    body: JSON.stringify({ from: from, to: to, preparedBy: by })
+  }).then(function(r){return r.json();}).then(function(j) {
+    if (!j.success) throw new Error(j.error||'فشل');
+    _faCloseEditor();
+    erpLoadFixedAssets();
+    if (typeof showToast === 'function') {
+      showToast('تم ترحيل قيد إهلاك ' + (j.lines||0) + ' أصل — إجمالي ' + _faMoney(j.total) + ' ر.س — رقم القيد: ' + (j.journalNumber||'—'), false);
+    }
+  }).catch(function(e) {
+    if (typeof showToast === 'function') showToast('فشل: '+(e.message||e), true);
+  });
+};
+
+// ─── CSV import / export ─────────────────────────────────────────────────
+window._faExportCsv = function() {
+  var rows = _faCache.filtered || [];
+  var headers = ['code','name','category','status','purchase_date','purchase_cost','salvage_value',
+                 'useful_life_years','dep_start_month','current_value','dep_until_date',
+                 'gl_asset_account_code','gl_dep_expense_account_code','gl_accum_dep_account_code',
+                 'notes','cost_center_name','project_id','branch_name','serial_number','updated_at','created_at'];
+  var headerLabels = ['رقم الأصل','الاسم','الفئة','الحالة','تاريخ الشراء','كلفة الشراء','قيمة الخردة',
+                      'العمر الإنتاجي','شهر بدء الإهلاك','القيمة الدفترية','مستهلك لغاية',
+                      'حساب الأصل','حساب الإهلاك','حساب المجمع',
+                      'ملاحظات','مركز التكلفة','المشروع','الفرع','الرقم التعريفي','تم التعديل','تم الإنشاء'];
+  var csv = '﻿' + headerLabels.join(',') + '\n';
+  rows.forEach(function(r) {
+    csv += headers.map(function(h) {
+      var v = r[h] == null ? '' : String(r[h]);
+      if (v.indexOf(',') !== -1 || v.indexOf('"') !== -1 || v.indexOf('\n') !== -1) {
+        v = '"' + v.replace(/"/g,'""') + '"';
+      }
+      return v;
+    }).join(',') + '\n';
+  });
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'fixed-assets-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+};
+
+window._faImportCsv = function(file) {
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var text = e.target.result;
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);   // strip BOM
+    var lines = text.split(/\r?\n/).filter(function(l){return l.trim();});
+    if (lines.length < 2) { if (typeof showToast === 'function') showToast('الملف فارغ', true); return; }
+    // Use first row as field map (must match backend field names)
+    var fields = lines[0].split(',').map(function(s){return s.trim();});
+    var promises = lines.slice(1).map(function(line) {
+      var cells = _faParseCsvLine(line);
+      var body = {};
+      fields.forEach(function(f, i) { body[f] = cells[i] || null; });
+      return fetch('/api/erp/work-orders/assets', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + (localStorage.getItem('pos_token')||'') },
+        body: JSON.stringify(body)
+      }).then(function(r){return r.json();});
+    });
+    Promise.all(promises).then(function(results) {
+      var ok = results.filter(function(r){return r.success;}).length;
+      if (typeof showToast === 'function') showToast('تم استيراد ' + ok + ' / ' + results.length + ' أصل', ok===0);
+      erpLoadFixedAssets();
+    });
+  };
+  reader.readAsText(file);
+};
+function _faParseCsvLine(line) {
+  var cells = []; var cur = ''; var inQ = false;
+  for (var i = 0; i < line.length; i++) {
+    var c = line[i];
+    if (inQ) {
+      if (c === '"') { if (line[i+1] === '"') { cur += '"'; i++; } else inQ = false; }
+      else cur += c;
+    } else {
+      if (c === ',') { cells.push(cur); cur = ''; }
+      else if (c === '"') inQ = true;
+      else cur += c;
+    }
+  }
+  cells.push(cur);
+  return cells;
 }
 
 // ═══ Profitability by dimension — enhanced ═══

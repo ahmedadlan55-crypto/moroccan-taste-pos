@@ -43,7 +43,18 @@ router.get('/dashboard', async (req,res)=>{
   } catch(e){ res.status(500).json({error:e.message}); }
 });
 
-// ─── ASSETS ──────────────────────────────────────────────────────────
+// ─── ASSETS (v5.10.5 — Fixed Assets Registry + GL linkage) ──────────────
+//
+// All asset endpoints support the new GL-linkage columns + depreciation
+// tracking. The grid in views/app-content.html (#erpFixedAssets) calls:
+//   GET    /assets                  → grid hydrate (with JOINed account names)
+//   POST   /assets                  → modal "+ أصل جديد"
+//   PUT    /assets/:id              → modal heavy edit
+//   PATCH  /assets/:id/cell         → inline cell edit (whitelisted)
+//   DELETE /assets/:id              → soft delete (status='disposed')
+//   GET    /assets/coa-options      → COA dropdown source for the 3 GL pickers
+//   POST   /assets/post-depreciation→ batch journal poster
+
 router.get('/assets', async (req,res)=>{
   try {
     const { brandId, branchId, status, q } = req.query;
@@ -54,52 +65,257 @@ router.get('/assets', async (req,res)=>{
     if (q)       { conds.push('(a.name LIKE ? OR a.code LIKE ? OR a.serial_number LIKE ?)');
                    params.push(`%${q}%`,`%${q}%`,`%${q}%`); }
     const where = conds.length?'WHERE '+conds.join(' AND '):'';
+    // LEFT JOIN: brands + branches + cost_centers + the 3 GL accounts so the
+    // grid can render code+name chips without a second round-trip per row.
     const [rows] = await db.query(
-      `SELECT a.*, b.name AS brand_name FROM assets a
-       LEFT JOIN brands b ON b.id=a.brand_id ${where}
-       ORDER BY a.created_at DESC LIMIT 500`, params);
+      `SELECT a.*,
+              b.name  AS brand_name,
+              br.name AS branch_name,
+              cc.name AS cost_center_name,
+              ga.code  AS gl_asset_account_code,       ga.name_ar  AS gl_asset_account_name,
+              gde.code AS gl_dep_expense_account_code, gde.name_ar AS gl_dep_expense_account_name,
+              gad.code AS gl_accum_dep_account_code,   gad.name_ar AS gl_accum_dep_account_name
+       FROM assets a
+       LEFT JOIN brands       b   ON b.id  = a.brand_id
+       LEFT JOIN branches     br  ON br.id = a.branch_id
+       LEFT JOIN cost_centers cc  ON cc.id = a.cost_center_id
+       LEFT JOIN gl_accounts  ga  ON ga.id  = a.gl_asset_account_id
+       LEFT JOIN gl_accounts  gde ON gde.id = a.gl_dep_expense_account_id
+       LEFT JOIN gl_accounts  gad ON gad.id = a.gl_accum_dep_account_id
+       ${where}
+       ORDER BY a.created_at DESC
+       LIMIT 500`, params);
     res.json(rows);
   } catch(e){ res.status(500).json({error:e.message}); }
 });
+
+// Helper — straight-line book value as of `asOf` (defaults to today).
+// book = cost − ((months_elapsed / total_months) × (cost − salvage)),
+// clamped to [salvage, cost].
+function _computeBookValue(a, asOf) {
+  const cost    = Number(a.purchase_cost) || 0;
+  const salvage = Number(a.salvage_value) || 0;
+  const years   = Number(a.useful_life_years) || 0;
+  if (cost <= 0 || years <= 0) return cost; // can't depreciate
+  const start = a.dep_start_month ? new Date(a.dep_start_month) :
+                a.purchase_date    ? new Date(a.purchase_date)    : null;
+  if (!start) return cost;
+  const ref = asOf ? new Date(asOf) : new Date();
+  const monthsElapsed = (ref.getFullYear() - start.getFullYear()) * 12
+                      + (ref.getMonth() - start.getMonth());
+  if (monthsElapsed <= 0) return cost;
+  const totalMonths = years * 12;
+  const dep = Math.min(monthsElapsed, totalMonths) / totalMonths * (cost - salvage);
+  return Math.max(salvage, Math.min(cost, cost - dep));
+}
 
 router.post('/assets', async (req,res)=>{
   try {
     const b = req.body||{};
     if (!b.name) return res.status(400).json({error:'name required'});
     const id = b.id||_id('AST');
+    const bookValue = _computeBookValue(b);
     await db.query(
       `INSERT INTO assets
        (id,code,name,category,brand_id,branch_id,property_id,cost_center_id,
         serial_number,manufacturer,model,purchase_date,purchase_cost,
         depreciation_method,useful_life_years,salvage_value,current_value,
-        warranty_expiry,assigned_to,status,notes)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        warranty_expiry,assigned_to,status,notes,
+        dep_start_month,dep_until_date,
+        gl_asset_account_id,gl_dep_expense_account_id,gl_accum_dep_account_id,
+        project_id,created_by)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [id, b.code||id, b.name, b.category||'equipment',
        b.brand_id||null, b.branch_id||null, b.property_id||null, b.cost_center_id||null,
        b.serial_number||null, b.manufacturer||null, b.model||null,
        b.purchase_date||null, b.purchase_cost||null,
        b.depreciation_method||'straight_line', b.useful_life_years||5,
-       b.salvage_value||0, b.current_value||b.purchase_cost||0,
+       b.salvage_value||0,
+       b.current_value!=null ? b.current_value : bookValue,
        b.warranty_expiry||null, b.assigned_to||null,
-       b.status||'active', b.notes||null]);
-    res.json({ success:true, id });
+       b.status||'active', b.notes||null,
+       b.dep_start_month || b.purchase_date || null,
+       b.dep_until_date || null,
+       b.gl_asset_account_id || null,
+       b.gl_dep_expense_account_id || null,
+       b.gl_accum_dep_account_id || null,
+       b.project_id || null,
+       _user(req, b)]);
+    res.json({ success:true, id, bookValue });
   } catch(e){ res.status(500).json({error:e.message}); }
 });
 
+const _ASSET_FIELDS = ['code','name','category','brand_id','branch_id','property_id','cost_center_id',
+                       'serial_number','manufacturer','model','purchase_date','purchase_cost',
+                       'depreciation_method','useful_life_years','salvage_value','current_value',
+                       'warranty_expiry','last_maintenance_date','next_maintenance_date',
+                       'assigned_to','status','notes',
+                       // v5.10.5 additions
+                       'dep_start_month','dep_until_date',
+                       'gl_asset_account_id','gl_dep_expense_account_id','gl_accum_dep_account_id',
+                       'project_id'];
+
 router.put('/assets/:id', async (req,res)=>{
   try {
-    const fields = ['code','name','category','brand_id','branch_id','property_id','cost_center_id',
-                    'serial_number','manufacturer','model','purchase_date','purchase_cost',
-                    'depreciation_method','useful_life_years','salvage_value','current_value',
-                    'warranty_expiry','last_maintenance_date','next_maintenance_date',
-                    'assigned_to','status','notes'];
     const set=[]; const params=[];
-    for (const f of fields) if (f in req.body){ set.push(`${f}=?`); params.push(req.body[f]); }
+    for (const f of _ASSET_FIELDS) if (f in req.body){ set.push(`${f}=?`); params.push(req.body[f]||null); }
     if (!set.length) return res.json({success:true,noop:true});
     params.push(req.params.id);
     await db.query(`UPDATE assets SET ${set.join(',')} WHERE id=?`, params);
+    // Re-compute book value on every save when cost/life/salvage changed
+    if ('purchase_cost' in req.body || 'salvage_value' in req.body
+        || 'useful_life_years' in req.body || 'dep_start_month' in req.body) {
+      const [rows] = await db.query('SELECT * FROM assets WHERE id=?', [req.params.id]);
+      if (rows.length) {
+        const bv = _computeBookValue(rows[0]);
+        await db.query('UPDATE assets SET current_value=? WHERE id=?', [bv, req.params.id]);
+      }
+    }
     res.json({success:true});
   } catch(e){ res.status(500).json({error:e.message}); }
+});
+
+// v5.10.5 — Inline single-cell PATCH for grid editing. Whitelist + same
+// computed-fields refresh as PUT, but the response carries the recomputed
+// book value so the grid can update its sibling cell in-place.
+router.patch('/assets/:id/cell', async (req,res)=>{
+  try {
+    const { field, value } = req.body || {};
+    if (!field || !_ASSET_FIELDS.includes(field)) return res.status(400).json({error:'field-not-allowed'});
+    await db.query(`UPDATE assets SET ${field}=? WHERE id=?`, [value === '' ? null : value, req.params.id]);
+    const [rows] = await db.query('SELECT * FROM assets WHERE id=?', [req.params.id]);
+    if (!rows.length) return res.status(404).json({error:'not-found'});
+    let bookValue = rows[0].current_value;
+    if (['purchase_cost','salvage_value','useful_life_years','dep_start_month','purchase_date'].includes(field)) {
+      bookValue = _computeBookValue(rows[0]);
+      await db.query('UPDATE assets SET current_value=? WHERE id=?', [bookValue, req.params.id]);
+    }
+    res.json({ success:true, bookValue });
+  } catch(e){ res.status(500).json({error:e.message}); }
+});
+
+// v5.10.5 — Soft delete: keeps the row (journals reference it) but flags
+// status='disposed'. Use ?hard=1 for an actual DELETE (admin-only path).
+router.delete('/assets/:id', async (req,res)=>{
+  try {
+    if (req.query.hard === '1') {
+      await db.query('DELETE FROM assets WHERE id=?', [req.params.id]);
+    } else {
+      await db.query("UPDATE assets SET status='disposed' WHERE id=?", [req.params.id]);
+    }
+    res.json({ success:true });
+  } catch(e){ res.status(500).json({error:e.message}); }
+});
+
+// v5.10.5 — COA dropdown source for the 3 asset-row pickers.
+router.get('/assets/coa-options', async (req,res)=>{
+  try {
+    const kind = String(req.query.kind || 'asset');
+    let where = "is_active = 1";
+    if (kind === 'asset') {
+      // PP&E only — exclude accumulated depreciation (124*)
+      where += " AND code LIKE '12%' AND code NOT LIKE '124%' AND type = 'asset'";
+    } else if (kind === 'expense') {
+      // Depreciation expense — by name OR by code under operating expenses
+      where += " AND type = 'expense' AND (name_ar LIKE '%إهلاك%' OR code LIKE '524%' OR code LIKE '5232%')";
+    } else if (kind === 'accum') {
+      // Accumulated depreciation contra-asset
+      where += " AND code LIKE '124%' AND type = 'asset'";
+    } else {
+      return res.status(400).json({error:'kind-must-be-asset|expense|accum'});
+    }
+    const [rows] = await db.query(
+      `SELECT id, code, name_ar AS nameAr, type, level, parent_id AS parentId
+       FROM gl_accounts WHERE ${where} ORDER BY code`
+    );
+    res.json({ success:true, kind, accounts: rows });
+  } catch(e){ res.status(500).json({error:e.message}); }
+});
+
+// v5.10.5 — Post one balanced depreciation journal across all eligible
+// assets for [from, to]. Writes DR dep_expense + CR accum_dep per asset
+// (each as a separate pair of lines), stamps dep_until_date on each
+// asset, returns the journal id + total amount.
+router.post('/assets/post-depreciation', async (req,res)=>{
+  try {
+    const { from, to, preparedBy } = req.body || {};
+    if (!from || !to) return res.status(400).json({error:'from + to required'});
+    // Period-lock guard (v5.10.0). Best-effort: skip if helper unavailable.
+    try {
+      const erpRouter = require('./erp');
+      if (erpRouter._checkPeriodOpen) {
+        const open = await erpRouter._checkPeriodOpen(to, false);
+        if (open && open.locked) return res.status(400).json({error:'period-locked', period: open.period});
+      }
+    } catch(_) { /* helper not exported — soft-skip */ }
+
+    const monthsInPeriod = Math.max(1,
+      (new Date(to).getFullYear()  - new Date(from).getFullYear()) * 12 +
+      (new Date(to).getMonth()     - new Date(from).getMonth()) + 1);
+    const [assets] = await db.query(
+      `SELECT id, code, name, purchase_cost, salvage_value, useful_life_years,
+              dep_start_month, dep_until_date, gl_dep_expense_account_id, gl_accum_dep_account_id
+         FROM assets
+        WHERE status = 'active'
+          AND gl_dep_expense_account_id IS NOT NULL
+          AND gl_accum_dep_account_id   IS NOT NULL
+          AND useful_life_years > 0
+          AND purchase_cost > 0`);
+    const lines = [];
+    let total = 0;
+    const stampIds = [];
+    for (const a of assets) {
+      const cost  = Number(a.purchase_cost) || 0;
+      const salv  = Number(a.salvage_value) || 0;
+      const years = Number(a.useful_life_years) || 0;
+      const monthly = (cost - salv) / (years * 12);
+      const periodAmt = Math.round(monthly * monthsInPeriod * 100) / 100;
+      if (periodAmt <= 0) continue;
+      lines.push({
+        debit_account: a.gl_dep_expense_account_id, credit_account: a.gl_accum_dep_account_id,
+        amount: periodAmt,
+        description: `إهلاك الأصل ${a.code || a.id} — ${a.name}`
+      });
+      total += periodAmt;
+      stampIds.push(a.id);
+    }
+    if (!lines.length) return res.json({ success:true, message:'لا توجد أصول قابلة للإهلاك خلال الفترة', total:0, lines:0 });
+
+    // Build a balanced journal — one DR + one CR per asset.
+    const jrnId = 'JRN-DEP-' + Date.now();
+    const [lastJ] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
+    let jrnNum = 1;
+    if (lastJ.length && lastJ[0].journal_number) {
+      const m = String(lastJ[0].journal_number).match(/(\d+)/); if (m) jrnNum = parseInt(m[1])+1;
+    }
+    const journalNumber = 'JV-' + String(jrnNum).padStart(6,'0');
+    await db.query(
+      `INSERT INTO gl_journals
+        (id, journal_number, journal_date, description, total_debit, total_credit, status, reference_type, reference_id, created_by, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [jrnId, journalNumber, to,
+       `قيد إهلاك أصول ثابتة — الفترة ${from} → ${to}`,
+       total, total, 'posted', 'depreciation', jrnId,
+       preparedBy || _user(req, {}), new Date()]);
+    let lineNo = 0;
+    for (const l of lines) {
+      lineNo++;
+      await db.query(
+        `INSERT INTO gl_entries (id, journal_id, line_no, account_id, debit, credit, description)
+         VALUES (?,?,?,?,?,?,?)`,
+        [`${jrnId}-D${lineNo}`, jrnId, lineNo*2-1, l.debit_account, l.amount, 0, l.description]);
+      await db.query(
+        `INSERT INTO gl_entries (id, journal_id, line_no, account_id, debit, credit, description)
+         VALUES (?,?,?,?,?,?,?)`,
+        [`${jrnId}-C${lineNo}`, jrnId, lineNo*2, l.credit_account, 0, l.amount, l.description]);
+    }
+    // Stamp dep_until_date on every depreciated asset
+    if (stampIds.length) {
+      const placeholders = stampIds.map(()=>'?').join(',');
+      await db.query(`UPDATE assets SET dep_until_date=? WHERE id IN (${placeholders})`, [to, ...stampIds]);
+    }
+    res.json({ success:true, journalId: jrnId, journalNumber, total, lines: lines.length, monthsInPeriod });
+  } catch(e){ console.error('[post-depreciation]', e); res.status(500).json({error:e.message}); }
 });
 
 // ─── WORK ORDERS ─────────────────────────────────────────────────────

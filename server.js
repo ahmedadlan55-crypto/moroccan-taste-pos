@@ -1977,6 +1977,34 @@ async function runMigrations() {
   // Lets the bookkeeper hand-pick Dr / Cr from the COA at create time.
   await addColumnIfMissing('cash_receipts',  'manual_gl_lines', "TEXT");
   await addColumnIfMissing('cash_payments',  'manual_gl_lines', "TEXT");
+
+  // v5.10.5 — Fixed Assets registry: GL linkage + depreciation tracking +
+  // project + audit columns. The base `assets` table is created earlier in
+  // server.js (~line 3388) — these are additive columns for the new page.
+  await addColumnIfMissing('assets', 'dep_start_month',           "DATE");
+  await addColumnIfMissing('assets', 'dep_until_date',            "DATE");
+  await addColumnIfMissing('assets', 'gl_asset_account_id',       "VARCHAR(40)");
+  await addColumnIfMissing('assets', 'gl_dep_expense_account_id', "VARCHAR(40)");
+  await addColumnIfMissing('assets', 'gl_accum_dep_account_id',   "VARCHAR(40)");
+  await addColumnIfMissing('assets', 'project_id',                "VARCHAR(40)");
+  await addColumnIfMissing('assets', 'created_by',                "VARCHAR(80)");
+  await addColumnIfMissing('assets', 'updated_at',                "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+
+  // v5.10.5 — Self-heal inventory misclassification once at boot. Any
+  // user-created "مخزون / منتجات تامة / WIP" account whose ancestry leads
+  // to code 12 (الأصول الثابتة) instead of 112 (المخزون) is re-parented.
+  // Idempotent + safe on cold start (silently skips when COA isn't seeded).
+  try {
+    const erpRouter = require('./routes/erp');
+    if (erpRouter && typeof erpRouter._repairInventoryClassification === 'function') {
+      const r = await erpRouter._repairInventoryClassification(db);
+      if (r && r.ok) {
+        console.log(`[migrate] inventory-classification: ok (${r.repaired.length} accounts repaired)`);
+      } else if (r && r.reason) {
+        console.log(`[migrate] inventory-classification: skipped (${r.reason})`);
+      }
+    }
+  } catch(e) { console.warn('[migrate] inventory-classification: error', e.message); }
   // Existing rows shipped with status='posted' as the table default;
   // change the default to 'draft' going forward but leave existing rows alone.
   try {

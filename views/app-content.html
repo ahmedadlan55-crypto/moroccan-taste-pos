@@ -124,6 +124,8 @@
           <div class="nav-item" data-erp-nav="erpPeriods" onclick="erpNav('erpPeriods')"><i class="fas fa-calendar-alt"></i><span data-i18n="nav.periods">الفترات المحاسبية</span></div>
           <div class="nav-item" data-erp-nav="erpCostCenters" onclick="erpNav('erpCostCenters')"><i class="fas fa-bullseye"></i><span data-i18n="nav.costCenters">مراكز التكلفة</span></div>
           <div class="nav-item" data-erp-nav="erpDimensionsHub" onclick="erpNav('erpDimensionsHub')" style="background:linear-gradient(90deg,rgba(124,58,237,.18),transparent);font-weight:800;"><i class="fas fa-cubes" style="color:#7c3aed;"></i><span>دليل الأبعاد المحاسبية</span></div>
+          <!-- v5.10.5 — Fixed Assets Registry (الأصول الثابتة) -->
+          <div class="nav-item" data-erp-nav="erpFixedAssets" onclick="erpNav('erpFixedAssets')"><i class="fas fa-cubes-stacked"></i><span data-i18n="nav.fixedAssets">الأصول الثابتة</span></div>
         </div>
 
         <!-- 11. التقارير المالية (موحدة — IFRS / المعايير الدولية) — كل التقارير في مكان واحد -->
@@ -4154,6 +4156,90 @@
 
   <div id="cfSummary" class="wo-metric-strip" style="display:none;margin-bottom:14px;"></div>
   <div id="cfDetails"></div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- v5.10.5 — Fixed Assets Registry (الأصول الثابتة)                   -->
+<!-- Dense 21-column grid with sticky header + inline cell editing,      -->
+<!-- linked to chart of accounts (3 GL pickers per row), supports        -->
+<!-- search · filter · sort · import (CSV) · export · post-depreciation. -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<div id="erpFixedAssets" class="dash-section hidden">
+  <div class="fa-top">
+    <h2 class="fa-title"><i class="fas fa-cubes-stacked"></i> الأصول الثابتة <span class="fa-badge-ifrs">IAS 16</span></h2>
+    <div class="fa-actions">
+      <button class="fa-btn" onclick="_faPostDepreciation()"><i class="fas fa-calendar-check"></i> احتساب الإهلاك للفترة</button>
+      <button class="fa-btn fa-btn-primary" onclick="_faOpenEditor(null)"><i class="fas fa-plus"></i> أصل جديد</button>
+    </div>
+  </div>
+
+  <!-- Toolbar — matches the reference screenshot exactly -->
+  <div class="fa-toolbar">
+    <div class="fa-search">
+      <i class="fas fa-search"></i>
+      <input type="text" id="faSearch" placeholder="البحث..." oninput="_faApplyClientFilters()">
+    </div>
+    <div class="fa-tools">
+      <button class="fa-tool" onclick="_faToggleFilterMenu()" id="faAddFilterBtn"><i class="fas fa-filter"></i> أضف فلتر</button>
+      <select class="fa-tool fa-time" id="faTimeRange" onchange="_faApplyClientFilters()">
+        <option value="all">كل الوقت</option>
+        <option value="this-month">هذا الشهر</option>
+        <option value="last-month">الشهر الماضي</option>
+        <option value="this-quarter">الربع الحالي</option>
+        <option value="this-year">هذه السنة</option>
+        <option value="last-year">السنة الماضية</option>
+      </select>
+      <button class="fa-tool" onclick="_faToggleSortMenu()" id="faSortBtn"><i class="fas fa-arrow-down-wide-short"></i> ترتيب</button>
+      <label class="fa-tool fa-import" title="استيراد CSV">
+        <i class="fas fa-file-import"></i> الإستيراد
+        <input type="file" id="faImportFile" accept=".csv" onchange="_faImportCsv(this.files[0])" hidden>
+      </label>
+      <button class="fa-tool" onclick="_faExportCsv()"><i class="fas fa-file-export"></i> التصدير</button>
+    </div>
+  </div>
+
+  <!-- Active filters strip (chips) -->
+  <div id="faFilterChips" class="fa-chips" style="display:none;"></div>
+
+  <!-- KPI strip -->
+  <div id="faKpis" class="fa-kpis" style="display:none;"></div>
+
+  <!-- The grid -->
+  <div class="fa-grid-wrap">
+    <table class="fa-grid">
+      <thead>
+        <tr>
+          <th class="fa-col-status" data-sort="status">الحالة</th>
+          <th data-sort="code">رقم الأصل</th>
+          <th data-sort="name">الاسم</th>
+          <th data-sort="purchase_date">تاريخ الشراء</th>
+          <th class="fa-num" data-sort="purchase_cost">كلفة الشراء</th>
+          <th class="fa-num" data-sort="salvage_value">قيمة الخردة</th>
+          <th class="fa-num" data-sort="useful_life_years">العمر الإنتاجي</th>
+          <th data-sort="dep_start_month">شهر بدء الإهلاك</th>
+          <th class="fa-num" data-sort="current_value">القيمة الدفترية</th>
+          <th data-sort="dep_until_date">مستهلك لغاية</th>
+          <th>حساب الأصل الثابت</th>
+          <th>حساب الإهلاك</th>
+          <th>حساب الإهلاك المتراكم</th>
+          <th>ملاحظات</th>
+          <th>مركز التكلفة</th>
+          <th>المشروع</th>
+          <th>الفرع</th>
+          <th>الرقم التعريفي</th>
+          <th data-sort="updated_at">تم التعديل</th>
+          <th data-sort="created_at">تم إنشاؤها في</th>
+          <th class="fa-col-actions"></th>
+        </tr>
+      </thead>
+      <tbody id="faBody">
+        <tr><td colspan="21" class="fa-empty"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Asset editor modal (mounted on demand by _faOpenEditor) -->
+  <div id="faEditorOverlay" class="fa-modal-overlay" style="display:none;"></div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════ -->

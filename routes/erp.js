@@ -267,6 +267,8 @@ router.post('/gl/seed', async (req, res) => {
       {code:'11201',name:'مخزون المواد الخام (البن، الحليب، المنكهات)',type:'asset',parent:'112',level:4},
       {code:'11202',name:'مخزون المنتجات الجاهزة (المخبوزات، الحلويات)',type:'asset',parent:'112',level:4},
       {code:'11203',name:'مخزون مواد التغليف والتعبئة (الأكواب، الأكياس)',type:'asset',parent:'112',level:4},
+      {code:'11204',name:'مخزون المنتجات تحت التشغيل (WIP)',type:'asset',parent:'112',level:4},
+      {code:'11205',name:'مخزون المنتجات التامة (Finished Goods)',type:'asset',parent:'112',level:4},
       {code:'113',name:'الذمم المدينة والأرصدة',type:'asset',parent:'11',level:3},
       {code:'11301',name:'ذمم تطبيقات التوصيل (جاهز، هنقرستيشن..)',type:'asset',parent:'113',level:4},
       {code:'11302',name:'سلف ومقدمات الموظفين',type:'asset',parent:'113',level:4},
@@ -352,6 +354,65 @@ router.post('/gl/seed', async (req, res) => {
       );
     }
     res.json({ success: true, count: accounts.length });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// ─── v5.10.5 — COA inventory classification repair ─────────────────────
+// Walks the chart and fixes any account whose name screams "inventory" but
+// whose parent_id chain is anchored at code 12 (الأصول الثابتة) instead of
+// 112 (المخزون). Idempotent. Also exported as a helper so server.js can
+// run it once at boot for self-healing on existing deployments.
+async function _repairInventoryClassification(db) {
+  const repaired = [];
+  // Resolve target parent (112 المخزون). If missing, try to create it under 11.
+  let [p112] = await db.query("SELECT id FROM gl_accounts WHERE code = '112'");
+  let target112Id = p112.length ? p112[0].id : null;
+  if (!target112Id) {
+    const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11'");
+    if (p11.length) {
+      target112Id = 'GL-112';
+      await db.query(
+        "INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)",
+        [target112Id, '112', 'المخزون', 'asset', p11[0].id, 3]
+      );
+    }
+  }
+  if (!target112Id) return { ok: false, reason: 'no-parent-112', repaired };
+
+  // Find candidates: name contains inventory keywords AND parent chain leads to code 12
+  const inventoryRegex = /(مخزون|منتجات تامة|منتجات تحت التشغيل|finished good|wip|raw material)/i;
+  const [allAcc] = await db.query(
+    "SELECT id, code, name_ar, parent_id FROM gl_accounts WHERE type = 'asset'"
+  );
+  const byId = Object.fromEntries(allAcc.map(a => [a.id, a]));
+  function ancestorCode(id, depth = 0) {
+    if (depth > 10) return null;
+    const a = byId[id]; if (!a) return null;
+    if (a.code === '12') return '12';
+    if (a.code === '112') return '112';
+    if (!a.parent_id) return a.code;
+    return ancestorCode(a.parent_id, depth + 1);
+  }
+  for (const a of allAcc) {
+    if (!inventoryRegex.test(a.name_ar || '')) continue;
+    if (a.code === '112') continue;            // skip the target parent itself
+    if (String(a.code).startsWith('112')) continue; // already correct
+    const anc = ancestorCode(a.parent_id);
+    if (anc === '12') {
+      // Misclassified — re-parent to 112
+      await db.query("UPDATE gl_accounts SET parent_id = ? WHERE id = ?", [target112Id, a.id]);
+      repaired.push({ id: a.id, code: a.code, name: a.name_ar, oldParent: a.parent_id, newParent: target112Id });
+    }
+  }
+  return { ok: true, repaired };
+}
+// Expose helper on the router so server.js can run it at boot
+router._repairInventoryClassification = _repairInventoryClassification;
+
+router.post('/gl/repair-inventory-classification', async (req, res) => {
+  try {
+    const r = await _repairInventoryClassification(db);
+    res.json({ success: r.ok, fixed: r.repaired.length, repaired: r.repaired, reason: r.reason || null });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 

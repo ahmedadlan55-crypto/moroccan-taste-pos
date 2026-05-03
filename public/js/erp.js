@@ -4784,18 +4784,70 @@ function erpEditBranch(id) {
 
 // ═══════════════════════════════════════
 // ACCOUNTING PERIODS
+// V5.10.0 — supports the 3-state lock workflow (open / soft_closed / closed)
+// and the new POST /erp/periods/:id/lock endpoint. The previous flow only
+// had open/closed and called the legacy `closePeriod` GAS-style API. The
+// backend now refuses GL postings into closed periods (see _checkPeriodOpen
+// in routes/erp.js) so this UI directly controls posting access.
 // ═══════════════════════════════════════
 function erpLoadPeriods() {
   window._apiBridge.withSuccessHandler(function(list) {
     const tbody = document.getElementById('erpPeriodsBody');
     if (!list || list.length === 0) { tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">لا توجد فترات</td></tr>'; return; }
-    tbody.innerHTML = list.map(p => `<tr>
-      <td>${p.Name||''}</td><td>${p.StartDate||''}</td><td>${p.EndDate||''}</td>
-      <td><span class="badge badge-${p.Status==='open'?'green':'red'}">${p.Status==='open'?'مفتوحة':'مغلقة'}</span></td>
-      <td>${p.Status==='open'?`<button class="btn btn-sm btn-danger" onclick="erpClosePeriod('${p.ID}')"><i class="fas fa-lock"></i> إقفال</button>`:''}</td>
-    </tr>`).join('');
+    // Backend now returns camelCase {periodName,startDate,endDate,status}; the
+    // legacy GAS schema used PascalCase {Name,StartDate,EndDate,Status}. Read
+    // both so we don't break old data while the new endpoints take over.
+    const statusPill = function(s) {
+      if (s === 'open')        return '<span class="badge" style="background:#dcfce7;color:#166534;font-weight:800;"><i class="fas fa-lock-open" style="margin-inline-end:4px;"></i>مفتوحة</span>';
+      if (s === 'soft_closed') return '<span class="badge" style="background:#fef3c7;color:#92400e;font-weight:800;"><i class="fas fa-shield-halved" style="margin-inline-end:4px;"></i>إقفال مبدئي</span>';
+      if (s === 'closed')      return '<span class="badge" style="background:#fee2e2;color:#991b1b;font-weight:800;"><i class="fas fa-lock" style="margin-inline-end:4px;"></i>مُقفلة نهائياً</span>';
+      return '<span class="badge">'+(s||'')+'</span>';
+    };
+    tbody.innerHTML = list.map(p => {
+      const id     = p.id || p.ID;
+      const name   = p.periodName || p.Name || '';
+      const start  = p.startDate  || p.StartDate || '';
+      const end    = p.endDate    || p.EndDate || '';
+      const status = (p.status || p.Status || 'open').toLowerCase();
+      let actions = '';
+      if (status === 'open') {
+        actions = `<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;border-radius:8px;font-weight:700;" onclick="erpLockPeriod('${id}','soft_closed')"><i class="fas fa-shield-halved"></i> إقفال مبدئي</button> <button class="btn btn-sm btn-danger" onclick="erpLockPeriod('${id}','closed')"><i class="fas fa-lock"></i> إقفال نهائي</button>`;
+      } else if (status === 'soft_closed') {
+        actions = `<button class="btn btn-sm btn-success" onclick="erpLockPeriod('${id}','open')"><i class="fas fa-lock-open"></i> إعادة فتح</button> <button class="btn btn-sm btn-danger" onclick="erpLockPeriod('${id}','closed')"><i class="fas fa-lock"></i> إقفال نهائي</button>`;
+      } else {
+        actions = `<button class="btn btn-sm btn-light" onclick="erpLockPeriod('${id}','open',true)"><i class="fas fa-key"></i> إعادة فتح (Force)</button>`;
+      }
+      return `<tr>
+        <td><b>${_woEscapeHtml(name)}</b></td>
+        <td><code>${_woEscapeHtml(start)}</code></td>
+        <td><code>${_woEscapeHtml(end)}</code></td>
+        <td>${statusPill(status)}</td>
+        <td>${actions}</td>
+      </tr>`;
+    }).join('');
   }).getAccountingPeriods();
 }
+
+window.erpLockPeriod = function(id, status, force) {
+  var labels = { open: 'إعادة فتح', soft_closed: 'إقفال مبدئي', closed: 'إقفال نهائي' };
+  var msgs = {
+    open: 'إعادة فتح الفترة؟ سيُسمح بالترحيل فيها مرة أخرى.',
+    soft_closed: 'إقفال مبدئي؟ سيُمنع الترحيل العادي، لكن للمحاسب الرئيسي صلاحية ترحيل قسري بـ force.',
+    closed: 'إقفال نهائي؟ لن يُسمح بأي ترحيل في هذه الفترة بعد ذلك.'
+  };
+  if (!confirm(msgs[status] || 'تأكيد؟')) return;
+  loader(true);
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/periods/' + id + '/lock', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
+    body: JSON.stringify({ status: status, username: currentUser, force: !!force })
+  }).then(function(r){ return r.json(); }).then(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم: ' + labels[status]); erpLoadPeriods(); }
+    else showToast((r && r.error) || 'فشل', true);
+  }).catch(function(e) { loader(false); showToast('فشل الاتصال: ' + (e && e.message || ''), true); });
+};
 
 function erpOpenPeriodModal() {
   document.getElementById('erpModalTitle').textContent = 'فترة محاسبية جديدة';
@@ -4804,10 +4856,23 @@ function erpOpenPeriodModal() {
     <div class="form-row"><label>تاريخ البداية *</label><input type="date" class="form-control" id="erpPerStart"></div>
     <div class="form-row"><label>تاريخ النهاية *</label><input type="date" class="form-control" id="erpPerEnd"></div>`;
   document.getElementById('erpModalSaveBtn').onclick = function() {
-    const d = { Name: document.getElementById('erpPerName').value, StartDate: document.getElementById('erpPerStart').value, EndDate: document.getElementById('erpPerEnd').value };
-    if (!d.Name || !d.StartDate || !d.EndDate) return showToast('جميع الحقول مطلوبة', 'error');
+    // V5.10.0 — POST to /api/erp/periods (the new endpoint accepts camelCase
+    // {periodName, startDate, endDate}).
+    var name  = document.getElementById('erpPerName').value;
+    var start = document.getElementById('erpPerStart').value;
+    var end   = document.getElementById('erpPerEnd').value;
+    if (!name || !start || !end) return showToast('جميع الحقول مطلوبة', true);
     loader(true);
-    window._apiBridge.withSuccessHandler(function(res) { loader(false); if (res.success) { showToast('تم الإنشاء'); erpCloseModal(); erpLoadPeriods(); } else showToast(res.error, 'error'); }).saveAccountingPeriod(d, currentUser);
+    var token = localStorage.getItem('pos_token') || '';
+    fetch('/api/erp/periods', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
+      body: JSON.stringify({ periodName: name, startDate: start, endDate: end })
+    }).then(function(r){ return r.json(); }).then(function(res) {
+      loader(false);
+      if (res && res.success) { showToast('تم إنشاء الفترة'); erpCloseModal(); erpLoadPeriods(); }
+      else showToast((res && res.error) || 'فشل', true);
+    }).catch(function(e) { loader(false); showToast('فشل: ' + (e && e.message || ''), true); });
   };
   document.getElementById('erpModal').classList.remove('hidden');
 }

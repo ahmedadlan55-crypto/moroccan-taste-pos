@@ -493,13 +493,99 @@ router.post('/gl/journals/:id/approve', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// V5.10.0 — Accounting periods: list / create / open / close / soft-close.
+// The schema already exists (server.js:2382). These endpoints expose it.
+router.get('/periods', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT id, company_id, period_name, start_date, end_date, status, closed_by, closed_at, notes
+       FROM accounting_periods
+       ORDER BY start_date DESC LIMIT 200`);
+    res.json(rows.map(r => ({
+      id: r.id, periodName: r.period_name, startDate: r.start_date, endDate: r.end_date,
+      status: r.status, closedBy: r.closed_by || '', closedAt: r.closed_at, notes: r.notes || ''
+    })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/periods', async (req, res) => {
+  try {
+    const { id, periodName, startDate, endDate, notes } = req.body || {};
+    if (!periodName || !startDate || !endDate) return res.json({ success:false, error: 'الاسم والتواريخ مطلوبة' });
+    if (id) {
+      await db.query(
+        `UPDATE accounting_periods SET period_name=?, start_date=?, end_date=?, notes=? WHERE id=?`,
+        [periodName, startDate, endDate, notes||null, id]);
+      return res.json({ success:true, id });
+    }
+    const newId = 'PER-' + Date.now();
+    await db.query(
+      `INSERT INTO accounting_periods (id, company_id, period_name, start_date, end_date, status, notes)
+       VALUES (?, 'CO-MAIN', ?, ?, ?, 'open', ?)`,
+      [newId, periodName, startDate, endDate, notes||null]);
+    res.json({ success:true, id:newId });
+  } catch(e) { res.json({ success:false, error:e.message }); }
+});
+
+// Lock / unlock a period. status ∈ {open, soft_closed, closed}.
+router.post('/periods/:id/lock', async (req, res) => {
+  try {
+    const { status, username } = req.body || {};
+    if (!['open','soft_closed','closed'].includes(status)) {
+      return res.json({ success:false, error:'الحالة غير صالحة' });
+    }
+    const [p] = await db.query('SELECT status FROM accounting_periods WHERE id=?', [req.params.id]);
+    if (!p.length) return res.json({ success:false, error:'الفترة غير موجودة' });
+    if (p[0].status === 'closed' && status !== 'closed') {
+      // Re-opening a hard-closed period requires a force flag (audit safety).
+      if (!req.body || req.body.force !== true) {
+        return res.json({ success:false, error:'الفترة مُقفلة نهائياً — يلزم force=true لإعادة فتحها' });
+      }
+    }
+    if (status === 'open') {
+      await db.query('UPDATE accounting_periods SET status=?, closed_by=NULL, closed_at=NULL WHERE id=?',
+        [status, req.params.id]);
+    } else {
+      await db.query('UPDATE accounting_periods SET status=?, closed_by=?, closed_at=NOW() WHERE id=?',
+        [status, username||'', req.params.id]);
+    }
+    res.json({ success:true });
+  } catch(e) { res.json({ success:false, error:e.message }); }
+});
+
+// V5.10.0 — Helper: refuse to post into a closed accounting period.
+// `closed` periods are hard-locked (no posting at all). `soft_closed`
+// allows admin override via {force:true}. `open` periods accept any post.
+async function _checkPeriodOpen(journalDate, allowForce) {
+  if (!journalDate) return { ok: true };
+  const [p] = await db.query(
+    `SELECT id, period_name, status FROM accounting_periods
+     WHERE start_date <= ? AND end_date >= ? LIMIT 1`,
+    [journalDate, journalDate]);
+  if (!p.length) return { ok: true }; // no period defined for that date — allow
+  const period = p[0];
+  if (period.status === 'open') return { ok: true, period };
+  if (period.status === 'soft_closed' && allowForce) return { ok: true, period, forced: true };
+  return {
+    ok: false,
+    period,
+    error: period.status === 'closed'
+      ? `لا يمكن الترحيل: الفترة «${period.period_name}» مُقفلة نهائياً.`
+      : `الفترة «${period.period_name}» مُقفلة (إقفال مبدئي). تواصل مع المحاسب الرئيسي للسماح بالترحيل.`
+  };
+}
+
 // Post journal (approved → posted) — updates account balances
 router.post('/gl/journals/:id/post', async (req, res) => {
   try {
-    const { username } = req.body;
-    const [jrn] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [req.params.id]);
+    const { username, force } = req.body || {};
+    const [jrn] = await db.query('SELECT status, journal_date FROM gl_journals WHERE id = ?', [req.params.id]);
     if (!jrn.length) return res.json({ success: false, error: 'القيد غير موجود' });
     if (jrn[0].status !== 'approved') return res.json({ success: false, error: 'يجب اعتماد القيد أولاً قبل الترحيل' });
+
+    // V5.10.0 — period lock guard
+    const guard = await _checkPeriodOpen(jrn[0].journal_date, !!force);
+    if (!guard.ok) return res.json({ success: false, error: guard.error });
 
     // Update account balances
     const [entries] = await db.query('SELECT * FROM gl_entries WHERE journal_id = ?', [req.params.id]);

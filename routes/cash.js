@@ -95,6 +95,23 @@ async function nextNumber(table, column, prefix) {
   return prefix + String(num).padStart(5, '0');
 }
 
+// V5.10.3 — Full COA dump for the manual-GL line picker. Returns every
+// active leaf account so the bookkeeper can pick any Dr / Cr account
+// when creating a voucher with manual posting.
+router.get('/gl-accounts-all', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT id, code, name_ar, type, parent_id, level
+       FROM gl_accounts
+       WHERE COALESCE(is_active, 1) = 1
+       ORDER BY code ASC`);
+    res.json(rows.map(r => ({
+      id: r.id, code: r.code, nameAr: r.name_ar, type: r.type,
+      parentId: r.parent_id, level: Number(r.level) || 0
+    })));
+  } catch(e) { res.json([]); }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // V5.9.13 — GL ACCOUNT TREE PICKER (for cash boxes / bank accounts)
 //
@@ -244,19 +261,31 @@ router.delete('/bank-accounts/:id', async (req, res) => {
 router.get('/receipts', async (req, res) => {
   try {
     const { from, to, source_type } = req.query;
-    let sql = 'SELECT * FROM cash_receipts WHERE 1=1';
+    // V5.10.3 — JOIN users for the creator/approver display name + a hasManualGl flag
+    let sql = `
+      SELECT r.*,
+             COALESCE(uc.full_name, uc.username, r.created_by)  AS created_by_name,
+             COALESCE(ua.full_name, ua.username, r.approved_by) AS approved_by_name
+      FROM cash_receipts r
+      LEFT JOIN users uc ON uc.username = r.created_by
+      LEFT JOIN users ua ON ua.username = r.approved_by
+      WHERE 1=1`;
     const params = [];
-    if (from) { sql += ' AND receipt_date >= ?'; params.push(from); }
-    if (to) { sql += ' AND receipt_date <= ?'; params.push(to); }
-    if (source_type) { sql += ' AND source_type = ?'; params.push(source_type); }
-    sql += ' ORDER BY receipt_date DESC, created_at DESC LIMIT 500';
+    if (from) { sql += ' AND r.receipt_date >= ?'; params.push(from); }
+    if (to)   { sql += ' AND r.receipt_date <= ?'; params.push(to); }
+    if (source_type) { sql += ' AND r.source_type = ?'; params.push(source_type); }
+    sql += ' ORDER BY r.receipt_date DESC, r.created_at DESC LIMIT 500';
     const [rows] = await db.query(sql, params);
     res.json(rows.map(r => ({
       id: r.id, receiptNumber: r.receipt_number, receiptDate: r.receipt_date,
       destinationType: r.destination_type, destinationId: r.destination_id,
       sourceType: r.source_type, sourceId: r.source_id, sourceName: r.source_name,
       amount: Number(r.amount)||0, reference: r.reference, description: r.description,
-      status: r.status, journalId: r.journal_id, createdBy: r.created_by, createdAt: r.created_at
+      status: r.status, journalId: r.journal_id,
+      createdBy: r.created_by, createdByName: r.created_by_name || r.created_by || '',
+      approvedBy: r.approved_by, approvedByName: r.approved_by_name || r.approved_by || '',
+      approvedAt: r.approved_at, createdAt: r.created_at,
+      hasManualGl: !!r.manual_gl_lines
     })));
   } catch(e) { res.json([]); }
 });
@@ -284,31 +313,62 @@ async function _receiptSourceGl(sourceType) {
   return { id, code, name };
 }
 
+// V5.10.3 — Validate manual GL lines (when the bookkeeper hand-picks Dr/Cr).
+// Lines must balance to the voucher amount and reference real GL accounts.
+async function _validateManualGlLines(lines, expectedAmount) {
+  if (!Array.isArray(lines) || lines.length === 0) return null; // empty → fall back to auto-routing
+  let totalDr = 0, totalCr = 0;
+  for (const l of lines) {
+    if (!l.accountId) return { error: 'كل سطر يحتاج حساباً من شجرة الحسابات' };
+    const [g] = await db.query('SELECT id FROM gl_accounts WHERE id=? AND is_active=1', [l.accountId]);
+    if (!g.length) return { error: 'حساب غير موجود في شجرة الحسابات: ' + l.accountId };
+    totalDr += Number(l.debit) || 0;
+    totalCr += Number(l.credit) || 0;
+  }
+  if (Math.abs(totalDr - totalCr) > 0.01) return { error: 'القيد غير متوازن: مدين=' + totalDr.toFixed(2) + ' دائن=' + totalCr.toFixed(2) };
+  if (expectedAmount && Math.abs(totalDr - Number(expectedAmount)) > 0.01) {
+    return { error: 'إجمالي القيد (' + totalDr.toFixed(2) + ') لا يطابق مبلغ السند (' + Number(expectedAmount).toFixed(2) + ')' };
+  }
+  return null;
+}
+
 // V5.9.14 — Receipt creation now persists as DRAFT only — no GL journal,
 // no balance update. The user must explicitly approve the receipt to post
 // the journal and credit the destination account. Old behavior posted
 // instantly which let unreviewed receipts hit the books.
+// V5.10.3 — Optionally accepts `manualGlLines` (array of {accountId, debit,
+// credit, description}) which overrides the auto-routed contra account at
+// approval time. Lets the user hand-pick Dr / Cr from the COA tree.
 router.post('/receipts', async (req, res) => {
   try {
-    const { receiptDate, destinationType, destinationId, sourceType, sourceId, sourceName, amount, reference, description, username } = req.body;
+    const { receiptDate, destinationType, destinationId, sourceType, sourceId, sourceName, amount, reference, description, username, manualGlLines } = req.body;
     if (!amount || !destinationId || !destinationType) return res.json({ success:false, error: 'البيانات ناقصة' });
-    // Validate destination exists (don't auto-create the GL account here — that
-    // happens at approve time, so the audit trail is clean).
     const destTable = destinationType === 'cash' ? 'cash_boxes' : 'bank_accounts';
     const [chk] = await db.query('SELECT id FROM ' + destTable + ' WHERE id=? AND is_active=1', [destinationId]);
     if (!chk.length) return res.json({ success:false, error: 'الجهة المُستلِمة غير موجودة' });
+
+    // V5.10.3 — validate manual GL lines if provided
+    if (manualGlLines && Array.isArray(manualGlLines) && manualGlLines.length) {
+      const err = await _validateManualGlLines(manualGlLines, amount);
+      if (err) return res.json({ success:false, error: err.error });
+    }
+
     const number = await nextNumber('cash_receipts', 'receipt_number', 'REC-');
     const id = 'REC-' + Date.now();
     await db.query(
-      `INSERT INTO cash_receipts (id, receipt_number, receipt_date, destination_type, destination_id, source_type, source_id, source_name, amount, reference, description, status, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?, 'draft', ?)`,
-      [id, number, receiptDate, destinationType, destinationId, sourceType||'other', sourceId||null, sourceName||'', amount, reference||'', description||'', username||'']);
+      `INSERT INTO cash_receipts (id, receipt_number, receipt_date, destination_type, destination_id, source_type, source_id, source_name, amount, reference, description, status, created_by, manual_gl_lines)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`,
+      [id, number, receiptDate, destinationType, destinationId, sourceType||'other', sourceId||null, sourceName||'', amount, reference||'', description||'', username||'',
+       manualGlLines && manualGlLines.length ? JSON.stringify(manualGlLines) : null]);
     res.json({ success:true, id, number, status:'draft' });
   } catch(e) { res.json({ success:false, error: e.message }); }
 });
 
 // V5.9.14 — Approve a draft receipt: posts the GL journal and updates the
 // destination balance. Idempotent (refuses to re-post a posted receipt).
+// V5.10.3 — When manual_gl_lines is set on the row, posts that exact journal
+// instead of the auto-routed Dr destination / Cr source contra. The lines
+// are already validated at create time.
 router.post('/receipts/:id/approve', async (req, res) => {
   try {
     const id = req.params.id;
@@ -317,14 +377,35 @@ router.post('/receipts/:id/approve', async (req, res) => {
     if (!rows.length) return res.json({ success:false, error: 'السند غير موجود' });
     const r = rows[0];
     if (r.status !== 'draft') return res.json({ success:false, error: 'السند غير قابل للاعتماد (الحالة: ' + r.status + ')' });
-    const destAcc = await getSourceAccount(r.destination_type, r.destination_id);
-    const src = await _receiptSourceGl(r.source_type);
-    const journal = await createJournal(r.receipt_date,
-      'سند قبض ' + r.receipt_number + ' — ' + (r.source_name || src.name),
-      [
+
+    let lines;
+    if (r.manual_gl_lines) {
+      // Use the bookkeeper's manual journal — re-resolve account names from the COA.
+      let parsed = [];
+      try { parsed = JSON.parse(r.manual_gl_lines); } catch(_) {}
+      lines = [];
+      for (const l of parsed) {
+        const [g] = await db.query('SELECT id, code, name_ar FROM gl_accounts WHERE id=?', [l.accountId]);
+        if (!g.length) continue;
+        lines.push({
+          accountId: g[0].id, accountCode: g[0].code, accountName: g[0].name_ar,
+          debit: Number(l.debit) || 0, credit: Number(l.credit) || 0,
+          description: l.description || ''
+        });
+      }
+      if (!lines.length) return res.json({ success:false, error: 'القيد اليدوي فارغ — راجع الأسطر' });
+    } else {
+      const destAcc = await getSourceAccount(r.destination_type, r.destination_id);
+      const src = await _receiptSourceGl(r.source_type);
+      lines = [
         { accountId: destAcc.glId, accountCode: destAcc.code, accountName: destAcc.name, debit: r.amount, credit: 0 },
         { accountId: src.id,       accountCode: src.code,    accountName: src.name,    debit: 0, credit: r.amount }
-      ], username);
+      ];
+    }
+
+    const journal = await createJournal(r.receipt_date,
+      'سند قبض ' + r.receipt_number + ' — ' + (r.source_name || ''),
+      lines, username);
     await db.query('UPDATE cash_receipts SET status=?, journal_id=?, approved_by=?, approved_at=NOW() WHERE id=?',
       ['posted', journal.id, username, id]);
     if (r.destination_type === 'cash') await db.query('UPDATE cash_boxes SET balance = balance + ? WHERE id = ?', [r.amount, r.destination_id]);
@@ -348,6 +429,8 @@ router.post('/receipts/:id/cancel', async (req, res) => {
 
 // V5.9.14 — Print data: the row + linked accounts + company settings, in one
 // round-trip so the e-voucher template doesn't need parallel fetches.
+// V5.10.3 — Also resolves the linked customer name (when source_id matches)
+// and parses manual_gl_lines into a structured array for the print template.
 router.get('/receipts/:id/print-data', async (req, res) => {
   try {
     const id = req.params.id;
@@ -358,7 +441,8 @@ router.get('/receipts/:id/print-data', async (req, res) => {
              ga.code AS dest_gl_code, ga.name_ar AS dest_gl_name,
              jr.journal_number,
              COALESCE(uc.full_name, uc.username, r.created_by) AS created_by_name,
-             COALESCE(ua.full_name, ua.username, r.approved_by) AS approved_by_name
+             COALESCE(ua.full_name, ua.username, r.approved_by) AS approved_by_name,
+             cust.name AS customer_name
       FROM cash_receipts r
       LEFT JOIN cash_boxes cb ON r.destination_type='cash' AND r.destination_id=cb.id
       LEFT JOIN bank_accounts ba ON r.destination_type='bank' AND r.destination_id=ba.id
@@ -366,13 +450,35 @@ router.get('/receipts/:id/print-data', async (req, res) => {
       LEFT JOIN gl_journals jr ON jr.id = r.journal_id
       LEFT JOIN users uc ON uc.username = r.created_by
       LEFT JOIN users ua ON ua.username = r.approved_by
+      LEFT JOIN customers cust ON cust.id = r.source_id AND r.source_type='customer'
       WHERE r.id=?`, [id]);
     if (!rows.length) return res.json({ success:false, error:'السند غير موجود' });
     const r = rows[0];
+    // Parse manual GL lines for the print template
+    let manualLines = null;
+    if (r.manual_gl_lines) {
+      try {
+        const parsed = JSON.parse(r.manual_gl_lines);
+        if (Array.isArray(parsed) && parsed.length) {
+          // Enrich with code/name from gl_accounts
+          const ids = parsed.map(l => l.accountId).filter(Boolean);
+          const placeholders = ids.length ? ids.map(() => '?').join(',') : "''";
+          const [accs] = await db.query('SELECT id, code, name_ar FROM gl_accounts WHERE id IN (' + placeholders + ')', ids);
+          const byId = {}; accs.forEach(a => { byId[a.id] = a; });
+          manualLines = parsed.map(l => ({
+            accountId: l.accountId,
+            accountCode: byId[l.accountId] ? byId[l.accountId].code : '',
+            accountName: byId[l.accountId] ? byId[l.accountId].name_ar : '',
+            debit: Number(l.debit) || 0, credit: Number(l.credit) || 0,
+            description: l.description || ''
+          }));
+        }
+      } catch(_) {}
+    }
     const [stg] = await db.query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('CompanyName','TaxNumber','Currency','CompanyLogo')");
     const cfg = {};
     stg.forEach(s => { cfg[s.setting_key] = s.setting_value; });
-    res.json({ success:true, voucher: r, company: cfg });
+    res.json({ success:true, voucher: { ...r, manual_lines: manualLines }, company: cfg });
   } catch(e) { res.json({ success:false, error:e.message }); }
 });
 
@@ -382,19 +488,30 @@ router.get('/receipts/:id/print-data', async (req, res) => {
 router.get('/payments', async (req, res) => {
   try {
     const { from, to, recipient_type } = req.query;
-    let sql = 'SELECT * FROM cash_payments WHERE 1=1';
+    let sql = `
+      SELECT p.*,
+             COALESCE(uc.full_name, uc.username, p.created_by)  AS created_by_name,
+             COALESCE(ua.full_name, ua.username, p.approved_by) AS approved_by_name
+      FROM cash_payments p
+      LEFT JOIN users uc ON uc.username = p.created_by
+      LEFT JOIN users ua ON ua.username = p.approved_by
+      WHERE 1=1`;
     const params = [];
-    if (from) { sql += ' AND payment_date >= ?'; params.push(from); }
-    if (to) { sql += ' AND payment_date <= ?'; params.push(to); }
-    if (recipient_type) { sql += ' AND recipient_type = ?'; params.push(recipient_type); }
-    sql += ' ORDER BY payment_date DESC, created_at DESC LIMIT 500';
+    if (from) { sql += ' AND p.payment_date >= ?'; params.push(from); }
+    if (to)   { sql += ' AND p.payment_date <= ?'; params.push(to); }
+    if (recipient_type) { sql += ' AND p.recipient_type = ?'; params.push(recipient_type); }
+    sql += ' ORDER BY p.payment_date DESC, p.created_at DESC LIMIT 500';
     const [rows] = await db.query(sql, params);
     res.json(rows.map(r => ({
       id: r.id, paymentNumber: r.payment_number, paymentDate: r.payment_date,
       sourceType: r.source_type, sourceId: r.source_id,
       recipientType: r.recipient_type, recipientId: r.recipient_id, recipientName: r.recipient_name,
       amount: Number(r.amount)||0, reference: r.reference, description: r.description,
-      status: r.status, journalId: r.journal_id, createdBy: r.created_by, createdAt: r.created_at
+      status: r.status, journalId: r.journal_id,
+      createdBy: r.created_by, createdByName: r.created_by_name || r.created_by || '',
+      approvedBy: r.approved_by, approvedByName: r.approved_by_name || r.approved_by || '',
+      approvedAt: r.approved_at, createdAt: r.created_at,
+      hasManualGl: !!r.manual_gl_lines
     })));
   } catch(e) { res.json([]); }
 });
@@ -423,25 +540,32 @@ async function _paymentRecipientGl(recipientType, expenseAccountId) {
 
 // V5.9.14 — Payment creation persists as DRAFT only — same approval gate
 // as receipts. Eliminates instant-post-on-create.
+// V5.10.3 — Optionally accepts manualGlLines for bookkeeper-controlled posting.
 router.post('/payments', async (req, res) => {
   try {
-    const { paymentDate, sourceType, sourceId, recipientType, recipientId, recipientName, expenseAccountId, amount, reference, description, username } = req.body;
+    const { paymentDate, sourceType, sourceId, recipientType, recipientId, recipientName, expenseAccountId, amount, reference, description, username, manualGlLines } = req.body;
     if (!amount || !sourceId || !sourceType) return res.json({ success:false, error: 'البيانات ناقصة' });
     const srcTable = sourceType === 'cash' ? 'cash_boxes' : 'bank_accounts';
     const [chk] = await db.query('SELECT id FROM ' + srcTable + ' WHERE id=? AND is_active=1', [sourceId]);
     if (!chk.length) return res.json({ success:false, error:'الجهة الدافعة غير موجودة' });
+    if (manualGlLines && Array.isArray(manualGlLines) && manualGlLines.length) {
+      const err = await _validateManualGlLines(manualGlLines, amount);
+      if (err) return res.json({ success:false, error: err.error });
+    }
     const number = await nextNumber('cash_payments', 'payment_number', 'PAY-');
     const id = 'PAY-' + Date.now();
     await db.query(
-      `INSERT INTO cash_payments (id, payment_number, payment_date, source_type, source_id, recipient_type, recipient_id, recipient_name, expense_account_id, amount, reference, description, status, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?)`,
-      [id, number, paymentDate, sourceType, sourceId, recipientType||'other', recipientId||null, recipientName||'', expenseAccountId||null, amount, reference||'', description||'', username||'']);
+      `INSERT INTO cash_payments (id, payment_number, payment_date, source_type, source_id, recipient_type, recipient_id, recipient_name, expense_account_id, amount, reference, description, status, created_by, manual_gl_lines)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`,
+      [id, number, paymentDate, sourceType, sourceId, recipientType||'other', recipientId||null, recipientName||'', expenseAccountId||null, amount, reference||'', description||'', username||'',
+       manualGlLines && manualGlLines.length ? JSON.stringify(manualGlLines) : null]);
     res.json({ success:true, id, number, status:'draft' });
   } catch(e) { res.json({ success:false, error: e.message }); }
 });
 
 // V5.9.14 — Approve a draft payment: posts the GL journal and decrements
 // the source balance.
+// V5.10.3 — Honors manual_gl_lines override (same as receipt approval).
 router.post('/payments/:id/approve', async (req, res) => {
   try {
     const id = req.params.id;
@@ -450,14 +574,34 @@ router.post('/payments/:id/approve', async (req, res) => {
     if (!rows.length) return res.json({ success:false, error:'السند غير موجود' });
     const p = rows[0];
     if (p.status !== 'draft') return res.json({ success:false, error: 'السند غير قابل للاعتماد (الحالة: ' + p.status + ')' });
-    const srcAcc = await getSourceAccount(p.source_type, p.source_id);
-    const recip = await _paymentRecipientGl(p.recipient_type, p.expense_account_id);
-    const journal = await createJournal(p.payment_date,
-      'سند صرف ' + p.payment_number + ' — ' + (p.recipient_name || recip.name),
-      [
+
+    let lines;
+    if (p.manual_gl_lines) {
+      let parsed = [];
+      try { parsed = JSON.parse(p.manual_gl_lines); } catch(_) {}
+      lines = [];
+      for (const l of parsed) {
+        const [g] = await db.query('SELECT id, code, name_ar FROM gl_accounts WHERE id=?', [l.accountId]);
+        if (!g.length) continue;
+        lines.push({
+          accountId: g[0].id, accountCode: g[0].code, accountName: g[0].name_ar,
+          debit: Number(l.debit) || 0, credit: Number(l.credit) || 0,
+          description: l.description || ''
+        });
+      }
+      if (!lines.length) return res.json({ success:false, error: 'القيد اليدوي فارغ — راجع الأسطر' });
+    } else {
+      const srcAcc = await getSourceAccount(p.source_type, p.source_id);
+      const recip = await _paymentRecipientGl(p.recipient_type, p.expense_account_id);
+      lines = [
         { accountId: recip.id,    accountCode: recip.code,    accountName: recip.name,    debit: p.amount, credit: 0 },
         { accountId: srcAcc.glId, accountCode: srcAcc.code,   accountName: srcAcc.name,   debit: 0, credit: p.amount }
-      ], username);
+      ];
+    }
+
+    const journal = await createJournal(p.payment_date,
+      'سند صرف ' + p.payment_number + ' — ' + (p.recipient_name || ''),
+      lines, username);
     await db.query('UPDATE cash_payments SET status=?, journal_id=?, approved_by=?, approved_at=NOW() WHERE id=?',
       ['posted', journal.id, username, id]);
     if (p.source_type === 'cash') await db.query('UPDATE cash_boxes SET balance = balance - ? WHERE id = ?', [p.amount, p.source_id]);
@@ -488,7 +632,8 @@ router.get('/payments/:id/print-data', async (req, res) => {
              ga.code AS src_gl_code, ga.name_ar AS src_gl_name,
              jr.journal_number,
              COALESCE(uc.full_name, uc.username, p.created_by) AS created_by_name,
-             COALESCE(ua.full_name, ua.username, p.approved_by) AS approved_by_name
+             COALESCE(ua.full_name, ua.username, p.approved_by) AS approved_by_name,
+             sup.name AS supplier_name
       FROM cash_payments p
       LEFT JOIN cash_boxes cb ON p.source_type='cash' AND p.source_id=cb.id
       LEFT JOIN bank_accounts ba ON p.source_type='bank' AND p.source_id=ba.id
@@ -496,12 +641,33 @@ router.get('/payments/:id/print-data', async (req, res) => {
       LEFT JOIN gl_journals jr ON jr.id = p.journal_id
       LEFT JOIN users uc ON uc.username = p.created_by
       LEFT JOIN users ua ON ua.username = p.approved_by
+      LEFT JOIN suppliers sup ON sup.id = p.recipient_id AND p.recipient_type='supplier'
       WHERE p.id=?`, [id]);
     if (!rows.length) return res.json({ success:false, error:'السند غير موجود' });
+    const r = rows[0];
+    let manualLines = null;
+    if (r.manual_gl_lines) {
+      try {
+        const parsed = JSON.parse(r.manual_gl_lines);
+        if (Array.isArray(parsed) && parsed.length) {
+          const ids = parsed.map(l => l.accountId).filter(Boolean);
+          const placeholders = ids.length ? ids.map(() => '?').join(',') : "''";
+          const [accs] = await db.query('SELECT id, code, name_ar FROM gl_accounts WHERE id IN (' + placeholders + ')', ids);
+          const byId = {}; accs.forEach(a => { byId[a.id] = a; });
+          manualLines = parsed.map(l => ({
+            accountId: l.accountId,
+            accountCode: byId[l.accountId] ? byId[l.accountId].code : '',
+            accountName: byId[l.accountId] ? byId[l.accountId].name_ar : '',
+            debit: Number(l.debit) || 0, credit: Number(l.credit) || 0,
+            description: l.description || ''
+          }));
+        }
+      } catch(_) {}
+    }
     const [stg] = await db.query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('CompanyName','TaxNumber','Currency','CompanyLogo')");
     const cfg = {};
     stg.forEach(s => { cfg[s.setting_key] = s.setting_value; });
-    res.json({ success:true, voucher: rows[0], company: cfg });
+    res.json({ success:true, voucher: { ...r, manual_lines: manualLines }, company: cfg });
   } catch(e) { res.json({ success:false, error:e.message }); }
 });
 

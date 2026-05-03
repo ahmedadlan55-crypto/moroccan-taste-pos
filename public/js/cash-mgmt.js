@@ -301,11 +301,15 @@ function cashLoadReceipts() {
         actions = '<button class="btn btn-sm" style="background:#dcfce7;color:#166534;border-radius:6px;font-size:11px;padding:3px 8px;font-weight:700;" onclick="cashApproveReceipt(\''+r.id+'\',\''+(r.receiptNumber||'')+'\')" title="اعتماد"><i class="fas fa-check"></i> اعتماد</button> ' + actions +
           ' <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b;border-radius:6px;font-size:11px;padding:3px 8px;" onclick="cashCancelReceipt(\''+r.id+'\')" title="إلغاء"><i class="fas fa-times"></i></button>';
       }
-      return '<tr><td><code style="font-weight:700;color:#10b981;">'+r.receiptNumber+'</code></td>' +
+      // V5.10.3 — surface creator name + manual-GL badge in the row
+      var creator = r.createdByName || r.createdBy || '—';
+      var manualBadge = r.hasManualGl ? ' <span style="font-size:9px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;margin-inline-start:4px;font-weight:700;" title="قيد محاسبي يدوي">قيد يدوي</span>' : '';
+      return '<tr><td><code style="font-weight:700;color:#10b981;">'+r.receiptNumber+'</code>'+manualBadge+'</td>' +
         '<td>'+dt+'</td>' +
         '<td>'+(r.sourceName||'')+' <span style="font-size:10px;color:#94a3b8;">('+(sMap[r.sourceType]||r.sourceType)+')</span></td>' +
         '<td><span style="font-size:11px;color:#64748b;">'+(r.destinationType==='cash'?'صندوق':'بنك')+'</span></td>' +
         '<td style="text-align:start;font-weight:800;color:#10b981;">'+_fmt(r.amount)+'</td>' +
+        '<td><span style="font-size:11px;color:#475569;"><i class="fas fa-user-circle" style="color:#94a3b8;margin-inline-end:3px;"></i>'+_cashEsc(creator)+'</span></td>' +
         '<td>'+statusPill(r.status)+'</td>' +
         '<td style="white-space:nowrap;">'+actions+'</td></tr>';
     }).join('');
@@ -332,54 +336,444 @@ window.cashCancelReceipt = function(id) {
   });
 };
 
-function cashOpenReceiptModal() {
-  _ensureCashBoxesLoaded(function() {
-    var today = new Date().toISOString().slice(0,10);
-    document.getElementById('erpModalTitle').textContent = 'سند قبض جديد';
+// V5.10.3 — Premium voucher creation modal — sectioned, searchable
+// customer/supplier picker, manual GL toggle, COA tree picker for each
+// manual journal line. Replaces the v5.9.14 flat form with a layout that
+// mirrors the v5.9.4 branch editor + v5.9.7 stock-issue detail visual
+// language (sid-* / brf-* tokens).
+function cashOpenReceiptModal() { _cashOpenVoucherModal('receipt'); }
+function cashOpenPaymentModal() { _cashOpenVoucherModal('payment'); }
+
+function _cashOpenVoucherModal(kind) {
+  _cashInjectVoucherStyles();
+  var isReceipt = kind === 'receipt';
+  var today = new Date().toISOString().slice(0,10);
+
+  // Pull everything we need in parallel: cash-box list (already cached),
+  // customers OR suppliers (depending on kind), full COA for the picker.
+  var partyEndpoint = isReceipt ? 'getCustomers' : 'getSuppliers';
+  Promise.all([
+    new Promise(function(res){ _cashAPI('GET', '/cash-boxes').then(res); }),
+    new Promise(function(res){ _cashAPI('GET', '/bank-accounts').then(res); }),
+    new Promise(function(res){ window._apiBridge.withSuccessHandler(res)[partyEndpoint](); }),
+    new Promise(function(res){ _cashAPI('GET', '/gl-accounts-all').then(res); })
+  ]).then(function(out) {
+    _cashBoxes      = Array.isArray(out[0]) ? out[0] : [];
+    _bankAccounts   = Array.isArray(out[1]) ? out[1] : [];
+    var parties     = Array.isArray(out[2]) ? out[2] : [];
+    var coa         = Array.isArray(out[3]) ? out[3] : [];
+    window._cashCoa = coa;  // cached for the manual-GL line picker
+
+    var partyTypeOptions = isReceipt
+      ? '<option value="customer">من عميل</option>' +
+        '<option value="employee">من موظف (سداد سلفة)</option>' +
+        '<option value="rent">من إيجارات</option>' +
+        '<option value="sales">من مبيعات</option>' +
+        '<option value="other">أخرى</option>'
+      : '<option value="supplier">لمورد</option>' +
+        '<option value="employee">لموظف (سلفة)</option>' +
+        '<option value="expense">مصروف تشغيلي</option>' +
+        '<option value="other">أخرى</option>';
+
+    document.getElementById('erpModalTitle').textContent = isReceipt ? 'سند قبض جديد' : 'سند صرف جديد';
     document.getElementById('erpModalBody').innerHTML =
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>تاريخ السند *</label><input type="date" class="form-control" id="rcptDate" value="'+today+'"></div>' +
-        '<div class="form-row"><label>المبلغ *</label><input type="number" step="0.01" class="form-control" id="rcptAmount"></div>' +
-      '</div>' +
-      '<div class="form-row">' + _cashDestinationSelect('rcptDest', 'يُودَع في') + '</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>نوع القبض *</label><select class="form-control" id="rcptSrcType">' +
-          '<option value="customer">من عميل</option>' +
-          '<option value="employee">من موظف (سداد سلفة)</option>' +
-          '<option value="rent">من إيجارات</option>' +
-          '<option value="sales">من مبيعات</option>' +
-          '<option value="other">أخرى</option>' +
-        '</select></div>' +
-        '<div class="form-row"><label>اسم المصدر (عميل/موظف)</label><input class="form-control" id="rcptSrcName"></div>' +
-      '</div>' +
-      '<div class="form-row"><label>المرجع (رقم فاتورة، إلخ)</label><input class="form-control" id="rcptRef"></div>' +
-      '<div class="form-row"><label>الوصف</label><textarea class="form-control" id="rcptDesc" rows="2"></textarea></div>';
-    document.getElementById('erpModalSaveBtn').onclick = cashSaveReceipt;
+      '<div class="cv">' +
+        // ── Section 1: Identity ───────────────────────────
+        '<section class="cv-section">' +
+          '<header class="cv-head"><i class="fas fa-id-card"></i><span>بيانات السند</span></header>' +
+          '<div class="cv-grid cv-grid-2">' +
+            '<div class="cv-row"><label>تاريخ السند <span class="req">*</span></label><input type="date" class="cv-input" id="cvDate" value="'+today+'"></div>' +
+            '<div class="cv-row"><label>المبلغ <span class="req">*</span></label><input type="number" step="0.01" class="cv-input" id="cvAmount" placeholder="0.00"></div>' +
+          '</div>' +
+          '<div class="cv-row" style="margin-top:10px;">' +
+            '<label><i class="fas fa-user-circle" style="color:'+(isReceipt?'#16a34a':'#dc2626')+';margin-inline-end:4px;"></i> اسم المنشئ</label>' +
+            '<div class="cv-input" style="background:#f8fafc;color:#475569;font-weight:700;">'+_cashEsc((window.currentUser && currentUser) || '—')+'</div>' +
+          '</div>' +
+        '</section>' +
+
+        // ── Section 2: Source / Destination (linked to COA) ──
+        '<section class="cv-section">' +
+          '<header class="cv-head"><i class="fas fa-arrow-' + (isReceipt?'down':'up') + '" style="color:'+(isReceipt?'#16a34a':'#dc2626')+';"></i><span>'+(isReceipt?'الجهة المُودَع فيها':'الجهة المصروف منها')+' (الصندوق / البنك)</span></header>' +
+          '<div class="cv-row">' +
+            '<label>الصندوق أو البنك <span class="req">*</span></label>' +
+            _cashBuildAccountPickerSelect('cvAcc') +
+            '<small class="cv-hint"><i class="fas fa-link"></i> ' +
+              'كل صندوق/بنك مرتبط بحساب في شجرة الحسابات (1101 للنقد، 1102 للبنوك). يمكن إدارة الربط من «إدارة النقد».' +
+            '</small>' +
+          '</div>' +
+        '</section>' +
+
+        // ── Section 3: Counter-party ─────────────────────────
+        '<section class="cv-section">' +
+          '<header class="cv-head"><i class="fas fa-handshake"></i><span>'+(isReceipt?'الطرف الآخر (المستلم منه)':'الطرف الآخر (المدفوع له)')+'</span></header>' +
+          '<div class="cv-grid cv-grid-2">' +
+            '<div class="cv-row"><label>النوع <span class="req">*</span></label>' +
+              '<select class="cv-input" id="cvPartyType" onchange="_cvOnPartyTypeChange()">' + partyTypeOptions + '</select>' +
+            '</div>' +
+            '<div class="cv-row"><label>'+(isReceipt?'العميل':'المورد')+' (من القائمة)</label>' +
+              '<select class="cv-input" id="cvPartyId" onchange="_cvOnPartyPick()">' +
+                '<option value="">— اختر من القائمة، أو اكتب اسماً يدوياً تحت —</option>' +
+                parties.map(function(p){ return '<option value="'+_cashEsc(p.id)+'" data-name="'+_cashEsc(p.name||'')+'">'+_cashEsc(p.name||'')+(p.phone?' · '+_cashEsc(p.phone):'')+'</option>'; }).join('') +
+              '</select>' +
+            '</div>' +
+          '</div>' +
+          '<div class="cv-row" style="margin-top:10px;">' +
+            '<label>اسم الطرف (سيظهر على السند والقيد)</label>' +
+            '<input class="cv-input" id="cvPartyName" placeholder="يُملأ تلقائياً عند الاختيار من القائمة">' +
+          '</div>' +
+        '</section>' +
+
+        // ── Section 4: Reference + description ────────────────
+        '<section class="cv-section">' +
+          '<header class="cv-head"><i class="fas fa-note-sticky"></i><span>المرجع والبيان</span></header>' +
+          '<div class="cv-row"><label>المرجع (رقم فاتورة، عقد، إلخ)</label><input class="cv-input" id="cvRef" placeholder="مثال: INV-2026-0123"></div>' +
+          '<div class="cv-row" style="margin-top:10px;"><label>البيان</label><textarea class="cv-input" id="cvDesc" rows="2" placeholder="وصف موجز يظهر على السند والقيد المحاسبي..."></textarea></div>' +
+        '</section>' +
+
+        // ── Section 5: Manual GL posting (collapsed by default) ──
+        '<section class="cv-section">' +
+          '<header class="cv-head" style="cursor:pointer;" onclick="_cvToggleManualGl()">' +
+            '<i class="fas fa-book-tanakh" style="color:#7f1d1d;"></i>' +
+            '<span>ترحيل محاسبي يدوي (اختياري)</span>' +
+            '<i class="fas fa-chevron-down" id="cvManualChev" style="margin-inline-start:auto;transition:transform .2s;"></i>' +
+          '</header>' +
+          '<div id="cvManualBody" style="display:none;">' +
+            '<div class="cv-warn">' +
+              '<i class="fas fa-circle-info"></i>' +
+              '<span>اتركه فارغاً ليُولِّد النظام القيد تلقائياً (Dr الصندوق/البنك → Cr الطرف الآخر). أو اختر يدوياً الحسابات المدينة والدائنة من شجرة الحسابات. الإجمالي يجب أن يساوي مبلغ السند والقيد متوازناً.</span>' +
+            '</div>' +
+            '<div class="cv-gl-table-wrap">' +
+              '<table class="cv-gl-table">' +
+                '<thead><tr><th>الحساب</th><th class="num">مدين</th><th class="num">دائن</th><th>وصف السطر</th><th></th></tr></thead>' +
+                '<tbody id="cvGlBody"></tbody>' +
+                '<tfoot><tr>' +
+                  '<td><b>الإجمالي</b></td>' +
+                  '<td class="num strong" id="cvGlTotalDr">0.00</td>' +
+                  '<td class="num strong" id="cvGlTotalCr">0.00</td>' +
+                  '<td colspan="2"><span id="cvGlBalance" class="cv-bal"></span></td>' +
+                '</tr></tfoot>' +
+              '</table>' +
+            '</div>' +
+            '<div style="display:flex;gap:8px;margin-top:8px;">' +
+              '<button type="button" class="cv-btn-ghost" onclick="_cvAddGlLine()"><i class="fas fa-plus"></i> إضافة سطر</button>' +
+              '<button type="button" class="cv-btn-ghost" onclick="_cvAutoFill()" id="cvAutoFillBtn"><i class="fas fa-wand-magic-sparkles"></i> تعبئة تلقائية</button>' +
+            '</div>' +
+          '</div>' +
+        '</section>' +
+      '</div>';
+    // Wire save handler + voucher kind onto the modal
+    window._cvKind = kind;
+    window._cvManualLines = []; // [{accountId, debit, credit, description}]
+    document.getElementById('erpModalSaveBtn').onclick = _cashSaveVoucher;
     document.getElementById('erpModal').classList.remove('hidden');
   });
 }
 
-function cashSaveReceipt() {
-  var dest = document.getElementById('rcptDest').value.split(':');
-  var data = {
-    receiptDate: document.getElementById('rcptDate').value,
-    destinationType: dest[0], destinationId: dest[1],
-    sourceType: document.getElementById('rcptSrcType').value,
-    sourceName: document.getElementById('rcptSrcName').value,
-    amount: Number(document.getElementById('rcptAmount').value)||0,
-    reference: document.getElementById('rcptRef').value,
-    description: document.getElementById('rcptDesc').value,
-    username: currentUser
-  };
-  if (!data.amount || !data.destinationId) return showToast('المبلغ والوجهة مطلوبان', true);
-  loader(true);
-  _cashAPI('POST', '/receipts', data).then(function(r) {
-    loader(false);
-    // V5.9.14 — receipt now creates as DRAFT; user must click Approve to post.
-    if (r.success) { showToast('تم إنشاء سند مسودة: '+r.number+' — اضغط «اعتماد» لترحيله محاسبياً.'); erpCloseModal(); cashLoadReceipts(); }
-    else showToast(r.error, true);
+// ── Voucher modal helpers ──────────────────────────────────────────────
+
+function _cashEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
   });
 }
+
+function _cashBuildAccountPickerSelect(id) {
+  // Cash boxes (linked to 1101) + bank accounts (linked to 1102) — grouped.
+  var html = '<select class="cv-input" id="' + id + '">';
+  html += '<option value="">— اختر صندوقاً أو حساب بنك —</option>';
+  if (_cashBoxes.length) {
+    html += '<optgroup label="الصناديق (1101 — النقدية)">';
+    _cashBoxes.forEach(function(b) {
+      html += '<option value="cash:' + _cashEsc(b.id) + '" data-gl="' + _cashEsc(b.glAccountCode||'') + '">' +
+        _cashEsc(b.name) + (b.glAccountCode ? ' · ' + _cashEsc(b.glAccountCode) : '') + '</option>';
+    });
+    html += '</optgroup>';
+  }
+  if (_bankAccounts.length) {
+    html += '<optgroup label="البنوك (1102 — البنوك)">';
+    _bankAccounts.forEach(function(b) {
+      html += '<option value="bank:' + _cashEsc(b.id) + '" data-gl="' + _cashEsc(b.glAccountCode||'') + '">' +
+        _cashEsc(b.bankName) + (b.glAccountCode ? ' · ' + _cashEsc(b.glAccountCode) : '') + '</option>';
+    });
+    html += '</optgroup>';
+  }
+  html += '</select>';
+  return html;
+}
+
+function _cashInjectVoucherStyles() {
+  if (document.getElementById('cvVoucherStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'cvVoucherStyles';
+  st.textContent =
+    '.cv{display:flex;flex-direction:column;gap:12px;}' +
+    '.cv-section{background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;}' +
+    '.cv-head{display:flex;align-items:center;gap:8px;padding:11px 14px;background:linear-gradient(135deg,#fafafa,#fff);border-bottom:1px solid #f1f5f9;font-size:13px;font-weight:800;color:#0f172a;}' +
+    '.cv-head i:first-child{font-size:14px;}' +
+    '.cv-section > .cv-row, .cv-section > .cv-grid{padding:12px 14px;}' +
+    '.cv-section > .cv-row + .cv-row, .cv-section > .cv-grid + .cv-row{padding-top:0;}' +
+    '.cv-grid{display:grid;gap:10px;}' +
+    '.cv-grid-2{grid-template-columns:1fr 1fr;}' +
+    '@media(max-width:640px){.cv-grid-2{grid-template-columns:1fr;}}' +
+    '.cv-row{display:flex;flex-direction:column;gap:5px;}' +
+    '.cv-row label{font-size:12px;font-weight:700;color:#334155;display:flex;align-items:center;gap:4px;}' +
+    '.cv-row label .req{color:#ef4444;}' +
+    '.cv-input{height:38px;border-radius:10px;border:1.5px solid #e2e8f0;padding:0 10px;font-size:13px;background:#fff;font-family:inherit;transition:border-color .15s,box-shadow .15s;}' +
+    'textarea.cv-input{height:auto;padding:8px 10px;}' +
+    '.cv-input:focus{outline:none;border-color:#7f1d1d;box-shadow:0 0 0 3px rgba(127,29,29,.1);}' +
+    '.cv-hint{font-size:11px;color:#94a3b8;margin-top:4px;display:flex;align-items:center;gap:5px;}' +
+    '.cv-hint i{color:#7f1d1d;}' +
+    '.cv-warn{margin:14px 14px 8px;padding:10px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:10px;font-size:11px;color:#92400e;display:flex;gap:8px;align-items:flex-start;line-height:1.6;}' +
+    '.cv-warn i{flex-shrink:0;margin-top:2px;}' +
+    '.cv-gl-table-wrap{padding:0 14px 8px;}' +
+    '.cv-gl-table{width:100%;border-collapse:collapse;font-size:12px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;}' +
+    '.cv-gl-table th{background:#f8fafc;padding:7px 8px;text-align:start;font-size:10px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #e2e8f0;}' +
+    '.cv-gl-table .num{text-align:end;}' +
+    '.cv-gl-table td{padding:6px 8px;border-bottom:1px solid #f1f5f9;}' +
+    '.cv-gl-table tr:last-child td{border-bottom:none;}' +
+    '.cv-gl-table tfoot td{background:#fafafa;font-weight:800;border-top:1.5px solid #e2e8f0;}' +
+    '.cv-gl-table .cv-line-sel{width:100%;height:30px;padding:0 6px;border:1px solid #e2e8f0;border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#fff;}' +
+    '.cv-gl-table .cv-line-amt{width:90px;height:28px;padding:0 6px;border:1px solid #e2e8f0;border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:12px;text-align:end;}' +
+    '.cv-gl-table .cv-line-desc{width:100%;height:28px;padding:0 6px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;}' +
+    '.cv-gl-table .cv-line-del{width:24px;height:24px;border-radius:6px;border:1px solid #fecaca;background:#fee2e2;color:#991b1b;cursor:pointer;}' +
+    '.cv-bal{font-size:11px;font-weight:700;}' +
+    '.cv-bal.ok{color:#16a34a;}.cv-bal.bad{color:#dc2626;}' +
+    '.cv-btn-ghost{height:32px;padding:0 12px;border-radius:8px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;display:inline-flex;align-items:center;gap:5px;}' +
+    '.cv-btn-ghost:hover{background:#fef2f2;border-color:#7f1d1d;color:#7f1d1d;}';
+  document.head.appendChild(st);
+}
+
+window._cvOnPartyTypeChange = function() {
+  // Reset the picker — different list types don't share IDs.
+  var sel = document.getElementById('cvPartyId');
+  if (sel) { sel.value = ''; }
+  var nm = document.getElementById('cvPartyName');
+  if (nm) { nm.value = ''; }
+};
+
+window._cvOnPartyPick = function() {
+  var sel = document.getElementById('cvPartyId');
+  var nm = document.getElementById('cvPartyName');
+  if (!sel || !nm) return;
+  var opt = sel.options[sel.selectedIndex];
+  if (opt && opt.dataset && opt.dataset.name) nm.value = opt.dataset.name;
+};
+
+window._cvToggleManualGl = function() {
+  var body = document.getElementById('cvManualBody');
+  var chev = document.getElementById('cvManualChev');
+  if (!body) return;
+  var open = body.style.display === '';
+  body.style.display = open ? 'none' : '';
+  if (chev) chev.style.transform = open ? '' : 'rotate(180deg)';
+  // Add 2 starter lines if empty
+  if (!open && (!window._cvManualLines || !window._cvManualLines.length)) {
+    window._cvManualLines = [
+      { accountId: '', debit: 0, credit: 0, description: '' },
+      { accountId: '', debit: 0, credit: 0, description: '' }
+    ];
+    _cvRenderGlLines();
+  }
+};
+
+window._cvAddGlLine = function() {
+  window._cvManualLines = window._cvManualLines || [];
+  window._cvManualLines.push({ accountId: '', debit: 0, credit: 0, description: '' });
+  _cvRenderGlLines();
+};
+
+window._cvDelGlLine = function(idx) {
+  if (!window._cvManualLines) return;
+  window._cvManualLines.splice(idx, 1);
+  _cvRenderGlLines();
+};
+
+window._cvAutoFill = function() {
+  // Auto-fill the 2 default lines based on the current voucher selection:
+  // Receipt: Dr (cash/bank) Cr (1125/customers default) at the entered amount.
+  // Payment: Dr (2101/suppliers default) Cr (cash/bank) at the entered amount.
+  var amt = Number((document.getElementById('cvAmount')||{}).value||0);
+  if (!amt) { showToast('أدخل المبلغ أولاً', true); return; }
+  var dest = (document.getElementById('cvAcc')||{}).value || '';
+  var coa = window._cashCoa || [];
+  var glRow = function(code) { return coa.find(function(a){return a.code === code;}); };
+
+  // Resolve the selected box/bank → its linked GL account
+  var boxOrBank = null;
+  if (dest.indexOf('cash:') === 0) boxOrBank = _cashBoxes.find(function(b){return b.id === dest.slice(5);});
+  else if (dest.indexOf('bank:') === 0) boxOrBank = _bankAccounts.find(function(b){return b.id === dest.slice(5);});
+  var boxAcc = boxOrBank && boxOrBank.glAccountId ? coa.find(function(a){return a.id === boxOrBank.glAccountId;}) : null;
+  if (!boxAcc) { showToast('اختر صندوقاً أو بنكاً مرتبطاً بحساب في الشجرة أولاً', true); return; }
+
+  var contraCode = window._cvKind === 'receipt' ? '1125' : '2101';
+  var contra = glRow(contraCode) || coa.find(function(a){
+    return a.code && a.code.startsWith(window._cvKind === 'receipt' ? '11' : '21');
+  });
+  if (!contra) { showToast('لم يُعثر على حساب مقابل في الشجرة', true); return; }
+
+  if (window._cvKind === 'receipt') {
+    window._cvManualLines = [
+      { accountId: boxAcc.id,  debit: amt, credit: 0,   description: 'قبض' },
+      { accountId: contra.id,  debit: 0,   credit: amt, description: 'الطرف الآخر' }
+    ];
+  } else {
+    window._cvManualLines = [
+      { accountId: contra.id,  debit: amt, credit: 0,   description: 'الطرف الآخر' },
+      { accountId: boxAcc.id,  debit: 0,   credit: amt, description: 'صرف' }
+    ];
+  }
+  _cvRenderGlLines();
+};
+
+function _cvRenderGlLines() {
+  var body = document.getElementById('cvGlBody');
+  if (!body) return;
+  var lines = window._cvManualLines || [];
+  var coa = window._cashCoa || [];
+  var coaByType = {};
+  coa.forEach(function(a) {
+    if (!coaByType[a.type]) coaByType[a.type] = [];
+    coaByType[a.type].push(a);
+  });
+  var typeLabels = { asset:'الأصول', liability:'الالتزامات', equity:'حقوق الملكية', revenue:'الإيرادات', expense:'المصروفات' };
+  var optGroups = ['asset','liability','equity','revenue','expense'].map(function(t) {
+    var arr = coaByType[t] || [];
+    if (!arr.length) return '';
+    return '<optgroup label="' + typeLabels[t] + '">' + arr.map(function(a) {
+      var pad = a.level && a.level > 1 ? '— '.repeat(a.level - 1) : '';
+      return '<option value="' + _cashEsc(a.id) + '">' + pad + _cashEsc(a.code||'') + ' — ' + _cashEsc(a.nameAr||'') + '</option>';
+    }).join('') + '</optgroup>';
+  }).join('');
+  body.innerHTML = lines.map(function(l, i) {
+    var sel = '<select class="cv-line-sel" onchange="_cvUpdateLine(' + i + ',\'accountId\',this.value)"><option value="">— اختر حساباً —</option>' + optGroups + '</select>';
+    return '<tr>' +
+      '<td>' + sel + '</td>' +
+      '<td class="num"><input type="number" step="0.01" class="cv-line-amt" value="' + (l.debit||0) + '" oninput="_cvUpdateLine(' + i + ',\'debit\',this.value)"></td>' +
+      '<td class="num"><input type="number" step="0.01" class="cv-line-amt" value="' + (l.credit||0) + '" oninput="_cvUpdateLine(' + i + ',\'credit\',this.value)"></td>' +
+      '<td><input class="cv-line-desc" value="' + _cashEsc(l.description||'') + '" oninput="_cvUpdateLine(' + i + ',\'description\',this.value)" placeholder="(اختياري)"></td>' +
+      '<td><button class="cv-line-del" onclick="_cvDelGlLine(' + i + ')" title="حذف"><i class="fas fa-times"></i></button></td>' +
+    '</tr>';
+  }).join('');
+  // Re-select preserved values (the optGroups html is regenerated each call)
+  Array.prototype.forEach.call(body.querySelectorAll('.cv-line-sel'), function(sel, i) {
+    if (lines[i] && lines[i].accountId) sel.value = lines[i].accountId;
+  });
+  _cvRecalcTotals();
+}
+
+window._cvUpdateLine = function(idx, field, val) {
+  var lines = window._cvManualLines || [];
+  if (!lines[idx]) return;
+  if (field === 'debit' || field === 'credit') {
+    var v = Number(val) || 0;
+    lines[idx][field] = v;
+    // Mutual exclusion: setting one side to >0 zeros the other (accounting convention)
+    if (v > 0) lines[idx][field === 'debit' ? 'credit' : 'debit'] = 0;
+  } else {
+    lines[idx][field] = val;
+  }
+  _cvRecalcTotals();
+};
+
+function _cvRecalcTotals() {
+  var lines = window._cvManualLines || [];
+  var dr = lines.reduce(function(s,l){return s + (Number(l.debit)||0);}, 0);
+  var cr = lines.reduce(function(s,l){return s + (Number(l.credit)||0);}, 0);
+  var fmt = function(v){return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});};
+  var elD = document.getElementById('cvGlTotalDr');
+  var elC = document.getElementById('cvGlTotalCr');
+  var elB = document.getElementById('cvGlBalance');
+  if (elD) elD.textContent = fmt(dr);
+  if (elC) elC.textContent = fmt(cr);
+  if (elB) {
+    var diff = dr - cr;
+    if (Math.abs(diff) < 0.01 && dr > 0) {
+      elB.textContent = '✓ متوازن';
+      elB.className = 'cv-bal ok';
+    } else if (dr === 0 && cr === 0) {
+      elB.textContent = '';
+      elB.className = 'cv-bal';
+    } else {
+      elB.textContent = '⚠ غير متوازن (فرق ' + fmt(diff) + ')';
+      elB.className = 'cv-bal bad';
+    }
+  }
+  // Refresh select values that may have been blanked by re-render
+  var body = document.getElementById('cvGlBody');
+  if (body) {
+    Array.prototype.forEach.call(body.querySelectorAll('.cv-line-sel'), function(sel, i) {
+      if (lines[i] && lines[i].accountId && sel.value !== lines[i].accountId) sel.value = lines[i].accountId;
+    });
+  }
+}
+
+function _cashSaveVoucher() {
+  var kind = window._cvKind || 'receipt';
+  var isReceipt = kind === 'receipt';
+  var dest = ((document.getElementById('cvAcc')||{}).value || '').split(':');
+  if (!dest[0] || !dest[1]) return showToast('اختر صندوقاً أو حساب بنك', true);
+  var amount = Number((document.getElementById('cvAmount')||{}).value || 0);
+  if (!amount) return showToast('المبلغ مطلوب', true);
+  var partyType = (document.getElementById('cvPartyType')||{}).value;
+  var partyId   = (document.getElementById('cvPartyId')||{}).value || null;
+  var partyName = (document.getElementById('cvPartyName')||{}).value || '';
+
+  // Manual GL lines — only send if at least 2 lines have non-zero amounts AND the toggle was opened
+  var manualBody = document.getElementById('cvManualBody');
+  var manualOpen = manualBody && manualBody.style.display !== 'none';
+  var manualLines = null;
+  if (manualOpen && Array.isArray(window._cvManualLines)) {
+    var nonZero = window._cvManualLines.filter(function(l){
+      return l.accountId && ((Number(l.debit)||0) > 0 || (Number(l.credit)||0) > 0);
+    });
+    if (nonZero.length) {
+      var dr = nonZero.reduce(function(s,l){return s + (Number(l.debit)||0);}, 0);
+      var cr = nonZero.reduce(function(s,l){return s + (Number(l.credit)||0);}, 0);
+      if (Math.abs(dr - cr) > 0.01)       return showToast('القيد غير متوازن — مدين ' + dr.toFixed(2) + ' ودائن ' + cr.toFixed(2), true);
+      if (Math.abs(dr - amount) > 0.01)   return showToast('إجمالي القيد لا يطابق مبلغ السند', true);
+      manualLines = nonZero;
+    }
+  }
+
+  var payload = {
+    receiptDate:  (document.getElementById('cvDate')||{}).value,
+    paymentDate:  (document.getElementById('cvDate')||{}).value,
+    amount: amount,
+    reference: (document.getElementById('cvRef')||{}).value || '',
+    description: (document.getElementById('cvDesc')||{}).value || '',
+    username: currentUser,
+    manualGlLines: manualLines
+  };
+  if (isReceipt) {
+    payload.destinationType = dest[0];
+    payload.destinationId   = dest[1];
+    payload.sourceType      = partyType;
+    payload.sourceId        = partyId;
+    payload.sourceName      = partyName;
+  } else {
+    payload.sourceType    = dest[0];
+    payload.sourceId      = dest[1];
+    payload.recipientType = partyType;
+    payload.recipientId   = partyId;
+    payload.recipientName = partyName;
+  }
+  loader(true);
+  _cashAPI('POST', isReceipt ? '/receipts' : '/payments', payload).then(function(r) {
+    loader(false);
+    if (r && r.success) {
+      var msg = 'تم إنشاء سند مسودة: ' + (r.number || '') + (manualLines ? ' (قيد يدوي)' : '');
+      showToast(msg + ' — اضغط «اعتماد» لترحيله محاسبياً.');
+      erpCloseModal();
+      if (isReceipt) cashLoadReceipts(); else cashLoadPayments();
+    } else {
+      showToast((r && r.error) || 'فشل الحفظ', true);
+    }
+  });
+}
+
+// Backward-compatible alias for the old voucher save handler
+function cashSaveReceipt() { _cashSaveVoucher(); }
+function cashSavePayment() { _cashSaveVoucher(); }
 
 // ─────────────────────────────────────────────────────────────
 // Payments
@@ -403,11 +797,14 @@ function cashLoadPayments() {
         actions = '<button class="btn btn-sm" style="background:#dcfce7;color:#166534;border-radius:6px;font-size:11px;padding:3px 8px;font-weight:700;" onclick="cashApprovePayment(\''+r.id+'\',\''+(r.paymentNumber||'')+'\')" title="اعتماد"><i class="fas fa-check"></i> اعتماد</button> ' + actions +
           ' <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b;border-radius:6px;font-size:11px;padding:3px 8px;" onclick="cashCancelPayment(\''+r.id+'\')" title="إلغاء"><i class="fas fa-times"></i></button>';
       }
-      return '<tr><td><code style="font-weight:700;color:#ef4444;">'+r.paymentNumber+'</code></td>' +
+      var creator = r.createdByName || r.createdBy || '—';
+      var manualBadge = r.hasManualGl ? ' <span style="font-size:9px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;margin-inline-start:4px;font-weight:700;" title="قيد محاسبي يدوي">قيد يدوي</span>' : '';
+      return '<tr><td><code style="font-weight:700;color:#ef4444;">'+r.paymentNumber+'</code>'+manualBadge+'</td>' +
         '<td>'+dt+'</td>' +
         '<td>'+(r.recipientName||'')+' <span style="font-size:10px;color:#94a3b8;">('+(rMap[r.recipientType]||r.recipientType)+')</span></td>' +
         '<td><span style="font-size:11px;color:#64748b;">'+(r.sourceType==='cash'?'صندوق':'بنك')+'</span></td>' +
         '<td style="text-align:start;font-weight:800;color:#ef4444;">-'+_fmt(r.amount)+'</td>' +
+        '<td><span style="font-size:11px;color:#475569;"><i class="fas fa-user-circle" style="color:#94a3b8;margin-inline-end:3px;"></i>'+_cashEsc(creator)+'</span></td>' +
         '<td>'+statusPill(r.status)+'</td>' +
         '<td style="white-space:nowrap;">'+actions+'</td></tr>';
     }).join('');
@@ -434,53 +831,8 @@ window.cashCancelPayment = function(id) {
   });
 };
 
-function cashOpenPaymentModal() {
-  _ensureCashBoxesLoaded(function() {
-    var today = new Date().toISOString().slice(0,10);
-    document.getElementById('erpModalTitle').textContent = 'سند صرف جديد';
-    document.getElementById('erpModalBody').innerHTML =
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>تاريخ السند *</label><input type="date" class="form-control" id="payDate" value="'+today+'"></div>' +
-        '<div class="form-row"><label>المبلغ *</label><input type="number" step="0.01" class="form-control" id="payAmount"></div>' +
-      '</div>' +
-      '<div class="form-row">' + _cashDestinationSelect('paySrc', 'يُصرف من') + '</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>نوع الصرف *</label><select class="form-control" id="payRecipType">' +
-          '<option value="supplier">لمورد</option>' +
-          '<option value="employee">لموظف (سلفة)</option>' +
-          '<option value="expense">مصروف تشغيلي</option>' +
-          '<option value="other">أخرى</option>' +
-        '</select></div>' +
-        '<div class="form-row"><label>اسم المستفيد</label><input class="form-control" id="payRecipName"></div>' +
-      '</div>' +
-      '<div class="form-row"><label>المرجع</label><input class="form-control" id="payRef"></div>' +
-      '<div class="form-row"><label>الوصف</label><textarea class="form-control" id="payDesc" rows="2"></textarea></div>';
-    document.getElementById('erpModalSaveBtn').onclick = cashSavePayment;
-    document.getElementById('erpModal').classList.remove('hidden');
-  });
-}
-
-function cashSavePayment() {
-  var src = document.getElementById('paySrc').value.split(':');
-  var data = {
-    paymentDate: document.getElementById('payDate').value,
-    sourceType: src[0], sourceId: src[1],
-    recipientType: document.getElementById('payRecipType').value,
-    recipientName: document.getElementById('payRecipName').value,
-    amount: Number(document.getElementById('payAmount').value)||0,
-    reference: document.getElementById('payRef').value,
-    description: document.getElementById('payDesc').value,
-    username: currentUser
-  };
-  if (!data.amount || !data.sourceId) return showToast('المبلغ والمصدر مطلوبان', true);
-  loader(true);
-  _cashAPI('POST', '/payments', data).then(function(r) {
-    loader(false);
-    // V5.9.14 — payment now creates as DRAFT; user must click Approve to post.
-    if (r.success) { showToast('تم إنشاء سند مسودة: '+r.number+' — اضغط «اعتماد» لترحيله محاسبياً.'); erpCloseModal(); cashLoadPayments(); }
-    else showToast(r.error, true);
-  });
-}
+// V5.10.3 — old cashOpenPaymentModal / cashSavePayment removed. The unified
+// _cashOpenVoucherModal('payment') and _cashSaveVoucher() handle both kinds.
 
 // ─────────────────────────────────────────────────────────────
 // Transfers
@@ -742,6 +1094,29 @@ function _cashRenderVoucher(v, cfg, kind) {
 
         (v.journal_id || v.journal_number
           ? '<div style="margin-top:18px;padding:8px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:11px;color:#92400e;display:flex;justify-content:space-between;align-items:center;"><span><i class="fas fa-book"></i> القيد المحاسبي: <code>' + _cashEsc(v.journal_number || v.journal_id) + '</code></span><span style="color:#16a34a;font-weight:700;">✓ مُرحَّل في الدفاتر</span></div>'
+          : '') +
+
+        // V5.10.3 — Manual GL lines table (when the bookkeeper hand-picked Dr/Cr)
+        (v.manual_lines && v.manual_lines.length
+          ? '<div style="margin-top:14px;padding:10px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;page-break-inside:avoid;">' +
+              '<div style="font-size:11px;font-weight:800;color:#9a3412;margin-bottom:6px;display:flex;align-items:center;gap:5px;"><i class="fas fa-book-tanakh"></i> أسطر القيد المحاسبي اليدوي</div>' +
+              '<table style="width:100%;border-collapse:collapse;font-size:10.5px;">' +
+                '<thead><tr style="background:#9a3412;color:#fff;">' +
+                  '<th style="padding:5px 7px;text-align:start;">الحساب</th>' +
+                  '<th style="padding:5px 7px;text-align:end;">مدين</th>' +
+                  '<th style="padding:5px 7px;text-align:end;">دائن</th>' +
+                '</tr></thead>' +
+                '<tbody>' + v.manual_lines.map(function(l) {
+                  return '<tr style="border-bottom:1px solid #fed7aa;">' +
+                    '<td style="padding:4px 7px;"><code style="color:#9a3412;font-family:ui-monospace,Menlo,monospace;">' + _cashEsc(l.accountCode||'') + '</code> ' + _cashEsc(l.accountName||'') +
+                      (l.description ? '<div style="color:#94a3b8;font-size:9px;">' + _cashEsc(l.description) + '</div>' : '') +
+                    '</td>' +
+                    '<td style="padding:4px 7px;text-align:end;font-family:ui-monospace,Menlo,monospace;">' + (Number(l.debit)>0 ? fmtNum(l.debit) : '—') + '</td>' +
+                    '<td style="padding:4px 7px;text-align:end;font-family:ui-monospace,Menlo,monospace;">' + (Number(l.credit)>0 ? fmtNum(l.credit) : '—') + '</td>' +
+                  '</tr>';
+                }).join('') + '</tbody>' +
+              '</table>' +
+            '</div>'
           : '') +
 
         '<footer class="foot">' +

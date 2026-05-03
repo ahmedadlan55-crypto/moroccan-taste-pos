@@ -1971,6 +1971,12 @@ async function runMigrations() {
   await addColumnIfMissing('cash_receipts',  'approved_at', "DATETIME");
   await addColumnIfMissing('cash_payments',  'approved_by', "VARCHAR(100)");
   await addColumnIfMissing('cash_payments',  'approved_at', "DATETIME");
+  // V5.10.3 — manual journal-entry lines that override the auto-routed GL
+  // posting. When set (JSON array of {accountId, debit, credit, description}),
+  // approval uses these instead of the source-type-driven default contra.
+  // Lets the bookkeeper hand-pick Dr / Cr from the COA at create time.
+  await addColumnIfMissing('cash_receipts',  'manual_gl_lines', "TEXT");
+  await addColumnIfMissing('cash_payments',  'manual_gl_lines', "TEXT");
   // Existing rows shipped with status='posted' as the table default;
   // change the default to 'draft' going forward but leave existing rows alone.
   try {

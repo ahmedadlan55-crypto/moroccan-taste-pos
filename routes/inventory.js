@@ -939,10 +939,12 @@ router.get('/live-report', async (req, res) => {
     const byItem = {};
     function bucket(reason, type) {
       // CHECK MOST-SPECIFIC FIRST so e.g. "تالف" doesn't fall into "تسويات"
+      // مبيعات comes BEFORE production so "مبيعات (نصف مصنع)" is treated as
+      // a sale (its dominant intent) rather than production/WIP.
       if (/تالف|spoil|damage|broken/i.test(reason))                return 'damaged';
       if (/مشتريات|استلام|purchase|receive/i.test(reason))         return 'purchases';
-      if (/إنتاج|انتاج|production|نصف مصنع|semi/i.test(reason))    return 'production';
       if (/مبيعات|sale/i.test(reason))                             return 'sales';
+      if (/إنتاج|انتاج|production|نصف مصنع|semi/i.test(reason))    return 'production';
       if (/إداري|اداري|admin/i.test(reason))                       return 'adjustments';
       if (/تسويات|settlement|adjust/i.test(reason))                return 'adjustments';
       if (/تحويل|transfer/i.test(reason))                          return type === 'in' ? 'transferIn' : 'transferOut';
@@ -1154,11 +1156,13 @@ router.get('/live-report/:itemId/movements', async (req, res) => {
 
     // Match the /live-report bucketing rules (same regex set, same
     // priority order) so when the user clicks a cell, the rows match.
+    // Order: damaged → purchases → SALES → production → ... so
+    // "مبيعات (نصف مصنع)" lands in 'sales' (its dominant intent).
     function bucket(reason, type) {
       if (/تالف|spoil|damage|broken/i.test(reason))                return 'damaged';
       if (/مشتريات|استلام|purchase|receive/i.test(reason))         return 'purchases';
-      if (/إنتاج|انتاج|production|نصف مصنع|semi/i.test(reason))    return 'production';
       if (/مبيعات|sale/i.test(reason))                             return 'sales';
+      if (/إنتاج|انتاج|production|نصف مصنع|semi/i.test(reason))    return 'production';
       if (/إداري|اداري|admin/i.test(reason))                       return 'adjustments';
       if (/تسويات|settlement|adjust/i.test(reason))                return 'adjustments';
       if (/تحويل|transfer/i.test(reason))                          return type === 'in' ? 'transferIn' : 'transferOut';
@@ -1254,6 +1258,208 @@ router.get('/live-report/:itemId/movements', async (req, res) => {
     }
     res.json(mapped);
   } catch (e) { console.error('[live-report movements]', e); res.json([]); }
+});
+
+// v5.10.18 — Diagnostic: explain why an inventory item shows zero sales-movements
+//
+// For each sale in [startDate, endDate] containing a menu item that COULD have
+// consumed this inv_item, returns a row with:
+//   - orderId, orderDate, menuName, menuId, qty (sold)
+//   - status: one of
+//       'recorded'             — inventory_movements has a row for :itemId tied to this order
+//       'different_warehouse'  — movement recorded but on a different warehouse_id
+//       'skipped_semi'         — menu has consumes_semi_id; the semi was deducted, not :itemId
+//       'no_recipe'            — menu has no legacy recipe and no active BOM
+//       'recipe_excludes_item' — menu has a recipe/BOM but it doesn't reference :itemId
+//       'unknown'              — fallback (data inconsistency)
+//   - hint: short Arabic message for UI display
+//
+// Used by the empty-state in _invLiveShowDrillModal so the user gets a
+// meaningful explanation instead of a blank "no transactions" message.
+router.get('/live-report/:itemId/sales-trace', async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    const { startDate, endDate, warehouseId } = req.query;
+    const endD   = endDate   ? new Date(endDate)   : new Date();
+    const startD = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    endD.setHours(23, 59, 59, 999);
+
+    // 1) Find every menu row potentially linked to :itemId.
+    //    Three ways a menu can reference an inv_item:
+    //      a) m.consumes_semi_id = :itemId  (the inv_item IS the semi)
+    //      b) legacy recipe table has a row (menu_id, inv_item_id=:itemId)
+    //      c) modern bom_lines (via menu.bom_id, b.is_active=1) has component_item_id=:itemId
+    let candidateRows = [];
+    try {
+      const [rows] = await db.query(
+        `SELECT m.id, m.name, m.consumes_semi_id,
+                COALESCE(m.production_method, 'made_at_branch') AS production_method,
+                m.bom_id,
+                EXISTS(SELECT 1 FROM recipe r WHERE r.menu_id = m.id AND r.inv_item_id = ?) AS in_legacy,
+                EXISTS(SELECT 1 FROM bom b JOIN bom_lines bl ON bl.bom_id = b.id
+                       WHERE b.id = m.bom_id AND b.is_active = 1 AND bl.component_item_id = ?) AS in_bom,
+                (SELECT COUNT(*) FROM recipe r WHERE r.menu_id = m.id) AS legacy_total,
+                EXISTS(SELECT 1 FROM bom b WHERE b.id = m.bom_id AND b.is_active = 1) AS has_active_bom
+         FROM menu m
+         WHERE m.consumes_semi_id = ?
+            OR EXISTS(SELECT 1 FROM recipe r WHERE r.menu_id = m.id AND r.inv_item_id = ?)
+            OR EXISTS(SELECT 1 FROM bom b JOIN bom_lines bl ON bl.bom_id = b.id
+                      WHERE b.id = m.bom_id AND b.is_active = 1 AND bl.component_item_id = ?)`,
+        [itemId, itemId, itemId, itemId, itemId]);
+      candidateRows = rows;
+    } catch (_) {
+      // bom/bom_lines tables may not exist on older deploys; fall back to legacy + semi only
+      try {
+        const [rows] = await db.query(
+          `SELECT m.id, m.name, m.consumes_semi_id,
+                  COALESCE(m.production_method, 'made_at_branch') AS production_method,
+                  NULL AS bom_id,
+                  EXISTS(SELECT 1 FROM recipe r WHERE r.menu_id = m.id AND r.inv_item_id = ?) AS in_legacy,
+                  0 AS in_bom,
+                  (SELECT COUNT(*) FROM recipe r WHERE r.menu_id = m.id) AS legacy_total,
+                  0 AS has_active_bom
+           FROM menu m
+           WHERE m.consumes_semi_id = ?
+              OR EXISTS(SELECT 1 FROM recipe r WHERE r.menu_id = m.id AND r.inv_item_id = ?)`,
+          [itemId, itemId, itemId]);
+        candidateRows = rows;
+      } catch (e2) { return res.json({ candidates: [], sales: [], reason: 'schema_unavailable' }); }
+    }
+
+    if (!candidateRows.length) {
+      return res.json({
+        candidates: [],
+        sales: [],
+        reason: 'no_menu_uses_item',
+        hint: 'لا يوجد أي منتج في القائمة يستهلك هذا الصنف عبر وصفة أو نصف-مصنع.'
+      });
+    }
+
+    // Index by name for joining sales_items (which only stores item_name)
+    const candidateByName = {};
+    candidateRows.forEach(r => { candidateByName[r.name] = r; });
+    const candidateNames = Object.keys(candidateByName);
+
+    // 2) Pull every sales_items row in period whose item_name matches a candidate.
+    let salesRows = [];
+    if (candidateNames.length) {
+      const placeholders = candidateNames.map(() => '?').join(',');
+      try {
+        const [rows] = await db.query(
+          `SELECT order_id, order_date, item_name, qty
+           FROM sales_items
+           WHERE order_date BETWEEN ? AND ?
+             AND item_name IN (${placeholders})
+           ORDER BY order_date DESC
+           LIMIT 200`,
+          [startD, endD, ...candidateNames]);
+        salesRows = rows;
+      } catch (_) { salesRows = []; }
+    }
+
+    if (!salesRows.length) {
+      return res.json({
+        candidates: candidateRows,
+        sales: [],
+        reason: 'no_sales_in_period',
+        hint: 'لم يُبَع أي منتج مرتبط بهذا الصنف خلال هذه الفترة.'
+      });
+    }
+
+    // 3) Pull every inventory_movements row whose notes contain one of the order_ids.
+    //    notes for raw-recipe path = orderId (exactly), for semi path = orderId + ' / ' + item.name.
+    const orderIds = [...new Set(salesRows.map(r => r.order_id))];
+    let movementRows = [];
+    if (orderIds.length) {
+      const orClauses = orderIds.map(() => 'm.notes LIKE ?').join(' OR ');
+      const orParams = orderIds.map(id => '%' + id + '%');
+      try {
+        const [rows] = await db.query(
+          `SELECT m.id, m.movement_date, m.item_id, m.qty, m.reason, m.warehouse_id, m.notes
+           FROM inventory_movements m
+           WHERE m.movement_date BETWEEN ? AND ?
+             AND (${orClauses})`,
+          [startD, endD, ...orParams]);
+        movementRows = rows;
+      } catch (_) { movementRows = []; }
+    }
+
+    // Index movements by orderId → array of rows (an order may emit many movements)
+    const movsByOrder = {};
+    movementRows.forEach(m => {
+      orderIds.forEach(oid => {
+        if ((m.notes || '').indexOf(oid) >= 0) {
+          if (!movsByOrder[oid]) movsByOrder[oid] = [];
+          movsByOrder[oid].push(m);
+        }
+      });
+    });
+
+    // 4) Classify each sale.
+    const sales = salesRows.map(s => {
+      const cand = candidateByName[s.item_name];
+      const movs = movsByOrder[s.order_id] || [];
+      const movForItem = movs.find(m => m.item_id === itemId);
+      const movForSemi = cand.consumes_semi_id
+        ? movs.find(m => m.item_id === cand.consumes_semi_id)
+        : null;
+
+      let status, hint;
+      if (movForItem) {
+        if (warehouseId && movForItem.warehouse_id && movForItem.warehouse_id !== warehouseId) {
+          status = 'different_warehouse';
+          hint = 'الحركة مسجلة لكن في مستودع آخر — أزل فلتر المستودع لرؤيتها.';
+        } else {
+          status = 'recorded';
+          hint = 'الحركة مسجلة فعلاً (يجب أن تظهر في تبويب المبيعات).';
+        }
+      } else if (cand.consumes_semi_id && movForSemi) {
+        status = 'skipped_semi';
+        hint = 'تم استهلاك نصف-مصنع بدلاً من هذا الصنف الخام — افحص حركات نصف-المصنع نفسه.';
+      } else if (cand.consumes_semi_id) {
+        status = 'skipped_semi';
+        hint = 'هذا المنتج يستهلك نصف-مصنع وليس الصنف الخام — لذا لم تُسجَّل حركة لهذا الصنف.';
+      } else if (!Number(cand.legacy_total) && !Number(cand.has_active_bom)) {
+        status = 'no_recipe';
+        hint = 'منتج "' + s.item_name + '" مُباع بدون أي وصفة فعّالة، لذا لم يُخصم أي مكوّن.';
+      } else if (!Number(cand.in_legacy) && !Number(cand.in_bom)) {
+        status = 'recipe_excludes_item';
+        hint = 'وصفة "' + s.item_name + '" لا تتضمّن هذا الصنف بعد — راجع إعداد الوصفة.';
+      } else {
+        status = 'unknown';
+        hint = 'حالة غير مفسَّرة — تحقق من سجلات الخادم.';
+      }
+
+      return {
+        orderId: s.order_id,
+        orderDate: s.order_date,
+        menuName: s.item_name,
+        menuId: cand.id,
+        qty: Number(s.qty) || 0,
+        consumesSemiId: cand.consumes_semi_id || null,
+        productionMethod: cand.production_method,
+        status,
+        hint
+      };
+    });
+
+    // Aggregate top-level reason — pick the most common status across sales
+    const counts = {};
+    sales.forEach(s => { counts[s.status] = (counts[s.status] || 0) + 1; });
+    const topStatus = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || 'unknown';
+    const topHint = sales.find(s => s.status === topStatus)?.hint || '';
+
+    res.json({
+      candidates: candidateRows,
+      sales,
+      reason: topStatus,
+      hint: topHint,
+      counts
+    });
+  } catch (e) {
+    console.error('[live-report sales-trace]', e);
+    res.json({ candidates: [], sales: [], reason: 'error', error: e.message });
+  }
 });
 
 // ─── Stocktakes ───

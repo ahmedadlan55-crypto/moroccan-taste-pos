@@ -7859,8 +7859,13 @@ function _invLiveShowDrillModal(itemId, itemName, rows, op) {
   // Body — runs reverse chronological with per-row metadata for transfers
   // and production. Each cell shows the date + type + qty + warehouse +
   // (for transfers) from→to + (for production) production order code.
+  // v5.10.18 — when empty, leave a placeholder div so we can inject a
+  // diagnostic explanation fetched from /sales-trace.
   var bodyHtml = rows.length === 0
-    ? '<div class="iv-live-empty">لا توجد حركات تطابق هذا الفلتر ضمن الفترة المحددة.</div>'
+    ? '<div class="iv-live-empty">' +
+        '<div>لا توجد حركات تطابق هذا الفلتر ضمن الفترة المحددة.</div>' +
+        '<div id="ivDrillTraceHost" style="margin-top:14px;"></div>' +
+      '</div>'
     : '<div class="iv-live-drill-table-wrap"><table class="iv-live-drill-table">' +
         '<thead><tr>' +
           '<th>#</th>' +
@@ -7936,6 +7941,105 @@ function _invLiveShowDrillModal(itemId, itemName, rows, op) {
       '<button class="iv-drill-btn" onclick="_invLiveDrillPrint()"><i class="fas fa-print"></i> طباعة / PDF</button>'
   });
   _invDrillInjectStyles();
+
+  // v5.10.18 — when the modal is empty for a sales-relevant filter, fetch
+  // /sales-trace and render a meaningful explanation in the placeholder.
+  if (rows.length === 0 && (op === 'sales' || op === 'all' || !op)) {
+    _invLiveFetchSalesTrace(itemId);
+  }
+}
+
+// v5.10.18 — Fetch the diagnostic trace explaining why no movements appear,
+// then render it into #ivDrillTraceHost in the modal body.
+function _invLiveFetchSalesTrace(itemId) {
+  var s = window._invLive;
+  var token = localStorage.getItem('pos_token') || '';
+  var hubWh = (window._invHub && window._invHub.warehouseId && window._invHub.warehouseId !== '__all__')
+    ? window._invHub.warehouseId : '';
+  var effWh = s.warehouseId || hubWh;
+  var qsParams = [
+    'startDate=' + encodeURIComponent(_ymd(s.startDate)),
+    'endDate=' + encodeURIComponent(_ymd(s.endDate))
+  ];
+  if (effWh) qsParams.push('warehouseId=' + encodeURIComponent(effWh));
+
+  fetch('/api/inventory/live-report/' + encodeURIComponent(itemId) + '/sales-trace?' + qsParams.join('&'),
+        { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(trace){
+      var host = document.getElementById('ivDrillTraceHost');
+      if (!host) return;
+      host.innerHTML = _invLiveRenderTraceHtml(trace || {});
+    })
+    .catch(function(){ /* silent — empty state stays as-is */ });
+}
+
+// v5.10.18 — Render the trace JSON into a friendly Arabic explanation block.
+function _invLiveRenderTraceHtml(trace) {
+  var reason = trace.reason || 'unknown';
+  var hint = trace.hint || '';
+  var sales = Array.isArray(trace.sales) ? trace.sales : [];
+  var counts = trace.counts || {};
+
+  // Top icon + headline based on reason
+  var icon = 'fa-circle-info', color = '#0891b2';
+  if (reason === 'no_menu_uses_item' || reason === 'no_recipe' || reason === 'recipe_excludes_item') {
+    icon = 'fa-triangle-exclamation'; color = '#d97706';
+  } else if (reason === 'skipped_semi') {
+    icon = 'fa-arrow-right-from-bracket'; color = '#1d4ed8';
+  } else if (reason === 'different_warehouse') {
+    icon = 'fa-warehouse'; color = '#7c3aed';
+  } else if (reason === 'no_sales_in_period') {
+    icon = 'fa-calendar-xmark'; color = '#64748b';
+  }
+
+  var html =
+    '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;text-align:right;">' +
+      '<div style="display:flex;align-items:flex-start;gap:10px;">' +
+        '<i class="fas ' + icon + '" style="color:' + color + ';font-size:18px;margin-top:3px;"></i>' +
+        '<div style="flex:1;">' +
+          '<div style="font-weight:700;color:#0f172a;font-size:13.5px;margin-bottom:6px;">سبب الفراغ</div>' +
+          '<div style="color:#475569;font-size:12.5px;line-height:1.6;">' + _invHubEsc(hint || 'لا توجد بيانات تشخيصية متاحة.') + '</div>';
+
+  if (sales.length) {
+    // Quick counts breakdown
+    var labelMap = {
+      recorded: 'مسجلة فعلاً',
+      different_warehouse: 'مستودع آخر',
+      skipped_semi: 'مرّ عبر نصف-مصنع',
+      no_recipe: 'بدون وصفة',
+      recipe_excludes_item: 'الوصفة لا تشمل الصنف',
+      unknown: 'حالة غير معروفة'
+    };
+    var pills = Object.keys(counts).map(function(k){
+      return '<span class="iv-live-pill" style="background:#e0f2fe;color:#075985;margin-inline-end:4px;">' +
+             _invHubEsc(labelMap[k] || k) + ' · ' + counts[k] + '</span>';
+    }).join('');
+    html += '<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:4px;">' + pills + '</div>';
+
+    // Up to 5 recent sales as a small table
+    var top5 = sales.slice(0, 5);
+    html += '<div style="margin-top:10px;font-size:11.5px;color:#64748b;">آخر ' + top5.length + ' من أصل ' + sales.length + ' عمليات بيع ذات صلة:</div>';
+    html += '<table style="width:100%;margin-top:6px;font-size:11.5px;border-collapse:collapse;">';
+    html += '<thead><tr style="background:#f1f5f9;color:#334155;">' +
+              '<th style="padding:6px 8px;text-align:right;">المنتج المُباع</th>' +
+              '<th style="padding:6px 8px;text-align:right;">الكمية</th>' +
+              '<th style="padding:6px 8px;text-align:right;">الحالة</th>' +
+              '<th style="padding:6px 8px;text-align:right;">رقم الطلب</th>' +
+            '</tr></thead><tbody>';
+    top5.forEach(function(r){
+      html += '<tr style="border-bottom:1px solid #e2e8f0;">' +
+                '<td style="padding:5px 8px;">' + _invHubEsc(r.menuName) + '</td>' +
+                '<td style="padding:5px 8px;">' + (Number(r.qty)||0) + '</td>' +
+                '<td style="padding:5px 8px;">' + _invHubEsc(labelMap[r.status] || r.status) + '</td>' +
+                '<td style="padding:5px 8px;color:#64748b;font-family:monospace;font-size:10.5px;">' + _invHubEsc(r.orderId) + '</td>' +
+              '</tr>';
+    });
+    html += '</tbody></table>';
+  }
+
+  html += '</div></div></div>';
+  return html;
 }
 
 // v5.10.8 — drill-down style helpers (tabs + export buttons + clickable cell)

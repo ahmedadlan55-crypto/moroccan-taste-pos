@@ -413,6 +413,94 @@ router.delete('/warehouses/:warehouseId/items/:itemId', async (req, res) => {
   } catch (e) { res.json({ success:false, error: e.message }); }
 });
 
+// v5.10.13 — list brand items NOT yet in this warehouse.
+// Used by the "غير منقولة" picker so the user can register them in bulk.
+//   GET /api/inventory/warehouses/:warehouseId/missing-items?brandId=X
+//   Optional brandId — when omitted, defaults to the warehouse's brand_id.
+//   Filters out: items already in warehouse_stock here, items with any
+//   inventory_movements record for this warehouse.
+router.get('/warehouses/:warehouseId/missing-items', async (req, res) => {
+  try {
+    const warehouseId = req.params.warehouseId;
+    const [whs] = await db.query('SELECT id, name, brand_id FROM warehouses WHERE id = ?', [warehouseId]);
+    if (!whs.length) return res.status(404).json({ success:false, error:'warehouse-not-found' });
+    const brandId = req.query.brandId || whs[0].brand_id || null;
+
+    // Brand catalog (active items)
+    let sql = 'SELECT i.id, i.name, i.category, i.unit, i.big_unit AS bigUnit, ' +
+              '       i.conv_rate AS convRate, i.cost, i.min_stock AS minStock, ' +
+              '       i.brand_id, b.name AS brand_name ' +
+              'FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id ' +
+              'WHERE i.active = 1';
+    const params = [];
+    if (brandId) { sql += ' AND i.brand_id = ?'; params.push(brandId); }
+    sql += ' AND i.id NOT IN (' +
+              ' SELECT ws.item_id FROM warehouse_stock ws WHERE ws.warehouse_id = ?' +
+              ' UNION ' +
+              ' SELECT DISTINCT im.item_id FROM inventory_movements im WHERE im.warehouse_id = ?' +
+            ') ORDER BY i.category, i.name';
+    params.push(warehouseId, warehouseId);
+    const [rows] = await db.query(sql, params);
+    res.json({
+      success: true,
+      warehouseId, warehouseName: whs[0].name,
+      brandId: brandId || null,
+      count: rows.length,
+      items: rows.map(r => ({
+        id: r.id, name: r.name, category: r.category || '',
+        unit: r.unit || 'حبة', bigUnit: r.bigUnit || '',
+        convRate: Number(r.convRate) || 1,
+        cost: Number(r.cost) || 0,
+        minStock: Number(r.minStock) || 0,
+        brandId: r.brand_id || '', brandName: r.brand_name || ''
+      }))
+    });
+  } catch(e) { console.error('[missing-items]', e); res.json({ success:false, error: e.message }); }
+});
+
+// v5.10.13 — bulk-register items into a warehouse with qty=0.
+//   POST /api/inventory/warehouses/:warehouseId/register-bulk
+//   body: { itemIds:[], firstAddedDate?, username? }
+//   Creates a warehouse_stock(qty=0, first_added_date=...) row for each
+//   itemId that doesn't already have one. Idempotent — silently skips
+//   items already registered.
+router.post('/warehouses/:warehouseId/register-bulk', async (req, res) => {
+  try {
+    const warehouseId = req.params.warehouseId;
+    const b = req.body || {};
+    const itemIds = Array.isArray(b.itemIds) ? b.itemIds.filter(Boolean) : [];
+    if (!itemIds.length) return res.json({ success:false, error:'no-items' });
+
+    const [whs] = await db.query('SELECT id FROM warehouses WHERE id = ?', [warehouseId]);
+    if (!whs.length) return res.status(404).json({ success:false, error:'warehouse-not-found' });
+
+    const firstAddedDate = b.firstAddedDate
+      ? new Date(b.firstAddedDate).toISOString().slice(0,10)
+      : new Date().toISOString().slice(0,10);
+    const username = b.username || 'system';
+
+    let registered = 0, skipped = 0;
+    for (const itemId of itemIds) {
+      const [exists] = await db.query(
+        'SELECT id FROM warehouse_stock WHERE warehouse_id = ? AND item_id = ?',
+        [warehouseId, itemId]);
+      if (exists.length) { skipped++; continue; }
+      const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
+      try {
+        await db.query(
+          'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, added_at, first_added_date, added_by, last_updated) ' +
+          'VALUES (?,?,?,?,?,?,?,?)',
+          [wsId, warehouseId, itemId, 0, new Date(), firstAddedDate, username, new Date()]);
+        registered++;
+      } catch(e) {
+        // Race / duplicate key — count as skipped, not as failure
+        skipped++;
+      }
+    }
+    res.json({ success:true, registered, skipped, total: itemIds.length });
+  } catch(e) { console.error('[register-bulk]', e); res.json({ success:false, error: e.message }); }
+});
+
 // v5.10.6 — Admin cleanup: removes warehouse_stock rows that look like
 // auto-backfill artifacts (qty=0, no first_added_date, and no movement
 // log referencing the (warehouse, item) pair). Idempotent + safe — only

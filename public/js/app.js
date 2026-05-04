@@ -5369,6 +5369,21 @@ function loadDashInvItems() {
       _invItemsMountShell();
       renderInvTable(applyInvFilters(cachedRawItems));
       _invItemsRenderKpis(cachedRawItems);
+      // v5.10.13 — fetch missing-items count for the banner (only when
+      // a specific warehouse is selected — pure brand views don't need it).
+      if (whId) {
+        var missQs = brandId ? '?brandId=' + encodeURIComponent(brandId) : '';
+        fetch('/api/inventory/warehouses/' + encodeURIComponent(whId) + '/missing-items' + missQs,
+              { headers: { 'Authorization': 'Bearer ' + token } })
+          .then(r => r.json())
+          .then(function(d) {
+            if (!d || !d.success) return;
+            var brandTotal = (d.count || 0) + cachedRawItems.length;
+            _invItemsRenderMissingBanner(brandTotal, cachedRawItems.length);
+          }).catch(function(){});
+      } else {
+        var b = q('#invItemsMissingBanner'); if (b) b.style.display = 'none';
+      }
     })
     .catch(function(err) {
       loader(false);
@@ -5414,7 +5429,165 @@ function _invItemsMountShell() {
   counts.id = 'invItemsCounts';
   counts.className = 'iv-items-counts';
   kpis.parentNode.insertBefore(counts, kpis.nextSibling);
+  // 4) v5.10.13 — Missing-items banner. Sits between counts and table.
+  //    Renders only when the warehouse has fewer items than the brand
+  //    catalog. Click → opens the missing-items picker modal.
+  var miss = document.createElement('div');
+  miss.id = 'invItemsMissingBanner';
+  miss.style.cssText = 'margin:8px 0;display:none;';
+  counts.parentNode.insertBefore(miss, counts.nextSibling);
 }
+
+// v5.10.13 — Render missing-items banner. Hidden when no gap.
+function _invItemsRenderMissingBanner(brandTotal, warehouseTotal) {
+  var box = q('#invItemsMissingBanner');
+  if (!box) return;
+  var whId = (window._invHub && window._invHub.warehouseId && window._invHub.warehouseId !== '__all__')
+    ? window._invHub.warehouseId : '';
+  if (!whId) { box.style.display = 'none'; return; }
+  var missing = Math.max(0, brandTotal - warehouseTotal);
+  if (missing <= 0) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  box.innerHTML =
+    '<div style="background:linear-gradient(135deg,#fff7ed,#ffedd5);border:1.5px solid #fdba74;' +
+                'border-radius:12px;padding:12px 18px;display:flex;align-items:center;gap:14px;' +
+                'box-shadow:0 1px 3px rgba(15,23,42,0.04);">' +
+      '<div style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,#f97316,#ea580c);' +
+                  'color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">' +
+        '<i class="fas fa-folder-tree"></i>' +
+      '</div>' +
+      '<div style="flex:1;">' +
+        '<div style="font-size:11px;color:#9a3412;font-weight:800;letter-spacing:0.4px;">كتالوج البراند</div>' +
+        '<div style="font-size:14px;font-weight:800;color:#7c2d12;">' +
+          'البراند يحتوي <b>' + brandTotal + '</b> صنف · في هذا المستودع <b>' + warehouseTotal + '</b> · ' +
+          'غير منقولة <b style="color:#b91c1c;">' + missing + '</b>' +
+        '</div>' +
+      '</div>' +
+      '<button class="iv-items-btn iv-items-btn-primary" onclick="invItemsOpenMissing()" style="background:#f97316;border-color:#ea580c;">' +
+        '<i class="fas fa-list-check"></i><span>عرض المتبقي</span>' +
+      '</button>' +
+    '</div>';
+}
+
+// v5.10.13 — Open the missing-items picker modal.
+window.invItemsOpenMissing = function() {
+  var whId = (window._invHub && window._invHub.warehouseId && window._invHub.warehouseId !== '__all__')
+    ? window._invHub.warehouseId : '';
+  if (!whId) return showToast('اختر مستودعاً أولاً', true);
+  var brandId = (window._invHub && window._invHub.brandId && window._invHub.brandId !== '__all__')
+    ? window._invHub.brandId : '';
+  loader(true);
+  var token = localStorage.getItem('pos_token') || '';
+  var qs = brandId ? '?brandId=' + encodeURIComponent(brandId) : '';
+  fetch('/api/inventory/warehouses/' + encodeURIComponent(whId) + '/missing-items' + qs,
+        { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => r.json())
+    .then(function(data) {
+      loader(false);
+      if (!data.success) return showToast(data.error || 'فشل التحميل', true);
+      _invItemsShowMissingModal(data, whId);
+    })
+    .catch(function(e) { loader(false); showToast(e.message || 'فشل', true); });
+};
+
+function _invItemsShowMissingModal(data, whId) {
+  window._invMissingPayload = { items: data.items || [], warehouseId: whId, warehouseName: data.warehouseName || '' };
+  var rows = (data.items || []).map(function(it) {
+    return '<tr data-item-id="' + _invHubEsc(it.id) + '">' +
+      '<td style="width:34px;"><input type="checkbox" class="iv-miss-chk" data-id="' + _invHubEsc(it.id) + '"></td>' +
+      '<td style="font-family:ui-monospace,monospace;color:#64748b;font-size:11px;">' + _invHubEsc(it.id) + '</td>' +
+      '<td style="font-weight:700;">' + _invHubEsc(it.name) + '</td>' +
+      '<td>' + _invHubEsc(it.category || '—') + '</td>' +
+      '<td>' + _invHubEsc(it.unit || '') + '</td>' +
+      '<td>' + Number(it.cost || 0).toFixed(4) + ' ر.س</td>' +
+    '</tr>';
+  }).join('');
+  var bodyHtml =
+    '<div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;">' +
+      '<input type="text" id="invMissSearch" placeholder="بحث بالاسم أو الكود..." class="form-control" style="flex:1;max-width:300px;" oninput="_invMissFilter(this.value)">' +
+      '<button class="btn btn-light" onclick="_invMissSelectAll(true)"><i class="fas fa-check-double"></i> تحديد الكل</button>' +
+      '<button class="btn btn-light" onclick="_invMissSelectAll(false)"><i class="fas fa-xmark"></i> إلغاء التحديد</button>' +
+      '<span id="invMissCount" style="margin-inline-start:auto;font-weight:800;color:#475569;">0 محدّد</span>' +
+    '</div>' +
+    '<div style="max-height:55vh;overflow:auto;border:1px solid #e5e7eb;border-radius:10px;">' +
+      '<table class="table" style="margin:0;width:100%;font-size:12.5px;">' +
+        '<thead style="position:sticky;top:0;background:#f8fafc;z-index:1;">' +
+          '<tr><th style="width:34px;"></th><th>الكود</th><th>الصنف</th><th>التصنيف</th><th>الوحدة</th><th>التكلفة</th></tr>' +
+        '</thead>' +
+        '<tbody id="invMissBody">' + (rows || '<tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8;">لا توجد أصناف غير منقولة في هذا المستودع</td></tr>') + '</tbody>' +
+      '</table>' +
+    '</div>';
+
+  ivShowModal({
+    icon: 'fa-folder-tree',
+    iconColor: '#f97316',
+    title: 'الأصناف غير المنقولة لمستودع: ' + (data.warehouseName || ''),
+    subtitle: data.count + ' صنف في كتالوج البراند ولم تُسجّل في هذا المستودع',
+    body: bodyHtml,
+    size: 'xl',
+    footer:
+      '<button class="iv-drill-btn" onclick="ivCloseModal()">إغلاق</button>' +
+      '<button class="iv-drill-btn primary" style="background:#f97316;color:#fff;border-color:#ea580c;font-weight:800;" onclick="_invMissRegisterSelected()"><i class="fas fa-floppy-disk"></i> تسجيل المحدد للمستودع</button>'
+  });
+  // Wire row checkboxes for the count badge
+  setTimeout(function() {
+    document.querySelectorAll('.iv-miss-chk').forEach(function(cb) {
+      cb.addEventListener('change', _invMissUpdateCount);
+    });
+    _invMissUpdateCount();
+  }, 50);
+}
+
+function _invMissUpdateCount() {
+  var n = document.querySelectorAll('.iv-miss-chk:checked').length;
+  var el = document.getElementById('invMissCount');
+  if (el) el.textContent = n + ' محدّد';
+}
+
+window._invMissFilter = function(qStr) {
+  qStr = (qStr || '').trim().toLowerCase();
+  var rows = document.querySelectorAll('#invMissBody tr');
+  rows.forEach(function(tr) {
+    var txt = tr.textContent.toLowerCase();
+    tr.style.display = (!qStr || txt.indexOf(qStr) !== -1) ? '' : 'none';
+  });
+};
+
+window._invMissSelectAll = function(check) {
+  // Only check visible rows (respect search filter)
+  document.querySelectorAll('#invMissBody tr').forEach(function(tr) {
+    if (tr.style.display === 'none') return;
+    var cb = tr.querySelector('.iv-miss-chk');
+    if (cb) cb.checked = !!check;
+  });
+  _invMissUpdateCount();
+};
+
+window._invMissRegisterSelected = function() {
+  var ids = Array.prototype.map.call(
+    document.querySelectorAll('.iv-miss-chk:checked'),
+    function(cb) { return cb.dataset.id; }
+  );
+  if (!ids.length) return showToast('حدّد صنفاً واحداً على الأقل', true);
+  var p = window._invMissingPayload || {};
+  loader(true);
+  fetch('/api/inventory/warehouses/' + encodeURIComponent(p.warehouseId) + '/register-bulk', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json',
+               'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') },
+    body: JSON.stringify({
+      itemIds: ids,
+      firstAddedDate: new Date().toISOString().slice(0,10),
+      username: (window.currentUser && window.currentUser.username) || ''
+    })
+  }).then(r => r.json()).then(function(j) {
+    loader(false);
+    if (!j.success) return showToast(j.error || 'فشل', true);
+    showToast('تم تسجيل ' + j.registered + ' صنف' + (j.skipped ? ' · تخطّي ' + j.skipped : ''));
+    ivCloseModal();
+    if (typeof loadDashInvItems === 'function') loadDashInvItems();
+  }).catch(function(e) { loader(false); showToast(e.message || 'فشل', true); });
+};
 
 function _invItemsRenderKpis(items) {
   var box = q('#invItemsKpis');

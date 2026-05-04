@@ -20395,6 +20395,10 @@ function _reBuildStylesheet() {
     /* ─── 2. Root + reset ─── */
     '#reEditorBody{font-feature-settings:"tnum","kern";font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}',
     '#reEditorBody *{box-sizing:border-box;}',
+    /* v5.10.17 — defensive: <datalist> should always be invisible. Some
+       UA stylesheets render it as an empty box if a global * rule sets
+       display. Belt-and-suspenders. */
+    'datalist{display:none !important;}',
     '.re-num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum";font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:-0.01em;}',
     '.re-num-good{color:' + C.success + ';font-weight:800;}',
 
@@ -20735,12 +20739,18 @@ function _reRenderEditor() {
   //     1) drastically smaller HTML strings (faster string concat + paint)
   //     2) hover/focus/responsive states that inline can't express
   //     3) tabular numerals so RTL/LTR digits align across rows + KPIs
-  if (!document.getElementById('reFullscreenStyles')) {
-    var st = document.createElement('style');
-    st.id = 'reFullscreenStyles';
-    st.textContent = _reBuildStylesheet();
-    document.head.appendChild(st);
+  // v5.10.17 — always-update stylesheet so a cached old version doesn't
+  // linger when the user gets a new app build. Was: insert-once gated on
+  // ID, which meant if the document already had a stale "reFullscreenStyles"
+  // style tag (from a previous render with a fixed but cached version),
+  // the new CSS never replaced it. Now we update textContent every render.
+  var __reSt = document.getElementById('reFullscreenStyles');
+  if (!__reSt) {
+    __reSt = document.createElement('style');
+    __reSt.id = 'reFullscreenStyles';
+    document.head.appendChild(__reSt);
   }
+  __reSt.textContent = _reBuildStylesheet();
   // V5.7.36 — Belt-and-suspenders: stamp data-re-fullscreen on the actual
   //   wo-modal-* nodes containing #reEditorBody so the fallback CSS catches
   //   browsers without :has() support.
@@ -21629,7 +21639,19 @@ function erpOpenSemiFinishedModal(id) {
   });
 }
 
+// v5.10.17 — global one-time defensive style: ensures <datalist> elements
+// are never accidentally rendered as visible boxes (some UA stylesheets +
+// some global selectors can flip them on). Idempotent.
+function _ensureDatalistHidden() {
+  if (document.getElementById('globalDatalistHide')) return;
+  var st = document.createElement('style');
+  st.id = 'globalDatalistHide';
+  st.textContent = 'datalist{display:none !important;position:absolute !important;left:-9999px !important;}';
+  document.head.appendChild(st);
+}
+
 function _openSemiFinishedInner(id, brandsList, currentBrand) {
+  _ensureDatalistHidden();
   var pool = window._sfItemsCache.length ? window._sfItemsCache : window._bmItemsCache || [];
   var m = (id != null && id !== '')
     ? pool.find(function(x){return String(x.id) === String(id);})
@@ -21652,10 +21674,10 @@ function _openSemiFinishedInner(id, brandsList, currentBrand) {
 
   // v5.10.16 — comprehensive unit set (matches what raw materials use)
   var prodUnits = ['لتر','مل','جرام','كجم','براد','صحن','كوب','حبة','قطعة','بوكس','كرتون','كيس','عبوة','pcs'];
-  var prodUnitOpts = prodUnits.map(function(u){
-    return '<option value="'+u+'"'+(mi.productionUnit===u?' selected':'')+'>'+u+'</option>';
-  }).join('');
-  // For unit pickers we use datalist so the user can also free-type
+  // For all unit pickers we use a single datalist + free-type inputs.
+  // This matches the "بحث برقم أو اسم" style of raw-material units —
+  // user types or picks. (v5.10.17 — productionUnit was a <select>, now
+  // it's a datalist input like the other 3 unit fields, per user request.)
   var unitDatalistId = 'sfUnitOpts';
 
   // Computed: estimated value of current stock at current cost
@@ -21708,7 +21730,8 @@ function _openSemiFinishedInner(id, brandsList, currentBrand) {
           '<input id="sfF_unit" class="wo-input" list="'+unitDatalistId+'" value="'+ _v3EscapeHtml(mi.unit||'') +'" placeholder="مثل: مل / جرام / حبة">' +
         '</div>' +
         '<div class="wo-field"><label class="wo-field-label">وحدة الإنتاج (تظهر في أوامر الإنتاج)</label>' +
-          '<select id="sfF_productionUnit" class="wo-select">'+ prodUnitOpts +'</select>' +
+          // v5.10.17 — same datalist input pattern as bigUnit/unit
+          '<input id="sfF_productionUnit" class="wo-input" list="'+unitDatalistId+'" value="'+ _v3EscapeHtml(mi.productionUnit||'لتر') +'" placeholder="مثل: لتر / براد / صحن">' +
         '</div>' +
       '</div>' +
     '</div>' +

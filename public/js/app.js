@@ -5813,13 +5813,22 @@ function renderInvTable(list) {
         var globalHint = (i.globalStock != null && Number(i.globalStock) > stock)
           ? '<div style="font-size:10.5px;color:#94a3b8;font-weight:600;margin-top:2px;">إجمالي عبر كل المستودعات: <b>' + Number(i.globalStock).toFixed(2) + ' ' + (i.unit||'') + '</b></div>'
           : '';
-        // v5.10.10 — small gray pill for items not yet registered in
-        // this warehouse (no warehouse_stock row). Saving any qty (or
-        // adjusting via the modal) creates the row automatically.
-        var regBadge = (i.isRegistered === false)
-          ? ' <span class="badge" style="background:#f1f5f9;color:#94a3b8;font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;" title="غير مسجّل في هذا المستودع — حفظ أي كمية يسجّله تلقائياً"><i class="fas fa-circle-question"></i> غير مسجّل</span>'
-          : '';
-        var rowOpacity = (i.isRegistered === false) ? 'opacity:0.78;' : '';
+        // v5.10.11 — three states for non-registered rows:
+        //   1. registered (ws row exists) → no badge
+        //   2. history only (transferred earlier, ws row gone) → blue
+        //      "كان موجوداً" badge so user can tell it's not random
+        //   3. brand catalog candidate → gray "غير مسجّل" pill
+        var regBadge = '';
+        var rowOpacity = '';
+        if (i.isRegistered === false) {
+          if (i.hasHistory) {
+            regBadge = ' <span class="badge" style="background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;" title="حُوِّل سابقاً لهذا المستودع ثم نفد — حفظ أي كمية يعيد تسجيله"><i class="fas fa-clock-rotate-left"></i> كان موجوداً</span>';
+            rowOpacity = 'opacity:0.85;';
+          } else {
+            regBadge = ' <span class="badge" style="background:#f1f5f9;color:#94a3b8;font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;" title="غير مسجّل في هذا المستودع — حفظ أي كمية يسجّله تلقائياً"><i class="fas fa-circle-question"></i> غير مسجّل</span>';
+            rowOpacity = 'opacity:0.78;';
+          }
+        }
         h += '<tr style="' + rowOpacity + '">' +
           '<td style="font-family:ui-monospace,monospace;color:#64748b;font-size:12px;">' + (i.id || '') + '</td>' +
           '<td style="font-weight:800;color:#0f172a;">' + (i.name || '') + regBadge + globalHint + '</td>' +

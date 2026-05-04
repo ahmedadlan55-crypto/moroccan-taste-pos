@@ -56,18 +56,21 @@ router.post('/warehouse-stock/backfill', async (req, res) => {
 router.get('/warehouses-by-brand', async (req, res) => {
   try {
     const { brandId } = req.query;
-    // v5.10.7 — DO NOT call _ensureWarehouseStockBackfilled here either.
-    // It was re-creating the same ghost rows (qty=0, no first_added_date)
-    // on every render of the warehouse picker, causing the card count
-    // (e.g. "159 صنف") to disagree with the items view inside the
-    // warehouse (which now correctly shows only the 2 items that were
-    // actually transferred). The count is now scoped to "real" entries:
-    // qty > 0 OR explicitly added (first_added_date IS NOT NULL).
+    // v5.10.11 — align the card count with the inside view of the
+    // warehouse. Each card now shows the size of the warehouse's
+    // catalog (registered + history + brand-matched), exactly like
+    // GET /items?warehouseId=X. The total/low/out values continue to
+    // reflect actual stock from warehouse_stock so the financial
+    // numbers stay honest.
     let sql = `
       SELECT w.id, w.name, w.code, w.brand_id, b.name AS brand_name, w.is_main, w.is_active,
-             COUNT(DISTINCT CASE
-               WHEN ws.qty > 0 OR ws.first_added_date IS NOT NULL
-               THEN ws.item_id END) AS item_count,
+             (SELECT COUNT(DISTINCT i.id) FROM inv_items i
+               WHERE i.active = 1
+                 AND (
+                   EXISTS(SELECT 1 FROM warehouse_stock ws2 WHERE ws2.item_id = i.id AND ws2.warehouse_id = w.id)
+                   OR (w.brand_id IS NOT NULL AND i.brand_id = w.brand_id)
+                   OR EXISTS(SELECT 1 FROM inventory_movements im WHERE im.item_id = i.id AND im.warehouse_id = w.id)
+                 )) AS item_count,
              COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty * i.cost ELSE 0 END), 0) AS total_value,
              SUM(CASE WHEN ws.qty > 0 AND ws.qty <= i.min_stock AND i.min_stock > 0 THEN 1 ELSE 0 END) AS low_count,
              SUM(CASE WHEN ws.first_added_date IS NOT NULL AND ws.qty <= 0 THEN 1 ELSE 0 END) AS out_count
@@ -125,12 +128,16 @@ router.get('/items', async (req, res) => {
     const { brandId, warehouseId, expandWarehouses } = req.query;
 
     if (warehouseId) {
-      // v5.10.10 — Brand-wide LEFT JOIN.
-      // Show every active inv_item belonging to the warehouse's brand,
-      // even if it has no warehouse_stock row yet. Items without a row
-      // appear with qty=0 and isRegistered=false — the user explicitly
-      // asked to see the full brand catalog inside the warehouse (159
-      // expected, not 13).
+      // v5.10.11 — Union of three sources so every item the warehouse
+      // ever touched appears, with qty pulled from warehouse_stock when
+      // present (else 0):
+      //   (a) items currently registered in warehouse_stock here
+      //   (b) items with any movement history for this warehouse
+      //       (covers "transferred earlier then consumed" — they should
+      //        show with qty=0, not disappear)
+      //   (c) items belonging to the warehouse's brand (brand catalog)
+      // Warehouses without a brand_id (general/main) skip (c) and rely
+      // on (a)+(b) so they're not empty.
       let sql = `
         SELECT i.*, b.name AS brand_name,
                w.id AS wh_id, w.name AS wh_name, w.code AS wh_code,
@@ -140,13 +147,21 @@ router.get('/items', async (req, res) => {
                ws.added_at                 AS wh_added_at,
                ws.first_added_date         AS wh_first_added,
                ws.last_updated             AS wh_last_updated,
-               (ws.id IS NOT NULL)         AS is_registered
-        FROM warehouses w
-        JOIN inv_items   i ON i.brand_id = w.brand_id AND i.active = 1
+               (ws.id IS NOT NULL)         AS is_registered,
+               EXISTS(SELECT 1 FROM inventory_movements im
+                      WHERE im.item_id = i.id AND im.warehouse_id = w.id) AS has_history
+        FROM inv_items i
+        JOIN warehouses w ON w.id = ?
         LEFT JOIN warehouse_stock ws
                ON ws.item_id = i.id AND ws.warehouse_id = w.id
         LEFT JOIN brands b ON b.id = i.brand_id
-        WHERE w.id = ?`;
+        WHERE i.active = 1
+          AND (
+            ws.id IS NOT NULL
+            OR (w.brand_id IS NOT NULL AND i.brand_id = w.brand_id)
+            OR EXISTS(SELECT 1 FROM inventory_movements im2
+                      WHERE im2.item_id = i.id AND im2.warehouse_id = w.id)
+          )`;
       const params = [warehouseId];
       if (brandId) { sql += ' AND i.brand_id = ?'; params.push(brandId); }
       sql += ' ORDER BY i.category, i.name';
@@ -171,7 +186,12 @@ router.get('/items', async (req, res) => {
         lastUpdated: i.wh_last_updated || null,
         // v5.10.10 — true if a warehouse_stock row exists; false means
         // it's a candidate brand item not yet registered in this warehouse
-        isRegistered: !!Number(i.is_registered)
+        isRegistered: !!Number(i.is_registered),
+        // v5.10.11 — true if any movement record exists for this
+        // (item, warehouse) pair. Lets the UI show a different badge
+        // for "had history but no longer registered" (transferred and
+        // consumed) vs "candidate from brand catalog".
+        hasHistory: !!Number(i.has_history)
       })));
     }
 

@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const db = require('../db/connection');
+const { recomputeInvItemStock } = require('../lib/stockRecompute');
 
 // ─── Purchases ───
 
@@ -226,19 +227,30 @@ router.post('/receive/:id', async (req, res) => {
         newCost = currentCost;
       }
 
-      const [result] = await db.query(
-        'UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?',
-        [stockQty, newCost, inv.id]
-      );
-      let affectedRows = result.affectedRows;
-
-      // ─── UPDATE WAREHOUSE STOCK (per-warehouse inventory) ───
+      // v5.10.19 — warehouse_stock is the source of truth. Cost (WAC) is
+      // still global on inv_items.cost; quantity becomes a recomputed
+      // SUM(warehouse_stock.qty) rollup.
+      let affectedRows;
       if (warehouseId) {
         const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
         await db.query(
           'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE qty = qty + ?',
           [wsId, warehouseId, inv.id, stockQty, stockQty]
         );
+        // Update WAC + recompute the global stock rollup
+        const [costRes] = await db.query(
+          'UPDATE inv_items SET cost = ? WHERE id = ?',
+          [newCost, inv.id]
+        );
+        affectedRows = costRes.affectedRows;
+        await recomputeInvItemStock(db, inv.id);
+      } else {
+        // Legacy fallback: no warehouse — direct global write (qty + cost).
+        const [result] = await db.query(
+          'UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?',
+          [stockQty, newCost, inv.id]
+        );
+        affectedRows = result.affectedRows;
       }
 
       // ─── PURCHASE LOT (for future FIFO) ───
@@ -385,9 +397,22 @@ router.post('/receive/:id/revert', async (req, res) => {
       }
     }
 
-    // Roll back stock (using the converted quantity, not the raw ordered qty)
+    // v5.10.19 — Roll back stock at the warehouse level first (the warehouse
+    // the purchase landed in), then recompute the global inv_items.stock.
+    // This keeps other warehouses' balances untouched if a purchase received
+    // in W1 is reverted; only W1's quantity is decreased.
+    const purchaseWh = purchase.warehouse_id || null;
     for (const r of resolved) {
-      await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [r.stockQty, r.inv.id]);
+      if (purchaseWh) {
+        await db.query(
+          'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
+          [r.stockQty, purchaseWh, r.inv.id]
+        );
+        await recomputeInvItemStock(db, r.inv.id);
+      } else {
+        // Legacy purchase with no warehouse_id stamped — fall back to global.
+        await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [r.stockQty, r.inv.id]);
+      }
     }
 
     // Delete the movements created by the receive

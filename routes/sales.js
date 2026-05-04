@@ -2,6 +2,7 @@ const router = require('express').Router();
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
 const zatca = require('../lib/zatca');
+const { recomputeInvItemStock, recomputeMenuStock } = require('../lib/stockRecompute');
 
 const VAT_RATE = Number(process.env.VAT_RATE) || 15;
 const SELLER_NAME_FALLBACK = process.env.COMPANY_NAME || 'Moroccan Taste';
@@ -306,14 +307,18 @@ router.post('/', async (req, res) => {
       if (semiConsumeMap[item.id]) {
         const sc = semiConsumeMap[item.id];
         const consumed = sc.semiQty * item.qty;
-        // Update menu.stock for the semi-finished (central total)
-        await db.query('UPDATE menu SET stock = GREATEST(0, stock - ?) WHERE id = ?', [consumed, sc.semiId]);
-        // Update warehouse_stock for the branch's warehouse
+        // v5.10.19 — warehouse_stock is the source of truth. menu.stock for
+        // semi-finished products becomes a SUM(warehouse_stock.qty) rollup
+        // so multi-warehouse balances stay independent.
         if (warehouseId) {
           await db.query(
             'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
             [consumed, warehouseId, sc.semiId]
           );
+          await recomputeMenuStock(db, sc.semiId);
+        } else {
+          // Legacy fallback: no warehouse — deduct global menu.stock directly.
+          await db.query('UPDATE menu SET stock = GREATEST(0, stock - ?) WHERE id = ?', [consumed, sc.semiId]);
         }
         // Movement log
         const movId = 'MOV-SEMI-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
@@ -335,16 +340,20 @@ router.post('/', async (req, res) => {
       // ALSO deduct from menu.stock + warehouse_stock so the cashier sees the right
       // remaining count. For made-to-order (made_at_branch/kitchen/prepared) items,
       // skip menu.stock entirely — the only truth is the ingredients.
+      // v5.10.19 — warehouse_stock leads, menu.stock is recomputed as the sum.
       const meta = productionMetaMap[item.id];
       if (meta && meta.method === 'imported') {
         try {
-          await db.query(
-            `UPDATE menu SET stock = ${meta.allowNegative ? 'stock - ?' : 'GREATEST(0, stock - ?)'} WHERE id = ?`,
-            [item.qty, item.id]);
           if (warehouseId) {
             await db.query(
               `UPDATE warehouse_stock SET qty = ${meta.allowNegative ? 'qty - ?' : 'GREATEST(0, qty - ?)'} WHERE warehouse_id = ? AND item_id = ?`,
               [item.qty, warehouseId, item.id]);
+            await recomputeMenuStock(db, item.id);
+          } else {
+            // Legacy: no warehouse → write global menu.stock directly.
+            await db.query(
+              `UPDATE menu SET stock = ${meta.allowNegative ? 'stock - ?' : 'GREATEST(0, stock - ?)'} WHERE id = ?`,
+              [item.qty, item.id]);
           }
         } catch(_) {}
       }
@@ -359,19 +368,25 @@ router.post('/', async (req, res) => {
       for (const ing of recipeMap[item.id]) {
         const deduct = ing.qtyUsed * item.qty;
 
-        // CRITICAL: deduct from central inventory
-        const [updateResult] = await db.query(
-          'UPDATE inv_items SET stock = stock - ? WHERE id = ?',
-          [deduct, ing.invId]
-        );
-        const affected = updateResult.affectedRows;
-
-        // Deduct from warehouse stock (branch-specific)
+        // v5.10.19 — Deduct from per-warehouse balance first (source of
+        // truth), then recompute the global inv_items.stock rollup. This
+        // means W1's sale never touches W2's balance, and the global field
+        // always equals SUM(warehouse_stock) without drift.
+        let affected = 0;
         if (warehouseId) {
-          await db.query(
+          const [whRes] = await db.query(
             'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
             [deduct, warehouseId, ing.invId]
           );
+          affected = whRes.affectedRows;
+          await recomputeInvItemStock(db, ing.invId);
+        } else {
+          // Legacy fallback: no warehouse context — direct global write.
+          const [updateResult] = await db.query(
+            'UPDATE inv_items SET stock = stock - ? WHERE id = ?',
+            [deduct, ing.invId]
+          );
+          affected = updateResult.affectedRows;
         }
 
         // Record movement with warehouse reference

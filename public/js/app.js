@@ -8658,31 +8658,47 @@ function _invLiveInjectStyles() {
 let cachedStItems = [];
 function loadDashStocktake() {
   loader();
-  api.withSuccessHandler(res => {
-    loader(false);
-    let h = "";
-    if (!res || !res.length) {
-      h = "<tr><td colspan='6' style='text-align:center; padding:30px;'>لا توجد عمليات جرد سابقة</td></tr>";
-    } else {
-      res.forEach(st => {
-        var dateStr = st.date ? new Date(st.date).toLocaleString('ar-SA') : '';
-        var varColor = st.totalVariance === 0 ? '#16a34a' : (st.totalVariance > 0 ? '#2563eb' : '#ef4444');
-        h += '<tr>'+
-          '<td style="font-family:monospace;color:#64748b;font-size:12px;">'+st.id+'</td>'+
-          '<td>'+dateStr+'</td>'+
-          '<td style="font-weight:bold;">'+st.username+'</td>'+
-          '<td>'+st.itemsCount+' صنف</td>'+
-          '<td style="font-weight:800;color:'+varColor+';">'+Number(st.totalVariance).toFixed(2)+'</td>'+
-          '<td style="white-space:nowrap;">'+
-            '<button class="btn btn-primary btn-sm" onclick="viewStocktakeDetail(\''+st.id+'\')" title="عرض التفاصيل"><i class="fas fa-eye"></i></button> '+
-            '<button class="btn btn-light btn-sm" onclick="printStocktake(\''+st.id+'\')" title="طباعة المحضر"><i class="fas fa-print"></i></button> '+
-            (state.isDeveloper ? '<button class="btn btn-danger btn-sm" onclick="deleteStocktake(\''+st.id+'\')" title="حذف"><i class="fas fa-trash"></i></button>' : '')+
-          '</td>'+
-        '</tr>';
-      });
-    }
-    q("#tbStocktake").innerHTML = h;
-  }).getAllStocktakes();
+  // v5.10.19 — when the inventory hub is scoped to a single warehouse,
+  // pass it as a query param so the list reflects that scope. When the
+  // user is on "all warehouses", every stocktake is shown but each row
+  // carries a warehouse-name column for clarity.
+  var token = localStorage.getItem('pos_token') || '';
+  var hubWh = (window._invHub && window._invHub.warehouseId && window._invHub.warehouseId !== '__all__')
+    ? window._invHub.warehouseId : '';
+  var url = '/api/inventory/stocktakes' + (hubWh ? ('?warehouseId=' + encodeURIComponent(hubWh)) : '');
+  fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(res) {
+      loader(false);
+      let h = "";
+      if (!res || !res.length) {
+        h = "<tr><td colspan='7' style='text-align:center; padding:30px;'>" +
+            (hubWh ? "لا توجد عمليات جرد لهذا المستودع" : "لا توجد عمليات جرد سابقة") +
+            "</td></tr>";
+      } else {
+        res.forEach(function(st) {
+          var dateStr = st.date ? new Date(st.date).toLocaleString('ar-SA') : '';
+          var varColor = st.totalVariance === 0 ? '#16a34a' : (st.totalVariance > 0 ? '#2563eb' : '#ef4444');
+          var whCell = st.warehouseName
+            ? '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(st.warehouseName) + '</span>'
+            : '<span style="color:#cbd5e1;font-size:11px;">—</span>';
+          h += '<tr>'+
+            '<td style="font-family:monospace;color:#64748b;font-size:12px;">'+st.id+'</td>'+
+            '<td>'+dateStr+'</td>'+
+            '<td>'+whCell+'</td>'+
+            '<td style="font-weight:bold;">'+st.username+'</td>'+
+            '<td>'+st.itemsCount+' صنف</td>'+
+            '<td style="font-weight:800;color:'+varColor+';">'+Number(st.totalVariance).toFixed(2)+'</td>'+
+            '<td style="white-space:nowrap;">'+
+              '<button class="btn btn-primary btn-sm" onclick="viewStocktakeDetail(\''+st.id+'\')" title="عرض التفاصيل"><i class="fas fa-eye"></i></button> '+
+              '<button class="btn btn-light btn-sm" onclick="printStocktake(\''+st.id+'\')" title="طباعة المحضر"><i class="fas fa-print"></i></button> '+
+              (state.isDeveloper ? '<button class="btn btn-danger btn-sm" onclick="deleteStocktake(\''+st.id+'\')" title="حذف"><i class="fas fa-trash"></i></button>' : '')+
+            '</td>'+
+          '</tr>';
+        });
+      }
+      q("#tbStocktake").innerHTML = h;
+    }).catch(function(){ loader(false); });
 }
 
 // View stocktake detail in a modal

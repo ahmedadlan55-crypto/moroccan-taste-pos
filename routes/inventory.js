@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const db = require('../db/connection');
+const { recomputeInvItemStock, recomputeMenuStock, reconcileAllStock } = require('../lib/stockRecompute');
 
 // V5.9.1 — Backfill helper.  Ensures EVERY active inv_item has at least one
 //   warehouse_stock row so the warehouse-aware UI never hides items.
@@ -47,6 +48,32 @@ async function _ensureWarehouseStockBackfilled() {
 // Manual backfill trigger (admin only — one-time)
 router.post('/warehouse-stock/backfill', async (req, res) => {
   res.json(await _ensureWarehouseStockBackfilled());
+});
+
+// v5.10.19 — Reconcile inv_items.stock and menu.stock against
+// SUM(warehouse_stock.qty). Use this once after deploying the
+// warehouse-isolation fix to repair any historical drift, and any time you
+// suspect the rollups are out of sync with per-warehouse balances.
+//
+// GET /api/inventory/reconcile-stock?dryRun=1   → returns the drift list
+//                                                  without writing anything
+// POST /api/inventory/reconcile-stock           → recomputes both rollups
+router.get('/reconcile-stock', async (req, res) => {
+  try {
+    const result = await reconcileAllStock(db, { reportDrift: true });
+    res.json({ success: true, dryRun: true, ...result });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/reconcile-stock', async (req, res) => {
+  try {
+    const result = await reconcileAllStock(db, { reportDrift: true });
+    res.json({ success: true, dryRun: false, ...result });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
 });
 
 // V5.9.0 — Warehouses for a brand, with per-warehouse inventory stats.
@@ -588,22 +615,33 @@ router.post('/items/import', async (req, res) => {
 });
 
 // Get inventory movements
+// v5.10.19 — added warehouseId scoping so movements list no longer mixes
+// warehouses by default. Also returns warehouse_id + warehouse_name on each
+// row so the UI can render a "المستودع" column.
 router.get('/movements', async (req, res) => {
   try {
-    let query = 'SELECT * FROM inventory_movements WHERE 1=1';
+    let query =
+      'SELECT m.*, w.name AS warehouse_name, w.code AS warehouse_code ' +
+      'FROM inventory_movements m ' +
+      'LEFT JOIN warehouses w ON w.id = m.warehouse_id ' +
+      'WHERE 1=1';
     const params = [];
 
-    if (req.query.startDate) { query += ' AND DATE(movement_date) >= ?'; params.push(req.query.startDate); }
-    if (req.query.endDate) { query += ' AND DATE(movement_date) <= ?'; params.push(req.query.endDate); }
-    if (req.query.itemId) { query += ' AND item_id = ?'; params.push(req.query.itemId); }
-    if (req.query.type) { query += ' AND type = ?'; params.push(req.query.type); }
+    if (req.query.startDate)   { query += ' AND DATE(m.movement_date) >= ?'; params.push(req.query.startDate); }
+    if (req.query.endDate)     { query += ' AND DATE(m.movement_date) <= ?'; params.push(req.query.endDate); }
+    if (req.query.itemId)      { query += ' AND m.item_id = ?';       params.push(req.query.itemId); }
+    if (req.query.type)        { query += ' AND m.type = ?';          params.push(req.query.type); }
+    if (req.query.warehouseId) { query += ' AND m.warehouse_id = ?';  params.push(req.query.warehouseId); }
 
-    query += ' ORDER BY movement_date DESC LIMIT 500';
+    query += ' ORDER BY m.movement_date DESC LIMIT 500';
 
     const [rows] = await db.query(query, params);
     res.json(rows.map(m => ({
       id: m.id, date: m.movement_date, itemId: m.item_id, itemName: m.item_name,
-      type: m.type, qty: Number(m.qty), reason: m.reason, username: m.username, notes: m.notes
+      type: m.type, qty: Number(m.qty), reason: m.reason, username: m.username, notes: m.notes,
+      warehouseId: m.warehouse_id || '',
+      warehouseName: m.warehouse_name || '',
+      warehouseCode: m.warehouse_code || ''
     })));
   } catch (e) {
     res.json([]);
@@ -649,23 +687,29 @@ router.post('/stock-update', async (req, res) => {
       );
     }
 
-    // Update stock on inv_items (central total)
-    if (type === 'in') {
-      await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?', [qty, itemId]);
+    // v5.10.19 — warehouse_stock is the source of truth. We write the
+    // per-warehouse delta first, then recompute inv_items.stock as a
+    // SUM(warehouse_stock.qty) rollup so totals stay consistent across
+    // warehouses without overwriting any other warehouse's balance.
+    const delta = (type === 'in') ? Number(qty) : -Number(qty);
+    if (warehouseId) {
+      try {
+        const wsId = 'WS-' + warehouseId + '-' + itemId;
+        await db.query(
+          `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?)
+           ON DUPLICATE KEY UPDATE qty = GREATEST(0, qty + VALUES(qty))`,
+          [wsId, warehouseId, itemId, delta]
+        );
+        await recomputeInvItemStock(db, itemId);
+      } catch(e) { /* warehouse_stock missing on very old deploy — fall through */ }
     } else {
-      await db.query('UPDATE inv_items SET stock = GREATEST(0, stock - ?) WHERE id = ?', [qty, itemId]);
+      // Legacy fallback: no warehouse context — direct global write.
+      if (type === 'in') {
+        await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?', [qty, itemId]);
+      } else {
+        await db.query('UPDATE inv_items SET stock = GREATEST(0, stock - ?) WHERE id = ?', [qty, itemId]);
+      }
     }
-
-    // Also update warehouse_stock so per-warehouse totals stay accurate
-    try {
-      const wsId = 'WS-' + warehouseId + '-' + itemId;
-      const delta = (type === 'in') ? Number(qty) : -Number(qty);
-      await db.query(
-        `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?)
-         ON DUPLICATE KEY UPDATE qty = GREATEST(0, qty + VALUES(qty))`,
-        [wsId, warehouseId, itemId, delta]
-      );
-    } catch(e) { /* tolerate if warehouse_stock missing on old deploy */ }
 
     res.json({ success: true, movementId: movId, warehouseId: warehouseId, branchId: branchId });
   } catch (e) {
@@ -967,10 +1011,31 @@ router.get('/live-report', async (req, res) => {
     const periodDays = Math.max(1, Math.ceil((endD - startD) / (24 * 3600 * 1000)));
     const SLOW_DAYS = 60;  // Items with no movement in 60+ days are "slow-moving"
 
+    // v5.10.19 — When scoped to one warehouse, "current stock" must come
+    // from warehouse_stock for THAT warehouse, not from inv_items.stock
+    // (which is the sum across all warehouses). Without this, the live
+    // report's opening/closing/value columns mixed the global rollup with
+    // per-warehouse movement deltas — producing the figures the user saw
+    // as "warehouses are mixed."
+    const whStockMap = {};
+    if (warehouseId && itemIds.length) {
+      try {
+        const [whRows] = await db.query(
+          'SELECT item_id, qty FROM warehouse_stock WHERE warehouse_id = ? AND item_id IN (' + placeholders + ')',
+          [warehouseId, ...itemIds]
+        );
+        whRows.forEach(r => { whStockMap[r.item_id] = Number(r.qty) || 0; });
+      } catch (_) { /* schema diff — fall back to global stock */ }
+    }
+
     // Compute the per-item summary
     const totals = _zeroTotals();
     const result = items.map(i => {
-      const cur = Number(i.stock) || 0;
+      // Warehouse-scoped reports must read warehouse_stock; un-scoped
+      // reports keep using the inv_items.stock rollup.
+      const cur = warehouseId
+        ? (whStockMap[i.id] !== undefined ? whStockMap[i.id] : 0)
+        : (Number(i.stock) || 0);
       const opening = cur - (netSinceStart[i.id] || 0);
       const closing = cur - (netSinceEnd[i.id]   || 0);
       const b = byItem[i.id] || {
@@ -1516,16 +1581,21 @@ router.post('/stocktakes', async (req, res) => {
       if (diff > 0) totalGainCost += varianceCost;
       else          totalLossCost += varianceCost;
 
-      // Update central stock
-      await db.query('UPDATE inv_items SET stock = ? WHERE id = ?', [actQty, itemId]);
-
-      // Update warehouse stock if warehouse specified
+      // v5.10.19 — Stock writes are now warehouse-scoped: the user's count
+      // applies ONLY to the warehouse they're counting; other warehouses'
+      // stock is preserved. inv_items.stock becomes a derived rollup
+      // (= SUM(warehouse_stock.qty)). Previous behavior overwrote the
+      // global field with one warehouse's count, destroying others' data.
       if (warehouseId) {
         const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
         await db.query(
           'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE qty = ?',
           [wsId, warehouseId, itemId, actQty, actQty]
         );
+        await recomputeInvItemStock(db, itemId);
+      } else {
+        // Legacy fallback: no warehouse scope — overwrite global directly.
+        await db.query('UPDATE inv_items SET stock = ? WHERE id = ?', [actQty, itemId]);
       }
 
       // Record movement with warehouse reference
@@ -1605,12 +1675,28 @@ router.post('/stocktakes', async (req, res) => {
 });
 
 // Get all stocktakes (list)
+// v5.10.19 — accepts ?warehouseId= to scope the list to one warehouse, and
+// joins warehouses so each row carries warehouse name/code for UI grouping.
 router.get('/stocktakes', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM stocktakes ORDER BY stocktake_date DESC LIMIT 200');
+    let sql =
+      'SELECT s.*, w.name AS warehouse_name, w.code AS warehouse_code ' +
+      'FROM stocktakes s ' +
+      'LEFT JOIN warehouses w ON w.id = s.warehouse_id ';
+    const params = [];
+    const conds = [];
+    if (req.query.warehouseId) { conds.push('s.warehouse_id = ?'); params.push(req.query.warehouseId); }
+    if (req.query.startDate)   { conds.push('DATE(s.stocktake_date) >= ?'); params.push(req.query.startDate); }
+    if (req.query.endDate)     { conds.push('DATE(s.stocktake_date) <= ?'); params.push(req.query.endDate); }
+    if (conds.length) sql += 'WHERE ' + conds.join(' AND ') + ' ';
+    sql += 'ORDER BY s.stocktake_date DESC LIMIT 200';
+    const [rows] = await db.query(sql, params);
     res.json(rows.map(s => ({
       id: s.id, date: s.stocktake_date, username: s.username, notes: s.notes,
-      status: s.status, itemsCount: s.items_count, totalVariance: Number(s.total_variance)
+      status: s.status, itemsCount: s.items_count, totalVariance: Number(s.total_variance),
+      warehouseId: s.warehouse_id || '',
+      warehouseName: s.warehouse_name || '',
+      warehouseCode: s.warehouse_code || ''
     })));
   } catch (e) { res.json([]); }
 });

@@ -20537,14 +20537,18 @@ function _reBuildStylesheet() {
     '.re-add-btn i{font-size:11px;}',
     '.re-add-count{background:rgba(255,255,255,0.25);padding:1px 7px;border-radius:6px;font-variant-numeric:tabular-nums;min-width:22px;text-align:center;}',
 
-    '.re-search{position:relative;margin-bottom:10px;}',
-    '.re-search-icon{position:absolute;top:50%;inset-inline-start:13px;transform:translateY(-50%);color:' + C.muted + ';font-size:13px;pointer-events:none;}',
-    '.re-search-input{width:100%;padding:10px 40px;border:1.5px solid ' + C.border + ';border-radius:11px;font-size:13.5px;',
-      'background:#fff;font-family:inherit;direction:rtl;color:' + C.ink + ';transition:border-color 0.15s,box-shadow 0.15s;}',
-    '.re-search-input:focus{outline:none;border-color:' + C.primary + ';box-shadow:0 0 0 3px ' + C.primarySoft + ';}',
+    // v5.10.15 — simplified search box: single full-width input with the
+    // search icon as a leading affix, no absolute positioning. Removed
+    // the keyboard "/" hint badge that was visually breaking up the input
+    // and confusing users into thinking there were two separate boxes.
+    '.re-search{display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff;',
+      'border:1.5px solid ' + C.border + ';border-radius:11px;margin-bottom:10px;',
+      'transition:border-color 0.15s,box-shadow 0.15s;box-sizing:border-box;}',
+    '.re-search:focus-within{border-color:' + C.primary + ';box-shadow:0 0 0 3px ' + C.primarySoft + ';}',
+    '.re-search-icon{color:' + C.muted + ';font-size:14px;flex-shrink:0;pointer-events:none;}',
+    '.re-search-input{flex:1;border:none;outline:none;background:transparent;font-size:14px;',
+      'font-family:inherit;direction:rtl;color:' + C.ink + ';padding:2px 0;line-height:1.4;}',
     '.re-search-input::placeholder{color:' + C.muted + ';}',
-    '.re-search-kbd{position:absolute;top:50%;inset-inline-end:12px;transform:translateY(-50%);background:' + C.surfaceAlt + ';',
-      'color:' + C.muted + ';padding:3px 8px;border-radius:5px;font-family:inherit;font-size:11px;font-weight:700;border:1px solid ' + C.border + ';line-height:1;}',
 
     '.re-pills{display:flex;gap:6px;flex-wrap:wrap;padding:2px 0;}',
     '.re-pill{background:' + C.surfaceAlt + ';color:' + C.sub + ';border:1px solid ' + C.border + ';',
@@ -20783,6 +20787,19 @@ function _reRenderEditor() {
 
   _reInstallShortcuts();
 
+  // v5.10.15 — defensive: bind 'input' event programmatically as a
+  // backup to the inline oninput attribute. Some browsers/extensions
+  // can strip inline handlers; this ensures the search always reacts.
+  // Also stops any keydown event in the search from bubbling to the
+  // global '/' shortcut handler.
+  var searchEl = document.getElementById('rePickerSearchInput');
+  if (searchEl && !searchEl._reBound) {
+    searchEl._reBound = true;
+    searchEl.addEventListener('input', function() { window.rePickerSearch(this.value); });
+    searchEl.addEventListener('keydown', function(e) { e.stopPropagation(); });
+    searchEl.addEventListener('keyup',   function(e) { e.stopPropagation(); });
+  }
+
   // v5.10.14 — restore search input focus + caret after a full re-render
   // (triggered by add/remove/clear). Without this the user feels like
   // typing is lost when a list change re-builds the editor.
@@ -21014,12 +21031,12 @@ function _reRenderPickerPanel() {
                  '<i class="fas fa-plus"></i><span>أضف</span><span class="re-add-count" id="reSelCount">0</span>' +
                '</button>' +
              '</div>' +
-             // Search box with slash hint
-             '<div class="re-search">' +
+             // v5.10.15 — Simplified search: one flex container with icon
+             // + input. No kbd badge (was visually breaking the box).
+             '<label class="re-search" for="rePickerSearchInput">' +
                '<i class="fas fa-search re-search-icon"></i>' +
-               '<input type="text" id="rePickerSearchInput" class="re-search-input" placeholder="ابحث عن مكوّن..." value="' + _v3EscapeHtml(search) + '" oninput="rePickerSearch(this.value)" autocomplete="off">' +
-               '<kbd class="re-search-kbd">/</kbd>' +
-             '</div>' +
+               '<input type="text" id="rePickerSearchInput" class="re-search-input" placeholder="ابحث عن مكوّن بالاسم أو الكود..." value="' + _v3EscapeHtml(search) + '" oninput="rePickerSearch(this.value)" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">' +
+             '</label>' +
              // Category pills
              pillsHtml +
            '</header>' +

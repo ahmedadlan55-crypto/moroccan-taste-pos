@@ -56,19 +56,17 @@ router.post('/warehouse-stock/backfill', async (req, res) => {
 router.get('/warehouses-by-brand', async (req, res) => {
   try {
     const { brandId } = req.query;
-    // v5.10.11 — align the card count with the inside view of the
-    // warehouse. Each card now shows the size of the warehouse's
-    // catalog (registered + history + brand-matched), exactly like
-    // GET /items?warehouseId=X. The total/low/out values continue to
-    // reflect actual stock from warehouse_stock so the financial
-    // numbers stay honest.
+    // v5.10.12 — same independent-warehouse rule as /items?warehouseId.
+    // Card count = items that have actually touched this warehouse
+    // (registered or with movement history). Brand-matched items are
+    // NOT auto-counted: a warehouse with 2 transfers shows "2 صنف",
+    // not the entire brand catalog.
     let sql = `
       SELECT w.id, w.name, w.code, w.brand_id, b.name AS brand_name, w.is_main, w.is_active,
              (SELECT COUNT(DISTINCT i.id) FROM inv_items i
                WHERE i.active = 1
                  AND (
                    EXISTS(SELECT 1 FROM warehouse_stock ws2 WHERE ws2.item_id = i.id AND ws2.warehouse_id = w.id)
-                   OR (w.brand_id IS NOT NULL AND i.brand_id = w.brand_id)
                    OR EXISTS(SELECT 1 FROM inventory_movements im WHERE im.item_id = i.id AND im.warehouse_id = w.id)
                  )) AS item_count,
              COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty * i.cost ELSE 0 END), 0) AS total_value,
@@ -128,16 +126,14 @@ router.get('/items', async (req, res) => {
     const { brandId, warehouseId, expandWarehouses } = req.query;
 
     if (warehouseId) {
-      // v5.10.11 — Union of three sources so every item the warehouse
-      // ever touched appears, with qty pulled from warehouse_stock when
-      // present (else 0):
-      //   (a) items currently registered in warehouse_stock here
-      //   (b) items with any movement history for this warehouse
-      //       (covers "transferred earlier then consumed" — they should
-      //        show with qty=0, not disappear)
-      //   (c) items belonging to the warehouse's brand (brand catalog)
-      // Warehouses without a brand_id (general/main) skip (c) and rely
-      // on (a)+(b) so they're not empty.
+      // v5.10.12 — Each warehouse is an independent entity. It shows
+      // ONLY items that have touched it via either:
+      //   (a) a warehouse_stock row (registered)
+      //   (b) any inventory_movements record (transferred / counted /
+      //       consumed historically — shown with qty=0 if depleted)
+      // The brand catalog is intentionally NOT auto-included anymore:
+      // the user explicitly asked for "transfer 2 → main warehouse
+      // shows 2", not "main warehouse shows all 159 brand items".
       let sql = `
         SELECT i.*, b.name AS brand_name,
                w.id AS wh_id, w.name AS wh_name, w.code AS wh_code,
@@ -158,7 +154,6 @@ router.get('/items', async (req, res) => {
         WHERE i.active = 1
           AND (
             ws.id IS NOT NULL
-            OR (w.brand_id IS NOT NULL AND i.brand_id = w.brand_id)
             OR EXISTS(SELECT 1 FROM inventory_movements im2
                       WHERE im2.item_id = i.id AND im2.warehouse_id = w.id)
           )`;

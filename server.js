@@ -383,6 +383,15 @@ async function runMigrations() {
   await addColumnIfMissing('menu', 'consumes_semi_qty', "DECIMAL(14,4) DEFAULT 0");
   await addColumnIfMissing('menu', 'production_warehouse_id', "VARCHAR(50) DEFAULT NULL");
   await addColumnIfMissing('menu', 'sales_warehouse_id', "VARCHAR(50) DEFAULT NULL");
+  // v5.10.16 — big/small unit + conversion + batch yield. Lets semi-
+  // finished products be inventoried like raw materials (e.g. produced
+  // in 5 LTR batches, consumed by recipes in 100 ML increments). Also
+  // applies to finished products that need bulk packaging metadata.
+  await addColumnIfMissing('menu', 'unit',          "VARCHAR(30) DEFAULT NULL");      // small unit (consumption)
+  await addColumnIfMissing('menu', 'big_unit',      "VARCHAR(30) DEFAULT NULL");      // big unit (production / batch)
+  await addColumnIfMissing('menu', 'conv_rate',     "DECIMAL(14,4) DEFAULT 1");       // small per big
+  await addColumnIfMissing('menu', 'yield_quantity', "DECIMAL(14,4) DEFAULT 1");      // produced per batch
+  await addColumnIfMissing('menu', 'yield_unit',    "VARCHAR(30) DEFAULT NULL");
 
   // Index for finding semi-finished consumers
   try { await db.query('CREATE INDEX idx_menu_semi_id ON menu(is_semi_finished)'); } catch(e) {}

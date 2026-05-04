@@ -23,7 +23,13 @@ function _mapMenu(m) {
     productionMethod: m.production_method || 'made_at_branch',
     deductStrategy: m.deduct_strategy || 'on_sale',
     allowNegativeStock: m.allow_negative_stock !== 0,
-    minStockAlert: Number(m.min_stock_alert) || 0
+    minStockAlert: Number(m.min_stock_alert) || 0,
+    // v5.10.16 — units + batch yield
+    unit: m.unit || null,
+    bigUnit: m.big_unit || null,
+    convRate: Number(m.conv_rate) || 1,
+    yieldQuantity: Number(m.yield_quantity) || 1,
+    yieldUnit: m.yield_unit || null
   };
 }
 
@@ -100,18 +106,23 @@ router.post('/', async (req, res) => {
     const {
       name, nameEn, price, category, cost, stock, minStock, active, pricingMode, markupPct, brandId,
       isSemiFinished, productionUnit, consumesSemiId, consumesSemiQty,
-      productionWarehouseId, salesWarehouseId
+      productionWarehouseId, salesWarehouseId,
+      // v5.10.16 — units + batch yield
+      unit, bigUnit, convRate, yieldQuantity, yieldUnit
     } = req.body;
     const id = 'MENU-' + Date.now();
     await db.query(
       `INSERT INTO menu (id, name, name_en, price, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
                          is_semi_finished, production_unit, consumes_semi_id, consumes_semi_qty,
-                         production_warehouse_id, sales_warehouse_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                         production_warehouse_id, sales_warehouse_id,
+                         unit, big_unit, conv_rate, yield_quantity, yield_unit)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [id, name, nameEn || null, price || 0, category || 'عام', cost || 0, stock || 0, minStock || 0, active !== false,
        pricingMode || 'fixed', markupPct || 30, brandId || null,
        isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
-       productionWarehouseId || null, salesWarehouseId || null]
+       productionWarehouseId || null, salesWarehouseId || null,
+       unit || null, bigUnit || null, Number(convRate) || 1,
+       Number(yieldQuantity) || 1, yieldUnit || null]
     );
     res.json({ success: true, id });
   } catch (e) { res.json({ success: false, error: e.message }); }
@@ -123,7 +134,9 @@ router.put('/:id', async (req, res) => {
     const {
       name, nameEn, price, category, cost, stock, minStock, active, pricingMode, markupPct, brandId,
       isSemiFinished, productionUnit, consumesSemiId, consumesSemiQty,
-      productionWarehouseId, salesWarehouseId
+      productionWarehouseId, salesWarehouseId,
+      // v5.10.16 — units + batch yield
+      unit, bigUnit, convRate, yieldQuantity, yieldUnit
     } = req.body;
     // Price is ALWAYS manual (user sets it). pricing_mode only controls
     // whether the COST comes from recipes (variable) or manual input (fixed).
@@ -131,14 +144,31 @@ router.put('/:id', async (req, res) => {
       `UPDATE menu SET name=?, name_en=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?,
                        pricing_mode=?, markup_pct=?, brand_id=?,
                        is_semi_finished=?, production_unit=?, consumes_semi_id=?, consumes_semi_qty=?,
-                       production_warehouse_id=?, sales_warehouse_id=?
+                       production_warehouse_id=?, sales_warehouse_id=?,
+                       unit=?, big_unit=?, conv_rate=?, yield_quantity=?, yield_unit=?
        WHERE id=?`,
       [name, nameEn || null, price || 0, category, cost || 0, stock, minStock, active, pricingMode || 'variable', markupPct || 0,
        brandId || null,
        isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
        productionWarehouseId || null, salesWarehouseId || null,
+       unit || null, bigUnit || null, Number(convRate) || 1,
+       Number(yieldQuantity) || 1, yieldUnit || null,
        req.params.id]
     );
+    // v5.10.16 — when this is a semi-finished product, mirror the unit/
+    // conversion fields into inv_items so warehouse views, valuations, and
+    // recipes that consume it see consistent metadata.
+    if (isSemiFinished) {
+      try {
+        await db.query(
+          `UPDATE inv_items SET name=?, category=?, brand_id=?, unit=?, big_unit=?, conv_rate=?, min_stock=?
+           WHERE id=?`,
+          [name, category, brandId || null,
+           unit || productionUnit || 'pcs', bigUnit || null, Number(convRate) || 1,
+           Number(minStock) || 0, req.params.id]
+        );
+      } catch(_) { /* inv_items row may not exist on first save — non-fatal */ }
+    }
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });

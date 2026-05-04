@@ -21639,8 +21639,10 @@ function _openSemiFinishedInner(id, brandsList, currentBrand) {
   var mi = m || {
     id:'', name:'', category:'منتجات غير تامة', cost:0, stock:0, minStock:0, active:true,
     pricingMode:'variable', markupPct:0, brandId: brandId,
-    isSemiFinished:true, productionUnit:'pcs',
-    productionWarehouseId:'', salesWarehouseId:''
+    isSemiFinished:true, productionUnit:'لتر',
+    productionWarehouseId:'', salesWarehouseId:'',
+    // v5.10.16 — unit / conversion / yield defaults
+    unit:'مل', bigUnit:'لتر', convRate:1000, yieldQuantity:1, yieldUnit:'لتر'
   };
 
   var brandOpts = brandsList.map(function(b){
@@ -21648,35 +21650,111 @@ function _openSemiFinishedInner(id, brandsList, currentBrand) {
     return '<option value="' + b.id + '"' + sel + '>' + _v3EscapeHtml(b.name||b.id) + '</option>';
   }).join('');
 
-  var unitOpts = ['pcs','براد','صحن','لتر','جرام','كوب','حبة'].map(function(u){
+  // v5.10.16 — comprehensive unit set (matches what raw materials use)
+  var prodUnits = ['لتر','مل','جرام','كجم','براد','صحن','كوب','حبة','قطعة','بوكس','كرتون','كيس','عبوة','pcs'];
+  var prodUnitOpts = prodUnits.map(function(u){
     return '<option value="'+u+'"'+(mi.productionUnit===u?' selected':'')+'>'+u+'</option>';
   }).join('');
+  // For unit pickers we use datalist so the user can also free-type
+  var unitDatalistId = 'sfUnitOpts';
+
+  // Computed: estimated value of current stock at current cost
+  var estValue = (Number(mi.stock)||0) * (Number(mi.cost)||0);
 
   var html =
     '<form id="sfForm" onsubmit="event.preventDefault();_sfSave();" class="v3-form">' +
+    // v5.10.16 — Hero summary card (matches raw material style)
+    '<div style="background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1.5px solid #fde68a;border-radius:14px;padding:14px 18px;margin-bottom:14px;display:grid;grid-template-columns:auto 1fr auto;gap:18px;align-items:center;">' +
+      '<div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">' +
+        '<i class="fas fa-blender"></i>' +
+      '</div>' +
+      '<div>' +
+        '<div style="font-size:11px;color:#92400e;font-weight:800;letter-spacing:0.4px;">منتج غير تام · يُسعَّر بالتكلفة من الوصفة</div>' +
+        '<div style="font-size:15px;font-weight:900;color:#78350f;margin-top:2px;">' + _v3EscapeHtml(mi.name || '— منتج جديد —') + '</div>' +
+        '<div style="font-size:11px;color:#92400e;margin-top:2px;">' +
+          (mi.id ? '<code style="background:#fff;padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;">' + _v3EscapeHtml(mi.id) + '</code>' : 'سيُولَّد رمز الـ ID تلقائياً') +
+        '</div>' +
+      '</div>' +
+      '<div style="text-align:end;">' +
+        '<div style="font-size:10.5px;color:#92400e;font-weight:700;">قيمة المخزون الحالي</div>' +
+        '<div style="font-size:18px;font-weight:900;color:#78350f;font-family:ui-monospace,Menlo,monospace;">' + _v3Fmt(estValue) + ' <span style="font-size:11px;color:#92400e;">ر.س</span></div>' +
+      '</div>' +
+    '</div>' +
+
+    // SECTION 1 — Identity
     '<div class="v3-form-section">' +
       '<h4 class="v3-section-title"><i class="fas fa-circle-info"></i> البيانات الأساسية</h4>' +
       '<div class="v3-grid-2">' +
         '<div class="wo-field"><label class="wo-field-label">اسم المنتج غير التام *</label><input id="sfF_name" class="wo-input" value="'+ _v3EscapeHtml(mi.name) +'" required placeholder="مثل: براد شاي مغربي"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">الاسم الإنجليزي</label><input id="sfF_nameEn" class="wo-input" dir="ltr" value="'+ _v3EscapeHtml(mi.nameEn||'') +'" placeholder="Cold Drink Base"></div>' +
         '<div class="wo-field"><label class="wo-field-label">البراند *</label><select id="sfF_brandId" class="wo-select" required>'+ brandOpts +'</select></div>' +
         '<div class="wo-field"><label class="wo-field-label">الفئة</label><input id="sfF_category" class="wo-input" value="'+ _v3EscapeHtml(mi.category||'منتجات غير تامة') +'"></div>' +
-        '<div class="wo-field"><label class="wo-field-label">وحدة الإنتاج *</label><select id="sfF_productionUnit" class="wo-select">'+ unitOpts +'</select></div>' +
       '</div>' +
     '</div>' +
 
+    // SECTION 2 — Units & Conversion (مماثل لبطاقة المادة الخام)
+    '<div class="v3-form-section" style="background:#f0f9ff;border-color:#bae6fd;">' +
+      '<h4 class="v3-section-title" style="color:#075985;"><i class="fas fa-ruler-combined" style="color:#0ea5e9;"></i> الوحدات والتحويل</h4>' +
+      '<p style="font-size:11.5px;color:#0c4a6e;margin:0 0 10px;">اضبط الوحدة الكبرى (للإنتاج/الشراء) والوحدة الصغرى (للاستهلاك في الوصفات). التحويل يصف كم وحدة صغرى داخل وحدة كبرى واحدة.</p>' +
+      '<datalist id="' + unitDatalistId + '">' + prodUnits.map(function(u){return '<option value="'+u+'">';}).join('') + '</datalist>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">الوحدة الكبرى (للإنتاج)</label>' +
+          '<input id="sfF_bigUnit" class="wo-input" list="'+unitDatalistId+'" value="'+ _v3EscapeHtml(mi.bigUnit||'') +'" placeholder="مثل: لتر / كرتون / براد">' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">معامل التحويل (كم وحدة صغرى داخل الكبرى)</label>' +
+          '<input id="sfF_convRate" type="number" min="0.01" step="0.01" class="wo-input" value="'+ (Number(mi.convRate)||1) +'">' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">الوحدة الصغرى (للوصفات)</label>' +
+          '<input id="sfF_unit" class="wo-input" list="'+unitDatalistId+'" value="'+ _v3EscapeHtml(mi.unit||'') +'" placeholder="مثل: مل / جرام / حبة">' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">وحدة الإنتاج (تظهر في أوامر الإنتاج)</label>' +
+          '<select id="sfF_productionUnit" class="wo-select">'+ prodUnitOpts +'</select>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    // SECTION 3 — Batch & Yield
+    '<div class="v3-form-section" style="background:#f0fdf4;border-color:#86efac;">' +
+      '<h4 class="v3-section-title" style="color:#15803d;"><i class="fas fa-flask" style="color:#16a34a;"></i> حجم الدفعة (Batch Yield)</h4>' +
+      '<p style="font-size:11.5px;color:#14532d;margin:0 0 10px;">الكمية الناتجة من تنفيذ الوصفة مرة واحدة. مثلاً وصفة قاعدة المشروبات الباردة تنتج <b>5 لتر</b> لكل دفعة.</p>' +
+      '<div class="v3-grid-2">' +
+        '<div class="wo-field"><label class="wo-field-label">كمية الإنتاج/الدفعة</label>' +
+          '<input id="sfF_yieldQty" type="number" min="0.01" step="0.01" class="wo-input" value="'+ (Number(mi.yieldQuantity)||1) +'">' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">وحدة الإنتاج/الدفعة</label>' +
+          '<input id="sfF_yieldUnit" class="wo-input" list="'+unitDatalistId+'" value="'+ _v3EscapeHtml(mi.yieldUnit || mi.bigUnit || mi.productionUnit || '') +'">' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    // SECTION 4 — Stock & Warehouse
     '<div class="v3-form-section">' +
       '<h4 class="v3-section-title"><i class="fas fa-warehouse"></i> المستودع والمخزون</h4>' +
       '<div class="v3-grid-2">' +
-        '<div class="wo-field"><label class="wo-field-label">المستودع الافتراضي للإنتاج</label><select id="sfF_productionWarehouseId" class="wo-select">'+ _mhWarehouseOptions(mi.productionWarehouseId, mi.brandId) +'</select></div>' +
-        '<div class="wo-field"><label class="wo-field-label">المخزون الحالي</label><input id="sfF_stock" type="number" class="wo-input" value="'+ Number(mi.stock||0) +'"></div>' +
-        '<div class="wo-field"><label class="wo-field-label">التكلفة</label><input id="sfF_cost" type="number" step="0.01" class="wo-input" value="'+ Number(mi.cost||0) +'"></div>' +
-        '<label class="v3-checkbox" style="align-self:flex-end;"><input type="checkbox" id="sfF_active" '+(mi.active!==false?'checked':'')+'><span>المنتج مفعّل</span></label>' +
+        '<div class="wo-field"><label class="wo-field-label">المستودع الافتراضي للإنتاج</label>' +
+          '<select id="sfF_productionWarehouseId" class="wo-select">'+ _mhWarehouseOptions(mi.productionWarehouseId, mi.brandId) +'</select>' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">المخزون الحالي (بالوحدة الصغرى)</label>' +
+          '<input id="sfF_stock" type="number" min="0" step="0.01" class="wo-input" value="'+ Number(mi.stock||0) +'">' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">حد التنبيه (نواقص)</label>' +
+          '<input id="sfF_minStock" type="number" min="0" step="0.01" class="wo-input" value="'+ Number(mi.minStock||0) +'">' +
+        '</div>' +
+        '<div class="wo-field"><label class="wo-field-label">التكلفة المحسوبة من الوصفة (للقراءة)</label>' +
+          '<input id="sfF_cost" type="number" step="0.0001" class="wo-input" value="'+ Number(mi.cost||0) +'" readonly style="background:#f8fafc;color:#475569;font-family:ui-monospace,Menlo,monospace;font-weight:800;">' +
+        '</div>' +
       '</div>' +
+      '<label class="v3-checkbox" style="margin-top:10px;display:inline-flex;align-items:center;gap:8px;">' +
+        '<input type="checkbox" id="sfF_active" '+(mi.active!==false?'checked':'')+'><span>المنتج مفعّل</span>' +
+      '</label>' +
     '</div>' +
 
+    // SECTION 5 — Note (BOM hint)
     '<div class="v3-form-section" style="background:#fffbeb;border-color:#fde68a;">' +
-      '<h4 class="v3-section-title" style="color:#92400e;"><i class="fas fa-info-circle" style="color:#f59e0b;"></i> ملاحظة</h4>' +
-      '<p style="font-size:12px;color:#78350f;margin:0;">بعد الحفظ يمكنك تحديد الوصفة (BOM) من زر "<i class="fas fa-list-check"></i>" في الجدول. عند الإنتاج سيتم خصم المكونات من المستودع وإضافة الكمية المنتجة.</p>' +
+      '<h4 class="v3-section-title" style="color:#92400e;"><i class="fas fa-list-check" style="color:#f59e0b;"></i> الوصفة (BOM)</h4>' +
+      '<p style="font-size:12px;color:#78350f;margin:0;line-height:1.7;">' +
+        'بعد الحفظ اضغط زر <i class="fas fa-list-check"></i> في الجدول لفتح <b>محرر الوصفة</b>. التكلفة أعلاه تُحسب تلقائياً من المكونات. عند تشغيل أمر إنتاج: تُخصم المكونات من المستودع وتُضاف الكمية المنتجة بالوحدة الصغرى = (الناتج × معامل التحويل).' +
+      '</p>' +
     '</div>' +
 
     '<input type="hidden" id="sfF_id" value="'+ _v3EscapeHtml(mi.id != null ? String(mi.id) : '') +'">' +
@@ -21685,9 +21763,10 @@ function _openSemiFinishedInner(id, brandsList, currentBrand) {
   WoModal.open({
     icon: 'fa-blender', iconColor: '#f59e0b',
     title: id ? 'تعديل منتج غير تام' : 'منتج غير تام جديد',
-    subtitle: 'منتج نصف مصنع له وصفة (BOM) ويتم استهلاكه عند بيع المنتجات التامة.',
-    body: html, size: 'lg',
+    subtitle: 'منتج نصف مصنع له وصفة (BOM) — يُدار في المستودعات بالوحدتين الصغرى/الكبرى مثل المواد الخام.',
+    body: html, size: 'xl',
     footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+            (id ? '<button class="wo-btn wo-btn-warning" onclick="WoModal.close();erpEditSemiBom(\''+_v3EscapeHtml(id)+'\');"><i class="fas fa-list-check"></i> الوصفة (BOM)</button>' : '') +
             '<button class="wo-btn wo-btn-primary" onclick="_sfSave()"><i class="fas fa-save"></i> حفظ</button>'
   });
 }
@@ -21697,23 +21776,31 @@ function _sfSave() {
     if (typeof callAPI !== 'function') { _v3Toast('callAPI غير محمّل — أعد التحميل', true); return; }
     var data = {
       name: (_v3FldVal('sfF_name') || '').trim(),
+      nameEn: (_v3FldVal('sfF_nameEn') || '').trim() || null,
       brandId: _v3FldVal('sfF_brandId'),
       category: (_v3FldVal('sfF_category') || '').trim() || 'منتجات غير تامة',
       cost: Number(_v3FldVal('sfF_cost', 0)) || 0,
       stock: Number(_v3FldVal('sfF_stock', 0)) || 0,
-      minStock: 0,
+      minStock: Number(_v3FldVal('sfF_minStock', 0)) || 0,
       active: _v3FldChecked('sfF_active'),
       pricingMode: 'variable',
       markupPct: 0,
       price: 0,
       isSemiFinished: true,
-      productionUnit: _v3FldVal('sfF_productionUnit') || 'pcs',
+      productionUnit: _v3FldVal('sfF_productionUnit') || 'لتر',
       productionWarehouseId: _v3FldVal('sfF_productionWarehouseId') || null,
       consumesSemiId: null,
-      consumesSemiQty: 0
+      consumesSemiQty: 0,
+      // v5.10.16 — units + batch yield (mirrors raw material schema)
+      unit:          (_v3FldVal('sfF_unit')      || '').trim() || null,
+      bigUnit:       (_v3FldVal('sfF_bigUnit')   || '').trim() || null,
+      convRate:      Number(_v3FldVal('sfF_convRate', 1)) || 1,
+      yieldQuantity: Number(_v3FldVal('sfF_yieldQty', 1)) || 1,
+      yieldUnit:     (_v3FldVal('sfF_yieldUnit') || '').trim() || null
     };
     if (!data.name) { _v3Toast('الاسم مطلوب', true); return; }
     if (!data.brandId) { _v3Toast('البراند مطلوب', true); return; }
+    if (data.convRate <= 0) { _v3Toast('معامل التحويل يجب أن يكون أكبر من صفر', true); return; }
 
     var rawId = _v3FldVal('sfF_id');
     var id = (rawId === '' || rawId == null) ? null : rawId;

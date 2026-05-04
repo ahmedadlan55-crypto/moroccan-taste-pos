@@ -20610,6 +20610,18 @@ function _reBuildStylesheet() {
 function _reRenderEditor() {
   var box = document.getElementById('reEditorBody');
   if (!box || !window._re) return;
+  // v5.10.14 — Preserve search input focus + caret across full re-renders
+  // (called when adding/removing/clearing components). Without this, the
+  // user's caret jumps to the end on every action — felt like "can't type".
+  var savedFocus = null;
+  var oldSearch = document.getElementById('rePickerSearchInput');
+  if (oldSearch && document.activeElement === oldSearch) {
+    savedFocus = {
+      value: oldSearch.value,
+      start: oldSearch.selectionStart,
+      end:   oldSearch.selectionEnd
+    };
+  }
   var menu = window._re.menu || {};
   var lines = window._re.lines;
   var price = Number(menu.price) || 0;
@@ -20617,6 +20629,11 @@ function _reRenderEditor() {
   var marginGood = t.marginPct >= 50;
   var marginOk = t.marginPct >= 25;
   var marginColor = marginGood ? '#86efac' : (marginOk ? '#fde68a' : '#fecaca');
+  // v5.10.14 — Semi-finished products are inventory items consumed by
+  // other recipes. They have NO sale price by design; their cost = sum
+  // of component costs and is what gets saved to inv_items.cost. Hide
+  // price + margin from the hero — those numbers are meaningless.
+  var isSemiFinished = !!(menu.isSemiFinished || menu.is_semi_finished);
 
   // V5.7.36 ── HERO CARD: balanced 4-column hero with monogram avatar.
   //   • avatar circle anchors the product identity visually
@@ -20643,27 +20660,47 @@ function _reRenderEditor() {
               (menu.category ? '<span class="re-hero-chip"><i class="fas fa-tag"></i>' + _v3EscapeHtml(menu.category) + '</span>' : '') +
               '<span class="re-hero-chip"><i class="fas fa-cubes"></i>' + lines.length + ' مكوّن</span>' +
               '<span class="re-hero-chip"><i class="fas fa-box"></i>1 وحدة/دفعة</span>' +
+              (isSemiFinished
+                ? '<span class="re-hero-chip" style="background:rgba(253,224,71,0.18);color:#fde68a;border-color:rgba(253,224,71,0.4);"><i class="fas fa-blender"></i>منتج غير تام · يُسعَّر بالتكلفة</span>'
+                : '') +
             '</div>' +
           '</div>' +
         '</div>' +
-        // KPI: Price
-        '<div class="re-hero-kpi">' +
-          '<div class="re-hero-kpi-label">السعر</div>' +
-          '<div class="re-hero-kpi-value">' + _v3Fmt(price) + '</div>' +
-          '<div class="re-hero-kpi-unit">ر.س / وحدة</div>' +
-        '</div>' +
-        // KPI: Live cost
-        '<div class="re-hero-kpi">' +
-          '<div class="re-hero-kpi-label">التكلفة الحية</div>' +
-          '<div id="reLiveCost" class="re-hero-kpi-value">' + _v3Fmt(t.totalCost) + '</div>' +
-          '<div class="re-hero-kpi-unit">ر.س / وحدة</div>' +
-        '</div>' +
-        // KPI: Margin (boxed for emphasis)
-        '<div class="re-hero-kpi re-hero-kpi-boxed">' +
-          '<div class="re-hero-kpi-label">هامش الربح</div>' +
-          '<div id="reLiveMargin" class="re-hero-kpi-value re-hero-kpi-margin" style="color:' + marginColor + ';">' + (t.marginPct >= 0 ? '+' : '') + t.marginPct.toFixed(1) + '%</div>' +
-          '<div id="reLiveMarginAmt" class="re-hero-kpi-unit re-hero-kpi-margin-amt">' + (t.marginAbs >= 0 ? '+' : '') + _v3Fmt(t.marginAbs) + ' ر.س</div>' +
-        '</div>' +
+        (isSemiFinished
+          ? // v5.10.14 — Semi-finished hero: only Cost + Per-batch.
+            // No sale price, no profit margin (they don't sell).
+            '<div class="re-hero-kpi">' +
+              '<div class="re-hero-kpi-label">تكلفة المكوّنات</div>' +
+              '<div id="reLiveCost" class="re-hero-kpi-value">' + _v3Fmt(t.totalCost) + '</div>' +
+              '<div class="re-hero-kpi-unit">ر.س / وحدة</div>' +
+            '</div>' +
+            '<div class="re-hero-kpi">' +
+              '<div class="re-hero-kpi-label">المكوّنات</div>' +
+              '<div class="re-hero-kpi-value">' + lines.length + '</div>' +
+              '<div class="re-hero-kpi-unit">صنف</div>' +
+            '</div>' +
+            '<div class="re-hero-kpi re-hero-kpi-boxed">' +
+              '<div class="re-hero-kpi-label">إنتاج/دفعة</div>' +
+              '<div class="re-hero-kpi-value">1</div>' +
+              '<div class="re-hero-kpi-unit">' + _v3EscapeHtml(menu.productionUnit || 'وحدة') + '</div>' +
+            '</div>'
+          : // Finished product: original 3 KPI tiles
+            '<div class="re-hero-kpi">' +
+              '<div class="re-hero-kpi-label">السعر</div>' +
+              '<div class="re-hero-kpi-value">' + _v3Fmt(price) + '</div>' +
+              '<div class="re-hero-kpi-unit">ر.س / وحدة</div>' +
+            '</div>' +
+            '<div class="re-hero-kpi">' +
+              '<div class="re-hero-kpi-label">التكلفة الحية</div>' +
+              '<div id="reLiveCost" class="re-hero-kpi-value">' + _v3Fmt(t.totalCost) + '</div>' +
+              '<div class="re-hero-kpi-unit">ر.س / وحدة</div>' +
+            '</div>' +
+            '<div class="re-hero-kpi re-hero-kpi-boxed">' +
+              '<div class="re-hero-kpi-label">هامش الربح</div>' +
+              '<div id="reLiveMargin" class="re-hero-kpi-value re-hero-kpi-margin" style="color:' + marginColor + ';">' + (t.marginPct >= 0 ? '+' : '') + t.marginPct.toFixed(1) + '%</div>' +
+              '<div id="reLiveMarginAmt" class="re-hero-kpi-unit re-hero-kpi-margin-amt">' + (t.marginAbs >= 0 ? '+' : '') + _v3Fmt(t.marginAbs) + ' ر.س</div>' +
+            '</div>'
+        ) +
       '</div>' +
     '</section>';
 
@@ -20745,6 +20782,19 @@ function _reRenderEditor() {
   }
 
   _reInstallShortcuts();
+
+  // v5.10.14 — restore search input focus + caret after a full re-render
+  // (triggered by add/remove/clear). Without this the user feels like
+  // typing is lost when a list change re-builds the editor.
+  if (savedFocus) {
+    var newSearch = document.getElementById('rePickerSearchInput');
+    if (newSearch) {
+      newSearch.focus();
+      try {
+        newSearch.setSelectionRange(savedFocus.start, savedFocus.end);
+      } catch(_) {}
+    }
+  }
 }
 
 // V5.7.28 — Ingredient CARDS (replaces table). Cards give each line
@@ -21057,10 +21107,30 @@ function _reRenderPickerRow(it) {
 window.reSetCategory = function(cat) {
   if (!window._re) return;
   window._re.pickerCategory = cat || '';
-  // Re-render the picker panel only (header changes due to active pill state)
-  var pickerSection = document.querySelector('.re-picker-panel');
-  if (pickerSection && pickerSection.parentNode) {
-    pickerSection.outerHTML = _reRenderPickerPanel();
+  // v5.10.14 — Surgical update: only the LIST BODY re-renders + the
+  // category pill bar. The search input is preserved so the user
+  // doesn't lose focus + typed text + caret position when filtering.
+  // Previous version did pickerSection.outerHTML which wiped the input.
+  if (!window._re.items) return;
+  var items = window._re.items;
+  var byCategory = _reGroupByCategory(items);
+  var pickedIds = new Set(window._re.lines.map(function(l) { return l.itemId; }));
+  // Refresh the list body
+  var listBody = document.getElementById('rePickerListBody');
+  if (listBody) {
+    listBody.innerHTML = _reRenderPickerListBody(items, pickedIds, window._re.pickerSearch || '', window._re.pickerCategory || '', byCategory);
+  }
+  // Refresh active state on pills without recreating them — toggle
+  // the .re-pill-active class based on the current category.
+  var pillsWrap = document.querySelector('.re-picker-panel .re-pills');
+  if (pillsWrap) {
+    Array.prototype.forEach.call(pillsWrap.querySelectorAll('.re-pill'), function(btn) {
+      // Match against the inline onclick("reSetCategory('xxx')") arg
+      var m = (btn.getAttribute('onclick') || '').match(/reSetCategory\('([^']*)'\)/);
+      var btnCat = m ? m[1] : '';
+      if (btnCat === (window._re.pickerCategory || '')) btn.classList.add('re-pill-active');
+      else btn.classList.remove('re-pill-active');
+    });
   }
 };
 
@@ -21195,7 +21265,11 @@ window.reSaveRecipe = function() {
   if (!window._re || window._re.saving) return;
   var menu = window._re.menu;
   if (!menu) return _v3Toast('لا توجد بيانات منتج', true);
-  if (Number(menu.price) <= 0) {
+  // v5.10.14 — Semi-finished products (منتجات غير تامة) have no sale
+  // price by design — they're inputs to other recipes. Skip the
+  // price check for them; only finished products need a positive price.
+  var isSemiFinished = !!(menu.isSemiFinished || menu.is_semi_finished);
+  if (!isSemiFinished && Number(menu.price) <= 0) {
     return _v3Toast('سعر المنتج صفر — حدد السعر أولاً قبل ربط الوصفة', true);
   }
   var lines = window._re.lines.filter(function(l) { return Number(l.qtyMinor) > 0; });

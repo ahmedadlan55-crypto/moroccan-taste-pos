@@ -806,6 +806,16 @@ router.post('/bom', async (req, res) => {
       if (newCost != null && !isNaN(newCost)) {
         try {
           await db.query('UPDATE menu SET cost = ?, computed_cost = ? WHERE id = ?', [newCost, newCost, productId]);
+          // v5.10.14 — Semi-finished products are inventory items: their
+          // cost = sum of component costs from the recipe. Mirror the
+          // recomputed cost into inv_items so warehouse views, valuation
+          // reports, and downstream production orders see the same number.
+          try {
+            const [mr] = await db.query('SELECT is_semi_finished FROM menu WHERE id = ?', [productId]);
+            if (mr.length && Number(mr[0].is_semi_finished)) {
+              await db.query('UPDATE inv_items SET cost = ? WHERE id = ?', [newCost, productId]);
+            }
+          } catch(_) { /* inv_items row may not exist for this menu item — non-fatal */ }
         } catch (_) {}
       }
     }

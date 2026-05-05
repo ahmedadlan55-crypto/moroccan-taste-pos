@@ -941,6 +941,7 @@
                 <button class="btn btn-primary" onclick="startStocktake()"><i class="fas fa-play"></i> بدء عملية جرد جديدة</button>
               </div>
             </div>
+            <div id="stocktakeKpis" class="iv-items-kpis"></div>
             <div class="table-wrapper">
               <table class="table">
                 <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>المستودع</th><th>القائم بالجرد</th><th>عدد الأصناف</th><th>إجمالي التباين</th><th>إجراءات</th></tr></thead>
@@ -976,6 +977,7 @@
                 <button class="btn btn-danger" onclick="openAdjustmentModal()"><i class="fas fa-plus"></i> محضر تعديل كمية</button>
               </div>
             </div>
+            <div id="adjKpis" class="iv-items-kpis"></div>
             <div class="table-wrapper">
               <table class="table">
                 <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>المستودع</th><th>السبب</th><th>بواسطة</th><th>عدد الأصناف</th><th>إجمالي التكلفة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
@@ -985,19 +987,36 @@
           </div>
 
           <!-- Tab 4: التحويلات -->
+          <!-- v5.10.21 — unified filter bar: search + date + direction + status -->
           <div class="sales-tab-content" id="wh_transfers">
-            <div class="filter-bar" style="justify-content:space-between; align-items:center;flex-wrap:wrap;gap:10px;">
-              <h3 style="margin:0; color:var(--primary);"><i class="fas fa-exchange-alt"></i> طلبات التحويل من/إلى الفروع</h3>
-              <div style="display:flex;gap:8px;align-items:center;">
-                <select id="transferBrandFilter" class="form-control" style="max-width:200px;background:linear-gradient(135deg,#faf5ff,#fff);border-color:#d8b4fe;" onchange="loadTransfersList()">
-                  <option value="">🏪 كل البراندات</option>
+            <div class="wh-filter-bar">
+              <div class="wh-fb-title"><i class="fas fa-exchange-alt"></i> طلبات التحويل من/إلى المستودع</div>
+              <div class="wh-fb-controls">
+                <div class="wh-fb-search">
+                  <i class="fas fa-search"></i>
+                  <input type="text" id="transferSearch" class="form-control" placeholder="بحث برقم التحويل، اسم المستودع، أو الملاحظات..." oninput="loadDashTransfers()">
+                </div>
+                <input type="date" id="transferFromDate" class="form-control wh-fb-date" title="من تاريخ" onchange="loadDashTransfers()">
+                <input type="date" id="transferToDate" class="form-control wh-fb-date" title="إلى تاريخ" onchange="loadDashTransfers()">
+                <select id="transferDirectionFilter" class="form-control wh-fb-select" onchange="loadDashTransfers()">
+                  <option value="">كل الاتجاهات</option>
+                  <option value="in">واردة (لهذا المستودع)</option>
+                  <option value="out">صادرة (من هذا المستودع)</option>
                 </select>
+                <select id="transferStatusFilter" class="form-control wh-fb-select" onchange="loadDashTransfers()">
+                  <option value="">كل الحالات</option>
+                  <option value="pending">معلّق</option>
+                  <option value="approved">معتمد</option>
+                  <option value="cancelled">ملغى</option>
+                </select>
+                <button class="btn btn-light wh-fb-clear" onclick="whClearFilters('transfer')" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
                 <button class="btn btn-primary" onclick="openTransferModal()"><i class="fas fa-plus"></i> إنشاء طلب تحويل</button>
               </div>
             </div>
+            <div id="transferKpis" class="iv-items-kpis"></div>
             <div class="table-wrapper">
               <table class="table">
-                <thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>البراند</th><th>الوجهة / المصدر</th><th>النوع</th><th>حالة الطلب</th><th>المسؤول</th><th>إجراءات</th></tr></thead>
+                <thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>الوجهة / المصدر</th><th>الاتجاه</th><th>عدد المواد</th><th>الحالة</th><th>المسؤول</th><th>إجراءات</th></tr></thead>
                 <tbody id="tbTransfers"></tbody>
               </table>
             </div>
@@ -1044,6 +1063,7 @@
                 <button class="btn btn-secondary" onclick="loadDashShortageRequests()"><i class="fas fa-sync"></i> تحديث</button>
               </div>
             </div>
+            <div id="shortageKpis" class="iv-items-kpis"></div>
             <div class="table-wrapper">
               <table class="table">
                 <thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>البراند</th><th>الكاشير</th><th>عدد المواد</th><th>الحالة</th><th>إجراءات</th></tr></thead>

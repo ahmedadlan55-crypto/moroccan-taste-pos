@@ -4444,6 +4444,7 @@ function loadDashAdjustments() {
                  ((a.warehouseName || '').toLowerCase().indexOf(search) >= 0);
         });
       }
+      _whRenderAdjustmentsKpis(res);
       var h = '';
       if (!res.length) {
         var emptyMsg = (search || fromDate || toDate || reason || status)
@@ -6723,6 +6724,7 @@ function loadDashShortageRequests() {
                ((r.notes || '').toLowerCase().indexOf(search) >= 0);
       });
     }
+    _whRenderShortageKpis(list);
     if (!list.length) {
       var emptyMsg = (search || fromDate || toDate || statusF || brandF)
         ? 'لا توجد طلبات تطابق الفلاتر — جرّب توسيع نطاق البحث.'
@@ -7231,15 +7233,97 @@ function viewReceiveDetail(purchaseId) {
   }).getReceiveRequests();
 }
 
+// v5.10.21 — render the warehouse-transfers list IN PLACE inside the
+// inventory hub's transfers tab. The legacy behavior was to redirect to
+// the ERP multi-warehouse screen, but that broke the unified filter-bar
+// pattern the user wants across all warehouse tabs. We now read the
+// filter inputs (search/date/direction/status) and call /api/erp/warehouse-
+// transfers with the relevant params; the "create transfer" action still
+// jumps to the ERP modal because the editor lives there.
 function loadDashTransfers() {
-  // Redirect to ERP multi-warehouse transfers
-  if (typeof erpNav === 'function') {
-    erpNav('erpMultiWarehouses');
-    // Switch to transfers tab
-    setTimeout(function() { if (typeof whSwitchTab === 'function') whSwitchTab('transfers'); }, 300);
-  } else {
-    q("#tbTransfers").innerHTML = "<tr><td colspan='7' style='text-align:center;padding:20px;'>استخدم قسم <b>إدارة المستودعات</b> في نظام ERP للتحويلات</td></tr>";
-  }
+  var tb = q('#tbTransfers');
+  if (!tb) return;
+  loader();
+  var token = localStorage.getItem('pos_token') || '';
+  var hubWh = (window._invHub && window._invHub.warehouseId && window._invHub.warehouseId !== '__all__')
+    ? window._invHub.warehouseId : '';
+  var fromDate = (q('#transferFromDate') && q('#transferFromDate').value) || '';
+  var toDate   = (q('#transferToDate')   && q('#transferToDate').value)   || '';
+  var direction = (q('#transferDirectionFilter') && q('#transferDirectionFilter').value) || '';
+  var statusF   = (q('#transferStatusFilter')    && q('#transferStatusFilter').value)    || '';
+  var search    = ((q('#transferSearch') && q('#transferSearch').value) || '').trim().toLowerCase();
+
+  var qs = [];
+  if (hubWh)     qs.push('warehouseId=' + encodeURIComponent(hubWh));
+  if (direction) qs.push('direction='   + encodeURIComponent(direction));
+  if (fromDate)  qs.push('startDate='   + encodeURIComponent(fromDate));
+  if (toDate)    qs.push('endDate='     + encodeURIComponent(toDate));
+  if (statusF)   qs.push('status='      + encodeURIComponent(statusF));
+  var url = '/api/erp/warehouse-transfers' + (qs.length ? ('?' + qs.join('&')) : '');
+
+  fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(list) {
+      loader(false);
+      if (!Array.isArray(list)) list = [];
+      _whRenderTransfersKpis(list);
+      // Free-text search across transferNumber, fromWarehouse, toWarehouse, notes, createdBy
+      if (search) {
+        list = list.filter(function(t){
+          return ((t.transferNumber || '').toLowerCase().indexOf(search) >= 0) ||
+                 ((t.fromWarehouse  || '').toLowerCase().indexOf(search) >= 0) ||
+                 ((t.toWarehouse    || '').toLowerCase().indexOf(search) >= 0) ||
+                 ((t.notes          || '').toLowerCase().indexOf(search) >= 0) ||
+                 ((t.createdBy      || '').toLowerCase().indexOf(search) >= 0);
+        });
+      }
+      if (!list.length) {
+        var emptyMsg = (search || fromDate || toDate || direction || statusF)
+          ? 'لا توجد تحويلات تطابق الفلاتر — جرّب توسيع نطاق البحث.'
+          : 'لا توجد تحويلات بعد. اضغط "إنشاء طلب تحويل" لبدء أول تحويل.';
+        tb.innerHTML = "<tr><td colspan='8' style='text-align:center;padding:30px;color:#94a3b8;'>" + emptyMsg + "</td></tr>";
+        return;
+      }
+      var statusBadge = function(s) {
+        if (s === 'pending')   return '<span class="badge yellow">معلّق</span>';
+        if (s === 'approved')  return '<span class="badge green">معتمد ✓</span>';
+        if (s === 'cancelled') return '<span class="badge red">ملغى</span>';
+        return '<span class="badge">' + (s || '—') + '</span>';
+      };
+      tb.innerHTML = list.map(function(t) {
+        var dt = t.transferDate ? new Date(t.transferDate).toLocaleDateString('en-GB') : '';
+        // Direction relative to hub warehouse: in if hubWh is destination, out if source
+        var dirCell = '<span style="color:#64748b;font-size:11px;">داخلي</span>';
+        if (hubWh) {
+          if (t.toId === hubWh && t.fromId !== hubWh) {
+            dirCell = '<span class="badge" style="background:#dcfce7;color:#15803d;"><i class="fas fa-arrow-down"></i> وارد</span>';
+          } else if (t.fromId === hubWh && t.toId !== hubWh) {
+            dirCell = '<span class="badge" style="background:#fee2e2;color:#b91c1c;"><i class="fas fa-arrow-up"></i> صادر</span>';
+          }
+        }
+        var routeCell =
+          '<div style="font-size:11.5px;line-height:1.5;">' +
+            '<div><i class="fas fa-arrow-left" style="color:#06b6d4;font-size:9px;"></i> <b>من:</b> ' + _invHubEsc(t.fromWarehouse || '—') + '</div>' +
+            '<div><i class="fas fa-arrow-right" style="color:#16a34a;font-size:9px;"></i> <b>إلى:</b> ' + _invHubEsc(t.toWarehouse || '—') + '</div>' +
+          '</div>';
+        var itemsCount = Array.isArray(t.items) ? t.items.length : 0;
+        return '<tr>' +
+          '<td><code style="font-weight:800;color:#0891b2;">' + _invHubEsc(t.transferNumber || t.id) + '</code></td>' +
+          '<td>' + dt + '</td>' +
+          '<td>' + routeCell + '</td>' +
+          '<td>' + dirCell + '</td>' +
+          '<td>' + itemsCount + ' مادة</td>' +
+          '<td>' + statusBadge(t.status) + '</td>' +
+          '<td style="font-weight:700;">' + _invHubEsc(t.createdBy || '—') + '</td>' +
+          '<td style="white-space:nowrap;">' +
+            (t.status === 'pending' && typeof erpNav === 'function'
+              ? '<button class="btn btn-success btn-sm" onclick="erpNav(\'erpMultiWarehouses\')" title="فتح للاعتماد"><i class="fas fa-check"></i></button> '
+              : '') +
+            '<button class="btn btn-light btn-sm" onclick="erpNav && erpNav(\'erpMultiWarehouses\')" title="تفاصيل"><i class="fas fa-eye"></i></button>' +
+          '</td></tr>';
+      }).join('');
+    })
+    .catch(function(){ loader(false); tb.innerHTML = "<tr><td colspan='8' style='text-align:center;padding:20px;color:#ef4444;'>فشل التحميل</td></tr>"; });
 }
 function openTransferModal() {
   if (typeof erpNav === 'function') {
@@ -7650,10 +7734,26 @@ function _invLiveRenderTable(items, totals) {
   var head = q('#invLiveTable thead');
   var body = q('#invLiveTable tbody');
   if (!head || !body) return;
+  // v5.10.21 — Resolve which warehouse name to show in the new "المستودع"
+  // column. When the report is scoped to one warehouse, every row belongs
+  // to that warehouse. When un-scoped (all warehouses), each row is an
+  // aggregate across warehouses, so we render a "كل المستودعات" badge.
+  var data = window._invLive.data || {};
+  var scoped = data.scopedWarehouse || null;
+  var whCellHtml = scoped
+    ? '<span class="iv-live-pill" style="background:#cffafe;color:#0e7490;font-weight:700;">' +
+        '<i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:4px;"></i>' +
+        _invHubEsc(scoped.name || '') +
+        (scoped.code ? ' <code style="font-size:9px;color:#0e7490;background:#fff;padding:1px 5px;border-radius:4px;margin-inline-start:3px;">' + _invHubEsc(scoped.code) + '</code>' : '') +
+      '</span>'
+    : '<span class="iv-live-pill" style="background:#f1f5f9;color:#64748b;font-size:10.5px;" title="عرض مجمَّع عبر كل مستودعات هذا البراند">' +
+        '<i class="fas fa-layer-group" style="font-size:9px;margin-inline-end:4px;"></i>كل المستودعات</span>';
+
   head.innerHTML =
     '<tr>' +
       '<th>الكود</th>' +
       '<th class="iv-th-name">الصنف</th>' +
+      '<th>المستودع</th>' +
       '<th>التصنيف</th>' +
       '<th title="ABC = تصنيف باريتو حسب القيمة">ABC</th>' +
       '<th class="iv-th-num">مخزون أول الفترة</th>' +
@@ -7670,7 +7770,7 @@ function _invLiveRenderTable(items, totals) {
       '<th>الحالة</th>' +
     '</tr>';
   body.innerHTML = filtered.length === 0
-    ? '<tr><td colspan="15" class="iv-live-empty">' +
+    ? '<tr><td colspan="16" class="iv-live-empty">' +
         (quick ? 'لا توجد أصناف تطابق هذا الفلتر. <a href="#" onclick="event.preventDefault();_invLiveClearQuickFilter();">مسح الفلتر</a>' : 'لا توجد بيانات في النطاق المحدد. جرّب توسيع الفترة أو رفع الفلاتر.') +
       '</td></tr>'
     : filtered.map(function(it) {
@@ -7694,6 +7794,7 @@ function _invLiveRenderTable(items, totals) {
         return '<tr class="' + rowClass + '">' +
                  '<td class="iv-live-code">' + idEsc + '</td>' +
                  '<td class="iv-live-name iv-cell-clickable" onclick="_invLiveDrillDown(\'' + idEsc + '\',\'' + nameEsc + '\',\'all\')" title="كل الحركات">' + _invHubEsc(it.name) + '</td>' +
+                 '<td>' + whCellHtml + '</td>' +
                  '<td class="iv-live-cat">' + _invHubEsc(it.category) + '</td>' +
                  '<td>' + abcBadge + '</td>' +
                  _drillCell(idEsc, nameEsc, 'all',          it.openingStock,  it.unit) +
@@ -7709,9 +7810,9 @@ function _invLiveRenderTable(items, totals) {
                  '<td>' + statusBadge + '</td>' +
                '</tr>';
       }).join('') +
-      // Totals row (15 cols now: 4 leading + 11 numeric/badge)
+      // Totals row (16 cols now: 5 leading + 11 numeric/badge)
       '<tr class="iv-live-totals-row">' +
-        '<td colspan="4" class="iv-live-totals-label">الإجمالي · ' + filtered.length + ' صنف</td>' +
+        '<td colspan="5" class="iv-live-totals-label">الإجمالي · ' + filtered.length + ' صنف</td>' +
         '<td class="iv-live-num">' + _invHubFmtMoney((totals||{}).openingValue || 0) + '</td>' +
         '<td class="iv-live-num" style="color:#86efac;">+ ' + _invHubFmtMoney((totals||{}).purchasesValue || 0) + '</td>' +
         '<td class="iv-live-num" style="color:#7dd3fc;">− ' + _invHubFmtMoney((totals||{}).productionValue || 0) + '</td>' +
@@ -8014,6 +8115,9 @@ function _invLiveShowDrillModal(itemId, itemName, rows, op) {
 
   // v5.10.18 — when the modal is empty for a sales-relevant filter, fetch
   // /sales-trace and render a meaningful explanation in the placeholder.
+  // v5.10.21 — clear any stale trace from a previous item before fetching
+  // a new one, so print/export fallbacks don't leak data across drills.
+  window._invLiveLastTrace = null;
   if (rows.length === 0 && (op === 'sales' || op === 'all' || !op)) {
     _invLiveFetchSalesTrace(itemId);
   }
@@ -8037,6 +8141,10 @@ function _invLiveFetchSalesTrace(itemId) {
         { headers: { 'Authorization': 'Bearer ' + token } })
     .then(function(r){ return r.json(); })
     .then(function(trace){
+      // v5.10.21 — cache so the print/CSV/XLSX buttons can fall back to
+      // trace rows when the main movements list is empty (the common case
+      // when sales went via a semi-finished or a different warehouse).
+      window._invLiveLastTrace = trace || null;
       var host = document.getElementById('ivDrillTraceHost');
       if (!host) return;
       host.innerHTML = _invLiveRenderTraceHtml(trace || {});
@@ -8155,12 +8263,61 @@ function _invDrillBuildExportRows() {
       r.notes    || ''
     ]);
   });
-  return { rows: rows, data: data, headers: headers, drill: d };
+  return { rows: rows, data: data, headers: headers, drill: d, mode: 'movements' };
+}
+
+// v5.10.21 — Fallback export: when the movements list is empty but the
+// /sales-trace endpoint found related sales, build an alternative export
+// from the trace so the print/CSV/XLSX buttons still produce something
+// useful instead of "لا توجد حركات للطباعة". Different headers reflect
+// that this is a diagnostic listing of related sales, not raw movements.
+function _invDrillBuildTraceExportRows() {
+  var trace = window._invLiveLastTrace;
+  var d = window._invLiveLastDrill || {};
+  if (!trace || !Array.isArray(trace.sales) || !trace.sales.length) return null;
+  var statusLabel = function(s) {
+    if (s === 'recorded')             return 'مسجلة فعلاً';
+    if (s === 'different_warehouse')  return 'مستودع آخر';
+    if (s === 'skipped_semi')         return 'مرّ عبر نصف-مصنع';
+    if (s === 'no_recipe')            return 'بدون وصفة';
+    if (s === 'recipe_excludes_item') return 'الوصفة لا تشمل الصنف';
+    return s || 'غير معروف';
+  };
+  var headers = ['#','التاريخ','المنتج المُباع','الكمية','الحالة','رقم الطلب','ملاحظة'];
+  var data = [headers];
+  trace.sales.forEach(function(r, i) {
+    var d2 = r.orderDate ? new Date(r.orderDate) : null;
+    data.push([
+      i + 1,
+      d2 ? d2.toLocaleString('en-GB') : '',
+      r.menuName || '',
+      Number(r.qty) || 0,
+      statusLabel(r.status),
+      r.orderId || '',
+      r.consumesSemiId ? ('يستهلك نصف-مصنع: ' + r.consumesSemiId) : ''
+    ]);
+  });
+  return {
+    rows: trace.sales, data: data, headers: headers, drill: d, mode: 'trace',
+    traceReason: trace.reason || '',
+    traceHint:   trace.hint   || ''
+  };
+}
+
+// v5.10.21 — pick the export source: prefer the actual movements list,
+// but fall back to the diagnostic trace when the modal is empty so users
+// can still get a printout/CSV explaining WHY no movements appeared.
+function _invDrillPickExport() {
+  var movements = _invDrillBuildExportRows();
+  if (movements.rows.length) return movements;
+  var trace = _invDrillBuildTraceExportRows();
+  if (trace) return trace;
+  return movements;  // empty — caller decides what to show
 }
 
 window._invLiveDrillExportCsv = function() {
-  var b = _invDrillBuildExportRows();
-  if (!b.rows.length) return showToast('لا توجد حركات لتصديرها', true);
+  var b = _invDrillPickExport();
+  if (!b.rows.length) return showToast('لا توجد حركات ولا بيانات تشخيص للتصدير', true);
   var csv = '﻿' + b.data.map(function(r) {
     return r.map(function(v) {
       v = v == null ? '' : String(v);
@@ -8172,29 +8329,34 @@ window._invLiveDrillExportCsv = function() {
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url;
-  a.download = 'movements-' + (b.drill.itemId||'item') + '-' + (b.drill.op||'all') + '-' + _ymd(new Date()) + '.csv';
+  var fileTag = b.mode === 'trace' ? 'sales-trace' : 'movements';
+  a.download = fileTag + '-' + (b.drill.itemId||'item') + '-' + (b.drill.op||'all') + '-' + _ymd(new Date()) + '.csv';
   a.click();
   setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
 };
 
 window._invLiveDrillExportXlsx = function() {
-  var b = _invDrillBuildExportRows();
-  if (!b.rows.length) return showToast('لا توجد حركات لتصديرها', true);
+  var b = _invDrillPickExport();
+  if (!b.rows.length) return showToast('لا توجد حركات ولا بيانات تشخيص للتصدير', true);
   if (typeof XLSX === 'undefined' && typeof ensureXlsx === 'function') {
     ensureXlsx().then(function(){ _invLiveDrillExportXlsx(); });
     return;
   }
   if (typeof XLSX === 'undefined') return showToast('XLSX غير متاح', true);
   var ws = XLSX.utils.aoa_to_sheet(b.data);
-  ws['!cols'] = [{wch:5},{wch:20},{wch:8},{wch:14},{wch:20},{wch:18},{wch:18},{wch:14},{wch:14},{wch:14},{wch:10},{wch:14},{wch:18},{wch:24}];
+  // Column widths differ between movements (14 cols) and trace (7 cols)
+  ws['!cols'] = b.mode === 'trace'
+    ? [{wch:5},{wch:20},{wch:24},{wch:8},{wch:18},{wch:32},{wch:32}]
+    : [{wch:5},{wch:20},{wch:8},{wch:14},{wch:20},{wch:18},{wch:18},{wch:14},{wch:14},{wch:14},{wch:10},{wch:14},{wch:18},{wch:24}];
   var wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'حركة الصنف');
-  XLSX.writeFile(wb, 'movements-' + (b.drill.itemId||'item') + '-' + (b.drill.op||'all') + '-' + _ymd(new Date()) + '.xlsx');
+  XLSX.utils.book_append_sheet(wb, ws, b.mode === 'trace' ? 'تشخيص المبيعات' : 'حركة الصنف');
+  var fileTag = b.mode === 'trace' ? 'sales-trace' : 'movements';
+  XLSX.writeFile(wb, fileTag + '-' + (b.drill.itemId||'item') + '-' + (b.drill.op||'all') + '-' + _ymd(new Date()) + '.xlsx');
 };
 
 window._invLiveDrillPrint = function() {
-  var b = _invDrillBuildExportRows();
-  if (!b.rows.length) return showToast('لا توجد حركات لطباعتها', true);
+  var b = _invDrillPickExport();
+  if (!b.rows.length) return showToast('لا توجد حركات ولا بيانات تشخيص للطباعة', true);
   var d = b.drill;
   var win = window.open('', '_blank', 'width=900,height=1100');
   if (!win) return showToast('السماح بالنوافذ المنبثقة مطلوب للطباعة', true);
@@ -8204,9 +8366,23 @@ window._invLiveDrillPrint = function() {
     return '<tr>' + row.map(function(v){ return '<td>' + esc(v) + '</td>'; }).join('') + '</tr>';
   }).join('');
   var s = window._invLive || {};
+  // v5.10.21 — title + subtitle + optional banner change when we're
+  // printing the diagnostic trace instead of raw movements.
+  var isTrace = b.mode === 'trace';
+  var titleTxt = isTrace
+    ? 'تشخيص: لا توجد حركات مباشرة — ' + esc(d.itemName)
+    : esc(_opLabel(d.op||'all')) + ' — ' + esc(d.itemName);
+  var countLabel = isTrace
+    ? (b.rows.length + ' عملية بيع ذات صلة')
+    : (b.rows.length + ' حركة');
+  var traceBanner = isTrace
+    ? '<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:11px;color:#334155;">' +
+        '<strong style="color:#0f172a;">سبب الفراغ:</strong> ' + esc(b.traceHint || 'انظر العمود "الحالة" في كل سطر.') +
+      '</div>'
+    : '';
   var html =
     '<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8">' +
-      '<title>حركة الصنف ' + esc(d.itemName) + '</title>' +
+      '<title>' + (isTrace ? 'تشخيص الصنف ' : 'حركة الصنف ') + esc(d.itemName) + '</title>' +
       '<style>' +
         '@page{size:A4 landscape;margin:14mm 12mm;}' +
         'body{font-family:"Tahoma","Segoe UI",Arial,sans-serif;direction:rtl;color:#0f172a;font-size:11px;margin:0;}' +
@@ -8222,13 +8398,14 @@ window._invLiveDrillPrint = function() {
     '</head><body>' +
       '<div class="head">' +
         '<div>' +
-          '<h1>' + esc(_opLabel(d.op||'all')) + ' — ' + esc(d.itemName) + '</h1>' +
-          '<div class="meta">من ' + esc(_ymd(s.startDate)) + ' إلى ' + esc(_ymd(s.endDate)) + ' · ' + b.rows.length + ' حركة</div>' +
+          '<h1>' + titleTxt + '</h1>' +
+          '<div class="meta">من ' + esc(_ymd(s.startDate)) + ' إلى ' + esc(_ymd(s.endDate)) + ' · ' + countLabel + '</div>' +
         '</div>' +
         '<div class="meta">طُبع: ' + new Date().toLocaleString('en-GB') + '</div>' +
       '</div>' +
+      traceBanner +
       '<table><thead><tr>' + headerCells + '</tr></thead><tbody>' + bodyRows + '</tbody></table>' +
-      '<div class="foot"><span>Moroccan Taste POS</span><span>v5.10.8</span></div>' +
+      '<div class="foot"><span>Moroccan Taste POS</span><span>v5.10.21</span></div>' +
       '<script>setTimeout(function(){window.print();},250);<\/script>' +
     '</body></html>';
   win.document.open();
@@ -8758,6 +8935,7 @@ function loadDashStocktake() {
                  ((st.warehouseName || '').toLowerCase().indexOf(search) >= 0);
         });
       }
+      _whRenderStocktakeKpis(res);
       let h = "";
       if (!res.length) {
         var emptyMsg = search || fromDate || toDate
@@ -8806,7 +8984,133 @@ function whClearFilters(tabKey) {
     ids = ['shortageSearch', 'shortageFromDate', 'shortageToDate', 'shortageStatusFilter', 'shortageBrandFilter'];
     ids.forEach(function(id){ var el = q('#'+id); if (el) el.value = ''; });
     if (typeof loadDashShortageRequests === 'function') loadDashShortageRequests();
+  } else if (tabKey === 'transfer') {
+    ids = ['transferSearch', 'transferFromDate', 'transferToDate', 'transferDirectionFilter', 'transferStatusFilter'];
+    ids.forEach(function(id){ var el = q('#'+id); if (el) el.value = ''; });
+    if (typeof loadDashTransfers === 'function') loadDashTransfers();
   }
+}
+
+// v5.10.21 — KPI cards for warehouse tabs. Each tab has its own metrics
+// computed from the currently loaded list (filtered or not). The shared
+// _invItemsKpi() helper from the items tab gives identical visuals.
+function _whIsToday(d) {
+  if (!d) return false;
+  var t = new Date(d);
+  var now = new Date();
+  return t.getFullYear() === now.getFullYear() && t.getMonth() === now.getMonth() && t.getDate() === now.getDate();
+}
+
+function _whRenderStocktakeKpis(rows) {
+  var box = q('#stocktakeKpis');
+  if (!box || typeof _invItemsKpi !== 'function') return;
+  rows = rows || [];
+  var totalCount = rows.length;
+  var totalItems = 0, totalAbsVar = 0, todayCount = 0;
+  rows.forEach(function(s){
+    totalItems  += Number(s.itemsCount) || 0;
+    totalAbsVar += Math.abs(Number(s.totalVariance) || 0);
+    if (_whIsToday(s.date)) todayCount++;
+  });
+  box.innerHTML =
+    _invItemsKpi({ label: 'إجمالي المحاضر',          num: totalCount.toLocaleString('ar-SA'), unit: 'محضر',
+                   icon: 'fa-tasks',           color: '#3b82f6', gradFrom: '#dbeafe', gradTo: '#eff6ff',
+                   footer: '<i class="fas fa-calendar-day"></i> اليوم: ' + todayCount }) +
+    _invItemsKpi({ label: 'الأصناف المجرودة',         num: totalItems.toLocaleString('ar-SA'), unit: 'صنف',
+                   icon: 'fa-boxes-stacked',   color: '#10b981', gradFrom: '#d1fae5', gradTo: '#ecfdf5',
+                   footer: '<i class="fas fa-chart-simple"></i> متوسط/محضر: <b>' + (totalCount ? Math.round(totalItems/totalCount) : 0) + '</b>' }) +
+    _invItemsKpi({ label: 'إجمالي التباين',          num: totalAbsVar.toFixed(2), unit: 'وحدة',
+                   icon: 'fa-scale-balanced',  color: '#f59e0b', gradFrom: '#fef3c7', gradTo: '#fffbeb',
+                   footer: totalAbsVar > 0 ? '<i class="fas fa-bell"></i> فروقات تستحق المراجعة' : '<i class="fas fa-circle-check"></i> لا فروقات', pulse: totalAbsVar > 0 }) +
+    _invItemsKpi({ label: 'محاضر اليوم',             num: todayCount.toLocaleString('ar-SA'), unit: 'محضر',
+                   icon: 'fa-calendar-day',    color: '#8b5cf6', gradFrom: '#ede9fe', gradTo: '#f5f3ff',
+                   footer: '<i class="fas fa-clock"></i> آخر تحديث: ' + new Date().toLocaleTimeString('ar-SA', {hour:'2-digit',minute:'2-digit'}) });
+}
+
+function _whRenderAdjustmentsKpis(rows) {
+  var box = q('#adjKpis');
+  if (!box || typeof _invItemsKpi !== 'function') return;
+  rows = rows || [];
+  var totalCount = rows.length;
+  var totalCost = 0, pendingCount = 0, todayCount = 0, damagedCount = 0;
+  rows.forEach(function(a){
+    totalCost += Number(a.totalCost) || 0;
+    if (a.status === 'pending')  pendingCount++;
+    if (a.reason === 'damaged')  damagedCount++;
+    if (_whIsToday(a.date))      todayCount++;
+  });
+  box.innerHTML =
+    _invItemsKpi({ label: 'إجمالي المحاضر',          num: totalCount.toLocaleString('ar-SA'), unit: 'محضر',
+                   icon: 'fa-minus-circle',    color: '#3b82f6', gradFrom: '#dbeafe', gradTo: '#eff6ff',
+                   footer: '<i class="fas fa-calendar-day"></i> اليوم: ' + todayCount }) +
+    _invItemsKpi({ label: 'إجمالي تكلفة التعديلات', num: _invHubFmtMoney(totalCost), unit: 'ر.س',
+                   icon: 'fa-sack-dollar',     color: '#ef4444', gradFrom: '#fee2e2', gradTo: '#fef2f2',
+                   footer: '<i class="fas fa-fire-flame-curved"></i> توالف: ' + damagedCount }) +
+    _invItemsKpi({ label: 'بانتظار الاعتماد',        num: pendingCount.toLocaleString('ar-SA'), unit: 'محضر',
+                   icon: 'fa-hourglass-half',  color: '#f59e0b', gradFrom: '#fef3c7', gradTo: '#fffbeb',
+                   footer: pendingCount > 0 ? '<i class="fas fa-bell"></i> يحتاج مراجعة المدير' : '<i class="fas fa-circle-check"></i> كل المحاضر معتمدة', pulse: pendingCount > 0 }) +
+    _invItemsKpi({ label: 'محاضر اليوم',             num: todayCount.toLocaleString('ar-SA'), unit: 'محضر',
+                   icon: 'fa-calendar-day',    color: '#8b5cf6', gradFrom: '#ede9fe', gradTo: '#f5f3ff',
+                   footer: '<i class="fas fa-clock"></i> آخر تحديث: ' + new Date().toLocaleTimeString('ar-SA', {hour:'2-digit',minute:'2-digit'}) });
+}
+
+function _whRenderShortageKpis(rows) {
+  var box = q('#shortageKpis');
+  if (!box || typeof _invItemsKpi !== 'function') return;
+  rows = rows || [];
+  var totalCount = rows.length;
+  var pendingCount = 0, approvedCount = 0, convertedCount = 0, rejectedCount = 0;
+  rows.forEach(function(r){
+    if (r.status === 'pending')   pendingCount++;
+    if (r.status === 'approved')  approvedCount++;
+    if (r.status === 'converted') convertedCount++;
+    if (r.status === 'rejected')  rejectedCount++;
+  });
+  box.innerHTML =
+    _invItemsKpi({ label: 'إجمالي الطلبات',          num: totalCount.toLocaleString('ar-SA'), unit: 'طلب',
+                   icon: 'fa-exclamation-triangle', color: '#3b82f6', gradFrom: '#dbeafe', gradTo: '#eff6ff',
+                   footer: '<i class="fas fa-tag"></i> معتمد: ' + approvedCount + ' · مرفوض: ' + rejectedCount }) +
+    _invItemsKpi({ label: 'بانتظار',                 num: pendingCount.toLocaleString('ar-SA'), unit: 'طلب',
+                   icon: 'fa-hourglass-half',  color: '#f59e0b', gradFrom: '#fef3c7', gradTo: '#fffbeb',
+                   footer: pendingCount > 0 ? '<i class="fas fa-bell"></i> طلبات تحتاج إجراءً' : '<i class="fas fa-circle-check"></i> لا طلبات معلّقة', pulse: pendingCount > 0 }) +
+    _invItemsKpi({ label: 'تحوّلت لأمر شراء',         num: convertedCount.toLocaleString('ar-SA'), unit: 'طلب',
+                   icon: 'fa-shopping-cart',   color: '#10b981', gradFrom: '#d1fae5', gradTo: '#ecfdf5',
+                   footer: '<i class="fas fa-receipt"></i> أوامر شراء صادرة' }) +
+    _invItemsKpi({ label: 'مرفوضة',                  num: rejectedCount.toLocaleString('ar-SA'), unit: 'طلب',
+                   icon: 'fa-ban',             color: '#ef4444', gradFrom: '#fee2e2', gradTo: '#fef2f2',
+                   footer: rejectedCount > 0 ? '<i class="fas fa-circle-info"></i> راجع أسباب الرفض' : '<i class="fas fa-circle-check"></i> لا توجد طلبات مرفوضة' });
+}
+
+function _whRenderTransfersKpis(rows) {
+  var box = q('#transferKpis');
+  if (!box || typeof _invItemsKpi !== 'function') return;
+  rows = rows || [];
+  var hubWh = (window._invHub && window._invHub.warehouseId && window._invHub.warehouseId !== '__all__')
+    ? window._invHub.warehouseId : '';
+  var totalCount = rows.length;
+  var pendingCount = 0, approvedCount = 0, cancelledCount = 0, inCount = 0, outCount = 0;
+  rows.forEach(function(t){
+    if (t.status === 'pending')   pendingCount++;
+    if (t.status === 'approved')  approvedCount++;
+    if (t.status === 'cancelled') cancelledCount++;
+    if (hubWh) {
+      if (t.toId === hubWh && t.fromId !== hubWh)  inCount++;
+      if (t.fromId === hubWh && t.toId !== hubWh)  outCount++;
+    }
+  });
+  box.innerHTML =
+    _invItemsKpi({ label: 'إجمالي التحويلات',         num: totalCount.toLocaleString('ar-SA'), unit: 'تحويل',
+                   icon: 'fa-exchange-alt',    color: '#3b82f6', gradFrom: '#dbeafe', gradTo: '#eff6ff',
+                   footer: hubWh ? ('<i class="fas fa-arrow-down"></i> وارد: ' + inCount + ' · <i class="fas fa-arrow-up"></i> صادر: ' + outCount) : '<i class="fas fa-globe"></i> كل المستودعات' }) +
+    _invItemsKpi({ label: 'بانتظار الاعتماد',         num: pendingCount.toLocaleString('ar-SA'), unit: 'تحويل',
+                   icon: 'fa-hourglass-half',  color: '#f59e0b', gradFrom: '#fef3c7', gradTo: '#fffbeb',
+                   footer: pendingCount > 0 ? '<i class="fas fa-bell"></i> تحويلات تنتظر الاعتماد' : '<i class="fas fa-circle-check"></i> لا تحويلات معلّقة', pulse: pendingCount > 0 }) +
+    _invItemsKpi({ label: 'معتمدة',                   num: approvedCount.toLocaleString('ar-SA'), unit: 'تحويل',
+                   icon: 'fa-circle-check',    color: '#10b981', gradFrom: '#d1fae5', gradTo: '#ecfdf5',
+                   footer: '<i class="fas fa-check-double"></i> أُجريت بنجاح' }) +
+    _invItemsKpi({ label: 'ملغية',                    num: cancelledCount.toLocaleString('ar-SA'), unit: 'تحويل',
+                   icon: 'fa-ban',             color: '#ef4444', gradFrom: '#fee2e2', gradTo: '#fef2f2',
+                   footer: cancelledCount > 0 ? '<i class="fas fa-circle-info"></i> راجع الأسباب' : '<i class="fas fa-circle-check"></i> لا تحويلات ملغية' });
 }
 
 // View stocktake detail in a modal

@@ -2434,12 +2434,34 @@ router.get('/warehouse-stock-detail/:whId', async (req, res) => {
 });
 
 // Warehouse transfers
+// v5.10.21 — accepts ?warehouseId (matches either from or to), ?direction
+// (in|out — only when warehouseId is set), ?status, ?startDate, ?endDate
+// so the unified filter bar in the wh_transfers tab can scope server-side.
 router.get('/warehouse-transfers', async (req, res) => {
   try {
-    const [rows] = await db.query(
+    let sql =
       `SELECT t.*, wf.name AS from_name, wt.name AS to_name FROM warehouse_transfers t
        LEFT JOIN warehouses wf ON t.from_warehouse_id = wf.id
-       LEFT JOIN warehouses wt ON t.to_warehouse_id = wt.id ORDER BY t.created_at DESC LIMIT 200`);
+       LEFT JOIN warehouses wt ON t.to_warehouse_id = wt.id`;
+    const conds = [];
+    const params = [];
+    const { warehouseId, direction, status, startDate, endDate } = req.query;
+    if (warehouseId) {
+      if (direction === 'in') {
+        conds.push('t.to_warehouse_id = ?');   params.push(warehouseId);
+      } else if (direction === 'out') {
+        conds.push('t.from_warehouse_id = ?'); params.push(warehouseId);
+      } else {
+        conds.push('(t.from_warehouse_id = ? OR t.to_warehouse_id = ?)');
+        params.push(warehouseId, warehouseId);
+      }
+    }
+    if (status)    { conds.push('t.status = ?');                  params.push(status); }
+    if (startDate) { conds.push('DATE(t.transfer_date) >= ?');    params.push(startDate); }
+    if (endDate)   { conds.push('DATE(t.transfer_date) <= ?');    params.push(endDate); }
+    if (conds.length) sql += ' WHERE ' + conds.join(' AND ');
+    sql += ' ORDER BY t.created_at DESC LIMIT 200';
+    const [rows] = await db.query(sql, params);
     res.json(rows.map(t => ({
       id: t.id, transferNumber: t.transfer_number, fromWarehouse: t.from_name||'', toWarehouse: t.to_name||'',
       fromId: t.from_warehouse_id, toId: t.to_warehouse_id,

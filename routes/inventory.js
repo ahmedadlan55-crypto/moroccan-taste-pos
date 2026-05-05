@@ -1821,15 +1821,41 @@ router.post('/adjustments/:id/approve', async (req, res) => {
 });
 
 // List adjustments
+// v5.10.20 — accepts ?warehouseId, ?startDate, ?endDate, ?status, ?reason
+// so the unified filter bar in the adjustments tab can scope server-side.
+// Also returns warehouse_name when adjustments table has warehouse_id.
 router.get('/adjustments', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM stock_adjustments ORDER BY adjustment_date DESC LIMIT 200');
+    let sql =
+      'SELECT a.*, w.name AS warehouse_name, w.code AS warehouse_code ' +
+      'FROM stock_adjustments a ' +
+      'LEFT JOIN warehouses w ON w.id = a.warehouse_id ';
+    const params = [];
+    const conds = [];
+    if (req.query.warehouseId) { conds.push('a.warehouse_id = ?'); params.push(req.query.warehouseId); }
+    if (req.query.startDate)   { conds.push('DATE(a.adjustment_date) >= ?'); params.push(req.query.startDate); }
+    if (req.query.endDate)     { conds.push('DATE(a.adjustment_date) <= ?'); params.push(req.query.endDate); }
+    if (req.query.status)      { conds.push('a.status = ?'); params.push(req.query.status); }
+    if (req.query.reason)      { conds.push('a.reason = ?'); params.push(req.query.reason); }
+    if (conds.length) sql += 'WHERE ' + conds.join(' AND ') + ' ';
+    sql += 'ORDER BY a.adjustment_date DESC LIMIT 200';
+    let rows;
+    try {
+      [rows] = await db.query(sql, params);
+    } catch (_) {
+      // Fallback for very old schemas without warehouse_id on stock_adjustments
+      [rows] = await db.query('SELECT * FROM stock_adjustments ORDER BY adjustment_date DESC LIMIT 200');
+      rows = rows.map(r => Object.assign({}, r, { warehouse_name: null, warehouse_code: null }));
+    }
     res.json(rows.map(a => ({
       id: a.id, date: a.adjustment_date, reason: a.reason,
       reasonLabel: REASON_LABELS[a.reason] || a.reason,
       reasonNotes: a.reason_notes, username: a.username,
       status: a.status, itemsCount: a.items_count,
-      totalCost: Number(a.total_cost), approvedBy: a.approved_by, approvedAt: a.approved_at
+      totalCost: Number(a.total_cost), approvedBy: a.approved_by, approvedAt: a.approved_at,
+      warehouseId: a.warehouse_id || '',
+      warehouseName: a.warehouse_name || '',
+      warehouseCode: a.warehouse_code || ''
     })));
   } catch (e) { res.json([]); }
 });
@@ -2090,18 +2116,22 @@ router.post('/shortage-requests', async (req, res) => {
 });
 
 // Get shortage requests (brand-aware)
+// v5.10.20 — added startDate/endDate filters so the unified filter bar can
+// scope the list server-side instead of fetching everything every time.
 router.get('/shortage-requests', async (req, res) => {
   try {
-    const { brandId, status, branchId } = req.query;
+    const { brandId, status, branchId, startDate, endDate } = req.query;
     let sql = `SELECT r.*, b.name AS brand_name, br.name AS branch_name
                FROM shortage_requests r
                LEFT JOIN brands b ON b.id = r.brand_id
                LEFT JOIN branches br ON br.id = r.branch_id
                WHERE 1=1`;
     const params = [];
-    if (brandId)  { sql += ' AND r.brand_id = ?';  params.push(brandId); }
-    if (status)   { sql += ' AND r.status = ?';    params.push(status); }
-    if (branchId) { sql += ' AND r.branch_id = ?'; params.push(branchId); }
+    if (brandId)   { sql += ' AND r.brand_id = ?';            params.push(brandId); }
+    if (status)    { sql += ' AND r.status = ?';              params.push(status); }
+    if (branchId)  { sql += ' AND r.branch_id = ?';           params.push(branchId); }
+    if (startDate) { sql += ' AND DATE(r.request_date) >= ?'; params.push(startDate); }
+    if (endDate)   { sql += ' AND DATE(r.request_date) <= ?'; params.push(endDate); }
     sql += ' ORDER BY r.created_at DESC LIMIT 200';
     const [rows] = await db.query(sql, params);
     res.json(rows.map(r => ({

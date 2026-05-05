@@ -926,13 +926,18 @@
           </div>
 
           <!-- Tab 3: الجرد -->
+          <!-- v5.10.20 — unified filter bar pattern: search + date range + status -->
           <div class="sales-tab-content" id="wh_stocktake">
-            <div class="filter-bar" style="justify-content:space-between; align-items:center;flex-wrap:wrap;gap:10px;">
-              <h3 style="margin:0; color:var(--primary);"><i class="fas fa-tasks"></i> عمليات الجرد والتسويات</h3>
-              <div style="display:flex;gap:8px;align-items:center;">
-                <select id="stocktakeBrandFilter" class="form-control" style="max-width:200px;background:linear-gradient(135deg,#faf5ff,#fff);border-color:#d8b4fe;" onchange="loadStocktakeList()">
-                  <option value="">🏪 كل البراندات</option>
-                </select>
+            <div class="wh-filter-bar">
+              <div class="wh-fb-title"><i class="fas fa-tasks"></i> عمليات الجرد والتسويات</div>
+              <div class="wh-fb-controls">
+                <div class="wh-fb-search">
+                  <i class="fas fa-search"></i>
+                  <input type="text" id="stocktakeSearch" class="form-control" placeholder="بحث برقم المحضر، اسم القائم، أو الملاحظات..." oninput="loadDashStocktake()">
+                </div>
+                <input type="date" id="stocktakeFromDate" class="form-control wh-fb-date" title="من تاريخ" onchange="loadDashStocktake()">
+                <input type="date" id="stocktakeToDate" class="form-control wh-fb-date" title="إلى تاريخ" onchange="loadDashStocktake()">
+                <button class="btn btn-light wh-fb-clear" onclick="whClearFilters('stocktake')" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
                 <button class="btn btn-primary" onclick="startStocktake()"><i class="fas fa-play"></i> بدء عملية جرد جديدة</button>
               </div>
             </div>
@@ -945,19 +950,35 @@
           </div>
 
           <!-- Tab: تعديل كمية -->
+          <!-- v5.10.20 — unified filter bar: search + date range + reason + status -->
           <div class="sales-tab-content" id="wh_adjustments">
-            <div class="filter-bar" style="justify-content:space-between; align-items:center;flex-wrap:wrap;gap:10px;">
-              <h3 style="margin:0; color:var(--primary);"><i class="fas fa-minus-circle"></i> محاضر تعديل الكمية</h3>
-              <div style="display:flex;gap:8px;align-items:center;">
-                <select id="adjBrandFilter" class="form-control" style="max-width:200px;background:linear-gradient(135deg,#faf5ff,#fff);border-color:#d8b4fe;" onchange="loadAdjustmentsList()">
-                  <option value="">🏪 كل البراندات</option>
+            <div class="wh-filter-bar">
+              <div class="wh-fb-title"><i class="fas fa-minus-circle"></i> محاضر تعديل الكمية</div>
+              <div class="wh-fb-controls">
+                <div class="wh-fb-search">
+                  <i class="fas fa-search"></i>
+                  <input type="text" id="adjSearch" class="form-control" placeholder="بحث برقم المحضر، السبب، أو بواسطة..." oninput="loadDashAdjustments()">
+                </div>
+                <input type="date" id="adjFromDate" class="form-control wh-fb-date" title="من تاريخ" onchange="loadDashAdjustments()">
+                <input type="date" id="adjToDate" class="form-control wh-fb-date" title="إلى تاريخ" onchange="loadDashAdjustments()">
+                <select id="adjReasonFilter" class="form-control wh-fb-select" onchange="loadDashAdjustments()">
+                  <option value="">كل الأسباب</option>
+                  <option value="damaged">تالف</option>
+                  <option value="admin">إداري</option>
+                  <option value="settlement">تسويات</option>
                 </select>
+                <select id="adjStatusFilter" class="form-control wh-fb-select" onchange="loadDashAdjustments()">
+                  <option value="">كل الحالات</option>
+                  <option value="pending">بانتظار الاعتماد</option>
+                  <option value="approved">معتمد</option>
+                </select>
+                <button class="btn btn-light wh-fb-clear" onclick="whClearFilters('adj')" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
                 <button class="btn btn-danger" onclick="openAdjustmentModal()"><i class="fas fa-plus"></i> محضر تعديل كمية</button>
               </div>
             </div>
             <div class="table-wrapper">
               <table class="table">
-                <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>البراند</th><th>السبب</th><th>بواسطة</th><th>عدد الأصناف</th><th>إجمالي التكلفة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+                <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>المستودع</th><th>السبب</th><th>بواسطة</th><th>عدد الأصناف</th><th>إجمالي التكلفة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
                 <tbody id="tbAdjustments"></tbody>
               </table>
             </div>
@@ -999,13 +1020,28 @@
               <div id="xferInboxGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;"></div>
             </div>
 
-            <div class="filter-bar" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
-              <h3 style="margin:0;color:var(--primary);"><i class="fas fa-exclamation-triangle"></i> طلبات النواقص من الفروع</h3>
-              <div style="display:flex;gap:8px;align-items:center;">
-                <select id="shortageBrandFilter" class="form-control" style="max-width:200px;background:linear-gradient(135deg,#faf5ff,#fff);border-color:#d8b4fe;" onchange="loadShortageRequests()">
+            <!-- v5.10.20 — unified filter bar: search + date range + status + brand -->
+            <div class="wh-filter-bar">
+              <div class="wh-fb-title"><i class="fas fa-exclamation-triangle"></i> طلبات النواقص من الفروع</div>
+              <div class="wh-fb-controls">
+                <div class="wh-fb-search">
+                  <i class="fas fa-search"></i>
+                  <input type="text" id="shortageSearch" class="form-control" placeholder="بحث برقم الطلب، اسم الكاشير، أو الملاحظات..." oninput="loadDashShortageRequests()">
+                </div>
+                <input type="date" id="shortageFromDate" class="form-control wh-fb-date" title="من تاريخ" onchange="loadDashShortageRequests()">
+                <input type="date" id="shortageToDate" class="form-control wh-fb-date" title="إلى تاريخ" onchange="loadDashShortageRequests()">
+                <select id="shortageStatusFilter" class="form-control wh-fb-select" onchange="loadDashShortageRequests()">
+                  <option value="">كل الحالات</option>
+                  <option value="pending">بانتظار</option>
+                  <option value="approved">معتمد</option>
+                  <option value="converted">تم التحويل لأمر شراء</option>
+                  <option value="rejected">مرفوض</option>
+                </select>
+                <select id="shortageBrandFilter" class="form-control wh-fb-select" onchange="loadDashShortageRequests()">
                   <option value="">🏪 كل البراندات</option>
                 </select>
-                <button class="btn btn-secondary" onclick="loadShortageRequests()"><i class="fas fa-sync"></i> تحديث</button>
+                <button class="btn btn-light wh-fb-clear" onclick="whClearFilters('shortage')" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
+                <button class="btn btn-secondary" onclick="loadDashShortageRequests()"><i class="fas fa-sync"></i> تحديث</button>
               </div>
             </div>
             <div class="table-wrapper">

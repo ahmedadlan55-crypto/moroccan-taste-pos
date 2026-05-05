@@ -4407,38 +4407,78 @@ function switchWhTab(tab) {
 var _adjCart = []; // [{id, name, unit, qty, unitCost, stockBefore}]
 var _adjReasonLabels = { damaged: 'تالف', admin: 'إداري', settlement: 'تسويات' };
 
+// v5.10.20 — read the unified filter-bar inputs (search/date/reason/status)
+// and pass server-side filters to /inventory/adjustments. Free-text search
+// is applied client-side after fetch.
 function loadDashAdjustments() {
   loader();
-  api.withSuccessHandler(function(res) {
-    loader(false);
-    var h = '';
-    if (!res || !res.length) {
-      h = '<tr><td colspan="8" style="text-align:center;padding:30px;">لا توجد محاضر تعديل سابقة</td></tr>';
-    } else {
-      res.forEach(function(a) {
-        var dateStr = a.date ? new Date(a.date).toLocaleString('ar-SA') : '';
-        var reasonBadge = '<span class="badge ' + (a.reason === 'damaged' ? 'red' : (a.reason === 'admin' ? 'blue' : 'yellow')) + '">' + (a.reasonLabel || a.reason) + '</span>';
-        var statusBadge = a.status === 'approved'
-          ? '<span class="badge green">معتمد ✓</span>'
-          : '<span class="badge yellow">بانتظار الاعتماد</span>';
-        h += '<tr>' +
-          '<td style="font-family:monospace;font-size:12px;color:#64748b;">' + a.id + '</td>' +
-          '<td>' + dateStr + '</td>' +
-          '<td>' + reasonBadge + '</td>' +
-          '<td style="font-weight:600;">' + a.username + '</td>' +
-          '<td style="text-align:center;">' + a.itemsCount + '</td>' +
-          '<td style="font-weight:800;color:#ef4444;">' + formatVal(a.totalCost) + ' SAR</td>' +
-          '<td>' + statusBadge + '</td>' +
-          '<td style="white-space:nowrap;">' +
-            '<button class="btn btn-primary btn-sm" onclick="viewAdjustmentDetail(\'' + a.id + '\')" title="عرض"><i class="fas fa-eye"></i></button> ' +
-            (a.status !== 'approved' ? '<button class="btn btn-success btn-sm" onclick="approveAdjustment(\'' + a.id + '\')" title="اعتماد"><i class="fas fa-check"></i></button> ' : '') +
-            '<button class="btn btn-light btn-sm" onclick="printAdjustment(\'' + a.id + '\')" title="طباعة"><i class="fas fa-print"></i></button> ' +
-            (a.status !== 'approved' || state.isDeveloper ? '<button class="btn btn-danger btn-sm" onclick="deleteAdjustment(\'' + a.id + '\')" title="حذف"><i class="fas fa-trash"></i></button>' : '') +
-          '</td></tr>';
-      });
-    }
-    q("#tbAdjustments").innerHTML = h;
-  }).getAllAdjustments();
+  var token = localStorage.getItem('pos_token') || '';
+  var hubWh = (window._invHub && window._invHub.warehouseId && window._invHub.warehouseId !== '__all__')
+    ? window._invHub.warehouseId : '';
+  var fromDate = (q('#adjFromDate') && q('#adjFromDate').value) || '';
+  var toDate   = (q('#adjToDate')   && q('#adjToDate').value)   || '';
+  var reason   = (q('#adjReasonFilter') && q('#adjReasonFilter').value) || '';
+  var status   = (q('#adjStatusFilter') && q('#adjStatusFilter').value) || '';
+  var search   = ((q('#adjSearch') && q('#adjSearch').value) || '').trim().toLowerCase();
+
+  var qs = [];
+  if (hubWh)    qs.push('warehouseId=' + encodeURIComponent(hubWh));
+  if (fromDate) qs.push('startDate='   + encodeURIComponent(fromDate));
+  if (toDate)   qs.push('endDate='     + encodeURIComponent(toDate));
+  if (reason)   qs.push('reason='      + encodeURIComponent(reason));
+  if (status)   qs.push('status='      + encodeURIComponent(status));
+  var url = '/api/inventory/adjustments' + (qs.length ? ('?' + qs.join('&')) : '');
+
+  fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(res) {
+      loader(false);
+      if (!Array.isArray(res)) res = [];
+      // Client-side text search across id, username, reason, reasonNotes, warehouse
+      if (search) {
+        res = res.filter(function(a){
+          return ((a.id || '').toLowerCase().indexOf(search) >= 0) ||
+                 ((a.username || '').toLowerCase().indexOf(search) >= 0) ||
+                 ((a.reasonLabel || '').toLowerCase().indexOf(search) >= 0) ||
+                 ((a.reasonNotes || '').toLowerCase().indexOf(search) >= 0) ||
+                 ((a.warehouseName || '').toLowerCase().indexOf(search) >= 0);
+        });
+      }
+      var h = '';
+      if (!res.length) {
+        var emptyMsg = (search || fromDate || toDate || reason || status)
+          ? 'لا توجد محاضر تطابق الفلاتر — جرّب توسيع نطاق البحث.'
+          : 'لا توجد محاضر تعديل سابقة';
+        h = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#94a3b8;">' + emptyMsg + '</td></tr>';
+      } else {
+        res.forEach(function(a) {
+          var dateStr = a.date ? new Date(a.date).toLocaleString('ar-SA') : '';
+          var reasonBadge = '<span class="badge ' + (a.reason === 'damaged' ? 'red' : (a.reason === 'admin' ? 'blue' : 'yellow')) + '">' + (a.reasonLabel || a.reason) + '</span>';
+          var statusBadge = a.status === 'approved'
+            ? '<span class="badge green">معتمد ✓</span>'
+            : '<span class="badge yellow">بانتظار الاعتماد</span>';
+          var whCell = a.warehouseName
+            ? '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(a.warehouseName) + '</span>'
+            : '<span style="color:#cbd5e1;font-size:11px;">—</span>';
+          h += '<tr>' +
+            '<td style="font-family:monospace;font-size:12px;color:#64748b;">' + a.id + '</td>' +
+            '<td>' + dateStr + '</td>' +
+            '<td>' + whCell + '</td>' +
+            '<td>' + reasonBadge + '</td>' +
+            '<td style="font-weight:600;">' + a.username + '</td>' +
+            '<td style="text-align:center;">' + a.itemsCount + '</td>' +
+            '<td style="font-weight:800;color:#ef4444;">' + formatVal(a.totalCost) + ' SAR</td>' +
+            '<td>' + statusBadge + '</td>' +
+            '<td style="white-space:nowrap;">' +
+              '<button class="btn btn-primary btn-sm" onclick="viewAdjustmentDetail(\'' + a.id + '\')" title="عرض"><i class="fas fa-eye"></i></button> ' +
+              (a.status !== 'approved' ? '<button class="btn btn-success btn-sm" onclick="approveAdjustment(\'' + a.id + '\')" title="اعتماد"><i class="fas fa-check"></i></button> ' : '') +
+              '<button class="btn btn-light btn-sm" onclick="printAdjustment(\'' + a.id + '\')" title="طباعة"><i class="fas fa-print"></i></button> ' +
+              (a.status !== 'approved' || state.isDeveloper ? '<button class="btn btn-danger btn-sm" onclick="deleteAdjustment(\'' + a.id + '\')" title="حذف"><i class="fas fa-trash"></i></button>' : '') +
+            '</td></tr>';
+        });
+      }
+      q("#tbAdjustments").innerHTML = h;
+    }).catch(function(){ loader(false); });
 }
 
 // V5.8.9 — Pro fullscreen adjustment editor.
@@ -6648,18 +6688,48 @@ function loadDashShortageRequests() {
     }
   }).getReceiveRequests();
 
-  api.withSuccessHandler(function(list) {
+  // v5.10.20 — pull date + status filters from the unified filter bar so
+  // the server-side endpoint can scope results before they reach the wire.
+  var token = localStorage.getItem('pos_token') || '';
+  var fromDate = (q('#shortageFromDate') && q('#shortageFromDate').value) || '';
+  var toDate   = (q('#shortageToDate')   && q('#shortageToDate').value)   || '';
+  var statusF  = (q('#shortageStatusFilter') && q('#shortageStatusFilter').value) || '';
+  var search   = ((q('#shortageSearch') && q('#shortageSearch').value) || '').trim().toLowerCase();
+  var brandF   = q('#shortageBrandFilter') ? q('#shortageBrandFilter').value : '';
+
+  var qs = [];
+  if (fromDate) qs.push('startDate=' + encodeURIComponent(fromDate));
+  if (toDate)   qs.push('endDate='   + encodeURIComponent(toDate));
+  if (statusF)  qs.push('status='    + encodeURIComponent(statusF));
+  if (brandF && brandF !== '__none__') qs.push('brandId=' + encodeURIComponent(brandF));
+  var url = '/api/inventory/shortage-requests' + (qs.length ? ('?' + qs.join('&')) : '');
+
+  fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(list) {
     var tb = q('#tbShortageRequests');
     if (!tb) return;
-    if (!list) list = [];
-    // Apply brand filter (client-side)
-    var brandF = q('#shortageBrandFilter') ? q('#shortageBrandFilter').value : '';
-    if (brandF) {
+    if (!Array.isArray(list)) list = [];
+    // Brand: __none__ means "items without a brand" — server doesn't model that, so filter client-side
+    if (brandF === '__none__') {
+      list = list.filter(function(r){ return !r.brandId; });
+    }
+    // Free-text search across id/requestNumber/username/notes
+    if (search) {
       list = list.filter(function(r){
-        return brandF === '__none__' ? !r.brandId : r.brandId === brandF;
+        return ((r.id || '').toLowerCase().indexOf(search) >= 0) ||
+               ((r.requestNumber || '').toLowerCase().indexOf(search) >= 0) ||
+               ((r.username || '').toLowerCase().indexOf(search) >= 0) ||
+               ((r.notes || '').toLowerCase().indexOf(search) >= 0);
       });
     }
-    if (!list.length) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:#94a3b8;">لا توجد طلبات نواقص</td></tr>'; return; }
+    if (!list.length) {
+      var emptyMsg = (search || fromDate || toDate || statusF || brandF)
+        ? 'لا توجد طلبات تطابق الفلاتر — جرّب توسيع نطاق البحث.'
+        : 'لا توجد طلبات نواقص';
+      tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:#94a3b8;">' + emptyMsg + '</td></tr>';
+      return;
+    }
     var statusBadge = function(s) {
       if (s === 'pending') return '<span class="badge yellow">بانتظار</span>';
       if (s === 'approved') return '<span class="badge blue">معتمد</span>';
@@ -6691,7 +6761,7 @@ function loadDashShortageRequests() {
         '<td>' + statusBadge(r.status) + '</td>' +
         '<td style="white-space:nowrap;">' + actions + '</td></tr>';
     }).join('');
-  }).getShortageRequests();
+  }).catch(function(){ /* keep the existing inbox/receives rendered above */ });
 }
 
 // Stand-alone loader alias for the UI button
@@ -8656,25 +8726,44 @@ function _invLiveInjectStyles() {
 }
 
 let cachedStItems = [];
+// v5.10.20 — read the unified filter-bar inputs (search + date range) and
+// pass server-side filters to /inventory/stocktakes. Free-text search is
+// applied client-side after fetch (cheap on 200 rows; the API caps at 200).
 function loadDashStocktake() {
   loader();
-  // v5.10.19 — when the inventory hub is scoped to a single warehouse,
-  // pass it as a query param so the list reflects that scope. When the
-  // user is on "all warehouses", every stocktake is shown but each row
-  // carries a warehouse-name column for clarity.
   var token = localStorage.getItem('pos_token') || '';
   var hubWh = (window._invHub && window._invHub.warehouseId && window._invHub.warehouseId !== '__all__')
     ? window._invHub.warehouseId : '';
-  var url = '/api/inventory/stocktakes' + (hubWh ? ('?warehouseId=' + encodeURIComponent(hubWh)) : '');
+  var fromDate = (q('#stocktakeFromDate') && q('#stocktakeFromDate').value) || '';
+  var toDate   = (q('#stocktakeToDate')   && q('#stocktakeToDate').value)   || '';
+  var search   = ((q('#stocktakeSearch') && q('#stocktakeSearch').value) || '').trim().toLowerCase();
+
+  var qs = [];
+  if (hubWh)    qs.push('warehouseId=' + encodeURIComponent(hubWh));
+  if (fromDate) qs.push('startDate='   + encodeURIComponent(fromDate));
+  if (toDate)   qs.push('endDate='     + encodeURIComponent(toDate));
+  var url = '/api/inventory/stocktakes' + (qs.length ? ('?' + qs.join('&')) : '');
+
   fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
     .then(function(r){ return r.json(); })
     .then(function(res) {
       loader(false);
+      if (!Array.isArray(res)) res = [];
+      // Client-side text search: id, username, notes, warehouse name
+      if (search) {
+        res = res.filter(function(st){
+          return ((st.id || '').toLowerCase().indexOf(search) >= 0) ||
+                 ((st.username || '').toLowerCase().indexOf(search) >= 0) ||
+                 ((st.notes || '').toLowerCase().indexOf(search) >= 0) ||
+                 ((st.warehouseName || '').toLowerCase().indexOf(search) >= 0);
+        });
+      }
       let h = "";
-      if (!res || !res.length) {
-        h = "<tr><td colspan='7' style='text-align:center; padding:30px;'>" +
-            (hubWh ? "لا توجد عمليات جرد لهذا المستودع" : "لا توجد عمليات جرد سابقة") +
-            "</td></tr>";
+      if (!res.length) {
+        var emptyMsg = search || fromDate || toDate
+          ? 'لا توجد محاضر تطابق الفلاتر — جرّب توسيع نطاق البحث.'
+          : (hubWh ? 'لا توجد عمليات جرد لهذا المستودع' : 'لا توجد عمليات جرد سابقة');
+        h = "<tr><td colspan='7' style='text-align:center; padding:30px; color:#94a3b8;'>" + emptyMsg + "</td></tr>";
       } else {
         res.forEach(function(st) {
           var dateStr = st.date ? new Date(st.date).toLocaleString('ar-SA') : '';
@@ -8699,6 +8788,25 @@ function loadDashStocktake() {
       }
       q("#tbStocktake").innerHTML = h;
     }).catch(function(){ loader(false); });
+}
+
+// v5.10.20 — Reset all filter inputs for a given warehouse tab and refresh.
+// tabKey ∈ 'stocktake' | 'adj' | 'shortage'
+function whClearFilters(tabKey) {
+  var ids;
+  if (tabKey === 'stocktake') {
+    ids = ['stocktakeSearch', 'stocktakeFromDate', 'stocktakeToDate'];
+    ids.forEach(function(id){ var el = q('#'+id); if (el) el.value = ''; });
+    if (typeof loadDashStocktake === 'function') loadDashStocktake();
+  } else if (tabKey === 'adj') {
+    ids = ['adjSearch', 'adjFromDate', 'adjToDate', 'adjReasonFilter', 'adjStatusFilter'];
+    ids.forEach(function(id){ var el = q('#'+id); if (el) el.value = ''; });
+    if (typeof loadDashAdjustments === 'function') loadDashAdjustments();
+  } else if (tabKey === 'shortage') {
+    ids = ['shortageSearch', 'shortageFromDate', 'shortageToDate', 'shortageStatusFilter', 'shortageBrandFilter'];
+    ids.forEach(function(id){ var el = q('#'+id); if (el) el.value = ''; });
+    if (typeof loadDashShortageRequests === 'function') loadDashShortageRequests();
+  }
 }
 
 // View stocktake detail in a modal

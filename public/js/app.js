@@ -4054,41 +4054,43 @@ function _invHubLoadBrandsData(cb) {
     return cb(window._invHubCache.data);
   }
   var token = localStorage.getItem('pos_token') || '';
-  Promise.all([
-    fetch('/api/erp/brands', { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json()).catch(() => []),
-    fetch('/api/inventory/items', { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json()).catch(() => [])
-  ]).then(function(out) {
-    var brands = Array.isArray(out[0]) ? out[0] : [];
-    var items  = Array.isArray(out[1]) ? out[1] : [];
-    // Aggregate per-brand stats client-side (fast — < 2k items typical)
-    var byBrand = {};
-    items.forEach(function(it) {
-      var bid = it.brandId || '__none__';
-      if (!byBrand[bid]) byBrand[bid] = { itemCount: 0, totalValue: 0, lowCount: 0 };
-      var stock = Number(it.stock) || 0;
-      var cost  = Number(it.cost)  || 0;
-      var minStock = Number(it.minStock) || 0;
-      byBrand[bid].itemCount++;
-      byBrand[bid].totalValue += stock * cost;
-      if (stock <= minStock && minStock > 0) byBrand[bid].lowCount++;
+  // v5.10.24 — switched from fetching every item globally + aggregating
+  // client-side (which used the inv_items.stock rollup and could disagree
+  // with the warehouse cards inside each brand) to a small per-brand
+  // summary endpoint that aggregates from warehouse_stock with the same
+  // "real presence" rule. Side-benefit: payload is tiny (one row per brand),
+  // so opening the brand picker is now essentially free even on big
+  // catalogs — the lazy-loading the user asked for.
+  fetch('/api/inventory/brands-summary', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(payload) {
+      var brands = (payload && Array.isArray(payload.brands)) ? payload.brands : [];
+      var unbranded = (payload && payload.unbranded) || null;
+      var srvTotals = (payload && payload.totals) || {};
+      // Field names mapped to whatever the renderer expects (totalValue/value, lowCount/low, ...)
+      var enriched = brands.map(function(b){
+        return {
+          id: b.id, name: b.name, code: b.code, logo: b.logo,
+          itemCount:      Number(b.itemCount)      || 0,
+          totalValue:     Number(b.totalValue)     || 0,
+          lowCount:       Number(b.lowCount)       || 0,
+          outCount:       Number(b.outCount)       || 0,
+          warehouseCount: Number(b.warehouseCount) || 0
+        };
+      });
+      var totals = {
+        items: Number(srvTotals.items) || 0,
+        value: Number(srvTotals.value) || 0,
+        low:   Number(srvTotals.low)   || 0
+      };
+      var data = { brands: enriched, unbranded: unbranded, totals: totals };
+      window._invHubCache = { ts: Date.now(), data: data };
+      cb(data);
+    })
+    .catch(function(){
+      // Hard fallback: empty hub rather than a JS exception that hides the UI
+      cb({ brands: [], unbranded: null, totals: { items: 0, value: 0, low: 0 } });
     });
-    var enriched = brands.map(function(b) {
-      var s = byBrand[b.id] || { itemCount: 0, totalValue: 0, lowCount: 0 };
-      return Object.assign({}, b, s);
-    });
-    var unbranded = byBrand['__none__'] || null;
-    var totals = { items: items.length, value: 0, low: 0 };
-    items.forEach(function(it) {
-      var stock = Number(it.stock) || 0;
-      var cost  = Number(it.cost)  || 0;
-      var minStock = Number(it.minStock) || 0;
-      totals.value += stock * cost;
-      if (stock <= minStock && minStock > 0) totals.low++;
-    });
-    var data = { brands: enriched, unbranded: unbranded, totals: totals };
-    window._invHubCache = { ts: Date.now(), data: data };
-    cb(data);
-  });
 }
 
 window._invHubRefresh = function() {

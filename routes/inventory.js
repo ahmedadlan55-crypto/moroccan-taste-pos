@@ -134,6 +134,70 @@ router.post('/reconcile-stock', async (req, res) => {
   }
 });
 
+// v5.10.24 — Brand cards summary. Each card now reflects the SUM of its
+// warehouses' real numbers (using the same v5.10.23 "real presence" rule:
+// qty > 0 OR movement history) — guaranteeing the brand card == the sum
+// of the warehouse cards inside, no more "خداع بصري" between the two
+// levels. Also acts as a lazy-loading endpoint: a single small payload
+// per brand instead of the entire global items list.
+router.get('/brands-summary', async (req, res) => {
+  try {
+    // Per-warehouse stats — same logic as /warehouses-by-brand. We then
+    // group by brand_id on the JS side. SUMs match what the inner cards
+    // show, so totals are consistent end-to-end.
+    const [whRows] = await db.query(`
+      SELECT w.id AS warehouse_id, w.brand_id, w.is_active,
+             (SELECT COUNT(DISTINCT i.id) FROM inv_items i
+               WHERE i.active = 1
+                 AND (
+                   EXISTS(SELECT 1 FROM warehouse_stock ws2 WHERE ws2.item_id = i.id AND ws2.warehouse_id = w.id AND ws2.qty > 0)
+                   OR EXISTS(SELECT 1 FROM inventory_movements im WHERE im.item_id = i.id AND im.warehouse_id = w.id)
+                 )) AS item_count,
+             COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty * i.cost ELSE 0 END), 0) AS total_value,
+             SUM(CASE WHEN ws.qty > 0 AND ws.qty <= i.min_stock AND i.min_stock > 0 THEN 1 ELSE 0 END) AS low_count,
+             SUM(CASE WHEN ws.first_added_date IS NOT NULL AND ws.qty <= 0 THEN 1 ELSE 0 END) AS out_count
+      FROM warehouses w
+      LEFT JOIN warehouse_stock ws ON ws.warehouse_id = w.id
+      LEFT JOIN inv_items i ON i.id = ws.item_id AND i.active = 1
+      WHERE w.is_active = 1
+      GROUP BY w.id`);
+
+    // Roll up per-brand. itemCount sums per-warehouse counts (so brand
+    // total = warehouse cards added together — what the user expects
+    // visually). Items present in 2 warehouses count twice; that's the
+    // intentional read of "stock entries across the brand."
+    const byBrand = {};
+    whRows.forEach(w => {
+      const bid = w.brand_id || '__none__';
+      if (!byBrand[bid]) byBrand[bid] = { itemCount: 0, totalValue: 0, lowCount: 0, outCount: 0, warehouseCount: 0 };
+      byBrand[bid].itemCount     += Number(w.item_count)   || 0;
+      byBrand[bid].totalValue    += Number(w.total_value)  || 0;
+      byBrand[bid].lowCount      += Number(w.low_count)    || 0;
+      byBrand[bid].outCount      += Number(w.out_count)    || 0;
+      byBrand[bid].warehouseCount++;
+    });
+
+    const [brands] = await db.query(`SELECT id, name, code, logo FROM brands ORDER BY name`);
+    const enriched = brands.map(b => Object.assign({}, b, byBrand[b.id] || {
+      itemCount: 0, totalValue: 0, lowCount: 0, outCount: 0, warehouseCount: 0
+    }));
+
+    res.json({
+      brands: enriched,
+      unbranded: byBrand['__none__'] || null,
+      totals: {
+        items:           enriched.reduce((s, b) => s + (b.itemCount || 0),    (byBrand['__none__'] && byBrand['__none__'].itemCount)    || 0),
+        value:           enriched.reduce((s, b) => s + (b.totalValue || 0),   (byBrand['__none__'] && byBrand['__none__'].totalValue)   || 0),
+        low:             enriched.reduce((s, b) => s + (b.lowCount || 0),     (byBrand['__none__'] && byBrand['__none__'].lowCount)     || 0),
+        warehouseCount:  enriched.reduce((s, b) => s + (b.warehouseCount || 0), (byBrand['__none__'] && byBrand['__none__'].warehouseCount) || 0)
+      }
+    });
+  } catch (e) {
+    console.error('[brands-summary]', e);
+    res.json({ brands: [], unbranded: null, totals: { items: 0, value: 0, low: 0, warehouseCount: 0 }, error: e.message });
+  }
+});
+
 // V5.9.0 — Warehouses for a brand, with per-warehouse inventory stats.
 //   Used by the new "Warehouse Picker" view that sits between the Brand
 //   Picker and the 6-icon Hub.  Each card needs: itemCount, totalValue,

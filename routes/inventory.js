@@ -50,6 +50,64 @@ router.post('/warehouse-stock/backfill', async (req, res) => {
   res.json(await _ensureWarehouseStockBackfilled());
 });
 
+// v5.10.23 — Cleanup endpoint that REMOVES the legacy "ghost" warehouse_stock
+// rows: rows where qty=0 AND there is NO movement history for that
+// (warehouse, item) pair. Such rows are leftovers from the old auto-
+// backfill that injected the entire brand catalog into every warehouse,
+// which made every warehouse view look identical (the user complaint
+// "warehouses are not truly independent").
+//
+// GET  → dry-run, returns the list of rows that WOULD be deleted
+// POST → actually deletes them
+async function _findEmptyGhostRows() {
+  try {
+    const [rows] = await db.query(`
+      SELECT ws.id, ws.warehouse_id, ws.item_id, w.name AS warehouse_name, i.name AS item_name
+      FROM warehouse_stock ws
+      JOIN warehouses w ON w.id = ws.warehouse_id
+      JOIN inv_items   i ON i.id = ws.item_id
+      WHERE COALESCE(ws.qty, 0) <= 0
+        AND NOT EXISTS(
+          SELECT 1 FROM inventory_movements im
+          WHERE im.item_id = ws.item_id AND im.warehouse_id = ws.warehouse_id
+        )
+    `);
+    return rows;
+  } catch (e) {
+    return { _error: e.message };
+  }
+}
+
+router.get('/warehouse-stock/cleanup-ghosts', async (req, res) => {
+  const ghosts = await _findEmptyGhostRows();
+  if (ghosts && ghosts._error) return res.json({ success: false, error: ghosts._error });
+  res.json({
+    success: true,
+    dryRun: true,
+    count: ghosts.length,
+    sample: ghosts.slice(0, 20).map(r => ({
+      itemId: r.item_id, itemName: r.item_name,
+      warehouseId: r.warehouse_id, warehouseName: r.warehouse_name
+    }))
+  });
+});
+
+router.post('/warehouse-stock/cleanup-ghosts', async (req, res) => {
+  try {
+    const ghosts = await _findEmptyGhostRows();
+    if (ghosts && ghosts._error) return res.json({ success: false, error: ghosts._error });
+    if (!ghosts.length) return res.json({ success: true, deleted: 0 });
+    const ids = ghosts.map(r => r.id);
+    const placeholders = ids.map(() => '?').join(',');
+    const [result] = await db.query(
+      `DELETE FROM warehouse_stock WHERE id IN (${placeholders})`, ids
+    );
+    res.json({ success: true, deleted: result.affectedRows || 0 });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
 // v5.10.19 — Reconcile inv_items.stock and menu.stock against
 // SUM(warehouse_stock.qty). Use this once after deploying the
 // warehouse-isolation fix to repair any historical drift, and any time you
@@ -180,7 +238,12 @@ router.get('/items', async (req, res) => {
         LEFT JOIN brands b ON b.id = i.brand_id
         WHERE i.active = 1
           AND (
-            ws.id IS NOT NULL
+            -- v5.10.23 — TRUE per-warehouse independence: an item belongs to
+            -- this warehouse only if it has REAL presence here. A
+            -- warehouse_stock row alone is no longer enough (legacy backfills
+            -- left ghost qty=0 rows that made every warehouse look identical).
+            -- Real presence = stock right now > 0  OR  any movement history.
+            ws.qty > 0
             OR EXISTS(SELECT 1 FROM inventory_movements im2
                       WHERE im2.item_id = i.id AND im2.warehouse_id = w.id)
           )`;
@@ -908,6 +971,19 @@ router.get('/live-report', async (req, res) => {
     if (brandId)   { sql += ' AND i.brand_id = ?'; params.push(brandId); }
     if (category)  { sql += ' AND i.category = ?'; params.push(category); }
     if (q)         { sql += ' AND (i.name LIKE ? OR i.id LIKE ?)'; params.push('%'+q+'%', '%'+q+'%'); }
+    // v5.10.23 — TRUE per-warehouse independence: when scoped to one
+    // warehouse, only show items that have real presence here (qty > 0
+    // OR any movement history). Backfilled ghost rows (qty=0, no movements)
+    // no longer leak the entire brand catalog into every warehouse view.
+    if (warehouseId) {
+      sql += ` AND (
+        EXISTS(SELECT 1 FROM warehouse_stock ws
+               WHERE ws.item_id = i.id AND ws.warehouse_id = ? AND ws.qty > 0)
+        OR EXISTS(SELECT 1 FROM inventory_movements im
+                  WHERE im.item_id = i.id AND im.warehouse_id = ?)
+      )`;
+      params.push(warehouseId, warehouseId);
+    }
     sql += ' ORDER BY i.category, i.name';
     const [items] = await db.query(sql, params);
 

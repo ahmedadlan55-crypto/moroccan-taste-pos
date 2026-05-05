@@ -5448,7 +5448,11 @@ function _invItemsMountShell() {
   // 1) Replace the right-side action group inside the filter bar with
   //    our unified set (Print/Excel/PDF + Import + Add). Removes the
   //    duplicate "Excel" button that called the old exportInvExcel().
-  var rightGroup = filterBar.querySelectorAll('div')[1];
+  // v5.10.22 BUGFIX: querySelectorAll('div')[1] returned the .form-group
+  //    holding the search input (descendant order!) and its innerHTML
+  //    got clobbered, so the search box vanished. Use direct children
+  //    instead — children[1] is the right wrapper as intended.
+  var rightGroup = filterBar.children[1];
   if (rightGroup) {
     rightGroup.innerHTML =
       '<button class="iv-items-btn iv-items-btn-ghost" onclick="invItemsExport(\'print\')" title="طباعة"><i class="fas fa-print"></i><span>طباعة</span></button>' +

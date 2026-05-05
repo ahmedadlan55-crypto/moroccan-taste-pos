@@ -2176,6 +2176,7 @@ function nav(sectionId) {
   if (sectionId === 'recipes') loadDashRecipes();
   if (sectionId === 'inventory') loadDashMenu(); // legacy alias → menu
   if (sectionId === 'warehouse') invHubOpen();
+  if (sectionId === 'invCatalog') { if (typeof loadInvCatalog === 'function') loadInvCatalog(); }
   if (sectionId === 'expenses') loadDashExpenses();
   if (sectionId === 'purchases') loadDashPurchases();
   if (sectionId === 'users') loadDashUsers();
@@ -5434,6 +5435,214 @@ function loadDashInvItems() {
     });
 }
 
+// =========================================
+// v5.10.25 — Inventory Catalog (إدارة مواد المخزون)
+// =========================================
+// Master list of all inv_items, independent of warehouses. Two views:
+//   • "active"  → items currently in the catalog
+//   • "deleted" → recycle bin: items soft-deleted (deleted_at IS NOT NULL)
+// Add/edit reuses the existing openRawModal(); delete is soft and goes
+// to the recycle bin tab where it can be restored or hard-deleted.
+
+window._invCatState = window._invCatState || { tab: 'active' };
+
+function loadInvCatalog() {
+  loader();
+  var token = localStorage.getItem('pos_token') || '';
+  var search = ((q('#invCatSearch') && q('#invCatSearch').value) || '').trim();
+  var brandId = (q('#invCatBrandFilter') && q('#invCatBrandFilter').value) || '';
+  var tab = window._invCatState.tab || 'active';
+  var qs = [];
+  if (tab === 'deleted') qs.push('onlyDeleted=1');
+  if (search)  qs.push('q='       + encodeURIComponent(search));
+  if (brandId) qs.push('brandId=' + encodeURIComponent(brandId));
+  var url = '/api/inventory/catalog' + (qs.length ? ('?' + qs.join('&')) : '');
+
+  // Populate brand filter once
+  _invCatPopulateBrandFilter();
+
+  // Fetch summary (counts) + list in parallel
+  Promise.all([
+    fetch('/api/inventory/catalog/summary', { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json()).catch(() => ({})),
+    fetch(url, { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json()).catch(() => [])
+  ]).then(function(out) {
+    loader(false);
+    var summary = out[0] || {};
+    var items = Array.isArray(out[1]) ? out[1] : [];
+
+    // Tab badges
+    var aEl = q('#invCatActiveCount'),  dEl = q('#invCatDeletedCount');
+    if (aEl) aEl.textContent = (Number(summary.activeCount)  || 0).toLocaleString('ar-SA');
+    if (dEl) dEl.textContent = (Number(summary.deletedCount) || 0).toLocaleString('ar-SA');
+
+    _renderInvCatalogKpis(summary, tab);
+    _renderInvCatalogTable(items, tab);
+  }).catch(function(){
+    loader(false);
+    showToast('فشل تحميل الكتالوج', true);
+  });
+}
+
+function _invCatPopulateBrandFilter() {
+  var sel = q('#invCatBrandFilter');
+  if (!sel || sel.options.length > 1) return;  // already populated
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/brands', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => r.json())
+    .then(function(brands){
+      if (!Array.isArray(brands)) return;
+      brands.forEach(function(b){
+        var opt = document.createElement('option');
+        opt.value = b.id;
+        opt.textContent = b.name;
+        sel.appendChild(opt);
+      });
+    }).catch(function(){});
+}
+
+function _renderInvCatalogKpis(summary, tab) {
+  var box = q('#invCatalogKpis');
+  if (!box || typeof _invItemsKpi !== 'function') return;
+  var s = summary || {};
+  box.innerHTML =
+    _invItemsKpi({
+      label: 'المواد المعرَّفة', num: (Number(s.activeCount)||0).toLocaleString('ar-SA'), unit: 'مادة',
+      icon: 'fa-book', color: '#3b82f6', gradFrom: '#dbeafe', gradTo: '#eff6ff',
+      footer: '<i class="fas fa-tags"></i> ' + (Number(s.categoryCount)||0) + ' تصنيف · <i class="fas fa-store"></i> ' + (Number(s.brandCount)||0) + ' براند'
+    }) +
+    _invItemsKpi({
+      label: 'في سلة المحذوفات', num: (Number(s.deletedCount)||0).toLocaleString('ar-SA'), unit: 'مادة',
+      icon: 'fa-trash-restore', color: '#ef4444', gradFrom: '#fee2e2', gradTo: '#fef2f2',
+      footer: (Number(s.deletedCount)||0) > 0
+        ? '<i class="fas fa-circle-info"></i> يمكن استرجاعها من تبويب السلة'
+        : '<i class="fas fa-circle-check"></i> السلة فارغة'
+    }) +
+    _invItemsKpi({
+      label: 'البراندات النشطة', num: (Number(s.brandCount)||0).toLocaleString('ar-SA'), unit: 'براند',
+      icon: 'fa-store', color: '#10b981', gradFrom: '#d1fae5', gradTo: '#ecfdf5',
+      footer: '<i class="fas fa-layer-group"></i> توزيع المواد عبر البراندات'
+    }) +
+    _invItemsKpi({
+      label: 'التصنيفات', num: (Number(s.categoryCount)||0).toLocaleString('ar-SA'), unit: 'تصنيف',
+      icon: 'fa-folder-tree', color: '#8b5cf6', gradFrom: '#ede9fe', gradTo: '#f5f3ff',
+      footer: '<i class="fas fa-list-check"></i> ' + (tab === 'deleted' ? 'عرض المحذوفات' : 'العرض الحالي: المواد النشطة')
+    });
+}
+
+function _renderInvCatalogTable(items, tab) {
+  var tb = q('#tbInvCatalog');
+  if (!tb) return;
+  if (!items.length) {
+    var msg = tab === 'deleted' ? 'سلة المحذوفات فارغة' : 'لا توجد مواد مُعرَّفة بعد';
+    tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;color:#94a3b8;">' + msg + '</td></tr>';
+    return;
+  }
+  tb.innerHTML = items.map(function(it) {
+    var brandHtml = it.brandName
+      ? '<span class="badge" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-store"></i> ' + _invHubEsc(it.brandName) + '</span>'
+      : '<span class="badge" style="background:#f1f5f9;color:#94a3b8;">—</span>';
+    var createdStr = it.createdAt ? new Date(it.createdAt).toLocaleDateString('en-GB') : '—';
+    var idEsc = _invHubEsc(it.id).replace(/'/g, "\\'");
+    var nameEsc = _invHubEsc(it.name).replace(/'/g, "\\'");
+    var actions;
+    if (tab === 'deleted') {
+      var deletedAtStr = it.deletedAt ? new Date(it.deletedAt).toLocaleString('en-GB') : '';
+      actions =
+        '<button class="btn btn-success btn-sm" onclick="invCatRestoreItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="استرجاع"><i class="fas fa-trash-restore"></i> استرجاع</button> ' +
+        (state.isDeveloper
+          ? '<button class="btn btn-danger btn-sm" onclick="invCatHardDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف نهائي"><i class="fas fa-fire"></i></button>'
+          : '');
+      return '<tr style="background:#fff7ed;">' +
+        '<td style="font-family:monospace;color:#94a3b8;font-size:11px;">' + _invHubEsc(it.id) + '</td>' +
+        '<td style="font-weight:700;color:#7c2d12;"><i class="fas fa-trash" style="font-size:10px;color:#ef4444;margin-inline-end:5px;"></i>' + _invHubEsc(it.name) + '</td>' +
+        '<td>' + brandHtml + '</td>' +
+        '<td>' + _invHubEsc(it.category) + '</td>' +
+        '<td>' + _invHubEsc(it.bigUnit || '—') + '</td>' +
+        '<td>' + _invHubEsc(it.unit) + '</td>' +
+        '<td>' + (Number(it.cost)||0).toFixed(2) + '</td>' +
+        '<td>' + (Number(it.minStock)||0) + '</td>' +
+        '<td style="font-size:11px;color:#94a3b8;">حُذف: ' + deletedAtStr + '</td>' +
+        '<td style="white-space:nowrap;">' + actions + '</td>' +
+      '</tr>';
+    }
+    actions =
+      '<button class="btn btn-light btn-sm" onclick="openRawModal(\'' + idEsc + '\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
+      '<button class="btn btn-danger btn-sm" onclick="invCatDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف (يذهب إلى السلة)"><i class="fas fa-trash"></i></button>';
+    return '<tr>' +
+      '<td style="font-family:monospace;color:#64748b;font-size:11px;">' + _invHubEsc(it.id) + '</td>' +
+      '<td style="font-weight:700;">' + _invHubEsc(it.name) + '</td>' +
+      '<td>' + brandHtml + '</td>' +
+      '<td>' + _invHubEsc(it.category) + '</td>' +
+      '<td>' + _invHubEsc(it.bigUnit || '—') + '</td>' +
+      '<td>' + _invHubEsc(it.unit) + '</td>' +
+      '<td>' + (Number(it.cost)||0).toFixed(2) + '</td>' +
+      '<td>' + (Number(it.minStock)||0) + '</td>' +
+      '<td style="font-size:12px;color:#94a3b8;">' + createdStr + '</td>' +
+      '<td style="white-space:nowrap;">' + actions + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+window.invCatalogSwitchTab = function(tab) {
+  window._invCatState.tab = (tab === 'deleted') ? 'deleted' : 'active';
+  var aT = q('#invCatTab_active'), dT = q('#invCatTab_deleted');
+  if (aT) aT.classList.toggle('active', tab !== 'deleted');
+  if (dT) dT.classList.toggle('active', tab === 'deleted');
+  loadInvCatalog();
+};
+
+window.invCatClearFilters = function() {
+  ['invCatSearch', 'invCatBrandFilter'].forEach(function(id){
+    var el = q('#' + id); if (el) el.value = '';
+  });
+  loadInvCatalog();
+};
+
+window.invCatDeleteItem = function(id, name) {
+  if (!confirm('نقل المادة "' + name + '" إلى سلة المحذوفات؟\n\nملاحظة: لن تختفي بياناتها ويمكن استرجاعها لاحقاً، لكنها لن تظهر في أي مستودع.')) return;
+  loader(true);
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/inventory/items/' + encodeURIComponent(id), {
+    method: 'DELETE',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(r => r.json()).then(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم نقل المادة إلى السلة'); loadInvCatalog(); }
+    else showToast((r && r.error) || 'فشل الحذف', true);
+  }).catch(function(){ loader(false); showToast('فشل الحذف', true); });
+};
+
+window.invCatRestoreItem = function(id, name) {
+  if (!confirm('استرجاع "' + name + '" من السلة؟ ستعود المادة إلى الكتالوج النشط.')) return;
+  loader(true);
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/inventory/items/' + encodeURIComponent(id) + '/restore', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: '{}'
+  }).then(r => r.json()).then(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم استرجاع المادة'); loadInvCatalog(); }
+    else showToast((r && r.error) || 'فشل الاسترجاع', true);
+  }).catch(function(){ loader(false); showToast('فشل الاسترجاع', true); });
+};
+
+window.invCatHardDeleteItem = function(id, name) {
+  if (!state.isDeveloper) return showToast('الحذف النهائي للمطور فقط', true);
+  if (!confirm('⚠️ حذف نهائي لـ "' + name + '" — لا يمكن التراجع.\n\nمتابعة؟')) return;
+  if (!confirm('تأكيد أخير: سيُحذف الصف من قاعدة البيانات نهائياً.\n\nمتابعة؟')) return;
+  loader(true);
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/inventory/items/' + encodeURIComponent(id) + '?hard=1', {
+    method: 'DELETE',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(r => r.json()).then(function(r) {
+    loader(false);
+    if (r && r.success) { showToast('تم الحذف النهائي'); loadInvCatalog(); }
+    else showToast((r && r.error) || 'فشل الحذف', true);
+  }).catch(function(){ loader(false); showToast('فشل الحذف', true); });
+};
+
 // V5.8.5 — Pro Inventory Items shell. Cleaner than V5.8.3:
 //   • ONE filter+actions row (no separate toolbar block)
 //   • KPI strip BELOW the filter bar, above the table
@@ -6237,8 +6446,16 @@ function saveRawItem() {
       if (!j.success) return showToast(j.error || 'فشل', true);
       closeModal('#modalRawForm');
       showToast("تم حفظ المادة في المستودع بنجاح");
-      // refresh the warehouse view if available, else fall back to dash
-      if (typeof loadWarehouseItems === 'function' && window._wmCurrentWarehouseId) {
+      // v5.10.25 — refresh whichever view is currently active so the
+      // user immediately sees the new/edited material:
+      //   • catalog management page → loadInvCatalog
+      //   • per-warehouse view      → loadWarehouseItems
+      //   • inventory hub items tab → loadDashInvItems
+      var catalogSec = q('#sec_invCatalog');
+      var inCatalog = catalogSec && catalogSec.classList.contains('active');
+      if (inCatalog && typeof loadInvCatalog === 'function') {
+        loadInvCatalog();
+      } else if (typeof loadWarehouseItems === 'function' && window._wmCurrentWarehouseId) {
         loadWarehouseItems(window._wmCurrentWarehouseId);
       } else {
         loadDashInvItems();
@@ -6259,7 +6476,13 @@ function saveRawItem() {
     if(r.success) {
       closeModal('#modalRawForm');
       showToast("تم حفظ المادة الخام بنجاح");
-      loadDashInvItems();
+      // v5.10.25 — refresh the catalog screen if it's the active section
+      var catalogSec = q('#sec_invCatalog');
+      if (catalogSec && catalogSec.classList.contains('active') && typeof loadInvCatalog === 'function') {
+        loadInvCatalog();
+      } else {
+        loadDashInvItems();
+      }
     } else { showToast(r.error, true); }
   }).saveInvItem(d);
 }

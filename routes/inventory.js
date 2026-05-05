@@ -2,6 +2,31 @@ const router = require('express').Router();
 const db = require('../db/connection');
 const { recomputeInvItemStock, recomputeMenuStock, reconcileAllStock } = require('../lib/stockRecompute');
 
+// v5.10.25 — Idempotent migration: add deleted_at column to inv_items so
+// the new "إدارة مواد المخزون" catalog page can soft-delete + restore.
+// Runs once per server lifetime; subsequent calls are a no-op.
+let _catalogColumnEnsured = false;
+async function _ensureCatalogSoftDeleteColumn() {
+  if (_catalogColumnEnsured) return;
+  try {
+    const [cols] = await db.query(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS " +
+      "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'inv_items' AND COLUMN_NAME = 'deleted_at'");
+    if (!cols.length) {
+      await db.query("ALTER TABLE inv_items ADD COLUMN deleted_at TIMESTAMP NULL DEFAULT NULL");
+      console.log('[inventory] v5.10.25 added inv_items.deleted_at column');
+    }
+    _catalogColumnEnsured = true;
+  } catch (e) {
+    console.warn('[inventory] v5.10.25 deleted_at migration skipped:', e.message);
+  }
+}
+// Best-effort: trigger on first request that touches the catalog
+router.use(async (req, res, next) => {
+  if (!_catalogColumnEnsured) await _ensureCatalogSoftDeleteColumn();
+  next();
+});
+
 // V5.9.1 — Backfill helper.  Ensures EVERY active inv_item has at least one
 //   warehouse_stock row so the warehouse-aware UI never hides items.
 //   The previous V5.9.0 version skipped items with stock=0, which made
@@ -148,7 +173,7 @@ router.get('/brands-summary', async (req, res) => {
     const [whRows] = await db.query(`
       SELECT w.id AS warehouse_id, w.brand_id, w.is_active,
              (SELECT COUNT(DISTINCT i.id) FROM inv_items i
-               WHERE i.active = 1
+               WHERE i.active = 1 AND i.deleted_at IS NULL
                  AND (
                    EXISTS(SELECT 1 FROM warehouse_stock ws2 WHERE ws2.item_id = i.id AND ws2.warehouse_id = w.id AND ws2.qty > 0)
                    OR EXISTS(SELECT 1 FROM inventory_movements im WHERE im.item_id = i.id AND im.warehouse_id = w.id)
@@ -158,7 +183,7 @@ router.get('/brands-summary', async (req, res) => {
              SUM(CASE WHEN ws.first_added_date IS NOT NULL AND ws.qty <= 0 THEN 1 ELSE 0 END) AS out_count
       FROM warehouses w
       LEFT JOIN warehouse_stock ws ON ws.warehouse_id = w.id
-      LEFT JOIN inv_items i ON i.id = ws.item_id AND i.active = 1
+      LEFT JOIN inv_items i ON i.id = ws.item_id AND i.active = 1 AND i.deleted_at IS NULL
       WHERE w.is_active = 1
       GROUP BY w.id`);
 
@@ -213,7 +238,7 @@ router.get('/warehouses-by-brand', async (req, res) => {
     let sql = `
       SELECT w.id, w.name, w.code, w.brand_id, b.name AS brand_name, w.is_main, w.is_active,
              (SELECT COUNT(DISTINCT i.id) FROM inv_items i
-               WHERE i.active = 1
+               WHERE i.active = 1 AND i.deleted_at IS NULL
                  AND (
                    EXISTS(SELECT 1 FROM warehouse_stock ws2 WHERE ws2.item_id = i.id AND ws2.warehouse_id = w.id)
                    OR EXISTS(SELECT 1 FROM inventory_movements im WHERE im.item_id = i.id AND im.warehouse_id = w.id)
@@ -223,7 +248,7 @@ router.get('/warehouses-by-brand', async (req, res) => {
              SUM(CASE WHEN ws.first_added_date IS NOT NULL AND ws.qty <= 0 THEN 1 ELSE 0 END) AS out_count
       FROM warehouses w
       LEFT JOIN warehouse_stock ws ON ws.warehouse_id = w.id
-      LEFT JOIN inv_items i ON i.id = ws.item_id AND i.active = 1
+      LEFT JOIN inv_items i ON i.id = ws.item_id AND i.active = 1 AND i.deleted_at IS NULL
       LEFT JOIN brands b ON b.id = w.brand_id
       WHERE w.is_active = 1`;
     const params = [];
@@ -301,6 +326,7 @@ router.get('/items', async (req, res) => {
                ON ws.item_id = i.id AND ws.warehouse_id = w.id
         LEFT JOIN brands b ON b.id = i.brand_id
         WHERE i.active = 1
+          AND (i.deleted_at IS NULL)
           AND (
             -- v5.10.23 — TRUE per-warehouse independence: an item belongs to
             -- this warehouse only if it has REAL presence here. A
@@ -696,12 +722,104 @@ router.post('/admin/cleanup-ghost-warehouse-stock', async (req, res) => {
 });
 
 // Delete inventory item
+// v5.10.25 — Soft-delete: marks deleted_at instead of physically removing.
+// The item disappears from all read endpoints (which now filter
+// deleted_at IS NULL) but remains in the recycle bin for restore.
+// Hard delete remains available via ?hard=1 for the rare case where the
+// row was created by mistake and has no foreign-key references.
 router.delete('/items/:id', async (req, res) => {
   try {
-    await db.query('DELETE FROM inv_items WHERE id = ?', [req.params.id]);
-    res.json({ success: true });
+    if (req.query.hard === '1') {
+      await db.query('DELETE FROM inv_items WHERE id = ?', [req.params.id]);
+      return res.json({ success: true, hardDeleted: true });
+    }
+    const [result] = await db.query(
+      'UPDATE inv_items SET deleted_at = NOW() WHERE id = ? AND deleted_at IS NULL',
+      [req.params.id]
+    );
+    res.json({ success: true, softDeleted: true, affected: result.affectedRows || 0 });
   } catch (e) {
     res.json({ success: false, error: e.message });
+  }
+});
+
+// v5.10.25 — Restore a soft-deleted item back into the active catalog.
+router.post('/items/:id/restore', async (req, res) => {
+  try {
+    const [result] = await db.query(
+      'UPDATE inv_items SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL',
+      [req.params.id]
+    );
+    res.json({ success: true, restored: result.affectedRows || 0 });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// v5.10.25 — Catalog endpoint for the new "إدارة مواد المخزون" section.
+// Returns ALL items (across all warehouses, all brands) with metadata
+// only — NO warehouse_stock joins or aggregation. This is the master
+// definition list, what the user manages globally.
+//
+// Query params:
+//   ?onlyDeleted=1  → recycle bin (deleted_at IS NOT NULL)
+//   ?brandId=...    → filter by brand
+//   ?q=...          → name/id search
+router.get('/catalog', async (req, res) => {
+  try {
+    const { onlyDeleted, brandId, q } = req.query;
+    let sql =
+      'SELECT i.id, i.name, i.category, i.brand_id, b.name AS brand_name, ' +
+      '       i.unit, i.big_unit, i.conv_rate, i.cost, i.min_stock, ' +
+      '       i.stock AS global_stock, i.active, i.created_at, i.deleted_at ' +
+      'FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id ' +
+      'WHERE 1=1';
+    const params = [];
+    if (onlyDeleted === '1') {
+      sql += ' AND i.deleted_at IS NOT NULL';
+    } else {
+      sql += ' AND i.deleted_at IS NULL';
+    }
+    if (brandId) { sql += ' AND i.brand_id = ?'; params.push(brandId); }
+    if (q)       { sql += ' AND (i.name LIKE ? OR i.id LIKE ? OR i.category LIKE ?)';
+                   params.push('%'+q+'%', '%'+q+'%', '%'+q+'%'); }
+    sql += ' ORDER BY ' + (onlyDeleted === '1' ? 'i.deleted_at DESC' : 'i.category, i.name');
+    const [rows] = await db.query(sql, params);
+    res.json(rows.map(i => ({
+      id: i.id, name: i.name, category: i.category || '',
+      brandId: i.brand_id || '', brandName: i.brand_name || '',
+      unit: i.unit || '', bigUnit: i.big_unit || '',
+      convRate: Number(i.conv_rate) || 1, cost: Number(i.cost) || 0,
+      minStock: Number(i.min_stock) || 0, globalStock: Number(i.global_stock) || 0,
+      active: !!i.active, createdAt: i.created_at,
+      deletedAt: i.deleted_at
+    })));
+  } catch (e) {
+    res.json({ error: e.message, items: [] });
+  }
+});
+
+// v5.10.25 — Catalog summary KPIs (one row, computed). Powers the
+// "إدارة مواد المخزون" KPI strip.
+router.get('/catalog/summary', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      "SELECT " +
+      "  SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS active_count, " +
+      "  SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS deleted_count, " +
+      "  COUNT(DISTINCT CASE WHEN deleted_at IS NULL THEN brand_id END) AS brand_count, " +
+      "  COUNT(DISTINCT CASE WHEN deleted_at IS NULL THEN category END) AS category_count " +
+      "FROM inv_items"
+    );
+    const r = rows[0] || {};
+    res.json({
+      activeCount:   Number(r.active_count)   || 0,
+      deletedCount:  Number(r.deleted_count)  || 0,
+      brandCount:    Number(r.brand_count)    || 0,
+      categoryCount: Number(r.category_count) || 0
+    });
+  } catch (e) {
+    res.json({ activeCount: 0, deletedCount: 0, brandCount: 0, categoryCount: 0, error: e.message });
   }
 });
 
@@ -1030,7 +1148,7 @@ router.get('/live-report', async (req, res) => {
       } catch(_) {}
     }
 
-    let sql = 'SELECT i.*, b.name AS brand_name FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id WHERE i.active = 1';
+    let sql = 'SELECT i.*, b.name AS brand_name FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id WHERE i.active = 1 AND i.deleted_at IS NULL';
     const params = [];
     if (brandId)   { sql += ' AND i.brand_id = ?'; params.push(brandId); }
     if (category)  { sql += ' AND i.category = ?'; params.push(category); }

@@ -44,6 +44,7 @@
           <i class="fas fa-warehouse"></i><span data-i18n="nav.inventory">المخزون والمستودعات</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
+          <div class="nav-item" onclick="nav('invCatalog')" style="background:linear-gradient(90deg,rgba(124,58,237,.15),transparent);font-weight:800;"><i class="fas fa-book" style="color:#7c3aed;"></i><span data-i18n="nav.invCatalog">إدارة مواد المخزون</span></div>
           <div class="nav-item" onclick="nav('warehouse')"><i class="fas fa-boxes-stacked"></i><span data-i18n="nav.stockManagement">إدارة المخزون والجرد</span></div>
           <div class="nav-item" data-erp-nav="erpMultiWarehouses" onclick="erpNav('erpMultiWarehouses')"><i class="fas fa-building"></i><span data-i18n="nav.multiWarehouses">المستودعات المتعددة</span></div>
           <div class="nav-item" data-erp-nav="erpWhHierarchy" onclick="erpNav('erpWhHierarchy')"><i class="fas fa-sitemap"></i><span data-i18n="nav.whHierarchy">هيكل المستودعات</span></div>
@@ -844,6 +845,70 @@
         <!-- sec_inventory stub kept as alias so any legacy nav('inventory') call still works -->
         <div id="sec_recipes" class="admin-section" style="display:none;"></div>
         <div id="sec_inventory" class="admin-section" style="display:none;"></div>
+
+        <!-- v5.10.25 — Section: إدارة مواد المخزون (Materials Catalog).
+             Master list of all inv_items (no per-warehouse aggregation).
+             JS in loadInvCatalog() renders filter bar + KPIs + table + recycle-bin tab.
+             Add/edit reuses the existing openRawModal(); delete is soft (deleted_at)
+             with restore from the recycle-bin tab. -->
+        <div id="sec_invCatalog" class="admin-section" style="display:none;">
+          <div class="filter-bar" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <h2 style="margin:0;color:#7c3aed;display:flex;align-items:center;gap:8px;">
+                <i class="fas fa-book"></i> إدارة مواد المخزون
+              </h2>
+              <span style="color:#94a3b8;font-size:12px;">التعريف العام للمواد — مستقل عن المستودعات</span>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-primary" onclick="openRawModal()"><i class="fas fa-plus"></i> إضافة مادة</button>
+            </div>
+          </div>
+          <!-- View tabs: active catalog vs. recycle bin -->
+          <div class="sales-tabs" id="invCatalogTabs" style="margin-bottom:14px;">
+            <div class="sales-tab active" id="invCatTab_active" onclick="invCatalogSwitchTab('active')">
+              <i class="fas fa-list-check"></i> <span>المواد المعرَّفة</span>
+              <span id="invCatActiveCount" class="badge" style="background:#ede9fe;color:#5b21b6;margin-inline-start:8px;">0</span>
+            </div>
+            <div class="sales-tab" id="invCatTab_deleted" onclick="invCatalogSwitchTab('deleted')">
+              <i class="fas fa-trash-restore"></i> <span>سلة المحذوفات</span>
+              <span id="invCatDeletedCount" class="badge" style="background:#fef2f2;color:#b91c1c;margin-inline-start:8px;">0</span>
+            </div>
+          </div>
+          <!-- Unified filter bar (v5.10.20 pattern) -->
+          <div class="wh-filter-bar">
+            <div class="wh-fb-title"><i class="fas fa-filter"></i> فلاتر</div>
+            <div class="wh-fb-controls">
+              <div class="wh-fb-search">
+                <i class="fas fa-search"></i>
+                <input type="text" id="invCatSearch" class="form-control" placeholder="بحث بالاسم، الكود، أو التصنيف..." oninput="loadInvCatalog()">
+              </div>
+              <select id="invCatBrandFilter" class="form-control wh-fb-select" onchange="loadInvCatalog()">
+                <option value="">🏪 كل البراندات</option>
+              </select>
+              <button class="btn btn-light wh-fb-clear" onclick="invCatClearFilters()" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
+            </div>
+          </div>
+          <!-- KPI strip (reuses .iv-items-kpis grid + _invItemsKpi cards) -->
+          <div id="invCatalogKpis" class="iv-items-kpis"></div>
+          <!-- Table -->
+          <div class="table-wrapper">
+            <table class="table">
+              <thead><tr id="invCatalogHead">
+                <th>كود المادة</th>
+                <th>اسم المادة</th>
+                <th>البراند</th>
+                <th>التصنيف</th>
+                <th>الوحدة الكبرى</th>
+                <th>الوحدة الصغرى</th>
+                <th>التكلفة (ر.س)</th>
+                <th>حد النواقص</th>
+                <th>تاريخ الإنشاء</th>
+                <th>إجراءات</th>
+              </tr></thead>
+              <tbody id="tbInvCatalog"><tr><td colspan="10" style="text-align:center;padding:30px;color:#94a3b8;">جاري التحميل...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
 
         <!-- Section: Raw Materials (INV_Items) -->
         <!-- Section: Unified Warehouse -->

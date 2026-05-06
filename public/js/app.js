@@ -7811,9 +7811,14 @@ function _invLiveRender() {
   _invLiveRenderTable(data.items, data.totals);
 }
 
-// v5.10.8 — Warehouse banner: shows the scoped warehouse name above
-// the table. Mounted just before #invLiveTable. Hidden when the report
-// is brand-wide (no warehouseId filter).
+// v5.10.27 — Scope banner: ALWAYS visible above the live ledger table.
+// Two states:
+//   • wh provided  → cyan banner with the scoped warehouse name + code
+//   • wh missing   → amber banner clearly marking the report as a roll-up
+//     across all warehouses, with a hint to pick a warehouse for an
+//     independent per-warehouse view. The point is that the user never
+//     sees numbers without knowing the scope they belong to (the bug
+//     they reported as "warehouses are leaking into each other").
 function _invLiveRenderWarehouseBanner(wh) {
   var table = document.getElementById('invLiveTable');
   if (!table) return;
@@ -7821,27 +7826,48 @@ function _invLiveRenderWarehouseBanner(wh) {
   if (!holder) {
     holder = document.createElement('div');
     holder.id = 'invLiveWhBanner';
-    holder.style.cssText = 'margin:8px 0 12px;display:none;';
+    holder.style.cssText = 'margin:8px 0 12px;';
     table.parentNode.insertBefore(holder, table);
   }
-  if (!wh || !wh.id) { holder.style.display = 'none'; holder.innerHTML = ''; return; }
   holder.style.display = '';
+  if (wh && wh.id) {
+    holder.innerHTML =
+      '<div style="background:linear-gradient(135deg,#ecfeff,#cffafe);border:1.5px solid #67e8f9;' +
+                  'border-radius:12px;padding:12px 18px;display:flex;align-items:center;gap:14px;' +
+                  'box-shadow:0 1px 3px rgba(15,23,42,0.04);">' +
+        '<div style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,#06b6d4,#0891b2);' +
+                    'color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">' +
+          '<i class="fas fa-warehouse"></i>' +
+        '</div>' +
+        '<div style="flex:1;">' +
+          '<div style="font-size:11px;color:#0e7490;font-weight:800;letter-spacing:0.4px;">نطاق العرض: مستودع واحد</div>' +
+          '<div style="font-size:16px;font-weight:900;color:#155e75;">' + _invHubEsc(wh.name||'') +
+            (wh.code ? ' <code style="font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#0e7490;background:#fff;padding:2px 8px;border-radius:6px;margin-inline-start:6px;border:1px solid #cffafe;">' + _invHubEsc(wh.code) + '</code>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#155e75;text-align:end;">' +
+          '<i class="fas fa-circle-info"></i> اضغط أي رقم في الجدول لرؤية الحركات التفصيلية بالتاريخ' +
+        '</div>' +
+      '</div>';
+    return;
+  }
+  // No warehouse scope → show an explicit roll-up notice so the numbers
+  // are never misread as belonging to a single warehouse.
   holder.innerHTML =
-    '<div style="background:linear-gradient(135deg,#ecfeff,#cffafe);border:1.5px solid #67e8f9;' +
+    '<div style="background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1.5px solid #fbbf24;' +
                 'border-radius:12px;padding:12px 18px;display:flex;align-items:center;gap:14px;' +
                 'box-shadow:0 1px 3px rgba(15,23,42,0.04);">' +
-      '<div style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,#06b6d4,#0891b2);' +
+      '<div style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,#f59e0b,#d97706);' +
                   'color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">' +
-        '<i class="fas fa-warehouse"></i>' +
+        '<i class="fas fa-globe"></i>' +
       '</div>' +
       '<div style="flex:1;">' +
-        '<div style="font-size:11px;color:#0e7490;font-weight:800;letter-spacing:0.4px;">المستودع المعروض</div>' +
-        '<div style="font-size:16px;font-weight:900;color:#155e75;">' + _invHubEsc(wh.name||'') +
-          (wh.code ? ' <code style="font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#0e7490;background:#fff;padding:2px 8px;border-radius:6px;margin-inline-start:6px;border:1px solid #cffafe;">' + _invHubEsc(wh.code) + '</code>' : '') +
+        '<div style="font-size:11px;color:#92400e;font-weight:800;letter-spacing:0.4px;">نطاق العرض: عرض إجمالي</div>' +
+        '<div style="font-size:15px;font-weight:900;color:#78350f;">جميع المستودعات (مجموع تراكمي)</div>' +
+        '<div style="font-size:11px;color:#92400e;margin-top:2px;">' +
+          '<i class="fas fa-triangle-exclamation"></i> الأرقام أدناه تجمع كل المستودعات معاً. لعرض مستودع مستقل، ادخل من ' +
+          '<b>إدارة المستودعات</b> ← اختر المستودع.' +
         '</div>' +
-      '</div>' +
-      '<div style="font-size:11px;color:#155e75;text-align:end;">' +
-        '<i class="fas fa-circle-info"></i> اضغط أي رقم في الجدول لرؤية الحركات التفصيلية بالتاريخ' +
       '</div>' +
     '</div>';
 }

@@ -387,30 +387,42 @@ router.get('/brands-summary', async (req, res) => {
 });
 
 // V5.9.0 — Warehouses for a brand, with per-warehouse inventory stats.
-//   Used by the new "Warehouse Picker" view that sits between the Brand
-//   Picker and the 6-icon Hub.  Each card needs: itemCount, totalValue,
-//   lowCount, lastActivity.
+// Used by the new "Warehouse Picker" view that sits between the Brand
+// Picker and the 6-icon Hub. Each card needs: itemCount, totalValue,
+// lowCount, lastActivity.
+//
+// v5.10.32 — FIX 159-bug: count only items that actually carry stock
+// in this warehouse (qty > 0), not items that ever touched it. The
+// previous "EVER touched" semantics produced phantom counts where every
+// warehouse showed the same number of items because old movement rows
+// were enough to qualify.
+//
+// outCount semantics also tightened: items that the warehouse has
+// historically stocked (first_added_date IS NOT NULL) but currently
+// have qty = 0 — the meaningful "depleted-but-known" set.
+//
+// Adds optional ?fromDate&toDate for the lastActivity (the date filter
+// only restricts the activity computation, not the stock counts which
+// are point-in-time current).
 router.get('/warehouses-by-brand', async (req, res) => {
   try {
-    const { brandId } = req.query;
-    // v5.10.12 — same independent-warehouse rule as /items?warehouseId.
-    // Card count = items that have actually touched this warehouse
-    // (registered or with movement history). Brand-matched items are
-    // NOT auto-counted: a warehouse with 2 transfers shows "2 صنف",
-    // not the entire brand catalog.
+    const { brandId, fromDate, toDate } = req.query;
     let sql = `
       SELECT w.id, w.name, w.code, w.brand_id, b.name AS brand_name, w.is_main, w.is_active,
              (SELECT COUNT(DISTINCT i.id) FROM inv_items i
+                INNER JOIN warehouse_stock ws2
+                   ON ws2.item_id = i.id AND ws2.warehouse_id = w.id
+               WHERE i.active = 1 AND i.deleted_at IS NULL AND ws2.qty > 0) AS item_count,
+             (SELECT COUNT(DISTINCT i.id) FROM inv_items i
+                INNER JOIN warehouse_stock ws3
+                   ON ws3.item_id = i.id AND ws3.warehouse_id = w.id
                WHERE i.active = 1 AND i.deleted_at IS NULL
-                 AND (
-                   EXISTS(SELECT 1 FROM warehouse_stock ws2 WHERE ws2.item_id = i.id AND ws2.warehouse_id = w.id)
-                   OR EXISTS(SELECT 1 FROM inventory_movements im WHERE im.item_id = i.id AND im.warehouse_id = w.id)
-                 )) AS item_count,
+                 AND ws3.first_added_date IS NOT NULL
+                 AND ws3.qty <= 0) AS out_count_real,
              COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty * i.cost ELSE 0 END), 0) AS total_value,
-             SUM(CASE WHEN ws.qty > 0 AND ws.qty <= i.min_stock AND i.min_stock > 0 THEN 1 ELSE 0 END) AS low_count,
-             SUM(CASE WHEN ws.first_added_date IS NOT NULL AND ws.qty <= 0 THEN 1 ELSE 0 END) AS out_count
+             SUM(CASE WHEN ws.qty > 0 AND ws.qty <= i.min_stock AND i.min_stock > 0 THEN 1 ELSE 0 END) AS low_count
       FROM warehouses w
-      LEFT JOIN warehouse_stock ws ON ws.warehouse_id = w.id
+      LEFT JOIN warehouse_stock ws ON ws.warehouse_id = w.id AND ws.qty > 0
       LEFT JOIN inv_items i ON i.id = ws.item_id AND i.active = 1 AND i.deleted_at IS NULL
       LEFT JOIN brands b ON b.id = w.brand_id
       WHERE w.is_active = 1`;
@@ -421,12 +433,22 @@ router.get('/warehouses-by-brand', async (req, res) => {
     }
     sql += ' GROUP BY w.id ORDER BY (w.is_main=1) DESC, w.code ASC';
     const [rows] = await db.query(sql, params);
-    // Last-activity per warehouse (single extra query)
-    const [lastMov] = await db.query(`
-      SELECT warehouse_id, MAX(movement_date) AS last_activity
-      FROM inventory_movements WHERE warehouse_id IS NOT NULL GROUP BY warehouse_id`);
+
+    // Last-activity per warehouse (date-bounded if requested)
+    const movWhere = ['warehouse_id IS NOT NULL'];
+    const movParams = [];
+    if (fromDate) { movWhere.push('DATE(movement_date) >= ?'); movParams.push(fromDate); }
+    if (toDate)   { movWhere.push('DATE(movement_date) <= ?'); movParams.push(toDate); }
+    const [lastMov] = await db.query(
+      'SELECT warehouse_id, MAX(movement_date) AS last_activity, COUNT(*) AS movement_count ' +
+      '  FROM inventory_movements WHERE ' + movWhere.join(' AND ') + ' GROUP BY warehouse_id',
+      movParams);
     const activityMap = {};
-    lastMov.forEach(m => { activityMap[m.warehouse_id] = m.last_activity; });
+    const movementCountMap = {};
+    lastMov.forEach(m => {
+      activityMap[m.warehouse_id] = m.last_activity;
+      movementCountMap[m.warehouse_id] = Number(m.movement_count) || 0;
+    });
     res.json(rows.map(w => ({
       id: w.id, name: w.name, code: w.code,
       brandId: w.brand_id, brandName: w.brand_name || '',
@@ -434,10 +456,226 @@ router.get('/warehouses-by-brand', async (req, res) => {
       itemCount: Number(w.item_count) || 0,
       totalValue: Number(w.total_value) || 0,
       lowCount: Number(w.low_count) || 0,
-      outCount: Number(w.out_count) || 0,
-      lastActivity: activityMap[w.id] || null
+      outCount: Number(w.out_count_real) || 0,
+      lastActivity: activityMap[w.id] || null,
+      movementCount: movementCountMap[w.id] || 0
     })));
   } catch (e) { res.json({ error: e.message, warehouses: [] }); }
+});
+
+// v5.10.32 — Single endpoint that returns all six counters used by the
+// section-cards hub (الجرد، المخزون الفعلي، مواد المخزون، طلبات النواقص،
+// التحويلات، تعديل كمية) for a single warehouse OR brand. Replaces the
+// scattered /api/getAllStocktakes + /api/getAllAdjustments + ad-hoc
+// queries in _invHubLoadBadges so every card finally shows accurate,
+// scoped, date-filterable numbers.
+//
+// Query params:
+//   warehouseId     — required if scope is single warehouse
+//   brandId         — required if scope is brand-wide (no warehouseId)
+//   fromDate, toDate — optional; constrain movement-based counts
+//
+// Response:
+//   {
+//     scope: { kind, warehouseId?, brandId?, name },
+//     items:       { total, lowCount, outCount, totalValue },
+//     live:        { movementCount, distinctItems, valueIn, valueOut, netValueChange, lastActivity },
+//     stocktake:   { count, lastDate, totalVariance },
+//     adjustments: { count, pending, approved, totalCost },
+//     transfers:   { incoming, outgoing, draftCount, completedCount },
+//     shortage:    { pendingCount, fulfilledCount }
+//   }
+router.get('/warehouse-card-stats', async (req, res) => {
+  try {
+    const { warehouseId, brandId, fromDate, toDate } = req.query;
+    if (!warehouseId && !brandId) {
+      return res.status(400).json({ success:false, error:'warehouseId-or-brandId-required' });
+    }
+
+    // Resolve scope label
+    let scope;
+    if (warehouseId) {
+      const [w] = await db.query('SELECT id, name, code, brand_id FROM warehouses WHERE id = ?', [warehouseId]);
+      if (!w.length) return res.status(404).json({ success:false, error:'warehouse-not-found' });
+      scope = { kind:'warehouse', warehouseId: w[0].id, name: w[0].name, code: w[0].code, brandId: w[0].brand_id || null };
+    } else {
+      const [b] = await db.query('SELECT id, name FROM brands WHERE id = ?', [brandId]);
+      scope = { kind:'brand', brandId, name: b.length ? b[0].name : brandId };
+    }
+
+    // Helper: scope predicate for movement-based queries
+    const movFilter = warehouseId
+      ? { sql: 'm.warehouse_id = ?', params: [warehouseId] }
+      : { sql: 'EXISTS(SELECT 1 FROM warehouses w WHERE w.id = m.warehouse_id AND w.brand_id = ?)', params: [brandId] };
+    const dateConds = [];
+    const dateParams = [];
+    if (fromDate) { dateConds.push('DATE(m.movement_date) >= ?'); dateParams.push(fromDate); }
+    if (toDate)   { dateConds.push('DATE(m.movement_date) <= ?'); dateParams.push(toDate); }
+    const dateClause = dateConds.length ? (' AND ' + dateConds.join(' AND ')) : '';
+
+    // (1) Items panel — point-in-time, NOT date-bounded
+    let itemsTotal = 0, itemsLow = 0, itemsOut = 0, itemsValue = 0;
+    if (warehouseId) {
+      const [r] = await db.query(`
+        SELECT COUNT(DISTINCT i.id) AS total,
+               COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty * i.cost ELSE 0 END), 0) AS total_value,
+               SUM(CASE WHEN ws.qty > 0 AND ws.qty <= i.min_stock AND i.min_stock > 0 THEN 1 ELSE 0 END) AS low_count,
+               SUM(CASE WHEN ws.qty <= 0 AND ws.first_added_date IS NOT NULL THEN 1 ELSE 0 END) AS out_count
+          FROM warehouse_stock ws
+          JOIN inv_items i ON i.id = ws.item_id AND i.active = 1 AND i.deleted_at IS NULL
+         WHERE ws.warehouse_id = ?`, [warehouseId]);
+      const row = r[0] || {};
+      itemsTotal = Number(row.total) || 0;
+      itemsLow   = Number(row.low_count) || 0;
+      itemsOut   = Number(row.out_count) || 0;
+      itemsValue = Number(row.total_value) || 0;
+    } else {
+      // brand-wide: aggregate across warehouses of this brand
+      const [r] = await db.query(`
+        SELECT COUNT(DISTINCT i.id) AS total,
+               COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty * i.cost ELSE 0 END), 0) AS total_value,
+               SUM(CASE WHEN ws.qty > 0 AND ws.qty <= i.min_stock AND i.min_stock > 0 THEN 1 ELSE 0 END) AS low_count,
+               SUM(CASE WHEN ws.qty <= 0 AND ws.first_added_date IS NOT NULL THEN 1 ELSE 0 END) AS out_count
+          FROM warehouse_stock ws
+          JOIN inv_items i ON i.id = ws.item_id AND i.active = 1 AND i.deleted_at IS NULL
+          JOIN warehouses w ON w.id = ws.warehouse_id
+         WHERE w.brand_id = ?`, [brandId]);
+      const row = r[0] || {};
+      itemsTotal = Number(row.total) || 0;
+      itemsLow   = Number(row.low_count) || 0;
+      itemsOut   = Number(row.out_count) || 0;
+      itemsValue = Number(row.total_value) || 0;
+    }
+
+    // (2) Live (movement) panel — date-bounded
+    let live = { movementCount: 0, distinctItems: 0, valueIn: 0, valueOut: 0, netValueChange: 0, lastActivity: null };
+    try {
+      const [r] = await db.query(
+        `SELECT COUNT(*) AS movement_count,
+                COUNT(DISTINCT m.item_id) AS distinct_items,
+                MAX(m.movement_date) AS last_activity,
+                SUM(CASE WHEN m.type='in'  THEN m.qty * COALESCE(i.cost,0) ELSE 0 END) AS value_in,
+                SUM(CASE WHEN m.type='out' THEN m.qty * COALESCE(i.cost,0) ELSE 0 END) AS value_out
+           FROM inventory_movements m
+           LEFT JOIN inv_items i ON i.id = m.item_id
+          WHERE ` + movFilter.sql + dateClause,
+        movFilter.params.concat(dateParams));
+      const row = r[0] || {};
+      live.movementCount   = Number(row.movement_count) || 0;
+      live.distinctItems   = Number(row.distinct_items) || 0;
+      live.valueIn         = Number(row.value_in) || 0;
+      live.valueOut        = Number(row.value_out) || 0;
+      live.netValueChange  = live.valueIn - live.valueOut;
+      live.lastActivity    = row.last_activity || null;
+    } catch(_){}
+
+    // (3) Stocktake panel
+    let stocktake = { count: 0, lastDate: null, totalVariance: 0, pending: 0 };
+    try {
+      const stWhere = [];
+      const stParams = [];
+      if (warehouseId) { stWhere.push('s.warehouse_id = ?'); stParams.push(warehouseId); }
+      else { stWhere.push('EXISTS(SELECT 1 FROM warehouses w WHERE w.id = s.warehouse_id AND w.brand_id = ?)'); stParams.push(brandId); }
+      if (fromDate) { stWhere.push('DATE(s.stocktake_date) >= ?'); stParams.push(fromDate); }
+      if (toDate)   { stWhere.push('DATE(s.stocktake_date) <= ?'); stParams.push(toDate); }
+      const [r] = await db.query(
+        'SELECT COUNT(*) AS cnt, MAX(s.stocktake_date) AS last_date, ' +
+        '       SUM(s.total_variance) AS total_var, ' +
+        "       SUM(CASE WHEN s.status = 'pending' THEN 1 ELSE 0 END) AS pending_cnt " +
+        '  FROM stocktakes s WHERE ' + stWhere.join(' AND '),
+        stParams);
+      const row = r[0] || {};
+      stocktake.count         = Number(row.cnt) || 0;
+      stocktake.lastDate      = row.last_date || null;
+      stocktake.totalVariance = Number(row.total_var) || 0;
+      stocktake.pending       = Number(row.pending_cnt) || 0;
+    } catch(_){}
+
+    // (4) Adjustments panel
+    let adjustments = { count: 0, pending: 0, approved: 0, totalCost: 0 };
+    try {
+      const aWhere = [];
+      const aParams = [];
+      if (warehouseId) { aWhere.push('a.warehouse_id = ?'); aParams.push(warehouseId); }
+      else { aWhere.push('EXISTS(SELECT 1 FROM warehouses w WHERE w.id = a.warehouse_id AND w.brand_id = ?)'); aParams.push(brandId); }
+      if (fromDate) { aWhere.push('DATE(a.adjustment_date) >= ?'); aParams.push(fromDate); }
+      if (toDate)   { aWhere.push('DATE(a.adjustment_date) <= ?'); aParams.push(toDate); }
+      const [r] = await db.query(
+        'SELECT COUNT(*) AS cnt, ' +
+        "       SUM(CASE WHEN a.status='pending'  THEN 1 ELSE 0 END) AS pending_cnt, " +
+        "       SUM(CASE WHEN a.status='approved' THEN 1 ELSE 0 END) AS approved_cnt, " +
+        '       SUM(a.total_cost) AS total_cost ' +
+        '  FROM stock_adjustments a WHERE ' + aWhere.join(' AND '),
+        aParams);
+      const row = r[0] || {};
+      adjustments.count     = Number(row.cnt) || 0;
+      adjustments.pending   = Number(row.pending_cnt) || 0;
+      adjustments.approved  = Number(row.approved_cnt) || 0;
+      adjustments.totalCost = Number(row.total_cost) || 0;
+    } catch(_){}
+
+    // (5) Transfers panel — incoming + outgoing
+    let transfers = { incoming: 0, outgoing: 0, draftCount: 0, completedCount: 0 };
+    try {
+      const tWhere = [];
+      const tParams = [];
+      if (warehouseId) {
+        tWhere.push('(t.from_warehouse_id = ? OR t.to_warehouse_id = ?)');
+        tParams.push(warehouseId, warehouseId);
+      } else {
+        tWhere.push('EXISTS(SELECT 1 FROM warehouses w WHERE (w.id = t.from_warehouse_id OR w.id = t.to_warehouse_id) AND w.brand_id = ?)');
+        tParams.push(brandId);
+      }
+      if (fromDate) { tWhere.push('DATE(t.transfer_date) >= ?'); tParams.push(fromDate); }
+      if (toDate)   { tWhere.push('DATE(t.transfer_date) <= ?'); tParams.push(toDate); }
+      const sqlBase = 'FROM warehouse_transfers t WHERE ' + tWhere.join(' AND ');
+      const [r] = await db.query(
+        'SELECT ' +
+          (warehouseId
+            ? 'SUM(CASE WHEN t.to_warehouse_id = ? THEN 1 ELSE 0 END) AS incoming, ' +
+              'SUM(CASE WHEN t.from_warehouse_id = ? THEN 1 ELSE 0 END) AS outgoing, '
+            : 'COUNT(*) AS incoming, 0 AS outgoing, ') +
+          "SUM(CASE WHEN t.status='draft' THEN 1 ELSE 0 END) AS draft_cnt, " +
+          "SUM(CASE WHEN t.status='completed' THEN 1 ELSE 0 END) AS completed_cnt " +
+        sqlBase,
+        warehouseId ? [warehouseId, warehouseId].concat(tParams) : tParams);
+      const row = r[0] || {};
+      transfers.incoming        = Number(row.incoming) || 0;
+      transfers.outgoing        = Number(row.outgoing) || 0;
+      transfers.draftCount      = Number(row.draft_cnt) || 0;
+      transfers.completedCount  = Number(row.completed_cnt) || 0;
+    } catch(_){}
+
+    // (6) Shortage panel — best-effort, the table may not exist on stale deploys
+    let shortage = { pendingCount: 0, fulfilledCount: 0 };
+    try {
+      const sWhere = [];
+      const sParams = [];
+      if (warehouseId) { sWhere.push('warehouse_id = ?'); sParams.push(warehouseId); }
+      else if (brandId) { sWhere.push('EXISTS(SELECT 1 FROM warehouses w WHERE w.id = warehouse_id AND w.brand_id = ?)'); sParams.push(brandId); }
+      if (fromDate) { sWhere.push('DATE(request_date) >= ?'); sParams.push(fromDate); }
+      if (toDate)   { sWhere.push('DATE(request_date) <= ?'); sParams.push(toDate); }
+      const whereSql = sWhere.length ? (' WHERE ' + sWhere.join(' AND ')) : '';
+      const [r] = await db.query(
+        'SELECT ' +
+          "SUM(CASE WHEN status='pending'   THEN 1 ELSE 0 END) AS pending_cnt, " +
+          "SUM(CASE WHEN status='fulfilled' THEN 1 ELSE 0 END) AS fulfilled_cnt " +
+        'FROM shortage_requests' + whereSql,
+        sParams);
+      const row = r[0] || {};
+      shortage.pendingCount   = Number(row.pending_cnt) || 0;
+      shortage.fulfilledCount = Number(row.fulfilled_cnt) || 0;
+    } catch(_){ /* table missing on older deploys */ }
+
+    res.json({
+      success: true,
+      scope,
+      items: { total: itemsTotal, lowCount: itemsLow, outCount: itemsOut, totalValue: itemsValue },
+      live, stocktake, adjustments, transfers, shortage
+    });
+  } catch (e) {
+    res.status(500).json({ success:false, error: e.message });
+  }
 });
 
 // V5.9.1 — Items, optionally expanded per-warehouse.

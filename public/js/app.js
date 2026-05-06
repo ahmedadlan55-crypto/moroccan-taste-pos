@@ -4122,20 +4122,31 @@ function _invHubRenderBrandHub(brandId) {
     var b = data.brands.find(function(x) { return x.id === brandId; });
     if (b) { brandName = b.name; brandLogo = b.logo; brandCode = b.code; }
   }
+  // v5.10.32 — also surface the warehouse name when one is selected, so the
+  // header is unambiguous (the user complained the cards looked the same).
+  var whId = (window._invHub && window._invHub.warehouseId) || '__all__';
+  var whName = whId === '__all__' ? 'جميع المستودعات' : '';
+  if (whId !== '__all__' && window._invHubWhCache && window._invHubWhCache[brandId]) {
+    var w = (window._invHubWhCache[brandId].list || []).find(function(x){return x.id===whId;});
+    if (w) whName = w.name;
+  }
+
   // Render shell with skeleton, then load badges
   box.innerHTML =
     '<div class="iv-hub-shell">' +
       '<header class="iv-hub-head iv-hub-head-brand">' +
-        '<button class="iv-hub-back" onclick="invHubGoToBrandsList()" title="رجوع"><i class="fas fa-chevron-right"></i></button>' +
+        '<button class="iv-hub-back" onclick="invHubGoToBrand(\'' + _invHubEsc(brandId) + '\')" title="رجوع"><i class="fas fa-chevron-right"></i></button>' +
         (brandLogo
           ? '<img src="' + _invHubEsc(brandLogo) + '" alt="" class="iv-hub-brand-logo">'
           : '<div class="iv-hub-brand-logo iv-hub-brand-logo-text">' + _invHubEsc((brandName||'?').charAt(0).toUpperCase()) + '</div>') +
         '<div class="iv-hub-head-titles">' +
-          '<h2 class="iv-hub-title">' + _invHubEsc(brandName) + '</h2>' +
-          '<p class="iv-hub-sub">' + (brandCode ? _invHubEsc(brandCode) + ' · ' : '') + 'اختر القسم للتنقل داخل هذا البراند.</p>' +
+          '<h2 class="iv-hub-title">' + _invHubEsc(brandName) + ' <span style="color:#94a3b8;font-weight:600;font-size:14px;">·</span> <span style="font-size:16px;color:#475569;">' + _invHubEsc(whName) + '</span></h2>' +
+          '<p class="iv-hub-sub">' + (brandCode ? _invHubEsc(brandCode) + ' · ' : '') + 'اختر القسم للتنقل داخل هذا المستودع.</p>' +
         '</div>' +
         '<button class="iv-hub-btn iv-hub-btn-ghost" onclick="_invHubRefresh()" title="تحديث"><i class="fas fa-rotate"></i></button>' +
       '</header>' +
+      // v5.10.32 — date range strip (filters the badge counts on every card)
+      _invHubRenderDateStrip() +
       '<div class="iv-hub-grid">' +
         _INV_HUB_TABS.map(function(t) {
           return '<button class="iv-hub-tile" data-tab="' + t.id + '" onclick="invHubGoToTab(\'' + _invHubEsc(brandId) + '\',\'' + t.id + '\',true)">' +
@@ -4151,46 +4162,176 @@ function _invHubRenderBrandHub(brandId) {
   _invHubLoadBadges(brandId);
 }
 
+// v5.10.32 — Date-range strip rendered above the section cards. Lets the
+// user constrain every card's counters to a specific period (today, week,
+// month, etc., or a manual range). Stored on window._invHub.dateFrom/To
+// so it survives navigation.
+function _invHubRenderDateStrip() {
+  var st = window._invHub || {};
+  var presets = ['today','yesterday','week','month','quarter','year','all'];
+  var labels = {today:'اليوم', yesterday:'أمس', week:'الأسبوع', month:'الشهر',
+    quarter:'الربع', year:'العام', all:'كل التواريخ'};
+  var active = st.datePreset || 'all';
+  return '<div class="iv-hub-date-strip">' +
+    '<div class="iv-hub-date-strip-label"><i class="fas fa-calendar-day"></i> فترة التقرير</div>' +
+    '<div class="iv-hub-date-presets">' +
+      presets.map(function(p){
+        var cls = 'iv-hub-date-chip' + (p === active ? ' is-active' : '');
+        return '<button class="' + cls + '" data-preset="' + p + '" onclick="_invHubSetDatePreset(\'' + p + '\')">' + labels[p] + '</button>';
+      }).join('') +
+    '</div>' +
+    '<div class="iv-hub-date-custom">' +
+      '<input type="date" id="invHubDateFrom" value="' + (st.dateFrom || '') + '" onchange="_invHubOnDateInput()">' +
+      '<span>→</span>' +
+      '<input type="date" id="invHubDateTo"   value="' + (st.dateTo   || '') + '" onchange="_invHubOnDateInput()">' +
+    '</div>' +
+  '</div>';
+}
+
+window._invHubSetDatePreset = function(preset) {
+  var now = new Date();
+  var pad = function(n){ return String(n).padStart(2,'0'); };
+  var ymd = function(d){ return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()); };
+  var from, to = new Date(now);
+  switch (preset) {
+    case 'today':     from = new Date(now); break;
+    case 'yesterday': from = new Date(now); from.setDate(from.getDate()-1); to = new Date(from); break;
+    case 'week':      from = new Date(now); from.setDate(from.getDate() - ((from.getDay() + 6) % 7)); break;
+    case 'month':     from = new Date(now.getFullYear(), now.getMonth(), 1); break;
+    case 'quarter':   from = new Date(now.getFullYear(), Math.floor(now.getMonth()/3)*3, 1); break;
+    case 'year':      from = new Date(now.getFullYear(), 0, 1); break;
+    case 'all':       from = null; to = null; break;
+    default: return;
+  }
+  window._invHub.datePreset = preset;
+  window._invHub.dateFrom   = from ? ymd(from) : '';
+  window._invHub.dateTo     = to   ? ymd(to)   : '';
+  // Update active chip + inputs without full re-render
+  document.querySelectorAll('.iv-hub-date-chip').forEach(function(b){
+    b.classList.toggle('is-active', b.getAttribute('data-preset') === preset);
+  });
+  var f = q('#invHubDateFrom'), t = q('#invHubDateTo');
+  if (f) f.value = window._invHub.dateFrom;
+  if (t) t.value = window._invHub.dateTo;
+  // Reload badges with new date scope
+  _invHubLoadBadges(window._invHub.brandId);
+};
+
+window._invHubOnDateInput = function() {
+  var f = q('#invHubDateFrom'), t = q('#invHubDateTo');
+  window._invHub.datePreset = 'custom';
+  window._invHub.dateFrom = (f && f.value) || '';
+  window._invHub.dateTo   = (t && t.value) || '';
+  document.querySelectorAll('.iv-hub-date-chip').forEach(function(b){ b.classList.remove('is-active'); });
+  _invHubLoadBadges(window._invHub.brandId);
+};
+
+// v5.10.32 — Replaced legacy badge loader that called 3 separate endpoints
+// and produced inconsistent placeholder counts. New version calls the
+// unified /api/inventory/warehouse-card-stats which returns accurate,
+// scope-aware, date-filterable counters for all 6 cards in one shot.
 function _invHubLoadBadges(brandId) {
   var token = localStorage.getItem('pos_token') || '';
-  var brandQ = (brandId && brandId !== '__all__') ? ('?brandId=' + encodeURIComponent(brandId)) : '';
-  // Items: we already have the data in cache
-  if (window._invHubCache.data && window._invHubCache.data.brands) {
-    var b = window._invHubCache.data.brands.find(function(x){ return x.id === brandId; });
-    var totals = window._invHubCache.data.totals;
-    var unb = window._invHubCache.data.unbranded;
-    var pick = brandId === '__all__' ? totals
-             : brandId === '__none__' ? (unb || { items: 0, value: 0, low: 0 })
-             : (b ? { items: b.itemCount, value: b.totalValue, low: b.lowCount } : null);
-    if (pick) {
-      _invHubSetBadge('items', (pick.items || pick.itemCount || 0) + ' صنف');
-      _invHubSetBadge('live',  (pick.low > 0 ? '⚠ ' + pick.low + ' منخفضة' : 'سليم'));
-    }
+  var st = window._invHub || {};
+  var whId = st.warehouseId;
+  var qs = [];
+  // Scope: warehouse takes precedence; fall back to brand
+  if (whId && whId !== '__all__') {
+    qs.push('warehouseId=' + encodeURIComponent(whId));
+  } else if (brandId && brandId !== '__all__' && brandId !== '__none__') {
+    qs.push('brandId=' + encodeURIComponent(brandId));
+  } else {
+    // No scope to call against — show fallbacks
+    ['items','live','stocktake','adjustments','transfers','shortage'].forEach(function(k){
+      _invHubSetBadge(k, '—');
+    });
+    return;
   }
-  // Stocktakes
-  fetch('/api/getAllStocktakes', { headers: { 'Authorization': 'Bearer ' + token } })
-    .then(r => r.json()).then(function(rows) {
-      if (!Array.isArray(rows)) return _invHubSetBadge('stocktake', '—');
-      // Filter by brand if not __all__: stocktake doesn't natively store brand, so we just show count + last date
-      var sorted = rows.slice().sort(function(a,b){ return new Date(b.stocktake_date||b.date) - new Date(a.stocktake_date||a.date); });
-      var last = sorted[0];
-      _invHubSetBadge('stocktake', last ? ('آخر جرد: ' + _invHubFmtDate(last.stocktake_date||last.date)) : 'لا يوجد جرد');
-    }).catch(function(){ _invHubSetBadge('stocktake', '—'); });
-  // Adjustments (count pending)
-  fetch('/api/getAllAdjustments', { headers: { 'Authorization': 'Bearer ' + token } })
-    .then(r => r.json()).then(function(rows) {
-      if (!Array.isArray(rows)) return _invHubSetBadge('adjustments', '—');
-      var pending = rows.filter(function(r){ return (r.status||'') === 'pending'; }).length;
-      _invHubSetBadge('adjustments', pending > 0 ? (pending + ' معلّقة') : (rows.length + ' كلي'));
-    }).catch(function(){ _invHubSetBadge('adjustments', '—'); });
-  // Transfers + Shortage are the placeholders; richer counts come in PR2.
-  _invHubSetBadge('transfers', '—');
-  fetch('/api/getShortageRequests', { headers: { 'Authorization': 'Bearer ' + token } })
-    .then(r => r.json()).then(function(rows) {
-      if (!Array.isArray(rows)) return _invHubSetBadge('shortage', '—');
-      var pending = rows.filter(function(r){ return (r.status||'pending') === 'pending'; }).length;
-      _invHubSetBadge('shortage', pending > 0 ? (pending + ' معلّقة') : (rows.length + ' كلي'));
-    }).catch(function(){ _invHubSetBadge('shortage', '—'); });
+  if (st.dateFrom) qs.push('fromDate=' + encodeURIComponent(st.dateFrom));
+  if (st.dateTo)   qs.push('toDate='   + encodeURIComponent(st.dateTo));
+
+  // Show loading placeholders
+  ['items','live','stocktake','adjustments','transfers','shortage'].forEach(function(k){
+    _invHubSetBadge(k, '...');
+  });
+
+  fetch('/api/inventory/warehouse-card-stats?' + qs.join('&'),
+    { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j || !j.success) {
+        ['items','live','stocktake','adjustments','transfers','shortage'].forEach(function(k){
+          _invHubSetBadge(k, '—');
+        });
+        return;
+      }
+      var fmt    = function(n){ return Number(n||0).toLocaleString('ar-SA'); };
+      var fmtVal = function(n){ return Number(n||0).toLocaleString('en', { maximumFractionDigits: 0 }); };
+
+      // Items card — total registered + low/out warning
+      var it = j.items || {};
+      var itemBadge = fmt(it.total) + ' صنف';
+      if (it.outCount > 0)      itemBadge += ' · ' + fmt(it.outCount) + ' نفد';
+      else if (it.lowCount > 0) itemBadge += ' · ' + fmt(it.lowCount) + ' منخفض';
+      _invHubSetBadge('items', itemBadge);
+
+      // Live (movements panel) — movement count + net value flow
+      var lv = j.live || {};
+      var liveBadge;
+      if (lv.movementCount > 0) {
+        var net = lv.netValueChange || 0;
+        liveBadge = fmt(lv.movementCount) + ' حركة · ' +
+                    (net >= 0 ? '+' : '') + fmtVal(net) + ' ر.س';
+      } else {
+        liveBadge = it.lowCount > 0 ? ('⚠ ' + fmt(it.lowCount) + ' منخفض') : 'سليم';
+      }
+      _invHubSetBadge('live', liveBadge);
+
+      // Stocktake card — count + last date
+      var st2 = j.stocktake || {};
+      var stBadge;
+      if (st2.count > 0) {
+        stBadge = fmt(st2.count) + ' محضر';
+        if (st2.lastDate) stBadge += ' · آخر: ' + _invHubFmtDate(st2.lastDate);
+      } else {
+        stBadge = 'لا يوجد جرد';
+      }
+      _invHubSetBadge('stocktake', stBadge);
+
+      // Adjustments card — pending priority, then total
+      var aj = j.adjustments || {};
+      var ajBadge = aj.pending > 0
+        ? ('⚠ ' + fmt(aj.pending) + ' معلّقة')
+        : (aj.count > 0 ? fmt(aj.count) + ' تعديل' : 'لا يوجد');
+      _invHubSetBadge('adjustments', ajBadge);
+
+      // Transfers card — incoming/outgoing/draft
+      var tr = j.transfers || {};
+      var trBadge;
+      if ((tr.incoming || 0) + (tr.outgoing || 0) === 0) {
+        trBadge = tr.draftCount > 0 ? (fmt(tr.draftCount) + ' مسودة') : 'لا تحويلات';
+      } else if (tr.incoming && tr.outgoing) {
+        trBadge = '↓' + fmt(tr.incoming) + ' · ↑' + fmt(tr.outgoing);
+      } else if (tr.incoming) {
+        trBadge = '↓ ' + fmt(tr.incoming) + ' وارد';
+      } else {
+        trBadge = '↑ ' + fmt(tr.outgoing) + ' صادر';
+      }
+      if (tr.draftCount > 0 && (tr.incoming || tr.outgoing)) trBadge += ' · ' + fmt(tr.draftCount) + ' مسودة';
+      _invHubSetBadge('transfers', trBadge);
+
+      // Shortage card — pending requests
+      var sh = j.shortage || {};
+      var shBadge = sh.pendingCount > 0
+        ? ('⚠ ' + fmt(sh.pendingCount) + ' معلّقة')
+        : (sh.fulfilledCount > 0 ? fmt(sh.fulfilledCount) + ' منفّذة' : 'لا يوجد');
+      _invHubSetBadge('shortage', shBadge);
+    })
+    .catch(function(){
+      ['items','live','stocktake','adjustments','transfers','shortage'].forEach(function(k){
+        _invHubSetBadge(k, '—');
+      });
+    });
 }
 
 function _invHubSetBadge(tab, text) {

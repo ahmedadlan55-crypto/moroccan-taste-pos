@@ -322,6 +322,76 @@
 }
 
 /* ===================================================================
+   v5.10.32 — Hub date-range strip + tile badges
+   =================================================================== */
+.iv-hub-date-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  margin: 8px 0 16px;
+  background: linear-gradient(135deg, #f8fafc, #eef2ff);
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+}
+.iv-hub-date-strip-label {
+  font-size: 12px;
+  font-weight: 800;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.iv-hub-date-strip-label i { color: #6366f1; }
+.iv-hub-date-presets { display: flex; flex-wrap: wrap; gap: 5px; }
+.iv-hub-date-chip {
+  padding: 5px 12px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #475569;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+.iv-hub-date-chip:hover {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+.iv-hub-date-chip.is-active {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  border-color: #6366f1;
+  box-shadow: 0 4px 12px -4px rgba(99,102,241,0.5);
+}
+.iv-hub-date-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: auto;
+}
+.iv-hub-date-custom input {
+  height: 30px;
+  padding: 0 8px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 12px;
+  background: #fff;
+}
+.iv-hub-date-custom span { color: #94a3b8; font-weight: 700; }
+
+/* Make sure the badge shows the new richer text without overflowing */
+.iv-hub-tile-badge {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* ===================================================================
    v5.10.31 — Warehouse Ledger (دفتر أستاذ المستودع) styling
    =================================================================== */
 #erpRptWarehouseLedger .wl-filters {

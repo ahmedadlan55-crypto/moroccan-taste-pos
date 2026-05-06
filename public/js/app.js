@@ -5542,9 +5542,11 @@ function loadInvCatalog() {
 
     _renderInvCatalogKpis(summary, tab);
     _renderInvCatalogTable(items, tab);
+    _invCatRenderSummaryFooter(items, total, summary);
     _invCatRenderPagination(total, page, pageSize);
     _invCatUpdateSortHeaders();
     _invCatUpdateBulkBar();
+    _invCatBindScrollShadow();
   }).catch(function(err){
     console.warn('[invCatalog] load failed:', err && err.message);
     _invCatRenderError();
@@ -5650,14 +5652,21 @@ function _renderInvCatalogTable(items, tab) {
     return;
   }
 
+  // v5.10.30 — Pull search query for in-cell highlighting
+  var searchQuery = ((q('#invCatSearch') && q('#invCatSearch').value) || '').trim();
+
   tb.innerHTML = items.map(function(it) {
+    // v5.10.30 — brand chip is now clickable (filter by brand)
+    var brandIdEsc = _invHubEsc(it.brandId || '').replace(/'/g, "\\'");
     var brandHtml = it.brandName
-      ? '<span class="wo-chip purple"><i class="fas fa-store"></i> ' + _invHubEsc(it.brandName) + '</span>'
+      ? '<span class="wo-chip purple is-clickable" onclick="event.stopPropagation();invCatFilterByBrand(\'' + brandIdEsc + '\')" title="' + _invHubEsc(it.brandName) + ' · انقر للتصفية"><i class="fas fa-store"></i> ' + _invHubEsc(it.brandName) + '</span>'
       : '<span class="wo-chip neutral flat">—</span>';
     var warehousesHtml = _invCatRenderWarehouseChips(it.warehouses);
     var createdStr = it.createdAt ? new Date(it.createdAt).toLocaleDateString('en-GB') : '—';
     var idEsc = _invHubEsc(it.id).replace(/'/g, "\\'");
     var nameEsc = _invHubEsc(it.name).replace(/'/g, "\\'");
+    var nameHighlighted = _invCatHighlight(_invHubEsc(it.name), searchQuery);
+    var stockPill = _invCatStockPill(it);
     var checked = s.selected[it.id] ? ' checked' : '';
     var rowSelClass = s.selected[it.id] ? ' is-selected' : '';
     var actions;
@@ -5672,10 +5681,10 @@ function _renderInvCatalogTable(items, tab) {
           : '') +
         '</div>';
 
-      return '<tr class="inv-row--deleted' + rowSelClass + '" data-id="' + idEsc + '">' +
+      return '<tr class="inv-row--deleted inv-row-enter' + rowSelClass + '" data-id="' + idEsc + '">' +
         '<td class="col-select"><input type="checkbox" class="inv-row-checkbox" data-id="' + idEsc + '" onchange="invCatToggleRow(\'' + idEsc + '\', this.checked)"' + checked + '></td>' +
         '<td><code>' + _invHubEsc(it.id) + '</code></td>' +
-        '<td class="inv-row-name"><i class="fas fa-trash inv-row-name__del-icon"></i>' + _invHubEsc(it.name) + '</td>' +
+        '<td class="inv-row-name"><i class="fas fa-trash inv-row-name__del-icon"></i>' + nameHighlighted + '</td>' +
         '<td>' + brandHtml + '</td>' +
         '<td>' + warehousesHtml + '</td>' +
         '<td><span class="wo-chip neutral flat">' + _invHubEsc(it.category) + '</span></td>' +
@@ -5694,10 +5703,10 @@ function _renderInvCatalogTable(items, tab) {
       '<button class="wo-icon-btn danger" onclick="invCatDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف (يذهب إلى السلة)"><i class="fas fa-trash"></i></button>' +
       '</div>';
 
-    return '<tr' + (rowSelClass ? ' class="' + rowSelClass.trim() + '"' : '') + ' data-id="' + idEsc + '">' +
+    return '<tr class="inv-row-enter' + rowSelClass + '" data-id="' + idEsc + '">' +
       '<td class="col-select"><input type="checkbox" class="inv-row-checkbox" data-id="' + idEsc + '" onchange="invCatToggleRow(\'' + idEsc + '\', this.checked)"' + checked + '></td>' +
       '<td><code>' + _invHubEsc(it.id) + '</code></td>' +
-      '<td style="font-weight:700;">' + _invHubEsc(it.name) + '</td>' +
+      '<td style="font-weight:700;">' + nameHighlighted + stockPill + '</td>' +
       '<td>' + brandHtml + '</td>' +
       '<td>' + warehousesHtml + '</td>' +
       '<td><span class="wo-chip neutral flat">' + _invHubEsc(it.category) + '</span></td>' +
@@ -5714,6 +5723,9 @@ function _renderInvCatalogTable(items, tab) {
 // v5.10.29 — Render the per-item warehouse-distribution chips for the
 // "المستودعات" column. Hover shows full list when truncated; first two
 // chips are inline, the rest collapse into a "+N" overflow chip.
+// v5.10.30 — chips are now CLICKABLE: clicking sets the warehouse filter
+// at the top of the catalog and re-renders, so the user can drill into a
+// single warehouse with one tap.
 function _invCatRenderWarehouseChips(warehouses) {
   if (!warehouses || !warehouses.length) {
     return '<span class="wo-chip neutral flat" title="لا يوجد مخزون نشط في أي مستودع">— لا مخزون —</span>';
@@ -5723,7 +5735,8 @@ function _invCatRenderWarehouseChips(warehouses) {
   var rest  = warehouses.slice(MAX);
   var fmt = function(n){ return Number(n || 0).toLocaleString('en', { maximumFractionDigits: 2 }); };
   var chips = first.map(function(w){
-    return '<span class="inv-wh-chip" title="' + _invHubEsc(w.warehouseName) + ' — ' + fmt(w.qty) + '">' +
+    var idEsc = _invHubEsc(w.warehouseId || '').replace(/'/g, "\\'");
+    return '<span class="inv-wh-chip is-clickable" onclick="event.stopPropagation();invCatFilterByWarehouse(\'' + idEsc + '\')" title="' + _invHubEsc(w.warehouseName) + ' — ' + fmt(w.qty) + '  ·  انقر للتصفية">' +
              '<i class="fas fa-warehouse"></i>' +
              '<span class="inv-wh-chip__name">' + _invHubEsc(w.warehouseName) + '</span>' +
              '<span class="inv-wh-chip__qty">' + fmt(w.qty) + '</span>' +
@@ -5734,6 +5747,52 @@ function _invCatRenderWarehouseChips(warehouses) {
     chips.push('<span class="inv-wh-chip inv-wh-chip--more" title="' + _invHubEsc(tip) + '">+' + rest.length + '</span>');
   }
   return '<div class="inv-wh-chips">' + chips.join('') + '</div>';
+}
+
+// v5.10.30 — Filter handlers wired to chip clicks. Set the dropdown value
+// programmatically and reload — the loader picks up the new filter via the
+// existing oninput/onchange path.
+window.invCatFilterByWarehouse = function(id) {
+  var sel = q('#invCatWarehouseFilter');
+  if (!sel) return;
+  sel.value = id || '';
+  window._invCatState.page = 1;
+  loadInvCatalog();
+};
+window.invCatFilterByBrand = function(id) {
+  var sel = q('#invCatBrandFilter');
+  if (!sel) return;
+  sel.value = id || '';
+  window._invCatState.page = 1;
+  loadInvCatalog();
+};
+
+// v5.10.30 — Wrap matches of the current search query in <mark>. Safe by
+// construction: the input text is already escaped before being passed in,
+// and the query is regex-escaped here.
+function _invCatHighlight(escapedText, rawQuery) {
+  if (!rawQuery) return escapedText;
+  var q = String(rawQuery).trim();
+  if (!q) return escapedText;
+  var safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[<>"'&]/g, '');
+  if (!safe) return escapedText;
+  try {
+    var re = new RegExp('(' + safe + ')', 'gi');
+    return escapedText.replace(re, '<span class="inv-search-mark">$1</span>');
+  } catch (_) { return escapedText; }
+}
+
+// v5.10.30 — Stock health pill: out / low / ok with the qty alongside.
+// Uses globalStock (sum across warehouses) vs minStock for the threshold.
+function _invCatStockPill(item) {
+  var stock = Number(item.globalStock != null ? item.globalStock : item.stock) || 0;
+  var min   = Number(item.minStock) || 0;
+  var fmt = function(n){ return Number(n || 0).toLocaleString('en', { maximumFractionDigits: 2 }); };
+  var cls, label;
+  if (stock <= 0)     { cls = 'inv-stock-pill--out'; label = 'نفد · 0'; }
+  else if (stock <= min) { cls = 'inv-stock-pill--low'; label = 'منخفض · ' + fmt(stock); }
+  else                { cls = 'inv-stock-pill--ok';  label = 'متوفر · ' + fmt(stock); }
+  return '<span class="inv-stock-pill ' + cls + '">' + label + '</span>';
 }
 
 // v5.10.28 — Skeleton rows shown while a fetch is in flight.
@@ -5772,6 +5831,101 @@ function _invCatRenderError() {
       '</div>' +
     '</td></tr>';
   var pag = q('#invCatPagination'); if (pag) pag.style.display = 'none';
+  var foot = q('#invCatSummaryFooter'); if (foot) foot.innerHTML = '';
+}
+
+// v5.10.30 — Render the summary footer between the table and pagination.
+// Reads the page items + the catalog summary KPIs to expose:
+//   • items on this page (out of total)
+//   • total inventory value across visible items (Σ cost × globalStock)
+//   • unique warehouses touched by these items
+//   • out-of-stock + low-stock counts on this page (so the user can
+//     immediately see whether a quick action is needed)
+function _invCatRenderSummaryFooter(items, totalAcrossAll, summary) {
+  var box = q('#invCatSummaryFooter');
+  if (!box) return;
+  if (!items || !items.length) { box.innerHTML = ''; return; }
+
+  var totalValue = 0;
+  var outCount = 0, lowCount = 0;
+  var whSet = {};
+  items.forEach(function(it){
+    var stock = Number(it.globalStock != null ? it.globalStock : it.stock) || 0;
+    var cost  = Number(it.cost) || 0;
+    totalValue += stock * cost;
+    var min = Number(it.minStock) || 0;
+    if (stock <= 0) outCount++;
+    else if (stock <= min) lowCount++;
+    (it.warehouses || []).forEach(function(w){ if (w.warehouseId) whSet[w.warehouseId] = true; });
+  });
+  var uniqueWh = Object.keys(whSet).length;
+  var fmt = function(n){ return Number(n || 0).toLocaleString('ar-SA', { maximumFractionDigits: 2 }); };
+  var fmtMoney = function(n){ return Number(n || 0).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+
+  box.innerHTML =
+    '<div class="inv-summary-footer__cell">' +
+      '<div class="inv-summary-footer__label"><i class="fas fa-list-check"></i> عناصر الصفحة</div>' +
+      '<div class="inv-summary-footer__value">' + fmt(items.length) + '</div>' +
+      '<div class="inv-summary-footer__sub">من إجمالي ' + fmt(totalAcrossAll || items.length) + ' عنصر</div>' +
+    '</div>' +
+    '<div class="inv-summary-footer__cell">' +
+      '<div class="inv-summary-footer__label"><i class="fas fa-coins"></i> القيمة الإجمالية</div>' +
+      '<div class="inv-summary-footer__value">' + fmtMoney(totalValue) + ' <span style="font-size:11px;color:#64748b;font-weight:700;">ر.س</span></div>' +
+      '<div class="inv-summary-footer__sub">تكلفة × الرصيد العالمي للصفحة</div>' +
+    '</div>' +
+    '<div class="inv-summary-footer__cell">' +
+      '<div class="inv-summary-footer__label"><i class="fas fa-warehouse"></i> مستودعات نشطة</div>' +
+      '<div class="inv-summary-footer__value">' + fmt(uniqueWh) + '</div>' +
+      '<div class="inv-summary-footer__sub">تظهر فيها مواد هذه الصفحة</div>' +
+    '</div>' +
+    '<div class="inv-summary-footer__cell">' +
+      '<div class="inv-summary-footer__label" style="color:' + (outCount ? '#b91c1c' : (lowCount ? '#b45309' : '#047857')) + ';"><i class="fas fa-' + (outCount ? 'circle-exclamation' : (lowCount ? 'triangle-exclamation' : 'circle-check')) + '"></i> صحة المخزون</div>' +
+      '<div class="inv-summary-footer__value" style="color:' + (outCount ? '#b91c1c' : (lowCount ? '#b45309' : '#047857')) + ';">' +
+        (outCount > 0 ? fmt(outCount) + ' نفد' : (lowCount > 0 ? fmt(lowCount) + ' منخفض' : 'سليم')) +
+      '</div>' +
+      '<div class="inv-summary-footer__sub">' +
+        (outCount > 0 || lowCount > 0
+          ? (outCount + ' نفد · ' + lowCount + ' منخفض على الصفحة')
+          : 'لا توجد مواد منخفضة في هذه الصفحة') +
+      '</div>' +
+    '</div>';
+}
+
+// v5.10.30 — (a) Track scroll on the table surface so the sticky <thead>
+// gets a soft shadow underneath only when content is scrolled. Bound
+// once. (b) Strip enter-animation classes after the animation runs so
+// hover doesn't retrigger them. Runs every render.
+var _invCatScrollBound = false;
+function _invCatBindScrollShadow() {
+  var section = q('#sec_invCatalog');
+  if (!section) return;
+  var surface = section.querySelector('.wo-table-surface');
+  if (!surface) return;
+
+  if (!_invCatScrollBound) {
+    var onScroll = function() {
+      var rect = surface.getBoundingClientRect();
+      surface.classList.toggle('is-scrolled', rect.top < 1);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    // Also catch a scrollable parent (e.g. admin-content)
+    var p = surface.parentElement;
+    while (p && p !== document.body) {
+      var st = window.getComputedStyle(p).overflowY;
+      if (st === 'auto' || st === 'scroll') {
+        p.addEventListener('scroll', onScroll, { passive: true });
+        break;
+      }
+      p = p.parentElement;
+    }
+    _invCatScrollBound = true;
+  }
+
+  // Always strip enter-animation classes after they finish — runs each render
+  setTimeout(function(){
+    var rows = section.querySelectorAll('#tbInvCatalog tr.inv-row-enter');
+    rows.forEach(function(r){ r.classList.remove('inv-row-enter'); });
+  }, 320);
 }
 
 function _invCatRenderPagination(total, page, pageSize) {

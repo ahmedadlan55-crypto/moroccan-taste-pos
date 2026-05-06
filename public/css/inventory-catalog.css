@@ -108,6 +108,219 @@
   font-size: 11px;
 }
 
+/* ── v5.10.30 — Richer table: stripes, hover, sticky header ──────── */
+#sec_invCatalog .wo-table-surface {
+  position: relative;
+  border: 1px solid #e5e7eb;
+  border-radius: var(--wo-radius-md, 14px);
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+#sec_invCatalog .wo-table-surface > table {
+  position: relative;
+}
+#sec_invCatalog .wo-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+}
+#sec_invCatalog .wo-table thead::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 6px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.08), transparent);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+#sec_invCatalog .wo-table-surface.is-scrolled .wo-table thead::after {
+  opacity: 1;
+}
+#sec_invCatalog .wo-table thead th {
+  padding-block: 11px;
+  padding-inline: 12px;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #334155;
+  border-bottom: 1.5px solid #c7d2fe;
+}
+#sec_invCatalog .wo-table tbody td {
+  padding-block: 9px;
+  padding-inline: 12px;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 13px;
+  vertical-align: middle;
+  transition: background 150ms ease;
+}
+#sec_invCatalog .wo-table tbody tr {
+  position: relative;
+  transition: background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+#sec_invCatalog .wo-table tbody tr:nth-child(even) td {
+  background: #fafbfd;
+}
+#sec_invCatalog .wo-table tbody tr:hover td {
+  background: linear-gradient(90deg, #eef2ff 0%, #f5f3ff 100%);
+}
+#sec_invCatalog .wo-table tbody tr::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-start: 0;
+  width: 3px;
+  background: linear-gradient(180deg, #6366f1, #8b5cf6);
+  opacity: 0;
+  transition: opacity 160ms ease;
+  pointer-events: none;
+}
+#sec_invCatalog .wo-table tbody tr:hover::before,
+#sec_invCatalog .wo-table tbody tr.is-selected::before {
+  opacity: 1;
+}
+#sec_invCatalog .wo-table tbody tr.is-selected td {
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.10), rgba(139, 92, 246, 0.05));
+}
+
+/* Smooth row enter (used after filter / page change) */
+#sec_invCatalog .wo-table tbody tr.inv-row-enter {
+  animation: invRowEnter 280ms cubic-bezier(.4, 0, .2, 1) both;
+}
+@keyframes invRowEnter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Stock health pill (next to material name) ─────────────────── */
+.inv-stock-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  vertical-align: middle;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.inv-stock-pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7);
+}
+.inv-stock-pill--ok   { background: #d1fae5; color: #047857; }
+.inv-stock-pill--low  { background: #fef3c7; color: #b45309; }
+.inv-stock-pill--out  { background: #fee2e2; color: #b91c1c; }
+.inv-stock-pill--out::before {
+  animation: invPulseOut 1.6s ease-in-out infinite;
+}
+@keyframes invPulseOut {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(0.7); }
+}
+
+/* ── Search match highlight in name cell ──────────────────────────── */
+.inv-search-mark {
+  background: linear-gradient(180deg, transparent 60%, #fef08a 60%);
+  font-weight: 900;
+  color: #713f12;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+
+/* ── Clickable chips (warehouse + brand) — interactive feel ─────── */
+#sec_invCatalog .inv-wh-chip,
+#sec_invCatalog .wo-chip.purple {
+  transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
+}
+#sec_invCatalog .inv-wh-chip.is-clickable,
+#sec_invCatalog .wo-chip.purple.is-clickable {
+  cursor: pointer;
+}
+#sec_invCatalog .inv-wh-chip.is-clickable:hover,
+#sec_invCatalog .wo-chip.purple.is-clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px -3px rgba(15, 23, 42, 0.2);
+  filter: brightness(1.05);
+}
+#sec_invCatalog .inv-wh-chip.is-clickable:active,
+#sec_invCatalog .wo-chip.purple.is-clickable:active {
+  transform: translateY(0);
+  filter: brightness(0.96);
+}
+
+/* ── Summary footer (between table and pagination) ──────────────── */
+.inv-summary-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0;
+  margin-top: -1px; /* sit flush against the table */
+  padding: 0;
+  background: linear-gradient(135deg, #f8fafc, #eef2ff);
+  border: 1px solid #e2e8f0;
+  border-top: none;
+  border-radius: 0 0 var(--wo-radius-md, 14px) var(--wo-radius-md, 14px);
+  box-shadow: 0 2px 8px -4px rgba(15, 23, 42, 0.08);
+}
+.inv-summary-footer__cell {
+  flex: 1 1 0;
+  min-width: 160px;
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-inline-end: 1px dashed #cbd5e1;
+}
+.inv-summary-footer__cell:last-child {
+  border-inline-end: none;
+}
+.inv-summary-footer__label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.inv-summary-footer__label i {
+  color: #6366f1;
+}
+.inv-summary-footer__value {
+  font-size: 16px;
+  font-weight: 900;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.inv-summary-footer__sub {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+/* tighten the row-deleted look so it matches the new stripe density */
+#sec_invCatalog .wo-table tbody tr.inv-row--deleted td,
+#sec_invCatalog .wo-table tbody tr.inv-row--deleted:nth-child(even) td {
+  background: #fff7ed;
+}
+#sec_invCatalog .wo-table tbody tr.inv-row--deleted:hover td {
+  background: linear-gradient(90deg, #ffedd5, #fff7ed);
+}
+
 /* ── Sortable headers ─────────────────────────────────────────────── */
 .wo-table--sortable thead th[data-sort] {
   cursor: pointer;

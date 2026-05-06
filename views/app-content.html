@@ -5303,14 +5303,17 @@
     <div class="modal-content modal-large">
       <div class="modal-title"><span id="rMdlTitle">إضافة مادة خام جديدة للمستودع</span><button class="modal-close" onclick="closeModal('#modalRawForm')">&times;</button></div>
       <input type="hidden" id="mrId">
-      <!-- Warehouse selector -->
+      <!-- Warehouse selector — v5.10.27: MANDATORY when adding new materials.
+           Each warehouse is independent; a master record without a warehouse
+           cannot have stock or movement history, so the per-warehouse page
+           wouldn't show it anywhere. -->
       <div class="form-group" style="background:linear-gradient(135deg,#ecfeff,#cffafe);padding:12px 14px;border-radius:10px;border:1.5px solid #67e8f9;margin-bottom:12px;">
-        <label class="form-label" style="color:#0e7490;font-weight:800;"><i class="fas fa-warehouse"></i> المستودع المستلم</label>
-        <select id="mrWarehouseId" class="form-control">
-          <option value="">— عام (بدون تحديد مستودع) —</option>
+        <label class="form-label" style="color:#0e7490;font-weight:800;"><i class="fas fa-warehouse"></i> المستودع المستلم <span style="color:#dc2626;font-weight:900;">*</span></label>
+        <select id="mrWarehouseId" class="form-control" required>
+          <option value="">— اختر مستودعاً —</option>
         </select>
         <small style="color:#155e75;font-size:11px;margin-top:4px;display:block;">
-          <i class="fas fa-info-circle"></i> ستُسجّل المادة في هذا المستودع، ولن تظهر في باقي المستودعات إلا بعد تحويلها.
+          <i class="fas fa-info-circle"></i> اختيار المستودع إجباري. ستُسجّل المادة في هذا المستودع فقط، ولن تظهر في باقي المستودعات إلا بعد تحويلها.
         </small>
       </div>
 

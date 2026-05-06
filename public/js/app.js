@@ -6444,6 +6444,23 @@ function saveRawItem() {
   if (!name) return showToast("يرجى تعبئة اسم المادة الخام", true);
 
   var whId = q("#mrWarehouseId").value;
+  var existingId = q("#mrId").value;
+  // v5.10.27 — warehouse is mandatory when ADDING a new material. The
+  // legacy "global fallback" path created master records with no
+  // warehouse association, which then leaked across the warehouse views
+  // (the bug the user is fixing). Editing an existing item that already
+  // has stock somewhere can still go through with no warehouse change,
+  // but a brand new material always needs a target warehouse.
+  if (!existingId && !whId) {
+    var sel = q("#mrWarehouseId");
+    if (sel) {
+      sel.style.borderColor = '#dc2626';
+      sel.style.boxShadow = '0 0 0 3px rgba(220,38,38,.15)';
+      sel.focus();
+      setTimeout(function(){ sel.style.borderColor=''; sel.style.boxShadow=''; }, 2500);
+    }
+    return showToast("يرجى اختيار المستودع المستلم — كل مستودع مستقل وحفظ مادة بدون مستودع لن يظهرها في أي شاشة.", true);
+  }
   var qtyRaw = Number(q("#mrQty").value) || 0;
   var qtyUnit = q("#mrQtyUnit").value || 'small';
   var addedAt = q("#mrAddedAt").value || new Date().toISOString().slice(0,10);

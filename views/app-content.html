@@ -858,65 +858,115 @@
              JS in loadInvCatalog() renders filter bar + KPIs + table + recycle-bin tab.
              Add/edit reuses the existing openRawModal(); delete is soft (deleted_at)
              with restore from the recycle-bin tab. -->
-        <div id="sec_invCatalog" class="admin-section">
-          <div class="filter-bar" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <h2 style="margin:0;color:#7c3aed;display:flex;align-items:center;gap:8px;">
-                <i class="fas fa-book"></i> إدارة مواد المخزون
-              </h2>
-              <span style="color:#94a3b8;font-size:12px;">التعريف العام للمواد — مستقل عن المستودعات</span>
+        <div id="sec_invCatalog" class="admin-section wo-section">
+          <header class="wo-header">
+            <div class="wo-header-titles">
+              <h1><span class="wo-icon-slot purple"><i class="fas fa-book"></i></span>إدارة مواد المخزون</h1>
+              <p class="wo-header-sub">التعريف العام للمواد — السجل الرئيسي للأصناف المستقل عن المستودعات والفروع.</p>
             </div>
-            <div style="display:flex;gap:8px;">
-              <button class="btn btn-primary" onclick="openRawModal()"><i class="fas fa-plus"></i> إضافة مادة</button>
+            <div class="wo-header-actions">
+              <button class="wo-btn wo-btn-primary" onclick="openRawModal()"><i class="fas fa-plus"></i><span>إضافة مادة</span></button>
             </div>
-          </div>
+          </header>
+
           <!-- View tabs: active catalog vs. recycle bin -->
-          <div class="sales-tabs" id="invCatalogTabs" style="margin-bottom:14px;">
+          <div class="sales-tabs" id="invCatalogTabs" style="margin-bottom:16px;">
             <div class="sales-tab active" id="invCatTab_active" onclick="invCatalogSwitchTab('active')">
               <i class="fas fa-list-check"></i> <span>المواد المعرَّفة</span>
-              <span id="invCatActiveCount" class="badge" style="background:#ede9fe;color:#5b21b6;margin-inline-start:8px;">0</span>
+              <span id="invCatActiveCount" class="inv-tab-badge inv-tab-badge--active">0</span>
             </div>
             <div class="sales-tab" id="invCatTab_deleted" onclick="invCatalogSwitchTab('deleted')">
               <i class="fas fa-trash-restore"></i> <span>سلة المحذوفات</span>
-              <span id="invCatDeletedCount" class="badge" style="background:#fef2f2;color:#b91c1c;margin-inline-start:8px;">0</span>
+              <span id="invCatDeletedCount" class="inv-tab-badge inv-tab-badge--deleted">0</span>
             </div>
           </div>
-          <!-- Unified filter bar (v5.10.20 pattern) -->
-          <div class="wh-filter-bar">
-            <div class="wh-fb-title"><i class="fas fa-filter"></i> فلاتر</div>
-            <div class="wh-fb-controls">
-              <div class="wh-fb-search">
-                <i class="fas fa-search"></i>
-                <input type="text" id="invCatSearch" class="form-control" placeholder="بحث بالاسم، الكود، أو التصنيف..." oninput="loadInvCatalog()">
-              </div>
-              <select id="invCatBrandFilter" class="form-control wh-fb-select" onchange="loadInvCatalog()">
+
+          <!-- Unified filter bar -->
+          <section class="wo-toolbar" role="search" aria-label="تصفية الكتالوج">
+            <div class="wo-field" style="flex:1;">
+              <label class="wo-field-label"><i class="fas fa-search"></i> بحث</label>
+              <input type="text" id="invCatSearch" class="wo-input" placeholder="بحث بالاسم، الكود، أو التصنيف..." oninput="invCatOnSearchInput(this)">
+            </div>
+            <div class="wo-field">
+              <label class="wo-field-label"><i class="fas fa-store"></i> البراند</label>
+              <select id="invCatBrandFilter" class="wo-select" onchange="invCatOnFilterChange()">
                 <option value="">🏪 كل البراندات</option>
               </select>
-              <select id="invCatWarehouseFilter" class="form-control wh-fb-select" onchange="loadInvCatalog()">
+            </div>
+            <div class="wo-field">
+              <label class="wo-field-label"><i class="fas fa-warehouse"></i> المستودع</label>
+              <select id="invCatWarehouseFilter" class="wo-select" onchange="invCatOnFilterChange()">
                 <option value="">🏢 كل المستودعات</option>
               </select>
-              <button class="btn btn-light wh-fb-clear" onclick="invCatClearFilters()" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
             </div>
-          </div>
+            <div class="wo-field" style="align-self: flex-end;">
+              <button class="wo-btn wo-btn-ghost" onclick="invCatClearFilters()" title="مسح الفلاتر"><i class="fas fa-broom"></i><span>مسح</span></button>
+            </div>
+          </section>
+
           <!-- KPI strip (reuses .iv-items-kpis grid + _invItemsKpi cards) -->
           <div id="invCatalogKpis" class="iv-items-kpis"></div>
+
+          <!-- Bulk actions bar (visible only when rows are selected) -->
+          <div id="invCatBulkBar" class="inv-bulk-bar is-hidden" role="region" aria-label="عمليات مجمَّعة">
+            <div class="inv-bulk-bar__count">
+              <i class="fas fa-check-square"></i>
+              <span>تم تحديد</span>
+              <span class="badge" id="invCatBulkCount">0</span>
+              <span>عنصر</span>
+            </div>
+            <div class="inv-bulk-bar__actions">
+              <button class="wo-btn wo-btn-ghost" type="button" onclick="invCatClearSelection()">
+                <i class="fas fa-xmark"></i><span>إلغاء التحديد</span>
+              </button>
+              <button class="wo-btn wo-btn-primary" type="button" id="invCatBulkPrimaryBtn" onclick="invCatBulkAction()">
+                <i class="fas fa-trash" id="invCatBulkPrimaryIcon"></i><span id="invCatBulkPrimaryLabel">حذف المحدد</span>
+              </button>
+            </div>
+          </div>
+
           <!-- Table -->
-          <div class="table-wrapper">
-            <table class="table">
+          <div class="wo-table-surface">
+            <table class="wo-table wo-table--sortable wo-table--selectable" role="table">
               <thead><tr id="invCatalogHead">
-                <th>كود المادة</th>
-                <th>اسم المادة</th>
-                <th>البراند</th>
-                <th>التصنيف</th>
-                <th>الوحدة الكبرى</th>
-                <th>الوحدة الصغرى</th>
-                <th>التكلفة (ر.س)</th>
-                <th>حد النواقص</th>
-                <th>تاريخ الإنشاء</th>
-                <th>إجراءات</th>
+                <th scope="col" class="col-select">
+                  <input type="checkbox" id="invCatMasterChk" class="inv-master-checkbox" onchange="invCatToggleAll(this)" aria-label="تحديد الكل">
+                </th>
+                <th scope="col" data-sort="id"><span>كود المادة</span><i class="fas fa-sort sort-ico"></i></th>
+                <th scope="col" data-sort="name"><span>اسم المادة</span><i class="fas fa-sort sort-ico"></i></th>
+                <th scope="col" data-sort="brand"><span>البراند</span><i class="fas fa-sort sort-ico"></i></th>
+                <th scope="col" data-sort="category"><span>التصنيف</span><i class="fas fa-sort sort-ico"></i></th>
+                <th scope="col">الوحدة الكبرى</th>
+                <th scope="col">الوحدة الصغرى</th>
+                <th scope="col" class="num" data-sort="cost"><span>التكلفة (ر.س)</span><i class="fas fa-sort sort-ico"></i></th>
+                <th scope="col" class="num" data-sort="min_stock"><span>حد النواقص</span><i class="fas fa-sort sort-ico"></i></th>
+                <th scope="col" data-sort="created_at"><span>تاريخ الإنشاء</span><i class="fas fa-sort sort-ico"></i></th>
+                <th scope="col">إجراءات</th>
               </tr></thead>
-              <tbody id="tbInvCatalog"><tr><td colspan="10" style="text-align:center;padding:30px;color:#94a3b8;">جاري التحميل...</td></tr></tbody>
+              <tbody id="tbInvCatalog">
+                <tr><td colspan="11"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+              </tbody>
             </table>
+
+            <!-- Pagination footer -->
+            <div id="invCatPagination" class="inv-pagination" style="display:none;">
+              <div class="inv-pagination__info">
+                <span id="invCatPagInfo">—</span>
+              </div>
+              <div class="inv-pagination__controls">
+                <button class="inv-pagination__btn" id="invCatPagFirst" onclick="invCatGoPage(1)" title="الأولى" aria-label="الصفحة الأولى"><i class="fas fa-angles-right"></i></button>
+                <button class="inv-pagination__btn" id="invCatPagPrev"  onclick="invCatGoRel(-1)" title="السابقة" aria-label="السابقة"><i class="fas fa-angle-right"></i></button>
+                <span id="invCatPagPages"></span>
+                <button class="inv-pagination__btn" id="invCatPagNext"  onclick="invCatGoRel(1)"  title="التالية" aria-label="التالية"><i class="fas fa-angle-left"></i></button>
+                <button class="inv-pagination__btn" id="invCatPagLast"  onclick="invCatGoLast()" title="الأخيرة" aria-label="الأخيرة"><i class="fas fa-angles-left"></i></button>
+                <span class="inv-pagination__sep">·</span>
+                <select id="invCatPagSize" class="inv-pagination__size" onchange="invCatChangePageSize(this.value)" aria-label="حجم الصفحة">
+                  <option value="25">25 / صفحة</option>
+                  <option value="50" selected>50 / صفحة</option>
+                  <option value="100">100 / صفحة</option>
+                </select>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -5299,19 +5349,32 @@
   </div>
 
   <!-- Raw Material Modal (INV_Items) — v5.10.6: warehouse-aware + dual-unit qty -->
+  <!-- v5.10.28: prominent warehouse banner + inline validation + smart save button -->
   <div class="modal" id="modalRawForm">
     <div class="modal-content modal-large">
       <div class="modal-title"><span id="rMdlTitle">إضافة مادة خام جديدة للمستودع</span><button class="modal-close" onclick="closeModal('#modalRawForm')">&times;</button></div>
       <input type="hidden" id="mrId">
+
+      <!-- v5.10.28 — Live warehouse banner: mirrors the dropdown selection so the
+           user always sees which warehouse is targeted without scrolling/opening it. -->
+      <div id="mrWarehouseBanner" class="inv-modal-warehouse-banner is-empty">
+        <div class="inv-modal-warehouse-banner__icon"><i class="fas fa-warehouse"></i></div>
+        <div>
+          <div class="inv-modal-warehouse-banner__label">المستودع المستلم</div>
+          <div class="inv-modal-warehouse-banner__name" id="mrWarehouseBannerName">— لم يُختر بعد —</div>
+        </div>
+      </div>
+
       <!-- Warehouse selector — v5.10.27: MANDATORY when adding new materials.
            Each warehouse is independent; a master record without a warehouse
            cannot have stock or movement history, so the per-warehouse page
            wouldn't show it anywhere. -->
       <div class="form-group" style="background:linear-gradient(135deg,#ecfeff,#cffafe);padding:12px 14px;border-radius:10px;border:1.5px solid #67e8f9;margin-bottom:12px;">
         <label class="form-label" style="color:#0e7490;font-weight:800;"><i class="fas fa-warehouse"></i> المستودع المستلم <span style="color:#dc2626;font-weight:900;">*</span></label>
-        <select id="mrWarehouseId" class="form-control" required>
+        <select id="mrWarehouseId" class="form-control wo-select" required onchange="_invModalRevalidate()">
           <option value="">— اختر مستودعاً —</option>
         </select>
+        <small class="inv-field-error" id="err_mrWarehouseId">يجب اختيار المستودع المستلم.</small>
         <small style="color:#155e75;font-size:11px;margin-top:4px;display:block;">
           <i class="fas fa-info-circle"></i> اختيار المستودع إجباري. ستُسجّل المادة في هذا المستودع فقط، ولن تظهر في باقي المستودعات إلا بعد تحويلها.
         </small>
@@ -5329,23 +5392,35 @@
       </div>
 
       <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px 20px;">
-        <div class="form-group"><label class="form-label">اسم المادة الخام</label><input type="text" id="mrName" class="form-control" placeholder="مثال: بن كولومبي، سكر..."></div>
+        <div class="form-group">
+          <label class="form-label">اسم المادة الخام <span style="color:#dc2626;">*</span></label>
+          <input type="text" id="mrName" class="form-control" placeholder="مثال: بن كولومبي، سكر..." oninput="_invModalRevalidate()">
+          <small class="inv-field-error" id="err_mrName">اسم المادة مطلوب.</small>
+        </div>
         <div class="form-group"><label class="form-label">التصنيف</label><input type="text" id="mrCat" class="form-control" placeholder="مثال: حبوب قهوة، تغليف.."></div>
         <div class="form-group" style="background:#e0f2fe; padding:10px; border-radius:8px;"><label class="form-label" style="color:#0369a1;">الوحدة الكبرى (للشراء)</label><input type="text" id="mrBigUnit" class="form-control" placeholder="كرتون، بوكس، كيس..."></div>
 
         <div class="form-group" style="background:#dbeafe; padding:10px; border-radius:8px; border:2px solid #3b82f6;">
           <label class="form-label" style="color:#1d4ed8; font-weight:800;">سعر شراء الوحدة الكبرى (SAR)</label>
-          <input type="number" step="0.01" id="mrCost" class="form-control" value="0" oninput="calcSmallUnitCost()">
+          <input type="number" step="0.01" id="mrCost" class="form-control" value="0" min="0" oninput="calcSmallUnitCost(); _invModalRevalidate();">
+          <small class="inv-field-error" id="err_mrCost">التكلفة لا يمكن أن تكون سالبة.</small>
         </div>
-        <div class="form-group" style="background:#e0f2fe; padding:10px; border-radius:8px;"><label class="form-label" style="color:#0369a1;">معامل التحويل (كم وحدة صغرى؟)</label><input type="number" id="mrConvRate" class="form-control" placeholder="مثال: 24" value="1" min="1" oninput="calcSmallUnitCost()">
-</div>
-        <div class="form-group" style="background:#e0f2fe; padding:10px; border-radius:8px;"><label class="form-label" style="color:#0369a1;">الوحدة الصغرى (للوصفات)</label><input type="text" id="mrUnit" class="form-control" value="حبة" placeholder="حبة، جرام، مل"></div>
+        <div class="form-group" style="background:#e0f2fe; padding:10px; border-radius:8px;">
+          <label class="form-label" style="color:#0369a1;">معامل التحويل (كم وحدة صغرى؟) <span style="color:#dc2626;">*</span></label>
+          <input type="number" id="mrConvRate" class="form-control" placeholder="مثال: 24" value="1" min="1" step="0.01" oninput="calcSmallUnitCost(); _invModalRevalidate();">
+          <small class="inv-field-error" id="err_mrConvRate">معامل التحويل يجب أن يكون أكبر من صفر.</small>
+        </div>
+        <div class="form-group" style="background:#e0f2fe; padding:10px; border-radius:8px;"><label class="form-label" style="color:#0369a1;">الوحدة الصغرى (للوصفات)</label><input type="text" id="mrUnit" class="form-control" value="حبة" placeholder="حبة، جرام، مل" oninput="_invModalRevalidate()"></div>
 
         <div class="form-group" style="background:#f0fdf4; padding:10px; border-radius:8px; border:2px solid #22c55e;">
           <label class="form-label" style="color:#16a34a; font-weight:800;">سعر الوحدة الصغرى (SAR)</label>
-          <input type="number" step="0.0001" id="mrSmallCost" class="form-control" style="font-weight:900; color:#166534; font-size:16px;" value="0" oninput="calcBigUnitCost()">
+          <input type="number" step="0.0001" id="mrSmallCost" class="form-control" style="font-weight:900; color:#166534; font-size:16px;" value="0" min="0" oninput="calcBigUnitCost(); _invModalRevalidate();">
         </div>
-        <div class="form-group"><label class="form-label">حد التنبيه (بالوحدة الصغرى)</label><input type="number" id="mrMin" class="form-control" value="0"></div>
+        <div class="form-group">
+          <label class="form-label">حد التنبيه (بالوحدة الصغرى)</label>
+          <input type="number" id="mrMin" class="form-control" value="0" min="0" oninput="_invModalRevalidate()">
+          <small class="inv-field-error" id="err_mrMin">حد التنبيه لا يمكن أن يكون سالبًا.</small>
+        </div>
       </div>
 
       <!-- v5.10.6 — Quantity-to-add panel (large/small unit toggle + date) -->
@@ -5379,7 +5454,7 @@
       </div>
 
       <div style="display:flex; gap:10px; margin-top:25px;">
-        <button class="btn btn-primary" style="flex:1;" onclick="saveRawItem()"><i class="fas fa-save"></i> حفظ مادة المستودع</button>
+        <button id="mrSaveBtn" class="btn btn-primary" style="flex:1;" onclick="saveRawItem()"><i class="fas fa-save"></i> حفظ مادة المستودع</button>
         <button class="btn btn-light" onclick="closeModal('#modalRawForm')">إلغاء الأمر</button>
       </div>
     </div>

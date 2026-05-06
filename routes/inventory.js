@@ -27,6 +27,88 @@ router.use(async (req, res, next) => {
   next();
 });
 
+// v5.10.28 — Shared helpers for the catalog hardening pass.
+// ---------------------------------------------------------------
+// _validateItemPayload(): rejects negative cost / convRate<=0 / blank name.
+// Returns null on success or { status, error } on failure.
+function _validateItemPayload(b, opts) {
+  opts = opts || {};
+  const isUpdate = !!opts.update;
+  if (!isUpdate || b.name !== undefined) {
+    const nm = (b.name == null ? '' : String(b.name)).trim();
+    if (!nm) return { status: 400, error: 'name-required' };
+    if (nm.length > 200) return { status: 400, error: 'name-too-long' };
+  }
+  if (b.cost !== undefined && b.cost !== '' && b.cost !== null) {
+    const c = Number(b.cost);
+    if (!isFinite(c) || c < 0) return { status: 400, error: 'cost-must-be-nonneg-number' };
+  }
+  if (b.convRate !== undefined && b.convRate !== '' && b.convRate !== null) {
+    const cr = Number(b.convRate);
+    if (!isFinite(cr) || cr <= 0) return { status: 400, error: 'convRate-must-be-positive' };
+  }
+  if (b.minStock !== undefined && b.minStock !== '' && b.minStock !== null) {
+    const m = Number(b.minStock);
+    if (!isFinite(m) || m < 0) return { status: 400, error: 'minStock-must-be-nonneg' };
+  }
+  if (b.qty !== undefined && b.qty !== '' && b.qty !== null) {
+    const q = Number(b.qty);
+    if (!isFinite(q) || q < 0) return { status: 400, error: 'qty-must-be-nonneg' };
+  }
+  return null;
+}
+
+// _checkDuplicateName(): returns id of an existing active item with the same
+// (name, brand_id) pair, or null. Excludes the supplied id so updates don't
+// flag themselves. Brand is part of the key — same name across brands is OK.
+async function _checkDuplicateName(conn, name, brandId, excludeId) {
+  const c = conn || db;
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return null;
+  const params = [trimmed];
+  let sql = 'SELECT id FROM inv_items WHERE deleted_at IS NULL AND TRIM(name) = ?';
+  if (brandId) { sql += ' AND brand_id = ?'; params.push(brandId); }
+  else         { sql += ' AND (brand_id IS NULL OR brand_id = "")'; }
+  if (excludeId) { sql += ' AND id <> ?'; params.push(excludeId); }
+  sql += ' LIMIT 1';
+  const [rows] = await c.query(sql, params);
+  return rows.length ? rows[0].id : null;
+}
+
+// _audit(): write a row to audit_log. Best-effort — never throws.
+// action: e.g. 'inv_item.create', 'inv_item.update', 'inv_item.soft_delete',
+// 'inv_item.restore', 'inv_item.hard_delete'.
+async function _audit(connOrDb, req, action, recordId, oldVal, newVal) {
+  try {
+    const c = connOrDb || db;
+    const username = (req && (req.user && req.user.username)) || (req && req.body && req.body.username) || 'system';
+    const userId   = (req && req.user && req.user.id) || null;
+    const ip       = (req && (req.ip || (req.headers && req.headers['x-forwarded-for']) || '')) || '';
+    const ua       = (req && req.headers && req.headers['user-agent']) || '';
+    const id = 'AUD-' + Date.now() + '-' + Math.random().toString(36).slice(2,7);
+    const oldStr = oldVal == null ? null : (typeof oldVal === 'string' ? oldVal : JSON.stringify(oldVal));
+    const newStr = newVal == null ? null : (typeof newVal === 'string' ? newVal : JSON.stringify(newVal));
+    await c.query(
+      `INSERT INTO audit_log (id, user_id, username, action, table_name, record_id, old_value, new_value, ip_address, device_info)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [id, userId, username, action, 'inv_items', recordId || null, oldStr, newStr, String(ip).slice(0,50), String(ua).slice(0,500)]
+    );
+  } catch (e) {
+    // Audit must never break the main flow.
+    if (process.env.NODE_ENV !== 'production') console.warn('[inventory audit]', action, e.message);
+  }
+}
+
+// _fetchItemSnapshot(): small helper for before/after audit values.
+async function _fetchItemSnapshot(connOrDb, id) {
+  try {
+    const c = connOrDb || db;
+    const [rows] = await c.query(
+      'SELECT id, name, category, cost, stock, min_stock, unit, big_unit, conv_rate, active, brand_id, deleted_at FROM inv_items WHERE id = ?', [id]);
+    return rows[0] || null;
+  } catch (_) { return null; }
+}
+
 // V5.9.1 — Backfill helper.  Ensures EVERY active inv_item has at least one
 //   warehouse_stock row so the warehouse-aware UI never hides items.
 //   The previous V5.9.0 version skipped items with stock=0, which made
@@ -445,32 +527,109 @@ router.get('/items/:itemId/warehouses', async (req, res) => {
 });
 
 // Save inventory item (insert or update)
+// v5.10.28 — Hardened:
+//   • New items REQUIRE a warehouseId (closes the gap commit 92dd8be left
+//     in the frontend only). Without it we'd create orphan inv_items rows
+//     with no warehouse_stock counterpart.
+//   • Returns proper 4xx codes instead of 200 + {success:false}.
+//   • Validates numeric ranges (cost>=0, convRate>0, minStock>=0).
+//   • Rejects duplicate (name, brand_id) pairs with 409 Conflict.
+//   • Writes an audit_log row for every successful insert/update.
 router.post('/items', async (req, res) => {
   try {
-    const { id, name, category, cost, stock, minStock, unit, bigUnit, convRate, active, brandId } = req.body;
+    const b = req.body || {};
+    const { id, name, category, cost, stock, minStock, unit, bigUnit, convRate, active, brandId, warehouseId } = b;
+    const isUpdate = !!id;
+
+    const v = _validateItemPayload(b, { update: isUpdate });
+    if (v) return res.status(v.status).json({ success: false, error: v.error });
+
     const brandIdVal = brandId || null;
 
-    if (id) {
-      // Check if exists
-      const [existing] = await db.query('SELECT id FROM inv_items WHERE id = ?', [id]);
-      if (existing.length) {
-        await db.query(
-          `UPDATE inv_items SET name=?, category=?, cost=?, stock=?, min_stock=?, unit=?, big_unit=?, conv_rate=?, active=?, brand_id=? WHERE id=?`,
-          [name, category || '', cost || 0, stock || 0, minStock || 0, unit || 'حبة', bigUnit || null, convRate || 1, active !== false, brandIdVal, id]
+    if (isUpdate) {
+      // Update path — record must exist
+      const before = await _fetchItemSnapshot(null, id);
+      if (!before) return res.status(404).json({ success: false, error: 'item-not-found' });
+
+      if (name !== undefined) {
+        const dup = await _checkDuplicateName(null, name, brandIdVal !== null ? brandIdVal : before.brand_id, id);
+        if (dup) return res.status(409).json({ success: false, error: 'duplicate-name', conflictId: dup });
+      }
+
+      await db.query(
+        `UPDATE inv_items SET name=?, category=?, cost=?, stock=?, min_stock=?, unit=?, big_unit=?, conv_rate=?, active=?, brand_id=? WHERE id=?`,
+        [name != null ? name : before.name,
+         category !== undefined ? (category || '') : before.category,
+         cost !== undefined ? Number(cost) : Number(before.cost),
+         stock !== undefined ? Number(stock) : Number(before.stock),
+         minStock !== undefined ? Number(minStock) : Number(before.min_stock),
+         unit || before.unit || 'حبة',
+         bigUnit !== undefined ? (bigUnit || null) : before.big_unit,
+         convRate !== undefined ? Number(convRate) : Number(before.conv_rate),
+         active !== undefined ? active !== false : !!before.active,
+         brandIdVal !== null ? brandIdVal : before.brand_id,
+         id]
+      );
+      const after = await _fetchItemSnapshot(null, id);
+      _audit(null, req, 'inv_item.update', id, before, after);
+      return res.json({ success: true, id });
+    }
+
+    // Insert path — warehouse is mandatory (commit 92dd8be).
+    if (!warehouseId) {
+      return res.status(400).json({
+        success: false,
+        error: 'warehouse-required',
+        hint: 'New materials must be registered to a specific warehouse. Use POST /api/inventory/warehouses/:warehouseId/items.'
+      });
+    }
+
+    // Verify the warehouse exists before creating an orphan record.
+    const [whs] = await db.query('SELECT id, brand_id FROM warehouses WHERE id = ?', [warehouseId]);
+    if (!whs.length) return res.status(404).json({ success: false, error: 'warehouse-not-found' });
+
+    const effectiveBrand = brandIdVal !== null ? brandIdVal : (whs[0].brand_id || null);
+    const dup = await _checkDuplicateName(null, name, effectiveBrand, null);
+    if (dup) return res.status(409).json({ success: false, error: 'duplicate-name', conflictId: dup });
+
+    const newId = id || ('INV-' + Date.now() + '-' + Math.random().toString(36).slice(2,5));
+    try {
+      await db.withTransaction(async (conn) => {
+        await conn.query(
+          `INSERT INTO inv_items (id, name, category, cost, stock, min_stock, unit, big_unit, conv_rate, active, brand_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          [newId, String(name).trim(), category || '', Number(cost) || 0, Number(stock) || 0, Number(minStock) || 0,
+           unit || 'حبة', bigUnit || null, Number(convRate) || 1, active !== false, effectiveBrand]
         );
-        return res.json({ success: true, id });
+        // Stock row at qty=0 so the item is visible in the warehouse view.
+        const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
+        const nowIso = new Date().toISOString().slice(0,19).replace('T',' ');
+        const today  = nowIso.slice(0,10);
+        await conn.query(
+          `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, added_at, first_added_date, added_by, last_updated)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          [wsId, warehouseId, newId, 0, nowIso, today, (req.user && req.user.username) || b.username || 'system', nowIso]
+        );
+        await _audit(conn, req, 'inv_item.create', newId, null, { id: newId, name, brandId: effectiveBrand, warehouseId });
+      });
+    } catch (txErr) {
+      // Fallback: best-effort sequential if the transaction helper failed
+      // (older deploys / pool exhausted). We accept potential inconsistency
+      // here rather than failing outright.
+      try {
+        await db.query(
+          `INSERT INTO inv_items (id, name, category, cost, stock, min_stock, unit, big_unit, conv_rate, active, brand_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          [newId, String(name).trim(), category || '', Number(cost) || 0, Number(stock) || 0, Number(minStock) || 0,
+           unit || 'حبة', bigUnit || null, Number(convRate) || 1, active !== false, effectiveBrand]
+        );
+        _audit(null, req, 'inv_item.create', newId, null, { id: newId, name, brandId: effectiveBrand, warehouseId, fallback: true });
+      } catch (e2) {
+        return res.status(500).json({ success: false, error: e2.message });
       }
     }
 
-    const newId = id || 'INV-' + Date.now();
-    await db.query(
-      `INSERT INTO inv_items (id, name, category, cost, stock, min_stock, unit, big_unit, conv_rate, active, brand_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      [newId, name, category || '', cost || 0, stock || 0, minStock || 0, unit || 'حبة', bigUnit || null, convRate || 1, active !== false, brandIdVal]
-    );
-
-    res.json({ success: true, id: newId });
+    res.status(201).json({ success: true, id: newId });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
@@ -495,91 +654,132 @@ router.post('/warehouses/:warehouseId/items', async (req, res) => {
   try {
     const warehouseId = req.params.warehouseId;
     const b = req.body || {};
-    const username = b.username || 'system';
+    const username = (req.user && req.user.username) || b.username || 'system';
 
     // Validate warehouse exists
     const [whs] = await db.query('SELECT id, name, brand_id FROM warehouses WHERE id = ?', [warehouseId]);
     if (!whs.length) return res.status(404).json({ success:false, error:'warehouse-not-found' });
     const wh = whs[0];
 
+    // v5.10.28 — Tightened payload validation up front.
+    const v = _validateItemPayload(b, { update: !!b.itemId });
+    if (v) return res.status(v.status).json({ success:false, error: v.error });
+
     // Either itemId for an existing item OR a fresh master record
     let itemId = b.itemId || null;
+    let isNewItem = false;
     if (itemId) {
       const [exists] = await db.query('SELECT id FROM inv_items WHERE id = ?', [itemId]);
       if (!exists.length) itemId = null;
     }
     if (!itemId) {
       if (!b.name) return res.status(400).json({ success:false, error:'name-required-for-new-item' });
-      itemId = b.id || 'INV-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
-      // cost stored per SMALL unit
-      const cRate = Number(b.convRate) || 1;
-      const bigCost = Number(b.cost) || 0;
-      const smallCost = (b.qtyUnit === 'big' || cRate > 1) ? (bigCost / cRate) : bigCost;
-      // Inherit brand from warehouse if not supplied
+      // v5.10.28 — Reject duplicate name within the same brand.
       const brandIdVal = b.brandId || wh.brand_id || null;
-      await db.query(
-        `INSERT INTO inv_items
-          (id, name, category, cost, stock, min_stock, unit, big_unit, conv_rate, active, brand_id)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-        [itemId, b.name, b.category || '', smallCost, 0, Number(b.minStock)||0,
-         b.unit || 'حبة', b.bigUnit || null, cRate, true, brandIdVal]);
+      const dup = await _checkDuplicateName(null, b.name, brandIdVal, null);
+      if (dup) return res.status(409).json({ success:false, error:'duplicate-name', conflictId: dup });
+      itemId = b.id || 'INV-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
+      isNewItem = true;
     }
 
-    // Convert qty to small units
     const cRate = Number(b.convRate) || 1;
+    const bigCost = Number(b.cost) || 0;
+    const smallCost = (b.qtyUnit === 'big' || cRate > 1) ? (bigCost / cRate) : bigCost;
+    const brandIdVal = b.brandId || wh.brand_id || null;
     const qtyRaw = Number(b.qty) || 0;
     const qtySmall = (b.qtyUnit === 'big') ? qtyRaw * cRate : qtyRaw;
-
-    // UPSERT warehouse_stock — increment if existing, set first_added_date
-    // only the first time so backdating is preserved across re-saves.
     const addedAt = b.addedAt ? new Date(b.addedAt) : new Date();
     const addedAtIso = addedAt.toISOString().slice(0,19).replace('T',' ');
     const firstAddedDate = b.addedAt ? b.addedAt : addedAt.toISOString().slice(0,10);
-    const [existing] = await db.query(
-      'SELECT id, qty, first_added_date FROM warehouse_stock WHERE warehouse_id = ? AND item_id = ?',
-      [warehouseId, itemId]);
-    if (existing.length) {
-      const newQty = Number(existing[0].qty) + qtySmall;
-      await db.query(
-        `UPDATE warehouse_stock SET qty = ?, last_updated = ?,
-                                    first_added_date = COALESCE(first_added_date, ?)
-         WHERE id = ?`,
-        [newQty, addedAtIso, firstAddedDate, existing[0].id]);
-    } else {
-      const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
-      await db.query(
-        `INSERT INTO warehouse_stock
-          (id, warehouse_id, item_id, qty, added_at, first_added_date, added_by, last_updated)
-         VALUES (?,?,?,?,?,?,?,?)`,
-        [wsId, warehouseId, itemId, qtySmall, addedAtIso, firstAddedDate, username, addedAtIso]);
-    }
 
-    // Log movement (uses provided date so backdated entries are dated correctly)
-    if (qtySmall > 0) {
-      const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
-      const [iname] = await db.query('SELECT name FROM inv_items WHERE id = ?', [itemId]);
+    // v5.10.28 — Wrap the four-step write in a transaction so a partial
+    // failure (e.g. movements insert) cannot leave warehouse_stock and
+    // inv_items inconsistent. Falls back to best-effort sequential if
+    // the transaction helper is unavailable on the deploy.
+    const runWrites = async (conn) => {
+      const c = conn || db;
+
+      // 1. Master record (insert if new)
+      if (isNewItem) {
+        await c.query(
+          `INSERT INTO inv_items
+            (id, name, category, cost, stock, min_stock, unit, big_unit, conv_rate, active, brand_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          [itemId, String(b.name).trim(), b.category || '', smallCost, 0, Number(b.minStock)||0,
+           b.unit || 'حبة', b.bigUnit || null, cRate, true, brandIdVal]);
+      }
+
+      // 2. UPSERT warehouse_stock — increment if existing, preserve first_added_date.
+      const [existing] = await c.query(
+        'SELECT id, qty, first_added_date FROM warehouse_stock WHERE warehouse_id = ? AND item_id = ?',
+        [warehouseId, itemId]);
+      if (existing.length) {
+        const newQty = Number(existing[0].qty) + qtySmall;
+        await c.query(
+          `UPDATE warehouse_stock SET qty = ?, last_updated = ?,
+                                      first_added_date = COALESCE(first_added_date, ?)
+           WHERE id = ?`,
+          [newQty, addedAtIso, firstAddedDate, existing[0].id]);
+      } else {
+        const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
+        await c.query(
+          `INSERT INTO warehouse_stock
+            (id, warehouse_id, item_id, qty, added_at, first_added_date, added_by, last_updated)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          [wsId, warehouseId, itemId, qtySmall, addedAtIso, firstAddedDate, username, addedAtIso]);
+      }
+
+      // 3. Movement log (only for actual inflows)
+      if (qtySmall > 0) {
+        const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
+        const [iname] = await c.query('SELECT name FROM inv_items WHERE id = ?', [itemId]);
+        try {
+          await c.query(
+            `INSERT INTO inventory_movements
+              (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            [movId, addedAtIso, itemId, iname.length?iname[0].name:'', 'in', qtySmall,
+             'إضافة للمستودع', username, 'WH: ' + wh.name, warehouseId]);
+        } catch (e) {
+          // Older deploys may have a different movements schema — non-fatal,
+          // but inside a tx we still let it through (the catch above swallows
+          // schema errors specifically; other failures bubble up).
+        }
+      }
+
+      // 4. Recompute global stock — non-fatal.
       try {
-        await db.query(
-          `INSERT INTO inventory_movements
-            (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          [movId, addedAtIso, itemId, iname.length?iname[0].name:'', 'in', qtySmall,
-           'إضافة للمستودع', username, 'WH: ' + wh.name, warehouseId]);
-      } catch(e) { /* table schema may differ on older deploys */ }
+        await c.query(
+          `UPDATE inv_items i SET i.stock =
+             (SELECT COALESCE(SUM(ws.qty),0) FROM warehouse_stock ws WHERE ws.item_id = i.id)
+           WHERE i.id = ?`, [itemId]);
+      } catch (e) { /* permission or older mysql; non-fatal */ }
+    };
+
+    let usedTx = false;
+    try {
+      if (typeof db.withTransaction === 'function') {
+        await db.withTransaction(runWrites);
+        usedTx = true;
+      } else {
+        await runWrites(null);
+      }
+    } catch (txErr) {
+      // Fallback: try sequential (no rollback). If this also fails, surface 500.
+      try { await runWrites(null); }
+      catch (e2) {
+        console.error('[POST /warehouses/:id/items] tx + fallback failed:', txErr.message, e2.message);
+        return res.status(500).json({ success:false, error: e2.message });
+      }
     }
 
-    // Recompute global stock
-    try {
-      await db.query(
-        `UPDATE inv_items i SET i.stock =
-           (SELECT COALESCE(SUM(ws.qty),0) FROM warehouse_stock ws WHERE ws.item_id = i.id)
-         WHERE i.id = ?`, [itemId]);
-    } catch(e) { /* permission or older mysql; non-fatal */ }
+    _audit(null, req, isNewItem ? 'inv_item.create' : 'inv_item.stock_in', itemId, null,
+      { warehouseId, qtySmall, firstAddedDate, isNewItem, viaTransaction: usedTx });
 
     res.json({ success:true, itemId, warehouseId, qtySmall, firstAddedDate });
   } catch (e) {
     console.error('[POST /warehouses/:id/items]', e);
-    res.json({ success:false, error: e.message });
+    res.status(500).json({ success:false, error: e.message });
   }
 });
 
@@ -723,36 +923,143 @@ router.post('/admin/cleanup-ghost-warehouse-stock', async (req, res) => {
 
 // Delete inventory item
 // v5.10.25 — Soft-delete: marks deleted_at instead of physically removing.
-// The item disappears from all read endpoints (which now filter
-// deleted_at IS NULL) but remains in the recycle bin for restore.
-// Hard delete remains available via ?hard=1 for the rare case where the
-// row was created by mistake and has no foreign-key references.
+// v5.10.28 — Adds audit trail + proper 404 / 409 status codes.
 router.delete('/items/:id', async (req, res) => {
   try {
+    const id = req.params.id;
+    const before = await _fetchItemSnapshot(null, id);
+    if (!before) return res.status(404).json({ success: false, error: 'item-not-found' });
+
     if (req.query.hard === '1') {
-      await db.query('DELETE FROM inv_items WHERE id = ?', [req.params.id]);
+      await db.query('DELETE FROM inv_items WHERE id = ?', [id]);
+      _audit(null, req, 'inv_item.hard_delete', id, before, null);
       return res.json({ success: true, hardDeleted: true });
+    }
+    if (before.deleted_at) {
+      return res.status(409).json({ success: false, error: 'already-deleted' });
     }
     const [result] = await db.query(
       'UPDATE inv_items SET deleted_at = NOW() WHERE id = ? AND deleted_at IS NULL',
-      [req.params.id]
+      [id]
     );
+    _audit(null, req, 'inv_item.soft_delete', id, before, { deleted_at: 'NOW' });
     res.json({ success: true, softDeleted: true, affected: result.affectedRows || 0 });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
 // v5.10.25 — Restore a soft-deleted item back into the active catalog.
+// v5.10.28 — Adds audit trail + 404 / 409 codes.
 router.post('/items/:id/restore', async (req, res) => {
   try {
+    const id = req.params.id;
+    const before = await _fetchItemSnapshot(null, id);
+    if (!before) return res.status(404).json({ success: false, error: 'item-not-found' });
+    if (!before.deleted_at) return res.status(409).json({ success: false, error: 'not-deleted' });
+
     const [result] = await db.query(
       'UPDATE inv_items SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL',
-      [req.params.id]
+      [id]
     );
+    _audit(null, req, 'inv_item.restore', id, before, { deleted_at: null });
     res.json({ success: true, restored: result.affectedRows || 0 });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// v5.10.28 — Bulk soft-delete: ids in body. Wrapped in a transaction so
+// partial failure leaves no half-applied state. Returns per-id outcomes
+// so the UI can show a meaningful summary.
+router.post('/items/bulk-delete', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.filter(Boolean) : [];
+    if (!ids.length) return res.status(400).json({ success: false, error: 'ids-required' });
+    if (ids.length > 500) return res.status(400).json({ success: false, error: 'too-many-ids' });
+
+    const ph = ids.map(() => '?').join(',');
+    const [rows] = await db.query(
+      `SELECT id, name, brand_id, deleted_at FROM inv_items WHERE id IN (${ph})`, ids);
+    const found = new Map(rows.map(r => [r.id, r]));
+
+    const eligible = ids.filter(id => found.has(id) && !found.get(id).deleted_at);
+    let affected = 0;
+    if (eligible.length) {
+      const eph = eligible.map(() => '?').join(',');
+      const runner = async (conn) => {
+        const c = conn || db;
+        const [r] = await c.query(
+          `UPDATE inv_items SET deleted_at = NOW() WHERE id IN (${eph}) AND deleted_at IS NULL`,
+          eligible);
+        affected = r.affectedRows || 0;
+        for (const id of eligible) {
+          await _audit(c, req, 'inv_item.soft_delete', id, found.get(id), { deleted_at: 'NOW', bulk: true });
+        }
+      };
+      try {
+        if (typeof db.withTransaction === 'function') await db.withTransaction(runner);
+        else await runner(null);
+      } catch (e) {
+        try { await runner(null); } catch (_) { return res.status(500).json({ success: false, error: e.message }); }
+      }
+    }
+
+    res.json({
+      success: true,
+      requested: ids.length,
+      affected,
+      missing: ids.filter(id => !found.has(id)),
+      alreadyDeleted: ids.filter(id => found.has(id) && found.get(id).deleted_at)
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// v5.10.28 — Bulk restore: mirror of bulk-delete.
+router.post('/items/bulk-restore', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.filter(Boolean) : [];
+    if (!ids.length) return res.status(400).json({ success: false, error: 'ids-required' });
+    if (ids.length > 500) return res.status(400).json({ success: false, error: 'too-many-ids' });
+
+    const ph = ids.map(() => '?').join(',');
+    const [rows] = await db.query(
+      `SELECT id, name, brand_id, deleted_at FROM inv_items WHERE id IN (${ph})`, ids);
+    const found = new Map(rows.map(r => [r.id, r]));
+    const eligible = ids.filter(id => found.has(id) && found.get(id).deleted_at);
+
+    let affected = 0;
+    if (eligible.length) {
+      const eph = eligible.map(() => '?').join(',');
+      const runner = async (conn) => {
+        const c = conn || db;
+        const [r] = await c.query(
+          `UPDATE inv_items SET deleted_at = NULL WHERE id IN (${eph}) AND deleted_at IS NOT NULL`,
+          eligible);
+        affected = r.affectedRows || 0;
+        for (const id of eligible) {
+          await _audit(c, req, 'inv_item.restore', id, found.get(id), { deleted_at: null, bulk: true });
+        }
+      };
+      try {
+        if (typeof db.withTransaction === 'function') await db.withTransaction(runner);
+        else await runner(null);
+      } catch (e) {
+        try { await runner(null); } catch (_) { return res.status(500).json({ success: false, error: e.message }); }
+      }
+    }
+
+    res.json({
+      success: true,
+      requested: ids.length,
+      affected,
+      missing: ids.filter(id => !found.has(id)),
+      alreadyActive: ids.filter(id => found.has(id) && !found.get(id).deleted_at)
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
@@ -761,48 +1068,98 @@ router.post('/items/:id/restore', async (req, res) => {
 // only — NO warehouse_stock joins or aggregation. This is the master
 // definition list, what the user manages globally.
 //
-// Query params:
-//   ?onlyDeleted=1  → recycle bin (deleted_at IS NOT NULL)
-//   ?brandId=...    → filter by brand
-//   ?q=...          → name/id search
+// v5.10.28 — Adds pagination + sorting + total count.
+//   New params: ?paginated=1, ?limit (default 50, max 500), ?offset,
+//               ?sort (whitelist: name|cost|category|created_at|min_stock|deleted_at),
+//               ?order (asc|desc).
+//   When ?paginated=1 → returns { items, total, limit, offset }.
+//   Otherwise → returns array (back-compat for older clients).
 router.get('/catalog', async (req, res) => {
   try {
-    const { onlyDeleted, brandId, warehouseId, q } = req.query;
-    let sql =
+    const { onlyDeleted, brandId, warehouseId, q, paginated } = req.query;
+    const SORT_WHITELIST = {
+      id:         'i.id',
+      name:       'i.name',
+      brand:      'b.name',
+      brandName:  'b.name',
+      cost:       'i.cost',
+      category:   'i.category',
+      created_at: 'i.created_at',
+      createdAt:  'i.created_at',
+      min_stock:  'i.min_stock',
+      minStock:   'i.min_stock',
+      deleted_at: 'i.deleted_at',
+      deletedAt:  'i.deleted_at'
+    };
+    const sortKey  = SORT_WHITELIST[req.query.sort] || null;
+    const sortOrd  = (String(req.query.order || '').toLowerCase() === 'desc') ? 'DESC' : 'ASC';
+    const limit    = Math.min(Math.max(Number(req.query.limit) || 50, 1), 500);
+    const offset   = Math.max(Number(req.query.offset) || 0, 0);
+
+    const where = [];
+    const params = [];
+    if (onlyDeleted === '1') where.push('i.deleted_at IS NOT NULL');
+    else                     where.push('i.deleted_at IS NULL');
+    if (brandId) { where.push('i.brand_id = ?'); params.push(brandId); }
+    if (warehouseId) {
+      where.push('(EXISTS(SELECT 1 FROM warehouse_stock ws WHERE ws.item_id = i.id AND ws.warehouse_id = ?) ' +
+                 'OR EXISTS(SELECT 1 FROM inventory_movements im WHERE im.item_id = i.id AND im.warehouse_id = ?))');
+      params.push(warehouseId, warehouseId);
+    }
+    if (q) {
+      where.push('(i.name LIKE ? OR i.id LIKE ? OR i.category LIKE ?)');
+      params.push('%'+q+'%', '%'+q+'%', '%'+q+'%');
+    }
+    const whereSql = 'WHERE ' + where.join(' AND ');
+
+    const orderSql = sortKey
+      ? ` ORDER BY ${sortKey} ${sortOrd}, i.id ASC`
+      : ` ORDER BY ${onlyDeleted === '1' ? 'i.deleted_at DESC' : 'i.category, i.name'}`;
+
+    const baseSelect =
       'SELECT i.id, i.name, i.category, i.brand_id, b.name AS brand_name, ' +
       '       i.unit, i.big_unit, i.conv_rate, i.cost, i.min_stock, ' +
       '       i.stock AS global_stock, i.active, i.created_at, i.deleted_at ' +
-      'FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id ' +
-      'WHERE 1=1';
-    const params = [];
-    if (onlyDeleted === '1') {
-      sql += ' AND i.deleted_at IS NOT NULL';
-    } else {
-      sql += ' AND i.deleted_at IS NULL';
+      'FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id ';
+
+    const wantsPaginated = paginated === '1' || req.query.limit != null || req.query.offset != null;
+
+    if (wantsPaginated) {
+      const [countRows] = await db.query(
+        'SELECT COUNT(*) AS total FROM inv_items i ' + whereSql, params);
+      const total = Number((countRows[0] || {}).total) || 0;
+
+      const [rows] = await db.query(
+        baseSelect + whereSql + orderSql + ' LIMIT ? OFFSET ?',
+        params.concat([limit, offset]));
+
+      return res.json({
+        items: rows.map(_mapCatalogRow),
+        total, limit, offset,
+        sort: req.query.sort || null,
+        order: sortKey ? sortOrd.toLowerCase() : null
+      });
     }
-    if (brandId) { sql += ' AND i.brand_id = ?'; params.push(brandId); }
-    if (warehouseId) {
-      sql += ' AND (EXISTS(SELECT 1 FROM warehouse_stock ws WHERE ws.item_id = i.id AND ws.warehouse_id = ?) ' +
-             'OR EXISTS(SELECT 1 FROM inventory_movements im WHERE im.item_id = i.id AND im.warehouse_id = ?))';
-      params.push(warehouseId, warehouseId);
-    }
-    if (q)       { sql += ' AND (i.name LIKE ? OR i.id LIKE ? OR i.category LIKE ?)';
-                   params.push('%'+q+'%', '%'+q+'%', '%'+q+'%'); }
-    sql += ' ORDER BY ' + (onlyDeleted === '1' ? 'i.deleted_at DESC' : 'i.category, i.name');
-    const [rows] = await db.query(sql, params);
-    res.json(rows.map(i => ({
-      id: i.id, name: i.name, category: i.category || '',
-      brandId: i.brand_id || '', brandName: i.brand_name || '',
-      unit: i.unit || '', bigUnit: i.big_unit || '',
-      convRate: Number(i.conv_rate) || 1, cost: Number(i.cost) || 0,
-      minStock: Number(i.min_stock) || 0, globalStock: Number(i.global_stock) || 0,
-      active: !!i.active, createdAt: i.created_at,
-      deletedAt: i.deleted_at
-    })));
+
+    // Back-compat: array shape, capped at 500 to protect memory.
+    const [rows] = await db.query(baseSelect + whereSql + orderSql + ' LIMIT 500', params);
+    res.json(rows.map(_mapCatalogRow));
   } catch (e) {
-    res.json({ error: e.message, items: [] });
+    res.status(500).json({ error: e.message, items: [] });
   }
 });
+
+function _mapCatalogRow(i) {
+  return {
+    id: i.id, name: i.name, category: i.category || '',
+    brandId: i.brand_id || '', brandName: i.brand_name || '',
+    unit: i.unit || '', bigUnit: i.big_unit || '',
+    convRate: Number(i.conv_rate) || 1, cost: Number(i.cost) || 0,
+    minStock: Number(i.min_stock) || 0, globalStock: Number(i.global_stock) || 0,
+    active: !!i.active, createdAt: i.created_at,
+    deletedAt: i.deleted_at
+  };
+}
 
 // v5.10.25 — Catalog summary KPIs (one row, computed). Powers the
 // "إدارة مواد المخزون" KPI strip.

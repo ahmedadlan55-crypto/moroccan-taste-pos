@@ -5458,47 +5458,96 @@ function loadDashInvItems() {
 //   • "deleted" → recycle bin: items soft-deleted (deleted_at IS NOT NULL)
 // Add/edit reuses the existing openRawModal(); delete is soft and goes
 // to the recycle bin tab where it can be restored or hard-deleted.
+//
+// v5.10.28 — Pro upgrade:
+//   • Server-side pagination + sorting (paginated=1&limit&offset&sort&order)
+//   • Multi-row selection with bulk delete/restore
+//   • Debounced search (no fetch storm on every keystroke)
+//   • Skeleton loading rows + clear empty/error states with retry
 
-window._invCatState = window._invCatState || { tab: 'active' };
+window._invCatState = window._invCatState || {};
+(function _initInvCatState(){
+  var s = window._invCatState;
+  if (s.tab === undefined)       s.tab = 'active';
+  if (s.page === undefined)      s.page = 1;
+  if (s.pageSize === undefined)  s.pageSize = 50;
+  if (s.sortBy === undefined)    s.sortBy = null;     // 'name'|'cost'|...
+  if (s.sortOrder === undefined) s.sortOrder = 'asc';
+  if (s.selected === undefined)  s.selected = {};      // {id: true}
+  if (s.lastTotal === undefined) s.lastTotal = 0;
+})();
+
+// Debounced search input handler (300ms). Replaces the previous oninput=loadInvCatalog
+// which fired a fetch on every single keystroke.
+window.invCatOnSearchInput = function(/*el*/) {
+  var s = window._invCatState;
+  if (s._searchTimer) clearTimeout(s._searchTimer);
+  s._searchTimer = setTimeout(function(){
+    s.page = 1;
+    loadInvCatalog();
+  }, 300);
+};
+
+window.invCatOnFilterChange = function() {
+  window._invCatState.page = 1;
+  loadInvCatalog();
+};
 
 function loadInvCatalog() {
-  loader();
   var token = localStorage.getItem('pos_token') || '';
+  var s = window._invCatState;
   var search = ((q('#invCatSearch') && q('#invCatSearch').value) || '').trim();
   var brandId = (q('#invCatBrandFilter') && q('#invCatBrandFilter').value) || '';
   var warehouseId = (q('#invCatWarehouseFilter') && q('#invCatWarehouseFilter').value) || '';
-  var tab = window._invCatState.tab || 'active';
-  var qs = [];
-  if (tab === 'deleted') qs.push('onlyDeleted=1');
-  if (search)  qs.push('q='       + encodeURIComponent(search));
-  if (brandId) qs.push('brandId=' + encodeURIComponent(brandId));
-  if (warehouseId) qs.push('warehouseId=' + encodeURIComponent(warehouseId));
-  var url = '/api/inventory/catalog' + (qs.length ? ('?' + qs.join('&')) : '');
-  var summaryUrl = '/api/inventory/catalog/summary' + (qs.length ? ('?' + qs.join('&')) : '');
+  var tab = s.tab || 'active';
+  var page = Math.max(1, Number(s.page) || 1);
+  var pageSize = Math.max(1, Math.min(500, Number(s.pageSize) || 50));
+  var offset = (page - 1) * pageSize;
 
-  // Populate brand and warehouse filters once
+  var qs = ['paginated=1', 'limit=' + pageSize, 'offset=' + offset];
+  if (tab === 'deleted')   qs.push('onlyDeleted=1');
+  if (search)              qs.push('q=' + encodeURIComponent(search));
+  if (brandId)             qs.push('brandId=' + encodeURIComponent(brandId));
+  if (warehouseId)         qs.push('warehouseId=' + encodeURIComponent(warehouseId));
+  if (s.sortBy)            qs.push('sort=' + encodeURIComponent(s.sortBy));
+  if (s.sortBy)            qs.push('order=' + (s.sortOrder === 'desc' ? 'desc' : 'asc'));
+  var url = '/api/inventory/catalog?' + qs.join('&');
+
+  var sumQs = [];
+  if (tab === 'deleted')   sumQs.push('onlyDeleted=1');
+  if (search)              sumQs.push('q=' + encodeURIComponent(search));
+  if (brandId)             sumQs.push('brandId=' + encodeURIComponent(brandId));
+  if (warehouseId)         sumQs.push('warehouseId=' + encodeURIComponent(warehouseId));
+  var summaryUrl = '/api/inventory/catalog/summary' + (sumQs.length ? ('?' + sumQs.join('&')) : '');
+
   _invCatPopulateBrandFilter();
   _invCatPopulateWarehouseFilter();
+  _invCatRenderSkeleton(pageSize > 8 ? 8 : pageSize);
 
-  // Fetch summary (counts) + list in parallel
   Promise.all([
-    fetch(summaryUrl, { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json()).catch(() => ({})),
-    fetch(url, { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json()).catch(() => [])
+    fetch(summaryUrl, { headers: { 'Authorization': 'Bearer ' + token } })
+      .then(r => r.ok ? r.json() : {}).catch(() => ({})),
+    fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
   ]).then(function(out) {
-    loader(false);
     var summary = out[0] || {};
-    var items = Array.isArray(out[1]) ? out[1] : [];
+    var payload = out[1] || {};
+    var items = Array.isArray(payload) ? payload : (payload.items || []);
+    var total = Array.isArray(payload) ? items.length : (Number(payload.total) || 0);
+    s.lastTotal = total;
 
-    // Tab badges
     var aEl = q('#invCatActiveCount'),  dEl = q('#invCatDeletedCount');
     if (aEl) aEl.textContent = (Number(summary.activeCount)  || 0).toLocaleString('ar-SA');
     if (dEl) dEl.textContent = (Number(summary.deletedCount) || 0).toLocaleString('ar-SA');
 
     _renderInvCatalogKpis(summary, tab);
     _renderInvCatalogTable(items, tab);
-  }).catch(function(){
-    loader(false);
-    showToast('فشل تحميل الكتالوج', true);
+    _invCatRenderPagination(total, page, pageSize);
+    _invCatUpdateSortHeaders();
+    _invCatUpdateBulkBar();
+  }).catch(function(err){
+    console.warn('[invCatalog] load failed:', err && err.message);
+    _invCatRenderError();
   });
 }
 
@@ -5577,59 +5626,390 @@ function _renderInvCatalogKpis(summary, tab) {
 function _renderInvCatalogTable(items, tab) {
   var tb = q('#tbInvCatalog');
   if (!tb) return;
+  var s = window._invCatState;
+
   if (!items.length) {
-    var msg = tab === 'deleted' ? 'سلة المحذوفات فارغة' : 'لا توجد مواد مُعرَّفة بعد';
-    tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;color:#94a3b8;">' + msg + '</td></tr>';
+    var isDeleted = tab === 'deleted';
+    var iconCls   = isDeleted ? 'fa-trash-can' : 'fa-box-open';
+    var title     = isDeleted ? 'سلة المحذوفات فارغة' : 'لا توجد مواد مُعرَّفة بعد';
+    var sub       = isDeleted
+      ? 'لم يتم حذف أي مادة بعد. عند حذف أي مادة من تبويب "المواد المعرَّفة" ستظهر هنا.'
+      : 'ابدأ بإضافة أول مادة لإدارة مخزون مطعمك. ستتمكن من تتبع التكاليف، الكميات، والحدود الدنيا.';
+    var ctaHtml   = !isDeleted
+      ? '<button class="wo-btn wo-btn-primary inv-empty__cta" onclick="openRawModal()"><i class="fas fa-plus"></i><span>إضافة أول مادة</span></button>'
+      : '';
+    tb.innerHTML =
+      '<tr><td colspan="11">' +
+        '<div class="inv-empty">' +
+          '<div class="inv-empty__icon"><i class="fas ' + iconCls + '"></i></div>' +
+          '<div class="inv-empty__title">' + title + '</div>' +
+          '<div class="inv-empty__sub">' + sub + '</div>' +
+          ctaHtml +
+        '</div>' +
+      '</td></tr>';
     return;
   }
+
   tb.innerHTML = items.map(function(it) {
     var brandHtml = it.brandName
-      ? '<span class="badge" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-store"></i> ' + _invHubEsc(it.brandName) + '</span>'
-      : '<span class="badge" style="background:#f1f5f9;color:#94a3b8;">—</span>';
+      ? '<span class="wo-chip purple"><i class="fas fa-store"></i> ' + _invHubEsc(it.brandName) + '</span>'
+      : '<span class="wo-chip neutral flat">—</span>';
     var createdStr = it.createdAt ? new Date(it.createdAt).toLocaleDateString('en-GB') : '—';
     var idEsc = _invHubEsc(it.id).replace(/'/g, "\\'");
     var nameEsc = _invHubEsc(it.name).replace(/'/g, "\\'");
+    var checked = s.selected[it.id] ? ' checked' : '';
+    var rowSelClass = s.selected[it.id] ? ' is-selected' : '';
     var actions;
+
     if (tab === 'deleted') {
       var deletedAtStr = it.deletedAt ? new Date(it.deletedAt).toLocaleString('en-GB') : '';
       actions =
-        '<button class="btn btn-success btn-sm" onclick="invCatRestoreItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="استرجاع"><i class="fas fa-trash-restore"></i> استرجاع</button> ' +
+        '<div class="wo-actions">' +
+        '<button class="wo-btn wo-btn-success" style="padding:6px 10px;font-size:11px;" onclick="invCatRestoreItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="استرجاع"><i class="fas fa-trash-restore"></i> استرجاع</button> ' +
         (state.isDeveloper
-          ? '<button class="btn btn-danger btn-sm" onclick="invCatHardDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف نهائي"><i class="fas fa-fire"></i></button>'
-          : '');
-      return '<tr style="background:#fff7ed;">' +
-        '<td style="font-family:monospace;color:#94a3b8;font-size:11px;">' + _invHubEsc(it.id) + '</td>' +
-        '<td style="font-weight:700;color:#7c2d12;"><i class="fas fa-trash" style="font-size:10px;color:#ef4444;margin-inline-end:5px;"></i>' + _invHubEsc(it.name) + '</td>' +
+          ? '<button class="wo-icon-btn danger" onclick="invCatHardDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف نهائي"><i class="fas fa-fire"></i></button>'
+          : '') +
+        '</div>';
+
+      return '<tr class="inv-row--deleted' + rowSelClass + '" data-id="' + idEsc + '">' +
+        '<td class="col-select"><input type="checkbox" class="inv-row-checkbox" data-id="' + idEsc + '" onchange="invCatToggleRow(\'' + idEsc + '\', this.checked)"' + checked + '></td>' +
+        '<td><code>' + _invHubEsc(it.id) + '</code></td>' +
+        '<td class="inv-row-name"><i class="fas fa-trash inv-row-name__del-icon"></i>' + _invHubEsc(it.name) + '</td>' +
         '<td>' + brandHtml + '</td>' +
-        '<td>' + _invHubEsc(it.category) + '</td>' +
+        '<td><span class="wo-chip neutral flat">' + _invHubEsc(it.category) + '</span></td>' +
         '<td>' + _invHubEsc(it.bigUnit || '—') + '</td>' +
         '<td>' + _invHubEsc(it.unit) + '</td>' +
-        '<td>' + (Number(it.cost)||0).toFixed(2) + '</td>' +
-        '<td>' + (Number(it.minStock)||0) + '</td>' +
-        '<td style="font-size:11px;color:#94a3b8;">حُذف: ' + deletedAtStr + '</td>' +
-        '<td style="white-space:nowrap;">' + actions + '</td>' +
+        '<td class="num">' + (Number(it.cost)||0).toFixed(2) + '</td>' +
+        '<td class="num">' + (Number(it.minStock)||0) + '</td>' +
+        '<td class="inv-row-deleted-at">حُذف: ' + deletedAtStr + '</td>' +
+        '<td>' + actions + '</td>' +
       '</tr>';
     }
+
     actions =
-      '<button class="btn btn-light btn-sm" onclick="openRawModal(\'' + idEsc + '\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
-      '<button class="btn btn-danger btn-sm" onclick="invCatDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف (يذهب إلى السلة)"><i class="fas fa-trash"></i></button>';
-    return '<tr>' +
-      '<td style="font-family:monospace;color:#64748b;font-size:11px;">' + _invHubEsc(it.id) + '</td>' +
+      '<div class="wo-actions">' +
+      '<button class="wo-icon-btn" onclick="openRawModal(\'' + idEsc + '\')" title="تعديل"><i class="fas fa-pen"></i></button> ' +
+      '<button class="wo-icon-btn danger" onclick="invCatDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف (يذهب إلى السلة)"><i class="fas fa-trash"></i></button>' +
+      '</div>';
+
+    return '<tr' + (rowSelClass ? ' class="' + rowSelClass.trim() + '"' : '') + ' data-id="' + idEsc + '">' +
+      '<td class="col-select"><input type="checkbox" class="inv-row-checkbox" data-id="' + idEsc + '" onchange="invCatToggleRow(\'' + idEsc + '\', this.checked)"' + checked + '></td>' +
+      '<td><code>' + _invHubEsc(it.id) + '</code></td>' +
       '<td style="font-weight:700;">' + _invHubEsc(it.name) + '</td>' +
       '<td>' + brandHtml + '</td>' +
-      '<td>' + _invHubEsc(it.category) + '</td>' +
+      '<td><span class="wo-chip neutral flat">' + _invHubEsc(it.category) + '</span></td>' +
       '<td>' + _invHubEsc(it.bigUnit || '—') + '</td>' +
       '<td>' + _invHubEsc(it.unit) + '</td>' +
-      '<td>' + (Number(it.cost)||0).toFixed(2) + '</td>' +
-      '<td>' + (Number(it.minStock)||0) + '</td>' +
-      '<td style="font-size:12px;color:#94a3b8;">' + createdStr + '</td>' +
-      '<td style="white-space:nowrap;">' + actions + '</td>' +
+      '<td class="num strong">' + (Number(it.cost)||0).toFixed(2) + '</td>' +
+      '<td class="num">' + (Number(it.minStock)||0) + '</td>' +
+      '<td class="inv-row-created-at">' + createdStr + '</td>' +
+      '<td>' + actions + '</td>' +
     '</tr>';
   }).join('');
 }
 
+// v5.10.28 — Skeleton rows shown while a fetch is in flight.
+function _invCatRenderSkeleton(rowCount) {
+  var tb = q('#tbInvCatalog');
+  if (!tb) return;
+  var n = Math.max(3, Math.min(12, Number(rowCount) || 6));
+  var cells =
+    '<td class="col-select"><span class="inv-skeleton-bar short"></span></td>' +
+    '<td><span class="inv-skeleton-bar medium"></span></td>' +
+    '<td><span class="inv-skeleton-bar full"></span></td>' +
+    '<td><span class="inv-skeleton-bar medium"></span></td>' +
+    '<td><span class="inv-skeleton-bar short"></span></td>' +
+    '<td><span class="inv-skeleton-bar short"></span></td>' +
+    '<td><span class="inv-skeleton-bar short"></span></td>' +
+    '<td class="num"><span class="inv-skeleton-bar short"></span></td>' +
+    '<td class="num"><span class="inv-skeleton-bar short"></span></td>' +
+    '<td><span class="inv-skeleton-bar medium"></span></td>' +
+    '<td><span class="inv-skeleton-bar short"></span></td>';
+  var rows = '';
+  for (var i = 0; i < n; i++) rows += '<tr class="inv-skeleton-row">' + cells + '</tr>';
+  tb.innerHTML = rows;
+}
+
+function _invCatRenderError() {
+  var tb = q('#tbInvCatalog');
+  if (!tb) return;
+  tb.innerHTML =
+    '<tr><td colspan="11">' +
+      '<div class="inv-error">' +
+        '<div class="inv-error__icon"><i class="fas fa-circle-exclamation"></i></div>' +
+        '<div class="inv-error__title">تعذّر تحميل الكتالوج</div>' +
+        '<div class="inv-error__sub">حدث خطأ أثناء الاتصال بالخادم. تحقق من الشبكة ثم أعد المحاولة.</div>' +
+        '<button class="wo-btn wo-btn-primary" onclick="loadInvCatalog()"><i class="fas fa-rotate"></i><span>إعادة المحاولة</span></button>' +
+      '</div>' +
+    '</td></tr>';
+  var pag = q('#invCatPagination'); if (pag) pag.style.display = 'none';
+}
+
+function _invCatRenderPagination(total, page, pageSize) {
+  var box = q('#invCatPagination');
+  var info = q('#invCatPagInfo');
+  var pages = q('#invCatPagPages');
+  var sel  = q('#invCatPagSize');
+  if (!box) return;
+  if (!total) { box.style.display = 'none'; return; }
+  box.style.display = '';
+
+  var totalPages = Math.max(1, Math.ceil(total / pageSize));
+  var first = (page - 1) * pageSize + 1;
+  var last  = Math.min(total, page * pageSize);
+  if (info) {
+    info.textContent = 'عرض ' + first.toLocaleString('ar-SA') + '–' +
+                       last.toLocaleString('ar-SA') + ' من ' +
+                       total.toLocaleString('ar-SA') + ' عنصر · صفحة ' +
+                       page + ' / ' + totalPages;
+  }
+
+  // Numeric page buttons (current ± 2, with ellipses)
+  if (pages) {
+    var html = '';
+    var add = function(p, active){
+      html += '<button class="inv-pagination__btn' + (active ? ' is-active' : '') + '" onclick="invCatGoPage(' + p + ')">' + p + '</button>';
+    };
+    var addSep = function(){ html += '<span class="inv-pagination__sep">…</span>'; };
+    var lo = Math.max(1, page - 2), hi = Math.min(totalPages, page + 2);
+    if (lo > 1) { add(1, page === 1); if (lo > 2) addSep(); }
+    for (var i = lo; i <= hi; i++) add(i, i === page);
+    if (hi < totalPages) { if (hi < totalPages - 1) addSep(); add(totalPages, page === totalPages); }
+    pages.innerHTML = html;
+  }
+
+  var prev = q('#invCatPagPrev'),  next = q('#invCatPagNext');
+  var f    = q('#invCatPagFirst'), l    = q('#invCatPagLast');
+  if (prev) prev.disabled = page <= 1;
+  if (f)    f.disabled    = page <= 1;
+  if (next) next.disabled = page >= totalPages;
+  if (l)    l.disabled    = page >= totalPages;
+
+  if (sel && Number(sel.value) !== pageSize) sel.value = String(pageSize);
+}
+
+window.invCatGoPage = function(p) {
+  var s = window._invCatState;
+  var totalPages = Math.max(1, Math.ceil((Number(s.lastTotal) || 0) / s.pageSize));
+  s.page = Math.max(1, Math.min(totalPages, Number(p) || 1));
+  loadInvCatalog();
+};
+window.invCatGoRel  = function(d) { invCatGoPage((Number(window._invCatState.page) || 1) + Number(d)); };
+window.invCatGoLast = function() {
+  var s = window._invCatState;
+  var totalPages = Math.max(1, Math.ceil((Number(s.lastTotal) || 0) / s.pageSize));
+  invCatGoPage(totalPages);
+};
+window.invCatChangePageSize = function(v) {
+  var s = window._invCatState;
+  s.pageSize = Math.max(1, Math.min(500, Number(v) || 50));
+  s.page = 1;
+  loadInvCatalog();
+};
+
+// ── Sorting ─────────────────────────────────────────────────────────
+window.invCatSortBy = function(key) {
+  var s = window._invCatState;
+  if (!key) return;
+  if (s.sortBy === key) s.sortOrder = s.sortOrder === 'asc' ? 'desc' : 'asc';
+  else { s.sortBy = key; s.sortOrder = 'asc'; }
+  s.page = 1;
+  loadInvCatalog();
+};
+function _invCatUpdateSortHeaders() {
+  var s = window._invCatState;
+  var ths = document.querySelectorAll('#invCatalogHead th[data-sort]');
+  for (var i = 0; i < ths.length; i++) {
+    var th = ths[i];
+    var ico = th.querySelector('.sort-ico');
+    var key = th.getAttribute('data-sort');
+    if (s.sortBy !== key) {
+      th.removeAttribute('aria-sort');
+      if (ico) { ico.classList.remove('fa-sort-up','fa-sort-down'); ico.classList.add('fa-sort'); }
+    } else {
+      th.setAttribute('aria-sort', s.sortOrder === 'desc' ? 'descending' : 'ascending');
+      if (ico) {
+        ico.classList.remove('fa-sort','fa-sort-up','fa-sort-down');
+        ico.classList.add(s.sortOrder === 'desc' ? 'fa-sort-down' : 'fa-sort-up');
+      }
+    }
+  }
+}
+// Wire up sort header clicks via delegation (idempotent)
+document.addEventListener('click', function(ev) {
+  var th = ev.target && ev.target.closest && ev.target.closest('#invCatalogHead th[data-sort]');
+  if (!th) return;
+  invCatSortBy(th.getAttribute('data-sort'));
+}, false);
+
+// ── Multi-select & bulk actions ─────────────────────────────────────
+window.invCatToggleRow = function(id, checked) {
+  var s = window._invCatState;
+  if (checked) s.selected[id] = true;
+  else delete s.selected[id];
+  // Visual feedback on the row (no full re-render)
+  var tr = document.querySelector('#tbInvCatalog tr[data-id="' + CSS.escape(id) + '"]');
+  if (tr) tr.classList.toggle('is-selected', !!checked);
+  _invCatUpdateBulkBar();
+};
+window.invCatToggleAll = function(masterChk) {
+  var s = window._invCatState;
+  var checkboxes = document.querySelectorAll('#tbInvCatalog .inv-row-checkbox');
+  for (var i = 0; i < checkboxes.length; i++) {
+    var cb = checkboxes[i];
+    var id = cb.getAttribute('data-id');
+    cb.checked = !!masterChk.checked;
+    if (masterChk.checked) s.selected[id] = true;
+    else delete s.selected[id];
+    var tr = cb.closest('tr'); if (tr) tr.classList.toggle('is-selected', !!masterChk.checked);
+  }
+  _invCatUpdateBulkBar();
+};
+window.invCatClearSelection = function() {
+  var s = window._invCatState;
+  s.selected = {};
+  var checkboxes = document.querySelectorAll('#tbInvCatalog .inv-row-checkbox');
+  for (var i = 0; i < checkboxes.length; i++) {
+    checkboxes[i].checked = false;
+    var tr = checkboxes[i].closest('tr'); if (tr) tr.classList.remove('is-selected');
+  }
+  var master = q('#invCatMasterChk'); if (master) master.checked = false;
+  _invCatUpdateBulkBar();
+};
+function _invCatUpdateBulkBar() {
+  var s = window._invCatState;
+  var bar = q('#invCatBulkBar'),
+      count = q('#invCatBulkCount'),
+      label = q('#invCatBulkPrimaryLabel'),
+      icon  = q('#invCatBulkPrimaryIcon');
+  if (!bar) return;
+  var ids = Object.keys(s.selected);
+  if (!ids.length) { bar.classList.add('is-hidden'); return; }
+  bar.classList.remove('is-hidden');
+  if (count) count.textContent = ids.length.toLocaleString('ar-SA');
+  // Tab-aware primary action: bulk-restore in deleted tab, bulk-delete in active tab.
+  if (s.tab === 'deleted') {
+    if (label) label.textContent = 'استرجاع المحدد';
+    if (icon)  { icon.className = 'fas fa-trash-restore'; }
+  } else {
+    if (label) label.textContent = 'حذف المحدد';
+    if (icon)  { icon.className = 'fas fa-trash'; }
+  }
+  // Sync master checkbox: indeterminate when partial.
+  var allOnPage = document.querySelectorAll('#tbInvCatalog .inv-row-checkbox');
+  var checkedOnPage = document.querySelectorAll('#tbInvCatalog .inv-row-checkbox:checked');
+  var master = q('#invCatMasterChk');
+  if (master) {
+    master.checked = allOnPage.length && allOnPage.length === checkedOnPage.length;
+    master.indeterminate = !master.checked && checkedOnPage.length > 0;
+  }
+}
+// v5.10.28 — Modal real-time validation. Updates the warehouse banner, toggles
+// inline error spans, and disables the save button until the form is coherent.
+// Wired from oninput/onchange handlers on the modal fields.
+window._invModalRevalidate = function() {
+  var sel = q('#mrWarehouseId');
+  var nameEl = q('#mrName');
+  var costEl = q('#mrCost');
+  var crEl   = q('#mrConvRate');
+  var minEl  = q('#mrMin');
+  var unitEl = q('#mrUnit');
+  var saveBtn = q('#mrSaveBtn');
+  var bannerEl = q('#mrWarehouseBanner');
+  var bannerName = q('#mrWarehouseBannerName');
+  var existingId = (q('#mrId') && q('#mrId').value) || '';
+
+  // Banner: mirror selected warehouse text
+  if (sel && bannerEl && bannerName) {
+    var picked = sel.options[sel.selectedIndex];
+    if (sel.value && picked) {
+      bannerName.textContent = picked.text;
+      bannerEl.classList.remove('is-empty');
+    } else {
+      bannerName.textContent = '— لم يُختر بعد —';
+      bannerEl.classList.add('is-empty');
+    }
+  }
+
+  var errors = [];
+
+  // Warehouse: mandatory only when adding new
+  var whMissing = !existingId && sel && !sel.value;
+  _toggleField(sel, 'err_mrWarehouseId', whMissing);
+  if (whMissing) errors.push('warehouse');
+
+  // Name: required for both create and (effectively) edit
+  var nameMissing = nameEl && !String(nameEl.value || '').trim();
+  _toggleField(nameEl, 'err_mrName', nameMissing);
+  if (nameMissing) errors.push('name');
+
+  // Cost: not negative
+  var costBad = costEl && costEl.value !== '' && Number(costEl.value) < 0;
+  _toggleField(costEl, 'err_mrCost', costBad);
+  if (costBad) errors.push('cost');
+
+  // ConvRate: > 0
+  var crBad = crEl && (crEl.value === '' || Number(crEl.value) <= 0 || !isFinite(Number(crEl.value)));
+  _toggleField(crEl, 'err_mrConvRate', crBad);
+  if (crBad) errors.push('convRate');
+
+  // MinStock: >= 0
+  var minBad = minEl && minEl.value !== '' && Number(minEl.value) < 0;
+  _toggleField(minEl, 'err_mrMin', minBad);
+  if (minBad) errors.push('minStock');
+
+  // Unit: keep validation light — non-empty preferred but not blocking
+  if (unitEl && !String(unitEl.value || '').trim()) errors.push('unit');
+
+  if (saveBtn) {
+    var disabled = errors.length > 0;
+    saveBtn.disabled = disabled;
+    saveBtn.classList.toggle('is-disabled', disabled);
+  }
+  return errors;
+};
+function _toggleField(inputEl, errId, hasError) {
+  if (inputEl) inputEl.classList.toggle('is-invalid', !!hasError);
+  var err = q('#' + errId);
+  if (err) err.classList.toggle('is-shown', !!hasError);
+}
+
+window.invCatBulkAction = function() {
+  var s = window._invCatState;
+  var ids = Object.keys(s.selected);
+  if (!ids.length) return;
+  var isRestore = s.tab === 'deleted';
+  var verb = isRestore ? 'استرجاع' : 'حذف';
+  var msg  = isRestore
+    ? ('استرجاع ' + ids.length + ' مادة من السلة؟')
+    : ('نقل ' + ids.length + ' مادة إلى السلة؟ يمكن استرجاعها لاحقاً.');
+  if (!confirm(msg)) return;
+  var token = localStorage.getItem('pos_token') || '';
+  var url = '/api/inventory/items/' + (isRestore ? 'bulk-restore' : 'bulk-delete');
+  loader(true);
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: ids })
+  }).then(function(r){ return r.json().then(function(j){ return { ok: r.ok, body: j }; }); })
+    .then(function(out){
+      loader(false);
+      if (!out.ok || !out.body || out.body.success === false) {
+        showToast((out.body && out.body.error) || ('فشل ' + verb), true);
+        return;
+      }
+      var n = Number(out.body.affected) || 0;
+      showToast('تم ' + verb + ' ' + n + ' مادة');
+      window._invCatState.selected = {};
+      loadInvCatalog();
+    }).catch(function(){ loader(false); showToast('فشل ' + verb, true); });
+};
+
 window.invCatalogSwitchTab = function(tab) {
-  window._invCatState.tab = (tab === 'deleted') ? 'deleted' : 'active';
+  var s = window._invCatState;
+  s.tab = (tab === 'deleted') ? 'deleted' : 'active';
+  s.page = 1;
+  s.selected = {};
   var aT = q('#invCatTab_active'), dT = q('#invCatTab_deleted');
   if (aT) aT.classList.toggle('active', tab !== 'deleted');
   if (dT) dT.classList.toggle('active', tab === 'deleted');
@@ -5637,9 +6017,15 @@ window.invCatalogSwitchTab = function(tab) {
 };
 
 window.invCatClearFilters = function() {
-  ['invCatSearch', 'invCatBrandFilter'].forEach(function(id){
+  ['invCatSearch', 'invCatBrandFilter', 'invCatWarehouseFilter'].forEach(function(id){
     var el = q('#' + id); if (el) el.value = '';
   });
+  var s = window._invCatState;
+  if (s._searchTimer) { clearTimeout(s._searchTimer); s._searchTimer = null; }
+  s.page = 1;
+  s.sortBy = null;
+  s.sortOrder = 'asc';
+  s.selected = {};
   loadInvCatalog();
 };
 
@@ -6509,6 +6895,8 @@ function openRawModal(id = null, opts = {}) {
     calcSmallUnitCost();
     _mrUpdatePreview();
     openModal("#modalRawForm");
+    // v5.10.28 — sync warehouse banner + save-button state on open.
+    if (typeof _invModalRevalidate === 'function') _invModalRevalidate();
   });
 }
 
@@ -14257,4 +14645,3 @@ function initTheme() {
 // Initialize theme as soon as this script is loaded / parsed
 document.addEventListener('DOMContentLoaded', initTheme);
 initTheme(); // Also immediately call it to prevent FOUC as much as possible
-

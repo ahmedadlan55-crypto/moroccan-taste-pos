@@ -1162,6 +1162,268 @@ router.post('/expiry-alerts/:lotId/dispose', async (req, res) => {
   } catch (e) { res.status(500).json({ success:false, error: e.message }); }
 });
 
+// ────────────────────────────────────────────────────────────────────
+// v5.10.33 — Additional inventory reports for full visibility
+// ────────────────────────────────────────────────────────────────────
+
+// ABC analysis (Pareto). Classifies items by their cumulative share of
+// inventory value: A = top 70%, B = next 20% (70-90%), C = remaining
+// 10%. Optional date window restricts the consumption-based revenue
+// signal; the value side is always current stock value.
+//   ?warehouseId=X&fromDate=Y&toDate=Z
+router.get('/abc-analysis', async (req, res) => {
+  try {
+    const { warehouseId } = req.query;
+    const fromDate = req.query.fromDate || null;
+    const toDate   = req.query.toDate   || null;
+
+    // Item × warehouse current value
+    const where = ['ws.qty > 0', 'i.active = 1', 'i.deleted_at IS NULL'];
+    const params = [];
+    if (warehouseId) { where.push('ws.warehouse_id = ?'); params.push(warehouseId); }
+    const [stockRows] = await db.query(
+      `SELECT i.id AS item_id, i.name AS item_name, i.unit, i.category, i.brand_id,
+              b.name AS brand_name,
+              SUM(ws.qty) AS total_qty,
+              SUM(ws.qty * COALESCE(NULLIF(ws.avg_cost,0), i.cost, 0)) AS total_value
+         FROM warehouse_stock ws
+         JOIN inv_items i ON i.id = ws.item_id
+         LEFT JOIN brands b ON b.id = i.brand_id
+        WHERE ` + where.join(' AND ') + `
+        GROUP BY i.id, i.name, i.unit, i.category, i.brand_id, b.name
+        HAVING total_value > 0`,
+      params);
+
+    // Optional consumption signal (movements out) for the same period
+    const movWhere = ["m.type = 'out'"];
+    const movParams = [];
+    if (warehouseId) { movWhere.push('m.warehouse_id = ?'); movParams.push(warehouseId); }
+    if (fromDate)    { movWhere.push('DATE(m.movement_date) >= ?'); movParams.push(fromDate); }
+    if (toDate)      { movWhere.push('DATE(m.movement_date) <= ?'); movParams.push(toDate); }
+    const [consRows] = await db.query(
+      'SELECT m.item_id, SUM(m.qty) AS consumed_qty, ' +
+      '       SUM(m.qty * COALESCE(i.cost, 0)) AS consumed_value ' +
+      '  FROM inventory_movements m LEFT JOIN inv_items i ON i.id = m.item_id ' +
+      ' WHERE ' + movWhere.join(' AND ') +
+      ' GROUP BY m.item_id',
+      movParams);
+    const consMap = {};
+    consRows.forEach(c => { consMap[c.item_id] = { qty: Number(c.consumed_qty)||0, value: Number(c.consumed_value)||0 }; });
+
+    // Sort by total_value desc, compute cumulative %, assign A/B/C
+    const items = stockRows.map(r => ({
+      itemId: r.item_id,
+      itemName: r.item_name,
+      unit: r.unit || '',
+      category: r.category || '',
+      brandId: r.brand_id || '',
+      brandName: r.brand_name || '',
+      totalQty: Number(r.total_qty) || 0,
+      totalValue: Number(r.total_value) || 0,
+      consumedQty:   (consMap[r.item_id] && consMap[r.item_id].qty)   || 0,
+      consumedValue: (consMap[r.item_id] && consMap[r.item_id].value) || 0
+    })).sort((a,b) => b.totalValue - a.totalValue);
+
+    const grandTotal = items.reduce((s, x) => s + x.totalValue, 0) || 1;
+    let cum = 0;
+    items.forEach(x => {
+      cum += x.totalValue;
+      const pctCum = (cum / grandTotal) * 100;
+      x.pctOfTotal = (x.totalValue / grandTotal) * 100;
+      x.cumulativePct = pctCum;
+      x.abcClass = pctCum <= 70 ? 'A' : (pctCum <= 90 ? 'B' : 'C');
+    });
+
+    const summary = items.reduce((s, x) => {
+      s[x.abcClass].count++;
+      s[x.abcClass].value += x.totalValue;
+      s.total++;
+      s.totalValue += x.totalValue;
+      return s;
+    }, {
+      A: { count:0, value:0 }, B: { count:0, value:0 }, C: { count:0, value:0 },
+      total: 0, totalValue: 0
+    });
+
+    res.json({ success: true, items, summary });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Reorder alerts: items at or below their min_stock, OR projected to
+// run out within N days based on recent consumption rate.
+//   ?warehouseId=X&projectionDays=14
+router.get('/reorder-alerts', async (req, res) => {
+  try {
+    const { warehouseId } = req.query;
+    const projectionDays = Math.max(1, Math.min(Number(req.query.projectionDays) || 14, 90));
+    // Lookback for daily consumption rate
+    const lookback = 30;
+
+    const where = ['ws.qty >= 0', 'i.active = 1', 'i.deleted_at IS NULL'];
+    const params = [];
+    if (warehouseId) { where.push('ws.warehouse_id = ?'); params.push(warehouseId); }
+
+    const [rows] = await db.query(
+      `SELECT i.id AS item_id, i.name AS item_name, i.unit, i.category, i.brand_id,
+              b.name AS brand_name, i.min_stock, i.cost,
+              ws.warehouse_id, w.name AS warehouse_name, w.code AS warehouse_code,
+              ws.qty AS current_qty,
+              (SELECT COALESCE(SUM(m.qty),0) / ? FROM inventory_movements m
+                WHERE m.item_id = i.id AND m.type='out'
+                  AND m.warehouse_id = ws.warehouse_id
+                  AND m.movement_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)) AS daily_rate
+         FROM warehouse_stock ws
+         JOIN inv_items i ON i.id = ws.item_id
+         LEFT JOIN brands b ON b.id = i.brand_id
+         LEFT JOIN warehouses w ON w.id = ws.warehouse_id
+        WHERE ` + where.join(' AND '),
+      [lookback, lookback].concat(params));
+
+    const items = rows.map(r => {
+      const cur     = Number(r.current_qty) || 0;
+      const min     = Number(r.min_stock) || 0;
+      const rate    = Number(r.daily_rate) || 0;
+      const days    = rate > 0 ? Math.floor(cur / rate) : (cur > 0 ? 9999 : 0);
+      const projShortage = rate > 0 && (cur - rate * projectionDays) <= min;
+      const isOut       = cur <= 0;
+      const isLow       = cur > 0 && cur <= min;
+      const status = isOut ? 'out' : isLow ? 'low' : projShortage ? 'projected' : 'ok';
+      return {
+        itemId: r.item_id, itemName: r.item_name, unit: r.unit || '',
+        category: r.category || '', brandId: r.brand_id || '', brandName: r.brand_name || '',
+        warehouseId: r.warehouse_id, warehouseName: r.warehouse_name || '', warehouseCode: r.warehouse_code || '',
+        currentQty: cur, minStock: min, cost: Number(r.cost) || 0,
+        dailyRate: rate, daysOfStock: days, projectedShortage: projShortage,
+        suggestedOrder: Math.max(0, min * 2 - cur), // simple suggestion: bring up to 2× min
+        suggestedOrderValue: Math.max(0, min * 2 - cur) * (Number(r.cost) || 0),
+        status: status
+      };
+    }).filter(x => x.status !== 'ok');
+
+    items.sort((a, b) => {
+      const order = { out: 0, low: 1, projected: 2 };
+      if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
+      return a.daysOfStock - b.daysOfStock;
+    });
+
+    const summary = items.reduce((s, x) => {
+      if (x.status === 'out') s.out++;
+      else if (x.status === 'low') s.low++;
+      else if (x.status === 'projected') s.projected++;
+      s.totalSuggestedValue += x.suggestedOrderValue;
+      return s;
+    }, { out:0, low:0, projected:0, totalSuggestedValue:0, total: items.length });
+
+    res.json({ success: true, items, summary, projectionDays });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Days-of-stock-on-hand for every active item: current_qty ÷ daily_rate.
+//   ?warehouseId=X
+router.get('/days-of-stock', async (req, res) => {
+  try {
+    const { warehouseId } = req.query;
+    const lookback = Math.max(7, Math.min(Number(req.query.lookback) || 30, 365));
+
+    const where = ['i.active = 1', 'i.deleted_at IS NULL'];
+    const params = [];
+    if (warehouseId) { where.push('ws.warehouse_id = ?'); params.push(warehouseId); }
+
+    const [rows] = await db.query(
+      `SELECT i.id AS item_id, i.name AS item_name, i.unit, i.category,
+              ws.warehouse_id, w.name AS warehouse_name,
+              ws.qty AS current_qty,
+              (SELECT COALESCE(SUM(m.qty),0) / ? FROM inventory_movements m
+                WHERE m.item_id = i.id AND m.type='out'
+                  AND m.warehouse_id = ws.warehouse_id
+                  AND m.movement_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)) AS daily_rate
+         FROM warehouse_stock ws
+         JOIN inv_items i ON i.id = ws.item_id
+         LEFT JOIN warehouses w ON w.id = ws.warehouse_id
+        WHERE ` + where.join(' AND ') + `
+          AND ws.qty > 0`,
+      [lookback, lookback].concat(params));
+
+    const items = rows.map(r => {
+      const cur = Number(r.current_qty) || 0;
+      const rate = Number(r.daily_rate) || 0;
+      const days = rate > 0 ? Math.floor(cur / rate) : 9999;
+      let zone = 'safe';
+      if (rate <= 0)        zone = 'no-movement';
+      else if (days < 7)    zone = 'critical';
+      else if (days < 14)   zone = 'low';
+      else if (days < 30)   zone = 'fair';
+      else if (days >= 180) zone = 'overstock';
+      return {
+        itemId: r.item_id, itemName: r.item_name, unit: r.unit || '', category: r.category || '',
+        warehouseId: r.warehouse_id, warehouseName: r.warehouse_name || '',
+        currentQty: cur, dailyRate: rate, daysOfStock: days === 9999 ? null : days,
+        zone: zone
+      };
+    });
+    items.sort((a, b) => (a.daysOfStock == null ? 99999 : a.daysOfStock) - (b.daysOfStock == null ? 99999 : b.daysOfStock));
+
+    res.json({ success: true, items, lookback });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Stocktake history summary: every stocktake with metadata + variance trend.
+//   ?warehouseId=X&fromDate=Y&toDate=Z
+router.get('/stocktake-history', async (req, res) => {
+  try {
+    const where = [];
+    const params = [];
+    if (req.query.warehouseId) { where.push('s.warehouse_id = ?'); params.push(req.query.warehouseId); }
+    if (req.query.fromDate)    { where.push('DATE(s.stocktake_date) >= ?'); params.push(req.query.fromDate); }
+    if (req.query.toDate)      { where.push('DATE(s.stocktake_date) <= ?'); params.push(req.query.toDate); }
+    const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
+
+    const [rows] = await db.query(
+      'SELECT s.*, w.name AS warehouse_name, w.code AS warehouse_code, ' +
+      '       (SELECT COUNT(*) FROM stocktake_items si WHERE si.stocktake_id = s.id) AS items_n, ' +
+      '       (SELECT COALESCE(SUM(ABS(si.variance) * COALESCE(inv.cost,0)), 0) ' +
+      '          FROM stocktake_items si LEFT JOIN inv_items inv ON inv.id = si.inv_item_id ' +
+      '         WHERE si.stocktake_id = s.id) AS abs_variance_cost ' +
+      '  FROM stocktakes s LEFT JOIN warehouses w ON w.id = s.warehouse_id' +
+      whereSql + ' ORDER BY s.stocktake_date DESC LIMIT 500',
+      params);
+
+    const items = rows.map(r => ({
+      id: r.id,
+      date: r.stocktake_date,
+      username: r.username,
+      notes: r.notes || '',
+      status: r.status || 'completed',
+      warehouseId: r.warehouse_id || '',
+      warehouseName: r.warehouse_name || '',
+      warehouseCode: r.warehouse_code || '',
+      itemsCount: Number(r.items_n) || 0,
+      totalVariance: Number(r.total_variance) || 0,
+      absVarianceCost: Number(r.abs_variance_cost) || 0
+    }));
+
+    // Aggregate stats
+    const summary = items.reduce((s, x) => {
+      s.totalCount++;
+      s.totalItems += x.itemsCount;
+      s.totalVarianceCost += x.totalVariance;
+      s.totalAbsVarianceCost += x.absVarianceCost;
+      return s;
+    }, { totalCount: 0, totalItems: 0, totalVarianceCost: 0, totalAbsVarianceCost: 0 });
+    summary.avgVariancePerStocktake = summary.totalCount ? (summary.totalAbsVarianceCost / summary.totalCount) : 0;
+
+    res.json({ success: true, items, summary });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // Inventory turnover report
 router.get('/inventory-turnover', async (req, res) => {
   try {

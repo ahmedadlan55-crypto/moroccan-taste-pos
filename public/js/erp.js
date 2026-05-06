@@ -223,6 +223,10 @@ function erpNav(sectionId) {
       case 'erpExpiryAlerts':    if (typeof expLoad === 'function') expLoad(); break;
       case 'erpSlowMoving':      if (typeof slowLoad === 'function') slowLoad(); break;
       case 'erpTurnover':        if (typeof turnLoad === 'function') turnLoad(); break;
+      case 'erpReorderAlerts':   if (typeof reorderLoad === 'function') reorderLoad(); break;
+      case 'erpDaysOfStock':     if (typeof dosLoad === 'function') dosLoad(); break;
+      case 'erpAbcAnalysis':     if (typeof abcLoad === 'function') abcLoad(); break;
+      case 'erpStocktakeHistory':if (typeof sthLoad === 'function') sthLoad(); break;
     }
   }
   // Update sidebar active state
@@ -17543,6 +17547,278 @@ function turnLoad() {
     }).join('');
   });
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// v5.10.33 — REORDER ALERTS, DAYS OF STOCK, ABC ANALYSIS, STOCKTAKE HISTORY
+// ═══════════════════════════════════════════════════════════════════
+
+// Hydrate a warehouse <select> once
+function _erpHydrateWhSelect(selectId) {
+  var sel = document.getElementById(selectId);
+  if (!sel || sel.options.length > 1) return;
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/inventory/warehouses-by-brand', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(list){
+      if (!Array.isArray(list)) return;
+      list.forEach(function(w){
+        var opt = document.createElement('option');
+        opt.value = w.id || w.ID; opt.textContent = w.name + (w.code ? ' (' + w.code + ')' : '');
+        sel.appendChild(opt);
+      });
+    }).catch(function(){});
+}
+
+// CSV export helper
+function _erpDownloadCsv(filename, headers, rows) {
+  var csv = '﻿' + headers.join(',') + '\n' + rows.map(function(r){
+    return r.map(function(c){
+      var s = (c == null ? '' : String(c));
+      if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g,'""') + '"';
+      return s;
+    }).join(',');
+  }).join('\n');
+  var blob = new Blob([csv], { type:'text/csv;charset=utf-8' });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  a.href = url; a.download = filename;
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+}
+
+// ── REORDER ALERTS ─────────────────────────────────────────────────
+function reorderLoad() {
+  _erpHydrateWhSelect('reorderWarehouse');
+  var wh   = (document.getElementById('reorderWarehouse')||{}).value || '';
+  var proj = (document.getElementById('reorderProjection')||{}).value || '14';
+  var qs = ['projectionDays=' + encodeURIComponent(proj)];
+  if (wh) qs.push('warehouseId=' + encodeURIComponent(wh));
+  var body = document.getElementById('reorderBody');
+  body.innerHTML = _woLoadingRow(9) + _woLoadingRow(9) + _woLoadingRow(9);
+
+  _erpGet('/erp/reorder-alerts?' + qs.join('&'), function(j){
+    if (!j || !j.success) {
+      body.innerHTML = '<tr><td colspan="9">' + _woEmpty('fa-circle-exclamation','تعذّر التحميل', (j && j.error)||'') + '</td></tr>';
+      return;
+    }
+    window._reorderSnap = j;
+    var s = j.summary || {};
+    var fmtVal = function(n){ return Number(n||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    document.getElementById('reorderMetrics').innerHTML =
+      _woMetric('fa-skull','danger','نفد المخزون', s.out, 'danger') +
+      _woMetric('fa-triangle-exclamation','warning','تحت الحد الأدنى', s.low, 'warning') +
+      _woMetric('fa-clock','info','نفاد متوقع', s.projected, 'info') +
+      _woMetric('fa-cart-plus','success','إجمالي قيمة الشراء المقترح', fmtVal(s.totalSuggestedValue) + ' ر.س', 'success');
+    var items = j.items || [];
+    if (!items.length) {
+      body.innerHTML = '<tr><td colspan="9">' + _woEmpty('fa-shield-heart','المخزون آمن','لا توجد أصناف تحتاج إعادة طلب الآن.') + '</td></tr>';
+      return;
+    }
+    var statusChip = { out:{cls:'expired',label:'نفد'}, low:{cls:'critical',label:'تحت الحد'}, projected:{cls:'soon',label:'متوقع نفاد'} };
+    body.innerHTML = items.map(function(r){
+      var sc = statusChip[r.status] || {cls:'soon',label:r.status};
+      return '<tr>' +
+        '<td><b>' + _woEscapeHtml(r.itemName) + '</b><br><small style="color:#94a3b8;font-size:10.5px;">' + _woEscapeHtml((r.brandName||'') + ' · ' + (r.category||'')) + '</small></td>' +
+        '<td>' + _woEscapeHtml(r.warehouseName||'—') + '</td>' +
+        '<td class="num"><b>' + Number(r.currentQty).toLocaleString('en',{maximumFractionDigits:2}) + '</b> <small>' + _woEscapeHtml(r.unit) + '</small></td>' +
+        '<td class="num">' + r.minStock + '</td>' +
+        '<td class="num">' + Number(r.dailyRate).toFixed(2) + '</td>' +
+        '<td class="num">' + (r.daysOfStock < 9999 ? r.daysOfStock + ' يوم' : '—') + '</td>' +
+        '<td><span class="exp-status-chip ' + sc.cls + '">' + sc.label + '</span></td>' +
+        '<td class="num"><b>' + Number(r.suggestedOrder).toLocaleString('en',{maximumFractionDigits:2}) + '</b></td>' +
+        '<td class="num">' + fmtVal(r.suggestedOrderValue) + ' ر.س</td>' +
+      '</tr>';
+    }).join('');
+  });
+}
+window.reorderLoad = reorderLoad;
+window.reorderExportExcel = function(){
+  var snap = window._reorderSnap; if (!snap || !snap.items) return showToast('اعرض البيانات أولاً', true);
+  var rows = snap.items.map(function(r){
+    return [r.itemName, r.brandName||'', r.category||'', r.warehouseName||'',
+      r.currentQty, r.minStock, Number(r.dailyRate).toFixed(2), r.daysOfStock,
+      r.status, r.suggestedOrder, r.suggestedOrderValue.toFixed(2)];
+  });
+  _erpDownloadCsv('reorder-alerts-' + new Date().toISOString().slice(0,10) + '.csv',
+    ['الصنف','البراند','التصنيف','المستودع','الرصيد','حد التنبيه','معدل/يوم','أيام التغطية','الحالة','كمية مقترحة','قيمة الشراء'], rows);
+};
+
+// ── DAYS OF STOCK ─────────────────────────────────────────────────
+function dosLoad() {
+  _erpHydrateWhSelect('dosWarehouse');
+  var wh = (document.getElementById('dosWarehouse')||{}).value || '';
+  var lb = (document.getElementById('dosLookback')||{}).value || '30';
+  var qs = ['lookback=' + encodeURIComponent(lb)];
+  if (wh) qs.push('warehouseId=' + encodeURIComponent(wh));
+  var body = document.getElementById('dosBody');
+  body.innerHTML = _woLoadingRow(6) + _woLoadingRow(6) + _woLoadingRow(6);
+
+  _erpGet('/erp/days-of-stock?' + qs.join('&'), function(j){
+    if (!j || !j.success) {
+      body.innerHTML = '<tr><td colspan="6">' + _woEmpty('fa-circle-exclamation','تعذّر التحميل', (j && j.error)||'') + '</td></tr>';
+      return;
+    }
+    window._dosSnap = j;
+    var items = j.items || [];
+    var critical = items.filter(function(x){return x.zone==='critical';}).length;
+    var low      = items.filter(function(x){return x.zone==='low';}).length;
+    var fair     = items.filter(function(x){return x.zone==='fair';}).length;
+    var safe     = items.filter(function(x){return x.zone==='safe';}).length;
+    var over     = items.filter(function(x){return x.zone==='overstock';}).length;
+    var noMv     = items.filter(function(x){return x.zone==='no-movement';}).length;
+    document.getElementById('dosMetrics').innerHTML =
+      _woMetric('fa-fire','danger','حرجة (<7 يوم)', critical, 'danger') +
+      _woMetric('fa-triangle-exclamation','warning','منخفضة (<14)', low, 'warning') +
+      _woMetric('fa-clock','info','مقبولة (<30)', fair, 'info') +
+      _woMetric('fa-shield','success','آمنة', safe, 'success') +
+      _woMetric('fa-warehouse','warning','إفراط (≥180)', over, 'warning') +
+      _woMetric('fa-snowflake','neutral','بدون حركة', noMv, 'neutral');
+    if (!items.length) {
+      body.innerHTML = '<tr><td colspan="6">' + _woEmpty('fa-shield-heart','لا أصناف','لا توجد أصناف برصيد > 0.') + '</td></tr>';
+      return;
+    }
+    var zoneChip = {
+      'critical':   {cls:'expired',  label:'حرجة'},
+      'low':        {cls:'critical', label:'منخفضة'},
+      'fair':       {cls:'soon',     label:'مقبولة'},
+      'safe':       {cls:'safe',     label:'آمنة'},
+      'overstock':  {cls:'monitor',  label:'إفراط'},
+      'no-movement':{cls:'monitor',  label:'بدون حركة'}
+    };
+    body.innerHTML = items.map(function(r){
+      var z = zoneChip[r.zone] || {cls:'soon',label:r.zone};
+      return '<tr>' +
+        '<td><b>' + _woEscapeHtml(r.itemName) + '</b><br><small style="color:#94a3b8;font-size:10.5px;">' + _woEscapeHtml(r.category||'') + '</small></td>' +
+        '<td>' + _woEscapeHtml(r.warehouseName||'—') + '</td>' +
+        '<td class="num">' + Number(r.currentQty).toLocaleString('en',{maximumFractionDigits:2}) + ' <small>' + _woEscapeHtml(r.unit) + '</small></td>' +
+        '<td class="num">' + Number(r.dailyRate).toFixed(2) + '</td>' +
+        '<td class="num"><b>' + (r.daysOfStock != null ? r.daysOfStock + ' يوم' : '—') + '</b></td>' +
+        '<td><span class="exp-status-chip ' + z.cls + '">' + z.label + '</span></td>' +
+      '</tr>';
+    }).join('');
+  });
+}
+window.dosLoad = dosLoad;
+window.dosExportExcel = function(){
+  var snap = window._dosSnap; if (!snap || !snap.items) return showToast('اعرض البيانات أولاً', true);
+  var rows = snap.items.map(function(r){
+    return [r.itemName, r.category||'', r.warehouseName||'',
+      r.currentQty, Number(r.dailyRate).toFixed(2), r.daysOfStock||'', r.zone];
+  });
+  _erpDownloadCsv('days-of-stock-' + new Date().toISOString().slice(0,10) + '.csv',
+    ['الصنف','التصنيف','المستودع','الرصيد','معدل/يوم','أيام التغطية','المنطقة'], rows);
+};
+
+// ── ABC ANALYSIS ───────────────────────────────────────────────────
+function abcLoad() {
+  _erpHydrateWhSelect('abcWarehouse');
+  var wh = (document.getElementById('abcWarehouse')||{}).value || '';
+  var qs = wh ? ('?warehouseId=' + encodeURIComponent(wh)) : '';
+  var body = document.getElementById('abcBody');
+  body.innerHTML = _woLoadingRow(8) + _woLoadingRow(8) + _woLoadingRow(8);
+
+  _erpGet('/erp/abc-analysis' + qs, function(j){
+    if (!j || !j.success) {
+      body.innerHTML = '<tr><td colspan="8">' + _woEmpty('fa-circle-exclamation','تعذّر التحميل', (j && j.error)||'') + '</td></tr>';
+      return;
+    }
+    window._abcSnap = j;
+    var s = j.summary || {};
+    var fmtVal = function(n){ return Number(n||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    document.getElementById('abcMetrics').innerHTML =
+      _woMetric('fa-trophy','danger','الفئة A (70%)', (s.A.count||0) + ' صنف · ' + fmtVal(s.A.value) + ' ر.س', 'danger') +
+      _woMetric('fa-medal','warning','الفئة B (20%)', (s.B.count||0) + ' صنف · ' + fmtVal(s.B.value) + ' ر.س', 'warning') +
+      _woMetric('fa-circle','info','الفئة C (10%)', (s.C.count||0) + ' صنف · ' + fmtVal(s.C.value) + ' ر.س', 'info') +
+      _woMetric('fa-sack-dollar','success','إجمالي القيمة', fmtVal(s.totalValue) + ' ر.س', 'success');
+    var items = j.items || [];
+    if (!items.length) {
+      body.innerHTML = '<tr><td colspan="8">' + _woEmpty('fa-shield-heart','لا بيانات','لا توجد أصناف برصيد > 0 لتحليلها.') + '</td></tr>';
+      return;
+    }
+    var clsColor = { A:'expired', B:'soon', C:'safe' };
+    body.innerHTML = items.map(function(r, i){
+      var cc = clsColor[r.abcClass] || 'monitor';
+      return '<tr>' +
+        '<td class="num" style="color:#94a3b8;font-weight:700;">' + (i+1) + '</td>' +
+        '<td><b>' + _woEscapeHtml(r.itemName) + '</b></td>' +
+        '<td style="font-size:11.5px;color:#475569;">' + _woEscapeHtml((r.brandName||'—') + ' · ' + (r.category||'—')) + '</td>' +
+        '<td class="num">' + Number(r.totalQty).toLocaleString('en',{maximumFractionDigits:2}) + ' <small>' + _woEscapeHtml(r.unit) + '</small></td>' +
+        '<td class="num"><b>' + fmtVal(r.totalValue) + '</b></td>' +
+        '<td class="num">' + r.pctOfTotal.toFixed(2) + '%</td>' +
+        '<td class="num"><b>' + r.cumulativePct.toFixed(2) + '%</b></td>' +
+        '<td><span class="exp-status-chip ' + cc + '" style="font-size:13px;padding:4px 12px;font-weight:900;">' + r.abcClass + '</span></td>' +
+      '</tr>';
+    }).join('');
+  });
+}
+window.abcLoad = abcLoad;
+window.abcExportExcel = function(){
+  var snap = window._abcSnap; if (!snap || !snap.items) return showToast('اعرض البيانات أولاً', true);
+  var rows = snap.items.map(function(r, i){
+    return [i+1, r.itemName, r.brandName||'', r.category||'', r.totalQty, r.unit||'',
+      r.totalValue.toFixed(2), r.pctOfTotal.toFixed(2)+'%', r.cumulativePct.toFixed(2)+'%', r.abcClass];
+  });
+  _erpDownloadCsv('abc-analysis-' + new Date().toISOString().slice(0,10) + '.csv',
+    ['#','الصنف','البراند','التصنيف','الكمية','الوحدة','القيمة','% من الإجمالي','% تراكمي','الفئة'], rows);
+};
+
+// ── STOCKTAKE HISTORY ──────────────────────────────────────────────
+function sthLoad() {
+  _erpHydrateWhSelect('sthWarehouse');
+  var wh = (document.getElementById('sthWarehouse')||{}).value || '';
+  var fr = (document.getElementById('sthFromDate')||{}).value || '';
+  var to = (document.getElementById('sthToDate')||{}).value   || '';
+  var qs = [];
+  if (wh) qs.push('warehouseId=' + encodeURIComponent(wh));
+  if (fr) qs.push('fromDate='    + encodeURIComponent(fr));
+  if (to) qs.push('toDate='      + encodeURIComponent(to));
+  var body = document.getElementById('sthBody');
+  body.innerHTML = _woLoadingRow(8) + _woLoadingRow(8);
+
+  _erpGet('/erp/stocktake-history' + (qs.length ? '?' + qs.join('&') : ''), function(j){
+    if (!j || !j.success) {
+      body.innerHTML = '<tr><td colspan="8">' + _woEmpty('fa-circle-exclamation','تعذّر التحميل', (j && j.error)||'') + '</td></tr>';
+      return;
+    }
+    window._sthSnap = j;
+    var s = j.summary || {};
+    var fmt = function(n){ return Number(n||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    document.getElementById('sthMetrics').innerHTML =
+      _woMetric('fa-clipboard-list','info','عدد المحاضر', s.totalCount, 'info') +
+      _woMetric('fa-list-check','info','إجمالي الأصناف المفحوصة', s.totalItems, 'info') +
+      _woMetric('fa-balance-scale','warning','صافي الفروقات', fmt(s.totalVarianceCost) + ' ر.س', s.totalVarianceCost < 0 ? 'danger' : 'success') +
+      _woMetric('fa-magnifying-glass-dollar','warning','متوسط التباين/محضر', fmt(s.avgVariancePerStocktake) + ' ر.س', 'warning');
+    var items = j.items || [];
+    if (!items.length) {
+      body.innerHTML = '<tr><td colspan="8">' + _woEmpty('fa-clipboard','لا توجد محاضر','لم يتم تسجيل محاضر جرد ضمن الفلاتر المحددة.') + '</td></tr>';
+      return;
+    }
+    body.innerHTML = items.map(function(r){
+      var dt = r.date ? new Date(r.date).toLocaleString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+      var varClr = Number(r.totalVariance) < 0 ? '#b91c1c' : (Number(r.totalVariance) > 0 ? '#047857' : '#475569');
+      return '<tr>' +
+        '<td>' + dt + '<br><small style="color:#94a3b8;font-size:10.5px;font-family:monospace;">' + _woEscapeHtml(r.id) + '</small></td>' +
+        '<td>' + _woEscapeHtml(r.warehouseName || '—') + (r.warehouseCode ? ' <small>(' + _woEscapeHtml(r.warehouseCode) + ')</small>' : '') + '</td>' +
+        '<td>' + _woEscapeHtml(r.username || '—') + '</td>' +
+        '<td class="num">' + r.itemsCount + '</td>' +
+        '<td class="num" style="color:' + varClr + ';font-weight:800;">' + fmt(r.totalVariance) + ' ر.س</td>' +
+        '<td class="num"><b>' + fmt(r.absVarianceCost) + ' ر.س</b></td>' +
+        '<td><span class="exp-status-chip safe">' + _woEscapeHtml(r.status) + '</span></td>' +
+        '<td style="font-size:11.5px;color:#64748b;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _woEscapeHtml(r.notes || '—') + '</td>' +
+      '</tr>';
+    }).join('');
+  });
+}
+window.sthLoad = sthLoad;
+window.sthExportExcel = function(){
+  var snap = window._sthSnap; if (!snap || !snap.items) return showToast('اعرض البيانات أولاً', true);
+  var rows = snap.items.map(function(r){
+    return [r.date, r.id, r.warehouseName||'', r.warehouseCode||'', r.username||'',
+      r.itemsCount, r.totalVariance.toFixed(2), r.absVarianceCost.toFixed(2), r.status, r.notes||''];
+  });
+  _erpDownloadCsv('stocktake-history-' + new Date().toISOString().slice(0,10) + '.csv',
+    ['التاريخ','رقم المحضر','المستودع','الكود','المسؤول','عدد الأصناف','صافي التباين','قيمة الفروقات','الحالة','ملاحظات'], rows);
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // BOM CLONE — استنساخ وصفة إلى منتج آخر (أو لبراند مختلف)

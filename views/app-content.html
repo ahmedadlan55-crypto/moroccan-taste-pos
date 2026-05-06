@@ -59,6 +59,10 @@
           <div class="nav-item" data-erp-nav="erpExpiryAlerts" onclick="erpNav('erpExpiryAlerts')"><i class="fas fa-hourglass-half"></i><span data-i18n="nav.expiryAlerts">تنبيهات انتهاء الصلاحية</span></div>
           <div class="nav-item" data-erp-nav="erpSlowMoving" onclick="erpNav('erpSlowMoving')"><i class="fas fa-snowflake"></i><span data-i18n="nav.slowMoving">أصناف بطيئة الحركة</span></div>
           <div class="nav-item" data-erp-nav="erpTurnover" onclick="erpNav('erpTurnover')"><i class="fas fa-rotate"></i><span data-i18n="nav.turnover">دوران المخزون</span></div>
+          <div class="nav-item" data-erp-nav="erpReorderAlerts" onclick="erpNav('erpReorderAlerts')"><i class="fas fa-cart-plus"></i><span data-i18n="nav.reorderAlerts">تنبيهات إعادة الطلب</span></div>
+          <div class="nav-item" data-erp-nav="erpDaysOfStock" onclick="erpNav('erpDaysOfStock')"><i class="fas fa-calendar-week"></i><span data-i18n="nav.daysOfStock">أيام التغطية</span></div>
+          <div class="nav-item" data-erp-nav="erpAbcAnalysis" onclick="erpNav('erpAbcAnalysis')"><i class="fas fa-chart-pie"></i><span data-i18n="nav.abcAnalysis">تحليل ABC</span></div>
+          <div class="nav-item" data-erp-nav="erpStocktakeHistory" onclick="erpNav('erpStocktakeHistory')"><i class="fas fa-clipboard-list"></i><span data-i18n="nav.stocktakeHistory">سجل محاضر الجرد</span></div>
 
           <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.invReports">التقارير</div>
           <div class="nav-item" data-erp-nav="erpRptInventoryVal" onclick="erpNav('erpRptInventoryVal')"><i class="fas fa-warehouse"></i><span data-i18n="nav.invValuation">تقييم المخزون</span></div>
@@ -3305,6 +3309,151 @@
         <tr><td colspan="8"><div class="wo-empty"><i class="fas fa-chart-line"></i><div class="wo-empty-title">اختر فترة للاحتساب</div><div class="wo-empty-sub">حدّد نطاق التاريخ من الأعلى ثم اضغط «احتساب الدوران» لاستخراج التقرير.</div></div></td></tr>
       </tbody>
     </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- v5.10.33 — REORDER ALERTS (تنبيهات إعادة الطلب)                 -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpReorderAlerts" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot warning"><i class="fas fa-cart-plus"></i></span>تنبيهات إعادة الطلب</h1>
+      <p class="wo-header-sub">الأصناف التي وصلت أو ستصل قريباً إلى نقطة إعادة الطلب — مع كميات شراء مقترحة بناءً على معدل الاستهلاك.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-ghost" onclick="window.print()"><i class="fas fa-print"></i><span>طباعة</span></button>
+      <button class="wo-btn wo-btn-secondary" onclick="reorderExportExcel()"><i class="fas fa-file-excel"></i><span>Excel</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="reorderLoad()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="reorderMetrics"></div>
+  <section class="wo-toolbar">
+    <div class="wo-field"><label class="wo-field-label"><i class="fas fa-warehouse"></i> المستودع</label>
+      <select id="reorderWarehouse" class="wo-select" onchange="reorderLoad()"><option value="">كل المستودعات</option></select>
+    </div>
+    <div class="wo-field"><label class="wo-field-label"><i class="fas fa-clock"></i> أفق التوقع (يوم)</label>
+      <select id="reorderProjection" class="wo-select" onchange="reorderLoad()">
+        <option value="7">7 أيام</option><option value="14" selected>14 يوم</option>
+        <option value="30">30 يوم</option><option value="60">60 يوم</option>
+      </select>
+    </div>
+  </section>
+  <div class="wo-table-surface">
+    <table class="wo-table"><thead><tr>
+      <th>الصنف</th><th>المستودع</th><th class="num">الرصيد</th><th class="num">حد التنبيه</th>
+      <th class="num">معدل/يوم</th><th class="num">أيام التغطية</th><th>الحالة</th>
+      <th class="num">كمية مقترحة</th><th class="num">قيمة الشراء</th>
+    </tr></thead><tbody id="reorderBody">
+      <tr><td colspan="9"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+    </tbody></table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- v5.10.33 — DAYS OF STOCK ON HAND (أيام تغطية المخزون)            -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpDaysOfStock" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot info"><i class="fas fa-calendar-week"></i></span>أيام تغطية المخزون</h1>
+      <p class="wo-header-sub">لكل صنف: كم يوماً ستغطّيه الكميات المتاحة بناءً على معدل الاستهلاك التاريخي. تساعدك على رؤية الأصناف الحرجة والمفرطة في التخزين بنظرة واحدة.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-ghost" onclick="window.print()"><i class="fas fa-print"></i><span>طباعة</span></button>
+      <button class="wo-btn wo-btn-secondary" onclick="dosExportExcel()"><i class="fas fa-file-excel"></i><span>Excel</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="dosLoad()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="dosMetrics"></div>
+  <section class="wo-toolbar">
+    <div class="wo-field"><label class="wo-field-label"><i class="fas fa-warehouse"></i> المستودع</label>
+      <select id="dosWarehouse" class="wo-select" onchange="dosLoad()"><option value="">كل المستودعات</option></select>
+    </div>
+    <div class="wo-field"><label class="wo-field-label"><i class="fas fa-clock-rotate-left"></i> فترة احتساب المعدل</label>
+      <select id="dosLookback" class="wo-select" onchange="dosLoad()">
+        <option value="14">آخر 14 يوم</option><option value="30" selected>آخر 30 يوم</option>
+        <option value="60">آخر 60 يوم</option><option value="90">آخر 90 يوم</option>
+      </select>
+    </div>
+  </section>
+  <div class="wo-table-surface">
+    <table class="wo-table"><thead><tr>
+      <th>الصنف</th><th>المستودع</th><th class="num">الرصيد</th><th class="num">معدل الاستهلاك/يوم</th>
+      <th class="num">أيام التغطية</th><th>المنطقة</th>
+    </tr></thead><tbody id="dosBody">
+      <tr><td colspan="6"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+    </tbody></table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- v5.10.33 — ABC ANALYSIS (تحليل ABC)                              -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpAbcAnalysis" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot info"><i class="fas fa-chart-pie"></i></span>تحليل ABC للمخزون</h1>
+      <p class="wo-header-sub">تصنيف Pareto للأصناف حسب القيمة: A (أعلى 70% من القيمة) · B (70-90%) · C (آخر 10%) — يساعدك على تركيز الانتباه على الأصناف الأكثر تأثيراً.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-ghost" onclick="window.print()"><i class="fas fa-print"></i><span>طباعة</span></button>
+      <button class="wo-btn wo-btn-secondary" onclick="abcExportExcel()"><i class="fas fa-file-excel"></i><span>Excel</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="abcLoad()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="abcMetrics"></div>
+  <section class="wo-toolbar">
+    <div class="wo-field"><label class="wo-field-label"><i class="fas fa-warehouse"></i> المستودع</label>
+      <select id="abcWarehouse" class="wo-select" onchange="abcLoad()"><option value="">كل المستودعات</option></select>
+    </div>
+  </section>
+  <div class="wo-table-surface">
+    <table class="wo-table"><thead><tr>
+      <th class="num">#</th><th>الصنف</th><th>البراند · التصنيف</th>
+      <th class="num">الرصيد</th><th class="num">القيمة</th><th class="num">% من الإجمالي</th>
+      <th class="num">% تراكمي</th><th>الفئة</th>
+    </tr></thead><tbody id="abcBody">
+      <tr><td colspan="8"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+    </tbody></table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- v5.10.33 — STOCKTAKE HISTORY (سجل محاضر الجرد)                  -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpStocktakeHistory" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot"><i class="fas fa-clipboard-list"></i></span>سجل محاضر الجرد</h1>
+      <p class="wo-header-sub">عرض موحَّد لكل محاضر الجرد مع متوسط التباين، إجمالي قيم الفروقات، وعدد الأصناف المفحوصة — لقياس جودة الجرد عبر الزمن.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-ghost" onclick="window.print()"><i class="fas fa-print"></i><span>طباعة</span></button>
+      <button class="wo-btn wo-btn-secondary" onclick="sthExportExcel()"><i class="fas fa-file-excel"></i><span>Excel</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="sthLoad()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="sthMetrics"></div>
+  <section class="wo-toolbar">
+    <div class="wo-field"><label class="wo-field-label"><i class="fas fa-warehouse"></i> المستودع</label>
+      <select id="sthWarehouse" class="wo-select" onchange="sthLoad()"><option value="">كل المستودعات</option></select>
+    </div>
+    <div class="wo-field"><label class="wo-field-label"><i class="fas fa-calendar-day"></i> من تاريخ</label>
+      <input type="date" id="sthFromDate" class="wo-input" onchange="sthLoad()">
+    </div>
+    <div class="wo-field"><label class="wo-field-label"><i class="fas fa-calendar-check"></i> إلى تاريخ</label>
+      <input type="date" id="sthToDate" class="wo-input" onchange="sthLoad()">
+    </div>
+  </section>
+  <div class="wo-table-surface">
+    <table class="wo-table"><thead><tr>
+      <th>التاريخ</th><th>المستودع</th><th>المسؤول</th>
+      <th class="num">عدد الأصناف</th><th class="num">صافي التباين</th>
+      <th class="num">قيمة الفروقات (مطلق)</th><th>الحالة</th><th>ملاحظات</th>
+    </tr></thead><tbody id="sthBody">
+      <tr><td colspan="8"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+    </tbody></table>
   </div>
 </div>
 

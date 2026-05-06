@@ -4512,24 +4512,80 @@
 <!-- ══════════════════════════════════════════════════════════════════ -->
 <div id="erpRptWarehouseLedger" class="dash-section hidden">
   <div class="tb-top">
-    <h2 class="tb-title"><i class="fas fa-book-bookmark"></i> دفتر أستاذ المستودع <span class="fa-badge-ifrs">حركة بالتاريخ</span></h2>
+    <h2 class="tb-title"><i class="fas fa-book-bookmark"></i> دفتر أستاذ المستودع <span class="fa-badge-ifrs">شامل · كل الحركات والتواريخ</span></h2>
     <div class="tb-actions">
       <button class="tb-btn" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>
       <button class="tb-btn" onclick="erpExportWarehouseLedger()"><i class="fas fa-file-excel"></i> Excel</button>
     </div>
   </div>
-  <div class="tb-filters-card">
+
+  <!-- v5.10.31 — Rich filter bar with date presets + view mode + advanced filters -->
+  <div class="tb-filters-card wl-filters">
     <div class="tb-filter-grid">
-      <div class="tb-field"><label>المستودع *</label><select id="wlWarehouse" class="form-control"><option value="">— اختر —</option></select></div>
-      <div class="tb-field"><label>الفترة من / إلى</label>
+      <div class="tb-field"><label><i class="fas fa-warehouse"></i> المستودع <span style="color:#dc2626;">*</span></label>
+        <select id="wlWarehouse" class="form-control"><option value="">— اختر —</option></select>
+      </div>
+      <div class="tb-field"><label><i class="fas fa-calendar-day"></i> الفترة من / إلى</label>
         <div class="tb-date-range">
           <input type="date" id="wlFrom"><span class="tb-sep">→</span><input type="date" id="wlTo">
         </div>
       </div>
-      <div class="tb-field"><label>صنف معين (اختياري)</label><input type="text" id="wlItem" placeholder="اختياري — كود الصنف" class="form-control"></div>
+      <div class="tb-field"><label><i class="fas fa-tag"></i> صنف محدّد (اختياري)</label>
+        <input type="text" id="wlItem" placeholder="كود الصنف" class="form-control">
+      </div>
     </div>
-    <div class="tb-filter-actions">
-      <button class="tb-btn tb-btn-success" onclick="erpLoadWarehouseLedger()"><i class="fas fa-search"></i> عرض الحركة</button>
+
+    <!-- Date presets -->
+    <div class="wl-presets" id="wlPresets" role="tablist">
+      <button class="wl-preset" data-preset="today">اليوم</button>
+      <button class="wl-preset" data-preset="yesterday">أمس</button>
+      <button class="wl-preset" data-preset="week">هذا الأسبوع</button>
+      <button class="wl-preset" data-preset="month">هذا الشهر</button>
+      <button class="wl-preset" data-preset="quarter">هذا الربع</button>
+      <button class="wl-preset" data-preset="year">هذا العام</button>
+      <button class="wl-preset" data-preset="all">منذ البداية</button>
+    </div>
+
+    <!-- Advanced filters -->
+    <div class="tb-filter-grid" style="margin-top:10px;">
+      <div class="tb-field"><label><i class="fas fa-filter"></i> نوع الحركة</label>
+        <select id="wlMoveType" class="form-control">
+          <option value="">الكل</option>
+          <option value="in">وارد فقط</option>
+          <option value="out">صادر فقط</option>
+        </select>
+      </div>
+      <div class="tb-field"><label><i class="fas fa-tags"></i> نوع المرجع</label>
+        <select id="wlRefType" class="form-control">
+          <option value="">كل المراجع</option>
+          <option value="sale">مبيعات</option>
+          <option value="transfer">تحويل</option>
+          <option value="stocktake">جرد</option>
+          <option value="adjustment">تعديل</option>
+          <option value="purchase">شراء/توريد</option>
+          <option value="waste">تالف/هدر</option>
+          <option value="opening">رصيد افتتاحي</option>
+          <option value="manual">يدوي</option>
+        </select>
+      </div>
+      <div class="tb-field"><label><i class="fas fa-user"></i> المستخدم</label>
+        <input type="text" id="wlUser" placeholder="اسم المستخدم" class="form-control">
+      </div>
+      <div class="tb-field"><label><i class="fas fa-search"></i> بحث في البيان</label>
+        <input type="text" id="wlSearchQ" placeholder="اسم/سبب/ملاحظات" class="form-control">
+      </div>
+    </div>
+
+    <div class="tb-filter-actions" style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap;">
+      <!-- View-mode toggle -->
+      <div class="wl-mode" role="tablist" aria-label="نمط العرض">
+        <button class="wl-mode-btn is-active" data-mode="byItem" onclick="erpSetWlMode('byItem')"><i class="fas fa-layer-group"></i> حسب الصنف</button>
+        <button class="wl-mode-btn" data-mode="byDate" onclick="erpSetWlMode('byDate')"><i class="fas fa-stream"></i> حسب التاريخ</button>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="tb-btn" onclick="erpResetWlFilters()" type="button"><i class="fas fa-broom"></i> مسح الفلاتر</button>
+        <button class="tb-btn tb-btn-success" onclick="erpLoadWarehouseLedger()" type="button"><i class="fas fa-search"></i> عرض الحركة</button>
+      </div>
     </div>
   </div>
 
@@ -4542,7 +4598,23 @@
   </div>
 
   <div id="wlKpis" class="fa-kpis" style="display:none;"></div>
+
+  <!-- Activity breakdown strip (v5.10.31) -->
+  <div id="wlBreakdown" class="wl-breakdown" style="display:none;"></div>
+
   <div id="wlBody"></div>
+
+  <!-- v5.10.31 — Movement detail modal (drill-down) -->
+  <div id="wlDetailModal" class="modal" style="display:none;align-items:center;justify-content:center;">
+    <div class="modal-content modal-large">
+      <div class="modal-title">
+        <i class="fas fa-receipt" style="color:#7c3aed;"></i>
+        <span>تفاصيل الحركة</span>
+        <button class="modal-close" onclick="erpCloseWlDetail()">&times;</button>
+      </div>
+      <div id="wlDetailBody"></div>
+    </div>
+  </div>
 </div>
 
 <!-- Sales Analytics -->

@@ -1680,6 +1680,351 @@ router.get('/warehouse-ledger', async (req, res) => {
   }
 });
 
+// v5.10.31 — Chronological flat-list of every movement for a warehouse.
+// Unlike /warehouse-ledger (grouped by item), this returns one row per
+// movement across ALL items in time order, making it the canonical
+// "everything that happened in this warehouse" view. Server-side
+// pagination + every filter the UI needs.
+//
+// Query params:
+//   warehouseId (required)
+//   from, to            (optional — omit either side to mean "since
+//                        beginning" / "until forever")
+//   itemId              (filter to one item)
+//   type                ('in' | 'out')
+//   refType             ('sale' | 'transfer' | 'stocktake' | 'adjustment'
+//                        | 'purchase' | 'waste' | 'opening' | 'manual')
+//   user                (filter by username)
+//   q                   (free-text on item_name / reason / notes)
+//   limit (default 200, cap 5000), offset, paginated=1
+//
+// Response: { success, warehouse, summary, items: [...] }
+//   each item: { id, date, itemId, itemName, type, qty, value, runningBalance,
+//                runningValue, reason, refType, refNumber, user, notes, unitCost }
+//   summary:   { total, totalIn, totalOut, valueIn, valueOut, netChange,
+//                netValueChange, byRefType: { sale:N, transfer:N, ... },
+//                byType: { in:N, out:N }, distinctItems, distinctUsers,
+//                topItems: [{ itemId, itemName, count, qty }] }
+router.get('/warehouse-ledger/all-movements', async (req, res) => {
+  try {
+    const warehouseId = req.query.warehouseId;
+    if (!warehouseId) return res.status(400).json({ success:false, error:'warehouseId-required' });
+
+    const [whs] = await db.query('SELECT id, name, code FROM warehouses WHERE id = ?', [warehouseId]);
+    if (!whs.length) return res.status(404).json({ success:false, error:'warehouse-not-found' });
+    const wh = whs[0];
+
+    const where = ['m.warehouse_id = ?'];
+    const params = [warehouseId];
+    if (req.query.from)   { where.push('DATE(m.movement_date) >= ?'); params.push(req.query.from); }
+    if (req.query.to)     { where.push('DATE(m.movement_date) <= ?'); params.push(req.query.to); }
+    if (req.query.itemId) { where.push('m.item_id = ?');               params.push(req.query.itemId); }
+    if (req.query.type)   { where.push('m.type = ?');                  params.push(req.query.type); }
+    if (req.query.user)   { where.push('m.username = ?');              params.push(req.query.user); }
+    if (req.query.q) {
+      where.push('(m.item_name LIKE ? OR m.reason LIKE ? OR m.notes LIKE ?)');
+      const pat = '%' + req.query.q + '%';
+      params.push(pat, pat, pat);
+    }
+
+    // refType is heuristic on reason/notes — apply post-fetch since the
+    // classifier is JS. We push the SQL filter into the dataset.
+    const reqRefType = req.query.refType || null;
+
+    const limit  = Math.max(1, Math.min(Number(req.query.limit) || 200, 5000));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const wantsPaginated = req.query.paginated === '1' || req.query.limit != null || req.query.offset != null;
+
+    const whereSql = ' WHERE ' + where.join(' AND ');
+
+    // Total count for pagination — note: refType is post-filter so the
+    // reported total is accurate only when refType isn't set. When it is
+    // set we can't easily count without scanning, so we cap at the page
+    // and report a "filtered" hint.
+    let totalRaw = 0;
+    if (wantsPaginated) {
+      const [c] = await db.query(
+        'SELECT COUNT(*) AS total FROM inventory_movements m' + whereSql, params);
+      totalRaw = Number((c[0] || {}).total) || 0;
+    }
+
+    // We need running per-item balance, so we fetch chronologically but
+    // also need per-item qty up to (and including) each row. The clean
+    // way: fetch all rows (or page) and replay.
+    // For correctness of running balance ON THIS PAGE we need to know the
+    // running per-item up to `offset`. We compute it once per item with a
+    // single grouped query.
+    const orderForward  = ' ORDER BY m.movement_date ASC, m.id ASC';
+    const orderBackward = ' ORDER BY m.movement_date DESC, m.id DESC';
+
+    // Page the user sees: most recent first
+    const [rows] = await db.query(
+      'SELECT m.*, COALESCE(i.cost, 0) AS unit_cost ' +
+      'FROM inventory_movements m LEFT JOIN inv_items i ON i.id = m.item_id' +
+      whereSql + orderBackward + ' LIMIT ? OFFSET ?',
+      params.concat([limit, offset]));
+
+    // For running balance we need: starting qty per item (= sum of qty
+    // BEFORE the earliest row on this page). We compute that with one
+    // bulk query for items that appear on the page.
+    const distinctItemIds = Array.from(new Set(rows.map(r => r.item_id))).filter(Boolean);
+    const runningStartByItem = {};
+    if (distinctItemIds.length) {
+      // Find the earliest row's date on the page
+      let earliestDate = null;
+      for (const r of rows) {
+        if (!earliestDate || new Date(r.movement_date) < new Date(earliestDate)) {
+          earliestDate = r.movement_date;
+        }
+      }
+      // Sum qty for THIS warehouse, item IN (...), where movement_date
+      // < earliest page row date, broken down by type.
+      const ph = distinctItemIds.map(() => '?').join(',');
+      const [agg] = await db.query(
+        `SELECT item_id, type, COALESCE(SUM(qty), 0) AS s
+           FROM inventory_movements
+          WHERE warehouse_id = ? AND item_id IN (${ph}) AND movement_date < ?
+          GROUP BY item_id, type`,
+        [warehouseId].concat(distinctItemIds).concat([earliestDate]));
+      const acc = {};
+      for (const a of agg) {
+        if (!acc[a.item_id]) acc[a.item_id] = 0;
+        acc[a.item_id] += (a.type === 'in' ? Number(a.s) : -Number(a.s));
+      }
+      Object.assign(runningStartByItem, acc);
+    }
+
+    // Now replay the page in chronological order to compute per-row running.
+    // Page came back DESC; sort ASC for replay, then re-reverse for display.
+    const asc = rows.slice().sort(function(a, b){
+      var d = new Date(a.movement_date) - new Date(b.movement_date);
+      if (d !== 0) return d;
+      return String(a.id).localeCompare(String(b.id));
+    });
+    const perItemRunning = Object.assign({}, runningStartByItem);
+    const enrichedAsc = asc.map(function(r){
+      var qty = Number(r.qty) || 0;
+      var cost = Number(r.unit_cost) || 0;
+      perItemRunning[r.item_id] = (perItemRunning[r.item_id] || 0) + (r.type === 'in' ? qty : -qty);
+      var refMatch = _classifyMovementRef(r.reason, r.notes);
+      return {
+        id: r.id,
+        date: r.movement_date,
+        itemId: r.item_id,
+        itemName: r.item_name,
+        type: r.type,
+        qty: qty,
+        signedQty: r.type === 'out' ? -qty : qty,
+        unitCost: cost,
+        value: qty * cost,
+        runningBalance: perItemRunning[r.item_id],
+        runningValue: perItemRunning[r.item_id] * cost,
+        reason: r.reason || '',
+        refType: refMatch.type,
+        refNumber: refMatch.number || '',
+        user: r.username || '',
+        notes: r.notes || ''
+      };
+    });
+    // Apply refType filter post-classification (if any)
+    const itemsAsc = reqRefType
+      ? enrichedAsc.filter(x => x.refType === reqRefType)
+      : enrichedAsc;
+
+    const items = itemsAsc.slice().reverse();
+
+    // Summary across the FULL filter (not just the page) — one query
+    const [aggAll] = await db.query(
+      `SELECT m.type, COALESCE(i.cost,0) AS unit_cost, m.reason, m.notes,
+              m.username, m.item_id, m.item_name, m.qty
+         FROM inventory_movements m LEFT JOIN inv_items i ON i.id = m.item_id` +
+      whereSql + ' LIMIT 50000', params);
+    const byType = { in: 0, out: 0 };
+    const byRef  = { sale:0, transfer:0, stocktake:0, adjustment:0, purchase:0, waste:0, opening:0, manual:0 };
+    let totalIn = 0, totalOut = 0, valueIn = 0, valueOut = 0;
+    const userSet = {}, itemSet = {};
+    const itemActivity = {}; // for top movers
+    for (const r of aggAll) {
+      const refKind = _classifyMovementRef(r.reason, r.notes).type;
+      if (reqRefType && refKind !== reqRefType) continue;
+      const q = Number(r.qty) || 0;
+      const v = q * (Number(r.unit_cost) || 0);
+      byType[r.type === 'in' ? 'in' : 'out']++;
+      if (byRef[refKind] != null) byRef[refKind]++;
+      if (r.type === 'in')  { totalIn  += q; valueIn  += v; }
+      else                  { totalOut += q; valueOut += v; }
+      if (r.username) userSet[r.username] = true;
+      if (r.item_id)  itemSet[r.item_id] = true;
+      if (r.item_id) {
+        if (!itemActivity[r.item_id]) {
+          itemActivity[r.item_id] = { itemId: r.item_id, itemName: r.item_name || r.item_id, count: 0, qty: 0 };
+        }
+        itemActivity[r.item_id].count++;
+        itemActivity[r.item_id].qty += q;
+      }
+    }
+    const topItems = Object.values(itemActivity)
+      .sort(function(a, b){ return b.count - a.count; })
+      .slice(0, 5);
+
+    const summary = {
+      total: items.length,
+      totalRaw: totalRaw,
+      totalIn, totalOut,
+      valueIn, valueOut,
+      netChange: totalIn - totalOut,
+      netValueChange: valueIn - valueOut,
+      byType, byRefType: byRef,
+      distinctItems: Object.keys(itemSet).length,
+      distinctUsers: Object.keys(userSet).length,
+      topItems
+    };
+
+    if (wantsPaginated) {
+      return res.json({
+        success: true,
+        warehouse: { id: wh.id, name: wh.name, code: wh.code },
+        from: req.query.from || null, to: req.query.to || null,
+        summary,
+        items,
+        limit, offset
+      });
+    }
+    res.json({
+      success: true,
+      warehouse: { id: wh.id, name: wh.name, code: wh.code },
+      from: req.query.from || null, to: req.query.to || null,
+      summary,
+      items
+    });
+  } catch (e) {
+    console.error('[warehouse-ledger/all-movements]', e);
+    res.status(500).json({ success:false, error: e.message });
+  }
+});
+
+// v5.10.31 — Drill-down: detail of a specific inventory movement, with
+// the source document hydrated when possible (sale invoice with items,
+// transfer with from/to, stocktake variance). Returns whatever lookup
+// matches the refType — gracefully degrades to just the movement row.
+router.get('/warehouse-ledger/movement/:id', async (req, res) => {
+  try {
+    const movId = req.params.id;
+    const [rows] = await db.query(
+      'SELECT m.*, w.name AS warehouse_name, w.code AS warehouse_code, ' +
+      '       COALESCE(i.cost, 0) AS unit_cost, i.unit, i.big_unit ' +
+      '  FROM inventory_movements m ' +
+      '  LEFT JOIN warehouses w ON w.id = m.warehouse_id ' +
+      '  LEFT JOIN inv_items i  ON i.id = m.item_id ' +
+      ' WHERE m.id = ? LIMIT 1', [movId]);
+    if (!rows.length) return res.status(404).json({ success:false, error:'movement-not-found' });
+    const m = rows[0];
+
+    const ref = _classifyMovementRef(m.reason, m.notes);
+    const detail = {
+      id: m.id,
+      date: m.movement_date,
+      itemId: m.item_id,
+      itemName: m.item_name,
+      unit: m.unit || '',
+      bigUnit: m.big_unit || '',
+      type: m.type,
+      qty: Number(m.qty) || 0,
+      unitCost: Number(m.unit_cost) || 0,
+      value: (Number(m.qty) || 0) * (Number(m.unit_cost) || 0),
+      reason: m.reason || '',
+      notes: m.notes || '',
+      user: m.username || '',
+      warehouseId: m.warehouse_id || '',
+      warehouseName: m.warehouse_name || '',
+      warehouseCode: m.warehouse_code || '',
+      refType: ref.type,
+      refNumber: ref.number || '',
+      source: null
+    };
+
+    // Try to hydrate the source document
+    try {
+      if (ref.type === 'sale' && m.notes) {
+        // notes was stamped with the orderId by sales.js
+        const orderId = String(m.notes).split(/\s|\//)[0];
+        const [s] = await db.query(
+          'SELECT id, order_date, total_final, payment_method, username FROM sales WHERE id = ?', [orderId]);
+        if (s.length) {
+          const [si] = await db.query(
+            'SELECT item_name, qty, price, total FROM sales_items WHERE order_id = ?', [orderId]);
+          detail.source = {
+            kind: 'sale',
+            orderId: s[0].id, orderDate: s[0].order_date,
+            total: Number(s[0].total_final) || 0,
+            paymentMethod: s[0].payment_method || '',
+            cashier: s[0].username || '',
+            items: si.map(r => ({
+              name: r.item_name, qty: Number(r.qty) || 0,
+              price: Number(r.price) || 0, total: Number(r.total) || 0
+            }))
+          };
+        }
+      } else if (ref.type === 'transfer' && ref.number) {
+        const [t] = await db.query(
+          'SELECT t.*, fw.name AS from_name, tw.name AS to_name ' +
+          '  FROM warehouse_transfers t ' +
+          '  LEFT JOIN warehouses fw ON fw.id = t.from_warehouse_id ' +
+          '  LEFT JOIN warehouses tw ON tw.id = t.to_warehouse_id ' +
+          ' WHERE t.transfer_number = ? OR t.id = ? LIMIT 1', [ref.number, ref.number]);
+        if (t.length) {
+          detail.source = {
+            kind: 'transfer',
+            transferId: t[0].id,
+            transferNumber: t[0].transfer_number,
+            transferDate: t[0].transfer_date,
+            fromWarehouseId: t[0].from_warehouse_id,
+            fromWarehouseName: t[0].from_name || '',
+            toWarehouseId: t[0].to_warehouse_id,
+            toWarehouseName: t[0].to_name || '',
+            status: t[0].status,
+            notes: t[0].notes || '',
+            items: JSON.parse(t[0].items_json || '[]')
+          };
+        }
+      } else if (ref.type === 'stocktake' && ref.number) {
+        const [st] = await db.query(
+          'SELECT * FROM stocktakes WHERE id = ? LIMIT 1', [ref.number]);
+        if (st.length) {
+          detail.source = {
+            kind: 'stocktake',
+            stocktakeId: st[0].id,
+            stocktakeDate: st[0].stocktake_date,
+            username: st[0].username,
+            notes: st[0].notes || '',
+            itemsCount: Number(st[0].items_count) || 0,
+            totalVariance: Number(st[0].total_variance) || 0
+          };
+        }
+      } else if (ref.type === 'adjustment' && ref.number) {
+        const [a] = await db.query(
+          'SELECT * FROM stock_adjustments WHERE id = ? LIMIT 1', [ref.number]);
+        if (a.length) {
+          detail.source = {
+            kind: 'adjustment',
+            adjustmentId: a[0].id,
+            adjustmentDate: a[0].adjustment_date,
+            reason: a[0].reason,
+            reasonNotes: a[0].reason_notes || '',
+            username: a[0].username,
+            status: a[0].status,
+            totalCost: Number(a[0].total_cost) || 0
+          };
+        }
+      }
+    } catch (_) { /* best effort — fall back to the bare movement detail */ }
+
+    res.json({ success: true, movement: detail });
+  } catch (e) {
+    res.status(500).json({ success:false, error: e.message });
+  }
+});
+
 // v5.10.29 — Heuristic classifier mapping a movement's reason/notes to a
 // structured reference type so the warehouse-ledger UI can render proper
 // links (and so reports can group by reference type).

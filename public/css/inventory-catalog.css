@@ -321,6 +321,238 @@
   background: linear-gradient(90deg, #ffedd5, #fff7ed);
 }
 
+/* ===================================================================
+   v5.10.31 — Warehouse Ledger (دفتر أستاذ المستودع) styling
+   =================================================================== */
+#erpRptWarehouseLedger .wl-filters {
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fefefe, #f8fafc);
+}
+
+/* Date preset chips */
+.wl-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0 0;
+  padding: 8px 0 0 0;
+  border-top: 1px dashed #e2e8f0;
+}
+.wl-preset {
+  padding: 6px 14px;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+.wl-preset:hover {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+.wl-preset.is-active {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border-color: #6366f1;
+  color: #fff;
+  box-shadow: 0 4px 12px -4px rgba(99, 102, 241, 0.5);
+}
+
+/* View-mode toggle (segmented control) */
+.wl-mode {
+  display: inline-flex;
+  background: #f1f5f9;
+  border-radius: 10px;
+  padding: 3px;
+  border: 1px solid #e2e8f0;
+}
+.wl-mode-btn {
+  padding: 7px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #64748b;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 150ms ease;
+}
+.wl-mode-btn:hover { color: #334155; }
+.wl-mode-btn.is-active {
+  background: #fff;
+  color: #4338ca;
+  box-shadow: 0 2px 6px -2px rgba(15, 23, 42, 0.12);
+}
+
+/* Activity breakdown strip — counts per ref type */
+.wl-breakdown {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+.wl-breakdown-cell {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+  cursor: pointer;
+}
+.wl-breakdown-cell:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px -6px rgba(15, 23, 42, 0.15);
+}
+.wl-breakdown-cell.is-empty { opacity: 0.55; cursor: default; }
+.wl-breakdown-cell.is-empty:hover { transform: none; box-shadow: none; }
+.wl-breakdown-cell__icon {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.wl-breakdown-cell__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wl-breakdown-cell__label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.03em;
+}
+.wl-breakdown-cell__value {
+  font-size: 18px;
+  font-weight: 900;
+  color: #0f172a;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Reference-type chip palette */
+.wl-ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.wl-ref-chip i { font-size: 9px; }
+.wl-ref-chip.ref-sale       { background: #fee2e2; color: #b91c1c; }
+.wl-ref-chip.ref-transfer   { background: #cffafe; color: #0e7490; }
+.wl-ref-chip.ref-stocktake  { background: #ede9fe; color: #6d28d9; }
+.wl-ref-chip.ref-adjustment { background: #fef3c7; color: #b45309; }
+.wl-ref-chip.ref-purchase   { background: #d1fae5; color: #047857; }
+.wl-ref-chip.ref-waste      { background: #fee2e2; color: #991b1b; }
+.wl-ref-chip.ref-opening    { background: #e0e7ff; color: #3730a3; }
+.wl-ref-chip.ref-manual     { background: #f1f5f9; color: #475569; }
+
+/* Chronological view row interactions */
+.wl-flat-table tr.wl-flat-row { cursor: pointer; transition: background 140ms ease; }
+.wl-flat-table tr.wl-flat-row:hover td { background: #eef2ff; }
+.wl-flat-table tr.wl-flat-row.type-in  td.qty-cell { color: #047857; font-weight: 800; }
+.wl-flat-table tr.wl-flat-row.type-out td.qty-cell { color: #b91c1c; font-weight: 800; }
+
+/* Detail modal content */
+.wl-detail-section {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.wl-detail-section h4 {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  font-weight: 800;
+  color: #334155;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wl-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 16px;
+  font-size: 13px;
+}
+.wl-detail-grid > div { display: flex; flex-direction: column; gap: 2px; }
+.wl-detail-grid label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #94a3b8;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.wl-detail-grid span {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.wl-detail-source-table {
+  width: 100%;
+  margin-top: 6px;
+  font-size: 12.5px;
+  border-collapse: collapse;
+}
+.wl-detail-source-table th {
+  background: #eef2ff;
+  color: #3730a3;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  text-align: start;
+  border-bottom: 1.5px solid #c7d2fe;
+}
+.wl-detail-source-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+/* Pagination footer for chronological flat view */
+.wl-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+  font-size: 12.5px;
+  color: #475569;
+  flex-wrap: wrap;
+}
+.wl-pagination__btn {
+  min-width: 32px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 12px;
+}
+.wl-pagination__btn:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+.wl-pagination__btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* ── Sortable headers ─────────────────────────────────────────────── */
 .wo-table--sortable thead th[data-sort] {
   cursor: pointer;

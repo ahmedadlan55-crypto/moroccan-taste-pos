@@ -14654,66 +14654,309 @@ window.erpDeleteMenuRecipe = function(menuId, menuName){
   });
 };
 
-// ─── Waste Entries (Redesigned) ───
+// ─── Waste Entries (v5.10.34 — enterprise rewrite) ───
+window._weState = window._weState || {
+  page: 1,
+  pageSize: 100,
+  searchTimer: null,
+  filtersHydrated: false
+};
+
 function erpLoadWasteEntries() {
   _erpPopulateBranchOptions(['weBranch']);
   _erpPopulateBrandOptions(['weBrand']);
-  var params = new URLSearchParams({
-    from: document.getElementById('weFrom').value,
-    to:   document.getElementById('weTo').value,
-    branch_id: document.getElementById('weBranch').value,
-    brand_id:  document.getElementById('weBrand').value
-  }).toString();
+  _erpHydrateWhSelect('weWarehouse');
+  _wePresetsBind();
+
+  var s = window._weState;
+  var qs = ['paginated=1', 'limit=' + s.pageSize, 'offset=' + ((s.page - 1) * s.pageSize)];
+  var fromD = (document.getElementById('weFrom')||{}).value || '';
+  var toD   = (document.getElementById('weTo')||{}).value   || '';
+  var br    = (document.getElementById('weBranch')||{}).value || '';
+  var bd    = (document.getElementById('weBrand')||{}).value  || '';
+  var wh    = (document.getElementById('weWarehouse')||{}).value || '';
+  var rs    = (document.getElementById('weReason')||{}).value || '';
+  var qq    = ((document.getElementById('weSearch')||{}).value || '').trim();
+  if (fromD) qs.push('fromDate=' + encodeURIComponent(fromD));
+  if (toD)   qs.push('toDate='   + encodeURIComponent(toD));
+  if (br)    qs.push('branch_id='+ encodeURIComponent(br));
+  if (bd)    qs.push('brand_id=' + encodeURIComponent(bd));
+  if (wh)    qs.push('warehouse_id=' + encodeURIComponent(wh));
+  if (rs)    qs.push('reason='   + encodeURIComponent(rs));
+  if (qq)    qs.push('q='        + encodeURIComponent(qq));
+
   var body = document.getElementById('weBody');
-  body.innerHTML = (typeof _woLoadingRow === 'function') ? _woLoadingRow(7) + _woLoadingRow(7) : '<tr><td colspan="7">جاري التحميل...</td></tr>';
-  _erpGet('/erp/waste-entries?'+params, function(list){
-    if (!Array.isArray(list)) list = [];
-    var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
-    // Metrics
-    var metrics = document.getElementById('weMetrics');
-    if (metrics && typeof _woMetric === 'function') {
-      var totalCost = list.reduce(function(s,w){return s + Number(w.totalCost||0);}, 0);
-      var reasons = {};
-      list.forEach(function(w){ reasons[w.reason] = (reasons[w.reason]||0) + 1; });
-      var topReason = Object.keys(reasons).sort(function(a,b){return reasons[b]-reasons[a];})[0] || '—';
-      var rMap = {expired:'منتهي',damaged:'تالف',spill:'انسكاب',prep_loss:'تحضير',customer_return:'إرجاع',other:'أخرى'};
-      metrics.innerHTML =
-        _woMetric('fa-dumpster', 'danger', 'إجمالي القيود', list.length, 'danger') +
-        _woMetric('fa-sack-dollar', 'warning', 'إجمالي الخسارة', totalCost.toLocaleString('en',{minimumFractionDigits:2}), 'warning') +
-        _woMetric('fa-chart-pie', 'info', 'أكثر سبب', rMap[topReason] || topReason, 'info') +
-        _woMetric('fa-scale-balanced', 'purple', 'متوسط القيد', list.length ? (totalCost/list.length).toFixed(2) : '0.00', 'purple');
-    }
-    if (!list.length) {
-      body.innerHTML = '<tr><td colspan="7">' +
-        ((typeof _woEmpty === 'function')
-          ? _woEmpty('fa-shield-heart', 'لا توجد قيود هدر في الفترة المحددة', 'وسّع نطاق التاريخ أو جرّب فروعاً أخرى.')
-          : 'لا توجد سجلات') +
-        '</td></tr>';
+  body.innerHTML = _woLoadingRow(9) + _woLoadingRow(9) + _woLoadingRow(9);
+
+  _erpGet('/erp/waste-entries?' + qs.join('&'), function(j){
+    if (!j || !j.success) {
+      body.innerHTML = '<tr><td colspan="9">' + _woEmpty('fa-circle-exclamation','تعذّر التحميل', (j && j.error)||'') + '</td></tr>';
       return;
     }
-    var reasonMap = {expired:'منتهي',damaged:'تالف',spill:'انسكاب',prep_loss:'تحضير',customer_return:'إرجاع',other:'أخرى'};
-    var reasonClr = {expired:'danger',damaged:'warning',spill:'info',prep_loss:'purple',customer_return:'neutral',other:'neutral'};
-    body.innerHTML = list.map(function(w){
-      return '<tr>' +
-        '<td data-label="التاريخ">'+esc((w.wasteDate||'').slice(0,10))+'</td>' +
-        '<td data-label="الفرع"><b>'+esc(w.branchName||'—')+'</b></td>' +
-        '<td data-label="البراند">'+esc(w.brandName||'—')+'</td>' +
-        '<td data-label="السبب"><span class="wo-chip '+(reasonClr[w.reason]||'neutral')+'">'+(reasonMap[w.reason]||w.reason||'')+'</span></td>' +
-        '<td data-label="مركز التكلفة" class="wo-text-subtle wo-text-caption">'+esc(w.costCenterName||'—')+'</td>' +
-        '<td data-label="التكلفة" class="num"><span class="wo-money neg">'+_erpFmt(w.totalCost)+'</span></td>' +
-        '<td data-label="الإجراءات"><div class="wo-actions"><button class="wo-icon-btn info" onclick="erpViewWasteItems(\''+esc(w.id)+'\')" title="التفاصيل" aria-label="تفاصيل"><i class="fas fa-list-ul"></i></button></div></td>' +
-      '</tr>';
-    }).join('');
+    window._weSnap = j;
+    _weRenderMetrics(j.summary);
+    _weRenderReasonChips(j.summary);
+    _weRenderRows(j.items);
+    _weRenderPagination(j.total);
   });
 }
-function erpViewWasteItems(id) {
-  _erpGet('/erp/waste-entries/'+id+'/items', function(items) {
-    document.getElementById('erpModalTitle').textContent = 'أصناف الهدر';
-    document.getElementById('erpModalBody').innerHTML = '<div class="erp-table-container"><table class="erp-table"><thead><tr><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>تكلفة الوحدة</th><th>الإجمالي</th></tr></thead><tbody>'+
-      ((items||[]).length ? items.map(function(i){return '<tr><td>'+i.itemName+'</td><td>'+_erpFmt(i.quantity)+'</td><td>'+i.unit+'</td><td>'+_erpFmt(i.unitCost)+'</td><td>'+_erpFmt(i.lineCost)+'</td></tr>';}).join('') : '<tr><td colspan="5" class="empty-msg">—</td></tr>') + '</tbody></table></div>';
-    document.getElementById('erpModalSaveBtn').style.display = 'none';
-    document.getElementById('erpModal').classList.remove('hidden');
+
+window.weOnSearchInput = function(){
+  var s = window._weState;
+  if (s.searchTimer) clearTimeout(s.searchTimer);
+  s.searchTimer = setTimeout(function(){ s.page = 1; erpLoadWasteEntries(); }, 300);
+};
+window.weOnDateChange = function(){
+  // Custom date inputs — clear preset highlight
+  document.querySelectorAll('#wePresets .wl-preset').forEach(function(b){ b.classList.remove('is-active'); });
+  window._weState.page = 1;
+  erpLoadWasteEntries();
+};
+window.weClearFilters = function(){
+  ['weSearch','weFrom','weTo'].forEach(function(id){ var el=document.getElementById(id); if(el)el.value=''; });
+  ['weBranch','weBrand','weWarehouse','weReason'].forEach(function(id){ var el=document.getElementById(id); if(el)el.value=''; });
+  document.querySelectorAll('#wePresets .wl-preset').forEach(function(b){ b.classList.remove('is-active'); });
+  document.querySelector('#wePresets .wl-preset[data-preset="month"]').classList.add('is-active');
+  _weApplyPreset('month');
+};
+window.weChangePageSize = function(v){
+  window._weState.pageSize = Math.max(10, Math.min(2000, Number(v)||100));
+  window._weState.page = 1;
+  erpLoadWasteEntries();
+};
+window.weGoto = function(p){
+  var s = window._weState, snap = window._weSnap || {};
+  var totalPages = Math.max(1, Math.ceil((snap.total||0) / s.pageSize));
+  s.page = Math.max(1, Math.min(totalPages, Number(p)||1));
+  erpLoadWasteEntries();
+};
+window.weGoRel  = function(d){ weGoto((Number(window._weState.page)||1) + Number(d)); };
+window.weGoLast = function(){
+  var snap = window._weSnap || {};
+  weGoto(Math.max(1, Math.ceil((snap.total||0) / window._weState.pageSize)));
+};
+
+function _wePresetsBind() {
+  var bar = document.getElementById('wePresets');
+  if (!bar || bar._bound) return;
+  bar._bound = true;
+  bar.addEventListener('click', function(ev){
+    var btn = ev.target.closest('.wl-preset'); if (!btn) return;
+    document.querySelectorAll('#wePresets .wl-preset').forEach(function(b){ b.classList.remove('is-active'); });
+    btn.classList.add('is-active');
+    _weApplyPreset(btn.getAttribute('data-preset'));
   });
+  // Apply default preset on first bind if no dates set
+  if (!document.getElementById('weFrom').value && !document.getElementById('weTo').value) {
+    _weApplyPreset('month');
+  }
+}
+function _weApplyPreset(preset) {
+  var now = new Date(), pad = function(n){return String(n).padStart(2,'0');};
+  var ymd = function(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());};
+  var from = null, to = new Date(now);
+  switch (preset) {
+    case 'today':     from = new Date(now); break;
+    case 'yesterday': from = new Date(now); from.setDate(from.getDate()-1); to = new Date(from); break;
+    case 'week':      from = new Date(now); from.setDate(from.getDate() - ((from.getDay() + 6) % 7)); break;
+    case 'month':     from = new Date(now.getFullYear(), now.getMonth(), 1); break;
+    case 'quarter':   from = new Date(now.getFullYear(), Math.floor(now.getMonth()/3)*3, 1); break;
+    case 'year':      from = new Date(now.getFullYear(), 0, 1); break;
+    case 'all':       from = null; to = null; break;
+    default: return;
+  }
+  document.getElementById('weFrom').value = from ? ymd(from) : '';
+  document.getElementById('weTo').value   = to   ? ymd(to)   : '';
+  window._weState.page = 1;
+  erpLoadWasteEntries();
+}
+
+function _weRenderMetrics(s){
+  s = s || {};
+  var box = document.getElementById('weMetrics');
+  if (!box) return;
+  var fmt = function(n){ return Number(n||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var topReason = '—';
+  var topVal = 0;
+  if (s.byReason) {
+    var rMap = {expired:'منتهي',damaged:'تالف',spill:'انسكاب',prep_loss:'تحضير',customer_return:'إرجاع',other:'أخرى'};
+    Object.keys(s.byReason).forEach(function(k){
+      if (Number(s.byReason[k].count) > topVal) { topVal = Number(s.byReason[k].count); topReason = rMap[k] || k; }
+    });
+  }
+  box.innerHTML =
+    _woMetric('fa-dumpster','danger','إجمالي القيود', s.total, 'danger') +
+    _woMetric('fa-sack-dollar','warning','إجمالي الخسارة', fmt(s.totalCost) + ' ر.س', 'warning') +
+    _woMetric('fa-chart-pie','info','أكثر سبب', topReason + (topVal ? ' · ' + topVal : ''), 'info') +
+    _woMetric('fa-scale-balanced','neutral','متوسط القيد', fmt(s.avgCost) + ' ر.س', 'neutral');
+}
+
+function _weRenderReasonChips(s){
+  s = s || {};
+  var box = document.getElementById('weReasonChips');
+  if (!box) return;
+  var def = [
+    { id:'',                label:'الكل',          icon:'fa-list',          count: s.total,                            cls:'all' },
+    { id:'expired',         label:'منتهي الصلاحية', icon:'fa-skull',         count: (s.byReason && s.byReason.expired         && s.byReason.expired.count)        || 0, cls:'expired' },
+    { id:'damaged',         label:'تالف',           icon:'fa-fire',          count: (s.byReason && s.byReason.damaged         && s.byReason.damaged.count)        || 0, cls:'critical' },
+    { id:'spill',           label:'انسكاب',          icon:'fa-droplet',       count: (s.byReason && s.byReason.spill           && s.byReason.spill.count)          || 0, cls:'soon' },
+    { id:'prep_loss',       label:'خسارة تحضير',     icon:'fa-utensils',      count: (s.byReason && s.byReason.prep_loss       && s.byReason.prep_loss.count)      || 0, cls:'monitor' },
+    { id:'customer_return', label:'إرجاع عميل',      icon:'fa-rotate-left',   count: (s.byReason && s.byReason.customer_return && s.byReason.customer_return.count)|| 0, cls:'safe' },
+    { id:'other',           label:'أخرى',           icon:'fa-circle',        count: (s.byReason && s.byReason.other           && s.byReason.other.count)          || 0, cls:'all' }
+  ];
+  var current = (document.getElementById('weReason')||{}).value || '';
+  box.innerHTML = def.map(function(b){
+    var active = (b.id === current) ? ' is-active' : '';
+    var bucketAttr = b.cls === 'all' ? 'all' : b.cls;
+    return '<button class="exp-bucket-pill' + active + '" data-bucket="' + bucketAttr + '" onclick="weFilterByReason(\'' + b.id + '\')">' +
+      '<i class="fas ' + b.icon + '"></i><span>' + b.label + '</span>' +
+      '<span class="exp-bucket-count">' + Number(b.count||0).toLocaleString('ar-SA') + '</span>' +
+    '</button>';
+  }).join('');
+}
+window.weFilterByReason = function(reason){
+  var sel = document.getElementById('weReason');
+  if (sel) sel.value = reason || '';
+  window._weState.page = 1;
+  erpLoadWasteEntries();
+};
+
+function _weRenderRows(items){
+  var body = document.getElementById('weBody');
+  if (!body) return;
+  if (!items || !items.length) {
+    body.innerHTML = '<tr><td colspan="9">' + _woEmpty('fa-shield-heart','لا توجد قيود هدر','جرّب توسيع نطاق التاريخ أو إزالة بعض الفلاتر — أو سجّل قيد هدر جديد بالضغط على «تسجيل هدر».') + '</td></tr>';
+    return;
+  }
+  var esc = _woEscapeHtml;
+  var fmt = function(n){ return Number(n||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var reasonMap = {expired:'منتهي',damaged:'تالف',spill:'انسكاب',prep_loss:'تحضير',customer_return:'إرجاع',other:'أخرى'};
+  var reasonCls = {expired:'expired',damaged:'critical',spill:'soon',prep_loss:'monitor',customer_return:'safe',other:'all'};
+  var reasonIcon= {expired:'fa-skull',damaged:'fa-fire',spill:'fa-droplet',prep_loss:'fa-utensils',customer_return:'fa-rotate-left',other:'fa-circle'};
+  body.innerHTML = items.map(function(w){
+    var idEsc = esc(w.id||'').replace(/'/g, "\\'");
+    var dt = w.wasteDate ? new Date(w.wasteDate).toLocaleDateString('en-GB') : '—';
+    var rs = w.reason || 'other';
+    return '<tr id="weRow_' + idEsc + '">' +
+      '<td><button class="wo-icon-btn" onclick="weToggleItems(\'' + idEsc + '\')" title="عرض الأصناف"><i class="fas fa-chevron-down" id="weChev_' + idEsc + '"></i></button></td>' +
+      '<td><b>' + dt + '</b><br><small style="color:#94a3b8;font-size:10.5px;font-family:monospace;">' + esc(w.id) + '</small></td>' +
+      '<td><b>' + esc(w.branchName||'—') + '</b><br><small style="color:#64748b;font-size:11px;">' + esc(w.brandName||'—') + '</small></td>' +
+      '<td>' + esc(w.warehouseName||'—') + (w.warehouseCode ? ' <small style="color:#94a3b8;">(' + esc(w.warehouseCode) + ')</small>' : '') + '</td>' +
+      '<td><span class="exp-status-chip ' + (reasonCls[rs]||'all') + '"><i class="fas ' + (reasonIcon[rs]||'fa-circle') + '"></i> ' + (reasonMap[rs] || rs) + '</span></td>' +
+      '<td style="font-size:11.5px;color:#475569;">' + esc(w.costCenterName||'—') + '</td>' +
+      '<td style="font-size:11.5px;">' + esc(w.createdBy||'—') + '</td>' +
+      '<td class="num"><b style="color:#b91c1c;">−' + fmt(w.totalCost) + '</b></td>' +
+      '<td>' +
+        '<div class="exp-row-actions">' +
+          '<button class="wo-icon-btn" onclick="erpViewWasteItems(\'' + idEsc + '\')" title="تفاصيل"><i class="fas fa-list-ul"></i></button> ' +
+          '<button class="wo-icon-btn danger" onclick="weDeleteEntry(\'' + idEsc + '\')" title="حذف وعكس الأثر"><i class="fas fa-trash"></i></button>' +
+        '</div>' +
+      '</td>' +
+    '</tr>' +
+    '<tr id="weItems_' + idEsc + '" style="display:none;background:#fafbfd;"><td colspan="9" style="padding:0;"></td></tr>';
+  }).join('');
+}
+
+window.weToggleItems = function(id){
+  var holder = document.getElementById('weItems_' + id);
+  var chev   = document.getElementById('weChev_' + id);
+  if (!holder) return;
+  if (holder.style.display !== 'none') {
+    holder.style.display = 'none';
+    if (chev) chev.classList.replace('fa-chevron-up','fa-chevron-down');
+    return;
+  }
+  // Lazy load items
+  var cell = holder.querySelector('td');
+  cell.innerHTML = '<div style="padding:14px;color:#94a3b8;font-size:12.5px;text-align:center;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+  holder.style.display = '';
+  if (chev) chev.classList.replace('fa-chevron-down','fa-chevron-up');
+  _erpGet('/erp/waste-entries/' + encodeURIComponent(id) + '/items', function(items){
+    items = items || [];
+    if (!items.length) {
+      cell.innerHTML = '<div style="padding:14px;color:#94a3b8;text-align:center;">لا توجد أصناف</div>';
+      return;
+    }
+    var fmt = function(n){ return Number(n||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    cell.innerHTML =
+      '<table class="erp-table" style="margin:0;background:#fff;font-size:12.5px;">' +
+        '<thead style="background:#eef2ff;color:#3730a3;"><tr>' +
+          '<th>الصنف</th><th>الكود</th><th class="num">الكمية</th><th>الوحدة</th><th class="num">تكلفة الوحدة</th><th class="num">إجمالي السطر</th>' +
+        '</tr></thead><tbody>' +
+        items.map(function(it){
+          return '<tr>' +
+            '<td><b>' + _woEscapeHtml(it.itemName||'') + '</b></td>' +
+            '<td><code style="font-size:10.5px;background:#f1f5f9;padding:2px 6px;border-radius:4px;">' + _woEscapeHtml(it.sku||it.itemId||'') + '</code></td>' +
+            '<td class="num"><b>' + fmt(it.quantity) + '</b></td>' +
+            '<td>' + _woEscapeHtml(it.unit||'') + '</td>' +
+            '<td class="num">' + fmt(it.unitCost) + '</td>' +
+            '<td class="num"><b style="color:#b91c1c;">' + fmt(it.lineCost) + '</b></td>' +
+          '</tr>';
+        }).join('') +
+        '</tbody>' +
+      '</table>';
+  });
+};
+
+window.weDeleteEntry = function(id){
+  if (!confirm('هل تريد حذف قيد الهدر "' + id + '"؟\nسيتم عكس الأثر المخزني والمحاسبي تلقائياً.')) return;
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/waste-entries/' + encodeURIComponent(id), {
+    method: 'DELETE',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(r){ return r.json(); }).then(function(j){
+    if (!j || !j.success) { showToast((j && j.error) || 'فشل الحذف', true); return; }
+    showToast('تم الحذف وعكس الأثر · ' + (j.reversedLines || 0) + ' سطر');
+    erpLoadWasteEntries();
+  }).catch(function(){ showToast('فشل الاتصال', true); });
+};
+
+function _weRenderPagination(total){
+  var box = document.getElementById('wePagination');
+  if (!box) return;
+  if (!total) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  var s = window._weState;
+  var totalPages = Math.max(1, Math.ceil(total / s.pageSize));
+  document.getElementById('wePagInfo').textContent =
+    'عرض ' + ((s.page-1)*s.pageSize+1).toLocaleString('ar-SA') + '–' +
+    Math.min(total, s.page*s.pageSize).toLocaleString('ar-SA') + ' من ' +
+    total.toLocaleString('ar-SA') + ' قيد · صفحة ' + s.page + ' / ' + totalPages;
+
+  var pages = document.getElementById('wePagPages');
+  if (pages) {
+    var html = '';
+    var lo = Math.max(1, s.page - 2), hi = Math.min(totalPages, s.page + 2);
+    var add = function(p, active){ html += '<button class="inv-pagination__btn' + (active ? ' is-active' : '') + '" onclick="weGoto(' + p + ')">' + p + '</button>'; };
+    if (lo > 1) { add(1, s.page === 1); if (lo > 2) html += '<span class="inv-pagination__sep">…</span>'; }
+    for (var i = lo; i <= hi; i++) add(i, i === s.page);
+    if (hi < totalPages) { if (hi < totalPages - 1) html += '<span class="inv-pagination__sep">…</span>'; add(totalPages, s.page === totalPages); }
+    pages.innerHTML = html;
+  }
+  document.getElementById('wePagFirst').disabled = s.page <= 1;
+  document.getElementById('wePagPrev').disabled  = s.page <= 1;
+  document.getElementById('wePagNext').disabled  = s.page >= totalPages;
+  document.getElementById('wePagLast').disabled  = s.page >= totalPages;
+}
+
+window.weExportExcel = function(){
+  var snap = window._weSnap;
+  if (!snap || !snap.items || !snap.items.length) return showToast('اعرض البيانات أولاً', true);
+  var rMap = {expired:'منتهي',damaged:'تالف',spill:'انسكاب',prep_loss:'تحضير',customer_return:'إرجاع',other:'أخرى'};
+  var rows = snap.items.map(function(w){
+    return [
+      String(w.wasteDate||'').slice(0,10), w.id,
+      w.branchName||'', w.brandName||'', w.warehouseName||'',
+      rMap[w.reason]||w.reason||'', w.costCenterName||'',
+      w.createdBy||'', Number(w.totalCost||0).toFixed(2), w.notes||''
+    ];
+  });
+  _erpDownloadCsv('waste-entries-' + new Date().toISOString().slice(0,10) + '.csv',
+    ['التاريخ','رقم القيد','الفرع','البراند','المستودع','السبب','مركز التكلفة','المستخدم','التكلفة','ملاحظات'], rows);
+};
+
+function erpViewWasteItems(id) {
+  weToggleItems(id);
 }
 function erpOpenWasteModal() {
   Promise.all([

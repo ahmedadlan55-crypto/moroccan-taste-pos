@@ -5038,30 +5038,97 @@
   </div>
 </div>
 
-<!-- Waste Entries (Redesigned) -->
+<!-- Waste Entries (v5.10.34 — enterprise rewrite) -->
 <div id="erpWasteEntries" class="dash-section hidden wo-section">
   <header class="wo-header">
     <div class="wo-header-titles">
       <h1><span class="wo-icon-slot danger"><i class="fas fa-dumpster"></i></span>قيود الهدر</h1>
-      <p class="wo-header-sub">تسجيل المواد التالفة/المنتهية/المهدورة — تُرحَّل تلقائياً GL (مدين مصروف الهدر / دائن المخزون).</p>
+      <p class="wo-header-sub">تسجيل المواد التالفة/المنتهية/المهدورة — تُرحَّل تلقائياً GL (مدين مصروف الهدر / دائن المخزون). مع تتبّع كامل، فلاتر زمنية، وإمكانية حذف القيود مع عكس الأثر المحاسبي.</p>
     </div>
     <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-ghost" onclick="window.print()"><i class="fas fa-print"></i><span>طباعة</span></button>
+      <button class="wo-btn wo-btn-secondary" onclick="weExportExcel()"><i class="fas fa-file-excel"></i><span>Excel</span></button>
       <button class="wo-btn wo-btn-primary" onclick="erpOpenWasteModal()"><i class="fas fa-plus"></i><span>تسجيل هدر</span></button>
     </div>
   </header>
+
   <div class="wo-metric-strip" id="weMetrics"></div>
+
+  <!-- Date presets -->
+  <div class="wl-presets" id="wePresets" role="tablist">
+    <button class="wl-preset" data-preset="today">اليوم</button>
+    <button class="wl-preset" data-preset="yesterday">أمس</button>
+    <button class="wl-preset" data-preset="week">هذا الأسبوع</button>
+    <button class="wl-preset is-active" data-preset="month">هذا الشهر</button>
+    <button class="wl-preset" data-preset="quarter">هذا الربع</button>
+    <button class="wl-preset" data-preset="year">هذا العام</button>
+    <button class="wl-preset" data-preset="all">كل التواريخ</button>
+  </div>
+
   <section class="wo-toolbar" role="search" aria-label="تصفية قيود الهدر">
-    <div class="wo-field"><label class="wo-field-label" for="weFrom"><i class="fas fa-calendar"></i> من تاريخ</label><input type="date" id="weFrom" class="wo-input"></div>
-    <div class="wo-field"><label class="wo-field-label" for="weTo"><i class="fas fa-calendar-check"></i> إلى تاريخ</label><input type="date" id="weTo" class="wo-input"></div>
-    <div class="wo-field"><label class="wo-field-label" for="weBranch"><i class="fas fa-code-branch"></i> الفرع</label><select id="weBranch" class="wo-select"><option value="">الكل</option></select></div>
-    <div class="wo-field"><label class="wo-field-label" for="weBrand"><i class="fas fa-tags"></i> البراند</label><select id="weBrand" class="wo-select"><option value="">الكل</option></select></div>
-    <div class="wo-field" style="align-self:flex-end;"><button class="wo-btn wo-btn-primary" onclick="erpLoadWasteEntries()"><i class="fas fa-search"></i><span>بحث</span></button></div>
+    <div class="wo-field" style="flex:1.2;min-width:180px;">
+      <label class="wo-field-label" for="weSearch"><i class="fas fa-search"></i> بحث</label>
+      <input type="text" id="weSearch" class="wo-input" placeholder="ملاحظات أو اسم المستخدم..." oninput="weOnSearchInput()">
+    </div>
+    <div class="wo-field"><label class="wo-field-label" for="weFrom"><i class="fas fa-calendar"></i> من</label><input type="date" id="weFrom" class="wo-input" onchange="weOnDateChange()"></div>
+    <div class="wo-field"><label class="wo-field-label" for="weTo"><i class="fas fa-calendar-check"></i> إلى</label><input type="date" id="weTo" class="wo-input" onchange="weOnDateChange()"></div>
+    <div class="wo-field"><label class="wo-field-label" for="weBranch"><i class="fas fa-code-branch"></i> الفرع</label><select id="weBranch" class="wo-select" onchange="erpLoadWasteEntries()"><option value="">الكل</option></select></div>
+    <div class="wo-field"><label class="wo-field-label" for="weBrand"><i class="fas fa-tags"></i> البراند</label><select id="weBrand" class="wo-select" onchange="erpLoadWasteEntries()"><option value="">الكل</option></select></div>
+    <div class="wo-field"><label class="wo-field-label" for="weWarehouse"><i class="fas fa-warehouse"></i> المستودع</label><select id="weWarehouse" class="wo-select" onchange="erpLoadWasteEntries()"><option value="">الكل</option></select></div>
+    <div class="wo-field"><label class="wo-field-label" for="weReason"><i class="fas fa-list"></i> السبب</label>
+      <select id="weReason" class="wo-select" onchange="erpLoadWasteEntries()">
+        <option value="">كل الأسباب</option>
+        <option value="expired">منتهي الصلاحية</option>
+        <option value="damaged">تالف</option>
+        <option value="spill">انسكاب</option>
+        <option value="prep_loss">خسارة تحضير</option>
+        <option value="customer_return">إرجاع عميل</option>
+        <option value="other">أخرى</option>
+      </select>
+    </div>
+    <div class="wo-field" style="align-self:flex-end;">
+      <button class="wo-btn wo-btn-ghost" onclick="weClearFilters()"><i class="fas fa-broom"></i><span>مسح</span></button>
+    </div>
   </section>
+
+  <!-- Reason breakdown chips -->
+  <div class="exp-bucket-pills" id="weReasonChips"></div>
+
   <div class="wo-table-surface">
     <table class="wo-table" role="table">
-      <thead><tr><th>التاريخ</th><th>الفرع</th><th>البراند</th><th>السبب</th><th>مركز التكلفة</th><th class="num">التكلفة</th><th>الإجراءات</th></tr></thead>
-      <tbody id="weBody"><tr><td colspan="7"><div class="wo-empty"><i class="fas fa-filter"></i><div class="wo-empty-title">حدّد الفترة ثم اضغط بحث</div><div class="wo-empty-sub">ستظهر قيود الهدر المسجّلة ضمن النطاق المحدد.</div></div></td></tr></tbody>
+      <thead>
+        <tr>
+          <th></th>
+          <th>التاريخ</th>
+          <th>الفرع · البراند</th>
+          <th>المستودع</th>
+          <th>السبب</th>
+          <th>مركز التكلفة</th>
+          <th>المستخدم</th>
+          <th class="num">التكلفة</th>
+          <th>إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="weBody"><tr><td colspan="9"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><div class="wo-empty-title">جاري التحميل...</div></div></td></tr></tbody>
     </table>
+
+    <!-- Pagination -->
+    <div id="wePagination" class="inv-pagination" style="display:none;">
+      <div class="inv-pagination__info"><span id="wePagInfo">—</span></div>
+      <div class="inv-pagination__controls">
+        <button class="inv-pagination__btn" onclick="weGoto(1)" id="wePagFirst"><i class="fas fa-angles-right"></i></button>
+        <button class="inv-pagination__btn" onclick="weGoRel(-1)" id="wePagPrev"><i class="fas fa-angle-right"></i></button>
+        <span id="wePagPages"></span>
+        <button class="inv-pagination__btn" onclick="weGoRel(1)" id="wePagNext"><i class="fas fa-angle-left"></i></button>
+        <button class="inv-pagination__btn" onclick="weGoLast()" id="wePagLast"><i class="fas fa-angles-left"></i></button>
+        <span class="inv-pagination__sep">·</span>
+        <select class="inv-pagination__size" onchange="weChangePageSize(this.value)">
+          <option value="50">50 / صفحة</option>
+          <option value="100" selected>100 / صفحة</option>
+          <option value="200">200 / صفحة</option>
+        </select>
+      </div>
+    </div>
   </div>
 </div>
 

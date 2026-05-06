@@ -1190,32 +1190,162 @@ router.delete('/royalty-runs/:id', async (req, res) => {
 // ═══════════════════════════════════════
 // WASTE ENTRIES
 // ═══════════════════════════════════════
+// v5.10.34 — Enhanced: pagination + search + reason/warehouse filters + summary.
+// Back-compat: still returns array shape when ?paginated is not set.
 router.get('/waste-entries', async (req, res) => {
   try {
-    const { brand_id, branch_id, from, to } = req.query;
-    let sql = `SELECT w.*, b.name AS branch_name, br.name AS brand_name, cc.name AS cc_name
-               FROM waste_entries w
-               LEFT JOIN branches b ON w.branch_id = b.id
-               LEFT JOIN brands br ON w.brand_id = br.id
-               LEFT JOIN cost_centers cc ON w.cost_center_id = cc.id
-               WHERE 1=1`;
+    const { brand_id, branch_id, warehouse_id, reason, q } = req.query;
+    const fromDate = req.query.fromDate || req.query.from;
+    const toDate   = req.query.toDate   || req.query.to;
+
+    const where = ['1=1'];
     const params = [];
-    if (brand_id)  { sql += ' AND w.brand_id = ?';  params.push(brand_id); }
-    if (branch_id) { sql += ' AND w.branch_id = ?'; params.push(branch_id); }
-    if (from)      { sql += ' AND w.waste_date >= ?'; params.push(from); }
-    if (to)        { sql += ' AND w.waste_date <= ?'; params.push(to); }
-    sql += ' ORDER BY w.waste_date DESC, w.created_at DESC LIMIT 500';
-    const [rows] = await db.query(sql, params);
-    res.json(rows.map(w => ({
+    if (brand_id)     { where.push('w.brand_id = ?');     params.push(brand_id); }
+    if (branch_id)    { where.push('w.branch_id = ?');    params.push(branch_id); }
+    if (warehouse_id) { where.push('w.warehouse_id = ?'); params.push(warehouse_id); }
+    if (reason)       { where.push('w.reason = ?');       params.push(reason); }
+    if (fromDate)     { where.push('w.waste_date >= ?');  params.push(fromDate); }
+    if (toDate)       { where.push('w.waste_date <= ?');  params.push(toDate); }
+    if (q) {
+      where.push('(w.notes LIKE ? OR w.created_by LIKE ? OR br.name LIKE ? OR b.name LIKE ?)');
+      const pat = '%' + q + '%';
+      params.push(pat, pat, pat, pat);
+    }
+    const whereSql = ' WHERE ' + where.join(' AND ');
+
+    const limit  = Math.max(1, Math.min(Number(req.query.limit) || 500, 2000));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const wantsPaginated = req.query.paginated === '1' || req.query.limit != null || req.query.offset != null;
+
+    const baseSelect =
+      'SELECT w.*, b.name AS branch_name, br.name AS brand_name, cc.name AS cc_name, ' +
+      '       wh.name AS warehouse_name, wh.code AS warehouse_code ' +
+      '  FROM waste_entries w ' +
+      '  LEFT JOIN branches b ON w.branch_id = b.id ' +
+      '  LEFT JOIN brands br ON w.brand_id = br.id ' +
+      '  LEFT JOIN cost_centers cc ON w.cost_center_id = cc.id ' +
+      '  LEFT JOIN warehouses wh ON w.warehouse_id = wh.id';
+    const order = ' ORDER BY w.waste_date DESC, w.created_at DESC';
+
+    const [rows] = await db.query(
+      baseSelect + whereSql + order + ' LIMIT ? OFFSET ?',
+      params.concat([limit, offset]));
+
+    const items = rows.map(w => ({
       id: w.id, wasteDate: w.waste_date, reason: w.reason,
       brandId: w.brand_id || '', brandName: w.brand_name || '',
       branchId: w.branch_id || '', branchName: w.branch_name || '',
-      warehouseId: w.warehouse_id, costCenterId: w.cost_center_id || '',
-      costCenterName: w.cc_name || '',
+      warehouseId: w.warehouse_id, warehouseName: w.warehouse_name || '', warehouseCode: w.warehouse_code || '',
+      costCenterId: w.cost_center_id || '', costCenterName: w.cc_name || '',
       totalCost: Number(w.total_cost) || 0,
       notes: w.notes || '', createdBy: w.created_by || '', createdAt: w.created_at
-    })));
-  } catch(e) { res.json([]); }
+    }));
+
+    if (!wantsPaginated) return res.json(items);
+
+    // Summary across full filter (no LIMIT)
+    const [sumRows] = await db.query(
+      'SELECT COUNT(*) AS total_count, ' +
+      '       SUM(w.total_cost) AS total_cost, ' +
+      '       SUM(CASE WHEN w.reason = \'expired\'         THEN 1 ELSE 0 END) AS expired_count, ' +
+      '       SUM(CASE WHEN w.reason = \'damaged\'         THEN 1 ELSE 0 END) AS damaged_count, ' +
+      '       SUM(CASE WHEN w.reason = \'spill\'           THEN 1 ELSE 0 END) AS spill_count, ' +
+      '       SUM(CASE WHEN w.reason = \'prep_loss\'       THEN 1 ELSE 0 END) AS prep_count, ' +
+      '       SUM(CASE WHEN w.reason = \'customer_return\' THEN 1 ELSE 0 END) AS return_count, ' +
+      '       SUM(CASE WHEN w.reason = \'other\'           THEN 1 ELSE 0 END) AS other_count, ' +
+      '       SUM(CASE WHEN w.reason = \'expired\'         THEN w.total_cost ELSE 0 END) AS expired_cost, ' +
+      '       SUM(CASE WHEN w.reason = \'damaged\'         THEN w.total_cost ELSE 0 END) AS damaged_cost, ' +
+      '       SUM(CASE WHEN w.reason = \'spill\'           THEN w.total_cost ELSE 0 END) AS spill_cost, ' +
+      '       SUM(CASE WHEN w.reason = \'prep_loss\'       THEN w.total_cost ELSE 0 END) AS prep_cost, ' +
+      '       SUM(CASE WHEN w.reason = \'customer_return\' THEN w.total_cost ELSE 0 END) AS return_cost, ' +
+      '       SUM(CASE WHEN w.reason = \'other\'           THEN w.total_cost ELSE 0 END) AS other_cost ' +
+      '  FROM waste_entries w ' +
+      '  LEFT JOIN branches b ON w.branch_id = b.id ' +
+      '  LEFT JOIN brands br ON w.brand_id = br.id' + whereSql,
+      params);
+    const s = sumRows[0] || {};
+
+    res.json({
+      success: true,
+      items,
+      total: Number(s.total_count) || 0,
+      limit, offset,
+      summary: {
+        total:     Number(s.total_count) || 0,
+        totalCost: Number(s.total_cost) || 0,
+        avgCost:   (Number(s.total_count) ? (Number(s.total_cost) / Number(s.total_count)) : 0),
+        byReason: {
+          expired:        { count: Number(s.expired_count) || 0, cost: Number(s.expired_cost) || 0 },
+          damaged:        { count: Number(s.damaged_count) || 0, cost: Number(s.damaged_cost) || 0 },
+          spill:          { count: Number(s.spill_count)   || 0, cost: Number(s.spill_cost)   || 0 },
+          prep_loss:      { count: Number(s.prep_count)    || 0, cost: Number(s.prep_cost)    || 0 },
+          customer_return:{ count: Number(s.return_count)  || 0, cost: Number(s.return_cost)  || 0 },
+          other:          { count: Number(s.other_count)   || 0, cost: Number(s.other_cost)   || 0 }
+        }
+      }
+    });
+  } catch(e) { res.status(500).json({ error: e.message, items: [] }); }
+});
+
+// v5.10.34 — Delete a waste entry (and reverse its inventory + GL effect).
+// Wrapped in db.withTransaction so a partial failure can never leave a
+// half-deleted entry.
+router.delete('/waste-entries/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const [hdr] = await db.query('SELECT * FROM waste_entries WHERE id = ?', [id]);
+    if (!hdr.length) return res.status(404).json({ success:false, error:'not-found' });
+    const w = hdr[0];
+    const [lines] = await db.query('SELECT * FROM waste_entry_items WHERE waste_id = ?', [id]);
+
+    const runner = async (conn) => {
+      const c = conn || db;
+      // 1. Reverse inventory_movements: insert opposite (positive) entries
+      for (const l of lines) {
+        try {
+          await c.query(
+            `INSERT INTO inventory_movements (id, item_id, warehouse_id, txn_type, quantity, unit_cost, total_cost, reference_type, reference_id, created_by, created_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,NOW())`,
+            [genId('IM'), l.item_id, w.warehouse_id, 'waste_reversal',
+             Number(l.quantity) || 0, Number(l.unit_cost) || 0, Number(l.line_cost) || 0,
+             'WasteEntry', id, (req.user && req.user.username) || 'system']);
+        } catch (_) {}
+        // Restore warehouse_stock qty
+        try {
+          await c.query(
+            'UPDATE warehouse_stock SET qty = qty + ? WHERE warehouse_id = ? AND item_id = ?',
+            [Number(l.quantity) || 0, w.warehouse_id, l.item_id]);
+        } catch (_) {}
+      }
+      // 2. Reverse GL journal
+      try {
+        const [j] = await c.query('SELECT id FROM gl_journals WHERE reference_type = ? AND reference_id = ?', ['WasteEntry', id]);
+        for (const journal of j) {
+          const [es] = await c.query('SELECT * FROM gl_entries WHERE journal_id = ?', [journal.id]);
+          for (const e of es) {
+            if (e.account_id) {
+              const reverseAmount = (Number(e.credit) || 0) - (Number(e.debit) || 0);
+              await c.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [reverseAmount, e.account_id]);
+            }
+          }
+          await c.query('DELETE FROM gl_entries WHERE journal_id = ?', [journal.id]);
+          await c.query('DELETE FROM gl_journals WHERE id = ?', [journal.id]);
+        }
+      } catch (_) {}
+      // 3. Delete the waste entry + items
+      await c.query('DELETE FROM waste_entry_items WHERE waste_id = ?', [id]);
+      await c.query('DELETE FROM waste_entries WHERE id = ?', [id]);
+    };
+
+    try {
+      if (typeof db.withTransaction === 'function') await db.withTransaction(runner);
+      else await runner(null);
+    } catch (txErr) {
+      return res.status(500).json({ success:false, error: txErr.message });
+    }
+
+    res.json({ success: true, id, reversedLines: lines.length });
+  } catch (e) { res.status(500).json({ success:false, error: e.message }); }
 });
 
 router.post('/waste-entries', async (req, res) => {

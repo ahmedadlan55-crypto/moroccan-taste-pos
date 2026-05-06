@@ -356,7 +356,7 @@ const dict = {
     "nav.menuProduction":"المنيو والإنتاج", "nav.menuHub":"إدارة المنيو والبرندات",
     "nav.semiFinished":"المنتجات غير التامة", "nav.bom":"الوصفات (BOM)",
     "nav.productionOrders":"أوامر الإنتاج", "nav.priceLists":"قوائم الأسعار", "nav.categories":"تصنيفات الأصناف",
-    "nav.inventory":"المخزون والمستودعات", "nav.stockManagement":"إدارة المخزون والجرد",
+    "nav.inventory":"المخزون والمستودعات", "nav.stockManagement":"تقارير المستودعات",
     "nav.multiWarehouses":"المستودعات المتعددة", "nav.whHierarchy":"هيكل المستودعات",
     "nav.inventoryMethod":"نوع الجرد وقيمة المخزون", "nav.stockIssues":"إذونات الصرف",
     "nav.wasteEntries":"قيود الهدر", "nav.expiryAlerts":"تنبيهات انتهاء الصلاحية",
@@ -3987,8 +3987,8 @@ function _invHubRenderBrandsList() {
     '<div class="iv-hub-shell">' +
       '<header class="iv-hub-head">' +
         '<div class="iv-hub-head-titles">' +
-          '<h2 class="iv-hub-title"><i class="fas fa-warehouse"></i> إدارة المخزون</h2>' +
-          '<p class="iv-hub-sub">اختر البراند لعرض مخزونه وتقاريره.</p>' +
+          '<h2 class="iv-hub-title"><i class="fas fa-warehouse"></i> تقارير المستودعات</h2>' +
+          '<p class="iv-hub-sub">اختر البراند لعرض تقارير مستودعاته وحركة مخزونه بكافة التواريخ.</p>' +
         '</div>' +
         '<div class="iv-hub-head-actions">' +
           '<button class="iv-hub-btn iv-hub-btn-ghost" onclick="_invHubRefresh()" title="تحديث الإحصائيات"><i class="fas fa-rotate"></i> تحديث</button>' +

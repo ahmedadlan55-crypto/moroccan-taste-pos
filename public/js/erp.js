@@ -3963,13 +3963,17 @@ var _trCart = [];
 
 function erpOpenTransferModal() {
   _trCart = [];
+  // v5.10.29 — track all warehouses for the dropdown sync logic
+  window._trWarehouses = [];
   Promise.all([
     new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getWarehousesList(); }),
     new Promise(function(r) { window._apiBridge.withSuccessHandler(r).getInvItems(); })
   ]).then(function(results) {
     var whs = results[0] || [];
     _trAllItems = results[1] || [];
-    var opts = whs.map(function(w) { return '<option value="' + w.id + '">' + w.name + '</option>'; }).join('');
+    window._trWarehouses = whs;
+    var opts = '<option value="">— اختر مستودعاً —</option>' +
+      whs.map(function(w) { return '<option value="' + w.id + '">' + w.name + (w.code ? ' (' + w.code + ')' : '') + '</option>'; }).join('');
 
     document.getElementById('erpModalTitle').textContent = 'تحويل بين مستودعات';
     var box = document.querySelector('#erpModal .modal-box');
@@ -3977,9 +3981,10 @@ function erpOpenTransferModal() {
 
     document.getElementById('erpModalBody').innerHTML =
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="form-row"><label>من مستودع *</label><select class="form-control" id="trFrom">' + opts + '</select></div>' +
-        '<div class="form-row"><label>إلى مستودع *</label><select class="form-control" id="trTo">' + opts + '</select></div>' +
+        '<div class="form-row"><label>من مستودع <span style="color:#dc2626;">*</span></label><select class="form-control" id="trFrom" onchange="_trOnWarehouseChange(\'from\')">' + opts + '</select><small id="trFromInfo" style="color:#64748b;font-size:11px;display:block;margin-top:4px;"></small></div>' +
+        '<div class="form-row"><label>إلى مستودع <span style="color:#dc2626;">*</span></label><select class="form-control" id="trTo" onchange="_trOnWarehouseChange(\'to\')">' + opts + '</select><small id="trToInfo" style="color:#64748b;font-size:11px;display:block;margin-top:4px;"></small></div>' +
       '</div>' +
+      '<div id="trWarning" style="display:none;margin:8px 0;padding:8px 12px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;color:#92400e;font-size:12.5px;font-weight:600;"><i class="fas fa-triangle-exclamation"></i> <span id="trWarningText"></span></div>' +
       '<div class="form-row"><label>ملاحظات</label><input class="form-control" id="trNotes" placeholder="اختياري"></div>' +
       '<div style="border-top:1px solid #e2e8f0;margin:14px 0;padding-top:14px;">' +
         '<div style="position:relative;margin-bottom:10px;">' +
@@ -3990,13 +3995,14 @@ function erpOpenTransferModal() {
       '</div>' +
       '<div style="max-height:300px;overflow-y:auto;">' +
         '<table class="erp-table" style="font-size:13px;">' +
-          '<thead><tr><th>المادة</th><th style="text-align:center;">الرصيد</th><th style="text-align:center;">الوحدة الكبرى</th><th style="text-align:center;">الكمية كبرى</th><th style="text-align:center;">الوحدة الصغرى</th><th style="text-align:center;">الكمية صغرى</th><th style="text-align:center;">التكلفة</th><th></th></tr></thead>' +
-          '<tbody id="trCartBody"><tr><td colspan="8" class="empty-msg">ابحث وأضف المواد</td></tr></tbody>' +
+          '<thead><tr><th>المادة</th><th style="text-align:center;">المتاح في المصدر</th><th style="text-align:center;">الوحدة الكبرى</th><th style="text-align:center;">الكمية كبرى</th><th style="text-align:center;">الوحدة الصغرى</th><th style="text-align:center;">الكمية صغرى</th><th style="text-align:center;">التكلفة</th><th></th></tr></thead>' +
+          '<tbody id="trCartBody"><tr><td colspan="8" class="empty-msg">اختر مستودعَين أولاً ثم أضف المواد</td></tr></tbody>' +
         '</table>' +
       '</div>';
 
     document.getElementById('erpModalSaveBtn').onclick = erpSubmitTransfer;
     document.getElementById('erpModal').classList.remove('hidden');
+    _trSyncDropdownOptions();
 
     // Close dropdown on outside click
     setTimeout(function() {
@@ -4008,6 +4014,63 @@ function erpOpenTransferModal() {
       });
     }, 100);
   });
+}
+
+// v5.10.29 — Disable the option in each dropdown that matches the other's
+// value so the user physically cannot pick the same warehouse twice.
+function _trSyncDropdownOptions() {
+  var from = document.getElementById('trFrom');
+  var to   = document.getElementById('trTo');
+  if (!from || !to) return;
+  var fromVal = from.value, toVal = to.value;
+  Array.prototype.slice.call(from.options).forEach(function(o){
+    o.disabled = !!(toVal && o.value && o.value === toVal);
+  });
+  Array.prototype.slice.call(to.options).forEach(function(o){
+    o.disabled = !!(fromVal && o.value && o.value === fromVal);
+  });
+}
+
+// v5.10.29 — When a warehouse is picked, refetch per-warehouse stock for
+// every item already in the cart so the "available" column reflects the
+// SOURCE warehouse's actual qty (not the global aggregate).
+window._trOnWarehouseChange = function(side) {
+  _trSyncDropdownOptions();
+  var fromId = (document.getElementById('trFrom')||{}).value || '';
+  var toId   = (document.getElementById('trTo')||{}).value || '';
+  // Render labels under each select with brand/code/etc.
+  var fromInfo = document.getElementById('trFromInfo');
+  var toInfo   = document.getElementById('trToInfo');
+  var labelOf = function(id){
+    if (!id) return '';
+    var w = (window._trWarehouses||[]).find(function(x){ return String(x.id) === String(id); });
+    return w ? (w.brandName ? '<i class="fas fa-store"></i> ' + w.brandName + ' · ' : '') + (w.code || '') : '';
+  };
+  if (fromInfo) fromInfo.innerHTML = labelOf(fromId);
+  if (toInfo)   toInfo.innerHTML   = labelOf(toId);
+
+  // If source changed, refetch source-warehouse stock for items in cart
+  if (side === 'from' && fromId) {
+    _trRefreshSourceStock(fromId);
+  } else if (side === 'from' && !fromId) {
+    // cleared — wipe per-warehouse stock so user re-selects
+    _trCart.forEach(function(c){ c.stock = 0; });
+    _trRenderCart();
+  }
+};
+
+// Refetch per-warehouse stock from /api/inventory/items?warehouseId=X
+function _trRefreshSourceStock(warehouseId) {
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/inventory/items?warehouseId=' + encodeURIComponent(warehouseId), {
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(r){return r.json();}).then(function(rows){
+    if (!Array.isArray(rows)) return;
+    var stockMap = {};
+    rows.forEach(function(it){ stockMap[it.id] = Number(it.stock) || 0; });
+    _trCart.forEach(function(c){ c.stock = stockMap[c.id] != null ? stockMap[c.id] : 0; });
+    _trRenderCart();
+  }).catch(function(){});
 }
 
 function _trFilterItems() {
@@ -4048,7 +4111,10 @@ function _trAddItem(id) {
   });
   document.getElementById('trSearch').value = '';
   document.getElementById('trSearchResults').style.display = 'none';
-  _trRenderCart();
+  // v5.10.29 — refresh per-warehouse stock for the new item if a source is set
+  var fromId = (document.getElementById('trFrom')||{}).value || '';
+  if (fromId) _trRefreshSourceStock(fromId);
+  else _trRenderCart();
 }
 
 function _trUpdateDual(idx, bigVal, smallVal) {
@@ -4065,15 +4131,22 @@ function _trRemoveItem(idx) {
 
 function _trRenderCart() {
   var tb = document.getElementById('trCartBody');
-  if (!_trCart.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-msg">ابحث وأضف المواد</td></tr>'; return; }
+  if (!_trCart.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-msg">ابحث وأضف المواد</td></tr>'; _trUpdateGlobalWarning(); return; }
   tb.innerHTML = _trCart.map(function(c, i) {
     var hasBig = c.bigUnit && c.convRate > 1;
     var bigStk = hasBig ? Math.floor(c.stock / c.convRate) : '';
     var smallStk = hasBig ? (c.stock % c.convRate) : c.stock;
-    var inputS = 'width:60px;padding:5px;text-align:center;font-weight:800;border:1.5px solid #e2e8f0;border-radius:8px;';
-    return '<tr>' +
-      '<td style="font-weight:700;">' + c.name + '</td>' +
-      '<td style="text-align:center;font-weight:800;color:#1e40af;">' + c.stock + '</td>' +
+    // v5.10.29 — flag rows where requested qty exceeds source warehouse stock
+    var requested = (hasBig ? Number(c._bigInput || 0) * c.convRate : 0) + Number(c._smallInput || 0);
+    var over = requested > c.stock;
+    var rowBg = over ? 'background:#fee2e2;' : '';
+    var stockClr = c.stock <= 0 ? '#dc2626' : (over ? '#dc2626' : '#1e40af');
+    var inputBase = 'width:60px;padding:5px;text-align:center;font-weight:800;border:1.5px solid;border-radius:8px;';
+    var inputS = inputBase + (over ? 'border-color:#dc2626;background:#fff;' : 'border-color:#e2e8f0;');
+    var warnIcon = over ? ' <i class="fas fa-triangle-exclamation" title="الكمية المطلوبة تتجاوز المتاح في المصدر" style="color:#dc2626;font-size:11px;"></i>' : '';
+    return '<tr style="' + rowBg + '">' +
+      '<td style="font-weight:700;">' + c.name + warnIcon + '</td>' +
+      '<td style="text-align:center;font-weight:800;color:' + stockClr + ';">' + c.stock + '</td>' +
       '<td style="text-align:center;color:#64748b;">' + (hasBig ? c.bigUnit + ' <span style="font-size:11px;color:#94a3b8;">(' + bigStk + ')</span>' : '—') + '</td>' +
       '<td style="text-align:center;">' + (hasBig ? '<input type="number" min="0" step="1" style="' + inputS + '" value="' + (c._bigInput === '' ? '' : c._bigInput) + '" oninput="_trUpdateDual(' + i + ',this.value,null)" placeholder="0">' : '—') + '</td>' +
       '<td style="text-align:center;color:#64748b;">' + (c.unit || '') + ' <span style="font-size:11px;color:#94a3b8;">(' + smallStk + ')</span></td>' +
@@ -4082,12 +4155,65 @@ function _trRenderCart() {
       '<td><button style="width:28px;height:28px;border-radius:6px;border:1px solid #fecaca;background:#fee2e2;color:#ef4444;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;justify-content:center;" onclick="_trRemoveItem(' + i + ')"><i class="fas fa-times"></i></button></td>' +
     '</tr>';
   }).join('');
+  _trUpdateGlobalWarning();
+}
+
+// v5.10.29 — Aggregate warning above the cart: counts over-quantity rows
+// and disables the save button when any line is invalid.
+function _trUpdateGlobalWarning() {
+  var fromId = (document.getElementById('trFrom')||{}).value || '';
+  var toId   = (document.getElementById('trTo')||{}).value || '';
+  var box  = document.getElementById('trWarning');
+  var text = document.getElementById('trWarningText');
+  var btn  = document.getElementById('erpModalSaveBtn');
+  var problems = [];
+
+  if (!fromId)         problems.push('اختر مستودع المصدر');
+  if (!toId)           problems.push('اختر مستودع الوجهة');
+  if (fromId && toId && fromId === toId) problems.push('لا يمكن التحويل لنفس المستودع');
+
+  var overRows = _trCart.filter(function(c){
+    var req = (c.bigUnit && c.convRate > 1 ? Number(c._bigInput||0) * c.convRate : 0) + Number(c._smallInput||0);
+    return req > c.stock;
+  });
+  if (overRows.length) problems.push(overRows.length + ' بند بكمية تتجاوز المتاح في المصدر');
+
+  var hasQty = _trCart.some(function(c){
+    var req = (c.bigUnit && c.convRate > 1 ? Number(c._bigInput||0) * c.convRate : 0) + Number(c._smallInput||0);
+    return req > 0;
+  });
+  if (_trCart.length && !hasQty) problems.push('أدخل كميات للمواد المضافة');
+
+  if (box && text) {
+    if (problems.length) {
+      text.textContent = problems.join(' · ');
+      box.style.display = '';
+    } else {
+      box.style.display = 'none';
+    }
+  }
+  if (btn) {
+    btn.disabled = problems.length > 0 || !_trCart.length;
+    btn.style.opacity = btn.disabled ? '0.5' : '';
+    btn.style.cursor  = btn.disabled ? 'not-allowed' : '';
+  }
 }
 
 function erpSubmitTransfer() {
   var from = document.getElementById('trFrom').value, to = document.getElementById('trTo').value;
-  if (from === to) return showToast('اختر مستودعين مختلفين', true);
+  if (!from || !to) return showToast('اختر مستودعَي المصدر والوجهة', true);
+  if (from === to) return showToast('لا يمكن التحويل لنفس المستودع', true);
   if (!_trCart.length) return showToast('أضف مواد أولاً', true);
+
+  // v5.10.29 — block submit if any line exceeds source qty.
+  var overflow = _trCart.filter(function(c){
+    var req = (c.bigUnit && c.convRate > 1 ? Number(c._bigInput||0) * c.convRate : 0) + Number(c._smallInput||0);
+    return req > c.stock;
+  });
+  if (overflow.length) {
+    return showToast(overflow.length + ' بند بكمية تتجاوز المتاح في المصدر — راجع الجدول', true);
+  }
+
   // Build items with calculated quantities
   var items = _trCart.map(function(c) {
     var b = Number(c._bigInput) || 0;

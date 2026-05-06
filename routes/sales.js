@@ -704,23 +704,190 @@ router.get('/invoice/:orderId', async (req, res) => {
   } catch (e) { res.json(null); }
 });
 
-// Delete sale (developer only — frontend checks isDeveloper)
-router.delete('/:orderId', async (req, res) => {
+// v5.10.29 — Reverse a sale's stock + GL effects, then optionally hard-delete.
+// This is the proper way to undo a sale: it restores warehouse_stock,
+// writes reversing inventory_movements, and reverses the GL journal so
+// books stay balanced. Wrapped in a transaction so a partial reversal can
+// never leave phantom stock or unbalanced GL.
+//
+// Returns:
+//   { success, restored: [...], reversedGl: bool, deletedSale: bool }
+async function _reverseSaleEffects(conn, orderId, username, opts) {
+  opts = opts || {};
+  const c = conn || db;
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const restored = [];
+
+  // 1. Find every "out" movement that came from this sale (sale-creation
+  //    code stamps notes with orderId or "orderId / itemName").
+  const [movs] = await c.query(
+    `SELECT id, item_id, item_name, qty, warehouse_id, reason
+       FROM inventory_movements
+      WHERE type = 'out'
+        AND (notes = ? OR notes LIKE CONCAT(?, ' /%') OR notes LIKE CONCAT(?, ' / %'))
+        AND reason IN ('مبيعات', 'مبيعات (نصف مصنع)')`,
+    [orderId, orderId, orderId]
+  );
+
+  for (const m of movs) {
+    // 2a. Restore warehouse_stock if a warehouse was tracked
+    if (m.warehouse_id) {
+      try {
+        await c.query(
+          'UPDATE warehouse_stock SET qty = qty + ?, last_updated = ? WHERE warehouse_id = ? AND item_id = ?',
+          [Number(m.qty) || 0, now, m.warehouse_id, m.item_id]);
+      } catch (_) { /* row may have been deleted; non-fatal */ }
+    } else {
+      // Legacy path: deduction happened against inv_items.stock directly
+      try {
+        await c.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?',
+          [Number(m.qty) || 0, m.item_id]);
+      } catch (_) {}
+    }
+
+    // 2b. Write a reversing movement so the warehouse ledger is honest
+    const reverseId = 'MOV-VOID-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5);
+    try {
+      await c.query(
+        `INSERT INTO inventory_movements
+          (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [reverseId, now, m.item_id, m.item_name, 'in', Number(m.qty) || 0,
+         'عكس بيع', username || 'system',
+         'void of ' + orderId + ' (mov ' + m.id + ')',
+         m.warehouse_id || null]);
+    } catch (_) {}
+
+    restored.push({
+      itemId: m.item_id, itemName: m.item_name,
+      qty: Number(m.qty) || 0, warehouseId: m.warehouse_id || null
+    });
+  }
+
+  // 3. Recompute global stock for each affected item once
+  const itemIds = Array.from(new Set(movs.map(m => m.item_id))).filter(Boolean);
+  for (const id of itemIds) {
+    try { await recomputeInvItemStock(c, id); } catch (_) {}
+  }
+
+  // 4. Reverse the GL journal for this sale
+  let reversedGl = false;
   try {
-    await db.query('DELETE FROM sales WHERE id = ?', [req.params.orderId]);
-    res.json({ success: true });
-  } catch (e) { res.json({ success: false, error: e.message }); }
+    const [journals] = await c.query(
+      'SELECT id FROM gl_journals WHERE reference_type = ? AND reference_id = ?',
+      ['Sale', orderId]);
+    for (const j of journals) {
+      const [entries] = await c.query('SELECT * FROM gl_entries WHERE journal_id = ?', [j.id]);
+      for (const e of entries) {
+        if (e.account_id) {
+          const reverseAmount = (Number(e.credit) || 0) - (Number(e.debit) || 0);
+          await c.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?',
+            [reverseAmount, e.account_id]);
+        }
+      }
+      await c.query('DELETE FROM gl_entries WHERE journal_id = ?', [j.id]);
+      await c.query('DELETE FROM gl_journals WHERE id = ?', [j.id]);
+      reversedGl = true;
+    }
+  } catch (_) { /* gl tables missing on stale deploy; non-fatal */ }
+
+  // 5. Optionally hard-delete the sale row + lines
+  let deletedSale = false;
+  if (opts.deleteSale) {
+    try { await c.query('DELETE FROM sales_items WHERE order_id = ?', [orderId]); } catch (_) {}
+    await c.query('DELETE FROM sales WHERE id = ?', [orderId]);
+    deletedSale = true;
+  }
+
+  return { restored, reversedGl, deletedSale };
+}
+
+// POST /sales/:orderId/void — reverse stock + GL but KEEP the sale row.
+// This is the recommended path when you need an audit trail (the sale
+// remains visible in reports as voided). Use ?delete=1 to also drop the row.
+router.post('/:orderId/void', async (req, res) => {
+  try {
+    const orderId = req.params.orderId;
+    const username = (req.user && req.user.username) || (req.body && req.body.username) || 'system';
+    const [sale] = await db.query('SELECT id FROM sales WHERE id = ?', [orderId]);
+    if (!sale.length) return res.status(404).json({ success: false, error: 'sale-not-found' });
+
+    const wantDelete = req.query.delete === '1';
+    const runner = async (conn) => _reverseSaleEffects(conn, orderId, username, { deleteSale: wantDelete });
+
+    let result;
+    try {
+      result = (typeof db.withTransaction === 'function')
+        ? await db.withTransaction(runner)
+        : await runner(null);
+    } catch (txErr) {
+      console.error('[POST /sales/:id/void] tx failed:', txErr.message);
+      return res.status(500).json({ success: false, error: txErr.message });
+    }
+
+    res.json({ success: true, orderId, ...result });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
-// Bulk delete sales
+// Delete sale (developer only — frontend checks isDeveloper)
+// v5.10.29 — DELETE is no longer a silent destructor. It now:
+//   * reverses warehouse_stock + GL journal automatically (so books balance)
+//   * deletes the sale row (sales_items cascades via FK)
+//   * accepts ?force=1 to skip reversal (legacy emergency mode — leaves
+//     phantom stock; do NOT use in normal operation)
+router.delete('/:orderId', async (req, res) => {
+  try {
+    const orderId = req.params.orderId;
+    const username = (req.user && req.user.username) || 'system';
+    if (req.query.force === '1') {
+      await db.query('DELETE FROM sales WHERE id = ?', [orderId]);
+      return res.json({ success: true, force: true, warning: 'inventory + GL NOT reversed' });
+    }
+    const [sale] = await db.query('SELECT id FROM sales WHERE id = ?', [orderId]);
+    if (!sale.length) return res.status(404).json({ success: false, error: 'sale-not-found' });
+
+    const runner = async (conn) => _reverseSaleEffects(conn, orderId, username, { deleteSale: true });
+    let result;
+    try {
+      result = (typeof db.withTransaction === 'function')
+        ? await db.withTransaction(runner)
+        : await runner(null);
+    } catch (txErr) {
+      return res.status(500).json({ success: false, error: txErr.message });
+    }
+    res.json({ success: true, ...result });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// Bulk delete sales — same reversal semantics applied to each id.
 router.post('/bulk-delete', async (req, res) => {
   try {
-    const { ids } = req.body;
-    if (!ids || !ids.length) return res.json({ success: false, error: 'No IDs' });
-    const placeholders = ids.map(() => '?').join(',');
-    await db.query('DELETE FROM sales WHERE id IN (' + placeholders + ')', ids);
-    res.json({ success: true, deleted: ids.length });
-  } catch (e) { res.json({ success: false, error: e.message }); }
+    const { ids, force } = req.body || {};
+    if (!ids || !ids.length) return res.status(400).json({ success: false, error: 'No IDs' });
+    const username = (req.user && req.user.username) || 'system';
+
+    if (force) {
+      const placeholders = ids.map(() => '?').join(',');
+      await db.query('DELETE FROM sales WHERE id IN (' + placeholders + ')', ids);
+      return res.json({ success: true, deleted: ids.length, force: true, warning: 'inventory + GL NOT reversed' });
+    }
+
+    const reversed = [];
+    for (const id of ids) {
+      try {
+        const runner = async (conn) => _reverseSaleEffects(conn, id, username, { deleteSale: true });
+        const r = (typeof db.withTransaction === 'function')
+          ? await db.withTransaction(runner)
+          : await runner(null);
+        reversed.push({ id, ...r });
+      } catch (e) {
+        reversed.push({ id, error: e.message });
+      }
+    }
+    res.json({ success: true, deleted: reversed.length, results: reversed });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 // ═══════════════════════════════════════

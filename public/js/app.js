@@ -10192,9 +10192,12 @@ function _stRenderItemsPanel() {
                  '<div class="st-panel-sub">' + items.length + ' صنف · ' + totals.surplus + ' فائض · ' + totals.shortage + ' نقص</div>' +
                '</div>' +
              '</div>' +
-             (items.length > 0
-               ? '<button class="st-clear-all" onclick="_stClearAll()" title="مسح الكل"><i class="fas fa-trash-can"></i> مسح الكل</button>'
-               : '') +
+             '<div style="display:flex;gap:8px;align-items:center;">' +
+               '<button class="st-clear-all" style="background:#ede9fe;border-color:#c4b5fd;color:#6d28d9;" onclick="stOpenBulkPaste()" title="لصق جماعي من Excel أو نص"><i class="fas fa-paste"></i> لصق جماعي</button>' +
+               (items.length > 0
+                 ? '<button class="st-clear-all" onclick="_stClearAll()" title="مسح الكل"><i class="fas fa-trash-can"></i> مسح الكل</button>'
+                 : '') +
+             '</div>' +
            '</header>' +
            '<div class="st-panel-meta">' +
              '<div class="st-meta-field">' +
@@ -10410,10 +10413,17 @@ function _stFmtDateTime(d) {
          ' · ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
 }
 
-function _stAddItem(item) {
+function _stAddItem(item, opts) {
+  opts = opts || {};
   if (!window._stSession) window._stSession = { items: [], notes: '', warehouseId: '' };
-  // Prevent duplicates
-  if (window._stSession.items.some(function(i){return String(i.id)===String(item.id);})) return;
+  // v5.10.29 — duplicate prevention now toasts the user instead of silently
+  // dropping the click; bulk-paste callers can suppress with opts.silent.
+  if (window._stSession.items.some(function(i){return String(i.id)===String(item.id);})) {
+    if (!opts.silent && typeof showToast === 'function') {
+      showToast('"' + (item.name || item.id) + '" موجودة مسبقاً في الجرد', true);
+    }
+    return false;
+  }
   var sysStock = Number(item.currentStock || item.stock || 0);
   window._stSession.items.push({
     id: item.id,
@@ -10424,17 +10434,102 @@ function _stAddItem(item) {
     convRate: Number(item.convRate) || 1,
     cost: Number(item.cost) || 0,
     sysStock: sysStock,
-    actual: sysStock,
-    diff: 0
+    actual: opts.actual != null ? Number(opts.actual) : sysStock,
+    diff: opts.actual != null ? (Number(opts.actual) - sysStock) : 0
   });
   // V5.8.4 — re-render the new fullscreen editor (or fall back to legacy)
-  if (typeof _stRenderEditor === 'function' && document.getElementById('stEditorBody')) {
-    _stRenderEditor();
-  } else if (typeof renderStItems === 'function') {
-    renderStItems();
+  if (!opts.skipRender) {
+    if (typeof _stRenderEditor === 'function' && document.getElementById('stEditorBody')) {
+      _stRenderEditor();
+    } else if (typeof renderStItems === 'function') {
+      renderStItems();
+    }
+    _stSaveDraft(false);
   }
-  _stSaveDraft(false);
+  return true;
 }
+
+// v5.10.29 — Bulk paste: open a modal where the user pastes lines like
+//   "INV-001,15"   or   "INV-001 15"   or   "INV-001\t15"
+// (id/code first, optional actual qty second). Each parsed row is added to
+// the stocktake; duplicates are skipped, unknown ids are reported back.
+window.stOpenBulkPaste = function() {
+  if (!window._stSession) return;
+  // Build the modal lazily; reuses generic .glass-modal styling
+  var existing = document.getElementById('stBulkPasteModal');
+  if (existing) { existing.classList.add('show'); existing.style.display = 'flex'; return; }
+  var html =
+    '<div id="stBulkPasteModal" class="modal" style="display:flex;align-items:center;justify-content:center;">' +
+      '<div class="modal-content" style="max-width:640px;width:92%;">' +
+        '<div class="modal-title">' +
+          '<i class="fas fa-paste" style="color:#7c3aed;"></i> لصق جماعي للجرد' +
+          '<button class="modal-close" onclick="document.getElementById(\'stBulkPasteModal\').remove()">&times;</button>' +
+        '</div>' +
+        '<div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:#3730a3;line-height:1.7;">' +
+          '<i class="fas fa-circle-info"></i> الصق سطراً لكل صنف بصيغة: <code style="background:#fff;padding:2px 6px;border-radius:4px;">كود_المادة , الكمية</code><br>' +
+          'مثال: <code style="background:#fff;padding:2px 6px;border-radius:4px;">INV-1775845082769-03sa, 12</code>' +
+          '<br>الفواصل المسموحة: فاصلة، tab، أو مسافة. الكمية اختيارية (الافتراضي = الكمية النظامية).' +
+        '</div>' +
+        '<textarea id="stBulkPasteText" class="form-control" rows="10" style="font-family:Menlo,Consolas,monospace;direction:ltr;text-align:left;" placeholder="INV-001, 12&#10;INV-002, 5.5&#10;INV-003"></textarea>' +
+        '<div id="stBulkPasteResult" style="margin-top:10px;font-size:12px;color:#475569;"></div>' +
+        '<div style="display:flex;gap:10px;margin-top:14px;">' +
+          '<button class="btn btn-primary" style="flex:1;" onclick="stBulkPasteApply()"><i class="fas fa-check"></i> إضافة</button>' +
+          '<button class="btn btn-light" onclick="document.getElementById(\'stBulkPasteModal\').remove()">إلغاء</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  var div = document.createElement('div');
+  div.innerHTML = html;
+  document.body.appendChild(div.firstElementChild);
+};
+
+window.stBulkPasteApply = function() {
+  var ta = document.getElementById('stBulkPasteText');
+  var resultEl = document.getElementById('stBulkPasteResult');
+  if (!ta || !window._stSession) return;
+  var text = ta.value || '';
+  var lines = text.split(/\r?\n/).map(function(l){return l.trim();}).filter(Boolean);
+  if (!lines.length) { if (resultEl) resultEl.textContent = 'الصق سطراً واحداً على الأقل.'; return; }
+
+  // Build lookup over cached items + stocktake-loaded items (whichever is available)
+  var pool = (window.cachedRawItems && cachedRawItems.length ? cachedRawItems : null) ||
+             (window._invLive && window._invLive.data && window._invLive.data.items) || [];
+  var byId = {}, byCode = {};
+  pool.forEach(function(it){
+    if (it.id)   byId[String(it.id).trim().toLowerCase()]   = it;
+    if (it.code) byCode[String(it.code).trim().toLowerCase()] = it;
+  });
+
+  var added = 0, dup = 0, unknown = [];
+  lines.forEach(function(line){
+    var parts = line.split(/[\s,\t]+/).filter(Boolean);
+    if (!parts.length) return;
+    var idOrCode = parts[0].toLowerCase();
+    var actual = parts.length >= 2 ? Number(parts[1]) : null;
+    var item = byId[idOrCode] || byCode[idOrCode];
+    if (!item) { unknown.push(parts[0]); return; }
+    var ok = _stAddItem(item, { silent: true, skipRender: true, actual: actual });
+    if (ok) added++;
+    else dup++;
+  });
+
+  // Re-render once after all additions
+  if (typeof _stRenderEditor === 'function' && document.getElementById('stEditorBody')) _stRenderEditor();
+  else if (typeof renderStItems === 'function') renderStItems();
+  _stSaveDraft(false);
+
+  if (resultEl) {
+    var summary = 'أُضيفت ' + added + ' مادة';
+    if (dup) summary += ' · تكرار: ' + dup;
+    if (unknown.length) summary += ' · غير معروفة: ' + unknown.slice(0,5).join(', ') + (unknown.length > 5 ? '…' : '');
+    resultEl.textContent = summary;
+    resultEl.style.color = unknown.length ? '#b91c1c' : '#16a34a';
+  }
+  if (added && typeof showToast === 'function') showToast('تمت إضافة ' + added + ' مادة من اللصق الجماعي');
+  if (!unknown.length && !dup) {
+    setTimeout(function(){ var m = document.getElementById('stBulkPasteModal'); if (m) m.remove(); }, 800);
+  }
+};
 
 function _stRemoveItem(idx) {
   if (!window._stSession || !window._stSession.items) return;

@@ -130,6 +130,57 @@
   color: #6366f1;
 }
 
+/* ── Warehouse-distribution chips (المستودعات column) ────────────── */
+.inv-wh-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  max-width: 220px;
+}
+.inv-wh-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  background: linear-gradient(135deg, #ecfeff, #cffafe);
+  border: 1px solid #67e8f9;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #0e7490;
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inv-wh-chip i {
+  font-size: 10px;
+  opacity: 0.85;
+}
+.inv-wh-chip__name {
+  font-weight: 700;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inv-wh-chip__qty {
+  background: rgba(255, 255, 255, 0.85);
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: 800;
+  color: #155e75;
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+}
+.inv-wh-chip--more {
+  background: linear-gradient(135deg, #f5f3ff, #ede9fe);
+  border-color: #c4b5fd;
+  color: #5b21b6;
+  font-weight: 800;
+  cursor: help;
+}
+
 /* ── Multi-select column ─────────────────────────────────────────── */
 .wo-table--selectable thead th.col-select,
 .wo-table--selectable tbody td.col-select {

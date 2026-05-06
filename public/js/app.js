@@ -5639,7 +5639,7 @@ function _renderInvCatalogTable(items, tab) {
       ? '<button class="wo-btn wo-btn-primary inv-empty__cta" onclick="openRawModal()"><i class="fas fa-plus"></i><span>إضافة أول مادة</span></button>'
       : '';
     tb.innerHTML =
-      '<tr><td colspan="11">' +
+      '<tr><td colspan="12">' +
         '<div class="inv-empty">' +
           '<div class="inv-empty__icon"><i class="fas ' + iconCls + '"></i></div>' +
           '<div class="inv-empty__title">' + title + '</div>' +
@@ -5654,6 +5654,7 @@ function _renderInvCatalogTable(items, tab) {
     var brandHtml = it.brandName
       ? '<span class="wo-chip purple"><i class="fas fa-store"></i> ' + _invHubEsc(it.brandName) + '</span>'
       : '<span class="wo-chip neutral flat">—</span>';
+    var warehousesHtml = _invCatRenderWarehouseChips(it.warehouses);
     var createdStr = it.createdAt ? new Date(it.createdAt).toLocaleDateString('en-GB') : '—';
     var idEsc = _invHubEsc(it.id).replace(/'/g, "\\'");
     var nameEsc = _invHubEsc(it.name).replace(/'/g, "\\'");
@@ -5676,6 +5677,7 @@ function _renderInvCatalogTable(items, tab) {
         '<td><code>' + _invHubEsc(it.id) + '</code></td>' +
         '<td class="inv-row-name"><i class="fas fa-trash inv-row-name__del-icon"></i>' + _invHubEsc(it.name) + '</td>' +
         '<td>' + brandHtml + '</td>' +
+        '<td>' + warehousesHtml + '</td>' +
         '<td><span class="wo-chip neutral flat">' + _invHubEsc(it.category) + '</span></td>' +
         '<td>' + _invHubEsc(it.bigUnit || '—') + '</td>' +
         '<td>' + _invHubEsc(it.unit) + '</td>' +
@@ -5697,6 +5699,7 @@ function _renderInvCatalogTable(items, tab) {
       '<td><code>' + _invHubEsc(it.id) + '</code></td>' +
       '<td style="font-weight:700;">' + _invHubEsc(it.name) + '</td>' +
       '<td>' + brandHtml + '</td>' +
+      '<td>' + warehousesHtml + '</td>' +
       '<td><span class="wo-chip neutral flat">' + _invHubEsc(it.category) + '</span></td>' +
       '<td>' + _invHubEsc(it.bigUnit || '—') + '</td>' +
       '<td>' + _invHubEsc(it.unit) + '</td>' +
@@ -5708,6 +5711,31 @@ function _renderInvCatalogTable(items, tab) {
   }).join('');
 }
 
+// v5.10.29 — Render the per-item warehouse-distribution chips for the
+// "المستودعات" column. Hover shows full list when truncated; first two
+// chips are inline, the rest collapse into a "+N" overflow chip.
+function _invCatRenderWarehouseChips(warehouses) {
+  if (!warehouses || !warehouses.length) {
+    return '<span class="wo-chip neutral flat" title="لا يوجد مخزون نشط في أي مستودع">— لا مخزون —</span>';
+  }
+  var MAX = 2;
+  var first = warehouses.slice(0, MAX);
+  var rest  = warehouses.slice(MAX);
+  var fmt = function(n){ return Number(n || 0).toLocaleString('en', { maximumFractionDigits: 2 }); };
+  var chips = first.map(function(w){
+    return '<span class="inv-wh-chip" title="' + _invHubEsc(w.warehouseName) + ' — ' + fmt(w.qty) + '">' +
+             '<i class="fas fa-warehouse"></i>' +
+             '<span class="inv-wh-chip__name">' + _invHubEsc(w.warehouseName) + '</span>' +
+             '<span class="inv-wh-chip__qty">' + fmt(w.qty) + '</span>' +
+           '</span>';
+  });
+  if (rest.length) {
+    var tip = rest.map(function(w){ return w.warehouseName + ': ' + fmt(w.qty); }).join('\n');
+    chips.push('<span class="inv-wh-chip inv-wh-chip--more" title="' + _invHubEsc(tip) + '">+' + rest.length + '</span>');
+  }
+  return '<div class="inv-wh-chips">' + chips.join('') + '</div>';
+}
+
 // v5.10.28 — Skeleton rows shown while a fetch is in flight.
 function _invCatRenderSkeleton(rowCount) {
   var tb = q('#tbInvCatalog');
@@ -5717,6 +5745,7 @@ function _invCatRenderSkeleton(rowCount) {
     '<td class="col-select"><span class="inv-skeleton-bar short"></span></td>' +
     '<td><span class="inv-skeleton-bar medium"></span></td>' +
     '<td><span class="inv-skeleton-bar full"></span></td>' +
+    '<td><span class="inv-skeleton-bar medium"></span></td>' +
     '<td><span class="inv-skeleton-bar medium"></span></td>' +
     '<td><span class="inv-skeleton-bar short"></span></td>' +
     '<td><span class="inv-skeleton-bar short"></span></td>' +
@@ -5734,7 +5763,7 @@ function _invCatRenderError() {
   var tb = q('#tbInvCatalog');
   if (!tb) return;
   tb.innerHTML =
-    '<tr><td colspan="11">' +
+    '<tr><td colspan="12">' +
       '<div class="inv-error">' +
         '<div class="inv-error__icon"><i class="fas fa-circle-exclamation"></i></div>' +
         '<div class="inv-error__title">تعذّر تحميل الكتالوج</div>' +

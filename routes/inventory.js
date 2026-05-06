@@ -1133,8 +1133,10 @@ router.get('/catalog', async (req, res) => {
         baseSelect + whereSql + orderSql + ' LIMIT ? OFFSET ?',
         params.concat([limit, offset]));
 
+      const mapped = rows.map(_mapCatalogRow);
+      await _attachWarehouseDistribution(mapped);
       return res.json({
-        items: rows.map(_mapCatalogRow),
+        items: mapped,
         total, limit, offset,
         sort: req.query.sort || null,
         order: sortKey ? sortOrd.toLowerCase() : null
@@ -1143,7 +1145,9 @@ router.get('/catalog', async (req, res) => {
 
     // Back-compat: array shape, capped at 500 to protect memory.
     const [rows] = await db.query(baseSelect + whereSql + orderSql + ' LIMIT 500', params);
-    res.json(rows.map(_mapCatalogRow));
+    const mapped = rows.map(_mapCatalogRow);
+    await _attachWarehouseDistribution(mapped);
+    res.json(mapped);
   } catch (e) {
     res.status(500).json({ error: e.message, items: [] });
   }
@@ -1157,8 +1161,40 @@ function _mapCatalogRow(i) {
     convRate: Number(i.conv_rate) || 1, cost: Number(i.cost) || 0,
     minStock: Number(i.min_stock) || 0, globalStock: Number(i.global_stock) || 0,
     active: !!i.active, createdAt: i.created_at,
-    deletedAt: i.deleted_at
+    deletedAt: i.deleted_at,
+    warehouses: []  // populated by _attachWarehouseDistribution
   };
+}
+
+// v5.10.29 — For each catalog row, attach the list of warehouses that hold
+// this item (with their qty). Powers the "المستودعات" column in the catalog
+// table so the user can see, at a glance, where each material is stocked.
+// Single grouped query, not N+1.
+async function _attachWarehouseDistribution(items) {
+  if (!items || !items.length) return;
+  const ids = items.map(it => it.id);
+  const ph = ids.map(() => '?').join(',');
+  let rows = [];
+  try {
+    [rows] = await db.query(
+      'SELECT ws.item_id, ws.warehouse_id, ws.qty, w.name AS warehouse_name, w.code AS warehouse_code ' +
+      'FROM warehouse_stock ws LEFT JOIN warehouses w ON w.id = ws.warehouse_id ' +
+      'WHERE ws.item_id IN (' + ph + ') AND ws.qty > 0 ' +
+      'ORDER BY ws.qty DESC',
+      ids);
+  } catch (_) { return; /* table missing on stale deploy */ }
+  const byItem = {};
+  for (const r of rows) {
+    const id = r.item_id;
+    if (!byItem[id]) byItem[id] = [];
+    byItem[id].push({
+      warehouseId: r.warehouse_id,
+      warehouseName: r.warehouse_name || r.warehouse_code || r.warehouse_id,
+      warehouseCode: r.warehouse_code || '',
+      qty: Number(r.qty) || 0
+    });
+  }
+  for (const it of items) it.warehouses = byItem[it.id] || [];
 }
 
 // v5.10.25 — Catalog summary KPIs (one row, computed). Powers the
@@ -1233,31 +1269,53 @@ router.post('/items/import', async (req, res) => {
 // v5.10.19 — added warehouseId scoping so movements list no longer mixes
 // warehouses by default. Also returns warehouse_id + warehouse_name on each
 // row so the UI can render a "المستودع" column.
+// v5.10.29 — Adds ?fromDate&toDate aliases (back-compat with startDate/endDate),
+// configurable ?limit (default 200, cap 2000) + ?offset, and ?paginated=1 for
+// the new shape { items, total, limit, offset } so the UI can paginate freely.
 router.get('/movements', async (req, res) => {
   try {
-    let query =
-      'SELECT m.*, w.name AS warehouse_name, w.code AS warehouse_code ' +
-      'FROM inventory_movements m ' +
-      'LEFT JOIN warehouses w ON w.id = m.warehouse_id ' +
-      'WHERE 1=1';
+    const where = ['1=1'];
     const params = [];
+    const from = req.query.fromDate || req.query.startDate;
+    const to   = req.query.toDate   || req.query.endDate;
+    if (from)                  { where.push('DATE(m.movement_date) >= ?'); params.push(from); }
+    if (to)                    { where.push('DATE(m.movement_date) <= ?'); params.push(to); }
+    if (req.query.itemId)      { where.push('m.item_id = ?');               params.push(req.query.itemId); }
+    if (req.query.type)        { where.push('m.type = ?');                  params.push(req.query.type); }
+    if (req.query.warehouseId) { where.push('m.warehouse_id = ?');          params.push(req.query.warehouseId); }
+    if (req.query.q)           { where.push('(m.item_name LIKE ? OR m.reason LIKE ? OR m.notes LIKE ?)');
+                                 params.push('%'+req.query.q+'%','%'+req.query.q+'%','%'+req.query.q+'%'); }
 
-    if (req.query.startDate)   { query += ' AND DATE(m.movement_date) >= ?'; params.push(req.query.startDate); }
-    if (req.query.endDate)     { query += ' AND DATE(m.movement_date) <= ?'; params.push(req.query.endDate); }
-    if (req.query.itemId)      { query += ' AND m.item_id = ?';       params.push(req.query.itemId); }
-    if (req.query.type)        { query += ' AND m.type = ?';          params.push(req.query.type); }
-    if (req.query.warehouseId) { query += ' AND m.warehouse_id = ?';  params.push(req.query.warehouseId); }
+    const whereSql = ' WHERE ' + where.join(' AND ');
+    const limit = Math.max(1, Math.min(Number(req.query.limit) || 200, 2000));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const wantsPaginated = req.query.paginated === '1' || req.query.limit != null || req.query.offset != null;
 
-    query += ' ORDER BY m.movement_date DESC LIMIT 500';
+    const baseSelect =
+      'SELECT m.*, w.name AS warehouse_name, w.code AS warehouse_code ' +
+      'FROM inventory_movements m LEFT JOIN warehouses w ON w.id = m.warehouse_id';
+    const order = ' ORDER BY m.movement_date DESC, m.id DESC';
 
-    const [rows] = await db.query(query, params);
-    res.json(rows.map(m => ({
+    const [rows] = await db.query(
+      baseSelect + whereSql + order + ' LIMIT ? OFFSET ?',
+      params.concat([limit, offset]));
+    const items = rows.map(m => ({
       id: m.id, date: m.movement_date, itemId: m.item_id, itemName: m.item_name,
       type: m.type, qty: Number(m.qty), reason: m.reason, username: m.username, notes: m.notes,
       warehouseId: m.warehouse_id || '',
       warehouseName: m.warehouse_name || '',
       warehouseCode: m.warehouse_code || ''
-    })));
+    }));
+
+    if (wantsPaginated) {
+      const [countRows] = await db.query(
+        'SELECT COUNT(*) AS total FROM inventory_movements m' + whereSql, params);
+      return res.json({
+        items, total: Number((countRows[0]||{}).total) || 0,
+        limit, offset
+      });
+    }
+    res.json(items);
   } catch (e) {
     res.json([]);
   }
@@ -2305,27 +2363,44 @@ router.post('/stocktakes', async (req, res) => {
 // Get all stocktakes (list)
 // v5.10.19 — accepts ?warehouseId= to scope the list to one warehouse, and
 // joins warehouses so each row carries warehouse name/code for UI grouping.
+// v5.10.29 — fromDate/toDate aliases + ?limit/?offset/?paginated=1.
 router.get('/stocktakes', async (req, res) => {
   try {
-    let sql =
-      'SELECT s.*, w.name AS warehouse_name, w.code AS warehouse_code ' +
-      'FROM stocktakes s ' +
-      'LEFT JOIN warehouses w ON w.id = s.warehouse_id ';
+    const where = [];
     const params = [];
-    const conds = [];
-    if (req.query.warehouseId) { conds.push('s.warehouse_id = ?'); params.push(req.query.warehouseId); }
-    if (req.query.startDate)   { conds.push('DATE(s.stocktake_date) >= ?'); params.push(req.query.startDate); }
-    if (req.query.endDate)     { conds.push('DATE(s.stocktake_date) <= ?'); params.push(req.query.endDate); }
-    if (conds.length) sql += 'WHERE ' + conds.join(' AND ') + ' ';
-    sql += 'ORDER BY s.stocktake_date DESC LIMIT 200';
-    const [rows] = await db.query(sql, params);
-    res.json(rows.map(s => ({
+    const from = req.query.fromDate || req.query.startDate;
+    const to   = req.query.toDate   || req.query.endDate;
+    if (req.query.warehouseId) { where.push('s.warehouse_id = ?');         params.push(req.query.warehouseId); }
+    if (from)                  { where.push('DATE(s.stocktake_date) >= ?'); params.push(from); }
+    if (to)                    { where.push('DATE(s.stocktake_date) <= ?'); params.push(to); }
+    if (req.query.status)      { where.push('s.status = ?');                params.push(req.query.status); }
+    if (req.query.username)    { where.push('s.username = ?');              params.push(req.query.username); }
+    const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
+
+    const limit = Math.max(1, Math.min(Number(req.query.limit) || 200, 2000));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const wantsPaginated = req.query.paginated === '1' || req.query.limit != null || req.query.offset != null;
+
+    const baseSelect =
+      'SELECT s.*, w.name AS warehouse_name, w.code AS warehouse_code ' +
+      'FROM stocktakes s LEFT JOIN warehouses w ON w.id = s.warehouse_id';
+    const order = ' ORDER BY s.stocktake_date DESC, s.id DESC';
+
+    const [rows] = await db.query(baseSelect + whereSql + order + ' LIMIT ? OFFSET ?',
+      params.concat([limit, offset]));
+    const items = rows.map(s => ({
       id: s.id, date: s.stocktake_date, username: s.username, notes: s.notes,
       status: s.status, itemsCount: s.items_count, totalVariance: Number(s.total_variance),
       warehouseId: s.warehouse_id || '',
       warehouseName: s.warehouse_name || '',
       warehouseCode: s.warehouse_code || ''
-    })));
+    }));
+
+    if (wantsPaginated) {
+      const [countRows] = await db.query('SELECT COUNT(*) AS total FROM stocktakes s' + whereSql, params);
+      return res.json({ items, total: Number((countRows[0]||{}).total) || 0, limit, offset });
+    }
+    res.json(items);
   } catch (e) { res.json([]); }
 });
 
@@ -2452,30 +2527,45 @@ router.post('/adjustments/:id/approve', async (req, res) => {
 // v5.10.20 — accepts ?warehouseId, ?startDate, ?endDate, ?status, ?reason
 // so the unified filter bar in the adjustments tab can scope server-side.
 // Also returns warehouse_name when adjustments table has warehouse_id.
+// v5.10.29 — fromDate/toDate aliases + ?limit/?offset/?paginated=1.
 router.get('/adjustments', async (req, res) => {
   try {
-    let sql =
-      'SELECT a.*, w.name AS warehouse_name, w.code AS warehouse_code ' +
-      'FROM stock_adjustments a ' +
-      'LEFT JOIN warehouses w ON w.id = a.warehouse_id ';
+    const where = [];
     const params = [];
-    const conds = [];
-    if (req.query.warehouseId) { conds.push('a.warehouse_id = ?'); params.push(req.query.warehouseId); }
-    if (req.query.startDate)   { conds.push('DATE(a.adjustment_date) >= ?'); params.push(req.query.startDate); }
-    if (req.query.endDate)     { conds.push('DATE(a.adjustment_date) <= ?'); params.push(req.query.endDate); }
-    if (req.query.status)      { conds.push('a.status = ?'); params.push(req.query.status); }
-    if (req.query.reason)      { conds.push('a.reason = ?'); params.push(req.query.reason); }
-    if (conds.length) sql += 'WHERE ' + conds.join(' AND ') + ' ';
-    sql += 'ORDER BY a.adjustment_date DESC LIMIT 200';
+    const from = req.query.fromDate || req.query.startDate;
+    const to   = req.query.toDate   || req.query.endDate;
+    if (req.query.warehouseId) { where.push('a.warehouse_id = ?');           params.push(req.query.warehouseId); }
+    if (from)                  { where.push('DATE(a.adjustment_date) >= ?'); params.push(from); }
+    if (to)                    { where.push('DATE(a.adjustment_date) <= ?'); params.push(to); }
+    if (req.query.status)      { where.push('a.status = ?');                 params.push(req.query.status); }
+    if (req.query.reason)      { where.push('a.reason = ?');                 params.push(req.query.reason); }
+    if (req.query.username)    { where.push('a.username = ?');               params.push(req.query.username); }
+    const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
+
+    const limit  = Math.max(1, Math.min(Number(req.query.limit) || 200, 2000));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const wantsPaginated = req.query.paginated === '1' || req.query.limit != null || req.query.offset != null;
+
+    const baseSelect =
+      'SELECT a.*, w.name AS warehouse_name, w.code AS warehouse_code ' +
+      'FROM stock_adjustments a LEFT JOIN warehouses w ON w.id = a.warehouse_id';
+    const order = ' ORDER BY a.adjustment_date DESC, a.id DESC';
+
     let rows;
+    let total = null;
     try {
-      [rows] = await db.query(sql, params);
+      [rows] = await db.query(baseSelect + whereSql + order + ' LIMIT ? OFFSET ?',
+        params.concat([limit, offset]));
+      if (wantsPaginated) {
+        const [c] = await db.query('SELECT COUNT(*) AS total FROM stock_adjustments a' + whereSql, params);
+        total = Number((c[0]||{}).total) || 0;
+      }
     } catch (_) {
       // Fallback for very old schemas without warehouse_id on stock_adjustments
-      [rows] = await db.query('SELECT * FROM stock_adjustments ORDER BY adjustment_date DESC LIMIT 200');
+      [rows] = await db.query('SELECT * FROM stock_adjustments ORDER BY adjustment_date DESC LIMIT ?', [limit]);
       rows = rows.map(r => Object.assign({}, r, { warehouse_name: null, warehouse_code: null }));
     }
-    res.json(rows.map(a => ({
+    const items = rows.map(a => ({
       id: a.id, date: a.adjustment_date, reason: a.reason,
       reasonLabel: REASON_LABELS[a.reason] || a.reason,
       reasonNotes: a.reason_notes, username: a.username,
@@ -2484,7 +2574,9 @@ router.get('/adjustments', async (req, res) => {
       warehouseId: a.warehouse_id || '',
       warehouseName: a.warehouse_name || '',
       warehouseCode: a.warehouse_code || ''
-    })));
+    }));
+    if (wantsPaginated) return res.json({ items, total: total || items.length, limit, offset });
+    res.json(items);
   } catch (e) { res.json([]); }
 });
 

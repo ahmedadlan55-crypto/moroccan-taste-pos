@@ -21,9 +21,90 @@ async function _ensureCatalogSoftDeleteColumn() {
     console.warn('[inventory] v5.10.25 deleted_at migration skipped:', e.message);
   }
 }
+// v5.10.29 — Idempotent schema migrations for the inventory + accounting
+// dimensions that the code relies on but the seed schema doesn't always
+// declare. Each runs once per server lifetime; subsequent calls are a
+// no-op. Errors are warned but never fatal — they let stale deploys keep
+// working until the operator updates the schema.
+let _v51029MigrationsRan = false;
+async function _ensureColumn(table, column, definition) {
+  const [cols] = await db.query(
+    "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1",
+    [table, column]);
+  if (!cols.length) {
+    await db.query(`ALTER TABLE \`${table}\` ADD COLUMN ${definition}`);
+    console.log(`[inventory v5.10.29] added ${table}.${column}`);
+  }
+}
+async function _ensureIndex(table, indexName, columns) {
+  const [idx] = await db.query(
+    "SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ? LIMIT 1",
+    [table, indexName]);
+  if (!idx.length) {
+    await db.query(`CREATE INDEX \`${indexName}\` ON \`${table}\` (${columns})`);
+    console.log(`[inventory v5.10.29] created index ${indexName} on ${table}(${columns})`);
+  }
+}
+async function _ensureTable(name, ddl) {
+  const [t] = await db.query(
+    "SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1",
+    [name]);
+  if (!t.length) {
+    await db.query(ddl);
+    console.log(`[inventory v5.10.29] created table ${name}`);
+  }
+}
+async function _runV51029Migrations() {
+  if (_v51029MigrationsRan) return;
+  try {
+    // (1) inventory_movements.warehouse_id — code assumes this exists
+    //     (warehouse-aware reports + per-cashier deduction). On older
+    //     deploys the seed schema lacks it; add NULLABLE so historic rows
+    //     stay valid.
+    await _ensureColumn('inventory_movements', 'warehouse_id',
+      'warehouse_id VARCHAR(50) NULL DEFAULT NULL');
+    await _ensureIndex('inventory_movements', 'idx_invmov_wh_date',
+      'warehouse_id, movement_date');
+
+    // (2) gl_entries dimensions — accounting dimension columns the
+    //     glPosting service writes to, but core schema only carries the
+    //     basic columns. Without them, dimension reports return blanks.
+    await _ensureColumn('gl_entries', 'warehouse_id',  'warehouse_id  VARCHAR(50) NULL DEFAULT NULL');
+    await _ensureColumn('gl_entries', 'branch_id',     'branch_id     VARCHAR(50) NULL DEFAULT NULL');
+    await _ensureColumn('gl_entries', 'cost_center_id','cost_center_id VARCHAR(50) NULL DEFAULT NULL');
+    await _ensureColumn('gl_entries', 'brand_id',      'brand_id      VARCHAR(50) NULL DEFAULT NULL');
+    await _ensureIndex('gl_entries', 'idx_gle_dim_warehouse', 'warehouse_id');
+    await _ensureIndex('gl_entries', 'idx_gle_dim_branch',    'branch_id');
+    await _ensureIndex('gl_entries', 'idx_gle_dim_costctr',   'cost_center_id');
+    await _ensureIndex('gl_entries', 'idx_gle_dim_brand',     'brand_id');
+
+    // (3) cost_centers master — referenced by budgets/AP/AR but never
+    //     created in the seed. Minimal hierarchy + branch link.
+    await _ensureTable('cost_centers', `
+      CREATE TABLE cost_centers (
+        id          VARCHAR(50) PRIMARY KEY,
+        code        VARCHAR(50) UNIQUE,
+        name_ar     VARCHAR(200) NOT NULL,
+        name_en     VARCHAR(200),
+        branch_id   VARCHAR(50) NULL,
+        parent_id   VARCHAR(50) NULL,
+        is_active   BOOLEAN DEFAULT TRUE,
+        notes       TEXT,
+        created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by  VARCHAR(80),
+        FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+    _v51029MigrationsRan = true;
+  } catch (e) {
+    console.warn('[inventory v5.10.29] migration warning:', e.message);
+  }
+}
+
 // Best-effort: trigger on first request that touches the catalog
 router.use(async (req, res, next) => {
   if (!_catalogColumnEnsured) await _ensureCatalogSoftDeleteColumn();
+  if (!_v51029MigrationsRan)  await _runV51029Migrations();
   next();
 });
 

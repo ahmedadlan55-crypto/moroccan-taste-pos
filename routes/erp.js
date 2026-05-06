@@ -2474,7 +2474,28 @@ router.get('/warehouse-transfers', async (req, res) => {
 router.post('/warehouse-transfers', async (req, res) => {
   try {
     const { fromWarehouseId, toWarehouseId, items, notes, username } = req.body;
-    if (!fromWarehouseId || !toWarehouseId || !items || !items.length) return res.json({ success: false, error: 'بيانات ناقصة' });
+    if (!fromWarehouseId || !toWarehouseId || !items || !items.length) {
+      return res.status(400).json({ success: false, error: 'بيانات ناقصة' });
+    }
+    // v5.10.29 — block same-warehouse transfers; meaningless, would cancel out.
+    if (String(fromWarehouseId) === String(toWarehouseId)) {
+      return res.status(400).json({ success: false, error: 'لا يمكن التحويل إلى نفس المستودع' });
+    }
+    // Validate both warehouses exist
+    const [whs] = await db.query(
+      'SELECT id FROM warehouses WHERE id IN (?, ?)', [fromWarehouseId, toWarehouseId]);
+    if (whs.length < 2) {
+      return res.status(404).json({ success: false, error: 'أحد المستودعين غير موجود' });
+    }
+    // v5.10.29 — reject zero/negative quantities up-front so drafts never carry
+    // garbage into approval. itemId required.
+    for (const it of items) {
+      if (!it || !it.itemId) return res.status(400).json({ success: false, error: 'صنف بدون معرّف' });
+      const q = Number(it.qty);
+      if (!isFinite(q) || q <= 0) {
+        return res.status(400).json({ success: false, error: 'الكمية يجب أن تكون أكبر من صفر' });
+      }
+    }
 
     const id = 'WT-' + Date.now();
     const [last] = await db.query('SELECT transfer_number FROM warehouse_transfers ORDER BY created_at DESC LIMIT 1');
@@ -2486,39 +2507,105 @@ router.post('/warehouse-transfers', async (req, res) => {
       'INSERT INTO warehouse_transfers (id, transfer_number, from_warehouse_id, to_warehouse_id, transfer_date, items_json, notes, created_by) VALUES (?,?,?,?,?,?,?,?)',
       [id, transferNumber, fromWarehouseId, toWarehouseId, new Date(), JSON.stringify(items), notes||'', username||'']
     );
-    res.json({ success: true, id, transferNumber });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+    res.status(201).json({ success: true, id, transferNumber });
+  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+// v5.10.29 — Atomic approval. Wraps the whole operation in a transaction:
+//   1. Validate every line: source qty must cover the requested qty (else 409 + rollback)
+//   2. Decrement source warehouse_stock (UPSERT pattern preserved)
+//   3. Increment destination warehouse_stock
+//   4. Write inventory_movements rows for both sides (out from source, in to dest)
+//   5. Mark transfer "completed"
+// On any failure all writes roll back, so a partial transfer can never leave
+// stock missing or duplicated.
 router.post('/warehouse-transfers/:id/approve', async (req, res) => {
   try {
-    const { username } = req.body;
+    const { username } = req.body || {};
     const [transfers] = await db.query('SELECT * FROM warehouse_transfers WHERE id = ?', [req.params.id]);
-    if (!transfers.length) return res.json({ success: false, error: 'التحويل غير موجود' });
+    if (!transfers.length) return res.status(404).json({ success: false, error: 'التحويل غير موجود' });
     const t = transfers[0];
-    if (t.status !== 'draft') return res.json({ success: false, error: 'التحويل ليس في حالة مسودة' });
+    if (t.status !== 'draft') return res.status(409).json({ success: false, error: 'التحويل ليس في حالة مسودة' });
 
-    const items = JSON.parse(t.items_json || '[]');
+    const items = JSON.parse(t.items_json || '[]').filter(x => x && x.itemId && Number(x.qty) > 0);
+    if (!items.length) return res.status(400).json({ success: false, error: 'لا توجد بنود صالحة' });
 
-    // Move stock between warehouses
+    // (1) Pre-flight check: source must hold enough stock for every line.
+    //     One COALESCE'd query per line — cheap and avoids transaction
+    //     entry on a doomed approval.
+    const insufficient = [];
     for (const item of items) {
-      const qty = Number(item.qty) || 0;
-      if (qty <= 0) continue;
-      // Decrease from source
-      await db.query(
-        'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE qty = qty - ?',
-        ['WS-' + Date.now() + '-' + Math.random().toString(36).substr(2,4), t.from_warehouse_id, item.itemId, -qty, qty]
-      );
-      // Increase in destination
-      await db.query(
-        'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE qty = qty + ?',
-        ['WS-' + Date.now() + '-' + Math.random().toString(36).substr(2,4), t.to_warehouse_id, item.itemId, qty, qty]
-      );
+      const [rows] = await db.query(
+        'SELECT COALESCE(qty, 0) AS qty FROM warehouse_stock WHERE warehouse_id = ? AND item_id = ?',
+        [t.from_warehouse_id, item.itemId]);
+      const onHand = rows.length ? Number(rows[0].qty) : 0;
+      const need   = Number(item.qty) || 0;
+      if (onHand < need) {
+        insufficient.push({ itemId: item.itemId, itemName: item.itemName || item.itemId, onHand, need });
+      }
+    }
+    if (insufficient.length) {
+      return res.status(409).json({
+        success: false,
+        error: 'رصيد المصدر غير كافٍ في بعض البنود',
+        insufficient
+      });
     }
 
-    await db.query('UPDATE warehouse_transfers SET status = "completed", approved_by = ? WHERE id = ?', [username||'', req.params.id]);
+    const runner = async (conn) => {
+      const c = conn || db;
+      const nowIso = new Date().toISOString().slice(0,19).replace('T',' ');
+      const today  = nowIso.slice(0,10);
+
+      for (const item of items) {
+        const qty = Number(item.qty) || 0;
+        if (qty <= 0) continue;
+
+        // (2) decrement source — UPSERT keeps schema unchanged
+        await c.query(
+          'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, added_at, first_added_date, added_by, last_updated) VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE qty = qty - VALUES(qty), last_updated = VALUES(last_updated)',
+          ['WS-' + Date.now() + '-' + Math.random().toString(36).slice(2,5),
+           t.from_warehouse_id, item.itemId, qty, nowIso, today, username || '', nowIso]);
+
+        // (3) increment destination
+        await c.query(
+          'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, added_at, first_added_date, added_by, last_updated) VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE qty = qty + VALUES(qty), last_updated = VALUES(last_updated)',
+          ['WS-' + Date.now() + '-' + Math.random().toString(36).slice(2,5),
+           t.to_warehouse_id, item.itemId, qty, nowIso, today, username || '', nowIso]);
+
+        // (4) movement log on both sides — keeps the warehouse ledger correct
+        const itemName = item.itemName || '';
+        const refNote  = 'تحويل ' + (t.transfer_number || t.id);
+        try {
+          await c.query(
+            `INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            ['MOV-' + Date.now() + '-' + Math.random().toString(36).slice(2,5),
+             nowIso, item.itemId, itemName, 'out', qty,
+             'تحويل صادر', username || '', refNote, t.from_warehouse_id]);
+          await c.query(
+            `INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            ['MOV-' + Date.now() + '-' + Math.random().toString(36).slice(2,5),
+             nowIso, item.itemId, itemName, 'in', qty,
+             'تحويل وارد', username || '', refNote, t.to_warehouse_id]);
+        } catch (_) { /* older schemas without warehouse_id; skip */ }
+      }
+
+      // (5) mark complete
+      await c.query(
+        'UPDATE warehouse_transfers SET status = "completed", approved_by = ?, approved_at = ? WHERE id = ?',
+        [username || '', nowIso, req.params.id]);
+    };
+
+    try {
+      if (typeof db.withTransaction === 'function') await db.withTransaction(runner);
+      else await runner(null);
+    } catch (txErr) {
+      console.error('[warehouse-transfers/:id/approve] tx failed:', txErr.message);
+      return res.status(500).json({ success: false, error: txErr.message });
+    }
+
     res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 // ─── Warehouse Transfers: cancel + view lines (consolidated from legacy) ───

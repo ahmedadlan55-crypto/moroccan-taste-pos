@@ -17051,46 +17051,415 @@ function prdComplete(id) {
 // PHASE 3 — EXPIRY / SLOW / TURNOVER
 // ═══════════════════════════════════════════════════════════════════
 
+// v5.10.33 — Expiry alerts: enterprise rewrite
+window._expState = window._expState || {
+  page: 1,
+  pageSize: 100,
+  bucket: 'all',
+  searchTimer: null,
+  filtersHydrated: false,
+  lastTotal: 0
+};
+
 function expLoad() {
-  var days = document.getElementById('expDays').value;
+  _expHydrateFilters();
+  var s  = window._expState;
+  var qs = ['paginated=1', 'limit=' + s.pageSize, 'offset=' + ((s.page - 1) * s.pageSize)];
+
+  var days   = (document.getElementById('expDays')||{}).value || '30';
+  var fromD  = (document.getElementById('expFromDate')||{}).value || '';
+  var toD    = (document.getElementById('expToDate')||{}).value   || '';
+  var whId   = (document.getElementById('expWarehouseFilter')||{}).value || '';
+  var brand  = (document.getElementById('expBrandFilter')||{}).value     || '';
+  var cat    = (document.getElementById('expCategoryFilter')||{}).value  || '';
+  var search = ((document.getElementById('expSearch')||{}).value || '').trim();
+
+  // If user picked a custom date range, ignore the days dropdown
+  if (fromD || toD) {
+    if (fromD) qs.push('fromDate=' + encodeURIComponent(fromD));
+    if (toD)   qs.push('toDate='   + encodeURIComponent(toD));
+    qs.push('includeSafe=1'); // a custom range may include safe rows
+  } else {
+    qs.push('days=' + encodeURIComponent(days));
+  }
+  if (whId)   qs.push('warehouseId=' + encodeURIComponent(whId));
+  if (brand)  qs.push('brandId='     + encodeURIComponent(brand));
+  if (cat)    qs.push('category='    + encodeURIComponent(cat));
+  if (search) qs.push('q='            + encodeURIComponent(search));
+  if (s.bucket && s.bucket !== 'all') {
+    qs.push('status=' + encodeURIComponent(s.bucket));
+    qs.push('includeSafe=1');
+  }
+
   var body = document.getElementById('expBody');
-  body.innerHTML = _woLoadingRow(7) + _woLoadingRow(7);
-  _erpGet('/erp/expiry-alerts?days=' + days, function(rows){
-    if (!Array.isArray(rows)) rows = [];
-    // Metrics
-    var metrics = document.getElementById('expMetrics');
-    if (metrics) {
-      var expired = rows.filter(function(r){return Number(r.days_remaining)<0;}).length;
-      var critical = rows.filter(function(r){var d=Number(r.days_remaining); return d>=0 && d<7;}).length;
-      var soon    = rows.filter(function(r){var d=Number(r.days_remaining); return d>=7 && d<30;}).length;
-      var atRisk  = rows.reduce(function(s,r){return s + Number(r.qty_remaining||0)*Number(r.unit_cost||0);}, 0);
-      metrics.innerHTML =
-        _woMetric('fa-triangle-exclamation', 'danger', 'منتهية الصلاحية', expired, 'danger') +
-        _woMetric('fa-fire', 'danger', 'حرجة (< 7 أيام)', critical, 'danger') +
-        _woMetric('fa-hourglass-half', 'warning', 'قريبة (< 30 يوم)', soon, 'warning') +
-        _woMetric('fa-sack-dollar', 'warning', 'قيمة المخزون المعرض', atRisk.toLocaleString('en',{minimumFractionDigits:2}), 'warning');
-    }
-    if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="7">' + _woEmpty('fa-shield-heart', 'لا توجد دفعات قرب الانتهاء', 'كل المخزون في المدى الآمن — المخزون المسجّل برقم دفعة وتاريخ انتهاء سيظهر هنا قبل وقته بكفاية.') + '</td></tr>';
-      return;
-    }
-    body.innerHTML = rows.map(function(r){
-      var d = Number(r.days_remaining);
-      var cls = d < 0 ? 'row-critical' : (d < 7 ? 'row-critical' : (d < 30 ? 'row-warning' : ''));
-      var chipClass = d < 0 ? 'expired' : (d < 7 ? 'critical' : (d < 30 ? 'soon' : 'ok'));
-      var chipText = d < 0 ? 'منتهية ('+Math.abs(d)+' يوم)' : (d + ' يوم متبقي');
-      return '<tr class="'+cls+'">' +
-        '<td data-label="الصنف"><b>'+_woEscapeHtml(r.item_name||'')+'</b></td>' +
-        '<td data-label="المستودع">'+_woEscapeHtml(r.warehouse_name||'—')+'</td>' +
-        '<td data-label="رقم الدفعة"><code>'+_woEscapeHtml(r.batch_number||'—')+'</code></td>' +
-        '<td data-label="الكمية" class="num">'+Number(r.qty_remaining||0).toLocaleString('en')+'</td>' +
-        '<td data-label="تاريخ الانتهاء">'+_woEscapeHtml(r.expiry_date||'')+'</td>' +
-        '<td data-label="الحالة"><span class="wo-chip '+chipClass+'">'+chipText+'</span></td>' +
-        '<td data-label="تكلفة الوحدة" class="num">'+Number(r.unit_cost||0).toFixed(4)+'</td>' +
-      '</tr>';
-    }).join('');
-  });
+  body.innerHTML = _woLoadingRow(9) + _woLoadingRow(9) + _woLoadingRow(9);
+
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/expiry-alerts?' + qs.join('&'),
+    { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j || !j.success) {
+        body.innerHTML = '<tr><td colspan="9">' + _woEmpty('fa-circle-exclamation','تعذّر تحميل تنبيهات الصلاحية', (j && j.error) || 'تحقق من الاتصال ثم أعد المحاولة.') + '</td></tr>';
+        return;
+      }
+      window._expSnapshot = j;
+      _expRenderMetrics(j.summary);
+      _expRenderBuckets(j.summary);
+      _expRenderRows(j.items);
+      _expRenderPagination(j.total, j.limit, j.offset);
+      _expLoadTimeline();
+    })
+    .catch(function(e){
+      body.innerHTML = '<tr><td colspan="9">' + _woEmpty('fa-circle-exclamation','خطأ', (e && e.message) || 'فشل الاتصال') + '</td></tr>';
+    });
 }
+
+window.expOnSearchInput = function(){
+  var s = window._expState;
+  if (s.searchTimer) clearTimeout(s.searchTimer);
+  s.searchTimer = setTimeout(function(){ s.page = 1; expLoad(); }, 300);
+};
+
+window.expClearFilters = function(){
+  ['expSearch','expFromDate','expToDate','expWarehouseFilter','expBrandFilter','expCategoryFilter']
+    .forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+  var d = document.getElementById('expDays'); if (d) d.value = '30';
+  window._expState.bucket = 'all';
+  window._expState.page = 1;
+  expLoad();
+};
+
+window.expChangePageSize = function(v){
+  window._expState.pageSize = Math.max(10, Math.min(2000, Number(v)||100));
+  window._expState.page = 1;
+  expLoad();
+};
+window.expGoto = function(p){
+  var s = window._expState, snap = window._expSnapshot || {};
+  var totalPages = Math.max(1, Math.ceil((snap.total || 0) / s.pageSize));
+  s.page = Math.max(1, Math.min(totalPages, Number(p)||1));
+  expLoad();
+};
+window.expGoRel  = function(d){ expGoto((Number(window._expState.page)||1) + Number(d)); };
+window.expGoLast = function(){
+  var snap = window._expSnapshot || {};
+  expGoto(Math.max(1, Math.ceil((snap.total||0) / window._expState.pageSize)));
+};
+
+window.expFilterByBucket = function(bucket){
+  window._expState.bucket = bucket || 'all';
+  window._expState.page = 1;
+  document.querySelectorAll('.exp-bucket-pill').forEach(function(p){
+    p.classList.toggle('is-active', p.getAttribute('data-bucket') === window._expState.bucket);
+  });
+  expLoad();
+};
+
+function _expRenderMetrics(s){
+  s = s || {};
+  var metrics = document.getElementById('expMetrics');
+  if (!metrics) return;
+  var fmtVal = function(n){ return Number(n||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  metrics.innerHTML =
+    _woMetric('fa-triangle-exclamation', 'danger', 'منتهية الصلاحية',  s.expired,  'danger') +
+    _woMetric('fa-fire', 'danger', 'حرجة (< 7 أيام)',       s.critical, 'danger') +
+    _woMetric('fa-hourglass-half', 'warning', 'قريبة (< 30 يوم)',     s.soon,     'warning') +
+    _woMetric('fa-eye', 'info', 'تحت المراقبة (< 90)',     s.monitor,  'info') +
+    _woMetric('fa-sack-dollar', 'warning', 'القيمة المعرضة', fmtVal(s.atRiskValue) + ' ر.س', 'warning');
+}
+
+function _expRenderBuckets(s){
+  s = s || {};
+  var box = document.getElementById('expBucketPills');
+  if (!box) return;
+  var current = window._expState.bucket || 'all';
+  var def = [
+    { id:'all',      label:'الكل',         icon:'fa-list',          count: s.total },
+    { id:'expired',  label:'منتهية',       icon:'fa-skull',         count: s.expired },
+    { id:'critical', label:'حرجة',         icon:'fa-fire',          count: s.critical },
+    { id:'soon',     label:'قريبة',        icon:'fa-hourglass-half',count: s.soon },
+    { id:'monitor',  label:'تحت المراقبة', icon:'fa-eye',           count: s.monitor },
+    { id:'safe',     label:'آمنة',         icon:'fa-shield',        count: s.safe }
+  ];
+  box.innerHTML = def.map(function(b){
+    var active = (b.id === current) ? ' is-active' : '';
+    return '<button class="exp-bucket-pill' + active + '" data-bucket="' + b.id + '" onclick="expFilterByBucket(\'' + b.id + '\')">' +
+      '<i class="fas ' + b.icon + '"></i>' +
+      '<span>' + b.label + '</span>' +
+      '<span class="exp-bucket-count">' + (Number(b.count||0)).toLocaleString('ar-SA') + '</span>' +
+    '</button>';
+  }).join('');
+}
+
+function _expRenderRows(items){
+  var body = document.getElementById('expBody');
+  if (!body) return;
+  if (!items || !items.length) {
+    body.innerHTML = '<tr><td colspan="9">' + _woEmpty('fa-shield-heart','لا توجد دفعات تطابق هذه الفلاتر','جرّب توسيع نطاق التواريخ أو إزالة بعض الفلاتر، أو سجّل رقم دفعة وتاريخ انتهاء عند استلام بضاعة جديدة.') + '</td></tr>';
+    return;
+  }
+  var fmt    = function(n){ return Number(n||0).toLocaleString('en',{maximumFractionDigits:2}); };
+  var fmtVal = function(n){ return Number(n||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var iconOf = { expired:'fa-skull', critical:'fa-fire', soon:'fa-hourglass-half', monitor:'fa-eye', safe:'fa-shield' };
+  var labelOf = { expired:'منتهية', critical:'حرجة', soon:'قريبة', monitor:'مراقبة', safe:'آمنة' };
+
+  body.innerHTML = items.map(function(r){
+    var d = Number(r.days_remaining);
+    var bucket = r.bucket || (d < 0 ? 'expired' : d < 7 ? 'critical' : d < 30 ? 'soon' : d < 90 ? 'monitor' : 'safe');
+    var rowClass = bucket === 'expired' ? 'exp-row-expired' : bucket === 'critical' ? 'exp-row-critical' : bucket === 'soon' ? 'exp-row-soon' : '';
+    var chipText = bucket === 'expired' ? 'منتهية · ' + Math.abs(d) + ' يوم'
+                 : (d + ' يوم متبقي');
+    var dateStr = r.expiry_date ? new Date(r.expiry_date).toLocaleDateString('en-GB') : '—';
+    var brandCat = (r.brandName ? r.brandName : '—') + ' · ' + (r.category || '—');
+    var lotIdEsc = String(r.id || '').replace(/'/g, "\\'");
+    return '<tr class="' + rowClass + '">' +
+      '<td><b>' + _woEscapeHtml(r.item_name||'') + '</b><br><small style="color:#94a3b8;font-size:10.5px;font-family:monospace;">' + _woEscapeHtml(r.inv_item_id||r.item_id||'') + '</small></td>' +
+      '<td style="font-size:11.5px;color:#475569;">' + _woEscapeHtml(brandCat) + '</td>' +
+      '<td>' + _woEscapeHtml(r.warehouseName || r.warehouse_name || '—') + '</td>' +
+      '<td><code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;">' + _woEscapeHtml(r.batch_number||'—') + '</code></td>' +
+      '<td class="num"><b>' + fmt(r.qtyRemaining || r.qty_remaining) + '</b> <small style="color:#94a3b8;">' + _woEscapeHtml(r.unit||'') + '</small></td>' +
+      '<td>' + dateStr + '<br><small style="color:#94a3b8;font-size:10.5px;">' + (r.received_date ? 'استلام: ' + new Date(r.received_date).toLocaleDateString('en-GB') : '') + '</small></td>' +
+      '<td><span class="exp-status-chip ' + bucket + '"><i class="fas ' + (iconOf[bucket]||'fa-circle') + '"></i> ' + chipText + '</span></td>' +
+      '<td class="num" style="font-weight:800;color:' + (bucket==='expired'?'#b91c1c':bucket==='critical'?'#c2410c':'#0f172a') + ';">' + fmtVal(r.atRiskValue || (Number(r.qty_remaining)*Number(r.unit_cost))) + ' ر.س</td>' +
+      '<td>' +
+        '<div class="exp-row-actions">' +
+          '<button class="wo-icon-btn" onclick="expViewLot(\'' + lotIdEsc + '\')" title="تفاصيل الدفعة"><i class="fas fa-eye"></i></button> ' +
+          (Number(r.qty_remaining) > 0 ? '<button class="wo-icon-btn danger" onclick="expOpenDispose(\'' + lotIdEsc + '\')" title="إتلاف"><i class="fas fa-trash"></i></button>' : '') +
+        '</div>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function _expRenderPagination(total, limit, offset){
+  var box = document.getElementById('expPagination');
+  if (!box) return;
+  if (!total) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  var s = window._expState;
+  var totalPages = Math.max(1, Math.ceil(total / s.pageSize));
+  var first = (s.page - 1) * s.pageSize + 1;
+  var last  = Math.min(total, s.page * s.pageSize);
+  document.getElementById('expPagInfo').textContent =
+    'عرض ' + first.toLocaleString('ar-SA') + '–' + last.toLocaleString('ar-SA') +
+    ' من ' + total.toLocaleString('ar-SA') + ' دفعة · صفحة ' + s.page + ' / ' + totalPages;
+
+  // Numeric buttons
+  var pages = document.getElementById('expPagPages');
+  if (pages) {
+    var html = '';
+    var lo = Math.max(1, s.page - 2), hi = Math.min(totalPages, s.page + 2);
+    var add = function(p, active){ html += '<button class="inv-pagination__btn' + (active ? ' is-active' : '') + '" onclick="expGoto(' + p + ')">' + p + '</button>'; };
+    if (lo > 1) { add(1, s.page === 1); if (lo > 2) html += '<span class="inv-pagination__sep">…</span>'; }
+    for (var i = lo; i <= hi; i++) add(i, i === s.page);
+    if (hi < totalPages) { if (hi < totalPages - 1) html += '<span class="inv-pagination__sep">…</span>'; add(totalPages, s.page === totalPages); }
+    pages.innerHTML = html;
+  }
+  document.getElementById('expPagFirst').disabled = s.page <= 1;
+  document.getElementById('expPagPrev').disabled  = s.page <= 1;
+  document.getElementById('expPagNext').disabled  = s.page >= totalPages;
+  document.getElementById('expPagLast').disabled  = s.page >= totalPages;
+}
+
+function _expLoadTimeline(){
+  var box = document.getElementById('expTimeline');
+  if (!box) return;
+  var qs = [];
+  var whId  = (document.getElementById('expWarehouseFilter')||{}).value || '';
+  var brand = (document.getElementById('expBrandFilter')||{}).value     || '';
+  var cat   = (document.getElementById('expCategoryFilter')||{}).value  || '';
+  if (whId)  qs.push('warehouseId=' + encodeURIComponent(whId));
+  if (brand) qs.push('brandId='     + encodeURIComponent(brand));
+  if (cat)   qs.push('category='    + encodeURIComponent(cat));
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/expiry-alerts/timeline' + (qs.length ? ('?' + qs.join('&')) : ''),
+    { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j || !j.success || !j.buckets || !j.buckets.length) { box.style.display = 'none'; return; }
+      var fmt = function(n){ return Number(n||0).toLocaleString('en',{maximumFractionDigits:0}); };
+      box.style.display = '';
+      box.innerHTML = j.buckets.slice(0, 14).map(function(b){
+        var dt = new Date(b.month + '-01');
+        var label = dt.toLocaleDateString('ar-SA', { month: 'short', year: 'numeric' });
+        var hasExp = Number(b.expiredCount) > 0;
+        return '<div class="exp-timeline-bar' + (hasExp ? ' has-expired' : '') + '" title="' + b.batchCount + ' دفعة · ' + fmt(b.value) + ' ر.س' + (hasExp?(' · ' + b.expiredCount + ' منتهية'):'') + '">' +
+          '<div class="exp-timeline-bar__month">' + label + '</div>' +
+          '<div class="exp-timeline-bar__count">' + b.batchCount + '</div>' +
+          '<div class="exp-timeline-bar__value">' + fmt(b.value) + ' ر.س</div>' +
+        '</div>';
+      }).join('');
+    })
+    .catch(function(){ box.style.display = 'none'; });
+}
+
+// Hydrate filter dropdowns once (warehouses, brands, categories)
+function _expHydrateFilters(){
+  var s = window._expState;
+  if (s.filtersHydrated) return;
+  s.filtersHydrated = true;
+  var token = localStorage.getItem('pos_token') || '';
+
+  // Warehouses
+  var whSel = document.getElementById('expWarehouseFilter');
+  if (whSel) {
+    fetch('/api/inventory/warehouses-by-brand', { headers: { 'Authorization': 'Bearer ' + token } })
+      .then(function(r){ return r.json(); })
+      .then(function(list){
+        if (!Array.isArray(list)) return;
+        list.forEach(function(w){
+          var opt = document.createElement('option');
+          opt.value = w.id || w.ID; opt.textContent = w.name + (w.code ? ' (' + w.code + ')' : '');
+          whSel.appendChild(opt);
+        });
+      }).catch(function(){});
+  }
+  // Brands
+  var brSel = document.getElementById('expBrandFilter');
+  if (brSel) {
+    fetch('/api/erp/brands', { headers: { 'Authorization': 'Bearer ' + token } })
+      .then(function(r){ return r.json(); })
+      .then(function(list){
+        if (!Array.isArray(list)) return;
+        list.forEach(function(b){
+          var opt = document.createElement('option');
+          opt.value = b.id; opt.textContent = b.name;
+          brSel.appendChild(opt);
+        });
+      }).catch(function(){});
+  }
+  // Categories — derived from inv_items
+  var catSel = document.getElementById('expCategoryFilter');
+  if (catSel) {
+    fetch('/api/inventory/items', { headers: { 'Authorization': 'Bearer ' + token } })
+      .then(function(r){ return r.json(); })
+      .then(function(list){
+        if (!Array.isArray(list)) return;
+        var seen = {};
+        list.forEach(function(i){ if (i.category && !seen[i.category]) seen[i.category] = true; });
+        Object.keys(seen).sort().forEach(function(c){
+          var opt = document.createElement('option');
+          opt.value = c; opt.textContent = c;
+          catSel.appendChild(opt);
+        });
+      }).catch(function(){});
+  }
+}
+
+window.expViewLot = function(lotId){
+  var snap = window._expSnapshot;
+  if (!snap || !snap.items) return;
+  var lot = snap.items.find(function(x){ return String(x.id) === String(lotId); });
+  if (!lot) return;
+  alert('الدفعة #' + lot.id + '\n' +
+        'الصنف: ' + (lot.item_name||'') + '\n' +
+        'رقم: ' + (lot.batch_number||'—') + '\n' +
+        'المستودع: ' + (lot.warehouseName||lot.warehouse_name||'—') + '\n' +
+        'المتاح: ' + lot.qty_remaining + ' ' + (lot.unit||'') + '\n' +
+        'تاريخ الانتهاء: ' + (lot.expiry_date||'—') + '\n' +
+        'تاريخ الاستلام: ' + (lot.received_date||'—'));
+};
+
+window.expOpenDispose = function(lotId){
+  var snap = window._expSnapshot;
+  if (!snap || !snap.items) return;
+  var lot = snap.items.find(function(x){ return String(x.id) === String(lotId); });
+  if (!lot) return;
+  var modal = document.getElementById('expDisposeModal');
+  var body  = document.getElementById('expDisposeBody');
+  if (!modal || !body) return;
+  var fmt = function(n){ return Number(n||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var value = Number(lot.qty_remaining||0) * Number(lot.unit_cost||0);
+  body.innerHTML =
+    '<div class="exp-dispose-summary">' +
+      '<div style="font-size:14px;font-weight:800;color:#991b1b;margin-bottom:8px;"><i class="fas fa-triangle-exclamation"></i> سيتم إتلاف الدفعة بالكامل وتسجيل الحركة كـ "out" بسبب انتهاء الصلاحية</div>' +
+      '<div class="exp-dispose-stat"><span>الصنف</span><span>' + esc(lot.item_name||'') + '</span></div>' +
+      '<div class="exp-dispose-stat"><span>رقم الدفعة</span><span>' + esc(lot.batch_number||'—') + '</span></div>' +
+      '<div class="exp-dispose-stat"><span>المستودع</span><span>' + esc(lot.warehouseName||lot.warehouse_name||'—') + '</span></div>' +
+      '<div class="exp-dispose-stat"><span>الكمية المُتلَفَة</span><span>' + fmt(lot.qty_remaining) + ' ' + esc(lot.unit||'') + '</span></div>' +
+      '<div class="exp-dispose-stat"><span>قيمة الخسارة</span><span style="color:#b91c1c;">' + fmt(value) + ' ر.س</span></div>' +
+    '</div>' +
+    '<div style="margin-bottom:10px;">' +
+      '<label style="font-weight:700;font-size:12px;color:#475569;display:block;margin-bottom:4px;">سبب الإتلاف</label>' +
+      '<select id="expDisposeReason" class="form-control">' +
+        '<option value="تالف صلاحية">تالف صلاحية</option>' +
+        '<option value="تالف نقل">تالف نقل</option>' +
+        '<option value="تالف تخزين">تالف تخزين</option>' +
+        '<option value="أخرى">أخرى</option>' +
+      '</select>' +
+    '</div>' +
+    '<div style="margin-bottom:14px;">' +
+      '<label style="font-weight:700;font-size:12px;color:#475569;display:block;margin-bottom:4px;">ملاحظات (اختياري)</label>' +
+      '<input type="text" id="expDisposeNotes" class="form-control" placeholder="مثلاً: علبة منتفخة، رائحة كريهة...">' +
+    '</div>' +
+    '<div style="display:flex;gap:10px;">' +
+      '<button class="wo-btn wo-btn-danger" style="flex:1;" onclick="expConfirmDispose(\'' + lotId + '\')"><i class="fas fa-trash"></i><span>تأكيد الإتلاف</span></button>' +
+      '<button class="wo-btn wo-btn-ghost" onclick="expCloseDispose()"><span>إلغاء</span></button>' +
+    '</div>';
+  modal.style.display = 'flex';
+};
+
+window.expCloseDispose = function(){
+  var m = document.getElementById('expDisposeModal');
+  if (m) m.style.display = 'none';
+};
+
+window.expConfirmDispose = function(lotId){
+  var reason = (document.getElementById('expDisposeReason')||{}).value || 'تالف صلاحية';
+  var notes  = (document.getElementById('expDisposeNotes')||{}).value  || '';
+  var token  = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/expiry-alerts/' + encodeURIComponent(lotId) + '/dispose', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason: reason, notes: notes })
+  }).then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j || !j.success) { showToast((j && j.error) || 'فشل الإتلاف', true); return; }
+      showToast('تم الإتلاف · ' + (j.itemName||'') + ' (' + Number(j.value||0).toFixed(2) + ' ر.س)');
+      expCloseDispose();
+      expLoad();
+    }).catch(function(){ showToast('فشل الاتصال', true); });
+};
+
+window.expExportExcel = function(){
+  var snap = window._expSnapshot;
+  if (!snap || !snap.items || !snap.items.length) {
+    showToast('اعرض البيانات أولاً', true);
+    return;
+  }
+  var headers = ['الصنف','الكود','البراند','التصنيف','المستودع','رقم الدفعة','الكمية','الوحدة','تاريخ الاستلام','تاريخ الانتهاء','أيام متبقية','الحالة','تكلفة الوحدة','القيمة المعرضة'];
+  var labelOf = { expired:'منتهية', critical:'حرجة', soon:'قريبة', monitor:'تحت المراقبة', safe:'آمنة' };
+  var rows = snap.items.map(function(r){
+    return [
+      r.item_name || '', r.inv_item_id || r.item_id || '',
+      r.brandName || '', r.category || '',
+      r.warehouseName || r.warehouse_name || '',
+      r.batch_number || '', r.qty_remaining || 0,
+      r.unit || '',
+      r.received_date ? String(r.received_date).slice(0,10) : '',
+      r.expiry_date ? String(r.expiry_date).slice(0,10) : '',
+      r.days_remaining,
+      labelOf[r.bucket] || r.bucket || '',
+      Number(r.unit_cost||0).toFixed(4),
+      Number(r.atRiskValue || (r.qty_remaining * r.unit_cost) || 0).toFixed(2)
+    ];
+  });
+  var csv = '﻿' + headers.join(',') + '\n' + rows.map(function(r){
+    return r.map(function(c){
+      var s = (c == null ? '' : String(c));
+      if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g,'""') + '"';
+      return s;
+    }).join(',');
+  }).join('\n');
+  var blob = new Blob([csv], { type:'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'expiry-alerts-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+};
 function slowLoad() {
   var days = document.getElementById('slowDays').value;
   var body = document.getElementById('slowBody');

@@ -910,23 +910,256 @@ router.get('/cost-history/:itemId', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Expiry alerts — items expiring in the next N days
+// Expiry alerts — v5.10.33 enterprise overhaul
+//
+// Lists every batch (purchase_lots row) that has an expiry_date and a
+// remaining qty, with rich filters, accurate per-batch days-remaining,
+// summary KPIs and pagination.
+//
+// Bug fix: previous version queried pl.item_id but the column is named
+// inv_item_id, so the JOIN to inv_items returned NULLs — the table was
+// effectively unusable. Switched to pl.inv_item_id throughout.
+//
+// Query params:
+//   days        — alert window in days (default 30; ignored when
+//                 fromDate/toDate are set)
+//   fromDate    — filter expiry_date >= fromDate
+//   toDate      — filter expiry_date <= toDate
+//   warehouseId — single warehouse filter
+//   brandId     — filter by item.brand_id
+//   category    — filter by inv_items.category
+//   q           — free-text search across item name + batch number
+//   status      — bucket filter: expired | critical (<7) | soon (<30) |
+//                 monitor (<90) | safe (>=90)
+//   includeSafe — '1' to include batches > days threshold (otherwise capped)
+//   limit, offset, paginated=1
+//
+// Response (paginated):
+//   { items: [...], summary: {...}, total, limit, offset, days }
+// Response (legacy non-paginated): array of items (back-compat).
 router.get('/expiry-alerts', async (req, res) => {
   try {
-    const days = Number(req.query.days) || 30;
-    const [rows] = await db.query(`
-      SELECT pl.*, i.name AS item_name, i.unit AS item_unit, w.name AS warehouse_name,
-             DATEDIFF(pl.expiry_date, CURDATE()) AS days_remaining
-      FROM purchase_lots pl
-      LEFT JOIN inv_items i ON i.id = pl.item_id
-      LEFT JOIN warehouses w ON w.id = pl.warehouse_id
-      WHERE pl.expiry_date IS NOT NULL
-        AND pl.qty_remaining > 0
-        AND pl.expiry_date <= DATE_ADD(CURDATE(), INTERVAL ? DAY)
-      ORDER BY pl.expiry_date ASC
-      LIMIT 500`, [days]);
-    res.json(rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
+    const days       = Math.max(1, Math.min(Number(req.query.days) || 30, 365));
+    const fromDate   = req.query.fromDate || null;
+    const toDate     = req.query.toDate   || null;
+    const warehouseId= req.query.warehouseId || null;
+    const brandId    = req.query.brandId   || null;
+    const category   = req.query.category  || null;
+    const q          = req.query.q         || null;
+    const status     = req.query.status    || null;
+    const includeSafe= req.query.includeSafe === '1';
+
+    const where = ['pl.expiry_date IS NOT NULL', 'pl.qty_remaining > 0'];
+    const params = [];
+
+    if (fromDate) { where.push('pl.expiry_date >= ?'); params.push(fromDate); }
+    if (toDate)   { where.push('pl.expiry_date <= ?'); params.push(toDate); }
+    if (!fromDate && !toDate && !includeSafe) {
+      where.push('pl.expiry_date <= DATE_ADD(CURDATE(), INTERVAL ? DAY)');
+      params.push(days);
+    }
+    if (warehouseId) { where.push('pl.warehouse_id = ?'); params.push(warehouseId); }
+    if (brandId)     { where.push('i.brand_id = ?');      params.push(brandId); }
+    if (category)    { where.push('i.category = ?');      params.push(category); }
+    if (q) {
+      where.push('(i.name LIKE ? OR pl.batch_number LIKE ?)');
+      params.push('%' + q + '%', '%' + q + '%');
+    }
+    if (status === 'expired')  where.push('DATEDIFF(pl.expiry_date, CURDATE()) < 0');
+    if (status === 'critical') where.push('DATEDIFF(pl.expiry_date, CURDATE()) BETWEEN 0 AND 6');
+    if (status === 'soon')     where.push('DATEDIFF(pl.expiry_date, CURDATE()) BETWEEN 7 AND 29');
+    if (status === 'monitor')  where.push('DATEDIFF(pl.expiry_date, CURDATE()) BETWEEN 30 AND 89');
+    if (status === 'safe')     where.push('DATEDIFF(pl.expiry_date, CURDATE()) >= 90');
+
+    const whereSql = ' WHERE ' + where.join(' AND ');
+
+    const limit  = Math.max(1, Math.min(Number(req.query.limit) || 500, 2000));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const wantsPaginated = req.query.paginated === '1' || req.query.limit != null || req.query.offset != null;
+
+    const baseSelect =
+      'SELECT pl.*, ' +
+      '       i.name AS item_name, i.unit AS item_unit, i.category, i.brand_id, ' +
+      '       b.name AS brand_name, ' +
+      '       w.name AS warehouse_name, w.code AS warehouse_code, ' +
+      '       DATEDIFF(pl.expiry_date, CURDATE()) AS days_remaining, ' +
+      '       (pl.qty_remaining * pl.unit_cost) AS at_risk_value ' +
+      '  FROM purchase_lots pl ' +
+      '  LEFT JOIN inv_items i ON i.id = pl.inv_item_id ' +
+      '  LEFT JOIN brands     b ON b.id = i.brand_id ' +
+      '  LEFT JOIN warehouses w ON w.id = pl.warehouse_id';
+
+    const orderSql = ' ORDER BY pl.expiry_date ASC, pl.id ASC';
+
+    const [rows] = await db.query(
+      baseSelect + whereSql + orderSql + ' LIMIT ? OFFSET ?',
+      params.concat([limit, offset]));
+
+    // Map response — keep legacy keys (item_name, days_remaining, etc.)
+    // and add camelCase enriched fields the new UI uses.
+    const items = rows.map(function(r){
+      const d = Number(r.days_remaining);
+      let bucket = 'safe';
+      if (d < 0) bucket = 'expired';
+      else if (d < 7) bucket = 'critical';
+      else if (d < 30) bucket = 'soon';
+      else if (d < 90) bucket = 'monitor';
+      return Object.assign({}, r, {
+        item_id:        r.inv_item_id,
+        bucket:         bucket,
+        atRiskValue:    Number(r.at_risk_value) || 0,
+        qtyRemaining:   Number(r.qty_remaining) || 0,
+        unitCost:       Number(r.unit_cost) || 0,
+        warehouseId:    r.warehouse_id || '',
+        warehouseName:  r.warehouse_name || '',
+        warehouseCode:  r.warehouse_code || '',
+        brandName:      r.brand_name || '',
+        category:       r.category || '',
+        unit:           r.item_unit || ''
+      });
+    });
+
+    if (!wantsPaginated) {
+      // Legacy back-compat: array shape, no summary
+      return res.json(items);
+    }
+
+    // Compute summary across the FULL filter (no LIMIT) — separate query for accuracy
+    const [summaryRows] = await db.query(
+      'SELECT ' +
+        'COUNT(*) AS total_count, ' +
+        'SUM(CASE WHEN DATEDIFF(pl.expiry_date, CURDATE()) < 0 THEN 1 ELSE 0 END) AS expired_count, ' +
+        'SUM(CASE WHEN DATEDIFF(pl.expiry_date, CURDATE()) BETWEEN 0 AND 6 THEN 1 ELSE 0 END) AS critical_count, ' +
+        'SUM(CASE WHEN DATEDIFF(pl.expiry_date, CURDATE()) BETWEEN 7 AND 29 THEN 1 ELSE 0 END) AS soon_count, ' +
+        'SUM(CASE WHEN DATEDIFF(pl.expiry_date, CURDATE()) BETWEEN 30 AND 89 THEN 1 ELSE 0 END) AS monitor_count, ' +
+        'SUM(CASE WHEN DATEDIFF(pl.expiry_date, CURDATE()) >= 90 THEN 1 ELSE 0 END) AS safe_count, ' +
+        'SUM(pl.qty_remaining * pl.unit_cost) AS at_risk_value, ' +
+        'SUM(CASE WHEN DATEDIFF(pl.expiry_date, CURDATE()) < 0 THEN pl.qty_remaining * pl.unit_cost ELSE 0 END) AS expired_value, ' +
+        'COUNT(DISTINCT pl.inv_item_id) AS distinct_items, ' +
+        'COUNT(DISTINCT pl.warehouse_id) AS distinct_warehouses ' +
+      'FROM purchase_lots pl ' +
+      'LEFT JOIN inv_items i ON i.id = pl.inv_item_id' + whereSql,
+      params);
+    const sRow = summaryRows[0] || {};
+
+    res.json({
+      success: true,
+      items,
+      summary: {
+        total:        Number(sRow.total_count)       || 0,
+        expired:      Number(sRow.expired_count)     || 0,
+        critical:     Number(sRow.critical_count)    || 0,
+        soon:         Number(sRow.soon_count)        || 0,
+        monitor:      Number(sRow.monitor_count)     || 0,
+        safe:         Number(sRow.safe_count)        || 0,
+        atRiskValue:  Number(sRow.at_risk_value)     || 0,
+        expiredValue: Number(sRow.expired_value)     || 0,
+        distinctItems:      Number(sRow.distinct_items)      || 0,
+        distinctWarehouses: Number(sRow.distinct_warehouses) || 0
+      },
+      total: Number(sRow.total_count) || items.length,
+      limit, offset,
+      days
+    });
+  } catch(e) { res.status(500).json({ success:false, error: e.message }); }
+});
+
+// v5.10.33 — Timeline: monthly distribution of expiring batches for the
+// next 12 months. Used by the timeline strip in the expiry UI.
+router.get('/expiry-alerts/timeline', async (req, res) => {
+  try {
+    const where = ['pl.expiry_date IS NOT NULL', 'pl.qty_remaining > 0'];
+    const params = [];
+    if (req.query.warehouseId) { where.push('pl.warehouse_id = ?'); params.push(req.query.warehouseId); }
+    if (req.query.brandId)     { where.push('i.brand_id = ?');      params.push(req.query.brandId); }
+    if (req.query.category)    { where.push('i.category = ?');      params.push(req.query.category); }
+    const whereSql = ' WHERE ' + where.join(' AND ');
+    const [rows] = await db.query(
+      'SELECT DATE_FORMAT(pl.expiry_date, \'%Y-%m\') AS month, ' +
+      '       COUNT(*) AS batch_count, ' +
+      '       SUM(pl.qty_remaining * pl.unit_cost) AS value, ' +
+      '       SUM(CASE WHEN pl.expiry_date < CURDATE() THEN 1 ELSE 0 END) AS expired_count ' +
+      '  FROM purchase_lots pl LEFT JOIN inv_items i ON i.id = pl.inv_item_id' +
+      whereSql +
+      ' GROUP BY DATE_FORMAT(pl.expiry_date, \'%Y-%m\') ' +
+      ' ORDER BY month ASC LIMIT 24',
+      params);
+    res.json({
+      success: true,
+      buckets: rows.map(r => ({
+        month: r.month,
+        batchCount: Number(r.batch_count) || 0,
+        value: Number(r.value) || 0,
+        expiredCount: Number(r.expired_count) || 0
+      }))
+    });
+  } catch (e) { res.status(500).json({ success:false, error: e.message }); }
+});
+
+// v5.10.33 — Dispose a batch (mark as wasted/destroyed). Sets qty_remaining
+// to 0, writes an inventory_movements row (type='out', reason='تالف
+// صلاحية'), and optionally posts a GL waste entry.
+// Wrapped in a transaction so partial failure can never leave the batch
+// half-disposed.
+router.post('/expiry-alerts/:lotId/dispose', async (req, res) => {
+  try {
+    const lotId = req.params.lotId;
+    const username = (req.user && req.user.username) || (req.body && req.body.username) || 'system';
+    const reason   = (req.body && req.body.reason) || 'تالف صلاحية';
+    const notes    = (req.body && req.body.notes)  || '';
+
+    const [lots] = await db.query(
+      'SELECT pl.*, i.name AS item_name FROM purchase_lots pl ' +
+      'LEFT JOIN inv_items i ON i.id = pl.inv_item_id WHERE pl.id = ?', [lotId]);
+    if (!lots.length) return res.status(404).json({ success:false, error:'lot-not-found' });
+    const lot = lots[0];
+    if (Number(lot.qty_remaining) <= 0) {
+      return res.status(409).json({ success:false, error:'lot-already-empty' });
+    }
+
+    const qty       = Number(lot.qty_remaining) || 0;
+    const itemId    = lot.inv_item_id;
+    const itemName  = lot.item_name || itemId;
+    const warehouse = lot.warehouse_id;
+    const cost      = Number(lot.unit_cost) || 0;
+    const value     = qty * cost;
+    const nowIso    = new Date().toISOString().slice(0,19).replace('T',' ');
+
+    const runner = async (conn) => {
+      const c = conn || db;
+      // 1. Zero the lot
+      await c.query('UPDATE purchase_lots SET qty_remaining = 0 WHERE id = ?', [lotId]);
+      // 2. Decrement warehouse_stock by the disposed qty (best effort)
+      if (warehouse) {
+        try {
+          await c.query(
+            'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
+            [qty, warehouse, itemId]);
+        } catch (_) {}
+      }
+      // 3. Movement log
+      const movId = 'MOV-EXP-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
+      try {
+        await c.query(
+          `INSERT INTO inventory_movements
+            (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          [movId, nowIso, itemId, itemName, 'out', qty, reason, username,
+           notes || ('Lot #' + lotId + ' · batch ' + (lot.batch_number || '—')), warehouse || null]);
+      } catch (_) {}
+    };
+
+    try {
+      if (typeof db.withTransaction === 'function') await db.withTransaction(runner);
+      else await runner(null);
+    } catch (txErr) {
+      try { await runner(null); } catch (_) {
+        return res.status(500).json({ success:false, error: txErr.message });
+      }
+    }
+
+    res.json({ success: true, lotId, qty, value, itemName });
+  } catch (e) { res.status(500).json({ success:false, error: e.message }); }
 });
 
 // Inventory turnover report

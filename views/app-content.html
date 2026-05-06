@@ -3091,45 +3091,123 @@
   <header class="wo-header">
     <div class="wo-header-titles">
       <h1><span class="wo-icon-slot danger"><i class="fas fa-hourglass-half"></i></span>تنبيهات انتهاء الصلاحية</h1>
-      <p class="wo-header-sub">الدفعات القريبة من تاريخ انتهاء الصلاحية — رتّب التصريف قبل الخسارة.</p>
+      <p class="wo-header-sub">رصد كامل للدفعات حسب فترة الصلاحية — منتهية، حرجة، قريبة، تحت المراقبة، آمنة. صرّف، حوّل، أو أتلِف قبل وقوع الخسارة.</p>
     </div>
     <div class="wo-header-actions">
-      <button class="wo-btn wo-btn-secondary" onclick="expLoad()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="wo-btn wo-btn-ghost" onclick="window.print()" title="طباعة"><i class="fas fa-print"></i><span>طباعة</span></button>
+      <button class="wo-btn wo-btn-secondary" onclick="expExportExcel()" title="تصدير Excel"><i class="fas fa-file-excel"></i><span>Excel</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="expLoad()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
     </div>
   </header>
 
   <div class="wo-metric-strip" id="expMetrics"></div>
 
-  <section class="wo-toolbar" aria-label="فترة التنبيه">
+  <!-- v5.10.33 — Visual timeline strip -->
+  <div id="expTimeline" class="exp-timeline" style="display:none;"></div>
+
+  <!-- Filter bar — bucket pills + advanced inputs -->
+  <section class="wo-toolbar exp-toolbar" aria-label="فلاتر تنبيهات الصلاحية">
+    <div class="wo-field" style="flex:1.5;min-width:200px;">
+      <label class="wo-field-label"><i class="fas fa-search"></i> بحث</label>
+      <input type="text" id="expSearch" class="wo-input" placeholder="اسم الصنف أو رقم الدفعة..." oninput="expOnSearchInput()">
+    </div>
     <div class="wo-field">
-      <label class="wo-field-label" for="expDays"><i class="fas fa-clock"></i>فترة التنبيه</label>
+      <label class="wo-field-label"><i class="fas fa-warehouse"></i> المستودع</label>
+      <select id="expWarehouseFilter" class="wo-select" onchange="expLoad()">
+        <option value="">كل المستودعات</option>
+      </select>
+    </div>
+    <div class="wo-field">
+      <label class="wo-field-label"><i class="fas fa-store"></i> البراند</label>
+      <select id="expBrandFilter" class="wo-select" onchange="expLoad()">
+        <option value="">كل البراندات</option>
+      </select>
+    </div>
+    <div class="wo-field">
+      <label class="wo-field-label"><i class="fas fa-tags"></i> التصنيف</label>
+      <select id="expCategoryFilter" class="wo-select" onchange="expLoad()">
+        <option value="">كل التصنيفات</option>
+      </select>
+    </div>
+    <div class="wo-field">
+      <label class="wo-field-label"><i class="fas fa-clock"></i> النطاق</label>
       <select id="expDays" class="wo-select" onchange="expLoad()">
         <option value="7">خلال 7 أيام</option>
         <option value="14">خلال 14 يوم</option>
         <option value="30" selected>خلال 30 يوم</option>
         <option value="60">خلال 60 يوم</option>
         <option value="90">خلال 90 يوم</option>
+        <option value="180">خلال 180 يوم</option>
+        <option value="365">خلال سنة</option>
       </select>
+    </div>
+    <div class="wo-field">
+      <label class="wo-field-label"><i class="fas fa-calendar-day"></i> من تاريخ</label>
+      <input type="date" id="expFromDate" class="wo-input" onchange="expLoad()">
+    </div>
+    <div class="wo-field">
+      <label class="wo-field-label"><i class="fas fa-calendar-check"></i> إلى تاريخ</label>
+      <input type="date" id="expToDate" class="wo-input" onchange="expLoad()">
+    </div>
+    <div class="wo-field" style="align-self:flex-end;">
+      <button class="wo-btn wo-btn-ghost" onclick="expClearFilters()" title="مسح الفلاتر">
+        <i class="fas fa-broom"></i><span>مسح</span>
+      </button>
     </div>
   </section>
 
+  <!-- Status bucket pills (click to filter) -->
+  <div class="exp-bucket-pills" id="expBucketPills" role="tablist" aria-label="تصفية حسب الحالة"></div>
+
   <div class="wo-table-surface">
-    <table class="wo-table" role="table">
+    <table class="wo-table wo-table--sortable" role="table">
       <thead>
         <tr>
           <th scope="col">الصنف</th>
+          <th scope="col">البراند · التصنيف</th>
           <th scope="col">المستودع</th>
           <th scope="col">رقم الدفعة</th>
           <th scope="col" class="num">الكمية</th>
           <th scope="col">تاريخ الانتهاء</th>
           <th scope="col">الحالة</th>
-          <th scope="col" class="num">تكلفة الوحدة</th>
+          <th scope="col" class="num">القيمة المعرضة</th>
+          <th scope="col">إجراء</th>
         </tr>
       </thead>
       <tbody id="expBody">
-        <tr><td colspan="7"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+        <tr><td colspan="9"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
       </tbody>
     </table>
+
+    <!-- Pagination -->
+    <div id="expPagination" class="inv-pagination" style="display:none;">
+      <div class="inv-pagination__info"><span id="expPagInfo">—</span></div>
+      <div class="inv-pagination__controls">
+        <button class="inv-pagination__btn" onclick="expGoto(1)" id="expPagFirst"><i class="fas fa-angles-right"></i></button>
+        <button class="inv-pagination__btn" onclick="expGoRel(-1)" id="expPagPrev"><i class="fas fa-angle-right"></i></button>
+        <span id="expPagPages"></span>
+        <button class="inv-pagination__btn" onclick="expGoRel(1)"  id="expPagNext"><i class="fas fa-angle-left"></i></button>
+        <button class="inv-pagination__btn" onclick="expGoLast()"  id="expPagLast"><i class="fas fa-angles-left"></i></button>
+        <span class="inv-pagination__sep">·</span>
+        <select class="inv-pagination__size" onchange="expChangePageSize(this.value)">
+          <option value="50">50 / صفحة</option>
+          <option value="100" selected>100 / صفحة</option>
+          <option value="200">200 / صفحة</option>
+          <option value="500">500 / صفحة</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dispose-confirm modal -->
+  <div id="expDisposeModal" class="modal" style="display:none;align-items:center;justify-content:center;">
+    <div class="modal-content" style="max-width:520px;">
+      <div class="modal-title">
+        <i class="fas fa-trash" style="color:#b91c1c;"></i> إتلاف دفعة
+        <button class="modal-close" onclick="expCloseDispose()">&times;</button>
+      </div>
+      <div id="expDisposeBody"></div>
+    </div>
   </div>
 </div>
 
@@ -4510,14 +4588,17 @@
 <!-- ══════════════════════════════════════════════════════════════════ -->
 <!-- v5.10.6 — Warehouse Ledger by Date (دفتر أستاذ المستودع)            -->
 <!-- ══════════════════════════════════════════════════════════════════ -->
-<div id="erpRptWarehouseLedger" class="dash-section hidden">
-  <div class="tb-top">
-    <h2 class="tb-title"><i class="fas fa-book-bookmark"></i> دفتر أستاذ المستودع <span class="fa-badge-ifrs">شامل · كل الحركات والتواريخ</span></h2>
-    <div class="tb-actions">
-      <button class="tb-btn" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>
-      <button class="tb-btn" onclick="erpExportWarehouseLedger()"><i class="fas fa-file-excel"></i> Excel</button>
+<div id="erpRptWarehouseLedger" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot info"><i class="fas fa-book-bookmark"></i></span>دفتر أستاذ المستودع <span class="fa-badge-ifrs" style="font-size:11px;font-weight:700;margin-inline-start:8px;">شامل · كل الحركات والتواريخ</span></h1>
+      <p class="wo-header-sub">يلتقط كل حركة وكل تاريخ — وارد وصادر، تحويلات، جرد، تعديلات، مع رصيد متراكم وقيمة لحظية. اختر مستودعاً واضغط "عرض الحركة".</p>
     </div>
-  </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-ghost" onclick="window.print()" title="طباعة"><i class="fas fa-print"></i><span>طباعة</span></button>
+      <button class="wo-btn wo-btn-secondary" onclick="erpExportWarehouseLedger()" title="تصدير Excel"><i class="fas fa-file-excel"></i><span>Excel</span></button>
+    </div>
+  </header>
 
   <!-- v5.10.31 — Rich filter bar with date presets + view mode + advanced filters -->
   <div class="tb-filters-card wl-filters">

@@ -322,6 +322,212 @@
 }
 
 /* ===================================================================
+   v5.10.33 — Expiry alerts visual system
+   =================================================================== */
+.exp-toolbar { flex-wrap: wrap; gap: 10px; }
+
+/* Bucket pills (status filter) */
+.exp-bucket-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 14px;
+}
+.exp-bucket-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1.5px solid;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 150ms ease;
+  background: #fff;
+  user-select: none;
+}
+.exp-bucket-pill .exp-bucket-count {
+  background: rgba(255,255,255,0.85);
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.exp-bucket-pill:hover { transform: translateY(-1px); box-shadow: 0 4px 12px -4px rgba(15,23,42,0.18); }
+.exp-bucket-pill.is-active { color: #fff; transform: translateY(-1px); }
+.exp-bucket-pill.is-active .exp-bucket-count { background: rgba(255,255,255,0.25); color: #fff; }
+.exp-bucket-pill[data-bucket="all"]      { color:#475569; border-color:#cbd5e1; }
+.exp-bucket-pill[data-bucket="all"].is-active     { background:#475569; border-color:#475569; }
+.exp-bucket-pill[data-bucket="expired"]  { color:#b91c1c; border-color:#fecaca; }
+.exp-bucket-pill[data-bucket="expired"].is-active { background:#b91c1c; border-color:#b91c1c; }
+.exp-bucket-pill[data-bucket="critical"] { color:#c2410c; border-color:#fed7aa; }
+.exp-bucket-pill[data-bucket="critical"].is-active{ background:#c2410c; border-color:#c2410c; }
+.exp-bucket-pill[data-bucket="soon"]     { color:#a16207; border-color:#fde68a; }
+.exp-bucket-pill[data-bucket="soon"].is-active    { background:#a16207; border-color:#a16207; }
+.exp-bucket-pill[data-bucket="monitor"]  { color:#0e7490; border-color:#a5f3fc; }
+.exp-bucket-pill[data-bucket="monitor"].is-active { background:#0e7490; border-color:#0e7490; }
+.exp-bucket-pill[data-bucket="safe"]     { color:#047857; border-color:#a7f3d0; }
+.exp-bucket-pill[data-bucket="safe"].is-active    { background:#047857; border-color:#047857; }
+
+/* Timeline strip */
+.exp-timeline {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  margin: 14px 0;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, #fefce8, #fef3c7);
+  border: 1px solid #fde68a;
+  border-radius: 14px;
+}
+.exp-timeline-bar {
+  flex: 1;
+  min-width: 50px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 4px;
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid #fcd34d;
+  transition: all 140ms ease;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.exp-timeline-bar:hover { transform: translateY(-2px); box-shadow: 0 6px 16px -6px rgba(245,158,11,0.4); }
+.exp-timeline-bar.has-expired { border-color: #b91c1c; background: linear-gradient(180deg, #fee2e2 0%, #fff 50%); }
+.exp-timeline-bar__month { font-size: 10.5px; font-weight: 800; color: #92400e; letter-spacing: 0.02em; }
+.exp-timeline-bar__count { font-size: 16px; font-weight: 900; color: #b45309; line-height: 1; font-variant-numeric: tabular-nums; }
+.exp-timeline-bar__value { font-size: 10px; color: #78716c; font-weight: 700; }
+.exp-timeline-bar.has-expired .exp-timeline-bar__count { color: #b91c1c; }
+
+/* Status chip in row */
+.exp-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.exp-status-chip i { font-size: 9px; }
+.exp-status-chip.expired  { background: #fecaca; color: #991b1b; }
+.exp-status-chip.critical { background: #fed7aa; color: #9a3412; }
+.exp-status-chip.soon     { background: #fef3c7; color: #854d0e; }
+.exp-status-chip.monitor  { background: #cffafe; color: #155e75; }
+.exp-status-chip.safe     { background: #d1fae5; color: #065f46; }
+
+/* Row tinting based on bucket */
+.wo-table tbody tr.exp-row-expired  td { background: linear-gradient(90deg, #fee2e2 0%, #fff 60%); }
+.wo-table tbody tr.exp-row-critical td { background: linear-gradient(90deg, #ffedd5 0%, #fff 60%); }
+.wo-table tbody tr.exp-row-soon     td { background: linear-gradient(90deg, #fef9c3 0%, #fff 60%); }
+
+/* Action buttons */
+.exp-row-actions { display: inline-flex; gap: 4px; }
+.exp-row-actions .wo-icon-btn { width: 30px; height: 30px; font-size: 12px; }
+
+/* Dispose modal body */
+.exp-dispose-summary {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.exp-dispose-summary b { color: #991b1b; }
+.exp-dispose-summary .exp-dispose-stat { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed #fecaca; }
+.exp-dispose-summary .exp-dispose-stat:last-child { border-bottom: none; }
+.exp-dispose-summary .exp-dispose-stat span:last-child { font-weight: 800; color: #0f172a; }
+
+/* ===================================================================
+   v5.10.33 — Inventory header & button consistency layer
+   -------------------------------------------------------------------
+   Problem: inventory screens mixed wo-header/wo-btn with tb-top/tb-btn
+   producing inconsistent button heights, paddings, and weights.
+   Fix: equalize so every action button across inventory screens looks
+   identical regardless of which class is used; tighten the wo-header
+   action row spacing; align tb-btn with wo-btn-secondary.
+   =================================================================== */
+
+/* Equalize tb-btn to wo-btn (used in financial-style report toolbars) */
+.tb-btn {
+  min-height: 40px !important;
+  padding: 9px 16px !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  border-radius: 10px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  white-space: nowrap;
+  letter-spacing: 0;
+  font-family: inherit;
+  transition: all 180ms cubic-bezier(.4,0,.2,1);
+}
+.tb-btn i { font-size: 13px; }
+
+/* Tighten wo-header action row so multiple buttons look balanced */
+.wo-header .wo-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.wo-header .wo-header-actions .wo-btn,
+.wo-header .wo-header-actions .tb-btn {
+  min-height: 40px;
+  padding: 9px 16px;
+}
+
+/* Icon-only wo-btn variant (matches wo-icon-btn but inside wo-btn family
+   so it sits cleanly next to text buttons in the header action row) */
+.wo-btn.wo-btn--icon {
+  width: 40px;
+  min-width: 40px;
+  padding: 0 !important;
+  justify-content: center;
+}
+.wo-btn.wo-btn--icon i { margin: 0; font-size: 14px; }
+
+/* wo-btn-ghost in headers — keep it the same height as siblings */
+.wo-header .wo-btn-ghost {
+  min-height: 40px;
+  padding: 9px 14px;
+  border: 1px solid transparent;
+}
+.wo-header .wo-btn-ghost:hover { border-color: var(--wo-border, #e2e8f0); }
+
+/* Active/pressed state visual feedback */
+.wo-header .wo-btn:active,
+.wo-header .tb-btn:active { transform: scale(0.97); }
+
+/* The h1 inside wo-header sometimes wraps when its content is long; lock
+   line-height + ellipsis to keep the strip aligned */
+.wo-header .wo-header-titles h1 {
+  line-height: 1.3;
+  margin: 0 0 2px 0;
+}
+.wo-header .wo-header-titles .wo-header-sub {
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Mobile: stack header rows cleanly */
+@media (max-width: 720px) {
+  .wo-header { flex-wrap: wrap; gap: 12px; }
+  .wo-header .wo-header-actions { width: 100%; justify-content: flex-end; }
+  .wo-header .wo-btn { flex: 1; min-width: 0; }
+}
+
+/* ===================================================================
    v5.10.32 — Hub date-range strip + tile badges
    =================================================================== */
 .iv-hub-date-strip {

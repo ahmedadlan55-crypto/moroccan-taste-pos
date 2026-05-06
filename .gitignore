@@ -1,3 +1,14 @@
 node_modules/
 .env
 *.log
+
+# v5.10.26 — machine-local + IDE config (must never enter the repo)
+.claude/
+.vscode/
+.idea/
+*.lock
+
+# Screenshots, audit artifacts, ad-hoc scripts that leaked into earlier commits
+Screenshot*.png
+Enterprise_System_Audit_Report.pdf
+generate_report.py

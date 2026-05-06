@@ -12786,43 +12786,84 @@ function _wlRender(j) {
   document.getElementById('wlBnFrom').textContent = j.from || '—';
   document.getElementById('wlBnTo').textContent   = j.to   || '—';
 
-  // KPIs
-  var totalIn = 0, totalOut = 0, totalOpen = 0, totalClose = 0, distinctItems = (j.items||[]).length;
-  (j.items||[]).forEach(function(it) {
-    totalIn += it.in || 0; totalOut += it.out || 0;
-    totalOpen += it.opening || 0; totalClose += it.closing || 0;
-  });
+  // v5.10.29 — prefer the API's pre-computed summary; fall back to client-side
+  // sum if (older deploy hasn't shipped the new shape yet).
+  var s = j.summary || (j.items||[]).reduce(function(acc, it){
+    acc.totalIn      += it.in || 0;
+    acc.totalOut     += it.out || 0;
+    acc.openingValue += it.openingValue || ((it.opening||0) * (it.cost||0));
+    acc.closingValue += it.closingValue || ((it.closing||0) * (it.cost||0));
+    acc.itemsCount   += 1;
+    acc.linesCount   += (it.lines||[]).length;
+    return acc;
+  }, { totalIn:0, totalOut:0, openingValue:0, closingValue:0, itemsCount:0, linesCount:0 });
+  s.netChange      = (s.netChange      != null) ? s.netChange      : (s.totalIn - s.totalOut);
+  s.netChangeValue = (s.netChangeValue != null) ? s.netChangeValue : (s.closingValue - s.openingValue);
+
   var kpis = document.getElementById('wlKpis');
   kpis.style.display = 'grid';
   kpis.innerHTML =
-    '<div class="fa-kpi"><div class="fa-kpi-label">عدد الأصناف</div><div class="fa-kpi-value" style="color:#7c3aed;">' + distinctItems + '</div></div>' +
-    '<div class="fa-kpi"><div class="fa-kpi-label">رصيد افتتاحي إجمالي</div><div class="fa-kpi-value">' + fmt(totalOpen) + '</div></div>' +
-    '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الوارد</div><div class="fa-kpi-value" style="color:#16a34a;">+' + fmt(totalIn) + '</div></div>' +
-    '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الصادر</div><div class="fa-kpi-value" style="color:#ef4444;">−' + fmt(totalOut) + '</div></div>' +
-    '<div class="fa-kpi"><div class="fa-kpi-label">رصيد ختامي إجمالي</div><div class="fa-kpi-value" style="color:#0ea5e9;">' + fmt(totalClose) + '</div></div>';
+    '<div class="fa-kpi"><div class="fa-kpi-label">عدد الأصناف</div><div class="fa-kpi-value" style="color:#7c3aed;">' + (s.itemsCount||0) + '</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">القيمة الافتتاحية</div><div class="fa-kpi-value">' + fmt(s.openingValue) + ' ر.س</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الوارد</div><div class="fa-kpi-value" style="color:#16a34a;">+' + fmt(s.totalIn) + '</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الصادر</div><div class="fa-kpi-value" style="color:#ef4444;">−' + fmt(s.totalOut) + '</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">صافي حركة الفترة</div><div class="fa-kpi-value" style="color:' + (s.netChange>=0?'#0ea5e9':'#dc2626') + ';">' + (s.netChange>=0?'+':'') + fmt(s.netChange) + '</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">القيمة الختامية</div><div class="fa-kpi-value" style="color:#0ea5e9;">' + fmt(s.closingValue) + ' ر.س</div></div>';
+
+  // ── Reference-type chip mapping ─────────────────────────────────
+  var refMap = {
+    sale:       { label: 'مبيعات',   color: '#dc2626', bg: '#fee2e2', icon: 'fa-cash-register' },
+    transfer:   { label: 'تحويل',    color: '#0e7490', bg: '#cffafe', icon: 'fa-truck' },
+    stocktake:  { label: 'جرد',      color: '#7c3aed', bg: '#ede9fe', icon: 'fa-clipboard-check' },
+    adjustment: { label: 'تعديل',    color: '#a16207', bg: '#fef3c7', icon: 'fa-pen-to-square' },
+    purchase:   { label: 'شراء',     color: '#16a34a', bg: '#d1fae5', icon: 'fa-box-archive' },
+    waste:      { label: 'تالف',     color: '#991b1b', bg: '#fee2e2', icon: 'fa-trash' },
+    opening:    { label: 'افتتاحي',  color: '#475569', bg: '#e2e8f0', icon: 'fa-flag' },
+    manual:     { label: 'يدوي',     color: '#475569', bg: '#f1f5f9', icon: 'fa-hand' }
+  };
+  var refChip = function(refType, refNumber){
+    var def = refMap[refType] || refMap.manual;
+    return '<span style="display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:999px;background:' + def.bg + ';color:' + def.color + ';font-size:10.5px;font-weight:700;"><i class="fas ' + def.icon + '" style="font-size:9px;"></i>' + def.label + (refNumber ? ' · ' + esc(refNumber) : '') + '</span>';
+  };
 
   // Table — one master row per item, expandable to show movement lines
   var rows = (j.items||[]).map(function(it, idx) {
     var linesHtml = (it.lines||[]).map(function(l) {
-      var d = l.date ? new Date(l.date).toLocaleDateString('en-GB') : '—';
+      var d = l.date ? new Date(l.date).toLocaleString('en-GB', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
       var sign = l.type === 'in' ? '+' : '−';
       var clr  = l.type === 'in' ? '#16a34a' : '#ef4444';
+      var running = (l.runningBalance != null) ? l.runningBalance : null;
+      var lineVal = (l.value != null) ? l.value : (Number(l.qty)||0) * (it.cost||0);
+      var ref = refChip(l.refType || 'manual', l.refNumber || '');
+      var notesHtml = l.notes ? '<small style="color:#94a3b8;display:block;font-size:10.5px;">' + esc(l.notes) + '</small>' : '';
       return '<tr style="background:#fafafa;font-size:11.5px;color:#475569;">' +
-        '<td colspan="3" style="padding-inline-start:30px;">' + d + ' · ' + esc(l.reason||'') + (l.notes?' · <small>'+esc(l.notes)+'</small>':'') + '</td>' +
-        '<td class="num" style="color:'+clr+';font-weight:700;">' + sign + fmt(l.qty) + '</td>' +
-        '<td colspan="2" class="num" style="color:#64748b;">' + esc(l.user||'') + '</td>' +
+        '<td style="padding-inline-start:30px;white-space:nowrap;">' + d + '</td>' +
+        '<td>' + ref + '<br>' + esc(l.reason||'') + notesHtml + '</td>' +
+        '<td class="num" style="color:'+clr+';font-weight:700;font-size:12px;">' + sign + fmt(l.qty) + '</td>' +
+        '<td class="num" style="font-weight:800;color:#0f172a;">' + (running != null ? fmt(running) : '—') + '</td>' +
+        '<td class="num" style="color:'+clr+';font-weight:600;">' + sign + fmt(lineVal) + '</td>' +
+        '<td style="color:#64748b;font-size:11px;">' + esc(l.user||'') + '</td>' +
       '</tr>';
     }).join('');
     var firstAdded = it.firstAddedDate ? new Date(it.firstAddedDate).toLocaleDateString('en-GB') : '—';
+    var subHeaderRow =
+      '<tr style="background:#eef2ff;font-size:11px;font-weight:700;color:#3730a3;">' +
+        '<td style="padding-inline-start:30px;">التاريخ</td>' +
+        '<td>المرجع / السبب</td>' +
+        '<td class="num">الكمية</td>' +
+        '<td class="num">الرصيد بعد الحركة</td>' +
+        '<td class="num">القيمة</td>' +
+        '<td>المستخدم</td>' +
+      '</tr>';
     return '<tr class="wl-master" data-idx="'+idx+'" onclick="_wlToggleLines('+idx+')" style="cursor:pointer;">' +
-      '<td><i class="fas fa-chevron-left wl-chev" id="wlChev'+idx+'" style="margin-inline-end:6px;color:#94a3b8;font-size:10px;"></i><b>' + esc(it.name) + '</b><br><small style="color:#64748b;">أول إضافة: ' + firstAdded + '</small></td>' +
+      '<td><i class="fas fa-chevron-left wl-chev" id="wlChev'+idx+'" style="margin-inline-end:6px;color:#94a3b8;font-size:10px;"></i><b>' + esc(it.name) + '</b><br><small style="color:#64748b;">أول إضافة: ' + firstAdded + ' · ' + (it.lines||[]).length + ' حركة</small></td>' +
       '<td class="num">' + fmt(it.opening) + ' <small>' + esc(it.unit||'') + '</small></td>' +
       '<td class="num" style="color:#16a34a;">+' + fmt(it.in) + '</td>' +
       '<td class="num" style="color:#ef4444;">−' + fmt(it.out) + '</td>' +
       '<td class="num"><b>' + fmt(it.closing) + '</b></td>' +
-      '<td class="num">' + fmt((it.closing||0) * (it.cost||0)) + ' ر.س</td>' +
+      '<td class="num">' + fmt(it.closingValue != null ? it.closingValue : ((it.closing||0) * (it.cost||0))) + ' ر.س</td>' +
     '</tr>' +
-    '<tr class="wl-lines wl-lines-' + idx + '" style="display:none;"><td colspan="6" style="padding:0;background:#fafafa;"><table class="erp-table" style="margin:0;font-size:11.5px;"><tbody>' + linesHtml + '</tbody></table></td></tr>';
+    '<tr class="wl-lines wl-lines-' + idx + '" style="display:none;"><td colspan="6" style="padding:0;background:#fafafa;"><table class="erp-table" style="margin:0;font-size:11.5px;"><tbody>' + subHeaderRow + linesHtml + '</tbody></table></td></tr>';
   }).join('');
   document.getElementById('wlBody').innerHTML =
     '<div class="erp-table-container" style="margin-top:12px;">' +
@@ -12851,18 +12892,47 @@ window._wlToggleLines = function(idx) {
 window.erpExportWarehouseLedger = function() {
   var snap = window._wlSnapshot;
   if (!snap || !snap.items) return showToast('اعرض التقرير أولاً', true);
-  var headers = ['الصنف','الوحدة','أول إضافة','رصيد افتتاحي','وارد','صادر','رصيد ختامي','تكلفة الوحدة','القيمة'];
-  var csv = '﻿' + headers.join(',') + '\n';
-  snap.items.forEach(function(it) {
-    var fa = it.firstAddedDate ? new Date(it.firstAddedDate).toISOString().slice(0,10) : '';
-    csv += [
-      '"' + (it.name||'').replace(/"/g,'""') + '"',
-      it.unit||'', fa,
-      it.opening||0, it.in||0, it.out||0, it.closing||0,
-      it.cost||0,
-      ((it.closing||0)*(it.cost||0)).toFixed(2)
-    ].join(',') + '\n';
+  // v5.10.29 — proper accounting ledger CSV: one row per movement line with
+  // running balance + value, preceded by an item summary block. Excel-friendly.
+  var rows = [];
+  rows.push(['الصنف','الوحدة','تاريخ الحركة','المرجع','رقم المرجع','نوع الحركة','الكمية','الرصيد بعد الحركة','تكلفة الوحدة','قيمة الحركة','الرصيد المتراكم القيمي','المستخدم','بيان']);
+  snap.items.forEach(function(it){
+    var unit = it.unit || '';
+    var cost = Number(it.cost) || 0;
+    // opening row
+    rows.push([
+      it.name, unit, snap.from || '', 'افتتاحي', '',
+      'opening', it.opening || 0, it.opening || 0, cost, (it.openingValue || (it.opening||0)*cost),
+      (it.openingValue || (it.opening||0)*cost), '', 'الرصيد الافتتاحي للفترة'
+    ]);
+    (it.lines||[]).forEach(function(l){
+      var date = l.date ? new Date(l.date).toISOString().slice(0,19).replace('T',' ') : '';
+      rows.push([
+        it.name, unit, date,
+        l.refType || 'manual', l.refNumber || '',
+        l.type || '', (l.type==='out'?-1:1) * (Number(l.qty)||0),
+        (l.runningBalance != null ? l.runningBalance : ''),
+        cost,
+        (l.value != null ? l.value : (Number(l.qty)||0) * cost),
+        (l.runningValue != null ? l.runningValue : ''),
+        l.user || '', l.reason + (l.notes ? ' - ' + l.notes : '')
+      ]);
+    });
+    // closing row
+    rows.push([
+      it.name, unit, snap.to || '', 'ختامي', '',
+      'closing', it.closing || 0, it.closing || 0, cost,
+      (it.closingValue || (it.closing||0)*cost),
+      (it.closingValue || (it.closing||0)*cost), '', 'الرصيد الختامي للفترة'
+    ]);
   });
+  var csv = '﻿' + rows.map(function(r){
+    return r.map(function(c){
+      var s = (c == null ? '' : String(c));
+      if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    }).join(',');
+  }).join('\n');
   var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');

@@ -1613,23 +1613,65 @@ router.get('/warehouse-ledger', async (req, res) => {
         else                  outQty += Number(l.qty);
       });
 
+      // v5.10.29 — replay each movement from the opening balance to expose
+      // a per-row running balance + value, the way an accounting ledger
+      // expects. Also tag the line with a structured ref so the UI can
+      // drill down (sale, transfer, stocktake, manual movement).
+      const unitCost = Number(it.cost) || 0;
+      let running = Number(opening) || 0;
+      const enrichedLines = lines.map(function(l){
+        const q = Number(l.qty) || 0;
+        if (l.type === 'in') running += q;
+        else                 running -= q;
+        const refType = _classifyMovementRef(l.reason, l.notes);
+        return {
+          id: l.id,
+          date: l.movement_date,
+          type: l.type,
+          qty: q,
+          reason: l.reason || '',
+          user:   l.username || '',
+          notes:  l.notes || '',
+          runningBalance: running,
+          value: q * unitCost,                 // value of THIS line
+          runningValue: running * unitCost,    // running ledger value
+          refType: refType.type,
+          refNumber: refType.number || ''
+        };
+      });
+
       result.push({
         itemId: it.id, name: it.name, unit: it.unit || '',
-        cost: Number(it.cost) || 0,
+        cost: unitCost,
         firstAddedDate: it.first_added || null,
-        opening, in: inQty, out: outQty,
+        opening,
+        openingValue: (Number(opening) || 0) * unitCost,
+        in: inQty, out: outQty,
         closing: opening + inQty - outQty,
-        lines: lines.map(l => ({
-          date: l.movement_date, type: l.type, qty: Number(l.qty)||0,
-          reason: l.reason || '', user: l.username || '', notes: l.notes || ''
-        }))
+        closingValue: (opening + inQty - outQty) * unitCost,
+        lines: enrichedLines
       });
     }
+
+    // v5.10.29 — period summary across all items in the warehouse, so the
+    // UI can render a header strip showing total movement and value flow.
+    const summary = result.reduce(function(acc, it){
+      acc.totalIn        += it.in;
+      acc.totalOut       += it.out;
+      acc.openingValue   += it.openingValue;
+      acc.closingValue   += it.closingValue;
+      acc.itemsCount     += 1;
+      acc.linesCount     += it.lines.length;
+      return acc;
+    }, { totalIn: 0, totalOut: 0, openingValue: 0, closingValue: 0, itemsCount: 0, linesCount: 0 });
+    summary.netChange      = summary.totalIn - summary.totalOut;
+    summary.netChangeValue = summary.closingValue - summary.openingValue;
 
     res.json({
       success: true,
       warehouse: { id: wh[0].id, name: wh[0].name, code: wh[0].code },
       from: from || null, to: to || null,
+      summary,
       items: result
     });
   } catch(e) {
@@ -1637,6 +1679,33 @@ router.get('/warehouse-ledger', async (req, res) => {
     res.json({ success:false, error: e.message });
   }
 });
+
+// v5.10.29 — Heuristic classifier mapping a movement's reason/notes to a
+// structured reference type so the warehouse-ledger UI can render proper
+// links (and so reports can group by reference type).
+function _classifyMovementRef(reason, notes) {
+  const txt = ((reason || '') + ' ' + (notes || '')).trim();
+  if (/مبيعات|sale/i.test(txt))                   return { type: 'sale' };
+  if (/تحويل|transfer/i.test(txt)) {
+    const m = txt.match(/(WT-\d+|TR-\d+)/);
+    return { type: 'transfer', number: m ? m[1] : '' };
+  }
+  if (/(جرد|stocktake)/i.test(txt)) {
+    const m = txt.match(/(ST-\d+)/);
+    return { type: 'stocktake', number: m ? m[1] : '' };
+  }
+  if (/(تعديل|adjustment|ADJ)/i.test(txt)) {
+    const m = txt.match(/(ADJ-\d+)/);
+    return { type: 'adjustment', number: m ? m[1] : '' };
+  }
+  if (/شراء|توريد|purchase|GRN/i.test(txt)) {
+    const m = txt.match(/(PO-\d+|GRN-\d+)/);
+    return { type: 'purchase', number: m ? m[1] : '' };
+  }
+  if (/تالف|هدر|waste|damage/i.test(txt)) return { type: 'waste' };
+  if (/إضافة للمستودع|opening/i.test(txt)) return { type: 'opening' };
+  return { type: 'manual' };
+}
 
 router.get('/live-report', async (req, res) => {
   try {

@@ -5425,6 +5425,7 @@ function loadDashInvItems() {
       }
       populateInvCatFilter();
       _invItemsMountShell();
+      _invItemsRenderScopeBanner();  // v5.10.27 — show what scope these rows belong to
       renderInvTable(applyInvFilters(cachedRawItems));
       _invItemsRenderKpis(cachedRawItems);
       // v5.10.13 — fetch missing-items count for the banner (only when
@@ -5700,6 +5701,15 @@ function _invItemsMountShell() {
   if (!content) return;
   var filterBar = content.querySelector('.filter-bar');
   if (!filterBar) return;
+  // v5.10.27 — Scope banner mount point. Inserted just below the filter
+  // bar, above the KPI strip. _invItemsRenderScopeBanner() decides what
+  // to show (single warehouse vs roll-up vs no scope at all).
+  if (!q('#invItemsScopeBanner')) {
+    var scope = document.createElement('div');
+    scope.id = 'invItemsScopeBanner';
+    scope.style.cssText = 'margin:10px 0 4px;';
+    filterBar.parentNode.insertBefore(scope, filterBar.nextSibling);
+  }
   // 1) Replace the right-side action group inside the filter bar with
   //    our unified set (Print/Excel/PDF + Import + Add). Removes the
   //    duplicate "Excel" button that called the old exportInvExcel().
@@ -5736,6 +5746,82 @@ function _invItemsMountShell() {
   miss.id = 'invItemsMissingBanner';
   miss.style.cssText = 'margin:8px 0;display:none;';
   counts.parentNode.insertBefore(miss, counts.nextSibling);
+}
+
+// v5.10.27 — Scope banner for the warehouse "items" tab. Mirrors the
+// live-ledger pattern: always visible, three states.
+//   • Single warehouse → cyan banner with name + code
+//   • '__all__' rollup → amber banner: rows are (item × warehouse) pairs
+//   • No scope at all  → red banner urging the user to pick a warehouse
+//     (this is the bug surface the user reported — landing on the items
+//     tab without a warehouse used to show every brand item with global
+//     stock, which looked like cross-warehouse leakage).
+function _invItemsRenderScopeBanner() {
+  var box = q('#invItemsScopeBanner');
+  if (!box) return;
+  var st = window._invHub || {};
+  var rawWh = st.warehouseId || '';
+  var brandId = (st.brandId && st.brandId !== '__all__') ? st.brandId : '';
+
+  if (rawWh && rawWh !== '__all__') {
+    // Look up warehouse name from cached data if available
+    var whName = '', whCode = '';
+    var whCache = (window._invHubWhCache && brandId) ? window._invHubWhCache[brandId] : null;
+    if (whCache && Array.isArray(whCache.list)) {
+      var found = whCache.list.find(function(w){ return String(w.id) === String(rawWh); });
+      if (found) { whName = found.name || ''; whCode = found.code || ''; }
+    }
+    box.innerHTML =
+      '<div style="background:linear-gradient(135deg,#ecfeff,#cffafe);border:1.5px solid #67e8f9;' +
+                  'border-radius:12px;padding:10px 16px;display:flex;align-items:center;gap:12px;">' +
+        '<div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#06b6d4,#0891b2);' +
+                    'color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">' +
+          '<i class="fas fa-warehouse"></i>' +
+        '</div>' +
+        '<div style="flex:1;">' +
+          '<div style="font-size:10.5px;color:#0e7490;font-weight:800;letter-spacing:0.4px;">نطاق العرض: مستودع واحد</div>' +
+          '<div style="font-size:14px;font-weight:900;color:#155e75;">' + (whName ? _invHubEsc(whName) : 'المستودع المحدد') +
+            (whCode ? ' <code style="font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#0e7490;background:#fff;padding:1px 7px;border-radius:6px;margin-inline-start:6px;border:1px solid #cffafe;">' + _invHubEsc(whCode) + '</code>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#155e75;">كل صنف هنا له رصيد وحركات مستقلة في هذا المستودع.</div>' +
+      '</div>';
+    return;
+  }
+
+  if (rawWh === '__all__') {
+    box.innerHTML =
+      '<div style="background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1.5px solid #fbbf24;' +
+                  'border-radius:12px;padding:10px 16px;display:flex;align-items:center;gap:12px;">' +
+        '<div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#f59e0b,#d97706);' +
+                    'color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">' +
+          '<i class="fas fa-layer-group"></i>' +
+        '</div>' +
+        '<div style="flex:1;">' +
+          '<div style="font-size:10.5px;color:#92400e;font-weight:800;letter-spacing:0.4px;">نطاق العرض: عبر جميع المستودعات</div>' +
+          '<div style="font-size:13.5px;font-weight:800;color:#78350f;">كل صف هنا يمثّل (صنف × مستودع) — صف لكل تواجد للصنف في مستودع.</div>' +
+        '</div>' +
+      '</div>';
+    return;
+  }
+
+  // No scope at all — explicit warning so the user never thinks the
+  // numbers belong to a single warehouse.
+  box.innerHTML =
+    '<div style="background:linear-gradient(135deg,#fef2f2,#fee2e2);border:1.5px solid #fca5a5;' +
+                'border-radius:12px;padding:10px 16px;display:flex;align-items:center;gap:12px;">' +
+      '<div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#ef4444,#dc2626);' +
+                  'color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">' +
+        '<i class="fas fa-triangle-exclamation"></i>' +
+      '</div>' +
+      '<div style="flex:1;">' +
+        '<div style="font-size:10.5px;color:#991b1b;font-weight:800;letter-spacing:0.4px;">لم يتم تحديد مستودع</div>' +
+        '<div style="font-size:13.5px;font-weight:800;color:#7f1d1d;">' +
+          'الأرقام أدناه هي مجاميع تراكمية لكل المستودعات وليست لمستودع واحد. ' +
+          'ادخل من <b>إدارة المستودعات</b> ← اختر براند ← اختر مستودعاً للحصول على عرض مستقل.' +
+        '</div>' +
+      '</div>' +
+    '</div>';
 }
 
 // v5.10.13 — Render missing-items banner. Hidden when no gap.

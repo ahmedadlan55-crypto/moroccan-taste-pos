@@ -5130,6 +5130,135 @@
       </div>
     </div>
   </div>
+
+  <!-- v5.10.34 — Dedicated waste registration modal (replaces generic erpModal flow) -->
+  <div id="weRegisterModal" class="modal" style="display:none;align-items:flex-start;justify-content:center;z-index:9999;">
+    <div class="modal-content modal-large" style="max-width:900px;width:96%;margin-top:24px;">
+      <div class="modal-title" style="display:flex;align-items:center;gap:10px;">
+        <i class="fas fa-dumpster" style="color:#b91c1c;font-size:18px;"></i>
+        <span>تسجيل قيد هدر جديد</span>
+        <span style="margin-inline-start:auto;font-size:11px;color:#94a3b8;font-weight:600;">يُرحَّل تلقائياً GL: مدين مصروف الهدر / دائن المخزون</span>
+        <button class="modal-close" onclick="weCloseRegister()">&times;</button>
+      </div>
+
+      <!-- Sectioned form -->
+      <div class="we-form-section">
+        <div class="we-form-section__title"><i class="fas fa-info-circle"></i> بيانات القيد</div>
+        <div class="we-form-grid we-form-grid--3">
+          <div class="we-field">
+            <label class="we-label">التاريخ <span class="we-req">*</span></label>
+            <input type="date" id="wnDate" class="form-control" oninput="_weValidateForm()">
+          </div>
+          <div class="we-field">
+            <label class="we-label">السبب <span class="we-req">*</span></label>
+            <select id="wnReason" class="form-control" onchange="_weValidateForm()">
+              <option value="expired">منتهي الصلاحية</option>
+              <option value="damaged">تالف</option>
+              <option value="spill">انسكاب</option>
+              <option value="prep_loss">خسارة تحضير</option>
+              <option value="customer_return">إرجاع عميل</option>
+              <option value="other">أخرى</option>
+            </select>
+          </div>
+          <div class="we-field">
+            <label class="we-label">المستودع <span class="we-req">*</span></label>
+            <select id="wnWh" class="form-control" onchange="_weOnWarehouseChange()">
+              <option value="">— اختر مستودع —</option>
+            </select>
+            <small class="we-error" id="wnWhErr">يجب اختيار المستودع — منه تُخصم الأصناف.</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="we-form-section">
+        <div class="we-form-section__title"><i class="fas fa-building"></i> تخصيص محاسبي (اختياري)</div>
+        <div class="we-form-grid we-form-grid--3">
+          <div class="we-field">
+            <label class="we-label">الفرع</label>
+            <select id="wnBranch" class="form-control"><option value="">—</option></select>
+          </div>
+          <div class="we-field">
+            <label class="we-label">البراند</label>
+            <select id="wnBrand" class="form-control"><option value="">—</option></select>
+          </div>
+          <div class="we-field">
+            <label class="we-label">مركز التكلفة</label>
+            <select id="wnCC" class="form-control"><option value="">—</option></select>
+          </div>
+        </div>
+        <div class="we-field" style="margin-top:10px;">
+          <label class="we-label">ملاحظات</label>
+          <textarea id="wnNotes" class="form-control" rows="2" placeholder="مثال: علبة منتفخة، تكسّر أثناء النقل، باقي طلب لم يُسحب..."></textarea>
+        </div>
+      </div>
+
+      <div class="we-form-section">
+        <div class="we-form-section__title">
+          <i class="fas fa-boxes-stacked"></i> الأصناف المهدورة
+          <span style="margin-inline-start:auto;font-size:11px;color:#64748b;font-weight:600;">ابحث وأضف ثم حدّد الكمية</span>
+        </div>
+
+        <!-- Item autocomplete search -->
+        <div class="we-search-box" style="position:relative;">
+          <i class="fas fa-search" style="position:absolute;top:50%;transform:translateY(-50%);inset-inline-end:14px;color:#94a3b8;pointer-events:none;"></i>
+          <input type="text" id="wnSearch" class="form-control" placeholder="ابحث عن مادة (الاسم أو الكود)..." autocomplete="off"
+                 oninput="_weSearchItems(this.value)" onfocus="_weSearchItems(this.value)" style="padding-inline-end:38px;">
+          <div id="wnSearchDropdown" class="we-autocomplete" style="display:none;"></div>
+        </div>
+
+        <div class="we-cart-table-wrap">
+          <table class="we-cart-table">
+            <thead>
+              <tr>
+                <th style="width:38%;">الصنف</th>
+                <th class="num">المتاح</th>
+                <th class="num">الكمية المهدورة *</th>
+                <th>الوحدة</th>
+                <th class="num">تكلفة الوحدة</th>
+                <th class="num">قيمة السطر</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="wnCartBody">
+              <tr><td colspan="7" class="we-cart-empty"><i class="fas fa-arrow-up"></i> ابحث أعلاه واضغط على الصنف لإضافته</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Live total preview -->
+      <div class="we-summary-bar" id="wnSummaryBar">
+        <div class="we-summary-item">
+          <span class="we-summary-label"><i class="fas fa-list"></i> أصناف</span>
+          <span class="we-summary-value" id="wnSumCount">0</span>
+        </div>
+        <div class="we-summary-item">
+          <span class="we-summary-label"><i class="fas fa-cubes"></i> إجمالي الكميات</span>
+          <span class="we-summary-value" id="wnSumQty">0</span>
+        </div>
+        <div class="we-summary-item we-summary-item--total">
+          <span class="we-summary-label"><i class="fas fa-sack-dollar"></i> إجمالي قيمة الخسارة</span>
+          <span class="we-summary-value" id="wnSumTotal">0.00 ر.س</span>
+        </div>
+      </div>
+
+      <!-- Validation banner -->
+      <div id="wnValidation" class="we-validation-banner" style="display:none;">
+        <i class="fas fa-triangle-exclamation"></i>
+        <span id="wnValidationText"></span>
+      </div>
+
+      <!-- Actions -->
+      <div class="we-actions-bar">
+        <button class="wo-btn wo-btn-ghost" onclick="weCloseRegister()" type="button">
+          <i class="fas fa-xmark"></i><span>إلغاء</span>
+        </button>
+        <button class="wo-btn wo-btn-danger" id="wnSaveBtn" onclick="_weSubmitRegistration()" type="button" disabled>
+          <i class="fas fa-check"></i><span>تسجيل قيد الهدر</span>
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Royalty Runs -->

@@ -14958,68 +14958,331 @@ window.weExportExcel = function(){
 function erpViewWasteItems(id) {
   weToggleItems(id);
 }
+// v5.10.34 — Professional waste registration modal.
+// Items use autocomplete search instead of a select dropdown, show
+// per-warehouse availability live, validate qty against on-hand stock,
+// and surface a real-time total at the bottom. Save button is disabled
+// until the form is coherent.
+window._weReg = window._weReg || {
+  cart: [],            // [{ itemId, name, unit, cost, available, qty }]
+  itemsCache: [],      // master list of inv_items for the picker
+  stockMap: {},        // { itemId: qtyInSelectedWarehouse }
+  warehousesCache: [], branchesCache: [], brandsCache: [], ccsCache: []
+};
+
 function erpOpenWasteModal() {
+  var modal = document.getElementById('weRegisterModal');
+  if (!modal) {
+    if (typeof showToast === 'function') showToast('شاشة التسجيل غير موجودة في DOM — أعد تحميل الصفحة', true);
+    return;
+  }
+  // Reset state
+  window._weReg.cart = [];
+  window._weReg.stockMap = {};
+
+  // Fetch master data in parallel
   Promise.all([
-    new Promise(function(r){_erpGet('/erp/branches-full',r);}),
-    new Promise(function(r){_erpGet('/erp/brands',r);}),
-    new Promise(function(r){_erpGet('/erp/warehouses-list',r);}),
-    new Promise(function(r){_erpGet('/erp/cost-centers',r);}),
-    new Promise(function(r){_erpGet('/inventory/items',r);})
+    new Promise(function(r){_erpGet('/erp/branches-full', r);}),
+    new Promise(function(r){_erpGet('/erp/brands', r);}),
+    new Promise(function(r){_erpGet('/erp/warehouses-list', r);}),
+    new Promise(function(r){_erpGet('/erp/cost-centers', r);}),
+    new Promise(function(r){_erpGet('/inventory/items', r);})
   ]).then(function(res){
     var branches = res[0]||[], brands = res[1]||[], whs = res[2]||[], ccs = res[3]||[], items = res[4]||[];
-    var reasons = [['expired','منتهي الصلاحية'],['damaged','تالف'],['spill','انسكاب'],['prep_loss','خسارة تحضير'],['customer_return','إرجاع عميل'],['other','أخرى']];
-    document.getElementById('erpModalTitle').textContent = 'تسجيل هدر جديد';
-    document.getElementById('erpModalBody').innerHTML =
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+
-      '<div class="form-row"><label>التاريخ</label><input type="date" class="form-control" id="wnDate" value="'+new Date().toISOString().slice(0,10)+'"></div>'+
-      '<div class="form-row"><label>السبب</label><select class="form-control" id="wnReason">'+reasons.map(function(r){return '<option value="'+r[0]+'">'+r[1]+'</option>';}).join('')+'</select></div></div>'+
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+
-      '<div class="form-row"><label>الفرع</label><select class="form-control" id="wnBranch"><option value="">—</option>'+branches.map(function(b){return '<option value="'+b.id+'">'+b.name+'</option>';}).join('')+'</select></div>'+
-      '<div class="form-row"><label>البراند</label><select class="form-control" id="wnBrand"><option value="">—</option>'+brands.map(function(b){return '<option value="'+b.id+'">'+b.name+'</option>';}).join('')+'</select></div></div>'+
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+
-      '<div class="form-row"><label>المستودع *</label><select class="form-control" id="wnWh"><option value="">—</option>'+whs.map(function(w){return '<option value="'+w.id+'">'+w.name+'</option>';}).join('')+'</select></div>'+
-      '<div class="form-row"><label>مركز التكلفة</label><select class="form-control" id="wnCC"><option value="">—</option>'+ccs.map(function(c){return '<option value="'+c.id+'">'+(c.name||c.code)+'</option>';}).join('')+'</select></div></div>'+
-      '<div class="form-row"><label>ملاحظات</label><textarea class="form-control" id="wnNotes" rows="2"></textarea></div>'+
-      '<h4 style="margin:14px 0 6px;"><i class="fas fa-boxes"></i> الأصناف المهدورة</h4>'+
-      '<div id="wnItems"></div>'+
-      '<button class="btn btn-light btn-sm" onclick="erpWasteAddRow()"><i class="fas fa-plus"></i> صنف جديد</button>';
-    window._wnItemOptions = '<option value="">—</option>' + items.map(function(i){return '<option value="'+i.id+'" data-cost="'+(i.avg_cost||0)+'" data-unit="'+(i.unit||'PCS')+'">'+(i.name||'')+'</option>';}).join('');
-    erpWasteAddRow(); erpWasteAddRow();
-    document.getElementById('erpModalSaveBtn').onclick = function() {
-      var items = [];
-      document.querySelectorAll('.wn-item-row').forEach(function(row){
-        var s = row.querySelector('.wn-item-sel');
-        var q = row.querySelector('.wn-item-qty');
-        var c = row.querySelector('.wn-item-cost');
-        if (s.value && Number(q.value)>0) items.push({ itemId: s.value, quantity: Number(q.value), unit: s.options[s.selectedIndex].getAttribute('data-unit'), unitCost: Number(c.value)||0 });
-      });
-      if (!items.length) return showToast('أضف صنفاً واحداً على الأقل', true);
-      _erpPost('/erp/waste-entries', {
-        wasteDate: document.getElementById('wnDate').value,
-        reason: document.getElementById('wnReason').value,
-        branchId: document.getElementById('wnBranch').value || null,
-        brandId: document.getElementById('wnBrand').value || null,
-        warehouseId: document.getElementById('wnWh').value,
-        costCenterId: document.getElementById('wnCC').value || null,
-        notes: document.getElementById('wnNotes').value,
-        createdBy: currentUser,
-        items: items
-      }, function(r){ if(r.success){showToast('تم — إجمالي: '+_erpFmt(r.totalCost));erpCloseModal();erpLoadWasteEntries();}else showToast(r.error||'فشل',true); });
+    window._weReg.branchesCache = branches;
+    window._weReg.brandsCache   = brands;
+    window._weReg.warehousesCache = whs;
+    window._weReg.ccsCache      = ccs;
+    window._weReg.itemsCache    = items;
+
+    // Populate select dropdowns
+    var fillOpts = function(sel, list, valueKey, labelKey) {
+      if (!sel) return;
+      var keep = sel.options[0] ? sel.options[0].outerHTML : '';
+      sel.innerHTML = keep + list.map(function(x){
+        return '<option value="' + (x[valueKey]||'') + '">' + (x[labelKey]||x.name||'') + (x.code ? ' (' + x.code + ')' : '') + '</option>';
+      }).join('');
     };
-    document.getElementById('erpModal').classList.remove('hidden');
+    fillOpts(document.getElementById('wnBranch'), branches, 'id', 'name');
+    fillOpts(document.getElementById('wnBrand'),  brands,   'id', 'name');
+    fillOpts(document.getElementById('wnWh'),     whs,      'id', 'name');
+    fillOpts(document.getElementById('wnCC'),     ccs,      'id', 'name');
+
+    // Reset form fields
+    document.getElementById('wnDate').value = new Date().toISOString().slice(0,10);
+    document.getElementById('wnReason').value = 'expired';
+    document.getElementById('wnBranch').value = '';
+    document.getElementById('wnBrand').value  = '';
+    document.getElementById('wnWh').value     = '';
+    document.getElementById('wnCC').value     = '';
+    document.getElementById('wnNotes').value  = '';
+    document.getElementById('wnSearch').value = '';
+    var dd = document.getElementById('wnSearchDropdown'); if (dd) dd.style.display = 'none';
+
+    _weRenderCart();
+    _weValidateForm();
+
+    // Show modal (set display:flex via inline style)
+    modal.style.display = 'flex';
+
+    // Bind escape to close + outside-click to close
+    document.addEventListener('keydown', _weEscHandler, { once: true });
+  }).catch(function(e){
+    if (typeof showToast === 'function') showToast('فشل تحميل البيانات: ' + (e && e.message || ''), true);
   });
 }
-function erpWasteAddRow() {
-  var c = document.getElementById('wnItems');
-  var div = document.createElement('div');
-  div.className = 'wn-item-row';
-  div.style.cssText = 'display:grid;grid-template-columns:3fr 1fr 1fr auto;gap:6px;margin-bottom:6px;';
-  div.innerHTML = '<select class="form-control wn-item-sel" onchange="this.parentNode.querySelector(\'.wn-item-cost\').value=this.options[this.selectedIndex].getAttribute(\'data-cost\')||0">'+window._wnItemOptions+'</select>'+
-    '<input type="number" step="0.001" class="form-control wn-item-qty" placeholder="الكمية">'+
-    '<input type="number" step="0.0001" class="form-control wn-item-cost" placeholder="تكلفة الوحدة">'+
-    '<button class="btn btn-sm btn-danger" onclick="this.parentNode.remove()"><i class="fas fa-times"></i></button>';
-  c.appendChild(div);
+
+function _weEscHandler(e) {
+  if (e.key === 'Escape') weCloseRegister();
+  else document.addEventListener('keydown', _weEscHandler, { once: true });
 }
+
+window.weCloseRegister = function() {
+  var m = document.getElementById('weRegisterModal');
+  if (m) m.style.display = 'none';
+};
+
+// Refresh per-warehouse stock map when warehouse changes
+window._weOnWarehouseChange = function() {
+  var whId = document.getElementById('wnWh').value;
+  if (!whId) {
+    window._weReg.stockMap = {};
+    _weRenderCart();
+    _weValidateForm();
+    return;
+  }
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/inventory/items?warehouseId=' + encodeURIComponent(whId), {
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(r){ return r.json(); })
+    .then(function(rows){
+      window._weReg.stockMap = {};
+      if (Array.isArray(rows)) rows.forEach(function(r){ window._weReg.stockMap[r.id] = Number(r.stock) || 0; });
+      // Update cart available + re-render
+      window._weReg.cart.forEach(function(c){
+        c.available = window._weReg.stockMap[c.itemId] != null ? window._weReg.stockMap[c.itemId] : 0;
+      });
+      _weRenderCart();
+      _weValidateForm();
+    }).catch(function(){});
+};
+
+// Autocomplete search for adding items
+window._weSearchItems = function(qText) {
+  var dd = document.getElementById('wnSearchDropdown');
+  if (!dd) return;
+  var items = window._weReg.itemsCache || [];
+  var stock = window._weReg.stockMap || {};
+  var inCart = {};
+  window._weReg.cart.forEach(function(c){ inCart[c.itemId] = true; });
+  qText = (qText || '').trim().toLowerCase();
+  var matches = items
+    .filter(function(i){ return !inCart[i.id]; })
+    .filter(function(i){
+      if (!qText) return true;
+      return (String(i.name||'').toLowerCase().indexOf(qText) >= 0)
+          || (String(i.id||'').toLowerCase().indexOf(qText) >= 0);
+    })
+    .slice(0, 30);
+  if (!matches.length) {
+    dd.innerHTML = '<div class="we-autocomplete-empty">لا توجد نتائج' + (qText ? ' لـ "' + _woEscapeHtml(qText) + '"' : '') + '</div>';
+    dd.style.display = 'block';
+    return;
+  }
+  dd.innerHTML = matches.map(function(i){
+    var available = stock[i.id] != null ? stock[i.id] : null;
+    var stkChip = available == null
+      ? ''
+      : '<span class="we-autocomplete-item__stock' + (available <= 0 ? ' is-zero' : '') + '">' + Number(available).toLocaleString('en',{maximumFractionDigits:2}) + ' ' + _woEscapeHtml(i.unit||'') + '</span>';
+    var disabled = (available != null && available <= 0) ? ' is-disabled' : '';
+    return '<div class="we-autocomplete-item' + disabled + '" data-id="' + _woEscapeHtml(i.id) + '">' +
+      '<div>' +
+        '<div class="we-autocomplete-item__name">' + _woEscapeHtml(i.name||'') + '</div>' +
+        '<div class="we-autocomplete-item__sub">' + _woEscapeHtml(i.id||'') + (i.category ? ' · ' + _woEscapeHtml(i.category) : '') + '</div>' +
+      '</div>' +
+      stkChip +
+    '</div>';
+  }).join('');
+  dd.style.display = 'block';
+  // Wire clicks
+  Array.prototype.slice.call(dd.querySelectorAll('.we-autocomplete-item:not(.is-disabled)')).forEach(function(el){
+    el.onclick = function(){ _weAddItemToCart(el.getAttribute('data-id')); };
+  });
+};
+
+// Hide dropdown on outside click (one-time bind on modal show)
+document.addEventListener('click', function(ev){
+  var modal = document.getElementById('weRegisterModal');
+  if (!modal || modal.style.display === 'none') return;
+  if (ev.target.closest('.we-search-box')) return;
+  var dd = document.getElementById('wnSearchDropdown');
+  if (dd) dd.style.display = 'none';
+});
+
+function _weAddItemToCart(itemId) {
+  var item = (window._weReg.itemsCache || []).find(function(i){ return String(i.id) === String(itemId); });
+  if (!item) return;
+  var available = window._weReg.stockMap[item.id] != null ? window._weReg.stockMap[item.id] : 0;
+  window._weReg.cart.push({
+    itemId: item.id,
+    name: item.name || item.id,
+    unit: item.unit || 'PCS',
+    cost: Number(item.cost) || Number(item.avg_cost) || 0,
+    available: available,
+    qty: ''
+  });
+  // Clear search + close dropdown
+  var s = document.getElementById('wnSearch');
+  if (s) s.value = '';
+  var dd = document.getElementById('wnSearchDropdown');
+  if (dd) dd.style.display = 'none';
+  _weRenderCart();
+  _weValidateForm();
+}
+
+window._weRemoveCartItem = function(idx) {
+  window._weReg.cart.splice(idx, 1);
+  _weRenderCart();
+  _weValidateForm();
+};
+
+window._weUpdateCartQty = function(idx, value) {
+  if (!window._weReg.cart[idx]) return;
+  window._weReg.cart[idx].qty = value;
+  _weRenderCart(true);
+  _weValidateForm();
+};
+
+window._weUpdateCartCost = function(idx, value) {
+  if (!window._weReg.cart[idx]) return;
+  window._weReg.cart[idx].cost = Number(value) || 0;
+  _weRenderCart(true);
+  _weValidateForm();
+};
+
+function _weRenderCart(skipFocus) {
+  var body = document.getElementById('wnCartBody');
+  if (!body) return;
+  var cart = window._weReg.cart;
+  if (!cart.length) {
+    body.innerHTML = '<tr><td colspan="7" class="we-cart-empty"><i class="fas fa-arrow-up"></i> ابحث أعلاه واضغط على الصنف لإضافته</td></tr>';
+    _weUpdateSummary();
+    return;
+  }
+  var fmt    = function(n){ return Number(n||0).toLocaleString('en',{maximumFractionDigits:2}); };
+  var fmtCost= function(n){ return Number(n||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:4}); };
+  body.innerHTML = cart.map(function(c, i){
+    var requested = Number(c.qty) || 0;
+    var lineCost  = requested * Number(c.cost || 0);
+    var overflow  = requested > Number(c.available || 0);
+    var stkBadge = '<span class="we-stock-badge' + (c.available <= 0 ? ' is-zero' : (c.available <= 5 ? ' is-low' : '')) + '">' + fmt(c.available) + '</span>';
+    var qtyCls = (requested > 0 && overflow) ? ' is-invalid' : '';
+    return '<tr class="' + (overflow ? 'is-overflow' : '') + '">' +
+      '<td><b>' + _woEscapeHtml(c.name) + '</b><br><small style="color:#94a3b8;font-size:10.5px;">' + _woEscapeHtml(c.itemId) + '</small></td>' +
+      '<td class="num">' + stkBadge + ' <small style="color:#94a3b8;">' + _woEscapeHtml(c.unit) + '</small></td>' +
+      '<td class="num"><input type="number" min="0" step="0.001" class="we-cart-input' + qtyCls + '" value="' + (c.qty===''?'':c.qty) + '" oninput="_weUpdateCartQty(' + i + ', this.value)" placeholder="0"></td>' +
+      '<td>' + _woEscapeHtml(c.unit) + '</td>' +
+      '<td class="num"><input type="number" min="0" step="0.0001" class="we-cart-input" value="' + Number(c.cost).toFixed(4) + '" oninput="_weUpdateCartCost(' + i + ', this.value)"></td>' +
+      '<td class="num"><b>' + fmtCost(lineCost) + ' ر.س</b></td>' +
+      '<td><button class="we-cart-remove" onclick="_weRemoveCartItem(' + i + ')" title="حذف"><i class="fas fa-times"></i></button></td>' +
+    '</tr>';
+  }).join('');
+  _weUpdateSummary();
+}
+
+function _weUpdateSummary() {
+  var cart = window._weReg.cart;
+  var totalQty = 0, totalCost = 0;
+  cart.forEach(function(c){
+    var q = Number(c.qty) || 0;
+    totalQty += q;
+    totalCost += q * Number(c.cost || 0);
+  });
+  var fmt    = function(n){ return Number(n||0).toLocaleString('en',{maximumFractionDigits:2}); };
+  var fmtMon = function(n){ return Number(n||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var elC = document.getElementById('wnSumCount');  if (elC) elC.textContent = cart.length;
+  var elQ = document.getElementById('wnSumQty');    if (elQ) elQ.textContent = fmt(totalQty);
+  var elT = document.getElementById('wnSumTotal');  if (elT) elT.textContent = fmtMon(totalCost) + ' ر.س';
+}
+
+window._weValidateForm = function() {
+  var problems = [];
+  var whEl    = document.getElementById('wnWh');
+  var dateEl  = document.getElementById('wnDate');
+  var saveBtn = document.getElementById('wnSaveBtn');
+  var banner  = document.getElementById('wnValidation');
+  var bannerText = document.getElementById('wnValidationText');
+  var whErr   = document.getElementById('wnWhErr');
+
+  // Warehouse required
+  var whMissing = !whEl || !whEl.value;
+  if (whEl) whEl.classList.toggle('is-invalid', whMissing);
+  if (whErr) whErr.classList.toggle('is-shown', whMissing);
+  if (whMissing) problems.push('اختر المستودع');
+
+  // Date required
+  if (!dateEl || !dateEl.value) problems.push('اختر تاريخ القيد');
+
+  // Cart not empty + every line has qty>0 + qty <= available
+  var cart = window._weReg.cart || [];
+  var hasQtyLine = cart.some(function(c){ return Number(c.qty) > 0; });
+  if (!cart.length) problems.push('أضف صنفاً واحداً على الأقل');
+  else if (!hasQtyLine) problems.push('أدخل كمية أكبر من صفر لصنف واحد على الأقل');
+
+  var overflowCount = 0;
+  cart.forEach(function(c){ if (Number(c.qty) > Number(c.available || 0)) overflowCount++; });
+  if (overflowCount) problems.push(overflowCount + ' صنف بكمية أكبر من المتاح');
+
+  if (banner && bannerText) {
+    if (problems.length) {
+      bannerText.textContent = problems.join(' · ');
+      banner.style.display = '';
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+  if (saveBtn) saveBtn.disabled = problems.length > 0;
+  return problems;
+};
+
+window._weSubmitRegistration = function() {
+  if (_weValidateForm().length) return;
+  var cart = window._weReg.cart;
+  var items = cart
+    .filter(function(c){ return Number(c.qty) > 0; })
+    .map(function(c){
+      return {
+        itemId: c.itemId,
+        quantity: Number(c.qty) || 0,
+        unit: c.unit || 'PCS',
+        unitCost: Number(c.cost) || 0
+      };
+    });
+  if (!items.length) return showToast('أدخل كميات للمواد المضافة', true);
+  var saveBtn = document.getElementById('wnSaveBtn');
+  if (saveBtn) saveBtn.disabled = true;
+
+  _erpPost('/erp/waste-entries', {
+    wasteDate:    document.getElementById('wnDate').value,
+    reason:       document.getElementById('wnReason').value,
+    branchId:     document.getElementById('wnBranch').value || null,
+    brandId:      document.getElementById('wnBrand').value  || null,
+    warehouseId:  document.getElementById('wnWh').value,
+    costCenterId: document.getElementById('wnCC').value || null,
+    notes:        document.getElementById('wnNotes').value,
+    createdBy:    (typeof currentUser !== 'undefined' ? currentUser : ''),
+    items:        items
+  }, function(r){
+    if (r && r.success) {
+      showToast('تم تسجيل قيد الهدر — إجمالي: ' + _erpFmt(r.totalCost) + ' ر.س' + (r.journalNumber ? ' · قيد ' + r.journalNumber : ''));
+      weCloseRegister();
+      if (typeof erpLoadWasteEntries === 'function') erpLoadWasteEntries();
+    } else {
+      showToast((r && r.error) || 'فشل التسجيل', true);
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  });
+};
 
 // ─── Royalty Runs ───
 function erpLoadRoyaltyRuns() {

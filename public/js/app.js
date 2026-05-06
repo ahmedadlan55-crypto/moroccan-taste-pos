@@ -1805,7 +1805,16 @@ function refreshActiveAdminSection() {
     case 'home':       if (typeof loadDashHome === 'function') loadDashHome(); break;
     case 'sales':      if (typeof salesGo === 'function') salesGo('hub'); else if (typeof loadDashSales === 'function') loadDashSales(); break;
     case 'inventory':  if (typeof loadDashInv === 'function') loadDashInv(); break;
-    case 'warehouse':  if (typeof loadDashInvItems === 'function') loadDashInvItems(); break;
+    case 'warehouse':
+      // v5.10.26 — route refresh through invHub state so we don't fight with
+      // the brand/warehouse picker. If user is inside a tab, refresh that
+      // tab's loader; if on the picker grid, do nothing (no auto-refresh).
+      if (window._invHub && window._invHub.mode === 'tab' && typeof loadDashInvItems === 'function') {
+        loadDashInvItems();
+      } else if (typeof invHubOpen === 'function') {
+        invHubOpen();
+      }
+      break;
     case 'expenses':   if (typeof loadDashExpenses === 'function') loadDashExpenses(); break;
     case 'purchases':  if (typeof loadDashPurchases === 'function') loadDashPurchases(); break;
     case 'shifts':     if (typeof loadDashShifts === 'function') loadDashShifts(); break;
@@ -4239,7 +4248,12 @@ function _invHubRenderBrandStrip(brandId) {
         '<i class="fas ' + tabMeta.icon + '"></i> <span>' + _invHubEsc(tabMeta.title) + '</span>' +
       '</span>' +
       '<span class="iv-hub-strip-spacer"></span>' +
-      // Quick switch back to the hub for inter-tab navigation
+      // v5.10.26 — explicit "change warehouse" button (the brand button does
+      // this too, but the label is the brand name so it's not discoverable).
+      '<button class="iv-hub-strip-switch" onclick="invHubGoToBrand(\'' + _invHubEsc(brandId) + '\')" title="رجوع لاختيار المستودع">' +
+        '<i class="fas fa-warehouse"></i> <span>تغيير المستودع</span>' +
+      '</button>' +
+      // Quick switch back to the 6-icon hub for inter-tab navigation
       '<button class="iv-hub-strip-switch" onclick="invHubGoToWarehouse(\'' + _invHubEsc(brandId) + '\',\'' + _invHubEsc(whId) + '\')">' +
         '<i class="fas fa-grip"></i> <span>تغيير القسم</span>' +
       '</button>' +

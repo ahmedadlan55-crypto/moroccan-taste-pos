@@ -20056,6 +20056,16 @@ function _bmRender() {
     var pm = methodLabels[m.productionMethod] || methodLabels['made_at_branch'];
     var methodBadge = '<span class="wo-chip" style="background:'+pm.c+'15;color:'+pm.c+';font-weight:700;font-size:10px;"><i class="fas '+pm.i+'"></i> '+pm.l+'</span>';
 
+    // v5.10.26 — warehouse-link chip (Slot 5): visible at-a-glance whether the
+    // menu item is bound to a production/sales warehouse. Items with no
+    // binding silently fall back to global stock at sale-time → known
+    // divergence path (sales.js fallback chain). Yellow = needs attention.
+    var hasProdWh = !!m.productionWarehouseId;
+    var hasSalesWh = !!m.salesWarehouseId;
+    var whChip = (hasProdWh || hasSalesWh)
+      ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;font-size:10px;" title="مرتبط بمستودع — الخصم من رصيد دقيق"><i class="fas fa-warehouse"></i> '+ (hasProdWh ? '🏭' : '') + (hasProdWh && hasSalesWh ? '→' : '') + (hasSalesWh ? '🏬' : '') +'</span>'
+      : '<span class="wo-chip" style="background:#fef3c7;color:#92400e;font-weight:700;font-size:10px;" title="غير مرتبط بمستودع — يخصم من المخزون العام (يسبب انحراف)"><i class="fas fa-triangle-exclamation"></i> غير مرتبط</span>';
+
     // V5.7.4 — Inline-editable price cell. Double-click → input. Enter → save via PATCH.
     var safePrice = Number(m.price)||0;
     var safeCost = Number(m.cost)||0;
@@ -20076,7 +20086,7 @@ function _bmRender() {
       '<td><input type="checkbox" class="menu-bulk-cb" data-menu-id="'+m.id+'" onchange="erpToggleBulkPrice(this)" style="margin-inline-end:8px;width:14px;height:14px;cursor:pointer;">' +
         '<span style="font-weight:800;">'+ _v3EscapeHtml(m.name) +'</span>' +
         (m.nameEn ? '<div style="font-size:11px;color:#64748b;direction:ltr;font-weight:500;margin-top:2px;">'+ _v3EscapeHtml(m.nameEn) +'</div>' : '') +
-        '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">'+recipeChip+' '+methodBadge+'</div>' +
+        '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">'+recipeChip+' '+methodBadge+' '+whChip+'</div>' +
       '</td>' +
       '<td>'+ typeBadge +'</td>' +
       '<td><span class="wo-chip">'+ _v3EscapeHtml(m.category||'عام') +'</span></td>' +
@@ -20932,7 +20942,13 @@ function _reRenderLineCards() {
                    '<span>' + _v3EscapeHtml(l.name) + '</span>' +
                    pendingChip + shortageChip +
                  '</div>' +
-                 '<div class="re-line-meta">سعر/وحدة: <span class="re-num">' + _v3Fmt(unitCost) + '</span> ر.س</div>' +
+                 '<div class="re-line-meta">سعر/وحدة: <span class="re-num">' + _v3Fmt(unitCost) + '</span> ر.س' +
+                   // v5.10.26 — always-visible availability badge (Slot 5).
+                   // Color tracks adequacy: green if stock >= required, amber
+                   // if running thin, red if depleted. Helps the user spot
+                   // weak ingredients before saving the recipe.
+                   ' · <span style="font-weight:700;color:' + (stockMinor === 0 ? '#dc2626' : (qtyMinor > 0 && stockMinor < qtyMinor * 3 ? '#b45309' : '#15803d')) + ';" title="الرصيد المتاح في المستودع المرتبط"><i class="fas fa-warehouse" style="font-size:10px;"></i> متاح: <span class="re-num">' + _v3Fmt(stockMinor) + '</span></span>' +
+                 '</div>' +
                '</div>' +
                // Qty widget
                '<div class="wqty-host" data-idx="' + idx + '"></div>' +

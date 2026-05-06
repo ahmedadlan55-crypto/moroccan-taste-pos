@@ -1200,19 +1200,168 @@ router.post('/gl/repair-topups', async (req, res) => {
 });
 
 // Diagnostic: check GL data
+// v5.10.29 — Enhanced. Now surfaces concrete chart-of-accounts integrity
+// issues so the operator can see what needs fixing:
+//   • orphans: accounts whose parent_id doesn't match any existing account
+//   • typeMismatch: accounts whose type ≠ parent's type (e.g. asset under revenue)
+//   • levelMismatch: accounts whose stored level disagrees with computed depth
+//   • duplicateCodes: same code used by more than one account
+//   • unbalancedJournals: posted journals where SUM(debit) ≠ SUM(credit)
+//   • orphanEntries: entries pointing at deleted accounts
+//   • missingCoreAccounts: required core accounts (CASH/INVENTORY/COGS…) absent
 router.get('/gl/diagnose', async (req, res) => {
   try {
+    const CORE_CODES = ['1110','1120','1150','1200','2100','2210','3100','4100','5100','5200','5300'];
+
     const [accs] = await db.query('SELECT COUNT(*) AS cnt FROM gl_accounts');
     const [jrns] = await db.query('SELECT COUNT(*) AS cnt, status FROM gl_journals GROUP BY status');
     const [nullEntries] = await db.query('SELECT COUNT(*) AS cnt FROM gl_entries WHERE account_id IS NULL');
     const [validEntries] = await db.query('SELECT COUNT(*) AS cnt FROM gl_entries WHERE account_id IS NOT NULL');
-    const [nonZeroAccs] = await db.query('SELECT code, name_ar, balance FROM gl_accounts WHERE balance != 0 ORDER BY code');
+    const [nonZeroAccs] = await db.query('SELECT code, name_ar, type, balance FROM gl_accounts WHERE balance != 0 ORDER BY code');
+
+    // Orphans: parent_id set but no matching parent row
+    const [orphans] = await db.query(
+      `SELECT a.id, a.code, a.name_ar, a.type, a.parent_id
+         FROM gl_accounts a
+        WHERE a.parent_id IS NOT NULL
+          AND a.parent_id NOT IN (SELECT id FROM (SELECT id FROM gl_accounts) p)`);
+
+    // Type mismatch with parent
+    const [typeMismatch] = await db.query(
+      `SELECT c.id, c.code, c.name_ar, c.type AS child_type,
+              p.code AS parent_code, p.name_ar AS parent_name, p.type AS parent_type
+         FROM gl_accounts c
+         JOIN gl_accounts p ON p.id = c.parent_id
+        WHERE c.type IS NOT NULL AND p.type IS NOT NULL AND c.type <> p.type`);
+
+    // Duplicate codes
+    const [dupCodes] = await db.query(
+      `SELECT code, COUNT(*) AS n FROM gl_accounts WHERE code IS NOT NULL GROUP BY code HAVING n > 1`);
+
+    // Unbalanced posted journals
+    const [unbalanced] = await db.query(
+      `SELECT j.id, j.journal_number, j.journal_date, j.description,
+              ROUND(SUM(e.debit), 4)  AS total_debit,
+              ROUND(SUM(e.credit), 4) AS total_credit
+         FROM gl_journals j JOIN gl_entries e ON e.journal_id = j.id
+        WHERE j.status = 'posted'
+        GROUP BY j.id
+       HAVING ABS(IFNULL(total_debit,0) - IFNULL(total_credit,0)) > 0.01
+        ORDER BY j.journal_date DESC LIMIT 20`);
+
+    // Entries pointing at deleted accounts (account_id set but row missing)
+    const [orphanEntries] = await db.query(
+      `SELECT e.id, e.journal_id, e.account_id, e.account_code, e.account_name, e.debit, e.credit
+         FROM gl_entries e
+        WHERE e.account_id IS NOT NULL
+          AND e.account_id NOT IN (SELECT id FROM (SELECT id FROM gl_accounts) p)
+        LIMIT 50`);
+
+    // Missing core accounts
+    const ph = CORE_CODES.map(() => '?').join(',');
+    const [presentCore] = await db.query(
+      `SELECT code FROM gl_accounts WHERE code IN (${ph})`, CORE_CODES);
+    const presentSet = new Set(presentCore.map(r => r.code));
+    const missingCoreAccounts = CORE_CODES.filter(c => !presentSet.has(c));
+
+    // Computed levels: walk parent chain and compare against stored level
+    const [allAccs] = await db.query('SELECT id, code, name_ar, parent_id, level FROM gl_accounts');
+    const byId = {}; allAccs.forEach(a => { byId[a.id] = a; });
+    const computeDepth = function(a, seen) {
+      if (!a || !a.parent_id) return 0;
+      if (seen.has(a.id)) return -1; // cycle
+      seen.add(a.id);
+      const p = byId[a.parent_id];
+      if (!p) return 0;  // orphan; treat as root
+      const d = computeDepth(p, seen);
+      return d < 0 ? d : d + 1;
+    };
+    const levelMismatch = [];
+    const cycles = [];
+    for (const a of allAccs) {
+      const d = computeDepth(a, new Set());
+      if (d < 0) { cycles.push({ id: a.id, code: a.code, name_ar: a.name_ar }); continue; }
+      if (Number(a.level || 0) !== d) {
+        levelMismatch.push({ id: a.id, code: a.code, name_ar: a.name_ar, storedLevel: a.level, computedLevel: d });
+      }
+    }
+
     const [recentEntries] = await db.query(
       `SELECT e.account_id, e.account_code, e.account_name, e.debit, e.credit, j.journal_number, j.status, j.description
        FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id ORDER BY j.created_at DESC LIMIT 10`
     );
-    res.json({ accounts: accs[0].cnt, journals: jrns, nullEntries: nullEntries[0].cnt, validEntries: validEntries[0].cnt, nonZeroAccounts: nonZeroAccs, recentEntries });
+
+    const issuesCount =
+      orphans.length + typeMismatch.length + dupCodes.length +
+      unbalanced.length + orphanEntries.length + missingCoreAccounts.length +
+      levelMismatch.length + cycles.length;
+
+    res.json({
+      summary: {
+        accounts: accs[0].cnt,
+        journals: jrns,
+        nullEntries: nullEntries[0].cnt,
+        validEntries: validEntries[0].cnt,
+        issuesCount,
+        healthy: issuesCount === 0
+      },
+      issues: {
+        orphans,
+        typeMismatch,
+        duplicateCodes: dupCodes,
+        unbalancedJournals: unbalanced,
+        orphanEntries,
+        missingCoreAccounts,
+        levelMismatch,
+        cycles
+      },
+      nonZeroAccounts: nonZeroAccs,
+      recentEntries
+    });
   } catch(e) { res.json({ error: e.message }); }
+});
+
+// v5.10.29 — Auto-fix safe issues found by /gl/diagnose:
+//   • orphans → set parent_id to NULL (promote to root)
+//   • level mismatches → recompute level from actual parent depth
+// Does NOT touch type mismatches (operator decision), duplicate codes
+// (need merge strategy), or unbalanced journals (need accounting review).
+router.post('/gl/auto-fix', async (req, res) => {
+  try {
+    const result = { orphansPromoted: 0, levelsCorrected: 0 };
+
+    // 1. Orphans → root
+    const [orphans] = await db.query(
+      `SELECT a.id FROM gl_accounts a
+        WHERE a.parent_id IS NOT NULL
+          AND a.parent_id NOT IN (SELECT id FROM (SELECT id FROM gl_accounts) p)`);
+    for (const o of orphans) {
+      await db.query('UPDATE gl_accounts SET parent_id = NULL, level = 0 WHERE id = ?', [o.id]);
+      result.orphansPromoted++;
+    }
+
+    // 2. Recompute levels for everyone
+    const [allAccs] = await db.query('SELECT id, parent_id, level FROM gl_accounts');
+    const byId = {}; allAccs.forEach(a => { byId[a.id] = a; });
+    const depth = function(a, seen) {
+      if (!a || !a.parent_id) return 0;
+      if (seen.has(a.id)) return 0;
+      seen.add(a.id);
+      const p = byId[a.parent_id];
+      return p ? depth(p, seen) + 1 : 0;
+    };
+    for (const a of allAccs) {
+      const d = depth(a, new Set());
+      if (Number(a.level || 0) !== d) {
+        await db.query('UPDATE gl_accounts SET level = ? WHERE id = ?', [d, a.id]);
+        result.levelsCorrected++;
+      }
+    }
+
+    res.json({ success: true, ...result });
+  } catch(e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // ─── Inventory Method & Valuation ───

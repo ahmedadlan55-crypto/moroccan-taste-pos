@@ -767,7 +767,7 @@ router.post('/items/:id/restore', async (req, res) => {
 //   ?q=...          → name/id search
 router.get('/catalog', async (req, res) => {
   try {
-    const { onlyDeleted, brandId, q } = req.query;
+    const { onlyDeleted, brandId, warehouseId, q } = req.query;
     let sql =
       'SELECT i.id, i.name, i.category, i.brand_id, b.name AS brand_name, ' +
       '       i.unit, i.big_unit, i.conv_rate, i.cost, i.min_stock, ' +
@@ -781,6 +781,11 @@ router.get('/catalog', async (req, res) => {
       sql += ' AND i.deleted_at IS NULL';
     }
     if (brandId) { sql += ' AND i.brand_id = ?'; params.push(brandId); }
+    if (warehouseId) {
+      sql += ' AND (EXISTS(SELECT 1 FROM warehouse_stock ws WHERE ws.item_id = i.id AND ws.warehouse_id = ?) ' +
+             'OR EXISTS(SELECT 1 FROM inventory_movements im WHERE im.item_id = i.id AND im.warehouse_id = ?))';
+      params.push(warehouseId, warehouseId);
+    }
     if (q)       { sql += ' AND (i.name LIKE ? OR i.id LIKE ? OR i.category LIKE ?)';
                    params.push('%'+q+'%', '%'+q+'%', '%'+q+'%'); }
     sql += ' ORDER BY ' + (onlyDeleted === '1' ? 'i.deleted_at DESC' : 'i.category, i.name');
@@ -803,13 +808,21 @@ router.get('/catalog', async (req, res) => {
 // "إدارة مواد المخزون" KPI strip.
 router.get('/catalog/summary', async (req, res) => {
   try {
+    const { warehouseId } = req.query;
+    let whCondition = '';
+    const params = [];
+    if (warehouseId) {
+      whCondition = ' AND (EXISTS(SELECT 1 FROM warehouse_stock ws WHERE ws.item_id = inv_items.id AND ws.warehouse_id = ?) ' +
+                    'OR EXISTS(SELECT 1 FROM inventory_movements im WHERE im.item_id = inv_items.id AND im.warehouse_id = ?))';
+      params.push(warehouseId, warehouseId);
+    }
     const [rows] = await db.query(
       "SELECT " +
       "  SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS active_count, " +
       "  SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS deleted_count, " +
       "  COUNT(DISTINCT CASE WHEN deleted_at IS NULL THEN brand_id END) AS brand_count, " +
       "  COUNT(DISTINCT CASE WHEN deleted_at IS NULL THEN category END) AS category_count " +
-      "FROM inv_items"
+      "FROM inv_items WHERE 1=1" + whCondition, params
     );
     const r = rows[0] || {};
     res.json({

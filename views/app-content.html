@@ -885,6 +885,9 @@
               <select id="invCatBrandFilter" class="form-control wh-fb-select" onchange="loadInvCatalog()">
                 <option value="">🏪 كل البراندات</option>
               </select>
+              <select id="invCatWarehouseFilter" class="form-control wh-fb-select" onchange="loadInvCatalog()">
+                <option value="">🏢 كل المستودعات</option>
+              </select>
               <button class="btn btn-light wh-fb-clear" onclick="invCatClearFilters()" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
             </div>
           </div>
@@ -5279,17 +5282,14 @@
     <div class="modal-content modal-large">
       <div class="modal-title"><span id="rMdlTitle">إضافة مادة خام جديدة للمستودع</span><button class="modal-close" onclick="closeModal('#modalRawForm')">&times;</button></div>
       <input type="hidden" id="mrId">
-      <input type="hidden" id="mrWarehouseId">
-
-      <!-- v5.10.6 — Warehouse banner (shows which warehouse we're adding to) -->
-      <div id="mrWarehouseBanner" class="form-group" style="background:linear-gradient(135deg,#ecfeff,#cffafe);padding:12px 14px;border-radius:10px;border:1.5px solid #67e8f9;margin-bottom:12px;display:none;">
+      <!-- Warehouse selector -->
+      <div class="form-group" style="background:linear-gradient(135deg,#ecfeff,#cffafe);padding:12px 14px;border-radius:10px;border:1.5px solid #67e8f9;margin-bottom:12px;">
         <label class="form-label" style="color:#0e7490;font-weight:800;"><i class="fas fa-warehouse"></i> المستودع المستلم</label>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <span id="mrWarehouseName" style="font-size:15px;font-weight:900;color:#155e75;"></span>
-          <span id="mrWarehouseCode" style="background:#fff;padding:2px 10px;border-radius:8px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#0e7490;border:1px solid #cffafe;"></span>
-        </div>
+        <select id="mrWarehouseId" class="form-control">
+          <option value="">— عام (بدون تحديد مستودع) —</option>
+        </select>
         <small style="color:#155e75;font-size:11px;margin-top:4px;display:block;">
-          <i class="fas fa-info-circle"></i> ستُسجّل المادة في هذا المستودع فقط، ولن تظهر في باقي المستودعات إلا بعد تحويلها صراحة.
+          <i class="fas fa-info-circle"></i> ستُسجّل المادة في هذا المستودع، ولن تظهر في باقي المستودعات إلا بعد تحويلها.
         </small>
       </div>
 

@@ -5451,19 +5451,23 @@ function loadInvCatalog() {
   var token = localStorage.getItem('pos_token') || '';
   var search = ((q('#invCatSearch') && q('#invCatSearch').value) || '').trim();
   var brandId = (q('#invCatBrandFilter') && q('#invCatBrandFilter').value) || '';
+  var warehouseId = (q('#invCatWarehouseFilter') && q('#invCatWarehouseFilter').value) || '';
   var tab = window._invCatState.tab || 'active';
   var qs = [];
   if (tab === 'deleted') qs.push('onlyDeleted=1');
   if (search)  qs.push('q='       + encodeURIComponent(search));
   if (brandId) qs.push('brandId=' + encodeURIComponent(brandId));
+  if (warehouseId) qs.push('warehouseId=' + encodeURIComponent(warehouseId));
   var url = '/api/inventory/catalog' + (qs.length ? ('?' + qs.join('&')) : '');
+  var summaryUrl = '/api/inventory/catalog/summary' + (qs.length ? ('?' + qs.join('&')) : '');
 
-  // Populate brand filter once
+  // Populate brand and warehouse filters once
   _invCatPopulateBrandFilter();
+  _invCatPopulateWarehouseFilter();
 
   // Fetch summary (counts) + list in parallel
   Promise.all([
-    fetch('/api/inventory/catalog/summary', { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json()).catch(() => ({})),
+    fetch(summaryUrl, { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json()).catch(() => ({})),
     fetch(url, { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json()).catch(() => [])
   ]).then(function(out) {
     loader(false);
@@ -5496,6 +5500,32 @@ function _invCatPopulateBrandFilter() {
         opt.value = b.id;
         opt.textContent = b.name;
         sel.appendChild(opt);
+      });
+    }).catch(function(){});
+}
+
+function _invCatPopulateWarehouseFilter() {
+  var selCat = q('#invCatWarehouseFilter');
+  var selMod = q('#mrWarehouseId');
+  if (selCat && selCat.options.length > 1) return;  // already populated
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/warehouses-list', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => r.json())
+    .then(function(whs){
+      if (!Array.isArray(whs)) return;
+      whs.forEach(function(w){
+        if (selCat) {
+          var opt1 = document.createElement('option');
+          opt1.value = w.id || w.ID;
+          opt1.textContent = w.name || w.NameAR || w.Code;
+          selCat.appendChild(opt1);
+        }
+        if (selMod) {
+          var opt2 = document.createElement('option');
+          opt2.value = w.id || w.ID;
+          opt2.textContent = w.name || w.NameAR || w.Code;
+          selMod.appendChild(opt2);
+        }
       });
     }).catch(function(){});
 }
@@ -6349,30 +6379,11 @@ function openRawModal(id = null, opts = {}) {
     if (!whId && window._invHub && window._invHub.warehouseId
         && window._invHub.warehouseId !== '__all__') {
       whId = window._invHub.warehouseId;
-      // Resolve name + code from the per-brand cache populated by
-      // _invHubLoadWarehousesData (lookup by id across all cached brands)
-      try {
-        var whCache = window._invHubWhCache || {};
-        Object.keys(whCache).forEach(function(bid) {
-          var entry = whCache[bid];
-          if (!entry || !entry.list) return;
-          var match = entry.list.find(function(w){ return w.id === whId; });
-          if (match) {
-            whName = whName || match.name || '';
-            whCode = whCode || match.code || '';
-          }
-        });
-      } catch(_) {}
     }
-    q("#mrWarehouseId").value = whId || '';
-    if (banner) {
-      if (whId) {
-        banner.style.display = '';
-        if (q("#mrWarehouseName")) q("#mrWarehouseName").innerText = whName || '—';
-        if (q("#mrWarehouseCode")) q("#mrWarehouseCode").innerText = whCode || whId;
-      } else {
-        banner.style.display = 'none';
-      }
+    
+    // Set explicit warehouse drop-down and make sure to populate
+    if (q("#mrWarehouseId")) {
+       q("#mrWarehouseId").value = whId || '';
     }
 
     if (!id) {

@@ -1,6 +1,10 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const { ensureCoreAccounts } = require('../lib/glPosting');
+// v5.11.1 — official 150-account COA template (mirrored from the Excel
+// the user attached). Loaded once at boot, used by /gl/seed-from-template
+// to seed or refresh the chart of accounts in one click.
+const COA_TEMPLATE = require('../db/coa-template.json');
 
 // ─── Dashboard ───
 
@@ -963,6 +967,15 @@ router.delete('/gl/accounts/:id', async (req, res) => {
     await db.query('DELETE FROM gl_accounts WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// v5.11.1 — expose the official template as a static resource so the
+// frontend can fetch it once and feed it through the existing import
+// flow (preview modal + replace-mode + cascade rename). 150 accounts,
+// 6 IFRS-aligned roots: Assets / Liabilities / Equity / Revenue /
+// COGS / Operating & Admin Expenses.
+router.get('/gl/coa-template', async (req, res) => {
+  res.json({ success: true, accounts: COA_TEMPLATE });
 });
 
 // Seed cafe GL accounts (دليل حسابات المقهى)
@@ -2523,7 +2536,10 @@ router.put('/gl/journals/:id', async (req, res) => {
 router.post('/gl/journals/bulk', async (req, res) => {
   const { ids, action, username } = req.body || {};
   if (!Array.isArray(ids) || !ids.length) return res.json({ success: false, error: 'لا توجد قيود محدَّدة' });
-  const allowed = ['approve','post','unpost','delete'];
+  // v5.11.1 — added 'approve_post': single round-trip that approves and
+  // posts each journal so bulk-approve in the UI matches the new
+  // single-row behaviour (approve = post on the chart of accounts).
+  const allowed = ['approve','post','unpost','delete','approve_post'];
   if (allowed.indexOf(action) < 0) return res.json({ success: false, error: 'إجراء غير مدعوم' });
 
   const results = [];
@@ -2537,6 +2553,20 @@ router.post('/gl/journals/bulk', async (req, res) => {
         if (jrn.status !== 'draft') { results.push({ id, ok: false, reason: 'not-draft' }); failed++; continue; }
         await db.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?', [username || '', new Date(), id]);
         await auditLog('approve_journal', 'gl_journal', id, username, { bulk: true }, req.ip);
+        results.push({ id, ok: true }); ok++;
+      } else if (action === 'approve_post') {
+        // v5.11.1 — combined: only drafts can enter this path; we approve,
+        // then immediately post (apply balance updates).
+        if (jrn.status !== 'draft') { results.push({ id, ok: false, reason: 'not-draft' }); failed++; continue; }
+        await db.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?', [username || '', new Date(), id]);
+        const [entries] = await db.query('SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ?', [id]);
+        for (const e of entries) {
+          if (!e.account_id) continue;
+          const net = (Number(e.debit) || 0) - (Number(e.credit) || 0);
+          await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [net, e.account_id]);
+        }
+        await db.query('UPDATE gl_journals SET status = "posted", posted_by = ?, posted_at = ? WHERE id = ?', [username || '', new Date(), id]);
+        await auditLog('approve_post_journal', 'gl_journal', id, username, { bulk: true }, req.ip);
         results.push({ id, ok: true }); ok++;
       } else if (action === 'post') {
         if (jrn.status === 'posted') { results.push({ id, ok: false, reason: 'already-posted' }); failed++; continue; }

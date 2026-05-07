@@ -1,0 +1,192 @@
+/* ────────────────────────────────────────────────────────────────────
+   Journal Entries — premium brand-aligned styling (v5.11.1)
+   Replaces the inline-style mess that used to live in erpLoadJournals.
+   All classes here consume the global theme vars (--accent, --primary,
+   --success, --warning, --danger) declared in style.css:5.
+   ──────────────────────────────────────────────────────────────────── */
+
+/* ── Stat cards ── */
+.jrn-stat-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #ffffff, #f8fafc);
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+.jrn-stat-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px -8px rgba(15, 23, 42, 0.16);
+  border-color: #cbd5e1;
+}
+.jrn-stat-card .jsc-icon {
+  width: 44px; height: 44px;
+  display: grid; place-items: center;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent), #2563eb);
+  color: #ffffff;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+.jrn-stat-card[data-status="draft"]    .jsc-icon { background: linear-gradient(135deg, #f59e0b, #d97706); }
+.jrn-stat-card[data-status="approved"] .jsc-icon { background: linear-gradient(135deg, #6366f1, #4f46e5); }
+.jrn-stat-card[data-status="posted"]   .jsc-icon { background: linear-gradient(135deg, #10b981, #059669); }
+.jrn-stat-card .jsc-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.jrn-stat-card .jsc-val {
+  font-size: 22px;
+  font-weight: 900;
+  color: var(--primary);
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.jrn-stat-card .jsc-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.04em;
+}
+.jrn-stat-card .jsc-amt {
+  font-size: 12px;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+/* ── Action buttons ── */
+.jrn-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px; height: 32px;
+  margin-inline-start: 2px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, transform 100ms ease, border-color 120ms ease;
+  font-size: 13px;
+}
+.jrn-action-btn:hover {
+  background: #f1f5f9;
+  color: var(--accent);
+  border-color: #cbd5e1;
+  transform: scale(1.05);
+}
+.jrn-action-btn:active { transform: scale(0.97); }
+.jrn-action-btn--primary:hover { background: var(--accent);  color: #fff; border-color: var(--accent); }
+.jrn-action-btn--success:hover { background: var(--success); color: #fff; border-color: var(--success); }
+.jrn-action-btn--warn:hover    { background: var(--warning); color: #fff; border-color: var(--warning); }
+.jrn-action-btn--danger:hover  { background: var(--danger);  color: #fff; border-color: var(--danger); }
+.jrn-action-btn--info:hover    { background: #0ea5e9;        color: #fff; border-color: #0ea5e9; }
+
+/* ── Status badges ── */
+.jrn-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.jrn-badge--draft    { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+.jrn-badge--approved { background: #ede9fe; color: #5b21b6; border: 1px solid #ddd6fe; }
+.jrn-badge--posted   { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+
+/* ── Dimension chips on each row ── */
+.jrn-dim-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: var(--chip-bg, #f1f5f9);
+  color: var(--chip-fg, #475569);
+  border: 1px solid var(--chip-border, #e2e8f0);
+  white-space: nowrap;
+}
+.jrn-dim-chip i { font-size: 9.5px; opacity: 0.85; }
+.jrn-dim-chip--brand   { --chip-bg: #faf5ff; --chip-fg: #7c3aed; --chip-border: #e9d5ff; }
+.jrn-dim-chip--branch  { --chip-bg: #eff6ff; --chip-fg: #1d4ed8; --chip-border: #bfdbfe; }
+.jrn-dim-chip--project { --chip-bg: #f0fdf4; --chip-fg: #15803d; --chip-border: #bbf7d0; }
+.jrn-dim-chip--cc      { --chip-bg: #fef2f2; --chip-fg: #b91c1c; --chip-border: #fecaca; }
+
+/* ── Bulk action bar ── */
+.jrn-bulk-bar {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  margin-top: 12px;
+  background: linear-gradient(135deg, var(--primary), #1e293b);
+  color: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px -8px rgba(15, 23, 42, 0.32);
+}
+.jrn-bulk-bar.is-active { display: flex; }
+.jrn-bulk-bar__count { font-weight: 800; font-size: 13.5px; }
+.jrn-bulk-bar__count i { margin-inline-end: 6px; opacity: 0.8; }
+.jrn-bulk-bar__btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: none;
+  font-weight: 800;
+  font-size: 12.5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: transform 100ms ease, opacity 120ms ease, box-shadow 120ms ease;
+  color: #ffffff;
+}
+.jrn-bulk-bar__btn:hover  { transform: scale(1.04); box-shadow: 0 4px 14px -4px rgba(0,0,0,0.3); }
+.jrn-bulk-bar__btn:active { opacity: 0.88; transform: scale(0.98); }
+.jrn-bulk-bar__btn--approve { background: linear-gradient(135deg, var(--success), #059669); }
+.jrn-bulk-bar__btn--post    { background: linear-gradient(135deg, #16a34a, #15803d); }
+.jrn-bulk-bar__btn--unpost  { background: linear-gradient(135deg, var(--warning), #d97706); }
+.jrn-bulk-bar__btn--delete  { background: linear-gradient(135deg, var(--danger), #dc2626); }
+.jrn-bulk-bar__btn--ghost   { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); }
+
+/* ── Row hover affordance + draft tint ── */
+.jrn-row { transition: background 120ms ease; }
+.jrn-row:hover { background: #f8fafc; }
+.jrn-row--draft { background: rgba(254, 243, 199, 0.18); }
+.jrn-row--draft:hover { background: rgba(254, 243, 199, 0.32); }
+
+/* ── Row inner bits ── */
+.jrn-num {
+  font-weight: 800;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  background: #eff6ff;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.jrn-meta {
+  font-size: 10.5px;
+  color: #94a3b8;
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.jrn-row .jrn-amt {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.jrn-row .jrn-amt--debit  { color: #16a34a; }
+.jrn-row .jrn-amt--credit { color: #dc2626; }
+.jrn-row-cb {
+  width: 16px; height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}

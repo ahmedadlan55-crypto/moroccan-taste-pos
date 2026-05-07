@@ -1,0 +1,1502 @@
+[
+  {
+    "code": "1",
+    "nameAr": "الأصول",
+    "nameEn": "Assets",
+    "type": "asset",
+    "parentCode": "",
+    "level": 1,
+    "kind": "folder",
+    "order": 1
+  },
+  {
+    "code": "11",
+    "nameAr": "الأصول المتداولة",
+    "nameEn": "Current Assets",
+    "type": "asset",
+    "parentCode": "1",
+    "level": 2,
+    "kind": "folder",
+    "order": 2
+  },
+  {
+    "code": "111",
+    "nameAr": "النقدية والبنوك",
+    "nameEn": "Cash and Banks",
+    "type": "asset",
+    "parentCode": "11",
+    "level": 2,
+    "kind": "folder",
+    "order": 3
+  },
+  {
+    "code": "1110",
+    "nameAr": "النقدية",
+    "nameEn": "Cash",
+    "type": "asset",
+    "parentCode": "111",
+    "level": 4,
+    "kind": "leaf",
+    "order": 4
+  },
+  {
+    "code": "11101",
+    "nameAr": "عهدة الكاشير / صناديق نقاط البيع (POS)",
+    "nameEn": "POS Cash",
+    "type": "asset",
+    "parentCode": "1110",
+    "level": 5,
+    "kind": "leaf",
+    "order": 5
+  },
+  {
+    "code": "11102",
+    "nameAr": "البنوك",
+    "nameEn": "Banks",
+    "type": "asset",
+    "parentCode": "1120",
+    "level": 5,
+    "kind": "leaf",
+    "order": 6
+  },
+  {
+    "code": "11103",
+    "nameAr": "الحسابات البنكية الجارية",
+    "nameEn": "Current Bank Accounts",
+    "type": "asset",
+    "parentCode": "1120",
+    "level": 5,
+    "kind": "leaf",
+    "order": 7
+  },
+  {
+    "code": "112",
+    "nameAr": "بنك الأهلي",
+    "nameEn": "Al-Ahli Bank",
+    "type": "asset",
+    "parentCode": "11",
+    "level": 2,
+    "kind": "leaf",
+    "order": 8
+  },
+  {
+    "code": "1120",
+    "nameAr": "المخزون",
+    "nameEn": "Inventory",
+    "type": "asset",
+    "parentCode": "111",
+    "level": 4,
+    "kind": "folder",
+    "order": 9
+  },
+  {
+    "code": "11201",
+    "nameAr": "المخزون الرئيسي",
+    "nameEn": "Main Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 10
+  },
+  {
+    "code": "11202",
+    "nameAr": "مخزون الفروع",
+    "nameEn": "Branches Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 11
+  },
+  {
+    "code": "11203",
+    "nameAr": "الإنتاج تحت التشغيل",
+    "nameEn": "Work in Process",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 12
+  },
+  {
+    "code": "11204",
+    "nameAr": "المنتجات التامة",
+    "nameEn": "Finished Products",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 13
+  },
+  {
+    "code": "11205",
+    "nameAr": "مخزون المواد الخام (البن، الحليب، المنكهات)",
+    "nameEn": "Raw Materials Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 14
+  },
+  {
+    "code": "11206",
+    "nameAr": "مخزون المنتجات الجاهزة (المخبوزات، الحلويات)",
+    "nameEn": "Finished Goods Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 15
+  },
+  {
+    "code": "11207",
+    "nameAr": "مخزون مواد التغليف والتعبئة",
+    "nameEn": "Packaging Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 16
+  },
+  {
+    "code": "11208",
+    "nameAr": "مخزون أدوات تقديم",
+    "nameEn": "Service Tools Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 17
+  },
+  {
+    "code": "11209",
+    "nameAr": "مخزون مواد تغليف",
+    "nameEn": "Packing Materials",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 18
+  },
+  {
+    "code": "11211",
+    "nameAr": "مخزون مناديل",
+    "nameEn": "Napkins Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 19
+  },
+  {
+    "code": "11212",
+    "nameAr": "مخزون حاملات أكواب",
+    "nameEn": "Cup Holders Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 20
+  },
+  {
+    "code": "11214",
+    "nameAr": "مخزون أكياس",
+    "nameEn": "Bags Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 21
+  },
+  {
+    "code": "11215",
+    "nameAr": "مخزون أكواب بلاستيكية",
+    "nameEn": "Plastic Cups Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 22
+  },
+  {
+    "code": "11216",
+    "nameAr": "مخزون زجاجات بلاستيكية",
+    "nameEn": "Plastic Bottles Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 23
+  },
+  {
+    "code": "11217",
+    "nameAr": "مخزون شفاطات",
+    "nameEn": "Straws Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 24
+  },
+  {
+    "code": "11218",
+    "nameAr": "مخزون توابل",
+    "nameEn": "Spices Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 25
+  },
+  {
+    "code": "11219",
+    "nameAr": "مخزون شوكولاتة ساخنة",
+    "nameEn": "Hot Chocolate Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 26
+  },
+  {
+    "code": "11220",
+    "nameAr": "مخزون مشروبات غازية",
+    "nameEn": "Soft Drinks Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 27
+  },
+  {
+    "code": "11222",
+    "nameAr": "مخزون ليمون مجفف",
+    "nameEn": "Dried Lemon Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 28
+  },
+  {
+    "code": "11223",
+    "nameAr": "مخزون مكسرات",
+    "nameEn": "Nuts Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 29
+  },
+  {
+    "code": "11225",
+    "nameAr": "مخزون أكواب زجاجية",
+    "nameEn": "Glass Cups Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 30
+  },
+  {
+    "code": "11226",
+    "nameAr": "مخزون كريمة",
+    "nameEn": "Cream Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 31
+  },
+  {
+    "code": "11227",
+    "nameAr": "مخزون ملابس موظفين",
+    "nameEn": "Staff Uniform Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 32
+  },
+  {
+    "code": "11228",
+    "nameAr": "مخزون حلويات",
+    "nameEn": "Sweets Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 33
+  },
+  {
+    "code": "11229",
+    "nameAr": "مخزون شوكولاتة",
+    "nameEn": "Chocolate Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 34
+  },
+  {
+    "code": "11230",
+    "nameAr": "مخزون أكواب ورقية",
+    "nameEn": "Paper Cups Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 35
+  },
+  {
+    "code": "11231",
+    "nameAr": "مخزون أكمام أكواب",
+    "nameEn": "Cup Sleeves Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 36
+  },
+  {
+    "code": "11232",
+    "nameAr": "مخزون أكياس نفايات",
+    "nameEn": "Trash Bags Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 37
+  },
+  {
+    "code": "11233",
+    "nameAr": "مخزون كمامات",
+    "nameEn": "Masks Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 38
+  },
+  {
+    "code": "11234",
+    "nameAr": "مخزون مياه",
+    "nameEn": "Water Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 39
+  },
+  {
+    "code": "11235",
+    "nameAr": "مخزون قفازات",
+    "nameEn": "Gloves Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 40
+  },
+  {
+    "code": "11236",
+    "nameAr": "مخزون علب سفر",
+    "nameEn": "Takeaway Boxes Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 41
+  },
+  {
+    "code": "11237",
+    "nameAr": "مخزون سكر",
+    "nameEn": "Sugar Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 42
+  },
+  {
+    "code": "11238",
+    "nameAr": "مخزون شاي",
+    "nameEn": "Tea Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 43
+  },
+  {
+    "code": "11239",
+    "nameAr": "مخزون سحلب",
+    "nameEn": "Sahlab Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 44
+  },
+  {
+    "code": "11240",
+    "nameAr": "مخزون شراب منكه",
+    "nameEn": "Flavored Syrup Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 45
+  },
+  {
+    "code": "11241",
+    "nameAr": "مخزون صوص",
+    "nameEn": "Sauce Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 46
+  },
+  {
+    "code": "11242",
+    "nameAr": "مخزون مهروس فواكه",
+    "nameEn": "Fruit Puree Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 47
+  },
+  {
+    "code": "11243",
+    "nameAr": "مخزون كركديه",
+    "nameEn": "Hibiscus Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 48
+  },
+  {
+    "code": "11244",
+    "nameAr": "مخزون ملصقات",
+    "nameEn": "Stickers Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 49
+  },
+  {
+    "code": "11245",
+    "nameAr": "مخزون أكواب حرارية",
+    "nameEn": "Thermal Cups Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 50
+  },
+  {
+    "code": "11246",
+    "nameAr": "مخزون مشروبات طبيعية",
+    "nameEn": "Natural Drinks Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 51
+  },
+  {
+    "code": "11247",
+    "nameAr": "مخزون منظفات",
+    "nameEn": "Detergents Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 52
+  },
+  {
+    "code": "11248",
+    "nameAr": "مخزون أدوات نظافة",
+    "nameEn": "Cleaning Tools Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 53
+  },
+  {
+    "code": "11249",
+    "nameAr": "مخزون ورق طباعة",
+    "nameEn": "Printing Paper Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 54
+  },
+  {
+    "code": "11250",
+    "nameAr": "مخزون ورق تغليف",
+    "nameEn": "Wrapping Paper Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 55
+  },
+  {
+    "code": "11251",
+    "nameAr": "مخزون كيك",
+    "nameEn": "Cake Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 56
+  },
+  {
+    "code": "11252",
+    "nameAr": "مخزون معجنات",
+    "nameEn": "Pastries Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 57
+  },
+  {
+    "code": "11258",
+    "nameAr": "مخزون ساندويتشات",
+    "nameEn": "Sandwiches Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 58
+  },
+  {
+    "code": "11259",
+    "nameAr": "مخزون نعناع",
+    "nameEn": "Mint Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 59
+  },
+  {
+    "code": "11260",
+    "nameAr": "مخزون فطائر",
+    "nameEn": "Pies Inventory",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 60
+  },
+  {
+    "code": "11261",
+    "nameAr": "مخزون ماء",
+    "nameEn": "Water Inventory 2",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 61
+  },
+  {
+    "code": "113",
+    "nameAr": "مخزون حليب",
+    "nameEn": "Milk Inventory",
+    "type": "asset",
+    "parentCode": "11",
+    "level": 2,
+    "kind": "leaf",
+    "order": 62
+  },
+  {
+    "code": "1130",
+    "nameAr": "مخزون بسكويت",
+    "nameEn": "Biscuit Inventory",
+    "type": "asset",
+    "parentCode": "113",
+    "level": 4,
+    "kind": "leaf",
+    "order": 63
+  },
+  {
+    "code": "11301",
+    "nameAr": "مخزون أغطية أكواب",
+    "nameEn": "Cup Lids Inventory",
+    "type": "asset",
+    "parentCode": "113",
+    "level": 4,
+    "kind": "leaf",
+    "order": 64
+  },
+  {
+    "code": "11302",
+    "nameAr": "مخزون قهوة",
+    "nameEn": "Coffee Inventory",
+    "type": "asset",
+    "parentCode": "113",
+    "level": 4,
+    "kind": "leaf",
+    "order": 65
+  },
+  {
+    "code": "11303",
+    "nameAr": "الذمم المدينة والأرصدة",
+    "nameEn": "Receivables",
+    "type": "asset",
+    "parentCode": "113",
+    "level": 4,
+    "kind": "folder",
+    "order": 66
+  },
+  {
+    "code": "11304",
+    "nameAr": "عهد الموظفين",
+    "nameEn": "Employee Custody",
+    "type": "asset",
+    "parentCode": "113",
+    "level": 4,
+    "kind": "leaf",
+    "order": 67
+  },
+  {
+    "code": "11305",
+    "nameAr": "ذمم تطبيقات التوصيل (جاهز، هنقرستيشن)",
+    "nameEn": "Delivery Apps Receivables",
+    "type": "asset",
+    "parentCode": "113",
+    "level": 4,
+    "kind": "leaf",
+    "order": 68
+  },
+  {
+    "code": "114",
+    "nameAr": "سلف ومقدمات الموظفين",
+    "nameEn": "Employee Advances",
+    "type": "asset",
+    "parentCode": "11",
+    "level": 2,
+    "kind": "leaf",
+    "order": 69
+  },
+  {
+    "code": "1150",
+    "nameAr": "إيجارات مدفوعة مقدماً",
+    "nameEn": "Prepaid Rent",
+    "type": "asset",
+    "parentCode": "113",
+    "level": 4,
+    "kind": "leaf",
+    "order": 70
+  },
+  {
+    "code": "12",
+    "nameAr": "مصروفات عهدة",
+    "nameEn": "Custody Expenses",
+    "type": "asset",
+    "parentCode": "1",
+    "level": 2,
+    "kind": "leaf",
+    "order": 71
+  },
+  {
+    "code": "1200",
+    "nameAr": "عهدة adlan",
+    "nameEn": "Adlan Custody",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 72
+  },
+  {
+    "code": "121",
+    "nameAr": "ذمم العملاء",
+    "nameEn": "Customer Receivables",
+    "type": "asset",
+    "parentCode": "12",
+    "level": 3,
+    "kind": "leaf",
+    "order": 73
+  },
+  {
+    "code": "1210",
+    "nameAr": "الضرائب المدفوعة",
+    "nameEn": "Input VAT",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "folder",
+    "order": 74
+  },
+  {
+    "code": "122",
+    "nameAr": "ضريبة المدخلات",
+    "nameEn": "Input Tax (VAT)",
+    "type": "asset",
+    "parentCode": "12",
+    "level": 3,
+    "kind": "leaf",
+    "order": 75
+  },
+  {
+    "code": "1220",
+    "nameAr": "الأصول الثابتة",
+    "nameEn": "Fixed Assets",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "folder",
+    "order": 76
+  },
+  {
+    "code": "123",
+    "nameAr": "معدات وآلات الكافيه",
+    "nameEn": "Café Equipment",
+    "type": "asset",
+    "parentCode": "12",
+    "level": 3,
+    "kind": "leaf",
+    "order": 77
+  },
+  {
+    "code": "1230",
+    "nameAr": "أجهزة نقاط البيع والأنظمة",
+    "nameEn": "POS Devices & Systems",
+    "type": "asset",
+    "parentCode": "112",
+    "level": 4,
+    "kind": "leaf",
+    "order": 78
+  },
+  {
+    "code": "124",
+    "nameAr": "الأثاث والديكورات",
+    "nameEn": "Furniture & Decor",
+    "type": "asset",
+    "parentCode": "12",
+    "level": 3,
+    "kind": "leaf",
+    "order": 79
+  },
+  {
+    "code": "1290",
+    "nameAr": "مجمع إهلاك الأصول الثابتة",
+    "nameEn": "Accumulated Depreciation",
+    "type": "asset",
+    "parentCode": "114",
+    "level": 4,
+    "kind": "leaf",
+    "order": 80
+  },
+  {
+    "code": "2",
+    "nameAr": "الالتزامات (الخصوم)",
+    "nameEn": "Liabilities",
+    "type": "liability",
+    "parentCode": "",
+    "level": 1,
+    "kind": "folder",
+    "order": 81
+  },
+  {
+    "code": "21",
+    "nameAr": "الالتزامات المتداولة",
+    "nameEn": "Current Liabilities",
+    "type": "liability",
+    "parentCode": "2",
+    "level": 2,
+    "kind": "folder",
+    "order": 82
+  },
+  {
+    "code": "2100",
+    "nameAr": "الموردون والدائنون",
+    "nameEn": "Suppliers & Creditors",
+    "type": "liability",
+    "parentCode": "211",
+    "level": 4,
+    "kind": "folder",
+    "order": 83
+  },
+  {
+    "code": "211",
+    "nameAr": "ذمم الموردين",
+    "nameEn": "Suppliers Payable",
+    "type": "liability",
+    "parentCode": "21",
+    "level": 2,
+    "kind": "leaf",
+    "order": 84
+  },
+  {
+    "code": "21101",
+    "nameAr": "موردو المواد الغذائية والبن",
+    "nameEn": "Food & Coffee Suppliers",
+    "type": "liability",
+    "parentCode": "211",
+    "level": 4,
+    "kind": "leaf",
+    "order": 85
+  },
+  {
+    "code": "21103",
+    "nameAr": "المذاق المغربي",
+    "nameEn": "Moroccan Taste Supplier",
+    "type": "liability",
+    "parentCode": "211",
+    "level": 4,
+    "kind": "leaf",
+    "order": 86
+  },
+  {
+    "code": "212",
+    "nameAr": "المصروفات المستحقة",
+    "nameEn": "Accrued Expenses",
+    "type": "liability",
+    "parentCode": "21",
+    "level": 2,
+    "kind": "folder",
+    "order": 87
+  },
+  {
+    "code": "21201",
+    "nameAr": "رواتب وأجور مستحقة",
+    "nameEn": "Accrued Salaries",
+    "type": "liability",
+    "parentCode": "212",
+    "level": 4,
+    "kind": "leaf",
+    "order": 88
+  },
+  {
+    "code": "21202",
+    "nameAr": "إيجارات عقود مستحقة الدفع",
+    "nameEn": "Accrued Rent",
+    "type": "liability",
+    "parentCode": "212",
+    "level": 4,
+    "kind": "leaf",
+    "order": 89
+  },
+  {
+    "code": "21203",
+    "nameAr": "فواتير منافع مستحقة",
+    "nameEn": "Accrued Utilities",
+    "type": "liability",
+    "parentCode": "212",
+    "level": 4,
+    "kind": "leaf",
+    "order": 90
+  },
+  {
+    "code": "213",
+    "nameAr": "الضرائب",
+    "nameEn": "Taxes Payable",
+    "type": "liability",
+    "parentCode": "21",
+    "level": 2,
+    "kind": "folder",
+    "order": 91
+  },
+  {
+    "code": "21301",
+    "nameAr": "ضريبة القيمة المضافة المستحقة (VAT)",
+    "nameEn": "VAT Payable",
+    "type": "liability",
+    "parentCode": "213",
+    "level": 4,
+    "kind": "leaf",
+    "order": 92
+  },
+  {
+    "code": "214",
+    "nameAr": "ضريبة المخرجات",
+    "nameEn": "Output VAT",
+    "type": "liability",
+    "parentCode": "21",
+    "level": 2,
+    "kind": "leaf",
+    "order": 93
+  },
+  {
+    "code": "2210",
+    "nameAr": "مستحقات أخرى",
+    "nameEn": "Other Payables",
+    "type": "liability",
+    "parentCode": "213",
+    "level": 4,
+    "kind": "folder",
+    "order": 94
+  },
+  {
+    "code": "2310",
+    "nameAr": "مستحقات الامتياز",
+    "nameEn": "Franchise Payables",
+    "type": "liability",
+    "parentCode": "214",
+    "level": 4,
+    "kind": "leaf",
+    "order": 95
+  },
+  {
+    "code": "3",
+    "nameAr": "حقوق الملكية",
+    "nameEn": "Equity",
+    "type": "equity",
+    "parentCode": "",
+    "level": 1,
+    "kind": "folder",
+    "order": 96
+  },
+  {
+    "code": "31",
+    "nameAr": "رأس المال",
+    "nameEn": "Capital",
+    "type": "equity",
+    "parentCode": "3",
+    "level": 2,
+    "kind": "folder",
+    "order": 97
+  },
+  {
+    "code": "311",
+    "nameAr": "رأس مال الشركاء أو المالك",
+    "nameEn": "Owners Capital",
+    "type": "equity",
+    "parentCode": "31",
+    "level": 3,
+    "kind": "leaf",
+    "order": 98
+  },
+  {
+    "code": "32",
+    "nameAr": "الأرباح المبقاة",
+    "nameEn": "Retained Earnings",
+    "type": "equity",
+    "parentCode": "3",
+    "level": 2,
+    "kind": "folder",
+    "order": 99
+  },
+  {
+    "code": "321",
+    "nameAr": "الأرباح أو الخسائر المرحلة",
+    "nameEn": "Retained P&L",
+    "type": "equity",
+    "parentCode": "32",
+    "level": 3,
+    "kind": "leaf",
+    "order": 100
+  },
+  {
+    "code": "33",
+    "nameAr": "المسحوبات",
+    "nameEn": "Drawings",
+    "type": "equity",
+    "parentCode": "3",
+    "level": 2,
+    "kind": "folder",
+    "order": 101
+  },
+  {
+    "code": "331",
+    "nameAr": "جاري المالك (المسحوبات الشخصية)",
+    "nameEn": "Owner's Drawings",
+    "type": "equity",
+    "parentCode": "33",
+    "level": 3,
+    "kind": "leaf",
+    "order": 102
+  },
+  {
+    "code": "4",
+    "nameAr": "الإيرادات",
+    "nameEn": "Revenue",
+    "type": "revenue",
+    "parentCode": "",
+    "level": 1,
+    "kind": "folder",
+    "order": 103
+  },
+  {
+    "code": "41",
+    "nameAr": "الإيرادات التشغيلية",
+    "nameEn": "Operating Revenue",
+    "type": "revenue",
+    "parentCode": "4",
+    "level": 2,
+    "kind": "folder",
+    "order": 104
+  },
+  {
+    "code": "4100",
+    "nameAr": "مبيعات نقاط البيع (POS)",
+    "nameEn": "POS Sales",
+    "type": "revenue",
+    "parentCode": "411",
+    "level": 4,
+    "kind": "folder",
+    "order": 105
+  },
+  {
+    "code": "411",
+    "nameAr": "إيرادات المبيعات",
+    "nameEn": "Sales Revenue",
+    "type": "revenue",
+    "parentCode": "41",
+    "level": 2,
+    "kind": "leaf",
+    "order": 106
+  },
+  {
+    "code": "412",
+    "nameAr": "مبيعات تطبيقات التوصيل",
+    "nameEn": "Delivery Apps Sales",
+    "type": "revenue",
+    "parentCode": "41",
+    "level": 2,
+    "kind": "folder",
+    "order": 107
+  },
+  {
+    "code": "42",
+    "nameAr": "الإيرادات الأخرى",
+    "nameEn": "Other Revenue",
+    "type": "revenue",
+    "parentCode": "4",
+    "level": 2,
+    "kind": "folder",
+    "order": 108
+  },
+  {
+    "code": "421",
+    "nameAr": "إيرادات خدمات الحفلات الخارجية (Catering)",
+    "nameEn": "Catering Revenue",
+    "type": "revenue",
+    "parentCode": "42",
+    "level": 3,
+    "kind": "leaf",
+    "order": 109
+  },
+  {
+    "code": "422",
+    "nameAr": "إيرادات متنوعة",
+    "nameEn": "Miscellaneous Revenue",
+    "type": "revenue",
+    "parentCode": "42",
+    "level": 2,
+    "kind": "folder",
+    "order": 110
+  },
+  {
+    "code": "4910",
+    "nameAr": "إيراد فروقات جرد",
+    "nameEn": "Inventory Variance Revenue",
+    "type": "revenue",
+    "parentCode": "422",
+    "level": 4,
+    "kind": "leaf",
+    "order": 111
+  },
+  {
+    "code": "5",
+    "nameAr": "تكلفة المبيعات (COGS)",
+    "nameEn": "Cost of Goods Sold",
+    "type": "expense",
+    "parentCode": "",
+    "level": 1,
+    "kind": "folder",
+    "order": 112
+  },
+  {
+    "code": "51",
+    "nameAr": "تكلفة المواد المستهلكة",
+    "nameEn": "Cost of Materials Consumed",
+    "type": "expense",
+    "parentCode": "5",
+    "level": 2,
+    "kind": "folder",
+    "order": 113
+  },
+  {
+    "code": "5100",
+    "nameAr": "تكلفة البن والمشروبات",
+    "nameEn": "Cost of Coffee & Beverages",
+    "type": "expense",
+    "parentCode": "511",
+    "level": 4,
+    "kind": "folder",
+    "order": 114
+  },
+  {
+    "code": "511",
+    "nameAr": "تكلفة المبيعات",
+    "nameEn": "COGS",
+    "type": "expense",
+    "parentCode": "51",
+    "level": 2,
+    "kind": "leaf",
+    "order": 115
+  },
+  {
+    "code": "512",
+    "nameAr": "فروق سعر المشتريات",
+    "nameEn": "Purchase Price Variance",
+    "type": "expense",
+    "parentCode": "51",
+    "level": 2,
+    "kind": "leaf",
+    "order": 116
+  },
+  {
+    "code": "5121",
+    "nameAr": "تكلفة المأكولات والحلويات المباعة",
+    "nameEn": "Cost of Food & Sweets Sold",
+    "type": "expense",
+    "parentCode": "512",
+    "level": 4,
+    "kind": "folder",
+    "order": 117
+  },
+  {
+    "code": "5122",
+    "nameAr": "هدر المواد الخام",
+    "nameEn": "Raw Materials Waste",
+    "type": "expense",
+    "parentCode": "512",
+    "level": 4,
+    "kind": "leaf",
+    "order": 118
+  },
+  {
+    "code": "5123",
+    "nameAr": "هدر المنتجات الجاهزة",
+    "nameEn": "Finished Goods Waste",
+    "type": "expense",
+    "parentCode": "512",
+    "level": 4,
+    "kind": "leaf",
+    "order": 119
+  },
+  {
+    "code": "5124",
+    "nameAr": "تالف منتهي الصلاحية",
+    "nameEn": "Expired Damaged",
+    "type": "expense",
+    "parentCode": "512",
+    "level": 4,
+    "kind": "leaf",
+    "order": 120
+  },
+  {
+    "code": "5125",
+    "nameAr": "هدر التشغيل (انسكاب)",
+    "nameEn": "Operating Waste",
+    "type": "expense",
+    "parentCode": "512",
+    "level": 4,
+    "kind": "leaf",
+    "order": 121
+  },
+  {
+    "code": "513",
+    "nameAr": "مرتجعات العملاء (هدر)",
+    "nameEn": "Customer Returns Waste",
+    "type": "expense",
+    "parentCode": "51",
+    "level": 3,
+    "kind": "leaf",
+    "order": 122
+  },
+  {
+    "code": "52",
+    "nameAr": "مصروف الهدر",
+    "nameEn": "Waste Expense",
+    "type": "expense",
+    "parentCode": "5",
+    "level": 2,
+    "kind": "leaf",
+    "order": 123
+  },
+  {
+    "code": "5200",
+    "nameAr": "فروقات الجرد",
+    "nameEn": "Inventory Variance",
+    "type": "expense",
+    "parentCode": "512",
+    "level": 4,
+    "kind": "leaf",
+    "order": 124
+  },
+  {
+    "code": "521",
+    "nameAr": "فروقات الإنتاج",
+    "nameEn": "Production Variance",
+    "type": "expense",
+    "parentCode": "52",
+    "level": 2,
+    "kind": "leaf",
+    "order": 125
+  },
+  {
+    "code": "5300",
+    "nameAr": "تكلفة مواد التعبئة والتغليف",
+    "nameEn": "Packaging Cost",
+    "type": "expense",
+    "parentCode": "512",
+    "level": 4,
+    "kind": "leaf",
+    "order": 126
+  },
+  {
+    "code": "5350",
+    "nameAr": "الهالك والتوالف",
+    "nameEn": "Damages & Spoilage",
+    "type": "expense",
+    "parentCode": "511",
+    "level": 4,
+    "kind": "folder",
+    "order": 127
+  },
+  {
+    "code": "5400",
+    "nameAr": "هالك المواد الغذائية والبن",
+    "nameEn": "Food & Coffee Spoilage",
+    "type": "expense",
+    "parentCode": "521",
+    "level": 4,
+    "kind": "folder",
+    "order": 128
+  },
+  {
+    "code": "5410",
+    "nameAr": "العمالة المحملة",
+    "nameEn": "Allocated Labor",
+    "type": "expense",
+    "parentCode": "52",
+    "level": 3,
+    "kind": "leaf",
+    "order": 129
+  },
+  {
+    "code": "5420",
+    "nameAr": "التكاليف غير المباشرة",
+    "nameEn": "Indirect Costs",
+    "type": "expense",
+    "parentCode": "512",
+    "level": 4,
+    "kind": "leaf",
+    "order": 130
+  },
+  {
+    "code": "6",
+    "nameAr": "المصروفات التشغيلية والإدارية",
+    "nameEn": "Operating & Admin Expenses",
+    "type": "expense",
+    "parentCode": "",
+    "level": 1,
+    "kind": "folder",
+    "order": 131
+  },
+  {
+    "code": "61",
+    "nameAr": "المصروفات التشغيلية",
+    "nameEn": "Operating Expenses",
+    "type": "expense",
+    "parentCode": "6",
+    "level": 2,
+    "kind": "folder",
+    "order": 132
+  },
+  {
+    "code": "6100",
+    "nameAr": "مصروف رسوم الامتياز",
+    "nameEn": "Franchise Fee Expense",
+    "type": "expense",
+    "parentCode": "61",
+    "level": 3,
+    "kind": "leaf",
+    "order": 133
+  },
+  {
+    "code": "611",
+    "nameAr": "الرواتب والأجور",
+    "nameEn": "Salaries & Wages",
+    "type": "expense",
+    "parentCode": "61",
+    "level": 2,
+    "kind": "folder",
+    "order": 134
+  },
+  {
+    "code": "612",
+    "nameAr": "الإيجارات والمنافع",
+    "nameEn": "Rent & Utilities",
+    "type": "expense",
+    "parentCode": "61",
+    "level": 2,
+    "kind": "folder",
+    "order": 135
+  },
+  {
+    "code": "61201",
+    "nameAr": "إيجارات الفروع",
+    "nameEn": "Branches Rent",
+    "type": "expense",
+    "parentCode": "612",
+    "level": 4,
+    "kind": "leaf",
+    "order": 136
+  },
+  {
+    "code": "61202",
+    "nameAr": "الكهرباء والماء",
+    "nameEn": "Electricity & Water",
+    "type": "expense",
+    "parentCode": "612",
+    "level": 4,
+    "kind": "leaf",
+    "order": 137
+  },
+  {
+    "code": "61203",
+    "nameAr": "اشتراكات الإنترنت والاتصالات",
+    "nameEn": "Internet & Communications",
+    "type": "expense",
+    "parentCode": "612",
+    "level": 4,
+    "kind": "leaf",
+    "order": 138
+  },
+  {
+    "code": "613",
+    "nameAr": "التشغيل والصيانة",
+    "nameEn": "Operations & Maintenance",
+    "type": "expense",
+    "parentCode": "61",
+    "level": 2,
+    "kind": "folder",
+    "order": 139
+  },
+  {
+    "code": "61301",
+    "nameAr": "صيانة مكائن القهوة والمعدات",
+    "nameEn": "Coffee Machines Maintenance",
+    "type": "expense",
+    "parentCode": "613",
+    "level": 4,
+    "kind": "leaf",
+    "order": 140
+  },
+  {
+    "code": "61302",
+    "nameAr": "أدوات النظافة والتعقيم",
+    "nameEn": "Cleaning & Sanitization",
+    "type": "expense",
+    "parentCode": "613",
+    "level": 4,
+    "kind": "leaf",
+    "order": 141
+  },
+  {
+    "code": "614",
+    "nameAr": "صيانة لمبات",
+    "nameEn": "Lamps Maintenance",
+    "type": "expense",
+    "parentCode": "61",
+    "level": 2,
+    "kind": "leaf",
+    "order": 142
+  },
+  {
+    "code": "61401",
+    "nameAr": "التسويق والعمولات",
+    "nameEn": "Marketing & Commissions",
+    "type": "expense",
+    "parentCode": "614",
+    "level": 4,
+    "kind": "folder",
+    "order": 143
+  },
+  {
+    "code": "61402",
+    "nameAr": "عمولات تطبيقات التوصيل",
+    "nameEn": "Delivery Apps Commissions",
+    "type": "expense",
+    "parentCode": "614",
+    "level": 4,
+    "kind": "leaf",
+    "order": 144
+  },
+  {
+    "code": "61403",
+    "nameAr": "الحملات الإعلانية والتسويق",
+    "nameEn": "Advertising Campaigns",
+    "type": "expense",
+    "parentCode": "613",
+    "level": 4,
+    "kind": "leaf",
+    "order": 145
+  },
+  {
+    "code": "62",
+    "nameAr": "المصروفات العمومية والإدارية",
+    "nameEn": "General & Admin Expenses",
+    "type": "expense",
+    "parentCode": "6",
+    "level": 2,
+    "kind": "folder",
+    "order": 146
+  },
+  {
+    "code": "621",
+    "nameAr": "رسوم اشتراكات الأنظمة والبرامج",
+    "nameEn": "Software Subscriptions",
+    "type": "expense",
+    "parentCode": "62",
+    "level": 3,
+    "kind": "leaf",
+    "order": 147
+  },
+  {
+    "code": "622",
+    "nameAr": "الرسوم الحكومية والتراخيص",
+    "nameEn": "Government Fees & Licenses",
+    "type": "expense",
+    "parentCode": "62",
+    "level": 3,
+    "kind": "leaf",
+    "order": 148
+  },
+  {
+    "code": "623",
+    "nameAr": "العمولات البنكية ورسوم شبكات الدفع",
+    "nameEn": "Bank & Payment Fees",
+    "type": "expense",
+    "parentCode": "62",
+    "level": 3,
+    "kind": "leaf",
+    "order": 149
+  },
+  {
+    "code": "624",
+    "nameAr": "مصروفات الضيافة والنثريات",
+    "nameEn": "Hospitality & Sundries",
+    "type": "expense",
+    "parentCode": "62",
+    "level": 3,
+    "kind": "leaf",
+    "order": 150
+  }
+]

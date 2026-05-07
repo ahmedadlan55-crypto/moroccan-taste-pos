@@ -2178,6 +2178,47 @@ function _coaShowAppliedChangesModal(j) {
 // case-folded) and let the user pick which to keep. Backend deletes the
 // rest atomically (refusing any whose deletion would orphan journal
 // entries). Reachable from the tree toolbar.
+// v5.11.1 — fetches the official 150-account template and feeds it
+// through the existing import preview flow with replace-mode preselected.
+// One confirmation, then the chart is overwritten (accounts with journal
+// entries are preserved by the import logic).
+window.coaApplyTemplate = function() {
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/gl/coa-template', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j || !j.success || !Array.isArray(j.accounts)) {
+        return showToast('تعذَّر تحميل القالب', true);
+      }
+      var rows = j.accounts.map(function(a){
+        return {
+          'الكود':         a.code,
+          'الاسم العربي':  a.nameAr,
+          'الاسم الإنج':   a.nameEn,
+          'النوع':         a.type,
+          'كود الأب':      a.parentCode || '',
+          'اسم الأب':      '',
+          'المستوى':       a.level,
+          'النوع الهيكلي': a.kind === 'folder' ? 'رئيسي' : 'فرعي',
+          'الترتيب':       a.order
+        };
+      });
+      // Single confirmation before the destructive replace.
+      erpConfirm(
+        'تَطبيق القالب الرسمي',
+        'سيُطبَّق القالب الرسمي (' + rows.length + ' حساب) كـ"شجرة نهائية" — أي حساب في القاعدة وليس في القالب سيُحذف، باستثناء الجذور 1-5 والحسابات بقيود يومية. متابعة؟',
+        function(){
+          window._coaImportRows = rows;
+          window._coaImportMode = 'replace';
+          // Reuse the import preview modal; user just clicks "تأكيد".
+          _coaConfirmImport(rows, 'replace');
+        },
+        { icon: 'fa-wand-magic-sparkles', color: '#7c3aed', okText: 'تَطبيق' }
+      );
+    })
+    .catch(function(e){ showToast(String((e && e.message) || e), true); });
+};
+
 window.coaOpenDedupeModal = function() {
   var prior = document.getElementById('coaDedupeModal');
   if (prior) prior.remove();
@@ -3113,16 +3154,36 @@ function erpLoadJournals() {
       else if (j.status === 'posted')   { posted++;   amtPosted   += amt; }
     });
     var fmt = function(n){ return Number(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}); };
-    var setStat = function(id, n, amt) {
-      var el = document.getElementById(id);
-      if (!el) return;
-      el.innerHTML = '<div style="font-size:22px;font-weight:900;color:#0f172a;line-height:1.2;">' + n + '</div>' +
-        '<div style="font-size:11.5px;color:#64748b;font-variant-numeric:tabular-nums;">' + fmt(amt) + '</div>';
+    // v5.11.1 — premium stat cards with brand-coordinated icons + count + total
+    var statIcons = {
+      total:    { icon: 'fa-book',         label: 'إجمالي القيود' },
+      draft:    { icon: 'fa-pen-to-square', label: 'مسودة' },
+      approved: { icon: 'fa-circle-check', label: 'معتمد' },
+      posted:   { icon: 'fa-check-double', label: 'مرحَّل' }
     };
-    setStat('jrnStatTotal', total, amtTotal);
-    setStat('jrnStatDraft', drafts, amtDraft);
-    setStat('jrnStatApproved', approved, amtApproved);
-    setStat('jrnStatPosted', posted, amtPosted);
+    var setStat = function(containerId, status, n, amt) {
+      var el = document.getElementById(containerId);
+      if (!el) return;
+      var meta = statIcons[status] || { icon: 'fa-book', label: '' };
+      // Find the parent .jrn-stat-card and rebuild it cleanly so the
+      // status-keyed gradient (set via [data-status]) takes effect.
+      var card = el.closest('.jrn-stat-card');
+      if (card) card.setAttribute('data-status', status);
+      // Replace the inner — we expect the existing markup to be a single
+      // value span, so we rebuild with full premium structure.
+      var host = card || el;
+      host.innerHTML =
+        '<div class="jsc-icon"><i class="fas ' + meta.icon + '"></i></div>' +
+        '<div class="jsc-body">' +
+          '<div class="jsc-val">' + n + '</div>' +
+          '<div class="jsc-label">' + meta.label + '</div>' +
+          '<div class="jsc-amt">' + fmt(amt) + '</div>' +
+        '</div>';
+    };
+    setStat('jrnStatTotal',    'total',    total,    amtTotal);
+    setStat('jrnStatDraft',    'draft',    drafts,   amtDraft);
+    setStat('jrnStatApproved', 'approved', approved, amtApproved);
+    setStat('jrnStatPosted',   'posted',   posted,   amtPosted);
 
     _erpUpdateBulkBar();
 
@@ -3132,52 +3193,55 @@ function erpLoadJournals() {
       return;
     }
 
+    // v5.11.1 — brand-aligned badges + chips via CSS classes (see journals.css)
     var statusBadge = function(s) {
-      if (s === 'draft')    return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:8px;font-size:11px;font-weight:800;background:#fef3c7;color:#92400e;"><i class="fas fa-pencil-alt"></i> مسودة</span>';
-      if (s === 'approved') return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:8px;font-size:11px;font-weight:800;background:#e0e7ff;color:#4338ca;"><i class="fas fa-check"></i> معتمد</span>';
-      return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:8px;font-size:11px;font-weight:800;background:#dcfce7;color:#166534;"><i class="fas fa-check-double"></i> مرحّل</span>';
+      if (s === 'draft')    return '<span class="jrn-badge jrn-badge--draft"><i class="fas fa-pen-to-square"></i> مسودة</span>';
+      if (s === 'approved') return '<span class="jrn-badge jrn-badge--approved"><i class="fas fa-circle-check"></i> معتمد</span>';
+      return '<span class="jrn-badge jrn-badge--posted"><i class="fas fa-check-double"></i> مرحَّل</span>';
     };
-    var dimChip = function(icon, label, color) {
+    var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+    var dimChip = function(icon, label, kind) {
       if (!label) return '';
-      var esc = String(label).replace(/[<>&"]/g, function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c];});
-      return '<span class="jrn-dim-chip" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:' + color + '14;color:' + color + ';border:1px solid ' + color + '33;border-radius:999px;font-size:10.5px;font-weight:700;">' +
-        '<i class="' + icon + '" style="font-size:9.5px;"></i>' + esc + '</span>';
+      return '<span class="jrn-dim-chip jrn-dim-chip--' + kind + '"><i class="' + icon + '"></i>' + esc(label) + '</span>';
     };
 
     tbody.innerHTML = list.map(function(j) {
       var dt = j.journalDate ? new Date(j.journalDate).toLocaleDateString('en-GB') : '';
-      var actions = '<button class="btn-icon" onclick="erpViewJournal(\'' + j.id + '\')" title="عرض"><i class="fas fa-eye"></i></button> ';
-      actions += '<button class="btn-icon" style="color:#3b82f6;" onclick="erpPrintJournal(\'' + j.id + '\')" title="طباعة"><i class="fas fa-print"></i></button> ';
       var isDev = state.currentUser && (state.currentUser.isDeveloper || state.role === 'admin');
-      // v5.11.0 — every status now exposes ✏️ edit. Posted journals route
-      // through the unpost-confirm flow inside erpEditJournal.
-      actions += '<button class="btn-icon" style="color:#0ea5e9;" onclick="erpEditJournal(\'' + j.id + '\')" title="تَعديل"><i class="fas fa-pen"></i></button> ';
+
+      // v5.11.1 — every action button is a .jrn-action-btn variant. Hover
+      // colors flow from the brand palette in journals.css. The single-click
+      // approve+post combo lives on draft (success styling).
+      var actions = '<button class="jrn-action-btn jrn-action-btn--info" onclick="erpViewJournal(\'' + j.id + '\')" title="عرض"><i class="fas fa-eye"></i></button>';
+      actions += '<button class="jrn-action-btn" onclick="erpPrintJournal(\'' + j.id + '\')" title="طباعة"><i class="fas fa-print"></i></button>';
+      actions += '<button class="jrn-action-btn jrn-action-btn--primary" onclick="erpEditJournal(\'' + j.id + '\')" title="تَعديل"><i class="fas fa-pen-to-square"></i></button>';
       if (j.status === 'draft') {
-        actions += '<button class="btn-icon" style="color:#8b5cf6;" onclick="erpApproveJournal(\'' + j.id + '\')" title="اعتماد"><i class="fas fa-check-circle"></i></button> ';
-        if (isDev) actions += '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>';
+        actions += '<button class="jrn-action-btn jrn-action-btn--success" onclick="erpApproveJournal(\'' + j.id + '\')" title="اعتماد + ترحيل (يُحدِّث الأرصدة فورًا)"><i class="fas fa-check-double"></i></button>';
+        if (isDev) actions += '<button class="jrn-action-btn jrn-action-btn--danger" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف"><i class="fas fa-trash-can"></i></button>';
       } else if (j.status === 'approved') {
-        actions += '<button class="btn-icon" style="color:#16a34a;" onclick="erpPostJournal(\'' + j.id + '\')" title="ترحيل"><i class="fas fa-share-square"></i></button> ';
-        if (isDev) actions += '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>';
+        actions += '<button class="jrn-action-btn jrn-action-btn--success" onclick="erpPostJournal(\'' + j.id + '\')" title="ترحيل"><i class="fas fa-share-from-square"></i></button>';
+        if (isDev) actions += '<button class="jrn-action-btn jrn-action-btn--danger" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف"><i class="fas fa-trash-can"></i></button>';
       } else if (j.status === 'posted') {
-        actions += '<button class="btn-icon" style="color:#f59e0b;" onclick="erpUnpostJournal(\'' + j.id + '\')" title="إلغاء الترحيل"><i class="fas fa-undo"></i></button> ';
+        actions += '<button class="jrn-action-btn jrn-action-btn--warn" onclick="erpUnpostJournal(\'' + j.id + '\')" title="إلغاء الترحيل"><i class="fas fa-rotate-left"></i></button>';
       }
 
       var chips = '';
-      if (j.brandName)        chips += dimChip('fas fa-tag',       j.brandName,        '#7c3aed');
-      if (j.branchName)       chips += dimChip('fas fa-building',  j.branchName,       '#0369a1');
-      if (j.projectName)      chips += dimChip('fas fa-clipboard-list', j.projectName, '#16a34a');
-      if (j.costCenterName)   chips += dimChip('fas fa-bullseye',  j.costCenterName,   '#dc2626');
+      if (j.brandName)      chips += dimChip('fas fa-tag',             j.brandName,      'brand');
+      if (j.branchName)     chips += dimChip('fas fa-building',        j.branchName,     'branch');
+      if (j.projectName)    chips += dimChip('fas fa-clipboard-list',  j.projectName,    'project');
+      if (j.costCenterName) chips += dimChip('fas fa-bullseye',        j.costCenterName, 'cc');
 
       var checked = window._jrnSelectedIds.has(j.id) ? 'checked' : '';
-      return '<tr style="' + (j.status==='draft'?'background:rgba(254,243,199,0.15);':'') + '">' +
-        '<td style="text-align:center;width:36px;"><input type="checkbox" class="jrn-row-cb" data-id="' + j.id + '" ' + checked + ' onchange="_erpToggleJrnSel(\'' + j.id + '\', this.checked)" style="width:16px;height:16px;cursor:pointer;"></td>' +
-        '<td><code style="font-weight:800;color:#1e40af;">' + (j.journalNumber||'') + '</code><div style="font-size:10px;color:#94a3b8;margin-top:2px;"><i class="fas fa-user" style="margin-left:2px;"></i>' + (j.createdBy||'') + '</div></td>' +
-        '<td style="font-size:13px;">' + dt + '</td>' +
-        '<td><div style="font-weight:600;">' + (j.description||'') + '</div>' +
-          (chips ? '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;">' + chips + '</div>' : '') +
+      var rowCls = 'jrn-row jrn-row--' + (j.status || 'draft');
+      return '<tr class="' + rowCls + '">' +
+        '<td style="text-align:center;width:36px;"><input type="checkbox" class="jrn-row-cb" data-id="' + j.id + '" ' + checked + ' onchange="_erpToggleJrnSel(\'' + j.id + '\', this.checked)"></td>' +
+        '<td><span class="jrn-num">' + esc(j.journalNumber || '') + '</span><div class="jrn-meta"><i class="fas fa-user"></i>' + esc(j.createdBy || '') + '</div></td>' +
+        '<td style="font-size:13px;font-variant-numeric:tabular-nums;">' + dt + '</td>' +
+        '<td><div style="font-weight:600;color:var(--primary);">' + esc(j.description || '') + '</div>' +
+          (chips ? '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;">' + chips + '</div>' : '') +
         '</td>' +
-        '<td style="font-weight:800;color:#16a34a;font-variant-numeric:tabular-nums;">' + (j.totalDebit||0).toFixed(2) + '</td>' +
-        '<td style="font-weight:800;color:#ef4444;font-variant-numeric:tabular-nums;">' + (j.totalCredit||0).toFixed(2) + '</td>' +
+        '<td><span class="jrn-amt jrn-amt--debit">' + (j.totalDebit||0).toFixed(2) + '</span></td>' +
+        '<td><span class="jrn-amt jrn-amt--credit">' + (j.totalCredit||0).toFixed(2) + '</span></td>' +
         '<td>' + statusBadge(j.status) + '</td>' +
         '<td style="white-space:nowrap;">' + actions + '</td></tr>';
     }).join('');
@@ -3209,8 +3273,8 @@ function _erpUpdateBulkBar() {
   var bar = document.getElementById('jrnBulkBar');
   if (!bar) return;
   var n = window._jrnSelectedIds.size;
-  if (!n) { bar.style.display = 'none'; return; }
-  bar.style.display = 'flex';
+  if (!n) { bar.classList.remove('is-active'); return; }
+  bar.classList.add('is-active');
   var countEl = document.getElementById('jrnBulkCount');
   if (countEl) countEl.textContent = n;
 }
@@ -3268,19 +3332,18 @@ function _erpInjectJrnFilterBar() {
     '<button onclick="_erpClearJrnFilters()" style="padding:7px 12px;border-radius:8px;border:1px solid #e5e7eb;background:#fff;color:#64748b;font-weight:700;font-size:12px;cursor:pointer;"><i class="fas fa-xmark"></i> مسح الفلاتر</button>';
   container.appendChild(bar);
 
-  // Bulk action bar
+  // Bulk action bar — v5.11.1 styling via journals.css
   if (!document.getElementById('jrnBulkBar')) {
     var bulkBar = document.createElement('div');
     bulkBar.id = 'jrnBulkBar';
-    bulkBar.style.cssText = 'display:none;align-items:center;justify-content:space-between;padding:10px 14px;margin-top:10px;background:linear-gradient(135deg,#1e293b,#334155);color:#fff;border-radius:10px;box-shadow:0 4px 14px rgba(15,23,42,.18);';
+    bulkBar.className = 'jrn-bulk-bar';
     bulkBar.innerHTML =
-      '<div style="font-weight:800;font-size:13px;"><i class="fas fa-check-double" style="margin-left:6px;"></i> <span id="jrnBulkCount">0</span> قيد محدَّد</div>' +
-      '<div style="display:flex;gap:6px;">' +
-        '<button onclick="erpBulkAction(\'approve\')" style="padding:6px 12px;border-radius:7px;border:none;background:#8b5cf6;color:#fff;font-weight:700;font-size:12px;cursor:pointer;"><i class="fas fa-check-circle"></i> اعتماد</button>' +
-        '<button onclick="erpBulkAction(\'post\')" style="padding:6px 12px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-weight:700;font-size:12px;cursor:pointer;"><i class="fas fa-share-square"></i> ترحيل</button>' +
-        '<button onclick="erpBulkAction(\'unpost\')" style="padding:6px 12px;border-radius:7px;border:none;background:#f59e0b;color:#fff;font-weight:700;font-size:12px;cursor:pointer;"><i class="fas fa-undo"></i> إلغاء ترحيل</button>' +
-        '<button onclick="erpBulkAction(\'delete\')" style="padding:6px 12px;border-radius:7px;border:none;background:#dc2626;color:#fff;font-weight:700;font-size:12px;cursor:pointer;"><i class="fas fa-trash"></i> حذف</button>' +
-        '<button onclick="_erpClearJrnSel()" style="padding:6px 12px;border-radius:7px;border:1px solid rgba(255,255,255,.3);background:transparent;color:#fff;font-weight:700;font-size:12px;cursor:pointer;">إلغاء</button>' +
+      '<div class="jrn-bulk-bar__count"><i class="fas fa-check-double"></i><span id="jrnBulkCount">0</span> قيد محدَّد</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+        '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--approve" onclick="erpBulkAction(\'approve_post\')"><i class="fas fa-check-double"></i> اعتماد + ترحيل</button>' +
+        '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--unpost"  onclick="erpBulkAction(\'unpost\')"><i class="fas fa-rotate-left"></i> إلغاء ترحيل</button>' +
+        '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--delete"  onclick="erpBulkAction(\'delete\')"><i class="fas fa-trash-can"></i> حذف</button>' +
+        '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--ghost"   onclick="_erpClearJrnSel()">إلغاء</button>' +
       '</div>';
     bar.parentElement.appendChild(bulkBar);
   }
@@ -3582,15 +3645,44 @@ function erpSaveEditedJournal() {
   });
 }
 
+// v5.11.1 — single-click "اعتماد" now chains approve → post so the
+// chart of accounts updates immediately. The previous behaviour
+// (approve only, status sits in 'approved' until someone posts) caused
+// real confusion: the user approved two journals and then wondered why
+// balances didn't move. The legacy 2-step flow is still available via
+// erpApproveOnly (callable from a row's overflow menu in v5.11.2).
 function erpApproveJournal(id) {
-  erpConfirm('اعتماد القيد', 'هل تريد اعتماد هذا القيد؟', function() {
-    loader(true);
-    window._apiBridge.withSuccessHandler(function(r) {
-      loader(false);
-      if (r.success) { showToast('تم اعتماد القيد'); erpLoadJournals(); } else showToast(r.error, true);
-    }).approveGLJournal(id, currentUser);
-  }, {icon:'fa-check-circle', color:'#8b5cf6', okText:'اعتماد'});
+  erpConfirm(
+    'اعتماد + ترحيل',
+    'سيتم اعتماد القيد وترحيله مباشرة، فتُحدَّث أرصدة الحسابات في الشجرة فورًا.',
+    function(){
+      loader(true);
+      window._apiBridge.withSuccessHandler(function(r1){
+        if (!r1 || !r1.success) { loader(false); return showToast((r1 && r1.error) || 'فشل الاعتماد', true); }
+        window._apiBridge.withSuccessHandler(function(r2){
+          loader(false);
+          if (!r2 || !r2.success) { showToast((r2 && r2.error) || 'تم الاعتماد لكن الترحيل فشل', true); erpLoadJournals(); return; }
+          showToast('تم الاعتماد والترحيل — الأرصدة محدَّثة');
+          erpLoadJournals();
+        }).postGLJournal(id, currentUser);
+      }).approveGLJournal(id, currentUser);
+    },
+    { icon: 'fa-check-double', color: '#10b981', okText: 'اعتماد + ترحيل' }
+  );
 }
+
+// v5.11.1 — the legacy 2-step approval, kept for accountants who need
+// dual approval (one user approves, another posts). Not wired to the
+// row buttons in this release; reachable directly from console or via
+// row overflow menu (planned for v5.11.2).
+window.erpApproveOnly = function(id) {
+  loader(true);
+  window._apiBridge.withSuccessHandler(function(r){
+    loader(false);
+    if (r.success) { showToast('تم الاعتماد فقط — لم يُرحَّل بعد'); erpLoadJournals(); }
+    else showToast(r.error, true);
+  }).approveGLJournal(id, currentUser);
+};
 
 function erpPostJournal(id) {
   erpConfirm('ترحيل القيد', 'سيتم ترحيل القيد إلى ميزان المراجعة ودفتر الأستاذ وتحديث أرصدة الحسابات.', function() {

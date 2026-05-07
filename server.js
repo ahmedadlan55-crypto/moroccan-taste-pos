@@ -3928,6 +3928,30 @@ async function runMigrations() {
   // button). Default FALSE; root codes 1..5 forced to TRUE; any account
   // that already has children gets TRUE for data integrity.
   await addColumnIfMissing('gl_accounts', 'is_folder', 'BOOLEAN DEFAULT FALSE');
+
+  // v5.10.51 — persistent display order. The Excel "الترتيب" column was
+  // previously a fake (just the row index after code-sort) — edits to it
+  // were silently ignored on import. Now it has a real home. NULL falls
+  // to the bottom at query time. Existing rows get a sensible initial
+  // value: their position in the current code-sorted view, partitioned
+  // by parent. So today's tree looks identical, but every later import
+  // can move rows around persistently.
+  await addColumnIfMissing('gl_accounts', 'display_order', 'INT DEFAULT NULL');
+  try {
+    const [unset] = await db.query("SELECT COUNT(*) AS n FROM gl_accounts WHERE display_order IS NULL");
+    if (unset[0] && Number(unset[0].n) > 0) {
+      const [all] = await db.query("SELECT id, parent_id, code FROM gl_accounts ORDER BY COALESCE(parent_id, ''), code");
+      const counters = {};
+      for (const row of all) {
+        const key = String(row.parent_id || '');
+        counters[key] = (counters[key] || 0) + 1;
+        await db.query('UPDATE gl_accounts SET display_order = ? WHERE id = ?', [counters[key], row.id]);
+      }
+      console.log('[v5.10.51] backfilled display_order for ' + all.length + ' accounts');
+    }
+  } catch (e) {
+    console.error('[v5.10.51] display_order backfill failed:', e.message);
+  }
   // v5.10.43 — bulletproof migration. The previous attempt used a
   // self-referencing subquery (UPDATE gl_accounts ... WHERE id IN
   // (SELECT ... FROM gl_accounts ...)) wrapped in try/catch — if

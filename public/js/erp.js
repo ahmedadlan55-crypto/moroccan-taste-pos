@@ -601,14 +601,19 @@ function erpLoadAccountsList_() {
           type: a.type, parentId: a.parentId, level: Number(a.level) || 1,
           isActive: a.isActive,
           isFolder: !!a.isFolder,
+          // v5.10.51 — explicit display_order persisted per account
+          displayOrder: a.displayOrder == null ? null : Number(a.displayOrder),
           balance: Number(a.balance) || 0,
           storedBalance: Number(a.storedBalance) || 0,
           movementCount: Number(a.movementCount) || 0
         };
       });
-      // v5.10.42 — sort by code globally so every consumer gets a stable
-      // numeric-aware order (children, cards, popovers, modals).
+      // v5.10.51 — explicit displayOrder wins, code is the tiebreaker.
+      // NULL falls to the bottom (matches the SQL COALESCE 99999 trick).
       _erpAccounts.sort(function(a, b){
+        var ao = a.displayOrder == null ? 99999 : Number(a.displayOrder);
+        var bo = b.displayOrder == null ? 99999 : Number(b.displayOrder);
+        if (ao !== bo) return ao - bo;
         return String(a.code || '').localeCompare(String(b.code || ''));
       });
       // v5.10.45 — restore persisted open-set (or seed with the 5 roots
@@ -624,7 +629,17 @@ function erpLoadAccountsList_() {
 
 // ─── Build children map ───
 function _coaChildrenOf(parentId) {
-  return _erpAccounts.filter(a => (a.parentId||null) === (parentId||null)).sort((a,b) => a.code.localeCompare(b.code));
+  // v5.10.51 — same priority as _erpAccounts.sort: explicit displayOrder
+  // first (NULL → bottom), code as tiebreaker. This is what makes the
+  // user's import-order edits actually show up in the tree.
+  return _erpAccounts
+    .filter(function(a){ return (a.parentId || null) === (parentId || null); })
+    .sort(function(a, b){
+      var ao = a.displayOrder == null ? 99999 : Number(a.displayOrder);
+      var bo = b.displayOrder == null ? 99999 : Number(b.displayOrder);
+      if (ao !== bo) return ao - bo;
+      return String(a.code || '').localeCompare(String(b.code || ''));
+    });
 }
 // v5.10.43 — defense in depth against migration failure: codes 1..5
 // (the IFRS roots) are ALWAYS folders regardless of what the database
@@ -1603,12 +1618,18 @@ function _erpReloadAccountsCacheBust() {
           type: a.type, parentId: a.parentId, level: Number(a.level) || 1,
           isActive: a.isActive,
           isFolder: !!a.isFolder,
+          displayOrder: a.displayOrder == null ? null : Number(a.displayOrder),
           balance: Number(a.balance) || 0,
           storedBalance: Number(a.storedBalance) || 0,
           movementCount: Number(a.movementCount) || 0
         };
       });
-      _erpAccounts.sort(function(a,b){ return String(a.code||'').localeCompare(String(b.code||'')); });
+      _erpAccounts.sort(function(a,b){
+        var ao = a.displayOrder == null ? 99999 : Number(a.displayOrder);
+        var bo = b.displayOrder == null ? 99999 : Number(b.displayOrder);
+        if (ao !== bo) return ao - bo;
+        return String(a.code||'').localeCompare(String(b.code||''));
+      });
       if (typeof _coaBuildTree === 'function') _coaBuildTree();
       if (_coaSelectedId && typeof coaSelectNode === 'function') coaSelectNode(_coaSelectedId);
     })
@@ -1817,7 +1838,9 @@ window.coaExportExcel = async function() {
     var parent = a.parentId ? _erpAccounts.find(function(p){ return p.id === a.parentId; }) : null;
     return {
       'المعرف (لا تحذف)': a.id || '',
-      'الترتيب':       idx + 1,
+      // v5.10.51 — real persisted display_order. Edit this cell, re-import,
+      // and the row actually moves in the tree.
+      'الترتيب':       a.displayOrder == null ? (idx + 1) : Number(a.displayOrder),
       'الكود':         a.code || '',
       'الاسم العربي':  a.nameAr || '',
       'الاسم الإنج':   a.nameEn || '',
@@ -1949,6 +1972,10 @@ window.coaRunImport = function() {
       // v5.10.50 — if any rows had unresolved parents or other issues,
       // surface them in a follow-up modal so the user can fix the file.
       if (j.errors && j.errors.length) _coaShowImportErrorsModal(j);
+      // v5.10.51 — after a successful import, prove what changed by
+      // showing the per-row diff. Closes the "I imported but I can't
+      // see what was applied" feedback gap.
+      if (j.appliedChanges && j.appliedChanges.length) _coaShowAppliedChangesModal(j);
       if (typeof _erpReloadAccountsCacheBust === 'function') _erpReloadAccountsCacheBust();
       else if (typeof erpLoadAccountsList_ === 'function') erpLoadAccountsList_();
     })
@@ -1997,6 +2024,67 @@ function _coaShowImportErrorsModal(j) {
           '<div style="margin-top:14px;text-align:end;">' +
             '<button class="wo-btn wo-btn-primary" onclick="document.getElementById(\'coaImportErrorsModal\').remove()">إغلاق</button>' +
           '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstChild);
+}
+
+// v5.10.51 — applied-changes modal: per-row diff of what the import
+// actually changed. Renders BEFORE → AFTER for code, name, level,
+// parent, and order so the user has visible proof their edits landed.
+function _coaShowAppliedChangesModal(j) {
+  var prior = document.getElementById('coaAppliedChangesModal');
+  if (prior) prior.remove();
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var changes = (j.appliedChanges || []).slice(0, 200);
+  var rowsHtml = changes.map(function(c){
+    var d = c.diff || {};
+    var parts = [];
+    if (d.code)   parts.push('الكود: <span style="color:#dc2626;">' + esc(d.code.from) + '</span> → <span style="color:#16a34a;font-weight:800;">' + esc(d.code.to) + '</span>');
+    if (d.name)   parts.push('الاسم: <span style="color:#dc2626;">' + esc(d.name.from) + '</span> → <span style="color:#16a34a;font-weight:800;">' + esc(d.name.to) + '</span>');
+    if (d.level)  parts.push('المستوى: <span style="color:#dc2626;">L' + esc(d.level.from) + '</span> → <span style="color:#16a34a;font-weight:800;">L' + esc(d.level.to) + '</span>');
+    if (d.order)  parts.push('الترتيب: <span style="color:#dc2626;">' + (d.order.from == null ? '—' : esc(d.order.from)) + '</span> → <span style="color:#16a34a;font-weight:800;">' + esc(d.order.to) + '</span>');
+    if (d.parent) parts.push('الأب: <span style="color:#dc2626;">' + (d.parent.from == null ? '—' : esc(d.parent.from)) + '</span> → <span style="color:#16a34a;font-weight:800;">' + (d.parent.to == null ? '—' : esc(d.parent.to)) + '</span>');
+    return '<tr>' +
+      '<td><strong>' + esc(c.code) + '</strong></td>' +
+      '<td>' + esc(c.name || '') + '</td>' +
+      '<td style="line-height:1.9;">' + parts.join('<br>') + '</td>' +
+    '</tr>';
+  }).join('');
+  var more = ((j.appliedChanges || []).length > 200) ? '<div style="padding:8px 10px;color:#64748b;font-size:12px;">… و ' + ((j.appliedChanges.length - 200)) + ' تَغيير آخر</div>' : '';
+  var sums = '<strong>' + (j.codeChanges  || 0) + '</strong> كود · ' +
+             '<strong>' + (j.parentChanges|| 0) + '</strong> أب · ' +
+             '<strong>' + (j.levelChanges || 0) + '</strong> مستوى · ' +
+             '<strong>' + (j.orderChanges || 0) + '</strong> ترتيب';
+  var html =
+    '<div class="modal show" id="coaAppliedChangesModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10002;" onclick="if(event.target===this)this.remove();">' +
+      '<div class="modal-content" style="max-width:820px;width:96%;margin-top:32px;max-height:88vh;display:flex;flex-direction:column;" onclick="event.stopPropagation();">' +
+        '<div class="modal-title">' +
+          '<i class="fas fa-circle-check" style="color:#16a34a;"></i>' +
+          '<span>تَفاصيل التَّطبيق — ' + (j.appliedChanges || []).length + ' تَغيير</span>' +
+          '<button class="modal-close" onclick="document.getElementById(\'coaAppliedChangesModal\').remove()">&times;</button>' +
+        '</div>' +
+        '<div style="padding:16px 22px;overflow-y:auto;flex:1;">' +
+          '<div style="padding:12px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;font-size:13px;color:#166534;line-height:1.8;margin-bottom:12px;">' +
+            '<i class="fas fa-shield-check"></i> ' +
+            'تم تَطبيق وتَأكيد التَّغييرات على القاعدة. الـ verification يَعمل على الخادم بعد كل commit. ' +
+            'مجموع: ' + sums +
+          '</div>' +
+          '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">' +
+            '<thead><tr style="background:#f1f5f9;">' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">الكود</th>' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">الاسم</th>' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">التَّغيير</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rowsHtml + '</tbody>' +
+          '</table>' +
+          more +
+        '</div>' +
+        '<div style="padding:14px 22px;border-top:1px solid #e2e8f0;text-align:end;background:#f8fafc;">' +
+          '<button class="wo-btn wo-btn-primary" onclick="document.getElementById(\'coaAppliedChangesModal\').remove()">إغلاق</button>' +
         '</div>' +
       '</div>' +
     '</div>';

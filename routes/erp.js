@@ -204,6 +204,8 @@ router.get('/gl/accounts', async (req, res) => {
     // actual journal. The stored gl_accounts.balance column is exposed as
     // storedBalance for diagnostics only. movementCount lets the UI hide
     // accounts that have never been touched.
+    // v5.10.51 — order by display_order (NULL falls to the bottom),
+    // code as tiebreaker. The frontend re-sorts using the same rule.
     const [rows] = await db.query(`
       SELECT a.*,
              (SELECT COUNT(*)
@@ -215,12 +217,13 @@ router.get('/gl/accounts', async (req, res) => {
                 JOIN gl_journals j ON j.id = e.journal_id
                WHERE e.account_id = a.id AND j.status = 'posted') AS computed_balance
         FROM gl_accounts a
-       ORDER BY a.code`);
+       ORDER BY COALESCE(a.display_order, 99999), a.code`);
     res.json(rows.map(a => ({
       id: a.id, code: a.code, nameAr: a.name_ar, nameEn: a.name_en,
       type: a.type, parentId: a.parent_id, level: a.level,
       isActive: a.is_active,
       isFolder: !!a.is_folder,
+      displayOrder: a.display_order == null ? null : Number(a.display_order),
       balance: Number(a.computed_balance || 0),
       storedBalance: Number(a.balance || 0),
       movementCount: Number(a.movement_count || 0)
@@ -278,7 +281,9 @@ router.post('/gl/accounts/import', async (req, res) => {
       // v5.10.50 — three indices: id (safest), normalized name (the user's
       // preferred identity), code (fallback). Names are trimmed +
       // case-folded so "بنك الراجحي" matches "  بنك الراجحي  ".
-      const [existing] = await conn.query('SELECT id, code, name_ar, parent_id FROM gl_accounts');
+      // v5.10.51 — also pull level + display_order so per-row diffs can
+      // include them in the response (so the user CAN SEE what changed).
+      const [existing] = await conn.query('SELECT id, code, name_ar, parent_id, level, display_order FROM gl_accounts');
       const byId   = {};
       const byCode = {};
       const byName = {};   // normalizedName -> [id, id, ...] (multiple = ambiguous)
@@ -286,7 +291,10 @@ router.post('/gl/accounts/import', async (req, res) => {
       existing.forEach(e => {
         byId[String(e.id)] = {
           id: e.id, code: String(e.code || ''),
-          name_ar: String(e.name_ar || ''), parent_id: e.parent_id || null
+          name_ar: String(e.name_ar || ''),
+          parent_id: e.parent_id || null,
+          level: Number(e.level || 1),
+          display_order: e.display_order == null ? null : Number(e.display_order)
         };
         if (e.code) byCode[String(e.code)] = e.id;
         const nn = normName(e.name_ar);
@@ -312,6 +320,12 @@ router.post('/gl/accounts/import', async (req, res) => {
 
       let nameMatches = 0, codeMatches = 0, idMatches = 0;
       let parentByName = 0, parentByCode = 0, parentMissing = 0;
+      // v5.10.51 — per-row diffs: every UPDATE that actually changes a
+      // tracked field gets pushed here. Surfaces in the response so the
+      // user sees exactly what was applied (closes the "changes don't
+      // reflect" feedback gap).
+      const appliedChanges = [];
+      let orderChanges = 0, levelChanges = 0;
 
       for (const r of sorted) {
         const id     = String(r['المعرف (لا تحذف)'] || r.id || '').trim();
@@ -325,6 +339,10 @@ router.post('/gl/accounts/import', async (req, res) => {
         const level  = Number(r['المستوى'] || r.level || 1);
         const kindRaw= String(r['النوع الهيكلي'] || r.kind || '').trim();
         const isFolder = (kindRaw === 'رئيسي' || kindRaw === 'folder' || level <= 2) ? 1 : 0;
+        // v5.10.51 — read the "الترتيب" cell. Empty/0/non-number → null
+        // (means: leave existing display_order alone OR fall back to bottom).
+        const orderRaw = r['الترتيب'] != null ? r['الترتيب'] : (r.order != null ? r.order : r.displayOrder);
+        const displayOrder = (orderRaw === '' || orderRaw == null || isNaN(Number(orderRaw))) ? null : Number(orderRaw);
 
         // v5.10.50 — parent resolution: NAME first, code as fallback.
         // The user explicitly asked for name-based matching because they
@@ -361,12 +379,20 @@ router.post('/gl/accounts/import', async (req, res) => {
           }
           const oldName = target.name_ar;
           const oldCode = target.code;
+          const oldLevel = Number(target.level || 1);
+          const oldOrder = target.display_order;
           const codeChanged = String(oldCode) !== code;
           const nameChanged = normName(oldName) !== normName(nameAr);
           const parentChanged = String(target.parent_id || '') !== String(parentId || '');
+          const levelChanged = oldLevel !== level;
+          // v5.10.51 — only treat as a change when the file ACTUALLY
+          // specified an order; null means "leave it alone".
+          const orderChanged = (displayOrder != null) && (oldOrder !== displayOrder);
+          // Effective new order: keep old when file didn't specify
+          const effectiveOrder = (displayOrder == null) ? oldOrder : displayOrder;
           await conn.query(
-            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_folder=? WHERE id=?',
-            [code, nameAr, nameEn, type, parentId, level, isFolder, target.id]);
+            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_folder=?, display_order=? WHERE id=?',
+            [code, nameAr, nameEn, type, parentId, level, isFolder, effectiveOrder, target.id]);
           if (codeChanged) {
             await conn.query('UPDATE gl_entries SET account_code = ? WHERE account_id = ?', [code, target.id]);
             delete byCode[String(oldCode)];
@@ -388,31 +414,74 @@ router.post('/gl/accounts/import', async (req, res) => {
             target.name_ar = nameAr;
           }
           if (parentChanged) { target.parent_id = parentId; parentChanges++; }
+          if (levelChanged) { target.level = level; levelChanges++; }
+          if (orderChanged) { target.display_order = effectiveOrder; orderChanges++; }
+          // Build the diff payload for the response (only non-trivial changes)
+          if (codeChanged || nameChanged || parentChanged || levelChanged || orderChanged) {
+            const diff = {};
+            if (codeChanged)   diff.code   = { from: oldCode, to: code };
+            if (nameChanged)   diff.name   = { from: oldName, to: nameAr };
+            if (levelChanged)  diff.level  = { from: oldLevel, to: level };
+            if (orderChanged)  diff.order  = { from: oldOrder, to: effectiveOrder };
+            if (parentChanged) diff.parent = { from: byId[String(target.parent_id_was || '')] && byId[String(target.parent_id_was)].code || null, to: parentId };
+            appliedChanges.push({ id: target.id, code, name: nameAr, diff });
+          }
           updated++;
         } else {
           const newId = id || ('GL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7));
+          // v5.10.51 — insert with display_order if specified, else NULL
+          // (will fall to the bottom of its parent group at query time).
           await conn.query(
-            'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_folder) VALUES (?,?,?,?,?,?,?,?)',
-            [newId, code, nameAr, nameEn, type, parentId, level, isFolder]);
+            'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_folder, display_order) VALUES (?,?,?,?,?,?,?,?,?)',
+            [newId, code, nameAr, nameEn, type, parentId, level, isFolder, displayOrder]);
           byCode[code] = newId;
           const nn = normName(nameAr);
           if (nn) {
             if (!byName[nn]) byName[nn] = [];
             byName[nn].push(newId);
           }
-          byId[newId] = { id: newId, code: code, name_ar: nameAr, parent_id: parentId };
+          byId[newId] = { id: newId, code: code, name_ar: nameAr, parent_id: parentId, level: level, display_order: displayOrder };
           inserted++;
         }
       }
       console.log('[gl/accounts/import] inserted=' + inserted + ' updated=' + updated + ' skipped=' + skipped +
         ' | match: id=' + idMatches + ' name=' + nameMatches + ' code=' + codeMatches +
         ' | parent: name=' + parentByName + ' code=' + parentByCode + ' missing=' + parentMissing +
-        ' | renames: code=' + codeChanges + ' parent=' + parentChanges);
-      // Stash counters in a closure-accessible spot
+        ' | changes: code=' + codeChanges + ' parent=' + parentChanges + ' level=' + levelChanges + ' order=' + orderChanges);
       req._coaImportStats = { idMatches, nameMatches, codeMatches, parentByName, parentByCode, parentMissing };
+      req._coaAppliedChanges = appliedChanges;
+      req._coaCounters = { codeChanges, parentChanges, levelChanges, orderChanges };
     });
+
+    // v5.10.51 — post-commit verification: re-read each touched id and
+    // confirm the new values made it into the DB. Mismatches surface in
+    // the server log so silent-rollback bugs become visible.
+    const applied = req._coaAppliedChanges || [];
+    if (applied.length) {
+      const ids = applied.map(c => c.id);
+      const placeholders = ids.map(() => '?').join(',');
+      const [verify] = await db.query(
+        'SELECT id, code, level, display_order FROM gl_accounts WHERE id IN (' + placeholders + ')',
+        ids);
+      const byVerifyId = {};
+      verify.forEach(v => { byVerifyId[v.id] = v; });
+      let mismatches = 0;
+      applied.forEach(c => {
+        const v = byVerifyId[c.id];
+        if (!v) { mismatches++; console.error('[gl/accounts/import] VERIFY MISSING ' + c.id); return; }
+        if (c.diff.code  && String(v.code)  !== String(c.diff.code.to))  { mismatches++; console.error('[gl/accounts/import] VERIFY CODE FAIL '  + c.id + ' want=' + c.diff.code.to  + ' got=' + v.code); }
+        if (c.diff.level && Number(v.level) !== Number(c.diff.level.to)) { mismatches++; console.error('[gl/accounts/import] VERIFY LEVEL FAIL ' + c.id + ' want=' + c.diff.level.to + ' got=' + v.level); }
+      });
+      console.log('[gl/accounts/import] applied ' + applied.length + ' changes, verified ' + (applied.length - mismatches) + ' rows' + (mismatches ? ' (' + mismatches + ' mismatches)' : ''));
+    }
+    const counters = req._coaCounters || {};
     res.json({
-      success: true, inserted, updated, skipped, codeChanges, parentChanges, errors,
+      success: true, inserted, updated, skipped, errors,
+      codeChanges:   counters.codeChanges   || 0,
+      parentChanges: counters.parentChanges || 0,
+      levelChanges:  counters.levelChanges  || 0,
+      orderChanges:  counters.orderChanges  || 0,
+      appliedChanges: applied,
       matchStats: req._coaImportStats || null
     });
   } catch (e) {

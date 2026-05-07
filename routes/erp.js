@@ -311,6 +311,33 @@ router.post('/gl/accounts/import', async (req, res) => {
         return null;  // 0 = no match, 2+ = ambiguous (caller decides)
       }
 
+      // v5.10.54 — primary resolver: match by (name + level) and break
+      // remaining ties with parent. This is the top tier of the new
+      // priority chain because the user said "the name is the identity,
+      // level disambiguates, position picks the survivor."
+      // Returns the matched id or null. parentId may be null.
+      function resolveByNameLevel(name, lvl, parentId) {
+        const nn = normName(name);
+        if (!nn) return null;
+        const list = byName[nn] || [];
+        if (!list.length) return null;
+        if (list.length === 1) return list[0];
+        // Multiple by name → filter by level
+        const lvlNum = Number(lvl) || 0;
+        const sameLevel = list.filter(mid => Number(byId[mid].level || 1) === lvlNum);
+        if (sameLevel.length === 1) return sameLevel[0];
+        if (sameLevel.length === 0) {
+          // Level didn't match any of the name candidates — fall through
+          // to the plain-name caller logic (which returns null for
+          // ambiguity). Don't silently pick a level-mismatched row.
+          return null;
+        }
+        // Still ambiguous → break tie by parent
+        const sameParent = sameLevel.filter(mid => String(byId[mid].parent_id || '') === String(parentId || ''));
+        if (sameParent.length >= 1) return sameParent[0];
+        return sameLevel[0]; // last resort
+      }
+
       // Sort by level ASC so parents are upserted before children.
       const sorted = rows.slice().sort((a, b) => {
         return Number(a['المستوى'] || a.level || 1) - Number(b['المستوى'] || b.level || 1);
@@ -353,23 +380,24 @@ router.post('/gl/accounts/import', async (req, res) => {
 
       const fileCodeToTargetId = {};
       const idsChangingCode = new Set();
-      // Pre-walk: resolve every row's target without applying anything.
+      // v5.10.54 — pre-walk uses the new priority: NAME+LEVEL first, then
+      // id, then code. The name is the identity; the file is the truth.
       for (const r of sorted) {
         const idP = String(r['المعرف (لا تحذف)'] || r.id || '').trim();
         const codeP = String(r['الكود'] || r.code || '').trim();
         if (!codeP) continue;
         const nameP = String(r['الاسم العربي'] || r.nameAr || '').trim();
+        const lvlP = Number(r['المستوى'] || r.level || 1);
         let tid = null;
-        if (idP && byId[idP]) tid = idP;
-        else if (idP && nameP) {
-          const matches = byName[normName(nameP)] || [];
-          if (matches.length === 1) tid = matches[0];
-        }
-        if (!tid && !idP && nameP) {
-          const t = lookupByName(nameP);
-          if (t) tid = t;
-        }
-        if (!tid && !idP && byCode[codeP]) tid = byCode[codeP];
+        // 1. NAME + LEVEL (top priority)
+        if (nameP) tid = resolveByNameLevel(nameP, lvlP, null);
+        // 2. id (still useful when name not unique enough — same level
+        //    not present, or two-level disambiguation failed)
+        if (!tid && idP && byId[idP]) tid = idP;
+        // 3. plain name (no level constraint) — only if exactly one match
+        if (!tid && nameP) tid = lookupByName(nameP);
+        // 4. code (legacy fallback)
+        if (!tid && byCode[codeP]) tid = byCode[codeP];
         if (tid && byId[tid]) {
           fileCodeToTargetId[codeP] = tid;
           if (byId[tid].code !== codeP) idsChangingCode.add(tid);
@@ -436,39 +464,39 @@ router.post('/gl/accounts/import', async (req, res) => {
           else { parentMissing++; errors.push({ id, code, reason: 'parent-code-not-found:' + parentCode }); }
         }
 
-        // v5.10.50 — target resolution priority: id → name → code.
-        // v5.10.52 — when an id is specified BUT not found in the DB,
-        // we no longer silently fall back to name — that was causing
-        // edited rows to overwrite UNRELATED accounts. Instead we treat
-        // it as a rename intent: try a unique name match, and if found,
-        // change that row's id to the new value (cascading FK refs).
-        // If the name match is ambiguous, we refuse the row.
+        // v5.10.54 — NEW priority: name+level → id → plain name → code.
+        // The name is the identity, level disambiguates duplicates, the
+        // file is the truth. id is still honoured (and renamed when
+        // explicitly different from the resolved target's id), but it
+        // is no longer the primary key for matching.
         let target = null, matchedBy = null;
-        let idRenameFromId = null;     // set when we're about to change the PK
-        if (id && byId[id]) { target = byId[id]; matchedBy = 'id'; idMatches++; }
-        else if (id) {
-          // ID specified, but doesn't exist. Did the user rename it?
-          if (nameAr) {
-            const nn = normName(nameAr);
-            const matches = (byName[nn] || []);
-            if (matches.length === 1) {
-              target = byId[matches[0]];
-              matchedBy = 'id-rename';
-              idRenameFromId = target.id;
-              nameMatches++;
-            } else if (matches.length > 1) {
-              skipped++;
-              errors.push({ id, code, reason: 'id-not-found-and-name-ambiguous:' + nameAr });
-              continue;
-            }
-            // Else: zero name matches → fall through to INSERT below.
-          }
+        let idRenameFromId = null;
+        // 1. name + level
+        if (nameAr) {
+          const t = resolveByNameLevel(nameAr, level, parentId);
+          if (t) { target = byId[t]; matchedBy = 'name+level'; nameMatches++; }
         }
-        if (!target && nameAr && !id) {
+        // 2. id (when name+level didn't resolve)
+        if (!target && id && byId[id]) { target = byId[id]; matchedBy = 'id'; idMatches++; }
+        // 3. plain name (single match)
+        if (!target && nameAr) {
           const t = lookupByName(nameAr);
           if (t) { target = byId[t]; matchedBy = 'name'; nameMatches++; }
         }
-        if (!target && byCode[code] && !id) { target = byId[byCode[code]]; matchedBy = 'code'; codeMatches++; }
+        // 4. code (legacy)
+        if (!target && byCode[code]) { target = byId[byCode[code]]; matchedBy = 'code'; codeMatches++; }
+        // If the file specified an id and it differs from what we
+        // resolved, treat that as a rename intent (v5.10.52 behaviour).
+        // The match itself is by name+level; the id rename is a follow-up.
+        if (target && id && id !== target.id) {
+          if (byId[id]) {
+            // Another row already owns the new id — refuse.
+            skipped++;
+            errors.push({ id, code, reason: 'id-rename-collision-with:' + id });
+            continue;
+          }
+          idRenameFromId = target.id;
+        }
 
         if (target) {
           // Collision: would we steal a code another row owns?

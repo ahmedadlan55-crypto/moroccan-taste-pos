@@ -1917,10 +1917,9 @@ function _coaConfirmImport(rows) {
         '<div style="padding:16px 22px;">' +
           '<div style="padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-size:13px;color:#0369a1;line-height:1.7;">' +
             '<i class="fas fa-circle-info"></i> ' +
-            '<strong>أولوية المُطابقة:</strong> الـ ID أولاً، ثم <strong>الاسم</strong>، ثم الكود. ' +
-            'الأب يُحلّ بـ <strong>اسم الأب</strong> أولاً، ثم بـ "كود الأب". ' +
-            '<br/><strong>' + withId + '</strong> صف بـ ID (تَحديث مَضمون) · ' +
-            '<strong>' + (rows.length - withId) + '</strong> بدون ID (سيُطابق بالاسم).' +
+            '<strong>أولوية المُطابقة:</strong> الاسم + المستوى أولاً، ثم الـ ID، ثم الاسم وحده، ثم الكود. ' +
+            'الأب يُحلّ بـ <strong>اسم الأب</strong> أولاً، ثم بـ "كود الأب" (يَدعم الكود الجديد المعطى في نفس الملف). ' +
+            '<br/>الملف هو الحقيقة — ما تَستورده يُطبَّق ما لم يَكن هناك تَعارض حقيقي.' +
           '</div>' +
           '<table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:12.5px;">' +
             '<thead><tr style="background:#f1f5f9;">' +

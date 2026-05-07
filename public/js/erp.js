@@ -1810,10 +1810,9 @@ window.coaExportExcel = async function() {
   var sorted = _erpAccounts.slice().sort(function(a,b){
     return String(a.code||'').localeCompare(String(b.code||''));
   });
-  // v5.10.48 — first column is the internal id. The header explicitly
-  // tells the user not to delete it: re-import matches by this id so
-  // edits to code/name/parent persist correctly without creating
-  // duplicate rows. Removing the id falls back to matching by code.
+  // v5.10.48 — first column is the internal id. v5.10.50 — added
+  // "اسم الأب" so the user can rewire parents in Excel by editing
+  // names instead of codes. Backend resolves parents by name first.
   var rows = sorted.map(function(a, idx){
     var parent = a.parentId ? _erpAccounts.find(function(p){ return p.id === a.parentId; }) : null;
     return {
@@ -1823,6 +1822,7 @@ window.coaExportExcel = async function() {
       'الاسم العربي':  a.nameAr || '',
       'الاسم الإنج':   a.nameEn || '',
       'النوع':         a.type || '',
+      'اسم الأب':      parent ? (parent.nameAr || '') : '',
       'كود الأب':      parent ? parent.code : '',
       'المستوى':       a.level || 1,
       'النوع الهيكلي': a.isFolder ? 'رئيسي' : 'فرعي',
@@ -1830,7 +1830,7 @@ window.coaExportExcel = async function() {
     };
   });
   var ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = [{wch:22},{wch:8},{wch:12},{wch:32},{wch:32},{wch:12},{wch:10},{wch:8},{wch:12},{wch:14}];
+  ws['!cols'] = [{wch:22},{wch:8},{wch:12},{wch:32},{wch:32},{wch:12},{wch:32},{wch:10},{wch:8},{wch:12},{wch:14}];
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'دليل الحسابات');
   var stamp = new Date().toISOString().slice(0, 10);
@@ -1894,9 +1894,10 @@ function _coaConfirmImport(rows) {
         '<div style="padding:16px 22px;">' +
           '<div style="padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-size:13px;color:#0369a1;line-height:1.7;">' +
             '<i class="fas fa-circle-info"></i> ' +
-            '<strong>' + withId + '</strong> صف بـ ID (تَحديث مَضمون بدون ازدواج) · ' +
-            '<strong>' + (rows.length - withId) + '</strong> صف بدون ID (سيُطابق بالكود — أو يُدرَج إن لم يَكن موجودًا).' +
-            '<br/><span style="font-size:12px;color:#475569;">الأبناء يُربطون بآبائهم بالكود الجديد بعد التحديث، فالهيكل يَنعكس فوريًا.</span>' +
+            '<strong>أولوية المُطابقة:</strong> الـ ID أولاً، ثم <strong>الاسم</strong>، ثم الكود. ' +
+            'الأب يُحلّ بـ <strong>اسم الأب</strong> أولاً، ثم بـ "كود الأب". ' +
+            '<br/><strong>' + withId + '</strong> صف بـ ID (تَحديث مَضمون) · ' +
+            '<strong>' + (rows.length - withId) + '</strong> بدون ID (سيُطابق بالاسم).' +
           '</div>' +
           '<table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:12.5px;">' +
             '<thead><tr style="background:#f1f5f9;">' +
@@ -1945,11 +1946,210 @@ window.coaRunImport = function() {
       var renameNote = (j.codeChanges || j.parentChanges) ?
         ' · ' + (j.codeChanges || 0) + ' كود مُعاد · ' + (j.parentChanges || 0) + ' أب مُعاد' : '';
       showToast('تم الاستيراد: ' + j.inserted + ' جديد · ' + j.updated + ' محدَّث · ' + j.skipped + ' متخطٍّ' + renameNote);
+      // v5.10.50 — if any rows had unresolved parents or other issues,
+      // surface them in a follow-up modal so the user can fix the file.
+      if (j.errors && j.errors.length) _coaShowImportErrorsModal(j);
       if (typeof _erpReloadAccountsCacheBust === 'function') _erpReloadAccountsCacheBust();
       else if (typeof erpLoadAccountsList_ === 'function') erpLoadAccountsList_();
     })
     .catch(function(e){
       if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> تأكيد الاستيراد'; }
+      showToast(String((e && e.message) || e), true);
+    });
+};
+
+// v5.10.50 — when the import response carries an errors array (typically
+// rows whose parentName/parentCode didn't resolve to any existing
+// account), show them so the user can fix the file and re-import.
+function _coaShowImportErrorsModal(j) {
+  var prior = document.getElementById('coaImportErrorsModal');
+  if (prior) prior.remove();
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var rows = (j.errors || []).slice(0, 50).map(function(e){
+    return '<tr>' +
+      '<td><code>' + esc(e.code || '—') + '</code></td>' +
+      '<td><code style="color:#94a3b8;font-size:10.5px;">' + esc(e.id || '—') + '</code></td>' +
+      '<td style="color:#b91c1c;">' + esc(e.reason || '') + '</td>' +
+    '</tr>';
+  }).join('');
+  var more = (j.errors.length > 50) ? '<div style="padding:8px 10px;color:#64748b;font-size:12px;">… و ' + (j.errors.length - 50) + ' خطأ آخر</div>' : '';
+  var html =
+    '<div class="modal show" id="coaImportErrorsModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10002;" onclick="if(event.target===this)this.remove();">' +
+      '<div class="modal-content" style="max-width:680px;width:96%;margin-top:48px;" onclick="event.stopPropagation();">' +
+        '<div class="modal-title">' +
+          '<i class="fas fa-triangle-exclamation" style="color:#d97706;"></i>' +
+          '<span>تحذيرات الاستيراد (' + j.errors.length + ')</span>' +
+          '<button class="modal-close" onclick="document.getElementById(\'coaImportErrorsModal\').remove()">&times;</button>' +
+        '</div>' +
+        '<div style="padding:16px 22px;">' +
+          '<div style="padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:12.5px;color:#78350f;line-height:1.7;">' +
+            'الصفوف التالية لم تَنحلّ بالكامل (غالبًا لأن "اسم الأب" أو "كود الأب" لا يُطابق أي حساب موجود). صحِّح الملف وأعِد الاستيراد.' +
+          '</div>' +
+          '<table style="width:100%;border-collapse:collapse;margin-top:12px;font-size:12.5px;">' +
+            '<thead><tr style="background:#f1f5f9;">' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">الكود</th>' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">المعرف</th>' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">السبب</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rows + '</tbody>' +
+          '</table>' +
+          more +
+          '<div style="margin-top:14px;text-align:end;">' +
+            '<button class="wo-btn wo-btn-primary" onclick="document.getElementById(\'coaImportErrorsModal\').remove()">إغلاق</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstChild);
+}
+
+// v5.10.50 — detect duplicate accounts by normalized name (trimmed +
+// case-folded) and let the user pick which to keep. Backend deletes the
+// rest atomically (refusing any whose deletion would orphan journal
+// entries). Reachable from the tree toolbar.
+window.coaOpenDedupeModal = function() {
+  var prior = document.getElementById('coaDedupeModal');
+  if (prior) prior.remove();
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var normName = function(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g, ' '); };
+
+  // Group accounts by normalized nameAr; keep only groups of size > 1.
+  var groups = {};
+  (_erpAccounts || []).forEach(function(a){
+    var nn = normName(a.nameAr);
+    if (!nn) return;
+    if (!groups[nn]) groups[nn] = [];
+    groups[nn].push(a);
+  });
+  var dupGroups = Object.keys(groups).filter(function(k){ return groups[k].length > 1; }).map(function(k){ return groups[k]; });
+  // Sort groups by name; inside each, oldest-with-most-movements first
+  dupGroups.sort(function(a,b){ return String(a[0].nameAr||'').localeCompare(String(b[0].nameAr||'')); });
+  dupGroups.forEach(function(g){
+    g.sort(function(a,b){
+      var am = (a.movementCount || 0), bm = (b.movementCount || 0);
+      if (am !== bm) return bm - am;             // most movements first → suggested keeper
+      return String(a.code||'').localeCompare(String(b.code||''));
+    });
+  });
+
+  if (!dupGroups.length) {
+    showToast('لا توجد حسابات مكرَّرة بالاسم');
+    return;
+  }
+
+  var sectionsHtml = dupGroups.map(function(group, gi){
+    var rowsHtml = group.map(function(a, ri){
+      var ckId = 'coaDup_' + gi + '_' + ri;
+      var nameId = 'coaDupKeep_' + gi;  // radio name = group, so picking one auto-deselects others
+      var hasMovements = (a.movementCount || 0) > 0;
+      return '<tr data-acc-id="' + esc(a.id) + '" data-group="' + gi + '">' +
+        '<td><input type="radio" name="' + nameId + '" id="' + ckId + '"' + (ri === 0 ? ' checked' : '') + ' style="width:16px;height:16px;cursor:pointer;"></td>' +
+        '<td><strong>' + esc(a.code || '') + '</strong></td>' +
+        '<td>' + esc(a.nameAr || '') + '</td>' +
+        '<td><code style="font-size:10.5px;color:#64748b;">' + esc(a.id) + '</code></td>' +
+        '<td style="text-align:center;">L' + (a.level || 1) + '</td>' +
+        '<td style="text-align:center;color:' + (hasMovements ? '#dc2626' : '#94a3b8') + ';font-weight:800;">' + (a.movementCount || 0) + '</td>' +
+        '<td style="text-align:end;font-variant-numeric:tabular-nums;">' + Number(a.balance||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '</td>' +
+      '</tr>';
+    }).join('');
+    return '<div class="coa-dedupe-group" style="margin-bottom:18px;">' +
+      '<div style="font-weight:800;color:#0f172a;font-size:13px;padding:6px 4px;display:flex;align-items:center;gap:8px;">' +
+        '<i class="fas fa-clone" style="color:#7c3aed;"></i>' +
+        '<span>' + esc(group[0].nameAr) + '</span>' +
+        '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">' + group.length + ' نسخ</span>' +
+      '</div>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:12.5px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">' +
+        '<thead><tr style="background:#f8fafc;">' +
+          '<th style="padding:8px 10px;text-align:center;width:60px;">إبقاء</th>' +
+          '<th style="padding:8px 10px;text-align:right;">الكود</th>' +
+          '<th style="padding:8px 10px;text-align:right;">الاسم</th>' +
+          '<th style="padding:8px 10px;text-align:right;">المعرف</th>' +
+          '<th style="padding:8px 10px;text-align:center;">المستوى</th>' +
+          '<th style="padding:8px 10px;text-align:center;">الحركات</th>' +
+          '<th style="padding:8px 10px;text-align:end;">الرصيد</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rowsHtml + '</tbody>' +
+      '</table>' +
+    '</div>';
+  }).join('');
+
+  var totalDups = dupGroups.reduce(function(s,g){ return s + g.length; }, 0);
+  var willDelete = totalDups - dupGroups.length;
+
+  var html =
+    '<div class="modal show" id="coaDedupeModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10001;" onclick="if(event.target===this)this.remove();">' +
+      '<div class="modal-content" style="max-width:920px;width:96%;margin-top:32px;max-height:88vh;display:flex;flex-direction:column;" onclick="event.stopPropagation();">' +
+        '<div class="modal-title">' +
+          '<i class="fas fa-clone" style="color:#7c3aed;"></i>' +
+          '<span>حذف الحسابات المُكرَّرة</span>' +
+          '<button class="modal-close" onclick="document.getElementById(\'coaDedupeModal\').remove()">&times;</button>' +
+        '</div>' +
+        '<div style="padding:18px 22px;overflow-y:auto;flex:1;">' +
+          '<div style="padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-size:13px;color:#0369a1;line-height:1.7;margin-bottom:14px;">' +
+            '<i class="fas fa-circle-info"></i> ' +
+            'تم العثور على <strong>' + dupGroups.length + '</strong> مجموعة بأسماء مكرَّرة (<strong>' + totalDups + '</strong> حساب إجمالي). ' +
+            'الـ radio يُؤشِّر إلى الحساب الذي سيُبقى — الأبناء سيُربطون به. ' +
+            'الباقي (<strong>' + willDelete + '</strong> حساب) سيُحذف. ' +
+            '<strong>الحسابات بحركات يومية لن تُحذف</strong> — سيُتجاهَل وضعها وتُترَك.' +
+          '</div>' +
+          sectionsHtml +
+        '</div>' +
+        '<div style="padding:14px 22px;border-top:1px solid #e2e8f0;display:flex;gap:8px;justify-content:flex-end;background:#f8fafc;">' +
+          '<button class="wo-btn wo-btn-ghost" onclick="document.getElementById(\'coaDedupeModal\').remove()">إلغاء</button>' +
+          '<button class="wo-btn wo-btn-primary" style="background:#dc2626;" onclick="coaConfirmDedupe()"><i class="fas fa-trash"></i> حذف ' + willDelete + ' مكرَّر</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstChild);
+};
+
+window.coaConfirmDedupe = function() {
+  var modal = document.getElementById('coaDedupeModal');
+  if (!modal) return;
+  // Build payload: for each group, the keep id and the delete ids.
+  var groups = {};
+  modal.querySelectorAll('tr[data-acc-id]').forEach(function(tr){
+    var gi = tr.getAttribute('data-group');
+    var id = tr.getAttribute('data-acc-id');
+    var radio = tr.querySelector('input[type="radio"]');
+    if (!groups[gi]) groups[gi] = { keep: null, deleteIds: [] };
+    if (radio && radio.checked) groups[gi].keep = id;
+    else groups[gi].deleteIds.push(id);
+  });
+  var payload = [];
+  Object.keys(groups).forEach(function(gi){
+    var g = groups[gi];
+    if (!g.keep || !g.deleteIds.length) return;
+    payload.push({ keepId: g.keep, deleteIds: g.deleteIds });
+  });
+  if (!payload.length) { showToast('لا شيء للحذف', true); return; }
+
+  var btn = modal.querySelector('.wo-btn-primary');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الحذف...'; }
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/gl/accounts/dedupe', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groups: payload })
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j || !j.success) {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-trash"></i> حذف مكرَّر'; }
+        showToast((j && j.error) || 'فشل الحذف', true);
+        return;
+      }
+      modal.remove();
+      var noteSkipped = (j.skipped && j.skipped.length) ? ' · ' + j.skipped.length + ' لم يُحذف (له حركات)' : '';
+      showToast('تم حذف ' + (j.deleted || 0) + ' حساب مكرَّر · ' + (j.reparented || 0) + ' طفل مُعاد ربطه' + noteSkipped);
+      if (typeof _erpReloadAccountsCacheBust === 'function') _erpReloadAccountsCacheBust();
+    })
+    .catch(function(e){
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-trash"></i> حذف مكرَّر'; }
       showToast(String((e && e.message) || e), true);
     });
 };

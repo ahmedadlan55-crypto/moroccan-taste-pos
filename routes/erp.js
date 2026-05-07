@@ -275,14 +275,33 @@ router.post('/gl/accounts/import', async (req, res) => {
   const errors = [];
   try {
     await db.withTransaction(async (conn) => {
-      // Build two indices over the CURRENT DB state.
-      const [existing] = await conn.query('SELECT id, code, parent_id FROM gl_accounts');
+      // v5.10.50 — three indices: id (safest), normalized name (the user's
+      // preferred identity), code (fallback). Names are trimmed +
+      // case-folded so "بنك الراجحي" matches "  بنك الراجحي  ".
+      const [existing] = await conn.query('SELECT id, code, name_ar, parent_id FROM gl_accounts');
       const byId   = {};
       const byCode = {};
+      const byName = {};   // normalizedName -> [id, id, ...] (multiple = ambiguous)
+      const normName = function(s){ return String(s || '').trim().toLowerCase().replace(/\s+/g, ' '); };
       existing.forEach(e => {
-        byId[String(e.id)] = { id: e.id, code: String(e.code || ''), parent_id: e.parent_id || null };
+        byId[String(e.id)] = {
+          id: e.id, code: String(e.code || ''),
+          name_ar: String(e.name_ar || ''), parent_id: e.parent_id || null
+        };
         if (e.code) byCode[String(e.code)] = e.id;
+        const nn = normName(e.name_ar);
+        if (nn) {
+          if (!byName[nn]) byName[nn] = [];
+          byName[nn].push(e.id);
+        }
       });
+      function lookupByName(name) {
+        const nn = normName(name);
+        if (!nn) return null;
+        const list = byName[nn] || [];
+        if (list.length === 1) return list[0];
+        return null;  // 0 = no match, 2+ = ambiguous (caller decides)
+      }
 
       // Sort by level ASC so parents are upserted before children: when a
       // child resolves its parentCode lookup, the parent's row is already
@@ -291,6 +310,9 @@ router.post('/gl/accounts/import', async (req, res) => {
         return Number(a['المستوى'] || a.level || 1) - Number(b['المستوى'] || b.level || 1);
       });
 
+      let nameMatches = 0, codeMatches = 0, idMatches = 0;
+      let parentByName = 0, parentByCode = 0, parentMissing = 0;
+
       for (const r of sorted) {
         const id     = String(r['المعرف (لا تحذف)'] || r.id || '').trim();
         const code   = String(r['الكود'] || r.code || '').trim();
@@ -298,58 +320,151 @@ router.post('/gl/accounts/import', async (req, res) => {
         const nameAr = String(r['الاسم العربي'] || r.nameAr || '').trim();
         const nameEn = String(r['الاسم الإنج'] || r['الاسم الانجليزي'] || r.nameEn || '').trim();
         const type   = String(r['النوع'] || r.type || 'asset').trim();
+        const parentName = String(r['اسم الأب'] || r.parentName || '').trim();
         const parentCode = String(r['كود الأب'] || r.parentCode || '').trim();
         const level  = Number(r['المستوى'] || r.level || 1);
         const kindRaw= String(r['النوع الهيكلي'] || r.kind || '').trim();
         const isFolder = (kindRaw === 'رئيسي' || kindRaw === 'folder' || level <= 2) ? 1 : 0;
-        const parentId = parentCode ? (byCode[parentCode] || null) : null;
 
-        // Resolve the target row: id wins, code is fallback.
-        const target = id && byId[id] ? byId[id] : (byCode[code] ? byId[byCode[code]] : null);
+        // v5.10.50 — parent resolution: NAME first, code as fallback.
+        // The user explicitly asked for name-based matching because they
+        // rewire structure in Excel by editing names.
+        let parentId = null;
+        if (parentName) {
+          const pid = lookupByName(parentName);
+          if (pid) { parentId = pid; parentByName++; }
+          else if (parentCode && byCode[parentCode]) { parentId = byCode[parentCode]; parentByCode++; }
+          else { parentMissing++; errors.push({ id, code, reason: 'parent-not-found:' + parentName }); }
+        } else if (parentCode) {
+          if (byCode[parentCode]) { parentId = byCode[parentCode]; parentByCode++; }
+          else { parentMissing++; errors.push({ id, code, reason: 'parent-code-not-found:' + parentCode }); }
+        }
+
+        // v5.10.50 — target resolution: id → name → code (the user said
+        // "match by name not by code"; id is the safest tier so it wins
+        // when present, code is the legacy fallback).
+        let target = null, matchedBy = null;
+        if (id && byId[id]) { target = byId[id]; matchedBy = 'id'; idMatches++; }
+        if (!target && nameAr) {
+          const t = lookupByName(nameAr);
+          if (t) { target = byId[t]; matchedBy = 'name'; nameMatches++; }
+        }
+        if (!target && byCode[code]) { target = byId[byCode[code]]; matchedBy = 'code'; codeMatches++; }
 
         if (target) {
-          // Collision check: if we'd be assigning a code that already
-          // belongs to a DIFFERENT row, refuse this single row.
+          // Collision: would we steal a code another row owns?
           const claimant = byCode[code];
           if (claimant && claimant !== target.id) {
             skipped++;
             errors.push({ id: target.id, code, reason: 'code-collision-with:' + claimant });
             continue;
           }
-          const codeChanged = String(target.code) !== code;
+          const oldName = target.name_ar;
+          const oldCode = target.code;
+          const codeChanged = String(oldCode) !== code;
+          const nameChanged = normName(oldName) !== normName(nameAr);
           const parentChanged = String(target.parent_id || '') !== String(parentId || '');
           await conn.query(
             'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_folder=? WHERE id=?',
             [code, nameAr, nameEn, type, parentId, level, isFolder, target.id]);
           if (codeChanged) {
-            // Mirror denormalized account_code on every gl_entry so reports
-            // see the new code without waiting for deep-repair.
             await conn.query('UPDATE gl_entries SET account_code = ? WHERE account_id = ?', [code, target.id]);
-            // Refresh both indices to reflect the rename.
-            delete byCode[String(target.code)];
+            delete byCode[String(oldCode)];
             byCode[code] = target.id;
             target.code = code;
             codeChanges++;
           }
+          if (nameChanged) {
+            const oldNN = normName(oldName);
+            if (oldNN && byName[oldNN]) {
+              byName[oldNN] = byName[oldNN].filter(x => x !== target.id);
+              if (!byName[oldNN].length) delete byName[oldNN];
+            }
+            const newNN = normName(nameAr);
+            if (newNN) {
+              if (!byName[newNN]) byName[newNN] = [];
+              if (byName[newNN].indexOf(target.id) < 0) byName[newNN].push(target.id);
+            }
+            target.name_ar = nameAr;
+          }
           if (parentChanged) { target.parent_id = parentId; parentChanges++; }
           updated++;
         } else {
-          // Insert new. Honour the file's id if present (so re-importing
-          // the same file twice is idempotent), otherwise mint a new one.
           const newId = id || ('GL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7));
           await conn.query(
             'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_folder) VALUES (?,?,?,?,?,?,?,?)',
             [newId, code, nameAr, nameEn, type, parentId, level, isFolder]);
           byCode[code] = newId;
-          byId[newId]  = { id: newId, code: code, parent_id: parentId };
+          const nn = normName(nameAr);
+          if (nn) {
+            if (!byName[nn]) byName[nn] = [];
+            byName[nn].push(newId);
+          }
+          byId[newId] = { id: newId, code: code, name_ar: nameAr, parent_id: parentId };
           inserted++;
         }
       }
-      console.log('[gl/accounts/import] inserted=' + inserted + ' updated=' + updated + ' skipped=' + skipped + ' codeRenames=' + codeChanges + ' parentChanges=' + parentChanges);
+      console.log('[gl/accounts/import] inserted=' + inserted + ' updated=' + updated + ' skipped=' + skipped +
+        ' | match: id=' + idMatches + ' name=' + nameMatches + ' code=' + codeMatches +
+        ' | parent: name=' + parentByName + ' code=' + parentByCode + ' missing=' + parentMissing +
+        ' | renames: code=' + codeChanges + ' parent=' + parentChanges);
+      // Stash counters in a closure-accessible spot
+      req._coaImportStats = { idMatches, nameMatches, codeMatches, parentByName, parentByCode, parentMissing };
     });
-    res.json({ success: true, inserted, updated, skipped, codeChanges, parentChanges, errors });
+    res.json({
+      success: true, inserted, updated, skipped, codeChanges, parentChanges, errors,
+      matchStats: req._coaImportStats || null
+    });
   } catch (e) {
     console.error('[gl/accounts/import] FAILED:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// v5.10.50 — atomic dedupe: for each group {keepId, deleteIds[]} re-parent
+// any children of the deletees to the keeper, refuse to delete any account
+// that has gl_entries rows (would orphan the journal), then DELETE the
+// rest. Reports counts so the UI can tell the user exactly what happened.
+router.post('/gl/accounts/dedupe', async (req, res) => {
+  const { groups } = req.body || {};
+  if (!Array.isArray(groups) || !groups.length) {
+    return res.status(400).json({ success: false, error: 'لا توجد مجموعات للحذف' });
+  }
+  let deleted = 0, reparented = 0;
+  const skipped = [];
+  try {
+    await db.withTransaction(async (conn) => {
+      for (const g of groups) {
+        const keepId = String(g.keepId || '').trim();
+        const delIds = Array.isArray(g.deleteIds) ? g.deleteIds.map(String) : [];
+        if (!keepId || !delIds.length) continue;
+        // Ensure keepId actually exists
+        const [keepRows] = await conn.query('SELECT id FROM gl_accounts WHERE id = ?', [keepId]);
+        if (!keepRows.length) { skipped.push({ id: keepId, reason: 'keep-not-found' }); continue; }
+        for (const did of delIds) {
+          if (did === keepId) continue;
+          // Refuse to delete if account has any gl_entries (would orphan
+          // posted journal lines). User must merge entries manually.
+          const [entries] = await conn.query('SELECT id FROM gl_entries WHERE account_id = ? LIMIT 1', [did]);
+          if (entries.length) { skipped.push({ id: did, reason: 'has-journal-entries' }); continue; }
+          // Re-parent any children of the deletee to the keeper.
+          const [kids] = await conn.query('SELECT id FROM gl_accounts WHERE parent_id = ?', [did]);
+          if (kids.length) {
+            await conn.query('UPDATE gl_accounts SET parent_id = ? WHERE parent_id = ?', [keepId, did]);
+            reparented += kids.length;
+          }
+          // Refuse if a journal HEADER references it as account_id (rare,
+          // but defensive) — none of our journals reference accounts at
+          // header level so this is a no-op in practice.
+          await conn.query('DELETE FROM gl_accounts WHERE id = ?', [did]);
+          deleted++;
+          console.log('[gl/accounts/dedupe] deleted ' + did + ' (kept ' + keepId + ', reparented ' + kids.length + ' children)');
+        }
+      }
+    });
+    res.json({ success: true, deleted, reparented, skipped });
+  } catch (e) {
+    console.error('[gl/accounts/dedupe] FAILED:', e.message);
     res.status(500).json({ success: false, error: e.message });
   }
 });

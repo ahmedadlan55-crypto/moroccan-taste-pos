@@ -1875,7 +1875,8 @@ window.coaImportExcel = async function(event) {
       var wb = XLSX.read(e.target.result, { type: 'array' });
       var ws = wb.Sheets[wb.SheetNames[0]];
       var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-      _coaConfirmImport(rows);
+      // v5.10.55 — first ask the user which import semantics they want.
+      _coaShowImportModeModal(rows);
     } catch (err) {
       showToast('فشل قراءة الملف: ' + (err && err.message || err), true);
     }
@@ -1884,11 +1885,77 @@ window.coaImportExcel = async function(event) {
   reader.readAsArrayBuffer(file);
 };
 
-function _coaConfirmImport(rows) {
+// v5.10.55 — mode picker. Two options:
+//   'update'   — upsert only; existing accounts not in the file stay.
+//   'replace'  — file is the truth; accounts not in the file are
+//                deleted (when they have no journal entries; otherwise
+//                skipped and reported).
+function _coaShowImportModeModal(rows) {
+  var prior = document.getElementById('coaImportModeModal');
+  if (prior) prior.remove();
+  var html =
+    '<div class="modal show" id="coaImportModeModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10001;" onclick="if(event.target===this)this.remove();">' +
+      '<div class="modal-content" style="max-width:640px;width:96%;margin-top:60px;" onclick="event.stopPropagation();">' +
+        '<div class="modal-title">' +
+          '<i class="fas fa-question-circle" style="color:#7c3aed;"></i>' +
+          '<span>كيف تريد اعتماد الملف؟</span>' +
+          '<button class="modal-close" onclick="document.getElementById(\'coaImportModeModal\').remove()">&times;</button>' +
+        '</div>' +
+        '<div style="padding:18px 22px;">' +
+          '<p style="font-size:13.5px;color:#475569;line-height:1.8;margin-bottom:14px;">' +
+            'الملف يَحوي <strong>' + rows.length + '</strong> صف. اختر طريقة التَّطبيق:' +
+          '</p>' +
+          '<div style="display:grid;gap:10px;">' +
+            '<button class="coa-mode-btn" onclick="_coaPickImportMode(\'update\')" style="text-align:start;padding:14px 16px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;cursor:pointer;transition:all 120ms;">' +
+              '<div style="display:flex;align-items:center;gap:10px;">' +
+                '<i class="fas fa-pen-to-square" style="color:#0369a1;font-size:18px;"></i>' +
+                '<div>' +
+                  '<div style="font-weight:800;font-size:14px;color:#0f172a;">اعتماد كتَعديل</div>' +
+                  '<div style="font-size:12px;color:#64748b;margin-top:3px;">يُحدِّث ما في الملف فقط. الحسابات الأخرى في القاعدة تَبقى كما هي.</div>' +
+                '</div>' +
+              '</div>' +
+            '</button>' +
+            '<button class="coa-mode-btn" onclick="_coaPickImportMode(\'replace\')" style="text-align:start;padding:14px 16px;background:#fef2f2;border:1.5px solid #fecaca;border-radius:12px;cursor:pointer;transition:all 120ms;">' +
+              '<div style="display:flex;align-items:center;gap:10px;">' +
+                '<i class="fas fa-tree" style="color:#b91c1c;font-size:18px;"></i>' +
+                '<div>' +
+                  '<div style="font-weight:800;font-size:14px;color:#7f1d1d;">اعتماد كالشجرة النهائية</div>' +
+                  '<div style="font-size:12px;color:#991b1b;margin-top:3px;">' +
+                    'الملف هو الشجرة كاملةً. الحسابات الموجودة في القاعدة وغير الموجودة في الملف <strong>تُحذف</strong>. ' +
+                    'الجذور 1-5 والحسابات بقيود يومية لن تُحذف.' +
+                  '</div>' +
+                '</div>' +
+              '</div>' +
+            '</button>' +
+          '</div>' +
+          '<div style="margin-top:14px;text-align:end;">' +
+            '<button class="wo-btn wo-btn-ghost" onclick="document.getElementById(\'coaImportModeModal\').remove()">إلغاء</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstChild);
+  // Stash the rows so the picked mode can carry them forward.
+  window._coaImportPendingRows = rows;
+}
+
+window._coaPickImportMode = function(mode) {
+  var rows = window._coaImportPendingRows || [];
+  window._coaImportPendingRows = null;
+  var m = document.getElementById('coaImportModeModal');
+  if (m) m.remove();
+  if (!rows.length) return;
+  _coaConfirmImport(rows, mode);
+};
+
+function _coaConfirmImport(rows, mode) {
   if (!rows || !rows.length) { showToast('الملف فارغ', true); return; }
   var prior = document.getElementById('coaImportModal');
   if (prior) prior.remove();
   window._coaImportRows = rows;
+  window._coaImportMode = String(mode || 'update');
   var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
   var sample = rows.slice(0, 5);
   var withId = rows.filter(function(r){ return String(r['المعرف (لا تحذف)'] || r.id || '').trim(); }).length;
@@ -1915,12 +1982,18 @@ function _coaConfirmImport(rows) {
           '<button class="modal-close" onclick="document.getElementById(\'coaImportModal\').remove()">&times;</button>' +
         '</div>' +
         '<div style="padding:16px 22px;">' +
-          '<div style="padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-size:13px;color:#0369a1;line-height:1.7;">' +
-            '<i class="fas fa-circle-info"></i> ' +
-            '<strong>أولوية المُطابقة:</strong> الاسم + المستوى أولاً، ثم الـ ID، ثم الاسم وحده، ثم الكود. ' +
-            'الأب يُحلّ بـ <strong>اسم الأب</strong> أولاً، ثم بـ "كود الأب" (يَدعم الكود الجديد المعطى في نفس الملف). ' +
-            '<br/>الملف هو الحقيقة — ما تَستورده يُطبَّق ما لم يَكن هناك تَعارض حقيقي.' +
-          '</div>' +
+          (window._coaImportMode === 'replace'
+            ? '<div style="padding:12px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;font-size:13px;color:#7f1d1d;line-height:1.7;">' +
+                '<i class="fas fa-tree"></i> <strong>الوضع: شجرة نهائية.</strong> ' +
+                'الملف يُمثِّل الشجرة كاملةً — أي حساب في القاعدة وليس في الملف سيُحذف (مع تجاهل الجذور 1-5 والحسابات التي لها قيود يومية). ' +
+                'الأولوية: الاسم + المستوى ثم الـ ID ثم الكود.' +
+              '</div>'
+            : '<div style="padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-size:13px;color:#0369a1;line-height:1.7;">' +
+                '<i class="fas fa-pen-to-square"></i> <strong>الوضع: تَعديل فقط.</strong> ' +
+                'الحسابات الموجودة في الملف تُحدَّث، الجديدة تُضاف. الحسابات الأخرى في القاعدة لا تُمسّ. ' +
+                'الأولوية: الاسم + المستوى ثم الـ ID ثم الكود.' +
+              '</div>'
+          ) +
           '<table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:12.5px;">' +
             '<thead><tr style="background:#f1f5f9;">' +
               '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">الكود</th>' +
@@ -1948,13 +2021,14 @@ function _coaConfirmImport(rows) {
 window.coaRunImport = function() {
   var rows = window._coaImportRows || [];
   if (!rows.length) return;
+  var mode = window._coaImportMode || 'update';
   var token = localStorage.getItem('pos_token') || '';
   var btn = document.querySelector('#coaImportModal .wo-btn-primary');
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الاستيراد...'; }
   fetch('/api/erp/gl/accounts/import', {
     method: 'POST',
     headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ rows: rows })
+    body: JSON.stringify({ rows: rows, mode: mode })
   })
     .then(function(r){ return r.json(); })
     .then(function(j){
@@ -1965,9 +2039,16 @@ window.coaRunImport = function() {
       }
       var m = document.getElementById('coaImportModal'); if (m) m.remove();
       window._coaImportRows = null;
+      window._coaImportMode = null;
       var renameNote = (j.codeChanges || j.parentChanges) ?
         ' · ' + (j.codeChanges || 0) + ' كود مُعاد · ' + (j.parentChanges || 0) + ' أب مُعاد' : '';
-      showToast('تم الاستيراد: ' + j.inserted + ' جديد · ' + j.updated + ' محدَّث · ' + j.skipped + ' متخطٍّ' + renameNote);
+      // v5.10.55 — surface delete metrics in replace mode
+      var deleteNote = '';
+      if (j.deleted || (j.skippedDeletes && j.skippedDeletes.length)) {
+        deleteNote = ' · ' + (j.deleted || 0) + ' محذوف';
+        if (j.skippedDeletes && j.skippedDeletes.length) deleteNote += ' · ' + j.skippedDeletes.length + ' تُجوهل (لها قيود)';
+      }
+      showToast('تم الاستيراد: ' + j.inserted + ' جديد · ' + j.updated + ' محدَّث · ' + j.skipped + ' متخطٍّ' + renameNote + deleteNote);
       // v5.10.50 — if any rows had unresolved parents or other issues,
       // surface them in a follow-up modal so the user can fix the file.
       if (j.errors && j.errors.length) _coaShowImportErrorsModal(j);

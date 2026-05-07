@@ -271,10 +271,24 @@ router.post('/gl/accounts/:id/folder', async (req, res) => {
 //     parent resolve to the right id within the same batch.
 router.post('/gl/accounts/import', async (req, res) => {
   const { rows } = req.body || {};
+  // v5.10.55 — mode controls destructive semantics:
+  //   'update'  (default): upsert only. Accounts in DB but not in the
+  //                        file are left alone. Safe.
+  //   'replace':           the file IS the chart of accounts. Anything
+  //                        in DB but not matched in the file gets
+  //                        deleted, EXCEPT (a) the 5 IFRS roots and
+  //                        (b) any account with posted journal entries
+  //                        (would orphan ledger data). Skipped rows
+  //                        come back in skippedDeletes[] so the user
+  //                        can reconcile manually.
+  const mode = String((req.body && req.body.mode) || 'update').toLowerCase();
+  const isReplace = mode === 'replace';
   if (!Array.isArray(rows) || !rows.length) {
     return res.status(400).json({ success: false, error: 'لا توجد صفوف للاستيراد' });
   }
   let inserted = 0, updated = 0, skipped = 0, codeChanges = 0, parentChanges = 0;
+  let deleted = 0;
+  const skippedDeletes = [];
   const errors = [];
   try {
     await db.withTransaction(async (conn) => {
@@ -403,6 +417,61 @@ router.post('/gl/accounts/import', async (req, res) => {
           if (byId[tid].code !== codeP) idsChangingCode.add(tid);
         }
       }
+      // v5.10.55 — REPLACE MODE: delete every existing account that the
+      // file did NOT match to. Roots 1-5 are preserved. Accounts with
+      // posted journal entries are skipped (their deletion would orphan
+      // gl_entries — the user must merge entries manually). We delete
+      // children before parents (depth DESC) to keep parent_id valid
+      // throughout, even though we briefly disable FK checks.
+      if (isReplace) {
+        const matchedIds = new Set();
+        for (const tid of Object.values(fileCodeToTargetId)) matchedIds.add(tid);
+        const deletionCandidates = [];
+        for (const eid of Object.keys(byId)) {
+          if (matchedIds.has(eid)) continue;
+          const acc = byId[eid];
+          if (['1','2','3','4','5'].indexOf(String(acc.code)) >= 0) continue;
+          deletionCandidates.push(acc);
+        }
+        // Filter out anything with journal entries.
+        const safeToDelete = [];
+        for (const acc of deletionCandidates) {
+          const [hits] = await conn.query('SELECT id FROM gl_entries WHERE account_id = ? LIMIT 1', [acc.id]);
+          if (hits.length) {
+            skippedDeletes.push({ id: acc.id, code: acc.code, name: acc.name_ar, reason: 'has-journal-entries' });
+          } else {
+            safeToDelete.push(acc);
+          }
+        }
+        // Sort by computed depth DESC so children get deleted before parents.
+        // We don't have depth on the in-memory model, so derive via parent
+        // chain length. Cheap because the chart is small.
+        function depthOf(acc) {
+          let d = 0, walker = acc, hops = 0;
+          while (walker && walker.parent_id && hops < 50) {
+            walker = byId[walker.parent_id];
+            d++; hops++;
+          }
+          return d;
+        }
+        safeToDelete.sort((a, b) => depthOf(b) - depthOf(a));
+        await conn.query('SET FOREIGN_KEY_CHECKS = 0');
+        for (const acc of safeToDelete) {
+          await conn.query('DELETE FROM gl_accounts WHERE id = ?', [acc.id]);
+          deleted++;
+          // Drop in-memory indices so later phases don't see this id
+          if (acc.code) delete byCode[acc.code];
+          delete byId[acc.id];
+          const nn = normName(acc.name_ar);
+          if (nn && byName[nn]) {
+            byName[nn] = byName[nn].filter(x => x !== acc.id);
+            if (!byName[nn].length) delete byName[nn];
+          }
+        }
+        await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+        console.log('[gl/accounts/import] replace-mode deleted ' + deleted + ' rows, skipped ' + skippedDeletes.length + ' (have entries)');
+      }
+
       // Phase A: clear codes for everything that will change. We stash
       // the real code on byId[tid].original_code so the diff modal still
       // shows the meaningful "from" value (not __TMP_xxx).
@@ -425,6 +494,12 @@ router.post('/gl/accounts/import', async (req, res) => {
       // reflect" feedback gap).
       const appliedChanges = [];
       let orderChanges = 0, levelChanges = 0;
+      // v5.10.55 — when the file's "الترتيب" cell is empty, derive a
+      // displayOrder from the row's position within its parent group.
+      // In replace mode this is always done; in update mode it only
+      // applies when the user left the cell empty (so existing orders
+      // aren't trampled). Counter is per resolved parent_id.
+      const positionByParent = {};
 
       for (const r of sorted) {
         const id     = String(r['المعرف (لا تحذف)'] || r.id || '').trim();
@@ -440,8 +515,17 @@ router.post('/gl/accounts/import', async (req, res) => {
         const isFolder = (kindRaw === 'رئيسي' || kindRaw === 'folder' || level <= 2) ? 1 : 0;
         // v5.10.51 — read the "الترتيب" cell. Empty/0/non-number → null
         // (means: leave existing display_order alone OR fall back to bottom).
+        // v5.10.55 — when null, auto-derive from file row position within
+        // parent group (every row gets a deterministic order, the file
+        // sequence is preserved). Update mode does this too because the
+        // user said: "I want the same order as the file."
         const orderRaw = r['الترتيب'] != null ? r['الترتيب'] : (r.order != null ? r.order : r.displayOrder);
-        const displayOrder = (orderRaw === '' || orderRaw == null || isNaN(Number(orderRaw))) ? null : Number(orderRaw);
+        let displayOrder = (orderRaw === '' || orderRaw == null || isNaN(Number(orderRaw))) ? null : Number(orderRaw);
+        if (displayOrder == null) {
+          const parentKey = String(parentId || '__ROOT__');
+          positionByParent[parentKey] = (positionByParent[parentKey] || 0) + 1;
+          displayOrder = positionByParent[parentKey];
+        }
 
         // v5.10.50 — parent resolution: NAME first, code as fallback.
         // v5.10.53 — code lookup now consults fileCodeToTargetId first,
@@ -650,6 +734,10 @@ router.post('/gl/accounts/import', async (req, res) => {
     const counters = req._coaCounters || {};
     res.json({
       success: true, inserted, updated, skipped, errors,
+      // v5.10.55 — replace-mode metrics
+      mode,
+      deleted,
+      skippedDeletes,
       codeChanges:   counters.codeChanges   || 0,
       parentChanges: counters.parentChanges || 0,
       levelChanges:  counters.levelChanges  || 0,

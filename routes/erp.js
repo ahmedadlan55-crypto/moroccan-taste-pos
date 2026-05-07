@@ -311,12 +311,83 @@ router.post('/gl/accounts/import', async (req, res) => {
         return null;  // 0 = no match, 2+ = ambiguous (caller decides)
       }
 
-      // Sort by level ASC so parents are upserted before children: when a
-      // child resolves its parentCode lookup, the parent's row is already
-      // in byCode (and any code rename has already been applied).
+      // Sort by level ASC so parents are upserted before children.
       const sorted = rows.slice().sort((a, b) => {
         return Number(a['المستوى'] || a.level || 1) - Number(b['المستوى'] || b.level || 1);
       });
+
+      // v5.10.53 — TWO-PHASE COMMIT.
+      //
+      // Without this, mass code reassignment fails: row X wants code 112
+      // but row Y currently holds code 112; we process X first, the
+      // UNIQUE(code) constraint trips, X is rejected, then Y still holds
+      // 112 forever. The user reported 102 such collisions in a single
+      // import that should have just renumbered the chart.
+      //
+      // Fix:
+      //   Pre-walk: figure out (a) which existing rows will get a NEW
+      //             code, and (b) what target each row in the file maps
+      //             to.  Build fileCodeToTargetId so children can resolve
+      //             parents by their NEW code.
+      //   Phase A:  Move every "code-changing" row to a unique temporary
+      //             code (`__TMP_<id>`). After this, the codes the file
+      //             intends to assign are free.
+      //   Phase B:  The existing per-row UPDATE loop runs; collisions can
+      //             only happen against rows that are NOT in the import,
+      //             which is the genuine error case.
+      // v5.10.53 — refuse if the file has the SAME code on two rows.
+      // (Two rows trying to claim the same code is a file authoring
+      // error, not something Phase A can recover from.)
+      {
+        const codeOccurrences = {};
+        for (const r of sorted) {
+          const c = String(r['الكود'] || r.code || '').trim();
+          if (!c) continue;
+          codeOccurrences[c] = (codeOccurrences[c] || 0) + 1;
+        }
+        const dups = Object.keys(codeOccurrences).filter(c => codeOccurrences[c] > 1);
+        if (dups.length) {
+          throw new Error('الملف يحوي أكوادًا مكرَّرة: ' + dups.slice(0, 5).join(', ') + (dups.length > 5 ? ' … و' + (dups.length - 5) + ' آخر' : ''));
+        }
+      }
+
+      const fileCodeToTargetId = {};
+      const idsChangingCode = new Set();
+      // Pre-walk: resolve every row's target without applying anything.
+      for (const r of sorted) {
+        const idP = String(r['المعرف (لا تحذف)'] || r.id || '').trim();
+        const codeP = String(r['الكود'] || r.code || '').trim();
+        if (!codeP) continue;
+        const nameP = String(r['الاسم العربي'] || r.nameAr || '').trim();
+        let tid = null;
+        if (idP && byId[idP]) tid = idP;
+        else if (idP && nameP) {
+          const matches = byName[normName(nameP)] || [];
+          if (matches.length === 1) tid = matches[0];
+        }
+        if (!tid && !idP && nameP) {
+          const t = lookupByName(nameP);
+          if (t) tid = t;
+        }
+        if (!tid && !idP && byCode[codeP]) tid = byCode[codeP];
+        if (tid && byId[tid]) {
+          fileCodeToTargetId[codeP] = tid;
+          if (byId[tid].code !== codeP) idsChangingCode.add(tid);
+        }
+      }
+      // Phase A: clear codes for everything that will change. We stash
+      // the real code on byId[tid].original_code so the diff modal still
+      // shows the meaningful "from" value (not __TMP_xxx).
+      for (const tid of idsChangingCode) {
+        const oldCode = byId[tid].code;
+        const tempCode = '__TMP_' + tid;
+        await conn.query('UPDATE gl_accounts SET code = ? WHERE id = ?', [tempCode, tid]);
+        if (oldCode) delete byCode[oldCode];
+        byCode[tempCode] = tid;
+        byId[tid].original_code = oldCode;
+        byId[tid].code = tempCode;
+      }
+      console.log('[gl/accounts/import] phase-A moved ' + idsChangingCode.size + ' codes to temp');
 
       let nameMatches = 0, codeMatches = 0, idMatches = 0;
       let parentByName = 0, parentByCode = 0, parentMissing = 0;
@@ -345,16 +416,23 @@ router.post('/gl/accounts/import', async (req, res) => {
         const displayOrder = (orderRaw === '' || orderRaw == null || isNaN(Number(orderRaw))) ? null : Number(orderRaw);
 
         // v5.10.50 — parent resolution: NAME first, code as fallback.
-        // The user explicitly asked for name-based matching because they
-        // rewire structure in Excel by editing names.
+        // v5.10.53 — code lookup now consults fileCodeToTargetId first,
+        // so a parent referenced by its NEW code (which is currently in
+        // temp form thanks to Phase A) still resolves correctly.
         let parentId = null;
+        function resolveParentByCode(pc){
+          return fileCodeToTargetId[pc] || byCode[pc] || null;
+        }
         if (parentName) {
           const pid = lookupByName(parentName);
           if (pid) { parentId = pid; parentByName++; }
-          else if (parentCode && byCode[parentCode]) { parentId = byCode[parentCode]; parentByCode++; }
+          else if (parentCode && resolveParentByCode(parentCode)) {
+            parentId = resolveParentByCode(parentCode); parentByCode++;
+          }
           else { parentMissing++; errors.push({ id, code, reason: 'parent-not-found:' + parentName }); }
         } else if (parentCode) {
-          if (byCode[parentCode]) { parentId = byCode[parentCode]; parentByCode++; }
+          const r = resolveParentByCode(parentCode);
+          if (r) { parentId = r; parentByCode++; }
           else { parentMissing++; errors.push({ id, code, reason: 'parent-code-not-found:' + parentCode }); }
         }
 
@@ -434,7 +512,10 @@ router.post('/gl/accounts/import', async (req, res) => {
             idChanged = true;
           }
           const oldName = target.name_ar;
-          const oldCode = target.code;
+          // v5.10.53 — when Phase A moved this row to a temp code, use
+          // original_code for the user-visible diff. Otherwise just use
+          // the current code.
+          const oldCode = target.original_code != null ? target.original_code : target.code;
           const oldLevel = Number(target.level || 1);
           const oldOrder = target.display_order;
           const codeChanged = String(oldCode) !== code;
@@ -451,9 +532,16 @@ router.post('/gl/accounts/import', async (req, res) => {
             [code, nameAr, nameEn, type, parentId, level, isFolder, effectiveOrder, target.id]);
           if (codeChanged) {
             await conn.query('UPDATE gl_entries SET account_code = ? WHERE account_id = ?', [code, target.id]);
-            delete byCode[String(oldCode)];
+            // v5.10.53 — sweep ALL temp/original byCode entries that
+            // currently point at this target. id-rename can detach them
+            // from a derivable key, so we sweep by value to be safe.
+            if (oldCode) delete byCode[String(oldCode)];
+            Object.keys(byCode).forEach(function(k){
+              if (byCode[k] === target.id && (k.indexOf('__TMP_') === 0 || k === oldCode)) delete byCode[k];
+            });
             byCode[code] = target.id;
             target.code = code;
+            target.original_code = null;
             codeChanges++;
           }
           if (nameChanged) {

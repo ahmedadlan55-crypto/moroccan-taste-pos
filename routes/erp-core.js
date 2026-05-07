@@ -1384,8 +1384,19 @@ router.post('/waste-entries', async (req, res) => {
       } catch(e) { /* older schema — inventory_movements may lack needed fields */ }
     }
 
-    // ═══ AUTO GL POSTING ═══
-    // Dr Waste Expense (cost_center) / Cr Inventory (warehouse)
+    // ═══ AUTO GL POSTING (v5.10.39 — granular by reason) ═══
+    // Dr Waste sub-account (5121-5125 by reason) / Cr Inventory (warehouse)
+    // Falls back to 5200 (generic waste expense) for unmapped reasons.
+    const WASTE_ACCOUNT_BY_REASON = {
+      prep_loss:        '5121',   // هدر المواد الخام
+      damaged:          '5122',   // هدر المنتجات الجاهزة
+      expired:          '5123',   // تالف منتهي الصلاحية
+      spill:            '5124',   // هدر التشغيل (انسكاب)
+      customer_return:  '5125',   // مرتجعات العملاء
+      other:            '5200'    // مصروف الهدر العام (fallback)
+    };
+    const wasteAccountCode = WASTE_ACCOUNT_BY_REASON[reason] || '5200';
+
     if (total > 0) {
       const post = await gl.postJournal(db, {
         journalDate: wasteDate || new Date().toISOString().slice(0, 10),
@@ -1394,9 +1405,9 @@ router.post('/waste-entries', async (req, res) => {
         referenceId: id,
         entries: [
           {
-            accountCode: '5200',       // Waste Expense
+            accountCode: wasteAccountCode,   // sub-account based on reason
             debit: total, credit: 0,
-            description: 'Waste cost',
+            description: 'Waste cost — ' + (reason || 'other'),
             branchId: branchId || null,
             brandId: brandId || null,
             costCenterId: costCenterId || null
@@ -1416,6 +1427,7 @@ router.post('/waste-entries', async (req, res) => {
         success: true, id, totalCost: total,
         journalId: post.journalId || null,
         journalNumber: post.journalNumber || null,
+        wasteAccountCode: wasteAccountCode,
         postingWarning: post.success ? null : post.error
       });
     }

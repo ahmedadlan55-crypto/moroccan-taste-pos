@@ -5201,7 +5201,7 @@
           </div>
           <div class="we-field">
             <label class="we-label">السبب <span class="we-req">*</span></label>
-            <select id="wnReason" class="form-control" onchange="_weValidateForm()">
+            <select id="wnReason" class="form-control" onchange="_weValidateForm(); _weUpdateGLHint();">
               <option value="expired">منتهي الصلاحية</option>
               <option value="damaged">تالف</option>
               <option value="spill">انسكاب</option>
@@ -5209,6 +5209,13 @@
               <option value="customer_return">إرجاع عميل</option>
               <option value="other">أخرى</option>
             </select>
+            <!-- v5.10.39 — hint-pill: shows which GL sub-account the entry will post to -->
+            <div class="waste-gl-hint" id="wnGLHint">
+              <i class="fas fa-link"></i>
+              <span>سيُقيَّد على</span>
+              <strong id="wnGLCode">5123</strong>
+              <span id="wnGLName">تالف منتهي الصلاحية</span>
+            </div>
           </div>
           <div class="we-field">
             <label class="we-label">المستودع <span class="we-req">*</span></label>

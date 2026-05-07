@@ -3901,6 +3901,54 @@ async function runMigrations() {
   try { await db.query('CREATE INDEX idx_bom_source ON bom(product_source, product_id)'); } catch(_) {}
 
   console.log('[v5.6-migrations] menu↔BOM integration ready.');
+
+  // ─── v5.10.39 — Multi-dimensional GL infrastructure ───────────────────
+  // Adds dimension columns (brand_id, branch_id, project_id, cost_center_id,
+  // warehouse_id) to gl_journals + gl_entries so reports can be sliced by
+  // any combination, and journals can be tagged with a full reporting context.
+  // Backward-compatible: all NULL on legacy rows; existing queries still work.
+  await addColumnIfMissing('gl_journals', 'brand_id',   'VARCHAR(50) NULL');
+  await addColumnIfMissing('gl_journals', 'branch_id',  'VARCHAR(50) NULL');
+  await addColumnIfMissing('gl_journals', 'project_id', 'VARCHAR(50) NULL');
+  try { await db.query('CREATE INDEX idx_jrn_dims ON gl_journals (brand_id, branch_id, project_id, cost_center_id)'); } catch(_) {}
+
+  await addColumnIfMissing('gl_entries', 'brand_id',       'VARCHAR(50) NULL');
+  await addColumnIfMissing('gl_entries', 'branch_id',      'VARCHAR(50) NULL');
+  await addColumnIfMissing('gl_entries', 'project_id',     'VARCHAR(50) NULL');
+  await addColumnIfMissing('gl_entries', 'cost_center_id', 'VARCHAR(50) NULL');
+  await addColumnIfMissing('gl_entries', 'warehouse_id',   'VARCHAR(50) NULL');
+  try { await db.query('CREATE INDEX idx_ent_dims ON gl_entries (account_id, brand_id, branch_id, project_id)'); } catch(_) {}
+
+  // Optional: per-account dimension requirements. NULL = not required.
+  // Stored as JSON array of dim names: ["brand", "branch"].
+  await addColumnIfMissing('gl_accounts', 'dim_required', 'JSON DEFAULT NULL');
+
+  // Per-item override for waste GL routing. NULL = use reason→account map.
+  await addColumnIfMissing('inv_items', 'waste_gl_account_id', 'VARCHAR(50) NULL');
+
+  // Projects catalog — first-class accounting dimension.
+  await createTableIfMissing('projects', `
+    CREATE TABLE projects (
+      id          VARCHAR(50)  PRIMARY KEY,
+      code        VARCHAR(20)  UNIQUE NOT NULL,
+      name_ar     VARCHAR(200) NOT NULL,
+      name_en     VARCHAR(200),
+      parent_id   VARCHAR(50)  NULL,
+      brand_id    VARCHAR(50)  NULL,
+      branch_id   VARCHAR(50)  NULL,
+      status      ENUM('active','archived','planned') DEFAULT 'active',
+      start_date  DATE NULL,
+      end_date    DATE NULL,
+      budget      DECIMAL(14,2) DEFAULT 0,
+      owner       VARCHAR(100) NULL,
+      notes       TEXT,
+      created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_proj_status (status),
+      INDEX idx_proj_dims (brand_id, branch_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  console.log('[v5.10.39] Multi-dimensional GL columns + projects table ready.');
 }
 
 app.listen(PORT, async () => {

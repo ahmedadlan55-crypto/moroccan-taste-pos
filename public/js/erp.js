@@ -698,6 +698,13 @@ window.coaToggleShowEmpty = function(checked) {
   _coaBuildTree();
 };
 
+// v5.10.39 — quick row actions. Both currently delegate to coaSelectNode
+// which loads the ledger view in the main panel; the separation lets us
+// later route "view ledger" vs "edit" to dedicated screens without
+// changing the tree markup.
+window.coaViewLedger  = function(id) { if (typeof coaSelectNode === 'function') coaSelectNode(id); };
+window.coaEditAccount = function(id) { if (typeof coaSelectNode === 'function') coaSelectNode(id); };
+
 function _coaRenderNode(acc, open) {
   var children = _coaChildrenOf(acc.id);
   // v5.10.38 — when hideEmpty mode is on, drop children with no movements
@@ -739,20 +746,54 @@ function _coaRenderNode(acc, open) {
     if (hasIssue) warnHtml = '<i class="fas fa-triangle-exclamation coa-warn-icon" title="' + issueLabel + '"></i>';
   }
 
+  // v5.10.39 — folder balance ALWAYS shown (not only when non-zero) so parents
+  // surface their rollup at a glance. Leaves still hide zero to avoid clutter.
+  var displayBal = isGroup ? _coaRollupBalance(acc.id) : (Number(acc.balance) || 0);
+  var balClass = displayBal > 0 ? 'coa-folder-balance--pos'
+              : displayBal < 0 ? 'coa-folder-balance--neg'
+              : 'coa-folder-balance--zero';
+  var balHtml = '';
+  if (isGroup) {
+    balHtml = '<span class="coa-folder-balance coa-folder-balance--group ' + balClass + '">' +
+      Number(displayBal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) +
+    '</span>';
+  } else if (displayBal !== 0) {
+    balHtml = '<span class="coa-folder-balance ' + balClass + '" style="font-size:11px;">' +
+      Number(displayBal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) +
+    '</span>';
+  }
+
+  // v5.10.39 — mini-stat showing how many descendants have movements (folders only)
+  var miniStatHtml = '';
+  if (isGroup) {
+    var withMov = children.filter(function(c){
+      return _coaHasMovements ? _coaHasMovements(c.id) : ((c.movementCount||0) > 0);
+    }).length;
+    var miniCls = withMov === 0 ? 'coa-mini-stat coa-mini-stat--zero' : 'coa-mini-stat';
+    miniStatHtml = '<span class="' + miniCls + '" title="عدد الأبناء الذين لديهم حركات">' +
+      withMov + '/' + children.length +
+    '</span>';
+  } else if ((acc.movementCount || 0) > 0) {
+    miniStatHtml = '<span class="coa-mini-stat" title="عدد الحركات">' +
+      Number(acc.movementCount).toLocaleString('ar-SA') + ' حركة' +
+    '</span>';
+  }
+
+  // v5.10.39 — hover-reveal action buttons
+  var actionsHtml = '<span class="coa-node-actions" onclick="event.stopPropagation();">' +
+    '<button title="عرض الأستاذ" onclick="coaViewLedger(\'' + acc.id + '\')"><i class="fas fa-eye"></i></button>' +
+    (isGroup ? '' : '<button title="تعديل" onclick="coaEditAccount(\'' + acc.id + '\')"><i class="fas fa-pen"></i></button>') +
+  '</span>';
+
   var html = '<div class="coa-node" data-id="' + acc.id + '" data-level="' + lvl + '" data-type="' + (acc.type||'') + '">';
   html += '<div class="coa-node-row' + activeClass + '" style="font-weight:' + fontW + ';font-size:' + fontSize + 'px;" onclick="coaSelectNode(\'' + acc.id + '\')">';
   html += toggle + ' ' + typeBadge + icon + ' ';
   html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
   html += warnHtml;
   html += levelBadge;
-  // Show balance (rollup for parents, own for leaves)
-  var displayBal = isGroup ? _coaRollupBalance(acc.id) : (Number(acc.balance) || 0);
-  if (displayBal !== 0) {
-    var balColor = displayBal > 0 ? '#16a34a' : '#ef4444';
-    var balBg = isGroup ? (displayBal > 0 ? '#dcfce7' : '#fee2e2') : 'transparent';
-    var padding = isGroup ? '2px 8px' : '0';
-    html += '<span style="font-size:' + (isGroup ? 11 : 10) + 'px;font-weight:800;color:' + balColor + ';margin-inline-start:auto;white-space:nowrap;background:' + balBg + ';padding:' + padding + ';border-radius:6px;">' + Number(displayBal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '</span>';
-  }
+  html += miniStatHtml;
+  html += balHtml;
+  html += actionsHtml;
   html += '</div>';
   if (isGroup) {
     html += '<div class="coa-node-children' + (open ? ' open' : '') + '" style="margin-inline-start:30px;padding-inline-start:10px;border-inline-start:2px dotted #cbd5e1;">';
@@ -1008,32 +1049,72 @@ function _coaRenderDiagnose(j) {
         '<div style="font-size:12px;color:#475569;">' + fmt(s.accounts) + ' حساب · ' + fmt(s.validEntries) + ' قيد · ' + fmt(s.nullEntries) + ' قيد بدون حساب</div>' +
       '</div>' +
       '<div style="margin-inline-start:auto;">' +
-        '<button class="wo-btn wo-btn-secondary" onclick="coaRunAutoRepair()"><i class="fas fa-wand-magic-sparkles"></i><span>إصلاح تلقائي</span></button>' +
+        '<button class="wo-btn wo-btn-secondary" onclick="coaRunAutoRepair()"><i class="fas fa-wand-magic-sparkles"></i><span>إصلاح شامل</span></button>' +
       '</div>' +
     '</div>';
 
-  // Issue categories
-  var categories = [
-    // v5.10.38 — three new categories surfaced first because they tie
-    // directly to the bugs the user reported (zombie balances + misplaced
-    // banks/inventory).
-    { key:'balanceWithoutEntries',   icon:'fa-ghost',            color:'#dc2626', label:'رصيد بدون قيود فعلية (Zombie)' },
-    { key:'nameVsPlacementMismatch', icon:'fa-folder-tree',      color:'#dc2626', label:'الاسم لا يطابق المكان في الشجرة' },
-    { key:'codeTypeMismatch',        icon:'fa-tags',             color:'#ea580c', label:'النوع لا يطابق الكود' },
-    { key:'orphans',                 icon:'fa-unlink',           color:'#dc2626', label:'حسابات يتيمة (parent محذوف)' },
-    { key:'typeMismatch',            icon:'fa-arrows-rotate',    color:'#ea580c', label:'نوع لا يطابق نوع الأب' },
-    { key:'duplicateCodes',          icon:'fa-copy',             color:'#b45309', label:'أكواد مكرَّرة' },
-    { key:'unbalancedJournals',      icon:'fa-scale-unbalanced', color:'#dc2626', label:'قيود غير متوازنة' },
-    { key:'orphanEntries',           icon:'fa-link-slash',       color:'#dc2626', label:'قيود تشير لحساب محذوف' },
-    { key:'missingCoreAccounts',     icon:'fa-circle-question',  color:'#7c3aed', label:'حسابات أساسية ناقصة' },
-    { key:'levelMismatch',           icon:'fa-layer-group',      color:'#0e7490', label:'مستوى مختلف عن العمق الفعلي' },
-    { key:'cycles',                  icon:'fa-rotate',           color:'#dc2626', label:'حلقات في الشجرة (cycle)' }
-  ];
+  // v5.10.39 — Three groups (tabs): critical / structural / balance
+  var GROUP_DEFS = {
+    critical: {
+      label: 'حرجة',
+      icon: 'fa-fire',
+      keys: ['balanceWithoutEntries', 'nameVsPlacementMismatch', 'codeTypeMismatch',
+             'cycles', 'unbalancedJournals', 'orphanEntries']
+    },
+    structural: {
+      label: 'هيكلية',
+      icon: 'fa-sitemap',
+      keys: ['orphans', 'typeMismatch', 'duplicateCodes', 'levelMismatch', 'missingCoreAccounts']
+    }
+  };
+  var groupCounts = { all: 0, critical: 0, structural: 0 };
+  Object.keys(GROUP_DEFS).forEach(function(g){
+    GROUP_DEFS[g].keys.forEach(function(k){
+      var n = (issues[k] || []).length;
+      groupCounts[g] += n; groupCounts.all += n;
+    });
+  });
 
+  var activeTab = window._coaDiagActiveTab || 'critical';
+  if (groupCounts[activeTab] === 0 && groupCounts.all > 0) {
+    activeTab = groupCounts.critical > 0 ? 'critical' : 'structural';
+  }
+
+  var tabsHtml = '<div class="coa-diag-tabs">' +
+    '<button class="coa-diag-tab' + (activeTab==='all' ? ' is-active' : '') + '" onclick="coaSetDiagTab(\'all\')">' +
+      '<i class="fas fa-list"></i> الكل <span class="coa-diag-tab__count">' + groupCounts.all + '</span>' +
+    '</button>' +
+    '<button class="coa-diag-tab coa-diag-tab--critical' + (activeTab==='critical' ? ' is-active' : '') + '" onclick="coaSetDiagTab(\'critical\')">' +
+      '<i class="fas fa-fire"></i> حرجة <span class="coa-diag-tab__count">' + groupCounts.critical + '</span>' +
+    '</button>' +
+    '<button class="coa-diag-tab' + (activeTab==='structural' ? ' is-active' : '') + '" onclick="coaSetDiagTab(\'structural\')">' +
+      '<i class="fas fa-sitemap"></i> هيكلية <span class="coa-diag-tab__count">' + groupCounts.structural + '</span>' +
+    '</button>' +
+  '</div>';
+
+  // Issue categories — all metadata in one place; the active tab decides which to show.
+  var CATS = {
+    balanceWithoutEntries:   { icon:'fa-ghost',            color:'#dc2626', label:'رصيد بدون قيود فعلية', group:'critical' },
+    nameVsPlacementMismatch: { icon:'fa-folder-tree',      color:'#dc2626', label:'الاسم لا يطابق المكان في الشجرة', group:'critical' },
+    codeTypeMismatch:        { icon:'fa-tags',             color:'#ea580c', label:'النوع لا يطابق الكود', group:'critical' },
+    cycles:                  { icon:'fa-rotate',           color:'#dc2626', label:'حلقات في الشجرة (cycle)', group:'critical' },
+    unbalancedJournals:      { icon:'fa-scale-unbalanced', color:'#dc2626', label:'قيود غير متوازنة', group:'critical' },
+    orphanEntries:           { icon:'fa-link-slash',       color:'#dc2626', label:'قيود تشير لحساب محذوف', group:'critical' },
+    orphans:                 { icon:'fa-unlink',           color:'#b45309', label:'حسابات يتيمة (parent محذوف)', group:'structural' },
+    typeMismatch:            { icon:'fa-arrows-rotate',    color:'#b45309', label:'نوع لا يطابق نوع الأب', group:'structural' },
+    duplicateCodes:          { icon:'fa-copy',             color:'#b45309', label:'أكواد مكرَّرة', group:'structural' },
+    levelMismatch:           { icon:'fa-layer-group',      color:'#0e7490', label:'مستوى مختلف عن العمق الفعلي', group:'structural' },
+    missingCoreAccounts:     { icon:'fa-circle-question',  color:'#7c3aed', label:'حسابات أساسية ناقصة', group:'structural' }
+  };
+
+  // For each category in the active tab, render a card with up to 12 rows.
   var sectionsHtml = '';
-  categories.forEach(function(cat){
-    var arr = issues[cat.key] || [];
+  Object.keys(CATS).forEach(function(key){
+    var cat = CATS[key];
+    if (activeTab !== 'all' && cat.group !== activeTab) return;
+    var arr = issues[key] || [];
     if (!arr.length) return;
+
     sectionsHtml += '<div class="coa-diag-cat">' +
       '<div class="coa-diag-cat__head" style="border-color:' + cat.color + '33;">' +
         '<i class="fas ' + cat.icon + '" style="color:' + cat.color + ';"></i>' +
@@ -1041,30 +1122,95 @@ function _coaRenderDiagnose(j) {
         '<span class="coa-diag-cat__count" style="background:' + cat.color + '22;color:' + cat.color + ';">' + arr.length + '</span>' +
       '</div>' +
       '<div class="coa-diag-cat__body">';
+
     arr.slice(0, 12).forEach(function(item){
-      var info = '';
-      if (cat.key === 'orphans')                        info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · parent_id ' + esc(item.parent_id || '');
-      else if (cat.key === 'typeMismatch')              info = (item.code || '') + ' (' + esc(item.child_type || '') + ') تحت ' + (item.parent_code || '') + ' (' + esc(item.parent_type || '') + ')';
-      else if (cat.key === 'duplicateCodes')            info = 'كود ' + esc(item.code) + ' مستخدم ' + item.n + ' مرات';
-      else if (cat.key === 'unbalancedJournals')        info = (item.journal_number || item.id) + ' · مدين ' + (Number(item.total_debit)||0).toFixed(2) + ' ≠ دائن ' + (Number(item.total_credit)||0).toFixed(2);
-      else if (cat.key === 'orphanEntries')             info = (item.account_code || '') + ' — ' + esc(item.account_name || '');
-      else if (cat.key === 'missingCoreAccounts')       info = 'كود ' + esc(item);
-      else if (cat.key === 'levelMismatch')             info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · مستوى محفوظ ' + item.storedLevel + ' لكن المحسوب ' + item.computedLevel;
-      else if (cat.key === 'cycles')                    info = (item.code || '') + ' — ' + esc(item.name_ar || '');
-      // v5.10.38 — formatters for the three new categories
-      else if (cat.key === 'codeTypeMismatch')          info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · النوع المحفوظ "' + esc(item.type || '—') + '" لا يطابق جذر الكود';
-      else if (cat.key === 'balanceWithoutEntries')     info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · رصيد ' + Number(item.balance||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' بدون أي قيد فعلي';
-      else if (cat.key === 'nameVsPlacementMismatch')   info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · موجود تحت جذر "' + esc(item.actualRootCode || '?') + '" والمتوقع "' + esc(item.expectedLabel || item.expectedParentCode || '?') + '"';
-      sectionsHtml += '<div class="coa-diag-row">' + info + '</div>';
+      var code = '', info = '', actionHtml = '', accId = item.id || '';
+      if (key === 'orphans') {
+        code = item.code || '';
+        info = '<b>' + esc(item.name_ar || '') + '</b> <span class="coa-diag-arrow">→</span> parent مفقود';
+      } else if (key === 'typeMismatch') {
+        code = item.code || '';
+        info = '<b>' + esc(item.name_ar || '') + '</b> · النوع: <span class="coa-diag-from">' + esc(item.child_type || '?') + '</span>' +
+               '<span class="coa-diag-arrow">في</span><b>' + (item.parent_code || '') + '</b> (' + esc(item.parent_type || '?') + ')';
+      } else if (key === 'duplicateCodes') {
+        code = item.code || '';
+        info = 'مستخدم في <b>' + item.n + '</b> حساب';
+      } else if (key === 'unbalancedJournals') {
+        code = item.journal_number || item.id || '';
+        info = 'مدين ' + (Number(item.total_debit)||0).toFixed(2) + ' <span class="coa-diag-arrow">≠</span> دائن ' + (Number(item.total_credit)||0).toFixed(2);
+      } else if (key === 'orphanEntries') {
+        code = item.account_code || '—';
+        info = '<b>' + esc(item.account_name || '') + '</b> · حساب محذوف';
+      } else if (key === 'missingCoreAccounts') {
+        code = String(item);
+        info = 'حساب أساسي مفقود';
+      } else if (key === 'levelMismatch') {
+        code = item.code || '';
+        info = '<b>' + esc(item.name_ar || '') + '</b> · مستوى محفوظ <span class="coa-diag-from">' + item.storedLevel + '</span> <span class="coa-diag-arrow">→</span> المحسوب <span class="coa-diag-to">' + item.computedLevel + '</span>';
+      } else if (key === 'cycles') {
+        code = item.code || '';
+        info = '<b>' + esc(item.name_ar || '') + '</b> · حلقة في الشجرة';
+      } else if (key === 'codeTypeMismatch') {
+        code = item.code || '';
+        info = '<b>' + esc(item.name_ar || '') + '</b> · النوع <span class="coa-diag-from">' + esc(item.type || '—') + '</span> لا يطابق جذر الكود';
+      } else if (key === 'balanceWithoutEntries') {
+        code = item.code || '';
+        info = '<b>' + esc(item.name_ar || '') + '</b> · رصيد ' + Number(item.balance||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' بدون قيد فعلي';
+      } else if (key === 'nameVsPlacementMismatch') {
+        code = item.code || '';
+        info = '<b>' + esc(item.name_ar || '') + '</b> · في <span class="coa-diag-from">' + esc(item.actualRootCode || '?') + '</span> <span class="coa-diag-arrow">→</span> المتوقع <span class="coa-diag-to">' + esc(item.expectedLabel || item.expectedParentCode || '?') + '</span>';
+      }
+
+      // Click takes the user to the account in the tree (when we have an id)
+      var rowAttrs = '';
+      if (accId) {
+        rowAttrs = ' class="coa-diag-row coa-diag-row--clickable" onclick="coaJumpToAccount(\'' + esc(accId) + '\')"';
+      } else {
+        rowAttrs = ' class="coa-diag-row"';
+      }
+
+      sectionsHtml += '<div' + rowAttrs + '>' +
+        '<span class="coa-diag-row__code">' + esc(code) + '</span>' +
+        '<span class="coa-diag-row__info">' + info + '</span>' +
+        actionHtml +
+      '</div>';
     });
-    if (arr.length > 12) sectionsHtml += '<div class="coa-diag-row coa-diag-row--more">… و' + (arr.length - 12) + ' بند آخر</div>';
+    if (arr.length > 12) {
+      sectionsHtml += '<div class="coa-diag-row coa-diag-row--more">… و' + (arr.length - 12) + ' بند آخر</div>';
+    }
     sectionsHtml += '</div></div>';
   });
 
-  if (!sectionsHtml) sectionsHtml = '<div class="coa-empty" style="padding:30px;color:#16a34a;"><i class="fas fa-shield-heart" style="font-size:32px;"></i><p style="margin-top:10px;">كل شيء على ما يرام — لا توجد مشاكل في الشجرة 🎉</p></div>';
+  if (!sectionsHtml) {
+    sectionsHtml = '<div class="coa-empty" style="padding:30px;color:#16a34a;"><i class="fas fa-shield-heart" style="font-size:32px;"></i><p style="margin-top:10px;">كل شيء على ما يرام — لا توجد مشاكل في هذا التصنيف 🎉</p></div>';
+  }
 
-  body.innerHTML = headHtml + sectionsHtml;
+  body.innerHTML = headHtml + tabsHtml + sectionsHtml;
 }
+
+// v5.10.39 — switch active diagnose tab without re-fetching
+window.coaSetDiagTab = function(tab) {
+  window._coaDiagActiveTab = tab;
+  if (window._coaDiagSnap) _coaRenderDiagnose(window._coaDiagSnap);
+};
+
+// v5.10.39 — jump to an account in the tree from any diagnose row
+window.coaJumpToAccount = function(accId) {
+  if (!accId) return;
+  // Close diagnose modal so the user can see the tree
+  var m = document.getElementById('coaDiagModal');
+  if (m) { m.classList.remove('show'); m.style.display = 'none'; }
+  // Select and scroll to it
+  if (typeof coaSelectNode === 'function') coaSelectNode(accId);
+  setTimeout(function(){
+    var el = document.querySelector('.coa-node[data-id="' + accId.replace(/"/g,'\\"') + '"]');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('coa-node--flash');
+      setTimeout(function(){ el.classList.remove('coa-node--flash'); }, 1500);
+    }
+  }, 50);
+};
 
 // v5.10.38 — Single-shot deep repair. Runs all fixes inside one DB
 // transaction on the server and shows a before/after report modal.
@@ -15596,6 +15742,7 @@ function erpOpenWasteModal() {
 
     _weRenderCart();
     _weValidateForm();
+    if (typeof _weUpdateGLHint === 'function') _weUpdateGLHint();
 
     // Show modal (set display:flex via inline style)
     modal.classList.add('show'); modal.style.display = '';
@@ -15611,6 +15758,26 @@ function _weEscHandler(e) {
   if (e.key === 'Escape') weCloseRegister();
   else document.addEventListener('keydown', _weEscHandler, { once: true });
 }
+
+// v5.10.39 — keep the hint-pill in sync with the selected reason so the
+// user sees exactly which GL sub-account the entry will post to. Mirrors
+// WASTE_ACCOUNT_BY_REASON in routes/erp-core.js.
+window._weUpdateGLHint = function() {
+  var reason = (document.getElementById('wnReason') || {}).value || 'expired';
+  var map = {
+    prep_loss:       { code: '5121', name: 'هدر المواد الخام' },
+    damaged:         { code: '5122', name: 'هدر المنتجات الجاهزة' },
+    expired:         { code: '5123', name: 'تالف منتهي الصلاحية' },
+    spill:           { code: '5124', name: 'هدر التشغيل (انسكاب)' },
+    customer_return: { code: '5125', name: 'مرتجعات العملاء (هدر)' },
+    other:           { code: '5200', name: 'مصروف الهدر (عام)' }
+  };
+  var info = map[reason] || map.other;
+  var codeEl = document.getElementById('wnGLCode');
+  var nameEl = document.getElementById('wnGLName');
+  if (codeEl) codeEl.textContent = info.code;
+  if (nameEl) nameEl.textContent = info.name;
+};
 
 window.weCloseRegister = function() {
   var m = document.getElementById('weRegisterModal');

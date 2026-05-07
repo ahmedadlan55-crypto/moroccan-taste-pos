@@ -973,6 +973,77 @@
   .coa-cards--v2 { grid-template-columns: 1fr; }
 }
 
+/* v5.10.42 — Full-screen repair overlay (replaces toast-only feedback) */
+.coa-repair-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(2px);
+  z-index: 10100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: coaOverlayIn 200ms ease;
+}
+@keyframes coaOverlayIn { from { opacity: 0; } to { opacity: 1; } }
+.coa-repair-overlay__panel {
+  background: #fff;
+  border-radius: 18px;
+  padding: 28px 32px;
+  text-align: center;
+  max-width: 460px;
+  width: 92%;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.30);
+}
+.coa-repair-overlay__spinner {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 18px;
+  border: 5px solid #e0e7ff;
+  border-top-color: #4f46e5;
+  border-radius: 50%;
+  animation: coaSpin 0.9s linear infinite;
+}
+@keyframes coaSpin { to { transform: rotate(360deg); } }
+.coa-repair-overlay__msg {
+  font-size: 17px;
+  font-weight: 800;
+  color: #0f172a;
+  margin-bottom: 6px;
+}
+.coa-repair-overlay__hint {
+  font-size: 12.5px;
+  color: #64748b;
+  line-height: 1.7;
+}
+
+/* v5.10.42 — "Fix this category" button on each diagnose category head */
+.coa-diag-cat__head {
+  position: relative;
+  padding-inline-end: 130px !important; /* room for the action button */
+}
+.coa-diag-cat__fix-btn {
+  position: absolute;
+  inset-inline-end: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  background: #4f46e5;
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 100ms ease;
+  white-space: nowrap;
+}
+.coa-diag-cat__fix-btn:hover { background: #4338ca; }
+.coa-diag-cat__fix-btn:disabled { background: #cbd5e1; cursor: not-allowed; }
+
 /* v5.10.40 — Card popover (replaces confirm() for edit/delete/promote) */
 .coa-card-popover {
   position: fixed;

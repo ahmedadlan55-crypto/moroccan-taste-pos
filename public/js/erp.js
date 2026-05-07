@@ -564,11 +564,25 @@ function erpLoadAccountsList_() {
   window._apiBridge.withSuccessHandler(function() {
     // Then load accounts
     window._apiBridge.withSuccessHandler(function(list) {
-      _erpAccounts = (list || []).map(a => ({
-        id: a.id, code: a.code, nameAr: a.nameAr, nameEn: a.nameEn,
-        type: a.type, parentId: a.parentId, level: Number(a.level)||1,
-        isActive: a.isActive, balance: Number(a.balance)||0
-      }));
+      // v5.10.42 — preserve isFolder, movementCount, storedBalance from
+      // the v5.10.38+ endpoints. Without this mapping, _coaIsGroup never
+      // sees user-promoted folders and _coaHasMovements always returns 0.
+      _erpAccounts = (list || []).map(function(a) {
+        return {
+          id: a.id, code: a.code, nameAr: a.nameAr, nameEn: a.nameEn,
+          type: a.type, parentId: a.parentId, level: Number(a.level) || 1,
+          isActive: a.isActive,
+          isFolder: !!a.isFolder,
+          balance: Number(a.balance) || 0,
+          storedBalance: Number(a.storedBalance) || 0,
+          movementCount: Number(a.movementCount) || 0
+        };
+      });
+      // v5.10.42 — sort by code globally so every consumer gets a stable
+      // numeric-aware order (children, cards, popovers, modals).
+      _erpAccounts.sort(function(a, b){
+        return String(a.code || '').localeCompare(String(b.code || ''));
+      });
       _coaBuildTree();
       if (_coaSelectedId) coaSelectNode(_coaSelectedId);
     }).getGLAccounts();
@@ -758,22 +772,21 @@ function _coaRenderNode(acc, open, depth) {
   // back via inspector if needed; the row no longer wastes pixels on chrome.
   var typeBadge = '';
   var levelBadge = '';
-  // Detect issues against the diag snapshot
+  // v5.10.42 — warning icon shows ONLY for critical issues that need
+  // attention. Minor structural issues (levelMismatch, typeMismatch) are
+  // fixed automatically by deep-repair and don't deserve a noisy warning.
   var warnHtml = '';
   var snap = window._coaDiagSnap;
   if (snap && snap.issues) {
-    var hasIssue = false, issueLabel = '';
     var hit = function(arr){ return arr && arr.find(function(x){ return x.id === acc.id; }); };
-    if (hit(snap.issues.orphans))                       { hasIssue = true; issueLabel = 'orphan'; }
-    else if (hit(snap.issues.typeMismatch))             { hasIssue = true; issueLabel = 'type-mismatch'; }
-    else if (hit(snap.issues.cycles))                   { hasIssue = true; issueLabel = 'cycle'; }
-    else if (hit(snap.issues.levelMismatch))            { hasIssue = true; issueLabel = 'level-mismatch'; }
-    // v5.10.38 — three new categories surfaced in the tree
-    else if (hit(snap.issues.codeTypeMismatch))         { hasIssue = true; issueLabel = 'code-type-mismatch'; }
-    else if (hit(snap.issues.balanceWithoutEntries))    { hasIssue = true; issueLabel = 'balance-without-entries'; }
-    else if (hit(snap.issues.nameVsPlacementMismatch))  { hasIssue = true; issueLabel = 'misplaced-by-name'; }
-    else if (hit(snap.issues.rootCodeMismatch))         { hasIssue = true; issueLabel = 'root-code-mismatch'; }
-    if (hasIssue) warnHtml = '<i class="fas fa-triangle-exclamation coa-warn-icon" title="' + issueLabel + '"></i>';
+    var critical = null;
+    if      (hit(snap.issues.rootCodeMismatch))         critical = 'الجذر الفعلي لا يطابق الكود';
+    else if (hit(snap.issues.balanceWithoutEntries))    critical = 'رصيد بدون قيود فعلية';
+    else if (hit(snap.issues.nameVsPlacementMismatch))  critical = 'الاسم لا يطابق المكان في الشجرة';
+    else if (hit(snap.issues.cycles))                   critical = 'حلقة في الشجرة';
+    else if (hit(snap.issues.codeTypeMismatch))         critical = 'النوع لا يطابق جذر الكود';
+    else if (hit(snap.issues.orphans))                  critical = 'حساب يتيم (parent محذوف)';
+    if (critical) warnHtml = '<i class="fas fa-triangle-exclamation coa-warn-icon" title="' + critical + '" onclick="event.stopPropagation();coaOpenDiagnose();"></i>';
   }
 
   // v5.10.39 — folder balance ALWAYS shown (not only when non-zero) so parents
@@ -1241,11 +1254,21 @@ function _coaRenderDiagnose(j) {
     var arr = issues[key] || [];
     if (!arr.length) return;
 
+    // v5.10.42 — sort each category's items by code for predictable display.
+    arr = arr.slice().sort(function(a, b){
+      var ca = String(a && a.code || ''), cb = String(b && b.code || '');
+      return ca.localeCompare(cb);
+    });
+
     sectionsHtml += '<div class="coa-diag-cat">' +
       '<div class="coa-diag-cat__head" style="border-color:' + cat.color + '33;">' +
         '<i class="fas ' + cat.icon + '" style="color:' + cat.color + ';"></i>' +
         '<span class="coa-diag-cat__label">' + cat.label + '</span>' +
         '<span class="coa-diag-cat__count" style="background:' + cat.color + '22;color:' + cat.color + ';">' + arr.length + '</span>' +
+        // v5.10.42 — actual fix button per category
+        '<button class="coa-diag-cat__fix-btn" onclick="event.stopPropagation();coaRunAutoRepair();" title="يُشغِّل الإصلاح الشامل الذي يعالج كل الفئات">' +
+          '<i class="fas fa-wand-magic-sparkles"></i> إصلاح' +
+        '</button>' +
       '</div>' +
       '<div class="coa-diag-cat__body">';
 
@@ -1341,36 +1364,112 @@ window.coaJumpToAccount = function(accId) {
   }, 50);
 };
 
-// v5.10.38 — Single-shot deep repair. Runs all fixes inside one DB
-// transaction on the server and shows a before/after report modal.
+// v5.10.42 — Full-screen overlay during repair so the user can SEE work
+// happening, plus modal-based error reporting (a toast disappears in 3
+// seconds — for a multi-second DB operation that's invisible).
 window.coaRunAutoRepair = function() {
   if (!confirm('سيتم تشغيل إصلاح شامل لشجرة الحسابات:\n\n' +
     '• إعادة تصنيف الحسابات بالاسم (بنوك، مخزون، …)\n' +
+    '• نقل الحسابات بكود خاطئ إلى جذرها الصحيح\n' +
     '• توحيد النوع مع جذر الكود\n' +
     '• إصلاح اليتامى وإعادة احتساب المستويات\n' +
     '• إعادة احتساب كل الأرصدة من قيود اليومية الفعلية\n\n' +
     'يتم كل ذلك في معاملة واحدة. هل تريد المتابعة؟')) return;
+
+  _coaShowRepairOverlay('جاري تنفيذ الإصلاح الشامل...');
   var token = localStorage.getItem('pos_token') || '';
-  if (typeof showToast === 'function') showToast('جاري الإصلاح الشامل...', false);
-  fetch('/api/erp/gl/deep-repair', { method:'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type':'application/json' } })
+  fetch('/api/erp/gl/deep-repair', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
+  })
     .then(function(r){ return r.json(); })
     .then(function(j){
+      _coaHideRepairOverlay();
       if (!j || !j.success) {
-        if (typeof showToast === 'function') showToast('فشل الإصلاح: ' + ((j && j.error) || 'خطأ غير معروف'), true);
+        _coaShowRepairError((j && j.error) || 'استجابة غير متوقعة من الخادم');
         return;
       }
       _coaShowRepairReport(j);
-      if (typeof erpLoadAccountsList_ === 'function') erpLoadAccountsList_();
-      // refresh open diagnose modal if visible
+      // v5.10.42 — force a full reload from the server so the tree
+      // reflects the actual post-repair state (not a cached snapshot).
+      if (typeof erpLoadAccountsList_ === 'function') {
+        erpLoadAccountsList_();
+      }
+      // Refresh the diagnose snapshot so warning icons in the tree clear out.
+      _coaRefreshDiagSnap();
       var diagModal = document.getElementById('coaDiagModal');
       if (diagModal && (diagModal.classList.contains('show') || diagModal.style.display === 'flex')) {
         setTimeout(function(){ coaOpenDiagnose(); }, 400);
       }
     })
     .catch(function(e){
-      if (typeof showToast === 'function') showToast('فشل الإصلاح: ' + (e && e.message || ''), true);
+      _coaHideRepairOverlay();
+      _coaShowRepairError((e && e.message) || 'تعذّر الاتصال بالخادم');
     });
 };
+
+function _coaShowRepairOverlay(msg) {
+  _coaHideRepairOverlay();
+  var ov = document.createElement('div');
+  ov.id = 'coaRepairOverlay';
+  ov.className = 'coa-repair-overlay';
+  ov.innerHTML =
+    '<div class="coa-repair-overlay__panel">' +
+      '<div class="coa-repair-overlay__spinner"></div>' +
+      '<div class="coa-repair-overlay__msg">' + (msg || 'جاري المعالجة...') + '</div>' +
+      '<div class="coa-repair-overlay__hint">يتم تنفيذ كل خطوات الإصلاح في معاملة واحدة. الرجاء عدم إغلاق الصفحة.</div>' +
+    '</div>';
+  document.body.appendChild(ov);
+}
+function _coaHideRepairOverlay() {
+  var ov = document.getElementById('coaRepairOverlay');
+  if (ov) ov.remove();
+}
+function _coaShowRepairError(message) {
+  var prior = document.getElementById('coaRepairErrorModal');
+  if (prior) prior.remove();
+  var html =
+    '<div class="modal show" id="coaRepairErrorModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10001;" onclick="if(event.target===this)this.remove();">' +
+      '<div class="modal-content" style="max-width:560px;width:96%;margin-top:60px;" onclick="event.stopPropagation();">' +
+        '<div class="modal-title">' +
+          '<i class="fas fa-circle-exclamation" style="color:#dc2626;"></i>' +
+          '<span>فشل الإصلاح الشامل</span>' +
+          '<button class="modal-close" onclick="document.getElementById(\'coaRepairErrorModal\').remove()">&times;</button>' +
+        '</div>' +
+        '<div style="padding:18px 20px;">' +
+          '<div style="padding:14px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;font-size:13px;color:#7f1d1d;">' +
+            '<i class="fas fa-triangle-exclamation"></i> ' +
+            String(message || 'خطأ غير معروف').replace(/[<>]/g,'') +
+          '</div>' +
+          '<p style="font-size:12.5px;color:#475569;margin-top:12px;line-height:1.7;">' +
+            'لم يتم تطبيق أي تغيير — كل عمليات الإصلاح تتم داخل معاملة قاعدة بيانات واحدة، فإذا فشلت أي خطوة يتم التراجع عن الجميع. ' +
+            'يمكنك إعادة المحاولة، أو فتح "تشخيص" لرؤية الفئات بمزيد من التفصيل.' +
+          '</p>' +
+          '<div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">' +
+            '<button class="wo-btn wo-btn-ghost" onclick="document.getElementById(\'coaRepairErrorModal\').remove();coaOpenDiagnose();">عرض التشخيص</button>' +
+            '<button class="wo-btn wo-btn-primary" onclick="document.getElementById(\'coaRepairErrorModal\').remove();coaRunAutoRepair();">إعادة المحاولة</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstChild);
+}
+
+// Pull a fresh diagnose snapshot in the background so tree warning icons
+// reflect the current state without forcing the user to open the modal.
+function _coaRefreshDiagSnap() {
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/gl/diagnose', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      window._coaDiagSnap = j;
+      _coaUpdateDiagBadge(j);
+      if (typeof _coaBuildTree === 'function') _coaBuildTree();
+    })
+    .catch(function(){});
+}
 
 // Display a modal summarizing what /gl/deep-repair changed.
 function _coaShowRepairReport(j) {

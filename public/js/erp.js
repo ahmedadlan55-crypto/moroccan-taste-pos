@@ -1669,6 +1669,145 @@ function _coaShowMisplacementWarning(j) {
   document.body.appendChild(wrap.firstChild);
 }
 
+// v5.10.46 — export the chart of accounts to an .xlsx file with a fixed
+// 9-column shape (order/code/nameAr/nameEn/type/parentCode/level/kind/balance).
+// Re-importing the same file is a no-op; modify cells and re-import to
+// upsert. Reuses the global ensureXlsx loader from app.js.
+window.coaExportExcel = async function() {
+  if (typeof window.ensureXlsx === 'function') await window.ensureXlsx();
+  if (typeof XLSX === 'undefined') { showToast('فشل تحميل مكتبة Excel', true); return; }
+  if (!_erpAccounts || !_erpAccounts.length) { showToast('لا توجد حسابات للتصدير', true); return; }
+  var sorted = _erpAccounts.slice().sort(function(a,b){
+    return String(a.code||'').localeCompare(String(b.code||''));
+  });
+  var rows = sorted.map(function(a, idx){
+    var parent = a.parentId ? _erpAccounts.find(function(p){ return p.id === a.parentId; }) : null;
+    return {
+      'الترتيب':       idx + 1,
+      'الكود':         a.code || '',
+      'الاسم العربي':  a.nameAr || '',
+      'الاسم الإنج':   a.nameEn || '',
+      'النوع':         a.type || '',
+      'كود الأب':      parent ? parent.code : '',
+      'المستوى':       a.level || 1,
+      'النوع الهيكلي': a.isFolder ? 'رئيسي' : 'فرعي',
+      'الرصيد':        Number(a.balance || 0).toFixed(2)
+    };
+  });
+  var ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = [{wch:8},{wch:12},{wch:32},{wch:32},{wch:12},{wch:10},{wch:8},{wch:12},{wch:14}];
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'دليل الحسابات');
+  var stamp = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, 'chart_of_accounts_' + stamp + '.xlsx');
+  showToast('تم تصدير ' + rows.length + ' حساب');
+};
+
+// v5.10.46 — read an .xlsx file the user picked, parse it, then show a
+// preview modal before posting. Resetting event.target.value lets the
+// user re-pick the same file after fixing it without a hard refresh.
+window.coaImportExcel = async function(event) {
+  var file = event && event.target && event.target.files && event.target.files[0];
+  if (!file) return;
+  if (typeof window.ensureXlsx === 'function') await window.ensureXlsx();
+  if (typeof XLSX === 'undefined') { showToast('فشل تحميل مكتبة Excel', true); return; }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var wb = XLSX.read(e.target.result, { type: 'array' });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      _coaConfirmImport(rows);
+    } catch (err) {
+      showToast('فشل قراءة الملف: ' + (err && err.message || err), true);
+    }
+    event.target.value = '';
+  };
+  reader.readAsArrayBuffer(file);
+};
+
+function _coaConfirmImport(rows) {
+  if (!rows || !rows.length) { showToast('الملف فارغ', true); return; }
+  var prior = document.getElementById('coaImportModal');
+  if (prior) prior.remove();
+  window._coaImportRows = rows;
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var sample = rows.slice(0, 5);
+  var sampleRows = sample.map(function(r){
+    return '<tr>' +
+      '<td>' + esc(r['الكود'] || r.code || '') + '</td>' +
+      '<td>' + esc(r['الاسم العربي'] || r.nameAr || '') + '</td>' +
+      '<td>' + esc(r['كود الأب'] || r.parentCode || '—') + '</td>' +
+      '<td>' + esc(r['المستوى'] || r.level || '') + '</td>' +
+      '<td>' + esc(r['النوع الهيكلي'] || r.kind || '') + '</td>' +
+    '</tr>';
+  }).join('');
+  var html =
+    '<div class="modal show" id="coaImportModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10001;" onclick="if(event.target===this)this.remove();">' +
+      '<div class="modal-content" style="max-width:760px;width:96%;margin-top:48px;" onclick="event.stopPropagation();">' +
+        '<div class="modal-title">' +
+          '<i class="fas fa-file-import" style="color:#16a34a;"></i>' +
+          '<span>معاينة الاستيراد — ' + rows.length + ' حساب</span>' +
+          '<button class="modal-close" onclick="document.getElementById(\'coaImportModal\').remove()">&times;</button>' +
+        '</div>' +
+        '<div style="padding:16px 22px;">' +
+          '<div style="padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-size:13px;color:#0369a1;line-height:1.7;">' +
+            '<i class="fas fa-circle-info"></i> ' +
+            'سيتم upsert: حسابات بنفس الكود تُحدَّث، الجديدة تُضاف. الأبناء يُربطون بآبائهم بالكود.' +
+          '</div>' +
+          '<table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:12.5px;">' +
+            '<thead><tr style="background:#f1f5f9;">' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">الكود</th>' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">الاسم</th>' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">كود الأب</th>' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">المستوى</th>' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">رئيسي/فرعي</th>' +
+            '</tr></thead>' +
+            '<tbody>' + sampleRows + '</tbody>' +
+          '</table>' +
+          (rows.length > 5 ? '<div style="padding:8px 10px;color:#64748b;font-size:12px;">… و ' + (rows.length - 5) + ' صف آخر</div>' : '') +
+          '<div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">' +
+            '<button class="wo-btn wo-btn-ghost" onclick="document.getElementById(\'coaImportModal\').remove()">إلغاء</button>' +
+            '<button class="wo-btn wo-btn-primary" onclick="coaRunImport()"><i class="fas fa-check"></i> تأكيد الاستيراد</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstChild);
+}
+
+window.coaRunImport = function() {
+  var rows = window._coaImportRows || [];
+  if (!rows.length) return;
+  var token = localStorage.getItem('pos_token') || '';
+  var btn = document.querySelector('#coaImportModal .wo-btn-primary');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الاستيراد...'; }
+  fetch('/api/erp/gl/accounts/import', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rows: rows })
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j || !j.success) {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> تأكيد الاستيراد'; }
+        showToast((j && j.error) || 'فشل الاستيراد', true);
+        return;
+      }
+      var m = document.getElementById('coaImportModal'); if (m) m.remove();
+      window._coaImportRows = null;
+      showToast('تم الاستيراد: ' + j.inserted + ' جديد · ' + j.updated + ' محدَّث · ' + j.skipped + ' متخطٍّ');
+      if (typeof _erpReloadAccountsCacheBust === 'function') _erpReloadAccountsCacheBust();
+      else if (typeof erpLoadAccountsList_ === 'function') erpLoadAccountsList_();
+    })
+    .catch(function(e){
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> تأكيد الاستيراد'; }
+      showToast(String((e && e.message) || e), true);
+    });
+};
+
 // v5.10.45 — collect all descendant ids of an account so the move modal
 // can exclude them from the parent dropdown (preventing cycles client-side).
 function _coaCollectDescendants(rootId) {
@@ -2089,8 +2228,40 @@ function erpOpenAccountModal(data) {
       return '<option value="' + a.id + '"' + sel + '>' + indent + a.code + ' — ' + a.nameAr + '</option>';
     }).join('');
 
+  // v5.10.46 — initial "kind" defaults to folder for new accounts that
+  // are root-level (no parent yet) so the user sees the folder option
+  // selected for L1/L2 work; for editing, derive from the existing flag.
+  var initialKind = isEdit ? (d.isFolder ? 'folder' : 'leaf')
+                            : (d.parentId ? 'leaf' : 'folder');
+  var initialLevel = d.level || 1;
+
   document.getElementById('erpModalBody').innerHTML =
     '<input type="hidden" id="erpAccID" value="' + (d.id||'') + '">' +
+    // v5.10.46 — kind radio selector
+    '<div class="erp-acc-modal__radios">' +
+      '<label><input type="radio" name="erpAccKind" value="folder"' + (initialKind==='folder'?' checked':'') + '> ' +
+        '<span><i class="fas fa-folder" style="color:#f59e0b;"></i> حساب رئيسي (فولدر)</span>' +
+      '</label>' +
+      '<label><input type="radio" name="erpAccKind" value="leaf"' + (initialKind==='leaf'?' checked':'') + '> ' +
+        '<span><i class="fas fa-file-alt" style="color:#3b82f6;"></i> حساب فرعي (ورقة)</span>' +
+      '</label>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+      '<div class="form-row"><label>الحساب الرئيسي (الأب)</label><select class="form-control" id="erpAccParent"><option value="">— جذر (بلا أب) —</option>' + parentOpts + '</select></div>' +
+      '<div class="form-row"><label>المستوى</label><select class="form-control" id="erpAccLevelSelect">' +
+        '<option value="auto" selected>يُحسب تلقائيًا</option>' +
+        '<option value="1">L1 — جذر</option>' +
+        '<option value="2">L2</option>' +
+        '<option value="3">L3</option>' +
+        '<option value="4">L4</option>' +
+        '<option value="5">L5</option>' +
+      '</select></div>' +
+    '</div>' +
+    '<div class="form-row" style="display:flex;align-items:center;gap:10px;margin-top:6px;">' +
+      '<input type="checkbox" id="erpAccAutoCode"' + (isEdit ? '' : ' checked') + ' style="width:18px;height:18px;">' +
+      '<label for="erpAccAutoCode" style="margin:0;cursor:pointer;font-weight:700;">ترقيم تلقائي للكود</label>' +
+      '<span id="erpAccCodeHint" style="color:#94a3b8;font-size:12px;margin-inline-start:6px;"></span>' +
+    '</div>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
       '<div class="form-row"><label>رمز الحساب *</label><input class="form-control" id="erpAccCode" value="' + (d.code||'') + '" ' + (isEdit?'readonly':'') + ' placeholder="مثال: 11201"></div>' +
       '<div class="form-row"><label>النوع *</label><select class="form-control" id="erpAccType">' +
@@ -2102,51 +2273,90 @@ function erpOpenAccountModal(data) {
     '</div>' +
     '<div class="form-row"><label>الاسم (عربي) *</label><input class="form-control" id="erpAccNameAR" value="' + (d.nameAr||'') + '" placeholder="اسم الحساب بالعربي"></div>' +
     '<div class="form-row"><label>الاسم (إنجليزي)</label><input class="form-control" id="erpAccNameEN" value="' + (d.nameEn||'') + '" placeholder="Account name in English"></div>' +
-    '<div class="form-row"><label>الحساب الرئيسي (الأب)</label><select class="form-control" id="erpAccParent"><option value="">— حساب رئيسي (بدون أب) —</option>' + parentOpts + '</select></div>' +
-    '<input type="hidden" id="erpAccLevel" value="' + (d.level||1) + '">';
+    '<input type="hidden" id="erpAccLevel" value="' + initialLevel + '">';
 
-  // Auto-set level + auto-generate next code when parent changes
+  // v5.10.46 — wire the new controls. The "kind" radios, the level
+  // select, the autoCode checkbox, and the parent dropdown all interact:
+  // changing one recomputes the level/code/folder hint atomically.
   setTimeout(function() {
-    var parentSel = document.getElementById('erpAccParent');
-    if (parentSel) parentSel.onchange = function() {
-      var pid = parentSel.value;
-      var codeEl = document.getElementById('erpAccCode');
-      var levelEl = document.getElementById('erpAccLevel');
-      if (!pid) {
-        levelEl.value = 1;
-        if (!isEdit) { codeEl.value = ''; codeEl.placeholder = 'مثال: 11201'; }
+    var parentSel  = document.getElementById('erpAccParent');
+    var levelSel   = document.getElementById('erpAccLevelSelect');
+    var levelHidden= document.getElementById('erpAccLevel');
+    var autoCodeEl = document.getElementById('erpAccAutoCode');
+    var codeEl     = document.getElementById('erpAccCode');
+    var typeEl     = document.getElementById('erpAccType');
+    var hintEl     = document.getElementById('erpAccCodeHint');
+    var kindRadios = document.getElementsByName('erpAccKind');
+
+    function getKind(){ for (var i=0;i<kindRadios.length;i++) if (kindRadios[i].checked) return kindRadios[i].value; return 'folder'; }
+    function currentParent(){ return parentSel.value ? _erpAccounts.find(function(a){ return a.id === parentSel.value; }) : null; }
+
+    function recomputeLevel() {
+      var p = currentParent();
+      if (levelSel.value === 'auto') {
+        var lvl = p ? (Number(p.level || 1) + 1) : 1;
+        levelHidden.value = lvl;
+      } else {
+        levelHidden.value = Number(levelSel.value) || 1;
+      }
+    }
+
+    function recomputeCode() {
+      if (!autoCodeEl.checked) {
+        codeEl.removeAttribute('readonly');
+        codeEl.style.background = '';
+        hintEl.textContent = '— ترقيم يدوي';
         return;
       }
-      var parent = _erpAccounts.find(function(a) { return a.id === pid; });
-      if (!parent) return;
-      levelEl.value = parent.level + 1;
-
-      if (!isEdit) {
-        // Find all direct children of this parent and compute next code
-        var parentCode = parent.code;
-        var children = _erpAccounts.filter(function(a) { return a.parentId === pid; });
-        var childCodes = children.map(function(a) { return a.code; }).sort();
-
-        if (!childCodes.length) {
-          // No children yet — first child: parentCode + "01" or "1" depending on level
-          if (parent.level >= 3) {
-            codeEl.value = parentCode + '01';
-          } else {
-            codeEl.value = parentCode + '1';
-          }
-        } else {
-          // Get last child code and increment
-          var lastCode = childCodes[childCodes.length - 1];
-          // Extract the suffix after parent code
-          var suffix = lastCode.substring(parentCode.length);
-          var nextNum = parseInt(suffix, 10) + 1;
-          // Keep same suffix length (zero-padded)
-          var padded = String(nextNum).padStart(suffix.length, '0');
-          codeEl.value = parentCode + padded;
-        }
-        codeEl.placeholder = '';
+      codeEl.setAttribute('readonly', 'readonly');
+      codeEl.style.background = '#f8fafc';
+      var p = currentParent();
+      if (!p) {
+        // Root-level: pick the next free single-digit root code.
+        var usedRoots = _erpAccounts.filter(function(a){ return !a.parentId; }).map(function(a){ return String(a.code); });
+        var next = '';
+        for (var d2 = 1; d2 <= 9; d2++) { if (usedRoots.indexOf(String(d2)) < 0) { next = String(d2); break; } }
+        codeEl.value = next || '';
+        hintEl.textContent = next ? 'كود جذر تلقائي' : '— كل الجذور 1-9 مستخدمة، عطّل التلقائي';
+        return;
       }
-    };
+      // Child-of-parent: same algorithm as erpAddChildAccount / _coaPreviewMoveCode
+      var parentCode = p.code;
+      var siblings = _erpAccounts.filter(function(a){ return a.parentId === p.id; });
+      var childCodes = siblings.map(function(a){ return a.code; }).sort();
+      if (!childCodes.length) {
+        codeEl.value = (Number(p.level||1) >= 3) ? (parentCode + '01') : (parentCode + '1');
+      } else {
+        var lastCode = childCodes[childCodes.length - 1];
+        var suffix = lastCode.substring(parentCode.length);
+        var nextNum = parseInt(suffix, 10) + 1;
+        codeEl.value = parentCode + String(nextNum).padStart(suffix.length || 1, '0');
+      }
+      hintEl.textContent = 'الأب: ' + parentCode + ' → الكود التالي';
+    }
+
+    function inheritType() {
+      var p = currentParent();
+      if (p && p.type && !typeEl.dataset.userTouched) typeEl.value = p.type;
+    }
+
+    parentSel.onchange = function(){ recomputeLevel(); inheritType(); recomputeCode(); };
+    levelSel.onchange  = function(){ recomputeLevel(); recomputeCode(); };
+    autoCodeEl.onchange= function(){ recomputeCode(); };
+    typeEl.addEventListener('change', function(){ typeEl.dataset.userTouched = '1'; });
+    Array.prototype.forEach.call(kindRadios, function(r){
+      r.onchange = function(){
+        // "Folder" defaults to no parent (root-level main account); "leaf" leaves parent as is.
+        if (getKind() === 'folder' && !parentSel.value) {
+          // already root-level — just refresh
+        }
+        recomputeCode();
+      };
+    });
+
+    // First paint
+    recomputeLevel();
+    recomputeCode();
   }, 50);
 
   document.getElementById('erpModalSaveBtn').onclick = erpSaveAccount;
@@ -2195,6 +2405,10 @@ function erpDeleteAccount(id, code, name) {
 }
 
 function erpSaveAccount() {
+  // v5.10.46 — read kind radio + level select → derive isFolder & level
+  var kindRadios = document.getElementsByName('erpAccKind');
+  var kind = 'folder';
+  for (var i=0;i<kindRadios.length;i++) if (kindRadios[i].checked) { kind = kindRadios[i].value; break; }
   const data = {
     id: document.getElementById('erpAccID').value || '',
     code: document.getElementById('erpAccCode').value,
@@ -2202,7 +2416,8 @@ function erpSaveAccount() {
     nameEn: document.getElementById('erpAccNameEN').value,
     type: document.getElementById('erpAccType').value,
     parentId: document.getElementById('erpAccParent').value,
-    level: document.getElementById('erpAccLevel').value
+    level: Number(document.getElementById('erpAccLevel').value) || 1,
+    isFolder: kind === 'folder'
   };
   if (!data.code || !data.nameAr) return showToast('الرمز والاسم مطلوبان', true);
   loader(true);

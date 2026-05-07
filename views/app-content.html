@@ -1814,10 +1814,13 @@
     <div class="coa-tree-panel">
       <div class="coa-tree-header">
         <input type="text" id="coaSearch" class="coa-search" placeholder="بحث بالاسم أو الكود..." oninput="coaFilterTree(this.value)">
-        <!-- v5.10.43 — Expand all / Collapse all buttons -->
+        <!-- v5.10.43 — Expand/Collapse · v5.10.46 — Excel import/export -->
         <div class="coa-tree-toolbar">
           <button class="coa-tree-tool-btn" onclick="coaExpandAll()" title="توسيع كل الفولدرات"><i class="fas fa-angles-down"></i><span>توسيع الكل</span></button>
-          <button class="coa-tree-tool-btn" onclick="coaCollapseAll()" title="طي كل الفولدرات إلا الجذور"><i class="fas fa-angles-up"></i><span>طي الكل</span></button>
+          <button class="coa-tree-tool-btn" onclick="coaCollapseAll()" title="طي كل الفولدرات"><i class="fas fa-angles-up"></i><span>طي الكل</span></button>
+          <button class="coa-tree-tool-btn" onclick="coaExportExcel()" title="تصدير شجرة الحسابات إلى Excel"><i class="fas fa-file-excel" style="color:#16a34a;"></i><span>تصدير</span></button>
+          <button class="coa-tree-tool-btn" onclick="document.getElementById('coaImportFile').click()" title="استيراد شجرة الحسابات من ملف Excel"><i class="fas fa-file-import" style="color:#7c3aed;"></i><span>استيراد</span></button>
+          <input type="file" id="coaImportFile" accept=".xlsx,.xls" style="display:none;" onchange="coaImportExcel(event)">
         </div>
       </div>
       <div id="coaTreeBody" class="coa-tree-body"></div>

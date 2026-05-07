@@ -253,6 +253,63 @@ router.post('/gl/accounts/:id/folder', async (req, res) => {
   }
 });
 
+// v5.10.46 — bulk import COA from an Excel file. The frontend reads the
+// xlsx via SheetJS, posts an array of rows here. We sort by level ASC so
+// parents are upserted before children (the codeMap built in the first
+// pass ties parentCode -> id). Atomic: any single failure rolls back the
+// whole batch.
+router.post('/gl/accounts/import', async (req, res) => {
+  const { rows } = req.body || {};
+  if (!Array.isArray(rows) || !rows.length) {
+    return res.status(400).json({ success: false, error: 'لا توجد صفوف للاستيراد' });
+  }
+  let inserted = 0, updated = 0, skipped = 0;
+  const errors = [];
+  try {
+    await db.withTransaction(async (conn) => {
+      const codeMap = {};
+      const [existing] = await conn.query('SELECT id, code FROM gl_accounts');
+      existing.forEach(e => { codeMap[String(e.code)] = e.id; });
+
+      const sorted = rows.slice().sort((a, b) => {
+        return Number(a['المستوى'] || a.level || 1) - Number(b['المستوى'] || b.level || 1);
+      });
+
+      for (const r of sorted) {
+        const code = String(r['الكود'] || r.code || '').trim();
+        if (!code) { skipped++; errors.push({ row: r, reason: 'empty-code' }); continue; }
+        const nameAr = String(r['الاسم العربي'] || r.nameAr || '').trim();
+        const nameEn = String(r['الاسم الإنج'] || r['الاسم الانجليزي'] || r.nameEn || '').trim();
+        const type = String(r['النوع'] || r.type || 'asset').trim();
+        const parentCode = String(r['كود الأب'] || r.parentCode || '').trim();
+        const level = Number(r['المستوى'] || r.level || 1);
+        const kindRaw = String(r['النوع الهيكلي'] || r.kind || '').trim();
+        const isFolder = (kindRaw === 'رئيسي' || kindRaw === 'folder' || level <= 2) ? 1 : 0;
+        const parentId = parentCode ? (codeMap[parentCode] || null) : null;
+
+        if (codeMap[code]) {
+          await conn.query(
+            'UPDATE gl_accounts SET name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_folder=? WHERE code=?',
+            [nameAr, nameEn, type, parentId, level, isFolder, code]);
+          updated++;
+        } else {
+          const newId = 'GL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+          await conn.query(
+            'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_folder) VALUES (?,?,?,?,?,?,?,?)',
+            [newId, code, nameAr, nameEn, type, parentId, level, isFolder]);
+          codeMap[code] = newId;
+          inserted++;
+        }
+      }
+      console.log('[gl/accounts/import] inserted=' + inserted + ' updated=' + updated + ' skipped=' + skipped);
+    });
+    res.json({ success: true, inserted, updated, skipped, errors });
+  } catch (e) {
+    console.error('[gl/accounts/import] FAILED:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // v5.10.45 — move an account under a new parent and (optionally) renumber
 // its code based on the new parent's existing children. When renumbering,
 // every descendant's code is rewritten with the new prefix in the same
@@ -345,24 +402,59 @@ router.post('/gl/accounts/:id/move', async (req, res) => {
 
 router.post('/gl/accounts', async (req, res) => {
   try {
-    const { id, code, nameAr, nameEn, type, parentId, level } = req.body;
+    const { id, code, nameAr, nameEn, type, parentId, level, isFolder } = req.body;
+    // v5.10.46 — accept explicit isFolder flag from the frontend modal so
+    // L1/L2 main accounts get is_folder=1 even before any child is added.
+    const hasFolderFlag = (typeof isFolder === 'boolean');
+    const folderInt = hasFolderFlag ? (isFolder ? 1 : 0) : null;
 
     if (id) {
       const [existing] = await db.query('SELECT id FROM gl_accounts WHERE id = ?', [id]);
       if (existing.length) {
-        await db.query(
-          'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=? WHERE id=?',
-          [code, nameAr, nameEn || '', type, parentId || null, level || 1, id]
-        );
+        if (hasFolderFlag) {
+          await db.query(
+            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_folder=? WHERE id=?',
+            [code, nameAr, nameEn || '', type, parentId || null, level || 1, folderInt, id]
+          );
+        } else {
+          await db.query(
+            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=? WHERE id=?',
+            [code, nameAr, nameEn || '', type, parentId || null, level || 1, id]
+          );
+        }
         return res.json({ success: true, id });
       }
     }
 
     const newId = id || 'GL-' + Date.now();
-    await db.query(
-      'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level) VALUES (?,?,?,?,?,?,?)',
-      [newId, code, nameAr, nameEn || '', type, parentId || null, level || 1]
-    );
+    if (hasFolderFlag) {
+      await db.query(
+        'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_folder) VALUES (?,?,?,?,?,?,?,?)',
+        [newId, code, nameAr, nameEn || '', type, parentId || null, level || 1, folderInt]
+      );
+    } else {
+      await db.query(
+        'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level) VALUES (?,?,?,?,?,?,?)',
+        [newId, code, nameAr, nameEn || '', type, parentId || null, level || 1]
+      );
+    }
+
+    // v5.10.46 — auto-promote the parent to a folder when a child is
+    // inserted under it at L3+ (parent.level >= 2 means new child is L3+).
+    // This mirrors what _coaForceFolderConsistency does at deep-repair
+    // time, but applies it to the insert hot-path so the user sees the
+    // parent flip to folder immediately, without needing to run repair.
+    if (parentId) {
+      try {
+        const [parentRows] = await db.query('SELECT level, is_folder FROM gl_accounts WHERE id = ?', [parentId]);
+        if (parentRows.length && Number(parentRows[0].level) >= 2 && !parentRows[0].is_folder) {
+          await db.query('UPDATE gl_accounts SET is_folder = 1 WHERE id = ?', [parentId]);
+          console.log('[gl/accounts] auto-promoted parent ' + parentId + ' to folder (child at L' + ((Number(parentRows[0].level)||1) + 1) + ')');
+        }
+      } catch (e) {
+        console.error('[gl/accounts] auto-promote parent failed:', e.message);
+      }
+    }
 
     res.json({ success: true, id: newId });
   } catch (e) {

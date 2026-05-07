@@ -253,6 +253,96 @@ router.post('/gl/accounts/:id/folder', async (req, res) => {
   }
 });
 
+// v5.10.45 — move an account under a new parent and (optionally) renumber
+// its code based on the new parent's existing children. When renumbering,
+// every descendant's code is rewritten with the new prefix in the same
+// transaction, and gl_entries.account_code (denormalized) is kept in sync.
+// Refuses to make an account its own ancestor (cycle protection).
+router.post('/gl/accounts/:id/move', async (req, res) => {
+  const { id } = req.params;
+  const { parentId, autoRenumber } = req.body || {};
+  const willRenumber = !!autoRenumber;
+  try {
+    const result = await db.withTransaction(async (conn) => {
+      const [accRows] = await conn.query('SELECT id, code, parent_id, level FROM gl_accounts WHERE id = ?', [id]);
+      if (!accRows.length) throw new Error('الحساب غير موجود');
+      const acc = accRows[0];
+      if (['1','2','3','4','5'].indexOf(String(acc.code)) >= 0) {
+        throw new Error('لا يمكن نقل حساب رئيسي (الجذور 1-5)');
+      }
+
+      let newParent = null;
+      if (parentId) {
+        const [pRows] = await conn.query('SELECT id, code, level FROM gl_accounts WHERE id = ?', [parentId]);
+        if (!pRows.length) throw new Error('الأب الجديد غير موجود');
+        newParent = pRows[0];
+        if (newParent.id === id) throw new Error('لا يمكن جعل الحساب أبًا لنفسه');
+        // Cycle check: walk up parentId's chain — if we hit `id`, abort.
+        let walkerId = newParent.id, hops = 0; const seen = new Set();
+        while (walkerId && hops < 50) {
+          if (seen.has(walkerId)) break;
+          seen.add(walkerId);
+          if (walkerId === id) throw new Error('لا يمكن نقل الحساب تحت أحد أبنائه');
+          const [up] = await conn.query('SELECT parent_id FROM gl_accounts WHERE id = ?', [walkerId]);
+          if (!up.length || !up[0].parent_id) break;
+          walkerId = up[0].parent_id;
+          hops++;
+        }
+      }
+
+      // Compute new code (and cascade to descendants) when autoRenumber=true
+      const renumbered = [];
+      let newCode = acc.code;
+      if (willRenumber && newParent) {
+        const [siblings] = await conn.query(
+          'SELECT code FROM gl_accounts WHERE parent_id = ? ORDER BY code',
+          [newParent.id]);
+        if (!siblings.length) {
+          newCode = (Number(newParent.level) >= 3) ? (newParent.code + '01') : (newParent.code + '1');
+        } else {
+          const last = siblings[siblings.length - 1].code;
+          const suffix = last.substring(newParent.code.length);
+          const nextNum = parseInt(suffix, 10) + 1;
+          newCode = newParent.code + String(nextNum).padStart(suffix.length || 1, '0');
+        }
+
+        // Cascade rename: every descendant whose code starts with the
+        // moving account's old code gets its prefix rewritten to newCode.
+        const oldPrefix = acc.code;
+        const [descRows] = await conn.query(
+          'SELECT id, code FROM gl_accounts WHERE code LIKE ? AND id != ?',
+          [oldPrefix + '%', id]);
+        for (const d of descRows) {
+          if (!String(d.code).startsWith(oldPrefix)) continue;
+          const newDescCode = newCode + d.code.substring(oldPrefix.length);
+          const [clash] = await conn.query('SELECT id FROM gl_accounts WHERE code = ? AND id != ?', [newDescCode, d.id]);
+          if (clash.length) throw new Error('تعارض كود: ' + newDescCode + ' موجود مسبقًا');
+          await conn.query('UPDATE gl_accounts SET code = ? WHERE id = ?', [newDescCode, d.id]);
+          await conn.query('UPDATE gl_entries SET account_code = ? WHERE account_id = ?', [newDescCode, d.id]);
+          renumbered.push({ id: d.id, oldCode: d.code, newCode: newDescCode });
+        }
+      }
+
+      // Apply main update
+      const [mainClash] = await conn.query('SELECT id FROM gl_accounts WHERE code = ? AND id != ?', [newCode, id]);
+      if (mainClash.length) throw new Error('تعارض كود: ' + newCode + ' موجود مسبقًا');
+      const newLevel = newParent ? (Number(newParent.level) + 1) : 1;
+      await conn.query(
+        'UPDATE gl_accounts SET code = ?, parent_id = ?, level = ? WHERE id = ?',
+        [newCode, parentId || null, newLevel, id]);
+      await conn.query('UPDATE gl_entries SET account_code = ? WHERE account_id = ?', [newCode, id]);
+      renumbered.push({ id, oldCode: acc.code, newCode });
+
+      console.log('[gl/move] ' + acc.code + ' -> ' + newCode + ' under ' + (newParent ? newParent.code : 'root') + ' (renumbered ' + renumbered.length + ')');
+      return { renumbered, oldCode: acc.code, newCode, newParentId: parentId || null };
+    });
+    res.json({ success: true, ...result });
+  } catch (e) {
+    console.error('[gl/move] FAILED:', e.message);
+    res.status(400).json({ success: false, error: e.message });
+  }
+});
+
 router.post('/gl/accounts', async (req, res) => {
   try {
     const { id, code, nameAr, nameEn, type, parentId, level } = req.body;

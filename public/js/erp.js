@@ -553,6 +553,34 @@ var _coaSelectedId = null;
 window._coaTypeFilter = window._coaTypeFilter || '';
 // v5.10.35 — diagnose snapshot
 window._coaDiagSnap = null;
+// v5.10.45 — single source of truth for which folders are open in the tree.
+// Replaces the depth-based heuristic that lost user state on every rebuild.
+// Persisted to localStorage so it survives reload and any data refresh.
+window._coaOpenSet = window._coaOpenSet || null;
+function _coaPersistOpenSet() {
+  try {
+    if (window._coaOpenSet) {
+      localStorage.setItem('coa_open_set', JSON.stringify(Array.from(window._coaOpenSet)));
+    }
+  } catch (_) {}
+}
+function _coaRestoreOpenSet() {
+  try {
+    var raw = localStorage.getItem('coa_open_set');
+    if (raw) {
+      var arr = JSON.parse(raw);
+      if (Array.isArray(arr)) window._coaOpenSet = new Set(arr);
+    }
+  } catch (_) {}
+}
+function _coaSeedOpenSetIfEmpty() {
+  if (window._coaOpenSet && window._coaOpenSet.size > 0) return;
+  if (!window._coaOpenSet) window._coaOpenSet = new Set();
+  // First run: open the 5 IFRS roots so the user sees the structure immediately.
+  (_erpAccounts || []).forEach(function(a){
+    if (['1','2','3','4','5'].indexOf(String(a.code)) >= 0) window._coaOpenSet.add(a.id);
+  });
+}
 
 function erpLoadAccounts() {
   window._apiBridge.withSuccessHandler(function() {
@@ -583,6 +611,11 @@ function erpLoadAccountsList_() {
       _erpAccounts.sort(function(a, b){
         return String(a.code || '').localeCompare(String(b.code || ''));
       });
+      // v5.10.45 — restore persisted open-set (or seed with the 5 roots
+      // on first run) before the first build so the tree opens at the
+      // user's last expanded state, not at an arbitrary default.
+      _coaRestoreOpenSet();
+      _coaSeedOpenSetIfEmpty();
       _coaBuildTree();
       if (_coaSelectedId) coaSelectNode(_coaSelectedId);
     }).getGLAccounts();
@@ -738,37 +771,24 @@ window.coaToggleShowEmpty = function(checked) {
   _coaBuildTree();
 };
 
-// v5.10.43 — expand/collapse all folders in the tree. Walks every
-// .coa-node-children element and toggles the "open" class + chevron.
+// v5.10.45 — expand/collapse all rewritten on top of _coaOpenSet so the
+// state survives every subsequent rebuild and persists across reloads.
+// "Collapse all" now means "all" — even the 5 roots collapse, matching
+// the user's explicit expectation. They can re-expand any root with one
+// click; we no longer special-case them.
 window.coaExpandAll = function() {
-  document.querySelectorAll('.coa-node-children').forEach(function(el){ el.classList.add('open'); });
-  document.querySelectorAll('.coa-node-toggle i').forEach(function(i){
-    if (i.parentElement && i.parentElement.parentElement && i.parentElement.parentElement.querySelector('.coa-node-children')) {
-      i.className = 'fas fa-chevron-down';
-    }
+  if (!window._coaOpenSet) window._coaOpenSet = new Set();
+  _erpAccounts.forEach(function(a){
+    var hasKids = _erpAccounts.some(function(b){ return b.parentId === a.id; });
+    if (hasKids) window._coaOpenSet.add(a.id);
   });
+  _coaPersistOpenSet();
+  _coaBuildTree();
 };
 window.coaCollapseAll = function() {
-  // Keep root-level (depth 0) folders open, collapse everything deeper.
-  document.querySelectorAll('.coa-node .coa-node-children').forEach(function(el){
-    var parentNode = el.closest('.coa-node');
-    var depth = 0, walker = parentNode && parentNode.parentElement;
-    while (walker && walker.classList) {
-      if (walker.classList.contains('coa-node')) depth++;
-      walker = walker.parentElement;
-    }
-    if (depth === 0) {
-      el.classList.add('open');
-    } else {
-      el.classList.remove('open');
-    }
-  });
-  document.querySelectorAll('.coa-node .coa-node-toggle i').forEach(function(i){
-    var node = i.closest('.coa-node');
-    var children = node && node.querySelector('.coa-node-children');
-    if (!children) return;
-    i.className = children.classList.contains('open') ? 'fas fa-chevron-down' : 'fas fa-chevron-left';
-  });
+  window._coaOpenSet = new Set();
+  _coaPersistOpenSet();
+  _coaBuildTree();
 };
 
 // v5.10.39 — quick row actions. Both currently delegate to coaSelectNode
@@ -790,9 +810,12 @@ function _coaRenderNode(acc, open, depth) {
   }
   var isGroup = children.length > 0;
   var lvl = acc.level || 1;
-  // v5.10.41 — only the 5 root nodes (depth 0) auto-open. Deeper folders
-  // start collapsed so the user gets a clean overview, not a wall of rows.
-  var openSelf = (depth === 0) ? !!open : false;
+  // v5.10.45 — open state lives in window._coaOpenSet (persisted to
+  // localStorage). Replaces the depth-based heuristic that lost the
+  // user's expansion state on every rebuild and made coaExpandAll a
+  // best-effort visual hack instead of a real source of truth.
+  if (!window._coaOpenSet) window._coaOpenSet = new Set();
+  var openSelf = isGroup && window._coaOpenSet.has(acc.id);
   var chevronDir = openSelf ? 'fa-chevron-down' : 'fa-chevron-left';
   var toggle = isGroup ? '<span class="coa-node-toggle"><i class="fas ' + chevronDir + '"></i></span>' : '<span style="width:16px;display:inline-block;"></span>';
   var iconSize = lvl <= 1 ? 18 : lvl === 2 ? 16 : lvl === 3 ? 14 : 12;
@@ -844,19 +867,42 @@ function _coaRenderNode(acc, open, depth) {
   }
 
   // v5.10.41 — actions only on hover; mini-stat removed from default view.
-  // The row is now: chevron + icon + NAME + balance. Everything else is
-  // visible only when needed (warn icon = there's an issue, hover = actions).
+  // v5.10.45 — added "Move" action; hidden for the 5 IFRS roots since
+  // those should never be reparented through the UI.
+  var isRoot = ['1','2','3','4','5'].indexOf(String(acc.code)) >= 0;
+  var moveBtn = isRoot ? '' :
+    '<button title="نقل لقسم آخر" onclick="coaOpenMoveModal(\'' + acc.id + '\')"><i class="fas fa-arrows-up-down-left-right"></i></button>';
   var actionsHtml = '<span class="coa-node-actions" onclick="event.stopPropagation();">' +
     '<button title="عرض الأستاذ" onclick="coaViewLedger(\'' + acc.id + '\')"><i class="fas fa-eye"></i></button>' +
+    moveBtn +
   '</span>';
 
   // Right-side cluster: warn (only if real issue) + balance + actions.
   var rightHtml = '<span class="coa-node-right">' + warnHtml + balHtml + actionsHtml + '</span>';
 
+  // v5.10.45 — IFRS reference chip on the 5 root rows. Tells the user
+  // at a glance which IFRS standard governs each branch and signals
+  // that the structure follows international convention.
+  var ifrsChipHtml = '';
+  if (depth === 0) {
+    var IFRS_REF = {
+      '1': { std: 'IAS 1',   tip: 'IAS 1 — Presentation of Financial Statements (الأصول)' },
+      '2': { std: 'IAS 1',   tip: 'IAS 1 — Presentation of Financial Statements (الالتزامات)' },
+      '3': { std: 'IAS 1',   tip: 'IAS 1 — Presentation of Financial Statements (حقوق الملكية)' },
+      '4': { std: 'IFRS 15', tip: 'IFRS 15 — Revenue from Contracts with Customers' },
+      '5': { std: 'IAS 1',   tip: 'IAS 1 — Presentation of Financial Statements (المصروفات)' }
+    };
+    var ref = IFRS_REF[String(acc.code)];
+    if (ref) {
+      ifrsChipHtml = '<span class="coa-ifrs-chip" title="' + ref.tip + '">' + ref.std + '</span>';
+    }
+  }
+
   var html = '<div class="coa-node" data-id="' + acc.id + '" data-level="' + lvl + '" data-type="' + (acc.type||'') + '">';
   html += '<div class="coa-node-row' + activeClass + '" style="font-weight:' + fontW + ';font-size:' + fontSize + 'px;" onclick="coaSelectNode(\'' + acc.id + '\')" title="' + (acc.nameAr||'').replace(/"/g,'&quot;') + ' — ' + (acc.code||'') + '">';
   html += toggle + icon;
   html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
+  html += ifrsChipHtml;
   html += rightHtml;
   html += '</div>';
   if (isGroup) {
@@ -869,17 +915,27 @@ function _coaRenderNode(acc, open, depth) {
 }
 
 // ─── Tree: Toggle expand/collapse ───
+// v5.10.45 — also mutate window._coaOpenSet so a tree rebuild later
+// (e.g. after deep-repair, account edit, sync) doesn't drop the user's
+// expansion state.
 document.addEventListener('click', function(e) {
   var toggle = e.target.closest('.coa-node-toggle');
   if (toggle && toggle.querySelector('i')) {
     e.stopPropagation();
     var node = toggle.closest('.coa-node');
+    if (!node) return;
+    var id = node.getAttribute('data-id');
     var children = node.querySelector('.coa-node-children');
-    if (children) {
-      children.classList.toggle('open');
-      var icon = toggle.querySelector('i');
-      icon.className = children.classList.contains('open') ? 'fas fa-chevron-down' : 'fas fa-chevron-left';
+    if (!children) return;
+    if (id) {
+      if (!window._coaOpenSet) window._coaOpenSet = new Set();
+      if (window._coaOpenSet.has(id)) window._coaOpenSet.delete(id);
+      else                            window._coaOpenSet.add(id);
+      _coaPersistOpenSet();
     }
+    children.classList.toggle('open');
+    var icon = toggle.querySelector('i');
+    icon.className = children.classList.contains('open') ? 'fas fa-chevron-down' : 'fas fa-chevron-left';
   }
 });
 
@@ -901,12 +957,17 @@ window.coaSelectNode = function(id) {
   if (row) row.classList.add('active');
   var acc = _erpAccounts.find(a => a.id === id);
   if (acc) {
+    // v5.10.45 — push the ancestor chain into the Set so the path stays
+    // open across rebuilds (and survives reload via localStorage).
+    if (!window._coaOpenSet) window._coaOpenSet = new Set();
     var parent = acc;
     while (parent && parent.parentId) {
+      window._coaOpenSet.add(parent.parentId);
       var parentNode = document.querySelector('.coa-node[data-id="' + parent.parentId + '"] > .coa-node-children');
       if (parentNode) parentNode.classList.add('open');
       parent = _erpAccounts.find(a => a.id === parent.parentId);
     }
+    _coaPersistOpenSet();
   }
   var isGroup = _coaIsGroup(id);
   if (isGroup) _coaShowGroup(id, main);
@@ -1382,8 +1443,20 @@ function _coaRenderDiagnose(j) {
     sectionsHtml += '</div></div>';
   });
 
-  if (!sectionsHtml) {
-    sectionsHtml = '<div class="coa-empty" style="padding:30px;color:#16a34a;"><i class="fas fa-shield-heart" style="font-size:32px;"></i><p style="margin-top:10px;">كل شيء على ما يرام — لا توجد مشاكل في هذا التصنيف 🎉</p></div>';
+  // v5.10.45 — full-clear empty state when ALL groups are healthy.
+  // Per-tab empty state still applies if only the active tab is clean.
+  if (groupCounts.all === 0) {
+    sectionsHtml =
+      '<div class="coa-diag-empty-state">' +
+        '<i class="fas fa-circle-check" style="color:#16a34a;font-size:54px;"></i>' +
+        '<h3>الشجرة سليمة بنسبة 100%</h3>' +
+        '<p>لا توجد مشاكل هيكلية أو حرجة أو في الأرصدة. آخر فحص قبل ثوانٍ.</p>' +
+        '<div class="coa-diag-empty-state__meta">' +
+          fmt(s.accounts) + ' حساب · ' + fmt(s.validEntries) + ' قيد · 0 مشكلة' +
+        '</div>' +
+      '</div>';
+  } else if (!sectionsHtml) {
+    sectionsHtml = '<div class="coa-empty" style="padding:30px;color:#16a34a;"><i class="fas fa-shield-heart" style="font-size:32px;"></i><p style="margin-top:10px;">لا توجد مشاكل في هذا التصنيف. تابوبات أخرى قد تحتوي على مشاكل.</p></div>';
   }
 
   body.innerHTML = headHtml + tabsHtml + sectionsHtml;
@@ -1595,6 +1668,148 @@ function _coaShowMisplacementWarning(j) {
   wrap.innerHTML = html;
   document.body.appendChild(wrap.firstChild);
 }
+
+// v5.10.45 — collect all descendant ids of an account so the move modal
+// can exclude them from the parent dropdown (preventing cycles client-side).
+function _coaCollectDescendants(rootId) {
+  var out = [];
+  function walk(pid) {
+    _erpAccounts.forEach(function(a){
+      if (a.parentId === pid) { out.push(a.id); walk(a.id); }
+    });
+  }
+  walk(rootId);
+  return out;
+}
+
+// v5.10.45 — compute the next code under a given parent, mirroring
+// erpAddChildAccount's algorithm. Used by the move modal preview AND by
+// the backend (kept identical to avoid drift). Returns null if no parent.
+function _coaPreviewMoveCode(parent) {
+  if (!parent) return null;
+  var children = _erpAccounts.filter(function(a){ return a.parentId === parent.id; });
+  var childCodes = children.map(function(a){ return a.code; }).sort();
+  if (!childCodes.length) {
+    return (parent.level >= 3) ? parent.code + '01' : parent.code + '1';
+  }
+  var lastCode = childCodes[childCodes.length - 1];
+  var suffix = lastCode.substring(parent.code.length);
+  var nextNum = parseInt(suffix, 10) + 1;
+  return parent.code + String(nextNum).padStart(suffix.length, '0');
+}
+
+// v5.10.45 — move modal: lets the user reparent an account (and optionally
+// auto-renumber the code + cascade-rename descendants). Posts to
+// /api/erp/gl/accounts/:id/move which performs the work atomically.
+window.coaOpenMoveModal = function(id) {
+  var acc = _erpAccounts.find(function(a){ return a.id === id; });
+  if (!acc) return;
+  var prior = document.getElementById('coaMoveModal');
+  if (prior) prior.remove();
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var descendantIds = _coaCollectDescendants(id);
+  var descendantCount = descendantIds.length;
+  var parentOpts = '<option value="">— جذر (بلا أب) —</option>' +
+    _erpAccounts
+      .filter(function(a){
+        if (a.id === id) return false;
+        if (descendantIds.indexOf(a.id) >= 0) return false;
+        if ((a.level || 1) >= 4) return false;
+        return true;
+      })
+      .sort(function(a,b){ return String(a.code||'').localeCompare(String(b.code||'')); })
+      .map(function(a){
+        var indent = '    '.repeat(((a.level||1) - 1));
+        return '<option value="' + a.id + '">' + indent + esc(a.code) + ' — ' + esc(a.nameAr || '') + '</option>';
+      }).join('');
+
+  var html =
+    '<div class="modal show" id="coaMoveModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10001;" onclick="if(event.target===this)this.remove();">' +
+      '<div class="modal-content" style="max-width:560px;width:96%;margin-top:60px;" onclick="event.stopPropagation();">' +
+        '<div class="modal-title">' +
+          '<i class="fas fa-arrows-up-down-left-right" style="color:#7c3aed;"></i>' +
+          '<span>نقل الحساب: ' + esc(acc.code) + ' — ' + esc(acc.nameAr || '') + '</span>' +
+          '<button class="modal-close" onclick="document.getElementById(\'coaMoveModal\').remove()">&times;</button>' +
+        '</div>' +
+        '<div style="padding:18px 22px;">' +
+          '<div class="form-row">' +
+            '<label style="font-weight:700;">الأب الجديد</label>' +
+            '<select class="form-control" id="coaMoveNewParent" onchange="_coaUpdateMovePreview(\'' + id + '\')">' + parentOpts + '</select>' +
+          '</div>' +
+          '<div class="form-row" style="display:flex;align-items:center;gap:8px;margin-top:12px;">' +
+            '<input type="checkbox" id="coaMoveAutoRenum" checked onchange="_coaUpdateMovePreview(\'' + id + '\')" style="width:18px;height:18px;">' +
+            '<label for="coaMoveAutoRenum" style="margin:0;font-weight:700;cursor:pointer;">إعادة ترقيم الكود تلقائيًا بناءً على الأب الجديد</label>' +
+          '</div>' +
+          '<div id="coaMovePreview" style="margin-top:14px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;color:#475569;line-height:1.8;">' +
+            'اختر أبًا جديدًا لمعاينة الكود الناتج.' +
+          '</div>' +
+          (descendantCount > 0 ? '<div style="margin-top:10px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:12.5px;color:#78350f;"><i class="fas fa-triangle-exclamation"></i> هذا الحساب لديه <strong>' + descendantCount + '</strong> حساب فرعي — سيُعاد ترقيمها تلقائيًا للحفاظ على التسلسل.</div>' : '') +
+          '<div style="margin-top:18px;display:flex;gap:8px;justify-content:flex-end;">' +
+            '<button class="wo-btn wo-btn-ghost" onclick="document.getElementById(\'coaMoveModal\').remove()">إلغاء</button>' +
+            '<button class="wo-btn wo-btn-primary" onclick="coaConfirmMove(\'' + id + '\')"><i class="fas fa-check"></i> تأكيد النقل</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstChild);
+};
+
+window._coaUpdateMovePreview = function(id) {
+  var acc = _erpAccounts.find(function(a){ return a.id === id; });
+  var box = document.getElementById('coaMovePreview');
+  var sel = document.getElementById('coaMoveNewParent');
+  var auto = document.getElementById('coaMoveAutoRenum');
+  if (!acc || !box || !sel) return;
+  var newParentId = sel.value || null;
+  var newParent = newParentId ? _erpAccounts.find(function(a){ return a.id === newParentId; }) : null;
+  var willRenumber = !!(auto && auto.checked && newParent);
+  var newCode = willRenumber ? _coaPreviewMoveCode(newParent) : acc.code;
+  var newLevel = newParent ? ((newParent.level || 1) + 1) : 1;
+  box.innerHTML =
+    '<div><strong>الكود الجديد:</strong> <code style="background:#fff;padding:2px 8px;border-radius:6px;border:1px solid #cbd5e1;font-weight:800;color:#7c3aed;">' + (newCode || '—') + '</code>' +
+      (willRenumber ? '' : ' <span style="color:#94a3b8;">(لن يتغيَّر — اختيار يدوي)</span>') +
+    '</div>' +
+    '<div style="margin-top:6px;"><strong>المستوى الجديد:</strong> L' + newLevel + '</div>' +
+    '<div style="margin-top:6px;color:#64748b;font-size:12px;">' +
+      'الأب: ' + (newParent ? (newParent.code + ' — ' + (newParent.nameAr || '')) : '— جذر —') +
+    '</div>';
+};
+
+window.coaConfirmMove = function(id) {
+  var sel = document.getElementById('coaMoveNewParent');
+  var auto = document.getElementById('coaMoveAutoRenum');
+  if (!sel) return;
+  var newParentId = sel.value || null;
+  var autoRenumber = !!(auto && auto.checked);
+  var token = localStorage.getItem('pos_token') || '';
+  var btn = document.querySelector('#coaMoveModal .wo-btn-primary');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري النقل...'; }
+  fetch('/api/erp/gl/accounts/' + encodeURIComponent(id) + '/move', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parentId: newParentId, autoRenumber: autoRenumber })
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j || !j.success) {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> تأكيد النقل'; }
+        showToast((j && j.error) || 'فشل النقل', true);
+        return;
+      }
+      var modal = document.getElementById('coaMoveModal');
+      if (modal) modal.remove();
+      var n = (j.renumbered || []).length;
+      showToast('تم نقل الحساب بنجاح — أُعيد ترقيم ' + n + ' حساب');
+      if (typeof _erpReloadAccountsCacheBust === 'function') _erpReloadAccountsCacheBust();
+      else if (typeof erpLoadAccountsList_ === 'function') erpLoadAccountsList_();
+    })
+    .catch(function(e){
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> تأكيد النقل'; }
+      showToast(String((e && e.message) || e), true);
+    });
+};
 
 // Pull a fresh diagnose snapshot in the background so tree warning icons
 // reflect the current state without forcing the user to open the modal.

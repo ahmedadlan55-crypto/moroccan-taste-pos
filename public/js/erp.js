@@ -10927,13 +10927,15 @@ function _erpDelete(path, cb) {
 
 function _erpPopulateBranchOptions(selectIds) {
   _erpGet('/erp/branches-full', function(list) {
-    var opts = '<option value="">الكل</option>' + (list||[]).map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('');
+    var arr = Array.isArray(list) ? list : [];
+    var opts = '<option value="">الكل</option>' + arr.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('');
     selectIds.forEach(function(id) { var el = document.getElementById(id); if (el) el.innerHTML = opts; });
   });
 }
 function _erpPopulateBrandOptions(selectIds) {
   _erpGet('/erp/brands', function(list) {
-    var opts = '<option value="">الكل</option>' + (list||[]).map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('');
+    var arr = Array.isArray(list) ? list : [];
+    var opts = '<option value="">الكل</option>' + arr.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('');
     selectIds.forEach(function(id) { var el = document.getElementById(id); if (el) el.innerHTML = opts; });
   });
 }
@@ -15028,15 +15030,24 @@ function erpLoadWasteEntries() {
   body.innerHTML = _woLoadingRow(9) + _woLoadingRow(9) + _woLoadingRow(9);
 
   _erpGet('/erp/waste-entries?' + qs.join('&'), function(j){
-    if (!j || !j.success) {
+    // v5.10.37 — accept both new paginated shape {success,items,...}
+    // and legacy plain-array shape (back-compat path in routes/erp-core.js).
+    var items, summary, total;
+    if (Array.isArray(j)) {
+      items = j; summary = null; total = j.length;
+    } else if (j && j.success) {
+      items   = Array.isArray(j.items) ? j.items : [];
+      summary = j.summary || null;
+      total   = Number(j.total) || items.length;
+    } else {
       body.innerHTML = '<tr><td colspan="9">' + _woEmpty('fa-circle-exclamation','تعذّر التحميل', (j && j.error)||'') + '</td></tr>';
       return;
     }
-    window._weSnap = j;
-    _weRenderMetrics(j.summary);
-    _weRenderReasonChips(j.summary);
-    _weRenderRows(j.items);
-    _weRenderPagination(j.total);
+    window._weSnap = { items: items, summary: summary, total: total };
+    _weRenderMetrics(summary);
+    _weRenderReasonChips(summary);
+    _weRenderRows(items);
+    _weRenderPagination(total);
   });
 }
 
@@ -15327,7 +15338,12 @@ function erpOpenWasteModal() {
     new Promise(function(r){_erpGet('/erp/cost-centers', r);}),
     new Promise(function(r){_erpGet('/inventory/items', r);})
   ]).then(function(res){
-    var branches = res[0]||[], brands = res[1]||[], whs = res[2]||[], ccs = res[3]||[], items = res[4]||[];
+    // v5.10.37 — _erpGet returns {success:false,error} on fetch failure
+    // (a non-array object). Coerce every result to array before storing
+    // so downstream .map() calls never explode.
+    var asArr = function(x){ return Array.isArray(x) ? x : []; };
+    var branches = asArr(res[0]), brands = asArr(res[1]), whs = asArr(res[2]),
+        ccs = asArr(res[3]), items = asArr(res[4]);
     window._weReg.branchesCache = branches;
     window._weReg.brandsCache   = brands;
     window._weReg.warehousesCache = whs;
@@ -15367,7 +15383,7 @@ function erpOpenWasteModal() {
     // Bind escape to close + outside-click to close
     document.addEventListener('keydown', _weEscHandler, { once: true });
   }).catch(function(e){
-    if (typeof showToast === 'function') showToast('فشل تحميل البيانات: ' + (e && e.message || ''), true);
+    if (typeof showToast === 'function') showToast('تعذّر تحميل البيانات الأساسية — تحقق من الجلسة وأعد المحاولة. (' + (e && e.message || '') + ')', true);
   });
 }
 

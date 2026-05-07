@@ -10775,7 +10775,10 @@ window.stOpenBulkPaste = function() {
     '</div>';
   var div = document.createElement('div');
   div.innerHTML = html;
-  document.body.appendChild(div.firstElementChild);
+  var modalEl = div.firstElementChild;
+  document.body.appendChild(modalEl);
+  // v5.10.36 — .modal class hides via opacity:0; needs .show to appear
+  setTimeout(function(){ modalEl.classList.add('show'); }, 0);
 };
 
 window.stBulkPasteApply = function() {

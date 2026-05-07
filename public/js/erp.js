@@ -922,7 +922,7 @@ window.coaOpenDiagnose = function() {
   var body  = document.getElementById('coaDiagBody');
   if (!modal || !body) return;
   body.innerHTML = '<div class="coa-empty" style="padding:40px;"><i class="fas fa-spinner fa-spin"></i><p>جاري التشخيص...</p></div>';
-  modal.style.display = 'flex';
+  modal.classList.add('show'); modal.style.display = '';
   var token = localStorage.getItem('pos_token') || '';
   fetch('/api/erp/gl/diagnose', { headers: { 'Authorization': 'Bearer ' + token } })
     .then(function(r){ return r.json(); })
@@ -936,7 +936,7 @@ window.coaOpenDiagnose = function() {
     });
 };
 window.coaCloseDiagnose = function() {
-  var m = document.getElementById('coaDiagModal'); if (m) m.style.display = 'none';
+  var m = document.getElementById('coaDiagModal'); if (m) { m.classList.remove('show'); m.style.display = 'none'; }
 };
 
 function _coaUpdateDiagBadge(j) {
@@ -1050,10 +1050,10 @@ window.coaOpenSuggestions = function() {
   var body  = document.getElementById('coaSuggBody');
   if (!modal || !body) return;
   body.innerHTML = _coaBuildSuggestionsHtml();
-  modal.style.display = 'flex';
+  modal.classList.add('show'); modal.style.display = '';
 };
 window.coaCloseSuggestions = function() {
-  var m = document.getElementById('coaSuggModal'); if (m) m.style.display = 'none';
+  var m = document.getElementById('coaSuggModal'); if (m) { m.classList.remove('show'); m.style.display = 'none'; }
 };
 
 function _coaBuildSuggestionsHtml() {
@@ -13607,7 +13607,7 @@ window.erpOpenWlDetail = function(movId) {
   var body  = document.getElementById('wlDetailBody');
   if (!modal || !body) return;
   body.innerHTML = '<div class="empty-msg" style="padding:40px;text-align:center;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
-  modal.style.display = 'flex';
+  modal.classList.add('show'); modal.style.display = '';
   var token = localStorage.getItem('pos_token') || '';
   fetch('/api/inventory/warehouse-ledger/movement/' + encodeURIComponent(movId), { headers: { 'Authorization': 'Bearer ' + token } })
     .then(function(r){ return r.json(); })
@@ -13624,7 +13624,7 @@ window.erpOpenWlDetail = function(movId) {
 };
 window.erpCloseWlDetail = function() {
   var modal = document.getElementById('wlDetailModal');
-  if (modal) modal.style.display = 'none';
+  if (modal) { modal.classList.remove('show'); modal.style.display = 'none'; }
 };
 
 function _wlRenderDetail(m) {
@@ -15362,7 +15362,7 @@ function erpOpenWasteModal() {
     _weValidateForm();
 
     // Show modal (set display:flex via inline style)
-    modal.style.display = 'flex';
+    modal.classList.add('show'); modal.style.display = '';
 
     // Bind escape to close + outside-click to close
     document.addEventListener('keydown', _weEscHandler, { once: true });
@@ -15378,7 +15378,7 @@ function _weEscHandler(e) {
 
 window.weCloseRegister = function() {
   var m = document.getElementById('weRegisterModal');
-  if (m) m.style.display = 'none';
+  if (m) { m.classList.remove('show'); m.style.display = 'none'; }
 };
 
 // Refresh per-warehouse stock map when warehouse changes
@@ -15452,7 +15452,7 @@ window._weSearchItems = function(qText) {
 // Hide dropdown on outside click (one-time bind on modal show)
 document.addEventListener('click', function(ev){
   var modal = document.getElementById('weRegisterModal');
-  if (!modal || modal.style.display === 'none') return;
+  if (!modal || !modal.classList.contains('show')) return;
   if (ev.target.closest('.we-search-box')) return;
   var dd = document.getElementById('wnSearchDropdown');
   if (dd) dd.style.display = 'none';
@@ -18247,12 +18247,12 @@ window.expOpenDispose = function(lotId){
       '<button class="wo-btn wo-btn-danger" style="flex:1;" onclick="expConfirmDispose(\'' + lotId + '\')"><i class="fas fa-trash"></i><span>تأكيد الإتلاف</span></button>' +
       '<button class="wo-btn wo-btn-ghost" onclick="expCloseDispose()"><span>إلغاء</span></button>' +
     '</div>';
-  modal.style.display = 'flex';
+  modal.classList.add('show'); modal.style.display = '';
 };
 
 window.expCloseDispose = function(){
   var m = document.getElementById('expDisposeModal');
-  if (m) m.style.display = 'none';
+  if (m) { m.classList.remove('show'); m.style.display = 'none'; }
 };
 
 window.expConfirmDispose = function(lotId){

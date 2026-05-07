@@ -593,11 +593,15 @@ function erpLoadAccountsList_() {
 function _coaChildrenOf(parentId) {
   return _erpAccounts.filter(a => (a.parentId||null) === (parentId||null)).sort((a,b) => a.code.localeCompare(b.code));
 }
-// v5.10.40 — an account is a "group" (folder) if it explicitly opts in
-// via isFolder OR currently has children (legacy data integrity).
+// v5.10.43 — defense in depth against migration failure: codes 1..5
+// (the IFRS roots) are ALWAYS folders regardless of what the database
+// says. This ensures حقوق الملكية and الإيرادات never render as leaves
+// even if the is_folder migration silently failed in production.
 function _coaIsGroup(id) {
   var acc = _erpAccounts.find(function(a){ return a.id === id; });
-  if (acc && acc.isFolder) return true;
+  if (!acc) return false;
+  if (['1','2','3','4','5'].indexOf(String(acc.code)) >= 0) return true;
+  if (acc.isFolder) return true;
   return _erpAccounts.some(function(a){ return a.parentId === id; });
 }
 
@@ -732,6 +736,39 @@ window.coaSetTypeFilter = function(type) {
 window.coaToggleShowEmpty = function(checked) {
   window._coaShowEmpty = !!checked;
   _coaBuildTree();
+};
+
+// v5.10.43 — expand/collapse all folders in the tree. Walks every
+// .coa-node-children element and toggles the "open" class + chevron.
+window.coaExpandAll = function() {
+  document.querySelectorAll('.coa-node-children').forEach(function(el){ el.classList.add('open'); });
+  document.querySelectorAll('.coa-node-toggle i').forEach(function(i){
+    if (i.parentElement && i.parentElement.parentElement && i.parentElement.parentElement.querySelector('.coa-node-children')) {
+      i.className = 'fas fa-chevron-down';
+    }
+  });
+};
+window.coaCollapseAll = function() {
+  // Keep root-level (depth 0) folders open, collapse everything deeper.
+  document.querySelectorAll('.coa-node .coa-node-children').forEach(function(el){
+    var parentNode = el.closest('.coa-node');
+    var depth = 0, walker = parentNode && parentNode.parentElement;
+    while (walker && walker.classList) {
+      if (walker.classList.contains('coa-node')) depth++;
+      walker = walker.parentElement;
+    }
+    if (depth === 0) {
+      el.classList.add('open');
+    } else {
+      el.classList.remove('open');
+    }
+  });
+  document.querySelectorAll('.coa-node .coa-node-toggle i').forEach(function(i){
+    var node = i.closest('.coa-node');
+    var children = node && node.querySelector('.coa-node-children');
+    if (!children) return;
+    i.className = children.classList.contains('open') ? 'fas fa-chevron-down' : 'fas fa-chevron-left';
+  });
 };
 
 // v5.10.39 — quick row actions. Both currently delegate to coaSelectNode
@@ -938,7 +975,19 @@ function _coaShowGroup(id, container) {
       html +=     '<div class="coa-card__sub">';
       html +=       '<span class="coa-card__code">#' + esc(c.code) + '</span>';
       html +=       '<span class="coa-card-nature ' + nature + '">' + (natureLabels[nature] || '') + '</span>';
-      if (mvCount > 0) {
+      // v5.10.43 — folders show rollup metric (children with movements /
+      // total children); leaves show their own movement count. The old
+      // logic showed "بدون حركات" on a folder whose children had movements
+      // — a confusing contradiction with the visible balance pill.
+      if (isFolder) {
+        var grand   = _coaChildrenOf(c.id);
+        var withMov = grand.filter(function(g){ return _coaHasMovements(g.id); }).length;
+        if (withMov > 0) {
+          html +=   '<span class="coa-card__mv">' + withMov + '/' + grand.length + ' بحركات</span>';
+        } else {
+          html +=   '<span class="coa-card__mv coa-card__mv--zero">' + grand.length + ' فرعي بدون حركات</span>';
+        }
+      } else if (mvCount > 0) {
         html +=     '<span class="coa-card__mv">' + mvCount.toLocaleString('ar-SA') + ' حركة</span>';
       } else {
         html +=     '<span class="coa-card__mv coa-card__mv--zero">بدون حركات</span>';

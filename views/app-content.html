@@ -1814,6 +1814,11 @@
     <div class="coa-tree-panel">
       <div class="coa-tree-header">
         <input type="text" id="coaSearch" class="coa-search" placeholder="بحث بالاسم أو الكود..." oninput="coaFilterTree(this.value)">
+        <!-- v5.10.43 — Expand all / Collapse all buttons -->
+        <div class="coa-tree-toolbar">
+          <button class="coa-tree-tool-btn" onclick="coaExpandAll()" title="توسيع كل الفولدرات"><i class="fas fa-angles-down"></i><span>توسيع الكل</span></button>
+          <button class="coa-tree-tool-btn" onclick="coaCollapseAll()" title="طي كل الفولدرات إلا الجذور"><i class="fas fa-angles-up"></i><span>طي الكل</span></button>
+        </div>
       </div>
       <div id="coaTreeBody" class="coa-tree-body"></div>
     </div>

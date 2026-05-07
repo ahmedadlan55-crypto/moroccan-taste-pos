@@ -3928,12 +3928,29 @@ async function runMigrations() {
   // button). Default FALSE; root codes 1..5 forced to TRUE; any account
   // that already has children gets TRUE for data integrity.
   await addColumnIfMissing('gl_accounts', 'is_folder', 'BOOLEAN DEFAULT FALSE');
+  // v5.10.43 — bulletproof migration. The previous attempt used a
+  // self-referencing subquery (UPDATE gl_accounts ... WHERE id IN
+  // (SELECT ... FROM gl_accounts ...)) wrapped in try/catch — if
+  // MySQL 5.7 rejected the construct (which it does in some configs),
+  // we silently lost the migration and roots 3/4 stayed as leaves in
+  // the UI. Now done in two explicit steps with NO try/catch so any
+  // failure shows up in server logs.
   try {
-    await db.query("UPDATE gl_accounts SET is_folder = 1 WHERE code IN ('1','2','3','4','5')");
-    await db.query(`UPDATE gl_accounts SET is_folder = 1 WHERE id IN (
-      SELECT t.parent_id FROM (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL) t
-    ) AND is_folder = 0`);
-  } catch(_) {}
+    const [r1] = await db.query("UPDATE gl_accounts SET is_folder = 1 WHERE code IN ('1','2','3','4','5')");
+    console.log('[v5.10.43] is_folder enforced for ' + (r1.affectedRows || 0) + ' root accounts (1-5)');
+
+    const [parents] = await db.query("SELECT DISTINCT parent_id AS pid FROM gl_accounts WHERE parent_id IS NOT NULL");
+    const ids = parents.map(p => p.pid).filter(Boolean);
+    if (ids.length) {
+      const placeholders = ids.map(() => '?').join(',');
+      const [r2] = await db.query(`UPDATE gl_accounts SET is_folder = 1 WHERE id IN (${placeholders})`, ids);
+      console.log('[v5.10.43] is_folder enforced for ' + (r2.affectedRows || 0) + ' parent accounts');
+    } else {
+      console.log('[v5.10.43] no parent accounts found yet (fresh install)');
+    }
+  } catch (e) {
+    console.error('[v5.10.43] is_folder migration FAILED:', e.message);
+  }
 
   // Per-item override for waste GL routing. NULL = use reason→account map.
   await addColumnIfMissing('inv_items', 'waste_gl_account_id', 'VARCHAR(50) NULL');

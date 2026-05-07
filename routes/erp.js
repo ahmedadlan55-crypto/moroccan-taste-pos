@@ -956,6 +956,32 @@ async function _coaAutoFixLevels(db) {
   return { orphansPromoted, levelsCorrected };
 }
 
+// v5.10.43 — defense in depth: even if the boot migration failed, this
+// runs at the end of every deep-repair and re-enforces is_folder=1 for
+// the 5 main roots and any account that has children. Manual folder
+// promotions (is_folder=1 with no children) are preserved.
+async function _coaForceFolderConsistency(db) {
+  const fixed = { roots: 0, parents: 0 };
+  try {
+    const [r1] = await db.query("UPDATE gl_accounts SET is_folder = 1 WHERE code IN ('1','2','3','4','5') AND (is_folder = 0 OR is_folder IS NULL)");
+    fixed.roots = r1.affectedRows || 0;
+  } catch (e) {
+    console.error('[deep-repair] _coaForceFolderConsistency roots failed:', e.message);
+  }
+  try {
+    const [parents] = await db.query("SELECT DISTINCT parent_id AS pid FROM gl_accounts WHERE parent_id IS NOT NULL");
+    const ids = parents.map(p => p.pid).filter(Boolean);
+    if (ids.length) {
+      const ph = ids.map(() => '?').join(',');
+      const [r2] = await db.query(`UPDATE gl_accounts SET is_folder = 1 WHERE id IN (${ph}) AND (is_folder = 0 OR is_folder IS NULL)`, ids);
+      fixed.parents = r2.affectedRows || 0;
+    }
+  } catch (e) {
+    console.error('[deep-repair] _coaForceFolderConsistency parents failed:', e.message);
+  }
+  return fixed;
+}
+
 // Rebuild gl_accounts.balance from posted gl_entries — the only safe way
 // to guarantee tree balances match the journal.
 async function _coaRecomputeBalances(db) {
@@ -973,27 +999,63 @@ async function _coaRecomputeBalances(db) {
 }
 
 // POST /gl/deep-repair — single-shot atomic chart-of-accounts repair.
+// v5.10.43 — every step now logs to server console so silent failures
+// become visible. If a step throws, the transaction rolls back and the
+// HTTP response includes the actual error message + the step that failed.
 router.post('/gl/deep-repair', async (req, res) => {
+  let lastStep = 'init';
   try {
     const result = await db.withTransaction(async (conn) => {
+      console.log('[deep-repair] ========== START ==========');
+
+      lastStep = 'snapshot-before';
       const before = await _coaDiagnoseSnapshot(conn);
-      try { await ensureCoreAccounts(conn); } catch(_) {}
-      const treeFixed   = await _coaFixRootsAndOrphansByPrefix(conn);
-      // v5.10.41 — physically re-parent any account whose code's first
-      // digit doesn't match its actual root (e.g. 41xxx under root 5).
-      // Runs BEFORE keyword reclassification so the latter has a clean tree.
-      const rootFixes   = await _coaFixRootCodeMismatch(conn);
-      const reclass     = await _coaRepairByKeywords(conn);
-      const typeFixes   = await _coaAlignTypeWithParent(conn);
-      const lvl         = await _coaAutoFixLevels(conn);
-      const balRecomp   = await _coaRecomputeBalances(conn);
-      const after       = await _coaDiagnoseSnapshot(conn);
+      console.log('[deep-repair] step 0: before snapshot — issues:', JSON.stringify(before));
+
+      lastStep = 'ensureCoreAccounts';
+      try { await ensureCoreAccounts(conn); } catch(e) { console.error('[deep-repair] ensureCoreAccounts:', e.message); }
+      console.log('[deep-repair] step 1: ensureCoreAccounts done');
+
+      lastStep = 'fixRootsAndOrphansByPrefix';
+      const treeFixed = await _coaFixRootsAndOrphansByPrefix(conn);
+      console.log('[deep-repair] step 2: fixRootsAndOrphansByPrefix → ' + treeFixed + ' rows touched');
+
+      lastStep = 'fixRootCodeMismatch';
+      const rootFixes = await _coaFixRootCodeMismatch(conn);
+      console.log('[deep-repair] step 3: fixRootCodeMismatch → ' + (rootFixes ? rootFixes.length : 0) + ' accounts moved to correct root');
+
+      lastStep = 'repairByKeywords';
+      const reclass = await _coaRepairByKeywords(conn);
+      console.log('[deep-repair] step 4: repairByKeywords → ' + (reclass.repaired ? reclass.repaired.length : 0) + ' reclassified, ' + (reclass.skipped ? reclass.skipped.length : 0) + ' skipped');
+
+      lastStep = 'alignTypeWithParent';
+      const typeFixes = await _coaAlignTypeWithParent(conn);
+      console.log('[deep-repair] step 5: alignTypeWithParent → ' + (typeFixes ? typeFixes.length : 0) + ' types corrected');
+
+      lastStep = 'autoFixLevels';
+      const lvl = await _coaAutoFixLevels(conn);
+      console.log('[deep-repair] step 6: autoFixLevels → ' + lvl.orphansPromoted + ' orphans promoted, ' + lvl.levelsCorrected + ' levels corrected');
+
+      lastStep = 'recomputeBalances';
+      const balRecomp = await _coaRecomputeBalances(conn);
+      console.log('[deep-repair] step 7: recomputeBalances → ' + balRecomp + ' balances rebuilt from gl_entries');
+
+      lastStep = 'forceFolderConsistency';
+      const folderFixes = await _coaForceFolderConsistency(conn);
+      console.log('[deep-repair] step 8: forceFolderConsistency → roots=' + folderFixes.roots + ' parents=' + folderFixes.parents);
+
+      lastStep = 'snapshot-after';
+      const after = await _coaDiagnoseSnapshot(conn);
+      console.log('[deep-repair] step 9: after snapshot — issues:', JSON.stringify(after));
+
+      console.log('[deep-repair] ========== COMMIT ==========');
       return {
         before, after,
         reclassified: reclass.repaired,
         skipped: reclass.skipped,
         typeFixed: typeFixes,
-        rootFixed: rootFixes,        // v5.10.41
+        rootFixed: rootFixes,
+        folderFixed: folderFixes,    // v5.10.43
         treeFixed,
         orphansPromoted: lvl.orphansPromoted,
         levelsCorrected: lvl.levelsCorrected,
@@ -1002,7 +1064,8 @@ router.post('/gl/deep-repair', async (req, res) => {
     });
     res.json({ success: true, ...result });
   } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
+    console.error('[deep-repair] ROLLBACK at step "' + lastStep + '":', e.message, e.stack);
+    res.status(500).json({ success: false, error: e.message, failedStep: lastStep });
   }
 });
 

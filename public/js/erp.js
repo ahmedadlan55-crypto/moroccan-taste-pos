@@ -1375,8 +1375,11 @@ function _coaRenderDiagnose(j) {
         '<i class="fas ' + cat.icon + '" style="color:' + cat.color + ';"></i>' +
         '<span class="coa-diag-cat__label">' + cat.label + '</span>' +
         '<span class="coa-diag-cat__count" style="background:' + cat.color + '22;color:' + cat.color + ';">' + arr.length + '</span>' +
-        // v5.10.42 — actual fix button per category
-        '<button class="coa-diag-cat__fix-btn" onclick="event.stopPropagation();coaRunAutoRepair();" title="يُشغِّل الإصلاح الشامل الذي يعالج كل الفئات">' +
+        // v5.10.47 — per-category fix now refreshes the diagnose modal
+        // in place instead of triggering the full repair-report modal.
+        // Resolved categories disappear immediately; the user stays on
+        // this screen to keep working through remaining issues.
+        '<button class="coa-diag-cat__fix-btn" onclick="event.stopPropagation();_coaFixAllAndRefreshDiagnose(this);" title="يُشغِّل الإصلاح الشامل ويُحدِّث القائمة فوريًا">' +
           '<i class="fas fa-wand-magic-sparkles"></i> إصلاح' +
         '</button>' +
       '</div>' +
@@ -1669,6 +1672,133 @@ function _coaShowMisplacementWarning(j) {
   document.body.appendChild(wrap.firstChild);
 }
 
+// v5.10.47 — searchable combobox: replaces a native <select> with a real
+// type-ahead dropdown that filters by code OR name. Used by both the
+// account create/edit modal and the move modal. The hidden <input type="hidden">
+// keeps the value so existing form readers (document.getElementById(id).value)
+// keep working without any caller changes.
+//
+// opts = {
+//   id:           hidden input id (the one form code reads)
+//   placeholder:  search box placeholder
+//   value:        currently-selected option value (optional)
+//   options:      array of { value, label, sublabel?, disabled? }
+//   onChange:     fired with (newValue) after user picks an option
+// }
+function _coaMountSearchableSelect(targetEl, opts) {
+  if (!targetEl) return;
+  opts = opts || {};
+  var options = (opts.options || []).slice();
+  var hiddenId = opts.id || ('coaSel_' + Math.random().toString(36).slice(2, 8));
+  var initialValue = opts.value || '';
+  var selectedOpt = options.find(function(o){ return String(o.value) === String(initialValue); });
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+
+  var displayText = selectedOpt ? selectedOpt.label : (opts.placeholder || '— اختر —');
+
+  targetEl.innerHTML =
+    '<div class="coa-sel" data-open="0">' +
+      '<input type="hidden" id="' + hiddenId + '" value="' + esc(initialValue) + '">' +
+      '<button type="button" class="coa-sel__trigger" tabindex="0">' +
+        '<span class="coa-sel__current' + (selectedOpt ? '' : ' is-placeholder') + '">' + esc(displayText) + '</span>' +
+        '<i class="fas fa-chevron-down coa-sel__chev"></i>' +
+      '</button>' +
+      '<div class="coa-sel__panel">' +
+        '<div class="coa-sel__searchbox">' +
+          '<i class="fas fa-search"></i>' +
+          '<input type="text" class="coa-sel__search" placeholder="ابحث بالكود أو الاسم..." autocomplete="off">' +
+        '</div>' +
+        '<div class="coa-sel__list" role="listbox"></div>' +
+        '<div class="coa-sel__footer"><span class="coa-sel__count">' + options.length + ' نتيجة</span></div>' +
+      '</div>' +
+    '</div>';
+
+  var root      = targetEl.querySelector('.coa-sel');
+  var hidden    = targetEl.querySelector('#' + hiddenId);
+  var trigger   = targetEl.querySelector('.coa-sel__trigger');
+  var current   = targetEl.querySelector('.coa-sel__current');
+  var panel     = targetEl.querySelector('.coa-sel__panel');
+  var searchInp = targetEl.querySelector('.coa-sel__search');
+  var list      = targetEl.querySelector('.coa-sel__list');
+  var countEl   = targetEl.querySelector('.coa-sel__count');
+  var activeIdx = -1;
+
+  function renderList(filterText) {
+    var ft = String(filterText || '').trim().toLowerCase();
+    var visible = options.map(function(o, i){ return { o: o, i: i }; }).filter(function(p){
+      if (!ft) return true;
+      var hay = (String(p.o.label) + ' ' + String(p.o.sublabel || '')).toLowerCase();
+      return hay.indexOf(ft) >= 0;
+    });
+    if (!visible.length) {
+      list.innerHTML = '<div class="coa-sel__empty">لا توجد نتائج لـ "' + esc(ft) + '"</div>';
+      countEl.textContent = '0 نتيجة';
+      return;
+    }
+    countEl.textContent = visible.length + ' نتيجة';
+    list.innerHTML = visible.map(function(p, vi){
+      var isSel = String(hidden.value) === String(p.o.value);
+      var disabled = p.o.disabled ? ' is-disabled' : '';
+      var sub = p.o.sublabel ? '<span class="coa-sel__sub">' + esc(p.o.sublabel) + '</span>' : '';
+      return '<div class="coa-sel__opt' + (isSel ? ' is-selected' : '') + disabled +
+        '" role="option" data-value="' + esc(p.o.value) + '" data-vi="' + vi + '">' +
+        '<span class="coa-sel__lbl">' + esc(p.o.label) + '</span>' + sub +
+        (isSel ? '<i class="fas fa-check coa-sel__tick"></i>' : '') +
+      '</div>';
+    }).join('');
+    activeIdx = -1;
+  }
+
+  function setValue(val, label) {
+    hidden.value = val == null ? '' : String(val);
+    var picked = options.find(function(o){ return String(o.value) === String(hidden.value); });
+    var txt = label || (picked ? picked.label : (opts.placeholder || '— اختر —'));
+    current.textContent = txt;
+    current.classList.toggle('is-placeholder', !picked);
+    if (typeof opts.onChange === 'function') opts.onChange(hidden.value, picked || null);
+  }
+
+  function open() {
+    root.setAttribute('data-open', '1');
+    renderList('');
+    setTimeout(function(){ searchInp.focus(); searchInp.select(); }, 30);
+  }
+  function close() { root.setAttribute('data-open', '0'); }
+  function toggle() { root.getAttribute('data-open') === '1' ? close() : open(); }
+
+  trigger.addEventListener('click', function(e){ e.stopPropagation(); toggle(); });
+  searchInp.addEventListener('input', function(){ renderList(searchInp.value); });
+  searchInp.addEventListener('keydown', function(e){
+    var opts2 = list.querySelectorAll('.coa-sel__opt:not(.is-disabled)');
+    if (e.key === 'ArrowDown') { e.preventDefault(); activeIdx = Math.min(opts2.length - 1, activeIdx + 1); _coaSelHighlight(opts2, activeIdx); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); activeIdx = Math.max(0, activeIdx - 1); _coaSelHighlight(opts2, activeIdx); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (activeIdx >= 0 && opts2[activeIdx]) opts2[activeIdx].click(); }
+    else if (e.key === 'Escape') { close(); trigger.focus(); }
+  });
+  list.addEventListener('click', function(e){
+    var opt = e.target.closest('.coa-sel__opt');
+    if (!opt || opt.classList.contains('is-disabled')) return;
+    setValue(opt.getAttribute('data-value'), opt.querySelector('.coa-sel__lbl').textContent);
+    close();
+  });
+  // close when clicking outside
+  document.addEventListener('click', function outsideHandler(e){
+    if (!root.contains(e.target)) close();
+  });
+
+  // Public API on the targetEl for callers to reset/refresh
+  targetEl._coaSel = {
+    setValue: setValue,
+    setOptions: function(newOpts) { options = (newOpts || []).slice(); renderList(''); },
+    getValue: function(){ return hidden.value; }
+  };
+}
+
+function _coaSelHighlight(opts, idx) {
+  Array.prototype.forEach.call(opts, function(o, i){ o.classList.toggle('is-active', i === idx); });
+  if (opts[idx]) opts[idx].scrollIntoView({ block: 'nearest' });
+}
+
 // v5.10.46 — export the chart of accounts to an .xlsx file with a fixed
 // 9-column shape (order/code/nameAr/nameEn/type/parentCode/level/kind/balance).
 // Re-importing the same file is a no-op; modify cells and re-import to
@@ -1848,6 +1978,25 @@ window.coaOpenMoveModal = function(id) {
   var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
   var descendantIds = _coaCollectDescendants(id);
   var descendantCount = descendantIds.length;
+  // v5.10.47 — structured options for the searchable combobox.
+  var moveParentOptions = [{ value: '', label: '— جذر (بلا أب) —' }].concat(
+    _erpAccounts
+      .filter(function(a){
+        if (a.id === id) return false;
+        if (descendantIds.indexOf(a.id) >= 0) return false;
+        if ((a.level || 1) >= 4) return false;
+        return true;
+      })
+      .sort(function(a,b){ return String(a.code||'').localeCompare(String(b.code||'')); })
+      .map(function(a){
+        var indentM = '  '.repeat(((a.level||1) - 1));
+        return {
+          value: a.id,
+          label: indentM + a.code + ' — ' + (a.nameAr || ''),
+          sublabel: a.type || ''
+        };
+      })
+  );
   var parentOpts = '<option value="">— جذر (بلا أب) —</option>' +
     _erpAccounts
       .filter(function(a){
@@ -1873,7 +2022,7 @@ window.coaOpenMoveModal = function(id) {
         '<div style="padding:18px 22px;">' +
           '<div class="form-row">' +
             '<label style="font-weight:700;">الأب الجديد</label>' +
-            '<select class="form-control" id="coaMoveNewParent" onchange="_coaUpdateMovePreview(\'' + id + '\')">' + parentOpts + '</select>' +
+            '<div id="coaMoveParentMount"></div>' +
           '</div>' +
           '<div class="form-row" style="display:flex;align-items:center;gap:8px;margin-top:12px;">' +
             '<input type="checkbox" id="coaMoveAutoRenum" checked onchange="_coaUpdateMovePreview(\'' + id + '\')" style="width:18px;height:18px;">' +
@@ -1893,6 +2042,21 @@ window.coaOpenMoveModal = function(id) {
   var wrap = document.createElement('div');
   wrap.innerHTML = html;
   document.body.appendChild(wrap.firstChild);
+
+  // v5.10.47 — mount the searchable combobox in the parent slot. The
+  // hidden input it writes (#coaMoveNewParent) keeps the same id so
+  // existing readers in coaConfirmMove / _coaUpdateMovePreview still work.
+  setTimeout(function(){
+    var mount = document.getElementById('coaMoveParentMount');
+    if (!mount) return;
+    _coaMountSearchableSelect(mount, {
+      id: 'coaMoveNewParent',
+      placeholder: '— جذر (بلا أب) —',
+      value: '',
+      options: moveParentOptions,
+      onChange: function(){ if (typeof _coaUpdateMovePreview === 'function') _coaUpdateMovePreview(id); }
+    });
+  }, 30);
 };
 
 window._coaUpdateMovePreview = function(id) {
@@ -1963,6 +2127,53 @@ function _coaRefreshDiagSnap() {
     })
     .catch(function(){});
 }
+
+// v5.10.47 — per-category "إصلاح" button: runs deep-repair, then
+// re-fetches diagnose and re-renders the modal body in place. The user
+// stays in the diagnose modal; resolved categories vanish from the list
+// without needing to close+reopen anything. The full-blown repair-report
+// modal is intentionally skipped here — that flow is reserved for the
+// header-level "إصلاح شامل" button.
+window._coaFixAllAndRefreshDiagnose = function(btnEl) {
+  var btn = btnEl || null;
+  var prevHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الإصلاح...'; }
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/gl/deep-repair', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j || !j.success) {
+        if (btn) { btn.disabled = false; btn.innerHTML = prevHtml; }
+        showToast((j && j.error) || 'فشل الإصلاح', true);
+        return;
+      }
+      // Re-fetch diagnose and re-render the modal body in place.
+      return fetch('/api/erp/gl/diagnose', { headers: { 'Authorization': 'Bearer ' + token } })
+        .then(function(r2){ return r2.json(); })
+        .then(function(diag){
+          window._coaDiagSnap = diag;
+          _coaUpdateDiagBadge(diag);
+          _coaRenderDiagnose(diag);
+          // Refresh accounts so the tree mirrors the post-repair state.
+          if (typeof _erpReloadAccountsCacheBust === 'function') _erpReloadAccountsCacheBust();
+          var fixedCount = 0;
+          if (j.before && j.after) {
+            ['orphans','typeMismatch','duplicateCodes','levelMismatch','cycles',
+             'codeTypeMismatch','balanceWithoutEntries','nameVsPlacementMismatch',
+             'rootCodeMismatch','unbalancedJournals','orphanEntries','missingCoreAccounts'
+            ].forEach(function(k){ fixedCount += Math.max(0, (j.before[k]||0) - (j.after[k]||0)); });
+          }
+          showToast('تم إصلاح ' + fixedCount + ' مشكلة');
+        });
+    })
+    .catch(function(e){
+      if (btn) { btn.disabled = false; btn.innerHTML = prevHtml; }
+      showToast(String((e && e.message) || e), true);
+    });
+};
 
 // Display a modal summarizing what /gl/deep-repair changed.
 function _coaShowRepairReport(j) {
@@ -2219,6 +2430,21 @@ function erpOpenAccountModal(data) {
   document.getElementById('erpModalTitle').textContent = isEdit ? 'تعديل حساب' : 'إضافة حساب جديد';
 
   // Build parent options grouped by type
+  // v5.10.47 — searchable combobox (mounted below) replaces the legacy
+  // native <select>. parentSelectOptions feeds the helper.
+  var parentSelectOptions = [{ value: '', label: '— جذر (بلا أب) —' }].concat(
+    _erpAccounts
+      .filter(function(a){ return (a.level || 1) < 4; })
+      .sort(function(a,b){ return String(a.code||'').localeCompare(String(b.code||'')); })
+      .map(function(a){
+        var indentP = '  '.repeat(((a.level || 1) - 1));
+        return {
+          value: a.id,
+          label: indentP + a.code + ' — ' + (a.nameAr || ''),
+          sublabel: a.type || ''
+        };
+      })
+  );
   const parentOpts = _erpAccounts
     .filter(a => a.level < 4)
     .sort((a,b) => a.code.localeCompare(b.code))
@@ -2247,7 +2473,7 @@ function erpOpenAccountModal(data) {
       '</label>' +
     '</div>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-      '<div class="form-row"><label>الحساب الرئيسي (الأب)</label><select class="form-control" id="erpAccParent"><option value="">— جذر (بلا أب) —</option>' + parentOpts + '</select></div>' +
+      '<div class="form-row"><label>الحساب الرئيسي (الأب)</label><div id="erpAccParentMount"></div></div>' +
       '<div class="form-row"><label>المستوى</label><select class="form-control" id="erpAccLevelSelect">' +
         '<option value="auto" selected>يُحسب تلقائيًا</option>' +
         '<option value="1">L1 — جذر</option>' +
@@ -2278,8 +2504,10 @@ function erpOpenAccountModal(data) {
   // v5.10.46 — wire the new controls. The "kind" radios, the level
   // select, the autoCode checkbox, and the parent dropdown all interact:
   // changing one recomputes the level/code/folder hint atomically.
+  // v5.10.47 — parent dropdown is now a searchable combobox; we read its
+  // value via the hidden input #erpAccParent that the helper writes to.
   setTimeout(function() {
-    var parentSel  = document.getElementById('erpAccParent');
+    var mountEl    = document.getElementById('erpAccParentMount');
     var levelSel   = document.getElementById('erpAccLevelSelect');
     var levelHidden= document.getElementById('erpAccLevel');
     var autoCodeEl = document.getElementById('erpAccAutoCode');
@@ -2289,7 +2517,8 @@ function erpOpenAccountModal(data) {
     var kindRadios = document.getElementsByName('erpAccKind');
 
     function getKind(){ for (var i=0;i<kindRadios.length;i++) if (kindRadios[i].checked) return kindRadios[i].value; return 'folder'; }
-    function currentParent(){ return parentSel.value ? _erpAccounts.find(function(a){ return a.id === parentSel.value; }) : null; }
+    function parentValue(){ var h = document.getElementById('erpAccParent'); return h ? h.value : ''; }
+    function currentParent(){ var v = parentValue(); return v ? _erpAccounts.find(function(a){ return a.id === v; }) : null; }
 
     function recomputeLevel() {
       var p = currentParent();
@@ -2312,7 +2541,6 @@ function erpOpenAccountModal(data) {
       codeEl.style.background = '#f8fafc';
       var p = currentParent();
       if (!p) {
-        // Root-level: pick the next free single-digit root code.
         var usedRoots = _erpAccounts.filter(function(a){ return !a.parentId; }).map(function(a){ return String(a.code); });
         var next = '';
         for (var d2 = 1; d2 <= 9; d2++) { if (usedRoots.indexOf(String(d2)) < 0) { next = String(d2); break; } }
@@ -2320,7 +2548,6 @@ function erpOpenAccountModal(data) {
         hintEl.textContent = next ? 'كود جذر تلقائي' : '— كل الجذور 1-9 مستخدمة، عطّل التلقائي';
         return;
       }
-      // Child-of-parent: same algorithm as erpAddChildAccount / _coaPreviewMoveCode
       var parentCode = p.code;
       var siblings = _erpAccounts.filter(function(a){ return a.parentId === p.id; });
       var childCodes = siblings.map(function(a){ return a.code; }).sort();
@@ -2340,18 +2567,21 @@ function erpOpenAccountModal(data) {
       if (p && p.type && !typeEl.dataset.userTouched) typeEl.value = p.type;
     }
 
-    parentSel.onchange = function(){ recomputeLevel(); inheritType(); recomputeCode(); };
+    // v5.10.47 — mount the searchable combobox; its onChange replaces
+    // the old <select>.onchange handler.
+    _coaMountSearchableSelect(mountEl, {
+      id: 'erpAccParent',
+      placeholder: '— جذر (بلا أب) —',
+      value: d.parentId || '',
+      options: parentSelectOptions,
+      onChange: function(){ recomputeLevel(); inheritType(); recomputeCode(); }
+    });
+
     levelSel.onchange  = function(){ recomputeLevel(); recomputeCode(); };
     autoCodeEl.onchange= function(){ recomputeCode(); };
     typeEl.addEventListener('change', function(){ typeEl.dataset.userTouched = '1'; });
     Array.prototype.forEach.call(kindRadios, function(r){
-      r.onchange = function(){
-        // "Folder" defaults to no parent (root-level main account); "leaf" leaves parent as is.
-        if (getKind() === 'folder' && !parentSel.value) {
-          // already root-level — just refresh
-        }
-        recomputeCode();
-      };
+      r.onchange = function(){ recomputeCode(); };
     });
 
     // First paint

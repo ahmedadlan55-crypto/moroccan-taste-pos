@@ -1438,12 +1438,17 @@ window.coaRunAutoRepair = function() {
         _coaShowRepairError((j && j.error) || 'استجابة غير متوقعة من الخادم');
         return;
       }
-      _coaShowRepairReport(j);
-      // v5.10.42 — force a full reload from the server so the tree
-      // reflects the actual post-repair state (not a cached snapshot).
-      if (typeof erpLoadAccountsList_ === 'function') {
-        erpLoadAccountsList_();
+      // v5.10.44 — if the verification query returned remaining
+      // misplacements, surface them prominently. Otherwise show the
+      // normal success report. Either way, force a fresh reload below.
+      if (j.stillMisplaced && j.stillMisplaced.length) {
+        _coaShowMisplacementWarning(j);
+      } else {
+        _coaShowRepairReport(j);
       }
+      // v5.10.44 — bypass any HTTP-level cache so the tree definitely
+      // reflects the post-repair DB state, not a stale snapshot.
+      _erpReloadAccountsCacheBust();
       // Refresh the diagnose snapshot so warning icons in the tree clear out.
       _coaRefreshDiagSnap();
       var diagModal = document.getElementById('coaDiagModal');
@@ -1497,6 +1502,91 @@ function _coaShowRepairError(message) {
           '<div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">' +
             '<button class="wo-btn wo-btn-ghost" onclick="document.getElementById(\'coaRepairErrorModal\').remove();coaOpenDiagnose();">عرض التشخيص</button>' +
             '<button class="wo-btn wo-btn-primary" onclick="document.getElementById(\'coaRepairErrorModal\').remove();coaRunAutoRepair();">إعادة المحاولة</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstChild);
+}
+
+// v5.10.44 — bypass any HTTP-level cache by hitting the accounts endpoint
+// with a timestamp query param. Replaces erpLoadAccountsList_() in the
+// post-repair flow because the bridge has no cache-bust knob.
+function _erpReloadAccountsCacheBust() {
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/gl/accounts?_=' + Date.now(), {
+    headers: { 'Authorization': 'Bearer ' + token }
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(list){
+      _erpAccounts = (list || []).map(function(a){
+        return {
+          id: a.id, code: a.code, nameAr: a.nameAr, nameEn: a.nameEn,
+          type: a.type, parentId: a.parentId, level: Number(a.level) || 1,
+          isActive: a.isActive,
+          isFolder: !!a.isFolder,
+          balance: Number(a.balance) || 0,
+          storedBalance: Number(a.storedBalance) || 0,
+          movementCount: Number(a.movementCount) || 0
+        };
+      });
+      _erpAccounts.sort(function(a,b){ return String(a.code||'').localeCompare(String(b.code||'')); });
+      if (typeof _coaBuildTree === 'function') _coaBuildTree();
+      if (_coaSelectedId && typeof coaSelectNode === 'function') coaSelectNode(_coaSelectedId);
+    })
+    .catch(function(e){ console.error('[v5.10.44] cache-bust reload failed:', e); });
+}
+
+// v5.10.44 — explicit warning modal that lists the accounts the
+// deep-repair pipeline COULD NOT relocate. The user previously got a
+// fake success toast even when accounts like 41 stayed under root 5;
+// this surfaces the truth so they can act or escalate.
+function _coaShowMisplacementWarning(j) {
+  var prior = document.getElementById('coaMisplacementModal');
+  if (prior) prior.remove();
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var list = j.stillMisplaced || [];
+  var rows = list.map(function(m){
+    return '<tr>' +
+      '<td><strong>' + esc(m.code) + '</strong></td>' +
+      '<td>' + esc(m.name) + '</td>' +
+      '<td><code>' + esc(m.expected) + '</code></td>' +
+      '<td><code>' + esc(m.actual || 'orphan') + '</code></td>' +
+    '</tr>';
+  }).join('');
+  var moved = (j.bruteForcedTopology || []).length + (j.rootFixed || []).length;
+  var html =
+    '<div class="modal show" id="coaMisplacementModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10001;" onclick="if(event.target===this)this.remove();">' +
+      '<div class="modal-content" style="max-width:760px;width:96%;margin-top:48px;" onclick="event.stopPropagation();">' +
+        '<div class="modal-title">' +
+          '<i class="fas fa-triangle-exclamation" style="color:#d97706;"></i>' +
+          '<span>تحذير — بعض الحسابات لم تُنقَل</span>' +
+          '<button class="modal-close" onclick="document.getElementById(\'coaMisplacementModal\').remove()">&times;</button>' +
+        '</div>' +
+        '<div style="padding:18px 22px 22px;">' +
+          '<div style="padding:14px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;font-size:13px;color:#78350f;line-height:1.7;">' +
+            '<strong>' + list.length + '</strong> حساب لا يزال في موقع خاطئ في الشجرة بعد تنفيذ كل خطوات الإصلاح. ' +
+            'تم نقل <strong>' + moved + '</strong> حساب آخر بنجاح. ' +
+            (j.missingRoots && j.missingRoots.length ? '<br/><strong>سبب جذري:</strong> الجذور التالية مفقودة من قاعدة البيانات: <code>' + esc(j.missingRoots.join(', ')) + '</code> — لذلك تعذَّر إعادة الإسناد.' : '') +
+          '</div>' +
+          '<table style="width:100%;border-collapse:collapse;margin-top:16px;font-size:12.5px;">' +
+            '<thead><tr style="background:#f1f5f9;">' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">الكود</th>' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">الاسم</th>' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">الجذر المتوقَّع</th>' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">الجذر الفعلي</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rows + '</tbody>' +
+          '</table>' +
+          '<p style="font-size:12px;color:#64748b;margin-top:14px;line-height:1.7;">' +
+            'انسخ هذه القائمة وأرسلها للدعم الفني، أو افتح "تشخيص" لرؤية تفاصيل الفئات الأخرى. ' +
+            'تم تسجيل كل المحاولات والإخفاقات في سجل الخادم (Railway logs).' +
+          '</p>' +
+          '<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">' +
+            '<button class="wo-btn wo-btn-ghost" onclick="document.getElementById(\'coaMisplacementModal\').remove();coaOpenDiagnose();">عرض التشخيص الكامل</button>' +
+            '<button class="wo-btn wo-btn-primary" onclick="document.getElementById(\'coaMisplacementModal\').remove();">إغلاق</button>' +
           '</div>' +
         '</div>' +
       '</div>' +
@@ -1618,6 +1708,7 @@ function _coaShowRepairReport(j) {
             '<i class="fas fa-circle-check"></i> ' +
             'أُعيد احتساب أرصدة <b>' + (j.balancesRecomputed||0) + '</b> حساب من قيود اليومية الفعلية' +
             ((j.rootFixed||[]).length ? ' · نُقل <b>' + j.rootFixed.length + '</b> حساب لجذره الصحيح' : '') +
+            ((j.bruteForcedTopology||[]).length ? ' · فُرض على <b>' + j.bruteForcedTopology.length + '</b> حساب الانتقال مباشرةً تحت جذره (v5.10.44)' : '') +
             '. الآن الأرقام في الشجرة = مجموع <code>gl_entries</code> فقط — لا أرصدة وهمية.' +
           '</div>' +
           detailsHtml +

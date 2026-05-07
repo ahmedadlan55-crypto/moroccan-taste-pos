@@ -827,12 +827,16 @@ async function _coaRepairByKeywords(db) {
 
 // v5.10.41 — physically move accounts whose code's first digit doesn't
 // match their actual root ancestor. e.g. an account with code 41xxx
-// sitting under root 5 (cost of sales) gets re-parented under root 4
-// (revenue). The previous _alignTypeWithParent only updated the type
-// field — the account stayed in the wrong subtree. This actually moves it.
+// sitting under root 5 (cost of sales) gets re-parented under root 4.
+// v5.10.44 — silent try/catch replaced by per-account console.log; the
+// returned object now exposes skipped[] (no candidate found) and failed[]
+// (DB error during UPDATE) so the caller and Railway logs both see the
+// truth instead of a swallowed failure.
 async function _coaFixRootCodeMismatch(db) {
   const fixed = [];
-  const [allAccs] = await db.query('SELECT id, code, parent_id FROM gl_accounts');
+  const skipped = [];
+  const failed = [];
+  const [allAccs] = await db.query('SELECT id, code, parent_id, name_ar FROM gl_accounts');
   const byId = {}, byCode = {};
   allAccs.forEach(a => { byId[a.id] = a; byCode[a.code] = a; });
 
@@ -850,15 +854,17 @@ async function _coaFixRootCodeMismatch(db) {
 
   for (const a of allAccs) {
     const codeStr = String(a.code || '');
-    if (!codeStr) continue;
+    if (!codeStr) { skipped.push({ code: a.code, name: a.name_ar, reason: 'empty-code' }); continue; }
     const codeRoot = codeStr.charAt(0);
-    if (['1','2','3','4','5'].indexOf(codeRoot) < 0) continue;
-    if (codeStr === codeRoot) continue; // root itself — never move
+    if (['1','2','3','4','5'].indexOf(codeRoot) < 0) {
+      skipped.push({ code: a.code, name: a.name_ar, reason: 'non-numeric-root:' + codeRoot });
+      continue;
+    }
+    if (codeStr === codeRoot) continue; // root itself — silent skip
     const actualRoot = ascendantCode(a);
-    if (!actualRoot || actualRoot === codeRoot) continue;
+    if (!actualRoot) { skipped.push({ code: a.code, name: a.name_ar, reason: 'no-ancestor-root' }); continue; }
+    if (actualRoot === codeRoot) continue; // already correct — silent skip
 
-    // Find the best new parent: walk up the code prefix until we hit a
-    // node that exists under the correct root.
     let candidate = null;
     let walk = codeStr.substring(0, codeStr.length - 1);
     while (walk.length > 0) {
@@ -870,20 +876,86 @@ async function _coaFixRootCodeMismatch(db) {
       walk = walk.substring(0, walk.length - 1);
     }
     if (!candidate) candidate = byCode[codeRoot] || null;
-    if (!candidate || candidate.id === a.id) continue;
+    if (!candidate || candidate.id === a.id) {
+      skipped.push({ code: a.code, name: a.name_ar, reason: 'no-valid-candidate', expectedRoot: codeRoot, actualRoot });
+      continue;
+    }
 
     try {
       await db.query('UPDATE gl_accounts SET parent_id = ? WHERE id = ?', [candidate.id, a.id]);
+      console.log('[fixRootCodeMismatch] MOVED ' + a.code + ' (' + (a.name_ar || '') + ') from root ' + actualRoot + ' -> under ' + candidate.code);
       fixed.push({
-        id: a.id, code: a.code,
+        id: a.id, code: a.code, name: a.name_ar,
         oldRootCode: actualRoot,
         newParentCode: candidate.code,
         expectedRootCode: codeRoot
       });
       byId[a.id].parent_id = candidate.id;
-    } catch (_) { /* skip on FK error */ }
+    } catch (e) {
+      console.error('[fixRootCodeMismatch] FAILED to move ' + a.code + ' (' + (a.name_ar || '') + '): ' + e.message);
+      failed.push({ code: a.code, name: a.name_ar, error: e.message });
+    }
   }
-  return fixed;
+  return { fixed, skipped, failed };
+}
+
+// v5.10.44 — Last-resort topology guarantee. Runs AFTER all the smart
+// helpers. For any account whose code's first digit doesn't match its
+// reachable root, force-reparent it directly under the correct root.
+// We sacrifice the original sub-hierarchy in exchange for guaranteed
+// correctness — better that 41xxx ends up flat under root 4 than to
+// keep it under root 5 because the smart helpers couldn't find a
+// suitable intermediate parent.
+async function _coaBruteForceRootTopology(db) {
+  const moved = [];
+  const failed = [];
+  const [roots] = await db.query("SELECT id, code FROM gl_accounts WHERE code IN ('1','2','3','4','5') AND (parent_id IS NULL OR parent_id = '')");
+  const rootIdByCode = {};
+  roots.forEach(r => { rootIdByCode[r.code] = r.id; });
+
+  const missingRoots = ['1','2','3','4','5'].filter(c => !rootIdByCode[c]);
+  if (missingRoots.length) {
+    console.error('[bruteForceTopology] ABORT - missing roots: ' + missingRoots.join(','));
+    return { moved, failed, missingRoots };
+  }
+
+  const [allAccs] = await db.query('SELECT id, code, parent_id, name_ar FROM gl_accounts');
+  const byId = {};
+  allAccs.forEach(a => { byId[a.id] = a; });
+
+  function reachableRootCode(a) {
+    let walker = a, hops = 0;
+    const seen = new Set();
+    while (walker && walker.parent_id) {
+      if (seen.has(walker.id)) return null;
+      seen.add(walker.id);
+      walker = byId[walker.parent_id] || null;
+      if (++hops > 50) return null;
+    }
+    return walker ? String(walker.code || '') : null;
+  }
+
+  for (const a of allAccs) {
+    const code = String(a.code || '');
+    if (!code) continue;
+    const expectedRoot = code.charAt(0);
+    if (['1','2','3','4','5'].indexOf(expectedRoot) < 0) continue;
+    if (code === expectedRoot) continue; // root itself
+    const actual = reachableRootCode(a);
+    if (actual === expectedRoot) continue; // correctly placed
+    const targetRootId = rootIdByCode[expectedRoot];
+    if (!targetRootId || targetRootId === a.id) continue;
+    try {
+      await db.query('UPDATE gl_accounts SET parent_id = ? WHERE id = ?', [targetRootId, a.id]);
+      console.log('[bruteForceTopology] MOVED ' + code + ' (' + (a.name_ar || '') + ') -> under root ' + expectedRoot);
+      moved.push({ code: a.code, name: a.name_ar, fromRoot: actual, toRoot: expectedRoot });
+      byId[a.id].parent_id = targetRootId;
+    } catch (e) {
+      console.error('[bruteForceTopology] FAILED ' + code + ' (' + (a.name_ar || '') + '): ' + e.message);
+      failed.push({ code: a.code, name: a.name_ar, error: e.message });
+    }
+  }
+  return { moved, failed, missingRoots: [] };
 }
 
 async function _coaAlignTypeWithParent(db) {
@@ -1021,8 +1093,8 @@ router.post('/gl/deep-repair', async (req, res) => {
       console.log('[deep-repair] step 2: fixRootsAndOrphansByPrefix → ' + treeFixed + ' rows touched');
 
       lastStep = 'fixRootCodeMismatch';
-      const rootFixes = await _coaFixRootCodeMismatch(conn);
-      console.log('[deep-repair] step 3: fixRootCodeMismatch → ' + (rootFixes ? rootFixes.length : 0) + ' accounts moved to correct root');
+      const rootFixesResult = await _coaFixRootCodeMismatch(conn);
+      console.log('[deep-repair] step 3: fixRootCodeMismatch → fixed=' + rootFixesResult.fixed.length + ' skipped=' + rootFixesResult.skipped.length + ' failed=' + rootFixesResult.failed.length);
 
       lastStep = 'repairByKeywords';
       const reclass = await _coaRepairByKeywords(conn);
@@ -1040,9 +1112,50 @@ router.post('/gl/deep-repair', async (req, res) => {
       const balRecomp = await _coaRecomputeBalances(conn);
       console.log('[deep-repair] step 7: recomputeBalances → ' + balRecomp + ' balances rebuilt from gl_entries');
 
+      // v5.10.44 — last-resort topology guarantee. If any account is still
+      // in the wrong root subtree after the smart helpers, force-reparent
+      // it directly under the correct root. Better flat-but-correct than
+      // hierarchical-but-wrong.
+      lastStep = 'bruteForceTopology';
+      const brute = await _coaBruteForceRootTopology(conn);
+      console.log('[deep-repair] step 7.5: bruteForceTopology → ' + brute.moved.length + ' force-reparented, missingRoots=[' + (brute.missingRoots || []).join(',') + ']');
+
       lastStep = 'forceFolderConsistency';
       const folderFixes = await _coaForceFolderConsistency(conn);
       console.log('[deep-repair] step 8: forceFolderConsistency → roots=' + folderFixes.roots + ' parents=' + folderFixes.parents);
+
+      // v5.10.44 — final independent verification: walk every account's
+      // parent chain and list any whose reachable root still doesn't
+      // match its code prefix. This is the truth surfaced to the user.
+      lastStep = 'verifyTopology';
+      const [verifyAccs] = await conn.query('SELECT id, code, parent_id, name_ar FROM gl_accounts');
+      const _byIdV = {}; verifyAccs.forEach(a => { _byIdV[a.id] = a; });
+      function _walkRootV(a) {
+        let w = a, hops = 0; const seen = new Set();
+        while (w && w.parent_id) {
+          if (seen.has(w.id)) return null;
+          seen.add(w.id);
+          w = _byIdV[w.parent_id] || null;
+          if (++hops > 50) return null;
+        }
+        return w ? String(w.code || '') : null;
+      }
+      const stillMisplaced = [];
+      for (const a of verifyAccs) {
+        const code = String(a.code || '');
+        if (!code) continue;
+        const expected = code.charAt(0);
+        if (['1','2','3','4','5'].indexOf(expected) < 0) continue;
+        if (code === expected) continue;
+        const actual = _walkRootV(a);
+        if (actual && actual !== expected) {
+          stillMisplaced.push({ code: a.code, name: a.name_ar, expected, actual });
+        } else if (!actual) {
+          stillMisplaced.push({ code: a.code, name: a.name_ar, expected, actual: 'orphan-or-cycle' });
+        }
+      }
+      console.log('[deep-repair] FINAL VERIFICATION: ' + stillMisplaced.length + ' accounts still in wrong root');
+      if (stillMisplaced.length) console.log(JSON.stringify(stillMisplaced));
 
       lastStep = 'snapshot-after';
       const after = await _coaDiagnoseSnapshot(conn);
@@ -1054,12 +1167,18 @@ router.post('/gl/deep-repair', async (req, res) => {
         reclassified: reclass.repaired,
         skipped: reclass.skipped,
         typeFixed: typeFixes,
-        rootFixed: rootFixes,
-        folderFixed: folderFixes,    // v5.10.43
+        rootFixed: rootFixesResult.fixed,
+        rootFixSkipped: rootFixesResult.skipped,           // v5.10.44
+        rootFixFailed: rootFixesResult.failed,             // v5.10.44
+        bruteForcedTopology: brute.moved,                  // v5.10.44
+        bruteForcedFailed: brute.failed,                   // v5.10.44
+        missingRoots: brute.missingRoots || [],            // v5.10.44
+        folderFixed: folderFixes,                          // v5.10.43
         treeFixed,
         orphansPromoted: lvl.orphansPromoted,
         levelsCorrected: lvl.levelsCorrected,
-        balancesRecomputed: balRecomp
+        balancesRecomputed: balRecomp,
+        stillMisplaced                                     // v5.10.44 — TRUTH
       };
     });
     res.json({ success: true, ...result });

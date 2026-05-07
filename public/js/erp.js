@@ -3064,6 +3064,9 @@ function erpSaveAccount() {
 var _jrnCache = [];
 var _jrnListHTML = ''; // Stores original journal list HTML
 
+// v5.11.0 — selection state for bulk operations
+window._jrnSelectedIds = window._jrnSelectedIds || new Set();
+
 function erpLoadJournals() {
   // Restore original list HTML if we were in form mode
   if (_jrnListHTML) {
@@ -3072,34 +3075,73 @@ function erpLoadJournals() {
       sec.innerHTML = _jrnListHTML;
     }
   }
+  // v5.11.0 — make sure dim lists are loaded for the filter bar
+  if (!_jrnBrands.length && !_jrnBranches.length) _erpLoadJrnDims(function(){ _erpInjectJrnFilterBar(); });
+  else _erpInjectJrnFilterBar();
+
   var filters = {};
-  var s = document.getElementById('erpJrnStartDate');
-  var e = document.getElementById('erpJrnEndDate');
+  var s  = document.getElementById('erpJrnStartDate');
+  var e  = document.getElementById('erpJrnEndDate');
   var st = document.getElementById('erpJrnStatusFilter');
-  if (s && s.value) filters.startDate = s.value;
-  if (e && e.value) filters.endDate = e.value;
-  if (st && st.value) filters.status = st.value;
+  var qS = document.getElementById('erpJrnSearch');
+  var fb = document.getElementById('erpJrnFilterBrand');
+  var fbr= document.getElementById('erpJrnFilterBranch');
+  var fp = document.getElementById('erpJrnFilterProject');
+  var fc = document.getElementById('erpJrnFilterCC');
+  if (s  && s.value)  filters.startDate    = s.value;
+  if (e  && e.value)  filters.endDate      = e.value;
+  if (st && st.value) filters.status       = st.value;
+  if (qS && qS.value) filters.q            = qS.value.trim();
+  if (fb && fb.value) filters.brandId      = fb.value;
+  if (fbr&& fbr.value)filters.branchId     = fbr.value;
+  if (fp && fp.value) filters.projectId    = fp.value;
+  if (fc && fc.value) filters.costCenterId = fc.value;
 
   window._apiBridge.withSuccessHandler(function(list) {
-    _jrnCache = list || [];
+    list = list || [];
+    _jrnCache = list;
     var tbody = document.getElementById('erpJournalsBody');
 
-    // Stats
+    // Stats — count + amount per bucket
     var total = list.length, drafts = 0, approved = 0, posted = 0;
+    var amtTotal = 0, amtDraft = 0, amtApproved = 0, amtPosted = 0;
     list.forEach(function(j) {
-      if (j.status === 'draft') drafts++;
-      else if (j.status === 'approved') approved++;
-      else if (j.status === 'posted') posted++;
+      var amt = Number(j.totalDebit) || 0;
+      amtTotal += amt;
+      if      (j.status === 'draft')    { drafts++;   amtDraft    += amt; }
+      else if (j.status === 'approved') { approved++; amtApproved += amt; }
+      else if (j.status === 'posted')   { posted++;   amtPosted   += amt; }
     });
-    var _s = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
-    _s('jrnStatTotal', total); _s('jrnStatDraft', drafts); _s('jrnStatApproved', approved); _s('jrnStatPosted', posted);
+    var fmt = function(n){ return Number(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}); };
+    var setStat = function(id, n, amt) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.innerHTML = '<div style="font-size:22px;font-weight:900;color:#0f172a;line-height:1.2;">' + n + '</div>' +
+        '<div style="font-size:11.5px;color:#64748b;font-variant-numeric:tabular-nums;">' + fmt(amt) + '</div>';
+    };
+    setStat('jrnStatTotal', total, amtTotal);
+    setStat('jrnStatDraft', drafts, amtDraft);
+    setStat('jrnStatApproved', approved, amtApproved);
+    setStat('jrnStatPosted', posted, amtPosted);
 
-    if (!list.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-inbox" style="font-size:28px;display:block;margin-bottom:8px;color:#cbd5e1;"></i>لا توجد قيود</td></tr>'; return; }
+    _erpUpdateBulkBar();
+
+    if (!tbody) return;
+    if (!list.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-inbox" style="font-size:28px;display:block;margin-bottom:8px;color:#cbd5e1;"></i>لا توجد قيود مطابقة</td></tr>';
+      return;
+    }
 
     var statusBadge = function(s) {
-      if (s === 'draft') return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:8px;font-size:11px;font-weight:800;background:#fef3c7;color:#92400e;"><i class="fas fa-pencil-alt"></i> مسودة</span>';
+      if (s === 'draft')    return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:8px;font-size:11px;font-weight:800;background:#fef3c7;color:#92400e;"><i class="fas fa-pencil-alt"></i> مسودة</span>';
       if (s === 'approved') return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:8px;font-size:11px;font-weight:800;background:#e0e7ff;color:#4338ca;"><i class="fas fa-check"></i> معتمد</span>';
       return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:8px;font-size:11px;font-weight:800;background:#dcfce7;color:#166534;"><i class="fas fa-check-double"></i> مرحّل</span>';
+    };
+    var dimChip = function(icon, label, color) {
+      if (!label) return '';
+      var esc = String(label).replace(/[<>&"]/g, function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c];});
+      return '<span class="jrn-dim-chip" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:' + color + '14;color:' + color + ';border:1px solid ' + color + '33;border-radius:999px;font-size:10.5px;font-weight:700;">' +
+        '<i class="' + icon + '" style="font-size:9.5px;"></i>' + esc + '</span>';
     };
 
     tbody.innerHTML = list.map(function(j) {
@@ -3107,6 +3149,9 @@ function erpLoadJournals() {
       var actions = '<button class="btn-icon" onclick="erpViewJournal(\'' + j.id + '\')" title="عرض"><i class="fas fa-eye"></i></button> ';
       actions += '<button class="btn-icon" style="color:#3b82f6;" onclick="erpPrintJournal(\'' + j.id + '\')" title="طباعة"><i class="fas fa-print"></i></button> ';
       var isDev = state.currentUser && (state.currentUser.isDeveloper || state.role === 'admin');
+      // v5.11.0 — every status now exposes ✏️ edit. Posted journals route
+      // through the unpost-confirm flow inside erpEditJournal.
+      actions += '<button class="btn-icon" style="color:#0ea5e9;" onclick="erpEditJournal(\'' + j.id + '\')" title="تَعديل"><i class="fas fa-pen"></i></button> ';
       if (j.status === 'draft') {
         actions += '<button class="btn-icon" style="color:#8b5cf6;" onclick="erpApproveJournal(\'' + j.id + '\')" title="اعتماد"><i class="fas fa-check-circle"></i></button> ';
         if (isDev) actions += '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>';
@@ -3115,19 +3160,138 @@ function erpLoadJournals() {
         if (isDev) actions += '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>';
       } else if (j.status === 'posted') {
         actions += '<button class="btn-icon" style="color:#f59e0b;" onclick="erpUnpostJournal(\'' + j.id + '\')" title="إلغاء الترحيل"><i class="fas fa-undo"></i></button> ';
-        if (isDev) actions += '<button class="btn-icon" style="color:#ef4444;" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف (مطور)"><i class="fas fa-trash"></i></button>';
       }
+
+      var chips = '';
+      if (j.brandName)        chips += dimChip('fas fa-tag',       j.brandName,        '#7c3aed');
+      if (j.branchName)       chips += dimChip('fas fa-building',  j.branchName,       '#0369a1');
+      if (j.projectName)      chips += dimChip('fas fa-clipboard-list', j.projectName, '#16a34a');
+      if (j.costCenterName)   chips += dimChip('fas fa-bullseye',  j.costCenterName,   '#dc2626');
+
+      var checked = window._jrnSelectedIds.has(j.id) ? 'checked' : '';
       return '<tr style="' + (j.status==='draft'?'background:rgba(254,243,199,0.15);':'') + '">' +
+        '<td style="text-align:center;width:36px;"><input type="checkbox" class="jrn-row-cb" data-id="' + j.id + '" ' + checked + ' onchange="_erpToggleJrnSel(\'' + j.id + '\', this.checked)" style="width:16px;height:16px;cursor:pointer;"></td>' +
         '<td><code style="font-weight:800;color:#1e40af;">' + (j.journalNumber||'') + '</code><div style="font-size:10px;color:#94a3b8;margin-top:2px;"><i class="fas fa-user" style="margin-left:2px;"></i>' + (j.createdBy||'') + '</div></td>' +
         '<td style="font-size:13px;">' + dt + '</td>' +
-        '<td style="font-weight:600;">' + (j.description||'') + '</td>' +
-        '<td style="font-weight:800;color:#16a34a;">' + (j.totalDebit||0).toFixed(2) + '</td>' +
-        '<td style="font-weight:800;color:#ef4444;">' + (j.totalCredit||0).toFixed(2) + '</td>' +
+        '<td><div style="font-weight:600;">' + (j.description||'') + '</div>' +
+          (chips ? '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;">' + chips + '</div>' : '') +
+        '</td>' +
+        '<td style="font-weight:800;color:#16a34a;font-variant-numeric:tabular-nums;">' + (j.totalDebit||0).toFixed(2) + '</td>' +
+        '<td style="font-weight:800;color:#ef4444;font-variant-numeric:tabular-nums;">' + (j.totalCredit||0).toFixed(2) + '</td>' +
         '<td>' + statusBadge(j.status) + '</td>' +
         '<td style="white-space:nowrap;">' + actions + '</td></tr>';
     }).join('');
   }).getGLJournals(filters);
 }
+
+// v5.11.0 — bulk selection helpers
+window._erpToggleJrnSelectAll = function(on) {
+  document.querySelectorAll('.jrn-row-cb').forEach(function(cb){
+    cb.checked = on;
+    var id = cb.getAttribute('data-id');
+    if (!id) return;
+    if (on) window._jrnSelectedIds.add(id);
+    else    window._jrnSelectedIds.delete(id);
+  });
+  _erpUpdateBulkBar();
+};
+window._erpToggleJrnSel = function(id, on) {
+  if (on) window._jrnSelectedIds.add(id);
+  else    window._jrnSelectedIds.delete(id);
+  _erpUpdateBulkBar();
+};
+window._erpClearJrnSel = function() {
+  window._jrnSelectedIds.clear();
+  document.querySelectorAll('.jrn-row-cb').forEach(function(cb){ cb.checked = false; });
+  _erpUpdateBulkBar();
+};
+function _erpUpdateBulkBar() {
+  var bar = document.getElementById('jrnBulkBar');
+  if (!bar) return;
+  var n = window._jrnSelectedIds.size;
+  if (!n) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  var countEl = document.getElementById('jrnBulkCount');
+  if (countEl) countEl.textContent = n;
+}
+window.erpBulkAction = function(action) {
+  var ids = Array.from(window._jrnSelectedIds);
+  if (!ids.length) return;
+  var labels = { approve: 'اعتماد', post: 'ترحيل', unpost: 'إلغاء ترحيل', delete: 'حذف' };
+  var icons  = { approve: 'fa-check-circle', post: 'fa-share-square', unpost: 'fa-undo', delete: 'fa-trash' };
+  var colors = { approve: '#8b5cf6', post: '#16a34a', unpost: '#f59e0b', delete: '#dc2626' };
+  erpConfirm(labels[action] + ' الكل', 'سيتم تَطبيق "' + labels[action] + '" على ' + ids.length + ' قيد. متابعة؟', function(){
+    loader(true);
+    var token = localStorage.getItem('pos_token') || '';
+    fetch('/api/erp/gl/journals/bulk', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids, action: action, username: currentUser })
+    }).then(function(r){ return r.json(); }).then(function(j){
+      loader(false);
+      if (!j || !j.success) return showToast((j && j.error) || 'فشل', true);
+      showToast('تم: ' + j.ok + ' قيد · فشل: ' + j.failed);
+      window._jrnSelectedIds.clear();
+      erpLoadJournals();
+    }).catch(function(e){ loader(false); showToast(String(e.message || e), true); });
+  }, { icon: icons[action], color: colors[action], okText: labels[action] });
+};
+
+// v5.11.0 — injects an extended filter bar (search + 4 dim dropdowns)
+// alongside the existing date/status filters. Idempotent: only adds it
+// once per page load.
+function _erpInjectJrnFilterBar() {
+  if (document.getElementById('jrnExtFilterBar')) return;
+  var container = document.querySelector('#erpGLJournals .filters') || document.querySelector('#erpGLJournals .jrn-filters');
+  if (!container) {
+    // Try to find the simple search input and wrap around it
+    var search = document.getElementById('erpJrnSearch');
+    if (!search) return;  // nothing to anchor onto
+    container = search.parentElement;
+  }
+  var bar = document.createElement('div');
+  bar.id = 'jrnExtFilterBar';
+  bar.style.cssText = 'display:grid;grid-template-columns:repeat(4, minmax(140px, 1fr));gap:8px;margin-top:10px;align-items:center;';
+  bar.innerHTML =
+    '<select id="erpJrnFilterBrand" class="form-control" style="font-size:12.5px;" onchange="erpLoadJournals()">' +
+      '<option value="">🏷️ كل البراندات</option>' +
+      _jrnBrands.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('') +
+    '</select>' +
+    '<select id="erpJrnFilterBranch" class="form-control" style="font-size:12.5px;" onchange="erpLoadJournals()">' +
+      '<option value="">🏢 كل الفروع</option>' +
+      _jrnBranches.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('') +
+    '</select>' +
+    '<select id="erpJrnFilterProject" class="form-control" style="font-size:12.5px;" onchange="erpLoadJournals()">' +
+      '<option value="">📋 كل المشاريع</option>' +
+      _jrnProjects.map(function(p){return '<option value="'+p.id+'">'+(p.nameAr||p.name||p.code||'')+'</option>';}).join('') +
+    '</select>' +
+    '<button onclick="_erpClearJrnFilters()" style="padding:7px 12px;border-radius:8px;border:1px solid #e5e7eb;background:#fff;color:#64748b;font-weight:700;font-size:12px;cursor:pointer;"><i class="fas fa-xmark"></i> مسح الفلاتر</button>';
+  container.appendChild(bar);
+
+  // Bulk action bar
+  if (!document.getElementById('jrnBulkBar')) {
+    var bulkBar = document.createElement('div');
+    bulkBar.id = 'jrnBulkBar';
+    bulkBar.style.cssText = 'display:none;align-items:center;justify-content:space-between;padding:10px 14px;margin-top:10px;background:linear-gradient(135deg,#1e293b,#334155);color:#fff;border-radius:10px;box-shadow:0 4px 14px rgba(15,23,42,.18);';
+    bulkBar.innerHTML =
+      '<div style="font-weight:800;font-size:13px;"><i class="fas fa-check-double" style="margin-left:6px;"></i> <span id="jrnBulkCount">0</span> قيد محدَّد</div>' +
+      '<div style="display:flex;gap:6px;">' +
+        '<button onclick="erpBulkAction(\'approve\')" style="padding:6px 12px;border-radius:7px;border:none;background:#8b5cf6;color:#fff;font-weight:700;font-size:12px;cursor:pointer;"><i class="fas fa-check-circle"></i> اعتماد</button>' +
+        '<button onclick="erpBulkAction(\'post\')" style="padding:6px 12px;border-radius:7px;border:none;background:#16a34a;color:#fff;font-weight:700;font-size:12px;cursor:pointer;"><i class="fas fa-share-square"></i> ترحيل</button>' +
+        '<button onclick="erpBulkAction(\'unpost\')" style="padding:6px 12px;border-radius:7px;border:none;background:#f59e0b;color:#fff;font-weight:700;font-size:12px;cursor:pointer;"><i class="fas fa-undo"></i> إلغاء ترحيل</button>' +
+        '<button onclick="erpBulkAction(\'delete\')" style="padding:6px 12px;border-radius:7px;border:none;background:#dc2626;color:#fff;font-weight:700;font-size:12px;cursor:pointer;"><i class="fas fa-trash"></i> حذف</button>' +
+        '<button onclick="_erpClearJrnSel()" style="padding:6px 12px;border-radius:7px;border:1px solid rgba(255,255,255,.3);background:transparent;color:#fff;font-weight:700;font-size:12px;cursor:pointer;">إلغاء</button>' +
+      '</div>';
+    bar.parentElement.appendChild(bulkBar);
+  }
+}
+
+window._erpClearJrnFilters = function() {
+  ['erpJrnStartDate','erpJrnEndDate','erpJrnStatusFilter','erpJrnSearch',
+   'erpJrnFilterBrand','erpJrnFilterBranch','erpJrnFilterProject','erpJrnFilterCC'
+  ].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+  erpLoadJournals();
+};
 
 function erpViewJournal(journalId) {
   // Always fetch fresh from full journal list to get all fields
@@ -3235,19 +3399,90 @@ function erpEditJournal(journalId) {
   if (!j) return showToast('القيد غير موجود', true);
   var isManual = !j.referenceType || j.referenceType === 'manual' || j.referenceType === 'opening';
   if (!isManual) return showToast('لا يمكن تعديل القيود التلقائية', true);
-  _editingJournalId = journalId;
-  erpCloseDetailModal();
 
-  // Open the journal creation modal with pre-filled data
+  // v5.11.0 — posted-lock: if the journal is posted, ask the user to
+  // confirm an unpost first, then open the editor. The backend PUT also
+  // refuses posted edits as a safety net.
+  if (j.status === 'posted') {
+    erpConfirm(
+      'القيد مرحَّل',
+      'هذا القيد مرحَّل ويُؤثِّر على أرصدة الحسابات. سيتم إلغاء الترحيل أوّلًا لتَتمكَّن من التَّعديل، وسيَبقى مسودة حتى تُعيد ترحيله يَدويًا.',
+      function(){
+        loader(true);
+        window._apiBridge.withSuccessHandler(function(res){
+          loader(false);
+          if (!res || !res.success) return showToast((res && res.error) || 'تعذَّر إلغاء الترحيل', true);
+          j.status = 'draft';
+          _openJournalEditor(j);
+        }).unpostGLJournal(j.id, currentUser);
+      },
+      { icon: 'fa-rotate-left', color: '#dc2626', okText: 'إلغاء الترحيل وتَعديل' }
+    );
+    return;
+  }
+  _openJournalEditor(j);
+}
+
+// v5.11.0 — opens the SAME create form (so the new dim dropdowns are
+// available) and pre-fills it. Header + per-line dims are populated.
+function _openJournalEditor(j) {
+  _jrnEditingId = j.id;
+  _editingJournalId = j.id;  // legacy global referenced elsewhere
+  erpCloseDetailModal();
+  // Make sure we have accounts + dim lists, then render
+  var open = function(){
+    _renderJournalForm();
+    setTimeout(function(){
+      // Header fields
+      var dt = j.journalDate ? new Date(j.journalDate).toISOString().split('T')[0] : '';
+      var setVal = function(id, v){ var el = document.getElementById(id); if (el) el.value = v == null ? '' : v; };
+      setVal('erpJrnNum', j.journalNumber || '');
+      setVal('erpJrnDate', dt);
+      setVal('erpJrnDesc', j.description || '');
+      setVal('erpJrnDescEn', j.notes || '');
+      setVal('erpJrnBrand',   j.brandId || '');
+      setVal('erpJrnBranch',  j.branchId || '');
+      setVal('erpJrnProject', j.projectId || '');
+      setVal('erpJrnCC',      j.costCenterId || '');
+      // Clear the auto-added 2 lines, then add one per existing entry
+      var tbody = document.getElementById('erpJrnLines');
+      if (tbody) tbody.innerHTML = '';
+      _jrnLineCounter = 0;
+      (j.entries || []).forEach(function(e){
+        erpAddJrnLine({
+          code:  e.accountCode || '',
+          id:    e.accountId || '',
+          name:  e.accountName || '',
+          debit: e.debit || '',
+          credit: e.credit || '',
+          desc:  e.description || ''
+        });
+        // Per-line cost center prefill
+        var rows = document.querySelectorAll('#erpJrnLines tr');
+        var lastTr = rows[rows.length - 1];
+        if (lastTr) {
+          var ccSel = lastTr.querySelector('.jec-cc');
+          if (ccSel && e.costCenterId) ccSel.value = e.costCenterId;
+        }
+      });
+      erpCalcJrnBalance();
+      // Repurpose the page title to make the edit context obvious
+      var titleEl = document.querySelector('#erpGLJournals h3');
+      if (titleEl) titleEl.innerHTML = '<i class="fas fa-pen" style="color:#0ea5e9;margin-left:8px;"></i> تَعديل القيد — ' + (j.journalNumber || '');
+    }, 80);
+  };
   if (_erpAccounts.length === 0) {
-    window._apiBridge.withSuccessHandler(function(list) {
-      _erpAccounts = (list || []).map(function(a) {
+    window._apiBridge.withSuccessHandler(function(list){
+      _erpAccounts = (list || []).map(function(a){
         return { id: a.id, code: a.code, nameAr: a.nameAr, nameEn: a.nameEn, type: a.type, parentId: a.parentId, level: Number(a.level)||1, balance: Number(a.balance)||0 };
       });
-      _renderEditJournalForm(j);
+      // Also preload dim lists if cold
+      if (!_jrnBrands.length && !_jrnBranches.length) _erpLoadJrnDims(open);
+      else open();
     }).getGLAccounts();
   } else {
-    _renderEditJournalForm(j);
+    if (!_jrnBrands.length && !_jrnBranches.length) _erpLoadJrnDims(open);
+    else open();
   }
 }
 
@@ -3449,14 +3684,41 @@ function _getLeafAccounts() {
 // ─── Journal creation — full page form ───
 var _jrnLineCounter = 0;
 var _jrnCostCenters = [];
+// v5.11.0 — full-dimension cache, used by both the create modal and the
+// list filter bar. Populated once per session via _erpLoadJrnDims().
+var _jrnBrands   = [];
+var _jrnBranches = [];
+var _jrnProjects = [];
+var _jrnEditingId = null;  // set by erpEditJournal so erpSaveJournal sends PUT
 var _jrnSelectedType = 'GL';
 var _jrnTypes = [{code:'GL',name:'يومية عامة'},{code:'OB',name:'افتتاحية'},{code:'RENT',name:'إدارة التأجير'}];
+
+function _erpLoadJrnDims(cb) {
+  // Three parallel fetches; we don't gate on any single one — the
+  // dropdowns degrade gracefully if a list fails to load.
+  var pending = 3;
+  function done() { if (--pending <= 0 && typeof cb === 'function') cb(); }
+  var token = localStorage.getItem('pos_token') || '';
+  var hdr = { 'Authorization': 'Bearer ' + token };
+  fetch('/api/erp/brands-stats', { headers: hdr }).then(function(r){ return r.json(); })
+    .then(function(arr){ _jrnBrands = (arr || []).map(function(b){ return { id: b.id, name: b.name }; }); done(); })
+    .catch(function(){ done(); });
+  fetch('/api/erp/branches-full', { headers: hdr }).then(function(r){ return r.json(); })
+    .then(function(arr){ _jrnBranches = (arr || []).map(function(b){ return { id: b.id, name: b.name }; }); done(); })
+    .catch(function(){ done(); });
+  // Projects table is optional — was added in v5.11.0; fall back to []
+  fetch('/api/erp/projects', { headers: hdr }).then(function(r){ return r.json(); })
+    .then(function(arr){ _jrnProjects = Array.isArray(arr) ? arr : []; done(); })
+    .catch(function(){ _jrnProjects = []; done(); });
+}
 
 function erpOpenJournalModal() {
   _jrnLineCounter = 0;
   _jrnSelectedType = 'GL';
-  // Load cost centers
+  _jrnEditingId = null;
+  // Load cost centers + brands/branches/projects in parallel
   window._apiBridge.withSuccessHandler(function(ccs) { _jrnCostCenters = ccs || []; }).getCostCenters();
+  _erpLoadJrnDims();
   if (_erpAccounts.length === 0) {
     loader(true);
     window._apiBridge.withSuccessHandler(function(list) {
@@ -3497,6 +3759,32 @@ function _renderJournalForm() {
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 20px;border-bottom:1px solid #e5e7eb;">' +
         '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">الوصف * (عربي)</label><input class="form-control" id="erpJrnDesc" placeholder="وصف القيد بالعربي..."></div>' +
         '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">الوصف * (إنجليزي)</label><input class="form-control" id="erpJrnDescEn" placeholder="Description in English..."></div>' +
+      '</div>' +
+      // v5.11.0 — Header accounting dimensions. Each line inherits these
+      // unless explicitly overridden in the line's own dim row.
+      '<div style="padding:12px 20px;background:#fafbff;border-bottom:1px solid #e5e7eb;">' +
+        '<div style="font-size:11.5px;font-weight:800;color:#5b21b6;margin-bottom:8px;letter-spacing:.02em;">' +
+          '<i class="fas fa-layer-group" style="margin-left:6px;"></i> الأبعاد المحاسبية للقيد' +
+          '<span style="font-weight:500;color:#94a3b8;font-size:10.5px;margin-inline-start:8px;">(تُورَث على كل سطر تلقائيًا)</span>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;">' +
+          '<div><label style="font-size:10.5px;font-weight:700;color:#64748b;display:block;margin-bottom:3px;">🏷️ البراند</label>' +
+            '<select class="form-control" id="erpJrnBrand" style="font-size:13px;"><option value="">— الكل —</option>' +
+              _jrnBrands.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('') +
+            '</select></div>' +
+          '<div><label style="font-size:10.5px;font-weight:700;color:#64748b;display:block;margin-bottom:3px;">🏢 الفرع</label>' +
+            '<select class="form-control" id="erpJrnBranch" style="font-size:13px;"><option value="">— الكل —</option>' +
+              _jrnBranches.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('') +
+            '</select></div>' +
+          '<div><label style="font-size:10.5px;font-weight:700;color:#64748b;display:block;margin-bottom:3px;">📋 المشروع</label>' +
+            '<select class="form-control" id="erpJrnProject" style="font-size:13px;"><option value="">— لا يوجد —</option>' +
+              _jrnProjects.map(function(p){return '<option value="'+p.id+'">'+(p.nameAr||p.name||p.code||'')+'</option>';}).join('') +
+            '</select></div>' +
+          '<div><label style="font-size:10.5px;font-weight:700;color:#64748b;display:block;margin-bottom:3px;">🎯 مركز التكلفة</label>' +
+            '<select class="form-control" id="erpJrnCC" style="font-size:13px;"><option value="">— لا يوجد —</option>' +
+              _jrnCostCenters.map(function(c){return '<option value="'+c.id+'" data-name="'+(c.name||'')+'">'+(c.code||'')+' — '+(c.name||'')+'</option>';}).join('') +
+            '</select></div>' +
+        '</div>' +
       '</div>' +
       // Toolbar
       '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 20px;border-bottom:1px solid #e5e7eb;">' +
@@ -3701,15 +3989,20 @@ function erpSaveJournal(andNew) {
   var movType = (document.getElementById('erpJrnMovType')||{}).value || 'general';
   var isOpening = _jrnSelectedType === 'OB' || movType === 'opening';
 
-  loader(true);
-  window._apiBridge.withSuccessHandler(function(res) {
-    loader(false);
-    if (res.success) {
-      showToast('تم إنشاء القيد: ' + res.journalNumber);
-      if (andNew) { _jrnLineCounter = 0; _renderJournalForm(); }
-      else erpLoadJournals();
-    } else showToast(res.error, true);
-  }).createJournalEntry({
+  // v5.11.0 — collect header dimensions; backend cascades them to entries
+  // that didn't override on the line itself.
+  var brandId    = (document.getElementById('erpJrnBrand')   || {}).value || null;
+  var branchId   = (document.getElementById('erpJrnBranch')  || {}).value || null;
+  var projectId  = (document.getElementById('erpJrnProject') || {}).value || null;
+  var ccSel      = document.getElementById('erpJrnCC');
+  var costCenterId = ccSel ? ccSel.value : null;
+  var costCenterName = '';
+  if (ccSel && ccSel.selectedIndex > 0) {
+    var opt = ccSel.options[ccSel.selectedIndex];
+    costCenterName = opt.getAttribute('data-name') || opt.textContent || '';
+  }
+
+  var payload = {
     journalDate: document.getElementById('erpJrnDate').value,
     referenceType: isOpening ? 'opening' : 'manual',
     referenceId: '',
@@ -3717,8 +4010,32 @@ function erpSaveJournal(andNew) {
     notes: (document.getElementById('erpJrnDescEn')||{}).value || '',
     attachment: window._jrnAttachmentData || '',
     isOpening: isOpening,
+    brandId: brandId, branchId: branchId, projectId: projectId,
+    costCenterId: costCenterId, costCenterName: costCenterName,
     entries: entries
-  }, currentUser);
+  };
+
+  loader(true);
+  // v5.11.0 — edit mode reuses the same form; we just hit PUT instead of POST.
+  if (_jrnEditingId) {
+    window._apiBridge.withSuccessHandler(function(res) {
+      loader(false);
+      if (res.success) {
+        showToast('تم تحديث القيد: ' + res.journalNumber);
+        _jrnEditingId = null;
+        erpLoadJournals();
+      } else showToast(res.error, true);
+    }).updateGLJournal(_jrnEditingId, payload, currentUser);
+    return;
+  }
+  window._apiBridge.withSuccessHandler(function(res) {
+    loader(false);
+    if (res.success) {
+      showToast('تم إنشاء القيد: ' + res.journalNumber);
+      if (andNew) { _jrnLineCounter = 0; _renderJournalForm(); }
+      else erpLoadJournals();
+    } else showToast(res.error, true);
+  }).createJournalEntry(payload, currentUser);
 }
 
 function erpSaveAndPost() {
@@ -3732,6 +4049,18 @@ function erpSaveAndPost() {
   var movType = (document.getElementById('erpJrnMovType')||{}).value || 'general';
   var isOpening = _jrnSelectedType === 'OB' || movType === 'opening';
 
+  // v5.11.0 — collect header dimensions
+  var brandId    = (document.getElementById('erpJrnBrand')   || {}).value || null;
+  var branchId   = (document.getElementById('erpJrnBranch')  || {}).value || null;
+  var projectId  = (document.getElementById('erpJrnProject') || {}).value || null;
+  var ccSel      = document.getElementById('erpJrnCC');
+  var costCenterId = ccSel ? ccSel.value : null;
+  var costCenterName = '';
+  if (ccSel && ccSel.selectedIndex > 0) {
+    var opt = ccSel.options[ccSel.selectedIndex];
+    costCenterName = opt.getAttribute('data-name') || opt.textContent || '';
+  }
+
   erpConfirm('حفظ وترحيل', 'سيتم حفظ القيد وترحيله مباشرة وتحديث أرصدة الحسابات.', function() {
     loader(true);
     window._apiBridge.withSuccessHandler(function(res) {
@@ -3744,13 +4073,15 @@ function erpSaveAndPost() {
         }).postGLJournal(res.id, currentUser);
       }).approveGLJournal(res.id, currentUser);
     }).createJournalEntry({
-    journalDate: document.getElementById('erpJrnDate').value,
-    referenceType: isOpening ? 'opening' : 'manual',
-    description: desc,
-    notes: (document.getElementById('erpJrnDescEn')||{}).value || '',
-    isOpening: isOpening,
-    entries: entries
-  }, currentUser);
+      journalDate: document.getElementById('erpJrnDate').value,
+      referenceType: isOpening ? 'opening' : 'manual',
+      description: desc,
+      notes: (document.getElementById('erpJrnDescEn')||{}).value || '',
+      isOpening: isOpening,
+      brandId: brandId, branchId: branchId, projectId: projectId,
+      costCenterId: costCenterId, costCenterName: costCenterName,
+      entries: entries
+    }, currentUser);
   }, {icon:'fa-check-double', color:'#ef4444', okText:'حفظ وترحيل'});
 }
 

@@ -3923,6 +3923,18 @@ async function runMigrations() {
   // Stored as JSON array of dim names: ["brand", "branch"].
   await addColumnIfMissing('gl_accounts', 'dim_required', 'JSON DEFAULT NULL');
 
+  // v5.10.40 — explicit folder flag. Lets the user manually designate
+  // which accounts behave as folders (can have children + show "+ Add"
+  // button). Default FALSE; root codes 1..5 forced to TRUE; any account
+  // that already has children gets TRUE for data integrity.
+  await addColumnIfMissing('gl_accounts', 'is_folder', 'BOOLEAN DEFAULT FALSE');
+  try {
+    await db.query("UPDATE gl_accounts SET is_folder = 1 WHERE code IN ('1','2','3','4','5')");
+    await db.query(`UPDATE gl_accounts SET is_folder = 1 WHERE id IN (
+      SELECT t.parent_id FROM (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL) t
+    ) AND is_folder = 0`);
+  } catch(_) {}
+
   // Per-item override for waste GL routing. NULL = use reason→account map.
   await addColumnIfMissing('inv_items', 'waste_gl_account_id', 'VARCHAR(50) NULL');
 

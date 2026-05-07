@@ -579,7 +579,13 @@ function erpLoadAccountsList_() {
 function _coaChildrenOf(parentId) {
   return _erpAccounts.filter(a => (a.parentId||null) === (parentId||null)).sort((a,b) => a.code.localeCompare(b.code));
 }
-function _coaIsGroup(id) { return _erpAccounts.some(a => a.parentId === id); }
+// v5.10.40 — an account is a "group" (folder) if it explicitly opts in
+// via isFolder OR currently has children (legacy data integrity).
+function _coaIsGroup(id) {
+  var acc = _erpAccounts.find(function(a){ return a.id === id; });
+  if (acc && acc.isFolder) return true;
+  return _erpAccounts.some(function(a){ return a.parentId === id; });
+}
 
 // v5.10.38 — does this account (or any descendant) have any posted journal
 // entries? Used to hide structural-only accounts from the tree by default.
@@ -743,6 +749,7 @@ function _coaRenderNode(acc, open) {
     else if (hit(snap.issues.codeTypeMismatch))         { hasIssue = true; issueLabel = 'code-type-mismatch'; }
     else if (hit(snap.issues.balanceWithoutEntries))    { hasIssue = true; issueLabel = 'balance-without-entries'; }
     else if (hit(snap.issues.nameVsPlacementMismatch))  { hasIssue = true; issueLabel = 'misplaced-by-name'; }
+    else if (hit(snap.issues.rootCodeMismatch))         { hasIssue = true; issueLabel = 'root-code-mismatch'; }
     if (hasIssue) warnHtml = '<i class="fas fa-triangle-exclamation coa-warn-icon" title="' + issueLabel + '"></i>';
   }
 
@@ -849,44 +856,82 @@ window.coaSelectNode = function(id) {
   else         _coaShowAccount(id, main);
 };
 
-// ─── Show Group (children as cards) ───
+// ─── Show Group (children as cards) — v5.10.40 redesign ───
+// • Rollup balance prominently shown on the END of header (visually left in RTL)
+// • Every card always shows its balance (zero is muted, not hidden)
+// • Folders have a green nimbus, leaves a blue nimbus — clearer visual rhythm
+// • Per-card "promote to folder" / "demote to leaf" toggle for manual control
 function _coaShowGroup(id, container) {
-  if (!container) return; // V5.9.6 — belt-and-suspenders: caller already checks
+  if (!container) return;
   var acc = _erpAccounts.find(a => a.id === id);
   if (!acc) return;
   var children = _coaChildrenOf(id);
-  var typeNature = {asset:'debit',expense:'debit',liability:'credit',equity:'credit',revenue:'credit'};
-  var natureLabels = {debit:'مدين',credit:'دائن'};
+  var typeNature   = { asset:'debit', expense:'debit', liability:'credit', equity:'credit', revenue:'credit' };
+  var natureLabels = { debit:'مدين', credit:'دائن' };
+  var typeLabels   = { asset:'أصول', liability:'التزامات', equity:'حقوق ملكية', revenue:'إيرادات', expense:'مصروفات' };
   var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
 
-  var html = '<div class="coa-group-header">';
-  html += '<div class="coa-group-title"><i class="fas fa-folder-open"></i> ' + (acc.nameAr||'') + ' <span class="coa-group-code">#' + acc.code + '</span></div>';
-  html += '<div style="display:flex;gap:6px;">';
-  html += '<button class="btn btn-sm btn-primary" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')" style="border-radius:10px;"><i class="fas fa-plus"></i> إضافة حساب</button>';
-  html += '<button class="btn btn-sm btn-light" onclick="erpEditAccount(\'' + acc.id + '\')" style="border-radius:10px;"><i class="fas fa-edit"></i></button>';
-  html += '</div></div>';
+  // Rollup of this folder + all descendants (computed_balance from gl_entries)
+  var rollup    = _coaRollupBalance(id);
+  var rollupCls = rollup > 0 ? 'is-pos' : (rollup < 0 ? 'is-neg' : 'is-zero');
+  var withMov   = children.filter(function(c){ return _coaHasMovements ? _coaHasMovements(c.id) : ((c.movementCount||0)>0); }).length;
 
+  var html = '';
+  // ── Header: name + code on right, rollup + actions on left ──
+  html += '<div class="coa-group-header coa-group-header--v2">';
+  html +=   '<div class="coa-group-headline">';
+  html +=     '<div class="coa-group-title"><i class="fas fa-folder-open"></i> ' + esc(acc.nameAr || '') + ' <span class="coa-group-code">#' + esc(acc.code) + '</span></div>';
+  html +=     '<div class="coa-group-meta">';
+  html +=       '<span class="coa-group-meta-pill coa-type-' + (acc.type || 'asset') + '">' + (typeLabels[acc.type] || acc.type || '—') + '</span>';
+  html +=       '<span class="coa-group-meta-pill">' + children.length + ' حساب فرعي</span>';
+  html +=       '<span class="coa-group-meta-pill">' + withMov + ' بحركات</span>';
+  html +=     '</div>';
+  html +=   '</div>';
+  html +=   '<div class="coa-group-balance ' + rollupCls + '">';
+  html +=     '<span class="coa-group-balance__label">الرصيد المجمَّع</span>';
+  html +=     '<span class="coa-group-balance__value">' + fmt(rollup) + '</span>';
+  html +=   '</div>';
+  html +=   '<div class="coa-group-actions">';
+  html +=     '<button class="btn btn-sm btn-primary coa-group-add" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')"><i class="fas fa-plus"></i> إضافة حساب</button>';
+  html +=     '<button class="btn btn-sm btn-light" onclick="erpEditAccount(\'' + acc.id + '\')" title="تعديل"><i class="fas fa-edit"></i></button>';
+  html +=   '</div>';
+  html += '</div>';
+
+  // ── Children grid ──
   if (!children.length) {
-    html += '<div class="coa-empty"><i class="fas fa-inbox"></i><p>هذا الحساب فارغ</p></div>';
+    html += '<div class="coa-empty coa-empty--v2"><i class="fas fa-inbox"></i><p>هذا الحساب فارغ — أضف أوّل حساب فرعي</p></div>';
     html += '<button class="coa-add-btn" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')"><i class="fas fa-plus-circle"></i> أضف حساب</button>';
   } else {
-    html += '<div class="coa-cards">';
+    html += '<div class="coa-cards coa-cards--v2">';
     children.forEach(function(c) {
-      var isChild = _coaIsGroup(c.id);
-      var nature = typeNature[c.type] || 'debit';
-      html += '<div class="coa-card" onclick="coaSelectNode(\'' + c.id + '\')">';
-      html += '<i class="fas ' + (isChild?'fa-folder':'fa-file-alt') + ' coa-card-icon' + (isChild?'':' leaf') + '"></i>';
-      html += '<div class="coa-card-body">';
-      html += '<div class="coa-card-name">' + (c.nameAr||'') + '</div>';
-      html += '<div class="coa-card-sub"><span class="coa-card-code">#' + c.code + '</span>';
-      html += '<span class="coa-card-nature ' + nature + '">' + (natureLabels[nature]||'') + '</span></div>';
-      html += '</div>';
-      if (c.balance) html += '<div class="coa-card-bal">' + fmt(c.balance) + '</div>';
-      html += '<span class="coa-card-menu" onclick="event.stopPropagation();coaCardMenu(\'' + c.id + '\',this)" title="خيارات">&#8943;</span>';
+      var isFolder = _coaIsGroup(c.id);
+      var nature   = typeNature[c.type] || 'debit';
+      var bal      = Number(c.balance) || 0;
+      var balCls   = bal > 0 ? 'is-pos' : (bal < 0 ? 'is-neg' : 'is-zero');
+      var mvCount  = Number(c.movementCount || 0);
+
+      html += '<div class="coa-card coa-card--v2 ' + (isFolder ? 'is-folder' : 'is-leaf') + '" onclick="coaSelectNode(\'' + c.id + '\')">';
+      html +=   '<div class="coa-card__nimbus"><i class="fas ' + (isFolder ? 'fa-folder' : 'fa-file-invoice') + '"></i></div>';
+      html +=   '<div class="coa-card__body">';
+      html +=     '<div class="coa-card__name" title="' + esc(c.nameAr || '') + '">' + esc(c.nameAr || '') + '</div>';
+      html +=     '<div class="coa-card__sub">';
+      html +=       '<span class="coa-card__code">#' + esc(c.code) + '</span>';
+      html +=       '<span class="coa-card-nature ' + nature + '">' + (natureLabels[nature] || '') + '</span>';
+      if (mvCount > 0) {
+        html +=     '<span class="coa-card__mv">' + mvCount.toLocaleString('ar-SA') + ' حركة</span>';
+      } else {
+        html +=     '<span class="coa-card__mv coa-card__mv--zero">بدون حركات</span>';
+      }
+      html +=     '</div>';
+      html +=   '</div>';
+      // Always-on balance (zero shown muted)
+      html +=   '<div class="coa-card__bal ' + balCls + '">' + fmt(isFolder ? _coaRollupBalance(c.id) : bal) + '</div>';
+      html +=   '<button class="coa-card__menu" onclick="event.stopPropagation();coaCardMenu(\'' + c.id + '\',this)" title="خيارات">&#8943;</button>';
       html += '</div>';
     });
     html += '</div>';
-    html += '<button class="coa-add-btn" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')"><i class="fas fa-plus-circle"></i> أضف حساب</button>';
+    html += '<button class="coa-add-btn" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')"><i class="fas fa-plus-circle"></i> أضف حساب فرعي جديد</button>';
   }
   container.innerHTML = html;
 }
@@ -964,15 +1009,88 @@ function _coaLoadTransactions(accountId) {
 }
 
 // ─── Card context menu ───
+// v5.10.40 — proper popover replacing the old confirm() blocking dialog.
+// Adds "Promote to folder" / "Demote to leaf" so users control the
+// folder structure manually (instead of every account auto-becoming a
+// folder the moment it has children).
 window.coaCardMenu = function(id, el) {
   var acc = _erpAccounts.find(a => a.id === id);
   if (!acc) return;
-  // Simple: edit or delete
-  var choice = confirm('تعديل حساب "' + (acc.nameAr||'') + '"?\n\nاضغط إلغاء للحذف.');
-  if (choice) { erpEditAccount(id); }
-  else {
-    if (confirm('حذف "' + acc.code + ' — ' + (acc.nameAr||'') + '"؟')) erpDeleteAccount(id, acc.code, acc.nameAr||'');
+  // Close any existing popover
+  var prior = document.getElementById('coaCardPopover');
+  if (prior) prior.remove();
+
+  var isFolder = !!acc.isFolder || _coaIsGroup(id);
+  var hasChildren = _coaIsGroup(id);
+
+  var pop = document.createElement('div');
+  pop.id = 'coaCardPopover';
+  pop.className = 'coa-card-popover';
+  pop.innerHTML =
+    '<button class="coa-card-popover__item" onclick="event.stopPropagation();erpEditAccount(\'' + id + '\');coaClosePopover();">' +
+      '<i class="fas fa-pen"></i><span>تعديل البيانات</span>' +
+    '</button>' +
+    (isFolder
+      ? (hasChildren
+          ? '<button class="coa-card-popover__item" disabled title="لا يمكن إلغاء الفولدر — احذف الأبناء أولاً"><i class="fas fa-folder-minus"></i><span>تحويل لورقة (يحتاج لا أبناء)</span></button>'
+          : '<button class="coa-card-popover__item" onclick="event.stopPropagation();coaToggleFolder(\'' + id + '\',false);coaClosePopover();"><i class="fas fa-folder-minus"></i><span>تحويل إلى ورقة</span></button>')
+      : '<button class="coa-card-popover__item" onclick="event.stopPropagation();coaToggleFolder(\'' + id + '\',true);coaClosePopover();">' +
+          '<i class="fas fa-folder-plus"></i><span>تحويل إلى مجلد</span>' +
+        '</button>'
+    ) +
+    '<button class="coa-card-popover__item" onclick="event.stopPropagation();erpAddChildAccount(\'' + id + '\',\'' + acc.code + '\');coaClosePopover();">' +
+      '<i class="fas fa-plus"></i><span>إضافة حساب فرعي</span>' +
+    '</button>' +
+    '<div class="coa-card-popover__divider"></div>' +
+    '<button class="coa-card-popover__item coa-card-popover__item--danger" onclick="event.stopPropagation();coaConfirmDelete(\'' + id + '\',\'' + acc.code + '\',\'' + (acc.nameAr||'').replace(/[\\\']/g,'') + '\');coaClosePopover();">' +
+      '<i class="fas fa-trash"></i><span>حذف الحساب</span>' +
+    '</button>';
+
+  // Position relative to the trigger element
+  document.body.appendChild(pop);
+  if (el) {
+    var rect = el.getBoundingClientRect();
+    pop.style.position = 'fixed';
+    pop.style.top  = (rect.bottom + 4) + 'px';
+    // RTL: anchor to the trigger's right edge so the popover opens leftward
+    pop.style.right = (window.innerWidth - rect.right) + 'px';
   }
+  // Close on outside click
+  setTimeout(function(){
+    document.addEventListener('click', function _off(e){
+      if (!pop.contains(e.target)) { pop.remove(); document.removeEventListener('click', _off); }
+    });
+  }, 0);
+};
+
+window.coaClosePopover = function() {
+  var p = document.getElementById('coaCardPopover');
+  if (p) p.remove();
+};
+
+// v5.10.40 — toggle is_folder flag on an account. Refreshes the tree
+// and currently-shown group view.
+window.coaToggleFolder = function(id, makeFolder) {
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/gl/accounts/' + encodeURIComponent(id) + '/folder', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ isFolder: !!makeFolder })
+  }).then(function(r){ return r.json(); }).then(function(j){
+    if (!j || !j.success) {
+      if (typeof showToast === 'function') showToast(j && j.error || 'فشل التحديث', true);
+      return;
+    }
+    if (typeof showToast === 'function') showToast(makeFolder ? 'تم تحويله إلى مجلد' : 'تم تحويله إلى ورقة');
+    if (typeof erpLoadAccountsList_ === 'function') erpLoadAccountsList_();
+  }).catch(function(e){
+    if (typeof showToast === 'function') showToast('خطأ: ' + (e && e.message || ''), true);
+  });
+};
+
+// Keep the old delete confirmation flow but stripped of the popup chain
+window.coaConfirmDelete = function(id, code, name) {
+  if (confirm('حذف "' + code + ' — ' + name + '"؟')) erpDeleteAccount(id, code, name);
 };
 
 // ─── Tree search filter ───
@@ -1094,6 +1212,7 @@ function _coaRenderDiagnose(j) {
 
   // Issue categories — all metadata in one place; the active tab decides which to show.
   var CATS = {
+    rootCodeMismatch:        { icon:'fa-diagram-project',  color:'#dc2626', label:'الجذر الفعلي لا يطابق الكود', group:'critical' },
     balanceWithoutEntries:   { icon:'fa-ghost',            color:'#dc2626', label:'رصيد بدون قيود فعلية', group:'critical' },
     nameVsPlacementMismatch: { icon:'fa-folder-tree',      color:'#dc2626', label:'الاسم لا يطابق المكان في الشجرة', group:'critical' },
     codeTypeMismatch:        { icon:'fa-tags',             color:'#ea580c', label:'النوع لا يطابق الكود', group:'critical' },
@@ -1159,6 +1278,9 @@ function _coaRenderDiagnose(j) {
       } else if (key === 'nameVsPlacementMismatch') {
         code = item.code || '';
         info = '<b>' + esc(item.name_ar || '') + '</b> · في <span class="coa-diag-from">' + esc(item.actualRootCode || '?') + '</span> <span class="coa-diag-arrow">→</span> المتوقع <span class="coa-diag-to">' + esc(item.expectedLabel || item.expectedParentCode || '?') + '</span>';
+      } else if (key === 'rootCodeMismatch') {
+        code = item.code || '';
+        info = '<b>' + esc(item.name_ar || '') + '</b> · يبدأ بـ <span class="coa-diag-to">' + esc(item.expectedRootCode || '?') + '</span> لكنه تحت جذر <span class="coa-diag-from">' + esc(item.actualRootCode || '?') + '</span>';
       }
 
       // Click takes the user to the account in the tree (when we have an id)

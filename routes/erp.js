@@ -220,12 +220,36 @@ router.get('/gl/accounts', async (req, res) => {
       id: a.id, code: a.code, nameAr: a.name_ar, nameEn: a.name_en,
       type: a.type, parentId: a.parent_id, level: a.level,
       isActive: a.is_active,
+      isFolder: !!a.is_folder,
       balance: Number(a.computed_balance || 0),
       storedBalance: Number(a.balance || 0),
       movementCount: Number(a.movement_count || 0)
     })));
   } catch (e) {
     res.json([]);
+  }
+});
+
+// v5.10.40 — toggle is_folder on an account. Refuses to demote a folder
+// that still has children (data integrity).
+router.post('/gl/accounts/:id/folder', async (req, res) => {
+  try {
+    const { isFolder } = req.body;
+    const want = !!isFolder;
+    const [rows] = await db.query('SELECT id, code FROM gl_accounts WHERE id = ?', [req.params.id]);
+    if (!rows.length) return res.json({ success: false, error: 'الحساب غير موجود' });
+    // Block demotion of root accounts (codes 1-5) — they must always be folders
+    if (!want && ['1','2','3','4','5'].indexOf(rows[0].code) >= 0) {
+      return res.json({ success: false, error: 'لا يمكن تحويل حساب رئيسي إلى ورقة' });
+    }
+    if (!want) {
+      const [kids] = await db.query('SELECT id FROM gl_accounts WHERE parent_id = ? LIMIT 1', [req.params.id]);
+      if (kids.length) return res.json({ success: false, error: 'لا يمكن إلغاء الفولدر — احذف الأبناء أولاً' });
+    }
+    await db.query('UPDATE gl_accounts SET is_folder = ? WHERE id = ?', [want ? 1 : 0, req.params.id]);
+    res.json({ success: true, id: req.params.id, isFolder: want });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
@@ -1906,7 +1930,11 @@ router.get('/gl/diagnose', async (req, res) => {
     // (11) account name strongly hints at a category but its placement
     //      disagrees (e.g. "بنك القاهرة" parented under inventory).
     //      Re-uses _COA_KEYWORD_RULES to compute expected root.
+    // (12) v5.10.40 — root code mismatch: code starts with digit X but
+    //      actual root ancestor is a different digit. Catches cases like
+    //      "41 الإيرادات التشغيلية" sitting under root 5 (cost of sales).
     const nameVsPlacementMismatch = [];
+    const rootCodeMismatch = [];
     {
       const [allAccs2] = await db.query('SELECT id, code, name_ar, parent_id FROM gl_accounts');
       const byId2 = {}; allAccs2.forEach(a => { byId2[a.id] = a; });
@@ -1922,6 +1950,21 @@ router.get('/gl/diagnose', async (req, res) => {
         return walker ? walker.code : null;
       };
       for (const a of allAccs2) {
+        const codeStr = String(a.code || '');
+        const codeRoot = codeStr.charAt(0);
+        const actualRoot = ascendantCode(a);
+
+        // (12) — code's first digit must match the root ancestor
+        if (codeRoot && actualRoot && ['1','2','3','4','5'].indexOf(codeRoot) >= 0
+            && actualRoot !== codeRoot) {
+          rootCodeMismatch.push({
+            id: a.id, code: a.code, name_ar: a.name_ar,
+            expectedRootCode: codeRoot,
+            actualRootCode: actualRoot
+          });
+        }
+
+        // (11) — name keyword vs actual placement
         const name = String(a.name_ar || '');
         if (!name) continue;
         let rule = null;
@@ -1930,7 +1973,6 @@ router.get('/gl/diagnose', async (req, res) => {
         }
         if (!rule) continue;
         const expectedRoot = rule.parentCode.charAt(0);
-        const actualRoot = ascendantCode(a);
         if (actualRoot && actualRoot !== expectedRoot) {
           nameVsPlacementMismatch.push({
             id: a.id, code: a.code, name_ar: a.name_ar,
@@ -1945,7 +1987,8 @@ router.get('/gl/diagnose', async (req, res) => {
       orphans.length + typeMismatch.length + dupCodes.length +
       unbalanced.length + orphanEntries.length + missingCoreAccounts.length +
       levelMismatch.length + cycles.length +
-      codeTypeMismatch.length + balanceWithoutEntries.length + nameVsPlacementMismatch.length;
+      codeTypeMismatch.length + balanceWithoutEntries.length +
+      nameVsPlacementMismatch.length + rootCodeMismatch.length;
 
     res.json({
       summary: {
@@ -1968,7 +2011,9 @@ router.get('/gl/diagnose', async (req, res) => {
         // v5.10.38
         codeTypeMismatch,
         balanceWithoutEntries,
-        nameVsPlacementMismatch
+        nameVsPlacementMismatch,
+        // v5.10.40
+        rootCodeMismatch
       },
       nonZeroAccounts: nonZeroAccs,
       recentEntries

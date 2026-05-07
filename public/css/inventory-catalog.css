@@ -724,6 +724,294 @@
   animation: coaNodeFlash 1.5s ease;
 }
 
+/* ─── v5.10.40 — Group header & cards v2 (Stripe / Linear-grade) ───
+   Purpose: address the user complaint that folders show no balance, that
+   alignment was inconsistent, and that the right-pane group view felt weak.
+   Always renders: rollup balance, child counts, per-card balance, action
+   buttons, and a colored "nimbus" so folders vs leaves are visually distinct
+   at a glance. */
+
+.coa-group-header--v2 {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 18px;
+  align-items: center;
+  padding: 16px 20px;
+  margin-bottom: 18px;
+  background: linear-gradient(135deg, #f8fafc, #eff6ff);
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+}
+.coa-group-header--v2 .coa-group-headline { min-width: 0; }
+.coa-group-header--v2 .coa-group-title {
+  font-size: 19px;
+  font-weight: 900;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  letter-spacing: -0.01em;
+}
+.coa-group-header--v2 .coa-group-title i { color: #f59e0b; font-size: 22px; }
+.coa-group-header--v2 .coa-group-code {
+  font-size: 11px;
+  color: #475569;
+  font-family: 'Courier New', monospace;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  padding: 2px 9px;
+  border-radius: 7px;
+  font-weight: 700;
+}
+
+.coa-group-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.coa-group-meta-pill {
+  font-size: 11px;
+  font-weight: 700;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  color: #475569;
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.coa-group-meta-pill.coa-type-asset     { background: #ecfeff; border-color: #67e8f9; color: #0e7490; }
+.coa-group-meta-pill.coa-type-liability { background: #fef2f2; border-color: #fca5a5; color: #b91c1c; }
+.coa-group-meta-pill.coa-type-equity    { background: #f5f3ff; border-color: #c4b5fd; color: #6d28d9; }
+.coa-group-meta-pill.coa-type-revenue   { background: #ecfdf5; border-color: #6ee7b7; color: #047857; }
+.coa-group-meta-pill.coa-type-expense   { background: #fff7ed; border-color: #fdba74; color: #c2410c; }
+
+.coa-group-balance {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 10px 18px;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 12px;
+  min-width: 160px;
+}
+.coa-group-balance__label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.coa-group-balance__value {
+  font-size: 22px;
+  font-weight: 900;
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.coa-group-balance.is-pos  { border-color: #86efac; background: linear-gradient(135deg, #f0fdf4, #fff); }
+.coa-group-balance.is-pos  .coa-group-balance__value { color: #15803d; }
+.coa-group-balance.is-neg  { border-color: #fca5a5; background: linear-gradient(135deg, #fef2f2, #fff); }
+.coa-group-balance.is-neg  .coa-group-balance__value { color: #b91c1c; }
+.coa-group-balance.is-zero .coa-group-balance__value { color: #94a3b8; font-weight: 800; }
+
+.coa-group-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.coa-group-actions .btn { white-space: nowrap; }
+.coa-group-add { border-radius: 10px !important; }
+
+.coa-cards--v2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.coa-card--v2 {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 14px;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+}
+.coa-card--v2:hover {
+  border-color: #6366f1;
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.10);
+  transform: translateY(-1px);
+}
+.coa-card__nimbus {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  flex-shrink: 0;
+}
+.coa-card--v2.is-folder .coa-card__nimbus {
+  background: linear-gradient(135deg, #fef3c7, #fef9c3);
+  color: #b45309;
+}
+.coa-card--v2.is-leaf .coa-card__nimbus {
+  background: linear-gradient(135deg, #dbeafe, #e0e7ff);
+  color: #4338ca;
+}
+.coa-card__body { min-width: 0; }
+.coa-card__name {
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.coa-card__sub {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.coa-card__code {
+  font-size: 10.5px;
+  font-family: 'Courier New', monospace;
+  font-weight: 700;
+  color: #475569;
+  background: #f1f5f9;
+  padding: 1px 8px;
+  border-radius: 5px;
+}
+.coa-card-nature {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 8px;
+  border-radius: 4px;
+}
+.coa-card-nature.debit  { background: #dcfce7; color: #166534; }
+.coa-card-nature.credit { background: #fee2e2; color: #991b1b; }
+.coa-card__mv {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #64748b;
+  padding: 1px 8px;
+  background: #f1f5f9;
+  border-radius: 999px;
+}
+.coa-card__mv--zero { background: #fef3c7; color: #92400e; }
+
+.coa-card__bal {
+  font-size: 16px;
+  font-weight: 900;
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  padding: 4px 12px;
+  border-radius: 8px;
+}
+.coa-card__bal.is-pos  { color: #15803d; background: #f0fdf4; }
+.coa-card__bal.is-neg  { color: #b91c1c; background: #fef2f2; }
+.coa-card__bal.is-zero { color: #94a3b8; background: #f8fafc; font-weight: 700; }
+
+.coa-card__menu {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.coa-card__menu:hover { background: #f1f5f9; color: #0f172a; }
+
+.coa-empty--v2 {
+  text-align: center;
+  padding: 40px 20px;
+  color: #94a3b8;
+  background: #f8fafc;
+  border: 2px dashed #cbd5e1;
+  border-radius: 14px;
+  margin-bottom: 16px;
+}
+.coa-empty--v2 i { font-size: 38px; color: #cbd5e1; }
+.coa-empty--v2 p { font-size: 14px; font-weight: 700; margin-top: 10px; color: #64748b; }
+
+/* Responsive */
+@media (max-width: 720px) {
+  .coa-group-header--v2 {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .coa-cards--v2 { grid-template-columns: 1fr; }
+}
+
+/* v5.10.40 — Card popover (replaces confirm() for edit/delete/promote) */
+.coa-card-popover {
+  position: fixed;
+  z-index: 10001;
+  min-width: 220px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.14), 0 2px 6px rgba(15, 23, 42, 0.06);
+  padding: 6px;
+  animation: coaPopoverIn 120ms ease-out;
+}
+@keyframes coaPopoverIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.coa-card-popover__item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  cursor: pointer;
+  text-align: start;
+  transition: background 100ms ease;
+}
+.coa-card-popover__item:hover:not([disabled]) { background: #f1f5f9; }
+.coa-card-popover__item:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+  font-size: 12px;
+}
+.coa-card-popover__item i { color: #6366f1; width: 18px; text-align: center; }
+.coa-card-popover__item--danger { color: #b91c1c; }
+.coa-card-popover__item--danger i { color: #dc2626; }
+.coa-card-popover__item--danger:hover:not([disabled]) { background: #fef2f2; }
+.coa-card-popover__divider {
+  height: 1px;
+  background: #f1f5f9;
+  margin: 4px 0;
+}
+
 /* v5.10.39 — Waste form GL routing hint */
 .waste-gl-hint {
   display: inline-flex;

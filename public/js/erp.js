@@ -648,9 +648,25 @@ function _coaBuildTree() {
     });
   }
 
+  // v5.10.41 — only the 5 roots are open by default; all descendants start
+  // collapsed so the user sees a clean overview and can drill down on demand.
   container.innerHTML = roots.length
-    ? roots.map(function(a) { return _coaRenderNode(a, true); }).join('')
+    ? roots.map(function(a) { return _coaRenderNode(a, true, /*depth*/0); }).join('')
     : '<div class="coa-empty"><i class="fas fa-folder-open"></i><p>لا حسابات في هذا التصنيف</p></div>';
+
+  // v5.10.41 — restore persisted tree-panel width (set by user via the
+  // resize handle). Saved on every mouseup of the panel.
+  var panel = document.querySelector('.coa-tree-panel');
+  if (panel) {
+    var saved = parseInt(localStorage.getItem('coaTreeWidth') || '0', 10);
+    if (saved >= 320 && saved <= 800) panel.style.width = saved + 'px';
+    if (!panel._coaWidthBound) {
+      panel._coaWidthBound = true;
+      panel.addEventListener('mouseup', function(){
+        try { localStorage.setItem('coaTreeWidth', String(panel.getBoundingClientRect().width | 0)); } catch(_) {}
+      });
+    }
+  }
 }
 
 // v5.10.35 — Render the top type-filter chip strip with live counts + balances
@@ -711,7 +727,8 @@ window.coaToggleShowEmpty = function(checked) {
 window.coaViewLedger  = function(id) { if (typeof coaSelectNode === 'function') coaSelectNode(id); };
 window.coaEditAccount = function(id) { if (typeof coaSelectNode === 'function') coaSelectNode(id); };
 
-function _coaRenderNode(acc, open) {
+function _coaRenderNode(acc, open, depth) {
+  if (typeof depth !== 'number') depth = 0;
   var children = _coaChildrenOf(acc.id);
   // v5.10.38 — when hideEmpty mode is on, drop children with no movements
   // anywhere below them (and no movement of their own). Roots 1-5 are
@@ -722,7 +739,10 @@ function _coaRenderNode(acc, open) {
   }
   var isGroup = children.length > 0;
   var lvl = acc.level || 1;
-  var chevronDir = open ? 'fa-chevron-down' : 'fa-chevron-left';
+  // v5.10.41 — only the 5 root nodes (depth 0) auto-open. Deeper folders
+  // start collapsed so the user gets a clean overview, not a wall of rows.
+  var openSelf = (depth === 0) ? !!open : false;
+  var chevronDir = openSelf ? 'fa-chevron-down' : 'fa-chevron-left';
   var toggle = isGroup ? '<span class="coa-node-toggle"><i class="fas ' + chevronDir + '"></i></span>' : '<span style="width:16px;display:inline-block;"></span>';
   var iconSize = lvl <= 1 ? 18 : lvl === 2 ? 16 : lvl === 3 ? 14 : 12;
   var icon = isGroup
@@ -732,9 +752,12 @@ function _coaRenderNode(acc, open) {
   var fontSize = lvl <= 1 ? 15 : lvl === 2 ? 14 : lvl === 3 ? 13 : 12;
   var activeClass = _coaSelectedId === acc.id ? ' active' : '';
 
-  // v5.10.35 — type/level badges + warning indicator
-  var typeBadge = '<span class="coa-type-badge coa-type-badge--' + (acc.type || 'asset') + '" title="' + (acc.type || '') + '"></span>';
-  var levelBadge = '<span class="coa-level-badge">L' + lvl + '</span>';
+  // v5.10.41 — type-badge is now an inline-start border on the row itself
+  // (set via [data-type] CSS), and the L1 level badge is removed from the
+  // default view to give the name full breathing room. Both can be brought
+  // back via inspector if needed; the row no longer wastes pixels on chrome.
+  var typeBadge = '';
+  var levelBadge = '';
   // Detect issues against the diag snapshot
   var warnHtml = '';
   var snap = window._coaDiagSnap;
@@ -770,41 +793,25 @@ function _coaRenderNode(acc, open) {
     '</span>';
   }
 
-  // v5.10.39 — mini-stat showing how many descendants have movements (folders only)
-  var miniStatHtml = '';
-  if (isGroup) {
-    var withMov = children.filter(function(c){
-      return _coaHasMovements ? _coaHasMovements(c.id) : ((c.movementCount||0) > 0);
-    }).length;
-    var miniCls = withMov === 0 ? 'coa-mini-stat coa-mini-stat--zero' : 'coa-mini-stat';
-    miniStatHtml = '<span class="' + miniCls + '" title="عدد الأبناء الذين لديهم حركات">' +
-      withMov + '/' + children.length +
-    '</span>';
-  } else if ((acc.movementCount || 0) > 0) {
-    miniStatHtml = '<span class="coa-mini-stat" title="عدد الحركات">' +
-      Number(acc.movementCount).toLocaleString('ar-SA') + ' حركة' +
-    '</span>';
-  }
-
-  // v5.10.39 — hover-reveal action buttons
+  // v5.10.41 — actions only on hover; mini-stat removed from default view.
+  // The row is now: chevron + icon + NAME + balance. Everything else is
+  // visible only when needed (warn icon = there's an issue, hover = actions).
   var actionsHtml = '<span class="coa-node-actions" onclick="event.stopPropagation();">' +
     '<button title="عرض الأستاذ" onclick="coaViewLedger(\'' + acc.id + '\')"><i class="fas fa-eye"></i></button>' +
-    (isGroup ? '' : '<button title="تعديل" onclick="coaEditAccount(\'' + acc.id + '\')"><i class="fas fa-pen"></i></button>') +
   '</span>';
 
+  // Right-side cluster: warn (only if real issue) + balance + actions.
+  var rightHtml = '<span class="coa-node-right">' + warnHtml + balHtml + actionsHtml + '</span>';
+
   var html = '<div class="coa-node" data-id="' + acc.id + '" data-level="' + lvl + '" data-type="' + (acc.type||'') + '">';
-  html += '<div class="coa-node-row' + activeClass + '" style="font-weight:' + fontW + ';font-size:' + fontSize + 'px;" onclick="coaSelectNode(\'' + acc.id + '\')">';
-  html += toggle + ' ' + typeBadge + icon + ' ';
+  html += '<div class="coa-node-row' + activeClass + '" style="font-weight:' + fontW + ';font-size:' + fontSize + 'px;" onclick="coaSelectNode(\'' + acc.id + '\')" title="' + (acc.nameAr||'').replace(/"/g,'&quot;') + ' — ' + (acc.code||'') + '">';
+  html += toggle + icon;
   html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
-  html += warnHtml;
-  html += levelBadge;
-  html += miniStatHtml;
-  html += balHtml;
-  html += actionsHtml;
+  html += rightHtml;
   html += '</div>';
   if (isGroup) {
-    html += '<div class="coa-node-children' + (open ? ' open' : '') + '" style="margin-inline-start:30px;padding-inline-start:10px;border-inline-start:2px dotted #cbd5e1;">';
-    html += children.map(function(c) { return _coaRenderNode(c, false); }).join('');
+    html += '<div class="coa-node-children' + (openSelf ? ' open' : '') + '" style="margin-inline-start:22px;padding-inline-start:8px;border-inline-start:2px dotted #cbd5e1;">';
+    html += children.map(function(c) { return _coaRenderNode(c, false, depth + 1); }).join('');
     html += '</div>';
   }
   html += '</div>';
@@ -1371,6 +1378,7 @@ function _coaShowRepairReport(j) {
     orphans: 'يتيمة',
     typeMismatch: 'نوع لا يطابق الأب',
     codeTypeMismatch: 'النوع لا يطابق الكود',
+    rootCodeMismatch: 'الجذر الفعلي لا يطابق الكود',
     duplicateCodes: 'أكواد مكرَّرة',
     balanceWithoutEntries: 'رصيد بدون قيود فعلية',
     levelMismatch: 'مستويات خاطئة',
@@ -1460,8 +1468,9 @@ function _coaShowRepairReport(j) {
           '</table>' +
           '<div style="margin-top:14px;padding:10px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:13px;color:#0369a1;">' +
             '<i class="fas fa-circle-check"></i> ' +
-            'أُعيد احتساب أرصدة <b>' + (j.balancesRecomputed||0) + '</b> حساب من قيود اليومية الفعلية. ' +
-            'الآن الأرقام في الشجرة = مجموع <code>gl_entries</code> فقط — لا أرصدة وهمية.' +
+            'أُعيد احتساب أرصدة <b>' + (j.balancesRecomputed||0) + '</b> حساب من قيود اليومية الفعلية' +
+            ((j.rootFixed||[]).length ? ' · نُقل <b>' + j.rootFixed.length + '</b> حساب لجذره الصحيح' : '') +
+            '. الآن الأرقام في الشجرة = مجموع <code>gl_entries</code> فقط — لا أرصدة وهمية.' +
           '</div>' +
           detailsHtml +
           '<div style="margin-top:16px;text-align:left;">' +

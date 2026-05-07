@@ -977,9 +977,23 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
    ═══════════════════════════════════════ */
 .coa-layout { display: flex; height: calc(100vh - 140px); gap: 0; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; background: #fff; direction: rtl; }
 
-/* Tree Sidebar */
-.coa-tree-panel { width: 280px; min-width: 240px; border-left: 1px solid #e2e8f0; background: #f8fafc; display: flex; flex-direction: column; overflow: hidden; direction: rtl; }
-.coa-main-panel { flex: 1; overflow-y: auto; padding: 20px; background: #fff; direction: rtl; }
+/* v5.10.41 — Tree panel widened (280→clamp 360-560px) and made user-resizable
+   so long account names display fully. The default reads the saved width
+   from localStorage (coaTreeWidth) when present. */
+.coa-tree-panel {
+  width: clamp(360px, 32vw, 560px);
+  min-width: 320px;
+  max-width: 640px;
+  border-left: 1px solid #e2e8f0;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  direction: rtl;
+  position: relative;
+  resize: horizontal;
+}
+.coa-main-panel { flex: 1; min-width: 0; overflow-y: auto; padding: 20px; background: #fff; direction: rtl; }
 .coa-tree-header { padding: 10px; border-bottom: 1px solid #e2e8f0; }
 .coa-search { width: 100%; padding: 8px 12px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 13px; font-family: inherit; background: #fff; }
 .coa-search:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
@@ -987,7 +1001,23 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 
 /* Tree Node */
 .coa-node { cursor: pointer; user-select: none; }
-.coa-node-row { display: flex; align-items: center; gap: 6px; padding: 7px 10px; margin: 1px 6px; border-radius: 8px; font-size: 13px; transition: background 0.1s; direction: rtl; text-align: right; }
+/* v5.10.41 — name-first row layout. Grid columns: [chevron] [icon] [name flex] [right-side stats]
+   The name now gets all available space; secondary chips collapse on narrow widths. */
+.coa-node-row {
+  display: grid;
+  grid-template-columns: 16px auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px 7px 14px;
+  margin: 1px 6px;
+  border-radius: 8px;
+  font-size: 13px;
+  transition: background 0.1s, box-shadow 0.1s;
+  direction: rtl;
+  text-align: right;
+  border-inline-start: 3px solid transparent;
+  min-width: 0;
+}
 .coa-node-row:hover { background: #e2e8f0; }
 .coa-node-row.active { background: #dbeafe; color: #1e40af; font-weight: 800; }
 .coa-node-toggle { width: 16px; text-align: center; font-size: 10px; color: #94a3b8; flex-shrink: 0; }
@@ -1003,7 +1033,20 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 .coa-node[data-level="3"] > .coa-node-row .coa-node-icon { font-size: 14px; }
 .coa-node[data-level="4"] > .coa-node-row { font-size: 12px; font-weight: 400; color: #475569; }
 .coa-node[data-level="4"] > .coa-node-row .coa-node-icon { font-size: 11px; }
-.coa-node-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.coa-node-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* v5.10.41 — colored left edge replaces the separate type-badge dot.
+   Asset=blue, Liability=red, Equity=purple, Revenue=green, Expense=amber. */
+.coa-node[data-type="asset"]     > .coa-node-row { border-inline-start-color: #0ea5e9; }
+.coa-node[data-type="liability"] > .coa-node-row { border-inline-start-color: #dc2626; }
+.coa-node[data-type="equity"]    > .coa-node-row { border-inline-start-color: #7c3aed; }
+.coa-node[data-type="revenue"]   > .coa-node-row { border-inline-start-color: #16a34a; }
+.coa-node[data-type="expense"]   > .coa-node-row { border-inline-start-color: #f59e0b; }
 .coa-node-code { font-size: 10px; color: #94a3b8; font-family: monospace; }
 .coa-node-children { display: none; }
 .coa-node-children.open { display: block; }

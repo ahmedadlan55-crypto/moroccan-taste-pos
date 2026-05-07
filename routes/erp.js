@@ -825,6 +825,67 @@ async function _coaRepairByKeywords(db) {
   return { repaired, skipped };
 }
 
+// v5.10.41 — physically move accounts whose code's first digit doesn't
+// match their actual root ancestor. e.g. an account with code 41xxx
+// sitting under root 5 (cost of sales) gets re-parented under root 4
+// (revenue). The previous _alignTypeWithParent only updated the type
+// field — the account stayed in the wrong subtree. This actually moves it.
+async function _coaFixRootCodeMismatch(db) {
+  const fixed = [];
+  const [allAccs] = await db.query('SELECT id, code, parent_id FROM gl_accounts');
+  const byId = {}, byCode = {};
+  allAccs.forEach(a => { byId[a.id] = a; byCode[a.code] = a; });
+
+  function ascendantCode(a) {
+    let walker = a, hops = 0;
+    const seen = new Set();
+    while (walker && walker.parent_id) {
+      if (seen.has(walker.id)) return null;
+      seen.add(walker.id);
+      walker = byId[walker.parent_id] || null;
+      if (++hops > 50) return null;
+    }
+    return walker ? walker.code : null;
+  }
+
+  for (const a of allAccs) {
+    const codeStr = String(a.code || '');
+    if (!codeStr) continue;
+    const codeRoot = codeStr.charAt(0);
+    if (['1','2','3','4','5'].indexOf(codeRoot) < 0) continue;
+    if (codeStr === codeRoot) continue; // root itself — never move
+    const actualRoot = ascendantCode(a);
+    if (!actualRoot || actualRoot === codeRoot) continue;
+
+    // Find the best new parent: walk up the code prefix until we hit a
+    // node that exists under the correct root.
+    let candidate = null;
+    let walk = codeStr.substring(0, codeStr.length - 1);
+    while (walk.length > 0) {
+      const cand = byCode[walk];
+      if (cand) {
+        const candRoot = ascendantCode(cand);
+        if (cand.code === codeRoot || candRoot === codeRoot) { candidate = cand; break; }
+      }
+      walk = walk.substring(0, walk.length - 1);
+    }
+    if (!candidate) candidate = byCode[codeRoot] || null;
+    if (!candidate || candidate.id === a.id) continue;
+
+    try {
+      await db.query('UPDATE gl_accounts SET parent_id = ? WHERE id = ?', [candidate.id, a.id]);
+      fixed.push({
+        id: a.id, code: a.code,
+        oldRootCode: actualRoot,
+        newParentCode: candidate.code,
+        expectedRootCode: codeRoot
+      });
+      byId[a.id].parent_id = candidate.id;
+    } catch (_) { /* skip on FK error */ }
+  }
+  return fixed;
+}
+
 async function _coaAlignTypeWithParent(db) {
   const fixed = [];
   const [rows] = await db.query('SELECT id, code, type FROM gl_accounts WHERE code IS NOT NULL');
@@ -918,6 +979,10 @@ router.post('/gl/deep-repair', async (req, res) => {
       const before = await _coaDiagnoseSnapshot(conn);
       try { await ensureCoreAccounts(conn); } catch(_) {}
       const treeFixed   = await _coaFixRootsAndOrphansByPrefix(conn);
+      // v5.10.41 — physically re-parent any account whose code's first
+      // digit doesn't match its actual root (e.g. 41xxx under root 5).
+      // Runs BEFORE keyword reclassification so the latter has a clean tree.
+      const rootFixes   = await _coaFixRootCodeMismatch(conn);
       const reclass     = await _coaRepairByKeywords(conn);
       const typeFixes   = await _coaAlignTypeWithParent(conn);
       const lvl         = await _coaAutoFixLevels(conn);
@@ -928,6 +993,7 @@ router.post('/gl/deep-repair', async (req, res) => {
         reclassified: reclass.repaired,
         skipped: reclass.skipped,
         typeFixed: typeFixes,
+        rootFixed: rootFixes,        // v5.10.41
         treeFixed,
         orphansPromoted: lvl.orphansPromoted,
         levelsCorrected: lvl.levelsCorrected,

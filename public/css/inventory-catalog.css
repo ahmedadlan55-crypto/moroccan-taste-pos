@@ -715,6 +715,16 @@
   color: #4338ca;
 }
 
+/* v5.10.41 — right-side cluster keeps badges + balance + actions together,
+   so the name has the full remaining grid column. */
+.coa-node-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 /* Flash animation for "jump to account" from diagnose rows */
 @keyframes coaNodeFlash {
   0%, 100% { background: transparent; }

@@ -253,57 +253,101 @@ router.post('/gl/accounts/:id/folder', async (req, res) => {
   }
 });
 
-// v5.10.46 — bulk import COA from an Excel file. The frontend reads the
-// xlsx via SheetJS, posts an array of rows here. We sort by level ASC so
-// parents are upserted before children (the codeMap built in the first
-// pass ties parentCode -> id). Atomic: any single failure rolls back the
-// whole batch.
+// v5.10.48 — bulk import COA from an Excel file. Match priority:
+//   (1) by internal `id` (column "المعرف (لا تحذف)" in the export) —
+//       this is THE way to avoid duplicates when codes change in Excel,
+//       and the way structural edits (rename/reparent) actually take
+//       effect on the existing row instead of creating a sibling.
+//   (2) by `code` if id is missing (legacy / hand-built files).
+//   (3) otherwise INSERT new.
+//
+// Side effects we keep consistent in the same transaction:
+//   - When a row's code changes, gl_entries.account_code gets the new
+//     code so reports and ledger views don't go stale.
+//   - codeMap is updated as we go, so children reparented to a renamed
+//     parent resolve to the right id within the same batch.
 router.post('/gl/accounts/import', async (req, res) => {
   const { rows } = req.body || {};
   if (!Array.isArray(rows) || !rows.length) {
     return res.status(400).json({ success: false, error: 'لا توجد صفوف للاستيراد' });
   }
-  let inserted = 0, updated = 0, skipped = 0;
+  let inserted = 0, updated = 0, skipped = 0, codeChanges = 0, parentChanges = 0;
   const errors = [];
   try {
     await db.withTransaction(async (conn) => {
-      const codeMap = {};
-      const [existing] = await conn.query('SELECT id, code FROM gl_accounts');
-      existing.forEach(e => { codeMap[String(e.code)] = e.id; });
+      // Build two indices over the CURRENT DB state.
+      const [existing] = await conn.query('SELECT id, code, parent_id FROM gl_accounts');
+      const byId   = {};
+      const byCode = {};
+      existing.forEach(e => {
+        byId[String(e.id)] = { id: e.id, code: String(e.code || ''), parent_id: e.parent_id || null };
+        if (e.code) byCode[String(e.code)] = e.id;
+      });
 
+      // Sort by level ASC so parents are upserted before children: when a
+      // child resolves its parentCode lookup, the parent's row is already
+      // in byCode (and any code rename has already been applied).
       const sorted = rows.slice().sort((a, b) => {
         return Number(a['المستوى'] || a.level || 1) - Number(b['المستوى'] || b.level || 1);
       });
 
       for (const r of sorted) {
-        const code = String(r['الكود'] || r.code || '').trim();
-        if (!code) { skipped++; errors.push({ row: r, reason: 'empty-code' }); continue; }
+        const id     = String(r['المعرف (لا تحذف)'] || r.id || '').trim();
+        const code   = String(r['الكود'] || r.code || '').trim();
+        if (!code) { skipped++; errors.push({ id, code: '', reason: 'empty-code' }); continue; }
         const nameAr = String(r['الاسم العربي'] || r.nameAr || '').trim();
         const nameEn = String(r['الاسم الإنج'] || r['الاسم الانجليزي'] || r.nameEn || '').trim();
-        const type = String(r['النوع'] || r.type || 'asset').trim();
+        const type   = String(r['النوع'] || r.type || 'asset').trim();
         const parentCode = String(r['كود الأب'] || r.parentCode || '').trim();
-        const level = Number(r['المستوى'] || r.level || 1);
-        const kindRaw = String(r['النوع الهيكلي'] || r.kind || '').trim();
+        const level  = Number(r['المستوى'] || r.level || 1);
+        const kindRaw= String(r['النوع الهيكلي'] || r.kind || '').trim();
         const isFolder = (kindRaw === 'رئيسي' || kindRaw === 'folder' || level <= 2) ? 1 : 0;
-        const parentId = parentCode ? (codeMap[parentCode] || null) : null;
+        const parentId = parentCode ? (byCode[parentCode] || null) : null;
 
-        if (codeMap[code]) {
+        // Resolve the target row: id wins, code is fallback.
+        const target = id && byId[id] ? byId[id] : (byCode[code] ? byId[byCode[code]] : null);
+
+        if (target) {
+          // Collision check: if we'd be assigning a code that already
+          // belongs to a DIFFERENT row, refuse this single row.
+          const claimant = byCode[code];
+          if (claimant && claimant !== target.id) {
+            skipped++;
+            errors.push({ id: target.id, code, reason: 'code-collision-with:' + claimant });
+            continue;
+          }
+          const codeChanged = String(target.code) !== code;
+          const parentChanged = String(target.parent_id || '') !== String(parentId || '');
           await conn.query(
-            'UPDATE gl_accounts SET name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_folder=? WHERE code=?',
-            [nameAr, nameEn, type, parentId, level, isFolder, code]);
+            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_folder=? WHERE id=?',
+            [code, nameAr, nameEn, type, parentId, level, isFolder, target.id]);
+          if (codeChanged) {
+            // Mirror denormalized account_code on every gl_entry so reports
+            // see the new code without waiting for deep-repair.
+            await conn.query('UPDATE gl_entries SET account_code = ? WHERE account_id = ?', [code, target.id]);
+            // Refresh both indices to reflect the rename.
+            delete byCode[String(target.code)];
+            byCode[code] = target.id;
+            target.code = code;
+            codeChanges++;
+          }
+          if (parentChanged) { target.parent_id = parentId; parentChanges++; }
           updated++;
         } else {
-          const newId = 'GL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+          // Insert new. Honour the file's id if present (so re-importing
+          // the same file twice is idempotent), otherwise mint a new one.
+          const newId = id || ('GL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7));
           await conn.query(
             'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_folder) VALUES (?,?,?,?,?,?,?,?)',
             [newId, code, nameAr, nameEn, type, parentId, level, isFolder]);
-          codeMap[code] = newId;
+          byCode[code] = newId;
+          byId[newId]  = { id: newId, code: code, parent_id: parentId };
           inserted++;
         }
       }
-      console.log('[gl/accounts/import] inserted=' + inserted + ' updated=' + updated + ' skipped=' + skipped);
+      console.log('[gl/accounts/import] inserted=' + inserted + ' updated=' + updated + ' skipped=' + skipped + ' codeRenames=' + codeChanges + ' parentChanges=' + parentChanges);
     });
-    res.json({ success: true, inserted, updated, skipped, errors });
+    res.json({ success: true, inserted, updated, skipped, codeChanges, parentChanges, errors });
   } catch (e) {
     console.error('[gl/accounts/import] FAILED:', e.message);
     res.status(500).json({ success: false, error: e.message });

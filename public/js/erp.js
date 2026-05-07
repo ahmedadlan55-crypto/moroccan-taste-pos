@@ -1810,9 +1810,14 @@ window.coaExportExcel = async function() {
   var sorted = _erpAccounts.slice().sort(function(a,b){
     return String(a.code||'').localeCompare(String(b.code||''));
   });
+  // v5.10.48 — first column is the internal id. The header explicitly
+  // tells the user not to delete it: re-import matches by this id so
+  // edits to code/name/parent persist correctly without creating
+  // duplicate rows. Removing the id falls back to matching by code.
   var rows = sorted.map(function(a, idx){
     var parent = a.parentId ? _erpAccounts.find(function(p){ return p.id === a.parentId; }) : null;
     return {
+      'المعرف (لا تحذف)': a.id || '',
       'الترتيب':       idx + 1,
       'الكود':         a.code || '',
       'الاسم العربي':  a.nameAr || '',
@@ -1825,7 +1830,7 @@ window.coaExportExcel = async function() {
     };
   });
   var ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = [{wch:8},{wch:12},{wch:32},{wch:32},{wch:12},{wch:10},{wch:8},{wch:12},{wch:14}];
+  ws['!cols'] = [{wch:22},{wch:8},{wch:12},{wch:32},{wch:32},{wch:12},{wch:10},{wch:8},{wch:12},{wch:14}];
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'دليل الحسابات');
   var stamp = new Date().toISOString().slice(0, 10);
@@ -1863,13 +1868,19 @@ function _coaConfirmImport(rows) {
   window._coaImportRows = rows;
   var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
   var sample = rows.slice(0, 5);
+  var withId = rows.filter(function(r){ return String(r['المعرف (لا تحذف)'] || r.id || '').trim(); }).length;
   var sampleRows = sample.map(function(r){
+    var idVal = String(r['المعرف (لا تحذف)'] || r.id || '').trim();
+    var matchBadge = idVal
+      ? '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:800;">سيُطابق بالـ ID</span>'
+      : '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:800;">سيُطابق بالكود</span>';
     return '<tr>' +
       '<td>' + esc(r['الكود'] || r.code || '') + '</td>' +
       '<td>' + esc(r['الاسم العربي'] || r.nameAr || '') + '</td>' +
       '<td>' + esc(r['كود الأب'] || r.parentCode || '—') + '</td>' +
       '<td>' + esc(r['المستوى'] || r.level || '') + '</td>' +
       '<td>' + esc(r['النوع الهيكلي'] || r.kind || '') + '</td>' +
+      '<td>' + matchBadge + '</td>' +
     '</tr>';
   }).join('');
   var html =
@@ -1883,7 +1894,9 @@ function _coaConfirmImport(rows) {
         '<div style="padding:16px 22px;">' +
           '<div style="padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-size:13px;color:#0369a1;line-height:1.7;">' +
             '<i class="fas fa-circle-info"></i> ' +
-            'سيتم upsert: حسابات بنفس الكود تُحدَّث، الجديدة تُضاف. الأبناء يُربطون بآبائهم بالكود.' +
+            '<strong>' + withId + '</strong> صف بـ ID (تَحديث مَضمون بدون ازدواج) · ' +
+            '<strong>' + (rows.length - withId) + '</strong> صف بدون ID (سيُطابق بالكود — أو يُدرَج إن لم يَكن موجودًا).' +
+            '<br/><span style="font-size:12px;color:#475569;">الأبناء يُربطون بآبائهم بالكود الجديد بعد التحديث، فالهيكل يَنعكس فوريًا.</span>' +
           '</div>' +
           '<table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:12.5px;">' +
             '<thead><tr style="background:#f1f5f9;">' +
@@ -1892,6 +1905,7 @@ function _coaConfirmImport(rows) {
               '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">كود الأب</th>' +
               '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">المستوى</th>' +
               '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">رئيسي/فرعي</th>' +
+              '<th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">المُطابقة</th>' +
             '</tr></thead>' +
             '<tbody>' + sampleRows + '</tbody>' +
           '</table>' +
@@ -1928,7 +1942,9 @@ window.coaRunImport = function() {
       }
       var m = document.getElementById('coaImportModal'); if (m) m.remove();
       window._coaImportRows = null;
-      showToast('تم الاستيراد: ' + j.inserted + ' جديد · ' + j.updated + ' محدَّث · ' + j.skipped + ' متخطٍّ');
+      var renameNote = (j.codeChanges || j.parentChanges) ?
+        ' · ' + (j.codeChanges || 0) + ' كود مُعاد · ' + (j.parentChanges || 0) + ' أب مُعاد' : '';
+      showToast('تم الاستيراد: ' + j.inserted + ' جديد · ' + j.updated + ' محدَّث · ' + j.skipped + ' متخطٍّ' + renameNote);
       if (typeof _erpReloadAccountsCacheBust === 'function') _erpReloadAccountsCacheBust();
       else if (typeof erpLoadAccountsList_ === 'function') erpLoadAccountsList_();
     })

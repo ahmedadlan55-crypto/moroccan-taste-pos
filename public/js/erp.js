@@ -2043,6 +2043,7 @@ function _coaShowAppliedChangesModal(j) {
   var rowsHtml = changes.map(function(c){
     var d = c.diff || {};
     var parts = [];
+    if (d.id)     parts.push('المعرف: <span style="color:#dc2626;font-family:monospace;font-size:11px;">' + esc(d.id.from) + '</span> → <span style="color:#16a34a;font-weight:800;font-family:monospace;font-size:11px;">' + esc(d.id.to) + '</span>');
     if (d.code)   parts.push('الكود: <span style="color:#dc2626;">' + esc(d.code.from) + '</span> → <span style="color:#16a34a;font-weight:800;">' + esc(d.code.to) + '</span>');
     if (d.name)   parts.push('الاسم: <span style="color:#dc2626;">' + esc(d.name.from) + '</span> → <span style="color:#16a34a;font-weight:800;">' + esc(d.name.to) + '</span>');
     if (d.level)  parts.push('المستوى: <span style="color:#dc2626;">L' + esc(d.level.from) + '</span> → <span style="color:#16a34a;font-weight:800;">L' + esc(d.level.to) + '</span>');

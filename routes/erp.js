@@ -358,16 +358,39 @@ router.post('/gl/accounts/import', async (req, res) => {
           else { parentMissing++; errors.push({ id, code, reason: 'parent-code-not-found:' + parentCode }); }
         }
 
-        // v5.10.50 — target resolution: id → name → code (the user said
-        // "match by name not by code"; id is the safest tier so it wins
-        // when present, code is the legacy fallback).
+        // v5.10.50 — target resolution priority: id → name → code.
+        // v5.10.52 — when an id is specified BUT not found in the DB,
+        // we no longer silently fall back to name — that was causing
+        // edited rows to overwrite UNRELATED accounts. Instead we treat
+        // it as a rename intent: try a unique name match, and if found,
+        // change that row's id to the new value (cascading FK refs).
+        // If the name match is ambiguous, we refuse the row.
         let target = null, matchedBy = null;
+        let idRenameFromId = null;     // set when we're about to change the PK
         if (id && byId[id]) { target = byId[id]; matchedBy = 'id'; idMatches++; }
-        if (!target && nameAr) {
+        else if (id) {
+          // ID specified, but doesn't exist. Did the user rename it?
+          if (nameAr) {
+            const nn = normName(nameAr);
+            const matches = (byName[nn] || []);
+            if (matches.length === 1) {
+              target = byId[matches[0]];
+              matchedBy = 'id-rename';
+              idRenameFromId = target.id;
+              nameMatches++;
+            } else if (matches.length > 1) {
+              skipped++;
+              errors.push({ id, code, reason: 'id-not-found-and-name-ambiguous:' + nameAr });
+              continue;
+            }
+            // Else: zero name matches → fall through to INSERT below.
+          }
+        }
+        if (!target && nameAr && !id) {
           const t = lookupByName(nameAr);
           if (t) { target = byId[t]; matchedBy = 'name'; nameMatches++; }
         }
-        if (!target && byCode[code]) { target = byId[byCode[code]]; matchedBy = 'code'; codeMatches++; }
+        if (!target && byCode[code] && !id) { target = byId[byCode[code]]; matchedBy = 'code'; codeMatches++; }
 
         if (target) {
           // Collision: would we steal a code another row owns?
@@ -376,6 +399,39 @@ router.post('/gl/accounts/import', async (req, res) => {
             skipped++;
             errors.push({ id: target.id, code, reason: 'code-collision-with:' + claimant });
             continue;
+          }
+          // v5.10.52 — handle id rename if requested (matchedBy='id-rename').
+          // The FK on gl_entries.account_id has no ON UPDATE CASCADE, so we
+          // briefly suspend FK checks for the rename. parent_id is a plain
+          // VARCHAR (no FK), so we just UPDATE every child manually.
+          let idChanged = false;
+          if (idRenameFromId && id && id !== idRenameFromId) {
+            // Refuse if the new id is already in use by another row
+            if (byId[id]) {
+              skipped++;
+              errors.push({ id, code, reason: 'id-rename-collision-with:' + id });
+              continue;
+            }
+            await conn.query('SET FOREIGN_KEY_CHECKS = 0');
+            await conn.query('UPDATE gl_accounts SET id = ? WHERE id = ?', [id, idRenameFromId]);
+            await conn.query('UPDATE gl_accounts SET parent_id = ? WHERE parent_id = ?', [id, idRenameFromId]);
+            await conn.query('UPDATE gl_entries SET account_id = ? WHERE account_id = ?', [id, idRenameFromId]);
+            await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+            console.log('[gl/accounts/import] ID RENAME ' + idRenameFromId + ' → ' + id + ' (account: ' + nameAr + ')');
+            // Refresh indices to reflect the new id
+            byId[id] = byId[idRenameFromId];
+            byId[id].id = id;
+            delete byId[idRenameFromId];
+            // byCode keeps the same code → still points at the old id var,
+            // so re-point it to the new id.
+            if (byCode[target.code]) byCode[target.code] = id;
+            // byName entry holds the old id; replace it.
+            const nnX = normName(target.name_ar);
+            if (nnX && byName[nnX]) {
+              byName[nnX] = byName[nnX].map(x => x === idRenameFromId ? id : x);
+            }
+            target = byId[id];
+            idChanged = true;
           }
           const oldName = target.name_ar;
           const oldCode = target.code;
@@ -416,9 +472,10 @@ router.post('/gl/accounts/import', async (req, res) => {
           if (parentChanged) { target.parent_id = parentId; parentChanges++; }
           if (levelChanged) { target.level = level; levelChanges++; }
           if (orderChanged) { target.display_order = effectiveOrder; orderChanges++; }
-          // Build the diff payload for the response (only non-trivial changes)
-          if (codeChanged || nameChanged || parentChanged || levelChanged || orderChanged) {
+          // v5.10.52 — diff includes id when renamed
+          if (codeChanged || nameChanged || parentChanged || levelChanged || orderChanged || idChanged) {
             const diff = {};
+            if (idChanged)     diff.id     = { from: idRenameFromId, to: target.id };
             if (codeChanged)   diff.code   = { from: oldCode, to: code };
             if (nameChanged)   diff.name   = { from: oldName, to: nameAr };
             if (levelChanged)  diff.level  = { from: oldLevel, to: level };

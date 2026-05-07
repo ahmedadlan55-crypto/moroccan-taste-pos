@@ -549,6 +549,10 @@ function erpDeleteSupplier(id, name) {
 // ═══════════════════════════════════════
 let _erpAccounts = [];
 var _coaSelectedId = null;
+// v5.10.35 — type filter state (one of '', 'asset','liability','equity','revenue','expense')
+window._coaTypeFilter = window._coaTypeFilter || '';
+// v5.10.35 — diagnose snapshot
+window._coaDiagSnap = null;
 
 function erpLoadAccounts() {
   window._apiBridge.withSuccessHandler(function() {
@@ -592,6 +596,11 @@ function _coaBuildTree() {
   var container = document.getElementById('coaTreeBody');
   if (!container) return;
 
+  // v5.10.35 — refresh top filter chips first
+  _coaRenderTypeChips();
+
+  var typeFilter = window._coaTypeFilter || '';
+
   // Find ONLY the 5 main roots by code (1,2,3,4,5)
   var mainCodes = ['1','2','3','4','5'];
   var roots = _erpAccounts.filter(function(a) {
@@ -606,8 +615,59 @@ function _coaBuildTree() {
   // Final fallback: accounts with no parent
   if (!roots.length) roots = _coaChildrenOf(null);
 
-  container.innerHTML = roots.map(function(a) { return _coaRenderNode(a, false); }).join('');
+  // v5.10.35 — when a type filter is active, hide root branches that don't
+  // match (e.g. selecting 'asset' shows only the "1 الأصول" tree)
+  if (typeFilter) {
+    roots = roots.filter(function(r){ return r.type === typeFilter; });
+  }
+
+  container.innerHTML = roots.length
+    ? roots.map(function(a) { return _coaRenderNode(a, true); }).join('')
+    : '<div class="coa-empty"><i class="fas fa-folder-open"></i><p>لا حسابات في هذا التصنيف</p></div>';
 }
+
+// v5.10.35 — Render the top type-filter chip strip with live counts + balances
+function _coaRenderTypeChips() {
+  var box = document.getElementById('coaTypeChips');
+  if (!box) return;
+  var current = window._coaTypeFilter || '';
+  var fmt = function(n){ return Number(n||0).toLocaleString('en',{maximumFractionDigits:0}); };
+  var chipDef = [
+    { id:'',         label:'الكل',          icon:'fa-layer-group',     cls:'all' },
+    { id:'asset',    label:'الأصول',        icon:'fa-vault',           cls:'asset' },
+    { id:'liability',label:'الالتزامات',    icon:'fa-file-invoice',    cls:'liability' },
+    { id:'equity',   label:'حقوق الملكية',  icon:'fa-handshake',       cls:'equity' },
+    { id:'revenue',  label:'الإيرادات',     icon:'fa-arrow-trend-up',  cls:'revenue' },
+    { id:'expense',  label:'المصروفات',     icon:'fa-arrow-trend-down',cls:'expense' }
+  ];
+  // Compute counts + total balance per type (across leaves only — sum at root level)
+  var stats = { '':{count: _erpAccounts.length, balance: 0}, asset:{count:0,balance:0}, liability:{count:0,balance:0}, equity:{count:0,balance:0}, revenue:{count:0,balance:0}, expense:{count:0,balance:0} };
+  _erpAccounts.forEach(function(a){
+    if (stats[a.type]) {
+      stats[a.type].count++;
+      // Only sum non-group accounts (leaves) to avoid double counting
+      if (!_coaIsGroup(a.id)) stats[a.type].balance += Number(a.balance) || 0;
+    }
+  });
+  // Compute total balance for "All" as sum across types
+  stats[''].balance = stats.asset.balance + stats.liability.balance + stats.equity.balance + stats.revenue.balance + stats.expense.balance;
+
+  box.innerHTML = chipDef.map(function(c){
+    var s = stats[c.id] || { count: 0, balance: 0 };
+    var active = (c.id === current) ? ' is-active' : '';
+    return '<button class="coa-type-chip coa-type-chip--' + c.cls + active + '" data-type="' + c.id + '" onclick="coaSetTypeFilter(\'' + c.id + '\')">' +
+      '<i class="fas ' + c.icon + '"></i>' +
+      '<span class="coa-type-chip__label">' + c.label + '</span>' +
+      '<span class="coa-type-chip__count">' + s.count + '</span>' +
+      (s.balance ? '<span class="coa-type-chip__bal">' + fmt(s.balance) + ' ر.س</span>' : '') +
+    '</button>';
+  }).join('');
+}
+
+window.coaSetTypeFilter = function(type) {
+  window._coaTypeFilter = type || '';
+  _coaBuildTree();
+};
 
 function _coaRenderNode(acc, open) {
   var children = _coaChildrenOf(acc.id);
@@ -623,10 +683,27 @@ function _coaRenderNode(acc, open) {
   var fontSize = lvl <= 1 ? 15 : lvl === 2 ? 14 : lvl === 3 ? 13 : 12;
   var activeClass = _coaSelectedId === acc.id ? ' active' : '';
 
-  var html = '<div class="coa-node" data-id="' + acc.id + '" data-level="' + lvl + '">';
+  // v5.10.35 — type/level badges + warning indicator
+  var typeBadge = '<span class="coa-type-badge coa-type-badge--' + (acc.type || 'asset') + '" title="' + (acc.type || '') + '"></span>';
+  var levelBadge = '<span class="coa-level-badge">L' + lvl + '</span>';
+  // Detect issues against the diag snapshot
+  var warnHtml = '';
+  var snap = window._coaDiagSnap;
+  if (snap && snap.issues) {
+    var hasIssue = false, issueLabel = '';
+    if (snap.issues.orphans && snap.issues.orphans.find(function(x){return x.id === acc.id;})) { hasIssue = true; issueLabel = 'orphan'; }
+    if (!hasIssue && snap.issues.typeMismatch && snap.issues.typeMismatch.find(function(x){return x.id === acc.id;})) { hasIssue = true; issueLabel = 'type-mismatch'; }
+    if (!hasIssue && snap.issues.cycles && snap.issues.cycles.find(function(x){return x.id === acc.id;})) { hasIssue = true; issueLabel = 'cycle'; }
+    if (!hasIssue && snap.issues.levelMismatch && snap.issues.levelMismatch.find(function(x){return x.id === acc.id;})) { hasIssue = true; issueLabel = 'level-mismatch'; }
+    if (hasIssue) warnHtml = '<i class="fas fa-triangle-exclamation coa-warn-icon" title="' + issueLabel + '"></i>';
+  }
+
+  var html = '<div class="coa-node" data-id="' + acc.id + '" data-level="' + lvl + '" data-type="' + (acc.type||'') + '">';
   html += '<div class="coa-node-row' + activeClass + '" style="font-weight:' + fontW + ';font-size:' + fontSize + 'px;" onclick="coaSelectNode(\'' + acc.id + '\')">';
-  html += toggle + ' ' + icon + ' ';
+  html += toggle + ' ' + typeBadge + icon + ' ';
   html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
+  html += warnHtml;
+  html += levelBadge;
   // Show balance (rollup for parents, own for leaves)
   var displayBal = isGroup ? _coaRollupBalance(acc.id) : (Number(acc.balance) || 0);
   if (displayBal !== 0) {
@@ -836,6 +913,268 @@ window.coaFilterTree = function(query) {
     }
   });
 };
+
+// ═══════════════════════════════════════════════════════════════════════
+// v5.10.35 — COA diagnose, repair, suggestions
+// ═══════════════════════════════════════════════════════════════════════
+window.coaOpenDiagnose = function() {
+  var modal = document.getElementById('coaDiagModal');
+  var body  = document.getElementById('coaDiagBody');
+  if (!modal || !body) return;
+  body.innerHTML = '<div class="coa-empty" style="padding:40px;"><i class="fas fa-spinner fa-spin"></i><p>جاري التشخيص...</p></div>';
+  modal.style.display = 'flex';
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/gl/diagnose', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      window._coaDiagSnap = j;
+      _coaRenderDiagnose(j);
+      _coaUpdateDiagBadge(j);
+    })
+    .catch(function(e){
+      body.innerHTML = '<div class="coa-empty" style="color:#ef4444;padding:30px;">' + (e && e.message || 'تعذّر التحميل') + '</div>';
+    });
+};
+window.coaCloseDiagnose = function() {
+  var m = document.getElementById('coaDiagModal'); if (m) m.style.display = 'none';
+};
+
+function _coaUpdateDiagBadge(j) {
+  var badge = document.getElementById('coaDiagBadge');
+  if (!badge) return;
+  var n = (j && j.summary && j.summary.issuesCount) || 0;
+  badge.textContent = n;
+  badge.style.display = n > 0 ? 'inline-flex' : 'none';
+  badge.classList.toggle('coa-action-badge--healthy', n === 0);
+}
+
+function _coaRenderDiagnose(j) {
+  var body = document.getElementById('coaDiagBody');
+  if (!body) return;
+  if (!j || !j.summary) { body.innerHTML = '<div class="coa-empty">لا بيانات</div>'; return; }
+  var s = j.summary, issues = j.issues || {};
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var fmt = function(n){ return Number(n||0).toLocaleString('ar-SA'); };
+
+  // Top summary card
+  var healthClass = s.healthy ? 'coa-diag-summary--healthy' : 'coa-diag-summary--issues';
+  var healthIcon  = s.healthy ? 'fa-check-circle' : 'fa-triangle-exclamation';
+  var headHtml =
+    '<div class="coa-diag-summary ' + healthClass + '">' +
+      '<i class="fas ' + healthIcon + '" style="font-size:28px;"></i>' +
+      '<div>' +
+        '<div style="font-size:18px;font-weight:900;">' + (s.healthy ? 'الشجرة سليمة' : (fmt(s.issuesCount) + ' مشكلة بحاجة لمراجعة')) + '</div>' +
+        '<div style="font-size:12px;color:#475569;">' + fmt(s.accounts) + ' حساب · ' + fmt(s.validEntries) + ' قيد · ' + fmt(s.nullEntries) + ' قيد بدون حساب</div>' +
+      '</div>' +
+      '<div style="margin-inline-start:auto;">' +
+        '<button class="wo-btn wo-btn-secondary" onclick="coaRunAutoRepair()"><i class="fas fa-wand-magic-sparkles"></i><span>إصلاح تلقائي</span></button>' +
+      '</div>' +
+    '</div>';
+
+  // Issue categories
+  var categories = [
+    { key:'orphans',            icon:'fa-unlink',           color:'#dc2626', label:'حسابات يتيمة (parent محذوف)' },
+    { key:'typeMismatch',       icon:'fa-arrows-rotate',     color:'#ea580c', label:'نوع لا يطابق نوع الأب' },
+    { key:'duplicateCodes',     icon:'fa-copy',              color:'#b45309', label:'أكواد مكرَّرة' },
+    { key:'unbalancedJournals', icon:'fa-scale-unbalanced',  color:'#dc2626', label:'قيود غير متوازنة' },
+    { key:'orphanEntries',      icon:'fa-link-slash',        color:'#dc2626', label:'قيود تشير لحساب محذوف' },
+    { key:'missingCoreAccounts',icon:'fa-circle-question',   color:'#7c3aed', label:'حسابات أساسية ناقصة' },
+    { key:'levelMismatch',      icon:'fa-layer-group',       color:'#0e7490', label:'مستوى مختلف عن العمق الفعلي' },
+    { key:'cycles',             icon:'fa-rotate',            color:'#dc2626', label:'حلقات في الشجرة (cycle)' }
+  ];
+
+  var sectionsHtml = '';
+  categories.forEach(function(cat){
+    var arr = issues[cat.key] || [];
+    if (!arr.length) return;
+    sectionsHtml += '<div class="coa-diag-cat">' +
+      '<div class="coa-diag-cat__head" style="border-color:' + cat.color + '33;">' +
+        '<i class="fas ' + cat.icon + '" style="color:' + cat.color + ';"></i>' +
+        '<span class="coa-diag-cat__label">' + cat.label + '</span>' +
+        '<span class="coa-diag-cat__count" style="background:' + cat.color + '22;color:' + cat.color + ';">' + arr.length + '</span>' +
+      '</div>' +
+      '<div class="coa-diag-cat__body">';
+    arr.slice(0, 12).forEach(function(item){
+      var info = '';
+      if (cat.key === 'orphans')           info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · parent_id ' + esc(item.parent_id || '');
+      else if (cat.key === 'typeMismatch') info = (item.code || '') + ' (' + esc(item.child_type || '') + ') تحت ' + (item.parent_code || '') + ' (' + esc(item.parent_type || '') + ')';
+      else if (cat.key === 'duplicateCodes') info = 'كود ' + esc(item.code) + ' مستخدم ' + item.n + ' مرات';
+      else if (cat.key === 'unbalancedJournals') info = (item.journal_number || item.id) + ' · مدين ' + (Number(item.total_debit)||0).toFixed(2) + ' ≠ دائن ' + (Number(item.total_credit)||0).toFixed(2);
+      else if (cat.key === 'orphanEntries') info = (item.account_code || '') + ' — ' + esc(item.account_name || '');
+      else if (cat.key === 'missingCoreAccounts') info = 'كود ' + esc(item);
+      else if (cat.key === 'levelMismatch') info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · مستوى محفوظ ' + item.storedLevel + ' لكن المحسوب ' + item.computedLevel;
+      else if (cat.key === 'cycles') info = (item.code || '') + ' — ' + esc(item.name_ar || '');
+      sectionsHtml += '<div class="coa-diag-row">' + info + '</div>';
+    });
+    if (arr.length > 12) sectionsHtml += '<div class="coa-diag-row coa-diag-row--more">… و' + (arr.length - 12) + ' بند آخر</div>';
+    sectionsHtml += '</div></div>';
+  });
+
+  if (!sectionsHtml) sectionsHtml = '<div class="coa-empty" style="padding:30px;color:#16a34a;"><i class="fas fa-shield-heart" style="font-size:32px;"></i><p style="margin-top:10px;">كل شيء على ما يرام — لا توجد مشاكل في الشجرة 🎉</p></div>';
+
+  body.innerHTML = headHtml + sectionsHtml;
+}
+
+window.coaRunAutoRepair = function() {
+  if (!confirm('سيتم تشغيل سلسلة الإصلاحات التلقائية:\n• إصلاح التصنيفات المُحرَّفة\n• إصلاح الـ orphans والمستويات\n• إعادة تحميل الشجرة بعد ذلك\n\nمتابعة؟')) return;
+  var token = localStorage.getItem('pos_token') || '';
+  if (typeof showToast === 'function') showToast('جاري الإصلاح...', false);
+  // Run repair-classification then auto-fix in sequence
+  fetch('/api/erp/gl/repair-classification', { method:'POST', headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(j1){
+      var fixed1 = (j1 && j1.fixed) || 0;
+      return fetch('/api/erp/gl/auto-fix', { method:'POST', headers: { 'Authorization': 'Bearer ' + token } })
+        .then(function(r){ return r.json(); })
+        .then(function(j2){
+          var fixed2 = ((j2 && j2.orphansPromoted) || 0) + ((j2 && j2.levelsCorrected) || 0);
+          if (typeof showToast === 'function') {
+            showToast('تم — ' + fixed1 + ' تصنيف + ' + fixed2 + ' هيكلية');
+          }
+          // Refresh tree + diagnose
+          if (typeof erpLoadAccountsList_ === 'function') erpLoadAccountsList_();
+          // Refresh diagnose if open
+          if (document.getElementById('coaDiagModal').style.display === 'flex') {
+            setTimeout(function(){ coaOpenDiagnose(); }, 500);
+          }
+        });
+    })
+    .catch(function(e){
+      if (typeof showToast === 'function') showToast('فشل الإصلاح: ' + (e && e.message || ''), true);
+    });
+};
+
+// ─── Suggestions panel (international standard reference) ───
+window.coaOpenSuggestions = function() {
+  var modal = document.getElementById('coaSuggModal');
+  var body  = document.getElementById('coaSuggBody');
+  if (!modal || !body) return;
+  body.innerHTML = _coaBuildSuggestionsHtml();
+  modal.style.display = 'flex';
+};
+window.coaCloseSuggestions = function() {
+  var m = document.getElementById('coaSuggModal'); if (m) m.style.display = 'none';
+};
+
+function _coaBuildSuggestionsHtml() {
+  var STANDARD_TREE = [
+    { code:'1',   name:'الأصول',                                   type:'asset',     en:'Assets' },
+    { code:'11',  name:'الأصول المتداولة',                         type:'asset' },
+    { code:'111', name:'النقدية والبنوك',                          type:'asset',     hint:'كاشير، صناديق، حسابات بنكية، عهد موظفين' },
+    { code:'112', name:'المخزون',                                  type:'asset',     hint:'مواد خام، جاهزة، WIP، تغليف، Finished Goods' },
+    { code:'113', name:'الذمم المدينة',                            type:'asset',     hint:'عملاء، تطبيقات توصيل، سلف موظفين، إيجارات مدفوعة مقدماً' },
+    { code:'114', name:'ضريبة المدخلات',                           type:'asset' },
+    { code:'115', name:'استثمارات قصيرة الأجل',                    type:'asset',     optional:true },
+    { code:'12',  name:'الأصول الثابتة (Non-current)',             type:'asset' },
+    { code:'121', name:'معدات الكافيه',                            type:'asset' },
+    { code:'122', name:'أجهزة POS',                                type:'asset' },
+    { code:'123', name:'الأثاث والديكورات',                        type:'asset' },
+    { code:'124', name:'مجمع الإهلاك (Contra)',                    type:'asset' },
+    { code:'125', name:'الأصول غير الملموسة (تراخيص، علامات)',     type:'asset',     optional:true },
+    { code:'2',   name:'الالتزامات',                                type:'liability' },
+    { code:'21',  name:'الالتزامات المتداولة',                     type:'liability' },
+    { code:'211', name:'الموردون والدائنون',                       type:'liability' },
+    { code:'212', name:'المصروفات المستحقة',                       type:'liability', hint:'رواتب مستحقة، إيجارات، رسوم امتياز' },
+    { code:'213', name:'الضرائب',                                   type:'liability', hint:'VAT مخرجات، زكاة، ضريبة دخل' },
+    { code:'214', name:'القروض قصيرة الأجل',                       type:'liability', optional:true },
+    { code:'22',  name:'الالتزامات طويلة الأجل',                   type:'liability', optional:true },
+    { code:'221', name:'القروض طويلة الأجل',                       type:'liability', optional:true },
+    { code:'222', name:'التزامات الإيجار التشغيلي (IFRS 16)',      type:'liability', optional:true },
+    { code:'3',   name:'حقوق الملكية',                              type:'equity' },
+    { code:'31',  name:'رأس المال',                                 type:'equity' },
+    { code:'32',  name:'الأرباح المبقاة',                           type:'equity' },
+    { code:'33',  name:'المسحوبات / جاري المالك',                  type:'equity' },
+    { code:'34',  name:'الاحتياطيات',                               type:'equity',    optional:true },
+    { code:'4',   name:'الإيرادات',                                  type:'revenue' },
+    { code:'41',  name:'الإيرادات التشغيلية',                       type:'revenue' },
+    { code:'411', name:'مبيعات نقاط البيع (POS)',                  type:'revenue',   hint:'مشروبات، طعام، تجزئة' },
+    { code:'412', name:'مبيعات تطبيقات التوصيل',                   type:'revenue' },
+    { code:'42',  name:'الإيرادات الأخرى',                         type:'revenue' },
+    { code:'421', name:'كاترينج وحفلات خارجية',                    type:'revenue',   optional:true },
+    { code:'422', name:'إيرادات متنوعة (فروقات جرد إيجابية)',      type:'revenue' },
+    { code:'5',   name:'المصروفات',                                  type:'expense' },
+    { code:'51',  name:'تكلفة المبيعات (COGS)',                    type:'expense' },
+    { code:'511', name:'تكلفة المواد المستهلكة',                   type:'expense',   hint:'بن، طعام، تغليف' },
+    { code:'512', name:'الهالك والتوالف وفروقات الجرد',            type:'expense' },
+    { code:'513', name:'فروقات الإنتاج',                            type:'expense',   optional:true },
+    { code:'52',  name:'المصروفات التشغيلية',                      type:'expense' },
+    { code:'521', name:'الرواتب والأجور',                          type:'expense' },
+    { code:'522', name:'الإيجارات والمنافع',                       type:'expense' },
+    { code:'523', name:'التشغيل والصيانة',                         type:'expense' },
+    { code:'524', name:'التسويق والعمولات',                        type:'expense' },
+    { code:'53',  name:'العمومية والإدارية',                       type:'expense' },
+    { code:'531', name:'رسوم الأنظمة والبرامج',                    type:'expense' },
+    { code:'532', name:'الرسوم الحكومية والتراخيص',                type:'expense' },
+    { code:'533', name:'العمولات البنكية ورسوم الدفع والامتياز',    type:'expense' },
+    { code:'534', name:'الضيافة والنثريات',                         type:'expense' },
+    { code:'54',  name:'المصروفات المالية (الفوائد، رسوم تحويل)',  type:'expense',   optional:true },
+    { code:'55',  name:'الإهلاك والاستهلاك',                       type:'expense',   optional:true }
+  ];
+
+  var existingByCode = {};
+  _erpAccounts.forEach(function(a){ existingByCode[a.code] = a; });
+
+  var typeColor = { asset:'#0ea5e9', liability:'#dc2626', equity:'#7c3aed', revenue:'#16a34a', expense:'#f59e0b' };
+
+  var headHtml =
+    '<div style="background:linear-gradient(135deg,#ede9fe,#fae8ff);padding:14px 16px;border-radius:12px;border:1px solid #c4b5fd;margin-bottom:14px;">' +
+      '<div style="font-size:14px;font-weight:800;color:#5b21b6;margin-bottom:6px;"><i class="fas fa-lightbulb"></i> الهيكل المعياري للقطاع — مرجع IFRS / SOCPA / F&B</div>' +
+      '<div style="font-size:12.5px;color:#475569;line-height:1.7;">' +
+      'هذا الهيكل يحاكي معايير المحاسبة الدولية (IFRS) ومجلس المحاسبين السعوديين (SOCPA) مع تخصيصات قطاع المقاهي والمطاعم. ' +
+      'علامة <span style="color:#16a34a;font-weight:700;">✓</span> = موجود · ' +
+      '<span style="color:#dc2626;font-weight:700;">✗</span> = ناقص · ' +
+      '<span style="color:#94a3b8;font-weight:700;">○</span> = اختياري' +
+      '</div>' +
+    '</div>';
+
+  var rowsHtml = STANDARD_TREE.map(function(n){
+    var existing = existingByCode[n.code];
+    var status, statusColor;
+    if (existing) { status = '✓'; statusColor = '#16a34a'; }
+    else if (n.optional) { status = '○'; statusColor = '#94a3b8'; }
+    else { status = '✗'; statusColor = '#dc2626'; }
+    var indentLevel = n.code.length - 1;
+    var indentPx = indentLevel * 18;
+    var pillBg = (typeColor[n.type] || '#94a3b8') + '20';
+    var pillFg = typeColor[n.type] || '#94a3b8';
+
+    var typeMatch = '';
+    if (existing && existing.type !== n.type) {
+      typeMatch = ' <span style="background:#fef3c7;color:#92400e;font-size:9.5px;font-weight:800;padding:1px 5px;border-radius:4px;">نوع غير مطابق</span>';
+    }
+    return '<div class="coa-sugg-row" style="padding-inline-start:' + (8 + indentPx) + 'px;">' +
+      '<span class="coa-sugg-status" style="color:' + statusColor + ';">' + status + '</span>' +
+      '<span class="coa-sugg-code">' + n.code + '</span>' +
+      '<span class="coa-sugg-name">' + n.name + '</span>' +
+      '<span class="coa-sugg-pill" style="background:' + pillBg + ';color:' + pillFg + ';">' + n.type + '</span>' +
+      typeMatch +
+      (n.hint ? '<div class="coa-sugg-hint">' + n.hint + '</div>' : '') +
+    '</div>';
+  }).join('');
+
+  return headHtml + '<div class="coa-sugg-list">' + rowsHtml + '</div>';
+}
+
+// Auto-load diagnose count when COA section opens (one-time per page-load)
+window._coaDiagAutoLoaded = false;
+(function(){
+  // Wrap erpLoadAccounts to fire diagnose once data loaded
+  if (typeof erpLoadAccounts === 'function' && !erpLoadAccounts._coaWrapped) {
+    var orig = erpLoadAccounts;
+    window.erpLoadAccounts = function() {
+      orig.apply(this, arguments);
+      if (!window._coaDiagAutoLoaded) {
+        window._coaDiagAutoLoaded = true;
+        setTimeout(function(){
+          var token = localStorage.getItem('pos_token') || '';
+          fetch('/api/erp/gl/diagnose', { headers: { 'Authorization': 'Bearer ' + token } })
+            .then(function(r){ return r.json(); }).then(_coaUpdateDiagBadge).catch(function(){});
+        }, 1500);
+      }
+    };
+    window.erpLoadAccounts._coaWrapped = true;
+  }
+})();
 
 function erpOpenAccountModal(data) {
   const d = data || {};

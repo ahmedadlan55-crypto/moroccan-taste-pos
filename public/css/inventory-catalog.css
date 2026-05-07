@@ -322,6 +322,289 @@
 }
 
 /* ===================================================================
+   v5.10.35 — Chart of Accounts (دليل الحسابات) UX overhaul
+   =================================================================== */
+
+/* Top action bar */
+.coa-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: linear-gradient(135deg, #f8fafc, #eef2ff);
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+}
+.coa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.coa-action-btn {
+  position: relative;
+  padding: 7px 14px !important;
+  min-height: 36px !important;
+  font-size: 12.5px !important;
+}
+.coa-action-badge {
+  position: absolute;
+  top: -6px;
+  inset-inline-end: -6px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 1px 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  box-shadow: 0 2px 6px rgba(220,38,38,0.4);
+}
+.coa-action-badge--healthy { background: #16a34a; box-shadow: 0 2px 6px rgba(22,163,74,0.4); }
+
+/* Type filter chips */
+.coa-type-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.coa-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  cursor: pointer;
+  transition: all 150ms ease;
+  white-space: nowrap;
+}
+.coa-type-chip:hover { transform: translateY(-1px); box-shadow: 0 4px 10px -4px rgba(15,23,42,0.18); }
+.coa-type-chip.is-active { color: #fff; box-shadow: 0 4px 12px -4px currentColor; }
+
+.coa-type-chip__count {
+  background: rgba(0,0,0,0.06);
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.coa-type-chip.is-active .coa-type-chip__count { background: rgba(255,255,255,0.25); color: #fff; }
+.coa-type-chip__bal {
+  font-size: 10.5px;
+  color: #94a3b8;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.coa-type-chip.is-active .coa-type-chip__bal { color: rgba(255,255,255,0.9); }
+
+/* Per-type chip colors */
+.coa-type-chip--all      { color: #475569; }
+.coa-type-chip--all.is-active     { background: #475569; border-color: #475569; }
+.coa-type-chip--asset    { color: #0369a1; }
+.coa-type-chip--asset.is-active   { background: #0ea5e9; border-color: #0ea5e9; }
+.coa-type-chip--liability{ color: #b91c1c; }
+.coa-type-chip--liability.is-active { background: #dc2626; border-color: #dc2626; }
+.coa-type-chip--equity   { color: #6d28d9; }
+.coa-type-chip--equity.is-active  { background: #7c3aed; border-color: #7c3aed; }
+.coa-type-chip--revenue  { color: #047857; }
+.coa-type-chip--revenue.is-active { background: #16a34a; border-color: #16a34a; }
+.coa-type-chip--expense  { color: #c2410c; }
+.coa-type-chip--expense.is-active { background: #f59e0b; border-color: #f59e0b; }
+
+/* Tree-node enrichments: type swatch + level badge + warning */
+.coa-type-badge {
+  display: inline-block;
+  width: 4px;
+  height: 18px;
+  border-radius: 2px;
+  margin-inline-end: 6px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.coa-type-badge--asset    { background: #0ea5e9; }
+.coa-type-badge--liability{ background: #dc2626; }
+.coa-type-badge--equity   { background: #7c3aed; }
+.coa-type-badge--revenue  { background: #16a34a; }
+.coa-type-badge--expense  { background: #f59e0b; }
+
+.coa-level-badge {
+  margin-inline-start: 6px;
+  font-size: 9.5px;
+  font-weight: 800;
+  color: #94a3b8;
+  background: #f1f5f9;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.coa-warn-icon {
+  margin-inline-start: 6px;
+  color: #dc2626;
+  font-size: 11px;
+  animation: coaWarnPulse 2s ease-in-out infinite;
+}
+@keyframes coaWarnPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.85); }
+}
+
+/* Diagnose panel */
+.coa-diag-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+.coa-diag-summary--healthy {
+  background: linear-gradient(135deg, #d1fae5, #ecfdf5);
+  border: 1px solid #6ee7b7;
+  color: #047857;
+}
+.coa-diag-summary--issues {
+  background: linear-gradient(135deg, #fee2e2, #fef2f2);
+  border: 1px solid #fca5a5;
+  color: #991b1b;
+}
+.coa-diag-cat {
+  margin-bottom: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+.coa-diag-cat__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-bottom: 1.5px solid;
+  font-size: 13px;
+  font-weight: 800;
+}
+.coa-diag-cat__label { color: #1e293b; }
+.coa-diag-cat__count {
+  margin-inline-start: auto;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-weight: 900;
+  font-size: 11.5px;
+}
+.coa-diag-cat__body { background: #fff; }
+.coa-diag-row {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: #475569;
+  border-bottom: 1px dashed #f1f5f9;
+}
+.coa-diag-row:last-child { border-bottom: none; }
+.coa-diag-row--more { color: #94a3b8; font-style: italic; text-align: center; }
+
+/* Suggestions panel */
+.coa-sugg-list {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  font-family: 'Segoe UI', sans-serif;
+  background: #fff;
+}
+.coa-sugg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px dashed #f1f5f9;
+  font-size: 13px;
+  flex-wrap: wrap;
+  position: relative;
+}
+.coa-sugg-row:last-child { border-bottom: none; }
+.coa-sugg-row:hover { background: #fafbfd; }
+.coa-sugg-status {
+  font-size: 14px;
+  font-weight: 900;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.coa-sugg-code {
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 800;
+  color: #6366f1;
+  min-width: 36px;
+}
+.coa-sugg-name { font-weight: 700; color: #0f172a; flex: 1; }
+.coa-sugg-pill {
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 1px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.coa-sugg-hint {
+  width: 100%;
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 500;
+  margin-inline-start: 62px;
+  margin-top: 2px;
+}
+
+/* Modal sizing for COA drawers */
+#coaDiagModal, #coaSuggModal {
+  overflow-y: auto;
+  padding: 20px 0;
+}
+#coaDiagModal .modal-content,
+#coaSuggModal .modal-content {
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 24px 60px -12px rgba(15, 23, 42, 0.32);
+  padding: 0;
+  overflow: visible;
+}
+#coaDiagModal .modal-title,
+#coaSuggModal .modal-title {
+  padding: 16px 20px;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 16px;
+  font-weight: 800;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+}
+#coaDiagModal .modal-close,
+#coaSuggModal .modal-close {
+  background: transparent;
+  border: none;
+  font-size: 22px;
+  color: #94a3b8;
+  cursor: pointer;
+  margin-inline-start: auto;
+}
+#coaDiagModal .modal-close:hover,
+#coaSuggModal .modal-close:hover { color: #b91c1c; }
+
+/* ===================================================================
    v5.10.34 — Waste registration modal (professional)
    =================================================================== */
 #weRegisterModal { overflow-y: auto; padding: 20px 0; }

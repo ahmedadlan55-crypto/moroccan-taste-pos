@@ -1787,11 +1787,28 @@
 <!-- GL ACCOUNTS (دليل الحسابات) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpGLAccounts" class="dash-section hidden">
+  <!-- v5.10.35 — Top action bar: type filter chips + diagnose / repair / suggestions -->
+  <div class="coa-topbar" id="coaTopbar">
+    <div class="coa-type-chips" id="coaTypeChips" role="tablist" aria-label="تصفية حسب النوع"></div>
+    <div class="coa-actions">
+      <button class="wo-btn wo-btn-ghost coa-action-btn" onclick="coaOpenSuggestions()" title="اقتراحات الهيكل المعياري">
+        <i class="fas fa-lightbulb"></i><span>اقتراحات معيارية</span>
+      </button>
+      <button class="wo-btn wo-btn-ghost coa-action-btn" onclick="coaOpenDiagnose()" title="تشخيص صحة الشجرة">
+        <i class="fas fa-stethoscope"></i><span>تشخيص</span>
+        <span class="coa-action-badge" id="coaDiagBadge" style="display:none;">0</span>
+      </button>
+      <button class="wo-btn wo-btn-secondary coa-action-btn" onclick="coaRunAutoRepair()" title="إصلاح تلقائي للتصنيفات">
+        <i class="fas fa-wand-magic-sparkles"></i><span>إصلاح تلقائي</span>
+      </button>
+    </div>
+  </div>
+
   <div class="coa-layout">
     <!-- Tree Sidebar -->
     <div class="coa-tree-panel">
       <div class="coa-tree-header">
-        <input type="text" id="coaSearch" class="coa-search" placeholder="بحث..." oninput="coaFilterTree(this.value)">
+        <input type="text" id="coaSearch" class="coa-search" placeholder="بحث بالاسم أو الكود..." oninput="coaFilterTree(this.value)">
       </div>
       <div id="coaTreeBody" class="coa-tree-body"></div>
     </div>
@@ -1801,9 +1818,37 @@
         <div class="coa-welcome">
           <i class="fas fa-sitemap"></i>
           <h3>دليل الحسابات</h3>
-          <p>اختر حساباً من الشجرة لعرض تفاصيله</p>
+          <p>اختر حساباً من الشجرة لعرض تفاصيله، أو اضغط على شارة نوع أعلاه للتصفية.</p>
+          <div style="display:flex;gap:8px;justify-content:center;margin-top:14px;flex-wrap:wrap;">
+            <button class="wo-btn wo-btn-ghost coa-action-btn" onclick="coaOpenDiagnose()"><i class="fas fa-stethoscope"></i><span>تشخيص الشجرة</span></button>
+            <button class="wo-btn wo-btn-ghost coa-action-btn" onclick="coaOpenSuggestions()"><i class="fas fa-lightbulb"></i><span>عرض الهيكل المعياري</span></button>
+          </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Diagnose drawer -->
+  <div id="coaDiagModal" class="modal" style="display:none;align-items:flex-start;justify-content:center;z-index:9999;">
+    <div class="modal-content modal-large" style="max-width:780px;width:96%;margin-top:24px;">
+      <div class="modal-title">
+        <i class="fas fa-stethoscope" style="color:#0e7490;"></i>
+        <span>تشخيص شجرة الحسابات</span>
+        <button class="modal-close" onclick="coaCloseDiagnose()">&times;</button>
+      </div>
+      <div id="coaDiagBody" style="padding:18px 20px;"></div>
+    </div>
+  </div>
+
+  <!-- Suggestions drawer -->
+  <div id="coaSuggModal" class="modal" style="display:none;align-items:flex-start;justify-content:center;z-index:9999;">
+    <div class="modal-content modal-large" style="max-width:900px;width:96%;margin-top:24px;">
+      <div class="modal-title">
+        <i class="fas fa-lightbulb" style="color:#7c3aed;"></i>
+        <span>الهيكل المعياري المُقترَح (IFRS / SOCPA / F&B)</span>
+        <button class="modal-close" onclick="coaCloseSuggestions()">&times;</button>
+      </div>
+      <div id="coaSuggBody" style="padding:18px 20px;"></div>
     </div>
   </div>
 </div>

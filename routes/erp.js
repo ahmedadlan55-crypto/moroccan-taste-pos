@@ -416,6 +416,162 @@ router.post('/gl/repair-inventory-classification', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// v5.10.35 — General-purpose chart-of-accounts repair. Walks every account
+// and re-parents anything that:
+//   1. Is an orphan (parent_id points at a deleted/missing row), OR
+//   2. Has a name keyword that conflicts with its current branch
+//      (e.g. account named "مخزون شيء" parented under fixed-assets tree)
+//
+// Idempotent: returns { fixed: 0 } when nothing needs changing.
+//
+// Response:
+//   {
+//     success, fixed, repaired: [{ id, code, nameAr, oldParentCode,
+//       newParentCode, reason }],
+//     skipped:  [{ id, code, nameAr, reason }]   // for human review
+//   }
+router.post('/gl/repair-classification', async (req, res) => {
+  try {
+    // Keyword → preferred parent code map (ordered: most-specific first)
+    // Each entry: [regex, parentCode, label]
+    const KEYWORD_RULES = [
+      // Inventory must come BEFORE other matchers since "مخزون" is generic
+      [/^(مخزون|inventory|raw\s*material|finished\s*goods|wip|تغليف|تعبئة)/i, '112', 'مخزون'],
+      [/(عهدة|كاشير|صندوق|cash\s*box|petty\s*cash|نقدية)/i,                   '111', 'النقدية والبنوك'],
+      [/(بنك\b|bank\b|حساب\s*جاري)/i,                                          '111', 'النقدية والبنوك'],
+      [/(ذمم\s*مدين|عملاء|customers?\s*receivab|تطبيقات\s*التوصيل|سلف.*موظف|prepaid|مدفوعة\s*مقدم)/i, '113', 'الذمم المدينة'],
+      [/(ضريبة\s*المدخلات|input\s*vat)/i,                                      '114', 'ضريبة المدخلات'],
+      [/(معدات|آلات|أجهزة\s*pos|أثاث|ديكور|مجمع\s*إهلاك|equipment)/i,           '12',  'الأصول الثابتة'],
+      [/(ذمم\s*دائن|موردون|suppliers?\s*payab|accounts?\s*payable)/i,           '211', 'الموردون والدائنون'],
+      [/(رواتب\s*مستحق|إيجار.*مستحق|منافع\s*مستحق|accrued)/i,                  '212', 'المصروفات المستحقة'],
+      [/(ضريبة\s*المخرجات|output\s*vat|زكاة|ضريبة\s*دخل)/i,                    '213', 'الضرائب'],
+      [/(قروض|loans?)/i,                                                       '214', 'القروض'],
+      [/(رأس\s*المال|capital)/i,                                                '31',  'رأس المال'],
+      [/(أرباح\s*محتجزة|أرباح\s*مرحلة|retained\s*earnings)/i,                  '32',  'الأرباح المبقاة'],
+      [/(مسحوبات|drawings|جاري\s*المالك)/i,                                    '33',  'المسحوبات'],
+      [/(إيرادات.*مبيعات|sales\s*revenue|مبيعات\s*pos|مبيعات\s*المشروبات|مبيعات\s*المأكولات)/i, '411', 'مبيعات نقاط البيع'],
+      [/(تطبيقات\s*التوصيل|delivery\s*apps?|جاهز|هنقرستيشن|كيتا|keeta)/i,      '412', 'مبيعات تطبيقات التوصيل'],
+      [/(كاترينج|catering|حفلات\s*خارجي)/i,                                    '421', 'إيرادات الحفلات الخارجية'],
+      [/(فروقات\s*جرد.*إيراد|stock\s*gain|إيراد.*متنوع)/i,                     '422', 'إيرادات متنوعة'],
+      [/(تكلفة\s*المبيعات|cogs|cost\s*of\s*goods|تكلفة\s*البن|تكلفة\s*المواد)/i,'511', 'تكلفة المواد المستهلكة'],
+      [/(هدر|تالف|waste|spoilage|فروقات\s*الجرد|stock\s*variance|فروقات\s*الإنتاج)/i, '512', 'الهالك والتوالف'],
+      [/(رواتب|أجور|salaries|wages|عمالة)/i,                                   '521', 'الرواتب والأجور'],
+      [/(إيجار|rent|كهرباء|ماء|إنترنت|اتصال|utilities)/i,                      '522', 'الإيجارات والمنافع'],
+      [/(صيانة|maintenance|تشغيل|نظافة|تعقيم)/i,                               '523', 'التشغيل والصيانة'],
+      [/(تسويق|marketing|إعلان|عمولة\s*تطبيق)/i,                               '524', 'التسويق والعمولات'],
+      [/(اشتراك|software|نظام|برنامج)/i,                                       '531', 'رسوم الأنظمة والبرامج'],
+      [/(رسوم\s*حكومي|تراخيص|licens)/i,                                        '532', 'الرسوم الحكومية والتراخيص'],
+      [/(عمولة\s*بنك|رسوم\s*شبكة|رسوم\s*تحويل|merchant\s*fee)/i,               '533', 'العمولات البنكية ورسوم الدفع'],
+      [/(ضيافة|نثريات)/i,                                                       '534', 'الضيافة والنثريات'],
+      [/(امتياز|franchise|royalty)/i,                                          '533', 'رسوم الامتياز']
+    ];
+
+    // 1. Build code→id and id→row maps
+    const [allRows] = await db.query(
+      'SELECT id, code, name_ar, type, parent_id, level FROM gl_accounts');
+    const byCode = {};
+    const byId   = {};
+    allRows.forEach(r => { byCode[r.code] = r; byId[r.id] = r; });
+
+    const repaired = [];
+    const skipped  = [];
+
+    // Helper: resolve preferred parent for a code, walking up if absent
+    function resolvePreferredParent(preferredCode) {
+      let walk = String(preferredCode || '');
+      while (walk.length > 0) {
+        if (byCode[walk]) return byCode[walk];
+        walk = walk.substring(0, walk.length - 1);
+      }
+      return null;
+    }
+
+    for (const acc of allRows) {
+      // Skip top-level roots (codes 1..5)
+      if (!acc.parent_id || ['1','2','3','4','5'].includes(acc.code)) continue;
+
+      // (1) Orphan check: parent_id present but no matching row
+      let currentParent = byId[acc.parent_id] || null;
+      if (!currentParent) {
+        // Try to derive parent from code prefix
+        const prefix = acc.code.substring(0, acc.code.length - 1);
+        const target = resolvePreferredParent(prefix);
+        if (target && target.id !== acc.id) {
+          await db.query('UPDATE gl_accounts SET parent_id = ?, level = ? WHERE id = ?',
+            [target.id, target.code.length + 1, acc.id]);
+          repaired.push({
+            id: acc.id, code: acc.code, nameAr: acc.name_ar,
+            oldParentCode: '(orphan)', newParentCode: target.code,
+            reason: 'orphan-reparented-by-prefix'
+          });
+          // refresh local cache so subsequent loops see the new parent
+          byId[acc.id].parent_id = target.id;
+          continue;
+        }
+        skipped.push({ id: acc.id, code: acc.code, nameAr: acc.name_ar, reason: 'orphan-no-prefix-match' });
+        continue;
+      }
+
+      // (2) Keyword-based reclassification: if the name strongly hints at a
+      //     known category, ensure the account sits under that branch.
+      const nameForMatch = String(acc.name_ar || '');
+      let matchedRule = null;
+      for (const [re, parentCode, label] of KEYWORD_RULES) {
+        if (re.test(nameForMatch)) { matchedRule = { parentCode, label }; break; }
+      }
+      if (!matchedRule) continue;
+
+      // Walk up from acc to root collecting parent codes — if matchedRule's
+      // root is already an ancestor, the account is correctly placed.
+      const rootOfRule = matchedRule.parentCode.charAt(0);   // '1'..'5'
+      let walker = currentParent;
+      let seenRoot = null;
+      const seenIds = new Set();
+      while (walker) {
+        if (seenIds.has(walker.id)) break;     // cycle guard
+        seenIds.add(walker.id);
+        if (walker.code === rootOfRule) { seenRoot = walker; break; }
+        if (!walker.parent_id) { seenRoot = walker; break; }
+        walker = byId[walker.parent_id] || null;
+      }
+
+      // Acceptable when account already lives under the right top-level root
+      // AND its immediate parent code starts with the matchedRule's parentCode prefix
+      const directParentCode = currentParent.code || '';
+      const okBranch = (seenRoot && seenRoot.code === rootOfRule);
+      const okSubtree = directParentCode.startsWith(matchedRule.parentCode) ||
+                        matchedRule.parentCode.startsWith(directParentCode);
+      if (okBranch && okSubtree) continue;
+
+      // Otherwise re-parent under the preferred parent
+      const target = resolvePreferredParent(matchedRule.parentCode);
+      if (!target) {
+        skipped.push({ id: acc.id, code: acc.code, nameAr: acc.name_ar, reason: 'preferred-parent-' + matchedRule.parentCode + '-missing' });
+        continue;
+      }
+      if (target.id === acc.id) continue; // can't be its own parent
+
+      // Don't re-parent a top-level root
+      try {
+        await db.query('UPDATE gl_accounts SET parent_id = ?, level = ? WHERE id = ?',
+          [target.id, target.code.length + 1, acc.id]);
+        repaired.push({
+          id: acc.id, code: acc.code, nameAr: acc.name_ar,
+          oldParentCode: directParentCode, newParentCode: target.code,
+          reason: 'keyword:' + matchedRule.label
+        });
+        byId[acc.id].parent_id = target.id;
+      } catch (e) {
+        skipped.push({ id: acc.id, code: acc.code, nameAr: acc.name_ar, reason: 'update-error:' + e.message });
+      }
+    }
+
+    res.json({ success: true, fixed: repaired.length, repaired, skipped });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // ─── GL Journals ───
 
 router.get('/gl/journals', async (req, res) => {

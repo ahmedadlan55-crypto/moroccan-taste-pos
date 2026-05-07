@@ -2490,13 +2490,17 @@ function erpOpenAccountModal(data) {
     '</div>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
       '<div class="form-row"><label>الحساب الرئيسي (الأب)</label><div id="erpAccParentMount"></div></div>' +
+      // v5.10.49 — when editing an existing account, pre-select the
+      // SAVED level so the user sees their real level (and we don't
+      // silently overwrite it with parent.level+1 on first paint).
+      // Adding a new account still defaults to auto.
       '<div class="form-row"><label>المستوى</label><select class="form-control" id="erpAccLevelSelect">' +
-        '<option value="auto" selected>يُحسب تلقائيًا</option>' +
-        '<option value="1">L1 — جذر</option>' +
-        '<option value="2">L2</option>' +
-        '<option value="3">L3</option>' +
-        '<option value="4">L4</option>' +
-        '<option value="5">L5</option>' +
+        '<option value="auto"' + (isEdit ? '' : ' selected') + '>يُحسب تلقائيًا</option>' +
+        '<option value="1"' + (isEdit && Number(d.level) === 1 ? ' selected' : '') + '>L1 — جذر</option>' +
+        '<option value="2"' + (isEdit && Number(d.level) === 2 ? ' selected' : '') + '>L2</option>' +
+        '<option value="3"' + (isEdit && Number(d.level) === 3 ? ' selected' : '') + '>L3</option>' +
+        '<option value="4"' + (isEdit && Number(d.level) === 4 ? ' selected' : '') + '>L4</option>' +
+        '<option value="5"' + (isEdit && Number(d.level) === 5 ? ' selected' : '') + '>L5</option>' +
       '</select></div>' +
     '</div>' +
     '<div class="form-row" style="display:flex;align-items:center;gap:10px;margin-top:6px;">' +
@@ -2538,9 +2542,15 @@ function erpOpenAccountModal(data) {
 
     function recomputeLevel() {
       var p = currentParent();
+      // v5.10.49 — when "auto" is the picked mode, write the resolved
+      // level into both the hidden field AND back into the option label
+      // so the user can see "يُحسب تلقائيًا (L4)" instead of just "auto".
+      // No silent overwrite when the user picked an explicit level.
+      var autoOpt = levelSel.querySelector('option[value="auto"]');
+      var resolvedAuto = p ? (Number(p.level || 1) + 1) : 1;
+      if (autoOpt) autoOpt.textContent = 'يُحسب تلقائيًا (L' + resolvedAuto + ')';
       if (levelSel.value === 'auto') {
-        var lvl = p ? (Number(p.level || 1) + 1) : 1;
-        levelHidden.value = lvl;
+        levelHidden.value = resolvedAuto;
       } else {
         levelHidden.value = Number(levelSel.value) || 1;
       }
@@ -2579,6 +2589,10 @@ function erpOpenAccountModal(data) {
     }
 
     function inheritType() {
+      // v5.10.49 — never overwrite the saved type when editing an
+      // existing account. Inheritance from the parent only kicks in
+      // for brand-new accounts where the user hasn't picked a type yet.
+      if (isEdit) return;
       var p = currentParent();
       if (p && p.type && !typeEl.dataset.userTouched) typeEl.value = p.type;
     }

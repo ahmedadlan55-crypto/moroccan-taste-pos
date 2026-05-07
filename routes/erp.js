@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const db = require('../db/connection');
+const { ensureCoreAccounts } = require('../lib/glPosting');
 
 // ─── Dashboard ───
 
@@ -198,11 +199,30 @@ router.delete('/suppliers/:id', async (req, res) => {
 
 router.get('/gl/accounts', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM gl_accounts ORDER BY code');
+    // v5.10.38 — derive `balance` from posted gl_entries (single source of
+    // truth) so the COA tree never shows a "zombie" balance that lacks an
+    // actual journal. The stored gl_accounts.balance column is exposed as
+    // storedBalance for diagnostics only. movementCount lets the UI hide
+    // accounts that have never been touched.
+    const [rows] = await db.query(`
+      SELECT a.*,
+             (SELECT COUNT(*)
+                FROM gl_entries e
+                JOIN gl_journals j ON j.id = e.journal_id
+               WHERE e.account_id = a.id AND j.status = 'posted') AS movement_count,
+             (SELECT IFNULL(SUM(e.debit - e.credit), 0)
+                FROM gl_entries e
+                JOIN gl_journals j ON j.id = e.journal_id
+               WHERE e.account_id = a.id AND j.status = 'posted') AS computed_balance
+        FROM gl_accounts a
+       ORDER BY a.code`);
     res.json(rows.map(a => ({
       id: a.id, code: a.code, nameAr: a.name_ar, nameEn: a.name_en,
       type: a.type, parentId: a.parent_id, level: a.level,
-      isActive: a.is_active, balance: Number(a.balance)
+      isActive: a.is_active,
+      balance: Number(a.computed_balance || 0),
+      storedBalance: Number(a.balance || 0),
+      movementCount: Number(a.movement_count || 0)
     })));
   } catch (e) {
     res.json([]);
@@ -567,6 +587,330 @@ router.post('/gl/repair-classification', async (req, res) => {
     }
 
     res.json({ success: true, fixed: repaired.length, repaired, skipped });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────
+// v5.10.38 — Deep repair (single atomic endpoint).
+// Runs every COA integrity fix in one transaction and returns
+// before/after diagnostic counts so the UI can show what changed.
+// ───────────────────────────────────────────────────────────────────────
+
+// Keyword → preferred parent code map (ordered: most-specific first).
+// Banks regex strengthened over the inline rules used by /gl/repair-
+// classification: matches "بنك" anywhere (no \b — Arabic word boundaries
+// are unreliable) plus "البنوك / الحساب البنكي / حساب جاري / current account".
+const _COA_KEYWORD_RULES = [
+  [/^(مخزون|inventory|raw\s*material|finished\s*goods|wip|تغليف|تعبئة)/i, '112', 'مخزون'],
+  [/(بنك|bank|البنوك|حساب\s*جاري|current\s*account|الحساب(?:ات)?\s*البنكي)/i, '111', 'النقدية والبنوك'],
+  [/(عهدة|كاشير|صندوق|cash\s*box|petty\s*cash|نقدية)/i,                   '111', 'النقدية والبنوك'],
+  [/(ذمم\s*مدين|عملاء|customers?\s*receivab|تطبيقات\s*التوصيل|سلف.*موظف|prepaid|مدفوعة\s*مقدم)/i, '113', 'الذمم المدينة'],
+  [/(ضريبة\s*المدخلات|input\s*vat)/i,                                      '114', 'ضريبة المدخلات'],
+  [/(معدات|آلات|أجهزة\s*pos|أثاث|ديكور|مجمع\s*إهلاك|equipment)/i,           '12',  'الأصول الثابتة'],
+  [/(ذمم\s*دائن|موردون|suppliers?\s*payab|accounts?\s*payable)/i,           '211', 'الموردون والدائنون'],
+  [/(رواتب\s*مستحق|إيجار.*مستحق|منافع\s*مستحق|accrued)/i,                  '212', 'المصروفات المستحقة'],
+  [/(ضريبة\s*المخرجات|output\s*vat|زكاة|ضريبة\s*دخل)/i,                    '213', 'الضرائب'],
+  [/(قروض|loans?)/i,                                                       '214', 'القروض'],
+  [/(رأس\s*المال|capital)/i,                                               '31',  'رأس المال'],
+  [/(أرباح\s*محتجزة|أرباح\s*مرحلة|retained\s*earnings)/i,                  '32',  'الأرباح المبقاة'],
+  [/(مسحوبات|drawings|جاري\s*المالك)/i,                                    '33',  'المسحوبات'],
+  [/(إيرادات.*مبيعات|sales\s*revenue|مبيعات\s*pos|مبيعات\s*المشروبات|مبيعات\s*المأكولات)/i, '411', 'مبيعات نقاط البيع'],
+  [/(تطبيقات\s*التوصيل|delivery\s*apps?|جاهز|هنقرستيشن|كيتا|keeta)/i,      '412', 'مبيعات تطبيقات التوصيل'],
+  [/(كاترينج|catering|حفلات\s*خارجي)/i,                                    '421', 'إيرادات الحفلات الخارجية'],
+  [/(فروقات\s*جرد.*إيراد|stock\s*gain|إيراد.*متنوع)/i,                     '422', 'إيرادات متنوعة'],
+  [/(تكلفة\s*المبيعات|cogs|cost\s*of\s*goods|تكلفة\s*البن|تكلفة\s*المواد)/i,'511', 'تكلفة المواد المستهلكة'],
+  [/(هدر|تالف|waste|spoilage|فروقات\s*الجرد|stock\s*variance|فروقات\s*الإنتاج)/i, '512', 'الهالك والتوالف'],
+  [/(رواتب|أجور|salaries|wages|عمالة)/i,                                   '521', 'الرواتب والأجور'],
+  [/(إيجار|rent|كهرباء|ماء|إنترنت|اتصال|utilities)/i,                      '522', 'الإيجارات والمنافع'],
+  [/(صيانة|maintenance|تشغيل|نظافة|تعقيم)/i,                               '523', 'التشغيل والصيانة'],
+  [/(تسويق|marketing|إعلان|عمولة\s*تطبيق)/i,                               '524', 'التسويق والعمولات'],
+  [/(اشتراك|software|نظام|برنامج)/i,                                       '531', 'رسوم الأنظمة والبرامج'],
+  [/(رسوم\s*حكومي|تراخيص|licens)/i,                                        '532', 'الرسوم الحكومية والتراخيص'],
+  [/(عمولة\s*بنك|رسوم\s*شبكة|رسوم\s*تحويل|merchant\s*fee)/i,               '533', 'العمولات البنكية ورسوم الدفع'],
+  [/(ضيافة|نثريات)/i,                                                       '534', 'الضيافة والنثريات'],
+  [/(امتياز|franchise|royalty)/i,                                          '533', 'رسوم الامتياز']
+];
+
+const _COA_ROOT_TYPE_BY_CODE = {
+  '1': 'asset', '2': 'liability', '3': 'equity', '4': 'revenue', '5': 'expense'
+};
+
+function _coaComputeDepth(byId, a, seen) {
+  if (!a || !a.parent_id) return 0;
+  if (seen.has(a.id)) return 0;
+  seen.add(a.id);
+  const p = byId[a.parent_id];
+  return p ? _coaComputeDepth(byId, p, seen) + 1 : 0;
+}
+
+// Snapshot of integrity issues. Used before/after deep-repair to
+// quantify what changed.
+async function _coaDiagnoseSnapshot(db) {
+  const out = {};
+  const [orphans] = await db.query(
+    `SELECT id FROM gl_accounts
+      WHERE parent_id IS NOT NULL
+        AND parent_id NOT IN (SELECT id FROM (SELECT id FROM gl_accounts) p)`);
+  out.orphans = orphans.length;
+
+  const [tm] = await db.query(
+    `SELECT c.id FROM gl_accounts c
+       JOIN gl_accounts p ON p.id = c.parent_id
+      WHERE c.type IS NOT NULL AND p.type IS NOT NULL AND c.type <> p.type`);
+  out.typeMismatch = tm.length;
+
+  const [ctm] = await db.query(
+    `SELECT id FROM gl_accounts WHERE code IS NOT NULL AND (
+       (LEFT(code,1)='1' AND type<>'asset')      OR
+       (LEFT(code,1)='2' AND type<>'liability')  OR
+       (LEFT(code,1)='3' AND type<>'equity')     OR
+       (LEFT(code,1)='4' AND type<>'revenue')    OR
+       (LEFT(code,1)='5' AND type<>'expense'))`);
+  out.codeTypeMismatch = ctm.length;
+
+  const [dup] = await db.query(
+    `SELECT code FROM gl_accounts WHERE code IS NOT NULL GROUP BY code HAVING COUNT(*) > 1`);
+  out.duplicateCodes = dup.length;
+
+  const [bwe] = await db.query(
+    `SELECT a.id FROM gl_accounts a
+      WHERE ABS(IFNULL(a.balance,0)) > 0.001
+        AND NOT EXISTS (SELECT 1 FROM gl_entries e
+                          JOIN gl_journals j ON j.id = e.journal_id
+                         WHERE e.account_id = a.id AND j.status='posted')`);
+  out.balanceWithoutEntries = bwe.length;
+
+  const [allAccs] = await db.query('SELECT id, parent_id, level FROM gl_accounts');
+  const byId = {}; allAccs.forEach(a => { byId[a.id] = a; });
+  let levelMismatch = 0, cycles = 0;
+  for (const a of allAccs) {
+    const seen = new Set();
+    let walker = a, hops = 0, cycled = false;
+    while (walker && walker.parent_id) {
+      if (seen.has(walker.id)) { cycled = true; break; }
+      seen.add(walker.id);
+      walker = byId[walker.parent_id] || null;
+      if (++hops > 50) break;
+    }
+    if (cycled) { cycles++; continue; }
+    const d = _coaComputeDepth(byId, a, new Set());
+    if (Number(a.level || 0) !== d) levelMismatch++;
+  }
+  out.levelMismatch = levelMismatch;
+  out.cycles = cycles;
+  return out;
+}
+
+function _coaResolvePreferredParent(byCode, preferredCode) {
+  let walk = String(preferredCode || '');
+  while (walk.length > 0) {
+    if (byCode[walk]) return byCode[walk];
+    walk = walk.substring(0, walk.length - 1);
+  }
+  return null;
+}
+
+// Reparent accounts whose name strongly hints at a known IFRS branch.
+// Bug fixes vs. the legacy /gl/repair-classification:
+//   (a) orphan reparenting requires type compatibility
+//   (b) level computed from target.level, not target.code.length
+//   (c) banks regex no longer relies on \b word boundaries
+async function _coaRepairByKeywords(db) {
+  const [allRows] = await db.query(
+    'SELECT id, code, name_ar, type, parent_id, level FROM gl_accounts');
+  const byCode = {}, byId = {};
+  allRows.forEach(r => { byCode[r.code] = r; byId[r.id] = r; });
+
+  const repaired = [], skipped = [];
+
+  for (const acc of allRows) {
+    if (!acc.parent_id || ['1','2','3','4','5'].includes(acc.code)) continue;
+
+    let currentParent = byId[acc.parent_id] || null;
+    if (!currentParent) {
+      const codeStr = String(acc.code || '');
+      const prefix = codeStr.substring(0, Math.max(0, codeStr.length - 1));
+      const target = _coaResolvePreferredParent(byCode, prefix);
+      if (target && target.id !== acc.id) {
+        const targetRootType = _COA_ROOT_TYPE_BY_CODE[String(target.code || '').charAt(0)];
+        if (targetRootType && acc.type && acc.type !== targetRootType) {
+          skipped.push({ id: acc.id, code: acc.code, nameAr: acc.name_ar, reason: 'type-conflict-needs-manual-review' });
+          continue;
+        }
+        await db.query('UPDATE gl_accounts SET parent_id = ?, level = ? WHERE id = ?',
+          [target.id, (Number(target.level || 0) + 1), acc.id]);
+        repaired.push({
+          id: acc.id, code: acc.code, nameAr: acc.name_ar,
+          oldParentCode: '(orphan)', newParentCode: target.code,
+          reason: 'orphan-reparented-by-prefix'
+        });
+        byId[acc.id].parent_id = target.id;
+        continue;
+      }
+      skipped.push({ id: acc.id, code: acc.code, nameAr: acc.name_ar, reason: 'orphan-no-prefix-match' });
+      continue;
+    }
+
+    const nameForMatch = String(acc.name_ar || '');
+    let matchedRule = null;
+    for (const [re, parentCode, label] of _COA_KEYWORD_RULES) {
+      if (re.test(nameForMatch)) { matchedRule = { parentCode, label }; break; }
+    }
+    if (!matchedRule) continue;
+
+    const rootOfRule = matchedRule.parentCode.charAt(0);
+    let walker = currentParent;
+    let seenRoot = null;
+    const seenIds = new Set();
+    while (walker) {
+      if (seenIds.has(walker.id)) break;
+      seenIds.add(walker.id);
+      if (walker.code === rootOfRule) { seenRoot = walker; break; }
+      if (!walker.parent_id) { seenRoot = walker; break; }
+      walker = byId[walker.parent_id] || null;
+    }
+
+    const directParentCode = currentParent.code || '';
+    const okBranch = (seenRoot && seenRoot.code === rootOfRule);
+    const okSubtree = directParentCode.startsWith(matchedRule.parentCode) ||
+                      matchedRule.parentCode.startsWith(directParentCode);
+    if (okBranch && okSubtree) continue;
+
+    const target = _coaResolvePreferredParent(byCode, matchedRule.parentCode);
+    if (!target) {
+      skipped.push({ id: acc.id, code: acc.code, nameAr: acc.name_ar, reason: 'preferred-parent-' + matchedRule.parentCode + '-missing' });
+      continue;
+    }
+    if (target.id === acc.id) continue;
+
+    try {
+      await db.query('UPDATE gl_accounts SET parent_id = ?, level = ? WHERE id = ?',
+        [target.id, (Number(target.level || 0) + 1), acc.id]);
+      repaired.push({
+        id: acc.id, code: acc.code, nameAr: acc.name_ar,
+        oldParentCode: directParentCode, newParentCode: target.code,
+        reason: 'keyword:' + matchedRule.label
+      });
+      byId[acc.id].parent_id = target.id;
+    } catch (e) {
+      skipped.push({ id: acc.id, code: acc.code, nameAr: acc.name_ar, reason: 'update-error:' + e.message });
+    }
+  }
+  return { repaired, skipped };
+}
+
+async function _coaAlignTypeWithParent(db) {
+  const fixed = [];
+  const [rows] = await db.query('SELECT id, code, type FROM gl_accounts WHERE code IS NOT NULL');
+  for (const r of rows) {
+    const expected = _COA_ROOT_TYPE_BY_CODE[String(r.code).charAt(0)];
+    if (expected && r.type !== expected) {
+      await db.query('UPDATE gl_accounts SET type = ? WHERE id = ?', [expected, r.id]);
+      fixed.push({ id: r.id, code: r.code, oldType: r.type, newType: expected });
+    }
+  }
+  return fixed;
+}
+
+async function _coaFixRootsAndOrphansByPrefix(db) {
+  let fixed = 0;
+  // Merge legacy code 6 into 5 (if both exist) or rename
+  const [acc6] = await db.query("SELECT id FROM gl_accounts WHERE code = '6'");
+  if (acc6.length) {
+    const [acc5] = await db.query("SELECT id FROM gl_accounts WHERE code = '5'");
+    if (acc5.length) {
+      await db.query("UPDATE gl_accounts SET parent_id = ? WHERE parent_id = ?", [acc5[0].id, acc6[0].id]);
+      await db.query("DELETE FROM gl_accounts WHERE id = ? AND code = '6'", [acc6[0].id]);
+      fixed++;
+    } else {
+      await db.query("UPDATE gl_accounts SET code = '5', name_ar = 'المصروفات', parent_id = NULL, level = 1 WHERE id = ?", [acc6[0].id]);
+      fixed++;
+    }
+  }
+  // Reparent orphans by code prefix (level>1 with no parent)
+  const [orphans] = await db.query("SELECT id, code, level FROM gl_accounts WHERE level > 1 AND (parent_id IS NULL OR parent_id = '')");
+  for (const o of orphans) {
+    let parentCode = String(o.code || '');
+    parentCode = parentCode.substring(0, Math.max(0, parentCode.length - 1));
+    while (parentCode.length > 0) {
+      const [parent] = await db.query("SELECT id FROM gl_accounts WHERE code = ?", [parentCode]);
+      if (parent.length) {
+        await db.query("UPDATE gl_accounts SET parent_id = ? WHERE id = ?", [parent[0].id, o.id]);
+        fixed++;
+        break;
+      }
+      parentCode = parentCode.substring(0, parentCode.length - 1);
+    }
+  }
+  // Ensure roots 1..5 are level 1, parent NULL
+  await db.query("UPDATE gl_accounts SET level = 1, parent_id = NULL WHERE code IN ('1','2','3','4','5') AND (level != 1 OR parent_id IS NOT NULL)");
+  return fixed;
+}
+
+async function _coaAutoFixLevels(db) {
+  let orphansPromoted = 0, levelsCorrected = 0;
+  const [orphans] = await db.query(
+    `SELECT a.id FROM gl_accounts a
+      WHERE a.parent_id IS NOT NULL
+        AND a.parent_id NOT IN (SELECT id FROM (SELECT id FROM gl_accounts) p)`);
+  for (const o of orphans) {
+    await db.query('UPDATE gl_accounts SET parent_id = NULL, level = 0 WHERE id = ?', [o.id]);
+    orphansPromoted++;
+  }
+  const [allAccs] = await db.query('SELECT id, parent_id, level FROM gl_accounts');
+  const byId = {}; allAccs.forEach(a => { byId[a.id] = a; });
+  for (const a of allAccs) {
+    const d = _coaComputeDepth(byId, a, new Set());
+    if (Number(a.level || 0) !== d) {
+      await db.query('UPDATE gl_accounts SET level = ? WHERE id = ?', [d, a.id]);
+      levelsCorrected++;
+    }
+  }
+  return { orphansPromoted, levelsCorrected };
+}
+
+// Rebuild gl_accounts.balance from posted gl_entries — the only safe way
+// to guarantee tree balances match the journal.
+async function _coaRecomputeBalances(db) {
+  await db.query('UPDATE gl_accounts SET balance = 0');
+  const [agg] = await db.query(
+    `SELECT e.account_id, SUM(e.debit) AS d, SUM(e.credit) AS c
+       FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
+      WHERE j.status = 'posted' AND e.account_id IS NOT NULL
+      GROUP BY e.account_id`);
+  for (const a of agg) {
+    const net = (Number(a.d) || 0) - (Number(a.c) || 0);
+    await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [net, a.account_id]);
+  }
+  return agg.length;
+}
+
+// POST /gl/deep-repair — single-shot atomic chart-of-accounts repair.
+router.post('/gl/deep-repair', async (req, res) => {
+  try {
+    const result = await db.withTransaction(async (conn) => {
+      const before = await _coaDiagnoseSnapshot(conn);
+      try { await ensureCoreAccounts(conn); } catch(_) {}
+      const treeFixed   = await _coaFixRootsAndOrphansByPrefix(conn);
+      const reclass     = await _coaRepairByKeywords(conn);
+      const typeFixes   = await _coaAlignTypeWithParent(conn);
+      const lvl         = await _coaAutoFixLevels(conn);
+      const balRecomp   = await _coaRecomputeBalances(conn);
+      const after       = await _coaDiagnoseSnapshot(conn);
+      return {
+        before, after,
+        reclassified: reclass.repaired,
+        skipped: reclass.skipped,
+        typeFixed: typeFixes,
+        treeFixed,
+        orphansPromoted: lvl.orphansPromoted,
+        levelsCorrected: lvl.levelsCorrected,
+        balancesRecomputed: balRecomp
+      };
+    });
+    res.json({ success: true, ...result });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
@@ -1533,10 +1877,75 @@ router.get('/gl/diagnose', async (req, res) => {
        FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id ORDER BY j.created_at DESC LIMIT 10`
     );
 
+    // ─── v5.10.38 — three new integrity checks ───
+
+    // (9) code prefix vs type mismatch
+    //     e.g. account with code starting "11" (asset family) but type='liability'
+    const [codeTypeMismatch] = await db.query(
+      `SELECT id, code, name_ar, type FROM gl_accounts
+        WHERE code IS NOT NULL AND (
+          (LEFT(code,1)='1' AND type<>'asset')      OR
+          (LEFT(code,1)='2' AND type<>'liability')  OR
+          (LEFT(code,1)='3' AND type<>'equity')     OR
+          (LEFT(code,1)='4' AND type<>'revenue')    OR
+          (LEFT(code,1)='5' AND type<>'expense'))
+        ORDER BY code`);
+
+    // (10) THE USER'S COMPLAINT: balance != 0 but no posted journal entries
+    //      means the gl_accounts.balance column is a "zombie" — a number
+    //      not backed by any actual journal. Fix = recompute from gl_entries.
+    const [balanceWithoutEntries] = await db.query(
+      `SELECT a.id, a.code, a.name_ar, a.type, a.balance
+         FROM gl_accounts a
+        WHERE ABS(IFNULL(a.balance,0)) > 0.001
+          AND NOT EXISTS (SELECT 1 FROM gl_entries e
+                            JOIN gl_journals j ON j.id = e.journal_id
+                           WHERE e.account_id = a.id AND j.status='posted')
+        ORDER BY a.code`);
+
+    // (11) account name strongly hints at a category but its placement
+    //      disagrees (e.g. "بنك القاهرة" parented under inventory).
+    //      Re-uses _COA_KEYWORD_RULES to compute expected root.
+    const nameVsPlacementMismatch = [];
+    {
+      const [allAccs2] = await db.query('SELECT id, code, name_ar, parent_id FROM gl_accounts');
+      const byId2 = {}; allAccs2.forEach(a => { byId2[a.id] = a; });
+      const ascendantCode = function(a) {
+        let walker = a, hops = 0;
+        const seen = new Set();
+        while (walker && walker.parent_id) {
+          if (seen.has(walker.id)) return null;
+          seen.add(walker.id);
+          walker = byId2[walker.parent_id] || null;
+          if (++hops > 50) return null;
+        }
+        return walker ? walker.code : null;
+      };
+      for (const a of allAccs2) {
+        const name = String(a.name_ar || '');
+        if (!name) continue;
+        let rule = null;
+        for (const [re, parentCode, label] of _COA_KEYWORD_RULES) {
+          if (re.test(name)) { rule = { parentCode, label }; break; }
+        }
+        if (!rule) continue;
+        const expectedRoot = rule.parentCode.charAt(0);
+        const actualRoot = ascendantCode(a);
+        if (actualRoot && actualRoot !== expectedRoot) {
+          nameVsPlacementMismatch.push({
+            id: a.id, code: a.code, name_ar: a.name_ar,
+            expectedParentCode: rule.parentCode, expectedLabel: rule.label,
+            actualRootCode: actualRoot
+          });
+        }
+      }
+    }
+
     const issuesCount =
       orphans.length + typeMismatch.length + dupCodes.length +
       unbalanced.length + orphanEntries.length + missingCoreAccounts.length +
-      levelMismatch.length + cycles.length;
+      levelMismatch.length + cycles.length +
+      codeTypeMismatch.length + balanceWithoutEntries.length + nameVsPlacementMismatch.length;
 
     res.json({
       summary: {
@@ -1555,7 +1964,11 @@ router.get('/gl/diagnose', async (req, res) => {
         orphanEntries,
         missingCoreAccounts,
         levelMismatch,
-        cycles
+        cycles,
+        // v5.10.38
+        codeTypeMismatch,
+        balanceWithoutEntries,
+        nameVsPlacementMismatch
       },
       nonZeroAccounts: nonZeroAccs,
       recentEntries
@@ -1970,12 +2383,12 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
     if (brandId  && hasBrandId)  { where += ' AND (e.brand_id IS NULL OR e.brand_id = ?)';   params.push(brandId); }
     if (branchId && hasBranchId) { where += ' AND (e.branch_id IS NULL OR e.branch_id = ?)'; params.push(branchId); }
     const [entries] = await db.query(
-      `SELECT e.account_id, SUM(e.debit) AS d, SUM(e.credit) AS c
+      `SELECT e.account_id, SUM(e.debit) AS d, SUM(e.credit) AS c, COUNT(e.id) AS cnt
        FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
        WHERE ${where} GROUP BY e.account_id`, params
     );
     const balMap = {};
-    entries.forEach(e => { balMap[e.account_id] = { debit: Number(e.d)||0, credit: Number(e.c)||0 }; });
+    entries.forEach(e => { balMap[e.account_id] = { debit: Number(e.d)||0, credit: Number(e.c)||0, count: Number(e.cnt)||0 }; });
 
     // V5.10.2 — IFRS / IAS 1 hierarchical classification.
     // Each leaf account carries `id` so the frontend can drill down via
@@ -2045,12 +2458,19 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
     let totCA = 0, totNCA = 0, totCL = 0, totNCL = 0, totEq = 0;
     let netIncome = 0;
 
+    // v5.10.38 — collect accounts that don't fit any classification rule
+    // so the UI can surface a "Unclassified" warning section.
+    const unclassified = [];
+
     accounts.forEach(a => {
-      const entry = balMap[a.id] || { debit: 0, credit: 0 };
+      const entry = balMap[a.id] || { debit: 0, credit: 0, count: 0 };
       const net = entry.debit - entry.credit; // debit-normal
-      // v5.10.4 — when showZero is on, include accounts with no balance so
-      // the user can see the entire chart of accounts under each IFRS bucket.
-      if (net === 0 && !includeZero) return;
+      // v5.10.38 — primary filter: no posted journal entries means no
+      // display, regardless of stored balance. The COA tree and the
+      // balance sheet must agree: numbers shown ⇒ backed by gl_entries.
+      if ((entry.count || 0) === 0 && !includeZero) return;
+      // Secondary filter: belt-and-suspenders against zombie balances.
+      if (Math.abs(net) < 0.001 && !includeZero) return;
 
       const flatItem = { id: a.id, code: a.code, name: a.name_ar, balance: 0, level: a.level };
 
@@ -2060,6 +2480,8 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
         if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
           groups[cls[0]][cls[1]].accounts.push({ id: a.id, code: a.code, nameAr: a.name_ar, balance: net });
           groups[cls[0]][cls[1]].total += net;
+        } else {
+          unclassified.push({ id: a.id, code: a.code, nameAr: a.name_ar, type: a.type, balance: net });
         }
         if (a.code && a.code.startsWith('12')) { nonCurrentAssets.push(flatItem); totNCA += net; }
         else                                    { currentAssets.push(flatItem);   totCA  += net; }
@@ -2069,6 +2491,8 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
         if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
           groups[cls[0]][cls[1]].accounts.push({ id: a.id, code: a.code, nameAr: a.name_ar, balance: Math.abs(net) });
           groups[cls[0]][cls[1]].total += Math.abs(net);
+        } else {
+          unclassified.push({ id: a.id, code: a.code, nameAr: a.name_ar, type: a.type, balance: Math.abs(net) });
         }
         if (a.code && a.code.startsWith('22')) { nonCurrentLiab.push(flatItem); totNCL += Math.abs(net); }
         else                                    { currentLiab.push(flatItem);    totCL  += Math.abs(net); }
@@ -2111,9 +2535,11 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       isBalanced: Math.abs(totalAssets - (totalLiabilities + totEq)) < 0.01,
       asOfDate: asOfDate || new Date().toISOString().split('T')[0],
       // V5.10.2 — IFRS hierarchy for the new statement view
-      groups: groups
+      groups: groups,
+      // v5.10.38 — accounts that didn't match any classification rule
+      unclassified: unclassified
     });
-  } catch (e) { res.json({ currentAssets:[], nonCurrentAssets:[], currentLiab:[], nonCurrentLiab:[], equityItems:[], totCA:0, totNCA:0, totCL:0, totNCL:0, totEq:0, totalAssets:0, totalLiabilities:0, netIncome:0, isBalanced:false, groups:{} }); }
+  } catch (e) { res.json({ currentAssets:[], nonCurrentAssets:[], currentLiab:[], nonCurrentLiab:[], equityItems:[], totCA:0, totNCA:0, totCL:0, totNCL:0, totEq:0, totalAssets:0, totalLiabilities:0, netIncome:0, isBalanced:false, groups:{}, unclassified:[] }); }
 });
 
 // V5.10.1 — Cash Flow Statement (IAS 7 — Indirect Method)

@@ -581,6 +581,16 @@ function _coaChildrenOf(parentId) {
 }
 function _coaIsGroup(id) { return _erpAccounts.some(a => a.parentId === id); }
 
+// v5.10.38 — does this account (or any descendant) have any posted journal
+// entries? Used to hide structural-only accounts from the tree by default.
+function _coaHasMovements(accId) {
+  var acc = _erpAccounts.find(function(a){ return a.id === accId; });
+  if (!acc) return false;
+  if ((acc.movementCount || 0) > 0) return true;
+  var children = _coaChildrenOf(accId);
+  return children.some(function(c) { return _coaHasMovements(c.id); });
+}
+
 // Rollup balance: sum self + all descendants (for parent/folder accounts)
 function _coaRollupBalance(accId) {
   var acc = _erpAccounts.find(function(a) { return a.id === accId; });
@@ -619,6 +629,17 @@ function _coaBuildTree() {
   // match (e.g. selecting 'asset' shows only the "1 الأصول" tree)
   if (typeFilter) {
     roots = roots.filter(function(r){ return r.type === typeFilter; });
+  }
+
+  // v5.10.38 — by default hide branches with no journal movements anywhere
+  // in the subtree. The 5 main roots (codes 1-5) always show so the user
+  // can build the chart from scratch. Toggle exposes structural accounts.
+  var hideEmpty = !window._coaShowEmpty;
+  if (hideEmpty) {
+    var alwaysShow = ['1','2','3','4','5'];
+    roots = roots.filter(function(r){
+      return alwaysShow.indexOf(r.code) >= 0 || _coaHasMovements(r.id);
+    });
   }
 
   container.innerHTML = roots.length
@@ -669,8 +690,23 @@ window.coaSetTypeFilter = function(type) {
   _coaBuildTree();
 };
 
+// v5.10.38 — toggle structural / empty accounts in the COA tree.
+// Default (false): only accounts with posted journal entries (anywhere
+// in their subtree) are shown. The 5 main roots always show.
+window.coaToggleShowEmpty = function(checked) {
+  window._coaShowEmpty = !!checked;
+  _coaBuildTree();
+};
+
 function _coaRenderNode(acc, open) {
   var children = _coaChildrenOf(acc.id);
+  // v5.10.38 — when hideEmpty mode is on, drop children with no movements
+  // anywhere below them (and no movement of their own). Roots 1-5 are
+  // never hidden — that's enforced in _coaBuildTree, not here.
+  var hideEmpty = !window._coaShowEmpty;
+  if (hideEmpty) {
+    children = children.filter(function(c){ return _coaHasMovements(c.id); });
+  }
   var isGroup = children.length > 0;
   var lvl = acc.level || 1;
   var chevronDir = open ? 'fa-chevron-down' : 'fa-chevron-left';
@@ -691,10 +727,15 @@ function _coaRenderNode(acc, open) {
   var snap = window._coaDiagSnap;
   if (snap && snap.issues) {
     var hasIssue = false, issueLabel = '';
-    if (snap.issues.orphans && snap.issues.orphans.find(function(x){return x.id === acc.id;})) { hasIssue = true; issueLabel = 'orphan'; }
-    if (!hasIssue && snap.issues.typeMismatch && snap.issues.typeMismatch.find(function(x){return x.id === acc.id;})) { hasIssue = true; issueLabel = 'type-mismatch'; }
-    if (!hasIssue && snap.issues.cycles && snap.issues.cycles.find(function(x){return x.id === acc.id;})) { hasIssue = true; issueLabel = 'cycle'; }
-    if (!hasIssue && snap.issues.levelMismatch && snap.issues.levelMismatch.find(function(x){return x.id === acc.id;})) { hasIssue = true; issueLabel = 'level-mismatch'; }
+    var hit = function(arr){ return arr && arr.find(function(x){ return x.id === acc.id; }); };
+    if (hit(snap.issues.orphans))                       { hasIssue = true; issueLabel = 'orphan'; }
+    else if (hit(snap.issues.typeMismatch))             { hasIssue = true; issueLabel = 'type-mismatch'; }
+    else if (hit(snap.issues.cycles))                   { hasIssue = true; issueLabel = 'cycle'; }
+    else if (hit(snap.issues.levelMismatch))            { hasIssue = true; issueLabel = 'level-mismatch'; }
+    // v5.10.38 — three new categories surfaced in the tree
+    else if (hit(snap.issues.codeTypeMismatch))         { hasIssue = true; issueLabel = 'code-type-mismatch'; }
+    else if (hit(snap.issues.balanceWithoutEntries))    { hasIssue = true; issueLabel = 'balance-without-entries'; }
+    else if (hit(snap.issues.nameVsPlacementMismatch))  { hasIssue = true; issueLabel = 'misplaced-by-name'; }
     if (hasIssue) warnHtml = '<i class="fas fa-triangle-exclamation coa-warn-icon" title="' + issueLabel + '"></i>';
   }
 
@@ -973,14 +1014,20 @@ function _coaRenderDiagnose(j) {
 
   // Issue categories
   var categories = [
-    { key:'orphans',            icon:'fa-unlink',           color:'#dc2626', label:'حسابات يتيمة (parent محذوف)' },
-    { key:'typeMismatch',       icon:'fa-arrows-rotate',     color:'#ea580c', label:'نوع لا يطابق نوع الأب' },
-    { key:'duplicateCodes',     icon:'fa-copy',              color:'#b45309', label:'أكواد مكرَّرة' },
-    { key:'unbalancedJournals', icon:'fa-scale-unbalanced',  color:'#dc2626', label:'قيود غير متوازنة' },
-    { key:'orphanEntries',      icon:'fa-link-slash',        color:'#dc2626', label:'قيود تشير لحساب محذوف' },
-    { key:'missingCoreAccounts',icon:'fa-circle-question',   color:'#7c3aed', label:'حسابات أساسية ناقصة' },
-    { key:'levelMismatch',      icon:'fa-layer-group',       color:'#0e7490', label:'مستوى مختلف عن العمق الفعلي' },
-    { key:'cycles',             icon:'fa-rotate',            color:'#dc2626', label:'حلقات في الشجرة (cycle)' }
+    // v5.10.38 — three new categories surfaced first because they tie
+    // directly to the bugs the user reported (zombie balances + misplaced
+    // banks/inventory).
+    { key:'balanceWithoutEntries',   icon:'fa-ghost',            color:'#dc2626', label:'رصيد بدون قيود فعلية (Zombie)' },
+    { key:'nameVsPlacementMismatch', icon:'fa-folder-tree',      color:'#dc2626', label:'الاسم لا يطابق المكان في الشجرة' },
+    { key:'codeTypeMismatch',        icon:'fa-tags',             color:'#ea580c', label:'النوع لا يطابق الكود' },
+    { key:'orphans',                 icon:'fa-unlink',           color:'#dc2626', label:'حسابات يتيمة (parent محذوف)' },
+    { key:'typeMismatch',            icon:'fa-arrows-rotate',    color:'#ea580c', label:'نوع لا يطابق نوع الأب' },
+    { key:'duplicateCodes',          icon:'fa-copy',             color:'#b45309', label:'أكواد مكرَّرة' },
+    { key:'unbalancedJournals',      icon:'fa-scale-unbalanced', color:'#dc2626', label:'قيود غير متوازنة' },
+    { key:'orphanEntries',           icon:'fa-link-slash',       color:'#dc2626', label:'قيود تشير لحساب محذوف' },
+    { key:'missingCoreAccounts',     icon:'fa-circle-question',  color:'#7c3aed', label:'حسابات أساسية ناقصة' },
+    { key:'levelMismatch',           icon:'fa-layer-group',      color:'#0e7490', label:'مستوى مختلف عن العمق الفعلي' },
+    { key:'cycles',                  icon:'fa-rotate',           color:'#dc2626', label:'حلقات في الشجرة (cycle)' }
   ];
 
   var sectionsHtml = '';
@@ -996,14 +1043,18 @@ function _coaRenderDiagnose(j) {
       '<div class="coa-diag-cat__body">';
     arr.slice(0, 12).forEach(function(item){
       var info = '';
-      if (cat.key === 'orphans')           info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · parent_id ' + esc(item.parent_id || '');
-      else if (cat.key === 'typeMismatch') info = (item.code || '') + ' (' + esc(item.child_type || '') + ') تحت ' + (item.parent_code || '') + ' (' + esc(item.parent_type || '') + ')';
-      else if (cat.key === 'duplicateCodes') info = 'كود ' + esc(item.code) + ' مستخدم ' + item.n + ' مرات';
-      else if (cat.key === 'unbalancedJournals') info = (item.journal_number || item.id) + ' · مدين ' + (Number(item.total_debit)||0).toFixed(2) + ' ≠ دائن ' + (Number(item.total_credit)||0).toFixed(2);
-      else if (cat.key === 'orphanEntries') info = (item.account_code || '') + ' — ' + esc(item.account_name || '');
-      else if (cat.key === 'missingCoreAccounts') info = 'كود ' + esc(item);
-      else if (cat.key === 'levelMismatch') info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · مستوى محفوظ ' + item.storedLevel + ' لكن المحسوب ' + item.computedLevel;
-      else if (cat.key === 'cycles') info = (item.code || '') + ' — ' + esc(item.name_ar || '');
+      if (cat.key === 'orphans')                        info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · parent_id ' + esc(item.parent_id || '');
+      else if (cat.key === 'typeMismatch')              info = (item.code || '') + ' (' + esc(item.child_type || '') + ') تحت ' + (item.parent_code || '') + ' (' + esc(item.parent_type || '') + ')';
+      else if (cat.key === 'duplicateCodes')            info = 'كود ' + esc(item.code) + ' مستخدم ' + item.n + ' مرات';
+      else if (cat.key === 'unbalancedJournals')        info = (item.journal_number || item.id) + ' · مدين ' + (Number(item.total_debit)||0).toFixed(2) + ' ≠ دائن ' + (Number(item.total_credit)||0).toFixed(2);
+      else if (cat.key === 'orphanEntries')             info = (item.account_code || '') + ' — ' + esc(item.account_name || '');
+      else if (cat.key === 'missingCoreAccounts')       info = 'كود ' + esc(item);
+      else if (cat.key === 'levelMismatch')             info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · مستوى محفوظ ' + item.storedLevel + ' لكن المحسوب ' + item.computedLevel;
+      else if (cat.key === 'cycles')                    info = (item.code || '') + ' — ' + esc(item.name_ar || '');
+      // v5.10.38 — formatters for the three new categories
+      else if (cat.key === 'codeTypeMismatch')          info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · النوع المحفوظ "' + esc(item.type || '—') + '" لا يطابق جذر الكود';
+      else if (cat.key === 'balanceWithoutEntries')     info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · رصيد ' + Number(item.balance||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' بدون أي قيد فعلي';
+      else if (cat.key === 'nameVsPlacementMismatch')   info = (item.code || '') + ' — ' + esc(item.name_ar || '') + ' · موجود تحت جذر "' + esc(item.actualRootCode || '?') + '" والمتوقع "' + esc(item.expectedLabel || item.expectedParentCode || '?') + '"';
       sectionsHtml += '<div class="coa-diag-row">' + info + '</div>';
     });
     if (arr.length > 12) sectionsHtml += '<div class="coa-diag-row coa-diag-row--more">… و' + (arr.length - 12) + ' بند آخر</div>';
@@ -1015,34 +1066,150 @@ function _coaRenderDiagnose(j) {
   body.innerHTML = headHtml + sectionsHtml;
 }
 
+// v5.10.38 — Single-shot deep repair. Runs all fixes inside one DB
+// transaction on the server and shows a before/after report modal.
 window.coaRunAutoRepair = function() {
-  if (!confirm('سيتم تشغيل سلسلة الإصلاحات التلقائية:\n• إصلاح التصنيفات المُحرَّفة\n• إصلاح الـ orphans والمستويات\n• إعادة تحميل الشجرة بعد ذلك\n\nمتابعة؟')) return;
+  if (!confirm('سيتم تشغيل إصلاح شامل لشجرة الحسابات:\n\n' +
+    '• إعادة تصنيف الحسابات بالاسم (بنوك، مخزون، …)\n' +
+    '• توحيد النوع مع جذر الكود\n' +
+    '• إصلاح اليتامى وإعادة احتساب المستويات\n' +
+    '• إعادة احتساب كل الأرصدة من قيود اليومية الفعلية\n\n' +
+    'يتم كل ذلك في معاملة واحدة. هل تريد المتابعة؟')) return;
   var token = localStorage.getItem('pos_token') || '';
-  if (typeof showToast === 'function') showToast('جاري الإصلاح...', false);
-  // Run repair-classification then auto-fix in sequence
-  fetch('/api/erp/gl/repair-classification', { method:'POST', headers: { 'Authorization': 'Bearer ' + token } })
+  if (typeof showToast === 'function') showToast('جاري الإصلاح الشامل...', false);
+  fetch('/api/erp/gl/deep-repair', { method:'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type':'application/json' } })
     .then(function(r){ return r.json(); })
-    .then(function(j1){
-      var fixed1 = (j1 && j1.fixed) || 0;
-      return fetch('/api/erp/gl/auto-fix', { method:'POST', headers: { 'Authorization': 'Bearer ' + token } })
-        .then(function(r){ return r.json(); })
-        .then(function(j2){
-          var fixed2 = ((j2 && j2.orphansPromoted) || 0) + ((j2 && j2.levelsCorrected) || 0);
-          if (typeof showToast === 'function') {
-            showToast('تم — ' + fixed1 + ' تصنيف + ' + fixed2 + ' هيكلية');
-          }
-          // Refresh tree + diagnose
-          if (typeof erpLoadAccountsList_ === 'function') erpLoadAccountsList_();
-          // Refresh diagnose if open
-          if (document.getElementById('coaDiagModal').style.display === 'flex') {
-            setTimeout(function(){ coaOpenDiagnose(); }, 500);
-          }
-        });
+    .then(function(j){
+      if (!j || !j.success) {
+        if (typeof showToast === 'function') showToast('فشل الإصلاح: ' + ((j && j.error) || 'خطأ غير معروف'), true);
+        return;
+      }
+      _coaShowRepairReport(j);
+      if (typeof erpLoadAccountsList_ === 'function') erpLoadAccountsList_();
+      // refresh open diagnose modal if visible
+      var diagModal = document.getElementById('coaDiagModal');
+      if (diagModal && (diagModal.classList.contains('show') || diagModal.style.display === 'flex')) {
+        setTimeout(function(){ coaOpenDiagnose(); }, 400);
+      }
     })
     .catch(function(e){
       if (typeof showToast === 'function') showToast('فشل الإصلاح: ' + (e && e.message || ''), true);
     });
 };
+
+// Display a modal summarizing what /gl/deep-repair changed.
+function _coaShowRepairReport(j) {
+  var labels = {
+    orphans: 'يتيمة',
+    typeMismatch: 'نوع لا يطابق الأب',
+    codeTypeMismatch: 'النوع لا يطابق الكود',
+    duplicateCodes: 'أكواد مكرَّرة',
+    balanceWithoutEntries: 'رصيد بدون قيود فعلية',
+    levelMismatch: 'مستويات خاطئة',
+    cycles: 'حلقات (cycles)'
+  };
+  var before = j.before || {}, after = j.after || {};
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var totalBefore = 0, totalAfter = 0;
+  Object.keys(labels).forEach(function(k){ totalBefore += (before[k]||0); totalAfter += (after[k]||0); });
+
+  var rowsHtml = Object.keys(labels).map(function(k){
+    var b = before[k] || 0, a = after[k] || 0;
+    var diff = b - a, color = diff > 0 ? '#16a34a' : (diff < 0 ? '#dc2626' : '#64748b');
+    return '<tr>' +
+      '<td style="padding:6px 10px;">' + labels[k] + '</td>' +
+      '<td style="padding:6px 10px;text-align:center;color:#64748b;">' + b + '</td>' +
+      '<td style="padding:6px 10px;text-align:center;font-weight:800;color:' + color + ';">' + a + '</td>' +
+      '<td style="padding:6px 10px;text-align:center;color:' + color + ';">' + (diff > 0 ? '−' + diff : (diff < 0 ? '+' + Math.abs(diff) : '0')) + '</td>' +
+    '</tr>';
+  }).join('');
+
+  var reclass = j.reclassified || [];
+  var skipped = j.skipped || [];
+  var typeFixed = j.typeFixed || [];
+
+  var detailsHtml = '';
+  if (reclass.length) {
+    detailsHtml += '<details style="margin-top:14px;"><summary style="cursor:pointer;font-weight:700;">إعادة تصنيف ' + reclass.length + ' حساب</summary><div style="max-height:240px;overflow:auto;margin-top:8px;font-size:12px;">';
+    reclass.slice(0, 200).forEach(function(x){
+      detailsHtml += '<div style="padding:4px 8px;border-bottom:1px solid #f1f5f9;">' +
+        esc(x.nameAr || '') + ' <span style="color:#64748b;">(' + esc(x.code || '') + ')</span> · ' +
+        '<span style="color:#dc2626;">' + esc(x.oldParentCode || '?') + '</span> → ' +
+        '<span style="color:#16a34a;">' + esc(x.newParentCode || '?') + '</span>' +
+      '</div>';
+    });
+    if (reclass.length > 200) detailsHtml += '<div style="padding:4px 8px;color:#64748b;">… و' + (reclass.length - 200) + ' بند آخر</div>';
+    detailsHtml += '</div></details>';
+  }
+  if (typeFixed.length) {
+    detailsHtml += '<details style="margin-top:8px;"><summary style="cursor:pointer;font-weight:700;">تصحيح النوع لـ ' + typeFixed.length + ' حساب</summary><div style="max-height:240px;overflow:auto;margin-top:8px;font-size:12px;">';
+    typeFixed.slice(0, 200).forEach(function(x){
+      detailsHtml += '<div style="padding:4px 8px;border-bottom:1px solid #f1f5f9;">' +
+        esc(x.code || '') + ' · ' +
+        '<span style="color:#dc2626;">' + esc(x.oldType || '—') + '</span> → ' +
+        '<span style="color:#16a34a;">' + esc(x.newType || '—') + '</span>' +
+      '</div>';
+    });
+    detailsHtml += '</div></details>';
+  }
+  if (skipped.length) {
+    detailsHtml += '<details style="margin-top:8px;"><summary style="cursor:pointer;font-weight:700;color:#b45309;">تخطٍّ ' + skipped.length + ' حساب (مراجعة يدوية)</summary><div style="max-height:200px;overflow:auto;margin-top:8px;font-size:12px;">';
+    skipped.slice(0, 100).forEach(function(x){
+      detailsHtml += '<div style="padding:4px 8px;border-bottom:1px solid #f1f5f9;">' +
+        esc(x.nameAr || '') + ' <span style="color:#64748b;">(' + esc(x.code || '') + ')</span> · ' + esc(x.reason || '') +
+      '</div>';
+    });
+    detailsHtml += '</div></details>';
+  }
+
+  var summaryColor = totalAfter === 0 ? '#16a34a' : (totalAfter < totalBefore ? '#0e7490' : '#dc2626');
+  var summaryIcon = totalAfter === 0 ? 'fa-circle-check' : 'fa-circle-info';
+  var summaryText = totalAfter === 0
+    ? 'الشجرة سليمة الآن — تم حلّ كل المشاكل ✓'
+    : (totalBefore - totalAfter) + ' مشكلة تم إصلاحها · ' + totalAfter + ' متبقّية للمراجعة';
+
+  var html =
+    '<div class="modal show" id="coaRepairReportModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10000;" onclick="if(event.target===this)this.remove();">' +
+      '<div class="modal-content modal-large" style="max-width:760px;width:96%;margin-top:24px;" onclick="event.stopPropagation();">' +
+        '<div class="modal-title">' +
+          '<i class="fas fa-wand-magic-sparkles" style="color:#7c3aed;"></i>' +
+          '<span>تقرير الإصلاح الشامل</span>' +
+          '<button class="modal-close" onclick="document.getElementById(\'coaRepairReportModal\').remove()">&times;</button>' +
+        '</div>' +
+        '<div style="padding:18px 20px;">' +
+          '<div style="display:flex;align-items:center;gap:12px;padding:14px;background:' + summaryColor + '11;border:1px solid ' + summaryColor + '33;border-radius:10px;margin-bottom:14px;">' +
+            '<i class="fas ' + summaryIcon + '" style="color:' + summaryColor + ';font-size:24px;"></i>' +
+            '<div style="font-weight:800;color:' + summaryColor + ';">' + summaryText + '</div>' +
+          '</div>' +
+          '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
+            '<thead><tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">' +
+              '<th style="padding:8px 10px;text-align:right;">الفئة</th>' +
+              '<th style="padding:8px 10px;text-align:center;">قبل</th>' +
+              '<th style="padding:8px 10px;text-align:center;">بعد</th>' +
+              '<th style="padding:8px 10px;text-align:center;">التغير</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rowsHtml + '</tbody>' +
+          '</table>' +
+          '<div style="margin-top:14px;padding:10px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:13px;color:#0369a1;">' +
+            '<i class="fas fa-circle-check"></i> ' +
+            'أُعيد احتساب أرصدة <b>' + (j.balancesRecomputed||0) + '</b> حساب من قيود اليومية الفعلية. ' +
+            'الآن الأرقام في الشجرة = مجموع <code>gl_entries</code> فقط — لا أرصدة وهمية.' +
+          '</div>' +
+          detailsHtml +
+          '<div style="margin-top:16px;text-align:left;">' +
+            '<button class="wo-btn wo-btn-primary" onclick="document.getElementById(\'coaRepairReportModal\').remove()">إغلاق</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+  // remove any prior instance
+  var prior = document.getElementById('coaRepairReportModal');
+  if (prior) prior.remove();
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstChild);
+}
 
 // ─── Suggestions panel (international standard reference) ───
 window.coaOpenSuggestions = function() {
@@ -11711,6 +11878,24 @@ function erpLoadBalanceSheet() {
     // Cache the response so the print button can re-use it
     window._bsSnapshot = { asOf: asOf, brand: brand, branch: branch, data: r };
 
+    // v5.10.38 — banner for unclassified accounts and tree integrity issues
+    var bannerHtml = '';
+    var unclassified = (r.unclassified || []);
+    if (unclassified.length) {
+      var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+      var sample = unclassified.slice(0, 5).map(function(u){ return esc(u.code || '?') + ' ' + esc(u.nameAr || ''); }).join('، ');
+      var more = unclassified.length > 5 ? ' و' + (unclassified.length - 5) + ' آخر' : '';
+      bannerHtml +=
+        '<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:#fff7ed;border:1px solid #fdba74;border-radius:10px;margin-bottom:14px;">' +
+          '<i class="fas fa-triangle-exclamation" style="color:#ea580c;font-size:20px;"></i>' +
+          '<div style="flex:1;">' +
+            '<div style="font-weight:800;color:#9a3412;">' + unclassified.length + ' حساب لم يُصنَّف في المركز المالي</div>' +
+            '<div style="font-size:12px;color:#9a3412;margin-top:2px;">مثل: ' + sample + more + '</div>' +
+          '</div>' +
+          '<button class="wo-btn wo-btn-secondary" onclick="coaRunAutoRepair()"><i class="fas fa-wand-magic-sparkles"></i><span>إصلاح شامل</span></button>' +
+        '</div>';
+    }
+
     // Build the IFRS hierarchy
     var groups = r.groups || {};
     var leftColHtml  = ''; // الالتزامات + حقوق الملكية
@@ -11733,7 +11918,8 @@ function erpLoadBalanceSheet() {
         { label: 'حقوق الملكية',             subs: groups.equity,         color: '#8b5cf6' }
       ], totalEq, asOf);
 
-    var html = '<div class="bs-grid">' +
+    var html = bannerHtml +
+      '<div class="bs-grid">' +
         '<div class="bs-col">' + rightColHtml + '</div>' +
         '<div class="bs-col">' + leftColHtml + '</div>' +
       '</div>' +
@@ -11754,6 +11940,40 @@ function erpLoadBalanceSheet() {
         '<button class="tb-btn tb-btn-success" onclick="erpBalanceSheetPrint()" style="font-size:13px;padding:8px 24px;"><i class="fas fa-print"></i> طباعة قائمة المركز المالي</button>' +
       '</div>';
     document.getElementById('bsDetails').innerHTML = html;
+
+    // v5.10.38 — fire-and-forget diagnose to prepend a critical-issues
+    // banner if the COA has zombie balances or misplaced banks/inventory.
+    var token = localStorage.getItem('pos_token') || '';
+    fetch('/api/erp/gl/diagnose', { headers: { 'Authorization': 'Bearer ' + token } })
+      .then(function(rr){ return rr.json(); })
+      .then(function(d){
+        if (!d || !d.issues) return;
+        var crit =
+          ((d.issues.balanceWithoutEntries||[]).length) +
+          ((d.issues.nameVsPlacementMismatch||[]).length) +
+          ((d.issues.codeTypeMismatch||[]).length);
+        if (crit === 0) return;
+        var box = document.getElementById('bsDetails');
+        if (!box) return;
+        var crit2 = (d.issues.balanceWithoutEntries||[]).length;
+        var crit3 = (d.issues.nameVsPlacementMismatch||[]).length;
+        var crit1 = (d.issues.codeTypeMismatch||[]).length;
+        var details = [];
+        if (crit2) details.push(crit2 + ' حساب يحمل رصيدًا بدون قيود فعلية');
+        if (crit3) details.push(crit3 + ' حساب اسمه لا يطابق مكانه (مثلاً بنوك تحت مخزون)');
+        if (crit1) details.push(crit1 + ' حساب نوعه لا يطابق الكود');
+        var bn = document.createElement('div');
+        bn.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px 16px;background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;margin-bottom:14px;';
+        bn.innerHTML =
+          '<i class="fas fa-circle-exclamation" style="color:#dc2626;font-size:20px;"></i>' +
+          '<div style="flex:1;">' +
+            '<div style="font-weight:800;color:#7f1d1d;">قد لا يكون المركز المالي دقيقًا</div>' +
+            '<div style="font-size:12px;color:#991b1b;margin-top:2px;">' + details.join(' · ') + '</div>' +
+          '</div>' +
+          '<button class="wo-btn wo-btn-secondary" onclick="coaRunAutoRepair()"><i class="fas fa-wand-magic-sparkles"></i><span>إصلاح شامل</span></button>';
+        box.insertBefore(bn, box.firstChild);
+      })
+      .catch(function(){ /* ignore — diagnose is advisory */ });
   });
 }
 

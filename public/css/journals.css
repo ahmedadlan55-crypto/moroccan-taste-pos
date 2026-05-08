@@ -190,3 +190,131 @@
   cursor: pointer;
   accent-color: var(--accent);
 }
+
+/* ────────────────────────────────────────────────────────────────────
+   Cash voucher modal (v5.11.4) — premium dim bar + tile picker.
+   Lives next to the journals styles because the brand language is
+   shared (--accent, --primary, dim chip palette).
+   ──────────────────────────────────────────────────────────────────── */
+.cv-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.cv-dim-bar {
+  background: linear-gradient(135deg, #faf5ff, #fff);
+  border: 1px solid #e9d5ff !important;
+}
+.cv-dim-bar .cv-head { color: #5b21b6 !important; }
+
+/* ── Tile picker (Source / Destination) ── */
+.cv-tile-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.cv-tile-col {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 120px;
+}
+.cv-tile-col__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+  font-size: 12.5px;
+  color: var(--primary);
+  padding: 4px 6px 10px;
+  border-bottom: 1px dashed #cbd5e1;
+  margin-bottom: 8px;
+}
+.cv-tile-col__head i { color: var(--accent); font-size: 14px; }
+.cv-tile-col__count {
+  margin-inline-start: auto;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #64748b;
+  background: #fff;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+}
+.cv-tile-col__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-inline-end: 2px;
+}
+.cv-tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 100ms ease, box-shadow 120ms ease;
+  text-align: start;
+}
+.cv-tile:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px -8px rgba(59, 130, 246, 0.32);
+}
+.cv-tile.is-selected {
+  border-color: var(--accent);
+  background: linear-gradient(135deg, #eff6ff, #fff);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+.cv-tile__icon {
+  width: 36px; height: 36px;
+  display: grid; place-items: center;
+  border-radius: 10px;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.cv-tile__body {
+  flex: 1;
+  min-width: 0;
+}
+.cv-tile__name {
+  font-weight: 800;
+  font-size: 13px;
+  color: var(--primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cv-tile__meta {
+  font-size: 10.5px;
+  color: #94a3b8;
+  font-family: ui-monospace, Menlo, monospace;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cv-tile__bal {
+  font-weight: 800;
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.cv-tile-empty {
+  padding: 20px 12px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 600;
+  font-style: italic;
+}
+
+@media (max-width: 720px) {
+  .cv-grid-3   { grid-template-columns: 1fr; }
+  .cv-tile-grid { grid-template-columns: 1fr; }
+}

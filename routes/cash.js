@@ -43,6 +43,53 @@ async function ensureBankAccount(bankId, name, code) {
   return accId;
 }
 
+// v5.11.4 — explicit-parent helper used when the cashbox / bank-account
+// modal lets the user pick a parent GL account and the system needs to
+// mint a fresh gl_account beneath it (with the suggested code that the
+// frontend computed via the same algorithm as erpAddChildAccount).
+//
+// Rules:
+//   - parentId must exist and live under root 1101 (cashbox) or 1102 (bank).
+//   - newCode must be unique on gl_accounts.code.
+//   - On collision, falls back to '<parent.code>-<random>' so the
+//     account still gets created — the user can rename later.
+async function createGlAccountUnderParent({ parentId, suggestedCode, suggestedLevel, suggestedName, type, requiredRoot }) {
+  if (!parentId) return null;
+  const [parentRows] = await db.query('SELECT id, code, level FROM gl_accounts WHERE id = ?', [parentId]);
+  if (!parentRows.length) return null;
+  const parent = parentRows[0];
+  if (requiredRoot && !String(parent.code || '').startsWith(requiredRoot)) {
+    throw new Error('الأب يجب أن يكون تحت ' + requiredRoot);
+  }
+  let code = String(suggestedCode || '').trim();
+  if (!code) {
+    // Compute next-suffix based on parent's existing children — same algorithm
+    // as erpAddChildAccount so the cash modal produces consistent codes.
+    const [siblings] = await db.query(
+      'SELECT code FROM gl_accounts WHERE parent_id = ? ORDER BY code',
+      [parentId]);
+    if (!siblings.length) {
+      code = (Number(parent.level) >= 3) ? (parent.code + '01') : (parent.code + '1');
+    } else {
+      const last = siblings[siblings.length - 1].code;
+      const suffix = String(last).substring(String(parent.code).length);
+      const next = parseInt(suffix, 10) + 1;
+      code = parent.code + String(next).padStart(suffix.length || 1, '0');
+    }
+  }
+  // Resolve collision by appending a random suffix
+  const [clash] = await db.query('SELECT id FROM gl_accounts WHERE code = ?', [code]);
+  if (clash.length) {
+    code = code + '-' + Math.random().toString(36).slice(2, 5);
+  }
+  const newId = 'GL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  const level = Number(suggestedLevel) || (Number(parent.level || 1) + 1);
+  await db.query(
+    'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
+    [newId, code, suggestedName || code, type || 'asset', parentId, level]);
+  return { id: newId, code, level };
+}
+
 async function getSourceAccount(type, id) {
   if (type === 'cash') {
     const [r] = await db.query('SELECT id, name, code, gl_account_id FROM cash_boxes WHERE id = ?', [id]);
@@ -56,7 +103,14 @@ async function getSourceAccount(type, id) {
   return { glId: gl, name: r[0].bank_name, code: r[0].account_number || '' };
 }
 
-async function createJournal(date, description, lines, username) {
+// v5.11.4 — fifth `dims` argument carries brand/branch/cost-center/project
+// from the voucher header through to gl_journals + gl_entries so every
+// dimensional report (Trial Balance by brand, P&L by branch, etc.)
+// includes voucher activity. Each entry inherits the header dims unless
+// the line explicitly overrides — same inheritance contract that
+// gl/journals POST uses.
+async function createJournal(date, description, lines, username, dims) {
+  dims = dims || {};
   const journalId = 'GLJ-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
   const [last] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
   let num = 1;
@@ -68,15 +122,59 @@ async function createJournal(date, description, lines, username) {
   let totalD = 0, totalC = 0;
   lines.forEach(l => { totalD += Number(l.debit)||0; totalC += Number(l.credit)||0; });
   if (Math.abs(totalD - totalC) > 0.01) throw new Error('القيد غير متوازن');
-  await db.query(
-    `INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, description, total_debit, total_credit, status, created_by, posted_by, posted_at)
-     VALUES (?,?,?,?,?,?,?,'posted',?,?,NOW())`,
-    [journalId, jNum, date, 'cash', description, totalD, totalC, username||'', username||'']);
+  // Header insert: try the wide form (with dim columns) first; fall back
+  // to the legacy column set if the migration hasn't applied yet.
+  const headerCols = ['id','journal_number','journal_date','reference_type','description',
+                      'total_debit','total_credit','status','created_by','posted_by','posted_at'];
+  const headerVals = [journalId, jNum, date, 'cash', description, totalD, totalC,
+                      'posted', username||'', username||'', new Date()];
+  const dimMap = [
+    ['brandId','brand_id'], ['branchId','branch_id'],
+    ['projectId','project_id'], ['costCenterId','cost_center_id']
+  ];
+  const dimCols = [], dimVals = [];
+  for (const [k, col] of dimMap) {
+    if (dims[k]) { dimCols.push(col); dimVals.push(dims[k]); }
+  }
+  const allCols = headerCols.concat(dimCols);
+  const allVals = headerVals.concat(dimVals);
+  try {
+    await db.query(
+      'INSERT INTO gl_journals (' + allCols.join(',') + ') VALUES (' + allCols.map(() => '?').join(',') + ')',
+      allVals);
+  } catch (err) {
+    if (dimCols.length) {
+      await db.query(
+        'INSERT INTO gl_journals (' + headerCols.slice(0, -1).join(',') + ', posted_at) VALUES (' + headerCols.map(() => '?').join(',') + ')',
+        headerVals);
+    } else throw err;
+  }
   for (const l of lines) {
     const entryId = 'GLE-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
-    await db.query(
-      `INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)`,
-      [entryId, journalId, l.accountId||null, l.accountCode||'', l.accountName||'', Number(l.debit)||0, Number(l.credit)||0, l.description || description]);
+    // Per-entry insert with dim inheritance (line value wins, header is fallback)
+    const entryCols = ['id','journal_id','account_id','account_code','account_name',
+                       'debit','credit','description'];
+    const entryVals = [entryId, journalId, l.accountId||null, l.accountCode||'',
+                       l.accountName||'', Number(l.debit)||0, Number(l.credit)||0,
+                       l.description || description];
+    const entryDimCols = [], entryDimVals = [];
+    for (const [k, col] of dimMap.concat([['warehouseId','warehouse_id']])) {
+      const v = (l[k] != null && l[k] !== '') ? l[k] : dims[k];
+      if (v) { entryDimCols.push(col); entryDimVals.push(v); }
+    }
+    const allEntryCols = entryCols.concat(entryDimCols);
+    const allEntryVals = entryVals.concat(entryDimVals);
+    try {
+      await db.query(
+        'INSERT INTO gl_entries (' + allEntryCols.join(',') + ') VALUES (' + allEntryCols.map(() => '?').join(',') + ')',
+        allEntryVals);
+    } catch (err) {
+      if (entryDimCols.length) {
+        await db.query(
+          'INSERT INTO gl_entries (' + entryCols.join(',') + ') VALUES (' + entryCols.map(() => '?').join(',') + ')',
+          entryVals);
+      } else throw err;
+    }
     if (l.accountId) {
       const net = (Number(l.debit)||0) - (Number(l.credit)||0);
       await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [net, l.accountId]);
@@ -168,7 +266,9 @@ router.get('/cash-boxes', async (req, res) => {
 
 router.post('/cash-boxes', async (req, res) => {
   try {
-    const { id, name, code, type, branchId, brandId, keeperUsername, currency, glAccountId, username } = req.body;
+    const { id, name, code, type, branchId, brandId, keeperUsername, currency, glAccountId, username,
+            // v5.11.4 — parent-picker payload from the new "add cashbox" modal
+            parentGlId, suggestedCode, suggestedLevel } = req.body;
     if (!name) return res.json({ success:false, error: 'الاسم مطلوب' });
     // V5.9.13 — validate the chosen GL account exists and lives under root 1101 (النقدية).
     let glId = null;
@@ -178,6 +278,19 @@ router.post('/cash-boxes', async (req, res) => {
       if (g[0].code && !String(g[0].code).startsWith('1101'))
         return res.json({ success:false, error: 'حساب الصندوق يجب أن يكون تحت 1101 (النقدية)' });
       glId = glAccountId;
+    }
+    // v5.11.4 — when no existing glAccountId is supplied but a parent IS,
+    // mint a fresh gl_account beneath it with the user's suggested code.
+    else if (parentGlId) {
+      try {
+        const created = await createGlAccountUnderParent({
+          parentId: parentGlId, suggestedCode, suggestedLevel,
+          suggestedName: name, type: 'asset', requiredRoot: '1101'
+        });
+        if (created) glId = created.id;
+      } catch (e) {
+        return res.json({ success:false, error: e.message });
+      }
     }
     if (id) {
       await db.query(
@@ -225,7 +338,8 @@ router.get('/bank-accounts', async (req, res) => {
 
 router.post('/bank-accounts', async (req, res) => {
   try {
-    const { id, bankName, accountName, accountNumber, iban, currency, brandId, glAccountId } = req.body;
+    const { id, bankName, accountName, accountNumber, iban, currency, brandId, glAccountId,
+            parentGlId, suggestedCode, suggestedLevel } = req.body;
     if (!bankName) return res.json({ success:false, error: 'اسم البنك مطلوب' });
     // V5.9.13 — validate GL account is under root 1102 (البنوك)
     let glId = null;
@@ -235,6 +349,18 @@ router.post('/bank-accounts', async (req, res) => {
       if (g[0].code && !String(g[0].code).startsWith('1102'))
         return res.json({ success:false, error: 'حساب البنك يجب أن يكون تحت 1102 (البنوك)' });
       glId = glAccountId;
+    }
+    // v5.11.4 — same parent-picker support for the "add bank" modal
+    else if (parentGlId) {
+      try {
+        const created = await createGlAccountUnderParent({
+          parentId: parentGlId, suggestedCode, suggestedLevel,
+          suggestedName: bankName, type: 'asset', requiredRoot: '1102'
+        });
+        if (created) glId = created.id;
+      } catch (e) {
+        return res.json({ success:false, error: e.message });
+      }
     }
     if (id) {
       await db.query(
@@ -341,7 +467,9 @@ async function _validateManualGlLines(lines, expectedAmount) {
 // approval time. Lets the user hand-pick Dr / Cr from the COA tree.
 router.post('/receipts', async (req, res) => {
   try {
-    const { receiptDate, destinationType, destinationId, sourceType, sourceId, sourceName, amount, reference, description, username, manualGlLines } = req.body;
+    const { receiptDate, destinationType, destinationId, sourceType, sourceId, sourceName, amount, reference, description, username, manualGlLines,
+            // v5.11.4 — accounting dimensions captured at the voucher header
+            brandId, branchId, costCenterId, projectId } = req.body;
     if (!amount || !destinationId || !destinationType) return res.json({ success:false, error: 'البيانات ناقصة' });
     const destTable = destinationType === 'cash' ? 'cash_boxes' : 'bank_accounts';
     const [chk] = await db.query('SELECT id FROM ' + destTable + ' WHERE id=? AND is_active=1', [destinationId]);
@@ -355,11 +483,22 @@ router.post('/receipts', async (req, res) => {
 
     const number = await nextNumber('cash_receipts', 'receipt_number', 'REC-');
     const id = 'REC-' + Date.now();
-    await db.query(
-      `INSERT INTO cash_receipts (id, receipt_number, receipt_date, destination_type, destination_id, source_type, source_id, source_name, amount, reference, description, status, created_by, manual_gl_lines)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`,
-      [id, number, receiptDate, destinationType, destinationId, sourceType||'other', sourceId||null, sourceName||'', amount, reference||'', description||'', username||'',
-       manualGlLines && manualGlLines.length ? JSON.stringify(manualGlLines) : null]);
+    // v5.11.4 — wide insert that also writes the dims; if the migration
+    // hasn't run yet, fall back to the legacy column set.
+    try {
+      await db.query(
+        `INSERT INTO cash_receipts (id, receipt_number, receipt_date, destination_type, destination_id, source_type, source_id, source_name, amount, reference, description, status, created_by, manual_gl_lines, brand_id, branch_id, cost_center_id, project_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?, ?, ?, ?, ?)`,
+        [id, number, receiptDate, destinationType, destinationId, sourceType||'other', sourceId||null, sourceName||'', amount, reference||'', description||'', username||'',
+         manualGlLines && manualGlLines.length ? JSON.stringify(manualGlLines) : null,
+         brandId||null, branchId||null, costCenterId||null, projectId||null]);
+    } catch (e) {
+      await db.query(
+        `INSERT INTO cash_receipts (id, receipt_number, receipt_date, destination_type, destination_id, source_type, source_id, source_name, amount, reference, description, status, created_by, manual_gl_lines)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`,
+        [id, number, receiptDate, destinationType, destinationId, sourceType||'other', sourceId||null, sourceName||'', amount, reference||'', description||'', username||'',
+         manualGlLines && manualGlLines.length ? JSON.stringify(manualGlLines) : null]);
+    }
     res.json({ success:true, id, number, status:'draft' });
   } catch(e) { res.json({ success:false, error: e.message }); }
 });
@@ -403,9 +542,16 @@ router.post('/receipts/:id/approve', async (req, res) => {
       ];
     }
 
+    // v5.11.4 — pass voucher dims into the journal so reports sliced by
+    // brand/branch/cost-center/project pick up cash receipts.
     const journal = await createJournal(r.receipt_date,
       'سند قبض ' + r.receipt_number + ' — ' + (r.source_name || ''),
-      lines, username);
+      lines, username, {
+        brandId: r.brand_id || null,
+        branchId: r.branch_id || null,
+        costCenterId: r.cost_center_id || null,
+        projectId: r.project_id || null
+      });
     await db.query('UPDATE cash_receipts SET status=?, journal_id=?, approved_by=?, approved_at=NOW() WHERE id=?',
       ['posted', journal.id, username, id]);
     if (r.destination_type === 'cash') await db.query('UPDATE cash_boxes SET balance = balance + ? WHERE id = ?', [r.amount, r.destination_id]);
@@ -543,7 +689,8 @@ async function _paymentRecipientGl(recipientType, expenseAccountId) {
 // V5.10.3 — Optionally accepts manualGlLines for bookkeeper-controlled posting.
 router.post('/payments', async (req, res) => {
   try {
-    const { paymentDate, sourceType, sourceId, recipientType, recipientId, recipientName, expenseAccountId, amount, reference, description, username, manualGlLines } = req.body;
+    const { paymentDate, sourceType, sourceId, recipientType, recipientId, recipientName, expenseAccountId, amount, reference, description, username, manualGlLines,
+            brandId, branchId, costCenterId, projectId } = req.body;
     if (!amount || !sourceId || !sourceType) return res.json({ success:false, error: 'البيانات ناقصة' });
     const srcTable = sourceType === 'cash' ? 'cash_boxes' : 'bank_accounts';
     const [chk] = await db.query('SELECT id FROM ' + srcTable + ' WHERE id=? AND is_active=1', [sourceId]);
@@ -554,11 +701,21 @@ router.post('/payments', async (req, res) => {
     }
     const number = await nextNumber('cash_payments', 'payment_number', 'PAY-');
     const id = 'PAY-' + Date.now();
-    await db.query(
-      `INSERT INTO cash_payments (id, payment_number, payment_date, source_type, source_id, recipient_type, recipient_id, recipient_name, expense_account_id, amount, reference, description, status, created_by, manual_gl_lines)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`,
-      [id, number, paymentDate, sourceType, sourceId, recipientType||'other', recipientId||null, recipientName||'', expenseAccountId||null, amount, reference||'', description||'', username||'',
-       manualGlLines && manualGlLines.length ? JSON.stringify(manualGlLines) : null]);
+    // v5.11.4 — same wide-insert with dim columns + legacy fallback
+    try {
+      await db.query(
+        `INSERT INTO cash_payments (id, payment_number, payment_date, source_type, source_id, recipient_type, recipient_id, recipient_name, expense_account_id, amount, reference, description, status, created_by, manual_gl_lines, brand_id, branch_id, cost_center_id, project_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?, ?, ?, ?, ?)`,
+        [id, number, paymentDate, sourceType, sourceId, recipientType||'other', recipientId||null, recipientName||'', expenseAccountId||null, amount, reference||'', description||'', username||'',
+         manualGlLines && manualGlLines.length ? JSON.stringify(manualGlLines) : null,
+         brandId||null, branchId||null, costCenterId||null, projectId||null]);
+    } catch (e) {
+      await db.query(
+        `INSERT INTO cash_payments (id, payment_number, payment_date, source_type, source_id, recipient_type, recipient_id, recipient_name, expense_account_id, amount, reference, description, status, created_by, manual_gl_lines)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?)`,
+        [id, number, paymentDate, sourceType, sourceId, recipientType||'other', recipientId||null, recipientName||'', expenseAccountId||null, amount, reference||'', description||'', username||'',
+         manualGlLines && manualGlLines.length ? JSON.stringify(manualGlLines) : null]);
+    }
     res.json({ success:true, id, number, status:'draft' });
   } catch(e) { res.json({ success:false, error: e.message }); }
 });
@@ -599,9 +756,15 @@ router.post('/payments/:id/approve', async (req, res) => {
       ];
     }
 
+    // v5.11.4 — pass voucher dims into the journal
     const journal = await createJournal(p.payment_date,
       'سند صرف ' + p.payment_number + ' — ' + (p.recipient_name || ''),
-      lines, username);
+      lines, username, {
+        brandId: p.brand_id || null,
+        branchId: p.branch_id || null,
+        costCenterId: p.cost_center_id || null,
+        projectId: p.project_id || null
+      });
     await db.query('UPDATE cash_payments SET status=?, journal_id=?, approved_by=?, approved_at=NOW() WHERE id=?',
       ['posted', journal.id, username, id]);
     if (p.source_type === 'cash') await db.query('UPDATE cash_boxes SET balance = balance - ? WHERE id = ?', [p.amount, p.source_id]);

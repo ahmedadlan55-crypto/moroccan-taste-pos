@@ -1987,6 +1987,19 @@ async function runMigrations() {
   await addColumnIfMissing('cash_receipts',  'manual_gl_lines', "TEXT");
   await addColumnIfMissing('cash_payments',  'manual_gl_lines', "TEXT");
 
+  // v5.11.4 — accounting dimensions on cash vouchers. The vouchers' approval
+  // step writes a journal; these columns let the dimensions captured on the
+  // voucher header propagate to gl_journals + gl_entries so reports
+  // sliced by brand/branch/project/cost-center include voucher activity.
+  await addColumnIfMissing('cash_receipts', 'brand_id',       "VARCHAR(50)");
+  await addColumnIfMissing('cash_receipts', 'branch_id',      "VARCHAR(50)");
+  await addColumnIfMissing('cash_receipts', 'cost_center_id', "VARCHAR(50)");
+  await addColumnIfMissing('cash_receipts', 'project_id',     "VARCHAR(50)");
+  await addColumnIfMissing('cash_payments', 'brand_id',       "VARCHAR(50)");
+  await addColumnIfMissing('cash_payments', 'branch_id',      "VARCHAR(50)");
+  await addColumnIfMissing('cash_payments', 'cost_center_id', "VARCHAR(50)");
+  await addColumnIfMissing('cash_payments', 'project_id',     "VARCHAR(50)");
+
   // v5.10.5 — Fixed Assets registry: GL linkage + depreciation tracking +
   // project + audit columns. The base `assets` table is created earlier in
   // server.js (~line 3388) — these are additive columns for the new page.

@@ -85,29 +85,35 @@ function cashOpenBoxModal() { cashEditBox(null); }
 function cashEditBox(id) {
   var b = id ? _cashBoxes.find(function(x){return x.id===id;}) : null;
   var d = b || { type:'branch', currency:'SAR' };
-  // V5.9.13 — also load the GL accounts under root 1101 (النقدية) so the
-  // user picks the box's GL account explicitly instead of relying on the
-  // implicit auto-create that ran on first transaction.
   Promise.all([
     new Promise(function(res){ window._apiBridge.withSuccessHandler(res).getBranchesFull(); }),
     new Promise(function(res){ window._apiBridge.withSuccessHandler(res).getBrands(); }),
     _cashAPI('GET', '/gl-accounts-tree?root=1101')
   ]).then(function(r) {
     var brs = r[0]||[], brands = r[1]||[], glAccs = Array.isArray(r[2]) ? r[2] : [];
+    // Cache the COA tree on window so the auto-code helper can read it
+    // synchronously when the user picks a parent.
+    window._cashCoaCash = glAccs;
     var brOpts = brs.map(function(x){return '<option value="'+x.id+'"'+(d.branchId===x.id?' selected':'')+'>'+x.name+'</option>';}).join('');
     var brandOpts = brands.map(function(x){return '<option value="'+x.id+'"'+(d.brandId===x.id?' selected':'')+'>'+x.name+'</option>';}).join('');
-    // Build a labelled GL options list. Indent by level so the tree is visible
-    // even inside a flat <select>.
-    var glOpts = '<option value="">— تلقائي (سيُنشأ عند الحفظ) —</option>' +
-      glAccs.filter(function(a){ return a.code !== '1101'; }) // hide the root itself
-            .map(function(a) {
-              var pad = a.level && a.level > 3 ? '— '.repeat(Math.max(0, a.level - 3)) : '';
-              var sel = (d.glAccountId && d.glAccountId === a.id) ? ' selected' : '';
-              return '<option value="'+a.id+'"'+sel+'>'+pad+a.code+' — '+(a.nameAr||'')+'</option>';
-            }).join('');
+    // v5.11.4 — parent picker. Only folder candidates (level < 5) so we
+    // don't hand the user a leaf as a parent and end up with a 6-deep
+    // descendant under it. Root 1101 itself is the default parent.
+    var parentOpts = glAccs
+      .filter(function(a){ return Number(a.level || 1) < 5; })
+      .sort(function(a, b){ return String(a.code||'').localeCompare(String(b.code||'')); })
+      .map(function(a){
+        var pad = a.level && a.level > 3 ? '— '.repeat(Math.max(0, a.level - 3)) : '';
+        var sel = (d.glAccountId && _cashFindParentByChild(glAccs, d.glAccountId) === a.id) ? ' selected' : '';
+        if (!d.glAccountId && a.code === '1101') sel = ' selected';
+        return '<option value="'+a.id+'" data-code="'+(a.code||'')+'" data-level="'+(a.level||1)+'"'+sel+'>'+pad+(a.code||'')+' — '+(a.nameAr||'')+'</option>';
+      }).join('');
+    var existingCode = d.glAccountCode || '';
+    var existingLevel = d.glAccountLevel || '';
     document.getElementById('erpModalTitle').textContent = id ? 'تعديل صندوق' : 'صندوق جديد';
     document.getElementById('erpModalBody').innerHTML =
       '<input type="hidden" id="cbId" value="'+(d.id||'')+'">' +
+      '<input type="hidden" id="cbExistingGl" value="'+(d.glAccountId||'')+'">' +
       '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>اسم الصندوق *</label><input class="form-control" id="cbName" value="'+(d.name||'')+'"></div>' +
         '<div class="form-row"><label>الرمز</label><input class="form-control" id="cbCode" value="'+(d.code||'')+'"></div>' +
@@ -121,16 +127,103 @@ function cashEditBox(id) {
         '<div class="form-row"><label>أمين الصندوق (username)</label><input class="form-control" id="cbKeeper" value="'+(d.keeperUsername||'')+'"></div>' +
         '<div class="form-row"><label>العملة</label><input class="form-control" id="cbCurrency" value="'+(d.currency||'SAR')+'"></div>' +
       '</div>' +
-      '<div class="form-row" style="margin-top:6px;">' +
-        '<label><i class="fas fa-book" style="color:#7f1d1d;margin-inline-end:4px;"></i> حساب الأستاذ (1101 — النقدية)</label>' +
-        '<select class="form-control" id="cbGlAccount" style="font-family:ui-monospace,Menlo,monospace;">'+glOpts+'</select>' +
-        '<small style="color:#94a3b8;font-size:11px;display:block;margin-top:3px;">اختر الحساب من شجرة الحسابات. اتركه افتراضياً ليُنشأ تلقائياً تحت 1101.</small>' +
+      // v5.11.4 — GL section: parent picker + auto code + level. Replaces
+      // the flat "pick existing" select with the same workflow the user
+      // already knows from the COA tree's "+ child" modal.
+      '<div style="margin-top:12px;padding:14px;background:linear-gradient(135deg,#fef2f2,#fff);border:1px solid #fecaca;border-radius:12px;">' +
+        '<div style="font-weight:800;color:#7f1d1d;margin-bottom:10px;font-size:13px;"><i class="fas fa-folder-tree" style="margin-inline-end:6px;"></i> ربط حساب الأستاذ (تحت 1101 — النقدية)</div>' +
+        '<div class="form-row" style="margin-bottom:10px;">' +
+          '<label style="font-size:11px;font-weight:700;color:#64748b;">الحساب الأب *</label>' +
+          '<select class="form-control" id="cbParent" onchange="_cashOnParentChange(\'cash\')" style="font-family:ui-monospace,Menlo,monospace;">'+parentOpts+'</select>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;">' +
+          '<div class="form-row">' +
+            '<label style="font-size:11px;font-weight:700;color:#64748b;">كود الحساب الجديد</label>' +
+            '<input class="form-control" id="cbNewCode" value="'+existingCode+'" '+(d.glAccountId?'':'readonly')+' style="font-family:ui-monospace,Menlo,monospace;font-weight:800;background:'+(d.glAccountId?'#fff':'#f8fafc')+';color:#7f1d1d;">' +
+          '</div>' +
+          '<div class="form-row">' +
+            '<label style="font-size:11px;font-weight:700;color:#64748b;">المستوى</label>' +
+            '<input class="form-control" id="cbNewLevel" value="'+existingLevel+'" readonly style="text-align:center;background:#f8fafc;font-weight:800;">' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-top:8px;">' +
+          '<input type="checkbox" id="cbAutoCode" '+(d.glAccountId?'':'checked')+' onchange="_cashToggleAutoCode(\'cash\')" style="width:16px;height:16px;cursor:pointer;">' +
+          '<label for="cbAutoCode" style="margin:0;font-size:12px;font-weight:700;color:#475569;cursor:pointer;">ترقيم تلقائي بناءً على تتابع الأب</label>' +
+        '</div>' +
+        (d.glAccountId
+          ? '<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:11.5px;color:#92400e;"><i class="fas fa-info-circle"></i> هذا الصندوق مَربوط مسبقًا بـ '+_cashEsc(existingCode)+' — التَّعديل لن يُغيِّر الربط.</div>'
+          : '<div style="margin-top:8px;font-size:11px;color:#94a3b8;"><i class="fas fa-lightbulb"></i> اختر الأب أوّلًا، وسيُحسَب الكود الجديد تلقائيًا. عَطِّل التَّرقيم لتُدخِله يدويًا.</div>') +
       '</div>';
+    // Initial paint: trigger the parent-change handler so the auto-code
+    // gets seeded from the (default-selected) root parent.
+    if (!d.glAccountId) setTimeout(function(){ _cashOnParentChange('cash'); }, 30);
     document.getElementById('erpModalSaveBtn').onclick = cashSaveBox;
     document.getElementById('erpModal').classList.remove('hidden');
   });
 }
+
+// v5.11.4 — given a flat COA list and a target id, return the parent_id
+// of that target (so the modal pre-selects the correct parent on edit).
+function _cashFindParentByChild(coa, childId) {
+  var node = (coa || []).find(function(a){ return a.id === childId; });
+  return node ? (node.parentId || node.parent_id || '') : '';
+}
+
+// v5.11.4 — recompute the suggested new account code + level whenever
+// the parent changes or the user toggles auto-code. Mirrors the
+// erpAddChildAccount algorithm so codes are predictable and consistent
+// across the COA tree, the journal modal, and now the cash modals.
+window._cashOnParentChange = function(kind) {
+  var coa = kind === 'cash' ? (window._cashCoaCash || []) : (window._cashCoaBank || []);
+  var parentSel = document.getElementById(kind === 'cash' ? 'cbParent' : 'baParent');
+  var codeEl    = document.getElementById(kind === 'cash' ? 'cbNewCode' : 'baNewCode');
+  var levelEl   = document.getElementById(kind === 'cash' ? 'cbNewLevel' : 'baNewLevel');
+  var autoEl    = document.getElementById(kind === 'cash' ? 'cbAutoCode' : 'baAutoCode');
+  var existingEl= document.getElementById(kind === 'cash' ? 'cbExistingGl' : 'baExistingGl');
+  if (!parentSel || !codeEl) return;
+  // Don't rewrite a code that's already locked to an existing GL link.
+  if (existingEl && existingEl.value) return;
+  var pid = parentSel.value;
+  var parent = coa.find(function(a){ return a.id === pid; });
+  if (!parent) { codeEl.value = ''; if (levelEl) levelEl.value = '—'; return; }
+  if (levelEl) levelEl.value = 'L' + (Number(parent.level || 1) + 1);
+  if (!autoEl || !autoEl.checked) return;  // manual mode — leave code alone
+  var siblings = coa.filter(function(a){ return (a.parentId || a.parent_id) === parent.id; });
+  var codes = siblings.map(function(a){ return String(a.code||''); }).sort();
+  var nextCode;
+  if (!codes.length) {
+    nextCode = (Number(parent.level || 1) >= 3) ? (parent.code + '01') : (parent.code + '1');
+  } else {
+    var last = codes[codes.length - 1];
+    var suffix = last.substring(String(parent.code).length);
+    var n = parseInt(suffix, 10) + 1;
+    nextCode = parent.code + String(n).padStart(suffix.length || 1, '0');
+  }
+  codeEl.value = nextCode;
+};
+
+window._cashToggleAutoCode = function(kind) {
+  var auto    = document.getElementById(kind === 'cash' ? 'cbAutoCode' : 'baAutoCode');
+  var codeEl  = document.getElementById(kind === 'cash' ? 'cbNewCode'  : 'baNewCode');
+  if (!auto || !codeEl) return;
+  if (auto.checked) {
+    codeEl.setAttribute('readonly', 'readonly');
+    codeEl.style.background = '#f8fafc';
+    _cashOnParentChange(kind);
+  } else {
+    codeEl.removeAttribute('readonly');
+    codeEl.style.background = '#fff';
+    codeEl.focus();
+  }
+};
 function cashSaveBox() {
+  // v5.11.4 — payload now carries either glAccountId (existing link, edit
+  // mode) OR { parentGlId, suggestedCode, suggestedLevel } so the backend
+  // mints a fresh gl_account under the chosen parent.
+  var existingGl  = (document.getElementById('cbExistingGl') || {}).value || '';
+  var parentSel   = document.getElementById('cbParent');
+  var newCodeEl   = document.getElementById('cbNewCode');
+  var newLevelEl  = document.getElementById('cbNewLevel');
   var data = {
     id: document.getElementById('cbId').value || undefined,
     name: document.getElementById('cbName').value,
@@ -140,9 +233,14 @@ function cashSaveBox() {
     branchId: document.getElementById('cbBranch').value,
     keeperUsername: document.getElementById('cbKeeper').value,
     currency: document.getElementById('cbCurrency').value || 'SAR',
-    glAccountId: (document.getElementById('cbGlAccount')||{}).value || '',
+    glAccountId: existingGl,
     username: currentUser
   };
+  if (!existingGl && parentSel) {
+    data.parentGlId       = parentSel.value || null;
+    data.suggestedCode    = newCodeEl ? newCodeEl.value.trim() : '';
+    data.suggestedLevel   = newLevelEl ? Number((newLevelEl.value || '').replace(/^L/, '')) : null;
+  }
   if (!data.name) return showToast('الاسم مطلوب', true);
   loader(true);
   _cashAPI('POST', '/cash-boxes', data).then(function(r) {
@@ -190,23 +288,29 @@ function cashOpenBankModal() { cashEditBank(null); }
 function cashEditBank(id) {
   var b = id ? _bankAccounts.find(function(x){return x.id===id;}) : null;
   var d = b || { currency:'SAR' };
-  // V5.9.13 — also fetch GL accounts under root 1102 (البنوك) for the picker.
   Promise.all([
     new Promise(function(res){ window._apiBridge.withSuccessHandler(res).getBrands(); }),
     _cashAPI('GET', '/gl-accounts-tree?root=1102')
   ]).then(function(r) {
     var brands = r[0]||[], glAccs = Array.isArray(r[1]) ? r[1] : [];
+    window._cashCoaBank = glAccs;
     var brandOpts = brands.map(function(x){return '<option value="'+x.id+'"'+(d.brandId===x.id?' selected':'')+'>'+x.name+'</option>';}).join('');
-    var glOpts = '<option value="">— تلقائي (سيُنشأ عند الحفظ) —</option>' +
-      glAccs.filter(function(a){ return a.code !== '1102'; })
-            .map(function(a) {
-              var pad = a.level && a.level > 3 ? '— '.repeat(Math.max(0, a.level - 3)) : '';
-              var sel = (d.glAccountId && d.glAccountId === a.id) ? ' selected' : '';
-              return '<option value="'+a.id+'"'+sel+'>'+pad+a.code+' — '+(a.nameAr||'')+'</option>';
-            }).join('');
+    // v5.11.4 — same parent-picker workflow as cashEditBox
+    var parentOpts = glAccs
+      .filter(function(a){ return Number(a.level || 1) < 5; })
+      .sort(function(a, b){ return String(a.code||'').localeCompare(String(b.code||'')); })
+      .map(function(a){
+        var pad = a.level && a.level > 3 ? '— '.repeat(Math.max(0, a.level - 3)) : '';
+        var sel = (d.glAccountId && _cashFindParentByChild(glAccs, d.glAccountId) === a.id) ? ' selected' : '';
+        if (!d.glAccountId && a.code === '1102') sel = ' selected';
+        return '<option value="'+a.id+'" data-code="'+(a.code||'')+'" data-level="'+(a.level||1)+'"'+sel+'>'+pad+(a.code||'')+' — '+(a.nameAr||'')+'</option>';
+      }).join('');
+    var existingCode = d.glAccountCode || '';
+    var existingLevel = d.glAccountLevel || '';
     document.getElementById('erpModalTitle').textContent = id ? 'تعديل حساب بنكي' : 'حساب بنكي جديد';
     document.getElementById('erpModalBody').innerHTML =
       '<input type="hidden" id="baId" value="'+(d.id||'')+'">' +
+      '<input type="hidden" id="baExistingGl" value="'+(d.glAccountId||'')+'">' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
         '<div class="form-row"><label>اسم البنك *</label><input class="form-control" id="baBankName" value="'+(d.bankName||'')+'" placeholder="الراجحي، الأهلي..."></div>' +
         '<div class="form-row"><label>اسم الحساب</label><input class="form-control" id="baAccName" value="'+(d.accountName||'')+'"></div>' +
@@ -219,16 +323,40 @@ function cashEditBank(id) {
         '<div class="form-row"><label>البراند</label><select class="form-control" id="baBrand"><option value="">—</option>'+brandOpts+'</select></div>' +
         '<div class="form-row"><label>العملة</label><input class="form-control" id="baCurrency" value="'+(d.currency||'SAR')+'"></div>' +
       '</div>' +
-      '<div class="form-row" style="margin-top:6px;">' +
-        '<label><i class="fas fa-book" style="color:#1e40af;margin-inline-end:4px;"></i> حساب الأستاذ (1102 — البنوك)</label>' +
-        '<select class="form-control" id="baGlAccount" style="font-family:ui-monospace,Menlo,monospace;">'+glOpts+'</select>' +
-        '<small style="color:#94a3b8;font-size:11px;display:block;margin-top:3px;">اختر حساب البنك من شجرة الحسابات. اتركه افتراضياً ليُنشأ تلقائياً تحت 1102.</small>' +
+      '<div style="margin-top:12px;padding:14px;background:linear-gradient(135deg,#eff6ff,#fff);border:1px solid #bfdbfe;border-radius:12px;">' +
+        '<div style="font-weight:800;color:#1e40af;margin-bottom:10px;font-size:13px;"><i class="fas fa-folder-tree" style="margin-inline-end:6px;"></i> ربط حساب الأستاذ (تحت 1102 — البنوك)</div>' +
+        '<div class="form-row" style="margin-bottom:10px;">' +
+          '<label style="font-size:11px;font-weight:700;color:#64748b;">الحساب الأب *</label>' +
+          '<select class="form-control" id="baParent" onchange="_cashOnParentChange(\'bank\')" style="font-family:ui-monospace,Menlo,monospace;">'+parentOpts+'</select>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;">' +
+          '<div class="form-row">' +
+            '<label style="font-size:11px;font-weight:700;color:#64748b;">كود الحساب الجديد</label>' +
+            '<input class="form-control" id="baNewCode" value="'+existingCode+'" '+(d.glAccountId?'':'readonly')+' style="font-family:ui-monospace,Menlo,monospace;font-weight:800;background:'+(d.glAccountId?'#fff':'#f8fafc')+';color:#1e40af;">' +
+          '</div>' +
+          '<div class="form-row">' +
+            '<label style="font-size:11px;font-weight:700;color:#64748b;">المستوى</label>' +
+            '<input class="form-control" id="baNewLevel" value="'+existingLevel+'" readonly style="text-align:center;background:#f8fafc;font-weight:800;">' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-top:8px;">' +
+          '<input type="checkbox" id="baAutoCode" '+(d.glAccountId?'':'checked')+' onchange="_cashToggleAutoCode(\'bank\')" style="width:16px;height:16px;cursor:pointer;">' +
+          '<label for="baAutoCode" style="margin:0;font-size:12px;font-weight:700;color:#475569;cursor:pointer;">ترقيم تلقائي بناءً على تتابع الأب</label>' +
+        '</div>' +
+        (d.glAccountId
+          ? '<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:11.5px;color:#92400e;"><i class="fas fa-info-circle"></i> هذا البنك مَربوط مسبقًا بـ '+_cashEsc(existingCode)+' — التَّعديل لن يُغيِّر الربط.</div>'
+          : '<div style="margin-top:8px;font-size:11px;color:#94a3b8;"><i class="fas fa-lightbulb"></i> اختر الأب أوّلًا، وسيُحسَب الكود الجديد تلقائيًا.</div>') +
       '</div>';
+    if (!d.glAccountId) setTimeout(function(){ _cashOnParentChange('bank'); }, 30);
     document.getElementById('erpModalSaveBtn').onclick = cashSaveBank;
     document.getElementById('erpModal').classList.remove('hidden');
   });
 }
 function cashSaveBank() {
+  var existingGl = (document.getElementById('baExistingGl') || {}).value || '';
+  var parentSel  = document.getElementById('baParent');
+  var newCodeEl  = document.getElementById('baNewCode');
+  var newLevelEl = document.getElementById('baNewLevel');
   var data = {
     id: document.getElementById('baId').value || undefined,
     bankName: document.getElementById('baBankName').value,
@@ -237,8 +365,13 @@ function cashSaveBank() {
     iban: document.getElementById('baIban').value,
     brandId: document.getElementById('baBrand').value,
     currency: document.getElementById('baCurrency').value || 'SAR',
-    glAccountId: (document.getElementById('baGlAccount')||{}).value || ''
+    glAccountId: existingGl
   };
+  if (!existingGl && parentSel) {
+    data.parentGlId     = parentSel.value || null;
+    data.suggestedCode  = newCodeEl ? newCodeEl.value.trim() : '';
+    data.suggestedLevel = newLevelEl ? Number((newLevelEl.value || '').replace(/^L/, '')) : null;
+  }
   if (!data.bankName) return showToast('اسم البنك مطلوب', true);
   loader(true);
   _cashAPI('POST', '/bank-accounts', data).then(function(r) {
@@ -349,19 +482,27 @@ function _cashOpenVoucherModal(kind) {
   var isReceipt = kind === 'receipt';
   var today = new Date().toISOString().slice(0,10);
 
-  // Pull everything we need in parallel: cash-box list (already cached),
-  // customers OR suppliers (depending on kind), full COA for the picker.
+  // Pull everything we need in parallel: cash-box list, bank list,
+  // customers OR suppliers, full COA for the manual-GL picker, plus
+  // (v5.11.4) brands / branches / cost-centers for the new dimensions
+  // bar at the top of the voucher.
   var partyEndpoint = isReceipt ? 'getCustomers' : 'getSuppliers';
   Promise.all([
     new Promise(function(res){ _cashAPI('GET', '/cash-boxes').then(res); }),
     new Promise(function(res){ _cashAPI('GET', '/bank-accounts').then(res); }),
     new Promise(function(res){ window._apiBridge.withSuccessHandler(res)[partyEndpoint](); }),
-    new Promise(function(res){ _cashAPI('GET', '/gl-accounts-all').then(res); })
+    new Promise(function(res){ _cashAPI('GET', '/gl-accounts-all').then(res); }),
+    new Promise(function(res){ window._apiBridge.withSuccessHandler(res).getBrands(); }),
+    new Promise(function(res){ window._apiBridge.withSuccessHandler(res).getBranches(); }),
+    new Promise(function(res){ window._apiBridge.withSuccessHandler(res).getCostCenters(); })
   ]).then(function(out) {
     _cashBoxes      = Array.isArray(out[0]) ? out[0] : [];
     _bankAccounts   = Array.isArray(out[1]) ? out[1] : [];
     var parties     = Array.isArray(out[2]) ? out[2] : [];
     var coa         = Array.isArray(out[3]) ? out[3] : [];
+    var brands      = Array.isArray(out[4]) ? out[4] : [];
+    var branches    = Array.isArray(out[5]) ? out[5] : [];
+    var costCenters = Array.isArray(out[6]) ? out[6] : [];
     window._cashCoa = coa;  // cached for the manual-GL line picker
 
     var partyTypeOptions = isReceipt
@@ -391,16 +532,40 @@ function _cashOpenVoucherModal(kind) {
           '</div>' +
         '</section>' +
 
-        // ── Section 2: Source / Destination (linked to COA) ──
-        '<section class="cv-section">' +
-          '<header class="cv-head"><i class="fas fa-arrow-' + (isReceipt?'down':'up') + '" style="color:'+(isReceipt?'#16a34a':'#dc2626')+';"></i><span>'+(isReceipt?'الجهة المُودَع فيها':'الجهة المصروف منها')+' (الصندوق / البنك)</span></header>' +
-          '<div class="cv-row">' +
-            '<label>الصندوق أو البنك <span class="req">*</span></label>' +
-            _cashBuildAccountPickerSelect('cvAcc') +
-            '<small class="cv-hint"><i class="fas fa-link"></i> ' +
-              'كل صندوق/بنك مرتبط بحساب في شجرة الحسابات (1101 للنقد، 1102 للبنوك). يمكن إدارة الربط من «إدارة النقد».' +
-            '</small>' +
+        // ── Section 1.5: Accounting dimensions ────────────────────
+        // v5.11.4 — header brand / branch / cost-center carry through
+        // to gl_entries when this voucher is approved, so dimensional
+        // reports include voucher activity.
+        '<section class="cv-section cv-dim-bar">' +
+          '<header class="cv-head"><i class="fas fa-layer-group" style="color:#7c3aed;"></i><span>الأبعاد المحاسبية</span><small style="margin-inline-start:auto;color:#94a3b8;font-weight:500;font-size:11px;">تُورَث على القيد المحاسبي عند الاعتماد</small></header>' +
+          '<div class="cv-grid cv-grid-3">' +
+            '<div class="cv-row">' +
+              '<label><i class="fas fa-tag" style="color:#7c3aed;font-size:11px;"></i> البراند</label>' +
+              '<select class="cv-input" id="cvBrand"><option value="">— الكل —</option>' +
+                brands.map(function(b){return '<option value="'+_cashEsc(b.id)+'">'+_cashEsc(b.name||'')+'</option>';}).join('') +
+              '</select>' +
+            '</div>' +
+            '<div class="cv-row">' +
+              '<label><i class="fas fa-building" style="color:#1d4ed8;font-size:11px;"></i> الفرع</label>' +
+              '<select class="cv-input" id="cvBranch"><option value="">— الكل —</option>' +
+                branches.map(function(b){return '<option value="'+_cashEsc(b.id)+'">'+_cashEsc(b.name||'')+'</option>';}).join('') +
+              '</select>' +
+            '</div>' +
+            '<div class="cv-row">' +
+              '<label><i class="fas fa-bullseye" style="color:#dc2626;font-size:11px;"></i> مركز التكلفة</label>' +
+              '<select class="cv-input" id="cvCC"><option value="">— لا يوجد —</option>' +
+                costCenters.map(function(c){return '<option value="'+_cashEsc(c.id)+'">'+_cashEsc((c.code||'')+' — '+(c.name||''))+'</option>';}).join('') +
+              '</select>' +
+            '</div>' +
           '</div>' +
+        '</section>' +
+
+        // ── Section 2: Source / Destination (premium tile picker) ──
+        '<section class="cv-section">' +
+          '<header class="cv-head"><i class="fas fa-arrow-' + (isReceipt?'down':'up') + '" style="color:'+(isReceipt?'#16a34a':'#dc2626')+';"></i><span>'+(isReceipt?'الجهة المُودَع فيها':'الجهة المصروف منها')+'</span><small style="margin-inline-start:auto;color:#94a3b8;font-weight:500;font-size:11px;">'+(_cashBoxes.length+_bankAccounts.length)+' خيار</small></header>' +
+          // Hidden field that mirrors the legacy cvAcc value (kept for back-compat with downstream code)
+          '<input type="hidden" id="cvAcc" value="">' +
+          _cashBuildTilePicker(isReceipt) +
         '</section>' +
 
         // ── Section 3: Counter-party ─────────────────────────
@@ -476,6 +641,56 @@ function _cashEsc(s) {
     return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
   });
 }
+
+// v5.11.4 — premium tile picker. Two side-by-side panels (boxes + banks),
+// each row clickable, balance shown on the right. Picking a tile writes
+// "cash:<id>" or "bank:<id>" into the hidden #cvAcc input that downstream
+// _cashSaveVoucher already reads from.
+function _cashBuildTilePicker(isReceipt) {
+  var color = isReceipt ? '#16a34a' : '#dc2626';
+  var fmt = function(n){ return Number(n||0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}); };
+  var boxTiles = (_cashBoxes && _cashBoxes.length)
+    ? _cashBoxes.map(function(b){
+        return '<button type="button" class="cv-tile" data-val="cash:'+_cashEsc(b.id)+'" onclick="_cashPickTile(this)">' +
+          '<div class="cv-tile__icon" style="background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;"><i class="fas fa-wallet"></i></div>' +
+          '<div class="cv-tile__body">' +
+            '<div class="cv-tile__name">' + _cashEsc(b.name) + '</div>' +
+            (b.glAccountCode ? '<div class="cv-tile__meta">' + _cashEsc(b.glAccountCode) + '</div>' : '') +
+          '</div>' +
+          '<div class="cv-tile__bal" style="color:'+color+';">' + fmt(b.balance) + '</div>' +
+        '</button>';
+      }).join('')
+    : '<div class="cv-tile-empty">لا توجد صناديق مُعرَّفة — أضِف صندوقًا من «الصناديق»</div>';
+  var bankTiles = (_bankAccounts && _bankAccounts.length)
+    ? _bankAccounts.map(function(b){
+        return '<button type="button" class="cv-tile" data-val="bank:'+_cashEsc(b.id)+'" onclick="_cashPickTile(this)">' +
+          '<div class="cv-tile__icon" style="background:linear-gradient(135deg,#dbeafe,#bfdbfe);color:#1e40af;"><i class="fas fa-university"></i></div>' +
+          '<div class="cv-tile__body">' +
+            '<div class="cv-tile__name">' + _cashEsc(b.bankName) + '</div>' +
+            '<div class="cv-tile__meta">' + (b.accountNumber ? _cashEsc(b.accountNumber) + ' · ' : '') + (b.glAccountCode || '') + '</div>' +
+          '</div>' +
+          '<div class="cv-tile__bal" style="color:'+color+';">' + fmt(b.balance) + '</div>' +
+        '</button>';
+      }).join('')
+    : '<div class="cv-tile-empty">لا توجد حسابات بنكية — أضِف بنكًا من «البنوك»</div>';
+  return '<div class="cv-tile-grid">' +
+    '<div class="cv-tile-col">' +
+      '<div class="cv-tile-col__head"><i class="fas fa-wallet"></i> الصناديق <span class="cv-tile-col__count">' + _cashBoxes.length + '</span></div>' +
+      '<div class="cv-tile-col__list">' + boxTiles + '</div>' +
+    '</div>' +
+    '<div class="cv-tile-col">' +
+      '<div class="cv-tile-col__head"><i class="fas fa-university"></i> البنوك <span class="cv-tile-col__count">' + _bankAccounts.length + '</span></div>' +
+      '<div class="cv-tile-col__list">' + bankTiles + '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+window._cashPickTile = function(btn) {
+  document.querySelectorAll('.cv-tile.is-selected').forEach(function(t){ t.classList.remove('is-selected'); });
+  btn.classList.add('is-selected');
+  var hid = document.getElementById('cvAcc');
+  if (hid) hid.value = btn.getAttribute('data-val') || '';
+};
 
 function _cashBuildAccountPickerSelect(id) {
   // Cash boxes (linked to 1101) + bank accounts (linked to 1102) — grouped.
@@ -735,6 +950,11 @@ function _cashSaveVoucher() {
     }
   }
 
+  // v5.11.4 — collect the new accounting dimensions from the header bar
+  var brandId    = (document.getElementById('cvBrand')  || {}).value || null;
+  var branchId   = (document.getElementById('cvBranch') || {}).value || null;
+  var costCenterId = (document.getElementById('cvCC')   || {}).value || null;
+
   var payload = {
     receiptDate:  (document.getElementById('cvDate')||{}).value,
     paymentDate:  (document.getElementById('cvDate')||{}).value,
@@ -742,7 +962,9 @@ function _cashSaveVoucher() {
     reference: (document.getElementById('cvRef')||{}).value || '',
     description: (document.getElementById('cvDesc')||{}).value || '',
     username: currentUser,
-    manualGlLines: manualLines
+    manualGlLines: manualLines,
+    // v5.11.4 — dims propagate to the auto-posted journal on approval
+    brandId: brandId, branchId: branchId, costCenterId: costCenterId
   };
   if (isReceipt) {
     payload.destinationType = dest[0];

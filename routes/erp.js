@@ -3646,30 +3646,36 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
     function makeGroup(label, isContra) {
       return { label: label, total: 0, accounts: [], isContra: !!isContra };
     }
+    // v5.11.12 — granular liability + equity buckets so every template
+    // account lands in a meaningful, accountancy-conventional group
+    // instead of falling into a generic "أخرى" bucket.
     const groups = {
       currentAssets: {
         cash:        makeGroup('النقد وما في حكمه'),
-        inventory:   makeGroup('المخزون'),
         receivables: makeGroup('الذمم المدينة'),
+        inventory:   makeGroup('المخزون'),
         otherCA:     makeGroup('أصول متداولة أخرى')
       },
       nonCurrentAssets: {
-        ppe:         makeGroup('الممتلكات والمعدات (PP&E)'),
-        accDep:      makeGroup('مجمَّع الإهلاك', true)
+        ppe:    makeGroup('الممتلكات والمعدات والأصول غير الملموسة'),
+        accDep: makeGroup('مجمَّع الإهلاك', true)
       },
       currentLiab: {
-        payables:  makeGroup('الذمم الدائنة (موردون)'),
-        accrued:   makeGroup('المصروفات المستحقة'),
-        taxes:     makeGroup('ضرائب مستحقة'),
-        otherCL:   makeGroup('التزامات متداولة أخرى')
+        payables:         makeGroup('الذمم الدائنة (موردون)'),
+        accrued:          makeGroup('المصروفات المستحقة'),
+        govDues:          makeGroup('الضرائب ومستحقات حكومية'),    // 213 + 216 + 217
+        customerDeposits: makeGroup('دفعات مقدمة من العملاء'),      // 214
+        shortTermDebt:    makeGroup('قروض وإيجارات قصيرة الأجل'),   // 218 + 219
+        otherCL:          makeGroup('التزامات متداولة أخرى')        // 215 + باقي
       },
       nonCurrentLiab: {
-        longTermDebt: makeGroup('قروض ومطلوبات طويلة الأجل')
+        longTermDebt: makeGroup('قروض ومطلوبات طويلة الأجل')        // 22x
       },
       equity: {
         capital:      makeGroup('رأس المال'),
         retained:     makeGroup('الأرباح المحتجزة'),
         drawings:     makeGroup('المسحوبات', true),
+        reserves:     makeGroup('الاحتياطيات'),                     // 34
         periodIncome: makeGroup('صافي ربح/خسارة الفترة')
       }
     };
@@ -3696,18 +3702,28 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
     }
     function classifyLiability(code) {
       const c = String(code || '');
-      if (c.startsWith('211')) return ['currentLiab', 'payables'];
-      if (c.startsWith('212')) return ['currentLiab', 'accrued'];
-      if (c.startsWith('213')) return ['currentLiab', 'taxes'];
-      if (c.startsWith('22'))  return ['nonCurrentLiab', 'longTermDebt'];
-      if (c.startsWith('21'))  return ['currentLiab', 'otherCL'];
+      // v5.11.12 — calibrated for the v5.11.8 template:
+      // 211 = AP, 212 = accrued, 213 = Output VAT, 214 = customer deposits,
+      // 215 = franchise/royalty, 216 = GOSI, 217 = withholding tax,
+      // 218 = short-term loans, 219 = current portion of lease,
+      // 22x = long-term liabilities (loans / lease / EoS).
+      if (c.startsWith('211'))                                                  return ['currentLiab', 'payables'];
+      if (c.startsWith('212'))                                                  return ['currentLiab', 'accrued'];
+      if (c.startsWith('213') || c.startsWith('216') || c.startsWith('217'))    return ['currentLiab', 'govDues'];
+      if (c.startsWith('214'))                                                  return ['currentLiab', 'customerDeposits'];
+      if (c.startsWith('218') || c.startsWith('219'))                           return ['currentLiab', 'shortTermDebt'];
+      if (c.startsWith('22'))                                                   return ['nonCurrentLiab', 'longTermDebt'];
+      if (c.startsWith('21'))                                                   return ['currentLiab', 'otherCL'];
       return null;
     }
     function classifyEquity(code) {
       const c = String(code || '');
+      // v5.11.12 — 34 (Reserves) gets its own bucket instead of falling
+      // through to capital, so the user sees the full equity structure.
       if (c.startsWith('31')) return ['equity', 'capital'];
       if (c.startsWith('32')) return ['equity', 'retained'];
       if (c.startsWith('33')) return ['equity', 'drawings'];
+      if (c.startsWith('34')) return ['equity', 'reserves'];
       return ['equity', 'capital'];
     }
 

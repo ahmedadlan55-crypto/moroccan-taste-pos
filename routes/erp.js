@@ -3448,15 +3448,36 @@ router.post('/gl/sync-inventory', async (req, res) => {
 // Returns: opening balance + period movement + closing balance for ALL accounts
 router.get('/reports/trial-balance', async (req, res) => {
   try {
-    const { startDate, endDate, accountType, createdBy } = req.query;
+    // v5.11.13 — Accept both legacy (from/to) and new (startDate/endDate)
+    // param names so the existing frontend keeps working. Same for the
+    // dimension filters: brand/branch/costCenter from the new UI dropdowns.
+    const startDate    = req.query.startDate || req.query.from || '';
+    const endDate      = req.query.endDate   || req.query.to   || '';
+    const accountType  = req.query.accountType || '';
+    const createdBy    = req.query.createdBy   || '';
+    const brandId      = req.query.brandId      || req.query.brand      || '';
+    const branchId     = req.query.branchId     || req.query.branch     || '';
+    const costCenterId = req.query.costCenterId || req.query.cost_center_id || '';
+
     const [accounts] = await db.query('SELECT * FROM gl_accounts WHERE is_active = 1 ORDER BY code');
+
+    // Detect dimension columns — graceful degrade if they aren't present yet.
+    const [dimCols1] = await db.query("SHOW COLUMNS FROM gl_entries LIKE 'brand_id'");
+    const hasBrandId = dimCols1.length > 0;
+    const [dimCols2] = await db.query("SHOW COLUMNS FROM gl_entries LIKE 'branch_id'");
+    const hasBranchId = dimCols2.length > 0;
+    const [dimCols3] = await db.query("SHOW COLUMNS FROM gl_entries LIKE 'cost_center_id'");
+    const hasCostCenterId = dimCols3.length > 0;
 
     // Build journal filter for period (exclude opening entries — they go to opening balance)
     let jrnWhere = "j.status = 'posted' AND j.reference_type != 'opening'";
     const jrnParams = [];
-    if (startDate) { jrnWhere += ' AND DATE(j.journal_date) >= ?'; jrnParams.push(startDate); }
-    if (endDate) { jrnWhere += ' AND DATE(j.journal_date) <= ?'; jrnParams.push(endDate); }
-    if (createdBy) { jrnWhere += ' AND j.created_by = ?'; jrnParams.push(createdBy); }
+    if (startDate)    { jrnWhere += ' AND DATE(j.journal_date) >= ?'; jrnParams.push(startDate); }
+    if (endDate)      { jrnWhere += ' AND DATE(j.journal_date) <= ?'; jrnParams.push(endDate); }
+    if (createdBy)    { jrnWhere += ' AND j.created_by = ?';          jrnParams.push(createdBy); }
+    if (brandId      && hasBrandId)      { jrnWhere += ' AND (e.brand_id IS NULL OR e.brand_id = ?)';             jrnParams.push(brandId); }
+    if (branchId     && hasBranchId)     { jrnWhere += ' AND (e.branch_id IS NULL OR e.branch_id = ?)';           jrnParams.push(branchId); }
+    if (costCenterId && hasCostCenterId) { jrnWhere += ' AND (e.cost_center_id IS NULL OR e.cost_center_id = ?)'; jrnParams.push(costCenterId); }
 
     // Get period movements (non-opening posted journals)
     const [periodEntries] = await db.query(
@@ -3467,25 +3488,36 @@ router.get('/reports/trial-balance', async (req, res) => {
     const periodMap = {};
     periodEntries.forEach(e => { periodMap[e.account_id] = { debit: Number(e.totalDebit)||0, credit: Number(e.totalCredit)||0 }; });
 
-    // Opening balance = ALL opening entries + non-opening entries BEFORE startDate
+    // Opening balance = ALL opening entries + non-opening entries BEFORE startDate.
+    // Dimension filters apply here too — opening for brand X means only the
+    // opening lines tagged with brand X (or untagged legacy lines).
     let openMap = {};
-    // 1. Opening entries (always included regardless of date — IAS 1)
+    let openWhere = "j.status = 'posted' AND j.reference_type = 'opening'";
+    const openParams = [];
+    if (brandId      && hasBrandId)      { openWhere += ' AND (e.brand_id IS NULL OR e.brand_id = ?)';             openParams.push(brandId); }
+    if (branchId     && hasBranchId)     { openWhere += ' AND (e.branch_id IS NULL OR e.branch_id = ?)';           openParams.push(branchId); }
+    if (costCenterId && hasCostCenterId) { openWhere += ' AND (e.cost_center_id IS NULL OR e.cost_center_id = ?)'; openParams.push(costCenterId); }
     const [openingEntries] = await db.query(
       `SELECT e.account_id, SUM(e.debit) AS totalDebit, SUM(e.credit) AS totalCredit
        FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
-       WHERE j.status = 'posted' AND j.reference_type = 'opening'
-       GROUP BY e.account_id`
+       WHERE ${openWhere}
+       GROUP BY e.account_id`, openParams
     );
     openingEntries.forEach(e => {
       openMap[e.account_id] = { debit: Number(e.totalDebit)||0, credit: Number(e.totalCredit)||0 };
     });
     // 2. Non-opening entries before startDate
     if (startDate) {
+      let priorWhere = "j.status = 'posted' AND j.reference_type != 'opening' AND DATE(j.journal_date) < ?";
+      const priorParams = [startDate];
+      if (brandId      && hasBrandId)      { priorWhere += ' AND (e.brand_id IS NULL OR e.brand_id = ?)';             priorParams.push(brandId); }
+      if (branchId     && hasBranchId)     { priorWhere += ' AND (e.branch_id IS NULL OR e.branch_id = ?)';           priorParams.push(branchId); }
+      if (costCenterId && hasCostCenterId) { priorWhere += ' AND (e.cost_center_id IS NULL OR e.cost_center_id = ?)'; priorParams.push(costCenterId); }
       const [priorEntries] = await db.query(
         `SELECT e.account_id, SUM(e.debit) AS totalDebit, SUM(e.credit) AS totalCredit
          FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
-         WHERE j.status = 'posted' AND j.reference_type != 'opening' AND DATE(j.journal_date) < ?
-         GROUP BY e.account_id`, [startDate]
+         WHERE ${priorWhere}
+         GROUP BY e.account_id`, priorParams
       );
       priorEntries.forEach(e => {
         if (!openMap[e.account_id]) openMap[e.account_id] = { debit: 0, credit: 0 };

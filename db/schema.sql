@@ -257,6 +257,10 @@ CREATE TABLE gl_journals (
 ) ENGINE=InnoDB;
 
 -- ─── GL Entries ───
+-- Dimension columns (brand_id / branch_id / cost_center_id / warehouse_id)
+-- enable accounting-dimension filtering on every report. They're added by
+-- idempotent migrations in server.js (see runMigrations) so existing DBs
+-- pick them up at startup; declared here for fresh deployments.
 CREATE TABLE gl_entries (
   id VARCHAR(50) PRIMARY KEY,
   journal_id VARCHAR(50) NOT NULL,
@@ -266,6 +270,13 @@ CREATE TABLE gl_entries (
   debit DECIMAL(14,2) DEFAULT 0,
   credit DECIMAL(14,2) DEFAULT 0,
   description TEXT,
+  brand_id VARCHAR(50),
+  branch_id VARCHAR(50),
+  cost_center_id VARCHAR(50),
+  warehouse_id VARCHAR(50),
+  INDEX idx_gle_brand (brand_id),
+  INDEX idx_gle_branch (branch_id),
+  INDEX idx_gle_cc (cost_center_id),
   FOREIGN KEY (journal_id) REFERENCES gl_journals(id) ON DELETE CASCADE,
   FOREIGN KEY (account_id) REFERENCES gl_accounts(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;

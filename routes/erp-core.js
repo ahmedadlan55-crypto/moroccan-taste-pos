@@ -1976,110 +1976,15 @@ router.get('/reports/profitability', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// EXTENDED REPORTS — Cash Flow / Aging / Inventory / Sales / Waste / Royalty
+// EXTENDED REPORTS — Aging / Inventory / Sales / Waste / Royalty
 // ═══════════════════════════════════════════════════════════════════════
-
-/**
- * GET /erp/reports/cash-flow?from=&to=&branch=&brand=
- * Direct-method cash flow. Classifies movements on cash/bank accounts
- * into three categories based on the contra account's type:
- *   Operating: revenue / expense / COGS / input VAT / output VAT
- *   Investing: fixed assets / long-term assets
- *   Financing: equity / long-term liabilities
- */
-router.get('/reports/cash-flow', async (req, res) => {
-  try {
-    const { from, to, branch, brand } = req.query;
-    const dim = await _dimCols();
-
-    const where = [];
-    const params = [];
-    where.push("j.status = 'posted'");
-    // Only cash/bank accounts (1110 or 1120)
-    where.push("ca.code IN ('1110','1120')");
-    if (from) { where.push('j.journal_date >= ?'); params.push(from); }
-    if (to)   { where.push('j.journal_date <= ?'); params.push(to); }
-    if (branch && dim.branch_id) { where.push('ce.branch_id = ?'); params.push(branch); }
-    if (brand && dim.brand_id)   { where.push('ce.brand_id = ?');  params.push(brand); }
-
-    // Self-join gl_entries to find contra lines on the same journal.
-    // cash_entry (ce) is the cash/bank entry; contra (cc) is the matched non-cash side.
-    const sql = `
-      SELECT ce.debit AS cash_in, ce.credit AS cash_out,
-             j.journal_date, j.description, j.reference_type, j.reference_id, j.id AS journal_id,
-             cc.account_id AS contra_acc_id, ca2.code AS contra_code, ca2.type AS contra_type, ca2.name_ar AS contra_name
-      FROM gl_entries ce
-      JOIN gl_accounts ca ON ce.account_id = ca.id
-      JOIN gl_journals j ON ce.journal_id = j.id
-      JOIN gl_entries cc ON cc.journal_id = ce.journal_id AND cc.id != ce.id
-      JOIN gl_accounts ca2 ON cc.account_id = ca2.id
-      WHERE ${where.join(' AND ')}
-      ORDER BY j.journal_date`;
-    const [rows] = await db.query(sql, params);
-
-    // Classify each cash movement
-    const opening = {}; // { 'in': 0, 'out': 0, by category }
-    const flows = { operating: 0, investing: 0, financing: 0, other: 0 };
-    const byCategory = {};  // bucket → [{date, description, amount}]
-
-    rows.forEach(r => {
-      const cashIn = Number(r.cash_in) || 0;
-      const cashOut = Number(r.cash_out) || 0;
-      const netCash = cashIn - cashOut;  // + = in, - = out
-      if (netCash === 0) return;
-
-      let bucket = 'operating';
-      const ct = (r.contra_type || '').toLowerCase();
-      const cc = r.contra_code || '';
-      if (cc.startsWith('15') || cc.startsWith('16')) bucket = 'investing';
-      else if (cc.startsWith('3') || cc.startsWith('25')) bucket = 'financing';
-      else if (ct === 'revenue' || ct === 'expense' || cc === '1200' || cc === '1290' || cc === '2210') bucket = 'operating';
-      else if (ct === 'asset') bucket = (cc.startsWith('15') ? 'investing' : 'operating');
-      else if (ct === 'liability') bucket = (cc.startsWith('25') || cc.startsWith('3') ? 'financing' : 'operating');
-      else if (ct === 'equity') bucket = 'financing';
-      else bucket = 'other';
-
-      flows[bucket] += netCash;
-      if (!byCategory[bucket]) byCategory[bucket] = [];
-      byCategory[bucket].push({
-        date: r.journal_date,
-        description: r.description || '',
-        contra: cc + ' — ' + (r.contra_name || ''),
-        referenceType: r.reference_type,
-        referenceId: r.reference_id,
-        amount: Math.round(netCash * 100) / 100
-      });
-    });
-
-    // Opening & closing cash balances
-    const [ob] = await db.query(
-      `SELECT COALESCE(SUM(e.debit),0) AS d, COALESCE(SUM(e.credit),0) AS c
-       FROM gl_entries e
-       JOIN gl_accounts a ON e.account_id = a.id
-       JOIN gl_journals j ON e.journal_id = j.id
-       WHERE a.code IN ('1110','1120') AND j.status='posted'
-         AND j.journal_date < ?`, [from || '1900-01-01']);
-    const openingCash = Number(ob[0].d || 0) - Number(ob[0].c || 0);
-    const netChange = flows.operating + flows.investing + flows.financing + flows.other;
-    const closingCash = openingCash + netChange;
-
-    res.json({
-      success: true,
-      period: { from: from || null, to: to || null },
-      filters: { branch: branch || null, brand: brand || null },
-      openingCash: Math.round(openingCash * 100) / 100,
-      closingCash: Math.round(closingCash * 100) / 100,
-      netChange: Math.round(netChange * 100) / 100,
-      flows: {
-        operating: Math.round(flows.operating * 100) / 100,
-        investing: Math.round(flows.investing * 100) / 100,
-        financing: Math.round(flows.financing * 100) / 100,
-        other: Math.round(flows.other * 100) / 100
-      },
-      details: byCategory
-    });
-  } catch(e) { res.json({ success: false, error: e.message }); }
-});
+//
+// v5.11.13 — The legacy GET /reports/cash-flow endpoint was removed.
+// It hardcoded cash/bank account codes ('1110','1120') that don't exist
+// in the v5.11.8 IFRS template (real cash codes start with 111x). The
+// IAS 7 indirect-method endpoint /reports/cash-flow-ias7 in routes/erp.js
+// is what the frontend calls — that one reads dynamically from
+// gl_accounts and is fully aligned with the current chart.
 
 /**
  * GET /erp/reports/ar-aging?asOf=

@@ -106,8 +106,10 @@
     getTrialBalance:     { method: 'GET',  url: '/erp/reports/trial-balance', query: (f) => f },
     getIncomeStatement:  { method: 'GET',  url: '/erp/reports/income', query: (f) => f },
     getBalanceSheet:     { method: 'GET',  url: '/erp/reports/balance-sheet', query: (f) => f },
-    // V5.10.1 — Cash Flow Statement (IAS 7, indirect method)
-    getCashFlow:         { method: 'GET',  url: '/erp/reports/cash-flow',     query: (f) => f },
+    // v5.10.1 — Cash Flow Statement (IAS 7, indirect method).
+    // v5.11.13 — points to the IAS 7 endpoint; the legacy /reports/cash-flow
+    // (hardcoded to '1110'/'1120') was removed when those codes left the chart.
+    getCashFlow:         { method: 'GET',  url: '/erp/reports/cash-flow-ias7', query: (f) => f },
 
     // Users
     getAllUsernames:     { method: 'GET',  url: '/auth/users' },

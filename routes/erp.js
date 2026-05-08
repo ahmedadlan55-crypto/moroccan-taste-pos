@@ -1037,11 +1037,15 @@ router.post('/gl/coa/wipe-and-seed', async (req, res) => {
       // Reseed CoA from the official template. DFS-ordered so parents
       // are inserted before children — no FK on parent_id, but the
       // ordering keeps the data clean for any downstream consumer.
+      // v5.11.18 — also persist is_folder from the template's `kind`
+      // field so reports can hide folders right after the reseed without
+      // waiting for the next server restart's is_folder migration.
       for (const a of COA_TEMPLATE) {
+        const isFolder = a.kind === 'folder' ? 1 : 0;
         await conn.query(
-          'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_active, balance) ' +
-          'VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)',
-          [a.code, a.code, a.nameAr, a.nameEn || null, a.type, a.parentCode || null, a.level]
+          'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_active, is_folder, balance) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 0)',
+          [a.code, a.code, a.nameAr, a.nameEn || null, a.type, a.parentCode || null, a.level, isFolder]
         );
         inserted++;
       }
@@ -3464,7 +3468,17 @@ router.get('/reports/trial-balance', async (req, res) => {
     const branchId     = req.query.branchId     || req.query.branch     || '';
     const costCenterId = req.query.costCenterId || req.query.cost_center_id || '';
 
-    const [accounts] = await db.query('SELECT * FROM gl_accounts WHERE is_active = 1 ORDER BY code');
+    // v5.11.18 — Trial balance shows POSTING accounts only (leaves), not
+    // folders. A row is a folder if EITHER is_folder is set OR any other
+    // account references it as parent — using both checks defends against
+    // a stale is_folder column on legacy rows.
+    const [accounts] = await db.query(
+      'SELECT * FROM gl_accounts a ' +
+      'WHERE a.is_active = 1 ' +
+      '  AND COALESCE(a.is_folder, 0) = 0 ' +
+      '  AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL) ' +
+      'ORDER BY a.code'
+    );
 
     // Detect dimension columns — graceful degrade if they aren't present yet.
     const [dimCols1] = await db.query("SHOW COLUMNS FROM gl_entries LIKE 'brand_id'");
@@ -3583,7 +3597,14 @@ router.get('/reports/trial-balance', async (req, res) => {
 router.get('/reports/income', async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-    const [accounts] = await db.query("SELECT * FROM gl_accounts WHERE is_active = 1 ORDER BY code");
+    // v5.11.18 — leaf accounts only.
+    const [accounts] = await db.query(
+      "SELECT * FROM gl_accounts a " +
+      "WHERE a.is_active = 1 " +
+      "  AND COALESCE(a.is_folder, 0) = 0 " +
+      "  AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL) " +
+      "ORDER BY a.code"
+    );
 
     // Get period balances from gl_entries (not gl_accounts.balance)
     let where = "j.status = 'posted'";
@@ -3654,7 +3675,18 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
   try {
     const { asOfDate, brandId, branchId, showZero } = req.query;
     const includeZero = showZero === '1' || showZero === 'true';
-    const [accounts] = await db.query("SELECT * FROM gl_accounts WHERE is_active = 1 ORDER BY code");
+    // v5.11.18 — Balance Sheet shows leaf accounts only. Folders never
+    // hold posted entries (only their leaves do), so they would never
+    // contribute totals — but they DID show up as empty rows when
+    // showZero=true. The groups/aggregations below already build their
+    // own hierarchy from prefix matching, so folders add only noise.
+    const [accounts] = await db.query(
+      "SELECT * FROM gl_accounts a " +
+      "WHERE a.is_active = 1 " +
+      "  AND COALESCE(a.is_folder, 0) = 0 " +
+      "  AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL) " +
+      "ORDER BY a.code"
+    );
 
     // Detect dimension columns once so the brand/branch filters degrade
     // gracefully when the columns haven't been added to gl_entries yet.
@@ -3882,6 +3914,7 @@ router.get('/reports/cash-flow-ias7', async (req, res) => {
     // opening balances (anything before `from`) and once for the period
     // movement (between `from` and `to`).
     function balQuery(asOfClause, params) {
+      // v5.11.18 — leaf accounts only (folders don't hold balances).
       let sql = `
         SELECT a.id, a.code, a.name_ar, a.type,
                COALESCE(SUM(e.debit), 0)  AS debit,
@@ -3890,6 +3923,8 @@ router.get('/reports/cash-flow-ias7', async (req, res) => {
         LEFT JOIN gl_entries e ON e.account_id = a.id
         LEFT JOIN gl_journals j ON j.id = e.journal_id
         WHERE COALESCE(a.is_active, 1) = 1
+          AND COALESCE(a.is_folder, 0) = 0
+          AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL)
           AND (j.status IS NULL OR j.status = 'posted')
           AND (j.id IS NULL OR ${asOfClause})`;
       // Optional brand/branch filter on the entry itself (when columns exist).

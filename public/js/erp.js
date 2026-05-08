@@ -1778,7 +1778,19 @@ function _coaMountSearchableSelect(targetEl, opts) {
   function open() {
     root.setAttribute('data-open', '1');
     renderList('');
-    setTimeout(function(){ searchInp.focus(); searchInp.select(); }, 30);
+    // v5.11.7 — focus the search input via rAF (renders the panel first,
+    // then immediately steals focus from the trigger button). The old
+    // 30ms setTimeout was racing the modal stack and sometimes missing
+    // the input entirely, leaving the user staring at what looked like
+    // a non-functional search box.
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(function(){
+        try { searchInp.focus({ preventScroll: true }); } catch (_) { searchInp.focus(); }
+        searchInp.select();
+      });
+    } else {
+      setTimeout(function(){ searchInp.focus(); searchInp.select(); }, 0);
+    }
   }
   function close() { root.setAttribute('data-open', '0'); }
   function toggle() { root.getAttribute('data-open') === '1' ? close() : open(); }
@@ -2862,6 +2874,29 @@ function erpOpenAccountModal(data) {
   // it polluted every row and visually overpowered the actual code+name.
   // Pass code and nameAr as structured fields so the renderer can style
   // them differently (mono code accent + name in primary).
+  // v5.11.7 — _buildParentSelectOptions(requireParent) builds the same
+  // list with the "— جذر —" entry conditionally disabled. Used both at
+  // initial render AND when the user toggles the kind radio so a leaf
+  // can't be saved with no parent.
+  function _buildParentSelectOptions(requireParent) {
+    return [{
+      value: '', label: '— جذر (بلا أب) —', code: '', name: '',
+      disabled: !!requireParent
+    }].concat(
+      _erpAccounts
+        .filter(function(a){ return (a.level || 1) < 4; })
+        .sort(function(a,b){ return String(a.code||'').localeCompare(String(b.code||'')); })
+        .map(function(a){
+          return {
+            value: a.id,
+            code: a.code || '',
+            name: a.nameAr || a.nameEn || '',
+            level: Number(a.level || 1),
+            label: (a.code || '') + ' ' + (a.nameAr || a.nameEn || '')
+          };
+        })
+    );
+  }
   var parentSelectOptions = [{ value: '', label: '— جذر (بلا أب) —', code: '', name: '' }].concat(
     _erpAccounts
       .filter(function(a){ return (a.level || 1) < 4; })
@@ -3016,11 +3051,13 @@ function erpOpenAccountModal(data) {
 
     // v5.10.47 — mount the searchable combobox; its onChange replaces
     // the old <select>.onchange handler.
+    // v5.11.7 — initial options reflect the current kind radio so a
+    // leaf creation flow disables the "— جذر —" option upfront.
     _coaMountSearchableSelect(mountEl, {
       id: 'erpAccParent',
       placeholder: '— جذر (بلا أب) —',
       value: d.parentId || '',
-      options: parentSelectOptions,
+      options: _buildParentSelectOptions(getKind() === 'leaf'),
       onChange: function(){ recomputeLevel(); inheritType(); recomputeCode(); }
     });
 
@@ -3028,7 +3065,15 @@ function erpOpenAccountModal(data) {
     autoCodeEl.onchange= function(){ recomputeCode(); };
     typeEl.addEventListener('change', function(){ typeEl.dataset.userTouched = '1'; });
     Array.prototype.forEach.call(kindRadios, function(r){
-      r.onchange = function(){ recomputeCode(); };
+      r.onchange = function(){
+        recomputeCode();
+        // v5.11.7 — refresh parent options so "— جذر —" disables when
+        // the user wants a leaf (a leaf MUST have a parent) and re-enables
+        // when they pick "حساب رئيسي" (a folder may live at the root).
+        if (mountEl && mountEl._coaSel && typeof mountEl._coaSel.setOptions === 'function') {
+          mountEl._coaSel.setOptions(_buildParentSelectOptions(getKind() === 'leaf'));
+        }
+      };
     });
 
     // First paint

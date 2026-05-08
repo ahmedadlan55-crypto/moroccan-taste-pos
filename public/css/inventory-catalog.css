@@ -2570,38 +2570,66 @@
   z-index: 10500;
   display: none;
   flex-direction: column;
-  max-height: 360px;
+  /* v5.11.7 — was 360px (only 6-7 options visible). Now grows up to
+     70vh capped at 540px so 13+ options fit before scroll, with a
+     280px floor so the search box + 6 options always fit. */
+  min-height: 280px;
+  max-height: min(70vh, 540px);
   overflow: hidden;
 }
 .coa-sel[data-open="1"] .coa-sel__panel { display: flex; }
+/* v5.11.7 — solid background + thicker padding so the search section
+   reads as a distinct row (not a fade into the list). */
 .coa-sel__searchbox {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 10px;
+  padding: 12px 14px;
   border-bottom: 1px solid #e2e8f0;
-  background: linear-gradient(180deg, #f8fafc, #fff);
+  background: #f8fafc;
   flex-shrink: 0;
 }
-.coa-sel__searchbox > i { color: #94a3b8; font-size: 13px; flex-shrink: 0; }
+.coa-sel__searchbox > i {
+  color: #94a3b8;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+/* v5.11.7 — search input now has an explicit border + white background +
+   focus ring so the user can clearly see WHERE to type. The previous
+   transparent/borderless render made it look like an empty space. */
 .coa-sel__search {
   flex: 1;
   width: 100%;
   min-width: 0;
-  border: none;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
   outline: none;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
-  background: transparent;
+  background: #fff;
   font-family: inherit;
-  padding: 4px 6px;
+  padding: 9px 12px;
   text-align: start;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
+.coa-sel__search::placeholder {
+  color: #94a3b8;
+  font-weight: 500;
+  opacity: 1;
+}
+.coa-sel__search:focus {
+  border-color: var(--accent, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.14);
+}
+/* v5.11.7 — list now grows to fill the rest of the panel height so a
+   tall panel doesn't leave dead space at the bottom. */
 .coa-sel__list {
   flex: 1 1 auto;
+  min-height: 200px;
   overflow-y: auto;
-  padding: 4px;
-  min-height: 0;
+  padding: 6px;
 }
 .coa-sel__opt {
   display: flex;

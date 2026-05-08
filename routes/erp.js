@@ -980,6 +980,80 @@ router.get('/gl/coa-template', async (req, res) => {
   res.json({ success: true, accounts: COA_TEMPLATE });
 });
 
+// v5.11.9 — Hard wipe + reseed CoA + purge transactional history.
+// User asked for a clean accounting foundation: previous journals + sales
+// must go, then CoA is rebuilt fresh from the template. Master data
+// (customers, suppliers, items, brands, branches, periods) is preserved.
+// Differs from /gl/accounts/import?mode=replace which preserves accounts
+// with posted journal entries — that guard is exactly why the user's
+// bank stayed under inventory.
+router.post('/gl/coa/wipe-and-seed', async (req, res) => {
+  const phrase = (req.body && req.body.confirmPhrase) || '';
+  if (phrase !== 'WIPE-COA-CONFIRMED') {
+    return res.status(400).json({ success: false, error: 'تأكيد ناقص أو خاطئ' });
+  }
+  try {
+    const counts = {};
+    let inserted = 0;
+    await db.withTransaction(async (conn) => {
+      // Tally what we're about to wipe (so the response is honest).
+      const tally = async (tbl) => {
+        try {
+          const [[r]] = await conn.query('SELECT COUNT(*) AS n FROM ' + tbl);
+          counts[tbl] = r.n;
+        } catch (e) { counts[tbl] = 0; }
+      };
+      await tally('gl_entries');
+      await tally('gl_journals');
+      await tally('sales_items');
+      await tally('sales');
+      await tally('purchases');
+      await tally('expenses');
+      await tally('inventory_movements');
+      await tally('payments');
+      await tally('vat_reports');
+      await tally('gl_accounts');
+
+      // Order matters for cascading FKs. Children before parents:
+      //   gl_entries     → CASCADEd by gl_journals delete (FK), but explicit
+      //                    delete is cleaner and lets us count.
+      //   sales_items    → CASCADEd by sales delete (FK).
+      //   gl_accounts    → ON DELETE SET NULL on gl_entries.account_id,
+      //                    but gl_entries is already gone by then.
+      const safeDelete = async (tbl) => {
+        try { await conn.query('DELETE FROM ' + tbl); } catch (e) { /* table may not exist */ }
+      };
+      await safeDelete('gl_entries');
+      await safeDelete('gl_journals');
+      await safeDelete('sales_items');
+      await safeDelete('sales');
+      await safeDelete('purchases');
+      await safeDelete('expenses');
+      await safeDelete('inventory_movements');
+      await safeDelete('payments');
+      await safeDelete('vat_reports');
+      await safeDelete('gl_accounts');
+
+      // Reseed CoA from the official template. DFS-ordered so parents
+      // are inserted before children — no FK on parent_id, but the
+      // ordering keeps the data clean for any downstream consumer.
+      for (const a of COA_TEMPLATE) {
+        await conn.query(
+          'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_active, balance) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)',
+          [a.code, a.code, a.nameAr, a.nameEn || null, a.type, a.parentCode || null, a.level]
+        );
+        inserted++;
+      }
+    });
+    console.log('[wipe-and-seed]', JSON.stringify({ deleted: counts, seeded: inserted }));
+    res.json({ success: true, deleted: counts, seeded: inserted });
+  } catch (e) {
+    console.error('[wipe-and-seed]', e);
+    res.status(500).json({ success: false, error: String((e && e.message) || e) });
+  }
+});
+
 // Seed cafe GL accounts (دليل حسابات المقهى)
 router.post('/gl/seed', async (req, res) => {
   try {

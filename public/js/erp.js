@@ -2229,6 +2229,62 @@ window.coaApplyTemplate = function() {
     .catch(function(e){ showToast(String((e && e.message) || e), true); });
 };
 
+// v5.11.9 — Hard wipe + reseed. Different from coaApplyTemplate which
+// runs through the import path that preserves accounts with journal
+// entries (the bug that left the user's bank under inventory).
+// This nukes journals, sales, purchases, expenses, payments, VAT reports,
+// inventory movements, and the entire chart of accounts, then reseeds
+// the chart from the official IFRS template (216 accounts).
+// Master data (customers, suppliers, items, brands, branches, periods,
+// users, settings) is preserved.
+window.coaWipeAndSeed = function() {
+  erpConfirm(
+    'مسح + تأسيس — تَحذير شديد',
+    'سيُحذَف نهائيًا:\n' +
+    '• كل القيود اليومية (gl_journals + gl_entries)\n' +
+    '• كل المبيعات (sales + sales_items)\n' +
+    '• كل المشتريات والمصروفات (purchases + expenses)\n' +
+    '• كل المدفوعات وحركات المخزون (payments + inventory_movements)\n' +
+    '• تقارير ضريبة القيمة المضافة (vat_reports)\n' +
+    '• شجرة الحسابات بالكامل\n\n' +
+    'ثم تُعاد بناء الشجرة من القالب الرسمي (216 حساب IFRS).\n\n' +
+    'البيانات المحفوظة: العملاء، الموردون، الأصناف، العلامات، الفروع، الفترات، المستخدمون.\n\n' +
+    'هذا الإجراء لا يُمكن التَراجع عنه. تابع؟',
+    function() {
+      var phrase = window.prompt('للتَأكيد النهائي، اكتب الجملة التالية حرفيًا:\n\nWIPE-COA-CONFIRMED');
+      if (phrase !== 'WIPE-COA-CONFIRMED') return showToast('تَم الإلغاء — لم يَتم حذف شيء', false);
+      var token = localStorage.getItem('pos_token') || '';
+      showToast('جارٍ المسح وإعادة البناء...');
+      fetch('/api/erp/gl/coa/wipe-and-seed', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmPhrase: phrase })
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (!j.success) return showToast(j.error || 'فشل المسح', true);
+        var d = j.deleted || {};
+        var summary =
+          'تَم بنجاح:\n' +
+          '• قيود يومية: ' + (d.gl_journals||0) + ' (مع ' + (d.gl_entries||0) + ' سطر)\n' +
+          '• مبيعات: ' + (d.sales||0) + '\n' +
+          '• مشتريات: ' + (d.purchases||0) + '\n' +
+          '• مصروفات: ' + (d.expenses||0) + '\n' +
+          '• مدفوعات: ' + (d.payments||0) + '\n' +
+          '• حركات مخزون: ' + (d.inventory_movements||0) + '\n' +
+          '• حسابات قديمة: ' + (d.gl_accounts||0) + '\n' +
+          '• حسابات جديدة: ' + (j.seeded||0);
+        showToast('تَم: ' + (j.seeded||0) + ' حساب جديد · ' + (d.gl_journals||0) + ' قيد محذوف · ' + (d.sales||0) + ' بيع محذوف');
+        if (typeof console !== 'undefined' && console.log) console.log(summary);
+        if (typeof _erpReloadAccountsCacheBust === 'function') _erpReloadAccountsCacheBust();
+        else if (typeof erpLoadAccountsList_ === 'function') erpLoadAccountsList_();
+      })
+      .catch(function(e){ showToast(String((e && e.message) || e), true); });
+    },
+    { icon: 'fa-bomb', color: '#dc2626', okText: 'متابعة' }
+  );
+};
+
 window.coaOpenDedupeModal = function() {
   var prior = document.getElementById('coaDedupeModal');
   if (prior) prior.remove();

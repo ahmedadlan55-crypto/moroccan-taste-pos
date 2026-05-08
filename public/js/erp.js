@@ -1838,37 +1838,183 @@ window.coaExportExcel = async function() {
   if (typeof window.ensureXlsx === 'function') await window.ensureXlsx();
   if (typeof XLSX === 'undefined') { showToast('فشل تحميل مكتبة Excel', true); return; }
   if (!_erpAccounts || !_erpAccounts.length) { showToast('لا توجد حسابات للتصدير', true); return; }
-  var sorted = _erpAccounts.slice().sort(function(a,b){
-    return String(a.code||'').localeCompare(String(b.code||''));
+
+  // v5.11.15 — full structural export. Every detail the user needs to
+  // restructure the tree correctly:
+  //  · Order in DFS (parents before children) so the sheet visually
+  //    mirrors the tree.
+  //  · Indented Arabic name so depth is obvious without reading levels.
+  //  · Full ancestry path from root.
+  //  · Arabic type label (أصل / التزام / حقوق ملكية / إيراد / مصروف).
+  //  · Parent code + parent name + parent type.
+  //  · Folder/leaf flag (رئيسي / فرعي) + children count.
+  //  · Active status + journal-movement count + balance.
+
+  var typeLabelMap = {
+    asset:     'أصل',
+    liability: 'التزام',
+    equity:    'حقوق ملكية',
+    revenue:   'إيراد',
+    expense:   'مصروف'
+  };
+
+  // Build helpers: id → account, and parentId → children[]
+  var byId = {};
+  _erpAccounts.forEach(function(a){ byId[a.id] = a; });
+  var childrenByParent = {};
+  _erpAccounts.forEach(function(a){
+    var pid = a.parentId || '__root__';
+    (childrenByParent[pid] = childrenByParent[pid] || []).push(a);
   });
-  // v5.10.48 — first column is the internal id. v5.10.50 — added
-  // "اسم الأب" so the user can rewire parents in Excel by editing
-  // names instead of codes. Backend resolves parents by name first.
-  var rows = sorted.map(function(a, idx){
-    var parent = a.parentId ? _erpAccounts.find(function(p){ return p.id === a.parentId; }) : null;
+  // Sort siblings: explicit displayOrder first, then code, then name.
+  Object.keys(childrenByParent).forEach(function(pid){
+    childrenByParent[pid].sort(function(a, b){
+      var ao = a.displayOrder == null ? 99999 : Number(a.displayOrder);
+      var bo = b.displayOrder == null ? 99999 : Number(b.displayOrder);
+      if (ao !== bo) return ao - bo;
+      var ca = String(a.code || ''), cb = String(b.code || '');
+      if (ca !== cb) return ca.localeCompare(cb);
+      return String(a.nameAr || '').localeCompare(String(b.nameAr || ''));
+    });
+  });
+
+  // Walk in DFS so the row order mirrors the tree.
+  var ordered = [];
+  function dfs(pid) {
+    var kids = childrenByParent[pid] || [];
+    for (var i = 0; i < kids.length; i++) {
+      ordered.push(kids[i]);
+      dfs(kids[i].id);
+    }
+  }
+  dfs('__root__');
+  // Anything not reachable from a root (orphan) — append at the end so
+  // it isn't silently dropped from the export.
+  if (ordered.length < _erpAccounts.length) {
+    var seen = {};
+    ordered.forEach(function(a){ seen[a.id] = 1; });
+    _erpAccounts.forEach(function(a){ if (!seen[a.id]) ordered.push(a); });
+  }
+
+  // Resolve full path "1 الأصول › 11 الأصول المتداولة › 111 النقدية" for each row.
+  function pathOf(a) {
+    var parts = [];
+    var safety = 0;
+    var cur = a;
+    while (cur && safety < 50) {
+      parts.unshift((cur.code || '') + ' ' + (cur.nameAr || ''));
+      cur = cur.parentId ? byId[cur.parentId] : null;
+      safety++;
+    }
+    return parts.join(' › ');
+  }
+
+  var rows = ordered.map(function(a, idx){
+    var parent = a.parentId ? byId[a.parentId] : null;
+    var childCount = (childrenByParent[a.id] || []).length;
+    var isFolder = !!a.isFolder || childCount > 0;
+    // Indented name — 2 spaces per level past 1, plus a leaf/folder glyph.
+    var depth = Math.max(0, (Number(a.level) || 1) - 1);
+    var indent = '';
+    for (var k = 0; k < depth; k++) indent += '    ';
+    var glyph = isFolder ? '📁 ' : '• ';
     return {
-      'المعرف (لا تحذف)': a.id || '',
-      // v5.10.51 — real persisted display_order. Edit this cell, re-import,
-      // and the row actually moves in the tree.
-      'الترتيب':       a.displayOrder == null ? (idx + 1) : Number(a.displayOrder),
-      'الكود':         a.code || '',
-      'الاسم العربي':  a.nameAr || '',
-      'الاسم الإنج':   a.nameEn || '',
-      'النوع':         a.type || '',
-      'اسم الأب':      parent ? (parent.nameAr || '') : '',
-      'كود الأب':      parent ? parent.code : '',
-      'المستوى':       a.level || 1,
-      'النوع الهيكلي': a.isFolder ? 'رئيسي' : 'فرعي',
-      'الرصيد':        Number(a.balance || 0).toFixed(2)
+      '#':                idx + 1,
+      'المستوى':          a.level || 1,
+      'الكود':            a.code || '',
+      'الاسم (مُهيكل)':   indent + glyph + (a.nameAr || ''),
+      'الاسم العربي':     a.nameAr || '',
+      'الاسم الإنجليزي':  a.nameEn || '',
+      'نوع الحساب':       typeLabelMap[a.type] || a.type || '',
+      'النوع الهيكلي':    isFolder ? 'رئيسي (Folder)' : 'فرعي (Leaf)',
+      'كود الأب':         parent ? (parent.code || '') : '',
+      'اسم الأب':         parent ? (parent.nameAr || '') : '',
+      'نوع الأب':         parent ? (typeLabelMap[parent.type] || parent.type || '') : '',
+      'المسار الكامل':    pathOf(a),
+      'عدد الأبناء':      childCount,
+      'له حركات':         (Number(a.movementCount) || 0) > 0 ? 'نعم' : 'لا',
+      'عدد القيود':       Number(a.movementCount) || 0,
+      'الرصيد':           Number(a.balance || 0).toFixed(2),
+      'الحالة':           a.isActive === false ? 'معطل' : 'نَشط',
+      'الترتيب':          a.displayOrder == null ? (idx + 1) : Number(a.displayOrder),
+      'المعرف (لا تحذف)': a.id || ''
     };
   });
+
   var ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = [{wch:22},{wch:8},{wch:12},{wch:32},{wch:32},{wch:12},{wch:32},{wch:10},{wch:8},{wch:12},{wch:14}];
+  // Column widths tuned for a Yumsar-style accountancy sheet.
+  ws['!cols'] = [
+    {wch:5},   // #
+    {wch:7},   // المستوى
+    {wch:10},  // الكود
+    {wch:42},  // الاسم (مُهيكل) — indented
+    {wch:30},  // الاسم العربي
+    {wch:30},  // الاسم الإنجليزي
+    {wch:14},  // نوع الحساب
+    {wch:18},  // النوع الهيكلي
+    {wch:10},  // كود الأب
+    {wch:30},  // اسم الأب
+    {wch:14},  // نوع الأب
+    {wch:60},  // المسار الكامل
+    {wch:9},   // عدد الأبناء
+    {wch:9},   // له حركات
+    {wch:9},   // عدد القيود
+    {wch:14},  // الرصيد
+    {wch:8},   // الحالة
+    {wch:8},   // الترتيب
+    {wch:22}   // المعرف
+  ];
+  // Freeze the header row so it stays visible while scrolling 200+ accounts.
+  ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+
+  // Header row formatting — make the column titles bold + filled. xlsx
+  // (community edition) ignores most cell styles, but we set them anyway
+  // so that XLSX-Pro / SheetJS-CE-with-cellStyles users see formatting.
+  var headerRange = XLSX.utils.decode_range(ws['!ref']);
+  for (var c = headerRange.s.c; c <= headerRange.e.c; c++) {
+    var addr = XLSX.utils.encode_cell({ r: 0, c: c });
+    if (ws[addr]) {
+      ws[addr].s = {
+        font: { bold: true, color: { rgb: 'FFFFFF' } },
+        fill: { fgColor: { rgb: '7C3AED' } },
+        alignment: { horizontal: 'center', vertical: 'center' }
+      };
+    }
+  }
+
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'دليل الحسابات');
+
+  // ── Second sheet: a per-type summary so the user can sanity-check
+  //    how many leaves/folders exist under each IFRS root.
+  var summary = {};
+  _erpAccounts.forEach(function(a){
+    var t = typeLabelMap[a.type] || a.type || 'غير مُحدَّد';
+    if (!summary[t]) summary[t] = { type: t, total: 0, folders: 0, leaves: 0, withMovements: 0, totalBalance: 0 };
+    summary[t].total++;
+    var cc = (childrenByParent[a.id] || []).length;
+    if (a.isFolder || cc > 0) summary[t].folders++; else summary[t].leaves++;
+    if ((Number(a.movementCount) || 0) > 0) summary[t].withMovements++;
+    summary[t].totalBalance += Number(a.balance || 0);
+  });
+  var summaryRows = Object.keys(summary).map(function(k){
+    var s = summary[k];
+    return {
+      'النوع':          s.type,
+      'إجمالي الحسابات': s.total,
+      'حسابات رئيسية':  s.folders,
+      'حسابات فرعية':   s.leaves,
+      'له حركات':       s.withMovements,
+      'إجمالي الأرصدة':  Number(s.totalBalance).toFixed(2)
+    };
+  });
+  var ws2 = XLSX.utils.json_to_sheet(summaryRows);
+  ws2['!cols'] = [{wch:18},{wch:14},{wch:14},{wch:14},{wch:12},{wch:18}];
+  XLSX.utils.book_append_sheet(wb, ws2, 'ملخَّص');
+
   var stamp = new Date().toISOString().slice(0, 10);
   XLSX.writeFile(wb, 'chart_of_accounts_' + stamp + '.xlsx');
-  showToast('تم تصدير ' + rows.length + ' حساب');
+  showToast('تم تصدير ' + rows.length + ' حساب · ' + Object.keys(summary).length + ' أنواع');
 };
 
 // v5.10.46 — read an .xlsx file the user picked, parse it, then show a

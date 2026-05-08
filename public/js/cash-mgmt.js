@@ -186,7 +186,18 @@ window._cashOnParentChange = function(kind) {
   var pid = parentSel.value;
   var parent = coa.find(function(a){ return a.id === pid; });
   if (!parent) { codeEl.value = ''; if (levelEl) levelEl.value = '—'; return; }
-  if (levelEl) levelEl.value = 'L' + (Number(parent.level || 1) + 1);
+  // v5.11.6 — refuse to compute a level from a parent that lacks one.
+  // Surfaces stale COA data quickly (instead of silently producing L2
+  // for every child by treating null as 1).
+  var parentLvl = Number(parent.level || 0);
+  if (!parentLvl) {
+    if (levelEl) levelEl.value = 'L?';
+    if (typeof showToast === 'function') {
+      showToast('مستوى الحساب الأب غير مَحدَّد — أعِد تحميل دليل الحسابات', true);
+    }
+    return;
+  }
+  if (levelEl) levelEl.value = 'L' + (parentLvl + 1);
   if (!autoEl || !autoEl.checked) return;  // manual mode — leave code alone
   var siblings = coa.filter(function(a){ return (a.parentId || a.parent_id) === parent.id; });
   var codes = siblings.map(function(a){ return String(a.code||''); }).sort();

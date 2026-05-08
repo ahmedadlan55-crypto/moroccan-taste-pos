@@ -1272,7 +1272,11 @@ function _coaRenderDiagnose(j) {
         '<div style="font-size:12px;color:#475569;">' + fmt(s.accounts) + ' حساب · ' + fmt(s.validEntries) + ' قيد · ' + fmt(s.nullEntries) + ' قيد بدون حساب</div>' +
       '</div>' +
       '<div style="margin-inline-start:auto;">' +
-        '<button class="wo-btn wo-btn-secondary" onclick="coaRunAutoRepair()"><i class="fas fa-wand-magic-sparkles"></i><span>إصلاح شامل</span></button>' +
+        // v5.11.6 — fix in place: refresh the modal body after the
+        // repair completes so the user sees fixed categories vanish
+        // immediately (instead of waiting for the legacy 400ms re-open
+        // that gets covered by the repair-report modal).
+        '<button class="wo-btn wo-btn-secondary" onclick="event.stopPropagation();_coaFixAllAndRefreshDiagnose(this);"><i class="fas fa-wand-magic-sparkles"></i><span>إصلاح شامل</span></button>' +
       '</div>' +
     '</div>';
 

@@ -83,11 +83,20 @@ async function createGlAccountUnderParent({ parentId, suggestedCode, suggestedLe
     code = code + '-' + Math.random().toString(36).slice(2, 5);
   }
   const newId = 'GL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-  const level = Number(suggestedLevel) || (Number(parent.level || 1) + 1);
+  // v5.11.6 — level is ALWAYS parent.level + 1. The frontend ships a
+  // suggestedLevel for sanity (computed from the same parent picker),
+  // but it's only used to log a warning when the two disagree — never
+  // as the source of truth. Single source of truth = parent.level.
+  const computedLevel = Number(parent.level || 1) + 1;
+  if (suggestedLevel != null && Number(suggestedLevel) && Number(suggestedLevel) !== computedLevel) {
+    console.warn('[cash] suggestedLevel ' + suggestedLevel +
+                 ' != computed ' + computedLevel + ' for parent ' + parent.code +
+                 ' — using computed value');
+  }
   await db.query(
     'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
-    [newId, code, suggestedName || code, type || 'asset', parentId, level]);
-  return { id: newId, code, level };
+    [newId, code, suggestedName || code, type || 'asset', parentId, computedLevel]);
+  return { id: newId, code, level: computedLevel };
 }
 
 async function getSourceAccount(type, id) {

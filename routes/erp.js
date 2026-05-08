@@ -3676,14 +3676,22 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
 
     function classifyAsset(code) {
       const c = String(code || '');
-      if (c.startsWith('1101') || c.startsWith('1102')) return ['currentAssets', 'cash'];
-      if (c.startsWith('1125') || c.startsWith('113'))  return ['currentAssets', 'receivables'];
-      if (c.startsWith('112'))                          return ['currentAssets', 'inventory'];
-      if (c.startsWith('114') || c.startsWith('115'))   return ['currentAssets', 'otherCA'];
-      if (c.startsWith('124'))                          return ['nonCurrentAssets', 'accDep'];
-      if (c.startsWith('12'))                           return ['nonCurrentAssets', 'ppe'];
-      // Anything else under root 1 → other current assets fallback
-      if (c.startsWith('11'))                           return ['currentAssets', 'otherCA'];
+      // v5.11.11 — calibrated for the v5.11.8 IFRS template (216 accounts).
+      // 111x = Cash and Bank, 112x = AR, 113x = Inventory, 114-116 = other CA,
+      // 121 = PPE, 122 = Accumulated Depreciation (contra), 123 = Intangibles,
+      // 124 = ROU IFRS 16. Older calibration mis-mapped 112↔113 and put 124
+      // under accDep — that's why the user saw "wrong accounts" in the BS.
+      if (c.startsWith('111'))                         return ['currentAssets', 'cash'];
+      if (c.startsWith('112'))                         return ['currentAssets', 'receivables'];
+      if (c.startsWith('113'))                         return ['currentAssets', 'inventory'];
+      if (c.startsWith('114') || c.startsWith('115') || c.startsWith('116'))
+                                                       return ['currentAssets', 'otherCA'];
+      if (c.startsWith('122'))                         return ['nonCurrentAssets', 'accDep'];
+      if (c.startsWith('121') || c.startsWith('123') || c.startsWith('124'))
+                                                       return ['nonCurrentAssets', 'ppe'];
+      // Fallbacks for off-template rows
+      if (c.startsWith('11'))                          return ['currentAssets', 'otherCA'];
+      if (c.startsWith('12'))                          return ['nonCurrentAssets', 'ppe'];
       return null;
     }
     function classifyLiability(code) {

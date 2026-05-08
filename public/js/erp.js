@@ -14005,7 +14005,6 @@ function erpLoadBalanceSheet() {
             '<div style="font-weight:800;color:#9a3412;">' + unclassified.length + ' حساب لم يُصنَّف في المركز المالي</div>' +
             '<div style="font-size:12px;color:#9a3412;margin-top:2px;">مثل: ' + sample + more + '</div>' +
           '</div>' +
-          '<button class="wo-btn wo-btn-secondary" onclick="coaRunAutoRepair()"><i class="fas fa-wand-magic-sparkles"></i><span>إصلاح شامل</span></button>' +
         '</div>';
     }
 
@@ -14053,40 +14052,11 @@ function erpLoadBalanceSheet() {
         '<button class="tb-btn tb-btn-success" onclick="erpBalanceSheetPrint()" style="font-size:13px;padding:8px 24px;"><i class="fas fa-print"></i> طباعة قائمة المركز المالي</button>' +
       '</div>';
     document.getElementById('bsDetails').innerHTML = html;
-
-    // v5.10.38 — fire-and-forget diagnose to prepend a critical-issues
-    // banner if the COA has zombie balances or misplaced banks/inventory.
-    var token = localStorage.getItem('pos_token') || '';
-    fetch('/api/erp/gl/diagnose', { headers: { 'Authorization': 'Bearer ' + token } })
-      .then(function(rr){ return rr.json(); })
-      .then(function(d){
-        if (!d || !d.issues) return;
-        var crit =
-          ((d.issues.balanceWithoutEntries||[]).length) +
-          ((d.issues.nameVsPlacementMismatch||[]).length) +
-          ((d.issues.codeTypeMismatch||[]).length);
-        if (crit === 0) return;
-        var box = document.getElementById('bsDetails');
-        if (!box) return;
-        var crit2 = (d.issues.balanceWithoutEntries||[]).length;
-        var crit3 = (d.issues.nameVsPlacementMismatch||[]).length;
-        var crit1 = (d.issues.codeTypeMismatch||[]).length;
-        var details = [];
-        if (crit2) details.push(crit2 + ' حساب يحمل رصيدًا بدون قيود فعلية');
-        if (crit3) details.push(crit3 + ' حساب اسمه لا يطابق مكانه (مثلاً بنوك تحت مخزون)');
-        if (crit1) details.push(crit1 + ' حساب نوعه لا يطابق الكود');
-        var bn = document.createElement('div');
-        bn.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px 16px;background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;margin-bottom:14px;';
-        bn.innerHTML =
-          '<i class="fas fa-circle-exclamation" style="color:#dc2626;font-size:20px;"></i>' +
-          '<div style="flex:1;">' +
-            '<div style="font-weight:800;color:#7f1d1d;">قد لا يكون المركز المالي دقيقًا</div>' +
-            '<div style="font-size:12px;color:#991b1b;margin-top:2px;">' + details.join(' · ') + '</div>' +
-          '</div>' +
-          '<button class="wo-btn wo-btn-secondary" onclick="coaRunAutoRepair()"><i class="fas fa-wand-magic-sparkles"></i><span>إصلاح شامل</span></button>';
-        box.insertBefore(bn, box.firstChild);
-      })
-      .catch(function(){ /* ignore — diagnose is advisory */ });
+    // v5.11.11 — diagnose fire-and-forget banner removed. After v5.11.9's
+    // wipe-and-seed and v5.11.11's classifier alignment, the diagnose
+    // checks (which use legacy keyword rules) generate false positives on
+    // a clean IFRS template. The user does the rebuild deliberately via
+    // the "مسح + تأسيس" button — no auto-repair surface needed here.
   });
 }
 

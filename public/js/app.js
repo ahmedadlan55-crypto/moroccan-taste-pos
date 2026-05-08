@@ -68,21 +68,9 @@ window.erpNav = function(section) {
 };
 window._erpNavStub = window.erpNav;
 
-// V5.9.3 — same shim for erpV5Nav (إدارة المؤسسة V5 submenu).  Defined
-//   inside erp.js, so the sidebar click was a no-op before erp.js loaded.
-window.erpV5Nav = function(section) {
-  ensureErpJs().then(function() {
-    if (window.erpV5Nav && window.erpV5Nav !== window._erpV5NavStub) {
-      window.erpV5Nav(section);
-    } else {
-      // erp.js loaded but didn't override our stub — bug; surface it
-      if (typeof showToast === 'function') showToast('تعذر فتح القسم — أعد تحميل الصفحة', true);
-    }
-  }).catch(function(e) {
-    if (typeof showToast === 'function') showToast(e.message || 'فشل تحميل وحدة ERP', true);
-  });
-};
-window._erpV5NavStub = window.erpV5Nav;
+// v5.11.2 — erpV5Nav shim and the entire "إدارة المؤسسة المتقدّمة"
+// section have been removed. Stale localStorage values starting with
+// 'v5:' are filtered out in the boot recovery path below.
 
 // =========================================
 // 1. App State & Utilities
@@ -1058,6 +1046,10 @@ function initViews() {
   {
     // Admin/manager → restore last section or default to home
     var lastSection = localStorage.getItem("pos_last_section") || 'home';
+    // v5.11.2 — drop stale 'v5:...' values left behind by the removed
+    // "إدارة المؤسسة المتقدّمة" section so the user lands on home
+    // instead of a blank screen on next boot.
+    if (lastSection.indexOf('v5:') === 0) lastSection = 'home';
     if (lastSection.indexOf('erp:') === 0) {
       // ERP section — load ERP nav
       var erpSec = lastSection.substring(4);

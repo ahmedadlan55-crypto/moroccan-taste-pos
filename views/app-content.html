@@ -184,8 +184,7 @@
           <div class="nav-item" data-erp-nav="erpCreditNotes" onclick="erpNav('erpCreditNotes')"><i class="fas fa-file-alt"></i><span data-i18n="nav.creditNotes">الإشعارات الدائنة/المدينة</span></div>
         </div>
 
-        <!-- 13. الإدارة العامة — V5.9.12: merged with the former «إدارة المؤسسة V5» group.
-             Two routers (erpNav + erpV5Nav) coexist; no router collision. -->
+        <!-- 13. الإدارة العامة — v5.11.2: «إدارة المؤسسة المتقدّمة» section removed entirely. -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
           <i class="fas fa-building"></i><span data-i18n="nav.organization">الإدارة العامة</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
@@ -197,21 +196,6 @@
           <div class="nav-item" data-erp-nav="erpPosTerminals" onclick="erpNav('erpPosTerminals')"><i class="fas fa-desktop"></i><span data-i18n="nav.posTerminals">أجهزة POS</span></div>
           <div class="nav-item" data-erp-nav="erpRoyaltyRuns" onclick="erpNav('erpRoyaltyRuns')"><i class="fas fa-receipt"></i><span data-i18n="nav.royaltyRuns">احتساب الفرانشايز</span></div>
           <div class="nav-item" data-erp-nav="erpAuditLog" onclick="erpNav('erpAuditLog')"><i class="fas fa-history"></i><span data-i18n="nav.auditLog">سجل العمليات</span></div>
-
-          <!-- ── 13.b — Enterprise tools (formerly "إدارة المؤسسة V5") ── -->
-          <div style="margin:10px 12px 4px;border-top:1px solid rgba(255,255,255,0.12);padding-top:8px;">
-            <div style="font-size:10px;color:#94a3b8;font-weight:800;letter-spacing:0.6px;text-transform:uppercase;">أدوات المؤسسة المتقدّمة</div>
-          </div>
-          <div class="nav-item" onclick="erpV5Nav('properties')"><i class="fas fa-building" style="color:#818cf8;"></i><span>العقارات والوحدات</span></div>
-          <div class="nav-item" onclick="erpV5Nav('contracts')"><i class="fas fa-file-contract" style="color:#818cf8;"></i><span>العقود والإيجارات</span></div>
-          <div class="nav-item" onclick="erpV5Nav('work-orders')"><i class="fas fa-screwdriver-wrench" style="color:#818cf8;"></i><span>أوامر العمل والصيانة</span></div>
-          <div class="nav-item" onclick="erpV5Nav('ap')"><i class="fas fa-file-invoice-dollar" style="color:#818cf8;"></i><span>فواتير الموردين (AP)</span></div>
-          <div class="nav-item" onclick="erpV5Nav('ar')"><i class="fas fa-file-invoice" style="color:#818cf8;"></i><span>فواتير العملاء (AR)</span></div>
-          <div class="nav-item" onclick="erpV5Nav('matrix')"><i class="fas fa-sitemap" style="color:#818cf8;"></i><span>مصفوفة الموافقات</span></div>
-          <div class="nav-item" onclick="erpV5Nav('budgets')"><i class="fas fa-chart-pie" style="color:#818cf8;"></i><span>الميزانيات والتباين</span></div>
-          <div class="nav-item" onclick="erpV5Nav('anomalies')"><i class="fas fa-radar" style="color:#818cf8;"></i><span>تنبيهات الشذوذ (AI)</span></div>
-          <div class="nav-item" onclick="erpV5Nav('channel-menus')" style="background:linear-gradient(90deg,rgba(14,165,233,.15),transparent);"><i class="fas fa-store" style="color:#0ea5e9;"></i><span>منيو القنوات</span></div>
-          <div class="nav-item" onclick="erpV5Nav('stocktake-pro')" style="background:linear-gradient(90deg,rgba(34,197,94,.15),transparent);"><i class="fas fa-clipboard-check" style="color:#16a34a;"></i><span>الجرد الاحترافي</span></div>
         </div>
 
         <!-- 14. المعاملات الإدارية (Workflow Engine) -->
@@ -1618,10 +1602,7 @@
      All modules: Customers, Suppliers, GL, VAT, ZATCA, Audit, PO, etc.
      ==================================================================== -->
 
-<!-- ══════════════════════════════════════════════════════════════ -->
-<!-- V5 ENTERPRISE HOST — Properties / Contracts / WorkOrders / Invoices / Matrix -->
-<!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpV5Host" class="dash-section hidden"></div>
+<!-- v5.11.2 — V5 ENTERPRISE HOST removed (section deleted from sidebar) -->
 
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- ERP MAIN DASHBOARD -->

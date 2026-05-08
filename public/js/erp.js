@@ -1918,14 +1918,12 @@ window.coaExportExcel = async function() {
     var indent = '';
     for (var k = 0; k < depth; k++) indent += '    ';
     var glyph = isFolder ? '📁 ' : '• ';
-    // v5.11.16 — id is now the SECOND column (right after #) so the user
-    // can spot the immutable system identifier without scrolling. Parent
-    // id is added so re-parenting in Excel works even if codes/names
-    // change between exports.
+    // v5.11.17 — internal account id removed from the user-facing export.
+    // The import flow matches on name+level → code → plain name (see
+    // routes/erp.js resolveByNameLevel), so the id isn't needed in the
+    // sheet for round-tripping. Keeps the export accountancy-clean.
     return {
       '#':                idx + 1,
-      'المعرف (لا تحذف)': a.id || '',
-      'معرف الأب':        parent ? (parent.id || '') : '',
       'المستوى':          a.level || 1,
       'الكود':            a.code || '',
       'الاسم (مُهيكل)':   indent + glyph + (a.nameAr || ''),
@@ -1950,8 +1948,6 @@ window.coaExportExcel = async function() {
   // Column widths tuned for a Yumsar-style accountancy sheet.
   ws['!cols'] = [
     {wch:5},   // #
-    {wch:24},  // المعرف
-    {wch:24},  // معرف الأب
     {wch:7},   // المستوى
     {wch:10},  // الكود
     {wch:42},  // الاسم (مُهيكل)

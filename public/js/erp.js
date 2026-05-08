@@ -3294,6 +3294,13 @@ function _erpInjectJrnFilterBar() {
 
   // Bulk action bar — v5.11.1 styling via journals.css
   if (!document.getElementById('jrnBulkBar')) {
+    // v5.11.3 — bulk delete is developer-only. The DELETE endpoint on
+    // the backend rejects non-dev callers too, but hiding the button
+    // keeps the UI honest.
+    var isDev = state.currentUser && (state.currentUser.isDeveloper || state.role === 'admin');
+    var deleteBtnHtml = isDev
+      ? '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--delete"  onclick="erpBulkAction(\'delete\')"><i class="fas fa-trash-can"></i> حذف</button>'
+      : '';
     var bulkBar = document.createElement('div');
     bulkBar.id = 'jrnBulkBar';
     bulkBar.className = 'jrn-bulk-bar';
@@ -3302,7 +3309,7 @@ function _erpInjectJrnFilterBar() {
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
         '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--approve" onclick="erpBulkAction(\'approve_post\')"><i class="fas fa-check-double"></i> اعتماد + ترحيل</button>' +
         '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--unpost"  onclick="erpBulkAction(\'unpost\')"><i class="fas fa-rotate-left"></i> إلغاء ترحيل</button>' +
-        '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--delete"  onclick="erpBulkAction(\'delete\')"><i class="fas fa-trash-can"></i> حذف</button>' +
+        deleteBtnHtml +
         '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--ghost"   onclick="_erpClearJrnSel()">إلغاء</button>' +
       '</div>';
     bar.parentElement.appendChild(bulkBar);

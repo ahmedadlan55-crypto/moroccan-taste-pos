@@ -5,6 +5,8 @@ const { ensureCoreAccounts } = require('../lib/glPosting');
 // the user attached). Loaded once at boot, used by /gl/seed-from-template
 // to seed or refresh the chart of accounts in one click.
 const COA_TEMPLATE = require('../db/coa-template.json');
+// v5.11.3 — developer-only guard for destructive journal endpoints.
+const { guardDeveloper } = require('../lib/transactionGuards');
 
 // ─── Dashboard ───
 
@@ -2541,6 +2543,24 @@ router.post('/gl/journals/bulk', async (req, res) => {
   // single-row behaviour (approve = post on the chart of accounts).
   const allowed = ['approve','post','unpost','delete','approve_post'];
   if (allowed.indexOf(action) < 0) return res.json({ success: false, error: 'إجراء غير مدعوم' });
+  // v5.11.3 — bulk delete is developer-only. We can't pin guardDeveloper
+  // to the whole route (the other actions are open), so we run the same
+  // check inline when action === 'delete'.
+  if (action === 'delete') {
+    let isDev = false;
+    if (req.user && req.user.isDeveloper) isDev = true;
+    else if ((username || (req.user && req.user.username)) === 'admin') isDev = true;
+    else {
+      const u = (username || (req.user && req.user.username) || '').trim();
+      if (u) {
+        try {
+          const [rows] = await db.query('SELECT is_developer, role FROM users WHERE username = ? LIMIT 1', [u]);
+          if (rows.length && (rows[0].is_developer || rows[0].role === 'developer')) isDev = true;
+        } catch (_) {}
+      }
+    }
+    if (!isDev) return res.status(403).json({ success: false, error: 'حذف القيود متاح للمطوِّر فقط' });
+  }
 
   const results = [];
   let ok = 0, failed = 0;
@@ -2607,8 +2627,11 @@ router.post('/gl/journals/bulk', async (req, res) => {
   res.json({ success: true, action, ok, failed, results });
 });
 
-// Delete journal — reverse balances then delete
-router.delete('/gl/journals/:id', async (req, res) => {
+// Delete journal — reverse balances then delete.
+// v5.11.3 — gated behind guardDeveloper so only the developer/admin
+// role can erase journal records. Frontend hides the button for
+// everyone else; this is the server-side safety net for direct calls.
+router.delete('/gl/journals/:id', guardDeveloper, async (req, res) => {
   try {
     const [entries] = await db.query('SELECT * FROM gl_entries WHERE journal_id = ?', [req.params.id]);
     // Reverse account balances

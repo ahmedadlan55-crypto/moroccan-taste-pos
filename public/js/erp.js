@@ -1677,17 +1677,25 @@ function _coaMountSearchableSelect(targetEl, opts) {
 
   var displayText = selectedOpt ? selectedOpt.label : (opts.placeholder || '— اختر —');
 
+  // v5.11.5 — display text for the trigger uses code + name when available
+  // so the picked value reads "112 بنك الأهلي" instead of an opaque label.
+  var triggerHtml = selectedOpt
+    ? (selectedOpt.code
+        ? '<span class="coa-sel__trigger-code">' + esc(selectedOpt.code) + '</span><span class="coa-sel__trigger-name">' + esc(selectedOpt.name || '') + '</span>'
+        : '<span class="coa-sel__current">' + esc(selectedOpt.label || displayText) + '</span>')
+    : '<span class="coa-sel__current is-placeholder">' + esc(displayText) + '</span>';
+
   targetEl.innerHTML =
     '<div class="coa-sel" data-open="0">' +
       '<input type="hidden" id="' + hiddenId + '" value="' + esc(initialValue) + '">' +
       '<button type="button" class="coa-sel__trigger" tabindex="0">' +
-        '<span class="coa-sel__current' + (selectedOpt ? '' : ' is-placeholder') + '">' + esc(displayText) + '</span>' +
+        '<span class="coa-sel__triggerText">' + triggerHtml + '</span>' +
         '<i class="fas fa-chevron-down coa-sel__chev"></i>' +
       '</button>' +
       '<div class="coa-sel__panel">' +
         '<div class="coa-sel__searchbox">' +
           '<i class="fas fa-search"></i>' +
-          '<input type="text" class="coa-sel__search" placeholder="ابحث بالكود أو الاسم..." autocomplete="off">' +
+          '<input type="text" class="coa-sel__search" placeholder="ابحث بالكود أو الاسم..." autocomplete="off" dir="rtl">' +
         '</div>' +
         '<div class="coa-sel__list" role="listbox"></div>' +
         '<div class="coa-sel__footer"><span class="coa-sel__count">' + options.length + ' نتيجة</span></div>' +
@@ -1717,25 +1725,49 @@ function _coaMountSearchableSelect(targetEl, opts) {
       return;
     }
     countEl.textContent = visible.length + ' نتيجة';
+    // v5.11.5 — preferred render: code (mono accent) + name (primary).
+    // Falls back to the legacy single-line label for callers that don't
+    // pass structured code/name (e.g. the move modal's "— جذر —" entry).
     list.innerHTML = visible.map(function(p, vi){
       var isSel = String(hidden.value) === String(p.o.value);
       var disabled = p.o.disabled ? ' is-disabled' : '';
-      var sub = p.o.sublabel ? '<span class="coa-sel__sub">' + esc(p.o.sublabel) + '</span>' : '';
+      var hasCode = (p.o.code != null && p.o.code !== '');
+      var indentLevel = (Number(p.o.level || 1) - 1) * 14;
+      var inner;
+      if (hasCode || p.o.name) {
+        inner =
+          '<span class="coa-sel__opt-indent" style="width:' + indentLevel + 'px;flex-shrink:0;"></span>' +
+          '<code class="coa-sel__opt-code">' + esc(p.o.code || '—') + '</code>' +
+          '<span class="coa-sel__opt-name">' + esc(p.o.name || '') + '</span>';
+      } else {
+        inner = '<span class="coa-sel__opt-name">' + esc(p.o.label || '—') + '</span>';
+      }
       return '<div class="coa-sel__opt' + (isSel ? ' is-selected' : '') + disabled +
         '" role="option" data-value="' + esc(p.o.value) + '" data-vi="' + vi + '">' +
-        '<span class="coa-sel__lbl">' + esc(p.o.label) + '</span>' + sub +
+        inner +
         (isSel ? '<i class="fas fa-check coa-sel__tick"></i>' : '') +
       '</div>';
     }).join('');
     activeIdx = -1;
   }
 
-  function setValue(val, label) {
+  function setValue(val, _legacyLabel) {
     hidden.value = val == null ? '' : String(val);
     var picked = options.find(function(o){ return String(o.value) === String(hidden.value); });
-    var txt = label || (picked ? picked.label : (opts.placeholder || '— اختر —'));
-    current.textContent = txt;
-    current.classList.toggle('is-placeholder', !picked);
+    // v5.11.5 — repaint the trigger using the structured code+name when
+    // available, otherwise fall back to the option's label.
+    var triggerText = targetEl.querySelector('.coa-sel__triggerText');
+    if (triggerText) {
+      if (picked && picked.code) {
+        triggerText.innerHTML =
+          '<span class="coa-sel__trigger-code">' + esc(picked.code) + '</span>' +
+          '<span class="coa-sel__trigger-name">' + esc(picked.name || '') + '</span>';
+      } else if (picked) {
+        triggerText.innerHTML = '<span class="coa-sel__current">' + esc(picked.label || '') + '</span>';
+      } else {
+        triggerText.innerHTML = '<span class="coa-sel__current is-placeholder">' + esc(opts.placeholder || '— اختر —') + '</span>';
+      }
+    }
     if (typeof opts.onChange === 'function') opts.onChange(hidden.value, picked || null);
   }
 
@@ -1759,7 +1791,9 @@ function _coaMountSearchableSelect(targetEl, opts) {
   list.addEventListener('click', function(e){
     var opt = e.target.closest('.coa-sel__opt');
     if (!opt || opt.classList.contains('is-disabled')) return;
-    setValue(opt.getAttribute('data-value'), opt.querySelector('.coa-sel__lbl').textContent);
+    // v5.11.5 — setValue rebuilds the trigger from the picked option
+    // itself; no need to read text from the row anymore.
+    setValue(opt.getAttribute('data-value'));
     close();
   });
   // close when clicking outside
@@ -2365,7 +2399,8 @@ window.coaOpenMoveModal = function(id) {
   var descendantIds = _coaCollectDescendants(id);
   var descendantCount = descendantIds.length;
   // v5.10.47 — structured options for the searchable combobox.
-  var moveParentOptions = [{ value: '', label: '— جذر (بلا أب) —' }].concat(
+  // v5.11.5 — same code+name structured fields as the account modal.
+  var moveParentOptions = [{ value: '', label: '— جذر (بلا أب) —', code: '', name: '' }].concat(
     _erpAccounts
       .filter(function(a){
         if (a.id === id) return false;
@@ -2375,11 +2410,12 @@ window.coaOpenMoveModal = function(id) {
       })
       .sort(function(a,b){ return String(a.code||'').localeCompare(String(b.code||'')); })
       .map(function(a){
-        var indentM = '  '.repeat(((a.level||1) - 1));
         return {
           value: a.id,
-          label: indentM + a.code + ' — ' + (a.nameAr || ''),
-          sublabel: a.type || ''
+          code: a.code || '',
+          name: a.nameAr || a.nameEn || '',
+          level: Number(a.level || 1),
+          label: (a.code || '') + ' ' + (a.nameAr || a.nameEn || '')
         };
       })
   );
@@ -2818,16 +2854,23 @@ function erpOpenAccountModal(data) {
   // Build parent options grouped by type
   // v5.10.47 — searchable combobox (mounted below) replaces the legacy
   // native <select>. parentSelectOptions feeds the helper.
-  var parentSelectOptions = [{ value: '', label: '— جذر (بلا أب) —' }].concat(
+  // v5.11.5 — drop the per-option type sublabel ("asset"/"liability"/etc.):
+  // it polluted every row and visually overpowered the actual code+name.
+  // Pass code and nameAr as structured fields so the renderer can style
+  // them differently (mono code accent + name in primary).
+  var parentSelectOptions = [{ value: '', label: '— جذر (بلا أب) —', code: '', name: '' }].concat(
     _erpAccounts
       .filter(function(a){ return (a.level || 1) < 4; })
       .sort(function(a,b){ return String(a.code||'').localeCompare(String(b.code||'')); })
       .map(function(a){
-        var indentP = '  '.repeat(((a.level || 1) - 1));
         return {
           value: a.id,
-          label: indentP + a.code + ' — ' + (a.nameAr || ''),
-          sublabel: a.type || ''
+          code: a.code || '',
+          name: a.nameAr || a.nameEn || '',
+          level: Number(a.level || 1),
+          // keep .label as a plain searchable string so the existing
+          // type-ahead filter still matches by either code or name.
+          label: (a.code || '') + ' ' + (a.nameAr || a.nameEn || '')
         };
       })
   );

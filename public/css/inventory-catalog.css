@@ -2581,17 +2581,21 @@
   padding: 10px 12px;
   border-bottom: 1px solid #e2e8f0;
   background: linear-gradient(180deg, #f8fafc, #fff);
+  flex-shrink: 0;
 }
-.coa-sel__searchbox > i { color: #94a3b8; font-size: 13px; }
+.coa-sel__searchbox > i { color: #94a3b8; font-size: 13px; flex-shrink: 0; }
 .coa-sel__search {
   flex: 1;
+  width: 100%;
+  min-width: 0;
   border: none;
   outline: none;
   font-size: 13px;
   font-weight: 600;
   background: transparent;
   font-family: inherit;
-  padding: 4px 0;
+  padding: 4px 6px;
+  text-align: start;
 }
 .coa-sel__list {
   flex: 1 1 auto;
@@ -2602,12 +2606,11 @@
 .coa-sel__opt {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 9px 12px;
   border-radius: 8px;
   cursor: pointer;
   font-size: 13px;
-  font-weight: 600;
   color: #0f172a;
   transition: background 80ms ease;
 }
@@ -2616,26 +2619,71 @@
 }
 .coa-sel__opt.is-selected {
   background: linear-gradient(135deg, #ede9fe, #ddd6fe);
-  color: #5b21b6;
 }
+.coa-sel__opt.is-selected .coa-sel__opt-name { color: #5b21b6; }
 .coa-sel__opt.is-disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
-.coa-sel__lbl {
+/* v5.11.5 — split row layout: indent strut + mono code + name + tick */
+.coa-sel__opt-code {
+  display: inline-block;
+  min-width: 64px;
+  padding: 2px 8px;
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 800;
+  text-align: center;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+.coa-sel__opt.is-selected .coa-sel__opt-code {
+  background: #fff;
+  border-color: #c4b5fd;
+  color: #5b21b6;
+}
+.coa-sel__opt-name {
   flex: 1;
+  font-weight: 700;
+  color: #0f172a;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.coa-sel__sub {
-  font-size: 11px;
-  font-weight: 500;
-  color: #94a3b8;
-  margin-inline-start: 8px;
+.coa-sel__opt-indent { display: inline-block; }
+.coa-sel__tick { color: #7c3aed; font-size: 13px; flex-shrink: 0; }
+/* v5.11.5 — trigger button can also display the split code + name */
+.coa-sel__triggerText {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  text-align: start;
   white-space: nowrap;
+  overflow: hidden;
 }
-.coa-sel__tick { color: #7c3aed; font-size: 12px; }
+.coa-sel__trigger-code {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.coa-sel__trigger-name {
+  font-weight: 700;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .coa-sel__empty {
   padding: 24px 14px;
   text-align: center;

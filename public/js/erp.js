@@ -1918,8 +1918,14 @@ window.coaExportExcel = async function() {
     var indent = '';
     for (var k = 0; k < depth; k++) indent += '    ';
     var glyph = isFolder ? '📁 ' : '• ';
+    // v5.11.16 — id is now the SECOND column (right after #) so the user
+    // can spot the immutable system identifier without scrolling. Parent
+    // id is added so re-parenting in Excel works even if codes/names
+    // change between exports.
     return {
       '#':                idx + 1,
+      'المعرف (لا تحذف)': a.id || '',
+      'معرف الأب':        parent ? (parent.id || '') : '',
       'المستوى':          a.level || 1,
       'الكود':            a.code || '',
       'الاسم (مُهيكل)':   indent + glyph + (a.nameAr || ''),
@@ -1936,8 +1942,7 @@ window.coaExportExcel = async function() {
       'عدد القيود':       Number(a.movementCount) || 0,
       'الرصيد':           Number(a.balance || 0).toFixed(2),
       'الحالة':           a.isActive === false ? 'معطل' : 'نَشط',
-      'الترتيب':          a.displayOrder == null ? (idx + 1) : Number(a.displayOrder),
-      'المعرف (لا تحذف)': a.id || ''
+      'الترتيب':          a.displayOrder == null ? (idx + 1) : Number(a.displayOrder)
     };
   });
 
@@ -1945,9 +1950,11 @@ window.coaExportExcel = async function() {
   // Column widths tuned for a Yumsar-style accountancy sheet.
   ws['!cols'] = [
     {wch:5},   // #
+    {wch:24},  // المعرف
+    {wch:24},  // معرف الأب
     {wch:7},   // المستوى
     {wch:10},  // الكود
-    {wch:42},  // الاسم (مُهيكل) — indented
+    {wch:42},  // الاسم (مُهيكل)
     {wch:30},  // الاسم العربي
     {wch:30},  // الاسم الإنجليزي
     {wch:14},  // نوع الحساب
@@ -1961,8 +1968,7 @@ window.coaExportExcel = async function() {
     {wch:9},   // عدد القيود
     {wch:14},  // الرصيد
     {wch:8},   // الحالة
-    {wch:8},   // الترتيب
-    {wch:22}   // المعرف
+    {wch:8}    // الترتيب
   ];
   // Freeze the header row so it stays visible while scrolling 200+ accounts.
   ws['!freeze'] = { xSplit: 0, ySplit: 1 };

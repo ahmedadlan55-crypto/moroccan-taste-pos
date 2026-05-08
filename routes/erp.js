@@ -3380,37 +3380,42 @@ router.get('/inventory-valuation', async (req, res) => {
   }
 });
 
-// Sync inventory GL accounts — create accounts for each category under 112
+// v5.11.14 — Realigned for the v5.11.8 IFRS template: parent code is
+// '113' (Inventory), not '112' (which is now Accounts Receivable).
+// Sub-account codes follow the 113xx pattern so they nest cleanly under
+// the inventory branch instead of polluting the AR branch.
 router.post('/gl/sync-inventory', async (req, res) => {
   try {
-    // Ensure parent 112 exists
-    const [p112] = await db.query("SELECT id FROM gl_accounts WHERE code = '112'");
-    let parentId = p112.length ? p112[0].id : null;
+    // Ensure parent 113 (Inventory) exists
+    const [p113] = await db.query("SELECT id FROM gl_accounts WHERE code = '113'");
+    let parentId = p113.length ? p113[0].id : null;
     if (!parentId) {
       const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11'");
-      parentId = 'GL-112';
+      parentId = 'GL-113';
       await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-        [parentId, '112', 'المخزون', 'asset', p11.length ? p11[0].id : null, 3]);
+        [parentId, '113', 'المخزون', 'asset', p11.length ? p11[0].id : null, 3]);
     }
 
     // Get inventory categories
     const [cats] = await db.query('SELECT DISTINCT category FROM inv_items WHERE active = 1 AND category IS NOT NULL AND category != ""');
     let created = 0;
 
-    // Get existing children of 112
-    const [existing] = await db.query("SELECT code, name_ar FROM gl_accounts WHERE code LIKE '112%' AND code != '112' ORDER BY code");
+    // Look at existing children directly under code 113 (not the leaves
+    // of 1131/1132/etc — those are the template's named buckets and we
+    // don't auto-add siblings to them). Code prefix '113xx' = 5 chars.
+    const [existing] = await db.query("SELECT code, name_ar FROM gl_accounts WHERE code REGEXP '^113[0-9]{2}$' ORDER BY code");
     const existingNames = existing.map(e => e.name_ar.toLowerCase());
 
     for (const cat of cats) {
       const catName = 'مخزون ' + cat.category;
       if (existingNames.includes(catName.toLowerCase())) continue; // Already exists
 
-      // Find next code
-      const [lastChild] = await db.query("SELECT code FROM gl_accounts WHERE code LIKE '112%' AND code != '112' ORDER BY code DESC LIMIT 1");
-      let nextCode = '11201';
+      // Find next code in the 113xx range
+      const [lastChild] = await db.query("SELECT code FROM gl_accounts WHERE code REGEXP '^113[0-9]{2}$' ORDER BY code DESC LIMIT 1");
+      let nextCode = '11301';
       if (lastChild.length) {
-        const num = parseInt(lastChild[0].code.replace('112','')) || 0;
-        nextCode = '112' + String(num + 1).padStart(2, '0');
+        const num = parseInt(lastChild[0].code.replace('113','')) || 0;
+        nextCode = '113' + String(num + 1).padStart(2, '0');
       }
       const id = 'GL-' + nextCode;
       await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',

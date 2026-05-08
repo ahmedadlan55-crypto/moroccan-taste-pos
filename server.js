@@ -2667,6 +2667,64 @@ async function runMigrations() {
   await addColumnIfMissing('gl_entries', 'warehouse_id', "VARCHAR(50)");
   try { await db.query('CREATE INDEX idx_gle_dims ON gl_entries(brand_id, branch_id)'); } catch(e) {}
 
+  // v5.11.14 — One-time relocation of legacy auto-created accounts whose
+  // parent_id points to the WRONG branch in the v5.11.8 IFRS template.
+  // Earlier versions of CORE_ACCOUNTS (lib/glPosting.js) and
+  // /gl/sync-inventory put inventory accounts under code 112 (which is
+  // "الذمم المدينة" / AR in the new chart) and AR under 113 (Inventory) —
+  // exactly the swap the user reported as "ذمم تطبيقات تحت المخزون".
+  // Idempotent: only relocates rows whose parent is currently wrong.
+  try {
+    const [r112] = await db.query("SELECT id FROM gl_accounts WHERE code = '112' LIMIT 1");
+    const [r113] = await db.query("SELECT id FROM gl_accounts WHERE code = '113' LIMIT 1");
+    const [r116] = await db.query("SELECT id FROM gl_accounts WHERE code = '116' LIMIT 1");
+    if (r112.length && r113.length && r116.length) {
+      const id112 = r112[0].id, id113 = r113[0].id, id116 = r116[0].id;
+      // Inventory legacy codes (1200/1210/1220/1230) → parent 113 (Inventory)
+      const [u1] = await db.query(
+        "UPDATE gl_accounts SET parent_id = ?, level = 4 " +
+        "WHERE code IN ('1200','1210','1220','1230') AND (parent_id != ? OR parent_id IS NULL)",
+        [id113, id113]
+      );
+      if (u1.affectedRows) console.log('[v5.11.14] Moved', u1.affectedRows, 'legacy inventory rows to parent 113');
+      // AR legacy code (1150) → parent 112 (AR)
+      const [u2] = await db.query(
+        "UPDATE gl_accounts SET parent_id = ?, level = 4 WHERE code = '1150' AND (parent_id != ? OR parent_id IS NULL)",
+        [id112, id112]
+      );
+      if (u2.affectedRows) console.log('[v5.11.14] Moved', u2.affectedRows, 'legacy AR rows to parent 112');
+      // Input VAT legacy code (1290) → parent 116 (Input VAT)
+      const [u3] = await db.query(
+        "UPDATE gl_accounts SET parent_id = ?, level = 4 WHERE code = '1290' AND (parent_id != ? OR parent_id IS NULL)",
+        [id116, id116]
+      );
+      if (u3.affectedRows) console.log('[v5.11.14] Moved', u3.affectedRows, 'legacy input-VAT rows to parent 116');
+      // Auto-created inventory categories from /gl/sync-inventory: rows
+      // named "مخزون %" with codes like 11201, 11202... that should be
+      // under 113. Re-code them to 113NN AND reparent them.
+      const [stuck] = await db.query(
+        "SELECT id, code, name_ar FROM gl_accounts " +
+        "WHERE name_ar LIKE 'مخزون %' AND code REGEXP '^112[0-9]+$' AND parent_id != ?",
+        [id113]
+      );
+      for (const row of stuck) {
+        const [last] = await db.query(
+          "SELECT code FROM gl_accounts WHERE code REGEXP '^113[0-9]{2}$' ORDER BY code DESC LIMIT 1"
+        );
+        let n = 0;
+        if (last.length) n = parseInt(String(last[0].code).slice(3), 10) || 0;
+        const newCode = '113' + String(n + 1).padStart(2, '0');
+        try {
+          await db.query(
+            "UPDATE gl_accounts SET code = ?, parent_id = ?, level = 4 WHERE id = ?",
+            [newCode, id113, row.id]
+          );
+          console.log('[v5.11.14] Relocated "' + row.name_ar + '" from ' + row.code + ' → ' + newCode);
+        } catch(e) { /* code collision: leave as-is, won't break anything */ }
+      }
+    }
+  } catch (e) { console.log('[v5.11.14] Legacy CoA relocation skipped:', e.message.substring(0, 120)); }
+
   // V5.7.18 — One-time backfill: gl_entries.account_name was being saved
   //   as empty string by glPosting.js (now fixed). For all existing rows
   //   with an empty account_name, copy the gl_accounts.name_ar via JOIN.

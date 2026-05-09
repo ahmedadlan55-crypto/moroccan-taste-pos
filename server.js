@@ -2670,6 +2670,16 @@ async function runMigrations() {
   // v5.12.7 — optional base64 product image stored on the menu row
   await addColumnIfMissing('menu', 'image_data', 'LONGTEXT NULL');
 
+  // v5.13.0 — Allow standalone (custom) items in a price list with no
+  // menu reference. item_id becomes nullable so a row can carry just
+  // a name + price; new item_name / item_category columns hold the
+  // standalone label for those rows. The original UNIQUE key on
+  // (price_list_id, item_id) keeps menu-linked overrides unique while
+  // permitting many NULL item_id rows (per ANSI SQL NULL semantics).
+  try { await db.query('ALTER TABLE price_list_items MODIFY COLUMN item_id VARCHAR(50) NULL'); } catch(e) {}
+  await addColumnIfMissing('price_list_items', 'item_name', 'VARCHAR(200) NULL');
+  await addColumnIfMissing('price_list_items', 'item_category', 'VARCHAR(100) NULL');
+
   // v5.12.2 — channel as first-class dimension on transactions
   await addColumnIfMissing('sales',       'channel_id',   'VARCHAR(50)');
   await addColumnIfMissing('sales_items', 'channel_id',   'VARCHAR(50)');

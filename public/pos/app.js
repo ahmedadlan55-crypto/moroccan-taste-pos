@@ -211,6 +211,15 @@ window.renderMenuGrid = function() {
     }
   }
 
+  // v5.13.0 — append custom items from the active channel's price list.
+  // They're virtual rows that bypass the channel filter (they belong to
+  // THIS channel by definition) so they always appear when the channel
+  // is selected.
+  if (state._channelCustomItems && state._channelCustomItems.length) {
+    list = list.concat(state._channelCustomItems);
+    channelEmpty = false;
+  }
+
   if (state.activeCat) list = list.filter(function(i) { return i.category === state.activeCat; });
   if (searchTerm) list = list.filter(function(i) {
     return (i.name || '').toLowerCase().includes(searchTerm) || String(i.id || '').toLowerCase().includes(searchTerm);
@@ -239,8 +248,13 @@ window.renderMenuGrid = function() {
       var imgHtml = img
         ? '<div class="pos-item-img"><img src="' + img + '" loading="lazy" alt=""></div>'
         : '';
+      // v5.13.0 — badge for standalone (custom) price-list items
+      var customBadge = i.__custom
+        ? '<div style="position:absolute;top:6px;inset-inline-start:6px;background:#f59e0b;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:6px;z-index:1;">مُخصَّص</div>'
+        : '';
       var safeJson = JSON.stringify(i).replace(/'/g, '&#39;');
-      h += '<div class="pos-item ' + (isSel ? 'selected' : '') + '">' +
+      h += '<div class="pos-item ' + (isSel ? 'selected' : '') + '" style="position:relative;">' +
+        customBadge +
         imgHtml +
         '<div>' +
           '<div class="pos-item-name">' + (i.name || '') + '</div>' +
@@ -2656,20 +2670,48 @@ function _doSetChannel(ch) {
   }
 
   // Load price list items for this channel (override menu prices + cart prices)
+  // v5.13.0 — also harvests standalone "custom" items (item_id IS NULL) and
+  // exposes them as virtual menu rows so the cashier sees only-on-this-channel
+  // products that aren't part of the main menu.
   if (ch.priceListId) {
     _posCallAPI('GET', '/erp/price-lists/' + ch.priceListId + '/items', null, function(rows) {
       state.channelPriceMap = {};
+      var customItems = [];
       (rows || []).forEach(function(r) {
-        state.channelPriceMap[r.itemId || r.item_id] = Number(r.price || 0);
+        if (r.isCustom || (r.itemId == null && r.itemName)) {
+          // Virtual menu item: id starts with PLI- so we know it's
+          // recipe-free at sale time.
+          customItems.push({
+            id:        'PLI-' + r.id,
+            name:      r.itemName,
+            price:     Number(r.price) || 0,
+            category:  r.categoryOrUnit || 'صنف مُخصَّص',
+            cost:      0,
+            active:    true,
+            __custom:  true
+          });
+        } else if (r.itemId) {
+          state.channelPriceMap[r.itemId] = Number(r.price || 0);
+        }
       });
+      state._channelCustomItems = customItems;
+      // Make sure custom-item categories appear in the tab strip
+      if (customItems.length) {
+        var existingCats = new Set(state.categories || []);
+        customItems.forEach(function (m) { if (m.category) existingCats.add(m.category); });
+        state.categories = Array.from(existingCats);
+      }
       _posApplyChannelPrices();
+      if (typeof renderMenuGrid === 'function') renderMenuGrid();
       if (isSwitch && state.cart && state.cart.length && typeof glassToast === 'function') {
         glassToast('تم تحديث أسعار السلة لقناة: ' + (ch.name || ''), false);
       }
     });
   } else {
     state.channelPriceMap = {};
+    state._channelCustomItems = [];
     _posApplyChannelPrices();
+    if (typeof renderMenuGrid === 'function') renderMenuGrid();
     if (isSwitch && state.cart && state.cart.length && typeof glassToast === 'function') {
       glassToast('تم تحديث أسعار السلة لقناة: ' + (ch.name || ''), false);
     }

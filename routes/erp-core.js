@@ -198,25 +198,31 @@ router.post('/price-lists', async (req, res) => {
 router.get('/price-lists/:id/items', async (req, res) => {
   try {
     // V3: items can come from EITHER menu (finished products) OR inv_items (raw)
-    // Fallback chain: menu first, then inv_items
+    // v5.13.0: also supports standalone custom items (item_id NULL) where the
+    // row carries its own item_name and item_category.
     const [rows] = await db.query(
       `SELECT li.*,
-              COALESCE(m.name, i.name) AS item_name,
+              COALESCE(li.item_name, m.name, i.name) AS effective_name,
+              COALESCE(li.item_category, m.category, i.unit) AS effective_category,
               COALESCE(m.id, i.id) AS sku,
-              COALESCE(m.category, i.unit) AS category_or_unit,
-              CASE WHEN m.id IS NOT NULL THEN 'menu' ELSE 'inv' END AS item_source,
+              CASE
+                WHEN li.item_id IS NULL THEN 'custom'
+                WHEN m.id IS NOT NULL    THEN 'menu'
+                ELSE 'inv'
+              END AS item_source,
               m.price AS default_price
        FROM price_list_items li
        LEFT JOIN menu m ON li.item_id = m.id
        LEFT JOIN inv_items i ON li.item_id = i.id
        WHERE li.price_list_id = ?
-       ORDER BY item_name`, [req.params.id]);
+       ORDER BY effective_name`, [req.params.id]);
     res.json(rows.map(l => ({
       id: l.id, itemId: l.item_id,
-      itemName: l.item_name || l.item_id,
-      sku: l.sku || l.item_id,
+      itemName: l.effective_name || l.item_id,
+      sku: l.sku || l.item_id || '',
       itemSource: l.item_source || 'unknown',
-      categoryOrUnit: l.category_or_unit || '',
+      isCustom: l.item_id == null,
+      categoryOrUnit: l.effective_category || '',
       defaultPrice: Number(l.default_price || 0),
       price: Number(l.price),
       minPrice: Number(l.min_price) || 0,
@@ -227,14 +233,25 @@ router.get('/price-lists/:id/items', async (req, res) => {
 
 router.post('/price-lists/:id/items', async (req, res) => {
   try {
-    const { itemId, price, minPrice, validFrom, validTo } = req.body;
-    if (!itemId || price == null) return res.json({ success: false, error: 'الصنف والسعر مطلوبان' });
+    // v5.13.0 — accept either {itemId} (menu/inv reference) or
+    // {itemName, category} for a fully standalone custom item.
+    const { itemId, itemName, category, price, minPrice, validFrom, validTo } = req.body;
+    const isCustom = !itemId && !!itemName;
+    if (!isCustom && !itemId) return res.json({ success: false, error: 'الصنف أو الاسم المُخصَّص مطلوب' });
+    if (price == null) return res.json({ success: false, error: 'السعر مطلوب' });
     const id = genId('PLI');
-    await db.query(
-      `INSERT INTO price_list_items (id, price_list_id, item_id, price, min_price, valid_from, valid_to)
-       VALUES (?,?,?,?,?,?,?)
-       ON DUPLICATE KEY UPDATE price=VALUES(price), min_price=VALUES(min_price), valid_from=VALUES(valid_from), valid_to=VALUES(valid_to)`,
-      [id, req.params.id, itemId, Number(price), Number(minPrice)||0, validFrom||null, validTo||null]);
+    if (isCustom) {
+      await db.query(
+        `INSERT INTO price_list_items (id, price_list_id, item_id, item_name, item_category, price, min_price, valid_from, valid_to)
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+        [id, req.params.id, itemName, category || null, Number(price), Number(minPrice)||0, validFrom||null, validTo||null]);
+    } else {
+      await db.query(
+        `INSERT INTO price_list_items (id, price_list_id, item_id, price, min_price, valid_from, valid_to)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE price=VALUES(price), min_price=VALUES(min_price), valid_from=VALUES(valid_from), valid_to=VALUES(valid_to)`,
+        [id, req.params.id, itemId, Number(price), Number(minPrice)||0, validFrom||null, validTo||null]);
+    }
     res.json({ success: true, id });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });

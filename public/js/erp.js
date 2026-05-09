@@ -16512,8 +16512,24 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
       '</div>' +
     '</div>' +
 
+    // v5.13.0 — Custom item panel (PRIMARY): add a fully standalone item
+    // by name + price, no menu reference required.
+    '<div style="background:linear-gradient(135deg,#fef3c7,#fef9c3);border:1.5px solid #fde68a;border-radius:12px;padding:16px;margin-bottom:14px;">' +
+      '<div style="font-size:13px;font-weight:900;color:#854d0e;margin-bottom:10px;"><i class="fas fa-plus-circle"></i> إضافة صنف مُخصَّص جديد (مُستَقل عن المنيو)</div>' +
+      '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:8px;align-items:end;">' +
+        '<div class="form-row" style="margin:0;"><label style="font-size:11px;font-weight:700;">اسم الصنف *</label><input id="plCustomName" class="form-control" placeholder="مثلاً: قهوة مثلجة"></div>' +
+        '<div class="form-row" style="margin:0;"><label style="font-size:11px;font-weight:700;">الفئة</label><input id="plCustomCat" class="form-control" placeholder="مثلاً: مشروبات"></div>' +
+        '<div class="form-row" style="margin:0;"><label style="font-size:11px;font-weight:700;">السعر *</label><input type="number" step="0.01" id="plCustomPrice" class="form-control" placeholder="0.00"></div>' +
+        '<div class="form-row" style="margin:0;"><label style="font-size:11px;font-weight:700;">الحد الأدنى</label><input type="number" step="0.01" id="plCustomMin" class="form-control" placeholder="0.00"></div>' +
+        '<button class="btn btn-primary" style="height:40px;background:linear-gradient(135deg,#f59e0b,#d97706);" onclick="plAddCustomItem(\''+id+'\')"><i class="fas fa-check"></i> إضافة</button>' +
+      '</div>' +
+      '<div style="font-size:10px;color:#92400e;margin-top:8px;"><i class="fas fa-info-circle"></i> هذا الصنف سَيَظهر فقط في قنوات البيع المُرتبطة بهذه القائمة، ولن يَتم خَصمه من المخزون.</div>' +
+    '</div>' +
+
+    // v5.13.0 — Menu pool panel collapsed by default (advanced)
+    '<details style="margin-bottom:14px;"><summary style="cursor:pointer;padding:12px 14px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;font-weight:800;color:#475569;font-size:13px;list-style:none;"><i class="fas fa-caret-down"></i> 📋 إضافة من المنيو الرئيسي (متقدم — للـ overrides)</summary>' +
     // V5.5 — multi-select panel (replaces the single dropdown)
-    '<div style="background:#f0fdf4;border:1.5px dashed #86efac;border-radius:12px;padding:14px;margin-bottom:14px;">' +
+    '<div style="background:#f0fdf4;border:1.5px dashed #86efac;border-radius:12px;padding:14px;margin-top:10px;">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">' +
         '<div style="font-size:13px;font-weight:900;color:#15803d;"><i class="fas fa-plus-circle"></i> إضافة منتجات للقائمة (تحديد متعدد)</div>' +
         '<div style="font-size:11px;color:#15803d;"><i class="fas fa-info-circle"></i> ابحث، حدد المنتجات، حدد سعراً افتراضياً، ثم اضغط "إضافة المحدد"</div>' +
@@ -16547,6 +16563,7 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
       // Available items list — checkbox + name + category + brand + default price + per-row override
       '<div id="plAvailList" style="max-height:340px;overflow-y:auto;border:1px solid #d1fae5;border-radius:10px;background:#fff;"></div>' +
     '</div>' +
+    '</details>' +
 
     // Existing items table
     '<div style="font-size:13px;font-weight:900;color:#0f172a;margin-bottom:8px;"><i class="fas fa-list"></i> الأصناف الحالية في القائمة</div>' +
@@ -16626,6 +16643,38 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
   // Render initial available list
   _plRenderAvailable();
 }
+
+// v5.13.0 — Add a fully standalone (custom) item to the price list.
+// No menu_id link, recipe-deduction won't fire on sale, item appears
+// in the cashier grid only when a channel uses this price list.
+window.plAddCustomItem = function (plId) {
+  var nameEl = document.getElementById('plCustomName');
+  var catEl  = document.getElementById('plCustomCat');
+  var prEl   = document.getElementById('plCustomPrice');
+  var minEl  = document.getElementById('plCustomMin');
+  var name = (nameEl && nameEl.value || '').trim();
+  var cat  = (catEl  && catEl.value  || '').trim();
+  var price = Number(prEl && prEl.value);
+  var minPrice = Number(minEl && minEl.value) || 0;
+  if (!name) return showToast('اسم الصنف مَطلوب', true);
+  if (!isFinite(price) || price <= 0) return showToast('السعر مَطلوب وأكبر من صفر', true);
+  _erpPost('/erp/price-lists/' + plId + '/items', {
+    itemName: name, category: cat || null,
+    price: price, minPrice: minPrice
+  }, function (r) {
+    if (r && r.success) {
+      showToast('أُضيف "' + name + '"');
+      if (nameEl) nameEl.value = '';
+      if (catEl)  catEl.value  = '';
+      if (prEl)   prEl.value   = '';
+      if (minEl)  minEl.value  = '';
+      var st = window._plState;
+      if (st) erpViewPriceListItems(st.id, st.name);
+    } else {
+      showToast(r && r.error || 'فشل الإضافة', true);
+    }
+  });
+};
 
 // V5.5 — render the multi-select available items list (filtered by search)
 window._plRenderAvailable = function(){

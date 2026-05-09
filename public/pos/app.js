@@ -845,15 +845,37 @@ window.generateZATCA_TLV = function(sellerName, vatNumber, timestamp, totalAmoun
   return btoa(binary);
 };
 
+// v5.12.3 — Silent print via hidden iframe instead of window.open().
+// Browsers / kiosks block popups in many configurations and require
+// user interaction to allow them; iframe printing always succeeds and
+// goes straight to the OS default printer (silent under Chrome /
+// Edge --kiosk-printing). The iframe self-cleans after 4 s.
+window._silentPrint = function (html) {
+  try { var prior = document.getElementById('vkPrintFrame'); if (prior) prior.remove(); } catch (e) {}
+  var f = document.createElement('iframe');
+  f.id = 'vkPrintFrame';
+  f.setAttribute('aria-hidden', 'true');
+  f.style.cssText = 'position:fixed;right:-10000px;bottom:-10000px;width:0;height:0;border:0;visibility:hidden;';
+  document.body.appendChild(f);
+  f.onload = function () {
+    try { f.contentWindow.focus(); f.contentWindow.print(); }
+    catch (e) { console.warn('iframe print failed:', e); }
+    setTimeout(function () { try { f.remove(); } catch (e) {} }, 4000);
+  };
+  var doc = f.contentDocument || f.contentWindow.document;
+  doc.open();
+  doc.write(html);
+  doc.close();
+};
+
 // V5.7.9 — Print window mirrors the on-screen receipt EXACTLY (same bilingual layout).
 //          Sized for 80mm thermal printers (≈280px viewport at typical thermal DPI).
+// v5.12.3 — switched from window.open() to hidden iframe; HTML body stays identical.
 window.printReceiptWindow = function() {
   var r = state._lastReceipt;
   if (!r) return;
   var qrCanvas = document.querySelector('#receiptQR canvas');
   var qrImg = qrCanvas ? qrCanvas.toDataURL() : '';
-  var w = window.open('', '_blank', 'width=350,height=700');
-  if (!w) return;
 
   function rowSplit(left, right, opts) {
     opts = opts || {};
@@ -969,9 +991,7 @@ window.printReceiptWindow = function() {
 
     '</body></html>';
 
-  w.document.write(html);
-  w.document.close();
-  setTimeout(function() { w.print(); }, 400);
+  window._silentPrint(html);
 };
 
 // =========================================
@@ -3445,9 +3465,9 @@ function scV3ShowReport(shiftId, r) {
 }
 
 function _openShiftPrintWindow(reportHtml) {
-  var w = window.open('', '_blank', 'width=350,height=900');
-  if (!w) return;
-  var doc =
+  // v5.12.3 — uses the same hidden-iframe silent printer as the
+  // receipt path. No popup, no blocker, no leftover window.
+  var html =
     '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>Shift Report</title>' +
     '<style>' +
       '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}' +
@@ -3457,11 +3477,8 @@ function _openShiftPrintWindow(reportHtml) {
     '</style></head><body>' +
     reportHtml +
     '</body></html>';
-  w.document.write(doc);
-  w.document.close();
-  setTimeout(function () { try { w.print(); } catch (e) {} }, 400);
-  // If the OS print dialog is suppressed (kiosk mode), close the helper
-  // window after spool finishes; otherwise leave it open briefly.
-  setTimeout(function () { try { w.close(); } catch (e) {} }, 4000);
+  if (typeof window._silentPrint === 'function') {
+    window._silentPrint(html);
+  }
 }
 

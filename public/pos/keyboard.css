@@ -1,216 +1,186 @@
 /* ─────────────────────────────────────────────────────────────────
- * v5.12.0 — Virtual Keyboard for kiosk cashier (touch-only PCs)
- * Premium, touch-friendly, Arabic + English layouts.
- * Slides up from the bottom of the viewport when a [data-vk="1"]
- * input is focused; hidden by default.
+ * v5.12.3 — iPad-style virtual keyboard
+ *
+ *   • White / light-gray surface (not the v5.12.0 dark slate look)
+ *   • 180 ms slide-up · 150 ms slide-down · GPU transform
+ *   • iPad-class key feedback: highlight on press, no jumpy translate
+ *   • Standard QWERTY (EN) and AR-101 layouts, plus 123/symbol panel
+ *   • Long-press backspace, shift toggle, language toggle
+ *   • Disable browser tap-zoom + tap-delay via touch-action
  * ───────────────────────────────────────────────────────────────── */
 
 #vkKeyboard {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: auto 0 0 0;
   z-index: 9999;
-  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
-  padding: 14px 12px 16px;
-  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.5), 0 -2px 0 rgba(255, 255, 255, 0.06) inset;
-  border-top: 1px solid rgba(124, 58, 237, 0.4);
+  background: rgba(243, 244, 247, 0.96);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  padding: 8px 6px 10px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08);
   transform: translateY(110%);
-  transition: transform 240ms cubic-bezier(.4, 0, .2, 1);
+  transition: transform 180ms cubic-bezier(.32, .72, 0, 1);
+  will-change: transform;
   user-select: none;
   -webkit-user-select: none;
-  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  touch-action: manipulation;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Tahoma", sans-serif;
 }
+#vkKeyboard.vk-open { transform: translateY(0); }
 
-#vkKeyboard.vk-open {
-  transform: translateY(0);
-}
-
+/* Header bar — minimal, just a hide chevron + label */
 #vkKeyboard .vk-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
-  padding: 0 6px;
+  padding: 2px 8px 6px;
+  font-size: 11px;
+  color: #6b7280;
 }
-
 #vkKeyboard .vk-bar-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 700;
-  color: #cbd5e1;
+  gap: 6px;
+  font-weight: 500;
 }
-
-#vkKeyboard .vk-bar-title i {
-  font-size: 16px;
-  color: #a78bfa;
-}
-
-#vkKeyboard .vk-bar-actions {
-  display: flex;
-  gap: 8px;
-}
-
 #vkKeyboard .vk-bar-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  border: none;
-  background: rgba(255, 255, 255, 0.08);
-  color: #e2e8f0;
-  font-size: 16px;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 0;
+  background: rgba(0, 0, 0, 0.06);
+  color: #1c1c1e;
+  font-size: 14px;
   cursor: pointer;
-  transition: background 120ms;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
 }
+#vkKeyboard .vk-bar-btn:active { background: rgba(0, 0, 0, 0.12); }
 
-#vkKeyboard .vk-bar-btn:hover,
-#vkKeyboard .vk-bar-btn:active {
-  background: rgba(255, 255, 255, 0.16);
-}
-
+/* Rows */
 #vkKeyboard .vk-row {
   display: flex;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: 5px;
+  margin-bottom: 5px;
   justify-content: center;
 }
 
+/* Default key — white iPad-style */
 #vkKeyboard .vk-key {
   flex: 1 1 auto;
-  min-width: 44px;
-  max-width: 72px;
-  height: 56px;
-  border-radius: 12px;
-  border: none;
-  background: linear-gradient(180deg, #475569 0%, #334155 100%);
-  color: #f8fafc;
-  font-size: 20px;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 2px 0 #1e293b, 0 4px 12px rgba(0, 0, 0, 0.3);
-  transition: transform 80ms, box-shadow 80ms, background 120ms;
+  min-width: 30px;
+  height: 46px;
+  border: 0;
+  border-radius: 7px;
+  background: #fff;
+  color: #1c1c1e;
+  font-size: 22px;
+  font-weight: 400;
   font-family: inherit;
-  display: flex;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+  transition: background 60ms;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
-#vkKeyboard .vk-key:hover {
-  background: linear-gradient(180deg, #64748b 0%, #475569 100%);
+/* Press highlight — iPad uses a darker fill, no transform */
+#vkKeyboard .vk-key.vk-pressed,
+#vkKeyboard .vk-key:active {
+  background: #d1d3d9;
 }
 
-#vkKeyboard .vk-key:active,
-#vkKeyboard .vk-key.vk-active {
-  transform: translateY(2px);
-  box-shadow: 0 0 0 #1e293b, 0 2px 6px rgba(0, 0, 0, 0.3);
-  background: linear-gradient(180deg, #7c3aed 0%, #6d28d9 100%);
-}
-
-/* Special keys */
-#vkKeyboard .vk-key.vk-num {
-  background: linear-gradient(180deg, #1e3a8a 0%, #1e40af 100%);
-  font-family: ui-monospace, "SFMono-Regular", monospace;
-  font-weight: 700;
-}
-
-#vkKeyboard .vk-key.vk-num:hover {
-  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
-}
-
-#vkKeyboard .vk-key.vk-wide {
-  flex: 2 1 auto;
+/* Modifier / action keys (Shift, Backspace, 123, ABC, 🌐, Return) */
+#vkKeyboard .vk-key.vk-action,
+#vkKeyboard .vk-key.vk-shift,
+#vkKeyboard .vk-key.vk-back,
+#vkKeyboard .vk-key.vk-mode,
+#vkKeyboard .vk-key.vk-lang,
+#vkKeyboard .vk-key.vk-return {
+  background: #adb3bd;
+  color: #1c1c1e;
   font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
+  font-weight: 500;
+  flex: 1.3 1 auto;
+}
+#vkKeyboard .vk-key.vk-action:active,
+#vkKeyboard .vk-key.vk-shift:active,
+#vkKeyboard .vk-key.vk-back:active,
+#vkKeyboard .vk-key.vk-mode:active,
+#vkKeyboard .vk-key.vk-lang:active,
+#vkKeyboard .vk-key.vk-return:active,
+#vkKeyboard .vk-key.vk-action.vk-pressed,
+#vkKeyboard .vk-key.vk-shift.vk-pressed,
+#vkKeyboard .vk-key.vk-back.vk-pressed,
+#vkKeyboard .vk-key.vk-mode.vk-pressed,
+#vkKeyboard .vk-key.vk-lang.vk-pressed,
+#vkKeyboard .vk-key.vk-return.vk-pressed {
+  background: #939aa7;
 }
 
+/* Shift held / caps active = white card with extra ink */
+#vkKeyboard .vk-key.vk-shift.vk-on {
+  background: #fff;
+  color: #1c1c1e;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35), 0 0 0 1.5px #1c1c1e inset;
+}
+
+/* Return is tinted blue on iPad to suggest "send" */
+#vkKeyboard .vk-key.vk-return {
+  background: #007aff;
+  color: #fff;
+  flex: 1.6 1 auto;
+}
+#vkKeyboard .vk-key.vk-return:active,
+#vkKeyboard .vk-key.vk-return.vk-pressed {
+  background: #0066d6;
+}
+
+/* Space bar — wide white pill */
 #vkKeyboard .vk-key.vk-space {
-  flex: 6 1 auto;
-  max-width: none;
+  background: #fff;
+  flex: 5 1 auto;
   font-size: 14px;
-  font-weight: 600;
-  background: linear-gradient(180deg, #475569 0%, #334155 100%);
+  color: #6b7280;
+  font-weight: 500;
 }
 
-#vkKeyboard .vk-key.vk-action {
-  background: linear-gradient(180deg, #7c3aed 0%, #6d28d9 100%);
-  color: #fff;
-  font-weight: 700;
-}
-
-#vkKeyboard .vk-key.vk-action:hover {
-  background: linear-gradient(180deg, #8b5cf6 0%, #7c3aed 100%);
-}
-
-#vkKeyboard .vk-key.vk-danger {
-  background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%);
-  color: #fff;
-}
-
-#vkKeyboard .vk-key.vk-danger:hover {
-  background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
-}
-
-#vkKeyboard .vk-key.vk-lang {
-  background: linear-gradient(180deg, #059669 0%, #047857 100%);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-#vkKeyboard .vk-key.vk-lang:hover {
-  background: linear-gradient(180deg, #10b981 0%, #059669 100%);
-}
-
-/* Arabic glyphs need a font that handles isolated forms beautifully */
-#vkKeyboard.vk-lang-ar .vk-key:not(.vk-num):not(.vk-action):not(.vk-lang):not(.vk-wide) {
-  font-family: "Tahoma", "Segoe UI", Arial, sans-serif;
-  font-size: 22px;
-}
-
-/* Push body content up by keyboard height when keyboard is open */
+/* Body padding to push content above keyboard while open */
 body.vk-active {
-  padding-bottom: 360px;
+  padding-bottom: 280px;
 }
 
-/* v5.12.1 — Removed the (hover: hover) auto-hide rule. Most Windows
- * touch PCs are hybrid devices that report BOTH hover AND fine-pointer
- * capability because of the mouse, which made the keyboard invisible
- * on the very kiosks it was built for. Show it whenever an input is
- * focused; users on machines with a real keyboard can dismiss it
- * with the ✕ button. Set body.vk-disabled to opt out programmatically.
- */
 body.vk-disabled #vkKeyboard {
   display: none !important;
 }
 
-/* Compact layout for narrow screens */
+/* Arabic layout — bigger glyph, font that handles Arabic shaping */
+#vkKeyboard.vk-lang-ar {
+  direction: rtl;
+}
+#vkKeyboard.vk-lang-ar .vk-key:not(.vk-action):not(.vk-mode):not(.vk-lang):not(.vk-back):not(.vk-shift):not(.vk-space):not(.vk-return) {
+  font-family: "SF Arabic", "Geeza Pro", "Tahoma", "Segoe UI", Arial, sans-serif;
+  font-size: 22px;
+}
+
+/* Compact phone-size layout */
 @media (max-width: 480px) {
-  #vkKeyboard {
-    padding: 8px 4px 10px;
-  }
-  #vkKeyboard .vk-key {
-    height: 46px;
-    min-width: 30px;
-    font-size: 16px;
-    border-radius: 8px;
-  }
-  #vkKeyboard.vk-lang-ar .vk-key:not(.vk-num):not(.vk-action):not(.vk-lang):not(.vk-wide) {
-    font-size: 18px;
-  }
-  body.vk-active {
-    padding-bottom: 280px;
-  }
+  #vkKeyboard { padding: 6px 4px 8px; }
+  #vkKeyboard .vk-row { gap: 4px; margin-bottom: 4px; }
+  #vkKeyboard .vk-key { height: 42px; font-size: 18px; min-width: 26px; }
+  body.vk-active { padding-bottom: 240px; }
 }
 
 /* Hide the manual print button on the cashier receipt modal —
- * v5.12.0 prints automatically. Selector targets the receipt modal
- * action that calls printReceiptWindow(). */
-#modalReceipt button[onclick*="printReceiptWindow"] {
+ * v5.12.0 prints automatically. Selectors target both legacy and
+ * v5.12.3 wiring (data-action / class-based fallbacks). */
+#modalReceipt button[onclick*="printReceiptWindow"],
+#modalReceipt .btn-print,
+#modalReceipt [data-action="print"] {
   display: none !important;
 }

@@ -242,6 +242,50 @@ router.post('/', async (req, res) => {
       });
     });
 
+    // 3. v5.12.3 — Channel-specific BOM overrides. If this sale was made
+    // through a sales channel that has a custom bom_id on any of its
+    // channel_menu_items, that BOM replaces the menu's default for the
+    // matching item only. Lets one main menu product expose different
+    // recipes per channel (e.g. delivery uses larger packaging).
+    if (channelId) {
+      try {
+        const itemIds = items.map(it => it.id).filter(Boolean);
+        if (itemIds.length) {
+          const ph = itemIds.map(() => '?').join(',');
+          const [overrides] = await db.query(
+            `SELECT cmi.menu_item_id, b.yield_quantity,
+                    bl.component_item_id, bl.quantity, bl.waste_pct,
+                    COALESCE(i.name, '') AS inv_name
+             FROM channel_menu_items cmi
+             INNER JOIN bom b ON b.id = cmi.bom_id AND b.is_active = 1
+             INNER JOIN bom_lines bl ON bl.bom_id = b.id
+             LEFT JOIN inv_items i ON i.id = bl.component_item_id
+             WHERE cmi.channel_id = ? AND cmi.bom_id IS NOT NULL
+               AND cmi.menu_item_id IN (${ph})`,
+            [channelId, ...itemIds]
+          );
+          if (overrides.length) {
+            const overrideMap = {};
+            overrides.forEach(r => {
+              if (!overrideMap[r.menu_item_id]) overrideMap[r.menu_item_id] = [];
+              const yieldQ = Math.max(1, Number(r.yield_quantity) || 1);
+              const wasteFactor = 1 + (Number(r.waste_pct) || 0) / 100;
+              overrideMap[r.menu_item_id].push({
+                invId:   r.component_item_id,
+                invName: r.inv_name || '',
+                qtyUsed: (Number(r.quantity) || 0) * wasteFactor / yieldQ,
+                source:  'channel_override'
+              });
+            });
+            // Replace recipeMap entries for items the channel overrides
+            Object.keys(overrideMap).forEach(mid => { recipeMap[mid] = overrideMap[mid]; });
+            console.log('[sales] channel ' + channelId + ' overrode recipe for ' +
+                        Object.keys(overrideMap).length + ' item(s)');
+          }
+        }
+      } catch (e) { console.warn('[sales] channel recipe override failed:', e.message); }
+    }
+
     // V5.7 — Build production-method map so we know how to handle each item:
     //   - made_at_branch  → made-to-order: do NOT touch menu.stock; only deduct ingredients
     //   - made_at_kitchen → same as branch but flagged for kitchen production logging

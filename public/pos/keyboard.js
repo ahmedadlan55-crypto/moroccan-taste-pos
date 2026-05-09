@@ -1,195 +1,314 @@
 /* ─────────────────────────────────────────────────────────────────
- * v5.12.0 — Virtual Keyboard for kiosk cashier
- * Auto-attaches to any input/textarea with [data-vk="1"]. Pops up
- * on focus, slides down on blur or click outside. Writes back to the
- * input via dispatched 'input' events so existing handlers
- * (e.g. renderMenuGrid) fire as if a hardware key were pressed.
+ * v5.12.3 — iPad-style virtual keyboard
  *
- * Layouts: AR (QWERTY-Arabic) + EN (QWERTY) + always-visible
- * numbers row. Initial language follows document.lang; subsequent
- * 🌐 toggles persist in localStorage('vk_lang').
+ *   • Standard QWERTY (English) and AR-101 (Arabic) layouts
+ *   • Numbers + symbols panel, Shift toggle, Lang toggle, Return
+ *   • touchstart drives keypress (no 300 ms tap delay)
+ *   • Long-press Backspace (350 ms hold → 60 ms repeat)
+ *   • White surface, iPad-style press highlights
+ *   • Hides on outside touch, persists on key tap (preventDefault)
+ *
+ * Auto-attaches to any [data-vk="1"] input or textarea, immediately
+ * for elements present at load time and via MutationObserver for
+ * elements added later (modals etc.).
  * ───────────────────────────────────────────────────────────────── */
 (function () {
   'use strict';
 
-  var LAYOUTS = {
-    en: [
-      ['q','w','e','r','t','y','u','i','o','p'],
-      ['a','s','d','f','g','h','j','k','l'],
-      ['z','x','c','v','b','n','m']
-    ],
-    ar: [
-      ['ض','ص','ث','ق','ف','غ','ع','ه','خ','ح'],
-      ['ش','س','ي','ب','ل','ا','ت','ن','م'],
-      ['ئ','ء','ؤ','ر','لا','ى','ة','و','ز']
-    ]
-  };
+  // ─── Layouts ───────────────────────────────────────────────────────
+  // Last entry of each row is the action key marker; alphabetic keys
+  // are plain strings.
+  var LAYOUT_EN = [
+    ['q','w','e','r','t','y','u','i','o','p'],
+    ['a','s','d','f','g','h','j','k','l'],
+    ['SHIFT','z','x','c','v','b','n','m','BACK'],
+    ['MODE','LANG','SPACE','RETURN']
+  ];
 
-  var NUMBERS = ['1','2','3','4','5','6','7','8','9','0'];
+  // Standard Arabic (Mac/iOS) layout
+  var LAYOUT_AR = [
+    ['ض','ص','ث','ق','ف','غ','ع','ه','خ','ح','ج'],
+    ['ش','س','ي','ب','ل','ا','ت','ن','م','ك','ط'],
+    ['ذ','ء','ؤ','ر','لا','ى','ة','و','ز','ظ','BACK'],
+    ['MODE','LANG','SPACE','RETURN']
+  ];
 
+  // Numbers / symbols (single panel — toggled by 123 / ABC)
+  var LAYOUT_NUM = [
+    ['1','2','3','4','5','6','7','8','9','0'],
+    ['-','/',':',';','(',')','$','&','@','"'],
+    ['SYM','.',',','?','!',"'",'BACK'],
+    ['MODE','LANG','SPACE','RETURN']
+  ];
+
+  // ─── State ─────────────────────────────────────────────────────────
   var state = {
-    el:        null,   // root <div id="vkKeyboard">
-    target:    null,   // currently focused input
-    lang:      'en',
-    isShift:   false   // reserved for future capitalization
+    el:        null,
+    target:    null,
+    lang:      'en',     // 'en' | 'ar'
+    mode:      'letters',// 'letters' | 'numbers'
+    shift:     false,
+    capsLock:  false,
+    backHold:  null      // long-press timer
   };
 
-  function chooseInitialLang() {
+  // ─── Persistence ───────────────────────────────────────────────────
+  function loadLang() {
     try {
-      var saved = localStorage.getItem('vk_lang');
-      if (saved === 'ar' || saved === 'en') return saved;
+      var s = localStorage.getItem('vk_lang');
+      if (s === 'ar' || s === 'en') return s;
     } catch (e) {}
-    var docLang = (document.documentElement.lang || '').toLowerCase();
-    return docLang.startsWith('ar') ? 'ar' : 'en';
+    return (document.documentElement.lang || '').toLowerCase().startsWith('ar') ? 'ar' : 'en';
   }
+  function saveLang(v) { try { localStorage.setItem('vk_lang', v); } catch (e) {} }
 
+  // ─── Build keys ────────────────────────────────────────────────────
   function makeKey(label, opts) {
     opts = opts || {};
     var b = document.createElement('button');
     b.type = 'button';
     b.className = 'vk-key' + (opts.cls ? ' ' + opts.cls : '');
     b.textContent = label;
-    if (opts.data) {
-      Object.keys(opts.data).forEach(function (k) {
-        b.setAttribute('data-' + k, opts.data[k]);
-      });
-    }
-    if (opts.aria) b.setAttribute('aria-label', opts.aria);
-    // Block focus stealing — keep the input focused so the caret stays put.
-    b.addEventListener('mousedown', function (e) { e.preventDefault(); });
-    b.addEventListener('touchstart', function (e) { e.preventDefault(); }, { passive: false });
-    b.addEventListener('click', opts.onClick || function () {});
+    b.tabIndex = -1;
+
+    // Block focus stealing — keep input focused so the caret stays
+    var blockFocus = function (e) { e.preventDefault(); };
+    b.addEventListener('mousedown', blockFocus);
+
+    // Press handler: fire on touchstart for instant feedback, fall
+    // back to mousedown on desktop. Single source of truth so we
+    // never fire twice on hybrid devices.
+    var handled = false;
+    var onPress = function (e) {
+      if (handled) { handled = false; return; }
+      handled = true;
+      e.preventDefault();
+      b.classList.add('vk-pressed');
+      if (opts.onPress) opts.onPress(b);
+    };
+    var onRelease = function () {
+      requestAnimationFrame(function () { b.classList.remove('vk-pressed'); });
+      if (opts.onRelease) opts.onRelease(b);
+      // Reset the de-dup guard after the gesture finishes
+      setTimeout(function () { handled = false; }, 50);
+    };
+    b.addEventListener('touchstart', onPress, { passive: false });
+    b.addEventListener('touchend',   onRelease);
+    b.addEventListener('touchcancel', onRelease);
+    b.addEventListener('mousedown',  function (e) {
+      blockFocus(e);
+      onPress(e);
+    });
+    b.addEventListener('mouseup',    onRelease);
+    b.addEventListener('mouseleave', onRelease);
+
     return b;
   }
 
-  function buildLayout() {
-    var root = state.el;
-    // Wipe everything except the bar
-    var bar = root.querySelector('.vk-bar');
-    root.innerHTML = '';
-    root.appendChild(bar);
-    root.classList.toggle('vk-lang-ar', state.lang === 'ar');
-    root.classList.toggle('vk-lang-en', state.lang === 'en');
-
-    // Numbers row (always)
-    var rowNums = document.createElement('div');
-    rowNums.className = 'vk-row';
-    NUMBERS.forEach(function (n) {
-      rowNums.appendChild(makeKey(n, {
-        cls: 'vk-num',
-        onClick: function () { typeChar(n); }
-      }));
-    });
-    root.appendChild(rowNums);
-
-    // Letter rows
-    var letters = LAYOUTS[state.lang];
-    letters.forEach(function (rowChars, idx) {
-      var row = document.createElement('div');
-      row.className = 'vk-row';
-      // Last letter row gets backspace appended on the right
-      rowChars.forEach(function (ch) {
-        row.appendChild(makeKey(ch, {
-          onClick: function () { typeChar(ch); }
-        }));
-      });
-      if (idx === letters.length - 1) {
-        row.appendChild(makeKey('⌫', {
-          cls: 'vk-danger vk-wide',
-          aria: 'Backspace',
-          onClick: backspace
-        }));
-      }
-      root.appendChild(row);
-    });
-
-    // Bottom row — language toggle + space + clear + close
-    var bottom = document.createElement('div');
-    bottom.className = 'vk-row';
-    bottom.appendChild(makeKey(state.lang === 'ar' ? 'EN' : 'ع',
-      { cls: 'vk-lang', aria: 'Toggle language', onClick: toggleLang }));
-    bottom.appendChild(makeKey(state.lang === 'ar' ? 'مسافة' : 'space',
-      { cls: 'vk-space', onClick: function () { typeChar(' '); } }));
-    bottom.appendChild(makeKey(state.lang === 'ar' ? 'مسح' : 'clear',
-      { cls: 'vk-wide', onClick: clearAll }));
-    bottom.appendChild(makeKey('✕',
-      { cls: 'vk-action vk-wide', aria: 'Close keyboard', onClick: hide }));
-    root.appendChild(bottom);
-  }
-
+  // ─── Layout rendering ──────────────────────────────────────────────
   function ensureRoot() {
     if (state.el) return state.el;
+
     var root = document.createElement('div');
     root.id = 'vkKeyboard';
     root.setAttribute('role', 'dialog');
     root.setAttribute('aria-label', 'Virtual keyboard');
+
     var bar = document.createElement('div');
     bar.className = 'vk-bar';
     bar.innerHTML =
-      '<div class="vk-bar-title"><i class="fas fa-keyboard"></i><span>لوحة المفاتيح</span></div>' +
-      '<div class="vk-bar-actions">' +
-        '<button type="button" class="vk-bar-btn" data-vk-act="hide" title="إخفاء">✕</button>' +
-      '</div>';
-    bar.querySelector('[data-vk-act="hide"]').addEventListener('mousedown', function (e) { e.preventDefault(); });
-    bar.querySelector('[data-vk-act="hide"]').addEventListener('click', hide);
+      '<div class="vk-bar-title"><i class="fas fa-keyboard"></i> <span class="vk-bar-text">لوحة المفاتيح</span></div>' +
+      '<button type="button" class="vk-bar-btn" data-vk-act="hide" title="إخفاء"><i class="fas fa-chevron-down"></i></button>';
+    var hideBtn = bar.querySelector('[data-vk-act="hide"]');
+    hideBtn.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    hideBtn.addEventListener('click', hide);
     root.appendChild(bar);
+
     document.body.appendChild(root);
     state.el = root;
-    state.lang = chooseInitialLang();
-    buildLayout();
+    state.lang = loadLang();
+    redraw();
     return root;
   }
 
+  function redraw() {
+    var root = state.el;
+    if (!root) return;
+    // Remove all rows except the bar
+    Array.prototype.slice.call(root.querySelectorAll('.vk-row')).forEach(function (n) { n.remove(); });
+    root.classList.toggle('vk-lang-ar', state.lang === 'ar');
+    root.classList.toggle('vk-lang-en', state.lang === 'en');
+    root.classList.toggle('vk-mode-num', state.mode === 'numbers');
+
+    var layout =
+      state.mode === 'numbers' ? LAYOUT_NUM :
+      state.lang === 'ar'      ? LAYOUT_AR  :
+                                 LAYOUT_EN;
+
+    layout.forEach(function (rowDef) {
+      var row = document.createElement('div');
+      row.className = 'vk-row';
+      rowDef.forEach(function (entry) {
+        row.appendChild(buildKey(entry));
+      });
+      root.appendChild(row);
+    });
+  }
+
+  function buildKey(entry) {
+    if (entry === 'SHIFT') {
+      var shiftKey = makeKey('⇧', {
+        cls: 'vk-shift' + (state.shift || state.capsLock ? ' vk-on' : ''),
+        onPress: toggleShift
+      });
+      return shiftKey;
+    }
+    if (entry === 'BACK') {
+      var backKey = makeKey('⌫', {
+        cls: 'vk-back',
+        onPress: function (btn) {
+          backspaceOnce();
+          // Long-press repeat — 350 ms hold then 60 ms interval
+          state.backHold = setTimeout(function () {
+            state.backHold = setInterval(backspaceOnce, 60);
+          }, 350);
+        },
+        onRelease: function () {
+          if (state.backHold) {
+            clearTimeout(state.backHold);
+            clearInterval(state.backHold);
+            state.backHold = null;
+          }
+        }
+      });
+      return backKey;
+    }
+    if (entry === 'MODE') {
+      var label = state.mode === 'numbers'
+        ? (state.lang === 'ar' ? 'حروف' : 'ABC')
+        : '123';
+      return makeKey(label, { cls: 'vk-mode', onPress: toggleMode });
+    }
+    if (entry === 'LANG') {
+      // Show the OPPOSITE language so the user knows what they'll switch to
+      var langLabel = state.lang === 'ar' ? 'EN' : 'ع';
+      return makeKey(langLabel, { cls: 'vk-lang', onPress: toggleLang });
+    }
+    if (entry === 'SPACE') {
+      return makeKey(state.lang === 'ar' ? 'مسافة' : 'space', {
+        cls: 'vk-space',
+        onPress: function () { typeChar(' '); }
+      });
+    }
+    if (entry === 'RETURN') {
+      return makeKey(state.lang === 'ar' ? 'إدخال' : 'return', {
+        cls: 'vk-return',
+        onPress: function () { sendReturn(); }
+      });
+    }
+    if (entry === 'SYM') {
+      return makeKey('#+=', { cls: 'vk-mode', onPress: function () { /* future second symbols panel */ } });
+    }
+    // Plain character key
+    var ch = entry;
+    var displayed = (state.shift || state.capsLock) && state.lang === 'en'
+      ? ch.toUpperCase()
+      : ch;
+    return makeKey(displayed, {
+      onPress: function () {
+        var out = (state.shift || state.capsLock) && state.lang === 'en'
+          ? ch.toUpperCase()
+          : ch;
+        typeChar(out);
+        if (state.shift && !state.capsLock) {
+          state.shift = false;
+          redraw();
+        }
+      }
+    });
+  }
+
+  // ─── Input helpers ─────────────────────────────────────────────────
+  function getInput() { return state.target; }
+
   function typeChar(ch) {
-    var inp = state.target;
+    var inp = getInput();
     if (!inp) return;
-    var start = inp.selectionStart != null ? inp.selectionStart : inp.value.length;
-    var end   = inp.selectionEnd   != null ? inp.selectionEnd   : inp.value.length;
-    var v = inp.value;
-    inp.value = v.slice(0, start) + ch + v.slice(end);
-    var caret = start + ch.length;
-    try { inp.setSelectionRange(caret, caret); } catch (e) {}
+    var s = inp.selectionStart != null ? inp.selectionStart : inp.value.length;
+    var e = inp.selectionEnd   != null ? inp.selectionEnd   : inp.value.length;
+    inp.value = inp.value.slice(0, s) + ch + inp.value.slice(e);
+    var caret = s + ch.length;
+    try { inp.setSelectionRange(caret, caret); } catch (err) {}
     inp.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  function backspace() {
-    var inp = state.target;
+  function backspaceOnce() {
+    var inp = getInput();
     if (!inp) return;
-    var start = inp.selectionStart != null ? inp.selectionStart : inp.value.length;
-    var end   = inp.selectionEnd   != null ? inp.selectionEnd   : inp.value.length;
-    var v = inp.value;
-    if (start === end && start > 0) {
-      inp.value = v.slice(0, start - 1) + v.slice(end);
-      try { inp.setSelectionRange(start - 1, start - 1); } catch (e) {}
-    } else if (start !== end) {
-      inp.value = v.slice(0, start) + v.slice(end);
-      try { inp.setSelectionRange(start, start); } catch (e) {}
+    var s = inp.selectionStart != null ? inp.selectionStart : inp.value.length;
+    var e = inp.selectionEnd   != null ? inp.selectionEnd   : inp.value.length;
+    if (s === e) {
+      if (s === 0) return;
+      inp.value = inp.value.slice(0, s - 1) + inp.value.slice(e);
+      try { inp.setSelectionRange(s - 1, s - 1); } catch (err) {}
+    } else {
+      inp.value = inp.value.slice(0, s) + inp.value.slice(e);
+      try { inp.setSelectionRange(s, s); } catch (err) {}
     }
     inp.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  function clearAll() {
-    var inp = state.target;
+  function sendReturn() {
+    var inp = getInput();
     if (!inp) return;
-    inp.value = '';
-    inp.dispatchEvent(new Event('input', { bubbles: true }));
+    // Fire a synthetic Enter keydown so existing handlers (e.g. form submit, search) run
+    try {
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+      inp.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    } catch (e) {}
+    // Hide after Return on single-line inputs
+    if (inp.tagName === 'INPUT') hide();
+  }
+
+  // ─── Toggles ───────────────────────────────────────────────────────
+  function toggleShift() {
+    // Quick double-tap → caps lock
+    var now = Date.now();
+    if (state._lastShift && (now - state._lastShift) < 350) {
+      state.capsLock = !state.capsLock;
+      state.shift = state.capsLock;
+    } else {
+      state.shift = !state.shift;
+      state.capsLock = false;
+    }
+    state._lastShift = now;
+    redraw();
   }
 
   function toggleLang() {
     state.lang = state.lang === 'ar' ? 'en' : 'ar';
-    try { localStorage.setItem('vk_lang', state.lang); } catch (e) {}
-    buildLayout();
+    state.mode = 'letters';
+    state.shift = false;
+    state.capsLock = false;
+    saveLang(state.lang);
+    redraw();
   }
 
+  function toggleMode() {
+    state.mode = state.mode === 'numbers' ? 'letters' : 'numbers';
+    state.shift = false;
+    redraw();
+  }
+
+  // ─── Show / hide ───────────────────────────────────────────────────
   function show(input) {
     ensureRoot();
     state.target = input;
     state.el.classList.add('vk-open');
     document.body.classList.add('vk-active');
-    // Make sure the input stays visible above the keyboard
     setTimeout(function () {
       try { input.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
-    }, 280);
+    }, 200);
   }
 
   function hide() {
@@ -197,50 +316,55 @@
     state.el.classList.remove('vk-open');
     document.body.classList.remove('vk-active');
     state.target = null;
+    if (state.backHold) {
+      clearTimeout(state.backHold);
+      clearInterval(state.backHold);
+      state.backHold = null;
+    }
   }
 
-  // Bind to all inputs/textarea marked with data-vk="1". MutationObserver
-  // catches any added later (modals, etc.).
+  // ─── Input binding ────────────────────────────────────────────────
   function bindInput(el) {
     if (!el || el._vkBound) return;
     el._vkBound = true;
     el.addEventListener('focus', function () { show(el); });
-    // Don't hide on blur — that fires when the user taps a key (focus moves
-    // to the button briefly). Use document mousedown instead.
   }
 
   function scanAndBind(root) {
     (root || document).querySelectorAll('input[data-vk="1"], textarea[data-vk="1"]').forEach(bindInput);
   }
 
-  // Hide when user clicks anywhere outside the keyboard AND outside the
-  // currently bound input.
+  // Hide when clicking / tapping outside both the keyboard and the
+  // currently bound input. Captured early so blur-via-keypress doesn't
+  // race the close.
   document.addEventListener('mousedown', function (e) {
     if (!state.el || !state.el.classList.contains('vk-open')) return;
     if (state.el.contains(e.target)) return;
     if (state.target && state.target.contains(e.target)) return;
     if (e.target === state.target) return;
-    // If the click landed on another VK-bound input, show that one instead.
-    if (e.target.matches && e.target.matches('input[data-vk="1"], textarea[data-vk="1"]')) {
-      // The focus event will handle it.
-      return;
-    }
+    if (e.target.matches && e.target.matches('input[data-vk="1"], textarea[data-vk="1"]')) return;
     hide();
   }, true);
+  document.addEventListener('touchstart', function (e) {
+    if (!state.el || !state.el.classList.contains('vk-open')) return;
+    if (state.el.contains(e.target)) return;
+    if (state.target && state.target.contains(e.target)) return;
+    if (e.target === state.target) return;
+    if (e.target.matches && e.target.matches('input[data-vk="1"], textarea[data-vk="1"]')) return;
+    hide();
+  }, { capture: true, passive: true });
 
-  // Public API for power users / debug
+  // ─── Public debug API ─────────────────────────────────────────────
   window.vkShow   = function (sel) { var el = typeof sel === 'string' ? document.querySelector(sel) : sel; if (el) { bindInput(el); show(el); } };
   window.vkHide   = hide;
-  window.vkLang   = function (lang) { if (lang === 'ar' || lang === 'en') { state.lang = lang; try { localStorage.setItem('vk_lang', lang); } catch (e) {} buildLayout(); } };
+  window.vkLang   = function (lang) { if (lang === 'ar' || lang === 'en') { state.lang = lang; saveLang(lang); redraw(); } };
   window.vkRescan = scanAndBind;
 
-  // Initial scan once DOM is ready (script is loaded with defer, so
-  // DOMContentLoaded may have already fired).
+  // ─── Init ─────────────────────────────────────────────────────────
   function init() {
     scanAndBind(document);
-    // Watch for inputs added later (modals open after page load)
     if (typeof MutationObserver !== 'undefined') {
-      var mo = new MutationObserver(function (muts) {
+      new MutationObserver(function (muts) {
         muts.forEach(function (m) {
           m.addedNodes.forEach(function (n) {
             if (n.nodeType === 1) {
@@ -249,8 +373,7 @@
             }
           });
         });
-      });
-      mo.observe(document.body, { childList: true, subtree: true });
+      }).observe(document.body, { childList: true, subtree: true });
     }
   }
 

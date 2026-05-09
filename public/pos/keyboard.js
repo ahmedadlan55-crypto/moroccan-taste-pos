@@ -71,36 +71,36 @@
     b.textContent = label;
     b.tabIndex = -1;
 
-    // Block focus stealing — keep input focused so the caret stays
-    var blockFocus = function (e) { e.preventDefault(); };
-    b.addEventListener('mousedown', blockFocus);
-
-    // Press handler: fire on touchstart for instant feedback, fall
-    // back to mousedown on desktop. Single source of truth so we
-    // never fire twice on hybrid devices.
-    var handled = false;
-    var onPress = function (e) {
-      if (handled) { handled = false; return; }
-      handled = true;
-      e.preventDefault();
+    // v5.12.6 — "touch wins" dedup. Browsers fire BOTH touchstart and a
+    // synthetic mousedown for the same finger gesture; the previous
+    // handled-flag trick blocked legit fast taps. Now: every touchstart
+    // stamps a timestamp on the element; a mousedown that lands within
+    // 600 ms is treated as a ghost and skipped. Real mouse clicks (no
+    // prior touchstart) still fire. Result: unlimited-rate fast typing.
+    var TOUCH_LOCK_MS = 600;
+    var fire = function () {
       b.classList.add('vk-pressed');
       if (opts.onPress) opts.onPress(b);
     };
-    var onRelease = function () {
+    var release = function () {
       requestAnimationFrame(function () { b.classList.remove('vk-pressed'); });
       if (opts.onRelease) opts.onRelease(b);
-      // Reset the de-dup guard after the gesture finishes
-      setTimeout(function () { handled = false; }, 50);
     };
-    b.addEventListener('touchstart', onPress, { passive: false });
-    b.addEventListener('touchend',   onRelease);
-    b.addEventListener('touchcancel', onRelease);
-    b.addEventListener('mousedown',  function (e) {
-      blockFocus(e);
-      onPress(e);
+    b.addEventListener('touchstart', function (e) {
+      e.preventDefault();
+      b.dataset.vkTouch = String(Date.now());
+      fire();
+    }, { passive: false });
+    b.addEventListener('touchend',    release);
+    b.addEventListener('touchcancel', release);
+    b.addEventListener('mousedown', function (e) {
+      e.preventDefault(); // keep the input focused
+      var t = Number(b.dataset.vkTouch || 0);
+      if (t && (Date.now() - t) < TOUCH_LOCK_MS) return; // ghost click — skip
+      fire();
     });
-    b.addEventListener('mouseup',    onRelease);
-    b.addEventListener('mouseleave', onRelease);
+    b.addEventListener('mouseup',    release);
+    b.addEventListener('mouseleave', release);
 
     return b;
   }

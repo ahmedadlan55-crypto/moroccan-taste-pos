@@ -218,9 +218,16 @@ window.renderMenuGrid = function() {
 
   var h = '';
   if (!list.length) {
-    var emptyMsg = channelEmpty
-      ? 'لا توجد أصناف مَفعَّلة لهذه القناة'
-      : t('noProducts');
+    // v5.12.6 — distinguish between (a) the channel filter eliminated
+    // everything and (b) the user's brand has no menu items loaded.
+    var emptyMsg;
+    if (channelEmpty) {
+      emptyMsg = 'لا توجد أصناف مَفعَّلة لهذه القناة';
+    } else if (!(state.menu || []).length) {
+      emptyMsg = 'لم يَتم تَحميل المنيو · تَحقَّق من أنه تَم ربط أصناف بحساب الفرع/البراند';
+    } else {
+      emptyMsg = t('noProducts');
+    }
     h = '<div style="grid-column:1/-1;text-align:center;padding:50px 20px;color:#94a3b8;"><i class="fas fa-box-open" style="font-size:54px;margin-bottom:14px;display:block;opacity:0.35;"></i><div style="font-weight:700;">' + emptyMsg + '</div></div>';
   } else {
     list.forEach(function(i) {
@@ -2559,6 +2566,23 @@ function _doSetChannel(ch) {
     state.channelOverrideMap = {};
     _posApplyChannelPrices();
     if (typeof renderMenuGrid === 'function') renderMenuGrid();
+
+    // v5.12.6 — guarantee MAIN never shows an empty grid even if /init's
+    // brand-filtered menu came back empty. Fall back to the unfiltered
+    // /menu endpoint (which still respects active=1) and re-render.
+    var current = (state.menu || []).filter(function (i) { return i.active; });
+    if (current.length === 0) {
+      console.warn('[pos v5.12.6] state.menu empty under MAIN — falling back to /menu');
+      _posCallAPI('GET', '/menu', null, function (rows) {
+        if (Array.isArray(rows) && rows.length) {
+          state.menu = rows;
+          state.categories = Array.from(new Set(rows.map(function (i) { return i.category; })))
+                                  .filter(function (c) { return c && String(c).trim() !== ''; });
+          _posApplyChannelPrices();
+          if (typeof renderMenuGrid === 'function') renderMenuGrid();
+        }
+      });
+    }
   } else {
     // Read from the prefetch cache for instant switching; refresh in
     // the background if the cache is stale or missing.

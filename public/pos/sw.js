@@ -15,7 +15,7 @@
  * clients pick up the fresh shell on next load.
  */
 
-const CACHE_VERSION = 'mt-pos-v46-fullscreen-css';
+const CACHE_VERSION = 'mt-pos-v47-no-html-cache';
 const CACHE_NAME = CACHE_VERSION;
 
 // App shell — pre-cached on install so the first launch works offline
@@ -98,9 +98,12 @@ self.addEventListener('fetch', (event) => {
   //   2+ refreshes after each deploy. Now: try network, fall back to cache
   //   only when offline. Other assets (CSS, images, fonts) stay on the fast
   //   stale-while-revalidate path.
+  // v5.12.8 — HTML now also network-first so a shared link sends the
+  // recipient to the live login screen, not a cached post-login shell.
+  const isHtml = url.pathname === '/pos/' || url.pathname.endsWith('.html') || url.pathname.endsWith('/');
   const isJs = url.pathname.endsWith('.js');
 
-  if (isJs) {
+  if (isHtml || isJs) {
     // Network-first for JS
     event.respondWith(
       fetch(request)

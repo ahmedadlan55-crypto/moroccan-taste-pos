@@ -168,7 +168,20 @@ body.vk-disabled #vkKeyboard {
   font-size: 22px;
 }
 
-/* Compact phone-size layout */
+/* v5.12.8 — explicit phone style toggled by JS regardless of viewport.
+ * The user can pick this style on a tablet/desktop too. */
+#vkKeyboard.vk-style-phone { padding: 6px 4px 8px; }
+#vkKeyboard.vk-style-phone .vk-row { gap: 4px; margin-bottom: 4px; }
+#vkKeyboard.vk-style-phone .vk-key { height: 38px; font-size: 18px; min-width: 26px; }
+#vkKeyboard.vk-style-phone .vk-key.vk-action,
+#vkKeyboard.vk-style-phone .vk-key.vk-shift,
+#vkKeyboard.vk-style-phone .vk-key.vk-back,
+#vkKeyboard.vk-style-phone .vk-key.vk-mode,
+#vkKeyboard.vk-style-phone .vk-key.vk-lang,
+#vkKeyboard.vk-style-phone .vk-key.vk-return { font-size: 13px; }
+body.vk-active.vk-active { padding-bottom: 280px; }
+
+/* Compact viewport — auto-shrink even on tablet style */
 @media (max-width: 480px) {
   #vkKeyboard { padding: 6px 4px 8px; }
   #vkKeyboard .vk-row { gap: 4px; margin-bottom: 4px; }

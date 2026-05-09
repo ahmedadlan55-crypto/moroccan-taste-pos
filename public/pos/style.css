@@ -882,6 +882,39 @@ body.ar .pwa-install-btn {
 .glass-modal-content.danger { border-color: rgba(239, 68, 68, 0.4); }
 .glass-modal-content.danger .glass-modal-title { color: var(--danger); }
 
+/* v5.12.8 — full-bleed modals on phone-class viewports so the stocktake
+ * and shortage interfaces always fit any screen instead of being clipped.
+ * Tablets keep the centred card. */
+@media (max-width: 768px) {
+  .glass-modal {
+    align-items: stretch !important;
+    padding: 0 !important;
+  }
+  .glass-modal-content,
+  .glass-modal-content.small,
+  .glass-modal-content.large {
+    max-width: 100% !important;
+    width: 100% !important;
+    max-height: 100dvh !important;
+    height: 100dvh !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    padding: 16px 14px 18px !important;
+    overflow-y: auto;
+  }
+}
+
+/* GPU fallback — same approach as the cart panel: solid background when
+ * backdrop-filter isn't supported so the modal never appears transparent
+ * over the products grid. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-modal-content {
+    background: #ffffff !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
 .glass-modal-title {
   font-size: 18px;
   font-weight: 900;

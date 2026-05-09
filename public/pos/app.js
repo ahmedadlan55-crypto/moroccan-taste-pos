@@ -2453,6 +2453,26 @@ window.posLoadV3Data = function() {
     var found = state.channels.find(function(c){ return c.id === savedChId; });
     if (found) posSetChannel(found.id);
     else if (state.channels.length) posSetChannel(state.channels[0].id);
+
+    // v5.12.4 — Pre-fetch every non-MAIN channel's menu in parallel and
+    // cache it in state.channelMenuCache. Subsequent posSetChannel
+    // switches read from the cache (0 ms) and refresh the row in the
+    // background. MAIN is skipped because it never uses the cache.
+    state.channelMenuCache = state.channelMenuCache || {};
+    var branchQ = state.branchId ? '?branchId=' + encodeURIComponent(state.branchId) : '';
+    state.channels.forEach(function (c) {
+      var code = String(c.code || '').toUpperCase();
+      var ctype = String(c.channelType || c.channel_type || '').toLowerCase();
+      if (code === 'MAIN' || ctype === 'main') return;
+      _posCallAPI('GET', '/channel-menus/' + c.id + branchQ, null, function (cmRows) {
+        if (cmRows && cmRows.error) {
+          console.error('[channel-menu] prefetch error for', c.id, cmRows.error);
+          state.channelMenuCache[c.id] = [];
+          return;
+        }
+        state.channelMenuCache[c.id] = Array.isArray(cmRows) ? cmRows : [];
+      });
+    });
   });
   _posCallAPI('GET', '/settings/payment-methods-full', null, function(rows) {
     state.paymentMethodsV3 = Array.isArray(rows) ? rows : [];
@@ -2520,29 +2540,55 @@ function _doSetChannel(ch) {
   var sel = q('#posChannelSel');
   if (sel) sel.value = ch.id;
 
-  // v5.12.2 — load this channel's allowed menu items so the grid only
-  // displays what's been added to the channel. Empty rows for a non-MAIN
-  // channel means the grid renders empty; MAIN/Dine-In falls back to the
-  // full menu so the cashier doesn't lose their default workflow.
-  // Per-item override_price (from channel_menu_items) wins over the
-  // channel-level price_list set below.
-  var branchQ = state.branchId ? '?branchId=' + encodeURIComponent(state.branchId) : '';
-  _posCallAPI('GET', '/channel-menus/' + ch.id + branchQ, null, function (rows) {
-    var available = (Array.isArray(rows) ? rows : []).filter(function (r) { return r.isAvailable !== false; });
-    state.channelMenuItems = available;
-    var isMain = String(ch.channelType || ch.channel_type || '').toUpperCase() === 'MAIN'
-              || String(ch.code || '').toUpperCase() === 'MAIN';
-    state.activeChannel.useFullMenu = (available.length === 0 && isMain);
-    // Build per-item override map (overrides win over the channel price list)
+  // v5.12.4 — MAIN / Dine-In ALWAYS uses the full menu, regardless of
+  // any channel_menu_items rows that may exist. Other channels respect
+  // their list strictly. Detection covers all three possible markers:
+  //   • code === 'MAIN'  (canonical seed)
+  //   • channelType === 'main'  (legacy)
+  //   • channelType === 'dine_in'  (the seed pairs this with code='MAIN')
+  var _code  = String(ch.code || '').toUpperCase();
+  var _ctype = String(ch.channelType || ch.channel_type || '').toLowerCase();
+  var isMain = (_code === 'MAIN') || (_ctype === 'main') || (_code === 'MAIN' && _ctype === 'dine_in');
+  state.activeChannel.useFullMenu = isMain;
+
+  if (isMain) {
+    // Skip the channel-menu fetch entirely — saves a round-trip and
+    // guarantees the full menu shows even if MAIN has stale rows in
+    // channel_menu_items from a different brand.
+    state.channelMenuItems = [];
     state.channelOverrideMap = {};
-    available.forEach(function (r) {
-      if (r.overridePrice != null && !isNaN(Number(r.overridePrice))) {
-        state.channelOverrideMap[String(r.menuItemId)] = Number(r.overridePrice);
-      }
-    });
     _posApplyChannelPrices();
     if (typeof renderMenuGrid === 'function') renderMenuGrid();
-  });
+  } else {
+    // Read from the prefetch cache for instant switching; refresh in
+    // the background if the cache is stale or missing.
+    var cached = state.channelMenuCache && state.channelMenuCache[ch.id];
+    var applyRows = function (rows) {
+      var available = (Array.isArray(rows) ? rows : []).filter(function (r) { return r.isAvailable !== false; });
+      state.channelMenuItems = available;
+      state.channelOverrideMap = {};
+      available.forEach(function (r) {
+        if (r.overridePrice != null && !isNaN(Number(r.overridePrice))) {
+          state.channelOverrideMap[String(r.menuItemId)] = Number(r.overridePrice);
+        }
+      });
+      _posApplyChannelPrices();
+      if (typeof renderMenuGrid === 'function') renderMenuGrid();
+    };
+    if (cached) applyRows(cached);
+    var branchQ = state.branchId ? '?branchId=' + encodeURIComponent(state.branchId) : '';
+    _posCallAPI('GET', '/channel-menus/' + ch.id + branchQ, null, function (rows) {
+      if (rows && rows.error) {
+        console.error('[channel-menu] fetch error:', rows.error);
+        if (typeof glassToast === 'function') glassToast('فشل تحميل أصناف القناة: ' + rows.error, true);
+        if (!cached) applyRows([]);
+        return;
+      }
+      if (!state.channelMenuCache) state.channelMenuCache = {};
+      state.channelMenuCache[ch.id] = Array.isArray(rows) ? rows : [];
+      applyRows(rows);
+    });
+  }
 
   // Load price list items for this channel (override menu prices + cart prices)
   if (ch.priceListId) {

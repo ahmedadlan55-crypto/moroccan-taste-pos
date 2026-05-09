@@ -1059,24 +1059,30 @@ function doLogin() {
   if (!u || !p) return toast(t('login.fill'), true);
   var btn = document.getElementById('lbtn');
   btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-  callAPI('POST', '/auth/login', {username:u, password:p}, function(r, err) {
-    btn.disabled = false; btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> ' + t('login.btn');
-    if (err) return toast(t('common.connError') + err, true);
-    if (r && r.success && r.token) {
-      localStorage.setItem('emp_token', r.token);
-      localStorage.setItem('emp_session', JSON.stringify({username:r.username,role:r.role,brandId:r.brandId||'',branchId:r.branchId||'',isDeveloper:!!r.isDeveloper}));
-      // V5.4.1: persist for TxnView assignee-lock logic
-      try {
-        localStorage.setItem('emp_role', r.role || '');
-        localStorage.setItem('emp_username', r.username || '');
-        // V5.4.3: developer flag for delete-button gating
-        localStorage.setItem('emp_is_developer', r.isDeveloper ? '1' : '0');
-      } catch(_){}
-      currentUser = r.username;
-      window.currentUserIsDeveloper = !!r.isDeveloper;
-      document.getElementById('loginPage').style.display = 'none';
-      startApp();
-    } else toast(r ? r.error : t('login.failed'), true);
+  // v5.12.2 — attach parsed device info so audit_log records the
+  // actual hardware (e.g. Samsung Galaxy S22 — Android 13) rather than
+  // a raw User-Agent string.
+  var devicePromise = (typeof window.detectDevice === 'function')
+    ? window.detectDevice()
+    : Promise.resolve(null);
+  devicePromise.then(function (device) {
+    callAPI('POST', '/auth/login', { username: u, password: p, device: device }, function(r, err) {
+      btn.disabled = false; btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> ' + t('login.btn');
+      if (err) return toast(t('common.connError') + err, true);
+      if (r && r.success && r.token) {
+        localStorage.setItem('emp_token', r.token);
+        localStorage.setItem('emp_session', JSON.stringify({username:r.username,role:r.role,brandId:r.brandId||'',branchId:r.branchId||'',isDeveloper:!!r.isDeveloper}));
+        try {
+          localStorage.setItem('emp_role', r.role || '');
+          localStorage.setItem('emp_username', r.username || '');
+          localStorage.setItem('emp_is_developer', r.isDeveloper ? '1' : '0');
+        } catch(_){}
+        currentUser = r.username;
+        window.currentUserIsDeveloper = !!r.isDeveloper;
+        document.getElementById('loginPage').style.display = 'none';
+        startApp();
+      } else toast(r ? r.error : t('login.failed'), true);
+    });
   });
 }
 

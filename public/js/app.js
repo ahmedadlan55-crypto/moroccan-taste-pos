@@ -867,7 +867,17 @@ function doLogin() {
           showToast('فشل تحميل التطبيق: ' + err.message, true);
         }
       });
-  }).checkLogin(u, p);
+  });
+  // v5.12.2 — pass device info to /auth/login so audit_log records
+  // brand/model/os instead of a raw User-Agent string. The handler is
+  // already attached above; we just need to fire the request after
+  // detectDevice() resolves (it's async on Chromium UA-CH).
+  var _devicePromise = (typeof window.detectDevice === 'function')
+    ? window.detectDevice()
+    : Promise.resolve(null);
+  _devicePromise.then(function (device) {
+    api.checkLogin(u, p, device);
+  });
 }
 
 function loadCoreData() {

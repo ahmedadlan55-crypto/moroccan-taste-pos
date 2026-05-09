@@ -194,6 +194,23 @@ window.renderMenuGrid = function() {
   var searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
 
   var list = (state.menu || []).filter(function(i) { return i.active; });
+
+  // v5.12.2 — channel filter: only items added to the active channel are
+  // shown. MAIN channel with no overrides defaults to the full menu via
+  // useFullMenu=true so the cashier doesn't lose Dine-In.
+  var channelEmpty = false;
+  if (state.activeChannel && !state.activeChannel.useFullMenu) {
+    var allowedSet = new Set((state.channelMenuItems || []).map(function (r) {
+      return String(r.menuItemId);
+    }));
+    if (allowedSet.size === 0) {
+      list = [];
+      channelEmpty = true;
+    } else {
+      list = list.filter(function (i) { return allowedSet.has(String(i.id)); });
+    }
+  }
+
   if (state.activeCat) list = list.filter(function(i) { return i.category === state.activeCat; });
   if (searchTerm) list = list.filter(function(i) {
     return (i.name || '').toLowerCase().includes(searchTerm) || String(i.id || '').toLowerCase().includes(searchTerm);
@@ -201,7 +218,10 @@ window.renderMenuGrid = function() {
 
   var h = '';
   if (!list.length) {
-    h = '<div style="grid-column:1/-1;text-align:center;padding:50px 20px;color:#94a3b8;"><i class="fas fa-box-open" style="font-size:54px;margin-bottom:14px;display:block;opacity:0.35;"></i><div style="font-weight:700;">' + t('noProducts') + '</div></div>';
+    var emptyMsg = channelEmpty
+      ? 'لا توجد أصناف مَفعَّلة لهذه القناة'
+      : t('noProducts');
+    h = '<div style="grid-column:1/-1;text-align:center;padding:50px 20px;color:#94a3b8;"><i class="fas fa-box-open" style="font-size:54px;margin-bottom:14px;display:block;opacity:0.35;"></i><div style="font-weight:700;">' + emptyMsg + '</div></div>';
   } else {
     list.forEach(function(i) {
       var inCart = state.cart.find(function(c) { return c.id === i.id; });
@@ -974,31 +994,35 @@ window.shiftOpen = function() {
   glassConfirm(t('openShiftTitle'), t('openShiftMsg') + state.user + '?', { okText: t('openShiftBtn') }).then(function(ok) {
     if (!ok) return;
     loader(true);
-    // Capture device info
-    var deviceInfo = navigator.userAgent || '';
-    // Try to get a readable device name
-    var ua = deviceInfo;
-    var deviceName = '';
-    if (/iPhone/.test(ua)) deviceName = 'iPhone';
-    else if (/iPad/.test(ua)) deviceName = 'iPad';
-    else if (/Android/.test(ua)) { var m = ua.match(/Android[\s\S]*?;\s*([^;)]+)/); deviceName = m ? m[1].trim() : 'Android'; }
-    else if (/Windows/.test(ua)) deviceName = 'Windows PC';
-    else if (/Mac/.test(ua)) deviceName = 'Mac';
-    else deviceName = 'Desktop';
-    var extraData = { deviceInfo: deviceName + ' — ' + navigator.platform };
-    // Capture geolocation
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(function(pos) {
-        extraData.geoLat = pos.coords.latitude;
-        extraData.geoLng = pos.coords.longitude;
-        // Reverse geocode with a simple API (optional)
-        fetch('https://nominatim.openstreetmap.org/reverse?lat=' + pos.coords.latitude + '&lon=' + pos.coords.longitude + '&format=json&accept-language=ar')
-          .then(function(r) { return r.json(); })
-          .then(function(data) { extraData.geoAddress = data.display_name || ''; })
-          .catch(function() {})
-          .finally(function() { _doOpenShift(extraData); });
-      }, function() { _doOpenShift(extraData); }, { timeout: 5000 });
-    } else { _doOpenShift(extraData); }
+
+    // v5.12.2 — use the structured device detector (UA-CH first, regex
+    // fallback) so admin reports show "Samsung SM-G998B — Android 13"
+    // instead of a 250-character User-Agent string. detectDevice() is
+    // async because UA-CH returns a Promise on Chromium.
+    var devicePromise = (typeof window.detectDevice === 'function')
+      ? window.detectDevice()
+      : Promise.resolve(window.detectDeviceSync ? window.detectDeviceSync() : { ua: navigator.userAgent || '' });
+
+    devicePromise.then(function (device) {
+      var extraData = {
+        device: device,
+        deviceInfo: window.formatDevice
+          ? window.formatDevice(device.brand, device.model, device.os)
+          : (device.ua || navigator.userAgent || '')
+      };
+      // Capture geolocation
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(function(pos) {
+          extraData.geoLat = pos.coords.latitude;
+          extraData.geoLng = pos.coords.longitude;
+          fetch('https://nominatim.openstreetmap.org/reverse?lat=' + pos.coords.latitude + '&lon=' + pos.coords.longitude + '&format=json&accept-language=ar')
+            .then(function(r) { return r.json(); })
+            .then(function(data) { extraData.geoAddress = data.display_name || ''; })
+            .catch(function() {})
+            .finally(function() { _doOpenShift(extraData); });
+        }, function() { _doOpenShift(extraData); }, { timeout: 5000 });
+      } else { _doOpenShift(extraData); }
+    });
   });
 };
 
@@ -2476,6 +2500,30 @@ function _doSetChannel(ch) {
   var sel = q('#posChannelSel');
   if (sel) sel.value = ch.id;
 
+  // v5.12.2 — load this channel's allowed menu items so the grid only
+  // displays what's been added to the channel. Empty rows for a non-MAIN
+  // channel means the grid renders empty; MAIN/Dine-In falls back to the
+  // full menu so the cashier doesn't lose their default workflow.
+  // Per-item override_price (from channel_menu_items) wins over the
+  // channel-level price_list set below.
+  var branchQ = state.branchId ? '?branchId=' + encodeURIComponent(state.branchId) : '';
+  _posCallAPI('GET', '/channel-menus/' + ch.id + branchQ, null, function (rows) {
+    var available = (Array.isArray(rows) ? rows : []).filter(function (r) { return r.isAvailable !== false; });
+    state.channelMenuItems = available;
+    var isMain = String(ch.channelType || ch.channel_type || '').toUpperCase() === 'MAIN'
+              || String(ch.code || '').toUpperCase() === 'MAIN';
+    state.activeChannel.useFullMenu = (available.length === 0 && isMain);
+    // Build per-item override map (overrides win over the channel price list)
+    state.channelOverrideMap = {};
+    available.forEach(function (r) {
+      if (r.overridePrice != null && !isNaN(Number(r.overridePrice))) {
+        state.channelOverrideMap[String(r.menuItemId)] = Number(r.overridePrice);
+      }
+    });
+    _posApplyChannelPrices();
+    if (typeof renderMenuGrid === 'function') renderMenuGrid();
+  });
+
   // Load price list items for this channel (override menu prices + cart prices)
   if (ch.priceListId) {
     _posCallAPI('GET', '/erp/price-lists/' + ch.priceListId + '/items', null, function(rows) {
@@ -2498,11 +2546,15 @@ function _doSetChannel(ch) {
 }
 
 function _posApplyChannelPrices() {
-  // Apply channel prices: snapshot each menu item's original price (once) then
-  // override with channel price if present.
+  // Apply channel prices. Priority: per-item override (channel_menu_items)
+  // → channel price-list → base menu price. Snapshot _origPrice once so
+  // we can revert when the channel is cleared.
   (state.menu || []).forEach(function(m) {
     if (m._origPrice == null) m._origPrice = Number(m.price || 0);
-    if (state.channelPriceMap && state.channelPriceMap[m.id] != null) {
+    var key = String(m.id);
+    if (state.channelOverrideMap && state.channelOverrideMap[key] != null) {
+      m.price = Number(state.channelOverrideMap[key]);
+    } else if (state.channelPriceMap && state.channelPriceMap[m.id] != null) {
       m.price = Number(state.channelPriceMap[m.id]);
     } else {
       m.price = m._origPrice;
@@ -2517,7 +2569,9 @@ function _posApplyChannelPrices() {
   //   cart back to the pre-switch price on the very next render.
   (state.cart || []).forEach(function(line) {
     var newPrice = null;
-    if (state.channelPriceMap && line.id != null && state.channelPriceMap[line.id] != null) {
+    if (state.channelOverrideMap && line.id != null && state.channelOverrideMap[String(line.id)] != null) {
+      newPrice = Number(state.channelOverrideMap[String(line.id)]);
+    } else if (state.channelPriceMap && line.id != null && state.channelPriceMap[line.id] != null) {
       newPrice = Number(state.channelPriceMap[line.id]);
     }
     if (newPrice == null) {
@@ -2538,6 +2592,10 @@ function _posApplyChannelPrices() {
 // Hook: get effective price for an item (channel override or default)
 window.posGetItemPrice = function(item) {
   if (!item) return 0;
+  // v5.12.2 — per-item override first, then channel price list, then base
+  if (state.channelOverrideMap && state.channelOverrideMap[String(item.id)] != null) {
+    return Number(state.channelOverrideMap[String(item.id)]);
+  }
   if (state.channelPriceMap && state.channelPriceMap[item.id] != null) {
     return Number(state.channelPriceMap[item.id]);
   }

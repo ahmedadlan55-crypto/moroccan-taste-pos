@@ -92,6 +92,26 @@ router.post('/login', async (req, res) => {
     clearAttempts(ip);
     await db.query('UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?', [user.id]);
 
+    // v5.12.2 — record device brand/model/os in audit_log so admins can
+    // see who logged in from which device. Tolerant of missing device_*
+    // columns on older deployed schemas.
+    try {
+      var dev = req.body && req.body.device || {};
+      var ua  = (dev.ua || req.headers['user-agent'] || '').slice(0, 500);
+      await db.query(
+        'INSERT INTO audit_log (id, user_id, username, action, table_name, record_id, ip_address, device_info, device_brand, device_model, device_os) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          'AUD-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+          user.id, user.username, 'login', 'users', String(user.id),
+          ip, ua,
+          (dev.brand || '').slice(0, 50),
+          (dev.model || '').slice(0, 120),
+          (dev.os    || '').slice(0, 80)
+        ]
+      );
+    } catch (e) { /* audit_log columns may be missing on older schemas — ignore */ }
+
     // V5.4.3: include isDeveloper in JWT + login response so frontend can gate UI buttons
     const isDev = !!user.is_developer || user.username === 'admin' || user.role === 'developer';
     const token = jwt.sign({

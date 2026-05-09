@@ -8,7 +8,10 @@
   // Map GAS function names to REST endpoints
   const ROUTE_MAP = {
     // Auth
-    checkLogin:          { method: 'POST', url: '/auth/login', body: (u,p) => ({username:u,password:p}) },
+    // v5.12.2 — third optional arg `d` carries the parsed device info
+    // ({brand, model, os, ua, mobile}) so audit_log can record who
+    // signed in from which device.
+    checkLogin:          { method: 'POST', url: '/auth/login', body: (u,p,d) => ({username:u,password:p,device:d||null}) },
     refreshToken:        { method: 'POST', url: '/auth/refresh-token' },
     getInitialAppData:   { method: 'GET',  url: (u) => '/auth/init/'+u },
 

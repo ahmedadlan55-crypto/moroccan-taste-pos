@@ -161,7 +161,7 @@ async function aggregateShiftPayments(shiftId) {
 // Open shift
 router.post('/open', async (req, res) => {
   try {
-    const { username, geoLat, geoLng, geoAddress, deviceInfo } = req.body;
+    const { username, geoLat, geoLng, geoAddress, deviceInfo, device } = req.body;
     const ip = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress || '';
 
     // Check if user already has an open shift
@@ -173,9 +173,24 @@ router.post('/open', async (req, res) => {
     const shiftId = 'SH-' + Date.now();
     const now = new Date();
 
+    // v5.12.2 — accept structured device { brand, model, os, ua, mobile }
+    // sent by /shared/device-info.js, fall back to legacy raw deviceInfo
+    // string for backwards compatibility with older clients.
+    const dev = device && typeof device === 'object' ? device : {};
+    const rawUA = (dev.ua || deviceInfo || '').toString();
+
     await db.query(
-      'INSERT INTO shifts (id, username, start_time, status, geo_lat, geo_lng, geo_address, device_info, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [shiftId, username, now, 'OPEN', geoLat||null, geoLng||null, geoAddress||'', deviceInfo||'', ip]
+      'INSERT INTO shifts (id, username, start_time, status, geo_lat, geo_lng, geo_address, device_info, device_brand, device_model, device_os, ip_address) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        shiftId, username, now, 'OPEN',
+        geoLat || null, geoLng || null, geoAddress || '',
+        rawUA,
+        (dev.brand || '').toString().slice(0, 50),
+        (dev.model || '').toString().slice(0, 120),
+        (dev.os    || '').toString().slice(0, 80),
+        ip
+      ]
     );
 
     res.json({ success: true, shiftId });

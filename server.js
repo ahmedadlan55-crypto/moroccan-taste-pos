@@ -2667,6 +2667,20 @@ async function runMigrations() {
   await addColumnIfMissing('gl_entries', 'warehouse_id', "VARCHAR(50)");
   try { await db.query('CREATE INDEX idx_gle_dims ON gl_entries(brand_id, branch_id)'); } catch(e) {}
 
+  // v5.12.2 — channel as first-class dimension on transactions
+  await addColumnIfMissing('sales',       'channel_id',   'VARCHAR(50)');
+  await addColumnIfMissing('sales_items', 'channel_id',   'VARCHAR(50)');
+  try { await db.query('CREATE INDEX idx_sales_channel ON sales(channel_id)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_sales_items_channel ON sales_items(channel_id)'); } catch(e) {}
+
+  // v5.12.2 — parsed device info on shifts + audit_log
+  await addColumnIfMissing('shifts',    'device_brand', 'VARCHAR(50)');
+  await addColumnIfMissing('shifts',    'device_model', 'VARCHAR(120)');
+  await addColumnIfMissing('shifts',    'device_os',    'VARCHAR(80)');
+  await addColumnIfMissing('audit_log', 'device_brand', 'VARCHAR(50)');
+  await addColumnIfMissing('audit_log', 'device_model', 'VARCHAR(120)');
+  await addColumnIfMissing('audit_log', 'device_os',    'VARCHAR(80)');
+
   // v5.11.14 — One-time relocation of legacy auto-created accounts whose
   // parent_id points to the WRONG branch in the v5.11.8 IFRS template.
   // Earlier versions of CORE_ACCOUNTS (lib/glPosting.js) and

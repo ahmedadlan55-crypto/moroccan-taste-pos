@@ -960,15 +960,38 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
   border: 1px solid rgba(255,255,255,0.4);
   box-shadow: 0 25px 60px -12px rgba(0, 0, 0, 0.3);
   animation: erpModalIn 0.25s ease;
-  max-height: 90vh; overflow-y: auto;
+  max-height: 90vh;
+  /* v5.12.9 — flex column so the footer can stick at the bottom while
+   * the body scrolls. Previous overflow:auto on the wrapper let the
+   * footer (and its save button) get clipped on tall forms. */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 @keyframes erpModalIn { from { opacity: 0; transform: translateY(16px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
-.erp-modal-box .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px 14px; border-bottom: 1px solid rgba(0,0,0,0.06); }
+.erp-modal-box .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px 14px; border-bottom: 1px solid rgba(0,0,0,0.06); flex-shrink: 0; }
 .erp-modal-box .modal-header h3 { font-size: 18px; font-weight: 900; color: #1e293b; margin: 0; }
 .erp-modal-box .modal-close { background: none; border: none; font-size: 22px; color: #94a3b8; cursor: pointer; width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
 .erp-modal-box .modal-close:hover { background: rgba(239,68,68,0.1); color: #ef4444; }
-.erp-modal-box .modal-body { padding: 20px 24px; }
-.erp-modal-box .modal-footer { display: flex; gap: 10px; justify-content: flex-end; padding: 14px 24px 20px; border-top: 1px solid rgba(0,0,0,0.06); }
+.erp-modal-box .modal-body { padding: 20px 24px; flex: 1; overflow-y: auto; min-height: 0; }
+.erp-modal-box .modal-footer {
+  display: flex; gap: 10px; justify-content: flex-end;
+  padding: 14px 24px 20px;
+  border-top: 1px solid rgba(0,0,0,0.06);
+  background: rgba(255,255,255,0.96);
+  flex-shrink: 0;
+  position: sticky; bottom: 0;
+}
+
+/* v5.12.9 — full-screen modal on phone class viewports so the save
+ * button never falls off-screen. */
+@media (max-width: 768px) {
+  .erp-modal-box {
+    width: 100%; max-width: 100%;
+    height: 100dvh; max-height: 100dvh;
+    border-radius: 0;
+  }
+}
 .form-row { margin-bottom: 16px; }
 .form-row label { display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px; }
 

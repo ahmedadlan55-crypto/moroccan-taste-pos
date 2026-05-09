@@ -16429,11 +16429,22 @@ function erpOpenPriceListModal(id) {
       document.getElementById('erpModalTitle').textContent = d.id ? ('تعديل قائمة — '+d.name) : 'قائمة أسعار جديدة';
       document.getElementById('erpModalBody').innerHTML =
         '<input type="hidden" id="plId" value="'+(d.id||'')+'">'+
-        '<div class="form-row"><label>الاسم *</label><input class="form-control" id="plName" value="'+(d.name||'').replace(/"/g,'&quot;')+'"></div>'+
+        '<div class="form-row"><label>الاسم *</label><input class="form-control" id="plName" placeholder="مثلاً: قائمة أسعار التوصيل" value="'+(d.name||'').replace(/"/g,'&quot;')+'"></div>'+
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-row"><label>البراند</label><select class="form-control" id="plBrandSel">'+brOpts+'</select></div><div class="form-row"><label>الفرع</label><select class="form-control" id="plBranchSel">'+bchOpts+'</select></div></div>'+
         '<div class="form-row"><label><input type="checkbox" id="plDefault" '+(d.isDefault?'checked':'')+'> افتراضية</label></div>'+
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-row"><label>فعالة من</label><input type="date" class="form-control" id="plFromDate" value="'+(d.validFrom||'').slice(0,10)+'"></div><div class="form-row"><label>إلى</label><input type="date" class="form-control" id="plToDate" value="'+(d.validTo||'').slice(0,10)+'"></div></div>';
-      document.getElementById('erpModalSaveBtn').onclick = function() {
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-row"><label>فعالة من</label><input type="date" class="form-control" id="plFromDate" value="'+(d.validFrom||'').slice(0,10)+'"></div><div class="form-row"><label>إلى</label><input type="date" class="form-control" id="plToDate" value="'+(d.validTo||'').slice(0,10)+'"></div></div>'+
+        (d.id ? '' :
+          '<div style="margin-top:14px;padding:12px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;color:#1e40af;font-size:13px;line-height:1.7;">'+
+            '<i class="fas fa-info-circle"></i> بعد حفظ القائمة، يُمكنك إضافة الأصناف وأسعارها بزر <strong>📋 الأصناف</strong> من قائمة القوائم.'+
+          '</div>'
+        );
+      // v5.12.9 — make the save button visually prominent + clearer label
+      var btn = document.getElementById('erpModalSaveBtn');
+      btn.innerHTML = d.id
+        ? '<i class="fas fa-save"></i> حفظ التَعديلات'
+        : '<i class="fas fa-plus-circle"></i> إضافة قائمة الأسعار';
+      btn.style.cssText = 'font-size:15px;font-weight:800;padding:12px 24px;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;border:0;border-radius:10px;box-shadow:0 4px 14px rgba(59,130,246,.35);cursor:pointer;';
+      btn.onclick = function() {
         _erpPost('/erp/price-lists', {
           id: document.getElementById('plId').value || undefined,
           name: document.getElementById('plName').value,

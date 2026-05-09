@@ -917,9 +917,16 @@ window.printReceiptWindow = function() {
   var html =
     '<!DOCTYPE html><html lang="en" dir="ltr"><head><meta charset="UTF-8"><title>Receipt ' + r.inv.orderId + '</title>' +
     '<style>' +
-      '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}' +
-      'body{font-family:"Helvetica Neue",Arial,"Segoe UI",sans-serif;padding:10px;width:300px;margin:0 auto;font-size:12px;color:#000;background:#fff;}' +
-      '@media print{@page{margin:0;size:80mm auto;}body{padding:4px;width:100%;}}' +
+      // v5.12.9 — thermal-printer-tuned styles. Tahoma renders Arabic
+      // crisp on ESC/POS heads; Helvetica Neue (the prior default) is
+      // missing on most kiosk Windows boxes and falls back to Arial,
+      // which rendered some glyphs faded. font-weight 600 body / 700
+      // print stops anti-aliasing from washing thin strokes out, and
+      // -webkit-font-smoothing:none + text-rendering:geometricPrecision
+      // force vector-quality strokes instead of bitmap fallbacks.
+      '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-weight:inherit;}' +
+      'body{font-family:"Tahoma","Cairo","Segoe UI","Arial Black",Arial,sans-serif;padding:10px;width:300px;margin:0 auto;font-size:13px;color:#000;background:#fff;font-weight:600;-webkit-font-smoothing:none;-moz-osx-font-smoothing:never;font-smooth:never;text-rendering:geometricPrecision;}' +
+      '@media print{@page{margin:0;size:80mm auto;}body{padding:6px 4px;width:100%;font-weight:700;}}' +
     '</style></head><body>' +
 
     (r.logoUrl ? '<div style="text-align:center;margin-bottom:4px;"><img src="' + r.logoUrl + '" style="max-width:90px;max-height:90px;object-fit:contain;"></div>' : '') +
@@ -2611,6 +2618,14 @@ function _doSetChannel(ch) {
           state.channelOverrideMap[String(r.menuItemId)] = Number(r.overridePrice);
         }
       });
+      // v5.12.9 — Generalised catch-all: any channel with zero items
+      // configured in channel_menu_items renders the full menu, not
+      // just code='MAIN'. Admins who create a "Main menu" channel with
+      // a custom code shouldn't get an empty grid; admins who DO
+      // configure items still get strict filtering.
+      if (available.length === 0) {
+        state.activeChannel.useFullMenu = true;
+      }
       // v5.12.7 — make sure state.menu has items before we filter by it
       _ensureMenuLoaded(function () {
         _posApplyChannelPrices();
@@ -3563,13 +3578,15 @@ function scV3ShowReport(shiftId, r) {
 function _openShiftPrintWindow(reportHtml) {
   // v5.12.3 — uses the same hidden-iframe silent printer as the
   // receipt path. No popup, no blocker, no leftover window.
+  // v5.12.9 — same thermal-tuned font stack + crisp-stroke settings
+  // as the sales receipt so Arabic glyphs aren't faded on ESC/POS.
   var html =
     '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>Shift Report</title>' +
     '<style>' +
-      '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}' +
-      'body{font-family:"Helvetica Neue",Arial,"Segoe UI",sans-serif;padding:8px;width:300px;margin:0 auto;font-size:12px;color:#000;background:#fff;}' +
+      '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-weight:inherit;}' +
+      'body{font-family:"Tahoma","Cairo","Segoe UI","Arial Black",Arial,sans-serif;padding:8px;width:300px;margin:0 auto;font-size:13px;color:#000;background:#fff;font-weight:600;-webkit-font-smoothing:none;-moz-osx-font-smoothing:never;font-smooth:never;text-rendering:geometricPrecision;}' +
       'table{width:100%;border-collapse:collapse;}' +
-      '@media print{@page{margin:0;size:80mm auto;}body{padding:4px;width:100%;}}' +
+      '@media print{@page{margin:0;size:80mm auto;}body{padding:4px;width:100%;font-weight:700;}}' +
     '</style></head><body>' +
     reportHtml +
     '</body></html>';

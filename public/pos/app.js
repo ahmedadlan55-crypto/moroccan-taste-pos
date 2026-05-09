@@ -2579,9 +2579,17 @@ function _doSetChannel(ch) {
     var branchQ = state.branchId ? '?branchId=' + encodeURIComponent(state.branchId) : '';
     _posCallAPI('GET', '/channel-menus/' + ch.id + branchQ, null, function (rows) {
       if (rows && rows.error) {
-        console.error('[channel-menu] fetch error:', rows.error);
-        if (typeof glassToast === 'function') glassToast('فشل تحميل أصناف القناة: ' + rows.error, true);
-        if (!cached) applyRows([]);
+        // v5.12.5 — log to console only, never block the cashier with
+        // a red toast. Drop the channel filter so the full menu shows;
+        // the next successful refresh will reapply the strict filter.
+        console.error('[channel-menu] fetch error for', ch.id, ':', rows.error);
+        if (!cached) {
+          state.activeChannel.useFullMenu = true;
+          state.channelMenuItems = [];
+          state.channelOverrideMap = {};
+          _posApplyChannelPrices();
+          if (typeof renderMenuGrid === 'function') renderMenuGrid();
+        }
         return;
       }
       if (!state.channelMenuCache) state.channelMenuCache = {};

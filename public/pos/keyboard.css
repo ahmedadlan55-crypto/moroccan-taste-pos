@@ -176,11 +176,19 @@ body.vk-disabled #vkKeyboard {
   body.vk-active { padding-bottom: 240px; }
 }
 
-/* Hide the manual print button on the cashier receipt modal —
- * v5.12.0 prints automatically. Selectors target both legacy and
- * v5.12.3 wiring (data-action / class-based fallbacks). */
+/* v5.12.5 — Hide ALL print-related controls on the cashier UI.
+ * v5.12.0 prints automatically after every checkout and on shift close,
+ * so the cashier never needs a manual button. Selectors cover the
+ * receipt modal, the floating action bar, and the shift close/report
+ * modals. Add `.no-print-on-kiosk` to any future print button to opt in.
+ */
 #modalReceipt button[onclick*="printReceiptWindow"],
 #modalReceipt .btn-print,
-#modalReceipt [data-action="print"] {
+#modalReceipt [data-action="print"],
+.float-btn[onclick*="openPrinterSettings"],
+.float-btn[onclick*="printSettings"],
+#modalShiftClose button[onclick*="printShiftReport"],
+#modalShiftReport button[onclick*="print"]:not(.glass-modal-close),
+.no-print-on-kiosk {
   display: none !important;
 }

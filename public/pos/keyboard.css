@@ -178,11 +178,15 @@ body.vk-active {
   padding-bottom: 360px;
 }
 
-/* Hide on actual desktop with physical keyboard (no touch points) */
-@media (hover: hover) and (pointer: fine) {
-  body:not(.vk-force) #vkKeyboard {
-    display: none !important;
-  }
+/* v5.12.1 — Removed the (hover: hover) auto-hide rule. Most Windows
+ * touch PCs are hybrid devices that report BOTH hover AND fine-pointer
+ * capability because of the mouse, which made the keyboard invisible
+ * on the very kiosks it was built for. Show it whenever an input is
+ * focused; users on machines with a real keyboard can dismiss it
+ * with the ✕ button. Set body.vk-disabled to opt out programmatically.
+ */
+body.vk-disabled #vkKeyboard {
+  display: none !important;
 }
 
 /* Compact layout for narrow screens */

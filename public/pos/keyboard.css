@@ -1,0 +1,212 @@
+/* ─────────────────────────────────────────────────────────────────
+ * v5.12.0 — Virtual Keyboard for kiosk cashier (touch-only PCs)
+ * Premium, touch-friendly, Arabic + English layouts.
+ * Slides up from the bottom of the viewport when a [data-vk="1"]
+ * input is focused; hidden by default.
+ * ───────────────────────────────────────────────────────────────── */
+
+#vkKeyboard {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  padding: 14px 12px 16px;
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.5), 0 -2px 0 rgba(255, 255, 255, 0.06) inset;
+  border-top: 1px solid rgba(124, 58, 237, 0.4);
+  transform: translateY(110%);
+  transition: transform 240ms cubic-bezier(.4, 0, .2, 1);
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
+#vkKeyboard.vk-open {
+  transform: translateY(0);
+}
+
+#vkKeyboard .vk-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding: 0 6px;
+}
+
+#vkKeyboard .vk-bar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #cbd5e1;
+}
+
+#vkKeyboard .vk-bar-title i {
+  font-size: 16px;
+  color: #a78bfa;
+}
+
+#vkKeyboard .vk-bar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+#vkKeyboard .vk-bar-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 120ms;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#vkKeyboard .vk-bar-btn:hover,
+#vkKeyboard .vk-bar-btn:active {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+#vkKeyboard .vk-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  justify-content: center;
+}
+
+#vkKeyboard .vk-key {
+  flex: 1 1 auto;
+  min-width: 44px;
+  max-width: 72px;
+  height: 56px;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(180deg, #475569 0%, #334155 100%);
+  color: #f8fafc;
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 0 #1e293b, 0 4px 12px rgba(0, 0, 0, 0.3);
+  transition: transform 80ms, box-shadow 80ms, background 120ms;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#vkKeyboard .vk-key:hover {
+  background: linear-gradient(180deg, #64748b 0%, #475569 100%);
+}
+
+#vkKeyboard .vk-key:active,
+#vkKeyboard .vk-key.vk-active {
+  transform: translateY(2px);
+  box-shadow: 0 0 0 #1e293b, 0 2px 6px rgba(0, 0, 0, 0.3);
+  background: linear-gradient(180deg, #7c3aed 0%, #6d28d9 100%);
+}
+
+/* Special keys */
+#vkKeyboard .vk-key.vk-num {
+  background: linear-gradient(180deg, #1e3a8a 0%, #1e40af 100%);
+  font-family: ui-monospace, "SFMono-Regular", monospace;
+  font-weight: 700;
+}
+
+#vkKeyboard .vk-key.vk-num:hover {
+  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+}
+
+#vkKeyboard .vk-key.vk-wide {
+  flex: 2 1 auto;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+#vkKeyboard .vk-key.vk-space {
+  flex: 6 1 auto;
+  max-width: none;
+  font-size: 14px;
+  font-weight: 600;
+  background: linear-gradient(180deg, #475569 0%, #334155 100%);
+}
+
+#vkKeyboard .vk-key.vk-action {
+  background: linear-gradient(180deg, #7c3aed 0%, #6d28d9 100%);
+  color: #fff;
+  font-weight: 700;
+}
+
+#vkKeyboard .vk-key.vk-action:hover {
+  background: linear-gradient(180deg, #8b5cf6 0%, #7c3aed 100%);
+}
+
+#vkKeyboard .vk-key.vk-danger {
+  background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%);
+  color: #fff;
+}
+
+#vkKeyboard .vk-key.vk-danger:hover {
+  background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
+}
+
+#vkKeyboard .vk-key.vk-lang {
+  background: linear-gradient(180deg, #059669 0%, #047857 100%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+#vkKeyboard .vk-key.vk-lang:hover {
+  background: linear-gradient(180deg, #10b981 0%, #059669 100%);
+}
+
+/* Arabic glyphs need a font that handles isolated forms beautifully */
+#vkKeyboard.vk-lang-ar .vk-key:not(.vk-num):not(.vk-action):not(.vk-lang):not(.vk-wide) {
+  font-family: "Tahoma", "Segoe UI", Arial, sans-serif;
+  font-size: 22px;
+}
+
+/* Push body content up by keyboard height when keyboard is open */
+body.vk-active {
+  padding-bottom: 360px;
+}
+
+/* Hide on actual desktop with physical keyboard (no touch points) */
+@media (hover: hover) and (pointer: fine) {
+  body:not(.vk-force) #vkKeyboard {
+    display: none !important;
+  }
+}
+
+/* Compact layout for narrow screens */
+@media (max-width: 480px) {
+  #vkKeyboard {
+    padding: 8px 4px 10px;
+  }
+  #vkKeyboard .vk-key {
+    height: 46px;
+    min-width: 30px;
+    font-size: 16px;
+    border-radius: 8px;
+  }
+  #vkKeyboard.vk-lang-ar .vk-key:not(.vk-num):not(.vk-action):not(.vk-lang):not(.vk-wide) {
+    font-size: 18px;
+  }
+  body.vk-active {
+    padding-bottom: 280px;
+  }
+}
+
+/* Hide the manual print button on the cashier receipt modal —
+ * v5.12.0 prints automatically. Selector targets the receipt modal
+ * action that calls printReceiptWindow(). */
+#modalReceipt button[onclick*="printReceiptWindow"] {
+  display: none !important;
+}

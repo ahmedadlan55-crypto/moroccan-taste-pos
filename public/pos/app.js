@@ -785,6 +785,16 @@ window.printReceipt = function(orderId) {
         new QRCode(qrEl, { text: tlvBase64, width: 140, height: 140, colorDark: '#000', colorLight: '#fff' });
       }
     }, 200);
+
+    // v5.12.0 — auto-print to thermal printer. Fires AFTER the QR has
+    // rendered so the printed copy includes the ZATCA QR. With Chrome
+    // / Edge launched using --kiosk-printing the dialog is suppressed
+    // and the receipt prints silently to the OS default printer.
+    setTimeout(function() {
+      if (typeof window.printReceiptWindow === 'function') {
+        try { window.printReceiptWindow(); } catch (e) { console.warn('auto-print failed:', e); }
+      }
+    }, 600);
   }).getInvoice(orderId);
 };
 
@@ -3366,5 +3376,34 @@ function scV3ShowReport(shiftId, r) {
 
   q('#shiftReportBody').innerHTML = html;
   openGlassModal('#modalShiftReport');
+
+  // v5.12.0 — auto-print the shift end-of-day report. Mirrors the
+  // printReceiptWindow() pattern: opens a 80mm-sized window, writes
+  // the same HTML the modal shows (with thermal @page rules), and
+  // calls w.print() — silent under Chrome / Edge --kiosk-printing.
+  setTimeout(function () {
+    try { _openShiftPrintWindow(html); } catch (e) { console.warn('shift auto-print failed:', e); }
+  }, 600);
+}
+
+function _openShiftPrintWindow(reportHtml) {
+  var w = window.open('', '_blank', 'width=350,height=900');
+  if (!w) return;
+  var doc =
+    '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>Shift Report</title>' +
+    '<style>' +
+      '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}' +
+      'body{font-family:"Helvetica Neue",Arial,"Segoe UI",sans-serif;padding:8px;width:300px;margin:0 auto;font-size:12px;color:#000;background:#fff;}' +
+      'table{width:100%;border-collapse:collapse;}' +
+      '@media print{@page{margin:0;size:80mm auto;}body{padding:4px;width:100%;}}' +
+    '</style></head><body>' +
+    reportHtml +
+    '</body></html>';
+  w.document.write(doc);
+  w.document.close();
+  setTimeout(function () { try { w.print(); } catch (e) {} }, 400);
+  // If the OS print dialog is suppressed (kiosk mode), close the helper
+  // window after spool finishes; otherwise leave it open briefly.
+  setTimeout(function () { try { w.close(); } catch (e) {} }, 4000);
 }
 

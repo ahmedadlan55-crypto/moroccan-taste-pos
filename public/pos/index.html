@@ -58,6 +58,7 @@
   <link rel="stylesheet" href="/shared/common.css">
   <link rel="stylesheet" href="/shared/header.css">
   <link rel="stylesheet" href="/pos/style.css?v=4">
+  <link rel="stylesheet" href="/pos/keyboard.css?v=1">
 
   <script defer src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script defer src="/shared/api-bridge.js"></script>
@@ -67,6 +68,7 @@
   <script defer src="/shared/auth.js"></script>
   <script defer src="/shared/header.js"></script>
   <script defer src="/pos/app.js?v=5"></script>
+  <script defer src="/pos/keyboard.js?v=1"></script>
 </head>
 <body class="ar" data-page="pos" data-show-shift="1">
 
@@ -85,7 +87,7 @@
     <section class="pos-products-area">
       <div class="pos-search-bar">
         <i class="fas fa-search"></i>
-        <input type="text" id="posSearchInput" placeholder="البحث برقم، أو اسم المنتج..." data-i18n-placeholder="searchPlaceholder" oninput="renderMenuGrid()" autocomplete="off">
+        <input type="text" id="posSearchInput" placeholder="البحث برقم، أو اسم المنتج..." data-i18n-placeholder="searchPlaceholder" oninput="renderMenuGrid()" autocomplete="off" data-vk="1">
       </div>
       <div class="pos-categories" id="posCatTabs"></div>
       <div class="pos-grid" id="posItemsGrid"></div>

@@ -3586,6 +3586,10 @@ function openInvM(mode, id = null) {
       q("#miComputedCost").value = "0"; q("#miMarkupPct").value = "30";
       q("#miPricingFixed").checked = true;
       if (q("#miBrand")) q("#miBrand").value = '';
+      // v5.12.7 — clear image preview/data on Add
+      if (q("#miImageData")) q("#miImageData").value = '';
+      if (q("#miImageFile")) q("#miImageFile").value = '';
+      if (q("#miImagePreview")) q("#miImagePreview").style.display = 'none';
     } else {
       q("#iMdlTitle").innerText = "تعديل المنتج";
       let d = state.menu.find(x => x.id === id);
@@ -3599,6 +3603,18 @@ function openInvM(mode, id = null) {
       // Set pricing mode radio
       if (d.pricingMode === 'variable') { q("#miPricingVariable").checked = true; }
       else { q("#miPricingFixed").checked = true; }
+      // v5.12.7 — preload existing image into the preview
+      var existingImg = d.imageData || d.image_data || '';
+      if (q("#miImageData")) q("#miImageData").value = existingImg;
+      if (q("#miImageFile")) q("#miImageFile").value = '';
+      if (q("#miImagePreview")) {
+        if (existingImg) {
+          q("#miImagePreview").style.display = 'flex';
+          if (q("#miImagePreviewImg")) q("#miImagePreviewImg").src = existingImg;
+        } else {
+          q("#miImagePreview").style.display = 'none';
+        }
+      }
     }
     togglePricingMode();
     openModal("#modalInvForm");
@@ -3639,6 +3655,45 @@ function togglePricingMode() {
   }
 }
 
+// v5.12.7 — image upload helpers for the menu form. Resizes to a max
+// 400×400 JPEG at quality 0.8 so a typical photo lands ~40-80 KB —
+// small enough to inline as base64 in /init without bloating the
+// initial cashier payload. Reset/clear is exposed for the × button.
+window._miHandleImageFile = function (input) {
+  var file = input && input.files && input.files[0];
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    return showToast('الصورة أكبر من 8 ميجابايت — اختر صورة أصغر', true);
+  }
+  var reader = new FileReader();
+  reader.onload = function (e) {
+    var img = new Image();
+    img.onload = function () {
+      var canvas = document.createElement('canvas');
+      var max = 400;
+      var ratio = Math.min(max / img.width, max / img.height, 1);
+      canvas.width  = Math.max(1, Math.round(img.width  * ratio));
+      canvas.height = Math.max(1, Math.round(img.height * ratio));
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      var dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      if (q('#miImageData')) q('#miImageData').value = dataUrl;
+      if (q('#miImagePreviewImg')) q('#miImagePreviewImg').src = dataUrl;
+      if (q('#miImagePreview')) q('#miImagePreview').style.display = 'flex';
+    };
+    img.onerror = function () { showToast('تعذَّر قراءة الصورة', true); };
+    img.src = e.target.result;
+  };
+  reader.onerror = function () { showToast('فشل تحميل الصورة', true); };
+  reader.readAsDataURL(file);
+};
+
+window._miClearImage = function () {
+  if (q('#miImageData')) q('#miImageData').value = '';
+  if (q('#miImageFile')) q('#miImageFile').value = '';
+  if (q('#miImagePreview')) q('#miImagePreview').style.display = 'none';
+  if (q('#miImagePreviewImg')) q('#miImagePreviewImg').src = '';
+};
+
 function saveInv() {
   var pricingMode = q('input[name="miPricingMode"]:checked') ? q('input[name="miPricingMode"]:checked').value : 'fixed';
   const d = {
@@ -3646,7 +3701,9 @@ function saveInv() {
     brandId: (q("#miBrand") ? q("#miBrand").value : '') || '',
     price: q("#miPrice").value, cost: q("#miCost").value, stock: 9999, minStock: 0, active: q("#miActive").checked,
     pricingMode: pricingMode,
-    markupPct: q("#miMarkupPct") ? q("#miMarkupPct").value : 30
+    markupPct: q("#miMarkupPct") ? q("#miMarkupPct").value : 30,
+    // v5.12.7 — optional product image (base64). Empty string clears.
+    imageData: q("#miImageData") ? q("#miImageData").value : ''
   };
   if (!d.name) return showToast("يرجى كتابة اسم المنتج", true);
   if (pricingMode === 'fixed' && !d.price) return showToast("يرجى إدخال سعر البيع", true);

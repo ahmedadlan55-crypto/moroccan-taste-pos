@@ -234,9 +234,14 @@ window.renderMenuGrid = function() {
       var inCart = state.cart.find(function(c) { return c.id === i.id; });
       var qty = inCart ? inCart.qty : 0;
       var isSel = !!inCart;
-      // Menu items no longer have their own stock — no stock badge.
+      // v5.12.7 — optional product image at the top of the card
+      var img = i.imageData || i.image_data;
+      var imgHtml = img
+        ? '<div class="pos-item-img"><img src="' + img + '" loading="lazy" alt=""></div>'
+        : '';
       var safeJson = JSON.stringify(i).replace(/'/g, '&#39;');
       h += '<div class="pos-item ' + (isSel ? 'selected' : '') + '">' +
+        imgHtml +
         '<div>' +
           '<div class="pos-item-name">' + (i.name || '') + '</div>' +
           '<div class="pos-item-price">' + formatVal(i.price) + '</div>' +
@@ -1716,11 +1721,9 @@ function renderCstCart() {
     var actualSmall = c.actualQty === '' || c.actualQty === null ? '' : Number(c.actualQty);
     var bigVal = c._bigInput !== undefined ? c._bigInput : '';
     var smallVal = c._smallInput !== undefined ? c._smallInput : (actualSmall !== '' && !hasBig ? actualSmall : '');
-    var diff = actualSmall === '' ? '' : (Number(actualSmall) - c.systemQty);
-    var diffHtml = diff === '' ? '<span style="color:#94a3b8;">—</span>'
-      : (diff === 0 ? '<span style="color:#64748b;">0</span>'
-        : (diff > 0 ? '<span style="color:#16a34a;">+' + diff.toFixed(2) + '</span>'
-          : '<span style="color:#ef4444;">' + diff.toFixed(2) + '</span>'));
+    // v5.12.7 — diff is computed on the server during stocktake review;
+    // hidden here so the cashier counts blind (proper audit practice).
+    var diffHtml = '<span style="color:#cbd5e1;">—</span>';
     // Column 1: المادة
     var nameCell = '<td style="font-weight:700;font-size:12px;">' + c.name + '</td>';
     // Column 2: الكبرى — input or dash
@@ -1733,8 +1736,8 @@ function renderCstCart() {
     var smallCell = '<td style="text-align:center;"><input type="number" min="0" step="0.01" class="form-control glass-input" style="width:60px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (smallVal === '' ? '' : smallVal) + '" oninput="updateCstDual(' + i + ',null,this.value)" placeholder="0"></td>';
     // Column 5: وحدة صغرى
     var unitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (c.unit || '') + '</td>';
-    // Column 5: النظام
-    var sysCell = '<td style="text-align:center;font-weight:600;color:var(--primary);font-size:12px;">' + c.systemQty.toFixed(2) + '</td>';
+    // Column 5: النظام — v5.12.7 hidden from cashier (blind count)
+    var sysCell = '<td style="text-align:center;color:#cbd5e1;font-weight:500;">—</td>';
     // Column 6: التباين
     var diffCell = '<td style="text-align:center;font-weight:900;">' + diffHtml + '</td>';
     // Column 7: حذف
@@ -2534,6 +2537,31 @@ window.posSetChannel = function(channelId) {
   _doSetChannel(ch);
 };
 
+// v5.12.7 — guarantee state.menu is populated before rendering. /init
+// filters menu by the cashier's brand_id; if the result is empty (brand
+// has no items wired up), fall back to the unfiltered /menu endpoint.
+// Tries once per session — flag prevents an infinite loop on persistent
+// failure. Caches the result so reloads pick it up instantly.
+function _ensureMenuLoaded(cb) {
+  var current = (state.menu || []).filter(function (i) { return i.active; });
+  if (current.length > 0) { if (cb) cb(); return; }
+  if (state._menuFallbackTried) { if (cb) cb(); return; }
+  state._menuFallbackTried = true;
+  console.warn('[pos-menu] state.menu empty — falling back to /menu');
+  _posCallAPI('GET', '/menu', null, function (rows) {
+    if (Array.isArray(rows) && rows.length) {
+      state.menu = rows;
+      state.categories = Array.from(new Set(rows.map(function (i) { return i.category; })))
+                              .filter(function (c) { return c && String(c).trim() !== ''; });
+      try { localStorage.setItem('pos_menu_cache', JSON.stringify({ ts: Date.now(), menu: rows })); } catch (e) {}
+      console.log('[pos-menu] fallback fetched', rows.length, 'items');
+    } else {
+      console.error('[pos-menu] fallback returned empty');
+    }
+    if (cb) cb();
+  });
+}
+
 function _doSetChannel(ch) {
   var isSwitch = state.activeChannel && state.activeChannel.id !== ch.id;
   state.activeChannel = ch;
@@ -2566,23 +2594,10 @@ function _doSetChannel(ch) {
     state.channelOverrideMap = {};
     _posApplyChannelPrices();
     if (typeof renderMenuGrid === 'function') renderMenuGrid();
-
-    // v5.12.6 — guarantee MAIN never shows an empty grid even if /init's
-    // brand-filtered menu came back empty. Fall back to the unfiltered
-    // /menu endpoint (which still respects active=1) and re-render.
-    var current = (state.menu || []).filter(function (i) { return i.active; });
-    if (current.length === 0) {
-      console.warn('[pos v5.12.6] state.menu empty under MAIN — falling back to /menu');
-      _posCallAPI('GET', '/menu', null, function (rows) {
-        if (Array.isArray(rows) && rows.length) {
-          state.menu = rows;
-          state.categories = Array.from(new Set(rows.map(function (i) { return i.category; })))
-                                  .filter(function (c) { return c && String(c).trim() !== ''; });
-          _posApplyChannelPrices();
-          if (typeof renderMenuGrid === 'function') renderMenuGrid();
-        }
-      });
-    }
+    _ensureMenuLoaded(function () {
+      _posApplyChannelPrices();
+      if (typeof renderMenuGrid === 'function') renderMenuGrid();
+    });
   } else {
     // Read from the prefetch cache for instant switching; refresh in
     // the background if the cache is stale or missing.
@@ -2596,8 +2611,11 @@ function _doSetChannel(ch) {
           state.channelOverrideMap[String(r.menuItemId)] = Number(r.overridePrice);
         }
       });
-      _posApplyChannelPrices();
-      if (typeof renderMenuGrid === 'function') renderMenuGrid();
+      // v5.12.7 — make sure state.menu has items before we filter by it
+      _ensureMenuLoaded(function () {
+        _posApplyChannelPrices();
+        if (typeof renderMenuGrid === 'function') renderMenuGrid();
+      });
     };
     if (cached) applyRows(cached);
     var branchQ = state.branchId ? '?branchId=' + encodeURIComponent(state.branchId) : '';

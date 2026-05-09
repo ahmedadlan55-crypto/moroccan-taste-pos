@@ -29,7 +29,9 @@ function _mapMenu(m) {
     bigUnit: m.big_unit || null,
     convRate: Number(m.conv_rate) || 1,
     yieldQuantity: Number(m.yield_quantity) || 1,
-    yieldUnit: m.yield_unit || null
+    yieldUnit: m.yield_unit || null,
+    // v5.12.7 — optional product image (base64 data URL)
+    imageData: m.image_data || null
   };
 }
 
@@ -108,21 +110,24 @@ router.post('/', async (req, res) => {
       isSemiFinished, productionUnit, consumesSemiId, consumesSemiQty,
       productionWarehouseId, salesWarehouseId,
       // v5.10.16 — units + batch yield
-      unit, bigUnit, convRate, yieldQuantity, yieldUnit
+      unit, bigUnit, convRate, yieldQuantity, yieldUnit,
+      // v5.12.7 — optional product image (base64 data URL)
+      imageData
     } = req.body;
     const id = 'MENU-' + Date.now();
     await db.query(
       `INSERT INTO menu (id, name, name_en, price, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
                          is_semi_finished, production_unit, consumes_semi_id, consumes_semi_qty,
                          production_warehouse_id, sales_warehouse_id,
-                         unit, big_unit, conv_rate, yield_quantity, yield_unit)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                         unit, big_unit, conv_rate, yield_quantity, yield_unit, image_data)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [id, name, nameEn || null, price || 0, category || 'عام', cost || 0, stock || 0, minStock || 0, active !== false,
        pricingMode || 'fixed', markupPct || 30, brandId || null,
        isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
        productionWarehouseId || null, salesWarehouseId || null,
        unit || null, bigUnit || null, Number(convRate) || 1,
-       Number(yieldQuantity) || 1, yieldUnit || null]
+       Number(yieldQuantity) || 1, yieldUnit || null,
+       imageData || null]
     );
     res.json({ success: true, id });
   } catch (e) { res.json({ success: false, error: e.message }); }
@@ -136,25 +141,31 @@ router.put('/:id', async (req, res) => {
       isSemiFinished, productionUnit, consumesSemiId, consumesSemiQty,
       productionWarehouseId, salesWarehouseId,
       // v5.10.16 — units + batch yield
-      unit, bigUnit, convRate, yieldQuantity, yieldUnit
+      unit, bigUnit, convRate, yieldQuantity, yieldUnit,
+      // v5.12.7 — optional product image (base64 data URL); '' clears it
+      imageData
     } = req.body;
     // Price is ALWAYS manual (user sets it). pricing_mode only controls
     // whether the COST comes from recipes (variable) or manual input (fixed).
-    await db.query(
+    // v5.12.7 — image_data is left untouched when undefined; explicit '' clears.
+    const setImage = (typeof imageData !== 'undefined');
+    const sql =
       `UPDATE menu SET name=?, name_en=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?,
                        pricing_mode=?, markup_pct=?, brand_id=?,
                        is_semi_finished=?, production_unit=?, consumes_semi_id=?, consumes_semi_qty=?,
                        production_warehouse_id=?, sales_warehouse_id=?,
-                       unit=?, big_unit=?, conv_rate=?, yield_quantity=?, yield_unit=?
-       WHERE id=?`,
-      [name, nameEn || null, price || 0, category, cost || 0, stock, minStock, active, pricingMode || 'variable', markupPct || 0,
+                       unit=?, big_unit=?, conv_rate=?, yield_quantity=?, yield_unit=?` +
+      (setImage ? ', image_data=?' : '') +
+      ` WHERE id=?`;
+    const params = [name, nameEn || null, price || 0, category, cost || 0, stock, minStock, active, pricingMode || 'variable', markupPct || 0,
        brandId || null,
        isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
        productionWarehouseId || null, salesWarehouseId || null,
        unit || null, bigUnit || null, Number(convRate) || 1,
-       Number(yieldQuantity) || 1, yieldUnit || null,
-       req.params.id]
-    );
+       Number(yieldQuantity) || 1, yieldUnit || null];
+    if (setImage) params.push(imageData || null);
+    params.push(req.params.id);
+    await db.query(sql, params);
     // v5.10.16 — when this is a semi-finished product, mirror the unit/
     // conversion fields into inv_items so warehouse views, valuations, and
     // recipes that consume it see consistent metadata.

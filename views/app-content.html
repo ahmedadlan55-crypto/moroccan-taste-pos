@@ -5866,6 +5866,18 @@
 
       <input type="hidden" id="miMarkupPct" value="0">
 
+      <!-- v5.12.7 — optional product image. Uploaded base64 stored in
+           menu.image_data; displayed at the top of each cashier card. -->
+      <div class="form-group" style="margin-top:10px;">
+        <label class="form-label">صورة المنتج (اختياري)</label>
+        <input type="file" id="miImageFile" accept="image/*" onchange="_miHandleImageFile(this)" class="form-control">
+        <div id="miImagePreview" style="margin-top:8px; display:none; align-items:center; gap:10px;">
+          <img id="miImagePreviewImg" alt="" style="max-width:120px; max-height:120px; border-radius:10px; border:1px solid #e2e8f0; object-fit:cover;">
+          <button type="button" onclick="_miClearImage()" class="btn btn-light" style="padding:6px 12px;"><i class="fas fa-times"></i> إزالة</button>
+        </div>
+        <input type="hidden" id="miImageData">
+        <small style="color:#64748b; font-size:11px; display:block; margin-top:4px;">تُضغط الصورة تلقائيًا قبل الرفع · يَظهر أعلى كارت المنتج في شاشة الكاشير</small>
+      </div>
 
       <div class="form-group" style="background:#f1f5f9; padding:15px; border-radius:12px; margin-top:10px;">
         <label style="display:flex; align-items:center; gap:10px; cursor:pointer;" class="form-label"><input type="checkbox" id="miActive" style="transform:scale(1.5);"> عرض وتفعيل هذا المنتج على أنظمة الكاشير</label>

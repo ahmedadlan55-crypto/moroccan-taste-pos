@@ -206,6 +206,53 @@ body.ar .pwa-install-btn {
   padding-bottom: 20px;
 }
 
+/* v5.12.7 — optional product image atop each card */
+.pos-item-img {
+  width: 100%;
+  aspect-ratio: 1.4 / 1;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 8px;
+  background: #f1f5f9;
+}
+.pos-item-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* v5.12.7 — hardware-acceleration fallback. Browsers / GPUs that can't
+ * render backdrop-filter (older drivers, GPU-disabled Chrome, integrated
+ * graphics) get a solid white surface instead of a transparent ghost
+ * that visually overlays the product grid. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .pos-cart-area,
+  .cart-footer,
+  .pos-search-bar,
+  .pay-btn {
+    background: #ffffff !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* Force a solid stacking context on the cart so its footer cannot
+ * visually leak onto the product grid even if a parent's filter fails. */
+.pos-cart-area {
+  position: relative;
+  z-index: 2;
+  isolation: isolate;
+}
+.pos-products-area {
+  position: relative;
+  z-index: 1;
+}
+.cart-footer {
+  position: relative !important;
+  flex-shrink: 0;
+}
+
 .pos-item {
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.6));
   backdrop-filter: blur(16px);

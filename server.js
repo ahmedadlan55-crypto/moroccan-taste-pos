@@ -2667,6 +2667,9 @@ async function runMigrations() {
   await addColumnIfMissing('gl_entries', 'warehouse_id', "VARCHAR(50)");
   try { await db.query('CREATE INDEX idx_gle_dims ON gl_entries(brand_id, branch_id)'); } catch(e) {}
 
+  // v5.12.7 — optional base64 product image stored on the menu row
+  await addColumnIfMissing('menu', 'image_data', 'LONGTEXT NULL');
+
   // v5.12.2 — channel as first-class dimension on transactions
   await addColumnIfMissing('sales',       'channel_id',   'VARCHAR(50)');
   await addColumnIfMissing('sales_items', 'channel_id',   'VARCHAR(50)');

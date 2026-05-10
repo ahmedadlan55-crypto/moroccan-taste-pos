@@ -884,7 +884,14 @@ body.ar .pwa-install-btn {
 
 /* v5.12.8 — full-bleed modals on phone-class viewports so the stocktake
  * and shortage interfaces always fit any screen instead of being clipped.
- * Tablets keep the centred card. */
+ * Tablets keep the centred card.
+ * v5.13.1 — DO NOT override the modal-content's padding or overflow on
+ * mobile. Modals like #modalShortage and #modalCashierStocktake use a
+ * carefully tuned flex column layout where each inner section manages
+ * its own padding and scroll region; a wrapper padding+overflow pushed
+ * those sections out of view (regression). Only sizing / corners /
+ * margin are forced now.
+ */
 @media (max-width: 768px) {
   .glass-modal {
     align-items: stretch !important;
@@ -899,8 +906,6 @@ body.ar .pwa-install-btn {
     height: 100dvh !important;
     border-radius: 0 !important;
     margin: 0 !important;
-    padding: 16px 14px 18px !important;
-    overflow-y: auto;
   }
 }
 

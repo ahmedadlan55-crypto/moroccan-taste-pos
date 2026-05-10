@@ -109,6 +109,12 @@ document.addEventListener('DOMContentLoaded', function() {
   applyLang();
   translateUI();
   renderPayButtons();
+  // v5.14.0 — Foodics-mode wires up the category grid + total bar +
+  // payment modal layers. Legacy in-cart pieces (channel/discount/pay)
+  // get hidden via body.foodics-mode CSS.
+  document.body.classList.add('foodics-mode');
+  state.posView = 'categories';
+  renderCategoryGrid();
   renderMenuGrid();
   updateCart();
   updateShiftUI();
@@ -144,6 +150,8 @@ document.addEventListener('DOMContentLoaded', function() {
     posLoadV3Data();
 
     renderPayButtons();
+    // v5.14.0 — rebuild Foodics category grid with fresh menu
+    if (typeof renderCategoryGrid === 'function') renderCategoryGrid();
     renderMenuGrid();
     updateCart();
     updateShiftUI();
@@ -272,6 +280,141 @@ window.renderMenuGrid = function() {
   // V5.7.16 — translate freshly-rendered menu cards (product names from DB)
   if (typeof window.translateNow === 'function') window.translateNow(q('#posItemsGrid'));
 };
+
+// ============================================
+// v5.14.0 — Foodics-style category navigation
+// ============================================
+function _posCategoryIcon(c) {
+  var n = String(c || '').toLowerCase();
+  if (/قهوة|coffee|اسبر|espress|كافي/.test(n)) return 'fa-mug-hot';
+  if (/شاي|tea|كرك|karak/.test(n)) return 'fa-leaf';
+  if (/بارد|cold|عصير|juice|smooth|frap/.test(n)) return 'fa-glass-water';
+  if (/كيك|cake|حلو|sweet|dessert|بسبوس|كنافه/.test(n)) return 'fa-cake-candles';
+  if (/كومبو|combo|وجب|meal/.test(n)) return 'fa-utensils';
+  if (/هدايا|gift|بوكس|box/.test(n)) return 'fa-gift';
+  if (/تذكار|merch|قميص|shirt/.test(n)) return 'fa-shirt';
+  if (/معجن|pastr|سندو|sandwich|كرواس|croiss/.test(n)) return 'fa-bread-slice';
+  if (/ساخن|hot/.test(n)) return 'fa-fire';
+  return 'fa-utensils';
+}
+
+window.renderCategoryGrid = function () {
+  var grid = q('#posCatGrid');
+  if (!grid) return;
+  var cats = (state.categories || []).filter(function (c) { return c && String(c).trim(); });
+  // Build the menu count for each category up-front
+  var menuActive = (state.menu || []).filter(function (m) { return m.active; });
+  if (!cats.length) {
+    grid.innerHTML = '<div class="pos-empty"><i class="fas fa-box-open" style="font-size:48px;display:block;margin-bottom:14px;opacity:.4;"></i>لا توجد فئات — تَأكَّد من تَحميل المنيو</div>';
+    return;
+  }
+  var esc = function (s) { return String(s).replace(/[&<>"'\\]/g, function (c) { return '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4); }); };
+  var html = '<div class="pos-cat-tile pos-cat-all" onclick="posShowAllProducts()">' +
+              '<i class="fas fa-th-large"></i>' +
+              '<span class="pos-cat-name">الكل</span>' +
+              '<span class="pos-cat-count">' + menuActive.length + '</span>' +
+            '</div>';
+  cats.forEach(function (c) {
+    var count = menuActive.filter(function (m) { return m.category === c; }).length;
+    if (count === 0) return; // hide empty cats
+    var icon = _posCategoryIcon(c);
+    var safeName = String(c).replace(/</g, '&lt;');
+    var safeAttr = String(c).replace(/'/g, '&#39;');
+    html += '<div class="pos-cat-tile" onclick="posEnterCategory(\'' + safeAttr + '\')">' +
+              '<i class="fas ' + icon + '"></i>' +
+              '<span class="pos-cat-name">' + safeName + '</span>' +
+              '<span class="pos-cat-count">' + count + '</span>' +
+            '</div>';
+  });
+  grid.innerHTML = html;
+  if (typeof window.translateNow === 'function') window.translateNow(grid);
+};
+
+window.posEnterCategory = function (cat) {
+  state.activeCat = cat;
+  state.posView = 'products';
+  var grid = q('#posCatGrid');     if (grid) grid.style.display = 'none';
+  var prods = q('#posItemsGrid');  if (prods) prods.style.display = '';
+  var bc = q('#posBreadcrumb');    if (bc) bc.style.display = 'flex';
+  var cur = q('#posBreadcrumbCurrent'); if (cur) cur.textContent = cat;
+  renderMenuGrid();
+};
+
+window.posShowAllProducts = function () {
+  state.activeCat = '';
+  state.posView = 'products';
+  var grid = q('#posCatGrid');     if (grid) grid.style.display = 'none';
+  var prods = q('#posItemsGrid');  if (prods) prods.style.display = '';
+  var bc = q('#posBreadcrumb');    if (bc) bc.style.display = 'flex';
+  var cur = q('#posBreadcrumbCurrent'); if (cur) cur.textContent = t('allItems') || 'كل المنتجات';
+  renderMenuGrid();
+};
+
+window.posBackToCategories = function () {
+  state.activeCat = '';
+  state.posView = 'categories';
+  var search = q('#posSearchInput'); if (search) search.value = '';
+  var grid = q('#posCatGrid');     if (grid) grid.style.display = 'grid';
+  var prods = q('#posItemsGrid');  if (prods) prods.style.display = 'none';
+  var bc = q('#posBreadcrumb');    if (bc) bc.style.display = 'none';
+  renderCategoryGrid();
+};
+
+// Top action-bar channel selector mirrors the legacy one in cart-area.
+// Onchange triggers the same posSetChannel path.
+window.posOnChannelTopChange = function () {
+  var sel = q('#posChannelSelTop');
+  if (!sel || !sel.value) return;
+  posSetChannel(sel.value);
+  // sync legacy select if present
+  var legacy = q('#posChannelSel');
+  if (legacy) legacy.value = sel.value;
+};
+
+// Total bar — opens the payment modal. Cart-footer (sidebar) houses the
+// canonical payment UI; we move it into the modal at open and back at
+// close so renderPayButtons / split panel / checkout-btn all keep
+// their existing IDs and bindings.
+window.posOpenPaymentModal = function () {
+  if (!state.cart || !state.cart.length) {
+    if (typeof glassToast === 'function') glassToast(t('emptyCart') || 'السلة فارغة', true);
+    return;
+  }
+  // Sync summary text
+  var sub = q('#cartSubtotalText'), disc = q('#cartDiscText'), tot = q('#cartFinalTotal');
+  if (sub)  q('#payModalSubtotal').textContent = sub.textContent;
+  if (disc) q('#payModalDiscount').textContent = disc.textContent;
+  if (tot)  q('#payModalTotal').textContent    = tot.textContent;
+  // Move payment UI into modal
+  var host = q('#payModalHost');
+  if (host && !host._hasPayment) {
+    var pay = q('#payMethodsContainer');
+    var split = q('#splitPayPanel');
+    var checkout = q('.cart-footer .checkout-btn');
+    if (pay)      host.appendChild(pay);
+    if (split)    host.appendChild(split);
+    if (checkout) host.appendChild(checkout);
+    host._hasPayment = true;
+  }
+  openGlassModal('#modalPayment');
+};
+
+// Sync total bar whenever the cart updates. We wrap the existing
+// updateCart so the legacy summary lines still populate first.
+(function () {
+  var origUpdateCart = window.updateCart;
+  window.updateCart = function () {
+    var ret = origUpdateCart ? origUpdateCart.apply(this, arguments) : undefined;
+    try {
+      var totalEl = q('#cartFinalTotal');
+      var count = (state.cart || []).reduce(function (s, i) { return s + (Number(i.qty) || 0); }, 0);
+      var cntEl = q('#posTotalBarCount'); if (cntEl) cntEl.textContent = count;
+      var amtEl = q('#posTotalBarAmount'); if (amtEl) amtEl.textContent = totalEl ? totalEl.textContent : '0.00 SAR';
+      var bar = q('#posTotalBar'); if (bar) bar.classList.toggle('has-items', count > 0);
+    } catch (e) {}
+    return ret;
+  };
+})();
 
 // =========================================
 // Cart
@@ -605,6 +748,8 @@ window.doCheckout = function() {
       }
 
       glassToast(t('orderSaved'));
+      // v5.14.0 — close the Foodics payment modal on successful sale
+      if (typeof closeGlassModal === 'function') closeGlassModal('#modalPayment');
       printReceipt(res.orderId);
       state.cart = [];
       state.currentDiscount = { name: '', amount: 0 };
@@ -2532,18 +2677,26 @@ window.posLoadV3Data = function() {
 
 // ─── 2. Channel Selector ────────────────────────────────────────────────
 function _posRenderChannelSelector() {
+  // v5.14.0 — populate both the legacy in-cart selector and the new
+  // Foodics top-action-bar selector so they stay in sync.
   var sel = q('#posChannelSel');
-  if (!sel) return;
+  var top = q('#posChannelSelTop');
+  var html;
   if (!state.channels.length) {
-    sel.innerHTML = '<option value="">— لا توجد قنوات —</option>';
+    html = '<option value="">— لا توجد قنوات —</option>';
   } else {
-    sel.innerHTML = state.channels.map(function(c){
-      return '<option value="' + c.id + '"><i class="fas ' + (c.icon||'fa-store') + '"></i> ' + (c.name||c.id) + '</option>';
+    html = state.channels.map(function(c){
+      return '<option value="' + c.id + '">' + (c.name || c.id) + '</option>';
     }).join('');
   }
+  if (sel) sel.innerHTML = html;
+  if (top) top.innerHTML = html;
   // V5.7.16 — force re-translate so channel names like "هنقرستيشن" → "Hungerstation"
   //           appear in English immediately when the user is in English mode.
-  if (typeof window.translateNow === 'function') window.translateNow(sel);
+  if (typeof window.translateNow === 'function') {
+    if (sel) window.translateNow(sel);
+    if (top) window.translateNow(top);
+  }
 }
 
 // V5.7.11 — Switching channels NEVER clears the cart.
@@ -2595,6 +2748,15 @@ function _doSetChannel(ch) {
   }
   var sel = q('#posChannelSel');
   if (sel) sel.value = ch.id;
+  // v5.14.0 — keep the top Foodics selector in sync
+  var selTop = q('#posChannelSelTop');
+  if (selTop) selTop.value = ch.id;
+  var topLabel = q('#posChannelPriceLabelTop');
+  if (topLabel) {
+    topLabel.innerHTML = ch.priceListId
+      ? '<i class="fas fa-link"></i> ' + (ch.priceListName || 'قائمة أسعار خاصة')
+      : '';
+  }
 
   // v5.12.4 — MAIN / Dine-In ALWAYS uses the full menu, regardless of
   // any channel_menu_items rows that may exist. Other channels respect

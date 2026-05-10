@@ -57,7 +57,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   <link rel="stylesheet" href="/shared/common.css">
   <link rel="stylesheet" href="/shared/header.css">
-  <link rel="stylesheet" href="/pos/style.css?v=4">
+  <link rel="stylesheet" href="/pos/style.css?v=6">
   <link rel="stylesheet" href="/pos/keyboard.css?v=5">
 
   <script defer src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
@@ -68,7 +68,7 @@
   <script defer src="/shared/auth.js"></script>
   <script defer src="/shared/header.js"></script>
   <script defer src="/shared/device-info.js?v=1"></script>
-  <script defer src="/pos/app.js?v=5"></script>
+  <script defer src="/pos/app.js?v=6"></script>
   <script defer src="/pos/keyboard.js?v=5"></script>
 </head>
 <body class="ar" data-page="pos" data-show-shift="1">
@@ -82,6 +82,25 @@
   <!-- Compact POS Top Bar -->
   <header id="appHeader" class="app-header pos-top-bar"></header>
 
+  <!-- v5.14.0 — Foodics action bar (channel + discounts) -->
+  <div class="pos-action-bar" id="posActionBar">
+    <div class="pos-action-channel">
+      <i class="fas fa-store" style="color:#7c3aed;"></i>
+      <select id="posChannelSelTop" class="pos-action-select" onchange="posOnChannelTopChange()">
+        <option value="">— لم تُحمَّل —</option>
+      </select>
+      <span class="pos-action-pricelist" id="posChannelPriceLabelTop"></span>
+    </div>
+    <div class="pos-action-discounts">
+      <button class="pos-action-btn" onclick="posOpenLineDiscountModal()" title="خصم على صنف">
+        <i class="fas fa-cube"></i> <span>خصم صنف</span>
+      </button>
+      <button class="pos-action-btn" onclick="posOpenInvoiceDiscountModal()" title="خصم على الفاتورة">
+        <i class="fas fa-receipt"></i> <span>خصم فاتورة</span>
+      </button>
+    </div>
+  </div>
+
   <!-- POS Main Layout -->
   <main class="pos-main">
     <!-- Products Area -->
@@ -90,8 +109,21 @@
         <i class="fas fa-search"></i>
         <input type="text" id="posSearchInput" placeholder="البحث برقم، أو اسم المنتج..." data-i18n-placeholder="searchPlaceholder" oninput="renderMenuGrid()" autocomplete="off" data-vk="1">
       </div>
+
+      <!-- v5.14.0 — Foodics breadcrumb (visible in products view) -->
+      <div class="pos-breadcrumb" id="posBreadcrumb" style="display:none;">
+        <button onclick="posBackToCategories()"><i class="fas fa-arrow-right"></i> الفئات</button>
+        <span class="pos-breadcrumb-current" id="posBreadcrumbCurrent"></span>
+      </div>
+
+      <!-- v5.14.0 — Foodics category tiles (state A: visible by default) -->
+      <div class="pos-cat-grid" id="posCatGrid"></div>
+
+      <!-- Legacy horizontal pills (hidden in foodics-mode) -->
       <div class="pos-categories" id="posCatTabs"></div>
-      <div class="pos-grid" id="posItemsGrid"></div>
+
+      <!-- Products grid (state B: visible after a category is picked) -->
+      <div class="pos-grid" id="posItemsGrid" style="display:none;"></div>
     </section>
 
     <!-- Cart Area (Glass) -->
@@ -175,6 +207,36 @@
       </div>
     </aside>
   </main>
+
+  <!-- v5.14.0 — Foodics sticky total bar -->
+  <div class="pos-total-bar" id="posTotalBar" onclick="posOpenPaymentModal()">
+    <div class="pos-total-bar-cart">
+      <i class="fas fa-shopping-basket"></i>
+      <span class="pos-total-bar-count" id="posTotalBarCount">0</span>
+      <span class="pos-total-bar-label">صنف</span>
+    </div>
+    <div class="pos-total-bar-amount" id="posTotalBarAmount">0.00 SAR</div>
+    <div class="pos-total-bar-cta">
+      <span>اضغط للدفع</span>
+      <i class="fas fa-arrow-left"></i>
+    </div>
+  </div>
+
+  <!-- v5.14.0 — Foodics payment modal -->
+  <div id="modalPayment" class="glass-modal hidden">
+    <div class="glass-modal-content" style="max-width:560px;">
+      <div class="glass-modal-title">
+        <span><i class="fas fa-credit-card" style="color:#7c3aed;"></i> اختر طريقة الدفع</span>
+        <button class="glass-modal-close" onclick="closeGlassModal('#modalPayment')">&times;</button>
+      </div>
+      <div class="pay-modal-summary">
+        <div class="pay-modal-sum-row"><span>المجموع الفرعي</span><strong id="payModalSubtotal">0.00</strong></div>
+        <div class="pay-modal-sum-row pay-modal-discount"><span>الخصم</span><strong id="payModalDiscount">0.00</strong></div>
+        <div class="pay-modal-sum-row pay-modal-total"><span>الإجمالي</span><strong id="payModalTotal">0.00 SAR</strong></div>
+      </div>
+      <div id="payModalHost"><!-- payment buttons + split panel + checkout get moved here on open --></div>
+    </div>
+  </div>
 
   <!-- Mobile Floating Cart Button -->
   <div class="mobile-cart-btn" id="mobileCartBtn" onclick="toggleMobileCart()">

@@ -4682,8 +4682,12 @@ function loadDashAdjustments() {
           var statusBadge = a.status === 'approved'
             ? '<span class="badge green">معتمد ✓</span>'
             : '<span class="badge yellow">بانتظار الاعتماد</span>';
+          // v5.10.38 — same "(من الفرع)" hint for orphan adjustments
+          var whHint = a.warehouseViaBranch
+            ? '<small style="font-size:9px;color:#92400e;margin-inline-start:4px;opacity:0.85;">(من الفرع)</small>'
+            : '';
           var whCell = a.warehouseName
-            ? '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(a.warehouseName) + '</span>'
+            ? '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(a.warehouseName) + '</span>' + whHint
             : '<span style="color:#cbd5e1;font-size:11px;">—</span>';
           // v5.10.32 — Branch pill (teal). Falls back to "—" for legacy
           // adjustments created before branch_id was wired through.
@@ -10173,8 +10177,15 @@ function loadDashStocktake() {
         res.forEach(function(st) {
           var dateStr = st.date ? new Date(st.date).toLocaleString('ar-SA') : '';
           var varColor = st.totalVariance === 0 ? '#16a34a' : (st.totalVariance > 0 ? '#2563eb' : '#ef4444');
+          // v5.10.38 — When warehouse name was resolved via the branch
+          // (orphan record, warehouse_id was NULL on the stocktake row),
+          // append a small italic hint so admins recognise it as data
+          // that needs to be reassigned.
+          var whHint = st.warehouseViaBranch
+            ? '<small style="font-size:9px;color:#92400e;margin-inline-start:4px;opacity:0.85;">(من الفرع)</small>'
+            : '';
           var whCell = st.warehouseName
-            ? '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(st.warehouseName) + '</span>'
+            ? '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(st.warehouseName) + '</span>' + whHint
             : '<span style="color:#cbd5e1;font-size:11px;">—</span>';
           // v5.10.32 — Branch pill (teal). Shows "—" when the stocktake
           // has no branch attached (legacy records, admin-warehouse

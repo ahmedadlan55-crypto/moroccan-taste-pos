@@ -3255,12 +3255,22 @@ router.get('/stocktakes', async (req, res) => {
 
     // v5.10.32 — JOIN branches so each row carries branch context the
     // UI can render in its own column.
+    // v5.10.38 — Also JOIN through the branch to its linked warehouse so
+    // we can fall back to the branch's warehouse name when the stocktake
+    // row itself has warehouse_id=NULL. Pre-v5.10.35 cashier submissions
+    // saved warehouse_id=NULL but had a valid branch_id; without this
+    // fallback the UI showed "—" for the warehouse and the owner couldn't
+    // tell where the cashier was working.
     const baseSelect =
-      'SELECT s.*, w.name AS warehouse_name, w.code AS warehouse_code, ' +
-      '       br.name AS branch_name, br.code AS branch_code ' +
+      'SELECT s.*, ' +
+      '       COALESCE(w.name, br_w.name) AS warehouse_name, ' +
+      '       COALESCE(w.code, br_w.code) AS warehouse_code, ' +
+      '       br.name AS branch_name, br.code AS branch_code, ' +
+      '       (s.warehouse_id IS NULL AND br_w.id IS NOT NULL) AS warehouse_via_branch ' +
       'FROM stocktakes s ' +
       'LEFT JOIN warehouses w ON w.id = s.warehouse_id ' +
-      'LEFT JOIN branches br ON br.id = s.branch_id';
+      'LEFT JOIN branches br ON br.id = s.branch_id ' +
+      'LEFT JOIN warehouses br_w ON br_w.id = br.warehouse_id';
     const order = ' ORDER BY s.stocktake_date DESC, s.id DESC';
 
     let rows;
@@ -3271,7 +3281,7 @@ router.get('/stocktakes', async (req, res) => {
       // Fallback for very old schemas without branches table or s.branch_id
       const legacySelect =
         'SELECT s.*, w.name AS warehouse_name, w.code AS warehouse_code, ' +
-        '       NULL AS branch_name, NULL AS branch_code ' +
+        '       NULL AS branch_name, NULL AS branch_code, 0 AS warehouse_via_branch ' +
         'FROM stocktakes s LEFT JOIN warehouses w ON w.id = s.warehouse_id';
       [rows] = await db.query(legacySelect + whereSql + order + ' LIMIT ? OFFSET ?',
         params.concat([limit, offset]));
@@ -3282,6 +3292,11 @@ router.get('/stocktakes', async (req, res) => {
       warehouseId: s.warehouse_id || '',
       warehouseName: s.warehouse_name || '',
       warehouseCode: s.warehouse_code || '',
+      // v5.10.38 — flag rows whose warehouse name was derived from the
+      // branch instead of saved directly on the stocktake. UI can show
+      // this with a subtle hint ("from branch") so admins know it's an
+      // orphan they may want to reassign.
+      warehouseViaBranch: !!s.warehouse_via_branch,
       // v5.10.32 — surface branch context so the UI can show it
       branchId:   s.branch_id   || '',
       branchName: s.branch_name || '',
@@ -3444,12 +3459,18 @@ router.get('/adjustments', async (req, res) => {
     const wantsPaginated = req.query.paginated === '1' || req.query.limit != null || req.query.offset != null;
 
     // v5.10.32 — JOIN branches so each row carries branch context.
+    // v5.10.38 — fall back to branch.warehouse_id when a.warehouse_id
+    // is NULL, same pattern as /stocktakes.
     const baseSelect =
-      'SELECT a.*, w.name AS warehouse_name, w.code AS warehouse_code, ' +
-      '       br.name AS branch_name, br.code AS branch_code ' +
+      'SELECT a.*, ' +
+      '       COALESCE(w.name, br_w.name) AS warehouse_name, ' +
+      '       COALESCE(w.code, br_w.code) AS warehouse_code, ' +
+      '       br.name AS branch_name, br.code AS branch_code, ' +
+      '       (a.warehouse_id IS NULL AND br_w.id IS NOT NULL) AS warehouse_via_branch ' +
       'FROM stock_adjustments a ' +
       'LEFT JOIN warehouses w ON w.id = a.warehouse_id ' +
-      'LEFT JOIN branches br ON br.id = a.branch_id';
+      'LEFT JOIN branches br ON br.id = a.branch_id ' +
+      'LEFT JOIN warehouses br_w ON br_w.id = br.warehouse_id';
     const order = ' ORDER BY a.adjustment_date DESC, a.id DESC';
 
     let rows;
@@ -3464,7 +3485,10 @@ router.get('/adjustments', async (req, res) => {
     } catch (_) {
       // Fallback for very old schemas without warehouse_id on stock_adjustments
       [rows] = await db.query('SELECT * FROM stock_adjustments ORDER BY adjustment_date DESC LIMIT ?', [limit]);
-      rows = rows.map(r => Object.assign({}, r, { warehouse_name: null, warehouse_code: null }));
+      rows = rows.map(r => Object.assign({}, r, {
+        warehouse_name: null, warehouse_code: null, warehouse_via_branch: 0,
+        branch_name: null, branch_code: null
+      }));
     }
     const items = rows.map(a => ({
       id: a.id, date: a.adjustment_date, reason: a.reason,
@@ -3475,6 +3499,7 @@ router.get('/adjustments', async (req, res) => {
       warehouseId: a.warehouse_id || '',
       warehouseName: a.warehouse_name || '',
       warehouseCode: a.warehouse_code || '',
+      warehouseViaBranch: !!a.warehouse_via_branch,
       // v5.10.32 — branch context surfaced on each row
       branchId:   a.branch_id   || '',
       branchName: a.branch_name || '',

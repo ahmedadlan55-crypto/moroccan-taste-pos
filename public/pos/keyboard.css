@@ -9,25 +9,51 @@
  *   • Disable browser tap-zoom + tap-delay via touch-action
  * ───────────────────────────────────────────────────────────────── */
 
+/* v5.14.9 — Left-side drawer on tablet / desktop. Slides in from the
+ * left edge of the viewport, covers ~45% of width (capped 520px). The
+ * body shifts right by the same amount so products / cart are not
+ * obscured. On phones (< 768px) the keyboard reverts to the original
+ * bottom drawer because a left drawer would consume the entire screen
+ * on a 5-inch device. */
 #vkKeyboard {
   position: fixed;
-  inset: auto 0 0 0;
+  inset: 0 auto 0 0;
+  width: min(45vw, 520px);
+  max-width: 520px;
   z-index: 9999;
   background: rgba(243, 244, 247, 0.96);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   backdrop-filter: saturate(180%) blur(20px);
-  padding: 8px 6px 10px;
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08);
-  transform: translateY(110%);
-  transition: transform 180ms cubic-bezier(.32, .72, 0, 1);
+  padding: calc(10px + env(safe-area-inset-top, 0)) 8px calc(10px + env(safe-area-inset-bottom, 0));
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 8px 0 24px rgba(0, 0, 0, 0.10);
+  transform: translateX(-110%);
+  transition: transform 220ms cubic-bezier(.32, .72, 0, 1);
   will-change: transform;
   user-select: none;
   -webkit-user-select: none;
   touch-action: manipulation;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Tahoma", sans-serif;
+  display: flex; flex-direction: column;
+  overflow-y: auto;
 }
-#vkKeyboard.vk-open { transform: translateY(0); }
+#vkKeyboard.vk-open { transform: translateX(0); }
+
+@media (max-width: 767px) {
+  /* Phones: keep the original bottom-drawer behaviour — a left drawer
+   * would eat the whole screen on a 5-inch device. */
+  #vkKeyboard {
+    inset: auto 0 0 0;
+    width: 100%; max-width: none;
+    padding: 8px 6px calc(10px + env(safe-area-inset-bottom, 0));
+    border-right: 0;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.10);
+    transform: translateY(110%);
+    transition: transform 180ms cubic-bezier(.32, .72, 0, 1);
+  }
+  #vkKeyboard.vk-open { transform: translateY(0); }
+}
 
 /* Header bar — minimal, just a hide chevron + label */
 #vkKeyboard .vk-bar {
@@ -150,9 +176,19 @@
   font-weight: 500;
 }
 
-/* Body padding to push content above keyboard while open */
+/* v5.14.9 — Body padding shifts content out of the keyboard's way.
+ * The drawer is on the visual left on tablet/desktop, so push content
+ * right (padding-left). On phones the keyboard reverts to a bottom
+ * drawer, so push content up (padding-bottom). */
 body.vk-active {
-  padding-bottom: 280px;
+  padding-left: min(45vw, 520px);
+  transition: padding-left 220ms;
+}
+@media (max-width: 767px) {
+  body.vk-active {
+    padding-left: 0;
+    padding-bottom: 280px;
+  }
 }
 
 body.vk-disabled #vkKeyboard {
@@ -179,8 +215,6 @@ body.vk-disabled #vkKeyboard {
 #vkKeyboard.vk-style-phone .vk-key.vk-mode,
 #vkKeyboard.vk-style-phone .vk-key.vk-lang,
 #vkKeyboard.vk-style-phone .vk-key.vk-return { font-size: 13px; }
-body.vk-active.vk-active { padding-bottom: 280px; }
-
 /* Compact viewport — auto-shrink even on tablet style */
 @media (max-width: 480px) {
   #vkKeyboard { padding: 6px 4px 8px; }

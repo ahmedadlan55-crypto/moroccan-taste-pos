@@ -420,11 +420,12 @@
   function bindInput(el) {
     if (!el || el._vkBound) return;
     el._vkBound = true;
-    // v5.14.8 — Keyboard no longer auto-opens on input focus. The
-    // cashier opens it explicitly via the floating #vkToggleBtn FAB.
-    // We still track the focused input so the toggle button knows
-    // which field to type into when pressed.
-    el.addEventListener('focus', function () { state.target = el; });
+    // v5.14.9 — Auto-open on focus is back per owner request. The
+    // dedicated #vkToggleBtn FAB stays as a manual override (close /
+    // reopen without re-focusing).
+    var open = function () { state.target = el; show(el); };
+    el.addEventListener('focus', open);
+    el.addEventListener('click', open);
   }
 
   function scanAndBind(root) {

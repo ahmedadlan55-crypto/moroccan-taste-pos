@@ -1254,7 +1254,16 @@ window.printReceiptWindow = function() {
       // force vector-quality strokes instead of bitmap fallbacks.
       '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-weight:inherit;}' +
       'body{font-family:"Tahoma","Cairo","Segoe UI","Arial Black",Arial,sans-serif;padding:10px;width:300px;margin:0 auto;font-size:13px;color:#000;background:#fff;font-weight:600;-webkit-font-smoothing:none;-moz-osx-font-smoothing:never;font-smooth:never;text-rendering:geometricPrecision;}' +
-      '@media print{@page{margin:0;size:80mm auto;}body{padding:6px 4px;width:100%;font-weight:700;}}' +
+      // v5.14.9 — Thermal printer override. Cheap thermal heads do
+      // not render light strokes or grey colors. Force EVERY element
+      // to pure black + bold + a thin text-stroke for darker ink. Any
+      // 9–10px inline font-size gets bumped to 11px so it survives on
+      // 80mm paper.
+      '@media print{@page{margin:0;size:80mm auto;}' +
+        'body{padding:6px 4px;width:100%;font-weight:700;}' +
+        '*,*::before,*::after{color:#000 !important;font-weight:700 !important;-webkit-text-stroke:0.25px #000;text-shadow:0 0 0.4px #000;}' +
+        '[style*="font-size:9px"],[style*="font-size:10px"]{font-size:11px !important;}' +
+      '}' +
     '</style></head><body>' +
 
     (r.logoUrl ? '<div style="text-align:center;margin-bottom:4px;"><img src="' + r.logoUrl + '" style="max-width:90px;max-height:90px;object-fit:contain;"></div>' : '') +
@@ -2938,6 +2947,31 @@ function _doSetChannel(ch) {
   var isMain = (_code === 'MAIN') || (_ctype === 'main') || (_code === 'MAIN' && _ctype === 'dine_in');
   state.activeChannel.useFullMenu = isMain;
 
+  // v5.14.9 — Helper: refresh BOTH the category tiles and the products
+  // grid after a channel switch. Previously only renderMenuGrid was
+  // called, so the category tiles kept stale counts from the previous
+  // channel — clicking a tile then hit an empty grid because the new
+  // channel had no items in that category. Also, if the cashier was
+  // deep in a category that doesn't exist on the new channel, fall
+  // back to the category view so they see what IS available.
+  var _refreshChannelViews = function () {
+    if (state.activeCat) {
+      var _pool = (state.menu || []).filter(function (m) { return m.active; });
+      if (state.activeChannel && !state.activeChannel.useFullMenu) {
+        var _allow = new Set((state.channelMenuItems || []).map(function (r) { return String(r.menuItemId); }));
+        _pool = _pool.filter(function (m) { return _allow.has(String(m.id)); });
+        if (state._channelCustomItems) _pool = _pool.concat(state._channelCustomItems);
+      }
+      var _hasItems = _pool.some(function (m) { return m.category === state.activeCat; });
+      if (!_hasItems && typeof window.posBackToCategories === 'function') {
+        window.posBackToCategories();
+        return;
+      }
+    }
+    if (typeof renderCategoryGrid === 'function') renderCategoryGrid();
+    if (typeof renderMenuGrid === 'function') renderMenuGrid();
+  };
+
   if (isMain) {
     // Skip the channel-menu fetch entirely — saves a round-trip and
     // guarantees the full menu shows even if MAIN has stale rows in
@@ -2945,10 +2979,10 @@ function _doSetChannel(ch) {
     state.channelMenuItems = [];
     state.channelOverrideMap = {};
     _posApplyChannelPrices();
-    if (typeof renderMenuGrid === 'function') renderMenuGrid();
+    _refreshChannelViews();
     _ensureMenuLoaded(function () {
       _posApplyChannelPrices();
-      if (typeof renderMenuGrid === 'function') renderMenuGrid();
+      _refreshChannelViews();
     });
   } else {
     // Read from the prefetch cache for instant switching; refresh in
@@ -2965,15 +2999,10 @@ function _doSetChannel(ch) {
       });
       // v5.14.7 — Strict per-channel menu: NO fallback. If the admin
       // has configured zero items for this channel, the cashier sees
-      // an empty grid. The owner explicitly wants channel isolation —
-      // a delivery channel should never silently expose dine-in items
-      // just because its channel_menu_items list is empty.
-      // renderMenuGrid handles the empty state via its channelEmpty
-      // branch (line ~210).
-      // v5.12.7 — make sure state.menu has items before we filter by it
+      // an empty grid.
       _ensureMenuLoaded(function () {
         _posApplyChannelPrices();
-        if (typeof renderMenuGrid === 'function') renderMenuGrid();
+        _refreshChannelViews();
       });
     };
     if (cached) applyRows(cached);
@@ -2981,16 +3010,13 @@ function _doSetChannel(ch) {
     _posCallAPI('GET', '/channel-menus/' + ch.id + branchQ, null, function (rows) {
       if (rows && rows.error) {
         // v5.14.7 — Strict: never silently swap to the full menu on a
-        // fetch failure. Show an empty grid + a one-line console error;
-        // the cashier can refresh or report it. Falling back to the
-        // full menu would let off-channel items get sold under (e.g.)
-        // a delivery channel, which is exactly the leak we're closing.
+        // fetch failure. Show an empty grid + a one-line console error.
         console.error('[channel-menu] fetch error for', ch.id, ':', rows.error);
         if (!cached) {
           state.channelMenuItems = [];
           state.channelOverrideMap = {};
           _posApplyChannelPrices();
-          if (typeof renderMenuGrid === 'function') renderMenuGrid();
+          _refreshChannelViews();
         }
         return;
       }
@@ -3959,7 +3985,15 @@ function _openShiftPrintWindow(reportHtml) {
       '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-weight:inherit;}' +
       'body{font-family:"Tahoma","Cairo","Segoe UI","Arial Black",Arial,sans-serif;padding:8px;width:300px;margin:0 auto;font-size:13px;color:#000;background:#fff;font-weight:600;-webkit-font-smoothing:none;-moz-osx-font-smoothing:never;font-smooth:never;text-rendering:geometricPrecision;}' +
       'table{width:100%;border-collapse:collapse;}' +
-      '@media print{@page{margin:0;size:80mm auto;}body{padding:4px;width:100%;font-weight:700;}}' +
+      // v5.14.9 — Same thermal-printer override as printReceiptWindow:
+      // force every element to pure black + bold + a thin text-stroke
+      // so light strokes and grey labels don't disappear on cheap
+      // thermal heads. Tiny 9–10px text bumped to 11px.
+      '@media print{@page{margin:0;size:80mm auto;}' +
+        'body{padding:4px;width:100%;font-weight:700;}' +
+        '*,*::before,*::after{color:#000 !important;font-weight:700 !important;-webkit-text-stroke:0.25px #000;text-shadow:0 0 0.4px #000;}' +
+        '[style*="font-size:9px"],[style*="font-size:10px"]{font-size:11px !important;}' +
+      '}' +
     '</style></head><body>' +
     reportHtml +
     '</body></html>';

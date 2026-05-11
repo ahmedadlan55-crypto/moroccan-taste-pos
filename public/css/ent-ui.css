@@ -779,10 +779,76 @@
   min-width: 130px;
   height: 40px;
 }
+/* v5.10.46 — search field is a moderate-sized pill with the icon
+ *   forced to the correct side via explicit physical RTL/LTR rules.
+ *   The original style.css used inset-inline-start which proved
+ *   unreliable on some browsers + behind some parent direction
+ *   contexts (the user reported the icon appearing on the LEFT in
+ *   RTL — wrong side, wrong size). */
 .wo-section .wh-fb-search {
-  flex: 2 1 240px;
-  min-width: 220px;
-  max-width: 400px;
+  position: relative;
+  flex: 1 1 220px;
+  min-width: 200px;
+  max-width: 320px;
+}
+.wo-section .wh-fb-search i {
+  position: absolute !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  color: var(--ent-text-mute2);
+  z-index: 1;
+  pointer-events: none;
+  font-size: 14px;
+  /* Default position (LTR fallback) */
+  left: 14px;
+  right: auto;
+}
+.wo-section .wh-fb-search input.form-control {
+  width: 100%;
+  height: 40px;
+  font-size: 13px;
+  border: 1.5px solid var(--ent-border);
+  border-radius: 10px;
+  background: var(--ent-surface);
+  /* Default padding (LTR fallback) */
+  padding-left: 38px;
+  padding-right: 12px;
+  font-family: inherit;
+  box-sizing: border-box;
+  transition: border-color .15s var(--ent-ease), box-shadow .15s var(--ent-ease);
+}
+.wo-section .wh-fb-search input.form-control:focus {
+  outline: none;
+  border-color: var(--ent-primary);
+  box-shadow: 0 0 0 3px rgba(79,70,229,.15);
+}
+.wo-section .wh-fb-search input.form-control::placeholder {
+  color: var(--ent-text-mute2);
+  font-weight: 500;
+}
+
+/* RTL — icon on the right side (the natural start of the field) */
+html[dir="rtl"] .wo-section .wh-fb-search i,
+[dir="rtl"] .wo-section .wh-fb-search i {
+  right: 14px !important;
+  left: auto !important;
+}
+html[dir="rtl"] .wo-section .wh-fb-search input.form-control,
+[dir="rtl"] .wo-section .wh-fb-search input.form-control {
+  padding-right: 38px !important;
+  padding-left: 12px !important;
+}
+
+/* LTR — icon on the left side */
+html[dir="ltr"] .wo-section .wh-fb-search i,
+[dir="ltr"] .wo-section .wh-fb-search i {
+  left: 14px !important;
+  right: auto !important;
+}
+html[dir="ltr"] .wo-section .wh-fb-search input.form-control,
+[dir="ltr"] .wo-section .wh-fb-search input.form-control {
+  padding-left: 38px !important;
+  padding-right: 12px !important;
 }
 .wo-section .wh-fb-select:focus,
 .wo-section .wh-filter-bar input:focus {

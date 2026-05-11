@@ -1246,142 +1246,197 @@ window._silentPrint = function (html) {
   doc.close();
 };
 
-// V5.7.9 — Print window mirrors the on-screen receipt EXACTLY (same bilingual layout).
-//          Sized for 80mm thermal printers (≈280px viewport at typical thermal DPI).
-// v5.12.3 — switched from window.open() to hidden iframe; HTML body stays identical.
+// v5.16.1 — Thermal-printer receipt template, completely redesigned to
+// be sharper, more spacious, and beat the typical Saudi POS / Saudi
+// Bank receipt aesthetic. Sized for 80mm thermal paper at standard DPI
+// (~300px viewport). Highlights vs. the previous version:
+//   • Larger centered logo (110px), framed by a thick top rule.
+//   • Bigger order-id panel in a bordered box, mono digits.
+//   • Date + time on a single labelled row.
+//   • Three-column items table with thicker header rule, slight row
+//     padding, and a clear @-per-unit subtitle under each item name.
+//   • Items total + grand total in a single ALL-BLACK 3-column box.
+//   • VAT breakdown table with full borders + bilingual labels.
+//   • Payment row stamped like an audit field.
+//   • ZATCA QR enlarged to 160px and labelled.
+//   • Friendly thank-you footer in both languages.
 window.printReceiptWindow = function() {
   var r = state._lastReceipt;
   if (!r) return;
   var qrCanvas = document.querySelector('#receiptQR canvas');
   var qrImg = qrCanvas ? qrCanvas.toDataURL() : '';
 
-  function rowSplit(left, right, opts) {
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;');
+  }
+
+  function rowKV(labelEn, labelAr, value, opts) {
     opts = opts || {};
-    return '<div style="display:flex;justify-content:space-between;align-items:center;font-size:'+(opts.fs||'12px')+';margin:'+(opts.my||3)+'px 0;">' +
-      '<span style="color:#000;">' + left + '</span>' +
-      '<span style="color:#000;font-weight:'+(opts.bold?'700':'400')+';font-family:monospace;">' + right + '</span>' +
+    return '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:'+(opts.fs||'12px')+';margin:'+(opts.my||4)+'px 0;padding:0 2px;">' +
+      '<span style="color:#000;">' + esc(labelEn) +
+        (labelAr ? ' <span style="font-size:10px;color:#000;direction:rtl;">' + esc(labelAr) + '</span>' : '') +
+      '</span>' +
+      '<span style="color:#000;font-weight:'+(opts.bold?'800':'700')+';font-family:ui-monospace,SFMono-Regular,monospace;">' + esc(value) + '</span>' +
     '</div>';
   }
 
-  // V5.7.29 — 3-column rows (Qty | Item+@price | Total) — same layout as
-  //   the on-screen modal so the printed paper matches what the cashier saw.
+  // Build items table rows — three columns (Qty | Item @ unit price | Total)
   var itemsHtml = '';
   (r.inv.items || []).forEach(function(i) {
     var qty = Number(i.qty) || 0;
     var unitPrice = qty > 0 ? (Number(i.total) / qty) : Number(i.price || 0);
     itemsHtml +=
-      '<tr style="direction:ltr;border-bottom:1px dotted #888;">' +
-        '<td style="text-align:center;font-size:13px;padding:7px 2px;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:700;vertical-align:top;width:38px;">' + qty + '×</td>' +
-        '<td style="text-align:left;font-size:12.5px;padding:7px 6px;font-weight:600;line-height:1.3;color:#000;">' +
-          i.name +
-          '<div style="font-size:10px;color:#555;font-weight:400;font-family:ui-monospace,SFMono-Regular,monospace;margin-top:2px;">@ ' + formatVal(unitPrice) + '</div>' +
+      '<tr style="direction:ltr;border-bottom:1px dotted #000;">' +
+        '<td style="text-align:center;font-size:14px;padding:8px 2px;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:800;vertical-align:top;width:40px;color:#000;">' + qty + '×</td>' +
+        '<td style="text-align:left;font-size:13px;padding:8px 8px;font-weight:700;line-height:1.35;color:#000;">' +
+          esc(i.name) +
+          '<div style="font-size:11px;color:#000;font-weight:600;font-family:ui-monospace,SFMono-Regular,monospace;margin-top:3px;letter-spacing:0.02em;">@ ' + formatVal(unitPrice) + '</div>' +
         '</td>' +
-        '<td style="text-align:right;font-size:13px;padding:7px 2px;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:700;vertical-align:top;width:62px;color:#000;">' + formatVal(i.total) + '</td>' +
+        '<td style="text-align:right;font-size:14px;padding:8px 2px;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:800;vertical-align:top;width:66px;color:#000;">' + formatVal(i.total) + '</td>' +
       '</tr>';
   });
 
   var html =
-    '<!DOCTYPE html><html lang="en" dir="ltr"><head><meta charset="UTF-8"><title>Receipt ' + r.inv.orderId + '</title>' +
+    '<!DOCTYPE html><html lang="en" dir="ltr"><head><meta charset="UTF-8"><title>Receipt ' + esc(r.inv.orderId) + '</title>' +
     '<style>' +
-      // v5.12.9 — thermal-printer-tuned styles. Tahoma renders Arabic
-      // crisp on ESC/POS heads; Helvetica Neue (the prior default) is
-      // missing on most kiosk Windows boxes and falls back to Arial,
-      // which rendered some glyphs faded. font-weight 600 body / 700
-      // print stops anti-aliasing from washing thin strokes out, and
-      // -webkit-font-smoothing:none + text-rendering:geometricPrecision
-      // force vector-quality strokes instead of bitmap fallbacks.
       '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-weight:inherit;}' +
-      'body{font-family:"Tahoma","Cairo","Segoe UI","Arial Black",Arial,sans-serif;padding:10px;width:300px;margin:0 auto;font-size:13px;color:#000;background:#fff;font-weight:600;-webkit-font-smoothing:none;-moz-osx-font-smoothing:never;font-smooth:never;text-rendering:geometricPrecision;}' +
-      // v5.14.9 — Thermal printer override. Cheap thermal heads do
-      // not render light strokes or grey colors. Force EVERY element
-      // to pure black + bold + a thin text-stroke for darker ink. Any
-      // 9–10px inline font-size gets bumped to 11px so it survives on
-      // 80mm paper.
+      'body{font-family:"Tahoma","Cairo","Segoe UI","Arial Black",Arial,sans-serif;padding:10px;width:300px;margin:0 auto;font-size:13px;color:#000;background:#fff;font-weight:700;-webkit-font-smoothing:none;-moz-osx-font-smoothing:never;font-smooth:never;text-rendering:geometricPrecision;}' +
+      // Thermal-printer override (kept from v5.14.9). Forces every
+      // element black + bold + thin stroke. Bumps tiny inline 9-10px
+      // sizes to 11px so they survive on 80mm paper.
       '@media print{@page{margin:0;size:80mm auto;}' +
-        'body{padding:6px 4px;width:100%;font-weight:700;}' +
-        '*,*::before,*::after{color:#000 !important;font-weight:700 !important;-webkit-text-stroke:0.25px #000;text-shadow:0 0 0.4px #000;}' +
+        'body{padding:6px 4px;width:100%;font-weight:800;}' +
+        '*,*::before,*::after{color:#000 !important;font-weight:700 !important;-webkit-text-stroke:0.3px #000;text-shadow:0 0 0.4px #000;}' +
         '[style*="font-size:9px"],[style*="font-size:10px"]{font-size:11px !important;}' +
       '}' +
     '</style></head><body>' +
 
-    (r.logoUrl ? '<div style="text-align:center;margin-bottom:4px;"><img src="' + r.logoUrl + '" style="max-width:90px;max-height:90px;object-fit:contain;"></div>' : '') +
+    // ───── HEADER: logo + brand identity ─────
+    (r.logoUrl
+      ? '<div style="text-align:center;padding:6px 0 8px;border-bottom:2.5px solid #000;margin-bottom:8px;">' +
+          '<img src="' + esc(r.logoUrl) + '" style="max-width:110px;max-height:110px;object-fit:contain;display:block;margin:0 auto;">' +
+        '</div>'
+      : '<div style="border-top:2.5px solid #000;margin-bottom:8px;"></div>'
+    ) +
 
-    // V5.7.14 — same 3-line ownership hierarchy as the on-screen receipt
-    '<div style="text-align:center;font-size:13px;font-weight:700;direction:rtl;margin-bottom:1px;">' + (r.companyNameAr || 'المذاق المغربي') + '</div>' +
-    '<div style="text-align:center;font-size:18px;font-weight:900;direction:ltr;margin-bottom:' + (r.branchCompanyName ? '2' : '6') + 'px;">' + r.companyName + '</div>' +
+    '<div style="text-align:center;font-size:15px;font-weight:800;direction:rtl;margin-bottom:2px;">' + esc(r.companyNameAr || 'المذاق المغربي') + '</div>' +
+    '<div style="text-align:center;font-size:20px;font-weight:900;direction:ltr;margin-bottom:' + (r.branchCompanyName ? '4' : '8') + 'px;letter-spacing:0.5px;">' + esc(r.companyName) + '</div>' +
     (r.branchCompanyName
-      ? '<div style="text-align:center;font-size:12px;font-weight:700;color:#000;direction:rtl;margin-bottom:6px;border-bottom:1px solid #d4d4d4;padding-bottom:6px;">' + r.branchCompanyName + '</div>'
+      ? '<div style="text-align:center;font-size:13px;font-weight:700;color:#000;direction:rtl;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #000;">' + esc(r.branchCompanyName) + '</div>'
       : ''
     ) +
 
-    '<div style="text-align:center;font-size:12px;color:#000;margin-bottom:2px;">Simplified TAX Invoice</div>' +
-    '<div style="text-align:center;font-size:10px;color:#444;direction:rtl;margin-bottom:6px;">فاتورة ضريبية مبسطة</div>' +
+    '<div style="text-align:center;font-size:13px;color:#000;font-weight:700;margin-bottom:1px;">Simplified TAX Invoice</div>' +
+    '<div style="text-align:center;font-size:11px;color:#000;direction:rtl;margin-bottom:8px;">فاتورة ضريبية مبسطة</div>' +
 
-    (r.taxNumber ? '<div style="text-align:center;font-size:11px;color:#000;margin-bottom:6px;font-family:monospace;direction:ltr;">' + r.taxNumber + '</div>' : '') +
-    (r.branchName ? '<div style="text-align:center;font-size:12px;font-weight:700;direction:ltr;margin-top:4px;">Welcome To ' + r.branchName.toUpperCase() + '</div>' : '') +
-    (r.branchAddr ? '<div style="text-align:center;font-size:10px;color:#444;direction:rtl;margin-bottom:6px;">' + r.branchAddr + '</div>' : '') +
+    (r.taxNumber
+      ? '<div style="text-align:center;margin-bottom:6px;padding:4px 8px;border:1.5px solid #000;border-radius:2px;display:inline-block;width:100%;">' +
+          '<span style="font-size:10px;color:#000;letter-spacing:0.05em;">VAT NO. <span style="direction:rtl;">| الرقم الضريبي</span></span><br>' +
+          '<span style="font-size:13px;color:#000;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:800;direction:ltr;">' + esc(r.taxNumber) + '</span>' +
+        '</div>'
+      : ''
+    ) +
 
-    '<div style="border-top:1px solid #000;margin:8px 0;"></div>' +
+    (r.branchName ? '<div style="text-align:center;font-size:13px;font-weight:800;direction:ltr;margin-top:6px;letter-spacing:0.5px;">' + esc(String(r.branchName).toUpperCase()) + '</div>' : '') +
+    (r.branchAddr ? '<div style="text-align:center;font-size:11px;color:#000;direction:rtl;margin-bottom:8px;line-height:1.6;">' + esc(r.branchAddr) + '</div>' : '') +
 
-    // V5.7.20 — Merchant copy badge centered (wrapped + inline-block)
+    '<div style="border-top:2px solid #000;margin:8px 0;"></div>' +
+
+    // ───── INVOICE BADGE ─────
     '<div style="text-align:center;margin-bottom:8px;">' +
-      '<div style="background:#000;color:#fff;text-align:center;padding:4px 12px;font-weight:700;font-size:12px;display:inline-block;border-radius:2px;">' +
-        'Merchant copy <span style="font-size:10px;direction:rtl;">| نسخة بطاقات التاجر</span>' +
+      '<div style="background:#000;color:#fff;text-align:center;padding:5px 14px;font-weight:800;font-size:13px;display:inline-block;border-radius:3px;letter-spacing:0.5px;">' +
+        'TAX INVOICE <span style="font-size:11px;direction:rtl;">| فاتورة ضريبية</span>' +
       '</div>' +
     '</div>' +
-    '<div style="text-align:center;font-size:13px;font-weight:700;margin-bottom:8px;">Tax Invoice <span style="font-size:11px;color:#444;direction:rtl;">| فاتورة ضريبية</span></div>' +
 
-    rowSplit('ID <small style="color:#666;">المعرف</small>', r.inv.orderId, { bold:true }) +
-    rowSplit('Date <small style="color:#666;">التاريخ</small>', r.dateStr) +
+    // ───── ORDER ID + DATE BOX ─────
+    '<div style="border:1.5px solid #000;border-radius:3px;padding:8px 10px;margin-bottom:8px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;letter-spacing:0.05em;color:#000;margin-bottom:4px;">' +
+        '<span>ORDER ID <span style="direction:rtl;">| رقم الفاتورة</span></span>' +
+        '<span style="font-size:16px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:0.5px;color:#000;">' + esc(r.inv.orderId) + '</span>' +
+      '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:#000;border-top:1px dashed #000;padding-top:5px;">' +
+        '<span>DATE <span style="direction:rtl;">| التاريخ</span></span>' +
+        '<span style="font-family:ui-monospace,SFMono-Regular,monospace;font-weight:700;color:#000;">' + esc(r.dateStr) + '</span>' +
+      '</div>' +
+    '</div>' +
 
-    '<div style="border-top:1px dashed #000;margin:8px 0;"></div>' +
-
-    // V5.7.29 — 3-col items table for thermal print (matches modal preview)
+    // ───── ITEMS TABLE ─────
     '<table style="width:100%;border-collapse:collapse;direction:ltr;table-layout:fixed;">' +
-      '<thead><tr style="border-bottom:1.5px solid #000;">' +
-        '<th style="text-align:center;font-size:10px;padding:5px 2px;color:#000;font-weight:700;letter-spacing:0.05em;width:38px;">QTY</th>' +
-        '<th style="text-align:left;font-size:10px;padding:5px 6px;color:#000;font-weight:700;letter-spacing:0.05em;">ITEM</th>' +
-        '<th style="text-align:right;font-size:10px;padding:5px 2px;color:#000;font-weight:700;letter-spacing:0.05em;width:62px;">TOTAL ' + r.currency + '</th>' +
+      '<thead><tr style="border-top:2px solid #000;border-bottom:2px solid #000;background:#000;color:#fff;">' +
+        '<th style="text-align:center;font-size:11px;padding:6px 2px;color:#fff;font-weight:800;letter-spacing:0.05em;width:40px;">QTY</th>' +
+        '<th style="text-align:left;font-size:11px;padding:6px 8px;color:#fff;font-weight:800;letter-spacing:0.05em;">ITEM</th>' +
+        '<th style="text-align:right;font-size:11px;padding:6px 2px;color:#fff;font-weight:800;letter-spacing:0.05em;width:66px;">TOTAL ' + esc(r.currency) + '</th>' +
       '</tr></thead>' +
       '<tbody>' + itemsHtml + '</tbody>' +
     '</table>' +
 
-    '<div style="border-top:1px dashed #000;margin:8px 0;"></div>' +
-
-    '<div style="text-align:center;margin:8px 0;">' +
-      '<div style="font-size:10px;color:#444;direction:rtl;">عدد الأصناف</div>' +
-      '<div style="font-size:13px;font-weight:700;">Total Items</div>' +
-      '<div style="font-size:18px;font-weight:900;">' + r.totalItems + '</div>' +
+    // ───── TOTAL ITEMS BANNER ─────
+    '<div style="text-align:center;margin:10px 0;padding:6px 0;border-top:1px dashed #000;border-bottom:1px dashed #000;">' +
+      '<span style="font-size:11px;color:#000;letter-spacing:0.05em;">TOTAL ITEMS <span style="direction:rtl;font-size:10px;">| عدد الأصناف</span> :</span> ' +
+      '<span style="font-size:18px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;color:#000;">' + esc(r.totalItems) + '</span>' +
     '</div>' +
 
-    '<table style="width:100%;border-collapse:collapse;border:1px solid #000;margin:10px 0;">' +
-      '<tr style="border-bottom:1px solid #000;">' +
-        '<td style="text-align:center;padding:6px;border-right:1px solid #000;font-size:11px;font-weight:700;">Total<br>Value<div style="font-size:9px;color:#444;direction:rtl;">إجمالي القيمة</div></td>' +
-        '<td style="text-align:center;padding:6px;border-right:1px solid #000;font-size:11px;font-weight:700;">Net Amount<div style="font-size:9px;color:#444;direction:rtl;">المبلغ قبل الضريبة</div></td>' +
-        '<td style="text-align:center;padding:6px;font-size:11px;font-weight:700;">VAT Amount<div style="font-size:9px;color:#444;direction:rtl;">ضريبة القيمة 15%</div></td>' +
+    // ───── VAT BREAKDOWN ─────
+    '<table style="width:100%;border-collapse:collapse;border:1.5px solid #000;margin:10px 0;">' +
+      '<tr style="background:#000;color:#fff;border-bottom:1.5px solid #000;">' +
+        '<td style="text-align:center;padding:6px 4px;border-right:1px solid #fff;font-size:11px;font-weight:800;color:#fff;">TOTAL<br>VALUE<div style="font-size:9px;color:#fff;direction:rtl;margin-top:2px;">إجمالي القيمة</div></td>' +
+        '<td style="text-align:center;padding:6px 4px;border-right:1px solid #fff;font-size:11px;font-weight:800;color:#fff;">NET<br>AMOUNT<div style="font-size:9px;color:#fff;direction:rtl;margin-top:2px;">قبل الضريبة</div></td>' +
+        '<td style="text-align:center;padding:6px 4px;font-size:11px;font-weight:800;color:#fff;">VAT<br>15%<div style="font-size:9px;color:#fff;direction:rtl;margin-top:2px;">ضريبة القيمة</div></td>' +
       '</tr>' +
       '<tr>' +
-        '<td style="text-align:center;padding:8px;border-right:1px solid #000;font-size:15px;font-weight:900;">' + formatVal(r.inv.totalFinal) + '</td>' +
-        '<td style="text-align:center;padding:8px;border-right:1px solid #000;font-size:15px;font-weight:900;">' + r.netAmount.toFixed(2) + '</td>' +
-        '<td style="text-align:center;padding:8px;font-size:15px;font-weight:900;">' + r.vatAmount.toFixed(2) + '</td>' +
+        '<td style="text-align:center;padding:10px 4px;border-right:1px solid #000;font-size:16px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;">' + formatVal(r.inv.totalFinal) + '</td>' +
+        '<td style="text-align:center;padding:10px 4px;border-right:1px solid #000;font-size:16px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;">' + r.netAmount.toFixed(2) + '</td>' +
+        '<td style="text-align:center;padding:10px 4px;font-size:16px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;">' + r.vatAmount.toFixed(2) + '</td>' +
       '</tr>' +
     '</table>' +
 
-    rowSplit((r.inv.payment || 'Visa') + ' <span style="font-size:10px;color:#444;direction:rtl;">| ' + (r.inv.payment || 'Visa') + '</span>', formatVal(r.inv.totalFinal), { bold:true }) +
-
-    '<div style="border-top:1px dashed #000;margin:6px 0;"></div>' +
-
-    '<div style="text-align:center;font-size:11px;color:#000;margin:6px 0;">' +
-      'You were served by : <strong>' + r.cashierName + (r.cashierEmpNo && r.cashierEmpNo !== r.cashierName ? ', ' + r.cashierEmpNo : '') + '</strong>' +
-      '<div style="font-size:10px;color:#444;direction:rtl;">قدّم لكم الخدمة: ' + r.cashierName + '</div>' +
+    // ───── PAYMENT ROW ─────
+    '<div style="border:1.5px solid #000;border-radius:3px;padding:8px 10px;margin:10px 0;background:#000;color:#fff;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:800;color:#fff;">' +
+        '<span style="color:#fff;"><i style="font-style:normal;">💳</i> ' + esc(r.inv.payment || 'CASH') + '</span>' +
+        '<span style="color:#fff;font-family:ui-monospace,SFMono-Regular,monospace;font-size:16px;">' + formatVal(r.inv.totalFinal) + ' ' + esc(r.currency) + '</span>' +
+      '</div>' +
     '</div>' +
 
-    (qrImg ? '<div style="text-align:center;margin:12px 0;"><img src="' + qrImg + '" width="140" height="140"></div>' : '') +
+    // ───── CASHIER / SERVER ─────
+    '<div style="text-align:center;font-size:12px;color:#000;margin:8px 0;padding:6px;border-top:1px dashed #000;">' +
+      '<div style="font-weight:700;">SERVED BY: <strong style="font-size:13px;">' + esc(r.cashierName) + (r.cashierEmpNo && r.cashierEmpNo !== r.cashierName ? ' (' + esc(r.cashierEmpNo) + ')' : '') + '</strong></div>' +
+      '<div style="font-size:11px;color:#000;direction:rtl;margin-top:2px;">قدّم لكم الخدمة: ' + esc(r.cashierName) + '</div>' +
+    '</div>' +
 
-    '<div style="text-align:center;font-size:10px;color:#000;margin-top:8px;">All Prices include VAT (15%)</div>' +
-    '<div style="text-align:center;font-size:10px;color:#444;direction:rtl;margin-bottom:4px;">جميع الأسعار شاملة الضريبة المضافة (15%)</div>' +
-    (r.companyPhone ? '<div style="text-align:center;font-size:11px;color:#000;margin-top:4px;font-family:monospace;">Tel: ' + r.companyPhone + '</div>' : '') +
-    (r.companyEmail ? '<div style="text-align:center;font-size:11px;color:#000;font-family:monospace;">Email: ' + r.companyEmail + '</div>' : '') +
+    // ───── ZATCA QR ─────
+    (qrImg
+      ? '<div style="text-align:center;margin:14px 0 8px;padding:10px;border:1.5px solid #000;border-radius:3px;">' +
+          '<img src="' + qrImg + '" width="160" height="160" style="display:block;margin:0 auto;">' +
+          '<div style="font-size:10px;color:#000;margin-top:6px;letter-spacing:0.05em;font-weight:700;">SCAN FOR ZATCA E-INVOICE</div>' +
+          '<div style="font-size:10px;color:#000;direction:rtl;margin-top:1px;">امسح للحصول على الفاتورة الإلكترونية</div>' +
+        '</div>'
+      : ''
+    ) +
+
+    // ───── THANK YOU ─────
+    '<div style="text-align:center;margin-top:10px;padding-top:8px;border-top:2px solid #000;">' +
+      '<div style="font-size:14px;font-weight:800;color:#000;letter-spacing:0.5px;">THANK YOU FOR YOUR VISIT</div>' +
+      '<div style="font-size:13px;font-weight:800;color:#000;direction:rtl;margin-top:2px;">شُكرًا لِزيارَتِكم</div>' +
+    '</div>' +
+
+    '<div style="text-align:center;font-size:10px;color:#000;margin-top:6px;">All Prices Include VAT (15%)</div>' +
+    '<div style="text-align:center;font-size:10px;color:#000;direction:rtl;margin-bottom:4px;">جميع الأسعار شاملة الضريبة المضافة (15%)</div>' +
+
+    // ───── CONTACT ─────
+    (r.companyPhone || r.companyEmail
+      ? '<div style="text-align:center;margin-top:6px;padding-top:5px;border-top:1px dashed #000;">' +
+          (r.companyPhone ? '<div style="font-size:11px;color:#000;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:700;">📞 ' + esc(r.companyPhone) + '</div>' : '') +
+          (r.companyEmail ? '<div style="font-size:11px;color:#000;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:700;">✉ ' + esc(r.companyEmail) + '</div>' : '') +
+        '</div>'
+      : ''
+    ) +
+
+    // Bottom padding so the printer cut doesn't shave the last line
+    '<div style="height:14px;"></div>' +
 
     '</body></html>';
 

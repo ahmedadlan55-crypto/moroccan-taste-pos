@@ -16374,7 +16374,7 @@ function erpOpenCompanyModal(id) {
 
 // ─── Price Lists ───
 function erpLoadPriceLists() {
-  document.getElementById('priceListsBody').innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+  document.getElementById('priceListsBody').innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
   // v5.15.1 — Load price lists AND active channels in parallel so each
   // row can display which channels are linked (visible price-list ↔
   // channel relationship the owner asked to see clearly).
@@ -16386,7 +16386,7 @@ function erpLoadPriceLists() {
     var channels = Array.isArray(results[1]) ? results[1] : ((results[1] && results[1].channels) || []);
     window._chCache = channels;  // cached for cross-references
     if (!Array.isArray(list) || !list.length) {
-      document.getElementById('priceListsBody').innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد قوائم أسعار</td></tr>';
+      document.getElementById('priceListsBody').innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد قوائم أسعار</td></tr>';
       return;
     }
     document.getElementById('priceListsBody').innerHTML = list.map(function(p){
@@ -16398,16 +16398,20 @@ function erpLoadPriceLists() {
             return '<span class="wo-chip" style="background:#faf5ff;color:#7c3aed;font-weight:700;font-size:10px;padding:2px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;margin:1px 2px 0 0;"><i class="fas fa-store"></i> ' + _v3EscapeHtml(c.name) + '</span>';
           }).join('')
         : '<span style="color:#94a3b8;font-size:10px;">— غير مرتبطة بقناة —</span>';
-      return '<tr>' +
+      // v5.16.1 — Active/inactive chip replaces the date columns.
+      var activeChip = (p.isActive === false)
+        ? '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;font-size:10px;padding:2px 8px;border-radius:6px;"><i class="fas fa-pause"></i> مُعَطَّلة</span>'
+        : '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;font-size:10px;padding:2px 8px;border-radius:6px;"><i class="fas fa-check"></i> مُفَعَّلة</span>';
+      return '<tr' + (p.isActive === false ? ' style="opacity:0.6;"' : '') + '>' +
         '<td>' +
-          '<div style="font-weight:700;">'+(p.name||'')+'</div>' +
+          '<div style="font-weight:700;">'+_v3EscapeHtml(p.name||'')+'</div>' +
           '<div style="margin-top:4px;line-height:1.6;">' + channelBadges + '</div>' +
         '</td>' +
-        '<td>'+(p.brandName||'—')+'</td>' +
-        '<td>'+(p.branchName||'—')+'</td>' +
-        '<td>'+(p.isDefault?'<i class="fas fa-check" style="color:#16a34a;"></i>':'')+'</td>'+
+        '<td>'+_v3EscapeHtml(p.brandName||'—')+'</td>' +
+        '<td>'+_v3EscapeHtml(p.branchName||'—')+'</td>' +
+        '<td>'+(p.isDefault?'<i class="fas fa-star" style="color:#7c3aed;"></i>':'')+'</td>'+
+        '<td>'+activeChip+'</td>'+
         '<td><span class="badge badge-blue">'+(p.itemCount||0)+'</span></td>'+
-        '<td>'+((p.validFrom||'').slice(0,10)||'—')+'</td><td>'+((p.validTo||'').slice(0,10)||'—')+'</td>'+
         '<td>' +
           '<button class="btn btn-sm btn-primary" onclick="erpOpenPriceListModal(\''+p.id+'\')" title="تعديل بيانات القائمة"><i class="fas fa-edit"></i></button> ' +
           '<button class="btn btn-sm" style="background:#dbeafe;color:#1e40af;" onclick="erpViewPriceListItems(\''+p.id+'\',\''+safeName+'\')" title="عرض/تعديل الأصناف والأسعار"><i class="fas fa-list"></i></button> ' +
@@ -16454,48 +16458,163 @@ window.erpDeletePriceList = function(id, name, itemCount, isDefault) {
     }
   });
 };
+// v5.16.1 — Redesigned price-list edit modal.
+//   • Drops the "valid from / to" date fields (owner found them
+//     unnecessary; the underlying columns stay on the schema).
+//   • Adds an "active / inactive" toggle next to the default flag.
+//   • When a brand is selected, surfaces two action buttons:
+//       - "إضافة منتجات البراند" — bulk-adds the brand's full admin
+//         menu via POST /erp/price-lists/:id/import-brand-menu
+//       - "إضافة منتجات جديدة (Excel)" — opens the existing
+//         plOpenImportDialog with the saved price-list id
+//   • Cleaner alignment, consistent two-column grids, accent chips.
 function erpOpenPriceListModal(id) {
-  Promise.all([new Promise(function(r){_erpGet('/erp/brands',r);}), new Promise(function(r){_erpGet('/erp/branches-full',r);})]).then(function(res){
-    var brands = res[0]||[], branches = res[1]||[];
+  Promise.all([
+    new Promise(function(r){ _erpGet('/erp/brands', r); }),
+    new Promise(function(r){ _erpGet('/erp/branches-full', r); })
+  ]).then(function(res){
+    var brands = res[0] || [], branches = res[1] || [];
     var d = {};
-    var render = function(){
-      var brOpts = '<option value="">— عام —</option>' + brands.map(function(b){return '<option value="'+b.id+'"'+(d.brandId===b.id?' selected':'')+'>'+b.name+'</option>';}).join('');
-      var bchOpts = '<option value="">— عام —</option>' + branches.map(function(b){return '<option value="'+b.id+'"'+(d.branchId===b.id?' selected':'')+'>'+b.name+'</option>';}).join('');
-      document.getElementById('erpModalTitle').textContent = d.id ? ('تعديل قائمة — '+d.name) : 'قائمة أسعار جديدة';
+    var render = function() {
+      var brOpts  = '<option value="">— عام —</option>' + brands.map(function(b){return '<option value="'+b.id+'"'+(d.brandId===b.id?' selected':'')+'>'+_v3EscapeHtml(b.name)+'</option>';}).join('');
+      var bchOpts = '<option value="">— كل الفُروع —</option>' + branches.map(function(b){return '<option value="'+b.id+'"'+(d.branchId===b.id?' selected':'')+'>'+_v3EscapeHtml(b.name)+'</option>';}).join('');
+      document.getElementById('erpModalTitle').textContent = d.id ? ('تَعديل قائمة — ' + d.name) : 'قائمة أسعار جَديدة';
+      window._currentPlId = d.id || '';
+      var isActiveChecked = (d.isActive === false) ? '' : 'checked';
+      var isDefaultChecked = d.isDefault ? 'checked' : '';
       document.getElementById('erpModalBody').innerHTML =
-        '<input type="hidden" id="plId" value="'+(d.id||'')+'">'+
-        '<div class="form-row"><label>الاسم *</label><input class="form-control" id="plName" placeholder="مثلاً: قائمة أسعار التوصيل" value="'+(d.name||'').replace(/"/g,'&quot;')+'"></div>'+
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-row"><label>البراند</label><select class="form-control" id="plBrandSel">'+brOpts+'</select></div><div class="form-row"><label>الفرع</label><select class="form-control" id="plBranchSel">'+bchOpts+'</select></div></div>'+
-        '<div class="form-row"><label><input type="checkbox" id="plDefault" '+(d.isDefault?'checked':'')+'> افتراضية</label></div>'+
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-row"><label>فعالة من</label><input type="date" class="form-control" id="plFromDate" value="'+(d.validFrom||'').slice(0,10)+'"></div><div class="form-row"><label>إلى</label><input type="date" class="form-control" id="plToDate" value="'+(d.validTo||'').slice(0,10)+'"></div></div>'+
-        (d.id ? '' :
-          '<div style="margin-top:14px;padding:12px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;color:#1e40af;font-size:13px;line-height:1.7;">'+
-            '<i class="fas fa-info-circle"></i> بعد حفظ القائمة، يُمكنك إضافة الأصناف وأسعارها بزر <strong>📋 الأصناف</strong> من قائمة القوائم.'+
-          '</div>'
-        );
-      // v5.12.9 — make the save button visually prominent + clearer label
+        '<input type="hidden" id="plId" value="' + _v3EscapeHtml(d.id || '') + '">' +
+
+        // Name (full width)
+        '<div class="form-row" style="margin-bottom:14px;">' +
+          '<label class="form-label" style="font-weight:700;">الاسم <span style="color:#dc2626;">*</span></label>' +
+          '<input class="form-control" id="plName" placeholder="مثلاً: قائمة HungerStation" value="' + _v3EscapeHtml(d.name || '') + '">' +
+        '</div>' +
+
+        // Brand + Branch (2-col grid)
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">' +
+          '<div class="form-row" style="margin:0;">' +
+            '<label class="form-label" style="font-weight:700;"><i class="fas fa-store"></i> البراند</label>' +
+            '<select class="form-control" id="plBrandSel" onchange="_erpPlOnBrandChange()">' + brOpts + '</select>' +
+          '</div>' +
+          '<div class="form-row" style="margin:0;">' +
+            '<label class="form-label" style="font-weight:700;"><i class="fas fa-code-branch"></i> الفَرع</label>' +
+            '<select class="form-control" id="plBranchSel">' + bchOpts + '</select>' +
+          '</div>' +
+        '</div>' +
+
+        // Active + Default toggles (visual chips, 2-col)
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">' +
+          '<label style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:#f0fdf4;border:1.5px solid #86efac;border-radius:10px;cursor:pointer;">' +
+            '<input type="checkbox" id="plActive" ' + isActiveChecked + ' style="width:18px;height:18px;cursor:pointer;">' +
+            '<span style="font-weight:800;color:#15803d;font-size:13px;"><i class="fas fa-toggle-on"></i> القائمة مُفَعَّلة</span>' +
+          '</label>' +
+          '<label style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:#faf5ff;border:1.5px solid #d8b4fe;border-radius:10px;cursor:pointer;">' +
+            '<input type="checkbox" id="plDefault" ' + isDefaultChecked + ' style="width:18px;height:18px;cursor:pointer;">' +
+            '<span style="font-weight:800;color:#7c3aed;font-size:13px;"><i class="fas fa-star"></i> هي الافتراضية</span>' +
+          '</label>' +
+        '</div>' +
+
+        // v5.16.1 — Brand-aware action buttons. Hidden until a brand is
+        // selected. Each button calls a separate flow: bulk-add brand's
+        // menu, or open the Excel-import dialog for net-new items.
+        '<div id="plBrandActions" style="padding:14px;background:linear-gradient(135deg,#fef3c7,#fef9c3);border:1.5px dashed #fde68a;border-radius:10px;display:none;">' +
+          '<div style="font-weight:800;color:#92400e;font-size:13px;margin-bottom:10px;">' +
+            '<i class="fas fa-magic"></i> إضافة أصناف لِلقائمة' +
+            (d.id ? '' : ' <span style="font-weight:600;font-size:11px;">(احفَظ القائمة أَوَّلاً لِتُفَعِّل الأَزرار)</span>') +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<button type="button" class="wo-btn wo-btn-secondary" onclick="erpPlImportBrandMenu()" ' + (d.id ? '' : 'disabled') + ' style="' + (d.id ? '' : 'opacity:0.5;cursor:not-allowed;') + '">' +
+              '<i class="fas fa-store"></i> إضافة مُنتَجات البراند' +
+            '</button>' +
+            '<button type="button" class="wo-btn wo-btn-secondary" onclick="erpPlOpenExcelImport()" ' + (d.id ? '' : 'disabled') + ' style="' + (d.id ? '' : 'opacity:0.5;cursor:not-allowed;') + '">' +
+              '<i class="fas fa-file-excel"></i> إضافة مُنتَجات جَديدة (Excel)' +
+            '</button>' +
+          '</div>' +
+          '<div style="font-size:11px;color:#92400e;margin-top:8px;line-height:1.7;background:#fef9c3;padding:8px 10px;border-radius:6px;">' +
+            '<b>مُنتَجات البراند:</b> يَجلِب كل أصناف مَنيو البراند المُختار ويُضيفها لِلقائمة بِأسعارها الأصلية.<br>' +
+            '<b>مُنتَجات جَديدة (Excel):</b> اِرفَع ملف Excel فيه أصناف جَديدة بِتَصنيفات جَديدة. يُمكِن رَبطها بِالمَنيو لاحقًا لِتُشارِك نَفس الوَصفة.' +
+          '</div>' +
+        '</div>';
+
+      // Save button styling
       var btn = document.getElementById('erpModalSaveBtn');
       btn.innerHTML = d.id
         ? '<i class="fas fa-save"></i> حفظ التَعديلات'
-        : '<i class="fas fa-plus-circle"></i> إضافة قائمة الأسعار';
-      btn.style.cssText = 'font-size:15px;font-weight:800;padding:12px 24px;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;border:0;border-radius:10px;box-shadow:0 4px 14px rgba(59,130,246,.35);cursor:pointer;';
+        : '<i class="fas fa-plus-circle"></i> إنشاء القائمة';
+      btn.style.cssText = 'font-size:15px;font-weight:800;padding:12px 24px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:0;border-radius:10px;box-shadow:0 4px 14px rgba(124,58,237,.35);cursor:pointer;';
       btn.onclick = function() {
+        var name = (document.getElementById('plName').value || '').trim();
+        if (!name) { showToast('الاسم مَطلوب', true); return; }
         _erpPost('/erp/price-lists', {
           id: document.getElementById('plId').value || undefined,
-          name: document.getElementById('plName').value,
+          name: name,
           brandId: document.getElementById('plBrandSel').value || null,
           branchId: document.getElementById('plBranchSel').value || null,
           isDefault: document.getElementById('plDefault').checked,
-          validFrom: document.getElementById('plFromDate').value || null,
-          validTo: document.getElementById('plToDate').value || null
-        }, function(r){ if(r.success){showToast('تم');erpCloseModal();erpLoadPriceLists();}else showToast(r.error||'فشل',true); });
+          isActive: document.getElementById('plActive').checked
+          // v5.16.1 — validFrom/validTo intentionally omitted; backend
+          // leaves them at NULL by default.
+        }, function(r) {
+          if (r && r.success) {
+            showToast('تَم الحفظ');
+            erpCloseModal();
+            if (typeof erpLoadPriceLists === 'function') erpLoadPriceLists();
+          } else {
+            showToast((r && r.error) || 'فشل', true);
+          }
+        });
       };
+
       document.getElementById('erpModal').classList.remove('hidden');
+      // Show/hide brand actions based on current brand selection
+      _erpPlOnBrandChange();
     };
     if (id) _erpGet('/erp/price-lists', function(list){ d = (list||[]).find(function(x){return x.id===id;}) || {}; render(); });
     else render();
   });
 }
+
+// v5.16.1 — Toggle the brand-actions panel based on whether a brand
+// is selected. Hidden when "— عام —" is picked.
+window._erpPlOnBrandChange = function () {
+  var brandId = (document.getElementById('plBrandSel') || {}).value || '';
+  var actions = document.getElementById('plBrandActions');
+  if (actions) actions.style.display = brandId ? 'block' : 'none';
+};
+
+// v5.16.1 — Bulk-import the selected brand's full admin menu into the
+// current price list. Requires the price list to be saved first (so we
+// have an id to POST to). Uses POST /erp/price-lists/:id/import-brand-menu.
+window.erpPlImportBrandMenu = function () {
+  var brandId = (document.getElementById('plBrandSel') || {}).value || '';
+  var plId = window._currentPlId || (document.getElementById('plId') || {}).value || '';
+  if (!plId) { showToast('احفَظ القائمة أَوَّلاً ثُم أَضِف المُنتَجات', true); return; }
+  if (!brandId) { showToast('اختَر البراند أَوَّلاً', true); return; }
+  if (!confirm('سيَتم جَلب كل أصناف مَنيو البراند المُختار وإضافَتها لِهذه القائمة بِأسعارها الأصلية. مُتابعة؟')) return;
+  _erpPost('/erp/price-lists/' + encodeURIComponent(plId) + '/import-brand-menu',
+    { brandId: brandId }, function (r) {
+      if (r && r.error) { showToast(r.error, true); return; }
+      var msg = 'تَم إضافة ' + (r.imported || 0) + ' صَنف';
+      if (r.skipped) msg += ' (' + r.skipped + ' كانوا مَوجودين مُسبَقًا)';
+      showToast(msg);
+      if (typeof erpLoadPriceLists === 'function') erpLoadPriceLists();
+    });
+};
+
+// v5.16.1 — Open the existing Excel-import dialog for the current price
+// list. Closes the metadata modal first since plOpenImportDialog uses
+// its own overlay.
+window.erpPlOpenExcelImport = function () {
+  var plId = window._currentPlId || (document.getElementById('plId') || {}).value || '';
+  if (!plId) { showToast('احفَظ القائمة أَوَّلاً', true); return; }
+  if (typeof plOpenImportDialog === 'function') {
+    erpCloseModal();
+    setTimeout(function () { plOpenImportDialog(plId); }, 200);
+  } else {
+    showToast('وَحدة الاستيراد غير مُحَمَّلة', true);
+  }
+};
 // V3: Cache the last-opened price list context for re-rendering after add/delete
 window._currentPriceList = null;
 

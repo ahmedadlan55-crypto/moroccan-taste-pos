@@ -159,14 +159,17 @@ router.post('/unit-conversions', async (req, res) => {
 // ═══════════════════════════════════════
 router.get('/price-lists', async (req, res) => {
   try {
+    // v5.16.1 — Admin endpoint returns ALL lists (active + inactive)
+    // so the management UI can re-activate disabled ones. The cashier
+    // path resolves price lists via channel.priceListId, which the
+    // channel's own active flag already gates.
     const [rows] = await db.query(
       `SELECT pl.*, b.name AS brand_name, br.name AS branch_name,
               (SELECT COUNT(*) FROM price_list_items li WHERE li.price_list_id = pl.id) AS item_count
        FROM price_lists pl
        LEFT JOIN brands b ON pl.brand_id = b.id
        LEFT JOIN branches br ON pl.branch_id = br.id
-       WHERE pl.is_active = 1 OR pl.is_active IS NULL
-       ORDER BY pl.is_default DESC, pl.name`);
+       ORDER BY (pl.is_active = 0 OR pl.is_active IS NULL) ASC, pl.is_default DESC, pl.name`);
     res.json(rows.map(p => ({
       id: p.id, name: p.name, brandId: p.brand_id || '', brandName: p.brand_name || '',
       branchId: p.branch_id || '', branchName: p.branch_name || '',
@@ -178,21 +181,74 @@ router.get('/price-lists', async (req, res) => {
 
 router.post('/price-lists', async (req, res) => {
   try {
-    const { id, name, brandId, branchId, isDefault, validFrom, validTo } = req.body;
+    // v5.16.1 — isActive added; validFrom/validTo optional (UI removed them
+    // but kept on the schema for backward compatibility).
+    const { id, name, brandId, branchId, isDefault, validFrom, validTo, isActive } = req.body;
     if (!name) return res.json({ success: false, error: 'اسم القائمة مطلوب' });
+    const activeFlag = (isActive === false) ? 0 : 1;
     if (id) {
       await db.query(
-        `UPDATE price_lists SET name=?, brand_id=?, branch_id=?, is_default=?, valid_from=?, valid_to=? WHERE id=?`,
-        [name, brandId||null, branchId||null, isDefault?1:0, validFrom||null, validTo||null, id]);
+        `UPDATE price_lists
+            SET name=?, brand_id=?, branch_id=?, is_default=?, valid_from=?, valid_to=?, is_active=?
+          WHERE id=?`,
+        [name, brandId||null, branchId||null, isDefault?1:0,
+         validFrom||null, validTo||null, activeFlag, id]);
       return res.json({ success: true, id });
     }
     const newId = genId('PL');
     await db.query(
-      `INSERT INTO price_lists (id, name, brand_id, branch_id, is_default, valid_from, valid_to)
-       VALUES (?,?,?,?,?,?,?)`,
-      [newId, name, brandId||null, branchId||null, isDefault?1:0, validFrom||null, validTo||null]);
+      `INSERT INTO price_lists (id, name, brand_id, branch_id, is_default, valid_from, valid_to, is_active)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [newId, name, brandId||null, branchId||null, isDefault?1:0,
+       validFrom||null, validTo||null, activeFlag]);
     res.json({ success: true, id: newId });
   } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// v5.16.1 — Bulk-add the brand's entire admin menu into a price list.
+// Skips items already in the list (dedup via INSERT IGNORE on the
+// composite unique key if present, falls back to a SELECT exists check
+// otherwise). Returns counts so the UI can show a toast.
+router.post('/price-lists/:plId/import-brand-menu', async (req, res) => {
+  try {
+    const { plId } = req.params;
+    const { brandId } = req.body || {};
+    if (!plId || !brandId) {
+      return res.status(400).json({ success: false, error: 'plId و brandId مطلوبان' });
+    }
+    const [menuItems] = await db.query(
+      `SELECT id, COALESCE(price, 0) AS price
+         FROM menu
+        WHERE brand_id = ?
+          AND COALESCE(active, 1) = 1
+          AND (is_semi_finished IS NULL OR is_semi_finished = 0)`,
+      [brandId]
+    );
+    if (!menuItems.length) {
+      return res.json({ success: true, imported: 0, skipped: 0, note: 'لا تَوجَد أصناف مَنيو لِهذا البراند' });
+    }
+    let imported = 0, skipped = 0;
+    for (const m of menuItems) {
+      try {
+        // Check existence by (price_list_id, item_id)
+        const [existing] = await db.query(
+          'SELECT id FROM price_list_items WHERE price_list_id = ? AND item_id = ? LIMIT 1',
+          [plId, m.id]
+        );
+        if (existing.length) { skipped++; continue; }
+        const liId = 'PLI-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+        await db.query(
+          `INSERT INTO price_list_items (id, price_list_id, item_id, price, is_custom)
+           VALUES (?, ?, ?, ?, 0)`,
+          [liId, plId, m.id, Number(m.price) || 0]
+        );
+        imported++;
+      } catch (e) { skipped++; }
+    }
+    res.json({ success: true, imported, skipped });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 router.get('/price-lists/:id/items', async (req, res) => {

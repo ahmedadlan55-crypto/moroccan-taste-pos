@@ -2342,6 +2342,11 @@ async function runMigrations() {
       INDEX idx_brand_branch (brand_id, branch_id)
     ) ENGINE=InnoDB
   `);
+  // v5.16.1 — Ensure is_active exists on older deployments that
+  // were created before the column was part of the CREATE TABLE
+  // statement above. Default TRUE = backwards-compatible (existing
+  // price lists stay active).
+  await addColumnIfMissing('price_lists', 'is_active', 'BOOLEAN DEFAULT TRUE');
   await createTableIfMissing('price_list_items', `
     CREATE TABLE price_list_items (
       id VARCHAR(60) PRIMARY KEY,

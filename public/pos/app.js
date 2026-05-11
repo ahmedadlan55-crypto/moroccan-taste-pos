@@ -371,10 +371,161 @@ window.posOnChannelTopChange = function () {
   if (legacy) legacy.value = sel.value;
 };
 
-// Total bar — opens the payment modal. Cart-footer (sidebar) houses the
-// canonical payment UI; we move it into the modal at open and back at
-// close so renderPayButtons / split panel / checkout-btn all keep
-// their existing IDs and bindings.
+// v5.14.1 — Foodics payment modal driver. Renders big payment-method
+// tiles + a smart split panel that pulls every active method, lets the
+// cashier auto-distribute the total equally or fill the remainder per
+// row. The legacy hidden #posPayMethod input still drives doCheckout.
+function _foodicsCartTotal() {
+  var sub = (state.cart || []).reduce(function (s, c) {
+    return s + (Number(c.qty) || 0) * (Number(c.price) || 0);
+  }, 0);
+  var disc = (state.currentDiscount && state.currentDiscount.amount) || 0;
+  return Math.max(0, sub - disc);
+}
+
+window.renderFoodicsPayTiles = function () {
+  var host = q('#payTilesGrid');
+  if (!host) return;
+  var methods = (state.paymentMethods || []).filter(function (m) {
+    return m.IsActive !== false && m.IsActive !== 'FALSE';
+  });
+  var current = q('#posPayMethod') ? q('#posPayMethod').value : 'Cash';
+  var isEn = state.lang === 'en';
+  var iconFor = function (n, m) {
+    var k = String(n || '').toLowerCase();
+    if (m && m.Icon) return m.Icon;
+    if (k === 'cash')   return 'fa-money-bill-wave';
+    if (k === 'card')   return 'fa-credit-card';
+    if (k === 'kita')   return 'fa-calculator';
+    if (k === 'split')  return 'fa-divide';
+    if (/hunger/.test(k)) return 'fa-motorcycle';
+    return 'fa-money-bill';
+  };
+  var labelFor = function (m) {
+    var lower = String(m.Name || '').toLowerCase();
+    if (lower === 'cash' || lower === 'card' || lower === 'kita') return t(lower);
+    return isEn ? (m.Name || m.NameAR) : (m.NameAR || m.Name);
+  };
+  var html = '';
+  methods.forEach(function (m) {
+    var active = m.Name === current ? ' is-active' : '';
+    html += '<button type="button" class="pay-tile' + active + '" onclick="setFoodicsPay(\'' + String(m.Name).replace(/'/g, "\\'") + '\')">' +
+              '<i class="fas ' + iconFor(m.Name, m) + '"></i>' +
+              '<span>' + labelFor(m) + '</span>' +
+            '</button>';
+  });
+  html += '<button type="button" class="pay-tile pay-tile-split' + (current === 'Split' ? ' is-active' : '') +
+          '" onclick="setFoodicsPay(\'Split\')">' +
+            '<i class="fas fa-divide"></i><span>' + (t('split') || 'تَجزئة') + '</span></button>';
+  host.innerHTML = html;
+};
+
+window.setFoodicsPay = function (name) {
+  // Drives the existing hidden #posPayMethod field used by doCheckout.
+  if (typeof setPayMethod === 'function') setPayMethod(name);
+  renderFoodicsPayTiles();
+  var panel = q('#paySplitFoodics');
+  if (panel) panel.classList.toggle('hidden', name !== 'Split');
+  if (name === 'Split') renderFoodicsSplitFields();
+};
+
+window.renderFoodicsSplitFields = function () {
+  var host = q('#paySplitFields');
+  if (!host) return;
+  // Show EVERY active method (not just cash + card) so the cashier
+  // can split however they need.
+  var methods = (state.paymentMethods || []).filter(function (m) {
+    var n = String(m.Name || '').toLowerCase();
+    return n !== 'split' && m.IsActive !== false && m.IsActive !== 'FALSE';
+  });
+  var isEn = state.lang === 'en';
+  var iconFor = function (n, m) {
+    if (m && m.Icon) return m.Icon;
+    var k = String(n || '').toLowerCase();
+    if (k === 'cash') return 'fa-money-bill-wave';
+    if (k === 'card') return 'fa-credit-card';
+    if (k === 'kita') return 'fa-calculator';
+    if (/hunger/.test(k)) return 'fa-motorcycle';
+    return 'fa-money-bill';
+  };
+  var labelFor = function (m) {
+    var lower = String(m.Name || '').toLowerCase();
+    if (lower === 'cash' || lower === 'card' || lower === 'kita') return t(lower);
+    return isEn ? (m.Name || m.NameAR) : (m.NameAR || m.Name);
+  };
+  // Note: each input ALSO carries class "split-input" so the legacy
+  // doCheckout split-extraction code (which reads .split-input) still
+  // sees the values.
+  host.innerHTML = methods.map(function (m) {
+    var safe = String(m.Name || '').replace(/'/g, "\\'");
+    return (
+      '<div class="pay-split-row">' +
+        '<div class="pay-split-method"><i class="fas ' + iconFor(m.Name, m) + '"></i> ' + labelFor(m) + '</div>' +
+        '<input type="number" step="0.01" min="0" class="form-control pay-split-input split-input" ' +
+               'data-method="' + safe + '" value="" placeholder="0.00" oninput="paySplitRecalc()">' +
+        '<button type="button" class="pay-split-rest" onclick="paySplitFillRest(\'' + safe + '\')" title="املأ بالمتبقي"><i class="fas fa-equals"></i></button>' +
+      '</div>'
+    );
+  }).join('');
+  paySplitRecalc();
+};
+
+window.paySplitRecalc = function () {
+  var total = _foodicsCartTotal();
+  var paid = 0;
+  qs('.pay-split-input').forEach(function (el) { paid += Number(el.value) || 0; });
+  var rem = total - paid;
+  var paidEl = q('#paySplitPaid'); if (paidEl) paidEl.textContent = paid.toFixed(2);
+  var remEl  = q('#paySplitRemaining');
+  if (remEl) {
+    remEl.textContent = rem.toFixed(2);
+    remEl.style.color = Math.abs(rem) < 0.01 ? '#16a34a' : (rem > 0 ? '#ef4444' : '#f59e0b');
+  }
+  // Mirror to legacy element for backward compat
+  var legacy = q('#splitRemaining');
+  if (legacy) legacy.textContent = rem.toFixed(2);
+};
+
+window.paySplitAutoDistribute = function () {
+  var inputs = Array.prototype.slice.call(qs('.pay-split-input'));
+  if (!inputs.length) return;
+  var total = _foodicsCartTotal();
+  if (total <= 0) {
+    inputs.forEach(function (el) { el.value = ''; });
+    return paySplitRecalc();
+  }
+  var per = total / inputs.length;
+  inputs.forEach(function (el, idx) {
+    if (idx < inputs.length - 1) {
+      el.value = per.toFixed(2);
+    } else {
+      var sumOthers = (inputs.length - 1) * Number(per.toFixed(2));
+      el.value = Math.max(0, total - sumOthers).toFixed(2);
+    }
+  });
+  paySplitRecalc();
+};
+
+window.paySplitClear = function () {
+  qs('.pay-split-input').forEach(function (el) { el.value = ''; });
+  paySplitRecalc();
+};
+
+window.paySplitFillRest = function (methodName) {
+  var inputs = Array.prototype.slice.call(qs('.pay-split-input'));
+  var total = _foodicsCartTotal();
+  var otherSum = 0;
+  inputs.forEach(function (el) {
+    if (el.dataset.method !== methodName) otherSum += Number(el.value) || 0;
+  });
+  inputs.forEach(function (el) {
+    if (el.dataset.method === methodName) {
+      el.value = Math.max(0, total - otherSum).toFixed(2);
+    }
+  });
+  paySplitRecalc();
+};
+
 window.posOpenPaymentModal = function () {
   if (!state.cart || !state.cart.length) {
     if (typeof glassToast === 'function') glassToast(t('emptyCart') || 'السلة فارغة', true);
@@ -385,17 +536,12 @@ window.posOpenPaymentModal = function () {
   if (sub)  q('#payModalSubtotal').textContent = sub.textContent;
   if (disc) q('#payModalDiscount').textContent = disc.textContent;
   if (tot)  q('#payModalTotal').textContent    = tot.textContent;
-  // Move payment UI into modal
-  var host = q('#payModalHost');
-  if (host && !host._hasPayment) {
-    var pay = q('#payMethodsContainer');
-    var split = q('#splitPayPanel');
-    var checkout = q('.cart-footer .checkout-btn');
-    if (pay)      host.appendChild(pay);
-    if (split)    host.appendChild(split);
-    if (checkout) host.appendChild(checkout);
-    host._hasPayment = true;
-  }
+  // Render tiles + reset split state
+  renderFoodicsPayTiles();
+  var currentMethod = q('#posPayMethod') ? q('#posPayMethod').value : 'Cash';
+  var splitPanel = q('#paySplitFoodics');
+  if (splitPanel) splitPanel.classList.toggle('hidden', currentMethod !== 'Split');
+  if (currentMethod === 'Split') renderFoodicsSplitFields();
   openGlassModal('#modalPayment');
 };
 
@@ -407,10 +553,13 @@ window.posOpenPaymentModal = function () {
     var ret = origUpdateCart ? origUpdateCart.apply(this, arguments) : undefined;
     try {
       var totalEl = q('#cartFinalTotal');
+      var totalTxt = totalEl ? totalEl.textContent : '0.00 SAR';
       var count = (state.cart || []).reduce(function (s, i) { return s + (Number(i.qty) || 0); }, 0);
       var cntEl = q('#posTotalBarCount'); if (cntEl) cntEl.textContent = count;
-      var amtEl = q('#posTotalBarAmount'); if (amtEl) amtEl.textContent = totalEl ? totalEl.textContent : '0.00 SAR';
+      var amtEl = q('#posTotalBarAmount'); if (amtEl) amtEl.textContent = totalTxt;
       var bar = q('#posTotalBar'); if (bar) bar.classList.toggle('has-items', count > 0);
+      // v5.14.1 — sync the cart-sidebar total button too
+      var ctb = q('#ctbAmount'); if (ctb) ctb.textContent = totalTxt;
     } catch (e) {}
     return ret;
   };

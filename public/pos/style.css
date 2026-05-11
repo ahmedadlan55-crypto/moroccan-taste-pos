@@ -386,6 +386,202 @@ body.ar .pwa-install-btn {
 body.foodics-mode .pos-channel-bar { display: none !important; }
 body.foodics-mode .pos-categories { display: none !important; }
 body.foodics-mode .pos-disc-actions { display: none !important; }
+/* v5.14.1 — Cart-footer (payment methods + summary + checkout) is
+ * replaced by a single total button in cart-footer-foodics. */
+body.foodics-mode .cart-footer { display: none !important; }
+
+/* Big total button in the cart sidebar */
+.cart-footer-foodics {
+  padding: 16px 16px 18px;
+  border-top: 1.5px solid #e2e8f0;
+  background: linear-gradient(180deg, #f8fafc, #ffffff);
+  flex-shrink: 0;
+}
+.checkout-total-btn {
+  width: 100%;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 18px 22px;
+  border: 0; cursor: pointer;
+  background: linear-gradient(135deg, #1e293b, #0f172a);
+  color: #fff;
+  border-radius: 18px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.35);
+  transition: transform 120ms, box-shadow 120ms;
+  text-align: center;
+  align-items: center;
+}
+.checkout-total-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.45);
+}
+.checkout-total-btn:active { transform: translateY(0); }
+.ctb-label { font-size: 13px; opacity: 0.75; font-weight: 600; letter-spacing: 0.3px; }
+.ctb-amount {
+  font-size: 30px; font-weight: 900;
+  font-family: ui-monospace, "SFMono-Regular", monospace;
+  letter-spacing: 0.5px;
+  line-height: 1.1;
+}
+.ctb-cta {
+  margin-top: 10px;
+  padding: 10px 18px;
+  background: #16a34a;
+  border-radius: 10px;
+  font-size: 14px; font-weight: 800;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+
+/* Foodics payment modal */
+.pay-modal-foodics {
+  max-height: 95dvh;
+  display: flex;
+  flex-direction: column;
+}
+.pay-modal-foodics .glass-modal-title {
+  flex-shrink: 0;
+  margin-bottom: 14px;
+}
+
+/* Big payment-method tiles */
+.pay-tiles-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.pay-tile {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 10px;
+  padding: 22px 14px;
+  background: #fff;
+  border: 2px solid #e2e8f0;
+  border-radius: 16px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 120ms;
+  min-height: 110px;
+}
+.pay-tile i { font-size: 32px; color: #475569; transition: color 120ms; }
+.pay-tile span { font-size: 14px; font-weight: 800; color: #1e293b; text-align: center; line-height: 1.2; }
+.pay-tile:hover {
+  border-color: #7c3aed;
+  background: #faf5ff;
+  transform: translateY(-2px);
+}
+.pay-tile.is-active {
+  border-color: #7c3aed;
+  background: linear-gradient(140deg, #ddd6fe, #ede9fe);
+  box-shadow: 0 8px 20px rgba(124, 58, 237, 0.25);
+}
+.pay-tile.is-active i { color: #5b21b6; }
+.pay-tile.is-active span { color: #4c1d95; }
+.pay-tile.pay-tile-split.is-active {
+  background: linear-gradient(140deg, #fde68a, #fbbf24);
+  border-color: #d97706;
+}
+.pay-tile.pay-tile-split.is-active i { color: #92400e; }
+
+/* Smart split panel */
+.pay-split-foodics {
+  background: #fff8e1;
+  border: 1.5px solid #fde68a;
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+.pay-split-foodics.hidden { display: none !important; }
+.pay-split-header {
+  display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; gap: 8px;
+  margin-bottom: 12px;
+}
+.pay-split-title {
+  font-weight: 900; color: #92400e; font-size: 14px;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.pay-split-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.pay-split-actions button {
+  padding: 7px 12px; border: 1.5px solid #d97706;
+  background: #fffbeb; color: #92400e;
+  border-radius: 8px; font-weight: 800; font-size: 12px;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.pay-split-actions button:hover { background: #fef3c7; }
+
+.pay-split-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr auto;
+  gap: 8px; align-items: center;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+.pay-split-method {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-weight: 700; color: #1e293b; font-size: 13px;
+}
+.pay-split-method i { color: #7c3aed; }
+.pay-split-input {
+  text-align: center;
+  font-weight: 800; font-size: 15px;
+  font-family: ui-monospace, monospace;
+  padding: 8px; border-radius: 8px;
+  border: 1.5px solid #cbd5e1;
+}
+.pay-split-input:focus {
+  border-color: #7c3aed; outline: 0;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+}
+.pay-split-rest {
+  width: 36px; height: 36px;
+  background: #7c3aed; color: #fff;
+  border: 0; border-radius: 8px;
+  cursor: pointer; font-size: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.pay-split-rest:hover { background: #6d28d9; }
+
+.pay-split-summary {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1.5px dashed #fde68a;
+  font-size: 14px; font-weight: 700;
+}
+.pay-split-summary strong {
+  font-family: ui-monospace, monospace;
+  font-size: 16px;
+}
+
+/* Confirm button */
+.pay-confirm-btn {
+  width: 100%;
+  padding: 16px;
+  background: linear-gradient(135deg, #16a34a, #15803d);
+  color: #fff; border: 0; border-radius: 14px;
+  font-size: 17px; font-weight: 900;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  box-shadow: 0 8px 24px rgba(22, 163, 74, 0.3);
+  transition: transform 120ms, box-shadow 120ms;
+}
+.pay-confirm-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(22, 163, 74, 0.4);
+}
+.pay-confirm-btn:active { transform: translateY(0); }
+
+@media (max-width: 768px) {
+  .pay-tiles-grid { grid-template-columns: repeat(3, 1fr); }
+  .pay-tile { min-height: 90px; padding: 14px 8px; }
+  .pay-tile i { font-size: 24px; }
+  .pay-tile span { font-size: 12px; }
+  .pay-split-row { grid-template-columns: 1fr; gap: 6px; padding: 10px; }
+  .pay-split-rest { width: 100%; height: 32px; }
+}
 
 /* Mobile responsiveness */
 @media (max-width: 768px) {

@@ -57,7 +57,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   <link rel="stylesheet" href="/shared/common.css">
   <link rel="stylesheet" href="/shared/header.css">
-  <link rel="stylesheet" href="/pos/style.css?v=6">
+  <link rel="stylesheet" href="/pos/style.css?v=7">
   <link rel="stylesheet" href="/pos/keyboard.css?v=5">
 
   <script defer src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
@@ -68,7 +68,7 @@
   <script defer src="/shared/auth.js"></script>
   <script defer src="/shared/header.js"></script>
   <script defer src="/shared/device-info.js?v=1"></script>
-  <script defer src="/pos/app.js?v=6"></script>
+  <script defer src="/pos/app.js?v=7"></script>
   <script defer src="/pos/keyboard.js?v=5"></script>
 </head>
 <body class="ar" data-page="pos" data-show-shift="1">
@@ -205,6 +205,17 @@
           <span data-i18n="checkoutBtn">إتمام الدفع والطلب</span>
         </button>
       </div>
+
+      <!-- v5.14.1 — Foodics cart footer: a single big total button that
+           opens the payment modal. Replaces the .cart-footer (hidden by
+           body.foodics-mode CSS) so the cart sidebar shows only items. -->
+      <div class="cart-footer-foodics">
+        <button class="checkout-total-btn" onclick="posOpenPaymentModal()">
+          <div class="ctb-label">إجمالي الفاتورة</div>
+          <div class="ctb-amount" id="ctbAmount">0.00 SAR</div>
+          <div class="ctb-cta"><i class="fas fa-credit-card"></i> اختيار طريقة الدفع</div>
+        </button>
+      </div>
     </aside>
   </main>
 
@@ -222,19 +233,42 @@
     </div>
   </div>
 
-  <!-- v5.14.0 — Foodics payment modal -->
+  <!-- v5.14.1 — Foodics payment modal (full static layout) -->
   <div id="modalPayment" class="glass-modal hidden">
-    <div class="glass-modal-content" style="max-width:560px;">
+    <div class="glass-modal-content pay-modal-foodics" style="max-width:640px;">
       <div class="glass-modal-title">
-        <span><i class="fas fa-credit-card" style="color:#7c3aed;"></i> اختر طريقة الدفع</span>
+        <span><i class="fas fa-credit-card" style="color:#7c3aed;"></i> اختيار طريقة الدفع</span>
         <button class="glass-modal-close" onclick="closeGlassModal('#modalPayment')">&times;</button>
       </div>
+
       <div class="pay-modal-summary">
         <div class="pay-modal-sum-row"><span>المجموع الفرعي</span><strong id="payModalSubtotal">0.00</strong></div>
         <div class="pay-modal-sum-row pay-modal-discount"><span>الخصم</span><strong id="payModalDiscount">0.00</strong></div>
         <div class="pay-modal-sum-row pay-modal-total"><span>الإجمالي</span><strong id="payModalTotal">0.00 SAR</strong></div>
       </div>
-      <div id="payModalHost"><!-- payment buttons + split panel + checkout get moved here on open --></div>
+
+      <!-- Big payment-method tiles (rendered by renderFoodicsPayTiles) -->
+      <div class="pay-tiles-grid" id="payTilesGrid"></div>
+
+      <!-- Smart split panel — appears when "Split" tile is active -->
+      <div class="pay-split-foodics hidden" id="paySplitFoodics">
+        <div class="pay-split-header">
+          <div class="pay-split-title"><i class="fas fa-divide"></i> تَجزئة الدفع</div>
+          <div class="pay-split-actions">
+            <button type="button" onclick="paySplitAutoDistribute()"><i class="fas fa-balance-scale"></i> تَوزيع متَساوٍ</button>
+            <button type="button" onclick="paySplitClear()"><i class="fas fa-eraser"></i> مَسح</button>
+          </div>
+        </div>
+        <div class="pay-split-fields" id="paySplitFields"></div>
+        <div class="pay-split-summary">
+          <div>مَدفوع: <strong id="paySplitPaid">0.00</strong></div>
+          <div>المتبقي: <strong id="paySplitRemaining">0.00</strong></div>
+        </div>
+      </div>
+
+      <button class="pay-confirm-btn" onclick="doCheckout()">
+        <i class="fas fa-check-circle"></i> إتمام الدفع
+      </button>
     </div>
   </div>
 

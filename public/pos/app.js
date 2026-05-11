@@ -254,27 +254,62 @@ window.renderMenuGrid = function() {
 
   var h = '';
   if (!list.length) {
-    // v5.15.0 — Actionable empty state. When a non-MAIN channel has
-    // zero items configured, tell the admin exactly where to fix it
-    // (the new "Items" button on the Sales Channels page) instead of
-    // leaving them staring at an empty grid wondering what's wrong.
-    var emptyHtml;
+    // v5.16.2 — Full diagnostic panel for the empty grid. Tells the
+    // cashier (and the owner staring at "no menu") EXACTLY why the
+    // grid is empty: which channel is active, how many items the
+    // brand has loaded, how many items the channel has configured,
+    // and a one-click action to either auto-populate the channel
+    // from the brand's menu, or switch to MAIN. No more guessing.
+    var ch = state.activeChannel || {};
+    var chName = ch.name || ch.code || '—';
+    var chId = ch.id || '';
+    var chCode = String(ch.code || '').toUpperCase();
+    var isMain = (chCode === 'MAIN') || (state.activeChannel && state.activeChannel.useFullMenu);
+    var menuCount = (state.menu || []).length;
+    var chItemsCount = (state.channelMenuItems || []).length;
+    var brandId = state.brandId || '';
+
+    // Pick the right narrative based on which condition is failing.
+    var reason, action;
     if (channelEmpty) {
-      emptyHtml =
-        '<i class="fas fa-store-slash" style="font-size:54px;margin-bottom:14px;display:block;opacity:0.4;color:#7c3aed;"></i>' +
-        '<div style="font-weight:900;font-size:17px;color:#1e293b;margin-bottom:6px;">هذه القناة فارغة</div>' +
-        '<div style="font-size:13px;color:#64748b;max-width:380px;line-height:1.7;margin:0 auto;">' +
-          'لا توجد أصناف معدّة لهذه القناة بعد.<br>' +
-          'من إدارة الادمن: <b style="color:#1e293b;">قنوات البيع</b> → اختر القناة → اضغط زر <b style="color:#7c3aed;"><i class="fas fa-utensils"></i> أصناف</b>' +
-        '</div>';
-    } else if (!(state.menu || []).length) {
-      emptyHtml = '<i class="fas fa-box-open" style="font-size:54px;margin-bottom:14px;display:block;opacity:0.35;"></i>' +
-        '<div style="font-weight:700;">لم يَتم تَحميل المنيو · تَحقَّق من أنه تَم ربط أصناف بحساب الفرع/البراند</div>';
+      reason =
+        'القَناة <b style="color:#1e293b;">' + chName + '</b> ليس لها أي صَنف مُعَدّ.<br>' +
+        'إعدادات القَنوات تَعمَل بِشَكل صَارِم — لا fallback تِلقائي.';
+      action =
+        (chId
+          ? '<button onclick="posQuickPopulateChannel(\'' + chId + '\')" style="padding:12px 24px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;box-shadow:0 4px 14px rgba(124,58,237,0.3);"><i class="fas fa-magic"></i> انسَخ أصناف المنيو الرَئيسي إلى هذه القَناة</button> '
+          : '') +
+        '<button onclick="posJumpToMain()" style="padding:12px 24px;background:#fff;color:#1e293b;border:2px solid #1e293b;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;margin-inline-start:8px;"><i class="fas fa-home"></i> ارجِع للقَناة الرَئيسية (MAIN)</button>';
+    } else if (!menuCount) {
+      reason =
+        'المنيو الرَئيسي فارِغ — لا أصناف مُسَجَّلة لِبراندك.<br>' +
+        '<span style="font-size:12px;">brand_id: <code>' + (brandId || '—') + '</code></span>';
+      action = '<div style="font-size:13px;color:#1e293b;background:#fef3c7;padding:10px 14px;border-radius:8px;display:inline-block;line-height:1.7;">' +
+        'من admin: <b>إدارة المنيو</b> → <b>البراند الخاص بك</b> → <b>أضف منتجات</b>' +
+      '</div>';
     } else {
-      emptyHtml = '<i class="fas fa-box-open" style="font-size:54px;margin-bottom:14px;display:block;opacity:0.35;"></i>' +
-        '<div style="font-weight:700;">' + t('noProducts') + '</div>';
+      reason = (state.activeCat
+        ? 'لا أصناف في فِئة "<b>' + state.activeCat + '</b>" ضِمن نِطاق البَحث الحالي.'
+        : 'لا أصناف تُطابِق البَحث.');
+      action = state.activeCat
+        ? '<button onclick="posBackToCategories()" style="padding:10px 20px;background:#7c3aed;color:#fff;border:0;border-radius:8px;font-weight:700;cursor:pointer;"><i class="fas fa-arrow-right"></i> ارجِع للفِئات</button>'
+        : '';
     }
-    h = '<div style="grid-column:1/-1;text-align:center;padding:50px 20px;color:#94a3b8;">' + emptyHtml + '</div>';
+
+    var debugChip = '<div style="margin-top:18px;padding:8px 14px;background:#f1f5f9;border-radius:6px;font-size:11px;color:#475569;font-family:ui-monospace,SFMono-Regular,monospace;text-align:left;direction:ltr;display:inline-block;">' +
+      'channel=' + (chCode || '—') + ' · useFullMenu=' + (isMain ? 'true' : 'false') +
+      ' · menu=' + menuCount +
+      ' · chItems=' + chItemsCount +
+      ' · cat=' + (state.activeCat || '*') +
+    '</div>';
+
+    h = '<div style="grid-column:1/-1;text-align:center;padding:40px 20px;">' +
+      '<i class="fas fa-store-slash" style="font-size:64px;margin-bottom:16px;display:block;color:#7c3aed;opacity:0.5;"></i>' +
+      '<div style="font-weight:900;font-size:20px;color:#0f172a;margin-bottom:8px;">المنيو غير ظاهِر</div>' +
+      '<div style="font-size:14px;color:#475569;max-width:480px;line-height:1.8;margin:0 auto 18px;">' + reason + '</div>' +
+      '<div>' + action + '</div>' +
+      debugChip +
+    '</div>';
   } else {
     list.forEach(function(i) {
       var inCart = state.cart.find(function(c) { return c.id === i.id; });
@@ -2895,6 +2930,51 @@ function _posFmt(n) { return Number(n||0).toFixed(2); }
 // channels and every channel's menu items in parallel, then re-renders.
 // Used when admin updates channel items and the cashier wants the change
 // without reloading the page (which would lose the in-progress cart).
+// v5.16.2 — Quick action from the empty-state panel. Copies every
+// admin-menu item for the cashier's current brand into the active
+// channel's channel_menu_items list, then refreshes. One click, no
+// admin trip. Falls back to a polite toast if no brand is set.
+window.posQuickPopulateChannel = function (channelId) {
+  if (!channelId) channelId = state.activeChannel && state.activeChannel.id;
+  if (!channelId) { glassToast('لا تَوجَد قَناة مُختارة', true); return; }
+  if (!confirm('سيَتم نَسخ كل أصناف المنيو الرَئيسي إلى القَناة الحالية. مُتابعة؟')) return;
+
+  // Find the MAIN channel id from state.channels
+  var mainCh = (state.channels || []).find(function (c) {
+    var code = String(c.code || '').toUpperCase();
+    var ctype = String(c.channelType || c.channel_type || '').toLowerCase();
+    return code === 'MAIN' || ctype === 'main';
+  });
+  if (!mainCh || mainCh.id === channelId) {
+    glassToast('لا تَوجَد قَناة رَئيسية لِلنَسخ منها', true);
+    return;
+  }
+
+  loader(true);
+  _posCallAPI('POST', '/channel-menus/' + encodeURIComponent(channelId) + '/copy-from/' + encodeURIComponent(mainCh.id), {}, function (r) {
+    loader(false);
+    if (r && r.error) { glassToast(r.error, true); return; }
+    glassToast('تَم النَسخ — يَتم التَحديث...');
+    // Re-fetch the channel's items and re-render
+    setTimeout(function () {
+      if (typeof posRefreshAll === 'function') posRefreshAll();
+    }, 300);
+  });
+};
+
+// v5.16.2 — Quick jump to MAIN from any empty channel. Useful when
+// the cashier just wants to start selling and discovers the active
+// channel has no items yet.
+window.posJumpToMain = function () {
+  var mainCh = (state.channels || []).find(function (c) {
+    var code = String(c.code || '').toUpperCase();
+    var ctype = String(c.channelType || c.channel_type || '').toLowerCase();
+    return code === 'MAIN' || ctype === 'main';
+  });
+  if (!mainCh) { glassToast('لا تَوجَد قَناة رَئيسية في النِظام', true); return; }
+  if (typeof posSetChannel === 'function') posSetChannel(mainCh.id);
+};
+
 window.posRefreshAll = function () {
   var btn = document.querySelector('.pos-refresh-btn');
   if (btn) btn.classList.add('is-spinning');

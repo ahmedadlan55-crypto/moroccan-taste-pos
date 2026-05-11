@@ -18876,8 +18876,11 @@ function _siPopulateWhFilters() {
       var brandLbl = w.brandName ? ' · ' + w.brandName : '';
       return '<option value="' + _woEscapeHtml(w.id) + '">' + _woEscapeHtml(w.name||'') + brandLbl + '</option>';
     }).join('');
-    fromSel.innerHTML = '<option value="">📦 من مستودع — الكل</option>' + opts;
-    toSel.innerHTML   = '<option value="">🎯 إلى مستودع — الكل</option>' + opts;
+    // v5.10.45 — shortened placeholders so the option text fits in the
+    // 220-px select without overflow. The HTML `title` on each select
+    // still tells the user which warehouse it filters (from/to).
+    fromSel.innerHTML = '<option value="">المصدر — الكل</option>' + opts;
+    toSel.innerHTML   = '<option value="">الوجهة — الكل</option>' + opts;
     if (curFrom) fromSel.value = curFrom;
     if (curTo)   toSel.value   = curTo;
   }

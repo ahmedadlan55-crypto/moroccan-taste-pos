@@ -720,12 +720,93 @@
  * container) so we don't accidentally restyle one-off modals/dialogs.
  * ═══════════════════════════════════════════════════════════════════════ */
 
-/* ── Section container — page-like background ── */
+/* ── Section container — keep transparent so internal cards (header,
+ *    toolbar, table) provide all visual structure. The 20px padding
+ *    from v5.10.43 was eating ~40px horizontal room, which made the
+ *    wh-filter-bar selects too narrow to display option text like
+ *    "📦 من مستودع — الكل" — option text would visibly overflow.
+ *    v5.10.45: padding/background removed; bottom-margin kept. */
 .wo-section {
-  background: var(--ent-bg);
-  border-radius: var(--ent-r-lg);
-  padding: 20px;
   margin-bottom: 16px;
+}
+
+/* ── v5.10.45 — Fix .wh-filter-bar select widths inside .wo-section.
+ *    Default .wh-fb-select has max-width: 180px which is too narrow
+ *    for option text like "📦 من مستودع — الكل" (Arabic + emoji
+ *    needs ~240px). Without enough room the text would render outside
+ *    the select boundary on some browsers. We override here. */
+.wo-section .wh-filter-bar {
+  background: var(--ent-surface);
+  border: 1px solid var(--ent-border);
+  border-radius: var(--ent-r-lg);
+  padding: 14px 16px;
+  box-shadow: var(--ent-shadow-1);
+}
+.wo-section .wh-fb-select {
+  max-width: none;
+  min-width: 160px;
+  flex: 0 1 220px;
+  height: 40px;
+  padding: 8px 30px 8px 12px;
+  background: linear-gradient(135deg, #faf5ff, #fff);
+  border: 1.5px solid #d8b4fe;
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  /* Ensure the option text wraps inside the box instead of bleeding */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(135deg, #faf5ff, #fff),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%237c3aed' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat, no-repeat;
+  background-position: 0 0, calc(100% - 10px) center;
+  background-size: 100% 100%, 14px 14px;
+}
+/* Warehouse selects need extra room for "من مستودع — الكل" + emoji */
+.wo-section .wh-filter-bar select[id*="Wh"],
+.wo-section .wh-filter-bar select[id*="warehouse"],
+.wo-section .wh-filter-bar select[id*="Warehouse"] {
+  flex: 1 1 240px;
+  min-width: 220px;
+  max-width: 280px;
+}
+.wo-section .wh-fb-date {
+  max-width: 160px;
+  min-width: 130px;
+  height: 40px;
+}
+.wo-section .wh-fb-search {
+  flex: 2 1 240px;
+  min-width: 220px;
+  max-width: 400px;
+}
+.wo-section .wh-fb-select:focus,
+.wo-section .wh-filter-bar input:focus {
+  outline: none;
+  border-color: var(--ent-primary);
+  box-shadow: 0 0 0 3px rgba(79,70,229,.15);
+}
+.wo-section .wh-fb-clear {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+@media (max-width: 768px) {
+  .wo-section .wh-fb-select,
+  .wo-section .wh-filter-bar select[id*="Wh"] {
+    flex: 1 1 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .wo-section .wh-fb-search { max-width: 100%; min-width: 100%; }
 }
 
 /* ── HeaderSection upgrade ────────────────────────────────────────── */

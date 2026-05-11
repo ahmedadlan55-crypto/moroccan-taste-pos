@@ -319,6 +319,127 @@ router.delete('/price-list-items/:id', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
+// v5.10.27 — Category-aware price-list management. These endpoints power
+// the new category-tabbed editor that mirrors how the cashier groups
+// products: every item belongs to a category, edit prices in bulk per
+// category, and add menu items grouped by their menu.category.
+
+// List distinct categories within a price list with item counts + price
+// stats. NULL/empty categories collapse into "بدون تصنيف".
+router.get('/price-lists/:id/categories', async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT COALESCE(NULLIF(TRIM(COALESCE(li.item_category, m.category, i.unit, '')), ''), '__none__') AS cat,
+             COUNT(*) AS item_count,
+             MIN(li.price) AS min_price,
+             MAX(li.price) AS max_price,
+             AVG(li.price) AS avg_price
+      FROM price_list_items li
+      LEFT JOIN menu m ON li.item_id = m.id
+      LEFT JOIN inv_items i ON li.item_id = i.id
+      WHERE li.price_list_id = ?
+      GROUP BY cat
+      ORDER BY (cat = '__none__'), cat
+    `, [req.params.id]);
+    res.json(rows.map(r => ({
+      name: r.cat === '__none__' ? '' : r.cat,
+      label: r.cat === '__none__' ? 'بدون تصنيف' : r.cat,
+      itemCount: Number(r.item_count) || 0,
+      minPrice: Number(r.min_price) || 0,
+      maxPrice: Number(r.max_price) || 0,
+      avgPrice: Math.round((Number(r.avg_price) || 0) * 100) / 100
+    })));
+  } catch(e) { res.json([]); }
+});
+
+// Bulk update the prices of every item in a category. Three modes:
+//   set      → set every price to `value`
+//   add      → add `value` to every price (negative allowed for subtract)
+//   percent  → multiply each price by (1 + value/100)
+// Returns affected count. Min-price safety: prices never go below 0.
+router.post('/price-lists/:id/categories/bulk-price', async (req, res) => {
+  try {
+    const { category, mode, value } = req.body || {};
+    if (!mode || value == null) return res.json({ success: false, error: 'mode و value مطلوبان' });
+    const v = Number(value);
+    if (isNaN(v)) return res.json({ success: false, error: 'value يجب أن يكون رقماً' });
+    // category may be '' (meaning "بدون تصنيف" — match NULL or empty)
+    const catFilter = (category && category.trim())
+      ? 'COALESCE(li.item_category, m.category, i.unit, "") = ?'
+      : '(li.item_category IS NULL OR li.item_category = "") AND (m.category IS NULL OR m.category = "") AND (i.unit IS NULL OR i.unit = "")';
+    const params = [req.params.id];
+    if (category && category.trim()) params.push(category.trim());
+
+    // Fetch matching IDs first so we can update precisely
+    const [hits] = await db.query(`
+      SELECT li.id, li.price
+      FROM price_list_items li
+      LEFT JOIN menu m ON li.item_id = m.id
+      LEFT JOIN inv_items i ON li.item_id = i.id
+      WHERE li.price_list_id = ? AND ${catFilter}
+    `, params);
+    if (!hits.length) return res.json({ success: true, affected: 0 });
+
+    let affected = 0;
+    for (const row of hits) {
+      let newPrice;
+      const cur = Number(row.price) || 0;
+      if (mode === 'set')          newPrice = v;
+      else if (mode === 'add')     newPrice = cur + v;
+      else if (mode === 'percent') newPrice = cur * (1 + v / 100);
+      else                          newPrice = cur;
+      newPrice = Math.max(0, Math.round(newPrice * 100) / 100);
+      await db.query('UPDATE price_list_items SET price = ? WHERE id = ?', [newPrice, row.id]);
+      affected++;
+    }
+    res.json({ success: true, affected, mode, value: v });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// Inline-edit save: bulk update specific line items by id.
+// Body: { items: [{ id, price, minPrice?, category? }] }
+router.post('/price-lists/:id/items/bulk-update', async (req, res) => {
+  try {
+    const { items } = req.body || {};
+    if (!Array.isArray(items) || !items.length) return res.json({ success: false, error: 'items مطلوب' });
+    let affected = 0;
+    for (const it of items) {
+      if (!it.id) continue;
+      const fields = [];
+      const params = [];
+      if (it.price != null)    { fields.push('price = ?');         params.push(Math.max(0, Number(it.price) || 0)); }
+      if (it.minPrice != null) { fields.push('min_price = ?');     params.push(Math.max(0, Number(it.minPrice) || 0)); }
+      if (it.category != null) { fields.push('item_category = ?'); params.push(it.category || null); }
+      if (!fields.length) continue;
+      params.push(req.params.id, it.id);
+      const [r] = await db.query(
+        `UPDATE price_list_items SET ${fields.join(', ')} WHERE price_list_id = ? AND id = ?`,
+        params);
+      affected += r.affectedRows || 0;
+    }
+    res.json({ success: true, affected });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// Move every item in one category to another. Useful for renaming
+// categories without touching menu.category.
+router.post('/price-lists/:id/categories/rename', async (req, res) => {
+  try {
+    const { from, to } = req.body || {};
+    if (to == null) return res.json({ success: false, error: 'to مطلوب' });
+    const fromFilter = (from && from.trim())
+      ? 'COALESCE(item_category, "") = ?'
+      : 'item_category IS NULL OR item_category = ""';
+    const params = [to];
+    if (from && from.trim()) params.push(from.trim());
+    params.push(req.params.id);
+    const [r] = await db.query(
+      `UPDATE price_list_items SET item_category = ? WHERE ${fromFilter} AND price_list_id = ?`,
+      params);
+    res.json({ success: true, affected: r.affectedRows || 0 });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
 // V5.7 — DELETE the entire price list (with cascade across all dependent tables)
 //   1. price_list_items   — line items in this list
 //   2. sales_channels     — UNSET price_list_id pointers (don't break channels)

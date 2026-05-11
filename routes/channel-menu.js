@@ -36,6 +36,44 @@ router.get('/:channelId', async (req, res) => {
     const conds = ['cmi.channel_id = ?'];
     const params = [req.params.channelId];
     if (branchId) { conds.push('(cmi.branch_id = ? OR cmi.branch_id IS NULL)'); params.push(branchId); }
+
+    // v5.10.27 — Resolve the price list assigned to this channel (if any)
+    // and load its items so the cashier honors price-list prices instead
+    // of always falling back to menu.price. Previously the price list
+    // assignment on sales_channels was only used as a label.
+    let priceList = null;
+    let priceListMap = {};
+    try {
+      const [chRows] = await db.query(
+        `SELECT sc.price_list_id, pl.name AS pl_name, pl.is_active AS pl_active
+           FROM sales_channels sc
+           LEFT JOIN price_lists pl ON pl.id = sc.price_list_id
+          WHERE sc.id = ? LIMIT 1`,
+        [req.params.channelId]);
+      if (chRows.length && chRows[0].price_list_id && chRows[0].pl_active !== 0) {
+        priceList = {
+          id: chRows[0].price_list_id,
+          name: chRows[0].pl_name || ''
+        };
+        const today = new Date().toISOString().slice(0, 10);
+        const [plItems] = await db.query(
+          `SELECT item_id, item_name, item_category, price, min_price, valid_from, valid_to
+             FROM price_list_items
+            WHERE price_list_id = ?
+              AND (valid_from IS NULL OR valid_from <= ?)
+              AND (valid_to   IS NULL OR valid_to   >= ?)`,
+          [priceList.id, today, today]);
+        plItems.forEach(li => {
+          if (li.item_id) priceListMap[li.item_id] = {
+            price: Number(li.price) || 0,
+            minPrice: Number(li.min_price) || 0,
+            category: li.item_category || null,
+            name: li.item_name || null
+          };
+        });
+      }
+    } catch(_) { /* schema diff — fall back to legacy behavior */ }
+
     const [rows] = await db.query(`
       SELECT cmi.*,
              m.name AS item_name, m.price AS base_price, m.category, m.cost,
@@ -49,23 +87,53 @@ router.get('/:channelId', async (req, res) => {
       LEFT JOIN branches br ON br.id = cmi.branch_id
       LEFT JOIN bom b ON b.id = cmi.bom_id
       WHERE ${conds.join(' AND ')}
-        AND m.id IS NOT NULL    /* v5.15.3 — skip orphaned rows whose menu_item_id no longer exists, otherwise the cashier renders blank product cards */
+        AND m.id IS NOT NULL    /* v5.15.3 — skip orphaned rows whose menu_item_id no longer exists */
       ORDER BY cmi.sort_order, m.category, m.name`, params);
-    res.json(rows.map(r => ({
-      id: r.id, channelId: r.channel_id, branchId: r.branch_id,
-      menuItemId: r.menu_item_id, itemName: r.item_name,
-      category: r.category, basePrice: Number(r.base_price)||0,
-      overridePrice: r.override_price != null ? Number(r.override_price) : null,
-      effectivePrice: r.override_price != null ? Number(r.override_price) : Number(r.base_price)||0,
-      cost: Number(r.cost)||0,
-      isAvailable: !!r.is_available,
-      dailyLimit: r.daily_limit, soldToday: r.sold_today || 0,
-      sortOrder: r.sort_order || 100,
-      salesWarehouseId: r.sales_warehouse_id, salesWarehouseName: r.sales_wh_name,
-      bomId: r.bom_id, bomName: r.bom_name,
-      isSemiFinished: !!r.is_semi_finished,
-      branchName: r.branch_name, notes: r.notes
-    })));
+
+    res.json({
+      // v5.10.27 — Wrap items in an envelope so the cashier can show
+      // "أسعار قائمة X" badge alongside the products grid.
+      priceList: priceList,
+      items: rows.map(r => {
+        // v5.10.27 — Price priority:
+        //   override_price (per-channel manual)
+        //   > price_list_items.price (if channel has a price list)
+        //   > menu.price (the original catalog price)
+        const plEntry = priceListMap[r.menu_item_id];
+        const plPrice = plEntry ? plEntry.price : null;
+        const effectivePrice =
+          (r.override_price != null) ? Number(r.override_price) :
+          (plPrice != null)          ? plPrice :
+                                        (Number(r.base_price) || 0);
+        // If the price list provides a category for this item, prefer it
+        // over the global menu.category — admins use price-list categories
+        // to override how items are grouped for a specific channel.
+        const effectiveCategory = (plEntry && plEntry.category) ? plEntry.category : r.category;
+        return {
+          id: r.id, channelId: r.channel_id, branchId: r.branch_id,
+          menuItemId: r.menu_item_id, itemName: r.item_name,
+          category: effectiveCategory,
+          menuCategory: r.category,                 // original menu category (for debug/admin)
+          basePrice: Number(r.base_price)||0,
+          overridePrice: r.override_price != null ? Number(r.override_price) : null,
+          priceListPrice: plPrice,                  // v5.10.27 — visible in admin tooling
+          priceListMinPrice: plEntry ? plEntry.minPrice : null,
+          priceSource:
+            (r.override_price != null) ? 'override' :
+            (plPrice != null)          ? 'priceList' :
+                                          'menu',
+          effectivePrice: effectivePrice,
+          cost: Number(r.cost)||0,
+          isAvailable: !!r.is_available,
+          dailyLimit: r.daily_limit, soldToday: r.sold_today || 0,
+          sortOrder: r.sort_order || 100,
+          salesWarehouseId: r.sales_warehouse_id, salesWarehouseName: r.sales_wh_name,
+          bomId: r.bom_id, bomName: r.bom_name,
+          isSemiFinished: !!r.is_semi_finished,
+          branchName: r.branch_name, notes: r.notes
+        };
+      })
+    });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

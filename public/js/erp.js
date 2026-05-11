@@ -16730,6 +16730,13 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
 
     // Existing items table
     '<div style="font-size:13px;font-weight:900;color:#0f172a;margin-bottom:8px;"><i class="fas fa-list"></i> الأصناف الحالية في القائمة</div>' +
+
+    // v5.10.27 — Category strip: tabs by category with counts. Clicking a
+    // tab filters the items table; the bulk-price toolbar reflects the
+    // current category context (will apply to filtered rows only when a
+    // category is selected, "all" applies globally).
+    '<div id="plCategoryStrip" style="margin-bottom:10px;"></div>' +
+
     '<div class="erp-table-container">' +
       // V5.7.5 — Bulk channel-price update bar (sticky above the table)
       '<div style="background:linear-gradient(135deg,#1e40af,#1e3a8a);color:#fff;padding:12px 16px;border-radius:12px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
@@ -16743,20 +16750,20 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
         '<input type="number" step="0.01" id="plBulkChValue" placeholder="القيمة" style="padding:7px 10px;border-radius:8px;border:0;width:110px;font-weight:700;color:#0f172a;">' +
         '<button class="btn btn-sm" style="background:#fbbf24;color:#0f172a;font-weight:800;" onclick="plBulkUpdateChannelPrices(\''+id+'\')"><i class="fas fa-bolt"></i> تطبيق على الكل</button>' +
         '<button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;font-weight:700;" onclick="plBulkUpdateChannelPrices(\''+id+'\',true)"><i class="fas fa-eye"></i> معاينة</button>' +
-        '<span style="margin-inline-start:auto;font-size:11px;opacity:.85;">يطبّق على ' + items.length + ' صنف في القائمة</span>' +
+        '<span style="margin-inline-start:auto;font-size:11px;opacity:.85;" id="plBulkScope">يطبّق على ' + items.length + ' صنف في القائمة</span>' +
       '</div>' +
-      '<table class="erp-table">' +
+      '<table class="erp-table" id="plItemsTable">' +
         '<thead><tr>' +
           '<th>المنتج</th>' +
           '<th>المصدر</th>' +
-          '<th>الفئة/الوحدة</th>' +
+          '<th>التصنيف <small style="color:#64748b;font-weight:500;">(انقر للتعديل)</small></th>' +
           '<th>السعر الافتراضي</th>' +
           '<th>سعر القناة <small style="color:#64748b;font-weight:500;">(انقر للتعديل)</small></th>' +
           '<th>الحد الأدنى</th>' +
           '<th>الفرق</th>' +
           '<th>إجراء</th>' +
         '</tr></thead>' +
-        '<tbody>' +
+        '<tbody id="plItemsTbody">' +
         (items.length ? items.map(function(i) {
           var diff = Number(i.price) - Number(i.defaultPrice||0);
           var diffClr = Math.abs(diff) < 0.01 ? '#94a3b8' : (diff > 0 ? '#16a34a' : '#dc2626');
@@ -16784,10 +16791,24 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
                 '<span class="pl-min-value">'+(Number(i.minPrice)||0 ? Number(i.minPrice).toFixed(2) : '—')+'</span>' +
               '</div>' +
             '</div>';
-          return '<tr>' +
+          // v5.10.27 — category cell is now inline-editable. Saves via the
+          // new POST /erp/price-lists/:id/items/bulk-update endpoint and
+          // refreshes the category strip so the new category appears as
+          // its own tab immediately.
+          var catCell =
+            '<div class="pl-cat-edit" data-pli-id="'+_v3EscapeHtml(i.id)+'" data-pl-id="'+id+'" data-cur-cat="'+_v3EscapeHtml(i.categoryOrUnit||'')+'">' +
+              '<div class="pl-cat-display" onclick="plStartCategoryEdit(this)" title="انقر لتعديل التصنيف" ' +
+                'style="cursor:pointer;color:#475569;font-size:12px;padding:3px 10px;border-radius:6px;background:#f8fafc;border:1px dashed transparent;transition:all .15s;display:inline-block;" ' +
+                'onmouseover="this.style.background=\'#e2e8f0\';this.style.borderColor=\'#64748b\';" ' +
+                'onmouseout="this.style.background=\'#f8fafc\';this.style.borderColor=\'transparent\';">' +
+                '<i class="fas fa-tag" style="font-size:9px;color:#94a3b8;margin-inline-end:4px;"></i>' +
+                '<span class="pl-cat-value">' + _v3EscapeHtml(i.categoryOrUnit||'بدون تصنيف') + '</span>' +
+              '</div>' +
+            '</div>';
+          return '<tr data-pli-cat="' + _v3EscapeHtml(i.categoryOrUnit||'') + '">' +
             '<td style="font-weight:700;">' + _v3EscapeHtml(i.itemName) + '</td>' +
             '<td>' + srcBadge + '</td>' +
-            '<td><small style="color:#64748b;">' + _v3EscapeHtml(i.categoryOrUnit||'—') + '</small></td>' +
+            '<td>' + catCell + '</td>' +
             '<td>' + Number(i.defaultPrice||0).toFixed(2) + '</td>' +
             '<td>' + priceCell + '</td>' +
             '<td>' + minCell + '</td>' +
@@ -16803,6 +16824,9 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
   document.getElementById('erpModalBody').innerHTML = html;
   document.getElementById('erpModalSaveBtn').style.display = 'none';
   document.getElementById('erpModal').classList.remove('hidden');
+  // v5.10.27 — Render the category strip now that the DOM exists.
+  window._plState.activeCategory = window._plState.activeCategory || '__all__';
+  _plRenderCategoryStrip();
   // v5.15.1 — Populate the brand dropdown so the admin can pull items
   // from any brand. The list's own brand is pre-selected.
   _erpGet('/erp/brands', function (brands) {
@@ -16818,6 +16842,155 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
   // Render initial available list
   _plRenderAvailable();
 }
+
+// =========================================
+// v5.10.27 — Category-aware price-list editor
+// =========================================
+// Renders a tab strip ABOVE the existing items table, one chip per
+// distinct category. Clicking a chip filters the visible rows and
+// scopes the bulk-price toolbar to that category. The "تعديل جماعي"
+// button on each chip opens a quick prompt to set/add/percent-bump the
+// prices of all items in that category in one shot.
+
+function _plRenderCategoryStrip() {
+  var host = document.getElementById('plCategoryStrip');
+  if (!host || !window._plState) return;
+  var items = window._plState.items || [];
+  var active = window._plState.activeCategory || '__all__';
+  // Group items by category locally so we don't need an extra fetch.
+  // The server endpoint /price-lists/:id/categories returns the same
+  // breakdown — we use it for the avg-price chip when admin clicks
+  // "تعديل جماعي".
+  var counts = { __all__: items.length, __none__: 0 };
+  items.forEach(function(i) {
+    var c = (i.categoryOrUnit || '').trim();
+    if (!c) { counts.__none__++; return; }
+    counts[c] = (counts[c] || 0) + 1;
+  });
+  var keys = Object.keys(counts).filter(function(k){ return k !== '__all__'; }).sort(function(a, b){
+    if (a === '__none__') return 1;
+    if (b === '__none__') return -1;
+    return a.localeCompare(b, 'ar');
+  });
+  var chip = function(key, label, count, isActive, color) {
+    color = color || '#7c3aed';
+    var bg = isActive ? color : (color === '#94a3b8' ? '#f1f5f9' : (color === '#7c3aed' ? '#faf5ff' : '#fef3c7'));
+    var fg = isActive ? '#fff' : color;
+    var bd = isActive ? color : (color + '40');
+    var safeKey = key.replace(/'/g, "\\'");
+    return '<button onclick="_plFilterByCategory(\'' + safeKey + '\')" ' +
+      'style="background:' + bg + ';color:' + fg + ';border:1.5px solid ' + bd + ';padding:8px 14px;border-radius:999px;font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;transition:all .15s;display:inline-flex;align-items:center;gap:6px;">' +
+      _v3EscapeHtml(label) +
+      '<span style="background:' + (isActive ? 'rgba(255,255,255,.25)' : '#fff') + ';color:' + (isActive ? '#fff' : color) + ';padding:1px 8px;border-radius:999px;font-size:10px;font-weight:900;">' + count + '</span>' +
+      '</button>';
+  };
+  var html =
+    '<div style="background:linear-gradient(135deg,#faf5ff,#f5f3ff);border:1.5px solid #e9d5ff;border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
+        '<div style="font-size:12px;font-weight:900;color:#6d28d9;"><i class="fas fa-folder-tree"></i> التصنيفات في هذه القائمة</div>' +
+        '<button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:700;" onclick="_plOpenCategoryBulkPrompt()" title="تعديل أسعار التصنيف الحالي جماعياً">' +
+          '<i class="fas fa-bolt"></i> تعديل جماعي للتصنيف' +
+        '</button>' +
+      '</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:6px;">' +
+        chip('__all__', 'كل التصنيفات', items.length, active === '__all__', '#94a3b8') +
+        keys.map(function(k) {
+          var label = k === '__none__' ? 'بدون تصنيف' : k;
+          return chip(k, label, counts[k], active === k, '#7c3aed');
+        }).join('') +
+      '</div>' +
+    '</div>';
+  host.innerHTML = html;
+}
+
+window._plFilterByCategory = function(cat) {
+  if (!window._plState) return;
+  window._plState.activeCategory = cat;
+  _plRenderCategoryStrip();
+  // Filter rows by data-pli-cat attribute
+  var tbody = document.getElementById('plItemsTbody');
+  if (!tbody) return;
+  var rows = tbody.querySelectorAll('tr[data-pli-cat]');
+  var visible = 0;
+  rows.forEach(function(tr) {
+    var c = tr.getAttribute('data-pli-cat') || '';
+    var show =
+      cat === '__all__' ? true :
+      cat === '__none__' ? !c :
+                            (c === cat);
+    tr.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  // Update the scope label in the bulk-price toolbar
+  var scope = document.getElementById('plBulkScope');
+  if (scope) {
+    var catLabel = cat === '__all__' ? 'كل القائمة' : (cat === '__none__' ? 'بدون تصنيف' : cat);
+    scope.textContent = 'يطبّق على ' + visible + ' صنف · النطاق: ' + catLabel;
+  }
+};
+
+window._plOpenCategoryBulkPrompt = function() {
+  if (!window._plState) return;
+  var cat = window._plState.activeCategory || '__all__';
+  var plId = window._plState.id;
+  if (cat === '__all__') return showToast('اختر تصنيفاً أولاً من الشريط الأعلى', true);
+  var catLabel = cat === '__none__' ? 'بدون تصنيف' : cat;
+  var modeStr = prompt('وضع التعديل لتصنيف "' + catLabel + '":\n\n' +
+    '1 = تعيين سعر ثابت لكل الأصناف في التصنيف\n' +
+    '2 = إضافة/طرح مبلغ ثابت لكل سعر\n' +
+    '3 = نسبة مئوية (+/-) من السعر الحالي\n\n' +
+    'أدخل 1 أو 2 أو 3:', '3');
+  if (!modeStr) return;
+  var mode = modeStr.trim() === '1' ? 'set' : (modeStr.trim() === '2' ? 'add' : (modeStr.trim() === '3' ? 'percent' : null));
+  if (!mode) return showToast('وضع غير صالح', true);
+  var hint = mode === 'set' ? 'السعر الجديد (مثلاً 25)' : (mode === 'add' ? 'المبلغ (مثلاً 2.5 أو -1.5)' : 'النسبة % (مثلاً 10 أو -15)');
+  var val = prompt(hint, mode === 'percent' ? '10' : '5');
+  if (val == null) return;
+  var v = Number(val);
+  if (isNaN(v)) return showToast('قيمة غير صالحة', true);
+  _erpPost('/erp/price-lists/' + encodeURIComponent(plId) + '/categories/bulk-price',
+    { category: cat === '__none__' ? '' : cat, mode: mode, value: v },
+    function(r) {
+      if (!r || !r.success) return showToast((r && r.error) || 'فشل التطبيق', true);
+      showToast('تم تحديث ' + r.affected + ' صنف في تصنيف "' + catLabel + '"');
+      // Reload the modal to reflect new prices
+      if (window._currentPriceList) erpViewPriceListItems(plId, window._currentPriceList.name || '');
+    });
+};
+
+// Inline edit for the category cell.
+window.plStartCategoryEdit = function(displayEl) {
+  var wrap = displayEl.parentElement;
+  if (!wrap) return;
+  var cur = wrap.getAttribute('data-cur-cat') || '';
+  var plId = wrap.getAttribute('data-pl-id');
+  var pliId = wrap.getAttribute('data-pli-id');
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.value = cur;
+  input.placeholder = 'اسم التصنيف';
+  input.style.cssText = 'padding:4px 8px;border:1.5px solid #7c3aed;border-radius:6px;font-size:12px;width:140px;font-family:inherit;';
+  var commit = function() {
+    var v = (input.value || '').trim();
+    if (v === cur) { wrap.innerHTML = ''; wrap.appendChild(displayEl); return; }
+    _erpPost('/erp/price-lists/' + encodeURIComponent(plId) + '/items/bulk-update',
+      { items: [{ id: pliId, category: v || null }] },
+      function(r) {
+        if (!r || !r.success) { showToast((r && r.error) || 'فشل التحديث', true); return; }
+        showToast('تم تحديث التصنيف');
+        if (window._currentPriceList) erpViewPriceListItems(plId, window._currentPriceList.name || '');
+      });
+  };
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') commit();
+    if (e.key === 'Escape') { wrap.innerHTML = ''; wrap.appendChild(displayEl); }
+  });
+  input.addEventListener('blur', commit);
+  wrap.innerHTML = '';
+  wrap.appendChild(input);
+  input.focus();
+  input.select();
+};
 
 // v5.15.1 — Reload the menu pool for a different brand without
 // leaving the price-list-items modal. Lets the owner add items from
@@ -24303,7 +24476,19 @@ window.erpOpenChannelItemsModal = function (channelId, channelName) {
 
 function _cmiLoadItems(cb) {
   callAPI('GET', '/channel-menus/' + encodeURIComponent(window._cmiChannelId), null, function (rows) {
-    window._cmiItems = Array.isArray(rows) ? rows : [];
+    // v5.10.27 — endpoint now returns { priceList, items } envelope.
+    // Stash the priceList so the modal can show a badge "أسعار من قائمة X".
+    var items, priceList = null;
+    if (Array.isArray(rows)) {
+      items = rows;
+    } else if (rows && Array.isArray(rows.items)) {
+      items = rows.items;
+      priceList = rows.priceList || null;
+    } else {
+      items = [];
+    }
+    window._cmiItems = items;
+    window._cmiPriceList = priceList;
     if (typeof cb === 'function') cb();
   });
 }

@@ -362,9 +362,42 @@ function _posCategoryIcon(c) {
   return 'fa-utensils';
 }
 
+// v5.10.27 — Surface which price list is driving prices for the
+// currently active channel. The cashier sees a small chip above the
+// categories grid: "أسعار من قائمة: X". When no list is bound, the
+// chip is hidden so the legacy menu-price flow stays visually clean.
+function _posRenderPriceListBadge() {
+  var host = q('#posPriceListBadge');
+  if (!host) {
+    var anchor = q('#posCatGrid');
+    if (!anchor || !anchor.parentNode) return;
+    host = document.createElement('div');
+    host.id = 'posPriceListBadge';
+    host.style.cssText = 'margin:8px 12px;';
+    anchor.parentNode.insertBefore(host, anchor);
+  }
+  var ch = state.activeChannel;
+  var pl = ch && ch._priceListBadge;
+  if (!pl || !pl.name) { host.style.display = 'none'; host.innerHTML = ''; return; }
+  host.style.display = '';
+  host.innerHTML =
+    '<div style="display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#faf5ff,#f3e8ff);' +
+                'border:1.5px solid #d8b4fe;border-radius:999px;padding:5px 14px;font-size:11.5px;font-weight:800;' +
+                'color:#6d28d9;box-shadow:0 1px 3px rgba(124,58,237,0.08);">' +
+      '<i class="fas fa-tag" style="font-size:10px;"></i>' +
+      '<span>أسعار من قائمة:</span>' +
+      '<span style="background:#fff;padding:1px 8px;border-radius:6px;color:#7c3aed;">' +
+        (typeof _v3EscapeHtml === 'function' ? _v3EscapeHtml(pl.name) : (pl.name || '')) +
+      '</span>' +
+    '</div>';
+}
+
 window.renderCategoryGrid = function () {
   var grid = q('#posCatGrid');
   if (!grid) return;
+  // v5.10.27 — refresh the price-list chip whenever categories re-render
+  // (channel switch, prefetch return, etc.).
+  try { _posRenderPriceListBadge(); } catch(_) {}
   // v5.15.1 — Build menuActive + categories from channelMenuItems DIRECTLY
   // when a non-MAIN channel is active. This mirrors renderMenuGrid and
   // bypasses state.menu's brand filter — the channel rows already carry
@@ -3082,7 +3115,12 @@ window.posLoadV3Data = function() {
           state.channelMenuCache[c.id] = [];
           return;
         }
-        state.channelMenuCache[c.id] = Array.isArray(cmRows) ? cmRows : [];
+        // v5.10.27 — endpoint now returns either an array (legacy) or an
+        // envelope { priceList, items }. Normalize so the cache always
+        // holds the item array; the priceList badge is rendered live on
+        // channel switch from state.activeChannel.priceListId.
+        var arr = Array.isArray(cmRows) ? cmRows : ((cmRows && Array.isArray(cmRows.items)) ? cmRows.items : []);
+        state.channelMenuCache[c.id] = arr;
         // v5.15.3 — persist after every prefetch so the next page open
         // is instant. localStorage write is cheap (~kB JSON).
         try { localStorage.setItem('pos_channel_menu_cache', JSON.stringify(state.channelMenuCache)); } catch (e) {}
@@ -3321,6 +3359,16 @@ function _doSetChannel(ch) {
           _refreshChannelViews();
         }
         return;
+      }
+      // v5.10.27 — envelope-aware unwrap. The endpoint may return either
+      // a flat array (legacy clients) or { priceList, items } (new). The
+      // priceList object lets us show "أسعار قائمة: X" badge above the
+      // grid so cashiers immediately know which list is driving prices.
+      if (!Array.isArray(rows) && rows && Array.isArray(rows.items)) {
+        if (state.activeChannel) {
+          state.activeChannel._priceListBadge = rows.priceList || null;
+        }
+        rows = rows.items;
       }
       if (!state.channelMenuCache) state.channelMenuCache = {};
       state.channelMenuCache[ch.id] = Array.isArray(rows) ? rows : [];

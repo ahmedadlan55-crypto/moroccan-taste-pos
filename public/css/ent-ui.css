@@ -739,8 +739,20 @@
   background: var(--ent-surface);
   border: 1px solid var(--ent-border);
   border-radius: var(--ent-r-lg);
-  padding: 14px 16px;
+  padding: 12px 14px;
   box-shadow: var(--ent-shadow-1);
+  gap: 8px;
+}
+/* v5.10.47 — hide the .wh-fb-title inside .wo-section. The dark hero
+ * header above already shows the section name ("إذونات الصرف") in
+ * large type — duplicating it inside the filter bar wasted ~150px
+ * of horizontal space and looked visually redundant. */
+.wo-section .wh-filter-bar .wh-fb-title {
+  display: none;
+}
+.wo-section .wh-filter-bar .wh-fb-controls {
+  width: 100%;
+  gap: 8px;
 }
 .wo-section .wh-fb-select {
   max-width: none;
@@ -766,13 +778,23 @@
   background-position: 0 0, calc(100% - 10px) center;
   background-size: 100% 100%, 14px 14px;
 }
-/* Warehouse selects need extra room for "من مستودع — الكل" + emoji */
+/* v5.10.47 — Warehouse selects: now using shortened placeholder
+ * ("المصدر — الكل" / "الوجهة — الكل" from v5.10.45) so 160-200px
+ * is plenty. Tighter than v5.10.45's 240px so all 6 controls fit on
+ * one row at standard laptop widths (1366+). */
 .wo-section .wh-filter-bar select[id*="Wh"],
 .wo-section .wh-filter-bar select[id*="warehouse"],
 .wo-section .wh-filter-bar select[id*="Warehouse"] {
-  flex: 1 1 240px;
-  min-width: 220px;
-  max-width: 280px;
+  flex: 1 1 170px;
+  min-width: 150px;
+  max-width: 220px;
+}
+/* Status select keeps a snug fit since its option labels are short */
+.wo-section .wh-filter-bar select[id$="Status"],
+.wo-section .wh-filter-bar #siFStatus {
+  flex: 0 1 140px;
+  min-width: 130px;
+  max-width: 160px;
 }
 .wo-section .wh-fb-date {
   max-width: 160px;
@@ -787,9 +809,9 @@
  *   RTL — wrong side, wrong size). */
 .wo-section .wh-fb-search {
   position: relative;
-  flex: 1 1 220px;
-  min-width: 200px;
-  max-width: 320px;
+  flex: 1 1 200px;
+  min-width: 180px;
+  max-width: 280px;
 }
 .wo-section .wh-fb-search i {
   position: absolute !important;
@@ -823,8 +845,10 @@
   box-shadow: 0 0 0 3px rgba(79,70,229,.15);
 }
 .wo-section .wh-fb-search input.form-control::placeholder {
-  color: var(--ent-text-mute2);
-  font-weight: 500;
+  color: #64748b;
+  font-weight: 600;
+  font-size: 12.5px;
+  opacity: 1;            /* Firefox sets opacity .54 by default */
 }
 
 /* RTL — icon on the right side (the natural start of the field) */

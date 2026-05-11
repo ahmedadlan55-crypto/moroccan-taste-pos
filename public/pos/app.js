@@ -212,11 +212,18 @@ window.renderMenuGrid = function() {
   var list;
   var channelEmpty = false;
   if (state.activeChannel && !state.activeChannel.useFullMenu) {
-    var chRows = (state.channelMenuItems || []).filter(function (r) { return r.isAvailable !== false; });
+    // v5.15.3 — Defend against orphaned channel_menu_items rows whose
+    // menu_item_id was deleted from the menu table (LEFT JOIN leaks
+    // NULL itemName). Backend route now filters these out too, but
+    // skip empty names here as well so an old client never renders
+    // blank product cards.
+    var chRows = (state.channelMenuItems || []).filter(function (r) {
+      return r.isAvailable !== false && r.itemName && String(r.itemName).trim();
+    });
     list = chRows.map(function (r) {
       return {
         id: r.menuItemId,
-        name: r.itemName || '',
+        name: r.itemName,
         category: r.category || '',
         price: r.effectivePrice != null ? Number(r.effectivePrice) : Number(r.basePrice || 0),
         cost: Number(r.cost || 0),
@@ -331,9 +338,10 @@ window.renderCategoryGrid = function () {
   var menuActive;
   var cats;
   if (state.activeChannel && !state.activeChannel.useFullMenu) {
+    // v5.15.3 — Same orphan-row defense as renderMenuGrid.
     menuActive = (state.channelMenuItems || [])
-      .filter(function (r) { return r.isAvailable !== false; })
-      .map(function (r) { return { id: r.menuItemId, name: r.itemName || '', category: r.category || '', active: true }; });
+      .filter(function (r) { return r.isAvailable !== false && r.itemName && String(r.itemName).trim(); })
+      .map(function (r) { return { id: r.menuItemId, name: r.itemName, category: r.category || '', active: true }; });
     if (state._channelCustomItems && state._channelCustomItems.length) {
       menuActive = menuActive.concat(state._channelCustomItems);
     }
@@ -2828,8 +2836,54 @@ function _posCallAPI(method, path, body, cb) {
 
 function _posFmt(n) { return Number(n||0).toFixed(2); }
 
+// v5.15.3 — Manual refresh button on the cashier. Re-fetches sales
+// channels and every channel's menu items in parallel, then re-renders.
+// Used when admin updates channel items and the cashier wants the change
+// without reloading the page (which would lose the in-progress cart).
+window.posRefreshAll = function () {
+  var btn = document.querySelector('.pos-refresh-btn');
+  if (btn) btn.classList.add('is-spinning');
+  if (typeof glassToast === 'function') glassToast('جاري التَحديث...', false);
+
+  // Drop in-memory channel caches so nothing is stale
+  state.channelMenuCache = {};
+  state._channelCustomItems = [];
+  try { localStorage.removeItem('pos_channel_menu_cache'); } catch (e) {}
+
+  // Re-fetch channels + per-channel menus (posLoadV3Data prefetches all
+  // non-MAIN channels in parallel, then auto-selects from localStorage).
+  if (typeof posLoadV3Data === 'function') {
+    try { posLoadV3Data(); } catch (e) { console.warn('refresh: posLoadV3Data failed', e); }
+  }
+
+  // Force re-fetch the full menu too, so state.menu reflects any new items.
+  state.menu = [];
+  if (typeof _ensureMenuLoaded === 'function') {
+    _ensureMenuLoaded(function () {
+      if (typeof renderCategoryGrid === 'function') renderCategoryGrid();
+      if (typeof renderMenuGrid === 'function') renderMenuGrid();
+    });
+  }
+
+  setTimeout(function () {
+    if (btn) btn.classList.remove('is-spinning');
+    if (typeof glassToast === 'function') glassToast('تَم التَحديث', false);
+  }, 1200);
+};
+
 // ─── 1. Load V3 data on init ────────────────────────────────────────────
 window.posLoadV3Data = function() {
+  // v5.15.3 — Hydrate channelMenuCache from localStorage so the very
+  // first channel switch is instant. Then the background pre-fetch
+  // below refreshes it. Without this, the first switch after a hard
+  // reload always waits on the network.
+  try {
+    var _persistedCache = localStorage.getItem('pos_channel_menu_cache');
+    if (_persistedCache) {
+      state.channelMenuCache = JSON.parse(_persistedCache) || {};
+    }
+  } catch (e) { /* corrupt cache — ignore */ }
+
   // Load 3 things in parallel: active channels, V3 payment methods, V3 discounts
   _posCallAPI('GET', '/sales-channels/active', null, function(rows) {
     state.channels = Array.isArray(rows) ? rows : [];
@@ -2857,6 +2911,9 @@ window.posLoadV3Data = function() {
           return;
         }
         state.channelMenuCache[c.id] = Array.isArray(cmRows) ? cmRows : [];
+        // v5.15.3 — persist after every prefetch so the next page open
+        // is instant. localStorage write is cheap (~kB JSON).
+        try { localStorage.setItem('pos_channel_menu_cache', JSON.stringify(state.channelMenuCache)); } catch (e) {}
       });
     });
   });
@@ -2950,11 +3007,19 @@ function _doSetChannel(ch) {
   var isSwitch = state.activeChannel && state.activeChannel.id !== ch.id;
   state.activeChannel = ch;
   localStorage.setItem('pos_active_channel_id', ch.id);
+  // v5.15.3 — ALWAYS render a visible price-list chip (linked or
+  // default). Previously when ch.priceListId was null the top label
+  // rendered as an empty string, hiding the channel↔price-list
+  // relationship from the cashier.
+  var _plChip = ch.priceListId
+    ? '<i class="fas fa-link"></i> قائمة أسعار: <b>' + (ch.priceListName || 'مُخَصَّصة') + '</b>'
+    : '<i class="fas fa-circle-info"></i> قائمة الأسعار الافتراضية';
+  var _plChipCls = ch.priceListId ? 'is-linked' : 'is-default';
+
   var label = q('#posChannelPriceLabel');
   if (label) {
-    label.innerHTML = ch.priceListId
-      ? '<i class="fas fa-link" style="color:#22c55e;"></i> ' + (ch.priceListName || 'قائمة أسعار خاصة')
-      : '<span style="color:#94a3b8;">قائمة أسعار افتراضية</span>';
+    label.className = 'pos-channel-pricelist ' + _plChipCls;
+    label.innerHTML = _plChip;
   }
   var sel = q('#posChannelSel');
   if (sel) sel.value = ch.id;
@@ -2963,9 +3028,8 @@ function _doSetChannel(ch) {
   if (selTop) selTop.value = ch.id;
   var topLabel = q('#posChannelPriceLabelTop');
   if (topLabel) {
-    topLabel.innerHTML = ch.priceListId
-      ? '<i class="fas fa-link"></i> ' + (ch.priceListName || 'قائمة أسعار خاصة')
-      : '';
+    topLabel.className = 'pos-action-pricelist ' + _plChipCls;
+    topLabel.innerHTML = _plChip;
   }
 
   // v5.12.4 — MAIN / Dine-In ALWAYS uses the full menu, regardless of

@@ -264,7 +264,36 @@ body.ar .pwa-install-btn {
   font-weight: 700;
   font-size: 13px;
 }
-.pos-action-pricelist { font-size: 11px; color: #7c3aed; font-weight: 700; }
+/* v5.15.3 — Always-visible price-list chip next to the channel
+ * selector. Purple "linked" state vs. grey "default" state makes the
+ * channel ↔ price-list relationship obvious at a glance. */
+.pos-action-pricelist,
+.pos-channel-pricelist {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.pos-action-pricelist.is-linked,
+.pos-channel-pricelist.is-linked {
+  background: var(--mt-accent-soft, #faf5ff);
+  color: var(--mt-accent-2, #6d28d9);
+}
+.pos-action-pricelist.is-linked i,
+.pos-channel-pricelist.is-linked i { color: var(--mt-success, #16a34a); }
+.pos-action-pricelist.is-default,
+.pos-channel-pricelist.is-default {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+/* v5.15.3 — Refresh button spin animation while re-fetching. */
+.pos-refresh-btn.is-spinning i { animation: posRefreshSpin 0.8s linear infinite; }
+@keyframes posRefreshSpin { to { transform: rotate(360deg); } }
 .pos-action-discounts { display: flex; gap: 8px; flex-wrap: wrap; }
 .pos-action-btn {
   padding: 10px 16px;
@@ -1569,11 +1598,9 @@ body.foodics-mode .cart-footer { display: none !important; }
   font-family: inherit;
 }
 .pos-channel-select:focus { box-shadow: 0 0 0 3px rgba(139,92,246,0.18); }
-.pos-channel-pricelist {
-  font-size: 11px;
-  color: #475569;
-  white-space: nowrap;
-}
+/* v5.15.3 — old .pos-channel-pricelist rule removed; the new is-linked /
+ * is-default variants above (near .pos-action-pricelist) handle both
+ * selectors now. */
 
 .pos-disc-actions {
   display: grid;

@@ -3975,6 +3975,28 @@ async function runMigrations() {
     await addColumnIfMissing('stocktake_items', 'notes', 'VARCHAR(400)');
   } catch(e) { /* table may not exist yet */ }
 
+  // v5.15.3 — Clean up orphaned channel_menu_items rows whose
+  // menu_item_id no longer exists. Without this, the LEFT JOIN in
+  // GET /channel-menus/:id leaks NULL item names into the cashier,
+  // which then renders blank product cards. wipe-and-seed flows can
+  // create these orphans by clearing the menu table without
+  // touching channel_menu_items.
+  try {
+    const [orphans] = await db.query(`
+      SELECT COUNT(*) AS n FROM channel_menu_items cmi
+      LEFT JOIN menu m ON m.id = cmi.menu_item_id
+      WHERE m.id IS NULL
+    `);
+    if (orphans.length && orphans[0].n > 0) {
+      await db.query(`
+        DELETE cmi FROM channel_menu_items cmi
+        LEFT JOIN menu m ON m.id = cmi.menu_item_id
+        WHERE m.id IS NULL
+      `);
+      console.log('[v5.15.3] cleaned ' + orphans[0].n + ' orphaned channel_menu_items rows.');
+    }
+  } catch (e) { /* table may not exist on a brand-new instance */ }
+
   console.log('[v5.4-migrations] channel_menu_items + stocktake workflow ready.');
 
   // ═══ V5.6 — Menu ↔ BOM integration (each finished menu item gets its own recipe) ═══

@@ -58,7 +58,7 @@
   <link rel="stylesheet" href="/shared/design-tokens.css?v=1">
   <link rel="stylesheet" href="/shared/common.css">
   <link rel="stylesheet" href="/shared/header.css">
-  <link rel="stylesheet" href="/pos/style.css?v=10">
+  <link rel="stylesheet" href="/pos/style.css?v=11">
   <link rel="stylesheet" href="/pos/keyboard.css?v=9">
 
   <script defer src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
@@ -69,7 +69,7 @@
   <script defer src="/shared/auth.js"></script>
   <script defer src="/shared/header.js"></script>
   <script defer src="/shared/device-info.js?v=1"></script>
-  <script defer src="/pos/app.js?v=13"></script>
+  <script defer src="/pos/app.js?v=14"></script>
   <script defer src="/pos/keyboard.js?v=7"></script>
 </head>
 <body class="ar" data-page="pos" data-show-shift="1">
@@ -93,6 +93,12 @@
       <span class="pos-action-pricelist" id="posChannelPriceLabelTop"></span>
     </div>
     <div class="pos-action-discounts">
+      <!-- v5.15.3 — Manual refresh button. Re-fetches sales channels
+           and every channel's menu items without reloading the page,
+           so the cashier sees admin changes instantly. -->
+      <button class="pos-action-btn pos-refresh-btn" onclick="posRefreshAll()" title="تَحديث المنيو والقَنوات" aria-label="تَحديث">
+        <i class="fas fa-rotate"></i> <span>تَحديث</span>
+      </button>
       <button class="pos-action-btn" onclick="posOpenLineDiscountModal()" title="خصم على صنف">
         <i class="fas fa-cube"></i> <span>خصم صنف</span>
       </button>

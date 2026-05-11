@@ -49,6 +49,7 @@ router.get('/:channelId', async (req, res) => {
       LEFT JOIN branches br ON br.id = cmi.branch_id
       LEFT JOIN bom b ON b.id = cmi.bom_id
       WHERE ${conds.join(' AND ')}
+        AND m.id IS NOT NULL    /* v5.15.3 — skip orphaned rows whose menu_item_id no longer exists, otherwise the cashier renders blank product cards */
       ORDER BY cmi.sort_order, m.category, m.name`, params);
     res.json(rows.map(r => ({
       id: r.id, channelId: r.channel_id, branchId: r.branch_id,

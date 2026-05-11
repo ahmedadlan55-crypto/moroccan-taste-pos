@@ -51,9 +51,10 @@
   <link rel="stylesheet" href="/css/inventory-catalog.css?v=16">
   <link rel="stylesheet" href="/css/journals.css?v=3">
   <link rel="stylesheet" href="/css/txn-letter.css?v=1">
-  <!-- v5.10.28 — Virtual keyboard CSS (shared with /pos/). Needed so the
-       on-screen keyboard renders correctly in the admin shell too. -->
-  <link rel="stylesheet" href="/pos/keyboard.css?v=1">
+  <!-- v5.10.36 — REMOVED keyboard.css/keyboard.js from the admin shell.
+       The owner wanted the on-screen keyboard only on the cashier POS,
+       not the admin. v5.10.28 mistakenly loaded it here too; reverted. -->
+  <!-- <link rel="stylesheet" href="/pos/keyboard.css?v=1"> -->
 
   <!-- ═══════════════════════════════════════════════════════════════════
        V5.7.36 — INLINE FULLSCREEN OVERRIDE for the recipe editor.
@@ -200,12 +201,11 @@
   <script src="/js/wo-modal.js?v=1"></script>
   <!-- V5.7.26 — reusable major+minor quantity input widget -->
   <script src="/js/wo-qty-input.js?v=1"></script>
-  <!-- v5.10.30 — On-screen virtual keyboard. Auto-binds to EVERY text-
-       like input/textarea on the page (no data-vk attribute needed).
-       Password/hidden/readOnly inputs are skipped; data-vk="0" opts
-       out for the rare exception. Belt-and-suspenders focus listener
-       catches any input the MutationObserver might miss. -->
-  <script src="/pos/keyboard.js?v=2"></script>
+  <!-- v5.10.36 — REMOVED the on-screen keyboard from the admin shell.
+       The owner uses a real keyboard on admin; only the cashier (POS)
+       needs the virtual one. /pos/keyboard.js is still loaded by
+       /pos/index.html as it always has been. -->
+  <!-- <script src="/pos/keyboard.js?v=2"></script> -->
   <!-- v5.11.2 — erp-v5.js / erp-v54.js removed (advanced enterprise section deleted) -->
   <script src="/js/app.js?v=62" defer></script>
 </body>

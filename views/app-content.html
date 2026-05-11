@@ -5658,6 +5658,17 @@
     </div>
   </header>
   <div class="wo-metric-strip" id="sfMetrics"></div>
+  <!-- v5.15.2 — Production-flow hint. Explains that semi-finished
+       stock only increases through production orders, not purchases. -->
+  <div style="margin:10px 0;padding:12px 16px;background:linear-gradient(135deg,#faf5ff,#f3e8ff);border:1.5px solid #d8b4fe;border-radius:12px;display:flex;align-items:center;gap:10px;font-size:13px;color:#6b21a8;">
+    <i class="fas fa-circle-info" style="font-size:18px;"></i>
+    <div>
+      <b>مَخزون هذه الأصناف يَتَحدَّث من أوامر الإنتاج، لا من الشِراء.</b>
+      <span style="display:block;font-size:12px;margin-top:2px;opacity:.85;">
+        لِزيادة المَخزون: افتَح <b>أوامر الإنتاج</b> → أَنشِئ أمرًا للصِنف → اعتَمِده. سَيَظهَر الصِنف عِندَئذ في تَقرير "قِيمة المَخزون" داخل مستودع الإنتاج بِشارة "نصف-مُصَنَّع".
+      </span>
+    </div>
+  </div>
   <section class="wo-toolbar" role="search">
     <div class="wo-field" style="flex:1;"><label class="wo-field-label" for="sfSearch"><i class="fas fa-search"></i> بحث</label><input id="sfSearch" class="wo-input" placeholder="اسم المنتج..." oninput="erpFilterSemiFinished()"></div>
     <div class="wo-field"><label class="wo-field-label" for="sfBrand"><i class="fas fa-tags"></i> البراند</label>

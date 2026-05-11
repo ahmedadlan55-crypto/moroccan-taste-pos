@@ -1800,18 +1800,42 @@ router.get('/warehouse-ledger', async (req, res) => {
     const itemFilterParams = [];
     if (itemId) { itemFilterSql = ' AND i.id = ?'; itemFilterParams.push(itemId); }
 
+    // v5.15.2 — UNION raw materials (inv_items) with semi-finished
+    // products (menu where is_semi_finished=1 + production_warehouse_id
+    // matches). Lets the warehouse ledger surface semi-finished items
+    // like "cold drink base" that previously were invisible here.
     const [items] = await db.query(`
-      SELECT DISTINCT i.id, i.name, i.unit, i.cost,
-             ws.qty       AS current_qty,
+      SELECT i.id, i.name, i.unit, i.cost,
+             'raw' AS item_type,
+             ws.qty AS current_qty,
              ws.first_added_date AS first_added
       FROM inv_items i
       LEFT JOIN warehouse_stock ws
              ON ws.item_id = i.id AND ws.warehouse_id = ?
-      LEFT JOIN inventory_movements m
-             ON m.item_id = i.id AND m.warehouse_id = ?
-      WHERE (ws.id IS NOT NULL OR m.id IS NOT NULL)
+      LEFT JOIN inventory_movements mvt
+             ON mvt.item_id = i.id AND mvt.warehouse_id = ?
+      WHERE (ws.id IS NOT NULL OR mvt.id IS NOT NULL)
             ${itemFilterSql}
-      ORDER BY i.name`, [warehouseId, warehouseId, ...itemFilterParams]);
+      GROUP BY i.id, i.name, i.unit, i.cost, ws.qty, ws.first_added_date
+
+      UNION ALL
+
+      SELECT m.id, m.name, COALESCE(m.production_unit, 'pcs') AS unit,
+             COALESCE(m.cost, 0) AS cost,
+             'semi' AS item_type,
+             COALESCE(m.stock, 0) AS current_qty,
+             m.created_at AS first_added
+      FROM menu m
+      WHERE m.is_semi_finished = 1
+        AND m.active = 1
+        AND m.production_warehouse_id = ?
+        ${itemId ? 'AND m.id = ?' : ''}
+
+      ORDER BY name`,
+      itemId
+        ? [warehouseId, warehouseId, ...itemFilterParams, warehouseId, itemId]
+        : [warehouseId, warehouseId, ...itemFilterParams, warehouseId]
+    );
 
     const dateFilter = [];
     const dateParams = [];

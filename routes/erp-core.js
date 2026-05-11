@@ -2146,11 +2146,20 @@ router.get('/reports/inventory-valuation', async (req, res) => {
     let hasWS = true;
     try { const [t] = await db.query("SHOW TABLES LIKE 'warehouse_stock'"); hasWS = !!t.length; } catch(e) { hasWS = false; }
 
+    // v5.15.2 — Two-track inventory: raw materials live in inv_items +
+    // warehouse_stock (per-warehouse), while semi-finished products live
+    // in menu (with is_semi_finished=1) and use menu.stock as a global
+    // count plus production_warehouse_id as the assigned warehouse.
+    // We UNION both so the inventory valuation report surfaces semis
+    // (e.g. "cold drink base") alongside raw materials. Zero-stock
+    // semis are still shown so the admin sees that the item exists
+    // — they need to run a production order to add stock.
     let sql, params = [];
     if (hasWS) {
       sql = `
         SELECT ws.warehouse_id, w.name AS warehouse_name,
                i.id AS item_id, i.name AS item_name, i.id AS sku, i.unit,
+               'raw' AS item_type,
                i.brand_id, b.name AS brand_name,
                COALESCE(ws.qty, 0) AS qty,
                COALESCE(i.cost, 0) AS avg_cost
@@ -2161,16 +2170,45 @@ router.get('/reports/inventory-valuation', async (req, res) => {
         WHERE COALESCE(ws.qty,0) > 0`;
       if (warehouse) { sql += ' AND ws.warehouse_id = ?'; params.push(warehouse); }
       if (brand)     { sql += ' AND i.brand_id = ?';      params.push(brand); }
-      sql += ' ORDER BY w.name, i.name';
+      sql += `
+        UNION ALL
+        SELECT m.production_warehouse_id AS warehouse_id, w2.name AS warehouse_name,
+               m.id AS item_id, m.name AS item_name, m.id AS sku,
+               COALESCE(m.production_unit, 'pcs') AS unit,
+               'semi' AS item_type,
+               m.brand_id, b2.name AS brand_name,
+               COALESCE(m.stock, 0) AS qty,
+               COALESCE(m.cost, 0) AS avg_cost
+        FROM menu m
+        LEFT JOIN warehouses w2 ON m.production_warehouse_id = w2.id
+        LEFT JOIN brands b2 ON b2.id = m.brand_id
+        WHERE m.is_semi_finished = 1
+          AND m.active = 1
+          AND m.production_warehouse_id IS NOT NULL`;
+      if (warehouse) { sql += ' AND m.production_warehouse_id = ?'; params.push(warehouse); }
+      if (brand)     { sql += ' AND m.brand_id = ?';                params.push(brand); }
+      sql += ' ORDER BY warehouse_name, item_type, item_name';
     } else {
       sql = `SELECT '' AS warehouse_id, '' AS warehouse_name,
              i.id AS item_id, i.name AS item_name, i.id AS sku, i.unit,
+             'raw' AS item_type,
              i.brand_id, b.name AS brand_name,
              COALESCE(i.stock, 0) AS qty, COALESCE(i.cost, 0) AS avg_cost
              FROM inv_items i LEFT JOIN brands b ON i.brand_id = b.id
              WHERE COALESCE(i.stock,0) > 0`;
       if (brand) { sql += ' AND i.brand_id = ?'; params.push(brand); }
-      sql += ' ORDER BY i.name';
+      sql += `
+        UNION ALL
+        SELECT '' AS warehouse_id, '' AS warehouse_name,
+               m.id AS item_id, m.name AS item_name, m.id AS sku,
+               COALESCE(m.production_unit, 'pcs') AS unit,
+               'semi' AS item_type,
+               m.brand_id, b2.name AS brand_name,
+               COALESCE(m.stock, 0) AS qty, COALESCE(m.cost, 0) AS avg_cost
+        FROM menu m LEFT JOIN brands b2 ON b2.id = m.brand_id
+        WHERE m.is_semi_finished = 1 AND m.active = 1`;
+      if (brand) { sql += ' AND m.brand_id = ?'; params.push(brand); }
+      sql += ' ORDER BY item_type, item_name';
     }
 
     const [rows] = await db.query(sql, params);
@@ -2181,6 +2219,8 @@ router.get('/reports/inventory-valuation', async (req, res) => {
         warehouseId: r.warehouse_id || '',
         warehouseName: r.warehouse_name || '',
         itemId: r.item_id, itemName: r.item_name, sku: r.sku || '', unit: r.unit || '',
+        // v5.15.2 — 'raw' for inv_items, 'semi' for is_semi_finished menu items.
+        itemType: r.item_type || 'raw',
         brandId: r.brand_id || '', brandName: r.brand_name || '',
         qty: q, avgCost: c,
         value: Math.round(q * c * 100) / 100

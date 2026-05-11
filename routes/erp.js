@@ -3311,8 +3311,15 @@ router.get('/inventory-valuation', async (req, res) => {
         ? 'COALESCE(NULLIF(ws.avg_cost, 0), i.cost, 0)'
         : 'COALESCE(i.cost, 0)';
 
+      // v5.15.2 — Raw materials + semi-finished products unified.
+      // Semi-finished items live in menu (with is_semi_finished=1) and
+      // are tracked via menu.stock + production_warehouse_id. We add
+      // an item_type column so the admin UI can badge them. Zero-stock
+      // semis are included so the admin sees the item exists even
+      // before the first production order runs.
       let sql = `
-        SELECT ws.warehouse_id, w.name AS warehouse_name, w.brand_id, COALESCE(br.name,'') AS brand_name,
+        SELECT 'raw' AS item_type,
+               ws.warehouse_id, w.name AS warehouse_name, w.brand_id, COALESCE(br.name,'') AS brand_name,
                ws.item_id, i.name AS item_name, i.category, i.unit,
                ${costExpr} AS cost,
                COALESCE(ws.qty, 0) AS qty
@@ -3324,7 +3331,26 @@ router.get('/inventory-valuation', async (req, res) => {
       const params = [];
       if (brand_id) { sql += ' AND w.brand_id = ?'; params.push(brand_id); }
       if (warehouse_id) { sql += ' AND ws.warehouse_id = ?'; params.push(warehouse_id); }
-      sql += ' ORDER BY w.name, i.name';
+      sql += `
+        UNION ALL
+        SELECT 'semi' AS item_type,
+               m.production_warehouse_id AS warehouse_id,
+               COALESCE(w2.name, 'بلا مستودع') AS warehouse_name,
+               m.brand_id AS brand_id,
+               COALESCE(br2.name, '') AS brand_name,
+               m.id AS item_id, m.name AS item_name,
+               COALESCE(m.category, 'نصف-مُصَنَّع') AS category,
+               COALESCE(m.production_unit, 'pcs') AS unit,
+               COALESCE(m.cost, 0) AS cost,
+               COALESCE(m.stock, 0) AS qty
+        FROM menu m
+        LEFT JOIN warehouses w2 ON m.production_warehouse_id = w2.id
+        LEFT JOIN brands br2 ON br2.id = m.brand_id
+        WHERE m.is_semi_finished = 1 AND COALESCE(m.active, 1) = 1
+          AND m.production_warehouse_id IS NOT NULL`;
+      if (brand_id) { sql += ' AND m.brand_id = ?'; params.push(brand_id); }
+      if (warehouse_id) { sql += ' AND m.production_warehouse_id = ?'; params.push(warehouse_id); }
+      sql += ' ORDER BY warehouse_name, item_type, item_name';
       let rows = [];
       try {
         const [r] = await db.query(sql, params);
@@ -3350,12 +3376,12 @@ router.get('/inventory-valuation', async (req, res) => {
 
           if (!byWarehouse[r.warehouse_id]) byWarehouse[r.warehouse_id] = { warehouseId: r.warehouse_id, warehouseName: r.warehouse_name, brandName: r.brand_name, totalValue: 0, items: [] };
           byWarehouse[r.warehouse_id].totalValue += val;
-          byWarehouse[r.warehouse_id].items.push({ name: r.item_name, qty: Number(r.qty)||0, cost: Number(r.cost)||0, value: val, unit: r.unit, category: r.category });
+          byWarehouse[r.warehouse_id].items.push({ name: r.item_name, qty: Number(r.qty)||0, cost: Number(r.cost)||0, value: val, unit: r.unit, category: r.category, itemType: r.item_type || 'raw' });
 
           const cat = r.category || 'أخرى';
           if (!byCategory[cat]) byCategory[cat] = { totalValue: 0, items: [] };
           byCategory[cat].totalValue += val;
-          byCategory[cat].items.push({ name: r.item_name, stock: Number(r.qty)||0, cost: Number(r.cost)||0, value: val, unit: r.unit });
+          byCategory[cat].items.push({ name: r.item_name, stock: Number(r.qty)||0, cost: Number(r.cost)||0, value: val, unit: r.unit, itemType: r.item_type || 'raw' });
         });
         return res.json({ method, totalValue, totalQty, itemCount: rows.length, byBrand, byWarehouse, categories: byCategory });
       }

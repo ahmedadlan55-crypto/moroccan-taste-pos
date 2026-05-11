@@ -5974,8 +5974,14 @@ function erpLoadInventoryValuation(filters) {
             '<td class="num strong"><span class="wo-money pos">'+fmt(c.totalValue)+'</span></td>' +
           '</tr>';
           (c.items||[]).forEach(function(item) {
+            // v5.15.2 — Semi-finished products get a yellow chip so the admin
+            // can tell them apart from raw materials. Same warehouse view,
+            // two inventory tracks, one clear visual distinction.
+            var typeBadge = (item.itemType === 'semi')
+              ? ' <span class="wo-chip" style="background:#fef3c7;color:#92400e;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;"><i class="fas fa-blender"></i> نصف-مُصَنَّع</span>'
+              : '';
             html += '<tr>' +
-              '<td style="padding-inline-start:36px;" data-label="الصنف" class="wo-text-muted">'+esc(item.name||'')+'</td>' +
+              '<td style="padding-inline-start:36px;" data-label="الصنف" class="wo-text-muted">'+esc(item.name||'')+typeBadge+'</td>' +
               '<td data-label="الكمية" class="num">'+fmt(item.stock||0)+' <span class="wo-text-subtle wo-text-caption">'+esc(item.unit||'')+'</span></td>' +
               '<td data-label="القيمة" class="num"><span class="wo-money">'+fmt(item.value||0)+'</span></td>' +
             '</tr>';

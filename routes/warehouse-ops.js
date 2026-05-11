@@ -188,7 +188,11 @@ router.get('/stock-issues', async (req, res) => {
              COALESCE(ui.full_name, ui.username, si.issued_by)   AS issued_by_name,
              COALESCE(ur.full_name, ur.username, si.received_by) AS received_by_name,
              COALESCE(uv.full_name, uv.username, si.reversed_by) AS reversed_by_name,
-             (SELECT COUNT(*) FROM stock_issue_items WHERE issue_id=si.id) AS line_count
+             (SELECT COUNT(*) FROM stock_issue_items WHERE issue_id=si.id) AS line_count,
+             /* v5.10.40 — aggregate qty totals so the list view can flag
+                partial-receipt rows without an extra round-trip per issue. */
+             (SELECT COALESCE(SUM(qty_issued),0)   FROM stock_issue_items WHERE issue_id=si.id) AS qty_issued_total,
+             (SELECT COALESCE(SUM(qty_received),0) FROM stock_issue_items WHERE issue_id=si.id) AS qty_received_total
       FROM stock_issues si
       LEFT JOIN warehouses wf ON wf.id = si.from_warehouse_id
       LEFT JOIN warehouses wt ON wt.id = si.to_warehouse_id
@@ -252,6 +256,15 @@ router.post('/stock-issues', async (req, res) => {
   try {
     const { fromWarehouseId, toWarehouseId, brandId, branchId, issueDate, notes, items, createdBy } = req.body;
     if (!fromWarehouseId || !toWarehouseId) return res.status(400).json({ error: 'from/to warehouse required' });
+    // v5.10.40 — Reject same-warehouse "transfers". Every ERP (SAP, Oracle,
+    // Odoo) treats this as invalid because it has no business meaning and
+    // would create offsetting movements at the same warehouse.
+    if (String(fromWarehouseId) === String(toWarehouseId)) {
+      return res.status(400).json({
+        error: 'لا يمكن أن يكون المستودع المصدر هو نفسه المستودع الوجهة. اختر مستودعَين مختلفَين.',
+        code: 'SAME_WAREHOUSE'
+      });
+    }
     if (fromWarehouseId === toWarehouseId) return res.status(400).json({ error: 'from and to must differ' });
     if (!items || !items.length) return res.status(400).json({ error: 'items required' });
 
@@ -424,6 +437,30 @@ router.post('/stock-issues/:id/receive', async (req, res) => {
     const qtyMap = {};
     if (Array.isArray(items)) items.forEach(it => { qtyMap[it.id] = Number(it.qtyReceived); });
 
+    // v5.10.40 — Validate received quantities BEFORE any side effects.
+    // A receiver must never accept more than what was issued — global ERP
+    // norm (SAP, Oracle, Odoo all reject over-receipt). Reject the whole
+    // request with a clear error rather than silently capping or failing
+    // mid-loop.
+    const issuedById = {};
+    dbItems.forEach(d => { issuedById[d.id] = Number(d.qty_issued) || 0; });
+    for (const k in qtyMap) {
+      const want = Number(qtyMap[k]) || 0;
+      const max  = issuedById[k] || 0;
+      if (want < 0) {
+        return res.status(400).json({ error: `الكمية المستلَمة لا يمكن أن تكون سالبة (سطر ${k})` });
+      }
+      if (want > max) {
+        return res.status(400).json({
+          error: `الكمية المستلَمة (${want}) أكبر من الكمية المُصدَرة (${max}) للسطر ${k}. غير مسموح.`,
+          code: 'OVER_RECEIPT',
+          lineId: k,
+          qtyIssued: max,
+          qtyReceived: want
+        });
+      }
+    }
+
     // v5.10.39 — log a "تحويل وارد" inventory_movements row for each
     // received line, dated NOW(), so the destination warehouse's ledger
     // shows the transfer at the receive date (matches the issue-side
@@ -488,6 +525,16 @@ router.post('/stock-issues/:id/reverse', async (req, res) => {
   try {
     const id = req.params.id;
     const { reversedBy, reason } = req.body || {};
+    // v5.10.40 — Reason is now MANDATORY for reversal (audit-trail
+    // compliance: every accounting reversal must carry justification).
+    // Trim to avoid whitespace-only inputs.
+    const reasonText = String(reason || '').trim();
+    if (!reasonText) {
+      return res.status(400).json({
+        error: 'سبب الإرجاع مطلوب — اشرح لماذا تُرجِع هذا الإذن لإكمال سجل التدقيق.',
+        code: 'REASON_REQUIRED'
+      });
+    }
     const [hdrRows] = await db.query('SELECT * FROM stock_issues WHERE id=?', [id]);
     if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
     const hdr = hdrRows[0];
@@ -503,6 +550,9 @@ router.post('/stock-issues/:id/reverse', async (req, res) => {
     //
     // We use the original unit_cost stored on each line so the reversal lands
     // at the same valuation the issue posted at — keeps weighted-average sane.
+    // v5.10.40 — Also write inventory_movements rows for the reversal so the
+    // ledger shows the round-trip (transfer → reverse) clearly.
+    const reverseNow = new Date();
     let totalCost = 0;
     for (const it of items) {
       const qtyIssued   = Number(it.qty_issued)   || 0;
@@ -512,10 +562,32 @@ router.post('/stock-issues/:id/reverse', async (req, res) => {
         await _applyStockMovement(hdr.from_warehouse_id, it.item_id, qtyIssued, unitCost,
                                   'stock_issue_reverse', id, reversedBy || '');
         totalCost += qtyIssued * unitCost;
+        // Ledger entry — 'in' to source (returning the goods)
+        try {
+          const movId = 'MOV-SI-REV-IN-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+          await db.query(
+            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
+            'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            [movId, reverseNow, it.item_id, it.item_name || '', 'in', qtyIssued,
+             'إرجاع تحويل', reversedBy || '',
+             'REVERSE: ' + (hdr.issue_number || id) + ' · ' + reasonText.slice(0, 200),
+             hdr.from_warehouse_id, 'transfer_reverse', id]);
+        } catch(_) {}
       }
       if (qtyReceived > 0 && hdr.status === 'received') {
         await _applyStockMovement(hdr.to_warehouse_id, it.item_id, -qtyReceived, unitCost,
                                   'stock_issue_reverse', id, reversedBy || '');
+        // Ledger entry — 'out' from destination (taking the goods back)
+        try {
+          const movId = 'MOV-SI-REV-OUT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+          await db.query(
+            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
+            'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            [movId, reverseNow, it.item_id, it.item_name || '', 'out', qtyReceived,
+             'إرجاع تحويل', reversedBy || '',
+             'REVERSE: ' + (hdr.issue_number || id) + ' · ' + reasonText.slice(0, 200),
+             hdr.to_warehouse_id, 'transfer_reverse', id]);
+        } catch(_) {}
       }
     }
 
@@ -553,7 +625,7 @@ router.post('/stock-issues/:id/reverse', async (req, res) => {
        SET status='reversed', reversed_by=?, reversed_at=NOW(),
            reverse_reason=?, reverse_gl_journal_id=?
        WHERE id=?`,
-      [reversedBy || '', (reason || '').slice(0, 500), reverseGlId, id]);
+      [reversedBy || '', reasonText.slice(0, 500), reverseGlId, id]);
 
     res.json({ success: true, reverseGlJournalId: reverseGlId, totalCost });
   } catch(e) {

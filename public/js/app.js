@@ -10267,6 +10267,11 @@ function whClearFilters(tabKey) {
     ids = ['transferSearch', 'transferFromDate', 'transferToDate', 'transferDirectionFilter', 'transferStatusFilter'];
     ids.forEach(function(id){ var el = q('#'+id); if (el) el.value = ''; });
     if (typeof loadDashTransfers === 'function') loadDashTransfers();
+  } else if (tabKey === 'si') {
+    // v5.10.40 — stock-issues (إذونات الصرف) filter bar
+    ids = ['siSearch', 'siFStatus', 'siFFromWh', 'siFToWh', 'siFFrom', 'siFTo'];
+    ids.forEach(function(id){ var el = q('#'+id); if (el) el.value = ''; });
+    if (typeof siLoad === 'function') siLoad();
   }
 }
 
@@ -10390,6 +10395,49 @@ function _whRenderTransfersKpis(rows) {
     _invItemsKpi({ label: 'ملغية',                    num: cancelledCount.toLocaleString('ar-SA'), unit: 'تحويل',
                    icon: 'fa-ban',             color: '#ef4444', gradFrom: '#fee2e2', gradTo: '#fef2f2',
                    footer: cancelledCount > 0 ? '<i class="fas fa-circle-info"></i> راجع الأسباب' : '<i class="fas fa-circle-check"></i> لا تحويلات ملغية' });
+}
+
+// v5.10.40 — KPI strip for إذونات الصرف (stock issues). Mirrors the
+// transfers KPI style but uses the stock-issue lifecycle:
+//   draft (مسودة) → approved → issued → received │ reversed / cancelled.
+// "قيد الاستلام" counts issued rows where qty_received_total < qty_issued_total
+// (the new aggregate columns added in v5.10.40 GET /stock-issues).
+function _whRenderStockIssuesKpis(rows) {
+  var box = q('#siKpis');
+  if (!box || typeof _invItemsKpi !== 'function') return;
+  rows = rows || [];
+  var totalCount = rows.length;
+  var draftCount = 0, issuedCount = 0, partialCount = 0, reversedCount = 0;
+  var movedValue = 0;
+  rows.forEach(function(r){
+    if (r.status === 'draft')    draftCount++;
+    if (r.status === 'reversed') reversedCount++;
+    if (r.status === 'issued')   issuedCount++;
+    if (r.status === 'issued') {
+      var iss = Number(r.qty_issued_total   || 0);
+      var rcv = Number(r.qty_received_total || 0);
+      if (iss > 0 && rcv > 0 && rcv < iss) partialCount++;
+    }
+    if (['issued','received'].indexOf(r.status) >= 0) {
+      movedValue += Number(r.total_cost || 0);
+    }
+  });
+  var movedFmt = movedValue.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  box.innerHTML =
+    _invItemsKpi({ label: 'إجمالي الإذونات',  num: totalCount.toLocaleString('ar-SA'), unit: 'إذن',
+                   icon: 'fa-file-invoice',  color: '#3b82f6', gradFrom: '#dbeafe', gradTo: '#eff6ff',
+                   footer: '<i class="fas fa-list"></i> الفترة المعروضة' }) +
+    _invItemsKpi({ label: 'مسودات بانتظار اعتماد', num: draftCount.toLocaleString('ar-SA'), unit: 'إذن',
+                   icon: 'fa-pen-to-square', color: '#f59e0b', gradFrom: '#fef3c7', gradTo: '#fffbeb',
+                   footer: draftCount > 0 ? '<i class="fas fa-bell"></i> تحتاج مراجعة' : '<i class="fas fa-circle-check"></i> لا مسودات', pulse: draftCount > 0 }) +
+    _invItemsKpi({ label: 'قيد الاستلام',     num: issuedCount.toLocaleString('ar-SA'), unit: 'إذن',
+                   icon: 'fa-paper-plane',   color: '#8b5cf6', gradFrom: '#ede9fe', gradTo: '#f5f3ff',
+                   footer: partialCount > 0
+                     ? ('<i class="fas fa-exclamation-triangle" style="color:#d97706;"></i> ' + partialCount + ' باستلام جزئي')
+                     : '<i class="fas fa-truck"></i> أُرسلت ولم تُستلم بعد' }) +
+    _invItemsKpi({ label: 'القيمة المنقولة',  num: movedFmt, unit: 'ر.س',
+                   icon: 'fa-sack-dollar',   color: '#10b981', gradFrom: '#d1fae5', gradTo: '#ecfdf5',
+                   footer: reversedCount > 0 ? ('<i class="fas fa-rotate-left"></i> ' + reversedCount + ' مرجع') : '<i class="fas fa-check-double"></i> رصيد محاسبي محرَّك' });
 }
 
 // View stocktake detail in a modal

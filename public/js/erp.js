@@ -18847,48 +18847,107 @@ function whhSetParent(id, parentId) {
 // PHASE 1 — STOCK ISSUES
 // ═══════════════════════════════════════════════════════════════════
 
+// v5.10.40 — Stock-issues list, full overhaul.
+//
+// Changes vs v5.10.39:
+//   • Search input (#siSearch) filters by issue_number / created_by_name on
+//     the client side (after the 500-row LIMIT applied by the API).
+//   • From-warehouse / to-warehouse filters (#siFFromWh / #siFToWh) sent to
+//     the server as fromWh / toWh (the endpoint has supported them for ages
+//     but the old UI never exposed them).
+//   • Warehouse <select>s are populated lazily on first siLoad via the cached
+//     /erp/warehouses-list call; subsequent calls reuse the cache.
+//   • KPI strip routed through _whRenderStockIssuesKpis() in app.js so it
+//     matches the global ERP visual standard (stocktake / adjustments cards).
+//   • Each <tr> gets a `si-row-partial` class + a small "استلام جزئي" chip in
+//     the status column when the issue is in 'issued' status and the
+//     aggregated qty_received < qty_issued (new aggregate columns added in
+//     this version).
+var _siWhCache = null;   // cached warehouse list, populated once
+function _siPopulateWhFilters() {
+  function paint(list) {
+    var fromSel = document.getElementById('siFFromWh');
+    var toSel   = document.getElementById('siFToWh');
+    if (!fromSel || !toSel) return;
+    // Preserve any current selection across re-paint (e.g. user changed a
+    // filter then siLoad re-rendered the KPI strip).
+    var curFrom = fromSel.value, curTo = toSel.value;
+    var opts = list.map(function(w){
+      var brandLbl = w.brandName ? ' · ' + w.brandName : '';
+      return '<option value="' + _woEscapeHtml(w.id) + '">' + _woEscapeHtml(w.name||'') + brandLbl + '</option>';
+    }).join('');
+    fromSel.innerHTML = '<option value="">📦 من مستودع — الكل</option>' + opts;
+    toSel.innerHTML   = '<option value="">🎯 إلى مستودع — الكل</option>' + opts;
+    if (curFrom) fromSel.value = curFrom;
+    if (curTo)   toSel.value   = curTo;
+  }
+  if (Array.isArray(_siWhCache)) { paint(_siWhCache); return; }
+  _erpGet('/erp/warehouses-list', function(whs){
+    _siWhCache = Array.isArray(whs) ? whs : [];
+    paint(_siWhCache);
+  });
+}
+
 function siLoad() {
   var body = document.getElementById('siBody');
   if (!body) return;
+  // Make sure the warehouse <select>s are filled (idempotent — cached).
+  _siPopulateWhFilters();
   body.innerHTML = _woLoadingRow(8) + _woLoadingRow(8);
-  var q = '';
-  var status = document.getElementById('siFStatus').value;
-  var from = document.getElementById('siFFrom').value;
-  var to = document.getElementById('siFTo').value;
-  if (status) q += '&status=' + status;
-  if (from) q += '&dateFrom=' + from;
-  if (to) q += '&dateTo=' + to;
-  _erpGet('/erp/stock-issues?1=1' + q, function(rows) {
+  var qstr = '';
+  var status  = (document.getElementById('siFStatus') || {}).value || '';
+  var fromWh  = (document.getElementById('siFFromWh') || {}).value || '';
+  var toWh    = (document.getElementById('siFToWh')   || {}).value || '';
+  var from    = (document.getElementById('siFFrom')   || {}).value || '';
+  var to      = (document.getElementById('siFTo')     || {}).value || '';
+  var search  = ((document.getElementById('siSearch') || {}).value || '').trim().toLowerCase();
+  if (status) qstr += '&status='   + encodeURIComponent(status);
+  if (fromWh) qstr += '&fromWh='   + encodeURIComponent(fromWh);
+  if (toWh)   qstr += '&toWh='     + encodeURIComponent(toWh);
+  if (from)   qstr += '&dateFrom=' + encodeURIComponent(from);
+  if (to)     qstr += '&dateTo='   + encodeURIComponent(to);
+  _erpGet('/erp/stock-issues?1=1' + qstr, function(rows) {
     if (!Array.isArray(rows)) rows = [];
-    // Metrics
-    var metrics = document.getElementById('siMetrics');
-    if (metrics) {
-      var draft = rows.filter(function(r){return r.status==='draft';}).length;
-      var issued = rows.filter(function(r){return r.status==='issued';}).length;
-      var received = rows.filter(function(r){return r.status==='received';}).length;
-      var totalValue = rows.filter(function(r){return ['issued','received'].indexOf(r.status)>=0;})
-                          .reduce(function(s,r){return s + Number(r.total_cost||0);}, 0);
-      metrics.innerHTML =
-        _woMetric('fa-file-invoice', 'info', 'إجمالي الإذونات', rows.length, 'info') +
-        _woMetric('fa-pen-to-square', 'neutral', 'مسودات', draft, 'info') +
-        _woMetric('fa-paper-plane', 'warning', 'قيد الاستلام', issued, 'warning') +
-        _woMetric('fa-sack-dollar', 'success', 'القيمة المنقولة', totalValue.toLocaleString('en',{minimumFractionDigits:2}), 'success');
+    // Client-side text filter on issue_number / created_by_name. Cheap because
+    // the server already capped the result set at 500.
+    if (search) {
+      rows = rows.filter(function(r){
+        var hay = (
+          (r.issue_number || '') + ' ' +
+          (r.created_by_name || r.created_by || '') + ' ' +
+          (r.from_warehouse_name || '') + ' ' +
+          (r.to_warehouse_name || '')
+        ).toLowerCase();
+        return hay.indexOf(search) >= 0;
+      });
     }
+    // v5.10.40 — KPI strip rendered by the shared helper in app.js.
+    if (typeof _whRenderStockIssuesKpis === 'function') _whRenderStockIssuesKpis(rows);
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="10">' + _woEmpty('fa-truck-arrow-right', 'لا توجد إذونات صرف', 'ابدأ بإنشاء أول إذن صرف من المستودع الرئيسي لأحد الفروع.',
-        '<button class="wo-btn wo-btn-primary" onclick="siOpenNewModal()"><i class="fas fa-plus"></i><span>إنشاء إذن جديد</span></button>') + '</td></tr>';
+      body.innerHTML = '<tr><td colspan="10">' + _woEmpty('fa-truck-arrow-right',
+        search ? 'لا نتائج مطابقة' : 'لا توجد إذونات صرف',
+        search ? 'جرّب مصطلح بحث آخر أو امسح الفلاتر.' : 'ابدأ بإنشاء أول إذن صرف من المستودع الرئيسي لأحد الفروع.',
+        search
+          ? '<button class="wo-btn wo-btn-secondary" onclick="whClearFilters(\'si\')"><i class="fas fa-broom"></i><span>مسح الفلاتر</span></button>'
+          : '<button class="wo-btn wo-btn-primary" onclick="siOpenNewModal()"><i class="fas fa-plus"></i><span>إنشاء إذن جديد</span></button>') + '</td></tr>';
       return;
     }
-    // V5.9.7 — added 'reversed' state + a reverse button on issued/received rows.
-    // V5.9.9 — added 'المنشئ' / 'المعتمد' columns + a Delete icon for drafts.
     var statusMap = {draft:{t:'مسودة',c:'neutral'}, approved:{t:'معتمد',c:'info'}, issued:{t:'تم الصرف',c:'warning'}, received:{t:'تم الاستلام',c:'success'}, cancelled:{t:'ملغى',c:'danger'}, reversed:{t:'مرجع',c:'pink'}};
     body.innerHTML = rows.map(function(r){
       var s = statusMap[r.status] || {t:r.status,c:'neutral'};
+      // v5.10.40 — partial-receipt detection at the issue level. Only marks
+      // 'issued' issues where SOME (not all) qty has been received.
+      var qIss = Number(r.qty_issued_total   || 0);
+      var qRcv = Number(r.qty_received_total || 0);
+      var isPartial = (r.status === 'issued' && qIss > 0 && qRcv > 0 && qRcv < qIss);
+      var rowCls = isPartial ? ' class="si-row-partial"' : '';
+      var partialChip = isPartial
+        ? ' <span class="wo-chip partial" title="استُلم جزء فقط من الكميات المصروفة">استلام جزئي</span>'
+        : '';
       var actions = '<button class="wo-icon-btn info" onclick="siView(\''+_woEscapeHtml(r.id)+'\')" title="عرض التفاصيل" aria-label="عرض"><i class="fas fa-eye"></i></button>';
       if (r.status === 'draft') {
         actions += '<button class="wo-icon-btn success" onclick="siApprove(\''+_woEscapeHtml(r.id)+'\')" title="اعتماد" aria-label="اعتماد"><i class="fas fa-check"></i></button>';
         actions += '<button class="wo-icon-btn danger" onclick="siCancel(\''+_woEscapeHtml(r.id)+'\')" title="إلغاء" aria-label="إلغاء"><i class="fas fa-xmark"></i></button>';
-        // V5.9.9 — hard delete only for drafts (audit trail safe).
         actions += '<button class="wo-icon-btn danger" onclick="siDelete(\''+_woEscapeHtml(r.id)+'\',\''+_woEscapeHtml(r.issue_number||r.id)+'\')" title="حذف نهائي" aria-label="حذف"><i class="fas fa-trash"></i></button>';
       }
       if (['draft','approved'].indexOf(r.status)>=0) {
@@ -18902,7 +18961,7 @@ function siLoad() {
       }
       var creator  = _woEscapeHtml(r.created_by_name  || r.created_by  || '—');
       var approver = _woEscapeHtml(r.approved_by_name || r.approved_by || '—');
-      return '<tr>' +
+      return '<tr'+rowCls+'>' +
         '<td data-label="رقم الإذن"><code>'+_woEscapeHtml(r.issue_number||'')+'</code></td>' +
         '<td data-label="التاريخ">'+_woEscapeHtml(r.issue_date||'')+'</td>' +
         '<td data-label="المستودع المصدر"><b>'+_woEscapeHtml(r.from_warehouse_name||'—')+'</b></td>' +
@@ -18911,7 +18970,7 @@ function siLoad() {
         '<td data-label="المعتمد"><span style="color:#475569;">'+approver+'</span></td>' +
         '<td data-label="الأصناف" class="num">'+(r.line_count||0)+'</td>' +
         '<td data-label="التكلفة" class="num strong">'+Number(r.total_cost||0).toLocaleString('en',{minimumFractionDigits:2})+'</td>' +
-        '<td data-label="الحالة"><span class="wo-chip '+s.c+'">'+s.t+'</span></td>' +
+        '<td data-label="الحالة"><span class="wo-chip '+s.c+'">'+s.t+'</span>'+partialChip+'</td>' +
         '<td data-label="الإجراءات"><div class="wo-actions">'+actions+'</div></td>' +
       '</tr>';
     }).join('');
@@ -19819,18 +19878,38 @@ function _siRenderDetailView(d) {
   }
 
   // Line items table
+  // v5.10.40 — per-row reception state, like SAP/Odoo:
+  //   • qty_received < qty_issued  AND > 0  ⇒ partial    (yellow row + chip)
+  //   • qty_received === qty_issued AND > 0 ⇒ fully received (no chip)
+  //   • qty_received === 0 AND status==='issued' ⇒ awaiting (muted row + chip)
+  //   • qty_received > qty_issued  ⇒ shouldn't happen now (blocked by OVER_RECEIPT)
+  //     but if it does (legacy data), flag it red so it's visible.
+  var siStatus = status;
   var itemRows = (d.items || []).map(function(it) {
     var req = Number(it.qty_requested || 0);
     var iss = Number(it.qty_issued    || 0);
     var rcv = Number(it.qty_received  || 0);
     var unit = it.item_unit || '';
-    return '<tr>' +
+    var rowCls = '', chip = '';
+    if (iss > 0 && rcv > 0 && rcv < iss) {
+      rowCls = ' class="si-row-partial"';
+      chip = ' <span class="wo-chip partial" style="margin-inline-start:6px;">جزئي</span>';
+    } else if (iss > 0 && rcv === 0 && siStatus === 'issued') {
+      rowCls = ' class="si-row-pending"';
+      chip = ' <span class="wo-chip neutral" style="margin-inline-start:6px;">بانتظار الاستلام</span>';
+    } else if (iss > 0 && rcv === iss) {
+      chip = ' <span class="wo-chip success" style="margin-inline-start:6px;"><i class="fas fa-check"></i> مكتمل</span>';
+    } else if (iss > 0 && rcv > iss) {
+      rowCls = ' class="si-row-over"';
+      chip = ' <span class="wo-chip danger" style="margin-inline-start:6px;">زيادة!</span>';
+    }
+    return '<tr'+rowCls+'>' +
       '<td><b>' + _siEsc(it.item_name || '') + '</b>' +
         (unit ? ' <span style="color:#94a3b8;font-size:11px;font-weight:600;">/' + _siEsc(unit) + '</span>' : '') +
       '</td>' +
       '<td class="num">' + _siFmtQty(req) + '</td>' +
       '<td class="num">' + _siFmtQty(iss) + '</td>' +
-      '<td class="num">' + _siFmtQty(rcv) + '</td>' +
+      '<td class="num">' + _siFmtQty(rcv) + chip + '</td>' +
       '<td class="num">' + _siFmtMoney(it.unit_cost) + '</td>' +
       '<td class="num strong">' + _siFmtMoney(it.line_total) + '</td>' +
     '</tr>';

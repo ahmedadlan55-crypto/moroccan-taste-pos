@@ -3024,12 +3024,17 @@
     </div>
   </header>
 
-  <div class="wo-metric-strip" id="siMetrics"></div>
-
-  <section class="wo-toolbar" role="search" aria-label="تصفية إذونات الصرف">
-    <div class="wo-field">
-      <label class="wo-field-label" for="siFStatus"><i class="fas fa-filter"></i>الحالة</label>
-      <select id="siFStatus" class="wo-select" onchange="siLoad()">
+  <!-- v5.10.40 — unified .wh-filter-bar pattern (matches stocktake / adjustments).
+       Search + status + from-warehouse + to-warehouse + date range + clear.
+       Replaces the legacy .wo-toolbar that had no search and no warehouse filters. -->
+  <div class="wh-filter-bar">
+    <div class="wh-fb-title"><i class="fas fa-truck-arrow-right"></i> إذونات الصرف</div>
+    <div class="wh-fb-controls">
+      <div class="wh-fb-search">
+        <i class="fas fa-search"></i>
+        <input type="text" id="siSearch" class="form-control" placeholder="بحث برقم الإذن / المُنشئ..." oninput="siLoad()">
+      </div>
+      <select id="siFStatus" class="form-control wh-fb-select" onchange="siLoad()" title="الحالة">
         <option value="">كل الحالات</option>
         <option value="draft">مسودة</option>
         <option value="approved">معتمد</option>
@@ -3038,16 +3043,18 @@
         <option value="cancelled">ملغى</option>
         <option value="reversed">مرجع</option>
       </select>
+      <select id="siFFromWh" class="form-control wh-fb-select" onchange="siLoad()" title="المستودع المصدر">
+        <option value="">📦 من مستودع — الكل</option>
+      </select>
+      <select id="siFToWh" class="form-control wh-fb-select" onchange="siLoad()" title="المستودع الوجهة">
+        <option value="">🎯 إلى مستودع — الكل</option>
+      </select>
+      <input type="date" id="siFFrom" class="form-control wh-fb-date" title="من تاريخ" onchange="siLoad()">
+      <input type="date" id="siFTo" class="form-control wh-fb-date" title="إلى تاريخ" onchange="siLoad()">
+      <button class="btn btn-light wh-fb-clear" onclick="whClearFilters('si')" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
     </div>
-    <div class="wo-field">
-      <label class="wo-field-label" for="siFFrom"><i class="fas fa-calendar"></i>من تاريخ</label>
-      <input type="date" id="siFFrom" class="wo-input" onchange="siLoad()">
-    </div>
-    <div class="wo-field">
-      <label class="wo-field-label" for="siFTo"><i class="fas fa-calendar-check"></i>إلى تاريخ</label>
-      <input type="date" id="siFTo" class="wo-input" onchange="siLoad()">
-    </div>
-  </section>
+  </div>
+  <div id="siKpis" class="iv-items-kpis"></div>
 
   <div class="wo-table-surface">
     <table class="wo-table" role="table">

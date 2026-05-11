@@ -5198,3 +5198,30 @@
 .fa-menu-item.active { background: #ede9fe; color: #5b21b6; font-weight: 800; }
 .fa-menu-divider { height: 1px; background: #e2e8f0; margin: 4px 0; }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * v5.10.40 — Stock-Issues: partial-receipt visuals.
+ * Mirrors SAP / Oracle / Odoo / Foodics conventions where rows that have
+ * been only partially received are highlighted with a soft amber so the
+ * user can scan a list and immediately see what still needs follow-up.
+ * Used by:
+ *   - Stock-issues list view (siLoad in erp.js) — issue-level partial flag
+ *   - Stock-issue detail view (_siRenderDetailView) — per-item partial flag
+ * ═══════════════════════════════════════════════════════════════════════ */
+.wo-table tr.si-row-partial { background: #fffbeb; }
+.wo-table tr.si-row-partial:hover { background: #fef3c7; }
+.wo-table tr.si-row-partial td:first-child { box-shadow: inset 4px 0 0 #f59e0b; }
+
+.wo-table tr.si-row-pending { background: #f8fafc; }
+.wo-table tr.si-row-pending td:first-child { box-shadow: inset 4px 0 0 #94a3b8; }
+
+.wo-table tr.si-row-over { background: #fef2f2; }
+.wo-table tr.si-row-over td:first-child { box-shadow: inset 4px 0 0 #ef4444; }
+
+/* Partial-receipt chip — slots into the existing .wo-chip variant family. */
+.wo-chip.partial {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  font-weight: 800;
+}
+

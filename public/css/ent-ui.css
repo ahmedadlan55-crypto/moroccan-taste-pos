@@ -699,3 +699,355 @@
   .ent-timeline { gap: 6px; padding: 10px 12px; }
   .ent-step { flex: 1 1 calc(50% - 6px); min-width: 0; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v5.10.43 — LEGACY-TO-ENTERPRISE VISUAL UNIFICATION LAYER
+ *
+ * The warehouse module has 13 list/dashboard sections still using the
+ * legacy `.wo-toolbar` / `.wo-metric-strip` / `.wo-header` / `.wo-table`
+ * patterns (إدارة مواد المخزون · المستودعات المتعددة · هيكل المستودعات ·
+ * تقارير المستودعات · قيود الهدر · أوامر الإنتاج · تنبيهات الصلاحية ·
+ * بطيئة الحركة · دوران المخزون · تنبيهات إعادة الطلب · أيام التغطية ·
+ * تحليل ABC · سجل محاضر الجرد). Rewriting all 13 load functions to use
+ * EntUI render helpers is multi-day work.
+ *
+ * This layer upgrades them BSC-style (in CSS only, no JS changes) so they
+ * IMMEDIATELY match the v5.10.41+ Enterprise visual contract: rounded
+ * cards, gradient KPIs with accent borders, prominent search field,
+ * polished sticky-headed tables, gradient headers.
+ *
+ * Activation: opt-in via `.wo-section` (already on every legacy section
+ * container) so we don't accidentally restyle one-off modals/dialogs.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Section container — page-like background ── */
+.wo-section {
+  background: var(--ent-bg);
+  border-radius: var(--ent-r-lg);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+/* ── HeaderSection upgrade ────────────────────────────────────────── */
+.wo-section .wo-header {
+  background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+  color: #fff;
+  padding: 22px 24px 20px;
+  border-radius: var(--ent-r-lg);
+  margin-bottom: 16px;
+  box-shadow: var(--ent-shadow-2);
+  position: relative;
+  overflow: hidden;
+}
+.wo-section .wo-header::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(circle at top right, rgba(255,255,255,.08), transparent 60%);
+  pointer-events: none;
+}
+.wo-section .wo-header h1,
+.wo-section .wo-header .wo-header-titles h1 {
+  color: #fff;
+  font-size: 22px;
+  letter-spacing: -.01em;
+}
+.wo-section .wo-header .wo-header-sub {
+  color: rgba(255,255,255,.85);
+  padding-inline-start: 56px;
+  margin-top: 4px;
+}
+.wo-section .wo-header .wo-icon-slot,
+.wo-section .wo-header h1 .wo-icon-slot {
+  background: rgba(255,255,255,.18) !important;
+  color: #fff !important;
+  border: 1px solid rgba(255,255,255,.22);
+  backdrop-filter: blur(6px);
+}
+.wo-section .wo-header-actions .wo-btn-secondary {
+  background: rgba(255,255,255,.15);
+  color: #fff;
+  border-color: rgba(255,255,255,.25);
+  backdrop-filter: blur(6px);
+}
+.wo-section .wo-header-actions .wo-btn-secondary:hover {
+  background: rgba(255,255,255,.25);
+  border-color: rgba(255,255,255,.4);
+}
+.wo-section .wo-header-actions .wo-btn-primary {
+  background: var(--ent-primary);
+  border-color: var(--ent-primary);
+  box-shadow: 0 4px 14px rgba(79,70,229,.35);
+}
+.wo-section .wo-header-actions .wo-btn-primary:hover {
+  background: #4338ca;
+  border-color: #4338ca;
+}
+
+/* Section theme variants — activated via data-section-theme on the .wo-section */
+.wo-section[data-section-theme="success"] .wo-header { background: linear-gradient(135deg, #047857 0%, #10b981 100%); }
+.wo-section[data-section-theme="warning"] .wo-header { background: linear-gradient(135deg, #b45309 0%, #f59e0b 100%); }
+.wo-section[data-section-theme="danger"]  .wo-header { background: linear-gradient(135deg, #b91c1c 0%, #ef4444 100%); }
+.wo-section[data-section-theme="info"]    .wo-header { background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); }
+.wo-section[data-section-theme="purple"]  .wo-header { background: linear-gradient(135deg, #6d28d9 0%, #a855f7 100%); }
+
+/* ── KPI Strip (`.wo-metric-strip` / `.wo-metric`) upgrade ───────── */
+.wo-section .wo-metric-strip {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.wo-section .wo-metric {
+  --kpi-c: #3b82f6;
+  --kpi-g-from: #f8fafc;
+  --kpi-g-to: #fff;
+  background: linear-gradient(160deg, var(--kpi-g-from) 0%, var(--kpi-g-to) 60%, #fff 100%) !important;
+  border: 1px solid var(--ent-border) !important;
+  border-radius: var(--ent-r-lg) !important;
+  border-inline-start: 4px solid var(--kpi-c) !important;
+  border-top: 1px solid var(--ent-border) !important;
+  padding: 16px 18px !important;
+  box-shadow: var(--ent-shadow-1);
+}
+.wo-section .wo-metric:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px -10px var(--kpi-c);
+  border-color: var(--ent-border-strong) !important;
+}
+.wo-section .wo-metric.accent-info,
+.wo-section .wo-metric.accent-primary {
+  --kpi-c: #3b82f6;    --kpi-g-from: #dbeafe;  --kpi-g-to: #eff6ff;
+}
+.wo-section .wo-metric.accent-success {
+  --kpi-c: #10b981;    --kpi-g-from: #d1fae5;  --kpi-g-to: #ecfdf5;
+}
+.wo-section .wo-metric.accent-warning {
+  --kpi-c: #f59e0b;    --kpi-g-from: #fef3c7;  --kpi-g-to: #fffbeb;
+}
+.wo-section .wo-metric.accent-danger {
+  --kpi-c: #ef4444;    --kpi-g-from: #fee2e2;  --kpi-g-to: #fef2f2;
+}
+.wo-section .wo-metric.accent-purple {
+  --kpi-c: #a855f7;    --kpi-g-from: #f3e8ff;  --kpi-g-to: #faf5ff;
+}
+.wo-section .wo-metric.accent-pink {
+  --kpi-c: #ec4899;    --kpi-g-from: #fce7f3;  --kpi-g-to: #fdf2f8;
+}
+.wo-section .wo-metric.accent-neutral {
+  --kpi-c: #64748b;    --kpi-g-from: #f1f5f9;  --kpi-g-to: #f8fafc;
+}
+.wo-section .wo-metric-icon {
+  width: 44px; height: 44px;
+  background: var(--kpi-g-from) !important;
+  color: var(--kpi-c) !important;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--kpi-c);
+}
+.wo-section .wo-metric-label {
+  font-size: 11px;
+  letter-spacing: .04em;
+}
+.wo-section .wo-metric-value {
+  font-size: 22px;
+  font-weight: 900;
+  color: var(--ent-text);
+  font-variant-numeric: tabular-nums;
+}
+.wo-section .wo-metric-delta { font-weight: 800; }
+/* Hide the legacy .accent-* top-bar — replaced by border-inline-start */
+.wo-section .wo-metric.accent-info,
+.wo-section .wo-metric.accent-success,
+.wo-section .wo-metric.accent-warning,
+.wo-section .wo-metric.accent-danger,
+.wo-section .wo-metric.accent-purple {
+  border-top-width: 1px;
+}
+
+/* ── Filter Toolbar (`.wo-toolbar`) upgrade ──────────────────────── */
+.wo-section .wo-toolbar {
+  background: var(--ent-surface);
+  border: 1px solid var(--ent-border);
+  border-radius: var(--ent-r-lg);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  box-shadow: var(--ent-shadow-1);
+}
+/* Restyle the inner fields as compact pill controls (no labels above) */
+.wo-section .wo-toolbar .wo-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+/* Hide the .wo-field-label inside toolbar (it was just decorative) so the
+   controls line up horizontally like the .wh-filter-bar pattern. The label
+   becomes the input's title attribute via the existing markup. */
+.wo-section .wo-toolbar .wo-field-label {
+  display: none;
+}
+.wo-section .wo-toolbar .wo-input,
+.wo-section .wo-toolbar .wo-select {
+  height: 40px;
+  padding: 8px 12px;
+  font-size: 13px;
+  border-radius: 10px;
+  border-width: 1.5px;
+  min-width: 140px;
+}
+/* Make the FIRST text input act as a search field (prominent + icon-like) */
+.wo-section .wo-toolbar .wo-field:first-child .wo-input[type="text"],
+.wo-section .wo-toolbar .wo-field:first-child .wo-input[type="search"] {
+  min-width: 220px;
+  max-width: 360px;
+  flex: 1 1 220px;
+  padding-inline-start: 34px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'></circle><path d='m21 21-4.3-4.3'></path></svg>");
+  background-repeat: no-repeat;
+  background-position: 12px center;
+}
+.wo-section .wo-toolbar .wo-input:focus-visible,
+.wo-section .wo-toolbar .wo-select:focus-visible {
+  border-color: var(--ent-primary);
+  box-shadow: 0 0 0 3px rgba(79,70,229,.15);
+}
+.wo-section .wo-toolbar .wo-btn {
+  height: 40px;
+  border-radius: 10px;
+}
+.wo-section .wo-toolbar .wo-btn-secondary {
+  background: var(--ent-surface);
+  border: 1px solid var(--ent-border);
+  color: var(--ent-text);
+}
+.wo-section .wo-toolbar .wo-btn-secondary:hover {
+  background: var(--ent-surface-2);
+  border-color: var(--ent-primary-bord);
+  color: var(--ent-primary);
+}
+
+/* ── Table Surface (`.wo-table-surface` / `.wo-table`) upgrade ───── */
+.wo-section .wo-table-surface {
+  background: var(--ent-surface);
+  border: 1px solid var(--ent-border);
+  border-radius: var(--ent-r-lg);
+  overflow: hidden;
+  box-shadow: var(--ent-shadow-1);
+}
+.wo-section .wo-table thead th {
+  background: var(--ent-surface-3);
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  padding: 11px 14px;
+  border-bottom: 1.5px solid var(--ent-border);
+}
+.wo-section .wo-table tbody td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--ent-surface-3);
+  font-size: 13px;
+}
+.wo-section .wo-table tbody tr:last-child td { border-bottom: none; }
+.wo-section .wo-table tbody tr:hover td {
+  background: var(--ent-surface-2);
+}
+
+/* ── Status pills polish — make existing .wo-chip match .ent-tag ── */
+.wo-section .wo-chip {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* ── Buttons inside .wo-section that aren't .wo-btn (legacy .btn) ── */
+.wo-section .btn.btn-primary {
+  background: var(--ent-primary);
+  border-color: var(--ent-primary);
+  color: #fff;
+  border-radius: 10px;
+}
+.wo-section .btn.btn-primary:hover { background: #4338ca; }
+
+/* ── KPI strip used outside .wo-section but inside a card area also picks up upgrades when wrapped */
+.wo-card-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+/* ── Inline-tab containers (.exp-bucket-pills etc.) sit nicely inside upgraded section */
+.wo-section .exp-bucket-pills {
+  background: var(--ent-surface);
+  border: 1px solid var(--ent-border);
+  border-radius: var(--ent-r-md);
+  padding: 8px;
+  display: inline-flex;
+  gap: 4px;
+  box-shadow: var(--ent-shadow-1);
+}
+
+/* ── Empty-state legacy wo-empty visual lift ── */
+.wo-section .wo-empty {
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--ent-text-muted);
+}
+
+/* ── Aliases for orphan classes used by Multi-Warehouses screen ── */
+/* `.whp-toolbar` and `.whp-stats` had no CSS file backing them — they
+ * rendered as unstyled flex containers. Map them to the new visuals. */
+.wo-section .whp-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.wo-section .whp-stat-card,
+.wo-section .whp-stats > div {
+  background: linear-gradient(160deg, #f8fafc 0%, #fff 60%, #fff 100%);
+  border: 1px solid var(--ent-border);
+  border-inline-start: 4px solid var(--ent-primary);
+  border-radius: var(--ent-r-lg);
+  padding: 14px 16px;
+  box-shadow: var(--ent-shadow-1);
+  display: flex; align-items: center; gap: 12px;
+  transition: transform .15s var(--ent-ease), box-shadow .15s var(--ent-ease);
+}
+.wo-section .whp-stat-card:hover,
+.wo-section .whp-stats > div:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--ent-shadow-2);
+}
+.wo-section .whp-toolbar {
+  background: var(--ent-surface);
+  border: 1px solid var(--ent-border);
+  border-radius: var(--ent-r-lg);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  box-shadow: var(--ent-shadow-1);
+}
+
+/* ── Responsive: collapse toolbar gracefully on mobile ── */
+@media (max-width: 640px) {
+  .wo-section { padding: 14px; }
+  .wo-section .wo-toolbar { padding: 12px; gap: 8px; }
+  .wo-section .wo-toolbar .wo-field { flex: 1 1 100%; }
+  .wo-section .wo-toolbar .wo-input,
+  .wo-section .wo-toolbar .wo-select { min-width: 0; width: 100%; }
+  .wo-section .wo-toolbar .wo-field:first-child .wo-input[type="text"] { max-width: 100%; }
+  .wo-section .wo-metric-strip { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .wo-section .wo-metric { padding: 12px 14px !important; }
+  .wo-section .wo-metric-value { font-size: 18px; }
+  .wo-section .wo-header { padding: 16px 16px 14px; border-radius: var(--ent-r-md); }
+  .wo-section .wo-header h1 { font-size: 18px; }
+}

@@ -850,7 +850,9 @@
              JS in loadInvCatalog() renders filter bar + KPIs + table + recycle-bin tab.
              Add/edit reuses the existing openRawModal(); delete is soft (deleted_at)
              with restore from the recycle-bin tab. -->
-        <div id="sec_invCatalog" class="admin-section wo-section">
+        <!-- v5.10.43 — data-section-theme tints the legacy .wo-header
+             so master-data screens get a purple gradient automatically. -->
+        <div id="sec_invCatalog" class="admin-section wo-section" data-section-theme="purple">
           <header class="wo-header">
             <div class="wo-header-titles">
               <h1><span class="wo-icon-slot purple"><i class="fas fa-book"></i></span>إدارة مواد المخزون</h1>
@@ -2852,7 +2854,7 @@
      Live Inventory tab in the inventory hub already shows balances; the
      fullscreen Stock-Issue editor handles transfers).  This page is now
      focused exclusively on warehouse master data + a strong overview. -->
-<div id="erpMultiWarehouses" class="dash-section hidden">
+<div id="erpMultiWarehouses" class="dash-section hidden wo-section" data-section-theme="info">
   <header class="whp-head">
     <div class="whp-head-left">
       <div class="whp-icon"><i class="fas fa-warehouse"></i></div>
@@ -2977,7 +2979,7 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- PHASE 1 — WAREHOUSE HIERARCHY (Main / Branch) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpWhHierarchy" class="dash-section hidden wo-section">
+<div id="erpWhHierarchy" class="dash-section hidden wo-section" data-section-theme="info">
   <header class="wo-header">
     <div class="wo-header-titles">
       <h1><span class="wo-icon-slot"><i class="fas fa-sitemap"></i></span>هيكل المستودعات</h1>
@@ -3082,7 +3084,7 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- PHASE 2 — PRODUCTION ORDERS (أوامر الإنتاج) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpProductionOrders" class="dash-section hidden wo-section">
+<div id="erpProductionOrders" class="dash-section hidden wo-section" data-section-theme="warning">
   <header class="wo-header">
     <div class="wo-header-titles">
       <h1><span class="wo-icon-slot warn"><i class="fas fa-industry"></i></span>أوامر الإنتاج</h1>
@@ -3164,7 +3166,7 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- PHASE 3 — EXPIRY ALERTS -->
 <!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpExpiryAlerts" class="dash-section hidden wo-section">
+<div id="erpExpiryAlerts" class="dash-section hidden wo-section" data-section-theme="danger">
   <header class="wo-header">
     <div class="wo-header-titles">
       <h1><span class="wo-icon-slot danger"><i class="fas fa-hourglass-half"></i></span>تنبيهات انتهاء الصلاحية</h1>
@@ -3291,7 +3293,7 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- PHASE 3 — SLOW MOVING ITEMS -->
 <!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpSlowMoving" class="dash-section hidden wo-section">
+<div id="erpSlowMoving" class="dash-section hidden wo-section" data-section-theme="warning">
   <header class="wo-header">
     <div class="wo-header-titles">
       <h1><span class="wo-icon-slot"><i class="fas fa-snowflake"></i></span>الأصناف بطيئة الحركة</h1>
@@ -3340,7 +3342,7 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- PHASE 3 — INVENTORY TURNOVER -->
 <!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpTurnover" class="dash-section hidden wo-section">
+<div id="erpTurnover" class="dash-section hidden wo-section" data-section-theme="info">
   <header class="wo-header">
     <div class="wo-header-titles">
       <h1><span class="wo-icon-slot purple"><i class="fas fa-rotate"></i></span>دوران المخزون</h1>
@@ -3388,7 +3390,7 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- v5.10.33 — REORDER ALERTS (تنبيهات إعادة الطلب)                 -->
 <!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpReorderAlerts" class="dash-section hidden wo-section">
+<div id="erpReorderAlerts" class="dash-section hidden wo-section" data-section-theme="warning">
   <header class="wo-header">
     <div class="wo-header-titles">
       <h1><span class="wo-icon-slot warning"><i class="fas fa-cart-plus"></i></span>تنبيهات إعادة الطلب</h1>
@@ -3426,7 +3428,7 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- v5.10.33 — DAYS OF STOCK ON HAND (أيام تغطية المخزون)            -->
 <!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpDaysOfStock" class="dash-section hidden wo-section">
+<div id="erpDaysOfStock" class="dash-section hidden wo-section" data-section-theme="info">
   <header class="wo-header">
     <div class="wo-header-titles">
       <h1><span class="wo-icon-slot info"><i class="fas fa-calendar-week"></i></span>أيام تغطية المخزون</h1>
@@ -3463,7 +3465,7 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- v5.10.33 — ABC ANALYSIS (تحليل ABC)                              -->
 <!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpAbcAnalysis" class="dash-section hidden wo-section">
+<div id="erpAbcAnalysis" class="dash-section hidden wo-section" data-section-theme="purple">
   <header class="wo-header">
     <div class="wo-header-titles">
       <h1><span class="wo-icon-slot info"><i class="fas fa-chart-pie"></i></span>تحليل ABC للمخزون</h1>
@@ -3495,7 +3497,7 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- v5.10.33 — STOCKTAKE HISTORY (سجل محاضر الجرد)                  -->
 <!-- ══════════════════════════════════════════════════════════════ -->
-<div id="erpStocktakeHistory" class="dash-section hidden wo-section">
+<div id="erpStocktakeHistory" class="dash-section hidden wo-section" data-section-theme="success">
   <header class="wo-header">
     <div class="wo-header-titles">
       <h1><span class="wo-icon-slot"><i class="fas fa-clipboard-list"></i></span>سجل محاضر الجرد</h1>
@@ -4795,7 +4797,7 @@
 </div>
 
 <!-- Inventory Valuation -->
-<div id="erpRptInventoryVal" class="dash-section hidden">
+<div id="erpRptInventoryVal" class="dash-section hidden wo-section" data-section-theme="purple">
   <div class="section-header"><h2 class="section-title"><i class="fas fa-warehouse"></i> تقييم المخزون</h2></div>
   <div class="erp-rpt-filter">
     <div><label>المستودع</label><select id="ivWh" class="form-control-sm"><option value="">الكل</option></select></div>
@@ -4810,7 +4812,7 @@
 <!-- ══════════════════════════════════════════════════════════════════ -->
 <!-- v5.10.6 — Warehouse Ledger by Date (دفتر أستاذ المستودع)            -->
 <!-- ══════════════════════════════════════════════════════════════════ -->
-<div id="erpRptWarehouseLedger" class="dash-section hidden wo-section">
+<div id="erpRptWarehouseLedger" class="dash-section hidden wo-section" data-section-theme="info">
   <header class="wo-header">
     <div class="wo-header-titles">
       <h1><span class="wo-icon-slot info"><i class="fas fa-book-bookmark"></i></span>دفتر أستاذ المستودع <span class="fa-badge-ifrs" style="font-size:11px;font-weight:700;margin-inline-start:8px;">شامل · كل الحركات والتواريخ</span></h1>
@@ -5112,7 +5114,7 @@
 </div>
 
 <!-- Waste Entries (v5.10.34 — enterprise rewrite) -->
-<div id="erpWasteEntries" class="dash-section hidden wo-section">
+<div id="erpWasteEntries" class="dash-section hidden wo-section" data-section-theme="danger">
   <header class="wo-header">
     <div class="wo-header-titles">
       <h1><span class="wo-icon-slot danger"><i class="fas fa-dumpster"></i></span>قيود الهدر</h1>

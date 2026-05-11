@@ -3232,13 +3232,20 @@ router.get('/stocktakes', async (req, res) => {
     const params = [];
     const from = req.query.fromDate || req.query.startDate;
     const to   = req.query.toDate   || req.query.endDate;
-    // v5.10.37 — Match the warehouse OR include rows with NULL
-    // warehouse_id. Orphan stocktakes (saved before v5.10.35 wired the
-    // warehouse-fallback resolver) had warehouse_id=NULL and were
-    // invisible from every warehouse view. They now surface in every
-    // view so the admin can find them and reassign. Future records
-    // are never orphans because POST refuses NULL warehouse.
-    if (req.query.warehouseId) { where.push('(s.warehouse_id = ? OR s.warehouse_id IS NULL)'); params.push(req.query.warehouseId); }
+    // v5.10.39 — Tighter "match this warehouse" filter. Was previously
+    // "warehouse_id = X OR IS NULL" (v5.10.37) which dumped EVERY orphan
+    // into EVERY warehouse view — owner found that confusing. The fix
+    // now matches:
+    //   • Direct: stocktake.warehouse_id = X, OR
+    //   • Implicit: stocktake.warehouse_id IS NULL but its branch.
+    //     warehouse_id = X (i.e. the cashier worked at a branch tied
+    //     to this warehouse but the row didn't save warehouse_id)
+    // Orphans whose branch ALSO doesn't link to this warehouse stay
+    // hidden; admin can find them via the "كل المستودعات" toggle.
+    if (req.query.warehouseId) {
+      where.push('(s.warehouse_id = ? OR (s.warehouse_id IS NULL AND br.warehouse_id = ?))');
+      params.push(req.query.warehouseId, req.query.warehouseId);
+    }
     // v5.10.32 — branchId filter so each branch's own list is fetchable
     // server-side. The owner wants to see "stocktakes done by branch X"
     // distinctly from the warehouse-level filter.
@@ -3355,17 +3362,47 @@ const REASON_LABELS = { damaged: 'تالف', admin: 'إداري', settlement: '�
 router.post('/adjustments', async (req, res) => {
   try {
     const { items, reason, reasonNotes, username } = req.body;
+    let { warehouseId, branchId } = req.body;
     if (!items || !items.length) return res.json({ success: false, error: 'No items' });
+
+    // v5.10.39 — Resolve warehouseId + branchId from the user's profile
+    // when the client didn't send them (parity with v5.10.35 stocktake
+    // fix). The adjustment row keeps warehouse_id as a real FK so the
+    // movement entry written at approval time can be scoped to a
+    // warehouse — fixes the bug where adjustments had warehouse_id=NULL
+    // and showed "—" in the admin view.
+    if ((!warehouseId || !branchId) && req.user) {
+      try {
+        const [u] = await db.query(
+          'SELECT u.branch_id, u.default_warehouse_id, b.warehouse_id AS branch_warehouse_id ' +
+          'FROM users u LEFT JOIN branches b ON b.id = u.branch_id ' +
+          'WHERE u.username = ? LIMIT 1',
+          [req.user.username || username]);
+        if (u.length) {
+          branchId    = branchId    || u[0].branch_id || null;
+          warehouseId = warehouseId || u[0].default_warehouse_id || u[0].branch_warehouse_id || null;
+        }
+      } catch(_) {}
+    }
 
     const now = new Date();
     const adjId = 'ADJ-' + Date.now();
     let totalCost = 0;
 
-    // Insert header first (FK)
-    await db.query(
-      'INSERT INTO stock_adjustments (id, adjustment_date, reason, reason_notes, username, status, items_count, total_cost) VALUES (?,?,?,?,?,?,?,?)',
-      [adjId, now, reason || 'damaged', reasonNotes || '', username || '', 'pending', 0, 0]
-    );
+    // Insert header first (FK). Best-effort warehouse_id/branch_id
+    // columns — if the schema is older and lacks them, fall back to the
+    // legacy column set.
+    try {
+      await db.query(
+        'INSERT INTO stock_adjustments (id, adjustment_date, reason, reason_notes, username, status, items_count, total_cost, warehouse_id, branch_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [adjId, now, reason || 'damaged', reasonNotes || '', username || '', 'pending', 0, 0, warehouseId || null, branchId || null]
+      );
+    } catch (_) {
+      await db.query(
+        'INSERT INTO stock_adjustments (id, adjustment_date, reason, reason_notes, username, status, items_count, total_cost) VALUES (?,?,?,?,?,?,?,?)',
+        [adjId, now, reason || 'damaged', reasonNotes || '', username || '', 'pending', 0, 0]
+      );
+    }
 
     for (const item of items) {
       const [inv] = await db.query('SELECT id, name, unit, stock, cost, conv_rate FROM inv_items WHERE id = ?', [item.id]);
@@ -3404,17 +3441,34 @@ router.post('/adjustments/:id/approve', async (req, res) => {
     if (adj[0].status === 'approved') return res.json({ success: false, error: 'Already approved' });
 
     const [items] = await db.query('SELECT * FROM stock_adjustment_items WHERE adjustment_id = ?', [id]);
+    const adjWarehouseId = adj[0].warehouse_id || null;
 
     for (const item of items) {
-      // Deduct from stock
-      await db.query('UPDATE inv_items SET stock = GREATEST(0, stock - ?) WHERE id = ?', [item.qty, item.inv_item_id]);
+      // v5.10.39 — Deduct from the warehouse_stock for the adjustment's
+      // warehouse, then recompute the inv_items.stock rollup. Falls back
+      // to the legacy global deduction only when warehouse_id is NULL
+      // (very old adjustments) so the behavior stays correct in both
+      // cases.
+      if (adjWarehouseId) {
+        await db.query(
+          'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
+          [item.qty, adjWarehouseId, item.inv_item_id]);
+        try {
+          await recomputeInvItemStock(db, item.inv_item_id);
+        } catch(_) { /* helper may be unavailable in very old deploys */ }
+      } else {
+        await db.query('UPDATE inv_items SET stock = GREATEST(0, stock - ?) WHERE id = ?', [item.qty, item.inv_item_id]);
+      }
 
-      // Record movement
+      // v5.10.39 — Record movement WITH warehouse_id so per-warehouse
+      // reports show the row (was NULL previously, which orphaned every
+      // adjustment entry in the admin view).
       const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
       await db.query(
-        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
         [movId, now, item.inv_item_id, item.inv_item_name, 'out', item.qty,
-         REASON_LABELS[adj[0].reason] || 'تعديل كمية', username || '', 'ADJ: ' + id]
+         REASON_LABELS[adj[0].reason] || 'تعديل كمية', username || '', 'ADJ: ' + id,
+         adjWarehouseId]
       );
     }
 
@@ -3441,10 +3495,13 @@ router.get('/adjustments', async (req, res) => {
     const params = [];
     const from = req.query.fromDate || req.query.startDate;
     const to   = req.query.toDate   || req.query.endDate;
-    // v5.10.37 — Same NULL-warehouse fallback as /stocktakes: orphan
-    // adjustments surface in every warehouse view so admins can find
-    // and reassign them.
-    if (req.query.warehouseId) { where.push('(a.warehouse_id = ? OR a.warehouse_id IS NULL)'); params.push(req.query.warehouseId); }
+    // v5.10.39 — Same tighter rule as /stocktakes: match direct or
+    // resolved-via-branch. Orphans not linked to this warehouse via
+    // either path stay hidden until the show-all toggle is used.
+    if (req.query.warehouseId) {
+      where.push('(a.warehouse_id = ? OR (a.warehouse_id IS NULL AND br.warehouse_id = ?))');
+      params.push(req.query.warehouseId, req.query.warehouseId);
+    }
     // v5.10.32 — branchId filter for per-branch admin views.
     if (req.query.branchId)    { where.push('a.branch_id = ?');              params.push(req.query.branchId); }
     if (from)                  { where.push('DATE(a.adjustment_date) >= ?'); params.push(from); }

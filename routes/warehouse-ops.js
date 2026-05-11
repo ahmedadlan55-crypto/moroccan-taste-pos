@@ -332,6 +332,12 @@ router.post('/stock-issues/:id/issue', async (req, res) => {
     }
 
     // Decrement source warehouse stock, set qty_issued
+    // v5.10.39 — Also write an inventory_movements row for each line.
+    // Pre-fix, stock-issues skipped the movement ledger entirely; the
+    // owner asked "هل التحويل يظهر بنفس التاريخ في الوجهة" — the answer
+    // was "no" because nothing was logged. Now: an 'out' row for every
+    // line of the issue, dated NOW(), referencing the issue header.
+    const issueNow = new Date();
     let totalCost = 0;
     for (const it of items) {
       const qty = Number(it.qty_requested);
@@ -342,6 +348,28 @@ router.post('/stock-issues/:id/issue', async (req, res) => {
       await db.query(
         `UPDATE stock_issue_items SET qty_issued=?, line_total=? WHERE id=?`,
         [qty, lineTotal, it.id]);
+      // Ledger entry: "تحويل صادر" — the bucket() in /live-report
+      // classifies this as transferOut (v5.10.18 regex).
+      try {
+        const movId = 'MOV-SI-OUT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+        await db.query(
+          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
+          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+          [movId, issueNow, it.item_id, it.item_name || '', 'out', qty,
+           'تحويل صادر', issuedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+           hdr.from_warehouse_id, 'transfer', id]);
+      } catch(e) {
+        // reference_type/reference_id columns might not exist on older
+        // schemas; retry without them.
+        try {
+          const movId = 'MOV-SI-OUT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+          await db.query(
+            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [movId, issueNow, it.item_id, it.item_name || '', 'out', qty,
+             'تحويل صادر', issuedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+             hdr.from_warehouse_id]);
+        } catch(_) { /* best effort */ }
+      }
     }
 
     // Post GL: Dr Branch Inventory / Cr Main Inventory (at total cost)
@@ -396,12 +424,37 @@ router.post('/stock-issues/:id/receive', async (req, res) => {
     const qtyMap = {};
     if (Array.isArray(items)) items.forEach(it => { qtyMap[it.id] = Number(it.qtyReceived); });
 
+    // v5.10.39 — log a "تحويل وارد" inventory_movements row for each
+    // received line, dated NOW(), so the destination warehouse's ledger
+    // shows the transfer at the receive date (matches the issue-side
+    // 'out' row with the same reference_id).
+    const receiveNow = new Date();
     for (const it of dbItems) {
       const qtyReceived = qtyMap.hasOwnProperty(it.id) ? qtyMap[it.id] : Number(it.qty_issued);
       if (qtyReceived <= 0) continue;
       await _applyStockMovement(hdr.to_warehouse_id, it.item_id, qtyReceived, Number(it.unit_cost),
                                 'stock_issue_in', id, receivedBy || '');
       await db.query('UPDATE stock_issue_items SET qty_received=? WHERE id=?', [qtyReceived, it.id]);
+      // Ledger entry — destination side. Same reference_id as the 'out'
+      // row so reports can pair them.
+      try {
+        const movId = 'MOV-SI-IN-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+        await db.query(
+          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
+          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+          [movId, receiveNow, it.item_id, it.item_name || '', 'in', qtyReceived,
+           'تحويل وارد', receivedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+           hdr.to_warehouse_id, 'transfer', id]);
+      } catch(e) {
+        try {
+          const movId = 'MOV-SI-IN-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+          await db.query(
+            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [movId, receiveNow, it.item_id, it.item_name || '', 'in', qtyReceived,
+             'تحويل وارد', receivedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+             hdr.to_warehouse_id]);
+        } catch(_) { /* best effort */ }
+      }
     }
 
     await db.query(
@@ -750,6 +803,10 @@ router.post('/production-orders/:id/release', async (req, res) => {
     }
 
     // Consume raw materials
+    // v5.10.39 — log a 'out' inventory_movements row per consumption
+    // line with reason "إنتاج" so the bucket() regex classifies them as
+    // production movements in /live-report. Same reference_id as GL.
+    const releaseNow = new Date();
     let materialsCost = 0;
     const glLines = [];
     for (const c of cons) {
@@ -762,6 +819,25 @@ router.post('/production-orders/:id/release', async (req, res) => {
       await db.query(
         `UPDATE production_consumption SET qty_actual=?, total_cost=?, consumed_at=NOW() WHERE id=?`,
         [qty, lineTotal, c.id]);
+      // Inventory movement: consumed-for-production
+      try {
+        const [itName] = await db.query('SELECT name FROM inv_items WHERE id = ?', [c.item_id]);
+        const movId = 'MOV-PROD-OUT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+        await db.query(
+          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
+          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+          [movId, releaseNow, c.item_id, (itName.length ? itName[0].name : ''), 'out', qty,
+           'إنتاج', releasedBy || '', 'PRODUCTION: ' + (hdr.order_number || id),
+           c.warehouse_id, 'production', id]);
+      } catch(e) {
+        try {
+          const movId = 'MOV-PROD-OUT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+          await db.query(
+            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [movId, releaseNow, c.item_id, '', 'out', qty, 'إنتاج', releasedBy || '',
+             'PRODUCTION: ' + (hdr.order_number || id), c.warehouse_id]);
+        } catch(_) { /* best effort */ }
+      }
       glLines.push({
         accountCode: gl.CORE_ACCOUNTS.WIP.code,
         debit: lineTotal, credit: 0,
@@ -838,6 +914,29 @@ router.post('/production-orders/:id/complete', async (req, res) => {
     // Add finished goods to inventory (WAC updated automatically)
     await _applyStockMovement(outputWh, hdr.product_id, qtyOut, unitCost,
                               'production_complete', id, completedBy || '');
+
+    // v5.10.39 — Inventory movement: production output. 'in' to the
+    // output warehouse with reason "إنتاج" so the destination ledger
+    // shows the finished good arriving.
+    const completeNow = new Date();
+    try {
+      const [prodName] = await db.query('SELECT name FROM inv_items WHERE id = ? UNION ALL SELECT name FROM menu WHERE id = ?', [hdr.product_id, hdr.product_id]);
+      const movId = 'MOV-PROD-IN-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+      await db.query(
+        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
+        'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+        [movId, completeNow, hdr.product_id, (prodName.length ? prodName[0].name : ''), 'in', qtyOut,
+         'إنتاج', completedBy || '', 'PRODUCTION: ' + (hdr.order_number || id),
+         outputWh, 'production', id]);
+    } catch(e) {
+      try {
+        const movId = 'MOV-PROD-IN-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+        await db.query(
+          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          [movId, completeNow, hdr.product_id, '', 'in', qtyOut, 'إنتاج', completedBy || '',
+           'PRODUCTION: ' + (hdr.order_number || id), outputWh]);
+      } catch(_) { /* best effort */ }
+    }
 
     // Record output row
     await db.query(

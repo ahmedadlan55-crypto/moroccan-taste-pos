@@ -685,10 +685,15 @@ body.en .table th:last-child { border-top-right-radius: 18px; border-top-left-ra
 .wh-fb-title { font-size: 16px; font-weight: 800; color: var(--primary); display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding-inline-end: 10px; border-inline-end: 2px solid #e2e8f0; }
 .wh-fb-title i { font-size: 18px; }
 .wh-fb-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: 1; }
-.wh-fb-search { position: relative; flex: 1; min-width: 240px; }
-.wh-fb-search i { position: absolute; inset-inline-start: 12px; top: 50%; transform: translateY(-50%); color: #94a3b8; font-size: 13px; pointer-events: none; }
-.wh-fb-search input.form-control { padding-inline-start: 36px; background: linear-gradient(135deg, #f8fafc, #fff); border-color: #e2e8f0; height: 40px; }
-.wh-fb-search input.form-control:focus { border-color: #7c3aed; background: #fff; }
+/* v5.10.37 — search container: grows to fill row, never shrinks below
+   220px so the icon + placeholder stay readable on every screen. Was
+   previously dropping to ~40px wide when the row got crowded — owner
+   reported the "ت..." truncated state. */
+.wh-fb-search { position: relative; flex: 1 1 220px; min-width: 220px; max-width: 360px; }
+.wh-fb-search i { position: absolute; inset-inline-start: 14px; top: 50%; transform: translateY(-50%); color: #94a3b8; font-size: 14px; pointer-events: none; z-index: 1; }
+.wh-fb-search input.form-control { padding-inline-start: 40px; padding-inline-end: 14px; background: #fff; border: 1.5px solid #e2e8f0; border-radius: 10px; height: 40px; font-size: 13px; box-sizing: border-box; width: 100%; }
+.wh-fb-search input.form-control::placeholder { color: #94a3b8; }
+.wh-fb-search input.form-control:focus { border-color: #7c3aed; box-shadow: 0 0 0 3px #ede9fe; outline: none; }
 .wh-fb-date { max-width: 150px; height: 40px; }
 .wh-fb-select { max-width: 180px; height: 40px; background: linear-gradient(135deg, #faf5ff, #fff); border-color: #d8b4fe; }
 .wh-fb-clear { width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }

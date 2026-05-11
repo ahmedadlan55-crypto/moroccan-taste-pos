@@ -3232,7 +3232,13 @@ router.get('/stocktakes', async (req, res) => {
     const params = [];
     const from = req.query.fromDate || req.query.startDate;
     const to   = req.query.toDate   || req.query.endDate;
-    if (req.query.warehouseId) { where.push('s.warehouse_id = ?');         params.push(req.query.warehouseId); }
+    // v5.10.37 — Match the warehouse OR include rows with NULL
+    // warehouse_id. Orphan stocktakes (saved before v5.10.35 wired the
+    // warehouse-fallback resolver) had warehouse_id=NULL and were
+    // invisible from every warehouse view. They now surface in every
+    // view so the admin can find them and reassign. Future records
+    // are never orphans because POST refuses NULL warehouse.
+    if (req.query.warehouseId) { where.push('(s.warehouse_id = ? OR s.warehouse_id IS NULL)'); params.push(req.query.warehouseId); }
     // v5.10.32 — branchId filter so each branch's own list is fetchable
     // server-side. The owner wants to see "stocktakes done by branch X"
     // distinctly from the warehouse-level filter.
@@ -3420,7 +3426,10 @@ router.get('/adjustments', async (req, res) => {
     const params = [];
     const from = req.query.fromDate || req.query.startDate;
     const to   = req.query.toDate   || req.query.endDate;
-    if (req.query.warehouseId) { where.push('a.warehouse_id = ?');           params.push(req.query.warehouseId); }
+    // v5.10.37 — Same NULL-warehouse fallback as /stocktakes: orphan
+    // adjustments surface in every warehouse view so admins can find
+    // and reassign them.
+    if (req.query.warehouseId) { where.push('(a.warehouse_id = ? OR a.warehouse_id IS NULL)'); params.push(req.query.warehouseId); }
     // v5.10.32 — branchId filter for per-branch admin views.
     if (req.query.branchId)    { where.push('a.branch_id = ?');              params.push(req.query.branchId); }
     if (from)                  { where.push('DATE(a.adjustment_date) >= ?'); params.push(from); }

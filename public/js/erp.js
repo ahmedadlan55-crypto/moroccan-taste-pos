@@ -19829,7 +19829,254 @@ function _siEsc(s) {
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// v5.10.41 — Stock-issues detail view rebuilt on the Enterprise UI Kit
+// (window.EntUI from /js/ent-ui.js + /css/ent-ui.css). Same visual contract
+// as the Stocktake / Adjustments detail views shipped in v5.10.41.
+//
+// Falls back to the legacy `sid-*` markup if EntUI failed to load for any
+// reason — defence-in-depth so a missing script never blocks the operator.
 function _siRenderDetailView(d) {
+  if (typeof window.EntUI !== 'undefined') {
+    return _siRenderDetailViewEnt(d);
+  }
+  // Legacy path (older browsers / asset-loader failures).
+  return _siRenderDetailViewLegacy(d);
+}
+
+// ─── EntUI implementation ────────────────────────────────────────────────
+function _siRenderDetailViewEnt(d) {
+  var statusLabels = {
+    draft:'مسودة', approved:'معتمد', issued:'تم الصرف',
+    received:'تم الاستلام', cancelled:'ملغى', reversed:'مرجع'
+  };
+  var statusTypeMap = {
+    draft:'neutral', approved:'info', issued:'warning',
+    received:'success', cancelled:'danger', reversed:'pink'
+  };
+  var status = d.status || 'draft';
+  var statusLbl = statusLabels[status] || status;
+  var statusType = statusTypeMap[status] || 'neutral';
+  var items = d.items || [];
+
+  // Aggregates for the header strip.
+  var totalReq = items.reduce(function (s, i) { return s + Number(i.qty_requested || 0); }, 0);
+  var totalIss = items.reduce(function (s, i) { return s + Number(i.qty_issued || 0); }, 0);
+  var totalRcv = items.reduce(function (s, i) { return s + Number(i.qty_received || 0); }, 0);
+
+  // Header theme tinted by status: success when received, danger when
+  // reversed/cancelled, warning when in-flight.
+  var theme = status === 'received' ? 'success'
+            : (status === 'reversed' || status === 'cancelled') ? 'danger'
+            : (status === 'issued' || status === 'approved') ? 'warning'
+            : 'info';
+
+  var headerHtml = EntUI.header({
+    icon: 'fa-truck-arrow-right',
+    eyebrow: 'إذن صرف · ' + EntUI.fmt.dateShort(d.issue_date || d.created_at),
+    code: d.issue_number || d.id,
+    status: statusLbl,
+    statusType: statusType,
+    theme: theme,
+    sub: [
+      { icon: 'fa-warehouse',  text: 'من: ' + (d.from_warehouse_name || '—') },
+      { icon: 'fa-store',      text: 'إلى: ' + (d.to_warehouse_name || '—') },
+      { icon: 'fa-user-circle',text: 'المنشئ: ' + (d.created_by_name || d.created_by || '—') },
+      { icon: 'fa-calendar',   text: EntUI.fmt.date(d.created_at) }
+    ],
+    stats: [
+      { label: 'عدد الأصناف',      value: items.length },
+      { label: 'إجمالي المطلوب',   value: EntUI.fmt.qty(totalReq) },
+      { label: 'إجمالي المصروف',   value: EntUI.fmt.qty(totalIss) },
+      { label: 'القيمة الإجمالية', value: EntUI.fmt.money(d.total_cost), unit: 'ر.س', accent: true }
+    ]
+  });
+
+  // Summary cards — per-status quick visual.
+  var partialCount = 0, fullCount = 0, pendingCount = 0;
+  items.forEach(function (i) {
+    var iss = Number(i.qty_issued || 0);
+    var rcv = Number(i.qty_received || 0);
+    if (iss > 0 && rcv === 0) pendingCount++;
+    else if (iss > 0 && rcv < iss) partialCount++;
+    else if (iss > 0 && rcv === iss) fullCount++;
+  });
+  var summaryHtml = EntUI.summary([
+    { label: 'مكتمل الاستلام', value: fullCount, unit: 'صنف', icon: 'fa-circle-check', intent: 'success' },
+    { label: 'استلام جزئي',    value: partialCount, unit: 'صنف', icon: 'fa-triangle-exclamation', intent: 'warning' },
+    { label: 'بانتظار الاستلام', value: pendingCount, unit: 'صنف', icon: 'fa-paper-plane', intent: 'info' },
+    { label: 'الحالة الحالية', value: statusLbl, icon: 'fa-flag', intent: statusType === 'pink' ? 'danger' : statusType }
+  ]);
+
+  // Reversal banner — only when status === 'reversed'.
+  var reversalHtml = '';
+  if (status === 'reversed') {
+    reversalHtml = EntUI.section({
+      body: EntUI.banner({
+        intent: 'pink',
+        icon: 'fa-rotate-left',
+        title: 'تم إرجاع هذا الإذن',
+        text: '<div style="line-height:1.7;">أُعيدت الكميات للمستودع المصدر وتم ترحيل قيد عكسي بنفس القيمة.' +
+              (d.reverse_reason ? '<br><b>السبب:</b> ' + EntUI.esc(d.reverse_reason) : '') + '</div>',
+        meta: 'بواسطة: ' + (d.reversed_by_name || d.reversed_by || '—') +
+              ' · ' + EntUI.fmt.date(d.reversed_at) +
+              (d.reverse_gl_journal_id ? ' · قيد عكسي: ' + d.reverse_gl_journal_id : '')
+      })
+    });
+  } else if (status === 'cancelled') {
+    reversalHtml = EntUI.section({
+      body: EntUI.banner({
+        intent: 'danger',
+        icon: 'fa-ban',
+        title: 'تم إلغاء هذا الإذن',
+        text: 'لم يتم الصرف. لن يُرحَّل أي قيد محاسبي ولن يتأثر المخزون.'
+      })
+    });
+  }
+
+  // Workflow timeline.
+  var statusOrder = ['draft','approved','issued','received'];
+  var currentIdx = Math.max(0, statusOrder.indexOf(status));
+  var timelineSteps = [
+    { key: 'draft',    label: 'مسودة',  icon: 'fa-pen-to-square', when: d.created_at,  who: d.created_by_name  || d.created_by },
+    { key: 'approved', label: 'اعتماد', icon: 'fa-circle-check',  when: d.approved_at, who: d.approved_by_name || d.approved_by },
+    { key: 'issued',   label: 'صرف',    icon: 'fa-paper-plane',   when: d.issued_at,   who: d.issued_by_name   || d.issued_by },
+    { key: 'received', label: 'استلام', icon: 'fa-inbox',         when: d.received_at, who: d.received_by_name || d.received_by }
+  ].map(function (step, i) {
+    if (status === 'cancelled') {
+      step.status = (step.key === 'draft') ? 'done' : 'cancelled';
+    } else if (status === 'reversed') {
+      step.status = 'done';
+    } else if (i < currentIdx) step.status = 'done';
+    else if (i === currentIdx) step.status = 'current';
+    else step.status = '';
+    return step;
+  });
+  if (status === 'reversed') {
+    timelineSteps.push({
+      key: 'reversed', label: 'إرجاع', icon: 'fa-rotate-left',
+      status: 'reversed', when: d.reversed_at, who: d.reversed_by_name || d.reversed_by
+    });
+  }
+  var timelineHtml = EntUI.section({
+    icon: 'fa-flag-checkered',
+    title: 'سير المعاملة',
+    body: EntUI.timeline(timelineSteps)
+  });
+
+  // Items table with per-row reception state badge.
+  var rows = items.map(function (it) {
+    var iss = Number(it.qty_issued || 0);
+    var rcv = Number(it.qty_received || 0);
+    if (iss > 0 && rcv > 0 && rcv < iss) it._state = 'partial';
+    else if (iss > 0 && rcv === 0 && status === 'issued') it._state = 'pending';
+    else if (iss > 0 && rcv > iss) it._state = 'over';
+    return it;
+  });
+  var tableHtml = EntUI.section({
+    icon: 'fa-list-ul',
+    title: 'أصناف الإذن',
+    body: EntUI.table({
+      columns: [
+        { key: 'item_name', label: 'الصنف', render: function (r) {
+          return '<b>' + EntUI.esc(r.item_name || '') + '</b>' +
+            (r.item_unit ? ' <span class="col-muted">/' + EntUI.esc(r.item_unit) + '</span>' : '');
+        }},
+        { key: 'qty_requested', label: 'مطلوب', num: true, render: function (r) { return EntUI.fmt.qty(r.qty_requested); }},
+        { key: 'qty_issued',    label: 'مصروف', num: true, render: function (r) { return EntUI.fmt.qty(r.qty_issued); }},
+        { key: 'qty_received',  label: 'مستلم', num: true, render: function (r) {
+          var iss = Number(r.qty_issued || 0);
+          var rcv = Number(r.qty_received || 0);
+          var chip = '';
+          if (iss > 0 && rcv > 0 && rcv < iss)        chip = ' ' + EntUI.tag('جزئي', 'warning');
+          else if (iss > 0 && rcv === 0 && status === 'issued') chip = ' ' + EntUI.tag('بانتظار', 'neutral');
+          else if (iss > 0 && rcv === iss)            chip = ' ' + EntUI.tag('مكتمل', 'success', { icon: 'fa-check' });
+          else if (iss > 0 && rcv > iss)              chip = ' ' + EntUI.tag('زيادة!', 'danger');
+          return EntUI.fmt.qty(rcv) + chip;
+        }},
+        { key: 'unit_cost', label: 'سعر الوحدة', num: true, render: function (r) { return EntUI.fmt.money(r.unit_cost); }},
+        { key: 'line_total', label: 'القيمة', num: true, render: function (r) {
+          return '<b>' + EntUI.fmt.money(r.line_total) + '</b>';
+        }}
+      ],
+      rows: rows,
+      emptyIcon: 'fa-truck-arrow-right',
+      emptyTitle: 'لا توجد أصناف',
+      emptyText: 'لم يُسجَّل أي صنف على هذا الإذن.',
+      footer: [
+        { colspan: 5, html: '<b>الإجمالي</b>' },
+        { num: true, html: '<b>' + EntUI.fmt.money(d.total_cost) + ' ر.س</b>' }
+      ]
+    })
+  });
+
+  // GL link card — only when journal posted.
+  var glHtml = '';
+  if (d.gl_journal_id) {
+    glHtml = EntUI.section({
+      icon: 'fa-building-columns',
+      title: 'القيد المحاسبي',
+      body: EntUI.infoCard({
+        icon: 'fa-book',
+        label: 'رقم القيد المحاسبي (GL Journal)',
+        html: '<code>' + EntUI.esc(d.gl_journal_id) + '</code> ' +
+              '<span style="color:#16a34a;font-size:12px;font-weight:700;margin-inline-start:6px;">· مُرحّل ✓</span>'
+      })
+    });
+  }
+
+  // Notes card.
+  var notesHtml = '';
+  if (d.notes) {
+    notesHtml = EntUI.section({
+      icon: 'fa-note-sticky',
+      title: 'ملاحظات',
+      body: EntUI.banner({
+        intent: 'info',
+        icon: 'fa-quote-right',
+        text: '<div style="white-space:pre-wrap;line-height:1.7;">' + EntUI.esc(d.notes) + '</div>'
+      })
+    });
+  }
+
+  // Action bar (status-aware).
+  var idSafe = EntUI.esc(d.id);
+  var leftBtns = [
+    { label: 'إغلاق', intent: 'ghost', onClick: 'siCloseDetail()' },
+    { label: 'طباعة A4', intent: 'ghost', icon: 'fa-print', onClick: "siPrint('" + idSafe + "')" }
+  ];
+  var rightBtns = [];
+  if (status === 'draft' && EntUI.Permission.can('transfers.approve')) {
+    rightBtns.push({ label: 'اعتماد', intent: 'success', icon: 'fa-circle-check',
+                     onClick: "siApprove('" + idSafe + "');siCloseDetail()" });
+  }
+  if ((status === 'draft' || status === 'approved') && EntUI.Permission.can('transfers.issue')) {
+    rightBtns.push({ label: 'صرف', intent: 'warning', icon: 'fa-paper-plane',
+                     onClick: "siIssue('" + idSafe + "');siCloseDetail()" });
+  }
+  if (status === 'issued' && EntUI.Permission.can('transfers.receive')) {
+    rightBtns.push({ label: 'استلام', intent: 'success', icon: 'fa-inbox',
+                     onClick: "siReceive('" + idSafe + "');siCloseDetail()" });
+  }
+  if ((status === 'issued' || status === 'received') && EntUI.Permission.can('transfers.reverse')) {
+    rightBtns.push({ label: 'إرجاع الإذن', intent: 'danger', icon: 'fa-rotate-left',
+                     onClick: "siOpenReverseConfirm('" + idSafe + "')" });
+  }
+  if (status === 'draft' && EntUI.Permission.can('transfers.delete')) {
+    rightBtns.push({ label: 'إلغاء', intent: 'danger', icon: 'fa-xmark',
+                     onClick: "siCancel('" + idSafe + "');siCloseDetail()" });
+  }
+  var actionBarHtml = EntUI.actionBar({ leftBtns: leftBtns, rightBtns: rightBtns });
+
+  // Mount via EntUI's overlay system (replaces the bespoke #siDetailOverlay
+  // setup but keeps siCloseDetail() working — see below).
+  var ov = EntUI.overlay({ id: 'entSiOverlay' });
+  ov.open(headerHtml + summaryHtml + reversalHtml + timelineHtml + tableHtml + glHtml + notesHtml + actionBarHtml);
+  window._siCurrentDetailId = d.id;
+}
+
+// Legacy path retained so the screen never goes dark even if EntUI didn't
+// load. Reads the same `d` shape as the new path.
+function _siRenderDetailViewLegacy(d) {
   var statusLabels = {
     draft:'مسودة', approved:'معتمد', issued:'تم الصرف',
     received:'تم الاستلام', cancelled:'ملغى', reversed:'مرجع'
@@ -20056,8 +20303,21 @@ function _siRenderDetailView(d) {
 }
 
 window.siCloseDetail = function() {
+  // Legacy overlay (used by _siRenderDetailViewLegacy if EntUI is missing).
   var ov = document.getElementById('siDetailOverlay');
   if (ov) ov.classList.remove('open');
+  // v5.10.41+ EntUI overlay.
+  if (typeof window.EntUI !== 'undefined') {
+    var entOv = document.getElementById('entSiOverlay');
+    if (entOv && entOv.classList.contains('open')) {
+      EntUI.overlay({ id: 'entSiOverlay' }).close();
+    }
+    var entRev = document.getElementById('entSiReverseOverlay');
+    if (entRev && entRev.classList.contains('open')) {
+      EntUI.overlay({ id: 'entSiReverseOverlay' }).close();
+    }
+  }
+  // Legacy reverse-confirm modal.
   var rc = document.getElementById('siRevConfirm');
   if (rc) rc.classList.remove('open');
 };
@@ -20330,11 +20590,114 @@ function _siRenderPrintWindow(d, cfg) {
   win.document.write(html);
   win.document.close();
 }
+// v5.10.41 — Reverse-confirm modal rebuilt on EntUI (overlay + header +
+// section + field + actionBar) so its visual language matches the detail
+// view it lives on top of. Falls back to the legacy markup if EntUI
+// isn't loaded.
 window.siOpenReverseConfirm = function(id) {
-  // V5.9.8 — inject styles even when the user opens this modal directly from
-  // the LIST row (not from the detail view). Previously the CSS lived only in
-  // `_siInjectDetailStyles` which `siView` called — opening the reverse modal
-  // straight from the list rendered raw unstyled HTML.
+  if (typeof window.EntUI === 'undefined') {
+    return _siOpenReverseConfirmLegacy(id);
+  }
+  var headerHtml = EntUI.header({
+    icon: 'fa-rotate-left',
+    eyebrow: 'إجراء عكسي — إرجاع إذن صرف',
+    title: 'إرجاع إذن الصرف',
+    theme: 'danger',
+    sub: [
+      { icon: 'fa-arrows-rotate', text: 'سيُعاد المخزون للمستودع المصدر' },
+      { icon: 'fa-book',          text: 'سيُرحَّل قيد محاسبي عكسي' }
+    ]
+  });
+  var bodyHtml = EntUI.section({
+    body:
+      EntUI.banner({
+        intent: 'danger',
+        icon: 'fa-triangle-exclamation',
+        title: 'هذا الإجراء غير قابل للتراجع',
+        text: 'تأكَّد من السبب قبل الاعتماد — لن يمكن إلغاء الإرجاع بعد ترحيل القيد العكسي.'
+      }) +
+      '<div style="margin-top:14px;">' +
+        EntUI.field({
+          type: 'textarea',
+          id: 'entSiRevReason',
+          label: 'سبب الإرجاع',
+          required: true,
+          icon: 'fa-comment-dots',
+          placeholder: 'مثال: خطأ في الكمية، تلف بالنقل، إلغاء الطلب من الفرع...',
+          hint: 'الحد الأدنى 4 أحرف · يُحفظ في سجل التدقيق ويظهر في حركات المخزون.',
+          attrs: 'maxlength="500"'
+        }) +
+      '</div>'
+  });
+  var idSafe = EntUI.esc(id);
+  var actionBarHtml = EntUI.actionBar({
+    leftBtns: [
+      { label: 'إلغاء', intent: 'ghost', onClick: 'EntUI.overlay({id:"entSiReverseOverlay"}).close()' }
+    ],
+    rightBtns: [
+      { label: 'اعتماد الإرجاع', intent: 'danger', icon: 'fa-rotate-left',
+        id: 'entSiRevConfirmBtn', onClick: "siConfirmReverse('" + idSafe + "')" }
+    ]
+  });
+  var ov = EntUI.overlay({ id: 'entSiReverseOverlay' });
+  ov.open(headerHtml + bodyHtml + actionBarHtml);
+  // Focus the textarea so the operator can type immediately.
+  setTimeout(function () {
+    var ta = document.getElementById('entSiRevReason');
+    if (ta) { ta.value = ''; ta.focus(); }
+  }, 60);
+};
+
+window.siConfirmReverse = function(id) {
+  // Read from whichever modal is open (EntUI overlay or legacy markup).
+  var ta = document.getElementById('entSiRevReason') || document.getElementById('siRevReason');
+  var reason = ta ? String(ta.value || '').trim() : '';
+  // ValidationEngine if EntUI loaded; identical rule (minLength 4) as the
+  // server enforces (REASON_REQUIRED). Surfaces inline error on the field.
+  if (typeof window.EntUI !== 'undefined' && document.getElementById('entSiRevReason')) {
+    var v = EntUI.Validation.run({ entSiRevReason: reason }, {
+      entSiRevReason: ['required', { rule: 'minLength', param: 4 }]
+    });
+    if (!v.ok) {
+      var host = document.getElementById('entSiReverseOverlay');
+      EntUI.Validation.applyErrors(host, v.errors);
+      if (ta) ta.focus();
+      return;
+    }
+  } else if (reason.length < 4) {
+    showToast('يجب كتابة سبب الإرجاع (4 أحرف على الأقل)', true);
+    if (ta) ta.focus();
+    return;
+  }
+  // Disable the button + spinner while in-flight.
+  var btn = document.getElementById('entSiRevConfirmBtn') || document.getElementById('siRevConfirmBtn');
+  var origLabel = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>جاري الإرجاع...</span>'; }
+  _erpPost('/erp/stock-issues/' + id + '/reverse',
+    { reversedBy: currentUser, reason: reason },
+    function(r) {
+      if (r && r.success) {
+        showToast('تم إرجاع الإذن وترحيل القيد العكسي ✓');
+        // Close whichever modal we opened from.
+        if (typeof window.EntUI !== 'undefined') {
+          var entRev = document.getElementById('entSiReverseOverlay');
+          if (entRev && entRev.classList.contains('open')) EntUI.overlay({ id: 'entSiReverseOverlay' }).close();
+        }
+        var rc = document.getElementById('siRevConfirm'); if (rc) rc.classList.remove('open');
+        // Re-fetch + re-render the detail so the user sees the new 'reversed' state.
+        _erpGet('/erp/stock-issues/' + id, function(d) {
+          if (d && !d.error) _siRenderDetailView(d);
+          if (typeof siLoad === 'function') siLoad();
+        });
+      } else {
+        if (btn) { btn.disabled = false; btn.innerHTML = origLabel || '<i class="fas fa-rotate-left"></i> <span>اعتماد الإرجاع</span>'; }
+        showToast((r && r.error) || 'فشل الإرجاع', true);
+      }
+    });
+};
+
+// Legacy fallback for the reverse modal (only used when EntUI isn't loaded).
+function _siOpenReverseConfirmLegacy(id) {
   _siInjectDetailStyles();
   var el = document.getElementById('siRevConfirm');
   if (!el) {
@@ -20349,8 +20712,7 @@ window.siOpenReverseConfirm = function(id) {
         '</div>' +
         '<div class="body">' +
           '<label>سبب الإرجاع <span class="req">*</span></label>' +
-          '<textarea id="siRevReason" placeholder="مثال: خطأ في الكمية، تلف بالنقل، إلغاء الطلب من الفرع..." maxlength="500"></textarea>' +
-          '<div class="warn"><i class="fas fa-triangle-exclamation"></i> هذا الإجراء غير قابل للتراجع — تأكد من السبب قبل الاعتماد.</div>' +
+          '<textarea id="siRevReason" placeholder="مثال: خطأ في الكمية..." maxlength="500"></textarea>' +
         '</div>' +
         '<div class="foot">' +
           '<button class="sid-btn sid-btn-ghost" type="button" onclick="document.getElementById(\'siRevConfirm\').classList.remove(\'open\');">إلغاء</button>' +
@@ -20358,44 +20720,12 @@ window.siOpenReverseConfirm = function(id) {
         '</div>' +
       '</div>';
     document.body.appendChild(el);
-    el.addEventListener('click', function(ev) {
-      if (ev.target === el) el.classList.remove('open');
-    });
+    el.addEventListener('click', function(ev) { if (ev.target === el) el.classList.remove('open'); });
   }
   el.classList.add('open');
-  setTimeout(function() {
-    var ta = document.getElementById('siRevReason'); if (ta) { ta.value = ''; ta.focus(); }
-  }, 60);
+  setTimeout(function() { var ta = document.getElementById('siRevReason'); if (ta) { ta.value = ''; ta.focus(); } }, 60);
   document.getElementById('siRevConfirmBtn').onclick = function() { siConfirmReverse(id); };
-};
-
-window.siConfirmReverse = function(id) {
-  var ta = document.getElementById('siRevReason');
-  var reason = ta ? ta.value.trim() : '';
-  if (reason.length < 4) {
-    showToast('يجب كتابة سبب الإرجاع (4 أحرف على الأقل)', true);
-    if (ta) ta.focus();
-    return;
-  }
-  var btn = document.getElementById('siRevConfirmBtn');
-  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الإرجاع...'; }
-  _erpPost('/erp/stock-issues/' + id + '/reverse',
-    { reversedBy: currentUser, reason: reason },
-    function(r) {
-      if (r && r.success) {
-        showToast('تم إرجاع الإذن وترحيل القيد العكسي ✓');
-        var rc = document.getElementById('siRevConfirm'); if (rc) rc.classList.remove('open');
-        // Re-fetch + re-render the detail so the user sees the new 'reversed' state.
-        _erpGet('/erp/stock-issues/' + id, function(d) {
-          if (d && !d.error) _siRenderDetailView(d);
-          if (typeof siLoad === 'function') siLoad();
-        });
-      } else {
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-rotate-left"></i> اعتماد الإرجاع'; }
-        showToast((r && r.error) || 'فشل الإرجاع', true);
-      }
-    });
-};
+}
 function siApprove(id) {
   _erpPost('/erp/stock-issues/'+id+'/approve', { approvedBy: currentUser }, function(r){
     if (r.success) { showToast('تم الاعتماد'); siLoad(); } else showToast(r.error||'فشل', true);

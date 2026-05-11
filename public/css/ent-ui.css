@@ -796,22 +796,25 @@
   gap: 14px;
   margin-bottom: 16px;
 }
+/* v5.10.44 — !important removed except where needed to override
+   warehouse-ops.css base rule. background-image stays because the
+   default .wo-metric has its own background. */
 .wo-section .wo-metric {
   --kpi-c: #3b82f6;
   --kpi-g-from: #f8fafc;
   --kpi-g-to: #fff;
-  background: linear-gradient(160deg, var(--kpi-g-from) 0%, var(--kpi-g-to) 60%, #fff 100%) !important;
-  border: 1px solid var(--ent-border) !important;
-  border-radius: var(--ent-r-lg) !important;
-  border-inline-start: 4px solid var(--kpi-c) !important;
-  border-top: 1px solid var(--ent-border) !important;
-  padding: 16px 18px !important;
+  background: linear-gradient(160deg, var(--kpi-g-from) 0%, var(--kpi-g-to) 60%, #fff 100%);
+  border: 1px solid var(--ent-border);
+  border-radius: var(--ent-r-lg);
+  border-inline-start: 4px solid var(--kpi-c);
+  padding: 16px 18px;
   box-shadow: var(--ent-shadow-1);
+  transition: transform .15s var(--ent-ease), box-shadow .15s var(--ent-ease), border-color .15s var(--ent-ease);
 }
 .wo-section .wo-metric:hover {
   transform: translateY(-3px);
   box-shadow: 0 12px 28px -10px var(--kpi-c);
-  border-color: var(--ent-border-strong) !important;
+  border-color: var(--ent-border-strong);
 }
 .wo-section .wo-metric.accent-info,
 .wo-section .wo-metric.accent-primary {
@@ -835,10 +838,11 @@
 .wo-section .wo-metric.accent-neutral {
   --kpi-c: #64748b;    --kpi-g-from: #f1f5f9;  --kpi-g-to: #f8fafc;
 }
+/* v5.10.44 — !important removed; we win on specificity now */
 .wo-section .wo-metric-icon {
   width: 44px; height: 44px;
-  background: var(--kpi-g-from) !important;
-  color: var(--kpi-c) !important;
+  background: var(--kpi-g-from);
+  color: var(--kpi-c);
   border-radius: 12px;
   box-shadow: inset 0 0 0 1px var(--kpi-c);
 }
@@ -871,23 +875,38 @@
   margin-bottom: 16px;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
+  align-items: stretch;     /* v5.10.44 — fields are columns; stretch so they share row height */
+  gap: 12px;
   box-shadow: var(--ent-shadow-1);
 }
-/* Restyle the inner fields as compact pill controls (no labels above) */
+/* v5.10.44 — keep the original "label above input" pattern. Every
+   section's labels (من تاريخ / إلى تاريخ / المستودع / الحالة / ...) carry
+   semantic meaning — the user needs them to understand each control.
+   The v5.10.43 attempt to hide them and force a horizontal layout broke
+   user comprehension across 8 sections. Reverted here. */
 .wo-section .wo-toolbar .wo-field {
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   min-width: 0;
-  flex: 0 1 auto;
+  flex: 1 1 160px;
 }
-/* Hide the .wo-field-label inside toolbar (it was just decorative) so the
-   controls line up horizontally like the .wh-filter-bar pattern. The label
-   becomes the input's title attribute via the existing markup. */
 .wo-section .wo-toolbar .wo-field-label {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--ent-text-muted);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin: 0 0 2px;
+  line-height: 1.2;
+}
+.wo-section .wo-toolbar .wo-field-label i {
+  font-size: 10px;
+  color: var(--ent-primary);
 }
 .wo-section .wo-toolbar .wo-input,
 .wo-section .wo-toolbar .wo-select {
@@ -895,32 +914,58 @@
   padding: 8px 12px;
   font-size: 13px;
   border-radius: 10px;
-  border-width: 1.5px;
-  min-width: 140px;
+  border: 1.5px solid var(--ent-border);
+  background: var(--ent-surface);
+  color: var(--ent-text);
+  width: 100%;
+  transition: border-color .15s var(--ent-ease), box-shadow .15s var(--ent-ease);
 }
-/* Make the FIRST text input act as a search field (prominent + icon-like) */
-.wo-section .wo-toolbar .wo-field:first-child .wo-input[type="text"],
-.wo-section .wo-toolbar .wo-field:first-child .wo-input[type="search"] {
-  min-width: 220px;
-  max-width: 360px;
-  flex: 1 1 220px;
+/* v5.10.44 — search-icon is OPT-IN: only attach to inputs whose id ends
+   with "Search"/"search"/"SearchQ" (matches expSearch, weSearch, etc.) or
+   that carry a search-related class. Was previously first-child which
+   wrongly applied to status/date fields. */
+.wo-section .wo-toolbar input[id$="Search"],
+.wo-section .wo-toolbar input[id$="SearchQ"],
+.wo-section .wo-toolbar input[id$="search"],
+.wo-section .wo-toolbar input[id$="searchQ"],
+.wo-section .wo-toolbar input[type="search"],
+.wo-section .wo-toolbar input.wo-search,
+.wo-section .wo-toolbar input.ent-search {
   padding-inline-start: 34px;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'></circle><path d='m21 21-4.3-4.3'></path></svg>");
   background-repeat: no-repeat;
   background-position: 12px center;
 }
+/* Search fields prefer to grow */
+.wo-section .wo-toolbar .wo-field:has(input[id$="Search"]),
+.wo-section .wo-toolbar .wo-field:has(input[id$="search"]) {
+  flex: 1.5 1 240px;
+  max-width: 360px;
+}
 .wo-section .wo-toolbar .wo-input:focus-visible,
 .wo-section .wo-toolbar .wo-select:focus-visible {
+  outline: none;
   border-color: var(--ent-primary);
   box-shadow: 0 0 0 3px rgba(79,70,229,.15);
 }
-.wo-section .wo-toolbar .wo-btn {
+.wo-section .wo-toolbar .wo-input:hover:not(:focus),
+.wo-section .wo-toolbar .wo-select:hover:not(:focus) {
+  border-color: var(--ent-border-strong);
+}
+/* v5.10.44 — buttons in the toolbar sit at the bottom of the row so
+   they align with the bottom edge of the .wo-field (which has a label
+   above + input below — taller than a bare button). */
+.wo-section .wo-toolbar > .wo-btn,
+.wo-section .wo-toolbar > button.btn,
+.wo-section .wo-toolbar > button {
+  align-self: end;
   height: 40px;
   border-radius: 10px;
+  margin-bottom: 0;
 }
 .wo-section .wo-toolbar .wo-btn-secondary {
   background: var(--ent-surface);
-  border: 1px solid var(--ent-border);
+  border: 1.5px solid var(--ent-border);
   color: var(--ent-text);
 }
 .wo-section .wo-toolbar .wo-btn-secondary:hover {
@@ -1001,7 +1046,11 @@
 
 /* ── Aliases for orphan classes used by Multi-Warehouses screen ── */
 /* `.whp-toolbar` and `.whp-stats` had no CSS file backing them — they
- * rendered as unstyled flex containers. Map them to the new visuals. */
+ * rendered as unstyled flex containers. Map them to the new visuals.
+ *
+ * v5.10.44 fix: also style the inputs themselves (the v5.10.43 attempt
+ * only styled the wrapper, leaving the .whp-input controls untouched).
+ */
 .wo-section .whp-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -1036,18 +1085,131 @@
   gap: 10px;
   box-shadow: var(--ent-shadow-1);
 }
+.wo-section .whp-toolbar .whp-input {
+  height: 40px;
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1.5px solid var(--ent-border);
+  border-radius: 10px;
+  background: var(--ent-surface);
+  color: var(--ent-text);
+  min-width: 140px;
+  font-family: inherit;
+  transition: border-color .15s var(--ent-ease), box-shadow .15s var(--ent-ease);
+}
+/* The search field grows to fill remaining row */
+.wo-section .whp-toolbar input.whp-input[id*="Search"],
+.wo-section .whp-toolbar input.whp-input[type="search"] {
+  flex: 1 1 240px;
+  max-width: 360px;
+}
+.wo-section .whp-toolbar .whp-input:focus-visible {
+  outline: none;
+  border-color: var(--ent-primary);
+  box-shadow: 0 0 0 3px rgba(79,70,229,.15);
+}
+.wo-section .whp-toolbar .whp-input:hover:not(:focus) {
+  border-color: var(--ent-border-strong);
+}
+.wo-section .whp-toolbar .whp-count {
+  margin-inline-start: auto;
+  color: var(--ent-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  background: var(--ent-surface-3);
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--ent-border);
+}
+
+/* ── .erp-rpt-filter (Inventory Valuation report screen) ──────────
+ * Had no CSS backing — rendered as bare flex. Same treatment as the
+ * other toolbars so the screen blends in with the rest of the module.
+ */
+.wo-section .erp-rpt-filter {
+  background: var(--ent-surface);
+  border: 1px solid var(--ent-border);
+  border-radius: var(--ent-r-lg);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 12px;
+  box-shadow: var(--ent-shadow-1);
+}
+.wo-section .erp-rpt-filter > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 160px;
+}
+.wo-section .erp-rpt-filter > div:last-child {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+.wo-section .erp-rpt-filter label {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--ent-text-muted);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin: 0 0 2px;
+  line-height: 1.2;
+}
+.wo-section .erp-rpt-filter .form-control,
+.wo-section .erp-rpt-filter .form-control-sm,
+.wo-section .erp-rpt-filter select,
+.wo-section .erp-rpt-filter input {
+  height: 40px;
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1.5px solid var(--ent-border);
+  border-radius: 10px;
+  background: var(--ent-surface);
+  color: var(--ent-text);
+  font-family: inherit;
+  width: 100%;
+}
+.wo-section .erp-rpt-filter select:focus-visible,
+.wo-section .erp-rpt-filter input:focus-visible,
+.wo-section .erp-rpt-filter .form-control:focus-visible,
+.wo-section .erp-rpt-filter .form-control-sm:focus-visible {
+  outline: none;
+  border-color: var(--ent-primary);
+  box-shadow: 0 0 0 3px rgba(79,70,229,.15);
+}
+.wo-section .erp-rpt-filter .btn {
+  height: 40px;
+  border-radius: 10px;
+  padding: 0 18px;
+  align-self: end;
+}
 
 /* ── Responsive: collapse toolbar gracefully on mobile ── */
 @media (max-width: 640px) {
   .wo-section { padding: 14px; }
-  .wo-section .wo-toolbar { padding: 12px; gap: 8px; }
-  .wo-section .wo-toolbar .wo-field { flex: 1 1 100%; }
+  .wo-section .wo-toolbar,
+  .wo-section .whp-toolbar,
+  .wo-section .erp-rpt-filter { padding: 12px; gap: 10px; }
+  .wo-section .wo-toolbar .wo-field,
+  .wo-section .erp-rpt-filter > div { flex: 1 1 100%; }
   .wo-section .wo-toolbar .wo-input,
-  .wo-section .wo-toolbar .wo-select { min-width: 0; width: 100%; }
-  .wo-section .wo-toolbar .wo-field:first-child .wo-input[type="text"] { max-width: 100%; }
+  .wo-section .wo-toolbar .wo-select,
+  .wo-section .whp-toolbar .whp-input,
+  .wo-section .erp-rpt-filter input,
+  .wo-section .erp-rpt-filter select { min-width: 0; width: 100%; }
+  /* Search fields on mobile take full width (max-width override) */
+  .wo-section .wo-toolbar .wo-field:has(input[id$="Search"]),
+  .wo-section .wo-toolbar .wo-field:has(input[id$="search"]) { max-width: 100%; }
+  .wo-section .whp-toolbar input.whp-input[id*="Search"] { max-width: 100%; }
   .wo-section .wo-metric-strip { grid-template-columns: 1fr 1fr; gap: 10px; }
-  .wo-section .wo-metric { padding: 12px 14px !important; }
+  .wo-section .wo-metric { padding: 12px 14px; }
   .wo-section .wo-metric-value { font-size: 18px; }
   .wo-section .wo-header { padding: 16px 16px 14px; border-radius: var(--ent-r-md); }
   .wo-section .wo-header h1 { font-size: 18px; }
+  /* Buttons collapse to full-width too so they don't squeeze */
+  .wo-section .wo-toolbar > .wo-btn,
+  .wo-section .wo-toolbar > button { width: 100%; align-self: stretch; }
 }

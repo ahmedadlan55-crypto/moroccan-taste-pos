@@ -35,11 +35,32 @@ function _mapMenu(m) {
   };
 }
 
+// v5.14.5 — "Incomplete product" rule.
+// Items that MUST be assembled at the branch/kitchen but have no
+// recipe linked (neither a modern BOM nor a legacy recipe row) are
+// not sellable. They are silently hidden from the cashier-facing
+// /api/menu and /init responses, but remain visible in the admin
+// editor (/menu/all) with a red "مَخفي من الكاشير" badge so the
+// owner can either link a recipe or move the item to inventory.
+//
+// Imported/prepared items stay in the menu even without a recipe —
+// they are ready-made goods (Pepsi, chips, etc.) where stock IS the
+// truth.
+const HIDE_INCOMPLETE_FRAGMENT = `
+  AND NOT (
+    COALESCE(m.production_method, 'made_at_branch') IN ('made_at_branch', 'made_at_kitchen')
+    AND (m.is_semi_finished IS NULL OR m.is_semi_finished = 0)
+    AND (m.bom_id IS NULL OR m.bom_id = '')
+    AND m.id NOT IN (SELECT DISTINCT menu_id FROM recipe WHERE menu_id IS NOT NULL)
+  )
+`;
+
 // Get all menu items (active only). Optional ?brandId= and ?type= filter (finished|semi).
 router.get('/', async (req, res) => {
   try {
     const { brandId, type } = req.query;
     let sql = 'SELECT m.*, b.name AS brand_name FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE m.active = 1';
+    sql += HIDE_INCOMPLETE_FRAGMENT;
     const params = [];
     if (brandId) { sql += ' AND m.brand_id = ?'; params.push(brandId); }
     if (type === 'semi')     sql += ' AND m.is_semi_finished = 1';
@@ -49,6 +70,7 @@ router.get('/', async (req, res) => {
     res.json(rows.map(_mapMenu));
   } catch (e) { res.json([]); }
 });
+router.HIDE_INCOMPLETE_FRAGMENT = HIDE_INCOMPLETE_FRAGMENT;
 
 // Get all menu items (including inactive)
 router.get('/all', async (req, res) => {

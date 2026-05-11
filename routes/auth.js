@@ -163,10 +163,23 @@ router.get('/init/:username', async (req, res) => {
     const userBranchId = userRow.length ? userRow[0].branch_id : '';
     const userWarehouseId = userRow.length ? userRow[0].default_warehouse_id : '';
 
-    // Menu filtered by brand (if user has a brand assigned)
+    // v5.14.5 — Hide "incomplete" products from the cashier bootstrap.
+    // An item that needs to be assembled at the branch/kitchen but has
+    // no recipe (neither modern BOM nor legacy recipe rows) is not
+    // sellable — it is effectively a raw warehouse material and should
+    // not appear in the cashier menu. The admin /menu/all endpoint
+    // still returns these rows so the owner can link a recipe.
+    const incompleteHide = `
+      AND NOT (
+        COALESCE(m.production_method, 'made_at_branch') IN ('made_at_branch', 'made_at_kitchen')
+        AND (m.is_semi_finished IS NULL OR m.is_semi_finished = 0)
+        AND (m.bom_id IS NULL OR m.bom_id = '')
+        AND m.id NOT IN (SELECT DISTINCT menu_id FROM recipe WHERE menu_id IS NOT NULL)
+      )
+    `;
     const menuQuery = userBrandId
-      ? 'SELECT * FROM menu WHERE active = 1 AND (brand_id = ? OR brand_id IS NULL OR brand_id = "") ORDER BY category, name'
-      : 'SELECT * FROM menu WHERE active = 1 ORDER BY category, name';
+      ? `SELECT m.* FROM menu m WHERE m.active = 1 AND (m.brand_id = ? OR m.brand_id IS NULL OR m.brand_id = "") ${incompleteHide} ORDER BY m.category, m.name`
+      : `SELECT m.* FROM menu m WHERE m.active = 1 ${incompleteHide} ORDER BY m.category, m.name`;
     const menuParams = userBrandId ? [userBrandId] : [];
     const [menu] = await db.query(menuQuery, menuParams);
     const [payMethods] = await db.query('SELECT * FROM payment_methods ORDER BY sort_order');

@@ -24642,10 +24642,21 @@ function _bmRender() {
       ? '<span style="font-size:11px;color:#475569;"><i class="fas fa-link" style="color:#f59e0b;"></i> ' + _v3EscapeHtml(nameById[m.consumesSemiId]||m.consumesSemiId) + ' × ' + Number(m.consumesSemiQty||0) + '</span>'
       : '<span style="color:#94a3b8;">—</span>';
     // V5.6: recipe chip — visible if menu item has BOM linked
+    // v5.14.5: items that MUST be assembled (made_at_branch / made_at_kitchen)
+    // but lack a recipe are silently hidden from the cashier — flag them
+    // here in red so the owner knows to either link a recipe or move
+    // the item to inventory.
     var hasRecipe = !!m.bomId;
-    var recipeChip = hasRecipe
-      ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;cursor:pointer;" onclick="erpOpenMenuRecipe(\''+m.id+'\',\''+_v3EscapeHtml(m.name).replace(/\'/g,"\\'")+'\')" title="عرض الوصفة"><i class="fas fa-mortar-pestle"></i> له وصفة</span>'
-      : '<span class="wo-chip" style="background:#fef3c7;color:#92400e;font-weight:700;"><i class="fas fa-circle-question"></i> بدون وصفة</span>';
+    var mustAssemble = !m.isSemiFinished &&
+      (!m.productionMethod || m.productionMethod === 'made_at_branch' || m.productionMethod === 'made_at_kitchen');
+    var recipeChip;
+    if (hasRecipe) {
+      recipeChip = '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;cursor:pointer;" onclick="erpOpenMenuRecipe(\''+m.id+'\',\''+_v3EscapeHtml(m.name).replace(/\'/g,"\\'")+'\')" title="عرض الوصفة"><i class="fas fa-mortar-pestle"></i> له وصفة</span>';
+    } else if (mustAssemble) {
+      recipeChip = '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:800;cursor:pointer;" onclick="erpOpenMenuRecipe(\''+m.id+'\',\''+_v3EscapeHtml(m.name).replace(/\'/g,"\\'")+'\')" title="مَخفي من الكاشير حتى تُعَيِّن وصفة — اضغط لإضافة الوصفة"><i class="fas fa-eye-slash"></i> مَخفي من الكاشير — بدون وصفة</span>';
+    } else {
+      recipeChip = '<span class="wo-chip" style="background:#fef3c7;color:#92400e;font-weight:700;"><i class="fas fa-circle-question"></i> بدون وصفة</span>';
+    }
 
     // V5.7.23 — "المخزون" column REMOVED from menu admin: menu items are
     //   MTO products and do NOT carry stock. (They're made fresh from

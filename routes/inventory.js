@@ -3054,8 +3054,37 @@ router.post('/stocktakes', async (req, res) => {
     // v5.10.6 — accept user-supplied countDate so opening-balance
     // counts can be backdated to the actual physical-count date.
     // Falls back to "now" for live counts.
-    const { items, username, notes, warehouseId, branchId, brandId, countDate } = req.body;
+    const { items, username, notes, brandId, countDate } = req.body;
+    let { warehouseId, branchId } = req.body;
     if (!items || !items.length) return res.json({ success: false, error: 'No items' });
+
+    // v5.10.35 — Resolve warehouse_id + branch_id from the user's profile
+    // when the client didn't supply them (cashier POS sessions whose
+    // state.warehouseId is empty would otherwise insert NULL — invisible
+    // from any per-warehouse admin filter). This is the root cause of the
+    // owner's complaint: "branch cashier did stocktakes but they don't
+    // show in Octane".
+    if ((!warehouseId || !branchId) && req.user) {
+      try {
+        const [u] = await db.query(
+          'SELECT u.branch_id, u.default_warehouse_id, b.warehouse_id AS branch_warehouse_id ' +
+          'FROM users u LEFT JOIN branches b ON b.id = u.branch_id ' +
+          'WHERE u.username = ? LIMIT 1',
+          [req.user.username || username]);
+        if (u.length) {
+          branchId    = branchId    || u[0].branch_id || null;
+          warehouseId = warehouseId || u[0].default_warehouse_id || u[0].branch_warehouse_id || null;
+        }
+      } catch(_) { /* legacy schema — keep whatever client sent */ }
+    }
+    // Final guard: if STILL no warehouse, refuse the submission rather
+    // than silently insert a NULL row that no admin filter will surface.
+    if (!warehouseId) {
+      return res.json({
+        success: false,
+        error: 'تعذّر تحديد المستودع: المستخدم ليس له default_warehouse_id ولا branch_id مرتبط بمستودع، والكاشير لم يُرسل warehouseId. حدّد المستودع من إعدادات المستخدم أو من واجهة الكاشير قبل الجرد.'
+      });
+    }
 
     const now = countDate ? new Date(countDate) : new Date();
     const stId = 'ST-' + Date.now();
@@ -3067,7 +3096,7 @@ router.post('/stocktakes', async (req, res) => {
     // Insert header with warehouse + branch reference
     await db.query(
       'INSERT INTO stocktakes (id, stocktake_date, username, notes, status, items_count, total_variance, warehouse_id, branch_id) VALUES (?,?,?,?,?,?,?,?,?)',
-      [stId, now, username || '', notes || '', 'completed', 0, 0, warehouseId || null, branchId || null]
+      [stId, now, username || '', notes || '', 'completed', 0, 0, warehouseId, branchId || null]
     );
 
     // V5.8.5 — counted-but-matched items are RECORDED in stocktake_items

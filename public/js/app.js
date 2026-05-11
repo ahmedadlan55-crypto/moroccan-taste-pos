@@ -10127,13 +10127,18 @@ function loadDashStocktake() {
   var fromDate = (q('#stocktakeFromDate') && q('#stocktakeFromDate').value) || '';
   var toDate   = (q('#stocktakeToDate')   && q('#stocktakeToDate').value)   || '';
   var branchId = (q('#stocktakeBranchFilter') && q('#stocktakeBranchFilter').value) || '';
+  // v5.10.35 — diagnostic toggle: ignore the hub's warehouse scope.
+  var showAll = !!(q('#stocktakeShowAll') && q('#stocktakeShowAll').checked);
   var search   = ((q('#stocktakeSearch') && q('#stocktakeSearch').value) || '').trim().toLowerCase();
 
   // v5.10.32 — populate the branch filter dropdown once
   _whPopulateBranchFilter('stocktakeBranchFilter');
 
   var qs = [];
-  if (hubWh)    qs.push('warehouseId=' + encodeURIComponent(hubWh));
+  // When "show all" is on, drop the warehouseId filter entirely so the
+  // admin can see records saved against any warehouse (including NULL
+  // — those will appear with "—" in the warehouse column).
+  if (hubWh && !showAll) qs.push('warehouseId=' + encodeURIComponent(hubWh));
   if (branchId) qs.push('branchId='    + encodeURIComponent(branchId));
   if (fromDate) qs.push('startDate='   + encodeURIComponent(fromDate));
   if (toDate)   qs.push('endDate='     + encodeURIComponent(toDate));
@@ -10234,9 +10239,10 @@ function _whPopulateBranchFilter(selectId) {
 function whClearFilters(tabKey) {
   var ids;
   if (tabKey === 'stocktake') {
-    // v5.10.32 — include the new branch filter in the reset set
+    // v5.10.32/35 — branch + show-all toggle included in the reset set
     ids = ['stocktakeSearch', 'stocktakeFromDate', 'stocktakeToDate', 'stocktakeBranchFilter'];
     ids.forEach(function(id){ var el = q('#'+id); if (el) el.value = ''; });
+    var showAll = q('#stocktakeShowAll'); if (showAll) showAll.checked = false;
     if (typeof loadDashStocktake === 'function') loadDashStocktake();
   } else if (tabKey === 'adj') {
     ids = ['adjSearch', 'adjFromDate', 'adjToDate', 'adjReasonFilter', 'adjStatusFilter', 'adjBranchFilter'];

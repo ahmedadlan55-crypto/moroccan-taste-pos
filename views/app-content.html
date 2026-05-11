@@ -1073,6 +1073,15 @@
                 <select id="stocktakeBranchFilter" class="form-control wh-fb-select" onchange="loadDashStocktake()">
                   <option value="">🏬 كل الفروع</option>
                 </select>
+                <!-- v5.10.35 — Diagnostic toggle: ignore the hub's
+                     warehouse scope and show every stocktake in the
+                     system. Lets the admin spot records that were saved
+                     with a different (or NULL) warehouse_id, e.g. from a
+                     cashier session whose state.warehouseId was empty. -->
+                <label style="display:inline-flex;align-items:center;gap:6px;background:#fef3c7;border:1.5px solid #fde68a;border-radius:8px;padding:6px 10px;cursor:pointer;user-select:none;font-size:12px;font-weight:700;color:#92400e;" title="تجاهل فلتر المستودع الحالي واعرض كل المحاضر في النظام">
+                  <input type="checkbox" id="stocktakeShowAll" onchange="loadDashStocktake()" style="margin:0;">
+                  <i class="fas fa-globe"></i> كل المستودعات
+                </label>
                 <button class="btn btn-light wh-fb-clear" onclick="whClearFilters('stocktake')" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
                 <button class="btn btn-primary" onclick="startStocktake()"><i class="fas fa-play"></i> بدء عملية جرد جديدة</button>
               </div>

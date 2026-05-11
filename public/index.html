@@ -51,6 +51,9 @@
   <link rel="stylesheet" href="/css/inventory-catalog.css?v=15">
   <link rel="stylesheet" href="/css/journals.css?v=3">
   <link rel="stylesheet" href="/css/txn-letter.css?v=1">
+  <!-- v5.10.28 — Virtual keyboard CSS (shared with /pos/). Needed so the
+       on-screen keyboard renders correctly in the admin shell too. -->
+  <link rel="stylesheet" href="/pos/keyboard.css?v=1">
 
   <!-- ═══════════════════════════════════════════════════════════════════
        V5.7.36 — INLINE FULLSCREEN OVERRIDE for the recipe editor.
@@ -197,6 +200,11 @@
   <script src="/js/wo-modal.js?v=1"></script>
   <!-- V5.7.26 — reusable major+minor quantity input widget -->
   <script src="/js/wo-qty-input.js?v=1"></script>
+  <!-- v5.10.28 — On-screen virtual keyboard. Self-initializes and binds
+       to every `[data-vk="1"]` input/textarea on the page via a
+       MutationObserver, so dynamically rendered sections (inventory
+       catalog, stocktake, etc.) get the keyboard automatically. -->
+  <script src="/pos/keyboard.js?v=1"></script>
   <!-- v5.11.2 — erp-v5.js / erp-v54.js removed (advanced enterprise section deleted) -->
   <script src="/js/app.js?v=62" defer></script>
 </body>

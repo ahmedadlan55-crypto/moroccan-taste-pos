@@ -45,21 +45,27 @@ function _mapMenu(m) {
 // finished items the owner hasn't priced ingredients for yet.
 const HIDE_INCOMPLETE_FRAGMENT = ' AND (m.is_semi_finished IS NULL OR m.is_semi_finished = 0)';
 
-// Get all menu items (active only). Optional ?brandId= and ?type= filter (finished|semi).
-// v5.16.4 — Default no longer hides semi-finished items. Same reason as
-// the /init change in v5.16.3: hiding them caused state.menu to come
-// back empty whenever every item was flagged is_semi_finished, and the
-// cashier ended up with nothing to render. Use ?type=finished to apply
-// the hide if you specifically want it (admin tools that distinguish).
+// Get all menu items (active only). Optional ?brandId= and ?type= filter (finished|semi|all).
+// v5.10.28 — Restore the v5.14.6 default of HIDING semi-finished items.
+// The intermediate v5.16.4 revert was a band-aid for a one-off data
+// hygiene incident (every item accidentally flagged). With correct data,
+// semi-finished items belong to the production flow only and must NOT
+// appear in the cashier menu. The owner spotted them leaking through.
+// Override with ?type=all or ?includeSemi=1 if you genuinely need both.
 router.get('/', async (req, res) => {
   try {
-    const { brandId, type } = req.query;
+    const { brandId, type, includeSemi } = req.query;
     let sql = 'SELECT m.*, b.name AS brand_name FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE m.active = 1';
     const params = [];
     if (brandId) { sql += ' AND m.brand_id = ?'; params.push(brandId); }
-    if (type === 'semi')          sql += ' AND m.is_semi_finished = 1';
-    else if (type === 'finished') sql += HIDE_INCOMPLETE_FRAGMENT;
-    // else: no extra filter — every active item is returned.
+    if (type === 'semi') {
+      sql += ' AND m.is_semi_finished = 1';
+    } else if (type === 'all' || includeSemi === '1') {
+      // Explicit "give me everything" — leave the filter off.
+    } else {
+      // Default + ?type=finished both hide semi-finished items.
+      sql += HIDE_INCOMPLETE_FRAGMENT;
+    }
     sql += ' ORDER BY m.category, m.name';
     const [rows] = await db.query(sql, params);
     res.json(rows.map(_mapMenu));
@@ -68,14 +74,21 @@ router.get('/', async (req, res) => {
 router.HIDE_INCOMPLETE_FRAGMENT = HIDE_INCOMPLETE_FRAGMENT;
 
 // Get all menu items (including inactive)
+// v5.10.28 — Same hide-by-default policy as GET /. Admin menu/management
+// pages that genuinely need both finished + semi-finished pass ?type=all.
 router.get('/all', async (req, res) => {
   try {
-    const { brandId, type } = req.query;
+    const { brandId, type, includeSemi } = req.query;
     let sql = 'SELECT m.*, b.name AS brand_name FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE 1=1';
     const params = [];
     if (brandId) { sql += ' AND m.brand_id = ?'; params.push(brandId); }
-    if (type === 'semi')     sql += ' AND m.is_semi_finished = 1';
-    if (type === 'finished') sql += ' AND (m.is_semi_finished IS NULL OR m.is_semi_finished = 0)';
+    if (type === 'semi') {
+      sql += ' AND m.is_semi_finished = 1';
+    } else if (type === 'all' || includeSemi === '1') {
+      // No filter.
+    } else {
+      sql += ' AND (m.is_semi_finished IS NULL OR m.is_semi_finished = 0)';
+    }
     sql += ' ORDER BY m.category, m.name';
     const [rows] = await db.query(sql, params);
     res.json(rows.map(_mapMenu));

@@ -143,7 +143,9 @@ router.get('/:channelId/available-items', async (req, res) => {
     const brandId = req.query.brandId || null;
     // V5-FIX: menu table doesn't have is_active column in all schema variants —
     // skip that filter; instead just exclude items already in the channel.
-    const conds = ['1=1'];
+    // v5.10.28 — Hide semi-finished items from the channel picker so admins
+    // don't accidentally expose them as sellable products on a sales channel.
+    const conds = ['1=1', '(m.is_semi_finished IS NULL OR m.is_semi_finished = 0)'];
     const params = [];
     if (brandId) { conds.push('m.brand_id = ?'); params.push(brandId); }
     let exclude = `AND m.id NOT IN (

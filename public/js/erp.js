@@ -23822,6 +23822,9 @@ function _v3RenderChannels() {
       '<td>'+ Number(c.serviceFeePct||0).toFixed(2) +'%</td>' +
       '<td>'+ (c.isActive ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مفعّلة</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;">معطّلة</span>') +'</td>' +
       '<td>' +
+        // v5.15.0 — "Items" button opens the channel-menu-items modal,
+        // the missing UI that explains why the cashier saw empty grids.
+        '<button class="wo-btn wo-btn-sm wo-btn-primary" onclick="erpOpenChannelItemsModal(\''+ c.id +'\',\''+ _v3EscapeHtml(c.name).replace(/\'/g,"\\'") +'\')" title="إدارة أصناف القناة"><i class="fas fa-utensils"></i> أصناف</button> ' +
         '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpOpenChannelModal(\''+ c.id +'\')" title="تعديل"><i class="fas fa-edit"></i></button> ' +
         '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpToggleChannel(\''+ c.id +'\')" title="تفعيل/تعطيل"><i class="fas fa-power-off"></i></button> ' +
         '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpDeleteChannel(\''+ c.id +'\')" title="حذف"><i class="fas fa-trash"></i></button>' +
@@ -24091,6 +24094,175 @@ function erpDeleteChannel(id) {
     });
   });
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// v5.15.0 — Channel-Menu Items management UI
+// Lets admins assign menu items to a sales channel, override prices /
+// daily limits, toggle availability, copy from MAIN, or pick from
+// the brand-filtered list of items not yet assigned. Wraps the
+// existing /channel-menus REST API; no backend changes needed.
+// ═══════════════════════════════════════════════════════════════════
+window.erpOpenChannelItemsModal = function (channelId, channelName) {
+  window._cmiChannelId = channelId;
+  window._cmiChannelName = channelName || '';
+  _cmiLoadItems(_cmiOpenModal);
+};
+
+function _cmiLoadItems(cb) {
+  callAPI('GET', '/channel-menus/' + encodeURIComponent(window._cmiChannelId), null, function (rows) {
+    window._cmiItems = Array.isArray(rows) ? rows : [];
+    if (typeof cb === 'function') cb();
+  });
+}
+
+function _cmiOpenModal() {
+  var rows = window._cmiItems || [];
+  WoModal.open({
+    icon: 'fa-utensils', iconColor: '#7c3aed',
+    title: 'إدارة أصناف القناة — ' + (window._cmiChannelName || ''),
+    subtitle: 'الأصناف التي يراها الكاشير على هذه القناة. أضف، خصّص السعر، أو احذف.',
+    body:
+      '<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">' +
+        '<button class="wo-btn wo-btn-primary" onclick="erpCmiOpenPicker()"><i class="fas fa-plus"></i> إضافة أصناف</button>' +
+        '<button class="wo-btn wo-btn-secondary" onclick="erpCmiCopyFromMain()" title="انسخ كل أصناف القناة الرئيسية إلى هنا"><i class="fas fa-copy"></i> انسخ من المنيو الرئيسي</button>' +
+        '<span style="margin-inline-start:auto;color:#64748b;font-size:13px;align-self:center;"><i class="fas fa-list"></i> ' + rows.length + ' صنف</span>' +
+      '</div>' +
+      '<div id="cmiTableWrap">' + _cmiRenderTable(rows) + '</div>',
+    size: 'lg',
+    footer: '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إغلاق</button>'
+  });
+}
+
+function _cmiRenderTable(rows) {
+  if (!rows.length) {
+    return '<div class="wo-empty" style="padding:36px 16px;">' +
+      '<i class="fas fa-folder-open" style="font-size:36px;color:#cbd5e1;"></i>' +
+      '<div class="wo-empty-title" style="margin-top:10px;">القناة فارغة</div>' +
+      '<div class="wo-empty-sub">اضغط "إضافة أصناف" أو "انسخ من المنيو الرئيسي" لِبَدء.</div>' +
+    '</div>';
+  }
+  return '<div style="max-height:60vh;overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px;">' +
+    '<table class="wo-table" style="margin:0;width:100%;">' +
+    '<thead><tr>' +
+      '<th>الصنف</th><th>الفئة</th><th>سعر أساسي</th><th>سعر القناة</th><th>سقف يومي</th><th>متاح؟</th><th></th>' +
+    '</tr></thead><tbody>' +
+    rows.map(function (r) {
+      var ovr = (r.overridePrice != null && !isNaN(Number(r.overridePrice))) ? Number(r.overridePrice) : '';
+      var dl  = (r.dailyLimit != null && !isNaN(Number(r.dailyLimit)))    ? Number(r.dailyLimit)    : '';
+      return '<tr>' +
+        '<td><b>' + _v3EscapeHtml(r.itemName || r.menuItemId) + '</b></td>' +
+        '<td>' + _v3EscapeHtml(r.category || '') + '</td>' +
+        '<td class="num">' + Number(r.basePrice || 0).toFixed(2) + '</td>' +
+        '<td><input type="number" step="0.01" min="0" value="' + ovr + '" placeholder="افتراضي" onblur="erpCmiUpdate(\'' + r.menuItemId + '\',\'override_price\',this.value === \'\' ? null : Number(this.value))" style="width:90px;padding:6px;border:1.5px solid #e2e8f0;border-radius:6px;"></td>' +
+        '<td><input type="number" step="1" min="0" value="' + dl + '" placeholder="لا حد" onblur="erpCmiUpdate(\'' + r.menuItemId + '\',\'daily_limit\',this.value === \'\' ? null : Number(this.value))" style="width:80px;padding:6px;border:1.5px solid #e2e8f0;border-radius:6px;"></td>' +
+        '<td><input type="checkbox" ' + (r.isAvailable ? 'checked' : '') + ' onchange="erpCmiUpdate(\'' + r.menuItemId + '\',\'is_available\',this.checked ? 1 : 0)" style="width:18px;height:18px;cursor:pointer;"></td>' +
+        '<td><button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpCmiRemove(\'' + r.menuItemId + '\')" title="حذف من القناة"><i class="fas fa-trash"></i></button></td>' +
+      '</tr>';
+    }).join('') +
+    '</tbody></table></div>';
+}
+
+window.erpCmiOpenPicker = function () {
+  var ch = (window._chCache || []).find(function (c) { return String(c.id) === String(window._cmiChannelId); });
+  var brandQ = '';
+  if (window._bmCurrentBrand && window._bmCurrentBrand.id) {
+    brandQ = '?brandId=' + encodeURIComponent(window._bmCurrentBrand.id);
+  }
+  callAPI('GET', '/channel-menus/' + encodeURIComponent(window._cmiChannelId) + '/available-items' + brandQ, null, function (rows) {
+    rows = Array.isArray(rows) ? rows : [];
+    if (!rows.length) { _v3Toast('لا توجد أصناف متاحة للإضافة', false); return; }
+    var byCat = {};
+    rows.forEach(function (m) {
+      var c = m.category || 'بدون فئة';
+      (byCat[c] = byCat[c] || []).push(m);
+    });
+    var html =
+      '<div style="margin-bottom:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">' +
+        '<button class="wo-btn wo-btn-secondary wo-btn-sm" onclick="document.querySelectorAll(\'#cmiPickerList input\').forEach(function(c){c.checked=true;})"><i class="fas fa-check-double"></i> تحديد الكل</button>' +
+        '<button class="wo-btn wo-btn-secondary wo-btn-sm" onclick="document.querySelectorAll(\'#cmiPickerList input\').forEach(function(c){c.checked=false;})">إلغاء التحديد</button>' +
+        '<span style="margin-inline-start:auto;color:#64748b;font-size:12px;">' + rows.length + ' صنف متاح</span>' +
+      '</div>' +
+      '<div id="cmiPickerList" style="max-height:55vh;overflow-y:auto;border:1.5px solid #e2e8f0;border-radius:8px;padding:6px;background:#f8fafc;">' +
+        Object.keys(byCat).sort().map(function (cat) {
+          return '<div style="font-weight:800;color:#0f172a;padding:8px 6px 4px;font-size:13px;border-bottom:1px solid #e2e8f0;margin-bottom:4px;">' + _v3EscapeHtml(cat) + ' <span style="color:#94a3b8;font-weight:600;">(' + byCat[cat].length + ')</span></div>' +
+            byCat[cat].map(function (m) {
+              return '<label style="display:flex;align-items:center;gap:10px;padding:8px 6px;border-bottom:1px dashed #e2e8f0;cursor:pointer;background:#fff;border-radius:4px;margin-bottom:2px;">' +
+                '<input type="checkbox" value="' + m.id + '" style="width:18px;height:18px;cursor:pointer;">' +
+                '<span style="flex:1;"><b>' + _v3EscapeHtml(m.name) + '</b></span>' +
+                '<span style="color:#64748b;font-size:12px;font-weight:700;">' + Number(m.price || 0).toFixed(2) + ' SAR</span>' +
+              '</label>';
+            }).join('') +
+          '</div>';
+        }).join('') +
+      '</div>';
+    WoModal.open({
+      icon: 'fa-plus-circle', iconColor: '#16a34a',
+      title: 'اختر أصنافًا لإضافتها — ' + (window._cmiChannelName || ''),
+      subtitle: 'اختر الأصناف ثم اضغط "إضافة المحدد".',
+      body: html,
+      size: 'lg',
+      footer:
+        '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+        '<button class="wo-btn wo-btn-primary" onclick="erpCmiCommitAdd()"><i class="fas fa-check"></i> إضافة المحدد</button>'
+    });
+  });
+};
+
+window.erpCmiCommitAdd = function () {
+  var ids = Array.prototype.slice.call(document.querySelectorAll('#cmiPickerList input:checked'))
+    .map(function (c) { return c.value; });
+  if (!ids.length) { _v3Toast('لم تختر أصنافًا', true); return; }
+  callAPI('POST', '/channel-menus/' + encodeURIComponent(window._cmiChannelId) + '/items', { itemIds: ids }, function (r) {
+    if (r && r.error) { _v3Toast(r.error, true); return; }
+    _v3Toast('تم إضافة ' + ids.length + ' صنفًا');
+    WoModal.close();
+    erpOpenChannelItemsModal(window._cmiChannelId, window._cmiChannelName);
+  });
+};
+
+window.erpCmiCopyFromMain = function () {
+  var mainCh = (window._chCache || []).find(function (c) { return String(c.code || '').toUpperCase() === 'MAIN'; });
+  if (!mainCh) { _v3Toast('لم يتم العثور على القناة الرئيسية (MAIN)', true); return; }
+  if (String(mainCh.id) === String(window._cmiChannelId)) {
+    _v3Toast('هذه هي القناة الرئيسية نفسها', true); return;
+  }
+  WoModal.confirm({
+    title: 'نسخ من المنيو الرئيسي',
+    message: 'هل تريد نسخ كل أصناف "' + mainCh.name + '" إلى هذه القناة؟ سيتم تخطي الأصناف الموجودة مسبقًا.',
+    confirmText: 'نسخ',
+    danger: false
+  }).then(function (ok) {
+    if (!ok) return;
+    callAPI('POST', '/channel-menus/' + encodeURIComponent(window._cmiChannelId) + '/copy-from/' + encodeURIComponent(mainCh.id), {}, function (r) {
+      if (r && r.error) { _v3Toast(r.error, true); return; }
+      _v3Toast('تم النسخ بنجاح');
+      erpOpenChannelItemsModal(window._cmiChannelId, window._cmiChannelName);
+    });
+  });
+};
+
+window.erpCmiUpdate = function (itemId, field, value) {
+  var body = {}; body[field] = value;
+  callAPI('PUT', '/channel-menus/' + encodeURIComponent(window._cmiChannelId) + '/items/' + encodeURIComponent(itemId), body, function (r) {
+    if (r && r.error) _v3Toast(r.error, true);
+  });
+};
+
+window.erpCmiRemove = function (itemId) {
+  WoModal.confirm({
+    title: 'حذف من القناة',
+    message: 'احذف هذا الصنف من القناة؟ لن يراه الكاشير على هذه القناة.',
+    confirmText: 'حذف',
+    danger: true
+  }).then(function (ok) {
+    if (!ok) return;
+    callAPI('DELETE', '/channel-menus/' + encodeURIComponent(window._cmiChannelId) + '/items/' + encodeURIComponent(itemId), null, function (r) {
+      if (r && r.error) { _v3Toast(r.error, true); return; }
+      _v3Toast('تم الحذف');
+      erpOpenChannelItemsModal(window._cmiChannelId, window._cmiChannelName);
+    });
+  });
+};
 
 /* ═══════════════════════════════════════════════════════════════════
  * DISCOUNTS V3

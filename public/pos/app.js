@@ -235,17 +235,27 @@ window.renderMenuGrid = function() {
 
   var h = '';
   if (!list.length) {
-    // v5.12.6 — distinguish between (a) the channel filter eliminated
-    // everything and (b) the user's brand has no menu items loaded.
-    var emptyMsg;
+    // v5.15.0 — Actionable empty state. When a non-MAIN channel has
+    // zero items configured, tell the admin exactly where to fix it
+    // (the new "Items" button on the Sales Channels page) instead of
+    // leaving them staring at an empty grid wondering what's wrong.
+    var emptyHtml;
     if (channelEmpty) {
-      emptyMsg = 'لا توجد أصناف مَفعَّلة لهذه القناة';
+      emptyHtml =
+        '<i class="fas fa-store-slash" style="font-size:54px;margin-bottom:14px;display:block;opacity:0.4;color:#7c3aed;"></i>' +
+        '<div style="font-weight:900;font-size:17px;color:#1e293b;margin-bottom:6px;">هذه القناة فارغة</div>' +
+        '<div style="font-size:13px;color:#64748b;max-width:380px;line-height:1.7;margin:0 auto;">' +
+          'لا توجد أصناف معدّة لهذه القناة بعد.<br>' +
+          'من إدارة الادمن: <b style="color:#1e293b;">قنوات البيع</b> → اختر القناة → اضغط زر <b style="color:#7c3aed;"><i class="fas fa-utensils"></i> أصناف</b>' +
+        '</div>';
     } else if (!(state.menu || []).length) {
-      emptyMsg = 'لم يَتم تَحميل المنيو · تَحقَّق من أنه تَم ربط أصناف بحساب الفرع/البراند';
+      emptyHtml = '<i class="fas fa-box-open" style="font-size:54px;margin-bottom:14px;display:block;opacity:0.35;"></i>' +
+        '<div style="font-weight:700;">لم يَتم تَحميل المنيو · تَحقَّق من أنه تَم ربط أصناف بحساب الفرع/البراند</div>';
     } else {
-      emptyMsg = t('noProducts');
+      emptyHtml = '<i class="fas fa-box-open" style="font-size:54px;margin-bottom:14px;display:block;opacity:0.35;"></i>' +
+        '<div style="font-weight:700;">' + t('noProducts') + '</div>';
     }
-    h = '<div style="grid-column:1/-1;text-align:center;padding:50px 20px;color:#94a3b8;"><i class="fas fa-box-open" style="font-size:54px;margin-bottom:14px;display:block;opacity:0.35;"></i><div style="font-weight:700;">' + emptyMsg + '</div></div>';
+    h = '<div style="grid-column:1/-1;text-align:center;padding:50px 20px;color:#94a3b8;">' + emptyHtml + '</div>';
   } else {
     list.forEach(function(i) {
       var inCart = state.cart.find(function(c) { return c.id === i.id; });

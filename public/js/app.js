@@ -5459,47 +5459,162 @@ function deleteAdjustment(adjId) {
   }).deleteAdjustment(adjId);
 }
 
+// v5.10.41 — Adjustments detail view rebuilt on the Enterprise UI Kit.
+// Same Header / Summary / Timeline / Table / ActionBar structure as the
+// Stocktake detail view, for a coherent operator experience across all
+// warehouse documents (matches SAP / Oracle / Dynamics 365 convention).
 function viewAdjustmentDetail(adjId) {
   loader();
   api.withSuccessHandler(function(a) {
     loader(false);
     if (!a || a.error) return showToast(a && a.error || 'خطأ', true);
-    var dateStr = a.date ? new Date(a.date).toLocaleString('ar-SA') : '';
-    var h = '<div style="margin-bottom:14px;">' +
-      '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">' +
-        '<div><strong>رقم المحضر:</strong> <code>' + a.id + '</code></div>' +
-        '<div><strong>التاريخ:</strong> ' + dateStr + '</div>' +
-        '<div><strong>السبب:</strong> <span class="badge ' + (a.reason === 'damaged' ? 'red' : 'blue') + '">' + (a.reasonLabel || a.reason) + '</span></div>' +
-        '<div><strong>المنشئ:</strong> ' + a.username + '</div>' +
-        '<div><strong>الحالة:</strong> ' + (a.status === 'approved' ? '<span class="badge green">معتمد (' + (a.approvedBy || '') + ')</span>' : '<span class="badge yellow">بانتظار</span>') + '</div>' +
-      '</div>' +
-      (a.reasonNotes ? '<div style="background:#fefce8;padding:8px 12px;border-radius:8px;font-size:13px;border:1px solid #fef08a;">' + a.reasonNotes + '</div>' : '') +
-    '</div>' +
-    '<table class="table" style="font-size:13px;"><thead><tr>' +
-      '<th>المادة</th><th>الوحدة</th><th>الكمية</th><th>تكلفة الوحدة</th><th>إجمالي التكلفة</th><th>المخزون قبل</th><th>المخزون بعد</th>' +
-    '</tr></thead><tbody>';
-    (a.items || []).forEach(function(i) {
-      h += '<tr>' +
-        '<td style="font-weight:700;">' + i.invItemName + '</td>' +
-        '<td>' + i.unit + '</td>' +
-        '<td style="text-align:center;font-weight:800;color:#ef4444;">' + i.qty.toFixed(2) + '</td>' +
-        '<td style="text-align:center;">' + formatVal(i.unitCost) + '</td>' +
-        '<td style="text-align:center;font-weight:800;color:#ef4444;">' + formatVal(i.totalCost) + '</td>' +
-        '<td style="text-align:center;">' + i.stockBefore.toFixed(2) + '</td>' +
-        '<td style="text-align:center;font-weight:800;">' + i.stockAfter.toFixed(2) + '</td>' +
-      '</tr>';
-    });
-    h += '</tbody></table>';
-    h += '<div style="text-align:left;font-weight:900;font-size:16px;color:#ef4444;margin-top:8px;">إجمالي التكلفة: ' + formatVal(a.totalCost) + ' SAR</div>';
-    if (!q('#modalAdjDetail')) {
-      var m = document.createElement('div'); m.id = 'modalAdjDetail'; m.className = 'modal';
-      m.innerHTML = '<div class="modal-content modal-large"><div class="modal-title">محضر تعديل الكمية<button class="modal-close" onclick="closeModal(\'#modalAdjDetail\')">&times;</button></div><div id="adjDetailBody"></div><div style="display:flex;gap:10px;margin-top:15px;"><button class="btn btn-primary" onclick="printAdjustment(state._viewingAdjId)"><i class="fas fa-print"></i> طباعة</button><button class="btn btn-light" onclick="closeModal(\'#modalAdjDetail\')">إغلاق</button></div></div>';
-      document.body.appendChild(m);
-    }
     state._viewingAdjId = adjId;
-    q('#adjDetailBody').innerHTML = h;
-    openModal('#modalAdjDetail');
+
+    if (typeof window.EntUI === 'undefined') {
+      // Defensive fallback (should never trigger in normal operation).
+      console.warn('[adjustments] EntUI missing — falling back to legacy modal.');
+      return _legacyAdjDetail(a, adjId);
+    }
+
+    var items = a.items || [];
+    var approved = (String(a.status || '').toLowerCase() === 'approved');
+    var reasonKey = a.reason || '';
+    var reasonLbl = a.reasonLabel || (window._adjReasonLabels && _adjReasonLabels[reasonKey]) || reasonKey || '—';
+    // Reason → intent (visual signal).
+    var reasonIntent = (reasonKey === 'damaged' || reasonKey === 'theft') ? 'danger'
+                     : (reasonKey === 'admin') ? 'info'
+                     : (reasonKey === 'settlement') ? 'warning'
+                     : 'neutral';
+
+    // ── HeaderSection ──
+    var headerHtml = EntUI.header({
+      icon: 'fa-minus-circle',
+      eyebrow: 'محضر تعديل كمية · ' + EntUI.fmt.dateShort(a.date),
+      code: a.id,
+      title: '',
+      status: approved ? 'معتمد' : 'بانتظار الاعتماد',
+      statusType: approved ? 'success' : 'warning',
+      theme: 'danger',
+      sub: [
+        { icon: 'fa-user-circle', text: 'المنشئ: ' + (a.username || '—') },
+        { icon: 'fa-warehouse', text: 'المستودع: ' + (a.warehouseName || a.warehouse_name || '—') },
+        { icon: 'fa-store', text: 'الفرع: ' + (a.branchName || a.branch_name || '—') },
+        { icon: 'fa-tag', text: 'السبب: ' + reasonLbl }
+      ],
+      stats: [
+        { label: 'عدد الأصناف', value: items.length },
+        { label: 'إجمالي الكمية المخصومة', value: items.reduce(function(s, i){ return s + Number(i.qty || 0); }, 0).toFixed(2) },
+        { label: 'إجمالي التكلفة', value: EntUI.fmt.money(a.totalCost), unit: 'ر.س', accent: true }
+      ]
+    });
+
+    // ── SummaryCards ──
+    var summaryHtml = EntUI.summary([
+      { label: 'سبب التعديل', value: reasonLbl, icon: 'fa-tag', intent: reasonIntent },
+      { label: 'حالة الاعتماد', value: approved ? 'معتمد ✓' : 'بانتظار', icon: approved ? 'fa-circle-check' : 'fa-hourglass-half', intent: approved ? 'success' : 'warning' },
+      { label: 'الأصناف المتأثرة', value: items.length, unit: 'صنف', icon: 'fa-boxes-stacked', intent: 'info' },
+      { label: 'القيمة الإجمالية', value: EntUI.fmt.money(a.totalCost), unit: 'ر.س', icon: 'fa-sack-dollar', intent: 'danger' }
+    ]);
+
+    // ── WorkflowTimeline ──
+    var timelineHtml = EntUI.section({
+      icon: 'fa-flag-checkered',
+      title: 'سير المعاملة',
+      body: EntUI.timeline([
+        { key: 'draft',    label: 'إنشاء المحضر', icon: 'fa-pen-to-square', status: 'done', when: a.date, who: a.username },
+        { key: 'pending',  label: 'بانتظار الاعتماد', icon: 'fa-hourglass-half', status: approved ? 'done' : 'current', when: a.date },
+        { key: 'approved', label: 'اعتماد', icon: 'fa-circle-check', status: approved ? 'done' : '', when: a.approvedAt, who: a.approvedBy || a.approved_by },
+        { key: 'executed', label: 'تم التنفيذ', icon: 'fa-bolt', status: approved ? 'done' : '', when: a.executedAt || a.approvedAt }
+      ])
+    });
+
+    // ── Reason notes banner ──
+    var notesHtml = '';
+    if (a.reasonNotes) {
+      notesHtml = EntUI.section({
+        body: EntUI.banner({
+          intent: reasonIntent === 'danger' ? 'danger' : 'info',
+          icon: 'fa-circle-info',
+          title: 'تفاصيل السبب',
+          text: '<div style="white-space:pre-wrap;">' + EntUI.esc(a.reasonNotes) + '</div>'
+        })
+      });
+    }
+
+    // ── DetailsTable ──
+    var rows = items.map(function (i) {
+      i._state = 'negative'; // adjustments are always deductions
+      return i;
+    });
+    var tableHtml = EntUI.section({
+      icon: 'fa-list-ul',
+      title: 'الأصناف المعدَّلة',
+      body: EntUI.table({
+        columns: [
+          { key: 'invItemName', label: 'المادة', render: function (r) {
+            return '<b>' + EntUI.esc(r.invItemName || '') + '</b>' +
+              (r.unit ? ' <span class="col-muted">/' + EntUI.esc(r.unit) + '</span>' : '');
+          }},
+          { key: 'qty', label: 'الكمية المخصومة', num: true, render: function (r) {
+            return '<b style="color:#ef4444;">−' + EntUI.fmt.qty(r.qty) + '</b>';
+          }},
+          { key: 'unitCost', label: 'تكلفة الوحدة', num: true, render: function (r) { return EntUI.fmt.money(r.unitCost); }},
+          { key: 'totalCost', label: 'إجمالي التكلفة', num: true, render: function (r) {
+            return '<b style="color:#ef4444;">' + EntUI.fmt.money(r.totalCost) + '</b>';
+          }},
+          { key: 'stockBefore', label: 'المخزون قبل', num: true, render: function (r) { return EntUI.fmt.qty(r.stockBefore); }},
+          { key: 'stockAfter',  label: 'المخزون بعد', num: true, render: function (r) {
+            return '<b>' + EntUI.fmt.qty(r.stockAfter) + '</b>';
+          }}
+        ],
+        rows: rows,
+        emptyIcon: 'fa-minus-circle',
+        emptyTitle: 'لا توجد أصناف',
+        emptyText: 'لم يُسجَّل أي صنف في هذا المحضر.',
+        footer: [
+          { colspan: 3, html: '<b>الإجمالي</b>' },
+          { num: true, html: '<b style="color:#ef4444;">' + EntUI.fmt.money(a.totalCost) + ' ر.س</b>' },
+          { num: true, html: '—' },
+          { num: true, html: '—' }
+        ]
+      })
+    });
+
+    // ── BottomActionBar ──
+    var canApprove = !approved && EntUI.Permission.can('adjustments.approve');
+    var canDelete = EntUI.Permission.can('adjustments.delete');
+    var rightBtns = [];
+    if (canApprove) {
+      rightBtns.push({ label: 'اعتماد المحضر', intent: 'success', icon: 'fa-circle-check', onClick: 'approveAdjustment(state._viewingAdjId);EntUI.overlay({id:\'entAdjOverlay\'}).close()' });
+    }
+    if (canDelete && !approved) {
+      rightBtns.push({ label: 'حذف', intent: 'danger', icon: 'fa-trash', onClick: 'deleteAdjustment && deleteAdjustment(state._viewingAdjId);EntUI.overlay({id:\'entAdjOverlay\'}).close()' });
+    }
+    var actionBarHtml = EntUI.actionBar({
+      leftBtns: [
+        { label: 'إغلاق', intent: 'ghost', onClick: 'EntUI.overlay({id:\'entAdjOverlay\'}).close()' },
+        { label: 'طباعة A4', intent: 'ghost', icon: 'fa-print', onClick: 'printAdjustment(state._viewingAdjId)' }
+      ],
+      rightBtns: rightBtns
+    });
+
+    // ── Mount ──
+    var ov = EntUI.overlay({ id: 'entAdjOverlay' });
+    ov.open(headerHtml + summaryHtml + timelineHtml + notesHtml + tableHtml + actionBarHtml);
   }).getAdjustmentDetail(adjId);
+}
+
+// Legacy fallback (defensive; not used in normal operation).
+function _legacyAdjDetail(a, adjId) {
+  var dateStr = a.date ? new Date(a.date).toLocaleString('ar-SA') : '';
+  var h = '<div><strong>رقم:</strong> <code>' + a.id + '</code> · <strong>التاريخ:</strong> ' + dateStr + ' · <strong>السبب:</strong> ' + (a.reasonLabel || a.reason) + '</div>';
+  if (!q('#modalAdjDetail')) {
+    var m = document.createElement('div'); m.id = 'modalAdjDetail'; m.className = 'modal';
+    m.innerHTML = '<div class="modal-content modal-large"><div class="modal-title">محضر تعديل الكمية<button class="modal-close" onclick="closeModal(\'#modalAdjDetail\')">&times;</button></div><div id="adjDetailBody"></div></div>';
+    document.body.appendChild(m);
+  }
+  q('#adjDetailBody').innerHTML = h;
+  openModal('#modalAdjDetail');
 }
 
 function printAdjustment(adjId) {
@@ -10441,58 +10556,200 @@ function _whRenderStockIssuesKpis(rows) {
 }
 
 // View stocktake detail in a modal
+// v5.10.41 — Stocktake detail view rebuilt on the Enterprise UI Kit
+// (window.EntUI from /js/ent-ui.js + /css/ent-ui.css).
+//
+// Replaces the legacy plain-modal layout with the standard ent-shell:
+//   HeaderSection · SummaryCards · WorkflowTimeline · DetailsTable · BottomActionBar
+//
+// Same data shape (st.id, st.date, st.username, st.items[], st.totalVariance,
+// st.totalVarianceCost), zero backend changes. Falls back to the legacy modal
+// path if EntUI failed to load for any reason — defence-in-depth.
 function viewStocktakeDetail(stId) {
   loader();
   api.withSuccessHandler(function(st) {
     loader(false);
     if (!st || st.error) return showToast(st && st.error || 'خطأ', true);
-    var dateStr = st.date ? new Date(st.date).toLocaleString('ar-SA') : '';
-    var h = '<div style="margin-bottom:14px;">'+
-      '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">'+
-        '<div><strong>رقم المحضر:</strong> <code>'+st.id+'</code></div>'+
-        '<div><strong>التاريخ:</strong> '+dateStr+'</div>'+
-        '<div><strong>القائم بالجرد:</strong> '+st.username+'</div>'+
-        '<div><strong>عدد الأصناف:</strong> '+st.itemsCount+'</div>'+
-      '</div>'+
-      (st.notes ? '<div style="background:#fefce8;padding:8px 12px;border-radius:8px;font-size:13px;border:1px solid #fef08a;">'+st.notes+'</div>' : '')+
-    '</div>'+
-    '<table class="table" style="font-size:13px;"><thead><tr>'+
-      '<th>المادة</th><th>الوحدة</th><th>رصيد النظام</th><th>الفعلي</th><th>التباين (كمية)</th><th>تكلفة الوحدة</th><th>تكلفة التباين</th>'+
-    '</tr></thead><tbody>';
-    (st.items || []).forEach(function(i) {
-      var vc = i.variance === 0 ? '#64748b' : (i.variance > 0 ? '#16a34a' : '#ef4444');
-      var vs = i.variance > 0 ? '+' + i.variance.toFixed(2) : i.variance.toFixed(2);
-      var vcost = Number(i.varianceCost) || 0;
-      var vcostColor = vcost === 0 ? '#64748b' : (vcost > 0 ? '#16a34a' : '#ef4444');
-      h += '<tr>'+
-        '<td style="font-weight:700;">'+i.invItemName+'</td>'+
-        '<td>'+i.unit+'</td>'+
-        '<td style="text-align:center;">'+i.systemQty.toFixed(2)+'</td>'+
-        '<td style="text-align:center;font-weight:800;">'+i.actualQty.toFixed(2)+'</td>'+
-        '<td style="text-align:center;font-weight:900;color:'+vc+';">'+vs+'</td>'+
-        '<td style="text-align:center;">'+formatVal(i.unitCost || 0)+'</td>'+
-        '<td style="text-align:center;font-weight:900;color:'+vcostColor+';">'+formatVal(vcost)+'</td>'+
-      '</tr>';
-    });
-    h += '</tbody></table>';
-    var tvc = Number(st.totalVarianceCost) || 0;
-    var tvcColor = tvc === 0 ? '#16a34a' : (tvc < 0 ? '#ef4444' : '#16a34a');
-    h += '<div style="display:flex;justify-content:space-between;margin-top:10px;padding:12px;background:#fef2f2;border:1.5px solid #fecaca;border-radius:10px;">' +
-      '<div style="font-weight:900;font-size:15px;color:'+(st.totalVariance===0?'#16a34a':'#ef4444')+';">إجمالي التباين (كمية): '+Number(st.totalVariance).toFixed(2)+'</div>' +
-      '<div style="font-weight:900;font-size:15px;color:'+tvcColor+';">تكلفة التباين: '+formatVal(tvc)+' SAR</div>' +
-    '</div>';
-    // Use a generic modal container
-    if (!q("#modalStocktakeDetail")) {
-      var m = document.createElement('div');
-      m.id = 'modalStocktakeDetail';
-      m.className = 'modal';
-      m.innerHTML = '<div class="modal-content modal-large"><div class="modal-title">محضر الجرد <button class="modal-close" onclick="closeModal(\'#modalStocktakeDetail\')">&times;</button></div><div id="stDetailBody"></div><div style="display:flex;gap:10px;margin-top:15px;"><button class="btn btn-primary" onclick="printStocktake(state._viewingStId)"><i class="fas fa-print"></i> طباعة المحضر</button><button class="btn btn-light" onclick="closeModal(\'#modalStocktakeDetail\')">إغلاق</button></div></div>';
-      document.body.appendChild(m);
-    }
     state._viewingStId = stId;
-    q("#stDetailBody").innerHTML = h;
-    openModal("#modalStocktakeDetail");
+
+    if (typeof window.EntUI === 'undefined') {
+      // Defensive fallback: simple modal if EntUI isn't loaded.
+      console.warn('[stocktake] EntUI missing — falling back to legacy modal.');
+      return _legacyStocktakeDetail(st, stId);
+    }
+
+    var items = st.items || [];
+    var totalVar  = Number(st.totalVariance || 0);
+    var totalVCost = Number(st.totalVarianceCost || 0);
+    var positiveLines = 0, negativeLines = 0, zeroLines = 0;
+    items.forEach(function (i) {
+      var v = Number(i.variance || 0);
+      if (v > 0) positiveLines++;
+      else if (v < 0) negativeLines++;
+      else zeroLines++;
+    });
+
+    // ── HeaderSection ──
+    var status = (st.status || 'closed').toLowerCase();
+    var statusLbl = status === 'closed' ? 'مُغلق'
+                  : status === 'approved' ? 'معتمد'
+                  : status === 'draft' ? 'مسودة'
+                  : status;
+    var headerHtml = EntUI.header({
+      icon: 'fa-clipboard-list',
+      eyebrow: 'محضر جرد · ' + EntUI.fmt.dateShort(st.date),
+      code: st.id,
+      title: '',
+      status: statusLbl,
+      statusType: status === 'closed' || status === 'approved' ? 'success' : 'info',
+      theme: totalVCost < 0 ? 'danger' : (totalVCost > 0 ? 'warning' : 'success'),
+      sub: [
+        { icon: 'fa-user-circle', text: 'القائم بالجرد: ' + (st.username || '—') },
+        { icon: 'fa-warehouse', text: 'المستودع: ' + (st.warehouseName || st.warehouse_name || '—') },
+        { icon: 'fa-store', text: 'الفرع: ' + (st.branchName || st.branch_name || '—') },
+        { icon: 'fa-calendar', text: EntUI.fmt.date(st.date) }
+      ],
+      stats: [
+        { label: 'عدد الأصناف', value: items.length },
+        { label: 'فروق موجبة', value: positiveLines },
+        { label: 'فروق سالبة', value: negativeLines },
+        { label: 'تكلفة التباين', value: EntUI.fmt.money(totalVCost), unit: 'ر.س', accent: totalVCost !== 0 }
+      ]
+    });
+
+    // ── SummaryCards ──
+    var summaryHtml = EntUI.summary([
+      {
+        label: 'إجمالي الأصناف',
+        value: items.length,
+        unit: 'صنف',
+        icon: 'fa-boxes-stacked',
+        intent: 'info'
+      },
+      {
+        label: 'بدون فروق',
+        value: zeroLines,
+        unit: 'صنف',
+        icon: 'fa-equals',
+        intent: 'success'
+      },
+      {
+        label: 'فروق إيجابية',
+        value: positiveLines,
+        unit: 'صنف',
+        icon: 'fa-arrow-trend-up',
+        intent: 'success'
+      },
+      {
+        label: 'فروق سلبية (نقص)',
+        value: negativeLines,
+        unit: 'صنف',
+        icon: 'fa-arrow-trend-down',
+        intent: 'danger'
+      }
+    ]);
+
+    // ── WorkflowTimeline (Stocktake lifecycle) ──
+    var timelineHtml = EntUI.section({
+      icon: 'fa-flag-checkered',
+      title: 'سير المعاملة',
+      body: EntUI.timeline([
+        { key: 'draft', label: 'بدء الجرد', icon: 'fa-pen-to-square', status: 'done', when: st.startedAt || st.date, who: st.username },
+        { key: 'count', label: 'إدخال الكميات', icon: 'fa-keyboard',  status: 'done', when: st.date, who: st.username, note: items.length + ' صنف' },
+        { key: 'closed', label: 'إغلاق المحضر', icon: 'fa-circle-check', status: 'done', when: st.closedAt || st.date, who: st.username },
+        { key: 'approved', label: 'اعتماد', icon: 'fa-stamp', status: status === 'approved' ? 'done' : (status === 'closed' ? 'current' : ''), when: st.approvedAt, who: st.approvedBy || st.approved_by }
+      ])
+    });
+
+    // ── Notes banner (if any) ──
+    var notesHtml = '';
+    if (st.notes) {
+      notesHtml = EntUI.section({
+        body: EntUI.banner({
+          intent: 'info',
+          icon: 'fa-note-sticky',
+          title: 'ملاحظات القائم بالجرد',
+          text: '<div style="white-space:pre-wrap;">' + EntUI.esc(st.notes) + '</div>'
+        })
+      });
+    }
+
+    // ── DetailsTable ──
+    var rows = items.map(function (i) {
+      var v  = Number(i.variance || 0);
+      var vc = Number(i.varianceCost || 0);
+      i._state = (v > 0 ? 'positive' : (v < 0 ? 'negative' : null));
+      i._varDisplay = (v > 0 ? '+' : '') + v.toFixed(2);
+      i._varColor = v === 0 ? '#64748b' : (v > 0 ? '#16a34a' : '#ef4444');
+      i._varCostDisplay = (vc > 0 ? '+' : '') + EntUI.fmt.money(vc);
+      i._varCostColor = vc === 0 ? '#64748b' : (vc > 0 ? '#16a34a' : '#ef4444');
+      return i;
+    });
+    var tableHtml = EntUI.section({
+      icon: 'fa-list-ul',
+      title: 'تفاصيل الأصناف المجرودة',
+      body: EntUI.table({
+        columns: [
+          { key: 'invItemName', label: 'المادة', render: function (r) {
+            return '<b>' + EntUI.esc(r.invItemName || '') + '</b>' +
+              (r.unit ? ' <span class="col-muted">/' + EntUI.esc(r.unit) + '</span>' : '');
+          }},
+          { key: 'systemQty', label: 'رصيد النظام', num: true, render: function (r) { return EntUI.fmt.qty(r.systemQty); }},
+          { key: 'actualQty', label: 'الكمية الفعلية', num: true, render: function (r) {
+            return '<b>' + EntUI.fmt.qty(r.actualQty) + '</b>';
+          }},
+          { key: 'variance',  label: 'الفرق (كمية)', num: true, render: function (r) {
+            return '<span style="font-weight:900;color:' + r._varColor + ';">' + r._varDisplay + '</span>';
+          }},
+          { key: 'unitCost',  label: 'تكلفة الوحدة', num: true, render: function (r) { return EntUI.fmt.money(r.unitCost || 0); }},
+          { key: 'varianceCost', label: 'تكلفة الفرق', num: true, render: function (r) {
+            return '<span style="font-weight:900;color:' + r._varCostColor + ';">' + r._varCostDisplay + '</span>';
+          }}
+        ],
+        rows: rows,
+        emptyIcon: 'fa-clipboard-list',
+        emptyTitle: 'لا توجد أصناف',
+        emptyText: 'لم يُسجَّل أي صنف في هذا المحضر.',
+        footer: [
+          { colspan: 3, html: '<b>الإجمالي</b>' },
+          { num: true, html: '<b style="color:' + (totalVar === 0 ? '#16a34a' : '#ef4444') + ';">' + (totalVar > 0 ? '+' : '') + totalVar.toFixed(2) + '</b>' },
+          { num: true, html: '—' },
+          { num: true, html: '<b style="color:' + (totalVCost < 0 ? '#ef4444' : (totalVCost > 0 ? '#16a34a' : '#64748b')) + ';">' + EntUI.fmt.money(totalVCost) + ' ر.س</b>' }
+        ]
+      })
+    });
+
+    // ── BottomActionBar ──
+    var canDelete = EntUI.Permission.can('stocktake.delete');
+    var actionBarHtml = EntUI.actionBar({
+      leftBtns: [
+        { label: 'إغلاق', intent: 'ghost', onClick: 'EntUI.overlay({id:\'entStocktakeOverlay\'}).close()' },
+        { label: 'طباعة A4', intent: 'ghost', icon: 'fa-print', onClick: 'printStocktake(state._viewingStId)' }
+      ],
+      rightBtns: canDelete ? [
+        { label: 'حذف المحضر', intent: 'danger', icon: 'fa-trash', onClick: 'deleteStocktake(state._viewingStId);EntUI.overlay({id:\'entStocktakeOverlay\'}).close()' }
+      ] : []
+    });
+
+    // ── Mount ──
+    var ov = EntUI.overlay({ id: 'entStocktakeOverlay' });
+    ov.open(headerHtml + summaryHtml + timelineHtml + notesHtml + tableHtml + actionBarHtml);
   }).getStocktakeDetail(stId);
+}
+
+// Legacy fallback (only used if EntUI is missing — should never happen
+// in normal operation; kept for resilience).
+function _legacyStocktakeDetail(st, stId) {
+  var dateStr = st.date ? new Date(st.date).toLocaleString('ar-SA') : '';
+  var h = '<div style="margin-bottom:14px;"><strong>رقم المحضر:</strong> <code>' + st.id + '</code> · <strong>التاريخ:</strong> ' + dateStr + ' · <strong>القائم:</strong> ' + (st.username || '—') + '</div>';
+  if (!q('#modalStocktakeDetail')) {
+    var m = document.createElement('div');
+    m.id = 'modalStocktakeDetail'; m.className = 'modal';
+    m.innerHTML = '<div class="modal-content modal-large"><div class="modal-title">محضر الجرد <button class="modal-close" onclick="closeModal(\'#modalStocktakeDetail\')">&times;</button></div><div id="stDetailBody"></div></div>';
+    document.body.appendChild(m);
+  }
+  q('#stDetailBody').innerHTML = h;
+  openModal('#modalStocktakeDetail');
 }
 
 // Print stocktake report

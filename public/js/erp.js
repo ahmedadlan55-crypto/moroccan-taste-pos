@@ -24216,6 +24216,10 @@ function _v3OpenChannelModalInner(id) {
     icon:'fa-store', color:'#3b82f6', commissionPct:0, serviceFeePct:0,
     glRevenueAccount:'', glCommissionAccount:'',
     requiresExternalRef:false, allowDiscount:true, isActive:true,
+    // v5.10.29 — new defaults: dine_in channels use the full menu by
+    // default (legacy implicit behavior); every other new channel is
+    // strictly independent. Admin can flip the toggle.
+    useFullMenu: (c == null) ? false : !!c.useFullMenu,
     displayOrder:0, notes:''
   };
 
@@ -24283,6 +24287,21 @@ function _v3OpenChannelModalInner(id) {
         '<label class="v3-checkbox"><input type="checkbox" id="chF_isActive" '+(ch.isActive?'checked':'')+'><span>القناة مفعّلة</span></label>' +
         '<label class="v3-checkbox"><input type="checkbox" id="chF_requiresExternalRef" '+(ch.requiresExternalRef?'checked':'')+'><span>تتطلب مرجع خارجي (رقم طلب)</span></label>' +
         '<label class="v3-checkbox"><input type="checkbox" id="chF_allowDiscount" '+(ch.allowDiscount?'checked':'')+'><span>تسمح بالخصومات</span></label>' +
+      '</div>' +
+      // v5.10.29 — Explicit "Use full menu vs strictly-independent" toggle.
+      // Bordered card emphasizes the architectural decision; the hint text
+      // explains what changes in the cashier.
+      '<div style="margin-top:14px;background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1.5px solid #86efac;border-radius:12px;padding:14px;">' +
+        '<label class="v3-checkbox" style="margin:0;">' +
+          '<input type="checkbox" id="chF_useFullMenu" '+(ch.useFullMenu?'checked':'')+'>' +
+          '<span style="font-weight:800;color:#15803d;font-size:13px;">' +
+            '<i class="fas fa-layer-group"></i> استخدام المنيو الكامل لِلبراند (لا منيو مُستَقِل)' +
+          '</span>' +
+        '</label>' +
+        '<div style="font-size:11.5px;color:#15803d;margin-top:8px;line-height:1.7;padding-inline-start:24px;">' +
+          '<b>مُفَعَّل:</b> الكاشير يَعرِض كل أصناف المنيو الرَئيسي لِلبراند عَلى هذه القَناة (سُلوك MAIN التَقليدي).<br>' +
+          '<b>مُعَطَّل (مُوصى به لِقَنوات Talabat / HungerStation / Jahez):</b> الكاشير يَعرِض فَقَط الأصناف التي تُضيفها عَبر "إدارة أصناف القَناة" — منيو مُستَقِل تَماماً، لا فَلسَفة احتياطية.' +
+        '</div>' +
       '</div>' +
       '<div class="wo-field" style="margin-top:10px;"><label class="wo-field-label">ملاحظات</label><textarea id="chF_notes" class="wo-input" rows="2">'+ _v3EscapeHtml(ch.notes||'') +'</textarea></div>' +
     '</div>' +
@@ -24389,6 +24408,8 @@ function _v3SaveChannel() {
       requiresExternalRef: _v3FldChecked('chF_requiresExternalRef'),
       allowDiscount: _v3FldChecked('chF_allowDiscount'),
       isActive: _v3FldChecked('chF_isActive'),
+      // v5.10.29 — explicit useFullMenu flag from the new admin toggle
+      useFullMenu: _v3FldChecked('chF_useFullMenu'),
       displayOrder: Number(_v3FldVal('chF_displayOrder', 0)) || 0,
       notes: _v3FldVal('chF_notes')
     };

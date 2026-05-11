@@ -392,12 +392,92 @@ function _posRenderPriceListBadge() {
     '</div>';
 }
 
+// v5.10.29 — Empty-state overlay for a strict-mode channel with zero
+// configured items. Replaces the silent auto-fallback to MAIN that
+// caused the owner's "channels aren't independent" frustration. Shows
+// explicit action buttons so the next step is one click away:
+//   1. "Copy from MAIN"          → POST /channel-menus/:id/copy-from/<MAIN>
+//   2. "Open admin channel page" → routes to the channel manager screen
+function _posRenderChannelEmptyState(ch, errMsg) {
+  var grid = q('#posCatGrid');
+  if (!grid || !grid.parentNode) return;
+  var host = q('#posChannelEmpty');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'posChannelEmpty';
+    host.style.cssText = 'margin:14px;padding:0;';
+    grid.parentNode.insertBefore(host, grid);
+  }
+  var name = (ch && ch.name) || '—';
+  var safeId = String((ch && ch.id) || '').replace(/'/g, "\\'");
+  var safeName = String(name).replace(/'/g, "\\'");
+  var errLine = errMsg
+    ? ('<div style="color:#b91c1c;font-size:11.5px;margin-top:8px;"><i class="fas fa-circle-exclamation"></i> ' + String(errMsg) + '</div>')
+    : '';
+  host.innerHTML =
+    '<div style="background:linear-gradient(135deg,#fef9c3,#fef3c7);border:1.5px solid #fcd34d;border-radius:14px;padding:18px 22px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">' +
+      '<div style="width:48px;height:48px;border-radius:12px;background:#f59e0b;color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">' +
+        '<i class="fas fa-store-slash"></i>' +
+      '</div>' +
+      '<div style="flex:1;min-width:240px;">' +
+        '<div style="font-size:14px;font-weight:900;color:#7c2d12;">قَناة "' + name + '" مُستَقِلَّة ولَيس بِها أصناف بَعد</div>' +
+        '<div style="font-size:12px;color:#9a3412;margin-top:4px;line-height:1.7;">' +
+          'هذه القَناة في وَضع "منيو مُستَقِل" — لِكَي يَظهَر شَيء لِلكاشير، أَضِف أصناف لَها أَو انسَخها من المنيو الرَئيسي.' +
+        '</div>' +
+        errLine +
+      '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+        '<button onclick="_posCopyFromMain(\'' + safeId + '\',\'' + safeName + '\')" ' +
+                'style="background:#3b82f6;color:#fff;border:0;padding:10px 16px;border-radius:10px;font-weight:800;font-size:12.5px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;">' +
+          '<i class="fas fa-copy"></i> انسَخ من المنيو الرَئيسي' +
+        '</button>' +
+        '<button onclick="window.location.href=\'/?openAdmin=channels\'" ' +
+                'style="background:#fff;color:#7c2d12;border:1.5px solid #fcd34d;padding:10px 16px;border-radius:10px;font-weight:800;font-size:12.5px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;">' +
+          '<i class="fas fa-gear"></i> فَتح إدارة القَنوات' +
+        '</button>' +
+      '</div>' +
+    '</div>';
+  host.style.display = '';
+}
+
+function _posClearChannelEmptyState() {
+  var host = q('#posChannelEmpty');
+  if (host) { host.style.display = 'none'; host.innerHTML = ''; }
+}
+
+window._posCopyFromMain = function(channelId, channelName) {
+  if (!confirm('انسَخ كل أصناف المنيو الرَئيسي (MAIN) إلى "' + channelName + '"؟ يُمكِنك تَعديلها بَعد ذَلِك.')) return;
+  // Find MAIN channel id from state.channels
+  var main = (state.channels || []).find(function(c) {
+    var co = String(c.code || '').toUpperCase();
+    var ct = String(c.channelType || c.channel_type || '').toLowerCase();
+    return co === 'MAIN' || ct === 'main';
+  });
+  if (!main) { if (typeof glassToast === 'function') glassToast('لَم يَتم العُثور عَلى قَناة MAIN', true); return; }
+  _posCallAPI('POST', '/channel-menus/' + encodeURIComponent(channelId) + '/copy-from/' + encodeURIComponent(main.id), {}, function(r) {
+    if (r && r.copied) {
+      if (typeof glassToast === 'function') glassToast('تَم نَسخ ' + r.copied + ' صَنف. يَتم تَحديث المنيو الآن...', false);
+      // Re-trigger channel switch to reload the items
+      _posClearChannelEmptyState();
+      if (state.activeChannel) _doSetChannel(state.activeChannel);
+    } else {
+      if (typeof glassToast === 'function') glassToast('فَشَل النَسخ: ' + ((r && r.error) || 'خَطأ غَير مَعروف'), true);
+    }
+  });
+};
+
 window.renderCategoryGrid = function () {
   var grid = q('#posCatGrid');
   if (!grid) return;
   // v5.10.27 — refresh the price-list chip whenever categories re-render
   // (channel switch, prefetch return, etc.).
   try { _posRenderPriceListBadge(); } catch(_) {}
+  // v5.10.29 — clear empty-state when we have items to render (the
+  // post-fix race condition: empty-state was rendered before items
+  // arrived; once they're here, the banner has to go).
+  if (state.channelMenuItems && state.channelMenuItems.length) {
+    try { _posClearChannelEmptyState(); } catch(_) {}
+  }
   // v5.15.1 — Build menuActive + categories from channelMenuItems DIRECTLY
   // when a non-MAIN channel is active. This mirrors renderMenuGrid and
   // bypasses state.menu's brand filter — the channel rows already carry
@@ -3254,16 +3334,23 @@ function _doSetChannel(ch) {
     topLabel.innerHTML = _plChip;
   }
 
-  // v5.12.4 — MAIN / Dine-In ALWAYS uses the full menu, regardless of
-  // any channel_menu_items rows that may exist. Other channels respect
-  // their list strictly. Detection covers all three possible markers:
-  //   • code === 'MAIN'  (canonical seed)
-  //   • channelType === 'main'  (legacy)
-  //   • channelType === 'dine_in'  (the seed pairs this with code='MAIN')
+  // v5.10.29 — Read the EXPLICIT useFullMenu flag from the channel row.
+  // Replaces the v5.12.4 implicit "MAIN/dine_in → full menu" inference.
+  // The owner controls per-channel from admin → قنوات البيع → edit:
+  //   • Toggle ON  → cashier shows every active menu item (the legacy
+  //                 MAIN behavior, also the migration default for
+  //                 existing MAIN/dine_in rows)
+  //   • Toggle OFF → cashier shows ONLY items configured via
+  //                 channel-menu-items; if zero, an explicit empty state
+  //                 with "Copy from MAIN" / "Add items" buttons appears.
+  //                 No silent fallback to MAIN anymore.
+  // We still support the LEGACY implicit MAIN detection as a fallback
+  // when the row doesn't carry the flag yet (e.g., old API client).
   var _code  = String(ch.code || '').toUpperCase();
   var _ctype = String(ch.channelType || ch.channel_type || '').toLowerCase();
-  var isMain = (_code === 'MAIN') || (_ctype === 'main') || (_code === 'MAIN' && _ctype === 'dine_in');
-  state.activeChannel.useFullMenu = isMain;
+  var _isMainLike = (_code === 'MAIN') || (_ctype === 'main');
+  var useFullMenu = (ch.useFullMenu != null) ? !!ch.useFullMenu : _isMainLike;
+  state.activeChannel.useFullMenu = useFullMenu;
 
   // v5.14.9 — Helper: refresh BOTH the category tiles and the products
   // grid after a channel switch. Previously only renderMenuGrid was
@@ -3290,10 +3377,11 @@ function _doSetChannel(ch) {
     if (typeof renderMenuGrid === 'function') renderMenuGrid();
   };
 
-  if (isMain) {
+  if (useFullMenu) {
     // Skip the channel-menu fetch entirely — saves a round-trip and
-    // guarantees the full menu shows even if MAIN has stale rows in
-    // channel_menu_items from a different brand.
+    // guarantees the full menu shows. This branch fires for any channel
+    // where admin explicitly toggled "Use full menu" ON (MAIN/dine_in
+    // by default; can also be opted into for any other channel).
     state.channelMenuItems = [];
     state.channelOverrideMap = {};
     _posApplyChannelPrices();
@@ -3315,29 +3403,22 @@ function _doSetChannel(ch) {
           state.channelOverrideMap[String(r.menuItemId)] = Number(r.overridePrice);
         }
       });
-      // v5.16.3 — Smart fallback restored.
-      //   • If the channel has zero rows in channel_menu_items, it has
-      //     never been configured. Show the brand's full menu so the
-      //     cashier can actually sell. A one-line toast tells the
-      //     owner where to configure the channel for strict mode.
-      //   • As soon as admin adds ONE item via channels → "أصناف",
-      //     the channel switches to strict isolation automatically.
-      //   • MAIN already uses useFullMenu=true via the isMain check
-      //     above; this only fires for non-MAIN channels.
-      var autoFallback = (available.length === 0);
-      state.activeChannel.useFullMenu = autoFallback;
-      state.activeChannel._autoFellBackToMain = autoFallback;
+      // v5.10.29 — NO MORE silent fallback. If the channel has zero
+      // configured items, the cashier shows an explicit empty state
+      // with action buttons ("Copy from MAIN" + "Open admin channel
+      // editor"). The owner's "channels are not independent" complaint
+      // was caused by the legacy auto-fallback making every empty
+      // channel impersonate MAIN — that's why it's gone here.
+      state.activeChannel._autoFellBackToMain = false;
       _ensureMenuLoaded(function () {
         _posApplyChannelPrices();
         _refreshChannelViews();
-        if (autoFallback) {
-          setTimeout(function () {
-            if (typeof glassToast === 'function') {
-              glassToast('القَناة "' + (state.activeChannel.name || '—') +
-                '" لم تُعَدّ بِأصناف بَعد. يَتم عَرض المنيو الكامِل لِلبراند. من admin → قَنوات البَيع → "أصناف" لِتَخصيصها.',
-                false);
-            }
-          }, 600);
+        if (available.length === 0) {
+          // Show the empty-state UI (categories grid renderer surfaces
+          // it via _posRenderChannelEmptyState — see below).
+          if (typeof _posRenderChannelEmptyState === 'function') {
+            _posRenderChannelEmptyState(state.activeChannel);
+          }
         }
       });
     };
@@ -3345,18 +3426,22 @@ function _doSetChannel(ch) {
     var branchQ = state.branchId ? '?branchId=' + encodeURIComponent(state.branchId) : '';
     _posCallAPI('GET', '/channel-menus/' + ch.id + branchQ, null, function (rows) {
       if (rows && rows.error) {
-        // v5.16.3 — On a fetch failure, fall back to the brand's full
-        // menu rather than trapping the cashier with an empty grid.
-        // The owner's actual request was "every channel must show its
-        // menu" — empty is unacceptable.
+        // v5.10.29 — On a fetch failure, show the empty-state UI rather
+        // than secretly switching to the full menu. The owner's hard
+        // requirement is "channels are independent" — silently impersonating
+        // MAIN on error was the root cause of the "channels feel merged"
+        // complaint.
         console.error('[channel-menu] fetch error for', ch.id, ':', rows.error);
         if (!cached) {
           state.channelMenuItems = [];
           state.channelOverrideMap = {};
-          state.activeChannel.useFullMenu = true;
-          state.activeChannel._autoFellBackToMain = true;
+          state.activeChannel.useFullMenu = false;
+          state.activeChannel._autoFellBackToMain = false;
           _posApplyChannelPrices();
           _refreshChannelViews();
+          if (typeof _posRenderChannelEmptyState === 'function') {
+            _posRenderChannelEmptyState(state.activeChannel, rows.error);
+          }
         }
         return;
       }

@@ -4636,10 +4636,15 @@ function loadDashAdjustments() {
   var toDate   = (q('#adjToDate')   && q('#adjToDate').value)   || '';
   var reason   = (q('#adjReasonFilter') && q('#adjReasonFilter').value) || '';
   var status   = (q('#adjStatusFilter') && q('#adjStatusFilter').value) || '';
+  var branchId = (q('#adjBranchFilter') && q('#adjBranchFilter').value) || '';
   var search   = ((q('#adjSearch') && q('#adjSearch').value) || '').trim().toLowerCase();
+
+  // v5.10.32 — populate the branch filter once
+  _whPopulateBranchFilter('adjBranchFilter');
 
   var qs = [];
   if (hubWh)    qs.push('warehouseId=' + encodeURIComponent(hubWh));
+  if (branchId) qs.push('branchId='    + encodeURIComponent(branchId));
   if (fromDate) qs.push('startDate='   + encodeURIComponent(fromDate));
   if (toDate)   qs.push('endDate='     + encodeURIComponent(toDate));
   if (reason)   qs.push('reason='      + encodeURIComponent(reason));
@@ -4650,24 +4655,26 @@ function loadDashAdjustments() {
     .then(function(r){ return r.json(); })
     .then(function(res) {
       loader(false);
+      if (res && !Array.isArray(res) && Array.isArray(res.items)) res = res.items;
       if (!Array.isArray(res)) res = [];
-      // Client-side text search across id, username, reason, reasonNotes, warehouse
+      // Client-side text search across id, username, reason, reasonNotes, warehouse, branch
       if (search) {
         res = res.filter(function(a){
           return ((a.id || '').toLowerCase().indexOf(search) >= 0) ||
                  ((a.username || '').toLowerCase().indexOf(search) >= 0) ||
                  ((a.reasonLabel || '').toLowerCase().indexOf(search) >= 0) ||
                  ((a.reasonNotes || '').toLowerCase().indexOf(search) >= 0) ||
-                 ((a.warehouseName || '').toLowerCase().indexOf(search) >= 0);
+                 ((a.warehouseName || '').toLowerCase().indexOf(search) >= 0) ||
+                 ((a.branchName || '').toLowerCase().indexOf(search) >= 0);
         });
       }
       _whRenderAdjustmentsKpis(res);
       var h = '';
       if (!res.length) {
-        var emptyMsg = (search || fromDate || toDate || reason || status)
+        var emptyMsg = (search || fromDate || toDate || reason || status || branchId)
           ? 'لا توجد محاضر تطابق الفلاتر — جرّب توسيع نطاق البحث.'
           : 'لا توجد محاضر تعديل سابقة';
-        h = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#94a3b8;">' + emptyMsg + '</td></tr>';
+        h = '<tr><td colspan="10" style="text-align:center;padding:30px;color:#94a3b8;">' + emptyMsg + '</td></tr>';
       } else {
         res.forEach(function(a) {
           var dateStr = a.date ? new Date(a.date).toLocaleString('ar-SA') : '';
@@ -4678,9 +4685,15 @@ function loadDashAdjustments() {
           var whCell = a.warehouseName
             ? '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(a.warehouseName) + '</span>'
             : '<span style="color:#cbd5e1;font-size:11px;">—</span>';
+          // v5.10.32 — Branch pill (teal). Falls back to "—" for legacy
+          // adjustments created before branch_id was wired through.
+          var brCell = a.branchName
+            ? '<span class="iv-live-pill" style="background:#cffafe;color:#0e7490;"><i class="fas fa-code-branch" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(a.branchName) + '</span>'
+            : '<span style="color:#cbd5e1;font-size:11px;">—</span>';
           h += '<tr>' +
             '<td style="font-family:monospace;font-size:12px;color:#64748b;">' + a.id + '</td>' +
             '<td>' + dateStr + '</td>' +
+            '<td>' + brCell + '</td>' +
             '<td>' + whCell + '</td>' +
             '<td>' + reasonBadge + '</td>' +
             '<td style="font-weight:600;">' + a.username + '</td>' +
@@ -10113,10 +10126,15 @@ function loadDashStocktake() {
     ? window._invHub.warehouseId : '';
   var fromDate = (q('#stocktakeFromDate') && q('#stocktakeFromDate').value) || '';
   var toDate   = (q('#stocktakeToDate')   && q('#stocktakeToDate').value)   || '';
+  var branchId = (q('#stocktakeBranchFilter') && q('#stocktakeBranchFilter').value) || '';
   var search   = ((q('#stocktakeSearch') && q('#stocktakeSearch').value) || '').trim().toLowerCase();
+
+  // v5.10.32 — populate the branch filter dropdown once
+  _whPopulateBranchFilter('stocktakeBranchFilter');
 
   var qs = [];
   if (hubWh)    qs.push('warehouseId=' + encodeURIComponent(hubWh));
+  if (branchId) qs.push('branchId='    + encodeURIComponent(branchId));
   if (fromDate) qs.push('startDate='   + encodeURIComponent(fromDate));
   if (toDate)   qs.push('endDate='     + encodeURIComponent(toDate));
   var url = '/api/inventory/stocktakes' + (qs.length ? ('?' + qs.join('&')) : '');
@@ -10125,23 +10143,27 @@ function loadDashStocktake() {
     .then(function(r){ return r.json(); })
     .then(function(res) {
       loader(false);
+      // v5.10.32 — endpoint may return either an array (legacy) or
+      // { items, total } envelope when paginated. Normalize.
+      if (res && !Array.isArray(res) && Array.isArray(res.items)) res = res.items;
       if (!Array.isArray(res)) res = [];
-      // Client-side text search: id, username, notes, warehouse name
+      // Client-side text search: id, username, notes, warehouse name, branch name
       if (search) {
         res = res.filter(function(st){
           return ((st.id || '').toLowerCase().indexOf(search) >= 0) ||
                  ((st.username || '').toLowerCase().indexOf(search) >= 0) ||
                  ((st.notes || '').toLowerCase().indexOf(search) >= 0) ||
-                 ((st.warehouseName || '').toLowerCase().indexOf(search) >= 0);
+                 ((st.warehouseName || '').toLowerCase().indexOf(search) >= 0) ||
+                 ((st.branchName || '').toLowerCase().indexOf(search) >= 0);
         });
       }
       _whRenderStocktakeKpis(res);
       let h = "";
       if (!res.length) {
-        var emptyMsg = search || fromDate || toDate
+        var emptyMsg = (search || fromDate || toDate || branchId)
           ? 'لا توجد محاضر تطابق الفلاتر — جرّب توسيع نطاق البحث.'
           : (hubWh ? 'لا توجد عمليات جرد لهذا المستودع' : 'لا توجد عمليات جرد سابقة');
-        h = "<tr><td colspan='7' style='text-align:center; padding:30px; color:#94a3b8;'>" + emptyMsg + "</td></tr>";
+        h = "<tr><td colspan='8' style='text-align:center; padding:30px; color:#94a3b8;'>" + emptyMsg + "</td></tr>";
       } else {
         res.forEach(function(st) {
           var dateStr = st.date ? new Date(st.date).toLocaleString('ar-SA') : '';
@@ -10149,9 +10171,16 @@ function loadDashStocktake() {
           var whCell = st.warehouseName
             ? '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(st.warehouseName) + '</span>'
             : '<span style="color:#cbd5e1;font-size:11px;">—</span>';
+          // v5.10.32 — Branch pill (teal). Shows "—" when the stocktake
+          // has no branch attached (legacy records, admin-warehouse
+          // stocktakes).
+          var brCell = st.branchName
+            ? '<span class="iv-live-pill" style="background:#cffafe;color:#0e7490;"><i class="fas fa-code-branch" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(st.branchName) + '</span>'
+            : '<span style="color:#cbd5e1;font-size:11px;">—</span>';
           h += '<tr>'+
             '<td style="font-family:monospace;color:#64748b;font-size:12px;">'+st.id+'</td>'+
             '<td>'+dateStr+'</td>'+
+            '<td>'+brCell+'</td>'+
             '<td>'+whCell+'</td>'+
             '<td style="font-weight:bold;">'+st.username+'</td>'+
             '<td>'+st.itemsCount+' صنف</td>'+
@@ -10168,16 +10197,49 @@ function loadDashStocktake() {
     }).catch(function(){ loader(false); });
 }
 
+// v5.10.32 — Populate a <select> with the system's branches. Cached at
+// the window level so the network call only fires once per session.
+window._whBranchesCache = window._whBranchesCache || null;
+function _whPopulateBranchFilter(selectId) {
+  var sel = q('#' + selectId);
+  if (!sel) return;
+  // Already populated? skip
+  if (sel.options.length > 1) return;
+  var apply = function(branches) {
+    if (!Array.isArray(branches)) return;
+    var keep = sel.value;
+    branches.forEach(function(b) {
+      var opt = document.createElement('option');
+      opt.value = b.id;
+      opt.textContent = b.name + (b.code ? ' (' + b.code + ')' : '');
+      sel.appendChild(opt);
+    });
+    if (keep) sel.value = keep;
+  };
+  if (window._whBranchesCache) { apply(window._whBranchesCache); return; }
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/branches', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(rows) {
+      if (Array.isArray(rows)) {
+        window._whBranchesCache = rows;
+        apply(rows);
+      }
+    })
+    .catch(function(){ /* fall back to "all branches" only */ });
+}
+
 // v5.10.20 — Reset all filter inputs for a given warehouse tab and refresh.
 // tabKey ∈ 'stocktake' | 'adj' | 'shortage'
 function whClearFilters(tabKey) {
   var ids;
   if (tabKey === 'stocktake') {
-    ids = ['stocktakeSearch', 'stocktakeFromDate', 'stocktakeToDate'];
+    // v5.10.32 — include the new branch filter in the reset set
+    ids = ['stocktakeSearch', 'stocktakeFromDate', 'stocktakeToDate', 'stocktakeBranchFilter'];
     ids.forEach(function(id){ var el = q('#'+id); if (el) el.value = ''; });
     if (typeof loadDashStocktake === 'function') loadDashStocktake();
   } else if (tabKey === 'adj') {
-    ids = ['adjSearch', 'adjFromDate', 'adjToDate', 'adjReasonFilter', 'adjStatusFilter'];
+    ids = ['adjSearch', 'adjFromDate', 'adjToDate', 'adjReasonFilter', 'adjStatusFilter', 'adjBranchFilter'];
     ids.forEach(function(id){ var el = q('#'+id); if (el) el.value = ''; });
     if (typeof loadDashAdjustments === 'function') loadDashAdjustments();
   } else if (tabKey === 'shortage') {

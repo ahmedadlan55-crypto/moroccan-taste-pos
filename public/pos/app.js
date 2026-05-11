@@ -409,6 +409,20 @@ function _posRenderChannelEmptyState(ch, errMsg) {
     grid.parentNode.insertBefore(host, grid);
   }
   var name = (ch && ch.name) || '—';
+  // v5.10.31 — Hide the admin-action banner from cashier-role users.
+  // The cashier just needs to know the channel isn't ready — the
+  // "Copy from main menu" / "Open channels admin" buttons leak
+  // architectural detail and admin functionality. For admins/managers,
+  // the original banner with action buttons stays.
+  if (typeof isAdmin === 'function' && !isAdmin()) {
+    host.innerHTML =
+      '<div style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:12px;padding:14px 18px;text-align:center;color:#64748b;font-size:12.5px;">' +
+        '<i class="fas fa-info-circle" style="color:#94a3b8;margin-inline-end:6px;"></i>' +
+        'هذه القَناة غَير مُعَدَّة لِلبَيع بَعد. تَواصَل مَع الإدارة لِتَكوينها.' +
+      '</div>';
+    host.style.display = '';
+    return;
+  }
   var safeId = String((ch && ch.id) || '').replace(/'/g, "\\'");
   var safeName = String(name).replace(/'/g, "\\'");
   var errLine = errMsg

@@ -3204,6 +3204,10 @@ router.get('/stocktakes', async (req, res) => {
     const from = req.query.fromDate || req.query.startDate;
     const to   = req.query.toDate   || req.query.endDate;
     if (req.query.warehouseId) { where.push('s.warehouse_id = ?');         params.push(req.query.warehouseId); }
+    // v5.10.32 — branchId filter so each branch's own list is fetchable
+    // server-side. The owner wants to see "stocktakes done by branch X"
+    // distinctly from the warehouse-level filter.
+    if (req.query.branchId)    { where.push('s.branch_id = ?');            params.push(req.query.branchId); }
     if (from)                  { where.push('DATE(s.stocktake_date) >= ?'); params.push(from); }
     if (to)                    { where.push('DATE(s.stocktake_date) <= ?'); params.push(to); }
     if (req.query.status)      { where.push('s.status = ?');                params.push(req.query.status); }
@@ -3214,19 +3218,39 @@ router.get('/stocktakes', async (req, res) => {
     const offset = Math.max(0, Number(req.query.offset) || 0);
     const wantsPaginated = req.query.paginated === '1' || req.query.limit != null || req.query.offset != null;
 
+    // v5.10.32 — JOIN branches so each row carries branch context the
+    // UI can render in its own column.
     const baseSelect =
-      'SELECT s.*, w.name AS warehouse_name, w.code AS warehouse_code ' +
-      'FROM stocktakes s LEFT JOIN warehouses w ON w.id = s.warehouse_id';
+      'SELECT s.*, w.name AS warehouse_name, w.code AS warehouse_code, ' +
+      '       br.name AS branch_name, br.code AS branch_code ' +
+      'FROM stocktakes s ' +
+      'LEFT JOIN warehouses w ON w.id = s.warehouse_id ' +
+      'LEFT JOIN branches br ON br.id = s.branch_id';
     const order = ' ORDER BY s.stocktake_date DESC, s.id DESC';
 
-    const [rows] = await db.query(baseSelect + whereSql + order + ' LIMIT ? OFFSET ?',
-      params.concat([limit, offset]));
+    let rows;
+    try {
+      [rows] = await db.query(baseSelect + whereSql + order + ' LIMIT ? OFFSET ?',
+        params.concat([limit, offset]));
+    } catch (_) {
+      // Fallback for very old schemas without branches table or s.branch_id
+      const legacySelect =
+        'SELECT s.*, w.name AS warehouse_name, w.code AS warehouse_code, ' +
+        '       NULL AS branch_name, NULL AS branch_code ' +
+        'FROM stocktakes s LEFT JOIN warehouses w ON w.id = s.warehouse_id';
+      [rows] = await db.query(legacySelect + whereSql + order + ' LIMIT ? OFFSET ?',
+        params.concat([limit, offset]));
+    }
     const items = rows.map(s => ({
       id: s.id, date: s.stocktake_date, username: s.username, notes: s.notes,
       status: s.status, itemsCount: s.items_count, totalVariance: Number(s.total_variance),
       warehouseId: s.warehouse_id || '',
       warehouseName: s.warehouse_name || '',
-      warehouseCode: s.warehouse_code || ''
+      warehouseCode: s.warehouse_code || '',
+      // v5.10.32 — surface branch context so the UI can show it
+      branchId:   s.branch_id   || '',
+      branchName: s.branch_name || '',
+      branchCode: s.branch_code || ''
     }));
 
     if (wantsPaginated) {
@@ -3368,6 +3392,8 @@ router.get('/adjustments', async (req, res) => {
     const from = req.query.fromDate || req.query.startDate;
     const to   = req.query.toDate   || req.query.endDate;
     if (req.query.warehouseId) { where.push('a.warehouse_id = ?');           params.push(req.query.warehouseId); }
+    // v5.10.32 — branchId filter for per-branch admin views.
+    if (req.query.branchId)    { where.push('a.branch_id = ?');              params.push(req.query.branchId); }
     if (from)                  { where.push('DATE(a.adjustment_date) >= ?'); params.push(from); }
     if (to)                    { where.push('DATE(a.adjustment_date) <= ?'); params.push(to); }
     if (req.query.status)      { where.push('a.status = ?');                 params.push(req.query.status); }
@@ -3379,9 +3405,13 @@ router.get('/adjustments', async (req, res) => {
     const offset = Math.max(0, Number(req.query.offset) || 0);
     const wantsPaginated = req.query.paginated === '1' || req.query.limit != null || req.query.offset != null;
 
+    // v5.10.32 — JOIN branches so each row carries branch context.
     const baseSelect =
-      'SELECT a.*, w.name AS warehouse_name, w.code AS warehouse_code ' +
-      'FROM stock_adjustments a LEFT JOIN warehouses w ON w.id = a.warehouse_id';
+      'SELECT a.*, w.name AS warehouse_name, w.code AS warehouse_code, ' +
+      '       br.name AS branch_name, br.code AS branch_code ' +
+      'FROM stock_adjustments a ' +
+      'LEFT JOIN warehouses w ON w.id = a.warehouse_id ' +
+      'LEFT JOIN branches br ON br.id = a.branch_id';
     const order = ' ORDER BY a.adjustment_date DESC, a.id DESC';
 
     let rows;
@@ -3406,7 +3436,11 @@ router.get('/adjustments', async (req, res) => {
       totalCost: Number(a.total_cost), approvedBy: a.approved_by, approvedAt: a.approved_at,
       warehouseId: a.warehouse_id || '',
       warehouseName: a.warehouse_name || '',
-      warehouseCode: a.warehouse_code || ''
+      warehouseCode: a.warehouse_code || '',
+      // v5.10.32 — branch context surfaced on each row
+      branchId:   a.branch_id   || '',
+      branchName: a.branch_name || '',
+      branchCode: a.branch_code || ''
     }));
     if (wantsPaginated) return res.json({ items, total: total || items.length, limit, offset });
     res.json(items);

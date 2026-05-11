@@ -8,10 +8,109 @@
    warehouse-ops.css.
    =================================================================== */
 
-/* ── KPI strip (ports the wh_items rules so the catalog inherits them) ─
-   The original styles are scoped to #wh_items in app.js (line 6667+),
-   so they never applied here. We re-scope to #sec_invCatalog.
+/* ── v5.10.32 — KPI strip: GLOBAL (was previously broken in every
+   warehouse tab because the inline styles in app.js were scoped to
+   #wh_items, and we only re-scoped to #sec_invCatalog. The stocktake,
+   adjustments, shortage, and transfers tabs all use .iv-items-kpis
+   without that prefix, so cards stacked vertically — the layout bug
+   the owner caught in the screenshot.)
    ─────────────────────────────────────────────────────────────────── */
+.iv-items-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  margin: 6px 0 16px;
+}
+.iv-items-kpi {
+  background: linear-gradient(160deg, var(--kg-from, #f8fafc) 0%, var(--kg-to, #fff) 60%, #fff 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 16px 18px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  gap: 8px 14px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+  border-inline-start: 4px solid var(--kc, #3b82f6);
+}
+.iv-items-kpi::after {
+  content: "";
+  position: absolute;
+  top: -30px;
+  inset-inline-end: -30px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--kc, #3b82f6) 0%, transparent 70%);
+  opacity: 0.08;
+  pointer-events: none;
+}
+.iv-items-kpi:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px -10px var(--kc, #3b82f6);
+}
+.iv-items-kpi-icon {
+  width: 54px;
+  height: 54px;
+  border-radius: 14px;
+  background: #fff;
+  color: var(--kc, #3b82f6);
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px -4px var(--kc, #3b82f6);
+  grid-row: span 2;
+  align-self: start;
+}
+.iv-items-kpi-pulse { animation: invItemsPulse 2.2s ease-in-out infinite; }
+@keyframes invItemsPulse {
+  0%, 100% { box-shadow: 0 4px 12px -4px var(--kc, #3b82f6), 0 0 0 0 rgba(0,0,0,0); }
+  50% { box-shadow: 0 4px 12px -4px var(--kc, #3b82f6), 0 0 0 10px rgba(255,255,255,0); transform: scale(1.04); }
+}
+.iv-items-kpi-body { min-width: 0; align-self: center; }
+.iv-items-kpi-label {
+  font-size: 11.5px;
+  color: #475569;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+  line-height: 1;
+}
+.iv-items-kpi-num { display: flex; align-items: baseline; gap: 5px; }
+.iv-items-kpi-num-val {
+  font-size: 30px;
+  font-weight: 900;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.iv-items-kpi-num-unit {
+  font-size: 13px;
+  color: var(--kc, #3b82f6);
+  font-weight: 700;
+}
+.iv-items-kpi-foot {
+  grid-column: 1 / -1;
+  font-size: 11.5px;
+  color: #475569;
+  font-weight: 600;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+  padding-top: 8px;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.iv-items-kpi-foot i { color: var(--kc, #3b82f6); font-size: 11px; }
+.iv-items-kpi-foot b { color: #0f172a; font-variant-numeric: tabular-nums; }
+
+/* Legacy section-scoped block kept for catalog page (back-compat). */
 #sec_invCatalog .iv-items-kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

@@ -1070,6 +1070,9 @@
                 </div>
                 <input type="date" id="stocktakeFromDate" class="form-control wh-fb-date" title="من تاريخ" onchange="loadDashStocktake()">
                 <input type="date" id="stocktakeToDate" class="form-control wh-fb-date" title="إلى تاريخ" onchange="loadDashStocktake()">
+                <select id="stocktakeBranchFilter" class="form-control wh-fb-select" onchange="loadDashStocktake()">
+                  <option value="">🏬 كل الفروع</option>
+                </select>
                 <button class="btn btn-light wh-fb-clear" onclick="whClearFilters('stocktake')" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
                 <button class="btn btn-primary" onclick="startStocktake()"><i class="fas fa-play"></i> بدء عملية جرد جديدة</button>
               </div>
@@ -1077,7 +1080,7 @@
             <div id="stocktakeKpis" class="iv-items-kpis"></div>
             <div class="table-wrapper">
               <table class="table">
-                <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>المستودع</th><th>القائم بالجرد</th><th>عدد الأصناف</th><th>إجمالي التباين</th><th>إجراءات</th></tr></thead>
+                <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>الفرع</th><th>المستودع</th><th>القائم بالجرد</th><th>عدد الأصناف</th><th>إجمالي التباين</th><th>إجراءات</th></tr></thead>
                 <tbody id="tbStocktake"></tbody>
               </table>
             </div>
@@ -1106,6 +1109,9 @@
                   <option value="pending">بانتظار الاعتماد</option>
                   <option value="approved">معتمد</option>
                 </select>
+                <select id="adjBranchFilter" class="form-control wh-fb-select" onchange="loadDashAdjustments()">
+                  <option value="">🏬 كل الفروع</option>
+                </select>
                 <button class="btn btn-light wh-fb-clear" onclick="whClearFilters('adj')" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
                 <button class="btn btn-danger" onclick="openAdjustmentModal()"><i class="fas fa-plus"></i> محضر تعديل كمية</button>
               </div>
@@ -1113,7 +1119,7 @@
             <div id="adjKpis" class="iv-items-kpis"></div>
             <div class="table-wrapper">
               <table class="table">
-                <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>المستودع</th><th>السبب</th><th>بواسطة</th><th>عدد الأصناف</th><th>إجمالي التكلفة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+                <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>الفرع</th><th>المستودع</th><th>السبب</th><th>بواسطة</th><th>عدد الأصناف</th><th>إجمالي التكلفة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
                 <tbody id="tbAdjustments"></tbody>
               </table>
             </div>

@@ -46,6 +46,11 @@ function _mapMenu(m) {
 const HIDE_INCOMPLETE_FRAGMENT = ' AND (m.is_semi_finished IS NULL OR m.is_semi_finished = 0)';
 
 // Get all menu items (active only). Optional ?brandId= and ?type= filter (finished|semi).
+// v5.16.4 — Default no longer hides semi-finished items. Same reason as
+// the /init change in v5.16.3: hiding them caused state.menu to come
+// back empty whenever every item was flagged is_semi_finished, and the
+// cashier ended up with nothing to render. Use ?type=finished to apply
+// the hide if you specifically want it (admin tools that distinguish).
 router.get('/', async (req, res) => {
   try {
     const { brandId, type } = req.query;
@@ -54,7 +59,7 @@ router.get('/', async (req, res) => {
     if (brandId) { sql += ' AND m.brand_id = ?'; params.push(brandId); }
     if (type === 'semi')          sql += ' AND m.is_semi_finished = 1';
     else if (type === 'finished') sql += HIDE_INCOMPLETE_FRAGMENT;
-    else                          sql += HIDE_INCOMPLETE_FRAGMENT;  // cashier default
+    // else: no extra filter — every active item is returned.
     sql += ' ORDER BY m.category, m.name';
     const [rows] = await db.query(sql, params);
     res.json(rows.map(_mapMenu));

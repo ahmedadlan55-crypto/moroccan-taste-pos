@@ -390,8 +390,45 @@ window.renderCategoryGrid = function () {
     menuActive = (state.menu || []).filter(function (m) { return m.active; });
     cats = (state.categories || []).filter(function (c) { return c && String(c).trim(); });
   }
-  if (!cats.length) {
-    grid.innerHTML = '<div class="pos-empty"><i class="fas fa-box-open" style="font-size:48px;display:block;margin-bottom:14px;opacity:.4;"></i>لا توجد فئات — تَأكَّد من تَحميل المنيو</div>';
+  // v5.16.4 — Show the full diagnostic panel right here in the
+  // category view whenever menuActive resolves to empty. Previously
+  // the category grid silently showed only the "الكل" tile with
+  // count=0 (the screenshot the owner sent), giving them no clue
+  // why or how to fix. The diagnostic chip lets us pinpoint the
+  // failure mode at a glance the next time this happens.
+  if (!cats.length || menuActive.length === 0) {
+    var dch = state.activeChannel || {};
+    var dchName = dch.name || dch.code || '—';
+    var dchCode = String(dch.code || '').toUpperCase();
+    var dIsMain = (dchCode === 'MAIN') || (state.activeChannel && state.activeChannel.useFullMenu);
+    var dMenuCount = (state.menu || []).length;
+    var dChItemsCount = (state.channelMenuItems || []).length;
+    var dBrandId = state.brandId || '';
+    var dReason, dAction;
+    if (dMenuCount === 0) {
+      dReason = 'المنيو الرَئيسي فارِغ — لا أصناف مُحَمَّلة في state.menu.<br>' +
+        '<span style="font-size:12px;">brand_id: <code>' + (dBrandId || '—') + '</code></span>';
+      dAction = '<button onclick="posRefreshAll()" style="padding:12px 24px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;"><i class="fas fa-rotate"></i> تَحديث وإعادة المُحاوَلة</button>';
+    } else if (state.activeChannel && !dIsMain && dChItemsCount === 0) {
+      dReason = 'القَناة "<b>' + dchName + '</b>" لم تُعَدّ بِأصناف. يُفتَرَض الـ fallback أن يَفتَح، يَتَحَقَّق...';
+      dAction = '<button onclick="posJumpToMain()" style="padding:12px 24px;background:#1e293b;color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;"><i class="fas fa-home"></i> الرُجوع إلى MAIN</button>';
+    } else {
+      dReason = 'كل الفِئات فارِغة — مَنيو البراند مَوجود لكنه لم يُحَمَّل في الكاشير. حاوِل التَحديث.';
+      dAction = '<button onclick="posRefreshAll()" style="padding:12px 24px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;"><i class="fas fa-rotate"></i> تَحديث</button>';
+    }
+    grid.innerHTML =
+      '<div class="pos-empty" style="padding:40px 20px;text-align:center;">' +
+        '<i class="fas fa-store-slash" style="font-size:64px;display:block;margin-bottom:16px;opacity:0.5;color:#7c3aed;"></i>' +
+        '<div style="font-weight:900;font-size:20px;color:#0f172a;margin-bottom:8px;">المنيو غير ظاهِر</div>' +
+        '<div style="font-size:14px;color:#475569;max-width:480px;line-height:1.8;margin:0 auto 18px;">' + dReason + '</div>' +
+        '<div>' + dAction + '</div>' +
+        '<div style="margin-top:18px;padding:8px 14px;background:#f1f5f9;border-radius:6px;font-size:11px;color:#475569;font-family:ui-monospace,SFMono-Regular,monospace;text-align:left;direction:ltr;display:inline-block;">' +
+          'channel=' + (dchCode || '—') + ' · useFullMenu=' + (dIsMain ? 'true' : 'false') +
+          ' · menu=' + dMenuCount +
+          ' · chItems=' + dChItemsCount +
+          ' · brand=' + (dBrandId || '—') +
+        '</div>' +
+      '</div>';
     return;
   }
   var esc = function (s) { return String(s).replace(/[&<>"'\\]/g, function (c) { return '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4); }); };
@@ -3113,28 +3150,40 @@ window.posSetChannel = function(channelId) {
   _doSetChannel(ch);
 };
 
-// v5.12.7 — guarantee state.menu is populated before rendering. /init
-// filters menu by the cashier's brand_id; if the result is empty (brand
-// has no items wired up), fall back to the unfiltered /menu endpoint.
-// Tries once per session — flag prevents an infinite loop on persistent
-// failure. Caches the result so reloads pick it up instantly.
+// v5.16.4 — Layered fallback chain to guarantee state.menu is populated
+// before rendering. The cashier MUST see SOMETHING. Order:
+//   1. /menu                 (active items, no brand filter, no semi-finished filter as of v5.16.4)
+//   2. /menu/all             (every row in the menu table — last resort)
+// Tries each step once per session; if a step returns items we stop.
+// Caches the result in localStorage so reloads pick it up instantly.
 function _ensureMenuLoaded(cb) {
   var current = (state.menu || []).filter(function (i) { return i.active; });
   if (current.length > 0) { if (cb) cb(); return; }
   if (state._menuFallbackTried) { if (cb) cb(); return; }
   state._menuFallbackTried = true;
-  console.warn('[pos-menu] state.menu empty — falling back to /menu');
-  _posCallAPI('GET', '/menu', null, function (rows) {
+
+  var applyRows = function (rows, source) {
     if (Array.isArray(rows) && rows.length) {
       state.menu = rows;
       state.categories = Array.from(new Set(rows.map(function (i) { return i.category; })))
                               .filter(function (c) { return c && String(c).trim() !== ''; });
       try { localStorage.setItem('pos_menu_cache', JSON.stringify({ ts: Date.now(), menu: rows })); } catch (e) {}
-      console.log('[pos-menu] fallback fetched', rows.length, 'items');
-    } else {
-      console.error('[pos-menu] fallback returned empty');
+      console.log('[pos-menu] fallback (' + source + ') fetched', rows.length, 'items');
+      return true;
     }
-    if (cb) cb();
+    return false;
+  };
+
+  console.warn('[pos-menu] state.menu empty — fallback step 1: /menu');
+  _posCallAPI('GET', '/menu', null, function (rows1) {
+    if (applyRows(rows1, '/menu')) { if (cb) cb(); return; }
+    console.warn('[pos-menu] /menu returned empty — fallback step 2: /menu/all');
+    _posCallAPI('GET', '/menu/all', null, function (rows2) {
+      if (!applyRows(rows2, '/menu/all')) {
+        console.error('[pos-menu] all fallback layers returned empty — DB likely has 0 menu rows');
+      }
+      if (cb) cb();
+    });
   });
 }
 

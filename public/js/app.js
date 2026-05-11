@@ -5699,6 +5699,8 @@ function loadInvCatalog() {
   var search = ((q('#invCatSearch') && q('#invCatSearch').value) || '').trim();
   var brandId = (q('#invCatBrandFilter') && q('#invCatBrandFilter').value) || '';
   var warehouseId = (q('#invCatWarehouseFilter') && q('#invCatWarehouseFilter').value) || '';
+  // v5.16.0 — kind filter ('raw' | 'semi' | '')
+  var kindFilter = (q('#invCatKindFilter') && q('#invCatKindFilter').value) || '';
   var tab = s.tab || 'active';
   var page = Math.max(1, Number(s.page) || 1);
   var pageSize = Math.max(1, Math.min(500, Number(s.pageSize) || 50));
@@ -5709,6 +5711,7 @@ function loadInvCatalog() {
   if (search)              qs.push('q=' + encodeURIComponent(search));
   if (brandId)             qs.push('brandId=' + encodeURIComponent(brandId));
   if (warehouseId)         qs.push('warehouseId=' + encodeURIComponent(warehouseId));
+  if (kindFilter)          qs.push('kind=' + encodeURIComponent(kindFilter));
   if (s.sortBy)            qs.push('sort=' + encodeURIComponent(s.sortBy));
   if (s.sortBy)            qs.push('order=' + (s.sortOrder === 'desc' ? 'desc' : 'asc'));
   var url = '/api/inventory/catalog?' + qs.join('&');
@@ -5718,6 +5721,7 @@ function loadInvCatalog() {
   if (search)              sumQs.push('q=' + encodeURIComponent(search));
   if (brandId)             sumQs.push('brandId=' + encodeURIComponent(brandId));
   if (warehouseId)         sumQs.push('warehouseId=' + encodeURIComponent(warehouseId));
+  if (kindFilter)          sumQs.push('kind=' + encodeURIComponent(kindFilter));
   var summaryUrl = '/api/inventory/catalog/summary' + (sumQs.length ? ('?' + sumQs.join('&')) : '');
 
   _invCatPopulateBrandFilter();
@@ -5903,10 +5907,16 @@ function _renderInvCatalogTable(items, tab) {
       '<button class="wo-icon-btn danger" onclick="invCatDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف (يذهب إلى السلة)"><i class="fas fa-trash"></i></button>' +
       '</div>';
 
-    return '<tr class="inv-row-enter' + rowSelClass + '" data-id="' + idEsc + '">' +
+    // v5.16.0 — Kind chip distinguishes raw materials from semi-finished
+    // products. Both share the same table and the same flows; only the
+    // chip + filter tell them apart visually.
+    var kindChip = (it.kind === 'semi')
+      ? '<span class="wo-chip" style="background:#fef3c7;color:#92400e;font-weight:700;font-size:10px;padding:2px 8px;border-radius:6px;margin-inline-start:6px;"><i class="fas fa-blender"></i> غير تامّ</span>'
+      : '<span class="wo-chip" style="background:#e0f2fe;color:#075985;font-weight:700;font-size:10px;padding:2px 8px;border-radius:6px;margin-inline-start:6px;"><i class="fas fa-seedling"></i> خام</span>';
+    return '<tr class="inv-row-enter' + rowSelClass + '" data-id="' + idEsc + '" data-kind="' + (it.kind === 'semi' ? 'semi' : 'raw') + '">' +
       '<td class="col-select"><input type="checkbox" class="inv-row-checkbox" data-id="' + idEsc + '" onchange="invCatToggleRow(\'' + idEsc + '\', this.checked)"' + checked + '></td>' +
       '<td><code>' + _invHubEsc(it.id) + '</code></td>' +
-      '<td style="font-weight:700;">' + nameHighlighted + stockPill + '</td>' +
+      '<td style="font-weight:700;">' + nameHighlighted + kindChip + stockPill + '</td>' +
       '<td>' + brandHtml + '</td>' +
       '<td>' + warehousesHtml + '</td>' +
       '<td><span class="wo-chip neutral flat">' + _invHubEsc(it.category) + '</span></td>' +
@@ -6400,7 +6410,7 @@ window.invCatalogSwitchTab = function(tab) {
 };
 
 window.invCatClearFilters = function() {
-  ['invCatSearch', 'invCatBrandFilter', 'invCatWarehouseFilter'].forEach(function(id){
+  ['invCatSearch', 'invCatBrandFilter', 'invCatWarehouseFilter', 'invCatKindFilter'].forEach(function(id){
     var el = q('#' + id); if (el) el.value = '';
   });
   var s = window._invCatState;
@@ -6410,6 +6420,33 @@ window.invCatClearFilters = function() {
   s.sortOrder = 'asc';
   s.selected = {};
   loadInvCatalog();
+};
+
+// v5.16.0 — Import legacy semi-finished menu items into inv_items so they
+// live in the unified inventory model alongside raw materials. The
+// backend route is safe to call multiple times — it skips items already
+// imported. Mirrors menu.stock to warehouse_stock at the menu's
+// production_warehouse_id so the items show up in the right warehouse
+// immediately.
+window.invCatImportSemis = function () {
+  if (!confirm('سيَتم نَسخ كل المُنتَجات غير التامَّة المُسَجَّلة في المنيو إلى جَدول مَواد المَخزون (الأَصلية تَبقى في المنيو لاتِّساق الأنظمة القَديمة). متابعة؟')) return;
+  loader(true);
+  fetch('/api/inventory/items/import-semi-from-menu', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + (localStorage.getItem('pos_token') || '')
+    },
+    body: JSON.stringify({})
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    loader(false);
+    if (!j.success) { showToast(j.error || 'فشل الاستيراد', true); return; }
+    showToast('تَم استيراد ' + (j.imported || 0) + ' صنفًا' + (j.skipped ? ' (' + j.skipped + ' كانوا مَوجودين مُسبَقًا)' : ''));
+    if (typeof loadInvCatalog === 'function') loadInvCatalog();
+  }).catch(function (e) {
+    loader(false);
+    showToast(e.message || 'فشل', true);
+  });
 };
 
 window.invCatDeleteItem = function(id, name) {
@@ -7256,16 +7293,19 @@ function openRawModal(id = null, opts = {}) {
     }
 
     if (!id) {
+      // v5.16.0 — Title reflects the selected kind (defaults to raw).
       q("#rMdlTitle").innerText = whName
-        ? "إضافة مادة خام جديدة لمستودع: " + whName
-        : "إضافة مادة خام جديدة";
+        ? "إضافة مادَّة جَديدة لِمستودَع: " + whName
+        : "إضافة مادَّة جَديدة";
       q("#mrId").value = ""; q("#mrName").value = ""; q("#mrCat").value = "";
       q("#mrCost").value = "0"; q("#mrBigUnit").value = ""; q("#mrUnit").value = "حبة"; q("#mrConvRate").value = "1";
       q("#mrMin").value = "0";
       if(q("#mrSmallCost")) q("#mrSmallCost").value = "0";
       if (q("#mrBrand")) q("#mrBrand").value = '';
+      // Default kind = raw unless caller overrides via opts.kind
+      if (q("#mrKind")) q("#mrKind").value = (opts && opts.kind === 'semi') ? 'semi' : 'raw';
     } else {
-      q("#rMdlTitle").innerText = "تعديل مادة خام";
+      q("#rMdlTitle").innerText = "تَعديل مادَّة";
       let d = cachedRawItems.find(x => x.id === id);
       if (!d) return;
       q("#mrId").value = d.id; q("#mrName").value = d.name; q("#mrCat").value = d.category;
@@ -7274,6 +7314,8 @@ function openRawModal(id = null, opts = {}) {
       q("#mrBigUnit").value = d.bigUnit || ""; q("#mrUnit").value = d.unit || "حبة"; q("#mrConvRate").value = d.convRate || 1;
       q("#mrMin").value = d.minStock;
       if (q("#mrBrand")) q("#mrBrand").value = d.brandId || d.brand_id || '';
+      // v5.16.0
+      if (q("#mrKind")) q("#mrKind").value = (d.kind === 'semi') ? 'semi' : 'raw';
     }
     calcSmallUnitCost();
     _mrUpdatePreview();
@@ -7333,6 +7375,8 @@ function saveRawItem() {
       cost: bigCostInput, unit: q("#mrUnit").value, bigUnit: q("#mrBigUnit").value,
       convRate: cRateInput, minStock: Number(q("#mrMin").value) || 0,
       qty: qtyRaw, qtyUnit: qtyUnit, addedAt: addedAt,
+      // v5.16.0 — kind selector ('raw' | 'semi')
+      kind: (q("#mrKind") && q("#mrKind").value === 'semi') ? 'semi' : 'raw',
       username: (window.currentUser && window.currentUser.username) || ''
     };
     fetch('/api/inventory/warehouses/' + encodeURIComponent(whId) + '/items', {
@@ -7368,7 +7412,9 @@ function saveRawItem() {
     id: q("#mrId").value, name: name, category: q("#mrCat").value,
     brandId: (q("#mrBrand") ? q("#mrBrand").value : '') || '',
     cost: costPerSmall, bigUnit: q("#mrBigUnit").value, unit: q("#mrUnit").value, convRate: q("#mrConvRate").value,
-    stock: 0, minStock: q("#mrMin").value, active: true
+    stock: 0, minStock: q("#mrMin").value, active: true,
+    // v5.16.0
+    kind: (q("#mrKind") && q("#mrKind").value === 'semi') ? 'semi' : 'raw'
   };
   api.withSuccessHandler(r => {
     loader(false);

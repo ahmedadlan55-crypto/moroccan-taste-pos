@@ -4099,6 +4099,16 @@ async function runMigrations() {
   // Per-item override for waste GL routing. NULL = use reason→account map.
   await addColumnIfMissing('inv_items', 'waste_gl_account_id', 'VARCHAR(50) NULL');
 
+  // v5.16.0 — Unify the inventory model. An inv_items row can now be
+  // either a raw material (default — bought from a supplier) or a
+  // semi-finished product (produced via a production order from a
+  // recipe). All inventory flows (warehouse_stock, stock_issues
+  // transfers, sales.js BOM consumption) work for both kinds; only
+  // the UI distinguishes them with a chip and a filter.
+  await addColumnIfMissing('inv_items', 'kind',
+    "ENUM('raw','semi') DEFAULT 'raw'");
+  try { await db.query('CREATE INDEX idx_inv_items_kind ON inv_items(kind)'); } catch(e) { /* index exists */ }
+
   // Projects catalog — first-class accounting dimension.
   await createTableIfMissing('projects', `
     CREATE TABLE projects (

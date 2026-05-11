@@ -744,6 +744,8 @@ router.get('/items', async (req, res) => {
       const [rows] = await db.query(sql, params);
       return res.json(rows.map(i => ({
         id: i.id, name: i.name, category: i.category,
+        // v5.16.0 — 'raw' (default) or 'semi' for semi-finished products.
+        kind: i.kind || 'raw',
         cost: Number(i.cost),
         stock: Number(i.wh_stock) || 0,
         globalStock: Number(i.stock) || 0,
@@ -789,6 +791,7 @@ router.get('/items', async (req, res) => {
       const [rows] = await db.query(sql, params);
       return res.json(rows.map(i => ({
         id: i.id, name: i.name, category: i.category,
+        kind: i.kind || 'raw',  // v5.16.0
         cost: Number(i.cost),
         stock: Number(i.wh_stock) || 0,
         globalStock: Number(i.stock) || 0,
@@ -810,6 +813,7 @@ router.get('/items', async (req, res) => {
     const [rows] = await db.query(sql, params);
     res.json(rows.map(i => ({
       id: i.id, name: i.name, category: i.category,
+      kind: i.kind || 'raw',  // v5.16.0
       cost: Number(i.cost), stock: Number(i.stock), minStock: Number(i.min_stock),
       unit: i.unit, bigUnit: i.big_unit, convRate: Number(i.conv_rate), active: i.active,
       brandId: i.brand_id || '', brand_id: i.brand_id || '', brandName: i.brand_name || ''
@@ -854,11 +858,75 @@ router.get('/items/:itemId/warehouses', async (req, res) => {
 //   • Validates numeric ranges (cost>=0, convRate>0, minStock>=0).
 //   • Rejects duplicate (name, brand_id) pairs with 409 Conflict.
 //   • Writes an audit_log row for every successful insert/update.
+// v5.16.0 — One-shot migration: copy every semi-finished menu item into
+// inv_items with kind='semi'. Mirrors current menu.stock to warehouse_stock
+// at the menu item's production_warehouse_id (if set). Safe to call
+// multiple times — existing inv_items rows with the generated id are
+// skipped. Lets the admin pull legacy semis into the unified inventory
+// model without re-creating them by hand.
+router.post('/items/import-semi-from-menu', async (req, res) => {
+  try {
+    const [semis] = await db.query(`
+      SELECT id, name, category, cost, stock, brand_id,
+             production_unit, production_warehouse_id, min_stock_alert
+      FROM menu
+      WHERE is_semi_finished = 1 AND COALESCE(active, 1) = 1
+    `);
+    let imported = 0, skipped = 0;
+    for (const s of semis) {
+      const baseId = String(s.id || '').replace(/^MENU-?/i, '');
+      const invId = 'INV-SEMI-' + baseId;
+      const [exists] = await db.query('SELECT id FROM inv_items WHERE id = ?', [invId]);
+      if (exists.length) { skipped++; continue; }
+      await db.query(`
+        INSERT INTO inv_items
+          (id, name, kind, category, cost, stock, min_stock, unit, brand_id, active)
+        VALUES (?, ?, 'semi', ?, ?, ?, ?, ?, ?, 1)
+      `, [
+        invId,
+        s.name,
+        s.category || 'غير تامّ',
+        Number(s.cost) || 0,
+        Number(s.stock) || 0,
+        Number(s.min_stock_alert) || 0,
+        s.production_unit || 'pcs',
+        s.brand_id || null
+      ]);
+      // Mirror current global stock into warehouse_stock at the menu's
+      // production warehouse so the item shows up in the correct place
+      // immediately. If no production_warehouse_id is set, the item
+      // appears in inv_items but stock stays at 0 per warehouse — admin
+      // can transfer it in later via stock-issues.
+      if (s.production_warehouse_id && Number(s.stock) > 0) {
+        const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+        const nowIso = new Date().toISOString().slice(0, 19).replace('T', ' ');
+        const today  = nowIso.slice(0, 10);
+        try {
+          await db.query(`
+            INSERT INTO warehouse_stock
+              (id, warehouse_id, item_id, qty, added_at, first_added_date, added_by, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE qty = VALUES(qty), last_updated = VALUES(last_updated)
+          `, [wsId, s.production_warehouse_id, invId, Number(s.stock),
+              nowIso, today, (req.user && req.user.username) || 'system', nowIso]);
+        } catch (e) { /* warehouse_stock row may already exist with a different id */ }
+      }
+      imported++;
+    }
+    res.json({ success: true, imported, skipped });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 router.post('/items', async (req, res) => {
   try {
     const b = req.body || {};
-    const { id, name, category, cost, stock, minStock, unit, bigUnit, convRate, active, brandId, warehouseId } = b;
+    const { id, name, category, cost, stock, minStock, unit, bigUnit, convRate, active, brandId, warehouseId, kind } = b;
     const isUpdate = !!id;
+    // v5.16.0 — whitelist the kind value. 'raw' is the default for new
+    // items so existing flows continue to work unchanged.
+    const safeKind = (kind === 'semi') ? 'semi' : 'raw';
 
     const v = _validateItemPayload(b, { update: isUpdate });
     if (v) return res.status(v.status).json({ success: false, error: v.error });
@@ -876,7 +944,7 @@ router.post('/items', async (req, res) => {
       }
 
       await db.query(
-        `UPDATE inv_items SET name=?, category=?, cost=?, stock=?, min_stock=?, unit=?, big_unit=?, conv_rate=?, active=?, brand_id=? WHERE id=?`,
+        `UPDATE inv_items SET name=?, category=?, cost=?, stock=?, min_stock=?, unit=?, big_unit=?, conv_rate=?, active=?, brand_id=?, kind=? WHERE id=?`,
         [name != null ? name : before.name,
          category !== undefined ? (category || '') : before.category,
          cost !== undefined ? Number(cost) : Number(before.cost),
@@ -887,6 +955,7 @@ router.post('/items', async (req, res) => {
          convRate !== undefined ? Number(convRate) : Number(before.conv_rate),
          active !== undefined ? active !== false : !!before.active,
          brandIdVal !== null ? brandIdVal : before.brand_id,
+         kind !== undefined ? safeKind : (before.kind || 'raw'),
          id]
       );
       const after = await _fetchItemSnapshot(null, id);
@@ -915,9 +984,9 @@ router.post('/items', async (req, res) => {
     try {
       await db.withTransaction(async (conn) => {
         await conn.query(
-          `INSERT INTO inv_items (id, name, category, cost, stock, min_stock, unit, big_unit, conv_rate, active, brand_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO inv_items (id, name, category, cost, stock, min_stock, unit, big_unit, conv_rate, active, brand_id, kind) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
           [newId, String(name).trim(), category || '', Number(cost) || 0, Number(stock) || 0, Number(minStock) || 0,
-           unit || 'حبة', bigUnit || null, Number(convRate) || 1, active !== false, effectiveBrand]
+           unit || 'حبة', bigUnit || null, Number(convRate) || 1, active !== false, effectiveBrand, safeKind]
         );
         // Stock row at qty=0 so the item is visible in the warehouse view.
         const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
@@ -928,7 +997,7 @@ router.post('/items', async (req, res) => {
            VALUES (?,?,?,?,?,?,?,?)`,
           [wsId, warehouseId, newId, 0, nowIso, today, (req.user && req.user.username) || b.username || 'system', nowIso]
         );
-        await _audit(conn, req, 'inv_item.create', newId, null, { id: newId, name, brandId: effectiveBrand, warehouseId });
+        await _audit(conn, req, 'inv_item.create', newId, null, { id: newId, name, brandId: effectiveBrand, warehouseId, kind: safeKind });
       });
     } catch (txErr) {
       // Fallback: best-effort sequential if the transaction helper failed
@@ -1395,7 +1464,7 @@ router.post('/items/bulk-restore', async (req, res) => {
 //   Otherwise → returns array (back-compat for older clients).
 router.get('/catalog', async (req, res) => {
   try {
-    const { onlyDeleted, brandId, warehouseId, q, paginated } = req.query;
+    const { onlyDeleted, brandId, warehouseId, q, paginated, kind } = req.query;
     const SORT_WHITELIST = {
       id:         'i.id',
       name:       'i.name',
@@ -1429,6 +1498,11 @@ router.get('/catalog', async (req, res) => {
       where.push('(i.name LIKE ? OR i.id LIKE ? OR i.category LIKE ?)');
       params.push('%'+q+'%', '%'+q+'%', '%'+q+'%');
     }
+    // v5.16.0 — filter by kind (raw / semi)
+    if (kind === 'raw' || kind === 'semi') {
+      where.push('COALESCE(i.kind, \'raw\') = ?');
+      params.push(kind);
+    }
     const whereSql = 'WHERE ' + where.join(' AND ');
 
     const orderSql = sortKey
@@ -1438,7 +1512,8 @@ router.get('/catalog', async (req, res) => {
     const baseSelect =
       'SELECT i.id, i.name, i.category, i.brand_id, b.name AS brand_name, ' +
       '       i.unit, i.big_unit, i.conv_rate, i.cost, i.min_stock, ' +
-      '       i.stock AS global_stock, i.active, i.created_at, i.deleted_at ' +
+      '       i.stock AS global_stock, i.active, i.created_at, i.deleted_at, ' +
+      '       COALESCE(i.kind, \'raw\') AS kind ' +  // v5.16.0
       'FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id ';
 
     const wantsPaginated = paginated === '1' || req.query.limit != null || req.query.offset != null;
@@ -1475,6 +1550,7 @@ router.get('/catalog', async (req, res) => {
 function _mapCatalogRow(i) {
   return {
     id: i.id, name: i.name, category: i.category || '',
+    kind: i.kind || 'raw',  // v5.16.0 — 'raw' or 'semi'
     brandId: i.brand_id || '', brandName: i.brand_name || '',
     unit: i.unit || '', bigUnit: i.big_unit || '',
     convRate: Number(i.conv_rate) || 1, cost: Number(i.cost) || 0,

@@ -857,7 +857,10 @@
               <p class="wo-header-sub">التعريف العام للمواد — السجل الرئيسي للأصناف المستقل عن المستودعات والفروع.</p>
             </div>
             <div class="wo-header-actions">
-              <button class="wo-btn wo-btn-primary" onclick="openRawModal()"><i class="fas fa-plus"></i><span>إضافة مادة</span></button>
+              <!-- v5.16.0 — Import legacy semi-finished products from menu.is_semi_finished
+                   into inv_items so they live in the unified inventory model. -->
+              <button class="wo-btn wo-btn-secondary" onclick="invCatImportSemis()" title="انسَخ المُنتَجات غير التامَّة المُسَجَّلة في المنيو إلى مَواد المَخزون"><i class="fas fa-file-import"></i><span>استيراد غير التامَّة</span></button>
+              <button class="wo-btn wo-btn-primary" onclick="openRawModal()"><i class="fas fa-plus"></i><span>إضافة مادَّة</span></button>
             </div>
           </header>
 
@@ -889,6 +892,15 @@
               <label class="wo-field-label"><i class="fas fa-warehouse"></i> المستودع</label>
               <select id="invCatWarehouseFilter" class="wo-select" onchange="invCatOnFilterChange()">
                 <option value="">🏢 كل المستودعات</option>
+              </select>
+            </div>
+            <!-- v5.16.0 — Kind filter (raw / semi-finished). -->
+            <div class="wo-field">
+              <label class="wo-field-label"><i class="fas fa-shapes"></i> النَوع</label>
+              <select id="invCatKindFilter" class="wo-select" onchange="invCatOnFilterChange()">
+                <option value="">الكُل</option>
+                <option value="raw">🧂 خام فقط</option>
+                <option value="semi">🥣 غير تامّ فقط</option>
               </select>
             </div>
             <div class="wo-field" style="align-self: flex-end;">
@@ -5948,6 +5960,21 @@
         <small class="inv-field-error" id="err_mrWarehouseId">يجب اختيار المستودع المستلم.</small>
         <small style="color:#155e75;font-size:11px;margin-top:4px;display:block;">
           <i class="fas fa-info-circle"></i> اختيار المستودع إجباري. ستُسجّل المادة في هذا المستودع فقط، ولن تظهر في باقي المستودعات إلا بعد تحويلها.
+        </small>
+      </div>
+
+      <!-- v5.16.0 — Kind selector. An inventory item is either a raw
+           material bought from a supplier, or a semi-finished product
+           output by a production order. Both share the same flows
+           (warehouse_stock, transfers, BOM consumption). -->
+      <div class="form-group" style="background:linear-gradient(135deg,#fef3c7,#fef9c3);padding:12px 14px;border-radius:10px;border:1.5px solid #fde68a;margin-bottom:12px;">
+        <label class="form-label" style="color:#92400e;font-weight:800;"><i class="fas fa-shapes"></i> نَوع المادَّة <span style="color:#dc2626;">*</span></label>
+        <select id="mrKind" class="form-control" onchange="_invModalKindHint()">
+          <option value="raw">🧂 مادَّة خام — تُشتَرى من المُورِّد وتَدخُل بِأمر شِراء</option>
+          <option value="semi">🥣 مُنتَج غير تامّ — يُنتَج من وَصفة ويَدخُل بِأمر إنتاج</option>
+        </select>
+        <small id="mrKindHint" style="color:#92400e;font-size:11px;margin-top:4px;display:block;">
+          <i class="fas fa-info-circle"></i> المَواد الخام تُشتَرى. المُنتَجات غير التامَّة (مِثل "أساس قهوة بارِدة") تُنتَج من وَصفة وتُخصَم عند بَيع المنتجات التامَّة المُعتَمِدة عليها.
         </small>
       </div>
 

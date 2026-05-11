@@ -807,23 +807,31 @@
  *   unreliable on some browsers + behind some parent direction
  *   contexts (the user reported the icon appearing on the LEFT in
  *   RTL — wrong side, wrong size). */
+/* v5.10.48 — ONE search icon, on the inline-end (trailing) side.
+ *
+ * User reported two overlapping magnifying-glass icons on search
+ * fields ("شيل علامة البحث الأمامية، الخلفية بس اللي سيبها أنت").
+ * The duplicates came from:
+ *   (a) the legacy <i class="fas fa-search"> element inside .wh-fb-search
+ *   (b) the legacy <i> inside .wo-field-label "🔍 بحث" labels
+ *   (c) the v5.10.44 background-image rule on .wo-toolbar inputs
+ *
+ * Fix: hide every <i>-based icon (a and b). Use a single background-
+ * image on the input itself, anchored to the inline-end side via
+ * dir-specific positioning. Result: one icon, always at the trailing
+ * edge of the field (LEFT in RTL, RIGHT in LTR).
+ */
 .wo-section .wh-fb-search {
   position: relative;
   flex: 1 1 200px;
   min-width: 180px;
   max-width: 280px;
 }
-.wo-section .wh-fb-search i {
-  position: absolute !important;
-  top: 50% !important;
-  transform: translateY(-50%) !important;
-  color: var(--ent-text-mute2);
-  z-index: 1;
-  pointer-events: none;
-  font-size: 14px;
-  /* Default position (LTR fallback) */
-  left: 14px;
-  right: auto;
+/* Hide the legacy <i> element — the icon comes from background-image now */
+.wo-section .wh-fb-search > i,
+.wo-section .wh-fb-search i.fa-search,
+.wo-section .wh-fb-search i.fa-magnifying-glass {
+  display: none !important;
 }
 .wo-section .wh-fb-search input.form-control {
   width: 100%;
@@ -831,10 +839,13 @@
   font-size: 13px;
   border: 1.5px solid var(--ent-border);
   border-radius: 10px;
-  background: var(--ent-surface);
-  /* Default padding (LTR fallback) */
-  padding-left: 38px;
-  padding-right: 12px;
+  background-color: var(--ent-surface);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/></svg>");
+  background-repeat: no-repeat;
+  /* Defaults are for LTR; RTL block below overrides */
+  background-position: right 12px center;
+  padding-right: 34px;
+  padding-left: 12px;
   font-family: inherit;
   box-sizing: border-box;
   transition: border-color .15s var(--ent-ease), box-shadow .15s var(--ent-ease);
@@ -851,28 +862,20 @@
   opacity: 1;            /* Firefox sets opacity .54 by default */
 }
 
-/* RTL — icon on the right side (the natural start of the field) */
-html[dir="rtl"] .wo-section .wh-fb-search i,
-[dir="rtl"] .wo-section .wh-fb-search i {
-  right: 14px !important;
-  left: auto !important;
-}
+/* RTL — icon on the LEFT (inline-end / trailing edge of the field) */
 html[dir="rtl"] .wo-section .wh-fb-search input.form-control,
 [dir="rtl"] .wo-section .wh-fb-search input.form-control {
-  padding-right: 38px !important;
-  padding-left: 12px !important;
+  background-position: left 12px center !important;
+  padding-left: 34px !important;
+  padding-right: 12px !important;
 }
 
-/* LTR — icon on the left side */
-html[dir="ltr"] .wo-section .wh-fb-search i,
-[dir="ltr"] .wo-section .wh-fb-search i {
-  left: 14px !important;
-  right: auto !important;
-}
+/* LTR — icon on the RIGHT (inline-end / trailing edge of the field) */
 html[dir="ltr"] .wo-section .wh-fb-search input.form-control,
 [dir="ltr"] .wo-section .wh-fb-search input.form-control {
-  padding-left: 38px !important;
-  padding-right: 12px !important;
+  background-position: right 12px center !important;
+  padding-right: 34px !important;
+  padding-left: 12px !important;
 }
 .wo-section .wh-fb-select:focus,
 .wo-section .wh-filter-bar input:focus {
@@ -1091,10 +1094,24 @@ html[dir="ltr"] .wo-section .wh-fb-search input.form-control,
   width: 100%;
   transition: border-color .15s var(--ent-ease), box-shadow .15s var(--ent-ease);
 }
-/* v5.10.44 — search-icon is OPT-IN: only attach to inputs whose id ends
-   with "Search"/"search"/"SearchQ" (matches expSearch, weSearch, etc.) or
-   that carry a search-related class. Was previously first-child which
-   wrongly applied to status/date fields. */
+/* v5.10.48 — duplicate-icon fix.
+ *
+ * Step 1: Hide the legacy decorative <i class="fa-search"> sitting
+ *         inside .wo-field-label "🔍 بحث" markup. The duplicate
+ *         icon caused visual overlap with the input's background
+ *         icon (next rule). Label text "بحث" stays — only the
+ *         icon glyph disappears.
+ *
+ * Step 2: Anchor the single search icon to the INLINE-END (trailing)
+ *         side of the input via dir-specific background-position.
+ *         RTL → LEFT, LTR → RIGHT. v5.10.44's `12px center` was
+ *         direction-agnostic and produced inconsistent positioning.
+ */
+.wo-section .wo-toolbar .wo-field-label > i.fa-search,
+.wo-section .wo-toolbar .wo-field-label > i.fa-magnifying-glass,
+.wo-section .wo-toolbar .wo-field-label > i.fa-magnifying-glass-plus {
+  display: none !important;
+}
 .wo-section .wo-toolbar input[id$="Search"],
 .wo-section .wo-toolbar input[id$="SearchQ"],
 .wo-section .wo-toolbar input[id$="search"],
@@ -1102,10 +1119,31 @@ html[dir="ltr"] .wo-section .wh-fb-search input.form-control,
 .wo-section .wo-toolbar input[type="search"],
 .wo-section .wo-toolbar input.wo-search,
 .wo-section .wo-toolbar input.ent-search {
-  padding-inline-start: 34px;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'></circle><path d='m21 21-4.3-4.3'></path></svg>");
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/></svg>");
   background-repeat: no-repeat;
-  background-position: 12px center;
+  /* LTR default */
+  background-position: right 12px center;
+  padding-right: 34px;
+  padding-left: 12px;
+}
+/* RTL — search icon on the LEFT (inline-end / trailing) */
+html[dir="rtl"] .wo-section .wo-toolbar input[id$="Search"],
+html[dir="rtl"] .wo-section .wo-toolbar input[id$="SearchQ"],
+html[dir="rtl"] .wo-section .wo-toolbar input[id$="search"],
+html[dir="rtl"] .wo-section .wo-toolbar input[id$="searchQ"],
+html[dir="rtl"] .wo-section .wo-toolbar input[type="search"],
+html[dir="rtl"] .wo-section .wo-toolbar input.wo-search,
+html[dir="rtl"] .wo-section .wo-toolbar input.ent-search,
+[dir="rtl"] .wo-section .wo-toolbar input[id$="Search"],
+[dir="rtl"] .wo-section .wo-toolbar input[id$="SearchQ"],
+[dir="rtl"] .wo-section .wo-toolbar input[id$="search"],
+[dir="rtl"] .wo-section .wo-toolbar input[id$="searchQ"],
+[dir="rtl"] .wo-section .wo-toolbar input[type="search"],
+[dir="rtl"] .wo-section .wo-toolbar input.wo-search,
+[dir="rtl"] .wo-section .wo-toolbar input.ent-search {
+  background-position: left 12px center !important;
+  padding-left: 34px !important;
+  padding-right: 12px !important;
 }
 /* Search fields prefer to grow */
 .wo-section .wo-toolbar .wo-field:has(input[id$="Search"]),

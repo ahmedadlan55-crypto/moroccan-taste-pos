@@ -33,11 +33,15 @@
     ['MODE','LANG','SPACE','RETURN']
   ];
 
-  // Numbers / symbols (single panel — toggled by 123 / ABC)
+  // v5.14.8 — Numbers as a phone-pad. Three big columns for fast number
+  // entry just like an iPhone / iPad dialer. The bottom nav row keeps
+  // mode / lang / space / return reachable so the cashier can leave
+  // numeric mode without hunting for keys.
   var LAYOUT_NUM = [
-    ['1','2','3','4','5','6','7','8','9','0'],
-    ['-','/',':',';','(',')','$','&','@','"'],
-    ['SYM','.',',','?','!',"'",'BACK'],
+    ['1','2','3'],
+    ['4','5','6'],
+    ['7','8','9'],
+    ['.','0','BACK'],
     ['MODE','LANG','SPACE','RETURN']
   ];
 
@@ -188,6 +192,11 @@
       state.mode === 'numbers' ? LAYOUT_NUM :
       state.lang === 'ar'      ? (isPhone ? LAYOUT_AR_PHONE : LAYOUT_AR) :
                                  (isPhone ? LAYOUT_EN_PHONE : LAYOUT_EN);
+
+    // v5.14.8 — Mark the keyboard root with the current mode so CSS
+    // can grow the numpad keys (iPad / iPhone phone-dialer style)
+    // without touching every other layout.
+    root.classList.toggle('vk-mode-numbers', state.mode === 'numbers');
 
     layout.forEach(function (rowDef) {
       var row = document.createElement('div');
@@ -356,6 +365,10 @@
     state.target = input;
     state.el.classList.add('vk-open');
     document.body.classList.add('vk-active');
+    // v5.14.8 — sync the dedicated FAB so the cashier sees an "active"
+    // state on the trigger button while the keyboard is open.
+    var fab = document.getElementById('vkToggleBtn');
+    if (fab) fab.classList.add('is-open');
     setTimeout(function () {
       try { input.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
     }, 200);
@@ -365,12 +378,12 @@
     if (!state.el) return;
     state.el.classList.remove('vk-open');
     document.body.classList.remove('vk-active');
-    // v5.12.8 — blur the bound input so a subsequent tap on the SAME
-    // input fires a fresh focus event. Without this, the next click
-    // hits an already-focused input and `focus` never re-fires, so the
-    // keyboard never reopens.
-    if (state.target) { try { state.target.blur(); } catch (e) {} }
-    state.target = null;
+    var fab = document.getElementById('vkToggleBtn');
+    if (fab) fab.classList.remove('is-open');
+    // v5.14.8 — no longer blur the bound input on hide. With the new
+    // dedicated FAB trigger, reopening the keyboard is one explicit
+    // press regardless of focus state, so we no longer need the
+    // v5.12.8 blur workaround that existed for the focus-auto-open era.
     if (state.backHold) {
       clearTimeout(state.backHold);
       clearInterval(state.backHold);
@@ -378,18 +391,40 @@
     }
   }
 
+  // v5.14.8 — Public toggle for the dedicated #vkToggleBtn FAB. Pick
+  // the target in this order: (a) the previously-focused data-vk input,
+  // (b) document.activeElement if it's a data-vk input, (c) the first
+  // visible data-vk input on the page. If nothing matches, do nothing.
+  window.vkToggle = function () {
+    var root = state.el;
+    if (root && root.classList.contains('vk-open')) {
+      hide();
+      return;
+    }
+    var target = state.target;
+    if (!target || !document.body.contains(target)) {
+      var ae = document.activeElement;
+      if (ae && ae.matches && ae.matches('input[data-vk="1"],textarea[data-vk="1"]')) {
+        target = ae;
+      } else {
+        target = document.querySelector('input[data-vk="1"]:not([disabled]),textarea[data-vk="1"]:not([disabled])');
+      }
+    }
+    if (target) {
+      try { target.focus(); } catch (e) {}
+      show(target);
+    }
+  };
+
   // ─── Input binding ────────────────────────────────────────────────
   function bindInput(el) {
     if (!el || el._vkBound) return;
     el._vkBound = true;
-    // v5.12.8 — open on BOTH focus AND click. Click captures the case
-    // where the input still has focus from a prior session (after the
-    // user dismissed the keyboard with ✕): focus event won't refire,
-    // but click always does. pointerdown covers stylus/pen input.
-    var open = function () { show(el); };
-    el.addEventListener('focus', open);
-    el.addEventListener('click', open);
-    el.addEventListener('pointerdown', open);
+    // v5.14.8 — Keyboard no longer auto-opens on input focus. The
+    // cashier opens it explicitly via the floating #vkToggleBtn FAB.
+    // We still track the focused input so the toggle button knows
+    // which field to type into when pressed.
+    el.addEventListener('focus', function () { state.target = el; });
   }
 
   function scanAndBind(root) {

@@ -205,3 +205,61 @@ body.vk-active.vk-active { padding-bottom: 280px; }
 .no-print-on-kiosk {
   display: none !important;
 }
+
+/* v5.14.8 — Dedicated keyboard toggle FAB. Sits above .float-actions
+ * (which lives at bottom-right). Round, slate-on-surface, 52px on
+ * tablet / 44px on phone. When the keyboard is open, the button gets
+ * a purple "active" state so the cashier can find the close action. */
+.vk-toggle-fab {
+  position: fixed;
+  inset: auto 16px calc(100px + env(safe-area-inset-bottom, 0)) auto;
+  width: 52px; height: 52px;
+  border-radius: 50%;
+  border: 0;
+  background: linear-gradient(135deg, var(--mt-primary, #1e293b), var(--mt-primary-2, #0f172a));
+  color: #fff;
+  font-size: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.30);
+  cursor: pointer;
+  z-index: 9998;  /* below #vkKeyboard (9999) but above .float-actions (100) */
+  transition: transform 120ms, background 120ms;
+}
+.vk-toggle-fab:hover  { transform: translateY(-2px); }
+.vk-toggle-fab:active { transform: translateY(0); }
+.vk-toggle-fab.is-open {
+  background: linear-gradient(135deg, var(--mt-accent, #7c3aed), var(--mt-accent-2, #6d28d9));
+}
+@media (max-width: 640px) {
+  .vk-toggle-fab {
+    width: 44px; height: 44px; font-size: 18px;
+    inset: auto 12px calc(140px + env(safe-area-inset-bottom, 0)) auto;
+  }
+}
+
+/* v5.14.8 — When the keyboard is in numpad mode, make the keys big
+ * and finger-friendly like an iPad / iPhone dialer. The 3-column
+ * rows naturally widen each key; we just bump the row height and
+ * font size so it feels like a dedicated calculator. */
+#vkKeyboard.vk-mode-numbers .vk-row {
+  min-height: 64px;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+#vkKeyboard.vk-mode-numbers .vk-key {
+  min-height: 60px;
+  font-size: 28px;
+  font-weight: 800;
+  font-family: var(--mt-font-mono, ui-monospace, "SFMono-Regular", monospace);
+}
+/* Bottom nav row (MODE / LANG / SPACE / RETURN) stays compact */
+#vkKeyboard.vk-mode-numbers .vk-row:last-child .vk-key {
+  min-height: 48px;
+  font-size: 14px;
+  font-family: var(--mt-font, -apple-system, "Segoe UI", sans-serif);
+  font-weight: 700;
+}
+@media (max-width: 640px) {
+  #vkKeyboard.vk-mode-numbers .vk-key { min-height: 52px; font-size: 24px; }
+  #vkKeyboard.vk-mode-numbers .vk-row:last-child .vk-key { min-height: 42px; font-size: 13px; }
+}

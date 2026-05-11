@@ -269,47 +269,71 @@ window.renderMenuGrid = function() {
     var chItemsCount = (state.channelMenuItems || []).length;
     var brandId = state.brandId || '';
 
-    // Pick the right narrative based on which condition is failing.
-    var reason, action;
-    if (channelEmpty) {
-      reason =
-        'القَناة <b style="color:#1e293b;">' + chName + '</b> ليس لها أي صَنف مُعَدّ.<br>' +
-        'إعدادات القَنوات تَعمَل بِشَكل صَارِم — لا fallback تِلقائي.';
-      action =
-        (chId
-          ? '<button onclick="posQuickPopulateChannel(\'' + chId + '\')" style="padding:12px 24px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;box-shadow:0 4px 14px rgba(124,58,237,0.3);"><i class="fas fa-magic"></i> انسَخ أصناف المنيو الرَئيسي إلى هذه القَناة</button> '
-          : '') +
-        '<button onclick="posJumpToMain()" style="padding:12px 24px;background:#fff;color:#1e293b;border:2px solid #1e293b;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;margin-inline-start:8px;"><i class="fas fa-home"></i> ارجِع للقَناة الرَئيسية (MAIN)</button>';
-    } else if (!menuCount) {
-      reason =
-        'المنيو الرَئيسي فارِغ — لا أصناف مُسَجَّلة لِبراندك.<br>' +
-        '<span style="font-size:12px;">brand_id: <code>' + (brandId || '—') + '</code></span>';
-      action = '<div style="font-size:13px;color:#1e293b;background:#fef3c7;padding:10px 14px;border-radius:8px;display:inline-block;line-height:1.7;">' +
-        'من admin: <b>إدارة المنيو</b> → <b>البراند الخاص بك</b> → <b>أضف منتجات</b>' +
+    // v5.10.33 — Role check up front. Cashier-role users see a clean,
+    // generic message — no technical chips, no admin actions, no
+    // "Copy from MAIN" buttons. The yellow banner above (rendered by
+    // _posRenderChannelEmptyState) already covers the same ground for
+    // admins; if we're an admin in a non-channel-empty path, fall back
+    // to the legacy diagnostic UI. The technical "channel=... menu=..."
+    // chip is now gated behind state.isDeveloper or
+    // localStorage.pos_is_developer === '1'.
+    var _isAdmin   = (typeof isAdmin === 'function') ? isAdmin() : false;
+    var _isDev     = !!(state && state.isDeveloper) || (localStorage.getItem('pos_is_developer') === '1');
+
+    if (!_isAdmin) {
+      // Cashier path: just the icon + one neutral line. No buttons.
+      h = '<div style="grid-column:1/-1;text-align:center;padding:40px 20px;">' +
+        '<i class="fas fa-store-slash" style="font-size:64px;margin-bottom:16px;display:block;color:#cbd5e1;"></i>' +
+        '<div style="font-weight:700;font-size:15px;color:#64748b;">لا توجد أصناف في هذه الشاشة حالياً. تَواصَل مَع الإدارة لِتَكوينها.</div>' +
       '</div>';
     } else {
-      reason = (state.activeCat
-        ? 'لا أصناف في فِئة "<b>' + state.activeCat + '</b>" ضِمن نِطاق البَحث الحالي.'
-        : 'لا أصناف تُطابِق البَحث.');
-      action = state.activeCat
-        ? '<button onclick="posBackToCategories()" style="padding:10px 20px;background:#7c3aed;color:#fff;border:0;border-radius:8px;font-weight:700;cursor:pointer;"><i class="fas fa-arrow-right"></i> ارجِع للفِئات</button>'
+      // Pick the right narrative based on which condition is failing.
+      var reason, action;
+      if (channelEmpty) {
+        reason =
+          'القَناة <b style="color:#1e293b;">' + chName + '</b> ليس لها أي صَنف مُعَدّ.<br>' +
+          'إعدادات القَنوات تَعمَل بِشَكل صَارِم — لا fallback تِلقائي.';
+        action =
+          (chId
+            ? '<button onclick="posQuickPopulateChannel(\'' + chId + '\')" style="padding:12px 24px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;box-shadow:0 4px 14px rgba(124,58,237,0.3);"><i class="fas fa-magic"></i> انسَخ أصناف المنيو الرَئيسي إلى هذه القَناة</button> '
+            : '') +
+          '<button onclick="posJumpToMain()" style="padding:12px 24px;background:#fff;color:#1e293b;border:2px solid #1e293b;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;margin-inline-start:8px;"><i class="fas fa-home"></i> ارجِع للقَناة الرَئيسية (MAIN)</button>';
+      } else if (!menuCount) {
+        reason =
+          'المنيو الرَئيسي فارِغ — لا أصناف مُسَجَّلة لِبراندك.<br>' +
+          '<span style="font-size:12px;">brand_id: <code>' + (brandId || '—') + '</code></span>';
+        action = '<div style="font-size:13px;color:#1e293b;background:#fef3c7;padding:10px 14px;border-radius:8px;display:inline-block;line-height:1.7;">' +
+          'من admin: <b>إدارة المنيو</b> → <b>البراند الخاص بك</b> → <b>أضف منتجات</b>' +
+        '</div>';
+      } else {
+        reason = (state.activeCat
+          ? 'لا أصناف في فِئة "<b>' + state.activeCat + '</b>" ضِمن نِطاق البَحث الحالي.'
+          : 'لا أصناف تُطابِق البَحث.');
+        action = state.activeCat
+          ? '<button onclick="posBackToCategories()" style="padding:10px 20px;background:#7c3aed;color:#fff;border:0;border-radius:8px;font-weight:700;cursor:pointer;"><i class="fas fa-arrow-right"></i> ارجِع للفِئات</button>'
+          : '';
+      }
+
+      // v5.10.33 — technical chip is developer-only. Hidden from admins,
+      // managers, AND cashiers in normal operation. Set
+      // localStorage.pos_is_developer = '1' to surface it.
+      var debugChip = _isDev
+        ? ('<div style="margin-top:18px;padding:8px 14px;background:#f1f5f9;border-radius:6px;font-size:11px;color:#475569;font-family:ui-monospace,SFMono-Regular,monospace;text-align:left;direction:ltr;display:inline-block;">' +
+            'channel=' + (chCode || '—') + ' · useFullMenu=' + (isMain ? 'true' : 'false') +
+            ' · menu=' + menuCount +
+            ' · chItems=' + chItemsCount +
+            ' · cat=' + (state.activeCat || '*') +
+          '</div>')
         : '';
+
+      h = '<div style="grid-column:1/-1;text-align:center;padding:40px 20px;">' +
+        '<i class="fas fa-store-slash" style="font-size:64px;margin-bottom:16px;display:block;color:#7c3aed;opacity:0.5;"></i>' +
+        '<div style="font-weight:900;font-size:20px;color:#0f172a;margin-bottom:8px;">المنيو غير ظاهِر</div>' +
+        '<div style="font-size:14px;color:#475569;max-width:480px;line-height:1.8;margin:0 auto 18px;">' + reason + '</div>' +
+        '<div>' + action + '</div>' +
+        debugChip +
+      '</div>';
     }
-
-    var debugChip = '<div style="margin-top:18px;padding:8px 14px;background:#f1f5f9;border-radius:6px;font-size:11px;color:#475569;font-family:ui-monospace,SFMono-Regular,monospace;text-align:left;direction:ltr;display:inline-block;">' +
-      'channel=' + (chCode || '—') + ' · useFullMenu=' + (isMain ? 'true' : 'false') +
-      ' · menu=' + menuCount +
-      ' · chItems=' + chItemsCount +
-      ' · cat=' + (state.activeCat || '*') +
-    '</div>';
-
-    h = '<div style="grid-column:1/-1;text-align:center;padding:40px 20px;">' +
-      '<i class="fas fa-store-slash" style="font-size:64px;margin-bottom:16px;display:block;color:#7c3aed;opacity:0.5;"></i>' +
-      '<div style="font-weight:900;font-size:20px;color:#0f172a;margin-bottom:8px;">المنيو غير ظاهِر</div>' +
-      '<div style="font-size:14px;color:#475569;max-width:480px;line-height:1.8;margin:0 auto 18px;">' + reason + '</div>' +
-      '<div>' + action + '</div>' +
-      debugChip +
-    '</div>';
   } else {
     list.forEach(function(i) {
       var inCart = state.cart.find(function(c) { return c.id === i.id; });
@@ -517,13 +541,24 @@ window.renderCategoryGrid = function () {
     menuActive = (state.menu || []).filter(function (m) { return m.active; });
     cats = (state.categories || []).filter(function (c) { return c && String(c).trim(); });
   }
-  // v5.16.4 — Show the full diagnostic panel right here in the
-  // category view whenever menuActive resolves to empty. Previously
-  // the category grid silently showed only the "الكل" tile with
-  // count=0 (the screenshot the owner sent), giving them no clue
-  // why or how to fix. The diagnostic chip lets us pinpoint the
-  // failure mode at a glance the next time this happens.
+  // v5.16.4 — Show a diagnostic panel here when menuActive resolves to
+  // empty. v5.10.33 — gated by role: cashier gets a clean neutral
+  // message; admin gets the helpful narrative + action; only developer
+  // mode reveals the technical chip (channel=… menu=… chItems=…).
   if (!cats.length || menuActive.length === 0) {
+    var _dIsAdmin = (typeof isAdmin === 'function') ? isAdmin() : false;
+    var _dIsDev   = !!(state && state.isDeveloper) || (localStorage.getItem('pos_is_developer') === '1');
+
+    if (!_dIsAdmin) {
+      // Cashier path: clean message, no actions, no technical detail.
+      grid.innerHTML =
+        '<div class="pos-empty" style="padding:40px 20px;text-align:center;">' +
+          '<i class="fas fa-store-slash" style="font-size:64px;display:block;margin-bottom:16px;opacity:0.5;color:#cbd5e1;"></i>' +
+          '<div style="font-weight:700;font-size:15px;color:#64748b;">لا توجد أصناف معروضة. تَواصَل مَع الإدارة لِتَكوين الشاشة.</div>' +
+        '</div>';
+      return;
+    }
+
     var dch = state.activeChannel || {};
     var dchName = dch.name || dch.code || '—';
     var dchCode = String(dch.code || '').toUpperCase();
@@ -533,28 +568,31 @@ window.renderCategoryGrid = function () {
     var dBrandId = state.brandId || '';
     var dReason, dAction;
     if (dMenuCount === 0) {
-      dReason = 'المنيو الرَئيسي فارِغ — لا أصناف مُحَمَّلة في state.menu.<br>' +
-        '<span style="font-size:12px;">brand_id: <code>' + (dBrandId || '—') + '</code></span>';
+      dReason = 'المنيو الرَئيسي فارِغ — لا أصناف مُحَمَّلة لِلبراند.';
       dAction = '<button onclick="posRefreshAll()" style="padding:12px 24px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;"><i class="fas fa-rotate"></i> تَحديث وإعادة المُحاوَلة</button>';
     } else if (state.activeChannel && !dIsMain && dChItemsCount === 0) {
-      dReason = 'القَناة "<b>' + dchName + '</b>" لم تُعَدّ بِأصناف. يُفتَرَض الـ fallback أن يَفتَح، يَتَحَقَّق...';
+      // v5.10.33 — cleaner copy (was a half-finished sentence with "...").
+      dReason = 'القَناة "<b>' + dchName + '</b>" لم تُعَدّ بِأصناف بَعد.';
       dAction = '<button onclick="posJumpToMain()" style="padding:12px 24px;background:#1e293b;color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;"><i class="fas fa-home"></i> الرُجوع إلى MAIN</button>';
     } else {
-      dReason = 'كل الفِئات فارِغة — مَنيو البراند مَوجود لكنه لم يُحَمَّل في الكاشير. حاوِل التَحديث.';
+      dReason = 'كل الفِئات فارِغة. حاوِل التَحديث.';
       dAction = '<button onclick="posRefreshAll()" style="padding:12px 24px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;"><i class="fas fa-rotate"></i> تَحديث</button>';
     }
+    var dDebugChip = _dIsDev
+      ? ('<div style="margin-top:18px;padding:8px 14px;background:#f1f5f9;border-radius:6px;font-size:11px;color:#475569;font-family:ui-monospace,SFMono-Regular,monospace;text-align:left;direction:ltr;display:inline-block;">' +
+          'channel=' + (dchCode || '—') + ' · useFullMenu=' + (dIsMain ? 'true' : 'false') +
+          ' · menu=' + dMenuCount +
+          ' · chItems=' + dChItemsCount +
+          ' · brand=' + (dBrandId || '—') +
+        '</div>')
+      : '';
     grid.innerHTML =
       '<div class="pos-empty" style="padding:40px 20px;text-align:center;">' +
         '<i class="fas fa-store-slash" style="font-size:64px;display:block;margin-bottom:16px;opacity:0.5;color:#7c3aed;"></i>' +
         '<div style="font-weight:900;font-size:20px;color:#0f172a;margin-bottom:8px;">المنيو غير ظاهِر</div>' +
         '<div style="font-size:14px;color:#475569;max-width:480px;line-height:1.8;margin:0 auto 18px;">' + dReason + '</div>' +
         '<div>' + dAction + '</div>' +
-        '<div style="margin-top:18px;padding:8px 14px;background:#f1f5f9;border-radius:6px;font-size:11px;color:#475569;font-family:ui-monospace,SFMono-Regular,monospace;text-align:left;direction:ltr;display:inline-block;">' +
-          'channel=' + (dchCode || '—') + ' · useFullMenu=' + (dIsMain ? 'true' : 'false') +
-          ' · menu=' + dMenuCount +
-          ' · chItems=' + dChItemsCount +
-          ' · brand=' + (dBrandId || '—') +
-        '</div>' +
+        dDebugChip +
       '</div>';
     return;
   }

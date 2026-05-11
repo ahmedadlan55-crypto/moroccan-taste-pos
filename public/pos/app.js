@@ -3228,24 +3228,46 @@ function _doSetChannel(ch) {
           state.channelOverrideMap[String(r.menuItemId)] = Number(r.overridePrice);
         }
       });
-      // v5.14.7 — Strict per-channel menu: NO fallback. If the admin
-      // has configured zero items for this channel, the cashier sees
-      // an empty grid.
+      // v5.16.3 — Smart fallback restored.
+      //   • If the channel has zero rows in channel_menu_items, it has
+      //     never been configured. Show the brand's full menu so the
+      //     cashier can actually sell. A one-line toast tells the
+      //     owner where to configure the channel for strict mode.
+      //   • As soon as admin adds ONE item via channels → "أصناف",
+      //     the channel switches to strict isolation automatically.
+      //   • MAIN already uses useFullMenu=true via the isMain check
+      //     above; this only fires for non-MAIN channels.
+      var autoFallback = (available.length === 0);
+      state.activeChannel.useFullMenu = autoFallback;
+      state.activeChannel._autoFellBackToMain = autoFallback;
       _ensureMenuLoaded(function () {
         _posApplyChannelPrices();
         _refreshChannelViews();
+        if (autoFallback) {
+          setTimeout(function () {
+            if (typeof glassToast === 'function') {
+              glassToast('القَناة "' + (state.activeChannel.name || '—') +
+                '" لم تُعَدّ بِأصناف بَعد. يَتم عَرض المنيو الكامِل لِلبراند. من admin → قَنوات البَيع → "أصناف" لِتَخصيصها.',
+                false);
+            }
+          }, 600);
+        }
       });
     };
     if (cached) applyRows(cached);
     var branchQ = state.branchId ? '?branchId=' + encodeURIComponent(state.branchId) : '';
     _posCallAPI('GET', '/channel-menus/' + ch.id + branchQ, null, function (rows) {
       if (rows && rows.error) {
-        // v5.14.7 — Strict: never silently swap to the full menu on a
-        // fetch failure. Show an empty grid + a one-line console error.
+        // v5.16.3 — On a fetch failure, fall back to the brand's full
+        // menu rather than trapping the cashier with an empty grid.
+        // The owner's actual request was "every channel must show its
+        // menu" — empty is unacceptable.
         console.error('[channel-menu] fetch error for', ch.id, ':', rows.error);
         if (!cached) {
           state.channelMenuItems = [];
           state.channelOverrideMap = {};
+          state.activeChannel.useFullMenu = true;
+          state.activeChannel._autoFellBackToMain = true;
           _posApplyChannelPrices();
           _refreshChannelViews();
         }

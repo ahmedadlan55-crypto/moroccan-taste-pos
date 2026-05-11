@@ -163,15 +163,15 @@ router.get('/init/:username', async (req, res) => {
     const userBranchId = userRow.length ? userRow[0].branch_id : '';
     const userWarehouseId = userRow.length ? userRow[0].default_warehouse_id : '';
 
-    // v5.14.6 — Hide semi-finished (is_semi_finished = 1) items from the
-    // cashier bootstrap. These are intermediate production-flow items,
-    // not sellable goods. Finished items WITHOUT a recipe stay visible —
-    // the owner may still want to sell them while pricing ingredients
-    // later. Admin /menu/all still returns semis so they can be edited.
-    const incompleteHide = ' AND (m.is_semi_finished IS NULL OR m.is_semi_finished = 0)';
+    // v5.16.3 — The is_semi_finished filter is REMOVED. It was hiding
+    // the cashier's entire menu in cases where every item was flagged
+    // as semi-finished (intentionally or by accident). The cashier
+    // now sees every active item for the user's brand. If the owner
+    // wants to hide a sellable item, they should set its active=0 in
+    // the admin menu editor instead of relying on is_semi_finished.
     const menuQuery = userBrandId
-      ? `SELECT m.* FROM menu m WHERE m.active = 1 AND (m.brand_id = ? OR m.brand_id IS NULL OR m.brand_id = "") ${incompleteHide} ORDER BY m.category, m.name`
-      : `SELECT m.* FROM menu m WHERE m.active = 1 ${incompleteHide} ORDER BY m.category, m.name`;
+      ? `SELECT m.* FROM menu m WHERE m.active = 1 AND (m.brand_id = ? OR m.brand_id IS NULL OR m.brand_id = "") ORDER BY m.category, m.name`
+      : `SELECT m.* FROM menu m WHERE m.active = 1 ORDER BY m.category, m.name`;
     const menuParams = userBrandId ? [userBrandId] : [];
     const [menu] = await db.query(menuQuery, menuParams);
     const [payMethods] = await db.query('SELECT * FROM payment_methods ORDER BY sort_order');

@@ -428,19 +428,53 @@
     el.addEventListener('click', open);
   }
 
+  // v5.10.30 — Decide whether an element should get the on-screen
+  // keyboard. Default policy:
+  //   • textarea elements              → YES (unless data-vk="0")
+  //   • <input> with text-like type    → YES (unless data-vk="0")
+  //   • password / hidden / file / etc → NEVER
+  //   • readOnly or disabled inputs    → NEVER
+  // Legacy data-vk="1" still works (it's an explicit opt-in marker but
+  // no longer required). data-vk="0" provides an opt-out for the rare
+  // input that must NOT trigger the keyboard.
+  var TEXT_LIKE_TYPES = {
+    text: 1, search: 1, number: 1, tel: 1, email: 1, url: 1,
+    password: 0,           // explicitly excluded
+    'datetime-local': 1
+  };
+  function shouldBind(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el._vkBound) return false;
+    if (el.getAttribute && el.getAttribute('data-vk') === '0') return false;
+    if (el.readOnly || el.disabled) return false;
+    var tag = (el.tagName || '').toLowerCase();
+    if (tag === 'textarea') return true;
+    if (tag !== 'input') return false;
+    var t = (el.getAttribute('type') || 'text').toLowerCase();
+    return TEXT_LIKE_TYPES[t] === 1;
+  }
+
   function scanAndBind(root) {
-    (root || document).querySelectorAll('input[data-vk="1"], textarea[data-vk="1"]').forEach(bindInput);
+    // v5.10.30 — bind EVERY text-like input/textarea by default. Was
+    // previously gated on data-vk="1" which required tagging hundreds of
+    // inputs manually — the owner kept hitting fields with no keyboard.
+    var nodes = (root || document).querySelectorAll('input, textarea');
+    nodes.forEach(function(n) { if (shouldBind(n)) bindInput(n); });
   }
 
   // Hide when clicking / tapping outside both the keyboard and the
   // currently bound input. Captured early so blur-via-keypress doesn't
   // race the close.
+  function _isKbCandidate(el) { return el && el.matches && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'); }
   document.addEventListener('mousedown', function (e) {
     if (!state.el || !state.el.classList.contains('vk-open')) return;
     if (state.el.contains(e.target)) return;
     if (state.target && state.target.contains(e.target)) return;
     if (e.target === state.target) return;
-    if (e.target.matches && e.target.matches('input[data-vk="1"], textarea[data-vk="1"]')) return;
+    // v5.10.30 — keep the keyboard open if user clicks another bindable
+    // input (focus handler will swap state.target seamlessly).
+    if (_isKbCandidate(e.target) && shouldBind(e.target)) return;
+    if (_isKbCandidate(e.target) && e.target._vkBound) return;
     hide();
   }, true);
   document.addEventListener('touchstart', function (e) {
@@ -448,9 +482,23 @@
     if (state.el.contains(e.target)) return;
     if (state.target && state.target.contains(e.target)) return;
     if (e.target === state.target) return;
-    if (e.target.matches && e.target.matches('input[data-vk="1"], textarea[data-vk="1"]')) return;
+    if (_isKbCandidate(e.target) && shouldBind(e.target)) return;
+    if (_isKbCandidate(e.target) && e.target._vkBound) return;
     hide();
   }, { capture: true, passive: true });
+
+  // v5.10.30 — Belt-and-suspenders focus listener at the document level.
+  // If an input slips past scanAndBind (e.g. injected by innerHTML in a
+  // way the MutationObserver doesn't see — rare but possible), this
+  // catches it on the user's first focus and binds it on the spot.
+  document.addEventListener('focus', function (e) {
+    var el = e.target;
+    if (shouldBind(el)) {
+      bindInput(el);
+      state.target = el;
+      show(el);
+    }
+  }, true);
 
   // ─── Public debug API ─────────────────────────────────────────────
   window.vkShow   = function (sel) { var el = typeof sel === 'string' ? document.querySelector(sel) : sel; if (el) { bindInput(el); show(el); } };
@@ -466,7 +514,9 @@
         muts.forEach(function (m) {
           m.addedNodes.forEach(function (n) {
             if (n.nodeType === 1) {
-              if (n.matches && n.matches('input[data-vk="1"], textarea[data-vk="1"]')) bindInput(n);
+              // v5.10.30 — bind the node itself if it's bindable, then
+              // recurse to catch any nested inputs.
+              if (shouldBind(n)) bindInput(n);
               scanAndBind(n);
             }
           });

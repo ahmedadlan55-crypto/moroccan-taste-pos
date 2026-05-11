@@ -200,11 +200,12 @@
   <script src="/js/wo-modal.js?v=1"></script>
   <!-- V5.7.26 — reusable major+minor quantity input widget -->
   <script src="/js/wo-qty-input.js?v=1"></script>
-  <!-- v5.10.28 — On-screen virtual keyboard. Self-initializes and binds
-       to every `[data-vk="1"]` input/textarea on the page via a
-       MutationObserver, so dynamically rendered sections (inventory
-       catalog, stocktake, etc.) get the keyboard automatically. -->
-  <script src="/pos/keyboard.js?v=1"></script>
+  <!-- v5.10.30 — On-screen virtual keyboard. Auto-binds to EVERY text-
+       like input/textarea on the page (no data-vk attribute needed).
+       Password/hidden/readOnly inputs are skipped; data-vk="0" opts
+       out for the rare exception. Belt-and-suspenders focus listener
+       catches any input the MutationObserver might miss. -->
+  <script src="/pos/keyboard.js?v=2"></script>
   <!-- v5.11.2 — erp-v5.js / erp-v54.js removed (advanced enterprise section deleted) -->
   <script src="/js/app.js?v=62" defer></script>
 </body>

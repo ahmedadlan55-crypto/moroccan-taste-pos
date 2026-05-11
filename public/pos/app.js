@@ -304,6 +304,19 @@ window.renderCategoryGrid = function () {
   var cats = (state.categories || []).filter(function (c) { return c && String(c).trim(); });
   // Build the menu count for each category up-front
   var menuActive = (state.menu || []).filter(function (m) { return m.active; });
+  // v5.14.7 — Apply the channel filter to category counts so the tile
+  // numbers match what the cashier will see after clicking through.
+  // Without this, a delivery channel with 3 items would still show the
+  // full menu's per-category counts on the category grid.
+  if (state.activeChannel && !state.activeChannel.useFullMenu) {
+    var _chAllowed = new Set((state.channelMenuItems || []).map(function (r) { return String(r.menuItemId); }));
+    menuActive = menuActive.filter(function (m) { return _chAllowed.has(String(m.id)); });
+    // Include channel-only custom items from the price list so their
+    // categories light up too.
+    if (state._channelCustomItems && state._channelCustomItems.length) {
+      menuActive = menuActive.concat(state._channelCustomItems);
+    }
+  }
   if (!cats.length) {
     grid.innerHTML = '<div class="pos-empty"><i class="fas fa-box-open" style="font-size:48px;display:block;margin-bottom:14px;opacity:.4;"></i>لا توجد فئات — تَأكَّد من تَحميل المنيو</div>';
     return;
@@ -2950,14 +2963,13 @@ function _doSetChannel(ch) {
           state.channelOverrideMap[String(r.menuItemId)] = Number(r.overridePrice);
         }
       });
-      // v5.12.9 — Generalised catch-all: any channel with zero items
-      // configured in channel_menu_items renders the full menu, not
-      // just code='MAIN'. Admins who create a "Main menu" channel with
-      // a custom code shouldn't get an empty grid; admins who DO
-      // configure items still get strict filtering.
-      if (available.length === 0) {
-        state.activeChannel.useFullMenu = true;
-      }
+      // v5.14.7 — Strict per-channel menu: NO fallback. If the admin
+      // has configured zero items for this channel, the cashier sees
+      // an empty grid. The owner explicitly wants channel isolation —
+      // a delivery channel should never silently expose dine-in items
+      // just because its channel_menu_items list is empty.
+      // renderMenuGrid handles the empty state via its channelEmpty
+      // branch (line ~210).
       // v5.12.7 — make sure state.menu has items before we filter by it
       _ensureMenuLoaded(function () {
         _posApplyChannelPrices();
@@ -2968,12 +2980,13 @@ function _doSetChannel(ch) {
     var branchQ = state.branchId ? '?branchId=' + encodeURIComponent(state.branchId) : '';
     _posCallAPI('GET', '/channel-menus/' + ch.id + branchQ, null, function (rows) {
       if (rows && rows.error) {
-        // v5.12.5 — log to console only, never block the cashier with
-        // a red toast. Drop the channel filter so the full menu shows;
-        // the next successful refresh will reapply the strict filter.
+        // v5.14.7 — Strict: never silently swap to the full menu on a
+        // fetch failure. Show an empty grid + a one-line console error;
+        // the cashier can refresh or report it. Falling back to the
+        // full menu would let off-channel items get sold under (e.g.)
+        // a delivery channel, which is exactly the leak we're closing.
         console.error('[channel-menu] fetch error for', ch.id, ':', rows.error);
         if (!cached) {
-          state.activeChannel.useFullMenu = true;
           state.channelMenuItems = [];
           state.channelOverrideMap = {};
           _posApplyChannelPrices();

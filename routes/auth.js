@@ -163,20 +163,12 @@ router.get('/init/:username', async (req, res) => {
     const userBranchId = userRow.length ? userRow[0].branch_id : '';
     const userWarehouseId = userRow.length ? userRow[0].default_warehouse_id : '';
 
-    // v5.14.5 — Hide "incomplete" products from the cashier bootstrap.
-    // An item that needs to be assembled at the branch/kitchen but has
-    // no recipe (neither modern BOM nor legacy recipe rows) is not
-    // sellable — it is effectively a raw warehouse material and should
-    // not appear in the cashier menu. The admin /menu/all endpoint
-    // still returns these rows so the owner can link a recipe.
-    const incompleteHide = `
-      AND NOT (
-        COALESCE(m.production_method, 'made_at_branch') IN ('made_at_branch', 'made_at_kitchen')
-        AND (m.is_semi_finished IS NULL OR m.is_semi_finished = 0)
-        AND (m.bom_id IS NULL OR m.bom_id = '')
-        AND m.id NOT IN (SELECT DISTINCT menu_id FROM recipe WHERE menu_id IS NOT NULL)
-      )
-    `;
+    // v5.14.6 — Hide semi-finished (is_semi_finished = 1) items from the
+    // cashier bootstrap. These are intermediate production-flow items,
+    // not sellable goods. Finished items WITHOUT a recipe stay visible —
+    // the owner may still want to sell them while pricing ingredients
+    // later. Admin /menu/all still returns semis so they can be edited.
+    const incompleteHide = ' AND (m.is_semi_finished IS NULL OR m.is_semi_finished = 0)';
     const menuQuery = userBrandId
       ? `SELECT m.* FROM menu m WHERE m.active = 1 AND (m.brand_id = ? OR m.brand_id IS NULL OR m.brand_id = "") ${incompleteHide} ORDER BY m.category, m.name`
       : `SELECT m.* FROM menu m WHERE m.active = 1 ${incompleteHide} ORDER BY m.category, m.name`;

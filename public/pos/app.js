@@ -545,6 +545,18 @@ window.posOpenPaymentModal = function () {
   openGlassModal('#modalPayment');
 };
 
+// v5.14.4 — The cart footer is a role="button" surface (no inner
+// <button>), so Space/Enter must be wired manually to keep it
+// keyboard-accessible.
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  var el = e.target;
+  if (el && el.classList && el.classList.contains('cart-footer-foodics')) {
+    e.preventDefault();
+    window.posOpenPaymentModal();
+  }
+});
+
 // v5.14.2 — Foodics overlay sync moved INTO updateCart itself (see
 // further down in this file). The old IIFE wrapper here was wrapping
 // `window.updateCart` BEFORE the real function was defined later on,
@@ -669,19 +681,14 @@ window.updateCart = function() {
   var activeBtn = q('#payBtn' + payMethod);
   if (activeBtn) activeBtn.classList.add('active');
 
-  // v5.14.2 — Sync the Foodics overlay (sticky total bar + cart-sidebar
-  // total button). Used to live in an IIFE wrapper that died because
-  // updateCart was redefined later in the file — see note above the
-  // (now removed) wrapper. Inline here so it runs every time the cart
-  // changes.
+  // v5.14.4 — Sync the single clickable total in the cart footer.
+  // The old #posTotalBar sticky overlay and the .checkout-total-btn
+  // wrapper were removed in v5.14.4; #ctbAmount is the only remaining
+  // consumer of the total.
   try {
     var ftxt = q('#cartFinalTotal') ? q('#cartFinalTotal').innerText : '0.00';
-    var fcount = (state.cart || []).reduce(function (s, i) { return s + (Number(i.qty) || 0); }, 0);
-    var fcnt = q('#posTotalBarCount'); if (fcnt) fcnt.textContent = fcount;
-    var famt = q('#posTotalBarAmount'); if (famt) famt.textContent = ftxt;
     var fctb = q('#ctbAmount'); if (fctb) fctb.textContent = ftxt;
-    var fbar = q('#posTotalBar'); if (fbar) fbar.classList.toggle('has-items', fcount > 0);
-  } catch (e) { /* foodics overlay may not be mounted yet */ }
+  } catch (e) { /* footer not mounted yet */ }
 
   // Re-render the menu so + buttons reflect the new qty
   renderMenuGrid();

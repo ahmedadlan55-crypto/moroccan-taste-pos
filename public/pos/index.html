@@ -58,7 +58,7 @@
   <link rel="stylesheet" href="/shared/design-tokens.css?v=1">
   <link rel="stylesheet" href="/shared/common.css">
   <link rel="stylesheet" href="/shared/header.css">
-  <link rel="stylesheet" href="/pos/style.css?v=9">
+  <link rel="stylesheet" href="/pos/style.css?v=10">
   <link rel="stylesheet" href="/pos/keyboard.css?v=5">
 
   <script defer src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
@@ -69,7 +69,7 @@
   <script defer src="/shared/auth.js"></script>
   <script defer src="/shared/header.js"></script>
   <script defer src="/shared/device-info.js?v=1"></script>
-  <script defer src="/pos/app.js?v=8"></script>
+  <script defer src="/pos/app.js?v=9"></script>
   <script defer src="/pos/keyboard.js?v=5"></script>
 </head>
 <body class="ar" data-page="pos" data-show-shift="1">
@@ -207,32 +207,15 @@
         </button>
       </div>
 
-      <!-- v5.14.1 — Foodics cart footer: a single big total button that
-           opens the payment modal. Replaces the .cart-footer (hidden by
-           body.foodics-mode CSS) so the cart sidebar shows only items. -->
-      <div class="cart-footer-foodics">
-        <button class="checkout-total-btn" onclick="posOpenPaymentModal()">
-          <div class="ctb-label">إجمالي الفاتورة</div>
-          <div class="ctb-amount" id="ctbAmount">0.00 SAR</div>
-          <div class="ctb-cta"><i class="fas fa-credit-card"></i> اختيار طريقة الدفع</div>
-        </button>
+      <!-- v5.14.4 — The total IS the action. Pressing anywhere on this
+           card opens the payment modal. No CTA text, no inner button,
+           no duplicated sticky bar — one calm, clickable total. -->
+      <div class="cart-footer-foodics" onclick="posOpenPaymentModal()" role="button" tabindex="0" aria-label="فتح طُرق الدفع">
+        <div class="ctb-label">إجمالي الفاتورة</div>
+        <div class="ctb-amount" id="ctbAmount">0.00 SAR</div>
       </div>
     </aside>
   </main>
-
-  <!-- v5.14.0 — Foodics sticky total bar -->
-  <div class="pos-total-bar" id="posTotalBar" onclick="posOpenPaymentModal()">
-    <div class="pos-total-bar-cart">
-      <i class="fas fa-shopping-basket"></i>
-      <span class="pos-total-bar-count" id="posTotalBarCount">0</span>
-      <span class="pos-total-bar-label">صنف</span>
-    </div>
-    <div class="pos-total-bar-amount" id="posTotalBarAmount">0.00 SAR</div>
-    <div class="pos-total-bar-cta">
-      <span>اضغط للدفع</span>
-      <i class="fas fa-arrow-left"></i>
-    </div>
-  </div>
 
   <!-- v5.14.1 — Foodics payment modal (full static layout) -->
   <div id="modalPayment" class="glass-modal hidden">

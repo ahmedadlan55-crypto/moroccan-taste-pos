@@ -351,44 +351,9 @@ body.ar .pwa-install-btn {
 .pos-breadcrumb button:hover { background: #e2e8f0; }
 .pos-breadcrumb-current { font-weight: 900; color: #1e293b; font-size: 16px; }
 
-/* Sticky total bar */
-.pos-total-bar {
-  position: fixed; inset: auto 0 0 0;
-  z-index: 90;
-  display: flex; align-items: center; gap: 16px;
-  padding: 14px 20px;
-  background: linear-gradient(135deg, var(--pos-primary), var(--pos-primary-2));
-  color: #fff;
-  cursor: pointer;
-  transform: translateY(120%);
-  transition: transform 240ms cubic-bezier(.32, .72, 0, 1);
-  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.2);
-}
-.pos-total-bar.has-items { transform: translateY(0); }
-.pos-total-bar-cart {
-  display: flex; align-items: center; gap: 8px;
-  font-weight: 700;
-}
-.pos-total-bar-count {
-  background: #f59e0b; color: #1e293b;
-  padding: 2px 10px; border-radius: 999px;
-  font-weight: 900; font-size: 14px;
-  min-width: 28px; text-align: center;
-}
-.pos-total-bar-amount {
-  flex: 1; text-align: center;
-  font-size: 22px; font-weight: 900;
-  font-family: ui-monospace, "SFMono-Regular", monospace;
-}
-.pos-total-bar-cta {
-  display: flex; align-items: center; gap: 10px;
-  background: var(--pos-success);
-  padding: 10px 20px;
-  border-radius: 12px;
-  font-weight: 800;
-  transition: background 120ms;
-}
-.pos-total-bar:hover .pos-total-bar-cta { background: var(--pos-success-2); }
+/* v5.14.4 — The sticky #posTotalBar overlay was removed. The cart
+ * footer (.cart-footer-foodics, below) is now the single payment
+ * trigger; tapping it anywhere opens the payment modal. */
 
 /* Payment modal */
 .pay-modal-summary {
@@ -422,45 +387,38 @@ body.foodics-mode .pos-disc-actions { display: none !important; }
  * replaced by a single total button in cart-footer-foodics. */
 body.foodics-mode .cart-footer { display: none !important; }
 
-/* Big total button in the cart sidebar */
+/* v5.14.4 — The cart footer IS the payment trigger. It reads as a calm
+ * total card, not a button — the amount itself communicates the action.
+ * Hover gives a subtle lift so the cashier knows it's interactive. */
 .cart-footer-foodics {
-  padding: 16px 16px 18px;
-  border-top: 1.5px solid #e2e8f0;
-  background: linear-gradient(180deg, #f8fafc, #ffffff);
+  padding: 18px 20px 22px;
+  border-top: 1.5px solid var(--mt-border);
+  background: linear-gradient(180deg, var(--mt-surface-2), var(--mt-surface));
   flex-shrink: 0;
-}
-.checkout-total-btn {
-  width: 100%;
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 18px 22px;
-  border: 0; cursor: pointer;
-  background: linear-gradient(135deg, var(--pos-primary), var(--pos-primary-2));
-  color: #fff;
-  border-radius: var(--pos-radius-lg);
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.35);
-  transition: transform 120ms, box-shadow 120ms;
+  cursor: pointer;
   text-align: center;
-  align-items: center;
+  transition: background 120ms, transform 80ms;
+  user-select: none;
 }
-.checkout-total-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.45);
+.cart-footer-foodics:hover  { background: linear-gradient(180deg, #eef2f7, var(--mt-surface)); }
+.cart-footer-foodics:active { transform: scale(0.99); }
+.cart-footer-foodics:focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 3px rgba(124, 58, 237, 0.20);
 }
-.checkout-total-btn:active { transform: translateY(0); }
-.ctb-label { font-size: 13px; opacity: 0.75; font-weight: 600; letter-spacing: 0.3px; }
+.ctb-label {
+  font-size: 13px;
+  color: var(--mt-text-muted);
+  font-weight: 600;
+  margin-bottom: 4px;
+  letter-spacing: 0.3px;
+}
 .ctb-amount {
-  font-size: 30px; font-weight: 900;
-  font-family: ui-monospace, "SFMono-Regular", monospace;
+  font-size: 34px; font-weight: 900;
+  color: var(--mt-text);
+  font-family: var(--mt-font-mono);
   letter-spacing: 0.5px;
   line-height: 1.1;
-}
-.ctb-cta {
-  margin-top: 10px;
-  padding: 10px 18px;
-  background: var(--pos-success);
-  border-radius: var(--pos-radius-sm);
-  font-size: 14px; font-weight: 800;
-  display: inline-flex; align-items: center; gap: 8px;
 }
 
 /* Foodics payment modal */

@@ -43,7 +43,11 @@ const erpSections = [
   'erpCashDash','erpCashBoxes','erpBankAccounts','erpCashReceipts','erpCashPayments','erpCashTransfers',
   // Warehouse Phase 1/2/3
   'erpWhHierarchy','erpStockIssues','erpProductionOrders','erpExpiryAlerts','erpSlowMoving','erpTurnover',
-  'erpWasteEntries','erpBOM','erpItemCategories','erpCompanies','erpPriceLists','erpRoyaltyRuns','erpPosTerminals',
+  // v5.15.1 — erpPosTerminals removed from sections per owner request:
+  // they don't want any POS/cashier item visible inside the admin
+  // shell. The route handler is kept in the file in case it's needed
+  // later, but it's no longer reachable from the navigation.
+  'erpWasteEntries','erpBOM','erpItemCategories','erpCompanies','erpPriceLists','erpRoyaltyRuns',
   // Workflow
   'erpWfDashboard','erpWfIncoming','erpWfOutgoing','erpWfOrgTree',
   // Reports
@@ -153,7 +157,7 @@ function erpNav(sectionId) {
       case 'erpBOM':             erpLoadBOM(); break;
       case 'erpWasteEntries':    erpLoadWasteEntries(); break;
       case 'erpRoyaltyRuns':     erpLoadRoyaltyRuns(); break;
-      case 'erpPosTerminals':    erpLoadPosTerminals(); break;
+      // v5.15.1 — erpPosTerminals route removed; no admin entry point.
       case 'erpItemCategories':  erpLoadItemCategories(); break;
       case 'erpWfInbox': wfLoadInbox(); break;
       case 'erpWfDashboard': wfInitDashboard(); break;
@@ -16365,11 +16369,36 @@ function erpOpenCompanyModal(id) {
 // ─── Price Lists ───
 function erpLoadPriceLists() {
   document.getElementById('priceListsBody').innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i></td></tr>';
-  _erpGet('/erp/price-lists', function(list) {
-    if (!Array.isArray(list) || !list.length) { document.getElementById('priceListsBody').innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد قوائم أسعار</td></tr>'; return; }
+  // v5.15.1 — Load price lists AND active channels in parallel so each
+  // row can display which channels are linked (visible price-list ↔
+  // channel relationship the owner asked to see clearly).
+  Promise.all([
+    new Promise(function (r) { _erpGet('/erp/price-lists', r); }),
+    new Promise(function (r) { _erpGet('/sales-channels/', r); })
+  ]).then(function (results) {
+    var list = results[0];
+    var channels = Array.isArray(results[1]) ? results[1] : ((results[1] && results[1].channels) || []);
+    window._chCache = channels;  // cached for cross-references
+    if (!Array.isArray(list) || !list.length) {
+      document.getElementById('priceListsBody').innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد قوائم أسعار</td></tr>';
+      return;
+    }
     document.getElementById('priceListsBody').innerHTML = list.map(function(p){
       var safeName = (p.name||'').replace(/'/g,"\\'");
-      return '<tr><td style="font-weight:700;">'+(p.name||'')+'</td><td>'+(p.brandName||'—')+'</td><td>'+(p.branchName||'—')+'</td>'+
+      // v5.15.1 — find every channel that uses this list, render as purple chips
+      var linkedChannels = channels.filter(function (c) { return String(c.priceListId) === String(p.id); });
+      var channelBadges = linkedChannels.length
+        ? linkedChannels.map(function (c) {
+            return '<span class="wo-chip" style="background:#faf5ff;color:#7c3aed;font-weight:700;font-size:10px;padding:2px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;margin:1px 2px 0 0;"><i class="fas fa-store"></i> ' + _v3EscapeHtml(c.name) + '</span>';
+          }).join('')
+        : '<span style="color:#94a3b8;font-size:10px;">— غير مرتبطة بقناة —</span>';
+      return '<tr>' +
+        '<td>' +
+          '<div style="font-weight:700;">'+(p.name||'')+'</div>' +
+          '<div style="margin-top:4px;line-height:1.6;">' + channelBadges + '</div>' +
+        '</td>' +
+        '<td>'+(p.brandName||'—')+'</td>' +
+        '<td>'+(p.branchName||'—')+'</td>' +
         '<td>'+(p.isDefault?'<i class="fas fa-check" style="color:#16a34a;"></i>':'')+'</td>'+
         '<td><span class="badge badge-blue">'+(p.itemCount||0)+'</span></td>'+
         '<td>'+((p.validFrom||'').slice(0,10)||'—')+'</td><td>'+((p.validTo||'').slice(0,10)||'—')+'</td>'+
@@ -16534,11 +16563,20 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
         '<div style="font-size:13px;font-weight:900;color:#15803d;"><i class="fas fa-plus-circle"></i> إضافة منتجات للقائمة (تحديد متعدد)</div>' +
         '<div style="font-size:11px;color:#15803d;"><i class="fas fa-info-circle"></i> ابحث، حدد المنتجات، حدد سعراً افتراضياً، ثم اضغط "إضافة المحدد"</div>' +
       '</div>' +
-      // Search + bulk price + add button row
-      '<div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:8px;align-items:end;margin-bottom:10px;">' +
+      // Search + brand-filter + bulk price + add button row
+      // v5.15.1 — owner asked for the picker to "fetch products from any
+      // brand or branch". Brand dropdown lets the admin reload the menu
+      // pool for any brand (or all brands) without leaving the modal.
+      '<div style="display:grid;grid-template-columns:2fr 1.4fr 1fr 1fr auto;gap:8px;align-items:end;margin-bottom:10px;">' +
         '<div class="form-row" style="margin:0;">' +
           '<label style="font-size:11px;font-weight:700;">البحث (اسم/فئة/براند)</label>' +
           '<input type="text" id="plSearch" class="form-control" placeholder="ابحث عن منتج..." oninput="_plRenderAvailable()">' +
+        '</div>' +
+        '<div class="form-row" style="margin:0;">' +
+          '<label style="font-size:11px;font-weight:700;"><i class="fas fa-tags"></i> سَحب من براند</label>' +
+          '<select id="plPickerBrandSel" class="form-control" onchange="erpPlReloadMenuPool(\''+id+'\')">' +
+            '<option value="">— كل البراندات —</option>' +
+          '</select>' +
         '</div>' +
         '<div class="form-row" style="margin:0;">' +
           '<label style="font-size:11px;font-weight:700;">سعر افتراضي للجميع</label>' +
@@ -16640,9 +16678,39 @@ function _renderPriceListItemsModal(id, name, pl, items, menuPool) {
   document.getElementById('erpModalBody').innerHTML = html;
   document.getElementById('erpModalSaveBtn').style.display = 'none';
   document.getElementById('erpModal').classList.remove('hidden');
+  // v5.15.1 — Populate the brand dropdown so the admin can pull items
+  // from any brand. The list's own brand is pre-selected.
+  _erpGet('/erp/brands', function (brands) {
+    var sel = document.getElementById('plPickerBrandSel');
+    if (!sel) return;
+    var opts = ['<option value="">— كل البراندات —</option>'];
+    (brands || []).forEach(function (b) {
+      var selectedAttr = (pl.brandId && String(pl.brandId) === String(b.id)) ? ' selected' : '';
+      opts.push('<option value="' + b.id + '"' + selectedAttr + '>' + _v3EscapeHtml(b.name) + '</option>');
+    });
+    sel.innerHTML = opts.join('');
+  });
   // Render initial available list
   _plRenderAvailable();
 }
+
+// v5.15.1 — Reload the menu pool for a different brand without
+// leaving the price-list-items modal. Lets the owner add items from
+// any brand to any price list.
+window.erpPlReloadMenuPool = function (priceListId) {
+  var sel = document.getElementById('plPickerBrandSel');
+  var brandId = sel ? sel.value : '';
+  var url = '/menu/all' + (brandId ? '?brandId=' + encodeURIComponent(brandId) : '');
+  _erpGet(url, function (pool) {
+    if (!window._plState) return;
+    window._plState.menuPool = Array.isArray(pool) ? pool : [];
+    var existingIds = new Set((window._plState.items || []).map(function (i) { return String(i.itemId); }));
+    window._plState.available = window._plState.menuPool.filter(function (m) { return !existingIds.has(String(m.id)); });
+    var countEl = document.getElementById('plAvailCount');
+    if (countEl) countEl.textContent = window._plState.available.length;
+    _plRenderAvailable();
+  });
+};
 
 // v5.13.0 — Add a fully standalone (custom) item to the price list.
 // No menu_id link, recipe-deduction won't fire on sale, item appears

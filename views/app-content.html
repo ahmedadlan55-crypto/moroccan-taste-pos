@@ -193,7 +193,11 @@
           <div class="nav-item" onclick="wzOpen()" style="background:linear-gradient(90deg,rgba(139,92,246,.15),transparent);"><i class="fas fa-wand-magic-sparkles" style="color:#a78bfa;"></i><span data-i18n="nav.brandWizard">معالج براند جديد</span></div>
           <div class="nav-item" data-erp-nav="erpCompanies" onclick="erpNav('erpCompanies')"><i class="fas fa-city"></i><span data-i18n="nav.companies">الشركات</span></div>
           <div class="nav-item" data-erp-nav="erpBranches" onclick="erpNav('erpBranches')"><i class="fas fa-code-branch"></i><span data-i18n="nav.branches">الفروع</span></div>
-          <div class="nav-item" data-erp-nav="erpPosTerminals" onclick="erpNav('erpPosTerminals')"><i class="fas fa-desktop"></i><span data-i18n="nav.posTerminals">أجهزة POS</span></div>
+          <!-- v5.15.1 — "أجهزة POS" nav item removed per owner request.
+               The cashier portal lives at /pos/ only; no POS terminology
+               should appear inside the admin shell. The route handler
+               and section div are kept so old links don't 404, but the
+               item is no longer reachable from the navigation. -->
           <div class="nav-item" data-erp-nav="erpRoyaltyRuns" onclick="erpNav('erpRoyaltyRuns')"><i class="fas fa-receipt"></i><span data-i18n="nav.royaltyRuns">احتساب الفرانشايز</span></div>
           <div class="nav-item" data-erp-nav="erpAuditLog" onclick="erpNav('erpAuditLog')"><i class="fas fa-history"></i><span data-i18n="nav.auditLog">سجل العمليات</span></div>
         </div>

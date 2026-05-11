@@ -201,22 +201,34 @@ window.renderMenuGrid = function() {
   var searchInput = q('#posSearchInput');
   var searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
 
-  var list = (state.menu || []).filter(function(i) { return i.active; });
-
-  // v5.12.2 — channel filter: only items added to the active channel are
-  // shown. MAIN channel with no overrides defaults to the full menu via
-  // useFullMenu=true so the cashier doesn't lose Dine-In.
+  // v5.15.1 — Build the cashier list from channelMenuItems DIRECTLY when
+  // a non-MAIN channel is active. The channel-menu API already JOINs the
+  // menu table and returns itemName, category, basePrice, effectivePrice,
+  // cost, bomId — everything the grid needs. Doing it this way bypasses
+  // state.menu's brand filter at /init/:username, so channels can carry
+  // items from any brand and the cashier sees them regardless of which
+  // brand the cashier user is bound to. Fixes the long-standing "channel
+  // has items but products don't appear" bug.
+  var list;
   var channelEmpty = false;
   if (state.activeChannel && !state.activeChannel.useFullMenu) {
-    var allowedSet = new Set((state.channelMenuItems || []).map(function (r) {
-      return String(r.menuItemId);
-    }));
-    if (allowedSet.size === 0) {
-      list = [];
-      channelEmpty = true;
-    } else {
-      list = list.filter(function (i) { return allowedSet.has(String(i.id)); });
-    }
+    var chRows = (state.channelMenuItems || []).filter(function (r) { return r.isAvailable !== false; });
+    list = chRows.map(function (r) {
+      return {
+        id: r.menuItemId,
+        name: r.itemName || '',
+        category: r.category || '',
+        price: r.effectivePrice != null ? Number(r.effectivePrice) : Number(r.basePrice || 0),
+        cost: Number(r.cost || 0),
+        active: true,
+        bomId: r.bomId || null,
+        imageData: null,
+        __fromChannel: true
+      };
+    });
+    channelEmpty = (list.length === 0);
+  } else {
+    list = (state.menu || []).filter(function (i) { return i.active; });
   }
 
   // v5.13.0 — append custom items from the active channel's price list.
@@ -311,21 +323,29 @@ function _posCategoryIcon(c) {
 window.renderCategoryGrid = function () {
   var grid = q('#posCatGrid');
   if (!grid) return;
-  var cats = (state.categories || []).filter(function (c) { return c && String(c).trim(); });
-  // Build the menu count for each category up-front
-  var menuActive = (state.menu || []).filter(function (m) { return m.active; });
-  // v5.14.7 — Apply the channel filter to category counts so the tile
-  // numbers match what the cashier will see after clicking through.
-  // Without this, a delivery channel with 3 items would still show the
-  // full menu's per-category counts on the category grid.
+  // v5.15.1 — Build menuActive + categories from channelMenuItems DIRECTLY
+  // when a non-MAIN channel is active. This mirrors renderMenuGrid and
+  // bypasses state.menu's brand filter — the channel rows already carry
+  // category, so the tiles match exactly what the grid will show after
+  // clicking through.
+  var menuActive;
+  var cats;
   if (state.activeChannel && !state.activeChannel.useFullMenu) {
-    var _chAllowed = new Set((state.channelMenuItems || []).map(function (r) { return String(r.menuItemId); }));
-    menuActive = menuActive.filter(function (m) { return _chAllowed.has(String(m.id)); });
-    // Include channel-only custom items from the price list so their
-    // categories light up too.
+    menuActive = (state.channelMenuItems || [])
+      .filter(function (r) { return r.isAvailable !== false; })
+      .map(function (r) { return { id: r.menuItemId, name: r.itemName || '', category: r.category || '', active: true }; });
     if (state._channelCustomItems && state._channelCustomItems.length) {
       menuActive = menuActive.concat(state._channelCustomItems);
     }
+    var seen = {};
+    cats = [];
+    menuActive.forEach(function (m) {
+      var c = (m.category || '').trim();
+      if (c && !seen[c]) { seen[c] = 1; cats.push(c); }
+    });
+  } else {
+    menuActive = (state.menu || []).filter(function (m) { return m.active; });
+    cats = (state.categories || []).filter(function (c) { return c && String(c).trim(); });
   }
   if (!cats.length) {
     grid.innerHTML = '<div class="pos-empty"><i class="fas fa-box-open" style="font-size:48px;display:block;margin-bottom:14px;opacity:.4;"></i>لا توجد فئات — تَأكَّد من تَحميل المنيو</div>';
@@ -484,7 +504,7 @@ window.renderFoodicsSplitFields = function () {
     return (
       '<div class="pay-split-row">' +
         '<div class="pay-split-method"><i class="fas ' + iconFor(m.Name, m) + '"></i> ' + labelFor(m) + '</div>' +
-        '<input type="number" step="0.01" min="0" class="form-control pay-split-input split-input" ' +
+        '<input type="number" data-vk="1" step="0.01" min="0" class="form-control pay-split-input split-input" ' +
                'data-method="' + safe + '" value="" placeholder="0.00" oninput="paySplitRecalc()">' +
         '<button type="button" class="pay-split-rest" onclick="paySplitFillRest(\'' + safe + '\')" title="املأ بالمتبقي"><i class="fas fa-equals"></i></button>' +
       '</div>'
@@ -2081,13 +2101,14 @@ function renderCstCart() {
     // Column 1: المادة
     var nameCell = '<td style="font-weight:700;font-size:12px;">' + c.name + '</td>';
     // Column 2: الكبرى — input or dash
+    // v5.15.1 — data-vk="1" so the virtual keyboard auto-opens here.
     var bigCell = hasBig
-      ? '<td style="text-align:center;"><input type="number" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (bigVal === '' ? '' : bigVal) + '" oninput="updateCstDual(' + i + ',this.value,null)" placeholder="0"></td>'
+      ? '<td style="text-align:center;"><input type="number" data-vk="1" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (bigVal === '' ? '' : bigVal) + '" oninput="updateCstDual(' + i + ',this.value,null)" placeholder="0"></td>'
       : '<td style="text-align:center;color:#e2e8f0;">—</td>';
     // Column 3: وحدة كبرى
     var bigUnitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (hasBig ? c.bigUnit : '—') + '</td>';
     // Column 4: الصغرى — always has input
-    var smallCell = '<td style="text-align:center;"><input type="number" min="0" step="0.01" class="form-control glass-input" style="width:60px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (smallVal === '' ? '' : smallVal) + '" oninput="updateCstDual(' + i + ',null,this.value)" placeholder="0"></td>';
+    var smallCell = '<td style="text-align:center;"><input type="number" data-vk="1" min="0" step="0.01" class="form-control glass-input" style="width:60px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (smallVal === '' ? '' : smallVal) + '" oninput="updateCstDual(' + i + ',null,this.value)" placeholder="0"></td>';
     // Column 5: وحدة صغرى
     var unitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (c.unit || '') + '</td>';
     // Column 5: النظام — v5.12.7 hidden from cashier (blind count)
@@ -2722,11 +2743,12 @@ function _shrRenderCart() {
     var low = c.stock <= c.minStock;
 
     var nameCell = '<td style="font-weight:700;font-size:12px;">' + c.name + '</td>';
+    // v5.15.1 — data-vk="1" so the virtual keyboard auto-opens here.
     var bigQtyCell = hasBig
-      ? '<td style="text-align:center;"><input type="number" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + bigVal + '" oninput="shrUpdateDual(' + i + ',this.value,null)" placeholder="0"></td>'
+      ? '<td style="text-align:center;"><input type="number" data-vk="1" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + bigVal + '" oninput="shrUpdateDual(' + i + ',this.value,null)" placeholder="0"></td>'
       : '<td style="text-align:center;color:#e2e8f0;">—</td>';
     var bigUnitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (hasBig ? c.bigUnit : '—') + '</td>';
-    var smallQtyCell = '<td style="text-align:center;"><input type="number" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + smallVal + '" oninput="shrUpdateDual(' + i + ',null,this.value)" placeholder="0"></td>';
+    var smallQtyCell = '<td style="text-align:center;"><input type="number" data-vk="1" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + smallVal + '" oninput="shrUpdateDual(' + i + ',null,this.value)" placeholder="0"></td>';
     var smallUnitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (c.unit||'') + '</td>';
     var stockCell = '<td style="text-align:center;font-weight:700;color:' + (low?'#ef4444':'#16a34a') + ';font-size:12px;">' + c.stock + '</td>';
     var delCell = '<td style="text-align:center;"><button onclick="shrRemoveItem(' + i + ')" style="border:none;background:none;color:#ef4444;cursor:pointer;font-size:14px;"><i class="fas fa-trash"></i></button></td>';
@@ -3198,7 +3220,7 @@ window.posSelectLineForDiscount = function(idx) {
     '<div style="font-weight:800;margin-bottom:6px;">أو أدخل خصم يدوي:</div>' +
     '<div style="display:flex;gap:8px;align-items:center;">' +
       '<select id="posLineDiscType" class="form-control glass-input" style="flex:1;"><option value="percentage">نسبة %</option><option value="fixed">مبلغ ثابت</option></select>' +
-      '<input id="posLineDiscValue" type="number" step="0.01" min="0" class="form-control glass-input" placeholder="القيمة" style="flex:1;">' +
+      '<input id="posLineDiscValue" type="number" data-vk="1" step="0.01" min="0" class="form-control glass-input" placeholder="القيمة" style="flex:1;">' +
       '<button class="btn btn-primary" onclick="posApplyManualLineDiscount()">تطبيق</button>' +
     '</div>' +
     '<div style="font-size:11px;color:#94a3b8;margin-top:6px;">قد يتطلب الخصم اليدوي صلاحية المدير.</div>' +
@@ -3264,7 +3286,7 @@ window.posOpenInvoiceDiscountModal = function() {
     '<div style="font-weight:800;margin-bottom:6px;">أو أدخل خصم يدوي:</div>' +
     '<div style="display:flex;gap:8px;align-items:center;">' +
       '<select id="posInvDiscType" class="form-control glass-input" style="flex:1;"><option value="percentage">نسبة %</option><option value="fixed">مبلغ ثابت</option></select>' +
-      '<input id="posInvDiscValue" type="number" step="0.01" min="0" class="form-control glass-input" placeholder="القيمة" style="flex:1;">' +
+      '<input id="posInvDiscValue" type="number" data-vk="1" step="0.01" min="0" class="form-control glass-input" placeholder="القيمة" style="flex:1;">' +
       '<button class="btn btn-primary" onclick="posApplyManualInvoiceDiscount()">تطبيق</button>' +
     '</div>' +
   '</div>';
@@ -3357,7 +3379,7 @@ window.shiftCloseStart = function() {
       var unit  = d < 1 ? 'هللة' : (d <= 1 ? 'ريال' : 'فئة');
       return '<div class="sc-denom-card">' +
                '<div class="sc-denom-card-top"><span class="sc-denom-face">' + label + '</span><span class="sc-denom-unit">' + unit + '</span></div>' +
-               '<input type="number" inputmode="numeric" min="0" step="1" class="sc-denom-input" data-denom="' + d + '" value="0" oninput="scV3Recalc()" onfocus="this.select()">' +
+               '<input type="number" inputmode="numeric" data-vk="1" min="0" step="1" class="sc-denom-input" data-denom="' + d + '" value="0" oninput="scV3Recalc()" onfocus="this.select()">' +
                '<div class="sc-denom-card-total" data-denom="' + d + '">0.00</div>' +
              '</div>';
     }).join('');
@@ -3423,7 +3445,7 @@ window.shiftCloseStart = function() {
         elecGrid.innerHTML = _scElecMethods.map(function(m) {
           return '<div class="sc-elec-card">' +
                    '<div class="sc-elec-card-head"><i class="fas ' + (m.icon || 'fa-credit-card') + '" style="color:' + (m.color || '#3b82f6') + ';"></i> <span>' + (m.nameAr || m.name) + '</span></div>' +
-                   '<input type="number" inputmode="decimal" min="0" step="0.01" class="sc-elec-input" data-pmid="' + m.id + '" data-pmname="' + (m.name || '').toLowerCase() + '" placeholder="0.00" oninput="scV3Recalc()" onfocus="this.select()">' +
+                   '<input type="number" inputmode="decimal" data-vk="1" min="0" step="0.01" class="sc-elec-input" data-pmid="' + m.id + '" data-pmname="' + (m.name || '').toLowerCase() + '" placeholder="0.00" oninput="scV3Recalc()" onfocus="this.select()">' +
                  '</div>';
         }).join('');
       }

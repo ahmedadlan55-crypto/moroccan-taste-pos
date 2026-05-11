@@ -1,0 +1,68 @@
+/* ────────────────────────────────────────────────────────────────
+ * Moroccan Taste POS / ERP — Unified Design Tokens
+ * ────────────────────────────────────────────────────────────────
+ * Single source of truth for colours, radii, shadows and
+ * typography across every entry point: admin (/), cashier (/pos/),
+ * employee portal (/employee/), and custody (/custody/).
+ *
+ * Three-colour brand system:
+ *   • Slate   — primary surfaces, headers, app chrome
+ *   • Purple  — interactive accent (hovers, active states, focus)
+ *   • Green   — CTAs and success states (save, confirm, paid)
+ *
+ * Edit a value here once and every module follows.
+ * Do NOT inline hex colours in component CSS — read from var()
+ * so brand updates take one edit.
+ * ──────────────────────────────────────────────────────────────── */
+:root {
+  /* Brand */
+  --mt-primary:     #1e293b;
+  --mt-primary-2:   #0f172a;
+  --mt-accent:      #7c3aed;
+  --mt-accent-2:    #6d28d9;
+  --mt-accent-soft: #faf5ff;
+
+  /* Semantic */
+  --mt-success:     #16a34a;
+  --mt-success-2:   #15803d;
+  --mt-danger:      #dc2626;
+  --mt-danger-2:    #b91c1c;
+  --mt-warning:     #f59e0b;
+  --mt-info:        #0284c7;
+
+  /* Neutrals */
+  --mt-bg:          #f1f5f9;
+  --mt-surface:     #ffffff;
+  --mt-surface-2:   #f8fafc;
+  --mt-border:      #e2e8f0;
+  --mt-divider:     rgba(0, 0, 0, 0.06);
+
+  /* Text */
+  --mt-text:        #0f172a;
+  --mt-text-muted:  #64748b;
+  --mt-text-light:  #94a3b8;
+
+  /* Geometry */
+  --mt-radius-sm:   10px;
+  --mt-radius-md:   14px;
+  --mt-radius-lg:   18px;
+  --mt-radius-xl:   24px;
+
+  /* Shadows */
+  --mt-shadow-sm:   0 2px 8px rgba(15, 23, 42, 0.06);
+  --mt-shadow-md:   0 8px 20px rgba(15, 23, 42, 0.10);
+  --mt-shadow-lg:   0 16px 40px rgba(15, 23, 42, 0.20);
+
+  /* Typography */
+  --mt-font:        -apple-system, BlinkMacSystemFont, "SF Pro Display",
+                    "Segoe UI", "Tahoma", "Cairo", Arial, sans-serif;
+  --mt-font-mono:   ui-monospace, "SFMono-Regular", "Menlo", monospace;
+}
+
+/* Unified focus ring across every interactive element. JS-driven
+ * widgets that prevent default click should keep this — touch users
+ * benefit from a visible indicator. */
+*:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.20);
+}

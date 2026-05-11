@@ -3,19 +3,22 @@
    Variables, reset, buttons, forms, modals, toast, loader
    ========================================= */
 
+/* v5.14.3 — Legacy variable names alias the shared brand tokens
+ * defined in /shared/design-tokens.css so every page that loads
+ * common.css inherits the unified Slate + Purple + Green palette. */
 :root {
-  --primary: #0f172a;
-  --secondary: #0d47a1;
-  --accent: #3b82f6;
-  --bg-color: #f8fafc;
-  --text-dark: #1e293b;
-  --text-light: #64748b;
-  --border: #e2e8f0;
-  --white: #ffffff;
-  --danger: #ef4444;
-  --danger-hover: #b91c1c;
-  --success: #10b981;
-  --warning: #f59e0b;
+  --primary:      var(--mt-primary-2);
+  --secondary:    var(--mt-primary);
+  --accent:       var(--mt-accent);
+  --bg-color:     var(--mt-surface-2);
+  --text-dark:    var(--mt-text);
+  --text-light:   var(--mt-text-muted);
+  --border:       var(--mt-border);
+  --white:        var(--mt-surface);
+  --danger:       var(--mt-danger);
+  --danger-hover: var(--mt-danger-2);
+  --success:      var(--mt-success);
+  --warning:      var(--mt-warning);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
@@ -30,11 +33,11 @@ input, select, textarea { outline: none; font-family: inherit; }
 .btn { padding: 12px 20px; border-radius: 12px; font-weight: bold; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .btn:active { transform: scale(0.96); }
 .btn-primary { background: var(--secondary); color: var(--white); box-shadow: 0 4px 12px rgba(13, 71, 161, 0.2); }
-.btn-primary:hover { background: #1565c0; }
+.btn-primary:hover { background: var(--mt-primary-2); }
 .btn-danger { background: var(--danger); color: var(--white); box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2); }
 .btn-danger:hover { background: var(--danger-hover); }
 .btn-success { background: var(--success); color: var(--white); box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2); }
-.btn-success:hover { background: #059669; }
+.btn-success:hover { background: var(--mt-success-2); }
 .btn-light { background: #f1f5f9; color: var(--text-dark); border: 1px solid var(--border); }
 .btn-light:hover { background: #e2e8f0; }
 .btn-sm { padding: 8px 14px; font-size: 13px; border-radius: 10px; }

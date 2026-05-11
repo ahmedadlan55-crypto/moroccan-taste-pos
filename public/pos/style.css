@@ -2,32 +2,32 @@
    POS page-specific styles — Glass-morphism + Mobile-first + PWA
    ========================================= */
 
-/* v5.14.2 — Unified POS design tokens. Three-colour brand system
- * (Slate + Purple + Green) plus neutral surfaces and a fixed
- * radius/shadow scale. Every Foodics-era component should refer to
- * these tokens instead of inlining hex codes. */
+/* v5.14.3 — POS tokens are now aliases of the shared brand tokens in
+ * /shared/design-tokens.css. Edit the master file there once and every
+ * module (POS, admin, employee, custody) updates. The --pos-* names
+ * are preserved so existing rules in this stylesheet still resolve. */
 :root {
-  --pos-primary:    #1e293b;
-  --pos-primary-2:  #0f172a;
-  --pos-accent:     #7c3aed;
-  --pos-accent-2:   #6d28d9;
-  --pos-accent-soft:#faf5ff;
-  --pos-success:    #16a34a;
-  --pos-success-2:  #15803d;
-  --pos-danger:     #dc2626;
-  --pos-warning:    #f59e0b;
-  --pos-bg:         #f1f5f9;
-  --pos-surface:    #ffffff;
-  --pos-surface-2:  #f8fafc;
-  --pos-border:     #e2e8f0;
-  --pos-text:       #0f172a;
-  --pos-text-muted: #64748b;
-  --pos-radius-sm:  10px;
-  --pos-radius-md:  14px;
-  --pos-radius-lg:  18px;
-  --pos-shadow-sm:  0 2px 8px rgba(15, 23, 42, 0.06);
-  --pos-shadow-md:  0 8px 20px rgba(15, 23, 42, 0.10);
-  --pos-shadow-lg:  0 16px 40px rgba(15, 23, 42, 0.20);
+  --pos-primary:    var(--mt-primary);
+  --pos-primary-2:  var(--mt-primary-2);
+  --pos-accent:     var(--mt-accent);
+  --pos-accent-2:   var(--mt-accent-2);
+  --pos-accent-soft:var(--mt-accent-soft);
+  --pos-success:    var(--mt-success);
+  --pos-success-2:  var(--mt-success-2);
+  --pos-danger:     var(--mt-danger);
+  --pos-warning:    var(--mt-warning);
+  --pos-bg:         var(--mt-bg);
+  --pos-surface:    var(--mt-surface);
+  --pos-surface-2:  var(--mt-surface-2);
+  --pos-border:     var(--mt-border);
+  --pos-text:       var(--mt-text);
+  --pos-text-muted: var(--mt-text-muted);
+  --pos-radius-sm:  var(--mt-radius-sm);
+  --pos-radius-md:  var(--mt-radius-md);
+  --pos-radius-lg:  var(--mt-radius-lg);
+  --pos-shadow-sm:  var(--mt-shadow-sm);
+  --pos-shadow-md:  var(--mt-shadow-md);
+  --pos-shadow-lg:  var(--mt-shadow-lg);
 }
 
 body {

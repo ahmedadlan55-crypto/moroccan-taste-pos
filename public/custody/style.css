@@ -5,9 +5,18 @@
 
 *{margin:0;padding:0;box-sizing:border-box;}
 
+/* v5.14.3 — Custody local variables are now aliases of the shared
+ * brand tokens in /shared/design-tokens.css. The whole custody UI
+ * switches to the Slate + Purple + Green identity automatically. */
 :root{
-  --blue:#3b82f6; --dblue:#1e40af; --green:#16a34a; --red:#ef4444;
-  --amber:#f59e0b; --purple:#8b5cf6; --slate:#64748b; --dark:#1e293b;
+  --blue:   var(--mt-accent);
+  --dblue:  var(--mt-accent-2);
+  --green:  var(--mt-success);
+  --red:    var(--mt-danger);
+  --amber:  var(--mt-warning);
+  --purple: var(--mt-accent);
+  --slate:  var(--mt-text-muted);
+  --dark:   var(--mt-text);
   --glass:rgba(255,255,255,0.62); --glass-border:rgba(255,255,255,0.35);
   --blur:blur(24px) saturate(180%);
   --radius:16px; --radius-lg:22px;
@@ -149,7 +158,7 @@ body{
   white-space:nowrap;display:flex;align-items:center;gap:4px;
 }
 .b-pending{background:#fef3c7;color:#92400e;}
-.b-approved{background:#dbeafe;color:#1e40af;}
+.b-approved{background:var(--mt-accent-soft);color:var(--mt-accent-2);}
 .b-rejected{background:#fee2e2;color:#991b1b;}
 .b-posted{background:#dcfce7;color:#166534;}
 
@@ -197,7 +206,7 @@ body{
 .close-btn{
   display:inline-flex;align-items:center;gap:6px;
   padding:0 16px;height:50px;border:none;border-radius:999px;
-  background:linear-gradient(135deg,#ef4444,#b91c1c);
+  background:linear-gradient(135deg,var(--mt-danger),var(--mt-danger-2));
   color:#fff;font-size:13px;font-weight:800;font-family:inherit;
   cursor:pointer;
   box-shadow:0 6px 20px rgba(239,68,68,0.35);

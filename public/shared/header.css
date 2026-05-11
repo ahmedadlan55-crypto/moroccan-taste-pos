@@ -62,7 +62,7 @@
 .app-header-actions .btn { padding: 9px 14px; font-size: 13px; gap: 7px; font-weight: 700; }
 .app-header-actions .btn i { font-size: 14px; }
 .app-logout-btn {
-  background: linear-gradient(135deg, #ef4444, #dc2626) !important;
+  background: linear-gradient(135deg, var(--mt-danger), var(--mt-danger-2)) !important;
   color: #fff !important;
   border: none !important;
   box-shadow: 0 4px 12px rgba(239, 68, 68, 0.28) !important;

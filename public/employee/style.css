@@ -4,7 +4,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;directio
 /* No loader */
 
 /* Header */
-#hdr{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:#1e40af;color:#fff;min-height:52px;width:100%;}
+#hdr{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--mt-primary);color:#fff;min-height:52px;width:100%;}
 .hdr-r{display:flex;align-items:center;gap:8px;flex:1;min-width:0;}
 .hdr-av{width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
 .hdr-info{min-width:0;flex:1;}
@@ -22,8 +22,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;directio
 .clock-btn i{font-size:32px;flex-shrink:0;}
 .clock-lbl{font-size:18px;font-weight:900;color:inherit;}
 .clock-time{font-size:13px;opacity:0.8;margin-top:2px;font-family:monospace;}
-.clock-in{background:linear-gradient(135deg,#10b981,#059669);color:#fff;box-shadow:0 6px 20px rgba(16,185,129,0.35);}
-.clock-out{background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;box-shadow:0 6px 20px rgba(239,68,68,0.35);}
+.clock-in{background:linear-gradient(135deg,var(--mt-success),var(--mt-success-2));color:#fff;box-shadow:0 6px 20px rgba(16,185,129,0.35);}
+.clock-out{background:linear-gradient(135deg,var(--mt-danger),var(--mt-danger-2));color:#fff;box-shadow:0 6px 20px rgba(239,68,68,0.35);}
 .clock-done{background:#fff;color:#64748b;border:1px solid #e2e8f0;cursor:default;}
 .clock-btn:active{transform:scale(0.97);}
 
@@ -37,22 +37,22 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;directio
 /* Card */
 .card{background:#fff;border-radius:14px;padding:12px;margin-bottom:8px;border:1px solid #f1f5f9;}
 .card-t{font-size:13px;font-weight:800;color:#1e293b;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
-.card-t i{color:#3b82f6;}
+.card-t i{color:var(--mt-accent);}
 
 /* Attendance Row */
 .ar{display:flex;align-items:center;gap:6px;padding:8px 0;border-bottom:1px solid #f8fafc;}
 .ar:last-child{border-bottom:none;}
 .ad{font-size:11px;font-weight:700;min-width:58px;flex-shrink:0;color:#475569;}
 .at{flex:1;font-size:11px;color:#64748b;}
-.ah{font-size:13px;font-weight:900;color:#1e40af;flex-shrink:0;}
+.ah{font-size:13px;font-weight:900;color:var(--mt-primary);flex-shrink:0;}
 .meta{font-size:9px;color:#94a3b8;margin-top:1px;}
 
 /* Leave Card */
 .lc{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f8fafc;}
 .lc:last-child{border-bottom:none;}
 .ln{font-size:12px;font-weight:700;color:#1e293b;}
-.lr{font-size:16px;font-weight:900;color:#1e40af;}
-.badge{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:#dbeafe;color:#1e40af;}
+.lr{font-size:16px;font-weight:900;color:var(--mt-primary);}
+.badge{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:var(--mt-accent-soft);color:var(--mt-primary);}
 
 /* Profile */
 .pf{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f8fafc;font-size:12px;}
@@ -64,17 +64,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;directio
 .bnav{display:flex;background:#fff;border-top:1px solid #e2e8f0;padding:4px 0;padding-bottom:calc(4px + env(safe-area-inset-bottom,0));position:fixed;bottom:0;left:0;right:0;z-index:50;}
 .nav-tab{flex:1;text-align:center;padding:6px 2px;cursor:pointer;color:#94a3b8;font-size:9px;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:2px;}
 .nav-tab i{font-size:18px;}
-.nav-tab.active{color:#1e40af;}
+.nav-tab.active{color:var(--mt-primary);}
 
 /* Button */
-.btn-main{width:100%;padding:12px;border-radius:12px;font-size:14px;font-weight:800;border:none;cursor:pointer;background:#3b82f6;color:#fff;display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:8px;}
+.btn-main{width:100%;padding:12px;border-radius:12px;font-size:14px;font-weight:800;border:none;cursor:pointer;background:var(--mt-accent);color:#fff;display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:8px;}
 .btn-main:active{transform:scale(0.97);}
 
 /* Form */
 .fg{margin-bottom:10px;}
 .fg label{display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:3px;}
 .fi{width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:14px;background:#fff;}
-.fi:focus{border-color:#3b82f6;outline:none;}
+.fi:focus{border-color:var(--mt-accent);outline:none;}
 
 /* Empty */
 .empty{text-align:center;color:#94a3b8;padding:20px;font-size:13px;}
@@ -83,7 +83,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;directio
 .toast{position:fixed;top:10px;left:50%;transform:translateX(-50%);padding:10px 20px;border-radius:10px;font-size:13px;font-weight:700;z-index:9999;display:none;max-width:90%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.15);}
 .toast.show{display:block;animation:sd .3s ease;}
 .toast.ok{background:#0f172a;color:#fff;}
-.toast.err{background:#ef4444;color:#fff;}
+.toast.err{background:var(--mt-danger);color:#fff;}
 @keyframes sd{from{opacity:0;transform:translateX(-50%) translateY(-10px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
 
 /* Pages */
@@ -93,11 +93,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;directio
 /* Login */
 .login-wrap{display:flex;align-items:center;justify-content:center;min-height:100dvh;padding:16px;background:#f1f5f9;}
 .login-box{background:#fff;border-radius:20px;padding:32px 20px;width:100%;max-width:340px;text-align:center;}
-.login-icon{width:52px;height:52px;border-radius:14px;background:#1e40af;color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;margin:0 auto 12px;}
+.login-icon{width:52px;height:52px;border-radius:14px;background:var(--mt-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;margin:0 auto 12px;}
 .login-box h1{font-size:20px;color:#0f172a;margin-bottom:4px;}
 .login-box p{color:#64748b;font-size:11px;margin-bottom:18px;}
 .login-box input{width:100%;padding:12px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:14px;margin-bottom:8px;text-align:right;}
-.login-box button{width:100%;padding:13px;background:#1e40af;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:800;cursor:pointer;}
+.login-box button{width:100%;padding:13px;background:var(--mt-primary);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:800;cursor:pointer;}
 
 /* Modal */
 .modal{position:fixed;inset:0;z-index:5000;background:rgba(0,0,0,0.4);display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;transition:.2s;}

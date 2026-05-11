@@ -2,6 +2,34 @@
    POS page-specific styles — Glass-morphism + Mobile-first + PWA
    ========================================= */
 
+/* v5.14.2 — Unified POS design tokens. Three-colour brand system
+ * (Slate + Purple + Green) plus neutral surfaces and a fixed
+ * radius/shadow scale. Every Foodics-era component should refer to
+ * these tokens instead of inlining hex codes. */
+:root {
+  --pos-primary:    #1e293b;
+  --pos-primary-2:  #0f172a;
+  --pos-accent:     #7c3aed;
+  --pos-accent-2:   #6d28d9;
+  --pos-accent-soft:#faf5ff;
+  --pos-success:    #16a34a;
+  --pos-success-2:  #15803d;
+  --pos-danger:     #dc2626;
+  --pos-warning:    #f59e0b;
+  --pos-bg:         #f1f5f9;
+  --pos-surface:    #ffffff;
+  --pos-surface-2:  #f8fafc;
+  --pos-border:     #e2e8f0;
+  --pos-text:       #0f172a;
+  --pos-text-muted: #64748b;
+  --pos-radius-sm:  10px;
+  --pos-radius-md:  14px;
+  --pos-radius-lg:  18px;
+  --pos-shadow-sm:  0 2px 8px rgba(15, 23, 42, 0.06);
+  --pos-shadow-md:  0 8px 20px rgba(15, 23, 42, 0.10);
+  --pos-shadow-lg:  0 16px 40px rgba(15, 23, 42, 0.20);
+}
+
 body {
   height: 100dvh;
   display: flex;
@@ -240,17 +268,21 @@ body.ar .pwa-install-btn {
 .pos-action-discounts { display: flex; gap: 8px; flex-wrap: wrap; }
 .pos-action-btn {
   padding: 10px 16px;
-  border-radius: 10px;
-  border: 1.5px solid #fde68a;
-  background: #fffbeb;
-  color: #92400e;
+  border-radius: var(--pos-radius-sm);
+  border: 1.5px solid var(--pos-border);
+  background: var(--pos-surface-2);
+  color: var(--pos-text);
   font-weight: 800;
   font-size: 13px;
   cursor: pointer;
   display: inline-flex; align-items: center; gap: 6px;
-  transition: transform 120ms, background 120ms;
+  transition: transform 120ms, background 120ms, border-color 120ms;
 }
-.pos-action-btn:hover { background: #fef3c7; transform: translateY(-1px); }
+.pos-action-btn:hover {
+  background: var(--pos-accent-soft);
+  border-color: var(--pos-accent);
+  transform: translateY(-1px);
+}
 .pos-action-btn:active { transform: translateY(0); }
 
 /* Categories grid — Foodics big tiles */
@@ -266,9 +298,9 @@ body.ar .pwa-install-btn {
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
   gap: 10px;
-  background: linear-gradient(140deg, #ffffff, #f8fafc);
-  border: 1.5px solid #e2e8f0;
-  border-radius: 18px;
+  background: linear-gradient(140deg, var(--pos-surface), var(--pos-surface-2));
+  border: 1.5px solid var(--pos-border);
+  border-radius: var(--pos-radius-lg);
   cursor: pointer;
   transition: transform 120ms, box-shadow 120ms, border-color 120ms;
   padding: 16px;
@@ -277,26 +309,26 @@ body.ar .pwa-install-btn {
 }
 .pos-cat-tile:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-  border-color: #7c3aed;
+  box-shadow: var(--pos-shadow-md);
+  border-color: var(--pos-accent);
 }
 .pos-cat-tile:active { transform: translateY(0); }
-.pos-cat-tile i { font-size: 38px; color: #7c3aed; }
+.pos-cat-tile i { font-size: 38px; color: var(--pos-accent); }
 .pos-cat-name {
-  font-size: 14px; font-weight: 900; text-align: center; color: #1e293b;
-  line-height: 1.3;
+  font-size: 14px; font-weight: 900; text-align: center;
+  color: var(--pos-text); line-height: 1.3;
 }
 .pos-cat-count {
   position: absolute; top: 10px; inset-inline-end: 10px;
-  background: #7c3aed; color: #fff;
+  background: var(--pos-accent); color: #fff;
   font-size: 11px; font-weight: 800;
   padding: 2px 8px; border-radius: 999px;
 }
 .pos-cat-tile.pos-cat-all {
-  background: linear-gradient(140deg, #ddd6fe, #ede9fe);
-  border-color: #a78bfa;
+  background: linear-gradient(140deg, #ddd6fe, var(--pos-accent-soft));
+  border-color: var(--pos-accent);
 }
-.pos-cat-tile.pos-cat-all i { color: #5b21b6; }
+.pos-cat-tile.pos-cat-all i { color: var(--pos-accent-2); }
 .pos-empty {
   grid-column: 1 / -1; text-align: center; padding: 40px 20px;
   color: #94a3b8; font-weight: 700;
@@ -325,7 +357,7 @@ body.ar .pwa-install-btn {
   z-index: 90;
   display: flex; align-items: center; gap: 16px;
   padding: 14px 20px;
-  background: linear-gradient(135deg, #1e293b, #0f172a);
+  background: linear-gradient(135deg, var(--pos-primary), var(--pos-primary-2));
   color: #fff;
   cursor: pointer;
   transform: translateY(120%);
@@ -350,13 +382,13 @@ body.ar .pwa-install-btn {
 }
 .pos-total-bar-cta {
   display: flex; align-items: center; gap: 10px;
-  background: #16a34a;
+  background: var(--pos-success);
   padding: 10px 20px;
   border-radius: 12px;
   font-weight: 800;
   transition: background 120ms;
 }
-.pos-total-bar:hover .pos-total-bar-cta { background: #15803d; }
+.pos-total-bar:hover .pos-total-bar-cta { background: var(--pos-success-2); }
 
 /* Payment modal */
 .pay-modal-summary {
@@ -402,9 +434,9 @@ body.foodics-mode .cart-footer { display: none !important; }
   display: flex; flex-direction: column; gap: 4px;
   padding: 18px 22px;
   border: 0; cursor: pointer;
-  background: linear-gradient(135deg, #1e293b, #0f172a);
+  background: linear-gradient(135deg, var(--pos-primary), var(--pos-primary-2));
   color: #fff;
-  border-radius: 18px;
+  border-radius: var(--pos-radius-lg);
   box-shadow: 0 10px 28px rgba(15, 23, 42, 0.35);
   transition: transform 120ms, box-shadow 120ms;
   text-align: center;
@@ -425,8 +457,8 @@ body.foodics-mode .cart-footer { display: none !important; }
 .ctb-cta {
   margin-top: 10px;
   padding: 10px 18px;
-  background: #16a34a;
-  border-radius: 10px;
+  background: var(--pos-success);
+  border-radius: var(--pos-radius-sm);
   font-size: 14px; font-weight: 800;
   display: inline-flex; align-items: center; gap: 8px;
 }
@@ -465,17 +497,17 @@ body.foodics-mode .cart-footer { display: none !important; }
 .pay-tile i { font-size: 32px; color: #475569; transition: color 120ms; }
 .pay-tile span { font-size: 14px; font-weight: 800; color: #1e293b; text-align: center; line-height: 1.2; }
 .pay-tile:hover {
-  border-color: #7c3aed;
-  background: #faf5ff;
+  border-color: var(--pos-accent);
+  background: var(--pos-accent-soft);
   transform: translateY(-2px);
 }
 .pay-tile.is-active {
-  border-color: #7c3aed;
-  background: linear-gradient(140deg, #ddd6fe, #ede9fe);
+  border-color: var(--pos-accent);
+  background: linear-gradient(140deg, #ddd6fe, var(--pos-accent-soft));
   box-shadow: 0 8px 20px rgba(124, 58, 237, 0.25);
 }
-.pay-tile.is-active i { color: #5b21b6; }
-.pay-tile.is-active span { color: #4c1d95; }
+.pay-tile.is-active i { color: var(--pos-accent-2); }
+.pay-tile.is-active span { color: var(--pos-accent-2); }
 .pay-tile.pay-tile-split.is-active {
   background: linear-gradient(140deg, #fde68a, #fbbf24);
   border-color: #d97706;
@@ -560,8 +592,8 @@ body.foodics-mode .cart-footer { display: none !important; }
 .pay-confirm-btn {
   width: 100%;
   padding: 16px;
-  background: linear-gradient(135deg, #16a34a, #15803d);
-  color: #fff; border: 0; border-radius: 14px;
+  background: linear-gradient(135deg, var(--pos-success), var(--pos-success-2));
+  color: #fff; border: 0; border-radius: var(--pos-radius-md);
   font-size: 17px; font-weight: 900;
   cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: 10px;

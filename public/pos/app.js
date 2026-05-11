@@ -545,25 +545,11 @@ window.posOpenPaymentModal = function () {
   openGlassModal('#modalPayment');
 };
 
-// Sync total bar whenever the cart updates. We wrap the existing
-// updateCart so the legacy summary lines still populate first.
-(function () {
-  var origUpdateCart = window.updateCart;
-  window.updateCart = function () {
-    var ret = origUpdateCart ? origUpdateCart.apply(this, arguments) : undefined;
-    try {
-      var totalEl = q('#cartFinalTotal');
-      var totalTxt = totalEl ? totalEl.textContent : '0.00 SAR';
-      var count = (state.cart || []).reduce(function (s, i) { return s + (Number(i.qty) || 0); }, 0);
-      var cntEl = q('#posTotalBarCount'); if (cntEl) cntEl.textContent = count;
-      var amtEl = q('#posTotalBarAmount'); if (amtEl) amtEl.textContent = totalTxt;
-      var bar = q('#posTotalBar'); if (bar) bar.classList.toggle('has-items', count > 0);
-      // v5.14.1 — sync the cart-sidebar total button too
-      var ctb = q('#ctbAmount'); if (ctb) ctb.textContent = totalTxt;
-    } catch (e) {}
-    return ret;
-  };
-})();
+// v5.14.2 — Foodics overlay sync moved INTO updateCart itself (see
+// further down in this file). The old IIFE wrapper here was wrapping
+// `window.updateCart` BEFORE the real function was defined later on,
+// so the real definition overwrote the wrapper and the sync never
+// ran — that's why the cart-sidebar total button was stuck at 0.00.
 
 // =========================================
 // Cart
@@ -682,6 +668,20 @@ window.updateCart = function() {
   qs('.pay-btn').forEach(function(btn) { btn.classList.remove('active'); });
   var activeBtn = q('#payBtn' + payMethod);
   if (activeBtn) activeBtn.classList.add('active');
+
+  // v5.14.2 — Sync the Foodics overlay (sticky total bar + cart-sidebar
+  // total button). Used to live in an IIFE wrapper that died because
+  // updateCart was redefined later in the file — see note above the
+  // (now removed) wrapper. Inline here so it runs every time the cart
+  // changes.
+  try {
+    var ftxt = q('#cartFinalTotal') ? q('#cartFinalTotal').innerText : '0.00';
+    var fcount = (state.cart || []).reduce(function (s, i) { return s + (Number(i.qty) || 0); }, 0);
+    var fcnt = q('#posTotalBarCount'); if (fcnt) fcnt.textContent = fcount;
+    var famt = q('#posTotalBarAmount'); if (famt) famt.textContent = ftxt;
+    var fctb = q('#ctbAmount'); if (fctb) fctb.textContent = ftxt;
+    var fbar = q('#posTotalBar'); if (fbar) fbar.classList.toggle('has-items', fcount > 0);
+  } catch (e) { /* foodics overlay may not be mounted yet */ }
 
   // Re-render the menu so + buttons reflect the new qty
   renderMenuGrid();

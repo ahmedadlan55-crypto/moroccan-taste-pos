@@ -987,37 +987,110 @@ def page_permissions(c, total):
             c.drawString(cx + (col_w_role - text_w) / 2, y + 1.5, mark)
 
     # Bottom: error codes reference card
-    err_y = MARGIN + 12 * mm
-    draw_card(c, MARGIN, err_y, PAGE_W - 2 * MARGIN, 38 * mm, fill=DANGER_SOFT, stroke=DANGER, accent=DANGER)
-    draw_text_rtl(c, PAGE_W - MARGIN - 6, err_y + 32 * mm, "أكواد أخطاء الخادم (Server Error Codes)", "Arabic-Bold", 11, INK)
-    codes = [
-        ("SAME_WAREHOUSE",  "لا يمكن أن يكون المصدر = الوجهة في تحويل"),
-        ("OVER_RECEIPT",    "qty_received > qty_issued — مرفوض"),
-        ("REASON_REQUIRED", "سبب الإرجاع مطلوب (>= 4 أحرف)"),
-        ("INSUFFICIENT_STOCK", "الكمية المطلوبة أكبر من المتاحة"),
-        ("INVALID_STATUS_TRANSITION", "انتقال حالة غير مسموح"),
+    # v5.10.48 — codes verified against actual server source
+    # (routes/warehouse-ops.js + routes/inventory.js, grep for `code:` and
+    #  `res.status(...).json({error: ...})`). Only codes that ACTUALLY
+    # exist in the codebase are shown.
+    err_y = MARGIN + 10 * mm
+    draw_card(c, MARGIN, err_y, PAGE_W - 2 * MARGIN, 58 * mm, fill=DANGER_SOFT, stroke=DANGER, accent=DANGER)
+    draw_text_rtl(c, PAGE_W - MARGIN - 6, err_y + 52 * mm, "أكواد أخطاء الخادم (Server Error Codes)", "Arabic-Bold", 11, INK)
+    draw_text_rtl(c, PAGE_W - MARGIN - 6, err_y + 47 * mm, "تم التحقّق منها مباشرةً من routes/warehouse-ops.js + routes/inventory.js", "Arabic", 8, INK_MUTED)
+
+    # ─ Group A: machine-readable code: errors (returned via `code: 'XXX'` field) ─
+    group_a_y = err_y + 41 * mm
+    draw_text_rtl(c, PAGE_W - MARGIN - 6, group_a_y, "أ) أكواد بـ \"code\" field (machine-readable)", "Arabic-Bold", 9, DANGER)
+    codes_a = [
+        ("SAME_WAREHOUSE",  "400", "warehouse-ops.js:265", "المصدر = الوجهة عند إنشاء تحويل"),
+        ("OVER_RECEIPT",    "400", "warehouse-ops.js:456", "qty_received > qty_issued عند الاستلام"),
+        ("REASON_REQUIRED", "400", "warehouse-ops.js:535", "سبب إرجاع التحويل ناقص (< 4 أحرف)"),
     ]
-    code_x = PAGE_W - MARGIN - 6
-    for i, (code, desc) in enumerate(codes):
-        y = err_y + 26 * mm - i * 5 * mm
-        # Chip
-        chip_w = 38 * mm
+    for i, (code, status, loc, desc) in enumerate(codes_a):
+        y = group_a_y - 4 * mm - i * 4.5 * mm
+        # Code chip
+        chip_w = 36 * mm
         c.setFillColor(DANGER)
         c.setStrokeColor(DANGER)
-        c.roundRect(code_x - chip_w, y - 1, chip_w, 4 * mm, 2, fill=1, stroke=1)
+        c.roundRect(PAGE_W - MARGIN - 8 - chip_w, y - 1, chip_w, 4 * mm, 2, fill=1, stroke=1)
         c.setFillColor(SURFACE)
         c.setFont("Arabic-Bold", 7.5)
         text_w = c.stringWidth(code, "Arabic-Bold", 7.5)
-        c.drawString(code_x - chip_w + (chip_w - text_w) / 2, y + 0.5, code)
+        c.drawString(PAGE_W - MARGIN - 8 - chip_w + (chip_w - text_w) / 2, y + 0.5, code)
+        # HTTP status mini-chip
+        status_chip_w = 10 * mm
+        sx_chip = PAGE_W - MARGIN - 8 - chip_w - 3 - status_chip_w
+        c.setFillColor(INK_MUTED)
+        c.setStrokeColor(INK_MUTED)
+        c.roundRect(sx_chip, y - 1, status_chip_w, 4 * mm, 2, fill=1, stroke=1)
+        c.setFillColor(SURFACE)
+        c.setFont("Arabic-Bold", 6.5)
+        c.drawString(sx_chip + 1.5, y + 0.5, f"HTTP {status}")
+        # Source location
+        draw_text_ltr(c, MARGIN + 6, y + 0.5, loc, "Arabic", 6.5, INK_FAINT)
         # Description
-        draw_text_rtl(c, code_x - chip_w - 4, y + 1, desc, "Arabic", 8.5, INK_MUTED)
+        draw_text_rtl(c, sx_chip - 3, y + 0.5, desc, "Arabic", 8, INK_MUTED)
+
+    # ─ Group B: message-based errors (no code: field, but raised with status) ─
+    group_b_y = group_a_y - 22 * mm
+    draw_text_rtl(c, PAGE_W - MARGIN - 6, group_b_y, "ب) أخطاء بـ \"error\" message (نصّية)", "Arabic-Bold", 9, WARNING)
+    codes_b = [
+        ("insufficient stock for item X", "400", "warehouse-ops.js:343"),
+        ("only draft can be approved",    "400", "warehouse-ops.js:315"),
+        ("invalid status",                  "400", "warehouse-ops.js:331"),
+        ("warehouse-not-found",           "404", "inventory.js:499/977"),
+        ("item-not-found",                  "404", "inventory.js:939/1319"),
+        ("duplicate-name",                  "409", "inventory.js:943/981"),
+        ("already-deleted",                  "409", "inventory.js:1327"),
+    ]
+    cols_b = 2
+    for i, (msg, status, loc) in enumerate(codes_b):
+        col = i % cols_b
+        row = i // cols_b
+        col_w = (PAGE_W - 2 * MARGIN - 16) / cols_b
+        cx_col = (PAGE_W - MARGIN - 6 if col == 0
+                  else PAGE_W - MARGIN - 6 - col_w - 8)
+        y = group_b_y - 4 * mm - row * 4.5 * mm
+        # Status chip
+        status_chip_w = 10 * mm
+        sx_chip = cx_col - 30 * mm - status_chip_w - 3
+        c.setFillColor(INK_MUTED)
+        c.roundRect(sx_chip, y - 1, status_chip_w, 4 * mm, 2, fill=1, stroke=1)
+        c.setFillColor(SURFACE)
+        c.setFont("Arabic-Bold", 6.5)
+        c.drawString(sx_chip + 1.5, y + 0.5, f"HTTP {status}")
+        # Message chip
+        chip_w = 30 * mm
+        c.setFillColor(WARNING)
+        c.setStrokeColor(WARNING)
+        c.roundRect(cx_col - chip_w, y - 1, chip_w, 4 * mm, 2, fill=1, stroke=1)
+        c.setFillColor(SURFACE)
+        c.setFont("Arabic-Bold", 6.5)
+        text_w = c.stringWidth(msg, "Arabic-Bold", 6.5)
+        c.drawString(cx_col - chip_w + (chip_w - text_w) / 2, y + 0.5, msg)
+        # Location
+        draw_text_ltr(c, sx_chip - 30, y + 0.5, loc, "Arabic", 6, INK_FAINT)
+
+    # Footer hint
+    draw_text_rtl(c, PAGE_W - MARGIN - 6, err_y + 4 * mm,
+                  "ملاحظة: المجموعة (ب) ستُرقَّى تدريجياً للحصول على `code` فيلد كي يستطيع الـ frontend مطابقتها بدقّة (i18n + UX)",
+                  "Arabic", 7.5, INK_FAINT)
 
     c.showPage()
 
 
 # ──────────────────────── Build the PDF ────────────────────────
 def main():
-    out_path = Path(__file__).resolve().parent.parent / "warehouse-system-mindmap.pdf"
+    project_root = Path(__file__).resolve().parent.parent
+    out_path = project_root / "warehouse-system-mindmap.pdf"
+    # If the target is locked (open in a viewer) fall back to a versioned
+    # name so we always produce output.
+    try:
+        if out_path.exists():
+            # Try to open in append mode to test write access
+            with open(out_path, "ab") as _:
+                pass
+    except PermissionError:
+        out_path = project_root / "warehouse-system-mindmap.v2.pdf"
+        print(f"NOTE: original PDF is open — writing to {out_path.name}")
     c = canvas.Canvas(str(out_path), pagesize=A4)
     c.setTitle(ar("الخريطة الذهنية لنظام المستودعات — Moroccan Taste POS"))
     c.setAuthor("Moroccan Taste POS")

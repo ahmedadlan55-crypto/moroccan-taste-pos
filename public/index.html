@@ -39,6 +39,16 @@
       display: none !important;
       visibility: hidden !important;
     }
+    /* v5.10.54 — owner request: the on-screen keyboard belongs ONLY on
+       the login screen of the admin shell, not on any admin section
+       after login. Hide both the FAB and any open keyboard panel once
+       the user is authenticated. The cashier shell (/pos/) is a
+       separate page so this rule doesn't reach it. */
+    body.authenticated #vkToggleBtn,
+    body.authenticated #vkKeyboard {
+      display: none !important;
+      visibility: hidden !important;
+    }
     /* Show login ONLY when no saved session */
     html:not(.has-session) body:not(.authenticated) #loginView { display: flex !important; visibility: visible !important; }
     /* Saved session exists: hide login, show loader until JS finishes */
@@ -227,7 +237,7 @@
        because v5.10.49 made it manual-mode (FAB-only, no auto-show
        on focus). The FAB button at the bottom of <body> is the only
        trigger. -->
-  <script src="/pos/keyboard.js?v=11"></script>
+  <script src="/pos/keyboard.js?v=12"></script>
   <!-- v5.11.2 — erp-v5.js / erp-v54.js removed (advanced enterprise section deleted) -->
   <script src="/js/app.js?v=64" defer></script>
 

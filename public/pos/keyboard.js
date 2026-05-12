@@ -33,15 +33,27 @@
     ['MODE','LANG','SPACE','RETURN']
   ];
 
-  // v5.14.8 — Numbers as a phone-pad. Three big columns for fast number
-  // entry just like an iPhone / iPad dialer. The bottom nav row keeps
-  // mode / lang / space / return reachable so the cashier can leave
-  // numeric mode without hunting for keys.
+  // v5.10.54 — iPhone-style full number panel with common punctuation
+  // on the second row. Owner request: "اريد كل الرموز المتواجدة في
+  // اي لوحة مفاتيح" — wants every symbol that a normal phone keyboard
+  // offers. Solution: numbers panel + dedicated symbols panel reachable
+  // via SYM (#+=) key, then back via SYM (123) key — exactly the
+  // iOS/Android pattern.
   var LAYOUT_NUM = [
-    ['1','2','3'],
-    ['4','5','6'],
-    ['7','8','9'],
-    ['.','0','BACK'],
+    ['1','2','3','4','5','6','7','8','9','0'],
+    ['-','/',':',';','(',')','$','&','@','"'],
+    ['SYM','.',',','?','!','\'','BACK'],
+    ['MODE','LANG','SPACE','RETURN']
+  ];
+
+  // Symbols panel — second iOS keyboard layer ("#+="). Curated set of
+  // every character that doesn't fit in the numbers row but a user
+  // might reasonably want to type (brackets, math operators, currency,
+  // logical / regex / programming symbols).
+  var LAYOUT_SYM = [
+    ['[',']','{','}','#','%','^','*','+','='],
+    ['_','\\','|','~','<','>','€','£','¥','•'],
+    ['SYM','.',',','?','!','\'','BACK'],
     ['MODE','LANG','SPACE','RETURN']
   ];
 
@@ -188,7 +200,12 @@
     if (styleBtn) styleBtn.textContent = state.style === 'phone' ? '🖥' : '📱';
 
     var isPhone = state.style === 'phone';
+    // v5.10.54 — three modes now: letters / numbers / symbols.
+    // Letters → MODE button: numbers
+    // Numbers → MODE button: letters, SYM button: symbols
+    // Symbols → MODE button: letters, SYM button: numbers
     var layout =
+      state.mode === 'symbols' ? LAYOUT_SYM :
       state.mode === 'numbers' ? LAYOUT_NUM :
       state.lang === 'ar'      ? (isPhone ? LAYOUT_AR_PHONE : LAYOUT_AR) :
                                  (isPhone ? LAYOUT_EN_PHONE : LAYOUT_EN);
@@ -237,7 +254,9 @@
       return backKey;
     }
     if (entry === 'MODE') {
-      var label = state.mode === 'numbers'
+      // v5.10.54 — three modes. From letters → "123" (goto numbers).
+      // From numbers OR symbols → "ABC" / "حروف" (goto letters).
+      var label = (state.mode === 'numbers' || state.mode === 'symbols')
         ? (state.lang === 'ar' ? 'حروف' : 'ABC')
         : '123';
       return makeKey(label, { cls: 'vk-mode', onPress: toggleMode });
@@ -260,7 +279,17 @@
       });
     }
     if (entry === 'SYM') {
-      return makeKey('#+=', { cls: 'vk-mode', onPress: function () { /* future second symbols panel */ } });
+      // v5.10.54 — toggle between numbers (123) and symbols (#+=).
+      // Label shows the OPPOSITE of the current mode so the user knows
+      // what they'll switch to. iOS keyboard convention.
+      var symLabel = state.mode === 'symbols' ? '123' : '#+=';
+      return makeKey(symLabel, {
+        cls: 'vk-mode',
+        onPress: function () {
+          state.mode = state.mode === 'symbols' ? 'numbers' : 'symbols';
+          redraw();
+        }
+      });
     }
     // Plain character key
     var ch = entry;
@@ -348,7 +377,9 @@
   }
 
   function toggleMode() {
-    state.mode = state.mode === 'numbers' ? 'letters' : 'numbers';
+    // v5.10.54 — three modes. From letters → numbers. From numbers OR
+    // symbols → letters. (Numbers ↔ symbols is handled by the SYM key.)
+    state.mode = (state.mode === 'numbers' || state.mode === 'symbols') ? 'letters' : 'numbers';
     state.shift = false;
     redraw();
   }

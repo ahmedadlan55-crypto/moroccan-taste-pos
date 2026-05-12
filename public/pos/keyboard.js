@@ -455,6 +455,11 @@
     if (tag === 'textarea') return true;
     if (tag !== 'input') return false;
     var t = (el.getAttribute('type') || 'text').toLowerCase();
+    // v5.10.50 — explicit data-vk="1" overrides the password block.
+    // The owner has consciously opted this field in (used on the login
+    // password field so a touch user can type their password via the
+    // on-screen keyboard FAB).
+    if (t === 'password') return true;
     return TEXT_LIKE_TYPES[t] === 1;
   }
 

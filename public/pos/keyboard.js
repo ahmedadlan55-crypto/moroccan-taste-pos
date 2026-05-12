@@ -420,23 +420,26 @@
   function bindInput(el) {
     if (!el || el._vkBound) return;
     el._vkBound = true;
-    // v5.14.9 — Auto-open on focus is back per owner request. The
-    // dedicated #vkToggleBtn FAB stays as a manual override (close /
-    // reopen without re-focusing).
-    var open = function () { state.target = el; show(el); };
-    el.addEventListener('focus', open);
-    el.addEventListener('click', open);
+    // v5.10.49 — Manual mode. We only TRACK the focused element so the
+    // FAB knows where to direct keystrokes — we do NOT auto-show. The
+    // keyboard appears only when the user explicitly taps the FAB
+    // (#vkToggleBtn) or code calls window.vkShow(selector).
+    var track = function () { state.target = el; };
+    el.addEventListener('focus', track);
+    el.addEventListener('click', track);
   }
 
-  // v5.10.30 — Decide whether an element should get the on-screen
-  // keyboard. Default policy:
-  //   • textarea elements              → YES (unless data-vk="0")
-  //   • <input> with text-like type    → YES (unless data-vk="0")
-  //   • password / hidden / file / etc → NEVER
-  //   • readOnly or disabled inputs    → NEVER
-  // Legacy data-vk="1" still works (it's an explicit opt-in marker but
-  // no longer required). data-vk="0" provides an opt-out for the rare
-  // input that must NOT trigger the keyboard.
+  // v5.10.49 — Decide whether an element should get the on-screen
+  // keyboard. NEW policy (manual / opt-in only):
+  //   • element must explicitly carry data-vk="1" → YES
+  //   • data-vk="0" or no data-vk attribute       → NEVER auto-bind
+  //   • password / hidden / file / etc            → NEVER (regardless)
+  //   • readOnly or disabled inputs               → NEVER
+  // The keyboard is now manual: users must tap the floating
+  // #vkToggleBtn FAB or call window.vkShow(selector) to show it.
+  // This reverts the v5.10.30 auto-bind-everything behavior at the
+  // owner's request — too many false triggers when typing on the
+  // physical keyboard while the cashier interface is open.
   var TEXT_LIKE_TYPES = {
     text: 1, search: 1, number: 1, tel: 1, email: 1, url: 1,
     password: 0,           // explicitly excluded
@@ -445,7 +448,8 @@
   function shouldBind(el) {
     if (!el || el.nodeType !== 1) return false;
     if (el._vkBound) return false;
-    if (el.getAttribute && el.getAttribute('data-vk') === '0') return false;
+    // v5.10.49 — strict opt-in: only elements with data-vk="1" qualify.
+    if (!el.getAttribute || el.getAttribute('data-vk') !== '1') return false;
     if (el.readOnly || el.disabled) return false;
     var tag = (el.tagName || '').toLowerCase();
     if (tag === 'textarea') return true;
@@ -455,10 +459,8 @@
   }
 
   function scanAndBind(root) {
-    // v5.10.30 — bind EVERY text-like input/textarea by default. Was
-    // previously gated on data-vk="1" which required tagging hundreds of
-    // inputs manually — the owner kept hitting fields with no keyboard.
-    var nodes = (root || document).querySelectorAll('input, textarea');
+    // v5.10.49 — scan only data-vk="1" elements. shouldBind() guards.
+    var nodes = (root || document).querySelectorAll('input[data-vk="1"], textarea[data-vk="1"]');
     nodes.forEach(function(n) { if (shouldBind(n)) bindInput(n); });
   }
 
@@ -487,16 +489,16 @@
     hide();
   }, { capture: true, passive: true });
 
-  // v5.10.30 — Belt-and-suspenders focus listener at the document level.
-  // If an input slips past scanAndBind (e.g. injected by innerHTML in a
-  // way the MutationObserver doesn't see — rare but possible), this
-  // catches it on the user's first focus and binds it on the spot.
+  // v5.10.49 — Belt-and-suspenders focus listener. ONLY binds (tracks
+  // target) for inputs the FAB can drive. Does NOT auto-show; the
+  // keyboard appears only via vkToggle() / vkShow() / manual click on
+  // the floating button.
   document.addEventListener('focus', function (e) {
     var el = e.target;
     if (shouldBind(el)) {
       bindInput(el);
       state.target = el;
-      show(el);
+      // NOTE: no show(el) — opening is fully manual now.
     }
   }, true);
 

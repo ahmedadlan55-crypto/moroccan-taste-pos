@@ -287,6 +287,153 @@
   width: 10px;
   text-align: center;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v5.10.59 — REAL alignment fix for the inventory-catalog table.
+ *
+ * v5.10.57's text-align fix was insufficient. The actual symptom the
+ * owner reported ("the data is misaligned with the headers") came from
+ * a different root cause: the NAME cell (col 3) packs three inline
+ * elements — name + kind chip + stock pill — that together can exceed
+ * the column's natural auto-width. When that happens, the browser
+ * either:
+ *   • Wraps the chips below the name, making that ROW taller than
+ *     siblings → visual misalignment with neighbors
+ *   • Lets the chips/pills overflow into the brand column → the eye
+ *     reads them as belonging to the wrong header
+ *
+ * The WAREHOUSES cell (col 5) has the same problem with multiple chips.
+ *
+ * Fix: explicit min/max widths on every column + flex-wrap inside the
+ * multi-chip cells so content wraps cleanly INSIDE its own cell.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Column 1: checkbox (fixed narrow) ─────────────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(1),
+#sec_invCatalog .wo-table tbody td:nth-child(1) {
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+}
+
+/* ── Column 2: code (monospace, fixed) ─────────────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(2),
+#sec_invCatalog .wo-table tbody td:nth-child(2) {
+  min-width: 150px;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Column 3: NAME + kind chip + stock pill (most important fix) ──
+ *  - white-space: normal so the name wraps if very long
+ *  - the three child elements (name span, kind chip, stock pill) align
+ *    on a flexible inline row that WRAPS inside the cell instead of
+ *    spilling into the brand column.
+ */
+#sec_invCatalog .wo-table tbody td:nth-child(3) {
+  min-width: 200px;
+  max-width: 340px;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.5;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+#sec_invCatalog .wo-table tbody td:nth-child(3) .wo-chip,
+#sec_invCatalog .wo-table tbody td:nth-child(3) .inv-stock-pill,
+#sec_invCatalog .wo-table tbody td:nth-child(3) span.inv-search-mark {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin: 1px 4px 1px 0;
+  max-width: 100%;
+}
+/* Header for the name column keeps the column width hint */
+#sec_invCatalog .wo-table thead th:nth-child(3) {
+  min-width: 200px;
+  max-width: 340px;
+}
+
+/* ── Column 4: BRAND (single chip, no wrap) ────────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(4),
+#sec_invCatalog .wo-table tbody td:nth-child(4) {
+  min-width: 140px;
+  max-width: 180px;
+  white-space: nowrap;
+}
+#sec_invCatalog .wo-table tbody td:nth-child(4) .wo-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Column 5: WAREHOUSES (multi-chip → also needs flex-wrap) ──────── */
+#sec_invCatalog .wo-table tbody td:nth-child(5) {
+  min-width: 180px;
+  max-width: 280px;
+  white-space: normal;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+#sec_invCatalog .wo-table thead th:nth-child(5) {
+  min-width: 180px;
+  max-width: 280px;
+}
+#sec_invCatalog .wo-table tbody td:nth-child(5) .inv-wh-chip,
+#sec_invCatalog .wo-table tbody td:nth-child(5) .wo-chip {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin: 1px 4px 1px 0;
+  max-width: 100%;
+}
+
+/* ── Column 6: CATEGORY (single chip) ──────────────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(6),
+#sec_invCatalog .wo-table tbody td:nth-child(6) {
+  min-width: 110px;
+  max-width: 160px;
+  white-space: nowrap;
+}
+
+/* ── Columns 7+8: UNITS (short text, narrow) ───────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(7),
+#sec_invCatalog .wo-table tbody td:nth-child(7),
+#sec_invCatalog .wo-table thead th:nth-child(8),
+#sec_invCatalog .wo-table tbody td:nth-child(8) {
+  min-width: 80px;
+  max-width: 110px;
+  white-space: nowrap;
+}
+
+/* ── Columns 9+10: NUMERIC (cost, min stock) ───────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(9),
+#sec_invCatalog .wo-table tbody td:nth-child(9),
+#sec_invCatalog .wo-table thead th:nth-child(10),
+#sec_invCatalog .wo-table tbody td:nth-child(10) {
+  min-width: 90px;
+  max-width: 120px;
+  white-space: nowrap;
+}
+
+/* ── Column 11: DATE (created_at) ──────────────────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(11),
+#sec_invCatalog .wo-table tbody td:nth-child(11) {
+  min-width: 100px;
+  max-width: 130px;
+  white-space: nowrap;
+}
+
+/* ── Column 12: ACTIONS (fixed) ────────────────────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(12),
+#sec_invCatalog .wo-table tbody td:nth-child(12) {
+  width: 110px;
+  min-width: 110px;
+  max-width: 110px;
+  white-space: nowrap;
+}
 #sec_invCatalog .wo-table tbody tr {
   position: relative;
   transition: background 160ms ease, box-shadow 160ms ease, transform 160ms ease;

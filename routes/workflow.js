@@ -18,6 +18,13 @@ const SM = require('../lib/transactionStateMachine');
 const PERMS = require('../lib/transactionPermissions');
 const SCHEMA = require('../lib/transactionSchema');
 const { guardTxnAccess, guardDeveloper } = require('../lib/transactionGuards');
+// v5.10.56 — SoD (Segregation of Duties) validator. Enforces
+//   SOD-1 Maker≠Approver · SOD-2 Approver≠Payer · SOD-3 Payer≠Reconciler
+//   SOD-4 Two distinct approvers when amount ≥ SOD_HIGH_AMOUNT_THRESHOLD
+// Runs IN ADDITION to PERMS — even an authorized user is blocked if
+// their action would violate segregation. Admin can break-glass with
+// SOD_OVERRIDE_REASON in body (≥ 10 chars, audit-logged).
+const SOD = require('../lib/sodValidator');
 const S3 = require('../lib/s3Storage');     // optional — falls back to inline if not configured
 const CACHE = require('../lib/redisCache'); // optional — no-op if REDIS_URL not set
 
@@ -2593,6 +2600,52 @@ router.post('/transactions/:id/action', SCHEMA.validateBody(SCHEMA.schemas.actio
         error: _explainPermissionDenied(action, user, txn, step, actionLog),
         code: 'PERMISSION_DENIED'
       });
+    }
+
+    // 6b. v5.10.56 — SoD enforcement. Runs AFTER PERMS so we only check
+    //     SoD when the user is otherwise authorized. SoD failure is a
+    //     conflict-of-interest block, distinct from "you can't act here".
+    //     Admin can break-glass with SOD_OVERRIDE_REASON ≥ 10 chars.
+    const isFinalStep = !!(step && (step.is_final_step || !nextStepHasNext));
+    const sodResult = SOD.validate({
+      transaction: txn,
+      actor: user,
+      action: action,
+      actionLog: actionLog,
+      isFinalStep: isFinalStep,
+      reqBody: req.body
+    });
+    if (!sodResult.ok) {
+      await conn.rollback();
+      // Audit the blocked attempt (best-effort, never throws)
+      try {
+        await db.query(
+          `INSERT INTO transaction_steps_log
+             (id, transaction_id, action_by, action_type, action_note, created_at)
+           VALUES (?, ?, ?, 'sod_blocked', ?, NOW())`,
+          ['SOD-BLK-' + Date.now() + '-' + Math.floor(Math.random()*1000),
+           txnId, username,
+           `[${sodResult.rule}] ${sodResult.code}: ${sodResult.message}`]);
+      } catch (_e) { /* tolerate */ }
+      return res.status(403).json({
+        success: false,
+        error: sodResult.message,
+        code: sodResult.code,
+        rule: sodResult.rule
+      });
+    }
+    // If admin used the override, log it explicitly so the audit trail
+    // shows who bypassed and why.
+    if (sodResult.override) {
+      try {
+        await db.query(
+          `INSERT INTO transaction_steps_log
+             (id, transaction_id, action_by, action_type, action_note, created_at)
+           VALUES (?, ?, ?, 'sod_override', ?, NOW())`,
+          ['SOD-OVR-' + Date.now() + '-' + Math.floor(Math.random()*1000),
+           txnId, username,
+           `Admin SoD override · reason: ${sodResult.reason}`]);
+      } catch (_e) { /* tolerate */ }
     }
 
     // 7. Apply newAmount if step allows it (must happen before transition computation)

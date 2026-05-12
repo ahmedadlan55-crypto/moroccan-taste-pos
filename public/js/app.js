@@ -6130,6 +6130,36 @@ function loadInvCatalog() {
     _invCatUpdateSortHeaders();
     _invCatUpdateBulkBar();
     _invCatBindScrollShadow();
+
+    // v5.10.57 — Populate the legacy `cachedRawItems` cache from the
+    // catalog response so the existing `openRawModal(id)` function (which
+    // does `cachedRawItems.find(x => x.id === id)`) can locate the row
+    // when the user clicks the pencil icon. Without this the edit modal
+    // silently returned `undefined` → nothing happened. We merge instead
+    // of replace so other code that pre-populated the cache (e.g. the
+    // older raw-items section) keeps its data too.
+    try {
+      if (!Array.isArray(window.cachedRawItems)) window.cachedRawItems = [];
+      var byId = Object.create(null);
+      window.cachedRawItems.forEach(function (r) { if (r && r.id) byId[r.id] = r; });
+      items.forEach(function (it) {
+        // Normalize to the shape openRawModal expects (mostly already there).
+        var d = {
+          id: it.id,
+          name: it.name,
+          category: it.category,
+          cost: Number(it.cost) || 0,
+          bigUnit: it.bigUnit || '',
+          unit: it.unit || 'حبة',
+          convRate: Number(it.convRate) || 1,
+          minStock: Number(it.minStock) || 0,
+          brandId: it.brandId || it.brand_id || '',
+          kind: it.kind || 'raw'
+        };
+        byId[it.id] = d;
+      });
+      window.cachedRawItems = Object.values(byId);
+    } catch (_e) { /* cache merge is best-effort */ }
   }).catch(function(err){
     console.warn('[invCatalog] load failed:', err && err.message);
     _invCatRenderError();
@@ -7685,8 +7715,41 @@ function openRawModal(id = null, opts = {}) {
       if (q("#mrKind")) q("#mrKind").value = (opts && opts.kind === 'semi') ? 'semi' : 'raw';
     } else {
       q("#rMdlTitle").innerText = "تَعديل مادَّة";
-      let d = cachedRawItems.find(x => x.id === id);
-      if (!d) return;
+      var d = cachedRawItems.find(function (x) { return x.id === id; });
+      // v5.10.57 — server fallback if the in-memory cache misses.
+      // Previously the function silently `return`-ed, which is why the
+      // pencil-edit icon on the inventory catalog did nothing for items
+      // that hadn't been loaded by the legacy raw-items section.
+      if (!d) {
+        var token = localStorage.getItem('pos_token') || '';
+        fetch('/api/inventory/catalog?id=' + encodeURIComponent(id) + '&limit=1', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (payload) {
+          var arr = Array.isArray(payload) ? payload : (payload && payload.items) || [];
+          var it = arr[0];
+          if (!it) {
+            return showToast('تعذّر تحميل بيانات المادة — حاول إعادة تحميل القائمة', true);
+          }
+          // Re-invoke ourselves now that we have the data cached.
+          if (!Array.isArray(window.cachedRawItems)) window.cachedRawItems = [];
+          window.cachedRawItems.push({
+            id: it.id, name: it.name, category: it.category,
+            cost: Number(it.cost) || 0,
+            bigUnit: it.bigUnit || '', unit: it.unit || 'حبة',
+            convRate: Number(it.convRate) || 1,
+            minStock: Number(it.minStock) || 0,
+            brandId: it.brandId || it.brand_id || '',
+            kind: it.kind || 'raw'
+          });
+          openRawModal(id, opts);
+        })
+        .catch(function () {
+          showToast('فشل الاتصال بالخادم — تحقّق من الاتصال', true);
+        });
+        return;
+      }
       q("#mrId").value = d.id; q("#mrName").value = d.name; q("#mrCat").value = d.category;
       var cRate = Number(d.convRate) || 1;
       q("#mrCost").value = (cRate > 1 ? d.cost * cRate : d.cost).toFixed(2);

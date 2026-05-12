@@ -248,6 +248,22 @@
   letter-spacing: 0.02em;
   color: #334155;
   border-bottom: 1.5px solid #c7d2fe;
+  /* v5.10.57 — explicit alignment so headers and cells match visually.
+     <th> defaults to text-align:center which created a perceived
+     misalignment between header label and the data row beneath it. */
+  text-align: start;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+#sec_invCatalog .wo-table thead th.num,
+#sec_invCatalog .wo-table tbody td.num {
+  text-align: end;
+}
+#sec_invCatalog .wo-table thead th.col-select,
+#sec_invCatalog .wo-table tbody td.col-select {
+  text-align: center;
+  width: 36px;
+  padding-inline: 8px;
 }
 #sec_invCatalog .wo-table tbody td {
   padding-block: 9px;
@@ -255,7 +271,21 @@
   border-bottom: 1px solid #f1f5f9;
   font-size: 13px;
   vertical-align: middle;
+  text-align: start;
   transition: background 150ms ease;
+}
+/* v5.10.57 — the sort-icon used to push the header label by ~6px to one
+   side which created an apparent column misalignment with the data row.
+   Make the icon a fixed-size right-anchored chip that doesn't affect
+   text flow. */
+#sec_invCatalog .wo-table thead th .sort-ico {
+  margin-inline-start: 6px;
+  font-size: 9px;
+  color: #94a3b8;
+  vertical-align: middle;
+  display: inline-block;
+  width: 10px;
+  text-align: center;
 }
 #sec_invCatalog .wo-table tbody tr {
   position: relative;

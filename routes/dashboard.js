@@ -174,19 +174,33 @@ router.get('/overview', async (req, res) => {
          FROM sales s WHERE DATE(s.order_date) BETWEEN ? AND ? ${sF.sql}
          GROUP BY DATE(s.order_date) ORDER BY d`,
         [from, to, ...sF.p]),
-      // Hourly today (for chart)
+      // Hourly chart — aggregates sales by HOUR across the selected date
+      // range (was previously hard-pinned to CURDATE() which depends on the
+      // MySQL server timezone — in UTC, "today" could lag the user's local
+      // day by 3h on a fresh morning. Using the same `from/to` filter as
+      // the rest of the dashboard is both more consistent AND gives a
+      // useful "peak hour of day" pattern across multiple days, matching
+      // what Foodics / Square / Toast do). v5.10.53.
       db.query(
         `SELECT HOUR(s.order_date) AS h, COALESCE(SUM(s.total_final),0) AS total
-         FROM sales s WHERE DATE(s.order_date) = CURDATE() ${sF.sql}
+         FROM sales s WHERE DATE(s.order_date) BETWEEN ? AND ? ${sF.sql}
          GROUP BY HOUR(s.order_date) ORDER BY h`,
-        [...sF.p]),
-      // Top items in range (brand-filtered via the parent sale)
+        [from, to, ...sF.p])
+        .catch(e => { console.error('[dashboard.hourly]', e.message); return [[]]; }),
+      // Top items in range (brand-filtered via the parent sale).
+      // v5.10.53 — three SQL errors fixed:
+      //   1) table  sale_items   → sales_items   (schema uses plural)
+      //   2) column si.sale_id   → si.order_id   (FK column name)
+      //   3) column si.line_total → si.total      (price-total column)
+      // The previous `.catch(() => [[]])` was silently swallowing the SQL
+      // error — that's why the section was empty with no console clue.
       db.query(
-        `SELECT si.item_name AS name, SUM(si.qty) AS qty, SUM(si.line_total) AS rev
-         FROM sale_items si JOIN sales s ON s.id = si.sale_id
+        `SELECT si.item_name AS name, SUM(si.qty) AS qty, SUM(si.total) AS rev
+         FROM sales_items si JOIN sales s ON s.id = si.order_id
          WHERE DATE(s.order_date) BETWEEN ? AND ? ${sF.sql}
          GROUP BY si.item_name ORDER BY rev DESC LIMIT 10`,
-        [from, to, ...sF.p]).catch(() => [[]]),
+        [from, to, ...sF.p])
+        .catch(e => { console.error('[dashboard.topItems]', e.message); return [[]]; }),
       // Top cashiers
       db.query(
         `SELECT s.username, COUNT(*) AS orders, COALESCE(SUM(s.total_final),0) AS total

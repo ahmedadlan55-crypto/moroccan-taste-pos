@@ -30,10 +30,12 @@
        Fallback: if no saved session, show login form and hide everything else. -->
   <style id="critical-auth-gate">
     html, body { margin: 0; padding: 0; background: radial-gradient(circle at top right, #1e293b, #0f172a); }
-    /* v5.10.50 — whitelist #vkToggleBtn so the on-screen keyboard FAB
-       stays visible at the login screen too (owner request: keyboard
-       access during password entry on touch devices). */
-    body:not(.authenticated) > *:not(#loginView):not(#loader):not(#toastContainer):not(#critical-auth-gate):not(#vkToggleBtn) {
+    /* v5.10.51 — whitelist BOTH the FAB and the keyboard panel itself
+       (#vkKeyboard) so the on-screen keyboard works at login. v5.10.50
+       missed #vkKeyboard which is the actual sliding panel — that's why
+       tapping the FAB did nothing visible during login (the panel was
+       created but immediately hidden by this gate). */
+    body:not(.authenticated) > *:not(#loginView):not(#loader):not(#toastContainer):not(#critical-auth-gate):not(#vkToggleBtn):not(#vkKeyboard) {
       display: none !important;
       visibility: hidden !important;
     }
@@ -49,7 +51,7 @@
 
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
   <link rel="stylesheet" href="/shared/design-tokens.css?v=1">
-  <link rel="stylesheet" href="/css/style.css?v=36">
+  <link rel="stylesheet" href="/css/style.css?v=37">
   <link rel="stylesheet" href="/css/warehouse-ops.css?v=21">
   <link rel="stylesheet" href="/css/inventory-catalog.css?v=16">
   <!-- v5.10.41 — Enterprise UI Kit (unified component system for warehouse

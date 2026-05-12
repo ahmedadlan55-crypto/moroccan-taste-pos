@@ -221,10 +221,30 @@ body.en .login-field input.form-control { padding-left: 20px; padding-right: 50p
   font-weight: 500;
   line-height: 52px;
 }
+/* v5.10.51 — branded focus state. Soft violet/indigo halo matches the
+ * ent-ui --ent-primary (#4f46e5) family but lifted to indigo-400
+ * (#818cf8) so it reads cleanly against the dark gradient background.
+ * Replaces the previous white halo which felt washed-out / cheap. */
 .login-field input.form-control:focus {
-  background: rgba(255, 255, 255, 0.15);
-  border-color: rgba(255, 255, 255, 0.5);
-  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.13);
+  border-color: rgba(129, 140, 248, 0.85);
+  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.22),
+              0 4px 18px rgba(79, 70, 229, 0.18);
+  outline: none;
+}
+/* Slight lift on focus for the surrounding field — purely visual cue. */
+.login-field:focus-within .login-field-icon {
+  color: rgba(165, 180, 252, 0.95);
+  transform: scale(1.06);
+  transition: color .15s ease, transform .15s ease;
+}
+/* Caret + selection colours tuned for the dark glass field */
+.login-field input.form-control {
+  caret-color: #c7d2fe;
+}
+.login-field input.form-control::selection {
+  background: rgba(99, 102, 241, 0.45);
+  color: #fff;
 }
 .login-field .login-field-icon {
   position: absolute;
@@ -435,14 +455,21 @@ body.en .login-submit:hover .login-submit-arrow { transform: rotate(180deg) tran
   z-index: 5;
 }
 
-/* V3.1 — Defeat browser autofill yellow */
+/* v5.10.51 — Defeat browser autofill yellow + match the new violet
+ * branded focus look so saved-credential fields don't break the theme. */
 .login-field input:-webkit-autofill,
 .login-field input:-webkit-autofill:hover,
-.login-field input:-webkit-autofill:focus {
+.login-field input:-webkit-autofill:focus,
+.login-field input:-webkit-autofill:active {
   -webkit-text-fill-color: #fff !important;
-  -webkit-box-shadow: 0 0 0px 1000px rgba(255, 255, 255, 0.10) inset !important;
-  caret-color: #fff;
+  -webkit-box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.10) inset !important;
+  caret-color: #c7d2fe;
   transition: background-color 5000s ease-in-out 0s;
+}
+.login-field input:-webkit-autofill:focus {
+  -webkit-box-shadow:
+    0 0 0 1000px rgba(255, 255, 255, 0.12) inset,
+    0 0 0 3px rgba(129, 140, 248, 0.22) !important;
 }
 
 /* ─── Mobile login (≤ 768px) — tighter spacing, full-width feel ─── */

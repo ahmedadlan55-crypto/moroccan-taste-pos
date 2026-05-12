@@ -2282,8 +2282,252 @@ window.ccSetCompareMode = function(mode) {
   loadDashHome();
 };
 
+// v5.10.55 — Real PDF export for Command Center.
+//
+// Opens a new window with a print-friendly A4 report that mirrors the
+// on-screen dashboard:
+//   • Letterhead (company name + report title + applied filters +
+//     generated-at timestamp + actor)
+//   • All 7 KPI cards (Sales / Orders / AvgTicket / Expenses /
+//     Purchases / Net Income / Gross Margin) with delta % vs the
+//     compare window.
+//   • Operational pulse (open shifts, open transactions, pending
+//     payments, AR/AP, cash in hand, low-stock & expiring counts).
+//   • Charts rendered as crisp images via canvas.toDataURL — daily
+//     sales line, hourly bars, top items, top brands.
+//   • Top-N rankings (cashiers, brands, products) as compact tables.
+//   • Alert lists (low stock, expiring soon) capped at 15 rows each.
+//   • Footer: print timestamp + version stamp.
+//
+// Uses window.print() so the user gets the native "Save as PDF" dialog
+// from any browser/OS without us pulling in jsPDF/html2canvas.
 window.ccExportPdf = function() {
-  showToast('تصدير PDF — قيد التطوير');
+  var d = window._ccLastData;
+  if (!d) {
+    showToast('انتظر اكتمال تحميل لوحة القيادة ثم أعد المحاولة', true);
+    return;
+  }
+  // 1. Snapshot the four chart canvases as PNG dataURLs while they're
+  //    still alive in state.charts. Empty string if a canvas is missing
+  //    (defensive — keeps the report from breaking when a chart didn't
+  //    render due to no data).
+  function snap(id) {
+    var el = document.getElementById(id);
+    if (!el || !el.toDataURL) return '';
+    try { return el.toDataURL('image/png'); } catch (e) { return ''; }
+  }
+  var imgDaily   = snap('dailySalesChartCtx');
+  var imgHourly  = snap('hourlySalesChartCtx');
+  var imgItems   = snap('topItemsChartCtx');
+  var imgBrands  = snap('topBrandsChartCtx');
+
+  var company  = (state.settings && state.settings.name) || 'Moroccan Taste';
+  var user     = (state.user || '—');
+  var nowStr   = new Date().toLocaleString('ar-SA', {
+    year:'numeric', month:'long', day:'2-digit',
+    hour:'2-digit', minute:'2-digit'
+  });
+  var fmt = function(n, dig){ return Number(n||0).toLocaleString('en', { minimumFractionDigits: dig||0, maximumFractionDigits: dig||0 }); };
+
+  // Filter chips
+  var filters = window._ccFilters || {};
+  var filterParts = [];
+  if (d.period && d.period.from && d.period.to) {
+    filterParts.push('الفترة: ' + d.period.from + ' → ' + d.period.to + ' (' + (d.period.rangeDays || '') + ' يوم)');
+  }
+  if (filters.brandId) {
+    var bSel = document.getElementById('ccFBrand');
+    var bName = (bSel && bSel.selectedOptions[0]) ? bSel.selectedOptions[0].textContent : filters.brandId;
+    filterParts.push('البراند: ' + bName);
+  }
+  if (filters.branchId) {
+    var brSel = document.getElementById('ccFBranch');
+    var brName = (brSel && brSel.selectedOptions[0]) ? brSel.selectedOptions[0].textContent : filters.branchId;
+    filterParts.push('الفرع: ' + brName);
+  }
+  if (d.period && d.period.compareMode && d.period.compareMode !== 'none' && d.period.prevFrom) {
+    var lbl = (window._ccCompareLabels && window._ccCompareLabels[d.period.compareMode]) || d.period.compareMode;
+    filterParts.push('مقارنة مع ' + lbl + ': ' + d.period.prevFrom + ' → ' + d.period.prevTo);
+  }
+
+  // Build KPI block
+  var kpiBox = function(label, value, unit, delta, invertDelta) {
+    var deltaHtml = '';
+    if (delta != null && d.period && d.period.compareMode !== 'none') {
+      var deltaNum = Number(delta || 0);
+      var effective = invertDelta ? -deltaNum : deltaNum;
+      var color = effective > 0.5 ? '#16a34a' : (effective < -0.5 ? '#dc2626' : '#64748b');
+      var arrow = deltaNum > 0.5 ? '↑' : (deltaNum < -0.5 ? '↓' : '·');
+      deltaHtml = '<div class="kpi-delta" style="color:' + color + ';">' + arrow + ' ' +
+                  (deltaNum > 0 ? '+' : '') + deltaNum.toFixed(1) + '%</div>';
+    }
+    return '<div class="kpi"><div class="kpi-label">' + label + '</div>' +
+           '<div class="kpi-value">' + value + (unit ? ' <span class="kpi-unit">' + unit + '</span>' : '') + '</div>' +
+           deltaHtml + '</div>';
+  };
+  var kpisHtml =
+    kpiBox('إجمالي المبيعات',    fmt(d.kpi.sales.value, 2),     'ر.س', d.kpi.sales.delta) +
+    kpiBox('عدد الطلبات',          fmt(d.kpi.orders.value, 0),    '', d.kpi.orders.delta) +
+    kpiBox('متوسط قيمة الطلب',   fmt(d.kpi.avgTicket.value, 2), 'ر.س', d.kpi.avgTicket.delta) +
+    kpiBox('إجمالي المصروفات',  fmt(d.kpi.expenses.value, 2),  'ر.س', d.kpi.expenses.delta, true) +
+    kpiBox('إجمالي المشتريات',  fmt(d.kpi.purchases.value, 2), 'ر.س', d.kpi.purchases.delta, true) +
+    kpiBox('صافي الدخل',          fmt(d.kpi.netIncome.value, 2), 'ر.س', d.kpi.netIncome.delta) +
+    kpiBox('هامش الربح',          fmt(d.kpi.grossMargin.value, 1), '%', null);
+
+  // Ops pulse
+  var opsHtml = '';
+  if (d.ops) {
+    opsHtml = '<div class="ops-grid">' +
+      '<div class="op"><div class="op-l">المناوبات المفتوحة</div><div class="op-v">' + d.ops.openShifts + '</div></div>' +
+      '<div class="op"><div class="op-l">الطلبات المعلقة</div><div class="op-v">' + d.ops.openTransactions + '</div></div>' +
+      '<div class="op"><div class="op-l">مدفوعات بانتظار</div><div class="op-v">' + d.ops.pendingPayments.count + ' <small>(' + fmt(d.ops.pendingPayments.amount, 2) + ')</small></div></div>' +
+      '<div class="op"><div class="op-l">ذمم مدينة</div><div class="op-v">' + d.ops.arOutstanding.count + ' <small>(' + fmt(d.ops.arOutstanding.amount, 2) + ')</small></div></div>' +
+      '<div class="op"><div class="op-l">ذمم دائنة</div><div class="op-v">' + d.ops.apOutstanding.count + ' <small>(' + fmt(d.ops.apOutstanding.amount, 2) + ')</small></div></div>' +
+      '<div class="op"><div class="op-l">النقد المتاح</div><div class="op-v">' + fmt(d.ops.cashInHand, 2) + ' <small>ر.س</small></div></div>' +
+      '<div class="op"><div class="op-l">مخزون منخفض</div><div class="op-v">' + d.ops.lowStockCount + '</div></div>' +
+      '<div class="op"><div class="op-l">قاربت صلاحيتها</div><div class="op-v">' + d.ops.expiringCount + '</div></div>' +
+    '</div>';
+  }
+
+  // Ranking table helper
+  var rankingTable = function(title, rows, cols) {
+    if (!rows || !rows.length) return '<div class="rank-box"><div class="rank-title">' + title + '</div><div class="rank-empty">لا توجد بيانات</div></div>';
+    var headers = cols.map(function(c){ return '<th>' + c.label + '</th>'; }).join('');
+    var body = rows.slice(0, 10).map(function(r, idx){
+      var tds = cols.map(function(c){
+        var v = (typeof c.value === 'function') ? c.value(r) : r[c.key];
+        return '<td' + (c.num ? ' class="num"' : '') + '>' + (v == null ? '' : v) + '</td>';
+      }).join('');
+      return '<tr><td class="rank-idx">' + (idx + 1) + '</td>' + tds + '</tr>';
+    }).join('');
+    return '<div class="rank-box"><div class="rank-title">' + title + '</div>' +
+           '<table class="rank-table"><thead><tr><th class="rank-idx">#</th>' + headers + '</tr></thead><tbody>' +
+           body + '</tbody></table></div>';
+  };
+  var topCashiersHtml = rankingTable('أكثر الكاشيرز إنتاجية', d.charts.topCashiers || [], [
+    { label:'المستخدم', key:'name' },
+    { label:'الطلبات', value:function(r){ return r.orders; }, num:true },
+    { label:'الإجمالي (ر.س)', value:function(r){ return fmt(r.total, 2); }, num:true }
+  ]);
+  var topBrandsTblHtml = rankingTable('أعلى البراندات أداءً', d.charts.topBrands || [], [
+    { label:'البراند', key:'name' },
+    { label:'العمليات', value:function(r){ return r.count; }, num:true },
+    { label:'الإجمالي (ر.س)', value:function(r){ return fmt(r.total, 2); }, num:true }
+  ]);
+  var topProductsHtml = rankingTable('أكثر المنتجات مبيعاً', d.charts.topItems || [], [
+    { label:'الصنف', key:'name' },
+    { label:'الكمية', value:function(r){ return fmt(r.qty, 0); }, num:true },
+    { label:'الإيراد (ر.س)', value:function(r){ return fmt(r.revenue, 2); }, num:true }
+  ]);
+
+  // Alert tables
+  var alertsHtml = '';
+  if (d.alerts) {
+    var ls = (d.alerts.lowStock || []).slice(0, 15);
+    var ex = (d.alerts.expiringSoon || []).slice(0, 15);
+    var lsRows = ls.length
+      ? ls.map(function(r){ return '<tr><td>' + (r.name || '') + '</td><td class="num">' + fmt(r.stock, 2) + '</td><td>' + (r.unit || '') + '</td></tr>'; }).join('')
+      : '<tr><td colspan="3" class="rank-empty">لا توجد تنبيهات نقص</td></tr>';
+    var exRows = ex.length
+      ? ex.map(function(r){ return '<tr><td>' + (r.name || '') + '</td><td>' + (r.expiry_date || '') + '</td><td class="num">' + (r.days_left || '') + '</td></tr>'; }).join('')
+      : '<tr><td colspan="3" class="rank-empty">لا توجد تنبيهات صلاحية</td></tr>';
+    alertsHtml =
+      '<div class="alerts-grid">' +
+        '<div class="alert-box"><div class="rank-title danger">⚠ مخزون منخفض</div>' +
+          '<table class="rank-table"><thead><tr><th>الصنف</th><th class="num">الرصيد</th><th>الوحدة</th></tr></thead><tbody>' + lsRows + '</tbody></table></div>' +
+        '<div class="alert-box"><div class="rank-title warning">⏰ صلاحيات قاربت</div>' +
+          '<table class="rank-table"><thead><tr><th>الصنف</th><th>تاريخ الانتهاء</th><th class="num">أيام متبقية</th></tr></thead><tbody>' + exRows + '</tbody></table></div>' +
+      '</div>';
+  }
+
+  // Chart-image cell helper
+  var chartCard = function(title, img, h) {
+    if (!img) return '<div class="chart-card"><div class="chart-title">' + title + '</div><div class="chart-empty">لا توجد بيانات</div></div>';
+    return '<div class="chart-card"><div class="chart-title">' + title + '</div>' +
+           '<img class="chart-img" src="' + img + '" alt="' + title + '"' + (h ? ' style="height:' + h + ';"' : '') + '></div>';
+  };
+
+  // Open new window with the print template
+  var win = window.open('', '_blank', 'width=900,height=1100');
+  if (!win) {
+    showToast('السماح بالنوافذ المنبثقة مطلوب لتصدير PDF', true);
+    return;
+  }
+  win.document.write(
+    '<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>تقرير مركز القيادة — ' + company + '</title>' +
+    '<style>' +
+      '*{margin:0;padding:0;box-sizing:border-box;}' +
+      'body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;direction:rtl;color:#0f172a;padding:20px;background:#fff;line-height:1.5;font-size:13px;}' +
+      'header.lh{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:linear-gradient(135deg,#1e293b 0%,#4f46e5 100%);color:#fff;border-radius:14px;margin-bottom:18px;}' +
+      'header.lh h1{font-size:22px;font-weight:900;letter-spacing:-.01em;}' +
+      'header.lh .sub{font-size:12px;opacity:.9;margin-top:2px;}' +
+      'header.lh .right{text-align:left;font-size:11px;line-height:1.6;}' +
+      '.filters{background:#f1f5f9;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px;margin-bottom:18px;font-size:12px;display:flex;flex-wrap:wrap;gap:6px;}' +
+      '.filters .chip{background:#fff;border:1px solid #cbd5e1;border-radius:999px;padding:3px 10px;font-weight:700;color:#475569;}' +
+      'h2.sec{font-size:15px;font-weight:900;color:#0f172a;margin:18px 0 10px;padding-bottom:6px;border-bottom:2px solid #4f46e5;display:flex;align-items:center;gap:8px;}' +
+      '.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;}' +
+      '.kpi{background:linear-gradient(160deg,#f8fafc 0%,#fff 60%);border:1px solid #e2e8f0;border-inline-start:4px solid #4f46e5;border-radius:12px;padding:12px 14px;}' +
+      '.kpi-label{font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.04em;}' +
+      '.kpi-value{font-size:20px;font-weight:900;color:#0f172a;margin-top:4px;}' +
+      '.kpi-unit{font-size:11px;color:#64748b;font-weight:700;}' +
+      '.kpi-delta{font-size:11px;font-weight:800;margin-top:3px;}' +
+      '.ops-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}' +
+      '.op{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;text-align:center;}' +
+      '.op-l{font-size:10.5px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.04em;}' +
+      '.op-v{font-size:16px;font-weight:900;color:#0f172a;margin-top:3px;}' +
+      '.op-v small{font-size:10px;color:#64748b;font-weight:700;}' +
+      '.charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;}' +
+      '.chart-card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:10px 12px;}' +
+      '.chart-title{font-size:12px;font-weight:800;color:#475569;margin-bottom:6px;}' +
+      '.chart-img{width:100%;height:auto;max-height:220px;object-fit:contain;}' +
+      '.chart-empty{text-align:center;color:#94a3b8;padding:30px;font-size:12px;}' +
+      '.rank-box{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:10px 12px;}' +
+      '.rank-title{font-size:12px;font-weight:800;color:#475569;margin-bottom:6px;}' +
+      '.rank-title.danger{color:#dc2626;}' +
+      '.rank-title.warning{color:#d97706;}' +
+      '.rank-empty{text-align:center;color:#94a3b8;padding:14px;font-size:11px;}' +
+      '.rank-table{width:100%;border-collapse:collapse;font-size:11.5px;}' +
+      '.rank-table th{background:#f1f5f9;text-align:start;padding:6px 8px;font-weight:800;color:#475569;border-bottom:1.5px solid #e2e8f0;}' +
+      '.rank-table th.num,.rank-table td.num{text-align:end;font-variant-numeric:tabular-nums;}' +
+      '.rank-table td{padding:6px 8px;border-bottom:1px solid #f1f5f9;}' +
+      '.rank-table .rank-idx{width:24px;color:#94a3b8;text-align:center;font-weight:700;}' +
+      '.rankings-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:18px;}' +
+      '.alerts-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;}' +
+      'footer{margin-top:24px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:10.5px;color:#64748b;display:flex;justify-content:space-between;}' +
+      '@media print{body{padding:10px;}.charts-grid,.kpi-grid,.ops-grid,.rankings-grid,.alerts-grid{page-break-inside:avoid;}header.lh{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.kpi,.chart-card,.rank-box,.alert-box{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}' +
+    '</style></head><body>' +
+    '<header class="lh">' +
+      '<div>' +
+        '<h1>📊 تقرير مركز القيادة التنفيذي</h1>' +
+        '<div class="sub">' + company + '</div>' +
+      '</div>' +
+      '<div class="right">' +
+        'تاريخ التقرير: ' + nowStr + '<br>' +
+        'أُنشئ بواسطة: ' + user +
+      '</div>' +
+    '</header>' +
+    (filterParts.length ? '<div class="filters">' + filterParts.map(function(p){return '<span class="chip">' + p + '</span>';}).join('') + '</div>' : '') +
+    '<h2 class="sec">📈 مؤشرات الأداء الرئيسية (KPIs)</h2>' +
+    '<div class="kpi-grid">' + kpisHtml + '</div>' +
+    '<h2 class="sec">⚡ النبض التشغيلي</h2>' + opsHtml +
+    '<h2 class="sec">📉 الرسوم البيانية</h2>' +
+    '<div class="charts-grid">' +
+      chartCard('المبيعات اليومية', imgDaily) +
+      chartCard('ذروة الساعات', imgHourly) +
+      chartCard('أكثر المنتجات', imgItems) +
+      chartCard('أعلى البراندات', imgBrands) +
+    '</div>' +
+    '<h2 class="sec">🏆 التصنيفات (Top Rankings)</h2>' +
+    '<div class="rankings-grid">' + topCashiersHtml + topBrandsTblHtml + topProductsHtml + '</div>' +
+    (alertsHtml ? '<h2 class="sec">🚨 التنبيهات</h2>' + alertsHtml : '') +
+    '<footer>' +
+      '<span>تقرير آلي من Moroccan Taste POS · v5.10.55</span>' +
+      '<span>صفحة <span class="pn"></span></span>' +
+    '</footer>' +
+    '<script>window.onload=function(){setTimeout(function(){window.print();},500);};<\/script>' +
+    '</body></html>'
+  );
+  win.document.close();
 };
 
 function _ccPopulateBrandBranchSelects() {
@@ -2345,6 +2589,9 @@ function _ccFetchAndRender() {
 
   fetch(url, { headers: hdr }).then(function(r){return r.json();}).then(function(d){
     if (!d || d.error) { showToast(d && d.error || 'فشل تحميل الداش بورد', true); return; }
+    // v5.10.55 — cache the dashboard response so ccExportPdf() can build
+    // a print-friendly PDF report without re-fetching from the server.
+    window._ccLastData = d;
     _ccRenderAll(d);
     _ccRenderActiveTags();
   }).catch(function(e){

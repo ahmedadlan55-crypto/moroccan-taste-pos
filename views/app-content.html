@@ -994,7 +994,11 @@
             <div class="sales-tab" onclick="switchWhTab('live')" id="whtab_live"><i class="fas fa-cubes"></i> <span>المخزون الفعلي</span></div>
             <div class="sales-tab" onclick="switchWhTab('stocktake')" id="whtab_stocktake"><i class="fas fa-tasks"></i> <span>الجرد</span></div>
             <div class="sales-tab" onclick="switchWhTab('adjustments')" id="whtab_adjustments"><i class="fas fa-minus-circle"></i> <span>تعديل كمية</span></div>
-            <div class="sales-tab" onclick="switchWhTab('transfers')" id="whtab_transfers" title="بدون ترحيل GL — للنقل اليومي بين الفروع"><i class="fas fa-exchange-alt"></i> <span>تحويلات الفرع</span></div>
+            <!-- v5.10.58 — Removed the "تحويلات الفرع" tab. It duplicated
+                 إذونات الصرف الرسمية (GL) without the accounting posting,
+                 confusing users into picking the wrong flow. The official
+                 stock-issues screen (erpStockIssues) now covers every
+                 transfer scenario with full GL + audit trail. -->
             <div class="sales-tab" onclick="switchWhTab('shortage')" id="whtab_shortage"><i class="fas fa-exclamation-triangle"></i> <span>طلبات النواقص</span></div>
           </div>
 
@@ -1136,55 +1140,13 @@
             </div>
           </div>
 
-          <!-- Tab 4: التحويلات -->
-          <!-- v5.10.21 — unified filter bar: search + date + direction + status -->
-          <!-- v5.10.26 — disambiguation banner: explains the difference vs formal stock issues -->
-          <div class="sales-tab-content" id="wh_transfers">
-            <div style="background:linear-gradient(90deg,#eff6ff,#fff);border:1px solid #bfdbfe;border-inline-start:4px solid #3b82f6;border-radius:8px;padding:10px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:flex-start;">
-              <i class="fas fa-info-circle" style="color:#3b82f6;font-size:18px;margin-top:2px;"></i>
-              <div style="font-size:12.5px;line-height:1.55;color:#1e3a8a;">
-                <b>تحويلات الفرع</b> = طلبات استلام يومية بين فروع نفس البراند، <u>بدون ترحيل محاسبي</u>.
-                <br>
-                للصرف الرسمي مع ترحيل GL تلقائي، استخدم
-                <a href="javascript:void(0)" onclick="erpNav('erpStockIssues')" style="color:#1d4ed8;font-weight:800;">إذونات الصرف الرسمية (GL)</a>
-                من قائمة "العمليات".
-              </div>
-            </div>
-            <div class="wh-filter-bar">
-              <div class="wh-fb-title">
-                <i class="fas fa-exchange-alt"></i> تحويلات الفرع (طلبات استلام)
-                <span style="font-size:10.5px;font-weight:600;color:#64748b;margin-inline-start:8px;background:#f1f5f9;padding:2px 8px;border-radius:6px;">بدون ترحيل GL — للنقل اليومي بين الفروع</span>
-              </div>
-              <div class="wh-fb-controls">
-                <div class="wh-fb-search">
-                  <i class="fas fa-search"></i>
-                  <input type="text" id="transferSearch" class="form-control" placeholder="بحث في التحويلات..." oninput="loadDashTransfers()">
-                </div>
-                <input type="date" id="transferFromDate" class="form-control wh-fb-date" title="من تاريخ" onchange="loadDashTransfers()">
-                <input type="date" id="transferToDate" class="form-control wh-fb-date" title="إلى تاريخ" onchange="loadDashTransfers()">
-                <select id="transferDirectionFilter" class="form-control wh-fb-select" onchange="loadDashTransfers()">
-                  <option value="">كل الاتجاهات</option>
-                  <option value="in">واردة (لهذا المستودع)</option>
-                  <option value="out">صادرة (من هذا المستودع)</option>
-                </select>
-                <select id="transferStatusFilter" class="form-control wh-fb-select" onchange="loadDashTransfers()">
-                  <option value="">كل الحالات</option>
-                  <option value="pending">معلّق</option>
-                  <option value="approved">معتمد</option>
-                  <option value="cancelled">ملغى</option>
-                </select>
-                <button class="btn btn-light wh-fb-clear" onclick="whClearFilters('transfer')" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
-                <button class="btn btn-primary" onclick="openTransferModal()"><i class="fas fa-plus"></i> إنشاء طلب تحويل</button>
-              </div>
-            </div>
-            <div id="transferKpis" class="iv-items-kpis"></div>
-            <div class="table-wrapper">
-              <table class="table">
-                <thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>الوجهة / المصدر</th><th>الاتجاه</th><th>عدد المواد</th><th>الحالة</th><th>المسؤول</th><th>إجراءات</th></tr></thead>
-                <tbody id="tbTransfers"></tbody>
-              </table>
-            </div>
-          </div>
+          <!-- v5.10.58 — Tab "تحويلات الفرع" REMOVED.
+               The whole flow is superseded by إذونات الصرف الرسمية (GL)
+               at the erpStockIssues section, which does everything this
+               tab did PLUS automatic GL posting + audit trail + reverse
+               capability. The disambiguation banner that lived here
+               between v5.10.26 and v5.10.57 was a Band-Aid; the proper
+               fix is to delete the duplicate flow entirely. -->
 
           <!-- Tab 5: طلبات النواقص -->
           <div class="sales-tab-content" id="wh_shortage">

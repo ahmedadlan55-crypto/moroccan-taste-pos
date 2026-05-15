@@ -1381,6 +1381,161 @@ router.post('/gl/repair-classification', async (req, res) => {
 });
 
 // ───────────────────────────────────────────────────────────────────────
+// v5.10.60 — Pure-prefix tree repair.
+// Owner reported: "اجدة حسابات ليست تابعة للحساب الرئيسي" — accounts
+// appearing at the wrong tree depth because their parent_id points to a
+// VALID row but the WRONG one (e.g. "11201" parented under "1" instead
+// of "112"). The existing /gl/repair-classification only fixes:
+//   (1) orphan parent_id (target row deleted) → re-link by prefix
+//   (2) name-keyword mismatches              → re-link by KEYWORD_RULES
+// Neither catches the case above where parent_id IS valid but isn't the
+// longest existing-code prefix of the child.
+//
+// This endpoint adds rule (3): for every non-root account, the parent's
+// code must be the LONGEST existing code that's a strict prefix of the
+// child's code. Walks the whole chart and re-parents anything that
+// doesn't match. Also recomputes `level` from the parent chain depth so
+// the UI's "depth" hint stays in sync.
+//
+// Response:
+//   {
+//     success, fixed, repaired: [{ id, code, nameAr, oldParentCode,
+//       newParentCode, oldLevel, newLevel }],
+//     skipped:  [{ id, code, reason }]   // for human review
+//   }
+// ───────────────────────────────────────────────────────────────────────
+async function _repairCoaByPrefix(db) {
+  const [allRows] = await db.query(
+    'SELECT id, code, name_ar, type, parent_id, level FROM gl_accounts');
+  const byCode = {};
+  const byId   = {};
+  allRows.forEach(r => { byCode[String(r.code)] = r; byId[r.id] = r; });
+
+  // For a given child code, find the longest EXISTING strictly-prefix code.
+  // e.g. "11201" → tries "1120", "112", "11", "1" in order; returns first hit.
+  function longestExistingPrefix(childCode) {
+    const code = String(childCode || '');
+    for (let len = code.length - 1; len >= 1; len--) {
+      const candidate = code.substring(0, len);
+      if (byCode[candidate] && byCode[candidate].id !== byId[childCode] ? byId[childCode].id : null) {
+        return byCode[candidate];
+      }
+      if (byCode[candidate]) return byCode[candidate];
+    }
+    return null;
+  }
+
+  // Compute level by walking up via parent_id (cycle-guarded, capped at 20).
+  function computeLevelFromChain(accId) {
+    let lvl = 1;
+    let walker = byId[accId];
+    const seen = new Set();
+    while (walker && walker.parent_id && !seen.has(walker.id) && lvl < 20) {
+      seen.add(walker.id);
+      walker = byId[walker.parent_id];
+      lvl++;
+    }
+    return lvl;
+  }
+
+  const repaired = [];
+  const skipped  = [];
+  const ROOTS = new Set(['1','2','3','4','5']);
+
+  for (const acc of allRows) {
+    // Never touch the 5 IFRS roots — they MUST have parent_id = NULL, level = 1.
+    if (ROOTS.has(String(acc.code))) {
+      // Defensive: if a root somehow got a parent_id or wrong level, fix it.
+      if (acc.parent_id !== null || Number(acc.level) !== 1) {
+        await db.query('UPDATE gl_accounts SET parent_id = NULL, level = 1 WHERE id = ?', [acc.id]);
+        repaired.push({
+          id: acc.id, code: acc.code, nameAr: acc.name_ar,
+          oldParentCode: acc.parent_id ? (byId[acc.parent_id] || {}).code || '(deleted)' : '(none)',
+          newParentCode: '(none — root)',
+          oldLevel: acc.level, newLevel: 1,
+          reason: 'root-must-have-no-parent'
+        });
+        byId[acc.id].parent_id = null;
+        byId[acc.id].level = 1;
+      }
+      continue;
+    }
+
+    // Find the longest existing strict-prefix code of this account's code.
+    const code = String(acc.code || '');
+    let preferredParent = null;
+    for (let len = code.length - 1; len >= 1; len--) {
+      const cand = code.substring(0, len);
+      if (byCode[cand] && byCode[cand].id !== acc.id) { preferredParent = byCode[cand]; break; }
+    }
+
+    if (!preferredParent) {
+      // No prefix-parent exists in the table — leave it alone, it's likely
+      // a custom code that doesn't follow the numeric hierarchy.
+      skipped.push({
+        id: acc.id, code: acc.code, nameAr: acc.name_ar,
+        reason: 'no-prefix-parent-in-chart'
+      });
+      continue;
+    }
+
+    const currentParentCode = acc.parent_id ? (byId[acc.parent_id] || {}).code || null : null;
+    const expectedLevel = preferredParent.code.length + 1
+                       || (Number(preferredParent.level) || 1) + 1;
+    // Use the preferred parent's level + 1 — more reliable than code.length
+    // for non-strict numeric codes.
+    const targetLevel = (Number(preferredParent.level) || 1) + 1;
+
+    const parentChanged = (acc.parent_id !== preferredParent.id);
+    const levelChanged  = (Number(acc.level) !== targetLevel);
+
+    if (!parentChanged && !levelChanged) continue;   // already correct
+
+    try {
+      await db.query(
+        'UPDATE gl_accounts SET parent_id = ?, level = ? WHERE id = ?',
+        [preferredParent.id, targetLevel, acc.id]);
+      repaired.push({
+        id: acc.id, code: acc.code, nameAr: acc.name_ar,
+        oldParentCode: currentParentCode || '(none)',
+        newParentCode: preferredParent.code,
+        oldLevel: acc.level, newLevel: targetLevel,
+        reason: parentChanged
+          ? (levelChanged ? 'reparent+relevel-by-prefix' : 'reparent-by-prefix')
+          : 'relevel-only'
+      });
+      // Update local cache for downstream level-recompute consistency.
+      byId[acc.id].parent_id = preferredParent.id;
+      byId[acc.id].level = targetLevel;
+    } catch (e) {
+      skipped.push({
+        id: acc.id, code: acc.code, nameAr: acc.name_ar,
+        reason: 'update-error:' + e.message
+      });
+    }
+  }
+
+  return { repaired, skipped };
+}
+// Export so server.js / boot scripts can run it idempotently if needed.
+router._repairCoaByPrefix = _repairCoaByPrefix;
+
+router.post('/gl/repair-tree-by-prefix', async (req, res) => {
+  try {
+    const r = await _repairCoaByPrefix(db);
+    res.json({
+      success: true,
+      fixed: r.repaired.length,
+      skipped: r.skipped.length,
+      repaired: r.repaired,
+      skippedDetails: r.skipped
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────
 // v5.10.38 — Deep repair (single atomic endpoint).
 // Runs every COA integrity fix in one transaction and returns
 // before/after diagnostic counts so the UI can show what changed.
@@ -1767,6 +1922,35 @@ async function _coaFixRootsAndOrphansByPrefix(db) {
   }
   // Ensure roots 1..5 are level 1, parent NULL
   await db.query("UPDATE gl_accounts SET level = 1, parent_id = NULL WHERE code IN ('1','2','3','4','5') AND (level != 1 OR parent_id IS NOT NULL)");
+
+  // v5.10.60 — Owner-reported gap: accounts with VALID but WRONG parent_id.
+  // The block above only catches NULL parents. Many real-world COA rows
+  // have a non-NULL parent_id pointing at the wrong row (e.g. account
+  // "11201" attached to root "1" instead of "112"), which made them
+  // render at the wrong tree depth. Fix: for every non-root account,
+  // compute the longest existing strict-prefix code; if that's not what
+  // parent_id currently points to, re-link it.
+  const [allRows] = await db.query("SELECT id, code, parent_id FROM gl_accounts WHERE code NOT IN ('1','2','3','4','5')");
+  const [allForLookup] = await db.query("SELECT id, code FROM gl_accounts");
+  const byCode = {};
+  const byId = {};
+  allForLookup.forEach(r => { byCode[String(r.code)] = r; byId[r.id] = r; });
+  for (const acc of allRows) {
+    const code = String(acc.code || '');
+    if (!code) continue;
+    // Find longest existing strict-prefix code
+    let preferred = null;
+    for (let len = code.length - 1; len >= 1; len--) {
+      const cand = code.substring(0, len);
+      if (byCode[cand] && byCode[cand].id !== acc.id) { preferred = byCode[cand]; break; }
+    }
+    if (!preferred) continue;  // no prefix-parent exists in chart
+    if (acc.parent_id === preferred.id) continue; // already correct
+    try {
+      await db.query("UPDATE gl_accounts SET parent_id = ? WHERE id = ?", [preferred.id, acc.id]);
+      fixed++;
+    } catch (_e) { /* tolerate FK or other errors; deeper repair step will retry */ }
+  }
   return fixed;
 }
 

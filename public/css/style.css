@@ -1480,6 +1480,28 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 .coa-acc-bal-label { font-size: 11px; color: #64748b; }
 .coa-acc-bal-val { font-size: 24px; font-weight: 900; }
 
+/* v5.10.63 — empty-folder hint. Rendered inside a .coa-node-children
+   container when a structural folder (chiefly the 5 IFRS roots) is
+   expanded but all its descendants got filtered out by the hideEmpty
+   toggle. Soft slate background + dashed inline-start border so it
+   reads as a passive informational note, never as an actionable row. */
+.coa-node-empty-hint {
+  font-size: 11.5px;
+  color: #94a3b8;
+  padding: 8px 14px;
+  margin: 2px 6px 4px;
+  font-style: italic;
+  line-height: 1.55;
+  background: #f8fafc;
+  border-radius: 10px;
+  border-inline-start: 2px dashed #cbd5e1;
+}
+.coa-node-empty-hint i {
+  color: #cbd5e1;
+  margin-inline-end: 6px;
+  font-style: normal;
+}
+
 @media (max-width: 900px) {
   /* v5.10.62 — full responsive layout for the COA tree */
   .coa-topbar { padding: 10px; gap: 8px; }

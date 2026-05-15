@@ -787,7 +787,17 @@ function _coaRenderNode(acc, open, depth) {
   if (hideEmpty) {
     children = children.filter(function(c){ return _coaHasMovements(c.id); });
   }
-  var isGroup = children.length > 0;
+  // v5.10.63 — `isGroup` must use the authoritative _coaIsGroup() helper
+  // (defined at line 612) which treats codes 1-5 as folders UNCONDITIONALLY
+  // (per IFRS structural-account convention), honors the explicit
+  // is_folder flag, and falls back to "has any children pre-filter". The
+  // previous `children.length > 0` was computed AFTER the hideEmpty filter
+  // and would flip a root (e.g. حقوق الملكية, codes 311/321/331 with no
+  // movements yet) into a LEAF — rendered with fa-file-alt, no chevron,
+  // and no rollup balance. The 5 IFRS roots are mandatory framework
+  // accounts; hideEmpty is meant to declutter deep sub-accounts only,
+  // never to invert the type of a root.
+  var isGroup = _coaIsGroup(acc.id);
   var lvl = acc.level || 1;
   // v5.10.45 — open state lives in window._coaOpenSet (persisted to
   // localStorage). Replaces the depth-based heuristic that lost the
@@ -895,7 +905,21 @@ function _coaRenderNode(acc, open, depth) {
   html += '</div>';
   if (isGroup) {
     html += '<div class="coa-node-children' + (openSelf ? ' open' : '') + '">';
-    html += children.map(function(c) { return _coaRenderNode(c, false, depth + 1); }).join('');
+    if (children.length > 0) {
+      html += children.map(function(c) { return _coaRenderNode(c, false, depth + 1); }).join('');
+    } else {
+      // v5.10.63 — empty placeholder for structural folders (chiefly the
+      // 5 IFRS roots) whose children all got filtered out by hideEmpty
+      // because none have posted journal entries yet. Without this hint
+      // the expanded node would show an empty white gap and confuse the
+      // user into thinking the chevron is broken. The wording invites
+      // them to flip the "إظهار الحسابات الهيكلية" toggle to reveal the
+      // skeleton children.
+      html += '<div class="coa-node-empty-hint">' +
+        '<i class="fas fa-circle-info"></i> ' +
+        'لا حسابات فرعية بها حركات بعد · فعِّل «إظهار الحسابات الهيكلية» أعلاه لرؤية كل الأبناء.' +
+        '</div>';
+    }
     html += '</div>';
   }
   html += '</div>';

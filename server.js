@@ -1486,6 +1486,12 @@ async function runMigrations() {
   await addColumnIfMissing('gl_journals', 'approved_at', "DATETIME");
   await addColumnIfMissing('gl_journals', 'posted_by', "VARCHAR(100) DEFAULT ''");
   await addColumnIfMissing('gl_journals', 'posted_at', "DATETIME");
+  // v5.10.61 — period-closing entries automation: mark JEs that came from
+  // the period-lock flow so the UI can show them separately + the reopen
+  // flow can find and reverse them. Idempotent ALTER (addColumnIfMissing
+  // checks INFORMATION_SCHEMA before adding).
+  await addColumnIfMissing('gl_journals', 'is_closing_entry', "TINYINT(1) DEFAULT 0");
+  await addColumnIfMissing('gl_journals', 'closing_period_id', "VARCHAR(50)");
   try { await db.query("ALTER TABLE gl_journals MODIFY COLUMN status ENUM('draft','approved','posted') DEFAULT 'draft'"); } catch(e) {}
 
   // GL account link on custody expenses

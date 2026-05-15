@@ -1081,6 +1081,10 @@ router.post('/gl/seed', async (req, res) => {
       {code:'11301',name:'ذمم تطبيقات التوصيل (جاهز، هنقرستيشن..)',type:'asset',parent:'113',level:4},
       {code:'11302',name:'سلف ومقدمات الموظفين',type:'asset',parent:'113',level:4},
       {code:'11303',name:'إيجارات مدفوعة مقدماً',type:'asset',parent:'113',level:4},
+      // v5.10.61 — مخصص الديون المشكوك في تحصيلها (contra-asset under 113).
+      // Recognized by name keyword "مخصص" + the contra-classification
+      // logic added in the Balance Sheet build below.
+      {code:'1131',name:'مخصص الديون المشكوك في تحصيلها',type:'asset',parent:'113',level:4},
       {code:'114',name:'ضريبة المدخلات',type:'asset',parent:'11',level:3},
       {code:'12',name:'الأصول الثابتة',type:'asset',parent:'1',level:2},
       {code:'121',name:'معدات وآلات الكافيه',type:'asset',parent:'12',level:3},
@@ -1130,6 +1134,13 @@ router.post('/gl/seed', async (req, res) => {
       {code:'5121',name:'هالك المواد الغذائية والبن',type:'expense',parent:'512',level:4},
       {code:'52',name:'المصروفات التشغيلية',type:'expense',parent:'5',level:2},
       {code:'521',name:'الرواتب والأجور',type:'expense',parent:'52',level:3},
+      // v5.10.61 — sub-accounts under 521 so payroll postings can be
+      // segregated by role/function (matches the granularity of 522/523/524).
+      {code:'5211',name:'رواتب الإدارة والمحاسبة',type:'expense',parent:'521',level:4},
+      {code:'5212',name:'رواتب الكاشيرز والباريستا',type:'expense',parent:'521',level:4},
+      {code:'5213',name:'رواتب الإنتاج (الباستري)',type:'expense',parent:'521',level:4},
+      {code:'5214',name:'مكافآت وحوافز',type:'expense',parent:'521',level:4},
+      {code:'5215',name:'تأمينات اجتماعية (GOSI)',type:'expense',parent:'521',level:4},
       {code:'522',name:'الإيجارات والمنافع',type:'expense',parent:'52',level:3},
       {code:'5221',name:'إيجارات الفروع',type:'expense',parent:'522',level:4},
       {code:'5222',name:'الكهرباء والماء',type:'expense',parent:'522',level:4},
@@ -1140,6 +1151,12 @@ router.post('/gl/seed', async (req, res) => {
       {code:'524',name:'التسويق والعمولات',type:'expense',parent:'52',level:3},
       {code:'5241',name:'عمولات تطبيقات التوصيل',type:'expense',parent:'524',level:4},
       {code:'5242',name:'الحملات الإعلانية والتسويق',type:'expense',parent:'524',level:4},
+      // v5.10.61 — مصاريف الإهلاك (the missing counterpart to 124 مجمع الإهلاك).
+      // Without these, the monthly depreciation JE has nowhere to debit.
+      {code:'525',name:'مصاريف الإهلاك',type:'expense',parent:'52',level:3},
+      {code:'5251',name:'إهلاك معدات وآلات الكافيه',type:'expense',parent:'525',level:4},
+      {code:'5252',name:'إهلاك أجهزة نقاط البيع',type:'expense',parent:'525',level:4},
+      {code:'5253',name:'إهلاك الأثاث والديكورات',type:'expense',parent:'525',level:4},
       {code:'53',name:'المصروفات العمومية والإدارية',type:'expense',parent:'5',level:2},
       {code:'531',name:'رسوم اشتراكات الأنظمة والبرامج',type:'expense',parent:'53',level:3},
       {code:'532',name:'الرسوم الحكومية والتراخيص',type:'expense',parent:'53',level:3},
@@ -2379,30 +2396,236 @@ router.post('/periods', async (req, res) => {
 });
 
 // Lock / unlock a period. status ∈ {open, soft_closed, closed}.
+//
+// v5.10.61 — When status transitions to 'closed' for the first time, an
+// AUTOMATIC closing journal entry is generated:
+//   • Dr each Revenue account at its period-end balance  →  zeroes it out
+//   • Cr account 321 (Retained Earnings) by the sum      →  parks the income
+//   • Dr account 321 by the total expense                →  reduces RE by it
+//   • Cr each Expense account at its period-end balance  →  zeroes them out
+//
+// Net effect: Revenue & Expense accounts return to zero (ready for the next
+// period), Retained Earnings (321) gains net income. This matches IFRS
+// closing-entry mechanics. Idempotent — won't double-close. Reopening
+// generates a REVERSE journal that undoes the closing without deleting it.
 router.post('/periods/:id/lock', async (req, res) => {
   try {
     const { status, username } = req.body || {};
     if (!['open','soft_closed','closed'].includes(status)) {
       return res.json({ success:false, error:'الحالة غير صالحة' });
     }
-    const [p] = await db.query('SELECT status FROM accounting_periods WHERE id=?', [req.params.id]);
+    const [p] = await db.query('SELECT * FROM accounting_periods WHERE id=?', [req.params.id]);
     if (!p.length) return res.json({ success:false, error:'الفترة غير موجودة' });
-    if (p[0].status === 'closed' && status !== 'closed') {
+    const period = p[0];
+    if (period.status === 'closed' && status !== 'closed') {
       // Re-opening a hard-closed period requires a force flag (audit safety).
       if (!req.body || req.body.force !== true) {
         return res.json({ success:false, error:'الفترة مُقفلة نهائياً — يلزم force=true لإعادة فتحها' });
       }
     }
+
+    let closingResult = null;     // populated when we generate / reverse closing entries
     if (status === 'open') {
+      // v5.10.61 — Re-opening: reverse any prior closing entry for this period
+      // (audit-safe: we don't delete the original, we post an offsetting JE).
+      if (period.status === 'closed') {
+        try {
+          closingResult = await _reverseClosingEntries(req.params.id, username || '');
+        } catch (e) {
+          console.error('[period.lock] reverseClosingEntries failed:', e.message);
+          // Don't block the reopen — the user can still post manual reversals.
+        }
+      }
       await db.query('UPDATE accounting_periods SET status=?, closed_by=NULL, closed_at=NULL WHERE id=?',
         [status, req.params.id]);
     } else {
       await db.query('UPDATE accounting_periods SET status=?, closed_by=?, closed_at=NOW() WHERE id=?',
         [status, username||'', req.params.id]);
+      // v5.10.61 — Generate closing entries only on the open→closed transition
+      // (NOT on open→soft_closed; soft-close is a review state, not a final).
+      if (status === 'closed' && period.status !== 'closed') {
+        try {
+          closingResult = await _generateClosingEntries(req.params.id, username || '');
+        } catch (e) {
+          console.error('[period.lock] generateClosingEntries failed:', e.message);
+          // Leave the period closed — operator can re-run manually if needed.
+          closingResult = { ok: false, error: e.message };
+        }
+      }
     }
-    res.json({ success:true });
+    res.json({ success:true, closing: closingResult });
   } catch(e) { res.json({ success:false, error:e.message }); }
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// v5.10.61 — Closing-entries automation helpers.
+//
+// On period close (status → 'closed'), we generate ONE atomic journal:
+//   Lines: [Dr each revenue@balance] [Cr 321 @ Σrevenue]
+//          [Dr 321 @ Σexpense]        [Cr each expense@balance]
+//   Sum check: ΣDr = ΣCr (defensive — refuses to post if unbalanced).
+//
+// On reopen (status → 'open'), we generate a REVERSE journal that
+// debits/credits the same accounts in the opposite direction, restoring
+// the period balances exactly. The original closing entry stays in the
+// ledger as an audit record.
+// ─────────────────────────────────────────────────────────────────────
+async function _generateClosingEntries(periodId, actorUsername) {
+  // 1. Fetch period bounds
+  const [pRows] = await db.query(
+    'SELECT id, period_name, start_date, end_date FROM accounting_periods WHERE id = ?',
+    [periodId]);
+  if (!pRows.length) return { ok: false, reason: 'period-not-found' };
+  const period = pRows[0];
+
+  // 2. Idempotency — skip if a closing JE already exists for this period
+  const closingJournalId = 'CLOSE-' + period.id;
+  const [existing] = await db.query(
+    'SELECT id FROM gl_journals WHERE id = ?', [closingJournalId]);
+  if (existing.length) return { ok: true, skipped: true, journalId: closingJournalId };
+
+  // 3. Find Retained Earnings account (321 → 32 → 3 fallback). MUST exist.
+  const [reRows] = await db.query(
+    "SELECT id FROM gl_accounts WHERE code IN ('321','32','3') ORDER BY CHAR_LENGTH(code) DESC LIMIT 1");
+  if (!reRows.length) return { ok: false, reason: 'no-retained-earnings-account' };
+  const retainedEarningsAccountId = reRows[0].id;
+
+  // 4. Compute net for every revenue + expense account in the period
+  const [accounts] = await db.query(
+    `SELECT a.id, a.code, a.type,
+            COALESCE(SUM(e.debit),  0) AS d,
+            COALESCE(SUM(e.credit), 0) AS c
+       FROM gl_accounts a
+       LEFT JOIN gl_entries  e ON e.account_id = a.id
+       LEFT JOIN gl_journals j ON j.id = e.journal_id
+                                  AND j.status = 'posted'
+                                  AND COALESCE(j.is_closing_entry, 0) = 0
+                                  AND DATE(j.journal_date) BETWEEN ? AND ?
+      WHERE a.is_active = 1 AND a.type IN ('revenue','expense')
+      GROUP BY a.id, a.code, a.type
+      HAVING ABS(d) + ABS(c) > 0.001`,
+    [period.start_date, period.end_date]);
+
+  if (!accounts.length) return { ok: true, skipped: true, reason: 'no-activity' };
+
+  // 5. Build JE lines + tally totals
+  const lines = [];     // { account_id, debit, credit }
+  let sumRevenueCredit = 0;   // = Σ(credit - debit) for revenue (normal positive)
+  let sumExpenseDebit  = 0;   // = Σ(debit  - credit) for expense (normal positive)
+
+  for (const a of accounts) {
+    const debit  = Number(a.d) || 0;
+    const credit = Number(a.c) || 0;
+    if (a.type === 'revenue') {
+      // Revenue is credit-normal. To zero it out we DEBIT (credit - debit).
+      const closingAmount = credit - debit;
+      if (Math.abs(closingAmount) < 0.001) continue;
+      if (closingAmount > 0) {
+        lines.push({ account_id: a.id, debit: closingAmount, credit: 0 });
+        sumRevenueCredit += closingAmount;
+      } else {
+        // Abnormal balance — credit instead
+        lines.push({ account_id: a.id, debit: 0, credit: -closingAmount });
+        sumRevenueCredit += closingAmount;  // negative
+      }
+    } else if (a.type === 'expense') {
+      // Expense is debit-normal. To zero it out we CREDIT (debit - credit).
+      const closingAmount = debit - credit;
+      if (Math.abs(closingAmount) < 0.001) continue;
+      if (closingAmount > 0) {
+        lines.push({ account_id: a.id, debit: 0, credit: closingAmount });
+        sumExpenseDebit += closingAmount;
+      } else {
+        lines.push({ account_id: a.id, debit: -closingAmount, credit: 0 });
+        sumExpenseDebit += closingAmount;
+      }
+    }
+  }
+
+  // 6. Balancing line through Retained Earnings (321):
+  //    Cr 321 by sumRevenueCredit  +  Dr 321 by sumExpenseDebit
+  //    = net effect: RE += (revenue − expense) = net income
+  const reNet = sumRevenueCredit - sumExpenseDebit;  // signed net income
+  if (Math.abs(reNet) >= 0.001) {
+    if (reNet > 0) lines.push({ account_id: retainedEarningsAccountId, debit: 0, credit:  reNet });
+    else           lines.push({ account_id: retainedEarningsAccountId, debit: -reNet, credit: 0 });
+  }
+
+  // 7. Defensive balance check before posting
+  const totalDebit  = lines.reduce((s, l) => s + Number(l.debit  || 0), 0);
+  const totalCredit = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
+  if (Math.abs(totalDebit - totalCredit) > 0.01) {
+    return { ok: false, reason: 'unbalanced-closing-entry', totalDebit, totalCredit };
+  }
+
+  // 8. Insert journal + entries
+  await db.query(
+    `INSERT INTO gl_journals
+       (id, journal_date, description, status, posted_by, posted_at,
+        is_closing_entry, closing_period_id, reference_type)
+     VALUES (?, ?, ?, 'posted', ?, NOW(), 1, ?, 'period_close')`,
+    [closingJournalId, period.end_date,
+     'قيد إغلاق فترة ' + (period.period_name || period.id), actorUsername || '',
+     period.id]);
+
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    await db.query(
+      `INSERT INTO gl_entries (id, journal_id, account_id, debit, credit, description)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['CLOSE-' + period.id + '-' + (i + 1), closingJournalId,
+       l.account_id, l.debit, l.credit, 'إغلاق دوري']);
+  }
+
+  return {
+    ok: true, journalId: closingJournalId,
+    linesPosted: lines.length, netIncome: reNet,
+    totalDebit, totalCredit
+  };
+}
+
+async function _reverseClosingEntries(periodId, actorUsername) {
+  const closingJournalId = 'CLOSE-' + periodId;
+  const reverseJournalId = 'REOPEN-CLOSE-' + periodId;
+
+  // Idempotency on the reverse side too
+  const [existingReverse] = await db.query(
+    'SELECT id FROM gl_journals WHERE id = ?', [reverseJournalId]);
+  if (existingReverse.length) return { ok: true, skipped: true, journalId: reverseJournalId };
+
+  const [closingExists] = await db.query(
+    'SELECT id, journal_date FROM gl_journals WHERE id = ?', [closingJournalId]);
+  if (!closingExists.length) return { ok: true, skipped: true, reason: 'no-closing-to-reverse' };
+
+  const [origLines] = await db.query(
+    'SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ?',
+    [closingJournalId]);
+  if (!origLines.length) return { ok: true, skipped: true, reason: 'no-lines-to-reverse' };
+
+  await db.query(
+    `INSERT INTO gl_journals
+       (id, journal_date, description, status, posted_by, posted_at,
+        is_closing_entry, closing_period_id, reference_type)
+     VALUES (?, CURDATE(), ?, 'posted', ?, NOW(), 1, ?, 'period_reopen')`,
+    [reverseJournalId,
+     'قيد عكسي لإعادة فتح الفترة (يعكس ' + closingJournalId + ')',
+     actorUsername || '', periodId]);
+
+  for (let i = 0; i < origLines.length; i++) {
+    const l = origLines[i];
+    // Flip debit/credit to reverse
+    await db.query(
+      `INSERT INTO gl_entries (id, journal_id, account_id, debit, credit, description)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [reverseJournalId + '-' + (i + 1), reverseJournalId,
+       l.account_id, l.credit, l.debit, 'عكس قيد إغلاق']);
+  }
+
+  return { ok: true, journalId: reverseJournalId, linesReversed: origLines.length };
+}
+// Expose helpers so admin tooling / future migration scripts can call them
+router._generateClosingEntries = _generateClosingEntries;
+router._reverseClosingEntries  = _reverseClosingEntries;
 
 // V5.10.0 — Helper: refuse to post into a closed accounting period.
 // `closed` periods are hard-locked (no posting at all). `soft_closed`
@@ -3787,20 +4010,44 @@ router.get('/reports/trial-balance', async (req, res) => {
       totals.periodDebit += period.debit; totals.periodCredit += period.credit;
       totals.closeDebit += closeDebit; totals.closeCredit += closeCredit;
 
+      // v5.10.61 — abnormal-sign detection. If a debit-normal account
+      // (asset/expense) ends up with a credit balance — or a credit-
+      // normal account (liability/equity/revenue) ends up with a debit
+      // balance — flag the row so the UI can highlight it in orange.
+      const isDebitNormal = (a.type === 'asset' || a.type === 'expense');
+      const abnormalSign = isDebitNormal
+        ? (closeCredit > 0.01)
+        : (closeDebit  > 0.01);
+
       rows.push({
         code: a.code, nameAR: a.name_ar, type: a.type, typeLabel: typeLabels[a.type]||a.type,
         level: a.level, parentId: a.parent_id,
         openDebit, openCredit,
         periodDebit: period.debit, periodCredit: period.credit,
-        closeDebit, closeCredit
+        closeDebit, closeCredit,
+        abnormalSign     // NEW: true when balance side doesn't match account's natural side
       });
     });
 
+    // v5.10.61 — individual balance checks per column. The old single
+    // `isBalanced` only checked the closing column, so a historical
+    // imbalance in the opening side or a one-sided period entry could
+    // pass unnoticed if the totals happened to cancel out at close.
+    const isOpeningBalanced = Math.abs(totals.openDebit  - totals.openCredit)  < 0.01;
+    const isPeriodBalanced  = Math.abs(totals.periodDebit - totals.periodCredit) < 0.01;
+    const isClosingBalanced = Math.abs(totals.closeDebit - totals.closeCredit) < 0.01;
+
     res.json({
-      isBalanced: Math.abs(totals.closeDebit - totals.closeCredit) < 0.01,
+      // Backward-compatible field — kept so existing UI still works
+      isBalanced: isClosingBalanced,
+      // v5.10.61 — granular balance checks for the trial-balance toolbar
+      isOpeningBalanced,
+      isPeriodBalanced,
+      isClosingBalanced,
+      abnormalCount: rows.filter(r => r.abnormalSign).length,
       rows, totals
     });
-  } catch (e) { res.json({ isBalanced: false, rows: [], totals: {} }); }
+  } catch (e) { res.json({ isBalanced: false, isOpeningBalanced: false, isPeriodBalanced: false, isClosingBalanced: false, abnormalCount: 0, rows: [], totals: {} }); }
 });
 
 // Income Statement — IFRS / IAS 1 (قائمة الدخل)
@@ -3829,29 +4076,49 @@ router.get('/reports/income', async (req, res) => {
     const balMap = {};
     entries.forEach(e => { balMap[e.account_id] = (Number(e.c)||0) - (Number(e.d)||0); }); // credit-positive for revenue
 
-    // Classify accounts by code prefix (IFRS categories)
-    // 4x = Revenue, 5x = COGS, 6x = Operating Expenses
-    const revenue = [], cogs = [], opex = [], otherIncome = [], otherExpense = [];
-    let totalRevenue = 0, totalCOGS = 0, totalOpex = 0, totalOtherInc = 0, totalOtherExp = 0;
+    // v5.10.61 — Income Statement classification bugs fixed:
+    //
+    //   BEFORE: `if (a.code.startsWith('5'))` matched EVERY expense (since
+    //           all expense codes start with '5' — 51 COGS / 52 OpEx /
+    //           53 G&A) and dumped everything into COGS. OpEx and G&A
+    //           sections were always empty.
+    //
+    //   AFTER:  Use 2-digit prefix (51/52/53) to keep COGS, OpEx, and G&A
+    //           properly separated. Codes starting with '6' fall under
+    //           "Other Expenses" (extraordinary / non-recurring).
+    //
+    // ALSO: `Math.abs(net)` was destroying signs, so an account with an
+    // abnormal balance (e.g. refunds > sales) appeared positive. Replaced
+    // with a type-aware normal-balance calculation that PRESERVES sign so
+    // the user can spot anomalies in the report.
+    const revenue = [], cogs = [], opex = [], gAndA = [], otherIncome = [], otherExpense = [];
+    let totalRevenue = 0, totalCOGS = 0, totalOpex = 0, totalGAndA = 0, totalOtherInc = 0, totalOtherExp = 0;
 
     accounts.forEach(a => {
-      const net = balMap[a.id] || 0;
-      if (net === 0 && !a.code.match(/^[456]/)) return;
-      const bal = Math.abs(net);
+      const net = balMap[a.id] || 0;   // balMap is credit-positive (c - d)
+      // Filter zero-balance rows by TYPE (was a fragile prefix-regex `^[456]`).
+      if (Math.abs(net) < 0.001 && a.type !== 'revenue' && a.type !== 'expense') return;
+      // Normal-balance display amount — preserves sign for anomaly detection.
+      //   Revenue: credit-normal → net (positive when c > d) is already correct.
+      //   Expense: debit-normal  → -net (positive when d > c) makes the amount appear positive.
+      const bal = (a.type === 'revenue') ? net : -net;
       const item = { code: a.code, name: a.name_ar, balance: bal, level: a.level };
 
       if (a.type === 'revenue') {
         if (a.code.startsWith('42')) { otherIncome.push(item); totalOtherInc += bal; }
-        else { revenue.push(item); totalRevenue += bal; }
+        else                          { revenue.push(item);     totalRevenue   += bal; }
       } else if (a.type === 'expense') {
-        if (a.code.startsWith('5')) { cogs.push(item); totalCOGS += bal; }
-        else if (a.code.startsWith('62') || a.code.startsWith('63') || a.code.startsWith('64')) { otherExpense.push(item); totalOtherExp += bal; }
-        else { opex.push(item); totalOpex += bal; }
+        // 51x = COGS · 52x = OpEx · 53x = G&A · 6x = Extraordinary
+        if      (a.code.startsWith('51')) { cogs.push(item);  totalCOGS  += bal; }
+        else if (a.code.startsWith('52')) { opex.push(item);  totalOpex  += bal; }
+        else if (a.code.startsWith('53')) { gAndA.push(item); totalGAndA += bal; }
+        else if (a.code.startsWith('6'))  { otherExpense.push(item); totalOtherExp += bal; }
+        else                              { opex.push(item);  totalOpex  += bal; }   // unknown → safest bucket
       }
     });
 
     const grossProfit = totalRevenue - totalCOGS;
-    const operatingIncome = grossProfit - totalOpex;
+    const operatingIncome = grossProfit - totalOpex - totalGAndA;
     const netIncome = operatingIncome + totalOtherInc - totalOtherExp;
 
     res.json({
@@ -3860,13 +4127,14 @@ router.get('/reports/income', async (req, res) => {
       cogs, totalCOGS,
       grossProfit,
       opex, totalOpex,
+      gAndA, totalGAndA,             // v5.10.61 NEW: G&A separated from OpEx
       operatingIncome,
       otherIncome, totalOtherInc,
       otherExpense, totalOtherExp,
       netIncome,
       period: { startDate: startDate || null, endDate: endDate || null }
     });
-  } catch (e) { res.json({ revenue:[], cogs:[], opex:[], otherIncome:[], otherExpense:[], totalRevenue:0, totalCOGS:0, grossProfit:0, totalOpex:0, operatingIncome:0, totalOtherInc:0, totalOtherExp:0, netIncome:0 }); }
+  } catch (e) { res.json({ revenue:[], cogs:[], opex:[], gAndA:[], otherIncome:[], otherExpense:[], totalRevenue:0, totalCOGS:0, grossProfit:0, totalOpex:0, totalGAndA:0, operatingIncome:0, totalOtherInc:0, totalOtherExp:0, netIncome:0 }); }
 });
 
 // Balance Sheet — IFRS / IAS 1 (الميزانية العمومية)
@@ -3930,10 +4198,15 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
     // instead of falling into a generic "أخرى" bucket.
     const groups = {
       currentAssets: {
-        cash:        makeGroup('النقد وما في حكمه'),
-        receivables: makeGroup('الذمم المدينة'),
-        inventory:   makeGroup('المخزون'),
-        otherCA:     makeGroup('أصول متداولة أخرى')
+        cash:               makeGroup('النقد وما في حكمه'),
+        receivables:        makeGroup('الذمم المدينة'),
+        // v5.10.61 — مخصص الديون المشكوك فيها (1131) as a contra
+        // sub-group under receivables. The Math.abs accumulator is
+        // replaced below with a signed contribution so the magnitude
+        // is SUBTRACTED from total assets.
+        allowanceDoubtful:  makeGroup('مخصص الديون المشكوك فيها', true),
+        inventory:          makeGroup('المخزون'),
+        otherCA:            makeGroup('أصول متداولة أخرى')
       },
       nonCurrentAssets: {
         ppe:    makeGroup('الممتلكات والمعدات والأصول غير الملموسة'),
@@ -3954,25 +4227,46 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
         capital:      makeGroup('رأس المال'),
         retained:     makeGroup('الأرباح المحتجزة'),
         drawings:     makeGroup('المسحوبات', true),
-        reserves:     makeGroup('الاحتياطيات'),                     // 34
-        periodIncome: makeGroup('صافي ربح/خسارة الفترة')
+        reserves:     makeGroup('الاحتياطيات')                     // 34
+        // v5.10.61 — `periodIncome` group REMOVED. Per IFRS Statement
+        // of Changes in Equity, the period's profit/loss is displayed
+        // as a line WITHIN Retained Earnings, not as a sibling group.
+        // The net income value is now pushed into groups.equity.retained
+        // (see the accounts loop below).
       }
     };
 
-    function classifyAsset(code) {
+    function classifyAsset(code, nameAr) {
       const c = String(code || '');
-      // v5.11.11 — calibrated for the v5.11.8 IFRS template (216 accounts).
-      // 111x = Cash and Bank, 112x = AR, 113x = Inventory, 114-116 = other CA,
-      // 121 = PPE, 122 = Accumulated Depreciation (contra), 123 = Intangibles,
-      // 124 = ROU IFRS 16. Older calibration mis-mapped 112↔113 and put 124
-      // under accDep — that's why the user saw "wrong accounts" in the BS.
+      const name = String(nameAr || '');
+      // v5.10.61 — Two key bug fixes here:
+      //   1) The v5.11.8 calibration above was WRONG for our actual seed.
+      //      Our seed has 112=Inventory, 113=Receivables, 124=AccDep —
+      //      the OPPOSITE of what the old function assumed. As a result
+      //      inventory accounts were appearing under "receivables" group
+      //      and POS devices (122) were being treated as contra-depreciation.
+      //   2) Both seed templates (current one + v5.11.8) coexist in deployed
+      //      databases. Detect by name keyword first ("إهلاك" → AccDep,
+      //      "مخصص" → contra-receivables) so we don't depend on which
+      //      template a particular branch uses.
+      // ── Step A: keyword-based override (template-agnostic) ──
+      if (/إهلاك|depreciation/i.test(name) && /^1[0-9]/.test(c)) {
+        return ['nonCurrentAssets', 'accDep'];
+      }
+      if (/مخصص|allowance|provision/i.test(name) && /^11/.test(c)) {
+        return ['currentAssets', 'allowanceDoubtful'];
+      }
+      // ── Step B: our actual seed (post-v5.10.0 template) ──
+      // 111 = Cash · 112 = Inventory · 113 = Receivables · 114 = VAT Input
       if (c.startsWith('111'))                         return ['currentAssets', 'cash'];
-      if (c.startsWith('112'))                         return ['currentAssets', 'receivables'];
-      if (c.startsWith('113'))                         return ['currentAssets', 'inventory'];
+      if (c.startsWith('112'))                         return ['currentAssets', 'inventory'];
+      if (c.startsWith('113'))                         return ['currentAssets', 'receivables'];
       if (c.startsWith('114') || c.startsWith('115') || c.startsWith('116'))
                                                        return ['currentAssets', 'otherCA'];
-      if (c.startsWith('122'))                         return ['nonCurrentAssets', 'accDep'];
-      if (c.startsWith('121') || c.startsWith('123') || c.startsWith('124'))
+      // 124 = AccDep in current seed (contra-asset)
+      if (c === '124' || c.startsWith('124'))          return ['nonCurrentAssets', 'accDep'];
+      // 121 / 122 / 123 = PPE families
+      if (c.startsWith('121') || c.startsWith('122') || c.startsWith('123'))
                                                        return ['nonCurrentAssets', 'ppe'];
       // Fallbacks for off-template rows
       if (c.startsWith('11'))                          return ['currentAssets', 'otherCA'];
@@ -4015,6 +4309,24 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
     // so the UI can surface a "Unclassified" warning section.
     const unclassified = [];
 
+    // v5.10.61 — pushAccount helper: applies the correct sign convention
+    // for both the group total AND the top-level total.
+    //   • For NORMAL (non-contra) accounts: magnitude is ADDED.
+    //   • For CONTRA accounts (مجمع الإهلاك / المسحوبات / مخصص الديون):
+    //     magnitude is SUBTRACTED — i.e., a NEGATIVE contribution.
+    // Both the per-account balance and the group/top totals carry the
+    // SIGNED contribution so the frontend can simply sum them without
+    // re-applying any negation logic of its own.
+    function pushToGroup(group, account, magnitude) {
+      const signed = group.isContra ? -magnitude : magnitude;
+      group.accounts.push({
+        id: account.id, code: account.code, nameAr: account.name_ar,
+        balance: signed, magnitude: magnitude, isContra: !!group.isContra
+      });
+      group.total += signed;
+      return signed;
+    }
+
     accounts.forEach(a => {
       const entry = balMap[a.id] || { debit: 0, credit: 0, count: 0 };
       const net = entry.debit - entry.credit; // debit-normal
@@ -4028,36 +4340,55 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       const flatItem = { id: a.id, code: a.code, name: a.name_ar, balance: 0, level: a.level };
 
       if (a.type === 'asset') {
-        flatItem.balance = net;
-        const cls = classifyAsset(a.code);
+        // Assets are debit-normal: positive net = positive magnitude.
+        // For contra-assets the magnitude is the same, but pushToGroup
+        // converts to a negative contribution at the group level.
+        const magnitude = net;   // signed magnitude (allows abnormal balance to surface)
+        const cls = classifyAsset(a.code, a.name_ar);
         if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
-          groups[cls[0]][cls[1]].accounts.push({ id: a.id, code: a.code, nameAr: a.name_ar, balance: net });
-          groups[cls[0]][cls[1]].total += net;
+          const targetGroup = groups[cls[0]][cls[1]];
+          const signed = pushToGroup(targetGroup, a, magnitude);
+          flatItem.balance = signed;
+          if (cls[0] === 'nonCurrentAssets') { nonCurrentAssets.push(flatItem); totNCA += signed; }
+          else                                { currentAssets.push(flatItem);    totCA  += signed; }
         } else {
-          unclassified.push({ id: a.id, code: a.code, nameAr: a.name_ar, type: a.type, balance: net });
+          flatItem.balance = magnitude;
+          unclassified.push({ id: a.id, code: a.code, nameAr: a.name_ar, type: a.type, balance: magnitude });
+          if (a.code && a.code.startsWith('12')) { nonCurrentAssets.push(flatItem); totNCA += magnitude; }
+          else                                    { currentAssets.push(flatItem);    totCA  += magnitude; }
         }
-        if (a.code && a.code.startsWith('12')) { nonCurrentAssets.push(flatItem); totNCA += net; }
-        else                                    { currentAssets.push(flatItem);   totCA  += net; }
       } else if (a.type === 'liability') {
-        flatItem.balance = Math.abs(net);
+        // Liabilities are credit-normal: positive magnitude = credit balance.
+        const magnitude = -net;   // (credit - debit), positive when normal
         const cls = classifyLiability(a.code);
         if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
-          groups[cls[0]][cls[1]].accounts.push({ id: a.id, code: a.code, nameAr: a.name_ar, balance: Math.abs(net) });
-          groups[cls[0]][cls[1]].total += Math.abs(net);
+          const targetGroup = groups[cls[0]][cls[1]];
+          const signed = pushToGroup(targetGroup, a, magnitude);
+          flatItem.balance = signed;
+          if (cls[0] === 'nonCurrentLiab') { nonCurrentLiab.push(flatItem); totNCL += signed; }
+          else                              { currentLiab.push(flatItem);    totCL  += signed; }
         } else {
-          unclassified.push({ id: a.id, code: a.code, nameAr: a.name_ar, type: a.type, balance: Math.abs(net) });
+          flatItem.balance = magnitude;
+          unclassified.push({ id: a.id, code: a.code, nameAr: a.name_ar, type: a.type, balance: magnitude });
+          if (a.code && a.code.startsWith('22')) { nonCurrentLiab.push(flatItem); totNCL += magnitude; }
+          else                                    { currentLiab.push(flatItem);    totCL  += magnitude; }
         }
-        if (a.code && a.code.startsWith('22')) { nonCurrentLiab.push(flatItem); totNCL += Math.abs(net); }
-        else                                    { currentLiab.push(flatItem);    totCL  += Math.abs(net); }
       } else if (a.type === 'equity') {
-        flatItem.balance = Math.abs(net);
+        // Equity is credit-normal. Drawings (33) are contra-equity:
+        // pushToGroup will SUBTRACT them from the equity total.
+        const magnitude = -net;   // (credit - debit), positive when normal
         const cls = classifyEquity(a.code);
         if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
-          groups[cls[0]][cls[1]].accounts.push({ id: a.id, code: a.code, nameAr: a.name_ar, balance: Math.abs(net) });
-          groups[cls[0]][cls[1]].total += Math.abs(net);
+          const targetGroup = groups[cls[0]][cls[1]];
+          const signed = pushToGroup(targetGroup, a, magnitude);
+          flatItem.balance = signed;
+          equityItems.push(flatItem);
+          totEq += signed;     // ← contra (drawings) reduces equity, no longer inflates it
+        } else {
+          flatItem.balance = magnitude;
+          equityItems.push(flatItem);
+          totEq += magnitude;
         }
-        equityItems.push(flatItem);
-        totEq += Math.abs(net);
       } else if (a.type === 'revenue') {
         netIncome += (entry.credit - entry.debit);
       } else if (a.type === 'expense') {
@@ -4065,14 +4396,22 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       }
     });
 
-    // Net income → period income sub-group + flat equity item
+    // v5.10.61 — Per IFRS Statement of Changes in Equity, the current-period
+    // P&L is shown as a LINE WITHIN Retained Earnings — not as a separate
+    // equity sub-group. (The frontend used to receive both totals and
+    // display them side-by-side, which double-counted the income.)
     if (Math.abs(netIncome) > 0.01) {
-      equityItems.push({ id: '__period_income__', code: '', name: 'صافي ربح/خسارة الفترة', balance: netIncome, level: 3, isComputed: true });
-      groups.equity.periodIncome.accounts.push({
-        id: '__period_income__', code: '', nameAr: 'صافي ربح/خسارة الفترة',
-        balance: netIncome, isComputed: true
+      const periodLabel = netIncome >= 0 ? 'صافي ربح الفترة (قبل قيد الإغلاق)' : 'صافي خسارة الفترة (قبل قيد الإغلاق)';
+      equityItems.push({
+        id: '__period_income__', code: '(P&L)', name: periodLabel,
+        balance: netIncome, level: 3, isComputed: true, isPeriodResult: true
       });
-      groups.equity.periodIncome.total += netIncome;
+      groups.equity.retained.accounts.push({
+        id: '__period_income__', code: '(P&L)', nameAr: periodLabel,
+        balance: netIncome, magnitude: Math.abs(netIncome),
+        isComputed: true, isPeriodResult: true
+      });
+      groups.equity.retained.total += netIncome;
       totEq += netIncome;
     }
 

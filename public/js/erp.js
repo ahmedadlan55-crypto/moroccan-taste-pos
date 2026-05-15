@@ -795,12 +795,16 @@ function _coaRenderNode(acc, open, depth) {
   // best-effort visual hack instead of a real source of truth.
   if (!window._coaOpenSet) window._coaOpenSet = new Set();
   var openSelf = isGroup && window._coaOpenSet.has(acc.id);
-  var chevronDir = openSelf ? 'fa-chevron-down' : 'fa-chevron-left';
-  var toggle = isGroup ? '<span class="coa-node-toggle"><i class="fas ' + chevronDir + '"></i></span>' : '<span style="width:16px;display:inline-block;"></span>';
+  // v5.10.62 — single chevron icon (fa-chevron-left). The .is-open class
+  // on the parent .coa-node triggers a smooth -90° rotation in CSS,
+  // replacing the previous fa-chevron-left ↔ fa-chevron-down swap.
+  var toggle = isGroup
+    ? '<span class="coa-node-toggle"><i class="fas fa-chevron-left"></i></span>'
+    : '<span style="width:16px;display:inline-block;"></span>';
   var iconSize = lvl <= 1 ? 18 : lvl === 2 ? 16 : lvl === 3 ? 14 : 12;
   var icon = isGroup
-    ? '<i class="fas fa-folder" style="color:#f59e0b;font-size:' + iconSize + 'px;"></i>'
-    : '<i class="fas fa-file-alt" style="color:#3b82f6;font-size:' + iconSize + 'px;"></i>';
+    ? '<i class="fas fa-folder coa-node-icon folder" style="color:#f59e0b;font-size:' + iconSize + 'px;"></i>'
+    : '<i class="fas fa-file-alt coa-node-icon file" style="color:#3b82f6;font-size:' + iconSize + 'px;"></i>';
   var fontW = lvl <= 1 ? 900 : lvl === 2 ? 800 : lvl === 3 ? 600 : 400;
   var fontSize = lvl <= 1 ? 15 : lvl === 2 ? 14 : lvl === 3 ? 13 : 12;
   var activeClass = _coaSelectedId === acc.id ? ' active' : '';
@@ -877,15 +881,20 @@ function _coaRenderNode(acc, open, depth) {
     }
   }
 
-  var html = '<div class="coa-node" data-id="' + acc.id + '" data-level="' + lvl + '" data-type="' + (acc.type||'') + '">';
-  html += '<div class="coa-node-row' + activeClass + '" style="font-weight:' + fontW + ';font-size:' + fontSize + 'px;" onclick="coaSelectNode(\'' + acc.id + '\')" title="' + (acc.nameAr||'').replace(/"/g,'&quot;') + ' — ' + (acc.code||'') + '">';
+  // v5.10.62 — `.is-open` on the node drives the CSS chevron rotation.
+  // Inline styles for font-weight/size and the indentation block on
+  // .coa-node-children were removed — the level-aware CSS rules in
+  // public/css/style.css (v5.10.62 redesign) handle all of this now.
+  var openClass = (isGroup && openSelf) ? ' is-open' : '';
+  var html = '<div class="coa-node' + openClass + '" data-id="' + acc.id + '" data-level="' + lvl + '" data-type="' + (acc.type||'') + '">';
+  html += '<div class="coa-node-row' + activeClass + '" onclick="coaSelectNode(\'' + acc.id + '\')" title="' + (acc.nameAr||'').replace(/"/g,'&quot;') + ' — ' + (acc.code||'') + '">';
   html += toggle + icon;
   html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
   html += ifrsChipHtml;
   html += rightHtml;
   html += '</div>';
   if (isGroup) {
-    html += '<div class="coa-node-children' + (openSelf ? ' open' : '') + '" style="margin-inline-start:22px;padding-inline-start:8px;border-inline-start:2px dotted #cbd5e1;">';
+    html += '<div class="coa-node-children' + (openSelf ? ' open' : '') + '">';
     html += children.map(function(c) { return _coaRenderNode(c, false, depth + 1); }).join('');
     html += '</div>';
   }
@@ -912,9 +921,11 @@ document.addEventListener('click', function(e) {
       else                            window._coaOpenSet.add(id);
       _coaPersistOpenSet();
     }
+    // v5.10.62 — toggle .open on children AND .is-open on the parent node.
+    // The parent class drives the CSS chevron rotation (single icon now,
+    // no more swapping the glyph between fa-chevron-left and fa-chevron-down).
     children.classList.toggle('open');
-    var icon = toggle.querySelector('i');
-    icon.className = children.classList.contains('open') ? 'fas fa-chevron-down' : 'fas fa-chevron-left';
+    node.classList.toggle('is-open', children.classList.contains('open'));
   }
 });
 

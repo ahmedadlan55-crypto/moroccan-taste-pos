@@ -1045,14 +1045,130 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 .form-row { margin-bottom: 16px; }
 .form-row label { display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px; }
 
-/* ═══════════════════════════════════════
-   Chart of Accounts — Tree + Panel Layout
-   ═══════════════════════════════════════ */
-.coa-layout { display: flex; height: calc(100vh - 140px); gap: 0; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; background: #fff; direction: rtl; }
+/* ═══════════════════════════════════════════════════════════════════
+   Chart of Accounts — Tree + Panel Layout · v5.10.62 (full redesign)
+   ───────────────────────────────────────────────────────────────────
+   Owner reported the tree looked broken. Audit found multiple HTML
+   classes (.coa-topbar, .coa-type-chips, .coa-tree-toolbar, .coa-actions,
+   .coa-node-actions, balance color states) had zero CSS coverage. This
+   block rebuilds the full visual layer with Odoo / SAP B1 conventions:
+   tree connectors, deeper indentation, hover-reveal actions, color-coded
+   balances, tinted root backgrounds, smooth chevron rotation, and full
+   mobile responsiveness.
+   ═══════════════════════════════════════════════════════════════════ */
 
-/* v5.10.41 — Tree panel widened (280→clamp 360-560px) and made user-resizable
-   so long account names display fully. The default reads the saved width
-   from localStorage (coaTreeWidth) when present. */
+/* ── Top action bar (above the layout) ──────────────────────────── */
+.coa-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-bottom: none;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  direction: rtl;
+}
+.coa-type-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.coa-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 999px;
+  color: #475569;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s, transform .08s;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.coa-type-chip:hover  { background: #f1f5f9; border-color: #cbd5e1; }
+.coa-type-chip:active { transform: scale(.97); }
+.coa-type-chip i { font-size: 10px; opacity: .8; }
+.coa-type-chip .chip-count {
+  background: rgba(0,0,0,.05);
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  color: #475569;
+}
+/* Active state per type — each type uses its own brand color */
+.coa-type-chip.active[data-type="asset"]     { background: #eff6ff; border-color: #3b82f6; color: #1d4ed8; }
+.coa-type-chip.active[data-type="liability"] { background: #fef2f2; border-color: #dc2626; color: #991b1b; }
+.coa-type-chip.active[data-type="equity"]    { background: #faf5ff; border-color: #a855f7; color: #6b21a8; }
+.coa-type-chip.active[data-type="revenue"]   { background: #f0fdf4; border-color: #16a34a; color: #166534; }
+.coa-type-chip.active[data-type="expense"]   { background: #fffbeb; border-color: #f59e0b; color: #92400e; }
+.coa-type-chip.active[data-type=""],
+.coa-type-chip.active:not([data-type]) {
+  background: #e0e7ff; border-color: #6366f1; color: #4338ca;
+}
+
+.coa-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.coa-toggle-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 8px;
+  user-select: none;
+}
+.coa-toggle-empty:hover { background: #f1f5f9; }
+.coa-toggle-empty input[type="checkbox"] { accent-color: #4f46e5; width: 14px; height: 14px; cursor: pointer; }
+.coa-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  color: #475569;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.coa-action-btn:hover {
+  background: #f8fafc;
+  border-color: #4f46e5;
+  color: #4f46e5;
+}
+
+/* ── Main layout (tree + content) ──────────────────────────────── */
+.coa-layout {
+  display: flex;
+  height: calc(100vh - 200px);
+  gap: 0;
+  border: 1px solid #e2e8f0;
+  border-top: none;
+  border-radius: 0 0 16px 16px;
+  overflow: hidden;
+  background: #fff;
+  direction: rtl;
+}
 .coa-tree-panel {
   width: clamp(360px, 32vw, 560px);
   min-width: 320px;
@@ -1066,46 +1182,117 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
   position: relative;
   resize: horizontal;
 }
-.coa-main-panel { flex: 1; min-width: 0; overflow-y: auto; padding: 20px; background: #fff; direction: rtl; }
-.coa-tree-header { padding: 10px; border-bottom: 1px solid #e2e8f0; }
-.coa-search { width: 100%; padding: 8px 12px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 13px; font-family: inherit; background: #fff; }
-.coa-search:focus { outline: none; border-color: var(--mt-accent); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
-.coa-tree-body { flex: 1; overflow-y: auto; padding: 6px 0; }
+.coa-main-panel {
+  flex: 1; min-width: 0;
+  overflow-y: auto;
+  padding: 20px;
+  background: #fff;
+  direction: rtl;
+}
 
-/* Tree Node */
-.coa-node { cursor: pointer; user-select: none; }
-/* v5.10.41 — name-first row layout. Grid columns: [chevron] [icon] [name flex] [right-side stats]
-   The name now gets all available space; secondary chips collapse on narrow widths. */
+/* ── Tree header (search + toolbar) ────────────────────────────── */
+.coa-tree-header {
+  padding: 10px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.coa-search {
+  width: 100%;
+  padding: 8px 12px 8px 32px;     /* room for icon (set via bg-image) */
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  background: #fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/></svg>") no-repeat left 10px center;
+  box-sizing: border-box;
+}
+.coa-search:focus {
+  outline: none;
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 3px rgba(79,70,229,0.15);
+}
+.coa-tree-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.coa-tree-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  color: #475569;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.coa-tree-tool-btn:hover {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+.coa-tree-tool-btn i { font-size: 10px; }
+.coa-tree-tool-btn span { white-space: nowrap; }
+
+.coa-tree-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+/* ── Tree node (the rebuilt grid) ──────────────────────────────── */
+.coa-node { cursor: pointer; user-select: none; position: relative; }
+
+/* Grid columns: [chevron 18px] [icon auto] [name+ifrs flex] [balance auto] [actions auto] */
 .coa-node-row {
   display: grid;
-  grid-template-columns: 16px auto 1fr auto;
+  grid-template-columns: 18px auto minmax(120px, 1fr) auto auto;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px 7px 14px;
+  padding: 6px 10px 6px 14px;
   margin: 1px 6px;
   border-radius: 8px;
   font-size: 13px;
-  transition: background 0.1s, box-shadow 0.1s;
+  transition: background .12s, box-shadow .12s, transform .12s;
   direction: rtl;
   text-align: right;
-  border-inline-start: 3px solid transparent;
+  border-inline-start: 4px solid transparent;
   min-width: 0;
+  position: relative;
 }
-.coa-node-row:hover { background: #e2e8f0; }
-.coa-node-row.active { background: var(--mt-accent-soft); color: var(--mt-accent-2); font-weight: 800; }
-.coa-node-toggle { width: 16px; text-align: center; font-size: 10px; color: #94a3b8; flex-shrink: 0; }
+.coa-node-row:hover {
+  background: #eef2ff;
+  box-shadow: 0 2px 6px rgba(79,70,229,.08);
+}
+.coa-node-row.active {
+  background: #e0e7ff;
+  color: #3730a3;
+  font-weight: 800;
+  box-shadow: inset 2px 0 0 #4f46e5;
+}
+
+/* Chevron — smooth rotation on .is-open instead of glyph swap */
+.coa-node-toggle {
+  width: 16px;
+  text-align: center;
+  color: #94a3b8;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform .2s ease, color .15s;
+}
+.coa-node-toggle i { font-size: 11px; }
+.coa-node.is-open > .coa-node-row .coa-node-toggle { transform: rotate(-90deg); color: #4f46e5; }
+.coa-node-row:hover .coa-node-toggle { color: #4f46e5; }
+
 .coa-node-icon { flex-shrink: 0; }
-.coa-node-icon.folder { color: #f59e0b; }
-.coa-node-icon.file { color: var(--mt-accent); font-size: 12px; }
-/* Level-based sizing */
-.coa-node[data-level="1"] > .coa-node-row { font-size: 15px; font-weight: 900; }
-.coa-node[data-level="1"] > .coa-node-row .coa-node-icon { font-size: 18px; }
-.coa-node[data-level="2"] > .coa-node-row { font-size: 14px; font-weight: 800; }
-.coa-node[data-level="2"] > .coa-node-row .coa-node-icon { font-size: 16px; }
-.coa-node[data-level="3"] > .coa-node-row { font-size: 13px; font-weight: 600; }
-.coa-node[data-level="3"] > .coa-node-row .coa-node-icon { font-size: 14px; }
-.coa-node[data-level="4"] > .coa-node-row { font-size: 12px; font-weight: 400; color: #475569; }
-.coa-node[data-level="4"] > .coa-node-row .coa-node-icon { font-size: 11px; }
 .coa-node-name {
   white-space: nowrap;
   overflow: hidden;
@@ -1113,16 +1300,144 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
   min-width: 0;
 }
 
-/* v5.10.41 — colored left edge replaces the separate type-badge dot.
-   Asset=blue, Liability=red, Equity=purple, Revenue=green, Expense=amber. */
-.coa-node[data-type="asset"]     > .coa-node-row { border-inline-start-color: var(--mt-info); }
+/* Level-based typography */
+.coa-node[data-level="1"] > .coa-node-row { font-size: 15px; font-weight: 900; padding-block: 9px; }
+.coa-node[data-level="1"] .coa-node-toggle i { font-size: 13px; }
+.coa-node[data-level="2"] > .coa-node-row { font-size: 14px; font-weight: 800; padding-block: 8px; }
+.coa-node[data-level="2"] .coa-node-toggle i { font-size: 12px; }
+.coa-node[data-level="3"] > .coa-node-row { font-size: 13px; font-weight: 600; padding-block: 7px; }
+.coa-node[data-level="3"] .coa-node-toggle i { font-size: 11px; }
+.coa-node[data-level="4"] > .coa-node-row { font-size: 12px; font-weight: 500; color: #475569; padding-block: 6px; }
+.coa-node[data-level="4"] .coa-node-toggle i { font-size: 10px; }
+
+/* Type accent: 4px left edge per type */
+.coa-node[data-type="asset"]     > .coa-node-row { border-inline-start-color: #3b82f6; }
 .coa-node[data-type="liability"] > .coa-node-row { border-inline-start-color: #dc2626; }
-.coa-node[data-type="equity"]    > .coa-node-row { border-inline-start-color: #7c3aed; }
-.coa-node[data-type="revenue"]   > .coa-node-row { border-inline-start-color: var(--mt-success); }
+.coa-node[data-type="equity"]    > .coa-node-row { border-inline-start-color: #a855f7; }
+.coa-node[data-type="revenue"]   > .coa-node-row { border-inline-start-color: #16a34a; }
 .coa-node[data-type="expense"]   > .coa-node-row { border-inline-start-color: #f59e0b; }
-.coa-node-code { font-size: 10px; color: #94a3b8; font-family: monospace; }
-.coa-node-children { display: none; }
+
+/* L1 root rows: tinted gradient background to anchor each section */
+.coa-node[data-level="1"][data-type="asset"]     > .coa-node-row { background: linear-gradient(90deg, rgba(59,130,246,.10), rgba(59,130,246,.02) 70%); }
+.coa-node[data-level="1"][data-type="liability"] > .coa-node-row { background: linear-gradient(90deg, rgba(220,38,38,.10), rgba(220,38,38,.02) 70%); }
+.coa-node[data-level="1"][data-type="equity"]    > .coa-node-row { background: linear-gradient(90deg, rgba(168,85,247,.10), rgba(168,85,247,.02) 70%); }
+.coa-node[data-level="1"][data-type="revenue"]   > .coa-node-row { background: linear-gradient(90deg, rgba(22,163,74,.10), rgba(22,163,74,.02) 70%); }
+.coa-node[data-level="1"][data-type="expense"]   > .coa-node-row { background: linear-gradient(90deg, rgba(245,158,11,.10), rgba(245,158,11,.02) 70%); }
+
+/* Children container — 28px indent + visual connector line */
+.coa-node-children {
+  display: none;
+  margin-inline-start: 28px;
+  padding-inline-start: 0;
+  border-inline-start: 1.5px solid #e2e8f0;
+  position: relative;
+}
 .coa-node-children.open { display: block; }
+
+/* Horizontal connector stub per child row (Odoo / SAP B1 pattern) */
+.coa-node-children > .coa-node > .coa-node-row::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: -6px;
+  top: 50%;
+  width: 10px;
+  height: 1.5px;
+  background: #e2e8f0;
+  pointer-events: none;
+}
+/* Don't paint connectors on the 5 IFRS root rows */
+.coa-node[data-level="1"] > .coa-node-row::before { display: none; }
+
+/* ── Right-cluster: balance + actions + IFRS chip ──────────────── */
+.coa-node-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.coa-folder-balance {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  min-width: 84px;
+  text-align: end;
+}
+.coa-folder-balance--group {
+  background: #f1f5f9;
+  color: #475569;
+  font-weight: 800;
+}
+.coa-folder-balance--pos { color: #16a34a; }
+.coa-folder-balance--neg { color: #dc2626; }
+.coa-folder-balance--zero { color: #94a3b8; }
+.coa-folder-balance--group.coa-folder-balance--pos { background: #dcfce7; color: #166534; }
+.coa-folder-balance--group.coa-folder-balance--neg { background: #fee2e2; color: #991b1b; }
+.coa-folder-balance--group.coa-folder-balance--zero { background: #f1f5f9; color: #94a3b8; }
+
+/* IFRS reference chip (on L1 rows) */
+.coa-ifrs-chip {
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #475569;
+  letter-spacing: .02em;
+  border: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+
+/* Warning icon — only shown when a critical issue is detected */
+.coa-warn-icon {
+  color: #d97706;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  transition: background .15s, color .15s;
+}
+.coa-warn-icon:hover { background: #fffbeb; color: #b45309; }
+
+/* Hover-reveal actions */
+.coa-node-actions {
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transform: translateX(-6px);
+  transition: opacity .15s, transform .15s;
+}
+.coa-node-row:hover .coa-node-actions,
+.coa-node-row:focus-within .coa-node-actions,
+.coa-node-row.active .coa-node-actions {
+  opacity: 1;
+  transform: translateX(0);
+}
+.coa-node-actions button {
+  width: 26px; height: 26px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: #64748b;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: background .15s, color .15s, transform .08s;
+}
+.coa-node-actions button:hover  { background: #e0e7ff; color: #4f46e5; }
+.coa-node-actions button:active { transform: scale(.93); }
+
+/* Code badge inside name */
+.coa-node-code {
+  font-size: 10px;
+  color: #94a3b8;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  margin-inline-start: 6px;
+}
 
 /* Main Panel */
 .coa-main-panel { flex: 1; overflow-y: auto; padding: 20px; background: #fff; }
@@ -1165,9 +1480,36 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 .coa-acc-bal-label { font-size: 11px; color: #64748b; }
 .coa-acc-bal-val { font-size: 24px; font-weight: 900; }
 
-@media (max-width: 768px) {
-  .coa-layout { flex-direction: column; height: auto; }
-  .coa-tree-panel { width: 100%; max-height: 250px; border-left: none; border-bottom: 1px solid #e2e8f0; }
+@media (max-width: 900px) {
+  /* v5.10.62 — full responsive layout for the COA tree */
+  .coa-topbar { padding: 10px; gap: 8px; }
+  .coa-type-chips { width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+  .coa-type-chip { flex-shrink: 0; }
+  .coa-actions { width: 100%; justify-content: flex-end; }
+  .coa-layout {
+    flex-direction: column;
+    height: auto;
+    min-height: calc(100vh - 200px);
+  }
+  .coa-tree-panel {
+    width: 100% !important;
+    max-width: 100%;
+    min-height: 320px;
+    max-height: 60vh;
+    resize: vertical;
+    border-bottom: 1px solid #e2e8f0;
+    border-left: none;
+  }
+  .coa-main-panel { padding: 14px; }
+  .coa-tree-toolbar {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 2px;
+  }
+  .coa-tree-tool-btn { flex-shrink: 0; }
+  /* Hide IFRS chips on narrow screens to declutter */
+  .coa-ifrs-chip { display: none; }
+  /* Cards stack on mobile */
   .coa-cards { grid-template-columns: 1fr; }
 }
 

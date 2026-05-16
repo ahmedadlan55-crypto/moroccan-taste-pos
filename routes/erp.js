@@ -8,6 +8,20 @@ const COA_TEMPLATE = require('../db/coa-template.json');
 // v5.11.3 — developer-only guard for destructive journal endpoints.
 const { guardDeveloper } = require('../lib/transactionGuards');
 
+// ═══════════════════════════════════════════════════════════════════
+// v5.17.1 — routes/erp/ split (Phase 1 of 5). Each sub-router below
+// owns one domain and lives in its own file under routes/erp/. Mount
+// order doesn't matter (paths are disjoint), but we mount BEFORE the
+// inline endpoints so future migrations of inline → sub-file just
+// require moving the block out and adjusting nothing else.
+//
+// URL prefixes are unchanged — paths like /api/erp/customers still
+// resolve to GET /customers inside customers.js.
+// ═══════════════════════════════════════════════════════════════════
+router.use(require('./erp/customers'));
+router.use(require('./erp/suppliers'));
+router.use(require('./erp/brands'));
+
 // ─── Dashboard ───
 
 router.get('/dashboard', async (req, res) => {
@@ -72,134 +86,9 @@ router.get('/dashboard', async (req, res) => {
 
 // ─── Customers ───
 
-router.get('/customers', async (req, res) => {
-  try {
-    const activeOnly = req.query.activeOnly !== 'false';
-    let query = 'SELECT * FROM customers';
-    if (activeOnly) query += ' WHERE is_active = 1';
-    query += ' ORDER BY name';
-
-    const [rows] = await db.query(query);
-    res.json(rows.map(c => ({
-      id: c.id, name: c.name, nameEn: c.name_en, vatNumber: c.vat_number,
-      phone: c.phone, email: c.email, address: c.address, city: c.city,
-      customerType: c.customer_type, creditLimit: Number(c.credit_limit),
-      balance: Number(c.balance), isActive: c.is_active,
-      createdAt: c.created_at, createdBy: c.created_by
-    })));
-  } catch (e) {
-    res.json([]);
-  }
-});
-
-router.post('/customers', async (req, res) => {
-  try {
-    const { id, name, nameEn, vatNumber, phone, email, address, city, customerType, creditLimit, username } = req.body;
-
-    if (id) {
-      const [existing] = await db.query('SELECT id FROM customers WHERE id = ?', [id]);
-      if (existing.length) {
-        await db.query(
-          `UPDATE customers SET name=?, name_en=?, vat_number=?, phone=?, email=?, address=?, city=?, customer_type=?, credit_limit=?, updated_by=? WHERE id=?`,
-          [name, nameEn || '', vatNumber || '', phone || '', email || '', address || '', city || '',
-           customerType || 'B2C', creditLimit || 0, username || '', id]
-        );
-        return res.json({ success: true, id });
-      }
-    }
-
-    const newId = id || 'CUST-' + Date.now();
-    await db.query(
-      `INSERT INTO customers (id, name, name_en, vat_number, phone, email, address, city, customer_type, credit_limit, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      [newId, name, nameEn || '', vatNumber || '', phone || '', email || '', address || '', city || '',
-       customerType || 'B2C', creditLimit || 0, username || '']
-    );
-
-    res.json({ success: true, id: newId });
-  } catch (e) {
-    res.json({ success: false, error: e.message });
-  }
-});
-
-// Deactivate customer (soft delete)
-router.delete('/customers/:id', async (req, res) => {
-  try {
-    await db.query('UPDATE customers SET is_active = 0 WHERE id = ?', [req.params.id]);
-    res.json({ success: true });
-  } catch (e) {
-    res.json({ success: false, error: e.message });
-  }
-});
-
-// ─── Suppliers ───
-
-router.get('/suppliers', async (req, res) => {
-  try {
-    const activeOnly = req.query.activeOnly !== 'false';
-    const { brandId } = req.query;
-    let query = `SELECT s.*, b.name AS brand_name
-                 FROM suppliers s LEFT JOIN brands b ON b.id = s.brand_id`;
-    const params = [];
-    const conds = [];
-    if (activeOnly) conds.push('s.is_active = 1');
-    if (brandId) { conds.push('s.brand_id = ?'); params.push(brandId); }
-    if (conds.length) query += ' WHERE ' + conds.join(' AND ');
-    query += ' ORDER BY s.name';
-
-    const [rows] = await db.query(query, params);
-    res.json(rows.map(s => ({
-      id: s.id, name: s.name, nameEn: s.name_en, vatNumber: s.vat_number,
-      phone: s.phone, email: s.email, address: s.address, city: s.city,
-      paymentTerms: s.payment_terms, balance: Number(s.balance), isActive: s.is_active,
-      brandId: s.brand_id || '', brand_id: s.brand_id || '', brandName: s.brand_name || '',
-      createdAt: s.created_at, createdBy: s.created_by
-    })));
-  } catch (e) {
-    res.json([]);
-  }
-});
-
-router.post('/suppliers', async (req, res) => {
-  try {
-    const { id, name, nameEn, vatNumber, phone, email, address, city, paymentTerms, username, brandId } = req.body;
-    const brand = brandId || null;
-
-    if (id) {
-      const [existing] = await db.query('SELECT id FROM suppliers WHERE id = ?', [id]);
-      if (existing.length) {
-        await db.query(
-          `UPDATE suppliers SET name=?, name_en=?, vat_number=?, phone=?, email=?, address=?, city=?, payment_terms=?, updated_by=?, brand_id=? WHERE id=?`,
-          [name, nameEn || '', vatNumber || '', phone || '', email || '', address || '', city || '',
-           paymentTerms || 'Cash', username || '', brand, id]
-        );
-        return res.json({ success: true, id });
-      }
-    }
-
-    const newId = id || 'SUP-' + Date.now();
-    await db.query(
-      `INSERT INTO suppliers (id, name, name_en, vat_number, phone, email, address, city, payment_terms, created_by, brand_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      [newId, name, nameEn || '', vatNumber || '', phone || '', email || '', address || '', city || '',
-       paymentTerms || 'Cash', username || '', brand]
-    );
-
-    res.json({ success: true, id: newId });
-  } catch (e) {
-    res.json({ success: false, error: e.message });
-  }
-});
-
-// Delete supplier
-router.delete('/suppliers/:id', async (req, res) => {
-  try {
-    await db.query('DELETE FROM suppliers WHERE id = ?', [req.params.id]);
-    res.json({ success: true });
-  } catch (e) {
-    res.json({ success: false, error: e.message });
-  }
-});
+// v5.17.1 — /customers, /suppliers, /brands moved to routes/erp/*.js
+// (see router.use calls at top of this file). The blocks were
+// removed verbatim — no behavior changes.
 
 // ─── GL Accounts (Chart of Accounts) ───
 
@@ -4986,58 +4875,7 @@ router.get('/purchase-reports', async (req, res) => {
   } catch(e) { res.json({ type: 'error', rows: [], totalAmount: 0, error: e.message }); }
 });
 
-// ─── Brands (البراندات) ───
-
-router.get('/brands', async (req, res) => {
-  try {
-    const [rows] = await db.query('SELECT * FROM brands ORDER BY name');
-    res.json(rows.map(b => {
-      let linkedBranches = [];
-      try { if (b.linked_branches) linkedBranches = JSON.parse(b.linked_branches); } catch(e) {}
-      return {
-        id: b.id, name: b.name, code: b.code, logo: b.logo, isActive: !!b.is_active,
-        linkedBranches: linkedBranches
-      };
-    }));
-  } catch(e) { res.json([]); }
-});
-
-router.post('/brands', async (req, res) => {
-  try {
-    const { id, name, code, logo, isActive, linkedBranches } = req.body;
-    if (!name) return res.json({ success: false, error: 'الاسم مطلوب' });
-    const linkedBranchesJson = Array.isArray(linkedBranches) ? JSON.stringify(linkedBranches) : null;
-    if (id) {
-      try {
-        await db.query('UPDATE brands SET name=?, code=?, logo=?, is_active=?, linked_branches=? WHERE id=?',
-          [name, code||'', logo||null, isActive!==false?1:0, linkedBranchesJson, id]);
-      } catch(e) {
-        // Fallback for older deploys without linked_branches column
-        await db.query('UPDATE brands SET name=?, code=?, logo=?, is_active=? WHERE id=?',
-          [name, code||'', logo||null, isActive!==false?1:0, id]);
-      }
-      return res.json({ success: true, id });
-    }
-    const newId = 'BR-' + Date.now();
-    try {
-      await db.query('INSERT INTO brands (id, name, code, logo, linked_branches) VALUES (?,?,?,?,?)',
-        [newId, name, code||'', logo||null, linkedBranchesJson]);
-    } catch(e) {
-      await db.query('INSERT INTO brands (id, name, code, logo) VALUES (?,?,?,?)', [newId, name, code||'', logo||null]);
-    }
-    res.json({ success: true, id: newId });
-  } catch(e) { res.json({ success: false, error: e.message }); }
-});
-
-router.delete('/brands/:id', async (req, res) => {
-  try {
-    // Check if brand has branches
-    const [branches] = await db.query('SELECT COUNT(*) AS cnt FROM branches WHERE brand_id = ?', [req.params.id]);
-    if (branches[0].cnt > 0) return res.json({ success: false, error: 'لا يمكن حذف براند لديه فروع مرتبطة' });
-    await db.query('DELETE FROM brands WHERE id = ?', [req.params.id]);
-    res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
-});
+// v5.17.1 — /brands moved to routes/erp/brands.js
 
 // ─── Cost Centers (مراكز التكلفة) ───
 

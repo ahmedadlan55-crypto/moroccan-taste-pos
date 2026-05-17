@@ -6209,35 +6209,59 @@ function _invCatPopulateWarehouseFilter() {
     }).catch(function(){});
 }
 
+// v5.10.69 — Render KPI strip in the new .invc-kpi component family.
+// Each card has: optional variant class (success/warn/danger/info),
+// icon slot, label, big value, optional hint. The legacy _invItemsKpi
+// helper is bypassed in favor of inline string building scoped to this
+// section — keeps tokens local and avoids polluting other admin views.
 function _renderInvCatalogKpis(summary, tab) {
   var box = q('#invCatalogKpis');
-  if (!box || typeof _invItemsKpi !== 'function') return;
+  if (!box) return;
   var s = summary || {};
+  var fmt = function(n){ return Number(n || 0).toLocaleString('ar-SA'); };
+
+  function card(opts) {
+    var variant = opts.variant ? ' invc-kpi--' + opts.variant : '';
+    return '<div class="invc-kpi' + variant + '">' +
+      '<span class="invc-kpi__icon"><i class="fas ' + opts.icon + '"></i></span>' +
+      '<div class="invc-kpi__body">' +
+        '<span class="invc-kpi__label">' + opts.label + '</span>' +
+        '<span class="invc-kpi__value">' + opts.value + '</span>' +
+        (opts.hint ? '<span class="invc-kpi__hint">' + opts.hint + '</span>' : '') +
+      '</div>' +
+    '</div>';
+  }
+
   box.innerHTML =
-    _invItemsKpi({
-      label: 'المواد المعرَّفة', num: (Number(s.activeCount)||0).toLocaleString('ar-SA'), unit: 'مادة',
-      icon: 'fa-book', color: '#3b82f6', gradFrom: '#dbeafe', gradTo: '#eff6ff',
-      footer: '<i class="fas fa-tags"></i> ' + (Number(s.categoryCount)||0) + ' تصنيف · <i class="fas fa-store"></i> ' + (Number(s.brandCount)||0) + ' براند'
+    card({
+      label: 'المواد المعرَّفة', value: fmt(s.activeCount), icon: 'fa-boxes-stacked',
+      hint: '<i class="fas fa-tags"></i> ' + fmt(s.categoryCount) + ' تصنيف · ' + fmt(s.brandCount) + ' براند'
     }) +
-    _invItemsKpi({
-      label: 'في سلة المحذوفات', num: (Number(s.deletedCount)||0).toLocaleString('ar-SA'), unit: 'مادة',
-      icon: 'fa-trash-restore', color: '#ef4444', gradFrom: '#fee2e2', gradTo: '#fef2f2',
-      footer: (Number(s.deletedCount)||0) > 0
-        ? '<i class="fas fa-circle-info"></i> يمكن استرجاعها من تبويب السلة'
+    card({
+      label: 'في سلة المحذوفات', value: fmt(s.deletedCount), icon: 'fa-trash-can',
+      variant: (Number(s.deletedCount)||0) > 0 ? 'danger' : 'success',
+      hint: (Number(s.deletedCount)||0) > 0
+        ? '<i class="fas fa-circle-info"></i> يمكن استرجاعها'
         : '<i class="fas fa-circle-check"></i> السلة فارغة'
     }) +
-    _invItemsKpi({
-      label: 'البراندات النشطة', num: (Number(s.brandCount)||0).toLocaleString('ar-SA'), unit: 'براند',
-      icon: 'fa-store', color: '#10b981', gradFrom: '#d1fae5', gradTo: '#ecfdf5',
-      footer: '<i class="fas fa-layer-group"></i> توزيع المواد عبر البراندات'
+    card({
+      label: 'البراندات النشطة', value: fmt(s.brandCount), icon: 'fa-store',
+      variant: 'success',
+      hint: '<i class="fas fa-layer-group"></i> توزيع المواد عبر البراندات'
     }) +
-    _invItemsKpi({
-      label: 'التصنيفات', num: (Number(s.categoryCount)||0).toLocaleString('ar-SA'), unit: 'تصنيف',
-      icon: 'fa-folder-tree', color: '#8b5cf6', gradFrom: '#ede9fe', gradTo: '#f5f3ff',
-      footer: '<i class="fas fa-list-check"></i> ' + (tab === 'deleted' ? 'عرض المحذوفات' : 'العرض الحالي: المواد النشطة')
+    card({
+      label: 'التصنيفات', value: fmt(s.categoryCount), icon: 'fa-folder-tree',
+      variant: 'info',
+      hint: '<i class="fas fa-list-check"></i> ' + (tab === 'deleted' ? 'عرض المحذوفات' : 'العرض الحالي: المواد النشطة')
     });
 }
 
+// v5.10.69 — REBUILD: emit CSS Grid markup (<div role="row">) instead of
+// <tr>/<td>. The header row in the HTML and every data row share the
+// same .invc-row → identical grid-template-columns → atomic alignment.
+// All event handlers (invCatToggleRow, openRawModal, invCatOpenRecipeModal,
+// invCatDeleteItem, invCatRestoreItem, invCatHardDeleteItem,
+// invCatFilterByBrand) are kept verbatim — only the markup wrapper changes.
 function _renderInvCatalogTable(items, tab) {
   var tb = q('#tbInvCatalog');
   if (!tb) return;
@@ -6251,17 +6275,15 @@ function _renderInvCatalogTable(items, tab) {
       ? 'لم يتم حذف أي مادة بعد. عند حذف أي مادة من تبويب "المواد المعرَّفة" ستظهر هنا.'
       : 'ابدأ بإضافة أول مادة لإدارة مخزون مطعمك. ستتمكن من تتبع التكاليف، الكميات، والحدود الدنيا.';
     var ctaHtml   = !isDeleted
-      ? '<button class="wo-btn wo-btn-primary inv-empty__cta" onclick="openRawModal()"><i class="fas fa-plus"></i><span>إضافة أول مادة</span></button>'
+      ? '<button class="invc-btn invc-btn--primary invc-empty__cta" onclick="openRawModal()"><i class="fas fa-plus"></i><span>إضافة أول مادة</span></button>'
       : '';
     tb.innerHTML =
-      '<tr><td colspan="12">' +
-        '<div class="inv-empty">' +
-          '<div class="inv-empty__icon"><i class="fas ' + iconCls + '"></i></div>' +
-          '<div class="inv-empty__title">' + title + '</div>' +
-          '<div class="inv-empty__sub">' + sub + '</div>' +
-          ctaHtml +
-        '</div>' +
-      '</td></tr>';
+      '<div class="invc-empty">' +
+        '<div class="invc-empty__icon"><i class="fas ' + iconCls + '"></i></div>' +
+        '<div class="invc-empty__title">' + title + '</div>' +
+        '<div class="invc-empty__sub">' + sub + '</div>' +
+        ctaHtml +
+      '</div>';
     return;
   }
 
@@ -6269,11 +6291,10 @@ function _renderInvCatalogTable(items, tab) {
   var searchQuery = ((q('#invCatSearch') && q('#invCatSearch').value) || '').trim();
 
   tb.innerHTML = items.map(function(it) {
-    // v5.10.30 — brand chip is now clickable (filter by brand)
     var brandIdEsc = _invHubEsc(it.brandId || '').replace(/'/g, "\\'");
     var brandHtml = it.brandName
-      ? '<span class="wo-chip purple is-clickable" onclick="event.stopPropagation();invCatFilterByBrand(\'' + brandIdEsc + '\')" title="' + _invHubEsc(it.brandName) + ' · انقر للتصفية"><i class="fas fa-store"></i> ' + _invHubEsc(it.brandName) + '</span>'
-      : '<span class="wo-chip neutral flat">—</span>';
+      ? '<span class="invc-chip invc-chip--brand is-clickable" onclick="event.stopPropagation();invCatFilterByBrand(\'' + brandIdEsc + '\')" title="' + _invHubEsc(it.brandName) + ' · انقر للتصفية"><i class="fas fa-store"></i> ' + _invHubEsc(it.brandName) + '</span>'
+      : '<span class="invc-chip invc-chip--empty">—</span>';
     var warehousesHtml = _invCatRenderWarehouseChips(it.warehouses);
     var createdStr = it.createdAt ? new Date(it.createdAt).toLocaleDateString('en-GB') : '—';
     var idEsc = _invHubEsc(it.id).replace(/'/g, "\\'");
@@ -6287,64 +6308,55 @@ function _renderInvCatalogTable(items, tab) {
     if (tab === 'deleted') {
       var deletedAtStr = it.deletedAt ? new Date(it.deletedAt).toLocaleString('en-GB') : '';
       actions =
-        '<div class="wo-actions">' +
-        '<button class="wo-btn wo-btn-success" style="padding:6px 10px;font-size:11px;" onclick="invCatRestoreItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="استرجاع"><i class="fas fa-trash-restore"></i> استرجاع</button> ' +
+        '<button class="invc-icon-btn" onclick="invCatRestoreItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="استرجاع" style="color:#15803d;border-color:#bbf7d0;"><i class="fas fa-trash-restore"></i></button>' +
         (state.isDeveloper
-          ? '<button class="wo-icon-btn danger" onclick="invCatHardDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف نهائي"><i class="fas fa-fire"></i></button>'
-          : '') +
-        '</div>';
+          ? '<button class="invc-icon-btn invc-icon-btn--danger" onclick="invCatHardDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف نهائي"><i class="fas fa-fire"></i></button>'
+          : '');
 
-      return '<tr class="inv-row--deleted inv-row-enter' + rowSelClass + '" data-id="' + idEsc + '">' +
-        '<td class="col-select"><input type="checkbox" class="inv-row-checkbox" data-id="' + idEsc + '" onchange="invCatToggleRow(\'' + idEsc + '\', this.checked)"' + checked + '></td>' +
-        '<td><code>' + _invHubEsc(it.id) + '</code></td>' +
-        '<td class="inv-row-name"><i class="fas fa-trash inv-row-name__del-icon"></i>' + nameHighlighted + '</td>' +
-        '<td>' + brandHtml + '</td>' +
-        '<td>' + warehousesHtml + '</td>' +
-        '<td><span class="wo-chip neutral flat">' + _invHubEsc(it.category) + '</span></td>' +
-        '<td>' + _invHubEsc(it.bigUnit || '—') + '</td>' +
-        '<td>' + _invHubEsc(it.unit) + '</td>' +
-        '<td class="num">' + (Number(it.cost)||0).toFixed(2) + '</td>' +
-        '<td class="num">' + (Number(it.minStock)||0) + '</td>' +
-        '<td class="inv-row-deleted-at">حُذف: ' + deletedAtStr + '</td>' +
-        '<td>' + actions + '</td>' +
-      '</tr>';
+      return '<div class="invc-row invc-row--data invc-row--deleted invc-row-enter' + rowSelClass + '" data-id="' + idEsc + '" role="row">' +
+        '<div class="invc-cell invc-cell--select" role="cell"><input type="checkbox" class="invc-checkbox inv-row-checkbox" data-id="' + idEsc + '" onchange="invCatToggleRow(\'' + idEsc + '\', this.checked)"' + checked + '></div>' +
+        '<div class="invc-cell invc-cell--code" data-label="كود" role="cell"><code>' + _invHubEsc(it.id) + '</code></div>' +
+        '<div class="invc-cell invc-cell--name" data-label="اسم المادة" role="cell"><i class="fas fa-trash" style="color:#dc2626;margin-inline-end:6px;"></i><span class="invc-name-text">' + nameHighlighted + '</span></div>' +
+        '<div class="invc-cell invc-cell--brand" data-label="البراند" role="cell">' + brandHtml + '</div>' +
+        '<div class="invc-cell invc-cell--whs" data-label="المستودعات" role="cell">' + warehousesHtml + '</div>' +
+        '<div class="invc-cell invc-cell--cat" data-label="التصنيف" role="cell"><span class="invc-chip invc-chip--cat">' + _invHubEsc(it.category) + '</span></div>' +
+        '<div class="invc-cell invc-cell--bigUnit" data-label="الوحدة الكبرى" role="cell">' + _invHubEsc(it.bigUnit || '—') + '</div>' +
+        '<div class="invc-cell invc-cell--smallUnit" data-label="الوحدة الصغرى" role="cell">' + _invHubEsc(it.unit) + '</div>' +
+        '<div class="invc-cell invc-cell--cost num" data-label="التكلفة" role="cell">' + (Number(it.cost)||0).toFixed(2) + '</div>' +
+        '<div class="invc-cell invc-cell--min num" data-label="حد النواقص" role="cell">' + (Number(it.minStock)||0) + '</div>' +
+        '<div class="invc-cell invc-cell--created" data-label="حُذف" role="cell" style="font-size:11.5px;color:#94a3b8;">' + deletedAtStr + '</div>' +
+        '<div class="invc-cell invc-cell--actions" role="cell">' + actions + '</div>' +
+      '</div>';
     }
 
-    // v5.10.65 — recipe button. Lit blue when the item has an active BOM
-    // (it.hasRecipe), muted otherwise. Clicking opens the inventory-side
-    // recipe modal (invCatOpenRecipeModal) which wraps POST /erp/bom and
-    // auto-flips kind→semi on save. Industry convention: an inv item
-    // with a recipe IS a semi-finished product (Foodics/SAP/NetSuite).
+    // v5.10.65 — recipe button. Lit purple when the item has an active BOM.
     var hasRecipe = !!it.hasRecipe;
-    var recipeBtnCls = hasRecipe ? 'wo-icon-btn primary' : 'wo-icon-btn';
+    var recipeBtnCls = hasRecipe ? 'invc-icon-btn invc-icon-btn--primary' : 'invc-icon-btn';
     var recipeBtnTitle = hasRecipe ? 'تَعديل الوصفة (نصف مُصنَّع)' : 'إضافة وصفة (تَحويل إلى نصف مُصنَّع)';
     actions =
-      '<div class="wo-actions">' +
-      '<button class="wo-icon-btn" onclick="openRawModal(\'' + idEsc + '\')" title="تعديل"><i class="fas fa-pen"></i></button> ' +
-      '<button class="' + recipeBtnCls + '" onclick="invCatOpenRecipeModal(\'' + idEsc + '\',\'' + nameEsc + '\')" title="' + recipeBtnTitle + '"><i class="fas fa-utensils"></i></button> ' +
-      '<button class="wo-icon-btn danger" onclick="invCatDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف (يذهب إلى السلة)"><i class="fas fa-trash"></i></button>' +
-      '</div>';
+      '<button class="invc-icon-btn" onclick="openRawModal(\'' + idEsc + '\')" title="تعديل"><i class="fas fa-pen"></i></button>' +
+      '<button class="' + recipeBtnCls + '" onclick="invCatOpenRecipeModal(\'' + idEsc + '\',\'' + nameEsc + '\')" title="' + recipeBtnTitle + '"><i class="fas fa-utensils"></i></button>' +
+      '<button class="invc-icon-btn invc-icon-btn--danger" onclick="invCatDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف (يذهب إلى السلة)"><i class="fas fa-trash"></i></button>';
 
-    // v5.16.0 — Kind chip distinguishes raw materials from semi-finished
-    // products. Both share the same table and the same flows; only the
-    // chip + filter tell them apart visually.
+    // v5.16.0 — Kind chip distinguishes raw vs semi-finished
     var kindChip = (it.kind === 'semi')
-      ? '<span class="wo-chip" style="background:#fef3c7;color:#92400e;font-weight:700;font-size:10px;padding:2px 8px;border-radius:6px;margin-inline-start:6px;"><i class="fas fa-blender"></i> غير تامّ</span>'
-      : '<span class="wo-chip" style="background:#e0f2fe;color:#075985;font-weight:700;font-size:10px;padding:2px 8px;border-radius:6px;margin-inline-start:6px;"><i class="fas fa-seedling"></i> خام</span>';
-    return '<tr class="inv-row-enter' + rowSelClass + '" data-id="' + idEsc + '" data-kind="' + (it.kind === 'semi' ? 'semi' : 'raw') + '">' +
-      '<td class="col-select"><input type="checkbox" class="inv-row-checkbox" data-id="' + idEsc + '" onchange="invCatToggleRow(\'' + idEsc + '\', this.checked)"' + checked + '></td>' +
-      '<td><code>' + _invHubEsc(it.id) + '</code></td>' +
-      '<td style="font-weight:700;">' + nameHighlighted + kindChip + stockPill + '</td>' +
-      '<td>' + brandHtml + '</td>' +
-      '<td>' + warehousesHtml + '</td>' +
-      '<td><span class="wo-chip neutral flat">' + _invHubEsc(it.category) + '</span></td>' +
-      '<td>' + _invHubEsc(it.bigUnit || '—') + '</td>' +
-      '<td>' + _invHubEsc(it.unit) + '</td>' +
-      '<td class="num strong">' + (Number(it.cost)||0).toFixed(2) + '</td>' +
-      '<td class="num">' + (Number(it.minStock)||0) + '</td>' +
-      '<td class="inv-row-created-at">' + createdStr + '</td>' +
-      '<td>' + actions + '</td>' +
-    '</tr>';
+      ? '<span class="invc-chip invc-chip--semi"><i class="fas fa-blender"></i> غير تامّ</span>'
+      : '<span class="invc-chip invc-chip--raw"><i class="fas fa-seedling"></i> خام</span>';
+
+    return '<div class="invc-row invc-row--data invc-row-enter' + rowSelClass + '" data-id="' + idEsc + '" data-kind="' + (it.kind === 'semi' ? 'semi' : 'raw') + '" role="row">' +
+      '<div class="invc-cell invc-cell--select" role="cell"><input type="checkbox" class="invc-checkbox inv-row-checkbox" data-id="' + idEsc + '" onchange="invCatToggleRow(\'' + idEsc + '\', this.checked)"' + checked + '></div>' +
+      '<div class="invc-cell invc-cell--code" data-label="كود" role="cell"><code>' + _invHubEsc(it.id) + '</code></div>' +
+      '<div class="invc-cell invc-cell--name" data-label="اسم المادة" role="cell"><span class="invc-name-text">' + nameHighlighted + '</span>' + kindChip + stockPill + '</div>' +
+      '<div class="invc-cell invc-cell--brand" data-label="البراند" role="cell">' + brandHtml + '</div>' +
+      '<div class="invc-cell invc-cell--whs" data-label="المستودعات" role="cell">' + warehousesHtml + '</div>' +
+      '<div class="invc-cell invc-cell--cat" data-label="التصنيف" role="cell"><span class="invc-chip invc-chip--cat">' + _invHubEsc(it.category) + '</span></div>' +
+      '<div class="invc-cell invc-cell--bigUnit" data-label="الوحدة الكبرى" role="cell">' + _invHubEsc(it.bigUnit || '—') + '</div>' +
+      '<div class="invc-cell invc-cell--smallUnit" data-label="الوحدة الصغرى" role="cell">' + _invHubEsc(it.unit) + '</div>' +
+      '<div class="invc-cell invc-cell--cost num strong" data-label="التكلفة" role="cell">' + (Number(it.cost)||0).toFixed(2) + '</div>' +
+      '<div class="invc-cell invc-cell--min num" data-label="حد النواقص" role="cell">' + (Number(it.minStock)||0) + '</div>' +
+      '<div class="invc-cell invc-cell--created" data-label="تاريخ الإنشاء" role="cell">' + createdStr + '</div>' +
+      '<div class="invc-cell invc-cell--actions" role="cell">' + actions + '</div>' +
+    '</div>';
   }).join('');
 }
 
@@ -6364,17 +6376,18 @@ function _invCatRenderWarehouseChips(warehouses) {
   var fmt = function(n){ return Number(n || 0).toLocaleString('en', { maximumFractionDigits: 2 }); };
   var chips = first.map(function(w){
     var idEsc = _invHubEsc(w.warehouseId || '').replace(/'/g, "\\'");
-    return '<span class="inv-wh-chip is-clickable" onclick="event.stopPropagation();invCatFilterByWarehouse(\'' + idEsc + '\')" title="' + _invHubEsc(w.warehouseName) + ' — ' + fmt(w.qty) + '  ·  انقر للتصفية">' +
+    // v5.10.69 — uses .invc-chip--whs (new identity) replacing .inv-wh-chip.
+    return '<span class="invc-chip invc-chip--whs" onclick="event.stopPropagation();invCatFilterByWarehouse(\'' + idEsc + '\')" title="' + _invHubEsc(w.warehouseName) + ' — ' + fmt(w.qty) + '  ·  انقر للتصفية">' +
              '<i class="fas fa-warehouse"></i>' +
-             '<span class="inv-wh-chip__name">' + _invHubEsc(w.warehouseName) + '</span>' +
-             '<span class="inv-wh-chip__qty">' + fmt(w.qty) + '</span>' +
+             '<span>' + _invHubEsc(w.warehouseName) + '</span>' +
+             '<span class="invc-chip--whs__qty">' + fmt(w.qty) + '</span>' +
            '</span>';
   });
   if (rest.length) {
     var tip = rest.map(function(w){ return w.warehouseName + ': ' + fmt(w.qty); }).join('\n');
-    chips.push('<span class="inv-wh-chip inv-wh-chip--more" title="' + _invHubEsc(tip) + '">+' + rest.length + '</span>');
+    chips.push('<span class="invc-chip invc-chip--whs-more" title="' + _invHubEsc(tip) + '">+' + rest.length + '</span>');
   }
-  return '<div class="inv-wh-chips">' + chips.join('') + '</div>';
+  return chips.join('');
 }
 
 // v5.10.30 — Filter handlers wired to chip clicks. Set the dropdown value
@@ -6406,21 +6419,23 @@ function _invCatHighlight(escapedText, rawQuery) {
   if (!safe) return escapedText;
   try {
     var re = new RegExp('(' + safe + ')', 'gi');
-    return escapedText.replace(re, '<span class="inv-search-mark">$1</span>');
+    // v5.10.69 — class renamed inv-search-mark → invc-search-mark
+    return escapedText.replace(re, '<span class="invc-search-mark">$1</span>');
   } catch (_) { return escapedText; }
 }
 
 // v5.10.30 — Stock health pill: out / low / ok with the qty alongside.
 // Uses globalStock (sum across warehouses) vs minStock for the threshold.
+// v5.10.69 — classes renamed inv-stock-pill → invc-pill.
 function _invCatStockPill(item) {
   var stock = Number(item.globalStock != null ? item.globalStock : item.stock) || 0;
   var min   = Number(item.minStock) || 0;
   var fmt = function(n){ return Number(n || 0).toLocaleString('en', { maximumFractionDigits: 2 }); };
   var cls, label;
-  if (stock <= 0)     { cls = 'inv-stock-pill--out'; label = 'نفد · 0'; }
-  else if (stock <= min) { cls = 'inv-stock-pill--low'; label = 'منخفض · ' + fmt(stock); }
-  else                { cls = 'inv-stock-pill--ok';  label = 'متوفر · ' + fmt(stock); }
-  return '<span class="inv-stock-pill ' + cls + '">' + label + '</span>';
+  if (stock <= 0)        { cls = 'invc-pill--out'; label = 'نفد · 0'; }
+  else if (stock <= min) { cls = 'invc-pill--low'; label = 'منخفض · ' + fmt(stock); }
+  else                   { cls = 'invc-pill--ok';  label = 'متوفر · ' + fmt(stock); }
+  return '<span class="invc-pill ' + cls + '">' + label + '</span>';
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -6752,25 +6767,28 @@ window.invCatRecipeUnlink = function() {
 };
 
 // v5.10.28 — Skeleton rows shown while a fetch is in flight.
+// v5.10.69 — Skeleton rows use the same CSS-Grid track template as data
+// rows (defined in .invc-skeleton-row in CSS). Each "cell" is a shimmer
+// bar so the user sees a structured preview while data loads.
 function _invCatRenderSkeleton(rowCount) {
   var tb = q('#tbInvCatalog');
   if (!tb) return;
   var n = Math.max(3, Math.min(12, Number(rowCount) || 6));
   var cells =
-    '<td class="col-select"><span class="inv-skeleton-bar short"></span></td>' +
-    '<td><span class="inv-skeleton-bar medium"></span></td>' +
-    '<td><span class="inv-skeleton-bar full"></span></td>' +
-    '<td><span class="inv-skeleton-bar medium"></span></td>' +
-    '<td><span class="inv-skeleton-bar medium"></span></td>' +
-    '<td><span class="inv-skeleton-bar short"></span></td>' +
-    '<td><span class="inv-skeleton-bar short"></span></td>' +
-    '<td><span class="inv-skeleton-bar short"></span></td>' +
-    '<td class="num"><span class="inv-skeleton-bar short"></span></td>' +
-    '<td class="num"><span class="inv-skeleton-bar short"></span></td>' +
-    '<td><span class="inv-skeleton-bar medium"></span></td>' +
-    '<td><span class="inv-skeleton-bar short"></span></td>';
+    '<span class="invc-skeleton-bar invc-skeleton-bar--short"></span>' +
+    '<span class="invc-skeleton-bar invc-skeleton-bar--medium"></span>' +
+    '<span class="invc-skeleton-bar invc-skeleton-bar--full"></span>' +
+    '<span class="invc-skeleton-bar invc-skeleton-bar--medium"></span>' +
+    '<span class="invc-skeleton-bar invc-skeleton-bar--medium"></span>' +
+    '<span class="invc-skeleton-bar invc-skeleton-bar--short"></span>' +
+    '<span class="invc-skeleton-bar invc-skeleton-bar--short"></span>' +
+    '<span class="invc-skeleton-bar invc-skeleton-bar--short"></span>' +
+    '<span class="invc-skeleton-bar invc-skeleton-bar--short"></span>' +
+    '<span class="invc-skeleton-bar invc-skeleton-bar--short"></span>' +
+    '<span class="invc-skeleton-bar invc-skeleton-bar--medium"></span>' +
+    '<span class="invc-skeleton-bar invc-skeleton-bar--short"></span>';
   var rows = '';
-  for (var i = 0; i < n; i++) rows += '<tr class="inv-skeleton-row">' + cells + '</tr>';
+  for (var i = 0; i < n; i++) rows += '<div class="invc-skeleton-row">' + cells + '</div>';
   tb.innerHTML = rows;
 }
 
@@ -6778,15 +6796,13 @@ function _invCatRenderError() {
   var tb = q('#tbInvCatalog');
   if (!tb) return;
   tb.innerHTML =
-    '<tr><td colspan="12">' +
-      '<div class="inv-error">' +
-        '<div class="inv-error__icon"><i class="fas fa-circle-exclamation"></i></div>' +
-        '<div class="inv-error__title">تعذّر تحميل الكتالوج</div>' +
-        '<div class="inv-error__sub">حدث خطأ أثناء الاتصال بالخادم. تحقق من الشبكة ثم أعد المحاولة.</div>' +
-        '<button class="wo-btn wo-btn-primary" onclick="loadInvCatalog()"><i class="fas fa-rotate"></i><span>إعادة المحاولة</span></button>' +
-      '</div>' +
-    '</td></tr>';
-  var pag = q('#invCatPagination'); if (pag) pag.style.display = 'none';
+    '<div class="invc-empty">' +
+      '<div class="invc-empty__icon" style="background:#fee2e2;color:#dc2626;"><i class="fas fa-circle-exclamation"></i></div>' +
+      '<div class="invc-empty__title">تعذّر تحميل الكتالوج</div>' +
+      '<div class="invc-empty__sub">حدث خطأ أثناء الاتصال بالخادم. تحقق من الشبكة ثم أعد المحاولة.</div>' +
+      '<button class="invc-btn invc-btn--primary" onclick="loadInvCatalog()"><i class="fas fa-rotate"></i><span>إعادة المحاولة</span></button>' +
+    '</div>';
+  var pag = q('#invCatPagination'); if (pag) pag.hidden = true;
   var foot = q('#invCatSummaryFooter'); if (foot) foot.innerHTML = '';
 }
 
@@ -6818,69 +6834,51 @@ function _invCatRenderSummaryFooter(items, totalAcrossAll, summary) {
   var fmt = function(n){ return Number(n || 0).toLocaleString('ar-SA', { maximumFractionDigits: 2 }); };
   var fmtMoney = function(n){ return Number(n || 0).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
 
+  // v5.10.69 — Summary uses .invc-summary cells with the new identity.
+  var hint = (outCount > 0 || lowCount > 0)
+    ? (outCount + ' نفد · ' + lowCount + ' منخفض')
+    : 'لا توجد مواد منخفضة في هذه الصفحة';
+  var healthColor = outCount ? '#b91c1c' : (lowCount ? '#b45309' : '#047857');
+  var healthIcon  = outCount ? 'circle-exclamation' : (lowCount ? 'triangle-exclamation' : 'circle-check');
+  var healthLabel = outCount > 0 ? (fmt(outCount) + ' نفد') : (lowCount > 0 ? (fmt(lowCount) + ' منخفض') : 'سليم');
+
   box.innerHTML =
-    '<div class="inv-summary-footer__cell">' +
-      '<div class="inv-summary-footer__label"><i class="fas fa-list-check"></i> عناصر الصفحة</div>' +
-      '<div class="inv-summary-footer__value">' + fmt(items.length) + '</div>' +
-      '<div class="inv-summary-footer__sub">من إجمالي ' + fmt(totalAcrossAll || items.length) + ' عنصر</div>' +
+    '<div class="invc-summary__cell">' +
+      '<div class="invc-summary__label"><i class="fas fa-list-check"></i> عناصر الصفحة</div>' +
+      '<div class="invc-summary__value">' + fmt(items.length) + '</div>' +
+      '<div class="invc-summary__hint">من إجمالي ' + fmt(totalAcrossAll || items.length) + ' عنصر</div>' +
     '</div>' +
-    '<div class="inv-summary-footer__cell">' +
-      '<div class="inv-summary-footer__label"><i class="fas fa-coins"></i> القيمة الإجمالية</div>' +
-      '<div class="inv-summary-footer__value">' + fmtMoney(totalValue) + ' <span style="font-size:11px;color:#64748b;font-weight:700;">ر.س</span></div>' +
-      '<div class="inv-summary-footer__sub">تكلفة × الرصيد العالمي للصفحة</div>' +
+    '<div class="invc-summary__cell">' +
+      '<div class="invc-summary__label"><i class="fas fa-coins"></i> القيمة الإجمالية</div>' +
+      '<div class="invc-summary__value">' + fmtMoney(totalValue) + ' <span style="font-size:11px;color:#64748b;font-weight:700;">ر.س</span></div>' +
+      '<div class="invc-summary__hint">تكلفة × الرصيد العالمي</div>' +
     '</div>' +
-    '<div class="inv-summary-footer__cell">' +
-      '<div class="inv-summary-footer__label"><i class="fas fa-warehouse"></i> مستودعات نشطة</div>' +
-      '<div class="inv-summary-footer__value">' + fmt(uniqueWh) + '</div>' +
-      '<div class="inv-summary-footer__sub">تظهر فيها مواد هذه الصفحة</div>' +
+    '<div class="invc-summary__cell">' +
+      '<div class="invc-summary__label"><i class="fas fa-warehouse"></i> مستودعات نشطة</div>' +
+      '<div class="invc-summary__value">' + fmt(uniqueWh) + '</div>' +
+      '<div class="invc-summary__hint">تظهر فيها مواد هذه الصفحة</div>' +
     '</div>' +
-    '<div class="inv-summary-footer__cell">' +
-      '<div class="inv-summary-footer__label" style="color:' + (outCount ? '#b91c1c' : (lowCount ? '#b45309' : '#047857')) + ';"><i class="fas fa-' + (outCount ? 'circle-exclamation' : (lowCount ? 'triangle-exclamation' : 'circle-check')) + '"></i> صحة المخزون</div>' +
-      '<div class="inv-summary-footer__value" style="color:' + (outCount ? '#b91c1c' : (lowCount ? '#b45309' : '#047857')) + ';">' +
-        (outCount > 0 ? fmt(outCount) + ' نفد' : (lowCount > 0 ? fmt(lowCount) + ' منخفض' : 'سليم')) +
-      '</div>' +
-      '<div class="inv-summary-footer__sub">' +
-        (outCount > 0 || lowCount > 0
-          ? (outCount + ' نفد · ' + lowCount + ' منخفض على الصفحة')
-          : 'لا توجد مواد منخفضة في هذه الصفحة') +
-      '</div>' +
+    '<div class="invc-summary__cell">' +
+      '<div class="invc-summary__label" style="color:' + healthColor + ';"><i class="fas fa-' + healthIcon + '"></i> صحة المخزون</div>' +
+      '<div class="invc-summary__value" style="color:' + healthColor + ';">' + healthLabel + '</div>' +
+      '<div class="invc-summary__hint">' + hint + '</div>' +
     '</div>';
 }
 
-// v5.10.30 — (a) Track scroll on the table surface so the sticky <thead>
-// gets a soft shadow underneath only when content is scrolled. Bound
-// once. (b) Strip enter-animation classes after the animation runs so
-// hover doesn't retrigger them. Runs every render.
-var _invCatScrollBound = false;
+// v5.10.69 — The scroll-shadow tracker is now mostly a no-op because the
+// v5.10.66 rebuild removed sticky-thead entirely (it was the root cause
+// of the column-shift bug). We keep this function for two reasons:
+//   (1) Strip the .invc-row-enter animation class after each render so
+//       hover doesn't retrigger the slide-in animation.
+//   (2) Backward compatibility: still attach is-scrolled to .wo-table-surface
+//       if it ever exists (e.g. older cached HTML during the rolling deploy).
 function _invCatBindScrollShadow() {
   var section = q('#sec_invCatalog');
   if (!section) return;
-  var surface = section.querySelector('.wo-table-surface');
-  if (!surface) return;
-
-  if (!_invCatScrollBound) {
-    var onScroll = function() {
-      var rect = surface.getBoundingClientRect();
-      surface.classList.toggle('is-scrolled', rect.top < 1);
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    // Also catch a scrollable parent (e.g. admin-content)
-    var p = surface.parentElement;
-    while (p && p !== document.body) {
-      var st = window.getComputedStyle(p).overflowY;
-      if (st === 'auto' || st === 'scroll') {
-        p.addEventListener('scroll', onScroll, { passive: true });
-        break;
-      }
-      p = p.parentElement;
-    }
-    _invCatScrollBound = true;
-  }
-
-  // Always strip enter-animation classes after they finish — runs each render
+  // Strip enter-animation classes after they finish — runs each render.
   setTimeout(function(){
-    var rows = section.querySelectorAll('#tbInvCatalog tr.inv-row-enter');
-    rows.forEach(function(r){ r.classList.remove('inv-row-enter'); });
+    var rows = section.querySelectorAll('#tbInvCatalog .invc-row-enter');
+    rows.forEach(function(r){ r.classList.remove('invc-row-enter'); });
   }, 320);
 }
 
@@ -6890,26 +6888,27 @@ function _invCatRenderPagination(total, page, pageSize) {
   var pages = q('#invCatPagPages');
   var sel  = q('#invCatPagSize');
   if (!box) return;
-  if (!total) { box.style.display = 'none'; return; }
-  box.style.display = '';
+  // v5.10.69 — use the [hidden] attribute (new identity) instead of inline display
+  if (!total) { box.hidden = true; return; }
+  box.hidden = false;
 
   var totalPages = Math.max(1, Math.ceil(total / pageSize));
   var first = (page - 1) * pageSize + 1;
   var last  = Math.min(total, page * pageSize);
   if (info) {
-    info.textContent = 'عرض ' + first.toLocaleString('ar-SA') + '–' +
-                       last.toLocaleString('ar-SA') + ' من ' +
-                       total.toLocaleString('ar-SA') + ' عنصر · صفحة ' +
-                       page + ' / ' + totalPages;
+    info.innerHTML = 'عرض <strong>' + first.toLocaleString('ar-SA') + '–' +
+                       last.toLocaleString('ar-SA') + '</strong> من ' +
+                       '<strong>' + total.toLocaleString('ar-SA') + '</strong> عنصر · ' +
+                       'صفحة <strong>' + page + '</strong> / ' + totalPages;
   }
 
   // Numeric page buttons (current ± 2, with ellipses)
   if (pages) {
     var html = '';
     var add = function(p, active){
-      html += '<button class="inv-pagination__btn' + (active ? ' is-active' : '') + '" onclick="invCatGoPage(' + p + ')">' + p + '</button>';
+      html += '<button class="invc-pagination__page' + (active ? ' is-active' : '') + '" onclick="invCatGoPage(' + p + ')">' + p + '</button>';
     };
-    var addSep = function(){ html += '<span class="inv-pagination__sep">…</span>'; };
+    var addSep = function(){ html += '<span class="invc-pagination__sep">…</span>'; };
     var lo = Math.max(1, page - 2), hi = Math.min(totalPages, page + 2);
     if (lo > 1) { add(1, page === 1); if (lo > 2) addSep(); }
     for (var i = lo; i <= hi; i++) add(i, i === page);
@@ -6955,18 +6954,22 @@ window.invCatSortBy = function(key) {
   s.page = 1;
   loadInvCatalog();
 };
+// v5.10.69 — Sort headers are now <div role="columnheader" data-sort> instead
+// of <th data-sort>. Sort indicator class renamed .sort-ico → .invc-sort-ico.
 function _invCatUpdateSortHeaders() {
   var s = window._invCatState;
-  var ths = document.querySelectorAll('#invCatalogHead th[data-sort]');
-  for (var i = 0; i < ths.length; i++) {
-    var th = ths[i];
-    var ico = th.querySelector('.sort-ico');
-    var key = th.getAttribute('data-sort');
+  var heads = document.querySelectorAll('#invCatalogHead [data-sort]');
+  for (var i = 0; i < heads.length; i++) {
+    var h = heads[i];
+    var ico = h.querySelector('.invc-sort-ico');
+    var key = h.getAttribute('data-sort');
+    h.classList.remove('is-sorted', 'is-sorted-asc', 'is-sorted-desc');
     if (s.sortBy !== key) {
-      th.removeAttribute('aria-sort');
+      h.removeAttribute('aria-sort');
       if (ico) { ico.classList.remove('fa-sort-up','fa-sort-down'); ico.classList.add('fa-sort'); }
     } else {
-      th.setAttribute('aria-sort', s.sortOrder === 'desc' ? 'descending' : 'ascending');
+      h.classList.add('is-sorted', s.sortOrder === 'desc' ? 'is-sorted-desc' : 'is-sorted-asc');
+      h.setAttribute('aria-sort', s.sortOrder === 'desc' ? 'descending' : 'ascending');
       if (ico) {
         ico.classList.remove('fa-sort','fa-sort-up','fa-sort-down');
         ico.classList.add(s.sortOrder === 'desc' ? 'fa-sort-down' : 'fa-sort-up');
@@ -6974,21 +6977,25 @@ function _invCatUpdateSortHeaders() {
     }
   }
 }
-// Wire up sort header clicks via delegation (idempotent)
+// Wire up sort header clicks via delegation (idempotent — targets the new
+// div-based columnheader as well as any leftover <th> for backward compat).
 document.addEventListener('click', function(ev) {
-  var th = ev.target && ev.target.closest && ev.target.closest('#invCatalogHead th[data-sort]');
-  if (!th) return;
-  invCatSortBy(th.getAttribute('data-sort'));
+  var target = ev.target;
+  if (!target || !target.closest) return;
+  var head = target.closest('#invCatalogHead [data-sort]');
+  if (!head) return;
+  invCatSortBy(head.getAttribute('data-sort'));
 }, false);
 
 // ── Multi-select & bulk actions ─────────────────────────────────────
+// v5.10.69 — Row selectors updated from `tr` to `.invc-row--data` since
+// the data area now uses CSS Grid divs instead of <table> rows.
 window.invCatToggleRow = function(id, checked) {
   var s = window._invCatState;
   if (checked) s.selected[id] = true;
   else delete s.selected[id];
-  // Visual feedback on the row (no full re-render)
-  var tr = document.querySelector('#tbInvCatalog tr[data-id="' + CSS.escape(id) + '"]');
-  if (tr) tr.classList.toggle('is-selected', !!checked);
+  var row = document.querySelector('#tbInvCatalog .invc-row--data[data-id="' + CSS.escape(id) + '"]');
+  if (row) row.classList.toggle('is-selected', !!checked);
   _invCatUpdateBulkBar();
 };
 window.invCatToggleAll = function(masterChk) {
@@ -7000,7 +7007,8 @@ window.invCatToggleAll = function(masterChk) {
     cb.checked = !!masterChk.checked;
     if (masterChk.checked) s.selected[id] = true;
     else delete s.selected[id];
-    var tr = cb.closest('tr'); if (tr) tr.classList.toggle('is-selected', !!masterChk.checked);
+    var row = cb.closest('.invc-row--data');
+    if (row) row.classList.toggle('is-selected', !!masterChk.checked);
   }
   _invCatUpdateBulkBar();
 };
@@ -7010,7 +7018,8 @@ window.invCatClearSelection = function() {
   var checkboxes = document.querySelectorAll('#tbInvCatalog .inv-row-checkbox');
   for (var i = 0; i < checkboxes.length; i++) {
     checkboxes[i].checked = false;
-    var tr = checkboxes[i].closest('tr'); if (tr) tr.classList.remove('is-selected');
+    var row = checkboxes[i].closest('.invc-row--data');
+    if (row) row.classList.remove('is-selected');
   }
   var master = q('#invCatMasterChk'); if (master) master.checked = false;
   _invCatUpdateBulkBar();
@@ -7027,12 +7036,23 @@ function _invCatUpdateBulkBar() {
   bar.classList.remove('is-hidden');
   if (count) count.textContent = ids.length.toLocaleString('ar-SA');
   // Tab-aware primary action: bulk-restore in deleted tab, bulk-delete in active tab.
+  // v5.10.69 — swap the button color class (.invc-btn--danger ↔ .invc-btn--primary)
+  // so the restore action reads as positive (purple) and delete as destructive (red).
+  var primaryBtn = q('#invCatBulkPrimaryBtn');
   if (s.tab === 'deleted') {
     if (label) label.textContent = 'استرجاع المحدد';
     if (icon)  { icon.className = 'fas fa-trash-restore'; }
+    if (primaryBtn) {
+      primaryBtn.classList.remove('invc-btn--danger');
+      primaryBtn.classList.add('invc-btn--primary');
+    }
   } else {
     if (label) label.textContent = 'حذف المحدد';
     if (icon)  { icon.className = 'fas fa-trash'; }
+    if (primaryBtn) {
+      primaryBtn.classList.remove('invc-btn--primary');
+      primaryBtn.classList.add('invc-btn--danger');
+    }
   }
   // Sync master checkbox: indeterminate when partial.
   var allOnPage = document.querySelectorAll('#tbInvCatalog .inv-row-checkbox');
@@ -7144,27 +7164,54 @@ window.invCatBulkAction = function() {
     }).catch(function(){ loader(false); showToast('فشل ' + verb, true); });
 };
 
+// v5.10.69 — Tabs now use .invc-tab.is-active (new identity) AND aria-selected
+// for accessibility, replacing the legacy .sales-tab.active class name.
 window.invCatalogSwitchTab = function(tab) {
   var s = window._invCatState;
   s.tab = (tab === 'deleted') ? 'deleted' : 'active';
   s.page = 1;
   s.selected = {};
   var aT = q('#invCatTab_active'), dT = q('#invCatTab_deleted');
-  if (aT) aT.classList.toggle('active', tab !== 'deleted');
-  if (dT) dT.classList.toggle('active', tab === 'deleted');
+  if (aT) {
+    aT.classList.toggle('is-active', tab !== 'deleted');
+    aT.classList.toggle('active',    tab !== 'deleted'); // legacy compat
+    aT.setAttribute('aria-selected', tab !== 'deleted' ? 'true' : 'false');
+  }
+  if (dT) {
+    dT.classList.toggle('is-active', tab === 'deleted');
+    dT.classList.toggle('active',    tab === 'deleted'); // legacy compat
+    dT.setAttribute('aria-selected', tab === 'deleted' ? 'true' : 'false');
+  }
   loadInvCatalog();
 };
 
+// v5.10.69 — Clear filters: also reset the kind chip group to "الكل".
 window.invCatClearFilters = function() {
   ['invCatSearch', 'invCatBrandFilter', 'invCatWarehouseFilter', 'invCatKindFilter'].forEach(function(id){
     var el = q('#' + id); if (el) el.value = '';
   });
+  // Reset kind chip group to the "all" state
+  var chips = document.querySelectorAll('.invc-kind-chip');
+  chips.forEach(function(c){ c.classList.toggle('is-active', c.getAttribute('data-kind') === ''); });
   var s = window._invCatState;
   if (s._searchTimer) { clearTimeout(s._searchTimer); s._searchTimer = null; }
   s.page = 1;
   s.sortBy = null;
   s.sortOrder = 'asc';
   s.selected = {};
+  loadInvCatalog();
+};
+
+// v5.10.69 — Kind filter is now a chip group instead of a <select>.
+// Writes to the hidden #invCatKindFilter input so loadInvCatalog reads
+// the same field name as before — backend integration unchanged.
+window.invCatSetKind = function(kind) {
+  var chips = document.querySelectorAll('.invc-kind-chip');
+  chips.forEach(function(c){ c.classList.toggle('is-active', c.getAttribute('data-kind') === (kind || '')); });
+  var hidden = q('#invCatKindFilter');
+  if (hidden) hidden.value = kind || '';
+  var s = window._invCatState;
+  if (s) { s.page = 1; s.selected = {}; }
   loadInvCatalog();
 };
 

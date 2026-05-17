@@ -852,152 +852,179 @@
              with restore from the recycle-bin tab. -->
         <!-- v5.10.43 — data-section-theme tints the legacy .wo-header
              so master-data screens get a purple gradient automatically. -->
-        <div id="sec_invCatalog" class="admin-section wo-section" data-section-theme="purple">
-          <header class="wo-header">
-            <div class="wo-header-titles">
-              <h1><span class="wo-icon-slot purple"><i class="fas fa-book"></i></span>إدارة مواد المخزون</h1>
-              <p class="wo-header-sub">التعريف العام للمواد — السجل الرئيسي للأصناف المستقل عن المستودعات والفروع.</p>
+        <!-- v5.10.69 — COMPLETE REBUILD of the inventory catalog section.
+             The old <table>-based markup (plus 5 alignment-fix layers in
+             inventory-catalog.css and a <colgroup> v5.10.67 attempt) has
+             been replaced with a CSS Grid layout. Grid eliminates the
+             entire class of table-layout bugs (sticky-thead formatting
+             context, border-collapse spacing variance, content-driven
+             auto-layout) — header cells and data cells share the SAME
+             grid-template-columns DECLARATION, so misalignment is
+             mathematically impossible.
+             Identity: purple #7c3aed (matches admin-skin.css).
+             All 30+ JS handlers and 27 backend endpoints kept verbatim. -->
+        <div id="sec_invCatalog" class="admin-section invc-section">
+
+          <!-- ═══════════════ Hero header ═══════════════ -->
+          <header class="invc-hero">
+            <div class="invc-hero__title">
+              <span class="invc-hero__icon"><i class="fas fa-boxes-stacked"></i></span>
+              <div class="invc-hero__text">
+                <h1>إدارة مواد المخزون</h1>
+                <p>التعريف العام للمواد — السجل الرئيسي المُستقل عن المستودعات والفروع</p>
+              </div>
             </div>
-            <div class="wo-header-actions">
-              <!-- v5.16.0 — Import legacy semi-finished products from menu.is_semi_finished
-                   into inv_items so they live in the unified inventory model. -->
-              <button class="wo-btn wo-btn-secondary" onclick="invCatImportSemis()" title="انسَخ المُنتَجات غير التامَّة المُسَجَّلة في المنيو إلى مَواد المَخزون"><i class="fas fa-file-import"></i><span>استيراد غير التامَّة</span></button>
-              <button class="wo-btn wo-btn-primary" onclick="openRawModal()"><i class="fas fa-plus"></i><span>إضافة مادَّة</span></button>
+            <div class="invc-hero__actions">
+              <button class="invc-btn invc-btn--ghost" onclick="invCatImportSemis()"
+                      title="انسَخ المُنتَجات غير التامَّة المُسَجَّلة في المنيو إلى مَواد المَخزون">
+                <i class="fas fa-file-import"></i><span>استيراد غير التامَّة</span>
+              </button>
+              <button class="invc-btn invc-btn--primary" onclick="openRawModal()">
+                <i class="fas fa-plus"></i><span>إضافة مادَّة</span>
+              </button>
             </div>
           </header>
 
-          <!-- View tabs: active catalog vs. recycle bin -->
-          <div class="sales-tabs" id="invCatalogTabs" style="margin-bottom:16px;">
-            <div class="sales-tab active" id="invCatTab_active" onclick="invCatalogSwitchTab('active')">
-              <i class="fas fa-list-check"></i> <span>المواد المعرَّفة</span>
-              <span id="invCatActiveCount" class="inv-tab-badge inv-tab-badge--active">0</span>
-            </div>
-            <div class="sales-tab" id="invCatTab_deleted" onclick="invCatalogSwitchTab('deleted')">
-              <i class="fas fa-trash-restore"></i> <span>سلة المحذوفات</span>
-              <span id="invCatDeletedCount" class="inv-tab-badge inv-tab-badge--deleted">0</span>
-            </div>
-          </div>
+          <!-- ═══════════════ Tabs ═══════════════ -->
+          <nav class="invc-tabs" role="tablist" aria-label="عرض الكتالوج">
+            <button class="invc-tab is-active" id="invCatTab_active" role="tab" aria-selected="true"
+                    onclick="invCatalogSwitchTab('active')">
+              <i class="fas fa-list-check"></i>
+              <span>المواد المعرَّفة</span>
+              <span class="invc-tab__count" id="invCatActiveCount">0</span>
+            </button>
+            <button class="invc-tab" id="invCatTab_deleted" role="tab" aria-selected="false"
+                    onclick="invCatalogSwitchTab('deleted')">
+              <i class="fas fa-trash-can"></i>
+              <span>سلة المحذوفات</span>
+              <span class="invc-tab__count" id="invCatDeletedCount">0</span>
+            </button>
+          </nav>
 
-          <!-- Unified filter bar -->
-          <section class="wo-toolbar" role="search" aria-label="تصفية الكتالوج">
-            <div class="wo-field" style="flex:1;">
-              <label class="wo-field-label"><i class="fas fa-search"></i> بحث</label>
-              <input type="text" id="invCatSearch" class="wo-input" placeholder="بحث بالاسم، الكود، أو التصنيف..." oninput="invCatOnSearchInput(this)">
+          <!-- ═══════════════ KPI strip ═══════════════ -->
+          <div id="invCatalogKpis" class="invc-kpis"></div>
+
+          <!-- ═══════════════ Filter bar ═══════════════ -->
+          <section class="invc-filters" role="search" aria-label="تصفية الكتالوج">
+            <div class="invc-filters__search">
+              <i class="fas fa-magnifying-glass"></i>
+              <input type="text" id="invCatSearch" placeholder="بحث بالاسم، الكود، أو التصنيف..."
+                     oninput="invCatOnSearchInput(this)" aria-label="بحث">
             </div>
-            <div class="wo-field">
-              <label class="wo-field-label"><i class="fas fa-store"></i> البراند</label>
-              <select id="invCatBrandFilter" class="wo-select" onchange="invCatOnFilterChange()">
-                <option value="">🏪 كل البراندات</option>
-              </select>
+            <select id="invCatBrandFilter" class="invc-filters__select" onchange="invCatOnFilterChange()" aria-label="البراند">
+              <option value="">كل البراندات</option>
+            </select>
+            <select id="invCatWarehouseFilter" class="invc-filters__select" onchange="invCatOnFilterChange()" aria-label="المستودع">
+              <option value="">كل المستودعات</option>
+            </select>
+            <!-- v5.16.0 + v5.10.69 — Kind filter, now chip-style for instant feedback. -->
+            <div class="invc-filters__kind" role="group" aria-label="نوع المادة">
+              <button type="button" class="invc-kind-chip is-active" data-kind="" onclick="invCatSetKind('')">الكل</button>
+              <button type="button" class="invc-kind-chip" data-kind="raw" onclick="invCatSetKind('raw')">
+                <i class="fas fa-seedling"></i> خام
+              </button>
+              <button type="button" class="invc-kind-chip" data-kind="semi" onclick="invCatSetKind('semi')">
+                <i class="fas fa-blender"></i> غير تامّ
+              </button>
             </div>
-            <div class="wo-field">
-              <label class="wo-field-label"><i class="fas fa-warehouse"></i> المستودع</label>
-              <select id="invCatWarehouseFilter" class="wo-select" onchange="invCatOnFilterChange()">
-                <option value="">🏢 كل المستودعات</option>
-              </select>
-            </div>
-            <!-- v5.16.0 — Kind filter (raw / semi-finished). -->
-            <div class="wo-field">
-              <label class="wo-field-label"><i class="fas fa-shapes"></i> النَوع</label>
-              <select id="invCatKindFilter" class="wo-select" onchange="invCatOnFilterChange()">
-                <option value="">الكُل</option>
-                <option value="raw">🧂 خام فقط</option>
-                <option value="semi">🥣 غير تامّ فقط</option>
-              </select>
-            </div>
-            <div class="wo-field" style="align-self: flex-end;">
-              <button class="wo-btn wo-btn-ghost" onclick="invCatClearFilters()" title="مسح الفلاتر"><i class="fas fa-broom"></i><span>مسح</span></button>
-            </div>
+            <!-- Backward-compat hidden field consumed by loadInvCatalog(). The
+                 chip buttons above write into it; the old <select> is gone. -->
+            <input type="hidden" id="invCatKindFilter" value="">
+            <button class="invc-btn invc-btn--text" onclick="invCatClearFilters()" title="مسح الفلاتر">
+              <i class="fas fa-rotate-left"></i><span>مسح</span>
+            </button>
           </section>
 
-          <!-- KPI strip (reuses .iv-items-kpis grid + _invItemsKpi cards) -->
-          <div id="invCatalogKpis" class="iv-items-kpis"></div>
-
-          <!-- Bulk actions bar (visible only when rows are selected) -->
-          <div id="invCatBulkBar" class="inv-bulk-bar is-hidden" role="region" aria-label="عمليات مجمَّعة">
-            <div class="inv-bulk-bar__count">
-              <i class="fas fa-check-square"></i>
+          <!-- ═══════════════ Bulk actions bar (hidden until selection) ═══════════════ -->
+          <div id="invCatBulkBar" class="invc-bulk is-hidden" role="region" aria-label="عمليات مجمَّعة">
+            <div class="invc-bulk__count">
+              <i class="fas fa-square-check"></i>
               <span>تم تحديد</span>
-              <span class="badge" id="invCatBulkCount">0</span>
+              <span class="invc-bulk__badge" id="invCatBulkCount">0</span>
               <span>عنصر</span>
             </div>
-            <div class="inv-bulk-bar__actions">
-              <button class="wo-btn wo-btn-ghost" type="button" onclick="invCatClearSelection()">
+            <div class="invc-bulk__actions">
+              <button class="invc-btn invc-btn--ghost" type="button" onclick="invCatClearSelection()">
                 <i class="fas fa-xmark"></i><span>إلغاء التحديد</span>
               </button>
-              <button class="wo-btn wo-btn-primary" type="button" id="invCatBulkPrimaryBtn" onclick="invCatBulkAction()">
+              <button class="invc-btn invc-btn--danger" type="button" id="invCatBulkPrimaryBtn" onclick="invCatBulkAction()">
                 <i class="fas fa-trash" id="invCatBulkPrimaryIcon"></i><span id="invCatBulkPrimaryLabel">حذف المحدد</span>
               </button>
             </div>
           </div>
 
-          <!-- Table -->
-          <div class="wo-table-surface">
-            <table class="wo-table wo-table--sortable wo-table--selectable" role="table">
-              <!-- v5.10.67 — Authoritative column-width binding via <colgroup>.
-                   The HTML5 table layout algorithm reads <col width> declarations
-                   FIRST in its column-width priority chain (before any CSS rule
-                   targeting <th> or <td>). The browser applies these widths
-                   ATOMICALLY to <thead> AND <tbody> — making it structurally
-                   IMPOSSIBLE for columns to drift between header and body.
-                   This is the W3C-standard solution that supersedes every
-                   CSS-only attempt (v5.10.57 / 59 / 64 / 66). Sum = 1614px. -->
-              <colgroup>
-                <col class="invCol-select"     style="width: 44px;">
-                <col class="invCol-code"       style="width: 160px;">
-                <col class="invCol-name"       style="width: 280px;">
-                <col class="invCol-brand"      style="width: 150px;">
-                <col class="invCol-warehouses" style="width: 220px;">
-                <col class="invCol-category"   style="width: 130px;">
-                <col class="invCol-bigUnit"    style="width: 90px;">
-                <col class="invCol-smallUnit"  style="width: 90px;">
-                <col class="invCol-cost"       style="width: 100px;">
-                <col class="invCol-minStock"   style="width: 100px;">
-                <col class="invCol-createdAt"  style="width: 110px;">
-                <col class="invCol-actions"    style="width: 140px;">
-              </colgroup>
-              <thead><tr id="invCatalogHead">
-                <th scope="col" class="col-select">
-                  <input type="checkbox" id="invCatMasterChk" class="inv-master-checkbox" onchange="invCatToggleAll(this)" aria-label="تحديد الكل">
-                </th>
-                <th scope="col" data-sort="id"><span>كود المادة</span><i class="fas fa-sort sort-ico"></i></th>
-                <th scope="col" data-sort="name"><span>اسم المادة</span><i class="fas fa-sort sort-ico"></i></th>
-                <th scope="col" data-sort="brand"><span>البراند</span><i class="fas fa-sort sort-ico"></i></th>
-                <th scope="col">المستودعات</th>
-                <th scope="col" data-sort="category"><span>التصنيف</span><i class="fas fa-sort sort-ico"></i></th>
-                <th scope="col">الوحدة الكبرى</th>
-                <th scope="col">الوحدة الصغرى</th>
-                <th scope="col" class="num" data-sort="cost"><span>التكلفة (ر.س)</span><i class="fas fa-sort sort-ico"></i></th>
-                <th scope="col" class="num" data-sort="min_stock"><span>حد النواقص</span><i class="fas fa-sort sort-ico"></i></th>
-                <th scope="col" data-sort="created_at"><span>تاريخ الإنشاء</span><i class="fas fa-sort sort-ico"></i></th>
-                <th scope="col">إجراءات</th>
-              </tr></thead>
-              <tbody id="tbInvCatalog">
-                <tr><td colspan="12"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
-              </tbody>
-            </table>
+          <!-- ═══════════════ CSS Grid Data Area ═══════════════ -->
+          <!-- The Grid is wrapped in .invc-table-scroll to enable horizontal
+               scroll on narrow viewports without breaking the Grid alignment
+               (both the head row and every data row share the same Grid
+               column tracks because they are siblings inside the same
+               .invc-table container). -->
+          <div class="invc-table-scroll">
+            <div class="invc-table" role="table" aria-label="قائمة مواد المخزون">
 
-            <!-- v5.10.30 — Summary footer (totals across the visible page) -->
-            <div id="invCatSummaryFooter" class="inv-summary-footer"></div>
+              <!-- Header row (CSS Grid track 1, applies to all rows below) -->
+              <div class="invc-row invc-row--head" role="row" id="invCatalogHead">
+                <div class="invc-cell invc-cell--select" role="columnheader">
+                  <input type="checkbox" id="invCatMasterChk" class="invc-checkbox"
+                         onchange="invCatToggleAll(this)" aria-label="تحديد الكل">
+                </div>
+                <div class="invc-cell invc-cell--code"      role="columnheader" data-sort="id">
+                  <span>كود</span><i class="fas fa-sort invc-sort-ico"></i>
+                </div>
+                <div class="invc-cell invc-cell--name"      role="columnheader" data-sort="name">
+                  <span>اسم المادة</span><i class="fas fa-sort invc-sort-ico"></i>
+                </div>
+                <div class="invc-cell invc-cell--brand"     role="columnheader" data-sort="brand">
+                  <span>البراند</span><i class="fas fa-sort invc-sort-ico"></i>
+                </div>
+                <div class="invc-cell invc-cell--whs"       role="columnheader">المستودعات</div>
+                <div class="invc-cell invc-cell--cat"       role="columnheader" data-sort="category">
+                  <span>التصنيف</span><i class="fas fa-sort invc-sort-ico"></i>
+                </div>
+                <div class="invc-cell invc-cell--bigUnit"   role="columnheader">و. كبرى</div>
+                <div class="invc-cell invc-cell--smallUnit" role="columnheader">و. صغرى</div>
+                <div class="invc-cell invc-cell--cost num"  role="columnheader" data-sort="cost">
+                  <span>التكلفة</span><i class="fas fa-sort invc-sort-ico"></i>
+                </div>
+                <div class="invc-cell invc-cell--min num"   role="columnheader" data-sort="min_stock">
+                  <span>حد النواقص</span><i class="fas fa-sort invc-sort-ico"></i>
+                </div>
+                <div class="invc-cell invc-cell--created"   role="columnheader" data-sort="created_at">
+                  <span>تاريخ الإنشاء</span><i class="fas fa-sort invc-sort-ico"></i>
+                </div>
+                <div class="invc-cell invc-cell--actions"   role="columnheader">إجراءات</div>
+              </div>
 
-            <!-- Pagination footer -->
-            <div id="invCatPagination" class="inv-pagination" style="display:none;">
-              <div class="inv-pagination__info">
-                <span id="invCatPagInfo">—</span>
+              <!-- Body: JS injects .invc-row.invc-row--data here via
+                   _renderInvCatalogTable() in public/js/app.js. -->
+              <div id="tbInvCatalog" class="invc-body" role="rowgroup">
+                <div class="invc-loading">
+                  <i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span>
+                </div>
               </div>
-              <div class="inv-pagination__controls">
-                <button class="inv-pagination__btn" id="invCatPagFirst" onclick="invCatGoPage(1)" title="الأولى" aria-label="الصفحة الأولى"><i class="fas fa-angles-right"></i></button>
-                <button class="inv-pagination__btn" id="invCatPagPrev"  onclick="invCatGoRel(-1)" title="السابقة" aria-label="السابقة"><i class="fas fa-angle-right"></i></button>
-                <span id="invCatPagPages"></span>
-                <button class="inv-pagination__btn" id="invCatPagNext"  onclick="invCatGoRel(1)"  title="التالية" aria-label="التالية"><i class="fas fa-angle-left"></i></button>
-                <button class="inv-pagination__btn" id="invCatPagLast"  onclick="invCatGoLast()" title="الأخيرة" aria-label="الأخيرة"><i class="fas fa-angles-left"></i></button>
-                <span class="inv-pagination__sep">·</span>
-                <select id="invCatPagSize" class="inv-pagination__size" onchange="invCatChangePageSize(this.value)" aria-label="حجم الصفحة">
-                  <option value="25">25 / صفحة</option>
-                  <option value="50" selected>50 / صفحة</option>
-                  <option value="100">100 / صفحة</option>
-                </select>
-              </div>
+            </div>
+          </div>
+
+          <!-- ═══════════════ Summary footer ═══════════════ -->
+          <div id="invCatSummaryFooter" class="invc-summary"></div>
+
+          <!-- ═══════════════ Pagination footer ═══════════════ -->
+          <div id="invCatPagination" class="invc-pagination" hidden>
+            <div class="invc-pagination__info">
+              <span id="invCatPagInfo">—</span>
+            </div>
+            <div class="invc-pagination__controls">
+              <button class="invc-pagination__btn" id="invCatPagFirst" onclick="invCatGoPage(1)" title="الأولى" aria-label="الصفحة الأولى"><i class="fas fa-angles-right"></i></button>
+              <button class="invc-pagination__btn" id="invCatPagPrev"  onclick="invCatGoRel(-1)" title="السابقة" aria-label="السابقة"><i class="fas fa-angle-right"></i></button>
+              <span id="invCatPagPages" class="invc-pagination__pages"></span>
+              <button class="invc-pagination__btn" id="invCatPagNext"  onclick="invCatGoRel(1)"  title="التالية" aria-label="التالية"><i class="fas fa-angle-left"></i></button>
+              <button class="invc-pagination__btn" id="invCatPagLast"  onclick="invCatGoLast()" title="الأخيرة" aria-label="الأخيرة"><i class="fas fa-angles-left"></i></button>
+              <span class="invc-pagination__sep">·</span>
+              <select id="invCatPagSize" class="invc-pagination__size" onchange="invCatChangePageSize(this.value)" aria-label="حجم الصفحة">
+                <option value="25">25 / صفحة</option>
+                <option value="50" selected>50 / صفحة</option>
+                <option value="100">100 / صفحة</option>
+              </select>
             </div>
           </div>
         </div>

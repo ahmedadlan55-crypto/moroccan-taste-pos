@@ -1,0 +1,3340 @@
+/* ===================================================================
+   Inventory Catalog — إدارة مواد المخزون (v5.10.28)
+   -------------------------------------------------------------------
+   Extends the wo-* design system (warehouse-ops.css) with the few
+   pieces specific to the catalog view: sortable headers, multi-select,
+   skeleton loading rows, the bulk-actions bar, and the modal banner.
+   Inherits all spacing/colour/elevation tokens from :root in
+   warehouse-ops.css.
+   =================================================================== */
+
+/* ── v5.10.32 — KPI strip: GLOBAL (was previously broken in every
+   warehouse tab because the inline styles in app.js were scoped to
+   #wh_items, and we only re-scoped to #sec_invCatalog. The stocktake,
+   adjustments, shortage, and transfers tabs all use .iv-items-kpis
+   without that prefix, so cards stacked vertically — the layout bug
+   the owner caught in the screenshot.)
+   ─────────────────────────────────────────────────────────────────── */
+.iv-items-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  margin: 6px 0 16px;
+}
+.iv-items-kpi {
+  background: linear-gradient(160deg, var(--kg-from, #f8fafc) 0%, var(--kg-to, #fff) 60%, #fff 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 16px 18px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  gap: 8px 14px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+  border-inline-start: 4px solid var(--kc, #3b82f6);
+}
+.iv-items-kpi::after {
+  content: "";
+  position: absolute;
+  top: -30px;
+  inset-inline-end: -30px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--kc, #3b82f6) 0%, transparent 70%);
+  opacity: 0.08;
+  pointer-events: none;
+}
+.iv-items-kpi:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px -10px var(--kc, #3b82f6);
+}
+.iv-items-kpi-icon {
+  width: 54px;
+  height: 54px;
+  border-radius: 14px;
+  background: #fff;
+  color: var(--kc, #3b82f6);
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px -4px var(--kc, #3b82f6);
+  grid-row: span 2;
+  align-self: start;
+}
+.iv-items-kpi-pulse { animation: invItemsPulse 2.2s ease-in-out infinite; }
+@keyframes invItemsPulse {
+  0%, 100% { box-shadow: 0 4px 12px -4px var(--kc, #3b82f6), 0 0 0 0 rgba(0,0,0,0); }
+  50% { box-shadow: 0 4px 12px -4px var(--kc, #3b82f6), 0 0 0 10px rgba(255,255,255,0); transform: scale(1.04); }
+}
+.iv-items-kpi-body { min-width: 0; align-self: center; }
+.iv-items-kpi-label {
+  font-size: 11.5px;
+  color: #475569;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+  line-height: 1;
+}
+.iv-items-kpi-num { display: flex; align-items: baseline; gap: 5px; }
+.iv-items-kpi-num-val {
+  font-size: 30px;
+  font-weight: 900;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.iv-items-kpi-num-unit {
+  font-size: 13px;
+  color: var(--kc, #3b82f6);
+  font-weight: 700;
+}
+.iv-items-kpi-foot {
+  grid-column: 1 / -1;
+  font-size: 11.5px;
+  color: #475569;
+  font-weight: 600;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+  padding-top: 8px;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.iv-items-kpi-foot i { color: var(--kc, #3b82f6); font-size: 11px; }
+.iv-items-kpi-foot b { color: #0f172a; font-variant-numeric: tabular-nums; }
+
+/* Legacy section-scoped block kept for catalog page (back-compat). */
+#sec_invCatalog .iv-items-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  margin: 6px 0 16px;
+}
+#sec_invCatalog .iv-items-kpi {
+  background: linear-gradient(160deg, var(--kg-from) 0%, var(--kg-to) 60%, #fff 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 16px 18px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  gap: 8px 14px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+  border-inline-start: 4px solid var(--kc);
+}
+#sec_invCatalog .iv-items-kpi::after {
+  content: "";
+  position: absolute;
+  top: -30px;
+  inset-inline-end: -30px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--kc) 0%, transparent 70%);
+  opacity: 0.08;
+  pointer-events: none;
+}
+#sec_invCatalog .iv-items-kpi:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px -10px var(--kc);
+}
+#sec_invCatalog .iv-items-kpi-icon {
+  width: 54px;
+  height: 54px;
+  border-radius: 14px;
+  background: #fff;
+  color: var(--kc);
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px -4px var(--kc);
+  grid-row: span 2;
+  align-self: start;
+}
+#sec_invCatalog .iv-items-kpi-body { min-width: 0; align-self: center; }
+#sec_invCatalog .iv-items-kpi-label {
+  font-size: 11.5px;
+  color: #475569;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+  line-height: 1;
+}
+#sec_invCatalog .iv-items-kpi-num {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+#sec_invCatalog .iv-items-kpi-num-val {
+  font-size: 30px;
+  font-weight: 900;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+#sec_invCatalog .iv-items-kpi-num-unit {
+  font-size: 13px;
+  color: var(--kc);
+  font-weight: 700;
+}
+#sec_invCatalog .iv-items-kpi-foot {
+  grid-column: 1 / -1;
+  font-size: 11.5px;
+  color: #475569;
+  font-weight: 600;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+  padding-top: 8px;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+#sec_invCatalog .iv-items-kpi-foot i {
+  color: var(--kc);
+  font-size: 11px;
+}
+
+/* ── v5.10.30 — Richer table: stripes, hover, sticky header ──────── */
+#sec_invCatalog .wo-table-surface {
+  position: relative;
+  border: 1px solid #e5e7eb;
+  border-radius: var(--wo-radius-md, 14px);
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+#sec_invCatalog .wo-table-surface {
+  /* v5.10.64 — explicit horizontal scroll. With table-layout:fixed the
+     table now declares its TRUE minimum width via the sum of the column
+     widths below; on narrow viewports we need to let the user scroll
+     horizontally instead of clipping content (the inherited overflow
+     :hidden from warehouse-ops would chop off the last 2-3 columns). */
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+#sec_invCatalog .wo-table-surface > table {
+  position: relative;
+  /* v5.10.64 — `table-layout: fixed` is the AUTHORITATIVE fix for the
+     header-vs-column misalignment the owner reported across v5.10.57 +
+     v5.10.59. The default `table-layout: auto` lets the browser
+     recompute column widths from each cell's natural content — and
+     because the THEAD cells contain (label + sort-icon + 6px margin)
+     while the TBODY cells contain (text + chip + pill with their own
+     widths), the algorithm picks slightly different widths for the
+     header column vs the body column — producing the visible 2-6 pixel
+     drift between "اسم المادة" header and the name-column data. With
+     `fixed`, column widths come EXCLUSIVELY from the explicit `width`
+     declarations below (which are applied identically to thead/th and
+     tbody/td via the :nth-child(N) selectors further down). Header text
+     and data text now sit on the SAME vertical line, always. */
+  table-layout: fixed;
+  /* v5.10.66 — force border-collapse:collapse to override the
+     `border-collapse: separate` inherited from .wo-table in
+     warehouse-ops.css:817. With `separate` + sticky thead + fixed
+     layout, Blink/Webkit compute thead column widths from a different
+     containing block than tbody, shifting all columns by ~1 column
+     visually. Collapsing the border model eliminates the per-cell
+     spacing variance that was amplifying the formatting-context drift.
+     v5.10.67 — escalated to !important. Owner reported the issue
+     persisted after v5.10.66; static-state investigation confirmed
+     the rule was present and our #sec_invCatalog specificity beats
+     ent-ui.css's .wo-section selector, but the !important guarantees
+     no future addition to ent-ui or warehouse-ops can re-introduce
+     `separate` without an explicit `!important` of its own. */
+  border-collapse: collapse !important;
+  /* v5.10.66 — sum of canonical column widths is now 1614px (was 1584
+     before v5.10.66 widened the Actions column from 110→140 to fit the
+     three icon buttons added in v5.10.65). On narrow viewports this
+     triggers horizontal scroll inside .wo-table-surface (above). On
+     wide screens (≥1640px) the table fits naturally. */
+  width: 100%;
+  min-width: 1614px;
+}
+#sec_invCatalog .wo-table thead {
+  /* v5.10.66 — REMOVED `position: sticky; top: 0; z-index: 5`.
+     The sticky-thead added in v5.10.64 was THE root cause of the
+     "header sits over a different column" bug the owner reported
+     for the 4th time:
+        sticky thead + sticky <th> (inherited from
+        warehouse-ops.css:832) + border-collapse:separate +
+        table-layout:fixed + .wo-table-surface{overflow-x:auto}
+        => Blink/Webkit assign different containing blocks to thead
+        vs tbody column tracks, shifting them by a full column.
+     We lose nothing functional: .wo-table-surface has
+     `overflow-y: hidden` (v5.10.64) so the sticky NEVER actually
+     engaged — the thead just scrolled with the rest of the page.
+     The background gradient is preserved purely as cosmetic chrome. */
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+}
+/* v5.10.66 — REMOVED the thead::after drop-shadow pseudo-element.
+   It existed only to give the sticky thead a "lifted" feel as the user
+   scrolled the body underneath; with the sticky behaviour removed (see
+   thead rule above), the shadow had no meaningful target and its
+   `position: absolute` would have rendered it at the BOTTOM of the
+   <table> instead of below the thead row, producing a stray dark line
+   across the data area. The .is-scrolled toggle that opacity-fades it
+   in is now a no-op and harmless to leave in place. */
+#sec_invCatalog .wo-table thead th {
+  /* v5.10.66 — neutralize the `position: sticky; top: 0;` inherited
+     from .wo-table thead th in warehouse-ops.css:832. Combined with
+     the (now-removed) sticky on <thead>, the nested sticky created
+     two competing formatting contexts; even now that the outer thead
+     sticky is gone, the inner one alone can still produce a subtle
+     1-2 column drift in older Chromium builds. `static` is the
+     simplest, most defensive override. */
+  position: static;
+  /* v5.10.64 — padding-block synced with <td> below (was 11px / 9px).
+     Vertical asymmetry between header and cells made the header row
+     LOOK 2px taller than data rows, which the eye reads as a horizontal
+     drift since the baseline of the label no longer sits where the user
+     expects relative to row-1 of data. */
+  padding-block: 10px;
+  padding-inline: 12px;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #334155;
+  border-bottom: 1.5px solid #c7d2fe;
+  /* v5.10.57 — explicit alignment so headers and cells match visually.
+     <th> defaults to text-align:center which created a perceived
+     misalignment between header label and the data row beneath it. */
+  text-align: start;
+  vertical-align: middle;
+  white-space: nowrap;
+  /* v5.10.64 — with table-layout:fixed the column widths come from
+     these cells; box-sizing must be border-box so padding doesn't
+     enlarge the declared width and break the column-sum math. */
+  box-sizing: border-box;
+  /* v5.10.64 — long header labels (e.g. "تاريخ الإنشاء", "الوحدة الكبرى")
+     stay on one line, but if a future label is too long for its declared
+     width we let it ellipsis rather than push the column wider — column
+     widths are now contractual under table-layout:fixed. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#sec_invCatalog .wo-table thead th.num,
+#sec_invCatalog .wo-table tbody td.num {
+  text-align: end;
+}
+#sec_invCatalog .wo-table thead th.col-select,
+#sec_invCatalog .wo-table tbody td.col-select {
+  text-align: center;
+  width: 36px;
+  padding-inline: 8px;
+}
+#sec_invCatalog .wo-table tbody td {
+  /* v5.10.64 — padding-block now matches <th> above (was 9px / 11px).
+     Both header and cells use the same 10px top/bottom so each row has
+     identical chrome around the text. */
+  padding-block: 10px;
+  padding-inline: 12px;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 13px;
+  vertical-align: middle;
+  text-align: start;
+  transition: background 150ms ease;
+  /* v5.10.64 — see thead th rule above for why this is mandatory under
+     table-layout:fixed. */
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* v5.10.57 — the sort-icon used to push the header label by ~6px to one
+   side which created an apparent column misalignment with the data row.
+   Make the icon a fixed-size right-anchored chip that doesn't affect
+   text flow. */
+#sec_invCatalog .wo-table thead th .sort-ico {
+  margin-inline-start: 6px;
+  font-size: 9px;
+  color: #94a3b8;
+  vertical-align: middle;
+  display: inline-block;
+  width: 10px;
+  text-align: center;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v5.10.59 — REAL alignment fix for the inventory-catalog table.
+ *
+ * v5.10.57's text-align fix was insufficient. The actual symptom the
+ * owner reported ("the data is misaligned with the headers") came from
+ * a different root cause: the NAME cell (col 3) packs three inline
+ * elements — name + kind chip + stock pill — that together can exceed
+ * the column's natural auto-width. When that happens, the browser
+ * either:
+ *   • Wraps the chips below the name, making that ROW taller than
+ *     siblings → visual misalignment with neighbors
+ *   • Lets the chips/pills overflow into the brand column → the eye
+ *     reads them as belonging to the wrong header
+ *
+ * The WAREHOUSES cell (col 5) has the same problem with multiple chips.
+ *
+ * Fix: explicit min/max widths on every column + flex-wrap inside the
+ * multi-chip cells so content wraps cleanly INSIDE its own cell.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v5.10.64 — Canonical column widths (single `width` value, identical
+ * between <th> and <td>). Under table-layout:fixed the browser reads
+ * these widths from the THEAD row and applies them to every body row,
+ * guaranteeing that header text and cell content sit on the exact same
+ * vertical line. The previous min-width/max-width ranges were RANGES
+ * (advisory, not authoritative) and the auto-layout algorithm still had
+ * freedom to pick different widths for <th> vs <td> depending on each
+ * cell's content. Single-value widths remove that freedom.
+ *
+ * Width budget (sum = 1614px after v5.10.66):
+ *   ☑ select    44
+ *   كود         160
+ *   اسم         280
+ *   براند       150
+ *   مستودعات    220
+ *   تصنيف       130
+ *   كبرى         90
+ *   صغرى         90
+ *   تكلفة       100
+ *   حد ناقص     100
+ *   إنشاء       110
+ *   إجراءات     140    ← v5.10.66 widened from 110 to fit 3 buttons
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Column 1: checkbox ────────────────────────────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(1),
+#sec_invCatalog .wo-table tbody td:nth-child(1) {
+  width: 44px;
+}
+
+/* ── Column 2: code (monospace, ellipsis if too long) ──────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(2),
+#sec_invCatalog .wo-table tbody td:nth-child(2) {
+  width: 160px;
+  white-space: nowrap;
+}
+
+/* ── Column 3: NAME + kind chip + stock pill ───────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(3),
+#sec_invCatalog .wo-table tbody td:nth-child(3) {
+  width: 280px;
+}
+#sec_invCatalog .wo-table tbody td:nth-child(3) {
+  /* Multi-element cell: name + kind chip + stock pill. Allow wrap so
+     chips stay inside the column even when the name is long. We
+     override the generic tbody td `overflow: hidden / text-overflow:
+     ellipsis` here because this cell intentionally wraps its content
+     onto a second visual line instead of truncating it. */
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.5;
+  overflow: visible;
+  text-overflow: clip;
+}
+#sec_invCatalog .wo-table tbody td:nth-child(3) .wo-chip,
+#sec_invCatalog .wo-table tbody td:nth-child(3) .inv-stock-pill,
+#sec_invCatalog .wo-table tbody td:nth-child(3) span.inv-search-mark {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin: 1px 4px 1px 0;
+  max-width: 100%;
+}
+
+/* ── Column 4: BRAND (single chip) ─────────────────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(4),
+#sec_invCatalog .wo-table tbody td:nth-child(4) {
+  width: 150px;
+  white-space: nowrap;
+}
+#sec_invCatalog .wo-table tbody td:nth-child(4) .wo-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Column 5: WAREHOUSES (multi-chip, wraps inside cell) ──────────── */
+#sec_invCatalog .wo-table thead th:nth-child(5),
+#sec_invCatalog .wo-table tbody td:nth-child(5) {
+  width: 220px;
+}
+#sec_invCatalog .wo-table tbody td:nth-child(5) {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.5;
+}
+#sec_invCatalog .wo-table tbody td:nth-child(5) .inv-wh-chip,
+#sec_invCatalog .wo-table tbody td:nth-child(5) .wo-chip {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin: 1px 4px 1px 0;
+  max-width: 100%;
+}
+
+/* ── Column 6: CATEGORY (single chip) ──────────────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(6),
+#sec_invCatalog .wo-table tbody td:nth-child(6) {
+  width: 130px;
+  white-space: nowrap;
+}
+
+/* ── Columns 7+8: UNITS (short text) ───────────────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(7),
+#sec_invCatalog .wo-table tbody td:nth-child(7),
+#sec_invCatalog .wo-table thead th:nth-child(8),
+#sec_invCatalog .wo-table tbody td:nth-child(8) {
+  width: 90px;
+  white-space: nowrap;
+}
+
+/* ── Columns 9+10: NUMERIC (cost, min stock) ───────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(9),
+#sec_invCatalog .wo-table tbody td:nth-child(9),
+#sec_invCatalog .wo-table thead th:nth-child(10),
+#sec_invCatalog .wo-table tbody td:nth-child(10) {
+  width: 100px;
+  white-space: nowrap;
+}
+
+/* ── Column 11: DATE (created_at) ──────────────────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(11),
+#sec_invCatalog .wo-table tbody td:nth-child(11) {
+  width: 110px;
+  white-space: nowrap;
+}
+
+/* ── Column 12: ACTIONS (icon buttons) ─────────────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(12),
+#sec_invCatalog .wo-table tbody td:nth-child(12) {
+  /* v5.10.66 — widened from 110→140px. v5.10.65 added a third icon
+     button (recipe) inside .wo-actions; the previous 110px column was
+     defined when only Edit + Delete existed. The math now:
+        3 buttons × 36px width + 2 × 2px gap   = 112px content
+        140px column - 2 × 12px padding-inline = 116px content area
+     → 4px of breathing room, no overflow, last button never clipped. */
+  width: 140px;
+  white-space: nowrap;
+}
+#sec_invCatalog .wo-table tbody tr {
+  position: relative;
+  transition: background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+#sec_invCatalog .wo-table tbody tr:nth-child(even) td {
+  background: #fafbfd;
+}
+#sec_invCatalog .wo-table tbody tr:hover td {
+  background: linear-gradient(90deg, #eef2ff 0%, #f5f3ff 100%);
+}
+#sec_invCatalog .wo-table tbody tr::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-start: 0;
+  width: 3px;
+  background: linear-gradient(180deg, #6366f1, #8b5cf6);
+  opacity: 0;
+  transition: opacity 160ms ease;
+  pointer-events: none;
+}
+#sec_invCatalog .wo-table tbody tr:hover::before,
+#sec_invCatalog .wo-table tbody tr.is-selected::before {
+  opacity: 1;
+}
+#sec_invCatalog .wo-table tbody tr.is-selected td {
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.10), rgba(139, 92, 246, 0.05));
+}
+
+/* Smooth row enter (used after filter / page change) */
+#sec_invCatalog .wo-table tbody tr.inv-row-enter {
+  animation: invRowEnter 280ms cubic-bezier(.4, 0, .2, 1) both;
+}
+@keyframes invRowEnter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Stock health pill (next to material name) ─────────────────── */
+.inv-stock-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  vertical-align: middle;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.inv-stock-pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7);
+}
+.inv-stock-pill--ok   { background: #d1fae5; color: #047857; }
+.inv-stock-pill--low  { background: #fef3c7; color: #b45309; }
+.inv-stock-pill--out  { background: #fee2e2; color: #b91c1c; }
+.inv-stock-pill--out::before {
+  animation: invPulseOut 1.6s ease-in-out infinite;
+}
+@keyframes invPulseOut {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(0.7); }
+}
+
+/* ── Search match highlight in name cell ──────────────────────────── */
+.inv-search-mark {
+  background: linear-gradient(180deg, transparent 60%, #fef08a 60%);
+  font-weight: 900;
+  color: #713f12;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+
+/* ── Clickable chips (warehouse + brand) — interactive feel ─────── */
+#sec_invCatalog .inv-wh-chip,
+#sec_invCatalog .wo-chip.purple {
+  transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
+}
+#sec_invCatalog .inv-wh-chip.is-clickable,
+#sec_invCatalog .wo-chip.purple.is-clickable {
+  cursor: pointer;
+}
+#sec_invCatalog .inv-wh-chip.is-clickable:hover,
+#sec_invCatalog .wo-chip.purple.is-clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px -3px rgba(15, 23, 42, 0.2);
+  filter: brightness(1.05);
+}
+#sec_invCatalog .inv-wh-chip.is-clickable:active,
+#sec_invCatalog .wo-chip.purple.is-clickable:active {
+  transform: translateY(0);
+  filter: brightness(0.96);
+}
+
+/* ── Summary footer (between table and pagination) ──────────────── */
+.inv-summary-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0;
+  margin-top: -1px; /* sit flush against the table */
+  padding: 0;
+  background: linear-gradient(135deg, #f8fafc, #eef2ff);
+  border: 1px solid #e2e8f0;
+  border-top: none;
+  border-radius: 0 0 var(--wo-radius-md, 14px) var(--wo-radius-md, 14px);
+  box-shadow: 0 2px 8px -4px rgba(15, 23, 42, 0.08);
+}
+.inv-summary-footer__cell {
+  flex: 1 1 0;
+  min-width: 160px;
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-inline-end: 1px dashed #cbd5e1;
+}
+.inv-summary-footer__cell:last-child {
+  border-inline-end: none;
+}
+.inv-summary-footer__label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.inv-summary-footer__label i {
+  color: #6366f1;
+}
+.inv-summary-footer__value {
+  font-size: 16px;
+  font-weight: 900;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.inv-summary-footer__sub {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+/* tighten the row-deleted look so it matches the new stripe density */
+#sec_invCatalog .wo-table tbody tr.inv-row--deleted td,
+#sec_invCatalog .wo-table tbody tr.inv-row--deleted:nth-child(even) td {
+  background: #fff7ed;
+}
+#sec_invCatalog .wo-table tbody tr.inv-row--deleted:hover td {
+  background: linear-gradient(90deg, #ffedd5, #fff7ed);
+}
+
+/* ===================================================================
+   v5.10.35 — Chart of Accounts (دليل الحسابات) UX overhaul
+   =================================================================== */
+
+/* Top action bar */
+.coa-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: linear-gradient(135deg, #f8fafc, #eef2ff);
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+}
+.coa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.coa-action-btn {
+  position: relative;
+  padding: 7px 14px !important;
+  min-height: 36px !important;
+  font-size: 12.5px !important;
+}
+.coa-action-badge {
+  position: absolute;
+  top: -6px;
+  inset-inline-end: -6px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 1px 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  box-shadow: 0 2px 6px rgba(220,38,38,0.4);
+}
+.coa-action-badge--healthy { background: #16a34a; box-shadow: 0 2px 6px rgba(22,163,74,0.4); }
+
+/* v5.10.38 — toggle for showing structural / empty accounts */
+.coa-toggle-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+.coa-toggle-empty:hover { border-color: #94a3b8; color: #1e293b; }
+.coa-toggle-empty input[type="checkbox"] {
+  margin: 0;
+  accent-color: #6366f1;
+  cursor: pointer;
+}
+.coa-toggle-empty input[type="checkbox"]:checked + span { color: #4338ca; font-weight: 800; }
+
+/* Type filter chips */
+.coa-type-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.coa-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  cursor: pointer;
+  transition: all 150ms ease;
+  white-space: nowrap;
+}
+.coa-type-chip:hover { transform: translateY(-1px); box-shadow: 0 4px 10px -4px rgba(15,23,42,0.18); }
+.coa-type-chip.is-active { color: #fff; box-shadow: 0 4px 12px -4px currentColor; }
+
+.coa-type-chip__count {
+  background: rgba(0,0,0,0.06);
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.coa-type-chip.is-active .coa-type-chip__count { background: rgba(255,255,255,0.25); color: #fff; }
+.coa-type-chip__bal {
+  font-size: 10.5px;
+  color: #94a3b8;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.coa-type-chip.is-active .coa-type-chip__bal { color: rgba(255,255,255,0.9); }
+
+/* Per-type chip colors */
+.coa-type-chip--all      { color: #475569; }
+.coa-type-chip--all.is-active     { background: #475569; border-color: #475569; }
+.coa-type-chip--asset    { color: #0369a1; }
+.coa-type-chip--asset.is-active   { background: #0ea5e9; border-color: #0ea5e9; }
+.coa-type-chip--liability{ color: #b91c1c; }
+.coa-type-chip--liability.is-active { background: #dc2626; border-color: #dc2626; }
+.coa-type-chip--equity   { color: #6d28d9; }
+.coa-type-chip--equity.is-active  { background: #7c3aed; border-color: #7c3aed; }
+.coa-type-chip--revenue  { color: #047857; }
+.coa-type-chip--revenue.is-active { background: #16a34a; border-color: #16a34a; }
+.coa-type-chip--expense  { color: #c2410c; }
+.coa-type-chip--expense.is-active { background: #f59e0b; border-color: #f59e0b; }
+
+/* Tree-node enrichments: type swatch + level badge + warning */
+.coa-type-badge {
+  display: inline-block;
+  width: 4px;
+  height: 18px;
+  border-radius: 2px;
+  margin-inline-end: 6px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.coa-type-badge--asset    { background: #0ea5e9; }
+.coa-type-badge--liability{ background: #dc2626; }
+.coa-type-badge--equity   { background: #7c3aed; }
+.coa-type-badge--revenue  { background: #16a34a; }
+.coa-type-badge--expense  { background: #f59e0b; }
+
+.coa-level-badge {
+  margin-inline-start: 6px;
+  font-size: 9.5px;
+  font-weight: 800;
+  color: #94a3b8;
+  background: #f1f5f9;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.coa-warn-icon {
+  margin-inline-start: 6px;
+  color: #dc2626;
+  font-size: 11px;
+  animation: coaWarnPulse 2s ease-in-out infinite;
+}
+@keyframes coaWarnPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.85); }
+}
+
+/* Diagnose panel */
+.coa-diag-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+.coa-diag-summary--healthy {
+  background: linear-gradient(135deg, #d1fae5, #ecfdf5);
+  border: 1px solid #6ee7b7;
+  color: #047857;
+}
+.coa-diag-summary--issues {
+  background: linear-gradient(135deg, #fee2e2, #fef2f2);
+  border: 1px solid #fca5a5;
+  color: #991b1b;
+}
+.coa-diag-cat {
+  margin-bottom: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+.coa-diag-cat__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-bottom: 1.5px solid;
+  font-size: 13px;
+  font-weight: 800;
+}
+.coa-diag-cat__label { color: #1e293b; }
+.coa-diag-cat__count {
+  margin-inline-start: auto;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-weight: 900;
+  font-size: 11.5px;
+}
+.coa-diag-cat__body { background: #fff; }
+.coa-diag-row {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: #475569;
+  border-bottom: 1px dashed #f1f5f9;
+}
+.coa-diag-row:last-child { border-bottom: none; }
+.coa-diag-row--more { color: #94a3b8; font-style: italic; text-align: center; }
+
+/* v5.10.39 — Diagnose Modal v2: tabs + clickable rows + per-row actions */
+.coa-diag-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: #f1f5f9;
+  border-radius: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.coa-diag-tab {
+  flex: 1;
+  min-width: 90px;
+  padding: 8px 14px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 700;
+  background: transparent;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 150ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.coa-diag-tab:hover { background: #e2e8f0; color: #1e293b; }
+.coa-diag-tab.is-active {
+  background: #fff;
+  color: #4338ca;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(99, 102, 241, 0.18);
+}
+.coa-diag-tab__count {
+  background: #cbd5e1;
+  color: #1e293b;
+  font-weight: 800;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  min-width: 22px;
+  text-align: center;
+}
+.coa-diag-tab.is-active .coa-diag-tab__count { background: #6366f1; color: #fff; }
+.coa-diag-tab.coa-diag-tab--critical .coa-diag-tab__count { background: #fee2e2; color: #991b1b; }
+.coa-diag-tab.coa-diag-tab--critical.is-active .coa-diag-tab__count { background: #dc2626; color: #fff; }
+
+.coa-diag-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 14px;
+  font-size: 12.5px;
+  color: #475569;
+  border-bottom: 1px dashed #f1f5f9;
+  transition: background 120ms ease;
+}
+.coa-diag-row:hover { background: #f8fafc; }
+.coa-diag-row--clickable { cursor: pointer; }
+.coa-diag-row--clickable:hover {
+  background: #eef2ff;
+  color: #1e293b;
+}
+.coa-diag-row__code {
+  font-family: 'Courier New', monospace;
+  font-weight: 800;
+  color: #1e293b;
+  background: #f1f5f9;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.coa-diag-row__info { line-height: 1.5; }
+.coa-diag-row__info b { color: #1e293b; font-weight: 700; }
+.coa-diag-row__info .coa-diag-arrow { margin: 0 6px; color: #94a3b8; }
+.coa-diag-row__info .coa-diag-from { color: #dc2626; font-weight: 700; }
+.coa-diag-row__info .coa-diag-to   { color: #16a34a; font-weight: 700; }
+.coa-diag-row__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: background 100ms ease;
+  white-space: nowrap;
+}
+.coa-diag-row__action:hover { background: #4f46e5; }
+
+/* v5.10.39 — COA Tree v2: folder balance + mini-bar + hover actions */
+.coa-folder-balance {
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  font-weight: 800;
+  white-space: nowrap;
+  margin-inline-start: auto;
+}
+.coa-folder-balance--zero  { color: #94a3b8; font-weight: 600; }
+.coa-folder-balance--pos   { color: #15803d; }
+.coa-folder-balance--neg   { color: #b91c1c; }
+.coa-folder-balance--group {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  padding: 2px 10px;
+  border-radius: 8px;
+  font-size: 11.5px;
+}
+.coa-folder-balance--group.coa-folder-balance--neg {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+.coa-folder-balance--group.coa-folder-balance--zero {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.coa-folder-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: #f1f5f9;
+  overflow: hidden;
+  margin-inline-start: 12px;
+  flex-shrink: 0;
+}
+.coa-folder-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition: width 240ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.coa-mini-stat {
+  font-size: 10.5px;
+  color: #64748b;
+  font-weight: 600;
+  background: #f1f5f9;
+  padding: 1px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.coa-mini-stat--zero { background: #fef3c7; color: #92400e; }
+
+.coa-node-actions {
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 150ms ease;
+  margin-inline-start: 6px;
+}
+.coa-node-row:hover .coa-node-actions { opacity: 1; }
+.coa-node-actions button {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  transition: all 120ms ease;
+}
+.coa-node-actions button:hover {
+  background: #e0e7ff;
+  color: #4338ca;
+}
+
+/* v5.10.41 — right-side cluster keeps badges + balance + actions together,
+   so the name has the full remaining grid column. */
+.coa-node-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Flash animation for "jump to account" from diagnose rows */
+@keyframes coaNodeFlash {
+  0%, 100% { background: transparent; }
+  20%, 80% { background: #fef3c7; }
+}
+.coa-node.coa-node--flash > .coa-node-row {
+  animation: coaNodeFlash 1.5s ease;
+}
+
+/* ─── v5.10.40 — Group header & cards v2 (Stripe / Linear-grade) ───
+   Purpose: address the user complaint that folders show no balance, that
+   alignment was inconsistent, and that the right-pane group view felt weak.
+   Always renders: rollup balance, child counts, per-card balance, action
+   buttons, and a colored "nimbus" so folders vs leaves are visually distinct
+   at a glance. */
+
+.coa-group-header--v2 {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 18px;
+  align-items: center;
+  padding: 16px 20px;
+  margin-bottom: 18px;
+  background: linear-gradient(135deg, #f8fafc, #eff6ff);
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+}
+.coa-group-header--v2 .coa-group-headline { min-width: 0; }
+.coa-group-header--v2 .coa-group-title {
+  font-size: 19px;
+  font-weight: 900;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  letter-spacing: -0.01em;
+}
+.coa-group-header--v2 .coa-group-title i { color: #f59e0b; font-size: 22px; }
+.coa-group-header--v2 .coa-group-code {
+  font-size: 11px;
+  color: #475569;
+  font-family: 'Courier New', monospace;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  padding: 2px 9px;
+  border-radius: 7px;
+  font-weight: 700;
+}
+
+.coa-group-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.coa-group-meta-pill {
+  font-size: 11px;
+  font-weight: 700;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  color: #475569;
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.coa-group-meta-pill.coa-type-asset     { background: #ecfeff; border-color: #67e8f9; color: #0e7490; }
+.coa-group-meta-pill.coa-type-liability { background: #fef2f2; border-color: #fca5a5; color: #b91c1c; }
+.coa-group-meta-pill.coa-type-equity    { background: #f5f3ff; border-color: #c4b5fd; color: #6d28d9; }
+.coa-group-meta-pill.coa-type-revenue   { background: #ecfdf5; border-color: #6ee7b7; color: #047857; }
+.coa-group-meta-pill.coa-type-expense   { background: #fff7ed; border-color: #fdba74; color: #c2410c; }
+
+.coa-group-balance {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 10px 18px;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 12px;
+  min-width: 160px;
+}
+.coa-group-balance__label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.coa-group-balance__value {
+  font-size: 22px;
+  font-weight: 900;
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.coa-group-balance.is-pos  { border-color: #86efac; background: linear-gradient(135deg, #f0fdf4, #fff); }
+.coa-group-balance.is-pos  .coa-group-balance__value { color: #15803d; }
+.coa-group-balance.is-neg  { border-color: #fca5a5; background: linear-gradient(135deg, #fef2f2, #fff); }
+.coa-group-balance.is-neg  .coa-group-balance__value { color: #b91c1c; }
+.coa-group-balance.is-zero .coa-group-balance__value { color: #94a3b8; font-weight: 800; }
+
+.coa-group-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.coa-group-actions .btn { white-space: nowrap; }
+.coa-group-add { border-radius: 10px !important; }
+
+.coa-cards--v2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.coa-card--v2 {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 14px;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+}
+.coa-card--v2:hover {
+  border-color: #6366f1;
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.10);
+  transform: translateY(-1px);
+}
+.coa-card__nimbus {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  flex-shrink: 0;
+}
+.coa-card--v2.is-folder .coa-card__nimbus {
+  background: linear-gradient(135deg, #fef3c7, #fef9c3);
+  color: #b45309;
+}
+.coa-card--v2.is-leaf .coa-card__nimbus {
+  background: linear-gradient(135deg, #dbeafe, #e0e7ff);
+  color: #4338ca;
+}
+.coa-card__body { min-width: 0; }
+.coa-card__name {
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.coa-card__sub {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.coa-card__code {
+  font-size: 10.5px;
+  font-family: 'Courier New', monospace;
+  font-weight: 700;
+  color: #475569;
+  background: #f1f5f9;
+  padding: 1px 8px;
+  border-radius: 5px;
+}
+.coa-card-nature {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 8px;
+  border-radius: 4px;
+}
+.coa-card-nature.debit  { background: #dcfce7; color: #166534; }
+.coa-card-nature.credit { background: #fee2e2; color: #991b1b; }
+.coa-card__mv {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #64748b;
+  padding: 1px 8px;
+  background: #f1f5f9;
+  border-radius: 999px;
+}
+.coa-card__mv--zero { background: #fef3c7; color: #92400e; }
+
+.coa-card__bal {
+  font-size: 16px;
+  font-weight: 900;
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  padding: 4px 12px;
+  border-radius: 8px;
+}
+.coa-card__bal.is-pos  { color: #15803d; background: #f0fdf4; }
+.coa-card__bal.is-neg  { color: #b91c1c; background: #fef2f2; }
+.coa-card__bal.is-zero { color: #94a3b8; background: #f8fafc; font-weight: 700; }
+
+.coa-card__menu {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.coa-card__menu:hover { background: #f1f5f9; color: #0f172a; }
+
+.coa-empty--v2 {
+  text-align: center;
+  padding: 40px 20px;
+  color: #94a3b8;
+  background: #f8fafc;
+  border: 2px dashed #cbd5e1;
+  border-radius: 14px;
+  margin-bottom: 16px;
+}
+.coa-empty--v2 i { font-size: 38px; color: #cbd5e1; }
+.coa-empty--v2 p { font-size: 14px; font-weight: 700; margin-top: 10px; color: #64748b; }
+
+/* Responsive */
+@media (max-width: 720px) {
+  .coa-group-header--v2 {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .coa-cards--v2 { grid-template-columns: 1fr; }
+}
+
+/* v5.10.43 — Tree toolbar: expand-all / collapse-all */
+.coa-tree-toolbar {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.coa-tree-tool-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 10px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #475569;
+  cursor: pointer;
+  transition: all 120ms ease;
+  font-family: inherit;
+}
+.coa-tree-tool-btn:hover {
+  background: #eef2ff;
+  border-color: #6366f1;
+  color: #4338ca;
+}
+.coa-tree-tool-btn i { font-size: 11px; }
+
+/* v5.10.42 — Full-screen repair overlay (replaces toast-only feedback) */
+.coa-repair-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(2px);
+  z-index: 10100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: coaOverlayIn 200ms ease;
+}
+@keyframes coaOverlayIn { from { opacity: 0; } to { opacity: 1; } }
+.coa-repair-overlay__panel {
+  background: #fff;
+  border-radius: 18px;
+  padding: 28px 32px;
+  text-align: center;
+  max-width: 460px;
+  width: 92%;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.30);
+}
+.coa-repair-overlay__spinner {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 18px;
+  border: 5px solid #e0e7ff;
+  border-top-color: #4f46e5;
+  border-radius: 50%;
+  animation: coaSpin 0.9s linear infinite;
+}
+@keyframes coaSpin { to { transform: rotate(360deg); } }
+.coa-repair-overlay__msg {
+  font-size: 17px;
+  font-weight: 800;
+  color: #0f172a;
+  margin-bottom: 6px;
+}
+.coa-repair-overlay__hint {
+  font-size: 12.5px;
+  color: #64748b;
+  line-height: 1.7;
+}
+
+/* v5.10.43 — diagnose category head as a clean grid: icon | label
+   (flex) | count badge | action button. No more position:absolute
+   overlap, no more padding-inline-end hacks. */
+.coa-diag-cat__head {
+  display: grid !important;
+  grid-template-columns: auto 1fr auto auto !important;
+  gap: 10px !important;
+  align-items: center !important;
+  padding: 10px 14px !important;
+}
+.coa-diag-cat__fix-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  background: #4f46e5;
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 100ms ease;
+  white-space: nowrap;
+}
+.coa-diag-cat__fix-btn:hover { background: #4338ca; }
+.coa-diag-cat__fix-btn:disabled { background: #cbd5e1; cursor: not-allowed; }
+
+/* v5.10.40 — Card popover (replaces confirm() for edit/delete/promote) */
+.coa-card-popover {
+  position: fixed;
+  z-index: 10001;
+  min-width: 220px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.14), 0 2px 6px rgba(15, 23, 42, 0.06);
+  padding: 6px;
+  animation: coaPopoverIn 120ms ease-out;
+}
+@keyframes coaPopoverIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.coa-card-popover__item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  cursor: pointer;
+  text-align: start;
+  transition: background 100ms ease;
+}
+.coa-card-popover__item:hover:not([disabled]) { background: #f1f5f9; }
+.coa-card-popover__item:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+  font-size: 12px;
+}
+.coa-card-popover__item i { color: #6366f1; width: 18px; text-align: center; }
+.coa-card-popover__item--danger { color: #b91c1c; }
+.coa-card-popover__item--danger i { color: #dc2626; }
+.coa-card-popover__item--danger:hover:not([disabled]) { background: #fef2f2; }
+.coa-card-popover__divider {
+  height: 1px;
+  background: #f1f5f9;
+  margin: 4px 0;
+}
+
+/* v5.10.39 — Waste form GL routing hint */
+.waste-gl-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: linear-gradient(135deg, #ecfdf5, #f0fdfa);
+  border: 1px solid #a7f3d0;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #047857;
+  font-weight: 600;
+}
+.waste-gl-hint i { color: #10b981; }
+.waste-gl-hint strong {
+  font-family: 'Courier New', monospace;
+  background: #fff;
+  border: 1px solid #6ee7b7;
+  padding: 1px 8px;
+  border-radius: 6px;
+  color: #047857;
+  font-weight: 800;
+}
+
+/* Empty-folder hint (when all descendants have no movements but the
+   folder is forced visible because it's a root) */
+.coa-empty-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #b45309;
+  background: #fef3c7;
+  padding: 1px 8px;
+  border-radius: 999px;
+  margin-inline-start: 8px;
+}
+
+/* Suggestions panel */
+.coa-sugg-list {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  font-family: 'Segoe UI', sans-serif;
+  background: #fff;
+}
+.coa-sugg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px dashed #f1f5f9;
+  font-size: 13px;
+  flex-wrap: wrap;
+  position: relative;
+}
+.coa-sugg-row:last-child { border-bottom: none; }
+.coa-sugg-row:hover { background: #fafbfd; }
+.coa-sugg-status {
+  font-size: 14px;
+  font-weight: 900;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.coa-sugg-code {
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 800;
+  color: #6366f1;
+  min-width: 36px;
+}
+.coa-sugg-name { font-weight: 700; color: #0f172a; flex: 1; }
+.coa-sugg-pill {
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 1px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.coa-sugg-hint {
+  width: 100%;
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 500;
+  margin-inline-start: 62px;
+  margin-top: 2px;
+}
+
+/* Modal sizing for COA drawers */
+#coaDiagModal, #coaSuggModal {
+  overflow-y: auto;
+  padding: 20px 0;
+}
+/* v5.10.47 — content was escaping the rounded card because overflow was
+   visible. Now the card clips, capped at 86vh, and the body scrolls
+   while the title stays sticky on top. */
+#coaDiagModal .modal-content,
+#coaSuggModal .modal-content {
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 24px 60px -12px rgba(15, 23, 42, 0.32);
+  padding: 0;
+  overflow: hidden;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+#coaDiagModal #coaDiagBody,
+#coaSuggModal #coaSuggBody {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+#coaDiagModal .modal-title,
+#coaSuggModal .modal-title {
+  padding: 16px 20px;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 16px;
+  font-weight: 800;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+}
+#coaDiagModal .modal-close,
+#coaSuggModal .modal-close {
+  background: transparent;
+  border: none;
+  font-size: 22px;
+  color: #94a3b8;
+  cursor: pointer;
+  margin-inline-start: auto;
+}
+#coaDiagModal .modal-close:hover,
+#coaSuggModal .modal-close:hover { color: #b91c1c; }
+
+/* ===================================================================
+   v5.10.34 — Waste registration modal (professional)
+   =================================================================== */
+#weRegisterModal { overflow-y: auto; padding: 20px 0; }
+#weRegisterModal .modal-content {
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 24px 60px -12px rgba(15, 23, 42, 0.32);
+  padding: 0;
+  overflow: visible;
+}
+#weRegisterModal .modal-title {
+  padding: 16px 20px;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 16px;
+  font-weight: 800;
+  color: #0f172a;
+  background: linear-gradient(135deg, #fef2f2, #fff);
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+}
+#weRegisterModal .modal-close { background: transparent; border: none; font-size: 22px; color: #94a3b8; cursor: pointer; }
+#weRegisterModal .modal-close:hover { color: #b91c1c; }
+
+.we-form-section {
+  padding: 14px 20px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.we-form-section:last-of-type { border-bottom: none; }
+.we-form-section__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 10px;
+}
+.we-form-section__title i { color: #6366f1; }
+
+.we-form-grid {
+  display: grid;
+  gap: 10px 12px;
+}
+.we-form-grid--3 { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 720px) { .we-form-grid--3 { grid-template-columns: 1fr; } }
+
+.we-field { display: flex; flex-direction: column; gap: 4px; }
+.we-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #475569;
+}
+.we-req { color: #b91c1c; font-weight: 900; }
+.we-field .form-control {
+  height: 38px;
+  padding: 6px 12px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 13.5px;
+  background: #fff;
+  transition: all 150ms ease;
+}
+.we-field .form-control:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+.we-field .form-control.is-invalid { border-color: #f87171; box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.15); }
+.we-field textarea.form-control { height: auto; min-height: 56px; resize: vertical; }
+.we-error {
+  display: none;
+  font-size: 11px;
+  color: #b91c1c;
+  font-weight: 600;
+}
+.we-field .form-control.is-invalid + .we-error,
+.we-error.is-shown { display: block; }
+
+/* Search box */
+.we-search-box { margin-bottom: 10px; }
+.we-search-box .form-control { height: 42px; padding-block: 8px; font-size: 13.5px; }
+.we-autocomplete {
+  position: absolute;
+  top: 100%;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
+  margin-top: 4px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px -8px rgba(15, 23, 42, 0.18);
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 10;
+}
+.we-autocomplete-item {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  border-bottom: 1px solid #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  transition: background 100ms ease;
+}
+.we-autocomplete-item:last-child { border-bottom: none; }
+.we-autocomplete-item:hover { background: #f8fafc; }
+.we-autocomplete-item__name { font-weight: 700; color: #0f172a; }
+.we-autocomplete-item__sub { font-size: 10.5px; color: #94a3b8; font-weight: 600; }
+.we-autocomplete-item__stock {
+  font-size: 11px;
+  font-weight: 800;
+  background: #d1fae5;
+  color: #047857;
+  padding: 2px 9px;
+  border-radius: 999px;
+}
+.we-autocomplete-item__stock.is-zero { background: #fee2e2; color: #b91c1c; }
+.we-autocomplete-item.is-disabled { opacity: 0.55; cursor: not-allowed; }
+.we-autocomplete-empty { padding: 18px; text-align: center; color: #94a3b8; font-size: 12.5px; }
+
+/* Cart table */
+.we-cart-table-wrap {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.we-cart-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.we-cart-table thead th {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 800;
+  padding: 10px 8px;
+  font-size: 11.5px;
+  text-align: start;
+  border-bottom: 1.5px solid #e2e8f0;
+}
+.we-cart-table thead th.num { text-align: end; }
+.we-cart-table tbody td {
+  padding: 8px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+.we-cart-table tbody tr.is-overflow td { background: #fff7ed; }
+.we-cart-table tbody tr:last-child td { border-bottom: none; }
+.we-cart-table .num { text-align: end; }
+.we-cart-table .we-cart-input {
+  width: 90px;
+  height: 32px;
+  padding: 4px 10px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.we-cart-table .we-cart-input:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
+.we-cart-table .we-cart-input.is-invalid { border-color: #dc2626; background: #fef2f2; }
+.we-cart-table .we-stock-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  background: #d1fae5;
+  color: #047857;
+}
+.we-cart-table .we-stock-badge.is-low { background: #fef3c7; color: #b45309; }
+.we-cart-table .we-stock-badge.is-zero { background: #fee2e2; color: #b91c1c; }
+.we-cart-table .we-cart-remove {
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  cursor: pointer;
+  font-size: 11px;
+}
+.we-cart-table .we-cart-remove:hover { background: #fee2e2; }
+.we-cart-empty { padding: 26px; text-align: center; color: #94a3b8; font-size: 13px; }
+
+/* Summary bar */
+.we-summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 12px 20px;
+  background: linear-gradient(135deg, #fef2f2, #fef3c7);
+  border-block: 1px solid #fde68a;
+}
+.we-summary-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 140px;
+}
+.we-summary-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #78350f;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.we-summary-value {
+  font-size: 16px;
+  font-weight: 900;
+  color: #92400e;
+  font-variant-numeric: tabular-nums;
+  margin-inline-start: auto;
+}
+.we-summary-item--total .we-summary-value { font-size: 18px; color: #b91c1c; }
+
+/* Validation banner */
+.we-validation-banner {
+  margin: 8px 20px;
+  padding: 9px 14px;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 10px;
+  color: #92400e;
+  font-size: 12.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Actions bar */
+.we-actions-bar {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 14px 20px;
+  border-top: 1px solid #e2e8f0;
+  background: #fafbfd;
+  border-bottom-left-radius: 18px;
+  border-bottom-right-radius: 18px;
+}
+.we-actions-bar .wo-btn[disabled],
+.we-actions-bar .wo-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ===================================================================
+   v5.10.33 — Expiry alerts visual system
+   =================================================================== */
+.exp-toolbar { flex-wrap: wrap; gap: 10px; }
+
+/* Bucket pills (status filter) */
+.exp-bucket-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 14px;
+}
+.exp-bucket-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1.5px solid;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 150ms ease;
+  background: #fff;
+  user-select: none;
+}
+.exp-bucket-pill .exp-bucket-count {
+  background: rgba(255,255,255,0.85);
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.exp-bucket-pill:hover { transform: translateY(-1px); box-shadow: 0 4px 12px -4px rgba(15,23,42,0.18); }
+.exp-bucket-pill.is-active { color: #fff; transform: translateY(-1px); }
+.exp-bucket-pill.is-active .exp-bucket-count { background: rgba(255,255,255,0.25); color: #fff; }
+.exp-bucket-pill[data-bucket="all"]      { color:#475569; border-color:#cbd5e1; }
+.exp-bucket-pill[data-bucket="all"].is-active     { background:#475569; border-color:#475569; }
+.exp-bucket-pill[data-bucket="expired"]  { color:#b91c1c; border-color:#fecaca; }
+.exp-bucket-pill[data-bucket="expired"].is-active { background:#b91c1c; border-color:#b91c1c; }
+.exp-bucket-pill[data-bucket="critical"] { color:#c2410c; border-color:#fed7aa; }
+.exp-bucket-pill[data-bucket="critical"].is-active{ background:#c2410c; border-color:#c2410c; }
+.exp-bucket-pill[data-bucket="soon"]     { color:#a16207; border-color:#fde68a; }
+.exp-bucket-pill[data-bucket="soon"].is-active    { background:#a16207; border-color:#a16207; }
+.exp-bucket-pill[data-bucket="monitor"]  { color:#0e7490; border-color:#a5f3fc; }
+.exp-bucket-pill[data-bucket="monitor"].is-active { background:#0e7490; border-color:#0e7490; }
+.exp-bucket-pill[data-bucket="safe"]     { color:#047857; border-color:#a7f3d0; }
+.exp-bucket-pill[data-bucket="safe"].is-active    { background:#047857; border-color:#047857; }
+
+/* Timeline strip */
+.exp-timeline {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  margin: 14px 0;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, #fefce8, #fef3c7);
+  border: 1px solid #fde68a;
+  border-radius: 14px;
+}
+.exp-timeline-bar {
+  flex: 1;
+  min-width: 50px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 4px;
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid #fcd34d;
+  transition: all 140ms ease;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.exp-timeline-bar:hover { transform: translateY(-2px); box-shadow: 0 6px 16px -6px rgba(245,158,11,0.4); }
+.exp-timeline-bar.has-expired { border-color: #b91c1c; background: linear-gradient(180deg, #fee2e2 0%, #fff 50%); }
+.exp-timeline-bar__month { font-size: 10.5px; font-weight: 800; color: #92400e; letter-spacing: 0.02em; }
+.exp-timeline-bar__count { font-size: 16px; font-weight: 900; color: #b45309; line-height: 1; font-variant-numeric: tabular-nums; }
+.exp-timeline-bar__value { font-size: 10px; color: #78716c; font-weight: 700; }
+.exp-timeline-bar.has-expired .exp-timeline-bar__count { color: #b91c1c; }
+
+/* Status chip in row */
+.exp-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.exp-status-chip i { font-size: 9px; }
+.exp-status-chip.expired  { background: #fecaca; color: #991b1b; }
+.exp-status-chip.critical { background: #fed7aa; color: #9a3412; }
+.exp-status-chip.soon     { background: #fef3c7; color: #854d0e; }
+.exp-status-chip.monitor  { background: #cffafe; color: #155e75; }
+.exp-status-chip.safe     { background: #d1fae5; color: #065f46; }
+
+/* Row tinting based on bucket */
+.wo-table tbody tr.exp-row-expired  td { background: linear-gradient(90deg, #fee2e2 0%, #fff 60%); }
+.wo-table tbody tr.exp-row-critical td { background: linear-gradient(90deg, #ffedd5 0%, #fff 60%); }
+.wo-table tbody tr.exp-row-soon     td { background: linear-gradient(90deg, #fef9c3 0%, #fff 60%); }
+
+/* Action buttons */
+.exp-row-actions { display: inline-flex; gap: 4px; }
+.exp-row-actions .wo-icon-btn { width: 30px; height: 30px; font-size: 12px; }
+
+/* Dispose modal body */
+.exp-dispose-summary {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.exp-dispose-summary b { color: #991b1b; }
+.exp-dispose-summary .exp-dispose-stat { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed #fecaca; }
+.exp-dispose-summary .exp-dispose-stat:last-child { border-bottom: none; }
+.exp-dispose-summary .exp-dispose-stat span:last-child { font-weight: 800; color: #0f172a; }
+
+/* ===================================================================
+   v5.10.33 — Inventory header & button consistency layer
+   -------------------------------------------------------------------
+   Problem: inventory screens mixed wo-header/wo-btn with tb-top/tb-btn
+   producing inconsistent button heights, paddings, and weights.
+   Fix: equalize so every action button across inventory screens looks
+   identical regardless of which class is used; tighten the wo-header
+   action row spacing; align tb-btn with wo-btn-secondary.
+   =================================================================== */
+
+/* Equalize tb-btn to wo-btn (used in financial-style report toolbars) */
+.tb-btn {
+  min-height: 40px !important;
+  padding: 9px 16px !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  border-radius: 10px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  white-space: nowrap;
+  letter-spacing: 0;
+  font-family: inherit;
+  transition: all 180ms cubic-bezier(.4,0,.2,1);
+}
+.tb-btn i { font-size: 13px; }
+
+/* Tighten wo-header action row so multiple buttons look balanced */
+.wo-header .wo-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.wo-header .wo-header-actions .wo-btn,
+.wo-header .wo-header-actions .tb-btn {
+  min-height: 40px;
+  padding: 9px 16px;
+}
+
+/* Icon-only wo-btn variant (matches wo-icon-btn but inside wo-btn family
+   so it sits cleanly next to text buttons in the header action row) */
+.wo-btn.wo-btn--icon {
+  width: 40px;
+  min-width: 40px;
+  padding: 0 !important;
+  justify-content: center;
+}
+.wo-btn.wo-btn--icon i { margin: 0; font-size: 14px; }
+
+/* wo-btn-ghost in headers — keep it the same height as siblings */
+.wo-header .wo-btn-ghost {
+  min-height: 40px;
+  padding: 9px 14px;
+  border: 1px solid transparent;
+}
+.wo-header .wo-btn-ghost:hover { border-color: var(--wo-border, #e2e8f0); }
+
+/* Active/pressed state visual feedback */
+.wo-header .wo-btn:active,
+.wo-header .tb-btn:active { transform: scale(0.97); }
+
+/* The h1 inside wo-header sometimes wraps when its content is long; lock
+   line-height + ellipsis to keep the strip aligned */
+.wo-header .wo-header-titles h1 {
+  line-height: 1.3;
+  margin: 0 0 2px 0;
+}
+.wo-header .wo-header-titles .wo-header-sub {
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Mobile: stack header rows cleanly */
+@media (max-width: 720px) {
+  .wo-header { flex-wrap: wrap; gap: 12px; }
+  .wo-header .wo-header-actions { width: 100%; justify-content: flex-end; }
+  .wo-header .wo-btn { flex: 1; min-width: 0; }
+}
+
+/* ===================================================================
+   v5.10.32 — Hub date-range strip + tile badges
+   =================================================================== */
+.iv-hub-date-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  margin: 8px 0 16px;
+  background: linear-gradient(135deg, #f8fafc, #eef2ff);
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+}
+.iv-hub-date-strip-label {
+  font-size: 12px;
+  font-weight: 800;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.iv-hub-date-strip-label i { color: #6366f1; }
+.iv-hub-date-presets { display: flex; flex-wrap: wrap; gap: 5px; }
+.iv-hub-date-chip {
+  padding: 5px 12px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #475569;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+.iv-hub-date-chip:hover {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+.iv-hub-date-chip.is-active {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  border-color: #6366f1;
+  box-shadow: 0 4px 12px -4px rgba(99,102,241,0.5);
+}
+.iv-hub-date-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: auto;
+}
+.iv-hub-date-custom input {
+  height: 30px;
+  padding: 0 8px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 12px;
+  background: #fff;
+}
+.iv-hub-date-custom span { color: #94a3b8; font-weight: 700; }
+
+/* Make sure the badge shows the new richer text without overflowing */
+.iv-hub-tile-badge {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* ===================================================================
+   v5.10.31 — Warehouse Ledger (دفتر أستاذ المستودع) styling
+   =================================================================== */
+#erpRptWarehouseLedger .wl-filters {
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fefefe, #f8fafc);
+}
+
+/* Date preset chips */
+.wl-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0 0;
+  padding: 8px 0 0 0;
+  border-top: 1px dashed #e2e8f0;
+}
+.wl-preset {
+  padding: 6px 14px;
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+.wl-preset:hover {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+.wl-preset.is-active {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border-color: #6366f1;
+  color: #fff;
+  box-shadow: 0 4px 12px -4px rgba(99, 102, 241, 0.5);
+}
+
+/* View-mode toggle (segmented control) */
+.wl-mode {
+  display: inline-flex;
+  background: #f1f5f9;
+  border-radius: 10px;
+  padding: 3px;
+  border: 1px solid #e2e8f0;
+}
+.wl-mode-btn {
+  padding: 7px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #64748b;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 150ms ease;
+}
+.wl-mode-btn:hover { color: #334155; }
+.wl-mode-btn.is-active {
+  background: #fff;
+  color: #4338ca;
+  box-shadow: 0 2px 6px -2px rgba(15, 23, 42, 0.12);
+}
+
+/* Activity breakdown strip — counts per ref type */
+.wl-breakdown {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+.wl-breakdown-cell {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+  cursor: pointer;
+}
+.wl-breakdown-cell:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px -6px rgba(15, 23, 42, 0.15);
+}
+.wl-breakdown-cell.is-empty { opacity: 0.55; cursor: default; }
+.wl-breakdown-cell.is-empty:hover { transform: none; box-shadow: none; }
+.wl-breakdown-cell__icon {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.wl-breakdown-cell__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wl-breakdown-cell__label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.03em;
+}
+.wl-breakdown-cell__value {
+  font-size: 18px;
+  font-weight: 900;
+  color: #0f172a;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Reference-type chip palette */
+.wl-ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.wl-ref-chip i { font-size: 9px; }
+.wl-ref-chip.ref-sale       { background: #fee2e2; color: #b91c1c; }
+.wl-ref-chip.ref-transfer   { background: #cffafe; color: #0e7490; }
+.wl-ref-chip.ref-stocktake  { background: #ede9fe; color: #6d28d9; }
+.wl-ref-chip.ref-adjustment { background: #fef3c7; color: #b45309; }
+.wl-ref-chip.ref-purchase   { background: #d1fae5; color: #047857; }
+.wl-ref-chip.ref-waste      { background: #fee2e2; color: #991b1b; }
+.wl-ref-chip.ref-opening    { background: #e0e7ff; color: #3730a3; }
+.wl-ref-chip.ref-manual     { background: #f1f5f9; color: #475569; }
+
+/* Chronological view row interactions */
+.wl-flat-table tr.wl-flat-row { cursor: pointer; transition: background 140ms ease; }
+.wl-flat-table tr.wl-flat-row:hover td { background: #eef2ff; }
+.wl-flat-table tr.wl-flat-row.type-in  td.qty-cell { color: #047857; font-weight: 800; }
+.wl-flat-table tr.wl-flat-row.type-out td.qty-cell { color: #b91c1c; font-weight: 800; }
+
+/* Detail modal content */
+.wl-detail-section {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.wl-detail-section h4 {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  font-weight: 800;
+  color: #334155;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wl-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 16px;
+  font-size: 13px;
+}
+.wl-detail-grid > div { display: flex; flex-direction: column; gap: 2px; }
+.wl-detail-grid label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #94a3b8;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.wl-detail-grid span {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.wl-detail-source-table {
+  width: 100%;
+  margin-top: 6px;
+  font-size: 12.5px;
+  border-collapse: collapse;
+}
+.wl-detail-source-table th {
+  background: #eef2ff;
+  color: #3730a3;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  text-align: start;
+  border-bottom: 1.5px solid #c7d2fe;
+}
+.wl-detail-source-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+/* Pagination footer for chronological flat view */
+.wl-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+  font-size: 12.5px;
+  color: #475569;
+  flex-wrap: wrap;
+}
+.wl-pagination__btn {
+  min-width: 32px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 12px;
+}
+.wl-pagination__btn:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+.wl-pagination__btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Sortable headers ─────────────────────────────────────────────── */
+.wo-table--sortable thead th[data-sort] {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: background var(--wo-dur-1, 150ms) var(--wo-ease, ease);
+}
+.wo-table--sortable thead th[data-sort]:hover {
+  background: var(--wo-surface-2, #f1f5f9);
+}
+.wo-table--sortable thead th .sort-ico {
+  margin-inline-start: 6px;
+  font-size: 10px;
+  opacity: 0.4;
+  transition: opacity 150ms ease, color 150ms ease;
+}
+.wo-table--sortable thead th[aria-sort="ascending"] .sort-ico,
+.wo-table--sortable thead th[aria-sort="descending"] .sort-ico {
+  opacity: 1;
+  color: #6366f1;
+}
+
+/* ── Warehouse-distribution chips (المستودعات column) ────────────── */
+.inv-wh-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  max-width: 220px;
+}
+.inv-wh-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  background: linear-gradient(135deg, #ecfeff, #cffafe);
+  border: 1px solid #67e8f9;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #0e7490;
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inv-wh-chip i {
+  font-size: 10px;
+  opacity: 0.85;
+}
+.inv-wh-chip__name {
+  font-weight: 700;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inv-wh-chip__qty {
+  background: rgba(255, 255, 255, 0.85);
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: 800;
+  color: #155e75;
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+}
+.inv-wh-chip--more {
+  background: linear-gradient(135deg, #f5f3ff, #ede9fe);
+  border-color: #c4b5fd;
+  color: #5b21b6;
+  font-weight: 800;
+  cursor: help;
+}
+
+/* ── Multi-select column ─────────────────────────────────────────── */
+.wo-table--selectable thead th.col-select,
+.wo-table--selectable tbody td.col-select {
+  width: 40px;
+  text-align: center;
+  padding-inline: 8px;
+}
+.wo-table--selectable tbody tr.is-selected td {
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.08), transparent 60%);
+}
+.inv-row-checkbox,
+.inv-master-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #6366f1;
+}
+
+/* ── Bulk actions bar (appears when rows are selected) ──────────── */
+.inv-bulk-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+  border: 1.5px solid #c7d2fe;
+  border-radius: var(--wo-radius-md, 14px);
+  box-shadow: var(--wo-elev-1, 0 1px 3px rgba(15, 23, 42, 0.04));
+  animation: invBulkSlideIn 200ms var(--wo-ease, ease);
+}
+.inv-bulk-bar.is-hidden { display: none; }
+.inv-bulk-bar__count {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #312e81;
+}
+.inv-bulk-bar__count .badge {
+  background: #6366f1;
+  color: #fff;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.inv-bulk-bar__actions {
+  display: flex;
+  gap: 8px;
+}
+@keyframes invBulkSlideIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Pagination footer ───────────────────────────────────────────── */
+.inv-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  border-bottom-left-radius: var(--wo-radius-md, 14px);
+  border-bottom-right-radius: var(--wo-radius-md, 14px);
+  font-size: 13px;
+  color: #475569;
+  flex-wrap: wrap;
+}
+.inv-pagination__info { font-weight: 600; }
+.inv-pagination__controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.inv-pagination__btn {
+  min-width: 34px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  transition: all 150ms ease;
+}
+.inv-pagination__btn:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+.inv-pagination__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.inv-pagination__btn.is-active {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #fff;
+}
+.inv-pagination__sep { color: #cbd5e1; padding: 0 4px; }
+.inv-pagination__size {
+  height: 32px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0 8px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+/* ── Skeleton loading rows ───────────────────────────────────────── */
+.inv-skeleton-row td {
+  padding: 14px 12px !important;
+}
+.inv-skeleton-bar {
+  display: block;
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 50%, #f1f5f9 100%);
+  background-size: 200% 100%;
+  animation: invSkeletonShimmer 1.4s infinite;
+}
+.inv-skeleton-bar.short  { width: 60%; }
+.inv-skeleton-bar.medium { width: 80%; }
+.inv-skeleton-bar.full   { width: 100%; }
+@keyframes invSkeletonShimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Improved empty state ───────────────────────────────────────── */
+.inv-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 56px 20px;
+  text-align: center;
+}
+.inv-empty__icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #ede9fe, #f5f3ff);
+  color: #8b5cf6;
+  font-size: 32px;
+  margin-bottom: 4px;
+}
+.inv-empty__title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #334155;
+}
+.inv-empty__sub {
+  font-size: 13px;
+  color: #94a3b8;
+  max-width: 360px;
+  line-height: 1.6;
+}
+.inv-empty__cta { margin-top: 8px; }
+
+/* ── Error state ─────────────────────────────────────────────────── */
+.inv-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 20px;
+  text-align: center;
+}
+.inv-error__icon {
+  font-size: 40px;
+  color: #ef4444;
+}
+.inv-error__title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #991b1b;
+}
+.inv-error__sub {
+  font-size: 13px;
+  color: #b91c1c;
+  max-width: 360px;
+}
+
+/* ── Section tab badges (extracted from inline styles) ──────────── */
+.inv-tab-badge {
+  margin-inline-start: 8px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.inv-tab-badge--active   { background: #ede9fe; color: #5b21b6; }
+.inv-tab-badge--deleted  { background: #fef2f2; color: #b91c1c; }
+
+/* ── Recycle-bin row tint (extracted from inline) ───────────────── */
+.wo-table tbody tr.inv-row--deleted {
+  background: #fff7ed;
+  opacity: 0.95;
+}
+.wo-table tbody tr.inv-row--deleted .inv-row-name {
+  font-weight: 700;
+  color: #7c2d12;
+}
+.inv-row-name__del-icon {
+  font-size: 10px;
+  color: #ef4444;
+  margin-inline-end: 5px;
+}
+.inv-row-deleted-at {
+  font-size: 11px;
+  color: #94a3b8;
+}
+.inv-row-created-at {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+/* ── Modal: warehouse banner (Add/Edit material) ────────────────── */
+.inv-modal-warehouse-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 16px 0;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #ecfeff, #cffafe);
+  border: 1.5px solid #67e8f9;
+  border-radius: var(--wo-radius-md, 14px);
+  font-size: 14px;
+  color: #155e75;
+}
+.inv-modal-warehouse-banner.is-empty {
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  border-color: #fcd34d;
+  color: #78350f;
+}
+.inv-modal-warehouse-banner__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.inv-modal-warehouse-banner__label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.7;
+}
+.inv-modal-warehouse-banner__name {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+/* ── Form-level inline validation ────────────────────────────────── */
+.inv-field-error {
+  display: none;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #b91c1c;
+  font-weight: 600;
+}
+.inv-field-error.is-shown { display: block; }
+.wo-input.is-invalid,
+.wo-select.is-invalid {
+  border-color: #f87171 !important;
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.18) !important;
+}
+.wo-input.is-invalid + .inv-field-error,
+.wo-select.is-invalid + .inv-field-error {
+  display: block;
+}
+
+/* Disable save button cleanly when required fields are missing. */
+.wo-btn[disabled],
+.wo-btn.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ── Responsive: collapse pagination controls on small screens ───── */
+@media (max-width: 768px) {
+  .inv-pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .inv-pagination__controls {
+    justify-content: center;
+  }
+  .inv-bulk-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   v5.10.45 — IFRS chip on the 5 root rows + diagnose all-clear
+   empty state + move-modal preview accents.
+   ───────────────────────────────────────────────────────────────── */
+.coa-ifrs-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: 8px;
+  padding: 2px 8px;
+  background: linear-gradient(135deg, #ede9fe, #ddd6fe);
+  color: #5b21b6;
+  font-size: 10.5px;
+  font-weight: 800;
+  border-radius: 999px;
+  border: 1px solid #c4b5fd;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: help;
+  font-variant-numeric: tabular-nums;
+}
+.coa-node-row:hover .coa-ifrs-chip {
+  background: linear-gradient(135deg, #ddd6fe, #c4b5fd);
+}
+
+.coa-diag-empty-state {
+  text-align: center;
+  padding: 48px 24px;
+  background: linear-gradient(135deg, #f0fdf4, #dcfce7);
+  border-radius: 14px;
+  border: 1px solid #bbf7d0;
+  margin: 8px 0;
+}
+.coa-diag-empty-state h3 {
+  margin: 16px 0 6px;
+  color: #15803d;
+  font-size: 18px;
+  font-weight: 900;
+}
+.coa-diag-empty-state p {
+  color: #166534;
+  font-size: 13px;
+  margin: 0 0 14px;
+  line-height: 1.7;
+}
+.coa-diag-empty-state__meta {
+  display: inline-block;
+  padding: 6px 14px;
+  background: #fff;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  color: #166534;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* v5.10.46 — account modal: kind radio selector (folder vs leaf) */
+.erp-acc-modal__radios {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.erp-acc-modal__radios > label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 13px;
+  color: #475569;
+  transition: all 120ms ease;
+  user-select: none;
+}
+.erp-acc-modal__radios > label:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+.erp-acc-modal__radios > label > input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #7c3aed;
+}
+.erp-acc-modal__radios > label > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+.erp-acc-modal__radios > label:has(input:checked) {
+  background: linear-gradient(135deg, #ede9fe, #ddd6fe);
+  border-color: #7c3aed;
+  color: #5b21b6;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   v5.10.47 — Searchable combobox (replaces native <select> for the
+   parent dropdown in the account modal AND the move modal). Native
+   selects don't filter; with 100+ accounts the user can't actually
+   FIND a parent without scrolling.
+   ───────────────────────────────────────────────────────────────── */
+.coa-sel { position: relative; width: 100%; }
+.coa-sel__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.coa-sel__trigger:hover { border-color: #94a3b8; }
+.coa-sel[data-open="1"] .coa-sel__trigger {
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
+}
+.coa-sel__current {
+  flex: 1;
+  text-align: start;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.coa-sel__current.is-placeholder { color: #94a3b8; font-weight: 500; }
+.coa-sel__chev {
+  color: #94a3b8;
+  margin-inline-start: 8px;
+  transition: transform 180ms ease;
+  font-size: 12px;
+}
+.coa-sel[data-open="1"] .coa-sel__chev { transform: rotate(180deg); color: #7c3aed; }
+.coa-sel__panel {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
+  top: calc(100% + 6px);
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 14px 40px -8px rgba(15, 23, 42, 0.18), 0 4px 12px rgba(15, 23, 42, 0.06);
+  z-index: 10500;
+  display: none;
+  flex-direction: column;
+  /* v5.11.7 — was 360px (only 6-7 options visible). Now grows up to
+     70vh capped at 540px so 13+ options fit before scroll, with a
+     280px floor so the search box + 6 options always fit. */
+  min-height: 280px;
+  max-height: min(70vh, 540px);
+  overflow: hidden;
+}
+.coa-sel[data-open="1"] .coa-sel__panel { display: flex; }
+/* v5.11.7 — solid background + thicker padding so the search section
+   reads as a distinct row (not a fade into the list). */
+.coa-sel__searchbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  flex-shrink: 0;
+}
+.coa-sel__searchbox > i {
+  color: #94a3b8;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+/* v5.11.7 — search input now has an explicit border + white background +
+   focus ring so the user can clearly see WHERE to type. The previous
+   transparent/borderless render made it look like an empty space. */
+.coa-sel__search {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  outline: none;
+  font-size: 14px;
+  font-weight: 600;
+  background: #fff;
+  font-family: inherit;
+  padding: 9px 12px;
+  text-align: start;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.coa-sel__search::placeholder {
+  color: #94a3b8;
+  font-weight: 500;
+  opacity: 1;
+}
+.coa-sel__search:focus {
+  border-color: var(--accent, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.14);
+}
+/* v5.11.7 — list now grows to fill the rest of the panel height so a
+   tall panel doesn't leave dead space at the bottom. */
+.coa-sel__list {
+  flex: 1 1 auto;
+  min-height: 200px;
+  overflow-y: auto;
+  padding: 6px;
+}
+.coa-sel__opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #0f172a;
+  transition: background 80ms ease;
+}
+.coa-sel__opt:hover, .coa-sel__opt.is-active {
+  background: #f1f5f9;
+}
+.coa-sel__opt.is-selected {
+  background: linear-gradient(135deg, #ede9fe, #ddd6fe);
+}
+.coa-sel__opt.is-selected .coa-sel__opt-name { color: #5b21b6; }
+.coa-sel__opt.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* v5.11.5 — split row layout: indent strut + mono code + name + tick */
+.coa-sel__opt-code {
+  display: inline-block;
+  min-width: 64px;
+  padding: 2px 8px;
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 800;
+  text-align: center;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+.coa-sel__opt.is-selected .coa-sel__opt-code {
+  background: #fff;
+  border-color: #c4b5fd;
+  color: #5b21b6;
+}
+.coa-sel__opt-name {
+  flex: 1;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.coa-sel__opt-indent { display: inline-block; }
+.coa-sel__tick { color: #7c3aed; font-size: 13px; flex-shrink: 0; }
+/* v5.11.5 — trigger button can also display the split code + name */
+.coa-sel__triggerText {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  text-align: start;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.coa-sel__trigger-code {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.coa-sel__trigger-name {
+  font-weight: 700;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.coa-sel__empty {
+  padding: 24px 14px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+}
+.coa-sel__footer {
+  padding: 8px 12px;
+  border-top: 1px solid #f1f5f9;
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 700;
+  background: #fafbfc;
+  text-align: end;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v5.10.65 — Recipe modal (Inventory side)
+ * ───────────────────────────────────────────────────────────────────────
+ * Modal opened from the "وصفة" button on each catalog row. Hosts the
+ * BOM editor (yield + components + waste %). All structural rules are
+ * inherited from .modal / .modal-content / wo-btn (style.css); only
+ * the recipe-specific layout lives here.
+ * ═══════════════════════════════════════════════════════════════════════ */
+.inv-recipe-modal {
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  overflow: hidden;
+}
+.inv-recipe-modal #invRecipeMdlBody {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px 18px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Header strip: yield qty + unit + notes */
+.inv-recipe-meta {
+  background: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%);
+  border: 1px solid #c7d2fe;
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+.inv-recipe-meta-row {
+  display: grid;
+  grid-template-columns: 140px 100px 1fr;
+  gap: 12px;
+}
+.inv-recipe-meta-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #475569;
+}
+.inv-recipe-meta-row input {
+  padding: 8px 12px;
+  border: 1.5px solid #c7d2fe;
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  background: #fff;
+}
+.inv-recipe-meta-row input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+/* Lines table */
+.inv-recipe-lines-wrap {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 10px 12px 12px;
+}
+.inv-recipe-lines-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 4px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #64748b;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-bottom: 1.5px dashed #e2e8f0;
+  margin-bottom: 8px;
+}
+.inv-recipe-line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.inv-recipe-line-item {
+  flex: 2.2;
+  padding: 8px 10px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  background: #fff;
+}
+.inv-recipe-line-qty,
+.inv-recipe-line-waste {
+  padding: 8px 10px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  background: #fff;
+  text-align: end;
+}
+.inv-recipe-line-qty   { flex: 1; }
+.inv-recipe-line-waste { flex: 0.9; }
+.inv-recipe-line-unit {
+  flex: 0.9;
+  padding: 8px 10px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  background: #fff;
+}
+.inv-recipe-line-item:focus,
+.inv-recipe-line-qty:focus,
+.inv-recipe-line-unit:focus,
+.inv-recipe-line-waste:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+.inv-recipe-line-del {
+  width: 36px; height: 36px;
+  border: 1.5px solid #fecaca;
+  background: #fff5f5;
+  color: #dc2626;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  transition: all 150ms ease;
+  flex-shrink: 0;
+}
+.inv-recipe-line-del:hover {
+  background: #fee2e2;
+  border-color: #f87171;
+  transform: translateY(-1px);
+}
+
+/* Add-line button */
+.inv-recipe-add {
+  margin-top: 8px;
+  width: 100%;
+  border: 1.5px dashed #c7d2fe;
+  color: #4338ca;
+  background: #fafbff;
+  padding: 9px 14px;
+  font-weight: 700;
+  font-size: 13px;
+  border-radius: 12px;
+  transition: all 150ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.inv-recipe-add:hover {
+  background: #eef2ff;
+  border-style: solid;
+}
+
+/* Info footer (explains the auto-flip behaviour) */
+.inv-recipe-foot-info {
+  font-size: 12px;
+  color: #475569;
+  padding: 10px 14px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 12px;
+  line-height: 1.6;
+}
+.inv-recipe-foot-info i { color: #16a34a; margin-inline-end: 6px; }
+.inv-recipe-foot-info b { color: #047857; }
+
+/* Unlink button (only shown when editing existing recipe) */
+.inv-recipe-unlink {
+  margin-top: 4px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid #fecaca;
+  background: #fff;
+  color: #dc2626;
+  font-weight: 700;
+  font-size: 13px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 150ms ease;
+}
+.inv-recipe-unlink:hover {
+  background: #fef2f2;
+  border-color: #f87171;
+}
+
+/* Footer action row */
+.inv-recipe-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 12px 18px;
+  border-top: 1px solid #e2e8f0;
+  background: #fafbfc;
+  border-radius: 0 0 var(--wo-radius-md, 14px) var(--wo-radius-md, 14px);
+}
+
+/* Recipe button on catalog rows when item already has a recipe */
+.wo-icon-btn.primary {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.35);
+}
+.wo-icon-btn.primary:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+@media (max-width: 720px) {
+  .inv-recipe-meta-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .inv-recipe-meta-row .inv-recipe-meta-notes {
+    grid-column: 1 / -1;
+  }
+  .inv-recipe-line {
+    flex-wrap: wrap;
+  }
+  .inv-recipe-line-item { flex: 1 1 100%; }
+  .inv-recipe-line-qty,
+  .inv-recipe-line-unit,
+  .inv-recipe-line-waste { flex: 1; }
+}

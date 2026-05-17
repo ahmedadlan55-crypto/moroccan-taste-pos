@@ -6072,6 +6072,56 @@ window.invCatOnFilterChange = function() {
   loadInvCatalog();
 };
 
+// v5.10.72 — DEFENSIVE click delegation for the catalog action buttons.
+// In case the browser fails to bind an inline onclick="..." attribute
+// (which has happened before due to a stale-cached app.js + rolling
+// deploy mismatch), this delegated listener catches the click on the
+// document level and dispatches to the right handler based on the
+// button's icon class. Idempotent — only attaches once via the
+// _invCatDelegationBound flag. Runs only for clicks INSIDE #tbInvCatalog
+// so it can't interfere with any other admin section.
+if (!window._invCatDelegationBound) {
+  document.addEventListener('click', function(ev) {
+    var btn = ev.target && ev.target.closest && ev.target.closest('#tbInvCatalog .invc-icon-btn');
+    if (!btn) return;
+    // Skip if the button already has an onclick handler that fired
+    // (we don't want to double-handle; the inline onclick wins when
+    // present and working).
+    if (btn._invCatHandled) { btn._invCatHandled = false; return; }
+    var row = btn.closest('.invc-row--data');
+    if (!row) return;
+    var id   = row.getAttribute('data-id') || '';
+    var name = '';
+    var nameNode = row.querySelector('.invc-name-text');
+    if (nameNode) name = nameNode.textContent || '';
+
+    var icon = btn.querySelector('i');
+    var iconCls = icon ? icon.className : '';
+
+    try {
+      if (iconCls.indexOf('fa-pen') >= 0 && typeof openRawModal === 'function') {
+        openRawModal(id);
+        ev.preventDefault();
+      } else if (iconCls.indexOf('fa-utensils') >= 0 && typeof invCatOpenRecipeModal === 'function') {
+        invCatOpenRecipeModal(id, name);
+        ev.preventDefault();
+      } else if (iconCls.indexOf('fa-trash') >= 0 && iconCls.indexOf('fa-trash-restore') < 0 && typeof invCatDeleteItem === 'function') {
+        invCatDeleteItem(id, name);
+        ev.preventDefault();
+      } else if (iconCls.indexOf('fa-trash-restore') >= 0 && typeof invCatRestoreItem === 'function') {
+        invCatRestoreItem(id, name);
+        ev.preventDefault();
+      } else if (iconCls.indexOf('fa-fire') >= 0 && typeof invCatHardDeleteItem === 'function') {
+        invCatHardDeleteItem(id, name);
+        ev.preventDefault();
+      }
+    } catch(e) {
+      console.error('[invCat delegation]', e);
+    }
+  }, false);
+  window._invCatDelegationBound = true;
+}
+
 function loadInvCatalog() {
   var token = localStorage.getItem('pos_token') || '';
   var s = window._invCatState;

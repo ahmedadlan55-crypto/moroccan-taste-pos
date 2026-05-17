@@ -17759,23 +17759,50 @@ function erpLoadBOM() {
 function erpOpenBomModal(id, preselect) {
   preselect = preselect || null;
 
-  // Path 1: caller already gave us a menu product → editor directly
+  // v5.10.76 — single entry point for ALL recipe edits in the project.
+  // Routes to the right editor based on productSource:
+  //   • 'inv'  → invCatOpenRecipeModal (WoModal-based, in app.js)
+  //              for inventory items (raw → semi conversion)
+  //   • 'menu' → erpOpenRecipeEditor (WoModal-based, in this file)
+  //              for menu products (with sale-price/margin calculation)
+  // Both editors now share the same WoModal shell, so the user gets
+  // the same visual experience regardless of which path opened them.
+
+  // Path 1: caller pre-selected an INV item → inv editor
+  if (preselect && preselect.productId && preselect.source === 'inv') {
+    if (typeof window.invCatOpenRecipeModal === 'function') {
+      return window.invCatOpenRecipeModal(preselect.productId, preselect.productName || '');
+    }
+    return _v3Toast('محرر وصفات المخزون غير مُحمَّل', true);
+  }
+
+  // Path 2: caller pre-selected a MENU product → menu recipe editor
   if (preselect && preselect.productId) {
     return window.erpOpenRecipeEditor(preselect.productId);
   }
 
-  // Path 2: editing existing BOM by id → resolve productId via /erp/bom
+  // Path 3: editing existing BOM by id → resolve productId via /erp/bom
   if (id) {
     return _erpGet('/erp/bom', function(boms) {
       var b = (Array.isArray(boms) ? boms : []).find(function(x){ return String(x.id) === String(id); });
-      if (b && b.productId && (b.productSource || 'menu') === 'menu') {
+      if (!b || !b.productId) {
+        return _v3Toast('لم يُعثر على الوصفة', true);
+      }
+      var src = b.productSource || 'menu';
+      if (src === 'inv' && typeof window.invCatOpenRecipeModal === 'function') {
+        // v5.10.76 — was previously a hard rejection. Now we route inv
+        // BOMs to the inventory-side editor so editing from any list
+        // (catalog, BOM list, etc.) takes the user to the right UI.
+        return window.invCatOpenRecipeModal(b.productId, b.productName || '');
+      }
+      if (src === 'menu') {
         return window.erpOpenRecipeEditor(b.productId);
       }
-      _v3Toast('هذه الوصفة مرتبطة بمنتج وسيط/مادة خام ولا تُحرر من هنا', true);
+      _v3Toast('نوع الوصفة غير مَعروف: ' + src, true);
     });
   }
 
-  // Path 3: "وصفة جديدة" button (no id, no preselect) → menu-item picker
+  // Path 4: "وصفة جديدة" button (no id, no preselect) → menu-item picker
   return _erpPickMenuForRecipe();
 }
 

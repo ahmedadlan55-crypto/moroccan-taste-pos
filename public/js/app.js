@@ -6140,8 +6140,10 @@ if (!window._invCatDelegationBound) {
       if (iconCls.indexOf('fa-pen') >= 0 && typeof openRawModal === 'function') {
         openRawModal(id);
         ev.preventDefault();
-      } else if (iconCls.indexOf('fa-utensils') >= 0 && typeof invCatOpenRecipeModal === 'function') {
-        invCatOpenRecipeModal(id, name);
+      } else if (iconCls.indexOf('fa-utensils') >= 0 && typeof erpOpenBomModal === 'function') {
+        // v5.10.76 — route through the unified entry point so all recipe
+        // edits go through one dispatcher (erp.js erpOpenBomModal).
+        erpOpenBomModal(null, { productId: id, productName: name, source: 'inv' });
         ev.preventDefault();
       } else if (iconCls.indexOf('fa-trash') >= 0 && iconCls.indexOf('fa-trash-restore') < 0 && typeof invCatDeleteItem === 'function') {
         invCatDeleteItem(id, name);
@@ -6425,12 +6427,16 @@ function _renderInvCatalogTable(items, tab) {
     }
 
     // v5.10.65 — recipe button. Lit purple when the item has an active BOM.
+    // v5.10.76 — calls the unified entry point erpOpenBomModal(null,
+    // {productId, source:'inv'}) instead of invCatOpenRecipeModal
+    // directly. Same end result, but the dispatch happens in ONE
+    // place (erpOpenBomModal) so future routing changes are central.
     var hasRecipe = !!it.hasRecipe;
     var recipeBtnCls = hasRecipe ? 'invc-icon-btn invc-icon-btn--primary' : 'invc-icon-btn';
     var recipeBtnTitle = hasRecipe ? 'تَعديل الوصفة (نصف مُصنَّع)' : 'إضافة وصفة (تَحويل إلى نصف مُصنَّع)';
     actions =
       '<button class="invc-icon-btn" onclick="openRawModal(\'' + idEsc + '\')" title="تعديل"><i class="fas fa-pen"></i></button>' +
-      '<button class="' + recipeBtnCls + '" onclick="invCatOpenRecipeModal(\'' + idEsc + '\',\'' + nameEsc + '\')" title="' + recipeBtnTitle + '"><i class="fas fa-utensils"></i></button>' +
+      '<button class="' + recipeBtnCls + '" onclick="erpOpenBomModal(null,{productId:\'' + idEsc + '\',productName:\'' + nameEsc + '\',source:\'inv\'})" title="' + recipeBtnTitle + '"><i class="fas fa-utensils"></i></button>' +
       '<button class="invc-icon-btn invc-icon-btn--danger" onclick="invCatDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف (يذهب إلى السلة)"><i class="fas fa-trash"></i></button>';
 
     // v5.16.0 — Kind chip distinguishes raw vs semi-finished
@@ -6561,8 +6567,17 @@ window._invCatRecipeState = {
   saving: false
 };
 
-// Open the recipe modal for a given inv-item. Loads existing recipe
-// (if any) and the raw-items picker pool, then renders the modal body.
+// v5.10.76 — Open the recipe modal for an inv-item using the project's
+// UNIFIED modal framework (WoModal). Previously this used a custom
+// #invCatRecipeModal HTML + bespoke .inv-recipe-* CSS (~160 lines)
+// which made the modal look DIFFERENT from every other modal in the
+// admin. Now it shares the same look/feel/animations as the recipe
+// editor (erpOpenRecipeEditor), the workflow modals, and everything
+// else built with WoModal — true visual consistency.
+//
+// The function logic itself (data fetching, line management, save,
+// kind-flip) is preserved as-is. Only the SHELL changed from
+// "manually opening a static HTML modal" to "WoModal.open({...})".
 window.invCatOpenRecipeModal = function(itemId, itemName) {
   var st = window._invCatRecipeState;
   st.itemId   = itemId;
@@ -6575,17 +6590,34 @@ window.invCatOpenRecipeModal = function(itemId, itemName) {
   st.consumptionWarehouseId = null;
   st.saving = false;
 
-  var titleEl = q('#invRecipeMdlTitle');
-  if (titleEl) titleEl.textContent = 'الوصفة: ' + (itemName || '—');
-
-  // Render skeleton first so the modal opens immediately.
-  var bodyEl = q('#invRecipeMdlBody');
-  if (bodyEl) {
-    bodyEl.innerHTML = '<div style="padding:30px;text-align:center;color:#94a3b8;">' +
-      '<i class="fas fa-spinner fa-spin" style="font-size:24px;"></i>' +
-      '<div style="margin-top:8px;font-size:13px;">جاري تحميل الوصفة…</div></div>';
+  // Open the project's standard modal with a skeleton body. The actual
+  // editor UI is injected by _invCatRecipeRender() once the BOM + raw-
+  // catalog fetches complete (see below).
+  if (typeof WoModal === 'undefined' || !WoModal.open) {
+    // Hard guard — wo-modal.js must load before this; surface a clear
+    // message instead of failing silently.
+    if (typeof showToast === 'function') showToast('WoModal غير مُحمَّل — أَعِد تحميل الصفحة', true);
+    return;
   }
-  openModal('#invCatRecipeModal');
+  WoModal.open({
+    icon: 'fa-mortar-pestle',
+    iconColor: '#7c3aed',
+    title: 'وصفة المادة',
+    subtitle: itemName ? ('المادة: ' + itemName) : 'مادة بدون اسم',
+    body:
+      '<div id="invRecipeMdlBody">' +
+        '<div style="padding:30px 16px;text-align:center;color:#94a3b8;">' +
+          '<i class="fas fa-spinner fa-spin" style="font-size:24px;color:#7c3aed;"></i>' +
+          '<div style="margin-top:10px;font-size:13px;font-weight:600;">جاري تحميل الوصفة…</div>' +
+        '</div>' +
+      '</div>',
+    size: 'lg',
+    footer:
+      '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+      '<button class="wo-btn wo-btn-primary" id="invRecipeMdlSave" onclick="invCatRecipeSave()">' +
+        '<i class="fas fa-save"></i> حفظ الوصفة' +
+      '</button>'
+  });
 
   var token = localStorage.getItem('pos_token') || '';
   // Two parallel fetches: (a) the existing BOM for this item (if any),
@@ -6641,10 +6673,14 @@ window.invCatOpenRecipeModal = function(itemId, itemName) {
   });
 };
 
-// Render the full modal body (header fields + lines table + footer).
+// v5.10.76 — Render the full modal body using the project's `wo-*`
+// design tokens (same vocabulary as the unified erpOpenRecipeEditor
+// and every other modal in the admin). No more bespoke .inv-recipe-*
+// classes; all styling is inline using wo-* utilities that pick up
+// the global purple identity from admin-skin.css automatically.
 function _invCatRecipeRender() {
   var st = window._invCatRecipeState;
-  var bodyEl = q('#invRecipeMdlBody');
+  var bodyEl = document.getElementById('invRecipeMdlBody');
   if (!bodyEl) return;
 
   var pickerOpts = '<option value="">— اختر مادة خام —</option>' +
@@ -6660,50 +6696,74 @@ function _invCatRecipeRender() {
 
   var hasRecipe = !!st.bomId;
 
+  // Layout: header metadata band (yield + unit + notes) on a purple-
+  // tinted gradient surface, then the ingredients grid, then a contextual
+  // info chip, then (only when editing) the unlink-recipe action.
   bodyEl.innerHTML =
-    '<div class="inv-recipe-meta">' +
-      '<div class="inv-recipe-meta-row">' +
-        '<label>كمية الإنتاج لكل دفعة' +
-          '<input type="number" id="invRecipeYieldQty" min="0.0001" step="0.0001" value="' + st.yieldQuantity + '" onchange="window._invCatRecipeState.yieldQuantity=Number(this.value)||1">' +
+    // ─── Metadata band ────────────────────────────────────────────────
+    '<div style="background:linear-gradient(135deg,#faf5ff,#f3e8ff);' +
+                'border:1px solid #c7d2fe;border-radius:14px;padding:14px 16px;' +
+                'margin-bottom:14px;">' +
+      '<div style="display:grid;grid-template-columns:140px 100px 1fr;gap:12px;">' +
+        '<label style="display:flex;flex-direction:column;gap:4px;font-size:11.5px;font-weight:700;color:#475569;">' +
+          'كمية الإنتاج لكل دفعة' +
+          '<input type="number" min="0.0001" step="0.0001" value="' + st.yieldQuantity + '"' +
+                 ' onchange="window._invCatRecipeState.yieldQuantity=Number(this.value)||1"' +
+                 ' style="padding:8px 12px;border:1.5px solid #c7d2fe;border-radius:10px;font-size:13px;font-family:inherit;background:#fff;">' +
         '</label>' +
-        '<label>الوحدة' +
-          '<input type="text" id="invRecipeYieldUnit" value="' + _invHubEsc(st.yieldUnit) + '" onchange="window._invCatRecipeState.yieldUnit=this.value||\'PCS\'">' +
+        '<label style="display:flex;flex-direction:column;gap:4px;font-size:11.5px;font-weight:700;color:#475569;">' +
+          'الوحدة' +
+          '<input type="text" value="' + _invHubEsc(st.yieldUnit) + '"' +
+                 ' onchange="window._invCatRecipeState.yieldUnit=this.value||\'PCS\'"' +
+                 ' style="padding:8px 12px;border:1.5px solid #c7d2fe;border-radius:10px;font-size:13px;font-family:inherit;background:#fff;">' +
         '</label>' +
-        '<label class="inv-recipe-meta-notes">ملاحظات' +
-          '<input type="text" id="invRecipeNotes" placeholder="اختياري" value="' + _invHubEsc(st.notes) + '" onchange="window._invCatRecipeState.notes=this.value">' +
+        '<label style="display:flex;flex-direction:column;gap:4px;font-size:11.5px;font-weight:700;color:#475569;">' +
+          'ملاحظات (اختياري)' +
+          '<input type="text" placeholder="مثال: تَخلط في كاسة بسعة 5 لتر…" value="' + _invHubEsc(st.notes) + '"' +
+                 ' onchange="window._invCatRecipeState.notes=this.value"' +
+                 ' style="padding:8px 12px;border:1.5px solid #c7d2fe;border-radius:10px;font-size:13px;font-family:inherit;background:#fff;">' +
         '</label>' +
       '</div>' +
     '</div>' +
-    '<div class="inv-recipe-lines-wrap">' +
-      '<div class="inv-recipe-lines-head">' +
+    // ─── Ingredients list ─────────────────────────────────────────────
+    '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:12px 14px;margin-bottom:14px;">' +
+      '<div style="display:flex;gap:8px;align-items:center;padding:4px 4px 10px;font-size:11px;font-weight:800;' +
+                  'color:#64748b;letter-spacing:0.04em;text-transform:uppercase;border-bottom:1.5px dashed #e2e8f0;' +
+                  'margin-bottom:10px;">' +
         '<span style="flex:2.2;">المُكوِّن (مادة خام)</span>' +
-        '<span style="flex:1;">الكمية</span>' +
-        '<span style="flex:0.9;">الوحدة</span>' +
-        '<span style="flex:0.9;">فاقد %</span>' +
+        '<span style="flex:1;text-align:end;">الكمية</span>' +
+        '<span style="flex:0.9;text-align:end;">الوحدة</span>' +
+        '<span style="flex:0.9;text-align:end;">فاقد %</span>' +
         '<span style="width:36px;text-align:center;">×</span>' +
       '</div>' +
       '<div id="invRecipeLines">' + rowsHtml + '</div>' +
-      '<button class="wo-btn wo-btn-ghost inv-recipe-add" onclick="invCatRecipeAddLine()">' +
+      '<button class="wo-btn wo-btn-ghost" onclick="invCatRecipeAddLine()"' +
+              ' style="margin-top:10px;width:100%;border:1.5px dashed #c7d2fe;color:#4c1d95;background:#fafbff;">' +
         '<i class="fas fa-plus"></i> إضافة مُكوِّن' +
       '</button>' +
     '</div>' +
-    '<div class="inv-recipe-foot-info">' +
-      '<i class="fas fa-info-circle"></i> ' +
-      'حِفظ الوصفة سيُحوِّل هذا الصنف تلقائياً إلى <b>"نصف مُصنَّع"</b> ' +
-      'ويُتيح استخدامه في أوامر الإنتاج.' +
+    // ─── Info chip ────────────────────────────────────────────────────
+    '<div style="font-size:12.5px;color:#475569;padding:10px 14px;background:#f0fdf4;' +
+                'border:1px solid #bbf7d0;border-radius:12px;line-height:1.6;margin-bottom:' +
+                (hasRecipe ? '10px' : '0') + ';">' +
+      '<i class="fas fa-circle-info" style="color:#16a34a;margin-inline-end:6px;"></i>' +
+      'حفظ الوصفة سيُحوِّل هذا الصنف تلقائياً إلى ' +
+      '<b style="color:#047857;">"نصف مُصنَّع"</b> ويُتيح استخدامه في أوامر الإنتاج.' +
     '</div>' +
+    // ─── Unlink button (edit mode only) ───────────────────────────────
     (hasRecipe
-      ? '<button class="wo-btn wo-btn-danger-ghost inv-recipe-unlink" onclick="invCatRecipeUnlink()">' +
-        '<i class="fas fa-unlink"></i> إلغاء الوصفة (إعادة إلى مادة خام)' +
+      ? '<button class="wo-btn" onclick="invCatRecipeUnlink()"' +
+        ' style="width:100%;padding:10px 14px;border:1.5px solid #fecaca;background:#fff;' +
+               'color:#dc2626;font-weight:700;font-size:13px;border-radius:12px;">' +
+        '<i class="fas fa-unlink"></i> إلغاء الوصفة (إعادة الصنف إلى مادة خام)' +
         '</button>'
       : '');
 }
 
-// One line row in the recipe lines table. Bound to st.lines[idx].
+// One ingredient row — uses inline wo-* styling for consistency with
+// the rest of the project's form controls. v5.10.76: bespoke
+// .inv-recipe-line-* classes replaced with inline styles.
 function _invCatRecipeRenderLine(line, idx, pickerOpts) {
-  // If the line has a componentItemId but we don't have it in the picker
-  // (e.g. it's a semi item that was once a raw component), keep it
-  // as a literal option so the value isn't lost on re-render.
   var inPool = window._invCatRecipeState.rawCatalog.some(function(r) {
     return r.id === line.componentItemId;
   });
@@ -6711,19 +6771,32 @@ function _invCatRecipeRenderLine(line, idx, pickerOpts) {
     ? '<option value="' + _invHubEsc(line.componentItemId) + '" selected>' +
         _invHubEsc(line.itemName || line.componentItemId) + ' (خارج القائمة)</option>'
     : '';
-  // Selected value injection
   var optsWithSelect = pickerOpts.replace(
     'value="' + _invHubEsc(line.componentItemId) + '"',
     'value="' + _invHubEsc(line.componentItemId) + '" selected'
   );
-  return '<div class="inv-recipe-line" data-idx="' + idx + '">' +
-    '<select class="inv-recipe-line-item" onchange="window._invCatRecipeState.lines[' + idx + '].componentItemId=this.value; var o=this.options[this.selectedIndex]; window._invCatRecipeState.lines[' + idx + '].itemName=o?o.textContent:\'\'">' +
+  var inputStyle = 'padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:10px;' +
+                   'font-size:13px;font-family:inherit;background:#fff;';
+  var numStyle = inputStyle + 'text-align:end;font-variant-numeric:tabular-nums;';
+  return '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;" data-idx="' + idx + '">' +
+    '<select style="flex:2.2;' + inputStyle + '"' +
+            ' onchange="window._invCatRecipeState.lines[' + idx + '].componentItemId=this.value;' +
+                      ' var o=this.options[this.selectedIndex];' +
+                      ' window._invCatRecipeState.lines[' + idx + '].itemName=o?o.textContent:\'\'">' +
       extraOpt + optsWithSelect +
     '</select>' +
-    '<input type="number" min="0" step="0.0001" class="inv-recipe-line-qty" value="' + line.quantity + '" onchange="window._invCatRecipeState.lines[' + idx + '].quantity=Number(this.value)||0">' +
-    '<input type="text" class="inv-recipe-line-unit" value="' + _invHubEsc(line.unit || 'PCS') + '" onchange="window._invCatRecipeState.lines[' + idx + '].unit=this.value||\'PCS\'">' +
-    '<input type="number" min="0" max="100" step="0.1" class="inv-recipe-line-waste" value="' + line.wastePct + '" onchange="window._invCatRecipeState.lines[' + idx + '].wastePct=Number(this.value)||0">' +
-    '<button class="inv-recipe-line-del" onclick="invCatRecipeRemoveLine(' + idx + ')" title="حذف الصف"><i class="fas fa-times"></i></button>' +
+    '<input type="number" min="0" step="0.0001" value="' + line.quantity + '" style="flex:1;' + numStyle + '"' +
+           ' onchange="window._invCatRecipeState.lines[' + idx + '].quantity=Number(this.value)||0">' +
+    '<input type="text" value="' + _invHubEsc(line.unit || 'PCS') + '" style="flex:0.9;' + inputStyle + '"' +
+           ' onchange="window._invCatRecipeState.lines[' + idx + '].unit=this.value||\'PCS\'">' +
+    '<input type="number" min="0" max="100" step="0.1" value="' + line.wastePct + '" style="flex:0.9;' + numStyle + '"' +
+           ' onchange="window._invCatRecipeState.lines[' + idx + '].wastePct=Number(this.value)||0">' +
+    '<button onclick="invCatRecipeRemoveLine(' + idx + ')" title="حذف الصف"' +
+            ' style="width:36px;height:36px;border:1.5px solid #fecaca;background:#fff5f5;' +
+                   'color:#dc2626;border-radius:10px;cursor:pointer;display:inline-flex;' +
+                   'align-items:center;justify-content:center;font-size:13px;flex-shrink:0;">' +
+      '<i class="fas fa-times"></i>' +
+    '</button>' +
     '</div>';
 }
 
@@ -6812,7 +6885,7 @@ window.invCatRecipeSave = function() {
         throw new Error((k && (k.message || k.error)) || 'فشل تَحويل الصنف إلى نصف مُصنَّع');
       }
       showToast('تم حفظ الوصفة وتَحويل الصنف إلى نصف مُصنَّع', false);
-      closeModal('#invCatRecipeModal');
+      if (typeof WoModal !== 'undefined' && WoModal.close) WoModal.close();  // v5.10.76
       if (typeof loadInvCatalog === 'function') loadInvCatalog();
     })
     .catch(function(err) {
@@ -6853,7 +6926,7 @@ window.invCatRecipeUnlink = function() {
         throw new Error((k && (k.message || k.error)) || 'تم حذف الوصفة، لكن تَعذَّر إرجاع الصنف إلى مادة خام');
       }
       showToast('تم إلغاء الوصفة — الصنف عاد مادة خام', false);
-      closeModal('#invCatRecipeModal');
+      if (typeof WoModal !== 'undefined' && WoModal.close) WoModal.close();  // v5.10.76
       if (typeof loadInvCatalog === 'function') loadInvCatalog();
     })
     .catch(function(err) {

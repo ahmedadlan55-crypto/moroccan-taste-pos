@@ -80,6 +80,26 @@
   <link rel="stylesheet" href="/pos/keyboard.css?v=10">
 
   <!-- ═══════════════════════════════════════════════════════════════════
+       v5.10.68 — Admin Skin (Drop-in Visual Upgrade)
+       ═══════════════════════════════════════════════════════════════════
+       New brand identity (purple #7c3aed instead of blue #0d47a1) plus
+       refined corners / shadows / focus rings / scrollbars across the
+       whole admin. This is a PURE CSS overlay — no HTML, JS, route, or
+       DB change. The skin uses `!important` to override base styles
+       safely, which is why it MUST be the LAST stylesheet loaded.
+
+       The base CSS files above are intentionally LEFT IN PLACE so the
+       owner can A/B compare. To revert the visual identity to the
+       original blue:
+          → DELETE the single <link> below
+          → Hard refresh (Ctrl+Shift+R)
+          → Everything reverts INSTANTLY, no other change needed.
+
+       Full rationale + scope: public/css/admin-skin.README.md
+       ═══════════════════════════════════════════════════════════════════ -->
+  <link rel="stylesheet" href="/css/admin-skin.css?v=1">
+
+  <!-- ═══════════════════════════════════════════════════════════════════
        V5.7.36 — INLINE FULLSCREEN OVERRIDE for the recipe editor.
        Targets the ACTUAL wo-modal-* classes the editor's WoModal renders
        (the previous v5.7.35 rule used wom-* selectors that never matched —

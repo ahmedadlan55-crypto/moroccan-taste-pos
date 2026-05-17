@@ -1,0 +1,418 @@
+/* ════════════════════════════════════════════════════════════════
+   Moroccan Taste — admin-skin.css
+   ════════════════════════════════════════════════════════════════
+   A drop-in visual upgrade layer for the existing admin.
+   Place AFTER /css/style.css and shared/common.css in your <head>.
+   It only overrides visual tokens + a few key components — every
+   feature, section, route, and submenu in your current product
+   stays exactly where it is.
+
+   To remove → delete the single <link> tag pointing to this file.
+
+   <link rel="stylesheet" href="/css/style.css">
+   <link rel="stylesheet" href="/css/admin-skin.css">  ← add this line
+   ════════════════════════════════════════════════════════════════ */
+
+/* ───────────── 1. New brand tokens ───────────── */
+:root {
+  /* Brand — slate + purple + green (matches /shared/design-tokens.css) */
+  --primary:       #1e293b;   /* main slate */
+  --secondary:     #7c3aed;   /* was blue → now purple */
+  --accent:        #7c3aed;
+  --bg-color:      #f1f5f9;
+  --text-dark:     #0f172a;
+  --text-light:    #64748b;
+  --border:        #e2e8f0;
+  --white:         #ffffff;
+  --danger:        #dc2626;
+  --danger-hover:  #b91c1c;
+  --success:       #16a34a;
+  --warning:       #f59e0b;
+
+  /* Extras the skin uses */
+  --mt-accent-soft:   #faf5ff;
+  --mt-accent-soft-2: #f3e8ff;
+  --mt-accent-fg:     #4c1d95;
+  --mt-success-soft:  #dcfce7;
+  --mt-danger-soft:   #fee2e2;
+  --mt-warning-soft:  #fef3c7;
+  --mt-info-soft:     #e0f2fe;
+  --mt-surface-2:     #f8fafc;
+  --mt-surface-3:     #f1f5f9;
+  --mt-surface-4:     #e2e8f0;
+
+  --mt-shadow-focus:  0 0 0 3px rgba(124, 58, 237, 0.18);
+  --mt-r-md:          12px;
+  --mt-r-lg:          16px;
+}
+
+/* ───────────── 2. Base smoothing ───────────── */
+body {
+  background: var(--bg-color);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+               "Segoe UI", "Cairo", "Tahoma", Arial, sans-serif !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+*:focus-visible {
+  outline: 0;
+  box-shadow: var(--mt-shadow-focus);
+}
+
+/* ───────────── 3. Buttons ───────────── */
+.btn {
+  font-weight: 700 !important;
+  border-radius: var(--mt-r-md) !important;
+  letter-spacing: 0 !important;
+  transition: all 160ms cubic-bezier(0.32, 0.72, 0.32, 1) !important;
+  border: 1px solid transparent;
+}
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+
+.btn-primary {
+  background: var(--accent) !important;
+  box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 2px 6px rgba(124,58,237,0.25) !important;
+}
+.btn-primary:hover {
+  background: #6d28d9 !important;
+  box-shadow: 0 4px 14px rgba(124,58,237,0.35) !important;
+}
+.btn-success {
+  background: var(--success) !important;
+  box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 2px 6px rgba(22,163,74,0.25) !important;
+}
+.btn-success:hover {
+  background: #15803d !important;
+  box-shadow: 0 4px 14px rgba(22,163,74,0.35) !important;
+}
+.btn-danger {
+  background: var(--danger) !important;
+  box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 2px 6px rgba(220,38,38,0.25) !important;
+}
+.btn-danger:hover {
+  background: var(--danger-hover) !important;
+  box-shadow: 0 4px 14px rgba(220,38,38,0.35) !important;
+}
+.btn-light {
+  background: var(--white) !important;
+  border-color: var(--border) !important;
+  color: var(--text-dark) !important;
+}
+.btn-light:hover {
+  background: var(--mt-surface-3) !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* ───────────── 4. Inputs ───────────── */
+.form-control {
+  border-radius: var(--mt-r-md) !important;
+  border-width: 1px !important;
+  font-weight: 500;
+  transition: all 160ms;
+}
+.form-control:focus {
+  border-color: var(--accent) !important;
+  box-shadow: var(--mt-shadow-focus) !important;
+}
+.form-label {
+  font-weight: 700 !important;
+  color: #1e293b !important;
+  font-size: 12.5px !important;
+  letter-spacing: 0 !important;
+}
+
+/* ───────────── 5. Cards ───────────── */
+.card {
+  border-radius: var(--mt-r-lg) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: 0 1px 3px rgba(15,23,42,0.04), 0 1px 2px rgba(15,23,42,0.03) !important;
+}
+
+/* ───────────── 6. Sidebar (admin) ───────────── */
+.sidebar {
+  background: #0f172a !important;
+  position: relative;
+}
+.sidebar::before {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(124,58,237,0.18), transparent 60%),
+    radial-gradient(circle at 100% 100%, rgba(124,58,237,0.08), transparent 50%);
+  pointer-events: none;
+}
+.sidebar > * { position: relative; }
+.sidebar-brand {
+  border-bottom: 1px solid rgba(255,255,255,0.06) !important;
+}
+.sidebar-brand i { color: var(--accent) !important; }
+
+.nav-item {
+  border-radius: 8px;
+  margin: 1px 8px;
+  padding: 10px 14px !important;
+  border-inline-end: 0 !important;
+  transition: all 140ms ease;
+}
+.nav-item:hover {
+  background: rgba(255,255,255,0.05) !important;
+}
+.nav-item.active {
+  background: rgba(124,58,237,0.18) !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+  position: relative;
+}
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: -8px;
+  top: 50%; transform: translateY(-50%);
+  width: 3px; height: 18px;
+  background: var(--accent);
+  border-radius: 0 3px 3px 0;
+}
+.nav-item.active i { color: var(--accent) !important; }
+.submenu {
+  background: transparent !important;
+  border: 0 !important;
+  margin: 4px 16px 4px 8px !important;
+  padding: 2px 0;
+  border-inline-start: 2px solid rgba(124,58,237,0.3) !important;
+}
+.submenu .nav-item { padding: 8px 14px !important; font-size: 12.5px !important; }
+
+/* ───────────── 7. Admin header ───────────── */
+.admin-header {
+  background: var(--white) !important;
+  border-bottom: 1px solid var(--border) !important;
+  box-shadow: none !important;
+}
+.admin-header-title { letter-spacing: -0.3px !important; }
+.admin-user-badge {
+  background: var(--mt-surface-3) !important;
+  border-radius: 999px !important;
+  padding: 5px 14px 5px 5px !important;
+}
+.admin-avatar {
+  background: linear-gradient(135deg, var(--accent), #6d28d9) !important;
+  box-shadow: 0 2px 6px rgba(124,58,237,0.3) !important;
+}
+
+/* ───────────── 8. Stat / dashboard cards ───────────── */
+.stat-card {
+  border-radius: var(--mt-r-lg) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: 0 1px 3px rgba(15,23,42,0.04) !important;
+  transition: all 180ms cubic-bezier(0.32, 0.72, 0.32, 1) !important;
+}
+.stat-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent) !important;
+  box-shadow: 0 8px 24px rgba(124,58,237,0.08), 0 4px 12px rgba(15,23,42,0.06) !important;
+}
+.stat-icon {
+  border-radius: 12px !important;
+  background: var(--mt-accent-soft) !important;
+  color: var(--mt-accent-fg) !important;
+}
+.stat-info p { letter-spacing: -0.4px !important; }
+
+.dash-box {
+  border-radius: var(--mt-r-lg) !important;
+  border: 1px solid var(--border) !important;
+}
+
+/* ───────────── 9. Tables ───────────── */
+.table-wrapper {
+  border-radius: var(--mt-r-lg) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: 0 1px 3px rgba(15,23,42,0.04) !important;
+}
+.table th {
+  background: var(--mt-surface-2) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.5px !important;
+  color: var(--text-light) !important;
+  padding: 12px 16px !important;
+}
+.table td { padding: 14px 16px !important; }
+.table tbody tr { transition: background 120ms; }
+.table tbody tr:hover { background: var(--mt-surface-2) !important; }
+
+/* ───────────── 10. Badges ───────────── */
+.badge {
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  padding: 3px 9px !important;
+  border-radius: 999px !important;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 5px;
+}
+.badge.green  { background: var(--mt-success-soft) !important; color: #14532d !important; }
+.badge.red    { background: var(--mt-danger-soft) !important; color: #7f1d1d !important; }
+.badge.yellow { background: var(--mt-warning-soft) !important; color: #78350f !important; }
+.badge.blue   { background: var(--mt-info-soft) !important; color: #075985 !important; }
+
+/* ───────────── 11. Modals ───────────── */
+.modal-content {
+  border-radius: 20px !important;
+  box-shadow: 0 24px 64px rgba(15,23,42,0.18), 0 8px 24px rgba(15,23,42,0.08) !important;
+}
+.modal-title { letter-spacing: -0.2px !important; }
+.glass-modal-content {
+  background: rgba(255, 255, 255, 0.96) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 24px 64px rgba(15,23,42,0.18) !important;
+}
+.glass-modal-title i { color: var(--accent) !important; }
+.glass-modal-close:hover {
+  background: var(--mt-danger-soft) !important;
+  color: var(--danger) !important;
+}
+
+/* ───────────── 12. Toasts ───────────── */
+.toast {
+  background: var(--primary) !important;
+  border-radius: 12px !important;
+  font-weight: 700 !important;
+  padding: 12px 20px !important;
+  box-shadow: 0 16px 40px rgba(15,23,42,0.20) !important;
+}
+.toast.success { background: var(--success) !important; }
+.toast.error   { background: var(--danger) !important; }
+
+/* ───────────── 13. ERP gradient KPI cards ───────────── */
+.erp-kpi-card {
+  border-radius: 18px !important;
+  box-shadow: 0 8px 24px -4px rgba(15,23,42,0.12) !important;
+}
+.erp-kpi-card.bg-blue   { background: linear-gradient(135deg, #7c3aed, #6d28d9) !important; }
+.erp-kpi-card.bg-green  { background: linear-gradient(135deg, #16a34a, #15803d) !important; }
+.erp-kpi-card.bg-purple { background: linear-gradient(135deg, #a855f7, #7c3aed) !important; }
+.erp-kpi-card.bg-orange { background: linear-gradient(135deg, #f59e0b, #d97706) !important; }
+.erp-kpi-val { letter-spacing: -0.5px !important; }
+
+/* ───────────── 14. Sales tabs ───────────── */
+.sales-tabs {
+  background: var(--mt-surface-3) !important;
+  border: 0 !important;
+  padding: 4px !important;
+  border-radius: 12px !important;
+}
+.sales-tab {
+  border-radius: 9px !important;
+  font-size: 13px !important;
+  padding: 8px 14px !important;
+  font-weight: 700 !important;
+}
+.sales-tab.active {
+  background: var(--white) !important;
+  color: var(--text-dark) !important;
+  box-shadow: 0 1px 3px rgba(15,23,42,0.08) !important;
+}
+
+/* ───────────── 15. Payment summary + breakdown ───────────── */
+.pay-summary-card {
+  border-radius: var(--mt-r-lg) !important;
+  border: 1px solid var(--border) !important;
+}
+.pay-summary-card:hover {
+  border-color: var(--accent) !important;
+  transform: translateY(-2px);
+}
+.breakdown-btn {
+  border-radius: 999px !important;
+  border-width: 1px !important;
+  font-size: 12.5px !important;
+  padding: 7px 14px !important;
+}
+.breakdown-btn.active {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 4px 12px rgba(124,58,237,0.25) !important;
+}
+.breakdown-btn:hover:not(.active) {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+
+/* ───────────── 16. POS surface (cashier) ───────────── */
+#posView {
+  background:
+    radial-gradient(circle at 0% 0%, rgba(167,139,250,0.10), transparent 50%),
+    radial-gradient(circle at 100% 100%, rgba(124,58,237,0.08), transparent 50%),
+    linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%) !important;
+}
+.cat-pill.active {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 4px 12px rgba(124,58,237,0.25) !important;
+}
+.pos-item.selected {
+  border-color: var(--accent) !important;
+  background: var(--mt-accent-soft) !important;
+  box-shadow: 0 4px 16px rgba(124,58,237,0.10) !important;
+}
+.pos-item-price {
+  background: var(--mt-accent-soft) !important;
+  color: var(--mt-accent-fg) !important;
+}
+.qty-btn { color: var(--accent) !important; }
+.qty-btn:hover { background: rgba(124,58,237,0.1) !important; }
+.pay-btn.active {
+  border-color: var(--accent) !important;
+  background: var(--mt-accent-soft) !important;
+  color: var(--mt-accent-fg) !important;
+  box-shadow: 0 4px 12px rgba(124,58,237,0.12) !important;
+}
+
+/* ───────────── 17. Login (cosmic) — slight polish only ───────────── */
+.login-box .btn-primary {
+  background: rgba(255,255,255,0.95) !important;
+  color: #4c1d95 !important;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25) !important;
+}
+.login-lang-toggle { background: rgba(255,255,255,0.12) !important; }
+
+/* ───────────── 18. Filter bar ───────────── */
+.filter-bar, .wh-filter-bar {
+  border-radius: var(--mt-r-lg) !important;
+  box-shadow: 0 1px 3px rgba(15,23,42,0.04) !important;
+}
+.wh-fb-search input.form-control:focus {
+  border-color: var(--accent) !important;
+  box-shadow: var(--mt-shadow-focus) !important;
+}
+.wh-fb-select {
+  background: var(--mt-accent-soft) !important;
+  border-color: #d8b4fe !important;
+}
+
+/* ───────────── 19. Searchable dropdown ───────────── */
+.sd-results {
+  border-color: var(--accent) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 12px 32px rgba(15,23,42,0.12) !important;
+}
+.sd-result-item:hover { background: var(--mt-accent-soft) !important; }
+.sd-result-item.sd-add-new {
+  background: var(--mt-success-soft) !important;
+  color: #14532d !important;
+}
+
+/* ───────────── 20. Tiny utility — better scrollbars ───────────── */
+* { scrollbar-width: thin; scrollbar-color: var(--mt-surface-4) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb {
+  background: var(--mt-surface-4);
+  border-radius: 999px;
+  border: 2px solid var(--bg-color);
+}
+*::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+
+/* ════════════════════════════════════════════════════════════════
+   End of skin.
+   ════════════════════════════════════════════════════════════════ */

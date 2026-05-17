@@ -61,6 +61,14 @@
   <link rel="stylesheet" href="/pos/style.css?v=11">
   <link rel="stylesheet" href="/pos/keyboard.css?v=9">
 
+  <!-- v5.10.68 — Admin Skin (Drop-in Visual Upgrade) — same skin as the
+       admin shell, with POS-specific rules (purple category pills, item
+       selection ring, payment-button hover). Loaded LAST so its
+       !important overrides win. To revert the cashier UI to the
+       previous blue identity: delete this single <link>.
+       Details: public/css/admin-skin.README.md -->
+  <link rel="stylesheet" href="/css/admin-skin.css?v=1">
+
   <script defer src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script defer src="/shared/api-bridge.js"></script>
   <script defer src="/shared/common.js"></script>

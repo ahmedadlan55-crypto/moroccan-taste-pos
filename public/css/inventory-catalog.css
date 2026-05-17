@@ -241,34 +241,55 @@
      tbody/td via the :nth-child(N) selectors further down). Header text
      and data text now sit on the SAME vertical line, always. */
   table-layout: fixed;
-  /* The sum of the canonical column widths below is 1584px. On narrow
-     viewports this triggers horizontal scroll inside .wo-table-surface
-     (above). On wide screens (≥1600px) the table fits naturally. */
+  /* v5.10.66 — force border-collapse:collapse to override the
+     `border-collapse: separate` inherited from .wo-table in
+     warehouse-ops.css:817. With `separate` + sticky thead + fixed
+     layout, Blink/Webkit compute thead column widths from a different
+     containing block than tbody, shifting all columns by ~1 column
+     visually. Collapsing the border model eliminates the per-cell
+     spacing variance that was amplifying the formatting-context drift. */
+  border-collapse: collapse;
+  /* v5.10.66 — sum of canonical column widths is now 1614px (was 1584
+     before v5.10.66 widened the Actions column from 110→140 to fit the
+     three icon buttons added in v5.10.65). On narrow viewports this
+     triggers horizontal scroll inside .wo-table-surface (above). On
+     wide screens (≥1640px) the table fits naturally. */
   width: 100%;
-  min-width: 1584px;
+  min-width: 1614px;
 }
 #sec_invCatalog .wo-table thead {
-  position: sticky;
-  top: 0;
-  z-index: 5;
+  /* v5.10.66 — REMOVED `position: sticky; top: 0; z-index: 5`.
+     The sticky-thead added in v5.10.64 was THE root cause of the
+     "header sits over a different column" bug the owner reported
+     for the 4th time:
+        sticky thead + sticky <th> (inherited from
+        warehouse-ops.css:832) + border-collapse:separate +
+        table-layout:fixed + .wo-table-surface{overflow-x:auto}
+        => Blink/Webkit assign different containing blocks to thead
+        vs tbody column tracks, shifting them by a full column.
+     We lose nothing functional: .wo-table-surface has
+     `overflow-y: hidden` (v5.10.64) so the sticky NEVER actually
+     engaged — the thead just scrolled with the rest of the page.
+     The background gradient is preserved purely as cosmetic chrome. */
   background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
 }
-#sec_invCatalog .wo-table thead::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 6px;
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.08), transparent);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 200ms ease;
-}
-#sec_invCatalog .wo-table-surface.is-scrolled .wo-table thead::after {
-  opacity: 1;
-}
+/* v5.10.66 — REMOVED the thead::after drop-shadow pseudo-element.
+   It existed only to give the sticky thead a "lifted" feel as the user
+   scrolled the body underneath; with the sticky behaviour removed (see
+   thead rule above), the shadow had no meaningful target and its
+   `position: absolute` would have rendered it at the BOTTOM of the
+   <table> instead of below the thead row, producing a stray dark line
+   across the data area. The .is-scrolled toggle that opacity-fades it
+   in is now a no-op and harmless to leave in place. */
 #sec_invCatalog .wo-table thead th {
+  /* v5.10.66 — neutralize the `position: sticky; top: 0;` inherited
+     from .wo-table thead th in warehouse-ops.css:832. Combined with
+     the (now-removed) sticky on <thead>, the nested sticky created
+     two competing formatting contexts; even now that the outer thead
+     sticky is gone, the inner one alone can still produce a subtle
+     1-2 column drift in older Chromium builds. `static` is the
+     simplest, most defensive override. */
+  position: static;
   /* v5.10.64 — padding-block synced with <td> below (was 11px / 9px).
      Vertical asymmetry between header and cells made the header row
      LOOK 2px taller than data rows, which the eye reads as a horizontal
@@ -369,7 +390,7 @@
  * freedom to pick different widths for <th> vs <td> depending on each
  * cell's content. Single-value widths remove that freedom.
  *
- * Width budget (sum = 1584px):
+ * Width budget (sum = 1614px after v5.10.66):
  *   ☑ select    44
  *   كود         160
  *   اسم         280
@@ -381,7 +402,7 @@
  *   تكلفة       100
  *   حد ناقص     100
  *   إنشاء       110
- *   إجراءات     110
+ *   إجراءات     140    ← v5.10.66 widened from 110 to fit 3 buttons
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── Column 1: checkbox ────────────────────────────────────────────── */
@@ -491,7 +512,13 @@
 /* ── Column 12: ACTIONS (icon buttons) ─────────────────────────────── */
 #sec_invCatalog .wo-table thead th:nth-child(12),
 #sec_invCatalog .wo-table tbody td:nth-child(12) {
-  width: 110px;
+  /* v5.10.66 — widened from 110→140px. v5.10.65 added a third icon
+     button (recipe) inside .wo-actions; the previous 110px column was
+     defined when only Edit + Delete existed. The math now:
+        3 buttons × 36px width + 2 × 2px gap   = 112px content
+        140px column - 2 × 12px padding-inline = 116px content area
+     → 4px of breathing room, no overflow, last button never clipped. */
+  width: 140px;
   white-space: nowrap;
 }
 #sec_invCatalog .wo-table tbody tr {

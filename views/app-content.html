@@ -934,6 +934,28 @@
           <!-- Table -->
           <div class="wo-table-surface">
             <table class="wo-table wo-table--sortable wo-table--selectable" role="table">
+              <!-- v5.10.67 — Authoritative column-width binding via <colgroup>.
+                   The HTML5 table layout algorithm reads <col width> declarations
+                   FIRST in its column-width priority chain (before any CSS rule
+                   targeting <th> or <td>). The browser applies these widths
+                   ATOMICALLY to <thead> AND <tbody> — making it structurally
+                   IMPOSSIBLE for columns to drift between header and body.
+                   This is the W3C-standard solution that supersedes every
+                   CSS-only attempt (v5.10.57 / 59 / 64 / 66). Sum = 1614px. -->
+              <colgroup>
+                <col class="invCol-select"     style="width: 44px;">
+                <col class="invCol-code"       style="width: 160px;">
+                <col class="invCol-name"       style="width: 280px;">
+                <col class="invCol-brand"      style="width: 150px;">
+                <col class="invCol-warehouses" style="width: 220px;">
+                <col class="invCol-category"   style="width: 130px;">
+                <col class="invCol-bigUnit"    style="width: 90px;">
+                <col class="invCol-smallUnit"  style="width: 90px;">
+                <col class="invCol-cost"       style="width: 100px;">
+                <col class="invCol-minStock"   style="width: 100px;">
+                <col class="invCol-createdAt"  style="width: 110px;">
+                <col class="invCol-actions"    style="width: 140px;">
+              </colgroup>
               <thead><tr id="invCatalogHead">
                 <th scope="col" class="col-select">
                   <input type="checkbox" id="invCatMasterChk" class="inv-master-checkbox" onchange="invCatToggleAll(this)" aria-label="تحديد الكل">

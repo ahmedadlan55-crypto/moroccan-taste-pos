@@ -247,8 +247,14 @@
      layout, Blink/Webkit compute thead column widths from a different
      containing block than tbody, shifting all columns by ~1 column
      visually. Collapsing the border model eliminates the per-cell
-     spacing variance that was amplifying the formatting-context drift. */
-  border-collapse: collapse;
+     spacing variance that was amplifying the formatting-context drift.
+     v5.10.67 — escalated to !important. Owner reported the issue
+     persisted after v5.10.66; static-state investigation confirmed
+     the rule was present and our #sec_invCatalog specificity beats
+     ent-ui.css's .wo-section selector, but the !important guarantees
+     no future addition to ent-ui or warehouse-ops can re-introduce
+     `separate` without an explicit `!important` of its own. */
+  border-collapse: collapse !important;
   /* v5.10.66 — sum of canonical column widths is now 1614px (was 1584
      before v5.10.66 widened the Actions column from 110→140 to fit the
      three icon buttons added in v5.10.65). On narrow viewports this

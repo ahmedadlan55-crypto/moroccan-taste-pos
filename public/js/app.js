@@ -6114,6 +6114,14 @@ if (!window._invCatDelegationBound) {
   document.addEventListener('click', function(ev) {
     var btn = ev.target && ev.target.closest && ev.target.closest('#tbInvCatalog .invc-icon-btn');
     if (!btn) return;
+    // v5.10.74 — SKIP if the button has an inline onclick attribute.
+    // The inline handler fires SYNCHRONOUSLY before this delegation
+    // (which fires on the BUBBLED event). Without this guard, every
+    // click triggered TWO calls to openRawModal/invCatOpenRecipeModal/
+    // invCatDeleteItem — doubling the rate-limit pressure for no
+    // value. Delegation now only fires for buttons without onclick,
+    // which is the true safety-net use case it was designed for.
+    if (btn.hasAttribute && btn.hasAttribute('onclick')) return;
     // Skip if the button already has an onclick handler that fired
     // (we don't want to double-handle; the inline onclick wins when
     // present and working).
@@ -6239,6 +6247,13 @@ function loadInvCatalog() {
         byId[it.id] = d;
       });
       window.cachedRawItems = Object.values(byId);
+      // v5.10.74 — Sync the file-local `let cachedRawItems` (declared
+      // at line ~4095) with window.cachedRawItems. They were two
+      // SEPARATE variables: openRawModal read from the local one
+      // (always []) while loadInvCatalog only wrote to window. Net
+      // effect: 100% cache-miss rate → every edit click triggered
+      // a fetch → Railway 429 cascade. This single line fixes it.
+      cachedRawItems = window.cachedRawItems;
     } catch (_e) { /* cache merge is best-effort */ }
   }).catch(function(err){
     console.warn('[invCatalog] load failed:', err && err.message);
@@ -8149,124 +8164,161 @@ window.invItemShowWarehouses = function(itemId, itemName) {
 // the bubbled event after the inline onclick already ran). The flag
 // auto-clears after 1500ms whether the modal opened or errored, so a
 // stuck flag can never block future legitimate opens.
+// v5.10.74 — Complete refactor of openRawModal. The previous version
+// used recursion (fetch → cache.push → openRawModal(id, opts) again),
+// which collided with the v5.10.73 in-flight guard at the TOP of the
+// function: the recursive re-invoke ALSO hit the guard, returned
+// early, and the modal NEVER opened — even after a successful fetch.
+//
+// New shape:
+//   openRawModal(id, opts)            — public entry point
+//     ├─ cache hit  → _openRawModalWithData(d, opts)
+//     ├─ cache miss → fetch → cache → _openRawModalWithData(d, opts)
+//     └─ no id      → _openRawModalWithData(null, opts)  [new-item mode]
+//   _openRawModalWithData(d, opts)    — private painter
+//     ├─ loads brand options
+//     ├─ fills modal fields (edit if d, blank if d===null)
+//     └─ calls openModal('#modalRawForm')
+//
+// No recursion → no flag collision. In-flight flag cleared at every
+// exit path. Modal opens reliably whether cache hits or misses.
 function openRawModal(id = null, opts = {}) {
   if (window._openRawModalInFlight === id) return;     // dedup same-id
   window._openRawModalInFlight = id;
+  // Auto-clear safety net (in case any branch forgets to clear).
   setTimeout(function(){
     if (window._openRawModalInFlight === id) window._openRawModalInFlight = null;
-  }, 1500);
+  }, 5000);
+  function clearFlag() {
+    if (window._openRawModalInFlight === id) window._openRawModalInFlight = null;
+  }
+
+  // New-item mode: no id, paint blank form.
+  if (!id) {
+    _openRawModalWithData(null, opts);
+    clearFlag();
+    return;
+  }
+
+  // v5.10.74 — Read from BOTH cachedRawItems sources. The local file-
+  // scoped `let cachedRawItems` (line ~4095) and `window.cachedRawItems`
+  // (populated by loadInvCatalog) were two SEPARATE variables — that's
+  // why every click hit cache-miss. We now consult both, preferring
+  // window since loadInvCatalog writes there.
+  var cache = (window.cachedRawItems && window.cachedRawItems.length)
+              ? window.cachedRawItems
+              : (Array.isArray(cachedRawItems) ? cachedRawItems : []);
+
+  var d = cache.find(function (x) { return x && x.id === id; });
+  if (d) {
+    _openRawModalWithData(d, opts);
+    clearFlag();
+    return;
+  }
+
+  // Cache miss — fetch with per-id in-flight dedup so rapid clicks
+  // share one network request. Uses ?q= because the catalog endpoint
+  // ignores ?id= but DOES support `i.id LIKE ?` via the q param.
+  window._invItemFetchInFlight = window._invItemFetchInFlight || Object.create(null);
+  if (window._invItemFetchInFlight[id]) { clearFlag(); return; }
+
+  var token = localStorage.getItem('pos_token') || '';
+  var url = '/api/inventory/catalog?paginated=1&limit=10&q=' + encodeURIComponent(id);
+  window._invItemFetchInFlight[id] = fetch(url, {
+    headers: { 'Authorization': 'Bearer ' + token }
+  })
+  .then(function (r) {
+    if (r.status === 429) throw new Error('rate-limited');
+    if (!r.ok) throw new Error('http-' + r.status);
+    return r.json();
+  })
+  .then(function (payload) {
+    var arr = Array.isArray(payload) ? payload : (payload && payload.items) || [];
+    var it = arr.find(function (x) { return x && x.id === id; });
+    delete window._invItemFetchInFlight[id];
+    if (!it) {
+      showToast('تَعذَّر العثور على هذه المادة — حاول إعادة تحميل القائمة', true);
+      clearFlag();
+      return;
+    }
+    var normalized = {
+      id: it.id, name: it.name, category: it.category,
+      cost: Number(it.cost) || 0,
+      bigUnit: it.bigUnit || '', unit: it.unit || 'حبة',
+      convRate: Number(it.convRate) || 1,
+      minStock: Number(it.minStock) || 0,
+      brandId: it.brandId || it.brand_id || '',
+      kind: it.kind || 'raw'
+    };
+    if (!Array.isArray(window.cachedRawItems)) window.cachedRawItems = [];
+    window.cachedRawItems.push(normalized);
+    // Direct paint — NO recursion, NO second pass through the flag.
+    _openRawModalWithData(normalized, opts);
+    clearFlag();
+  })
+  .catch(function (err) {
+    delete window._invItemFetchInFlight[id];
+    if (err && err.message === 'rate-limited') {
+      showToast('الخادم مزدحم — انتظر 30 ثانية ثم حاول مرة أخرى', true);
+    } else {
+      showToast('فشل الاتصال بالخادم — تحقّق من الاتصال', true);
+    }
+    clearFlag();
+  });
+}
+
+// v5.10.74 — Private painter. Assumes brand-options loading is wrapped
+// around the actual DOM mutation so the brand <select> is populated
+// BEFORE we set the current brand value.
+function _openRawModalWithData(d, opts) {
+  opts = opts || {};
   _loadBrandOptions('#mrBrand', function() {
-    // Set today as the default added_at date (user can backdate)
     var today = new Date().toISOString().slice(0,10);
     if (q("#mrAddedAt")) q("#mrAddedAt").value = today;
     if (q("#mrQty")) q("#mrQty").value = "0";
     if (q("#mrQtyUnit")) q("#mrQtyUnit").value = "small";
 
-    // Warehouse banner — visible only when a warehouse is selected upstream
-    var banner = q("#mrWarehouseBanner");
     var whId   = opts.warehouseId || (window._wmCurrentWarehouseId || '');
     var whName = opts.warehouseName || (window._wmCurrentWarehouseName || '');
-    var whCode = opts.warehouseCode || (window._wmCurrentWarehouseCode || '');
-    // v5.10.6 fallback — pick the current warehouse from the inventory hub
-    // state when not explicitly passed (covers the "+ إضافة مادة" button
-    // inside the per-warehouse view at /erpInventoryMethod hub).
+    // Inventory-hub fallback (v5.10.6) — pick the current warehouse if
+    // not explicitly passed and the user is inside a specific warehouse.
     if (!whId && window._invHub && window._invHub.warehouseId
         && window._invHub.warehouseId !== '__all__') {
       whId = window._invHub.warehouseId;
     }
-    
-    // Set explicit warehouse drop-down and make sure to populate
-    if (q("#mrWarehouseId")) {
-       q("#mrWarehouseId").value = whId || '';
-    }
+    if (q("#mrWarehouseId")) q("#mrWarehouseId").value = whId || '';
 
-    if (!id) {
-      // v5.16.0 — Title reflects the selected kind (defaults to raw).
+    if (!d) {
+      // NEW ITEM mode
       q("#rMdlTitle").innerText = whName
         ? "إضافة مادَّة جَديدة لِمستودَع: " + whName
         : "إضافة مادَّة جَديدة";
       q("#mrId").value = ""; q("#mrName").value = ""; q("#mrCat").value = "";
-      q("#mrCost").value = "0"; q("#mrBigUnit").value = ""; q("#mrUnit").value = "حبة"; q("#mrConvRate").value = "1";
-      q("#mrMin").value = "0";
-      if(q("#mrSmallCost")) q("#mrSmallCost").value = "0";
+      q("#mrCost").value = "0"; q("#mrBigUnit").value = ""; q("#mrUnit").value = "حبة";
+      q("#mrConvRate").value = "1"; q("#mrMin").value = "0";
+      if (q("#mrSmallCost")) q("#mrSmallCost").value = "0";
       if (q("#mrBrand")) q("#mrBrand").value = '';
-      // Default kind = raw unless caller overrides via opts.kind
       if (q("#mrKind")) q("#mrKind").value = (opts && opts.kind === 'semi') ? 'semi' : 'raw';
     } else {
+      // EDIT mode
       q("#rMdlTitle").innerText = "تَعديل مادَّة";
-      var d = cachedRawItems.find(function (x) { return x.id === id; });
-      // v5.10.73 — server fallback for cache miss.
-      //
-      // PREVIOUSLY (v5.10.57): fetched `/api/inventory/catalog?id=X&limit=1`
-      // but the catalog endpoint NEVER recognised an `id` query param —
-      // it only honours { onlyDeleted, brandId, warehouseId, q, paginated,
-      // kind }. So the request returned the FIRST catalog row (not the
-      // user's pick) or an empty page, then push()-ed a WRONG record into
-      // cachedRawItems and re-invoked openRawModal with the original id.
-      // That ID was still missing → infinite cache-miss → 10× /erp/brands
-      // + 10× /catalog → Railway 429 rate-limit → toast tower → owner
-      // angry. Today's fix uses the search param `q=<id>` which IS
-      // honoured (catalog WHERE clause includes `i.id LIKE ?`), and we
-      // verify the returned row actually matches before caching.
-      // Also: in-flight dedup so rapid double-clicks share one request.
-      if (!d) {
-        window._invItemFetchInFlight = window._invItemFetchInFlight || Object.create(null);
-        if (window._invItemFetchInFlight[id]) return;  // already loading
-        var token = localStorage.getItem('pos_token') || '';
-        var url = '/api/inventory/catalog?paginated=1&limit=10&q=' + encodeURIComponent(id);
-        window._invItemFetchInFlight[id] = fetch(url, {
-          headers: { 'Authorization': 'Bearer ' + token }
-        })
-        .then(function (r) {
-          if (r.status === 429) throw new Error('rate-limited');
-          if (!r.ok) throw new Error('http-' + r.status);
-          return r.json();
-        })
-        .then(function (payload) {
-          var arr = Array.isArray(payload) ? payload : (payload && payload.items) || [];
-          // CRITICAL: find the EXACT match by id, not arr[0]. The catalog
-          // search returns substring matches, so the array may contain
-          // multiple unrelated rows.
-          var it = arr.find(function(x){ return x && x.id === id; });
-          delete window._invItemFetchInFlight[id];
-          if (!it) {
-            return showToast('تعذّر العثور على هذه المادة — حاول إعادة تحميل القائمة', true);
-          }
-          if (!Array.isArray(window.cachedRawItems)) window.cachedRawItems = [];
-          window.cachedRawItems.push({
-            id: it.id, name: it.name, category: it.category,
-            cost: Number(it.cost) || 0,
-            bigUnit: it.bigUnit || '', unit: it.unit || 'حبة',
-            convRate: Number(it.convRate) || 1,
-            minStock: Number(it.minStock) || 0,
-            brandId: it.brandId || it.brand_id || '',
-            kind: it.kind || 'raw'
-          });
-          openRawModal(id, opts);
-        })
-        .catch(function (err) {
-          delete window._invItemFetchInFlight[id];
-          if (err && err.message === 'rate-limited') {
-            showToast('الخادم مزدحم حالياً — انتظر بضع ثوانٍ ثم حاول مرة أخرى', true);
-          } else {
-            showToast('فشل الاتصال بالخادم — تحقّق من الاتصال', true);
-          }
-        });
-        return;
-      }
-      q("#mrId").value = d.id; q("#mrName").value = d.name; q("#mrCat").value = d.category;
+      q("#mrId").value = d.id;
+      q("#mrName").value = d.name;
+      q("#mrCat").value = d.category;
       var cRate = Number(d.convRate) || 1;
       q("#mrCost").value = (cRate > 1 ? d.cost * cRate : d.cost).toFixed(2);
-      q("#mrBigUnit").value = d.bigUnit || ""; q("#mrUnit").value = d.unit || "حبة"; q("#mrConvRate").value = d.convRate || 1;
+      q("#mrBigUnit").value = d.bigUnit || "";
+      q("#mrUnit").value = d.unit || "حبة";
+      q("#mrConvRate").value = d.convRate || 1;
       q("#mrMin").value = d.minStock;
       if (q("#mrBrand")) q("#mrBrand").value = d.brandId || d.brand_id || '';
-      // v5.16.0
       if (q("#mrKind")) q("#mrKind").value = (d.kind === 'semi') ? 'semi' : 'raw';
     }
+
     calcSmallUnitCost();
     _mrUpdatePreview();
     openModal("#modalRawForm");
-    // v5.10.28 — sync warehouse banner + save-button state on open.
+    // Real-time validation sync (banner + save button state).
     if (typeof _invModalRevalidate === 'function') _invModalRevalidate();
   });
 }

@@ -3869,22 +3869,52 @@ function openInvM(mode, id = null) {
 }
 
 // Shared helper: load /api/erp/brands into a <select>
+// v5.10.73 — Brand-list cache + in-flight dedup. Previously every call
+// to openRawModal fired a fresh /api/erp/brands fetch. Combined with
+// the cache-miss item-fetch loop (fixed below), an impatient user
+// could rack up dozens of requests in seconds and trip Railway's 429
+// rate limit, after which NOTHING worked. We now cache the brands
+// list in window._invBrandsCache after the first successful fetch
+// and reuse it forever (refreshed on hard reload). In-flight calls
+// share the same Promise so 10 clicks = 1 network request.
+window._invBrandsCache    = window._invBrandsCache    || null;
+window._invBrandsInFlight = window._invBrandsInFlight || null;
 function _loadBrandOptions(selector, done) {
   var el = typeof selector === 'string' ? q(selector) : selector;
   if (!el) { if (done) done(); return; }
+  function paint(list) {
+    if (!Array.isArray(list)) list = [];
+    var current = el.value;
+    el.innerHTML = '<option value="">— بدون براند (عام) —</option>' +
+      list.map(function(b){ return '<option value="'+b.id+'">'+(b.name||'')+(b.code?' ('+b.code+')':'')+'</option>'; }).join('');
+    if (current) el.value = current;
+    if (done) done();
+  }
+  if (window._invBrandsCache) { paint(window._invBrandsCache); return; }
+  if (window._invBrandsInFlight) {
+    // Another caller already started the fetch — piggy-back on it.
+    window._invBrandsInFlight.then(paint).catch(function(){ if (done) done(); });
+    return;
+  }
   var token = localStorage.getItem('pos_token') || '';
-  fetch('/api/erp/brands', { headers: { 'Authorization': 'Bearer ' + token } })
-    .then(function(r){ return r.json(); })
+  window._invBrandsInFlight = fetch('/api/erp/brands', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.ok ? r.json() : []; })
     .then(function(list){
-      if (!Array.isArray(list)) list = [];
-      var current = el.value;
-      el.innerHTML = '<option value="">— بدون براند (عام) —</option>' +
-        list.map(function(b){ return '<option value="'+b.id+'">'+(b.name||'')+(b.code?' ('+b.code+')':'')+'</option>'; }).join('');
-      if (current) el.value = current;
-      if (done) done();
+      window._invBrandsCache = Array.isArray(list) ? list : [];
+      window._invBrandsInFlight = null;
+      return window._invBrandsCache;
     })
-    .catch(function(){ if (done) done(); });
+    .catch(function(){
+      window._invBrandsInFlight = null;
+      return [];
+    });
+  window._invBrandsInFlight.then(paint).catch(function(){ if (done) done(); });
 }
+// Public API to invalidate (call after creating/editing a brand).
+window.invBrandsCacheBust = function() {
+  window._invBrandsCache = null;
+  window._invBrandsInFlight = null;
+};
 
 // Toggle: variable cost (from recipes/inventory) vs fixed cost (manual).
 // Selling price is ALWAYS manual — this only controls the cost source.
@@ -8112,7 +8142,19 @@ window.invItemShowWarehouses = function(itemId, itemName) {
 // shows which warehouse is being targeted, and the save action writes
 // to that warehouse's `warehouse_stock` row instead of the global
 // inv_items.stock counter (the old behavior put stock everywhere).
+// v5.10.73 — in-flight guard: if the modal is already opening for a
+// given id, swallow subsequent calls. Prevents 429 cascades when the
+// inline onclick AND the v5.10.72 delegation both fire on the same
+// click (yes, they do — addEventListener at document level catches
+// the bubbled event after the inline onclick already ran). The flag
+// auto-clears after 1500ms whether the modal opened or errored, so a
+// stuck flag can never block future legitimate opens.
 function openRawModal(id = null, opts = {}) {
+  if (window._openRawModalInFlight === id) return;     // dedup same-id
+  window._openRawModalInFlight = id;
+  setTimeout(function(){
+    if (window._openRawModalInFlight === id) window._openRawModalInFlight = null;
+  }, 1500);
   _loadBrandOptions('#mrBrand', function() {
     // Set today as the default added_at date (user can backdate)
     var today = new Date().toISOString().slice(0,10);
@@ -8153,23 +8195,43 @@ function openRawModal(id = null, opts = {}) {
     } else {
       q("#rMdlTitle").innerText = "تَعديل مادَّة";
       var d = cachedRawItems.find(function (x) { return x.id === id; });
-      // v5.10.57 — server fallback if the in-memory cache misses.
-      // Previously the function silently `return`-ed, which is why the
-      // pencil-edit icon on the inventory catalog did nothing for items
-      // that hadn't been loaded by the legacy raw-items section.
+      // v5.10.73 — server fallback for cache miss.
+      //
+      // PREVIOUSLY (v5.10.57): fetched `/api/inventory/catalog?id=X&limit=1`
+      // but the catalog endpoint NEVER recognised an `id` query param —
+      // it only honours { onlyDeleted, brandId, warehouseId, q, paginated,
+      // kind }. So the request returned the FIRST catalog row (not the
+      // user's pick) or an empty page, then push()-ed a WRONG record into
+      // cachedRawItems and re-invoked openRawModal with the original id.
+      // That ID was still missing → infinite cache-miss → 10× /erp/brands
+      // + 10× /catalog → Railway 429 rate-limit → toast tower → owner
+      // angry. Today's fix uses the search param `q=<id>` which IS
+      // honoured (catalog WHERE clause includes `i.id LIKE ?`), and we
+      // verify the returned row actually matches before caching.
+      // Also: in-flight dedup so rapid double-clicks share one request.
       if (!d) {
+        window._invItemFetchInFlight = window._invItemFetchInFlight || Object.create(null);
+        if (window._invItemFetchInFlight[id]) return;  // already loading
         var token = localStorage.getItem('pos_token') || '';
-        fetch('/api/inventory/catalog?id=' + encodeURIComponent(id) + '&limit=1', {
+        var url = '/api/inventory/catalog?paginated=1&limit=10&q=' + encodeURIComponent(id);
+        window._invItemFetchInFlight[id] = fetch(url, {
           headers: { 'Authorization': 'Bearer ' + token }
         })
-        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (r) {
+          if (r.status === 429) throw new Error('rate-limited');
+          if (!r.ok) throw new Error('http-' + r.status);
+          return r.json();
+        })
         .then(function (payload) {
           var arr = Array.isArray(payload) ? payload : (payload && payload.items) || [];
-          var it = arr[0];
+          // CRITICAL: find the EXACT match by id, not arr[0]. The catalog
+          // search returns substring matches, so the array may contain
+          // multiple unrelated rows.
+          var it = arr.find(function(x){ return x && x.id === id; });
+          delete window._invItemFetchInFlight[id];
           if (!it) {
-            return showToast('تعذّر تحميل بيانات المادة — حاول إعادة تحميل القائمة', true);
+            return showToast('تعذّر العثور على هذه المادة — حاول إعادة تحميل القائمة', true);
           }
-          // Re-invoke ourselves now that we have the data cached.
           if (!Array.isArray(window.cachedRawItems)) window.cachedRawItems = [];
           window.cachedRawItems.push({
             id: it.id, name: it.name, category: it.category,
@@ -8182,8 +8244,13 @@ function openRawModal(id = null, opts = {}) {
           });
           openRawModal(id, opts);
         })
-        .catch(function () {
-          showToast('فشل الاتصال بالخادم — تحقّق من الاتصال', true);
+        .catch(function (err) {
+          delete window._invItemFetchInFlight[id];
+          if (err && err.message === 'rate-limited') {
+            showToast('الخادم مزدحم حالياً — انتظر بضع ثوانٍ ثم حاول مرة أخرى', true);
+          } else {
+            showToast('فشل الاتصال بالخادم — تحقّق من الاتصال', true);
+          }
         });
         return;
       }

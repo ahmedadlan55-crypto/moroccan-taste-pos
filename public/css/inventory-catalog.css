@@ -216,8 +216,36 @@
   background: #fff;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
 }
+#sec_invCatalog .wo-table-surface {
+  /* v5.10.64 — explicit horizontal scroll. With table-layout:fixed the
+     table now declares its TRUE minimum width via the sum of the column
+     widths below; on narrow viewports we need to let the user scroll
+     horizontally instead of clipping content (the inherited overflow
+     :hidden from warehouse-ops would chop off the last 2-3 columns). */
+  overflow-x: auto;
+  overflow-y: hidden;
+}
 #sec_invCatalog .wo-table-surface > table {
   position: relative;
+  /* v5.10.64 — `table-layout: fixed` is the AUTHORITATIVE fix for the
+     header-vs-column misalignment the owner reported across v5.10.57 +
+     v5.10.59. The default `table-layout: auto` lets the browser
+     recompute column widths from each cell's natural content — and
+     because the THEAD cells contain (label + sort-icon + 6px margin)
+     while the TBODY cells contain (text + chip + pill with their own
+     widths), the algorithm picks slightly different widths for the
+     header column vs the body column — producing the visible 2-6 pixel
+     drift between "اسم المادة" header and the name-column data. With
+     `fixed`, column widths come EXCLUSIVELY from the explicit `width`
+     declarations below (which are applied identically to thead/th and
+     tbody/td via the :nth-child(N) selectors further down). Header text
+     and data text now sit on the SAME vertical line, always. */
+  table-layout: fixed;
+  /* The sum of the canonical column widths below is 1584px. On narrow
+     viewports this triggers horizontal scroll inside .wo-table-surface
+     (above). On wide screens (≥1600px) the table fits naturally. */
+  width: 100%;
+  min-width: 1584px;
 }
 #sec_invCatalog .wo-table thead {
   position: sticky;
@@ -241,7 +269,12 @@
   opacity: 1;
 }
 #sec_invCatalog .wo-table thead th {
-  padding-block: 11px;
+  /* v5.10.64 — padding-block synced with <td> below (was 11px / 9px).
+     Vertical asymmetry between header and cells made the header row
+     LOOK 2px taller than data rows, which the eye reads as a horizontal
+     drift since the baseline of the label no longer sits where the user
+     expects relative to row-1 of data. */
+  padding-block: 10px;
   padding-inline: 12px;
   font-size: 11.5px;
   font-weight: 800;
@@ -254,6 +287,16 @@
   text-align: start;
   vertical-align: middle;
   white-space: nowrap;
+  /* v5.10.64 — with table-layout:fixed the column widths come from
+     these cells; box-sizing must be border-box so padding doesn't
+     enlarge the declared width and break the column-sum math. */
+  box-sizing: border-box;
+  /* v5.10.64 — long header labels (e.g. "تاريخ الإنشاء", "الوحدة الكبرى")
+     stay on one line, but if a future label is too long for its declared
+     width we let it ellipsis rather than push the column wider — column
+     widths are now contractual under table-layout:fixed. */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 #sec_invCatalog .wo-table thead th.num,
 #sec_invCatalog .wo-table tbody td.num {
@@ -266,13 +309,21 @@
   padding-inline: 8px;
 }
 #sec_invCatalog .wo-table tbody td {
-  padding-block: 9px;
+  /* v5.10.64 — padding-block now matches <th> above (was 9px / 11px).
+     Both header and cells use the same 10px top/bottom so each row has
+     identical chrome around the text. */
+  padding-block: 10px;
   padding-inline: 12px;
   border-bottom: 1px solid #f1f5f9;
   font-size: 13px;
   vertical-align: middle;
   text-align: start;
   transition: background 150ms ease;
+  /* v5.10.64 — see thead th rule above for why this is mandatory under
+     table-layout:fixed. */
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* v5.10.57 — the sort-icon used to push the header label by ~6px to one
    side which created an apparent column misalignment with the data row.
@@ -308,38 +359,60 @@
  * multi-chip cells so content wraps cleanly INSIDE its own cell.
  * ═══════════════════════════════════════════════════════════════════════ */
 
-/* ── Column 1: checkbox (fixed narrow) ─────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════
+ * v5.10.64 — Canonical column widths (single `width` value, identical
+ * between <th> and <td>). Under table-layout:fixed the browser reads
+ * these widths from the THEAD row and applies them to every body row,
+ * guaranteeing that header text and cell content sit on the exact same
+ * vertical line. The previous min-width/max-width ranges were RANGES
+ * (advisory, not authoritative) and the auto-layout algorithm still had
+ * freedom to pick different widths for <th> vs <td> depending on each
+ * cell's content. Single-value widths remove that freedom.
+ *
+ * Width budget (sum = 1584px):
+ *   ☑ select    44
+ *   كود         160
+ *   اسم         280
+ *   براند       150
+ *   مستودعات    220
+ *   تصنيف       130
+ *   كبرى         90
+ *   صغرى         90
+ *   تكلفة       100
+ *   حد ناقص     100
+ *   إنشاء       110
+ *   إجراءات     110
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Column 1: checkbox ────────────────────────────────────────────── */
 #sec_invCatalog .wo-table thead th:nth-child(1),
 #sec_invCatalog .wo-table tbody td:nth-child(1) {
   width: 44px;
-  min-width: 44px;
-  max-width: 44px;
 }
 
-/* ── Column 2: code (monospace, fixed) ─────────────────────────────── */
+/* ── Column 2: code (monospace, ellipsis if too long) ──────────────── */
 #sec_invCatalog .wo-table thead th:nth-child(2),
 #sec_invCatalog .wo-table tbody td:nth-child(2) {
-  min-width: 150px;
-  max-width: 200px;
+  width: 160px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-/* ── Column 3: NAME + kind chip + stock pill (most important fix) ──
- *  - white-space: normal so the name wraps if very long
- *  - the three child elements (name span, kind chip, stock pill) align
- *    on a flexible inline row that WRAPS inside the cell instead of
- *    spilling into the brand column.
- */
+/* ── Column 3: NAME + kind chip + stock pill ───────────────────────── */
+#sec_invCatalog .wo-table thead th:nth-child(3),
 #sec_invCatalog .wo-table tbody td:nth-child(3) {
-  min-width: 200px;
-  max-width: 340px;
+  width: 280px;
+}
+#sec_invCatalog .wo-table tbody td:nth-child(3) {
+  /* Multi-element cell: name + kind chip + stock pill. Allow wrap so
+     chips stay inside the column even when the name is long. We
+     override the generic tbody td `overflow: hidden / text-overflow:
+     ellipsis` here because this cell intentionally wraps its content
+     onto a second visual line instead of truncating it. */
   white-space: normal;
   word-break: break-word;
   line-height: 1.5;
-  padding-top: 8px;
-  padding-bottom: 8px;
+  overflow: visible;
+  text-overflow: clip;
 }
 #sec_invCatalog .wo-table tbody td:nth-child(3) .wo-chip,
 #sec_invCatalog .wo-table tbody td:nth-child(3) .inv-stock-pill,
@@ -350,17 +423,11 @@
   margin: 1px 4px 1px 0;
   max-width: 100%;
 }
-/* Header for the name column keeps the column width hint */
-#sec_invCatalog .wo-table thead th:nth-child(3) {
-  min-width: 200px;
-  max-width: 340px;
-}
 
-/* ── Column 4: BRAND (single chip, no wrap) ────────────────────────── */
+/* ── Column 4: BRAND (single chip) ─────────────────────────────────── */
 #sec_invCatalog .wo-table thead th:nth-child(4),
 #sec_invCatalog .wo-table tbody td:nth-child(4) {
-  min-width: 140px;
-  max-width: 180px;
+  width: 150px;
   white-space: nowrap;
 }
 #sec_invCatalog .wo-table tbody td:nth-child(4) .wo-chip {
@@ -369,17 +436,16 @@
   text-overflow: ellipsis;
 }
 
-/* ── Column 5: WAREHOUSES (multi-chip → also needs flex-wrap) ──────── */
+/* ── Column 5: WAREHOUSES (multi-chip, wraps inside cell) ──────────── */
+#sec_invCatalog .wo-table thead th:nth-child(5),
 #sec_invCatalog .wo-table tbody td:nth-child(5) {
-  min-width: 180px;
-  max-width: 280px;
-  white-space: normal;
-  padding-top: 8px;
-  padding-bottom: 8px;
+  width: 220px;
 }
-#sec_invCatalog .wo-table thead th:nth-child(5) {
-  min-width: 180px;
-  max-width: 280px;
+#sec_invCatalog .wo-table tbody td:nth-child(5) {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.5;
 }
 #sec_invCatalog .wo-table tbody td:nth-child(5) .inv-wh-chip,
 #sec_invCatalog .wo-table tbody td:nth-child(5) .wo-chip {
@@ -393,18 +459,16 @@
 /* ── Column 6: CATEGORY (single chip) ──────────────────────────────── */
 #sec_invCatalog .wo-table thead th:nth-child(6),
 #sec_invCatalog .wo-table tbody td:nth-child(6) {
-  min-width: 110px;
-  max-width: 160px;
+  width: 130px;
   white-space: nowrap;
 }
 
-/* ── Columns 7+8: UNITS (short text, narrow) ───────────────────────── */
+/* ── Columns 7+8: UNITS (short text) ───────────────────────────────── */
 #sec_invCatalog .wo-table thead th:nth-child(7),
 #sec_invCatalog .wo-table tbody td:nth-child(7),
 #sec_invCatalog .wo-table thead th:nth-child(8),
 #sec_invCatalog .wo-table tbody td:nth-child(8) {
-  min-width: 80px;
-  max-width: 110px;
+  width: 90px;
   white-space: nowrap;
 }
 
@@ -413,25 +477,21 @@
 #sec_invCatalog .wo-table tbody td:nth-child(9),
 #sec_invCatalog .wo-table thead th:nth-child(10),
 #sec_invCatalog .wo-table tbody td:nth-child(10) {
-  min-width: 90px;
-  max-width: 120px;
+  width: 100px;
   white-space: nowrap;
 }
 
 /* ── Column 11: DATE (created_at) ──────────────────────────────────── */
 #sec_invCatalog .wo-table thead th:nth-child(11),
 #sec_invCatalog .wo-table tbody td:nth-child(11) {
-  min-width: 100px;
-  max-width: 130px;
+  width: 110px;
   white-space: nowrap;
 }
 
-/* ── Column 12: ACTIONS (fixed) ────────────────────────────────────── */
+/* ── Column 12: ACTIONS (icon buttons) ─────────────────────────────── */
 #sec_invCatalog .wo-table thead th:nth-child(12),
 #sec_invCatalog .wo-table tbody td:nth-child(12) {
   width: 110px;
-  min-width: 110px;
-  max-width: 110px;
   white-space: nowrap;
 }
 #sec_invCatalog .wo-table tbody tr {

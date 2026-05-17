@@ -959,11 +959,19 @@
                (both the head row and every data row share the same Grid
                column tracks because they are siblings inside the same
                .invc-table container). -->
-          <div class="invc-table-scroll">
-            <div class="invc-table" role="table" aria-label="قائمة مواد المخزون">
+          <!-- v5.10.70 — Inline fallback style on .invc-table-scroll +
+               .invc-table to guarantee the layout works even if a stale
+               cached CSS file is still being served while Docker
+               redeploys. Once /css/inventory-catalog.css?v=24 loads,
+               the file's rules take over identically. -->
+          <div class="invc-table-scroll" style="overflow-x:auto;border:1px solid #e2e8f0;border-radius:14px;background:#fff;">
+            <div class="invc-table" role="table" aria-label="قائمة مواد المخزون" style="min-width:1614px;">
 
-              <!-- Header row (CSS Grid track 1, applies to all rows below) -->
-              <div class="invc-row invc-row--head" role="row" id="invCatalogHead">
+              <!-- Header row (CSS Grid track 1, applies to all rows below).
+                   Inline grid-template-columns is the same as in the CSS
+                   file — duplicated here as a stale-cache fallback. -->
+              <div class="invc-row invc-row--head" role="row" id="invCatalogHead"
+                   style="display:grid;grid-template-columns:44px 160px minmax(240px,1.4fr) 150px minmax(180px,1fr) 130px 90px 90px 100px 100px 110px 140px;align-items:center;background:linear-gradient(180deg,#f8fafc,#fff);border-bottom:1.5px solid #e2e8f0;font-size:11.5px;font-weight:800;color:#334155;">
                 <div class="invc-cell invc-cell--select" role="columnheader">
                   <input type="checkbox" id="invCatMasterChk" class="invc-checkbox"
                          onchange="invCatToggleAll(this)" aria-label="تحديد الكل">

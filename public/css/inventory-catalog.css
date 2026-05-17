@@ -563,8 +563,17 @@
   background: #ffffff;
 }
 
-.invc-row {
-  display: grid;
+/* v5.10.70 — both `.invc-row` and `#sec_invCatalog .invc-row` declared
+   identically. The second (high-specificity) selector with !important is
+   defensive: if any other stylesheet (admin-skin, ent-ui, style.css's
+   .admin-section block default, etc.) accidentally cascades display:
+   block or contents onto .invc-row, the !important on the ID-specificity
+   rule wins. The grid template tracks are also !important so a stray
+   grid-template-columns: 1fr (e.g. from a future responsive fix) can't
+   collapse the row to a single column. */
+.invc-row,
+#sec_invCatalog .invc-row {
+  display: grid !important;
   grid-template-columns:
     44px                       /* 01 select   */
     160px                      /* 02 code     */
@@ -577,8 +586,8 @@
     100px                      /* 09 cost     */
     100px                      /* 10 min      */
     110px                      /* 11 created  */
-    140px;                     /* 12 actions  */
-  align-items: center;
+    140px !important;          /* 12 actions  */
+  align-items: center !important;
 }
 
 .invc-row--head {

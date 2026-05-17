@@ -6313,7 +6313,7 @@ function _renderInvCatalogTable(items, tab) {
           ? '<button class="invc-icon-btn invc-icon-btn--danger" onclick="invCatHardDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف نهائي"><i class="fas fa-fire"></i></button>'
           : '');
 
-      return '<div class="invc-row invc-row--data invc-row--deleted invc-row-enter' + rowSelClass + '" data-id="' + idEsc + '" role="row">' +
+      return '<div class="invc-row invc-row--data invc-row--deleted invc-row-enter' + rowSelClass + '" data-id="' + idEsc + '" role="row" style="display:grid;grid-template-columns:44px 160px minmax(240px,1.4fr) 150px minmax(180px,1fr) 130px 90px 90px 100px 100px 110px 140px;align-items:center;border-bottom:1px solid #f1f5f9;">' +
         '<div class="invc-cell invc-cell--select" role="cell"><input type="checkbox" class="invc-checkbox inv-row-checkbox" data-id="' + idEsc + '" onchange="invCatToggleRow(\'' + idEsc + '\', this.checked)"' + checked + '></div>' +
         '<div class="invc-cell invc-cell--code" data-label="كود" role="cell"><code>' + _invHubEsc(it.id) + '</code></div>' +
         '<div class="invc-cell invc-cell--name" data-label="اسم المادة" role="cell"><i class="fas fa-trash" style="color:#dc2626;margin-inline-end:6px;"></i><span class="invc-name-text">' + nameHighlighted + '</span></div>' +
@@ -6343,7 +6343,7 @@ function _renderInvCatalogTable(items, tab) {
       ? '<span class="invc-chip invc-chip--semi"><i class="fas fa-blender"></i> غير تامّ</span>'
       : '<span class="invc-chip invc-chip--raw"><i class="fas fa-seedling"></i> خام</span>';
 
-    return '<div class="invc-row invc-row--data invc-row-enter' + rowSelClass + '" data-id="' + idEsc + '" data-kind="' + (it.kind === 'semi' ? 'semi' : 'raw') + '" role="row">' +
+    return '<div class="invc-row invc-row--data invc-row-enter' + rowSelClass + '" data-id="' + idEsc + '" data-kind="' + (it.kind === 'semi' ? 'semi' : 'raw') + '" role="row" style="display:grid;grid-template-columns:44px 160px minmax(240px,1.4fr) 150px minmax(180px,1fr) 130px 90px 90px 100px 100px 110px 140px;align-items:center;border-bottom:1px solid #f1f5f9;">' +
       '<div class="invc-cell invc-cell--select" role="cell"><input type="checkbox" class="invc-checkbox inv-row-checkbox" data-id="' + idEsc + '" onchange="invCatToggleRow(\'' + idEsc + '\', this.checked)"' + checked + '></div>' +
       '<div class="invc-cell invc-cell--code" data-label="كود" role="cell"><code>' + _invHubEsc(it.id) + '</code></div>' +
       '<div class="invc-cell invc-cell--name" data-label="اسم المادة" role="cell"><span class="invc-name-text">' + nameHighlighted + '</span>' + kindChip + stockPill + '</div>' +
@@ -6787,8 +6787,11 @@ function _invCatRenderSkeleton(rowCount) {
     '<span class="invc-skeleton-bar invc-skeleton-bar--short"></span>' +
     '<span class="invc-skeleton-bar invc-skeleton-bar--medium"></span>' +
     '<span class="invc-skeleton-bar invc-skeleton-bar--short"></span>';
+  // v5.10.70 — inline grid fallback so the skeleton lays out correctly
+  // even on a stale-cached CSS.
+  var rowStyle = 'display:grid;grid-template-columns:44px 160px minmax(240px,1.4fr) 150px minmax(180px,1fr) 130px 90px 90px 100px 100px 110px 140px;align-items:center;border-bottom:1px solid #f1f5f9;padding:14px 0;';
   var rows = '';
-  for (var i = 0; i < n; i++) rows += '<div class="invc-skeleton-row">' + cells + '</div>';
+  for (var i = 0; i < n; i++) rows += '<div class="invc-skeleton-row" style="' + rowStyle + '">' + cells + '</div>';
   tb.innerHTML = rows;
 }
 

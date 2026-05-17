@@ -980,6 +980,28 @@
           </div>
         </div>
 
+        <!-- v5.10.65 — Inventory-side Recipe (BOM) modal. Opened from the
+             "وصفة" button in the inventory catalog row. Wraps POST /erp/bom
+             with productSource='inv' and PATCH /inv-items/:id/kind so the
+             item is auto-flipped to semi-finished when the recipe saves.
+             All state in window._invCatRecipeState, all rendering by
+             _invCatRecipeRender() in public/js/app.js. -->
+        <div id="invCatRecipeModal" class="modal" style="display:none;align-items:flex-start;justify-content:center;z-index:9999;">
+          <div class="modal-content modal-large inv-recipe-modal" style="max-width:880px;width:96%;margin-top:24px;">
+            <div class="modal-title">
+              <span><i class="fas fa-utensils" style="color:#6366f1;margin-inline-end:8px;"></i><span id="invRecipeMdlTitle">الوصفة</span></span>
+              <button class="modal-close" onclick="closeModal('#invCatRecipeModal')" aria-label="إغلاق">&times;</button>
+            </div>
+            <div id="invRecipeMdlBody"></div>
+            <div class="inv-recipe-actions">
+              <button class="wo-btn wo-btn-ghost" onclick="closeModal('#invCatRecipeModal')">إلغاء</button>
+              <button class="wo-btn wo-btn-primary" id="invRecipeMdlSave" onclick="invCatRecipeSave()">
+                <i class="fas fa-save"></i> حفظ الوصفة
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Section: Raw Materials (INV_Items) -->
         <!-- Section: Unified Warehouse -->
         <div id="sec_warehouse" class="admin-section">

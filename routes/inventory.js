@@ -1021,6 +1021,90 @@ router.post('/items', async (req, res) => {
   }
 });
 
+// v5.10.65 — PATCH /items/:id/kind: flip an inventory item between
+// 'raw' (purchased material) and 'semi' (produced material, i.e. has
+// a BOM/recipe). Used by the "وصفة" button on the inventory catalog
+// to auto-toggle the kind when a recipe is saved or unlinked.
+//
+// Guards (industry convention, mirrors Foodics + SAP + NetSuite + Odoo):
+//   • To set kind='semi', the item MUST have an active BOM with
+//     product_source='inv'. Without that, the inventory becomes
+//     internally inconsistent (semi item with no recipe = unusable
+//     in production orders). Returns 400 if the precondition fails.
+//   • To revert kind='raw', there must be NO open production orders
+//     (status IN planned/released/in_progress) targeting this item.
+//     Otherwise the in-flight order would suddenly point at a "raw"
+//     product that production can't produce. Returns 409 if blocked.
+//
+// Audit: each successful flip writes a row to audit_log with the
+// before/after kind for traceability.
+router.patch('/items/:id/kind', async (req, res) => {
+  try {
+    const id   = req.params.id;
+    const body = req.body || {};
+    const safe = (body.kind === 'semi') ? 'semi' : 'raw';
+
+    // Read current kind for audit + early-exit if no change.
+    const [curRows] = await db.query(
+      'SELECT id, name, COALESCE(kind, \'raw\') AS kind FROM inv_items WHERE id = ?',
+      [id]);
+    if (!curRows.length) {
+      return res.status(404).json({ success: false, error: 'item-not-found' });
+    }
+    const before = curRows[0].kind;
+    if (before === safe) {
+      return res.json({ success: true, kind: safe, unchanged: true });
+    }
+
+    // Guard: semi requires an active BOM tied to this inv item.
+    if (safe === 'semi') {
+      const [boms] = await db.query(
+        `SELECT id FROM bom
+         WHERE product_id = ? AND COALESCE(product_source, 'inv') = 'inv'
+               AND COALESCE(is_active, 1) = 1
+         LIMIT 1`,
+        [id]);
+      if (!boms.length) {
+        return res.status(400).json({
+          success: false,
+          error: 'kind-semi-requires-active-bom',
+          message: 'لا يُمكِن تَحويل الصنف إلى نصف مُصنَّع بدون وصفة نَشطة. احفظ الوصفة أولاً.'
+        });
+      }
+    }
+
+    // Guard: raw requires no open production orders.
+    if (safe === 'raw') {
+      try {
+        const [open] = await db.query(
+          `SELECT id, order_number, status FROM production_orders
+           WHERE product_id = ? AND status IN ('planned','released','in_progress')
+           LIMIT 5`,
+          [id]);
+        if (open.length) {
+          return res.status(409).json({
+            success: false,
+            error: 'open-production-orders-exist',
+            message: 'يَتعذَّر إعادة الصنف إلى مادة خام — توجد أوامر إنتاج مفتوحة عليه.',
+            openOrders: open.map(o => ({ id: o.id, number: o.order_number, status: o.status }))
+          });
+        }
+      } catch (_) {
+        // production_orders may not exist in older deploys — non-fatal.
+      }
+    }
+
+    await db.query('UPDATE inv_items SET kind = ? WHERE id = ?', [safe, id]);
+    _audit(null, req, 'inv_item.kind_change', id,
+      { kind: before, name: curRows[0].name },
+      { kind: safe,   name: curRows[0].name });
+
+    res.json({ success: true, kind: safe, before: before });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // v5.10.6 — Warehouse-aware "add raw material to warehouse" endpoint.
 // Body: { itemId? | name, category, brandId, unit, bigUnit, convRate, cost,
 //         qty, qtyUnit ('big'|'small'), addedAt (YYYY-MM-DD), minStock,
@@ -1513,7 +1597,13 @@ router.get('/catalog', async (req, res) => {
       'SELECT i.id, i.name, i.category, i.brand_id, b.name AS brand_name, ' +
       '       i.unit, i.big_unit, i.conv_rate, i.cost, i.min_stock, ' +
       '       i.stock AS global_stock, i.active, i.created_at, i.deleted_at, ' +
-      '       COALESCE(i.kind, \'raw\') AS kind ' +  // v5.16.0
+      '       COALESCE(i.kind, \'raw\') AS kind, ' +  // v5.16.0
+      // v5.10.65 — surface bom_id + has_recipe so the catalog UI knows
+      // whether to render the recipe button as "ADD" or "EDIT", and to
+      // pre-open the existing BOM in edit mode without an extra round-trip.
+      '       (SELECT bom.id FROM bom WHERE bom.product_id = i.id ' +
+      '              AND COALESCE(bom.product_source, \'inv\') = \'inv\' ' +
+      '              AND COALESCE(bom.is_active, 1) = 1 LIMIT 1) AS bom_id ' +
       'FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id ';
 
     const wantsPaginated = paginated === '1' || req.query.limit != null || req.query.offset != null;
@@ -1557,6 +1647,9 @@ function _mapCatalogRow(i) {
     minStock: Number(i.min_stock) || 0, globalStock: Number(i.global_stock) || 0,
     active: !!i.active, createdAt: i.created_at,
     deletedAt: i.deleted_at,
+    // v5.10.65 — surface recipe state for the catalog UI's recipe button.
+    bomId: i.bom_id || null,
+    hasRecipe: !!i.bom_id,
     warehouses: []  // populated by _attachWarehouseDistribution
   };
 }

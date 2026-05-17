@@ -815,13 +815,26 @@ router.get('/bom/product-pool', async (req, res) => {
        ORDER BY m.name LIMIT 1500`,
       brandId ? [brandId] : []);
     const wI = whereI.length ? 'WHERE '+whereI.join(' AND ')+' AND COALESCE(i.active,1)=1' : 'WHERE COALESCE(i.active,1)=1';
+    // v5.10.65 — LEFT JOIN bom to surface the real recipe state of each
+    // inv_item. Previously this query hard-coded `0 AS is_semi_finished`
+    // and `NULL AS bom_id`, which prevented the BOM picker from showing
+    // existing recipes on inventory items (the user had to either
+    // remember the bom_id or hunt through the BOM list). Now an inv item
+    // with an active BOM (product_source='inv') correctly reports its
+    // hasRecipe + isSemiFinished + bom_id, and the catalog UI can
+    // decide whether to open the recipe modal in CREATE or EDIT mode.
     const [invRows] = await db.query(
       `SELECT i.id, i.name, i.category, COALESCE(i.cost,0) AS cost,
               i.brand_id, b.name AS brand_name,
-              0 AS is_semi_finished,
-              NULL AS bom_id,
+              CASE WHEN COALESCE(i.kind, 'raw') = 'semi' THEN 1 ELSE 0 END AS is_semi_finished,
+              bom.id AS bom_id,
               'inv' AS source
-       FROM inv_items i LEFT JOIN brands b ON b.id = i.brand_id ${wI}
+       FROM inv_items i
+       LEFT JOIN brands b   ON b.id = i.brand_id
+       LEFT JOIN bom        ON bom.product_id = i.id
+                            AND COALESCE(bom.product_source, 'inv') = 'inv'
+                            AND COALESCE(bom.is_active, 1) = 1
+       ${wI}
        ORDER BY i.name LIMIT 1500`,
       brandId ? [brandId] : []);
     res.json([
@@ -835,9 +848,11 @@ router.get('/bom/product-pool', async (req, res) => {
       ...invRows.map(r => ({
         id: r.id, name: r.name, category: r.category,
         cost: Number(r.cost)||0, brandId: r.brand_id, brandName: r.brand_name,
-        isSemiFinished: false,
-        hasRecipe: false, source: 'inv',
-        sourceLabel: 'مادة مخزنية'
+        isSemiFinished: !!r.is_semi_finished,
+        hasRecipe: !!r.bom_id,
+        bomId: r.bom_id || null,
+        source: 'inv',
+        sourceLabel: r.is_semi_finished ? 'مخزون (نصف مُصنَّع)' : 'مادة مخزنية'
       }))
     ]);
   } catch(e) {

@@ -6310,9 +6310,18 @@ function _renderInvCatalogTable(items, tab) {
       '</tr>';
     }
 
+    // v5.10.65 — recipe button. Lit blue when the item has an active BOM
+    // (it.hasRecipe), muted otherwise. Clicking opens the inventory-side
+    // recipe modal (invCatOpenRecipeModal) which wraps POST /erp/bom and
+    // auto-flips kind→semi on save. Industry convention: an inv item
+    // with a recipe IS a semi-finished product (Foodics/SAP/NetSuite).
+    var hasRecipe = !!it.hasRecipe;
+    var recipeBtnCls = hasRecipe ? 'wo-icon-btn primary' : 'wo-icon-btn';
+    var recipeBtnTitle = hasRecipe ? 'تَعديل الوصفة (نصف مُصنَّع)' : 'إضافة وصفة (تَحويل إلى نصف مُصنَّع)';
     actions =
       '<div class="wo-actions">' +
       '<button class="wo-icon-btn" onclick="openRawModal(\'' + idEsc + '\')" title="تعديل"><i class="fas fa-pen"></i></button> ' +
+      '<button class="' + recipeBtnCls + '" onclick="invCatOpenRecipeModal(\'' + idEsc + '\',\'' + nameEsc + '\')" title="' + recipeBtnTitle + '"><i class="fas fa-utensils"></i></button> ' +
       '<button class="wo-icon-btn danger" onclick="invCatDeleteItem(\'' + idEsc + '\',\'' + nameEsc + '\')" title="حذف (يذهب إلى السلة)"><i class="fas fa-trash"></i></button>' +
       '</div>';
 
@@ -6413,6 +6422,334 @@ function _invCatStockPill(item) {
   else                { cls = 'inv-stock-pill--ok';  label = 'متوفر · ' + fmt(stock); }
   return '<span class="inv-stock-pill ' + cls + '">' + label + '</span>';
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v5.10.65 — Inventory-side Recipe (BOM) Editor
+ * ───────────────────────────────────────────────────────────────────────
+ * Lets the owner attach a recipe to any inventory material directly
+ * from the catalog. When the recipe is saved, the item is auto-flipped
+ * to kind='semi' (semi-finished) — matching the industry convention
+ * (Foodics composition, SAP HALB+BOM, NetSuite Assembly Item, Odoo MRP):
+ * having a BOM IS the marker for "this item is produced internally".
+ *
+ * All the heavy lifting reuses existing endpoints:
+ *   POST /erp/bom          (save BOM with productSource='inv')
+ *   GET  /erp/bom/:id/lines (preload existing recipe lines)
+ *   DELETE /erp/bom/:id     (unlink recipe)
+ *   PATCH /api/inv-items/:id/kind  (flip kind with guards)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+// Per-modal state: which item we're editing, the loaded BOM (if any),
+// and the working set of lines. Reset every time the modal opens.
+window._invCatRecipeState = {
+  itemId: null, itemName: '',
+  bomId: null,           // null = new recipe, non-null = editing existing
+  yieldQuantity: 1, yieldUnit: 'PCS', notes: '',
+  consumptionWarehouseId: null,
+  lines: [],             // [{ componentItemId, itemName, quantity, unit, wastePct }]
+  rawCatalog: [],        // cached list of kind='raw' items for the picker
+  saving: false
+};
+
+// Open the recipe modal for a given inv-item. Loads existing recipe
+// (if any) and the raw-items picker pool, then renders the modal body.
+window.invCatOpenRecipeModal = function(itemId, itemName) {
+  var st = window._invCatRecipeState;
+  st.itemId   = itemId;
+  st.itemName = itemName || '';
+  st.bomId    = null;
+  st.lines    = [];
+  st.notes    = '';
+  st.yieldQuantity = 1;
+  st.yieldUnit = 'PCS';
+  st.consumptionWarehouseId = null;
+  st.saving = false;
+
+  var titleEl = q('#invRecipeMdlTitle');
+  if (titleEl) titleEl.textContent = 'الوصفة: ' + (itemName || '—');
+
+  // Render skeleton first so the modal opens immediately.
+  var bodyEl = q('#invRecipeMdlBody');
+  if (bodyEl) {
+    bodyEl.innerHTML = '<div style="padding:30px;text-align:center;color:#94a3b8;">' +
+      '<i class="fas fa-spinner fa-spin" style="font-size:24px;"></i>' +
+      '<div style="margin-top:8px;font-size:13px;">جاري تحميل الوصفة…</div></div>';
+  }
+  openModal('#invCatRecipeModal');
+
+  var token = localStorage.getItem('pos_token') || '';
+  // Two parallel fetches: (a) the existing BOM for this item (if any),
+  // (b) the raw-items picker pool. Both must complete before rendering.
+  var bomPromise = fetch('/api/erp/bom?product_id=' + encodeURIComponent(itemId) +
+                         '&source=inv', {
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(r) { return r.ok ? r.json() : []; })
+    .catch(function(){ return []; });
+
+  var rawsPromise = fetch('/api/inventory/catalog?kind=raw&limit=500', {
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(r) { return r.ok ? r.json() : { items: [] }; })
+    .then(function(p){ return Array.isArray(p) ? p : (p && p.items) || []; })
+    .catch(function(){ return []; });
+
+  Promise.all([bomPromise, rawsPromise]).then(function(results) {
+    var boms = results[0] || [];
+    var raws = results[1] || [];
+    st.rawCatalog = raws.filter(function(r) {
+      // Anti-circular: exclude the item itself from its own picker pool.
+      return r.id !== itemId && (r.kind === 'raw' || !r.kind);
+    });
+
+    var bom = (Array.isArray(boms) && boms.length) ? boms[0] : null;
+    if (bom) {
+      st.bomId = bom.id;
+      st.yieldQuantity = Number(bom.yieldQuantity) || 1;
+      st.yieldUnit = bom.yieldUnit || 'PCS';
+      st.notes = bom.notes || '';
+      // Fetch the actual lines.
+      fetch('/api/erp/bom/' + encodeURIComponent(bom.id) + '/lines', {
+        headers: { 'Authorization': 'Bearer ' + token }
+      }).then(function(r) { return r.ok ? r.json() : []; })
+        .then(function(lines) {
+          st.lines = (Array.isArray(lines) ? lines : []).map(function(l) {
+            return {
+              componentItemId: l.componentItemId,
+              itemName: l.itemName || '',
+              quantity: Number(l.quantity) || 0,
+              unit: l.unit || 'PCS',
+              wastePct: Number(l.wastePct) || 0
+            };
+          });
+          _invCatRecipeRender();
+        })
+        .catch(function(){ _invCatRecipeRender(); });
+    } else {
+      // No existing recipe — start with a single empty row to nudge entry.
+      st.lines = [{ componentItemId: '', itemName: '', quantity: 0, unit: 'PCS', wastePct: 0 }];
+      _invCatRecipeRender();
+    }
+  });
+};
+
+// Render the full modal body (header fields + lines table + footer).
+function _invCatRecipeRender() {
+  var st = window._invCatRecipeState;
+  var bodyEl = q('#invRecipeMdlBody');
+  if (!bodyEl) return;
+
+  var pickerOpts = '<option value="">— اختر مادة خام —</option>' +
+    st.rawCatalog.map(function(r) {
+      return '<option value="' + _invHubEsc(r.id) + '">' +
+             _invHubEsc(r.name) + (r.unit ? ' (' + _invHubEsc(r.unit) + ')' : '') +
+             '</option>';
+    }).join('');
+
+  var rowsHtml = st.lines.map(function(line, idx) {
+    return _invCatRecipeRenderLine(line, idx, pickerOpts);
+  }).join('');
+
+  var hasRecipe = !!st.bomId;
+
+  bodyEl.innerHTML =
+    '<div class="inv-recipe-meta">' +
+      '<div class="inv-recipe-meta-row">' +
+        '<label>كمية الإنتاج لكل دفعة' +
+          '<input type="number" id="invRecipeYieldQty" min="0.0001" step="0.0001" value="' + st.yieldQuantity + '" onchange="window._invCatRecipeState.yieldQuantity=Number(this.value)||1">' +
+        '</label>' +
+        '<label>الوحدة' +
+          '<input type="text" id="invRecipeYieldUnit" value="' + _invHubEsc(st.yieldUnit) + '" onchange="window._invCatRecipeState.yieldUnit=this.value||\'PCS\'">' +
+        '</label>' +
+        '<label class="inv-recipe-meta-notes">ملاحظات' +
+          '<input type="text" id="invRecipeNotes" placeholder="اختياري" value="' + _invHubEsc(st.notes) + '" onchange="window._invCatRecipeState.notes=this.value">' +
+        '</label>' +
+      '</div>' +
+    '</div>' +
+    '<div class="inv-recipe-lines-wrap">' +
+      '<div class="inv-recipe-lines-head">' +
+        '<span style="flex:2.2;">المُكوِّن (مادة خام)</span>' +
+        '<span style="flex:1;">الكمية</span>' +
+        '<span style="flex:0.9;">الوحدة</span>' +
+        '<span style="flex:0.9;">فاقد %</span>' +
+        '<span style="width:36px;text-align:center;">×</span>' +
+      '</div>' +
+      '<div id="invRecipeLines">' + rowsHtml + '</div>' +
+      '<button class="wo-btn wo-btn-ghost inv-recipe-add" onclick="invCatRecipeAddLine()">' +
+        '<i class="fas fa-plus"></i> إضافة مُكوِّن' +
+      '</button>' +
+    '</div>' +
+    '<div class="inv-recipe-foot-info">' +
+      '<i class="fas fa-info-circle"></i> ' +
+      'حِفظ الوصفة سيُحوِّل هذا الصنف تلقائياً إلى <b>"نصف مُصنَّع"</b> ' +
+      'ويُتيح استخدامه في أوامر الإنتاج.' +
+    '</div>' +
+    (hasRecipe
+      ? '<button class="wo-btn wo-btn-danger-ghost inv-recipe-unlink" onclick="invCatRecipeUnlink()">' +
+        '<i class="fas fa-unlink"></i> إلغاء الوصفة (إعادة إلى مادة خام)' +
+        '</button>'
+      : '');
+}
+
+// One line row in the recipe lines table. Bound to st.lines[idx].
+function _invCatRecipeRenderLine(line, idx, pickerOpts) {
+  // If the line has a componentItemId but we don't have it in the picker
+  // (e.g. it's a semi item that was once a raw component), keep it
+  // as a literal option so the value isn't lost on re-render.
+  var inPool = window._invCatRecipeState.rawCatalog.some(function(r) {
+    return r.id === line.componentItemId;
+  });
+  var extraOpt = (line.componentItemId && !inPool)
+    ? '<option value="' + _invHubEsc(line.componentItemId) + '" selected>' +
+        _invHubEsc(line.itemName || line.componentItemId) + ' (خارج القائمة)</option>'
+    : '';
+  // Selected value injection
+  var optsWithSelect = pickerOpts.replace(
+    'value="' + _invHubEsc(line.componentItemId) + '"',
+    'value="' + _invHubEsc(line.componentItemId) + '" selected'
+  );
+  return '<div class="inv-recipe-line" data-idx="' + idx + '">' +
+    '<select class="inv-recipe-line-item" onchange="window._invCatRecipeState.lines[' + idx + '].componentItemId=this.value; var o=this.options[this.selectedIndex]; window._invCatRecipeState.lines[' + idx + '].itemName=o?o.textContent:\'\'">' +
+      extraOpt + optsWithSelect +
+    '</select>' +
+    '<input type="number" min="0" step="0.0001" class="inv-recipe-line-qty" value="' + line.quantity + '" onchange="window._invCatRecipeState.lines[' + idx + '].quantity=Number(this.value)||0">' +
+    '<input type="text" class="inv-recipe-line-unit" value="' + _invHubEsc(line.unit || 'PCS') + '" onchange="window._invCatRecipeState.lines[' + idx + '].unit=this.value||\'PCS\'">' +
+    '<input type="number" min="0" max="100" step="0.1" class="inv-recipe-line-waste" value="' + line.wastePct + '" onchange="window._invCatRecipeState.lines[' + idx + '].wastePct=Number(this.value)||0">' +
+    '<button class="inv-recipe-line-del" onclick="invCatRecipeRemoveLine(' + idx + ')" title="حذف الصف"><i class="fas fa-times"></i></button>' +
+    '</div>';
+}
+
+// Append an empty line and re-render.
+window.invCatRecipeAddLine = function() {
+  var st = window._invCatRecipeState;
+  st.lines.push({ componentItemId: '', itemName: '', quantity: 0, unit: 'PCS', wastePct: 0 });
+  _invCatRecipeRender();
+};
+
+// Remove a line by index.
+window.invCatRecipeRemoveLine = function(idx) {
+  var st = window._invCatRecipeState;
+  st.lines.splice(idx, 1);
+  if (!st.lines.length) {
+    st.lines.push({ componentItemId: '', itemName: '', quantity: 0, unit: 'PCS', wastePct: 0 });
+  }
+  _invCatRecipeRender();
+};
+
+// Save: POST /erp/bom (create or update), then PATCH /inv-items/:id/kind
+// to 'semi'. Both must succeed for the operation to be considered done.
+window.invCatRecipeSave = function() {
+  var st = window._invCatRecipeState;
+  if (st.saving) return;
+  var validLines = st.lines.filter(function(l) {
+    return l.componentItemId && Number(l.quantity) > 0;
+  });
+  if (!validLines.length) {
+    return showToast('الوصفة يَجب أن تَحتوي على مُكوِّن واحد على الأقل بكمية > 0', true);
+  }
+  // Reject duplicate component_item_id in the same recipe (most common
+  // data-entry mistake; the user usually means to merge the quantities).
+  var seen = {};
+  for (var i = 0; i < validLines.length; i++) {
+    var cid = validLines[i].componentItemId;
+    if (seen[cid]) {
+      return showToast('مُكوِّن مُكرَّر في الوصفة — ادمج الكمية في صف واحد', true);
+    }
+    seen[cid] = true;
+  }
+
+  st.saving = true;
+  var saveBtn = q('#invRecipeMdlSave');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الحفظ…'; }
+
+  var token = localStorage.getItem('pos_token') || '';
+  var payload = {
+    id: st.bomId || null,
+    productId: st.itemId,
+    productSource: 'inv',
+    version: 1,
+    yieldQuantity: Number(st.yieldQuantity) || 1,
+    yieldUnit: st.yieldUnit || 'PCS',
+    notes: st.notes || '',
+    consumptionWarehouseId: st.consumptionWarehouseId || null,
+    lines: validLines.map(function(l) {
+      return {
+        componentItemId: l.componentItemId,
+        quantity: Number(l.quantity),
+        unit: l.unit || 'PCS',
+        wastePct: Number(l.wastePct) || 0
+      };
+    })
+  };
+
+  fetch('/api/erp/bom', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(j) {
+      if (!j || !j.success) {
+        throw new Error((j && j.error) || 'فشل حفظ الوصفة');
+      }
+      // Now flip the inv item's kind to semi.
+      return fetch('/api/inventory/items/' + encodeURIComponent(st.itemId) + '/kind', {
+        method: 'PATCH',
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'semi' })
+      }).then(function(r) { return r.json(); });
+    })
+    .then(function(k) {
+      if (!k || !k.success) {
+        throw new Error((k && (k.message || k.error)) || 'فشل تَحويل الصنف إلى نصف مُصنَّع');
+      }
+      showToast('تم حفظ الوصفة وتَحويل الصنف إلى نصف مُصنَّع', false);
+      closeModal('#invCatRecipeModal');
+      if (typeof loadInvCatalog === 'function') loadInvCatalog();
+    })
+    .catch(function(err) {
+      showToast(String(err && err.message || err), true);
+    })
+    .then(function() {
+      st.saving = false;
+      var sb = q('#invRecipeMdlSave');
+      if (sb) { sb.disabled = false; sb.innerHTML = '<i class="fas fa-save"></i> حفظ الوصفة'; }
+    });
+};
+
+// Unlink: DELETE /erp/bom/:id, then PATCH /inv-items/:id/kind to 'raw'.
+// Both are guarded server-side (no open production orders → raw allowed).
+window.invCatRecipeUnlink = function() {
+  var st = window._invCatRecipeState;
+  if (!st.bomId) return showToast('لا توجد وصفة لإلغائها', true);
+  if (!confirm('سيتم حذف الوصفة وإرجاع الصنف إلى "مادة خام". هل أنت متأكد؟')) return;
+
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/bom/' + encodeURIComponent(st.bomId), {
+    method: 'DELETE',
+    headers: { 'Authorization': 'Bearer ' + token }
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(j) {
+      if (!j || !j.success) throw new Error((j && j.error) || 'فشل حذف الوصفة');
+      return fetch('/api/inventory/items/' + encodeURIComponent(st.itemId) + '/kind', {
+        method: 'PATCH',
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'raw' })
+      }).then(function(r) { return r.json(); });
+    })
+    .then(function(k) {
+      if (!k || !k.success) {
+        // The BOM is already deleted; surface the kind-flip failure so
+        // the user knows the data is in a transient state.
+        throw new Error((k && (k.message || k.error)) || 'تم حذف الوصفة، لكن تَعذَّر إرجاع الصنف إلى مادة خام');
+      }
+      showToast('تم إلغاء الوصفة — الصنف عاد مادة خام', false);
+      closeModal('#invCatRecipeModal');
+      if (typeof loadInvCatalog === 'function') loadInvCatalog();
+    })
+    .catch(function(err) {
+      showToast(String(err && err.message || err), true);
+    });
+};
 
 // v5.10.28 — Skeleton rows shown while a fetch is in flight.
 function _invCatRenderSkeleton(rowCount) {

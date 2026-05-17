@@ -17286,7 +17286,21 @@ window.plOpenImportDialog = function(plId){
       window._plImportRows = rows;
       var prev = document.getElementById('plImportPreview');
       if (!rows || !rows.length) {
-        prev.innerHTML = '<div style="padding:14px;background:#fee2e2;border-radius:10px;color:#991b1b;font-weight:700;">لم يتم قراءة أي صفوف. تحقق من تنسيق الملف.</div>';
+        // v5.10.77 — Actionable error message. Most likely cause is a
+        // delimiter mismatch (Arabic Excel saves with `;` not `,`).
+        // Tell the user what to try instead of just "check the file".
+        prev.innerHTML =
+          '<div style="padding:14px;background:#fee2e2;border:1px solid #fca5a5;border-radius:10px;color:#991b1b;">' +
+            '<div style="font-weight:800;font-size:14px;margin-bottom:8px;"><i class="fas fa-circle-exclamation"></i> لم يَتم قراءة أي صف من الملف</div>' +
+            '<div style="font-size:12.5px;font-weight:600;line-height:1.7;color:#7f1d1d;">' +
+              '<b>الأسباب الشائعة:</b><br>' +
+              '• الملف فارغ أو يَحتوي على عمود واحد فقط<br>' +
+              '• اسم العمود في الصف الأول مختلف عن المُتوقَّع (يَجب أن يَكون <code>name</code> أو <code>الاسم</code>)<br>' +
+              '• Excel حَفظ الملف بفاصل <code>;</code> أو <code>tab</code> ولم يَتم التَّعرف عليه<br><br>' +
+              '<b>الحل المُوصى به:</b> اضغط زرّ <b>"تنزيل قالب القائمة"</b> أعلاه، افتح الملف، املأ عمود <code>channelPrice</code> فقط، احفظ وارفع.<br><br>' +
+              '<small style="opacity:0.85;">للمزيد من المعلومات افتح Console (F12) — سَتَجد تفاصيل الـ parser.</small>' +
+            '</div>' +
+          '</div>';
         document.getElementById('plImportPreviewBtn').disabled = true;
         document.getElementById('plImportRunBtn').disabled = true;
         return;
@@ -17312,13 +17326,31 @@ function _plParseFile(file){
     if (name.endsWith('.csv')) {
       reader.onload = function(){
         try {
+          // v5.10.77 — Strip BOM (﻿) from the START of the file AND
+          // from any cell. Excel sometimes prepends BOM to the first cell
+          // value of every line, not just the document start.
           var text = String(reader.result||'').replace(/^﻿/, '');
+          // v5.10.77 — accept BOTH \r\n (Excel/Windows) and bare \n endings.
           var lines = text.split(/\r?\n/).filter(function(l){ return l.trim(); });
           if (!lines.length) return resolve([]);
-          // Detect delimiter
-          var delim = (lines[0].indexOf(',') > -1) ? ',' : (lines[0].indexOf('\t') > -1 ? '\t' : ',');
+
+          // v5.10.77 — Smart delimiter detection. Count occurrences of the
+          // 3 common CSV delimiters in the header line and pick the most
+          // frequent one. Excel on Arabic/French/German Windows defaults to
+          // SEMICOLON (;) — the previous detector only checked `,` and `\t`,
+          // so any file saved via Excel on those locales returned 0 rows.
+          var firstLine = lines[0];
+          var counts = {
+            ',':  (firstLine.match(/,/g)  || []).length,
+            ';':  (firstLine.match(/;/g)  || []).length,
+            '\t': (firstLine.match(/\t/g) || []).length
+          };
+          var delim = ',';
+          if (counts[';']  > counts[delim]) delim = ';';
+          if (counts['\t'] > counts[delim]) delim = '\t';
+
           var parseLine = function(line){
-            // Support quoted values
+            // CSV with quoted-value support ("" → " inside a quoted value).
             var out = [], cur = '', inQ = false;
             for (var i = 0; i < line.length; i++){
               var c = line[i];
@@ -17327,28 +17359,53 @@ function _plParseFile(file){
               else cur += c;
             }
             out.push(cur);
-            return out.map(function(x){ return x.trim(); });
+            // v5.10.77 — also strip BOM + zero-width spaces from individual cells.
+            return out.map(function(x){
+              return String(x).trim().replace(/^[﻿​‌‍]+/, '');
+            });
           };
-          var headers = parseLine(lines[0]).map(function(h){ return h.toLowerCase().replace(/^﻿/,''); });
+
+          var headers = parseLine(lines[0]).map(function(h){ return h.toLowerCase(); });
+
+          // v5.10.77 — Sanity check: if delim detection ended up wrong (e.g.
+          // file has 1 header that's actually 8 columns mashed together),
+          // the headers array will have length 1 and the data will be
+          // un-parseable. Surface a clear error.
+          if (headers.length < 2 && counts[','] + counts[';'] + counts['\t'] === 0) {
+            try { console.warn('[priceList parse] no delimiter detected in header:', JSON.stringify(firstLine.slice(0, 200))); } catch(_){}
+            return reject(new Error('لم يُعرف فاصل CSV (delimiter). تأكَّد أن الملف فعلاً CSV ولم يَتلَف.'));
+          }
+
           var rows = [];
           for (var i = 1; i < lines.length; i++){
             var cells = parseLine(lines[i]);
             var obj = {};
             headers.forEach(function(h, idx){ obj[h] = cells[idx] || ''; });
-            // V5.7.6 — accept BOTH the new smart-template columns AND legacy column names
-            // v5.10.75 — also accept `_sysItemId` (new template column name).
+            // v5.10.75 — accept `_sysItemId` (new template column).
+            // v5.10.77 — also accept space-separated and dotted variants.
             rows.push({
-              itemId: obj.itemid || obj._sysitemid || obj['_sysitemid'] || obj['معرف_المنتج'] || obj['معرّف_المنتج'] || '',
-              name: obj.name || obj['الاسم'] || obj.itemname || obj.product || '',
-              brand: obj.brand || obj['البراند'] || obj['العلامة'] || '',
+              itemId: obj.itemid || obj._sysitemid || obj['_sysitemid'] || obj['sysitemid'] || obj['معرف_المنتج'] || obj['معرّف_المنتج'] || '',
+              name: obj.name || obj['الاسم'] || obj.itemname || obj.product || obj['اسم_المنتج'] || '',
+              brand: obj.brand || obj['البراند'] || obj['العلامة'] || obj['البراند_التجاري'] || '',
               category: obj.category || obj['الفئة'] || obj['التصنيف'] || '',
               defaultPrice: obj.defaultprice || obj['السعر_الافتراضي'] || '',
               currentChannelPrice: obj.currentchannelprice || obj['السعر_الحالي'] || '',
-              channelPrice: obj.channelprice || obj['سعر_القناة'] || '',
+              channelPrice: obj.channelprice || obj['سعر_القناة'] || obj['سعر القناة'] || '',
               price: obj.price || obj['السعر'] || '',
               minPrice: obj.minprice || obj['min_price'] || obj['الحد_الادنى'] || obj['الحد الادنى'] || ''
             });
           }
+
+          // v5.10.77 — diagnostics. The owner had "no rows read" errors
+          // because of a delimiter mismatch; logging the detected delim +
+          // header sample makes the next debug session 30 seconds long.
+          try {
+            console.log('[priceList parse] delim:', JSON.stringify(delim),
+                        '| headers:', headers,
+                        '| raw rows:', rows.length,
+                        '| matched after filter:', rows.filter(function(r){ return r.itemId || r.name; }).length);
+          } catch(_){}
+
           // Keep rows that have either an itemId OR a name (others are bogus)
           resolve(rows.filter(function(r){ return r.itemId || r.name; }));
         } catch(e){ reject(e); }

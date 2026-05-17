@@ -17235,26 +17235,35 @@ window.plOpenImportDialog = function(plId){
         '<h3 style="margin:0;font-size:17px;font-weight:800;"><i class="fas fa-file-excel" style="color:#16a34a;"></i> استيراد أسعار من Excel/CSV</h3>' +
         '<button onclick="document.getElementById(\'plImportDlg\').remove()" style="border:0;background:#f1f5f9;width:34px;height:34px;border-radius:8px;font-size:20px;cursor:pointer;color:#64748b;">&times;</button>' +
       '</div>' +
-      '<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:10px;padding:14px;margin-bottom:14px;font-size:13px;color:#1e3a8a;">' +
-        '<strong style="display:block;margin-bottom:6px;font-size:14px;"><i class="fas fa-lightbulb"></i> الطريقة الذكية الموصى بها:</strong>' +
-        '<ol style="margin:0;padding-inline-start:24px;line-height:1.9;">' +
-          '<li>اضغط <b>"تنزيل قالب القائمة"</b> — سينزل ملف Excel فيه <b>كل أصناف المنيو</b> مسبقاً مع البراند والفئة والسعر الافتراضي.</li>' +
-          '<li>افتح الملف في Excel، املأ عمود <code style="background:#fff;padding:1px 6px;border-radius:4px;font-weight:800;color:#15803d;">channelPrice</code> فقط للأصناف التي تريد إضافتها/تحديثها (اترك الباقي فارغاً).</li>' +
-          '<li>احفظ كـ CSV واسحب الملف هنا للاستيراد.</li>' +
+      // v5.10.75 — prominent auto-match banner. The previous text mentioned
+      // `itemId` and a confusing "do not edit" instruction; users assumed
+      // the cryptic IDs were their responsibility. The backend has ALWAYS
+      // auto-matched by name as a fallback — now we tell the user that.
+      '<div style="background:linear-gradient(135deg,#dcfce7,#bbf7d0);border:1.5px solid #16a34a;border-radius:12px;padding:14px;margin-bottom:14px;font-size:13.5px;color:#14532d;">' +
+        '<strong style="display:block;margin-bottom:8px;font-size:15px;"><i class="fas fa-magic" style="color:#15803d;"></i> النظام يَتعرَّف على المنتجات تلقائياً</strong>' +
+        '<p style="margin:0 0 6px;line-height:1.6;">لا تَحتاج لِملء أي مُعرِّف (ID) يدوياً. النظام يَطابق المنتجات بـ<b>الاسم</b> تلقائياً، ويَستخدم البراند والفئة لِحلّ أي تَكرار.</p>' +
+        '<p style="margin:0;line-height:1.6;font-size:12.5px;color:#166534;"><i class="fas fa-check-circle"></i> <b>كل ما تَحتاج فعله</b>: املأ <code style="background:#fff;padding:1px 7px;border-radius:4px;font-weight:800;color:#15803d;">channelPrice</code> للأصناف التي تُريد إضافتها/تَحديثها.</p>' +
+      '</div>' +
+      '<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:12.5px;color:#1e3a8a;">' +
+        '<strong style="display:block;margin-bottom:4px;"><i class="fas fa-lightbulb"></i> الطريقة الموصى بها:</strong>' +
+        '<ol style="margin:0;padding-inline-start:22px;line-height:1.8;">' +
+          '<li>اضغط <b>"تنزيل قالب القائمة"</b> — يَنزل Excel فيه كل أصناف المنيو.</li>' +
+          '<li>افتح في Excel واملأ عمود <code style="background:#fff;padding:1px 6px;border-radius:4px;font-weight:800;color:#15803d;">channelPrice</code> فقط.</li>' +
+          '<li>احفظ كـ CSV وارفعه هنا.</li>' +
         '</ol>' +
       '</div>' +
       '<div style="background:#fffbeb;border:1px dashed #fcd34d;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:11.5px;color:#78350f;">' +
-        '<strong>القناة = أسعار فقط.</strong> الوصفة (BOM) والإنتاج وسحب المخزون موحّدة من المنيو الرئيسي — لا تتغيّر بحسب القناة. كل ما يحدث هنا هو تخصيص <b>السعر</b> فقط لكل صنف في هذه القناة.' +
+        '<strong>القناة = أسعار فقط.</strong> الوصفة والإنتاج وسحب المخزون موحّدة من المنيو — لا تَتغيَّر حسب القناة.' +
       '</div>' +
       '<details style="margin-bottom:14px;font-size:11px;color:#64748b;">' +
-        '<summary style="cursor:pointer;font-weight:700;">الأعمدة في القالب (للمطلعين)</summary>' +
+        '<summary style="cursor:pointer;font-weight:700;">الأعمدة التِّقنية في القالب (للمُطلعين فقط)</summary>' +
         '<div style="margin-top:8px;line-height:1.8;">' +
-          '<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">itemId</code> — معرّف المنتج (للمطابقة الدقيقة، لا تعدّل)<br>' +
-          '<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">name / brand / category</code> — مرجعية فقط (تأتي من المنيو)<br>' +
+          '<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">name / brand / category</code> — مرجعية (يَأتي من المنيو)<br>' +
           '<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">defaultPrice</code> — السعر الأصلي للمنيو<br>' +
           '<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">currentChannelPrice</code> — السعر الحالي في هذه القناة (إن وُجد)<br>' +
-          '<code style="background:#fff7ed;border:1px solid #f59e0b;padding:1px 5px;border-radius:3px;font-weight:800;">channelPrice ★</code> — <b>هنا تكتب السعر الجديد</b> — اتركه فارغاً للتخطّي<br>' +
-          '<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">minPrice</code> — الحد الأدنى المسموح (اختياري)' +
+          '<code style="background:#fff7ed;border:1px solid #f59e0b;padding:1px 5px;border-radius:3px;font-weight:800;">channelPrice ★</code> — <b>السعر الجَديد</b> (فارغ = تَخطّي)<br>' +
+          '<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">minPrice</code> — الحد الأدنى (اختياري)<br>' +
+          '<code style="background:#e0f2fe;padding:1px 5px;border-radius:3px;color:#075985;">_sysItemId</code> — معرّف داخلي للنظام · <b>لا تَلمسه</b> (يُستخدم للمطابقة الدقيقة عند توفُّره)' +
         '</div>' +
       '</details>' +
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">' +
@@ -17327,8 +17336,9 @@ function _plParseFile(file){
             var obj = {};
             headers.forEach(function(h, idx){ obj[h] = cells[idx] || ''; });
             // V5.7.6 — accept BOTH the new smart-template columns AND legacy column names
+            // v5.10.75 — also accept `_sysItemId` (new template column name).
             rows.push({
-              itemId: obj.itemid || obj['معرف_المنتج'] || obj['معرّف_المنتج'] || '',
+              itemId: obj.itemid || obj._sysitemid || obj['_sysitemid'] || obj['معرف_المنتج'] || obj['معرّف_المنتج'] || '',
               name: obj.name || obj['الاسم'] || obj.itemname || obj.product || '',
               brand: obj.brand || obj['البراند'] || obj['العلامة'] || '',
               category: obj.category || obj['الفئة'] || obj['التصنيف'] || '',
@@ -17358,8 +17368,9 @@ function _plParseFile(file){
           var arr = XLSX.utils.sheet_to_json(ws, { defval: '' });
           var rows = arr.map(function(o){
             var lc = {}; Object.keys(o).forEach(function(k){ lc[String(k).toLowerCase().trim()] = o[k]; });
+            // v5.10.75 — also accept `_sysItemId` (new template column name).
             return {
-              itemId: lc.itemid || lc['معرف_المنتج'] || lc['معرّف_المنتج'] || '',
+              itemId: lc.itemid || lc._sysitemid || lc['معرف_المنتج'] || lc['معرّف_المنتج'] || '',
               name: lc.name || lc['الاسم'] || lc.product || lc.itemname || '',
               brand: lc.brand || lc['البراند'] || '',
               category: lc.category || lc['الفئة'] || lc['التصنيف'] || '',
@@ -17390,18 +17401,30 @@ window._plDoImport = function(plId, dryRun){
       resEl.innerHTML = '<div style="padding:14px;background:#fee2e2;border-radius:10px;color:#991b1b;font-weight:700;">'+(r && r.error || 'فشل الاستيراد')+'</div>';
       return;
     }
-    var summaryHtml = '<div style="background:linear-gradient(135deg,#dbeafe,#eff6ff);border:1.5px solid #93c5fd;border-radius:10px;padding:12px;margin-bottom:10px;font-size:12px;">' +
-      '<div style="font-weight:900;color:#1e3a8a;margin-bottom:6px;"><i class="fas fa-chart-bar"></i> '+(dryRun?'نتائج المعاينة':'نتائج الاستيراد')+':</div>' +
-      '<div style="display:flex;gap:14px;flex-wrap:wrap;">' +
-        '<span><strong>'+r.total+'</strong> صف إجمالي</span>' +
-        '<span style="color:#16a34a;"><i class="fas fa-check"></i> <strong>'+r.matched+'</strong> مُطابق</span>' +
-        (!dryRun ? '<span style="color:#15803d;">+<strong>'+r.added+'</strong> إضافة</span>' : '') +
-        (!dryRun ? '<span style="color:#0369a1;">↻ <strong>'+r.updated+'</strong> تحديث</span>' : '') +
-        '<span style="color:#f59e0b;"><i class="fas fa-question-circle"></i> <strong>'+r.ambiguous+'</strong> متعدد</span>' +
-        '<span style="color:#dc2626;"><i class="fas fa-times"></i> <strong>'+r.unmatched+'</strong> غير موجود</span>' +
-        '<span style="color:#7c2d12;"><i class="fas fa-ban"></i> <strong>'+r.invalid+'</strong> غير صالح</span>' +
+    // v5.10.75 — Richer summary cards. Each status gets its own bordered
+    // card with an icon + count + plain-language explanation. Gives the
+    // owner confidence that the system DID auto-detect his products
+    // (which was the whole point of the patch).
+    function _plCard(opts) {
+      return '<div style="flex:1;min-width:140px;background:' + opts.bg + ';border:1.5px solid ' + opts.border + ';border-radius:10px;padding:10px 12px;text-align:center;">' +
+        '<div style="font-size:22px;color:' + opts.fg + ';margin-bottom:2px;"><i class="fas ' + opts.icon + '"></i></div>' +
+        '<div style="font-size:24px;font-weight:900;color:' + opts.fg + ';line-height:1;">' + (opts.count || 0) + '</div>' +
+        '<div style="font-size:11px;color:' + opts.fg + ';font-weight:700;margin-top:4px;">' + opts.label + '</div>' +
+      '</div>';
+    }
+    var summaryHtml =
+      '<div style="font-weight:900;color:#1e293b;margin-bottom:8px;font-size:13px;">' +
+        '<i class="fas fa-chart-bar"></i> ' + (dryRun ? 'نتائج المعاينة' : 'نتائج الاستيراد') +
+        ' <span style="font-weight:600;color:#64748b;font-size:12px;">— من إجمالي <b>' + r.total + '</b> صف</span>' +
       '</div>' +
-    '</div>';
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">' +
+        _plCard({ count:r.matched,   icon:'fa-check-circle',      label:'تم التَّعرف عليه تلقائياً', bg:'#dcfce7', border:'#86efac', fg:'#15803d' }) +
+        _plCard({ count:r.ambiguous, icon:'fa-search',            label:'بحاجة لِتَوضيح البراند',   bg:'#fef3c7', border:'#fcd34d', fg:'#92400e' }) +
+        _plCard({ count:r.unmatched, icon:'fa-circle-exclamation', label:'لم يُعثَر عليه في المنيو', bg:'#fee2e2', border:'#fca5a5', fg:'#b91c1c' }) +
+        _plCard({ count:r.invalid,   icon:'fa-ban',               label:'صف غير صالح',              bg:'#f1f5f9', border:'#cbd5e1', fg:'#475569' }) +
+        (!dryRun ? _plCard({ count:r.added,   icon:'fa-plus-circle',   label:'صنف جَديد أُضيف',        bg:'#dbeafe', border:'#93c5fd', fg:'#1e40af' }) : '') +
+        (!dryRun ? _plCard({ count:r.updated, icon:'fa-arrows-rotate', label:'سعر مَوجود حُدِّث',      bg:'#e0e7ff', border:'#a5b4fc', fg:'#3730a3' }) : '') +
+      '</div>';
     var tableHtml = '<div style="max-height:280px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:10px;">' +
       '<table style="width:100%;font-size:11px;border-collapse:collapse;">' +
         '<thead style="position:sticky;top:0;background:#f8fafc;"><tr>' +

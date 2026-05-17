@@ -572,22 +572,33 @@ router.get('/price-lists/:id/template', async (req, res) => {
       existingMap[r.item_id] = { price: Number(r.price), minPrice: Number(r.min_price) || 0 };
     });
 
-    // Build CSV (BOM for Excel UTF-8)
-    const headers = ['itemId','name','brand','category','defaultPrice','currentChannelPrice','channelPrice','minPrice'];
+    // v5.10.75 — Column order: user-facing data first, system reference
+    // (`_sysItemId`) LAST. The owner reported that seeing `itemId` as the
+    // first column with cryptic IDs like "MENU-1729345-abc1" made him
+    // assume he was supposed to manage them manually. The backend has
+    // always auto-matched by name when `itemId` is empty, but the column
+    // layout was misleading. By:
+    //   1. Moving the ID to the LAST column
+    //   2. Renaming with `_sys` prefix (Tableau/Notion convention for
+    //      "system internal, do not edit")
+    // …the user sees `name, brand, category, channelPrice` first — the
+    // columns he actually cares about. The parser still accepts both
+    // `itemId` and `_sysItemId` so old templates keep working.
+    const headers = ['name','brand','category','defaultPrice','currentChannelPrice','channelPrice','minPrice','_sysItemId'];
     let csv = '﻿' + headers.join(',') + '\n';
     let prefilled = 0;
     menuRows.forEach(m => {
       const ex = existingMap[m.id];
       if (ex) prefilled++;
       const row = [
-        m.id,
         '"' + (m.name || '').replace(/"/g, '""') + '"',
         '"' + (m.brand_name || '').replace(/"/g, '""') + '"',
         '"' + (m.category || '').replace(/"/g, '""') + '"',
         Number(m.default_price || 0).toFixed(2),
         ex ? ex.price.toFixed(2) : '',
-        '',  // ★ user fills this
-        ex && ex.minPrice ? ex.minPrice.toFixed(2) : ''
+        '',  // ★ user fills this — channelPrice
+        ex && ex.minPrice ? ex.minPrice.toFixed(2) : '',
+        m.id  // _sysItemId — system reference, last column, do not edit
       ];
       csv += row.join(',') + '\n';
     });

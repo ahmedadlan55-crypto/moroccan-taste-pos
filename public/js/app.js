@@ -8154,6 +8154,16 @@ function openRawModal(id = null, opts = {}) {
   });
 }
 
+// v5.10.71 — `_invModalKindHint()` is referenced from the modal's kind
+// <select onchange="_invModalKindHint()"> in views/app-content.html
+// (added in v5.16.0) but was never implemented. The dangling reference
+// is harmless when the user doesn't touch the dropdown, but throws an
+// undefined-function error when they do — masking the next operation.
+// Defined as a no-op (the existing #mrKindHint <small> text below the
+// dropdown is statically set in HTML; no JS update needed today). If
+// future versions want a kind-specific hint, swap this body.
+window._invModalKindHint = function _invModalKindHint() { /* no-op */ };
+
 // v5.10.6 — preview the small-unit qty given the big/small toggle
 function _mrUpdatePreview() {
   var qty   = Number((q("#mrQty")||{}).value) || 0;

@@ -2673,20 +2673,100 @@ function _coaPreviewMoveCode(parent) {
   return parent.code + String(nextNum).padStart(suffix.length, '0');
 }
 
-// v5.10.45 — move modal: lets the user reparent an account (and optionally
-// auto-renumber the code + cascade-rename descendants). Posts to
-// /api/erp/gl/accounts/:id/move which performs the work atomically.
+// v5.10.45 — move modal: lets the user reparent an account.
+// v5.10.86 — Full UI rewrite. The previous version mounted a custom
+// combobox (`_coaMountSearchableSelect`) whose CSS lives in
+// inventory-catalog (2).css — a OneDrive backup file the server doesn't
+// serve. Result: unstyled stacked elements, broken alignment, search
+// field disconnected from results. This rewrite is self-contained:
+// inline CSS injection + always-visible search + result list, no
+// hidden dropdown panel. Data contract preserved (#coaMoveNewParent
+// hidden input still drives _coaUpdateMovePreview and coaConfirmMove).
+function _coaInjectMoveModalCss() {
+  if (document.getElementById('coaMoveModalStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'coaMoveModalStyles';
+  st.textContent =
+    '#coaMoveModal{font-family:inherit;direction:rtl;}' +
+    '#coaMoveModal .coa-mv__shell{max-width:640px;width:96%;margin:40px auto;background:#fff;border-radius:18px;box-shadow:0 30px 80px -20px rgba(15,23,42,0.45);overflow:hidden;animation:coaMvIn .25s ease;display:flex;flex-direction:column;max-height:calc(100vh - 60px);}' +
+    '@keyframes coaMvIn{from{opacity:0;transform:translateY(20px);}to{opacity:1;transform:translateY(0);}}' +
+    '#coaMoveModal .coa-mv__hero{padding:18px 22px;background:linear-gradient(135deg,#faf5ff,#fff 60%);border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:12px;flex-shrink:0;}' +
+    '#coaMoveModal .coa-mv__hero-icon{width:42px;height:42px;border-radius:12px;background:#ede9fe;color:#7c3aed;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}' +
+    '#coaMoveModal .coa-mv__hero-text{flex:1;min-width:0;}' +
+    '#coaMoveModal .coa-mv__eyebrow{font-size:11px;font-weight:800;color:#7c3aed;letter-spacing:0.4px;text-transform:uppercase;}' +
+    '#coaMoveModal .coa-mv__title{font-size:16px;font-weight:900;color:#0f172a;margin-top:3px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}' +
+    '#coaMoveModal .coa-mv__title code{font-family:ui-monospace,Menlo,monospace;font-size:13.5px;background:#fff;padding:3px 10px;border-radius:7px;border:1.5px solid #ddd6fe;color:#5b21b6;font-weight:800;}' +
+    '#coaMoveModal .coa-mv__close{width:34px;height:34px;border-radius:10px;border:none;background:#fff;color:#64748b;font-size:18px;cursor:pointer;box-shadow:0 1px 3px rgba(15,23,42,0.08);flex-shrink:0;}' +
+    '#coaMoveModal .coa-mv__close:hover{background:#fee2e2;color:#dc2626;}' +
+    '#coaMoveModal .coa-mv__body{padding:18px 22px;overflow-y:auto;flex:1;}' +
+    '#coaMoveModal .coa-mv__sec{margin-bottom:14px;}' +
+    '#coaMoveModal .coa-mv__sec:last-child{margin-bottom:0;}' +
+    '#coaMoveModal .coa-mv__sec-label{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;color:#475569;margin-bottom:8px;letter-spacing:0.2px;}' +
+    '#coaMoveModal .coa-mv__sec-label i{color:#7c3aed;font-size:13px;}' +
+    '#coaMoveModal .coa-mv__searchbar{position:relative;display:flex;align-items:center;background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:0 14px;transition:border-color .15s ease,box-shadow .15s ease;}' +
+    '#coaMoveModal .coa-mv__searchbar:focus-within{border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,0.12);}' +
+    '#coaMoveModal .coa-mv__searchbar i.fa-search{color:#94a3b8;font-size:13px;margin-inline-end:8px;}' +
+    '#coaMoveModal .coa-mv__searchinput{flex:1;border:none;outline:none;font-family:inherit;font-size:13.5px;color:#0f172a;padding:11px 0;background:transparent;direction:rtl;}' +
+    '#coaMoveModal .coa-mv__searchinput::placeholder{color:#94a3b8;}' +
+    '#coaMoveModal .coa-mv__count{font-size:11px;font-weight:800;color:#5b21b6;background:#ede9fe;padding:3px 10px;border-radius:999px;margin-inline-start:8px;min-width:32px;text-align:center;}' +
+    '#coaMoveModal .coa-mv__list{margin-top:8px;max-height:280px;overflow-y:auto;background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;}' +
+    '#coaMoveModal .coa-mv__list::-webkit-scrollbar{width:8px;}' +
+    '#coaMoveModal .coa-mv__list::-webkit-scrollbar-track{background:#f8fafc;}' +
+    '#coaMoveModal .coa-mv__list::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px;}' +
+    '#coaMoveModal .coa-mv__opt{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;transition:background .12s ease;}' +
+    '#coaMoveModal .coa-mv__opt:last-child{border-bottom:none;}' +
+    '#coaMoveModal .coa-mv__opt:hover{background:#faf5ff;}' +
+    '#coaMoveModal .coa-mv__opt.is-selected{background:#ede9fe;}' +
+    '#coaMoveModal .coa-mv__opt-radio{width:18px;height:18px;border-radius:50%;border:2px solid #cbd5e1;flex-shrink:0;transition:all .12s ease;position:relative;background:#fff;}' +
+    '#coaMoveModal .coa-mv__opt.is-selected .coa-mv__opt-radio{border-color:#7c3aed;background:#7c3aed;}' +
+    '#coaMoveModal .coa-mv__opt.is-selected .coa-mv__opt-radio::after{content:"";position:absolute;inset:3px;background:#fff;border-radius:50%;}' +
+    '#coaMoveModal .coa-mv__opt-code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#5b21b6;background:#f5f3ff;padding:3px 9px;border-radius:5px;font-weight:700;flex-shrink:0;min-width:68px;text-align:center;}' +
+    '#coaMoveModal .coa-mv__opt.is-root .coa-mv__opt-code{background:transparent;color:#94a3b8;font-style:italic;min-width:0;padding:0;}' +
+    '#coaMoveModal .coa-mv__opt-name{flex:1;color:#0f172a;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+    '#coaMoveModal .coa-mv__opt-tag{font-size:10px;color:#64748b;background:#f1f5f9;padding:2px 7px;border-radius:4px;font-weight:700;flex-shrink:0;}' +
+    '#coaMoveModal .coa-mv__opt-indent{flex-shrink:0;}' +
+    '#coaMoveModal .coa-mv__empty{padding:32px 16px;text-align:center;color:#94a3b8;font-size:13px;}' +
+    '#coaMoveModal .coa-mv__empty i{display:block;font-size:24px;color:#cbd5e1;margin-bottom:8px;}' +
+    '#coaMoveModal .coa-mv__renum{display:flex;align-items:center;gap:12px;padding:12px 14px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;cursor:pointer;user-select:none;}' +
+    '#coaMoveModal .coa-mv__renum:hover{border-color:#cbd5e1;}' +
+    '#coaMoveModal .coa-mv__renum input{width:18px;height:18px;cursor:pointer;accent-color:#7c3aed;flex-shrink:0;margin:0;}' +
+    '#coaMoveModal .coa-mv__renum-text{font-size:13px;font-weight:700;color:#0f172a;line-height:1.4;}' +
+    '#coaMoveModal .coa-mv__renum-text small{display:block;font-size:11px;font-weight:500;color:#64748b;margin-top:3px;}' +
+    '#coaMoveModal .coa-mv__preview{margin-top:14px;padding:14px 16px;background:linear-gradient(135deg,#f0fdf4,#fff 70%);border:1.5px solid #bbf7d0;border-radius:10px;font-size:13px;color:#0f172a;}' +
+    '#coaMoveModal .coa-mv__preview.is-empty{background:#f8fafc;border-color:#e2e8f0;color:#94a3b8;font-style:italic;text-align:center;padding:18px 16px;}' +
+    '#coaMoveModal .coa-mv__prev-row{display:flex;align-items:center;gap:12px;padding:4px 0;font-size:12.5px;}' +
+    '#coaMoveModal .coa-mv__prev-key{font-weight:800;color:#166534;min-width:110px;}' +
+    '#coaMoveModal .coa-mv__prev-val{color:#0f172a;font-weight:700;}' +
+    '#coaMoveModal .coa-mv__prev-val code{font-family:ui-monospace,Menlo,monospace;background:#fff;padding:3px 10px;border-radius:6px;border:1.5px solid #bbf7d0;color:#15803d;font-weight:800;}' +
+    '#coaMoveModal .coa-mv__prev-val .muted{color:#94a3b8;font-weight:500;font-style:italic;margin-inline-start:8px;}' +
+    '#coaMoveModal .coa-mv__warn{margin-top:12px;padding:12px 14px;background:#fffbeb;border:1.5px solid #fde68a;border-radius:10px;font-size:12.5px;color:#78350f;display:flex;align-items:flex-start;gap:10px;line-height:1.6;}' +
+    '#coaMoveModal .coa-mv__warn i{color:#d97706;font-size:16px;margin-top:1px;flex-shrink:0;}' +
+    '#coaMoveModal .coa-mv__warn strong{color:#92400e;}' +
+    '#coaMoveModal .coa-mv__foot{padding:14px 22px;background:#fafafa;border-top:1px solid #f1f5f9;display:flex;gap:10px;justify-content:flex-end;align-items:center;flex-shrink:0;}' +
+    '#coaMoveModal .coa-mv__btn{height:40px;padding:0 22px;border-radius:10px;border:1.5px solid transparent;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:all .15s ease;}' +
+    '#coaMoveModal .coa-mv__btn-ghost{background:#fff;border-color:#e2e8f0;color:#475569;}' +
+    '#coaMoveModal .coa-mv__btn-ghost:hover{border-color:#94a3b8;color:#0f172a;}' +
+    '#coaMoveModal .coa-mv__btn-primary{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;box-shadow:0 4px 12px rgba(124,58,237,0.30);}' +
+    '#coaMoveModal .coa-mv__btn-primary:hover:not(:disabled){box-shadow:0 6px 18px rgba(124,58,237,0.45);transform:translateY(-1px);}' +
+    '#coaMoveModal .coa-mv__btn-primary:disabled{opacity:0.6;cursor:not-allowed;}' +
+    '';
+  document.head.appendChild(st);
+}
+
 window.coaOpenMoveModal = function(id) {
   var acc = _erpAccounts.find(function(a){ return a.id === id; });
   if (!acc) return;
+  _coaInjectMoveModalCss();
   var prior = document.getElementById('coaMoveModal');
   if (prior) prior.remove();
   var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
   var descendantIds = _coaCollectDescendants(id);
   var descendantCount = descendantIds.length;
-  // v5.10.47 — structured options for the searchable combobox.
-  // v5.11.5 — same code+name structured fields as the account modal.
-  var moveParentOptions = [{ value: '', label: '— جذر (بلا أب) —', code: '', name: '' }].concat(
+
+  // Cache the eligible-parent options on window so the live-search +
+  // selection handlers (declared globally below) can reach them without
+  // closure dancing. Format: { id, code, name, level, isRoot }
+  window._coaMvOptions = [{ id: '', code: '', name: '— جذر (بلا أب) —', level: 0, isRoot: true }].concat(
     _erpAccounts
       .filter(function(a){
         if (a.id === id) return false;
@@ -2697,53 +2777,54 @@ window.coaOpenMoveModal = function(id) {
       .sort(function(a,b){ return String(a.code||'').localeCompare(String(b.code||'')); })
       .map(function(a){
         return {
-          value: a.id,
+          id: a.id,
           code: a.code || '',
           name: a.nameAr || a.nameEn || '',
           level: Number(a.level || 1),
-          label: (a.code || '') + ' ' + (a.nameAr || a.nameEn || '')
+          isRoot: false
         };
       })
   );
-  var parentOpts = '<option value="">— جذر (بلا أب) —</option>' +
-    _erpAccounts
-      .filter(function(a){
-        if (a.id === id) return false;
-        if (descendantIds.indexOf(a.id) >= 0) return false;
-        if ((a.level || 1) >= 4) return false;
-        return true;
-      })
-      .sort(function(a,b){ return String(a.code||'').localeCompare(String(b.code||'')); })
-      .map(function(a){
-        var indent = '    '.repeat(((a.level||1) - 1));
-        return '<option value="' + a.id + '">' + indent + esc(a.code) + ' — ' + esc(a.nameAr || '') + '</option>';
-      }).join('');
-
+  window._coaMvAccountId = id;
+  window._coaMvSelectedParentId = '';
   var html =
-    '<div class="modal show" id="coaMoveModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10001;" onclick="if(event.target===this)this.remove();">' +
-      '<div class="modal-content" style="max-width:560px;width:96%;margin-top:60px;" onclick="event.stopPropagation();">' +
-        '<div class="modal-title">' +
-          '<i class="fas fa-arrows-up-down-left-right" style="color:#7c3aed;"></i>' +
-          '<span>نقل الحساب: ' + esc(acc.code) + ' — ' + esc(acc.nameAr || '') + '</span>' +
-          '<button class="modal-close" onclick="document.getElementById(\'coaMoveModal\').remove()">&times;</button>' +
+    '<div class="modal show" id="coaMoveModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10001;background:rgba(15,23,42,0.55);backdrop-filter:blur(6px);overflow-y:auto;padding:20px 0;" onclick="if(event.target===this)coaCloseMoveModal();">' +
+      '<div class="coa-mv__shell" onclick="event.stopPropagation();">' +
+        '<div class="coa-mv__hero">' +
+          '<div class="coa-mv__hero-icon"><i class="fas fa-arrows-up-down-left-right"></i></div>' +
+          '<div class="coa-mv__hero-text">' +
+            '<div class="coa-mv__eyebrow">نقل حساب</div>' +
+            '<div class="coa-mv__title"><code>' + esc(acc.code) + '</code><span>' + esc(acc.nameAr || '') + '</span></div>' +
+          '</div>' +
+          '<button class="coa-mv__close" onclick="coaCloseMoveModal()" aria-label="إغلاق">&times;</button>' +
         '</div>' +
-        '<div style="padding:18px 22px;">' +
-          '<div class="form-row">' +
-            '<label style="font-weight:700;">الأب الجديد</label>' +
-            '<div id="coaMoveParentMount"></div>' +
+        '<div class="coa-mv__body">' +
+          '<div class="coa-mv__sec">' +
+            '<div class="coa-mv__sec-label"><i class="fas fa-folder-tree"></i>اختر الأب الجديد</div>' +
+            '<div class="coa-mv__searchbar">' +
+              '<i class="fas fa-search"></i>' +
+              '<input type="text" id="coaMvSearch" class="coa-mv__searchinput" placeholder="ابحث بالكود أو الاسم..." autocomplete="off" oninput="_coaMvRenderList()">' +
+              '<span id="coaMvCount" class="coa-mv__count">' + window._coaMvOptions.length + '</span>' +
+            '</div>' +
+            '<div id="coaMvList" class="coa-mv__list" role="listbox"></div>' +
+            '<input type="hidden" id="coaMoveNewParent" value="">' +
           '</div>' +
-          '<div class="form-row" style="display:flex;align-items:center;gap:8px;margin-top:12px;">' +
-            '<input type="checkbox" id="coaMoveAutoRenum" checked onchange="_coaUpdateMovePreview(\'' + id + '\')" style="width:18px;height:18px;">' +
-            '<label for="coaMoveAutoRenum" style="margin:0;font-weight:700;cursor:pointer;">إعادة ترقيم الكود تلقائيًا بناءً على الأب الجديد</label>' +
+          '<div class="coa-mv__sec">' +
+            '<label class="coa-mv__renum" for="coaMoveAutoRenum">' +
+              '<input type="checkbox" id="coaMoveAutoRenum" checked onchange="_coaUpdateMovePreview(\'' + id + '\')">' +
+              '<span class="coa-mv__renum-text">إعادة ترقيم الكود تلقائيًا بناءً على الأب الجديد' +
+                '<small>ينشئ كوداً جديداً وفق نمط GGMMPP تحت الأب المختار</small>' +
+              '</span>' +
+            '</label>' +
           '</div>' +
-          '<div id="coaMovePreview" style="margin-top:14px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;color:#475569;line-height:1.8;">' +
-            'اختر أبًا جديدًا لمعاينة الكود الناتج.' +
-          '</div>' +
-          (descendantCount > 0 ? '<div style="margin-top:10px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:12.5px;color:#78350f;"><i class="fas fa-triangle-exclamation"></i> هذا الحساب لديه <strong>' + descendantCount + '</strong> حساب فرعي — سيُعاد ترقيمها تلقائيًا للحفاظ على التسلسل.</div>' : '') +
-          '<div style="margin-top:18px;display:flex;gap:8px;justify-content:flex-end;">' +
-            '<button class="wo-btn wo-btn-ghost" onclick="document.getElementById(\'coaMoveModal\').remove()">إلغاء</button>' +
-            '<button class="wo-btn wo-btn-primary" onclick="coaConfirmMove(\'' + id + '\')"><i class="fas fa-check"></i> تأكيد النقل</button>' +
-          '</div>' +
+          '<div id="coaMovePreview" class="coa-mv__preview is-empty">اختر أبًا جديدًا لمعاينة الكود الناتج</div>' +
+          (descendantCount > 0
+            ? '<div class="coa-mv__warn"><i class="fas fa-triangle-exclamation"></i><div>هذا الحساب لديه <strong>' + descendantCount + '</strong> حساب فرعي — سيُعاد ترقيمها تلقائيًا للحفاظ على التسلسل.</div></div>'
+            : '') +
+        '</div>' +
+        '<div class="coa-mv__foot">' +
+          '<button class="coa-mv__btn coa-mv__btn-ghost" onclick="coaCloseMoveModal()">إلغاء</button>' +
+          '<button class="coa-mv__btn coa-mv__btn-primary" onclick="coaConfirmMove(\'' + id + '\')"><i class="fas fa-check"></i> تأكيد النقل</button>' +
         '</div>' +
       '</div>' +
     '</div>';
@@ -2751,20 +2832,61 @@ window.coaOpenMoveModal = function(id) {
   wrap.innerHTML = html;
   document.body.appendChild(wrap.firstChild);
 
-  // v5.10.47 — mount the searchable combobox in the parent slot. The
-  // hidden input it writes (#coaMoveNewParent) keeps the same id so
-  // existing readers in coaConfirmMove / _coaUpdateMovePreview still work.
-  setTimeout(function(){
-    var mount = document.getElementById('coaMoveParentMount');
-    if (!mount) return;
-    _coaMountSearchableSelect(mount, {
-      id: 'coaMoveNewParent',
-      placeholder: '— جذر (بلا أب) —',
-      value: '',
-      options: moveParentOptions,
-      onChange: function(){ if (typeof _coaUpdateMovePreview === 'function') _coaUpdateMovePreview(id); }
-    });
-  }, 30);
+  _coaMvRenderList();
+  setTimeout(function(){ var s = document.getElementById('coaMvSearch'); if (s) s.focus(); }, 50);
+};
+
+// v5.10.86 — Close handler: removes modal + clears cached options off window.
+window.coaCloseMoveModal = function() {
+  var m = document.getElementById('coaMoveModal');
+  if (m) m.remove();
+  delete window._coaMvOptions;
+  delete window._coaMvAccountId;
+  delete window._coaMvSelectedParentId;
+};
+
+// v5.10.86 — Re-renders the parent list applying the current search query.
+window._coaMvRenderList = function() {
+  var list = document.getElementById('coaMvList');
+  var searchEl = document.getElementById('coaMvSearch');
+  var countEl = document.getElementById('coaMvCount');
+  if (!list) return;
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var q = String((searchEl && searchEl.value) || '').trim().toLowerCase();
+  var opts = (window._coaMvOptions || []).filter(function(o){
+    if (!q) return true;
+    var hay = (String(o.code) + ' ' + String(o.name)).toLowerCase();
+    return hay.indexOf(q) >= 0;
+  });
+  if (countEl) countEl.textContent = opts.length;
+  if (!opts.length) {
+    list.innerHTML = '<div class="coa-mv__empty"><i class="fas fa-search"></i>لا توجد نتائج مطابقة لـ "' + esc(q) + '"</div>';
+    return;
+  }
+  var selectedId = window._coaMvSelectedParentId || '';
+  list.innerHTML = opts.map(function(o){
+    var indent = Math.max(0, (o.level - 1)) * 16;
+    var isSel = String(o.id) === String(selectedId);
+    var levelTag = o.isRoot ? '' : '<span class="coa-mv__opt-tag">L' + o.level + '</span>';
+    return '<div class="coa-mv__opt' + (isSel ? ' is-selected' : '') + (o.isRoot ? ' is-root' : '') + '" data-id="' + esc(o.id) + '" onclick="_coaMvSelect(\'' + esc(o.id) + '\')">' +
+      '<span class="coa-mv__opt-radio"></span>' +
+      (indent > 0 ? '<span class="coa-mv__opt-indent" style="width:' + indent + 'px"></span>' : '') +
+      (o.isRoot ? '' : '<code class="coa-mv__opt-code">' + esc(o.code || '—') + '</code>') +
+      '<span class="coa-mv__opt-name">' + esc(o.name) + '</span>' +
+      levelTag +
+    '</div>';
+  }).join('');
+};
+
+// v5.10.86 — Selects a parent option, writes hidden input, refreshes preview.
+window._coaMvSelect = function(parentId) {
+  window._coaMvSelectedParentId = parentId || '';
+  var hidden = document.getElementById('coaMoveNewParent');
+  if (hidden) hidden.value = parentId || '';
+  _coaMvRenderList();
+  if (typeof _coaUpdateMovePreview === 'function' && window._coaMvAccountId) {
+    _coaUpdateMovePreview(window._coaMvAccountId);
+  }
 };
 
 window._coaUpdateMovePreview = function(id) {
@@ -2778,13 +2900,26 @@ window._coaUpdateMovePreview = function(id) {
   var willRenumber = !!(auto && auto.checked && newParent);
   var newCode = willRenumber ? _coaPreviewMoveCode(newParent) : acc.code;
   var newLevel = newParent ? ((newParent.level || 1) + 1) : 1;
+  // v5.10.86 — uses the new .coa-mv__preview styles (green-tinted card
+  // with key-value rows). The is-empty class is removed once a value is
+  // chosen so the card switches from placeholder to populated styling.
+  box.classList.remove('is-empty');
   box.innerHTML =
-    '<div><strong>الكود الجديد:</strong> <code style="background:#fff;padding:2px 8px;border-radius:6px;border:1px solid #cbd5e1;font-weight:800;color:#7c3aed;">' + (newCode || '—') + '</code>' +
-      (willRenumber ? '' : ' <span style="color:#94a3b8;">(لن يتغيَّر — اختيار يدوي)</span>') +
+    '<div class="coa-mv__prev-row">' +
+      '<span class="coa-mv__prev-key">الكود الجديد</span>' +
+      '<span class="coa-mv__prev-val"><code>' + (newCode || '—') + '</code>' +
+        (willRenumber ? '' : '<span class="muted">(لن يتغيَّر — اختيار يدوي)</span>') +
+      '</span>' +
     '</div>' +
-    '<div style="margin-top:6px;"><strong>المستوى الجديد:</strong> L' + newLevel + '</div>' +
-    '<div style="margin-top:6px;color:#64748b;font-size:12px;">' +
-      'الأب: ' + (newParent ? (newParent.code + ' — ' + (newParent.nameAr || '')) : '— جذر —') +
+    '<div class="coa-mv__prev-row">' +
+      '<span class="coa-mv__prev-key">المستوى الجديد</span>' +
+      '<span class="coa-mv__prev-val">L' + newLevel + '</span>' +
+    '</div>' +
+    '<div class="coa-mv__prev-row">' +
+      '<span class="coa-mv__prev-key">الأب الجديد</span>' +
+      '<span class="coa-mv__prev-val" style="font-weight:600;">' +
+        (newParent ? (newParent.code + ' — ' + (newParent.nameAr || '')) : '— جذر (بلا أب) —') +
+      '</span>' +
     '</div>';
 };
 
@@ -2795,7 +2930,11 @@ window.coaConfirmMove = function(id) {
   var newParentId = sel.value || null;
   var autoRenumber = !!(auto && auto.checked);
   var token = localStorage.getItem('pos_token') || '';
-  var btn = document.querySelector('#coaMoveModal .wo-btn-primary');
+  // v5.10.86 — the move-modal button uses .coa-mv__btn-primary now,
+  // but keep .wo-btn-primary as a fallback for any caller that still
+  // renders the legacy button.
+  var btn = document.querySelector('#coaMoveModal .coa-mv__btn-primary')
+         || document.querySelector('#coaMoveModal .wo-btn-primary');
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري النقل...'; }
   fetch('/api/erp/gl/accounts/' + encodeURIComponent(id) + '/move', {
     method: 'POST',

@@ -4161,15 +4161,26 @@ async function runMigrations() {
   // assign report_section explicitly (e.g., via the CoA editor UI).
   try {
     const codeToSection = [
-      // ── Assets ──
+      // ── Assets ── v5.10.80 — Asset prefixes corrected to match
+      // coa-template.json. The earlier mapping had 112↔113 swapped
+      // (so inventory rows ended up under Receivables) and pointed
+      // allowance/accDep at the wrong prefixes (1131 → allowance,
+      // 124 → accDep — should be 1124 and 122). Order matters
+      // because the loop applies UPDATE statements in sequence and
+      // each one keys on `report_section IS NULL` — but the SECOND
+      // v5.10.80 re-derive pass below clears that flag for accounts
+      // that need correcting.
       ["'111'", "'cash'"],
-      ["'112'", "'inventory'"],
-      ["'1131'", "'allowance_doubtful'"],  // contra
-      ["'113'", "'receivables'"],
+      ["'1124'", "'allowance_doubtful'"],  // contra — MUST precede 112
+      ["'112'", "'receivables'"],
+      ["'113'", "'inventory'"],
       ["'1161'", "'vat_input'"],           // v5.10.78 new
-      ["'114','115','116'", "'other_current_asset'"],
-      ["'124'", "'acc_dep'"],              // contra
-      ["'121','122','123'", "'ppe'"],
+      ["'116'", "'vat_input'"],
+      ["'114'", "'prepaid'"],
+      ["'115'", "'receivables'"],          // العهد والسلف
+      ["'122'", "'acc_dep'"],              // contra (PRIMARY)
+      ["'124'", "'acc_dep'"],              // legacy fallback
+      ["'121','123'", "'ppe'"],
       ["'125','126'", "'intangibles'"],
       // ── Liabilities ──
       ["'211'", "'payables'"],
@@ -4215,6 +4226,77 @@ async function runMigrations() {
     }
     console.log('[v5.10.78] backfilled report_section for ' + totalTagged + ' accounts');
   } catch (e) { console.error('[v5.10.78] report_section backfill:', e.message); }
+
+  // v5.10.80 — RE-DERIVE pass: existing installs ran the v5.10.78 backfill
+  // with the swapped asset prefixes (112↔113, 1131 vs 1124, 124 vs 122)
+  // so their gl_accounts rows already have INCORRECT report_section
+  // values that the IS-NULL guard above cannot reach. This pass
+  // overrides them in-place for the affected asset prefixes only. It is
+  // idempotent (running twice is a no-op) and safe to run on every boot.
+  try {
+    const corrections = [
+      // [pattern, exclusionPattern (optional), correctSection]
+      // 1124 must come BEFORE 112 (more specific)
+      ['1124%', null,        'allowance_doubtful'],
+      // 112x receivables EXCEPT 1124 already handled above
+      ['112%',  '1124%',     'receivables'],
+      // 113x inventory — was wrongly 'receivables'
+      ['113%',  null,        'inventory'],
+      // 114x prepaid — was wrongly 'other_current_asset'
+      ['114%',  null,        'prepaid'],
+      // 115x custody → receivables — was wrongly 'other_current_asset'
+      ['115%',  null,        'receivables'],
+      // 116x VAT input — was correct but ensure consistency
+      ['116%',  null,        'vat_input'],
+      // 122x accumulated depreciation — was wrongly 'ppe'
+      ['122%',  null,        'acc_dep']
+    ];
+    let totalFixed = 0;
+    for (const [pattern, exclusion, section] of corrections) {
+      let sql = "UPDATE gl_accounts SET report_section = ? WHERE code LIKE ? AND (report_section IS NULL OR report_section <> ?)";
+      const args = [section, pattern, section];
+      if (exclusion) {
+        sql += " AND code NOT LIKE ?";
+        args.push(exclusion);
+      }
+      const [u] = await db.query(sql, args);
+      totalFixed += u.affectedRows || 0;
+    }
+    if (totalFixed > 0) console.log('[v5.10.80] re-derived report_section for ' + totalFixed + ' mis-tagged accounts');
+  } catch (e) { console.error('[v5.10.80] report_section re-derive:', e.message); }
+
+  // v5.10.80 — Name-based rescue pass for legacy mis-coded custody /
+  // allowance / depreciation accounts whose semantic NAME contradicts
+  // their code prefix. Example: an owner created "11301 عهدة ADLAN"
+  // — code 11301 starts with 113 (Inventory in our template), but the
+  // name "عهدة" clearly means custody (a receivable). Without this
+  // rescue, the prefix-only migration above would lock it under
+  // Inventory permanently. Runs LAST so it overrides the prefix pass.
+  try {
+    const nameRescues = [
+      // [LIKE pattern on name_ar, codeLike, correctSection]
+      // Depreciation accounts: "إهلاك" anywhere → acc_dep
+      [['%إهلاك%', '%depreciation%'], '1%', 'acc_dep'],
+      // Allowance / provision accounts under current assets → allowance_doubtful
+      [['%مخصص%', '%allowance%', '%provision%'], '11%', 'allowance_doubtful'],
+      // Custody / advances under current assets → receivables
+      [['%عهدة%', '%سلفة%', '%سلف%', '%advance%', '%custody%'], '11%', 'receivables']
+    ];
+    let totalRescued = 0;
+    for (const [namePatterns, codePattern, section] of nameRescues) {
+      for (const namePattern of namePatterns) {
+        const [u] = await db.query(
+          "UPDATE gl_accounts SET report_section = ? " +
+          "WHERE code LIKE ? " +
+          "  AND (name_ar LIKE ? OR name_en LIKE ?) " +
+          "  AND (report_section IS NULL OR report_section <> ?)",
+          [section, codePattern, namePattern, namePattern, section]
+        );
+        totalRescued += u.affectedRows || 0;
+      }
+    }
+    if (totalRescued > 0) console.log('[v5.10.80] name-rescued report_section for ' + totalRescued + ' accounts');
+  } catch (e) { console.error('[v5.10.80] name-rescue:', e.message); }
 
   // Per-item override for waste GL routing. NULL = use reason→account map.
   await addColumnIfMissing('inv_items', 'waste_gl_account_id', 'VARCHAR(50) NULL');

@@ -267,21 +267,46 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       return reportSectionMap[reportSection] || null;
     }
 
+    // v5.10.80 — Name-based override that runs BEFORE the explicit
+    // report_section lookup. Rescues legacy mis-coded accounts whose
+    // names clearly identify their nature (e.g. 11301 "عهدة ADLAN" coded
+    // under 113=Inventory). Otherwise report_section would dominate and
+    // pin them to the wrong bucket forever — the user can't un-stick
+    // them without re-coding every row.
+    function classifyAssetByName(code, nameAr) {
+      const c = String(code || '');
+      const name = String(nameAr || '');
+      if (/إهلاك|depreciation/i.test(name) && /^1[0-9]/.test(c)) return ['nonCurrentAssets', 'accDep'];
+      if (/مخصص|allowance|provision/i.test(name) && /^11/.test(c)) return ['currentAssets', 'allowanceDoubtful'];
+      if (/عهدة|سلفة|سلف|advance|custody/i.test(name) && /^11/.test(c)) return ['currentAssets', 'receivables'];
+      return null;
+    }
+
     function classifyAsset(code, nameAr) {
       const c = String(code || '');
       const name = String(nameAr || '');
       // ── Step A: keyword-based override (template-agnostic) ──
-      if (/إهلاك|depreciation/i.test(name) && /^1[0-9]/.test(c)) return ['nonCurrentAssets', 'accDep'];
-      if (/مخصص|allowance|provision/i.test(name) && /^11/.test(c)) return ['currentAssets', 'allowanceDoubtful'];
-      // ── Step B: our actual seed (post-v5.10.0 template) ──
+      const nameHit = classifyAssetByName(code, nameAr);
+      if (nameHit) return nameHit;
+      // ── Step B: actual coa-template.json hierarchy (v5.10.78+) ──
+      // v5.10.80 — Asset prefixes corrected: template says 112=Receivables,
+      // 113=Inventory, 1124=Allowance (contra), 122=AccDep (contra). The
+      // earlier mapping had 112↔113 swapped and pointed allowance/accDep
+      // at the wrong prefixes — causing inventory rows to surface under
+      // Receivables on the Balance Sheet.
       if (c.startsWith('111')) return ['currentAssets', 'cash'];
-      if (c.startsWith('112')) return ['currentAssets', 'inventory'];
-      if (c.startsWith('113')) return ['currentAssets', 'receivables'];
-      if (c.startsWith('114') || c.startsWith('115') || c.startsWith('116'))
-        return ['currentAssets', 'otherCA'];
-      if (c === '124' || c.startsWith('124')) return ['nonCurrentAssets', 'accDep'];
-      if (c.startsWith('121') || c.startsWith('122') || c.startsWith('123'))
+      if (c.startsWith('1124')) return ['currentAssets', 'allowanceDoubtful'];  // contra (must precede 112)
+      if (c.startsWith('112')) return ['currentAssets', 'receivables'];          // الذمم المدينة
+      if (c.startsWith('113')) return ['currentAssets', 'inventory'];            // المخزون
+      if (c.startsWith('114')) return ['currentAssets', 'prepaid'];              // مدفوعات مقدماً
+      if (c.startsWith('115')) return ['currentAssets', 'receivables'];          // العهد والسلف
+      if (c.startsWith('116')) return ['currentAssets', 'vatInput'];
+      if (c.startsWith('122')) return ['nonCurrentAssets', 'accDep'];            // مجمع الإهلاك (contra)
+      if (c.startsWith('124')) return ['nonCurrentAssets', 'accDep'];            // legacy fallback
+      if (c.startsWith('121') || c.startsWith('123'))
         return ['nonCurrentAssets', 'ppe'];
+      if (c.startsWith('125') || c.startsWith('126'))
+        return ['nonCurrentAssets', 'intangibles'];
       if (c.startsWith('11')) return ['currentAssets', 'otherCA'];
       if (c.startsWith('12')) return ['nonCurrentAssets', 'ppe'];
       return null;
@@ -352,7 +377,12 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
 
       if (a.type === 'asset') {
         const magnitude = net;
-        const cls = fromSection || classifyAsset(a.code, a.name_ar);
+        // v5.10.80 — name-based override beats report_section so legacy
+        // mis-coded custody/allowance/depreciation accounts get routed
+        // by their semantic name first.
+        const cls = classifyAssetByName(a.code, a.name_ar)
+                 || fromSection
+                 || classifyAsset(a.code, a.name_ar);
         if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
           const targetGroup = groups[cls[0]][cls[1]];
           const signed = pushToGroup(targetGroup, a, magnitude);

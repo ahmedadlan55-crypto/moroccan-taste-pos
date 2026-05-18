@@ -901,15 +901,23 @@ router.post('/gl/coa/wipe-and-seed', async (req, res) => {
       }
       function _deriveReportSection(code, type) {
         const c = String(code || '');
-        // Order matters: most-specific prefix first.
+        // v5.10.80 — Asset prefixes corrected to match the actual
+        // coa-template.json hierarchy. The earlier mapping had 112↔113
+        // swapped (template says 112=Receivables, 113=Inventory) and
+        // claimed 1131=Allowance + 124=AccDep, but the template has
+        // 1124=Allowance + 122=AccDep. Result: inventory items were
+        // landing under Receivables on the Balance Sheet. Order matters:
+        // most-specific prefix first so 1124 wins over 112.
         if (c.startsWith('1161') || c.startsWith('1162') || c.startsWith('116')) return 'vat_input';
         if (c.startsWith('1111') || c.startsWith('1112') || c.startsWith('111')) return 'cash';
-        if (c === '1131' || c.startsWith('1131')) return 'allowance_doubtful';
-        if (c.startsWith('113'))                  return 'receivables';
-        if (c.startsWith('112'))                  return 'inventory';
-        if (c.startsWith('114') || c.startsWith('115')) return 'prepaid';
-        if (c.startsWith('124'))                  return 'acc_dep';
-        if (c.startsWith('121') || c.startsWith('122') || c.startsWith('123')) return 'ppe';
+        if (c.startsWith('1124'))                 return 'allowance_doubtful';   // contra (1124 per template)
+        if (c.startsWith('112'))                  return 'receivables';            // الذمم المدينة
+        if (c.startsWith('113'))                  return 'inventory';              // المخزون
+        if (c.startsWith('114'))                  return 'prepaid';
+        if (c.startsWith('115'))                  return 'receivables';            // العهد والسلف — staff/operations advances
+        if (c.startsWith('122'))                  return 'acc_dep';                // مجمع الإهلاك (contra)
+        if (c.startsWith('124'))                  return 'acc_dep';                // legacy template fallback
+        if (c.startsWith('121') || c.startsWith('123')) return 'ppe';
         if (c.startsWith('125') || c.startsWith('126')) return 'intangibles';
         if (c.startsWith('211'))                  return 'payables';
         if (c.startsWith('212'))                  return 'accrued';

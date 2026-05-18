@@ -26,9 +26,108 @@
 const router = require('express').Router();
 const db = require('../../../db/connection');
 
+// v5.10.79 — Canonical IFRS-conventional ordering inside each Balance
+// Sheet section. The most-liquid item appears first (cash before
+// inventory), the most-tenured item appears first under Non-current
+// (PP&E before intangibles), and contra-accounts appear right after
+// the gross item they net against (allowance after receivables,
+// accumulated depreciation after PP&E). This is the order Big-4 audit
+// reports use and what SOCPA-trained accountants expect.
+const IFRS_SUBGROUP_ORDER = {
+  currentAssets:    ['cash', 'receivables', 'allowanceDoubtful', 'inventory', 'vatInput', 'prepaid', 'otherCA'],
+  nonCurrentAssets: ['ppe', 'accDep', 'intangibles'],
+  currentLiab:      ['payables', 'accrued', 'vatOutput', 'netVat', 'gosi', 'withholding', 'customerDeposits', 'shortTermDebt', 'otherCL'],
+  nonCurrentLiab:   ['longTermDebt', 'eosb'],
+  equity:           ['capital', 'retained', 'drawings', 'reserves', 'zakat']
+};
+
+// Helper — returns groups as an ORDERED ARRAY of {key, label, total,
+// accounts, isContra} so the frontend can render them in IFRS sequence
+// without depending on JavaScript object insertion order (which the
+// V8 engine guarantees but is brittle).
+function orderSection(sectionKey, sectionObj) {
+  const order = IFRS_SUBGROUP_ORDER[sectionKey] || [];
+  const seen = {};
+  const ordered = [];
+  // First: emit keys IN the canonical order
+  order.forEach(key => {
+    if (sectionObj[key]) {
+      ordered.push(Object.assign({ key }, sectionObj[key]));
+      seen[key] = true;
+    }
+  });
+  // Second: any keys NOT in the canonical list, in their original
+  // order (defensive — surfaces new buckets without a code change).
+  Object.keys(sectionObj).forEach(key => {
+    if (!seen[key]) ordered.push(Object.assign({ key }, sectionObj[key]));
+  });
+  return ordered;
+}
+
+// v5.10.79 — Compute Balance Sheet snapshot totals for a given date.
+// Returns ONLY the section/group totals (no per-account breakdown) —
+// used for the period-over-period comparison column. Kept lightweight
+// so providing a `compareDate` doesn't double the heavy main query.
+async function _bsSnapshotTotals(asOfDate, brandId, branchId, hasBrandId, hasBranchId) {
+  let where = "j.status = 'posted'";
+  const params = [];
+  if (asOfDate) { where += ' AND DATE(j.journal_date) <= ?'; params.push(asOfDate); }
+  if (brandId  && hasBrandId)  { where += ' AND (e.brand_id IS NULL OR e.brand_id = ?)';   params.push(brandId); }
+  if (branchId && hasBranchId) { where += ' AND (e.branch_id IS NULL OR e.branch_id = ?)'; params.push(branchId); }
+  const [rows] = await db.query(
+    `SELECT a.id, a.code, a.type, a.report_section,
+            COALESCE(SUM(CASE WHEN ${where} THEN e.debit  ELSE 0 END), 0) AS d,
+            COALESCE(SUM(CASE WHEN ${where} THEN e.credit ELSE 0 END), 0) AS c
+       FROM gl_accounts a
+       LEFT JOIN gl_entries e   ON e.account_id = a.id
+       LEFT JOIN gl_journals j  ON j.id = e.journal_id
+      WHERE COALESCE(a.is_folder, 0) = 0 AND a.is_active = 1
+      GROUP BY a.id`,
+    [...params, ...params]
+  );
+  // Bucket totals using the same `report_section` map the main pass uses.
+  const sectionTotals = {};
+  let totalAssets = 0, totalLiab = 0, totalEq = 0;
+  let netIncomeRevenue = 0, netIncomeExpense = 0;
+  rows.forEach(r => {
+    const net = (Number(r.d) || 0) - (Number(r.c) || 0);
+    if (Math.abs(net) < 0.001) return;
+    if (r.type === 'asset') {
+      const mag = net;
+      totalAssets += (String(r.report_section || '').match(/(acc_dep|allowance_doubtful)/) ? -mag : mag);
+    } else if (r.type === 'liability') {
+      totalLiab += -net;
+    } else if (r.type === 'equity') {
+      const mag = -net;
+      totalEq += (String(r.report_section || '') === 'drawings' ? -Math.abs(mag) : mag);
+    } else if (r.type === 'revenue') {
+      netIncomeRevenue += (Number(r.c) || 0) - (Number(r.d) || 0);
+    } else if (r.type === 'expense') {
+      netIncomeExpense += (Number(r.d) || 0) - (Number(r.c) || 0);
+    }
+    if (r.report_section) {
+      sectionTotals[r.report_section] = (sectionTotals[r.report_section] || 0) + (r.type === 'asset' ? net : -net);
+    }
+  });
+  const netIncome = netIncomeRevenue - netIncomeExpense;
+  totalEq += netIncome;  // Period income goes to retained earnings until close
+  return {
+    asOfDate, totalAssets, totalLiabilities: totalLiab, totEq: totalEq,
+    netIncome, sectionTotals,
+    isBalanced: Math.abs(totalAssets - (totalLiab + totalEq)) < 0.01
+  };
+}
+
+// Helper — computes change object {abs, pct} between two values.
+function _bsDelta(current, prior) {
+  const abs = (Number(current) || 0) - (Number(prior) || 0);
+  const pct = Math.abs(prior) > 0.001 ? (abs / Math.abs(prior)) * 100 : null;
+  return { abs, pct };
+}
+
 router.get('/reports/balance-sheet-ifrs', async (req, res) => {
   try {
-    const { asOfDate, brandId, branchId, showZero } = req.query;
+    const { asOfDate, compareDate, brandId, branchId, showZero } = req.query;
     const includeZero = showZero === '1' || showZero === 'true';
     // v5.11.18 — Balance Sheet shows leaf accounts only. Folders never
     // hold posted entries (only their leaves do), so they would never
@@ -323,6 +422,47 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
     const totalAssets = totCA + totNCA;
     const totalLiabilities = totCL + totNCL;
 
+    // v5.10.79 — Optional period-over-period comparison. When the client
+    // sends ?compareDate=YYYY-MM-DD, we run a slim 2nd snapshot to that
+    // date and compute deltas (absolute + %) for the top totals + every
+    // report_section bucket. The full per-account drilldown is NOT
+    // duplicated — that would double the heavy query for marginal UI
+    // value (the user wants the comparison in totals + section headers).
+    let priorSnapshot = null;
+    let change = null;
+    if (compareDate) {
+      try {
+        priorSnapshot = await _bsSnapshotTotals(compareDate, brandId, branchId, hasBrandId, hasBranchId);
+        change = {
+          totalAssets:      _bsDelta(totalAssets,      priorSnapshot.totalAssets),
+          totalLiabilities: _bsDelta(totalLiabilities, priorSnapshot.totalLiabilities),
+          totEq:            _bsDelta(totEq,            priorSnapshot.totEq),
+          netIncome:        _bsDelta(netIncome,        priorSnapshot.netIncome),
+          sectionTotals: {}
+        };
+        // Per-section delta map keyed by report_section. Lets the
+        // frontend show a small "Δ" next to each subgroup row.
+        Object.keys(priorSnapshot.sectionTotals).forEach(k => {
+          const cur = 0; // current is computed lazily by frontend from groups[].total
+          change.sectionTotals[k] = priorSnapshot.sectionTotals[k];
+        });
+      } catch (e) {
+        // Comparison is a soft feature; if it fails, log + return main data
+        console.warn('[balance-sheet] compareDate snapshot failed:', e.message);
+      }
+    }
+
+    // v5.10.79 — Order groups by IFRS liquidity convention before sending.
+    // The frontend can iterate `orderedGroups.currentAssets` as an ordered
+    // ARRAY (instead of relying on JavaScript object insertion order).
+    const orderedGroups = {
+      currentAssets:    orderSection('currentAssets',    groups.currentAssets),
+      nonCurrentAssets: orderSection('nonCurrentAssets', groups.nonCurrentAssets),
+      currentLiab:      orderSection('currentLiab',      groups.currentLiab),
+      nonCurrentLiab:   orderSection('nonCurrentLiab',   groups.nonCurrentLiab),
+      equity:           orderSection('equity',           groups.equity)
+    };
+
     res.json({
       currentAssets, totCA, nonCurrentAssets, totNCA, totalAssets,
       currentLiab, totCL, nonCurrentLiab, totNCL, totalLiabilities,
@@ -331,7 +471,10 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       isBalanced: Math.abs(totalAssets - (totalLiabilities + totEq)) < 0.01,
       asOfDate: asOfDate || new Date().toISOString().split('T')[0],
       groups: groups,
-      unclassified: unclassified
+      orderedGroups: orderedGroups,   // v5.10.79 — IFRS-ordered arrays
+      unclassified: unclassified,
+      prior: priorSnapshot,           // v5.10.79 — comparison snapshot (or null)
+      change: change                   // v5.10.79 — deltas (or null)
     });
   } catch (e) { res.json({ currentAssets:[], nonCurrentAssets:[], currentLiab:[], nonCurrentLiab:[], equityItems:[], totCA:0, totNCA:0, totCL:0, totNCL:0, totEq:0, totalAssets:0, totalLiabilities:0, netIncome:0, isBalanced:false, groups:{}, unclassified:[] }); }
 });

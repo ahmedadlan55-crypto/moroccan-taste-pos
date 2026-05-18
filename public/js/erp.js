@@ -14140,13 +14140,224 @@ function erpLoadPnL() {
 
 // ═══ Balance Sheet — enhanced ═══
 window.erpBSReset = function() {
-  ['bsAsOf','bsBrand','bsBranch','bsView'].forEach(function(id){
+  ['bsAsOf','bsBrand','bsBranch','bsView','bsCompareDate','bsQuarter','bsYear'].forEach(function(id){
     var el = document.getElementById(id); if (!el) return;
     if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
   });
+  var cmpToggle = document.getElementById('bsCompareEnabled');
+  if (cmpToggle) cmpToggle.checked = false;
+  var cmpDate = document.getElementById('bsCompareDate');
+  if (cmpDate) cmpDate.disabled = true;
   document.getElementById('bsBranded').style.display = 'none';
   document.getElementById('bsKpis').style.display = 'none';
   document.getElementById('bsDetails').innerHTML = '';
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v5.10.79 — Advanced period picker helpers
+// ═══════════════════════════════════════════════════════════════════
+// _bsFmtDate(d) → 'YYYY-MM-DD' (the format <input type="date"> expects).
+function _bsFmtDate(d) {
+  if (!d || isNaN(d.getTime())) return '';
+  var y = d.getFullYear();
+  var m = String(d.getMonth() + 1).padStart(2, '0');
+  var dd = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + dd;
+}
+
+// Quarter math helpers — return the LAST day of the requested quarter
+// in the given year. Used by every period preset.
+function _bsEndOfQuarter(y, q) {
+  // q ∈ {1,2,3,4}; returns Date for last day of that quarter
+  var endMonth = q * 3;          // Q1→3, Q2→6, Q3→9, Q4→12
+  return new Date(y, endMonth, 0);  // day 0 of next month = last day of endMonth
+}
+function _bsCurrentQuarter(date) {
+  return Math.floor(date.getMonth() / 3) + 1;
+}
+
+// bsSetPreset — public handler called by the preset buttons. Computes
+// the conventional "as of" + "compare with" dates for each preset and
+// auto-fills both fields. Then triggers the report load.
+window.bsSetPreset = function(preset) {
+  var today = new Date();
+  var asOf = null, compareWith = null;
+  switch (preset) {
+    case 'today':
+      asOf = today;
+      compareWith = null;  // no convention for "yesterday"; user can flip manually
+      break;
+    case 'mtd': {
+      asOf = today;
+      var lastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+      compareWith = lastMonth;
+      break;
+    }
+    case 'qtd': {
+      asOf = today;
+      var qNow = _bsCurrentQuarter(today);
+      var prevQ = qNow === 1 ? 4 : qNow - 1;
+      var prevQYear = qNow === 1 ? today.getFullYear() - 1 : today.getFullYear();
+      compareWith = _bsEndOfQuarter(prevQYear, prevQ);
+      break;
+    }
+    case 'ytd':
+      asOf = today;
+      compareWith = new Date(today.getFullYear() - 1, 11, 31);
+      break;
+    case 'last_month':
+      asOf = new Date(today.getFullYear(), today.getMonth(), 0);
+      compareWith = new Date(today.getFullYear(), today.getMonth() - 1, 0);
+      break;
+    case 'last_quarter': {
+      var qNow2 = _bsCurrentQuarter(today);
+      var prevQ2 = qNow2 === 1 ? 4 : qNow2 - 1;
+      var prevQYear2 = qNow2 === 1 ? today.getFullYear() - 1 : today.getFullYear();
+      asOf = _bsEndOfQuarter(prevQYear2, prevQ2);
+      var prevPrevQ = prevQ2 === 1 ? 4 : prevQ2 - 1;
+      var prevPrevQYear = prevQ2 === 1 ? prevQYear2 - 1 : prevQYear2;
+      compareWith = _bsEndOfQuarter(prevPrevQYear, prevPrevQ);
+      break;
+    }
+    case 'last_year':
+      asOf = new Date(today.getFullYear() - 1, 11, 31);
+      compareWith = new Date(today.getFullYear() - 2, 11, 31);
+      break;
+    case 'ltm':
+      asOf = today;
+      compareWith = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+      break;
+  }
+
+  var bsAsOf = document.getElementById('bsAsOf');
+  if (bsAsOf && asOf) bsAsOf.value = _bsFmtDate(asOf);
+
+  var cmpToggle = document.getElementById('bsCompareEnabled');
+  var cmpDate = document.getElementById('bsCompareDate');
+  if (compareWith && cmpToggle && cmpDate) {
+    cmpToggle.checked = true;
+    cmpDate.disabled = false;
+    cmpDate.value = _bsFmtDate(compareWith);
+  } else if (cmpToggle) {
+    cmpToggle.checked = false;
+    if (cmpDate) { cmpDate.disabled = true; cmpDate.value = ''; }
+  }
+
+  // Visual: highlight the active preset chip
+  document.querySelectorAll('.bs-preset').forEach(function(b) {
+    b.classList.toggle('is-active', b.getAttribute('data-bs-preset') === preset);
+  });
+
+  // Trigger the report
+  if (typeof erpLoadBalanceSheet === 'function') erpLoadBalanceSheet();
+};
+
+// bsSetQuarterYear — when the Quarter dropdown OR Year dropdown changes,
+// compute end-of-quarter as the asOf date and same-quarter-prior-year as
+// the comparison date.
+window.bsSetQuarterYear = function() {
+  var qSel = document.getElementById('bsQuarter');
+  var ySel = document.getElementById('bsYear');
+  if (!qSel || !ySel || !qSel.value || !ySel.value) return;
+  var qNum = Number(qSel.value.replace('Q', ''));
+  var yNum = Number(ySel.value);
+  if (!qNum || !yNum) return;
+  var asOf = _bsEndOfQuarter(yNum, qNum);
+  var compareWith = _bsEndOfQuarter(yNum - 1, qNum);
+
+  document.getElementById('bsAsOf').value = _bsFmtDate(asOf);
+  document.getElementById('bsCompareEnabled').checked = true;
+  document.getElementById('bsCompareDate').disabled = false;
+  document.getElementById('bsCompareDate').value = _bsFmtDate(compareWith);
+
+  // Clear preset highlight (we're in custom Q/Y mode now)
+  document.querySelectorAll('.bs-preset').forEach(function(b) {
+    b.classList.remove('is-active');
+  });
+
+  if (typeof erpLoadBalanceSheet === 'function') erpLoadBalanceSheet();
+};
+
+// bsToggleCompare — checkbox handler. Enables/disables the compare date.
+window.bsToggleCompare = function(checked) {
+  var cmpDate = document.getElementById('bsCompareDate');
+  if (!cmpDate) return;
+  cmpDate.disabled = !checked;
+  if (!checked) cmpDate.value = '';
+};
+
+// bsPopulateYears — fills #bsYear with the last 5 years on first open.
+window.bsPopulateYears = function() {
+  var sel = document.getElementById('bsYear');
+  if (!sel || sel.options.length > 1) return;
+  var thisYear = new Date().getFullYear();
+  var html = '<option value="">—</option>';
+  for (var y = thisYear; y >= thisYear - 5; y--) html += '<option value="' + y + '">' + y + '</option>';
+  sel.innerHTML = html;
+};
+
+// bsExportCsv — turn the last-fetched response into a UTF-8 CSV that
+// Excel opens correctly. Includes comparison columns when present.
+window.bsExportCsv = function() {
+  var snap = window._bsSnapshot;
+  if (!snap || !snap.data) { showToast('لا يوجد تقرير لتصديره — اعرض التقرير أولاً', true); return; }
+  var data = snap.data;
+  var hasCompare = !!(data.prior && data.change);
+  var lines = [];
+  // UTF-8 BOM so Excel auto-detects encoding (no "garbled Arabic")
+  var bom = '﻿';
+  var header = ['الكود','اسم الحساب','القسم','الرصيد'];
+  if (hasCompare) { header.push('الرصيد السابق'); header.push('التغير'); header.push('%'); }
+  lines.push(header.join(','));
+
+  function _csvCell(s) {
+    var str = String(s == null ? '' : s);
+    if (/[",\n]/.test(str)) return '"' + str.replace(/"/g, '""') + '"';
+    return str;
+  }
+  function _emit(section, sub, acc) {
+    var row = [
+      _csvCell(acc.code || ''),
+      _csvCell(acc.nameAr || acc.name || ''),
+      _csvCell(section + ' / ' + sub),
+      _csvCell((Number(acc.balance) || 0).toFixed(2))
+    ];
+    if (hasCompare) { row.push(''); row.push(''); row.push(''); }  // per-account prior is not in slim snapshot
+    lines.push(row.join(','));
+  }
+  var sections = data.orderedGroups || {};
+  var titleMap = {
+    currentAssets: 'الأصول المتداولة',
+    nonCurrentAssets: 'الأصول غير المتداولة',
+    currentLiab: 'الالتزامات المتداولة',
+    nonCurrentLiab: 'الالتزامات غير المتداولة',
+    equity: 'حقوق الملكية'
+  };
+  ['currentAssets','nonCurrentAssets','currentLiab','nonCurrentLiab','equity'].forEach(function(sec) {
+    var subs = sections[sec] || [];
+    subs.forEach(function(g) {
+      (g.accounts || []).forEach(function(a) { _emit(titleMap[sec], g.label, a); });
+    });
+  });
+  // Totals row
+  lines.push('');
+  var totalsRow = ['','','إجمالي الأصول', (data.totalAssets || 0).toFixed(2)];
+  if (hasCompare) {
+    totalsRow.push((data.prior.totalAssets || 0).toFixed(2));
+    var ch = data.change.totalAssets;
+    totalsRow.push((ch && ch.abs != null ? ch.abs.toFixed(2) : ''));
+    totalsRow.push((ch && ch.pct != null ? ch.pct.toFixed(1) + '%' : ''));
+  }
+  lines.push(totalsRow.join(','));
+
+  var csv = bom + lines.join('\n');
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'قائمة-المركز-المالي-' + (data.asOfDate || 'today') + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 };
 
 // V5.10.2 — IFRS / IAS 1 Balance Sheet renderer.
@@ -14156,6 +14367,7 @@ window.erpBSReset = function() {
 function erpLoadBalanceSheet() {
   _erpPopulateBranchOptions(['bsBranch']);
   _erpPopulateBrandOptions(['bsBrand']);
+  if (typeof bsPopulateYears === 'function') bsPopulateYears();  // v5.10.79 — fill year dropdown once
   if (!document.getElementById('bsAsOf').value) document.getElementById('bsAsOf').value = new Date().toISOString().slice(0,10);
   var asOf = document.getElementById('bsAsOf').value;
   var branch = (document.getElementById('bsBranch')||{}).value || '';
@@ -14168,10 +14380,16 @@ function erpLoadBalanceSheet() {
   // Default OFF, so users only see accounts with movement.
   var showZero = !!(document.getElementById('bsShowZero')||{}).checked;
   window._bsShowZero = showZero;  // _bsBigSection reads this to keep zero rows
+
+  // v5.10.79 — optional compareDate when "مقارنة بفترة سابقة" is on.
+  var compareEnabled = !!(document.getElementById('bsCompareEnabled')||{}).checked;
+  var compareDate    = compareEnabled ? ((document.getElementById('bsCompareDate')||{}).value || '') : '';
+
   var qs = 'asOfDate=' + encodeURIComponent(asOf);
-  if (brand)    qs += '&brandId='  + encodeURIComponent(brand);
-  if (branch)   qs += '&branchId=' + encodeURIComponent(branch);
-  if (showZero) qs += '&showZero=1';
+  if (brand)       qs += '&brandId='     + encodeURIComponent(brand);
+  if (branch)      qs += '&branchId='    + encodeURIComponent(branch);
+  if (showZero)    qs += '&showZero=1';
+  if (compareDate) qs += '&compareDate=' + encodeURIComponent(compareDate);  // v5.10.79
 
   // v5.10.4 — call /reports/balance-sheet-ifrs (the IAS 1 endpoint). The
   // legacy /reports/balance-sheet path lives in routes/erp-core.js and is
@@ -14190,21 +14408,51 @@ function erpLoadBalanceSheet() {
     document.getElementById('bsBnDate').textContent = asOf;
     document.getElementById('bsBranded').style.display = 'flex';
 
-    // KPI strip — keep working with the existing #bsKpis* IDs if they exist
+    // KPI strip — keep working with the existing #bsKpis* IDs if they exist.
+    // v5.10.79 — when prior-period data is present, each KPI shows an
+    // arrow + delta % beneath the current value. Accounting convention:
+    //   • Asset increase = positive (green)
+    //   • Liability increase = negative (amber/red) since debt grows
+    //   • Equity increase = positive (green)
+    //   • Net income positive = green; negative = red
     var kpis = document.getElementById('bsKpis');
+    var hasCompare = !!(r.prior && r.change);
+    function _bsMetricWithDelta(label, current, color, icon, deltaObj, invertColor) {
+      var deltaHtml = '';
+      if (deltaObj && deltaObj.abs != null) {
+        var abs = Number(deltaObj.abs) || 0;
+        var pct = deltaObj.pct;
+        var positive = invertColor ? abs < 0 : abs > 0;
+        var arrow = abs > 0 ? '▲' : (abs < 0 ? '▼' : '◆');
+        var deltaColor = abs === 0 ? '#64748b' : (positive ? '#16a34a' : '#dc2626');
+        var pctStr = pct != null ? (' (' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%)') : '';
+        deltaHtml = '<div style="font-size:11.5px;font-weight:700;color:' + deltaColor + ';margin-top:3px;">' +
+          arrow + ' ' + fmt(Math.abs(abs)) + pctStr +
+        '</div>';
+      }
+      return '<div class="wo-metric" style="border-color:' + color + '33;">' +
+        '<div class="wo-metric-icon" style="background:' + color + '22;color:' + color + ';"><i class="fas ' + icon + '"></i></div>' +
+        '<div class="wo-metric-body">' +
+          '<div class="wo-metric-label">' + label + '</div>' +
+          '<div class="wo-metric-value">' + fmt(current) + '</div>' +
+          deltaHtml +
+        '</div></div>';
+    }
     if (kpis) {
       kpis.style.display = 'grid';
       kpis.innerHTML =
-        _bsMetric('إجمالي الأصول',           totalAssets, '#0ea5e9', 'fa-coins') +
-        _bsMetric('إجمالي الالتزامات',         totalLiab,   '#ef4444', 'fa-file-invoice') +
-        _bsMetric('حقوق الملكية',              totalEq,     '#8b5cf6', 'fa-user-tie') +
-        _bsMetric('صافي ربح/خسارة الفترة',   r.netIncome, Number(r.netIncome||0)>=0?'#16a34a':'#dc2626', 'fa-chart-line') +
+        _bsMetricWithDelta('إجمالي الأصول',         totalAssets, '#0ea5e9', 'fa-coins',         hasCompare ? r.change.totalAssets      : null, false) +
+        _bsMetricWithDelta('إجمالي الالتزامات',     totalLiab,   '#ef4444', 'fa-file-invoice', hasCompare ? r.change.totalLiabilities : null, true)  +
+        _bsMetricWithDelta('حقوق الملكية',          totalEq,     '#8b5cf6', 'fa-user-tie',      hasCompare ? r.change.totEq            : null, false) +
+        _bsMetricWithDelta('صافي ربح/خسارة الفترة', r.netIncome, Number(r.netIncome||0)>=0?'#16a34a':'#dc2626', 'fa-chart-line', hasCompare ? r.change.netIncome : null, false) +
         '<div class="wo-metric" style="border-color:'+(isBalanced?'#bbf7d0':'#fecaca')+';background:'+(isBalanced?'#f0fdf4':'#fef2f2')+';">' +
           '<div class="wo-metric-icon" style="background:'+(isBalanced?'#16a34a22':'#ef444422')+';color:'+(isBalanced?'#166534':'#991b1b')+';"><i class="fas '+(isBalanced?'fa-check-circle':'fa-triangle-exclamation')+'"></i></div>' +
           '<div class="wo-metric-body"><div class="wo-metric-label">المعادلة المحاسبية</div>' +
             '<div class="wo-metric-value" style="color:'+(isBalanced?'#166534':'#991b1b')+';font-size:14px;">' +
               (isBalanced ? '✓ متوازنة' : ('⚠ فرق ' + fmt(diff))) +
-            '</div></div>' +
+            '</div>' +
+            (hasCompare ? '<div style="font-size:10.5px;color:#64748b;margin-top:3px;">السابق: ' + (r.prior.isBalanced ? '✓' : '⚠') + ' في ' + r.prior.asOfDate + '</div>' : '') +
+          '</div>' +
         '</div>';
     }
 
@@ -14362,6 +14610,22 @@ function _bsInjectStyles() {
   var st = document.createElement('style');
   st.id = 'bsIfrsStyles';
   st.textContent =
+    /* v5.10.79 — period picker styles */
+    '.bs-period-controls{padding:14px 16px;margin-bottom:14px;}' +
+    '.bs-presets-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;}' +
+    '.bs-presets-label{font-size:12px;font-weight:700;color:#475569;white-space:nowrap;}' +
+    '.bs-presets-label i{color:#7c3aed;margin-inline-end:4px;}' +
+    '.bs-presets{display:flex;gap:6px;flex-wrap:wrap;}' +
+    '.bs-preset{padding:7px 14px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;border-radius:999px;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;transition:all 140ms ease;}' +
+    '.bs-preset:hover{border-color:#7c3aed;color:#4c1d95;background:#faf5ff;transform:translateY(-1px);}' +
+    '.bs-preset.is-active{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border-color:transparent;box-shadow:0 4px 12px rgba(124,58,237,0.30);}' +
+    '.bs-quarter-row{display:grid;grid-template-columns:repeat(2,minmax(180px,240px));gap:12px;align-items:end;}' +
+    '@media(max-width:640px){.bs-quarter-row{grid-template-columns:1fr;}}' +
+    /* v5.10.79 — sticky section headers */
+    '.bs-section-head{position:sticky;top:0;z-index:2;}' +
+    /* v5.10.79 — animated KPI delta arrow */
+    '.wo-metric-body div[style*="margin-top:3px"]{animation:bsDeltaIn 380ms ease-out;}' +
+    '@keyframes bsDeltaIn{from{opacity:0;transform:translateY(-2px);}to{opacity:1;transform:translateY(0);}}' +
     '.bs-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;}' +
     '@media(max-width:900px){.bs-grid{grid-template-columns:1fr;}}' +
     '.bs-col{display:flex;flex-direction:column;gap:14px;}' +

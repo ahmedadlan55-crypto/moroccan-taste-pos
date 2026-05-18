@@ -4595,8 +4595,51 @@
 <div id="erpRptBalanceSheet" class="dash-section hidden">
   <div class="tb-top">
     <h2 class="tb-title"><i class="fas fa-landmark"></i> قائمة المركز المالي (Balance Sheet)</h2>
-    <div class="tb-actions"><button class="tb-btn" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button></div>
+    <div class="tb-actions">
+      <button class="tb-btn" onclick="bsExportCsv()"><i class="fas fa-file-excel"></i> تنزيل Excel</button>
+      <button class="tb-btn" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>
+    </div>
   </div>
+
+  <!-- v5.10.79 — Advanced period picker. Preset buttons + Quarter
+       picker + Year picker + custom As Of + comparison toggle.
+       Selecting a preset auto-fills both asOfDate AND compareDate
+       to the conventional period-prior date (e.g. YTD compares to
+       end-of-prior-year). -->
+  <div class="tb-filters-card bs-period-controls" id="bsPeriodControls">
+    <div class="bs-presets-row">
+      <span class="bs-presets-label"><i class="fas fa-calendar-day"></i> فترات سريعة:</span>
+      <div class="bs-presets">
+        <button type="button" class="bs-preset" data-bs-preset="today"        onclick="bsSetPreset('today')">اليوم</button>
+        <button type="button" class="bs-preset" data-bs-preset="mtd"          onclick="bsSetPreset('mtd')">حتى اليوم — MTD</button>
+        <button type="button" class="bs-preset" data-bs-preset="qtd"          onclick="bsSetPreset('qtd')">حتى اليوم — QTD</button>
+        <button type="button" class="bs-preset is-active" data-bs-preset="ytd" onclick="bsSetPreset('ytd')">حتى اليوم — YTD</button>
+        <button type="button" class="bs-preset" data-bs-preset="last_month"   onclick="bsSetPreset('last_month')">الشهر الماضي</button>
+        <button type="button" class="bs-preset" data-bs-preset="last_quarter" onclick="bsSetPreset('last_quarter')">الربع الماضي</button>
+        <button type="button" class="bs-preset" data-bs-preset="last_year"    onclick="bsSetPreset('last_year')">السنة الماضية</button>
+        <button type="button" class="bs-preset" data-bs-preset="ltm"          onclick="bsSetPreset('ltm')">آخر 12 شهر (LTM)</button>
+      </div>
+    </div>
+    <div class="bs-quarter-row">
+      <div class="tb-field">
+        <label><i class="fas fa-calendar-week"></i> الربع</label>
+        <select id="bsQuarter" onchange="bsSetQuarterYear()">
+          <option value="">—</option>
+          <option value="Q1">Q1 (يناير - مارس)</option>
+          <option value="Q2">Q2 (أبريل - يونيو)</option>
+          <option value="Q3">Q3 (يوليو - سبتمبر)</option>
+          <option value="Q4">Q4 (أكتوبر - ديسمبر)</option>
+        </select>
+      </div>
+      <div class="tb-field">
+        <label><i class="fas fa-calendar"></i> السنة</label>
+        <select id="bsYear" onchange="bsSetQuarterYear()">
+          <!-- populated by bsPopulateYears() in erp.js -->
+        </select>
+      </div>
+    </div>
+  </div>
+
   <div class="tb-filters-card">
     <div class="tb-filter-grid">
       <div class="tb-field"><label>كما في تاريخ</label><input type="date" id="bsAsOf"></div>
@@ -4607,6 +4650,21 @@
           <option value="grouped">مجمَّع (3 أعمدة)</option>
           <option value="vertical">عمودي تفصيلي (IFRS)</option>
         </select>
+      </div>
+    </div>
+    <!-- v5.10.79 — comparison row -->
+    <div class="tb-filter-grid">
+      <div class="tb-field tb-toggle-field">
+        <label class="tb-switch">
+          <input type="checkbox" id="bsCompareEnabled" onchange="bsToggleCompare(this.checked)">
+          <span class="tb-switch-slider"></span>
+          <span class="tb-switch-label"><i class="fas fa-arrows-left-right-to-line"></i> مقارنة بفترة سابقة</span>
+        </label>
+        <div class="tb-field-hint">يَعرض عمود الفترة السابقة + التَّغيُّر (مَطلق + نسبة مئوية). يَتم تَعيين تاريخ المقارنة تلقائياً مع كل preset.</div>
+      </div>
+      <div class="tb-field">
+        <label>تاريخ المقارنة</label>
+        <input type="date" id="bsCompareDate" disabled>
       </div>
     </div>
     <!-- v5.10.4 — show-zero toggle row -->

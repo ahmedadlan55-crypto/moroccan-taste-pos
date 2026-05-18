@@ -26092,8 +26092,82 @@ function erpDeleteDiscV3(id) {
 
 /* ═══════════════════════════════════════════════════════════════════
  * SHIFT CLOSE ADMIN
+ * v5.10.87 — Full rebuild with scoped .sca-* class names and
+ * inline-injected CSS so the layout never breaks when the active CSS
+ * bundle is missing the legacy .wo-* rules. Fixes the overlap reported
+ * by the owner (search button off-canvas, 6th KPI wrapping, filter
+ * button outside the toolbar grid).
  * ═══════════════════════════════════════════════════════════════════ */
+function _scaInjectStyles() {
+  if (document.getElementById('scaStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'scaStyles';
+  st.textContent =
+    /* Header */
+    '#erpShiftCloseAdmin .sca-header{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 22px;background:linear-gradient(135deg,#f0fdf4,#fff 60%);border:1.5px solid #bbf7d0;border-radius:14px;margin-bottom:16px;flex-wrap:wrap;}' +
+    '#erpShiftCloseAdmin .sca-header-main{display:flex;align-items:center;gap:14px;flex:1;min-width:0;}' +
+    '#erpShiftCloseAdmin .sca-header-icon{width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;box-shadow:0 6px 16px rgba(34,197,94,0.30);}' +
+    '#erpShiftCloseAdmin .sca-header-text{min-width:0;}' +
+    '#erpShiftCloseAdmin .sca-header-title{font-size:20px;font-weight:900;color:#0f172a;margin:0;line-height:1.3;}' +
+    '#erpShiftCloseAdmin .sca-header-sub{font-size:12.5px;color:#64748b;margin:4px 0 0;line-height:1.5;}' +
+    '#erpShiftCloseAdmin .sca-header-actions{display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap;}' +
+    '#erpShiftCloseAdmin .sca-btn{height:38px;padding:0 16px;border-radius:10px;border:1.5px solid transparent;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:all .15s ease;}' +
+    '#erpShiftCloseAdmin .sca-btn-ghost{background:#fff;border-color:#cbd5e1;color:#475569;}' +
+    '#erpShiftCloseAdmin .sca-btn-ghost:hover{border-color:#94a3b8;color:#0f172a;background:#f8fafc;}' +
+    '#erpShiftCloseAdmin .sca-btn-primary{background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;box-shadow:0 4px 12px rgba(34,197,94,0.30);}' +
+    '#erpShiftCloseAdmin .sca-btn-primary:hover{box-shadow:0 6px 18px rgba(34,197,94,0.45);transform:translateY(-1px);}' +
+    /* KPIs — single row, equal widths, no overflow */
+    '#erpShiftCloseAdmin .sca-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:16px;}' +
+    '@media (max-width:1100px){#erpShiftCloseAdmin .sca-kpis{grid-template-columns:repeat(3,minmax(0,1fr));}}' +
+    '@media (max-width:600px){#erpShiftCloseAdmin .sca-kpis{grid-template-columns:repeat(2,minmax(0,1fr));}}' +
+    '#erpShiftCloseAdmin .sca-kpi{background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:10px;min-width:0;transition:all .15s ease;}' +
+    '#erpShiftCloseAdmin .sca-kpi:hover{border-color:#cbd5e1;box-shadow:0 4px 12px rgba(15,23,42,0.06);transform:translateY(-1px);}' +
+    '#erpShiftCloseAdmin .sca-kpi-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;}' +
+    '#erpShiftCloseAdmin .sca-kpi-body{flex:1;min-width:0;}' +
+    '#erpShiftCloseAdmin .sca-kpi-label{font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+    '#erpShiftCloseAdmin .sca-kpi-value{font-size:17px;font-weight:900;color:#0f172a;line-height:1.2;font-variant-numeric:tabular-nums;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+    /* Toolbar — 4 inputs + 1 search button in a clean grid */
+    '#erpShiftCloseAdmin .sca-toolbar{background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:14px 16px;margin-bottom:14px;display:grid;grid-template-columns:repeat(4,minmax(140px,1fr)) auto;gap:12px;align-items:end;}' +
+    '@media (max-width:900px){#erpShiftCloseAdmin .sca-toolbar{grid-template-columns:repeat(2,minmax(140px,1fr));}}' +
+    '@media (max-width:900px){#erpShiftCloseAdmin .sca-search-btn{grid-column:1/-1;width:100%;}}' +
+    '#erpShiftCloseAdmin .sca-field{display:flex;flex-direction:column;gap:6px;min-width:0;}' +
+    '#erpShiftCloseAdmin .sca-field-label{font-size:11.5px;font-weight:800;color:#475569;display:flex;align-items:center;gap:5px;letter-spacing:0.02em;}' +
+    '#erpShiftCloseAdmin .sca-field-label i{color:#22c55e;font-size:11px;}' +
+    '#erpShiftCloseAdmin .sca-input{height:38px;padding:0 12px;border:1.5px solid #e2e8f0;border-radius:9px;font-family:inherit;font-size:13px;color:#0f172a;background:#fff;outline:none;transition:border-color .15s ease,box-shadow .15s ease;}' +
+    '#erpShiftCloseAdmin .sca-input:focus{border-color:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,0.12);}' +
+    '#erpShiftCloseAdmin .sca-search-btn{height:38px;padding:0 22px;border-radius:9px;border:none;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 12px rgba(34,197,94,0.30);transition:all .15s ease;}' +
+    '#erpShiftCloseAdmin .sca-search-btn:hover{box-shadow:0 6px 18px rgba(34,197,94,0.45);transform:translateY(-1px);}' +
+    /* Table */
+    '#erpShiftCloseAdmin .sca-table-wrap{background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;overflow:hidden;}' +
+    '#erpShiftCloseAdmin .sca-table{width:100%;border-collapse:collapse;font-size:13px;}' +
+    '#erpShiftCloseAdmin .sca-table thead th{background:#0f172a;color:#fff;font-weight:800;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;padding:11px 12px;text-align:start;border:none;white-space:nowrap;}' +
+    '#erpShiftCloseAdmin .sca-table thead th.num{text-align:end;font-variant-numeric:tabular-nums;}' +
+    '#erpShiftCloseAdmin .sca-table thead th.actions{text-align:center;width:80px;}' +
+    '#erpShiftCloseAdmin .sca-table tbody td{padding:11px 12px;border-bottom:1px solid #f1f5f9;color:#0f172a;vertical-align:middle;}' +
+    '#erpShiftCloseAdmin .sca-table tbody tr:last-child td{border-bottom:none;}' +
+    '#erpShiftCloseAdmin .sca-table tbody tr:hover{background:#f8fafc;}' +
+    '#erpShiftCloseAdmin .sca-table tbody td.num{text-align:end;font-variant-numeric:tabular-nums;font-weight:700;}' +
+    '#erpShiftCloseAdmin .sca-table tbody td.actions{text-align:center;}' +
+    '#erpShiftCloseAdmin .sca-cashier-name{font-weight:800;color:#0f172a;}' +
+    '#erpShiftCloseAdmin .sca-cashier-user{font-size:11px;color:#64748b;margin-top:2px;}' +
+    '#erpShiftCloseAdmin .sca-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:999px;font-size:11.5px;font-weight:800;}' +
+    '#erpShiftCloseAdmin .sca-chip.open{background:#fef3c7;color:#92400e;}' +
+    '#erpShiftCloseAdmin .sca-chip.closed{background:#dcfce7;color:#15803d;}' +
+    '#erpShiftCloseAdmin .sca-chip::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block;}' +
+    '#erpShiftCloseAdmin .sca-diff-pos{color:#15803d;font-weight:800;}' +
+    '#erpShiftCloseAdmin .sca-diff-neg{color:#dc2626;font-weight:800;}' +
+    '#erpShiftCloseAdmin .sca-diff-zero{color:#15803d;font-weight:800;}' +
+    '#erpShiftCloseAdmin .sca-row-btn{width:34px;height:34px;border-radius:9px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:13px;transition:all .15s ease;}' +
+    '#erpShiftCloseAdmin .sca-row-btn:hover{border-color:#22c55e;color:#15803d;background:#f0fdf4;}' +
+    '#erpShiftCloseAdmin .sca-empty{padding:40px 16px;text-align:center;color:#94a3b8;}' +
+    '#erpShiftCloseAdmin .sca-empty i{display:block;font-size:32px;color:#cbd5e1;margin-bottom:10px;}' +
+    '#erpShiftCloseAdmin .sca-empty div{font-size:14px;font-weight:700;color:#64748b;}' +
+    '';
+  document.head.appendChild(st);
+}
+
 function erpLoadShiftCloseAdmin() {
+  _scaInjectStyles();
   var qs = [];
   var f = (document.getElementById('scaFrom')||{}).value;
   var t = (document.getElementById('scaTo')||{}).value;
@@ -26105,13 +26179,29 @@ function erpLoadShiftCloseAdmin() {
   if (s) qs.push('status=' + encodeURIComponent(s));
   var path = '/shifts/' + (qs.length ? '?' + qs.join('&') : '');
 
+  // Show loading state in the table while we fetch
+  var tbody = document.getElementById('scaBody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="sca-empty"><i class="fas fa-spinner fa-spin"></i><div>جاري التحميل...</div></td></tr>';
+
   callAPI('GET', path, null, function(rows) {
     var arr = Array.isArray(rows) ? rows : [];
+    window._scaLastRows = arr;  // v5.10.87 — cached for Excel export
     _v3RenderShiftClose(arr);
   }, '/api');
 }
 
+function _scaKpiCard(icon, label, value, color) {
+  return '<div class="sca-kpi">' +
+    '<div class="sca-kpi-icon" style="background:' + color + '1f;color:' + color + ';"><i class="fas ' + icon + '"></i></div>' +
+    '<div class="sca-kpi-body">' +
+      '<div class="sca-kpi-label">' + label + '</div>' +
+      '<div class="sca-kpi-value">' + value + '</div>' +
+    '</div>' +
+  '</div>';
+}
+
 function _v3RenderShiftClose(arr) {
+  _scaInjectStyles();
   var metrics = document.getElementById('scaMetrics');
   if (metrics) {
     var open = arr.filter(function(s){return (s.status||'').toUpperCase()==='OPEN';}).length;
@@ -26122,39 +26212,42 @@ function _v3RenderShiftClose(arr) {
       totalActual += Number(s.actualCash||0) + Number(s.actualCard||0) + Number(s.actualKita||0);
       totalVar += Number(s.diffCash||0) + Number(s.diffCard||0) + Number(s.diffKita||0);
     });
+    var varIcon = Math.abs(totalVar) < 0.01 ? 'fa-check-circle' : (totalVar < 0 ? 'fa-arrow-down' : 'fa-arrow-up');
+    var varColor = Math.abs(totalVar) < 0.01 ? '#22c55e' : (totalVar < 0 ? '#ef4444' : '#f59e0b');
     metrics.innerHTML =
-      _v3MetricCard('fa-list', 'إجمالي الجلسات', arr.length, '#3b82f6') +
-      _v3MetricCard('fa-door-open', 'مفتوحة', open, '#f59e0b') +
-      _v3MetricCard('fa-door-closed', 'مغلقة', closed, '#22c55e') +
-      _v3MetricCard('fa-calculator', 'متوقع', _v3Fmt(totalExpected) + ' ر.س', '#06b6d4') +
-      _v3MetricCard('fa-coins', 'فعلي', _v3Fmt(totalActual) + ' ر.س', '#8b5cf6') +
-      _v3MetricCard(totalVar >= 0 ? 'fa-arrow-up' : 'fa-arrow-down', 'الفرق', _v3Fmt(totalVar) + ' ر.س', totalVar >= 0 ? '#22c55e' : '#ef4444');
+      _scaKpiCard('fa-list',         'إجمالي الجلسات', arr.length, '#3b82f6') +
+      _scaKpiCard('fa-door-open',    'مفتوحة',         open,       '#f59e0b') +
+      _scaKpiCard('fa-door-closed',  'مغلقة',          closed,     '#22c55e') +
+      _scaKpiCard('fa-calculator',   'المتوقَّع',       _v3Fmt(totalExpected) + ' ر.س', '#06b6d4') +
+      _scaKpiCard('fa-coins',        'الفعلي',         _v3Fmt(totalActual)   + ' ر.س', '#8b5cf6') +
+      _scaKpiCard(varIcon,           'الفرق',          _v3Fmt(totalVar)      + ' ر.س', varColor);
   }
 
   var tbody = document.getElementById('scaBody');
   if (!tbody) return;
   if (!arr.length) {
-    tbody.innerHTML = '<tr><td colspan="9"><div class="wo-empty"><i class="fas fa-folder-open"></i><div class="wo-empty-title">لا توجد جلسات</div></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="sca-empty"><i class="fas fa-folder-open"></i><div>لا توجد جلسات مطابقة للمعايير</div></td></tr>';
     return;
   }
 
   tbody.innerHTML = arr.map(function(s) {
     var actual = Number(s.actualCash||0) + Number(s.actualCard||0) + Number(s.actualKita||0);
     var diff = Number(s.diffCash||0) + Number(s.diffCard||0) + Number(s.diffKita||0);
-    var diffColor = Math.abs(diff) < 1 ? '#22c55e' : (diff < 0 ? '#ef4444' : '#f59e0b');
-    var statusChip = (s.status||'').toUpperCase() === 'OPEN' ?
-      '<span class="wo-chip" style="background:#fef3c7;color:#92400e;font-weight:700;">مفتوحة</span>' :
-      '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مغلقة</span>';
+    var diffCls = Math.abs(diff) < 0.01 ? 'sca-diff-zero' : (diff < 0 ? 'sca-diff-neg' : 'sca-diff-pos');
+    var isOpen = (s.status||'').toUpperCase() === 'OPEN';
+    var statusChip = isOpen
+      ? '<span class="sca-chip open">مفتوحة</span>'
+      : '<span class="sca-chip closed">مغلقة</span>';
     return '<tr>' +
-      '<td>'+ (s.startTime ? new Date(s.startTime).toLocaleDateString('ar-SA') : '—') +'</td>' +
-      '<td><div style="font-weight:800;">'+ _v3EscapeHtml(s.displayName||s.username) +'</div><div style="font-size:11px;color:#64748b;">'+ _v3EscapeHtml(s.username) +'</div></td>' +
+      '<td>'+ (s.startTime ? new Date(s.startTime).toLocaleDateString('en-GB') : '—') +'</td>' +
+      '<td><div class="sca-cashier-name">'+ _v3EscapeHtml(s.displayName||s.username||'—') +'</div><div class="sca-cashier-user">'+ _v3EscapeHtml(s.username||'') +'</div></td>' +
       '<td>'+ (s.startTime ? new Date(s.startTime).toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'}) : '—') +'</td>' +
       '<td>'+ (s.endTime ? new Date(s.endTime).toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'}) : '—') +'</td>' +
-      '<td style="font-weight:700;">'+ _v3Fmt(s.totalTheoretical) +'</td>' +
-      '<td style="font-weight:700;">'+ _v3Fmt(actual) +'</td>' +
-      '<td style="color:'+ diffColor +';font-weight:800;">'+ _v3Fmt(diff) +'</td>' +
+      '<td class="num">'+ _v3Fmt(s.totalTheoretical) +'</td>' +
+      '<td class="num">'+ _v3Fmt(actual) +'</td>' +
+      '<td class="num ' + diffCls + '">'+ _v3Fmt(diff) +'</td>' +
       '<td>'+ statusChip +'</td>' +
-      '<td><button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpViewShiftDetail(\''+ s.id +'\')" title="تفاصيل"><i class="fas fa-eye"></i></button></td>' +
+      '<td class="actions"><button class="sca-row-btn" onclick="erpViewShiftDetail(\''+ s.id +'\')" title="عرض التفاصيل"><i class="fas fa-eye"></i></button></td>' +
     '</tr>';
   }).join('');
 }
@@ -26194,8 +26287,56 @@ function erpViewShiftDetail(shiftId) {
   });
 }
 
+// v5.10.87 — Real XLSX export of the loaded shift sessions. Reads from
+// window._scaLastRows (set by erpLoadShiftCloseAdmin); if empty, prompts
+// the user to run a search first.
 function erpExportShiftCloseAdmin() {
-  _v3Toast('سيتم دعم التصدير قريباً');
+  var rows = window._scaLastRows;
+  if (!Array.isArray(rows) || !rows.length) {
+    _v3Toast('لا توجد جلسات للتصدير — اضغط بحث أولاً');
+    return;
+  }
+  var doExport = function(){
+    if (typeof XLSX === 'undefined') { _v3Toast('فشل تحميل مكتبة Excel'); return; }
+    var sheetRows = rows.map(function(s){
+      var actual = Number(s.actualCash||0) + Number(s.actualCard||0) + Number(s.actualKita||0);
+      var diff = Number(s.diffCash||0) + Number(s.diffCard||0) + Number(s.diffKita||0);
+      var statusLabel = (s.status||'').toUpperCase() === 'OPEN' ? 'مفتوحة' : 'مغلقة';
+      return {
+        'التاريخ':       s.startTime ? new Date(s.startTime).toLocaleDateString('en-GB') : '',
+        'اسم العرض':     s.displayName || s.username || '',
+        'اسم المستخدم':  s.username || '',
+        'الافتتاح':      s.startTime ? new Date(s.startTime).toLocaleString('en-GB') : '',
+        'الإغلاق':       s.endTime   ? new Date(s.endTime).toLocaleString('en-GB')   : '',
+        'المتوقع':        Number(s.totalTheoretical || 0),
+        'الفعلي - كاش':   Number(s.actualCash || 0),
+        'الفعلي - بطاقة': Number(s.actualCard || 0),
+        'الفعلي - أخرى':  Number(s.actualKita || 0),
+        'الفعلي - إجمالي': actual,
+        'الفرق':          diff,
+        'الحالة':         statusLabel,
+        'رقم الجلسة':     s.id || ''
+      };
+    });
+    var ws = XLSX.utils.json_to_sheet(sheetRows);
+    // Auto-width columns (best effort)
+    var keys = Object.keys(sheetRows[0] || {});
+    ws['!cols'] = keys.map(function(k){
+      var max = String(k).length;
+      sheetRows.forEach(function(r){ var v = String(r[k] == null ? '' : r[k]); if (v.length > max) max = v.length; });
+      return { wch: Math.min(Math.max(max + 2, 10), 28) };
+    });
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'إغلاق الشيفت');
+    var stamp = new Date().toISOString().split('T')[0];
+    XLSX.writeFile(wb, 'shift_closures_' + stamp + '.xlsx');
+    _v3Toast('تم تصدير ' + rows.length + ' جلسة إلى ملف Excel');
+  };
+  if (typeof window.ensureXlsx === 'function') {
+    window.ensureXlsx().then(doExport).catch(function(){ _v3Toast('فشل تحميل مكتبة Excel'); });
+  } else {
+    doExport();
+  }
 }
 
 /* ═════════════════════════════════════════════════════════════════════════

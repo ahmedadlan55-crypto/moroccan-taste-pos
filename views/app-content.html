@@ -5634,44 +5634,72 @@
 <!-- ═══════════════════════════════════════════════════════════════════ -->
 <!-- SHIFT CLOSE ADMIN — admin view of all closures + denominations log   -->
 <!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- v5.10.87 — Complete redesign with scoped .sca-* class names + inline-injected
+     CSS (via _scaInjectStyles() in erp.js) so the layout never depends on
+     which CSS bundle is loaded. Fixes the overlap reported by the owner
+     (search button rendering off-canvas + 6th KPI wrapping awkwardly +
+     filter button positioned outside the toolbar grid). -->
 <div id="erpShiftCloseAdmin" class="dash-section hidden wo-section">
-  <header class="wo-header">
-    <div class="wo-header-titles">
-      <h1><span class="wo-icon-slot success"><i class="fas fa-cash-register"></i></span>إغلاق الشيفت — لوحة الإدارة</h1>
-      <p class="wo-header-sub">عرض جميع جلسات الإغلاق مع تفصيل الفئات النقدية، التسويات الإلكترونية، والفروقات. لا يمكن تعديل بيانات الفواتير من هنا.</p>
+  <header class="sca-header">
+    <div class="sca-header-main">
+      <div class="sca-header-icon"><i class="fas fa-cash-register"></i></div>
+      <div class="sca-header-text">
+        <h1 class="sca-header-title">إغلاق الشيفت — لوحة الإدارة</h1>
+        <p class="sca-header-sub">عرض جميع جلسات الإغلاق مع تفصيل الفئات النقدية، التسويات الإلكترونية، والفروقات. لا يمكن تعديل بيانات الفواتير من هنا.</p>
+      </div>
     </div>
-    <div class="wo-header-actions">
-      <button class="wo-btn wo-btn-secondary" onclick="erpLoadShiftCloseAdmin()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
-      <button class="wo-btn wo-btn-primary" onclick="erpExportShiftCloseAdmin()"><i class="fas fa-file-excel"></i><span>تصدير</span></button>
+    <div class="sca-header-actions">
+      <button class="sca-btn sca-btn-ghost" onclick="erpLoadShiftCloseAdmin()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="sca-btn sca-btn-primary" onclick="erpExportShiftCloseAdmin()"><i class="fas fa-file-excel"></i><span>تصدير Excel</span></button>
     </div>
   </header>
-  <div class="wo-metric-strip" id="scaMetrics"></div>
-  <section class="wo-toolbar" role="search">
-    <div class="wo-field"><label class="wo-field-label" for="scaFrom"><i class="fas fa-calendar"></i> من</label><input type="date" id="scaFrom" class="wo-input"></div>
-    <div class="wo-field"><label class="wo-field-label" for="scaTo"><i class="fas fa-calendar-check"></i> إلى</label><input type="date" id="scaTo" class="wo-input"></div>
-    <div class="wo-field"><label class="wo-field-label" for="scaUser"><i class="fas fa-user"></i> الكاشير</label><input id="scaUser" class="wo-input" placeholder="username..."></div>
-    <div class="wo-field"><label class="wo-field-label" for="scaStatus"><i class="fas fa-toggle-on"></i> الحالة</label>
-      <select id="scaStatus" class="wo-select"><option value="">الكل</option><option value="OPEN">مفتوحة</option><option value="closed">مغلقة</option></select>
+
+  <div class="sca-kpis" id="scaMetrics"></div>
+
+  <section class="sca-toolbar" role="search" aria-label="مرشحات الجلسات">
+    <div class="sca-field">
+      <label class="sca-field-label" for="scaFrom"><i class="fas fa-calendar"></i> من تاريخ</label>
+      <input type="date" id="scaFrom" class="sca-input">
     </div>
-    <div class="wo-field" style="align-self:flex-end;"><button class="wo-btn wo-btn-primary" onclick="erpLoadShiftCloseAdmin()"><i class="fas fa-search"></i><span>بحث</span></button></div>
+    <div class="sca-field">
+      <label class="sca-field-label" for="scaTo"><i class="fas fa-calendar-check"></i> إلى تاريخ</label>
+      <input type="date" id="scaTo" class="sca-input">
+    </div>
+    <div class="sca-field">
+      <label class="sca-field-label" for="scaUser"><i class="fas fa-user"></i> الكاشير</label>
+      <input id="scaUser" class="sca-input" placeholder="اسم المستخدم...">
+    </div>
+    <div class="sca-field">
+      <label class="sca-field-label" for="scaStatus"><i class="fas fa-toggle-on"></i> الحالة</label>
+      <select id="scaStatus" class="sca-input">
+        <option value="">جميع الحالات</option>
+        <option value="OPEN">مفتوحة</option>
+        <option value="closed">مغلقة</option>
+      </select>
+    </div>
+    <button class="sca-search-btn" onclick="erpLoadShiftCloseAdmin()" aria-label="بحث">
+      <i class="fas fa-magnifying-glass"></i>
+      <span>بحث</span>
+    </button>
   </section>
-  <div class="wo-table-surface">
-    <table class="wo-table" role="table">
+
+  <div class="sca-table-wrap">
+    <table class="sca-table" role="table">
       <thead>
         <tr>
           <th>التاريخ</th>
           <th>الكاشير</th>
           <th>الافتتاح</th>
           <th>الإغلاق</th>
-          <th>المتوقع</th>
-          <th>الفعلي</th>
-          <th>الفرق</th>
+          <th class="num">المتوقع (ر.س)</th>
+          <th class="num">الفعلي (ر.س)</th>
+          <th class="num">الفرق (ر.س)</th>
           <th>الحالة</th>
-          <th>إجراءات</th>
+          <th class="actions">إجراءات</th>
         </tr>
       </thead>
       <tbody id="scaBody">
-        <tr><td colspan="9"><div class="wo-empty"><i class="fas fa-filter"></i><div class="wo-empty-title">حدّد الفترة ثم اضغط بحث</div></div></td></tr>
+        <tr><td colspan="9" class="sca-empty"><i class="fas fa-filter"></i><div>حدّد الفترة ثم اضغط بحث</div></td></tr>
       </tbody>
     </table>
   </div>

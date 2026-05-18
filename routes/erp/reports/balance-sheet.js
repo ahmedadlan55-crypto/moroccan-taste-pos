@@ -128,6 +128,163 @@ function _bsDelta(current, prior) {
   return { abs, pct };
 }
 
+// ════════════════════════════════════════════════════════════════════
+// v5.10.82 — CoA-driven hierarchical Balance Sheet builder.
+// Produces a recursive tree mirroring the actual Chart of Accounts
+// structure. Each folder rolls up the balances of all its descendants;
+// leaves carry their own posted-journal balance. Contra accounts (per
+// either the `report_section` column or a name match) are flagged so
+// the frontend can render them in red and the parent's signed sum
+// correctly reflects the IFRS net presentation.
+// ════════════════════════════════════════════════════════════════════
+const CONTRA_REPORT_SECTIONS = new Set(['allowance_doubtful', 'acc_dep', 'drawings']);
+function _isContraAccount(a) {
+  if (CONTRA_REPORT_SECTIONS.has(a.report_section)) return true;
+  const ar = String(a.name_ar || '');
+  const en = String(a.name_en || '');
+  if (/مخصص الديون|مجمَّع الإهلاك|مجمع الإهلاك|المسحوبات|مسحوبات/i.test(ar)) return true;
+  if (/allowance|accumulated depreciation|drawings/i.test(en)) return true;
+  return false;
+}
+
+// Sort by code, numerically-aware (so 1130 < 11201, etc.)
+function _codeCompare(a, b) {
+  return String(a.code || '').localeCompare(String(b.code || ''), 'en', { numeric: true });
+}
+
+// Build the CoA tree with rolled-up balances. Returns the root nodes
+// keyed by their account type (asset / liability / equity). Includes
+// folders + leaves; the frontend collapses zero-balance subtrees when
+// includeZero=false.
+function _buildCoaTree(allAccounts, balMap, includeZero, netIncome) {
+  const byId = {};
+  const kidsOf = {};
+  allAccounts.forEach(a => {
+    byId[a.id] = a;
+    const pid = a.parent_id || '__root__';
+    (kidsOf[pid] = kidsOf[pid] || []).push(a);
+  });
+  Object.keys(kidsOf).forEach(k => kidsOf[k].sort(_codeCompare));
+
+  function build(a) {
+    const isFolder = !!a.is_folder;
+    const contra = _isContraAccount(a);
+    let rawBalance = 0;        // debit-normal sum (raw)
+    let postedCount = 0;        // # of leaf entries beneath
+    const children = [];
+    if (isFolder) {
+      (kidsOf[a.id] || []).forEach(ch => {
+        const node = build(ch);
+        if (node) {
+          children.push(node);
+          rawBalance += node.rawBalance;
+          postedCount += node.postedCount;
+        }
+      });
+    } else {
+      const entry = balMap[a.id] || { debit: 0, credit: 0, count: 0 };
+      rawBalance = (Number(entry.debit) || 0) - (Number(entry.credit) || 0);
+      postedCount = Number(entry.count) || 0;
+    }
+    // Hide zero-balance subtree unless includeZero
+    if (!includeZero && postedCount === 0 && Math.abs(rawBalance) < 0.001) return null;
+
+    // displayBalance: assets keep debit-normal (contra naturally negative);
+    // liabilities + equity get sign-flipped to credit-normal positive;
+    // contra-equity (drawings) explicitly negative.
+    let displayBalance;
+    if (a.type === 'asset') {
+      displayBalance = rawBalance;
+    } else if (a.type === 'liability') {
+      displayBalance = -rawBalance;
+    } else if (a.type === 'equity') {
+      displayBalance = -rawBalance;
+      if (contra) displayBalance = -Math.abs(displayBalance);
+    } else {
+      displayBalance = rawBalance;
+    }
+    return {
+      id: a.id,
+      code: a.code,
+      nameAr: a.name_ar,
+      nameEn: a.name_en,
+      type: a.type,
+      level: a.level,
+      accountClass: a.account_class,
+      reportSection: a.report_section,
+      isFolder,
+      isContra: contra,
+      rawBalance,
+      balance: displayBalance,
+      postedCount,
+      children
+    };
+  }
+
+  // Top-level: find root nodes (parent_id IS NULL)
+  const roots = kidsOf['__root__'] || [];
+  const result = { assets: null, liabilities: null, equity: null };
+  roots.forEach(r => {
+    if (r.type === 'asset')     result.assets      = build(r);
+    if (r.type === 'liability') result.liabilities = build(r);
+    if (r.type === 'equity')    result.equity      = build(r);
+  });
+
+  // Inject synthetic Net Income line into the equity tree under
+  // Retained Earnings (typically code 32). If the equity tree doesn't
+  // have a retained-earnings child, we append it to the root.
+  if (Math.abs(netIncome) > 0.01 && result.equity) {
+    const periodLabel = netIncome >= 0
+      ? 'صافي ربح الفترة (قبل قيد الإغلاق)'
+      : 'صافي خسارة الفترة (قبل قيد الإغلاق)';
+    const syntheticNode = {
+      id: '__period_income__',
+      code: '(P&L)',
+      nameAr: periodLabel,
+      nameEn: 'Period Net Income (pre-closing)',
+      type: 'equity',
+      level: 3,
+      accountClass: 'detail',
+      reportSection: 'retained',
+      isFolder: false,
+      isContra: false,
+      isComputed: true,
+      isPeriodResult: true,
+      rawBalance: -netIncome,
+      balance: netIncome,
+      postedCount: 1,
+      children: []
+    };
+    // Find a "Retained Earnings" container (code 32) or fall back to root
+    function injectIntoRetained(node) {
+      if (!node) return false;
+      if (node.code === '32') {
+        node.children = node.children || [];
+        node.children.push(syntheticNode);
+        node.balance += netIncome;
+        node.rawBalance += syntheticNode.rawBalance;
+        node.postedCount += 1;
+        return true;
+      }
+      for (let i = 0; i < (node.children || []).length; i++) {
+        if (injectIntoRetained(node.children[i])) {
+          node.balance += netIncome;
+          node.rawBalance += syntheticNode.rawBalance;
+          return true;
+        }
+      }
+      return false;
+    }
+    if (!injectIntoRetained(result.equity)) {
+      result.equity.children.push(syntheticNode);
+      result.equity.balance += netIncome;
+      result.equity.rawBalance += syntheticNode.rawBalance;
+    }
+  }
+
+  return result;
+}
+
 router.get('/reports/balance-sheet-ifrs', async (req, res) => {
   try {
     const { asOfDate, compareDate, brandId, branchId, showZero } = req.query;
@@ -143,6 +300,8 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
     // is populated on every wipe-and-seed, so it's reliable for all
     // post-v5.10.78 installs. Pre-v5.10.78 rows will have NULL and fall
     // through to the legacy prefix logic — fully backward compatible.
+    // v5.10.82 — Load LEAF accounts for the legacy buckets pass, then
+    // load ALL accounts (folders + leaves) for the CoA-tree builder.
     const [accounts] = await db.query(
       "SELECT a.id, a.code, a.name_ar, a.name_en, a.type, a.parent_id, a.level, " +
       "       a.balance, a.is_active, " +
@@ -153,6 +312,16 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       "WHERE a.is_active = 1 " +
       "  AND COALESCE(a.is_folder, 0) = 0 " +
       "  AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL) " +
+      "ORDER BY a.code"
+    );
+    // Full CoA (folders + leaves) for the hierarchical tree view.
+    const [allAccountsForTree] = await db.query(
+      "SELECT a.id, a.code, a.name_ar, a.name_en, a.type, a.parent_id, a.level, " +
+      "       COALESCE(a.is_folder, 0) AS is_folder, " +
+      "       COALESCE(a.account_class, 'detail') AS account_class, " +
+      "       a.report_section " +
+      "FROM gl_accounts a " +
+      "WHERE a.is_active = 1 " +
       "ORDER BY a.code"
     );
 
@@ -523,6 +692,15 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       equity:           orderSection('equity',           groups.equity)
     };
 
+    // v5.10.82 — CoA-driven hierarchical tree. Mirrors the actual Chart
+    // of Accounts structure as configured by the owner. Each folder rolls
+    // up the balances of its descendants; contra accounts (1124 allowance,
+    // 122 acc dep, 33 drawings) are flagged so the frontend can color
+    // them red and the parent's sum reflects the correct net amount.
+    // Net Income is injected as a synthetic line under Retained Earnings
+    // (code 32) per IAS 1 Statement of Changes in Equity.
+    const coaTree = _buildCoaTree(allAccountsForTree, balMap, includeZero, netIncome);
+
     res.json({
       currentAssets, totCA, nonCurrentAssets, totNCA, totalAssets,
       currentLiab, totCL, nonCurrentLiab, totNCL, totalLiabilities,
@@ -532,6 +710,7 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       asOfDate: asOfDate || new Date().toISOString().split('T')[0],
       groups: groups,
       orderedGroups: orderedGroups,   // v5.10.79 — IFRS-ordered arrays
+      coaTree: coaTree,                // v5.10.82 — CoA-mirrored hierarchical tree
       unclassified: unclassified,
       prior: priorSnapshot,           // v5.10.79 — comparison snapshot (or null)
       change: change                   // v5.10.79 — deltas (or null)

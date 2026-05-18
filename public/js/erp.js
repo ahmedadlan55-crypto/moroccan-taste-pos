@@ -14319,26 +14319,42 @@ window.bsExportCsv = function() {
     var row = [
       _csvCell(acc.code || ''),
       _csvCell(acc.nameAr || acc.name || ''),
-      _csvCell(section + ' / ' + sub),
+      _csvCell(section + (sub ? ' / ' + sub : '')),
       _csvCell((Number(acc.balance) || 0).toFixed(2))
     ];
     if (hasCompare) { row.push(''); row.push(''); row.push(''); }  // per-account prior is not in slim snapshot
     lines.push(row.join(','));
   }
-  var sections = data.orderedGroups || {};
-  var titleMap = {
-    currentAssets: 'الأصول المتداولة',
-    nonCurrentAssets: 'الأصول غير المتداولة',
-    currentLiab: 'الالتزامات المتداولة',
-    nonCurrentLiab: 'الالتزامات غير المتداولة',
-    equity: 'حقوق الملكية'
-  };
-  ['currentAssets','nonCurrentAssets','currentLiab','nonCurrentLiab','equity'].forEach(function(sec) {
-    var subs = sections[sec] || [];
-    subs.forEach(function(g) {
-      (g.accounts || []).forEach(function(a) { _emit(titleMap[sec], g.label, a); });
+  // v5.10.82 — Prefer the CoA tree: walk recursively and emit each node
+  // with its breadcrumb-style section path. Falls back to the legacy
+  // orderedGroups iteration when the backend hasn't shipped coaTree.
+  if (data.coaTree && (data.coaTree.assets || data.coaTree.liabilities || data.coaTree.equity)) {
+    function walkTree(node, breadcrumb) {
+      if (!node) return;
+      var crumb = breadcrumb ? (breadcrumb + ' / ' + (node.nameAr || node.code || '')) : (node.nameAr || node.code || '');
+      if (node.isFolder) {
+        (node.children || []).forEach(function(ch) { walkTree(ch, crumb); });
+      } else {
+        _emit(breadcrumb || '', node.nameAr || '', { code: node.code, nameAr: node.nameAr, balance: node.balance });
+      }
+    }
+    ['assets','liabilities','equity'].forEach(function(k) { walkTree(data.coaTree[k], ''); });
+  } else {
+    var sections = data.orderedGroups || {};
+    var titleMap = {
+      currentAssets: 'الأصول المتداولة',
+      nonCurrentAssets: 'الأصول غير المتداولة',
+      currentLiab: 'الالتزامات المتداولة',
+      nonCurrentLiab: 'الالتزامات غير المتداولة',
+      equity: 'حقوق الملكية'
+    };
+    ['currentAssets','nonCurrentAssets','currentLiab','nonCurrentLiab','equity'].forEach(function(sec) {
+      var subs = sections[sec] || [];
+      subs.forEach(function(g) {
+        (g.accounts || []).forEach(function(a) { _emit(titleMap[sec], g.label, a); });
+      });
     });
-  });
+  }
   // Totals row
   lines.push('');
   var totalsRow = ['','','إجمالي الأصول', (data.totalAssets || 0).toFixed(2)];
@@ -14476,27 +14492,35 @@ function erpLoadBalanceSheet() {
         '</div>';
     }
 
-    // Build the IFRS hierarchy
-    var groups = r.groups || {};
-    var leftColHtml  = ''; // الالتزامات + حقوق الملكية
-    var rightColHtml = ''; // الأصول
-
-    rightColHtml +=
-      _bsBigSection('الأصول', '#0ea5e9', 'fa-coins', [
-        { label: 'الأصول المتداولة',     subs: groups.currentAssets,    color: '#0ea5e9' },
-        { label: 'الأصول غير المتداولة', subs: groups.nonCurrentAssets, color: '#0891b2' }
-      ], totalAssets, asOf);
-
-    leftColHtml +=
-      _bsBigSection('الالتزامات', '#ef4444', 'fa-file-invoice', [
-        { label: 'الالتزامات المتداولة',     subs: groups.currentLiab,    color: '#ef4444' },
-        { label: 'الالتزامات غير المتداولة', subs: groups.nonCurrentLiab, color: '#dc2626' }
-      ], totalLiab, asOf);
-
-    leftColHtml +=
-      _bsBigSection('حقوق الملكية', '#8b5cf6', 'fa-user-tie', [
-        { label: 'حقوق الملكية',             subs: groups.equity,         color: '#8b5cf6' }
-      ], totalEq, asOf);
+    // v5.10.82 — CoA-driven hierarchical render. The Balance Sheet now
+    // mirrors the actual Chart of Accounts tree the owner configured —
+    // every parent folder rolls up its children, every leaf shows its
+    // own posted-journal balance, and the depth of nesting matches the
+    // CoA exactly. Falls back to the legacy bucket render only when
+    // the backend hasn't shipped `coaTree` yet (mid-deploy safety net).
+    var leftColHtml  = '';
+    var rightColHtml = '';
+    if (r.coaTree && (r.coaTree.assets || r.coaTree.liabilities || r.coaTree.equity)) {
+      rightColHtml += _bsCoaColumn(r.coaTree.assets,      '#0ea5e9', 'fa-coins',          asOf);
+      leftColHtml  += _bsCoaColumn(r.coaTree.liabilities, '#ef4444', 'fa-file-invoice',   asOf);
+      leftColHtml  += _bsCoaColumn(r.coaTree.equity,      '#8b5cf6', 'fa-user-tie',       asOf);
+    } else {
+      var groups = r.groups || {};
+      rightColHtml +=
+        _bsBigSection('الأصول', '#0ea5e9', 'fa-coins', [
+          { label: 'الأصول المتداولة',     subs: groups.currentAssets,    color: '#0ea5e9' },
+          { label: 'الأصول غير المتداولة', subs: groups.nonCurrentAssets, color: '#0891b2' }
+        ], totalAssets, asOf);
+      leftColHtml +=
+        _bsBigSection('الالتزامات', '#ef4444', 'fa-file-invoice', [
+          { label: 'الالتزامات المتداولة',     subs: groups.currentLiab,    color: '#ef4444' },
+          { label: 'الالتزامات غير المتداولة', subs: groups.nonCurrentLiab, color: '#dc2626' }
+        ], totalLiab, asOf);
+      leftColHtml +=
+        _bsBigSection('حقوق الملكية', '#8b5cf6', 'fa-user-tie', [
+          { label: 'حقوق الملكية',             subs: groups.equity,         color: '#8b5cf6' }
+        ], totalEq, asOf);
+    }
 
     var html = bannerHtml +
       '<div class="bs-grid">' +
@@ -14541,11 +14565,81 @@ function _bsMetric(label, val, accent, icon) {
     '</div></div>';
 }
 
+// v5.10.82 — CoA-driven Balance Sheet section. Mirrors the actual
+// Chart of Accounts tree the owner configured. Each section gets one
+// root node (Assets / Liabilities / Equity), and its descendants are
+// rendered recursively with proper indentation, folder/leaf styling,
+// and contra-account marking. Folders roll up their children's
+// balances; leaves show their own posted-journal net.
+function _bsCoaColumn(rootNode, color, icon, asOf) {
+  if (!rootNode) return '';
+  var fmt = _bsFmt;
+  var rootBal = Number(rootNode.balance || 0);
+  var html = '<div class="bs-section bs-section-coa" style="border-top-color:' + color + ';">' +
+    '<div class="bs-section-head">' +
+      '<div class="bs-section-icon" style="background:' + color + '22;color:' + color + ';"><i class="fas ' + icon + '"></i></div>' +
+      '<h3 class="bs-section-title">' + _bsEsc(rootNode.nameAr || '') + '</h3>' +
+      '<div class="bs-section-total" style="color:' + color + ';">' + fmt(rootBal) + '</div>' +
+    '</div>' +
+    '<div class="bs-tree" style="--bs-tree-color:' + color + ';">';
+  (rootNode.children || []).forEach(function(child) {
+    html += _bsCoaTreeRow(child, color, asOf, 1);
+  });
+  html += '</div></div>';
+  return html;
+}
+
+// Recursive row renderer. Each row has:
+//   • code chip on the start side
+//   • Arabic name (folders bold, contra marked)
+//   • signed balance on the end side
+// Indentation grows by depth × 14px so the hierarchy reads visually.
+function _bsCoaTreeRow(node, color, asOf, depth) {
+  if (!node) return '';
+  var fmt = _bsFmt;
+  var bal = Number(node.balance || 0);
+  var isFolder = !!node.isFolder;
+  var isContra = !!node.isContra;
+  var isZero = Math.abs(bal) < 0.001;
+  var balCls = isContra && bal < 0 ? 'neg contra' : (bal < 0 ? 'neg' : '');
+  var rowCls = ['bs-tree-row', 'bs-tree-l' + (node.level || 1)];
+  if (isFolder) rowCls.push('is-folder');
+  else          rowCls.push('is-leaf');
+  if (isContra) rowCls.push('is-contra');
+  if (isZero)   rowCls.push('is-zero');
+  if (!isFolder && node.id && !node.isComputed) rowCls.push('clickable');
+  var indent = Math.max(0, (depth - 1)) * 14;
+  var nameSuffix = isContra ? ' <span class="bs-tree-contra-tag">(حساب مقابل)</span>' : '';
+  var clickAttr = (!isFolder && node.id && !node.isComputed)
+    ? ' onclick="bsOpenAccountDrill(\'' + String(node.id).replace(/'/g, "\\'") + '\', \'' + String(node.nameAr || '').replace(/'/g, "\\'") + '\', \'' + (asOf || '') + '\')"'
+    : '';
+  var html = '<div class="' + rowCls.join(' ') + '" style="--bs-tree-indent:' + indent + 'px"' + clickAttr + '>' +
+    (isFolder ? '<span class="bs-tree-chevron"><i class="fas fa-chevron-down"></i></span>' : '<span class="bs-tree-dot"></span>') +
+    '<code class="bs-tree-code">' + _bsEsc(node.code || '') + '</code>' +
+    '<span class="bs-tree-name">' + _bsEsc(node.nameAr || '') + nameSuffix + '</span>' +
+    '<span class="bs-tree-bal ' + balCls + '">' + fmt(bal) + '</span>' +
+  '</div>';
+  if (isFolder && node.children && node.children.length) {
+    node.children.forEach(function(child) {
+      html += _bsCoaTreeRow(child, color, asOf, depth + 1);
+    });
+  }
+  return html;
+}
+
+function _bsEsc(t) {
+  return String(t == null ? '' : t).replace(/[&<>"']/g, function(c) {
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
 // V5.10.2 — Render one of the three big BS sections (Assets / Liabilities / Equity)
 // composed of one or more sub-classifications (current vs non-current).
 // v5.10.4 — when window._bsShowZero is true, zero-balance accounts are kept
 // in the listing (rendered muted) so the IFRS chart-of-accounts is visible
 // in full to auditors.
+// v5.10.82 — Legacy renderer; preserved as fallback only. Primary
+// rendering now goes through _bsCoaColumn() which mirrors the CoA tree.
 function _bsBigSection(title, color, icon, classifications, grandTotal, asOf) {
   var fmt = _bsFmt;
   var showZero = !!window._bsShowZero;
@@ -14655,6 +14749,43 @@ function _bsInjectStyles() {
     '.bs-acc-row.is-zero{background:#fafafa;}' +
     '.bs-acc-row.is-zero .bs-acc-name{color:#94a3b8;}' +
     '.bs-acc-row.is-zero code{background:#e2e8f0;color:#94a3b8;}' +
+    /* v5.10.82 — CoA-tree balance sheet rows */
+    '.bs-tree{padding:6px 0;}' +
+    '.bs-tree-row{display:grid;grid-template-columns:24px auto 1fr auto;align-items:center;gap:8px;padding:7px 14px;border-bottom:1px dashed #f1f5f9;font-size:12.5px;color:#0f172a;transition:background .14s ease,transform .14s ease;}' +
+    '.bs-tree-row:last-child{border-bottom:none;}' +
+    '.bs-tree-row{padding-inline-start:calc(14px + var(--bs-tree-indent, 0px));}' +
+    '.bs-tree-row .bs-tree-chevron{width:18px;height:18px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:10px;}' +
+    '.bs-tree-row .bs-tree-dot{width:18px;height:18px;display:flex;align-items:center;justify-content:center;}' +
+    '.bs-tree-row .bs-tree-dot::before{content:"";width:4px;height:4px;border-radius:50%;background:#cbd5e1;}' +
+    '.bs-tree-row .bs-tree-code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#f1f5f9;color:#475569;padding:2px 8px;border-radius:6px;letter-spacing:0.2px;white-space:nowrap;}' +
+    '.bs-tree-row .bs-tree-name{color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+    '.bs-tree-row .bs-tree-bal{font-family:ui-monospace,Menlo,monospace;font-weight:700;color:#0f172a;text-align:end;white-space:nowrap;}' +
+    '.bs-tree-row .bs-tree-bal.neg{color:#dc2626;}' +
+    '.bs-tree-row .bs-tree-bal.contra{color:#dc2626;font-style:italic;}' +
+    '.bs-tree-row .bs-tree-contra-tag{font-size:10px;color:#dc2626;font-weight:700;background:#fef2f2;padding:1px 6px;border-radius:4px;margin-inline-start:6px;}' +
+    /* Folder rows — bold, larger code chip, accent background tint */
+    '.bs-tree-row.is-folder{background:linear-gradient(90deg,rgba(124,58,237,0.04),transparent 70%);}' +
+    '.bs-tree-row.is-folder .bs-tree-code{background:#ede9fe;color:#5b21b6;font-weight:800;}' +
+    '.bs-tree-row.is-folder .bs-tree-name{font-weight:800;color:#1e293b;}' +
+    '.bs-tree-row.is-folder .bs-tree-bal{font-weight:800;color:#0f172a;}' +
+    /* Level-specific styling — deeper levels lighten */
+    '.bs-tree-row.is-folder.bs-tree-l2{background:linear-gradient(90deg,rgba(14,165,233,0.10),transparent 70%);border-bottom:1.5px solid #bae6fd;}' +
+    '.bs-tree-row.is-folder.bs-tree-l2 .bs-tree-name{font-size:13.5px;color:#0c4a6e;}' +
+    '.bs-tree-row.is-folder.bs-tree-l2 .bs-tree-bal{font-size:13.5px;color:#0c4a6e;}' +
+    '.bs-tree-row.is-folder.bs-tree-l3{background:rgba(241,245,249,0.6);}' +
+    '.bs-tree-row.is-folder.bs-tree-l3 .bs-tree-name{font-size:12.8px;}' +
+    '.bs-tree-row.is-folder.bs-tree-l4{background:rgba(248,250,252,0.5);}' +
+    /* Leaf rows */
+    '.bs-tree-row.is-leaf{color:#475569;}' +
+    '.bs-tree-row.is-leaf .bs-tree-name{color:#334155;font-size:12px;}' +
+    '.bs-tree-row.is-leaf.clickable{cursor:pointer;}' +
+    '.bs-tree-row.is-leaf.clickable:hover{background:#fff7ed;color:#7c2d12;transform:translateX(-2px);}' +
+    /* Contra accounts — red tint */
+    '.bs-tree-row.is-contra .bs-tree-name{color:#991b1b;}' +
+    '.bs-tree-row.is-contra .bs-tree-code{background:#fee2e2;color:#991b1b;}' +
+    /* Zero-balance rows muted */
+    '.bs-tree-row.is-zero{opacity:0.55;}' +
+    '.bs-tree-row.is-zero .bs-tree-bal{color:#cbd5e1;font-weight:600;}' +
     '.bs-equation{margin-top:18px;padding:16px 20px;border-radius:14px;border:2px solid;}' +
     '.bs-equation.ok{background:#f0fdf4;border-color:#bbf7d0;}' +
     '.bs-equation.bad{background:#fef2f2;border-color:#fecaca;}' +
@@ -14799,7 +14930,37 @@ function _erpRenderBalanceSheetPrint(asOf, r, cfg) {
         '<tr class="sub-total"><td>إجمالي ' + esc(sub.label || k) + '</td><td class="num">' + fmt(sub.total) + '</td></tr>';
     }).join('');
   }
+  // v5.10.82 — Hierarchical printer that mirrors the CoA tree. Each
+  // folder row prints with indentation by level and bold-italic styling;
+  // each leaf is a normal row. Contra accounts are annotated (مقابل).
+  function treeRows(rootNode) {
+    if (!rootNode || !rootNode.children || rootNode.children.length === 0) return '';
+    function renderRow(node, depth) {
+      var bal = Number(node.balance || 0);
+      var isFolder = !!node.isFolder;
+      var isContra = !!node.isContra;
+      var indentPx = depth * 14;
+      var rowCls = isFolder ? ('sub-head lvl' + (node.level || 1)) : 'leaf';
+      var balCls = bal < 0 ? 'num neg' : 'num';
+      var nameHtml = '<span style="display:inline-block;padding-inline-start:' + indentPx + 'px;">' +
+        '<code>' + esc(node.code || '') + '</code> ' + esc(node.nameAr || '') +
+        (isContra ? ' <em style="color:#dc2626;">(مقابل)</em>' : '') +
+      '</span>';
+      var html = '<tr class="' + rowCls + '"><td>' + nameHtml + '</td><td class="' + balCls + '">' + fmt(bal) + '</td></tr>';
+      if (isFolder && node.children) {
+        node.children.forEach(function(child) {
+          html += renderRow(child, depth + 1);
+        });
+      }
+      return html;
+    }
+    return rootNode.children.map(function(child) {
+      return renderRow(child, 0);
+    }).join('');
+  }
   var groups = r.groups || {};
+  var coa    = r.coaTree || null;
+  var useCoaTree = !!(coa && (coa.assets || coa.liabilities || coa.equity));
 
   var html =
     '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">' +
@@ -14826,6 +14987,15 @@ function _erpRenderBalanceSheetPrint(asOf, r, cfg) {
       '.tbl.lia .head td{background:#ef4444;}' +
       '.tbl.eq .head td{background:#8b5cf6;}' +
       '.tbl .sub-head td{background:#f1f5f9;font-weight:800;color:#0f172a;font-size:11px;}' +
+      /* v5.10.82 — Hierarchical folder levels (CoA tree print) */
+      '.tbl .sub-head.lvl1 td,.tbl .sub-head.lvl2 td{background:#0ea5e9;color:#fff;font-size:12px;}' +
+      '.tbl.lia .sub-head.lvl1 td,.tbl.lia .sub-head.lvl2 td{background:#ef4444;}' +
+      '.tbl.eq  .sub-head.lvl1 td,.tbl.eq  .sub-head.lvl2 td{background:#8b5cf6;}' +
+      '.tbl .sub-head.lvl3 td{background:#e0f2fe;color:#0c4a6e;font-size:11.5px;}' +
+      '.tbl.lia .sub-head.lvl3 td{background:#fee2e2;color:#991b1b;}' +
+      '.tbl.eq  .sub-head.lvl3 td{background:#ede9fe;color:#5b21b6;}' +
+      '.tbl .sub-head.lvl4 td{background:#f1f5f9;color:#334155;font-weight:700;font-size:11px;}' +
+      '.tbl .num.neg{color:#dc2626;}' +
       '.tbl .sub-total td{background:#fef2f2;font-weight:800;color:#7f1d1d;border-top:1px solid #fecaca;}' +
       '.tbl .grand td{background:#0f172a;color:#fff;font-weight:900;font-size:13px;padding:10px;}' +
       '.tbl .dim{color:#94a3b8;text-align:center;font-style:italic;}' +
@@ -14862,10 +15032,12 @@ function _erpRenderBalanceSheetPrint(asOf, r, cfg) {
           '<div>' +
             '<table class="tbl">' +
               '<tr class="head"><td>الأصول · Assets</td><td class="num">' + currency + '</td></tr>' +
-              '<tr class="sub-head" style="background:#dbeafe!important;color:#0e7490;"><td colspan="2">الأصول المتداولة</td></tr>' +
-              subgroupRows(groups.currentAssets) +
-              '<tr class="sub-head" style="background:#dbeafe!important;color:#0e7490;"><td colspan="2">الأصول غير المتداولة</td></tr>' +
-              subgroupRows(groups.nonCurrentAssets) +
+              (useCoaTree
+                ? treeRows(coa.assets)
+                : ('<tr class="sub-head" style="background:#dbeafe!important;color:#0e7490;"><td colspan="2">الأصول المتداولة</td></tr>' +
+                   subgroupRows(groups.currentAssets) +
+                   '<tr class="sub-head" style="background:#dbeafe!important;color:#0e7490;"><td colspan="2">الأصول غير المتداولة</td></tr>' +
+                   subgroupRows(groups.nonCurrentAssets))) +
               '<tr class="grand"><td>إجمالي الأصول</td><td class="num">' + fmt(totalAssets) + '</td></tr>' +
             '</table>' +
           '</div>' +
@@ -14873,15 +15045,17 @@ function _erpRenderBalanceSheetPrint(asOf, r, cfg) {
           '<div>' +
             '<table class="tbl lia">' +
               '<tr class="head"><td>الالتزامات · Liabilities</td><td class="num">' + currency + '</td></tr>' +
-              '<tr class="sub-head" style="background:#fee2e2!important;color:#991b1b;"><td colspan="2">الالتزامات المتداولة</td></tr>' +
-              subgroupRows(groups.currentLiab) +
-              '<tr class="sub-head" style="background:#fee2e2!important;color:#991b1b;"><td colspan="2">الالتزامات غير المتداولة</td></tr>' +
-              subgroupRows(groups.nonCurrentLiab) +
+              (useCoaTree
+                ? treeRows(coa.liabilities)
+                : ('<tr class="sub-head" style="background:#fee2e2!important;color:#991b1b;"><td colspan="2">الالتزامات المتداولة</td></tr>' +
+                   subgroupRows(groups.currentLiab) +
+                   '<tr class="sub-head" style="background:#fee2e2!important;color:#991b1b;"><td colspan="2">الالتزامات غير المتداولة</td></tr>' +
+                   subgroupRows(groups.nonCurrentLiab))) +
               '<tr class="grand" style="background:#991b1b;"><td>إجمالي الالتزامات</td><td class="num">' + fmt(totalLiab) + '</td></tr>' +
             '</table>' +
             '<table class="tbl eq">' +
               '<tr class="head"><td>حقوق الملكية · Equity</td><td class="num">' + currency + '</td></tr>' +
-              subgroupRows(groups.equity) +
+              (useCoaTree ? treeRows(coa.equity) : subgroupRows(groups.equity)) +
               '<tr class="grand" style="background:#5b21b6;"><td>إجمالي حقوق الملكية</td><td class="num">' + fmt(totalEq) + '</td></tr>' +
             '</table>' +
           '</div>' +

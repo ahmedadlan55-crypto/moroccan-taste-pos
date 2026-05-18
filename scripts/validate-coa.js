@@ -24,11 +24,22 @@ data.forEach((a, i) => {
   byCode[a.code] = Object.assign({ _idx: i }, a);
 });
 
-// Pass 2: parent existence + prefix + level + type
+// Pass 2: parent existence + group-prefix + level + type
+// v5.10.84 — Updated for the 6-digit GGMMPP format. The literal
+// "code starts with parent code" rule from the old prefix-based design
+// no longer applies (e.g. 100200 doesn't start with 100000 because the
+// MM digits differ). Instead we check that child & parent share the
+// same GG (first 2 digits = group code) — that's the structural
+// invariant of the new standard.
+function _stripTrailingZeros(s) { return String(s || '').replace(/0+$/, ''); }
 data.forEach((a, i) => {
   // Root check
   if (!a.parentCode) {
     if (a.level !== 1) errors.push(`[LEVEL] root "${a.code}" has level ${a.level}, expected 1`);
+    // Roots must end in all-zeros for the GGMMPP convention
+    if (String(a.code).length === 6 && !/^(10|20|30|40|50)0000$/.test(String(a.code))) {
+      errors.push(`[ROOT-FORMAT] root "${a.code}" should be GG0000 (10/20/30/40/50 + 0000)`);
+    }
     return;
   }
   // Parent must exist
@@ -37,9 +48,11 @@ data.forEach((a, i) => {
     errors.push(`[ORPHAN] "${a.code}" (${a.nameAr}) parentCode="${a.parentCode}" does NOT exist`);
     return;
   }
-  // Prefix rule — child code must start with parent code
-  if (!String(a.code).startsWith(String(a.parentCode))) {
-    errors.push(`[PREFIX] "${a.code}" (${a.nameAr}) is under parent "${a.parentCode}" (${p.nameAr}) but code does not start with parent's code`);
+  // GG-prefix rule — child and parent must share the first 2 digits (group)
+  const childCode  = String(a.code || '');
+  const parentCode = String(a.parentCode || '');
+  if (childCode.length >= 2 && parentCode.length >= 2 && childCode.substr(0, 2) !== parentCode.substr(0, 2)) {
+    errors.push(`[GROUP] "${a.code}" (${a.nameAr}) is under parent "${a.parentCode}" (${p.nameAr}) but GG differs`);
   }
   // Level rule
   if (a.level !== (p.level || 0) + 1) {

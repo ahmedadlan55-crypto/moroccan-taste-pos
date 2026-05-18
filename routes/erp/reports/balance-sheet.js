@@ -140,6 +140,11 @@ function _bsDelta(current, prior) {
 const CONTRA_REPORT_SECTIONS = new Set(['allowance_doubtful', 'acc_dep', 'drawings']);
 function _isContraAccount(a) {
   if (CONTRA_REPORT_SECTIONS.has(a.report_section)) return true;
+  // v5.10.84 — In the new GGMMPP standard, Accumulated Depreciation
+  // lives under MM=06 (e.g., 100600, 100601). Detect by code prefix as
+  // a defensive fallback when report_section is NULL on a fresh row.
+  const c = String(a.code || '');
+  if (/^\d{6}$/.test(c) && c.startsWith('1006')) return true;
   const ar = String(a.name_ar || '');
   const en = String(a.name_en || '');
   if (/مخصص الديون|مجمَّع الإهلاك|مجمع الإهلاك|المسحوبات|مسحوبات/i.test(ar)) return true;
@@ -292,10 +297,18 @@ function _buildCoaTree(allAccounts, balMap, includeZero, netIncome) {
       postedCount: 1,
       children: []
     };
-    // Find a "Retained Earnings" container (code 32) or fall back to root
+    // Find a "Retained Earnings" container and inject the period P&L.
+    // v5.10.84 — Recognises BOTH the new GGMMPP code (300200 / 300300
+    // for Retained Earnings / Period P&L) AND the legacy code "32"
+    // for backward-compat with un-migrated installs.
     function injectIntoRetained(node) {
       if (!node) return false;
-      if (node.code === '32') {
+      const code = String(node.code || '');
+      const isRetainedContainer =
+        code === '32' ||
+        code === '300200' ||
+        code === '300300';
+      if (isRetainedContainer) {
         node.children = node.children || [];
         node.children.push(syntheticNode);
         node.balance += netIncome;
@@ -501,23 +514,32 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       // ── Step A: keyword-based override (template-agnostic) ──
       const nameHit = classifyAssetByName(code, nameAr);
       if (nameHit) return nameHit;
-      // ── Step B: actual coa-template.json hierarchy (v5.10.78+) ──
-      // v5.10.80 — Asset prefixes corrected: template says 112=Receivables,
-      // 113=Inventory, 1124=Allowance (contra), 122=AccDep (contra). The
-      // earlier mapping had 112↔113 swapped and pointed allowance/accDep
-      // at the wrong prefixes — causing inventory rows to surface under
-      // Receivables on the Balance Sheet.
+      // ── Step B: v5.10.84 — Saudi/International standard 6-digit GGMMPP ──
+      // GG=10 → Assets. MM bucket map:
+      //   01 cash, 02 receivables, 03 inventory, 04 prepaid,
+      //   05 fixed assets (PPE), 06 accumulated depreciation (contra).
+      if (/^\d{6}$/.test(c) && c.startsWith('10')) {
+        const mm = c.substr(2, 2);
+        if (mm === '01') return ['currentAssets',    'cash'];
+        if (mm === '02') return ['currentAssets',    'receivables'];
+        if (mm === '03') return ['currentAssets',    'inventory'];
+        if (mm === '04') return ['currentAssets',    'prepaid'];
+        if (mm === '05') return ['nonCurrentAssets', 'ppe'];
+        if (mm === '06') return ['nonCurrentAssets', 'accDep'];
+        return ['currentAssets', 'otherCA'];
+      }
+      // ── Step C: legacy fallback (pre-v5.10.84 codes) ──
       if (c.startsWith('111')) return ['currentAssets', 'cash'];
-      if (c.startsWith('1124')) return ['currentAssets', 'allowanceDoubtful'];  // contra (must precede 112)
-      if (c.startsWith('112')) return ['currentAssets', 'receivables'];          // الذمم المدينة
-      if (c.startsWith('113')) return ['currentAssets', 'inventory'];            // المخزون
-      if (c.startsWith('114')) return ['currentAssets', 'prepaid'];              // مدفوعات مقدماً
-      if (c.startsWith('115')) return ['currentAssets', 'receivables'];          // العهد والسلف
+      if (c.startsWith('1124')) return ['currentAssets', 'allowanceDoubtful'];
+      if (c.startsWith('112')) return ['currentAssets', 'receivables'];
+      if (c.startsWith('113')) return ['currentAssets', 'inventory'];
+      if (c.startsWith('114')) return ['currentAssets', 'prepaid'];
+      if (c.startsWith('115')) return ['currentAssets', 'receivables'];
       if (c.startsWith('116')) return ['currentAssets', 'vatInput'];
-      if (c.startsWith('122')) return ['nonCurrentAssets', 'accDep'];            // مجمع الإهلاك (contra)
-      if (c.startsWith('124')) return ['nonCurrentAssets', 'rou'];               // v5.10.81 — IFRS 16 Right-of-Use (NOT acc_dep)
-      if (c.startsWith('121')) return ['nonCurrentAssets', 'ppe'];               // PP&E
-      if (c.startsWith('123')) return ['nonCurrentAssets', 'intangibles'];       // v5.10.81 — 123 is Intangibles per template
+      if (c.startsWith('122')) return ['nonCurrentAssets', 'accDep'];
+      if (c.startsWith('124')) return ['nonCurrentAssets', 'rou'];
+      if (c.startsWith('121')) return ['nonCurrentAssets', 'ppe'];
+      if (c.startsWith('123')) return ['nonCurrentAssets', 'intangibles'];
       if (c.startsWith('125') || c.startsWith('126'))
         return ['nonCurrentAssets', 'intangibles'];
       if (c.startsWith('11')) return ['currentAssets', 'otherCA'];
@@ -526,31 +548,30 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
     }
     function classifyLiability(code) {
       const c = String(code || '');
-      // v5.10.81 — Liability prefixes calibrated to the current
-      // coa-template.json:
-      //   211 = Payables / 212 = Accrued / 213 = Output VAT (with sub-buckets
-      //   2131 = VAT 15%, 2132 = Net VAT payable) / 214 = Customer deposits /
-      //   215 = Franchise dues / 216 = GOSI / 217 = Withholding tax /
-      //   218 = Short-term loans / 219 = Current portion of lease /
-      //   221 = Long-term loans / 222 = Long-term lease (IFRS 16) /
-      //   223 = EOSB (IAS 19).
-      //
-      // PRIOR BUG: 213/216/217 used to route to a non-existent 'govDues'
-      // bucket, so legacy NULL-report_section rows for VAT/GOSI/
-      // Withholding fell into the unclassified pile. Now each lands in
-      // its own dedicated v5.10.78 bucket.
+      // ── v5.10.84 — Saudi/International standard 6-digit GGMMPP ──
+      // GG=20 → Liabilities. MM bucket map:
+      //   01 payables, 02 accrued, 03 VAT payable, 04 loans.
+      if (/^\d{6}$/.test(c) && c.startsWith('20')) {
+        const mm = c.substr(2, 2);
+        if (mm === '01') return ['currentLiab',    'payables'];
+        if (mm === '02') return ['currentLiab',    'accrued'];
+        if (mm === '03') return ['currentLiab',    'vatOutput'];
+        if (mm === '04') return ['nonCurrentLiab', 'longTermDebt'];
+        return ['currentLiab', 'otherCL'];
+      }
+      // ── Legacy fallback (pre-v5.10.84) ──
       if (c.startsWith('211')) return ['currentLiab', 'payables'];
       if (c.startsWith('212')) return ['currentLiab', 'accrued'];
-      if (c.startsWith('2132')) return ['currentLiab', 'netVat'];      // more specific first
+      if (c.startsWith('2132')) return ['currentLiab', 'netVat'];
       if (c.startsWith('2131')) return ['currentLiab', 'vatOutput'];
       if (c === '213' || c.startsWith('213')) return ['currentLiab', 'vatOutput'];
       if (c.startsWith('214')) return ['currentLiab', 'customerDeposits'];
-      if (c.startsWith('215')) return ['currentLiab', 'otherCL'];      // franchise dues
+      if (c.startsWith('215')) return ['currentLiab', 'otherCL'];
       if (c.startsWith('216')) return ['currentLiab', 'gosi'];
       if (c.startsWith('217')) return ['currentLiab', 'withholding'];
       if (c.startsWith('218') || c.startsWith('219')) return ['currentLiab', 'shortTermDebt'];
-      if (c.startsWith('223')) return ['nonCurrentLiab', 'eosb'];      // IAS 19
-      if (c.startsWith('222')) return ['nonCurrentLiab', 'leaseObligation'];   // IFRS 16
+      if (c.startsWith('223')) return ['nonCurrentLiab', 'eosb'];
+      if (c.startsWith('222')) return ['nonCurrentLiab', 'leaseObligation'];
       if (c.startsWith('221')) return ['nonCurrentLiab', 'longTermDebt'];
       if (c.startsWith('22'))  return ['nonCurrentLiab', 'longTermDebt'];
       if (c.startsWith('21'))  return ['currentLiab', 'otherCL'];
@@ -558,12 +579,18 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
     }
     function classifyEquity(code) {
       const c = String(code || '');
-      // v5.10.81 — Calibrated to template:
-      //   31 = Capital / 32 = Retained / 33 = Drawings (contra) /
-      //   341 = Statutory reserve / 342 = General reserve /
-      //   343 = Zakat reserve (SOCPA-specific).
-      // 343 is checked BEFORE 34 so the Zakat line gets its own bucket
-      // instead of being lumped with other reserves.
+      // ── v5.10.84 — Saudi/International standard 6-digit GGMMPP ──
+      // GG=30 → Equity. MM bucket map:
+      //   01 capital, 02 retained earnings, 03 period P&L (folds
+      //   into 'retained' per IAS 1 Statement of Changes in Equity).
+      if (/^\d{6}$/.test(c) && c.startsWith('30')) {
+        const mm = c.substr(2, 2);
+        if (mm === '01') return ['equity', 'capital'];
+        if (mm === '02') return ['equity', 'retained'];
+        if (mm === '03') return ['equity', 'retained'];
+        return ['equity', 'capital'];
+      }
+      // ── Legacy fallback (pre-v5.10.84) ──
       if (c.startsWith('31')) return ['equity', 'capital'];
       if (c.startsWith('32')) return ['equity', 'retained'];
       if (c.startsWith('33')) return ['equity', 'drawings'];

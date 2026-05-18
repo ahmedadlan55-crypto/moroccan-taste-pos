@@ -4161,20 +4161,28 @@ async function runMigrations() {
   // assign report_section explicitly (e.g., via the CoA editor UI).
   try {
     const codeToSection = [
-      // ── Assets ── v5.10.80 — Asset prefixes corrected to match
-      // coa-template.json. The earlier mapping had 112↔113 swapped
-      // (so inventory rows ended up under Receivables) and pointed
-      // allowance/accDep at the wrong prefixes (1131 → allowance,
-      // 124 → accDep — should be 1124 and 122). Order matters
-      // because the loop applies UPDATE statements in sequence and
-      // each one keys on `report_section IS NULL` — but the SECOND
-      // v5.10.80 re-derive pass below clears that flag for accounts
-      // that need correcting.
-      // v5.10.81 — Asset prefixes calibrated to current coa-template.json
-      // (112=Receivables, 113=Inventory, 1124=Allowance contra,
-      //  121=PP&E, 122=AccDep contra, 123=Intangibles,
-      //  124=IFRS 16 Right-of-Use). The earlier 124→acc_dep mapping was
-      // a holdover from an older template that no longer exists.
+      // v5.10.84 — Saudi/International standard 6-digit GGMMPP codes
+      // MUST come FIRST so they win over legacy patterns. The loop
+      // updates rows one at a time and short-circuits on first hit.
+      ["'1001'", "'cash'"],          // 100100, 100101, 100102 ...
+      ["'1002'", "'receivables'"],   // 100200, 100201 ...
+      ["'1003'", "'inventory'"],     // 100300, 100310-100332 ...
+      ["'1004'", "'prepaid'"],       // 100400, 100401 ...
+      ["'1005'", "'ppe'"],           // 100500, 100501-100504 ...
+      ["'1006'", "'acc_dep'"],       // 100600, 100601 (contra)
+      ["'2001'", "'payables'"],      // 200100, 200101 ...
+      ["'2002'", "'accrued'"],
+      ["'2003'", "'vat_output'"],
+      ["'2004'", "'long_term_debt'"],
+      ["'3001'", "'capital'"],
+      ["'3002'", "'retained'"],
+      ["'3003'", "'retained'"],
+      ["'4'", "'revenue'"],          // any 4xxxxx
+      ["'5001'", "'cogs'"],
+      ["'5002'", "'cogs'"],
+      ["'5003'", "'cogs'"],
+      ["'5004','5005','5006','5007','5008','5009','5010'", "'opex'"],
+      // ── Legacy v5.10.81 patterns kept as fallback for un-migrated rows ──
       ["'111'", "'cash'"],
       ["'1124'", "'allowance_doubtful'"],  // contra — MUST precede 112
       ["'112'", "'receivables'"],
@@ -4252,35 +4260,57 @@ async function runMigrations() {
   try {
     const corrections = [
       // [pattern, exclusionPattern (optional), correctSection]
-      // ── Assets ── (v5.10.80)
-      ['1124%', null,        'allowance_doubtful'],  // more specific first
+      // ── v5.10.84 NEW STANDARD (6-digit GGMMPP) — checked FIRST ──
+      ['1001%', null,        'cash'],
+      ['1002%', null,        'receivables'],
+      ['1003%', null,        'inventory'],
+      ['1004%', null,        'prepaid'],
+      ['1005%', null,        'ppe'],
+      ['1006%', null,        'acc_dep'],
+      ['2001%', null,        'payables'],
+      ['2002%', null,        'accrued'],
+      ['2003%', null,        'vat_output'],
+      ['2004%', null,        'long_term_debt'],
+      ['3001%', null,        'capital'],
+      ['3002%', null,        'retained'],
+      ['3003%', null,        'retained'],
+      ['4%',    null,        'revenue'],
+      ['5001%', null,        'cogs'],
+      ['5002%', null,        'cogs'],
+      ['5003%', null,        'cogs'],
+      ['5004%', null,        'opex'],
+      ['5005%', null,        'opex'],
+      ['5006%', null,        'opex'],
+      ['5007%', null,        'opex'],
+      ['5008%', null,        'opex'],
+      ['5009%', null,        'opex'],
+      ['5010%', null,        'opex'],
+      // ── Legacy patterns kept as fallback ──
+      ['1124%', null,        'allowance_doubtful'],
       ['112%',  '1124%',     'receivables'],
       ['113%',  null,        'inventory'],
       ['114%',  null,        'prepaid'],
-      ['115%',  null,        'receivables'],         // custody/advances
+      ['115%',  null,        'receivables'],
       ['116%',  null,        'vat_input'],
-      ['121%',  null,        'ppe'],                  // v5.10.81 PRIMARY PP&E
-      ['122%',  null,        'acc_dep'],             // contra
-      ['123%',  null,        'intangibles'],          // v5.10.81 — was wrongly 'ppe' under old map
-      ['124%',  null,        'rou'],                  // v5.10.81 — IFRS 16 RoU (was wrongly 'acc_dep')
-      // ── Liabilities ── (v5.10.81)
-      ['2132%', null,        'net_vat'],              // more specific first
+      ['121%',  null,        'ppe'],
+      ['122%',  null,        'acc_dep'],
+      ['123%',  null,        'intangibles'],
+      ['124%',  null,        'rou'],
+      ['2132%', null,        'net_vat'],
       ['2131%', null,        'vat_output'],
-      ['213%',  '213%' ,     'vat_output'],           // safety; 2131/2132 already handled
+      ['213%',  '213%' ,     'vat_output'],
       ['214%',  null,        'customer_deposits'],
       ['216%',  null,        'gosi'],
       ['217%',  null,        'withholding'],
       ['218%',  null,        'short_term_debt'],
       ['219%',  null,        'short_term_debt'],
       ['221%',  null,        'long_term_debt'],
-      ['222%',  null,        'lease_obligation'],     // v5.10.81 — IFRS 16
-      ['223%',  null,        'eosb'],                 // v5.10.81 — was stale '225'
-      // ── Equity ── (v5.10.81)
-      ['343%',  null,        'zakat'],                // v5.10.81 — was stale '345'
-      // ── Expenses ── (v5.10.81)
-      ['6123%', null,        'eosb_expense'],         // v5.10.81 — was stale '62141/62142'
-      ['6244%', null,        'zakat_paid'],           // v5.10.81 — was stale '62311'
-      ['624%',  '6244%',     'gov_fees']              // v5.10.81 — exclude zakat sub
+      ['222%',  null,        'lease_obligation'],
+      ['223%',  null,        'eosb'],
+      ['343%',  null,        'zakat'],
+      ['6123%', null,        'eosb_expense'],
+      ['6244%', null,        'zakat_paid'],
+      ['624%',  '6244%',     'gov_fees']
     ];
     let totalFixed = 0;
     for (const [pattern, exclusion, section] of corrections) {

@@ -901,24 +901,64 @@ router.post('/gl/coa/wipe-and-seed', async (req, res) => {
       }
       function _deriveReportSection(code, type) {
         const c = String(code || '');
-        // v5.10.80 — Asset prefixes corrected to match the actual
-        // coa-template.json hierarchy. The earlier mapping had 112↔113
-        // swapped (template says 112=Receivables, 113=Inventory) and
-        // claimed 1131=Allowance + 124=AccDep, but the template has
-        // 1124=Allowance + 122=AccDep. Result: inventory items were
-        // landing under Receivables on the Balance Sheet. Order matters:
-        // most-specific prefix first so 1124 wins over 112.
+        // v5.10.84 — Saudi / International standard CoA: 6-digit GGMMPP.
+        //   GG = group (10/20/30/40/50)
+        //   MM = main account
+        //   PP = sub-account
+        // Reports are derived from the FIRST TWO DIGITS only:
+        //   10 → BS Assets, 20 → BS Liabilities, 30 → BS Equity,
+        //   40 → IS Revenue, 50 → IS Expense (incl. COGS).
+        // The MM digit (positions 3-4) maps to the report_section bucket.
+        if (/^\d{6}$/.test(c)) {
+          const gg = c.substr(0, 2);
+          const mm = c.substr(2, 2);
+          if (gg === '10') {
+            if (mm === '00') return null;            // root header
+            if (mm === '01') return 'cash';
+            if (mm === '02') return 'receivables';
+            if (mm === '03') return 'inventory';
+            if (mm === '04') return 'prepaid';
+            if (mm === '05') return 'ppe';
+            if (mm === '06') return 'acc_dep';
+            return 'other_current_asset';
+          }
+          if (gg === '20') {
+            if (mm === '00') return null;
+            if (mm === '01') return 'payables';
+            if (mm === '02') return 'accrued';
+            if (mm === '03') return 'vat_output';
+            if (mm === '04') return 'long_term_debt';
+            return 'other_current_liability';
+          }
+          if (gg === '30') {
+            if (mm === '00') return null;
+            if (mm === '01') return 'capital';
+            if (mm === '02') return 'retained';
+            if (mm === '03') return 'retained';      // period P&L lives under retained per IAS 1
+            return 'capital';
+          }
+          if (gg === '40') return 'revenue';
+          if (gg === '50') {
+            // First three MM under expenses are COGS by brand
+            if (['01', '02', '03'].includes(mm)) return 'cogs';
+            return 'opex';
+          }
+          return null;
+        }
+        // ── Legacy fallback (pre-v5.10.84 installs with old codes) ──
+        // Kept for backward compatibility so partial-migration systems
+        // still classify correctly. New installs never hit this branch.
         if (c.startsWith('1161') || c.startsWith('1162') || c.startsWith('116')) return 'vat_input';
         if (c.startsWith('1111') || c.startsWith('1112') || c.startsWith('111')) return 'cash';
-        if (c.startsWith('1124'))                 return 'allowance_doubtful';   // contra (1124 per template)
-        if (c.startsWith('112'))                  return 'receivables';            // الذمم المدينة
-        if (c.startsWith('113'))                  return 'inventory';              // المخزون
+        if (c.startsWith('1124'))                 return 'allowance_doubtful';
+        if (c.startsWith('112'))                  return 'receivables';
+        if (c.startsWith('113'))                  return 'inventory';
         if (c.startsWith('114'))                  return 'prepaid';
-        if (c.startsWith('115'))                  return 'receivables';            // العهد والسلف — staff/operations advances
-        if (c.startsWith('122'))                  return 'acc_dep';                // مجمع الإهلاك (contra)
-        if (c.startsWith('124'))                  return 'rou';                    // v5.10.81 — حق استخدام الأصول (IFRS 16)
-        if (c.startsWith('121'))                  return 'ppe';                    // الممتلكات والآلات والمعدات
-        if (c.startsWith('123'))                  return 'intangibles';            // الأصول غير الملموسة
+        if (c.startsWith('115'))                  return 'receivables';
+        if (c.startsWith('122'))                  return 'acc_dep';
+        if (c.startsWith('124'))                  return 'rou';
+        if (c.startsWith('121'))                  return 'ppe';
+        if (c.startsWith('123'))                  return 'intangibles';
         if (c.startsWith('125') || c.startsWith('126')) return 'intangibles';
         if (c.startsWith('211'))                  return 'payables';
         if (c.startsWith('212'))                  return 'accrued';
@@ -945,6 +985,12 @@ router.post('/gl/coa/wipe-and-seed', async (req, res) => {
       }
       function _deriveTaxNature(code) {
         const c = String(code || '');
+        // v5.10.84 — Saudi/International standard: VAT lives under 2003xx
+        // (Output VAT Payable). The simplified CoA doesn't carry separate
+        // input-VAT / GOSI / Withholding / EOSB / Zakat accounts — those
+        // can be added by extending MM under group 20 / 50 as needed.
+        if (/^\d{6}$/.test(c) && c.startsWith('2003')) return 'vat_output';
+        // ── Legacy fallback (pre-v5.10.84) ──
         if (c.startsWith('116'))                return 'vat_input';
         if (c.startsWith('2131') || c === '213') return 'vat_output';
         if (c.startsWith('216'))                return 'gosi';

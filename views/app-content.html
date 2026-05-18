@@ -192,6 +192,11 @@
           <!-- ── 13.a — Org structure ───────────────────────────── -->
           <div class="nav-item" onclick="wzOpen()" style="background:linear-gradient(90deg,rgba(139,92,246,.15),transparent);"><i class="fas fa-wand-magic-sparkles" style="color:#a78bfa;"></i><span data-i18n="nav.brandWizard">معالج براند جديد</span></div>
           <div class="nav-item" data-erp-nav="erpCompanies" onclick="erpNav('erpCompanies')"><i class="fas fa-city"></i><span data-i18n="nav.companies">الشركات</span></div>
+          <!-- v5.10.83 — Standalone Brands nav item restored. Removed in v5.11.2
+               when it was deduplicated against "Menu Hub", but owners
+               legitimately want a corporate-level brand register here too
+               (alongside الشركات + الفروع) for legal/franchise structure. -->
+          <div class="nav-item" data-erp-nav="erpBrands" onclick="erpNav('erpBrands')"><i class="fas fa-tags"></i><span data-i18n="nav.brands">البراندات</span></div>
           <div class="nav-item" data-erp-nav="erpBranches" onclick="erpNav('erpBranches')"><i class="fas fa-code-branch"></i><span data-i18n="nav.branches">الفروع</span></div>
           <!-- v5.15.1 — "أجهزة POS" nav item removed per owner request.
                The cashier portal lives at /pos/ only; no POS terminology

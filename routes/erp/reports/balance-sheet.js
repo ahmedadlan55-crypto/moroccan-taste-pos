@@ -156,6 +156,14 @@ function _codeCompare(a, b) {
 // keyed by their account type (asset / liability / equity). Includes
 // folders + leaves; the frontend collapses zero-balance subtrees when
 // includeZero=false.
+//
+// v5.10.83 — STRICT TYPE FILTER: only assets/liabilities/equity nodes
+// appear in the BS tree. If a revenue/expense account has been parented
+// under a BS folder (legacy data corruption, manual mis-coding, etc.),
+// it is now EXCLUDED instead of polluting the report. The exclusions
+// are collected and surfaced back to the caller as `mistypedAccounts`
+// so the UI can show a banner pointing the owner at the offenders.
+const BS_TYPES = new Set(['asset', 'liability', 'equity']);
 function _buildCoaTree(allAccounts, balMap, includeZero, netIncome) {
   const byId = {};
   const kidsOf = {};
@@ -166,7 +174,32 @@ function _buildCoaTree(allAccounts, balMap, includeZero, netIncome) {
   });
   Object.keys(kidsOf).forEach(k => kidsOf[k].sort(_codeCompare));
 
-  function build(a) {
+  const mistypedAccounts = [];  // v5.10.83 — non-BS leaves under BS parents
+
+  function build(a, expectedType) {
+    // v5.10.83 — type guard. If this node's type differs from the
+    // section's expected type AND it's not a BS type at all (revenue/
+    // expense leaked into a BS subtree), record it and skip rendering.
+    // Equity ↔ Liability mismatch within a BS section is tolerated
+    // (those happen with mis-classified user accounts and would already
+    // be visible).
+    if (a.type !== expectedType) {
+      if (!BS_TYPES.has(a.type)) {
+        mistypedAccounts.push({
+          id: a.id, code: a.code, nameAr: a.name_ar,
+          type: a.type, expected: expectedType
+        });
+        return null;
+      }
+      // Cross-BS mismatch (e.g., asset under liability folder): also
+      // skip to preserve section integrity; record so the owner sees it.
+      mistypedAccounts.push({
+        id: a.id, code: a.code, nameAr: a.name_ar,
+        type: a.type, expected: expectedType
+      });
+      return null;
+    }
+
     const isFolder = !!a.is_folder;
     const contra = _isContraAccount(a);
     let rawBalance = 0;        // debit-normal sum (raw)
@@ -174,7 +207,7 @@ function _buildCoaTree(allAccounts, balMap, includeZero, netIncome) {
     const children = [];
     if (isFolder) {
       (kidsOf[a.id] || []).forEach(ch => {
-        const node = build(ch);
+        const node = build(ch, expectedType);
         if (node) {
           children.push(node);
           rawBalance += node.rawBalance;
@@ -221,14 +254,18 @@ function _buildCoaTree(allAccounts, balMap, includeZero, netIncome) {
     };
   }
 
-  // Top-level: find root nodes (parent_id IS NULL)
+  // Top-level: find root nodes (parent_id IS NULL).
+  // v5.10.83 — Pass the expected type into build() so the recursive
+  // walk can reject any descendant whose type doesn't match the
+  // section (e.g., a stray expense leaf under an asset folder).
   const roots = kidsOf['__root__'] || [];
-  const result = { assets: null, liabilities: null, equity: null };
+  const result = { assets: null, liabilities: null, equity: null, mistypedAccounts: [] };
   roots.forEach(r => {
-    if (r.type === 'asset')     result.assets      = build(r);
-    if (r.type === 'liability') result.liabilities = build(r);
-    if (r.type === 'equity')    result.equity      = build(r);
+    if (r.type === 'asset')     result.assets      = build(r, 'asset');
+    if (r.type === 'liability') result.liabilities = build(r, 'liability');
+    if (r.type === 'equity')    result.equity      = build(r, 'equity');
   });
+  result.mistypedAccounts = mistypedAccounts;
 
   // Inject synthetic Net Income line into the equity tree under
   // Retained Earnings (typically code 32). If the equity tree doesn't

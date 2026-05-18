@@ -14477,9 +14477,9 @@ function erpLoadBalanceSheet() {
 
     // v5.10.38 — banner for unclassified accounts and tree integrity issues
     var bannerHtml = '';
+    var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
     var unclassified = (r.unclassified || []);
     if (unclassified.length) {
-      var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
       var sample = unclassified.slice(0, 5).map(function(u){ return esc(u.code || '?') + ' ' + esc(u.nameAr || ''); }).join('، ');
       var more = unclassified.length > 5 ? ' و' + (unclassified.length - 5) + ' آخر' : '';
       bannerHtml +=
@@ -14488,6 +14488,31 @@ function erpLoadBalanceSheet() {
           '<div style="flex:1;">' +
             '<div style="font-weight:800;color:#9a3412;">' + unclassified.length + ' حساب لم يُصنَّف في المركز المالي</div>' +
             '<div style="font-size:12px;color:#9a3412;margin-top:2px;">مثل: ' + sample + more + '</div>' +
+          '</div>' +
+        '</div>';
+    }
+
+    // v5.10.83 — banner for mis-typed accounts (revenue/expense leaves
+    // parented under asset/liability/equity folders, or cross-BS-type
+    // mismatches). These were silently leaking onto the BS before
+    // v5.10.83 — now they're excluded from the tree AND surfaced here
+    // so the owner can fix the underlying account record.
+    var mistyped = (r.coaTree && r.coaTree.mistypedAccounts) || [];
+    if (mistyped.length) {
+      var typeLabel = { asset:'أصل', liability:'التزام', equity:'حقوق ملكية', revenue:'إيراد', expense:'مصروف' };
+      var msample = mistyped.slice(0, 6).map(function(m){
+        return '<code style="background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:11px;">' +
+          esc(m.code || '?') + '</code> ' + esc(m.nameAr || '') +
+          ' <span style="font-size:10.5px;opacity:0.8;">(' + esc(typeLabel[m.type] || m.type) + ' → داخل ' + esc(typeLabel[m.expected] || m.expected) + ')</span>';
+      }).join('<br>');
+      var mmore = mistyped.length > 6 ? '<div style="margin-top:6px;font-weight:700;">و ' + (mistyped.length - 6) + ' حساب آخر — راجع شجرة الحسابات لإعادة تصنيفها.</div>' : '';
+      bannerHtml +=
+        '<div style="display:flex;align-items:flex-start;gap:12px;padding:14px 16px;background:#fef2f2;border:1.5px solid #fca5a5;border-radius:10px;margin-bottom:14px;">' +
+          '<i class="fas fa-circle-exclamation" style="color:#dc2626;font-size:22px;margin-top:2px;"></i>' +
+          '<div style="flex:1;">' +
+            '<div style="font-weight:800;color:#7f1d1d;font-size:13.5px;">' + mistyped.length + ' حساب مَوضوع تحت قسم نوعه مُختلف — مُستبعَد من قائمة المركز المالي</div>' +
+            '<div style="font-size:11.5px;color:#9a3412;margin-top:2px;line-height:1.8;">إن وُجد حساب «مصروف» تحت أب «أصل» مثلاً، لا يَنبغي أن يَظهر هنا. صحِّح نوع الحسابات أو أعد ربطها بأب من نفس النوع:</div>' +
+            '<div style="font-size:12px;color:#0f172a;margin-top:8px;line-height:2;">' + msample + mmore + '</div>' +
           '</div>' +
         '</div>';
     }

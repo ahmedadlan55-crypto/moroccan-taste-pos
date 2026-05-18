@@ -4170,6 +4170,11 @@ async function runMigrations() {
       // each one keys on `report_section IS NULL` — but the SECOND
       // v5.10.80 re-derive pass below clears that flag for accounts
       // that need correcting.
+      // v5.10.81 — Asset prefixes calibrated to current coa-template.json
+      // (112=Receivables, 113=Inventory, 1124=Allowance contra,
+      //  121=PP&E, 122=AccDep contra, 123=Intangibles,
+      //  124=IFRS 16 Right-of-Use). The earlier 124→acc_dep mapping was
+      // a holdover from an older template that no longer exists.
       ["'111'", "'cash'"],
       ["'1124'", "'allowance_doubtful'"],  // contra — MUST precede 112
       ["'112'", "'receivables'"],
@@ -4179,35 +4184,46 @@ async function runMigrations() {
       ["'114'", "'prepaid'"],
       ["'115'", "'receivables'"],          // العهد والسلف
       ["'122'", "'acc_dep'"],              // contra (PRIMARY)
-      ["'124'", "'acc_dep'"],              // legacy fallback
-      ["'121','123'", "'ppe'"],
+      ["'124'", "'rou'"],                  // v5.10.81 — IFRS 16 Right-of-Use
+      ["'121'", "'ppe'"],
+      ["'123'", "'intangibles'"],          // v5.10.81 — 123 = Intangibles per template
       ["'125','126'", "'intangibles'"],
-      // ── Liabilities ──
+      // ── Liabilities ── v5.10.81 — Calibrated to template:
+      //   211=AP, 212=Accrued, 213=Output VAT (sub: 2131 VAT15%, 2132 Net VAT),
+      //   214=Customer Deposits, 215=Franchise Dues, 216=GOSI,
+      //   217=Withholding, 218=Short-term Loans, 219=Current Lease Portion,
+      //   221=Long-term Loans, 222=Long-term Lease (IFRS 16),
+      //   223=EOSB (IAS 19).
       ["'211'", "'payables'"],
       ["'212'", "'accrued'"],
-      ["'2131'", "'vat_output'"],          // v5.10.78 separated
-      ["'2132'", "'net_vat'"],             // v5.10.78 new
-      ["'2133'", "'withholding'"],         // v5.10.78 separated
-      ["'21321','21322','216'", "'gosi'"], // v5.10.78 separated
-      ["'213'", "'vat_output'"],           // any other 213x fallback
+      ["'2132'", "'net_vat'"],             // more specific first
+      ["'2131'", "'vat_output'"],
+      ["'213'", "'vat_output'"],
       ["'214'", "'customer_deposits'"],
       ["'215'", "'other_current_liability'"],
+      ["'216'", "'gosi'"],
       ["'217'", "'withholding'"],
       ["'218','219'", "'short_term_debt'"],
-      ["'225'", "'eosb'"],                 // v5.10.78 new IAS 19
+      ["'223'", "'eosb'"],                 // v5.10.81 — IAS 19 (corrected from stale 225)
+      ["'222'", "'lease_obligation'"],     // v5.10.81 — IFRS 16
+      ["'221'", "'long_term_debt'"],
       ["'22'", "'long_term_debt'"],
-      // ── Equity ──
+      // ── Equity ── v5.10.81 — Calibrated:
+      //   31=Capital, 32=Retained, 33=Drawings (contra),
+      //   341=Statutory, 342=General, 343=Zakat reserve (corrected from stale 345).
       ["'31'", "'capital'"],
       ["'32'", "'retained'"],
       ["'33'", "'drawings'"],              // contra
-      ["'345'", "'zakat'"],                // v5.10.78 separated
+      ["'343'", "'zakat'"],                // v5.10.81 — 343 is Zakat reserve per template (was wrongly '345')
       ["'34'", "'reserves'"],
-      // ── Revenue / Expense ──
+      // ── Revenue / Expense ── v5.10.81 — Calibrated:
+      //   41/42/43=Revenue, 5x=COGS, 6123=EOSB expense, 624x=Gov fees,
+      //   6244=Zakat paid.
       ["'4'", "'revenue'"],
       ["'5'", "'cogs'"],
-      ["'62141','62142'", "'eosb_expense'"], // v5.10.78
-      ["'62211','62212','62213','62214'", "'gov_fees'"], // v5.10.78
-      ["'62311'", "'zakat_paid'"],          // v5.10.78
+      ["'6123'", "'eosb_expense'"],        // v5.10.81 — was wrongly '62141','62142'
+      ["'6244'", "'zakat_paid'"],          // v5.10.81 — was wrongly '62311'
+      ["'624'", "'gov_fees'"],             // v5.10.81 — was wrongly '6221x'
       ["'6'", "'opex'"]
     ];
     let totalTagged = 0;
@@ -4236,20 +4252,35 @@ async function runMigrations() {
   try {
     const corrections = [
       // [pattern, exclusionPattern (optional), correctSection]
-      // 1124 must come BEFORE 112 (more specific)
-      ['1124%', null,        'allowance_doubtful'],
-      // 112x receivables EXCEPT 1124 already handled above
+      // ── Assets ── (v5.10.80)
+      ['1124%', null,        'allowance_doubtful'],  // more specific first
       ['112%',  '1124%',     'receivables'],
-      // 113x inventory — was wrongly 'receivables'
       ['113%',  null,        'inventory'],
-      // 114x prepaid — was wrongly 'other_current_asset'
       ['114%',  null,        'prepaid'],
-      // 115x custody → receivables — was wrongly 'other_current_asset'
-      ['115%',  null,        'receivables'],
-      // 116x VAT input — was correct but ensure consistency
+      ['115%',  null,        'receivables'],         // custody/advances
       ['116%',  null,        'vat_input'],
-      // 122x accumulated depreciation — was wrongly 'ppe'
-      ['122%',  null,        'acc_dep']
+      ['121%',  null,        'ppe'],                  // v5.10.81 PRIMARY PP&E
+      ['122%',  null,        'acc_dep'],             // contra
+      ['123%',  null,        'intangibles'],          // v5.10.81 — was wrongly 'ppe' under old map
+      ['124%',  null,        'rou'],                  // v5.10.81 — IFRS 16 RoU (was wrongly 'acc_dep')
+      // ── Liabilities ── (v5.10.81)
+      ['2132%', null,        'net_vat'],              // more specific first
+      ['2131%', null,        'vat_output'],
+      ['213%',  '213%' ,     'vat_output'],           // safety; 2131/2132 already handled
+      ['214%',  null,        'customer_deposits'],
+      ['216%',  null,        'gosi'],
+      ['217%',  null,        'withholding'],
+      ['218%',  null,        'short_term_debt'],
+      ['219%',  null,        'short_term_debt'],
+      ['221%',  null,        'long_term_debt'],
+      ['222%',  null,        'lease_obligation'],     // v5.10.81 — IFRS 16
+      ['223%',  null,        'eosb'],                 // v5.10.81 — was stale '225'
+      // ── Equity ── (v5.10.81)
+      ['343%',  null,        'zakat'],                // v5.10.81 — was stale '345'
+      // ── Expenses ── (v5.10.81)
+      ['6123%', null,        'eosb_expense'],         // v5.10.81 — was stale '62141/62142'
+      ['6244%', null,        'zakat_paid'],           // v5.10.81 — was stale '62311'
+      ['624%',  '6244%',     'gov_fees']              // v5.10.81 — exclude zakat sub
     ];
     let totalFixed = 0;
     for (const [pattern, exclusion, section] of corrections) {

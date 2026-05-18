@@ -34,10 +34,13 @@ const db = require('../../../db/connection');
 // accumulated depreciation after PP&E). This is the order Big-4 audit
 // reports use and what SOCPA-trained accountants expect.
 const IFRS_SUBGROUP_ORDER = {
+  // v5.10.81 — Added 'rou' (IFRS 16 Right-of-Use assets) between PPE and
+  // its contra. Conventional placement: tangible assets → RoU → contra
+  // depreciation → intangibles. Matches Big-4 BS layout.
   currentAssets:    ['cash', 'receivables', 'allowanceDoubtful', 'inventory', 'vatInput', 'prepaid', 'otherCA'],
-  nonCurrentAssets: ['ppe', 'accDep', 'intangibles'],
+  nonCurrentAssets: ['ppe', 'rou', 'accDep', 'intangibles'],
   currentLiab:      ['payables', 'accrued', 'vatOutput', 'netVat', 'gosi', 'withholding', 'customerDeposits', 'shortTermDebt', 'otherCL'],
-  nonCurrentLiab:   ['longTermDebt', 'eosb'],
+  nonCurrentLiab:   ['longTermDebt', 'leaseObligation', 'eosb'],
   equity:           ['capital', 'retained', 'drawings', 'reserves', 'zakat']
 };
 
@@ -197,7 +200,8 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
         otherCA:            makeGroup('أصول متداولة أخرى')
       },
       nonCurrentAssets: {
-        ppe:          makeGroup('الممتلكات والمعدات'),
+        ppe:          makeGroup('الممتلكات والآلات والمعدات'),
+        rou:          makeGroup('حق استخدام الأصول (IFRS 16)'),     // v5.10.81 — separate IFRS 16 RoU line
         accDep:       makeGroup('مجمَّع الإهلاك', true),
         intangibles:  makeGroup('الأصول غير الملموسة')              // v5.10.78
       },
@@ -213,8 +217,9 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
         otherCL:          makeGroup('التزامات متداولة أخرى')
       },
       nonCurrentLiab: {
-        longTermDebt: makeGroup('قروض ومطلوبات طويلة الأجل'),
-        eosb:         makeGroup('مخصص مكافأة نهاية الخدمة (IAS 19)')  // v5.10.78
+        longTermDebt:    makeGroup('قروض طويلة الأجل'),
+        leaseObligation: makeGroup('التزام الإيجار طويل الأجل (IFRS 16)'),  // v5.10.81
+        eosb:            makeGroup('مخصص مكافأة نهاية الخدمة (IAS 19)')      // v5.10.78
       },
       equity: {
         capital:    makeGroup('رأس المال'),
@@ -241,6 +246,7 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       prepaid:            ['currentAssets',    'prepaid'],
       other_current_asset:['currentAssets',    'otherCA'],
       ppe:                ['nonCurrentAssets', 'ppe'],
+      rou:                ['nonCurrentAssets', 'rou'],            // v5.10.81 — IFRS 16
       acc_dep:            ['nonCurrentAssets', 'accDep'],
       intangibles:        ['nonCurrentAssets', 'intangibles'],
       // Liabilities
@@ -254,6 +260,7 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       short_term_debt:    ['currentLiab',      'shortTermDebt'],
       other_current_liability: ['currentLiab', 'otherCL'],
       long_term_debt:     ['nonCurrentLiab',   'longTermDebt'],
+      lease_obligation:   ['nonCurrentLiab',   'leaseObligation'],  // v5.10.81 — IFRS 16
       eosb:               ['nonCurrentLiab',   'eosb'],
       // Equity
       capital:            ['equity',           'capital'],
@@ -302,9 +309,9 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       if (c.startsWith('115')) return ['currentAssets', 'receivables'];          // العهد والسلف
       if (c.startsWith('116')) return ['currentAssets', 'vatInput'];
       if (c.startsWith('122')) return ['nonCurrentAssets', 'accDep'];            // مجمع الإهلاك (contra)
-      if (c.startsWith('124')) return ['nonCurrentAssets', 'accDep'];            // legacy fallback
-      if (c.startsWith('121') || c.startsWith('123'))
-        return ['nonCurrentAssets', 'ppe'];
+      if (c.startsWith('124')) return ['nonCurrentAssets', 'rou'];               // v5.10.81 — IFRS 16 Right-of-Use (NOT acc_dep)
+      if (c.startsWith('121')) return ['nonCurrentAssets', 'ppe'];               // PP&E
+      if (c.startsWith('123')) return ['nonCurrentAssets', 'intangibles'];       // v5.10.81 — 123 is Intangibles per template
       if (c.startsWith('125') || c.startsWith('126'))
         return ['nonCurrentAssets', 'intangibles'];
       if (c.startsWith('11')) return ['currentAssets', 'otherCA'];
@@ -313,25 +320,48 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
     }
     function classifyLiability(code) {
       const c = String(code || '');
-      // v5.11.12 — calibrated for the v5.11.8 template:
-      // 211=AP, 212=accrued, 213=Output VAT, 214=customer deposits,
-      // 215=franchise/royalty, 216=GOSI, 217=withholding tax,
-      // 218=short-term loans, 219=current portion of lease,
-      // 22x=long-term liabilities.
+      // v5.10.81 — Liability prefixes calibrated to the current
+      // coa-template.json:
+      //   211 = Payables / 212 = Accrued / 213 = Output VAT (with sub-buckets
+      //   2131 = VAT 15%, 2132 = Net VAT payable) / 214 = Customer deposits /
+      //   215 = Franchise dues / 216 = GOSI / 217 = Withholding tax /
+      //   218 = Short-term loans / 219 = Current portion of lease /
+      //   221 = Long-term loans / 222 = Long-term lease (IFRS 16) /
+      //   223 = EOSB (IAS 19).
+      //
+      // PRIOR BUG: 213/216/217 used to route to a non-existent 'govDues'
+      // bucket, so legacy NULL-report_section rows for VAT/GOSI/
+      // Withholding fell into the unclassified pile. Now each lands in
+      // its own dedicated v5.10.78 bucket.
       if (c.startsWith('211')) return ['currentLiab', 'payables'];
       if (c.startsWith('212')) return ['currentLiab', 'accrued'];
-      if (c.startsWith('213') || c.startsWith('216') || c.startsWith('217')) return ['currentLiab', 'govDues'];
+      if (c.startsWith('2132')) return ['currentLiab', 'netVat'];      // more specific first
+      if (c.startsWith('2131')) return ['currentLiab', 'vatOutput'];
+      if (c === '213' || c.startsWith('213')) return ['currentLiab', 'vatOutput'];
       if (c.startsWith('214')) return ['currentLiab', 'customerDeposits'];
+      if (c.startsWith('215')) return ['currentLiab', 'otherCL'];      // franchise dues
+      if (c.startsWith('216')) return ['currentLiab', 'gosi'];
+      if (c.startsWith('217')) return ['currentLiab', 'withholding'];
       if (c.startsWith('218') || c.startsWith('219')) return ['currentLiab', 'shortTermDebt'];
+      if (c.startsWith('223')) return ['nonCurrentLiab', 'eosb'];      // IAS 19
+      if (c.startsWith('222')) return ['nonCurrentLiab', 'leaseObligation'];   // IFRS 16
+      if (c.startsWith('221')) return ['nonCurrentLiab', 'longTermDebt'];
       if (c.startsWith('22'))  return ['nonCurrentLiab', 'longTermDebt'];
       if (c.startsWith('21'))  return ['currentLiab', 'otherCL'];
       return null;
     }
     function classifyEquity(code) {
       const c = String(code || '');
+      // v5.10.81 — Calibrated to template:
+      //   31 = Capital / 32 = Retained / 33 = Drawings (contra) /
+      //   341 = Statutory reserve / 342 = General reserve /
+      //   343 = Zakat reserve (SOCPA-specific).
+      // 343 is checked BEFORE 34 so the Zakat line gets its own bucket
+      // instead of being lumped with other reserves.
       if (c.startsWith('31')) return ['equity', 'capital'];
       if (c.startsWith('32')) return ['equity', 'retained'];
       if (c.startsWith('33')) return ['equity', 'drawings'];
+      if (c.startsWith('343')) return ['equity', 'zakat'];
       if (c.startsWith('34')) return ['equity', 'reserves'];
       return ['equity', 'capital'];
     }

@@ -916,8 +916,9 @@ router.post('/gl/coa/wipe-and-seed', async (req, res) => {
         if (c.startsWith('114'))                  return 'prepaid';
         if (c.startsWith('115'))                  return 'receivables';            // العهد والسلف — staff/operations advances
         if (c.startsWith('122'))                  return 'acc_dep';                // مجمع الإهلاك (contra)
-        if (c.startsWith('124'))                  return 'acc_dep';                // legacy template fallback
-        if (c.startsWith('121') || c.startsWith('123')) return 'ppe';
+        if (c.startsWith('124'))                  return 'rou';                    // v5.10.81 — حق استخدام الأصول (IFRS 16)
+        if (c.startsWith('121'))                  return 'ppe';                    // الممتلكات والآلات والمعدات
+        if (c.startsWith('123'))                  return 'intangibles';            // الأصول غير الملموسة
         if (c.startsWith('125') || c.startsWith('126')) return 'intangibles';
         if (c.startsWith('211'))                  return 'payables';
         if (c.startsWith('212'))                  return 'accrued';

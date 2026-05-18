@@ -569,7 +569,11 @@ function erpLoadAccountsList_() {
           displayOrder: a.displayOrder == null ? null : Number(a.displayOrder),
           balance: Number(a.balance) || 0,
           storedBalance: Number(a.storedBalance) || 0,
-          movementCount: Number(a.movementCount) || 0
+          movementCount: Number(a.movementCount) || 0,
+          // v5.10.78 — IFRS + SOCPA classification surface
+          accountClass:  a.accountClass  || 'detail',
+          reportSection: a.reportSection || null,
+          taxNature:     a.taxNature     || 'none'
         };
       });
       // v5.10.51 — explicit displayOrder wins, code is the tiebreaker.
@@ -824,7 +828,27 @@ function _coaRenderNode(acc, open, depth) {
   // default view to give the name full breathing room. Both can be brought
   // back via inspector if needed; the row no longer wastes pixels on chrome.
   var typeBadge = '';
-  var levelBadge = '';
+  // v5.10.78 — class badge: M/S/A/D color-coded chip showing whether this
+  // account is Main (الفئة), Sub (رئيسي), Analytical (تحليلي), or Detail
+  // (تفصيلي قابل للترحيل). The owner explicitly asked for this distinction
+  // per IFRS + SOCPA standards. Each badge gets a tooltip in Arabic.
+  var classKey = acc.accountClass || (lvl <= 1 ? 'main' : lvl === 2 ? 'sub' : lvl === 3 ? 'analytical' : 'detail');
+  var classBadgeMeta = {
+    main:       { letter: 'م', label: 'حساب رئيسي (الفئة الأولى)',   bg: '#1e40af', fg: '#ffffff' },
+    sub:        { letter: 'ف', label: 'حساب فرعي (المستوى الثاني)',   bg: '#7c3aed', fg: '#ffffff' },
+    analytical: { letter: 'ت', label: 'حساب تحليلي (المستوى الثالث)', bg: '#16a34a', fg: '#ffffff' },
+    detail:     { letter: 'د', label: 'حساب تفصيلي قابل للترحيل',     bg: '#f59e0b', fg: '#ffffff' }
+  };
+  var bMeta = classBadgeMeta[classKey] || classBadgeMeta.detail;
+  var levelBadge =
+    '<span class="coa-class-badge" data-class="' + classKey + '" ' +
+          'title="' + bMeta.label + '" ' +
+          'style="display:inline-flex;align-items:center;justify-content:center;' +
+                 'width:18px;height:18px;border-radius:5px;font-size:10px;font-weight:900;' +
+                 'background:' + bMeta.bg + ';color:' + bMeta.fg + ';' +
+                 'margin-inline-end:6px;flex-shrink:0;">' +
+      bMeta.letter +
+    '</span>';
   // v5.10.42 — warning icon shows ONLY for critical issues that need
   // attention. Minor structural issues (levelMismatch, typeMismatch) are
   // fixed automatically by deep-repair and don't deserve a noisy warning.
@@ -896,9 +920,12 @@ function _coaRenderNode(acc, open, depth) {
   // .coa-node-children were removed — the level-aware CSS rules in
   // public/css/style.css (v5.10.62 redesign) handle all of this now.
   var openClass = (isGroup && openSelf) ? ' is-open' : '';
-  var html = '<div class="coa-node' + openClass + '" data-id="' + acc.id + '" data-level="' + lvl + '" data-type="' + (acc.type||'') + '">';
-  html += '<div class="coa-node-row' + activeClass + '" onclick="coaSelectNode(\'' + acc.id + '\')" title="' + (acc.nameAr||'').replace(/"/g,'&quot;') + ' — ' + (acc.code||'') + '">';
-  html += toggle + icon;
+  // v5.10.78 — data-class attribute lets a future CSS-only filter (e.g.
+  // ".coa-tree[data-filter='detail'] .coa-node:not([data-class='detail']) { opacity: .35 }")
+  // dim non-matching nodes without re-rendering the tree.
+  var html = '<div class="coa-node' + openClass + '" data-id="' + acc.id + '" data-level="' + lvl + '" data-type="' + (acc.type||'') + '" data-class="' + classKey + '">';
+  html += '<div class="coa-node-row' + activeClass + '" onclick="coaSelectNode(\'' + acc.id + '\')" title="' + (acc.nameAr||'').replace(/"/g,'&quot;') + ' — ' + (acc.code||'') + ' — ' + bMeta.label + '">';
+  html += toggle + icon + levelBadge;
   html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
   html += ifrsChipHtml;
   html += rightHtml;

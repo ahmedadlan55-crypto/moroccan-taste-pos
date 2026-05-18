@@ -35,8 +35,19 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
     // contribute totals — but they DID show up as empty rows when
     // showZero=true. The groups/aggregations below already build their
     // own hierarchy from prefix matching, so folders add only noise.
+    // v5.10.78 — include report_section + account_class in the projection
+    // so the classifier can route by EXPLICIT column instead of fragile
+    // code-prefix matching. The column was backfilled at server start +
+    // is populated on every wipe-and-seed, so it's reliable for all
+    // post-v5.10.78 installs. Pre-v5.10.78 rows will have NULL and fall
+    // through to the legacy prefix logic — fully backward compatible.
     const [accounts] = await db.query(
-      "SELECT * FROM gl_accounts a " +
+      "SELECT a.id, a.code, a.name_ar, a.name_en, a.type, a.parent_id, a.level, " +
+      "       a.balance, a.is_active, " +
+      "       COALESCE(a.is_folder, 0) AS is_folder, " +
+      "       COALESCE(a.account_class, 'detail') AS account_class, " +
+      "       a.report_section " +
+      "FROM gl_accounts a " +
       "WHERE a.is_active = 1 " +
       "  AND COALESCE(a.is_folder, 0) = 0 " +
       "  AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL) " +
@@ -71,38 +82,91 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
     // v5.11.12 — granular liability + equity buckets so every template
     // account lands in a meaningful, accountancy-conventional group
     // instead of falling into a generic "أخرى" bucket.
+    // v5.10.78 — granular IFRS + SOCPA buckets. Added Saudi-statutory
+    // groups (VAT input/output, net VAT, GOSI, withholding, EOSB,
+    // Zakat) that the prior generic `govDues` bucket was collapsing
+    // into a single line — making it impossible for ZATCA-conscious
+    // owners to see which obligation owes what.
     const groups = {
       currentAssets: {
         cash:               makeGroup('النقد وما في حكمه'),
         receivables:        makeGroup('الذمم المدينة'),
         allowanceDoubtful:  makeGroup('مخصص الديون المشكوك فيها', true),
         inventory:          makeGroup('المخزون'),
+        vatInput:           makeGroup('ضريبة المدخلات المستردة'),  // v5.10.78
+        prepaid:            makeGroup('مصروفات مدفوعة مقدماً'),     // v5.10.78
         otherCA:            makeGroup('أصول متداولة أخرى')
       },
       nonCurrentAssets: {
-        ppe:    makeGroup('الممتلكات والمعدات والأصول غير الملموسة'),
-        accDep: makeGroup('مجمَّع الإهلاك', true)
+        ppe:          makeGroup('الممتلكات والمعدات'),
+        accDep:       makeGroup('مجمَّع الإهلاك', true),
+        intangibles:  makeGroup('الأصول غير الملموسة')              // v5.10.78
       },
       currentLiab: {
         payables:         makeGroup('الذمم الدائنة (موردون)'),
         accrued:          makeGroup('المصروفات المستحقة'),
-        govDues:          makeGroup('الضرائب ومستحقات حكومية'),
+        vatOutput:        makeGroup('ضريبة المخرجات المستحقة'),     // v5.10.78
+        netVat:           makeGroup('صافي ضريبة القيمة المضافة'),    // v5.10.78
+        gosi:             makeGroup('التأمينات الاجتماعية (GOSI)'),  // v5.10.78
+        withholding:      makeGroup('ضريبة الاستقطاع'),              // v5.10.78
         customerDeposits: makeGroup('دفعات مقدمة من العملاء'),
         shortTermDebt:    makeGroup('قروض وإيجارات قصيرة الأجل'),
         otherCL:          makeGroup('التزامات متداولة أخرى')
       },
       nonCurrentLiab: {
-        longTermDebt: makeGroup('قروض ومطلوبات طويلة الأجل')
+        longTermDebt: makeGroup('قروض ومطلوبات طويلة الأجل'),
+        eosb:         makeGroup('مخصص مكافأة نهاية الخدمة (IAS 19)')  // v5.10.78
       },
       equity: {
-        capital:      makeGroup('رأس المال'),
-        retained:     makeGroup('الأرباح المحتجزة'),
-        drawings:     makeGroup('المسحوبات', true),
-        reserves:     makeGroup('الاحتياطيات')
-        // v5.10.61 — `periodIncome` group REMOVED. Net income is pushed
-        // into equity.retained as a synthetic line below.
+        capital:    makeGroup('رأس المال'),
+        retained:   makeGroup('الأرباح المحتجزة'),
+        drawings:   makeGroup('المسحوبات', true),
+        reserves:   makeGroup('الاحتياطيات'),
+        zakat:      makeGroup('مخصص الزكاة الشرعية')                  // v5.10.78
       }
     };
+
+    // v5.10.78 — Single source of truth: report_section → [topGroup, subGroup].
+    // The wipe-and-seed function (routes/erp.js) writes this column for every
+    // CoA template account, and the server-start backfill (server.js v5.10.78)
+    // populates it for legacy installs via the same heuristics. Classifiers
+    // below check this column FIRST; only fall through to prefix-matching
+    // when the column is NULL (unmigrated row).
+    const reportSectionMap = {
+      // Assets
+      cash:               ['currentAssets',    'cash'],
+      receivables:        ['currentAssets',    'receivables'],
+      allowance_doubtful: ['currentAssets',    'allowanceDoubtful'],
+      inventory:          ['currentAssets',    'inventory'],
+      vat_input:          ['currentAssets',    'vatInput'],
+      prepaid:            ['currentAssets',    'prepaid'],
+      other_current_asset:['currentAssets',    'otherCA'],
+      ppe:                ['nonCurrentAssets', 'ppe'],
+      acc_dep:            ['nonCurrentAssets', 'accDep'],
+      intangibles:        ['nonCurrentAssets', 'intangibles'],
+      // Liabilities
+      payables:           ['currentLiab',      'payables'],
+      accrued:            ['currentLiab',      'accrued'],
+      vat_output:         ['currentLiab',      'vatOutput'],
+      net_vat:            ['currentLiab',      'netVat'],
+      gosi:               ['currentLiab',      'gosi'],
+      withholding:        ['currentLiab',      'withholding'],
+      customer_deposits:  ['currentLiab',      'customerDeposits'],
+      short_term_debt:    ['currentLiab',      'shortTermDebt'],
+      other_current_liability: ['currentLiab', 'otherCL'],
+      long_term_debt:     ['nonCurrentLiab',   'longTermDebt'],
+      eosb:               ['nonCurrentLiab',   'eosb'],
+      // Equity
+      capital:            ['equity',           'capital'],
+      retained:           ['equity',           'retained'],
+      drawings:           ['equity',           'drawings'],
+      reserves:           ['equity',           'reserves'],
+      zakat:              ['equity',           'zakat']
+    };
+    function classifyByReportSection(reportSection) {
+      if (!reportSection) return null;
+      return reportSectionMap[reportSection] || null;
+    }
 
     function classifyAsset(code, nameAr) {
       const c = String(code || '');
@@ -181,9 +245,15 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
 
       const flatItem = { id: a.id, code: a.code, name: a.name_ar, balance: 0, level: a.level };
 
+      // v5.10.78 — Prefer the explicit report_section column. Falls back to
+      // the legacy prefix classifier for unmigrated rows (report_section
+      // IS NULL). New installs + post-migration rows take the fast path
+      // and stay correctly classified even if codes are later renamed.
+      const fromSection = classifyByReportSection(a.report_section);
+
       if (a.type === 'asset') {
         const magnitude = net;
-        const cls = classifyAsset(a.code, a.name_ar);
+        const cls = fromSection || classifyAsset(a.code, a.name_ar);
         if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
           const targetGroup = groups[cls[0]][cls[1]];
           const signed = pushToGroup(targetGroup, a, magnitude);
@@ -198,7 +268,7 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
         }
       } else if (a.type === 'liability') {
         const magnitude = -net;
-        const cls = classifyLiability(a.code);
+        const cls = fromSection || classifyLiability(a.code);
         if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
           const targetGroup = groups[cls[0]][cls[1]];
           const signed = pushToGroup(targetGroup, a, magnitude);
@@ -213,7 +283,7 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
         }
       } else if (a.type === 'equity') {
         const magnitude = -net;
-        const cls = classifyEquity(a.code);
+        const cls = fromSection || classifyEquity(a.code);
         if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
           const targetGroup = groups[cls[0]][cls[1]];
           const signed = pushToGroup(targetGroup, a, magnitude);

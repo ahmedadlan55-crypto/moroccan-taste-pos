@@ -76,7 +76,13 @@ router.get('/gl/accounts', async (req, res) => {
       displayOrder: a.display_order == null ? null : Number(a.display_order),
       balance: Number(a.computed_balance || 0),
       storedBalance: Number(a.balance || 0),
-      movementCount: Number(a.movement_count || 0)
+      movementCount: Number(a.movement_count || 0),
+      // v5.10.78 — IFRS+SOCPA classification columns exposed to the UI
+      // so the tree can show level badges (M/S/A/D) and the Balance
+      // Sheet legend can show which Saudi-tax bucket each account hits.
+      accountClass:  a.account_class || 'detail',
+      reportSection: a.report_section || null,
+      taxNature:     a.tax_nature || 'none'
     })));
   } catch (e) {
     res.json([]);
@@ -884,12 +890,70 @@ router.post('/gl/coa/wipe-and-seed', async (req, res) => {
       // v5.11.18 — also persist is_folder from the template's `kind`
       // field so reports can hide folders right after the reseed without
       // waiting for the next server restart's is_folder migration.
+      // v5.10.78 — write account_class + report_section + tax_nature
+      // derived from level + code, so the Balance Sheet generator has a
+      // first-class column to query instead of fragile prefix-matching.
+      function _deriveAccountClass(level, kind) {
+        if (level <= 1) return 'main';
+        if (level === 2) return 'sub';
+        if (level === 3) return 'analytical';
+        return 'detail';  // L4 + L5
+      }
+      function _deriveReportSection(code, type) {
+        const c = String(code || '');
+        // Order matters: most-specific prefix first.
+        if (c.startsWith('1161') || c.startsWith('1162') || c.startsWith('116')) return 'vat_input';
+        if (c.startsWith('1111') || c.startsWith('1112') || c.startsWith('111')) return 'cash';
+        if (c === '1131' || c.startsWith('1131')) return 'allowance_doubtful';
+        if (c.startsWith('113'))                  return 'receivables';
+        if (c.startsWith('112'))                  return 'inventory';
+        if (c.startsWith('114') || c.startsWith('115')) return 'prepaid';
+        if (c.startsWith('124'))                  return 'acc_dep';
+        if (c.startsWith('121') || c.startsWith('122') || c.startsWith('123')) return 'ppe';
+        if (c.startsWith('125') || c.startsWith('126')) return 'intangibles';
+        if (c.startsWith('211'))                  return 'payables';
+        if (c.startsWith('212'))                  return 'accrued';
+        if (c === '2132' || c.startsWith('2132')) return 'net_vat';
+        if (c.startsWith('2131') || c === '213')  return 'vat_output';
+        if (c.startsWith('214'))                  return 'customer_deposits';
+        if (c.startsWith('215'))                  return 'other_current_liability';
+        if (c.startsWith('216'))                  return 'gosi';
+        if (c.startsWith('217'))                  return 'withholding';
+        if (c.startsWith('218') || c.startsWith('219')) return 'short_term_debt';
+        if (c === '223' || c.startsWith('223'))   return 'eosb';
+        if (c.startsWith('22'))                   return 'long_term_debt';
+        if (c.startsWith('31'))                   return 'capital';
+        if (c.startsWith('32'))                   return 'retained';
+        if (c.startsWith('33'))                   return 'drawings';
+        if (c === '343' || c.startsWith('343'))   return 'zakat';
+        if (c.startsWith('34'))                   return 'reserves';
+        if (c === '6244')                         return 'zakat_paid';
+        if (c.startsWith('624'))                  return 'gov_fees';
+        if (type === 'revenue')                   return 'revenue';
+        if (c.startsWith('5'))                    return 'cogs';
+        if (type === 'expense')                   return 'opex';
+        return null;
+      }
+      function _deriveTaxNature(code) {
+        const c = String(code || '');
+        if (c.startsWith('116'))                return 'vat_input';
+        if (c.startsWith('2131') || c === '213') return 'vat_output';
+        if (c.startsWith('216'))                return 'gosi';
+        if (c.startsWith('217'))                return 'withholding';
+        if (c === '223' || c.startsWith('223')) return 'eosb';
+        if (c === '343' || c === '6244')        return 'zakat';
+        return 'none';
+      }
+
       for (const a of COA_TEMPLATE) {
-        const isFolder = a.kind === 'folder' ? 1 : 0;
+        const isFolder       = a.kind === 'folder' ? 1 : 0;
+        const accountClass   = _deriveAccountClass(a.level, a.kind);
+        const reportSection  = _deriveReportSection(a.code, a.type);
+        const taxNature      = _deriveTaxNature(a.code);
         await conn.query(
-          'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_active, is_folder, balance) ' +
-          'VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 0)',
-          [a.code, a.code, a.nameAr, a.nameEn || null, a.type, a.parentCode || null, a.level, isFolder]
+          'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_active, is_folder, balance, account_class, report_section, tax_nature) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?, ?)',
+          [a.code, a.code, a.nameAr, a.nameEn || null, a.type, a.parentCode || null, a.level, isFolder, accountClass, reportSection, taxNature]
         );
         inserted++;
       }

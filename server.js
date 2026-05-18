@@ -4107,6 +4107,115 @@ async function runMigrations() {
     console.error('[v5.10.43] is_folder migration FAILED:', e.message);
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // v5.10.78 — IFRS + SOCPA Chart of Accounts restructure
+  // ═══════════════════════════════════════════════════════════════════
+  // Adds 4 columns that replace the previous fragile "classify by code
+  // prefix" approach in the Balance Sheet generator. Every account now
+  // carries its own explicit:
+  //
+  //   account_class   main / sub / analytical / detail
+  //                   (main=الفئة, sub=رئيسي, analytical=تحليلي,
+  //                   detail=تفصيلي قابل للترحيل)
+  //
+  //   report_section  the exact Balance Sheet / Income Statement bucket
+  //                   (cash, inventory, vat_input, vat_output, eosb,
+  //                   zakat, gosi, withholding, ppe, acc_dep, …)
+  //
+  //   tax_nature      ZATCA tax category (vat_input / vat_output /
+  //                   zakat / withholding / gosi / eosb / none)
+  //
+  // Plus 3 indexes for tree-traversal + report-generation performance.
+  // All four columns are additive: existing data + queries keep working.
+  await addColumnIfMissing('gl_accounts', 'account_class',
+    "ENUM('main','sub','analytical','detail') DEFAULT 'detail' " +
+    "COMMENT 'main=الفئة(L1), sub=رئيسي(L2), analytical=تحليلي(L3), detail=تفصيلي قابل للترحيل(L4-5)'");
+  await addColumnIfMissing('gl_accounts', 'report_section',
+    "VARCHAR(40) DEFAULT NULL " +
+    "COMMENT 'تَصنيف Balance Sheet مُسبق — يَستبدل prefix-matching الهَشّ'");
+  await addColumnIfMissing('gl_accounts', 'tax_nature',
+    "ENUM('none','vat_input','vat_output','zakat','withholding','gosi','eosb') DEFAULT 'none' " +
+    "COMMENT 'تَصنيف ضريبي لـ ZATCA + تقارير ضرائب السعودية'");
+  try { await db.query('CREATE INDEX idx_gl_accounts_parent ON gl_accounts(parent_id)'); } catch(e) { /* exists */ }
+  try { await db.query('CREATE INDEX idx_gl_accounts_class ON gl_accounts(account_class)'); } catch(e) { /* exists */ }
+  try { await db.query('CREATE INDEX idx_gl_accounts_report ON gl_accounts(report_section)'); } catch(e) { /* exists */ }
+
+  // v5.10.78 — Backfill account_class for existing rows based on their
+  // current `level` column. Idempotent — only updates rows still on the
+  // DEFAULT 'detail' value, so re-running doesn't disturb manual fixes.
+  try {
+    const [bf1] = await db.query(
+      "UPDATE gl_accounts SET account_class = CASE " +
+      "  WHEN level <= 1 THEN 'main' " +
+      "  WHEN level = 2  THEN 'sub' " +
+      "  WHEN level = 3  THEN 'analytical' " +
+      "  ELSE 'detail' END " +
+      "WHERE account_class = 'detail' AND level IS NOT NULL"
+    );
+    console.log('[v5.10.78] backfilled account_class for ' + (bf1.affectedRows || 0) + ' accounts');
+  } catch (e) { console.error('[v5.10.78] account_class backfill:', e.message); }
+
+  // v5.10.78 — Backfill report_section for existing rows by code prefix.
+  // This is the SAME heuristic the Balance Sheet used to apply at query
+  // time, but now it's persisted once + indexed. Future code changes can
+  // assign report_section explicitly (e.g., via the CoA editor UI).
+  try {
+    const codeToSection = [
+      // ── Assets ──
+      ["'111'", "'cash'"],
+      ["'112'", "'inventory'"],
+      ["'1131'", "'allowance_doubtful'"],  // contra
+      ["'113'", "'receivables'"],
+      ["'1161'", "'vat_input'"],           // v5.10.78 new
+      ["'114','115','116'", "'other_current_asset'"],
+      ["'124'", "'acc_dep'"],              // contra
+      ["'121','122','123'", "'ppe'"],
+      ["'125','126'", "'intangibles'"],
+      // ── Liabilities ──
+      ["'211'", "'payables'"],
+      ["'212'", "'accrued'"],
+      ["'2131'", "'vat_output'"],          // v5.10.78 separated
+      ["'2132'", "'net_vat'"],             // v5.10.78 new
+      ["'2133'", "'withholding'"],         // v5.10.78 separated
+      ["'21321','21322','216'", "'gosi'"], // v5.10.78 separated
+      ["'213'", "'vat_output'"],           // any other 213x fallback
+      ["'214'", "'customer_deposits'"],
+      ["'215'", "'other_current_liability'"],
+      ["'217'", "'withholding'"],
+      ["'218','219'", "'short_term_debt'"],
+      ["'225'", "'eosb'"],                 // v5.10.78 new IAS 19
+      ["'22'", "'long_term_debt'"],
+      // ── Equity ──
+      ["'31'", "'capital'"],
+      ["'32'", "'retained'"],
+      ["'33'", "'drawings'"],              // contra
+      ["'345'", "'zakat'"],                // v5.10.78 separated
+      ["'34'", "'reserves'"],
+      // ── Revenue / Expense ──
+      ["'4'", "'revenue'"],
+      ["'5'", "'cogs'"],
+      ["'62141','62142'", "'eosb_expense'"], // v5.10.78
+      ["'62211','62212','62213','62214'", "'gov_fees'"], // v5.10.78
+      ["'62311'", "'zakat_paid'"],          // v5.10.78
+      ["'6'", "'opex'"]
+    ];
+    let totalTagged = 0;
+    for (const [codes, section] of codeToSection) {
+      // Use SUBSTRING comparison so prefix matching works at SQL level.
+      const codeList = codes.split(',');
+      for (const c of codeList) {
+        const cleanCode = c.replace(/'/g, '');
+        const [u] = await db.query(
+          "UPDATE gl_accounts SET report_section = ? " +
+          "WHERE report_section IS NULL AND code LIKE ?",
+          [section.replace(/'/g, ''), cleanCode + '%']
+        );
+        totalTagged += u.affectedRows || 0;
+      }
+    }
+    console.log('[v5.10.78] backfilled report_section for ' + totalTagged + ' accounts');
+  } catch (e) { console.error('[v5.10.78] report_section backfill:', e.message); }
+
   // Per-item override for waste GL routing. NULL = use reason→account map.
   await addColumnIfMissing('inv_items', 'waste_gl_account_id', 'VARCHAR(50) NULL');
 

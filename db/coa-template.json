@@ -1100,6 +1100,16 @@
     "order": 110
   },
   {
+    "code": "343",
+    "nameAr": "مخصص الزكاة الشرعية",
+    "nameEn": "Zakat Reserve",
+    "type": "equity",
+    "parentCode": "34",
+    "level": 3,
+    "kind": "leaf",
+    "order": 111
+  },
+  {
     "code": "4",
     "nameAr": "الإيرادات",
     "nameEn": "Revenue",
@@ -1868,6 +1878,16 @@
     "level": 4,
     "kind": "leaf",
     "order": 187
+  },
+  {
+    "code": "6244",
+    "nameAr": "الزكاة الفعلية المسدَّدة",
+    "nameEn": "Zakat Paid",
+    "type": "expense",
+    "parentCode": "624",
+    "level": 4,
+    "kind": "leaf",
+    "order": 187.5
   },
   {
     "code": "625",

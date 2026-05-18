@@ -928,6 +928,8 @@ router.post('/gl/coa/wipe-and-seed', async (req, res) => {
             if (mm === '02') return 'accrued';
             if (mm === '03') return 'vat_output';
             if (mm === '04') return 'long_term_debt';
+            if (mm === '05') return 'eosb';                // v5.10.85 — EOSB IAS 19
+            if (mm === '06') return 'customer_deposits';   // v5.10.85 — دفعات مقدمة من العملاء
             return 'other_current_liability';
           }
           if (gg === '30') {
@@ -935,6 +937,8 @@ router.post('/gl/coa/wipe-and-seed', async (req, res) => {
             if (mm === '01') return 'capital';
             if (mm === '02') return 'retained';
             if (mm === '03') return 'retained';      // period P&L lives under retained per IAS 1
+            if (mm === '04') return 'reserves';      // v5.10.85 — الاحتياطيات
+            if (mm === '05') return 'drawings';      // v5.10.85 — المسحوبات (contra)
             return 'capital';
           }
           if (gg === '40') return 'revenue';

@@ -4174,9 +4174,13 @@ async function runMigrations() {
       ["'2002'", "'accrued'"],
       ["'2003'", "'vat_output'"],
       ["'2004'", "'long_term_debt'"],
+      ["'2005'", "'eosb'"],             // v5.10.85 — IAS 19
+      ["'2006'", "'customer_deposits'"],// v5.10.85
       ["'3001'", "'capital'"],
       ["'3002'", "'retained'"],
       ["'3003'", "'retained'"],
+      ["'3004'", "'reserves'"],         // v5.10.85
+      ["'3005'", "'drawings'"],         // v5.10.85 (contra)
       ["'4'", "'revenue'"],          // any 4xxxxx
       ["'5001'", "'cogs'"],
       ["'5002'", "'cogs'"],
@@ -4271,9 +4275,13 @@ async function runMigrations() {
       ['2002%', null,        'accrued'],
       ['2003%', null,        'vat_output'],
       ['2004%', null,        'long_term_debt'],
+      ['2005%', null,        'eosb'],              // v5.10.85
+      ['2006%', null,        'customer_deposits'], // v5.10.85
       ['3001%', null,        'capital'],
       ['3002%', null,        'retained'],
       ['3003%', null,        'retained'],
+      ['3004%', null,        'reserves'],          // v5.10.85
+      ['3005%', null,        'drawings'],          // v5.10.85
       ['4%',    null,        'revenue'],
       ['5001%', null,        'cogs'],
       ['5002%', null,        'cogs'],

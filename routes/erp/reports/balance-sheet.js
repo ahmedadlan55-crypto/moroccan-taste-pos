@@ -557,6 +557,8 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
         if (mm === '02') return ['currentLiab',    'accrued'];
         if (mm === '03') return ['currentLiab',    'vatOutput'];
         if (mm === '04') return ['nonCurrentLiab', 'longTermDebt'];
+        if (mm === '05') return ['nonCurrentLiab', 'eosb'];            // v5.10.85 — IAS 19
+        if (mm === '06') return ['currentLiab',    'customerDeposits']; // v5.10.85
         return ['currentLiab', 'otherCL'];
       }
       // ── Legacy fallback (pre-v5.10.84) ──
@@ -588,6 +590,8 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
         if (mm === '01') return ['equity', 'capital'];
         if (mm === '02') return ['equity', 'retained'];
         if (mm === '03') return ['equity', 'retained'];
+        if (mm === '04') return ['equity', 'reserves'];   // v5.10.85
+        if (mm === '05') return ['equity', 'drawings'];   // v5.10.85 (contra)
         return ['equity', 'capital'];
       }
       // ── Legacy fallback (pre-v5.10.84) ──

@@ -6167,15 +6167,31 @@ function _renderInventoryParent(r) {
       warn.style.display = 'none';
     }
   }
-  // Mount the searchable combobox into #invParentMount
+  // Mount the searchable combobox into #invParentMount.
+  // v5.10.89 — Do our own fetch (with a real Promise) when the global
+  // _erpAccounts cache is empty. The old setTimeout(400) race against
+  // _erpReloadAccountsCacheBust's fire-and-forget fetch silently left
+  // the combobox empty on first visit to the screen. Field names match
+  // _erpReloadAccountsCacheBust's mapping: nameAr / isFolder / parentId
+  // (camelCase, not snake_case).
   var mount = document.getElementById('invParentMount');
   if (!mount || typeof _coaMountSearchableSelect !== 'function') return;
-  // Build options from _erpAccounts: only asset folders or L≤3 leaves.
-  // _erpAccounts may not be ready yet — fetch if missing.
-  function buildOptions() {
-    var src = Array.isArray(window._erpAccounts) ? window._erpAccounts : [];
+
+  function _isFolderRow(a) {
+    return a.isFolder === true || a.is_folder == 1 || a.kind === 'folder';
+  }
+
+  function buildOptions(rows) {
+    var src = Array.isArray(rows) ? rows : (Array.isArray(window._erpAccounts) ? window._erpAccounts : []);
     return src
-      .filter(function(a){ return a && a.type === 'asset' && (a.is_folder == 1 || a.isFolder || (Number(a.level || 1) <= 3)); })
+      .filter(function(a){
+        if (!a || a.type !== 'asset') return false;
+        // Skip deactivated accounts (isActive=0 or is_active=0)
+        if (a.isActive === false || a.isActive === 0 || a.is_active === 0) return false;
+        // Pick anything that CAN host children: folders OR L≤3 leaves
+        // (leaves at L1/L2/L3 can host L+1 children once selected).
+        return _isFolderRow(a) || (Number(a.level || 1) <= 3);
+      })
       .sort(function(a,b){ return String(a.code || '').localeCompare(String(b.code || '')); })
       .map(function(a){
         return {
@@ -6187,27 +6203,61 @@ function _renderInventoryParent(r) {
         };
       });
   }
-  function mountIt() {
+
+  function mountWith(rows) {
+    var options = buildOptions(rows);
+    if (!options.length) {
+      mount.innerHTML = '<div style="padding:10px 12px;border:1.5px solid #fecaca;background:#fef2f2;border-radius:10px;font-size:12.5px;color:#7f1d1d;">' +
+        '<i class="fas fa-circle-exclamation" style="margin-inline-end:6px;"></i>' +
+        'لا توجد حسابات أصول مَتاحة كأب. افتح <b>دليل الحسابات</b> ثم أعد التَّحميل.' +
+      '</div>';
+      return;
+    }
     _coaMountSearchableSelect(mount, {
       id: 'invParentNewId',
       placeholder: '— اختر حساب الأب —',
       value: (resolved && resolved.id) || '',
-      options: buildOptions(),
+      options: options,
       onChange: function(){}
     });
   }
-  if (!Array.isArray(window._erpAccounts) || !window._erpAccounts.length) {
-    // Trigger a fetch if available; otherwise mount with empty options.
-    if (typeof _erpReloadAccountsCacheBust === 'function') {
-      _erpReloadAccountsCacheBust();
-      // Give the cache a brief window to populate; render either way.
-      setTimeout(mountIt, 400);
-    } else {
-      mountIt();
-    }
-  } else {
-    mountIt();
+
+  // Loading placeholder while we fetch
+  mount.innerHTML = '<div style="padding:10px 14px;border:1.5px dashed #e2e8f0;border-radius:10px;font-size:12.5px;color:#94a3b8;text-align:center;">' +
+    '<i class="fas fa-spinner fa-spin" style="margin-inline-end:6px;"></i>جاري تحميل الحسابات...' +
+  '</div>';
+
+  if (Array.isArray(window._erpAccounts) && window._erpAccounts.length) {
+    mountWith(window._erpAccounts);
+    return;
   }
+
+  // Direct fetch — bypass the fire-and-forget cache-bust helper so we
+  // actually await the result and populate the dropdown reliably.
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/gl/accounts?_=' + Date.now(), {
+    headers: { 'Authorization': 'Bearer ' + token }
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(list){
+      var rows = (list || []).map(function(a){
+        return {
+          id: a.id, code: a.code, nameAr: a.nameAr, nameEn: a.nameEn,
+          type: a.type, parentId: a.parentId, level: Number(a.level) || 1,
+          isActive: a.isActive,
+          isFolder: !!a.isFolder
+        };
+      });
+      // Populate the global cache so other screens benefit too
+      window._erpAccounts = rows;
+      mountWith(rows);
+    })
+    .catch(function(){
+      mount.innerHTML = '<div style="padding:10px 12px;border:1.5px solid #fecaca;background:#fef2f2;border-radius:10px;font-size:12.5px;color:#7f1d1d;">' +
+        '<i class="fas fa-triangle-exclamation" style="margin-inline-end:6px;"></i>' +
+        'تَعذَّر تَحميل قائمة الحسابات. تَحقَّق من الاتصال.' +
+      '</div>';
+    });
 }
 
 // v5.10.88 — Picks the auto-detected parent (without saving it).

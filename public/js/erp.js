@@ -1295,7 +1295,35 @@ function _coaLoadTransactions(accountId) {
 // Adds "Promote to folder" / "Demote to leaf" so users control the
 // folder structure manually (instead of every account auto-becoming a
 // folder the moment it has children).
+// v5.10.95 — Inject styles for the card-action popover (the menu that
+// pops out of the ⋯ button on each child card). The .coa-card-popover
+// rules live only in the OneDrive backup CSS (inventory-catalog (2).css)
+// so the popover rendered as raw stacked text on production. Inject the
+// styles inline like every other v5.10.86+ patch — idempotent guard on
+// `#coaCardPopoverStyles`. The popover lives at document.body level so
+// styles are NOT scoped to #erpGLAccounts.
+function _coaInjectCardPopoverCss() {
+  if (document.getElementById('coaCardPopoverStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'coaCardPopoverStyles';
+  st.textContent =
+    '.coa-card-popover{position:fixed;z-index:10010;background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;box-shadow:0 14px 40px -10px rgba(15,23,42,0.25);padding:6px;min-width:240px;direction:rtl;font-family:inherit;animation:coaCardPopIn .15s ease;}' +
+    '@keyframes coaCardPopIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:translateY(0);}}' +
+    '.coa-card-popover__item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border:none;background:transparent;border-radius:8px;color:#0f172a;font-family:inherit;font-size:13px;font-weight:600;text-align:start;cursor:pointer;transition:background .12s ease,color .12s ease;}' +
+    '.coa-card-popover__item i{width:16px;text-align:center;font-size:13px;color:#7c3aed;flex-shrink:0;}' +
+    '.coa-card-popover__item:hover:not(:disabled){background:#faf5ff;color:#5b21b6;}' +
+    '.coa-card-popover__item:disabled{opacity:0.5;cursor:not-allowed;}' +
+    '.coa-card-popover__item:disabled i{color:#94a3b8;}' +
+    '.coa-card-popover__item--danger{color:#991b1b;}' +
+    '.coa-card-popover__item--danger i{color:#dc2626 !important;}' +
+    '.coa-card-popover__item--danger:hover:not(:disabled){background:#fef2f2;color:#7f1d1d;}' +
+    '.coa-card-popover__divider{height:1px;background:#f1f5f9;margin:4px 4px;}' +
+    '';
+  document.head.appendChild(st);
+}
+
 window.coaCardMenu = function(id, el) {
+  _coaInjectCardPopoverCss();
   var acc = _erpAccounts.find(a => a.id === id);
   if (!acc) return;
   // Close any existing popover

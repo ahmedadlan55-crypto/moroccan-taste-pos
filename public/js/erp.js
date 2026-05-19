@@ -671,16 +671,12 @@ function _coaBuildTree() {
     roots = roots.filter(function(r){ return r.type === typeFilter; });
   }
 
-  // v5.10.38 — by default hide branches with no journal movements anywhere
-  // in the subtree. The 5 main roots (codes 1-5) always show so the user
-  // can build the chart from scratch. Toggle exposes structural accounts.
-  var hideEmpty = !window._coaShowEmpty;
-  if (hideEmpty) {
-    var alwaysShow = ['1','2','3','4','5'];
-    roots = roots.filter(function(r){
-      return alwaysShow.indexOf(r.code) >= 0 || _coaHasMovements(r.id);
-    });
-  }
+  // v5.10.91 — Structural accounts are the permanent default. The old
+  // "إظهار الحسابات الهيكلية" toggle was removed; the full IFRS/SOCPA
+  // skeleton is always rendered so accountants can build, audit, and
+  // place opening balances against accounts before any postings exist.
+  // Force the flag in case anything still consults it elsewhere.
+  window._coaShowEmpty = true;
 
   // v5.10.41 — only the 5 roots are open by default; all descendants start
   // collapsed so the user sees a clean overview and can drill down on demand.
@@ -747,10 +743,14 @@ window.coaSetTypeFilter = function(type) {
 };
 
 // v5.10.38 — toggle structural / empty accounts in the COA tree.
-// Default (false): only accounts with posted journal entries (anywhere
-// in their subtree) are shown. The 5 main roots always show.
-window.coaToggleShowEmpty = function(checked) {
-  window._coaShowEmpty = !!checked;
+// v5.10.91 — Structural accounts are now permanently visible.
+// `_coaShowEmpty` is forced to `true` at boot (see the line right above
+// `_coaBuildTree`), and the old user-facing checkbox in the toolbar has
+// been removed. This wrapper is kept as a no-op so any stray inline
+// handler from cached HTML can't blow up — it just ignores the argument
+// and re-renders the tree.
+window.coaToggleShowEmpty = function() {
+  window._coaShowEmpty = true;
   _coaBuildTree();
 };
 
@@ -946,7 +946,7 @@ function _coaRenderNode(acc, open, depth) {
     } else {
       html += '<div class="coa-node-empty-hint" style="padding:8px 14px;font-size:11.5px;color:#94a3b8;font-style:italic;">' +
         '<i class="fas fa-circle-info"></i> ' +
-        'لا حسابات فرعية بها حركات بعد · فعِّل «إظهار الحسابات الهيكلية» أعلاه لرؤية كل الأبناء.' +
+        'لا توجد حسابات فرعية بعد — اضغط الحساب ثم أضف أوَّل حساب فرعي.' +
         '</div>';
     }
     html += '</div>';

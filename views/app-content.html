@@ -1832,14 +1832,14 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpGLAccounts" class="dash-section hidden">
   <!-- v5.10.35 — Top action bar: type filter chips + diagnose / repair / suggestions -->
+  <!-- v5.10.91 — Removed the "إظهار الحسابات الهيكلية" checkbox.
+       Structural accounts are now the permanent default (window._coaShowEmpty
+       is forced to true at boot). The filter no longer collapses empty
+       branches — accountants need to see the full IFRS/SOCPA skeleton even
+       before any postings exist. -->
   <div class="coa-topbar" id="coaTopbar">
     <div class="coa-type-chips" id="coaTypeChips" role="tablist" aria-label="تصفية حسب النوع"></div>
     <div class="coa-actions">
-      <!-- v5.10.38 — toggle: show accounts with no journal movements -->
-      <label class="coa-toggle-empty" title="افتراضيًا: لا يظهر إلا الحسابات التي تحتوي على حركات (قيود) فعلية. شغّل هذا الخيار لرؤية كل الحسابات الهيكلية في الدليل.">
-        <input type="checkbox" id="coaShowEmpty" onchange="coaToggleShowEmpty(this.checked)">
-        <span>إظهار الحسابات الهيكلية</span>
-      </label>
       <button class="wo-btn wo-btn-ghost coa-action-btn" onclick="coaOpenSuggestions()" title="اقتراحات الهيكل المعياري">
         <i class="fas fa-lightbulb"></i><span>اقتراحات معيارية</span>
       </button>

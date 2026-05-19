@@ -169,6 +169,103 @@ function _codeCompare(a, b) {
 // are collected and surfaced back to the caller as `mistypedAccounts`
 // so the UI can show a banner pointing the owner at the offenders.
 const BS_TYPES = new Set(['asset', 'liability', 'equity']);
+// v5.10.99 — Classification helper. Given the report_section of a top-
+// level CoA account, decides whether it belongs to the current bucket
+// or the non-current bucket. Falls back to GGMMPP MM digits if
+// report_section is NULL (legacy install).
+const CURRENT_ASSET_SECTIONS = new Set([
+  'cash', 'receivables', 'allowance_doubtful', 'inventory',
+  'vat_input', 'prepaid', 'other_current_asset'
+]);
+const NON_CURRENT_ASSET_SECTIONS = new Set([
+  'ppe', 'rou', 'acc_dep', 'intangibles'
+]);
+const CURRENT_LIAB_SECTIONS = new Set([
+  'payables', 'accrued', 'vat_output', 'net_vat', 'gosi', 'withholding',
+  'customer_deposits', 'short_term_debt', 'other_current_liability'
+]);
+const NON_CURRENT_LIAB_SECTIONS = new Set([
+  'long_term_debt', 'lease_obligation', 'eosb'
+]);
+
+function _classifyTopLevelChild(node, type) {
+  const rs = node.reportSection || node.report_section || '';
+  if (type === 'asset') {
+    if (CURRENT_ASSET_SECTIONS.has(rs))     return 'current';
+    if (NON_CURRENT_ASSET_SECTIONS.has(rs)) return 'non-current';
+  } else if (type === 'liability') {
+    if (CURRENT_LIAB_SECTIONS.has(rs))      return 'current';
+    if (NON_CURRENT_LIAB_SECTIONS.has(rs))  return 'non-current';
+  }
+  // Fallback: GGMMPP MM digits → 01-04 current, 05-06 non-current (assets)
+  // or 01-03 current, 04+ non-current (liabilities)
+  const code = String(node.code || '');
+  if (/^\d{6}$/.test(code)) {
+    const mm = code.substr(2, 2);
+    if (type === 'asset') {
+      if (['01','02','03','04'].includes(mm)) return 'current';
+      if (['05','06'].includes(mm))            return 'non-current';
+    } else if (type === 'liability') {
+      if (['01','02','03','06'].includes(mm)) return 'current';
+      if (['04','05'].includes(mm))            return 'non-current';
+    }
+  }
+  return 'current'; // safe default
+}
+
+// Build a virtual node wrapping a list of real CoA folders. Used to
+// insert "الأصول المتداولة" / "غير المتداولة" presentation layer.
+function _virtualSectionNode(label, children, parentLevel) {
+  let rawBal = 0, displayBal = 0, postedCount = 0;
+  children.forEach(c => {
+    rawBal     += Number(c.rawBalance || 0);
+    displayBal += Number(c.balance    || 0);
+    postedCount += Number(c.postedCount || 0);
+  });
+  return {
+    id: '__virtual_' + label.replace(/\s+/g, '_') + '__',
+    code: '',                  // empty → frontend hides the code chip
+    nameAr: label,
+    nameEn: '',
+    type: children[0] && children[0].type || '',
+    level: (parentLevel || 1) + 1,
+    accountClass: 'main',
+    reportSection: null,
+    isFolder: true,
+    isVirtual: true,           // marker for the frontend
+    isContra: false,
+    rawBalance: rawBal,
+    balance: displayBal,
+    postedCount,
+    children
+  };
+}
+
+function _ifrsInterpose(rootNode, type) {
+  if (!rootNode || !rootNode.children || !rootNode.children.length) return rootNode;
+  const current = [], nonCurrent = [];
+  for (const child of rootNode.children) {
+    const cls = _classifyTopLevelChild(child, type);
+    (cls === 'non-current' ? nonCurrent : current).push(child);
+  }
+  const labels = type === 'asset'
+    ? { current: 'الأصول المتداولة', nonCurrent: 'الأصول غير المتداولة' }
+    : { current: 'الالتزامات المتداولة', nonCurrent: 'الالتزامات غير المتداولة' };
+  const newChildren = [];
+  if (current.length) {
+    // Each interposed child needs its depth shifted by +1 too so the
+    // existing indent-by-level CSS still produces a clean cascade.
+    current.forEach(c => { c.level = (c.level || 2) + 1; });
+    newChildren.push(_virtualSectionNode(labels.current, current, rootNode.level));
+  }
+  if (nonCurrent.length) {
+    nonCurrent.forEach(c => { c.level = (c.level || 2) + 1; });
+    newChildren.push(_virtualSectionNode(labels.nonCurrent, nonCurrent, rootNode.level));
+  }
+  rootNode.children = newChildren;
+  return rootNode;
+}
+
 function _buildCoaTree(allAccounts, balMap, includeZero, netIncome) {
   const byId = {};
   const kidsOf = {};
@@ -271,6 +368,20 @@ function _buildCoaTree(allAccounts, balMap, includeZero, netIncome) {
     if (r.type === 'equity')    result.equity      = build(r, 'equity');
   });
   result.mistypedAccounts = mistypedAccounts;
+
+  // v5.10.99 — Interpose IFRS "current / non-current" virtual folders
+  // between the section root (الأصول / الالتزامات) and the actual CoA
+  // top-level accounts. Owner explicitly asked: "اريد فقط في قائمة
+  // المركز المالي عند الاختيار اجد المسميات الرئيسية" — so the BS now
+  // shows الأصول → (المتداولة / غير المتداولة) → cash/receivables/...
+  // The interpolated nodes are pure presentation — never written to
+  // the DB, never created in the CoA editor. CoA template (which the
+  // owner wipes-and-seeds) stays flat.
+  result.assets      = _ifrsInterpose(result.assets,      'asset');
+  result.liabilities = _ifrsInterpose(result.liabilities, 'liability');
+  // Equity gets no current/non-current split — IAS 1 reports it as a
+  // single section. Drawings/Reserves/Retained sit at the same level
+  // under the equity root.
 
   // Inject synthetic Net Income line into the equity tree under
   // Retained Earnings (typically code 32). If the equity tree doesn't

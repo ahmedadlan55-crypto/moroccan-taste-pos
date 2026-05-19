@@ -15323,12 +15323,14 @@ function _bsCoaTreeRow(node, color, asOf, depth) {
   var bal = Number(node.balance || 0);
   var isFolder = !!node.isFolder;
   var isContra = !!node.isContra;
+  var isVirtual = !!node.isVirtual;  // v5.10.99 — interposed IFRS section
   var isZero = Math.abs(bal) < 0.001;
   var balCls = isContra && bal < 0 ? 'neg contra' : (bal < 0 ? 'neg' : '');
   var rowCls = ['bs-tree-row', 'bs-tree-l' + (node.level || 1)];
   if (isFolder) rowCls.push('is-folder');
   else          rowCls.push('is-leaf');
   if (isContra) rowCls.push('is-contra');
+  if (isVirtual) rowCls.push('is-virtual');  // gets a distinct visual treatment
   if (isZero)   rowCls.push('is-zero');
   if (!isFolder && node.id && !node.isComputed) rowCls.push('clickable');
   var indent = Math.max(0, (depth - 1)) * 14;
@@ -15336,9 +15338,13 @@ function _bsCoaTreeRow(node, color, asOf, depth) {
   var clickAttr = (!isFolder && node.id && !node.isComputed)
     ? ' onclick="bsOpenAccountDrill(\'' + String(node.id).replace(/'/g, "\\'") + '\', \'' + String(node.nameAr || '').replace(/'/g, "\\'") + '\', \'' + (asOf || '') + '\')"'
     : '';
+  // v5.10.99 — empty `code` (virtual IFRS section) hides the chip entirely.
+  var codeChip = node.code
+    ? '<code class="bs-tree-code">' + _bsEsc(node.code) + '</code>'
+    : '<span class="bs-tree-code-empty" aria-hidden="true"></span>';
   var html = '<div class="' + rowCls.join(' ') + '" style="--bs-tree-indent:' + indent + 'px"' + clickAttr + '>' +
     (isFolder ? '<span class="bs-tree-chevron"><i class="fas fa-chevron-down"></i></span>' : '<span class="bs-tree-dot"></span>') +
-    '<code class="bs-tree-code">' + _bsEsc(node.code || '') + '</code>' +
+    codeChip +
     '<span class="bs-tree-name">' + _bsEsc(node.nameAr || '') + nameSuffix + '</span>' +
     '<span class="bs-tree-bal ' + balCls + '">' + fmt(bal) + '</span>' +
   '</div>';
@@ -15486,6 +15492,12 @@ function _bsInjectStyles() {
     '.bs-tree-row .bs-tree-bal.neg{color:#dc2626;}' +
     '.bs-tree-row .bs-tree-bal.contra{color:#dc2626;font-style:italic;}' +
     '.bs-tree-row .bs-tree-contra-tag{font-size:10px;color:#dc2626;font-weight:700;background:#fef2f2;padding:1px 6px;border-radius:4px;margin-inline-start:6px;}' +
+    /* v5.10.99 — Virtual IFRS section row (الأصول المتداولة / etc.) */
+    '.bs-tree-row.is-virtual{background:linear-gradient(90deg,rgba(124,58,237,0.08),transparent 70%);border-bottom:1.5px solid #ddd6fe;padding-top:11px;padding-bottom:11px;}' +
+    '.bs-tree-row.is-virtual .bs-tree-name{font-size:14px;font-weight:900;color:#5b21b6;letter-spacing:0.01em;}' +
+    '.bs-tree-row.is-virtual .bs-tree-bal{font-size:14px;font-weight:900;color:#5b21b6;}' +
+    '.bs-tree-row.is-virtual .bs-tree-chevron{color:#7c3aed;}' +
+    '.bs-tree-row .bs-tree-code-empty{width:0;display:inline-block;}' +
     /* Folder rows — bold, larger code chip, accent background tint */
     '.bs-tree-row.is-folder{background:linear-gradient(90deg,rgba(124,58,237,0.04),transparent 70%);}' +
     '.bs-tree-row.is-folder .bs-tree-code{background:#ede9fe;color:#5b21b6;font-weight:800;}' +

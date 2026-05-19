@@ -3382,9 +3382,103 @@ window._coaDiagAutoLoaded = false;
   }
 })();
 
+// v5.10.94 — Inject scoped styles for the Add/Edit Account modal.
+// Same idempotent pattern as `_coaInjectRefinedCss` (v5.10.90),
+// `_coaInjectToolbarCss` (v5.10.92), etc. Includes a full copy of
+// `.coa-sel` rules so the parent-picker dropdown renders correctly
+// here (the rules in `inventory-catalog (2).css` aren't on the live
+// CSS bundle). Scoped under `#erpModal[data-modal-kind="account"]`
+// so other consumers of the generic #erpModal wrapper aren't styled.
+function _erpAccountModalInjectCss() {
+  if (document.getElementById('erpAccModalStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'erpAccModalStyles';
+  st.textContent =
+    /* Shell + header + footer overrides scoped by data-modal-kind */
+    '#erpModal[data-modal-kind="account"] .modal-box{max-width:720px;width:96%;border-radius:16px;overflow:hidden;}' +
+    '#erpModal[data-modal-kind="account"] .modal-header{padding:18px 22px;background:linear-gradient(135deg,#faf5ff,#fff 60%);border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between;gap:14px;}' +
+    '#erpModal[data-modal-kind="account"] .modal-header h3{margin:0;font-size:18px;font-weight:900;color:#0f172a;display:flex;align-items:center;gap:10px;}' +
+    '#erpModal[data-modal-kind="account"] .modal-header h3::before{content:"";display:inline-block;width:36px;height:36px;border-radius:10px;background:#ede9fe url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 512 512\'><path fill=\'%237c3aed\' d=\'M362.7 19.3L314.3 67.7 444.3 197.7l48.4-48.4c25-25 25-65.5 0-90.5L453.3 19.3c-25-25-65.5-25-90.5 0zm-71 71L58.6 323.5c-10.4 10.4-18 23.3-22.2 37.4L1 481.2C-1.5 489.7 .8 498.8 7 505s15.3 8.5 23.7 6.1l120.3-35.4c14.1-4.2 27-11.8 37.4-22.2L421.7 220.3 291.7 90.3z\'/></svg>") center/16px no-repeat;flex-shrink:0;}' +
+    '#erpModal[data-modal-kind="account"] .modal-close{width:36px;height:36px;border-radius:10px;border:1.5px solid #e2e8f0;background:#fff;color:#64748b;cursor:pointer;font-size:18px;line-height:1;display:inline-flex;align-items:center;justify-content:center;}' +
+    '#erpModal[data-modal-kind="account"] .modal-close:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2;}' +
+    '#erpModal[data-modal-kind="account"] .modal-body{padding:20px 22px;max-height:70vh;overflow-y:auto;}' +
+    '#erpModal[data-modal-kind="account"] .modal-footer{padding:14px 22px;background:#fafafa;border-top:1px solid #f1f5f9;display:flex;gap:10px;justify-content:flex-end;align-items:center;}' +
+    '#erpModal[data-modal-kind="account"] .modal-footer .btn{height:40px;padding:0 22px;border-radius:10px;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:8px;border:1.5px solid transparent;transition:all .15s ease;}' +
+    '#erpModal[data-modal-kind="account"] .modal-footer .btn-primary{background:linear-gradient(135deg,#7c3aed,#6d28d9) !important;color:#fff !important;border-color:transparent !important;box-shadow:0 4px 12px rgba(124,58,237,0.30);}' +
+    '#erpModal[data-modal-kind="account"] .modal-footer .btn-primary:hover{box-shadow:0 6px 18px rgba(124,58,237,0.45);transform:translateY(-1px);}' +
+    '#erpModal[data-modal-kind="account"] .modal-footer .btn-secondary{background:#fff !important;color:#475569 !important;border-color:#e2e8f0 !important;}' +
+    '#erpModal[data-modal-kind="account"] .modal-footer .btn-secondary:hover{border-color:#94a3b8 !important;color:#0f172a !important;}' +
+    /* Form layout */
+    '#erpModal .erp-acc-form{display:flex;flex-direction:column;gap:16px;}' +
+    '#erpModal .erp-acc-form .form-row{display:flex !important;flex-direction:column;gap:0 !important;margin:0 !important;}' +
+    /* Kind toggle */
+    '#erpModal .erp-acc-form .acc-kind-toggle{display:grid;grid-template-columns:1fr 1fr;gap:10px;}' +
+    '#erpModal .erp-acc-form .acc-kind-option{display:block;cursor:pointer;position:relative;margin:0;}' +
+    '#erpModal .erp-acc-form .acc-kind-option input{position:absolute;opacity:0;pointer-events:none;}' +
+    '#erpModal .erp-acc-form .acc-kind-card{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1.5px solid #e2e8f0;border-radius:10px;background:#fff;transition:all .15s ease;}' +
+    '#erpModal .erp-acc-form .acc-kind-card:hover{border-color:#cbd5e1;background:#fafafa;}' +
+    '#erpModal .erp-acc-form .acc-kind-option input:checked + .acc-kind-card{border-color:#7c3aed;background:#faf5ff;box-shadow:0 0 0 3px rgba(124,58,237,0.10);}' +
+    '#erpModal .erp-acc-form .acc-kind-card-icon{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;background:#f1f5f9;color:#475569;}' +
+    '#erpModal .erp-acc-form .acc-kind-option input:checked + .acc-kind-card .acc-kind-card-icon{background:#ede9fe;color:#7c3aed;}' +
+    '#erpModal .erp-acc-form .acc-kind-card-text{min-width:0;}' +
+    '#erpModal .erp-acc-form .acc-kind-title{font-size:13px;font-weight:800;color:#0f172a;}' +
+    '#erpModal .erp-acc-form .acc-kind-sub{font-size:11px;color:#64748b;margin-top:2px;}' +
+    /* Field grid + inputs */
+    '#erpModal .erp-acc-form .acc-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}' +
+    '@media (max-width:600px){#erpModal .erp-acc-form .acc-form-grid{grid-template-columns:1fr;}}' +
+    '#erpModal .erp-acc-form .acc-field{display:flex;flex-direction:column;gap:6px;min-width:0;}' +
+    '#erpModal .erp-acc-form .acc-field-label{font-size:12.5px;font-weight:700;color:#475569;display:flex;align-items:center;gap:4px;}' +
+    '#erpModal .erp-acc-form .acc-field-label .req{color:#dc2626;font-weight:800;font-size:13px;}' +
+    '#erpModal .erp-acc-form .acc-input,#erpModal .erp-acc-form select.acc-input{height:40px !important;padding:0 12px !important;border:1.5px solid #e2e8f0 !important;border-radius:10px !important;font-family:inherit !important;font-size:13.5px !important;color:#0f172a !important;background:#fff !important;outline:none;transition:border-color .15s ease,box-shadow .15s ease;box-sizing:border-box;width:100%;}' +
+    '#erpModal .erp-acc-form .acc-input:focus,#erpModal .erp-acc-form select.acc-input:focus{border-color:#7c3aed !important;box-shadow:0 0 0 3px rgba(124,58,237,0.12) !important;}' +
+    '#erpModal .erp-acc-form .acc-input[readonly]{background:#f8fafc !important;color:#64748b !important;}' +
+    '#erpModal .erp-acc-form .acc-input::placeholder{color:#94a3b8;}' +
+    /* Auto-code card */
+    '#erpModal .erp-acc-form .acc-auto-card{display:flex;align-items:center;gap:12px;padding:12px 14px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;cursor:pointer;user-select:none;margin:0;}' +
+    '#erpModal .erp-acc-form .acc-auto-card:hover{border-color:#cbd5e1;}' +
+    '#erpModal .erp-acc-form .acc-auto-card input{width:18px;height:18px;cursor:pointer;accent-color:#7c3aed;flex-shrink:0;margin:0;}' +
+    '#erpModal .erp-acc-form .acc-auto-text{min-width:0;}' +
+    '#erpModal .erp-acc-form .acc-auto-title{font-size:13px;font-weight:800;color:#0f172a;}' +
+    '#erpModal .erp-acc-form .acc-auto-sub{font-size:11.5px;color:#64748b;margin-top:2px;}' +
+    /* Inline copy of .coa-sel rules so the parent picker renders right */
+    '#erpModal .erp-acc-form .coa-sel{position:relative;width:100%;}' +
+    '#erpModal .erp-acc-form .coa-sel__trigger{width:100%;height:40px;padding:0 12px;border:1.5px solid #e2e8f0;border-radius:10px;background:#fff;font-family:inherit;font-size:13.5px;color:#0f172a;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;transition:border-color .15s ease,box-shadow .15s ease;box-sizing:border-box;}' +
+    '#erpModal .erp-acc-form .coa-sel__trigger:hover{border-color:#94a3b8;}' +
+    '#erpModal .erp-acc-form .coa-sel[data-open="1"] .coa-sel__trigger{border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,0.12);}' +
+    '#erpModal .erp-acc-form .coa-sel__triggerText{display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '#erpModal .erp-acc-form .coa-sel__trigger-code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:#ede9fe;color:#5b21b6;padding:2px 8px;border-radius:5px;font-weight:700;flex-shrink:0;}' +
+    '#erpModal .erp-acc-form .coa-sel__trigger-name{font-weight:600;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '#erpModal .erp-acc-form .coa-sel__current{flex:1;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '#erpModal .erp-acc-form .coa-sel__current.is-placeholder{color:#94a3b8;font-weight:500;}' +
+    '#erpModal .erp-acc-form .coa-sel__chev{color:#94a3b8;font-size:11px;transition:transform .15s ease;flex-shrink:0;}' +
+    '#erpModal .erp-acc-form .coa-sel[data-open="1"] .coa-sel__chev{transform:rotate(180deg);color:#7c3aed;}' +
+    '#erpModal .erp-acc-form .coa-sel__panel{display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;box-shadow:0 10px 30px -10px rgba(15,23,42,0.20);z-index:60;flex-direction:column;overflow:hidden;}' +
+    '#erpModal .erp-acc-form .coa-sel[data-open="1"] .coa-sel__panel{display:flex;}' +
+    '#erpModal .erp-acc-form .coa-sel__searchbox{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1.5px solid #f1f5f9;background:#fafafa;}' +
+    '#erpModal .erp-acc-form .coa-sel__searchbox i{color:#94a3b8;font-size:12px;}' +
+    '#erpModal .erp-acc-form .coa-sel__search{flex:1;border:none;outline:none;background:transparent;font-family:inherit;font-size:13px;color:#0f172a;}' +
+    '#erpModal .erp-acc-form .coa-sel__list{max-height:240px;overflow-y:auto;}' +
+    '#erpModal .erp-acc-form .coa-sel__opt{display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;transition:background .12s ease;}' +
+    '#erpModal .erp-acc-form .coa-sel__opt:last-child{border-bottom:none;}' +
+    '#erpModal .erp-acc-form .coa-sel__opt:hover,#erpModal .erp-acc-form .coa-sel__opt.is-active{background:#faf5ff;}' +
+    '#erpModal .erp-acc-form .coa-sel__opt.is-selected{background:#ede9fe;}' +
+    '#erpModal .erp-acc-form .coa-sel__opt-code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#f5f3ff;color:#5b21b6;padding:2px 7px;border-radius:4px;font-weight:700;flex-shrink:0;min-width:62px;text-align:center;}' +
+    '#erpModal .erp-acc-form .coa-sel__opt-name{flex:1;color:#0f172a;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '#erpModal .erp-acc-form .coa-sel__tick{color:#7c3aed;font-size:12px;flex-shrink:0;}' +
+    '#erpModal .erp-acc-form .coa-sel__footer{padding:6px 12px;border-top:1.5px solid #f1f5f9;background:#fafafa;font-size:11px;color:#64748b;}' +
+    '#erpModal .erp-acc-form .coa-sel__empty{padding:24px 12px;text-align:center;color:#94a3b8;font-size:12.5px;}' +
+    '#erpModal .erp-acc-form .coa-sel__opt-indent{flex-shrink:0;}' +
+    '';
+  document.head.appendChild(st);
+}
+
 function erpOpenAccountModal(data) {
   const d = data || {};
   const isEdit = !!d.id;
+  _erpAccountModalInjectCss();
+  // v5.10.94 — flag the wrapper so the scoped CSS only targets this
+  // modal instance (other consumers of #erpModal stay untouched).
+  document.getElementById('erpModal').setAttribute('data-modal-kind', 'account');
   document.getElementById('erpModalTitle').textContent = isEdit ? 'تعديل حساب' : 'إضافة حساب جديد';
 
   // Build parent options grouped by type
@@ -3449,49 +3543,96 @@ function erpOpenAccountModal(data) {
                             : (d.parentId ? 'leaf' : 'folder');
   var initialLevel = d.level || 1;
 
+  // v5.10.94 — Restructured form HTML using scoped .acc-* classes.
+  // Every id/name preserved so save logic + onChange handlers keep
+  // working. The radios are now card-style, the auto-code becomes a
+  // proper toggle card, required fields use a consistent <span class="req">*</span>,
+  // and the parent picker mount stays where _coaMountSearchableSelect expects it.
   document.getElementById('erpModalBody').innerHTML =
-    '<input type="hidden" id="erpAccID" value="' + (d.id||'') + '">' +
-    // v5.10.46 — kind radio selector
-    '<div class="erp-acc-modal__radios">' +
-      '<label><input type="radio" name="erpAccKind" value="folder"' + (initialKind==='folder'?' checked':'') + '> ' +
-        '<span><i class="fas fa-folder" style="color:#f59e0b;"></i> حساب رئيسي (فولدر)</span>' +
+    '<div class="erp-acc-form">' +
+      '<input type="hidden" id="erpAccID" value="' + (d.id||'') + '">' +
+      '<input type="hidden" id="erpAccLevel" value="' + initialLevel + '">' +
+
+      /* Kind selector — card-style radios */
+      '<div class="acc-kind-toggle">' +
+        '<label class="acc-kind-option">' +
+          '<input type="radio" name="erpAccKind" value="folder"' + (initialKind==='folder'?' checked':'') + '>' +
+          '<div class="acc-kind-card">' +
+            '<div class="acc-kind-card-icon"><i class="fas fa-folder"></i></div>' +
+            '<div class="acc-kind-card-text">' +
+              '<div class="acc-kind-title">حساب رئيسي (فولدر)</div>' +
+              '<div class="acc-kind-sub">يَحوي حسابات فرعية</div>' +
+            '</div>' +
+          '</div>' +
+        '</label>' +
+        '<label class="acc-kind-option">' +
+          '<input type="radio" name="erpAccKind" value="leaf"' + (initialKind==='leaf'?' checked':'') + '>' +
+          '<div class="acc-kind-card">' +
+            '<div class="acc-kind-card-icon"><i class="fas fa-file-alt"></i></div>' +
+            '<div class="acc-kind-card-text">' +
+              '<div class="acc-kind-title">حساب فرعي (ورقة)</div>' +
+              '<div class="acc-kind-sub">يَستقبل القيود المحاسبية</div>' +
+            '</div>' +
+          '</div>' +
+        '</label>' +
+      '</div>' +
+
+      /* Parent + Level */
+      '<div class="acc-form-grid">' +
+        '<div class="acc-field">' +
+          '<label class="acc-field-label">الحساب الرئيسي (الأب)</label>' +
+          '<div id="erpAccParentMount"></div>' +
+        '</div>' +
+        '<div class="acc-field">' +
+          '<label class="acc-field-label" for="erpAccLevelSelect">المستوى</label>' +
+          '<select class="acc-input" id="erpAccLevelSelect">' +
+            '<option value="auto"' + (isEdit ? '' : ' selected') + '>يُحسب تلقائيًا</option>' +
+            '<option value="1"' + (isEdit && Number(d.level) === 1 ? ' selected' : '') + '>L1 — جذر</option>' +
+            '<option value="2"' + (isEdit && Number(d.level) === 2 ? ' selected' : '') + '>L2</option>' +
+            '<option value="3"' + (isEdit && Number(d.level) === 3 ? ' selected' : '') + '>L3</option>' +
+            '<option value="4"' + (isEdit && Number(d.level) === 4 ? ' selected' : '') + '>L4</option>' +
+            '<option value="5"' + (isEdit && Number(d.level) === 5 ? ' selected' : '') + '>L5</option>' +
+          '</select>' +
+        '</div>' +
+      '</div>' +
+
+      /* Auto-code toggle (card) */
+      '<label class="acc-auto-card" for="erpAccAutoCode">' +
+        '<input type="checkbox" id="erpAccAutoCode"' + (isEdit ? '' : ' checked') + '>' +
+        '<div class="acc-auto-text">' +
+          '<div class="acc-auto-title">ترقيم تلقائي للكود</div>' +
+          '<div class="acc-auto-sub" id="erpAccCodeHint">ينشئ الكود من بادئة الأب وفق نمط GGMMPP</div>' +
+        '</div>' +
       '</label>' +
-      '<label><input type="radio" name="erpAccKind" value="leaf"' + (initialKind==='leaf'?' checked':'') + '> ' +
-        '<span><i class="fas fa-file-alt" style="color:#3b82f6;"></i> حساب فرعي (ورقة)</span>' +
-      '</label>' +
-    '</div>' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-      '<div class="form-row"><label>الحساب الرئيسي (الأب)</label><div id="erpAccParentMount"></div></div>' +
-      // v5.10.49 — when editing an existing account, pre-select the
-      // SAVED level so the user sees their real level (and we don't
-      // silently overwrite it with parent.level+1 on first paint).
-      // Adding a new account still defaults to auto.
-      '<div class="form-row"><label>المستوى</label><select class="form-control" id="erpAccLevelSelect">' +
-        '<option value="auto"' + (isEdit ? '' : ' selected') + '>يُحسب تلقائيًا</option>' +
-        '<option value="1"' + (isEdit && Number(d.level) === 1 ? ' selected' : '') + '>L1 — جذر</option>' +
-        '<option value="2"' + (isEdit && Number(d.level) === 2 ? ' selected' : '') + '>L2</option>' +
-        '<option value="3"' + (isEdit && Number(d.level) === 3 ? ' selected' : '') + '>L3</option>' +
-        '<option value="4"' + (isEdit && Number(d.level) === 4 ? ' selected' : '') + '>L4</option>' +
-        '<option value="5"' + (isEdit && Number(d.level) === 5 ? ' selected' : '') + '>L5</option>' +
-      '</select></div>' +
-    '</div>' +
-    '<div class="form-row" style="display:flex;align-items:center;gap:10px;margin-top:6px;">' +
-      '<input type="checkbox" id="erpAccAutoCode"' + (isEdit ? '' : ' checked') + ' style="width:18px;height:18px;">' +
-      '<label for="erpAccAutoCode" style="margin:0;cursor:pointer;font-weight:700;">ترقيم تلقائي للكود</label>' +
-      '<span id="erpAccCodeHint" style="color:#94a3b8;font-size:12px;margin-inline-start:6px;"></span>' +
-    '</div>' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-      '<div class="form-row"><label>رمز الحساب *</label><input class="form-control" id="erpAccCode" value="' + (d.code||'') + '" ' + (isEdit?'readonly':'') + ' placeholder="مثال: 11201"></div>' +
-      '<div class="form-row"><label>النوع *</label><select class="form-control" id="erpAccType">' +
-        '<option value="asset"' + (d.type==='asset'?' selected':'') + '>أصول</option>' +
-        '<option value="liability"' + (d.type==='liability'?' selected':'') + '>التزامات</option>' +
-        '<option value="equity"' + (d.type==='equity'?' selected':'') + '>حقوق ملكية</option>' +
-        '<option value="revenue"' + (d.type==='revenue'?' selected':'') + '>إيرادات</option>' +
-        '<option value="expense"' + (d.type==='expense'?' selected':'') + '>مصروفات</option></select></div>' +
-    '</div>' +
-    '<div class="form-row"><label>الاسم (عربي) *</label><input class="form-control" id="erpAccNameAR" value="' + (d.nameAr||'') + '" placeholder="اسم الحساب بالعربي"></div>' +
-    '<div class="form-row"><label>الاسم (إنجليزي)</label><input class="form-control" id="erpAccNameEN" value="' + (d.nameEn||'') + '" placeholder="Account name in English"></div>' +
-    '<input type="hidden" id="erpAccLevel" value="' + initialLevel + '">';
+
+      /* Code + Type */
+      '<div class="acc-form-grid">' +
+        '<div class="acc-field">' +
+          '<label class="acc-field-label" for="erpAccCode">رمز الحساب <span class="req">*</span></label>' +
+          '<input class="acc-input" id="erpAccCode" value="' + (d.code||'') + '" ' + (isEdit?'readonly':'') + ' placeholder="مثال: 100320">' +
+        '</div>' +
+        '<div class="acc-field">' +
+          '<label class="acc-field-label" for="erpAccType">النوع <span class="req">*</span></label>' +
+          '<select class="acc-input" id="erpAccType">' +
+            '<option value="asset"' + (d.type==='asset'?' selected':'') + '>أصول</option>' +
+            '<option value="liability"' + (d.type==='liability'?' selected':'') + '>التزامات</option>' +
+            '<option value="equity"' + (d.type==='equity'?' selected':'') + '>حقوق ملكية</option>' +
+            '<option value="revenue"' + (d.type==='revenue'?' selected':'') + '>إيرادات</option>' +
+            '<option value="expense"' + (d.type==='expense'?' selected':'') + '>مصروفات</option>' +
+          '</select>' +
+        '</div>' +
+      '</div>' +
+
+      /* Names */
+      '<div class="acc-field">' +
+        '<label class="acc-field-label" for="erpAccNameAR">الاسم (عربي) <span class="req">*</span></label>' +
+        '<input class="acc-input" id="erpAccNameAR" value="' + (d.nameAr||'').replace(/"/g,'&quot;') + '" placeholder="اسم الحساب بالعربي">' +
+      '</div>' +
+      '<div class="acc-field">' +
+        '<label class="acc-field-label" for="erpAccNameEN">الاسم (إنجليزي)</label>' +
+        '<input class="acc-input" id="erpAccNameEN" value="' + (d.nameEn||'').replace(/"/g,'&quot;') + '" placeholder="Account name in English">' +
+      '</div>' +
+    '</div>';
 
   // v5.10.46 — wire the new controls. The "kind" radios, the level
   // select, the autoCode checkbox, and the parent dropdown all interact:
@@ -9010,6 +9151,9 @@ function erpExportReport(reportType) {
 function erpCloseModal() {
   var modalEl = document.getElementById('erpModal');
   modalEl.classList.add('hidden');
+  // v5.10.94 — clear the per-modal kind flag so the next modal that
+  // reuses #erpModal isn't styled with the account-modal CSS.
+  modalEl.removeAttribute('data-modal-kind');
   // V3.1 — clean up the wide txn-view-mode layout so the next modal opens normally
   modalEl.classList.remove('txn-view-mode');
   var injectedTb = modalEl.querySelector('#wfTxnToolbar');

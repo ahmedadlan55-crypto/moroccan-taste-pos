@@ -50,7 +50,7 @@
 #vkKeyboard .vk-bar-btn {
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--mt-radius-sm);
   border: 0;
   background: rgba(0, 0, 0, 0.06);
   color: #1c1c1e;
@@ -222,7 +222,7 @@ body.vk-disabled #vkKeyboard {
   width: 60px; height: 60px;
   border-radius: 50%;
   border: 0;
-  background: linear-gradient(135deg, var(--mt-accent, #7c3aed), var(--mt-accent-2, #6d28d9));
+  background: linear-gradient(135deg, var(--mt-accent, var(--mt-accent)), var(--mt-accent-2, var(--mt-accent-2)));
   color: #fff;
   font-size: 26px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -235,7 +235,7 @@ body.vk-disabled #vkKeyboard {
   content: '';
   position: absolute; inset: -6px;
   border-radius: 50%;
-  border: 2.5px solid var(--mt-accent, #7c3aed);
+  border: 2.5px solid var(--mt-accent, var(--mt-accent));
   opacity: 0;
   pointer-events: none;
   animation: vkFabPulse 2.4s ease-out 3;
@@ -247,7 +247,7 @@ body.vk-disabled #vkKeyboard {
 .vk-toggle-fab:hover  { transform: translateY(-2px); box-shadow: 0 16px 32px rgba(124, 58, 237, 0.50); }
 .vk-toggle-fab:active { transform: translateY(0); }
 .vk-toggle-fab.is-open {
-  background: linear-gradient(135deg, var(--mt-primary, #1e293b), var(--mt-primary-2, #0f172a));
+  background: linear-gradient(135deg, var(--mt-primary, var(--mt-primary)), var(--mt-primary-2, var(--mt-primary-2)));
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.40);
 }
 @media (max-width: 640px) {

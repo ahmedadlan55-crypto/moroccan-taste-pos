@@ -20,7 +20,7 @@
 
    IDENTITY
    ────────
-   Purple (#7c3aed) primary, slate text, white surfaces. Aligned with
+   Purple (var(--mt-accent)) primary, slate text, white surfaces. Aligned with
    admin-skin.css v5.10.68 — uses local invc-* tokens that mirror its
    token values, so the section reads as one design system.
 
@@ -39,28 +39,28 @@
   --invc-radius-md: 14px;
   --invc-radius-lg: 18px;
 
-  --invc-purple:        #7c3aed;
-  --invc-purple-deep:   #6d28d9;
+  --invc-purple:        var(--mt-accent);
+  --invc-purple-deep:   var(--mt-accent-2);
   --invc-purple-soft:   #faf5ff;
   --invc-purple-soft-2: #f3e8ff;
   --invc-purple-fg:     #4c1d95;
 
-  --invc-slate-50:  #f8fafc;
-  --invc-slate-100: #f1f5f9;
-  --invc-slate-200: #e2e8f0;
-  --invc-slate-300: #cbd5e1;
-  --invc-slate-500: #64748b;
+  --invc-slate-50:  var(--mt-surface-2);
+  --invc-slate-100: var(--mt-bg);
+  --invc-slate-200: var(--mt-border);
+  --invc-slate-300: var(--mt-border);
+  --invc-slate-500: var(--mt-text-muted);
   --invc-slate-600: #475569;
   --invc-slate-700: #334155;
-  --invc-slate-900: #0f172a;
+  --invc-slate-900: var(--mt-primary-2);
 
-  --invc-success:      #16a34a;
+  --invc-success:      var(--mt-success);
   --invc-success-soft: #dcfce7;
   --invc-success-fg:   #166534;
-  --invc-warn:         #f59e0b;
+  --invc-warn:         var(--mt-warning);
   --invc-warn-soft:    #fef3c7;
   --invc-warn-fg:      #92400e;
-  --invc-danger:       #dc2626;
+  --invc-danger:       var(--mt-danger);
   --invc-danger-soft:  #fee2e2;
   --invc-danger-fg:    #991b1b;
   --invc-info-soft:    #e0f2fe;
@@ -109,7 +109,7 @@
   width: 54px;
   height: 54px;
   flex-shrink: 0;
-  border-radius: 16px;
+  border-radius: var(--mt-radius-lg);
   background: linear-gradient(135deg, var(--invc-purple) 0%, var(--invc-purple-deep) 100%);
   color: #ffffff;
   display: grid;
@@ -198,7 +198,7 @@
   box-shadow: 0 2px 6px rgba(220, 38, 38, 0.3);
 }
 .invc-btn--danger:hover {
-  background: #b91c1c;
+  background: var(--mt-danger-2);
   box-shadow: 0 6px 18px rgba(220, 38, 38, 0.4);
 }
 
@@ -261,7 +261,7 @@
   gap: 4px;
   padding: 4px;
   background: var(--invc-slate-100);
-  border-radius: 12px;
+  border-radius: var(--mt-radius-md);
   margin-bottom: 16px;
 }
 .invc-tab {
@@ -399,8 +399,8 @@
 .invc-kpi--danger::after  { background: radial-gradient(circle, var(--invc-danger), transparent 70%); }
 .invc-kpi--danger:hover   { border-color: var(--invc-danger); }
 .invc-kpi--info .invc-kpi__icon    { background: var(--invc-info-soft);    color: var(--invc-info-fg); }
-.invc-kpi--info::after    { background: radial-gradient(circle, #3b82f6, transparent 70%); }
-.invc-kpi--info:hover     { border-color: #3b82f6; }
+.invc-kpi--info::after    { background: radial-gradient(circle, var(--mt-accent), transparent 70%); }
+.invc-kpi--info:hover     { border-color: var(--mt-accent); }
 
 /* ─────────────────────────────────────────────────────────────────────
    7. FILTER BAR
@@ -475,7 +475,7 @@
   padding: 7px 13px;
   border: 0;
   background: transparent;
-  border-radius: 8px;
+  border-radius: var(--mt-radius-sm);
   font-size: 12px;
   font-weight: 700;
   color: var(--invc-slate-500);
@@ -1036,7 +1036,7 @@
 .invc-pagination__page {
   min-width: 30px;
   padding: 4px 10px;
-  border-radius: 8px;
+  border-radius: var(--mt-radius-sm);
   background: transparent;
   border: 0;
   cursor: pointer;

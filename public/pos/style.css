@@ -75,7 +75,7 @@ body {
   padding: 12px 18px;
   border: none;
   border-radius: 999px;
-  background: linear-gradient(135deg, #0d47a1 0%, #1e40af 50%, #3b82f6 100%);
+  background: linear-gradient(135deg, #0d47a1 0%, #1e40af 50%, var(--mt-accent) 100%);
   color: #fff;
   font-family: inherit;
   font-size: 14px;
@@ -158,7 +158,7 @@ body.ar .pwa-install-btn {
   background: rgba(255, 255, 255, 0.78);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  border-radius: 16px;
+  border-radius: var(--mt-radius-lg);
   padding: 12px 18px;
   display: flex;
   align-items: center;
@@ -180,7 +180,7 @@ body.ar .pwa-install-btn {
   font-weight: 600;
   color: var(--text-dark);
 }
-.pos-search-bar input::placeholder { color: #94a3b8; font-weight: 500; }
+.pos-search-bar input::placeholder { color: var(--mt-text-light); font-weight: 500; }
 .pos-search-bar i { color: var(--secondary); font-size: 16px; }
 
 .pos-categories {
@@ -259,7 +259,7 @@ body.ar .pwa-install-btn {
   flex: 1 1 auto; min-width: 0;
   padding: 9px 14px;
   border-radius: 10px;
-  border: 1.5px solid #cbd5e1;
+  border: 1.5px solid var(--mt-border);
   background: #fff;
   font-weight: 700;
   font-size: 13px;
@@ -281,14 +281,14 @@ body.ar .pwa-install-btn {
 .pos-action-pricelist.is-linked,
 .pos-channel-pricelist.is-linked {
   background: var(--mt-accent-soft, #faf5ff);
-  color: var(--mt-accent-2, #6d28d9);
+  color: var(--mt-accent-2, var(--mt-accent-2));
 }
 .pos-action-pricelist.is-linked i,
-.pos-channel-pricelist.is-linked i { color: var(--mt-success, #16a34a); }
+.pos-channel-pricelist.is-linked i { color: var(--mt-success, var(--mt-success)); }
 .pos-action-pricelist.is-default,
 .pos-channel-pricelist.is-default {
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--mt-bg);
+  color: var(--mt-text-muted);
 }
 
 /* v5.15.3 — Refresh button spin animation while re-fetching. */
@@ -360,7 +360,7 @@ body.ar .pwa-install-btn {
 .pos-cat-tile.pos-cat-all i { color: var(--pos-accent-2); }
 .pos-empty {
   grid-column: 1 / -1; text-align: center; padding: 40px 20px;
-  color: #94a3b8; font-weight: 700;
+  color: var(--mt-text-light); font-weight: 700;
 }
 
 /* Breadcrumb */
@@ -369,16 +369,16 @@ body.ar .pwa-install-btn {
   padding: 8px 14px; margin-bottom: 12px;
   background: rgba(255, 255, 255, 0.7);
   border: 1px solid rgba(0, 0, 0, 0.06);
-  border-radius: 12px;
+  border-radius: var(--mt-radius-md);
 }
 .pos-breadcrumb button {
-  background: #f1f5f9; border: 0; padding: 8px 14px;
+  background: var(--mt-bg); border: 0; padding: 8px 14px;
   border-radius: 10px; font-weight: 800; cursor: pointer;
   display: inline-flex; align-items: center; gap: 6px;
-  color: #1e293b;
+  color: var(--mt-primary);
 }
-.pos-breadcrumb button:hover { background: #e2e8f0; }
-.pos-breadcrumb-current { font-weight: 900; color: #1e293b; font-size: 16px; }
+.pos-breadcrumb button:hover { background: var(--mt-border); }
+.pos-breadcrumb-current { font-weight: 900; color: var(--mt-primary); font-size: 16px; }
 
 /* v5.14.4 — The sticky #posTotalBar overlay was removed. The cart
  * footer (.cart-footer-foodics, below) is now the single payment
@@ -386,8 +386,8 @@ body.ar .pwa-install-btn {
 
 /* Payment modal */
 .pay-modal-summary {
-  background: linear-gradient(135deg, #f1f5f9, #ffffff);
-  border: 1.5px solid #e2e8f0;
+  background: linear-gradient(135deg, var(--mt-bg), #ffffff);
+  border: 1.5px solid var(--mt-border);
   border-radius: 14px;
   padding: 16px;
   margin: 0 0 16px;
@@ -396,15 +396,15 @@ body.ar .pwa-install-btn {
   display: flex; justify-content: space-between; align-items: center;
   padding: 6px 0; font-size: 14px; color: #475569;
 }
-.pay-modal-sum-row strong { color: #1e293b; font-weight: 800; }
-.pay-modal-sum-row.pay-modal-discount strong { color: #dc2626; }
+.pay-modal-sum-row strong { color: var(--mt-primary); font-weight: 800; }
+.pay-modal-sum-row.pay-modal-discount strong { color: var(--mt-danger); }
 .pay-modal-sum-row.pay-modal-total {
-  border-top: 2px dashed #cbd5e1;
+  border-top: 2px dashed var(--mt-border);
   margin-top: 8px; padding-top: 12px;
   font-size: 18px;
 }
 .pay-modal-sum-row.pay-modal-total strong {
-  color: #16a34a; font-size: 22px; font-weight: 900;
+  color: var(--mt-success); font-size: 22px; font-weight: 900;
   font-family: ui-monospace, monospace;
 }
 
@@ -474,15 +474,15 @@ body.foodics-mode .cart-footer { display: none !important; }
   gap: 10px;
   padding: 22px 14px;
   background: #fff;
-  border: 2px solid #e2e8f0;
-  border-radius: 16px;
+  border: 2px solid var(--mt-border);
+  border-radius: var(--mt-radius-lg);
   cursor: pointer;
   font-family: inherit;
   transition: all 120ms;
   min-height: 110px;
 }
 .pay-tile i { font-size: 32px; color: #475569; transition: color 120ms; }
-.pay-tile span { font-size: 14px; font-weight: 800; color: #1e293b; text-align: center; line-height: 1.2; }
+.pay-tile span { font-size: 14px; font-weight: 800; color: var(--mt-primary); text-align: center; line-height: 1.2; }
 .pay-tile:hover {
   border-color: var(--pos-accent);
   background: var(--pos-accent-soft);
@@ -496,8 +496,8 @@ body.foodics-mode .cart-footer { display: none !important; }
 .pay-tile.is-active i { color: var(--pos-accent-2); }
 .pay-tile.is-active span { color: var(--pos-accent-2); }
 .pay-tile.pay-tile-split.is-active {
-  background: linear-gradient(140deg, #fde68a, #fbbf24);
-  border-color: #d97706;
+  background: linear-gradient(140deg, #fde68a, var(--mt-warning));
+  border-color: var(--mt-warning);
 }
 .pay-tile.pay-tile-split.is-active i { color: #92400e; }
 
@@ -521,9 +521,9 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .pay-split-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .pay-split-actions button {
-  padding: 7px 12px; border: 1.5px solid #d97706;
+  padding: 7px 12px; border: 1.5px solid var(--mt-warning);
   background: #fffbeb; color: #92400e;
-  border-radius: 8px; font-weight: 800; font-size: 12px;
+  border-radius: var(--mt-radius-sm); font-weight: 800; font-size: 12px;
   cursor: pointer;
   display: inline-flex; align-items: center; gap: 5px;
 }
@@ -534,35 +534,35 @@ body.foodics-mode .cart-footer { display: none !important; }
   grid-template-columns: 1.4fr 1fr auto;
   gap: 8px; align-items: center;
   background: #fff;
-  border: 1.5px solid #e2e8f0;
+  border: 1.5px solid var(--mt-border);
   border-radius: 10px;
   padding: 8px 10px;
   margin-bottom: 6px;
 }
 .pay-split-method {
   display: inline-flex; align-items: center; gap: 8px;
-  font-weight: 700; color: #1e293b; font-size: 13px;
+  font-weight: 700; color: var(--mt-primary); font-size: 13px;
 }
-.pay-split-method i { color: #7c3aed; }
+.pay-split-method i { color: var(--mt-accent); }
 .pay-split-input {
   text-align: center;
   font-weight: 800; font-size: 15px;
   font-family: ui-monospace, monospace;
-  padding: 8px; border-radius: 8px;
-  border: 1.5px solid #cbd5e1;
+  padding: 8px; border-radius: var(--mt-radius-sm);
+  border: 1.5px solid var(--mt-border);
 }
 .pay-split-input:focus {
-  border-color: #7c3aed; outline: 0;
+  border-color: var(--mt-accent); outline: 0;
   box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
 }
 .pay-split-rest {
   width: 36px; height: 36px;
-  background: #7c3aed; color: #fff;
-  border: 0; border-radius: 8px;
+  background: var(--mt-accent); color: #fff;
+  border: 0; border-radius: var(--mt-radius-sm);
   cursor: pointer; font-size: 14px;
   display: inline-flex; align-items: center; justify-content: center;
 }
-.pay-split-rest:hover { background: #6d28d9; }
+.pay-split-rest:hover { background: var(--mt-accent-2); }
 
 .pay-split-summary {
   display: flex; justify-content: space-between; align-items: center;
@@ -625,10 +625,10 @@ body.foodics-mode .cart-footer { display: none !important; }
 .pos-item-img {
   width: 100%;
   aspect-ratio: 1.4 / 1;
-  border-radius: 12px;
+  border-radius: var(--mt-radius-md);
   overflow: hidden;
   margin-bottom: 8px;
-  background: #f1f5f9;
+  background: var(--mt-bg);
 }
 .pos-item-img img {
   width: 100%;
@@ -733,12 +733,12 @@ body.foodics-mode .cart-footer { display: none !important; }
   inset-inline-end: 8px;
   font-size: 10px;
   padding: 3px 7px;
-  border-radius: 8px;
+  border-radius: var(--mt-radius-sm);
   font-weight: 800;
   background: rgba(226, 232, 240, 0.9);
   color: #475569;
 }
-.pos-item-stock.low { background: #fee2e2; color: #dc2626; }
+.pos-item-stock.low { background: #fee2e2; color: var(--mt-danger); }
 
 /* +/- buttons inside the product card */
 .pos-item-actions {
@@ -751,7 +751,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 .pos-item-actions .qty-btn {
   width: 36px;
   height: 36px;
-  border-radius: 12px;
+  border-radius: var(--mt-radius-md);
   border: 1.5px solid var(--border);
   background: rgba(255, 255, 255, 0.95);
   color: var(--secondary);
@@ -776,9 +776,9 @@ body.foodics-mode .cart-footer { display: none !important; }
 .pos-item-actions .qty-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
-  background: #f1f5f9;
-  color: #94a3b8;
-  border-color: #e2e8f0;
+  background: var(--mt-bg);
+  color: var(--mt-text-light);
+  border-color: var(--mt-border);
 }
 .pos-item-actions .qty-display {
   flex: 1;
@@ -830,7 +830,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 .btn-icon-pill {
   width: 38px;
   height: 38px;
-  border-radius: 12px;
+  border-radius: var(--mt-radius-md);
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.85);
   color: var(--text-dark);
@@ -861,19 +861,19 @@ body.foodics-mode .cart-footer { display: none !important; }
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #94a3b8;
+  color: var(--mt-text-light);
   text-align: center;
   padding: 30px 20px;
 }
 .cart-empty i { font-size: 56px; margin-bottom: 18px; opacity: 0.35; }
-.cart-empty h3 { font-size: 16px; margin-bottom: 6px; color: #64748b; }
-.cart-empty p { font-size: 13px; color: #94a3b8; }
+.cart-empty h3 { font-size: 16px; margin-bottom: 6px; color: var(--mt-text-muted); }
+.cart-empty p { font-size: 13px; color: var(--mt-text-light); }
 
 .cart-item-row {
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(226, 232, 240, 0.7);
-  border-radius: 16px;
+  border-radius: var(--mt-radius-lg);
   padding: 12px 14px;
   margin-bottom: 8px;
   display: flex;
@@ -904,7 +904,7 @@ body.foodics-mode .cart-footer { display: none !important; }
   align-items: center;
   background: rgba(255, 255, 255, 0.95);
   border: 1.5px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--mt-radius-md);
   overflow: hidden;
 }
 .qty-btn {
@@ -964,7 +964,7 @@ body.foodics-mode .cart-footer { display: none !important; }
   width: 70px;
   text-align: center;
   padding: 6px;
-  border-radius: 8px;
+  border-radius: var(--mt-radius-sm);
   border: 1.5px solid var(--secondary);
   font-weight: 800;
   font-size: 13px;
@@ -988,7 +988,7 @@ body.foodics-mode .cart-footer { display: none !important; }
   flex: 1 1 calc(33.333% - 4px);
   min-width: 70px;
   padding: 11px 8px;
-  border-radius: 12px;
+  border-radius: var(--mt-radius-md);
   border: 1.5px solid rgba(226, 232, 240, 0.8);
   background: rgba(255, 255, 255, 0.78);
   backdrop-filter: blur(8px);
@@ -1026,7 +1026,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 .service-fee-row {
   background: rgba(254, 243, 199, 0.55);
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: var(--mt-radius-md);
   margin-bottom: 10px;
   border: 1px solid rgba(253, 224, 71, 0.6);
 }
@@ -1040,7 +1040,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 .service-fee-row-top span:last-child { font-weight: 800; color: #b45309; }
 .service-fee-row-bottom { display: flex; gap: 6px; align-items: center; }
 .service-fee-row-bottom .form-control {
-  flex: 1; padding: 8px 10px; font-size: 13px; font-weight: 700; border-radius: 8px;
+  flex: 1; padding: 8px 10px; font-size: 13px; font-weight: 700; border-radius: var(--mt-radius-sm);
 }
 .service-fee-currency { font-size: 11px; color: #92400e; white-space: nowrap; }
 
@@ -1154,10 +1154,10 @@ body.foodics-mode .cart-footer { display: none !important; }
   -webkit-tap-highlight-color: transparent;
 }
 .float-btn-success { background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 8px 20px rgba(16,185,129,0.4); }
-.float-btn-danger { background: linear-gradient(135deg, #ef4444, #dc2626); box-shadow: 0 8px 20px rgba(239,68,68,0.4); }
-.float-btn-info { background: linear-gradient(135deg, #0d47a1, #3b82f6); box-shadow: 0 8px 20px rgba(13,71,161,0.4); }
-.float-btn-warn { background: linear-gradient(135deg, #d97706, #f59e0b); box-shadow: 0 8px 20px rgba(217,119,6,0.4); }
-.float-btn-purple { background: linear-gradient(135deg, #8b5cf6, #6d28d9); box-shadow: 0 8px 20px rgba(139,92,246,0.4); }
+.float-btn-danger { background: linear-gradient(135deg, var(--mt-danger), var(--mt-danger)); box-shadow: 0 8px 20px rgba(239,68,68,0.4); }
+.float-btn-info { background: linear-gradient(135deg, #0d47a1, var(--mt-accent)); box-shadow: 0 8px 20px rgba(13,71,161,0.4); }
+.float-btn-warn { background: linear-gradient(135deg, var(--mt-warning), var(--mt-warning)); box-shadow: 0 8px 20px rgba(217,119,6,0.4); }
+.float-btn-purple { background: linear-gradient(135deg, #8b5cf6, var(--mt-accent-2)); box-shadow: 0 8px 20px rgba(139,92,246,0.4); }
 .float-btn:hover { transform: translateY(-2px); }
 .float-btn:active { transform: scale(0.93); }
 
@@ -1180,19 +1180,19 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .printer-current-box > i {
   font-size: 22px;
-  color: #94a3b8;
+  color: var(--mt-text-light);
   flex-shrink: 0;
 }
-.printer-current-box.connected > i { color: #16a34a; }
+.printer-current-box.connected > i { color: var(--mt-success); }
 .printer-current-box > div { flex: 1; min-width: 0; }
 .printer-current-label {
   font-weight: 800;
   font-size: 14px;
-  color: #1e293b;
+  color: var(--mt-primary);
 }
 .printer-current-detail {
   font-size: 11px;
-  color: #64748b;
+  color: var(--mt-text-muted);
   font-family: monospace;
   margin-top: 2px;
   word-break: break-all;
@@ -1205,16 +1205,16 @@ body.foodics-mode .cart-footer { display: none !important; }
   margin-bottom: 14px;
   padding: 6px;
   background: rgba(241, 245, 249, 0.7);
-  border-radius: 12px;
+  border-radius: var(--mt-radius-md);
 }
 .printer-tab {
   padding: 10px 8px;
   border: none;
   background: transparent;
-  border-radius: 8px;
+  border-radius: var(--mt-radius-sm);
   font-size: 13px;
   font-weight: 700;
-  color: #64748b;
+  color: var(--mt-text-muted);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1394,7 +1394,7 @@ body.foodics-mode .cart-footer { display: none !important; }
   border-collapse: collapse;
   margin: 12px 0 16px;
   background: rgba(255, 255, 255, 0.7);
-  border-radius: 12px;
+  border-radius: var(--mt-radius-md);
   overflow: hidden;
 }
 .variance-table th, .variance-table td {
@@ -1405,9 +1405,9 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .variance-table th { background: rgba(254, 226, 226, 0.6); color: #991b1b; font-weight: 800; }
 .variance-table tr:last-child td { border-bottom: none; }
-.variance-table .diff-pos { color: #16a34a; font-weight: 900; }
-.variance-table .diff-neg { color: #dc2626; font-weight: 900; }
-.variance-table .diff-zero { color: #64748b; font-weight: 700; }
+.variance-table .diff-pos { color: var(--mt-success); font-weight: 900; }
+.variance-table .diff-neg { color: var(--mt-danger); font-weight: 900; }
+.variance-table .diff-zero { color: var(--mt-text-muted); font-weight: 700; }
 .variance-table tr.total-row td { background: rgba(254, 243, 199, 0.5); font-weight: 900; font-size: 14px; }
 
 /* Shift report card styling */
@@ -1426,17 +1426,17 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .shift-stat-card .label { font-size: 11px; color: var(--text-light); font-weight: 700; margin-bottom: 4px; }
 .shift-stat-card .value { font-size: 22px; font-weight: 900; color: var(--primary); }
-.shift-stat-card.cash .value  { color: #16a34a; }
+.shift-stat-card.cash .value  { color: var(--mt-success); }
 .shift-stat-card.card .value  { color: #1e40af; }
-.shift-stat-card.kita .value  { color: #d97706; }
+.shift-stat-card.kita .value  { color: var(--mt-warning); }
 .shift-stat-card.total .value { color: var(--accent); font-size: 26px; }
 
 .receipt-box {
   font-family: Arial, sans-serif;
   background: #fff;
   padding: 14px;
-  border: 1px dashed #cbd5e1;
-  border-radius: 12px;
+  border: 1px dashed var(--mt-border);
+  border-radius: var(--mt-radius-md);
   max-height: 60vh;
   overflow-y: auto;
 }
@@ -1523,7 +1523,7 @@ body.foodics-mode .cart-footer { display: none !important; }
     bottom: 14px;
     left: 14px;
     right: 14px;
-    background: linear-gradient(135deg, var(--primary), #1e293b);
+    background: linear-gradient(135deg, var(--primary), var(--mt-primary));
     color: var(--white);
     padding: 14px 22px;
     border-radius: 18px;
@@ -1614,7 +1614,7 @@ body.foodics-mode .cart-footer { display: none !important; }
   justify-content: center;
   gap: 6px;
   padding: 10px;
-  border: 1.5px solid #fbbf24;
+  border: 1.5px solid var(--mt-warning);
   background: #fffbeb;
   color: #92400e;
   border-radius: 10px;
@@ -1630,18 +1630,18 @@ body.foodics-mode .cart-footer { display: none !important; }
 .pos-line-disc-list { display: flex; flex-direction: column; gap: 8px; max-height: 400px; overflow-y: auto; }
 .pos-line-disc-row {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 12px; background: #f8fafc; border: 1.5px solid #e2e8f0;
+  padding: 12px; background: var(--mt-surface-2); border: 1.5px solid var(--mt-border);
   border-radius: 10px; cursor: pointer; transition: all 0.15s;
 }
-.pos-line-disc-row:hover { background: #eff6ff; border-color: #3b82f6; }
+.pos-line-disc-row:hover { background: #eff6ff; border-color: var(--mt-accent); }
 
 .pos-disc-card {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 12px 14px; background: #fff; border: 1.5px solid #e2e8f0;
+  padding: 12px 14px; background: #fff; border: 1.5px solid var(--mt-border);
   border-radius: 10px; cursor: pointer; transition: all 0.15s;
   margin-bottom: 8px;
 }
-.pos-disc-card:hover:not(.disabled) { background: #f8fafc; border-color: #8b5cf6; }
+.pos-disc-card:hover:not(.disabled) { background: var(--mt-surface-2); border-color: #8b5cf6; }
 .pos-disc-card.disabled { opacity: 0.5; cursor: not-allowed; }
 .pos-disc-manual {
   margin-top: 14px;
@@ -1654,27 +1654,27 @@ body.foodics-mode .cart-footer { display: none !important; }
 /* V3 Shift close */
 .sc-v3-section {
   background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border: 1px solid var(--mt-border);
+  border-radius: var(--mt-radius-md);
   padding: 14px;
   margin-bottom: 14px;
 }
 .sc-v3-section-title {
   font-size: 14px;
   font-weight: 900;
-  color: #1e293b;
+  color: var(--mt-primary);
   margin: 0 0 10px;
   padding-bottom: 8px;
-  border-bottom: 1.5px solid #e2e8f0;
+  border-bottom: 1.5px solid var(--mt-border);
   display: flex; align-items: center; gap: 8px;
 }
-.sc-v3-section-title i { color: #16a34a; }
+.sc-v3-section-title i { color: var(--mt-success); }
 
 .sc-v3-row { display: flex; justify-content: space-between; padding: 8px 0; font-size: 13px; }
 .sc-v3-row-info {
   background: #dbeafe;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--mt-radius-sm);
   margin-bottom: 10px;
 }
 
@@ -1684,37 +1684,37 @@ body.foodics-mode .cart-footer { display: none !important; }
   font-size: 13px;
 }
 .sc-v3-denom-table th, .sc-v3-elec-table th {
-  background: #f1f5f9;
+  background: var(--mt-bg);
   padding: 8px;
   font-weight: 800;
   color: #475569;
-  border-bottom: 2px solid #e2e8f0;
+  border-bottom: 2px solid var(--mt-border);
   text-align: right;
 }
 .sc-v3-denom-table td, .sc-v3-elec-table td {
   padding: 8px;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--mt-bg);
   vertical-align: middle;
 }
 .sc-v3-denom-table input, .sc-v3-elec-table input {
   width: 100px;
   padding: 6px 10px;
-  border: 1.5px solid #cbd5e1;
-  border-radius: 8px;
+  border: 1.5px solid var(--mt-border);
+  border-radius: var(--mt-radius-sm);
   text-align: center;
   font-size: 13px;
   font-weight: 700;
 }
 .sc-v3-denom-table input:focus, .sc-v3-elec-table input:focus {
-  border-color: #16a34a;
+  border-color: var(--mt-success);
   box-shadow: 0 0 0 3px rgba(22,163,74,0.12);
   outline: none;
 }
 .sc-v3-row-total td {
   font-weight: 900;
-  background: #f8fafc;
+  background: var(--mt-surface-2);
   padding-top: 10px;
-  border-top: 2px solid #cbd5e1;
+  border-top: 2px solid var(--mt-border);
 }
 .sc-v3-diff { font-weight: 900; }
 
@@ -1729,15 +1729,15 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .sc-v3-stat {
   background: #fff;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--mt-border);
   border-radius: 10px;
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.sc-v3-stat span { font-size: 11px; color: #64748b; font-weight: 700; }
-.sc-v3-stat strong { font-size: 16px; color: #1e293b; font-weight: 900; }
+.sc-v3-stat span { font-size: 11px; color: var(--mt-text-muted); font-weight: 700; }
+.sc-v3-stat strong { font-size: 16px; color: var(--mt-primary); font-weight: 900; }
 .sc-v3-stat-total { background: #fef3c7; border-color: #fde68a; }
 .sc-v3-stat-total strong { color: #92400e; font-size: 18px; }
 
@@ -1751,7 +1751,7 @@ body.foodics-mode .cart-footer { display: none !important; }
    • Variance alert + mandatory explanation gating the close button
 ──────────────────────────────────────────────────────────── */
 .sc-section {
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--mt-border);
   background: #fff;
 }
 .sc-section-head {
@@ -1760,31 +1760,31 @@ body.foodics-mode .cart-footer { display: none !important; }
   padding: 14px 16px;
   font-weight: 800;
   font-size: 13px;
-  color: #0f172a;
+  color: var(--mt-primary-2);
   display: flex;
   align-items: center;
   gap: 8px;
   user-select: none;
-  background: linear-gradient(180deg, #f8fafc, #fff);
+  background: linear-gradient(180deg, var(--mt-surface-2), #fff);
 }
 .sc-section-head::-webkit-details-marker { display: none; }
 .sc-section-head .sc-chevron {
   margin-inline-start: auto;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--mt-text-light);
   transition: transform 0.2s;
 }
 .sc-section[open] .sc-section-head .sc-chevron { transform: rotate(180deg); }
 .sc-section-body { padding: 0 16px 14px; }
 
 .sc-mini-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.sc-mini-table th, .sc-mini-table td { padding: 6px 8px; text-align: start; border-bottom: 1px solid #f1f5f9; }
-.sc-mini-table th { background: #f8fafc; font-weight: 700; color: #64748b; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.4px; }
+.sc-mini-table th, .sc-mini-table td { padding: 6px 8px; text-align: start; border-bottom: 1px solid var(--mt-bg); }
+.sc-mini-table th { background: var(--mt-surface-2); font-weight: 700; color: var(--mt-text-muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.4px; }
 .sc-mini-table td:nth-child(2), .sc-mini-table th:nth-child(2),
 .sc-mini-table td:nth-child(3), .sc-mini-table th:nth-child(3),
 .sc-mini-table td:nth-child(4), .sc-mini-table th:nth-child(4) { text-align: center; }
-.sc-mini-table tbody tr:hover td { background: #f8fafc; }
-.sc-empty { text-align: center; color: #94a3b8; padding: 16px; font-style: italic; }
+.sc-mini-table tbody tr:hover td { background: var(--mt-surface-2); }
+.sc-empty { text-align: center; color: var(--mt-text-light); padding: 16px; font-style: italic; }
 
 /* Denomination grid — touch-friendly cards */
 .sc-denom-grid {
@@ -1795,7 +1795,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .sc-denom-card {
   background: #fff;
-  border: 1.5px solid #e2e8f0;
+  border: 1.5px solid var(--mt-border);
   border-radius: 10px;
   padding: 10px;
   display: flex;
@@ -1803,20 +1803,20 @@ body.foodics-mode .cart-footer { display: none !important; }
   gap: 6px;
   transition: all 0.15s;
 }
-.sc-denom-card:focus-within { border-color: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,0.12); }
+.sc-denom-card:focus-within { border-color: var(--mt-success); box-shadow: 0 0 0 3px rgba(22,163,74,0.12); }
 .sc-denom-card-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-weight: 800;
-  color: #0f172a;
+  color: var(--mt-primary-2);
 }
 .sc-denom-card-top .sc-denom-face { font-size: 14px; }
-.sc-denom-card-top .sc-denom-unit { font-size: 10px; color: #94a3b8; font-weight: 600; }
+.sc-denom-card-top .sc-denom-unit { font-size: 10px; color: var(--mt-text-light); font-weight: 600; }
 .sc-denom-card input {
   width: 100%;
   padding: 6px 8px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--mt-border);
   border-radius: 6px;
   font-size: 14px;
   font-weight: 700;
@@ -1824,10 +1824,10 @@ body.foodics-mode .cart-footer { display: none !important; }
   font-family: inherit;
   -webkit-appearance: none;
 }
-.sc-denom-card input:focus { outline: none; border-color: #16a34a; }
+.sc-denom-card input:focus { outline: none; border-color: var(--mt-success); }
 .sc-denom-card-total {
   font-size: 12px;
-  color: #16a34a;
+  color: var(--mt-success);
   font-weight: 800;
   text-align: center;
   font-family: monospace;
@@ -1856,26 +1856,26 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .sc-elec-card {
   background: #fff;
-  border: 1.5px solid #e2e8f0;
+  border: 1.5px solid var(--mt-border);
   border-radius: 10px;
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.sc-elec-card:focus-within { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
+.sc-elec-card:focus-within { border-color: var(--mt-accent); box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
 .sc-elec-card-head {
   display: flex;
   align-items: center;
   gap: 6px;
   font-weight: 800;
-  color: #0f172a;
+  color: var(--mt-primary-2);
   font-size: 13px;
 }
 .sc-elec-card input {
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--mt-border);
   border-radius: 6px;
   font-size: 14px;
   font-weight: 700;
@@ -1883,13 +1883,13 @@ body.foodics-mode .cart-footer { display: none !important; }
   font-family: monospace;
   -webkit-appearance: none;
 }
-.sc-elec-card input:focus { outline: none; border-color: #3b82f6; }
+.sc-elec-card input:focus { outline: none; border-color: var(--mt-accent); }
 
 /* Reveal bar (the big checkbox prompt) */
 .sc-reveal-bar {
   background: linear-gradient(135deg, #fef9c3, #fde68a);
-  border-top: 1px solid #fbbf24;
-  border-bottom: 1px solid #fbbf24;
+  border-top: 1px solid var(--mt-warning);
+  border-bottom: 1px solid var(--mt-warning);
   padding: 14px 16px;
   margin: 8px 0 0;
 }
@@ -1907,11 +1907,11 @@ body.foodics-mode .cart-footer { display: none !important; }
   width: 20px;
   height: 20px;
   cursor: pointer;
-  accent-color: #d97706;
+  accent-color: var(--mt-warning);
 }
 
 /* Comparison panel (revealed after counting) */
-.sc-compare-panel { padding: 14px 16px; background: #f8fafc; }
+.sc-compare-panel { padding: 14px 16px; background: var(--mt-surface-2); }
 .sc-compare-panel.hidden { display: none; }
 .sc-compare-grid {
   display: grid;
@@ -1920,22 +1920,22 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .sc-cmp-card {
   background: #fff;
-  border: 1.5px solid #e2e8f0;
+  border: 1.5px solid var(--mt-border);
   border-radius: 10px;
   padding: 12px;
   text-align: center;
 }
 .sc-cmp-blue  { border-color: #bfdbfe; background: linear-gradient(135deg, #eff6ff, #dbeafe); }
 .sc-cmp-green { border-color: #86efac; background: linear-gradient(135deg, #f0fdf4, #dcfce7); }
-.sc-cmp-lbl   { font-size: 10.5px; font-weight: 800; color: #64748b; margin-bottom: 4px; }
-.sc-cmp-val   { font-size: 20px; font-weight: 900; font-family: monospace; color: #0f172a; }
-.sc-cmp-unit  { font-size: 9.5px; color: #94a3b8; margin-top: 2px; }
+.sc-cmp-lbl   { font-size: 10.5px; font-weight: 800; color: var(--mt-text-muted); margin-bottom: 4px; }
+.sc-cmp-val   { font-size: 20px; font-weight: 900; font-family: monospace; color: var(--mt-primary-2); }
+.sc-cmp-unit  { font-size: 9.5px; color: var(--mt-text-light); margin-top: 2px; }
 .sc-cmp-diff-zero  { border-color: #86efac !important; background: linear-gradient(135deg,#f0fdf4,#dcfce7) !important; }
-.sc-cmp-diff-zero  .sc-cmp-val { color: #16a34a; }
+.sc-cmp-diff-zero  .sc-cmp-val { color: var(--mt-success); }
 .sc-cmp-diff-pos   { border-color: #fde68a !important; background: linear-gradient(135deg,#fef9c3,#fef3c7) !important; }
 .sc-cmp-diff-pos   .sc-cmp-val { color: #b45309; }
 .sc-cmp-diff-neg   { border-color: #fca5a5 !important; background: linear-gradient(135deg,#fef2f2,#fee2e2) !important; }
-.sc-cmp-diff-neg   .sc-cmp-val { color: #dc2626; }
+.sc-cmp-diff-neg   .sc-cmp-val { color: var(--mt-danger); }
 
 /* Per-method diff rows */
 .sc-pmd-row {
@@ -1943,16 +1943,16 @@ body.foodics-mode .cart-footer { display: none !important; }
   justify-content: space-between;
   align-items: center;
   background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  border: 1px solid var(--mt-border);
+  border-radius: var(--mt-radius-sm);
   padding: 8px 12px;
   margin-bottom: 4px;
   font-size: 12px;
 }
-.sc-pmd-row .sc-pmd-name { font-weight: 700; color: #0f172a; }
+.sc-pmd-row .sc-pmd-name { font-weight: 700; color: var(--mt-primary-2); }
 .sc-pmd-row .sc-pmd-vals { display: flex; gap: 14px; align-items: center; font-family: monospace; }
-.sc-pmd-row .sc-pmd-exp  { color: #64748b; font-size: 11px; }
-.sc-pmd-row .sc-pmd-act  { color: #0f172a; font-weight: 800; }
+.sc-pmd-row .sc-pmd-exp  { color: var(--mt-text-muted); font-size: 11px; }
+.sc-pmd-row .sc-pmd-act  { color: var(--mt-primary-2); font-weight: 800; }
 .sc-pmd-row .sc-pmd-diff { font-weight: 800; min-width: 60px; text-align: end; }
 
 /* Variance alert + mandatory explanation */

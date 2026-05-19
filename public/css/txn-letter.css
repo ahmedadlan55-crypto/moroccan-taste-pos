@@ -173,7 +173,7 @@
   align-items: center;
   cursor: pointer;
   padding: 8px;
-  border-radius: 8px;
+  border-radius: var(--mt-radius-sm);
   transition: background 150ms;
   text-decoration: none;
   color: inherit;
@@ -186,10 +186,10 @@
   margin-bottom: 6px;
   line-height: 1;
 }
-.txn-letter-attach-icon.pdf { color: #dc2626; }
-.txn-letter-attach-icon.excel { color: #16a34a; }
+.txn-letter-attach-icon.pdf { color: var(--mt-danger); }
+.txn-letter-attach-icon.excel { color: var(--mt-success); }
 .txn-letter-attach-icon.word { color: #1e40af; }
-.txn-letter-attach-icon.image { color: #f59e0b; }
+.txn-letter-attach-icon.image { color: var(--mt-warning); }
 .txn-letter-attach-icon.generic { color: #6b7280; }
 .txn-letter-attach-name {
   font-size: 11px;
@@ -275,15 +275,15 @@
 }
 /* V5-UX: each lifecycle state gets its OWN color so users can scan at a glance.
    Previously pending + in_progress used the same yellow/amber. */
-.txn-letter-status-pill.s-draft        { background: #f1f5f9; color: #475569; border: 1px dashed #cbd5e1; }
+.txn-letter-status-pill.s-draft        { background: var(--mt-bg); color: #475569; border: 1px dashed var(--mt-border); }
 .txn-letter-status-pill.s-created      { background: #e0f2fe; color: #0369a1; }
 .txn-letter-status-pill.s-pending      { background: #fef3c7; color: #92400e; }
 .txn-letter-status-pill.s-in_progress  { background: #dbeafe; color: #1d4ed8; }
-.txn-letter-status-pill.s-replied      { background: #ede9fe; color: #6d28d9; }
+.txn-letter-status-pill.s-replied      { background: #ede9fe; color: var(--mt-accent-2); }
 .txn-letter-status-pill.s-returned     { background: #ffedd5; color: #9a3412; border: 1px solid #fdba74; }
-.txn-letter-status-pill.s-approved     { background: #dcfce7; color: #15803d; }
+.txn-letter-status-pill.s-approved     { background: #dcfce7; color: var(--mt-success-2); }
 .txn-letter-status-pill.s-rejected     { background: #fee2e2; color: #991b1b; }
-.txn-letter-status-pill.s-closed       { background: #cbd5e1; color: #1e293b; }
+.txn-letter-status-pill.s-closed       { background: var(--mt-border); color: var(--mt-primary); }
 
 /* ═══════════════════════════════════════════════════════════════════
    V5: PRINT STYLESHEET

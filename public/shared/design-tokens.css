@@ -17,8 +17,10 @@
 :root {
   /* Brand */
   --mt-primary:     #1e293b;
+  --mt-primary-rgb: 30, 41, 59;       /* v5.10.96 — for rgba() */
   --mt-primary-2:   #0f172a;
   --mt-accent:      #7c3aed;
+  --mt-accent-rgb:  124, 58, 237;     /* v5.10.96 — for rgba() */
   --mt-accent-2:    #6d28d9;
   --mt-accent-soft: #faf5ff;
 
@@ -26,6 +28,7 @@
   --mt-success:     #16a34a;
   --mt-success-2:   #15803d;
   --mt-danger:      #dc2626;
+  --mt-danger-rgb:  220, 38, 38;      /* v5.10.96 — for rgba() */
   --mt-danger-2:    #b91c1c;
   --mt-warning:     #f59e0b;
   --mt-info:        #0284c7;
@@ -59,10 +62,19 @@
   --mt-font-mono:   ui-monospace, "SFMono-Regular", "Menlo", monospace;
 }
 
-/* Unified focus ring across every interactive element. JS-driven
- * widgets that prevent default click should keep this — touch users
- * benefit from a visible indicator. */
-*:focus-visible {
-  outline: 0;
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.20);
+/* v5.10.96 — Unified focus ring scoped to interactive elements only.
+ * The previous `*:focus-visible` wildcard tagged every element on Tab
+ * including non-interactive containers — visually noisy. The new rule
+ * targets the natural set (button/input/select/textarea + ARIA buttons)
+ * and uses the design-token RGB variant for the halo so a brand recolor
+ * propagates in one place. */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(var(--mt-accent-rgb), 0.25);
 }

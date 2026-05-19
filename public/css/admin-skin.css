@@ -16,18 +16,18 @@
 /* ───────────── 1. New brand tokens ───────────── */
 :root {
   /* Brand — slate + purple + green (matches /shared/design-tokens.css) */
-  --primary:       #1e293b;   /* main slate */
-  --secondary:     #7c3aed;   /* was blue → now purple */
-  --accent:        #7c3aed;
-  --bg-color:      #f1f5f9;
-  --text-dark:     #0f172a;
-  --text-light:    #64748b;
-  --border:        #e2e8f0;
+  --primary:       var(--mt-primary);   /* main slate */
+  --secondary:     var(--mt-accent);   /* was blue → now purple */
+  --accent:        var(--mt-accent);
+  --bg-color:      var(--mt-bg);
+  --text-dark:     var(--mt-primary-2);
+  --text-light:    var(--mt-text-muted);
+  --border:        var(--mt-border);
   --white:         #ffffff;
-  --danger:        #dc2626;
-  --danger-hover:  #b91c1c;
-  --success:       #16a34a;
-  --warning:       #f59e0b;
+  --danger:        var(--mt-danger);
+  --danger-hover:  var(--mt-danger-2);
+  --success:       var(--mt-success);
+  --warning:       var(--mt-warning);
 
   /* Extras the skin uses */
   --mt-accent-soft:   #faf5ff;
@@ -37,9 +37,9 @@
   --mt-danger-soft:   #fee2e2;
   --mt-warning-soft:  #fef3c7;
   --mt-info-soft:     #e0f2fe;
-  --mt-surface-2:     #f8fafc;
-  --mt-surface-3:     #f1f5f9;
-  --mt-surface-4:     #e2e8f0;
+  --mt-surface-2:     var(--mt-surface-2);
+  --mt-surface-3:     var(--mt-bg);
+  --mt-surface-4:     var(--mt-border);
 
   --mt-shadow-focus:  0 0 0 3px rgba(124, 58, 237, 0.18);
   --mt-r-md:          12px;
@@ -75,7 +75,7 @@ body {
   box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 2px 6px rgba(124,58,237,0.25) !important;
 }
 .btn-primary:hover {
-  background: #6d28d9 !important;
+  background: var(--mt-accent-2) !important;
   box-shadow: 0 4px 14px rgba(124,58,237,0.35) !important;
 }
 .btn-success {
@@ -83,7 +83,7 @@ body {
   box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 2px 6px rgba(22,163,74,0.25) !important;
 }
 .btn-success:hover {
-  background: #15803d !important;
+  background: var(--mt-success-2) !important;
   box-shadow: 0 4px 14px rgba(22,163,74,0.35) !important;
 }
 .btn-danger {
@@ -101,7 +101,7 @@ body {
 }
 .btn-light:hover {
   background: var(--mt-surface-3) !important;
-  border-color: #cbd5e1 !important;
+  border-color: var(--mt-border) !important;
 }
 
 /* ───────────── 4. Inputs ───────────── */
@@ -117,7 +117,7 @@ body {
 }
 .form-label {
   font-weight: 700 !important;
-  color: #1e293b !important;
+  color: var(--mt-primary) !important;
   font-size: 12.5px !important;
   letter-spacing: 0 !important;
 }
@@ -131,7 +131,7 @@ body {
 
 /* ───────────── 6. Sidebar (admin) ───────────── */
 .sidebar {
-  background: #0f172a !important;
+  background: var(--mt-primary-2) !important;
   position: relative;
 }
 .sidebar::before {
@@ -149,7 +149,7 @@ body {
 .sidebar-brand i { color: var(--accent) !important; }
 
 .nav-item {
-  border-radius: 8px;
+  border-radius: var(--mt-radius-sm);
   margin: 1px 8px;
   padding: 10px 14px !important;
   border-inline-end: 0 !important;
@@ -196,7 +196,7 @@ body {
   padding: 5px 14px 5px 5px !important;
 }
 .admin-avatar {
-  background: linear-gradient(135deg, var(--accent), #6d28d9) !important;
+  background: linear-gradient(135deg, var(--accent), var(--mt-accent-2)) !important;
   box-shadow: 0 2px 6px rgba(124,58,237,0.3) !important;
 }
 
@@ -213,7 +213,7 @@ body {
   box-shadow: 0 8px 24px rgba(124,58,237,0.08), 0 4px 12px rgba(15,23,42,0.06) !important;
 }
 .stat-icon {
-  border-radius: 12px !important;
+  border-radius: var(--mt-radius-md) !important;
   background: var(--mt-accent-soft) !important;
   color: var(--mt-accent-fg) !important;
 }
@@ -276,7 +276,7 @@ body {
 /* ───────────── 12. Toasts ───────────── */
 .toast {
   background: var(--primary) !important;
-  border-radius: 12px !important;
+  border-radius: var(--mt-radius-md) !important;
   font-weight: 700 !important;
   padding: 12px 20px !important;
   box-shadow: 0 16px 40px rgba(15,23,42,0.20) !important;
@@ -289,10 +289,10 @@ body {
   border-radius: 18px !important;
   box-shadow: 0 8px 24px -4px rgba(15,23,42,0.12) !important;
 }
-.erp-kpi-card.bg-blue   { background: linear-gradient(135deg, #7c3aed, #6d28d9) !important; }
-.erp-kpi-card.bg-green  { background: linear-gradient(135deg, #16a34a, #15803d) !important; }
-.erp-kpi-card.bg-purple { background: linear-gradient(135deg, #a855f7, #7c3aed) !important; }
-.erp-kpi-card.bg-orange { background: linear-gradient(135deg, #f59e0b, #d97706) !important; }
+.erp-kpi-card.bg-blue   { background: linear-gradient(135deg, var(--mt-accent), var(--mt-accent-2)) !important; }
+.erp-kpi-card.bg-green  { background: linear-gradient(135deg, var(--mt-success), var(--mt-success-2)) !important; }
+.erp-kpi-card.bg-purple { background: linear-gradient(135deg, #a855f7, var(--mt-accent)) !important; }
+.erp-kpi-card.bg-orange { background: linear-gradient(135deg, var(--mt-warning), var(--mt-warning)) !important; }
 .erp-kpi-val { letter-spacing: -0.5px !important; }
 
 /* ───────────── 14. Sales tabs ───────────── */
@@ -300,7 +300,7 @@ body {
   background: var(--mt-surface-3) !important;
   border: 0 !important;
   padding: 4px !important;
-  border-radius: 12px !important;
+  border-radius: var(--mt-radius-md) !important;
 }
 .sales-tab {
   border-radius: 9px !important;
@@ -344,7 +344,7 @@ body {
   background:
     radial-gradient(circle at 0% 0%, rgba(167,139,250,0.10), transparent 50%),
     radial-gradient(circle at 100% 100%, rgba(124,58,237,0.08), transparent 50%),
-    linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%) !important;
+    linear-gradient(135deg, var(--mt-bg) 0%, var(--mt-border) 100%) !important;
 }
 .cat-pill.active {
   background: var(--accent) !important;
@@ -394,7 +394,7 @@ body {
 /* ───────────── 19. Searchable dropdown ───────────── */
 .sd-results {
   border-color: var(--accent) !important;
-  border-radius: 12px !important;
+  border-radius: var(--mt-radius-md) !important;
   box-shadow: 0 12px 32px rgba(15,23,42,0.12) !important;
 }
 .sd-result-item:hover { background: var(--mt-accent-soft) !important; }
@@ -411,7 +411,7 @@ body {
   border-radius: 999px;
   border: 2px solid var(--bg-color);
 }
-*::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+*::-webkit-scrollbar-thumb:hover { background: var(--mt-border); }
 
 /* ════════════════════════════════════════════════════════════════
    End of skin.

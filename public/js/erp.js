@@ -653,12 +653,18 @@ function _coaInjectToolbarCss() {
   var st = document.createElement('style');
   st.id = 'coaToolbarStyles';
   st.textContent =
-    /* Header row layout: search grows, groups + overflow sit at end */
-    '#erpGLAccounts .coa-tree-header{display:flex !important;align-items:center;gap:10px !important;padding:12px 14px !important;background:#fff;border-bottom:1px solid #f1f5f9;flex-wrap:nowrap;}' +
-    '#erpGLAccounts .coa-search{flex:1 1 auto !important;min-width:120px;height:36px;padding:0 12px;border:1.5px solid #e2e8f0;border-radius:9px;font-family:inherit;font-size:13px;color:#0f172a;background:#fff;outline:none;transition:border-color .15s ease,box-shadow .15s ease;}' +
+    /* v5.10.93 — Topbar now hosts BOTH the chips and the actions in
+       one row. Chips take flex:1; actions pin to the end. Wraps on
+       narrow viewports. */
+    '#erpGLAccounts .coa-topbar{display:flex !important;align-items:center;gap:14px;padding:12px 16px !important;flex-wrap:wrap;background:#fff;border-bottom:1px solid #f1f5f9;}' +
+    '#erpGLAccounts .coa-type-chips{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}' +
+    '#erpGLAccounts .coa-topbar-actions{display:flex;align-items:center;gap:10px;flex-shrink:0;}' +
+    /* Tree header: search input only — full width hero */
+    '#erpGLAccounts .coa-tree-header{display:block !important;padding:14px 16px !important;background:#fff;border-bottom:1px solid #f1f5f9;}' +
+    '#erpGLAccounts .coa-search{width:100% !important;height:40px;padding:0 14px;border:1.5px solid #e2e8f0;border-radius:10px;font-family:inherit;font-size:13.5px;color:#0f172a;background:#fff;outline:none;transition:border-color .15s ease,box-shadow .15s ease;box-sizing:border-box;}' +
     '#erpGLAccounts .coa-search:focus{border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,0.12);}' +
-    /* The OLD .coa-tree-toolbar wrapper is gone in v5.10.92; if any
-       cached HTML still renders it we hide it to avoid duplicate UI. */
+    '#erpGLAccounts .coa-search::placeholder{color:#94a3b8;}' +
+    /* Legacy wrapper kept hidden so cached HTML doesn't double-render */
     '#erpGLAccounts .coa-tree-toolbar{display:none !important;}' +
     /* Toolbar groups */
     '#erpGLAccounts .coa-toolbar-group{display:inline-flex;gap:4px;flex-shrink:0;}' +
@@ -667,6 +673,8 @@ function _coaInjectToolbarCss() {
     '#erpGLAccounts .coa-tool-icon-btn{width:34px;height:34px;border-radius:9px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:13px;transition:all .15s ease;flex-shrink:0;}' +
     '#erpGLAccounts .coa-tool-icon-btn:hover{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
     '#erpGLAccounts .coa-tool-icon-btn:active{transform:scale(0.97);}' +
+    /* Responsive: under 900px, actions wrap below chips */
+    '@media (max-width:900px){#erpGLAccounts .coa-topbar-actions{width:100%;justify-content:flex-end;}}' +
     /* Overflow wrapper + menu */
     '#erpGLAccounts .coa-overflow{position:relative;flex-shrink:0;}' +
     '#erpGLAccounts .coa-overflow-menu{display:none;position:absolute;top:calc(100% + 6px);inset-inline-end:0;background:#fff;border:1.5px solid #e2e8f0;border-radius:11px;box-shadow:0 14px 38px -10px rgba(15,23,42,0.22);min-width:230px;padding:6px;z-index:50;animation:coaOvIn .15s ease;}' +
@@ -683,8 +691,8 @@ function _coaInjectToolbarCss() {
     '#erpGLAccounts .coa-tree-body{padding-top:6px;}' +
     '#erpGLAccounts .coa-node-row{padding:10px 14px !important;gap:10px !important;}' +
     '#erpGLAccounts .coa-node-children{padding-inline-start:22px !important;}' +
-    /* Topbar gets a touch of vertical breathing now that it carries only chips */
-    '#erpGLAccounts .coa-topbar{padding:10px 14px;}' +
+    /* v5.10.93 — topbar layout owned by the rule above (flex row +
+       padding 12px 16px) so the legacy compact rule was removed. */
     '';
   document.head.appendChild(st);
 

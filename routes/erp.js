@@ -3493,70 +3493,165 @@ router.get('/inventory-valuation', async (req, res) => {
   }
 });
 
-// v5.11.14 — Realigned for the v5.11.8 IFRS template: parent code is
-// '113' (Inventory), not '112' (which is now Accounts Receivable).
-// Sub-account codes follow the 113xx pattern so they nest cleanly under
-// the inventory branch instead of polluting the AR branch.
+// v5.10.88 — Resolve the inventory CoA parent. Priority:
+//   1. settings.inventory_coa_parent_id (if the row exists in gl_accounts)
+//   2. Auto-detect: '100300' (GGMMPP) → '113' (legacy) → '112' (older)
+// Returns { id, code, level, name_ar, source } or null if nothing matches.
+async function _resolveInventoryParent(opts) {
+  opts = opts || {};
+  if (!opts.ignoreSetting) {
+    const [pset] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_coa_parent_id' LIMIT 1");
+    const savedId = pset.length ? String(pset[0].setting_value || '') : '';
+    if (savedId) {
+      const [row] = await db.query('SELECT id, code, name_ar, level, type FROM gl_accounts WHERE id = ? LIMIT 1', [savedId]);
+      if (row.length) return Object.assign({}, row[0], { source: 'setting' });
+    }
+  }
+  // Auto-detect — prefer GGMMPP, then legacy fallbacks
+  for (const code of ['100300', '113', '112']) {
+    const [r] = await db.query('SELECT id, code, name_ar, level, type FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
+    if (r.length) return Object.assign({}, r[0], { source: 'auto-detect' });
+  }
+  return null;
+}
+
+// v5.10.88 — GET /inventory-coa-parent
+// Returns the resolved parent + the raw setting (if any) so the UI
+// can show a mismatch banner when the saved id no longer resolves.
+// Query param ?reset=1 ignores the setting and runs auto-detect only.
+router.get('/inventory-coa-parent', async (req, res) => {
+  try {
+    const ignoreSetting = String(req.query.reset || '') === '1';
+    const [pset] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_coa_parent_id' LIMIT 1");
+    const savedId = pset.length ? String(pset[0].setting_value || '') : null;
+    const [pcode] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_coa_parent_code' LIMIT 1");
+    const savedCode = pcode.length ? String(pcode[0].setting_value || '') : null;
+    const resolved = await _resolveInventoryParent({ ignoreSetting });
+    let childrenCount = 0;
+    if (resolved && resolved.id) {
+      const [kids] = await db.query('SELECT COUNT(*) AS n FROM gl_accounts WHERE parent_id = ?', [resolved.id]);
+      childrenCount = Number(kids[0].n) || 0;
+    }
+    res.json({
+      success: true,
+      settingId: savedId,
+      settingCode: savedCode,
+      resolved: resolved ? {
+        id: resolved.id,
+        code: resolved.code,
+        nameAr: resolved.name_ar,
+        level: resolved.level,
+        type: resolved.type,
+        childrenCount: childrenCount
+      } : null,
+      source: resolved ? resolved.source : null
+    });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// v5.10.88 — Sync inventory CoA accounts. Reads its parent from
+// settings via _resolveInventoryParent so the owner can re-target
+// the auto-numbering through the UI. Sub-account codes follow the
+// parent's prefix style:
+//   • 6-digit GGMMPP parent (e.g. 100300) → 1003 PP slots
+//     (100310, 100320, 100330, 100340, …). Used by the v5.10.85+
+//     Saudi/International standard CoA.
+//   • 3-digit legacy parent (e.g. 113) → 113xx 2-digit suffix
+//     (11301, 11302, …) preserved for backward-compat.
 router.post('/gl/sync-inventory', async (req, res) => {
   try {
-    // Ensure parent 113 (Inventory) exists
-    const [p113] = await db.query("SELECT id FROM gl_accounts WHERE code = '113'");
-    let parentId = p113.length ? p113[0].id : null;
-    if (!parentId) {
+    let parent = await _resolveInventoryParent();
+    // Fall back: if nothing resolved, create '113' under '11' (legacy)
+    if (!parent) {
       const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11'");
-      parentId = 'GL-113';
+      const parentId = 'GL-113';
       await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
         [parentId, '113', 'المخزون', 'asset', p11.length ? p11[0].id : null, 3]);
+      parent = { id: parentId, code: '113', name_ar: 'المخزون', level: 3, type: 'asset', source: 'created' };
     }
+
+    const parentId = parent.id;
+    const parentCode = String(parent.code || '');
+    const parentLevel = Number(parent.level || 2);
+    const childLevel = parentLevel + 1;
+
+    // Determine code template for new children based on parent style
+    // GGMMPP (6 digits): siblings of 100310/100320/…  use PP slot iteration
+    //                    on the parent's first 4 chars (1003) + 2-digit PP
+    // Legacy (3 chars):  '113' + 2-digit suffix → 11301, 11302, …
+    const isGgmmpp = /^\d{6}$/.test(parentCode);
+    const childPrefix = isGgmmpp ? parentCode.substr(0, 4) : parentCode;
+    const childCodeRegex = isGgmmpp
+      ? '^' + childPrefix + '[0-9]{2}$'
+      : '^' + childPrefix + '[0-9]{2}$';
 
     // Get inventory categories
     const [cats] = await db.query('SELECT DISTINCT category FROM inv_items WHERE active = 1 AND category IS NOT NULL AND category != ""');
     let created = 0;
 
-    // Look at existing children directly under code 113 (not the leaves
-    // of 1131/1132/etc — those are the template's named buckets and we
-    // don't auto-add siblings to them). Code prefix '113xx' = 5 chars.
-    const [existing] = await db.query("SELECT code, name_ar FROM gl_accounts WHERE code REGEXP '^113[0-9]{2}$' ORDER BY code");
-    const existingNames = existing.map(e => e.name_ar.toLowerCase());
+    const [existing] = await db.query(
+      "SELECT code, name_ar FROM gl_accounts WHERE code REGEXP ? ORDER BY code",
+      [childCodeRegex]
+    );
+    const existingNames = existing.map(e => (e.name_ar || '').toLowerCase());
 
     for (const cat of cats) {
       const catName = 'مخزون ' + cat.category;
-      if (existingNames.includes(catName.toLowerCase())) continue; // Already exists
+      if (existingNames.includes(catName.toLowerCase())) continue;
 
-      // Find next code in the 113xx range
-      const [lastChild] = await db.query("SELECT code FROM gl_accounts WHERE code REGEXP '^113[0-9]{2}$' ORDER BY code DESC LIMIT 1");
-      let nextCode = '11301';
+      // Next code in the child-prefix range
+      const [lastChild] = await db.query(
+        "SELECT code FROM gl_accounts WHERE code REGEXP ? ORDER BY code DESC LIMIT 1",
+        [childCodeRegex]
+      );
+      let nextCode;
       if (lastChild.length) {
-        const num = parseInt(lastChild[0].code.replace('113','')) || 0;
-        nextCode = '113' + String(num + 1).padStart(2, '0');
+        const suffix = lastChild[0].code.substr(childPrefix.length);
+        const num = parseInt(suffix, 10) || 0;
+        nextCode = childPrefix + String(num + 1).padStart(2, '0');
+      } else {
+        nextCode = childPrefix + '01';
       }
       const id = 'GL-' + nextCode;
-      await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-        [id, nextCode, catName, 'asset', parentId, 4]);
+      await db.query(
+        'INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
+        [id, nextCode, catName, 'asset', parentId, childLevel]
+      );
 
       // Update balance with current stock value for this category
       const [catItems] = await db.query('SELECT SUM(stock * cost) AS val FROM inv_items WHERE category = ? AND active = 1', [cat.category]);
       const catValue = Number(catItems[0].val) || 0;
       if (catValue > 0) await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [catValue, id]);
+      existingNames.push(catName.toLowerCase());
       created++;
     }
 
-    // Update ALL existing inventory category balances (perpetual sync)
-    const [allInvAccounts] = await db.query("SELECT id, name_ar FROM gl_accounts WHERE code LIKE '112%' AND code != '112'");
+    // Update ALL existing inventory sub-account balances (perpetual sync).
+    // We match descendants of the resolved parent, not a hardcoded prefix.
+    const [allInvAccounts] = await db.query(
+      "SELECT id, name_ar FROM gl_accounts WHERE parent_id = ? AND id <> ?",
+      [parentId, parentId]
+    );
     for (const acc of allInvAccounts) {
-      // Extract category name from "مخزون X" → "X"
       const catName = (acc.name_ar || '').replace(/^مخزون\s*/, '');
       if (catName) {
         const [catVal] = await db.query('SELECT SUM(stock * cost) AS val FROM inv_items WHERE category = ? AND active = 1', [catName]);
-        await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [Number(catVal[0].val)||0, acc.id]);
+        await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [Number(catVal[0].val) || 0, acc.id]);
       }
     }
 
-    // Update parent 112 balance (total of all inventory)
+    // Update parent balance (total of all active inventory)
     const [totalVal] = await db.query('SELECT SUM(stock * cost) AS val FROM inv_items WHERE active = 1');
-    if (parentId) await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [Number(totalVal[0].val)||0, parentId]);
+    await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [Number(totalVal[0].val) || 0, parentId]);
 
-    res.json({ success: true, categoriesCreated: created, totalCategories: cats.length });
+    res.json({
+      success: true,
+      categoriesCreated: created,
+      totalCategories: cats.length,
+      parent: { id: parentId, code: parentCode, source: parent.source }
+    });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 

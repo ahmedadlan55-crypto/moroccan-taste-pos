@@ -2334,6 +2334,35 @@
     </div>
   </div>
 
+  <!-- v5.10.88 — Inventory CoA Parent Anchor.
+       Lets the owner pick which CoA folder the auto-numbering hangs
+       new inventory sub-accounts under. Saved as a `settings` row
+       (`inventory_coa_parent_id`) and consumed by /gl/sync-inventory.
+       Pattern: scoped .im-* classes + inline-injected CSS via
+       `_invMethodInjectStyles()` so the layout never depends on
+       which CSS bundle is active. -->
+  <h3 class="im-section-title"><i class="fas fa-folder-tree" style="color:#7c3aed;"></i> أب حسابات المخزون في شجرة الحسابات</h3>
+  <div class="im-parent-card">
+    <div class="im-parent-current">
+      <div class="im-parent-label"><i class="fas fa-anchor"></i> الأب الحالي المُستخدَم في الترقيم</div>
+      <div id="invParentDisplay" class="im-parent-value">— جاري التحميل —</div>
+      <div id="invParentSource" class="im-parent-source"></div>
+    </div>
+    <div class="im-parent-picker">
+      <div class="im-parent-picker-label">تغيير الأب</div>
+      <div id="invParentMount"></div>
+      <div class="im-parent-actions">
+        <button class="im-btn im-btn-ghost" onclick="erpDetectInventoryParent()" type="button">
+          <i class="fas fa-wand-magic-sparkles"></i><span>كشف تلقائي</span>
+        </button>
+        <button class="im-btn im-btn-primary" onclick="erpSaveInventoryParent()" type="button">
+          <i class="fas fa-check"></i><span>حفظ كأب افتراضي</span>
+        </button>
+      </div>
+    </div>
+    <div id="invParentWarn" class="im-parent-warn" style="display:none;"></div>
+  </div>
+
   <h3 style="font-size:15px;font-weight:800;margin:24px 0 12px;color:#0f172a;"><i class="fas fa-sack-dollar" style="color:#f59e0b;"></i> تقييم المخزون الحالي</h3>
 
   <div id="invValuationContent">

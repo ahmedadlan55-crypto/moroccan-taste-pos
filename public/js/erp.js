@@ -6014,7 +6014,74 @@ function erpPrintFinReport() {
 // ═══════════════════════════════════════
 // INVENTORY METHOD & VALUATION (نوع الجرد)
 // ═══════════════════════════════════════
+// v5.10.88 — Scoped CSS injection for the Inventory Method screen.
+// Idempotent (single #invMethodStyles tag). Same pattern as
+// _scaInjectStyles (v5.10.87) and _coaInjectMoveModalCss (v5.10.86)
+// so the layout is bullet-proof regardless of the active CSS bundle.
+function _invMethodInjectStyles() {
+  if (document.getElementById('invMethodStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'invMethodStyles';
+  st.textContent =
+    '#erpInventoryMethod .im-section-title{font-size:15px;font-weight:800;margin:24px 0 12px;color:#0f172a;display:flex;align-items:center;gap:8px;}' +
+    '#erpInventoryMethod .im-parent-card{background:#fff;border:1.5px solid #ddd6fe;border-radius:14px;padding:18px 20px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:18px;align-items:start;}' +
+    '@media (max-width:900px){#erpInventoryMethod .im-parent-card{grid-template-columns:1fr;}}' +
+    '#erpInventoryMethod .im-parent-current{padding:14px 16px;background:linear-gradient(135deg,#faf5ff,#fff 70%);border:1.5px solid #ede9fe;border-radius:12px;min-width:0;}' +
+    '#erpInventoryMethod .im-parent-label{font-size:11.5px;font-weight:800;color:#5b21b6;text-transform:uppercase;letter-spacing:0.04em;display:flex;align-items:center;gap:6px;}' +
+    '#erpInventoryMethod .im-parent-label i{font-size:11px;}' +
+    '#erpInventoryMethod .im-parent-value{margin-top:10px;font-size:16px;font-weight:800;color:#0f172a;display:flex;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.5;}' +
+    '#erpInventoryMethod .im-parent-value code{font-family:ui-monospace,Menlo,monospace;font-size:13px;background:#fff;padding:3px 10px;border-radius:7px;border:1.5px solid #ddd6fe;color:#5b21b6;font-weight:800;}' +
+    '#erpInventoryMethod .im-parent-value .im-lvl{font-size:10.5px;font-weight:800;color:#64748b;background:#f1f5f9;padding:2px 8px;border-radius:5px;}' +
+    '#erpInventoryMethod .im-parent-source{margin-top:8px;font-size:11.5px;color:#64748b;display:inline-flex;align-items:center;gap:5px;padding:3px 9px;background:#f8fafc;border-radius:999px;}' +
+    '#erpInventoryMethod .im-parent-source.is-setting{background:#dcfce7;color:#15803d;font-weight:700;}' +
+    '#erpInventoryMethod .im-parent-source.is-auto{background:#fef3c7;color:#92400e;font-weight:700;}' +
+    '#erpInventoryMethod .im-parent-picker{min-width:0;}' +
+    '#erpInventoryMethod .im-parent-picker-label{font-size:12px;font-weight:800;color:#475569;margin-bottom:8px;letter-spacing:0.02em;}' +
+    '#erpInventoryMethod #invParentMount{margin-bottom:12px;}' +
+    '#erpInventoryMethod .im-parent-actions{display:flex;gap:8px;flex-wrap:wrap;}' +
+    '#erpInventoryMethod .im-btn{height:38px;padding:0 18px;border-radius:10px;border:1.5px solid transparent;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:all .15s ease;}' +
+    '#erpInventoryMethod .im-btn-ghost{background:#fff;border-color:#cbd5e1;color:#475569;}' +
+    '#erpInventoryMethod .im-btn-ghost:hover{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
+    '#erpInventoryMethod .im-btn-primary{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;box-shadow:0 4px 12px rgba(124,58,237,0.30);}' +
+    '#erpInventoryMethod .im-btn-primary:hover:not(:disabled){box-shadow:0 6px 18px rgba(124,58,237,0.45);transform:translateY(-1px);}' +
+    '#erpInventoryMethod .im-btn-primary:disabled{opacity:0.6;cursor:not-allowed;}' +
+    '#erpInventoryMethod .im-parent-warn{grid-column:1/-1;margin-top:6px;padding:11px 14px;background:#fef2f2;border:1.5px solid #fca5a5;border-radius:10px;font-size:12.5px;color:#7f1d1d;display:flex;align-items:flex-start;gap:10px;line-height:1.6;}' +
+    '#erpInventoryMethod .im-parent-warn i{color:#dc2626;font-size:14px;margin-top:1px;flex-shrink:0;}' +
+    /* Bridge .coa-sel styling into the picker so the dropdown looks right.
+       This mirrors a subset of the rules that live in inventory-catalog
+       (2).css but didn't make it into the active inventory-catalog.css. */
+    '#erpInventoryMethod .coa-sel{position:relative;width:100%;}' +
+    '#erpInventoryMethod .coa-sel__trigger{width:100%;height:42px;padding:0 14px;border:1.5px solid #e2e8f0;border-radius:10px;background:#fff;font-family:inherit;font-size:13.5px;color:#0f172a;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;transition:border-color .15s ease,box-shadow .15s ease;}' +
+    '#erpInventoryMethod .coa-sel__trigger:hover{border-color:#94a3b8;}' +
+    '#erpInventoryMethod .coa-sel[data-open="1"] .coa-sel__trigger{border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,0.12);}' +
+    '#erpInventoryMethod .coa-sel__triggerText{display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '#erpInventoryMethod .coa-sel__trigger-code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:#ede9fe;color:#5b21b6;padding:2px 8px;border-radius:5px;font-weight:700;flex-shrink:0;}' +
+    '#erpInventoryMethod .coa-sel__trigger-name{font-weight:600;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '#erpInventoryMethod .coa-sel__current{flex:1;color:#0f172a;}' +
+    '#erpInventoryMethod .coa-sel__current.is-placeholder{color:#94a3b8;font-weight:500;}' +
+    '#erpInventoryMethod .coa-sel__chev{color:#94a3b8;font-size:11px;transition:transform .15s ease;}' +
+    '#erpInventoryMethod .coa-sel[data-open="1"] .coa-sel__chev{transform:rotate(180deg);color:#7c3aed;}' +
+    '#erpInventoryMethod .coa-sel__panel{display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;box-shadow:0 10px 30px -10px rgba(15,23,42,0.20);z-index:30;flex-direction:column;overflow:hidden;}' +
+    '#erpInventoryMethod .coa-sel[data-open="1"] .coa-sel__panel{display:flex;}' +
+    '#erpInventoryMethod .coa-sel__searchbox{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1.5px solid #f1f5f9;background:#fafafa;}' +
+    '#erpInventoryMethod .coa-sel__searchbox i{color:#94a3b8;font-size:12px;}' +
+    '#erpInventoryMethod .coa-sel__search{flex:1;border:none;outline:none;background:transparent;font-family:inherit;font-size:13px;color:#0f172a;}' +
+    '#erpInventoryMethod .coa-sel__list{max-height:240px;overflow-y:auto;}' +
+    '#erpInventoryMethod .coa-sel__opt{display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;transition:background .12s ease;}' +
+    '#erpInventoryMethod .coa-sel__opt:last-child{border-bottom:none;}' +
+    '#erpInventoryMethod .coa-sel__opt:hover,#erpInventoryMethod .coa-sel__opt.is-active{background:#faf5ff;}' +
+    '#erpInventoryMethod .coa-sel__opt.is-selected{background:#ede9fe;}' +
+    '#erpInventoryMethod .coa-sel__opt-code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#f5f3ff;color:#5b21b6;padding:2px 7px;border-radius:4px;font-weight:700;flex-shrink:0;min-width:62px;text-align:center;}' +
+    '#erpInventoryMethod .coa-sel__opt-name{flex:1;color:#0f172a;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '#erpInventoryMethod .coa-sel__tick{color:#7c3aed;font-size:12px;flex-shrink:0;}' +
+    '#erpInventoryMethod .coa-sel__footer{padding:6px 12px;border-top:1.5px solid #f1f5f9;background:#fafafa;font-size:11px;color:#64748b;}' +
+    '#erpInventoryMethod .coa-sel__empty{padding:24px 12px;text-align:center;color:#94a3b8;font-size:12.5px;}' +
+    '';
+  document.head.appendChild(st);
+}
+
 function erpLoadInventoryMethod() {
+  _invMethodInjectStyles();
   window._apiBridge.withSuccessHandler(function(data) {
     var method = data.method || 'perpetual';
     // Apply active state using the new design-system class
@@ -6035,10 +6102,169 @@ function erpLoadInventoryMethod() {
         _woMetric('fa-receipt', 'purple', 'احتساب COGS', method==='perpetual'?'لحظي (كل بيع)':'دوري (كل جرد)', 'purple') +
         _woMetric('fa-building-columns', 'info', 'ترحيل GL', method==='perpetual'?'تلقائي مع البيع':'عند الجرد', 'info');
     }
+    // v5.10.88 — load CoA parent state for the inventory anchor card
+    _erpLoadInventoryParent();
     // Load valuation
     erpLoadInventoryValuation();
   }).getInventoryMethod();
 }
+
+// v5.10.88 — Inventory CoA parent anchor (loader + renderer).
+// Fetches /api/erp/inventory-coa-parent which resolves the active
+// parent from `settings` with an auto-detect fallback (prefers
+// the GGMMPP code 100300, then legacy 113, then 112).
+function _erpLoadInventoryParent() {
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/inventory-coa-parent', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(r){ _renderInventoryParent(r); })
+    .catch(function(){
+      var disp = document.getElementById('invParentDisplay');
+      if (disp) disp.textContent = '— تَعذَّر التَّحميل —';
+    });
+}
+
+function _renderInventoryParent(r) {
+  if (!r || !r.success) {
+    var disp0 = document.getElementById('invParentDisplay');
+    if (disp0) disp0.textContent = '— تَعذَّر التَّحميل —';
+    return;
+  }
+  var resolved = r.resolved || null;
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var disp = document.getElementById('invParentDisplay');
+  var srcEl = document.getElementById('invParentSource');
+  var warn = document.getElementById('invParentWarn');
+  if (disp) {
+    if (resolved) {
+      disp.innerHTML =
+        '<code>' + esc(resolved.code || '?') + '</code>' +
+        '<span>' + esc(resolved.nameAr || '') + '</span>' +
+        '<span class="im-lvl">L' + (resolved.level || '?') + '</span>' +
+        (resolved.childrenCount != null ? '<span class="im-lvl">' + resolved.childrenCount + ' فرع</span>' : '');
+    } else {
+      disp.textContent = '— لا يوجد حساب مُحدَّد —';
+    }
+  }
+  if (srcEl) {
+    srcEl.className = 'im-parent-source';
+    if (r.source === 'setting') {
+      srcEl.classList.add('is-setting');
+      srcEl.innerHTML = '<i class="fas fa-check-circle"></i> محفوظ في الإعدادات';
+    } else {
+      srcEl.classList.add('is-auto');
+      srcEl.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> كشف تلقائي (لم يُحفظ بعد)';
+    }
+  }
+  // Mismatch banner: saved setting points to an account that no longer
+  // exists or is inactive (resolved came from auto-detect even though
+  // settingId was set).
+  if (warn) {
+    if (r.settingId && r.source === 'auto-detect') {
+      warn.style.display = 'flex';
+      warn.innerHTML = '<i class="fas fa-circle-exclamation"></i><div>الإعداد المحفوظ <code>' + esc(r.settingId) + '</code> يُشير إلى حساب لا يوجد أو غير نشط — تَم استخدام كشف تلقائي مؤقَّتاً. اضغط "حفظ كأب افتراضي" لتثبيت الحساب الصحيح.</div>';
+    } else {
+      warn.style.display = 'none';
+    }
+  }
+  // Mount the searchable combobox into #invParentMount
+  var mount = document.getElementById('invParentMount');
+  if (!mount || typeof _coaMountSearchableSelect !== 'function') return;
+  // Build options from _erpAccounts: only asset folders or L≤3 leaves.
+  // _erpAccounts may not be ready yet — fetch if missing.
+  function buildOptions() {
+    var src = Array.isArray(window._erpAccounts) ? window._erpAccounts : [];
+    return src
+      .filter(function(a){ return a && a.type === 'asset' && (a.is_folder == 1 || a.isFolder || (Number(a.level || 1) <= 3)); })
+      .sort(function(a,b){ return String(a.code || '').localeCompare(String(b.code || '')); })
+      .map(function(a){
+        return {
+          value: a.id,
+          code: a.code || '',
+          name: a.nameAr || a.name_ar || '',
+          level: Number(a.level || 1),
+          label: (a.code || '') + ' ' + (a.nameAr || a.name_ar || '')
+        };
+      });
+  }
+  function mountIt() {
+    _coaMountSearchableSelect(mount, {
+      id: 'invParentNewId',
+      placeholder: '— اختر حساب الأب —',
+      value: (resolved && resolved.id) || '',
+      options: buildOptions(),
+      onChange: function(){}
+    });
+  }
+  if (!Array.isArray(window._erpAccounts) || !window._erpAccounts.length) {
+    // Trigger a fetch if available; otherwise mount with empty options.
+    if (typeof _erpReloadAccountsCacheBust === 'function') {
+      _erpReloadAccountsCacheBust();
+      // Give the cache a brief window to populate; render either way.
+      setTimeout(mountIt, 400);
+    } else {
+      mountIt();
+    }
+  } else {
+    mountIt();
+  }
+}
+
+// v5.10.88 — Picks the auto-detected parent (without saving it).
+// Re-fetches the endpoint, ignoring the stored setting via ?reset=1.
+window.erpDetectInventoryParent = function() {
+  var token = localStorage.getItem('pos_token') || '';
+  fetch('/api/erp/inventory-coa-parent?reset=1', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(r){
+      if (!r || !r.success || !r.resolved) { showToast('تَعذَّر الكشف التلقائي', true); return; }
+      // Update the combobox selection to the detected id
+      var mount = document.getElementById('invParentMount');
+      if (mount && mount._coaSel && typeof mount._coaSel.setValue === 'function') {
+        mount._coaSel.setValue(r.resolved.id);
+      }
+      showToast('تَم كشف الأب: ' + (r.resolved.code || '') + ' — ' + (r.resolved.nameAr || ''));
+    })
+    .catch(function(){ showToast('فشل الكشف التلقائي', true); });
+};
+
+// v5.10.88 — Saves the currently-selected parent into `settings` via
+// the generic PUT /settings endpoint, then re-renders.
+window.erpSaveInventoryParent = function() {
+  var hidden = document.getElementById('invParentNewId');
+  var parentId = hidden ? hidden.value : '';
+  if (!parentId) { showToast('اختَر حساباً أولاً', true); return; }
+  // Look up the code for the chosen id (for the second setting row)
+  var src = Array.isArray(window._erpAccounts) ? window._erpAccounts : [];
+  var pick = src.find(function(a){ return String(a.id) === String(parentId); });
+  var parentCode = (pick && (pick.code || '')) || parentId;
+  var token = localStorage.getItem('pos_token') || '';
+  var btn = document.querySelector('#erpInventoryMethod .im-btn-primary');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>جاري الحفظ...</span>'; }
+  fetch('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify({
+      inventory_coa_parent_id: parentId,
+      inventory_coa_parent_code: parentCode
+    })
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> <span>حفظ كأب افتراضي</span>'; }
+      if (!j || !j.success) { showToast((j && j.error) || 'فشل الحفظ', true); return; }
+      showToast('تَم حفظ الأب الافتراضي للمخزون');
+      _erpLoadInventoryParent();
+      // Offer to sync now so the change takes effect immediately
+      if (confirm('هل تُريد مزامنة حسابات المخزون الآن لتطبيق الأب الجديد؟')) {
+        if (typeof erpSyncInventoryGL === 'function') erpSyncInventoryGL();
+      }
+    })
+    .catch(function(e){
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> <span>حفظ كأب افتراضي</span>'; }
+      showToast(String((e && e.message) || e), true);
+    });
+};
 
 window.erpSetInvMethod = function(method) {
   loader(true);

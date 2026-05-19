@@ -781,77 +781,131 @@ window.coaCollapseAll = function() {
 window.coaViewLedger  = function(id) { if (typeof coaSelectNode === 'function') coaSelectNode(id); };
 window.coaEditAccount = function(id) { if (typeof coaSelectNode === 'function') coaSelectNode(id); };
 
+// v5.10.90 — Refined CoA UI: injects scoped styles for the calmer
+// tree + hero + cards layout. Idempotent guard via #coaRefinedStyles,
+// same pattern as _scaInjectStyles (v5.10.87) and _coaInjectMoveModalCss
+// (v5.10.86). All rules scoped under #erpGLAccounts so no other screen
+// is affected.
+function _coaInjectRefinedCss() {
+  if (document.getElementById('coaRefinedStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'coaRefinedStyles';
+  st.textContent =
+    /* TREE ROWS — uniform typography, single accent */
+    '#erpGLAccounts .coa-node-row{display:grid;grid-template-columns:18px 16px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 12px;border-radius:8px;border-inline-start:none !important;background:transparent !important;transition:background .12s ease;cursor:pointer;}' +
+    '#erpGLAccounts .coa-node[data-level="1"] > .coa-node-row,' +
+    '#erpGLAccounts .coa-node[data-level="2"] > .coa-node-row,' +
+    '#erpGLAccounts .coa-node[data-level="3"] > .coa-node-row,' +
+    '#erpGLAccounts .coa-node[data-level="4"] > .coa-node-row,' +
+    '#erpGLAccounts .coa-node[data-level="5"] > .coa-node-row{font-size:13.5px;font-weight:600;color:#1e293b;}' +
+    '#erpGLAccounts .coa-node-row:hover{background:#faf5ff !important;}' +
+    '#erpGLAccounts .coa-node-row.active{background:#ede9fe !important;color:#5b21b6;font-weight:700;}' +
+    '#erpGLAccounts .coa-node-row.active .coa-node-name{color:#5b21b6;}' +
+    '#erpGLAccounts .coa-node-toggle{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;color:#94a3b8;font-size:10px;flex-shrink:0;transition:transform .15s ease;}' +
+    '#erpGLAccounts .coa-node.is-open > .coa-node-row .coa-node-toggle{transform:rotate(-90deg);color:#7c3aed;}' +
+    '#erpGLAccounts .coa-node-row .coa-node-icon{font-size:14px !important;width:16px;text-align:center;flex-shrink:0;}' +
+    '#erpGLAccounts .coa-node-row .coa-node-icon.folder{color:#7c3aed !important;}' +
+    '#erpGLAccounts .coa-node-row .coa-node-icon.file{color:#94a3b8 !important;}' +
+    '#erpGLAccounts .coa-node-row .coa-node-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}' +
+    /* Hide the noisy chrome from the previous design */
+    '#erpGLAccounts .coa-class-badge,#erpGLAccounts .coa-ifrs-chip{display:none !important;}' +
+    /* Right cluster: balance becomes muted, actions hover-reveal */
+    '#erpGLAccounts .coa-node-right{display:inline-flex;align-items:center;gap:8px;}' +
+    '#erpGLAccounts .coa-folder-balance,#erpGLAccounts .coa-folder-balance--group{font-family:ui-monospace,Menlo,monospace !important;font-size:11.5px !important;font-weight:600 !important;color:#94a3b8 !important;background:transparent !important;padding:0 !important;border:none !important;}' +
+    '#erpGLAccounts .coa-folder-balance--neg{color:#dc2626 !important;}' +
+    '#erpGLAccounts .coa-node-actions{opacity:0;transition:opacity .15s ease;display:inline-flex;gap:4px;}' +
+    '#erpGLAccounts .coa-node-row:hover .coa-node-actions{opacity:1;}' +
+    '#erpGLAccounts .coa-node-actions button{width:26px;height:26px;border-radius:7px;border:1px solid #e2e8f0;background:#fff;color:#475569;cursor:pointer;font-size:11px;}' +
+    '#erpGLAccounts .coa-node-actions button:hover{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
+    /* Indent each depth by 20px */
+    '#erpGLAccounts .coa-node-children{padding-inline-start:20px;border:none;}' +
+    /* HERO — calm header for the selected node */
+    '#erpGLAccounts .coa-hero{background:#fff;border:1.5px solid #e2e8f0;border-radius:16px;padding:22px 26px;margin-bottom:18px;display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
+    '#erpGLAccounts .coa-hero-main{display:flex;align-items:center;gap:16px;flex:1;min-width:240px;}' +
+    '#erpGLAccounts .coa-hero-avatar{width:52px;height:52px;border-radius:50%;background:#ede9fe;color:#7c3aed;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;}' +
+    '#erpGLAccounts .coa-hero-text{min-width:0;}' +
+    '#erpGLAccounts .coa-hero-title{font-size:20px;font-weight:900;color:#0f172a;display:flex;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.3;}' +
+    '#erpGLAccounts .coa-hero-title .coa-hero-code{font-family:ui-monospace,Menlo,monospace;font-size:13px;background:#f5f3ff;color:#5b21b6;padding:3px 10px;border-radius:7px;font-weight:800;}' +
+    '#erpGLAccounts .coa-hero-sub{font-size:12.5px;color:#64748b;margin-top:4px;font-weight:500;}' +
+    '#erpGLAccounts .coa-hero-balance{display:flex;flex-direction:column;align-items:flex-end;text-align:end;gap:2px;flex-shrink:0;}' +
+    '#erpGLAccounts .coa-hero-balance-amount{font-family:ui-monospace,Menlo,monospace;font-size:22px;font-weight:900;line-height:1.2;letter-spacing:-0.01em;}' +
+    '#erpGLAccounts .coa-hero-balance-amount.is-pos{color:#16a34a;}' +
+    '#erpGLAccounts .coa-hero-balance-amount.is-neg{color:#dc2626;}' +
+    '#erpGLAccounts .coa-hero-balance-amount.is-zero{color:#64748b;}' +
+    '#erpGLAccounts .coa-hero-balance-nature{font-size:11.5px;color:#94a3b8;font-weight:600;}' +
+    '#erpGLAccounts .coa-hero-actions{display:flex;gap:6px;flex-shrink:0;}' +
+    '#erpGLAccounts .coa-hero-btn{width:36px;height:36px;border-radius:10px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;cursor:pointer;font-size:13px;display:inline-flex;align-items:center;justify-content:center;transition:all .15s ease;}' +
+    '#erpGLAccounts .coa-hero-btn:hover{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
+    '#erpGLAccounts .coa-hero-btn.is-danger:hover{border-color:#dc2626;color:#991b1b;background:#fef2f2;}' +
+    /* CHILDREN CARDS — generous, minimal */
+    '#erpGLAccounts .coa-cards--refined{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:14px;}' +
+    '#erpGLAccounts .coa-card--refined{display:grid;grid-template-columns:44px minmax(0,1fr) auto 28px;gap:12px;align-items:center;padding:14px 16px;background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;cursor:pointer;transition:all .15s ease;text-align:start;}' +
+    '#erpGLAccounts .coa-card--refined:hover{border-color:#c4b5fd;box-shadow:0 6px 18px rgba(124,58,237,0.10);transform:translateY(-1px);}' +
+    '#erpGLAccounts .coa-card--refined .coa-card-avatar{width:44px;height:44px;border-radius:12px;background:#f5f3ff;color:#7c3aed;display:flex;align-items:center;justify-content:center;font-size:16px;}' +
+    '#erpGLAccounts .coa-card--refined.is-leaf .coa-card-avatar{background:#f1f5f9;color:#475569;}' +
+    '#erpGLAccounts .coa-card--refined .coa-card-name{font-size:14.5px;font-weight:800;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '#erpGLAccounts .coa-card--refined .coa-card-code{display:inline-block;margin-top:4px;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;background:#f1f5f9;color:#64748b;padding:2px 8px;border-radius:5px;font-weight:700;}' +
+    '#erpGLAccounts .coa-card--refined .coa-card-balance{display:flex;flex-direction:column;align-items:flex-end;gap:1px;}' +
+    '#erpGLAccounts .coa-card--refined .coa-card-balance-amount{font-family:ui-monospace,Menlo,monospace;font-size:15px;font-weight:800;letter-spacing:-0.01em;}' +
+    '#erpGLAccounts .coa-card--refined .coa-card-balance-amount.is-pos{color:#16a34a;}' +
+    '#erpGLAccounts .coa-card--refined .coa-card-balance-amount.is-neg{color:#dc2626;}' +
+    '#erpGLAccounts .coa-card--refined .coa-card-balance-amount.is-zero{color:#94a3b8;}' +
+    '#erpGLAccounts .coa-card--refined .coa-card-balance-nature{font-size:10.5px;color:#94a3b8;font-weight:600;}' +
+    '#erpGLAccounts .coa-card--refined .coa-card-menu{width:28px;height:28px;border-radius:7px;border:none;background:transparent;color:#94a3b8;cursor:pointer;font-size:16px;line-height:1;display:inline-flex;align-items:center;justify-content:center;transition:all .15s ease;}' +
+    '#erpGLAccounts .coa-card--refined .coa-card-menu:hover{background:#f1f5f9;color:#0f172a;}' +
+    /* ADD-CHILD BUTTON */
+    '#erpGLAccounts .coa-add-row{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:14px 18px;background:#fff;border:1.5px dashed #cbd5e1;border-radius:12px;color:#7c3aed;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer;transition:all .15s ease;}' +
+    '#erpGLAccounts .coa-add-row:hover{border-style:solid;border-color:#7c3aed;background:#faf5ff;}' +
+    '#erpGLAccounts .coa-add-row i{font-size:14px;}' +
+    /* TRANSACTION SECTION HEADER (for leaves) */
+    '#erpGLAccounts .coa-trans-title{font-size:15px;font-weight:800;color:#0f172a;margin:8px 0 14px;display:flex;align-items:center;gap:8px;}' +
+    '#erpGLAccounts .coa-trans-title i{color:#7c3aed;font-size:14px;}' +
+    /* EMPTY STATE */
+    '#erpGLAccounts .coa-empty--refined{padding:40px 20px;text-align:center;color:#94a3b8;background:#fafafa;border:1.5px dashed #e2e8f0;border-radius:12px;margin-bottom:14px;}' +
+    '#erpGLAccounts .coa-empty--refined i{font-size:28px;color:#cbd5e1;display:block;margin-bottom:10px;}' +
+    '#erpGLAccounts .coa-empty--refined p{margin:0;font-size:13.5px;font-weight:600;color:#64748b;}' +
+    '';
+  document.head.appendChild(st);
+}
+
 function _coaRenderNode(acc, open, depth) {
+  _coaInjectRefinedCss();
   if (typeof depth !== 'number') depth = 0;
   var children = _coaChildrenOf(acc.id);
-  // v5.10.38 — when hideEmpty mode is on, drop children with no movements
-  // anywhere below them (and no movement of their own). Roots 1-5 are
-  // never hidden — that's enforced in _coaBuildTree, not here.
+  // v5.10.38 — when hideEmpty mode is on, drop children with no movements.
   var hideEmpty = !window._coaShowEmpty;
   if (hideEmpty) {
     children = children.filter(function(c){ return _coaHasMovements(c.id); });
   }
-  // v5.10.63 — `isGroup` must use the authoritative _coaIsGroup() helper
-  // (defined at line 612) which treats codes 1-5 as folders UNCONDITIONALLY
-  // (per IFRS structural-account convention), honors the explicit
-  // is_folder flag, and falls back to "has any children pre-filter". The
-  // previous `children.length > 0` was computed AFTER the hideEmpty filter
-  // and would flip a root (e.g. حقوق الملكية, codes 311/321/331 with no
-  // movements yet) into a LEAF — rendered with fa-file-alt, no chevron,
-  // and no rollup balance. The 5 IFRS roots are mandatory framework
-  // accounts; hideEmpty is meant to declutter deep sub-accounts only,
-  // never to invert the type of a root.
   var isGroup = _coaIsGroup(acc.id);
   var lvl = acc.level || 1;
-  // v5.10.45 — open state lives in window._coaOpenSet (persisted to
-  // localStorage). Replaces the depth-based heuristic that lost the
-  // user's expansion state on every rebuild and made coaExpandAll a
-  // best-effort visual hack instead of a real source of truth.
   if (!window._coaOpenSet) window._coaOpenSet = new Set();
   var openSelf = isGroup && window._coaOpenSet.has(acc.id);
-  // v5.10.62 — single chevron icon (fa-chevron-left). The .is-open class
-  // on the parent .coa-node triggers a smooth -90° rotation in CSS,
-  // replacing the previous fa-chevron-left ↔ fa-chevron-down swap.
   var toggle = isGroup
     ? '<span class="coa-node-toggle"><i class="fas fa-chevron-left"></i></span>'
-    : '<span style="width:16px;display:inline-block;"></span>';
-  var iconSize = lvl <= 1 ? 18 : lvl === 2 ? 16 : lvl === 3 ? 14 : 12;
+    : '<span class="coa-node-toggle" style="visibility:hidden;"></span>';
   var icon = isGroup
-    ? '<i class="fas fa-folder coa-node-icon folder" style="color:#f59e0b;font-size:' + iconSize + 'px;"></i>'
-    : '<i class="fas fa-file-alt coa-node-icon file" style="color:#3b82f6;font-size:' + iconSize + 'px;"></i>';
-  var fontW = lvl <= 1 ? 900 : lvl === 2 ? 800 : lvl === 3 ? 600 : 400;
-  var fontSize = lvl <= 1 ? 15 : lvl === 2 ? 14 : lvl === 3 ? 13 : 12;
+    ? '<i class="fas fa-folder coa-node-icon folder"></i>'
+    : '<i class="fas fa-file-alt coa-node-icon file"></i>';
   var activeClass = _coaSelectedId === acc.id ? ' active' : '';
 
-  // v5.10.41 — type-badge is now an inline-start border on the row itself
-  // (set via [data-type] CSS), and the L1 level badge is removed from the
-  // default view to give the name full breathing room. Both can be brought
-  // back via inspector if needed; the row no longer wastes pixels on chrome.
-  var typeBadge = '';
-  // v5.10.78 — class badge: M/S/A/D color-coded chip showing whether this
-  // account is Main (الفئة), Sub (رئيسي), Analytical (تحليلي), or Detail
-  // (تفصيلي قابل للترحيل). The owner explicitly asked for this distinction
-  // per IFRS + SOCPA standards. Each badge gets a tooltip in Arabic.
-  var classKey = acc.accountClass || (lvl <= 1 ? 'main' : lvl === 2 ? 'sub' : lvl === 3 ? 'analytical' : 'detail');
-  var classBadgeMeta = {
-    main:       { letter: 'م', label: 'حساب رئيسي (الفئة الأولى)',   bg: '#1e40af', fg: '#ffffff' },
-    sub:        { letter: 'ف', label: 'حساب فرعي (المستوى الثاني)',   bg: '#7c3aed', fg: '#ffffff' },
-    analytical: { letter: 'ت', label: 'حساب تحليلي (المستوى الثالث)', bg: '#16a34a', fg: '#ffffff' },
-    detail:     { letter: 'د', label: 'حساب تفصيلي قابل للترحيل',     bg: '#f59e0b', fg: '#ffffff' }
-  };
-  var bMeta = classBadgeMeta[classKey] || classBadgeMeta.detail;
-  var levelBadge =
-    '<span class="coa-class-badge" data-class="' + classKey + '" ' +
-          'title="' + bMeta.label + '" ' +
-          'style="display:inline-flex;align-items:center;justify-content:center;' +
-                 'width:18px;height:18px;border-radius:5px;font-size:10px;font-weight:900;' +
-                 'background:' + bMeta.bg + ';color:' + bMeta.fg + ';' +
-                 'margin-inline-end:6px;flex-shrink:0;">' +
-      bMeta.letter +
-    '</span>';
-  // v5.10.42 — warning icon shows ONLY for critical issues that need
-  // attention. Minor structural issues (levelMismatch, typeMismatch) are
-  // fixed automatically by deep-repair and don't deserve a noisy warning.
+  // v5.10.90 — folder balance only shown for L1 + L2 (top-level rollups).
+  // Deeper folders + leaves drop the balance to reduce noise; the user
+  // gets the precise number in the hero panel after selecting the node.
+  var balHtml = '';
+  if (isGroup && lvl <= 2) {
+    var rollup = _coaRollupBalance(acc.id);
+    if (Math.abs(rollup) > 0.001) {
+      var balClass = rollup > 0 ? 'coa-folder-balance--pos'
+                    : rollup < 0 ? 'coa-folder-balance--neg'
+                    : 'coa-folder-balance--zero';
+      balHtml = '<span class="coa-folder-balance coa-folder-balance--group ' + balClass + '">' +
+        Number(rollup).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) +
+      '</span>';
+    }
+  }
+
+  // Critical-diagnostic warning (kept — surfaces real data integrity issues)
   var warnHtml = '';
   var snap = window._coaDiagSnap;
   if (snap && snap.issues) {
@@ -863,29 +917,10 @@ function _coaRenderNode(acc, open, depth) {
     else if (hit(snap.issues.cycles))                   critical = 'حلقة في الشجرة';
     else if (hit(snap.issues.codeTypeMismatch))         critical = 'النوع لا يطابق جذر الكود';
     else if (hit(snap.issues.orphans))                  critical = 'حساب يتيم (parent محذوف)';
-    if (critical) warnHtml = '<i class="fas fa-triangle-exclamation coa-warn-icon" title="' + critical + '" onclick="event.stopPropagation();coaOpenDiagnose();"></i>';
+    if (critical) warnHtml = '<i class="fas fa-triangle-exclamation coa-warn-icon" title="' + critical + '" onclick="event.stopPropagation();coaOpenDiagnose();" style="color:#dc2626;margin-inline-end:4px;cursor:pointer;"></i>';
   }
 
-  // v5.10.39 — folder balance ALWAYS shown (not only when non-zero) so parents
-  // surface their rollup at a glance. Leaves still hide zero to avoid clutter.
-  var displayBal = isGroup ? _coaRollupBalance(acc.id) : (Number(acc.balance) || 0);
-  var balClass = displayBal > 0 ? 'coa-folder-balance--pos'
-              : displayBal < 0 ? 'coa-folder-balance--neg'
-              : 'coa-folder-balance--zero';
-  var balHtml = '';
-  if (isGroup) {
-    balHtml = '<span class="coa-folder-balance coa-folder-balance--group ' + balClass + '">' +
-      Number(displayBal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) +
-    '</span>';
-  } else if (displayBal !== 0) {
-    balHtml = '<span class="coa-folder-balance ' + balClass + '" style="font-size:11px;">' +
-      Number(displayBal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) +
-    '</span>';
-  }
-
-  // v5.10.41 — actions only on hover; mini-stat removed from default view.
-  // v5.10.45 — added "Move" action; hidden for the 5 IFRS roots since
-  // those should never be reparented through the UI.
+  // Actions: ledger + move (hide move for the 5 roots)
   var isRoot = ['1','2','3','4','5'].indexOf(String(acc.code)) >= 0;
   var moveBtn = isRoot ? '' :
     '<button title="نقل لقسم آخر" onclick="coaOpenMoveModal(\'' + acc.id + '\')"><i class="fas fa-arrows-up-down-left-right"></i></button>';
@@ -894,40 +929,14 @@ function _coaRenderNode(acc, open, depth) {
     moveBtn +
   '</span>';
 
-  // Right-side cluster: warn (only if real issue) + balance + actions.
   var rightHtml = '<span class="coa-node-right">' + warnHtml + balHtml + actionsHtml + '</span>';
 
-  // v5.10.45 — IFRS reference chip on the 5 root rows. Tells the user
-  // at a glance which IFRS standard governs each branch and signals
-  // that the structure follows international convention.
-  var ifrsChipHtml = '';
-  if (depth === 0) {
-    var IFRS_REF = {
-      '1': { std: 'IAS 1',   tip: 'IAS 1 — Presentation of Financial Statements (الأصول)' },
-      '2': { std: 'IAS 1',   tip: 'IAS 1 — Presentation of Financial Statements (الالتزامات)' },
-      '3': { std: 'IAS 1',   tip: 'IAS 1 — Presentation of Financial Statements (حقوق الملكية)' },
-      '4': { std: 'IFRS 15', tip: 'IFRS 15 — Revenue from Contracts with Customers' },
-      '5': { std: 'IAS 1',   tip: 'IAS 1 — Presentation of Financial Statements (المصروفات)' }
-    };
-    var ref = IFRS_REF[String(acc.code)];
-    if (ref) {
-      ifrsChipHtml = '<span class="coa-ifrs-chip" title="' + ref.tip + '">' + ref.std + '</span>';
-    }
-  }
-
-  // v5.10.62 — `.is-open` on the node drives the CSS chevron rotation.
-  // Inline styles for font-weight/size and the indentation block on
-  // .coa-node-children were removed — the level-aware CSS rules in
-  // public/css/style.css (v5.10.62 redesign) handle all of this now.
   var openClass = (isGroup && openSelf) ? ' is-open' : '';
-  // v5.10.78 — data-class attribute lets a future CSS-only filter (e.g.
-  // ".coa-tree[data-filter='detail'] .coa-node:not([data-class='detail']) { opacity: .35 }")
-  // dim non-matching nodes without re-rendering the tree.
-  var html = '<div class="coa-node' + openClass + '" data-id="' + acc.id + '" data-level="' + lvl + '" data-type="' + (acc.type||'') + '" data-class="' + classKey + '">';
-  html += '<div class="coa-node-row' + activeClass + '" onclick="coaSelectNode(\'' + acc.id + '\')" title="' + (acc.nameAr||'').replace(/"/g,'&quot;') + ' — ' + (acc.code||'') + ' — ' + bMeta.label + '">';
-  html += toggle + icon + levelBadge;
+  var tooltipText = (acc.code || '') + ' — ' + (acc.nameAr || '');
+  var html = '<div class="coa-node' + openClass + '" data-id="' + acc.id + '" data-level="' + lvl + '" data-type="' + (acc.type||'') + '">';
+  html += '<div class="coa-node-row' + activeClass + '" onclick="coaSelectNode(\'' + acc.id + '\')" title="' + tooltipText.replace(/"/g,'&quot;') + '">';
+  html += toggle + icon;
   html += '<span class="coa-node-name">' + (acc.nameAr||'') + '</span>';
-  html += ifrsChipHtml;
   html += rightHtml;
   html += '</div>';
   if (isGroup) {
@@ -935,14 +944,7 @@ function _coaRenderNode(acc, open, depth) {
     if (children.length > 0) {
       html += children.map(function(c) { return _coaRenderNode(c, false, depth + 1); }).join('');
     } else {
-      // v5.10.63 — empty placeholder for structural folders (chiefly the
-      // 5 IFRS roots) whose children all got filtered out by hideEmpty
-      // because none have posted journal entries yet. Without this hint
-      // the expanded node would show an empty white gap and confuse the
-      // user into thinking the chevron is broken. The wording invites
-      // them to flip the "إظهار الحسابات الهيكلية" toggle to reveal the
-      // skeleton children.
-      html += '<div class="coa-node-empty-hint">' +
+      html += '<div class="coa-node-empty-hint" style="padding:8px 14px;font-size:11.5px;color:#94a3b8;font-style:italic;">' +
         '<i class="fas fa-circle-info"></i> ' +
         'لا حسابات فرعية بها حركات بعد · فعِّل «إظهار الحسابات الهيكلية» أعلاه لرؤية كل الأبناء.' +
         '</div>';
@@ -1022,119 +1024,145 @@ window.coaSelectNode = function(id) {
 // • Per-card "promote to folder" / "demote to leaf" toggle for manual control
 function _coaShowGroup(id, container) {
   if (!container) return;
+  _coaInjectRefinedCss();
   var acc = _erpAccounts.find(a => a.id === id);
   if (!acc) return;
   var children = _coaChildrenOf(id);
-  var typeNature   = { asset:'debit', expense:'debit', liability:'credit', equity:'credit', revenue:'credit' };
+  var typeNature  = { asset:'debit', expense:'debit', liability:'credit', equity:'credit', revenue:'credit' };
   var natureLabels = { debit:'مدين', credit:'دائن' };
-  var typeLabels   = { asset:'أصول', liability:'التزامات', equity:'حقوق ملكية', revenue:'إيرادات', expense:'مصروفات' };
+  var typeLabels  = { asset:'الأصول', liability:'الالتزامات', equity:'حقوق الملكية', revenue:'الإيرادات', expense:'المصروفات' };
+  var typeIcons   = { asset:'fa-chart-pie', liability:'fa-file-invoice-dollar', equity:'fa-user-tie', revenue:'fa-coins', expense:'fa-credit-card' };
   var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
   var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
 
-  // Rollup of this folder + all descendants (computed_balance from gl_entries)
-  var rollup    = _coaRollupBalance(id);
-  var rollupCls = rollup > 0 ? 'is-pos' : (rollup < 0 ? 'is-neg' : 'is-zero');
-  var withMov   = children.filter(function(c){ return _coaHasMovements ? _coaHasMovements(c.id) : ((c.movementCount||0)>0); }).length;
+  var rollup = _coaRollupBalance(id);
+  var rollupCls = Math.abs(rollup) < 0.01 ? 'is-zero' : (rollup > 0 ? 'is-pos' : 'is-neg');
+  var nature = typeNature[acc.type] || 'debit';
+  var heroIcon = typeIcons[acc.type] || 'fa-folder-open';
+  var isRoot = ['1','2','3','4','5'].indexOf(String(acc.code)) >= 0;
 
   var html = '';
-  // ── Header: name + code on right, rollup + actions on left ──
-  html += '<div class="coa-group-header coa-group-header--v2">';
-  html +=   '<div class="coa-group-headline">';
-  html +=     '<div class="coa-group-title"><i class="fas fa-folder-open"></i> ' + esc(acc.nameAr || '') + ' <span class="coa-group-code">#' + esc(acc.code) + '</span></div>';
-  html +=     '<div class="coa-group-meta">';
-  html +=       '<span class="coa-group-meta-pill coa-type-' + (acc.type || 'asset') + '">' + (typeLabels[acc.type] || acc.type || '—') + '</span>';
-  html +=       '<span class="coa-group-meta-pill">' + children.length + ' حساب فرعي</span>';
-  html +=       '<span class="coa-group-meta-pill">' + withMov + ' بحركات</span>';
+  // ── HERO ──
+  html += '<div class="coa-hero">';
+  html +=   '<div class="coa-hero-main">';
+  html +=     '<div class="coa-hero-avatar"><i class="fas ' + heroIcon + '"></i></div>';
+  html +=     '<div class="coa-hero-text">';
+  html +=       '<div class="coa-hero-title">' +
+                  '<span class="coa-hero-code">#' + esc(acc.code) + '</span>' +
+                  '<span>' + esc(acc.nameAr || '') + '</span>' +
+                '</div>';
+  html +=       '<div class="coa-hero-sub">' + (typeLabels[acc.type] || acc.type || '—') + '</div>';
   html +=     '</div>';
   html +=   '</div>';
-  html +=   '<div class="coa-group-balance ' + rollupCls + '">';
-  html +=     '<span class="coa-group-balance__label">الرصيد المجمَّع</span>';
-  html +=     '<span class="coa-group-balance__value">' + fmt(rollup) + '</span>';
+  html +=   '<div class="coa-hero-balance">';
+  html +=     '<div class="coa-hero-balance-amount ' + rollupCls + '">SAR ' + fmt(rollup) + '</div>';
+  html +=     '<div class="coa-hero-balance-nature">' + natureLabels[nature] + '</div>';
   html +=   '</div>';
-  html +=   '<div class="coa-group-actions">';
-  html +=     '<button class="btn btn-sm btn-primary coa-group-add" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')"><i class="fas fa-plus"></i> إضافة حساب</button>';
-  html +=     '<button class="btn btn-sm btn-light" onclick="erpEditAccount(\'' + acc.id + '\')" title="تعديل"><i class="fas fa-edit"></i></button>';
+  html +=   '<div class="coa-hero-actions">';
+  html +=     '<button class="coa-hero-btn" title="تعديل" onclick="erpEditAccount(\'' + acc.id + '\')"><i class="fas fa-pen"></i></button>';
+  if (!isRoot) {
+    html +=   '<button class="coa-hero-btn" title="نقل" onclick="coaOpenMoveModal(\'' + acc.id + '\')"><i class="fas fa-arrows-up-down-left-right"></i></button>';
+  }
   html +=   '</div>';
   html += '</div>';
 
-  // ── Children grid ──
+  // ── CHILDREN ──
   if (!children.length) {
-    html += '<div class="coa-empty coa-empty--v2"><i class="fas fa-inbox"></i><p>هذا الحساب فارغ — أضف أوّل حساب فرعي</p></div>';
-    html += '<button class="coa-add-btn" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')"><i class="fas fa-plus-circle"></i> أضف حساب</button>';
+    html += '<div class="coa-empty--refined"><i class="fas fa-inbox"></i><p>هذا الحساب فارغ — أضف أوّل حساب فرعي</p></div>';
   } else {
-    html += '<div class="coa-cards coa-cards--v2">';
+    html += '<div class="coa-cards--refined">';
     children.forEach(function(c) {
       var isFolder = _coaIsGroup(c.id);
-      var nature   = typeNature[c.type] || 'debit';
-      var bal      = Number(c.balance) || 0;
-      var balCls   = bal > 0 ? 'is-pos' : (bal < 0 ? 'is-neg' : 'is-zero');
-      var mvCount  = Number(c.movementCount || 0);
-
-      html += '<div class="coa-card coa-card--v2 ' + (isFolder ? 'is-folder' : 'is-leaf') + '" onclick="coaSelectNode(\'' + c.id + '\')">';
-      html +=   '<div class="coa-card__nimbus"><i class="fas ' + (isFolder ? 'fa-folder' : 'fa-file-invoice') + '"></i></div>';
-      html +=   '<div class="coa-card__body">';
-      html +=     '<div class="coa-card__name" title="' + esc(c.nameAr || '') + '">' + esc(c.nameAr || '') + '</div>';
-      html +=     '<div class="coa-card__sub">';
-      html +=       '<span class="coa-card__code">#' + esc(c.code) + '</span>';
-      html +=       '<span class="coa-card-nature ' + nature + '">' + (natureLabels[nature] || '') + '</span>';
-      // v5.10.43 — folders show rollup metric (children with movements /
-      // total children); leaves show their own movement count. The old
-      // logic showed "بدون حركات" on a folder whose children had movements
-      // — a confusing contradiction with the visible balance pill.
-      if (isFolder) {
-        var grand   = _coaChildrenOf(c.id);
-        var withMov = grand.filter(function(g){ return _coaHasMovements(g.id); }).length;
-        if (withMov > 0) {
-          html +=   '<span class="coa-card__mv">' + withMov + '/' + grand.length + ' بحركات</span>';
-        } else {
-          html +=   '<span class="coa-card__mv coa-card__mv--zero">' + grand.length + ' فرعي بدون حركات</span>';
-        }
-      } else if (mvCount > 0) {
-        html +=     '<span class="coa-card__mv">' + mvCount.toLocaleString('ar-SA') + ' حركة</span>';
-      } else {
-        html +=     '<span class="coa-card__mv coa-card__mv--zero">بدون حركات</span>';
-      }
-      html +=     '</div>';
+      var cNature  = typeNature[c.type] || nature;
+      var cBalRaw  = isFolder ? _coaRollupBalance(c.id) : (Number(c.balance) || 0);
+      var cBalCls  = Math.abs(cBalRaw) < 0.01 ? 'is-zero' : (cBalRaw > 0 ? 'is-pos' : 'is-neg');
+      html += '<button type="button" class="coa-card--refined ' + (isFolder ? 'is-folder' : 'is-leaf') + '" onclick="coaSelectNode(\'' + c.id + '\')">';
+      html +=   '<div class="coa-card-avatar"><i class="fas ' + (isFolder ? 'fa-folder' : 'fa-file-alt') + '"></i></div>';
+      html +=   '<div>';
+      html +=     '<div class="coa-card-name" title="' + esc(c.nameAr || '') + '">' + esc(c.nameAr || '') + '</div>';
+      html +=     '<span class="coa-card-code">#' + esc(c.code) + '</span>';
       html +=   '</div>';
-      // Always-on balance (zero shown muted)
-      html +=   '<div class="coa-card__bal ' + balCls + '">' + fmt(isFolder ? _coaRollupBalance(c.id) : bal) + '</div>';
-      html +=   '<button class="coa-card__menu" onclick="event.stopPropagation();coaCardMenu(\'' + c.id + '\',this)" title="خيارات">&#8943;</button>';
-      html += '</div>';
+      html +=   '<div class="coa-card-balance">';
+      html +=     '<div class="coa-card-balance-amount ' + cBalCls + '">' + fmt(cBalRaw) + '</div>';
+      html +=     '<div class="coa-card-balance-nature">' + natureLabels[cNature] + '</div>';
+      html +=   '</div>';
+      html +=   '<span class="coa-card-menu" onclick="event.stopPropagation();coaCardMenu(\'' + c.id + '\',this)" title="خيارات">&#8943;</span>';
+      html += '</button>';
     });
     html += '</div>';
-    html += '<button class="coa-add-btn" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')"><i class="fas fa-plus-circle"></i> أضف حساب فرعي جديد</button>';
   }
+
+  // ── ADD-CHILD CTA ──
+  html += '<button class="coa-add-row" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')">' +
+            '<i class="fas fa-plus-circle"></i>' +
+            '<span>أضف حساب فرعي جديد</span>' +
+          '</button>';
+
   container.innerHTML = html;
 }
 
 // ─── Show Account Detail (transactions) ───
 function _coaShowAccount(id, container) {
-  if (!container) return; // V5.9.6
+  if (!container) return;
+  _coaInjectRefinedCss();
   var acc = _erpAccounts.find(a => a.id === id);
   if (!acc) return;
   var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
-  var balColor = acc.balance >= 0 ? '#16a34a' : '#ef4444';
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); };
+  var typeNature   = { asset:'debit', expense:'debit', liability:'credit', equity:'credit', revenue:'credit' };
+  var natureLabels = { debit:'مدين', credit:'دائن' };
+  var typeLabels   = { asset:'الأصول', liability:'الالتزامات', equity:'حقوق الملكية', revenue:'الإيرادات', expense:'المصروفات' };
+  var typeIcons    = { asset:'fa-chart-pie', liability:'fa-file-invoice-dollar', equity:'fa-user-tie', revenue:'fa-coins', expense:'fa-credit-card' };
 
-  var html = '<div class="coa-acc-header">';
-  html += '<div><div class="coa-acc-name"><i class="fas fa-file-alt" style="color:#3b82f6;margin-left:8px;"></i>' + (acc.nameAr||'') + '</div>';
-  html += '<span class="coa-acc-code-badge">#' + acc.code + '</span></div>';
-  html += '<div class="coa-acc-bal-box"><div class="coa-acc-bal-label">الرصيد</div><div class="coa-acc-bal-val" style="color:' + balColor + ';">' + fmt(acc.balance) + '</div></div>';
+  var bal = Number(acc.balance) || 0;
+  var balCls = Math.abs(bal) < 0.01 ? 'is-zero' : (bal > 0 ? 'is-pos' : 'is-neg');
+  var nature = typeNature[acc.type] || 'debit';
+  var heroIcon = typeIcons[acc.type] || 'fa-file-alt';
+  var mvCount = Number(acc.movementCount || 0);
+  var canDelete = mvCount === 0;
+  var isRoot = ['1','2','3','4','5'].indexOf(String(acc.code)) >= 0;
+
+  var html = '';
+  // ── HERO ──
+  html += '<div class="coa-hero">';
+  html +=   '<div class="coa-hero-main">';
+  html +=     '<div class="coa-hero-avatar"><i class="fas ' + heroIcon + '"></i></div>';
+  html +=     '<div class="coa-hero-text">';
+  html +=       '<div class="coa-hero-title">' +
+                  '<span class="coa-hero-code">#' + esc(acc.code) + '</span>' +
+                  '<span>' + esc(acc.nameAr || '') + '</span>' +
+                '</div>';
+  html +=       '<div class="coa-hero-sub">' + (typeLabels[acc.type] || acc.type || '—') +
+                ' · ' + (mvCount > 0 ? (mvCount + ' حركة') : 'بدون حركات') + '</div>';
+  html +=     '</div>';
+  html +=   '</div>';
+  html +=   '<div class="coa-hero-balance">';
+  html +=     '<div class="coa-hero-balance-amount ' + balCls + '">SAR ' + fmt(bal) + '</div>';
+  html +=     '<div class="coa-hero-balance-nature">' + natureLabels[nature] + '</div>';
+  html +=   '</div>';
+  html +=   '<div class="coa-hero-actions">';
+  html +=     '<button class="coa-hero-btn" title="تعديل" onclick="erpEditAccount(\'' + acc.id + '\')"><i class="fas fa-pen"></i></button>';
+  if (!isRoot) {
+    html +=   '<button class="coa-hero-btn" title="نقل" onclick="coaOpenMoveModal(\'' + acc.id + '\')"><i class="fas fa-arrows-up-down-left-right"></i></button>';
+  }
+  if (canDelete && !isRoot) {
+    html +=   '<button class="coa-hero-btn is-danger" title="حذف" onclick="erpDeleteAccount(\'' + acc.id + '\',\'' + acc.code + '\',\'' + (acc.nameAr||'').replace(/\\/g,'').replace(/'/g,'') + '\')"><i class="fas fa-trash"></i></button>';
+  }
+  html +=   '</div>';
   html += '</div>';
 
-  // Action buttons
-  html += '<div style="display:flex;gap:6px;margin-bottom:16px;">';
-  html += '<button class="btn btn-sm btn-light" onclick="erpEditAccount(\'' + acc.id + '\')" style="border-radius:10px;"><i class="fas fa-edit"></i> تعديل</button>';
-  html += '<button class="btn btn-sm btn-light" style="border-radius:10px;color:#ef4444;" onclick="erpDeleteAccount(\'' + acc.id + '\',\'' + acc.code + '\',\'' + (acc.nameAr||'').replace(/'/g,'') + '\')"><i class="fas fa-trash"></i> حذف</button>';
-  html += '<button class="coa-add-btn" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')"><i class="fas fa-plus-circle"></i> إضافة فرعي</button>';
-  html += '</div>';
+  // ── ADD-CHILD CTA (for non-leaves that could host children) ──
+  html += '<button class="coa-add-row" onclick="erpAddChildAccount(\'' + acc.id + '\',\'' + acc.code + '\')">' +
+            '<i class="fas fa-plus-circle"></i>' +
+            '<span>أضف حساب فرعي جديد</span>' +
+          '</button>';
 
-  // Transactions table
-  html += '<h4 style="font-size:15px;font-weight:800;color:#1e293b;margin-bottom:10px;"><i class="fas fa-list-alt" style="color:#3b82f6;margin-left:6px;"></i> حركات الحساب</h4>';
+  // ── TRANSACTIONS ──
+  html += '<h4 class="coa-trans-title"><i class="fas fa-list-alt"></i> حركات الحساب</h4>';
   html += '<div id="coaTransLoading" style="text-align:center;padding:20px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
   html += '<div id="coaTransTable"></div>';
   container.innerHTML = html;
 
-  // Load transactions for this account
   _coaLoadTransactions(id);
 }
 

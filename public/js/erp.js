@@ -642,7 +642,82 @@ function _coaRollupBalance(accId) {
 }
 
 // ─── Build Tree Sidebar ───
+// v5.10.92 — Toolbar refinement: grouped icon buttons, separators,
+// and an overflow menu (⋮) hosting admin/destructive actions. CSS is
+// injected by JS so the toolbar layout works regardless of which CSS
+// bundle the server happens to be serving (same pattern as
+// `_coaInjectRefinedCss` v5.10.90, `_scaInjectStyles` v5.10.87, and
+// `_invMethodInjectStyles` v5.10.88).
+function _coaInjectToolbarCss() {
+  if (document.getElementById('coaToolbarStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'coaToolbarStyles';
+  st.textContent =
+    /* Header row layout: search grows, groups + overflow sit at end */
+    '#erpGLAccounts .coa-tree-header{display:flex !important;align-items:center;gap:10px !important;padding:12px 14px !important;background:#fff;border-bottom:1px solid #f1f5f9;flex-wrap:nowrap;}' +
+    '#erpGLAccounts .coa-search{flex:1 1 auto !important;min-width:120px;height:36px;padding:0 12px;border:1.5px solid #e2e8f0;border-radius:9px;font-family:inherit;font-size:13px;color:#0f172a;background:#fff;outline:none;transition:border-color .15s ease,box-shadow .15s ease;}' +
+    '#erpGLAccounts .coa-search:focus{border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,0.12);}' +
+    /* The OLD .coa-tree-toolbar wrapper is gone in v5.10.92; if any
+       cached HTML still renders it we hide it to avoid duplicate UI. */
+    '#erpGLAccounts .coa-tree-toolbar{display:none !important;}' +
+    /* Toolbar groups */
+    '#erpGLAccounts .coa-toolbar-group{display:inline-flex;gap:4px;flex-shrink:0;}' +
+    '#erpGLAccounts .coa-toolbar-sep{display:inline-block;width:1px;height:22px;background:#e2e8f0;flex-shrink:0;}' +
+    /* Icon-only buttons */
+    '#erpGLAccounts .coa-tool-icon-btn{width:34px;height:34px;border-radius:9px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:13px;transition:all .15s ease;flex-shrink:0;}' +
+    '#erpGLAccounts .coa-tool-icon-btn:hover{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
+    '#erpGLAccounts .coa-tool-icon-btn:active{transform:scale(0.97);}' +
+    /* Overflow wrapper + menu */
+    '#erpGLAccounts .coa-overflow{position:relative;flex-shrink:0;}' +
+    '#erpGLAccounts .coa-overflow-menu{display:none;position:absolute;top:calc(100% + 6px);inset-inline-end:0;background:#fff;border:1.5px solid #e2e8f0;border-radius:11px;box-shadow:0 14px 38px -10px rgba(15,23,42,0.22);min-width:230px;padding:6px;z-index:50;animation:coaOvIn .15s ease;}' +
+    '@keyframes coaOvIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:translateY(0);}}' +
+    '#erpGLAccounts .coa-overflow.is-open .coa-overflow-menu{display:block;}' +
+    '#erpGLAccounts .coa-overflow.is-open .coa-overflow-btn{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
+    '#erpGLAccounts .coa-overflow-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;color:#0f172a;border:none;background:transparent;width:100%;text-align:start;font-family:inherit;transition:background .12s ease,color .12s ease;}' +
+    '#erpGLAccounts .coa-overflow-item:hover{background:#faf5ff;color:#5b21b6;}' +
+    '#erpGLAccounts .coa-overflow-item.is-danger{color:#991b1b;}' +
+    '#erpGLAccounts .coa-overflow-item.is-danger:hover{background:#fef2f2;color:#7f1d1d;}' +
+    '#erpGLAccounts .coa-overflow-item.is-danger i{color:#dc2626 !important;}' +
+    '#erpGLAccounts .coa-overflow-sep{height:1px;background:#f1f5f9;margin:4px 0;}' +
+    /* Tree breathing: a touch more padding + a deeper indent */
+    '#erpGLAccounts .coa-tree-body{padding-top:6px;}' +
+    '#erpGLAccounts .coa-node-row{padding:10px 14px !important;gap:10px !important;}' +
+    '#erpGLAccounts .coa-node-children{padding-inline-start:22px !important;}' +
+    /* Topbar gets a touch of vertical breathing now that it carries only chips */
+    '#erpGLAccounts .coa-topbar{padding:10px 14px;}' +
+    '';
+  document.head.appendChild(st);
+
+  // Outside-click + Esc handlers — attached once.
+  if (!window._coaOverflowBound) {
+    window._coaOverflowBound = true;
+    document.addEventListener('click', function(ev) {
+      var ov = document.getElementById('coaOverflow');
+      if (!ov || !ov.classList.contains('is-open')) return;
+      if (!ov.contains(ev.target)) ov.classList.remove('is-open');
+    });
+    document.addEventListener('keydown', function(ev) {
+      if (ev.key === 'Escape') {
+        var ov = document.getElementById('coaOverflow');
+        if (ov) ov.classList.remove('is-open');
+      }
+    });
+  }
+}
+
+// v5.10.92 — Toggle the CoA toolbar overflow menu. Pass `false` to
+// force-close (used by the menu items themselves so they close the
+// menu before invoking their handler).
+window.coaToggleOverflowMenu = function(force) {
+  var ov = document.getElementById('coaOverflow');
+  if (!ov) return;
+  if (force === false) { ov.classList.remove('is-open'); return; }
+  if (force === true)  { ov.classList.add('is-open'); return; }
+  ov.classList.toggle('is-open');
+};
+
 function _coaBuildTree() {
+  _coaInjectToolbarCss();
   var container = document.getElementById('coaTreeBody');
   if (!container) return;
 

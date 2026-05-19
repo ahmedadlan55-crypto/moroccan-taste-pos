@@ -1837,31 +1837,51 @@
        is forced to true at boot). The filter no longer collapses empty
        branches — accountants need to see the full IFRS/SOCPA skeleton even
        before any postings exist. -->
+  <!-- v5.10.92 — Topbar carries only the type-filter chips now. Action
+       buttons moved into the tree-header toolbar where they belong
+       (closer to the tree they operate on) and grouped by intent. -->
   <div class="coa-topbar" id="coaTopbar">
     <div class="coa-type-chips" id="coaTypeChips" role="tablist" aria-label="تصفية حسب النوع"></div>
-    <div class="coa-actions">
-      <button class="wo-btn wo-btn-ghost coa-action-btn" onclick="coaOpenSuggestions()" title="اقتراحات الهيكل المعياري">
-        <i class="fas fa-lightbulb"></i><span>اقتراحات معيارية</span>
-      </button>
-    </div>
   </div>
 
   <div class="coa-layout">
     <!-- Tree Sidebar -->
     <div class="coa-tree-panel">
+      <!-- v5.10.92 — Reorganized toolbar:
+           [Search input flex:1] [View group] [I/O group] [Overflow ⋮]
+           - Search takes the bulk of the row
+           - View group: expand/collapse icon-only
+           - I/O group: import/export icon-only
+           - Overflow: dedupe + template + suggestions + danger zone -->
       <div class="coa-tree-header">
-        <input type="text" id="coaSearch" class="coa-search" placeholder="بحث بالاسم أو الكود..." oninput="coaFilterTree(this.value)">
-        <!-- v5.10.43 — Expand/Collapse · v5.10.46 — Excel import/export -->
-        <div class="coa-tree-toolbar">
-          <button class="coa-tree-tool-btn" onclick="coaExpandAll()" title="توسيع كل الفولدرات"><i class="fas fa-angles-down"></i><span>توسيع الكل</span></button>
-          <button class="coa-tree-tool-btn" onclick="coaCollapseAll()" title="طي كل الفولدرات"><i class="fas fa-angles-up"></i><span>طي الكل</span></button>
-          <button class="coa-tree-tool-btn" onclick="coaExportExcel()" title="تصدير شجرة الحسابات إلى Excel"><i class="fas fa-file-excel" style="color:#16a34a;"></i><span>تصدير</span></button>
-          <button class="coa-tree-tool-btn" onclick="document.getElementById('coaImportFile').click()" title="استيراد شجرة الحسابات من ملف Excel"><i class="fas fa-file-import" style="color:#7c3aed;"></i><span>استيراد</span></button>
-          <button class="coa-tree-tool-btn" onclick="coaOpenDedupeModal()" title="كشف الحسابات المُكرَّرة بالاسم وحذف غير المستخدمة"><i class="fas fa-clone" style="color:#dc2626;"></i><span>المكرَّرات</span></button>
-          <button class="coa-tree-tool-btn" onclick="coaApplyTemplate()" title="تَطبيق قالب COA الرسمي (216 حساب IFRS) كشجرة نهائية"><i class="fas fa-wand-magic-sparkles" style="color:#7c3aed;"></i><span>قالب رسمي</span></button>
-          <button class="coa-tree-tool-btn" onclick="coaWipeAndSeed()" title="مسح كامل: حذف القيود والمبيعات والمصروفات وإعادة بناء شجرة الحسابات من القالب الرسمي"><i class="fas fa-bomb" style="color:#dc2626;"></i><span>مسح + تأسيس</span></button>
-          <input type="file" id="coaImportFile" accept=".xlsx,.xls" style="display:none;" onchange="coaImportExcel(event)">
+        <input type="text" id="coaSearch" class="coa-search" placeholder="ابحث عن حساب بالاسم أو الكود..." oninput="coaFilterTree(this.value)">
+
+        <div class="coa-toolbar-group" role="group" aria-label="تَوسيع وطي">
+          <button class="coa-tool-icon-btn" onclick="coaExpandAll()" title="توسيع كل الفولدرات" aria-label="توسيع الكل"><i class="fas fa-angles-down"></i></button>
+          <button class="coa-tool-icon-btn" onclick="coaCollapseAll()" title="طي كل الفولدرات" aria-label="طي الكل"><i class="fas fa-angles-up"></i></button>
         </div>
+
+        <span class="coa-toolbar-sep" aria-hidden="true"></span>
+
+        <div class="coa-toolbar-group" role="group" aria-label="استيراد وتصدير">
+          <button class="coa-tool-icon-btn" onclick="document.getElementById('coaImportFile').click()" title="استيراد من Excel" aria-label="استيراد"><i class="fas fa-file-import" style="color:#7c3aed;"></i></button>
+          <button class="coa-tool-icon-btn" onclick="coaExportExcel()" title="تصدير إلى Excel" aria-label="تصدير"><i class="fas fa-file-excel" style="color:#16a34a;"></i></button>
+        </div>
+
+        <span class="coa-toolbar-sep" aria-hidden="true"></span>
+
+        <div class="coa-overflow" id="coaOverflow">
+          <button class="coa-tool-icon-btn coa-overflow-btn" onclick="event.stopPropagation();coaToggleOverflowMenu()" title="مزيد من الإجراءات" aria-label="مزيد من الإجراءات" aria-haspopup="true"><i class="fas fa-ellipsis-vertical"></i></button>
+          <div class="coa-overflow-menu" role="menu" aria-label="إجراءات إدارية">
+            <button class="coa-overflow-item" role="menuitem" onclick="coaToggleOverflowMenu(false);coaOpenDedupeModal()"><i class="fas fa-clone" style="color:#dc2626;width:16px;text-align:center;"></i><span>كشف المكرَّرات</span></button>
+            <button class="coa-overflow-item" role="menuitem" onclick="coaToggleOverflowMenu(false);coaApplyTemplate()"><i class="fas fa-wand-magic-sparkles" style="color:#7c3aed;width:16px;text-align:center;"></i><span>قالب رسمي (IFRS)</span></button>
+            <button class="coa-overflow-item" role="menuitem" onclick="coaToggleOverflowMenu(false);coaOpenSuggestions()"><i class="fas fa-lightbulb" style="color:#f59e0b;width:16px;text-align:center;"></i><span>اقتراحات معيارية</span></button>
+            <div class="coa-overflow-sep" aria-hidden="true"></div>
+            <button class="coa-overflow-item is-danger" role="menuitem" onclick="coaToggleOverflowMenu(false);coaWipeAndSeed()"><i class="fas fa-bomb" style="width:16px;text-align:center;"></i><span>مسح + تأسيس</span></button>
+          </div>
+        </div>
+
+        <input type="file" id="coaImportFile" accept=".xlsx,.xls" style="display:none;" onchange="coaImportExcel(event)">
       </div>
       <div id="coaTreeBody" class="coa-tree-body"></div>
     </div>

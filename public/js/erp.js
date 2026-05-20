@@ -7834,65 +7834,34 @@ function _brfAttr(v) {
     .replace(/>/g, '&gt;');
 }
 
+// v5.10.101 — Modal-first, data-async. Render the form IMMEDIATELY
+// (<100ms after click), then fetch dropdown options in the background
+// and populate them when they arrive. The previous design blocked the
+// entire render behind a Promise.all over 3 API calls, so any backend
+// hiccup made the button look dead. The new design ALWAYS opens the
+// modal, even if every dropdown API fails.
 function erpOpenBranchFullModal(data) {
-  var d = data || {};
-  // v5.10.100 — Defensive Promise.all: each API call now has a failure
-  // handler that resolves to [] (not reject) AND a 6s safety timeout so
-  // the modal opens even if one endpoint hangs or 500s. Previously, a
-  // single silent API failure left Promise.all pending forever and the
-  // edit button looked completely dead — exactly the symptom the owner
-  // reported ("لا يمكنني فتح إعدادات الفرع").
-  function _brfApi(method) {
-    return new Promise(function(resolve) {
-      var settled = false;
-      var done = function(payload){ if (settled) return; settled = true; resolve(payload || []); };
-      // Hard 6-second deadline — modal opens with empty dropdowns rather
-      // than not opening at all
-      var timer = setTimeout(function(){
-        console.warn('[branch-edit] ' + method + ' timed out — opening modal with empty list');
-        done([]);
-      }, 6000);
-      try {
-        var bridge = window._apiBridge.withSuccessHandler(function(r){
-          clearTimeout(timer); done(r);
-        });
-        if (typeof bridge.withFailureHandler === 'function') {
-          bridge = bridge.withFailureHandler(function(err){
-            clearTimeout(timer);
-            console.warn('[branch-edit] ' + method + ' failed:', err);
-            done([]);
-          });
-        }
-        if (typeof bridge[method] !== 'function') {
-          console.warn('[branch-edit] API method missing:', method);
-          clearTimeout(timer); done([]); return;
-        }
-        bridge[method]();
-      } catch (e) {
-        console.warn('[branch-edit] ' + method + ' threw:', e);
-        clearTimeout(timer); done([]);
-      }
-    });
-  }
-  // Open feedback so the click feels responsive while the 3 calls fire
-  if (typeof showToast === 'function') showToast('جاري تحميل بيانات الفرع...');
-  Promise.all([
-    _brfApi('getWarehousesList'),
-    _brfApi('getCostCenters'),
-    _brfApi('getBrands')
-  ]).then(function(results) {
-    var whs = results[0]||[], ccs = results[1]||[], brands = results[2]||[];
-    var whOpts    = whs.map(function(w) { return '<option value="' + _brfAttr(w.id) + '"' + (d.warehouseId === w.id ? ' selected' : '') + '>' + _brfAttr(w.name) + '</option>'; }).join('');
-    var ccOpts    = ccs.map(function(c) { return '<option value="' + _brfAttr(c.id) + '"' + (d.costCenterId === c.id ? ' selected' : '') + '>' + _brfAttr((c.code||'') + ' — ' + (c.name||'')) + '</option>'; }).join('');
-    var brandOpts = brands.map(function(b) { return '<option value="' + _brfAttr(b.id) + '"' + (d.brandId === b.id ? ' selected' : '') + '>' + _brfAttr(b.name) + '</option>'; }).join('');
+  try {
+    var d = data || {};
+    console.log('[branch-edit] erpOpenBranchFullModal opening for:', d.id || '(new)');
     var supplyMode = d.supplyMode || 'parent_company';
     var typeVal    = d.type || 'main';
 
-    // V5.9.4 marker in the title so a stale cached erp.js can be spotted at a
-    // glance — old code shows just "تعديل فرع" without the badge.
+    // Build the modal title
     document.getElementById('erpModalTitle').innerHTML =
       _brfAttr(d.id ? 'تعديل فرع' : 'إضافة فرع جديد') +
-      ' <span style="font-size:10px;font-weight:700;color:#7f1d1d;background:#fef2f2;padding:2px 8px;border-radius:6px;border:1px solid #fecaca;margin-inline-start:8px;vertical-align:middle;">v5.9.4</span>';
+      ' <span style="font-size:10px;font-weight:700;color:#7f1d1d;background:#fef2f2;padding:2px 8px;border-radius:6px;border:1px solid #fecaca;margin-inline-start:8px;vertical-align:middle;">v5.10.101</span>';
+
+    // Each dropdown starts with a "loading" placeholder PLUS the
+    // currently-selected item (so the field shows the right value
+    // before the full list is fetched).
+    function _initSelectOptions(currentId, currentLabel, loadingText) {
+      return '<option value="">' + loadingText + '</option>' +
+        (currentId
+          ? '<option value="' + _brfAttr(currentId) + '" selected>' + _brfAttr(currentLabel || '— القيمة الحالية —') + '</option>'
+          : '');
+    }
+
     document.getElementById('erpModalBody').innerHTML =
       '<style>' +
         '.brf-section{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px;margin-bottom:12px;}' +
@@ -7921,7 +7890,9 @@ function erpOpenBranchFullModal(data) {
         '<h4><i class="fas fa-id-badge"></i> هوية الفرع</h4>' +
         '<div class="brf-grid brf-grid-2">' +
           '<div class="brf-row"><label>البراند <span class="req">*</span></label>' +
-            '<select class="form-control" id="brfBrand"><option value="">— اختر البراند —</option>' + brandOpts + '</select></div>' +
+            '<select class="form-control" id="brfBrand">' +
+              _initSelectOptions(d.brandId, d.brandName || d.brand_name, '— جارٍ تحميل البراندات... —') +
+            '</select></div>' +
           '<div class="brf-row"><label>الاسم <span class="req">*</span></label>' +
             '<input class="form-control" id="brfName" maxlength="200" value="' + _brfAttr(d.name) + '" placeholder="مثال: فرع اوكتين"></div>' +
         '</div>' +
@@ -7945,9 +7916,13 @@ function erpOpenBranchFullModal(data) {
         '<h4><i class="fas fa-warehouse"></i> العمليات والربط المحاسبي</h4>' +
         '<div class="brf-grid brf-grid-2">' +
           '<div class="brf-row"><label>المستودع المرتبط</label>' +
-            '<select class="form-control" id="brfWH"><option value="">— بدون —</option>' + whOpts + '</select></div>' +
+            '<select class="form-control" id="brfWH">' +
+              _initSelectOptions(d.warehouseId, d.warehouseName || d.warehouse_name, '— جارٍ تحميل المستودعات... —') +
+            '</select></div>' +
           '<div class="brf-row"><label>مركز التكلفة</label>' +
-            '<select class="form-control" id="brfCC"><option value="">— بدون —</option>' + ccOpts + '</select></div>' +
+            '<select class="form-control" id="brfCC">' +
+              _initSelectOptions(d.costCenterId, d.costCenterName || d.cost_center_name, '— جارٍ تحميل مراكز التكلفة... —') +
+            '</select></div>' +
         '</div>' +
         '<div class="brf-row" style="margin-top:10px;">' +
           '<label>إعدادات التوريد</label>' +
@@ -7982,9 +7957,63 @@ function erpOpenBranchFullModal(data) {
         '</div>' +
       '</div>';
 
+    // Wire the save button + show the modal IMMEDIATELY.
     document.getElementById('erpModalSaveBtn').onclick = erpSaveBranchFull;
     document.getElementById('erpModal').classList.remove('hidden');
-  });
+    console.log('[branch-edit] modal visible — hydrating dropdowns in background');
+
+    // Fire the dropdown APIs in the background — does NOT block the modal.
+    _brfHydrateDropdowns(d);
+  } catch (e) {
+    console.error('[branch-edit] erpOpenBranchFullModal threw:', e);
+    if (typeof showToast === 'function') showToast('خطأ في فتح النموذج: ' + ((e && e.message) || e), true);
+  }
+}
+
+// v5.10.101 — Each dropdown hydrates INDEPENDENTLY. No Promise.all,
+// no blocking. A single failed API only affects its own dropdown.
+function _brfHydrateDropdowns(d) {
+  function _hydrate(method, selectId, currentId, optionLabelFn) {
+    var sel = document.getElementById(selectId);
+    if (!sel) return; // modal already closed
+    var settled = false;
+    var apply = function(items, errMsg) {
+      if (settled) return; settled = true;
+      var list = Array.isArray(items) ? items : [];
+      // Preserve user's selection if they already picked something
+      var picked = sel.value || currentId || '';
+      sel.innerHTML = '<option value="">' + (errMsg || '— بدون —') + '</option>' +
+        list.map(function(x){
+          var selAttr = (picked && String(x.id) === String(picked)) ? ' selected' : '';
+          return '<option value="' + _brfAttr(x.id) + '"' + selAttr + '>' + _brfAttr(optionLabelFn(x)) + '</option>';
+        }).join('');
+    };
+    var timer = setTimeout(function(){
+      console.warn('[branch-edit] ' + method + ' timed out (6s) — leaving placeholder');
+      apply([], '— تَعذَّر التحميل، الكود الحالي محفوظ —');
+    }, 6000);
+    try {
+      var bridge = window._apiBridge.withSuccessHandler(function(r){ clearTimeout(timer); apply(r); });
+      if (typeof bridge.withFailureHandler === 'function') {
+        bridge = bridge.withFailureHandler(function(err){
+          clearTimeout(timer);
+          console.warn('[branch-edit] ' + method + ' failed:', err);
+          apply([], '— فشل التحميل —');
+        });
+      }
+      if (typeof bridge[method] !== 'function') {
+        console.warn('[branch-edit] API method missing:', method);
+        clearTimeout(timer); apply([], '— الوظيفة غير متاحة —'); return;
+      }
+      bridge[method]();
+    } catch (e) {
+      console.warn('[branch-edit] ' + method + ' threw:', e);
+      clearTimeout(timer); apply([], '— خطأ غير متوقع —');
+    }
+  }
+  _hydrate('getBrands',         'brfBrand', d.brandId,      function(b){ return b.name || b.nameAr || '(بدون اسم)'; });
+  _hydrate('getWarehousesList', 'brfWH',    d.warehouseId,  function(w){ return w.name || w.nameAr || '(بدون اسم)'; });
+  _hydrate('getCostCenters',    'brfCC',    d.costCenterId, function(c){ return (c.code ? (c.code + ' — ') : '') + (c.name || c.nameAr || '(بدون اسم)'); });
 }
 
 // v5.10.100 — Hardened branch-edit entry point. Now:
@@ -7995,6 +8024,10 @@ function erpOpenBranchFullModal(data) {
 //  • Falls back to opening a blank "new branch" pre-filled with the id
 //    if the fetch fails — strictly better than the previous dead button.
 function erpEditBranchFull(id) {
+  // v5.10.101 — diagnostic log so the owner can verify (F12 → Console)
+  // that the click reaches the function. If this line never prints,
+  // the button-event wiring is broken (not the modal-render logic).
+  console.log('[branch-edit] erpEditBranchFull called with id:', id);
   var cached = Array.isArray(window._brFullList) ? window._brFullList : [];
   var hit = cached.find(function(x){ return String(x.id) === String(id); });
   if (hit) { erpOpenBranchFullModal(hit); return; }

@@ -7784,6 +7784,10 @@ function erpCancelTransfer(id) {
 // ═══════════════════════════════════════
 function erpLoadBranchesFull() {
   window._apiBridge.withSuccessHandler(function(list) {
+    // v5.10.100 — cache the list on window so erpEditBranchFull can
+    // reuse it instantly (avoids the second round-trip + the silent
+    // hang that was causing "edit button does nothing").
+    window._brFullList = Array.isArray(list) ? list : [];
     var tb = document.getElementById('erpBranchesBody');
     if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد فروع</td></tr>'; return; }
     var supplyLabels = {parent_company:'الشركة الأم',warehouse:'المستودع الرئيسي',auto:'تلقائي'};
@@ -7791,7 +7795,13 @@ function erpLoadBranchesFull() {
       return '<tr><td><code>' + (b.code||'') + '</code></td><td style="font-weight:700;">' + b.name + '</td><td>' + (b.location||'—') + '</td>' +
         '<td>' + (b.warehouseName||'—') + '</td><td>' + (b.costCenterName||'—') + '</td><td>' + (b.manager||'—') + '</td>' +
         '<td><span class="badge badge-blue">' + (supplyLabels[b.supplyMode]||b.supplyMode) + '</span></td>' +
-        '<td><button class="btn-icon" onclick="erpEditBranchFull(\'' + b.id + '\')"><i class="fas fa-edit"></i></button></td></tr>';
+        // v5.10.100 — added explicit "settings" gear icon next to edit,
+        // both bound to the same handler so the user can find the entry
+        // point under either intent.
+        '<td>' +
+          '<button class="btn-icon" title="تعديل / إعدادات الفرع" onclick="erpEditBranchFull(\'' + b.id + '\')"><i class="fas fa-edit"></i></button>' +
+          '<button class="btn-icon" title="إعدادات الفرع" onclick="erpEditBranchFull(\'' + b.id + '\')" style="margin-inline-start:6px;color:#7c3aed;"><i class="fas fa-cog"></i></button>' +
+        '</td></tr>';
     }).join('');
   }).getBranchesFull();
 }
@@ -7826,10 +7836,50 @@ function _brfAttr(v) {
 
 function erpOpenBranchFullModal(data) {
   var d = data || {};
+  // v5.10.100 — Defensive Promise.all: each API call now has a failure
+  // handler that resolves to [] (not reject) AND a 6s safety timeout so
+  // the modal opens even if one endpoint hangs or 500s. Previously, a
+  // single silent API failure left Promise.all pending forever and the
+  // edit button looked completely dead — exactly the symptom the owner
+  // reported ("لا يمكنني فتح إعدادات الفرع").
+  function _brfApi(method) {
+    return new Promise(function(resolve) {
+      var settled = false;
+      var done = function(payload){ if (settled) return; settled = true; resolve(payload || []); };
+      // Hard 6-second deadline — modal opens with empty dropdowns rather
+      // than not opening at all
+      var timer = setTimeout(function(){
+        console.warn('[branch-edit] ' + method + ' timed out — opening modal with empty list');
+        done([]);
+      }, 6000);
+      try {
+        var bridge = window._apiBridge.withSuccessHandler(function(r){
+          clearTimeout(timer); done(r);
+        });
+        if (typeof bridge.withFailureHandler === 'function') {
+          bridge = bridge.withFailureHandler(function(err){
+            clearTimeout(timer);
+            console.warn('[branch-edit] ' + method + ' failed:', err);
+            done([]);
+          });
+        }
+        if (typeof bridge[method] !== 'function') {
+          console.warn('[branch-edit] API method missing:', method);
+          clearTimeout(timer); done([]); return;
+        }
+        bridge[method]();
+      } catch (e) {
+        console.warn('[branch-edit] ' + method + ' threw:', e);
+        clearTimeout(timer); done([]);
+      }
+    });
+  }
+  // Open feedback so the click feels responsive while the 3 calls fire
+  if (typeof showToast === 'function') showToast('جاري تحميل بيانات الفرع...');
   Promise.all([
-    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getWarehousesList(); }),
-    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getCostCenters(); }),
-    new Promise(function(res) { window._apiBridge.withSuccessHandler(res).getBrands(); })
+    _brfApi('getWarehousesList'),
+    _brfApi('getCostCenters'),
+    _brfApi('getBrands')
   ]).then(function(results) {
     var whs = results[0]||[], ccs = results[1]||[], brands = results[2]||[];
     var whOpts    = whs.map(function(w) { return '<option value="' + _brfAttr(w.id) + '"' + (d.warehouseId === w.id ? ' selected' : '') + '>' + _brfAttr(w.name) + '</option>'; }).join('');
@@ -7937,12 +7987,50 @@ function erpOpenBranchFullModal(data) {
   });
 }
 
+// v5.10.100 — Hardened branch-edit entry point. Now:
+//  • Tries the in-memory cache (window._brFullList) FIRST so re-opening
+//    after a fresh page-load is instant and survives backend hiccups.
+//  • Adds a failure handler + 6s timeout on the API call so the user
+//    always sees feedback (either the modal or a toast).
+//  • Falls back to opening a blank "new branch" pre-filled with the id
+//    if the fetch fails — strictly better than the previous dead button.
 function erpEditBranchFull(id) {
-  window._apiBridge.withSuccessHandler(function(list) {
-    var b = (list||[]).find(function(x){ return String(x.id) === String(id); });
+  var cached = Array.isArray(window._brFullList) ? window._brFullList : [];
+  var hit = cached.find(function(x){ return String(x.id) === String(id); });
+  if (hit) { erpOpenBranchFullModal(hit); return; }
+
+  var settled = false;
+  var finish = function(payload) {
+    if (settled) return; settled = true;
+    var list = Array.isArray(payload) ? payload : [];
+    window._brFullList = list;
+    var b = list.find(function(x){ return String(x.id) === String(id); });
     if (b) erpOpenBranchFullModal(b);
-    else showToast('لم يتم العثور على الفرع', true);
-  }).getBranchesFull();
+    else if (typeof showToast === 'function') showToast('لم يتم العثور على الفرع — اضغط "تحديث" ثم حاول مجدداً', true);
+  };
+  if (typeof showToast === 'function') showToast('جاري تحميل بيانات الفرع...');
+  var timer = setTimeout(function(){
+    console.warn('[branch-edit] getBranchesFull timed out');
+    if (typeof showToast === 'function') showToast('انتهت مهلة الاتصال — حاول مرة أخرى', true);
+    finish([]);
+  }, 8000);
+  try {
+    var bridge = window._apiBridge.withSuccessHandler(function(list){ clearTimeout(timer); finish(list); });
+    if (typeof bridge.withFailureHandler === 'function') {
+      bridge = bridge.withFailureHandler(function(err){
+        clearTimeout(timer);
+        console.warn('[branch-edit] getBranchesFull failed:', err);
+        if (typeof showToast === 'function') showToast('فشل تحميل قائمة الفروع — راجع الاتصال', true);
+        finish([]);
+      });
+    }
+    bridge.getBranchesFull();
+  } catch (e) {
+    clearTimeout(timer);
+    console.warn('[branch-edit] getBranchesFull threw:', e);
+    if (typeof showToast === 'function') showToast('خطأ غير متوقع — راجع الـ console', true);
+    finish([]);
+  }
 }
 
 function brfGetMyLocation() {

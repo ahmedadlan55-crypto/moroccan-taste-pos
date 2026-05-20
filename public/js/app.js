@@ -869,14 +869,65 @@ function doLogin() {
       });
   });
   // v5.12.2 — pass device info to /auth/login so audit_log records
-  // brand/model/os instead of a raw User-Agent string. The handler is
-  // already attached above; we just need to fire the request after
-  // detectDevice() resolves (it's async on Chromium UA-CH).
+  // brand/model/os instead of a raw User-Agent string.
+  // v5.11.0 — ALSO request the browser geolocation BEFORE sending the
+  // credentials so the server can apply the per-branch geo-fence.
+  // Cashier / employee / custody accounts are blocked if they're
+  // outside the radius. Admin / manager / developer accounts ignore
+  // the GPS server-side, so we don't strictly NEED the coords for
+  // them, but we still send them when granted (no harm, useful audit).
   var _devicePromise = (typeof window.detectDevice === 'function')
     ? window.detectDevice()
     : Promise.resolve(null);
-  _devicePromise.then(function (device) {
-    api.checkLogin(u, p, device);
+  var _geoPromise = _authGetLoginGeo();
+  Promise.all([_devicePromise, _geoPromise]).then(function (parts) {
+    var device = parts[0];
+    var geo    = parts[1] || {};
+    api.checkLogin(u, p, device, geo);
+  });
+}
+
+// v5.11.0 — Tries navigator.geolocation. Resolves with { geoLat, geoLng,
+// geoAddress } on success, or {} if denied / unavailable. NEVER rejects
+// — login proceeds with empty coords and the server decides whether to
+// reject (for cashier/employee/custody) or accept (for admin/manager).
+function _authGetLoginGeo() {
+  return new Promise(function (resolve) {
+    if (!navigator.geolocation) {
+      console.warn('[auth] navigator.geolocation unavailable');
+      resolve({});
+      return;
+    }
+    var settled = false;
+    var done = function (result) {
+      if (settled) return; settled = true;
+      resolve(result || {});
+    };
+    // Hard 8s timeout — never block the login button forever.
+    setTimeout(function () { done({}); }, 8000);
+    try {
+      navigator.geolocation.getCurrentPosition(
+        function (pos) {
+          var geoLat = pos.coords.latitude;
+          var geoLng = pos.coords.longitude;
+          // Best-effort reverse geocoding via Nominatim — non-blocking
+          // (fires the request but doesn't wait if slow).
+          var addr = '';
+          done({ geoLat: geoLat, geoLng: geoLng, geoAddress: addr });
+        },
+        function (err) {
+          var msg = err && err.code === 1
+            ? 'تم رفض الإذن بتحديد الموقع'
+            : 'تَعذَّر تحديد الموقع';
+          console.warn('[auth] geolocation failed:', msg);
+          done({});
+        },
+        { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 }
+      );
+    } catch (e) {
+      console.warn('[auth] geolocation threw:', e);
+      done({});
+    }
   });
 }
 
@@ -1087,15 +1138,67 @@ function initViews() {
 function viewPOS() { window.location.replace('/pos/'); }
 function viewAdmin() { if (state.role === "admin") { show("#adminView"); nav('home'); } }
 
+// v5.11.0 — Geo-fenced logout. For cashier / employee / custody roles,
+// the server requires the user to be inside the branch's geo-fence to
+// record the clock_out — same gate as login. For admin / manager /
+// developer the server is permissive and the call always succeeds.
+//
+// Flow:
+//   1. Try to read GPS (8s timeout — never block forever)
+//   2. POST /api/auth/logout with the coords. Server validates fence
+//      AND records clock_out into hr_attendance.
+//   3. On {success: true} → wipe localStorage + redirect to /
+//   4. On {success: false, code: outside_radius} → show toast,
+//      DON'T wipe (user stays logged in until they reach the branch).
+//   5. On network failure → wipe locally anyway so the user isn't
+//      stuck on a broken machine.
 function logout() {
-  // Clear ALL session data
+  var role = (localStorage.getItem('pos_role') || '').toLowerCase();
+  var subject = role === 'cashier' || role === 'employee' || role === 'custody';
+  if (!subject) {
+    // Privileged roles — wipe immediately, no geo gate.
+    _doLocalLogoutCleanup();
+    return;
+  }
+  if (typeof showToast === 'function') showToast('جاري تسجيل الانصراف وتحديد الموقع...');
+  var geoPromise = (typeof _authGetLoginGeo === 'function')
+    ? _authGetLoginGeo()
+    : Promise.resolve({});
+  geoPromise.then(function (geo) {
+    if (!api || typeof api.logoutWithGeo !== 'function') {
+      _doLocalLogoutCleanup();
+      return;
+    }
+    var settled = false;
+    var fallbackTimer = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      console.warn('[auth] logout endpoint timed out — wiping locally');
+      _doLocalLogoutCleanup();
+    }, 10000);
+    api.withSuccessHandler(function (res) {
+      if (settled) return;
+      clearTimeout(fallbackTimer);
+      settled = true;
+      if (res && res.success) {
+        if (typeof showToast === 'function') showToast('تم تسجيل الانصراف ✓');
+        _doLocalLogoutCleanup();
+      } else {
+        // Geo-fence rejection — keep the user logged in so they can
+        // come back when they're at the branch.
+        var msg = (res && res.error) || 'تعذَّر تسجيل الانصراف — تأكَّد من تواجدك داخل نطاق الفرع';
+        if (typeof showToast === 'function') showToast(msg, true);
+      }
+    }).logoutWithGeo(geo);
+  });
+}
+
+function _doLocalLogoutCleanup() {
   localStorage.removeItem("pos_session");
   localStorage.removeItem("pos_token");
   localStorage.removeItem("pos_active_shift_id");
   localStorage.removeItem("pos_last_view");
   localStorage.removeItem("pos_last_section");
-
-  // Full page reload to / — cleanest way to reset everything
   window.location.replace('/');
 }
 

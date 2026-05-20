@@ -11,7 +11,10 @@
     // v5.12.2 — third optional arg `d` carries the parsed device info
     // ({brand, model, os, ua, mobile}) so audit_log can record who
     // signed in from which device.
-    checkLogin:          { method: 'POST', url: '/auth/login', body: (u,p,d) => ({username:u,password:p,device:d||null}) },
+    // v5.11.0 — added optional 4th argument `geo` = { geoLat, geoLng, geoAddress }
+    // for the per-branch geo-fence on cashier/employee/custody logins.
+    checkLogin:          { method: 'POST', url: '/auth/login', body: (u,p,d,g) => Object.assign({username:u,password:p,device:d||null}, g||{}) },
+    logoutWithGeo:       { method: 'POST', url: '/auth/logout', body: (g) => g || {} },
     refreshToken:        { method: 'POST', url: '/auth/refresh-token' },
     getInitialAppData:   { method: 'GET',  url: (u) => '/auth/init/'+u },
 

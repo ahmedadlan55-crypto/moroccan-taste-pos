@@ -2790,6 +2790,21 @@ async function runMigrations() {
   try { await db.query('CREATE INDEX idx_sales_customer  ON sales(customer_id)'); } catch(e) {}
   try { await db.query('CREATE INDEX idx_customers_phone ON customers(phone)');   } catch(e) {}
 
+  // ─── v5.11.6 — Per-attendance-event device tracking ───
+  // Each clock-in / clock-out remembers the brand + model + OS + UA of
+  // the phone or tablet that recorded it. Owner needs this to verify
+  // that the right person on the right device punched in. Clock-out
+  // gets its own *_out variants because an employee may legitimately
+  // clock out from a different device than they clocked in with.
+  await addColumnIfMissing('hr_attendance', 'device_brand',     'VARCHAR(80) NULL');
+  await addColumnIfMissing('hr_attendance', 'device_model',     'VARCHAR(120) NULL');
+  await addColumnIfMissing('hr_attendance', 'device_os',        'VARCHAR(80) NULL');
+  await addColumnIfMissing('hr_attendance', 'device_ua',        'VARCHAR(500) NULL');
+  await addColumnIfMissing('hr_attendance', 'device_brand_out', 'VARCHAR(80) NULL');
+  await addColumnIfMissing('hr_attendance', 'device_model_out', 'VARCHAR(120) NULL');
+  await addColumnIfMissing('hr_attendance', 'device_os_out',    'VARCHAR(80) NULL');
+  await addColumnIfMissing('hr_attendance', 'device_ua_out',    'VARCHAR(500) NULL');
+
   // v5.12.2 — parsed device info on shifts + audit_log
   await addColumnIfMissing('shifts',    'device_brand', 'VARCHAR(50)');
   await addColumnIfMissing('shifts',    'device_model', 'VARCHAR(120)');

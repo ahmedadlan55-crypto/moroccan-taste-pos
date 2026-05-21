@@ -2041,18 +2041,29 @@ router.get('/my-attendance', async (req, res) => {
 });
 
 // POST clock in/out for myself
+// v5.11.6 — /my-clock now also persists device brand/model/OS/UA on
+// both the clock-in and clock-out paths so the owner can see exactly
+// which phone or tablet recorded each event.
 router.post('/my-clock', async (req, res) => {
   try {
     const username = req.user ? req.user.username : req.body.username;
-    const { geoLat, geoLng, geoAddress, deviceName } = req.body;
+    const { geoLat, geoLng, geoAddress, deviceName, device } = req.body;
     const [emp] = await db.query('SELECT e.id, e.first_name, e.branch_id, e.work_start, e.work_end FROM hr_employees e WHERE e.linked_username = ?', [username]);
     if (!emp.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط بحسابك — تواصل مع الإدارة' });
     const empId = emp[0].id;
     const branchId = emp[0].branch_id;
     const today = new Date().toISOString().split('T')[0];
 
-    // Device name (short — max 50 chars)
-    var devName = (deviceName || 'متصفح').substring(0, 50);
+    // v5.11.6 — Normalize device payload (brand/model/os/ua) — accept
+    // either a structured object or the legacy deviceName string.
+    const devObj = (device && typeof device === 'object') ? device : {};
+    const devBrand = String(devObj.brand || '').slice(0, 80);
+    const devModel = String(devObj.model || '').slice(0, 120);
+    const devOs    = String(devObj.os    || '').slice(0, 80);
+    const devUa    = String(devObj.ua    || req.headers['user-agent'] || '').slice(0, 500);
+    // Build a human-readable label for the legacy device_name column.
+    const devLabel = [devBrand, devModel, devOs].filter(Boolean).join(' · ') || deviceName || 'متصفح';
+    const devName = devLabel.substring(0, 50);
 
     // ─── LOCATION VALIDATION (إجباري) ───
     if (branchId) {
@@ -2073,7 +2084,13 @@ router.post('/my-clock', async (req, res) => {
                   Math.sin(dLng/2) * Math.sin(dLng/2);
         const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         if (dist > radius) {
-          return res.json({ success: false, error: 'أنت بعيد عن الفرع بـ ' + Math.round(dist) + ' متر — المسموح ' + radius + ' متر فقط' });
+          return res.json({
+            success: false,
+            error: 'أنت بعيد عن الفرع بـ ' + Math.round(dist) + ' متر — المسموح ' + radius + ' متر فقط',
+            code: 'outside_fence',
+            distance: Math.round(dist),
+            radius: radius
+          });
         }
       }
     }
@@ -2098,9 +2115,20 @@ router.post('/my-clock', async (req, res) => {
          geo_lat, geo_lng, geo_address_in, device_id, device_name, late_minutes) VALUES (?,?,?,NOW(),?,?,?,?,?,?,?,?)`,
         [id, empId, today, 'present', 'app', geoLat||null, geoLng||null, geoAddress||'', devName, devName, lateMin]
       );
+      // v5.11.6 — Persist structured device columns (best-effort on older schemas)
+      try {
+        await db.query(
+          'UPDATE hr_attendance SET device_brand=?, device_model=?, device_os=?, device_ua=? WHERE id=?',
+          [devBrand || null, devModel || null, devOs || null, devUa || null, id]
+        );
+      } catch(_) { /* columns missing — pre-v5.11.6 deploy */ }
       var msg = 'تم تسجيل الحضور ✓';
       if (lateMin > 0) msg += ' (متأخر ' + lateMin + ' دقيقة)';
-      res.json({ success: true, action: 'clock_in', time: now.toISOString(), lateMinutes: lateMin, message: msg });
+      res.json({
+        success: true, action: 'clock_in', time: now.toISOString(),
+        lateMinutes: lateMin, message: msg,
+        device: { brand: devBrand, model: devModel, os: devOs }
+      });
     } else if (!existing[0].clock_out) {
       // Clock OUT
       const clockIn = new Date(existing[0].clock_in);
@@ -2110,7 +2138,20 @@ router.post('/my-clock', async (req, res) => {
         'UPDATE hr_attendance SET clock_out=NOW(), total_hours=?, geo_lat_out=?, geo_lng_out=?, geo_address_out=? WHERE id=?',
         [totalHours, geoLat||null, geoLng||null, geoAddress||'', existing[0].id]
       );
-      res.json({ success: true, action: 'clock_out', time: clockOut.toISOString(), totalHours, message: 'تم تسجيل الانصراف ✓ (' + totalHours + ' ساعة)' });
+      // v5.11.6 — Persist the clock-out device separately (employee may
+      // use a different phone for clock-out than the one they clocked in
+      // with).
+      try {
+        await db.query(
+          'UPDATE hr_attendance SET device_brand_out=?, device_model_out=?, device_os_out=?, device_ua_out=? WHERE id=?',
+          [devBrand || null, devModel || null, devOs || null, devUa || null, existing[0].id]
+        );
+      } catch(_) { /* columns missing — pre-v5.11.6 deploy */ }
+      res.json({
+        success: true, action: 'clock_out', time: clockOut.toISOString(),
+        totalHours, message: 'تم تسجيل الانصراف ✓ (' + totalHours + ' ساعة)',
+        device: { brand: devBrand, model: devModel, os: devOs }
+      });
     } else {
       res.json({ success: false, error: 'تم تسجيل الحضور والانصراف اليوم بالفعل' });
     }

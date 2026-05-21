@@ -4,9 +4,9 @@ const jwt = require('jsonwebtoken');
 const db = require('../db/connection');
 const path = require('path');
 const verifyToken = require('./authMiddleware');
-// v5.11.0 — geo-fenced authentication.
-const { checkBranchGeofence, isRoleSubjectToGeofence } = require('../lib/geo-fence');
-const attendance = require('../lib/attendance-helper');
+// v5.11.6 — geo-fence + attendance helpers are no longer used here.
+// They live exclusively in routes/hr.js POST /my-clock so attendance
+// becomes a separate, intentional action from authentication.
 
 // ─── In-memory rate limiter (per IP) ───
 const loginAttempts = {}; // { ip: { count, firstAttempt, blockedUntil } }
@@ -118,99 +118,37 @@ router.post('/login', async (req, res) => {
     // V5.4.3: include isDeveloper in JWT + login response so frontend can gate UI buttons
     const isDev = !!user.is_developer || user.username === 'admin' || user.role === 'developer';
 
-    // v5.11.0 — Geo-fence enforcement. Only cashier/employee/custody must
-    // be physically inside their branch's circular fence. Admin, manager
-    // and developer accounts are exempt (managed remotely).
-    const geoLat     = req.body && req.body.geoLat;
-    const geoLng     = req.body && req.body.geoLng;
-    const geoAddress = req.body && req.body.geoAddress;
-    if (isRoleSubjectToGeofence(user.role, isDev)) {
-      const fence = await checkBranchGeofence(db, user.branch_id, geoLat, geoLng);
-      if (!fence.ok) {
-        // Audit the rejection so the owner can spot brute / off-site attempts
-        try {
-          await db.query(
-            'INSERT INTO audit_log (id, user_id, username, action, table_name, record_id, ip_address, device_info) ' +
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [
-              'AUD-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
-              user.id, user.username, 'login_geofence_rejected', 'users', String(user.id),
-              ip,
-              JSON.stringify({
-                reason: fence.reason,
-                distance: fence.distance || null,
-                radius: fence.radius || null,
-                branchId: user.branch_id
-              }).slice(0, 500)
-            ]
-          );
-        } catch (_) { /* audit_log shape may differ on older installs */ }
-        return res.json({ success: false, error: fence.message, code: fence.reason });
-      }
-    }
+    // v5.11.6 — Login is OPEN to any user with valid credentials. The
+    // geo-fence was relocated to the explicit clock-in/clock-out endpoint
+    // (POST /api/hr/my-clock) so off-site users can still access the
+    // employee portal, read holidays / payslips / leave balances, etc.
+    // Attendance recording is now a separate, intentional action.
 
     const token = jwt.sign({
       id: user.id, username: user.username, role: user.role,
       isDeveloper: isDev,
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       default_warehouse_id: user.default_warehouse_id || '',
-      employeeId: user.employee_id || ''  // v5.11.0 — for clock-out endpoint
+      employeeId: user.employee_id || ''  // still in JWT — /my-clock needs it
     }, process.env.JWT_SECRET, { expiresIn: '24h' });
-
-    // v5.11.0 — record attendance clock-in. No-op for users without an
-    // employee_id (e.g., the developer account). Idempotent: skips if
-    // already clocked in today.
-    let attResult = null;
-    try {
-      attResult = await attendance.clockIn(db, user.employee_id, {
-        lat: geoLat, lng: geoLng, address: geoAddress,
-        device: req.body && req.body.device
-      });
-    } catch (e) {
-      console.warn('[auth] clockIn failed (non-fatal):', e.message);
-    }
 
     res.json({
       success: true, username: user.username, role: user.role, token,
       isDeveloper: isDev,
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       warehouseId: user.default_warehouse_id || '',
-      employeeId: user.employee_id || '',  // v5.11.0
-      attendance: attResult                // v5.11.0 — { ok, action, recordId, ... }
+      employeeId: user.employee_id || ''
     });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// v5.11.0 — Logout endpoint. Performs the same geo-fence check as
-// login, then records clock_out into hr_attendance. The client clears
-// localStorage after a successful response (the JWT itself can't be
-// revoked — but the audit trail and attendance row are persisted).
+// v5.11.6 — Logout endpoint. Pure session-end action: no geo-fence
+// gate (off-site users must be able to sign out cleanly) and no auto
+// clock-out — attendance is handled exclusively via POST /api/hr/my-clock
+// which the employee triggers explicitly from the portal.
 router.post('/logout', verifyToken, async (req, res) => {
   try {
     const user = req.user || {};
-    const geoLat     = req.body && req.body.geoLat;
-    const geoLng     = req.body && req.body.geoLng;
-    const geoAddress = req.body && req.body.geoAddress;
-
-    // Geo-fence check (same role policy as login)
-    if (isRoleSubjectToGeofence(user.role, user.isDeveloper)) {
-      const fence = await checkBranchGeofence(db, user.branchId, geoLat, geoLng);
-      if (!fence.ok) {
-        return res.json({ success: false, error: fence.message, code: fence.reason });
-      }
-    }
-
-    // Record clock-out
-    let attResult = null;
-    try {
-      attResult = await attendance.clockOut(db, user.employeeId, {
-        lat: geoLat, lng: geoLng, address: geoAddress
-      });
-    } catch (e) {
-      console.warn('[auth] clockOut failed (non-fatal):', e.message);
-    }
-
-    // Audit log entry — non-fatal if columns missing
     try {
       const ip = req.ip || req.connection.remoteAddress || 'unknown';
       await db.query(
@@ -223,8 +161,7 @@ router.post('/logout', verifyToken, async (req, res) => {
         ]
       );
     } catch (_) { /* tolerate older audit_log schemas */ }
-
-    res.json({ success: true, attendance: attResult });
+    res.json({ success: true });
   } catch (e) {
     res.json({ success: false, error: e.message });
   }

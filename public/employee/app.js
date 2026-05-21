@@ -1211,33 +1211,104 @@ function doClock() {
 function doClockWithLocation() {
   toast(t('clock.locating'));
   var data = { username: currentUser };
-  // Device name
-  var ua = navigator.userAgent;
-  if (/iPhone/.test(ua)) data.deviceName = 'iPhone';
-  else if (/iPad/.test(ua)) data.deviceName = 'iPad';
-  else if (/Android/.test(ua)) { var m = ua.match(/;\s*([^;)]+)\s*Build/); data.deviceName = m ? m[1].trim() : 'Android'; }
-  else data.deviceName = t('common.browser');
+
+  // v5.11.6 — Resolve the full device fingerprint via the shared
+  // detector (window.detectDevice). Falls back to a minimal UA-based
+  // parse so older deployments still report something.
+  var devicePromise = (typeof window.detectDevice === 'function')
+    ? window.detectDevice()
+    : Promise.resolve(_fallbackDevice());
 
   // REQUIRE location
   if (!navigator.geolocation) { toast(t('clock.deviceNoGeo'), true); return; }
 
-  navigator.geolocation.getCurrentPosition(function(pos) {
+  Promise.all([
+    devicePromise,
+    new Promise(function (resolve, reject) {
+      navigator.geolocation.getCurrentPosition(
+        function (pos) { resolve(pos); },
+        function (err) { reject(err); },
+        { timeout: 10000, enableHighAccuracy: true }
+      );
+    })
+  ]).then(function (results) {
+    var device = results[0] || _fallbackDevice();
+    var pos    = results[1];
     data.geoLat = pos.coords.latitude;
     data.geoLng = pos.coords.longitude;
-    fetch('https://nominatim.openstreetmap.org/reverse?lat='+pos.coords.latitude+'&lon='+pos.coords.longitude+'&format=json&accept-language=' + (currentLang === 'en' ? 'en' : 'ar'))
-      .then(function(r){return r.json();})
-      .then(function(g){ data.geoAddress = g.display_name||''; sendClock(data); })
-      .catch(function(){ sendClock(data); });
-  }, function(err) {
+    // Send both: structured `device` object (v5.11.6) AND legacy
+    // `deviceName` string so older backends keep working.
+    data.device = device;
+    data.deviceName = [device.brand, device.model, device.os].filter(Boolean).join(' · ') || 'Browser';
+    fetch('https://nominatim.openstreetmap.org/reverse?lat=' + pos.coords.latitude +
+          '&lon=' + pos.coords.longitude + '&format=json&accept-language=' +
+          (currentLang === 'en' ? 'en' : 'ar'))
+      .then(function (r) { return r.json(); })
+      .then(function (g) { data.geoAddress = g.display_name || ''; sendClock(data); })
+      .catch(function () { sendClock(data); });
+  }).catch(function (err) {
+    // err can be either a device-detect error (resolves with fallback above
+    // so it's rare) or a geolocation error
     toast(t('clock.locationNeeded'), true);
-  }, {timeout:10000, enableHighAccuracy:true});
+  });
+}
+
+// v5.11.6 — Lightweight UA-based device detector used when the shared
+// window.detectDevice helper isn't loaded yet. Best-effort: returns
+// { brand, model, os, ua }.
+function _fallbackDevice() {
+  var ua = navigator.userAgent || '';
+  var brand = '', model = '', os = '';
+  if (/iPhone|iPad|iPod/.test(ua)) {
+    brand = 'Apple';
+    model = /iPad/.test(ua) ? 'iPad' : /iPod/.test(ua) ? 'iPod' : 'iPhone';
+    var iosM = ua.match(/OS (\d+[_\d]*) like Mac OS X/);
+    os = 'iOS' + (iosM ? ' ' + iosM[1].replace(/_/g, '.') : '');
+  } else if (/Android/.test(ua)) {
+    var aBuild = ua.match(/;\s*([^;)]+)\s*Build\//);
+    var aBuild2 = ua.match(/Android\s*\d+;\s*([^;)]+)\)/);
+    model = (aBuild && aBuild[1]) || (aBuild2 && aBuild2[1]) || 'Android';
+    brand = /Samsung|SM-|Galaxy/i.test(model) ? 'Samsung'
+          : /Pixel/i.test(model) ? 'Google'
+          : /Huawei|HW-|Honor/i.test(model) ? 'Huawei'
+          : /Xiaomi|Redmi|MI |POCO/i.test(model) ? 'Xiaomi'
+          : /OnePlus/i.test(model) ? 'OnePlus'
+          : /Oppo|CPH/i.test(model) ? 'Oppo'
+          : /Vivo/i.test(model) ? 'Vivo'
+          : 'Android';
+    var aV = ua.match(/Android\s*(\d+(?:\.\d+)?)/);
+    os = 'Android' + (aV ? ' ' + aV[1] : '');
+  } else if (/Windows/.test(ua)) {
+    brand = 'PC'; model = 'Windows'; os = 'Windows';
+  } else if (/Mac OS X/.test(ua)) {
+    brand = 'Apple'; model = 'Mac'; os = 'macOS';
+  } else if (/Linux/.test(ua)) {
+    brand = 'PC'; model = 'Linux'; os = 'Linux';
+  }
+  return { brand: brand, model: model, os: os, ua: ua.slice(0, 500) };
 }
 
 function sendClock(data) {
   callAPI('POST', '/hr/my-clock', data, function(r, err) {
     if (err) return toast(t('common.errorPrefix') + err, true);
-    if (r && r.success) { toast(r.message); loadHomeData(); }
-    else toast(r ? r.error : t('txn.clock.regFail'), true);
+    if (r && r.success) {
+      // v5.11.6 — Echo the recorded device in the success toast so the
+      // employee can confirm the right phone was logged.
+      var devLine = (r.device && (r.device.brand || r.device.model))
+        ? ' — ' + [r.device.brand, r.device.model, r.device.os].filter(Boolean).join(' · ')
+        : '';
+      toast(r.message + devLine);
+      loadHomeData();
+    } else {
+      // v5.11.6 — Surface the exact geo-fence distance/radius when present
+      var msg = r ? r.error : t('txn.clock.regFail');
+      if (r && r.code === 'outside_fence' && r.distance && r.radius) {
+        msg = (currentLang === 'en'
+          ? 'You are ' + r.distance + 'm from the branch — must be within ' + r.radius + 'm.'
+          : 'أنت بعيد عن الفرع بـ ' + r.distance + ' متر — قَرِّب نَفسك ضمن ' + r.radius + ' متر.');
+      }
+      toast(msg, true);
+    }
   });
 }
 

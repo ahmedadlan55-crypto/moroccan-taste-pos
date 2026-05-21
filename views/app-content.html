@@ -233,10 +233,14 @@
           <div class="nav-item" data-erp-nav="erpPermsMatrix" onclick="erpNav('erpPermsMatrix')" data-requires-primary-admin="1"><i class="fas fa-shield-halved"></i><span data-i18n="nav.permsMatrix">مصفوفة الصلاحيات</span></div>
           <div class="nav-item" data-erp-nav="erpHrDepartments" onclick="erpNav('erpHrDepartments')"><i class="fas fa-building"></i><span data-i18n="nav.departments">الأقسام</span></div>
           <div class="nav-item" data-erp-nav="erpHrAttendance" onclick="erpNav('erpHrAttendance')"><i class="fas fa-fingerprint"></i><span data-i18n="nav.attendance">الحضور والانصراف</span></div>
+          <!-- v5.11.1 — Monthly attendance report (per employee) -->
+          <div class="nav-item" data-erp-nav="erpHrAttendanceReport" onclick="erpNav('erpHrAttendanceReport')"><i class="fas fa-calendar-days"></i><span>تقرير الحضور الشَّهري</span></div>
           <div class="nav-item" data-erp-nav="erpHrShifts" onclick="erpNav('erpHrShifts')"><i class="fas fa-clock"></i><span data-i18n="nav.workShifts">الشفتات</span></div>
           <div class="nav-item" data-erp-nav="erpHrOvertime" onclick="erpNav('erpHrOvertime')"><i class="fas fa-business-time"></i><span data-i18n="nav.overtime">الإضافي</span></div>
           <div class="nav-item" data-erp-nav="erpHrExceptions" onclick="erpNav('erpHrExceptions')"><i class="fas fa-exclamation-triangle"></i><span data-i18n="nav.exceptions">الاستثناءات</span></div>
           <div class="nav-item" data-erp-nav="erpHrLeave" onclick="erpNav('erpHrLeave')"><i class="fas fa-calendar-check"></i><span data-i18n="nav.leave">الإجازات</span></div>
+          <!-- v5.11.1 — Official holidays + per-holiday OT policy -->
+          <div class="nav-item" data-erp-nav="erpHrHolidays" onclick="erpNav('erpHrHolidays')"><i class="fas fa-flag"></i><span>الإجازات الرسمية</span></div>
           <div class="nav-item" data-erp-nav="erpHrPayroll" onclick="erpNav('erpHrPayroll')"><i class="fas fa-money-check-alt"></i><span data-i18n="nav.payroll">الرواتب</span></div>
           <div class="nav-item" data-erp-nav="erpHrAdvances" onclick="erpNav('erpHrAdvances')"><i class="fas fa-hand-holding-usd"></i><span data-i18n="nav.advances">السلف</span></div>
         </div>
@@ -4167,6 +4171,123 @@
     <table class="erp-table">
       <thead><tr><th>الموظف</th><th>المبلغ</th><th>التاريخ</th><th>الأقساط</th><th>المتبقي</th><th>الحالة</th><th>إجراءات</th></tr></thead>
       <tbody id="hrAdvancesBody"><tr><td colspan="7" class="empty-msg">لا توجد سلف</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- v5.11.1 — HR: الإجازات الرسمية (Official Holidays)              -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpHrHolidays" class="dash-section hidden">
+  <header class="sca-header">
+    <div class="sca-header-main">
+      <div class="sca-header-icon" style="background:linear-gradient(135deg,#f59e0b,#d97706);"><i class="fas fa-flag"></i></div>
+      <div class="sca-header-text">
+        <h1 class="sca-header-title">الإجازات الرسمية</h1>
+        <p class="sca-header-sub">تعريف الأعياد والإجازات الرسمية + سياسة الإضافي عند العمل فيها. النطاق: كل الموظفين / براند مُحدَّد / فرع مُحدَّد.</p>
+      </div>
+    </div>
+    <div class="sca-header-actions">
+      <button class="sca-btn sca-btn-ghost" onclick="erpLoadHrHolidays()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="sca-btn sca-btn-ghost" onclick="erpExportHolidaysExcel()"><i class="fas fa-file-excel"></i><span>تصدير Excel</span></button>
+      <button class="sca-btn sca-btn-primary" onclick="erpOpenHolidayModal()"><i class="fas fa-plus"></i><span>إجازة جديدة</span></button>
+    </div>
+  </header>
+  <div class="sca-kpis" id="holKpis"></div>
+  <section class="sca-toolbar" role="search" aria-label="مرشحات الإجازات">
+    <div class="sca-field">
+      <label class="sca-field-label" for="holYear"><i class="fas fa-calendar"></i> السنة</label>
+      <select id="holYear" class="sca-input" onchange="erpLoadHrHolidays()"></select>
+    </div>
+    <div class="sca-field">
+      <label class="sca-field-label" for="holScope"><i class="fas fa-layer-group"></i> النطاق</label>
+      <select id="holScope" class="sca-input" onchange="erpLoadHrHolidays()">
+        <option value="">جميع النطاقات</option>
+        <option value="all">جميع الموظفين</option>
+        <option value="brand">براند مُحدَّد</option>
+        <option value="branch">فرع مُحدَّد</option>
+      </select>
+    </div>
+    <div class="sca-field">
+      <label class="sca-field-label" for="holSearch"><i class="fas fa-search"></i> بحث</label>
+      <input type="text" id="holSearch" class="sca-input" placeholder="اسم الإجازة..." oninput="erpLoadHrHolidaysDebounced()">
+    </div>
+    <button class="sca-search-btn" onclick="erpLoadHrHolidays()"><i class="fas fa-magnifying-glass"></i><span>بحث</span></button>
+  </section>
+  <div class="sca-table-wrap">
+    <table class="sca-table" role="table">
+      <thead>
+        <tr>
+          <th>الاسم</th>
+          <th>من تاريخ</th>
+          <th>إلى تاريخ</th>
+          <th class="num">عدد الأيام</th>
+          <th>النطاق</th>
+          <th>مدفوعة</th>
+          <th class="num">مضاعف الإضافي</th>
+          <th>متكررة</th>
+          <th class="actions">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="holBody">
+        <tr><td colspan="9" class="sca-empty"><i class="fas fa-spinner fa-spin"></i><div>جاري التحميل...</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- v5.11.1 — HR: تقرير الحضور الشَّهري (Monthly Attendance Report) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpHrAttendanceReport" class="dash-section hidden">
+  <header class="sca-header">
+    <div class="sca-header-main">
+      <div class="sca-header-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);"><i class="fas fa-calendar-days"></i></div>
+      <div class="sca-header-text">
+        <h1 class="sca-header-title">تقرير الحضور والانصراف الشَّهري</h1>
+        <p class="sca-header-sub">تقرير مُفصَّل لكل موظف: الحضور، الانصراف، التأخير، الغياب، الإجازات (عادية + رسمية)، والإضافي مع مضاعفاته.</p>
+      </div>
+    </div>
+    <div class="sca-header-actions">
+      <button class="sca-btn sca-btn-ghost" onclick="erpHrReportPrint()"><i class="fas fa-print"></i><span>طباعة</span></button>
+      <button class="sca-btn sca-btn-primary" onclick="erpHrReportExportExcel()"><i class="fas fa-file-excel"></i><span>تصدير Excel</span></button>
+    </div>
+  </header>
+  <section class="sca-toolbar" role="search">
+    <div class="sca-field">
+      <label class="sca-field-label" for="rptEmp"><i class="fas fa-user"></i> الموظف</label>
+      <select id="rptEmp" class="sca-input"></select>
+    </div>
+    <div class="sca-field">
+      <label class="sca-field-label" for="rptMonth"><i class="fas fa-calendar"></i> الشهر</label>
+      <select id="rptMonth" class="sca-input"></select>
+    </div>
+    <div class="sca-field">
+      <label class="sca-field-label" for="rptYear"><i class="fas fa-calendar-check"></i> السنة</label>
+      <select id="rptYear" class="sca-input"></select>
+    </div>
+    <button class="sca-search-btn" onclick="erpLoadHrAttendanceReport()"><i class="fas fa-chart-line"></i><span>عرض التقرير</span></button>
+  </section>
+  <div id="rptEmpCard"></div>
+  <div class="sca-kpis" id="rptKpis"></div>
+  <div id="rptCalendar"></div>
+  <div class="sca-table-wrap" id="rptDetailWrap" style="display:none;">
+    <table class="sca-table" id="rptDetailTable">
+      <thead>
+        <tr>
+          <th>التاريخ</th>
+          <th>اليوم</th>
+          <th>النوع</th>
+          <th>الحضور</th>
+          <th>الانصراف</th>
+          <th class="num">الساعات</th>
+          <th class="num">التأخير (د)</th>
+          <th class="num">الإضافي (د)</th>
+          <th class="num">قيمة الإضافي</th>
+          <th>الحالة</th>
+        </tr>
+      </thead>
+      <tbody id="rptDetailBody"></tbody>
     </table>
   </div>
 </div>

@@ -2195,6 +2195,88 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
+  // v5.11.1 — Official holidays (الإجازات الرسمية). Owner-defined
+  // ranges that mark certain days as paid leave for an entire scope
+  // (all employees / a brand / a single branch) AND carry an
+  // overtime_multiplier applied when an employee actually clocks in
+  // on a holiday day.
+  await createTableIfMissing('hr_holidays', `
+    CREATE TABLE hr_holidays (
+      id VARCHAR(50) PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      name_en VARCHAR(200),
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      scope ENUM('all','brand','branch') NOT NULL DEFAULT 'all',
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      is_paid BOOLEAN DEFAULT TRUE,
+      overtime_multiplier DECIMAL(4,2) DEFAULT 2.50,
+      is_recurring BOOLEAN DEFAULT FALSE,
+      notes TEXT,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_hol_dates (start_date, end_date),
+      INDEX idx_hol_active (is_active),
+      INDEX idx_hol_scope (scope, brand_id, branch_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // v5.11.1 — Seed Saudi public holidays the FIRST time the table is
+  // created (idempotent: only inserts if id is missing). The two Eid
+  // holidays use a placeholder date the owner adjusts annually (Hijri
+  // dates shift); the National Day and Founding Day are fixed.
+  try {
+    const currentYear = new Date().getFullYear();
+    const seeds = [
+      {
+        id: 'HOL-SA-NATIONAL',
+        name: 'اليوم الوطني السعودي',
+        name_en: 'Saudi National Day',
+        start_date: currentYear + '-09-23',
+        end_date:   currentYear + '-09-23',
+        is_recurring: 1
+      },
+      {
+        id: 'HOL-SA-FOUNDING',
+        name: 'يوم التأسيس',
+        name_en: 'Founding Day',
+        start_date: currentYear + '-02-22',
+        end_date:   currentYear + '-02-22',
+        is_recurring: 1
+      },
+      {
+        id: 'HOL-SA-EID-FITR',
+        name: 'عيد الفطر المبارك (يُحدَّث سنوياً)',
+        name_en: 'Eid al-Fitr (update annually)',
+        start_date: currentYear + '-04-10',
+        end_date:   currentYear + '-04-13',
+        is_recurring: 0
+      },
+      {
+        id: 'HOL-SA-EID-ADHA',
+        name: 'عيد الأضحى المبارك (يُحدَّث سنوياً)',
+        name_en: 'Eid al-Adha (update annually)',
+        start_date: currentYear + '-06-16',
+        end_date:   currentYear + '-06-19',
+        is_recurring: 0
+      }
+    ];
+    for (const h of seeds) {
+      const [exists] = await db.query('SELECT id FROM hr_holidays WHERE id = ?', [h.id]);
+      if (exists.length) continue;
+      await db.query(
+        'INSERT INTO hr_holidays (id, name, name_en, start_date, end_date, scope, is_paid, overtime_multiplier, is_recurring, is_active, created_by) ' +
+        'VALUES (?, ?, ?, ?, ?, "all", 1, 2.50, ?, 1, "system-seed")',
+        [h.id, h.name, h.name_en, h.start_date, h.end_date, h.is_recurring]
+      );
+    }
+  } catch (e) {
+    console.warn('[hr_holidays seed] non-fatal:', e.message);
+  }
+
   await createTableIfMissing('hr_audit_log', `
     CREATE TABLE hr_audit_log (
       id VARCHAR(50) PRIMARY KEY,

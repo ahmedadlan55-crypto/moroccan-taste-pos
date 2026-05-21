@@ -277,6 +277,12 @@
     getHrSchedules:      { method: 'GET',  url: '/hr/schedules' },
     saveHrSchedule:      { method: 'POST', url: '/hr/schedules' },
     getHrAttendance:     { method: 'GET',  url: '/hr/attendance', query: (f) => f },
+    // v5.11.1 — Official holidays + monthly attendance report
+    getHrHolidays:       { method: 'GET',    url: '/hr/holidays', query: (f) => f },
+    saveHrHoliday:       { method: 'POST',   url: '/hr/holidays' },
+    deleteHrHoliday:     { method: 'DELETE', url: (id) => '/hr/holidays/' + encodeURIComponent(id) },
+    getHrHolidayCalendar:{ method: 'GET',    url: (y) => '/hr/holidays/calendar/' + y, query: (y,f) => f },
+    getHrMonthlyAttendance: { method: 'GET', url: (id) => '/hr/attendance/monthly/' + encodeURIComponent(id), query: (id, f) => f },
     importHrAttendance:  { method: 'POST', url: '/hr/attendance/import' },
     clockHrAttendance:   { method: 'POST', url: '/hr/attendance/clock' },
     deleteHrAttendance:  { method: 'DELETE', url: (id) => '/hr/attendance/' + id },

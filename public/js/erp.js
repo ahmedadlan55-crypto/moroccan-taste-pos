@@ -174,6 +174,9 @@ function erpNav(sectionId) {
       case 'erpHrShifts': hrLoadShifts(); break;
       case 'erpHrOvertime': hrLoadOvertimeEntries(); break;
       case 'erpHrExceptions': hrLoadExceptions(); break;
+      // v5.11.1
+      case 'erpHrHolidays': if (typeof erpLoadHrHolidays === 'function') erpLoadHrHolidays(); break;
+      case 'erpHrAttendanceReport': if (typeof erpInitHrAttendanceReport === 'function') erpInitHrAttendanceReport(); break;
       case 'erpCashDash': cashLoadDashboard(); break;
       case 'erpCashBoxes': cashLoadBoxes(); break;
       case 'erpBankAccounts': cashLoadBanks(); break;
@@ -30880,4 +30883,665 @@ window.erpImportBrandMenuExcel = function(input) {
   }).catch(function(e) {
     _v3Toast('فشل تحميل مكتبة Excel: ' + e.message, true);
   });
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v5.11.1 — Official Holidays + Monthly Attendance Report
+// ═══════════════════════════════════════════════════════════════════
+
+// ─── helpers ────────────────────────────────────────────────────────
+function _hrFmt(n) {
+  var v = Number(n || 0);
+  return v.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function _hrEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function _hrDaysBetween(start, end) {
+  var a = new Date(start), b = new Date(end);
+  return Math.floor((b - a) / 86400000) + 1;
+}
+function _hrInjectStyles() {
+  if (document.getElementById('hrV511Styles')) return;
+  var st = document.createElement('style');
+  st.id = 'hrV511Styles';
+  st.textContent =
+    /* Holiday row badges */
+    '#erpHrHolidays .sca-table .scope-chip{font-size:11px;font-weight:800;padding:3px 8px;border-radius:5px;}' +
+    '#erpHrHolidays .sca-table .scope-all{background:#dbeafe;color:#1e40af;}' +
+    '#erpHrHolidays .sca-table .scope-brand{background:#fef3c7;color:#92400e;}' +
+    '#erpHrHolidays .sca-table .scope-branch{background:#dcfce7;color:#15803d;}' +
+    '#erpHrHolidays .sca-table .paid-yes{color:#15803d;font-weight:800;}' +
+    '#erpHrHolidays .sca-table .paid-no{color:#dc2626;font-weight:800;}' +
+    '#erpHrHolidays .sca-table .mul-chip{font-family:ui-monospace,Menlo,monospace;background:#ede9fe;color:#5b21b6;padding:3px 9px;border-radius:5px;font-weight:800;}' +
+    /* Holiday Modal */
+    '#holModal{position:fixed;inset:0;background:rgba(15,23,42,0.55);backdrop-filter:blur(6px);z-index:10001;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 0;}' +
+    '#holModal .shell{background:#fff;border-radius:18px;max-width:640px;width:96%;margin:40px auto;box-shadow:0 30px 80px -20px rgba(15,23,42,0.45);overflow:hidden;animation:holIn .25s ease;}' +
+    '@keyframes holIn{from{opacity:0;transform:translateY(20px);}to{opacity:1;transform:translateY(0);}}' +
+    '#holModal .hero{padding:18px 22px;background:linear-gradient(135deg,#fff7ed,#fff 60%);border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:14px;}' +
+    '#holModal .hero-icon{width:46px;height:46px;border-radius:12px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0;}' +
+    '#holModal .hero-text h3{margin:0;font-size:17px;font-weight:900;color:#0f172a;}' +
+    '#holModal .hero-text p{margin:3px 0 0;font-size:12px;color:#64748b;}' +
+    '#holModal .close-btn{margin-inline-start:auto;width:34px;height:34px;border-radius:10px;border:1.5px solid #e2e8f0;background:#fff;color:#64748b;cursor:pointer;font-size:18px;}' +
+    '#holModal .body{padding:20px 22px;}' +
+    '#holModal .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}' +
+    '#holModal .field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}' +
+    '#holModal .field label{font-size:12.5px;font-weight:700;color:#475569;}' +
+    '#holModal .field label .req{color:#dc2626;}' +
+    '#holModal .field input,#holModal .field select,#holModal .field textarea{height:40px;padding:0 12px;border:1.5px solid #e2e8f0;border-radius:10px;font-family:inherit;font-size:13.5px;color:#0f172a;background:#fff;outline:none;}' +
+    '#holModal .field textarea{height:auto;padding:10px 12px;resize:vertical;min-height:60px;}' +
+    '#holModal .field input:focus,#holModal .field select:focus,#holModal .field textarea:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,0.15);}' +
+    '#holModal .toggle{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;cursor:pointer;}' +
+    '#holModal .toggle input{width:18px;height:18px;accent-color:#f59e0b;}' +
+    '#holModal .toggle .tx{font-size:13px;font-weight:700;color:#0f172a;}' +
+    '#holModal .toggle .sub{font-size:11px;color:#64748b;margin-top:2px;}' +
+    '#holModal .foot{padding:14px 22px;background:#fafafa;border-top:1px solid #f1f5f9;display:flex;gap:10px;justify-content:flex-end;}' +
+    '#holModal .foot button{height:40px;padding:0 22px;border-radius:10px;border:1.5px solid transparent;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:8px;}' +
+    '#holModal .foot .ghost{background:#fff;border-color:#e2e8f0;color:#475569;}' +
+    '#holModal .foot .primary{background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;box-shadow:0 4px 12px rgba(245,158,11,0.30);}' +
+    /* Monthly Attendance Report */
+    '#erpHrAttendanceReport #rptEmpCard{margin:16px 0;padding:16px 18px;background:linear-gradient(135deg,#faf5ff,#fff 60%);border:1.5px solid #ddd6fe;border-radius:14px;display:none;}' +
+    '#erpHrAttendanceReport #rptEmpCard.has-data{display:block;}' +
+    '#erpHrAttendanceReport .empcard-top{display:flex;align-items:center;gap:14px;margin-bottom:10px;}' +
+    '#erpHrAttendanceReport .empcard-avatar{width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;flex-shrink:0;}' +
+    '#erpHrAttendanceReport .empcard-name{font-size:18px;font-weight:900;color:#0f172a;}' +
+    '#erpHrAttendanceReport .empcard-meta{font-size:12px;color:#64748b;margin-top:3px;}' +
+    '#erpHrAttendanceReport .empcard-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;}' +
+    '@media (max-width:800px){#erpHrAttendanceReport .empcard-grid{grid-template-columns:repeat(2,1fr);}}' +
+    '#erpHrAttendanceReport .empcard-grid .cell{background:#fff;border:1.5px solid #ede9fe;border-radius:10px;padding:8px 12px;}' +
+    '#erpHrAttendanceReport .empcard-grid .cell-l{font-size:10.5px;font-weight:800;color:#5b21b6;text-transform:uppercase;letter-spacing:0.04em;}' +
+    '#erpHrAttendanceReport .empcard-grid .cell-v{font-size:13.5px;font-weight:800;color:#0f172a;margin-top:3px;}' +
+    '#erpHrAttendanceReport #rptCalendar{margin:16px 0;}' +
+    '#erpHrAttendanceReport .cal-shell{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:14px 16px;}' +
+    '#erpHrAttendanceReport .cal-head{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px;}' +
+    '#erpHrAttendanceReport .cal-head .cal-dow{font-size:11px;font-weight:800;color:#64748b;text-align:center;padding:6px 0;}' +
+    '#erpHrAttendanceReport .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;}' +
+    '#erpHrAttendanceReport .cal-cell{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:8px 6px;min-height:80px;display:flex;flex-direction:column;font-size:11px;cursor:pointer;transition:all .15s;}' +
+    '#erpHrAttendanceReport .cal-cell:hover{box-shadow:0 4px 12px rgba(15,23,42,0.08);transform:translateY(-1px);}' +
+    '#erpHrAttendanceReport .cal-cell.is-blank{background:transparent;border:1.5px dashed #f1f5f9;cursor:default;}' +
+    '#erpHrAttendanceReport .cal-cell .day{font-size:14px;font-weight:900;color:#0f172a;}' +
+    '#erpHrAttendanceReport .cal-cell .label{font-size:10px;font-weight:700;margin-top:4px;}' +
+    '#erpHrAttendanceReport .cal-cell .hrs{font-size:10.5px;color:#475569;margin-top:auto;}' +
+    '#erpHrAttendanceReport .cal-cell.t-present{background:#f0fdf4;border-color:#bbf7d0;}' +
+    '#erpHrAttendanceReport .cal-cell.t-present .label{color:#15803d;}' +
+    '#erpHrAttendanceReport .cal-cell.t-late{background:#fef3c7;border-color:#fde68a;}' +
+    '#erpHrAttendanceReport .cal-cell.t-late .label{color:#92400e;}' +
+    '#erpHrAttendanceReport .cal-cell.t-absent{background:#fef2f2;border-color:#fecaca;}' +
+    '#erpHrAttendanceReport .cal-cell.t-absent .label{color:#991b1b;}' +
+    '#erpHrAttendanceReport .cal-cell.t-leave{background:#f3e8ff;border-color:#e9d5ff;}' +
+    '#erpHrAttendanceReport .cal-cell.t-leave .label{color:#6b21a8;}' +
+    '#erpHrAttendanceReport .cal-cell.t-holiday{background:#fff7ed;border-color:#fdba74;}' +
+    '#erpHrAttendanceReport .cal-cell.t-holiday .label{color:#9a3412;}' +
+    '#erpHrAttendanceReport .cal-cell.t-rest{background:#f8fafc;border-color:#e2e8f0;}' +
+    '#erpHrAttendanceReport .cal-cell.t-rest .label{color:#64748b;}' +
+    '#erpHrAttendanceReport .cal-cell.is-today{outline:2px solid #7c3aed;outline-offset:2px;}' +
+    '#erpHrAttendanceReport .cal-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px dashed #e2e8f0;}' +
+    '#erpHrAttendanceReport .cal-legend .lg-item{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#475569;}' +
+    '#erpHrAttendanceReport .cal-legend .lg-dot{width:12px;height:12px;border-radius:3px;}' +
+    '';
+  document.head.appendChild(st);
+}
+
+// ─── Holidays: Year dropdown population ─────────────────────────────
+function _hrPopulateYearSelect(elId, defaultYear) {
+  var sel = document.getElementById(elId);
+  if (!sel) return;
+  if (sel.options.length) return;
+  var now = new Date().getFullYear();
+  var html = '';
+  for (var y = now + 1; y >= now - 5; y--) {
+    var s = (y === (defaultYear || now)) ? ' selected' : '';
+    html += '<option value="' + y + '"' + s + '>' + y + '</option>';
+  }
+  sel.innerHTML = html;
+}
+
+var _holidaysCache = [];
+var _holidaysSearchTimer = null;
+window.erpLoadHrHolidaysDebounced = function() {
+  clearTimeout(_holidaysSearchTimer);
+  _holidaysSearchTimer = setTimeout(erpLoadHrHolidays, 280);
+};
+
+window.erpLoadHrHolidays = function() {
+  _hrInjectStyles();
+  _hrPopulateYearSelect('holYear');
+  var year   = (document.getElementById('holYear') || {}).value || new Date().getFullYear();
+  var scope  = (document.getElementById('holScope') || {}).value || '';
+  var search = (document.getElementById('holSearch') || {}).value || '';
+  var tb = document.getElementById('holBody');
+  if (tb) tb.innerHTML = '<tr><td colspan="9" class="sca-empty"><i class="fas fa-spinner fa-spin"></i><div>جاري التحميل...</div></td></tr>';
+  api.withSuccessHandler(function(rows) {
+    _holidaysCache = Array.isArray(rows) ? rows : [];
+    _holidaysRenderTable(_holidaysCache);
+    _holidaysRenderKpis(_holidaysCache);
+  }).getHrHolidays({ year: year, scope: scope, q: search });
+};
+
+function _holidaysRenderKpis(rows) {
+  var box = document.getElementById('holKpis');
+  if (!box) return;
+  var count = rows.length;
+  var totalDays = rows.reduce(function(s, r){ return s + _hrDaysBetween(r.startDate, r.endDate); }, 0);
+  var today = new Date().toISOString().slice(0,10);
+  var upcoming = rows.filter(function(r){ return r.startDate >= today; }).length;
+  var avgMul = rows.length ? (rows.reduce(function(s,r){ return s + Number(r.overtimeMultiplier || 0); }, 0) / rows.length) : 0;
+  var paid = rows.filter(function(r){ return r.isPaid; }).length;
+  var unpaid = rows.length - paid;
+  function card(icon, label, value, color) {
+    return '<div class="sca-kpi"><div class="sca-kpi-icon" style="background:' + color + '1f;color:' + color + ';"><i class="fas ' + icon + '"></i></div>' +
+      '<div class="sca-kpi-body"><div class="sca-kpi-label">' + label + '</div><div class="sca-kpi-value">' + value + '</div></div></div>';
+  }
+  box.innerHTML =
+    card('fa-flag',          'عدد الإجازات', count,                              '#f59e0b') +
+    card('fa-calendar-day',  'إجمالي الأيام', totalDays,                         '#3b82f6') +
+    card('fa-forward',       'قادمة',         upcoming,                          '#22c55e') +
+    card('fa-percent',       'مُتوسط المضاعف', avgMul.toFixed(2) + 'x',          '#8b5cf6') +
+    card('fa-money-bill',    'مدفوعة/غير',    paid + ' / ' + unpaid,             '#06b6d4');
+}
+
+function _holidaysRenderTable(rows) {
+  var tb = document.getElementById('holBody');
+  if (!tb) return;
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="9" class="sca-empty"><i class="fas fa-folder-open"></i><div>لا توجد إجازات مَطابقة للمعايير</div></td></tr>';
+    return;
+  }
+  var scopeLabel = { all: 'جميع الموظفين', brand: 'براند', branch: 'فرع' };
+  tb.innerHTML = rows.map(function(r) {
+    var days = _hrDaysBetween(r.startDate, r.endDate);
+    return '<tr>' +
+      '<td><strong>' + _hrEsc(r.name) + '</strong>' + (r.nameEn ? '<div style="font-size:11px;color:#64748b;">' + _hrEsc(r.nameEn) + '</div>' : '') + '</td>' +
+      '<td>' + _hrEsc(r.startDate) + '</td>' +
+      '<td>' + _hrEsc(r.endDate) + '</td>' +
+      '<td class="num"><strong>' + days + '</strong></td>' +
+      '<td><span class="scope-chip scope-' + r.scope + '">' + (scopeLabel[r.scope] || r.scope) + '</span></td>' +
+      '<td><span class="' + (r.isPaid ? 'paid-yes' : 'paid-no') + '">' + (r.isPaid ? '✓ نعم' : '✗ لا') + '</span></td>' +
+      '<td class="num"><span class="mul-chip">' + Number(r.overtimeMultiplier).toFixed(2) + 'x</span></td>' +
+      '<td>' + (r.isRecurring ? '<i class="fas fa-redo" style="color:#7c3aed;"></i> نَعم' : '<span style="color:#cbd5e1;">—</span>') + '</td>' +
+      '<td class="actions">' +
+        '<button class="sca-row-btn" title="تعديل" onclick="erpOpenHolidayModal(\'' + r.id + '\')"><i class="fas fa-edit"></i></button> ' +
+        '<button class="sca-row-btn" title="حذف" onclick="erpDeleteHoliday(\'' + r.id + '\')" style="color:#dc2626;border-color:#fecaca;"><i class="fas fa-trash"></i></button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+window.erpOpenHolidayModal = function(idOrData) {
+  _hrInjectStyles();
+  var existing = document.getElementById('holModal');
+  if (existing) existing.remove();
+  var data = {};
+  if (typeof idOrData === 'string') {
+    data = (_holidaysCache || []).find(function(r){ return String(r.id) === String(idOrData); }) || { id: idOrData };
+  } else if (idOrData && typeof idOrData === 'object') {
+    data = idOrData;
+  }
+  var isEdit = !!data.id;
+  var today = new Date().toISOString().slice(0,10);
+  var html =
+    '<div id="holModal" onclick="if(event.target===this)erpCloseHolidayModal()">' +
+      '<div class="shell" onclick="event.stopPropagation();">' +
+        '<div class="hero">' +
+          '<div class="hero-icon"><i class="fas fa-flag"></i></div>' +
+          '<div class="hero-text">' +
+            '<h3>' + (isEdit ? 'تعديل إجازة رسمية' : 'إجازة رسمية جديدة') + '</h3>' +
+            '<p>عند تَعريف الإجازة، تُحسَب لجميع الموظفين في النطاق المُحدَّد. عند الحضور فيها يُطبَّق مضاعف الإضافي.</p>' +
+          '</div>' +
+          '<button class="close-btn" onclick="erpCloseHolidayModal()">&times;</button>' +
+        '</div>' +
+        '<div class="body">' +
+          '<input type="hidden" id="holId" value="' + _hrEsc(data.id || '') + '">' +
+          '<div class="field"><label>الاسم (عربي) <span class="req">*</span></label>' +
+            '<input id="holName" value="' + _hrEsc(data.name || '') + '" placeholder="مثال: اليوم الوطني السعودي"></div>' +
+          '<div class="field"><label>الاسم (English)</label>' +
+            '<input id="holNameEn" value="' + _hrEsc(data.nameEn || '') + '" placeholder="Saudi National Day"></div>' +
+          '<div class="grid-2">' +
+            '<div class="field"><label>من تاريخ <span class="req">*</span></label>' +
+              '<input type="date" id="holStart" value="' + _hrEsc(data.startDate || today) + '"></div>' +
+            '<div class="field"><label>إلى تاريخ <span class="req">*</span></label>' +
+              '<input type="date" id="holEnd" value="' + _hrEsc(data.endDate || today) + '"></div>' +
+          '</div>' +
+          '<div class="grid-2">' +
+            '<div class="field"><label>النطاق</label>' +
+              '<select id="holScopeM"><option value="all"' + (data.scope === 'all' ? ' selected' : '') + '>جميع الموظفين</option>' +
+              '<option value="brand"' + (data.scope === 'brand' ? ' selected' : '') + '>براند مُحدَّد</option>' +
+              '<option value="branch"' + (data.scope === 'branch' ? ' selected' : '') + '>فرع مُحدَّد</option></select></div>' +
+            '<div class="field"><label>مضاعف الإضافي</label>' +
+              '<input type="number" id="holMul" step="0.25" min="1" max="10" value="' + (data.overtimeMultiplier != null ? data.overtimeMultiplier : 2.5) + '"></div>' +
+          '</div>' +
+          '<label class="toggle" style="margin-bottom:12px;">' +
+            '<input type="checkbox" id="holPaid"' + (data.isPaid !== false ? ' checked' : '') + '>' +
+            '<div><div class="tx">إجازة مَدفوعة الأجر</div><div class="sub">الموظف يَحصل على راتب اليوم كاملاً حتى لو لم يَحضر</div></div>' +
+          '</label>' +
+          '<label class="toggle" style="margin-bottom:12px;">' +
+            '<input type="checkbox" id="holRec"' + (data.isRecurring ? ' checked' : '') + '>' +
+            '<div><div class="tx">متكرِّرة سنوياً</div><div class="sub">تَنطبق على نفس التاريخ من كل سنة (لإجازات ثابتة كالـ اليوم الوطني)</div></div>' +
+          '</label>' +
+          '<div class="field"><label>ملاحظات</label>' +
+            '<textarea id="holNotes" placeholder="ملاحظات اختيارية...">' + _hrEsc(data.notes || '') + '</textarea></div>' +
+        '</div>' +
+        '<div class="foot">' +
+          '<button class="ghost" onclick="erpCloseHolidayModal()">إلغاء</button>' +
+          '<button class="primary" onclick="erpSaveHoliday()"><i class="fas fa-check"></i> حفظ</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstChild);
+};
+
+window.erpCloseHolidayModal = function() {
+  var m = document.getElementById('holModal');
+  if (m) m.remove();
+};
+
+window.erpSaveHoliday = function() {
+  var payload = {
+    id:                 (document.getElementById('holId') || {}).value || null,
+    name:               (document.getElementById('holName') || {}).value || '',
+    nameEn:             (document.getElementById('holNameEn') || {}).value || '',
+    startDate:          (document.getElementById('holStart') || {}).value || '',
+    endDate:            (document.getElementById('holEnd') || {}).value || '',
+    scope:              (document.getElementById('holScopeM') || {}).value || 'all',
+    overtimeMultiplier: Number((document.getElementById('holMul') || {}).value || 2.5),
+    isPaid:             !!(document.getElementById('holPaid') || {}).checked,
+    isRecurring:        !!(document.getElementById('holRec') || {}).checked,
+    notes:              (document.getElementById('holNotes') || {}).value || ''
+  };
+  if (!payload.name)      return showToast('الاسم مَطلوب', true);
+  if (!payload.startDate) return showToast('تاريخ البداية مَطلوب', true);
+  if (!payload.endDate)   return showToast('تاريخ النهاية مَطلوب', true);
+  api.withSuccessHandler(function(res) {
+    if (res && res.success) {
+      showToast('تم حفظ الإجازة ✓');
+      erpCloseHolidayModal();
+      erpLoadHrHolidays();
+    } else {
+      showToast((res && res.error) || 'فشل الحفظ', true);
+    }
+  }).saveHrHoliday(payload);
+};
+
+window.erpDeleteHoliday = function(id) {
+  if (!confirm('هل أنت مُتأكِّد من حذف هذه الإجازة؟')) return;
+  api.withSuccessHandler(function(res) {
+    if (res && res.success) {
+      showToast('تم الحذف ✓');
+      erpLoadHrHolidays();
+    } else {
+      showToast((res && res.error) || 'فشل الحذف', true);
+    }
+  }).deleteHrHoliday(id);
+};
+
+window.erpExportHolidaysExcel = function() {
+  if (!_holidaysCache || !_holidaysCache.length) {
+    showToast('لا توجد بيانات للتَّصدير', true); return;
+  }
+  function doExport(){
+    if (typeof XLSX === 'undefined') { showToast('فشل تحميل مكتبة Excel', true); return; }
+    var scopeLabel = { all: 'جميع الموظفين', brand: 'براند', branch: 'فرع' };
+    var rows = _holidaysCache.map(function(r){
+      return {
+        'الاسم': r.name,
+        'English': r.nameEn || '',
+        'من تاريخ': r.startDate,
+        'إلى تاريخ': r.endDate,
+        'عدد الأيام': _hrDaysBetween(r.startDate, r.endDate),
+        'النطاق': scopeLabel[r.scope] || r.scope,
+        'مدفوعة': r.isPaid ? 'نَعم' : 'لا',
+        'مضاعف الإضافي': Number(r.overtimeMultiplier).toFixed(2) + 'x',
+        'متكرِّرة سنوياً': r.isRecurring ? 'نَعم' : 'لا',
+        'ملاحظات': r.notes || ''
+      };
+    });
+    var ws = XLSX.utils.json_to_sheet(rows);
+    var keys = Object.keys(rows[0] || {});
+    ws['!cols'] = keys.map(function(k){
+      var max = String(k).length;
+      rows.forEach(function(r){ var v = String(r[k] == null ? '' : r[k]); if (v.length > max) max = v.length; });
+      return { wch: Math.min(Math.max(max + 2, 10), 32) };
+    });
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'الإجازات الرسمية');
+    var stamp = new Date().toISOString().split('T')[0];
+    XLSX.writeFile(wb, 'official_holidays_' + stamp + '.xlsx');
+    showToast('تم تصدير ' + rows.length + ' إجازة');
+  }
+  if (typeof window.ensureXlsx === 'function') {
+    window.ensureXlsx().then(doExport).catch(function(){ showToast('فشل تحميل مكتبة Excel', true); });
+  } else doExport();
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Monthly Attendance Report
+// ═══════════════════════════════════════════════════════════════════
+
+var _rptLastPayload = null;
+var _rptEmployees = [];
+
+window.erpInitHrAttendanceReport = function() {
+  _hrInjectStyles();
+  // Populate month + year selectors
+  var mSel = document.getElementById('rptMonth');
+  if (mSel && !mSel.options.length) {
+    var months = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+    var cur = new Date().getMonth() + 1;
+    mSel.innerHTML = months.map(function(m, i){ var v = i+1; return '<option value="' + v + '"' + (v===cur?' selected':'') + '>' + m + '</option>'; }).join('');
+  }
+  _hrPopulateYearSelect('rptYear');
+  // Populate employee selector
+  var eSel = document.getElementById('rptEmp');
+  if (eSel && eSel.options.length <= 1) {
+    api.withSuccessHandler(function(rows) {
+      _rptEmployees = Array.isArray(rows) ? rows : [];
+      eSel.innerHTML = '<option value="">— اختر موظفاً —</option>' +
+        _rptEmployees.map(function(e){
+          var name = ((e.firstName || e.first_name || '') + ' ' + (e.lastName || e.last_name || '')).trim();
+          var num  = e.employeeNumber || e.employee_number || '';
+          return '<option value="' + _hrEsc(e.id) + '">' + _hrEsc(name + ' — ' + num) + '</option>';
+        }).join('');
+    }).getHrEmployees();
+  }
+};
+
+window.erpLoadHrAttendanceReport = function() {
+  _hrInjectStyles();
+  var empId = (document.getElementById('rptEmp') || {}).value || '';
+  var month = (document.getElementById('rptMonth') || {}).value || (new Date().getMonth() + 1);
+  var year  = (document.getElementById('rptYear') || {}).value || new Date().getFullYear();
+  if (!empId) { showToast('اختر موظفاً أولاً', true); return; }
+  // Loading state
+  var card = document.getElementById('rptEmpCard');
+  if (card) { card.classList.remove('has-data'); card.innerHTML = ''; }
+  var kpi = document.getElementById('rptKpis');
+  if (kpi) kpi.innerHTML = '';
+  var cal = document.getElementById('rptCalendar');
+  if (cal) cal.innerHTML = '<div class="sca-empty"><i class="fas fa-spinner fa-spin"></i><div>جاري إعداد التقرير...</div></div>';
+  var wrap = document.getElementById('rptDetailWrap');
+  if (wrap) wrap.style.display = 'none';
+  api.withSuccessHandler(function(data) {
+    if (!data || !data.success) {
+      showToast((data && data.error) || 'فشل تحميل التقرير', true);
+      if (cal) cal.innerHTML = '';
+      return;
+    }
+    _rptLastPayload = data;
+    _rptRenderAll(data);
+  }).getHrMonthlyAttendance(empId, { month: month, year: year });
+};
+
+function _rptRenderAll(d) {
+  _rptRenderEmpCard(d.employee, d.shift, d.period);
+  _rptRenderKpis(d.summary);
+  _rptRenderCalendar(d.days, d.period);
+  _rptRenderDetailTable(d.days, d.employee.hourlyRate);
+}
+
+function _rptRenderEmpCard(emp, shift, period) {
+  var card = document.getElementById('rptEmpCard');
+  if (!card) return;
+  card.classList.add('has-data');
+  var initials = (emp.name || '?').trim().slice(0, 2);
+  card.innerHTML =
+    '<div class="empcard-top">' +
+      '<div class="empcard-avatar">' + _hrEsc(initials) + '</div>' +
+      '<div>' +
+        '<div class="empcard-name">' + _hrEsc(emp.name || '—') + '</div>' +
+        '<div class="empcard-meta">' + _hrEsc(emp.employeeNumber || '—') + ' · ' + _hrEsc(emp.position || emp.jobTitle || '—') + ' · ' + _hrEsc(emp.department || '—') + ' · ' + _hrEsc(emp.branch || '—') + '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="empcard-grid">' +
+      '<div class="cell"><div class="cell-l">الشَّهر</div><div class="cell-v">' + period.month + ' / ' + period.year + '</div></div>' +
+      '<div class="cell"><div class="cell-l">أيام العمل المُتوقَّعة</div><div class="cell-v">' + period.workDaysExpected + ' / ' + period.daysInMonth + '</div></div>' +
+      '<div class="cell"><div class="cell-l">الإجازات الرسمية</div><div class="cell-v">' + period.holidaysCount + ' يوم</div></div>' +
+      '<div class="cell"><div class="cell-l">الشِّفت</div><div class="cell-v">' + _hrEsc(shift.name || '—') + ' (' + (shift.dailyHours || 8).toFixed(1) + ' س)</div></div>' +
+    '</div>';
+}
+
+function _rptRenderKpis(s) {
+  var box = document.getElementById('rptKpis');
+  if (!box) return;
+  function card(icon, label, value, color) {
+    return '<div class="sca-kpi"><div class="sca-kpi-icon" style="background:' + color + '1f;color:' + color + ';"><i class="fas ' + icon + '"></i></div>' +
+      '<div class="sca-kpi-body"><div class="sca-kpi-label">' + label + '</div><div class="sca-kpi-value">' + value + '</div></div></div>';
+  }
+  box.innerHTML =
+    card('fa-check-circle', 'الحضور', s.presentDays + ' / ' + s.workDays,        '#22c55e') +
+    card('fa-times-circle', 'الغياب', s.absentDays,                              '#ef4444') +
+    card('fa-umbrella-beach', 'إجازات + رسمية', (s.leaveDays + s.holidayDays),   '#8b5cf6') +
+    card('fa-clock', 'الساعات',     _hrFmt(s.totalHours) + ' / ' + _hrFmt(s.expectedHours), '#06b6d4') +
+    card('fa-arrow-up-right-dots', 'الإضافي', _hrFmt(s.overtimeHours) + ' س · ' + _hrFmt(s.overtimeAmount) + ' ر.س', '#f59e0b') +
+    card('fa-chart-pie', 'نِسبة الالتزام', s.attendanceRate + '%',               s.attendanceRate >= 95 ? '#15803d' : s.attendanceRate >= 80 ? '#f59e0b' : '#dc2626');
+}
+
+function _rptRenderCalendar(days, period) {
+  var box = document.getElementById('rptCalendar');
+  if (!box) return;
+  // Determine starting weekday of the 1st (0=Sun..6=Sat)
+  var first = new Date(period.year, period.month - 1, 1);
+  var startDow = first.getDay();
+  // Header DOW labels (Sun..Sat for RTL grid right-to-left)
+  var doW = ['الأحد','الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+  var head = doW.map(function(d){ return '<div class="cal-dow">' + d + '</div>'; }).join('');
+  // Build cells: blanks before day 1, then 1..N
+  var cells = '';
+  for (var b = 0; b < startDow; b++) cells += '<div class="cal-cell is-blank"></div>';
+  days.forEach(function(day) {
+    var t = '';
+    var label = '';
+    if (day.dayType === 'holiday') { t = 't-holiday'; label = '🟠 ' + (day.holiday ? day.holiday.name : 'إجازة رسمية'); }
+    else if (day.dayType === 'leave') { t = 't-leave'; label = '🟣 إجازة'; }
+    else if (day.dayType === 'rest') { t = 't-rest'; label = '⚪ راحة'; }
+    else if (day.attendance) {
+      if (day.attendance.lateMinutes > 0) { t = 't-late'; label = '🟡 تأخير ' + day.attendance.lateMinutes + 'د'; }
+      else { t = 't-present'; label = '🟢 حضور'; }
+    } else {
+      // work day but no attendance
+      if (day.isWorkDay) { t = 't-absent'; label = '🔴 غياب'; }
+      else { t = 't-rest'; label = '⚪ —'; }
+    }
+    var hrs = day.attendance ? _hrFmt(day.attendance.totalHours) + ' س' : '';
+    cells += '<div class="cal-cell ' + t + (day.isToday ? ' is-today' : '') + '" title="' + _hrEsc(day.date) + '">' +
+      '<div class="day">' + Number(day.date.split('-')[2]) + '</div>' +
+      '<div class="label">' + _hrEsc(label) + '</div>' +
+      (hrs ? '<div class="hrs">' + hrs + '</div>' : '') +
+    '</div>';
+  });
+  box.innerHTML =
+    '<div class="cal-shell">' +
+      '<div class="cal-head">' + head + '</div>' +
+      '<div class="cal-grid">' + cells + '</div>' +
+      '<div class="cal-legend">' +
+        '<div class="lg-item"><span class="lg-dot" style="background:#bbf7d0;"></span>حضور</div>' +
+        '<div class="lg-item"><span class="lg-dot" style="background:#fde68a;"></span>تأخير</div>' +
+        '<div class="lg-item"><span class="lg-dot" style="background:#fecaca;"></span>غياب</div>' +
+        '<div class="lg-item"><span class="lg-dot" style="background:#e9d5ff;"></span>إجازة</div>' +
+        '<div class="lg-item"><span class="lg-dot" style="background:#fdba74;"></span>إجازة رسمية</div>' +
+        '<div class="lg-item"><span class="lg-dot" style="background:#e2e8f0;"></span>راحة</div>' +
+      '</div>' +
+    '</div>';
+}
+
+function _rptRenderDetailTable(days, hourlyRate) {
+  var wrap = document.getElementById('rptDetailWrap');
+  var body = document.getElementById('rptDetailBody');
+  if (!wrap || !body) return;
+  wrap.style.display = '';
+  var typeLabel = { work: 'يوم عمل', rest: 'راحة', holiday: 'إجازة رسمية', leave: 'إجازة' };
+  body.innerHTML = days.map(function(d) {
+    var att = d.attendance || {};
+    var clockIn  = att.clockIn  ? new Date(att.clockIn).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—';
+    var clockOut = att.clockOut ? new Date(att.clockOut).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—';
+    var hrs = att.totalHours ? _hrFmt(att.totalHours) : '—';
+    var late = att.lateMinutes || 0;
+    var ot   = att.overtimeMinutes || 0;
+    var multi = d.holiday ? Number(d.holiday.multiplier) : 1.5;
+    var otAmt = ot ? _hrFmt((ot / 60) * Number(hourlyRate || 0) * multi) : '—';
+    var status = att.clockIn ? (late > 0 ? '🟡 حضور بتأخير' : '🟢 حضور') :
+                 d.dayType === 'holiday' ? '🟠 إجازة رسمية' :
+                 d.dayType === 'leave' ? '🟣 إجازة' :
+                 d.dayType === 'rest' ? '⚪ راحة' :
+                 d.isWorkDay && new Date(d.date) < new Date() ? '🔴 غياب' : '⚪ —';
+    return '<tr>' +
+      '<td>' + _hrEsc(d.date) + '</td>' +
+      '<td>' + _hrEsc(d.dayName) + '</td>' +
+      '<td>' + _hrEsc(typeLabel[d.dayType] || d.dayType) + (d.holiday ? ' <small style="color:#9a3412;">(' + _hrEsc(d.holiday.name) + ')</small>' : '') + '</td>' +
+      '<td>' + clockIn + '</td>' +
+      '<td>' + clockOut + '</td>' +
+      '<td class="num">' + hrs + '</td>' +
+      '<td class="num"' + (late > 0 ? ' style="color:#dc2626;font-weight:800;"' : '') + '>' + (late || '—') + '</td>' +
+      '<td class="num"' + (ot > 0 ? ' style="color:#15803d;font-weight:800;"' : '') + '>' + (ot || '—') + '</td>' +
+      '<td class="num">' + otAmt + '</td>' +
+      '<td>' + status + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+window.erpHrReportExportExcel = function() {
+  if (!_rptLastPayload) { showToast('اعرض التقرير أولاً', true); return; }
+  function doExport() {
+    if (typeof XLSX === 'undefined') { showToast('فشل تحميل مكتبة Excel', true); return; }
+    var d = _rptLastPayload;
+    var wb = XLSX.utils.book_new();
+    // Sheet 1: Summary
+    var s1 = [
+      ['التقرير', 'تقرير الحضور الشَّهري'],
+      [],
+      ['الموظف', d.employee.name],
+      ['الرقم الوظيفي', d.employee.employeeNumber],
+      ['القسم', d.employee.department || '—'],
+      ['الفرع', d.employee.branch || '—'],
+      ['الشَّهر', d.period.month + '/' + d.period.year],
+      [],
+      ['ملخَّص'],
+      ['أيام العمل المتوقعة', d.summary.workDays],
+      ['أيام الحضور', d.summary.presentDays],
+      ['أيام الغياب', d.summary.absentDays],
+      ['أيام الإجازات العادية', d.summary.leaveDays],
+      ['أيام الإجازات الرسمية', d.summary.holidayDays],
+      ['الساعات الفعلية', d.summary.totalHours],
+      ['الساعات المتوقعة', d.summary.expectedHours],
+      ['دقائق التأخير', d.summary.lateMinutes],
+      ['ساعات الإضافي', d.summary.overtimeHours],
+      ['قيمة الإضافي', d.summary.overtimeAmount + ' ر.س'],
+      ['نسبة الالتزام', d.summary.attendanceRate + '%']
+    ];
+    var ws1 = XLSX.utils.aoa_to_sheet(s1);
+    ws1['!cols'] = [{ wch: 25 }, { wch: 30 }];
+    XLSX.utils.book_append_sheet(wb, ws1, 'ملخَّص');
+    // Sheet 2: Detail
+    var rows = d.days.map(function(day) {
+      var att = day.attendance || {};
+      return {
+        'التاريخ':   day.date,
+        'اليوم':     day.dayName,
+        'النوع':     day.dayType,
+        'الحضور':    att.clockIn ? new Date(att.clockIn).toLocaleTimeString('en-GB') : '',
+        'الانصراف':  att.clockOut ? new Date(att.clockOut).toLocaleTimeString('en-GB') : '',
+        'الساعات':   att.totalHours || 0,
+        'التأخير(د)': att.lateMinutes || 0,
+        'الإضافي(د)': att.overtimeMinutes || 0,
+        'الإجازة':   day.holiday ? day.holiday.name : (day.leave ? day.leave.typeName : '')
+      };
+    });
+    var ws2 = XLSX.utils.json_to_sheet(rows);
+    var keys = Object.keys(rows[0] || {});
+    ws2['!cols'] = keys.map(function(k){ return { wch: Math.max(String(k).length + 2, 12) }; });
+    XLSX.utils.book_append_sheet(wb, ws2, 'التَّفاصيل');
+    var safe = (d.employee.employeeNumber || d.employee.id).replace(/[^a-zA-Z0-9]/g, '_');
+    XLSX.writeFile(wb, 'attendance_' + safe + '_' + d.period.year + '-' + String(d.period.month).padStart(2,'0') + '.xlsx');
+    showToast('تم التصدير ✓');
+  }
+  if (typeof window.ensureXlsx === 'function') {
+    window.ensureXlsx().then(doExport).catch(function(){ showToast('فشل تحميل مكتبة Excel', true); });
+  } else doExport();
+};
+
+window.erpHrReportPrint = function() {
+  if (!_rptLastPayload) { showToast('اعرض التقرير أولاً', true); return; }
+  var d = _rptLastPayload;
+  var win = window.open('', '_blank', 'width=900,height=1100');
+  if (!win) { showToast('السماح بالنوافذ المنبثقة مطلوب للطباعة', true); return; }
+  var typeLabel = { work: 'يوم عمل', rest: 'راحة', holiday: 'إجازة رسمية', leave: 'إجازة' };
+  var rowsHtml = d.days.map(function(day) {
+    var att = day.attendance || {};
+    var clockIn  = att.clockIn  ? new Date(att.clockIn).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—';
+    var clockOut = att.clockOut ? new Date(att.clockOut).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—';
+    return '<tr>' +
+      '<td>' + _hrEsc(day.date) + '</td>' +
+      '<td>' + _hrEsc(day.dayName) + '</td>' +
+      '<td>' + _hrEsc(typeLabel[day.dayType]) + (day.holiday ? ' (' + _hrEsc(day.holiday.name) + ')' : '') + '</td>' +
+      '<td>' + clockIn + '</td>' +
+      '<td>' + clockOut + '</td>' +
+      '<td class="num">' + (att.totalHours ? _hrFmt(att.totalHours) : '—') + '</td>' +
+      '<td class="num">' + (att.lateMinutes || '—') + '</td>' +
+      '<td class="num">' + (att.overtimeMinutes || '—') + '</td>' +
+    '</tr>';
+  }).join('');
+  var html =
+    '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">' +
+    '<title>تقرير حضور · ' + _hrEsc(d.employee.name) + '</title>' +
+    '<style>' +
+      '*{box-sizing:border-box;margin:0;padding:0;}' +
+      'body{font-family:Tahoma,"Segoe UI",sans-serif;direction:rtl;color:#0f172a;background:#fff;font-size:12px;line-height:1.5;}' +
+      '@page{size:A4;margin:14mm 12mm;}' +
+      '.sheet{max-width:780px;margin:0 auto;padding:18px 22px;}' +
+      '.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #7c3aed;padding-bottom:14px;margin-bottom:18px;}' +
+      '.co{font-size:20px;font-weight:900;color:#0f172a;}' +
+      '.doc{font-size:11px;color:#7c3aed;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;}' +
+      '.doc-name{font-size:18px;font-weight:900;color:#5b21b6;background:#ede9fe;border:1.5px solid #ddd6fe;padding:5px 14px;border-radius:8px;margin-top:4px;display:inline-block;}' +
+      '.empcard{background:#faf5ff;border:1.5px solid #ddd6fe;border-radius:10px;padding:12px 14px;margin-bottom:14px;}' +
+      '.empcard .name{font-size:16px;font-weight:900;color:#0f172a;}' +
+      '.empcard .meta{font-size:11px;color:#64748b;margin-top:4px;}' +
+      '.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px;}' +
+      '.kpi{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:8px 10px;text-align:center;}' +
+      '.kpi .l{font-size:9.5px;font-weight:800;color:#64748b;text-transform:uppercase;}' +
+      '.kpi .v{font-size:13px;font-weight:900;color:#0f172a;margin-top:3px;font-variant-numeric:tabular-nums;}' +
+      'table{width:100%;border-collapse:collapse;font-size:11px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;}' +
+      'th{background:#0f172a;color:#fff;font-weight:800;padding:7px 8px;text-align:start;}' +
+      'td{padding:6px 8px;border-bottom:1px solid #f1f5f9;}' +
+      'tr:last-child td{border-bottom:none;}' +
+      '.num{text-align:end;font-variant-numeric:tabular-nums;}' +
+      '.signatures{margin-top:30px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;}' +
+      '.sig{text-align:center;border-top:2px solid #0f172a;padding-top:6px;font-size:11px;font-weight:700;}' +
+      '.toolbar{position:fixed;top:14px;inset-inline-end:14px;display:flex;gap:8px;background:#fff;padding:8px 12px;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,0.1);z-index:1000;}' +
+      '.toolbar button{height:36px;padding:0 16px;border-radius:8px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;}' +
+      '.toolbar .primary{background:#7c3aed;color:#fff;border-color:#7c3aed;}' +
+      '@media print{.toolbar{display:none;}}' +
+    '</style></head><body>' +
+      '<div class="toolbar"><button class="primary" onclick="window.print()">طباعة</button><button onclick="window.close()">إغلاق</button></div>' +
+      '<div class="sheet">' +
+        '<header class="header"><div><div class="co">Moroccan Taste</div><div style="font-size:10.5px;color:#64748b;">تقرير الموارد البشرية</div></div>' +
+        '<div style="text-align:start;"><div class="doc">Monthly Attendance Report</div><div class="doc-name">تقرير الحضور الشَّهري</div><div style="font-size:11px;color:#475569;margin-top:6px;">' + d.period.month + ' / ' + d.period.year + '</div></div></header>' +
+        '<div class="empcard">' +
+          '<div class="name">' + _hrEsc(d.employee.name) + '</div>' +
+          '<div class="meta">' + _hrEsc(d.employee.employeeNumber || '') + ' · ' + _hrEsc(d.employee.position || d.employee.jobTitle || '') + ' · ' + _hrEsc(d.employee.department || '') + ' · ' + _hrEsc(d.employee.branch || '') + '</div>' +
+        '</div>' +
+        '<div class="kpis">' +
+          '<div class="kpi"><div class="l">حضور</div><div class="v">' + d.summary.presentDays + ' / ' + d.summary.workDays + '</div></div>' +
+          '<div class="kpi"><div class="l">غياب</div><div class="v">' + d.summary.absentDays + '</div></div>' +
+          '<div class="kpi"><div class="l">إجازات</div><div class="v">' + (d.summary.leaveDays + d.summary.holidayDays) + '</div></div>' +
+          '<div class="kpi"><div class="l">الساعات</div><div class="v">' + _hrFmt(d.summary.totalHours) + '</div></div>' +
+          '<div class="kpi"><div class="l">الإضافي</div><div class="v">' + _hrFmt(d.summary.overtimeHours) + ' س</div></div>' +
+          '<div class="kpi"><div class="l">الالتزام</div><div class="v">' + d.summary.attendanceRate + '%</div></div>' +
+        '</div>' +
+        '<table>' +
+          '<thead><tr><th>التاريخ</th><th>اليوم</th><th>النوع</th><th>الحضور</th><th>الانصراف</th><th class="num">الساعات</th><th class="num">تأخير(د)</th><th class="num">إضافي(د)</th></tr></thead>' +
+          '<tbody>' + rowsHtml + '</tbody>' +
+        '</table>' +
+        '<div class="signatures">' +
+          '<div class="sig">توقيع الموظف</div>' +
+          '<div class="sig">توقيع المدير المباشر</div>' +
+          '<div class="sig">إدارة الموارد البشرية</div>' +
+        '</div>' +
+      '</div>' +
+      '<script>window.onload = function(){ setTimeout(function(){ window.focus(); window.print(); }, 250); };</' + 'script>' +
+    '</body></html>';
+  win.document.write(html);
+  win.document.close();
 };

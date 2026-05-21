@@ -2834,4 +2834,332 @@ router.get('/my-hours-summary', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// v5.11.1 — OFFICIAL HOLIDAYS (الإجازات الرسمية)
+// ═══════════════════════════════════════════════════════════════════
+const { findHolidayForDate, holidaysInMonth } = require('../lib/hr-holidays');
+
+// GET /api/hr/holidays?year=YYYY&scope=all|brand|branch&brandId=&branchId=
+router.get('/holidays', async (req, res) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const scope = req.query.scope;
+    const brandId = req.query.brandId;
+    const branchId = req.query.branchId;
+    const search = String(req.query.q || '').trim();
+    const yStart = year + '-01-01';
+    const yEnd   = year + '-12-31';
+    let sql = 'SELECT * FROM hr_holidays WHERE is_active = 1 AND ' +
+              '((start_date BETWEEN ? AND ?) OR (end_date BETWEEN ? AND ?) OR ' +
+              ' (start_date <= ? AND end_date >= ?))';
+    const params = [yStart, yEnd, yStart, yEnd, yStart, yEnd];
+    if (scope) { sql += ' AND scope = ?'; params.push(scope); }
+    if (brandId)  { sql += ' AND (scope <> "brand"  OR brand_id  = ?)'; params.push(brandId); }
+    if (branchId) { sql += ' AND (scope <> "branch" OR branch_id = ?)'; params.push(branchId); }
+    if (search) {
+      sql += ' AND (name LIKE ? OR name_en LIKE ?)';
+      params.push('%' + search + '%', '%' + search + '%');
+    }
+    sql += ' ORDER BY start_date ASC';
+    const [rows] = await db.query(sql, params);
+    res.json(rows.map(r => ({
+      id: r.id, name: r.name, nameEn: r.name_en,
+      startDate: r.start_date instanceof Date ? r.start_date.toISOString().slice(0,10) : r.start_date,
+      endDate:   r.end_date   instanceof Date ? r.end_date.toISOString().slice(0,10)   : r.end_date,
+      scope: r.scope, brandId: r.brand_id || '', branchId: r.branch_id || '',
+      isPaid: !!r.is_paid, overtimeMultiplier: Number(r.overtime_multiplier),
+      isRecurring: !!r.is_recurring, notes: r.notes || '',
+      isActive: !!r.is_active,
+      createdBy: r.created_by, createdAt: r.created_at, updatedAt: r.updated_at
+    })));
+  } catch (e) {
+    console.error('GET /holidays error:', e);
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/hr/holidays — create or update (id present = update)
+router.post('/holidays', async (req, res) => {
+  try {
+    const h = req.body || {};
+    if (!h.name)      return res.json({ success: false, error: 'الاسم مطلوب' });
+    if (!h.startDate) return res.json({ success: false, error: 'تاريخ البداية مطلوب' });
+    if (!h.endDate)   return res.json({ success: false, error: 'تاريخ النهاية مطلوب' });
+    if (new Date(h.endDate) < new Date(h.startDate)) {
+      return res.json({ success: false, error: 'تاريخ النهاية قبل تاريخ البداية' });
+    }
+    const scope    = ['all','brand','branch'].includes(h.scope) ? h.scope : 'all';
+    const isPaid   = (h.isPaid === false) ? 0 : 1;
+    const multi    = Math.max(0, Math.min(10, Number(h.overtimeMultiplier) || 2.5));
+    const recurring= h.isRecurring ? 1 : 0;
+    if (h.id) {
+      await db.query(
+        'UPDATE hr_holidays SET name=?, name_en=?, start_date=?, end_date=?, scope=?, ' +
+        'brand_id=?, branch_id=?, is_paid=?, overtime_multiplier=?, is_recurring=?, ' +
+        'notes=?, is_active=COALESCE(?, is_active) WHERE id=?',
+        [h.name, h.nameEn || '', h.startDate, h.endDate, scope,
+         h.brandId || null, h.branchId || null, isPaid, multi, recurring,
+         h.notes || '', (h.isActive === false ? 0 : 1), h.id]
+      );
+      return res.json({ success: true, id: h.id, action: 'updated' });
+    }
+    const id = 'HOL-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+    await db.query(
+      'INSERT INTO hr_holidays (id, name, name_en, start_date, end_date, scope, ' +
+      'brand_id, branch_id, is_paid, overtime_multiplier, is_recurring, notes, ' +
+      'is_active, created_by) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)',
+      [id, h.name, h.nameEn || '', h.startDate, h.endDate, scope,
+       h.brandId || null, h.branchId || null, isPaid, multi, recurring,
+       h.notes || '', h.createdBy || '']
+    );
+    res.json({ success: true, id, action: 'created' });
+  } catch (e) {
+    console.error('POST /holidays error:', e);
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// DELETE /api/hr/holidays/:id — soft delete
+router.delete('/holidays/:id', async (req, res) => {
+  try {
+    await db.query('UPDATE hr_holidays SET is_active = 0 WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/hr/holidays/calendar/:year — quick lookup map keyed by date
+router.get('/holidays/calendar/:year', async (req, res) => {
+  try {
+    const year = Number(req.params.year);
+    const brandId = req.query.brandId, branchId = req.query.branchId;
+    const map = {};
+    for (let m = 1; m <= 12; m++) {
+      const monthMap = await holidaysInMonth(year, m, brandId, branchId);
+      Object.assign(map, monthMap);
+    }
+    res.json({ year, holidays: map });
+  } catch (e) {
+    res.json({ year: Number(req.params.year), holidays: {}, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// v5.11.1 — MONTHLY ATTENDANCE REPORT (تقرير الحضور الشَّهري)
+// ═══════════════════════════════════════════════════════════════════
+function _ymd(d) {
+  const x = (d instanceof Date) ? d : new Date(d);
+  return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0');
+}
+const ARABIC_DAYS = ['الأحد','الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+
+// GET /api/hr/attendance/monthly/:employeeId?month=X&year=Y
+router.get('/attendance/monthly/:employeeId', async (req, res) => {
+  try {
+    const employeeId = req.params.employeeId;
+    const month = Math.min(12, Math.max(1, Number(req.query.month) || (new Date().getMonth() + 1)));
+    const year  = Number(req.query.year) || new Date().getFullYear();
+
+    // 1) Employee
+    const [empRows] = await db.query(
+      'SELECT e.*, d.name AS department_name, p.name AS position_name, br.name AS branch_name ' +
+      'FROM hr_employees e ' +
+      'LEFT JOIN hr_departments d ON d.id = e.department_id ' +
+      'LEFT JOIN hr_positions   p ON p.id = e.position_id ' +
+      'LEFT JOIN branches       br ON br.id = e.branch_id ' +
+      'WHERE e.id = ?', [employeeId]
+    );
+    if (!empRows.length) return res.json({ success: false, error: 'الموظف غير موجود' });
+    const emp = empRows[0];
+
+    // 2) Shift / schedule (best-effort — table may not exist on legacy)
+    let shift = { name: null, startTime: null, endTime: null, workDays: '1,2,3,4,5', dailyHours: 8 };
+    try {
+      const [shiftRows] = await db.query(
+        'SELECT * FROM hr_shifts WHERE id IN (SELECT shift_id FROM hr_employees WHERE id = ?) LIMIT 1',
+        [employeeId]
+      );
+      if (shiftRows.length) {
+        const s = shiftRows[0];
+        shift = {
+          name: s.name, code: s.code, startTime: s.start_time, endTime: s.end_time,
+          workDays: s.work_days || '1,2,3,4,5', breakMinutes: s.break_minutes,
+          dailyHours: 8  // computed below if start/end set
+        };
+        if (s.start_time && s.end_time) {
+          const [sh, sm] = String(s.start_time).split(':').map(Number);
+          const [eh, em] = String(s.end_time).split(':').map(Number);
+          shift.dailyHours = Math.max(0, ((eh*60+em) - (sh*60+sm)) / 60);
+        }
+      }
+    } catch (_) { /* schema variation tolerated */ }
+
+    // 3) Holidays for the month
+    const holMap = await holidaysInMonth(year, month, emp.brand_id, emp.branch_id);
+
+    // 4) Attendance rows for the month
+    const lastDay = new Date(year, month, 0).getDate();
+    const monthStart = year + '-' + String(month).padStart(2, '0') + '-01';
+    const monthEnd   = year + '-' + String(month).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+    const [attRows] = await db.query(
+      'SELECT * FROM hr_attendance WHERE employee_id = ? AND attendance_date BETWEEN ? AND ? ORDER BY attendance_date',
+      [employeeId, monthStart, monthEnd]
+    );
+    const attMap = {};
+    attRows.forEach(a => { attMap[_ymd(a.attendance_date)] = a; });
+
+    // 5) Leave requests overlapping the month (best-effort)
+    let leaveMap = {};
+    try {
+      const [leaveRows] = await db.query(
+        'SELECT lr.*, lt.name AS leave_type_name, lt.is_paid ' +
+        'FROM hr_leave_requests lr ' +
+        'LEFT JOIN hr_leave_types lt ON lt.id = lr.leave_type_id ' +
+        'WHERE lr.employee_id = ? AND lr.status IN ("branch_approved","hr_approved") ' +
+        '  AND NOT (lr.end_date < ? OR lr.start_date > ?)',
+        [employeeId, monthStart, monthEnd]
+      );
+      leaveRows.forEach(lr => {
+        const s = new Date(lr.start_date), e = new Date(lr.end_date);
+        for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+          if (d.getFullYear() !== year || d.getMonth() + 1 !== month) continue;
+          leaveMap[_ymd(d)] = { typeId: lr.leave_type_id, typeName: lr.leave_type_name, paid: !!lr.is_paid };
+        }
+      });
+    } catch (_) { /* leave tables may be absent */ }
+
+    // 6) Work-day set from shift (1=Mon..7=Sun on hr_shifts.work_days; we map to JS Date.getDay where 0=Sun)
+    const workDaysList = String(shift.workDays || '1,2,3,4,5').split(',').map(s => Number(s.trim()));
+    function isWorkDay(jsDay /* 0..6 from Date.getDay */) {
+      // Convert: hr_shifts uses 1..7 where 1=Sunday typically. We treat 1..7 matching JS getDay()+1.
+      // (Legacy "1,2,3,4,5" → Mon-Fri or Sun-Thu; we accept either by simple inclusion.)
+      const sundayBased = jsDay + 1; // 1..7
+      return workDaysList.includes(sundayBased);
+    }
+
+    // 7) Build days array
+    const hourlyRate = Number(emp.hourly_rate) ||
+      (Number(emp.basic_salary || 0) > 0 ? (Number(emp.basic_salary) / 30 / Math.max(1, shift.dailyHours)) : 0);
+
+    const days = [];
+    let presentDays = 0, absentDays = 0, leaveDays = 0, holidayDays = 0;
+    let totalMinutes = 0, lateMinutes = 0, earlyLeaveMinutes = 0, overtimeMinutes = 0, overtimeAmount = 0;
+    let workDaysExpected = 0;
+
+    for (let d = 1; d <= lastDay; d++) {
+      const dateStr = year + '-' + String(month).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      const dateObj = new Date(dateStr);
+      const jsDay = dateObj.getDay();
+      const dayName = ARABIC_DAYS[jsDay];
+      const att = attMap[dateStr];
+      const hol = holMap[dateStr];
+      const lv  = leaveMap[dateStr];
+      const isToday = (dateStr === _ymd(new Date()));
+      const isWork = isWorkDay(jsDay);
+
+      let dayType = 'rest';
+      if (hol) dayType = 'holiday';
+      else if (lv) dayType = 'leave';
+      else if (isWork) dayType = 'work';
+
+      // Attendance presence
+      let attendance = null;
+      if (att) {
+        const otMin = Number(att.overtime_minutes || 0);
+        const lateMin = Number(att.late_minutes || 0);
+        const earlyMin = Number(att.early_leave_minutes || 0);
+        const hrs = Number(att.total_hours || 0);
+        attendance = {
+          clockIn:  att.clock_in,
+          clockOut: att.clock_out,
+          totalHours: hrs,
+          lateMinutes: lateMin,
+          earlyLeaveMinutes: earlyMin,
+          overtimeMinutes: otMin,
+          status: att.status,
+          source: att.source,
+          geoIn:  (att.geo_lat && att.geo_lng) ? { lat: Number(att.geo_lat), lng: Number(att.geo_lng), addr: att.geo_address_in || '' } : null,
+          geoOut: (att.geo_lat_out && att.geo_lng_out) ? { lat: Number(att.geo_lat_out), lng: Number(att.geo_lng_out), addr: att.geo_address_out || '' } : null
+        };
+        totalMinutes += hrs * 60;
+        lateMinutes  += lateMin;
+        earlyLeaveMinutes += earlyMin;
+        overtimeMinutes   += otMin;
+        // Overtime amount: use holiday multiplier if today is a holiday
+        const multi = hol ? Number(hol.overtime_multiplier || 2.5) : 1.5;
+        overtimeAmount += (otMin / 60) * hourlyRate * multi;
+      }
+
+      // Counters
+      if (hol) holidayDays++;
+      else if (lv) leaveDays++;
+      else if (att && (att.status === 'present' || att.clock_in)) presentDays++;
+      else if (isWork && !isToday && new Date(dateStr) < new Date()) absentDays++;
+      if (isWork && !hol) workDaysExpected++;
+
+      days.push({
+        date: dateStr,
+        dayName,
+        dayType,
+        attendance,
+        holiday: hol ? { id: hol.id, name: hol.name, multiplier: Number(hol.overtime_multiplier) } : null,
+        leave: lv || null,
+        isWorkDay: isWork,
+        isToday
+      });
+    }
+
+    const expectedHours = workDaysExpected * shift.dailyHours;
+    const attendanceRate = workDaysExpected > 0 ? Math.round((presentDays / workDaysExpected) * 100) : 0;
+
+    res.json({
+      success: true,
+      employee: {
+        id: emp.id,
+        employeeNumber: emp.employee_number,
+        name: ((emp.first_name || '') + ' ' + (emp.last_name || '')).trim(),
+        nationality: emp.nationality,
+        nationalId: emp.national_id,
+        phone: emp.phone,
+        email: emp.email,
+        gender: emp.gender,
+        jobTitle: emp.job_title,
+        position: emp.position_name,
+        department: emp.department_name,
+        branch: emp.branch_name,
+        branchId: emp.branch_id,
+        brandId: emp.brand_id,
+        hireDate: emp.hire_date,
+        salaryType: emp.salary_type,
+        basicSalary: Number(emp.basic_salary || 0),
+        hourlyRate
+      },
+      shift,
+      period: {
+        year, month, daysInMonth: lastDay,
+        workDaysExpected, holidaysCount: Object.keys(holMap).length
+      },
+      holidays: Object.entries(holMap).map(([date, h]) => ({
+        date, name: h.name, multiplier: Number(h.overtime_multiplier), isPaid: !!h.is_paid
+      })),
+      days,
+      summary: {
+        workDays: workDaysExpected,
+        presentDays, absentDays, leaveDays, holidayDays,
+        totalHours: Math.round((totalMinutes / 60) * 100) / 100,
+        overtimeHours: Math.round((overtimeMinutes / 60) * 100) / 100,
+        lateMinutes, earlyLeaveMinutes,
+        overtimeAmount: Math.round(overtimeAmount * 100) / 100,
+        expectedHours,
+        attendanceRate
+      }
+    });
+  } catch (e) {
+    console.error('GET /attendance/monthly/:id error:', e);
+    res.json({ success: false, error: e.message });
+  }
+});
+
 module.exports = router;

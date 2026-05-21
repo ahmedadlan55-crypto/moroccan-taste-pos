@@ -2845,6 +2845,48 @@ async function runMigrations() {
   // backward-compat with reports; the breakdown lives here.
   await addColumnIfMissing('sales', 'split_details_json', 'LONGTEXT NULL');
 
+  // ─── v6.0.4 Wave D — Real ZATCA-compliant Credit Notes ───
+  // A Credit Note (Type 381) is a NEW invoice document in ZATCA — own
+  // UUID, own hash, own QR, links back to the original via
+  // original_invoice_uuid + original_invoice_hash. Previously the
+  // system flagged the original sale row as `zatca_type='credit_note'`
+  // which is mechanically incorrect (it mutates an immutable doc).
+  await createTableIfMissing('credit_notes', `
+    CREATE TABLE credit_notes (
+      id VARCHAR(50) PRIMARY KEY,
+      original_sale_id VARCHAR(50) NOT NULL,
+      original_invoice_uuid VARCHAR(36),
+      original_invoice_hash VARCHAR(100),
+      -- Credit note's own ZATCA identity
+      invoice_uuid VARCHAR(36),
+      invoice_hash VARCHAR(100),
+      previous_invoice_hash VARCHAR(100),
+      zatca_type ENUM('credit_note','debit_note') NOT NULL DEFAULT 'credit_note',
+      zatca_status ENUM('pending','submitted','accepted','rejected') DEFAULT 'pending',
+      zatca_submitted_at DATETIME NULL,
+      zatca_qr_base64 TEXT NULL,
+      -- Body
+      issue_date DATE NOT NULL,
+      issue_time VARCHAR(10),
+      total_final DECIMAL(12,2) NOT NULL DEFAULT 0,
+      net_amount  DECIMAL(12,2) NOT NULL DEFAULT 0,
+      vat_amount  DECIMAL(12,2) NOT NULL DEFAULT 0,
+      tax_subtotals_json LONGTEXT NULL,
+      reason VARCHAR(200),
+      reason_code VARCHAR(40),
+      items_json LONGTEXT,
+      customer_id VARCHAR(50),
+      brand_id    VARCHAR(50),
+      branch_id   VARCHAR(50),
+      username    VARCHAR(100),
+      shift_id    VARCHAR(50),
+      created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_cn_original (original_sale_id),
+      INDEX idx_cn_status   (zatca_status),
+      INDEX idx_cn_issue_date (issue_date)
+    ) ENGINE=InnoDB`);
+  await addColumnIfMissing('sales', 'has_credit_note', 'BOOLEAN NOT NULL DEFAULT 0');
+
   // ─── v5.11.6 — Per-attendance-event device tracking ───
   // Each clock-in / clock-out remembers the brand + model + OS + UA of
   // the phone or tablet that recorded it. Owner needs this to verify

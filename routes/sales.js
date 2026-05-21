@@ -823,7 +823,9 @@ router.get('/', async (req, res) => {
       customerPhone:  r.customer_phone  || null,
       customerGender: r.customer_gender || null,
       paymentNotes:   r.payment_notes   || null,
-      zatcaType:      r.zatca_type      || null
+      zatcaType:      r.zatca_type      || null,
+      // v6.0.4 Wave D — flag set when a credit note exists for this sale
+      hasCreditNote:  !!r.has_credit_note
     })));
   } catch (e) { res.json([]); }
 });
@@ -1135,38 +1137,120 @@ router.post('/:orderId/void', async (req, res) => {
 //   • appends "RETURN: <reason>" to payment_notes so the audit trail
 //     captures *why* the customer returned the order.
 // Refuses if the sale is already a cancellation or credit_note.
+// v6.0.4 Wave D — POST /sales/:orderId/return now generates a REAL ZATCA
+// Credit Note: a new row in `credit_notes` with its own UUID + hash chain
+// link, referencing the original sale's UUID/hash. The original sale row
+// is NOT mutated (BR-KSA-08 immutability) — only `has_credit_note` flips
+// to 1 for UI hinting. Inventory + GL are reversed via the existing
+// _reverseSaleEffects helper. Cancellation tag on the original is removed.
 router.post('/:orderId/return', async (req, res) => {
   try {
     const orderId = req.params.orderId;
     const username = (req.user && req.user.username) || (req.body && req.body.username) || 'system';
     const reason   = (req.body && String(req.body.reason || '').trim()) || 'customer return';
+    const reasonCode = (req.body && String(req.body.reasonCode || '').trim()) || 'goods_returned';
 
-    // v6.0.1 Wave A.4 — race-safe return (lock + reversal in one tx).
-    // (v6.0.4 will replace this body with a real credit_note INSERT, but
-    // the locking pattern is established here.)
     const runner = async (conn) => {
-      const [sale] = await conn.query(
-        'SELECT id, zatca_type FROM sales WHERE id = ? FOR UPDATE',
-        [orderId]
+      // 1. Lock the original sale row + load everything we need to clone
+      const [orig] = await conn.query(
+        'SELECT * FROM sales WHERE id = ? FOR UPDATE', [orderId]
       );
-      if (!sale.length) {
+      if (!orig.length) {
         const err = new Error('sale-not-found'); err.status = 404; throw err;
       }
-      const existingType = String(sale[0].zatca_type || '').toLowerCase();
-      if (existingType === 'cancellation' || existingType === 'credit_note') {
-        const err = new Error('already-reversed');
-        err.status = 400; err.zatcaType = existingType; throw err;
+      const sale = orig[0];
+      // Already fully reversed?
+      const exType = String(sale.zatca_type || '').toLowerCase();
+      if (exType === 'cancellation') {
+        const err = new Error('already-cancelled');
+        err.status = 400; err.zatcaType = exType; throw err;
       }
-      const r = await _reverseSaleEffects(conn, orderId, username, { deleteSale: false });
+      if (sale.has_credit_note) {
+        const err = new Error('already-credited');
+        err.status = 400; err.zatcaType = 'credit_note'; throw err;
+      }
+
+      // 2. Seller (for ZATCA QR)
+      let sellerName = SELLER_NAME_FALLBACK, sellerVat = SELLER_VAT_FALLBACK;
+      try {
+        const [cRow] = await conn.query("SELECT name, tax_number FROM companies WHERE id='CO-MAIN' LIMIT 1");
+        if (cRow.length) {
+          if (cRow[0].name) sellerName = cRow[0].name;
+          if (cRow[0].tax_number) sellerVat = cRow[0].tax_number;
+        }
+      } catch(e) {}
+
+      // 3. Compute the credit note's own ZATCA stamp (own UUID, own hash
+      //    chained off the most recent invoice hash in the system).
+      const itemsArr = sale.items_json ? JSON.parse(sale.items_json) : [];
+      const totalFinalNum = Number(sale.total_final) || 0;
+      const cnNet = Math.round((totalFinalNum / (1 + VAT_RATE / 100)) * 100) / 100;
+      const cnVat = Math.round((totalFinalNum - cnNet) * 100) / 100;
+      const cnStamp = await zatca.stampSale(conn, {
+        orderId: 'CN-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+        createdAt: new Date(),
+        total: totalFinalNum,
+        vatAmount: cnVat,
+        lines: itemsArr.map(it => ({
+          name: it.name, qty: it.qty,
+          unitPrice: it.price, lineTotal: it.qty * it.price
+        }))
+      }, { name: sellerName, vatNumber: sellerVat });
+      const cnId = 'CN-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+      const ksaNow = zatca.nowInRiyadh(new Date());
+
+      // 4. Insert the credit_note row
+      await conn.query(
+        `INSERT INTO credit_notes (
+          id, original_sale_id, original_invoice_uuid, original_invoice_hash,
+          invoice_uuid, invoice_hash, previous_invoice_hash,
+          zatca_type, issue_date, issue_time,
+          total_final, net_amount, vat_amount, tax_subtotals_json,
+          reason, reason_code, items_json,
+          customer_id, brand_id, branch_id, username, shift_id
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          cnId, sale.id, sale.invoice_uuid || null, sale.invoice_hash || null,
+          cnStamp.uuid, cnStamp.invoiceHash, cnStamp.previousInvoiceHash || null,
+          'credit_note', ksaNow.date, ksaNow.time,
+          totalFinalNum, cnNet, cnVat, sale.tax_subtotals_json || null,
+          reason, reasonCode, sale.items_json || null,
+          sale.customer_id || null, sale.brand_id || null,
+          sale.branch_id || null, username, sale.shift_id || null
+        ]
+      );
+
+      // 5. Reverse inventory + GL (existing helper). _reverseSaleEffects
+      //    runs inside the same transaction (conn) we're in.
+      const reversal = await _reverseSaleEffects(conn, sale.id, username, { deleteSale: false });
+
+      // 6. Flag the original (do NOT change its zatca_type — immutable!)
+      try {
+        await conn.query("UPDATE sales SET has_credit_note = 1 WHERE id = ?", [sale.id]);
+      } catch (_) { /* column missing on very old deploy — ignore */ }
+
+      // 7. Audit trail in payment_notes (non-critical)
       try {
         await conn.query(
-          "UPDATE sales SET zatca_type='credit_note', " +
-          "payment_notes = CONCAT(COALESCE(payment_notes,''), CASE WHEN payment_notes IS NULL OR payment_notes = '' THEN '' ELSE '\n' END, ?) " +
+          "UPDATE sales SET payment_notes = CONCAT(COALESCE(payment_notes,''), " +
+          "CASE WHEN payment_notes IS NULL OR payment_notes = '' THEN '' ELSE '\n' END, ?) " +
           "WHERE id = ?",
-          ['RETURN: ' + reason, orderId]
+          ['CREDIT_NOTE ' + cnId + ': ' + reason, sale.id]
         );
-      } catch (_) { /* schema older than v5.11.4 — silently skip metadata stamp */ }
-      return r;
+      } catch(_) {}
+
+      return {
+        creditNoteId: cnId,
+        creditNoteUuid: cnStamp.uuid,
+        creditNoteHash: cnStamp.invoiceHash,
+        previousInvoiceHash: cnStamp.previousInvoiceHash || null,
+        qrBase64: cnStamp.qrBase64 || null,
+        originalSaleId: sale.id,
+        totalFinal: totalFinalNum,
+        net: cnNet,
+        vat: cnVat,
+        ...reversal
+      };
     };
 
     let result;
@@ -1181,7 +1265,7 @@ router.post('/:orderId/return', async (req, res) => {
       });
     }
 
-    res.json({ success: true, orderId, reason, zatcaType: 'credit_note', ...result });
+    res.json({ success: true, orderId, reason, ...result });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }

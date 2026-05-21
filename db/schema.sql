@@ -146,11 +146,52 @@ CREATE TABLE sales (
   -- v6.0.3 Wave C.4 — structured split-payment breakdown (replaces legacy
   -- "method:amt/method:amt" string format). payment_method stays as 'Split'.
   split_details_json LONGTEXT NULL,
+  -- v6.0.4 Wave D — flag set when at least one Credit Note has been
+  -- issued against this sale. zatca_type stays 'simplified' on the
+  -- original (immutability); the credit note has its own row in
+  -- credit_notes with its own ZATCA identity.
+  has_credit_note BOOLEAN NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (shift_id) REFERENCES shifts(id) ON DELETE SET NULL,
   INDEX idx_sales_customer (customer_id),
   INDEX idx_sales_channel (channel_id),
   INDEX idx_sales_zatca_status (zatca_status, zatca_submitted_at)
+) ENGINE=InnoDB;
+
+-- ─── v6.0.4 Wave D — Credit Notes (real ZATCA Type 381 docs) ───
+-- Each row is a NEW invoice with its own UUID + hash, linked to the
+-- original sale via original_invoice_uuid + original_invoice_hash.
+-- See routes/sales.js POST /:orderId/return.
+CREATE TABLE credit_notes (
+  id VARCHAR(50) PRIMARY KEY,
+  original_sale_id VARCHAR(50) NOT NULL,
+  original_invoice_uuid VARCHAR(36),
+  original_invoice_hash VARCHAR(100),
+  invoice_uuid VARCHAR(36),
+  invoice_hash VARCHAR(100),
+  previous_invoice_hash VARCHAR(100),
+  zatca_type ENUM('credit_note','debit_note') NOT NULL DEFAULT 'credit_note',
+  zatca_status ENUM('pending','submitted','accepted','rejected') DEFAULT 'pending',
+  zatca_submitted_at DATETIME NULL,
+  zatca_qr_base64 TEXT NULL,
+  issue_date DATE NOT NULL,
+  issue_time VARCHAR(10),
+  total_final DECIMAL(12,2) NOT NULL DEFAULT 0,
+  net_amount  DECIMAL(12,2) NOT NULL DEFAULT 0,
+  vat_amount  DECIMAL(12,2) NOT NULL DEFAULT 0,
+  tax_subtotals_json LONGTEXT NULL,
+  reason VARCHAR(200),
+  reason_code VARCHAR(40),
+  items_json LONGTEXT,
+  customer_id VARCHAR(50),
+  brand_id VARCHAR(50),
+  branch_id VARCHAR(50),
+  username VARCHAR(100),
+  shift_id VARCHAR(50),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_cn_original (original_sale_id),
+  INDEX idx_cn_status (zatca_status),
+  INDEX idx_cn_issue_date (issue_date)
 ) ENGINE=InnoDB;
 
 -- ─── v6.0.3 Wave C.3 — Inventory Cost History ───

@@ -186,6 +186,58 @@
     .att-leg.weekend{background:#f1f5f9;border-color:#e2e8f0;}
     .att-leg.partial{background:#ffedd5;border-color:#fdba74;}
 
+    /* v6.3.0 — Attendance hero card (大 number + work-days denominator) */
+    .att-hero{
+      display:flex;align-items:center;justify-content:space-between;gap:16px;
+      background:linear-gradient(135deg,#ede9fe,#fff 65%);
+      border:1.5px solid #ddd6fe;border-radius:18px;
+      padding:18px 22px;margin-bottom:14px;
+      box-shadow:0 8px 24px -10px rgba(124,58,237,0.20);
+    }
+    .att-hero-main{display:flex;flex-direction:column;align-items:flex-start;line-height:1.1;}
+    .att-hero-num{font-size:48px;font-weight:900;color:#5b21b6;font-variant-numeric:tabular-nums;}
+    .att-hero-sub{font-size:13px;color:#64748b;margin-top:6px;font-weight:700;}
+    .att-hero-pct{font-size:36px;font-weight:900;font-variant-numeric:tabular-nums;}
+
+    /* v6.3.0 — Live salary card */
+    .sal-card{
+      background:#fff;border:1.5px solid #e2e8f0;border-radius:16px;
+      padding:18px 20px;margin-bottom:12px;
+      box-shadow:0 4px 14px -8px rgba(15,23,42,0.10);
+    }
+    .sal-head{
+      display:flex;justify-content:space-between;align-items:flex-end;
+      padding-bottom:14px;margin-bottom:14px;border-bottom:1.5px dashed #e2e8f0;
+    }
+    .sal-head h3{margin:0;font-size:14px;color:#475569;font-weight:800;}
+    .sal-head .sal-period{font-size:11px;color:#94a3b8;font-weight:700;margin-top:3px;}
+    .sal-net{text-align:end;}
+    .sal-net-num{font-size:34px;font-weight:900;color:#15803d;font-variant-numeric:tabular-nums;line-height:1;}
+    .sal-net-lbl{font-size:11px;color:#64748b;font-weight:700;margin-top:4px;}
+    .sal-rows{display:flex;flex-direction:column;gap:6px;}
+    .sal-row{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:6px 0;}
+    .sal-row.major{font-weight:800;border-top:1px dashed #e2e8f0;padding-top:10px;margin-top:4px;}
+    .sal-row-l{color:#475569;display:inline-flex;align-items:center;gap:7px;}
+    .sal-row-l i{color:#94a3b8;font-size:11px;}
+    .sal-row-v{font-variant-numeric:tabular-nums;font-weight:700;color:#0f172a;}
+    .sal-row.plus .sal-row-v{color:#15803d;}
+    .sal-row.minus .sal-row-v{color:#b91c1c;}
+    .sal-row.plus .sal-row-v::before{content:'+ ';}
+    .sal-row.minus .sal-row-v::before{content:'− ';}
+    .sal-foot{
+      margin-top:10px;padding-top:8px;border-top:1.5px dashed #e2e8f0;
+      display:flex;justify-content:space-between;align-items:center;
+      font-size:10.5px;color:#94a3b8;font-weight:700;
+    }
+    .sal-foot .sal-live{color:#15803d;display:inline-flex;align-items:center;gap:5px;}
+    .sal-foot .sal-live::before{content:'';width:7px;height:7px;border-radius:99px;background:#15803d;}
+    .sal-toggle-btn{
+      background:none;border:none;color:#7c3aed;font-size:11px;font-weight:800;
+      cursor:pointer;padding:4px 8px;border-radius:6px;
+    }
+    .sal-toggle-btn:hover{background:#f5f3ff;}
+    .sal-rows.collapsed{display:none;}
+
     /* Daily list rows */
     .att-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px dashed #f1f5f9;font-size:12.5px;}
     .att-row:last-child{border-bottom:none;}

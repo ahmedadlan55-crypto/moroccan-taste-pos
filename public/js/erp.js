@@ -176,6 +176,7 @@ function erpNav(sectionId) {
       case 'erpHrExceptions': hrLoadExceptions(); break;
       // v5.11.1
       case 'erpHrHolidays': if (typeof erpLoadHrHolidays === 'function') erpLoadHrHolidays(); break;
+      case 'erpHrWeeklyOff': if (typeof erpLoadHrWeeklyOff === 'function') erpLoadHrWeeklyOff(); break;
       case 'erpHrAttendanceReport': if (typeof erpInitHrAttendanceReport === 'function') erpInitHrAttendanceReport(); break;
       case 'erpCashDash': cashLoadDashboard(); break;
       case 'erpCashBoxes': cashLoadBoxes(); break;
@@ -31972,4 +31973,235 @@ window.erpHrReportPrint = function() {
     '</body></html>';
   win.document.write(html);
   win.document.close();
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v6.3.0 — HR: Weekly Off Days (org default + per-employee override)
+// ═══════════════════════════════════════════════════════════════════
+
+var _woState = {
+  defaultDays: new Set(),       // current org default
+  defaultDirty: false,           // unsaved edits in the org pills
+  employees: []                  // [{ id, name, days, hasOverride, ... }]
+};
+
+var WO_DAY_LABELS = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+var WO_DAY_SHORT  = ['حد','اث','ثل','أر','خم','جم','سب'];
+
+function _woInjectStyles() {
+  if (document.getElementById('woStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'woStyles';
+  st.textContent =
+    '#erpHrWeeklyOff .wo-default-card,#erpHrWeeklyOff .wo-employees-card{' +
+      'background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;' +
+      'padding:18px 20px;margin-bottom:16px;' +
+      'box-shadow:0 4px 14px -8px rgba(15,23,42,0.10);' +
+    '}' +
+    '#erpHrWeeklyOff .wo-card-head{margin-bottom:14px;}' +
+    '#erpHrWeeklyOff .wo-card-head h3{margin:0;font-size:15px;color:#0f172a;font-weight:900;display:inline-flex;align-items:center;gap:8px;}' +
+    '#erpHrWeeklyOff .wo-card-sub{margin:5px 0 0;font-size:12px;color:#64748b;line-height:1.5;}' +
+    '#erpHrWeeklyOff .wo-day-pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}' +
+    '#erpHrWeeklyOff .wo-day-pill{' +
+      'padding:10px 16px;border-radius:99px;border:1.5px solid #e2e8f0;background:#f8fafc;' +
+      'cursor:pointer;font-size:13px;font-weight:800;color:#475569;' +
+      'transition:all .15s;user-select:none;display:inline-flex;align-items:center;gap:6px;' +
+    '}' +
+    '#erpHrWeeklyOff .wo-day-pill:hover{border-color:#cbd5e1;transform:translateY(-1px);}' +
+    '#erpHrWeeklyOff .wo-day-pill.is-on{background:linear-gradient(135deg,#dcfce7,#bbf7d0);border-color:#16a34a;color:#15803d;box-shadow:0 4px 10px -4px rgba(22,163,74,0.3);}' +
+    '#erpHrWeeklyOff .wo-day-pill.is-on::before{content:"✓ ";}' +
+    '#erpHrWeeklyOff .wo-default-actions{text-align:end;}' +
+    '#erpHrWeeklyOff .wo-emp-days{display:inline-flex;flex-wrap:wrap;gap:4px;}' +
+    '#erpHrWeeklyOff .wo-emp-day{' +
+      'padding:3px 9px;border-radius:99px;font-size:11px;font-weight:800;' +
+      'background:linear-gradient(135deg,#dbeafe,#bfdbfe);color:#1e40af;' +
+    '}' +
+    '#erpHrWeeklyOff .wo-status-pill{' +
+      'display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:800;padding:4px 10px;border-radius:99px;' +
+    '}' +
+    '#erpHrWeeklyOff .wo-status-pill.default{background:#f1f5f9;color:#64748b;}' +
+    '#erpHrWeeklyOff .wo-status-pill.override{background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;}' +
+    /* Modal */
+    '#woEmpModal{position:fixed;inset:0;background:rgba(15,23,42,0.55);backdrop-filter:blur(6px);z-index:10001;display:flex;align-items:center;justify-content:center;padding:20px;}' +
+    '#woEmpModal .shell{background:#fff;border-radius:18px;max-width:520px;width:96%;box-shadow:0 30px 80px -20px rgba(15,23,42,0.45);overflow:hidden;}' +
+    '#woEmpModal .hero{padding:18px 22px;background:linear-gradient(135deg,#eff6ff,#fff 60%);border-bottom:1px solid #f1f5f9;}' +
+    '#woEmpModal .hero h3{margin:0;font-size:17px;font-weight:900;color:#0f172a;}' +
+    '#woEmpModal .hero p{margin:4px 0 0;font-size:12px;color:#64748b;}' +
+    '#woEmpModal .body{padding:20px 22px;}' +
+    '#woEmpModal .foot{padding:14px 22px;background:#fafafa;border-top:1px solid #f1f5f9;display:flex;gap:10px;justify-content:flex-end;}' +
+    '#woEmpModal .foot button{height:38px;padding:0 18px;border-radius:10px;font-weight:800;cursor:pointer;border:1.5px solid transparent;font-size:13px;}' +
+    '#woEmpModal .foot .ghost{background:#fff;border-color:#e2e8f0;color:#475569;}' +
+    '#woEmpModal .foot .reset{background:#fff;border-color:#fdba74;color:#9a3412;}' +
+    '#woEmpModal .foot .primary{background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;}';
+  document.head.appendChild(st);
+}
+
+window.erpLoadHrWeeklyOff = function () {
+  _woInjectStyles();
+  // Default org-wide pills
+  api.withSuccessHandler(function (r) {
+    if (r && r.success) {
+      _woState.defaultDays = new Set((r.days || []).map(Number));
+      _woState.defaultDirty = false;
+      _woRenderDefaultPills();
+    }
+  }).getWeeklyOffDefault();
+  // Employee table
+  var tb = document.getElementById('woEmployeesBody');
+  if (tb) tb.innerHTML = '<tr><td colspan="6" class="sca-empty"><i class="fas fa-spinner fa-spin"></i><div>جاري التحميل...</div></td></tr>';
+  api.withSuccessHandler(function (r) {
+    if (r && r.success) {
+      _woState.employees = r.employees || [];
+      _woRenderEmployees();
+    } else if (tb) {
+      tb.innerHTML = '<tr><td colspan="6" class="sca-empty">' + ((r && r.error) || 'فشل التحميل') + '</td></tr>';
+    }
+  }).getWeeklyOffEmployees();
+};
+
+function _woRenderDefaultPills() {
+  var host = document.getElementById('woDefaultPills');
+  if (!host) return;
+  var html = '';
+  for (var i = 0; i < 7; i++) {
+    var on = _woState.defaultDays.has(i);
+    html += '<div class="wo-day-pill' + (on ? ' is-on' : '') + '" onclick="erpToggleDefaultDay(' + i + ')">' +
+            WO_DAY_LABELS[i] +
+            '</div>';
+  }
+  host.innerHTML = html;
+}
+
+window.erpToggleDefaultDay = function (idx) {
+  if (_woState.defaultDays.has(idx)) _woState.defaultDays.delete(idx);
+  else _woState.defaultDays.add(idx);
+  _woState.defaultDirty = true;
+  _woRenderDefaultPills();
+};
+
+window.erpSaveWeeklyOffDefault = function () {
+  var days = Array.from(_woState.defaultDays).sort(function (a, b) { return a - b; });
+  api.withSuccessHandler(function (r) {
+    if (r && r.success) {
+      _woState.defaultDirty = false;
+      if (typeof showToast === 'function') showToast('✓ تم حفظ الإعداد الافتراضي');
+      // Refresh employee rows whose status depends on the default
+      erpLoadHrWeeklyOff();
+    } else if (typeof showToast === 'function') {
+      showToast((r && r.error) || 'فشل الحفظ', true);
+    }
+  }).setWeeklyOffDefault({ days: days });
+};
+
+function _woRenderEmployees() {
+  var tb = document.getElementById('woEmployeesBody');
+  if (!tb) return;
+  var rows = _woState.employees;
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="6" class="sca-empty"><i class="fas fa-users"></i><div>لا يوجد موظفون نَشطون</div></td></tr>';
+    return;
+  }
+  tb.innerHTML = rows.map(function (e) {
+    var daysHtml = '<span class="wo-emp-days">' + (e.days || []).map(function (d) {
+      return '<span class="wo-emp-day">' + WO_DAY_SHORT[d] + '</span>';
+    }).join('') + '</span>';
+    var statusHtml = e.hasOverride
+      ? '<span class="wo-status-pill override"><i class="fas fa-user-pen"></i> استثناء فَردي</span>'
+      : '<span class="wo-status-pill default"><i class="fas fa-globe"></i> الافتراضي</span>';
+    return '<tr>' +
+      '<td><strong>' + (e.name || '—') + '</strong></td>' +
+      '<td>' + (e.branchName || '—') + '</td>' +
+      '<td>' + (e.positionName || '—') + '</td>' +
+      '<td>' + daysHtml + '</td>' +
+      '<td>' + statusHtml + '</td>' +
+      '<td class="actions">' +
+        '<button class="sca-row-btn" title="تَخصيص" onclick="erpOpenWeeklyOffModal(\'' + e.id + '\')"><i class="fas fa-edit"></i></button>' +
+        (e.hasOverride
+          ? ' <button class="sca-row-btn is-danger" title="إعادة للافتراضي" onclick="erpResetEmployeeWeeklyOff(\'' + e.id + '\')"><i class="fas fa-rotate-left"></i></button>'
+          : '') +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+window.erpOpenWeeklyOffModal = function (empId) {
+  _woInjectStyles();
+  var emp = _woState.employees.find(function (e) { return String(e.id) === String(empId); });
+  if (!emp) return;
+  var existing = document.getElementById('woEmpModal');
+  if (existing) existing.remove();
+  var currentSet = new Set(emp.days || []);
+  var wrap = document.createElement('div');
+  wrap.id = 'woEmpModal';
+  wrap.onclick = function (ev) { if (ev.target === wrap) erpCloseWeeklyOffModal(); };
+  var pillsHtml = '';
+  for (var i = 0; i < 7; i++) {
+    var on = currentSet.has(i);
+    pillsHtml += '<div class="wo-day-pill' + (on ? ' is-on' : '') + '" data-day="' + i + '" onclick="_woModalToggle(' + i + ')">' + WO_DAY_LABELS[i] + '</div>';
+  }
+  wrap.innerHTML =
+    '<div class="shell" onclick="event.stopPropagation();">' +
+      '<div class="hero">' +
+        '<h3><i class="fas fa-calendar-week" style="color:#0284c7;"></i> ' + (emp.name || '—') + '</h3>' +
+        '<p>اختر أيام الإجازة الأسبوعية لهذا الموظَّف. لإعادته للافتراضي اضغط "إعادة للافتراضي".</p>' +
+      '</div>' +
+      '<div class="body">' +
+        '<div class="wo-day-pills" id="woEmpModalPills">' + pillsHtml + '</div>' +
+      '</div>' +
+      '<div class="foot">' +
+        '<button class="ghost" onclick="erpCloseWeeklyOffModal()">إلغاء</button>' +
+        '<button class="reset" onclick="erpResetEmployeeWeeklyOff(\'' + emp.id + '\', true)">إعادة للافتراضي</button>' +
+        '<button class="primary" onclick="erpSaveEmployeeWeeklyOff(\'' + emp.id + '\')"><i class="fas fa-check"></i> حفظ</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(wrap);
+  // Stash the modal's working set on the wrapper
+  wrap._workingSet = currentSet;
+};
+
+window._woModalToggle = function (idx) {
+  var wrap = document.getElementById('woEmpModal');
+  if (!wrap || !wrap._workingSet) return;
+  if (wrap._workingSet.has(idx)) wrap._workingSet.delete(idx);
+  else wrap._workingSet.add(idx);
+  // Re-render pills
+  var pillsHost = document.getElementById('woEmpModalPills');
+  if (!pillsHost) return;
+  pillsHost.querySelectorAll('.wo-day-pill').forEach(function (p) {
+    var d = Number(p.dataset.day);
+    if (wrap._workingSet.has(d)) p.classList.add('is-on');
+    else p.classList.remove('is-on');
+  });
+};
+
+window.erpCloseWeeklyOffModal = function () {
+  var m = document.getElementById('woEmpModal');
+  if (m) m.remove();
+};
+
+window.erpSaveEmployeeWeeklyOff = function (empId) {
+  var wrap = document.getElementById('woEmpModal');
+  var days = wrap && wrap._workingSet ? Array.from(wrap._workingSet).sort(function (a, b) { return a - b; }) : [];
+  api.withSuccessHandler(function (r) {
+    if (r && r.success) {
+      if (typeof showToast === 'function') showToast('✓ تم حفظ الاستثناء');
+      erpCloseWeeklyOffModal();
+      erpLoadHrWeeklyOff();
+    } else if (typeof showToast === 'function') {
+      showToast((r && r.error) || 'فشل الحفظ', true);
+    }
+  }).setWeeklyOffEmployee(empId, { days: days });
+};
+
+window.erpResetEmployeeWeeklyOff = function (empId, fromModal) {
+  if (!confirm('إعادة هذا الموظف للإعداد الافتراضي؟')) return;
+  api.withSuccessHandler(function (r) {
+    if (r && r.success) {
+      if (typeof showToast === 'function') showToast('✓ تَم استرجاع الافتراضي');
+      if (fromModal) erpCloseWeeklyOffModal();
+      erpLoadHrWeeklyOff();
+    } else if (typeof showToast === 'function') {
+      showToast((r && r.error) || 'فشل الإلغاء', true);
+    }
+  }).setWeeklyOffEmployee(empId, { days: [] });
 };

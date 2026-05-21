@@ -288,6 +288,13 @@
     deleteHrHoliday:     { method: 'DELETE', url: (id) => '/hr/holidays/' + encodeURIComponent(id) },
     // v5.11.8 — quick enable/disable flip from the holidays table
     toggleHoliday:       { method: 'POST',   url: (id) => '/hr/holidays/' + encodeURIComponent(id) + '/toggle' },
+    // v6.3.0 — Live salary projection + weekly off (org default + per-employee override)
+    getMySalaryProjection:  { method: 'GET',  url: '/hr/my-salary-projection', query: (f) => f },
+    getSalaryProjection:    { method: 'GET',  url: (id) => '/hr/salary-projection/' + encodeURIComponent(id), query: (id, f) => f },
+    getWeeklyOffDefault:    { method: 'GET',  url: '/hr/weekly-off/default' },
+    setWeeklyOffDefault:    { method: 'POST', url: '/hr/weekly-off/default' },
+    getWeeklyOffEmployees:  { method: 'GET',  url: '/hr/weekly-off/employees' },
+    setWeeklyOffEmployee:   { method: 'POST', url: (id) => '/hr/weekly-off/employee/' + encodeURIComponent(id), body: (id, d) => d || {} },
     // v6.1.0 Wave E.5 — ZATCA Phase 2 onboarding + status
     zatcaStatus:           { method: 'GET',  url: '/erp/zatca/status' },
     zatcaOnboardCompliance:{ method: 'POST', url: '/erp/zatca/onboard/compliance' },

@@ -2,6 +2,9 @@ const router = require('express').Router();
 const db = require('../db/connection');
 const hrRules = require('../lib/hrRules');
 const hrGLPosting = require('../lib/hrGLPosting');
+// v6.3.0 — live payroll projection + weekly off classifier
+const payrollEngine = require('../lib/payroll-engine');
+const weeklyOff = require('../lib/weeklyOff');
 
 // ═══════════════════════════════════════════════════════════════
 // HELPER: Ensure HR tables exist (auto-migrate)
@@ -2239,6 +2242,116 @@ router.get('/my-payslips', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// v6.3.0 — LIVE SALARY PROJECTION
+// Real-time monthly projection that reacts to every clock-in/out.
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/hr/my-salary-projection?year=&month= — employee self-service
+router.get('/my-salary-projection', async (req, res) => {
+  try {
+    const username = req.user ? req.user.username : req.query.username;
+    const [emp] = await db.query(
+      'SELECT id FROM hr_employees WHERE linked_username = ? LIMIT 1', [username]
+    );
+    if (!emp.length) return res.json({ error: 'no-employee-profile' });
+    const now = new Date();
+    const year = Number(req.query.year) || now.getFullYear();
+    const month = Number(req.query.month) || (now.getMonth() + 1);
+    const result = await payrollEngine.computeMonthlyProjection(db, emp[0].id, year, month);
+    res.json(result);
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
+
+// GET /api/hr/salary-projection/:employeeId?year=&month= — admin preview
+router.get('/salary-projection/:employeeId', async (req, res) => {
+  try {
+    const now = new Date();
+    const year = Number(req.query.year) || now.getFullYear();
+    const month = Number(req.query.month) || (now.getMonth() + 1);
+    const result = await payrollEngine.computeMonthlyProjection(db, req.params.employeeId, year, month);
+    res.json(result);
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// v6.3.0 — WEEKLY OFF DAYS (org default + per-employee override)
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/weekly-off/default', async (req, res) => {
+  try {
+    const set = await weeklyOff.getOrgDefaultWeeklyOff(db);
+    res.json({
+      success: true,
+      days: Array.from(set).sort((a, b) => a - b),
+      labels: weeklyOff.labelsFor(set)
+    });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/weekly-off/default', async (req, res) => {
+  try {
+    const days = Array.isArray(req.body && req.body.days) ? req.body.days : [];
+    const csv = await weeklyOff.setOrgDefaultWeeklyOff(db, days);
+    res.json({ success: true, days: csv ? csv.split(',').map(Number) : [] });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.get('/weekly-off/employees', async (req, res) => {
+  try {
+    const [emps] = await db.query(`
+      SELECT e.id, e.first_name, e.last_name, e.full_name, e.weekly_off_days,
+             e.branch_id, e.position_id, e.status,
+             b.name AS branch_name, p.name AS position_name
+        FROM hr_employees e
+        LEFT JOIN branches b ON b.id = e.branch_id
+        LEFT JOIN positions p ON p.id = e.position_id
+       WHERE e.status = 'active'
+       ORDER BY COALESCE(e.full_name, e.first_name)`);
+    const orgDefault = await weeklyOff.getOrgDefaultWeeklyOff(db);
+    const orgDefaultArr = Array.from(orgDefault).sort((a, b) => a - b);
+    res.json({
+      success: true,
+      orgDefault: orgDefaultArr,
+      employees: emps.map(e => {
+        const hasOverride = e.weekly_off_days != null && e.weekly_off_days !== '';
+        const days = hasOverride
+          ? String(e.weekly_off_days).split(',').map(Number)
+              .filter(n => Number.isFinite(n) && n >= 0 && n <= 6)
+          : orgDefaultArr;
+        return {
+          id: e.id,
+          name: e.full_name || ((e.first_name || '') + (e.last_name ? ' ' + e.last_name : '')).trim(),
+          branchName: e.branch_name || '',
+          positionName: e.position_name || '',
+          hasOverride,
+          days
+        };
+      })
+    });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+router.post('/weekly-off/employee/:id', async (req, res) => {
+  try {
+    const days = Array.isArray(req.body && req.body.days) ? req.body.days : null;
+    const csv = await weeklyOff.setEmployeeWeeklyOff(db, req.params.id, days);
+    res.json({ success: true, employeeId: req.params.id, override: csv });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // SHIFTS (الشفتات)
 // ═══════════════════════════════════════════════════════════════
 router.get('/shifts', async (req, res) => {
@@ -2563,13 +2676,17 @@ router.get('/my-attendance-full', async (req, res) => {
     const from = req.query.from || defaultFrom;
     const to   = req.query.to   || defaultTo;
 
-    // Resolve work-days CSV from default schedule (or fall back to Sun-Thu)
-    let workDaysCSV = '0,1,2,3,4';  // 0=Sun, 4=Thu (Saudi 5-day)
-    try {
-      const [sched] = await db.query(`SELECT work_days FROM hr_work_schedules WHERE is_default = 1 LIMIT 1`);
-      if (sched.length && sched[0].work_days) workDaysCSV = sched[0].work_days;
-    } catch(e) { /* no-op */ }
-    const workDaysSet = new Set(workDaysCSV.split(',').map(s => Number(s.trim())));
+    // v6.3.0 — Weekly-off lookup now comes from the new helper:
+    // per-employee override (hr_employees.weekly_off_days) wins, otherwise
+    // the org-wide default (settings.weekly_off_default), otherwise the
+    // factory default (Friday + Saturday for Saudi Arabia).
+    // We derive workDaysSet from the inverse — any day NOT in offDaysSet
+    // is a work day, so the existing isWorkDay logic below keeps working.
+    const offDaysSet = await weeklyOff.getWeeklyOffDaysForEmployee(db, emp.id);
+    const workDaysSet = new Set();
+    for (let i = 0; i < 7; i++) {
+      if (!offDaysSet.has(i)) workDaysSet.add(i);
+    }
 
     // Pull existing attendance + leave/holiday for the range
     const [attRows] = await db.query(
@@ -2674,6 +2791,17 @@ router.get('/my-attendance-full', async (req, res) => {
     totals.workingHours = Math.round(totals.workingHours * 100) / 100;
     totals.lateHours    = Math.round(totals.lateHours    * 100) / 100;
     totals.overtimeHours= Math.round(totals.overtimeHours* 100) / 100;
+    // v6.3.0 — expose the real "expected work days" (total range minus
+    // weekly-off minus holidays) so the Employee Portal can render
+    // "<present> من <workDays> يوم عمل" accurately. holiday is already
+    // counted into totals.holiday from the existing block; future days
+    // beyond today are excluded because they're 'future' / not 'absent'.
+    totals.workDays = days.filter(r => r.isWorkDay && !r.isFuture).length;
+    totals.attendanceRate = totals.workDays > 0
+      ? Math.round((totals.present / totals.workDays) * 1000) / 10
+      : 0;
+    const workDaysCSV = Array.from(workDaysSet).sort((a, b) => a - b).join(',');
+    const offDaysCSV  = Array.from(offDaysSet).sort((a, b) => a - b).join(',');
 
     res.json({
       success: true,
@@ -2686,7 +2814,12 @@ router.get('/my-attendance-full', async (req, res) => {
         workStart: emp.work_start,
         workEnd: emp.work_end
       },
-      period: { from, to, workDaysCSV, totalDays: days.length },
+      period: {
+        from, to,
+        workDaysCSV,
+        offDaysCSV,
+        totalDays: days.length
+      },
       totals,
       days
     });

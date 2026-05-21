@@ -241,6 +241,7 @@
           <div class="nav-item" data-erp-nav="erpHrLeave" onclick="erpNav('erpHrLeave')"><i class="fas fa-calendar-check"></i><span data-i18n="nav.leave">الإجازات</span></div>
           <!-- v5.11.1 — Official holidays + per-holiday OT policy -->
           <div class="nav-item" data-erp-nav="erpHrHolidays" onclick="erpNav('erpHrHolidays')"><i class="fas fa-flag"></i><span>الإجازات الرسمية</span></div>
+          <div class="nav-item" data-erp-nav="erpHrWeeklyOff" onclick="erpNav('erpHrWeeklyOff')"><i class="fas fa-calendar-week"></i><span>الإجازات الأسبوعية</span></div>
           <div class="nav-item" data-erp-nav="erpHrPayroll" onclick="erpNav('erpHrPayroll')"><i class="fas fa-money-check-alt"></i><span data-i18n="nav.payroll">الرواتب</span></div>
           <div class="nav-item" data-erp-nav="erpHrAdvances" onclick="erpNav('erpHrAdvances')"><i class="fas fa-hand-holding-usd"></i><span data-i18n="nav.advances">السلف</span></div>
         </div>
@@ -4235,6 +4236,61 @@
       </tbody>
     </table>
   </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- v6.3.0 — HR: الإجازات الأسبوعية (Weekly Off Days) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpHrWeeklyOff" class="dash-section hidden">
+  <header class="sca-header">
+    <div class="sca-header-main">
+      <div class="sca-header-icon" style="background:linear-gradient(135deg,#0ea5e9,#0284c7);"><i class="fas fa-calendar-week"></i></div>
+      <div class="sca-header-text">
+        <h1 class="sca-header-title">الإجازات الأسبوعية</h1>
+        <p class="sca-header-sub">تَحديد أيام الراحة الأسبوعية على مُستوى الشَّركة + إمكانية تَخصيص استثناءات لكل موظف بشكل مُستقل.</p>
+      </div>
+    </div>
+    <div class="sca-header-actions">
+      <button class="sca-btn sca-btn-ghost" onclick="erpLoadHrWeeklyOff()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+    </div>
+  </header>
+
+  <!-- Org default card -->
+  <section class="wo-default-card">
+    <div class="wo-card-head">
+      <h3><i class="fas fa-globe" style="color:#0284c7;"></i> الإعداد الافتراضي للشَّركة</h3>
+      <p class="wo-card-sub">يُطبَّق على كل موظَّف ليس عنده استثناء فَردي.</p>
+    </div>
+    <div class="wo-day-pills" id="woDefaultPills"></div>
+    <div class="wo-default-actions">
+      <button class="sca-btn sca-btn-primary" onclick="erpSaveWeeklyOffDefault()"><i class="fas fa-check"></i><span>حفظ الافتراضي</span></button>
+    </div>
+  </section>
+
+  <!-- Per-employee table -->
+  <section class="wo-employees-card">
+    <div class="wo-card-head">
+      <h3><i class="fas fa-users-cog" style="color:#7c3aed;"></i> استثناءات الموظفين</h3>
+      <p class="wo-card-sub">اضغط على "تَخصيص" لِتَعيين أيام مُختلفة لمُوظَّف، أو "إعادة للافتراضي" لِمَسح الاستثناء.</p>
+    </div>
+    <div class="sca-table-wrap">
+      <table class="sca-table">
+        <thead>
+          <tr>
+            <th>الموظف</th>
+            <th>الفَرع</th>
+            <th>الوظيفة</th>
+            <th>أيام الإجازة الحالية</th>
+            <th>الحالة</th>
+            <th class="actions">إجراء</th>
+          </tr>
+        </thead>
+        <tbody id="woEmployeesBody">
+          <tr><td colspan="6" class="sca-empty"><i class="fas fa-spinner fa-spin"></i><div>جاري التحميل...</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->

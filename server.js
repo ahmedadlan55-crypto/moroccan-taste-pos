@@ -2904,6 +2904,12 @@ async function runMigrations() {
   await addColumnIfMissing('audit_log', 'prev_hash',   'VARCHAR(100) NULL');
   await addColumnIfMissing('audit_log', 'record_hash', 'VARCHAR(100) NULL');
 
+  // ─── v6.3.0 — Per-employee weekly off days override ───
+  // Org-wide default lives in settings.weekly_off_default (CSV like '5,6');
+  // NULL here means "use the org default". A non-null CSV (e.g. '2,3' for
+  // Tue+Wed) lets HR give an individual employee a custom rest pattern.
+  await addColumnIfMissing('hr_employees', 'weekly_off_days', 'VARCHAR(20) NULL');
+
   // ─── v6.0.4 Wave D — Real ZATCA-compliant Credit Notes ───
   // A Credit Note (Type 381) is a NEW invoice document in ZATCA — own
   // UUID, own hash, own QR, links back to the original via

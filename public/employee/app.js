@@ -1364,6 +1364,38 @@ function _attFmt(v, dig) { return Number(v||0).toLocaleString('en', { minimumFra
 
 function _attRender(d) {
   var tot = d.totals || {};
+
+  // v6.3.0 — Hero card: large "<present> من <workDays> يوم عمل" + %
+  // workDays comes from the backend (work-eligible days that have already
+  // occurred, excluding weekly-off + future). present comes from actual
+  // clock-in events.
+  var heroEl = document.getElementById('attHeroCard');
+  if (!heroEl) {
+    // Lazily inject the hero card just above the stats strip
+    var statsHost = document.getElementById('attStats');
+    if (statsHost && statsHost.parentNode) {
+      heroEl = document.createElement('div');
+      heroEl.id = 'attHeroCard';
+      heroEl.className = 'att-hero';
+      statsHost.parentNode.insertBefore(heroEl, statsHost);
+    }
+  }
+  if (heroEl) {
+    var present = Number(tot.present || 0);
+    var workDays = Number(tot.workDays || 0);
+    var pct = workDays > 0 ? Math.round((present / workDays) * 100) : 0;
+    var rateColor = pct >= 90 ? '#10b981' : (pct >= 75 ? '#f59e0b' : '#ef4444');
+    var heroLabel = (currentLang === 'en')
+      ? ('of ' + workDays + ' working days this month')
+      : ('من ' + workDays + ' يوم عمل هذا الشهر');
+    heroEl.innerHTML =
+      '<div class="att-hero-main">' +
+        '<div class="att-hero-num">' + present + '</div>' +
+        '<div class="att-hero-sub">' + heroLabel + '</div>' +
+      '</div>' +
+      '<div class="att-hero-pct" style="color:' + rateColor + ';">' + pct + '%</div>';
+  }
+
   // KPI strip — 4 tiles, fully translated
   var statsEl = document.getElementById('attStats');
   if (statsEl) {
@@ -1374,9 +1406,12 @@ function _attRender(d) {
       '<div class="st"><i class="fas fa-exclamation" style="color:#f59e0b;background:#fffbeb;"></i><b>' + _attFmt(tot.lateHours||0) + '</b><span>' + t('att.lateHours') + '</span></div>';
   }
 
-  // Days count — translated
+  // v6.3.0 — Days count now reflects WORK days (not range length)
   var dc = document.getElementById('attDaysCount');
-  if (dc) dc.textContent = t('att.daysCount').replace('{n}', (d.days||[]).length);
+  if (dc) {
+    var workDays = Number(tot.workDays || 0);
+    dc.textContent = t('att.daysCount').replace('{n}', workDays);
+  }
 
   // Calendar grid (only the FIRST month in the range to keep it readable)
   _attRenderCalendar(d);
@@ -1557,50 +1592,160 @@ function loadProfilePage() {
   ];
   c.innerHTML = fields.map(function(f){return '<div class="pf"><span>'+f[0]+'</span><b>'+(f[1]||'—')+'</b></div>';}).join('');
 
-  // Calculate salary with late deductions for current month
-  callAPI('GET', '/hr/my-attendance?username=' + currentUser, null, function(rows) {
-    var att = rows || []; if (!Array.isArray(att)) att = [];
-    var now = new Date();
-    var thisMonth = att.filter(function(a) {
-      if (!a.attendance_date) return false;
-      var d = new Date(a.attendance_date);
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    });
-    var totalLateMin = thisMonth.reduce(function(s,a){return s+(Number(a.late_minutes)||0);},0);
-    var dailyRate = salary / 30;
-    var hourlyRate = dailyRate / 9; // 9-hour workday
+  // v6.3.0 — Live salary projection from the new payroll engine
+  // Replaces the previous "basic - late" approximation with a full
+  // breakdown that reflects absences, overtime, holiday work, GOSI,
+  // and advance recovery in real time.
+  _renderLiveSalary(c, salary);
 
-    // Check if late is ignored this month
-    var currentMonth = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
-    var ignoreMonth = empProfile ? (empProfile.ignore_late_month || '') : '';
-    var ignoreLate = ignoreMonth === currentMonth;
-
-    var lateDeduction = ignoreLate ? 0 : Math.round(hourlyRate * (totalLateMin / 60) * 100) / 100;
-    var netSalary = Math.round((salary - lateDeduction) * 100) / 100;
-
-    var currency = t('units.sarCurrency');
-    var monthLocale = currentLang === 'en' ? 'en-US' : 'ar-SA';
-    var salaryHtml = '<div style="background:#f8fafc;border-radius:12px;padding:14px;margin-top:10px;border:1px solid #e5e7eb;">';
-    salaryHtml += '<div style="font-size:13px;font-weight:800;color:#1e293b;margin-bottom:10px;"><i class="fas fa-money-bill-wave" style="color:#10b981;margin-left:6px;"></i> '+t('profile.salaryDetails')+' — ' + (now.toLocaleDateString(monthLocale,{month:'long'})) + '</div>';
-    salaryHtml += '<div class="pf"><span>'+t('profile.basic')+'</span><b style="color:#1e40af;">' + salary.toLocaleString('en') + ' ' + currency + '</b></div>';
-    if (totalLateMin > 0 && !ignoreLate) {
-      var lateH = Math.floor(totalLateMin/60); var lateM = totalLateMin%60;
-      salaryHtml += '<div class="pf"><span>'+t('profile.lateDed')+' (' + lateH + ':' + String(lateM).padStart(2,'0') + ')</span><b style="color:#ef4444;">- ' + lateDeduction.toLocaleString('en') + ' ' + currency + '</b></div>';
-    }
-    if (ignoreLate && totalLateMin > 0) {
-      salaryHtml += '<div style="padding:6px 10px;border-radius:8px;background:#dcfce7;color:#166534;font-size:11px;font-weight:700;margin:4px 0;"><i class="fas fa-check-circle" style="margin-left:4px;"></i> '+t('profile.lateIgnored')+'</div>';
-    }
-    salaryHtml += '<div class="pf" style="border-top:2px solid #e5e7eb;padding-top:8px;margin-top:4px;"><span style="font-weight:800;">'+t('profile.netExpected')+'</span><b style="color:' + (lateDeduction > 0 ? '#f59e0b' : '#10b981') + ';font-size:18px;">' + netSalary.toLocaleString('en') + ' ' + currency + '</b></div>';
-    salaryHtml += '</div>';
-    c.innerHTML += salaryHtml;
-  });
-
+  // Frozen payslips list (history of closed months)
   callAPI('GET', '/hr/my-payslips?username=' + currentUser, null, function(rows) {
     var s = rows||[]; if (!Array.isArray(s)) s = [];
     var currency = t('units.sarCurrency');
-    document.getElementById('payslips').innerHTML = s.length ? s.map(function(p){return '<div class="lc"><div class="ln">'+monthName(p.month||0)+' '+(p.year||'')+'</div><div class="lr" style="color:#10b981;">'+Number(p.net_salary||0).toFixed(0)+' '+currency+'</div></div>';}).join('') : '<p class="empty">'+t('profile.noSalaries')+'</p>';
+    var ps = document.getElementById('payslips');
+    if (ps) ps.innerHTML = s.length
+      ? s.map(function(p){return '<div class="lc"><div class="ln">'+monthName(p.month||0)+' '+(p.year||'')+'</div><div class="lr" style="color:#10b981;">'+Number(p.net_salary||0).toFixed(0)+' '+currency+'</div></div>';}).join('')
+      : '<p class="empty">'+t('profile.noSalaries')+'</p>';
   });
 }
+
+function _renderLiveSalary(profileContainer, fallbackBasic) {
+  var now = new Date();
+  var year = now.getFullYear();
+  var month = now.getMonth() + 1;
+  if (window._empSalaryMonthShift) {
+    month += window._empSalaryMonthShift;
+    if (month < 1) { month += 12; year -= 1; }
+    if (month > 12) { month -= 12; year += 1; }
+  }
+  var url = '/hr/my-salary-projection?username=' + encodeURIComponent(currentUser) +
+            '&year=' + year + '&month=' + month;
+  callAPI('GET', url, null, function(p) {
+    var holderId = 'salaryCard';
+    var existing = document.getElementById(holderId);
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+    if (!p || p.error || !p.netProjection && p.netProjection !== 0) {
+      // Fallback: minimal card showing just the basic until the engine
+      // can compute (e.g. employee not yet linked to a profile)
+      var fallback = document.createElement('div');
+      fallback.id = holderId;
+      fallback.className = 'sal-card';
+      fallback.innerHTML = '<div class="sal-head"><h3>' + t('profile.salaryDetails') + '</h3>' +
+        '<div class="sal-net"><div class="sal-net-num">' + Number(fallbackBasic || 0).toLocaleString('en') + '</div>' +
+        '<div class="sal-net-lbl">' + t('units.sarCurrency') + '</div></div></div>';
+      profileContainer.appendChild(fallback);
+      return;
+    }
+
+    var card = document.createElement('div');
+    card.id = holderId;
+    card.className = 'sal-card';
+    var currency = t('units.sarCurrency');
+    var monthLocale = currentLang === 'en' ? 'en-US' : 'ar-SA';
+    var monthName = new Date(p.period.year, p.period.month - 1, 1)
+      .toLocaleDateString(monthLocale, { month: 'long', year: 'numeric' });
+    var fmt = function(n) {
+      return Number(n || 0).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+    var nowHHmm = new Date().toTimeString().slice(0, 5);
+
+    // Quick-jump month selector
+    var shiftBack = (currentLang === 'en') ? '← Previous' : '← السابق';
+    var shiftFwd  = (currentLang === 'en') ? 'Next →'    : 'التالي →';
+    var shift = window._empSalaryMonthShift || 0;
+    card.innerHTML =
+      '<div class="sal-head">' +
+        '<div>' +
+          '<h3><i class="fas fa-money-check-dollar" style="color:#15803d;margin-inline-end:6px;"></i>' + t('profile.salaryDetails') + '</h3>' +
+          '<div class="sal-period">' + monthName + '</div>' +
+        '</div>' +
+        '<div class="sal-net">' +
+          '<div class="sal-net-num">' + fmt(p.netProjection) + '</div>' +
+          '<div class="sal-net-lbl">' + (currentLang === 'en' ? 'Projected net' : 'الصافي المتوقع') + ' · ' + currency + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="sal-rows" id="salRows">' +
+        // Earnings (gross block)
+        '<div class="sal-row"><span class="sal-row-l"><i class="fas fa-wallet"></i>' +
+          (currentLang === 'en' ? 'Basic earned' : 'الأساسي المُكتسَب') +
+          ' (' + p.attendance.presentDays + (p.attendance.partialDays ? '+' + p.attendance.partialDays : '') + '/' + p.period.workDaysExpected + ' ' + (currentLang === 'en' ? 'days' : 'يوم') + ')' +
+        '</span><span class="sal-row-v">' + fmt(p.earnings.basicEarned) + '</span></div>' +
+        '<div class="sal-row"><span class="sal-row-l"><i class="fas fa-coins"></i>' +
+          (currentLang === 'en' ? 'Allowances' : 'البدلات') +
+          (p.allowances.proRataApplied ? ' (' + (currentLang === 'en' ? 'pro-rated' : 'نسبية') + ')' : '') +
+        '</span><span class="sal-row-v">' + fmt(p.earnings.allowancesEarned) + '</span></div>' +
+        (p.earnings.overtimePay > 0
+          ? '<div class="sal-row plus"><span class="sal-row-l"><i class="fas fa-clock-rotate-left"></i>' +
+              (currentLang === 'en' ? 'Overtime' : 'الإضافي') +
+              ' (' + p.attendance.totalOvertimeMinutes + ' ' + (currentLang === 'en' ? 'min' : 'دقيقة') + ' × ' + p.earnings.overtimeMultiplier + 'x)' +
+            '</span><span class="sal-row-v">' + fmt(p.earnings.overtimePay) + '</span></div>'
+          : '') +
+        (p.earnings.holidayBonus > 0
+          ? '<div class="sal-row plus"><span class="sal-row-l"><i class="fas fa-flag"></i>' +
+              (currentLang === 'en' ? 'Holiday bonus' : 'علاوة الإجازة الرسمية') +
+            '</span><span class="sal-row-v">' + fmt(p.earnings.holidayBonus) + '</span></div>'
+          : '') +
+        // Deductions
+        (p.deductions.lateDeduction > 0
+          ? '<div class="sal-row minus"><span class="sal-row-l"><i class="fas fa-stopwatch"></i>' +
+              (currentLang === 'en' ? 'Late deduction' : 'خصم التأخير') +
+              ' (' + p.attendance.totalLateMinutes + ' ' + (currentLang === 'en' ? 'min' : 'دقيقة') + ')' +
+            '</span><span class="sal-row-v">' + fmt(p.deductions.lateDeduction) + '</span></div>'
+          : '') +
+        (p.deductions.absenceDeduction > 0
+          ? '<div class="sal-row minus"><span class="sal-row-l"><i class="fas fa-user-xmark"></i>' +
+              (currentLang === 'en' ? 'Absence deduction' : 'خصم الغياب') +
+              ' (' + p.attendance.absentDays + ' ' + (currentLang === 'en' ? 'days' : 'يوم') + ')' +
+            '</span><span class="sal-row-v">' + fmt(p.deductions.absenceDeduction) + '</span></div>'
+          : '') +
+        (p.deductions.gosi > 0
+          ? '<div class="sal-row minus"><span class="sal-row-l"><i class="fas fa-shield-halved"></i>' +
+              (currentLang === 'en' ? 'GOSI' : 'التأمينات الاجتماعية') +
+              ' (' + p.deductions.gosiRate + '%)' +
+            '</span><span class="sal-row-v">' + fmt(p.deductions.gosi) + '</span></div>'
+          : '') +
+        (p.deductions.advancesRecovered > 0
+          ? '<div class="sal-row minus"><span class="sal-row-l"><i class="fas fa-hand-holding-dollar"></i>' +
+              (currentLang === 'en' ? 'Advance recovery' : 'استرداد سُلَف') +
+            '</span><span class="sal-row-v">' + fmt(p.deductions.advancesRecovered) + '</span></div>'
+          : '') +
+        (p.deductions.fixedDeduction > 0
+          ? '<div class="sal-row minus"><span class="sal-row-l"><i class="fas fa-circle-minus"></i>' +
+              (currentLang === 'en' ? 'Fixed deduction' : 'خصم ثابت') +
+            '</span><span class="sal-row-v">' + fmt(p.deductions.fixedDeduction) + '</span></div>'
+          : '') +
+        // Totals
+        '<div class="sal-row major"><span class="sal-row-l">' +
+          (currentLang === 'en' ? 'Gross earned' : 'الإجمالي المُكتَسَب') +
+        '</span><span class="sal-row-v">' + fmt(p.earnings.gross) + '</span></div>' +
+        '<div class="sal-row major minus"><span class="sal-row-l">' +
+          (currentLang === 'en' ? 'Total deductions' : 'إجمالي الخُصومات') +
+        '</span><span class="sal-row-v">' + fmt(p.deductions.total) + '</span></div>' +
+      '</div>' +
+      '<div class="sal-foot">' +
+        '<span class="sal-live">' + (currentLang === 'en' ? 'live · updated ' : 'يَتحدَّث لَحظياً · ') + nowHHmm + '</span>' +
+        '<div>' +
+          '<button class="sal-toggle-btn" onclick="_empSalaryShiftMonth(-1)">' + shiftBack + '</button>' +
+          (shift !== 0 ? '<button class="sal-toggle-btn" onclick="_empSalaryShiftMonth(0)">' + (currentLang === 'en' ? 'Current' : 'الحالي') + '</button>' : '') +
+          (shift < 0 ? '<button class="sal-toggle-btn" onclick="_empSalaryShiftMonth(1)">' + shiftFwd + '</button>' : '') +
+        '</div>' +
+      '</div>';
+    profileContainer.appendChild(card);
+  });
+}
+
+window._empSalaryShiftMonth = function(delta) {
+  if (delta === 0) {
+    window._empSalaryMonthShift = 0;
+  } else {
+    window._empSalaryMonthShift = (window._empSalaryMonthShift || 0) + delta;
+    // Allow up to 6 months back, 0 forward
+    if (window._empSalaryMonthShift > 0) window._empSalaryMonthShift = 0;
+    if (window._empSalaryMonthShift < -6) window._empSalaryMonthShift = -6;
+  }
+  loadProfilePage();
+};
 
 // TRANSACTIONS — Common helpers
 var _impColors = { critical:'#dc2626', high:'#ea580c', medium:'#ca8a04', low:'#16a34a' };

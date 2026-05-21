@@ -103,6 +103,32 @@ function _parseSplitPayments(payStr, total) {
   return _parseSplitPaymentsV3(payStr, total, null);
 }
 
+// v6.0.2 Wave B.2 — Invoice immutability guard.
+// Per ZATCA BR-KSA-08, once an invoice has been submitted to the ZATCA
+// reporting/clearance gateway (zatca_submitted_at set), it cannot be
+// modified or deleted — only a Credit Note can offset it. This helper
+// throws if the sale row has been submitted; callers that need to allow
+// pre-submission edits should call it before any UPDATE/DELETE.
+async function _ensureNotSubmitted(conn, orderId) {
+  const c = conn || db;
+  try {
+    const [r] = await c.query(
+      'SELECT zatca_submitted_at FROM sales WHERE id = ? LIMIT 1',
+      [orderId]
+    );
+    if (r.length && r[0].zatca_submitted_at) {
+      const err = new Error('Cannot modify a sale that has been submitted to ZATCA');
+      err.code = 'invoice_immutable';
+      err.status = 403;
+      throw err;
+    }
+  } catch (e) {
+    // The zatca_submitted_at column may not exist on very old deploys —
+    // in that case, no enforcement is possible and we let the caller pass.
+    if (e.code === 'invoice_immutable') throw e;
+  }
+}
+
 // Save order
 // v6.0.1 Wave A — Entire handler wrapped in a DB transaction. All
 // queries below run on _conn (a single pooled connection). The outer
@@ -167,6 +193,39 @@ router.post('/', async (req, res) => {
     const invTotal = Number(totalFinal) || 0;
     const net = Math.round((invTotal / (1 + VAT_RATE / 100)) * 100) / 100;
     const vat = Math.round((invTotal - net) * 100) / 100;
+
+    // ─── v6.0.2 Wave B.3 — Per-category VAT subtotals (S/Z/E/O) ───
+    // Look up each item's tax_category from the menu and accumulate
+    // net + vat per category. This feeds the UBL XML when Phase 2
+    // ships and the VAT return today.
+    const taxSubtotals = {};
+    try {
+      const itemIds = items.map(it => it.id).filter(Boolean);
+      let catMap = {};
+      if (itemIds.length) {
+        const ph = itemIds.map(() => '?').join(',');
+        const [mrows] = await db.query(
+          'SELECT id, COALESCE(tax_category, \'S\') AS tax_category FROM menu WHERE id IN (' + ph + ')',
+          itemIds
+        );
+        mrows.forEach(m => { catMap[m.id] = m.tax_category; });
+      }
+      items.forEach(it => {
+        const cat = catMap[it.id] || 'S';
+        const rate = cat === 'S' ? VAT_RATE : 0;
+        const gross = Number(it.qty) * Number(it.price);
+        const lineNet = Math.round((gross / (1 + rate / 100)) * 100) / 100;
+        const lineVat = Math.round((gross - lineNet) * 100) / 100;
+        if (!taxSubtotals[cat]) taxSubtotals[cat] = { net: 0, vat: 0, rate };
+        taxSubtotals[cat].net += lineNet;
+        taxSubtotals[cat].vat += lineVat;
+      });
+      // Round each subtotal to 2 decimals to avoid floating-point drift
+      Object.keys(taxSubtotals).forEach(k => {
+        taxSubtotals[k].net = Math.round(taxSubtotals[k].net * 100) / 100;
+        taxSubtotals[k].vat = Math.round(taxSubtotals[k].vat * 100) / 100;
+      });
+    } catch (_) { /* menu.tax_category may be missing on older deploys — ignore */ }
 
     // ═══ ZATCA Phase 2 stamp (UUID + hash chain + QR) ═══
     // Load seller details — company + branch names if available
@@ -257,6 +316,15 @@ router.post('/', async (req, res) => {
         [resolvedCustomerId || null, (paymentNotes && String(paymentNotes).trim()) || null, orderId]
       );
     } catch(e) { /* columns missing — older deploy, skip */ }
+
+    // ─── v6.0.2 Wave B.3 — Persist VAT category breakdown ───
+    try {
+      const subtotalsHasData = Object.keys(taxSubtotals).length > 0;
+      await db.query(
+        'UPDATE sales SET tax_subtotals_json = ? WHERE id = ?',
+        [subtotalsHasData ? JSON.stringify(taxSubtotals) : null, orderId]
+      );
+    } catch(e) { /* tax_subtotals_json missing on older deploy */ }
 
     // Stamp ZATCA fields back (tolerate schemas without these columns)
     if (zatcaStamp.uuid) {
@@ -978,16 +1046,21 @@ router.post('/:orderId/void', async (req, res) => {
     const wantDelete = req.query.delete === '1';
 
     // v6.0.1 Wave A.4 — race-safe void: the lock + reversal happen inside
-    // ONE transaction with SELECT … FOR UPDATE on the sale row. Two
-    // concurrent void requests will serialise; the second sees
-    // zatca_type='cancellation' and is rejected.
+    // ONE transaction with SELECT … FOR UPDATE on the sale row.
+    // v6.0.2 Wave B.2 — also reject if the sale has been submitted to
+    // ZATCA (BR-KSA-08 invoice immutability) — only a Credit Note can
+    // offset a submitted invoice.
     const runner = async (conn) => {
       const [sale] = await conn.query(
-        'SELECT id, zatca_type FROM sales WHERE id = ? FOR UPDATE',
+        'SELECT id, zatca_type, zatca_submitted_at FROM sales WHERE id = ? FOR UPDATE',
         [orderId]
       );
       if (!sale.length) {
         const err = new Error('sale-not-found'); err.status = 404; throw err;
+      }
+      if (sale[0].zatca_submitted_at) {
+        const err = new Error('Cannot void a ZATCA-submitted invoice — issue a Credit Note instead');
+        err.code = 'invoice_immutable'; err.status = 403; throw err;
       }
       const existingType = String(sale[0].zatca_type || '').toLowerCase();
       if (existingType === 'cancellation' || existingType === 'credit_note') {
@@ -1091,6 +1164,16 @@ router.delete('/:orderId', async (req, res) => {
   try {
     const orderId = req.params.orderId;
     const username = (req.user && req.user.username) || 'system';
+    // v6.0.2 Wave B.7 — Submitted invoices are immutable (ZATCA BR-KSA-08).
+    // The only way to undo a submitted sale is a Credit Note (Wave D).
+    try {
+      await _ensureNotSubmitted(null, orderId);
+    } catch (err) {
+      if (err.code === 'invoice_immutable') {
+        return res.status(err.status || 403).json({ success: false, error: err.message, code: err.code });
+      }
+      throw err;
+    }
     if (req.query.force === '1') {
       await db.query('DELETE FROM sales WHERE id = ?', [orderId]);
       return res.json({ success: true, force: true, warning: 'inventory + GL NOT reversed' });

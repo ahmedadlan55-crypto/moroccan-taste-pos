@@ -1,4 +1,9 @@
 require('dotenv').config();
+// v6.0.2 Wave B.1 — Force Asia/Riyadh timezone for the entire Node process
+// so `new Date()`, MySQL CURRENT_TIMESTAMP fallbacks, and any log lines
+// all default to Saudi local time (ZATCA BR-DT-03). Honours an explicit
+// TZ env var if the operator overrides it.
+process.env.TZ = process.env.TZ || 'Asia/Riyadh';
 const express = require('express');
 const cors = require('cors');
 const compression = require('compression');
@@ -2794,6 +2799,27 @@ async function runMigrations() {
   // Closes the SELECT-then-INSERT race that could produce duplicate
   // JV-YYYYMMDD-NNNN numbers under concurrent checkouts.
   try { await db.query('ALTER TABLE gl_journals ADD UNIQUE KEY uq_journal_number (journal_number)'); } catch(e) {}
+
+  // ─── v6.0.2 Wave B.3 — VAT category breakdown (S/Z/E/O) ───
+  // ZATCA requires per-category tax subtotals in the UBL XML. Each menu
+  // item now carries its own tax_category; the sale persists a JSON
+  // breakdown of net/vat per category for VAT-return reporting.
+  await addColumnIfMissing('menu',  'tax_category',       "ENUM('S','Z','E','O') NOT NULL DEFAULT 'S'");
+  await addColumnIfMissing('sales', 'tax_subtotals_json', 'LONGTEXT NULL');
+
+  // ─── v6.0.2 Wave B.6 — UNIQUE constraint on customers.phone ───
+  // First deduplicate (keep the oldest row per phone), then enforce
+  // UNIQUE so the upsert-by-phone flow can never produce siblings.
+  try {
+    await db.query(`
+      DELETE c1 FROM customers c1
+      INNER JOIN customers c2
+      WHERE c1.phone = c2.phone
+        AND c1.phone IS NOT NULL AND c1.phone <> ''
+        AND c1.created_at > c2.created_at
+    `);
+  } catch(e) {}
+  try { await db.query('ALTER TABLE customers ADD UNIQUE KEY uq_customers_phone (phone)'); } catch(e) {}
 
   // ─── v5.11.6 — Per-attendance-event device tracking ───
   // Each clock-in / clock-out remembers the brand + model + OS + UA of

@@ -51,6 +51,9 @@ CREATE TABLE menu (
   stock INT DEFAULT 999,
   min_stock INT DEFAULT 5,
   active BOOLEAN DEFAULT TRUE,
+  -- v6.0.2 Wave B.3 — ZATCA tax category for the line. S=standard 15%,
+  -- Z=zero-rated, E=exempt, O=out-of-scope. Defaults to S for back-compat.
+  tax_category ENUM('S','Z','E','O') NOT NULL DEFAULT 'S',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
@@ -109,6 +112,9 @@ CREATE TABLE shifts (
 ) ENGINE=InnoDB;
 
 -- ─── Sales ───
+-- v6.0.2 — Canonical schema kept in sync with all runtime migrations
+-- (server.js runMigrations). Fresh installs from this file boot with
+-- the full column set; no migration-window column drift.
 CREATE TABLE sales (
   id VARCHAR(50) PRIMARY KEY,
   order_date DATETIME NOT NULL,
@@ -122,9 +128,26 @@ CREATE TABLE sales (
   discount_name VARCHAR(100),
   discount_amount DECIMAL(10,2) DEFAULT 0,
   kita_service_fee DECIMAL(10,2) DEFAULT 0,
+  -- v5.12.2 sales channel + V3 discount linkage
+  channel_id VARCHAR(50) DEFAULT NULL,
+  channel_name VARCHAR(200) DEFAULT NULL,
+  discount_id VARCHAR(50) DEFAULT NULL,
+  discount_gl_id VARCHAR(50) DEFAULT NULL,
+  line_discounts_json LONGTEXT,
+  -- ZATCA Phase 1 + 2 metadata
+  invoice_uuid VARCHAR(36),
+  invoice_hash VARCHAR(100),
+  previous_invoice_hash VARCHAR(100),
+  zatca_type ENUM('standard','simplified','credit_note','debit_note') DEFAULT 'simplified',
+  zatca_submitted_at DATETIME NULL,
+  zatca_status ENUM('pending','submitted','accepted','rejected') DEFAULT 'pending',
+  -- v6.0.2 Wave B.3 — per-category VAT subtotals (JSON keyed by S/Z/E/O)
+  tax_subtotals_json LONGTEXT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (shift_id) REFERENCES shifts(id) ON DELETE SET NULL,
-  INDEX idx_sales_customer (customer_id)
+  INDEX idx_sales_customer (customer_id),
+  INDEX idx_sales_channel (channel_id),
+  INDEX idx_sales_zatca_status (zatca_status, zatca_submitted_at)
 ) ENGINE=InnoDB;
 
 -- ─── Sales Items ───
@@ -191,6 +214,8 @@ CREATE TABLE purchases (
 -- ═══ ERP Tables ═══
 
 -- ─── Customers ───
+-- v6.0.2 — phone is UNIQUE so the v5.11.4 upsert-by-phone flow cannot
+-- produce siblings under concurrent checkouts.
 CREATE TABLE customers (
   id VARCHAR(50) PRIMARY KEY,
   name VARCHAR(200) NOT NULL,
@@ -209,6 +234,7 @@ CREATE TABLE customers (
   created_by VARCHAR(100),
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   updated_by VARCHAR(100),
+  UNIQUE KEY uq_customers_phone (phone),
   INDEX idx_customers_phone (phone)
 ) ENGINE=InnoDB;
 

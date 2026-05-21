@@ -104,8 +104,20 @@ function _parseSplitPayments(payStr, total) {
 }
 
 // Save order
+// v6.0.1 Wave A — Entire handler wrapped in a DB transaction. All
+// queries below run on _conn (a single pooled connection). The outer
+// `db` import is shadowed by `const db = _conn` so existing query calls
+// keep working without rewriting every line. GL posting failure now
+// throws (A.2), triggering rollback of sale + inventory + ZATCA stamp.
 router.post('/', async (req, res) => {
+  const _pool = db; // capture outer pool reference before shadowing
+  let _conn;
   try {
+    _conn = await _pool.getConnection();
+    await _conn.beginTransaction();
+    // eslint-disable-next-line no-shadow
+    const db = _conn; // local shadow — every db.query() below routes through _conn
+
     const { items, total, totalFinal, paymentMethod, discountName, discountAmount, kitaServiceFee, splitDetails } = req.body;
     const { username, shiftId, warehouseId: reqWhId } = req.body;
     // ─── V3: optional channel + discount metadata from POS ───
@@ -514,17 +526,19 @@ router.post('/', async (req, res) => {
 
     // ═══════════════════════════════════════════════════════════════
     // AUTO GL POSTING — Revenue + VAT + COGS
-    // Two journals are conceptually one transaction (A + B), we combine
-    // them into a single balanced journal:
+    // v6.0.1 Wave A: GL posting now FATAL — any failure throws, the
+    // surrounding transaction rolls back the sale + inventory + ZATCA
+    // stamp. No more "sale saved with missing GL" scenarios.
+    // Journal lines:
     //   Dr Cash/Card/AR    totalFinal (split by payment)
     //   Cr Sales Revenue   net (totalFinal / (1 + VAT_RATE/100))
     //   Cr Output VAT      totalFinal - net
     //   Dr COGS            totalCogs
     //   Cr Inventory       totalCogs
+    // (Discount add-back removed in v6.0.1 — Net method per IFRS 15 §70)
     // All lines carry brand_id + branch_id; COGS/Inventory also carry warehouse_id.
     // ═══════════════════════════════════════════════════════════════
-    let postingWarning = null;
-    try {
+    {
       if (invTotal > 0) {
         // Compute total COGS from deductions × avg_cost
         const invIds = [...new Set(recipesApplied.flatMap(r => r.deductions.map(d => d.invId)))];
@@ -588,26 +602,14 @@ router.post('/', async (req, res) => {
           });
         }
 
-        // ─── V3: Discount entry (Dr Discount Allowed / Cr Sales Revenue add-back) ───
-        // This makes the discount visible in GL while keeping net revenue == post-discount
-        // (the add-back to 4100 cancels by adding gross-revenue contribution that the
-        // discount took away). The net effect: Discount account shows the discount amount.
-        const discAmt = Number(discountAmount) || 0;
-        if (discAmt > 0) {
-          const discCode = await _resolveDiscountGlCode(db, discountGlAccountId);
-          entries.push({
-            accountCode: discCode,
-            debit: discAmt, credit: 0,
-            description: 'Sales discount — ' + orderId + (discountName ? ' (' + discountName + ')' : ''),
-            branchId: branchId || null, brandId: brandId || null
-          });
-          entries.push({
-            accountCode: '4100',
-            debit: 0, credit: discAmt,
-            description: 'Sales discount add-back (gross revenue) — ' + orderId,
-            branchId: branchId || null, brandId: brandId || null
-          });
-        }
+        // v6.0.1 Wave A.5 — Discount GL entries REMOVED (Net method per IFRS 15 §70).
+        // Revenue is recognised at the consideration the entity is entitled to
+        // = net post-discount, which is already in the Cr 4100 line above.
+        // The previous "Dr Discount Allowed / Cr Revenue add-back" pattern
+        // double-inflated revenue without properly adjusting Output VAT for
+        // the discount portion, producing a 3-way inconsistency.
+        // Discount visibility is preserved through sales.discount_amount +
+        // discount_name + reports filters (no GL entry needed).
 
         // COGS leg (if any cost)
         if (totalCogs > 0) {
@@ -635,11 +637,16 @@ router.post('/', async (req, res) => {
           entries,
           postedBy: username || ''
         });
-        if (!post.success) postingWarning = post.error;
+        // v6.0.1 Wave A.2 — GL posting failure is FATAL. Throws to roll back
+        // the entire transaction (sale row + inventory + ZATCA stamp).
+        if (!post.success) {
+          throw new Error('GL_POSTING_FAILED: ' + (post.error || 'unknown'));
+        }
       }
-    } catch (e) {
-      postingWarning = e.message;
     }
+
+    // v6.0.1 Wave A — commit the transaction
+    await _conn.commit();
 
     res.json({
       success: true,
@@ -647,7 +654,8 @@ router.post('/', async (req, res) => {
       recipesApplied: recipesApplied,
       itemsWithoutRecipe: itemsWithoutRecipe,
       semiDeductions: semiDeductions,
-      postingWarning: postingWarning,
+      // postingWarning kept for backward-compat; always null now (GL is fatal).
+      postingWarning: null,
       zatca: {
         uuid: zatcaStamp.uuid || null,
         invoiceHash: zatcaStamp.invoiceHash || null,
@@ -657,8 +665,16 @@ router.post('/', async (req, res) => {
       totals: { total: invTotal, net, vat }
     });
   } catch (e) {
-    // Production: removed debug log
+    // v6.0.1 Wave A — roll back the transaction on any error
+    if (_conn) {
+      try { await _conn.rollback(); } catch (_) {}
+    }
+    console.warn('[POST /sales] tx rollback:', e.message);
     res.json({ success: false, error: e.message });
+  } finally {
+    if (_conn) {
+      try { _conn.release(); } catch (_) {}
+    }
   }
 });
 
@@ -959,37 +975,44 @@ router.post('/:orderId/void', async (req, res) => {
   try {
     const orderId = req.params.orderId;
     const username = (req.user && req.user.username) || (req.body && req.body.username) || 'system';
-    // v5.11.4 — block re-voiding a sale that's already been reversed via Return.
-    const [sale] = await db.query('SELECT id, zatca_type FROM sales WHERE id = ?', [orderId]);
-    if (!sale.length) return res.status(404).json({ success: false, error: 'sale-not-found' });
-    const existingType = String(sale[0].zatca_type || '').toLowerCase();
-    if (existingType === 'cancellation' || existingType === 'credit_note') {
-      return res.status(400).json({ success: false, error: 'already-reversed', zatcaType: existingType });
-    }
-
     const wantDelete = req.query.delete === '1';
-    const runner = async (conn) => _reverseSaleEffects(conn, orderId, username, { deleteSale: wantDelete });
+
+    // v6.0.1 Wave A.4 — race-safe void: the lock + reversal happen inside
+    // ONE transaction with SELECT … FOR UPDATE on the sale row. Two
+    // concurrent void requests will serialise; the second sees
+    // zatca_type='cancellation' and is rejected.
+    const runner = async (conn) => {
+      const [sale] = await conn.query(
+        'SELECT id, zatca_type FROM sales WHERE id = ? FOR UPDATE',
+        [orderId]
+      );
+      if (!sale.length) {
+        const err = new Error('sale-not-found'); err.status = 404; throw err;
+      }
+      const existingType = String(sale[0].zatca_type || '').toLowerCase();
+      if (existingType === 'cancellation' || existingType === 'credit_note') {
+        const err = new Error('already-reversed');
+        err.status = 400; err.zatcaType = existingType; throw err;
+      }
+      const r = await _reverseSaleEffects(conn, orderId, username, { deleteSale: wantDelete });
+      if (!wantDelete) {
+        try {
+          await conn.query("UPDATE sales SET zatca_type='cancellation' WHERE id = ?", [orderId]);
+        } catch (_) { /* zatca_type column missing on very old deploy — ignore */ }
+      }
+      return r;
+    };
 
     let result;
     try {
-      result = (typeof db.withTransaction === 'function')
-        ? await db.withTransaction(runner)
-        : await runner(null);
+      result = await db.withTransaction(runner);
     } catch (txErr) {
-      console.error('[POST /sales/:id/void] tx failed:', txErr.message);
-      return res.status(500).json({ success: false, error: txErr.message });
-    }
-
-    // v5.11.4 — when the sale row survives the reversal (default mode),
-    // stamp it as a cancellation so the POS "My Invoices" view can show
-    // the proper status badge and we don't allow a second reversal.
-    if (!wantDelete) {
-      try {
-        await db.query(
-          "UPDATE sales SET zatca_type='cancellation' WHERE id = ?",
-          [orderId]
-        );
-      } catch (_) { /* zatca_type column missing on very old deploy — ignore */ }
+      console.warn('[POST /sales/:id/void] rolled back:', txErr.message);
+      const status = txErr.status || 500;
+      return res.status(status).json({
+        success: false, error: txErr.message,
+        zatcaType: txErr.zatcaType || undefined
+      });
     }
 
     res.json({ success: true, orderId, ...result, zatcaType: wantDelete ? null : 'cancellation' });
@@ -1012,35 +1035,44 @@ router.post('/:orderId/return', async (req, res) => {
     const username = (req.user && req.user.username) || (req.body && req.body.username) || 'system';
     const reason   = (req.body && String(req.body.reason || '').trim()) || 'customer return';
 
-    const [sale] = await db.query('SELECT id, zatca_type FROM sales WHERE id = ?', [orderId]);
-    if (!sale.length) return res.status(404).json({ success: false, error: 'sale-not-found' });
-    const existingType = String(sale[0].zatca_type || '').toLowerCase();
-    if (existingType === 'cancellation' || existingType === 'credit_note') {
-      return res.status(400).json({ success: false, error: 'already-reversed', zatcaType: existingType });
-    }
-
+    // v6.0.1 Wave A.4 — race-safe return (lock + reversal in one tx).
+    // (v6.0.4 will replace this body with a real credit_note INSERT, but
+    // the locking pattern is established here.)
     const runner = async (conn) => {
+      const [sale] = await conn.query(
+        'SELECT id, zatca_type FROM sales WHERE id = ? FOR UPDATE',
+        [orderId]
+      );
+      if (!sale.length) {
+        const err = new Error('sale-not-found'); err.status = 404; throw err;
+      }
+      const existingType = String(sale[0].zatca_type || '').toLowerCase();
+      if (existingType === 'cancellation' || existingType === 'credit_note') {
+        const err = new Error('already-reversed');
+        err.status = 400; err.zatcaType = existingType; throw err;
+      }
       const r = await _reverseSaleEffects(conn, orderId, username, { deleteSale: false });
-      const c = conn || db;
       try {
-        await c.query(
+        await conn.query(
           "UPDATE sales SET zatca_type='credit_note', " +
           "payment_notes = CONCAT(COALESCE(payment_notes,''), CASE WHEN payment_notes IS NULL OR payment_notes = '' THEN '' ELSE '\n' END, ?) " +
           "WHERE id = ?",
           ['RETURN: ' + reason, orderId]
         );
-      } catch (_) { /* schema older than v5.11.4 — silently skip the metadata stamp */ }
+      } catch (_) { /* schema older than v5.11.4 — silently skip metadata stamp */ }
       return r;
     };
 
     let result;
     try {
-      result = (typeof db.withTransaction === 'function')
-        ? await db.withTransaction(runner)
-        : await runner(null);
+      result = await db.withTransaction(runner);
     } catch (txErr) {
-      console.error('[POST /sales/:id/return] tx failed:', txErr.message);
-      return res.status(500).json({ success: false, error: txErr.message });
+      console.warn('[POST /sales/:id/return] rolled back:', txErr.message);
+      const status = txErr.status || 500;
+      return res.status(status).json({
+        success: false, error: txErr.message,
+        zatcaType: txErr.zatcaType || undefined
+      });
     }
 
     res.json({ success: true, orderId, reason, zatcaType: 'credit_note', ...result });

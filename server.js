@@ -2790,6 +2790,11 @@ async function runMigrations() {
   try { await db.query('CREATE INDEX idx_sales_customer  ON sales(customer_id)'); } catch(e) {}
   try { await db.query('CREATE INDEX idx_customers_phone ON customers(phone)');   } catch(e) {}
 
+  // ─── v6.0.1 Wave A.3 — UNIQUE constraint on gl_journals.journal_number ───
+  // Closes the SELECT-then-INSERT race that could produce duplicate
+  // JV-YYYYMMDD-NNNN numbers under concurrent checkouts.
+  try { await db.query('ALTER TABLE gl_journals ADD UNIQUE KEY uq_journal_number (journal_number)'); } catch(e) {}
+
   // ─── v5.11.6 — Per-attendance-event device tracking ───
   // Each clock-in / clock-out remembers the brand + model + OS + UA of
   // the phone or tablet that recorded it. Owner needs this to verify

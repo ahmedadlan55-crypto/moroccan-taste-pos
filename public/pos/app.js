@@ -357,9 +357,13 @@ window.renderMenuGrid = function() {
           '<div class="pos-item-price">' + formatVal(i.price) + '</div>' +
         '</div>' +
         '<div class="pos-item-actions">' +
-          '<button class="qty-btn" ' + (qty <= 0 ? 'disabled' : '') + ' onclick="decFromCart(\'' + i.id + '\')" aria-label="' + t('decrease') + '">−</button>' +
+          // v5.11.2 — FontAwesome icons instead of literal +/− glyphs.
+          // The plain "+" was rendering as a near-invisible white character
+          // inside the purple circle, so cashiers couldn't see the add
+          // affordance. fa-plus/fa-minus are unambiguous and sized via CSS.
+          '<button class="qty-btn" ' + (qty <= 0 ? 'disabled' : '') + ' onclick="decFromCart(\'' + i.id + '\')" aria-label="' + t('decrease') + '"><i class="fas fa-minus"></i></button>' +
           '<div class="qty-display">' + qty + '</div>' +
-          '<button class="qty-btn add" onclick=\'addToCart(' + safeJson + ')\' aria-label="' + t('add') + '">+</button>' +
+          '<button class="qty-btn add" onclick=\'addToCart(' + safeJson + ')\' aria-label="' + t('add') + '"><i class="fas fa-plus"></i></button>' +
         '</div>' +
       '</div>';
     });
@@ -1778,7 +1782,7 @@ window.shiftConfirmClose = function() {
       if (totalExpected > 0 && cash === 0 && card === 0 && kita === 0) {
         return showVarianceBlock({ thCash: thCash, thCard: thCard, thKita: thKita, cash: cash, card: card, kita: kita,
           dCash: -thCash, dCard: -thCard, dKita: -thKita, totalDiff: -totalExpected,
-          msg: t('noAmountEnteredMsg') + totalExpected.toFixed(2) + ' SAR' + t('noAmountEnteredMsgSuffix')
+          msg: t('noAmountEnteredMsg') + totalExpected.toFixed(2) + ' ر.س' + t('noAmountEnteredMsgSuffix')
         });
       }
 
@@ -1897,7 +1901,7 @@ window.shareShiftReportWhatsApp = function() {
   var variance = Number(r.variance || 0);
   var diffLine = Math.abs(variance) < 0.01
     ? '✓ متطابق'
-    : (variance < 0 ? '⚠ نقص: ' + fmt(Math.abs(variance)) + ' SAR' : '⚠ زيادة: ' + fmt(variance) + ' SAR');
+    : (variance < 0 ? '⚠ نقص: ' + fmt(Math.abs(variance)) + ' ر.س' : '⚠ زيادة: ' + fmt(variance) + ' ر.س');
 
   var lines = [
     '📋 تقرير إغلاق الوردية',
@@ -1908,8 +1912,8 @@ window.shareShiftReportWhatsApp = function() {
     '👤 ' + (r.cashierName || r.cashier || '') + (r.cashier && r.cashierName !== r.cashier ? ' (' + r.cashier + ')' : ''),
     '',
     '🧾 عدد الفواتير: ' + (r.orders || 0),
-    '💰 إجمالي متوقع: ' + fmt(r.totalExpected) + ' SAR',
-    '💵 إجمالي فعلي: ' + fmt(r.totalActual) + ' SAR',
+    '💰 إجمالي متوقع: ' + fmt(r.totalExpected) + ' ر.س',
+    '💵 إجمالي فعلي: ' + fmt(r.totalActual) + ' ر.س',
     '📊 الفرق: ' + diffLine,
     ''
   ];
@@ -1917,13 +1921,13 @@ window.shareShiftReportWhatsApp = function() {
   if (r.paymentTotals && Object.keys(r.paymentTotals).length) {
     lines.push('💳 توزيع طرق الدفع:');
     Object.keys(r.paymentTotals).forEach(function(k) {
-      lines.push('  • ' + k + ': ' + fmt(r.paymentTotals[k]) + ' SAR');
+      lines.push('  • ' + k + ': ' + fmt(r.paymentTotals[k]) + ' ر.س');
     });
   } else {
     // Legacy fallback
-    if (r.cash) lines.push('💵 كاش: ' + fmt(r.cash) + ' SAR');
-    if (r.card) lines.push('💳 مدى/شبكة: ' + fmt(r.card) + ' SAR');
-    if (r.kita) lines.push('🧾 كيتا: ' + fmt(r.kita) + ' SAR');
+    if (r.cash) lines.push('💵 كاش: ' + fmt(r.cash) + ' ر.س');
+    if (r.card) lines.push('💳 مدى/شبكة: ' + fmt(r.card) + ' ر.س');
+    if (r.kita) lines.push('🧾 كيتا: ' + fmt(r.kita) + ' ر.س');
   }
   var text = encodeURIComponent(lines.join('\n'));
   // Opens WhatsApp letting the user pick any contact
@@ -1977,7 +1981,7 @@ window.printShiftReport = function() {
       .filter(function(d){ return Number(d.count) > 0; })
       .map(function(d){
         var v = Number(d.value || 0), c = Number(d.count || 0);
-        return '<tr><td style="text-align:center;">' + v + ' SAR</td><td style="text-align:center;">' + c + '</td><td style="text-align:end;">' + fmt(v * c) + '</td></tr>';
+        return '<tr><td style="text-align:center;">' + v + ' ر.س</td><td style="text-align:center;">' + c + '</td><td style="text-align:end;">' + fmt(v * c) + '</td></tr>';
       }).join('');
     if (rowsD) {
       denomsTable = '<table style="margin-top:10px;"><tr><th>الفئة</th><th style="text-align:center;">العدد</th><th style="text-align:end;">المجموع</th></tr>' + rowsD + '</table>';
@@ -2000,9 +2004,9 @@ window.printShiftReport = function() {
     (methodsRows ? '<table><tr><th>الطريقة</th><th style="text-align:end;">المبلغ (SAR)</th></tr>' + methodsRows + '<tr class="t"><td>الإجمالي</td><td style="text-align:end;">' + fmt(r.totalActual) + '</td></tr></table>' : '') +
     denomsTable +
     '<table style="margin-top:14px;"><tr><th colspan="2" style="text-align:center;">📊 الفروقات</th></tr>' +
-      '<tr><td>المتوقع</td><td style="text-align:end;">' + fmt(r.totalExpected) + ' SAR</td></tr>' +
-      '<tr><td>الفعلي</td><td style="text-align:end;">' + fmt(r.totalActual) + ' SAR</td></tr>' +
-      '<tr style="background:#fef3c7;"><td><b>الفرق (' + varianceLabel + ')</b></td><td style="text-align:end;color:' + varianceClr + ';"><b>' + (variance >= 0 ? '+' : '') + fmt(variance) + ' SAR</b></td></tr>' +
+      '<tr><td>المتوقع</td><td style="text-align:end;">' + fmt(r.totalExpected) + ' ر.س</td></tr>' +
+      '<tr><td>الفعلي</td><td style="text-align:end;">' + fmt(r.totalActual) + ' ر.س</td></tr>' +
+      '<tr style="background:#fef3c7;"><td><b>الفرق (' + varianceLabel + ')</b></td><td style="text-align:end;color:' + varianceClr + ';"><b>' + (variance >= 0 ? '+' : '') + fmt(variance) + ' ر.س</b></td></tr>' +
     '</table>' +
     '</body></html>');
   w.document.close();
@@ -3657,13 +3661,13 @@ window.posSelectLineForDiscount = function(idx) {
 
   var html = '<div style="background:#dbeafe;padding:10px;border-radius:10px;margin-bottom:14px;">' +
     '<div style="font-weight:800;">' + c.name + '</div>' +
-    '<div style="font-size:12px;color:#1e3a8a;">إجمالي السطر: ' + _posFmt(lineTotal) + ' SAR</div>' +
+    '<div style="font-size:12px;color:#1e3a8a;">إجمالي السطر: ' + _posFmt(lineTotal) + ' ر.س</div>' +
   '</div>';
 
   if (lineDiscounts.length) {
     html += '<div style="font-weight:800;margin-bottom:8px;">خصومات جاهزة:</div>';
     html += lineDiscounts.map(function(d){
-      var valStr = d.type === 'percentage' ? d.value + '%' : _posFmt(d.value) + ' SAR';
+      var valStr = d.type === 'percentage' ? d.value + '%' : _posFmt(d.value) + ' ر.س';
       var canApply = !d.minOrder || lineTotal >= d.minOrder;
       return '<div class="pos-disc-card' + (canApply?'':' disabled') + '" onclick="' + (canApply?"posApplyLineDiscount('"+d.id+"')":'') + '">' +
         '<div><i class="fas ' + (d.icon||'fa-tag') + '" style="color:' + (d.color||'#8b5cf6') + ';"></i> <b>' + d.name + '</b></div>' +
@@ -3696,7 +3700,7 @@ window.posApplyLineDiscount = function(discId) {
   if (amt > lineTotal) amt = lineTotal;
   state.lineDiscounts[idx] = { name: d.name, type: d.type, value: d.value, amount: amt, discountId: d.id, glAccountId: d.glAccountId };
   closeGlassModal('#modalDiscount');
-  glassToast('تم تطبيق خصم: ' + d.name + ' (' + _posFmt(amt) + ' SAR)');
+  glassToast('تم تطبيق خصم: ' + d.name + ' (' + _posFmt(amt) + ' ر.س)');
   updateCart();
 };
 
@@ -3723,13 +3727,13 @@ window.posOpenInvoiceDiscountModal = function() {
   var subtotal = state.cart.reduce(function(s, c){ return s + (c.qty * posGetItemPrice(c)); }, 0);
 
   var html = '<div style="background:#fef3c7;padding:10px;border-radius:10px;margin-bottom:14px;">' +
-    '<div style="font-weight:800;">إجمالي الفاتورة: ' + _posFmt(subtotal) + ' SAR</div>' +
+    '<div style="font-weight:800;">إجمالي الفاتورة: ' + _posFmt(subtotal) + ' ر.س</div>' +
   '</div>';
 
   if (invDiscounts.length) {
     html += '<div style="font-weight:800;margin-bottom:8px;">خصومات جاهزة على الفاتورة:</div>';
     html += invDiscounts.map(function(d){
-      var valStr = d.type === 'percentage' ? d.value + '%' : _posFmt(d.value) + ' SAR';
+      var valStr = d.type === 'percentage' ? d.value + '%' : _posFmt(d.value) + ' ر.س';
       var canApply = !d.minOrder || subtotal >= d.minOrder;
       return '<div class="pos-disc-card' + (canApply?'':' disabled') + '" onclick="' + (canApply?"posApplyInvoiceDiscount('"+d.id+"')":'') + '">' +
         '<div><i class="fas ' + (d.icon||'fa-receipt') + '" style="color:' + (d.color||'#8b5cf6') + ';"></i> <b>' + d.name + '</b>' + (d.minOrder ? ' <small style="color:#94a3b8;">(حد أدنى: '+_posFmt(d.minOrder)+')</small>':'') + '</div>' +
@@ -3764,7 +3768,7 @@ window.posApplyInvoiceDiscount = function(discId) {
   if (amt > subtotal) amt = subtotal;
   state.currentDiscount = { name: d.name, amount: amt, discountId: d.id, glAccountId: d.glAccountId };
   closeGlassModal('#modalDiscount');
-  glassToast('تم تطبيق خصم: ' + d.name + ' (' + _posFmt(amt) + ' SAR)');
+  glassToast('تم تطبيق خصم: ' + d.name + ' (' + _posFmt(amt) + ' ر.س)');
   updateCart();
 };
 
@@ -3796,7 +3800,7 @@ window.posClearInvoiceDiscount = function() {
 //     5. if variance != 0, MUST type a reason ≥10 chars to unlock the close button
 //   The close button is locked until the reveal happens AND (variance==0 OR
 //   reason is filled).
-// V5.7.15 — extended denomination set including ½ SAR coin
+// V5.7.15 — extended denomination set including ½ ر.س coin
 state._v3CashDenoms = [500, 200, 100, 50, 20, 10, 5, 1, 0.5];
 
 // In-memory state for the modal session
@@ -3830,7 +3834,7 @@ window.shiftCloseStart = function() {
   var grid = q('#scDenomGrid');
   if (grid) {
     grid.innerHTML = state._v3CashDenoms.map(function(d) {
-      var label = d < 1 ? (d * 100) + ' هـ' : d + ' SAR';
+      var label = d < 1 ? (d * 100) + ' هـ' : d + ' ر.س';
       var unit  = d < 1 ? 'هللة' : (d <= 1 ? 'ريال' : 'فئة');
       return '<div class="sc-denom-card">' +
                '<div class="sc-denom-card-top"><span class="sc-denom-face">' + label + '</span><span class="sc-denom-unit">' + unit + '</span></div>' +
@@ -3927,7 +3931,7 @@ window.scV3Recalc = function() {
     if (totEl) totEl.textContent = _posFmt(sum);
     actualCash += sum;
   });
-  if (q('#scActualCash')) q('#scActualCash').textContent = _posFmt(actualCash) + ' SAR';
+  if (q('#scActualCash')) q('#scActualCash').textContent = _posFmt(actualCash) + ' ر.س';
 
   // Electronic actual sum
   var elecActual = 0;
@@ -3937,7 +3941,7 @@ window.scV3Recalc = function() {
     elecActual += v;
     elecActualByMethod[inp.dataset.pmid] = v;
   });
-  if (q('#scTotalElecActual')) q('#scTotalElecActual').textContent = _posFmt(elecActual) + ' SAR';
+  if (q('#scTotalElecActual')) q('#scTotalElecActual').textContent = _posFmt(elecActual) + ' ر.س';
 
   // Comparison panel — only render when revealed
   if (!_scRevealed) {
@@ -4163,7 +4167,7 @@ function _renderShiftThermalReport(d) {
       var subtotal = Number(x.value) * Number(x.count);
       var faceLabel = Number(x.value) < 1
         ? (Number(x.value) * 100) + ' هـ'
-        : Number(x.value) + ' SAR';
+        : Number(x.value) + ' ر.س';
       denomsHtml += '<tr>' +
                       '<td style="padding:2px 0;font-weight:700;">' + faceLabel + '</td>' +
                       '<td style="text-align:center;padding:2px 0;">×</td>' +
@@ -4434,16 +4438,16 @@ function scV3ShowReport(shiftId, r) {
     '<table style="width:100%;border-collapse:collapse;margin-top:8px;">' +
       '<tr style="background:#f8fafc;"><td colspan="2" style="padding:8px;font-weight:800;font-size:12px;">📊 الملخص</td></tr>' +
       '<tr><td style="padding:7px;border-bottom:1px solid #e2e8f0;">عدد الفواتير</td><td style="padding:7px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + orders + '</td></tr>' +
-      '<tr><td style="padding:7px;border-bottom:1px solid #e2e8f0;">إجمالي متوقع</td><td style="padding:7px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + _posFmt(totalExpected) + ' SAR</td></tr>' +
-      '<tr><td style="padding:7px;border-bottom:1px solid #e2e8f0;">إجمالي فعلي</td><td style="padding:7px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + _posFmt(totalActual) + ' SAR</td></tr>' +
-      '<tr style="background:#fef3c7;"><td style="padding:9px;font-weight:900;">الفرق (' + varianceLabel + ')</td><td style="padding:9px;text-align:left;font-weight:900;color:' + varianceClr + ';">' + (variance >= 0 ? '+' : '') + _posFmt(variance) + ' SAR</td></tr>' +
+      '<tr><td style="padding:7px;border-bottom:1px solid #e2e8f0;">إجمالي متوقع</td><td style="padding:7px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + _posFmt(totalExpected) + ' ر.س</td></tr>' +
+      '<tr><td style="padding:7px;border-bottom:1px solid #e2e8f0;">إجمالي فعلي</td><td style="padding:7px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + _posFmt(totalActual) + ' ر.س</td></tr>' +
+      '<tr style="background:#fef3c7;"><td style="padding:9px;font-weight:900;">الفرق (' + varianceLabel + ')</td><td style="padding:9px;text-align:left;font-weight:900;color:' + varianceClr + ';">' + (variance >= 0 ? '+' : '') + _posFmt(variance) + ' ر.س</td></tr>' +
     '</table>' +
     (Object.keys(actuals).length ? (
       '<table style="width:100%;border-collapse:collapse;margin-top:14px;">' +
         '<tr style="background:#f8fafc;"><td colspan="2" style="padding:8px;font-weight:800;font-size:12px;">💳 توزيع طرق الدفع</td></tr>' +
         Object.keys(actuals).map(function(k) {
           var v = Number(actuals[k] || 0);
-          return '<tr><td style="padding:6px;border-bottom:1px solid #e2e8f0;">' + k + '</td><td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + _posFmt(v) + ' SAR</td></tr>';
+          return '<tr><td style="padding:6px;border-bottom:1px solid #e2e8f0;">' + k + '</td><td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700;">' + _posFmt(v) + ' ر.س</td></tr>';
         }).join('') +
       '</table>'
     ) : '') +

@@ -773,6 +773,24 @@ body.foodics-mode .cart-footer { display: none !important; }
   box-shadow: 0 4px 12px rgba(13, 71, 161, 0.25);
 }
 .pos-item-actions .qty-btn.add:hover { background: #1565c0; }
+/* v5.11.2 — FontAwesome icon inside the +/− qty buttons. The literal
+   "+" text glyph was almost invisible on the purple/blue background;
+   the explicit icon is unambiguous at any zoom level. */
+.pos-item-actions .qty-btn i {
+  font-size: 15px;
+  line-height: 1;
+  pointer-events: none; /* click passes through to <button> */
+}
+.pos-item-actions .qty-btn.add i {
+  color: #fff;
+  font-weight: 900;
+}
+.pos-item-actions .qty-btn:not(.add) i {
+  color: var(--secondary);
+}
+.pos-item-actions .qty-btn:disabled i {
+  opacity: 0.45;
+}
 .pos-item-actions .qty-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;

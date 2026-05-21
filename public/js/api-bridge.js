@@ -286,6 +286,8 @@
     getHrHolidays:       { method: 'GET',    url: '/hr/holidays', query: (f) => f },
     saveHrHoliday:       { method: 'POST',   url: '/hr/holidays' },
     deleteHrHoliday:     { method: 'DELETE', url: (id) => '/hr/holidays/' + encodeURIComponent(id) },
+    // v5.11.8 — quick enable/disable flip from the holidays table
+    toggleHoliday:       { method: 'POST',   url: (id) => '/hr/holidays/' + encodeURIComponent(id) + '/toggle' },
     getHrHolidayCalendar:{ method: 'GET',    url: (y) => '/hr/holidays/calendar/' + y, query: (y,f) => f },
     getHrMonthlyAttendance: { method: 'GET', url: (id) => '/hr/attendance/monthly/' + encodeURIComponent(id), query: (id, f) => f },
     importHrAttendance:  { method: 'POST', url: '/hr/attendance/import' },

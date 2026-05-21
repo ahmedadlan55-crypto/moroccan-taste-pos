@@ -2880,7 +2880,12 @@ router.get('/my-hours-summary', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 const { findHolidayForDate, holidaysInMonth } = require('../lib/hr-holidays');
 
-// GET /api/hr/holidays?year=YYYY&scope=all|brand|branch&brandId=&branchId=
+// GET /api/hr/holidays?year=YYYY&scope=all|brand|branch&brandId=&branchId=&includeInactive=1
+// v5.11.8 — Admin views send includeInactive=1 so disabled holidays can
+// be re-enabled. lib/hr-holidays.js (which feeds attendance enforcement
+// and the Employee Portal calendar) still applies its own is_active = 1
+// filter, so disabled rows remain excluded from clock-in / monthly
+// reports regardless of what this admin endpoint returns.
 router.get('/holidays', async (req, res) => {
   try {
     const year = Number(req.query.year) || new Date().getFullYear();
@@ -2888,9 +2893,11 @@ router.get('/holidays', async (req, res) => {
     const brandId = req.query.brandId;
     const branchId = req.query.branchId;
     const search = String(req.query.q || '').trim();
+    const includeInactive = req.query.includeInactive === '1' || req.query.all === '1';
     const yStart = year + '-01-01';
     const yEnd   = year + '-12-31';
-    let sql = 'SELECT * FROM hr_holidays WHERE is_active = 1 AND ' +
+    const activeFilter = includeInactive ? '' : ' is_active = 1 AND';
+    let sql = 'SELECT * FROM hr_holidays WHERE ' + activeFilter + ' ' +
               '((start_date BETWEEN ? AND ?) OR (end_date BETWEEN ? AND ?) OR ' +
               ' (start_date <= ? AND end_date >= ?))';
     const params = [yStart, yEnd, yStart, yEnd, yStart, yEnd];
@@ -2966,6 +2973,28 @@ router.delete('/holidays/:id', async (req, res) => {
   try {
     await db.query('UPDATE hr_holidays SET is_active = 0 WHERE id = ?', [req.params.id]);
     res.json({ success: true });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// v5.11.8 — POST /api/hr/holidays/:id/toggle — quick enable/disable flip.
+// Mirrors the pattern of /api/auth/users/:username/toggle and
+// /api/custody/users/:id/toggle so the admin can toggle a holiday's
+// is_active flag with one click from the table. Returns the new state
+// so the UI can update without a refetch.
+router.post('/holidays/:id/toggle', async (req, res) => {
+  try {
+    await db.query(
+      'UPDATE hr_holidays SET is_active = NOT is_active WHERE id = ?',
+      [req.params.id]
+    );
+    const [rows] = await db.query(
+      'SELECT is_active FROM hr_holidays WHERE id = ? LIMIT 1',
+      [req.params.id]
+    );
+    const isActive = rows.length ? !!rows[0].is_active : null;
+    res.json({ success: true, isActive: isActive });
   } catch (e) {
     res.json({ success: false, error: e.message });
   }

@@ -31127,9 +31127,9 @@ function _hrInjectStyles() {
     '#erpHrAttendanceReport .sca-btn-primary{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;box-shadow:0 6px 16px -4px rgba(124,58,237,0.45);}' +
     '#erpHrAttendanceReport .sca-btn-primary:hover{box-shadow:0 8px 22px -4px rgba(124,58,237,0.6);transform:translateY(-1px);}' +
 
-    /* ═══ KPI grid ═══ */
-    dual('.sca-kpis') + '{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:18px;}' +
-    '@media (max-width:1200px){' + dual('.sca-kpis') + '{grid-template-columns:repeat(3,minmax(0,1fr));}}' +
+    /* ═══ KPI grid — v5.11.8: now 6 cards (مُفعَّلة + إجمالي + قادمة + متوسط + مدفوعة + مُعطَّلة) ═══ */
+    dual('.sca-kpis') + '{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:18px;}' +
+    '@media (max-width:1400px){' + dual('.sca-kpis') + '{grid-template-columns:repeat(3,minmax(0,1fr));}}' +
     '@media (max-width:680px){' + dual('.sca-kpis') + '{grid-template-columns:repeat(2,minmax(0,1fr));}}' +
 
     dual('.sca-kpi') + '{' +
@@ -31257,6 +31257,18 @@ function _hrInjectStyles() {
     '#erpHrHolidays .hol-name-en{font-size:11px;color:#64748b;margin-top:2px;}' +
     '#erpHrHolidays .hol-date-cell{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#334155;}' +
     '#erpHrHolidays .hol-days{font-size:14px;color:#0f172a;}' +
+    /* v5.11.8 — Status pill (مُفعَّلة / مُعطَّلة) + disabled row treatment */
+    '#erpHrHolidays .hol-status-pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:99px;}' +
+    '#erpHrHolidays .hol-status-pill.is-on{background:linear-gradient(135deg,#dcfce7,#bbf7d0);color:#15803d;}' +
+    '#erpHrHolidays .hol-status-pill.is-off{background:linear-gradient(135deg,#f1f5f9,#e2e8f0);color:#64748b;}' +
+    '#erpHrHolidays .hol-status-pill i{font-size:10px;}' +
+    '#erpHrHolidays tr.is-disabled{opacity:0.55;background:#f8fafc !important;}' +
+    '#erpHrHolidays tr.is-disabled:hover{background:#f1f5f9 !important;opacity:0.75;}' +
+    '#erpHrHolidays tr.is-disabled td strong{color:#94a3b8;text-decoration:line-through;}' +
+    '#erpHrHolidays .sca-row-btn.tog-on i{color:#16a34a;}' +
+    '#erpHrHolidays .sca-row-btn.tog-off i{color:#94a3b8;}' +
+    '#erpHrHolidays .sca-row-btn.tog-on:hover{background:#f0fdf4;border-color:#86efac;}' +
+    '#erpHrHolidays .sca-row-btn.tog-off:hover{background:#fefce8;border-color:#fde68a;}' +
     /* Holiday Modal */
     '#holModal{position:fixed;inset:0;background:rgba(15,23,42,0.55);backdrop-filter:blur(6px);z-index:10001;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 0;}' +
     '#holModal .shell{background:#fff;border-radius:18px;max-width:640px;width:96%;margin:40px auto;box-shadow:0 30px 80px -20px rgba(15,23,42,0.45);overflow:hidden;animation:holIn .25s ease;}' +
@@ -31358,19 +31370,24 @@ window.erpLoadHrHolidays = function() {
     _holidaysCache = Array.isArray(rows) ? rows : [];
     _holidaysRenderTable(_holidaysCache);
     _holidaysRenderKpis(_holidaysCache);
-  }).getHrHolidays({ year: year, scope: scope, q: search });
+  // v5.11.8 — pass includeInactive so admin can see + re-enable disabled holidays
+  }).getHrHolidays({ year: year, scope: scope, q: search, includeInactive: '1' });
 };
 
 function _holidaysRenderKpis(rows) {
   var box = document.getElementById('holKpis');
   if (!box) return;
-  var count = rows.length;
-  var totalDays = rows.reduce(function(s, r){ return s + _hrDaysBetween(r.startDate, r.endDate); }, 0);
+  // v5.11.8 — split active vs disabled so the count + total-days KPIs
+  // only reflect the holidays that actually affect attendance.
+  var active   = rows.filter(function(r){ return r.isActive !== false; });
+  var disabled = rows.filter(function(r){ return r.isActive === false; }).length;
+  var count = active.length;
+  var totalDays = active.reduce(function(s, r){ return s + _hrDaysBetween(r.startDate, r.endDate); }, 0);
   var today = new Date().toISOString().slice(0,10);
-  var upcoming = rows.filter(function(r){ return r.startDate >= today; }).length;
-  var avgMul = rows.length ? (rows.reduce(function(s,r){ return s + Number(r.overtimeMultiplier || 0); }, 0) / rows.length) : 0;
-  var paid = rows.filter(function(r){ return r.isPaid; }).length;
-  var unpaid = rows.length - paid;
+  var upcoming = active.filter(function(r){ return r.startDate >= today; }).length;
+  var avgMul = active.length ? (active.reduce(function(s,r){ return s + Number(r.overtimeMultiplier || 0); }, 0) / active.length) : 0;
+  var paid = active.filter(function(r){ return r.isPaid; }).length;
+  var unpaid = active.length - paid;
   // Premium gradient KPI cards — left-side accent bar driven by --kpi-accent
   function card(icon, label, value, trend, accent, iconBg, iconColor) {
     return (
@@ -31387,23 +31404,25 @@ function _holidaysRenderKpis(rows) {
     );
   }
   box.innerHTML =
-    card('fa-flag',         'عدد الإجازات',  count,                       'هذه السنة',
+    card('fa-flag',         'مُفعَّلة',        count,                       'تُحتسَب في الحضور',
          '#f59e0b', ['#fef3c7','#fde68a'], '#b45309') +
-    card('fa-calendar-day', 'إجمالي الأيام', totalDays,                   'يوم رسمي',
+    card('fa-calendar-day', 'إجمالي الأيام', totalDays,                   'أيام مُعتمَدة',
          '#3b82f6', ['#dbeafe','#bfdbfe'], '#1e40af') +
     card('fa-forward',      'قادمة',          upcoming,                   'من اليوم',
          '#22c55e', ['#dcfce7','#bbf7d0'], '#15803d') +
     card('fa-percent',      'مُتوسط المضاعف', avgMul.toFixed(2) + 'x',    'إضافي الإجازات',
          '#8b5cf6', ['#ede9fe','#ddd6fe'], '#5b21b6') +
     card('fa-money-bill',   'مدفوعة / غير',  paid + ' / ' + unpaid,       'تَوزيع الأجر',
-         '#06b6d4', ['#cffafe','#a5f3fc'], '#0e7490');
+         '#06b6d4', ['#cffafe','#a5f3fc'], '#0e7490') +
+    card('fa-circle-pause', 'مُعطَّلة',        disabled,                    'لا تُحتسَب',
+         '#94a3b8', ['#f1f5f9','#e2e8f0'], '#475569');
 }
 
 function _holidaysRenderTable(rows) {
   var tb = document.getElementById('holBody');
   if (!tb) return;
   if (!rows.length) {
-    tb.innerHTML = '<tr><td colspan="9" class="sca-empty"><i class="fas fa-folder-open"></i><div>لا توجد إجازات مَطابقة للمعايير<br><span style="font-size:12px;color:#cbd5e1;font-weight:500;">اضغط "إجازة جديدة" أعلاه لإضافة أول إجازة</span></div></td></tr>';
+    tb.innerHTML = '<tr><td colspan="10" class="sca-empty"><i class="fas fa-folder-open"></i><div>لا توجد إجازات مَطابقة للمعايير<br><span style="font-size:12px;color:#cbd5e1;font-weight:500;">اضغط "إجازة جديدة" أعلاه لإضافة أول إجازة</span></div></td></tr>';
     return;
   }
   var scopeLabel = { all: 'جميع الموظفين', brand: 'براند مُحدَّد', branch: 'فرع مُحدَّد' };
@@ -31413,10 +31432,12 @@ function _holidaysRenderTable(rows) {
     var days = _hrDaysBetween(r.startDate, r.endDate);
     var isPast = r.endDate < todayStr;
     var isToday = r.startDate <= todayStr && r.endDate >= todayStr;
+    var isOn = r.isActive !== false;
     var dateBadge = isToday
       ? '<span style="display:inline-block;font-size:9.5px;font-weight:900;background:#16a34a;color:#fff;padding:2px 7px;border-radius:99px;margin-inline-start:6px;">جارية</span>'
       : (isPast ? '<span style="display:inline-block;font-size:9.5px;font-weight:700;background:#f1f5f9;color:#94a3b8;padding:2px 7px;border-radius:99px;margin-inline-start:6px;">انتهت</span>' : '');
-    return '<tr>' +
+    // v5.11.8 — disabled-row visual: opacity + strike-through name
+    return '<tr' + (isOn ? '' : ' class="is-disabled"') + '>' +
       '<td>' +
         '<strong>' + _hrEsc(r.name) + '</strong>' + dateBadge +
         (r.nameEn ? '<div class="hol-name-en">' + _hrEsc(r.nameEn) + '</div>' : '') +
@@ -31428,13 +31449,46 @@ function _holidaysRenderTable(rows) {
       '<td><span class="paid-pill ' + (r.isPaid ? 'paid-yes' : 'paid-no') + '">' + (r.isPaid ? '<i class="fas fa-check-circle"></i> نَعم' : '<i class="fas fa-times-circle"></i> لا') + '</span></td>' +
       '<td class="num"><span class="mul-chip"><i class="fas fa-bolt"></i> ' + Number(r.overtimeMultiplier).toFixed(2) + 'x</span></td>' +
       '<td>' + (r.isRecurring ? '<span class="rec-yes"><i class="fas fa-redo"></i> سنوياً</span>' : '<span class="rec-no">—</span>') + '</td>' +
+      // v5.11.8 — status column (active / inactive pill)
+      '<td><span class="hol-status-pill ' + (isOn ? 'is-on' : 'is-off') + '">' +
+        '<i class="fas fa-' + (isOn ? 'circle-check' : 'circle-pause') + '"></i> ' +
+        (isOn ? 'مُفعَّلة' : 'مُعطَّلة') +
+      '</span></td>' +
       '<td class="actions">' +
+        // v5.11.8 — one-click toggle (no need to open modal)
+        '<button class="sca-row-btn ' + (isOn ? 'tog-on' : 'tog-off') + '" ' +
+          'title="' + (isOn ? 'تَعطيل الإجازة' : 'تَفعيل الإجازة') + '" ' +
+          'onclick="erpToggleHoliday(\'' + r.id + '\')">' +
+          '<i class="fas fa-toggle-' + (isOn ? 'on' : 'off') + '"></i>' +
+        '</button>' +
         '<button class="sca-row-btn" title="تعديل" onclick="erpOpenHolidayModal(\'' + r.id + '\')"><i class="fas fa-edit"></i></button>' +
         '<button class="sca-row-btn is-danger" title="حذف" onclick="erpDeleteHoliday(\'' + r.id + '\')"><i class="fas fa-trash"></i></button>' +
       '</td>' +
     '</tr>';
   }).join('');
 }
+
+// v5.11.8 — One-click enable/disable a holiday row. Optimistically
+// updates the in-memory cache + re-renders before the API responds is
+// avoided here in favour of the server-confirmed isActive so the UI
+// stays in sync with the DB even if two admins toggle simultaneously.
+window.erpToggleHoliday = function (id) {
+  api.withSuccessHandler(function (r) {
+    if (r && r.success) {
+      var item = (_holidaysCache || []).find(function (h) { return String(h.id) === String(id); });
+      if (item) item.isActive = r.isActive;
+      _holidaysRenderTable(_holidaysCache);
+      _holidaysRenderKpis(_holidaysCache);
+      if (typeof showToast === 'function') {
+        showToast(r.isActive ? '✓ تَم تَفعيل الإجازة' : '⊘ تَم تَعطيل الإجازة');
+      }
+    } else if (typeof showToast === 'function') {
+      showToast((r && r.error) || 'فشل تَبديل الحالة', true);
+    }
+  }).withFailureHandler(function (err) {
+    if (typeof showToast === 'function') showToast((err && err.message) || 'فشل الاتصال', true);
+  }).toggleHoliday(id);
+};
 
 window.erpOpenHolidayModal = function(idOrData) {
   _hrInjectStyles();
@@ -31487,6 +31541,11 @@ window.erpOpenHolidayModal = function(idOrData) {
             '<input type="checkbox" id="holRec"' + (data.isRecurring ? ' checked' : '') + '>' +
             '<div><div class="tx">متكرِّرة سنوياً</div><div class="sub">تَنطبق على نفس التاريخ من كل سنة (لإجازات ثابتة كالـ اليوم الوطني)</div></div>' +
           '</label>' +
+          // v5.11.8 — Master enable/disable toggle for the holiday
+          '<label class="toggle" style="margin-bottom:12px;">' +
+            '<input type="checkbox" id="holActive"' + (data.isActive !== false ? ' checked' : '') + '>' +
+            '<div><div class="tx">إجازة مُفعَّلة</div><div class="sub">عند الإلغاء، تُعامَل في بَوَّابة الموظف وتَقارير الحضور كَيوم عَمل عادي ولا يُطبَّق مضاعف الإضافي</div></div>' +
+          '</label>' +
           '<div class="field"><label>ملاحظات</label>' +
             '<textarea id="holNotes" placeholder="ملاحظات اختيارية...">' + _hrEsc(data.notes || '') + '</textarea></div>' +
         '</div>' +
@@ -31517,6 +31576,8 @@ window.erpSaveHoliday = function() {
     overtimeMultiplier: Number((document.getElementById('holMul') || {}).value || 2.5),
     isPaid:             !!(document.getElementById('holPaid') || {}).checked,
     isRecurring:        !!(document.getElementById('holRec') || {}).checked,
+    // v5.11.8 — capture the master enable/disable from the modal
+    isActive:           !!(document.getElementById('holActive') || {}).checked,
     notes:              (document.getElementById('holNotes') || {}).value || ''
   };
   if (!payload.name)      return showToast('الاسم مَطلوب', true);

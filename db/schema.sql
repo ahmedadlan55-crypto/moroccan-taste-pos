@@ -194,6 +194,39 @@ CREATE TABLE credit_notes (
   INDEX idx_cn_issue_date (issue_date)
 ) ENGINE=InnoDB;
 
+-- ─── v6.1.0 Wave E.6 — ZATCA submission queue ───
+CREATE TABLE zatca_submission_queue (
+  id VARCHAR(50) PRIMARY KEY,
+  doc_type ENUM('sale','credit_note') NOT NULL,
+  doc_id VARCHAR(50) NOT NULL,
+  attempt_count INT NOT NULL DEFAULT 0,
+  next_attempt_at DATETIME NOT NULL,
+  status ENUM('pending','running','done','failed') NOT NULL DEFAULT 'pending',
+  last_error TEXT NULL,
+  zatca_response_json LONGTEXT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_zq_status (status, next_attempt_at),
+  INDEX idx_zq_doc (doc_type, doc_id)
+) ENGINE=InnoDB;
+
+-- ─── v6.2.0 Wave F.3 — Accounting Periods (close-after-lock) ───
+CREATE TABLE accounting_periods (
+  id VARCHAR(50) PRIMARY KEY,
+  period_label VARCHAR(20) NOT NULL,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  status ENUM('open','soft_close','closed','locked') NOT NULL DEFAULT 'open',
+  brand_id VARCHAR(50),
+  branch_id VARCHAR(50),
+  closed_by VARCHAR(100),
+  closed_at DATETIME,
+  closing_notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_period (period_label, brand_id, branch_id),
+  INDEX idx_period_status (status, start_date, end_date)
+) ENGINE=InnoDB;
+
 -- ─── v6.0.3 Wave C.3 — Inventory Cost History ───
 CREATE TABLE inventory_cost_history (
   id VARCHAR(50) PRIMARY KEY,

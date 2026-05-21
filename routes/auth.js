@@ -7,6 +7,8 @@ const verifyToken = require('./authMiddleware');
 // v5.11.6 — geo-fence + attendance helpers are no longer used here.
 // They live exclusively in routes/hr.js POST /my-clock so attendance
 // becomes a separate, intentional action from authentication.
+// v6.2.0 Wave F.5 — 2FA required for admin / developer
+const { generateSecret: _genTotpSecret, verifyTOTP, generateOTPAuthURI: _genOtpUri } = require('../lib/twoFactor');
 
 // ─── In-memory rate limiter (per IP) ───
 const loginAttempts = {}; // { ip: { count, firstAttempt, blockedUntil } }
@@ -118,18 +120,75 @@ router.post('/login', async (req, res) => {
     // V5.4.3: include isDeveloper in JWT + login response so frontend can gate UI buttons
     const isDev = !!user.is_developer || user.username === 'admin' || user.role === 'developer';
 
+    // v6.2.0 Wave F.5 — 2FA mandatory for admin + developer accounts.
+    // Three states the frontend has to handle:
+    //   1. Admin without a totp_secret  → requires2faSetup=true (one-time)
+    //   2. Admin with secret, no code   → requires2faCode=true
+    //   3. Admin with secret + bad code → success=false + 2FA error
+    // Non-admin roles are unaffected.
+    const requires2fa = (user.role === 'admin' || isDev);
+    if (requires2fa) {
+      const code = req.body.totpCode || req.body.code || '';
+      if (!user.totp_secret) {
+        // First-time admin login — issue a short-lived setup token so the
+        // frontend can call /2fa/setup, then /2fa/enroll with the secret
+        // + first valid code. JWT is NOT issued until enrollment.
+        const setupToken = jwt.sign(
+          { username: user.username, intent: '2fa-setup', id: user.id },
+          process.env.JWT_SECRET, { expiresIn: '10m' }
+        );
+        return res.json({
+          success: false,
+          requires2faSetup: true,
+          username: user.username,
+          setupToken
+        });
+      }
+      if (!code) {
+        return res.json({
+          success: false,
+          requires2faCode: true,
+          username: user.username
+        });
+      }
+      try {
+        if (!verifyTOTP(user.totp_secret, code)) {
+          return res.json({ success: false, error: 'رمز التَّحقُّق الثُّنائي غير صحيح' });
+        }
+      } catch (e) {
+        return res.json({ success: false, error: 'فشل التَّحقُّق الثُّنائي: ' + e.message });
+      }
+    }
+
+    // v5.12.2 — record device brand/model/os in audit_log so admins can
+    // see who logged in from which device. Tolerant of missing device_*
+    // columns on older deployed schemas.
+    try {
+      var dev2 = req.body && req.body.device || {};
+      var ua2  = (dev2.ua || req.headers['user-agent'] || '').slice(0, 500);
+      await db.query(
+        'INSERT INTO audit_log (id, user_id, username, action, table_name, record_id, ip_address, device_info, device_brand, device_model, device_os) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          'AUD-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+          user.id, user.username, 'login_success', 'users', String(user.id),
+          ip, ua2,
+          (dev2.brand || '').slice(0, 50),
+          (dev2.model || '').slice(0, 120),
+          (dev2.os    || '').slice(0, 80)
+        ]
+      );
+    } catch (_) {}
+
     // v5.11.6 — Login is OPEN to any user with valid credentials. The
-    // geo-fence was relocated to the explicit clock-in/clock-out endpoint
-    // (POST /api/hr/my-clock) so off-site users can still access the
-    // employee portal, read holidays / payslips / leave balances, etc.
-    // Attendance recording is now a separate, intentional action.
+    // geo-fence was relocated to the explicit clock-in/clock-out endpoint.
 
     const token = jwt.sign({
       id: user.id, username: user.username, role: user.role,
       isDeveloper: isDev,
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       default_warehouse_id: user.default_warehouse_id || '',
-      employeeId: user.employee_id || ''  // still in JWT — /my-clock needs it
+      employeeId: user.employee_id || ''
     }, process.env.JWT_SECRET, { expiresIn: '24h' });
 
     res.json({
@@ -730,8 +789,10 @@ router.post('/reset-db', async (req, res) => {
 
 // ═══════════════════════════════════════
 // TWO-FACTOR AUTHENTICATION (2FA)
+// (verifyTOTP imported at top of file; alias generateSecret + generateOTPAuthURI here)
 // ═══════════════════════════════════════
-const { generateSecret, verifyTOTP, generateOTPAuthURI } = require('../lib/twoFactor');
+const generateSecret = _genTotpSecret;
+const generateOTPAuthURI = _genOtpUri;
 
 // POST /api/auth/2fa/setup — generate 2FA secret for a user
 router.post('/2fa/setup', async (req, res) => {
@@ -766,6 +827,59 @@ router.post('/2fa/disable', async (req, res) => {
     await db.query('UPDATE users SET totp_secret = NULL WHERE username = ?', [username]);
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// v6.2.0 Wave F.5 — Initial 2FA enrollment for admin / developer.
+// Flow:
+//   1. Admin logs in → backend responds requires2faSetup + setupToken.
+//   2. Frontend calls POST /api/auth/2fa/enroll with the setupToken,
+//      the secret displayed in the QR, and the first valid TOTP code.
+//   3. Backend validates the setupToken + the code, persists the secret,
+//      and returns a real JWT — the admin is now fully logged in.
+router.post('/2fa/enroll', async (req, res) => {
+  try {
+    const { setupToken, secret, code } = req.body || {};
+    if (!setupToken || !secret || !code) {
+      return res.json({ success: false, error: 'setupToken/secret/code required' });
+    }
+    let payload;
+    try {
+      payload = jwt.verify(setupToken, process.env.JWT_SECRET);
+    } catch (e) {
+      return res.json({ success: false, error: 'انتهت صلاحية رمز الإعداد، يرجى المحاولة من جديد' });
+    }
+    if (payload.intent !== '2fa-setup') {
+      return res.json({ success: false, error: 'رمز إعداد غير صالح' });
+    }
+    if (!verifyTOTP(secret, code)) {
+      return res.json({ success: false, error: 'الرَّمز غير صحيح — تأكَّد من المُزامنة مع تَطبيق Google Authenticator' });
+    }
+    // Persist + issue real JWT
+    const [users] = await db.query(
+      'SELECT id, username, role, brand_id, branch_id, default_warehouse_id, employee_id, is_developer FROM users WHERE username = ? AND active = 1',
+      [payload.username]
+    );
+    if (!users.length) return res.json({ success: false, error: 'user-not-found' });
+    const user = users[0];
+    await db.query('UPDATE users SET totp_secret = ? WHERE id = ?', [secret, user.id]);
+    const isDev = !!user.is_developer || user.username === 'admin' || user.role === 'developer';
+    const token = jwt.sign({
+      id: user.id, username: user.username, role: user.role,
+      isDeveloper: isDev,
+      brandId: user.brand_id || '', branchId: user.branch_id || '',
+      default_warehouse_id: user.default_warehouse_id || '',
+      employeeId: user.employee_id || ''
+    }, process.env.JWT_SECRET, { expiresIn: '24h' });
+    res.json({
+      success: true, token, username: user.username, role: user.role,
+      isDeveloper: isDev,
+      brandId: user.brand_id || '', branchId: user.branch_id || '',
+      warehouseId: user.default_warehouse_id || '',
+      employeeId: user.employee_id || ''
+    });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
 });
 
 // Helper for migration — add column if missing
@@ -906,6 +1020,29 @@ router.put('/permissions/user/:username', async (req, res) => {
     }
     res.json({ success: true, count: overrides.length });
   } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+// ─── v6.2.0 Wave F.4 — Audit chain verification ───
+// GET /api/auth/audit/verify?fromId=&limit=
+// Walks the audit_log hash chain and reports any row whose stored
+// record_hash doesn't match the recomputed value. Tampering (manual
+// UPDATEs in the DB) is detected with brokenAt: <id>.
+const { verifyAuditChain } = require('../lib/auditLogger');
+router.get('/audit/verify', verifyToken, async (req, res) => {
+  try {
+    // Only admin / developer can run this
+    const requester = (req.user && req.user.username) || '';
+    if (requester !== 'admin' && !req.user.isDeveloper) {
+      return res.status(403).json({ success: false, error: 'admin only' });
+    }
+    const result = await verifyAuditChain({
+      fromId: Number(req.query.fromId) || 0,
+      limit:  Number(req.query.limit)  || 1000
+    });
+    res.json({ success: true, ...result });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
 });
 
 module.exports = router;

@@ -288,6 +288,23 @@
     deleteHrHoliday:     { method: 'DELETE', url: (id) => '/hr/holidays/' + encodeURIComponent(id) },
     // v5.11.8 — quick enable/disable flip from the holidays table
     toggleHoliday:       { method: 'POST',   url: (id) => '/hr/holidays/' + encodeURIComponent(id) + '/toggle' },
+    // v6.1.0 Wave E.5 — ZATCA Phase 2 onboarding + status
+    zatcaStatus:           { method: 'GET',  url: '/erp/zatca/status' },
+    zatcaOnboardCompliance:{ method: 'POST', url: '/erp/zatca/onboard/compliance' },
+    zatcaOnboardProduction:{ method: 'POST', url: '/erp/zatca/onboard/production' },
+    zatcaTest:             { method: 'POST', url: '/erp/zatca/test' },
+    zatcaRevoke:           { method: 'POST', url: '/erp/zatca/revoke' },
+    // v6.2.0 Wave F.1+F.2+F.3+F.4 — aging reports + periods + audit verify
+    arAgingReport:         { method: 'GET',  url: '/erp/reports/ar-aging', query: (f) => f },
+    apAgingReport:         { method: 'GET',  url: '/erp/reports/ap-aging', query: (f) => f },
+    periodsList:           { method: 'GET',  url: '/erp/periods', query: (f) => f },
+    periodCheck:           { method: 'GET',  url: '/erp/periods/check', query: (f) => f },
+    closePeriod:           { method: 'POST', url: (label) => '/erp/periods/' + encodeURIComponent(label) + '/close',      body: (label, d) => d || {} },
+    softClosePeriod:       { method: 'POST', url: (label) => '/erp/periods/' + encodeURIComponent(label) + '/soft-close', body: (label, d) => d || {} },
+    lockPeriod:            { method: 'POST', url: (label) => '/erp/periods/' + encodeURIComponent(label) + '/lock',       body: (label, d) => d || {} },
+    reopenPeriod:          { method: 'POST', url: (label) => '/erp/periods/' + encodeURIComponent(label) + '/reopen',     body: (label, d) => d || {} },
+    auditVerify:           { method: 'GET',  url: '/auth/audit/verify', query: (f) => f },
+    enroll2fa:             { method: 'POST', url: '/auth/2fa/enroll' },
     getHrHolidayCalendar:{ method: 'GET',    url: (y) => '/hr/holidays/calendar/' + y, query: (y,f) => f },
     getHrMonthlyAttendance: { method: 'GET', url: (id) => '/hr/attendance/monthly/' + encodeURIComponent(id), query: (id, f) => f },
     importHrAttendance:  { method: 'POST', url: '/hr/attendance/import' },

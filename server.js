@@ -221,6 +221,12 @@ app.use('/api/erp', require('./routes/warehouse-ops'));
 app.use('/api/erp', require('./routes/payments'));
 app.use('/api/erp', require('./routes/notifications'));
 app.use('/api/erp', require('./routes/erp'));
+// v6.1.0 Wave E — ZATCA Phase 2 onboarding routes
+try { app.use('/api/erp', require('./routes/erp/zatca')); } catch(e){ console.warn('[mod:erp-zatca]', e.message); }
+// v6.2.0 Wave F.1+F.2+F.3 — aging reports + period close
+try { app.use('/api/erp', require('./routes/erp/reports/ar-aging')); } catch(e){ console.warn('[mod:ar-aging]', e.message); }
+try { app.use('/api/erp', require('./routes/erp/reports/ap-aging')); } catch(e){ console.warn('[mod:ap-aging]', e.message); }
+try { app.use('/api/erp', require('./routes/erp/periods'));            } catch(e){ console.warn('[mod:periods]', e.message); }
 // V5 Enterprise modules (Real-Estate / Contracts / WorkOrders / AP-AR / Approval Matrix)
 try { app.use('/api/properties', require('./routes/properties')); } catch(e){ console.warn('[mod:properties]', e.message); }
 try { app.use('/api/contracts', require('./routes/contracts')); } catch(e){ console.warn('[mod:contracts]', e.message); }
@@ -2845,6 +2851,59 @@ async function runMigrations() {
   // backward-compat with reports; the breakdown lives here.
   await addColumnIfMissing('sales', 'split_details_json', 'LONGTEXT NULL');
 
+  // ─── v6.1.0 Wave E.7 — ZATCA Phase 2 onboarding + submission ───
+  // CSID credentials live on the companies row (encrypted at rest using
+  // lib/encryption.js). The submission queue tracks every sale + credit
+  // note that needs to be sent to ZATCA.
+  await addColumnIfMissing('companies', 'zatca_csid_request_id',         'VARCHAR(100) NULL');
+  await addColumnIfMissing('companies', 'zatca_binary_token_encrypted',  'TEXT NULL');
+  await addColumnIfMissing('companies', 'zatca_secret_encrypted',        'TEXT NULL');
+  await addColumnIfMissing('companies', 'zatca_private_key_encrypted',   'LONGTEXT NULL');
+  await addColumnIfMissing('companies', 'zatca_csid_status',
+    "ENUM('none','compliance','production','revoked') NOT NULL DEFAULT 'none'");
+  await addColumnIfMissing('companies', 'zatca_csid_obtained_at',        'DATETIME NULL');
+  await addColumnIfMissing('sales',     'zatca_xml_signed',              'LONGTEXT NULL');
+  await addColumnIfMissing('sales',     'zatca_response_json',           'LONGTEXT NULL');
+  await addColumnIfMissing('credit_notes', 'zatca_xml_signed',           'LONGTEXT NULL');
+  await addColumnIfMissing('credit_notes', 'zatca_response_json',        'LONGTEXT NULL');
+  await createTableIfMissing('zatca_submission_queue', `
+    CREATE TABLE zatca_submission_queue (
+      id VARCHAR(50) PRIMARY KEY,
+      doc_type ENUM('sale','credit_note') NOT NULL,
+      doc_id VARCHAR(50) NOT NULL,
+      attempt_count INT NOT NULL DEFAULT 0,
+      next_attempt_at DATETIME NOT NULL,
+      status ENUM('pending','running','done','failed') NOT NULL DEFAULT 'pending',
+      last_error TEXT NULL,
+      zatca_response_json LONGTEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_zq_status (status, next_attempt_at),
+      INDEX idx_zq_doc (doc_type, doc_id)
+    ) ENGINE=InnoDB`);
+
+  // ─── v6.2.0 Wave F.3 — Accounting periods (lock-after-close) ───
+  await createTableIfMissing('accounting_periods', `
+    CREATE TABLE accounting_periods (
+      id VARCHAR(50) PRIMARY KEY,
+      period_label VARCHAR(20) NOT NULL,
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      status ENUM('open','soft_close','closed','locked') NOT NULL DEFAULT 'open',
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      closed_by VARCHAR(100),
+      closed_at DATETIME,
+      closing_notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_period (period_label, brand_id, branch_id),
+      INDEX idx_period_status (status, start_date, end_date)
+    ) ENGINE=InnoDB`);
+
+  // ─── v6.2.0 Wave F.4 — Audit log hash chain ───
+  await addColumnIfMissing('audit_log', 'prev_hash',   'VARCHAR(100) NULL');
+  await addColumnIfMissing('audit_log', 'record_hash', 'VARCHAR(100) NULL');
+
   // ─── v6.0.4 Wave D — Real ZATCA-compliant Credit Notes ───
   // A Credit Note (Type 381) is a NEW invoice document in ZATCA — own
   // UUID, own hash, own QR, links back to the original via
@@ -4613,4 +4672,12 @@ async function runMigrations() {
 app.listen(PORT, async () => {
   console.log(`Moroccan Taste POS running on port ${PORT}`);
   await autoInitDB();
+  // v6.1.0 Wave E.6 — start the ZATCA submission worker after migrations
+  // complete so it can see the new zatca_submission_queue table. The
+  // worker no-ops gracefully until the operator finishes onboarding.
+  try {
+    require('./lib/zatca-worker').start();
+  } catch (e) {
+    console.warn('[zatca-worker] failed to start:', e.message);
+  }
 });

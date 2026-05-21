@@ -3,6 +3,17 @@ const db = require('../db/connection');
 const gl = require('../lib/glPosting');
 const zatca = require('../lib/zatca');
 const { recomputeInvItemStock, recomputeMenuStock } = require('../lib/stockRecompute');
+// v6.1.0 Wave E.6 — queue trigger for ZATCA submissions
+let zatcaWorker;
+try { zatcaWorker = require('../lib/zatca-worker'); } catch (_) { zatcaWorker = { enqueue: () => {} }; }
+// v6.2.0 Wave F.3 — period-close guard
+let _periodsModule;
+try { _periodsModule = require('./erp/periods'); } catch (_) { _periodsModule = { assertPeriodOpen: async () => {} }; }
+async function _assertPeriodOpen(conn, date, brandId, branchId) {
+  if (_periodsModule && typeof _periodsModule.assertPeriodOpen === 'function') {
+    return _periodsModule.assertPeriodOpen(conn, date, brandId, branchId);
+  }
+}
 
 const VAT_RATE = Number(process.env.VAT_RATE) || 15;
 const SELLER_NAME_FALLBACK = process.env.COMPANY_NAME || 'Moroccan Taste';
@@ -173,6 +184,17 @@ router.post('/', async (req, res) => {
     }
     const orderId = shiftId + '-' + Date.now();
     const now = new Date();
+
+    // ─── v6.2.0 Wave F.3 — Period close guard ───
+    // Reject the sale up-front if the date falls in a closed/locked
+    // accounting period. We do this before any inventory or GL writes
+    // so the transaction stays clean.
+    try {
+      await _assertPeriodOpen(db, now, req.body.brandId || null, req.body.branchId || null);
+    } catch (periodErr) {
+      // Bubble out of the transaction so the outer catch returns 403
+      throw periodErr;
+    }
 
     // ─── V3: Resolve channel name from DB if id provided ───
     let resolvedChannelName = channelName || null;
@@ -747,6 +769,11 @@ router.post('/', async (req, res) => {
     // v6.0.1 Wave A — commit the transaction
     await _conn.commit();
 
+    // v6.1.0 Wave E.6 — enqueue ZATCA submission AFTER commit. The
+    // worker silently no-ops when CSID isn't onboarded yet, so this
+    // is safe for every deploy.
+    try { zatcaWorker.enqueue('sale', orderId); } catch (_) {}
+
     res.json({
       success: true,
       orderId,
@@ -771,7 +798,9 @@ router.post('/', async (req, res) => {
       try { await _conn.rollback(); } catch (_) {}
     }
     console.warn('[POST /sales] tx rollback:', e.message);
-    res.json({ success: false, error: e.message });
+    // v6.2.0 Wave F.3 — period-locked errors surface as 403
+    const status = e.status || (e.code === 'period_locked' ? 403 : 200);
+    res.status(status).json({ success: false, error: e.message, code: e.code || undefined });
   } finally {
     if (_conn) {
       try { _conn.release(); } catch (_) {}
@@ -1264,6 +1293,9 @@ router.post('/:orderId/return', async (req, res) => {
         zatcaType: txErr.zatcaType || undefined
       });
     }
+
+    // v6.1.0 Wave E.6 — enqueue the new credit_note for ZATCA submission
+    try { if (result && result.creditNoteId) zatcaWorker.enqueue('credit_note', result.creditNoteId); } catch (_) {}
 
     res.json({ success: true, orderId, reason, ...result });
   } catch (e) {

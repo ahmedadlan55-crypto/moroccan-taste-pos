@@ -2779,6 +2779,17 @@ async function runMigrations() {
   try { await db.query('CREATE INDEX idx_sales_channel ON sales(channel_id)'); } catch(e) {}
   try { await db.query('CREATE INDEX idx_sales_items_channel ON sales_items(channel_id)'); } catch(e) {}
 
+  // ─── v5.11.4 — Customer linkage on sales + payment notes + customer gender ───
+  // Wires the POS customer-capture flow (phone + name + gender) to each sale,
+  // and lets the new "Other" payment method carry a free-text note. Both
+  // additions are nullable so historical sales remain valid.
+  await addColumnIfMissing('sales',     'customer_id',   'VARCHAR(50) NULL');
+  await addColumnIfMissing('sales',     'payment_notes', 'TEXT NULL');
+  await addColumnIfMissing('customers', 'gender',
+    "ENUM('male','female','unknown') NOT NULL DEFAULT 'unknown'");
+  try { await db.query('CREATE INDEX idx_sales_customer  ON sales(customer_id)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_customers_phone ON customers(phone)');   } catch(e) {}
+
   // v5.12.2 — parsed device info on shifts + audit_log
   await addColumnIfMissing('shifts',    'device_brand', 'VARCHAR(50)');
   await addColumnIfMissing('shifts',    'device_model', 'VARCHAR(120)');

@@ -3161,6 +3161,8 @@ function loadDashSales() {
   var maxAmt     = f ? f.maxAmount : 0;
   var invoiceNo  = f ? f.invoiceNo : '';
   var productIds = f ? f.productIds : [];
+  // v5.11.4 — customer filter (resolved id from the picker)
+  var customerId = f ? f.customerId : '';
   // Widen the server query by 1 day on each side to catch timezone drift
   // between the client (local) and server (UTC). We re-filter client-side
   // below so the final rendered list still matches the user's intent.
@@ -3169,6 +3171,7 @@ function loadDashSales() {
   var params = { startDate: queryStart, endDate: queryEnd };
   if (cashier) params.username = cashier;
   if (payMethod) params.paymentMethod = payMethod;
+  if (customerId) params.customerId = customerId;
 
   api.withFailureHandler(err => { loader(false); showToast(err.message || 'خطأ في جلب بيانات المبيعات', true); }).withSuccessHandler(arr => {
     loader(false);
@@ -3194,12 +3197,15 @@ function loadDashSales() {
       if (maxAmt > 0 && Number(r.total) > maxAmt) return false;
       if (invoiceNo && (r.orderId || '').toLowerCase().indexOf(invoiceNo.toLowerCase()) < 0) return false;
       if (productIds.length && (!r.items || !r.items.some(function(it){ return productIds.indexOf(String(it.id||it.itemId)) >= 0; }))) return false;
+      // v5.11.4 — customer filter (the server already filtered, but if a stale
+      // page is showing old rows this guards them out)
+      if (customerId && r.customerId !== customerId) return false;
       return true;
     });
     let totalSales = 0;
     let maxInvoice = 0;
     let h = "";
-    if (!arr || !arr.length) h = "<tr><td colspan='9' style='text-align:center; padding:30px;'>لا توجد بيانات لهذه الفترة</td></tr>";
+    if (!arr || !arr.length) h = "<tr><td colspan='10' style='text-align:center; padding:30px;'>لا توجد بيانات لهذه الفترة · No data for this period</td></tr>";
     else {
       arr.forEach(s => {
         try {
@@ -3223,15 +3229,37 @@ function loadDashSales() {
           var chBadge = s.channelName
             ? '<span style="background:#ede9fe;color:#6d28d9;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;">'+s.channelName+'</span>'
             : '<span style="color:#94a3b8;font-size:11px;">—</span>';
+          // v5.11.4 — Customer chip (click → openCustomerProfile drawer)
+          var custName  = (s.customerName  || '').replace(/'/g, "&apos;").replace(/"/g, '&quot;');
+          var custPhone = (s.customerPhone || '').replace(/'/g, "&apos;").replace(/"/g, '&quot;');
+          var custChip = s.customerId
+            ? '<span class="sl-cust-chip" onclick="openCustomerProfile(\''+s.customerId+'\')" title="فتح ملف العميل · Open profile">'+
+                '<i class="fas fa-user-circle" style="color:#7c3aed;"></i> '+
+                (custName || '—')+
+                (custPhone ? '<span class="sl-cust-phone">'+custPhone+'</span>' : '')+
+              '</span>'
+            : '<span style="color:#94a3b8;font-size:11px;">—</span>';
+          // v5.11.4 — Reversed-sale status badge appended to payment chip
+          var statusBadge = '';
+          if (s.zatcaType === 'cancellation') {
+            statusBadge = ' <span class="badge red" style="font-size:10px;">ملغاة · Cancelled</span>';
+          } else if (s.zatcaType === 'credit_note') {
+            statusBadge = ' <span class="badge yellow" style="font-size:10px;">مرتجع · Returned</span>';
+          }
+          // Strike-through total for reversed sales (visual cue)
+          var totalStyle = (s.zatcaType === 'cancellation' || s.zatcaType === 'credit_note')
+            ? 'font-weight:900;color:#94a3b8;text-decoration:line-through;font-size:14px;'
+            : 'font-weight:900;color:var(--secondary);font-size:15px;';
           h += '<tr>'+
             (state.isDeveloper ? '<td style="text-align:center;"><input type="checkbox" class="sale-chk" value="'+s.orderId+'" style="width:16px;height:16px;"></td>' : '<td></td>')+
             '<td style="font-family:monospace;font-weight:bold;color:var(--primary);font-size:12px;">'+(s.orderId||'')+'</td>'+
             '<td style="font-size:12px;color:#64748b;">'+dateStr+'</td>'+
             '<td>'+chBadge+'</td>'+
             '<td style="font-weight:600;">'+userLabel(s.username)+'</td>'+
+            '<td>'+custChip+'</td>'+
             '<td>'+itemsHtml+'</td>'+
-            '<td><span class="badge '+bClass+'">'+payDisplay+'</span></td>'+
-            '<td style="font-weight:900;color:var(--secondary);font-size:15px;">'+formatVal(s.total)+'</td>'+
+            '<td><span class="badge '+bClass+'">'+payDisplay+'</span>'+statusBadge+'</td>'+
+            '<td style="'+totalStyle+'">'+formatVal(s.total)+'</td>'+
             '<td style="white-space:nowrap;">'+
               '<button class="btn btn-sm btn-primary" onclick="printReceipt(\''+s.orderId+'\')"><i class="fas fa-print"></i></button>'+
               (state.isDeveloper ? ' <button class="btn btn-sm btn-danger" onclick="deleteSingleSale(\''+s.orderId+'\')"><i class="fas fa-trash"></i></button>' : '')+
@@ -14520,6 +14548,8 @@ function _mountSalesFilter(hostId, prefix, applyFn) {
 
   // Wire product picker
   _wireProductPicker(prefix);
+  // v5.11.4 — wire customer picker
+  _wireCustomerPicker(prefix);
 }
 
 function _buildSalesFilterHTML(prefix) {
@@ -14555,11 +14585,20 @@ function _buildSalesFilterHTML(prefix) {
       '<div class="sf-field"><label><i class="fas fa-receipt"></i> رقم الفاتورة</label><input type="text" id="sf_' + prefix + '_invoiceNo" placeholder="بحث برقم..."></div>' +
     '</div>' +
 
-    '<div class="sf-row" style="grid-template-columns:1fr;">' +
+    // ─── v5.11.4 — Customer autocomplete filter ──────────────────────────
+    '<div class="sf-row" style="grid-template-columns:1fr 1fr;">' +
       '<div class="sf-field">' +
-        '<label><i class="fas fa-cube"></i> المنتجات (اختر منتج أو أكثر)</label>' +
+        '<label><i class="fas fa-user-circle"></i> العميل · Customer</label>' +
+        '<div class="sf-cust-host" id="sf_' + prefix + '_custHost" style="position:relative;">' +
+          '<input type="text" class="sf-cust-input" id="sf_' + prefix + '_custInput" autocomplete="off"' +
+                 ' placeholder="بحث بالاسم أو الهاتف · Search by name or phone">' +
+          '<input type="hidden" id="sf_' + prefix + '_customerId" value="">' +
+        '</div>' +
+      '</div>' +
+      '<div class="sf-field">' +
+        '<label><i class="fas fa-cube"></i> المنتجات · Products (multi)</label>' +
         '<div class="sf-products-host" id="sf_' + prefix + '_prodHost">' +
-          '<input type="text" class="sf-prod-input" id="sf_' + prefix + '_prodInput" placeholder="اكتب اسم منتج للبحث...">' +
+          '<input type="text" class="sf-prod-input" id="sf_' + prefix + '_prodInput" placeholder="اكتب اسم منتج للبحث... · Type product name">' +
         '</div>' +
         '<input type="hidden" id="sf_' + prefix + '_prodIds" value="">' +
       '</div>' +
@@ -14705,7 +14744,7 @@ function _addProductChip(prefix, id, name) {
 }
 
 function _resetSalesFilter(prefix) {
-  ['start','end','brand','branch','channel','pay','cashier','minAmt','maxAmt','invoiceNo','prodIds'].forEach(function(k) {
+  ['start','end','brand','branch','channel','pay','cashier','minAmt','maxAmt','invoiceNo','prodIds','customerId','custInput'].forEach(function(k) {
     var el = document.getElementById('sf_' + prefix + '_' + k);
     if (el) el.value = '';
   });
@@ -14729,9 +14768,271 @@ window.getSalesFilters = function(prefix) {
     minAmount: Number(v('minAmt')) || 0,
     maxAmount: Number(v('maxAmt')) || 0,
     invoiceNo: v('invoiceNo'),
-    productIds: v('prodIds') ? v('prodIds').split(',').filter(Boolean) : []
+    productIds: v('prodIds') ? v('prodIds').split(',').filter(Boolean) : [],
+    // v5.11.4 — customer filter (resolved by /api/erp/customers/search picker)
+    customerId: v('customerId')
   };
 };
+
+// ─── v5.11.4 — Customer autocomplete picker for Sales filter bar ─────────
+// Mirrors _wireProductPicker but hits /api/erp/customers/search and stores
+// the resolved id in a hidden field that getSalesFilters reads.
+function _wireCustomerPicker(prefix) {
+  var host   = document.getElementById('sf_' + prefix + '_custHost');
+  var input  = document.getElementById('sf_' + prefix + '_custInput');
+  var hidden = document.getElementById('sf_' + prefix + '_customerId');
+  if (!host || !input || !hidden) return;
+
+  var dropdown = null;
+  var debounceT = null;
+
+  function close_() { if (dropdown) { dropdown.remove(); dropdown = null; } }
+  function open_() {
+    close_();
+    var query = (input.value || '').trim();
+    if (query.length < 2) return;
+    fetch('/api/erp/customers/search?q=' + encodeURIComponent(query),
+          { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+      .then(function(r){return r.json();})
+      .then(function(rows){
+        if (!rows || !rows.length) {
+          dropdown = document.createElement('div');
+          dropdown.className = 'sf-cust-dropdown';
+          dropdown.innerHTML = '<div class="sf-cust-empty">لا توجد نتائج · No matches</div>';
+          host.appendChild(dropdown);
+          return;
+        }
+        dropdown = document.createElement('div');
+        dropdown.className = 'sf-cust-dropdown';
+        dropdown.innerHTML = rows.map(function(c){
+          var safeName = (c.name || '').replace(/"/g, '&quot;');
+          var safePhone = (c.phone || '').replace(/"/g, '&quot;');
+          var g = c.gender === 'male' ? 'fa-mars' : c.gender === 'female' ? 'fa-venus' : 'fa-user';
+          return '<div class="sf-cust-option" data-id="' + c.id + '"' +
+                       ' data-name="' + safeName + '"' +
+                       ' data-phone="' + safePhone + '">' +
+                   '<i class="fas ' + g + '"></i>' +
+                   '<div class="sf-cust-option-meta">' +
+                     '<strong>' + (c.name || '—') + '</strong>' +
+                     (c.phone ? '<span>' + c.phone + '</span>' : '') +
+                   '</div>' +
+                 '</div>';
+        }).join('');
+        host.appendChild(dropdown);
+        dropdown.addEventListener('click', function(e) {
+          var opt = e.target.closest('.sf-cust-option');
+          if (!opt) return;
+          hidden.value = opt.dataset.id;
+          input.value  = opt.dataset.name + (opt.dataset.phone ? ' · ' + opt.dataset.phone : '');
+          close_();
+        });
+      })
+      .catch(function(){ close_(); });
+  }
+
+  input.addEventListener('input', function(){
+    hidden.value = ''; // clearing previous selection — re-typing means new search
+    clearTimeout(debounceT);
+    debounceT = setTimeout(open_, 250);
+  });
+  document.addEventListener('click', function(e) {
+    if (!host.contains(e.target)) close_();
+  });
+}
+
+// ─── v5.11.4 — Customer Profile drawer ───────────────────────────────────
+// Opened by clicking a customer chip in the sales-log table. Shows:
+//   • Header: name + phone + gender + type chip
+//   • KPI strip: orders count, total spent, avg invoice, last visit
+//   • Purchase history: flattened item-level rows
+//   • Top-5 most-purchased products by qty
+window.openCustomerProfile = function (customerId) {
+  if (!customerId) return;
+  if (typeof loader === 'function') loader(true);
+  // Build / reuse the modal shell
+  var modal = document.getElementById('modalCustomerProfile');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'modalCustomerProfile';
+    modal.className = 'modal';
+    modal.style.display = 'none';
+    modal.innerHTML =
+      '<div class="modal-content" style="max-width:1080px;max-height:92vh;overflow-y:auto;">' +
+        '<button class="modal-close" onclick="closeCustomerProfile()">&times;</button>' +
+        '<div id="custProfileBody"></div>' +
+      '</div>';
+    document.body.appendChild(modal);
+  }
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  var body = document.getElementById('custProfileBody');
+  body.innerHTML =
+    '<div style="text-align:center;padding:40px;color:#94a3b8;">' +
+      '<i class="fas fa-spinner fa-spin" style="font-size:24px;"></i>' +
+      '<div style="margin-top:10px;">جاري تحميل ملف العميل · Loading profile…</div>' +
+    '</div>';
+
+  // Fetch full history (since 2020) plus customer info
+  fetch('/api/sales?customerId=' + encodeURIComponent(customerId) +
+        '&startDate=2020-01-01&endDate=' + encodeURIComponent(localDateStr()),
+        { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+    .then(function(r){return r.json();})
+    .then(function(sales){
+      if (typeof loader === 'function') loader(false);
+      _renderCustomerProfile(customerId, sales || []);
+    })
+    .catch(function(){
+      if (typeof loader === 'function') loader(false);
+      body.innerHTML = '<div style="padding:30px;text-align:center;color:#b91c1c;">فشل تحميل البيانات · Failed to load</div>';
+    });
+};
+
+window.closeCustomerProfile = function () {
+  var modal = document.getElementById('modalCustomerProfile');
+  if (modal) modal.style.display = 'none';
+  document.body.style.overflow = '';
+};
+
+function _renderCustomerProfile(customerId, sales) {
+  var body = document.getElementById('custProfileBody');
+  if (!body) return;
+
+  // Derive customer details from the first row that has them
+  var info = null;
+  for (var i = 0; i < sales.length; i++) {
+    if (sales[i].customerName || sales[i].customerPhone) {
+      info = {
+        name: sales[i].customerName || '—',
+        phone: sales[i].customerPhone || '',
+        gender: sales[i].customerGender || 'unknown'
+      };
+      break;
+    }
+  }
+  if (!info) info = { name: 'عميل · Customer', phone: '', gender: 'unknown' };
+
+  // Aggregate
+  var totalSpent = 0, count = 0, lastDate = null;
+  var productMap = {};
+  var rows = [];
+  sales.forEach(function (s) {
+    // Skip reversed sales when summing money
+    var isReversed = s.zatcaType === 'cancellation' || s.zatcaType === 'credit_note';
+    if (!isReversed) {
+      totalSpent += Number(s.total) || 0;
+      count++;
+    }
+    if (!lastDate || new Date(s.date) > new Date(lastDate)) lastDate = s.date;
+    (s.items || []).forEach(function (it) {
+      var key = (it.id || it.itemId || it.name || '').toString();
+      if (!productMap[key]) productMap[key] = { name: it.name || key, qty: 0, total: 0 };
+      productMap[key].qty   += Number(it.qty) || 0;
+      productMap[key].total += Number(it.total) || (Number(it.qty || 0) * Number(it.price || 0));
+      rows.push({
+        date: s.date,
+        orderId: s.orderId,
+        name: it.name || '—',
+        qty: it.qty || 1,
+        total: it.total || (Number(it.qty || 0) * Number(it.price || 0)),
+        payment: s.payment || '—',
+        status: isReversed ? (s.zatcaType === 'cancellation' ? 'ملغاة · Cancelled' : 'مرتجع · Returned') : null
+      });
+    });
+  });
+  rows.sort(function(a,b){ return new Date(b.date) - new Date(a.date); });
+  var topProducts = Object.values(productMap)
+    .sort(function(a,b){return b.qty - a.qty;})
+    .slice(0, 5);
+  var avg = count > 0 ? totalSpent / count : 0;
+
+  var fmt = function(n){ return Number(n||0).toLocaleString('ar-SA',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+
+  var gIcon = info.gender === 'male'   ? '<i class="fas fa-mars" style="color:#3b82f6;"></i> ذكر · Male'
+            : info.gender === 'female' ? '<i class="fas fa-venus" style="color:#ec4899;"></i> أنثى · Female'
+            : '<i class="fas fa-user"></i> غير محدد · Unknown';
+
+  body.innerHTML =
+    // Header
+    '<div style="background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;padding:22px 24px;border-radius:14px 14px 0 0;margin:-16px -16px 16px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">' +
+        '<div>' +
+          '<div style="font-size:22px;font-weight:900;">' + info.name + '</div>' +
+          (info.phone ? '<div style="font-family:ui-monospace,monospace;opacity:.9;margin-top:4px;"><i class="fas fa-phone"></i> ' + info.phone + '</div>' : '') +
+          '<div style="margin-top:6px;font-size:13px;">' + gIcon + '</div>' +
+        '</div>' +
+        '<div style="text-align:end;">' +
+          '<div style="font-size:12px;opacity:.85;">رقم العميل · Customer ID</div>' +
+          '<div style="font-family:ui-monospace,monospace;font-weight:700;">' + customerId + '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    // KPIs
+    '<div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:18px;">' +
+      _custKpi('عدد الطلبات · Orders', count.toLocaleString('ar-SA'), '#dcfce7', '#15803d', 'fa-receipt') +
+      _custKpi('إجمالي الإنفاق · Total Spent', fmt(totalSpent) + ' ر.س', '#dbeafe', '#1d4ed8', 'fa-money-bill-trend-up') +
+      _custKpi('متوسط الفاتورة · Avg Invoice', fmt(avg) + ' ر.س', '#fef3c7', '#d97706', 'fa-calculator') +
+      _custKpi('آخر زيارة · Last Visit',
+                lastDate ? new Date(lastDate).toLocaleDateString('en-CA') : '—',
+                '#fce7f3', '#be185d', 'fa-calendar-check') +
+    '</div>' +
+
+    // Top products
+    (topProducts.length
+      ? '<div style="margin-bottom:18px;">' +
+          '<h4 style="margin:0 0 8px;font-size:14px;color:#1e293b;"><i class="fas fa-trophy" style="color:#f59e0b;"></i> أكثر المنتجات شراءً · Top 5 Products</h4>' +
+          '<div style="display:flex;flex-wrap:wrap;gap:8px;">' +
+          topProducts.map(function(p){
+            return '<span style="background:#ede9fe;color:#5b21b6;padding:6px 12px;border-radius:99px;font-weight:700;font-size:12.5px;">' +
+                     p.name + ' · ' + p.qty + '× · ' + fmt(p.total) + ' ر.س' +
+                   '</span>';
+          }).join('') +
+          '</div>' +
+        '</div>'
+      : '') +
+
+    // Purchase history
+    '<h4 style="margin:0 0 8px;font-size:14px;color:#1e293b;"><i class="fas fa-history" style="color:#7c3aed;"></i> سجل المشتريات · Purchase History</h4>' +
+    (rows.length
+      ? '<div class="table-wrapper"><table class="table" style="font-size:12.5px;">' +
+          '<thead><tr>' +
+            '<th>التاريخ · Date</th>' +
+            '<th>الفاتورة · Invoice</th>' +
+            '<th>المنتج · Product</th>' +
+            '<th>الكمية · Qty</th>' +
+            '<th>الإجمالي · Total</th>' +
+            '<th>الدفع · Payment</th>' +
+            '<th>الحالة · Status</th>' +
+          '</tr></thead><tbody>' +
+          rows.slice(0, 200).map(function(r){
+            var d = '';
+            try { d = new Date(r.date).toLocaleDateString('en-CA') + ' ' + new Date(r.date).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}); } catch(e){ d = r.date; }
+            return '<tr' + (r.status ? ' style="opacity:.6;"' : '') + '>' +
+              '<td>' + d + '</td>' +
+              '<td style="font-family:ui-monospace,monospace;font-size:11px;">' + r.orderId + '</td>' +
+              '<td>' + r.name + '</td>' +
+              '<td>' + r.qty + '</td>' +
+              '<td style="font-family:ui-monospace,monospace;font-weight:700;">' + fmt(r.total) + '</td>' +
+              '<td>' + r.payment + '</td>' +
+              '<td>' + (r.status ? '<span style="color:#b91c1c;font-weight:700;">' + r.status + '</span>' : '<span style="color:#15803d;">✓</span>') + '</td>' +
+            '</tr>';
+          }).join('') +
+          '</tbody></table></div>' +
+          (rows.length > 200 ? '<div style="font-size:11px;color:#94a3b8;margin-top:6px;">يَعرض أول 200 من ' + rows.length + ' سطر · Showing first 200 of ' + rows.length + ' lines</div>' : '')
+      : '<div style="text-align:center;padding:30px;color:#94a3b8;">لا مشتريات بعد · No purchases yet</div>');
+}
+
+function _custKpi(label, value, bg, fg, icon) {
+  return '<div class="stat-card">' +
+    '<div class="stat-info">' +
+      '<h4 style="font-size:12px;color:#64748b;margin:0 0 6px;">' + label + '</h4>' +
+      '<p style="font-size:18px;font-weight:900;color:#0f172a;margin:0;">' + value + '</p>' +
+    '</div>' +
+    '<div class="stat-icon" style="background:' + bg + ';color:' + fg + ';">' +
+      '<i class="fas ' + icon + '"></i>' +
+    '</div>' +
+  '</div>';
+}
 
 window._exportSalesFiltered = function(prefix) {
   // Use existing export logic but with filtered cache

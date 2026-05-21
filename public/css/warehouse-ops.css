@@ -4510,6 +4510,79 @@
   display: inline-flex; align-items: center; gap: 4px;
 }
 
+/* ═══ v5.11.4 — Customer picker (filter bar) + customer chip (sales-log table) ═══ */
+.sf-cust-host {
+  position: relative;
+}
+.sf-cust-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1.5px solid var(--mt-border);
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  background: #ffffff;
+}
+.sf-cust-input:focus {
+  outline: 0;
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+}
+.sf-cust-dropdown {
+  position: absolute; top: calc(100% + 4px); right: 0; left: 0;
+  background: #fff; border: 1.5px solid #ddd6fe; border-radius: 10px;
+  max-height: 280px; overflow-y: auto; z-index: 60;
+  box-shadow: 0 10px 30px rgba(91, 33, 182, 0.18);
+}
+.sf-cust-option {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; cursor: pointer; font-size: 12.5px;
+  border-bottom: 1px solid #f5f3ff;
+  transition: background 120ms;
+}
+.sf-cust-option:last-child { border-bottom: 0; }
+.sf-cust-option:hover { background: #f5f3ff; }
+.sf-cust-option > i { color: #7c3aed; width: 18px; text-align: center; }
+.sf-cust-option-meta { display: flex; flex-direction: column; min-width: 0; }
+.sf-cust-option-meta strong { color: #1f2937; font-size: 12.5px; }
+.sf-cust-option-meta span {
+  font-size: 11px; color: #6b7280;
+  font-family: ui-monospace, monospace;
+}
+.sf-cust-empty {
+  padding: 14px; text-align: center;
+  color: #94a3b8; font-size: 12px; font-style: italic;
+}
+
+/* Customer chip rendered inside the sales-log "Customer" column */
+.sl-cust-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  border-radius: 99px;
+  color: #5b21b6;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: all 120ms;
+}
+.sl-cust-chip:hover {
+  background: #ede9fe;
+  border-color: #c4b5fd;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.18);
+}
+.sl-cust-phone {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  color: #7c3aed;
+  margin-inline-start: 6px;
+  opacity: 0.85;
+}
+
 /* ─── Advanced Reports Page (NEW) ─── */
 .adv-section {
   background: #fff;

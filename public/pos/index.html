@@ -170,6 +170,46 @@
         <span class="pos-channel-pricelist" id="posChannelPriceLabel"></span>
       </div>
 
+      <!-- ─── v5.11.4 — Customer capture panel (collapsible) ─── -->
+      <div class="pos-customer-bar" id="posCustomerBar">
+        <div class="pos-customer-header" onclick="posToggleCustomerPanel()">
+          <span class="pos-customer-title">
+            <i class="fas fa-user-circle"></i>
+            <span>العميل · Customer</span>
+            <span class="pos-customer-chip" id="posCustomerChip"></span>
+          </span>
+          <i class="fas fa-chevron-down" id="posCustomerChevron"></i>
+        </div>
+        <div class="pos-customer-body hidden" id="posCustomerBody">
+          <div class="pos-cust-row">
+            <label>الهاتف · Phone</label>
+            <input id="posCustPhone" type="tel" inputmode="tel" maxlength="20"
+                   placeholder="05xxxxxxxx" oninput="posCustomerLookup()"
+                   autocomplete="off">
+            <div class="pos-cust-suggest" id="posCustSuggest"></div>
+          </div>
+          <div class="pos-cust-row">
+            <label>الاسم · Name</label>
+            <input id="posCustName" type="text" maxlength="120"
+                   placeholder="اسم العميل · Customer name" autocomplete="off">
+          </div>
+          <div class="pos-cust-row pos-cust-gender">
+            <label>الجنس · Gender</label>
+            <div class="pos-cust-gender-pills">
+              <label class="pos-cust-pill"><input type="radio" name="posCustGender" value="male" checked>
+                <span><i class="fas fa-mars"></i> ذكر · Male</span></label>
+              <label class="pos-cust-pill"><input type="radio" name="posCustGender" value="female">
+                <span><i class="fas fa-venus"></i> أنثى · Female</span></label>
+            </div>
+          </div>
+          <div class="pos-cust-actions">
+            <button type="button" class="pos-cust-clear" onclick="posCustomerClear()">
+              <i class="fas fa-times"></i> مَسح · Clear
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div class="cart-items" id="cartItemsArea"></div>
 
       <div class="cart-footer">
@@ -227,41 +267,54 @@
     </aside>
   </main>
 
-  <!-- v5.14.1 — Foodics payment modal (full static layout) -->
+  <!-- v5.11.4 — Foodics payment modal (bilingual labels, 3 methods, Other-notes) -->
   <div id="modalPayment" class="glass-modal hidden">
     <div class="glass-modal-content pay-modal-foodics" style="max-width:640px;">
       <div class="glass-modal-title">
-        <span><i class="fas fa-credit-card" style="color:#7c3aed;"></i> اختيار طريقة الدفع</span>
+        <span><i class="fas fa-credit-card" style="color:#7c3aed;"></i> اختيار طريقة الدفع · Choose Payment Method</span>
         <button class="glass-modal-close" onclick="closeGlassModal('#modalPayment')">&times;</button>
       </div>
 
       <div class="pay-modal-summary">
-        <div class="pay-modal-sum-row"><span>المجموع الفرعي</span><strong id="payModalSubtotal">0.00</strong></div>
-        <div class="pay-modal-sum-row pay-modal-discount"><span>الخصم</span><strong id="payModalDiscount">0.00</strong></div>
-        <div class="pay-modal-sum-row pay-modal-total"><span>الإجمالي</span><strong id="payModalTotal">0.00 ر.س</strong></div>
+        <div class="pay-modal-sum-row"><span>المجموع الفرعي · Subtotal</span><strong id="payModalSubtotal">0.00</strong></div>
+        <div class="pay-modal-sum-row pay-modal-discount"><span>الخصم · Discount</span><strong id="payModalDiscount">0.00</strong></div>
+        <div class="pay-modal-sum-row pay-modal-total"><span>الإجمالي · Total</span><strong id="payModalTotal">0.00 ر.س</strong></div>
       </div>
 
-      <!-- Big payment-method tiles (rendered by renderFoodicsPayTiles) -->
+      <!-- Big payment-method tiles (rendered by renderFoodicsPayTiles — 3 fixed: Cash/Mada/Other + Split) -->
       <div class="pay-tiles-grid" id="payTilesGrid"></div>
+
+      <!-- v5.11.4 — Notes block (auto-shown for Other or non-zero Other-row in Split) -->
+      <div class="pay-notes-foodics hidden" id="payNotesBlock">
+        <label class="pay-notes-label">
+          <i class="fas fa-comment-dots"></i>
+          ملاحظات الدفع · Payment Notes
+          <span class="pay-notes-req">*</span>
+        </label>
+        <textarea id="payNotesInput" rows="2" maxlength="200"
+                  placeholder="مثال: تَحويل بنكي، Apple Pay، حساب آجل · e.g. bank transfer, Apple Pay, store credit"
+                  oninput="_payNotesUpdate()"></textarea>
+        <div class="pay-notes-counter"><span id="payNotesLen">0</span> / 200</div>
+      </div>
 
       <!-- Smart split panel — appears when "Split" tile is active -->
       <div class="pay-split-foodics hidden" id="paySplitFoodics">
         <div class="pay-split-header">
-          <div class="pay-split-title"><i class="fas fa-divide"></i> تَجزئة الدفع</div>
+          <div class="pay-split-title"><i class="fas fa-divide"></i> تَجزئة الدفع · Split Payment</div>
           <div class="pay-split-actions">
-            <button type="button" onclick="paySplitAutoDistribute()"><i class="fas fa-balance-scale"></i> تَوزيع متَساوٍ</button>
-            <button type="button" onclick="paySplitClear()"><i class="fas fa-eraser"></i> مَسح</button>
+            <button type="button" onclick="paySplitAutoDistribute()"><i class="fas fa-balance-scale"></i> تَوزيع متَساوٍ · Distribute Equally</button>
+            <button type="button" onclick="paySplitClear()"><i class="fas fa-eraser"></i> مَسح · Clear</button>
           </div>
         </div>
         <div class="pay-split-fields" id="paySplitFields"></div>
         <div class="pay-split-summary">
-          <div>مَدفوع: <strong id="paySplitPaid">0.00</strong></div>
-          <div>المتبقي: <strong id="paySplitRemaining">0.00</strong></div>
+          <div>مَدفوع · Paid: <strong id="paySplitPaid">0.00</strong></div>
+          <div>المتبقي · Remaining: <strong id="paySplitRemaining">0.00</strong></div>
         </div>
       </div>
 
       <button class="pay-confirm-btn" onclick="doCheckout()">
-        <i class="fas fa-check-circle"></i> إتمام الدفع
+        <i class="fas fa-check-circle"></i> إتمام الدفع · Confirm Payment
       </button>
     </div>
   </div>
@@ -287,7 +340,32 @@
       <button class="float-btn float-btn-info no-print-on-kiosk" onclick="openPrinterSettings()" title="الطابعة" style="display:none;"><i class="fas fa-print"></i></button>
       <button class="float-btn float-btn-warn" onclick="openCashierStocktake()" title="جرد المخزون"><i class="fas fa-clipboard-check"></i></button>
       <button class="float-btn float-btn-purple" onclick="openShortageRequest()" title="طلب نواقص" data-i18n-title="shortageRequest"><i class="fas fa-exclamation-triangle"></i></button>
-      <button class="float-btn" style="background:linear-gradient(135deg,#0ea5e9,#0284c7);box-shadow:0 8px 20px rgba(14,165,233,0.4);" onclick="window.open('/employee/','_blank')" title="بوابة الموظف"><i class="fas fa-user-tie"></i></button>
+      <!-- v5.11.4 — My Invoices (current shift) — cashier-facing list with Cancel + Return actions -->
+      <button class="float-btn" style="background:linear-gradient(135deg,#0ea5e9,#0284c7);box-shadow:0 8px 20px rgba(14,165,233,0.4);" onclick="posOpenMyInvoices()" title="فواتيري · My Invoices"><i class="fas fa-file-invoice"></i></button>
+      <button class="float-btn" style="background:linear-gradient(135deg,#22c55e,#15803d);box-shadow:0 8px 20px rgba(34,197,94,0.4);" onclick="window.open('/employee/','_blank')" title="بوابة الموظف"><i class="fas fa-user-tie"></i></button>
+    </div>
+  </div>
+
+  <!-- v5.11.4 — My Invoices (current shift) Modal -->
+  <div id="modalMyInvoices" class="glass-modal hidden">
+    <div class="glass-modal-content" style="max-width:1080px;max-height:92dvh;display:flex;flex-direction:column;">
+      <div class="glass-modal-title">
+        <span><i class="fas fa-file-invoice" style="color:#0284c7;"></i> فواتير الوردية · Current Shift Invoices</span>
+        <button class="glass-modal-close" onclick="closeGlassModal('#modalMyInvoices')">&times;</button>
+      </div>
+      <div class="glass-modal-body" style="flex:1;overflow-y:auto;padding:14px 18px;">
+        <div class="my-inv-toolbar">
+          <button class="my-inv-refresh" onclick="posLoadMyInvoices()">
+            <i class="fas fa-sync-alt"></i> تَحديث · Refresh
+          </button>
+          <div class="my-inv-stats" id="myInvStats"></div>
+        </div>
+        <div id="myInvoicesContent">
+          <div style="text-align:center;padding:30px;color:#94a3b8;">
+            <i class="fas fa-spinner fa-spin"></i> جاري التحميل · Loading…
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

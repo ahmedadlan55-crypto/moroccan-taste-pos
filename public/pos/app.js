@@ -675,40 +675,35 @@ function _foodicsCartTotal() {
   return Math.max(0, sub - disc);
 }
 
+// ─── v5.11.4 — Hardcoded 3 payment methods (+ Split) with bilingual labels ───
+// The dynamic state.paymentMethods loader still runs so shift-close and
+// historical reports remain compatible — but the POS payment modal renders
+// only the three canonical buckets the owner asked for: Cash, Mada, Other.
+// Anything else the cashier needs (Apple Pay, voucher, transfer, …) goes
+// under "Other" and is captured in the free-text payment-notes field.
+var FOODICS_PAY_METHODS = [
+  { name: 'Cash',  ar: 'كاش',  en: 'Cash',  icon: 'fa-money-bill-wave' },
+  { name: 'Mada',  ar: 'مدى',  en: 'Mada',  icon: 'fa-credit-card' },
+  { name: 'Other', ar: 'أخرى', en: 'Other', icon: 'fa-ellipsis-h' }
+];
+
 window.renderFoodicsPayTiles = function () {
   var host = q('#payTilesGrid');
   if (!host) return;
-  var methods = (state.paymentMethods || []).filter(function (m) {
-    return m.IsActive !== false && m.IsActive !== 'FALSE';
-  });
   var current = q('#posPayMethod') ? q('#posPayMethod').value : 'Cash';
-  var isEn = state.lang === 'en';
-  var iconFor = function (n, m) {
-    var k = String(n || '').toLowerCase();
-    if (m && m.Icon) return m.Icon;
-    if (k === 'cash')   return 'fa-money-bill-wave';
-    if (k === 'card')   return 'fa-credit-card';
-    if (k === 'kita')   return 'fa-calculator';
-    if (k === 'split')  return 'fa-divide';
-    if (/hunger/.test(k)) return 'fa-motorcycle';
-    return 'fa-money-bill';
-  };
-  var labelFor = function (m) {
-    var lower = String(m.Name || '').toLowerCase();
-    if (lower === 'cash' || lower === 'card' || lower === 'kita') return t(lower);
-    return isEn ? (m.Name || m.NameAR) : (m.NameAR || m.Name);
-  };
-  var html = '';
-  methods.forEach(function (m) {
-    var active = m.Name === current ? ' is-active' : '';
-    html += '<button type="button" class="pay-tile' + active + '" onclick="setFoodicsPay(\'' + String(m.Name).replace(/'/g, "\\'") + '\')">' +
-              '<i class="fas ' + iconFor(m.Name, m) + '"></i>' +
-              '<span>' + labelFor(m) + '</span>' +
-            '</button>';
-  });
-  html += '<button type="button" class="pay-tile pay-tile-split' + (current === 'Split' ? ' is-active' : '') +
+  var html = FOODICS_PAY_METHODS.map(function (m) {
+    var on = m.name === current ? ' is-active' : '';
+    return '<button type="button" class="pay-tile' + on + '" onclick="setFoodicsPay(\'' + m.name + '\')">' +
+             '<i class="fas ' + m.icon + '"></i>' +
+             '<span>' + m.ar + ' · ' + m.en + '</span>' +
+           '</button>';
+  }).join('');
+  html += '<button type="button" class="pay-tile pay-tile-split' +
+          (current === 'Split' ? ' is-active' : '') +
           '" onclick="setFoodicsPay(\'Split\')">' +
-            '<i class="fas fa-divide"></i><span>' + (t('split') || 'تَجزئة') + '</span></button>';
+            '<i class="fas fa-divide"></i>' +
+            '<span>تَجزئة · Split</span>' +
+          '</button>';
   host.innerHTML = html;
 };
 
@@ -719,47 +714,45 @@ window.setFoodicsPay = function (name) {
   var panel = q('#paySplitFoodics');
   if (panel) panel.classList.toggle('hidden', name !== 'Split');
   if (name === 'Split') renderFoodicsSplitFields();
+  _payNotesUpdate();
 };
 
 window.renderFoodicsSplitFields = function () {
   var host = q('#paySplitFields');
   if (!host) return;
-  // Show EVERY active method (not just cash + card) so the cashier
-  // can split however they need.
-  var methods = (state.paymentMethods || []).filter(function (m) {
-    var n = String(m.Name || '').toLowerCase();
-    return n !== 'split' && m.IsActive !== false && m.IsActive !== 'FALSE';
-  });
-  var isEn = state.lang === 'en';
-  var iconFor = function (n, m) {
-    if (m && m.Icon) return m.Icon;
-    var k = String(n || '').toLowerCase();
-    if (k === 'cash') return 'fa-money-bill-wave';
-    if (k === 'card') return 'fa-credit-card';
-    if (k === 'kita') return 'fa-calculator';
-    if (/hunger/.test(k)) return 'fa-motorcycle';
-    return 'fa-money-bill';
-  };
-  var labelFor = function (m) {
-    var lower = String(m.Name || '').toLowerCase();
-    if (lower === 'cash' || lower === 'card' || lower === 'kita') return t(lower);
-    return isEn ? (m.Name || m.NameAR) : (m.NameAR || m.Name);
-  };
-  // Note: each input ALSO carries class "split-input" so the legacy
-  // doCheckout split-extraction code (which reads .split-input) still
-  // sees the values.
-  host.innerHTML = methods.map(function (m) {
-    var safe = String(m.Name || '').replace(/'/g, "\\'");
+  // v5.11.4 — split inputs use the SAME 3 canonical methods.
+  // Inputs carry class "split-input" so legacy doCheckout extraction still works.
+  host.innerHTML = FOODICS_PAY_METHODS.map(function (m) {
     return (
       '<div class="pay-split-row">' +
-        '<div class="pay-split-method"><i class="fas ' + iconFor(m.Name, m) + '"></i> ' + labelFor(m) + '</div>' +
+        '<div class="pay-split-method"><i class="fas ' + m.icon + '"></i> ' + m.ar + ' · ' + m.en + '</div>' +
         '<input type="number" data-vk="1" step="0.01" min="0" class="form-control pay-split-input split-input" ' +
-               'data-method="' + safe + '" value="" placeholder="0.00" oninput="paySplitRecalc()">' +
-        '<button type="button" class="pay-split-rest" onclick="paySplitFillRest(\'' + safe + '\')" title="املأ بالمتبقي"><i class="fas fa-equals"></i></button>' +
+               'data-method="' + m.name + '" value="" placeholder="0.00" oninput="paySplitRecalc()">' +
+        '<button type="button" class="pay-split-rest" onclick="paySplitFillRest(\'' + m.name + '\')" title="املأ بالمتبقي · Fill remaining"><i class="fas fa-equals"></i></button>' +
       '</div>'
     );
   }).join('');
   paySplitRecalc();
+};
+
+// v5.11.4 — Show/hide the notes block based on either:
+//   • the current method = Other (full payment), or
+//   • the Other input in Split mode has a non-zero value.
+// Also keeps the character counter live.
+window._payNotesUpdate = function () {
+  var block = q('#payNotesBlock');
+  if (!block) return;
+  var current = q('#posPayMethod') ? q('#posPayMethod').value : 'Cash';
+  var needs = (current === 'Other');
+  if (!needs && current === 'Split') {
+    qs('.pay-split-input').forEach(function (el) {
+      if (el.dataset.method === 'Other' && Number(el.value) > 0) needs = true;
+    });
+  }
+  block.classList.toggle('hidden', !needs);
+  var ta  = q('#payNotesInput');
+  var len = q('#payNotesLen');
+  if (ta && len) len.textContent = String((ta.value || '').length);
 };
 
 window.paySplitRecalc = function () {
@@ -776,6 +769,8 @@ window.paySplitRecalc = function () {
   // Mirror to legacy element for backward compat
   var legacy = q('#splitRemaining');
   if (legacy) legacy.textContent = rem.toFixed(2);
+  // v5.11.4 — re-evaluate the notes block (Other-row value may have changed)
+  if (typeof _payNotesUpdate === 'function') _payNotesUpdate();
 };
 
 window.paySplitAutoDistribute = function () {
@@ -816,6 +811,121 @@ window.paySplitFillRest = function (methodName) {
     }
   });
   paySplitRecalc();
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v5.11.4 — Customer capture panel (cart sidebar)
+// ═══════════════════════════════════════════════════════════════════
+// Tracks who the current sale is for. Lookup is by phone (the natural
+// key); typing 2+ chars hits /api/erp/customers/search and offers
+// suggestions. Picking a suggestion stores the resolved id so the
+// backend can skip the upsert. Typing without a match offers "new
+// customer" — the backend then creates the row at checkout.
+state.posCustomer = state.posCustomer || { id:null, name:'', phone:'', gender:'unknown' };
+state._posCustLookupT = null;
+
+window.posToggleCustomerPanel = function () {
+  var body = q('#posCustomerBody');
+  var chev = q('#posCustomerChevron');
+  if (!body) return;
+  var open = body.classList.toggle('hidden') === false;
+  if (chev) chev.style.transform = open ? 'rotate(180deg)' : 'rotate(0deg)';
+};
+
+// Render the chip in the panel header so the cashier can see at a glance
+// who the sale is linked to without expanding the panel.
+window._posCustomerRenderChip = function () {
+  var chip = q('#posCustomerChip');
+  if (!chip) return;
+  if (state.posCustomer && (state.posCustomer.name || state.posCustomer.phone)) {
+    chip.textContent = (state.posCustomer.name || state.posCustomer.phone || '');
+    chip.classList.add('is-set');
+  } else {
+    chip.textContent = '';
+    chip.classList.remove('is-set');
+  }
+};
+
+window.posCustomerLookup = function () {
+  clearTimeout(state._posCustLookupT);
+  var phoneEl = q('#posCustPhone'); if (!phoneEl) return;
+  var q_ = String(phoneEl.value || '').trim();
+  // Any edit invalidates a previously-selected customer id (the cashier
+  // is mid-typing — let the backend re-resolve at checkout).
+  state.posCustomer.id = null;
+  state.posCustomer.phone = q_;
+  _posCustomerRenderChip();
+  var sug = q('#posCustSuggest');
+  if (sug) sug.innerHTML = '';
+  if (q_.length < 2) return;
+  state._posCustLookupT = setTimeout(function () {
+    api.withSuccessHandler(function (rows) {
+      _posCustomerRenderSuggestions(rows || [], q_);
+    }).withFailureHandler(function () {
+      _posCustomerRenderSuggestions([], q_);
+    }).searchCustomers(q_);
+  }, 250);
+};
+
+window._posCustomerRenderSuggestions = function (rows, q_) {
+  var sug = q('#posCustSuggest');
+  if (!sug) return;
+  if (!rows.length) {
+    sug.innerHTML = '<div class="pos-cust-suggest-item is-new" onclick="posCustomerMarkNew()">' +
+      '<i class="fas fa-plus-circle"></i> عميل جديد · New customer: <strong>' + (q_ || '') + '</strong>' +
+    '</div>';
+    return;
+  }
+  sug.innerHTML = rows.map(function (c) {
+    var g = c.gender === 'male' ? 'fa-mars' : c.gender === 'female' ? 'fa-venus' : 'fa-user';
+    return '<div class="pos-cust-suggest-item" data-id="' + (c.id || '') + '" ' +
+                'data-name="' + (c.name || '').replace(/"/g, '&quot;') + '" ' +
+                'data-phone="' + (c.phone || '').replace(/"/g, '&quot;') + '" ' +
+                'data-gender="' + (c.gender || 'unknown') + '" ' +
+                'onclick="posCustomerPickSuggestion(this)">' +
+             '<i class="fas ' + g + '"></i>' +
+             '<div class="pos-cust-suggest-meta">' +
+               '<strong>' + (c.name || '—') + '</strong>' +
+               (c.phone ? '<span>' + c.phone + '</span>' : '') +
+             '</div>' +
+           '</div>';
+  }).join('');
+};
+
+window.posCustomerPickSuggestion = function (el) {
+  if (!el) return;
+  state.posCustomer = {
+    id: el.dataset.id || null,
+    name: el.dataset.name || '',
+    phone: el.dataset.phone || '',
+    gender: el.dataset.gender || 'unknown'
+  };
+  var phoneEl = q('#posCustPhone'); if (phoneEl) phoneEl.value = state.posCustomer.phone;
+  var nameEl  = q('#posCustName');  if (nameEl)  nameEl.value  = state.posCustomer.name;
+  // Sync radio
+  qs('input[name="posCustGender"]').forEach(function (r) {
+    r.checked = (r.value === (state.posCustomer.gender === 'female' ? 'female' : 'male'));
+  });
+  var sug = q('#posCustSuggest'); if (sug) sug.innerHTML = '';
+  _posCustomerRenderChip();
+  if (typeof glassToast === 'function') glassToast('تم اختيار العميل · Customer selected', false);
+};
+
+window.posCustomerMarkNew = function () {
+  var sug = q('#posCustSuggest'); if (sug) sug.innerHTML = '';
+  var nameEl = q('#posCustName');
+  if (nameEl) { nameEl.focus(); nameEl.select && nameEl.select(); }
+  state.posCustomer.id = null;
+  _posCustomerRenderChip();
+};
+
+window.posCustomerClear = function () {
+  state.posCustomer = { id:null, name:'', phone:'', gender:'unknown' };
+  var phoneEl = q('#posCustPhone'); if (phoneEl) phoneEl.value = '';
+  var nameEl  = q('#posCustName');  if (nameEl)  nameEl.value  = '';
+  qs('input[name="posCustGender"]').forEach(function (r) { r.checked = (r.value === 'male'); });
+  var sug = q('#posCustSuggest'); if (sug) sug.innerHTML = '';
+  _posCustomerRenderChip();
 };
 
 window.posOpenPaymentModal = function () {
@@ -1142,6 +1252,44 @@ window.doCheckout = function() {
     totalFinal = afterDiscount;
   }
 
+  // ─── v5.11.4 — Validate payment notes whenever "Other" is involved ───
+  var paymentNotes = '';
+  var needsNote = (payMethod === 'Other') ||
+                  (payMethod === 'Split' && splitDetails && Number(splitDetails.Other || 0) > 0);
+  if (needsNote) {
+    var noteEl = q('#payNotesInput');
+    paymentNotes = noteEl ? String(noteEl.value || '').trim() : '';
+    if (paymentNotes.length < 3) {
+      if (noteEl) { noteEl.focus(); }
+      return glassAlert(
+        'ملاحظات الدفع مطلوبة · Payment Notes Required',
+        'يرجى كتابة سبب اختيار "أخرى" (٣ أحرف على الأقل) · Please describe the "Other" payment (min 3 chars).',
+        { danger: true }
+      );
+    }
+  }
+
+  // ─── v5.11.4 — Build the customer block from the cart-sidebar panel ───
+  var customerOut = null;
+  try {
+    if (state.posCustomer && state.posCustomer.id) {
+      customerOut = { id: state.posCustomer.id };
+    } else {
+      var phoneEl = q('#posCustPhone');
+      var nameEl  = q('#posCustName');
+      var genderEl = qs('input[name="posCustGender"]').filter(function(el){return el.checked;})[0];
+      var phoneVal = phoneEl ? String(phoneEl.value || '').trim() : '';
+      var nameVal  = nameEl  ? String(nameEl.value  || '').trim() : '';
+      if (phoneVal || nameVal) {
+        customerOut = {
+          phone: phoneVal,
+          name:  nameVal || phoneVal,
+          gender: genderEl ? genderEl.value : 'unknown'
+        };
+      }
+    }
+  } catch(_) { customerOut = null; }
+
   var order = {
     items: state.cart,
     total: sub,
@@ -1156,7 +1304,10 @@ window.doCheckout = function() {
     channelName: state.activeChannel ? state.activeChannel.name : null,
     discountId: state.currentDiscount.discountId || null,
     discountGlAccountId: state.currentDiscount.glAccountId || null,
-    lineDiscounts: Object.keys(state.lineDiscounts || {}).length ? state.lineDiscounts : null
+    lineDiscounts: Object.keys(state.lineDiscounts || {}).length ? state.lineDiscounts : null,
+    // ─── v5.11.4: customer link + payment notes ───
+    customer: customerOut,
+    paymentNotes: paymentNotes || null
   };
 
   var send = function() {
@@ -1201,6 +1352,13 @@ window.doCheckout = function() {
       printReceipt(res.orderId);
       state.cart = [];
       state.currentDiscount = { name: '', amount: 0 };
+      // v5.11.4 — reset Other-method notes + customer panel after a successful sale
+      try {
+        var noteIn = q('#payNotesInput'); if (noteIn) { noteIn.value = ''; }
+        var noteLn = q('#payNotesLen');   if (noteLn) { noteLn.textContent = '0'; }
+        var noteBl = q('#payNotesBlock'); if (noteBl) { noteBl.classList.add('hidden'); }
+        if (typeof posCustomerClear === 'function') posCustomerClear();
+      } catch(_) {}
       updateCart();
       api.withSuccessHandler(function(m) { state.menu = m || []; renderMenuGrid(); }).getMenu();
     }).withFailureHandler(function(err) {
@@ -1392,6 +1550,21 @@ window.printReceipt = function(orderId) {
         'You were served by : <strong>' + cashierName + (cashierEmpNo && cashierEmpNo !== cashierName ? ', ' + cashierEmpNo : '') + '</strong>' +
         '<div style="font-size:10px;color:#777;direction:rtl;">قدّم لكم الخدمة: ' + cashierName + '</div>' +
       '</div>' +
+
+      // ── v5.11.4 — Customer line (only when the cashier captured a customer) ──
+      (inv.customerName
+        ? '<div style="text-align:center;font-size:11px;color:#222;margin:6px 0;border-top:1px dashed #cbd5e1;padding-top:6px;">' +
+            'Customer: <strong>' + inv.customerName + '</strong>' + (inv.customerPhone ? ' · ' + inv.customerPhone : '') +
+            '<div style="font-size:10px;color:#777;direction:rtl;">العميل: ' + inv.customerName + (inv.customerPhone ? ' · ' + inv.customerPhone : '') + '</div>' +
+          '</div>'
+        : '') +
+
+      // ── v5.11.4 — Payment notes (Other-method context, when supplied) ──
+      (inv.paymentNotes
+        ? '<div style="text-align:center;font-size:10px;color:#444;margin:4px 0;font-style:italic;">' +
+            'Notes: ' + inv.paymentNotes +
+          '</div>'
+        : '') +
 
       // ── ZATCA QR code ──
       '<div id="receiptQR" style="text-align:center;margin:12px auto;width:150px;height:150px;"></div>' +
@@ -2293,6 +2466,205 @@ function _getCstCart() {
 function _saveCstCart(cart) {
   try { localStorage.setItem('pos_stocktake_cart', JSON.stringify(cart)); } catch(e) {}
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// v5.11.4 — POS "My Invoices" (current shift) + Cancel / Return actions
+// ═══════════════════════════════════════════════════════════════════
+// Lists every invoice the current cashier rang up during the active
+// shift, with a status badge (Active / Cancelled / Returned). Active
+// rows get two action buttons:
+//   • إلغاء · Cancel   → POST /api/sales/:id/void  (zatca_type=cancellation)
+//   • مرتجع · Return   → POST /api/sales/:id/return (zatca_type=credit_note)
+// Both reuse the existing _reverseSaleEffects() transaction so inventory
+// and GL stay consistent; the only difference is the ZATCA stamp + the
+// audit metadata appended to payment_notes.
+state._myInvCache = state._myInvCache || [];
+
+window.posOpenMyInvoices = function () {
+  if (!state.user) {
+    return glassToast('يرجى تسجيل الدخول أولاً · Please sign in first', true);
+  }
+  openGlassModal('#modalMyInvoices');
+  posLoadMyInvoices();
+};
+
+window.posLoadMyInvoices = function () {
+  var host = q('#myInvoicesContent');
+  if (host) {
+    host.innerHTML =
+      '<div style="text-align:center;padding:30px;color:#94a3b8;">' +
+        '<i class="fas fa-spinner fa-spin"></i> جاري التحميل · Loading…' +
+      '</div>';
+  }
+  var today = new Date(); var pad = function(n){return n<10?'0'+n:n;};
+  var dStr = today.getFullYear() + '-' + pad(today.getMonth()+1) + '-' + pad(today.getDate());
+  api.withSuccessHandler(function (arr) {
+    var all = Array.isArray(arr) ? arr : [];
+    // Only the current shift (cashier may have spanned midnight)
+    var rows = state.activeShiftId
+      ? all.filter(function (r) { return r.shiftId === state.activeShiftId; })
+      : all;
+    state._myInvCache = rows;
+    _myInvRender(rows);
+  }).withFailureHandler(function () {
+    _myInvRender([]);
+  }).getSalesListDetailed({
+    username: state.user || '',
+    startDate: dStr,
+    endDate: dStr
+  });
+};
+
+function _myInvStatusBadge(r) {
+  var t_ = String(r.zatcaType || '').toLowerCase();
+  if (t_ === 'cancellation') return '<span class="my-inv-badge red"><i class="fas fa-ban"></i> ملغاة · Cancelled</span>';
+  if (t_ === 'credit_note')  return '<span class="my-inv-badge orange"><i class="fas fa-undo"></i> مرتجع · Returned</span>';
+  return '<span class="my-inv-badge green"><i class="fas fa-check"></i> سارية · Active</span>';
+}
+
+function _myInvFmtTime(s) {
+  try {
+    var dt = new Date(s);
+    if (isNaN(dt)) return s || '';
+    var pad = function(n){return n<10?'0'+n:n;};
+    return pad(dt.getDate()) + '/' + pad(dt.getMonth()+1) + ' · ' +
+           pad(dt.getHours()) + ':' + pad(dt.getMinutes()) + ':' + pad(dt.getSeconds());
+  } catch (_) { return s || ''; }
+}
+
+function _myInvRender(rows) {
+  var host = q('#myInvoicesContent');
+  var stat = q('#myInvStats');
+  if (stat) {
+    var activeCount    = rows.filter(function(r){return !r.zatcaType || (r.zatcaType !== 'cancellation' && r.zatcaType !== 'credit_note');}).length;
+    var cancelledCount = rows.filter(function(r){return r.zatcaType === 'cancellation';}).length;
+    var returnedCount  = rows.filter(function(r){return r.zatcaType === 'credit_note';}).length;
+    var totalAmount    = rows.reduce(function(s,r){
+      if (r.zatcaType === 'cancellation' || r.zatcaType === 'credit_note') return s;
+      return s + (Number(r.total) || 0);
+    }, 0);
+    stat.innerHTML =
+      '<span class="my-inv-stat"><i class="fas fa-receipt"></i> ' + rows.length + ' · إجمالي · Total</span>' +
+      '<span class="my-inv-stat green">سارية · ' + activeCount + '</span>' +
+      '<span class="my-inv-stat red">ملغاة · ' + cancelledCount + '</span>' +
+      '<span class="my-inv-stat orange">مرتجع · ' + returnedCount + '</span>' +
+      '<span class="my-inv-stat blue">' + totalAmount.toFixed(2) + ' ر.س · SAR</span>';
+  }
+  if (!host) return;
+  if (!rows.length) {
+    host.innerHTML =
+      '<div style="text-align:center;padding:50px 20px;color:#94a3b8;">' +
+        '<i class="fas fa-receipt" style="font-size:48px;opacity:.4;display:block;margin-bottom:12px;"></i>' +
+        '<div style="font-size:14px;">لا توجد فواتير في هذه الوردية بعد</div>' +
+        '<div style="font-size:12px;color:#cbd5e1;margin-top:4px;">No invoices in the current shift yet</div>' +
+      '</div>';
+    return;
+  }
+  var html = '<table class="my-inv-table"><thead><tr>' +
+    '<th>الحالة · Status</th>' +
+    '<th>الوقت · Time</th>' +
+    '<th>رقم الفاتورة · Invoice #</th>' +
+    '<th>المنتجات · Products</th>' +
+    '<th>الإجمالي · Total</th>' +
+    '<th>الدفع · Payment</th>' +
+    '<th>إجراءات · Actions</th>' +
+  '</tr></thead><tbody>';
+  rows.forEach(function (r) {
+    var t_ = String(r.zatcaType || '').toLowerCase();
+    var active = !(t_ === 'cancellation' || t_ === 'credit_note');
+    var prods = (r.items || []).slice(0, 3).map(function (it) {
+      return '<span class="my-inv-prod-chip">' + (it.qty || 1) + '× ' + (it.name || '—') + '</span>';
+    }).join(' ');
+    if ((r.items || []).length > 3) {
+      prods += '<span class="my-inv-prod-more">+' + ((r.items || []).length - 3) + '</span>';
+    }
+    var safeId = String(r.orderId || '').replace(/'/g, "\\'");
+    html +=
+      '<tr class="my-inv-row' + (active ? '' : ' is-reversed') + '">' +
+        '<td>' + _myInvStatusBadge(r) + '</td>' +
+        '<td class="my-inv-time">' + _myInvFmtTime(r.date) + '</td>' +
+        '<td class="my-inv-id">' + (r.orderId || '') + '</td>' +
+        '<td class="my-inv-prods">' + (prods || '—') + '</td>' +
+        '<td class="my-inv-total">' + (Number(r.total) || 0).toFixed(2) + ' ر.س</td>' +
+        '<td class="my-inv-pay">' + (r.payment || '—') + (r.paymentNotes ? '<div class="my-inv-pay-notes">' + r.paymentNotes + '</div>' : '') + '</td>' +
+        '<td class="my-inv-actions">' +
+          (active
+            ? '<button class="my-inv-btn red"    onclick="posInvoiceVoid(\''   + safeId + '\')"><i class="fas fa-ban"></i> إلغاء · Cancel</button>' +
+              '<button class="my-inv-btn orange" onclick="posInvoiceReturn(\'' + safeId + '\')"><i class="fas fa-undo"></i> مرتجع · Return</button>'
+            : '<span class="my-inv-btn-disabled">تم — لا إجراءات · Done</span>') +
+        '</td>' +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+  host.innerHTML = html;
+}
+
+// Reusable confirmation — accepts a callback; if glassConfirm exists we use
+// it (proper Arabic-friendly modal), else we fall back to window.confirm.
+function _myInvConfirm(title, body, cb) {
+  if (typeof glassConfirm === 'function') {
+    glassConfirm(title, body, function (ok) { if (ok) cb(); });
+  } else {
+    if (window.confirm(title + '\n\n' + body)) cb();
+  }
+}
+
+window.posInvoiceVoid = function (orderId) {
+  if (!orderId) return;
+  _myInvConfirm(
+    'إلغاء الفاتورة · Cancel Invoice',
+    'سيتم استرجاع كامل المخزون وعكس القيود المحاسبية. لا يمكن التراجع عن هذا الإجراء.\n\n' +
+    'Stock will be restored and GL entries reversed. This action cannot be undone.\n\n' +
+    'Invoice #: ' + orderId,
+    function () {
+      loader(true);
+      api.withSuccessHandler(function (res) {
+        loader(false);
+        if (res && res.success) {
+          glassToast('تم إلغاء الفاتورة ✓ · Invoice cancelled');
+          posLoadMyInvoices();
+        } else {
+          var msg = (res && res.error === 'already-reversed')
+            ? 'هذه الفاتورة معكوسة بالفعل · This invoice was already reversed'
+            : ((res && res.error) || 'فشل الإلغاء · Cancel failed');
+          glassAlert('خطأ · Error', msg, { danger: true });
+        }
+      }).withFailureHandler(function (err) {
+        loader(false);
+        glassAlert('فشل الاتصال · Network error', (err && err.message) || '', { danger: true });
+      }).voidSale(orderId, state.user || 'system');
+    }
+  );
+};
+
+window.posInvoiceReturn = function (orderId) {
+  if (!orderId) return;
+  _myInvConfirm(
+    'مرتجع الفاتورة · Return Invoice',
+    'سيُسجَّل مرتجع كامل: استرجاع المخزون + إصدار إشعار دائن (Credit Note) في ZATCA + عكس القيود المحاسبية.\n\n' +
+    'A full customer return will be recorded: stock restored, ZATCA credit note issued, GL entries reversed.\n\n' +
+    'Invoice #: ' + orderId,
+    function () {
+      var reason = window.prompt('سبب الإرجاع (اختياري) · Return reason (optional)', 'customer return') || 'customer return';
+      loader(true);
+      api.withSuccessHandler(function (res) {
+        loader(false);
+        if (res && res.success) {
+          glassToast('تم تسجيل المرتجع ✓ · Return recorded');
+          posLoadMyInvoices();
+        } else {
+          var msg = (res && res.error === 'already-reversed')
+            ? 'هذه الفاتورة معكوسة بالفعل · This invoice was already reversed'
+            : ((res && res.error) || 'فشل تسجيل المرتجع · Return failed');
+          glassAlert('خطأ · Error', msg, { danger: true });
+        }
+      }).withFailureHandler(function (err) {
+        loader(false);
+        glassAlert('فشل الاتصال · Network error', (err && err.message) || '', { danger: true });
+      }).returnSale(orderId, state.user || 'system', reason);
+    }
+  );
+};
 
 window.openCashierStocktake = function() {
   _cstSelectedItem = null;

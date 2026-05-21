@@ -115,13 +115,16 @@ CREATE TABLE sales (
   items_json TEXT,
   total_final DECIMAL(12,2) NOT NULL DEFAULT 0,
   payment_method VARCHAR(100),
+  payment_notes TEXT NULL,
+  customer_id VARCHAR(50) NULL,
   username VARCHAR(100),
   shift_id VARCHAR(50),
   discount_name VARCHAR(100),
   discount_amount DECIMAL(10,2) DEFAULT 0,
   kita_service_fee DECIMAL(10,2) DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (shift_id) REFERENCES shifts(id) ON DELETE SET NULL
+  FOREIGN KEY (shift_id) REFERENCES shifts(id) ON DELETE SET NULL,
+  INDEX idx_sales_customer (customer_id)
 ) ENGINE=InnoDB;
 
 -- ─── Sales Items ───
@@ -197,6 +200,7 @@ CREATE TABLE customers (
   email VARCHAR(100),
   address TEXT,
   city VARCHAR(100),
+  gender ENUM('male','female','unknown') NOT NULL DEFAULT 'unknown',
   customer_type ENUM('B2C','B2B','B2G') DEFAULT 'B2C',
   credit_limit DECIMAL(12,2) DEFAULT 0,
   balance DECIMAL(12,2) DEFAULT 0,
@@ -204,7 +208,8 @@ CREATE TABLE customers (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   created_by VARCHAR(100),
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  updated_by VARCHAR(100)
+  updated_by VARCHAR(100),
+  INDEX idx_customers_phone (phone)
 ) ENGINE=InnoDB;
 
 -- ─── Suppliers ───

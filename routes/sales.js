@@ -110,6 +110,8 @@ router.post('/', async (req, res) => {
     const { username, shiftId, warehouseId: reqWhId } = req.body;
     // ─── V3: optional channel + discount metadata from POS ───
     const { channelId, channelName, discountId, discountGlAccountId, lineDiscounts: lineDiscPayload } = req.body;
+    // ─── v5.11.4: optional customer payload (id OR phone+name+gender) + Other-method notes ───
+    const { customer: customerPayload, paymentNotes } = req.body;
     // V5.9.2 — 4-step fallback chain to resolve which warehouse the
     //   cashier's sale should deduct from:
     //     1. Explicit warehouseId in the request body (POS override)
@@ -190,6 +192,59 @@ router.post('/', async (req, res) => {
          lineDiscPayload ? JSON.stringify(lineDiscPayload) : null, orderId]
       );
     } catch(e) { /* columns may be missing on very old deploys — ignore */ }
+
+    // ─── v5.11.4: Resolve / upsert customer by phone, then link to the sale ───
+    // Strategy: phone is the natural key. If the cashier sent a customer.id,
+    // trust it. Otherwise look up by phone; create on the fly when missing.
+    let resolvedCustomerId = null;
+    if (customerPayload && typeof customerPayload === 'object') {
+      try {
+        const cName  = String(customerPayload.name  || '').trim();
+        const cPhone = String(customerPayload.phone || '').trim();
+        const cGenderRaw = String(customerPayload.gender || 'unknown').toLowerCase();
+        const cGender = (cGenderRaw === 'male' || cGenderRaw === 'female') ? cGenderRaw : 'unknown';
+        if (customerPayload.id) {
+          // Trust the supplied id — confirm it exists then use it
+          const [chk] = await db.query('SELECT id FROM customers WHERE id = ? AND is_active = 1 LIMIT 1', [customerPayload.id]);
+          if (chk.length) resolvedCustomerId = customerPayload.id;
+        }
+        if (!resolvedCustomerId && cPhone) {
+          const [existing] = await db.query(
+            'SELECT id FROM customers WHERE phone = ? AND is_active = 1 LIMIT 1',
+            [cPhone]
+          );
+          if (existing.length) {
+            resolvedCustomerId = existing[0].id;
+            // Refresh name + gender if cashier provided more recent info
+            try {
+              await db.query(
+                'UPDATE customers SET name = COALESCE(NULLIF(?, \'\'), name), gender = ?, updated_by = ? WHERE id = ?',
+                [cName, cGender, username || '', resolvedCustomerId]
+              );
+            } catch(e) {}
+          } else if (cName || cPhone) {
+            resolvedCustomerId = 'CUST-' + Date.now();
+            try {
+              await db.query(
+                `INSERT INTO customers (id, name, phone, gender, customer_type, created_by)
+                 VALUES (?, ?, ?, ?, 'B2C', ?)`,
+                [resolvedCustomerId, cName || cPhone, cPhone, cGender, username || '']
+              );
+            } catch(e) {
+              resolvedCustomerId = null; // failed insert — drop the link silently
+            }
+          }
+        }
+      } catch(e) { /* never block a sale on customer-capture issues */ }
+    }
+
+    // ─── v5.11.4: Link customer + persist payment notes (post-insert update — tolerates pre-migration deploys) ───
+    try {
+      await db.query(
+        'UPDATE sales SET customer_id = ?, payment_notes = ? WHERE id = ?',
+        [resolvedCustomerId || null, (paymentNotes && String(paymentNotes).trim()) || null, orderId]
+      );
+    } catch(e) { /* columns missing — older deploy, skip */ }
 
     // Stamp ZATCA fields back (tolerate schemas without these columns)
     if (zatcaStamp.uuid) {
@@ -608,22 +663,50 @@ router.post('/', async (req, res) => {
 });
 
 // Get sales list (detailed)
+// v5.11.4 — LEFT JOIN customers so the sales-log table can show the
+// customer chip and the ERP advanced filter can filter by customerId.
+// Schema-tolerant: if customer columns are missing on an older deploy
+// the query falls back to the legacy form.
 router.get('/', async (req, res) => {
   try {
-    let query = 'SELECT * FROM sales WHERE 1=1';
+    let query =
+      'SELECT s.*, c.name AS customer_name, c.phone AS customer_phone, c.gender AS customer_gender ' +
+      'FROM sales s LEFT JOIN customers c ON c.id = s.customer_id WHERE 1=1';
     const params = [];
-    if (req.query.startDate) { query += ' AND DATE(order_date) >= ?'; params.push(req.query.startDate); }
-    if (req.query.endDate) { query += ' AND DATE(order_date) <= ?'; params.push(req.query.endDate); }
-    if (req.query.username) { query += ' AND username = ?'; params.push(req.query.username); }
-    if (req.query.paymentMethod) { query += ' AND LOWER(payment_method) = ?'; params.push(req.query.paymentMethod.toLowerCase()); }
-    query += ' ORDER BY order_date DESC LIMIT 500';
+    if (req.query.startDate)     { query += ' AND DATE(s.order_date) >= ?'; params.push(req.query.startDate); }
+    if (req.query.endDate)       { query += ' AND DATE(s.order_date) <= ?'; params.push(req.query.endDate); }
+    if (req.query.username)      { query += ' AND s.username = ?'; params.push(req.query.username); }
+    if (req.query.paymentMethod) { query += ' AND LOWER(s.payment_method) = ?'; params.push(String(req.query.paymentMethod).toLowerCase()); }
+    if (req.query.customerId)    { query += ' AND s.customer_id = ?'; params.push(req.query.customerId); }
+    query += ' ORDER BY s.order_date DESC LIMIT 500';
 
-    const [rows] = await db.query(query, params);
+    let rows;
+    try {
+      [rows] = await db.query(query, params);
+    } catch (joinErr) {
+      // Schema fallback: customer_id column not yet migrated.
+      let legacy = 'SELECT * FROM sales WHERE 1=1';
+      const lp = [];
+      if (req.query.startDate)     { legacy += ' AND DATE(order_date) >= ?'; lp.push(req.query.startDate); }
+      if (req.query.endDate)       { legacy += ' AND DATE(order_date) <= ?'; lp.push(req.query.endDate); }
+      if (req.query.username)      { legacy += ' AND username = ?'; lp.push(req.query.username); }
+      if (req.query.paymentMethod) { legacy += ' AND LOWER(payment_method) = ?'; lp.push(String(req.query.paymentMethod).toLowerCase()); }
+      legacy += ' ORDER BY order_date DESC LIMIT 500';
+      [rows] = await db.query(legacy, lp);
+    }
+
     res.json(rows.map(r => ({
       orderId: r.id, date: r.order_date, total: Number(r.total_final),
       payment: r.payment_method, username: r.username,
       items: JSON.parse(r.items_json || '[]'),
-      discount: Number(r.discount_amount) || 0, shiftId: r.shift_id
+      discount: Number(r.discount_amount) || 0, shiftId: r.shift_id,
+      // v5.11.4 extras (null-safe on legacy schema)
+      customerId:     r.customer_id     || null,
+      customerName:   r.customer_name   || null,
+      customerPhone:  r.customer_phone  || null,
+      customerGender: r.customer_gender || null,
+      paymentNotes:   r.payment_notes   || null,
+      zatcaType:      r.zatca_type      || null
     })));
   } catch (e) { res.json([]); }
 });
@@ -720,6 +803,22 @@ router.get('/invoice/:orderId', async (req, res) => {
       }
     } catch (_) { /* brands table or brand_id column may not exist on legacy schemas */ }
 
+    // ─── v5.11.4 — customer enrichment for receipts ───
+    let customerName = '', customerPhone = '', customerGender = '';
+    try {
+      if (sale.customer_id) {
+        const [cr] = await db.query(
+          'SELECT name, phone, gender FROM customers WHERE id = ? LIMIT 1',
+          [sale.customer_id]
+        );
+        if (cr.length) {
+          customerName = cr[0].name || '';
+          customerPhone = cr[0].phone || '';
+          customerGender = cr[0].gender || '';
+        }
+      }
+    } catch (_) { /* customer_id column or row missing — skip */ }
+
     res.json({
       orderId: sale.id, date: sale.order_date, payment: sale.payment_method,
       totalFinal: Number(sale.total_final), username: sale.username,
@@ -743,7 +842,14 @@ router.get('/invoice/:orderId', async (req, res) => {
       companyLogo: companyLogo,
       brandName: brandName,
       brandLogo: brandLogo,
-      receiptLogo: brandLogo || companyLogo
+      receiptLogo: brandLogo || companyLogo,
+      // v5.11.4 — customer block + payment notes for receipt and admin display
+      customerId: sale.customer_id || null,
+      customerName: customerName,
+      customerPhone: customerPhone,
+      customerGender: customerGender,
+      paymentNotes: sale.payment_notes || null,
+      zatcaType: sale.zatca_type || null
     });
   } catch (e) { res.json(null); }
 });
@@ -853,8 +959,13 @@ router.post('/:orderId/void', async (req, res) => {
   try {
     const orderId = req.params.orderId;
     const username = (req.user && req.user.username) || (req.body && req.body.username) || 'system';
-    const [sale] = await db.query('SELECT id FROM sales WHERE id = ?', [orderId]);
+    // v5.11.4 — block re-voiding a sale that's already been reversed via Return.
+    const [sale] = await db.query('SELECT id, zatca_type FROM sales WHERE id = ?', [orderId]);
     if (!sale.length) return res.status(404).json({ success: false, error: 'sale-not-found' });
+    const existingType = String(sale[0].zatca_type || '').toLowerCase();
+    if (existingType === 'cancellation' || existingType === 'credit_note') {
+      return res.status(400).json({ success: false, error: 'already-reversed', zatcaType: existingType });
+    }
 
     const wantDelete = req.query.delete === '1';
     const runner = async (conn) => _reverseSaleEffects(conn, orderId, username, { deleteSale: wantDelete });
@@ -869,7 +980,70 @@ router.post('/:orderId/void', async (req, res) => {
       return res.status(500).json({ success: false, error: txErr.message });
     }
 
-    res.json({ success: true, orderId, ...result });
+    // v5.11.4 — when the sale row survives the reversal (default mode),
+    // stamp it as a cancellation so the POS "My Invoices" view can show
+    // the proper status badge and we don't allow a second reversal.
+    if (!wantDelete) {
+      try {
+        await db.query(
+          "UPDATE sales SET zatca_type='cancellation' WHERE id = ?",
+          [orderId]
+        );
+      } catch (_) { /* zatca_type column missing on very old deploy — ignore */ }
+    }
+
+    res.json({ success: true, orderId, ...result, zatcaType: wantDelete ? null : 'cancellation' });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ─── v5.11.4 — POST /:orderId/return ─────────────────────────────────────
+// Customer-return semantics (vs Void which is "the order was wrong").
+// Reuses _reverseSaleEffects (which restores warehouse_stock + posts the
+// reversing GL journal inside a transaction) and then:
+//   • stamps the sale as a ZATCA credit note (zatca_type='credit_note')
+//   • appends "RETURN: <reason>" to payment_notes so the audit trail
+//     captures *why* the customer returned the order.
+// Refuses if the sale is already a cancellation or credit_note.
+router.post('/:orderId/return', async (req, res) => {
+  try {
+    const orderId = req.params.orderId;
+    const username = (req.user && req.user.username) || (req.body && req.body.username) || 'system';
+    const reason   = (req.body && String(req.body.reason || '').trim()) || 'customer return';
+
+    const [sale] = await db.query('SELECT id, zatca_type FROM sales WHERE id = ?', [orderId]);
+    if (!sale.length) return res.status(404).json({ success: false, error: 'sale-not-found' });
+    const existingType = String(sale[0].zatca_type || '').toLowerCase();
+    if (existingType === 'cancellation' || existingType === 'credit_note') {
+      return res.status(400).json({ success: false, error: 'already-reversed', zatcaType: existingType });
+    }
+
+    const runner = async (conn) => {
+      const r = await _reverseSaleEffects(conn, orderId, username, { deleteSale: false });
+      const c = conn || db;
+      try {
+        await c.query(
+          "UPDATE sales SET zatca_type='credit_note', " +
+          "payment_notes = CONCAT(COALESCE(payment_notes,''), CASE WHEN payment_notes IS NULL OR payment_notes = '' THEN '' ELSE '\n' END, ?) " +
+          "WHERE id = ?",
+          ['RETURN: ' + reason, orderId]
+        );
+      } catch (_) { /* schema older than v5.11.4 — silently skip the metadata stamp */ }
+      return r;
+    };
+
+    let result;
+    try {
+      result = (typeof db.withTransaction === 'function')
+        ? await db.withTransaction(runner)
+        : await runner(null);
+    } catch (txErr) {
+      console.error('[POST /sales/:id/return] tx failed:', txErr.message);
+      return res.status(500).json({ success: false, error: txErr.message });
+    }
+
+    res.json({ success: true, orderId, reason, zatcaType: 'credit_note', ...result });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }

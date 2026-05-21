@@ -35,6 +35,9 @@
     getInvoice:          { method: 'GET',  url: (id) => '/sales/invoice/'+id },
     deleteSale:          { method: 'DELETE', url: (id) => '/sales/' + id },
     bulkDeleteSales:     { method: 'POST', url: '/sales/bulk-delete', body: (ids) => ({ids:ids}) },
+    // v5.11.4 — cashier "My Invoices" actions
+    voidSale:            { method: 'POST', url: (id,u)   => '/sales/'+id+'/void',   body: (id,u)   => ({username:u}) },
+    returnSale:          { method: 'POST', url: (id,u,r) => '/sales/'+id+'/return', body: (id,u,r) => ({username:u, reason:r}) },
 
     // Shifts
     openShift:           { method: 'POST', url: '/shifts/open', body: (u,d) => Object.assign({username:u}, d||{}) },
@@ -87,6 +90,8 @@
     // ERP
     getERPDashboardData: { method: 'GET',  url: '/erp/dashboard' },
     getCustomers:        { method: 'GET',  url: '/erp/customers' },
+    // v5.11.4 — autocomplete for POS customer panel + ERP sales filter
+    searchCustomers:     { method: 'GET',  url: '/erp/customers/search', query: (q) => ({q:q}) },
     saveCustomer:        { method: 'POST', url: '/erp/customers' },
     deleteCustomer:      { method: 'DELETE',url: (id) => '/erp/customers/'+id },
     getSuppliers:        { method: 'GET',  url: '/erp/suppliers' },

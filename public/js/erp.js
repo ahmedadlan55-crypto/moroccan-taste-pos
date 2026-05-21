@@ -31065,23 +31065,33 @@ function _hrDaysBetween(start, end) {
   return Math.floor((b - a) / 86400000) + 1;
 }
 function _hrInjectStyles() {
-  // v5.11.5 — full re-skin of #erpHrHolidays + #erpHrAttendanceReport.
+  // v5.11.5 → v5.11.7 — full re-skin of #erpHrHolidays + #erpHrAttendanceReport.
   // The HTML uses .sca-* classes that were originally scoped to
   // #erpShiftCloseAdmin only. This block re-declares the full layout
   // for both HR sections with a premium, project-consistent design.
+  //
+  // v5.11.7 BUGFIX: the previous version concatenated a comma-joined
+  // root selector with a descendant — `"#A, #B" + " .child"` — which
+  // CSS parses as `#A { ... }` + `#B .child { ... }`. That made
+  // `#erpHrHolidays` itself receive grid/flex/etc rules and collapse
+  // its content. Fixed by emitting EXPLICIT dual selectors for every
+  // child rule via the `dual(child)` helper.
   if (document.getElementById('hrV511Styles')) {
     document.getElementById('hrV511Styles').remove();
   }
   var st = document.createElement('style');
   st.id = 'hrV511Styles';
-  // Helper: scope every selector to BOTH HR pages
-  var BOTH = '#erpHrHolidays, #erpHrAttendanceReport';
+  // dual('foo .bar') → "#erpHrHolidays foo .bar, #erpHrAttendanceReport foo .bar"
+  function dual(suffix) {
+    var s = String(suffix || '');
+    return '#erpHrHolidays ' + s + ', #erpHrAttendanceReport ' + s;
+  }
   st.textContent =
     /* ═══ HR SECTION SHELL — match polished accounting/sales look ═══ */
     '#erpHrHolidays, #erpHrAttendanceReport { padding: 0 4px 24px; }' +
 
     /* Premium hero header */
-    '#erpHrHolidays .sca-header, #erpHrAttendanceReport .sca-header {' +
+    dual('.sca-header') + ' {' +
       'display:flex;align-items:center;justify-content:space-between;gap:18px;' +
       'padding:20px 24px;background:linear-gradient(135deg,#fff7ed 0%,#fffbeb 35%,#fff 100%);' +
       'border:1.5px solid #fde68a;border-radius:18px;margin-bottom:18px;flex-wrap:wrap;' +
@@ -31092,77 +31102,76 @@ function _hrInjectStyles() {
       'border-color:#ddd6fe;' +
       'box-shadow:0 8px 24px -8px rgba(124,58,237,0.18);' +
     '}' +
-    BOTH + ' .sca-header-main{display:flex;align-items:center;gap:16px;flex:1;min-width:0;}' +
-    BOTH + ' .sca-header-icon{' +
+    dual('.sca-header-main') + '{display:flex;align-items:center;gap:16px;flex:1;min-width:0;}' +
+    dual('.sca-header-icon') + '{' +
       'width:58px;height:58px;border-radius:16px;color:#fff;display:flex;' +
       'align-items:center;justify-content:center;font-size:24px;flex-shrink:0;' +
       'box-shadow:0 8px 18px -4px rgba(15,23,42,0.20);' +
     '}' +
-    BOTH + ' .sca-header-text{min-width:0;flex:1;}' +
-    BOTH + ' .sca-header-title{font-size:22px;font-weight:900;color:#0f172a;margin:0;line-height:1.25;letter-spacing:-0.01em;}' +
-    BOTH + ' .sca-header-sub{font-size:13px;color:#64748b;margin:5px 0 0;line-height:1.55;max-width:780px;}' +
-    BOTH + ' .sca-header-actions{display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap;align-items:center;}' +
+    dual('.sca-header-text') + '{min-width:0;flex:1;}' +
+    dual('.sca-header-title') + '{font-size:22px;font-weight:900;color:#0f172a;margin:0;line-height:1.25;letter-spacing:-0.01em;}' +
+    dual('.sca-header-sub') + '{font-size:13px;color:#64748b;margin:5px 0 0;line-height:1.55;max-width:780px;}' +
+    dual('.sca-header-actions') + '{display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap;align-items:center;}' +
 
     /* Action buttons */
-    BOTH + ' .sca-btn{' +
+    dual('.sca-btn') + '{' +
       'height:40px;padding:0 16px;border-radius:11px;border:1.5px solid transparent;' +
       'font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;' +
       'display:inline-flex;align-items:center;gap:7px;white-space:nowrap;' +
       'transition:all .15s;' +
     '}' +
-    BOTH + ' .sca-btn-ghost{background:#fff;border-color:#e2e8f0;color:#475569;}' +
-    BOTH + ' .sca-btn-ghost:hover{border-color:#cbd5e1;color:#0f172a;background:#f8fafc;transform:translateY(-1px);box-shadow:0 4px 10px rgba(15,23,42,0.06);}' +
+    dual('.sca-btn-ghost') + '{background:#fff;border-color:#e2e8f0;color:#475569;}' +
+    dual('.sca-btn-ghost:hover') + '{border-color:#cbd5e1;color:#0f172a;background:#f8fafc;transform:translateY(-1px);box-shadow:0 4px 10px rgba(15,23,42,0.06);}' +
     '#erpHrHolidays .sca-btn-primary{background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;box-shadow:0 6px 16px -4px rgba(245,158,11,0.5);}' +
     '#erpHrHolidays .sca-btn-primary:hover{box-shadow:0 8px 22px -4px rgba(245,158,11,0.65);transform:translateY(-1px);}' +
     '#erpHrAttendanceReport .sca-btn-primary{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;box-shadow:0 6px 16px -4px rgba(124,58,237,0.45);}' +
     '#erpHrAttendanceReport .sca-btn-primary:hover{box-shadow:0 8px 22px -4px rgba(124,58,237,0.6);transform:translateY(-1px);}' +
 
     /* ═══ KPI grid ═══ */
-    BOTH + ' .sca-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:18px;}' +
-    '@media (max-width:1200px){' + BOTH + ' .sca-kpis{grid-template-columns:repeat(3,minmax(0,1fr));}}' +
-    '@media (max-width:680px){' + BOTH + ' .sca-kpis{grid-template-columns:repeat(2,minmax(0,1fr));}}' +
+    dual('.sca-kpis') + '{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:18px;}' +
+    '@media (max-width:1200px){' + dual('.sca-kpis') + '{grid-template-columns:repeat(3,minmax(0,1fr));}}' +
+    '@media (max-width:680px){' + dual('.sca-kpis') + '{grid-template-columns:repeat(2,minmax(0,1fr));}}' +
 
-    BOTH + ' .sca-kpi{' +
+    dual('.sca-kpi') + '{' +
       'position:relative;background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;' +
       'padding:14px 16px;display:flex;align-items:center;gap:12px;' +
       'box-shadow:0 1px 3px rgba(15,23,42,0.04);transition:all .2s;' +
       'overflow:hidden;' +
     '}' +
-    BOTH + ' .sca-kpi:hover{transform:translateY(-2px);box-shadow:0 10px 22px -8px rgba(15,23,42,0.12);border-color:#cbd5e1;}' +
-    BOTH + ' .sca-kpi::after{' +
+    dual('.sca-kpi:hover') + '{transform:translateY(-2px);box-shadow:0 10px 22px -8px rgba(15,23,42,0.12);border-color:#cbd5e1;}' +
+    dual('.sca-kpi::after') + '{' +
       'content:"";position:absolute;top:0;right:0;width:3px;height:100%;' +
       'background:var(--kpi-accent,#cbd5e1);opacity:0.85;' +
     '}' +
-    BOTH + ' .sca-kpi-icon{' +
+    dual('.sca-kpi-icon') + '{' +
       'width:46px;height:46px;border-radius:12px;display:flex;align-items:center;justify-content:center;' +
       'font-size:18px;flex-shrink:0;font-weight:900;' +
     '}' +
-    BOTH + ' .sca-kpi-body{min-width:0;flex:1;}' +
-    BOTH + ' .sca-kpi-label{font-size:11.5px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.04em;}' +
-    BOTH + ' .sca-kpi-value{font-size:21px;font-weight:900;color:#0f172a;margin-top:3px;line-height:1.15;font-variant-numeric:tabular-nums;}' +
-    BOTH + ' .sca-kpi-trend{font-size:10.5px;font-weight:700;color:#64748b;margin-top:3px;}' +
+    dual('.sca-kpi-body') + '{min-width:0;flex:1;}' +
+    dual('.sca-kpi-label') + '{font-size:11.5px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.04em;}' +
+    dual('.sca-kpi-value') + '{font-size:21px;font-weight:900;color:#0f172a;margin-top:3px;line-height:1.15;font-variant-numeric:tabular-nums;}' +
+    dual('.sca-kpi-trend') + '{font-size:10.5px;font-weight:700;color:#64748b;margin-top:3px;}' +
 
     /* ═══ Toolbar (filters) ═══ */
-    BOTH + ' .sca-toolbar{' +
+    dual('.sca-toolbar') + '{' +
       'background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:14px 16px;' +
       'margin-bottom:16px;display:grid;' +
       'grid-template-columns:repeat(3,minmax(140px,1fr)) auto;gap:12px;align-items:end;' +
       'box-shadow:0 1px 3px rgba(15,23,42,0.04);' +
     '}' +
-    '#erpHrAttendanceReport .sca-toolbar{grid-template-columns:repeat(3,minmax(140px,1fr)) auto;}' +
-    '@media (max-width:900px){' + BOTH + ' .sca-toolbar{grid-template-columns:repeat(2,minmax(140px,1fr));}}' +
-    '@media (max-width:560px){' + BOTH + ' .sca-toolbar{grid-template-columns:1fr;}}' +
-    BOTH + ' .sca-field{display:flex;flex-direction:column;gap:6px;min-width:0;}' +
-    BOTH + ' .sca-field-label{font-size:11.5px;font-weight:800;color:#475569;display:inline-flex;align-items:center;gap:6px;}' +
-    BOTH + ' .sca-field-label i{color:#94a3b8;}' +
-    BOTH + ' .sca-input{' +
+    '@media (max-width:900px){' + dual('.sca-toolbar') + '{grid-template-columns:repeat(2,minmax(140px,1fr));}}' +
+    '@media (max-width:560px){' + dual('.sca-toolbar') + '{grid-template-columns:1fr;}}' +
+    dual('.sca-field') + '{display:flex;flex-direction:column;gap:6px;min-width:0;}' +
+    dual('.sca-field-label') + '{font-size:11.5px;font-weight:800;color:#475569;display:inline-flex;align-items:center;gap:6px;}' +
+    dual('.sca-field-label i') + '{color:#94a3b8;}' +
+    dual('.sca-input') + '{' +
       'height:40px;padding:0 12px;border:1.5px solid #e2e8f0;border-radius:10px;' +
       'font-family:inherit;font-size:13.5px;color:#0f172a;background:#fff;outline:none;' +
       'transition:border-color .15s, box-shadow .15s;' +
     '}' +
     '#erpHrHolidays .sca-input:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,0.18);}' +
     '#erpHrAttendanceReport .sca-input:focus{border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,0.18);}' +
-    BOTH + ' .sca-input:hover:not(:focus){border-color:#cbd5e1;}' +
+    dual('.sca-input:hover:not(:focus)') + '{border-color:#cbd5e1;}' +
     '#erpHrHolidays .sca-search-btn{' +
       'height:40px;padding:0 18px;border-radius:11px;border:1.5px solid transparent;' +
       'background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;' +
@@ -31177,46 +31186,46 @@ function _hrInjectStyles() {
       'display:inline-flex;align-items:center;gap:7px;white-space:nowrap;' +
       'box-shadow:0 5px 14px -3px rgba(124,58,237,0.45);transition:all .15s;' +
     '}' +
-    BOTH + ' .sca-search-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px -3px rgba(245,158,11,0.55);}' +
-    '#erpHrAttendanceReport .sca-search-btn:hover{box-shadow:0 8px 20px -3px rgba(124,58,237,0.55);}' +
+    '#erpHrHolidays .sca-search-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px -3px rgba(245,158,11,0.55);}' +
+    '#erpHrAttendanceReport .sca-search-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px -3px rgba(124,58,237,0.55);}' +
 
     /* ═══ Table ═══ */
-    BOTH + ' .sca-table-wrap{' +
+    dual('.sca-table-wrap') + '{' +
       'background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;' +
       'overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);' +
     '}' +
-    BOTH + ' .sca-table{width:100%;border-collapse:collapse;font-size:13px;}' +
-    BOTH + ' .sca-table thead th{' +
+    dual('.sca-table') + '{width:100%;border-collapse:collapse;font-size:13px;}' +
+    dual('.sca-table thead th') + '{' +
       'background:linear-gradient(180deg,#1e293b 0%,#0f172a 100%);' +
       'color:#fff;font-weight:800;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;' +
       'padding:13px 14px;text-align:start;border:none;white-space:nowrap;position:sticky;top:0;z-index:2;' +
     '}' +
-    BOTH + ' .sca-table thead th.num{text-align:end;font-variant-numeric:tabular-nums;}' +
-    BOTH + ' .sca-table thead th.actions{text-align:center;width:120px;}' +
-    BOTH + ' .sca-table tbody td{padding:13px 14px;border-bottom:1px solid #f1f5f9;color:#0f172a;vertical-align:middle;font-size:13px;}' +
-    BOTH + ' .sca-table tbody td.num{text-align:end;font-variant-numeric:tabular-nums;font-weight:700;}' +
-    BOTH + ' .sca-table tbody td.actions{text-align:center;white-space:nowrap;}' +
-    BOTH + ' .sca-table tbody tr{transition:background-color .12s;}' +
-    BOTH + ' .sca-table tbody tr:nth-child(even){background:#fafbfc;}' +
-    BOTH + ' .sca-table tbody tr:hover{background:#fffbeb;}' +
+    dual('.sca-table thead th.num') + '{text-align:end;font-variant-numeric:tabular-nums;}' +
+    dual('.sca-table thead th.actions') + '{text-align:center;width:120px;}' +
+    dual('.sca-table tbody td') + '{padding:13px 14px;border-bottom:1px solid #f1f5f9;color:#0f172a;vertical-align:middle;font-size:13px;}' +
+    dual('.sca-table tbody td.num') + '{text-align:end;font-variant-numeric:tabular-nums;font-weight:700;}' +
+    dual('.sca-table tbody td.actions') + '{text-align:center;white-space:nowrap;}' +
+    dual('.sca-table tbody tr') + '{transition:background-color .12s;}' +
+    dual('.sca-table tbody tr:nth-child(even)') + '{background:#fafbfc;}' +
+    '#erpHrHolidays .sca-table tbody tr:hover{background:#fffbeb;}' +
     '#erpHrAttendanceReport .sca-table tbody tr:hover{background:#faf5ff;}' +
-    BOTH + ' .sca-table tbody tr:last-child td{border-bottom:none;}' +
-    BOTH + ' .sca-table strong{font-weight:800;color:#0f172a;}' +
+    dual('.sca-table tbody tr:last-child td') + '{border-bottom:none;}' +
+    dual('.sca-table strong') + '{font-weight:800;color:#0f172a;}' +
 
-    BOTH + ' .sca-empty{' +
+    dual('.sca-empty') + '{' +
       'text-align:center;padding:48px 20px;color:#94a3b8;font-weight:600;' +
     '}' +
-    BOTH + ' .sca-empty i{font-size:36px;display:block;margin-bottom:12px;opacity:0.55;}' +
-    BOTH + ' .sca-empty div{font-size:13.5px;}' +
+    dual('.sca-empty i') + '{font-size:36px;display:block;margin-bottom:12px;opacity:0.55;}' +
+    dual('.sca-empty div') + '{font-size:13.5px;}' +
 
     /* Action row buttons */
-    BOTH + ' .sca-row-btn{' +
+    dual('.sca-row-btn') + '{' +
       'width:32px;height:32px;border-radius:9px;border:1.5px solid #e2e8f0;background:#fff;' +
       'color:#475569;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;' +
       'margin:0 2px;transition:all .15s;' +
     '}' +
-    BOTH + ' .sca-row-btn:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(15,23,42,0.10);background:#f8fafc;border-color:#cbd5e1;color:#0f172a;}' +
-    BOTH + ' .sca-row-btn.is-danger:hover{background:#fef2f2;border-color:#fca5a5;color:#b91c1c;}' +
+    dual('.sca-row-btn:hover') + '{transform:translateY(-1px);box-shadow:0 4px 10px rgba(15,23,42,0.10);background:#f8fafc;border-color:#cbd5e1;color:#0f172a;}' +
+    dual('.sca-row-btn.is-danger:hover') + '{background:#fef2f2;border-color:#fca5a5;color:#b91c1c;}' +
 
     /* ═══ Holiday-specific row pills ═══ */
     '#erpHrHolidays .scope-chip{' +

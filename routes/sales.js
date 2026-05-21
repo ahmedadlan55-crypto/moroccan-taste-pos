@@ -326,6 +326,18 @@ router.post('/', async (req, res) => {
       );
     } catch(e) { /* tax_subtotals_json missing on older deploy */ }
 
+    // ─── v6.0.3 Wave C.4 — Persist structured split-payment JSON ───
+    // The legacy payStr "Cash:80/Mada:20" string breaks when a method
+    // name contains '/' (e.g. "شبكة/مدى"). The JSON form is unambiguous.
+    if (paymentMethod === 'Split' && splitDetails && typeof splitDetails === 'object') {
+      try {
+        await db.query(
+          'UPDATE sales SET split_details_json = ? WHERE id = ?',
+          [JSON.stringify(splitDetails), orderId]
+        );
+      } catch(e) { /* split_details_json missing on older deploy */ }
+    }
+
     // Stamp ZATCA fields back (tolerate schemas without these columns)
     if (zatcaStamp.uuid) {
       try {
@@ -520,6 +532,8 @@ router.post('/', async (req, res) => {
       // remaining count. For made-to-order (made_at_branch/kitchen/prepared) items,
       // skip menu.stock entirely — the only truth is the ingredients.
       // v5.10.19 — warehouse_stock leads, menu.stock is recomputed as the sum.
+      // v6.0.3 Wave C.2 — recomputeMenuStock now always derives menu.stock as
+      // SUM(warehouse_stock.qty) so multi-warehouse drift is impossible.
       const meta = productionMetaMap[item.id];
       if (meta && meta.method === 'imported') {
         try {
@@ -527,6 +541,7 @@ router.post('/', async (req, res) => {
             await db.query(
               `UPDATE warehouse_stock SET qty = ${meta.allowNegative ? 'qty - ?' : 'GREATEST(0, qty - ?)'} WHERE warehouse_id = ? AND item_id = ?`,
               [item.qty, warehouseId, item.id]);
+            // C.2 — always re-derive from sum, not GREATEST-clamp the global field
             await recomputeMenuStock(db, item.id);
           } else {
             // Legacy: no warehouse → write global menu.stock directly.
@@ -597,6 +612,8 @@ router.post('/', async (req, res) => {
     // v6.0.1 Wave A: GL posting now FATAL — any failure throws, the
     // surrounding transaction rolls back the sale + inventory + ZATCA
     // stamp. No more "sale saved with missing GL" scenarios.
+    // v6.0.3 Wave C.1: zero-cost components are detected and surfaced
+    // via `cogsWarning` in the response so the cashier sees a toast.
     // Journal lines:
     //   Dr Cash/Card/AR    totalFinal (split by payment)
     //   Cr Sales Revenue   net (totalFinal / (1 + VAT_RATE/100))
@@ -606,6 +623,7 @@ router.post('/', async (req, res) => {
     // (Discount add-back removed in v6.0.1 — Net method per IFRS 15 §70)
     // All lines carry brand_id + branch_id; COGS/Inventory also carry warehouse_id.
     // ═══════════════════════════════════════════════════════════════
+    let cogsWarning = null;
     {
       if (invTotal > 0) {
         // Compute total COGS from deductions × avg_cost
@@ -619,12 +637,25 @@ router.post('/', async (req, res) => {
           rows.forEach(r => { costMap[r.id] = Number(r.avg_cost) || 0; });
         }
         let totalCogs = 0;
+        // v6.0.3 Wave C.1 — detect components with cost = 0. A non-empty
+        // list means gross margin is artificially inflated; surface a
+        // warning so admin can update costs before more sales fly.
+        const zeroCostComponents = [];
         recipesApplied.forEach(r => {
           r.deductions.forEach(d => {
-            totalCogs += (Number(d.deducted) || 0) * (costMap[d.invId] || 0);
+            const unitCost = costMap[d.invId] || 0;
+            totalCogs += (Number(d.deducted) || 0) * unitCost;
+            if (unitCost === 0 && (Number(d.deducted) || 0) > 0) {
+              zeroCostComponents.push(d.invName || d.invId);
+            }
           });
         });
         totalCogs = Math.round(totalCogs * 100) / 100;
+        if (zeroCostComponents.length) {
+          const names = [...new Set(zeroCostComponents)].slice(0, 5);
+          console.warn('[sale ' + orderId + '] zero-cost components:', names.join(', '));
+          cogsWarning = 'تَنبيه: ' + zeroCostComponents.length + ' مُكوِّن بتَكلفة صفر — هامش الرِّبح قد يَكون مَغلوط. حَدِّث تَكلفة: ' + names.join('، ');
+        }
 
         // Pull brand + branch from the user context (best-effort)
         let brandId = req.body.brandId || (req.user && req.user.brand_id) || null;
@@ -724,6 +755,8 @@ router.post('/', async (req, res) => {
       semiDeductions: semiDeductions,
       // postingWarning kept for backward-compat; always null now (GL is fatal).
       postingWarning: null,
+      // v6.0.3 Wave C.1 — zero-cost component warning (non-blocking)
+      cogsWarning: cogsWarning,
       zatca: {
         uuid: zatcaStamp.uuid || null,
         invoiceHash: zatcaStamp.invoiceHash || null,

@@ -143,11 +143,28 @@ CREATE TABLE sales (
   zatca_status ENUM('pending','submitted','accepted','rejected') DEFAULT 'pending',
   -- v6.0.2 Wave B.3 — per-category VAT subtotals (JSON keyed by S/Z/E/O)
   tax_subtotals_json LONGTEXT NULL,
+  -- v6.0.3 Wave C.4 — structured split-payment breakdown (replaces legacy
+  -- "method:amt/method:amt" string format). payment_method stays as 'Split'.
+  split_details_json LONGTEXT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (shift_id) REFERENCES shifts(id) ON DELETE SET NULL,
   INDEX idx_sales_customer (customer_id),
   INDEX idx_sales_channel (channel_id),
   INDEX idx_sales_zatca_status (zatca_status, zatca_submitted_at)
+) ENGINE=InnoDB;
+
+-- ─── v6.0.3 Wave C.3 — Inventory Cost History ───
+CREATE TABLE inventory_cost_history (
+  id VARCHAR(50) PRIMARY KEY,
+  item_id VARCHAR(50) NOT NULL,
+  cost_before DECIMAL(14,4),
+  cost_after  DECIMAL(14,4),
+  reason ENUM('purchase','stocktake','manual','migration','sale','transfer','waste') NOT NULL,
+  reference_id VARCHAR(50),
+  changed_by VARCHAR(100),
+  changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_ich_item (item_id, changed_at),
+  INDEX idx_ich_reason (reason)
 ) ENGINE=InnoDB;
 
 -- ─── Sales Items ───

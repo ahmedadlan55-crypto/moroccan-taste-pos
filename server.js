@@ -2821,6 +2821,30 @@ async function runMigrations() {
   } catch(e) {}
   try { await db.query('ALTER TABLE customers ADD UNIQUE KEY uq_customers_phone (phone)'); } catch(e) {}
 
+  // ─── v6.0.3 Wave C.3 — Inventory cost history table ───
+  // Every change to inv_items.cost (purchase receipt, stocktake variance,
+  // manual edit) writes a row here so we can audit cost movements and
+  // restate COGS retroactively when needed.
+  await createTableIfMissing('inventory_cost_history', `
+    CREATE TABLE inventory_cost_history (
+      id VARCHAR(50) PRIMARY KEY,
+      item_id VARCHAR(50) NOT NULL,
+      cost_before DECIMAL(14,4),
+      cost_after  DECIMAL(14,4),
+      reason ENUM('purchase','stocktake','manual','migration','sale','transfer','waste') NOT NULL,
+      reference_id VARCHAR(50),
+      changed_by VARCHAR(100),
+      changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_ich_item (item_id, changed_at),
+      INDEX idx_ich_reason (reason)
+    ) ENGINE=InnoDB`);
+
+  // ─── v6.0.3 Wave C.4 — Split payment as structured JSON ───
+  // Replaces the brittle "method:amt/method:amt" string with a JSON
+  // column. The old payment_method string stays as "Split" for
+  // backward-compat with reports; the breakdown lives here.
+  await addColumnIfMissing('sales', 'split_details_json', 'LONGTEXT NULL');
+
   // ─── v5.11.6 — Per-attendance-event device tracking ───
   // Each clock-in / clock-out remembers the brand + model + OS + UA of
   // the phone or tablet that recorded it. Owner needs this to verify

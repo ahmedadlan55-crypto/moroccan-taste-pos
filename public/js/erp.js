@@ -31065,18 +31065,189 @@ function _hrDaysBetween(start, end) {
   return Math.floor((b - a) / 86400000) + 1;
 }
 function _hrInjectStyles() {
-  if (document.getElementById('hrV511Styles')) return;
+  // v5.11.5 — full re-skin of #erpHrHolidays + #erpHrAttendanceReport.
+  // The HTML uses .sca-* classes that were originally scoped to
+  // #erpShiftCloseAdmin only. This block re-declares the full layout
+  // for both HR sections with a premium, project-consistent design.
+  if (document.getElementById('hrV511Styles')) {
+    document.getElementById('hrV511Styles').remove();
+  }
   var st = document.createElement('style');
   st.id = 'hrV511Styles';
+  // Helper: scope every selector to BOTH HR pages
+  var BOTH = '#erpHrHolidays, #erpHrAttendanceReport';
   st.textContent =
-    /* Holiday row badges */
-    '#erpHrHolidays .sca-table .scope-chip{font-size:11px;font-weight:800;padding:3px 8px;border-radius:5px;}' +
-    '#erpHrHolidays .sca-table .scope-all{background:#dbeafe;color:#1e40af;}' +
-    '#erpHrHolidays .sca-table .scope-brand{background:#fef3c7;color:#92400e;}' +
-    '#erpHrHolidays .sca-table .scope-branch{background:#dcfce7;color:#15803d;}' +
-    '#erpHrHolidays .sca-table .paid-yes{color:#15803d;font-weight:800;}' +
-    '#erpHrHolidays .sca-table .paid-no{color:#dc2626;font-weight:800;}' +
-    '#erpHrHolidays .sca-table .mul-chip{font-family:ui-monospace,Menlo,monospace;background:#ede9fe;color:#5b21b6;padding:3px 9px;border-radius:5px;font-weight:800;}' +
+    /* ═══ HR SECTION SHELL — match polished accounting/sales look ═══ */
+    '#erpHrHolidays, #erpHrAttendanceReport { padding: 0 4px 24px; }' +
+
+    /* Premium hero header */
+    '#erpHrHolidays .sca-header, #erpHrAttendanceReport .sca-header {' +
+      'display:flex;align-items:center;justify-content:space-between;gap:18px;' +
+      'padding:20px 24px;background:linear-gradient(135deg,#fff7ed 0%,#fffbeb 35%,#fff 100%);' +
+      'border:1.5px solid #fde68a;border-radius:18px;margin-bottom:18px;flex-wrap:wrap;' +
+      'box-shadow:0 8px 24px -8px rgba(245,158,11,0.18);' +
+    '}' +
+    '#erpHrAttendanceReport .sca-header {' +
+      'background:linear-gradient(135deg,#faf5ff 0%,#f5f3ff 35%,#fff 100%);' +
+      'border-color:#ddd6fe;' +
+      'box-shadow:0 8px 24px -8px rgba(124,58,237,0.18);' +
+    '}' +
+    BOTH + ' .sca-header-main{display:flex;align-items:center;gap:16px;flex:1;min-width:0;}' +
+    BOTH + ' .sca-header-icon{' +
+      'width:58px;height:58px;border-radius:16px;color:#fff;display:flex;' +
+      'align-items:center;justify-content:center;font-size:24px;flex-shrink:0;' +
+      'box-shadow:0 8px 18px -4px rgba(15,23,42,0.20);' +
+    '}' +
+    BOTH + ' .sca-header-text{min-width:0;flex:1;}' +
+    BOTH + ' .sca-header-title{font-size:22px;font-weight:900;color:#0f172a;margin:0;line-height:1.25;letter-spacing:-0.01em;}' +
+    BOTH + ' .sca-header-sub{font-size:13px;color:#64748b;margin:5px 0 0;line-height:1.55;max-width:780px;}' +
+    BOTH + ' .sca-header-actions{display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap;align-items:center;}' +
+
+    /* Action buttons */
+    BOTH + ' .sca-btn{' +
+      'height:40px;padding:0 16px;border-radius:11px;border:1.5px solid transparent;' +
+      'font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;' +
+      'display:inline-flex;align-items:center;gap:7px;white-space:nowrap;' +
+      'transition:all .15s;' +
+    '}' +
+    BOTH + ' .sca-btn-ghost{background:#fff;border-color:#e2e8f0;color:#475569;}' +
+    BOTH + ' .sca-btn-ghost:hover{border-color:#cbd5e1;color:#0f172a;background:#f8fafc;transform:translateY(-1px);box-shadow:0 4px 10px rgba(15,23,42,0.06);}' +
+    '#erpHrHolidays .sca-btn-primary{background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;box-shadow:0 6px 16px -4px rgba(245,158,11,0.5);}' +
+    '#erpHrHolidays .sca-btn-primary:hover{box-shadow:0 8px 22px -4px rgba(245,158,11,0.65);transform:translateY(-1px);}' +
+    '#erpHrAttendanceReport .sca-btn-primary{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;box-shadow:0 6px 16px -4px rgba(124,58,237,0.45);}' +
+    '#erpHrAttendanceReport .sca-btn-primary:hover{box-shadow:0 8px 22px -4px rgba(124,58,237,0.6);transform:translateY(-1px);}' +
+
+    /* ═══ KPI grid ═══ */
+    BOTH + ' .sca-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:18px;}' +
+    '@media (max-width:1200px){' + BOTH + ' .sca-kpis{grid-template-columns:repeat(3,minmax(0,1fr));}}' +
+    '@media (max-width:680px){' + BOTH + ' .sca-kpis{grid-template-columns:repeat(2,minmax(0,1fr));}}' +
+
+    BOTH + ' .sca-kpi{' +
+      'position:relative;background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;' +
+      'padding:14px 16px;display:flex;align-items:center;gap:12px;' +
+      'box-shadow:0 1px 3px rgba(15,23,42,0.04);transition:all .2s;' +
+      'overflow:hidden;' +
+    '}' +
+    BOTH + ' .sca-kpi:hover{transform:translateY(-2px);box-shadow:0 10px 22px -8px rgba(15,23,42,0.12);border-color:#cbd5e1;}' +
+    BOTH + ' .sca-kpi::after{' +
+      'content:"";position:absolute;top:0;right:0;width:3px;height:100%;' +
+      'background:var(--kpi-accent,#cbd5e1);opacity:0.85;' +
+    '}' +
+    BOTH + ' .sca-kpi-icon{' +
+      'width:46px;height:46px;border-radius:12px;display:flex;align-items:center;justify-content:center;' +
+      'font-size:18px;flex-shrink:0;font-weight:900;' +
+    '}' +
+    BOTH + ' .sca-kpi-body{min-width:0;flex:1;}' +
+    BOTH + ' .sca-kpi-label{font-size:11.5px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.04em;}' +
+    BOTH + ' .sca-kpi-value{font-size:21px;font-weight:900;color:#0f172a;margin-top:3px;line-height:1.15;font-variant-numeric:tabular-nums;}' +
+    BOTH + ' .sca-kpi-trend{font-size:10.5px;font-weight:700;color:#64748b;margin-top:3px;}' +
+
+    /* ═══ Toolbar (filters) ═══ */
+    BOTH + ' .sca-toolbar{' +
+      'background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:14px 16px;' +
+      'margin-bottom:16px;display:grid;' +
+      'grid-template-columns:repeat(3,minmax(140px,1fr)) auto;gap:12px;align-items:end;' +
+      'box-shadow:0 1px 3px rgba(15,23,42,0.04);' +
+    '}' +
+    '#erpHrAttendanceReport .sca-toolbar{grid-template-columns:repeat(3,minmax(140px,1fr)) auto;}' +
+    '@media (max-width:900px){' + BOTH + ' .sca-toolbar{grid-template-columns:repeat(2,minmax(140px,1fr));}}' +
+    '@media (max-width:560px){' + BOTH + ' .sca-toolbar{grid-template-columns:1fr;}}' +
+    BOTH + ' .sca-field{display:flex;flex-direction:column;gap:6px;min-width:0;}' +
+    BOTH + ' .sca-field-label{font-size:11.5px;font-weight:800;color:#475569;display:inline-flex;align-items:center;gap:6px;}' +
+    BOTH + ' .sca-field-label i{color:#94a3b8;}' +
+    BOTH + ' .sca-input{' +
+      'height:40px;padding:0 12px;border:1.5px solid #e2e8f0;border-radius:10px;' +
+      'font-family:inherit;font-size:13.5px;color:#0f172a;background:#fff;outline:none;' +
+      'transition:border-color .15s, box-shadow .15s;' +
+    '}' +
+    '#erpHrHolidays .sca-input:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,0.18);}' +
+    '#erpHrAttendanceReport .sca-input:focus{border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,0.18);}' +
+    BOTH + ' .sca-input:hover:not(:focus){border-color:#cbd5e1;}' +
+    '#erpHrHolidays .sca-search-btn{' +
+      'height:40px;padding:0 18px;border-radius:11px;border:1.5px solid transparent;' +
+      'background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;' +
+      'font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;' +
+      'display:inline-flex;align-items:center;gap:7px;white-space:nowrap;' +
+      'box-shadow:0 5px 14px -3px rgba(245,158,11,0.45);transition:all .15s;' +
+    '}' +
+    '#erpHrAttendanceReport .sca-search-btn{' +
+      'height:40px;padding:0 18px;border-radius:11px;border:1.5px solid transparent;' +
+      'background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;' +
+      'font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;' +
+      'display:inline-flex;align-items:center;gap:7px;white-space:nowrap;' +
+      'box-shadow:0 5px 14px -3px rgba(124,58,237,0.45);transition:all .15s;' +
+    '}' +
+    BOTH + ' .sca-search-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px -3px rgba(245,158,11,0.55);}' +
+    '#erpHrAttendanceReport .sca-search-btn:hover{box-shadow:0 8px 20px -3px rgba(124,58,237,0.55);}' +
+
+    /* ═══ Table ═══ */
+    BOTH + ' .sca-table-wrap{' +
+      'background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;' +
+      'overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);' +
+    '}' +
+    BOTH + ' .sca-table{width:100%;border-collapse:collapse;font-size:13px;}' +
+    BOTH + ' .sca-table thead th{' +
+      'background:linear-gradient(180deg,#1e293b 0%,#0f172a 100%);' +
+      'color:#fff;font-weight:800;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;' +
+      'padding:13px 14px;text-align:start;border:none;white-space:nowrap;position:sticky;top:0;z-index:2;' +
+    '}' +
+    BOTH + ' .sca-table thead th.num{text-align:end;font-variant-numeric:tabular-nums;}' +
+    BOTH + ' .sca-table thead th.actions{text-align:center;width:120px;}' +
+    BOTH + ' .sca-table tbody td{padding:13px 14px;border-bottom:1px solid #f1f5f9;color:#0f172a;vertical-align:middle;font-size:13px;}' +
+    BOTH + ' .sca-table tbody td.num{text-align:end;font-variant-numeric:tabular-nums;font-weight:700;}' +
+    BOTH + ' .sca-table tbody td.actions{text-align:center;white-space:nowrap;}' +
+    BOTH + ' .sca-table tbody tr{transition:background-color .12s;}' +
+    BOTH + ' .sca-table tbody tr:nth-child(even){background:#fafbfc;}' +
+    BOTH + ' .sca-table tbody tr:hover{background:#fffbeb;}' +
+    '#erpHrAttendanceReport .sca-table tbody tr:hover{background:#faf5ff;}' +
+    BOTH + ' .sca-table tbody tr:last-child td{border-bottom:none;}' +
+    BOTH + ' .sca-table strong{font-weight:800;color:#0f172a;}' +
+
+    BOTH + ' .sca-empty{' +
+      'text-align:center;padding:48px 20px;color:#94a3b8;font-weight:600;' +
+    '}' +
+    BOTH + ' .sca-empty i{font-size:36px;display:block;margin-bottom:12px;opacity:0.55;}' +
+    BOTH + ' .sca-empty div{font-size:13.5px;}' +
+
+    /* Action row buttons */
+    BOTH + ' .sca-row-btn{' +
+      'width:32px;height:32px;border-radius:9px;border:1.5px solid #e2e8f0;background:#fff;' +
+      'color:#475569;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;' +
+      'margin:0 2px;transition:all .15s;' +
+    '}' +
+    BOTH + ' .sca-row-btn:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(15,23,42,0.10);background:#f8fafc;border-color:#cbd5e1;color:#0f172a;}' +
+    BOTH + ' .sca-row-btn.is-danger:hover{background:#fef2f2;border-color:#fca5a5;color:#b91c1c;}' +
+
+    /* ═══ Holiday-specific row pills ═══ */
+    '#erpHrHolidays .scope-chip{' +
+      'display:inline-flex;align-items:center;gap:5px;' +
+      'font-size:11px;font-weight:800;padding:4px 10px;border-radius:99px;letter-spacing:0;' +
+    '}' +
+    '#erpHrHolidays .scope-chip i{font-size:9px;}' +
+    '#erpHrHolidays .scope-all{background:linear-gradient(135deg,#dbeafe,#bfdbfe);color:#1e40af;}' +
+    '#erpHrHolidays .scope-brand{background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;}' +
+    '#erpHrHolidays .scope-branch{background:linear-gradient(135deg,#dcfce7,#bbf7d0);color:#15803d;}' +
+    '#erpHrHolidays .paid-pill{' +
+      'display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:800;' +
+      'padding:4px 10px;border-radius:99px;' +
+    '}' +
+    '#erpHrHolidays .paid-yes{background:#dcfce7;color:#15803d;}' +
+    '#erpHrHolidays .paid-no{background:#fee2e2;color:#b91c1c;}' +
+    '#erpHrHolidays .mul-chip{' +
+      'display:inline-flex;align-items:center;gap:4px;' +
+      'font-family:ui-monospace,Menlo,monospace;font-size:12px;' +
+      'background:linear-gradient(135deg,#ede9fe,#ddd6fe);color:#5b21b6;' +
+      'padding:4px 11px;border-radius:8px;font-weight:900;' +
+    '}' +
+    '#erpHrHolidays .rec-yes{' +
+      'display:inline-flex;align-items:center;gap:5px;' +
+      'font-size:11.5px;font-weight:800;color:#5b21b6;' +
+      'padding:4px 10px;background:#f5f3ff;border-radius:99px;border:1px solid #ddd6fe;' +
+    '}' +
+    '#erpHrHolidays .rec-no{color:#cbd5e1;font-weight:700;font-size:13px;}' +
+    '#erpHrHolidays .hol-name-en{font-size:11px;color:#64748b;margin-top:2px;}' +
+    '#erpHrHolidays .hol-date-cell{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#334155;}' +
+    '#erpHrHolidays .hol-days{font-size:14px;color:#0f172a;}' +
     /* Holiday Modal */
     '#holModal{position:fixed;inset:0;background:rgba(15,23,42,0.55);backdrop-filter:blur(6px);z-index:10001;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 0;}' +
     '#holModal .shell{background:#fff;border-radius:18px;max-width:640px;width:96%;margin:40px auto;box-shadow:0 30px 80px -20px rgba(15,23,42,0.45);overflow:hidden;animation:holIn .25s ease;}' +
@@ -31191,40 +31362,66 @@ function _holidaysRenderKpis(rows) {
   var avgMul = rows.length ? (rows.reduce(function(s,r){ return s + Number(r.overtimeMultiplier || 0); }, 0) / rows.length) : 0;
   var paid = rows.filter(function(r){ return r.isPaid; }).length;
   var unpaid = rows.length - paid;
-  function card(icon, label, value, color) {
-    return '<div class="sca-kpi"><div class="sca-kpi-icon" style="background:' + color + '1f;color:' + color + ';"><i class="fas ' + icon + '"></i></div>' +
-      '<div class="sca-kpi-body"><div class="sca-kpi-label">' + label + '</div><div class="sca-kpi-value">' + value + '</div></div></div>';
+  // Premium gradient KPI cards — left-side accent bar driven by --kpi-accent
+  function card(icon, label, value, trend, accent, iconBg, iconColor) {
+    return (
+      '<div class="sca-kpi" style="--kpi-accent:' + accent + ';">' +
+        '<div class="sca-kpi-icon" style="background:linear-gradient(135deg,' + iconBg[0] + ',' + iconBg[1] + ');color:' + iconColor + ';">' +
+          '<i class="fas ' + icon + '"></i>' +
+        '</div>' +
+        '<div class="sca-kpi-body">' +
+          '<div class="sca-kpi-label">' + label + '</div>' +
+          '<div class="sca-kpi-value">' + value + '</div>' +
+          (trend ? '<div class="sca-kpi-trend">' + trend + '</div>' : '') +
+        '</div>' +
+      '</div>'
+    );
   }
   box.innerHTML =
-    card('fa-flag',          'عدد الإجازات', count,                              '#f59e0b') +
-    card('fa-calendar-day',  'إجمالي الأيام', totalDays,                         '#3b82f6') +
-    card('fa-forward',       'قادمة',         upcoming,                          '#22c55e') +
-    card('fa-percent',       'مُتوسط المضاعف', avgMul.toFixed(2) + 'x',          '#8b5cf6') +
-    card('fa-money-bill',    'مدفوعة/غير',    paid + ' / ' + unpaid,             '#06b6d4');
+    card('fa-flag',         'عدد الإجازات',  count,                       'هذه السنة',
+         '#f59e0b', ['#fef3c7','#fde68a'], '#b45309') +
+    card('fa-calendar-day', 'إجمالي الأيام', totalDays,                   'يوم رسمي',
+         '#3b82f6', ['#dbeafe','#bfdbfe'], '#1e40af') +
+    card('fa-forward',      'قادمة',          upcoming,                   'من اليوم',
+         '#22c55e', ['#dcfce7','#bbf7d0'], '#15803d') +
+    card('fa-percent',      'مُتوسط المضاعف', avgMul.toFixed(2) + 'x',    'إضافي الإجازات',
+         '#8b5cf6', ['#ede9fe','#ddd6fe'], '#5b21b6') +
+    card('fa-money-bill',   'مدفوعة / غير',  paid + ' / ' + unpaid,       'تَوزيع الأجر',
+         '#06b6d4', ['#cffafe','#a5f3fc'], '#0e7490');
 }
 
 function _holidaysRenderTable(rows) {
   var tb = document.getElementById('holBody');
   if (!tb) return;
   if (!rows.length) {
-    tb.innerHTML = '<tr><td colspan="9" class="sca-empty"><i class="fas fa-folder-open"></i><div>لا توجد إجازات مَطابقة للمعايير</div></td></tr>';
+    tb.innerHTML = '<tr><td colspan="9" class="sca-empty"><i class="fas fa-folder-open"></i><div>لا توجد إجازات مَطابقة للمعايير<br><span style="font-size:12px;color:#cbd5e1;font-weight:500;">اضغط "إجازة جديدة" أعلاه لإضافة أول إجازة</span></div></td></tr>';
     return;
   }
-  var scopeLabel = { all: 'جميع الموظفين', brand: 'براند', branch: 'فرع' };
+  var scopeLabel = { all: 'جميع الموظفين', brand: 'براند مُحدَّد', branch: 'فرع مُحدَّد' };
+  var scopeIcon  = { all: 'fa-globe',     brand: 'fa-tag',        branch: 'fa-code-branch' };
+  var todayStr = new Date().toISOString().slice(0,10);
   tb.innerHTML = rows.map(function(r) {
     var days = _hrDaysBetween(r.startDate, r.endDate);
+    var isPast = r.endDate < todayStr;
+    var isToday = r.startDate <= todayStr && r.endDate >= todayStr;
+    var dateBadge = isToday
+      ? '<span style="display:inline-block;font-size:9.5px;font-weight:900;background:#16a34a;color:#fff;padding:2px 7px;border-radius:99px;margin-inline-start:6px;">جارية</span>'
+      : (isPast ? '<span style="display:inline-block;font-size:9.5px;font-weight:700;background:#f1f5f9;color:#94a3b8;padding:2px 7px;border-radius:99px;margin-inline-start:6px;">انتهت</span>' : '');
     return '<tr>' +
-      '<td><strong>' + _hrEsc(r.name) + '</strong>' + (r.nameEn ? '<div style="font-size:11px;color:#64748b;">' + _hrEsc(r.nameEn) + '</div>' : '') + '</td>' +
-      '<td>' + _hrEsc(r.startDate) + '</td>' +
-      '<td>' + _hrEsc(r.endDate) + '</td>' +
-      '<td class="num"><strong>' + days + '</strong></td>' +
-      '<td><span class="scope-chip scope-' + r.scope + '">' + (scopeLabel[r.scope] || r.scope) + '</span></td>' +
-      '<td><span class="' + (r.isPaid ? 'paid-yes' : 'paid-no') + '">' + (r.isPaid ? '✓ نعم' : '✗ لا') + '</span></td>' +
-      '<td class="num"><span class="mul-chip">' + Number(r.overtimeMultiplier).toFixed(2) + 'x</span></td>' +
-      '<td>' + (r.isRecurring ? '<i class="fas fa-redo" style="color:#7c3aed;"></i> نَعم' : '<span style="color:#cbd5e1;">—</span>') + '</td>' +
+      '<td>' +
+        '<strong>' + _hrEsc(r.name) + '</strong>' + dateBadge +
+        (r.nameEn ? '<div class="hol-name-en">' + _hrEsc(r.nameEn) + '</div>' : '') +
+      '</td>' +
+      '<td class="hol-date-cell">' + _hrEsc(r.startDate) + '</td>' +
+      '<td class="hol-date-cell">' + _hrEsc(r.endDate) + '</td>' +
+      '<td class="num"><span class="hol-days"><strong>' + days + '</strong></span></td>' +
+      '<td><span class="scope-chip scope-' + r.scope + '"><i class="fas ' + (scopeIcon[r.scope] || 'fa-globe') + '"></i> ' + (scopeLabel[r.scope] || r.scope) + '</span></td>' +
+      '<td><span class="paid-pill ' + (r.isPaid ? 'paid-yes' : 'paid-no') + '">' + (r.isPaid ? '<i class="fas fa-check-circle"></i> نَعم' : '<i class="fas fa-times-circle"></i> لا') + '</span></td>' +
+      '<td class="num"><span class="mul-chip"><i class="fas fa-bolt"></i> ' + Number(r.overtimeMultiplier).toFixed(2) + 'x</span></td>' +
+      '<td>' + (r.isRecurring ? '<span class="rec-yes"><i class="fas fa-redo"></i> سنوياً</span>' : '<span class="rec-no">—</span>') + '</td>' +
       '<td class="actions">' +
-        '<button class="sca-row-btn" title="تعديل" onclick="erpOpenHolidayModal(\'' + r.id + '\')"><i class="fas fa-edit"></i></button> ' +
-        '<button class="sca-row-btn" title="حذف" onclick="erpDeleteHoliday(\'' + r.id + '\')" style="color:#dc2626;border-color:#fecaca;"><i class="fas fa-trash"></i></button>' +
+        '<button class="sca-row-btn" title="تعديل" onclick="erpOpenHolidayModal(\'' + r.id + '\')"><i class="fas fa-edit"></i></button>' +
+        '<button class="sca-row-btn is-danger" title="حذف" onclick="erpDeleteHoliday(\'' + r.id + '\')"><i class="fas fa-trash"></i></button>' +
       '</td>' +
     '</tr>';
   }).join('');

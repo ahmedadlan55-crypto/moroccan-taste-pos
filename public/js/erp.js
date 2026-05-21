@@ -8196,8 +8196,19 @@ window.brfOpenMap = function() {
             '</div>' +
             '<div id="brfMapInfo"><b>الموقع المختار</b><span id="brfMapAddr">— لم يتم تحديد بعد —</span></div>' +
             '<div id="brfMapPois">' +
-              '<div id="brfMapPoisHead"><i class="fas fa-store"></i> المتاجر القريبة</div>' +
-              '<div id="brfMapPoisList"><div style="font-size:11px;color:#94a3b8;text-align:center;padding:20px;">حرّك الدبوس لعرض المتاجر القريبة</div></div>' +
+              '<div id="brfMapPoisHead" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">' +
+                '<span><i class="fas fa-store"></i> المحلات والمنشآت القريبة</span>' +
+                '<span id="brfMapPoisCount" style="font-size:10.5px;color:#64748b;font-weight:700;">—</span>' +
+              '</div>' +
+              // v5.11.3 — Search box for filtering the POI cache without
+              // re-querying Overpass; instant as the user types.
+              '<div style="padding:8px 10px;border-bottom:1px solid #f1f5f9;background:#fafafa;">' +
+                '<div style="position:relative;">' +
+                  '<i class="fas fa-search" style="position:absolute;top:50%;inset-inline-end:10px;transform:translateY(-50%);color:#94a3b8;font-size:11px;pointer-events:none;"></i>' +
+                  '<input id="brfPoiFilter" type="text" placeholder="ابحث في المحلات الظاهرة..." oninput="_brfRenderPois(this.value);_brfUpdatePoiCountFiltered(this.value);" style="width:100%;height:34px;border:1.5px solid #e2e8f0;border-radius:8px;padding:0 30px 0 10px;font-size:12px;background:#fff;outline:none;">' +
+                '</div>' +
+              '</div>' +
+              '<div id="brfMapPoisList"><div style="font-size:11px;color:#94a3b8;text-align:center;padding:20px;">حرّك الدبوس لعرض المحلات القريبة</div></div>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -8241,9 +8252,17 @@ window.brfOpenMap = function() {
       marker.on('drag',    function() { var p = marker.getLatLng(); circle.setLatLng(p); _brfUpdateCoordReadout(p.lat, p.lng); });
 
       var radiusEl = document.getElementById('brfMapRadius');
+      // v5.11.3 — Changing the fence radius now ALSO refreshes the
+      // POI search (debounced 500ms) so the owner sees more shops
+      // when they widen the fence. The circle still updates instantly.
       radiusEl.addEventListener('input', function() {
         var r = Math.max(10, Math.min(10000, Number(radiusEl.value) || 100));
         circle.setRadius(r);
+        clearTimeout(radiusEl._brfPoiDebounce);
+        radiusEl._brfPoiDebounce = setTimeout(function() {
+          var c = marker.getLatLng();
+          _brfFetchNearbyPOIs(c.lat, c.lng, r);
+        }, 500);
       });
 
       var searchEl = document.getElementById('brfMapSearch');
@@ -8377,11 +8396,50 @@ function _brfReverseGeocode(lat, lng) {
 // manager can confirm they're pointing at the right storefront.
 var _brfPoiAbort = null;
 var _brfPoiTimer = null;
-function _brfFetchNearbyPOIs(lat, lng) {
-  clearTimeout(_brfPoiTimer);
-  _brfPoiTimer = setTimeout(function() { _brfFetchNearbyPOIsNow(lat, lng); }, 350);
+// v5.11.3 — Per-category icon + colour for POI markers. Owners can now
+// glance at the map and immediately see fuel stations vs cafes vs banks
+// vs supermarkets without reading every label.
+function _brfPoiIcon(tags) {
+  var t = tags || {};
+  if (t.amenity === 'cafe')         return { ic: 'fa-mug-hot',          c: '#a16207', tx: 'مقهى' };
+  if (t.amenity === 'restaurant')   return { ic: 'fa-utensils',         c: '#dc2626', tx: 'مطعم' };
+  if (t.amenity === 'fast_food')    return { ic: 'fa-burger',           c: '#ea580c', tx: 'وجبات سريعة' };
+  if (t.amenity === 'fuel')         return { ic: 'fa-gas-pump',         c: '#0891b2', tx: 'محطة وقود' };
+  if (t.amenity === 'pharmacy')     return { ic: 'fa-prescription-bottle-medical', c: '#16a34a', tx: 'صيدلية' };
+  if (t.amenity === 'bank' || t.amenity === 'atm') return { ic: 'fa-building-columns', c: '#7c3aed', tx: t.amenity === 'atm' ? 'صراف آلي' : 'بنك' };
+  if (t.amenity === 'hospital' || t.amenity === 'clinic') return { ic: 'fa-hospital',  c: '#dc2626', tx: t.amenity === 'hospital' ? 'مستشفى' : 'عيادة' };
+  if (t.amenity === 'mosque')       return { ic: 'fa-mosque',           c: '#15803d', tx: 'مسجد' };
+  if (t.amenity === 'school' || t.amenity === 'university') return { ic: 'fa-graduation-cap', c: '#1e40af', tx: t.amenity === 'school' ? 'مدرسة' : 'جامعة' };
+  if (t.amenity === 'marketplace')  return { ic: 'fa-cart-shopping',    c: '#9333ea', tx: 'سوق' };
+  if (t.amenity === 'cinema')       return { ic: 'fa-film',             c: '#0d9488', tx: 'سينما' };
+  if (t.shop === 'supermarket')     return { ic: 'fa-cart-shopping',    c: '#1e40af', tx: 'سوبر ماركت' };
+  if (t.shop === 'convenience')     return { ic: 'fa-store',            c: '#0891b2', tx: 'بقالة' };
+  if (t.shop)                       return { ic: 'fa-store',            c: '#6b21a8', tx: 'متجر · ' + t.shop };
+  if (t.tourism === 'hotel' || t.tourism === 'hostel') return { ic: 'fa-hotel', c: '#0d9488', tx: 'فندق' };
+  if (t.office)                     return { ic: 'fa-briefcase',        c: '#475569', tx: 'مكتب · ' + t.office };
+  if (t.building === 'commercial')  return { ic: 'fa-city',             c: '#7c3aed', tx: 'مَبنى تجاري' };
+  return { ic: 'fa-map-pin', c: '#64748b', tx: 'موقع' };
 }
-function _brfFetchNearbyPOIsNow(lat, lng) {
+
+// v5.11.3 — Haversine in metres for human-friendly distance pills.
+function _brfDistanceMeters(lat1, lng1, lat2, lng2) {
+  var R = 6371000;
+  var toRad = function(d) { return d * Math.PI / 180; };
+  var dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  var a = Math.sin(dLat/2)*Math.sin(dLat/2) +
+          Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)*Math.sin(dLng/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// v5.11.3 — Cache so search filter can re-render without refetching.
+var _brfPoiCache = [];
+var _brfPoiCenter = null;
+
+function _brfFetchNearbyPOIs(lat, lng, radiusOverride) {
+  clearTimeout(_brfPoiTimer);
+  _brfPoiTimer = setTimeout(function() { _brfFetchNearbyPOIsNow(lat, lng, radiusOverride); }, 350);
+}
+function _brfFetchNearbyPOIsNow(lat, lng, radiusOverride) {
   var listEl = document.getElementById('brfMapPoisList');
   if (!listEl) return;
   listEl.innerHTML = '<div style="font-size:11px;color:#94a3b8;text-align:center;padding:14px;"><i class="fas fa-spinner fa-spin"></i> جاري البحث...</div>';
@@ -8389,15 +8447,26 @@ function _brfFetchNearbyPOIsNow(lat, lng) {
   if (_brfPoiAbort) try { _brfPoiAbort.abort(); } catch(e) {}
   _brfPoiAbort = ('AbortController' in window) ? new AbortController() : null;
 
-  // 200m radius around the marker — wide enough for a strip-mall, tight
-  // enough that the list stays readable.
-  var radius = 200;
+  // v5.11.3 — Radius is now DYNAMIC. Honours the user-set fence radius
+  // (#brfMapRadius), clamped to [50, 2000] for sensible Overpass load.
+  // A wider fence = wider POI search, so a 500 m branch shows shops
+  // across the whole strip, not just the immediate parcel.
+  var fenceRadius = Number((document.getElementById('brfMapRadius')||{}).value) || 200;
+  var radius = Math.max(50, Math.min(2000, Number(radiusOverride) || fenceRadius));
+  _brfPoiCenter = { lat: lat, lng: lng };
+
+  // v5.11.3 — Expanded from 7 to 18 categories so the owner sees the
+  // shop they expect (fuel stations, supermarkets, ATMs, hospitals,
+  // schools, mosques…). Adds commercial-building ways for big malls.
   var query =
-    '[out:json][timeout:8];(' +
+    '[out:json][timeout:10];(' +
       'node(around:' + radius + ',' + lat + ',' + lng + ')[shop];' +
-      'node(around:' + radius + ',' + lat + ',' + lng + ')[amenity~"^(cafe|restaurant|fast_food|bank|pharmacy|fuel|marketplace)$"];' +
-      'node(around:' + radius + ',' + lat + ',' + lng + ')[name][office];' +
-    ');out tags 30;';
+      'node(around:' + radius + ',' + lat + ',' + lng + ')[amenity~"^(cafe|restaurant|fast_food|bank|pharmacy|fuel|marketplace|supermarket|atm|hospital|clinic|school|university|hotel|mosque|cinema)$"];' +
+      'node(around:' + radius + ',' + lat + ',' + lng + ')[office][name];' +
+      'node(around:' + radius + ',' + lat + ',' + lng + ')[tourism~"^(hotel|hostel|attraction)$"];' +
+      'way(around:' + radius + ',' + lat + ',' + lng + ')[shop][name];' +
+      'way(around:' + radius + ',' + lat + ',' + lng + ')[building=commercial][name];' +
+    ');out tags center 60;';
 
   fetch('https://overpass-api.de/api/interpreter', {
     method: 'POST',
@@ -8408,73 +8477,124 @@ function _brfFetchNearbyPOIsNow(lat, lng) {
     .then(function(r) { return r.json(); })
     .then(function(j) {
       var els = (j && j.elements) || [];
-      // Sort by distance from the marker so the closest shop is on top.
+      // For ways, Overpass returns `center: {lat, lon}` because the
+      // geometry centroid is what we actually want for a pin.
       els.forEach(function(e) {
-        var dx = (e.lon - lng) * Math.cos(lat * Math.PI / 180);
-        var dy = (e.lat - lat);
-        e._d = Math.sqrt(dx*dx + dy*dy);
+        if (e.type === 'way' && e.center) { e.lat = e.center.lat; e.lon = e.center.lon; }
+      });
+      // Compute real Haversine distance (not the approx we had).
+      els.forEach(function(e) {
+        e._d = _brfDistanceMeters(lat, lng, e.lat, e.lon);
       });
       els.sort(function(a,b) { return a._d - b._d; });
 
-      var s = window._brfMap;
-      if (s && s.poiLayer) s.poiLayer.clearLayers();
-
       var named = els.filter(function(e) {
         var t = e.tags || {};
-        return t['name:ar'] || t.name;
-      }).slice(0, 25);
+        return (t['name:ar'] || t.name) && Number.isFinite(e.lat) && Number.isFinite(e.lon);
+      }).slice(0, 60);
 
-      if (!named.length) {
-        listEl.innerHTML = '<div style="font-size:11px;color:#94a3b8;text-align:center;padding:14px;">لا توجد متاجر مسجلة في هذا النطاق</div>';
-        return;
-      }
-
-      var L = window.L;
-      var html = named.map(function(e, i) {
-        var t = e.tags || {};
-        var nm = t['name:ar'] || t.name || '';
-        var sub = t.shop ? ('متجر: ' + t.shop) :
-                  t.amenity ? ('مرفق: ' + t.amenity) :
-                  t.office ? ('مكتب: ' + t.office) : '';
-        var icon = t.amenity === 'cafe' || t.amenity === 'restaurant' || t.amenity === 'fast_food' ? 'fa-utensils' :
-                   t.amenity === 'fuel' ? 'fa-gas-pump' :
-                   t.amenity === 'bank' ? 'fa-university' :
-                   t.amenity === 'pharmacy' ? 'fa-prescription-bottle-medical' :
-                   t.shop ? 'fa-store' : 'fa-map-pin';
-        // Dim labels on the map for visual context.
-        if (s && s.poiLayer && L) {
-          var markerIcon = L.divIcon({
-            className: 'brf-poi-label',
-            html: '<div style="background:rgba(255,255,255,.92);padding:2px 6px;border-radius:6px;font-size:10px;font-weight:700;color:#7f1d1d;border:1px solid #fecaca;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.08);">' + _brfAttr(nm) + '</div>',
-            iconSize: null
-          });
-          L.marker([e.lat, e.lon], { icon: markerIcon, interactive: false, keyboard: false }).addTo(s.poiLayer);
-        }
-        return '<div class="brf-poi" data-lat="' + e.lat + '" data-lng="' + e.lon + '" data-name="' + _brfAttr(nm) + '">' +
-          '<i class="fas ' + icon + '"></i>' +
-          '<div style="flex:1;min-width:0;"><b>' + _brfAttr(nm) + '</b>' +
-            (sub ? '<small>' + _brfAttr(sub) + '</small>' : '') +
-          '</div>' +
-        '</div>';
-      }).join('');
-      listEl.innerHTML = html;
-      Array.prototype.forEach.call(listEl.querySelectorAll('.brf-poi'), function(el) {
-        el.onclick = function() {
-          var la = Number(el.dataset.lat), ln = Number(el.dataset.lng);
-          if (!Number.isFinite(la) || !Number.isFinite(ln)) return;
-          var sx = window._brfMap;
-          sx.map.setView([la, ln], 19);
-          _brfMoveTo(la, ln, true);
-          var srch = document.getElementById('brfMapSearch');
-          if (srch) srch.value = el.dataset.name || '';
-        };
-      });
+      _brfPoiCache = named;
+      _brfRenderPois('');
+      _brfUpdatePoiCount();
     })
     .catch(function(err) {
       if (err && err.name === 'AbortError') return;
-      listEl.innerHTML = '<div style="font-size:11px;color:#94a3b8;text-align:center;padding:14px;">تعذر جلب المتاجر القريبة</div>';
+      listEl.innerHTML = '<div style="font-size:11px;color:#dc2626;text-align:center;padding:14px;"><i class="fas fa-circle-exclamation"></i> تعذَّر جلب المتاجر — راجع الاتصال</div>';
+      _brfUpdatePoiCount(0);
     });
 }
+
+// v5.11.3 — render the POI list. Reads from the cache so search-filter
+// re-runs don't fire a new Overpass request.
+function _brfRenderPois(filterQ) {
+  var listEl = document.getElementById('brfMapPoisList');
+  if (!listEl) return;
+  var s = window._brfMap;
+  var L = window.L;
+  if (s && s.poiLayer) s.poiLayer.clearLayers();
+
+  var q = String(filterQ || '').trim().toLowerCase();
+  var rows = _brfPoiCache.filter(function(e) {
+    if (!q) return true;
+    var t = e.tags || {};
+    var hay = ((t['name:ar'] || '') + ' ' + (t.name || '') + ' ' + (t.shop || '') + ' ' + (t.amenity || '')).toLowerCase();
+    return hay.indexOf(q) >= 0;
+  });
+
+  if (!rows.length) {
+    listEl.innerHTML = '<div style="font-size:11px;color:#94a3b8;text-align:center;padding:18px;">' +
+      (q ? 'لا توجد نتائج لـ "' + _brfAttr(q) + '"' : 'لا توجد متاجر مسجلة في هذا النطاق — جرِّب نطاقاً أوسع') +
+    '</div>';
+    return;
+  }
+
+  listEl.innerHTML = rows.map(function(e) {
+    var t = e.tags || {};
+    var nm = t['name:ar'] || t.name || '';
+    var info = _brfPoiIcon(t);
+    var distTxt = e._d < 1000 ? Math.round(e._d) + 'م' : (e._d / 1000).toFixed(1) + 'كم';
+    // Map marker label with category colour
+    if (s && s.poiLayer && L) {
+      var markerHtml =
+        '<div style="display:flex;align-items:center;gap:4px;background:#fff;padding:3px 7px;border-radius:8px;font-size:10.5px;font-weight:700;color:' + info.c + ';border:1.5px solid ' + info.c + ';white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.12);">' +
+          '<i class="fas ' + info.ic + '" style="font-size:10px;"></i>' +
+          '<span style="color:#0f172a;">' + _brfAttr(nm) + '</span>' +
+        '</div>';
+      var markerIcon = L.divIcon({ className: 'brf-poi-label', html: markerHtml, iconSize: null });
+      L.marker([e.lat, e.lon], { icon: markerIcon, interactive: false, keyboard: false }).addTo(s.poiLayer);
+    }
+    return '<div class="brf-poi" data-lat="' + e.lat + '" data-lng="' + e.lon + '" data-name="' + _brfAttr(nm) + '" style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-bottom:1px solid #f1f5f9;cursor:pointer;transition:background .12s;" onmouseover="this.style.background=\'#faf5ff\';" onmouseout="this.style.background=\'\';">' +
+      '<div style="width:32px;height:32px;border-radius:8px;background:' + info.c + '1a;color:' + info.c + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fas ' + info.ic + '"></i></div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-weight:800;color:#0f172a;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + _brfAttr(nm) + '</div>' +
+        '<div style="font-size:10.5px;color:#64748b;margin-top:2px;">' + _brfAttr(info.tx) + '</div>' +
+      '</div>' +
+      '<div style="font-size:10.5px;font-weight:800;color:#3b82f6;background:#dbeafe;padding:3px 8px;border-radius:6px;flex-shrink:0;">' + distTxt + '</div>' +
+    '</div>';
+  }).join('');
+
+  Array.prototype.forEach.call(listEl.querySelectorAll('.brf-poi'), function(el) {
+    el.onclick = function() {
+      var la = Number(el.dataset.lat), ln = Number(el.dataset.lng);
+      if (!Number.isFinite(la) || !Number.isFinite(ln)) return;
+      var sx = window._brfMap;
+      if (sx && sx.map) sx.map.setView([la, ln], 19);
+      _brfMoveTo(la, ln, true);
+      var srch = document.getElementById('brfMapSearch');
+      if (srch) srch.value = el.dataset.name || '';
+      // Highlight the selected item
+      Array.prototype.forEach.call(document.querySelectorAll('.brf-poi'), function(x) { x.style.background = ''; });
+      el.style.background = '#ede9fe';
+    };
+  });
+}
+
+function _brfUpdatePoiCount(forceN) {
+  var el = document.getElementById('brfMapPoisCount');
+  if (!el) return;
+  var n = (forceN != null) ? forceN : _brfPoiCache.length;
+  var fenceRadius = Number((document.getElementById('brfMapRadius')||{}).value) || 200;
+  var r = Math.max(50, Math.min(2000, fenceRadius));
+  el.textContent = n + ' نتيجة ضمن ' + r + 'م';
+}
+
+// v5.11.3 — Count + filter together: when the user types in the
+// search box, show "X من Y" so they know how many matches vs total.
+window._brfUpdatePoiCountFiltered = function(q) {
+  var el = document.getElementById('brfMapPoisCount');
+  if (!el) return;
+  var fenceRadius = Number((document.getElementById('brfMapRadius')||{}).value) || 200;
+  var r = Math.max(50, Math.min(2000, fenceRadius));
+  var total = _brfPoiCache.length;
+  q = String(q || '').trim().toLowerCase();
+  if (!q) { el.textContent = total + ' نتيجة ضمن ' + r + 'م'; return; }
+  var n = _brfPoiCache.filter(function(e) {
+    var t = e.tags || {};
+    var hay = ((t['name:ar'] || '') + ' ' + (t.name || '') + ' ' + (t.shop || '') + ' ' + (t.amenity || '')).toLowerCase();
+    return hay.indexOf(q) >= 0;
+  }).length;
+  el.textContent = n + ' من ' + total + ' ضمن ' + r + 'م';
+};
 
 // Compatibility shim — old inline UI used the search button onclick.
 window.brfMapSearchGo = function() {
@@ -8521,17 +8641,49 @@ function erpSaveBranchFull() {
     geoRadius:   radius
   };
 
+  // v5.11.3 — Robust save UX: spinner on the button, console.log of the
+  // payload for diagnostics, and a toast that ECHOES the saved geo values
+  // so the owner can verify the radius / coords landed in the DB.
+  console.log('[branch-save v5.11.3] payload:', JSON.parse(JSON.stringify(data)));
+  var btn = document.getElementById('erpModalSaveBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.dataset.origText = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الحفظ...';
+  }
+  var restoreBtn = function() {
+    if (!btn) return;
+    btn.disabled = false;
+    btn.innerHTML = btn.dataset.origText || 'حفظ';
+  };
+
   loader(true);
   window._apiBridge.withSuccessHandler(function(r) {
     loader(false);
+    restoreBtn();
     if (r && r.success) {
-      showToast('تم الحفظ ✓');
+      var info = 'تم حفظ بيانات الفرع ✓ ';
+      if (lat != null && lng != null) {
+        info += '(نطاق: ' + radius + 'م، الإحداثيات: ' + lat.toFixed(5) + ', ' + lng.toFixed(5) + ')';
+      } else {
+        info += '(بدون موقع جغرافي)';
+      }
+      showToast(info);
+      // Mark form as clean so the close handler doesn't warn.
+      window._brfFormDirty = false;
       erpCloseModal();
       erpLoadBranchesFull();
     } else {
-      showToast((r && r.error) || 'تعذّر الحفظ', true);
+      var errMsg = (r && r.error) || 'تعذَّر الحفظ — تَحقَّق من البيانات وحاول مَرَّة أخرى';
+      console.warn('[branch-save v5.11.3] failed response:', r);
+      showToast(errMsg, true);
     }
-  }).withFailureHandler(function() { loader(false); showToast('تعذّر الاتصال بالخادم', true); }).saveBranchFull(data);
+  }).withFailureHandler(function(err) {
+    loader(false);
+    restoreBtn();
+    console.error('[branch-save v5.11.3] network/server error:', err);
+    showToast('تعذَّر الاتصال بالخادم — ' + ((err && err.message) || 'لا اتصال'), true);
+  }).saveBranchFull(data);
 }
 
 // ═══════════════════════════════════════
@@ -9301,6 +9453,15 @@ function erpExportReport(reportType) {
 // MODAL UTILS
 // ═══════════════════════════════════════
 function erpCloseModal() {
+  // v5.11.3 — Dirty-check guard for the branch-edit form. If the
+  // owner touched any field but hasn't clicked Save, warn before
+  // losing the changes (most common confusion: thinking ✕ saves).
+  if (window._brfFormDirty === true) {
+    if (!confirm('لديك تَغييرات لم تُحفَظ في بيانات الفرع. هل تُريد الإغلاق فعلاً؟')) {
+      return;
+    }
+    window._brfFormDirty = false;
+  }
   var modalEl = document.getElementById('erpModal');
   modalEl.classList.add('hidden');
   // v5.10.94 — clear the per-modal kind flag so the next modal that
